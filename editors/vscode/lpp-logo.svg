@@ -1,0 +1,144 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="512"
+     height="512"
+     viewBox="0 0 512 512"
+     xmlns="http://www.w3.org/2000/svg">
+
+    <defs>
+
+        <!-- Background -->
+        <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#0B1018"/>
+            <stop offset="100%" stop-color="#1A2333"/>
+        </linearGradient>
+
+        <!-- Titanium / Brushed Metal -->
+        <linearGradient id="metal"
+                        x1="0%"
+                        y1="0%"
+                        x2="0%"
+                        y2="100%">
+            <stop offset="0%" stop-color="#FFFFFF"/>
+            <stop offset="10%" stop-color="#FAFAFB"/>
+            <stop offset="22%" stop-color="#D9DDE3"/>
+            <stop offset="38%" stop-color="#FDFDFD"/>
+            <stop offset="55%" stop-color="#BFC6CF"/>
+            <stop offset="72%" stop-color="#F6F7F9"/>
+            <stop offset="100%" stop-color="#A7AFBA"/>
+        </linearGradient>
+
+        <!-- Inner Highlight -->
+        <linearGradient id="shine"
+                        x1="0%"
+                        y1="0%"
+                        x2="100%"
+                        y2="100%">
+            <stop offset="0%"
+                  stop-color="#FFFFFF"
+                  stop-opacity="0.70"/>
+            <stop offset="100%"
+                  stop-color="#FFFFFF"
+                  stop-opacity="0"/>
+        </linearGradient>
+
+        <!-- Shadow -->
+        <filter id="shadow"
+                x="-40%"
+                y="-40%"
+                width="180%"
+                height="180%">
+
+            <feDropShadow dx="0"
+                          dy="14"
+                          stdDeviation="16"
+                          flood-color="#000000"
+                          flood-opacity="0.35"/>
+
+        </filter>
+
+    </defs>
+
+    <!-- Background -->
+    <rect
+        width="512"
+        height="512"
+        rx="96"
+        fill="url(#bg)"/>
+
+    <!-- Main L -->
+    <path
+        filter="url(#shadow)"
+        fill="url(#metal)"
+        d="
+            M148 64
+            L248 64
+            L278 94
+            L278 272
+            L394 272
+            L338 392
+            L128 392
+            L104 366
+            L104 92
+            L132 64
+            Z
+        "/>
+
+    <!-- Inner bevel -->
+    <path
+        fill="url(#shine)"
+        d="
+            M165 82
+            L235 82
+            L252 99
+            L252 252
+            L365 252
+            L352 279
+            L165 279
+            Z
+        "/>
+
+    <!-- Top bevel -->
+    <polygon
+        fill="#FFFFFF"
+        opacity="0.18"
+        points="
+            148,64
+            248,64
+            278,94
+            170,94
+        "/>
+
+    <!-- Right bevel -->
+    <polygon
+        fill="#000000"
+        opacity="0.08"
+        points="
+            278,94
+            394,272
+            338,392
+            308,368
+            352,290
+            278,290
+        "/>
+
+    <!-- Bottom metal reflection -->
+    <polygon
+        fill="#FFFFFF"
+        opacity="0.15"
+        points="
+            248,392
+            338,392
+            360,346
+            290,346
+        "/>
+
+    <!-- Small specular highlight -->
+    <ellipse
+        cx="205"
+        cy="118"
+        rx="26"
+        ry="10"
+        fill="#FFFFFF"
+        opacity="0.22"/>
+
+</svg>

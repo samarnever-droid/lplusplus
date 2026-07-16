@@ -1,0 +1,40 @@
+{
+    "name": "lpp-vscode",
+    "displayName": "L++ Language Support",
+    "description": "Rich support for L++, featuring syntax highlighting, compiler diagnostics, outline symbols, and escape-analysis visual hover hints.",
+    "version": "0.1.0",
+    "publisher": "lpp-lang",
+    "engines": {
+        "vscode": "^1.74.0"
+    },
+    "categories": [
+        "Programming Languages"
+    ],
+    "main": "./extension.js",
+    "icon": "lpp-logo.svg",
+    "contributes": {
+        "languages": [
+            {
+                "id": "lpp",
+                "aliases": [
+                    "L++",
+                    "lpp"
+                ],
+                "extensions": [
+                    ".lpp"
+                ],
+                "configuration": "./language-configuration.json"
+            }
+        ],
+        "grammars": [
+            {
+                "language": "lpp",
+                "scopeName": "source.lpp",
+                "path": "./syntaxes/lpp.tmLanguage.json"
+            }
+        ]
+    },
+    "activationEvents": [
+        "onLanguage:lpp"
+    ]
+}

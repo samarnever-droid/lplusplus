@@ -1,6 +1,6 @@
 ﻿# L++ Production-Grade Benchmark Results
 
-Generated on **2026-07-16 21:49**
+Generated on **2026-07-16 22:02**
 * **OS**: Microsoft Windows 10.0.26200 
 * **CPU**: 12th Gen Intel(R) Core(TM) i3-1215U
 * **C Compiler**: MSVC cl.exe (VS 2022 Community)
@@ -15,9 +15,9 @@ This timing breakdown shows exactly where time is spent to build a fully linked 
 
 | Benchmark | Frontend + MIR | Cranelift AOT | MSVC Linker | Total Compile time |
 |-----------|----------------|---------------|-------------|--------------------|
-| fib(35) | 2.0 ms | 1488.8 ms | 231.4 ms | **1722.2 ms** |
-| loop(10M) | 23.4 ms | 1011.8 ms | 6947.1 ms | **7982.3 ms** |
-| calls(1M) | 5.0 ms | 1017.9 ms | 62.3 ms | **1085.2 ms** |
+| fib(35) | 1.9 ms | 1.5 ms | 390.3 ms | **393.7 ms** |
+| loop(10M) | 1.8 ms | 1.4 ms | 102.3 ms | **105.5 ms** |
+| calls(1M) | 13.2 ms | 12.6 ms | 219.3 ms | **245.1 ms** |
 
 * **Frontend + MIR**: Lexer, Parser, Semantic Resolver, Typechecker, Escape Analysis, MIR conversion, and ARC pass.
 * **Cranelift AOT**: Compiles MIR into machine instructions and writes COFF object bytes.
@@ -31,9 +31,9 @@ These figures demonstrate execution speed of the compiled binaries. L++ is compi
 
 | Benchmark | L++ Runtime (ms) | C Runtime (ms) | Rust Runtime (ms) | Python (ms) | Speedup vs Python | Correctness |
 |-----------|------------------|----------------|-------------------|-------------|-------------------|-------------|
-| fib(35) | 64.3 | 56.3 | 47.4 | 1333.7 | **20.7x** | PASS |
-| loop(10M) | 22.7 | 20.6 | 21.1 | 723.6 | **31.9x** | PASS |
-| calls(1M) | 32.9 | 23 | 25.6 | 227.2 | **6.9x** | PASS |
+| fib(35) | 86 | 96.3 | 68 | 1444.8 | **16.8x** | PASS |
+| loop(10M) | 43.3 | 64.3 | 66.1 | 910.6 | **21x** | PASS |
+| calls(1M) | 51.8 | 34.2 | 36.5 | 222.3 | **4.3x** | PASS |
 
 ---
 
