@@ -234,3 +234,49 @@ L++ is designed as a multi-tier compilation pipeline:
 - Standard Library Expansion (`io`, `math`, `string`, `collections`)
 - Async Runtime
 - Rule 6 (Required Aliasing)
+
+---
+
+## 10. Toolchain & Installation
+
+L++ provides a simple and premium toolchain wrapper to install and run the compiler globally.
+
+### Global Installation
+
+To install the L++ compiler globally on your system:
+
+1. Open PowerShell and run the installer script from the project root:
+   ```powershell
+   .\install.ps1
+   ```
+2. The installer will:
+   - Build the compiler binary in release mode (`lpp-compiler.exe`).
+   - Create a global install directory at `%USERPROFILE%\.lpp`.
+   - Copy the pre-compiled C runtime library (`lpp_runtime.obj`) to `%USERPROFILE%\.lpp\lib`.
+   - Generate a global CLI wrapper (`lpp.bat`) at `%USERPROFILE%\.lpp\bin`.
+   - Add the binary directory to your user `PATH` environment variable.
+3. Restart your terminal or IDE, and you can now use the global `lpp` command directly!
+
+### Using the Global Command
+
+```cmd
+# Show compiler version
+lpp -v
+
+# Show help menu
+lpp -h
+
+# Compile a L++ file into a native executable
+lpp main.lpp
+```
+
+The global compiler automatically compiles the `.lpp` file to a native object file, invokes `link.exe` (auto-detecting your MSVC compiler environment), links it with the L++ runtime, and outputs a native executable (`main.exe`) while cleaning up any intermediate files!
+
+### Local Development Runner
+
+For quick local tests during development without installing globally, use the local runner script:
+
+```powershell
+# Compile, link, and run a L++ program instantly:
+.\run.ps1 tests\fib.lpp
+```
