@@ -1,0 +1,13 @@
+# nested_calls.lpp — Multiple function calls chained
+# Expected output: 120  (5!)
+
+def mul(a: Int, b: Int) -> Int:
+    return a * b
+
+def factorial(n: Int) -> Int:
+    if n <= 1:
+        return 1
+    return mul(n, factorial(n - 1))
+
+def main():
+    print(factorial(5))

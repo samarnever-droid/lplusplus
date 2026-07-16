@@ -1,0 +1,20 @@
+# bench_calls.lpp — Deep function call chain benchmark
+# Measures function call/return overhead across 1M calls.
+
+def inc(n: Int) -> Int:
+    return n + 1
+
+def add(a: Int, b: Int) -> Int:
+    return a + b
+
+def chain(n: Int) -> Int:
+    mut r := 0
+    mut i := 0
+    while i < n:
+        r = add(r, inc(i))
+        i = i + 1
+    return r
+
+def main():
+    result := chain(1000000)
+    print(result)

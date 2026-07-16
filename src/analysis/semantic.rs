@@ -1,0 +1,325 @@
+use std::collections::HashMap;
+use crate::ast::*;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ScopeId(pub usize);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct BindingId(pub usize);
+
+#[derive(Debug, Clone)]
+pub enum ScopeKind {
+    Global,
+    Function { name: String },
+    Closure { captures: Vec<BindingId> },
+    Block,
+}
+
+#[derive(Debug, Clone)]
+pub struct Scope {
+    pub id: ScopeId,
+    pub parent: Option<ScopeId>,
+    pub kind: ScopeKind,
+    pub bindings: HashMap<String, BindingId>,
+}
+
+#[derive(Debug, Clone)]
+pub enum BindingKind {
+    Local,
+    Param,
+    StructField, // Unused directly in Scope, but useful in TypeTable later
+    FunctionName,
+}
+
+#[derive(Debug, Clone)]
+pub struct Binding {
+    pub id: BindingId,
+    pub name: String,
+    pub declared_in: ScopeId,
+    pub ast_ty: Option<Type>,
+    pub ty: Option<crate::typecheck::TypeRef>,
+    pub is_mut: bool,
+    pub kind: BindingKind,
+}
+
+#[derive(Debug)]
+pub struct SymbolTable {
+    pub scopes: Vec<Scope>,
+    pub bindings: Vec<Binding>,
+}
+
+impl SymbolTable {
+    pub fn new() -> Self {
+        Self {
+            scopes: Vec::new(),
+            bindings: Vec::new(),
+        }
+    }
+
+    fn new_scope(&mut self, parent: Option<ScopeId>, kind: ScopeKind) -> ScopeId {
+        let id = ScopeId(self.scopes.len());
+        self.scopes.push(Scope {
+            id,
+            parent,
+            kind,
+            bindings: HashMap::new(),
+        });
+        id
+    }
+
+    fn add_binding(
+        &mut self,
+        scope_id: ScopeId,
+        name: String,
+        is_mut: bool,
+        ast_ty: Option<Type>,
+        kind: BindingKind,
+    ) -> BindingId {
+        let binding_id = BindingId(self.bindings.len());
+        self.bindings.push(Binding {
+            id: binding_id,
+            name: name.clone(),
+            declared_in: scope_id,
+            ast_ty,
+            ty: None,
+            is_mut,
+            kind,
+        });
+        self.scopes[scope_id.0].bindings.insert(name, binding_id);
+        binding_id
+    }
+
+    pub fn resolve_name(&mut self, start_scope: ScopeId, name: &str) -> Option<BindingId> {
+        let mut current = Some(start_scope);
+        let mut capture_chain: Vec<ScopeId> = Vec::new();
+
+        while let Some(scope_id) = current {
+            let scope = &self.scopes[scope_id.0];
+            if let Some(&binding_id) = scope.bindings.get(name) {
+                // If we found it, and we passed through any closures, register the capture
+                for closure_scope_id in capture_chain {
+                    if let ScopeKind::Closure { ref mut captures } = self.scopes[closure_scope_id.0].kind {
+                        if !captures.contains(&binding_id) {
+                            captures.push(binding_id);
+                        }
+                    }
+                }
+                return Some(binding_id);
+            }
+
+            if let ScopeKind::Closure { .. } = scope.kind {
+                capture_chain.push(scope_id);
+            }
+
+            current = scope.parent;
+        }
+        None
+    }
+
+    pub fn resolve_name_immutable(&self, start_scope: ScopeId, name: &str) -> Option<BindingId> {
+        let mut current = Some(start_scope);
+        while let Some(scope_id) = current {
+            let scope = &self.scopes[scope_id.0];
+            if let Some(&binding_id) = scope.bindings.get(name) {
+                return Some(binding_id);
+            }
+            current = scope.parent;
+        }
+        None
+    }
+}
+
+pub struct Resolver {
+    pub table: SymbolTable,
+    current_scope: ScopeId,
+}
+
+impl Resolver {
+    pub fn new() -> Self {
+        let mut table = SymbolTable::new();
+        let global = table.new_scope(None, ScopeKind::Global);
+        Self {
+            table,
+            current_scope: global,
+        }
+    }
+
+    pub fn resolve_program(&mut self, program: &Program) -> Result<(), String> {
+        // Register top-level items first so they can be referenced anywhere
+        for decl in &program.declarations {
+            match decl {
+                TopLevel::Function(func) => {
+                    self.table.add_binding(
+                        self.current_scope,
+                        func.name.clone(),
+                        false,
+                        Some(Type::Custom("Function".into())),
+                        BindingKind::FunctionName,
+                    );
+                }
+                TopLevel::Struct(s) => {
+                    // Register struct name as a constructor function
+                    self.table.add_binding(
+                        self.current_scope,
+                        s.name.clone(),
+                        false,
+                        Some(Type::Custom("Function".into())),
+                        BindingKind::FunctionName,
+                    );
+                }
+            }
+        }
+
+        // Now walk bodies
+        for decl in &program.declarations {
+            if let TopLevel::Function(func) = decl {
+                self.resolve_function(func)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn resolve_function(&mut self, func: &Function) -> Result<(), String> {
+        let parent = self.current_scope;
+        let func_scope = self.table.new_scope(Some(parent), ScopeKind::Function { name: func.name.clone() });
+        self.current_scope = func_scope;
+
+        for param in &func.params {
+            self.table.add_binding(
+                self.current_scope,
+                param.name.clone(),
+                false,
+                Some(param.ty.clone()),
+                BindingKind::Param,
+            );
+        }
+
+        for stmt in &func.body {
+            self.resolve_stmt(stmt)?;
+        }
+
+        self.current_scope = parent;
+        Ok(())
+    }
+
+    fn resolve_stmt(&mut self, stmt: &Stmt) -> Result<(), String> {
+        match stmt {
+            Stmt::LetInferred { name, is_mut, value, binding_id } => {
+                self.resolve_expr(value)?; // Resolve value before shadowing occurs!
+                let id = self.table.add_binding(
+                    self.current_scope,
+                    name.clone(),
+                    *is_mut,
+                    None, // Type inference comes next
+                    BindingKind::Local,
+                );
+                binding_id.set(Some(id.0));
+            }
+            Stmt::Assign { name, value, binding_id } => {
+                self.resolve_expr(value)?;
+                if let Some(id) = self.table.resolve_name(self.current_scope, name) {
+                    binding_id.set(Some(id.0));
+                } else {
+                    return Err(format!("Assignment to undeclared variable '{}'", name));
+                }
+            }
+            Stmt::If { condition, then_block, else_block } => {
+                self.resolve_expr(condition)?;
+                
+                let then_scope = self.table.new_scope(Some(self.current_scope), ScopeKind::Block);
+                let old_scope = self.current_scope;
+                self.current_scope = then_scope;
+                for stmt in then_block {
+                    self.resolve_stmt(stmt)?;
+                }
+                self.current_scope = old_scope;
+                
+                if let Some(else_b) = else_block {
+                    let else_scope = self.table.new_scope(Some(self.current_scope), ScopeKind::Block);
+                    self.current_scope = else_scope;
+                    for stmt in else_b {
+                        self.resolve_stmt(stmt)?;
+                    }
+                    self.current_scope = old_scope;
+                }
+            }
+            Stmt::While { condition, body } => {
+                self.resolve_expr(condition)?;
+                let body_scope = self.table.new_scope(Some(self.current_scope), ScopeKind::Block);
+                let old_scope = self.current_scope;
+                self.current_scope = body_scope;
+                for stmt in body {
+                    self.resolve_stmt(stmt)?;
+                }
+                self.current_scope = old_scope;
+            }
+            Stmt::Expr(expr) => {
+                self.resolve_expr(expr)?;
+            }
+            Stmt::Return(Some(expr)) => {
+                self.resolve_expr(expr)?;
+            }
+            Stmt::Return(None) => {}
+        }
+        Ok(())
+    }
+
+    fn resolve_expr(&mut self, expr: &Expr) -> Result<(), String> {
+        match expr {
+            Expr::IntLiteral(_) | Expr::StringLiteral(_) => {}
+            Expr::Identifier(name, binding_id_cell) => {
+                // Ignore builtins for now
+                if name != "print" && name != "input" && name != "read_file" && name != "write_file" && name != "print_str" {
+                    if let Some(id) = self.table.resolve_name(self.current_scope, name) {
+                        binding_id_cell.set(Some(id.0));
+                    } else {
+                        return Err(format!("Undeclared identifier '{}'", name));
+                    }
+                }
+            }
+            Expr::BinaryOp { left, right, .. } => {
+                self.resolve_expr(left)?;
+                self.resolve_expr(right)?;
+            }
+            Expr::Call { callee, args } => {
+                self.resolve_expr(callee)?;
+                for arg in args {
+                    self.resolve_expr(arg)?;
+                }
+            }
+            Expr::Closure { params, body, .. } => {
+                let parent = self.current_scope;
+                let closure_scope = self.table.new_scope(Some(parent), ScopeKind::Closure { captures: Vec::new() });
+                self.current_scope = closure_scope;
+
+                for param in params {
+                    self.table.add_binding(
+                        self.current_scope,
+                        param.name.clone(),
+                        false,
+                        param.ty.clone(),
+                        BindingKind::Param,
+                    );
+                }
+
+                for stmt in body {
+                    self.resolve_stmt(stmt)?;
+                }
+
+                self.current_scope = parent;
+            }
+            Expr::FieldAccess { base, .. } => {
+                self.resolve_expr(base)?;
+            }
+            Expr::Spawn { closure } => {
+                self.resolve_expr(closure)?;
+            }
+            Expr::ListLiteral(elements) => {
+                for element in elements {
+                    self.resolve_expr(element)?;
+                }
+            }
+        }
+        Ok(())
+    }
+}

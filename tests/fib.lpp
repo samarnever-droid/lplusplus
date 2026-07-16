@@ -1,0 +1,11 @@
+# fib.lpp — Fibonacci via recursion
+# Expected output: 55
+
+def fib(n: Int) -> Int:
+    if n <= 1:
+        return n
+    return fib(n - 1) + fib(n - 2)
+
+def main():
+    result := fib(10)
+    print(result)

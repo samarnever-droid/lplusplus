@@ -1,0 +1,10 @@
+/target
+*.exe
+*.o
+*.obj
+*.pdb
+output.c
+/benchmarks/c_*
+/benchmarks/rust_*
+/benchmarks/c_*.c
+/benchmarks/rust_*.rs

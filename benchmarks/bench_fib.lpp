@@ -1,0 +1,14 @@
+# bench_fib.lpp — Fibonacci(35) benchmark
+# Measures recursive function call performance.
+# Python equivalent: time python -c "
+#   def fib(n): return n if n<=1 else fib(n-1)+fib(n-2)
+#   print(fib(35))"
+
+def fib(n: Int) -> Int:
+    if n <= 1:
+        return n
+    return fib(n - 1) + fib(n - 2)
+
+def main():
+    result := fib(35)
+    print(result)

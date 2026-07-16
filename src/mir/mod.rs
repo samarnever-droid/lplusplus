@@ -1,0 +1,10 @@
+pub mod builder;
+pub mod ir;
+pub mod lower;
+pub mod pass_arc;
+pub mod pass_closure;
+
+// MIR (Mid-level Intermediate Representation) will be defined here.
+// This is the bridge between the high-level AST (after analysis) and Cranelift.
+// It explicitly flattens expressions, manages ARC increments/decrements,
+// and transforms closures into fat pointers.

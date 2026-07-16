@@ -1,0 +1,11 @@
+[package]
+name = "lpp"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+cranelift-codegen = { version = "0.113", features = ["x86", "all-arch"] }
+cranelift-frontend = "0.113"
+cranelift-module = "0.113"
+cranelift-object = "0.113"
+target-lexicon = "0.12"

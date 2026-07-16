@@ -1,0 +1,15 @@
+# branches.lpp — If/else and comparison operators
+# Expected output:
+# 1
+# 0
+# 1
+
+def classify(n: Int) -> Int:
+    if n > 0:
+        return 1
+    return 0
+
+def main():
+    print(classify(42))
+    print(classify(0))
+    print(classify(100))

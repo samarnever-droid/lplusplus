@@ -1,0 +1,13 @@
+def main():
+    mut prefix := "Hello"
+    
+    closure_a := fn(name) -> Void:
+        print(prefix, name)
+        
+    prefix := "Goodbye" # Shadowing perfectly allowed!
+
+    closure_b := fn(name) -> Void:
+        print(prefix, name)
+
+    closure_a("World") # Prints: Hello World
+    closure_b("World") # Prints: Goodbye World

@@ -1,0 +1,12 @@
+struct Node:
+    scalar: Int
+
+def test_list_container() -> Int:
+    escapes_to_list := Node()
+    list := [escapes_to_list]
+    return 0
+
+def test_list_scalar() -> Int:
+    stays_on_stack := Node()
+    list := [stays_on_stack.scalar]
+    return 0
