@@ -43,6 +43,11 @@ void lpp_free_str(char *ptr) {
     free(ptr);
 }
 
+int64_t lpp_parse_int(const char *str) {
+    if (!str) return 0;
+    return (int64_t)atoll(str);
+}
+
 /* ── File I/O ─────────────────────────────────────────────────────────────── */
 
 /* Read entire file contents. Returns heap-allocated string or NULL on error. */

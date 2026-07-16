@@ -283,6 +283,12 @@ impl<'a> Codegen<'a> {
                         self.out.push_str("; fwrite(data, 1, strlen(data), f); fclose(f); } 0; })");
                         return;
                     }
+                    if n == "parse_int" {
+                        self.out.push_str("(int64_t)atoll(");
+                        self.gen_expr(&args[0], current_scope, None);
+                        self.out.push_str(")");
+                        return;
+                    }
                     if let Some(&id) = self.type_table.structs_by_name.get(n) {
                         let def = &self.type_table.definitions[id.0];
                         let alloc_str = match target_class {

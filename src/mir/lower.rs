@@ -272,6 +272,7 @@ impl<'a> MirLowerCtx<'a> {
                         "input"      => Some("lpp_input"),
                         "read_file"  => Some("lpp_read_file"),
                         "write_file" => Some("lpp_write_file"),
+                        "parse_int"  => Some("lpp_parse_int"),
                         _            => None,
                     };
 

@@ -297,6 +297,16 @@ impl<'a> TypeChecker<'a> {
                         }
                         return Ok(TypeRef::Str);
                     }
+                    if name == "parse_int" {
+                        if args.len() != 1 {
+                            return Err(format!("parse_int expects 1 argument, got {}", args.len()));
+                        }
+                        let arg_ty = self.infer_expr(&args[0], current_scope)?;
+                        if arg_ty != TypeRef::Str {
+                            return Err(format!("parse_int expects a String, got {:?}", arg_ty));
+                        }
+                        return Ok(TypeRef::Int);
+                    }
                     if let Some(&id) = self.type_table.structs_by_name.get(name) {
                         return Ok(TypeRef::Custom(id));
                     }

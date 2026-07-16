@@ -39,6 +39,7 @@ static BUILTINS: &[BuiltinDesc] = &[
     ("lpp_list_free",  &[I64],       None),
     ("lpp_read_file",  &[I64],       Some(I64)),
     ("lpp_write_file", &[I64, I64],  None),
+    ("lpp_parse_int",  &[I64],       Some(I64)),
 ];
 
 // ── AotCompiler ──────────────────────────────────────────────────────────────

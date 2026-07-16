@@ -273,7 +273,7 @@ impl Resolver {
             Expr::IntLiteral(_) | Expr::StringLiteral(_) => {}
             Expr::Identifier(name, binding_id_cell) => {
                 // Ignore builtins for now
-                if name != "print" && name != "input" && name != "read_file" && name != "write_file" && name != "print_str" {
+                if name != "print" && name != "input" && name != "read_file" && name != "write_file" && name != "print_str" && name != "parse_int" {
                     if let Some(id) = self.table.resolve_name(self.current_scope, name) {
                         binding_id_cell.set(Some(id.0));
                     } else {
