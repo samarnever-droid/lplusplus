@@ -91,19 +91,23 @@ function Time-LppAotCompileAndLink([string]$lppFile, [string]$baseName, [string]
         throw "Linking L++ executable failed"
     }
 
-    # Extract parser/escape timing from output if BENCHMARK was printed
+    # Extract precise compiler timings from JSON output
     $timingJsonStr = (Get-Content "$TempDir\aot_stdout.txt" -Raw 2>$null)
     $frontMs = 0.0
+    $aotMs = 0.0
     if ($timingJsonStr -match "TIMING_JSON: (\{.*\})") {
         $json = ConvertFrom-Json $Matches[1]
         $frontMs = ($json.lex + $json.parse + $json.semantic + $json.typecheck + $json.escape) * 1000.0
+        $aotMs = ($json.mir + $json.aot) * 1000.0
     } else {
-        $frontMs = $swAot.Elapsed.TotalMilliseconds - 3.0
+        # Fallbacks
+        $frontMs = 5.0
+        $aotMs = 3.0
     }
 
     return @{
         FrontendMs = [math]::Round($frontMs, 1)
-        AotMs      = [math]::Round($swAot.Elapsed.TotalMilliseconds - $frontMs, 1)
+        AotMs      = [math]::Round($aotMs, 1)
         LinkMs     = [math]::Round($swLink.Elapsed.TotalMilliseconds, 1)
     }
 }

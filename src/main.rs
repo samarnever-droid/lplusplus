@@ -102,6 +102,7 @@ fn main() {
             }
             mir_time = mir_start.elapsed();
 
+            let mut aot_time = std::time::Duration::ZERO;
             // AOT compilation via Cranelift
             // Enabled by setting the LPP_AOT environment variable.
             if env::var("LPP_AOT").is_ok() {
@@ -117,8 +118,9 @@ fn main() {
                     }
                     Err(e) => eprintln!("[L++] AOT error: {}", e),
                 }
+                aot_time = aot_start.elapsed();
                 if env::var("BENCHMARK").is_err() {
-                    println!("AOT: {:?}", aot_start.elapsed());
+                    println!("AOT: {:?}", aot_time);
                 }
             }
 
@@ -127,27 +129,28 @@ fn main() {
             if let Err(e) = fs::write("output.c", c_code) {
                 eprintln!("Failed to write output.c: {}", e);
             }
+            
+            let esc_time = esc_start.elapsed();
+            let total_time = total_start.elapsed();
+
+            if env::var("BENCHMARK").is_ok() {
+                println!("TIMING_JSON: {{\"io\": {}, \"lex\": {}, \"parse\": {}, \"semantic\": {}, \"typecheck\": {}, \"escape\": {}, \"mir\": {}, \"aot\": {}, \"total\": {}}}", 
+                   io_time.as_secs_f64(), lex_time.as_secs_f64(), parse_time.as_secs_f64(), sem_time.as_secs_f64(), ty_time.as_secs_f64(), esc_time.as_secs_f64(), mir_time.as_secs_f64(), aot_time.as_secs_f64(), total_time.as_secs_f64());
+            } else {
+                println!("--- L++ Compilation Successful ---");
+                println!("Lex: {:?}", lex_time);
+                println!("Parse: {:?}", parse_time);
+                println!("Semantic: {:?}", sem_time);
+                println!("Typecheck: {:?}", ty_time);
+                println!("Escape: {:?}", esc_time);
+                println!("MIR: {:?}", mir_time);
+                println!("AOT: {:?}", aot_time);
+                println!("Total: {:?}", total_time);
+            }
         },
         Err(e) => {
             eprintln!("Escape Analysis error: {}", e);
             return;
         }
-    }
-    let esc_time = esc_start.elapsed();
-    
-    let total_time = total_start.elapsed();
-
-    if env::var("BENCHMARK").is_ok() {
-        println!("TIMING_JSON: {{\"io\": {}, \"lex\": {}, \"parse\": {}, \"semantic\": {}, \"typecheck\": {}, \"escape\": {}, \"total\": {}}}", 
-           io_time.as_secs_f64(), lex_time.as_secs_f64(), parse_time.as_secs_f64(), sem_time.as_secs_f64(), ty_time.as_secs_f64(), esc_time.as_secs_f64(), total_time.as_secs_f64());
-    } else {
-        println!("--- L++ Compilation Successful ---");
-        println!("Lex: {:?}", lex_time);
-        println!("Parse: {:?}", parse_time);
-        println!("Semantic: {:?}", sem_time);
-        println!("Typecheck: {:?}", ty_time);
-        println!("Escape: {:?}", esc_time);
-        println!("MIR: {:?}", mir_time);
-        println!("Total: {:?}", total_time);
     }
 }
