@@ -168,6 +168,25 @@ impl<'a> TypeChecker<'a> {
             Stmt::Assign { name: _, value, binding_id: _ } => {
                 self.infer_expr(value, current_scope)?;
             }
+            Stmt::AssignField { base, field, value } => {
+                let base_ty = self.infer_expr(base, current_scope)?;
+                let val_ty = self.infer_expr(value, current_scope)?;
+                if let TypeRef::Custom(struct_id) = base_ty {
+                    let struct_def = &self.type_table.definitions[struct_id.0];
+                    if let Some(field_entry) = struct_def.fields.iter().find(|(name, _)| name == field) {
+                        if field_entry.1 != val_ty {
+                            return Err(format!(
+                                "Type mismatch in field assignment: expected {:?}, got {:?}",
+                                field_entry.1, val_ty
+                            ));
+                        }
+                    } else {
+                        return Err(format!("Field '{}' not found on struct '{}'", field, struct_def.name));
+                    }
+                } else {
+                    return Err(format!("Cannot access field '{}' on non-struct type {:?}", field, base_ty));
+                }
+            }
             Stmt::If { condition, then_block, else_block } => {
                 let cond_ty = self.infer_expr(condition, current_scope)?;
                 if cond_ty != TypeRef::Bool {

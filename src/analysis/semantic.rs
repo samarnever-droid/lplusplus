@@ -223,6 +223,10 @@ impl Resolver {
                     return Err(format!("Assignment to undeclared variable '{}'", name));
                 }
             }
+            Stmt::AssignField { base, field: _, value } => {
+                self.resolve_expr(base)?;
+                self.resolve_expr(value)?;
+            }
             Stmt::If { condition, then_block, else_block } => {
                 self.resolve_expr(condition)?;
                 

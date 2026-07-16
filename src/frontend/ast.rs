@@ -63,6 +63,11 @@ pub enum Stmt {
         value: Expr,
         binding_id: std::cell::Cell<Option<usize>>,
     },
+    AssignField {
+        base: Expr,
+        field: String,
+        value: Expr,
+    },
     Expr(Expr),
     Return(Option<Expr>),
     If {

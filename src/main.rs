@@ -23,6 +23,25 @@ use std::time::Instant;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
+    if args.len() > 1 {
+        let flag = &args[1];
+        if flag == "--version" || flag == "-v" {
+            println!("L++ Compiler v0.1.0");
+            return;
+        }
+        if flag == "--help" || flag == "-h" {
+            println!("L++ (L Plus Plus) Compiler & Codegen Backend");
+            println!("Usage: lpp [file.lpp] [options]");
+            println!("\nOptions:");
+            println!("  -v, --version    Show L++ compiler version");
+            println!("  -h, --help       Show this help menu");
+            println!("\nEnvironment Variables:");
+            println!("  LPP_AOT=1        Enable Cranelift AOT compilation to native object file");
+            println!("  BENCHMARK=1      Suppress descriptive text and print sub-millisecond JSON timings");
+            return;
+        }
+    }
+    
     let filename = if args.len() > 1 { &args[1] } else { "escape_demo.lpp" };
     
     let total_start = Instant::now();

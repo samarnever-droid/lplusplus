@@ -154,6 +154,13 @@ impl<'a> Codegen<'a> {
                 self.gen_expr(value, current_scope, None);
                 self.out.push_str(";\n");
             }
+            Stmt::AssignField { base, field, value } => {
+                self.out.push_str("    ");
+                self.gen_expr(base, current_scope, None);
+                self.out.push_str(&format!("->{} = ", field));
+                self.gen_expr(value, current_scope, None);
+                self.out.push_str(";\n");
+            }
             Stmt::If { condition, then_block, else_block } => {
                 self.out.push_str("if (");
                 self.gen_expr(condition, current_scope, None);

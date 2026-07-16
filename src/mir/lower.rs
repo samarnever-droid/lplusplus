@@ -129,6 +129,19 @@ impl<'a> MirLowerCtx<'a> {
                 let operand = self.lower_expr(builder, value, binding_map);
                 builder.push_instr(MirInstr::Assign(local_id, Rvalue::Use(operand)));
             }
+            Stmt::AssignField { base, field, value } => {
+                let base_op = self.lower_expr(builder, base, binding_map);
+                let val_op = self.lower_expr(builder, value, binding_map);
+                if let Operand::Local(base_id) = base_op {
+                    builder.push_instr(MirInstr::AssignField {
+                        base: base_id,
+                        field: field.clone(),
+                        value: val_op,
+                    });
+                } else {
+                    panic!("Field assignment base is not a local variable");
+                }
+            }
             Stmt::Expr(expr) => {
                 self.lower_expr(builder, expr, binding_map);
             }
@@ -197,9 +210,17 @@ impl<'a> MirLowerCtx<'a> {
         match expr {
             Expr::IntLiteral(i) => Operand::Int(*i),
             Expr::StringLiteral(s) => Operand::String(s.clone()),
-            Expr::Identifier(_, cell) => {
+            Expr::Identifier(name, cell) => {
                 let ast_id = cell.get().unwrap();
-                let local = binding_map[&BindingId(ast_id)];
+                let local = match binding_map.get(&BindingId(ast_id)) {
+                    Some(l) => *l,
+                    None => {
+                        panic!(
+                            "Identifier '{}' (BindingId {}) not found in binding_map while lowering function '{}'!",
+                            name, ast_id, builder.function.name
+                        );
+                    }
+                };
                 Operand::Local(local)
             }
             Expr::BinaryOp { left, op, right } => {
@@ -226,6 +247,12 @@ impl<'a> MirLowerCtx<'a> {
                     // 1. Known top-level user function → CallDirect
                     if let Some(&func_id) = self.functions.get(name) {
                         builder.push_instr(MirInstr::Assign(temp, Rvalue::CallDirect(func_id, ops)));
+                        return Operand::Local(temp);
+                    }
+
+                    // 2. Custom struct constructor call → AllocateStruct
+                    if let Some(&struct_id) = self.type_table.structs_by_name.get(name) {
+                        builder.push_instr(MirInstr::Assign(temp, Rvalue::AllocateStruct(TypeRef::Custom(struct_id))));
                         return Operand::Local(temp);
                     }
 

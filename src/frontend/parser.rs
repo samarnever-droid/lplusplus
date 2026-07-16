@@ -67,6 +67,8 @@ impl Parser {
             return Err("Expected newline after ':'".to_string());
         }
 
+        self.skip_newlines();
+
         if !self.match_token(&Token::Indent) {
             return Err("Expected indentation for struct fields".to_string());
         }
@@ -143,6 +145,8 @@ impl Parser {
             return Err("Expected newline after ':'".to_string());
         }
 
+        self.skip_newlines();
+
         if !self.match_token(&Token::Indent) {
             return Err("Expected indentation for function body".to_string());
         }
@@ -207,6 +211,7 @@ impl Parser {
             if !self.match_token(&Token::Newline) {
                 return Err("Expected newline after ':'".to_string());
             }
+            self.skip_newlines();
             if !self.match_token(&Token::Indent) {
                 return Err("Expected indentation for if block".to_string());
             }
@@ -230,6 +235,7 @@ impl Parser {
                 if !self.match_token(&Token::Newline) {
                     return Err("Expected newline after ':'".to_string());
                 }
+                self.skip_newlines();
                 if !self.match_token(&Token::Indent) {
                     return Err("Expected indentation for else block".to_string());
                 }
@@ -257,6 +263,7 @@ impl Parser {
             if !self.match_token(&Token::Newline) {
                 return Err("Expected newline after ':'".to_string());
             }
+            self.skip_newlines();
             if !self.match_token(&Token::Indent) {
                 return Err("Expected indentation for while block".to_string());
             }
@@ -301,16 +308,22 @@ impl Parser {
                 self.advance(); // consume :=
                 let value = self.parse_expr()?;
                 return Ok(Stmt::LetInferred { name: name.clone(), is_mut: false, value, binding_id: std::cell::Cell::new(None) });
-            } else if next == Some(&Token::Equal) {
-                let name = name.clone();
-                self.advance(); // consume name
-                self.advance(); // consume =
-                let value = self.parse_expr()?;
-                return Ok(Stmt::Assign { name, value, binding_id: std::cell::Cell::new(None) });
             }
         }
 
         let expr = self.parse_expr()?;
+        if self.match_token(&Token::Equal) {
+            let value = self.parse_expr()?;
+            match expr {
+                Expr::Identifier(name, _) => {
+                    return Ok(Stmt::Assign { name, value, binding_id: std::cell::Cell::new(None) });
+                }
+                Expr::FieldAccess { base, field } => {
+                    return Ok(Stmt::AssignField { base: *base, field, value });
+                }
+                _ => return Err("Invalid assignment target".to_string()),
+            }
+        }
         Ok(Stmt::Expr(expr))
     }
 

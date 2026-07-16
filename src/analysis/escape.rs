@@ -148,6 +148,10 @@ impl EscapeAnalyzer {
             Stmt::Assign { value, .. } => {
                 Self::walk_expr_rule1(value, current_scope, symbol_table, type_table, closure_scopes, closure_idx, storage)?;
             }
+            Stmt::AssignField { base, field: _, value } => {
+                Self::walk_expr_rule1(base, current_scope, symbol_table, type_table, closure_scopes, closure_idx, storage)?;
+                Self::walk_expr_rule1(value, current_scope, symbol_table, type_table, closure_scopes, closure_idx, storage)?;
+            }
             Stmt::If { condition, then_block, else_block } => {
                 Self::walk_expr_rule1(condition, current_scope, symbol_table, type_table, closure_scopes, closure_idx, storage)?;
                 for stmt in then_block {

@@ -11,7 +11,6 @@
         "Programming Languages"
     ],
     "main": "./extension.js",
-    "icon": "lpp-logo.svg",
     "contributes": {
         "languages": [
             {
@@ -23,6 +22,10 @@
                 "extensions": [
                     ".lpp"
                 ],
+                "icon": {
+                    "light": "./lpp-logo.svg",
+                    "dark": "./lpp-logo.svg"
+                },
                 "configuration": "./language-configuration.json"
             }
         ],
