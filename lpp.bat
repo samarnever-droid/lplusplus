@@ -22,10 +22,10 @@ if %ERRORLEVEL% NEQ 0 (
 
 echo [L++] Output written to output.c
 
-where gcc >nul 2>nul
+where cl >nul 2>nul
 if %ERRORLEVEL% EQU 0 (
-    echo [L++] Compiling with GCC...
-    gcc output.c -o output.exe
+    echo [L++] Compiling with MSVC cl.exe...
+    cl.exe /nologo /O2 output.c /Fe:output.exe /link /SUBSYSTEM:CONSOLE > nul
     if !ERRORLEVEL! EQU 0 (
         echo [L++] Compilation successful! Executable: output.exe
         if "!RUN_MODE!"=="1" (
@@ -33,14 +33,14 @@ if %ERRORLEVEL% EQU 0 (
             .\output.exe
         )
     ) else (
-        echo [L++] C Compiler failed.
+        echo [L++] MSVC Compiler failed.
         exit /b !ERRORLEVEL!
     )
 ) else (
-    where clang >nul 2>nul
-    if !ERRORLEVEL! EQU 0 (
-        echo [L++] Compiling with Clang...
-        clang output.c -o output.exe
+    where gcc >nul 2>nul
+    if %ERRORLEVEL% EQU 0 (
+        echo [L++] Compiling with GCC...
+        gcc output.c -o output.exe
         if !ERRORLEVEL! EQU 0 (
             echo [L++] Compilation successful! Executable: output.exe
             if "!RUN_MODE!"=="1" (
@@ -52,7 +52,23 @@ if %ERRORLEVEL% EQU 0 (
             exit /b !ERRORLEVEL!
         )
     ) else (
-        echo [L++] No C compiler gcc or clang found in PATH.
-        echo [L++] You must compile output.c manually with your preferred C compiler.
+        where clang >nul 2>nul
+        if !ERRORLEVEL! EQU 0 (
+            echo [L++] Compiling with Clang...
+            clang output.c -o output.exe
+            if !ERRORLEVEL! EQU 0 (
+                echo [L++] Compilation successful! Executable: output.exe
+                if "!RUN_MODE!"=="1" (
+                    echo [L++] Running output.exe...
+                    .\output.exe
+                )
+            ) else (
+                echo [L++] C Compiler failed.
+                exit /b !ERRORLEVEL!
+            )
+        ) else (
+            echo [L++] No C compiler cl, gcc or clang found in PATH.
+            echo [L++] You must compile output.c manually with your preferred C compiler.
+        )
     )
 )
