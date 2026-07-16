@@ -126,7 +126,7 @@ fn main() {
             // Enabled by setting the LPP_AOT environment variable.
             if env::var("LPP_AOT").is_ok() {
                 let aot_start = Instant::now();
-                match cranelift_backend::compiler::AotCompiler::compile(&mir_program) {
+                match cranelift_backend::compiler::AotCompiler::compile(&mir_program, &type_table) {
                     Ok(obj_bytes) => {
                         let obj_path = filename.replace(".lpp", ".o");
                         if let Err(e) = fs::write(&obj_path, &obj_bytes) {

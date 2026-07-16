@@ -5,7 +5,7 @@ use cranelift_module::{Linkage, Module};
 use cranelift_object::{ObjectBuilder, ObjectModule};
 use target_lexicon::Triple;
 use crate::mir::ir::*;
-use crate::typecheck::TypeRef;
+use crate::typecheck::{TypeRef, TypeTable};
 use super::lower::FunctionLower;
 use super::types::type_to_cl;
 use std::collections::HashMap;
@@ -107,7 +107,7 @@ impl AotCompiler {
     }
 
     /// Lower all function bodies.
-    pub fn lower_functions(&mut self, program: &MirProgram) -> Result<(), String> {
+    pub fn lower_functions(&mut self, program: &MirProgram, type_table: &TypeTable) -> Result<(), String> {
         let mir_fns: Vec<MirFunction> = program.functions.values().cloned().collect();
         for mir_fn in &mir_fns {
             if mir_fn.blocks.is_empty() { continue; }
@@ -115,6 +115,7 @@ impl AotCompiler {
                 module:      &mut self.module,
                 func_ids:    &self.func_ids,
                 builtin_ids: &self.builtin_ids,
+                type_table,
             };
             lower.lower_function(mir_fn)?;
         }
@@ -126,11 +127,11 @@ impl AotCompiler {
     }
 
     /// Full pipeline: builtins → declare → lower → emit.
-    pub fn compile(program: &MirProgram) -> Result<Vec<u8>, String> {
+    pub fn compile(program: &MirProgram, type_table: &TypeTable) -> Result<Vec<u8>, String> {
         let mut c = Self::new_for_host()?;
         c.declare_builtins()?;
         c.declare_functions(program)?;
-        c.lower_functions(program)?;
+        c.lower_functions(program, type_table)?;
         c.finish()
     }
 }

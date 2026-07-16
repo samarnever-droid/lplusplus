@@ -5,7 +5,7 @@ use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use cranelift_module::{FuncId as CLFuncId, Module};
 use cranelift_codegen::entity::EntityRef;
 use crate::mir::ir::*;
-use crate::typecheck::TypeRef;
+use crate::typecheck::{TypeRef, TypeTable};
 use crate::ast::BinaryOperator;
 use super::types::type_to_cl;
 use std::collections::HashMap;
@@ -17,6 +17,7 @@ pub struct FunctionLower<'a, M: Module> {
     pub func_ids: &'a HashMap<FuncId, CLFuncId>,
     /// Maps runtime builtin symbol name → Cranelift FuncId
     pub builtin_ids: &'a HashMap<String, CLFuncId>,
+    pub type_table: &'a TypeTable,
 }
 
 impl<'a, M: Module> FunctionLower<'a, M> {
@@ -73,9 +74,9 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                     builder.switch_to_block(cl_block);
                 }
                 for instr in &block.instrs {
-                    Self::lower_instr_inner(
+                    self.lower_instr_inner(
                         &mut builder, instr, &local_vars,
-                        self.func_ids, self.builtin_ids, self.module,
+                        &mir_fn.locals,
                     );
                 }
                 Self::lower_terminator_inner(
@@ -111,33 +112,41 @@ impl<'a, M: Module> FunctionLower<'a, M> {
     }
 
     fn lower_instr_inner(
+        &mut self,
         builder: &mut FunctionBuilder,
         instr: &MirInstr,
         local_vars: &HashMap<LocalId, Variable>,
-        func_ids: &HashMap<FuncId, CLFuncId>,
-        builtin_ids: &HashMap<String, CLFuncId>,
-        module: &mut M,
+        locals: &[LocalDecl],
     ) {
         match instr {
             MirInstr::Assign(dest, rvalue) => {
-                let val = Self::lower_rvalue_inner(
-                    builder, rvalue, local_vars, func_ids, builtin_ids, module,
+                let val = self.lower_rvalue_inner(
+                    builder, rvalue, local_vars, locals,
                 );
                 builder.def_var(local_vars[dest], val);
             }
-            MirInstr::AssignField { .. } | MirInstr::Retain(_) | MirInstr::Release(_) => {
-                // ARC and struct fields: runtime stubs; full impl in a later pass.
+            MirInstr::AssignField { base, field, value } => {
+                let base_val = builder.use_var(local_vars[base]);
+                let base_ty = &locals[base.0].ty;
+                let value_val = Self::operand_to_value(builder, value, local_vars);
+                if let TypeRef::Custom(struct_id) = base_ty {
+                    let struct_def = &self.type_table.definitions[struct_id.0];
+                    if let Some(field_idx) = struct_def.fields.iter().position(|(name, _)| name == field) {
+                        let offset = (field_idx * 8) as i32;
+                        builder.ins().store(cranelift_codegen::ir::MemFlags::new(), value_val, base_val, offset);
+                    }
+                }
             }
+            MirInstr::Retain(_) | MirInstr::Release(_) => {}
         }
     }
 
     fn lower_rvalue_inner(
+        &mut self,
         builder: &mut FunctionBuilder,
         rvalue: &Rvalue,
         local_vars: &HashMap<LocalId, Variable>,
-        func_ids: &HashMap<FuncId, CLFuncId>,
-        builtin_ids: &HashMap<String, CLFuncId>,
-        module: &mut M,
+        locals: &[LocalDecl],
     ) -> Value {
         match rvalue {
             Rvalue::Use(op) => Self::operand_to_value(builder, op, local_vars),
@@ -166,8 +175,8 @@ impl<'a, M: Module> FunctionLower<'a, M> {
             }
 
             Rvalue::CallDirect(mir_func_id, args) => {
-                if let Some(&cl_id) = func_ids.get(mir_func_id) {
-                    let func_ref = module.declare_func_in_func(cl_id, builder.func);
+                if let Some(&cl_id) = self.func_ids.get(mir_func_id) {
+                    let func_ref = self.module.declare_func_in_func(cl_id, builder.func);
                     let arg_vals: Vec<Value> = args.iter()
                         .map(|a| Self::operand_to_value(builder, a, local_vars))
                         .collect();
@@ -181,8 +190,8 @@ impl<'a, M: Module> FunctionLower<'a, M> {
             }
 
             Rvalue::BuiltinCall(sym, args) => {
-                if let Some(&cl_id) = builtin_ids.get(sym) {
-                    let func_ref = module.declare_func_in_func(cl_id, builder.func);
+                if let Some(&cl_id) = self.builtin_ids.get(sym) {
+                    let func_ref = self.module.declare_func_in_func(cl_id, builder.func);
                     let arg_vals: Vec<Value> = args.iter()
                         .map(|a| Self::operand_to_value(builder, a, local_vars))
                         .collect();
@@ -191,12 +200,37 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                     if results.is_empty() { builder.ins().iconst(cl_types::I64, 0) }
                     else { results[0] }
                 } else {
-                    // Unknown builtin: warn but don't crash
                     builder.ins().iconst(cl_types::I64, 0)
                 }
             }
 
-            // Stubs for MVP
+            Rvalue::AllocateStruct(TypeRef::Custom(struct_id)) => {
+                let struct_def = &self.type_table.definitions[struct_id.0];
+                let size = (struct_def.fields.len() * 8) as i64;
+                let size_val = builder.ins().iconst(cl_types::I64, size);
+                let builtin_id = self.builtin_ids["lpp_alloc"];
+                let local_func = self.module.declare_func_in_func(builtin_id, builder.func);
+                let call = builder.ins().call(local_func, &[size_val]);
+                builder.inst_results(call)[0]
+            }
+
+            Rvalue::FieldAccess(Operand::Local(base_id), field) => {
+                let base_val = Self::operand_to_value(builder, &Operand::Local(*base_id), local_vars);
+                let base_ty = &locals[base_id.0].ty;
+                if let TypeRef::Custom(struct_id) = base_ty {
+                    let struct_def = &self.type_table.definitions[struct_id.0];
+                    if let Some(field_idx) = struct_def.fields.iter().position(|(name, _)| name == field) {
+                        let offset = (field_idx * 8) as i32;
+                        builder.ins().load(cl_types::I64, cranelift_codegen::ir::MemFlags::new(), base_val, offset)
+                    } else {
+                        builder.ins().iconst(cl_types::I64, 0)
+                    }
+                } else {
+                    builder.ins().iconst(cl_types::I64, 0)
+                }
+            }
+
+            // Stubs for remaining features
             Rvalue::CallIndirect(_, _)
             | Rvalue::MakeClosure(_, _)
             | Rvalue::FieldAccess(_, _)
