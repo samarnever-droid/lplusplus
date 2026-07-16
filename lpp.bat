@@ -23,6 +23,14 @@ if %ERRORLEVEL% NEQ 0 (
 echo [L++] Output written to output.c
 
 where cl >nul 2>nul
+if %ERRORLEVEL% NEQ 0 (
+    set VCVARS="C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat"
+    if exist !VCVARS! (
+        call !VCVARS! > nul
+    )
+)
+
+where cl >nul 2>nul
 if %ERRORLEVEL% EQU 0 (
     echo [L++] Compiling with MSVC cl.exe...
     cl.exe /nologo /O2 output.c /Fe:output.exe /link /SUBSYSTEM:CONSOLE > nul
