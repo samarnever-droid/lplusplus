@@ -27,18 +27,6 @@ impl<'a> MirLowerCtx<'a> {
         }
     }
 
-    /// Convert an AST `Type` annotation to the MIR `TypeRef`.
-    fn ast_type_to_mir_type(ty: &Type) -> TypeRef {
-        match ty {
-            Type::Int        => TypeRef::Int,
-            Type::String     => TypeRef::Str,
-            Type::Void       => TypeRef::Void,
-            Type::Custom(s)  => TypeRef::Unresolved(s.clone()),
-            Type::Generic(n, args) => {
-                TypeRef::Generic(n.clone(), args.iter().map(Self::ast_type_to_mir_type).collect())
-            }
-        }
-    }
 
     fn get_field_type(&self, base_ty: &TypeRef, field: &str) -> TypeRef {
         if let TypeRef::Custom(struct_id) = base_ty {
@@ -48,6 +36,24 @@ impl<'a> MirLowerCtx<'a> {
             }
         }
         TypeRef::Void
+    }
+
+    fn resolve_type(&self, ty: &Type) -> TypeRef {
+        match ty {
+            Type::Int => TypeRef::Int,
+            Type::String => TypeRef::Str,
+            Type::Void => TypeRef::Void,
+            Type::Custom(name) => {
+                if let Some(&id) = self.type_table.structs_by_name.get(name) {
+                    TypeRef::Custom(id)
+                } else {
+                    TypeRef::Unresolved(name.clone())
+                }
+            }
+            Type::Generic(n, args) => {
+                TypeRef::Generic(n.clone(), args.iter().map(|a| self.resolve_type(a)).collect())
+            }
+        }
     }
     
     pub fn lower_program(&mut self, program: &Program) -> MirProgram {
@@ -59,7 +65,7 @@ impl<'a> MirLowerCtx<'a> {
                 let id = FuncId(self.next_func_id);
                 self.next_func_id += 1;
                 self.functions.insert(f.name.clone(), id);
-                let ret_ty = Self::ast_type_to_mir_type(&f.return_type);
+                let ret_ty = self.resolve_type(&f.return_type);
                 self.func_return_types.insert(f.name.clone(), ret_ty);
             }
         }
@@ -82,15 +88,11 @@ impl<'a> MirLowerCtx<'a> {
     fn lower_function(&mut self, func: &Function) -> MirFunction {
         let func_id = self.functions[&func.name];
         // Resolve return type from the AST annotation (exact mapping).
-        let return_type = Self::ast_type_to_mir_type(&func.return_type);
+        let return_type = self.resolve_type(&func.return_type);
         let mut builder = MirBuilder::new(func_id, func.name.clone(), return_type);
         let mut binding_map = HashMap::new();
         
         // Lower parameters
-        // The type table stores the function's signature. For the MVP, we just use TypeRef::Int for everything if not mapped.
-        // We really should use TypeTable or SymbolTable. Since AST parameters don't have BindingId yet, 
-        // wait, do AST parameters have BindingId in the current tree? No, but semantic pass inserted them into scopes.
-        // We can just iterate the params, they aren't uniquely identified by ID in AST. Let's just create locals for them.
         for param in &func.params {
             let b_id = self.symbol_table.scopes.iter().find_map(|s| {
                 if let ScopeKind::Function { name } = &s.kind {
@@ -100,7 +102,7 @@ impl<'a> MirLowerCtx<'a> {
                 }
                 None
             });
-            let ty = TypeRef::Int; // Default fallback for now
+            let ty = self.resolve_type(&param.ty);
             let local = builder.new_local(ty, false, Some(param.name.clone()), b_id);
             builder.function.params.push(local);
             if let Some(id) = b_id {

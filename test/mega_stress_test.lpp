@@ -1,0 +1,129 @@
+# =================================================###########
+# L++ MEGA STRESS TEST
+# This is the most comprehensive stress test written for L++
+# Exercises:
+#   - Deeply nested recursive struct definitions (BST Nodes)
+#   - Dynamic heap allocations and struct field pointer tracking
+#   - Comparisons of custom struct pointers with 0 (null checks)
+#   - Deep mathematical recursion (Ackermann function)
+#   - Nested loops and complex control flow
+#   - Complex scope variable shadowing and mutations
+#   - Print logic and string conversions
+# =================================================###########
+
+struct TreeNode:
+    val: Int
+    left: TreeNode
+    right: TreeNode
+
+struct Wrapper:
+    id: Int
+    root: TreeNode
+
+# ── 1. Binary Search Tree (BST) Logic ──────────────────────
+
+def insert_node(root: TreeNode, val: Int) -> TreeNode:
+    if root == 0:
+        mut node := TreeNode()
+        node.val = val
+        return node
+    
+    if val < root.val:
+        root.left = insert_node(root.left, val)
+    else:
+        root.right = insert_node(root.right, val)
+    
+    return root
+
+def print_inorder(root: TreeNode) -> Void:
+    if root == 0:
+        return
+    
+    print_inorder(root.left)
+    print(root.val)
+    print_inorder(root.right)
+
+# ── 2. Deep Recursion (Ackermann Function) ──────────────────
+
+def ackermann(m: Int, n: Int) -> Int:
+    if m == 0:
+        return n + 1
+    if n == 0:
+        return ackermann(m - 1, 1)
+    return ackermann(m - 1, ackermann(m, n - 1))
+
+# ── 3. Collatz Conjecture (Math & Loops) ───────────────────
+
+def collatz_steps(start: Int) -> Int:
+    mut val := start
+    mut steps := 0
+    while val > 1:
+        # Check even/odd by manual remainder
+        half := val / 2
+        if half * 2 == val:
+            val = half
+        else:
+            val = val * 3 + 1
+        steps = steps + 1
+    return steps
+
+# ── 4. Deeply Nested Scopes & Shadowing ────────────────────
+
+def scope_frenzy() -> Int:
+    mut x := 1
+    if x == 1:
+        mut x := 2
+        if x == 2:
+            mut x := 3
+            if x == 3:
+                mut x := 4
+                x = x + 10 # mutate inner x
+                print(x) # prints 14
+            print(x) # prints 3
+        print(x) # prints 2
+    print(x) # prints 1
+    return x
+
+# ── 5. Main Test Program Execution ─────────────────────────
+
+def main() -> Void:
+    print_str("=====================================")
+    print_str("        L++ MEGA STRESS TEST         ")
+    print_str("=====================================")
+
+    # Test 1: BST Sorted Insertion & Traversal
+    print_str("[TEST 1/4] BST Sorted Insertion...")
+    wrapper := Wrapper()
+    wrapper.id = 42
+
+    # Insert out-of-order values: 50, 30, 70, 20, 40, 60, 80
+    wrapper.root = insert_node(wrapper.root, 50)
+    wrapper.root = insert_node(wrapper.root, 30)
+    wrapper.root = insert_node(wrapper.root, 70)
+    wrapper.root = insert_node(wrapper.root, 20)
+    wrapper.root = insert_node(wrapper.root, 40)
+    wrapper.root = insert_node(wrapper.root, 60)
+    wrapper.root = insert_node(wrapper.root, 80)
+
+    print_str("BST In-Order Traversal (Expected: 20, 30, 40, 50, 60, 70, 80):")
+    print_inorder(wrapper.root)
+
+    # Test 2: Ackermann Function
+    print_str("[TEST 2/4] Ackermann Recursion...")
+    print_str("Ackermann(3, 3) (Expected: 61):")
+    print(ackermann(3, 3))
+
+    # Test 3: Collatz Conjecture Steps
+    print_str("[TEST 3/4] Collatz Conjecture Steps...")
+    print_str("Collatz steps for 27 (Expected: 111):")
+    print(collatz_steps(27))
+
+    # Test 4: Variable Scoping and Mutation
+    print_str("[TEST 4/4] Nested Scoping & Mutations...")
+    print_str("Scope outputs (Expected: 14, 3, 2, 1, then returning 1):")
+    final_x := scope_frenzy()
+    print(final_x)
+
+    print_str("=====================================")
+    print_str("        ALL MEGA TESTS PASSED        ")
+    print_str("=====================================")

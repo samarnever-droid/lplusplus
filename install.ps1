@@ -127,11 +127,15 @@ if %ERRORLEVEL% NEQ 0 (
 set RUNTIME_OBJ=%~dp0..\lib\lpp_runtime.obj
 set RUNTIME_SRC=%~dp0..\lib\lpp_runtime.c
 
+set EXE_FILE=%~dpn1.exe
+if "%~2"=="--run" (
+    set EXE_FILE=%TEMP%\lpp_temp_%RANDOM%.exe
+)
+
 if exist "%RUNTIME_OBJ%" (
-    link.exe /nologo "%OBJ_FILE%" "%RUNTIME_OBJ%" /out:"%~dpn1.exe" /SUBSYSTEM:CONSOLE > nul
+    link.exe /nologo "%OBJ_FILE%" "%RUNTIME_OBJ%" /out:"!EXE_FILE!" /SUBSYSTEM:CONSOLE > nul
 ) else (
-    :: Fallback: Compile runtime and link together
-    cl.exe /nologo /O2 "%OBJ_FILE%" "%RUNTIME_SRC%" /Fe:"%~dpn1.exe" > nul
+    cl.exe /nologo /O2 "%OBJ_FILE%" "%RUNTIME_SRC%" /Fe:"!EXE_FILE!" > nul
 )
 
 if %ERRORLEVEL% NEQ 0 (
@@ -141,7 +145,13 @@ if %ERRORLEVEL% NEQ 0 (
 
 :: Clean up temporary object file
 del "%OBJ_FILE%" > nul 2>nul
-echo [L++] Compilation successful: "%~dpn1.exe"
+
+if "%~2"=="--run" (
+    "!EXE_FILE!"
+    del "!EXE_FILE!" > nul 2>nul
+) else (
+    echo [L++] Compilation successful: "%~dpn1.exe"
+)
 "@
 
 Set-Content -Path "$BinDir\lpp.bat" -Value $batContent -Encoding Ascii

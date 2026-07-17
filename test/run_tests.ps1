@@ -1,10 +1,10 @@
-# L++ Stress Test Runner Script
-# This script compiles stress_test.lpp, runs it, and asserts the expected output.
+# L++ Regression Test Harness
+# Compiles and runs stress_test.lpp and mega_stress_test.lpp, asserting outputs.
 
 $ErrorActionPreference = "Stop"
 
 Write-Host "========================================================" -ForegroundColor Cyan
-Write-Host "                L++ STRESS TEST RUNNER                  " -ForegroundColor Cyan
+Write-Host "                L++ TEST SUITE RUNNER                   " -ForegroundColor Cyan
 Write-Host "========================================================" -ForegroundColor Cyan
 
 # Find global lpp wrapper
@@ -14,27 +14,56 @@ if (-not (Test-Path $lppBat)) {
 }
 
 $TestDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$SourceFile = Join-Path $TestDir "stress_test.lpp"
-$ExeFile = Join-Path $TestDir "stress_test.exe"
-$ObjFile = Join-Path $TestDir "stress_test.o"
+$success = $true
 
-# Clean old artifacts
-if (Test-Path $ExeFile) { Remove-Item $ExeFile -Force }
-if (Test-Path $ObjFile) { Remove-Item $ObjFile -Force }
-
-Write-Host "`n[1/3] Compiling stress_test.lpp natively..." -ForegroundColor Yellow
-& cmd.exe /c "call `"$lppBat`" `"$SourceFile`""
-
-if (-not (Test-Path $ExeFile)) {
-    Write-Error "Failed to generate executable stress_test.exe"
+# Helper function to run a single test and assert its outputs
+function Run-Lpp-Test {
+    param(
+        [string]$FileName,
+        [string[]]$ExpectedOutputs
+    )
+    
+    $SourceFile = Join-Path $TestDir $FileName
+    $ExeFile = $SourceFile.Replace(".lpp", ".exe")
+    $ObjFile = $SourceFile.Replace(".lpp", ".o")
+    
+    # Clean old artifacts
+    if (Test-Path $ExeFile) { Remove-Item $ExeFile -Force }
+    if (Test-Path $ObjFile) { Remove-Item $ObjFile -Force }
+    
+    Write-Host "`nCompiling $FileName natively..." -ForegroundColor Yellow
+    & cmd.exe /c "call `"$lppBat`" `"$SourceFile`""
+    
+    if (-not (Test-Path $ExeFile)) {
+        Write-Error "Failed to generate executable for $FileName"
+    }
+    
+    Write-Host "Running $FileName..." -ForegroundColor Yellow
+    $actualLines = & $ExeFile
+    
+    Write-Host "Verifying assertions..." -ForegroundColor Yellow
+    $testPassed = $true
+    for ($i = 0; $i -lt $ExpectedOutputs.Length; $i++) {
+        $expectedVal = $ExpectedOutputs[$i].Trim()
+        $actualVal = $actualLines[$i].Trim()
+        
+        if ($actualVal -eq $expectedVal) {
+            Write-Host "  [PASS] '$expectedVal'" -ForegroundColor Green
+        } else {
+            Write-Host "  [FAIL] Expected: '$expectedVal' | Actual: '$actualVal'" -ForegroundColor Red
+            $testPassed = $false
+        }
+    }
+    
+    # Cleanup
+    if (Test-Path $ExeFile) { Remove-Item $ExeFile -Force }
+    if (Test-Path $ObjFile) { Remove-Item $ObjFile -Force }
+    
+    return $testPassed
 }
-Write-Host "  Compilation successful!" -ForegroundColor Green
 
-Write-Host "`n[2/3] Running stress_test.exe..." -ForegroundColor Yellow
-$outputLines = & $ExeFile
-
-# Define expected outputs in order
-$expected = @(
+# ── TEST 1: General stress test ──────────────────────────────
+$expected1 = @(
     "--- L++ Stress Test ---",
     "Loop Sum (Expected: 4950):",
     "4950",
@@ -55,31 +84,52 @@ $expected = @(
     "--- STRESS TEST PASS ---"
 )
 
-Write-Host "`n[3/3] Verifying outputs..." -ForegroundColor Yellow
-$success = $true
-for ($i = 0; $i -lt $expected.Length; $i++) {
-    $expectedVal = $expected[$i]
-    $actualVal = $outputLines[$i].Trim()
-    
-    if ($actualVal -eq $expectedVal) {
-        Write-Host "  [PASS] Expected: '$expectedVal' | Actual: '$actualVal'" -ForegroundColor Green
-    } else {
-        Write-Host "  [FAIL] Expected: '$expectedVal' | Actual: '$actualVal'" -ForegroundColor Red
-        $success = $false
-    }
-}
+$passed1 = Run-Lpp-Test -FileName "stress_test.lpp" -ExpectedOutputs $expected1
+if (-not $passed1) { $success = $false }
 
-# Cleanup
-if (Test-Path $ExeFile) { Remove-Item $ExeFile -Force }
-if (Test-Path $ObjFile) { Remove-Item $ObjFile -Force }
+# ── TEST 2: Mega stress test ────────────────────────────────
+$expectedMega = @(
+    "=====================================",
+    "        L++ MEGA STRESS TEST         ",
+    "=====================================",
+    "[TEST 1/4] BST Sorted Insertion...",
+    "BST In-Order Traversal (Expected: 20, 30, 40, 50, 60, 70, 80):",
+    "20",
+    "30",
+    "40",
+    "50",
+    "60",
+    "70",
+    "80",
+    "[TEST 2/4] Ackermann Recursion...",
+    "Ackermann(3, 3) (Expected: 61):",
+    "61",
+    "[TEST 3/4] Collatz Conjecture Steps...",
+    "Collatz steps for 27 (Expected: 111):",
+    "111",
+    "[TEST 4/4] Nested Scoping & Mutations...",
+    "Scope outputs (Expected: 14, 3, 2, 1, then returning 1):",
+    "14",
+    "3",
+    "2",
+    "1",
+    "1",
+    "=====================================",
+    "        ALL MEGA TESTS PASSED        ",
+    "====================================="
+)
 
+$passedMega = Run-Lpp-Test -FileName "mega_stress_test.lpp" -ExpectedOutputs $expectedMega
+if (-not $passedMega) { $success = $false }
+
+# ── Final Outcome ───────────────────────────────────────────
 if ($success) {
     Write-Host "`n========================================================" -ForegroundColor Green
-    Write-Host "            ALL STRESS TEST ASSERTIONS PASSED!          " -ForegroundColor Green
+    Write-Host "            ALL REGRESSION TEST SUITES PASSED!          " -ForegroundColor Green
     Write-Host "========================================================" -ForegroundColor Green
 } else {
     Write-Host "`n========================================================" -ForegroundColor Red
-    Write-Host "                STRESS TEST VERIFICATION FAILED!        " -ForegroundColor Red
+    Write-Host "                REGRESSION TEST SUITE FAILED!           " -ForegroundColor Red
     Write-Host "========================================================" -ForegroundColor Red
     exit 1
 }

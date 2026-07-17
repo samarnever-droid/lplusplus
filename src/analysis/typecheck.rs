@@ -54,6 +54,7 @@ pub struct TypeChecker<'a> {
     pub type_table: TypeTable,
     pub symbol_table: &'a mut SymbolTable,
     pub closure_scope_idx: usize,
+    pub func_return_types: HashMap<String, TypeRef>,
 }
 
 impl<'a> TypeChecker<'a> {
@@ -62,6 +63,7 @@ impl<'a> TypeChecker<'a> {
             type_table: TypeTable::new(),
             symbol_table,
             closure_scope_idx: 0,
+            func_return_types: HashMap::new(),
         }
     }
 
@@ -88,10 +90,16 @@ impl<'a> TypeChecker<'a> {
     }
 
     pub fn check_program(&mut self, program: &Program) -> Result<(), String> {
-        // Phase 1: Register all struct names (stubs)
+        // Phase 1: Register all struct names (stubs) and map function return types
         for decl in &program.declarations {
             if let TopLevel::Struct(s) = decl {
                 self.type_table.register_struct(s.name.clone());
+            }
+        }
+        for decl in &program.declarations {
+            if let TopLevel::Function(f) = decl {
+                let ret_ty = Self::convert_ast_type(&self.type_table, &f.return_type);
+                self.func_return_types.insert(f.name.clone(), ret_ty);
             }
         }
 
@@ -237,7 +245,13 @@ impl<'a> TypeChecker<'a> {
             Expr::BinaryOp { left, op, right } => {
                 let left_ty = self.infer_expr(left, current_scope)?;
                 let right_ty = self.infer_expr(right, current_scope)?;
-                if left_ty != right_ty {
+                let is_ptr_null_check = match (&left_ty, &right_ty) {
+                    (&TypeRef::Custom(_), &TypeRef::Int) | (&TypeRef::Int, &TypeRef::Custom(_)) => {
+                        matches!(op, crate::ast::BinaryOperator::Eq | crate::ast::BinaryOperator::NotEq)
+                    }
+                    _ => false,
+                };
+                if left_ty != right_ty && !is_ptr_null_check {
                     return Err(format!("Type mismatch in binary operation: {:?} and {:?}", left_ty, right_ty));
                 }
                 match op {
@@ -309,6 +323,9 @@ impl<'a> TypeChecker<'a> {
                     }
                     if let Some(&id) = self.type_table.structs_by_name.get(name) {
                         return Ok(TypeRef::Custom(id));
+                    }
+                    if let Some(ty) = self.func_return_types.get(name) {
+                        return Ok(ty.clone());
                     }
                 }
                 Ok(TypeRef::Int) 
