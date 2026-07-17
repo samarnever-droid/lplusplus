@@ -14,6 +14,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <errno.h>
 
 /* ── I/O ──────────────────────────────────────────────────────────────────── */
 
@@ -44,8 +45,42 @@ void lpp_free_str(char *ptr) {
 }
 
 int64_t lpp_parse_int(const char *str) {
-    if (!str) return 0;
-    return (int64_t)atoll(str);
+    if (!str || *str == '\0') {
+        fprintf(stderr, "[L++ Runtime Error] Invalid integer format: empty string\n");
+        exit(1);
+    }
+    
+    // Skip leading whitespace
+    const char *p = str;
+    while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') {
+        p++;
+    }
+    
+    if (*p == '\0') {
+        fprintf(stderr, "[L++ Runtime Error] Invalid integer format: \"%s\"\n", str);
+        exit(1);
+    }
+    
+    char *endptr;
+    errno = 0;
+    long long val = strtoll(p, &endptr, 10);
+    
+    // Check for overflow/underflow
+    if (errno == ERANGE) {
+        fprintf(stderr, "[L++ Runtime Error] Integer overflow/underflow: \"%s\" exceeds 64-bit limits\n", str);
+        exit(1);
+    }
+    
+    // Check for trailing garbage (invalid chars)
+    while (*endptr == ' ' || *endptr == '\t' || *endptr == '\r' || *endptr == '\n') {
+        endptr++;
+    }
+    if (*endptr != '\0') {
+        fprintf(stderr, "[L++ Runtime Error] Invalid integer format: \"%s\"\n", str);
+        exit(1);
+    }
+    
+    return (int64_t)val;
 }
 
 /* ── File I/O ─────────────────────────────────────────────────────────────── */
