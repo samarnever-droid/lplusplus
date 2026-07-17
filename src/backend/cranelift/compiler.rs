@@ -55,7 +55,12 @@ impl AotCompiler {
         let mut flag_builder = settings::builder();
         flag_builder.set("use_colocated_libcalls", "false").unwrap();
         flag_builder.set("is_pic", "false").unwrap();
-        flag_builder.set("opt_level", "speed").unwrap();
+        let opt_level = if std::env::var("LPP_RELEASE").is_ok() {
+            "speed"
+        } else {
+            "none"
+        };
+        flag_builder.set("opt_level", opt_level).unwrap();
 
         let isa = cranelift_codegen::isa::lookup(Triple::host())
             .map_err(|e| format!("ISA lookup: {}", e))?

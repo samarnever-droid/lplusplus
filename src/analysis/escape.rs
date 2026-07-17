@@ -70,19 +70,16 @@ impl EscapeAnalyzer {
         
         let mut closure_idx = 0;
 
+        let mut func_scopes = HashMap::new();
+        for scope in &symbol_table.scopes {
+            if let ScopeKind::Function { name } = &scope.kind {
+                func_scopes.insert(name.clone(), scope.id);
+            }
+        }
+
         for decl in &program.declarations {
             if let TopLevel::Function(func) = decl {
-                let mut func_scope = None;
-                for scope in &symbol_table.scopes {
-                    if let ScopeKind::Function { name } = &scope.kind {
-                        if name == &func.name {
-                            func_scope = Some(scope.id);
-                            break;
-                        }
-                    }
-                }
-
-                if let Some(scope_id) = func_scope {
+                if let Some(&scope_id) = func_scopes.get(&func.name) {
                     for stmt in &func.body {
                         Self::walk_stmt_rule1(stmt, scope_id, symbol_table, type_table, &closure_scopes, &mut closure_idx, &mut storage)?;
                     }
