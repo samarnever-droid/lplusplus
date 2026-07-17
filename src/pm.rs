@@ -14,6 +14,7 @@ pub struct Package {
     pub name: String,
     pub version: String,
     pub author: Option<String>,
+    pub entry: Option<String>,
     pub dependencies: Vec<Dependency>,
 }
 
@@ -27,6 +28,7 @@ pub fn parse_toml(content: &str) -> Result<Package, String> {
     let mut name = String::new();
     let mut version = String::new();
     let mut author = None;
+    let mut entry = None;
     let mut dependencies = Vec::new();
     
     let mut current_section = "";
@@ -55,6 +57,8 @@ pub fn parse_toml(content: &str) -> Result<Package, String> {
                         version = cleaned_val;
                     } else if key == "author" {
                         author = Some(cleaned_val);
+                    } else if key == "entry" {
+                        entry = Some(cleaned_val);
                     }
                 }
                 "dependencies" => {
@@ -109,9 +113,30 @@ pub fn parse_toml(content: &str) -> Result<Package, String> {
         name,
         version,
         author,
+        entry,
         dependencies,
     })
 }
+
+pub fn resolve_entry_point() -> String {
+    if std::path::Path::new("lpp.toml").exists() {
+        if let Ok(content) = fs::read_to_string("lpp.toml") {
+            if let Ok(pkg) = parse_toml(&content) {
+                if let Some(entry) = pkg.entry {
+                    return entry;
+                }
+            }
+        }
+    }
+    if std::path::Path::new("src/main.lpp").exists() {
+        "src/main.lpp".to_string()
+    } else if std::path::Path::new("main.lpp").exists() {
+        "main.lpp".to_string()
+    } else {
+        "src/main.lpp".to_string()
+    }
+}
+
 
 pub fn run_command(args: &[String]) {
     if args.is_empty() {
@@ -121,7 +146,7 @@ pub fn run_command(args: &[String]) {
     
     match args[0].as_str() {
         "init" => cmd_init(&args[1..]),
-        "install" => cmd_install(),
+        "install" => cmd_install(false),
         "add" => cmd_add(&args[1..]),
         "remove" => cmd_remove(&args[1..]),
         "update" => cmd_update(),
@@ -259,7 +284,7 @@ pub fn resolve_registry_package(name: &str) -> Option<RegistryEntry> {
     None
 }
 
-fn cmd_install() {
+fn cmd_install(force_update: bool) {
     println!("[L++] Resolving dependencies...");
     if !std::path::Path::new("lpp.toml").exists() {
         eprintln!("[L++] Error: lpp.toml not found in the current directory.");
@@ -313,18 +338,25 @@ fn cmd_install() {
         }
         
         if let Some(ref git_url) = dep_git {
+            let mut git_checkout_needed = false;
             if dest_path.exists() {
-                println!("  Updating '{}' from {}...", dep.name, git_url);
-                let status = std::process::Command::new("git")
-                    .env("GIT_TERMINAL_PROMPT", "0")
-                    .args(&["-c", "credential.helper=", "-C", dest_path.to_str().unwrap(), "pull"])
-                    .status();
-                match status {
-                    Ok(s) if s.success() => {},
-                    _ => {
-                        eprintln!("  Failed to pull updates for '{}'. skipping.", dep.name);
-                        continue;
+                if force_update {
+                    println!("  Updating '{}' from {}...", dep.name, git_url);
+                    let status = std::process::Command::new("git")
+                        .env("GIT_TERMINAL_PROMPT", "0")
+                        .args(&["-c", "credential.helper=", "-C", dest_path.to_str().unwrap(), "pull"])
+                        .status();
+                    match status {
+                        Ok(s) if s.success() => {
+                            git_checkout_needed = true;
+                        },
+                        _ => {
+                            eprintln!("  Failed to pull updates for '{}'. skipping.", dep.name);
+                            continue;
+                        }
                     }
+                } else {
+                    println!("  Dependency '{}' already installed.", dep.name);
                 }
             } else {
                 println!("  Cloning '{}' from {}...", dep.name, git_url);
@@ -333,7 +365,9 @@ fn cmd_install() {
                     .args(&["-c", "credential.helper=", "clone", git_url, dest_path.to_str().unwrap()])
                     .status();
                 match status {
-                    Ok(s) if s.success() => {},
+                    Ok(s) if s.success() => {
+                        git_checkout_needed = true;
+                    },
                     _ => {
                         eprintln!("  Failed to clone '{}'. skipping.", dep.name);
                         continue;
@@ -341,18 +375,20 @@ fn cmd_install() {
                 }
             }
             
-            if let Some(ref tag) = dep_tag {
-                println!("  Checking out tag '{}'...", tag);
-                let _ = std::process::Command::new("git")
-                    .env("GIT_TERMINAL_PROMPT", "0")
-                    .args(&["-c", "credential.helper=", "-C", dest_path.to_str().unwrap(), "checkout", tag])
-                    .status();
-            } else if let Some(ref branch) = dep_branch {
-                println!("  Checking out branch '{}'...", branch);
-                let _ = std::process::Command::new("git")
-                    .env("GIT_TERMINAL_PROMPT", "0")
-                    .args(&["-c", "credential.helper=", "-C", dest_path.to_str().unwrap(), "checkout", branch])
-                    .status();
+            if git_checkout_needed {
+                if let Some(ref tag) = dep_tag {
+                    println!("  Checking out tag '{}'...", tag);
+                    let _ = std::process::Command::new("git")
+                        .env("GIT_TERMINAL_PROMPT", "0")
+                        .args(&["-c", "credential.helper=", "-C", dest_path.to_str().unwrap(), "checkout", tag])
+                        .status();
+                } else if let Some(ref branch) = dep_branch {
+                    println!("  Checking out branch '{}'...", branch);
+                    let _ = std::process::Command::new("git")
+                        .env("GIT_TERMINAL_PROMPT", "0")
+                        .args(&["-c", "credential.helper=", "-C", dest_path.to_str().unwrap(), "checkout", branch])
+                        .status();
+                }
             }
             
             let commit_output = std::process::Command::new("git")
@@ -514,7 +550,7 @@ fn cmd_add(args: &[String]) {
     }
     
     println!("[L++] Added dependency '{}' to lpp.toml.", package_name);
-    cmd_install();
+    cmd_install(false);
 }
 
 fn cmd_remove(args: &[String]) {
@@ -563,24 +599,22 @@ fn cmd_remove(args: &[String]) {
         println!("[L++] Cleaned up package directory for '{}'.", package_name);
     }
     
-    cmd_install();
+    cmd_install(false);
 }
 
 fn cmd_update() {
     println!("[L++] Updating lockfile and pulling latest dependency updates...");
-    cmd_install();
+    cmd_install(true);
 }
 
 fn cmd_check() {
     println!("[L++] Checking project...");
-    let entry_point = if std::path::Path::new("src/main.lpp").exists() {
-        "src/main.lpp"
-    } else if std::path::Path::new("main.lpp").exists() {
-        "main.lpp"
-    } else {
-        eprintln!("[L++] Error: entry point src/main.lpp or main.lpp not found.");
+    let entry_point_str = resolve_entry_point();
+    let entry_point = &entry_point_str;
+    if !std::path::Path::new(entry_point).exists() {
+        eprintln!("[L++] Error: entry point '{}' not found.", entry_point);
         return;
-    };
+    }
     
     let home_dir = std::env::var("USERPROFILE").unwrap_or_else(|_| "C:\\Users\\khati".to_string());
     let compiler_path = std::path::Path::new(&home_dir)
@@ -679,16 +713,14 @@ pub fn load_msvc_env() {
 fn cmd_build() -> Option<String> {
     load_msvc_env();
     println!("[L++] Building project...");
-    let entry_point = if std::path::Path::new("src/main.lpp").exists() {
-        "src/main.lpp"
-    } else if std::path::Path::new("main.lpp").exists() {
-        "main.lpp"
-    } else {
-        eprintln!("[L++] Error: entry point src/main.lpp or main.lpp not found.");
+    let entry_point_str = resolve_entry_point();
+    let entry_point = &entry_point_str;
+    if !std::path::Path::new(entry_point).exists() {
+        eprintln!("[L++] Error: entry point '{}' not found.", entry_point);
         return None;
-    };
+    }
     
-    cmd_install();
+    cmd_install(false);
     
     let target_dir = std::path::Path::new("target").join("release");
     let _ = fs::create_dir_all(&target_dir);
