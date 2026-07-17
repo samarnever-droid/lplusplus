@@ -321,6 +321,40 @@ impl<'a> TypeChecker<'a> {
                         }
                         return Ok(TypeRef::Int);
                     }
+                    if name == "json_parse" {
+                        if args.len() != 1 {
+                            return Err(format!("json_parse expects 1 argument, got {}", args.len()));
+                        }
+                        let arg_ty = self.infer_expr(&args[0], current_scope)?;
+                        if arg_ty != TypeRef::Str {
+                            return Err(format!("json_parse expects a String, got {:?}", arg_ty));
+                        }
+                        return Ok(TypeRef::Int);
+                    }
+                    if name == "json_get_int" {
+                        if args.len() != 2 {
+                            return Err(format!("json_get_int expects 2 arguments, got {}", args.len()));
+                        }
+                        return Ok(TypeRef::Int);
+                    }
+                    if name == "json_get_str" {
+                        if args.len() != 2 {
+                            return Err(format!("json_get_str expects 2 arguments, got {}", args.len()));
+                        }
+                        return Ok(TypeRef::Str);
+                    }
+                    if name == "json_get_obj" {
+                        if args.len() != 2 {
+                            return Err(format!("json_get_obj expects 2 arguments, got {}", args.len()));
+                        }
+                        return Ok(TypeRef::Int);
+                    }
+                    if name == "json_free" {
+                        if args.len() != 1 {
+                            return Err(format!("json_free expects 1 argument, got {}", args.len()));
+                        }
+                        return Ok(TypeRef::Void);
+                    }
                     if let Some(&id) = self.type_table.structs_by_name.get(name) {
                         return Ok(TypeRef::Custom(id));
                     }

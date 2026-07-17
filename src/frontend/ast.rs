@@ -111,6 +111,7 @@ pub struct StructDef {
 pub enum TopLevel {
     Function(Function),
     Struct(StructDef),
+    Import(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]

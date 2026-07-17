@@ -203,3 +203,182 @@ void lpp_thread_spawn(void (*fn)(void*), void *env) {
     pthread_detach(t);
 }
 #endif
+
+/* ── JSON Parser and Accessors (Builtin Standard Library) ────────────────── */
+
+typedef struct lpp_JsonNode {
+    char *key;
+    int type; // 0=int, 1=str, 2=obj
+    union {
+        int64_t int_val;
+        char *str_val;
+        struct lpp_JsonNode *obj_val;
+    } value;
+    struct lpp_JsonNode *next;
+} lpp_JsonNode;
+
+static void skip_json_ws(const char **p) {
+    while (**p == ' ' || **p == '\t' || **p == '\r' || **p == '\n') {
+        (*p)++;
+    }
+}
+
+static char *parse_json_string(const char **p) {
+    skip_json_ws(p);
+    if (**p != '"') return NULL;
+    (*p)++; // skip '"'
+    const char *start = *p;
+    while (**p && **p != '"') {
+        (*p)++;
+    }
+    size_t len = *p - start;
+    char *res = malloc(len + 1);
+    memcpy(res, start, len);
+    res[len] = '\0';
+    if (**p == '"') (*p)++; // skip '"'
+    return res;
+}
+
+static lpp_JsonNode *parse_json_object(const char **p);
+
+static lpp_JsonNode *parse_json_value(const char **p) {
+    skip_json_ws(p);
+    if (**p == '{') {
+        return parse_json_object(p);
+    } else if (**p == '"') {
+        char *s = parse_json_string(p);
+        lpp_JsonNode *n = calloc(1, sizeof(lpp_JsonNode));
+        n->type = 1;
+        n->value.str_val = s;
+        return n;
+    } else if ((**p >= '0' && **p <= '9') || **p == '-') {
+        char *end;
+        long long val = strtoll(*p, &end, 10);
+        *p = end;
+        lpp_JsonNode *n = calloc(1, sizeof(lpp_JsonNode));
+        n->type = 0;
+        n->value.int_val = (int64_t)val;
+        return n;
+    }
+    return NULL;
+}
+
+static lpp_JsonNode *parse_json_object(const char **p) {
+    skip_json_ws(p);
+    if (**p != '{') return NULL;
+    (*p)++; // skip '{'
+    
+    lpp_JsonNode *head = NULL;
+    lpp_JsonNode *tail = NULL;
+    
+    while (**p && **p != '}') {
+        skip_json_ws(p);
+        if (**p == '}') break;
+        char *key = parse_json_string(p);
+        skip_json_ws(p);
+        if (**p != ':') {
+            free(key);
+            break;
+        }
+        (*p)++; // skip ':'
+        lpp_JsonNode *val = parse_json_value(p);
+        if (val) {
+            val->key = key;
+            if (!head) {
+                head = val;
+                tail = val;
+            } else {
+                tail->next = val;
+                tail = val;
+            }
+        } else {
+            free(key);
+        }
+        skip_json_ws(p);
+        if (**p == ',') {
+            (*p)++; // skip ','
+        } else if (**p != '}') {
+            break;
+        }
+    }
+    if (**p == '}') (*p)++; // skip '}'
+    
+    lpp_JsonNode *n = calloc(1, sizeof(lpp_JsonNode));
+    n->type = 2;
+    n->value.obj_val = head;
+    return n;
+}
+
+void *lpp_json_parse(const char *str) {
+    if (!str) return NULL;
+    const char *p = str;
+    return parse_json_value(&p);
+}
+
+int64_t lpp_json_get_int(void *json, const char *key) {
+    lpp_JsonNode *node = (lpp_JsonNode *)json;
+    if (!node) return 0;
+    if (node->type == 2) {
+        lpp_JsonNode *curr = node->value.obj_val;
+        while (curr) {
+            if (curr->key && strcmp(curr->key, key) == 0) {
+                if (curr->type == 0) return curr->value.int_val;
+                return 0;
+            }
+            curr = curr->next;
+        }
+    }
+    return 0;
+}
+
+const char *lpp_json_get_str(void *json, const char *key) {
+    lpp_JsonNode *node = (lpp_JsonNode *)json;
+    if (!node) return "";
+    if (node->type == 2) {
+        lpp_JsonNode *curr = node->value.obj_val;
+        while (curr) {
+            if (curr->key && strcmp(curr->key, key) == 0) {
+                if (curr->type == 1) return curr->value.str_val ? curr->value.str_val : "";
+                return "";
+            }
+            curr = curr->next;
+        }
+    }
+    return "";
+}
+
+void *lpp_json_get_obj(void *json, const char *key) {
+    lpp_JsonNode *node = (lpp_JsonNode *)json;
+    if (!node) return NULL;
+    if (node->type == 2) {
+        lpp_JsonNode *curr = node->value.obj_val;
+        while (curr) {
+            if (curr->key && strcmp(curr->key, key) == 0) {
+                if (curr->type == 2) return curr;
+                return NULL;
+            }
+            curr = curr->next;
+        }
+    }
+    return NULL;
+}
+
+static void lpp_json_free_node(lpp_JsonNode *node) {
+    if (!node) return;
+    if (node->key) free(node->key);
+    if (node->type == 1) {
+        if (node->value.str_val) free(node->value.str_val);
+    } else if (node->type == 2) {
+        lpp_JsonNode *curr = node->value.obj_val;
+        while (curr) {
+            lpp_JsonNode *next = curr->next;
+            lpp_json_free_node(curr);
+            curr = next;
+        }
+    }
+    free(node);
+}
+
+void lpp_json_free(void *json) {
+    lpp_json_free_node((lpp_JsonNode *)json);
+}

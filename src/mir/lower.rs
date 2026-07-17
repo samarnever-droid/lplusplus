@@ -266,8 +266,8 @@ impl<'a> MirLowerCtx<'a> {
                         }
                     } else {
                         return_type = match name.as_str() {
-                            "input" | "read_file" => TypeRef::Str,
-                            "parse_int" => TypeRef::Int,
+                            "input" | "read_file" | "json_get_str" => TypeRef::Str,
+                            "parse_int" | "json_parse" | "json_get_int" | "json_get_obj" => TypeRef::Int,
                             _ => TypeRef::Void,
                         };
                     }
@@ -304,6 +304,11 @@ impl<'a> MirLowerCtx<'a> {
                         "read_file"  => Some("lpp_read_file"),
                         "write_file" => Some("lpp_write_file"),
                         "parse_int"  => Some("lpp_parse_int"),
+                        "json_parse"   => Some("lpp_json_parse"),
+                        "json_get_int" => Some("lpp_json_get_int"),
+                        "json_get_str" => Some("lpp_json_get_str"),
+                        "json_get_obj" => Some("lpp_json_get_obj"),
+                        "json_free"    => Some("lpp_json_free"),
                         _            => None,
                     };
 

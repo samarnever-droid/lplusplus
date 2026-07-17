@@ -94,7 +94,7 @@ fn main() {
 
     let parse_start = Instant::now();
     let mut parser = parser::Parser::new(tokens);
-    let ast = match parser.parse() {
+    let mut ast = match parser.parse() {
         Ok(ast) => ast,
         Err(e) => {
             eprintln!("Parser error: {}", e);
@@ -105,7 +105,7 @@ fn main() {
 
     let sem_start = Instant::now();
     let mut resolver = semantic::Resolver::new();
-    if let Err(e) = resolver.resolve_program(&ast) {
+    if let Err(e) = resolver.resolve_program(&mut ast) {
         eprintln!("Semantic error: {}", e);
         return;
     }

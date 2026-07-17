@@ -7,6 +7,7 @@ pub enum Token {
     Struct,
     Fn,
     Spawn,
+    Import,
 
     If,
     Else,
@@ -204,7 +205,25 @@ impl<'a> Lexer<'a> {
                         if ch == '"' {
                             break;
                         }
-                        s.push(ch);
+                        if ch == '\\' {
+                            if let Some(escaped) = self.input.next() {
+                                match escaped {
+                                    'n' => s.push('\n'),
+                                    'r' => s.push('\r'),
+                                    't' => s.push('\t'),
+                                    '"' => s.push('"'),
+                                    '\\' => s.push('\\'),
+                                    other => {
+                                        s.push('\\');
+                                        s.push(other);
+                                    }
+                                }
+                            } else {
+                                return Err("Unterminated string escape".to_string());
+                            }
+                        } else {
+                            s.push(ch);
+                        }
                     }
                     tokens.push(Token::StringLit(s));
                 }
@@ -237,6 +256,7 @@ impl<'a> Lexer<'a> {
                         "struct" => tokens.push(Token::Struct),
                         "fn" => tokens.push(Token::Fn),
                         "spawn" => tokens.push(Token::Spawn),
+                        "import" => tokens.push(Token::Import),
                         "if" => tokens.push(Token::If),
                         "else" => tokens.push(Token::Else),
                         "while" => tokens.push(Token::While),

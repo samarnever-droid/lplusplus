@@ -122,6 +122,21 @@ $expectedMega = @(
 $passedMega = Run-Lpp-Test -FileName "mega_stress_test.lpp" -ExpectedOutputs $expectedMega
 if (-not $passedMega) { $success = $false }
 
+# ── TEST 3: JSON standard library test ───────────────────────
+$expectedJson = @(
+    "--- JSON Parser Library Test ---",
+    "val:",
+    "42",
+    "name:",
+    "L++ Lang",
+    "status:",
+    "200",
+    "--- Test Success ---"
+)
+
+$passedJson = Run-Lpp-Test -FileName "json_test.lpp" -ExpectedOutputs $expectedJson
+if (-not $passedJson) { $success = $false }
+
 # ── Final Outcome ───────────────────────────────────────────
 if ($success) {
     Write-Host "`n========================================================" -ForegroundColor Green

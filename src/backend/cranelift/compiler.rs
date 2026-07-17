@@ -40,6 +40,11 @@ static BUILTINS: &[BuiltinDesc] = &[
     ("lpp_read_file",  &[I64],       Some(I64)),
     ("lpp_write_file", &[I64, I64],  None),
     ("lpp_parse_int",  &[I64],       Some(I64)),
+    ("lpp_json_parse",   &[I64],      Some(I64)),
+    ("lpp_json_get_int", &[I64, I64], Some(I64)),
+    ("lpp_json_get_str", &[I64, I64], Some(I64)),
+    ("lpp_json_get_obj", &[I64, I64], Some(I64)),
+    ("lpp_json_free",    &[I64],      None),
 ];
 
 // ── AotCompiler ──────────────────────────────────────────────────────────────

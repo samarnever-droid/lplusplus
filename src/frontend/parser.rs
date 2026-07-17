@@ -44,13 +44,26 @@ impl Parser {
                 declarations.push(TopLevel::Function(self.parse_function()?));
             } else if self.match_token(&Token::Struct) {
                 declarations.push(TopLevel::Struct(self.parse_struct()?));
+            } else if self.match_token(&Token::Import) {
+                declarations.push(TopLevel::Import(self.parse_import()?));
             } else {
-                return Err(format!("Expected 'def' or 'struct', found {:?}", self.peek()));
+                return Err(format!("Expected 'def', 'struct', or 'import', found {:?}", self.peek()));
             }
             self.skip_newlines();
         }
 
         Ok(Program { declarations })
+    }
+
+    fn parse_import(&mut self) -> Result<String, String> {
+        let name = match self.advance() {
+            Some(Token::Ident(n)) => n.clone(),
+            _ => return Err("Expected module name after 'import'".to_string()),
+        };
+        if self.peek() == Some(&Token::Newline) {
+            self.advance();
+        }
+        Ok(name)
     }
 
     fn parse_struct(&mut self) -> Result<StructDef, String> {

@@ -132,6 +132,7 @@ impl SymbolTable {
 pub struct Resolver {
     pub table: SymbolTable,
     current_scope: ScopeId,
+    pub imports: Vec<String>,
 }
 
 impl Resolver {
@@ -141,10 +142,11 @@ impl Resolver {
         Self {
             table,
             current_scope: global,
+            imports: Vec::new(),
         }
     }
 
-    pub fn resolve_program(&mut self, program: &Program) -> Result<(), String> {
+    pub fn resolve_program(&mut self, program: &mut Program) -> Result<(), String> {
         // Register top-level items first so they can be referenced anywhere
         for decl in &program.declarations {
             match decl {
@@ -167,11 +169,23 @@ impl Resolver {
                         BindingKind::FunctionName,
                     );
                 }
+                TopLevel::Import(module) => {
+                    if module == "json" {
+                        self.imports.push(module.clone());
+                        self.table.add_binding(self.current_scope, "json_parse".to_string(), false, Some(Type::Custom("Function".into())), BindingKind::FunctionName);
+                        self.table.add_binding(self.current_scope, "json_get_int".to_string(), false, Some(Type::Custom("Function".into())), BindingKind::FunctionName);
+                        self.table.add_binding(self.current_scope, "json_get_str".to_string(), false, Some(Type::Custom("Function".into())), BindingKind::FunctionName);
+                        self.table.add_binding(self.current_scope, "json_get_obj".to_string(), false, Some(Type::Custom("Function".into())), BindingKind::FunctionName);
+                        self.table.add_binding(self.current_scope, "json_free".to_string(), false, Some(Type::Custom("Function".into())), BindingKind::FunctionName);
+                    } else {
+                        return Err(format!("Unknown module '{}'", module));
+                    }
+                }
             }
         }
 
         // Now walk bodies
-        for decl in &program.declarations {
+        for decl in &mut program.declarations {
             if let TopLevel::Function(func) = decl {
                 self.resolve_function(func)?;
             }
@@ -179,7 +193,7 @@ impl Resolver {
         Ok(())
     }
 
-    fn resolve_function(&mut self, func: &Function) -> Result<(), String> {
+    fn resolve_function(&mut self, func: &mut Function) -> Result<(), String> {
         let parent = self.current_scope;
         let func_scope = self.table.new_scope(Some(parent), ScopeKind::Function { name: func.name.clone() });
         self.current_scope = func_scope;
@@ -194,7 +208,7 @@ impl Resolver {
             );
         }
 
-        for stmt in &func.body {
+        for stmt in &mut func.body {
             self.resolve_stmt(stmt)?;
         }
 
@@ -202,7 +216,7 @@ impl Resolver {
         Ok(())
     }
 
-    fn resolve_stmt(&mut self, stmt: &Stmt) -> Result<(), String> {
+    fn resolve_stmt(&mut self, stmt: &mut Stmt) -> Result<(), String> {
         match stmt {
             Stmt::LetInferred { name, is_mut, value, binding_id } => {
                 self.resolve_expr(value)?; // Resolve value before shadowing occurs!
@@ -233,16 +247,16 @@ impl Resolver {
                 let then_scope = self.table.new_scope(Some(self.current_scope), ScopeKind::Block);
                 let old_scope = self.current_scope;
                 self.current_scope = then_scope;
-                for stmt in then_block {
-                    self.resolve_stmt(stmt)?;
+                for s in then_block {
+                    self.resolve_stmt(s)?;
                 }
                 self.current_scope = old_scope;
                 
                 if let Some(else_b) = else_block {
                     let else_scope = self.table.new_scope(Some(self.current_scope), ScopeKind::Block);
                     self.current_scope = else_scope;
-                    for stmt in else_b {
-                        self.resolve_stmt(stmt)?;
+                    for s in else_b {
+                        self.resolve_stmt(s)?;
                     }
                     self.current_scope = old_scope;
                 }
@@ -252,8 +266,8 @@ impl Resolver {
                 let body_scope = self.table.new_scope(Some(self.current_scope), ScopeKind::Block);
                 let old_scope = self.current_scope;
                 self.current_scope = body_scope;
-                for stmt in body {
-                    self.resolve_stmt(stmt)?;
+                for s in body {
+                    self.resolve_stmt(s)?;
                 }
                 self.current_scope = old_scope;
             }
@@ -268,7 +282,7 @@ impl Resolver {
         Ok(())
     }
 
-    fn resolve_expr(&mut self, expr: &Expr) -> Result<(), String> {
+    fn resolve_expr(&mut self, expr: &mut Expr) -> Result<(), String> {
         match expr {
             Expr::IntLiteral(_) | Expr::StringLiteral(_) => {}
             Expr::Identifier(name, binding_id_cell) => {
@@ -286,6 +300,19 @@ impl Resolver {
                 self.resolve_expr(right)?;
             }
             Expr::Call { callee, args } => {
+                // Check if calling an imported module's function (e.g., json.parse)
+                let mut rewritten = None;
+                if let Expr::FieldAccess { base, field } = &**callee {
+                    if let Expr::Identifier(module_name, _) = &**base {
+                        if self.imports.contains(module_name) {
+                            rewritten = Some(Expr::Identifier(format!("{}_{}", module_name, field), std::cell::Cell::new(None)));
+                        }
+                    }
+                }
+                if let Some(new_callee) = rewritten {
+                    *callee = Box::new(new_callee);
+                }
+
                 self.resolve_expr(callee)?;
                 for arg in args {
                     self.resolve_expr(arg)?;
@@ -306,8 +333,8 @@ impl Resolver {
                     );
                 }
 
-                for stmt in body {
-                    self.resolve_stmt(stmt)?;
+                for s in body {
+                    self.resolve_stmt(s)?;
                 }
 
                 self.current_scope = parent;
