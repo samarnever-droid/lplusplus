@@ -185,6 +185,7 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                     BinaryOperator::Subtract => builder.ins().isub(lv, rv),
                     BinaryOperator::Multiply => builder.ins().imul(lv, rv),
                     BinaryOperator::Divide   => builder.ins().sdiv(lv, rv),
+                    BinaryOperator::Modulo   => builder.ins().srem(lv, rv),
                     BinaryOperator::Eq =>
                         { let r = builder.ins().icmp(IntCC::Equal, lv, rv); builder.ins().uextend(cl_types::I64, r) }
                     BinaryOperator::NotEq =>

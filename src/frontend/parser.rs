@@ -469,6 +469,7 @@ impl Parser {
             let op = match t {
                 Token::Star => BinaryOperator::Multiply,
                 Token::Slash => BinaryOperator::Divide,
+                Token::Percent => BinaryOperator::Modulo,
                 _ => break,
             };
             self.advance();

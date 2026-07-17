@@ -149,6 +149,44 @@ $expectedCustom = @(
 $passedCustom = Run-Lpp-Test -FileName "custom_lib_test.lpp" -ExpectedOutputs $expectedCustom
 if (-not $passedCustom) { $success = $false }
 
+
+# ── TEST 5: Ultimate stress test ────────────────────────────
+$expectedUltimate = @(
+    "=====================================",
+    "    L++ ULTIMATE STRESS TEST",
+    "=====================================",
+    "[1] Testing JSON Parser Builtins...",
+    "JSON users count:",
+    "3",
+    "Admin name:",
+    "Root Admin",
+    "Admin level:",
+    "10",
+    "[2] Testing Dynamic Lists Builtins...",
+    "List length (Expected: 100):",
+    "100",
+    "List sum (Expected: 5050):",
+    "5050",
+    "[3] Testing Custom Library Import...",
+    "Collatz sum for 27:",
+    "101439",
+    "[4] Testing BST Nodes + Dynamic Lists...",
+    "BST In-Order Traversal:",
+    "20",
+    "30",
+    "40",
+    "50",
+    "60",
+    "70",
+    "80",
+    "=====================================",
+    "    ULTIMATE STRESS TEST SUCCESS",
+    "====================================="
+)
+
+$passedUltimate = Run-Lpp-Test -FileName "ultimate_stress_test.lpp" -ExpectedOutputs $expectedUltimate
+if (-not $passedUltimate) { $success = $false }
+
 # ── Final Outcome ───────────────────────────────────────────
 if ($success) {
     Write-Host "`n========================================================" -ForegroundColor Green

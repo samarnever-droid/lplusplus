@@ -256,7 +256,8 @@ impl<'a> TypeChecker<'a> {
                 }
                 match op {
                     crate::ast::BinaryOperator::Add | crate::ast::BinaryOperator::Subtract | 
-                    crate::ast::BinaryOperator::Multiply | crate::ast::BinaryOperator::Divide => Ok(left_ty),
+                    crate::ast::BinaryOperator::Multiply | crate::ast::BinaryOperator::Divide |
+                    crate::ast::BinaryOperator::Modulo => Ok(left_ty),
                     crate::ast::BinaryOperator::Eq | crate::ast::BinaryOperator::NotEq |
                     crate::ast::BinaryOperator::Less | crate::ast::BinaryOperator::LessEq |
                     crate::ast::BinaryOperator::Greater | crate::ast::BinaryOperator::GreaterEq => Ok(TypeRef::Bool),
@@ -352,6 +353,52 @@ impl<'a> TypeChecker<'a> {
                     if name == "json_free" {
                         if args.len() != 1 {
                             return Err(format!("json_free expects 1 argument, got {}", args.len()));
+                        }
+                        return Ok(TypeRef::Void);
+                    }
+                    if name == "list_new" {
+                        if args.len() != 0 {
+                            return Err(format!("list_new expects 0 arguments, got {}", args.len()));
+                        }
+                        return Ok(TypeRef::Generic("List".to_string(), vec![TypeRef::Int]));
+                    }
+                    if name == "list_push" {
+                        if args.len() != 2 {
+                            return Err(format!("list_push expects 2 arguments, got {}", args.len()));
+                        }
+                        let list_ty = self.infer_expr(&args[0], current_scope)?;
+                        if !matches!(list_ty, TypeRef::Generic(ref name, _) if name == "List") {
+                            return Err(format!("list_push first argument must be a List, got {:?}", list_ty));
+                        }
+                        return Ok(TypeRef::Void);
+                    }
+                    if name == "list_get" {
+                        if args.len() != 2 {
+                            return Err(format!("list_get expects 2 arguments, got {}", args.len()));
+                        }
+                        let list_ty = self.infer_expr(&args[0], current_scope)?;
+                        if !matches!(list_ty, TypeRef::Generic(ref name, _) if name == "List") {
+                            return Err(format!("list_get first argument must be a List, got {:?}", list_ty));
+                        }
+                        return Ok(TypeRef::Int);
+                    }
+                    if name == "list_len" {
+                        if args.len() != 1 {
+                            return Err(format!("list_len expects 1 argument, got {}", args.len()));
+                        }
+                        let list_ty = self.infer_expr(&args[0], current_scope)?;
+                        if !matches!(list_ty, TypeRef::Generic(ref name, _) if name == "List") {
+                            return Err(format!("list_len argument must be a List, got {:?}", list_ty));
+                        }
+                        return Ok(TypeRef::Int);
+                    }
+                    if name == "list_free" {
+                        if args.len() != 1 {
+                            return Err(format!("list_free expects 1 argument, got {}", args.len()));
+                        }
+                        let list_ty = self.infer_expr(&args[0], current_scope)?;
+                        if !matches!(list_ty, TypeRef::Generic(ref name, _) if name == "List") {
+                            return Err(format!("list_free argument must be a List, got {:?}", list_ty));
                         }
                         return Ok(TypeRef::Void);
                     }

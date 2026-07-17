@@ -231,6 +231,7 @@ impl<'a> Codegen<'a> {
                     crate::ast::BinaryOperator::Subtract => " - ",
                     crate::ast::BinaryOperator::Multiply => " * ",
                     crate::ast::BinaryOperator::Divide => " / ",
+                    crate::ast::BinaryOperator::Modulo => " % ",
                     crate::ast::BinaryOperator::Eq => " == ",
                     crate::ast::BinaryOperator::NotEq => " != ",
                     crate::ast::BinaryOperator::Less => " < ",
@@ -297,6 +298,38 @@ impl<'a> Codegen<'a> {
                         self.out.push_str(")");
                         return;
                     }
+                    if n == "list_new" {
+                        self.out.push_str("lpp_list_new()");
+                        return;
+                    }
+                    if n == "list_push" {
+                        self.out.push_str("lpp_list_push(");
+                        self.gen_expr(&args[0], current_scope, None);
+                        self.out.push_str(", ");
+                        self.gen_expr(&args[1], current_scope, None);
+                        self.out.push_str(")");
+                        return;
+                    }
+                    if n == "list_get" {
+                        self.out.push_str("lpp_list_get(");
+                        self.gen_expr(&args[0], current_scope, None);
+                        self.out.push_str(", ");
+                        self.gen_expr(&args[1], current_scope, None);
+                        self.out.push_str(")");
+                        return;
+                    }
+                    if n == "list_len" {
+                        self.out.push_str("lpp_list_len(");
+                        self.gen_expr(&args[0], current_scope, None);
+                        self.out.push_str(")");
+                        return;
+                    }
+                    if n == "list_free" {
+                        self.out.push_str("lpp_list_free(");
+                        self.gen_expr(&args[0], current_scope, None);
+                        self.out.push_str(")");
+                        return;
+                    }
                     if let Some(&id) = self.type_table.structs_by_name.get(n) {
                         let def = &self.type_table.definitions[id.0];
                         let alloc_str = match target_class {
@@ -322,13 +355,11 @@ impl<'a> Codegen<'a> {
                 self.out.push_str(&format!("->{}", field)); 
             }
             Expr::ListLiteral(elements) => {
-                self.out.push_str("({ void** __list = (void**)calloc(");
-                self.out.push_str(&elements.len().to_string());
-                self.out.push_str(", sizeof(void*)); ");
-                for (i, el) in elements.iter().enumerate() {
-                    self.out.push_str(&format!("__list[{}] = (void*)(intptr_t)", i));
+                self.out.push_str("({ void* __list = lpp_list_new(); ");
+                for el in elements {
+                    self.out.push_str("lpp_list_push(__list, (int64_t)(");
                     self.gen_expr(el, current_scope, None);
-                    self.out.push_str("; ");
+                    self.out.push_str(")); ");
                 }
                 self.out.push_str("__list; })");
             }

@@ -37,6 +37,46 @@ static int64_t lpp_write_file(const char* filename, const char* content) {
     }
     return 0;
 }
+
+typedef struct {
+    int64_t *data;
+    int64_t  len;
+    int64_t  cap;
+} LppList;
+
+static void* lpp_list_new(void) {
+    LppList *l = (LppList *)calloc(1, sizeof(LppList));
+    return l;
+}
+
+static void lpp_list_push(void *list, int64_t value) {
+    LppList *l = (LppList *)list;
+    if (!l) return;
+    if (l->len == l->cap) {
+        int64_t new_cap = l->cap == 0 ? 8 : l->cap * 2;
+        l->data = (int64_t *)realloc(l->data, (size_t)(new_cap * sizeof(int64_t)));
+        l->cap = new_cap;
+    }
+    l->data[l->len++] = value;
+}
+
+static int64_t lpp_list_get(void *list, int64_t index) {
+    LppList *l = (LppList *)list;
+    if (!l || index < 0 || index >= l->len) return 0;
+    return l->data[index];
+}
+
+static int64_t lpp_list_len(void *list) {
+    LppList *l = (LppList *)list;
+    return l ? l->len : 0;
+}
+
+static void lpp_list_free(void *list) {
+    LppList *l = (LppList *)list;
+    if (!l) return;
+    if (l->data) free(l->data);
+    free(l);
+}
 "#;
 
 pub const C_BUILTINS_JSON: &str = r#"

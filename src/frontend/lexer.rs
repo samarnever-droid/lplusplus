@@ -33,6 +33,7 @@ pub enum Token {
     Minus,  // -
     Star,   // *
     Slash,  // /
+    Percent,// %
     LParen, // (
     RParen, // )
     LBracket, // [
@@ -185,6 +186,7 @@ impl<'a> Lexer<'a> {
                 '+' => tokens.push(Token::Plus),
                 '*' => tokens.push(Token::Star),
                 '/' => tokens.push(Token::Slash),
+                '%' => tokens.push(Token::Percent),
                 '#' => {
                     while let Some(&next_c) = self.input.peek() {
                         if next_c == '\n' || next_c == '\r' {
