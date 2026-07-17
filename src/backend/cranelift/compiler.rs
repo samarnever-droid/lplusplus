@@ -37,6 +37,12 @@ static BUILTINS: &[BuiltinDesc] = &[
     ("lpp_list_get",   &[I64, I64],  Some(I64)),
     ("lpp_list_len",   &[I64],       Some(I64)),
     ("lpp_list_free",  &[I64],       None),
+    ("lpp_net_connect",&[I64, I64],  Some(I64)),
+    ("lpp_net_listen", &[I64],       Some(I64)),
+    ("lpp_net_accept", &[I64],       Some(I64)),
+    ("lpp_net_send",   &[I64, I64],  Some(I64)),
+    ("lpp_net_recv",   &[I64, I64],  Some(I64)),
+    ("lpp_net_close",  &[I64],       None),
     ("lpp_read_file",  &[I64],       Some(I64)),
     ("lpp_write_file", &[I64, I64],  None),
     ("lpp_parse_int",  &[I64],       Some(I64)),
@@ -58,14 +64,20 @@ pub struct AotCompiler {
 impl AotCompiler {
     pub fn new_for_host() -> Result<Self, String> {
         let mut flag_builder = settings::builder();
-        flag_builder.set("use_colocated_libcalls", "false").unwrap();
-        flag_builder.set("is_pic", "false").unwrap();
+        flag_builder
+            .set("use_colocated_libcalls", "false")
+            .map_err(|e| format!("set use_colocated_libcalls: {}", e))?;
+        flag_builder
+            .set("is_pic", "false")
+            .map_err(|e| format!("set is_pic: {}", e))?;
         let opt_level = if std::env::var("LPP_RELEASE").is_ok() {
             "speed"
         } else {
             "none"
         };
-        flag_builder.set("opt_level", opt_level).unwrap();
+        flag_builder
+            .set("opt_level", opt_level)
+            .map_err(|e| format!("set opt_level '{}': {}", opt_level, e))?;
 
         let isa = cranelift_codegen::isa::lookup(Triple::host())
             .map_err(|e| format!("ISA lookup: {}", e))?

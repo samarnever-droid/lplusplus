@@ -212,11 +212,42 @@ L++ provides a growing set of built-in functions for common operations, which ma
   - `json_get_str(node, "key")`: Retrieves a string property value.
   - `json_get_obj(node, "key")`: Retrieves a nested JSON object node handle (`Int`).
   - `json_free(node)`: Recursively frees the parsed JSON tree memory.
+- **Networking**:
+  - `net_connect(host, port) -> Int`: Opens a TCP client connection and returns a socket handle.
+  - `net_listen(port) -> Int`: Binds a TCP listener on the given port and returns a listener handle.
+  - `net_accept(listener) -> Int`: Accepts one inbound client from a listener handle.
+  - `net_send(socket, data) -> Int`: Sends a UTF-8 string and returns the number of bytes written.
+  - `net_recv(socket, max_bytes) -> String`: Receives up to `max_bytes` and returns the payload as a string.
+  - `net_close(handle) -> Void`: Closes a socket or listener handle.
+
+Example server:
+
+```lpp
+def main():
+    listener := net_listen(9000)
+    client := net_accept(listener)
+    request := net_recv(client, 1024)
+    print_str(request)
+    net_send(client, "hello from lpp server")
+    net_close(client)
+    net_close(listener)
+```
+
+Example client:
+
+```lpp
+def main():
+    socket := net_connect("127.0.0.1", 9000)
+    net_send(socket, "ping")
+    response := net_recv(socket, 1024)
+    print_str(response)
+    net_close(socket)
+```
 
 ### Compiler Architecture & Backends
 
 L++ is designed as a multi-tier compilation pipeline:
-1. **Cranelift AOT Backend (Default / Native):** Converts L++ AST into Mid-level IR (MIR), performs an ARC insertion pass, and uses Cranelift to emit native machine code object files (`.o`). These are linked using MSVC `link.exe` with our lean C runtime library ([`lpp_runtime.c`](file:///C:/Users/khati/lpp/lpp_runtime.c)) to produce self-contained native executables.
+1. **Cranelift AOT Backend (Default / Native):** Converts L++ AST into Mid-level IR (MIR), performs an ARC insertion pass, and uses Cranelift to emit native machine code object files (`.o`). These are linked against the lean C runtime library ([lpp_runtime.c](C:/Users/khati/lpp/lpp_runtime.c)) using `link.exe`, `cl.exe`, `cc`, `gcc`, or `clang` depending on the host toolchain.
 2. **C Transpiler:** Transpiles L++ directly into optimized C code, which can be compiled with standard GCC/Clang compilers.
 
 **Performance Characteristics:**
@@ -232,7 +263,7 @@ L++ is designed as a multi-tier compilation pipeline:
 | Input      | `input()`                       |
 | Files      | `read_file`, `write_file`       |
 | JSON       | Full (`json_parse`, `json_get_int`, `json_get_str`, `json_get_obj`, `json_free`) |
-| Networking | Not yet                         |
+| Networking | TCP built-ins (`net_connect`, `net_listen`, `net_accept`, `net_send`, `net_recv`, `net_close`) |
 | Threads    | `spawn` (POSIX/Windows native)  |
 | Lists      | Basic `[...]` and Dynamic Lists (`list_*` built-ins) |
 | Strings    | Basic                           |

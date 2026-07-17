@@ -115,6 +115,136 @@ static void lpp_list_free(void *list) {
     if (l->data) free(l->data);
     free(l);
 }
+
+#if defined(_WIN32)
+#  if defined(_MSC_VER)
+#    pragma comment(lib, "Ws2_32.lib")
+#  endif
+#  include <winsock2.h>
+#  include <ws2tcpip.h>
+typedef SOCKET lpp_socket_t;
+#  define LPP_INVALID_SOCKET INVALID_SOCKET
+#  define lpp_close_socket closesocket
+static int lpp__net_started = 0;
+static void lpp__net_init(void) {
+    if (!lpp__net_started) {
+        WSADATA wsa;
+        if (WSAStartup(MAKEWORD(2, 2), &wsa) == 0) lpp__net_started = 1;
+    }
+}
+#else
+#  include <sys/types.h>
+#  include <sys/socket.h>
+#  include <netdb.h>
+#  include <arpa/inet.h>
+#  include <unistd.h>
+typedef int lpp_socket_t;
+#  define LPP_INVALID_SOCKET (-1)
+#  define lpp_close_socket close
+static void lpp__net_init(void) {}
+#endif
+
+static lpp_socket_t lpp__socket_table[256];
+
+static int64_t lpp__socket_store(lpp_socket_t sock) {
+    for (int64_t i = 0; i < 256; ++i) {
+        if (lpp__socket_table[i] == 0 || lpp__socket_table[i] == LPP_INVALID_SOCKET) {
+            lpp__socket_table[i] = sock;
+            return i + 1;
+        }
+    }
+    return 0;
+}
+
+static lpp_socket_t lpp__socket_load(int64_t handle) {
+    if (handle <= 0 || handle > 256) return LPP_INVALID_SOCKET;
+    return lpp__socket_table[handle - 1];
+}
+
+static void lpp__socket_clear(int64_t handle) {
+    if (handle > 0 && handle <= 256) lpp__socket_table[handle - 1] = 0;
+}
+
+static int64_t lpp_net_connect(const char* host, int64_t port) {
+    lpp__net_init();
+    if (!host) return 0;
+    char port_buf[32];
+    snprintf(port_buf, sizeof(port_buf), "%lld", (long long)port);
+    struct addrinfo hints, *result = NULL, *rp = NULL;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    if (getaddrinfo(host, port_buf, &hints, &result) != 0) return 0;
+    lpp_socket_t sock = LPP_INVALID_SOCKET;
+    for (rp = result; rp; rp = rp->ai_next) {
+        sock = (lpp_socket_t)socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+        if (sock == LPP_INVALID_SOCKET) continue;
+        if (connect(sock, rp->ai_addr, (int)rp->ai_addrlen) == 0) break;
+        lpp_close_socket(sock);
+        sock = LPP_INVALID_SOCKET;
+    }
+    freeaddrinfo(result);
+    if (sock == LPP_INVALID_SOCKET) return 0;
+    return lpp__socket_store(sock);
+}
+
+static int64_t lpp_net_listen(int64_t port) {
+    lpp__net_init();
+    lpp_socket_t sock = (lpp_socket_t)socket(AF_INET, SOCK_STREAM, 0);
+    if (sock == LPP_INVALID_SOCKET) return 0;
+    int yes = 1;
+    setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, (const char*)&yes, sizeof(yes));
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    addr.sin_port = htons((unsigned short)port);
+    if (bind(sock, (struct sockaddr*)&addr, sizeof(addr)) != 0 || listen(sock, 16) != 0) {
+        lpp_close_socket(sock);
+        return 0;
+    }
+    return lpp__socket_store(sock);
+}
+
+static int64_t lpp_net_accept(int64_t listener) {
+    lpp_socket_t server = lpp__socket_load(listener);
+    if (server == LPP_INVALID_SOCKET) return 0;
+    lpp_socket_t client = accept(server, NULL, NULL);
+    if (client == LPP_INVALID_SOCKET) return 0;
+    return lpp__socket_store(client);
+}
+
+static int64_t lpp_net_send(int64_t handle, const char* data) {
+    lpp_socket_t sock = lpp__socket_load(handle);
+    if (sock == LPP_INVALID_SOCKET || !data) return -1;
+    return (int64_t)send(sock, data, (int)strlen(data), 0);
+}
+
+static char* lpp_net_recv(int64_t handle, int64_t max_bytes) {
+    lpp_socket_t sock = lpp__socket_load(handle);
+    if (sock == LPP_INVALID_SOCKET || max_bytes <= 0) {
+        char* empty = (char*)malloc(1);
+        if (empty) empty[0] = 0;
+        return empty;
+    }
+    int size = (int)max_bytes;
+    char* buf = (char*)malloc((size_t)size + 1);
+    if (!buf) return NULL;
+    int received = recv(sock, buf, size, 0);
+    if (received <= 0) {
+        buf[0] = 0;
+        return buf;
+    }
+    buf[received] = 0;
+    return buf;
+}
+
+static void lpp_net_close(int64_t handle) {
+    lpp_socket_t sock = lpp__socket_load(handle);
+    if (sock == LPP_INVALID_SOCKET) return;
+    lpp_close_socket(sock);
+    lpp__socket_clear(handle);
+}
 "#;
 
 pub const C_BUILTINS_JSON: &str = r#"

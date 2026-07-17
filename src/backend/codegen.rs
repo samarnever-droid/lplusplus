@@ -388,6 +388,42 @@ impl<'a> Codegen<'a> {
                         self.gen_expr(&args[0], current_scope, None);
                         self.out.push_str(")"); return;
                     }
+                    if n == "net_connect" {
+                        self.out.push_str("lpp_net_connect(");
+                        self.gen_expr(&args[0], current_scope, None);
+                        self.out.push_str(", ");
+                        self.gen_expr(&args[1], current_scope, None);
+                        self.out.push_str(")"); return;
+                    }
+                    if n == "net_listen" {
+                        self.out.push_str("lpp_net_listen(");
+                        self.gen_expr(&args[0], current_scope, None);
+                        self.out.push_str(")"); return;
+                    }
+                    if n == "net_accept" {
+                        self.out.push_str("lpp_net_accept(");
+                        self.gen_expr(&args[0], current_scope, None);
+                        self.out.push_str(")"); return;
+                    }
+                    if n == "net_send" {
+                        self.out.push_str("lpp_net_send(");
+                        self.gen_expr(&args[0], current_scope, None);
+                        self.out.push_str(", ");
+                        self.gen_expr(&args[1], current_scope, None);
+                        self.out.push_str(")"); return;
+                    }
+                    if n == "net_recv" {
+                        self.out.push_str("lpp_net_recv(");
+                        self.gen_expr(&args[0], current_scope, None);
+                        self.out.push_str(", ");
+                        self.gen_expr(&args[1], current_scope, None);
+                        self.out.push_str(")"); return;
+                    }
+                    if n == "net_close" {
+                        self.out.push_str("lpp_net_close(");
+                        self.gen_expr(&args[0], current_scope, None);
+                        self.out.push_str(")"); return;
+                    }
                     // JSON builtins
                     if n == "json_parse" {
                         self.out.push_str("lpp_json_parse(");
@@ -752,7 +788,7 @@ impl<'a> Codegen<'a> {
                     }
                 }
                 match name.as_str() {
-                    "input" | "read_file" | "json_get_str" => TypeRef::Str,
+                    "input" | "read_file" | "json_get_str" | "net_recv" => TypeRef::Str,
                     _ => TypeRef::Int,
                 }
             }
@@ -767,11 +803,12 @@ impl<'a> Codegen<'a> {
             Expr::Call { callee, .. } => {
                 if let Expr::Identifier(name, _) = &**callee {
                     match name.as_str() {
-                        "input" | "read_file" | "json_get_str" => return TypeRef::Str,
+                        "input" | "read_file" | "json_get_str" | "net_recv" => return TypeRef::Str,
                         "print" | "print_str" | "write_file" | "json_free"
-                        | "list_push" | "list_free" => return TypeRef::Void,
+                        | "list_push" | "list_free" | "net_close" => return TypeRef::Void,
                         "parse_int" | "json_parse" | "json_get_int"
-                        | "json_get_obj" | "list_get" | "list_len" => return TypeRef::Int,
+                        | "json_get_obj" | "list_get" | "list_len"
+                        | "net_connect" | "net_listen" | "net_accept" | "net_send" => return TypeRef::Int,
                         "list_new" => return TypeRef::Generic("List".into(), vec![TypeRef::Int]),
                         _ => {}
                     }

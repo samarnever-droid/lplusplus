@@ -2,6 +2,12 @@
 
 This document describes the exact implementation details, pipeline architecture, and current limitations of the L++ compiler as of version 0.1.0.
 
+Current classification:
+
+- Stable enough for local experimentation: frontend pipeline, semantic/type passes, MIR lowering, C backend, cross-platform CLI flow
+- Experimental: Cranelift AOT coverage outside the core subset, package manager ergonomics, runtime ownership details
+- Stubbed or partial: full closure environment lowering, backend parity for all list behaviors, cycle collection
+
 ---
 
 ## 1. Compiler Pipeline Architecture
@@ -47,7 +53,7 @@ The L++ compiler is written in Rust and operates via a standard multi-stage ahea
 ### 2.1 Lexer (`src/frontend/lexer.rs`)
 *   **What it does:** Tokenizes L++ source code into a stream of tokens.
 *   **Indentation Handling:** Converts spaces/tabs at the beginning of lines into `Token::Indent` and `Token::Dedent` markers to represent lexical blocks (similar to Python).
-*   **Reality:** Solid. Handles nested scopes, newlines, comments (`#`), and numeric/string literals.
+*   **Reality:** Solid for the current language subset. Handles nested scopes, newlines, comments (`#`), string literals, and now reports out-of-range integer literals as lexer errors instead of crashing.
 
 ### 2.2 Parser (`src/frontend/parser.rs`)
 *   **What it does:** Parsers the token stream into an Abstract Syntax Tree (AST) structure defined in `src/frontend/ast.rs`.
@@ -69,7 +75,7 @@ The L++ compiler is written in Rust and operates via a standard multi-stage ahea
 ### 2.6 Mid-level IR (MIR) (`src/mir/`)
 *   **What it does:** Lowers the high-level AST into a flat control-flow graph (CFG) representation comprising Basic Blocks (`bb0`, `bb1`, etc.) containing 3-address instructions.
 *   **ARC Pass (`src/mir/pass_arc.rs`):** Inspects the MIR instructions and automatically inserts increment (`Retain`) and decrement (`Release`) instructions for reference-counted variables.
-*   **Reality:** The lowered MIR is clean and handles loops/branches via explicit jump conditionals (`goto`, `if goto else`). Call temporaries are correctly typed based on function signature return types.
+*   **Reality:** The lowered MIR is clean and handles loops/branches via explicit jump conditionals (`goto`, `if goto else`). Call temporaries are typed from known signatures, and MIR lowering now returns structured errors for missing bindings instead of panicking.
 
 ---
 
@@ -77,15 +83,16 @@ The L++ compiler is written in Rust and operates via a standard multi-stage ahea
 
 ### 3.1 C Transpilation Backend (`src/backend/codegen.rs`)
 *   **How it works:** Directly walks the AST and emits standard, conforming C99 code.
-*   **MSVC Compatibility:** Refactored to not rely on GCC statement expressions (`({ ... })`) or the `__auto_type` keyword. Uses concrete variable types resolved from the symbol table. It compiles successfully under Microsoft Visual C++ (`cl.exe`), GCC, and Clang.
+*   **MSVC Compatibility:** Refactored to not rely on GCC statement expressions (`({ ... })`) or the `__auto_type` keyword. Uses concrete variable types resolved from the symbol table. It is intended to compile under Microsoft Visual C++ (`cl.exe`), GCC, and Clang, but backend feature parity is still incomplete.
 *   **Built-ins:** Standard built-ins are generated as static C helper functions prepended to the output file.
 
 ### 3.2 Cranelift AOT Backend (`src/backend/cranelift/`)
 *   **How it works:** Directly lowers the flat MIR control-flow graph into Cranelift IR using `cranelift-frontend` and outputs an ELF/COFF object file (`.o`).
 *   **Struct Memory Layout:** Custom structures compile to flat 64-bit unboxed fields in heap memory. Offset for field `i` is calculated as `i * 8` bytes.
 *   **Dynamic Allocations:** Struct allocations are compiled as native calls to the runtime function `lpp_alloc(size)` (backed by `calloc` in C).
-*   **String Literals:** Handled by creating static symbols in the object file's read-only data section (`DataDescription`), loading the symbol address dynamically inside the builder context.
-*   **Linking:** The `install.ps1` script pre-compiles `lpp_runtime.c` to `lpp_runtime.obj`. The global `lpp.bat` links the compiled Cranelift object file (`.o`) with `lpp_runtime.obj` using `link.exe` to produce a standalone Windows executable.
+*   **String Literals:** Handled by creating static symbols in the object file's data section (`DataDescription`), loading the symbol address dynamically inside the builder context.
+*   **Reliability note:** Recent cleanup replaced several `unwrap()`-style backend assumptions with propagated `Result` errors so lowering failures are surfaced as compiler diagnostics instead of process crashes.
+*   **Linking:** Native project builds now prefer platform-aware linking in the package manager: `link.exe` plus `lpp_runtime.obj` on Windows when available, otherwise `cl.exe`, `cc`, `gcc`, or `clang` compile/link against `lpp_runtime.c`. Installer helpers exist for both `install.ps1` and `install.sh`.
 
 ---
 

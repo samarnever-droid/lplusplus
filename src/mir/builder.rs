@@ -57,25 +57,39 @@ impl MirBuilder {
         self.current_block = Some(block);
     }
 
-    pub fn current_block(&self) -> BlockId {
-        self.current_block.expect("No current block")
+    pub fn current_block(&self) -> Result<BlockId, String> {
+        self.current_block
+            .ok_or_else(|| "MIR builder lost track of the current block".to_string())
     }
 
-    pub fn push_instr(&mut self, instr: MirInstr) {
-        let current_id = self.current_block();
-        let block = self.function.blocks.iter_mut().find(|b| b.id == current_id).unwrap();
+    pub fn push_instr(&mut self, instr: MirInstr) -> Result<(), String> {
+        let current_id = self.current_block()?;
+        let block = self
+            .function
+            .blocks
+            .iter_mut()
+            .find(|b| b.id == current_id)
+            .ok_or_else(|| format!("MIR block {:?} not found for instruction insertion", current_id))?;
         block.instrs.push(instr);
+        Ok(())
     }
 
-    pub fn set_terminator(&mut self, block_id: BlockId, terminator: Terminator) {
-        let block = self.function.blocks.iter_mut().find(|b| b.id == block_id).unwrap();
+    pub fn set_terminator(&mut self, block_id: BlockId, terminator: Terminator) -> Result<(), String> {
+        let block = self
+            .function
+            .blocks
+            .iter_mut()
+            .find(|b| b.id == block_id)
+            .ok_or_else(|| format!("MIR block {:?} not found for terminator insertion", block_id))?;
         block.terminator = terminator;
+        Ok(())
     }
     
-    pub fn terminate_current_block(&mut self, terminator: Terminator) {
-        let current_id = self.current_block();
-        self.set_terminator(current_id, terminator);
+    pub fn terminate_current_block(&mut self, terminator: Terminator) -> Result<(), String> {
+        let current_id = self.current_block()?;
+        self.set_terminator(current_id, terminator)?;
         self.current_block = None;
+        Ok(())
     }
     
     pub fn finish(self) -> MirFunction {

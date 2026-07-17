@@ -1,0 +1,14 @@
+def main():
+    listener := net_listen(9000)
+    print_str("Listening on port 9000")
+
+    client := net_accept(listener)
+    print_str("Client connected")
+
+    request := net_recv(client, 1024)
+    print_str("Received:")
+    print_str(request)
+
+    net_send(client, "hello from lpp server")
+    net_close(client)
+    net_close(listener)

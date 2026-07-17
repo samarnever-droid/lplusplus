@@ -98,7 +98,7 @@ impl<'a> Lexer<'a> {
 
                 if let Some(&c) = self.input.peek() {
                     if c != '\n' && c != '\r' {
-                        let current_indent = *self.indent_stack.last().unwrap();
+                        let current_indent = *self.indent_stack.last().unwrap_or(&0);
                         if spaces > current_indent {
                             self.indent_stack.push(spaces);
                             tokens.push(Token::Indent);
@@ -246,7 +246,10 @@ impl<'a> Lexer<'a> {
                             break;
                         }
                     }
-                    tokens.push(Token::Int(num.parse().unwrap()));
+                    let value = num
+                        .parse()
+                        .map_err(|_| format!("Integer literal '{}' is out of range for Int", num))?;
+                    tokens.push(Token::Int(value));
                 }
                 _ if c.is_alphabetic() || c == '_' => {
                     let mut ident = String::from(c);
@@ -276,5 +279,24 @@ impl<'a> Lexer<'a> {
             }
         }
         Ok(tokens)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Lexer, Token};
+
+    #[test]
+    fn rejects_out_of_range_integer_literals() {
+        let mut lexer = Lexer::new("9223372036854775808");
+        let err = lexer.tokenize().expect_err("lexer should reject overflowing Int literals");
+        assert!(err.contains("out of range"));
+    }
+
+    #[test]
+    fn emits_distinct_bindings_tokens_for_shadowing_source() {
+        let mut lexer = Lexer::new("def main():\n    x := 1\n    x := 2\n");
+        let tokens = lexer.tokenize().expect("lexer should accept valid shadowing syntax");
+        assert!(tokens.contains(&Token::Assign));
     }
 }

@@ -296,11 +296,12 @@ impl<'a> TypeChecker<'a> {
                     // BUG-05: Builtin identifiers have no binding_id (semantic resolver skips them).
                     // Return their known types instead of panicking with "Unresolved identifier".
                     match name.as_str() {
-                        "input" | "read_file" | "json_get_str" => Ok(TypeRef::Str),
+                        "input" | "read_file" | "json_get_str" | "net_recv" => Ok(TypeRef::Str),
                         "print" | "print_str" | "write_file" | "json_free"
-                        | "list_push" | "list_free" => Ok(TypeRef::Void),
+                        | "list_push" | "list_free" | "net_close" => Ok(TypeRef::Void),
                         "parse_int" | "json_parse" | "json_get_int"
-                        | "json_get_obj" | "list_get" | "list_len" => Ok(TypeRef::Int),
+                        | "json_get_obj" | "list_get" | "list_len"
+                        | "net_connect" | "net_listen" | "net_accept" | "net_send" => Ok(TypeRef::Int),
                         "list_new" => Ok(TypeRef::Generic("List".to_string(), vec![TypeRef::Int])),
                         _ => Err(format!("Unresolved identifier '{}'", name)),
                     }
@@ -496,6 +497,60 @@ impl<'a> TypeChecker<'a> {
                         }
                         return Ok(TypeRef::Void);
                     }
+                    if name == "net_connect" {
+                        if args.len() != 2 {
+                            return Err(format!("net_connect expects 2 arguments, got {}", args.len()));
+                        }
+                        if arg_tys[0] != TypeRef::Str || arg_tys[1] != TypeRef::Int {
+                            return Err(format!("net_connect expects (String, Int), got ({:?}, {:?})", arg_tys[0], arg_tys[1]));
+                        }
+                        return Ok(TypeRef::Int);
+                    }
+                    if name == "net_listen" {
+                        if args.len() != 1 {
+                            return Err(format!("net_listen expects 1 argument, got {}", args.len()));
+                        }
+                        if arg_tys[0] != TypeRef::Int {
+                            return Err(format!("net_listen expects (Int), got ({:?})", arg_tys[0]));
+                        }
+                        return Ok(TypeRef::Int);
+                    }
+                    if name == "net_accept" {
+                        if args.len() != 1 {
+                            return Err(format!("net_accept expects 1 argument, got {}", args.len()));
+                        }
+                        if arg_tys[0] != TypeRef::Int {
+                            return Err(format!("net_accept expects (Int), got ({:?})", arg_tys[0]));
+                        }
+                        return Ok(TypeRef::Int);
+                    }
+                    if name == "net_send" {
+                        if args.len() != 2 {
+                            return Err(format!("net_send expects 2 arguments, got {}", args.len()));
+                        }
+                        if arg_tys[0] != TypeRef::Int || arg_tys[1] != TypeRef::Str {
+                            return Err(format!("net_send expects (Int, String), got ({:?}, {:?})", arg_tys[0], arg_tys[1]));
+                        }
+                        return Ok(TypeRef::Int);
+                    }
+                    if name == "net_recv" {
+                        if args.len() != 2 {
+                            return Err(format!("net_recv expects 2 arguments, got {}", args.len()));
+                        }
+                        if arg_tys[0] != TypeRef::Int || arg_tys[1] != TypeRef::Int {
+                            return Err(format!("net_recv expects (Int, Int), got ({:?}, {:?})", arg_tys[0], arg_tys[1]));
+                        }
+                        return Ok(TypeRef::Str);
+                    }
+                    if name == "net_close" {
+                        if args.len() != 1 {
+                            return Err(format!("net_close expects 1 argument, got {}", args.len()));
+                        }
+                        if arg_tys[0] != TypeRef::Int {
+                            return Err(format!("net_close expects (Int), got ({:?})", arg_tys[0]));
+                        }
+                        return Ok(TypeRef::Void);
+                    }
                     if let Some(&id) = self.type_table.structs_by_name.get(name) {
                         return Ok(TypeRef::Custom(id));
                     }
@@ -574,5 +629,43 @@ impl<'a> TypeChecker<'a> {
                 Ok(TypeRef::Generic("List".to_string(), vec![elem_ty]))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TypeChecker;
+    use crate::lexer::Lexer;
+    use crate::parser::Parser;
+    use crate::semantic::Resolver;
+
+    #[test]
+    fn networking_builtins_typecheck_in_lpp_programs() {
+        let source = r#"
+def main():
+    listener := net_listen(9000)
+    client := net_accept(listener)
+    sent := net_send(client, "hello from lpp")
+    payload := net_recv(client, 128)
+    print(sent)
+    print_str(payload)
+    net_close(client)
+    net_close(listener)
+"#;
+
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.tokenize().expect("source should lex");
+        let mut parser = Parser::new(tokens);
+        let mut ast = parser.parse().expect("source should parse");
+
+        let mut resolver = Resolver::new();
+        resolver
+            .resolve_program(&mut ast)
+            .expect("networking program should resolve");
+
+        let mut type_checker = TypeChecker::new(&mut resolver.table);
+        type_checker
+            .check_program(&ast)
+            .expect("networking builtins should typecheck");
     }
 }

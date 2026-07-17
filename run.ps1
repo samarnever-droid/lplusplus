@@ -1,96 +1,108 @@
 <#
 .SYNOPSIS
-    Compiles and runs L++ source code using the native Cranelift AOT compiler
-    and MSVC linker.
+    Compiles and runs a single L++ source file.
 
-.PARAMETER File
-    The path to the L++ source file (.lpp) to run.
+.DESCRIPTION
+    Uses the release compiler to emit a native object file and then links it
+    with either MSVC, MinGW GCC, or Clang, depending on what is available.
 
 .EXAMPLE
     .\run.ps1 tests\fib.lpp
 #>
 
 param(
-    [Parameter(Mandatory=$true)]
+    [Parameter(Mandatory = $true)]
     [string]$File
 )
 
 $ErrorActionPreference = "Stop"
 $ProjectDir = $PSScriptRoot
+$Compiler = Join-Path $ProjectDir "target\release\lpp.exe"
+$RuntimeSource = Join-Path $ProjectDir "lpp_runtime.c"
+$RuntimeObject = Join-Path $ProjectDir "lpp_runtime.obj"
 
 if (-not (Test-Path $File)) {
     Write-Error "Source file '$File' not found."
     exit 1
 }
 
-# 1. Compile L++ code to native x86-64 Object (.o)
+if (-not (Test-Path $Compiler)) {
+    Write-Host "[L++] Building release compiler..." -ForegroundColor Yellow
+    cargo build --release | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "Failed to build target\release\lpp.exe"
+        exit 1
+    }
+}
+
 Write-Host "[L++] Compiling $File to object file..." -ForegroundColor Cyan
 $env:LPP_AOT = "1"
 $env:BENCHMARK = "1"
-
-$proc = Start-Process -FilePath "$ProjectDir\target\release\lpp.exe" `
-    -ArgumentList "`"$File`"" `
-    -WorkingDirectory $ProjectDir `
-    -NoNewWindow -Wait -PassThru
-
+& $Compiler $File
+$compileExit = $LASTEXITCODE
 $env:LPP_AOT = $null
 $env:BENCHMARK = $null
 
-if ($proc.ExitCode -ne 0) {
+if ($compileExit -ne 0) {
     Write-Error "L++ compilation failed."
-    exit $proc.ExitCode
+    exit $compileExit
 }
 
-$objFile = $File.Replace(".lpp", ".o")
+$sourcePath = [System.IO.Path]::GetFullPath($File)
+$objFile = [System.IO.Path]::ChangeExtension($sourcePath, ".o")
+$exeFile = [System.IO.Path]::ChangeExtension($sourcePath, ".exe")
 if (-not (Test-Path $objFile)) {
     Write-Error "Object file was not generated at $objFile"
     exit 1
 }
 
-# 2. Check and load MSVC environment (cl.exe and link.exe)
-if (-not (Get-Command cl.exe -ErrorAction SilentlyContinue)) {
-    Write-Host "[L++] Initializing MSVC Developer Command Prompt..." -ForegroundColor Yellow
-    $vcvars = "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat"
-    if (-not (Test-Path $vcvars)) {
-        Write-Error "Could not find MSVC vcvars64.bat. Please verify Visual Studio installation."
-        exit 1
+$linked = $false
+if (Get-Command link.exe -ErrorAction SilentlyContinue) {
+    if (-not (Test-Path $RuntimeObject) -and (Get-Command cl.exe -ErrorAction SilentlyContinue)) {
+        & cl.exe /nologo /O2 /c $RuntimeSource "/Fo:$RuntimeObject" 2>&1 | Out-Null
     }
-    $tempFile = [System.IO.Path]::GetTempFileName()
-    cmd.exe /c "call `"$vcvars`" > nul && set > `"$tempFile`""
-    Get-Content $tempFile | ForEach-Object {
-        if ($_ -match "^([^=]+)=(.*)$") {
-            $name = $Matches[1]
-            $val = $Matches[2]
-            Set-Content -Path "env:\$name" -Value $val
+    if (Test-Path $RuntimeObject) {
+        Write-Host "[L++] Linking with link.exe..." -ForegroundColor Cyan
+        & link.exe /nologo $objFile $RuntimeObject "/out:$exeFile" /SUBSYSTEM:CONSOLE 2>&1 | Out-Null
+        if ($LASTEXITCODE -eq 0) {
+            $linked = $true
         }
     }
-    Remove-Item $tempFile
 }
 
-# 3. Precompile runtime library if not already present
-$runtimeSrc = "$ProjectDir\lpp_runtime.c"
-$runtimeObj = "$ProjectDir\lpp_runtime.obj"
-if (-not (Test-Path $runtimeObj)) {
-    Write-Host "[L++] Compiling L++ runtime..." -ForegroundColor Yellow
-    & cl.exe /nologo /O2 /c $runtimeSrc "/Fo:$runtimeObj" 2>&1 | Out-Null
+if (-not $linked -and (Get-Command cl.exe -ErrorAction SilentlyContinue)) {
+    Write-Host "[L++] Linking with cl.exe..." -ForegroundColor Cyan
+    & cl.exe /nologo /O2 $objFile $RuntimeSource "/Fe:$exeFile" 2>&1 | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+        $linked = $true
+    }
 }
 
-# 4. Link Object file into native executable
-Write-Host "[L++] Linking to native executable..." -ForegroundColor Cyan
-$exeFile = $File.Replace(".lpp", ".exe")
-& link.exe /nologo $objFile $runtimeObj "/out:$exeFile" /SUBSYSTEM:CONSOLE 2>&1 | Out-Null
+if (-not $linked -and (Get-Command gcc -ErrorAction SilentlyContinue)) {
+    Write-Host "[L++] Linking with gcc..." -ForegroundColor Cyan
+    & gcc $objFile $RuntimeSource -O2 -o $exeFile
+    if ($LASTEXITCODE -eq 0) {
+        $linked = $true
+    }
+}
 
-# Clean up intermediate object file
+if (-not $linked -and (Get-Command clang -ErrorAction SilentlyContinue)) {
+    Write-Host "[L++] Linking with clang..." -ForegroundColor Cyan
+    & clang $objFile $RuntimeSource -O2 -o $exeFile
+    if ($LASTEXITCODE -eq 0) {
+        $linked = $true
+    }
+}
+
 Remove-Item $objFile -ErrorAction SilentlyContinue
 
-if (-not (Test-Path $exeFile)) {
-    Write-Error "Linking failed."
+if (-not $linked -or -not (Test-Path $exeFile)) {
+    Write-Error "Linking failed. Install MSVC Build Tools, GCC, or Clang."
     exit 1
 }
 
-# 5. Execute the compiled native program
 Write-Host "[L++] Running compiled program:`n" -ForegroundColor Green
 & $exeFile
-
-# Clean up temporary executable after running
+$runExit = $LASTEXITCODE
 Remove-Item $exeFile -ErrorAction SilentlyContinue
+exit $runExit

@@ -220,20 +220,13 @@ impl Resolver {
         match stmt {
             Stmt::LetInferred { name, is_mut, value, binding_id } => {
                 self.resolve_expr(value)?; // Resolve value before shadowing occurs!
-                // BUG-04: Dedup same-scope re-declarations. If the name already exists
-                // in this exact scope (not a parent scope), reuse that binding rather
-                // than minting a fresh one. This prevents code bloat like n_5, n_12, n_19...
-                let id = if let Some(&existing_id) = self.table.scopes[self.current_scope.0].bindings.get(name) {
-                    existing_id
-                } else {
-                    self.table.add_binding(
-                        self.current_scope,
-                        name.clone(),
-                        *is_mut,
-                        None, // Type inference comes next
-                        BindingKind::Local,
-                    )
-                };
+                let id = self.table.add_binding(
+                    self.current_scope,
+                    name.clone(),
+                    *is_mut,
+                    None, // Type inference comes next
+                    BindingKind::Local,
+                );
                 binding_id.set(Some(id.0));
             }
             Stmt::Assign { name, value, binding_id } => {
@@ -295,7 +288,9 @@ impl Resolver {
             Expr::Identifier(name, binding_id_cell) => {
                 // Ignore builtins for now
                 if name != "print" && name != "input" && name != "read_file" && name != "write_file" && name != "print_str" && name != "parse_int" &&
-                   name != "list_new" && name != "list_push" && name != "list_get" && name != "list_len" && name != "list_free" {
+                   name != "list_new" && name != "list_push" && name != "list_get" && name != "list_len" && name != "list_free" &&
+                   name != "net_connect" && name != "net_listen" && name != "net_accept" &&
+                   name != "net_send" && name != "net_recv" && name != "net_close" {
                     if let Some(id) = self.table.resolve_name(self.current_scope, name) {
                         binding_id_cell.set(Some(id.0));
                     } else {
@@ -360,5 +355,54 @@ impl Resolver {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Resolver;
+    use crate::ast::{Expr, Function, Program, Stmt, TopLevel, Type};
+
+    #[test]
+    fn same_scope_shadowing_creates_distinct_bindings() {
+        let mut program = Program {
+            declarations: vec![TopLevel::Function(Function {
+                name: "main".to_string(),
+                params: vec![],
+                return_type: Type::Void,
+                body: vec![
+                    Stmt::LetInferred {
+                        name: "x".to_string(),
+                        is_mut: false,
+                        value: Expr::IntLiteral(1),
+                        binding_id: std::cell::Cell::new(None),
+                    },
+                    Stmt::LetInferred {
+                        name: "x".to_string(),
+                        is_mut: false,
+                        value: Expr::IntLiteral(2),
+                        binding_id: std::cell::Cell::new(None),
+                    },
+                ],
+            })],
+        };
+
+        let mut resolver = Resolver::new();
+        resolver.resolve_program(&mut program).expect("program should resolve");
+
+        let TopLevel::Function(func) = &program.declarations[0] else {
+            panic!("expected function");
+        };
+
+        let first = match &func.body[0] {
+            Stmt::LetInferred { binding_id, .. } => binding_id.get().expect("first binding id"),
+            _ => panic!("expected let statement"),
+        };
+        let second = match &func.body[1] {
+            Stmt::LetInferred { binding_id, .. } => binding_id.get().expect("second binding id"),
+            _ => panic!("expected let statement"),
+        };
+
+        assert_ne!(first, second, "shadowing should mint a fresh binding");
     }
 }

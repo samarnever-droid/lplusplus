@@ -31,7 +31,10 @@ fn main() {
         let first_arg = &args[1];
         if first_arg == "init" || first_arg == "install" || first_arg == "add" ||
            first_arg == "remove" || first_arg == "update" || first_arg == "check" ||
-           first_arg == "build" || first_arg == "run" || first_arg == "test" {
+           first_arg == "build" || first_arg == "run" || first_arg == "test" ||
+           first_arg == "new" || first_arg == "search" || first_arg == "list" ||
+           first_arg == "tree" || first_arg == "metadata" || first_arg == "clean" ||
+           first_arg == "outdated" || first_arg == "help" {
             pm::run_command(&args[1..]);
             return;
         }
@@ -54,11 +57,18 @@ fn main() {
             println!("L++ (L Plus Plus) Compiler, Codegen Backend & Package Manager");
             println!("Usage: lpp [command] [options]");
             println!("\nCommands (Package Manager):");
-            println!("  init <name>      Initialize a new L++ project");
-            println!("  install          Install all dependencies from lpp.toml");
+            println!("  new <name>       Create a new L++ package");
+            println!("  init <name>      Initialize a project in the current directory");
+            println!("  install          Resolve and install dependencies");
             println!("  add <name>       Add a dependency to lpp.toml");
             println!("  remove <name>    Remove a dependency from lpp.toml");
-            println!("  update           Update all dependencies in lpp.lock");
+            println!("  update           Refresh dependencies and rewrite lpp.lock");
+            println!("  search <query>   Search the package registry");
+            println!("  list             List direct dependencies from lpp.toml");
+            println!("  tree             Print dependency tree/lockfile view");
+            println!("  metadata         Print package metadata summary");
+            println!("  outdated         Show dependencies without pinned versions");
+            println!("  clean            Remove build output and generated artifacts");
             println!("  check            Check the project for compilation errors");
             println!("  build            Build project into a native binary");
             println!("  run              Compile and run the project binary");
@@ -205,7 +215,13 @@ fn main() {
             
             let mir_start = Instant::now();
             let mut mir_ctx = mir::lower::MirLowerCtx::new(&resolver.table, &type_table);
-            let mut mir_program = mir_ctx.lower_program(&ast);
+            let mut mir_program = match mir_ctx.lower_program(&ast) {
+                Ok(program) => program,
+                Err(e) => {
+                    eprintln!("MIR lowering error: {}", e);
+                    return;
+                }
+            };
             mir::pass_arc::run_arc_insertion_pass(&mut mir_program, &storage);
             
             if dump_mir {
