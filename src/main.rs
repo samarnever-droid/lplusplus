@@ -105,6 +105,14 @@ fn main() {
     };
     let parse_time = parse_start.elapsed();
 
+    let file_path = std::path::Path::new(&filename);
+    let base_dir = file_path.parent().unwrap_or(std::path::Path::new("."));
+    let mut imported_files = std::collections::HashSet::new();
+    if let Err(e) = resolve_local_imports(&mut ast.declarations, &mut imported_files, base_dir) {
+        eprintln!("Import error: {}", e);
+        return;
+    }
+
     let sem_start = Instant::now();
     let mut resolver = semantic::Resolver::new();
     if let Err(e) = resolver.resolve_program(&mut ast) {
@@ -207,4 +215,44 @@ fn main() {
             return;
         }
     }
+}
+
+fn resolve_local_imports(
+    declarations: &mut Vec<ast::TopLevel>,
+    imported_files: &mut std::collections::HashSet<String>,
+    base_dir: &std::path::Path,
+) -> Result<(), String> {
+    let mut new_decls = Vec::new();
+    let mut imports_to_process = Vec::new();
+    
+    for decl in declarations.iter() {
+        if let ast::TopLevel::Import(module) = decl {
+            if module != "json" && !imported_files.contains(module) {
+                imports_to_process.push(module.clone());
+            }
+        }
+    }
+    
+    for module in imports_to_process {
+        imported_files.insert(module.clone());
+        let filepath = base_dir.join(format!("{}.lpp", module));
+        if !filepath.exists() {
+            return Err(format!("Imported library file '{}' not found", filepath.display()));
+        }
+        let content = std::fs::read_to_string(&filepath)
+            .map_err(|e| format!("Failed to read library '{}': {}", filepath.display(), e))?;
+            
+        let mut lex = lexer::Lexer::new(&content);
+        let tokens = lex.tokenize()?;
+        let mut par = parser::Parser::new(tokens);
+        let mut lib_ast = par.parse()?;
+        
+        // Recursively resolve imports of the library
+        resolve_local_imports(&mut lib_ast.declarations, imported_files, base_dir)?;
+        
+        new_decls.extend(lib_ast.declarations);
+    }
+    
+    declarations.extend(new_decls);
+    Ok(())
 }

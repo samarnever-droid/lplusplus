@@ -1,0 +1,14 @@
+struct User:
+    id: Int
+    name: String
+
+def make_user(id: Int, name: String) -> User:
+    mut u := User()
+    u.id = id
+    u.name = name
+    return u
+
+def print_user(u: User) -> Void:
+    print_str("User Profile:")
+    print_str(u.name)
+    print(u.id)

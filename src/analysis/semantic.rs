@@ -178,7 +178,7 @@ impl Resolver {
                         self.table.add_binding(self.current_scope, "json_get_obj".to_string(), false, Some(Type::Custom("Function".into())), BindingKind::FunctionName);
                         self.table.add_binding(self.current_scope, "json_free".to_string(), false, Some(Type::Custom("Function".into())), BindingKind::FunctionName);
                     } else {
-                        return Err(format!("Unknown module '{}'", module));
+                        // Custom local library module - parsed and merged at driver level
                     }
                 }
             }

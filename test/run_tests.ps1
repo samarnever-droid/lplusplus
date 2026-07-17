@@ -137,6 +137,18 @@ $expectedJson = @(
 $passedJson = Run-Lpp-Test -FileName "json_test.lpp" -ExpectedOutputs $expectedJson
 if (-not $passedJson) { $success = $false }
 
+# ── TEST 4: Custom library import test ──────────────────────
+$expectedCustom = @(
+    "--- Custom Library Test ---",
+    "User Profile:",
+    "Khati Developer",
+    "99",
+    "--- Custom Library Success ---"
+)
+
+$passedCustom = Run-Lpp-Test -FileName "custom_lib_test.lpp" -ExpectedOutputs $expectedCustom
+if (-not $passedCustom) { $success = $false }
+
 # ── Final Outcome ───────────────────────────────────────────
 if ($success) {
     Write-Host "`n========================================================" -ForegroundColor Green

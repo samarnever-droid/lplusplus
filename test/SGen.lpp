@@ -1,0 +1,27 @@
+def main() -> Void:
+    print_str("struct Node:")
+    print_str("    val: Int")
+    print_str("")
+    print_str("def test_func(a: Int, b: Int) -> Int:")
+    print_str("    return a + b")
+    print_str("")
+    print_str("def main() -> Void:")
+    print_str("    print_str(\"--- Samar.lpp start ---\")")
+    print_str("    mut sum := 0")
+    
+    mut i := 0
+    while i < 1100:
+        print_str("    n := Node()")
+        print_str("    n.val = 5")
+        print_str("    sum = sum + n.val")
+        print_str("    res := test_func(sum, 10)")
+        print_str("    if res > 10000000:")
+        print_str("        print(res)")
+        print_str("    else:")
+        print_str("        sum = sum + 1")
+        print_str("    sum = sum - 1")
+        i = i + 1
+        
+    print_str("    print_str(\"Final sum:\")")
+    print_str("    print(sum)")
+    print_str("    print_str(\"--- Samar.lpp end ---\")")
