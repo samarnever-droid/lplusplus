@@ -11,6 +11,7 @@ pub struct MirLowerCtx<'a> {
     
     // Mapping from global AST function name to MIR FuncId
     pub functions: HashMap<String, FuncId>,
+    pub func_return_types: HashMap<String, TypeRef>,
     
     pub next_func_id: usize,
 }
@@ -21,6 +22,7 @@ impl<'a> MirLowerCtx<'a> {
             symbol_table,
             type_table,
             functions: HashMap::new(),
+            func_return_types: HashMap::new(),
             next_func_id: 0,
         }
     }
@@ -41,12 +43,14 @@ impl<'a> MirLowerCtx<'a> {
     pub fn lower_program(&mut self, program: &Program) -> MirProgram {
         let mut mir_functions = HashMap::new();
         
-        // First pass: assign FuncId to all functions
+        // First pass: assign FuncId to all functions and map return types
         for decl in &program.declarations {
             if let TopLevel::Function(f) = decl {
                 let id = FuncId(self.next_func_id);
                 self.next_func_id += 1;
                 self.functions.insert(f.name.clone(), id);
+                let ret_ty = Self::ast_type_to_mir_type(&f.return_type);
+                self.func_return_types.insert(f.name.clone(), ret_ty);
             }
         }
         
@@ -240,8 +244,23 @@ impl<'a> MirLowerCtx<'a> {
                     ops.push(self.lower_expr(builder, arg, binding_map));
                 }
 
-                let ty = TypeRef::Void; // return type resolved properly in future
-                let temp = builder.new_local(ty, false, None, None);
+                let mut return_type = TypeRef::Void;
+                if let Expr::Identifier(name, _) = &**callee {
+                    if let Some(ty) = self.func_return_types.get(name) {
+                        return_type = ty.clone();
+                    } else if self.type_table.structs_by_name.contains_key(name) {
+                        if let Some(&struct_id) = self.type_table.structs_by_name.get(name) {
+                            return_type = TypeRef::Custom(struct_id);
+                        }
+                    } else {
+                        return_type = match name.as_str() {
+                            "input" | "read_file" => TypeRef::Str,
+                            "parse_int" => TypeRef::Int,
+                            _ => TypeRef::Void,
+                        };
+                    }
+                }
+                let temp = builder.new_local(return_type, false, None, None);
 
                 if let Expr::Identifier(name, _) = &**callee {
                     // 1. Known top-level user function → CallDirect

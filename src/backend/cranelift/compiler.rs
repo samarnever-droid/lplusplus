@@ -117,6 +117,8 @@ impl AotCompiler {
                 func_ids:    &self.func_ids,
                 builtin_ids: &self.builtin_ids,
                 type_table,
+                fn_name:     mir_fn.name.clone(),
+                next_str_idx: 0,
             };
             lower.lower_function(mir_fn)?;
         }

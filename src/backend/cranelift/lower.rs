@@ -2,7 +2,7 @@ use cranelift_codegen::ir::{AbiParam, InstBuilder, Value};
 use cranelift_codegen::ir::types as cl_types;
 use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
-use cranelift_module::{FuncId as CLFuncId, Module};
+use cranelift_module::{FuncId as CLFuncId, Module, Linkage, DataDescription};
 use cranelift_codegen::entity::EntityRef;
 use crate::mir::ir::*;
 use crate::typecheck::{TypeRef, TypeTable};
@@ -18,6 +18,8 @@ pub struct FunctionLower<'a, M: Module> {
     /// Maps runtime builtin symbol name → Cranelift FuncId
     pub builtin_ids: &'a HashMap<String, CLFuncId>,
     pub type_table: &'a TypeTable,
+    pub fn_name: String,
+    pub next_str_idx: usize,
 }
 
 impl<'a, M: Module> FunctionLower<'a, M> {
@@ -79,7 +81,7 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                         &mir_fn.locals,
                     );
                 }
-                Self::lower_terminator_inner(
+                self.lower_terminator_inner(
                     &mut builder, &block.terminator,
                     &cl_blocks, &local_vars, &mir_fn.return_type,
                 );
@@ -99,6 +101,7 @@ impl<'a, M: Module> FunctionLower<'a, M> {
     // ── helpers ─────────────────────────────────────────────────────────────
 
     fn operand_to_value(
+        &mut self,
         builder: &mut FunctionBuilder,
         op: &Operand,
         local_vars: &HashMap<LocalId, Variable>,
@@ -107,7 +110,30 @@ impl<'a, M: Module> FunctionLower<'a, M> {
             Operand::Local(id)  => builder.use_var(local_vars[id]),
             Operand::Int(i)     => builder.ins().iconst(cl_types::I64, *i),
             Operand::Bool(b)    => builder.ins().iconst(cl_types::I8, if *b { 1 } else { 0 }),
-            Operand::String(_)  => builder.ins().iconst(cl_types::I64, 0), // data-section ptr: MVP
+            Operand::String(s)  => {
+                let sym_name = format!("str_lit_{}_{}", self.fn_name, self.next_str_idx);
+                self.next_str_idx += 1;
+                
+                // Declare the data symbol
+                let data_id = self.module.declare_data(
+                    &sym_name,
+                    Linkage::Local,
+                    false, // writable
+                    false, // tls
+                ).unwrap();
+                
+                // Define the data symbol with the string bytes
+                let mut data_ctx = DataDescription::new();
+                let mut bytes = s.as_bytes().to_vec();
+                bytes.push(0); // null terminator
+                data_ctx.define(bytes.into_boxed_slice());
+                self.module.define_data(data_id, &data_ctx).unwrap();
+                
+                // Load symbol value (pointer) in function builder
+                let local_id = self.module.declare_data_in_func(data_id, &mut builder.func);
+                let pointer_type = self.module.target_config().pointer_type();
+                builder.ins().symbol_value(pointer_type, local_id)
+            }
         }
     }
 
@@ -128,7 +154,7 @@ impl<'a, M: Module> FunctionLower<'a, M> {
             MirInstr::AssignField { base, field, value } => {
                 let base_val = builder.use_var(local_vars[base]);
                 let base_ty = &locals[base.0].ty;
-                let value_val = Self::operand_to_value(builder, value, local_vars);
+                let value_val = self.operand_to_value(builder, value, local_vars);
                 if let TypeRef::Custom(struct_id) = base_ty {
                     let struct_def = &self.type_table.definitions[struct_id.0];
                     if let Some(field_idx) = struct_def.fields.iter().position(|(name, _)| name == field) {
@@ -149,11 +175,11 @@ impl<'a, M: Module> FunctionLower<'a, M> {
         locals: &[LocalDecl],
     ) -> Value {
         match rvalue {
-            Rvalue::Use(op) => Self::operand_to_value(builder, op, local_vars),
+            Rvalue::Use(op) => self.operand_to_value(builder, op, local_vars),
 
             Rvalue::BinaryOp(op, l, r) => {
-                let lv = Self::operand_to_value(builder, l, local_vars);
-                let rv = Self::operand_to_value(builder, r, local_vars);
+                let lv = self.operand_to_value(builder, l, local_vars);
+                let rv = self.operand_to_value(builder, r, local_vars);
                 match op {
                     BinaryOperator::Add      => builder.ins().iadd(lv, rv),
                     BinaryOperator::Subtract => builder.ins().isub(lv, rv),
@@ -178,7 +204,7 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                 if let Some(&cl_id) = self.func_ids.get(mir_func_id) {
                     let func_ref = self.module.declare_func_in_func(cl_id, builder.func);
                     let arg_vals: Vec<Value> = args.iter()
-                        .map(|a| Self::operand_to_value(builder, a, local_vars))
+                        .map(|a| self.operand_to_value(builder, a, local_vars))
                         .collect();
                     let call = builder.ins().call(func_ref, &arg_vals);
                     let results = builder.inst_results(call);
@@ -193,7 +219,7 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                 if let Some(&cl_id) = self.builtin_ids.get(sym) {
                     let func_ref = self.module.declare_func_in_func(cl_id, builder.func);
                     let arg_vals: Vec<Value> = args.iter()
-                        .map(|a| Self::operand_to_value(builder, a, local_vars))
+                        .map(|a| self.operand_to_value(builder, a, local_vars))
                         .collect();
                     let call = builder.ins().call(func_ref, &arg_vals);
                     let results = builder.inst_results(call);
@@ -215,7 +241,7 @@ impl<'a, M: Module> FunctionLower<'a, M> {
             }
 
             Rvalue::FieldAccess(Operand::Local(base_id), field) => {
-                let base_val = Self::operand_to_value(builder, &Operand::Local(*base_id), local_vars);
+                let base_val = self.operand_to_value(builder, &Operand::Local(*base_id), local_vars);
                 let base_ty = &locals[base_id.0].ty;
                 if let TypeRef::Custom(struct_id) = base_ty {
                     let struct_def = &self.type_table.definitions[struct_id.0];
@@ -240,6 +266,7 @@ impl<'a, M: Module> FunctionLower<'a, M> {
     }
 
     fn lower_terminator_inner(
+        &mut self,
         builder: &mut FunctionBuilder,
         term: &Terminator,
         cl_blocks: &HashMap<BlockId, cranelift_codegen::ir::Block>,
@@ -251,12 +278,12 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                 builder.ins().jump(cl_blocks[target], &[]);
             }
             Terminator::If { cond, then_block, else_block } => {
-                let cv = Self::operand_to_value(builder, cond, local_vars);
+                let cv = self.operand_to_value(builder, cond, local_vars);
                 let cb = builder.ins().icmp_imm(IntCC::NotEqual, cv, 0);
                 builder.ins().brif(cb, cl_blocks[then_block], &[], cl_blocks[else_block], &[]);
             }
             Terminator::Return(Some(op)) => {
-                let val = Self::operand_to_value(builder, op, local_vars);
+                let val = self.operand_to_value(builder, op, local_vars);
                 builder.ins().return_(&[val]);
             }
             Terminator::Return(None) => {

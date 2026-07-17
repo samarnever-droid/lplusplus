@@ -23,26 +23,51 @@ use std::time::Instant;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-    if args.len() > 1 {
-        let flag = &args[1];
-        if flag == "--version" || flag == "-v" {
+    
+    let mut filename = "escape_demo.lpp";
+    let mut dump_ast = false;
+    let mut dump_symbols = false;
+    let mut dump_types = false;
+    let mut dump_escape = false;
+    let mut dump_mir = false;
+    let mut dump_c = false;
+    
+    for arg in args.iter().skip(1) {
+        if arg == "--version" || arg == "-v" {
             println!("L++ Compiler v0.1.0");
             return;
-        }
-        if flag == "--help" || flag == "-h" {
+        } else if arg == "--help" || arg == "-h" {
             println!("L++ (L Plus Plus) Compiler & Codegen Backend");
             println!("Usage: lpp [file.lpp] [options]");
             println!("\nOptions:");
             println!("  -v, --version    Show L++ compiler version");
             println!("  -h, --help       Show this help menu");
+            println!("  --dump-ast       Dump the Abstract Syntax Tree");
+            println!("  --dump-symbols   Dump the resolved symbol table");
+            println!("  --dump-types     Dump the typechecker type table");
+            println!("  --dump-escape    Dump the escape analysis classifications");
+            println!("  --dump-mir       Dump the generated Mid-level IR (MIR)");
+            println!("  --dump-c         Dump the generated transpiled C code");
             println!("\nEnvironment Variables:");
             println!("  LPP_AOT=1        Enable Cranelift AOT compilation to native object file");
             println!("  BENCHMARK=1      Suppress descriptive text and print sub-millisecond JSON timings");
             return;
+        } else if arg == "--dump-ast" {
+            dump_ast = true;
+        } else if arg == "--dump-symbols" {
+            dump_symbols = true;
+        } else if arg == "--dump-types" {
+            dump_types = true;
+        } else if arg == "--dump-escape" {
+            dump_escape = true;
+        } else if arg == "--dump-mir" {
+            dump_mir = true;
+        } else if arg == "--dump-c" {
+            dump_c = true;
+        } else if !arg.starts_with('-') {
+            filename = arg;
         }
     }
-    
-    let filename = if args.len() > 1 { &args[1] } else { "escape_demo.lpp" };
     
     let total_start = Instant::now();
     
@@ -102,8 +127,20 @@ fn main() {
     let esc_start = Instant::now();
     match escape::EscapeAnalyzer::analyze(&ast, &resolver.table, &type_table) {
         Ok(storage) => {
-            if env::var("BENCHMARK").is_err() {
-                println!("\nStorage Classification Map:");
+            if dump_ast {
+                println!("--- Abstract Syntax Tree ---");
+                println!("{:#?}", ast);
+            }
+            if dump_symbols {
+                println!("--- Symbol Table ---");
+                println!("{:#?}", resolver.table);
+            }
+            if dump_types {
+                println!("--- Type Table ---");
+                println!("{:#?}", type_table);
+            }
+            if dump_escape {
+                println!("--- Storage Classification Map ---");
                 for (id, class) in &storage {
                     let binding = &resolver.table.bindings[id.0];
                     println!("  Binding '{}' -> {:?}", binding.name, class);
@@ -115,8 +152,8 @@ fn main() {
             let mut mir_program = mir_ctx.lower_program(&ast);
             mir::pass_arc::run_arc_insertion_pass(&mut mir_program, &storage);
             
-            if env::var("BENCHMARK").is_err() {
-                println!("\n--- Generated MIR ---");
+            if dump_mir {
+                println!("--- Generated MIR ---");
                 println!("{}", mir_program);
             }
             mir_time = mir_start.elapsed();
@@ -131,22 +168,24 @@ fn main() {
                         let obj_path = filename.replace(".lpp", ".o");
                         if let Err(e) = fs::write(&obj_path, &obj_bytes) {
                             eprintln!("Failed to write {}: {}", obj_path, e);
-                        } else if env::var("BENCHMARK").is_err() {
+                        } else if env::var("BENCHMARK").is_err() && !dump_ast && !dump_symbols && !dump_types && !dump_escape && !dump_mir {
                             println!("[L++] AOT object file written to {}", obj_path);
                         }
                     }
                     Err(e) => eprintln!("[L++] AOT error: {}", e),
                 }
                 aot_time = aot_start.elapsed();
-                if env::var("BENCHMARK").is_err() {
-                    println!("AOT: {:?}", aot_time);
-                }
             }
 
             let mut cg = codegen::Codegen::new(&resolver.table, &type_table, &storage);
             let c_code = cg.generate(&ast);
-            if let Err(e) = fs::write("output.c", c_code) {
+            if let Err(e) = fs::write("output.c", &c_code) {
                 eprintln!("Failed to write output.c: {}", e);
+            }
+            
+            if dump_c {
+                println!("--- Generated C Code ---");
+                println!("{}", c_code);
             }
             
             let esc_time = esc_start.elapsed();
@@ -155,16 +194,10 @@ fn main() {
             if env::var("BENCHMARK").is_ok() {
                 println!("TIMING_JSON: {{\"io\": {}, \"lex\": {}, \"parse\": {}, \"semantic\": {}, \"typecheck\": {}, \"escape\": {}, \"mir\": {}, \"aot\": {}, \"total\": {}}}", 
                    io_time.as_secs_f64(), lex_time.as_secs_f64(), parse_time.as_secs_f64(), sem_time.as_secs_f64(), ty_time.as_secs_f64(), esc_time.as_secs_f64(), mir_time.as_secs_f64(), aot_time.as_secs_f64(), total_time.as_secs_f64());
-            } else {
-                println!("--- L++ Compilation Successful ---");
-                println!("Lex: {:?}", lex_time);
-                println!("Parse: {:?}", parse_time);
-                println!("Semantic: {:?}", sem_time);
-                println!("Typecheck: {:?}", ty_time);
-                println!("Escape: {:?}", esc_time);
-                println!("MIR: {:?}", mir_time);
-                println!("AOT: {:?}", aot_time);
-                println!("Total: {:?}", total_time);
+            } else if !dump_ast && !dump_symbols && !dump_types && !dump_escape && !dump_mir && !dump_c {
+                println!("L++ v0.1.0\n");
+                println!("Compiled successfully.");
+                println!("Time: {:.1} ms", total_time.as_secs_f64() * 1000.0);
             }
         },
         Err(e) => {

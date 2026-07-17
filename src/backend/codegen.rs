@@ -34,6 +34,42 @@ impl<'a> Codegen<'a> {
         self.out.push_str("#include <string.h>\n");
         self.out.push_str("#include <malloc.h>\n"); // for alloca
         self.out.push_str("\n");
+        self.out.push_str("static char* lpp_input() {\n");
+        self.out.push_str("    char buffer[1024];\n");
+        self.out.push_str("    if (fgets(buffer, sizeof(buffer), stdin)) {\n");
+        self.out.push_str("        buffer[strcspn(buffer, \"\\n\")] = 0;\n");
+        self.out.push_str("    } else {\n");
+        self.out.push_str("        buffer[0] = 0;\n");
+        self.out.push_str("    }\n");
+        self.out.push_str("    char* res = malloc(strlen(buffer) + 1);\n");
+        self.out.push_str("    strcpy(res, buffer);\n");
+        self.out.push_str("    return res;\n");
+        self.out.push_str("}\n\n");
+        self.out.push_str("static char* lpp_read_file(const char* filename) {\n");
+        self.out.push_str("    char* res = NULL;\n");
+        self.out.push_str("    FILE* f = fopen(filename, \"rb\");\n");
+        self.out.push_str("    if (f) {\n");
+        self.out.push_str("        fseek(f, 0, SEEK_END);\n");
+        self.out.push_str("        long fsize = ftell(f);\n");
+        self.out.push_str("        fseek(f, 0, SEEK_SET);\n");
+        self.out.push_str("        res = malloc(fsize + 1);\n");
+        self.out.push_str("        size_t read_bytes = fread(res, 1, fsize, f);\n");
+        self.out.push_str("        fclose(f);\n");
+        self.out.push_str("        res[read_bytes] = 0;\n");
+        self.out.push_str("    } else {\n");
+        self.out.push_str("        res = malloc(1);\n");
+        self.out.push_str("        res[0] = 0;\n");
+        self.out.push_str("    }\n");
+        self.out.push_str("    return res;\n");
+        self.out.push_str("}\n\n");
+        self.out.push_str("static int64_t lpp_write_file(const char* filename, const char* content) {\n");
+        self.out.push_str("    FILE* f = fopen(filename, \"wb\");\n");
+        self.out.push_str("    if (f) {\n");
+        self.out.push_str("        fwrite(content, 1, strlen(content), f);\n");
+        self.out.push_str("        fclose(f);\n");
+        self.out.push_str("    }\n");
+        self.out.push_str("    return 0;\n");
+        self.out.push_str("}\n\n");
         
         // Emitting structs
         for def in &self.type_table.definitions {
@@ -143,7 +179,13 @@ impl<'a> Codegen<'a> {
                 let class = self.storage.get(&crate::semantic::BindingId(id)).unwrap_or(&StorageClass::Value);
                 self.out.push_str(&format!("    /* Storage: {:?} */\n", class));
                 let unique_name = format!("{}_{}", name, id);
-                self.out.push_str(&format!("    __auto_type {} = ", unique_name));
+                let binding = &self.symbol_table.bindings[id];
+                let ty_str = if let Some(ty) = &binding.ty {
+                    self.c_type(ty)
+                } else {
+                    "int64_t".to_string()
+                };
+                self.out.push_str(&format!("    {} {} = ", ty_str, unique_name));
                 self.gen_expr(value, current_scope, Some(class));
                 self.out.push_str(";\n");
             }
@@ -266,21 +308,21 @@ impl<'a> Codegen<'a> {
                         return;
                     }
                     if n == "input" {
-                        self.out.push_str("({ char buffer[1024]; if(fgets(buffer, sizeof(buffer), stdin)){ buffer[strcspn(buffer, \"\\n\")] = 0; } else { buffer[0]=0; } char* res = malloc(strlen(buffer)+1); strcpy(res, buffer); res; })");
+                        self.out.push_str("lpp_input()");
                         return;
                     }
                     if n == "read_file" {
-                        self.out.push_str("({ char* res = NULL; FILE* f = fopen(");
+                        self.out.push_str("lpp_read_file(");
                         self.gen_expr(&args[0], current_scope, None);
-                        self.out.push_str(", \"rb\"); if(f){ fseek(f, 0, SEEK_END); long fsize = ftell(f); fseek(f, 0, SEEK_SET); res = malloc(fsize + 1); fread(res, fsize, 1, f); fclose(f); res[fsize] = 0; } else { res = malloc(1); res[0] = 0; } res; })");
+                        self.out.push_str(")");
                         return;
                     }
                     if n == "write_file" {
-                        self.out.push_str("({ FILE* f = fopen(");
+                        self.out.push_str("lpp_write_file(");
                         self.gen_expr(&args[0], current_scope, None);
-                        self.out.push_str(", \"wb\"); if(f){ const char* data = ");
+                        self.out.push_str(", ");
                         self.gen_expr(&args[1], current_scope, None);
-                        self.out.push_str("; fwrite(data, 1, strlen(data), f); fclose(f); } 0; })");
+                        self.out.push_str(")");
                         return;
                     }
                     if n == "parse_int" {
