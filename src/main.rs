@@ -26,7 +26,7 @@ use std::time::Instant;
 fn main() {
     let args: Vec<String> = env::args().collect();
     
-    let mut filename = "escape_demo.lpp";
+    let mut filename = None;
     let mut dump_ast = false;
     let mut dump_symbols = false;
     let mut dump_types = false;
@@ -67,9 +67,18 @@ fn main() {
         } else if arg == "--dump-c" {
             dump_c = true;
         } else if !arg.starts_with('-') {
-            filename = arg;
+            filename = Some(arg.as_str());
         }
     }
+
+    let filename = match filename {
+        Some(f) => f,
+        None => {
+            eprintln!("[L++] Error: No input file specified.");
+            eprintln!("Usage: lpp [file.lpp] [options]");
+            return;
+        }
+    };
     
     let total_start = Instant::now();
     

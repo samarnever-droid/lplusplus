@@ -250,13 +250,23 @@ impl<'a> Codegen<'a> {
                             self.out.push_str("printf(\"\\n\")");
                         } else {
                             self.out.push_str("printf(\"");
-                            for (i, _) in args.iter().enumerate() {
+                            for (i, arg) in args.iter().enumerate() {
                                 if i > 0 { self.out.push_str(" "); }
-                                self.out.push_str("%d");
+                                let arg_ty = self.expr_type(arg, current_scope);
+                                if arg_ty == TypeRef::Str {
+                                    self.out.push_str("%s");
+                                } else {
+                                    self.out.push_str("%lld");
+                                }
                             }
                             self.out.push_str("\\n\"");
                             for arg in args {
-                                self.out.push_str(", (int)(");
+                                let arg_ty = self.expr_type(arg, current_scope);
+                                if arg_ty == TypeRef::Str {
+                                    self.out.push_str(", (char*)(");
+                                } else {
+                                    self.out.push_str(", (long long)(");
+                                }
                                 self.gen_expr(arg, current_scope, None);
                                 self.out.push_str(")");
                             }
@@ -426,6 +436,74 @@ impl<'a> Codegen<'a> {
             Type::Void => "void".to_string(),
             Type::Custom(n) => format!("{}_t*", n),
             Type::Generic(_, _) => "void*".to_string(),
+        }
+    }
+
+    fn expr_type(&self, expr: &Expr, scope: crate::semantic::ScopeId) -> TypeRef {
+        match expr {
+            Expr::IntLiteral(_) => TypeRef::Int,
+            Expr::StringLiteral(_) => TypeRef::Str,
+            Expr::Identifier(name, _) => {
+                if let Some(binding_id) = self.symbol_table.resolve_name_immutable(scope, name) {
+                    if let Some(ref ty) = self.symbol_table.bindings[binding_id.0].ty {
+                        return ty.clone();
+                    }
+                }
+                match name.as_str() {
+                    "input" | "read_file" | "json_get_str" => TypeRef::Str,
+                    _ => TypeRef::Int,
+                }
+            }
+            Expr::BinaryOp { op, left, .. } => {
+                match op {
+                    BinaryOperator::Add | BinaryOperator::Subtract | 
+                    BinaryOperator::Multiply | BinaryOperator::Divide | BinaryOperator::Modulo => {
+                        self.expr_type(left, scope)
+                    }
+                    _ => TypeRef::Bool,
+                }
+            }
+            Expr::Call { callee, .. } => {
+                if let Expr::Identifier(name, _) = &**callee {
+                    match name.as_str() {
+                        "input" | "read_file" | "json_get_str" => return TypeRef::Str,
+                        "print" | "print_str" | "write_file" | "json_free" | "list_push" | "list_free" => return TypeRef::Void,
+                        "parse_int" | "json_parse" | "json_get_int" | "json_get_obj" | "list_get" | "list_len" => return TypeRef::Int,
+                        "list_new" => return TypeRef::Generic("List".into(), vec![TypeRef::Int]),
+                        _ => {}
+                    }
+                    if self.type_table.structs_by_name.contains_key(name) {
+                        if let Some(&id) = self.type_table.structs_by_name.get(name) {
+                            return TypeRef::Custom(id);
+                        }
+                    }
+                    if let Some(binding_id) = self.symbol_table.resolve_name_immutable(crate::semantic::ScopeId(0), name) {
+                        if let Some(ref ty) = self.symbol_table.bindings[binding_id.0].ty {
+                            return ty.clone();
+                        }
+                    }
+                }
+                TypeRef::Int
+            }
+            Expr::FieldAccess { base, field } => {
+                let base_ty = self.expr_type(base, scope);
+                if let TypeRef::Custom(struct_id) = base_ty {
+                    let struct_def = &self.type_table.definitions[struct_id.0];
+                    if let Some(field_entry) = struct_def.fields.iter().find(|(name, _)| name == field) {
+                        return field_entry.1.clone();
+                    }
+                }
+                TypeRef::Int
+            }
+            Expr::ListLiteral(elements) => {
+                let mut elem_ty = TypeRef::Int;
+                if !elements.is_empty() {
+                    elem_ty = self.expr_type(&elements[0], scope);
+                }
+                TypeRef::Generic("List".to_string(), vec![elem_ty])
+            }
+            Expr::Closure { .. } => TypeRef::Function,
+            Expr::Spawn { .. } => TypeRef::Void,
         }
     }
 }

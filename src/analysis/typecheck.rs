@@ -55,6 +55,7 @@ pub struct TypeChecker<'a> {
     pub symbol_table: &'a mut SymbolTable,
     pub closure_scope_idx: usize,
     pub func_return_types: HashMap<String, TypeRef>,
+    pub func_param_types: HashMap<String, Vec<TypeRef>>,
 }
 
 impl<'a> TypeChecker<'a> {
@@ -64,6 +65,7 @@ impl<'a> TypeChecker<'a> {
             symbol_table,
             closure_scope_idx: 0,
             func_return_types: HashMap::new(),
+            func_param_types: HashMap::new(),
         }
     }
 
@@ -100,6 +102,10 @@ impl<'a> TypeChecker<'a> {
             if let TopLevel::Function(f) = decl {
                 let ret_ty = Self::convert_ast_type(&self.type_table, &f.return_type);
                 self.func_return_types.insert(f.name.clone(), ret_ty);
+                let param_tys: Vec<TypeRef> = f.params.iter()
+                    .map(|p| Self::convert_ast_type(&self.type_table, &p.ty))
+                    .collect();
+                self.func_param_types.insert(f.name.clone(), param_tys);
             }
         }
 
@@ -166,19 +172,34 @@ impl<'a> TypeChecker<'a> {
     fn infer_stmt(&mut self, stmt: &Stmt, current_scope: ScopeId) -> Result<(), String> {
         match stmt {
             Stmt::LetInferred { name: _, is_mut: _, value, binding_id } => {
-                let inferred_type = self.infer_expr(value, current_scope)?;
+                let inferred_type = self.infer_expr(value, current_scope, None)?;
                 let b_id = binding_id.get().ok_or_else(|| "Binding ID not set".to_string())?;
                 let binding = &mut self.symbol_table.bindings[b_id];
                 if binding.ty.is_none() {
                     binding.ty = Some(inferred_type);
                 }
             }
-            Stmt::Assign { name: _, value, binding_id: _ } => {
-                self.infer_expr(value, current_scope)?;
+            Stmt::Assign { name, value, binding_id } => {
+                let expected_ty = if let Some(b_id) = binding_id.get() {
+                    self.symbol_table.bindings[b_id].ty.clone()
+                } else if let Some(b_id) = self.symbol_table.resolve_name(current_scope, name) {
+                    binding_id.set(Some(b_id.0));
+                    self.symbol_table.bindings[b_id.0].ty.clone()
+                } else {
+                    None
+                };
+                self.infer_expr(value, current_scope, expected_ty)?;
             }
             Stmt::AssignField { base, field, value } => {
-                let base_ty = self.infer_expr(base, current_scope)?;
-                let val_ty = self.infer_expr(value, current_scope)?;
+                let base_ty = self.infer_expr(base, current_scope, None)?;
+                let mut expected_ty = None;
+                if let TypeRef::Custom(struct_id) = base_ty {
+                    let struct_def = &self.type_table.definitions[struct_id.0];
+                    if let Some(field_entry) = struct_def.fields.iter().find(|(name, _)| name == field) {
+                        expected_ty = Some(field_entry.1.clone());
+                    }
+                }
+                let val_ty = self.infer_expr(value, current_scope, expected_ty)?;
                 if let TypeRef::Custom(struct_id) = base_ty {
                     let struct_def = &self.type_table.definitions[struct_id.0];
                     if let Some(field_entry) = struct_def.fields.iter().find(|(name, _)| name == field) {
@@ -196,7 +217,7 @@ impl<'a> TypeChecker<'a> {
                 }
             }
             Stmt::If { condition, then_block, else_block } => {
-                let cond_ty = self.infer_expr(condition, current_scope)?;
+                let cond_ty = self.infer_expr(condition, current_scope, None)?;
                 if cond_ty != TypeRef::Bool {
                     if cond_ty != TypeRef::Int {
                         return Err(format!("'if' condition must be Bool or Int, found {:?}", cond_ty));
@@ -214,7 +235,7 @@ impl<'a> TypeChecker<'a> {
                 }
             }
             Stmt::While { condition, body } => {
-                let cond_ty = self.infer_expr(condition, current_scope)?;
+                let cond_ty = self.infer_expr(condition, current_scope, None)?;
                 if cond_ty != TypeRef::Bool && cond_ty != TypeRef::Int {
                     return Err(format!("'while' condition must be Bool or Int, found {:?}", cond_ty));
                 }
@@ -223,17 +244,26 @@ impl<'a> TypeChecker<'a> {
                 }
             }
             Stmt::Expr(expr) => {
-                self.infer_expr(expr, current_scope)?;
+                self.infer_expr(expr, current_scope, None)?;
             }
             Stmt::Return(Some(expr)) => {
-                self.infer_expr(expr, current_scope)?;
+                let mut expected_ret_ty = None;
+                let mut curr = Some(current_scope);
+                while let Some(sid) = curr {
+                    if let ScopeKind::Function { name } = &self.symbol_table.scopes[sid.0].kind {
+                        expected_ret_ty = self.func_return_types.get(name).cloned();
+                        break;
+                    }
+                    curr = self.symbol_table.scopes[sid.0].parent;
+                }
+                self.infer_expr(expr, current_scope, expected_ret_ty)?;
             }
             Stmt::Return(None) => {}
         }
         Ok(())
     }
 
-    fn infer_expr(&mut self, expr: &Expr, current_scope: ScopeId) -> Result<TypeRef, String> {
+    fn infer_expr(&mut self, expr: &Expr, current_scope: ScopeId, expected_ty: Option<TypeRef>) -> Result<TypeRef, String> {
         match expr {
             Expr::IntLiteral(_) => Ok(TypeRef::Int),
             Expr::StringLiteral(_) => Ok(TypeRef::Str),
@@ -243,8 +273,8 @@ impl<'a> TypeChecker<'a> {
                 binding.ty.clone().ok_or_else(|| "Type of identifier not yet inferred".to_string())
             }
             Expr::BinaryOp { left, op, right } => {
-                let left_ty = self.infer_expr(left, current_scope)?;
-                let right_ty = self.infer_expr(right, current_scope)?;
+                let left_ty = self.infer_expr(left, current_scope, None)?;
+                let right_ty = self.infer_expr(right, current_scope, None)?;
                 let is_ptr_null_check = match (&left_ty, &right_ty) {
                     (&TypeRef::Custom(_), &TypeRef::Int) | (&TypeRef::Int, &TypeRef::Custom(_)) => {
                         matches!(op, crate::ast::BinaryOperator::Eq | crate::ast::BinaryOperator::NotEq)
@@ -264,8 +294,31 @@ impl<'a> TypeChecker<'a> {
                 }
             }
             Expr::Call { callee, args } => {
-                for arg in args {
-                    self.infer_expr(arg, current_scope)?;
+                let mut param_tys = Vec::new();
+                if let Expr::Identifier(name, _) = &**callee {
+                    if let Some(tys) = self.func_param_types.get(name) {
+                        param_tys = tys.clone();
+                    } else if name == "list_push" && args.len() >= 2 {
+                        let list_ty = self.infer_expr(&args[0], current_scope, None)?;
+                        if let TypeRef::Generic(ref list_name, ref params) = list_ty {
+                            if list_name == "List" && !params.is_empty() {
+                                param_tys = vec![list_ty.clone(), params[0].clone()];
+                            }
+                        }
+                    } else if name == "list_get" && args.len() >= 2 {
+                        let list_ty = self.infer_expr(&args[0], current_scope, None)?;
+                        if let TypeRef::Generic(ref list_name, ref params) = list_ty {
+                            if list_name == "List" && !params.is_empty() {
+                                param_tys = vec![list_ty.clone(), TypeRef::Int];
+                            }
+                        }
+                    }
+                }
+
+                let mut arg_tys = Vec::new();
+                for (i, arg) in args.iter().enumerate() {
+                    let expected_arg_ty = param_tys.get(i);
+                    arg_tys.push(self.infer_expr(arg, current_scope, expected_arg_ty.cloned())?);
                 }
                 
                 if let Expr::Identifier(name, _) = &**callee {
@@ -279,7 +332,7 @@ impl<'a> TypeChecker<'a> {
                         if args.len() != 1 {
                             return Err(format!("print_str expects 1 argument, got {}", args.len()));
                         }
-                        let arg_ty = self.infer_expr(&args[0], current_scope)?;
+                        let arg_ty = arg_tys[0].clone();
                         if arg_ty != TypeRef::Str {
                             return Err(format!("print_str expects a String, got {:?}", arg_ty));
                         }
@@ -289,8 +342,8 @@ impl<'a> TypeChecker<'a> {
                         if args.len() != 2 {
                             return Err(format!("write_file expects 2 arguments, got {}", args.len()));
                         }
-                        let arg1_ty = self.infer_expr(&args[0], current_scope)?;
-                        let arg2_ty = self.infer_expr(&args[1], current_scope)?;
+                        let arg1_ty = arg_tys[0].clone();
+                        let arg2_ty = arg_tys[1].clone();
                         if arg1_ty != TypeRef::Str || arg2_ty != TypeRef::Str {
                             return Err(format!("write_file expects (String, String), got ({:?}, {:?})", arg1_ty, arg2_ty));
                         }
@@ -306,7 +359,7 @@ impl<'a> TypeChecker<'a> {
                         if args.len() != 1 {
                             return Err(format!("read_file expects 1 argument, got {}", args.len()));
                         }
-                        let arg_ty = self.infer_expr(&args[0], current_scope)?;
+                        let arg_ty = arg_tys[0].clone();
                         if arg_ty != TypeRef::Str {
                             return Err(format!("read_file expects a String, got {:?}", arg_ty));
                         }
@@ -316,7 +369,7 @@ impl<'a> TypeChecker<'a> {
                         if args.len() != 1 {
                             return Err(format!("parse_int expects 1 argument, got {}", args.len()));
                         }
-                        let arg_ty = self.infer_expr(&args[0], current_scope)?;
+                        let arg_ty = arg_tys[0].clone();
                         if arg_ty != TypeRef::Str {
                             return Err(format!("parse_int expects a String, got {:?}", arg_ty));
                         }
@@ -326,7 +379,7 @@ impl<'a> TypeChecker<'a> {
                         if args.len() != 1 {
                             return Err(format!("json_parse expects 1 argument, got {}", args.len()));
                         }
-                        let arg_ty = self.infer_expr(&args[0], current_scope)?;
+                        let arg_ty = arg_tys[0].clone();
                         if arg_ty != TypeRef::Str {
                             return Err(format!("json_parse expects a String, got {:?}", arg_ty));
                         }
@@ -360,13 +413,18 @@ impl<'a> TypeChecker<'a> {
                         if args.len() != 0 {
                             return Err(format!("list_new expects 0 arguments, got {}", args.len()));
                         }
+                        if let Some(TypeRef::Generic(list_name, params)) = expected_ty {
+                            if list_name == "List" {
+                                return Ok(TypeRef::Generic("List".to_string(), params.clone()));
+                            }
+                        }
                         return Ok(TypeRef::Generic("List".to_string(), vec![TypeRef::Int]));
                     }
                     if name == "list_push" {
                         if args.len() != 2 {
                             return Err(format!("list_push expects 2 arguments, got {}", args.len()));
                         }
-                        let list_ty = self.infer_expr(&args[0], current_scope)?;
+                        let list_ty = arg_tys[0].clone();
                         if !matches!(list_ty, TypeRef::Generic(ref name, _) if name == "List") {
                             return Err(format!("list_push first argument must be a List, got {:?}", list_ty));
                         }
@@ -376,17 +434,19 @@ impl<'a> TypeChecker<'a> {
                         if args.len() != 2 {
                             return Err(format!("list_get expects 2 arguments, got {}", args.len()));
                         }
-                        let list_ty = self.infer_expr(&args[0], current_scope)?;
-                        if !matches!(list_ty, TypeRef::Generic(ref name, _) if name == "List") {
-                            return Err(format!("list_get first argument must be a List, got {:?}", list_ty));
+                        let list_ty = arg_tys[0].clone();
+                        if let TypeRef::Generic(ref name, ref params) = list_ty {
+                            if name == "List" && !params.is_empty() {
+                                return Ok(params[0].clone());
+                            }
                         }
-                        return Ok(TypeRef::Int);
+                        return Err(format!("list_get first argument must be a List, got {:?}", list_ty));
                     }
                     if name == "list_len" {
                         if args.len() != 1 {
                             return Err(format!("list_len expects 1 argument, got {}", args.len()));
                         }
-                        let list_ty = self.infer_expr(&args[0], current_scope)?;
+                        let list_ty = arg_tys[0].clone();
                         if !matches!(list_ty, TypeRef::Generic(ref name, _) if name == "List") {
                             return Err(format!("list_len argument must be a List, got {:?}", list_ty));
                         }
@@ -396,7 +456,7 @@ impl<'a> TypeChecker<'a> {
                         if args.len() != 1 {
                             return Err(format!("list_free expects 1 argument, got {}", args.len()));
                         }
-                        let list_ty = self.infer_expr(&args[0], current_scope)?;
+                        let list_ty = arg_tys[0].clone();
                         if !matches!(list_ty, TypeRef::Generic(ref name, _) if name == "List") {
                             return Err(format!("list_free argument must be a List, got {:?}", list_ty));
                         }
@@ -444,7 +504,7 @@ impl<'a> TypeChecker<'a> {
                     let mut inferred_rt = TypeRef::Void;
                     for stmt in body {
                         if let Stmt::Return(Some(expr)) = stmt {
-                            if let Ok(ty) = self.infer_expr(expr, scope_id) {
+                            if let Ok(ty) = self.infer_expr(expr, scope_id, None) {
                                 inferred_rt = ty;
                                 break;
                             }
@@ -454,7 +514,7 @@ impl<'a> TypeChecker<'a> {
                 }
             }
             Expr::FieldAccess { base, field } => {
-                let base_ty = self.infer_expr(base, current_scope)?;
+                let base_ty = self.infer_expr(base, current_scope, None)?;
                 if let TypeRef::Custom(struct_id) = base_ty {
                     let struct_def = &self.type_table.definitions[struct_id.0];
                     if let Some(field_entry) = struct_def.fields.iter().find(|(name, _)| name == field) {
@@ -466,16 +526,15 @@ impl<'a> TypeChecker<'a> {
                 }
             }
             Expr::Spawn { closure } => {
-                self.infer_expr(closure, current_scope)?;
-                // spawn could return a Task handle, but for now we return Void
+                self.infer_expr(closure, current_scope, None)?;
                 Ok(TypeRef::Void)
             }
             Expr::ListLiteral(elements) => {
                 let mut elem_ty = TypeRef::Int; // Default if empty
                 if !elements.is_empty() {
-                    elem_ty = self.infer_expr(&elements[0], current_scope)?;
+                    elem_ty = self.infer_expr(&elements[0], current_scope, None)?;
                     for element in elements.iter().skip(1) {
-                        self.infer_expr(element, current_scope)?;
+                        self.infer_expr(element, current_scope, None)?;
                     }
                 }
                 Ok(TypeRef::Generic("List".to_string(), vec![elem_ty]))

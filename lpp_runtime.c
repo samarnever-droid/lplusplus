@@ -148,6 +148,7 @@ void *lpp_list_new(void) {
 
 void lpp_list_push(void *list, int64_t value) {
     LppList *l = (LppList *)list;
+    if (!l) return;
     if (l->len == l->cap) {
         int64_t new_cap = l->cap == 0 ? 8 : l->cap * 2;
         l->data = (int64_t *)realloc(l->data, (size_t)(new_cap * sizeof(int64_t)));
@@ -158,11 +159,13 @@ void lpp_list_push(void *list, int64_t value) {
 
 int64_t lpp_list_get(void *list, int64_t index) {
     LppList *l = (LppList *)list;
+    if (!l || index < 0 || index >= l->len) return 0;
     return l->data[index];
 }
 
 int64_t lpp_list_len(void *list) {
-    return ((LppList *)list)->len;
+    LppList *l = (LppList *)list;
+    return l ? l->len : 0;
 }
 
 void lpp_list_free(void *list) {

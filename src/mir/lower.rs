@@ -291,9 +291,18 @@ impl<'a> MirLowerCtx<'a> {
                     // 2. Known runtime builtin → BuiltinCall (name-mangled to C ABI symbol)
                     let runtime_sym = match name.as_str() {
                         "print"      => {
-                            // Dispatch based on the first arg's inferred type:
-                            // Operand::String → lpp_print_str, else → lpp_print_int
-                            let sym = if matches!(ops.first(), Some(Operand::String(_))) {
+                            let is_str = if let Some(first_op) = ops.first() {
+                                match first_op {
+                                    Operand::String(_) => true,
+                                    Operand::Local(local_id) => {
+                                        builder.function.locals[local_id.0].ty == TypeRef::Str
+                                    }
+                                    _ => false,
+                                }
+                            } else {
+                                false
+                            };
+                            let sym = if is_str {
                                 "lpp_print_str"
                             } else {
                                 "lpp_print_int"

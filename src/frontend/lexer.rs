@@ -50,10 +50,12 @@ pub enum Token {
     Eof,
 }
 
+use std::collections::VecDeque;
+
 pub struct Lexer<'a> {
     input: std::iter::Peekable<std::str::Chars<'a>>,
     indent_stack: Vec<usize>,
-    pending_tokens: Vec<Token>,
+    pending_tokens: VecDeque<Token>,
     at_line_start: bool,
 }
 
@@ -62,7 +64,7 @@ impl<'a> Lexer<'a> {
         Self {
             input: input.chars().peekable(),
             indent_stack: vec![0],
-            pending_tokens: Vec::new(),
+            pending_tokens: VecDeque::new(),
             at_line_start: true,
         }
     }
@@ -71,8 +73,8 @@ impl<'a> Lexer<'a> {
         let mut tokens = Vec::new();
 
         loop {
-            if !self.pending_tokens.is_empty() {
-                tokens.push(self.pending_tokens.remove(0));
+            if let Some(tok) = self.pending_tokens.pop_front() {
+                tokens.push(tok);
                 continue;
             }
 
@@ -203,8 +205,10 @@ impl<'a> Lexer<'a> {
                 '.' => tokens.push(Token::Dot),
                 '"' => {
                     let mut s = String::new();
+                    let mut terminated = false;
                     while let Some(ch) = self.input.next() {
                         if ch == '"' {
+                            terminated = true;
                             break;
                         }
                         if ch == '\\' {
@@ -226,6 +230,9 @@ impl<'a> Lexer<'a> {
                         } else {
                             s.push(ch);
                         }
+                    }
+                    if !terminated {
+                        return Err("Unterminated string literal".to_string());
                     }
                     tokens.push(Token::StringLit(s));
                 }

@@ -187,6 +187,22 @@ $expectedUltimate = @(
 $passedUltimate = Run-Lpp-Test -FileName "ultimate_stress_test.lpp" -ExpectedOutputs $expectedUltimate
 if (-not $passedUltimate) { $success = $false }
 
+
+# ── TEST 6: Bug verification test ───────────────────────────
+$expectedBugVerify = @(
+    "--- Bug Verification Test ---",
+    "Printing string via print:",
+    "Hello String Print",
+    "Printing integer via print:",
+    "12345",
+    "Retrieved value from box.items:",
+    "Verify List String",
+    "--- Bug Verification Success ---"
+)
+
+$passedBugVerify = Run-Lpp-Test -FileName "bug_verification_test.lpp" -ExpectedOutputs $expectedBugVerify
+if (-not $passedBugVerify) { $success = $false }
+
 # ── Final Outcome ───────────────────────────────────────────
 if ($success) {
     Write-Host "`n========================================================" -ForegroundColor Green
