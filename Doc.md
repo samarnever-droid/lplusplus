@@ -177,16 +177,18 @@ L++ handles all of this invisibly, leaving you to focus entirely on your busines
 
 Because L++ is an active prototype, only a subset of planned language features is currently parsed and transpiled. 
 
-### Language Features
+#### Language Features
 - **Data Types:** `Int` (64-bit), `String`, `Void`, and custom `struct` definitions.
 - **Variables & Mutability:** `:=` for initialization, `=` for assignment. `mut` keyword for mutable state.
 - **Functions:** `def` with typed arguments and return types.
 - **Closures:** Inline and block closures using `fn`, with lexical closure capture.
-- **Math Operations:** Basic arithmetic (`+`, `-`, `*`, `/`).
+- **Math Operations:** Basic arithmetic (`+`, `-`, `*`, `/`, `%` modulo).
 - **Data Structures:** 
   - Struct instantiation and field access (`obj.field`).
   - Heap-allocated Lists using square brackets (`[1, 2, 3]`).
+  - Dynamic Lists via standard library built-ins.
 - **Concurrency:** `spawn` keyword for launching concurrent threads.
+- **Custom Local Libraries:** Relational module merging imports (e.g. `import math_helper` merges source elements).
 
 ### Control Flow
 - **If / Else**: Fully implemented for branching logic (`if x == 10: ... else: ...`).
@@ -196,8 +198,20 @@ Because L++ is an active prototype, only a subset of planned language features i
 
 ### Standard Library (Built-ins)
 L++ provides a growing set of built-in functions for common operations, which map directly to optimal C stdlib calls:
-- **Console I/O**: `print(int_val)`, `print_str("string")`, `input()` (reads line from stdin)
+- **Console I/O**: `print(value)` (prints strings or integers via automatic format selection), `print_str("string")`, `input()` (reads line from stdin)
 - **File I/O**: `read_file("path")` (returns string), `write_file("path", "data")`
+- **Dynamic Lists**:
+  - `list_new()`: Creates a new generic list (inferred contextually as e.g. `List[Int]` or `List[String]`).
+  - `list_push(list, value)`: Appends an element to the list, automatically growing storage if needed.
+  - `list_get(list, index)`: Retrieves the element at `index` (type-checks to list's element type).
+  - `list_len(list)`: Returns the current number of elements in the list.
+  - `list_free(list)`: Safely deallocates the list's memory.
+- **JSON Parsing**:
+  - `json_parse("json_string")`: Parses a JSON string and returns a node handle (`Int`).
+  - `json_get_int(node, "key")`: Retrieves an integer property value.
+  - `json_get_str(node, "key")`: Retrieves a string property value.
+  - `json_get_obj(node, "key")`: Retrieves a nested JSON object node handle (`Int`).
+  - `json_free(node)`: Recursively frees the parsed JSON tree memory.
 
 ### Compiler Architecture & Backends
 
@@ -217,9 +231,10 @@ L++ is designed as a multi-tier compilation pipeline:
 | Console    | `print(...)`, `print_str(...)`  |
 | Input      | `input()`                       |
 | Files      | `read_file`, `write_file`       |
+| JSON       | Full (`json_parse`, `json_get_int`, `json_get_str`, `json_get_obj`, `json_free`) |
 | Networking | Not yet                         |
 | Threads    | `spawn` (POSIX/Windows native)  |
-| Lists      | Basic `[...]`                   |
+| Lists      | Basic `[...]` and Dynamic Lists (`list_*` built-ins) |
 | Strings    | Basic                           |
 | Structs    | Full                            |
 
