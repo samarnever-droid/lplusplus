@@ -117,7 +117,7 @@ The compiler then checks a series of rules. If a variable breaks a rule, its sto
 
 ### Summary of Storage Classes
 - **Value**: Stack-allocated. The default, zero-cost abstraction.
-- **Managed Heap**: Heap-allocated storage.
+- **Managed Heap (ARC)**: Heap-allocated storage managed automatically via **Automatic Reference Counting (ARC)**. The compiler automatically prepends a reference count header (`LppArcHeader`) containing an atomic count to every allocated object, incrementing (`retain`) or decrementing (`release`) it as references are passed around or go out of scope, and freeing it when the count hits zero.
 - **Arena**: Specialized high-performance heap allocation for recursive structures.
 
 ### The Promotion Rules
