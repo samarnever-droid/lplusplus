@@ -39,6 +39,16 @@ impl<'a> MirLowerCtx<'a> {
             }
         }
     }
+
+    fn get_field_type(&self, base_ty: &TypeRef, field: &str) -> TypeRef {
+        if let TypeRef::Custom(struct_id) = base_ty {
+            let struct_def = &self.type_table.definitions[struct_id.0];
+            if let Some((_, ty)) = struct_def.fields.iter().find(|(name, _)| name == field) {
+                return ty.clone();
+            }
+        }
+        TypeRef::Void
+    }
     
     pub fn lower_program(&mut self, program: &Program) -> MirProgram {
         let mut mir_functions = HashMap::new();
@@ -311,7 +321,11 @@ impl<'a> MirLowerCtx<'a> {
             }
             Expr::FieldAccess { base, field } => {
                 let base_op = self.lower_expr(builder, base, binding_map);
-                let ty = TypeRef::Void; // hardcoded
+                let base_ty = match &base_op {
+                    Operand::Local(id) => builder.function.locals[id.0].ty.clone(),
+                    _ => TypeRef::Void,
+                };
+                let ty = self.get_field_type(&base_ty, field);
                 let temp = builder.new_local(ty, false, None, None);
                 builder.push_instr(MirInstr::Assign(temp, Rvalue::FieldAccess(base_op, field.clone())));
                 Operand::Local(temp)

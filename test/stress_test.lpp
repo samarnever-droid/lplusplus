@@ -1,0 +1,73 @@
+struct Point:
+    x: Int
+    y: Int
+
+struct Line:
+    start: Point
+    end: Point
+
+def fib(n: Int) -> Int:
+    if n <= 1:
+        return n
+    return fib(n - 1) + fib(n - 2)
+
+def double_val(x: Int) -> Int:
+    return x * 2
+
+def run_shadowing() -> Int:
+    mut val := 10
+    if val == 10:
+        mut val := 20
+        if val == 20:
+            mut val := 30
+            print(val) # prints 30
+        print(val) # prints 20
+    print(val) # prints 10
+    return val
+
+def main() -> Void:
+    print_str("--- L++ STRESS TEST ---")
+    
+    # 1. Arithmetic Loop
+    mut sum := 0
+    mut i := 0
+    while i < 100:
+        sum = sum + i
+        i = i + 1
+    print_str("Loop Sum (Expected: 4950):")
+    print(sum)
+
+    # 2. Recursion
+    print_str("Fibonacci(10) (Expected: 55):")
+    print(fib(10))
+
+    # 3. Scope Shadowing
+    print_str("Shadowing values (Expected: 30, 20, 10, then return 10):")
+    res := run_shadowing()
+    print(res)
+
+    # 4. Struct Allocation & Mutation
+    print_str("Struct Mutation (Expected: 123, 456, 789, 999):")
+    p1 := Point()
+    p1.x = 123
+    p1.y = 456
+    print(p1.x)
+    print(p1.y)
+
+    line := Line()
+    line.start = p1
+    
+    p2 := Point()
+    p2.y = 999
+    line.end = p2
+    
+    line.start.x = 789
+    print(line.start.x)
+    print(line.end.y)
+    
+    # 5. String-to-Int conversion
+    print_str("String parsing (Expected: 1337):")
+    parsed := parse_int("1337")
+    print(parsed)
+
+    print_str("--- STRESS TEST PASS ---")
