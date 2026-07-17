@@ -1,0 +1,12 @@
+{
+  "packages": {
+    "@Okrabai/YTDownloader": {
+      "git": "https://github.com/Okrabai/YTDownloader.git",
+      "branch": "main"
+    },
+    "YTDownloader": {
+      "git": "https://github.com/Okrabai/YTDownloader.git",
+      "branch": "main"
+    }
+  }
+}

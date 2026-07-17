@@ -8,3 +8,4 @@ output.c
 /benchmarks/rust_*
 /benchmarks/c_*.c
 /benchmarks/rust_*.rs
+/test_project/

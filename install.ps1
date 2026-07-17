@@ -92,6 +92,44 @@ if "%~1"=="-h" (
     exit /b 0
 )
 
+:: Check for package manager commands
+if "%~1"=="init" (
+    "%~dp0lpp-compiler.exe" %*
+    exit /b %ERRORLEVEL%
+)
+if "%~1"=="install" (
+    "%~dp0lpp-compiler.exe" %*
+    exit /b %ERRORLEVEL%
+)
+if "%~1"=="add" (
+    "%~dp0lpp-compiler.exe" %*
+    exit /b %ERRORLEVEL%
+)
+if "%~1"=="remove" (
+    "%~dp0lpp-compiler.exe" %*
+    exit /b %ERRORLEVEL%
+)
+if "%~1"=="update" (
+    "%~dp0lpp-compiler.exe" %*
+    exit /b %ERRORLEVEL%
+)
+if "%~1"=="check" (
+    "%~dp0lpp-compiler.exe" %*
+    exit /b %ERRORLEVEL%
+)
+if "%~1"=="build" (
+    "%~dp0lpp-compiler.exe" %*
+    exit /b %ERRORLEVEL%
+)
+if "%~1"=="run" (
+    "%~dp0lpp-compiler.exe" %*
+    exit /b %ERRORLEVEL%
+)
+if "%~1"=="test" (
+    "%~dp0lpp-compiler.exe" %*
+    exit /b %ERRORLEVEL%
+)
+
 :: Ensure file exists
 if not exist "%~1" (
     echo [L++] Error: File "%~1" not found.

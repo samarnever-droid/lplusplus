@@ -18,6 +18,7 @@ mod c_runtime_headers;
 pub mod cranelift_backend;
 #[path = "mir/mod.rs"]
 pub mod mir;
+mod pm;
 
 use std::fs;
 use std::env;
@@ -26,6 +27,16 @@ use std::time::Instant;
 fn main() {
     let args: Vec<String> = env::args().collect();
     
+    if args.len() > 1 {
+        let first_arg = &args[1];
+        if first_arg == "init" || first_arg == "install" || first_arg == "add" ||
+           first_arg == "remove" || first_arg == "update" || first_arg == "check" ||
+           first_arg == "build" || first_arg == "run" || first_arg == "test" {
+            pm::run_command(&args[1..]);
+            return;
+        }
+    }
+    
     let mut filename = None;
     let mut dump_ast = false;
     let mut dump_symbols = false;
@@ -33,17 +44,29 @@ fn main() {
     let mut dump_escape = false;
     let mut dump_mir = false;
     let mut dump_c = false;
+    let mut check_only = false;
     
     for arg in args.iter().skip(1) {
         if arg == "--version" || arg == "-v" {
             println!("L++ Compiler v0.1.0");
             return;
         } else if arg == "--help" || arg == "-h" {
-            println!("L++ (L Plus Plus) Compiler & Codegen Backend");
-            println!("Usage: lpp [file.lpp] [options]");
-            println!("\nOptions:");
+            println!("L++ (L Plus Plus) Compiler, Codegen Backend & Package Manager");
+            println!("Usage: lpp [command] [options]");
+            println!("\nCommands (Package Manager):");
+            println!("  init <name>      Initialize a new L++ project");
+            println!("  install          Install all dependencies from lpp.toml");
+            println!("  add <name>       Add a dependency to lpp.toml");
+            println!("  remove <name>    Remove a dependency from lpp.toml");
+            println!("  update           Update all dependencies in lpp.lock");
+            println!("  check            Check the project for compilation errors");
+            println!("  build            Build project into a native binary");
+            println!("  run              Compile and run the project binary");
+            println!("  test             Compile and run tests inside tests/");
+            println!("\nOptions (Compiler):");
             println!("  -v, --version    Show L++ compiler version");
             println!("  -h, --help       Show this help menu");
+            println!("  --check          Check a single file without compiling");
             println!("  --dump-ast       Dump the Abstract Syntax Tree");
             println!("  --dump-symbols   Dump the resolved symbol table");
             println!("  --dump-types     Dump the typechecker type table");
@@ -66,6 +89,8 @@ fn main() {
             dump_mir = true;
         } else if arg == "--dump-c" {
             dump_c = true;
+        } else if arg == "--check" {
+            check_only = true;
         } else if !arg.starts_with('-') {
             filename = Some(arg.as_str());
         }
@@ -140,6 +165,18 @@ fn main() {
         type_checker.type_table
     };
     let ty_time = ty_start.elapsed();
+    
+    if check_only {
+        let total_time = total_start.elapsed();
+        if env::var("BENCHMARK").is_ok() {
+            println!("TIMING_JSON: {{\"io\": {}, \"lex\": {}, \"parse\": {}, \"semantic\": {}, \"typecheck\": {}, \"total\": {}}}", 
+               io_time.as_secs_f64(), lex_time.as_secs_f64(), parse_time.as_secs_f64(), sem_time.as_secs_f64(), ty_time.as_secs_f64(), total_time.as_secs_f64());
+        } else {
+            println!("L++ check: OK");
+            println!("Time: {:.1} ms", total_time.as_secs_f64() * 1000.0);
+        }
+        return;
+    }
 
     #[allow(unused_assignments)]
     let mut mir_time = std::time::Duration::ZERO;
@@ -244,9 +281,29 @@ fn resolve_local_imports(
     
     for module in imports_to_process {
         imported_files.insert(module.clone());
-        let filepath = base_dir.join(format!("{}.lpp", module));
+        let mut filepath = base_dir.join(format!("{}.lpp", module));
         if !filepath.exists() {
-            return Err(format!("Imported library file '{}' not found", filepath.display()));
+            // Check in .lpp_packages/module/module.lpp
+            let pkg_path = std::path::Path::new(".lpp_packages")
+                .join(&module)
+                .join(format!("{}.lpp", module));
+            if pkg_path.exists() {
+                filepath = pkg_path;
+            } else {
+                // Check in .lpp_packages/module/src/module.lpp
+                let pkg_src_path = std::path::Path::new(".lpp_packages")
+                    .join(&module)
+                    .join("src")
+                    .join(format!("{}.lpp", module));
+                if pkg_src_path.exists() {
+                    filepath = pkg_src_path;
+                } else {
+                    return Err(format!(
+                        "Imported library file '{}' not found in local directory or .lpp_packages",
+                        module
+                    ));
+                }
+            }
         }
         let content = std::fs::read_to_string(&filepath)
             .map_err(|e| format!("Failed to read library '{}': {}", filepath.display(), e))?;
@@ -256,8 +313,9 @@ fn resolve_local_imports(
         let mut par = parser::Parser::new(tokens);
         let mut lib_ast = par.parse()?;
         
-        // Recursively resolve imports of the library
-        resolve_local_imports(&mut lib_ast.declarations, imported_files, base_dir)?;
+        // Recursively resolve imports of the library using its own base directory
+        let lib_base_dir = filepath.parent().unwrap_or(std::path::Path::new("."));
+        resolve_local_imports(&mut lib_ast.declarations, imported_files, lib_base_dir)?;
         
         new_decls.extend(lib_ast.declarations);
     }
