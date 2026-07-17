@@ -12,6 +12,8 @@ mod typecheck;
 mod escape;
 #[path = "backend/codegen.rs"]
 mod codegen;
+#[path = "backend/c_runtime_headers.rs"]
+mod c_runtime_headers;
 #[path = "backend/cranelift/mod.rs"]
 pub mod cranelift_backend;
 #[path = "mir/mod.rs"]
