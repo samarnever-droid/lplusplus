@@ -242,27 +242,34 @@ impl Parser {
             let mut else_block = None;
             self.skip_newlines();
             if self.match_token(&Token::Else) {
-                if !self.match_token(&Token::Colon) {
-                    return Err("Expected ':' after else".to_string());
-                }
-                if !self.match_token(&Token::Newline) {
-                    return Err("Expected newline after ':'".to_string());
-                }
-                self.skip_newlines();
-                if !self.match_token(&Token::Indent) {
-                    return Err("Expected indentation for else block".to_string());
-                }
-                let mut e_block = Vec::new();
-                while self.peek() != Some(&Token::Dedent) && self.peek().is_some() {
-                    self.skip_newlines();
-                    if self.peek() == Some(&Token::Dedent) {
-                        break;
+                // BUG-08: Support chained `else if <cond>:` without requiring `elif` keyword
+                if self.peek() == Some(&Token::If) {
+                    // Parse the `else if` branch as a full nested if statement and wrap it
+                    let elif_stmt = self.parse_stmt()?;
+                    else_block = Some(vec![elif_stmt]);
+                } else {
+                    if !self.match_token(&Token::Colon) {
+                        return Err("Expected ':' or 'if' after 'else'".to_string());
                     }
-                    e_block.push(self.parse_stmt()?);
+                    if !self.match_token(&Token::Newline) {
+                        return Err("Expected newline after ':'".to_string());
+                    }
                     self.skip_newlines();
+                    if !self.match_token(&Token::Indent) {
+                        return Err("Expected indentation for else block".to_string());
+                    }
+                    let mut e_block = Vec::new();
+                    while self.peek() != Some(&Token::Dedent) && self.peek().is_some() {
+                        self.skip_newlines();
+                        if self.peek() == Some(&Token::Dedent) {
+                            break;
+                        }
+                        e_block.push(self.parse_stmt()?);
+                        self.skip_newlines();
+                    }
+                    self.match_token(&Token::Dedent);
+                    else_block = Some(e_block);
                 }
-                self.match_token(&Token::Dedent);
-                else_block = Some(e_block);
             }
             
             return Ok(Stmt::If { condition, then_block, else_block });

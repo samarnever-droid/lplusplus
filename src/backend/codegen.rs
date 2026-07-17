@@ -8,8 +8,18 @@ pub struct Codegen<'a> {
     symbol_table: &'a SymbolTable,
     type_table: &'a TypeTable,
     storage: &'a HashMap<BindingId, StorageClass>,
+    /// BUG-10: accumulates lifted static closure/spawn functions (emitted before user code)
+    preamble: String,
     out: String,
     closure_scope_idx: usize,
+    /// BUG-10: unique counter for lifted closure/spawn function names
+    closure_lift_count: usize,
+    /// BUG-15: current indentation level for generated C code
+    indent_depth: usize,
+    /// BUG-10: list literal pre-init statements flushed before the enclosing statement
+    pre_stmts: Vec<String>,
+    /// BUG-10: counter for unique list-temp variable names
+    tmp_count: usize,
 }
 
 impl<'a> Codegen<'a> {
@@ -22,8 +32,41 @@ impl<'a> Codegen<'a> {
             symbol_table,
             type_table,
             storage,
+            preamble: String::new(),
             out: String::new(),
             closure_scope_idx: 0,
+            closure_lift_count: 0,
+            indent_depth: 1,
+            pre_stmts: Vec::new(),
+            tmp_count: 0,
+        }
+    }
+
+    /// BUG-15: return the current indentation string.
+    fn indent(&self) -> String {
+        "    ".repeat(self.indent_depth)
+    }
+
+    /// BUG-10: Capture the output of gen_expr into a String without writing to self.out.
+    /// Allows callers to inspect/redirect the generated expression text.
+    fn gen_expr_str(
+        &mut self,
+        expr: &Expr,
+        current_scope: crate::semantic::ScopeId,
+        target_class: Option<&StorageClass>,
+    ) -> String {
+        let saved = std::mem::take(&mut self.out);
+        self.gen_expr(expr, current_scope, target_class);
+        let result = std::mem::take(&mut self.out);
+        self.out = saved;
+        result
+    }
+
+    /// Flush pre_stmts (list-literal init lines) into self.out.
+    fn flush_pre_stmts(&mut self) {
+        let stmts: Vec<String> = std::mem::take(&mut self.pre_stmts);
+        for s in stmts {
+            self.out.push_str(&s);
         }
     }
 
@@ -32,7 +75,8 @@ impl<'a> Codegen<'a> {
         self.out.push_str("#include <stdlib.h>\n");
         self.out.push_str("#include <stdint.h>\n");
         self.out.push_str("#include <string.h>\n");
-        self.out.push_str("#include <malloc.h>\n"); // for alloca
+        // BUG-10: MSVC uses <malloc.h> for alloca; GCC/Clang use <alloca.h>
+        self.out.push_str("#if defined(_MSC_VER)\n#  include <malloc.h>\n#else\n#  include <alloca.h>\n#endif\n");
         self.out.push_str("\n");
         self.out.push_str(crate::c_runtime_headers::C_BUILTINS_IO);
         self.out.push_str(crate::c_runtime_headers::C_BUILTINS_JSON);
@@ -50,7 +94,7 @@ impl<'a> Codegen<'a> {
             }
             self.out.push_str("};\n\n");
         }
-        
+
         // Emitting function prototypes
         for decl in &program.declarations {
             if let TopLevel::Function(f) = decl {
@@ -71,31 +115,34 @@ impl<'a> Codegen<'a> {
             }
         }
         self.out.push_str("\n");
-        
+
         // Emitting functions
         for decl in &program.declarations {
             if let TopLevel::Function(f) = decl {
                 self.gen_function(f);
             }
         }
-        
+
         // Adding C main
         self.out.push_str("int main() {\n");
-        // find if main exists in lpp
         let mut has_main = false;
         for decl in &program.declarations {
             if let TopLevel::Function(f) = decl {
-                if f.name == "main" {
-                    has_main = true;
-                }
+                if f.name == "main" { has_main = true; }
             }
         }
         if has_main {
             self.out.push_str("    lpp_main();\n");
         }
         self.out.push_str("    return 0;\n}\n");
-        
-        self.out.clone()
+
+        // BUG-10: prepend lifted closures/spawn wrappers before the user code
+        let preamble = std::mem::take(&mut self.preamble);
+        if preamble.is_empty() {
+            std::mem::take(&mut self.out)
+        } else {
+            preamble + "\n" + &self.out
+        }
     }
 
     fn gen_function(&mut self, f: &Function) {
@@ -105,6 +152,7 @@ impl<'a> Codegen<'a> {
         } else {
             self.out.push_str(&format!("{} {}(", ret_ty, f.name));
         }
+
         let mut func_scope = None;
         for scope in &self.symbol_table.scopes {
             if let ScopeKind::Function { name } = &scope.kind {
@@ -114,7 +162,7 @@ impl<'a> Codegen<'a> {
                 }
             }
         }
-        
+
         for (i, p) in f.params.iter().enumerate() {
             if i > 0 { self.out.push_str(", "); }
             let mut unique_name = p.name.clone();
@@ -129,7 +177,8 @@ impl<'a> Codegen<'a> {
             self.out.push_str("void");
         }
         self.out.push_str(") {\n");
-        
+
+        self.indent_depth = 1; // BUG-15: reset depth for each function
         if let Some(scope_id) = func_scope {
             for stmt in &f.body {
                 self.gen_stmt(stmt, scope_id);
@@ -139,11 +188,13 @@ impl<'a> Codegen<'a> {
     }
 
     fn gen_stmt(&mut self, stmt: &Stmt, current_scope: crate::semantic::ScopeId) {
+        let ind = self.indent();
         match stmt {
             Stmt::LetInferred { name, value, binding_id, .. } => {
                 let id = binding_id.get().unwrap();
-                let class = self.storage.get(&crate::semantic::BindingId(id)).unwrap_or(&StorageClass::Value);
-                self.out.push_str(&format!("    /* Storage: {:?} */\n", class));
+                let class = self.storage.get(&crate::semantic::BindingId(id))
+                    .unwrap_or(&StorageClass::Value)
+                    .clone();
                 let unique_name = format!("{}_{}", name, id);
                 let binding = &self.symbol_table.bindings[id];
                 let ty_str = if let Some(ty) = &binding.ty {
@@ -151,68 +202,83 @@ impl<'a> Codegen<'a> {
                 } else {
                     "int64_t".to_string()
                 };
-                self.out.push_str(&format!("    {} {} = ", ty_str, unique_name));
-                self.gen_expr(value, current_scope, Some(class));
-                self.out.push_str(";\n");
+                // BUG-15: use depth-aware indent
+                self.out.push_str(&format!("{}/* Storage: {:?} */\n", ind, class));
+                let val_str = self.gen_expr_str(value, current_scope, Some(&class));
+                // BUG-10: flush any list-literal pre-init before the declaration
+                self.flush_pre_stmts();
+                self.out.push_str(&format!("{}{} {} = {};\n", ind, ty_str, unique_name, val_str));
             }
             Stmt::Assign { name, value, binding_id, .. } => {
                 let id = binding_id.get().unwrap();
                 let unique_name = format!("{}_{}", name, id);
-                self.out.push_str(&format!("    {} = ", unique_name));
-                self.gen_expr(value, current_scope, None);
-                self.out.push_str(";\n");
+                let val_str = self.gen_expr_str(value, current_scope, None);
+                self.flush_pre_stmts();
+                self.out.push_str(&format!("{}{} = {};\n", ind, unique_name, val_str));
             }
             Stmt::AssignField { base, field, value } => {
-                self.out.push_str("    ");
-                self.gen_expr(base, current_scope, None);
-                self.out.push_str(&format!("->{} = ", field));
-                self.gen_expr(value, current_scope, None);
-                self.out.push_str(";\n");
+                let base_str = self.gen_expr_str(base, current_scope, None);
+                let val_str  = self.gen_expr_str(value, current_scope, None);
+                self.flush_pre_stmts();
+                self.out.push_str(&format!("{}{}->{} = {};\n", ind, base_str, field, val_str));
             }
             Stmt::If { condition, then_block, else_block } => {
-                self.out.push_str("if (");
-                self.gen_expr(condition, current_scope, None);
-                self.out.push_str(") {\n");
+                let cond_str = self.gen_expr_str(condition, current_scope, None);
+                self.flush_pre_stmts();
+                // BUG-15: proper nested indentation for if/else bodies
+                self.out.push_str(&format!("{}if ({}) {{\n", ind, cond_str));
+                self.indent_depth += 1;
                 for stmt in then_block {
                     self.gen_stmt(stmt, current_scope);
                 }
-                self.out.push_str("}");
+                self.indent_depth -= 1;
+                self.out.push_str(&format!("{}}}", ind));
                 if let Some(else_b) = else_block {
                     self.out.push_str(" else {\n");
+                    self.indent_depth += 1;
                     for stmt in else_b {
                         self.gen_stmt(stmt, current_scope);
                     }
-                    self.out.push_str("}\n");
+                    self.indent_depth -= 1;
+                    self.out.push_str(&format!("{}}}\n", ind));
                 } else {
                     self.out.push_str("\n");
                 }
             }
             Stmt::While { condition, body } => {
-                self.out.push_str("while (");
-                self.gen_expr(condition, current_scope, None);
-                self.out.push_str(") {\n");
+                let cond_str = self.gen_expr_str(condition, current_scope, None);
+                self.flush_pre_stmts();
+                // BUG-15: proper nested indentation for while body
+                self.out.push_str(&format!("{}while ({}) {{\n", ind, cond_str));
+                self.indent_depth += 1;
                 for stmt in body {
                     self.gen_stmt(stmt, current_scope);
                 }
-                self.out.push_str("}\n");
+                self.indent_depth -= 1;
+                self.out.push_str(&format!("{}}}\n", ind));
             }
             Stmt::Expr(expr) => {
-                self.out.push_str("    ");
-                self.gen_expr(expr, current_scope, None);
-                self.out.push_str(";\n");
+                let expr_str = self.gen_expr_str(expr, current_scope, None);
+                self.flush_pre_stmts();
+                self.out.push_str(&format!("{}{};\n", ind, expr_str));
             }
             Stmt::Return(Some(e)) => {
-                self.out.push_str("    return ");
-                self.gen_expr(e, current_scope, None);
-                self.out.push_str(";\n");
+                let e_str = self.gen_expr_str(e, current_scope, None);
+                self.flush_pre_stmts();
+                self.out.push_str(&format!("{}return {};\n", ind, e_str));
             }
             Stmt::Return(None) => {
-                self.out.push_str("    return;\n");
+                self.out.push_str(&format!("{}return;\n", ind));
             }
         }
     }
 
-    fn gen_expr(&mut self, expr: &Expr, current_scope: crate::semantic::ScopeId, target_class: Option<&StorageClass>) {
+    fn gen_expr(
+        &mut self,
+        expr: &Expr,
+        current_scope: crate::semantic::ScopeId,
+        target_class: Option<&StorageClass>,
+    ) {
         match expr {
             Expr::IntLiteral(i) => self.out.push_str(&i.to_string()),
             Expr::StringLiteral(s) => self.out.push_str(&format!("\"{}\"", s)),
@@ -222,21 +288,21 @@ impl<'a> Codegen<'a> {
                 } else {
                     self.out.push_str(n);
                 }
-            },
+            }
             Expr::BinaryOp { left, op, right } => {
                 self.out.push_str("(");
                 self.gen_expr(left, current_scope, target_class);
                 let op_str = match op {
-                    crate::ast::BinaryOperator::Add => " + ",
-                    crate::ast::BinaryOperator::Subtract => " - ",
-                    crate::ast::BinaryOperator::Multiply => " * ",
-                    crate::ast::BinaryOperator::Divide => " / ",
-                    crate::ast::BinaryOperator::Modulo => " % ",
-                    crate::ast::BinaryOperator::Eq => " == ",
-                    crate::ast::BinaryOperator::NotEq => " != ",
-                    crate::ast::BinaryOperator::Less => " < ",
-                    crate::ast::BinaryOperator::LessEq => " <= ",
-                    crate::ast::BinaryOperator::Greater => " > ",
+                    crate::ast::BinaryOperator::Add       => " + ",
+                    crate::ast::BinaryOperator::Subtract  => " - ",
+                    crate::ast::BinaryOperator::Multiply  => " * ",
+                    crate::ast::BinaryOperator::Divide    => " / ",
+                    crate::ast::BinaryOperator::Modulo    => " % ",
+                    crate::ast::BinaryOperator::Eq        => " == ",
+                    crate::ast::BinaryOperator::NotEq     => " != ",
+                    crate::ast::BinaryOperator::Less      => " < ",
+                    crate::ast::BinaryOperator::LessEq    => " <= ",
+                    crate::ast::BinaryOperator::Greater   => " > ",
                     crate::ast::BinaryOperator::GreaterEq => " >= ",
                 };
                 self.out.push_str(op_str);
@@ -252,8 +318,7 @@ impl<'a> Codegen<'a> {
                             self.out.push_str("printf(\"");
                             for (i, arg) in args.iter().enumerate() {
                                 if i > 0 { self.out.push_str(" "); }
-                                let arg_ty = self.expr_type(arg, current_scope);
-                                if arg_ty == TypeRef::Str {
+                                if self.expr_type(arg, current_scope) == TypeRef::Str {
                                     self.out.push_str("%s");
                                 } else {
                                     self.out.push_str("%lld");
@@ -261,8 +326,7 @@ impl<'a> Codegen<'a> {
                             }
                             self.out.push_str("\\n\"");
                             for arg in args {
-                                let arg_ty = self.expr_type(arg, current_scope);
-                                if arg_ty == TypeRef::Str {
+                                if self.expr_type(arg, current_scope) == TypeRef::Str {
                                     self.out.push_str(", (char*)(");
                                 } else {
                                     self.out.push_str(", (long long)(");
@@ -276,82 +340,103 @@ impl<'a> Codegen<'a> {
                     }
                     if n == "print_str" {
                         self.out.push_str("printf(\"%s\\n\", (char*)(");
-                        if !args.is_empty() {
-                            self.gen_expr(&args[0], current_scope, None);
-                        } else {
-                            self.out.push_str("\"\"");
-                        }
+                        if !args.is_empty() { self.gen_expr(&args[0], current_scope, None); }
+                        else { self.out.push_str("\"\""); }
                         self.out.push_str("))");
                         return;
                     }
-                    if n == "input" {
-                        self.out.push_str("lpp_input()");
-                        return;
-                    }
-                    if n == "read_file" {
+                    if n == "input"      { self.out.push_str("lpp_input()"); return; }
+                    if n == "read_file"  {
                         self.out.push_str("lpp_read_file(");
                         self.gen_expr(&args[0], current_scope, None);
-                        self.out.push_str(")");
-                        return;
+                        self.out.push_str(")"); return;
                     }
                     if n == "write_file" {
                         self.out.push_str("lpp_write_file(");
                         self.gen_expr(&args[0], current_scope, None);
                         self.out.push_str(", ");
                         self.gen_expr(&args[1], current_scope, None);
-                        self.out.push_str(")");
-                        return;
+                        self.out.push_str(")"); return;
                     }
                     if n == "parse_int" {
                         self.out.push_str("(int64_t)atoll(");
                         self.gen_expr(&args[0], current_scope, None);
-                        self.out.push_str(")");
-                        return;
+                        self.out.push_str(")"); return;
                     }
-                    if n == "list_new" {
-                        self.out.push_str("lpp_list_new()");
-                        return;
-                    }
+                    if n == "list_new"  { self.out.push_str("lpp_list_new()"); return; }
                     if n == "list_push" {
                         self.out.push_str("lpp_list_push(");
                         self.gen_expr(&args[0], current_scope, None);
                         self.out.push_str(", ");
                         self.gen_expr(&args[1], current_scope, None);
-                        self.out.push_str(")");
-                        return;
+                        self.out.push_str(")"); return;
                     }
-                    if n == "list_get" {
+                    if n == "list_get"  {
                         self.out.push_str("lpp_list_get(");
                         self.gen_expr(&args[0], current_scope, None);
                         self.out.push_str(", ");
                         self.gen_expr(&args[1], current_scope, None);
-                        self.out.push_str(")");
-                        return;
+                        self.out.push_str(")"); return;
                     }
-                    if n == "list_len" {
+                    if n == "list_len"  {
                         self.out.push_str("lpp_list_len(");
                         self.gen_expr(&args[0], current_scope, None);
-                        self.out.push_str(")");
-                        return;
+                        self.out.push_str(")"); return;
                     }
                     if n == "list_free" {
                         self.out.push_str("lpp_list_free(");
                         self.gen_expr(&args[0], current_scope, None);
-                        self.out.push_str(")");
-                        return;
+                        self.out.push_str(")"); return;
+                    }
+                    // JSON builtins
+                    if n == "json_parse" {
+                        self.out.push_str("lpp_json_parse(");
+                        self.gen_expr(&args[0], current_scope, None);
+                        self.out.push_str(")"); return;
+                    }
+                    if n == "json_get_int" {
+                        self.out.push_str("lpp_json_get_int(");
+                        self.gen_expr(&args[0], current_scope, None);
+                        self.out.push_str(", ");
+                        self.gen_expr(&args[1], current_scope, None);
+                        self.out.push_str(")"); return;
+                    }
+                    if n == "json_get_str" {
+                        self.out.push_str("lpp_json_get_str(");
+                        self.gen_expr(&args[0], current_scope, None);
+                        self.out.push_str(", ");
+                        self.gen_expr(&args[1], current_scope, None);
+                        self.out.push_str(")"); return;
+                    }
+                    if n == "json_get_obj" {
+                        self.out.push_str("lpp_json_get_obj(");
+                        self.gen_expr(&args[0], current_scope, None);
+                        self.out.push_str(", ");
+                        self.gen_expr(&args[1], current_scope, None);
+                        self.out.push_str(")"); return;
+                    }
+                    if n == "json_free" {
+                        self.out.push_str("lpp_json_free(");
+                        self.gen_expr(&args[0], current_scope, None);
+                        self.out.push_str(")"); return;
                     }
                     if let Some(&id) = self.type_table.structs_by_name.get(n) {
                         let def = &self.type_table.definitions[id.0];
                         let alloc_str = match target_class {
-                            Some(StorageClass::Value) => format!("({}_t*)alloca(sizeof({}_t))", def.name, def.name),
-                            Some(StorageClass::Arc) => format!("({}_t*)calloc(1, sizeof({}_t))", def.name, def.name),
-                            Some(StorageClass::Arena { .. }) => format!("({}_t*)malloc(sizeof({}_t)) /* arena */", def.name, def.name),
-                            None => format!("({}_t*)calloc(1, sizeof({}_t))", def.name, def.name),
+                            Some(StorageClass::Value) =>
+                                format!("({}_t*)alloca(sizeof({}_t))", def.name, def.name),
+                            Some(StorageClass::Arc) =>
+                                format!("({}_t*)lpp_arc_alloc(sizeof({}_t))", def.name, def.name),
+                            Some(StorageClass::Arena { .. }) =>
+                                format!("({}_t*)malloc(sizeof({}_t)) /* arena */", def.name, def.name),
+                            None =>
+                                format!("({}_t*)lpp_arc_alloc(sizeof({}_t))", def.name, def.name),
                         };
                         self.out.push_str(&alloc_str);
                         return;
                     }
                 }
+                // Generic call (user-defined function or closure variable)
                 self.gen_expr(callee, current_scope, None);
                 self.out.push_str("(");
                 for (i, arg) in args.iter().enumerate() {
@@ -362,88 +447,305 @@ impl<'a> Codegen<'a> {
             }
             Expr::FieldAccess { base, field } => {
                 self.gen_expr(base, current_scope, None);
-                self.out.push_str(&format!("->{}", field)); 
+                self.out.push_str(&format!("->{}", field));
             }
             Expr::ListLiteral(elements) => {
-                self.out.push_str("({ void* __list = lpp_list_new(); ");
+                // BUG-10: MSVC-safe — use a named temp variable via pre_stmts
+                // instead of the GCC-only ({ ... }) statement expression.
+                let tmp = format!("__lpp_list_{}", self.tmp_count);
+                self.tmp_count += 1;
+                let ind = self.indent();
+                // Capture element expressions before pushing to pre_stmts
+                let mut elem_strs: Vec<String> = Vec::new();
                 for el in elements {
-                    self.out.push_str("lpp_list_push(__list, (int64_t)(");
-                    self.gen_expr(el, current_scope, None);
-                    self.out.push_str(")); ");
+                    elem_strs.push(self.gen_expr_str(el, current_scope, None));
                 }
-                self.out.push_str("__list; })");
+                self.pre_stmts.push(format!("{}void* {} = lpp_list_new();\n", ind, tmp));
+                for el_str in elem_strs {
+                    self.pre_stmts.push(format!(
+                        "{}lpp_list_push({}, (int64_t)({}));\n", ind, tmp, el_str
+                    ));
+                }
+                self.out.push_str(&tmp);
             }
             Expr::Spawn { closure } => {
-                self.out.push_str("/* spawn thread */ ");
-                self.gen_expr(closure, current_scope, None);
+                // BUG-12: actually call lpp_thread_spawn with a proper wrapper + env struct
+                self.gen_spawn(closure, current_scope);
             }
             Expr::Closure { params, body, return_type } => {
-                let mut closure_scope = None;
-                for i in self.closure_scope_idx..self.symbol_table.scopes.len() {
-                    if let ScopeKind::Closure { .. } = self.symbol_table.scopes[i].kind {
-                        closure_scope = Some(crate::semantic::ScopeId(i));
-                        self.closure_scope_idx = i + 1;
-                        break;
-                    }
-                }
-                let scope_id = closure_scope.expect("Closure scope not found");
+                // BUG-10: lift to a static top-level function — MSVC compatible
+                self.gen_lifted_closure(params, body, return_type, current_scope);
+            }
+        }
+    }
 
-                let ret_ty_str = if let Some(t) = return_type {
-                    self.c_type_ast(t)
+    // ── BUG-10: Closure lifting ───────────────────────────────────────────────
+
+    /// Lift a closure to a static top-level function in `preamble`.
+    /// Emits a function pointer (or trampoline for closures with captures) into self.out.
+    fn gen_lifted_closure(
+        &mut self,
+        params: &[ClosureParam],
+        body: &[Stmt],
+        return_type: &Option<Type>,
+        _current_scope: crate::semantic::ScopeId,
+    ) {
+        // Find the closure scope
+        let scope_id = self.next_closure_scope();
+
+        let captures: Vec<BindingId> =
+            if let ScopeKind::Closure { captures } = &self.symbol_table.scopes[scope_id.0].kind {
+                captures.clone()
+            } else {
+                Vec::new()
+            };
+
+        let idx = self.closure_lift_count;
+        self.closure_lift_count += 1;
+        let fn_name = format!("lpp__fn_{}", idx);
+
+        let ret_ty = if let Some(t) = return_type { self.c_type_ast(t) }
+                     else { "int64_t".to_string() };
+        let has_env = !captures.is_empty();
+        let env_type = format!("lpp__env_{}_t", idx);
+
+        if has_env {
+            // Emit the capture-environment struct
+            self.preamble.push_str(&format!("typedef struct {{\n"));
+            for &cap_id in &captures {
+                let b = &self.symbol_table.bindings[cap_id.0];
+                let ty = if let Some(ty) = &b.ty { self.c_type(ty) } else { "int64_t".to_string() };
+                self.preamble.push_str(&format!("    {} {}_{};\n", ty, b.name, cap_id.0));
+            }
+            self.preamble.push_str(&format!("}} {};\n", env_type));
+            // Static current-env pointer (trampoline; single-threaded call without explicit env)
+            self.preamble.push_str(&format!("static {}* lpp__cur_env_{} = NULL;\n\n", env_type, idx));
+        }
+
+        // Emit the static function
+        self.preamble.push_str(&format!("static {} {}(", ret_ty, fn_name));
+        if has_env {
+            self.preamble.push_str(&format!("{}* __env", env_type));
+            if !params.is_empty() { self.preamble.push_str(", "); }
+        }
+        if params.is_empty() && !has_env { self.preamble.push_str("void"); }
+        for (i, p) in params.iter().enumerate() {
+            if i > 0 { self.preamble.push_str(", "); }
+            let uname = self.param_unique_name(scope_id, p);
+            let pty = if let Some(t) = &p.ty { self.c_type_ast(t) } else { "int64_t".to_string() };
+            self.preamble.push_str(&format!("{} {}", pty, uname));
+        }
+        self.preamble.push_str(") {\n");
+
+        // Unpack captures inside the function body
+        if has_env {
+            for &cap_id in &captures {
+                let b = &self.symbol_table.bindings[cap_id.0];
+                let ty = if let Some(ty) = &b.ty { self.c_type(ty) } else { "int64_t".to_string() };
+                self.preamble.push_str(&format!(
+                    "    {} {}_{} = __env->{}_{};\n", ty, b.name, cap_id.0, b.name, cap_id.0
+                ));
+            }
+        }
+
+        // Generate body into preamble
+        let saved_out   = std::mem::take(&mut self.out);
+        let saved_depth = self.indent_depth;
+        self.indent_depth = 1;
+        for stmt in body { self.gen_stmt(stmt, scope_id); }
+        let body_code = std::mem::take(&mut self.out);
+        self.out = saved_out;
+        self.indent_depth = saved_depth;
+        self.preamble.push_str(&body_code);
+        self.preamble.push_str("}\n\n");
+
+        if has_env {
+            // Emit a trampoline that reads from the static env pointer.
+            // This allows calling the closure as a plain function pointer
+            // (single-threaded use only — for spawn, see gen_spawn).
+            let tramp = format!("lpp__trampoline_{}", idx);
+            self.preamble.push_str(&format!("static {} {}(", ret_ty, tramp));
+            if params.is_empty() { self.preamble.push_str("void"); }
+            for (i, p) in params.iter().enumerate() {
+                if i > 0 { self.preamble.push_str(", "); }
+                let uname = self.param_unique_name(scope_id, p);
+                let pty = if let Some(t) = &p.ty { self.c_type_ast(t) } else { "int64_t".to_string() };
+                self.preamble.push_str(&format!("{} {}", pty, uname));
+            }
+            self.preamble.push_str(") {\n");
+            self.preamble.push_str(&format!("    return {}(lpp__cur_env_{}", fn_name, idx));
+            for p in params {
+                let uname = self.param_unique_name(scope_id, p);
+                self.preamble.push_str(&format!(", {}", uname));
+            }
+            self.preamble.push_str(");\n}\n\n");
+
+            // At the closure site: allocate env, fill captures, set trampoline env, emit trampoline ptr
+            let ind = self.indent();
+            let env_var = format!("__lpp_env_{}", idx);
+            self.pre_stmts.push(format!(
+                "{}{}* {} = ({}*)malloc(sizeof({}));\n",
+                ind, env_type, env_var, env_type, env_type
+            ));
+            for &cap_id in &captures {
+                let b = &self.symbol_table.bindings[cap_id.0];
+                self.pre_stmts.push(format!(
+                    "{}{}->{}_{}  = {}_{};\n",
+                    ind, env_var, b.name, cap_id.0, b.name, cap_id.0
+                ));
+            }
+            self.pre_stmts.push(format!("{}lpp__cur_env_{} = {};\n", ind, idx, env_var));
+            self.out.push_str(&tramp);
+        } else {
+            // No captures — emit plain function pointer
+            self.out.push_str(&fn_name);
+        }
+    }
+
+    // ── BUG-12: spawn → lpp_thread_spawn ─────────────────────────────────────
+
+    /// Generate a real `lpp_thread_spawn` call for a `spawn` expression.
+    fn gen_spawn(&mut self, closure: &Expr, _current_scope: crate::semantic::ScopeId) {
+        if let Expr::Closure { params, body, return_type } = closure {
+            let scope_id = self.next_closure_scope();
+
+            let captures: Vec<BindingId> =
+                if let ScopeKind::Closure { captures } = &self.symbol_table.scopes[scope_id.0].kind {
+                    captures.clone()
                 } else {
-                    "int64_t".to_string()
+                    Vec::new()
                 };
 
-                self.out.push_str(&format!("({{ {} __closure(", ret_ty_str));
-                if params.is_empty() {
-                    self.out.push_str("void");
-                }
-                for (i, p) in params.iter().enumerate() {
-                    if i > 0 { self.out.push_str(", "); }
-                    let mut unique_name = p.name.clone();
-                    if let Some(binding_id) = self.symbol_table.resolve_name_immutable(scope_id, &p.name) {
-                        unique_name = format!("{}_{}", p.name, binding_id.0);
-                    }
-                    let p_ty = if let Some(t) = &p.ty { self.c_type_ast(t) } else { "int64_t".to_string() };
-                    self.out.push_str(&format!("{} {}", p_ty, unique_name));
-                }
-                self.out.push_str(") {\n");
-                for stmt in body {
-                    self.gen_stmt(stmt, scope_id);
-                }
-                self.out.push_str("    } __closure; })");
+            let idx = self.closure_lift_count;
+            self.closure_lift_count += 1;
+            let fn_name      = format!("lpp__spawn_fn_{}", idx);
+            let wrapper_name = format!("lpp__spawn_wrapper_{}", idx);
+            let env_type     = format!("lpp__spawn_env_{}_t", idx);
+
+            let _ret_ty = if let Some(t) = return_type { self.c_type_ast(t) }
+                          else { "void".to_string() };
+
+            // Env struct (empty structs get a dummy member to satisfy C89/MSVC)
+            self.preamble.push_str("typedef struct {\n");
+            if captures.is_empty() {
+                self.preamble.push_str("    char _dummy;\n");
             }
+            for &cap_id in &captures {
+                let b = &self.symbol_table.bindings[cap_id.0];
+                let ty = if let Some(ty) = &b.ty { self.c_type(ty) } else { "int64_t".to_string() };
+                self.preamble.push_str(&format!("    {} {}_{};\n", ty, b.name, cap_id.0));
+            }
+            self.preamble.push_str(&format!("}} {};\n\n", env_type));
+
+            // Thread function (takes env* and no user params; spawn closures rarely have params)
+            self.preamble.push_str(&format!("static void {}({}* __env", fn_name, env_type));
+            for p in params {
+                let uname = self.param_unique_name(scope_id, p);
+                let pty = if let Some(t) = &p.ty { self.c_type_ast(t) } else { "int64_t".to_string() };
+                self.preamble.push_str(&format!(", {} {}", pty, uname));
+            }
+            self.preamble.push_str(") {\n");
+            // Unpack captures
+            for &cap_id in &captures {
+                let b = &self.symbol_table.bindings[cap_id.0];
+                let ty = if let Some(ty) = &b.ty { self.c_type(ty) } else { "int64_t".to_string() };
+                self.preamble.push_str(&format!(
+                    "    {} {}_{} = __env->{}_{};\n", ty, b.name, cap_id.0, b.name, cap_id.0
+                ));
+            }
+            // Body
+            let saved_out   = std::mem::take(&mut self.out);
+            let saved_depth = self.indent_depth;
+            self.indent_depth = 1;
+            for stmt in body { self.gen_stmt(stmt, scope_id); }
+            let body_code = std::mem::take(&mut self.out);
+            self.out = saved_out;
+            self.indent_depth = saved_depth;
+            self.preamble.push_str(&body_code);
+            self.preamble.push_str("}\n\n");
+
+            // void(*)(void*) wrapper for lpp_thread_spawn
+            self.preamble.push_str(&format!("static void {}(void* __raw) {{\n", wrapper_name));
+            self.preamble.push_str(&format!("    {}* __env = ({}*)__raw;\n", env_type, env_type));
+            self.preamble.push_str(&format!("    {}(__env);\n", fn_name));
+            self.preamble.push_str("    free(__raw);\n}\n\n");
+
+            // At the spawn site: allocate env, fill captures, call lpp_thread_spawn
+            let ind = self.indent();
+            let env_var = format!("__lpp_senv_{}", idx);
+            self.pre_stmts.push(format!(
+                "{}{}* {} = ({}*)malloc(sizeof({}));\n",
+                ind, env_type, env_var, env_type, env_type
+            ));
+            for &cap_id in &captures {
+                let b = &self.symbol_table.bindings[cap_id.0];
+                self.pre_stmts.push(format!(
+                    "{}{}->{}_{}  = {}_{};\n",
+                    ind, env_var, b.name, cap_id.0, b.name, cap_id.0
+                ));
+            }
+            // The spawn call goes into self.out (will be emitted as the statement body)
+            self.out.push_str(&format!("lpp_thread_spawn({}, {})", wrapper_name, env_var));
+        } else {
+            // Non-literal closure — best-effort: just run it inline (same thread)
+            self.out.push_str("/* spawn(non-literal) */ ");
+            self.gen_expr(closure, _current_scope, None);
+        }
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    fn next_closure_scope(&mut self) -> crate::semantic::ScopeId {
+        for i in self.closure_scope_idx..self.symbol_table.scopes.len() {
+            if let ScopeKind::Closure { .. } = self.symbol_table.scopes[i].kind {
+                self.closure_scope_idx = i + 1;
+                return crate::semantic::ScopeId(i);
+            }
+        }
+        panic!("Closure scope not found");
+    }
+
+    fn param_unique_name(&self, scope_id: crate::semantic::ScopeId, p: &ClosureParam) -> String {
+        if let Some(bid) = self.symbol_table.resolve_name_immutable(scope_id, &p.name) {
+            format!("{}_{}", p.name, bid.0)
+        } else {
+            p.name.clone()
         }
     }
 
     fn c_type(&self, ty: &TypeRef) -> String {
         match ty {
-            TypeRef::Int => "int64_t".to_string(),
-            TypeRef::Str => "char*".to_string(),
-            TypeRef::Void => "void".to_string(),
-            TypeRef::Bool => "bool".to_string(),
-            TypeRef::Custom(id) => format!("{}_t*", self.type_table.definitions[id.0].name),
-            TypeRef::Generic(_, _) => "void*".to_string(), // simple stub
-            TypeRef::Unresolved(n) => n.clone(),
-            TypeRef::Function => "void*".to_string(),
+            TypeRef::Int            => "int64_t".to_string(),
+            TypeRef::Str            => "char*".to_string(),
+            TypeRef::Void           => "void".to_string(),
+            TypeRef::Bool           => "int".to_string(),
+            TypeRef::Custom(id)     => format!("{}_t*", self.type_table.definitions[id.0].name),
+            TypeRef::Generic(_, _)  => "void*".to_string(),
+            TypeRef::Unresolved(n)  => n.clone(),
+            TypeRef::Function       => "void*".to_string(),
         }
     }
 
     fn c_type_ast(&self, ty: &Type) -> String {
         match ty {
-            Type::Int => "int64_t".to_string(),
-            Type::String => "char*".to_string(),
-            Type::Void => "void".to_string(),
-            Type::Custom(n) => format!("{}_t*", n),
+            Type::Int           => "int64_t".to_string(),
+            Type::String        => "char*".to_string(),
+            Type::Void          => "void".to_string(),
+            Type::Custom(n)     => format!("{}_t*", n),
             Type::Generic(_, _) => "void*".to_string(),
         }
     }
 
     fn expr_type(&self, expr: &Expr, scope: crate::semantic::ScopeId) -> TypeRef {
         match expr {
-            Expr::IntLiteral(_) => TypeRef::Int,
+            Expr::IntLiteral(_)    => TypeRef::Int,
             Expr::StringLiteral(_) => TypeRef::Str,
-            Expr::Identifier(name, _) => {
+            Expr::Identifier(name, binding_id_cell) => {
+                if let Some(id) = binding_id_cell.get() {
+                    if let Some(ref ty) = self.symbol_table.bindings[id].ty {
+                        return ty.clone();
+                    }
+                }
                 if let Some(binding_id) = self.symbol_table.resolve_name_immutable(scope, name) {
                     if let Some(ref ty) = self.symbol_table.bindings[binding_id.0].ty {
                         return ty.clone();
@@ -456,10 +758,9 @@ impl<'a> Codegen<'a> {
             }
             Expr::BinaryOp { op, left, .. } => {
                 match op {
-                    BinaryOperator::Add | BinaryOperator::Subtract | 
-                    BinaryOperator::Multiply | BinaryOperator::Divide | BinaryOperator::Modulo => {
-                        self.expr_type(left, scope)
-                    }
+                    BinaryOperator::Add | BinaryOperator::Subtract |
+                    BinaryOperator::Multiply | BinaryOperator::Divide |
+                    BinaryOperator::Modulo => self.expr_type(left, scope),
                     _ => TypeRef::Bool,
                 }
             }
@@ -467,18 +768,20 @@ impl<'a> Codegen<'a> {
                 if let Expr::Identifier(name, _) = &**callee {
                     match name.as_str() {
                         "input" | "read_file" | "json_get_str" => return TypeRef::Str,
-                        "print" | "print_str" | "write_file" | "json_free" | "list_push" | "list_free" => return TypeRef::Void,
-                        "parse_int" | "json_parse" | "json_get_int" | "json_get_obj" | "list_get" | "list_len" => return TypeRef::Int,
+                        "print" | "print_str" | "write_file" | "json_free"
+                        | "list_push" | "list_free" => return TypeRef::Void,
+                        "parse_int" | "json_parse" | "json_get_int"
+                        | "json_get_obj" | "list_get" | "list_len" => return TypeRef::Int,
                         "list_new" => return TypeRef::Generic("List".into(), vec![TypeRef::Int]),
                         _ => {}
                     }
-                    if self.type_table.structs_by_name.contains_key(name) {
-                        if let Some(&id) = self.type_table.structs_by_name.get(name) {
-                            return TypeRef::Custom(id);
-                        }
+                    if let Some(&id) = self.type_table.structs_by_name.get(name) {
+                        return TypeRef::Custom(id);
                     }
-                    if let Some(binding_id) = self.symbol_table.resolve_name_immutable(crate::semantic::ScopeId(0), name) {
-                        if let Some(ref ty) = self.symbol_table.bindings[binding_id.0].ty {
+                    if let Some(bid) = self.symbol_table.resolve_name_immutable(
+                        crate::semantic::ScopeId(0), name
+                    ) {
+                        if let Some(ref ty) = self.symbol_table.bindings[bid.0].ty {
                             return ty.clone();
                         }
                     }
@@ -488,22 +791,21 @@ impl<'a> Codegen<'a> {
             Expr::FieldAccess { base, field } => {
                 let base_ty = self.expr_type(base, scope);
                 if let TypeRef::Custom(struct_id) = base_ty {
-                    let struct_def = &self.type_table.definitions[struct_id.0];
-                    if let Some(field_entry) = struct_def.fields.iter().find(|(name, _)| name == field) {
-                        return field_entry.1.clone();
+                    let def = &self.type_table.definitions[struct_id.0];
+                    if let Some(fe) = def.fields.iter().find(|(n, _)| n == field) {
+                        return fe.1.clone();
                     }
                 }
                 TypeRef::Int
             }
             Expr::ListLiteral(elements) => {
-                let mut elem_ty = TypeRef::Int;
-                if !elements.is_empty() {
-                    elem_ty = self.expr_type(&elements[0], scope);
-                }
+                let elem_ty = elements.first()
+                    .map(|e| self.expr_type(e, scope))
+                    .unwrap_or(TypeRef::Int);
                 TypeRef::Generic("List".to_string(), vec![elem_ty])
             }
             Expr::Closure { .. } => TypeRef::Function,
-            Expr::Spawn { .. } => TypeRef::Void,
+            Expr::Spawn { .. }   => TypeRef::Void,
         }
     }
 }

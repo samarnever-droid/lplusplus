@@ -220,13 +220,20 @@ impl Resolver {
         match stmt {
             Stmt::LetInferred { name, is_mut, value, binding_id } => {
                 self.resolve_expr(value)?; // Resolve value before shadowing occurs!
-                let id = self.table.add_binding(
-                    self.current_scope,
-                    name.clone(),
-                    *is_mut,
-                    None, // Type inference comes next
-                    BindingKind::Local,
-                );
+                // BUG-04: Dedup same-scope re-declarations. If the name already exists
+                // in this exact scope (not a parent scope), reuse that binding rather
+                // than minting a fresh one. This prevents code bloat like n_5, n_12, n_19...
+                let id = if let Some(&existing_id) = self.table.scopes[self.current_scope.0].bindings.get(name) {
+                    existing_id
+                } else {
+                    self.table.add_binding(
+                        self.current_scope,
+                        name.clone(),
+                        *is_mut,
+                        None, // Type inference comes next
+                        BindingKind::Local,
+                    )
+                };
                 binding_id.set(Some(id.0));
             }
             Stmt::Assign { name, value, binding_id } => {

@@ -110,16 +110,63 @@ int64_t lpp_write_file(const char *path, const char *data) {
     return 0;
 }
 
-/* ── ARC (reference counting stubs) ──────────────────────────────────────── */
+/* ── ARC (Automatic Reference Counting) ──────────────────────────────────── */
+/*
+ * Layout: every ARC-managed object is preceded in memory by an LppArcHeader.
+ * lpp_arc_alloc(size) allocates  sizeof(LppArcHeader) + size  bytes, inits
+ * the refcount to 1, and returns a pointer to the byte immediately after the
+ * header (i.e. to the user-visible payload).  Retain/release operate on the
+ * hidden header that sits sizeof(LppArcHeader) bytes before the user pointer.
+ *
+ * Atomic ops use C11 stdatomic on GCC/Clang and MSVC interlocked on Windows.
+ */
 
-void lpp_arc_retain(void *ptr) {
-    /* TODO: atomically increment refcount in ARC header before ptr */
-    (void)ptr;
+#if defined(_MSC_VER)
+#  include <windows.h>
+   typedef volatile LONG lpp_atomic32_t;
+#  define LPP_ARC_LOAD(p)         ((int32_t)InterlockedAdd((p), 0))
+#  define LPP_ARC_INC(p)          InterlockedIncrement((p))
+#  define LPP_ARC_DEC(p)          InterlockedDecrement((p))
+#else
+#  include <stdatomic.h>
+   typedef _Atomic(int32_t) lpp_atomic32_t;
+#  define LPP_ARC_LOAD(p)         atomic_load_explicit((p), memory_order_acquire)
+#  define LPP_ARC_INC(p)          atomic_fetch_add_explicit((p), 1, memory_order_acq_rel)
+#  define LPP_ARC_DEC(p)          atomic_fetch_sub_explicit((p), 1, memory_order_acq_rel)
+#endif
+
+typedef struct {
+    lpp_atomic32_t refcount;
+} LppArcHeader;
+
+/* Allocate payload of `size` bytes with a hidden ARC header, refcount=1. */
+void *lpp_arc_alloc(int64_t size) {
+    LppArcHeader *hdr = (LppArcHeader *)calloc(1, sizeof(LppArcHeader) + (size_t)size);
+    if (!hdr) return NULL;
+#if defined(_MSC_VER)
+    hdr->refcount = 1;
+#else
+    atomic_init(&hdr->refcount, 1);
+#endif
+    return (void *)(hdr + 1); /* return pointer to payload, past the header */
 }
 
+/* Increment the reference count. Safe to call with NULL. */
+void lpp_arc_retain(void *ptr) {
+    if (!ptr) return;
+    LppArcHeader *hdr = (LppArcHeader *)ptr - 1;
+    LPP_ARC_INC(&hdr->refcount);
+}
+
+/* Decrement the reference count. Free when it reaches zero. */
 void lpp_arc_release(void *ptr) {
-    /* TODO: atomically decrement; free when zero */
-    (void)ptr;
+    if (!ptr) return;
+    LppArcHeader *hdr = (LppArcHeader *)ptr - 1;
+    int32_t prev = (int32_t)LPP_ARC_DEC(&hdr->refcount);
+    if (prev == 1) {
+        /* refcount just hit zero — free the entire allocation */
+        free(hdr);
+    }
 }
 
 /* ── Allocator ───────────────────────────────────────────────────────────── */

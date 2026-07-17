@@ -54,6 +54,7 @@ pub struct TypeChecker<'a> {
     pub type_table: TypeTable,
     pub symbol_table: &'a mut SymbolTable,
     pub closure_scope_idx: usize,
+    pub block_scope_idx: usize,    // BUG-11: tracks Block scopes for if/while bodies
     pub func_return_types: HashMap<String, TypeRef>,
     pub func_param_types: HashMap<String, Vec<TypeRef>>,
 }
@@ -64,9 +65,22 @@ impl<'a> TypeChecker<'a> {
             type_table: TypeTable::new(),
             symbol_table,
             closure_scope_idx: 0,
+            block_scope_idx: 0,
             func_return_types: HashMap::new(),
             func_param_types: HashMap::new(),
         }
+    }
+
+    /// BUG-11: Find the next Block scope in document order and advance the index.
+    /// Falls back to `parent` if no block scope is found (defensive; shouldn't happen).
+    fn next_block_scope(&mut self, parent: ScopeId) -> ScopeId {
+        for i in self.block_scope_idx..self.symbol_table.scopes.len() {
+            if let ScopeKind::Block = self.symbol_table.scopes[i].kind {
+                self.block_scope_idx = i + 1;
+                return ScopeId(i);
+            }
+        }
+        parent // defensive fallback
     }
 
     fn convert_ast_type(type_table: &TypeTable, ast_ty: &Type) -> TypeRef {
@@ -224,13 +238,17 @@ impl<'a> TypeChecker<'a> {
                     }
                 }
                 
+                // BUG-11: use the block's own scope, not the outer function scope
+                let then_scope = self.next_block_scope(current_scope);
                 for stmt in then_block {
-                    self.infer_stmt(stmt, current_scope)?;
+                    self.infer_stmt(stmt, then_scope)?
                 }
                 
                 if let Some(else_b) = else_block {
+                    // BUG-11: use the block's own scope, not the outer function scope
+                    let else_scope = self.next_block_scope(current_scope);
                     for stmt in else_b {
-                        self.infer_stmt(stmt, current_scope)?;
+                        self.infer_stmt(stmt, else_scope)?
                     }
                 }
             }
@@ -239,8 +257,11 @@ impl<'a> TypeChecker<'a> {
                 if cond_ty != TypeRef::Bool && cond_ty != TypeRef::Int {
                     return Err(format!("'while' condition must be Bool or Int, found {:?}", cond_ty));
                 }
+                
+                // BUG-11: use the while body's own block scope
+                let body_scope = self.next_block_scope(current_scope);
                 for stmt in body {
-                    self.infer_stmt(stmt, current_scope)?;
+                    self.infer_stmt(stmt, body_scope)?;
                 }
             }
             Stmt::Expr(expr) => {
@@ -267,10 +288,23 @@ impl<'a> TypeChecker<'a> {
         match expr {
             Expr::IntLiteral(_) => Ok(TypeRef::Int),
             Expr::StringLiteral(_) => Ok(TypeRef::Str),
-            Expr::Identifier(_, binding_id_cell) => {
-                let id = binding_id_cell.get().ok_or_else(|| "Unresolved identifier".to_string())?;
-                let binding = &self.symbol_table.bindings[id];
-                binding.ty.clone().ok_or_else(|| "Type of identifier not yet inferred".to_string())
+            Expr::Identifier(name, binding_id_cell) => {
+                if let Some(id) = binding_id_cell.get() {
+                    let binding = &self.symbol_table.bindings[id];
+                    binding.ty.clone().ok_or_else(|| "Type of identifier not yet inferred".to_string())
+                } else {
+                    // BUG-05: Builtin identifiers have no binding_id (semantic resolver skips them).
+                    // Return their known types instead of panicking with "Unresolved identifier".
+                    match name.as_str() {
+                        "input" | "read_file" | "json_get_str" => Ok(TypeRef::Str),
+                        "print" | "print_str" | "write_file" | "json_free"
+                        | "list_push" | "list_free" => Ok(TypeRef::Void),
+                        "parse_int" | "json_parse" | "json_get_int"
+                        | "json_get_obj" | "list_get" | "list_len" => Ok(TypeRef::Int),
+                        "list_new" => Ok(TypeRef::Generic("List".to_string(), vec![TypeRef::Int])),
+                        _ => Err(format!("Unresolved identifier '{}'", name)),
+                    }
+                }
             }
             Expr::BinaryOp { left, op, right } => {
                 let left_ty = self.infer_expr(left, current_scope, None)?;
