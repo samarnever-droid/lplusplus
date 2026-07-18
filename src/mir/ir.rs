@@ -30,6 +30,7 @@ pub struct LocalDecl {
 pub enum Operand {
     Local(LocalId),
     Int(i64),
+    Float(f64),
     String(String),
     Bool(bool),
 }
@@ -65,6 +66,7 @@ impl std::fmt::Display for Operand {
         match self {
             Operand::Local(id) => write!(f, "_{}", id.0),
             Operand::Int(i) => write!(f, "{}", i),
+            Operand::Float(val) => write!(f, "{}", val),
             Operand::String(s) => write!(f, "\"{}\"", s),
             Operand::Bool(b) => write!(f, "{}", b),
         }

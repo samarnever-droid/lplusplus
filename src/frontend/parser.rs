@@ -301,6 +301,99 @@ impl Parser {
             return Ok(Stmt::While { condition, body });
         }
 
+        if self.match_token(&Token::For) {
+            let var_name = match self.advance() {
+                Some(Token::Ident(n)) => n.clone(),
+                _ => return Err("Expected identifier after 'for'".to_string()),
+            };
+            if !self.match_token(&Token::In) {
+                return Err("Expected 'in' after variable in 'for' loop".to_string());
+            }
+            let list_expr = self.parse_expr()?;
+            if !self.match_token(&Token::Colon) {
+                return Err("Expected ':' after for loop list expression".to_string());
+            }
+            if !self.match_token(&Token::Newline) {
+                return Err("Expected newline after ':' in 'for' loop".to_string());
+            }
+            self.skip_newlines();
+            if !self.match_token(&Token::Indent) {
+                return Err("Expected indentation for 'for' block".to_string());
+            }
+            let mut body = Vec::new();
+            while self.peek() != Some(&Token::Dedent) && self.peek().is_some() {
+                self.skip_newlines();
+                if self.peek() == Some(&Token::Dedent) {
+                    break;
+                }
+                body.push(self.parse_stmt()?);
+                self.skip_newlines();
+            }
+            self.match_token(&Token::Dedent);
+
+            let unique_id = self.pos;
+            let list_var = format!("__lpp_for_list_{}", unique_id);
+            let idx_var = format!("__lpp_for_idx_{}", unique_id);
+
+            let list_decl = Stmt::LetInferred {
+                name: list_var.clone(),
+                is_mut: false,
+                value: list_expr,
+                binding_id: std::cell::Cell::new(None),
+            };
+
+            let idx_decl = Stmt::LetInferred {
+                name: idx_var.clone(),
+                is_mut: true,
+                value: Expr::IntLiteral(0),
+                binding_id: std::cell::Cell::new(None),
+            };
+
+            let while_cond = Expr::BinaryOp {
+                left: Box::new(Expr::Identifier(idx_var.clone(), std::cell::Cell::new(None))),
+                op: BinaryOperator::Less,
+                right: Box::new(Expr::Call {
+                    callee: Box::new(Expr::Identifier("list_len".to_string(), std::cell::Cell::new(None))),
+                    args: vec![Expr::Identifier(list_var.clone(), std::cell::Cell::new(None))],
+                }),
+            };
+
+            let mut while_body = Vec::new();
+
+            let var_decl = Stmt::LetInferred {
+                name: var_name,
+                is_mut: true,
+                value: Expr::Call {
+                    callee: Box::new(Expr::Identifier("list_get".to_string(), std::cell::Cell::new(None))),
+                    args: vec![
+                        Expr::Identifier(list_var.clone(), std::cell::Cell::new(None)),
+                        Expr::Identifier(idx_var.clone(), std::cell::Cell::new(None)),
+                    ],
+                },
+                binding_id: std::cell::Cell::new(None),
+            };
+            while_body.push(var_decl);
+            while_body.extend(body);
+
+            let increment = Stmt::Assign {
+                name: idx_var.clone(),
+                value: Expr::BinaryOp {
+                    left: Box::new(Expr::Identifier(idx_var, std::cell::Cell::new(None))),
+                    op: BinaryOperator::Add,
+                    right: Box::new(Expr::IntLiteral(1)),
+                },
+                binding_id: std::cell::Cell::new(None),
+            };
+            while_body.push(increment);
+
+            let while_stmt = Stmt::While {
+                condition: while_cond,
+                body: while_body,
+            };
+
+            return Ok(Stmt::Block(vec![list_decl, idx_decl, while_stmt]));
+        }
+
         if self.match_token(&Token::Return) {
             if self.peek() == Some(&Token::Newline) || self.peek() == Some(&Token::Dedent) {
                 return Ok(Stmt::Return(None));
@@ -531,7 +624,9 @@ impl Parser {
         let t = self.advance().ok_or_else(|| "Unexpected EOF".to_string())?;
         match t {
             Token::Int(v) => Ok(Expr::IntLiteral(*v)),
+            Token::FloatLit(v) => Ok(Expr::FloatLiteral(*v)),
             Token::StringLit(s) => Ok(Expr::StringLiteral(s.clone())),
+            Token::BoolLit(b) => Ok(Expr::BoolLiteral(*b)),
             Token::Ident(n) => Ok(Expr::Identifier(n.clone(), std::cell::Cell::new(None))),
             Token::LParen => {
                 let expr = self.parse_expr()?;

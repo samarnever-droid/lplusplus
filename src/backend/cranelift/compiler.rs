@@ -10,48 +10,16 @@ use super::lower::FunctionLower;
 use super::types::type_to_cl;
 use std::collections::HashMap;
 
-// ── Runtime ABI descriptions ─────────────────────────────────────────────────
-// Each entry: (symbol_name, &[param_cl_types], return_cl_type_or_None_for_void)
-type BuiltinDesc = (&'static str, &'static [u8], Option<u8>);
-
-/// 0 = I64, 1 = I8, 2 = I32  (encoded as u8 to avoid lifetime issues)
-const I64: u8 = 0;
-#[allow(dead_code)]
-const I8:  u8 = 1;
 
 fn decode_ty(tag: u8) -> cranelift_codegen::ir::Type {
-    match tag { 0 => cl_types::I64, 1 => cl_types::I8, 2 => cl_types::I32, _ => cl_types::I64 }
+    match tag { 
+        0 => cl_types::I64, 
+        1 => cl_types::I8, 
+        2 => cl_types::I32, 
+        3 => cl_types::F64,
+        _ => cl_types::I64 
+    }
 }
-
-static BUILTINS: &[BuiltinDesc] = &[
-    ("lpp_print_int",  &[I64],       None),
-    ("lpp_print_str",  &[I64],       None),   // ptr: I64
-    ("lpp_input",      &[],          Some(I64)),
-    ("lpp_free_str",   &[I64],       None),
-    ("lpp_arc_retain", &[I64],       None),
-    ("lpp_arc_release",&[I64],       None),
-    ("lpp_alloc",      &[I64],       Some(I64)),
-    ("lpp_free",       &[I64, I64],  None),
-    ("lpp_list_new",   &[],          Some(I64)),
-    ("lpp_list_push",  &[I64, I64],  None),
-    ("lpp_list_get",   &[I64, I64],  Some(I64)),
-    ("lpp_list_len",   &[I64],       Some(I64)),
-    ("lpp_list_free",  &[I64],       None),
-    ("lpp_net_connect",&[I64, I64],  Some(I64)),
-    ("lpp_net_listen", &[I64],       Some(I64)),
-    ("lpp_net_accept", &[I64],       Some(I64)),
-    ("lpp_net_send",   &[I64, I64],  Some(I64)),
-    ("lpp_net_recv",   &[I64, I64],  Some(I64)),
-    ("lpp_net_close",  &[I64],       None),
-    ("lpp_read_file",  &[I64],       Some(I64)),
-    ("lpp_write_file", &[I64, I64],  None),
-    ("lpp_parse_int",  &[I64],       Some(I64)),
-    ("lpp_json_parse",   &[I64],      Some(I64)),
-    ("lpp_json_get_int", &[I64, I64], Some(I64)),
-    ("lpp_json_get_str", &[I64, I64], Some(I64)),
-    ("lpp_json_get_obj", &[I64, I64], Some(I64)),
-    ("lpp_json_free",    &[I64],      None),
-];
 
 // ── AotCompiler ──────────────────────────────────────────────────────────────
 
@@ -94,18 +62,24 @@ impl AotCompiler {
 
     /// Declare all L++ runtime symbols as external imports.
     pub fn declare_builtins(&mut self) -> Result<(), String> {
-        for (sym, params, ret) in BUILTINS {
+        for builtin in crate::builtins::get_builtins() {
+            if builtin.symbol.is_empty() {
+                continue;
+            }
+            if self.builtin_ids.contains_key(builtin.symbol) {
+                continue;
+            }
             let mut sig = self.module.make_signature();
-            for &p in *params {
+            for &p in builtin.cl_params {
                 sig.params.push(AbiParam::new(decode_ty(p)));
             }
-            if let Some(r) = ret {
-                sig.returns.push(AbiParam::new(decode_ty(*r)));
+            if let Some(r) = builtin.cl_return {
+                sig.returns.push(AbiParam::new(decode_ty(r)));
             }
             let id = self.module
-                .declare_function(sym, Linkage::Import, &sig)
-                .map_err(|e| format!("declare builtin '{}': {:?}", sym, e))?;
-            self.builtin_ids.insert(sym.to_string(), id);
+                .declare_function(builtin.symbol, Linkage::Import, &sig)
+                .map_err(|e| format!("declare builtin '{}': {:?}", builtin.symbol, e))?;
+            self.builtin_ids.insert(builtin.symbol.to_string(), id);
         }
         Ok(())
     }

@@ -1,6 +1,7 @@
 #[derive(Debug, Clone, PartialEq)]
 pub enum Type {
     Int,
+    Float,
     String,
     Void,
     Custom(String),
@@ -25,7 +26,9 @@ pub enum BinaryOperator {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     IntLiteral(i64),
+    FloatLiteral(f64),
     StringLiteral(String),
+    BoolLiteral(bool),
     Identifier(String, std::cell::Cell<Option<usize>>),
     BinaryOp {
         left: Box<Expr>,
@@ -80,6 +83,7 @@ pub enum Stmt {
         condition: Expr,
         body: Vec<Stmt>,
     },
+    Block(Vec<Stmt>),
 }
 
 #[derive(Debug, Clone, PartialEq)]

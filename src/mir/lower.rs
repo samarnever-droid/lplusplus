@@ -7,20 +7,30 @@ use std::collections::HashMap;
 
 pub struct MirLowerCtx<'a> {
     pub symbol_table: &'a SymbolTable,
-    pub type_table: &'a TypeTable,
+    pub type_table: &'a mut TypeTable,
     pub functions: HashMap<String, FuncId>,
     pub func_return_types: HashMap<String, TypeRef>,
     pub next_func_id: usize,
+
+    // Closure compilation context
+    pub lifted_functions: HashMap<FuncId, MirFunction>,
+    pub closure_scope_idx: usize,
+    pub current_env_ptr: Option<LocalId>,
+    pub current_captures: Vec<BindingId>,
 }
 
 impl<'a> MirLowerCtx<'a> {
-    pub fn new(symbol_table: &'a SymbolTable, type_table: &'a TypeTable) -> Self {
+    pub fn new(symbol_table: &'a SymbolTable, type_table: &'a mut TypeTable) -> Self {
         Self {
             symbol_table,
             type_table,
             functions: HashMap::new(),
             func_return_types: HashMap::new(),
             next_func_id: 0,
+            lifted_functions: HashMap::new(),
+            closure_scope_idx: 0,
+            current_env_ptr: None,
+            current_captures: Vec::new(),
         }
     }
 
@@ -37,6 +47,7 @@ impl<'a> MirLowerCtx<'a> {
     fn resolve_type(&self, ty: &Type) -> TypeRef {
         match ty {
             Type::Int => TypeRef::Int,
+            Type::Float => TypeRef::Float,
             Type::String => TypeRef::Str,
             Type::Void => TypeRef::Void,
             Type::Custom(name) => self
@@ -60,7 +71,9 @@ impl<'a> MirLowerCtx<'a> {
     ) -> TypeRef {
         match expr {
             Expr::IntLiteral(_) => TypeRef::Int,
+            Expr::FloatLiteral(_) => TypeRef::Float,
             Expr::StringLiteral(_) => TypeRef::Str,
+            Expr::BoolLiteral(_) => TypeRef::Bool,
             Expr::Identifier(_, cell) => {
                 if let Some(ast_id) = cell.get() {
                     if let Some(local_id) = binding_map.get(&BindingId(ast_id)) {
@@ -88,18 +101,27 @@ impl<'a> MirLowerCtx<'a> {
                     if let Some(&struct_id) = self.type_table.structs_by_name.get(name) {
                         return TypeRef::Custom(struct_id);
                     }
+                    if let Some(builtin) = crate::builtins::get_builtins().iter().find(|b| b.name == name) {
+                        // list_new is special-cased because of generic parameter type inference
+                        if name != "list_new" {
+                            return builtin.return_type.clone();
+                        }
+                    }
                     return match name.as_str() {
                         "input" | "read_file" | "json_get_str" | "net_recv" => TypeRef::Str,
                         "parse_int" | "json_parse" | "json_get_int" | "json_get_obj" | "list_get" | "list_len"
                         | "net_connect" | "net_listen" | "net_accept" | "net_send" => TypeRef::Int,
                         "list_new" => TypeRef::Generic("List".to_string(), vec![TypeRef::Int]),
-                        "net_close" => TypeRef::Void,
-                        _ => TypeRef::Void,
+                        "print" | "print_str" | "json_free" | "list_push" | "list_free" | "net_close" => TypeRef::Void,
+                        _ => TypeRef::Int,
                     };
                 }
                 TypeRef::Int
             }
-            Expr::BinaryOp { .. } => TypeRef::Int,
+            Expr::BinaryOp { left, .. } => {
+                let left_ty = self.expr_type_hint(left, builder, binding_map);
+                left_ty
+            }
             Expr::Closure { .. } => TypeRef::Function,
             Expr::Spawn { .. } => TypeRef::Void,
         }
@@ -130,6 +152,10 @@ impl<'a> MirLowerCtx<'a> {
         for function in ast_functions {
             let mir_fn = self.lower_function(function)?;
             mir_functions.insert(mir_fn.id, mir_fn);
+        }
+
+        for (id, func) in self.lifted_functions.drain() {
+            mir_functions.insert(id, func);
         }
 
         Ok(MirProgram { functions: mir_functions })
@@ -211,12 +237,22 @@ impl<'a> MirLowerCtx<'a> {
                     .get()
                     .ok_or_else(|| "Missing binding id while lowering assignment".to_string())?;
                 let binding_id = BindingId(ast_id);
-                let local_id = *binding_map
-                    .get(&binding_id)
-                    .ok_or_else(|| format!("Missing MIR local for binding {}", ast_id))?;
-
                 let operand = self.lower_expr(builder, value, binding_map)?;
-                builder.push_instr(MirInstr::Assign(local_id, Rvalue::Use(operand)))?;
+                if let Some(local_id) = binding_map.get(&binding_id) {
+                    builder.push_instr(MirInstr::Assign(*local_id, Rvalue::Use(operand)))?;
+                } else if let Some(env_ptr) = self.current_env_ptr {
+                    if let Some(idx) = self.current_captures.iter().position(|&cid| cid == binding_id) {
+                        builder.push_instr(MirInstr::AssignField {
+                            base: env_ptr,
+                            field: format!("cap_{}", idx),
+                            value: operand,
+                        })?;
+                    } else {
+                        return Err(format!("Missing MIR local or capture for binding {}", ast_id));
+                    }
+                } else {
+                    return Err(format!("Missing MIR local for binding {}", ast_id));
+                }
             }
             Stmt::AssignField { base, field, value } => {
                 let base_op = self.lower_expr(builder, base, binding_map)?;
@@ -308,6 +344,11 @@ impl<'a> MirLowerCtx<'a> {
 
                 builder.switch_to_block(end_block_id);
             }
+            Stmt::Block(stmts) => {
+                for stmt in stmts {
+                    self.lower_stmt(builder, stmt, binding_map)?;
+                }
+            }
         }
         Ok(())
     }
@@ -320,23 +361,49 @@ impl<'a> MirLowerCtx<'a> {
     ) -> Result<Operand, String> {
         match expr {
             Expr::IntLiteral(value) => Ok(Operand::Int(*value)),
+            Expr::FloatLiteral(value) => Ok(Operand::Float(*value)),
             Expr::StringLiteral(value) => Ok(Operand::String(value.clone())),
+            Expr::BoolLiteral(value) => Ok(Operand::Bool(*value)),
             Expr::Identifier(name, cell) => {
                 let ast_id = cell
                     .get()
                     .ok_or_else(|| format!("Missing binding id for identifier '{}'", name))?;
-                let local_id = *binding_map.get(&BindingId(ast_id)).ok_or_else(|| {
-                    format!(
+                let binding_id = BindingId(ast_id);
+                if let Some(local_id) = binding_map.get(&binding_id) {
+                    Ok(Operand::Local(*local_id))
+                } else if let Some(env_ptr) = self.current_env_ptr {
+                    if let Some(idx) = self.current_captures.iter().position(|&cid| cid == binding_id) {
+                        let cap_ty = self.symbol_table.bindings[binding_id.0].ty.clone().unwrap_or(TypeRef::Int);
+                        let temp = builder.new_local(cap_ty, false, Some(format!("cap_val_{}", name)), None);
+                        builder.push_instr(MirInstr::Assign(
+                            temp,
+                            Rvalue::FieldAccess(Operand::Local(env_ptr), format!("cap_{}", idx)),
+                        ))?;
+                        Ok(Operand::Local(temp))
+                    } else {
+                        Err(format!(
+                            "Identifier '{}' (binding {}) was not mapped in locals or captures of '{}'",
+                            name, ast_id, builder.function.name
+                        ))
+                    }
+                } else {
+                    Err(format!(
                         "Identifier '{}' (binding {}) was not mapped into MIR locals for '{}'",
                         name, ast_id, builder.function.name
-                    )
-                })?;
-                Ok(Operand::Local(local_id))
+                    ))
+                }
             }
             Expr::BinaryOp { left, op, right } => {
+                let left_ty = self.expr_type_hint(left, builder, binding_map);
                 let left = self.lower_expr(builder, left, binding_map)?;
                 let right = self.lower_expr(builder, right, binding_map)?;
-                let temp = builder.new_local(TypeRef::Int, false, None, None);
+                let res_ty = match op {
+                    BinaryOperator::Eq | BinaryOperator::NotEq |
+                    BinaryOperator::Less | BinaryOperator::LessEq |
+                    BinaryOperator::Greater | BinaryOperator::GreaterEq => TypeRef::Bool,
+                    _ => left_ty,
+                };
+                let temp = builder.new_local(res_ty, false, None, None);
                 builder.push_instr(MirInstr::Assign(
                     temp,
                     Rvalue::BinaryOp(op.clone(), left, right),
@@ -355,9 +422,16 @@ impl<'a> MirLowerCtx<'a> {
                         return_type = ty.clone();
                     } else if let Some(&struct_id) = self.type_table.structs_by_name.get(name) {
                         return_type = TypeRef::Custom(struct_id);
+                    } else if let Some(builtin) = crate::builtins::get_builtins().iter().find(|b| b.name == name) {
+                        if name != "list_new" {
+                            return_type = builtin.return_type.clone();
+                        } else {
+                            // list_new is special-cased because of generic list type inference
+                            return_type = TypeRef::Generic("List".to_string(), vec![TypeRef::Int]);
+                        }
                     } else {
                         return_type = match name.as_str() {
-                            "input" | "read_file" | "json_get_str" => TypeRef::Str,
+                            "input" | "read_file" | "json_get_str" | "net_recv" => TypeRef::Str,
                             "parse_int"
                             | "json_parse"
                             | "json_get_int"
@@ -368,11 +442,13 @@ impl<'a> MirLowerCtx<'a> {
                             | "net_listen"
                             | "net_accept"
                             | "net_send" => TypeRef::Int,
-                            "net_recv" => TypeRef::Str,
                             "list_new" => TypeRef::Generic("List".to_string(), vec![TypeRef::Int]),
-                            _ => TypeRef::Void,
+                            "print" | "print_str" | "json_free" | "list_push" | "list_free" | "net_close" => TypeRef::Void,
+                            _ => TypeRef::Int,
                         };
                     }
+                } else {
+                    return_type = TypeRef::Int;
                 }
 
                 let temp = builder.new_local(return_type, false, None, None);
@@ -394,51 +470,37 @@ impl<'a> MirLowerCtx<'a> {
                         return Ok(Operand::Local(temp));
                     }
 
-                    let builtin_symbol = match name.as_str() {
-                        "print" => {
-                            let is_string = match lowered_args.first() {
-                                Some(Operand::String(_)) => true,
-                                Some(Operand::Local(local_id)) => {
-                                    builder.function.locals[local_id.0].ty == TypeRef::Str
-                                }
-                                _ => false,
-                            };
-                            Some(if is_string {
-                                "lpp_print_str"
-                            } else {
-                                "lpp_print_int"
-                            })
-                        }
-                        "print_str" => Some("lpp_print_str"),
-                        "input" => Some("lpp_input"),
-                        "read_file" => Some("lpp_read_file"),
-                        "write_file" => Some("lpp_write_file"),
-                        "parse_int" => Some("lpp_parse_int"),
-                        "json_parse" => Some("lpp_json_parse"),
-                        "json_get_int" => Some("lpp_json_get_int"),
-                        "json_get_str" => Some("lpp_json_get_str"),
-                        "json_get_obj" => Some("lpp_json_get_obj"),
-                        "json_free" => Some("lpp_json_free"),
-                        "list_new" => Some("lpp_list_new"),
-                        "list_push" => Some("lpp_list_push"),
-                        "list_get" => Some("lpp_list_get"),
-                        "list_len" => Some("lpp_list_len"),
-                        "list_free" => Some("lpp_list_free"),
-                        "net_connect" => Some("lpp_net_connect"),
-                        "net_listen" => Some("lpp_net_listen"),
-                        "net_accept" => Some("lpp_net_accept"),
-                        "net_send" => Some("lpp_net_send"),
-                        "net_recv" => Some("lpp_net_recv"),
-                        "net_close" => Some("lpp_net_close"),
-                        _ => None,
+                    let builtin_symbol = if name == "print" {
+                        let (is_string, is_float) = match lowered_args.first() {
+                            Some(Operand::String(_)) => (true, false),
+                            Some(Operand::Float(_)) => (false, true),
+                            Some(Operand::Local(local_id)) => {
+                                let ty = &builder.function.locals[local_id.0].ty;
+                                (*ty == TypeRef::Str, *ty == TypeRef::Float)
+                            }
+                            _ => (false, false),
+                        };
+                        Some(if is_string {
+                            "lpp_print_str"
+                        } else if is_float {
+                            "lpp_print_float"
+                        } else {
+                            "lpp_print_int"
+                        }.to_string())
+                    } else {
+                        crate::builtins::get_builtins().iter()
+                            .find(|b| b.name == name)
+                            .map(|b| b.symbol.to_string())
                     };
 
                     if let Some(symbol) = builtin_symbol {
-                        builder.push_instr(MirInstr::Assign(
-                            temp,
-                            Rvalue::BuiltinCall(symbol.to_string(), lowered_args),
-                        ))?;
-                        return Ok(Operand::Local(temp));
+                        if !symbol.is_empty() {
+                            builder.push_instr(MirInstr::Assign(
+                                temp,
+                                Rvalue::BuiltinCall(symbol, lowered_args),
+                            ))?;
+                            return Ok(Operand::Local(temp));
+                        }
                     }
                 }
 
@@ -491,7 +553,152 @@ impl<'a> MirLowerCtx<'a> {
                 Ok(Operand::Local(temp))
             }
             Expr::Spawn { closure } => self.lower_expr(builder, closure, binding_map),
-            Expr::Closure { .. } => Ok(Operand::Int(0)),
+            Expr::Closure { params, return_type: opt_return_type, body } => {
+                let closure_scope = {
+                    let mut scope = None;
+                    for i in self.closure_scope_idx..self.symbol_table.scopes.len() {
+                        if let ScopeKind::Closure { .. } = self.symbol_table.scopes[i].kind {
+                            scope = Some(self.symbol_table.scopes[i].id);
+                            self.closure_scope_idx = i + 1;
+                            break;
+                        }
+                    }
+                    scope.ok_or_else(|| "Closure scope not found".to_string())?
+                };
+
+                let captures = match &self.symbol_table.scopes[closure_scope.0].kind {
+                    ScopeKind::Closure { captures } => captures.clone(),
+                    _ => Vec::new(),
+                };
+
+                // Register environment struct
+                let env_struct_name = format!("__lpp_closure_env_{}", closure_scope.0);
+                let env_struct_id = self.type_table.register_struct(env_struct_name);
+                
+                let mut fields = Vec::new();
+                for (i, &cap_id) in captures.iter().enumerate() {
+                    let binding = &self.symbol_table.bindings[cap_id.0];
+                    let ty = binding.ty.as_ref().cloned().unwrap_or(TypeRef::Int);
+                    fields.push((format!("cap_{}", i), ty));
+                }
+                self.type_table.definitions[env_struct_id.0].fields = fields;
+
+                // Allocate environment struct at definition site
+                let env_local = builder.new_local(
+                    TypeRef::Custom(env_struct_id),
+                    false,
+                    Some("__env_alloc".to_string()),
+                    None,
+                );
+                builder.push_instr(MirInstr::Assign(
+                    env_local,
+                    Rvalue::AllocateStruct(TypeRef::Custom(env_struct_id)),
+                ))?;
+
+                // Populate captures
+                for (i, &cap_id) in captures.iter().enumerate() {
+                    let binding = &self.symbol_table.bindings[cap_id.0];
+                    let val_op = self.lower_expr(
+                        builder,
+                        &Expr::Identifier(binding.name.clone(), std::cell::Cell::new(Some(cap_id.0))),
+                        binding_map,
+                    )?;
+                    builder.push_instr(MirInstr::AssignField {
+                        base: env_local,
+                        field: format!("cap_{}", i),
+                        value: val_op,
+                    })?;
+                }
+
+                // Allocate func ID for lifted closure function
+                let closure_func_id = FuncId(self.next_func_id);
+                self.next_func_id += 1;
+                let closure_name = format!("__lpp_closure_fn_{}", closure_func_id.0);
+
+                // Lower closure function
+                let return_type = if let Some(t) = opt_return_type {
+                    self.resolve_type(t)
+                } else {
+                    let mut inferred_rt = TypeRef::Void;
+                    for stmt in body {
+                        if let Stmt::Return(Some(expr)) = stmt {
+                            // Best-effort typehint:
+                            if let Ok(ty) = self.lower_expr(builder, expr, binding_map) {
+                                if let Operand::Local(lid) = ty {
+                                    inferred_rt = builder.function.locals[lid.0].ty.clone();
+                                }
+                            }
+                            break;
+                        }
+                    }
+                    inferred_rt
+                };
+
+                let mut closure_builder = MirBuilder::new(closure_func_id, closure_name.clone(), return_type);
+                let mut closure_binding_map = HashMap::new();
+
+                let env_ptr_local = closure_builder.new_local(
+                    TypeRef::Custom(env_struct_id),
+                    false,
+                    Some("__env".to_string()),
+                    None,
+                );
+                closure_builder.function.params.push(env_ptr_local);
+
+                for param in params {
+                    let param_binding_id = self.symbol_table.scopes[closure_scope.0].bindings.get(&param.name).copied();
+                    let ty = if let Some(ref t) = param.ty {
+                        self.resolve_type(t)
+                    } else if let Some(bid) = param_binding_id {
+                        self.symbol_table.bindings[bid.0].ty.clone().unwrap_or(TypeRef::Int)
+                    } else {
+                        TypeRef::Int
+                    };
+                    let local = closure_builder.new_local(ty, false, Some(param.name.clone()), param_binding_id);
+                    closure_builder.function.params.push(local);
+                    if let Some(bid) = param_binding_id {
+                        closure_binding_map.insert(bid, local);
+                    }
+                }
+
+                // Set closure lowering context
+                let saved_env_ptr = self.current_env_ptr;
+                let saved_captures = std::mem::take(&mut self.current_captures);
+                
+                self.current_env_ptr = Some(env_ptr_local);
+                self.current_captures = captures;
+
+                for stmt in body {
+                    self.lower_stmt(&mut closure_builder, stmt, &mut closure_binding_map)?;
+                }
+
+                if let Ok(current_block) = closure_builder.current_block() {
+                    if current_block.0 < closure_builder.function.blocks.len() {
+                        closure_builder.set_terminator(current_block, Terminator::Return(None))?;
+                    }
+                }
+
+                let mir_fn = closure_builder.finish();
+                self.lifted_functions.insert(closure_func_id, mir_fn);
+
+                // Restore context
+                self.current_env_ptr = saved_env_ptr;
+                self.current_captures = saved_captures;
+
+                // Return closure fat pointer
+                let closure_local = builder.new_local(
+                    TypeRef::Function,
+                    false,
+                    Some("__closure".to_string()),
+                    None,
+                );
+                builder.push_instr(MirInstr::Assign(
+                    closure_local,
+                    Rvalue::MakeClosure(closure_func_id, vec![Operand::Local(env_local)]),
+                ))?;
+
+                Ok(Operand::Local(closure_local))
+            }
         }
     }
 }

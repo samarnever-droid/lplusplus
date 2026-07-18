@@ -3,7 +3,7 @@ use crate::ast::BinaryOperator;
 use crate::mir::ir::*;
 use crate::typecheck::{TypeRef, TypeTable};
 use cranelift_codegen::entity::EntityRef;
-use cranelift_codegen::ir::condcodes::IntCC;
+use cranelift_codegen::ir::condcodes::{IntCC, FloatCC};
 use cranelift_codegen::ir::types as cl_types;
 use cranelift_codegen::ir::{AbiParam, InstBuilder, Value};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
@@ -115,6 +115,7 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                 Ok(builder.use_var(variable))
             }
             Operand::Int(value) => Ok(builder.ins().iconst(cl_types::I64, *value)),
+            Operand::Float(value) => Ok(builder.ins().f64const(*value)),
             Operand::Bool(value) => Ok(builder.ins().iconst(cl_types::I8, if *value { 1 } else { 0 })),
             Operand::String(value) => {
                 let symbol_name = format!("str_lit_{}_{}", self.fn_name, self.next_str_idx);
@@ -149,7 +150,7 @@ impl<'a, M: Module> FunctionLower<'a, M> {
     ) -> Result<(), String> {
         match instr {
             MirInstr::Assign(dest, rvalue) => {
-                let value = self.lower_rvalue_inner(builder, rvalue, local_vars, locals)?;
+                let value = self.lower_rvalue_inner(builder, rvalue, local_vars, locals, Some(&locals[dest.0].ty))?;
                 let variable = *local_vars
                     .get(dest)
                     .ok_or_else(|| format!("Missing Cranelift variable for destination local {:?}", dest))?;
@@ -196,41 +197,58 @@ impl<'a, M: Module> FunctionLower<'a, M> {
         rvalue: &Rvalue,
         local_vars: &HashMap<LocalId, Variable>,
         locals: &[LocalDecl],
+        dest_ty: Option<&TypeRef>,
     ) -> Result<Value, String> {
         match rvalue {
             Rvalue::Use(op) => self.operand_to_value(builder, op, local_vars),
             Rvalue::BinaryOp(op, left, right) => {
                 let left = self.operand_to_value(builder, left, local_vars)?;
                 let right = self.operand_to_value(builder, right, local_vars)?;
+                let is_float = builder.func.dfg.value_type(left) == cl_types::F64;
                 Ok(match op {
-                    BinaryOperator::Add => builder.ins().iadd(left, right),
-                    BinaryOperator::Subtract => builder.ins().isub(left, right),
-                    BinaryOperator::Multiply => builder.ins().imul(left, right),
-                    BinaryOperator::Divide => builder.ins().sdiv(left, right),
-                    BinaryOperator::Modulo => builder.ins().srem(left, right),
+                    BinaryOperator::Add => {
+                        if is_float { builder.ins().fadd(left, right) }
+                        else { builder.ins().iadd(left, right) }
+                    }
+                    BinaryOperator::Subtract => {
+                        if is_float { builder.ins().fsub(left, right) }
+                        else { builder.ins().isub(left, right) }
+                    }
+                    BinaryOperator::Multiply => {
+                        if is_float { builder.ins().fmul(left, right) }
+                        else { builder.ins().imul(left, right) }
+                    }
+                    BinaryOperator::Divide => {
+                        if is_float { builder.ins().fdiv(left, right) }
+                        else { builder.ins().sdiv(left, right) }
+                    }
+                    BinaryOperator::Modulo => {
+                        if is_float { builder.ins().fsub(left, right) }
+                        else { builder.ins().srem(left, right) }
+                    }
                     BinaryOperator::Eq => {
-                        let result = builder.ins().icmp(IntCC::Equal, left, right);
-                        builder.ins().uextend(cl_types::I64, result)
+                        if is_float { builder.ins().fcmp(FloatCC::Equal, left, right) }
+                        else { builder.ins().icmp(IntCC::Equal, left, right) }
                     }
                     BinaryOperator::NotEq => {
-                        let result = builder.ins().icmp(IntCC::NotEqual, left, right);
-                        builder.ins().uextend(cl_types::I64, result)
+                        if is_float { builder.ins().fcmp(FloatCC::NotEqual, left, right) }
+                        else { builder.ins().icmp(IntCC::NotEqual, left, right) }
                     }
                     BinaryOperator::Less => {
-                        let result = builder.ins().icmp(IntCC::SignedLessThan, left, right);
-                        builder.ins().uextend(cl_types::I64, result)
+                        if is_float { builder.ins().fcmp(FloatCC::LessThan, left, right) }
+                        else { builder.ins().icmp(IntCC::SignedLessThan, left, right) }
                     }
                     BinaryOperator::Greater => {
-                        let result = builder.ins().icmp(IntCC::SignedGreaterThan, left, right);
-                        builder.ins().uextend(cl_types::I64, result)
+                        if is_float { builder.ins().fcmp(FloatCC::GreaterThan, left, right) }
+                        else { builder.ins().icmp(IntCC::SignedGreaterThan, left, right) }
                     }
                     BinaryOperator::LessEq => {
-                        let result = builder.ins().icmp(IntCC::SignedLessThanOrEqual, left, right);
-                        builder.ins().uextend(cl_types::I64, result)
+                        if is_float { builder.ins().fcmp(FloatCC::LessThanOrEqual, left, right) }
+                        else { builder.ins().icmp(IntCC::SignedLessThanOrEqual, left, right) }
                     }
                     BinaryOperator::GreaterEq => {
-                        let result = builder.ins().icmp(IntCC::SignedGreaterThanOrEqual, left, right);
-                        builder.ins().uextend(cl_types::I64, result)
+                        if is_float { builder.ins().fcmp(FloatCC::GreaterThanOrEqual, left, right) }
+                        else { builder.ins().icmp(IntCC::SignedGreaterThanOrEqual, left, right) }
                     }
                 })
             }
@@ -325,9 +343,92 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                     ))
                 }
             }
-            Rvalue::CallIndirect(_, _)
-            | Rvalue::MakeClosure(_, _)
-            | Rvalue::FieldAccess(_, _)
+            Rvalue::MakeClosure(mir_func_id, args) => {
+                let size_val = builder.ins().iconst(cl_types::I64, 16);
+                let builtin_id = *self
+                    .builtin_ids
+                    .get("lpp_alloc")
+                    .ok_or_else(|| "Builtin 'lpp_alloc' was not declared".to_string())?;
+                let alloc_func_ref = self.module.declare_func_in_func(builtin_id, builder.func);
+                let call = builder.ins().call(alloc_func_ref, &[size_val]);
+                let closure_ptr = builder.inst_results(call)[0];
+
+                let cl_id = *self.func_ids.get(mir_func_id).ok_or_else(|| {
+                    format!("Missing direct-call target for MIR function id {:?}", mir_func_id)
+                })?;
+                let func_ref = self.module.declare_func_in_func(cl_id, builder.func);
+                let pointer_type = self.module.target_config().pointer_type();
+                let func_addr = builder.ins().func_addr(pointer_type, func_ref);
+
+                builder.ins().store(
+                    cranelift_codegen::ir::MemFlags::new(),
+                    func_addr,
+                    closure_ptr,
+                    0,
+                );
+
+                let env_val = self.operand_to_value(builder, &args[0], local_vars)?;
+
+                builder.ins().store(
+                    cranelift_codegen::ir::MemFlags::new(),
+                    env_val,
+                    closure_ptr,
+                    8,
+                );
+
+                Ok(closure_ptr)
+            }
+            Rvalue::CallIndirect(callee, args) => {
+                let closure_ptr = self.operand_to_value(builder, callee, local_vars)?;
+                let pointer_type = self.module.target_config().pointer_type();
+
+                let func_ptr = builder.ins().load(
+                    pointer_type,
+                    cranelift_codegen::ir::MemFlags::new(),
+                    closure_ptr,
+                    0,
+                );
+
+                let env_ptr = builder.ins().load(
+                    pointer_type,
+                    cranelift_codegen::ir::MemFlags::new(),
+                    closure_ptr,
+                    8,
+                );
+
+                let mut sig = self.module.make_signature();
+                sig.params.push(AbiParam::new(pointer_type));
+                for arg in args {
+                    let arg_ty = match arg {
+                        Operand::Local(id) => locals[id.0].ty.clone(),
+                        Operand::Int(_) => TypeRef::Int,
+                        Operand::Float(_) => TypeRef::Float,
+                        Operand::Bool(_) => TypeRef::Bool,
+                        Operand::String(_) => TypeRef::Str,
+                    };
+                    sig.params.push(AbiParam::new(super::types::type_to_cl(&arg_ty)));
+                }
+
+                let ret_ty = dest_ty.cloned().unwrap_or(TypeRef::Void);
+                if ret_ty != TypeRef::Void {
+                    sig.returns.push(AbiParam::new(super::types::type_to_cl(&ret_ty)));
+                }
+
+                let sig_ref = builder.import_signature(sig);
+                let mut call_args = vec![env_ptr];
+                for arg in args {
+                    call_args.push(self.operand_to_value(builder, arg, local_vars)?);
+                }
+
+                let call = builder.ins().call_indirect(sig_ref, func_ptr, &call_args);
+                let results = builder.inst_results(call);
+                Ok(if results.is_empty() {
+                    builder.ins().iconst(cl_types::I64, 0)
+                } else {
+                    results[0]
+                })
+            }
+            Rvalue::FieldAccess(_, _)
             | Rvalue::AllocateStruct(_) => Ok(builder.ins().iconst(cl_types::I64, 0)),
         }
     }

@@ -1,0 +1,37 @@
+struct Node:
+    value: Int
+    next: Node
+
+def rule1_returns_by_ref() -> Int:
+    escapes_by_return := 100
+    return escapes_by_return # RULE 1: Returns a local identifier directly
+
+def rule2_closure_capture() -> Void:
+    escapes_by_capture := 200
+    my_closure := fn(x) -> Void:
+        print(escapes_by_capture, x) # RULE 2: Captured by closure
+
+def rule5_arena() -> Void:
+    my_node := Node() # RULE 5: Type resolves to self-referential struct (Node)
+
+def pure_value() -> Int:
+    stays_on_stack := 300
+    return stays_on_stack + 1 # NO ESCAPE: Returns a computed scalar value
+
+struct Box:
+    inner: Node
+    scalar: Int
+
+def rule1_field_ref() -> Node:
+    box1 := Box()
+    return box1.inner # RULE 1: Returns reference type field. `box1` gets Arc.
+
+def rule1_field_scalar() -> Int:
+    box2 := Box()
+    return box2.scalar # NO ESCAPE: Returns scalar type field. `box2` stays Value.
+
+def rule4_concurrency() -> Void:
+    shared_var := 400
+    mut shared_mut := 500
+    spawn fn() -> Void:
+        print(shared_var, shared_mut) # RULE 4: shared_var is immutable scalar -> Value. shared_mut is mutable -> Arc.

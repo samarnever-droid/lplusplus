@@ -1,0 +1,7 @@
+def main():
+    print_str("Starting IO test...")
+    write_file("test.txt", "Hello from L++ IO")
+    
+    content := read_file("test.txt")
+    print_str("Read back:")
+    print_str(content)

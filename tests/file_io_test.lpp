@@ -1,0 +1,49 @@
+# file_io_test.lpp — Verify new File I/O features
+# Expected output:
+# exists before: 0
+# write success: 0
+# exists after write: 1
+# append success: 0
+# contents: Hello World!
+# delete success: 0
+# exists after delete: 0
+
+def main():
+    path := "test_file.txt"
+    
+    # 1. exists before
+    ex1 := file_exists(path)
+    if ex1:
+        print_str("exists before: 1")
+    else:
+        print_str("exists before: 0")
+        
+    # 2. write_file
+    w_res := write_file(path, "Hello ")
+    print(w_res) # Should print 0
+    
+    # 3. exists after write
+    ex2 := file_exists(path)
+    if ex2:
+        print_str("exists after write: 1")
+    else:
+        print_str("exists after write: 0")
+        
+    # 4. append_file
+    a_res := append_file(path, "World!")
+    print(a_res) # Should print 0
+    
+    # 5. read_file (verify contents)
+    content := read_file(path)
+    print_str(content)
+    
+    # 6. delete_file
+    d_res := delete_file(path)
+    print(d_res) # Should print 0
+    
+    # 7. exists after delete
+    ex3 := file_exists(path)
+    if ex3:
+        print_str("exists after delete: 1")
+    else:
+        print_str("exists after delete: 0")

@@ -5,6 +5,7 @@ use crate::typecheck::TypeRef;
 pub fn type_to_cl(ty: &TypeRef) -> cranelift_codegen::ir::Type {
     match ty {
         TypeRef::Int              => cl_types::I64,
+        TypeRef::Float            => cl_types::F64,
         TypeRef::Bool             => cl_types::I8,
         TypeRef::Str              => cl_types::I64, // pointer (MVP: null for now)
         TypeRef::Void             => cl_types::I64, // dummy; callers check != Void

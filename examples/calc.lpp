@@ -1,0 +1,50 @@
+def add(a: Int, b: Int) -> Int:
+    return a + b
+
+def subtract(a: Int, b: Int) -> Int:
+    return a - b
+
+def multiply(a: Int, b: Int) -> Int:
+    return a * b
+
+def divide(a: Int, b: Int) -> Int:
+    if b == 0:
+        print_str("Error: Division by zero!")
+        return 0
+    return a / b
+
+def main() -> Void:
+    print_str("=== Welcome to the L++ Calculator ===")
+    print_str("Operations: 1=Add, 2=Sub, 3=Mult, 4=Div, 0=Exit")
+
+    mut running := 1
+
+    while running == 1:
+        print_str("Enter operation code:")
+        op_str := input()
+        op := parse_int(op_str)
+
+        if op == 0:
+            print_str("Exiting calculator. Goodbye!")
+            running = 0
+        else:
+            if op > 0:
+                if op <= 4:
+                    print_str("Enter first number:")
+                    num1 := parse_int(input())
+
+                    print_str("Enter second number:")
+                    num2 := parse_int(input())
+
+                    if op == 1:
+                        print(add(num1, num2))
+                    if op == 2:
+                        print(subtract(num1, num2))
+                    if op == 3:
+                        print(multiply(num1, num2))
+                    if op == 4:
+                        print(divide(num1, num2))
+                else:
+                    print_str("Invalid operation code.")
+            else:
+                print_str("Invalid operation code.")

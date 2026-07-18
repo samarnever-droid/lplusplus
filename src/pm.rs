@@ -368,6 +368,7 @@ fn compile_source_to_object(source_path: &Path) -> Result<PathBuf, String> {
         .env("LPP_AOT", "1")
         .env("BENCHMARK", "1")
         .arg(source_path)
+        .stdin(std::process::Stdio::null())
         .status()
         .map_err(|e| format!("Failed to start compiler '{}': {}", compiler_path.display(), e))?;
 
@@ -383,7 +384,63 @@ fn compile_source_to_object(source_path: &Path) -> Result<PathBuf, String> {
     Ok(obj_file)
 }
 
+fn find_vcvars64() -> Option<PathBuf> {
+    let fallbacks = [
+        "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Auxiliary\\Build\\vcvars64.bat",
+        "C:\\Program Files\\Microsoft Visual Studio\\2022\\Professional\\VC\\Auxiliary\\Build\\vcvars64.bat",
+        "C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Auxiliary\\Build\\vcvars64.bat",
+        "C:\\Program Files\\Microsoft Visual Studio\\2019\\Community\\VC\\Auxiliary\\Build\\vcvars64.bat",
+        "C:\\Program Files\\Microsoft Visual Studio\\2019\\Professional\\VC\\Auxiliary\\Build\\vcvars64.bat",
+        "C:\\Program Files\\Microsoft Visual Studio\\2019\\Enterprise\\VC\\Auxiliary\\Build\\vcvars64.bat",
+    ];
+    for fallback in &fallbacks {
+        let p = Path::new(fallback);
+        if p.exists() {
+            return Some(p.to_path_buf());
+        }
+    }
+    None
+}
+
 fn link_native_binary(obj_file: &Path, output_path: &Path) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        if let Some(vcvars) = find_vcvars64() {
+            let runtime_src = resolve_runtime_source()
+                .ok_or_else(|| "Failed to locate lpp_runtime.c for native linking.".to_string())?;
+            let mut cmd = std::process::Command::new("cmd.exe");
+            cmd.stdin(std::process::Stdio::piped());
+            cmd.stdout(std::process::Stdio::null());
+            cmd.stderr(std::process::Stdio::null());
+            let mut child = cmd.spawn().map_err(|e| format!("Failed to spawn cmd.exe: {}", e))?;
+            {
+                use std::io::Write;
+                if let Some(mut stdin) = child.stdin.take() {
+                    let _ = writeln!(stdin, "call \"{}\" > nul", vcvars.display());
+                    let _ = writeln!(
+                        stdin,
+                        "cl.exe /nologo /O2 \"{}\" \"{}\" /Fe:\"{}\"",
+                        obj_file.display(),
+                        runtime_src.display(),
+                        output_path.display()
+                    );
+                    let _ = writeln!(stdin, "exit");
+                }
+            }
+            let status = child.wait().map_err(|e| format!("Failed to wait for cmd.exe: {}", e))?;
+            if status.success() {
+                // Delete temporary MSVC outputs generated in current dir
+                let obj_in_curr_dir = Path::new("lpp_runtime.obj");
+                if obj_in_curr_dir.exists() {
+                    let _ = fs::remove_file(obj_in_curr_dir);
+                }
+                return Ok(());
+            } else {
+                return Err(format!("cl.exe compilation/linking failed."));
+            }
+        }
+    }
+
     match detect_link_strategy()? {
         LinkStrategy::MsvcLink { runtime_obj } => {
             let status = std::process::Command::new("link.exe")
@@ -392,6 +449,7 @@ fn link_native_binary(obj_file: &Path, output_path: &Path) -> Result<(), String>
                 .arg(runtime_obj)
                 .arg(format!("/out:{}", output_path.display()))
                 .arg("/SUBSYSTEM:CONSOLE")
+                .stdin(std::process::Stdio::null())
                 .status()
                 .map_err(|e| format!("Failed to execute link.exe: {}", e))?;
             if status.success() {
@@ -424,6 +482,7 @@ fn link_native_binary(obj_file: &Path, output_path: &Path) -> Result<(), String>
             }
 
             let status = cmd
+                .stdin(std::process::Stdio::null())
                 .status()
                 .map_err(|e| format!("Failed to execute native compiler '{}': {}", compiler, e))?;
             if status.success() {

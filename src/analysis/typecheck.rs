@@ -8,6 +8,7 @@ pub struct StructTypeId(pub usize);
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TypeRef {
     Int,
+    Float,
     Str,
     Void,
     Bool,
@@ -86,6 +87,7 @@ impl<'a> TypeChecker<'a> {
     fn convert_ast_type(type_table: &TypeTable, ast_ty: &Type) -> TypeRef {
         match ast_ty {
             Type::Int => TypeRef::Int,
+            Type::Float => TypeRef::Float,
             Type::String => TypeRef::Str,
             Type::Void => TypeRef::Void,
             Type::Custom(name) => {
@@ -264,6 +266,11 @@ impl<'a> TypeChecker<'a> {
                     self.infer_stmt(stmt, body_scope)?;
                 }
             }
+            Stmt::Block(stmts) => {
+                for stmt in stmts {
+                    self.infer_stmt(stmt, current_scope)?;
+                }
+            }
             Stmt::Expr(expr) => {
                 self.infer_expr(expr, current_scope, None)?;
             }
@@ -287,7 +294,9 @@ impl<'a> TypeChecker<'a> {
     fn infer_expr(&mut self, expr: &Expr, current_scope: ScopeId, expected_ty: Option<TypeRef>) -> Result<TypeRef, String> {
         match expr {
             Expr::IntLiteral(_) => Ok(TypeRef::Int),
+            Expr::FloatLiteral(_) => Ok(TypeRef::Float),
             Expr::StringLiteral(_) => Ok(TypeRef::Str),
+            Expr::BoolLiteral(_) => Ok(TypeRef::Bool),
             Expr::Identifier(name, binding_id_cell) => {
                 if let Some(id) = binding_id_cell.get() {
                     let binding = &self.symbol_table.bindings[id];
@@ -357,200 +366,52 @@ impl<'a> TypeChecker<'a> {
                 }
                 
                 if let Expr::Identifier(name, _) = &**callee {
-                    if name == "print" {
-                        if args.is_empty() {
-                            return Err("print requires at least 1 argument".to_string());
+                    if let Some(builtin) = crate::builtins::get_builtins().iter().find(|b| b.name == name) {
+                        if builtin.params.len() != args.len() && !builtin.params.iter().any(|p| matches!(p, crate::builtins::ParamType::Any)) {
+                            return Err(format!("{} expects {} arguments, got {}", name, builtin.params.len(), args.len()));
                         }
-                        return Ok(TypeRef::Void);
-                    }
-                    if name == "print_str" {
-                        if args.len() != 1 {
-                            return Err(format!("print_str expects 1 argument, got {}", args.len()));
-                        }
-                        let arg_ty = arg_tys[0].clone();
-                        if arg_ty != TypeRef::Str {
-                            return Err(format!("print_str expects a String, got {:?}", arg_ty));
-                        }
-                        return Ok(TypeRef::Void);
-                    }
-                    if name == "write_file" {
-                        if args.len() != 2 {
-                            return Err(format!("write_file expects 2 arguments, got {}", args.len()));
-                        }
-                        let arg1_ty = arg_tys[0].clone();
-                        let arg2_ty = arg_tys[1].clone();
-                        if arg1_ty != TypeRef::Str || arg2_ty != TypeRef::Str {
-                            return Err(format!("write_file expects (String, String), got ({:?}, {:?})", arg1_ty, arg2_ty));
-                        }
-                        return Ok(TypeRef::Void);
-                    }
-                    if name == "input" {
-                        if !args.is_empty() {
-                            return Err(format!("input expects 0 arguments, got {}", args.len()));
-                        }
-                        return Ok(TypeRef::Str);
-                    }
-                    if name == "read_file" {
-                        if args.len() != 1 {
-                            return Err(format!("read_file expects 1 argument, got {}", args.len()));
-                        }
-                        let arg_ty = arg_tys[0].clone();
-                        if arg_ty != TypeRef::Str {
-                            return Err(format!("read_file expects a String, got {:?}", arg_ty));
-                        }
-                        return Ok(TypeRef::Str);
-                    }
-                    if name == "parse_int" {
-                        if args.len() != 1 {
-                            return Err(format!("parse_int expects 1 argument, got {}", args.len()));
-                        }
-                        let arg_ty = arg_tys[0].clone();
-                        if arg_ty != TypeRef::Str {
-                            return Err(format!("parse_int expects a String, got {:?}", arg_ty));
-                        }
-                        return Ok(TypeRef::Int);
-                    }
-                    if name == "json_parse" {
-                        if args.len() != 1 {
-                            return Err(format!("json_parse expects 1 argument, got {}", args.len()));
-                        }
-                        let arg_ty = arg_tys[0].clone();
-                        if arg_ty != TypeRef::Str {
-                            return Err(format!("json_parse expects a String, got {:?}", arg_ty));
-                        }
-                        return Ok(TypeRef::Int);
-                    }
-                    if name == "json_get_int" {
-                        if args.len() != 2 {
-                            return Err(format!("json_get_int expects 2 arguments, got {}", args.len()));
-                        }
-                        return Ok(TypeRef::Int);
-                    }
-                    if name == "json_get_str" {
-                        if args.len() != 2 {
-                            return Err(format!("json_get_str expects 2 arguments, got {}", args.len()));
-                        }
-                        return Ok(TypeRef::Str);
-                    }
-                    if name == "json_get_obj" {
-                        if args.len() != 2 {
-                            return Err(format!("json_get_obj expects 2 arguments, got {}", args.len()));
-                        }
-                        return Ok(TypeRef::Int);
-                    }
-                    if name == "json_free" {
-                        if args.len() != 1 {
-                            return Err(format!("json_free expects 1 argument, got {}", args.len()));
-                        }
-                        return Ok(TypeRef::Void);
-                    }
-                    if name == "list_new" {
-                        if args.len() != 0 {
-                            return Err(format!("list_new expects 0 arguments, got {}", args.len()));
-                        }
-                        if let Some(TypeRef::Generic(list_name, params)) = expected_ty {
-                            if list_name == "List" {
-                                return Ok(TypeRef::Generic("List".to_string(), params.clone()));
+                        
+                        for (i, param) in builtin.params.iter().enumerate() {
+                            match param {
+                                crate::builtins::ParamType::Specific(expected_ty) => {
+                                    let arg_ty = &arg_tys[i];
+                                    if expected_ty != arg_ty {
+                                        if let TypeRef::Generic(expected_name, _) = expected_ty {
+                                            if let TypeRef::Generic(arg_name, _) = arg_ty {
+                                                if expected_name == arg_name {
+                                                    continue;
+                                                }
+                                            }
+                                        }
+                                        return Err(format!("{} expects parameter {} to be {:?}, got {:?}", name, i + 1, expected_ty, arg_ty));
+                                    }
+                                }
+                                crate::builtins::ParamType::Any => {}
                             }
                         }
-                        return Ok(TypeRef::Generic("List".to_string(), vec![TypeRef::Int]));
-                    }
-                    if name == "list_push" {
-                        if args.len() != 2 {
-                            return Err(format!("list_push expects 2 arguments, got {}", args.len()));
-                        }
-                        let list_ty = arg_tys[0].clone();
-                        if !matches!(list_ty, TypeRef::Generic(ref name, _) if name == "List") {
-                            return Err(format!("list_push first argument must be a List, got {:?}", list_ty));
-                        }
-                        return Ok(TypeRef::Void);
-                    }
-                    if name == "list_get" {
-                        if args.len() != 2 {
-                            return Err(format!("list_get expects 2 arguments, got {}", args.len()));
-                        }
-                        let list_ty = arg_tys[0].clone();
-                        if let TypeRef::Generic(ref name, ref params) = list_ty {
-                            if name == "List" && !params.is_empty() {
-                                return Ok(params[0].clone());
+
+                        if name == "list_new" {
+                            if let Some(TypeRef::Generic(list_name, params)) = expected_ty {
+                                if list_name == "List" {
+                                    return Ok(TypeRef::Generic("List".to_string(), params.clone()));
+                                }
                             }
+                            return Ok(TypeRef::Generic("List".to_string(), vec![TypeRef::Int]));
                         }
-                        return Err(format!("list_get first argument must be a List, got {:?}", list_ty));
+
+                        if name == "list_get" || name == "lpp_list_get" {
+                            let list_ty = arg_tys[0].clone();
+                            if let TypeRef::Generic(ref name, ref params) = list_ty {
+                                if name == "List" && !params.is_empty() {
+                                    return Ok(params[0].clone());
+                                }
+                            }
+                            return Err(format!("list_get first argument must be a List, got {:?}", list_ty));
+                        }
+
+                        return Ok(builtin.return_type.clone());
                     }
-                    if name == "list_len" {
-                        if args.len() != 1 {
-                            return Err(format!("list_len expects 1 argument, got {}", args.len()));
-                        }
-                        let list_ty = arg_tys[0].clone();
-                        if !matches!(list_ty, TypeRef::Generic(ref name, _) if name == "List") {
-                            return Err(format!("list_len argument must be a List, got {:?}", list_ty));
-                        }
-                        return Ok(TypeRef::Int);
-                    }
-                    if name == "list_free" {
-                        if args.len() != 1 {
-                            return Err(format!("list_free expects 1 argument, got {}", args.len()));
-                        }
-                        let list_ty = arg_tys[0].clone();
-                        if !matches!(list_ty, TypeRef::Generic(ref name, _) if name == "List") {
-                            return Err(format!("list_free argument must be a List, got {:?}", list_ty));
-                        }
-                        return Ok(TypeRef::Void);
-                    }
-                    if name == "net_connect" {
-                        if args.len() != 2 {
-                            return Err(format!("net_connect expects 2 arguments, got {}", args.len()));
-                        }
-                        if arg_tys[0] != TypeRef::Str || arg_tys[1] != TypeRef::Int {
-                            return Err(format!("net_connect expects (String, Int), got ({:?}, {:?})", arg_tys[0], arg_tys[1]));
-                        }
-                        return Ok(TypeRef::Int);
-                    }
-                    if name == "net_listen" {
-                        if args.len() != 1 {
-                            return Err(format!("net_listen expects 1 argument, got {}", args.len()));
-                        }
-                        if arg_tys[0] != TypeRef::Int {
-                            return Err(format!("net_listen expects (Int), got ({:?})", arg_tys[0]));
-                        }
-                        return Ok(TypeRef::Int);
-                    }
-                    if name == "net_accept" {
-                        if args.len() != 1 {
-                            return Err(format!("net_accept expects 1 argument, got {}", args.len()));
-                        }
-                        if arg_tys[0] != TypeRef::Int {
-                            return Err(format!("net_accept expects (Int), got ({:?})", arg_tys[0]));
-                        }
-                        return Ok(TypeRef::Int);
-                    }
-                    if name == "net_send" {
-                        if args.len() != 2 {
-                            return Err(format!("net_send expects 2 arguments, got {}", args.len()));
-                        }
-                        if arg_tys[0] != TypeRef::Int || arg_tys[1] != TypeRef::Str {
-                            return Err(format!("net_send expects (Int, String), got ({:?}, {:?})", arg_tys[0], arg_tys[1]));
-                        }
-                        return Ok(TypeRef::Int);
-                    }
-                    if name == "net_recv" {
-                        if args.len() != 2 {
-                            return Err(format!("net_recv expects 2 arguments, got {}", args.len()));
-                        }
-                        if arg_tys[0] != TypeRef::Int || arg_tys[1] != TypeRef::Int {
-                            return Err(format!("net_recv expects (Int, Int), got ({:?}, {:?})", arg_tys[0], arg_tys[1]));
-                        }
-                        return Ok(TypeRef::Str);
-                    }
-                    if name == "net_close" {
-                        if args.len() != 1 {
-                            return Err(format!("net_close expects 1 argument, got {}", args.len()));
-                        }
-                        if arg_tys[0] != TypeRef::Int {
-                            return Err(format!("net_close expects (Int), got ({:?})", arg_tys[0]));
-                        }
-                        return Ok(TypeRef::Void);
-                    }
+
                     if let Some(&id) = self.type_table.structs_by_name.get(name) {
                         return Ok(TypeRef::Custom(id));
                     }
@@ -667,5 +528,29 @@ def main():
         type_checker
             .check_program(&ast)
             .expect("networking builtins should typecheck");
+    }
+
+    #[test]
+    fn boolean_literals_typecheck() {
+        let source = r#"
+def main():
+    mut b := true
+    b = false
+"#;
+
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.tokenize().expect("source should lex");
+        let mut parser = Parser::new(tokens);
+        let mut ast = parser.parse().expect("source should parse");
+
+        let mut resolver = Resolver::new();
+        resolver
+            .resolve_program(&mut ast)
+            .expect("boolean program should resolve");
+
+        let mut type_checker = TypeChecker::new(&mut resolver.table);
+        type_checker
+            .check_program(&ast)
+            .expect("boolean program should typecheck");
     }
 }

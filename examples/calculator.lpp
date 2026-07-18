@@ -1,0 +1,16 @@
+struct Node:
+    value: Int
+    next: Node
+
+def map(item: Int, callback: Custom) -> Int:
+    return callback(item)
+
+def main():
+    mut n := 10
+    n = map(n, fn(x) -> Int: x * 2)
+    
+    closure_block := fn(x) -> Int:
+        mut y := x * 2
+        return y + 1
+
+    print("Hello, World!")

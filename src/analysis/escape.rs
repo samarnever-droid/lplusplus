@@ -166,6 +166,11 @@ impl EscapeAnalyzer {
                     Self::walk_stmt_rule1(stmt, current_scope, symbol_table, type_table, closure_scopes, closure_idx, storage)?;
                 }
             }
+            Stmt::Block(stmts) => {
+                for stmt in stmts {
+                    Self::walk_stmt_rule1(stmt, current_scope, symbol_table, type_table, closure_scopes, closure_idx, storage)?;
+                }
+            }
             Stmt::Expr(expr) => {
                 Self::walk_expr_rule1(expr, current_scope, symbol_table, type_table, closure_scopes, closure_idx, storage)?;
             }

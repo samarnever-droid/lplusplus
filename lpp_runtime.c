@@ -23,6 +23,11 @@ void lpp_print_int(int64_t value) {
     fflush(stdout);
 }
 
+void lpp_print_float(double value) {
+    printf("%f\n", value);
+    fflush(stdout);
+}
+
 void lpp_print_str(const char *ptr) {
     if (ptr) { puts(ptr); fflush(stdout); }
 }
@@ -110,6 +115,34 @@ int64_t lpp_write_file(const char *path, const char *data) {
     return 0;
 }
 
+/* Append data to file. Returns 0 on success, -1 on error. */
+int64_t lpp_append_file(const char *path, const char *data) {
+    FILE *f = fopen(path, "ab");
+    if (!f) return -1;
+    size_t len = data ? strlen(data) : 0;
+    fwrite(data, 1, len, f);
+    fclose(f);
+    return 0;
+}
+
+/* Delete file. Returns 0 on success, -1 on error. */
+int64_t lpp_delete_file(const char *path) {
+    if (!path) return -1;
+    return remove(path) == 0 ? 0 : -1;
+}
+
+/* Check if file exists. Returns 1 if exists, 0 if not. */
+int8_t lpp_file_exists(const char *path) {
+    if (!path) return 0;
+    FILE *f = fopen(path, "rb");
+    if (f) {
+        fclose(f);
+        return 1;
+    }
+    return 0;
+}
+
+
 /* ── ARC (Automatic Reference Counting) ──────────────────────────────────── */
 /*
  * Layout: every ARC-managed object is preceded in memory by an LppArcHeader.
@@ -122,6 +155,7 @@ int64_t lpp_write_file(const char *path, const char *data) {
  */
 
 #if defined(_MSC_VER)
+#  define WIN32_LEAN_AND_MEAN
 #  include <windows.h>
    typedef volatile LONG lpp_atomic32_t;
 #  define LPP_ARC_LOAD(p)         ((int32_t)InterlockedAdd((p), 0))

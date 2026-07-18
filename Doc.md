@@ -198,7 +198,7 @@ Because L++ is an active prototype, only a subset of planned language features i
 
 ### Standard Library (Built-ins)
 L++ provides a growing set of built-in functions for common operations, which map directly to optimal C stdlib calls:
-- **Console I/O**: `print(value)` (prints strings or integers via automatic format selection), `print_str("string")`, `input()` (reads line from stdin)
+- **Console I/O**: `print(value)` (prints strings or integers via automatic format selection), `print_str("string")`, `input()` (reads line from stdin), `parse_int("string")` (parses a string into an integer)
 - **File I/O**: `read_file("path")` (returns string), `write_file("path", "data")`
 - **Dynamic Lists**:
   - `list_new()`: Creates a new generic list (inferred contextually as e.g. `List[Int]` or `List[String]`).
@@ -260,7 +260,7 @@ L++ is designed as a multi-tier compilation pipeline:
 | Category   | Current Support                 |
 | ---------- | ------------------------------- |
 | Console    | `print(...)`, `print_str(...)`  |
-| Input      | `input()`                       |
+| Input      | `input()`, `parse_int(...)`     |
 | Files      | `read_file`, `write_file`       |
 | JSON       | Full (`json_parse`, `json_get_int`, `json_get_str`, `json_get_obj`, `json_free`) |
 | Networking | TCP built-ins (`net_connect`, `net_listen`, `net_accept`, `net_send`, `net_recv`, `net_close`) |

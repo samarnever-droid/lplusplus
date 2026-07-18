@@ -1,0 +1,7 @@
+def main():
+    print_str("--- Float Literal & Computation Test ---")
+    mut f := 3.14
+    print(f)
+    mut g := f + 2.5
+    print(g)
+    print_str("--- Success ---")

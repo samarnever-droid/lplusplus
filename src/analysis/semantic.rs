@@ -271,6 +271,11 @@ impl Resolver {
                 }
                 self.current_scope = old_scope;
             }
+            Stmt::Block(stmts) => {
+                for s in stmts {
+                    self.resolve_stmt(s)?;
+                }
+            }
             Stmt::Expr(expr) => {
                 self.resolve_expr(expr)?;
             }
@@ -282,15 +287,22 @@ impl Resolver {
         Ok(())
     }
 
+    fn is_builtin_resolved(&self, name: &str) -> bool {
+        if let Some(builtin) = crate::builtins::get_builtins().iter().find(|b| b.name == name) {
+            if builtin.name.starts_with("json_") {
+                return self.imports.iter().any(|imp| imp == "json");
+            }
+            return true;
+        }
+        false
+    }
+
     fn resolve_expr(&mut self, expr: &mut Expr) -> Result<(), String> {
         match expr {
-            Expr::IntLiteral(_) | Expr::StringLiteral(_) => {}
+            Expr::IntLiteral(_) | Expr::FloatLiteral(_) | Expr::StringLiteral(_) | Expr::BoolLiteral(_) => {}
             Expr::Identifier(name, binding_id_cell) => {
                 // Ignore builtins for now
-                if name != "print" && name != "input" && name != "read_file" && name != "write_file" && name != "print_str" && name != "parse_int" &&
-                   name != "list_new" && name != "list_push" && name != "list_get" && name != "list_len" && name != "list_free" &&
-                   name != "net_connect" && name != "net_listen" && name != "net_accept" &&
-                   name != "net_send" && name != "net_recv" && name != "net_close" {
+                if !self.is_builtin_resolved(name) {
                     if let Some(id) = self.table.resolve_name(self.current_scope, name) {
                         binding_id_cell.set(Some(id.0));
                     } else {

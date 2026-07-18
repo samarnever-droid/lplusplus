@@ -1,5 +1,6 @@
 #[path = "frontend/ast.rs"]
 mod ast;
+mod builtins;
 #[path = "frontend/lexer.rs"]
 mod lexer;
 #[path = "frontend/parser.rs"]
@@ -166,7 +167,7 @@ fn main() {
     let sem_time = sem_start.elapsed();
 
     let ty_start = Instant::now();
-    let type_table = {
+    let mut type_table = {
         let mut type_checker = typecheck::TypeChecker::new(&mut resolver.table);
         if let Err(e) = type_checker.check_program(&ast) {
             eprintln!("Type check error: {}", e);
@@ -214,7 +215,7 @@ fn main() {
             }
             
             let mir_start = Instant::now();
-            let mut mir_ctx = mir::lower::MirLowerCtx::new(&resolver.table, &type_table);
+            let mut mir_ctx = mir::lower::MirLowerCtx::new(&resolver.table, &mut type_table);
             let mut mir_program = match mir_ctx.lower_program(&ast) {
                 Ok(program) => program,
                 Err(e) => {
@@ -251,8 +252,9 @@ fn main() {
 
             let mut cg = codegen::Codegen::new(&resolver.table, &type_table, &storage);
             let c_code = cg.generate(&ast);
-            if let Err(e) = fs::write("output.c", &c_code) {
-                eprintln!("Failed to write output.c: {}", e);
+            let c_path = filename.replace(".lpp", ".c");
+            if let Err(e) = fs::write(&c_path, &c_code) {
+                eprintln!("Failed to write {}: {}", c_path, e);
             }
             
             if dump_c {

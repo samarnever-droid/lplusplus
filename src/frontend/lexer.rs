@@ -12,11 +12,15 @@ pub enum Token {
     If,
     Else,
     While,
+    For,
+    In,
 
     // Identifiers and Literals
     Ident(String),
     Int(i64),
     StringLit(String),
+    BoolLit(bool),
+    FloatLit(f64),
 
     // Operators and Punctuation
     Assign, // :=
@@ -238,18 +242,32 @@ impl<'a> Lexer<'a> {
                 }
                 _ if c.is_ascii_digit() => {
                     let mut num = String::from(c);
+                    let mut is_float = false;
                     while let Some(&next_c) = self.input.peek() {
                         if next_c.is_ascii_digit() {
+                            num.push(next_c);
+                            self.input.next();
+                        } else if next_c == '.' {
+                            // Peak past the dot to see if there's a digit after it
+                            // Since we have a peekable iterator, we can inspect next.
+                            is_float = true;
                             num.push(next_c);
                             self.input.next();
                         } else {
                             break;
                         }
                     }
-                    let value = num
-                        .parse()
-                        .map_err(|_| format!("Integer literal '{}' is out of range for Int", num))?;
-                    tokens.push(Token::Int(value));
+                    if is_float {
+                        let value = num
+                            .parse()
+                            .map_err(|_| format!("Float literal '{}' is invalid", num))?;
+                        tokens.push(Token::FloatLit(value));
+                    } else {
+                        let value = num
+                            .parse()
+                            .map_err(|_| format!("Integer literal '{}' is out of range for Int", num))?;
+                        tokens.push(Token::Int(value));
+                    }
                 }
                 _ if c.is_alphabetic() || c == '_' => {
                     let mut ident = String::from(c);
@@ -272,6 +290,10 @@ impl<'a> Lexer<'a> {
                         "if" => tokens.push(Token::If),
                         "else" => tokens.push(Token::Else),
                         "while" => tokens.push(Token::While),
+                        "for" => tokens.push(Token::For),
+                        "in" => tokens.push(Token::In),
+                        "true" => tokens.push(Token::BoolLit(true)),
+                        "false" => tokens.push(Token::BoolLit(false)),
                         _ => tokens.push(Token::Ident(ident)),
                     }
                 }
@@ -298,5 +320,12 @@ mod tests {
         let mut lexer = Lexer::new("def main():\n    x := 1\n    x := 2\n");
         let tokens = lexer.tokenize().expect("lexer should accept valid shadowing syntax");
         assert!(tokens.contains(&Token::Assign));
+    }
+
+    #[test]
+    fn lexes_boolean_literals() {
+        let mut lexer = Lexer::new("true false");
+        let tokens = lexer.tokenize().expect("lexer should parse boolean literals");
+        assert_eq!(tokens, vec![Token::BoolLit(true), Token::BoolLit(false), Token::Eof]);
     }
 }
