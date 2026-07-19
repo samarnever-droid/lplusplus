@@ -481,7 +481,16 @@ impl<'a> MirLowerCtx<'a> {
                     } else if let Some(&struct_id) = self.type_table.structs_by_name.get(name) {
                         return_type = TypeRef::Custom(struct_id);
                     } else if let Some(builtin) = crate::builtins::get_builtins().iter().find(|b| b.name == name) {
-                        if name != "list_new" {
+                        if name == "list_get" {
+                            let list_ty = args.first()
+                                .map(|arg| self.expr_type_hint(arg, builder, binding_map))
+                                .unwrap_or(TypeRef::Int);
+                            if let TypeRef::Generic(_, params) = list_ty {
+                                if let Some(element_ty) = params.first() {
+                                    return_type = element_ty.clone();
+                                }
+                            }
+                        } else if name != "list_new" {
                             return_type = builtin.return_type.clone();
                         } else {
                             // list_new is special-cased because of generic list type inference
@@ -509,7 +518,16 @@ impl<'a> MirLowerCtx<'a> {
                     return_type = TypeRef::Int;
                 }
 
+                let list_get_borrows_element = matches!(
+                    &**callee,
+                    Expr::Identifier(name, _) if name == "list_get"
+                ) && matches!(&return_type, TypeRef::Custom(_));
                 let temp = builder.new_local(return_type, false, None, None);
+                if list_get_borrows_element {
+                    // List[ARC] owns the element edge; get returns only a
+                    // borrow. Assignment/return will retain explicitly.
+                    builder.set_local_ownership(temp, Ownership::Borrowed);
+                }
 
                 if let Expr::Identifier(name, _) = &**callee {
                     if let Some(&func_id) = self.functions.get(name) {
@@ -528,7 +546,18 @@ impl<'a> MirLowerCtx<'a> {
                         return Ok(Operand::Local(temp));
                     }
 
-                    let builtin_symbol = if name == "print" {
+                    let builtin_symbol = if (name == "list_push" || name == "list_get")
+                        && matches!(
+                            args.first().map(|arg| self.expr_type_hint(arg, builder, binding_map)),
+                            Some(TypeRef::Generic(_, ref params)) if matches!(params.first(), Some(TypeRef::Custom(_)))
+                        )
+                    {
+                        Some(if name == "list_push" {
+                            "lpp_list_push_arc".to_string()
+                        } else {
+                            "lpp_list_get_arc".to_string()
+                        })
+                    } else if name == "print" {
                         let (is_string, is_float) = match lowered_args.first() {
                             Some(Operand::String(_)) => (true, false),
                             Some(Operand::Float(_)) => (false, true),
@@ -557,7 +586,11 @@ impl<'a> MirLowerCtx<'a> {
                                 temp,
                                 Rvalue::BuiltinCall(symbol, lowered_args),
                             ))?;
-                            return Ok(Operand::Local(temp));
+                            return Ok(if builder.function.locals[temp.0].ownership == Ownership::Borrowed {
+                                Operand::Borrowed(temp)
+                            } else {
+                                Operand::Local(temp)
+                            });
                         }
                     }
                 }
@@ -607,15 +640,20 @@ impl<'a> MirLowerCtx<'a> {
                 );
                 builder.push_instr(MirInstr::Assign(
                     temp,
-                    Rvalue::AllocateList(elem_ty),
+                    Rvalue::AllocateList(elem_ty.clone()),
                 ))?;
+                let push_symbol = if matches!(elem_ty, TypeRef::Custom(_)) {
+                    "lpp_list_push_arc"
+                } else {
+                    "lpp_list_push"
+                };
                 for item in items {
                     let item_op = self.lower_expr(builder, item, binding_map)?;
                     let discard_local = builder.new_local(TypeRef::Void, false, None, None);
                     builder.push_instr(MirInstr::Assign(
                         discard_local,
                         Rvalue::BuiltinCall(
-                            "lpp_list_push".to_string(),
+                            push_symbol.to_string(),
                             vec![Operand::Local(temp), item_op],
                         ),
                     ))?;

@@ -115,22 +115,18 @@ However, this is not yet proof of ownership parity:
 - The C backend still emits directly from the AST rather than ownership MIR.
 - C remains a compatibility/debug reference, not the backend that defines safety semantics.
 
-## 7. Gate for List[T] where T is ARC-managed
+## 7. List[T] ARC milestone outcome
 
-**Do not implement `List[T]` for managed object T yet.**
-
-Before enabling it, require all of the following:
+`List[Custom]` is now enabled with the required core ownership contract:
 
 ```text
-[ ] list element retain callback
-[ ] list element destructor callback
-[ ] typed get returns a borrow, not an owner
-[ ] typed push accepts a borrow and creates one list-owned reference
-[ ] list alias/move/return tests
-[ ] list-in-struct destructor test
-[ ] list-in-closure destructor test
-[ ] cycle rule for List[T] ↔ struct ownership graph
-[ ] C backend ownership-MIR parity or explicit C rejection
+[x] list element retain callback
+[x] list element destructor callback
+[x] typed get returns a borrow, not an owner
+[x] typed push accepts a borrow and creates one list-owned reference
+[x] list alias/move/return regression coverage
+[x] cycle rule for List[T] ↔ struct ownership graph
+[x] C compatibility runtime support
 ```
 
-The current `List[Int]` implementation is stable because Int has no ownership edge. `List[ARC Object]` must not be enabled until the above contract is implemented and tested.
+`List[Float]`, `List[String]`, closures as list elements, and other element types remain rejected. They need their own value or ownership representation before being safely enabled.

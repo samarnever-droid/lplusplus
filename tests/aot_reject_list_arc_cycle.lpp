@@ -1,0 +1,7 @@
+# List[Node] is an owning edge, so Node -> List[Node] is a strong ARC cycle.
+struct Node:
+    children: List[Node]
+
+def main():
+    node := Node()
+    print(1)

@@ -72,13 +72,13 @@ A Unix harness now exists at `tests/run_aot_parity.sh`. It compares stdout from 
 
 **Borrowed-return contract implemented:** custom structs and closure capsules are passed to ordinary functions as borrowed parameters. Returning such a borrowed value automatically retains it and emits `ReturnOwned`, so the caller always receives a valid owned reference. Fresh local allocations and call-result temporaries transfer ownership with `Move` instead of retaining again.
 
-**ARC-managed List[Int] implemented:** List[Int] is now an ARC object whose destructor frees the backing buffer. AOT automatically releases owned list locals at scope exit; manual `list_free` is rejected in AOT to prevent double release. Lists can be moved, borrowed for operations, returned as owned values, and stored in ARC-owning struct fields.
+**ARC-managed lists implemented:** `List[Int]` and `List[Custom]` are ARC objects. `List[Custom]` retains each pushed element, drops each element through the list destructor, and returns borrowed elements from `list_get`. AOT automatically releases owned list locals at scope exit; manual `list_free` is rejected in AOT to prevent double release. Lists can be moved, borrowed for operations, returned as owned values, and stored in ARC-owning struct fields.
 
 **Field alias baseline implemented:** reading a custom/list field produces a borrowed MIR value. Assigning that borrowed field into another owner retains it exactly once, while field reads inside closures remain non-owning. This closes the direct `alias := parent.child` class of dangling/double-release errors.
 
-**Cycle-safety gate implemented:** AOT builds now reject allocation of direct or indirect cyclic owned struct graphs. ARC cannot reclaim those graphs, so the compiler emits a diagnostic rather than silently leaking. A future `Weak`/arena annotation or cycle collector can re-enable them intentionally.
+**Cycle-safety gate implemented:** AOT builds now reject allocation of direct or indirect cyclic owned struct graphs, including `Struct -> List[Struct]` edges. ARC cannot reclaim those graphs, so the compiler emits a diagnostic rather than silently leaking. A future `Weak`/arena annotation or cycle collector can re-enable them intentionally.
 
-**Still required:** element ownership for future `List[T]` where T is an ARC object, alias analysis through arbitrary call/container patterns, and matching ownership cleanup in the C transpiler backend. Those are essential before claiming leak-free ARC.
+**Still required:** generic element support beyond `Int`/custom ARC objects, alias analysis through arbitrary call patterns, and matching ownership cleanup in the C transpiler backend. Those are essential before claiming leak-free ARC.
 
 ### Milestone C — Closure safety
 

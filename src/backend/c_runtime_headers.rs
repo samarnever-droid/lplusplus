@@ -91,66 +91,114 @@ static int64_t lpp_write_file(const char* filename, const char* content) {
     return 0;
 }
 
+typedef void (*LppListElementFn)(int64_t value);
+
 typedef struct {
     int64_t *data;
     int64_t  len;
     int64_t  cap;
+    /* NULL for value elements; retain/drop callbacks for ARC pointer elements. */
+    LppListElementFn retain_element;
+    LppListElementFn drop_element;
 } LppList;
 
-static void lpp_list_destroy(void* payload) {
+static void lpp_list_arc_retain_element(int64_t value) {
+    lpp_arc_retain((void *)(intptr_t)value);
+}
+
+static void lpp_list_arc_drop_element(int64_t value) {
+    lpp_arc_release((void *)(intptr_t)value);
+}
+
+static void lpp_list_destroy(void *payload) {
     LppList *l = (LppList *)payload;
     if (!l) return;
+    if (l->drop_element) {
+        for (int64_t i = 0; i < l->len; ++i) {
+            l->drop_element(l->data[i]);
+        }
+    }
     free(l->data);
     l->data = NULL;
     l->len = 0;
     l->cap = 0;
 }
 
-static void* lpp_list_new(void) {
+static void *lpp_list_new_with_ownership(
+    LppListElementFn retain_element,
+    LppListElementFn drop_element
+) {
     LppList *l = (LppList *)lpp_arc_alloc_with_destructor(
         (int64_t)sizeof(LppList), lpp_list_destroy
     );
     if (!l) {
-        fprintf(stderr, "[L++ Runtime Error] out of memory while creating List[Int]\n");
+        fprintf(stderr, "[L++ Runtime Error] out of memory while creating list\n");
         abort();
     }
+    l->retain_element = retain_element;
+    l->drop_element = drop_element;
     return l;
+}
+
+/* List[Int] stores values and owns no element references. */
+static void* lpp_list_new(void) {
+    return lpp_list_new_with_ownership(NULL, NULL);
+}
+
+/* List[ARC Object] owns one retained reference per element. */
+static void* lpp_list_new_arc(void) {
+    return lpp_list_new_with_ownership(
+        lpp_list_arc_retain_element,
+        lpp_list_arc_drop_element
+    );
 }
 
 static void lpp_list_push(void *list, int64_t value) {
     LppList *l = (LppList *)list;
     if (!l) {
-        fprintf(stderr, "[L++ Runtime Error] push to null List[Int]\n");
+        fprintf(stderr, "[L++ Runtime Error] push to null list\n");
         abort();
     }
     if (l->len == l->cap) {
         if (l->cap > INT64_MAX / 2) {
-            fprintf(stderr, "[L++ Runtime Error] List[Int] capacity overflow\n");
+            fprintf(stderr, "[L++ Runtime Error] list capacity overflow\n");
             abort();
         }
         int64_t new_cap = l->cap == 0 ? 8 : l->cap * 2;
         if (new_cap > INT64_MAX / (int64_t)sizeof(int64_t)) {
-            fprintf(stderr, "[L++ Runtime Error] List[Int] allocation size overflow\n");
+            fprintf(stderr, "[L++ Runtime Error] list allocation size overflow\n");
             abort();
         }
         int64_t *new_data = (int64_t *)realloc(l->data, (size_t)new_cap * sizeof(int64_t));
         if (!new_data) {
-            fprintf(stderr, "[L++ Runtime Error] out of memory while growing List[Int]\n");
+            fprintf(stderr, "[L++ Runtime Error] out of memory while growing list\n");
             abort();
         }
         l->data = new_data;
         l->cap = new_cap;
     }
+    if (l->retain_element) l->retain_element(value);
     l->data[l->len++] = value;
+}
+
+/* Store one ARC object reference in List[T]. */
+static void lpp_list_push_arc(void *list, void *value) {
+    lpp_list_push(list, (int64_t)(intptr_t)value);
 }
 
 static int64_t lpp_list_get(void *list, int64_t index) {
     LppList *l = (LppList *)list;
     if (!l || index < 0 || index >= l->len) {
-        fprintf(stderr, "[L++ Runtime Error] List[Int] index out of bounds: %lld\n", (long long)index);
+        fprintf(stderr, "[L++ Runtime Error] list index out of bounds: %lld\n", (long long)index);
         abort();
     }
     return l->data[index];
+}
+
+/* List element reads are borrowed; callers retain only when they create an
+ * additional owner (assignment/return/store). */
+static void* lpp_list_get_arc(void *list, int64_t index) {
+    return (void *)(intptr_t)lpp_list_get(list, index);
 }
 
 static int64_t lpp_list_len(void *list) {
@@ -159,6 +207,8 @@ static int64_t lpp_list_len(void *list) {
 }
 
 static void lpp_list_free(void *list) {
+    /* Compatibility entry point. In ownership-aware AOT code list lifetime is
+     * automatic, so this is only a single reference release, never raw free. */
     lpp_arc_release(list);
 }
 

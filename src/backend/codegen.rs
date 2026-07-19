@@ -398,6 +398,35 @@ impl<'a> Codegen<'a> {
                         }
                         return;
                     }
+                    if (n == "list_push" || n == "list_get") && !args.is_empty() {
+                        let list_ty = self.expr_type(&args[0], current_scope);
+                        let is_arc_list = matches!(
+                            list_ty,
+                            TypeRef::Generic(_, ref params)
+                                if matches!(params.first(), Some(TypeRef::Custom(_)))
+                        );
+                        if is_arc_list {
+                            let symbol = if n == "list_push" {
+                                "lpp_list_push_arc"
+                            } else {
+                                "lpp_list_get_arc"
+                            };
+                            if n == "list_get" {
+                                self.out.push_str("((void*)");
+                            }
+                            self.out.push_str(symbol);
+                            self.out.push_str("(");
+                            for (i, arg) in args.iter().enumerate() {
+                                if i > 0 { self.out.push_str(", "); }
+                                self.gen_expr(arg, current_scope, None);
+                            }
+                            self.out.push_str(")");
+                            if n == "list_get" {
+                                self.out.push_str(")");
+                            }
+                            return;
+                        }
+                    }
                     if n != "print" {
                         if let Some(builtin) = crate::builtins::get_builtins().iter().find(|b| b.name == n) {
                             if !builtin.symbol.is_empty() {
@@ -454,11 +483,26 @@ impl<'a> Codegen<'a> {
                 for el in elements {
                     elem_strs.push(self.gen_expr_str(el, current_scope, None));
                 }
-                self.pre_stmts.push(format!("{}void* {} = lpp_list_new();\n", ind, tmp));
+                let element_ty = elements.first()
+                    .map(|element| self.expr_type(element, current_scope))
+                    .unwrap_or(TypeRef::Int);
+                let is_arc_element = matches!(element_ty, TypeRef::Custom(_));
+                self.pre_stmts.push(format!(
+                    "{}void* {} = {}();\n",
+                    ind,
+                    tmp,
+                    if is_arc_element { "lpp_list_new_arc" } else { "lpp_list_new" }
+                ));
                 for el_str in elem_strs {
-                    self.pre_stmts.push(format!(
-                        "{}lpp_list_push({}, (int64_t)({}));\n", ind, tmp, el_str
-                    ));
+                    if is_arc_element {
+                        self.pre_stmts.push(format!(
+                            "{}lpp_list_push_arc({}, (void*)({}));\n", ind, tmp, el_str
+                        ));
+                    } else {
+                        self.pre_stmts.push(format!(
+                            "{}lpp_list_push({}, (int64_t)({}));\n", ind, tmp, el_str
+                        ));
+                    }
                 }
                 self.out.push_str(&tmp);
             }
@@ -762,8 +806,17 @@ impl<'a> Codegen<'a> {
                     _ => TypeRef::Bool,
                 }
             }
-            Expr::Call { callee, .. } => {
+            Expr::Call { callee, args } => {
                 if let Expr::Identifier(name, _) = &**callee {
+                    if name == "list_get" {
+                        if let Some(first) = args.first() {
+                            if let TypeRef::Generic(_, params) = self.expr_type(first, scope) {
+                                if let Some(element_ty) = params.first() {
+                                    return element_ty.clone();
+                                }
+                            }
+                        }
+                    }
                     match name.as_str() {
                         "input" | "read_file" | "json_get_str" | "net_recv" => return TypeRef::Str,
                         "print" | "print_str" | "write_file" | "json_free"

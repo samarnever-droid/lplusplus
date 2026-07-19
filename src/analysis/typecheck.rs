@@ -393,10 +393,8 @@ impl<'a> TypeChecker<'a> {
                         if name == "list_new" {
                             if let Some(TypeRef::Generic(list_name, params)) = expected_ty {
                                 if list_name == "List" {
-                                    if params.len() != 1 || params[0] != TypeRef::Int {
-                                        return Err(format!(
-                                            "only List[Int] is implemented safely; requested List[{:?}]", params
-                                        ));
+                                    if params.len() != 1 {
+                                        return Err("List requires exactly one element type".to_string());
                                     }
                                     return Ok(TypeRef::Generic("List".to_string(), params.clone()));
                                 }
@@ -498,9 +496,9 @@ impl<'a> TypeChecker<'a> {
                         ));
                     }
                 }
-                if elem_ty != TypeRef::Int {
+                if !matches!(elem_ty, TypeRef::Int | TypeRef::Custom(_)) {
                     return Err(format!(
-                        "only List[Int] is implemented safely; list literal element type is {:?}", elem_ty
+                        "List element type {:?} is not supported safely yet", elem_ty
                     ));
                 }
                 Ok(TypeRef::Generic("List".to_string(), vec![elem_ty]))

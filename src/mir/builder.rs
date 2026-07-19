@@ -34,7 +34,13 @@ impl MirBuilder {
         let id = LocalId(self.function.locals.len());
         // Custom structs and closure capsules are ARC-managed heap objects.
         let ownership = if matches!(&ty, TypeRef::Custom(_) | TypeRef::Function)
-            || matches!(&ty, TypeRef::Generic(name, args) if name == "List" && args == &vec![TypeRef::Int])
+            || matches!(
+                &ty,
+                TypeRef::Generic(name, args)
+                    if name == "List"
+                        && args.len() == 1
+                        && matches!(&args[0], TypeRef::Int | TypeRef::Custom(_))
+            )
         {
             Ownership::Owned
         } else {

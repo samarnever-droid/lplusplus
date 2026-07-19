@@ -94,8 +94,9 @@ while IFS='|' read -r file expected; do
 done < "$MANIFEST"
 
 for rejected_case in \
-    "aot_reject_float_list:List[Int]" \
-    "aot_reject_arc_cycle:ARC cannot reclaim ownership cycles"
+    "aot_reject_float_list:not supported safely yet" \
+    "aot_reject_arc_cycle:ARC cannot reclaim ownership cycles" \
+    "aot_reject_list_arc_cycle:ARC cannot reclaim ownership cycles"
 do
     test_name=${rejected_case%%:*}
     expected_diagnostic=${rejected_case#*:}

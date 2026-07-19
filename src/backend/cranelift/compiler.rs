@@ -34,11 +34,23 @@ fn arc_cycle_structs(type_table: &TypeTable) -> HashSet<StructTypeId> {
         visited: &mut HashSet<StructTypeId>,
     ) -> bool {
         for (_, field_ty) in &type_table.definitions[current.0].fields {
-            if let TypeRef::Custom(next) = field_ty {
-                if *next == target {
+            let next = match field_ty {
+                TypeRef::Custom(next) => Some(*next),
+                TypeRef::Generic(name, args)
+                    if name == "List" && args.len() == 1 =>
+                {
+                    match args[0] {
+                        TypeRef::Custom(next) => Some(next),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            };
+            if let Some(next) = next {
+                if next == target {
                     return true;
                 }
-                if visited.insert(*next) && reaches(type_table, target, *next, visited) {
+                if visited.insert(next) && reaches(type_table, target, next, visited) {
                     return true;
                 }
             }
@@ -65,7 +77,9 @@ fn validate_aot_program(program: &MirProgram, type_table: &TypeTable) -> Result<
     fn validate_type(ty: &TypeRef, where_: &str) -> Result<(), String> {
         match ty {
             TypeRef::Generic(name, args)
-                if name == "List" && args.len() == 1 && args[0] == TypeRef::Int =>
+                if name == "List"
+                    && args.len() == 1
+                    && matches!(args[0], TypeRef::Int | TypeRef::Custom(_)) =>
             {
                 Ok(())
             },
@@ -111,9 +125,10 @@ fn validate_aot_program(program: &MirProgram, type_table: &TypeTable) -> Result<
                             function.name
                         ));
                     }
-                    MirInstr::Assign(_, Rvalue::AllocateList(element_ty)) if *element_ty != TypeRef::Int => {
+                    MirInstr::Assign(_, Rvalue::AllocateList(element_ty))
+                        if !matches!(element_ty, TypeRef::Int | TypeRef::Custom(_)) => {
                         return Err(format!(
-                            "AOT supports only List[Int], but '{}' allocates List[{:?}]",
+                            "AOT supports List[Int] and List[Custom], but '{}' allocates List[{:?}]",
                             function.name, element_ty
                         ));
                     }

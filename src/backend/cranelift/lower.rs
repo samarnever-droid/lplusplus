@@ -345,17 +345,19 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                     .ok_or_else(|| "Allocator call returned no value".to_string())
             }
             Rvalue::AllocateList(element_ty) => {
-                // The current runtime stores int64_t elements, not generic boxed values.
-                // Refuse unsupported lists in AOT instead of truncating pointers/floats.
-                if *element_ty != TypeRef::Int {
-                    return Err(format!(
-                        "AOT currently supports only List[Int]; got List[{:?}]", element_ty
-                    ));
-                }
+                let allocator = match element_ty {
+                    TypeRef::Int => "lpp_list_new",
+                    TypeRef::Custom(_) => "lpp_list_new_arc",
+                    _ => {
+                        return Err(format!(
+                            "AOT supports List[Int] and List[Custom], got List[{:?}]", element_ty
+                        ));
+                    }
+                };
                 let builtin_id = *self
                     .builtin_ids
-                    .get("lpp_list_new")
-                    .ok_or_else(|| "Builtin 'lpp_list_new' was not declared".to_string())?;
+                    .get(allocator)
+                    .ok_or_else(|| format!("Builtin '{}' was not declared", allocator))?;
                 let func_ref = self.module.declare_func_in_func(builtin_id, builder.func);
                 let call = builder.ins().call(func_ref, &[]);
                 let results = builder.inst_results(call);

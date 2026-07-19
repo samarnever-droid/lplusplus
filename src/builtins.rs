@@ -163,9 +163,18 @@ pub fn get_builtins() -> &'static [Builtin] {
             cl_return: Some(0),
         },
         Builtin {
+            name: "lpp_list_new_arc",
+            symbol: "lpp_list_new_arc",
+            params: &[],
+            return_type: TypeRef::Void,
+            cl_params: &[],
+            cl_return: Some(0),
+        },
+        Builtin {
             name: "list_push",
             symbol: "lpp_list_push",
-            params: &[ParamType::Any, ParamType::Specific(TypeRef::Int)],
+            // TypeChecker derives the element type from the concrete List[T].
+            params: &[ParamType::Any, ParamType::Any],
             return_type: TypeRef::Void,
             cl_params: &[0, 0],
             cl_return: None,
@@ -173,7 +182,15 @@ pub fn get_builtins() -> &'static [Builtin] {
         Builtin {
             name: "lpp_list_push",
             symbol: "lpp_list_push",
-            params: &[ParamType::Any, ParamType::Specific(TypeRef::Int)],
+            params: &[ParamType::Any, ParamType::Any],
+            return_type: TypeRef::Void,
+            cl_params: &[0, 0],
+            cl_return: None,
+        },
+        Builtin {
+            name: "lpp_list_push_arc",
+            symbol: "lpp_list_push_arc",
+            params: &[ParamType::Any, ParamType::Any],
             return_type: TypeRef::Void,
             cl_params: &[0, 0],
             cl_return: None,
@@ -189,6 +206,14 @@ pub fn get_builtins() -> &'static [Builtin] {
         Builtin {
             name: "lpp_list_get",
             symbol: "lpp_list_get",
+            params: &[ParamType::Any, ParamType::Specific(TypeRef::Int)],
+            return_type: TypeRef::Int,
+            cl_params: &[0, 0],
+            cl_return: Some(0),
+        },
+        Builtin {
+            name: "lpp_list_get_arc",
+            symbol: "lpp_list_get_arc",
             params: &[ParamType::Any, ParamType::Specific(TypeRef::Int)],
             return_type: TypeRef::Int,
             cl_params: &[0, 0],
