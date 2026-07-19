@@ -169,5 +169,14 @@ jobs:
           LPP_AOT=1 target/release/lpp /tmp/arith.lpp
           clang /tmp/arith.o /tmp/lpp_runtime.o -o /tmp/arith
           test "$(/tmp/arith)" = $'15\n5\n50\n2'
+
+  macos-x86-direct-link:
+    runs-on: macos-13
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build direct Mach-O tools
+        run: cargo build --release --bin lpp --bin lpp-link
       - name: Direct Mach-O runtime-free MVP
         run: sh tests/test_direct_macho.sh
