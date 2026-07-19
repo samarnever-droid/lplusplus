@@ -11,16 +11,10 @@ command -v cargo >/dev/null
 command -v "$CC" >/dev/null
 cargo build --manifest-path "$ROOT/runtime/lpp-net/Cargo.toml" --release --locked
 cat > "$TMP/client.c" <<'C'
-#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-int64_t lpp_net_rs_connect(const char *, int64_t, int64_t);
-int64_t lpp_net_rs_send_all(int64_t, const char *);
-int64_t lpp_net_rs_set_timeout(int64_t, int64_t);
-char *lpp_net_rs_recv(int64_t, int64_t);
-void lpp_net_rs_free_string(char *);
-void lpp_net_rs_close(int64_t);
+#include "lpp_net_runtime.h"
 int main(int argc, char **argv) {
   if (argc != 2) return 2;
   int64_t s = lpp_net_rs_connect("127.0.0.1", atoll(argv[1]), 2000);
@@ -33,7 +27,7 @@ int main(int argc, char **argv) {
   return ok ? 0 : 12;
 }
 C
-"$CC" -std=c11 -Wall -Wextra -Werror "$TMP/client.c" \
+"$CC" -std=c11 -Wall -Wextra -Werror -I"$ROOT/runtime/lpp-net/include" "$TMP/client.c" \
   "$ROOT/runtime/lpp-net/target/release/liblpp_net_runtime.a" \
   -ldl -lm -lpthread -o "$TMP/client"
 python3 - "$TMP/port" <<'PY' &
