@@ -17,3 +17,6 @@ output.c
 /benchmarks/bench_pillars.rs
 /website/node_modules/
 /website/dist/
+
+# Nested Rust runtime build products
+/runtime/lpp-net/target/

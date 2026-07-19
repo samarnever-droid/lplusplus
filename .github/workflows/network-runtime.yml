@@ -1,0 +1,32 @@
+name: Rust network runtime
+
+on:
+  push:
+    paths:
+      - 'runtime/lpp-net/**'
+      - 'tests/test_rust_network_runtime.sh'
+      - '.github/workflows/network-runtime.yml'
+  pull_request:
+    paths:
+      - 'runtime/lpp-net/**'
+      - 'tests/test_rust_network_runtime.sh'
+      - '.github/workflows/network-runtime.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux-abi:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Format, unit-test, and build the Rust static runtime
+        run: |
+          cargo fmt --manifest-path runtime/lpp-net/Cargo.toml --check
+          cargo test --manifest-path runtime/lpp-net/Cargo.toml --locked
+          cargo build --manifest-path runtime/lpp-net/Cargo.toml --release --locked
+      - name: Verify C ABI loopback integration
+        run: sh tests/test_rust_network_runtime.sh
