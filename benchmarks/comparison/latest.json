@@ -1,35 +1,44 @@
 {
-  "generated_utc": "2026-07-19T08:13:15.564221+00:00",
+  "generated_utc": "2026-07-19T08:17:40.395768+00:00",
   "rows": [
     {
       "workload": "fib35",
       "language": "lpp",
       "status": "PASS",
-      "runtime_ms": 71.20614799987379,
-      "tool": "Cranelift AOT"
+      "compile_ms": 4.301608999867312,
+      "link_ms": 213.40601199972298,
+      "build_ms": 217.7076209995903,
+      "runtime_ms": 53.55177299998104,
+      "tool": "Cranelift AOT + host link"
     },
     {
       "workload": "fib35",
       "language": "c",
       "status": "PASS",
-      "runtime_ms": 25.29773500009469,
-      "build_ms": 126.8046229997708,
+      "runtime_ms": 19.755009000164137,
+      "compile_ms": 76.59296900010304,
+      "link_ms": null,
+      "build_ms": 76.59296900010304,
       "tool": "cc (Debian 14.2.0-19) 14.2.0"
     },
     {
       "workload": "fib35",
       "language": "cpp",
       "status": "PASS",
-      "runtime_ms": 18.841217000044708,
-      "build_ms": 512.2887279999304,
+      "runtime_ms": 18.431909000355517,
+      "compile_ms": 123.8444199998412,
+      "link_ms": null,
+      "build_ms": 123.8444199998412,
       "tool": "c++ (Debian 14.2.0-19) 14.2.0"
     },
     {
       "workload": "fib35",
       "language": "rust",
       "status": "PASS",
-      "runtime_ms": 34.66503399977228,
-      "build_ms": 84.73576799997318,
+      "runtime_ms": 34.06998700029362,
+      "compile_ms": 84.9539430000732,
+      "link_ms": null,
+      "build_ms": 84.9539430000732,
       "tool": "rustc 1.97.1 (8bab26f4f 2026-07-14)"
     },
     {
@@ -50,31 +59,40 @@
       "workload": "loop10m",
       "language": "lpp",
       "status": "PASS",
-      "runtime_ms": 11.455476000264753,
-      "tool": "Cranelift AOT"
+      "compile_ms": 2.84185400005299,
+      "link_ms": 200.6075710000914,
+      "build_ms": 203.4494250001444,
+      "runtime_ms": 9.874158999991778,
+      "tool": "Cranelift AOT + host link"
     },
     {
       "workload": "loop10m",
       "language": "c",
       "status": "PASS",
-      "runtime_ms": 1.3535530001718143,
-      "build_ms": 41.961334999996325,
+      "runtime_ms": 1.3007389998165308,
+      "compile_ms": 39.58516000011514,
+      "link_ms": null,
+      "build_ms": 39.58516000011514,
       "tool": "cc (Debian 14.2.0-19) 14.2.0"
     },
     {
       "workload": "loop10m",
       "language": "cpp",
       "status": "PASS",
-      "runtime_ms": 1.3824340003338875,
-      "build_ms": 53.60472599977584,
+      "runtime_ms": 1.4524339999297808,
+      "compile_ms": 52.85882499993022,
+      "link_ms": null,
+      "build_ms": 52.85882499993022,
       "tool": "c++ (Debian 14.2.0-19) 14.2.0"
     },
     {
       "workload": "loop10m",
       "language": "rust",
       "status": "PASS",
-      "runtime_ms": 1.7419430000700231,
-      "build_ms": 82.62230199989062,
+      "runtime_ms": 1.5744850002192834,
+      "compile_ms": 74.33290000017223,
+      "link_ms": null,
+      "build_ms": 74.33290000017223,
       "tool": "rustc 1.97.1 (8bab26f4f 2026-07-14)"
     },
     {

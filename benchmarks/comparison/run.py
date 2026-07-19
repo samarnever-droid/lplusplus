@@ -75,11 +75,21 @@ def main() -> None:
             lpp_src = temp / f"{workload}.lpp"
             lpp_src.write_text(spec["lpp"].read_text())
             env = os.environ.copy(); env.update({"LPP_AOT": "1", "LPP_RELEASE": "1"})
+            compile_started = time.perf_counter()
             subprocess.run([str(lpp), str(lpp_src)], env=env, check=True, capture_output=True)
+            compile_ms = (time.perf_counter() - compile_started) * 1000
             lpp_exe = temp / f"{workload}-lpp"
+            link_started = time.perf_counter()
             subprocess.run(["cc", "-O2", str(lpp_src.with_suffix('.o')), str(ROOT/'lpp_runtime.c'), "-o", str(lpp_exe), "-pthread"], check=True)
+            link_ms = (time.perf_counter() - link_started) * 1000
             runtime, execution = run_executable(lpp_exe)
-            rows.append({"workload": workload, "language": "lpp", "status": "PASS" if execution.returncode == 0 and execution.stdout.strip() == spec["expected"] else "FAIL", "runtime_ms": runtime, "tool": "Cranelift AOT"})
+            rows.append({
+                "workload": workload, "language": "lpp",
+                "status": "PASS" if execution.returncode == 0 and execution.stdout.strip() == spec["expected"] else "FAIL",
+                "compile_ms": compile_ms, "link_ms": link_ms,
+                "build_ms": compile_ms + link_ms, "runtime_ms": runtime,
+                "tool": "Cranelift AOT + host link",
+            })
             for language, config in LANGUAGES.items():
                 if not shutil.which(config["tool"]):
                     rows.append({"workload": workload, "language": language, "status": "SKIP", "runtime_ms": None, "tool": "unavailable"})
@@ -91,17 +101,23 @@ def main() -> None:
                 build = subprocess.run(config["build"](src, exe), text=True, capture_output=True)
                 build_ms = (time.perf_counter() - started) * 1000
                 if build.returncode != 0:
-                    rows.append({"workload": workload, "language": language, "status": "BUILD-FAIL", "runtime_ms": None, "build_ms": build_ms, "tool": version(config["tool"])})
+                    rows.append({"workload": workload, "language": language, "status": "BUILD-FAIL", "runtime_ms": None, "compile_ms": build_ms, "link_ms": None, "build_ms": build_ms, "tool": version(config["tool"])})
                     continue
                 runtime, execution = run_executable(exe)
-                rows.append({"workload": workload, "language": language, "status": "PASS" if execution.returncode == 0 and execution.stdout.strip() == spec["expected"] else "FAIL", "runtime_ms": runtime, "build_ms": build_ms, "tool": version(config["tool"])})
+                rows.append({"workload": workload, "language": language, "status": "PASS" if execution.returncode == 0 and execution.stdout.strip() == spec["expected"] else "FAIL", "runtime_ms": runtime, "compile_ms": build_ms, "link_ms": None, "build_ms": build_ms, "tool": version(config["tool"])})
     result = {"generated_utc": datetime.now(timezone.utc).isoformat(), "rows": rows}
     (HERE / "latest.json").write_text(json.dumps(result, indent=2) + "\n")
-    lines = ["# Cross-language comparison", "", f"Generated: `{result['generated_utc']}`", "", "| Workload | Language | Build ms | Runtime ms | Status |", "|---|---|---:|---:|---|"]
+    lines = [
+        "# Cross-language comparison", "", f"Generated: `{result['generated_utc']}`", "",
+        "| Workload | Language | Compile ms | Link ms | Total build ms | Runtime ms | Status |",
+        "|---|---|---:|---:|---:|---:|---|",
+    ]
     for row in rows:
-        build = "" if row.get("build_ms") is None else f"{row['build_ms']:.3f}"
+        compile_ms = "" if row.get("compile_ms") is None else f"{row['compile_ms']:.3f}"
+        link_ms = "" if row.get("link_ms") is None else f"{row['link_ms']:.3f}"
+        build_ms = "" if row.get("build_ms") is None else f"{row['build_ms']:.3f}"
         runtime = "" if row.get("runtime_ms") is None else f"{row['runtime_ms']:.3f}"
-        lines.append(f"| {row['workload']} | {row['language']} | {build} | {runtime} | {row['status']} |")
+        lines.append(f"| {row['workload']} | {row['language']} | {compile_ms} | {link_ms} | {build_ms} | {runtime} | {row['status']} |")
     (HERE / "latest.md").write_text("\n".join(lines) + "\n")
     print((HERE / "latest.md").read_text())
 
