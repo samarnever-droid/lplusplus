@@ -2,9 +2,48 @@
 
 L++ is an experimental prototype language aiming to be as readable as Python, as fast as C, and as safe as Rust. Its primary goal is to abstract away memory management without exposing a borrow checker or relying on a Tracing Garbage Collector (GC). 
 
-**Current Reality:** L++ is an experimental compiled-language prototype. It has two backends: a C transpiler and an opt-in **Cranelift AOT** object emitter. The hybrid memory model is an active implementation effort, not yet a complete Rust-equivalent safety guarantee. In particular, cycle collection, complete alias analysis, generic containers, and closure/thread ownership semantics remain unfinished. See `documentation/Cranelift_Safety_Plan.md` for the verified AOT subset and release criteria.
+**Current Reality:** L++ is an experimental compiled-language toolchain with a verified Linux x86-64 Cranelift AOT subset, a direct ELF linker path, and a C compatibility backend. The ownership model is stronger than a parser-only prototype: it has ownership-aware MIR, ARC allocation, `Borrow`/`Move`/`ReturnOwned`, generated destructor chains, closure capsules, `List[Int]`, `List[Custom]`, and strong-cycle rejection. It is still not a complete Rust-equivalent guarantee across every platform and library feature. Files, networking, threads, JSON, writable direct-link data, Windows PE, macOS Mach-O, and full C/AOT semantic parity remain in progress. Read `documentation/Cranelift_Ownership_Audit_2026-07-19.md`, `documentation/Native_Linker_Roadmap.md`, and `documentation/Windows_Native_Toolchain.md` for current boundaries.
 
 This guide breaks down the current working state of L++ and explains exactly how the compiler manages your memory under the hood.
+
+---
+
+## Current verified capability matrix
+
+| Area | Verified now | Explicit boundary |
+|---|---|---|
+| Cranelift AOT | Linux x86-64, COFF object generation on Windows | Direct PE/Mach-O output is not implemented yet. |
+| Ownership | ARC structs, aliases, owned/borrowed returns, closures, lists | Strong cycles are rejected until `Weak`/arena/cycle-collection support exists. |
+| Direct linker | `.text`, `.rodata`, GOT imports, ARC, closures, lists, King20 20/20 | File I/O, networking, threads, JSON, `.data`/`.bss`, and dynamic imports use fallback linking. |
+| C backend | Compatibility/debug path and observable parity suite | It is not the authoritative ownership implementation. |
+| Windows | COFF + `lpp_runtime.obj` + MSVC host-link fallback | Direct PE linker work is beginning. |
+
+### Ownership vocabulary
+
+The compiler uses these internal concepts; they are not syntax users must write:
+
+```text
+AllocateArc   create one owned ARC reference
+Borrow        read an existing owner without transfer
+Move          transfer a temporary owner
+Retain        create another owner from a borrow
+Release       remove an owner
+ReturnOwned   transfer one owner to the caller
+```
+
+A normal user program stays concise:
+
+```lpp
+def identity(value: Box) -> Box:
+    return value
+```
+
+Internally, a borrowed parameter return is lowered as:
+
+```text
+retain(value)
+return_owned(value)
+```
 
 ---
 
@@ -154,15 +193,11 @@ The compiler then checks a series of rules. If a variable breaks a rule, its sto
    ```
 
 4. **Rule 4: Concurrency Boundary**
-   If a reference crosses a concurrency boundary (e.g., captured by a `spawn` closure), it escapes. Structs and `mut` primitives are promoted to **Managed Heap** to safely share state across threads. Immutable scalars are cloned by value.
-   ```lpp
-   def parallel_work() -> Void:
-       shared_readonly := 100
-       mut shared_state := 0
-       spawn fn() -> Void:
-           # shared_readonly is copied by value
-           # shared_state is mutable, promoted to Managed Heap for thread safety!
-           print(shared_readonly, shared_state) 
+   This is a language-design rule, not yet a completed direct-AOT promise. The Cranelift backend currently rejects `spawn` because safe thread transfer needs an explicit ownership and synchronization contract for the closure environment. L++ will add this only when moved, shared, and atomic capture modes are defined and tested.
+
+   ```text
+   Current AOT behavior: reject unsafe spawn transfer clearly.
+   Future behavior: explicit compiler-selected move/share contract.
    ```
 
 5. **Rule 5: Self-Referential Structs (Arenas)**
@@ -187,7 +222,7 @@ Because L++ is an active prototype, only a subset of planned language features i
   - Struct instantiation and field access (`obj.field`).
   - Heap-allocated Lists using square brackets (`[1, 2, 3]`).
   - Dynamic Lists via standard library built-ins.
-- **Concurrency:** `spawn` keyword for launching concurrent threads.
+- **Concurrency:** `spawn` is parsed, but direct AOT currently rejects it until closure transfer ownership is complete.
 - **Custom Local Libraries:** Relational module merging imports (e.g. `import math_helper` merges source elements).
 
 ### Control Flow
@@ -201,11 +236,12 @@ L++ provides a growing set of built-in functions for common operations, which ma
 - **Console I/O**: `print(value)` (prints strings or integers via automatic format selection), `print_str("string")`, `input()` (reads line from stdin), `parse_int("string")` (parses a string into an integer)
 - **File I/O**: `read_file("path")` (returns string), `write_file("path", "data")`
 - **Dynamic Lists**:
-  - `list_new()`: Creates a new generic list (inferred contextually as e.g. `List[Int]` or `List[String]`).
-  - `list_push(list, value)`: Appends an element to the list, automatically growing storage if needed.
-  - `list_get(list, index)`: Retrieves the element at `index` (type-checks to list's element type).
+  - `list_new()`: Creates a list with an inferred supported element type.
+  - `list_push(list, value)`: Appends an element to the list, automatically retaining ARC-managed custom elements.
+  - `list_get(list, index)`: Retrieves a borrowed element; assigning or returning an ARC element creates the required retain.
   - `list_len(list)`: Returns the current number of elements in the list.
-  - **AOT ownership mode:** `List[Int]` is released automatically at scope exit. Do not call `list_free` in Cranelift AOT code; it is rejected to prevent double release. The legacy C compatibility backend still exposes it.
+  - **Supported AOT list types:** `List[Int]` and `List[Custom]`.
+  - **AOT ownership mode:** lists are released automatically at scope exit. Do not call `list_free` in Cranelift AOT code; it is rejected to prevent double release. The legacy C compatibility backend still exposes it.
 - **JSON Parsing**:
   - `json_parse("json_string")`: Parses a JSON string and returns a node handle (`Int`).
   - `json_get_int(node, "key")`: Retrieves an integer property value.
@@ -264,10 +300,10 @@ L++ is designed as a multi-tier compilation pipeline:
 | Files      | `read_file`, `write_file`       |
 | JSON       | Full (`json_parse`, `json_get_int`, `json_get_str`, `json_get_obj`, `json_free`) |
 | Networking | TCP built-ins (`net_connect`, `net_listen`, `net_accept`, `net_send`, `net_recv`, `net_close`) |
-| Threads    | `spawn` (POSIX/Windows native)  |
-| Lists      | Basic `[...]` and Dynamic Lists (`list_*` built-ins) |
-| Strings    | Basic                           |
-| Structs    | Full                            |
+| Threads    | Parsed; direct AOT transfer is intentionally rejected pending ownership work |
+| Lists      | ARC-managed `List[Int]` and `List[Custom]` in the verified AOT subset |
+| Strings    | Basic output and literals; direct ELF supports `.rodata` literals |
+| Structs    | ARC destructors, aliases, returns, and nested ownership in the verified subset |
 
 ---
 

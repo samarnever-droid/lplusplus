@@ -1,128 +1,278 @@
-# L++ (L Plus Plus)
+<p align="center">
+  <img src="assets/lpp-logo.svg" width="190" alt="L++ four-pillar prism logo">
+</p>
 
-Status on July 19, 2026: active experimental compiler prototype. The core frontend, ownership-aware MIR, ARC runtime, Cranelift AOT backend, C compatibility backend, and cross-platform build helpers are usable for the tested subset. Advanced language semantics and full C/AOT ownership parity remain incomplete.
+<h1 align="center">L++</h1>
 
-L++ is a modern, experimental programming language that aims to combine the best aspects of four major paradigms:
+<p align="center"><strong>Readable like Python. Ownership-aware like Rust. Fast iteration like Go. Native by default.</strong></p>
 
-1. **Easy like Python** — high readability, low cognitive overhead, no manual memory bookkeeping, and significant whitespace.
-2. **Safe like Rust** — no segfaults, no use-after-free, memory-safe by design.
-3. **Compile speed like Go** — blazing fast builds for quick iteration, enabled by explicit public type signatures.
-4. **Latency/Speed like C++** — zero-cost abstractions where possible, predictable performance without GC pauses.
+<p align="center">
+  <a href="benchmarks/king20/stable/v1/latest.md">King20 Stable</a> ·
+  <a href="documentation/Native_Linker_Roadmap.md">Native Linker</a> ·
+  <a href="Doc.md">Language Guide</a> ·
+  <a href="linguist/UPSTREAM_LINGUIST_PR.md">Linguist Package</a>
+</p>
 
-## Core Design: The Hybrid Memory Model
+> **Status — July 19, 2026:** L++ is an active experimental native language toolchain. The supported Linux x86-64 subset has ownership-aware MIR, ARC destructors, closures, `List[Int]`, `List[Custom]`, Cranelift AOT, and a direct ELF linker path. Unsupported features are deliberately rejected rather than silently compiled with unsafe semantics.
 
-L++ employs a **Value-by-Default with Auto-ARC** memory model. 
-Data is stack-allocated by default. The compiler uses a sophisticated semantic pass (Escape Analysis) to automatically promote data to the heap (via Automatic Reference Counting or Arenas) only when necessary:
-- **Rule 1:** Returned by Reference
-- **Rule 2:** Closure Capture
-- **Rule 3:** Unbounded/Ambiguous Lifetime Container
-- **Rule 4:** Concurrency Boundary
-- **Rule 5:** Self-Referential Data (Arenas)
-- **Rule 6:** Algorithmic Aliasing
+---
 
-Developers write clean, Python-like code, and the compiler handles the lifetime optimizations under the hood.
+## Why L++ exists
 
-## Implementation Status
+L++ is built around a difficult four-way design goal:
 
-Currently implemented with meaningful coverage:
+```text
+                 Python-like readability
+                         ▲
+                         │
+      Rust-inspired ◄────┼────► Go-like iteration speed
+      ownership safety    │
+                         ▼
+                 Native executable performance
+```
 
-- lexer, parser, semantic analysis, type checking
-- escape analysis and MIR lowering
-- C code generation
-- Cranelift-based native object emission for the supported subset
-- cross-platform package/install/build workflow with host C compiler fallback
+The language tries to make the safe path the pleasant path:
 
-Currently experimental or partial:
+```lpp
+struct Box:
+    value: Int
 
-- closure lowering and captured environments
-- list behavior parity across backends
-- full ARC/runtime ownership behavior
-- package ecosystem and dependency resolution robustness
+def identity(value: Box) -> Box:
+    return value
 
-Current builtin runtime coverage includes console/file I/O, ARC-managed `List[Int]` and `List[Custom]`, JSON helpers, threads, and TCP networking primitives (`net_connect`, `net_listen`, `net_accept`, `net_send`, `net_recv`, `net_close`).
+def main():
+    original := Box()
+    returned := identity(original)
+    print(returned.value)
+```
 
-## Benchmark Snapshot
+There are no user-visible `Arc`, `Rc`, raw pointers, or manual frees in this example. L++ lowers the program into explicit internal ownership operations:
 
-**Measured July 19, 2026** on the Arena Linux sandbox (`Linux 6.1.158+`, Debian `cc` 14.2.0). These are **single-run development measurements**, not cross-machine comparisons or statistical performance claims. The compiler was pre-built in release mode; compile timing below is the compiler pipeline and excludes rebuilding the compiler itself.
+```text
+AllocateArc → Borrow → Retain → Move → ReturnOwned → Release
+```
 
-| Workload | L++ compiler total | Cranelift AOT phase | C link step | Native runtime | Result | Executable size |
-|---|---:|---:|---:|---:|---|---:|
-| `fib(35)` | 0.974 ms | 0.828 ms | 339.118 ms | 71.029 ms | `9227465` | 24,120 B |
-| loop (10M) | 0.866 ms | 0.734 ms | 205.309 ms | 8.786 ms | `49999995000000` | 24,120 B |
-| call chain (1M) | 1.038 ms | 0.893 ms | 200.665 ms | 5.035 ms | `500000500000` | 24,176 B |
+## The four pillars
 
-Notes:
+| Pillar | L++ approach |
+|---|---|
+| **Readable** | Significant whitespace, `def`, `struct`, inferred locals, explicit public signatures. |
+| **Safe by construction** | Ownership-aware MIR, ARC, borrow/return contracts, generated destructors, cycle rejection. |
+| **Fast to iterate** | Small Rust compiler pipeline, explicit types, phase timing, fast Cranelift object emission. |
+| **Native** | Cranelift AOT, PIC objects, direct ELF linking for the verified Linux subset. |
 
-- Native-link time is dominated by the host C toolchain and runtime link, not the L++ frontend or Cranelift object emission.
-- The AOT benchmark path links Cranelift PIC objects with `lpp_runtime.c` and verifies each expected program result.
-- Use the parity suite (`sh tests/run_aot_parity.sh`) to check supported C/AOT behavior rather than comparing these measurements to the older Windows/MSVC benchmark record.
+## Verified ownership model
 
-## King 20 Standards
+The current AOT ownership contract covers:
 
-The **King 20** benchmark family has two tracks.
+```text
+✓ ARC allocation and destructor callbacks
+✓ owned returns and borrowed parameter returns
+✓ direct aliases and field aliases
+✓ branch-safe release insertion
+✓ nested struct destructor chains
+✓ closure capsules and closure environments
+✓ List[Int] and List[Custom] element ownership
+✓ strong ownership-cycle rejection
+```
 
-| Track | Purpose | Change policy |
+The compiler rejects direct or indirect strong ownership cycles such as:
+
+```lpp
+struct Node:
+    next: Node
+```
+
+until explicit `Weak`, arena, or cycle-collection semantics are available.
+
+Read the detailed audit: [`documentation/Cranelift_Ownership_Audit_2026-07-19.md`](documentation/Cranelift_Ownership_Audit_2026-07-19.md).
+
+## Build paths
+
+### Host-link fallback
+
+Portable development path:
+
+```text
+L++ source → Cranelift object → packaged runtime object → host linker → executable
+```
+
+Phase 1 packages `lpp_runtime.o` / `lpp_runtime.obj`, so installed builds no longer recompile the full C runtime for every project build.
+
+### Direct Linux ELF path
+
+Experimental Linux x86-64 path:
+
+```text
+L++ source → Cranelift object + freestanding runtime → lpp-link → static ELF
+```
+
+Use it after installation:
+
+```bash
+LPP_LINKER=direct lpp build
+```
+
+The direct linker currently supports all **20 / 20 King20 Stable** workloads without a host final linker.
+
+It includes:
+
+```text
+.text + .rodata merging
+internal symbols
+GOT runtime imports
+Linux startup and exit
+freestanding integer/string output
+freestanding ARC, closures, and lists
+```
+
+Networking, files, threads, JSON, writable data sections, Windows PE, and macOS Mach-O still use the host-link fallback. The roadmap is in [`documentation/Native_Linker_Roadmap.md`](documentation/Native_Linker_Roadmap.md).
+
+## King20 benchmark standards
+
+| Track | Purpose | Policy |
 |---|---|---|
-| **King 20 Stable v1** | Historical comparison baseline | Frozen forever; create `v2` rather than editing it |
-| **King 20 Experimental** | New ownership features, regressions, and optimization work | May evolve with the language |
+| [**King20 Stable v1**](benchmarks/king20/stable/v1/README.md) | Historical correctness and performance baseline | Frozen forever; cut `v2` instead of editing it. |
+| [**King20 Experimental**](benchmarks/king20/experimental/README.md) | New ownership features, regressions, and optimization experiments | Evolves with the toolchain. |
+| [**King20 Direct ELF**](benchmarks/king20/direct_elf_latest.md) | Host-link-free Linux validation | Must preserve exact stdout and exit status. |
 
-Each suite combines three runtime workloads with ownership, ARC, closure, list, and branch regressions. A case must match expected stdout and exit with status zero before timing is recorded.
+Run them:
 
 ```bash
 python3 benchmarks/king20/run.py --suite stable
 python3 benchmarks/king20/run.py --suite experimental
+python3 benchmarks/king20/run_direct_elf.py
 ```
 
-The latest checked-in Stable v1 sandbox run is recorded in [`benchmarks/king20/stable/v1/latest.md`](benchmarks/king20/stable/v1/latest.md): **20 / 20 passed** on a 2-core Intel Xeon Linux sandbox. The runner captures platform, CPU model, logical CPU count, memory, Python, Rust, and host C compiler information in suite-specific `latest.json` files.
-
-King20 Stable now passes **20 / 20** workloads through `lpp-link` with no host final linker. Its latest direct report is [`benchmarks/king20/direct_elf_latest.md`](benchmarks/king20/direct_elf_latest.md). In the current sandbox, direct linking takes about **1.6–2.1 ms** per workload, compared with roughly **200 ms** for the host-link path.
-
-> Phase 2 now includes an experimental Linux x86-64 `lpp-link` ELF runtime that merges internal `.text`, `.rodata`, GOT runtime imports, ARC, closures, `List[Int]`, and `List[Custom]` without a host final-link step. It is verified against all 20 King20 Stable workloads. Installed Linux x86-64 users can opt in with `LPP_LINKER=direct lpp build`. Networking, files, threads, JSON, writable data sections, and cross-platform executable formats still use the host-link fallback.
-
-## Scalability phase analysis
-
-The scalability suite generates deterministic programs at **10,000**, **50,000**, and **100,000** LOC and records the individual compiler phases:
+Latest direct-link result:
 
 ```text
-I/O → lexing → parsing → semantic analysis → type checking → escape analysis → MIR → Cranelift AOT → host linking
+King20 Stable: 20 / 20 passed through lpp-link
+Direct link:   ~1.5–2.1 ms per workload
+Host link:     ~200 ms per workload on the benchmark sandbox
 ```
+
+## Scalability: 10k → 100k LOC
+
+The scalability suite records each compiler phase at 10,000, 50,000, and 100,000 LOC:
 
 ```bash
 python3 benchmarks/scalability/run.py
 ```
 
-The current 100k LOC sandbox run completed the compiler pipeline in **783.497 ms**. Escape analysis (**691.433 ms**) and Cranelift AOT (**634.006 ms**) are currently the dominant scalable passes; host linking stayed near **203 ms** and did not scale with source size. See [`benchmarks/scalability/latest.md`](benchmarks/scalability/latest.md) for the full phase table.
+At 100k LOC on the recorded Linux sandbox:
+
+| Phase | Time |
+|---|---:|
+| Lexing | 26.405 ms |
+| Parsing | 49.233 ms |
+| Semantic analysis | 9.601 ms |
+| Type checking | 5.816 ms |
+| Escape analysis | 691.433 ms |
+| MIR generation | 19.834 ms |
+| Cranelift AOT | 634.006 ms |
+| Compiler total | 783.497 ms |
+| Host link | 202.726 ms |
+
+Escape analysis and AOT lowering are the current scaling targets. See [`benchmarks/scalability/latest.md`](benchmarks/scalability/latest.md) for system information and full data.
 
 ## Cross-language comparison
 
-Equivalent `fib(35)` and loop workloads can be compared against C, C++, Rust, Go, and Zig:
+Compare equivalent canonical workloads against C, C++, Rust, Go, and Zig:
 
 ```bash
 python3 benchmarks/comparison/run.py
 ```
 
-Missing toolchains are recorded as `SKIP`; they are never reported as benchmark values. See [`benchmarks/comparison/README.md`](benchmarks/comparison/README.md) for methodology.
+Unavailable toolchains are reported as `SKIP`, never fabricated as results. L++ comparison now records compile, link, total build, and runtime time separately. See [`benchmarks/comparison/README.md`](benchmarks/comparison/README.md).
+
+## Windows: started
+
+Windows currently supports:
+
+```text
+✓ Cranelift COFF object generation
+✓ lpp_runtime.obj packaging via install.ps1
+✓ MSVC host-link fallback
+✓ Windows CI build and COFF fallback smoke test
+⏳ Direct PE emission
+```
+
+The Windows direct-toolchain plan is in [`documentation/Windows_Native_Toolchain.md`](documentation/Windows_Native_Toolchain.md).
 
 ## GitHub language recognition
 
-L++ source uses the `.lpp` extension and the maintained VS Code TextMate scope `source.lpp`. Generated benchmark reports are marked with `linguist-generated=true` in `.gitattributes`, so they do not distort repository language statistics.
+L++ uses `.lpp` and TextMate scope `source.lpp`. Generated benchmark reports are marked `linguist-generated=true` so they do not distort repository statistics.
 
-Global GitHub language-bar recognition requires an upstream GitHub Linguist contribution; it cannot be forced by repository metadata alone. The maintained submission package is in [`linguist/UPSTREAM_LINGUIST_PR.md`](linguist/UPSTREAM_LINGUIST_PR.md), with a representative sample at [`linguist/samples/lpp/ownership_and_closures.lpp`](linguist/samples/lpp/ownership_and_closures.lpp).
+- Repository Linguist-readiness PR: merged.
+- Upstream GitHub Linguist PR: [#8075](https://github.com/github-linguist/linguist/pull/8075), ready for maintainer review.
 
-## Getting Started
+Global recognition depends on GitHub Linguist maintainers accepting the upstream language definition. The submission package is documented in [`linguist/UPSTREAM_LINGUIST_PR.md`](linguist/UPSTREAM_LINGUIST_PR.md).
 
-Check out [Doc.md](Doc.md) for a comprehensive guide on the syntax and semantics of L++.
+## Getting started
 
-Installer helpers:
+### Install
 
-- Windows: `.\install.ps1`
-- Unix-like shells: `./install.sh`
-- Repo-local wrappers: `lpp.bat` on Windows, `./lpp` on Unix-like shells
+```bash
+# Linux / macOS shell
+./install.sh
+
+# Windows PowerShell
+./install.ps1
+```
+
+### Compile a file
+
+```bash
+lpp examples/calc.lpp
+```
+
+### Create a project
+
+```bash
+lpp new hello-lpp
+cd hello-lpp
+lpp build
+lpp run
+```
+
+For syntax, semantics, runtime contracts, and current limitations, read [`Doc.md`](Doc.md).
 
 ## Architecture
 
-L++ is currently implemented as a Rust-based compiler frontend featuring:
-- A custom lexer managing Python-style significant whitespace.
-- A recursive descent parser.
-- A semantic resolver mapping a persistent Arena-based Scope and Binding tree.
-- A multi-pass Type Table for resolving self-referential structs and local types.
+```text
+Source
+  ↓
+Lexer (significant whitespace)
+  ↓
+Parser → AST
+  ↓
+Semantic resolver + symbol table
+  ↓
+Type checker
+  ↓
+Escape / alias analysis
+  ↓
+Ownership-aware MIR
+  ↓
+ARC insertion + generated destructors
+  ↓
+Cranelift AOT object ──→ lpp-link ELF (Linux verified subset)
+        │
+        └──────────────→ packaged runtime + host-link fallback
+```
+
+## Project identity
+
+The four-pillar visual identity is available as:
+
+```text
+assets/lpp-logo.svg
+editors/vscode/lpp-logo.svg
+```
+
+The logo is SVG/XML, so it can be reused in documentation, websites, packaging, editors, and future extensions.
+
+---
+
+L++ is ambitious by design. The project prefers a narrow, verified capability over a broad unverified promise: if a feature lacks a correct ownership and runtime contract, the compiler should reject it rather than pretend it is safe.

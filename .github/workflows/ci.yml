@@ -46,7 +46,7 @@ jobs:
         run: python3 benchmarks/king20/run.py --suite stable
       - name: Run King 20 Experimental
         run: python3 benchmarks/king20/run.py --suite experimental
-      - name: Run King 20 direct ELF subset
+      - name: Run King 20 direct ELF
         run: python3 benchmarks/king20/run_direct_elf.py
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4
@@ -75,3 +75,30 @@ jobs:
           path: |
             benchmarks/scalability/latest.json
             benchmarks/scalability/latest.md
+
+  windows-coff-fallback:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build and unit-test Windows toolchain
+        shell: pwsh
+        run: |
+          rustc --version
+          cargo test --locked
+          cargo build --release --bin lpp --bin lpp-link
+      - name: Compile runtime object and link Cranelift COFF output
+        shell: pwsh
+        run: |
+          $work = Join-Path $env:RUNNER_TEMP "lpp-windows-coff"
+          New-Item -ItemType Directory -Force $work | Out-Null
+          cl.exe /nologo /O2 /c lpp_runtime.c "/Fo:$work\lpp_runtime.obj"
+          Copy-Item tests\arith.lpp "$work\arith.lpp"
+          $env:LPP_AOT = "1"
+          & .\target\release\lpp.exe "$work\arith.lpp"
+          if ($LASTEXITCODE -ne 0) { throw "L++ AOT object generation failed" }
+          cl.exe /nologo "$work\arith.o" "$work\lpp_runtime.obj" "/Fe:$work\arith.exe"
+          & "$work\arith.exe" | Out-File "$work\output.txt"
+          $actual = (Get-Content "$work\output.txt" | ForEach-Object { $_.Trim() }) -join "`n"
+          if ($actual -ne "15`n5`n50`n2") { throw "Unexpected Windows AOT output: $actual" }
