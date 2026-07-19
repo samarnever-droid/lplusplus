@@ -2,16 +2,23 @@ import time
 import subprocess
 import os
 import json
+import sys
 
 LPP_FILE = "bench_pillars.lpp"
 RUST_FILE = "bench_pillars.rs"
 NUM_SETS = 1500  # 1500 * 65 = ~97,500 lines
 
 def run_benchmark():
+    # The 100k LOC inputs are generated on demand and intentionally not tracked.
+    if not os.path.exists(LPP_FILE) or not os.path.exists(RUST_FILE):
+        print("Generating large benchmark inputs...")
+        subprocess.run([sys.executable, "generate_benchmark_pillars.py"], check=True)
+
     # Build L++
     print("Building L++ compiler in release mode...")
     subprocess.run(["cargo", "build", "--release"], cwd="..", check=True)
-    lpp_executable = os.path.join("..", "target", "release", "lpp.exe")
+    lpp_binary = "lpp.exe" if os.name == "nt" else "lpp"
+    lpp_executable = os.path.join("..", "target", "release", lpp_binary)
 
     print("Benchmarking L++ (Frontend Analysis + Escape Rules)...")
     env = os.environ.copy()

@@ -11,3 +11,7 @@ output.c
 /test_project/
 /benchmarks/scalability/generated/
 **/__pycache__/
+/benchmarks/bench.lpp
+/benchmarks/bench.rs
+/benchmarks/bench_pillars.lpp
+/benchmarks/bench_pillars.rs
