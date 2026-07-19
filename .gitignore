@@ -9,3 +9,5 @@ output.c
 /benchmarks/c_*.c
 /benchmarks/rust_*.rs
 /test_project/
+/benchmarks/scalability/generated/
+**/__pycache__/

@@ -47,3 +47,19 @@ jobs:
             benchmarks/king20/stable/v1/latest.md
             benchmarks/king20/experimental/latest.json
             benchmarks/king20/experimental/latest.md
+
+  scalability-phase-analysis:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Run 10k / 50k / 100k phase scaling suite
+        run: python3 benchmarks/scalability/run.py
+      - name: Upload scalability result
+        uses: actions/upload-artifact@v4
+        with:
+          name: scalability-results
+          path: |
+            benchmarks/scalability/latest.json
+            benchmarks/scalability/latest.md

@@ -1,0 +1,58 @@
+{
+  "generated_utc": "2026-07-19T08:13:04.062922+00:00",
+  "system": {
+    "platform": "Linux-6.1.158+-x86_64-with-glibc2.41",
+    "cpu": "Intel(R) Xeon(R) Processor @ 2.60GHz",
+    "logical_cpus": 2,
+    "memory_mib": 1991.6,
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+    "cc": "cc (Debian 14.2.0-19) 14.2.0"
+  },
+  "rows": [
+    {
+      "loc": 10000,
+      "link_ms": 211.26681199984887,
+      "object_bytes": 2224,
+      "executable_bytes": 24096,
+      "io": 0.12701800000000002,
+      "lex": 2.5448139999999997,
+      "parse": 4.672883,
+      "semantic": 0.925328,
+      "typecheck": 0.444132,
+      "escape": 62.631487,
+      "mir": 2.1212,
+      "aot": 56.87416,
+      "total": 71.351386
+    },
+    {
+      "loc": 50000,
+      "link_ms": 200.61775199974363,
+      "object_bytes": 2224,
+      "executable_bytes": 24096,
+      "io": 0.529106,
+      "lex": 12.129282,
+      "parse": 23.813349000000002,
+      "semantic": 5.076461,
+      "typecheck": 2.94828,
+      "escape": 345.912764,
+      "mir": 10.083167000000001,
+      "aot": 317.934406,
+      "total": 390.416111
+    },
+    {
+      "loc": 100000,
+      "link_ms": 202.72596199993131,
+      "object_bytes": 2224,
+      "executable_bytes": 24096,
+      "io": 1.003304,
+      "lex": 26.404728,
+      "parse": 49.232602,
+      "semantic": 9.600628,
+      "typecheck": 5.816253000000001,
+      "escape": 691.432503,
+      "mir": 19.83446,
+      "aot": 634.006025,
+      "total": 783.4970460000001
+    }
+  ]
+}

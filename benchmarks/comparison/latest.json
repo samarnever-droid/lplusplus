@@ -1,0 +1,95 @@
+{
+  "generated_utc": "2026-07-19T08:13:15.564221+00:00",
+  "rows": [
+    {
+      "workload": "fib35",
+      "language": "lpp",
+      "status": "PASS",
+      "runtime_ms": 71.20614799987379,
+      "tool": "Cranelift AOT"
+    },
+    {
+      "workload": "fib35",
+      "language": "c",
+      "status": "PASS",
+      "runtime_ms": 25.29773500009469,
+      "build_ms": 126.8046229997708,
+      "tool": "cc (Debian 14.2.0-19) 14.2.0"
+    },
+    {
+      "workload": "fib35",
+      "language": "cpp",
+      "status": "PASS",
+      "runtime_ms": 18.841217000044708,
+      "build_ms": 512.2887279999304,
+      "tool": "c++ (Debian 14.2.0-19) 14.2.0"
+    },
+    {
+      "workload": "fib35",
+      "language": "rust",
+      "status": "PASS",
+      "runtime_ms": 34.66503399977228,
+      "build_ms": 84.73576799997318,
+      "tool": "rustc 1.97.1 (8bab26f4f 2026-07-14)"
+    },
+    {
+      "workload": "fib35",
+      "language": "go",
+      "status": "SKIP",
+      "runtime_ms": null,
+      "tool": "unavailable"
+    },
+    {
+      "workload": "fib35",
+      "language": "zig",
+      "status": "SKIP",
+      "runtime_ms": null,
+      "tool": "unavailable"
+    },
+    {
+      "workload": "loop10m",
+      "language": "lpp",
+      "status": "PASS",
+      "runtime_ms": 11.455476000264753,
+      "tool": "Cranelift AOT"
+    },
+    {
+      "workload": "loop10m",
+      "language": "c",
+      "status": "PASS",
+      "runtime_ms": 1.3535530001718143,
+      "build_ms": 41.961334999996325,
+      "tool": "cc (Debian 14.2.0-19) 14.2.0"
+    },
+    {
+      "workload": "loop10m",
+      "language": "cpp",
+      "status": "PASS",
+      "runtime_ms": 1.3824340003338875,
+      "build_ms": 53.60472599977584,
+      "tool": "c++ (Debian 14.2.0-19) 14.2.0"
+    },
+    {
+      "workload": "loop10m",
+      "language": "rust",
+      "status": "PASS",
+      "runtime_ms": 1.7419430000700231,
+      "build_ms": 82.62230199989062,
+      "tool": "rustc 1.97.1 (8bab26f4f 2026-07-14)"
+    },
+    {
+      "workload": "loop10m",
+      "language": "go",
+      "status": "SKIP",
+      "runtime_ms": null,
+      "tool": "unavailable"
+    },
+    {
+      "workload": "loop10m",
+      "language": "zig",
+      "status": "SKIP",
+      "runtime_ms": null,
+      "tool": "unavailable"
+    }
+  ]
+}

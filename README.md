@@ -77,6 +77,30 @@ The latest checked-in Stable v1 sandbox run is recorded in [`benchmarks/king20/s
 
 > Standalone AOT executables currently require a host linker because Cranelift emits native object files. The King 20 report separates linker time from compiler and runtime time. A direct executable emitter is a separate toolchain project; it cannot be safely replaced with a superficial flag.
 
+## Scalability phase analysis
+
+The scalability suite generates deterministic programs at **10,000**, **50,000**, and **100,000** LOC and records the individual compiler phases:
+
+```text
+I/O → lexing → parsing → semantic analysis → type checking → escape analysis → MIR → Cranelift AOT → host linking
+```
+
+```bash
+python3 benchmarks/scalability/run.py
+```
+
+The current 100k LOC sandbox run completed the compiler pipeline in **783.497 ms**. Escape analysis (**691.433 ms**) and Cranelift AOT (**634.006 ms**) are currently the dominant scalable passes; host linking stayed near **203 ms** and did not scale with source size. See [`benchmarks/scalability/latest.md`](benchmarks/scalability/latest.md) for the full phase table.
+
+## Cross-language comparison
+
+Equivalent `fib(35)` and loop workloads can be compared against C, C++, Rust, Go, and Zig:
+
+```bash
+python3 benchmarks/comparison/run.py
+```
+
+Missing toolchains are recorded as `SKIP`; they are never reported as benchmark values. See [`benchmarks/comparison/README.md`](benchmarks/comparison/README.md) for methodology.
+
 ## Getting Started
 
 Check out [Doc.md](Doc.md) for a comprehensive guide on the syntax and semantics of L++.
