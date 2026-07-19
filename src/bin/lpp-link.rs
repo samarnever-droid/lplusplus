@@ -333,7 +333,7 @@ fn read_coff_input(path: &Path) -> Result<InputText, String> {
                 if let Ok(name) = symbol.name() {
                     // COFF emits local section symbols such as `.text$mn`.
                     // They are relocation anchors, not linkable global names.
-                    if !name.is_empty() && !name.starts_with(".text") {
+                    if !name.is_empty() && !name.starts_with(".text") && !name.starts_with('$') {
                         text_symbols.push((name.to_string(), base as u64 + symbol.address()));
                     }
                 }
