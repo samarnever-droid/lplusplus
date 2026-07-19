@@ -344,7 +344,7 @@ static int64_t lpp_net_set_timeout(int64_t handle, int64_t milliseconds) {
     lpp_socket_t sock = lpp__socket_load(handle);
     if (sock == LPP_INVALID_SOCKET || milliseconds <= 0) return 0;
 #ifdef _WIN32
-    DWORD timeout = milliseconds > (int64_t)DWORD_MAX ? DWORD_MAX : (DWORD)milliseconds;
+    DWORD timeout = milliseconds > 0xFFFFFFFFLL ? (DWORD)0xFFFFFFFFUL : (DWORD)milliseconds;
     return setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout)) == 0
         && setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, (const char*)&timeout, sizeof(timeout)) == 0;
 #else
