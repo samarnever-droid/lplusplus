@@ -1,0 +1,17 @@
+# Field-alias regression: an object read from an owning struct field is borrowed,
+# then retained when assigned to a second owner.
+# Expected output:
+# 1
+
+struct Child:
+    value: Int
+
+struct Parent:
+    child: Child
+
+def main():
+    child := Child()
+    parent := Parent()
+    parent.child = child
+    alias := parent.child
+    print(1)

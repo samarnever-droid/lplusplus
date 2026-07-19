@@ -101,6 +101,34 @@ pub fn get_builtins() -> &'static [Builtin] {
             cl_params: &[0],
             cl_return: None,
         },
+        // ARC-managed allocation used by AOT struct lowering. The pointer is
+        // represented as I64 in the current 64-bit L++ runtime ABI.
+        Builtin {
+            name: "lpp_arc_alloc",
+            symbol: "lpp_arc_alloc",
+            params: &[ParamType::Specific(TypeRef::Int)],
+            return_type: TypeRef::Int,
+            cl_params: &[0],
+            cl_return: Some(0),
+        },
+        // AOT-only typed ARC allocation: size plus a generated destructor
+        // function pointer, both represented as I64 in the current ABI.
+        Builtin {
+            name: "lpp_arc_alloc_with_destructor",
+            symbol: "lpp_arc_alloc_with_destructor",
+            params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)],
+            return_type: TypeRef::Int,
+            cl_params: &[0, 0],
+            cl_return: Some(0),
+        },
+        Builtin {
+            name: "lpp_closure_destroy",
+            symbol: "lpp_closure_destroy",
+            params: &[ParamType::Specific(TypeRef::Int)],
+            return_type: TypeRef::Void,
+            cl_params: &[0],
+            cl_return: None,
+        },
         Builtin {
             name: "lpp_alloc",
             symbol: "lpp_alloc",

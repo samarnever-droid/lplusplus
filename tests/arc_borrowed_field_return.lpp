@@ -1,0 +1,20 @@
+# Ownership audit: returning a custom field of a borrowed parameter must retain
+# it for the caller before ReturnOwned.
+# Expected output:
+# 1
+
+struct Child:
+    value: Int
+
+struct Parent:
+    child: Child
+
+def extract(parent: Parent) -> Child:
+    return parent.child
+
+def main():
+    child := Child()
+    parent := Parent()
+    parent.child = child
+    extracted := extract(parent)
+    print(1)

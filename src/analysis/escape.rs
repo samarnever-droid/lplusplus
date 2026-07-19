@@ -45,11 +45,16 @@ impl EscapeAnalyzer {
                     let is_struct = matches!(binding.ty, Some(TypeRef::Custom(_)));
                     let is_mut = binding.is_mut;
 
-                    // Rule 2 & 4: If a reference crosses a concurrency boundary or escaping closure,
-                    // it is promoted to Arc if it's mutable (so edits are shared) or if it's a struct (references).
-                    // Pure immutable scalars are safely cloned by value and remain on the stack.
-                    if is_struct || is_mut {
+                    // Only custom structs currently use the ARC header runtime ABI.
+                    // Scalars are copied into closure environments; promoting an `Int`/`Bool`
+                    // merely because it is mutable would make the AOT backend pass a non-pointer
+                    // to lpp_arc_retain/release (undefined behaviour). Generic containers and
+                    // strings need their own ref-counted representation before they can opt in.
+                    if is_struct {
                         Self::promote(&mut storage, captured_id, StorageClass::Arc);
+                    } else if is_mut {
+                        // Mutable scalar captures are copied today, not shared. Keep this as a
+                        // value until closure capture-by-reference is implemented explicitly.
                     }
                 }
             }
@@ -129,6 +134,28 @@ impl EscapeAnalyzer {
         }
     }
 
+    /// Rule 6: direct aliases of a custom object (`b := a` or `b = a`)
+    /// give both bindings ownership of the same ARC object.
+    fn promote_direct_alias(
+        destination: BindingId,
+        value: &Expr,
+        current_scope: ScopeId,
+        symbol_table: &SymbolTable,
+        type_table: &TypeTable,
+        storage: &mut HashMap<BindingId, StorageClass>,
+    ) {
+        let Some(source) = Self::get_root_binding(value, current_scope, symbol_table) else {
+            return;
+        };
+        let Some(source_ty) = Self::get_expr_type(value, current_scope, symbol_table, type_table) else {
+            return;
+        };
+        if matches!(source_ty, TypeRef::Custom(_) | TypeRef::Generic(_, _)) {
+            Self::promote(storage, source, StorageClass::Arc);
+            Self::promote(storage, destination, StorageClass::Arc);
+        }
+    }
+
     fn walk_stmt_rule1(
         stmt: &Stmt, 
         current_scope: ScopeId, 
@@ -139,10 +166,20 @@ impl EscapeAnalyzer {
         storage: &mut HashMap<BindingId, StorageClass>
     ) -> Result<(), String> {
         match stmt {
-            Stmt::LetInferred { value, .. } => {
+            Stmt::LetInferred { value, binding_id, .. } => {
+                if let Some(id) = binding_id.get() {
+                    Self::promote_direct_alias(
+                        BindingId(id), value, current_scope, symbol_table, type_table, storage,
+                    );
+                }
                 Self::walk_expr_rule1(value, current_scope, symbol_table, type_table, closure_scopes, closure_idx, storage)?;
             }
-            Stmt::Assign { value, .. } => {
+            Stmt::Assign { value, binding_id, .. } => {
+                if let Some(id) = binding_id.get() {
+                    Self::promote_direct_alias(
+                        BindingId(id), value, current_scope, symbol_table, type_table, storage,
+                    );
+                }
                 Self::walk_expr_rule1(value, current_scope, symbol_table, type_table, closure_scopes, closure_idx, storage)?;
             }
             Stmt::AssignField { base, field: _, value } => {
@@ -177,7 +214,7 @@ impl EscapeAnalyzer {
             Stmt::Return(Some(expr)) => {
                 let mut should_promote = false;
                 if let Some(ty) = Self::get_expr_type(expr, current_scope, symbol_table, type_table) {
-                    if matches!(ty, TypeRef::Custom(_) | TypeRef::Generic(_, _) | TypeRef::Str) {
+                    if matches!(ty, TypeRef::Custom(_)) {
                         should_promote = true;
                     }
                 }
@@ -237,7 +274,7 @@ impl EscapeAnalyzer {
                 for element in elements {
                     let mut should_promote = false;
                     if let Some(ty) = Self::get_expr_type(element, current_scope, symbol_table, type_table) {
-                        if matches!(ty, TypeRef::Custom(_) | TypeRef::Generic(_, _) | TypeRef::Str) {
+                        if matches!(ty, TypeRef::Custom(_)) {
                             should_promote = true;
                         }
                     }

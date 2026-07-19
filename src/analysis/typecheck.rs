@@ -393,6 +393,11 @@ impl<'a> TypeChecker<'a> {
                         if name == "list_new" {
                             if let Some(TypeRef::Generic(list_name, params)) = expected_ty {
                                 if list_name == "List" {
+                                    if params.len() != 1 || params[0] != TypeRef::Int {
+                                        return Err(format!(
+                                            "only List[Int] is implemented safely; requested List[{:?}]", params
+                                        ));
+                                    }
                                     return Ok(TypeRef::Generic("List".to_string(), params.clone()));
                                 }
                             }
@@ -448,20 +453,20 @@ impl<'a> TypeChecker<'a> {
                     self.infer_stmt(stmt, scope_id)?;
                 }
                 
+                // Check an explicit/inferred result type for diagnostics, but
+                // the expression itself is a callable ownership capsule, not
+                // the value it will eventually return when invoked.
                 if let Some(t) = return_type {
-                    Ok(Self::convert_ast_type(&self.type_table, t))
+                    let _ = Self::convert_ast_type(&self.type_table, t);
                 } else {
-                    let mut inferred_rt = TypeRef::Void;
                     for stmt in body {
                         if let Stmt::Return(Some(expr)) = stmt {
-                            if let Ok(ty) = self.infer_expr(expr, scope_id, None) {
-                                inferred_rt = ty;
-                                break;
-                            }
+                            let _ = self.infer_expr(expr, scope_id, None)?;
+                            break;
                         }
                     }
-                    Ok(inferred_rt)
                 }
+                Ok(TypeRef::Function)
             }
             Expr::FieldAccess { base, field } => {
                 let base_ty = self.infer_expr(base, current_scope, None)?;
@@ -483,9 +488,20 @@ impl<'a> TypeChecker<'a> {
                 let mut elem_ty = TypeRef::Int; // Default if empty
                 if !elements.is_empty() {
                     elem_ty = self.infer_expr(&elements[0], current_scope, None)?;
-                    for element in elements.iter().skip(1) {
-                        self.infer_expr(element, current_scope, None)?;
+                }
+                for element in elements.iter().skip(1) {
+                    let actual_ty = self.infer_expr(element, current_scope, None)?;
+                    if actual_ty != elem_ty {
+                        return Err(format!(
+                            "list literal has mixed element types: expected {:?}, got {:?}",
+                            elem_ty, actual_ty
+                        ));
                     }
+                }
+                if elem_ty != TypeRef::Int {
+                    return Err(format!(
+                        "only List[Int] is implemented safely; list literal element type is {:?}", elem_ty
+                    ));
                 }
                 Ok(TypeRef::Generic("List".to_string(), vec![elem_ty]))
             }

@@ -14,6 +14,16 @@ pub struct BlockId(pub usize);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct FuncId(pub usize);
 
+/// Ownership class recorded in MIR. `Owned` values carry one ARC reference,
+/// `Borrowed` values are valid only for the caller-owned lifetime, and `Copy`
+/// values are plain scalars with no destructor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ownership {
+    Copy,
+    Owned,
+    Borrowed,
+}
+
 /// A declared local variable or temporary.
 #[derive(Debug, Clone)]
 pub struct LocalDecl {
@@ -23,12 +33,17 @@ pub struct LocalDecl {
     /// Optional human-readable name for debugging
     pub debug_name: Option<String>,
     pub binding_id: Option<crate::semantic::BindingId>,
+    pub ownership: Ownership,
 }
 
 /// An operand is either a constant value or a read from a Local.
 #[derive(Debug, Clone)]
 pub enum Operand {
+    /// Read a scalar or owned temporary by value.
     Local(LocalId),
+    /// Read an owned object without transferring its ARC reference. Ownership
+    /// passes must retain before assigning this value to another owner.
+    Borrowed(LocalId),
     Int(i64),
     Float(f64),
     String(String),
@@ -39,8 +54,12 @@ pub enum Operand {
 /// Rvalues are side-effect free (mostly) except for calls, but represent the right-hand side of assignments.
 #[derive(Debug, Clone)]
 pub enum Rvalue {
-    /// Simply yields the operand's value
+    /// Copy a scalar or read a borrowed value. ARC retains are inserted when a
+    /// borrowed object becomes another owner.
     Use(Operand),
+    /// Transfer an owned temporary into the assignment destination. The source
+    /// must not be released afterward by an ownership-aware cleanup pass.
+    Move(LocalId),
     /// A mathematical or logical binary operation
     BinaryOp(BinaryOperator, Operand, Operand),
     /// A direct function call (to a known top-level function)
@@ -55,8 +74,10 @@ pub enum Rvalue {
     MakeClosure(FuncId, Vec<Operand>),
     /// Reads a field from a custom struct
     FieldAccess(Operand, String),
-    /// Allocates memory for a new struct (zero-initialized or with values)
+    /// Legacy/raw struct allocation. AOT rejects this because it has no ARC header.
     AllocateStruct(TypeRef),
+    /// Allocates a custom struct with one owned ARC reference.
+    AllocateArcStruct(TypeRef),
     /// Allocates memory for a new list
     AllocateList(TypeRef),
 }
@@ -65,6 +86,7 @@ impl std::fmt::Display for Operand {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Operand::Local(id) => write!(f, "_{}", id.0),
+            Operand::Borrowed(id) => write!(f, "borrow(_{})", id.0),
             Operand::Int(i) => write!(f, "{}", i),
             Operand::Float(val) => write!(f, "{}", val),
             Operand::String(s) => write!(f, "\"{}\"", s),
@@ -77,6 +99,7 @@ impl std::fmt::Display for Rvalue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Rvalue::Use(op) => write!(f, "{}", op),
+            Rvalue::Move(local) => write!(f, "move(_{})", local.0),
             Rvalue::BinaryOp(op, l, r) => write!(f, "{} {:?} {}", l, op, r), // Note: using Debug for BinaryOp for now
             Rvalue::CallDirect(func_id, args) => {
                 write!(f, "call fn_{}(", func_id.0)?;
@@ -111,7 +134,8 @@ impl std::fmt::Display for Rvalue {
                 write!(f, "])")
             },
             Rvalue::FieldAccess(base, field) => write!(f, "{}.{}", base, field),
-            Rvalue::AllocateStruct(ty) => write!(f, "alloc_struct({:?})", ty),
+            Rvalue::AllocateStruct(ty) => write!(f, "alloc_struct_raw({:?})", ty),
+            Rvalue::AllocateArcStruct(ty) => write!(f, "alloc_arc_struct({:?})", ty),
             Rvalue::AllocateList(ty) => write!(f, "alloc_list({:?})", ty),
         }
     }
@@ -155,8 +179,11 @@ pub enum Terminator {
     /// Conditional jump based on a boolean operand
     If { cond: Operand, then_block: BlockId, else_block: BlockId },
     
-    /// Return from the current function
+    /// Return from the current function without transferring an owned local.
     Return(Option<Operand>),
+
+    /// Return an owned local and transfer its ARC reference to the caller.
+    ReturnOwned(Operand),
     
     /// Panic or abort the program
     Unreachable,
@@ -183,6 +210,7 @@ impl std::fmt::Display for MirBlock {
             },
             Terminator::Return(Some(op)) => writeln!(f, "    return {};", op),
             Terminator::Return(None) => writeln!(f, "    return;"),
+            Terminator::ReturnOwned(op) => writeln!(f, "    return_owned {};", op),
             Terminator::Unreachable => writeln!(f, "    unreachable;"),
         }
     }

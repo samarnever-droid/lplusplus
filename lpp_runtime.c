@@ -10,6 +10,11 @@
  *   clang -O2 -c lpp_runtime.c -o lpp_runtime.o
  */
 
+/* Expose POSIX networking declarations (getaddrinfo, addrinfo) under strict C. */
+#if !defined(_WIN32) && !defined(_POSIX_C_SOURCE)
+#  define _POSIX_C_SOURCE 200112L
+#endif
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -169,12 +174,16 @@ int8_t lpp_file_exists(const char *path) {
 #  define LPP_ARC_DEC(p)          atomic_fetch_sub_explicit((p), 1, memory_order_acq_rel)
 #endif
 
+typedef void (*LppArcDestructor)(void *payload);
+
 typedef struct {
     lpp_atomic32_t refcount;
+    /* Called exactly once, immediately before the payload is freed. */
+    LppArcDestructor destructor;
 } LppArcHeader;
 
-/* Allocate payload of `size` bytes with a hidden ARC header, refcount=1. */
-void *lpp_arc_alloc(int64_t size) {
+/* Allocate an ARC object with an optional type-specific destructor. */
+void *lpp_arc_alloc_with_destructor(int64_t size, LppArcDestructor destructor) {
     LppArcHeader *hdr = (LppArcHeader *)calloc(1, sizeof(LppArcHeader) + (size_t)size);
     if (!hdr) return NULL;
 #if defined(_MSC_VER)
@@ -182,7 +191,13 @@ void *lpp_arc_alloc(int64_t size) {
 #else
     atomic_init(&hdr->refcount, 1);
 #endif
+    hdr->destructor = destructor;
     return (void *)(hdr + 1); /* return pointer to payload, past the header */
+}
+
+/* Backwards-compatible allocation for runtime values with no child owners. */
+void *lpp_arc_alloc(int64_t size) {
+    return lpp_arc_alloc_with_destructor(size, NULL);
 }
 
 /* Increment the reference count. Safe to call with NULL. */
@@ -198,9 +213,21 @@ void lpp_arc_release(void *ptr) {
     LppArcHeader *hdr = (LppArcHeader *)ptr - 1;
     int32_t prev = (int32_t)LPP_ARC_DEC(&hdr->refcount);
     if (prev == 1) {
-        /* refcount just hit zero — free the entire allocation */
+        /* Refcount just hit zero. Destroy owned child references before the
+         * payload/header are released; child releases may recursively invoke
+         * their own generated destructors. */
+        if (hdr->destructor) hdr->destructor(ptr);
         free(hdr);
     }
+}
+
+/* An ARC-managed closure payload is two pointer-sized words:
+ * [code pointer, environment pointer].  The code pointer is non-owning; the
+ * environment is an owned ARC reference transferred into the closure. */
+void lpp_closure_destroy(void *closure) {
+    if (!closure) return;
+    void **parts = (void **)closure;
+    lpp_arc_release(parts[1]);
 }
 
 /* ── Allocator ───────────────────────────────────────────────────────────── */
@@ -222,17 +249,50 @@ typedef struct {
     int64_t  cap;
 } LppList;
 
+static void lpp_list_destroy(void *payload) {
+    LppList *l = (LppList *)payload;
+    if (!l) return;
+    free(l->data);
+    l->data = NULL;
+    l->len = 0;
+    l->cap = 0;
+}
+
+/* List[Int] is itself an ARC object. Its backing buffer is freed by the
+ * destructor when the final list owner disappears. */
 void *lpp_list_new(void) {
-    LppList *l = (LppList *)calloc(1, sizeof(LppList));
+    LppList *l = (LppList *)lpp_arc_alloc_with_destructor(
+        (int64_t)sizeof(LppList), lpp_list_destroy
+    );
+    if (!l) {
+        fprintf(stderr, "[L++ Runtime Error] out of memory while creating List[Int]\n");
+        abort();
+    }
     return l;
 }
 
 void lpp_list_push(void *list, int64_t value) {
     LppList *l = (LppList *)list;
-    if (!l) return;
+    if (!l) {
+        fprintf(stderr, "[L++ Runtime Error] push to null List[Int]\n");
+        abort();
+    }
     if (l->len == l->cap) {
+        if (l->cap > INT64_MAX / 2) {
+            fprintf(stderr, "[L++ Runtime Error] List[Int] capacity overflow\n");
+            abort();
+        }
         int64_t new_cap = l->cap == 0 ? 8 : l->cap * 2;
-        l->data = (int64_t *)realloc(l->data, (size_t)(new_cap * sizeof(int64_t)));
+        if (new_cap > INT64_MAX / (int64_t)sizeof(int64_t)) {
+            fprintf(stderr, "[L++ Runtime Error] List[Int] allocation size overflow\n");
+            abort();
+        }
+        int64_t *new_data = (int64_t *)realloc(l->data, (size_t)new_cap * sizeof(int64_t));
+        if (!new_data) {
+            fprintf(stderr, "[L++ Runtime Error] out of memory while growing List[Int]\n");
+            abort();
+        }
+        l->data = new_data;
         l->cap = new_cap;
     }
     l->data[l->len++] = value;
@@ -240,7 +300,10 @@ void lpp_list_push(void *list, int64_t value) {
 
 int64_t lpp_list_get(void *list, int64_t index) {
     LppList *l = (LppList *)list;
-    if (!l || index < 0 || index >= l->len) return 0;
+    if (!l || index < 0 || index >= l->len) {
+        fprintf(stderr, "[L++ Runtime Error] List[Int] index out of bounds: %lld\n", (long long)index);
+        abort();
+    }
     return l->data[index];
 }
 
@@ -250,9 +313,9 @@ int64_t lpp_list_len(void *list) {
 }
 
 void lpp_list_free(void *list) {
-    LppList *l = (LppList *)list;
-    free(l->data);
-    free(l);
+    /* Compatibility entry point. In ownership-aware AOT code list lifetime is
+     * automatic, so this is only a single reference release, never raw free. */
+    lpp_arc_release(list);
 }
 
 /* Network sockets */

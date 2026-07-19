@@ -1,0 +1,11 @@
+# Rule 6 regression: two bindings alias the same ARC object.
+# Expected output:
+# 1
+
+struct Box:
+    value: Int
+
+def main():
+    first := Box()
+    second := first
+    print(1)

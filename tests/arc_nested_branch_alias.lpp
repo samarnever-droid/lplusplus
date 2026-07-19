@@ -1,0 +1,20 @@
+# Ownership audit: a field alias created only in one nested branch must be
+# released on that path without releasing an uninitialized alias on the other.
+# Expected output:
+# 1
+
+struct Child:
+    value: Int
+
+struct Parent:
+    child: Child
+
+def main():
+    child := Child()
+    parent := Parent()
+    parent.child = child
+    if 1 == 1:
+        alias := parent.child
+        print(1)
+    else:
+        print(0)

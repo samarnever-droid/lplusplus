@@ -9,5 +9,5 @@ def main():
     for x in l:
         print(x)
         
-    list_free(l)
+    # List[Int] is automatically released by the ownership runtime.
     print_str("--- Success ---")

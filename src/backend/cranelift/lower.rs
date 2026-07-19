@@ -1,4 +1,4 @@
-use super::types::type_to_cl;
+use super::types::{struct_layout, type_to_cl};
 use crate::ast::BinaryOperator;
 use crate::mir::ir::*;
 use crate::typecheck::{TypeRef, TypeTable};
@@ -14,6 +14,8 @@ pub struct FunctionLower<'a, M: Module> {
     pub module: &'a mut M,
     pub func_ids: &'a HashMap<FuncId, CLFuncId>,
     pub builtin_ids: &'a HashMap<String, CLFuncId>,
+    /// Generated type-specific destructors used by AllocateArcStruct.
+    pub drop_ids: &'a HashMap<crate::typecheck::StructTypeId, CLFuncId>,
     pub type_table: &'a TypeTable,
     pub fn_name: String,
     pub next_str_idx: usize,
@@ -108,7 +110,7 @@ impl<'a, M: Module> FunctionLower<'a, M> {
         local_vars: &HashMap<LocalId, Variable>,
     ) -> Result<Value, String> {
         match op {
-            Operand::Local(id) => {
+            Operand::Local(id) | Operand::Borrowed(id) => {
                 let variable = *local_vars
                     .get(id)
                     .ok_or_else(|| format!("Missing Cranelift variable for local {:?}", id))?;
@@ -166,12 +168,16 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                 if let TypeRef::Custom(struct_id) = base_ty {
                     let struct_def = &self.type_table.definitions[struct_id.0];
                     if let Some(field_index) = struct_def.fields.iter().position(|(name, _)| name == field) {
-                        let offset = (field_index * 8) as i32;
+                        let (layout, _) = struct_layout(self.type_table, *struct_id);
+                        let field_layout = layout[field_index];
+                        if builder.func.dfg.value_type(value_value) != field_layout.ty {
+                            return Err(format!("Type mismatch storing field '{}' of '{}'", field, struct_def.name));
+                        }
                         builder.ins().store(
                             cranelift_codegen::ir::MemFlags::new(),
                             value_value,
                             base_value,
-                            offset,
+                            field_layout.offset as i32,
                         );
                     } else {
                         return Err(format!(
@@ -186,7 +192,21 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                     ));
                 }
             }
-            MirInstr::Retain(_) | MirInstr::Release(_) => {}
+            MirInstr::Retain(local) | MirInstr::Release(local) => {
+                // ARC operations are part of MIR semantics, not optional hints.  Emit
+                // the runtime call so AOT has the same ownership behavior as the model.
+                let symbol = if matches!(instr, MirInstr::Retain(_)) {
+                    "lpp_arc_retain"
+                } else {
+                    "lpp_arc_release"
+                };
+                let builtin_id = *self.builtin_ids.get(symbol).ok_or_else(|| {
+                    format!("ARC runtime symbol '{}' was not declared", symbol)
+                })?;
+                let func_ref = self.module.declare_func_in_func(builtin_id, builder.func);
+                let value = self.operand_to_value(builder, &Operand::Local(*local), local_vars)?;
+                builder.ins().call(func_ref, &[value]);
+            }
         }
         Ok(())
     }
@@ -201,11 +221,19 @@ impl<'a, M: Module> FunctionLower<'a, M> {
     ) -> Result<Value, String> {
         match rvalue {
             Rvalue::Use(op) => self.operand_to_value(builder, op, local_vars),
+            Rvalue::Move(local) => {
+                self.operand_to_value(builder, &Operand::Local(*local), local_vars)
+            }
             Rvalue::BinaryOp(op, left, right) => {
                 let left = self.operand_to_value(builder, left, local_vars)?;
                 let right = self.operand_to_value(builder, right, local_vars)?;
                 let is_float = builder.func.dfg.value_type(left) == cl_types::F64;
-                Ok(match op {
+                let is_comparison = matches!(
+                    op,
+                    BinaryOperator::Eq | BinaryOperator::NotEq | BinaryOperator::Less |
+                    BinaryOperator::Greater | BinaryOperator::LessEq | BinaryOperator::GreaterEq
+                );
+                let value = match op {
                     BinaryOperator::Add => {
                         if is_float { builder.ins().fadd(left, right) }
                         else { builder.ins().iadd(left, right) }
@@ -222,9 +250,13 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                         if is_float { builder.ins().fdiv(left, right) }
                         else { builder.ins().sdiv(left, right) }
                     }
+                    // Cranelift has no fmod instruction. Never silently compile `%`
+                    // as subtraction: reject float modulo until it has a runtime lowering.
                     BinaryOperator::Modulo => {
-                        if is_float { builder.ins().fsub(left, right) }
-                        else { builder.ins().srem(left, right) }
+                        if is_float {
+                            return Err("float modulo is not implemented by the AOT backend".to_string());
+                        }
+                        builder.ins().srem(left, right)
                     }
                     BinaryOperator::Eq => {
                         if is_float { builder.ins().fcmp(FloatCC::Equal, left, right) }
@@ -250,7 +282,12 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                         if is_float { builder.ins().fcmp(FloatCC::GreaterThanOrEqual, left, right) }
                         else { builder.ins().icmp(IntCC::SignedGreaterThanOrEqual, left, right) }
                     }
-                })
+                };
+                // Cranelift 0.113 represents integer/float comparisons as I8,
+                // which is also L++'s stable Bool ABI. Keep the value unchanged;
+                // extending it as if it were b1 creates invalid CLIF.
+                let _ = is_comparison;
+                Ok(value)
             }
             Rvalue::CallDirect(mir_func_id, args) => {
                 let cl_id = *self.func_ids.get(mir_func_id).ok_or_else(|| {
@@ -287,23 +324,34 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                     results[0]
                 })
             }
-            Rvalue::AllocateStruct(TypeRef::Custom(struct_id)) => {
-                let struct_def = &self.type_table.definitions[struct_id.0];
-                let size = (struct_def.fields.len() * 8) as i64;
-                let size_val = builder.ins().iconst(cl_types::I64, size);
+            Rvalue::AllocateArcStruct(TypeRef::Custom(struct_id)) => {
+                let (_, layout_size) = struct_layout(self.type_table, *struct_id);
+                let size_val = builder.ins().iconst(cl_types::I64, layout_size as i64);
                 let builtin_id = *self
                     .builtin_ids
-                    .get("lpp_alloc")
-                    .ok_or_else(|| "Builtin 'lpp_alloc' was not declared".to_string())?;
+                    .get("lpp_arc_alloc_with_destructor")
+                    .ok_or_else(|| "Builtin 'lpp_arc_alloc_with_destructor' was not declared".to_string())?;
                 let func_ref = self.module.declare_func_in_func(builtin_id, builder.func);
-                let call = builder.ins().call(func_ref, &[size_val]);
+                let drop_id = *self.drop_ids.get(struct_id).ok_or_else(|| {
+                    format!("missing generated ARC destructor for struct {:?}", struct_id)
+                })?;
+                let drop_ref = self.module.declare_func_in_func(drop_id, builder.func);
+                let drop_addr = builder.ins().func_addr(self.module.target_config().pointer_type(), drop_ref);
+                let call = builder.ins().call(func_ref, &[size_val, drop_addr]);
                 let results = builder.inst_results(call);
                 results
                     .first()
                     .copied()
                     .ok_or_else(|| "Allocator call returned no value".to_string())
             }
-            Rvalue::AllocateList(_) => {
+            Rvalue::AllocateList(element_ty) => {
+                // The current runtime stores int64_t elements, not generic boxed values.
+                // Refuse unsupported lists in AOT instead of truncating pointers/floats.
+                if *element_ty != TypeRef::Int {
+                    return Err(format!(
+                        "AOT currently supports only List[Int]; got List[{:?}]", element_ty
+                    ));
+                }
                 let builtin_id = *self
                     .builtin_ids
                     .get("lpp_list_new")
@@ -316,19 +364,21 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                     .copied()
                     .ok_or_else(|| "List allocator call returned no value".to_string())
             }
-            Rvalue::FieldAccess(Operand::Local(base_id), field) => {
+            Rvalue::FieldAccess(Operand::Local(base_id), field)
+            | Rvalue::FieldAccess(Operand::Borrowed(base_id), field) => {
                 let base_value =
                     self.operand_to_value(builder, &Operand::Local(*base_id), local_vars)?;
                 let base_ty = &locals[base_id.0].ty;
                 if let TypeRef::Custom(struct_id) = base_ty {
                     let struct_def = &self.type_table.definitions[struct_id.0];
                     if let Some(field_index) = struct_def.fields.iter().position(|(name, _)| name == field) {
-                        let offset = (field_index * 8) as i32;
+                        let (layout, _) = struct_layout(self.type_table, *struct_id);
+                        let field_layout = layout[field_index];
                         Ok(builder.ins().load(
-                            cl_types::I64,
+                            field_layout.ty,
                             cranelift_codegen::ir::MemFlags::new(),
                             base_value,
-                            offset,
+                            field_layout.offset as i32,
                         ))
                     } else {
                         Err(format!(
@@ -347,10 +397,19 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                 let size_val = builder.ins().iconst(cl_types::I64, 16);
                 let builtin_id = *self
                     .builtin_ids
-                    .get("lpp_alloc")
-                    .ok_or_else(|| "Builtin 'lpp_alloc' was not declared".to_string())?;
+                    .get("lpp_arc_alloc_with_destructor")
+                    .ok_or_else(|| "Builtin 'lpp_arc_alloc_with_destructor' was not declared".to_string())?;
                 let alloc_func_ref = self.module.declare_func_in_func(builtin_id, builder.func);
-                let call = builder.ins().call(alloc_func_ref, &[size_val]);
+                let destroy_id = *self
+                    .builtin_ids
+                    .get("lpp_closure_destroy")
+                    .ok_or_else(|| "Builtin 'lpp_closure_destroy' was not declared".to_string())?;
+                let destroy_ref = self.module.declare_func_in_func(destroy_id, builder.func);
+                let destroy_addr = builder.ins().func_addr(
+                    self.module.target_config().pointer_type(),
+                    destroy_ref,
+                );
+                let call = builder.ins().call(alloc_func_ref, &[size_val, destroy_addr]);
                 let closure_ptr = builder.inst_results(call)[0];
 
                 let cl_id = *self.func_ids.get(mir_func_id).ok_or_else(|| {
@@ -367,7 +426,10 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                     0,
                 );
 
-                let env_val = self.operand_to_value(builder, &args[0], local_vars)?;
+                let env_operand = args.first().ok_or_else(|| {
+                    "internal error: closure construction is missing its environment".to_string()
+                })?;
+                let env_val = self.operand_to_value(builder, env_operand, local_vars)?;
 
                 builder.ins().store(
                     cranelift_codegen::ir::MemFlags::new(),
@@ -400,7 +462,7 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                 sig.params.push(AbiParam::new(pointer_type));
                 for arg in args {
                     let arg_ty = match arg {
-                        Operand::Local(id) => locals[id.0].ty.clone(),
+                        Operand::Local(id) | Operand::Borrowed(id) => locals[id.0].ty.clone(),
                         Operand::Int(_) => TypeRef::Int,
                         Operand::Float(_) => TypeRef::Float,
                         Operand::Bool(_) => TypeRef::Bool,
@@ -428,8 +490,13 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                     results[0]
                 })
             }
-            Rvalue::FieldAccess(_, _)
-            | Rvalue::AllocateStruct(_) => Ok(builder.ins().iconst(cl_types::I64, 0)),
+            Rvalue::AllocateStruct(_) => Err(
+                "raw struct allocation reached AOT; use AllocateArcStruct for owned objects".to_string(),
+            ),
+            Rvalue::AllocateArcStruct(_) => Err(
+                "AllocateArcStruct requires a resolved custom struct type".to_string(),
+            ),
+            Rvalue::FieldAccess(_, _) => Ok(builder.ins().iconst(cl_types::I64, 0)),
         }
     }
 
@@ -463,7 +530,9 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                     .ok_or_else(|| format!("Missing else-block mapping for {:?}", else_block))?;
                 builder.ins().brif(cond_bool, then_block, &[], else_block, &[]);
             }
-            Terminator::Return(Some(op)) => {
+            Terminator::Return(Some(op)) | Terminator::ReturnOwned(op) => {
+                // ReturnOwned transfers an ARC reference in MIR; its machine ABI is
+                // the same return instruction as an ordinary return.
                 let value = self.operand_to_value(builder, op, local_vars)?;
                 builder.ins().return_(&[value]);
             }
@@ -471,7 +540,17 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                 if *return_type == TypeRef::Void {
                     builder.ins().return_(&[]);
                 } else {
-                    let zero = builder.ins().iconst(cl_types::I64, 0);
+                    // Keep an implicit/default return ABI-correct. In particular, an
+                    // `f64` function cannot return an I64 zero and a Bool is I8.
+                    let zero = match return_type {
+                        TypeRef::Float => builder.ins().f64const(0.0),
+                        TypeRef::Bool => builder.ins().iconst(cl_types::I8, 0),
+                        TypeRef::Int | TypeRef::Str | TypeRef::Custom(_)
+                        | TypeRef::Generic(_, _) | TypeRef::Unresolved(_)
+                        | TypeRef::Function | TypeRef::Void => {
+                            builder.ins().iconst(cl_types::I64, 0)
+                        }
+                    };
                     builder.ins().return_(&[zero]);
                 }
             }

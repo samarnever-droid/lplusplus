@@ -14,8 +14,9 @@ pub const C_BUILTINS_IO: &str = r#"
 #  define LPP__ARC_INC(p) atomic_fetch_add_explicit((p),  1, __ATOMIC_ACQ_REL)
 #  define LPP__ARC_DEC(p) atomic_fetch_sub_explicit((p),  1, __ATOMIC_ACQ_REL)
 #endif
-typedef struct { lpp__arc_cnt_t rc; } LppArcHdr;
-static void* lpp_arc_alloc(int64_t sz) {
+typedef void (*LppArcDestructor)(void* payload);
+typedef struct { lpp__arc_cnt_t rc; LppArcDestructor destructor; } LppArcHdr;
+static void* lpp_arc_alloc_with_destructor(int64_t sz, LppArcDestructor destructor) {
     LppArcHdr* h = (LppArcHdr*)calloc(1, sizeof(LppArcHdr) + (size_t)sz);
     if (!h) return NULL;
 #if defined(_MSC_VER)
@@ -23,7 +24,11 @@ static void* lpp_arc_alloc(int64_t sz) {
 #else
     atomic_init(&h->rc, 1);
 #endif
+    h->destructor = destructor;
     return (void*)(h + 1);
+}
+static void* lpp_arc_alloc(int64_t sz) {
+    return lpp_arc_alloc_with_destructor(sz, NULL);
 }
 static void lpp_arc_retain(void* p) {
     if (!p) return;
@@ -33,9 +38,19 @@ static void lpp_arc_retain(void* p) {
 static void lpp_arc_release(void* p) {
     if (!p) return;
     LppArcHdr* h = (LppArcHdr*)p - 1;
-    if ((int)LPP__ARC_DEC(&h->rc) == 1) free(h);
+    if ((int)LPP__ARC_DEC(&h->rc) == 1) {
+        if (h->destructor) h->destructor(p);
+        free(h);
+    }
 }
 
+
+/* ARC closure payload: [code pointer, owned environment pointer]. */
+static void lpp_closure_destroy(void* closure) {
+    if (!closure) return;
+    void** parts = (void**)closure;
+    lpp_arc_release(parts[1]);
+}
 
 static char* lpp_input() {
     char buffer[1024];
@@ -82,17 +97,48 @@ typedef struct {
     int64_t  cap;
 } LppList;
 
+static void lpp_list_destroy(void* payload) {
+    LppList *l = (LppList *)payload;
+    if (!l) return;
+    free(l->data);
+    l->data = NULL;
+    l->len = 0;
+    l->cap = 0;
+}
+
 static void* lpp_list_new(void) {
-    LppList *l = (LppList *)calloc(1, sizeof(LppList));
+    LppList *l = (LppList *)lpp_arc_alloc_with_destructor(
+        (int64_t)sizeof(LppList), lpp_list_destroy
+    );
+    if (!l) {
+        fprintf(stderr, "[L++ Runtime Error] out of memory while creating List[Int]\n");
+        abort();
+    }
     return l;
 }
 
 static void lpp_list_push(void *list, int64_t value) {
     LppList *l = (LppList *)list;
-    if (!l) return;
+    if (!l) {
+        fprintf(stderr, "[L++ Runtime Error] push to null List[Int]\n");
+        abort();
+    }
     if (l->len == l->cap) {
+        if (l->cap > INT64_MAX / 2) {
+            fprintf(stderr, "[L++ Runtime Error] List[Int] capacity overflow\n");
+            abort();
+        }
         int64_t new_cap = l->cap == 0 ? 8 : l->cap * 2;
-        l->data = (int64_t *)realloc(l->data, (size_t)(new_cap * sizeof(int64_t)));
+        if (new_cap > INT64_MAX / (int64_t)sizeof(int64_t)) {
+            fprintf(stderr, "[L++ Runtime Error] List[Int] allocation size overflow\n");
+            abort();
+        }
+        int64_t *new_data = (int64_t *)realloc(l->data, (size_t)new_cap * sizeof(int64_t));
+        if (!new_data) {
+            fprintf(stderr, "[L++ Runtime Error] out of memory while growing List[Int]\n");
+            abort();
+        }
+        l->data = new_data;
         l->cap = new_cap;
     }
     l->data[l->len++] = value;
@@ -100,7 +146,10 @@ static void lpp_list_push(void *list, int64_t value) {
 
 static int64_t lpp_list_get(void *list, int64_t index) {
     LppList *l = (LppList *)list;
-    if (!l || index < 0 || index >= l->len) return 0;
+    if (!l || index < 0 || index >= l->len) {
+        fprintf(stderr, "[L++ Runtime Error] List[Int] index out of bounds: %lld\n", (long long)index);
+        abort();
+    }
     return l->data[index];
 }
 
@@ -110,10 +159,7 @@ static int64_t lpp_list_len(void *list) {
 }
 
 static void lpp_list_free(void *list) {
-    LppList *l = (LppList *)list;
-    if (!l) return;
-    if (l->data) free(l->data);
-    free(l);
+    lpp_arc_release(list);
 }
 
 #if defined(_WIN32)

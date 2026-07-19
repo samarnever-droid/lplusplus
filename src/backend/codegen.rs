@@ -71,6 +71,9 @@ impl<'a> Codegen<'a> {
     }
 
     pub fn generate(&mut self, program: &Program) -> String {
+        // Must be before every system header so strict C builds expose POSIX
+        // networking declarations used by the embedded runtime.
+        self.out.push_str("#if !defined(_WIN32) && !defined(_POSIX_C_SOURCE)\n#  define _POSIX_C_SOURCE 200112L\n#endif\n");
         self.out.push_str("#include <stdio.h>\n");
         self.out.push_str("#include <stdlib.h>\n");
         self.out.push_str("#include <stdint.h>\n");
@@ -116,6 +119,12 @@ impl<'a> Codegen<'a> {
         }
         self.out.push_str("\n");
 
+        // Lifted closures are discovered while generating function bodies, but
+        // their declarations must appear after headers/prototypes and before
+        // any user function that refers to them. Keep this completed prefix
+        // separate so it can be assembled in that safe C order at the end.
+        let prefix = std::mem::take(&mut self.out);
+
         // Emitting functions
         for decl in &program.declarations {
             if let TopLevel::Function(f) = decl {
@@ -136,12 +145,14 @@ impl<'a> Codegen<'a> {
         }
         self.out.push_str("    return 0;\n}\n");
 
-        // TODO-10: prepend lifted closures/spawn wrappers before the user code
+        // Lifted closures/spawn wrappers need the standard headers and user
+        // prototypes above, and must be declared before user function bodies.
         let preamble = std::mem::take(&mut self.preamble);
+        let body = std::mem::take(&mut self.out);
         if preamble.is_empty() {
-            std::mem::take(&mut self.out)
+            prefix + &body
         } else {
-            preamble + "\n" + &self.out
+            prefix + "\n" + &preamble + "\n" + &body
         }
     }
 
@@ -207,7 +218,21 @@ impl<'a> Codegen<'a> {
                 let val_str = self.gen_expr_str(value, current_scope, Some(&class));
                 // TODO-10: flush any list-literal pre-init before the declaration
                 self.flush_pre_stmts();
-                self.out.push_str(&format!("{}{} {} = {};\n", ind, ty_str, unique_name, val_str));
+                if matches!(value, Expr::Closure { .. })
+                    || matches!(binding.ty, Some(TypeRef::Function))
+                {
+                    // The current type table infers a closure expression's
+                    // return type, not its callable signature. Detect the AST
+                    // closure at its binding site so generated C stores a real
+                    // function pointer rather than an integer/void pointer.
+                    // The supported C closure subset returns Int; the old-style
+                    // pointer declaration accepts its inferred parameter list.
+                    self.out.push_str(&format!(
+                        "{}int64_t (*{})() = {};\n", ind, unique_name, val_str
+                    ));
+                } else {
+                    self.out.push_str(&format!("{}{} {} = {};\n", ind, ty_str, unique_name, val_str));
+                }
             }
             Stmt::Assign { name, value, binding_id, .. } => {
                 let id = binding_id.get().unwrap();
@@ -291,7 +316,13 @@ impl<'a> Codegen<'a> {
             Expr::BoolLiteral(b) => self.out.push_str(if *b { "1" } else { "0" }),
             Expr::Identifier(n, binding_cell) => {
                 if let Some(id) = binding_cell.get() {
-                    self.out.push_str(&format!("{}_{}", n, id));
+                    // Top-level function names have stable C linkage. Local
+                    // variables are uniquely mangled to preserve shadowing.
+                    if matches!(self.symbol_table.bindings[id].kind, crate::semantic::BindingKind::FunctionName) {
+                        self.out.push_str(n);
+                    } else {
+                        self.out.push_str(&format!("{}_{}", n, id));
+                    }
                 } else {
                     self.out.push_str(n);
                 }

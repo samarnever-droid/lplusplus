@@ -32,14 +32,27 @@ impl MirBuilder {
 
     pub fn new_local(&mut self, ty: TypeRef, is_mut: bool, debug_name: Option<String>, binding_id: Option<crate::semantic::BindingId>) -> LocalId {
         let id = LocalId(self.function.locals.len());
+        // Custom structs and closure capsules are ARC-managed heap objects.
+        let ownership = if matches!(&ty, TypeRef::Custom(_) | TypeRef::Function)
+            || matches!(&ty, TypeRef::Generic(name, args) if name == "List" && args == &vec![TypeRef::Int])
+        {
+            Ownership::Owned
+        } else {
+            Ownership::Copy
+        };
         self.function.locals.push(LocalDecl {
             id,
             ty,
             is_mut,
             debug_name,
             binding_id,
+            ownership,
         });
         id
+    }
+
+    pub fn set_local_ownership(&mut self, local: LocalId, ownership: Ownership) {
+        self.function.locals[local.0].ownership = ownership;
     }
 
     pub fn new_block(&mut self) -> BlockId {

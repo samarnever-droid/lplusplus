@@ -1,0 +1,19 @@
+# source file|expected stdout, with \n denoting a newline
+arith.lpp|15\n5\n50\n2
+branches.lpp|1\n0\n1
+fib.lpp|55
+loop.lpp|5050
+nested_calls.lpp|120
+closure_test.lpp|52
+list_safety.lpp|3\n5\n13
+owned_return.lpp|1
+arc_branch_return.lpp|1
+arc_nested_struct.lpp|1
+arc_direct_alias.lpp|1
+arc_closure_capture.lpp|0
+arc_borrowed_return.lpp|1
+arc_field_alias.lpp|1
+arc_borrowed_field_return.lpp|1
+arc_list_alias.lpp|7
+arc_nested_branch_alias.lpp|1
+arc_closure_branch_capture.lpp|0

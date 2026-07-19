@@ -2,7 +2,7 @@
 
 L++ is an experimental prototype language aiming to be as readable as Python, as fast as C, and as safe as Rust. Its primary goal is to abstract away memory management without exposing a borrow checker or relying on a Tracing Garbage Collector (GC). 
 
-**Current Reality:** L++ is a production-grade compiled language prototype. The compiler supports two backends: a fast **Ahead-of-Time (AOT) compiler** using the **Cranelift** code generator to emit native x86-64 executables, and a **C Transpiler** that generates optimized C code. The compiler implements a novel "Hybrid Memory Model" using semantic escape analysis to automatically manage memory on the Stack, Managed Heap (via Automatic Reference Counting), or Arenas.
+**Current Reality:** L++ is an experimental compiled-language prototype. It has two backends: a C transpiler and an opt-in **Cranelift AOT** object emitter. The hybrid memory model is an active implementation effort, not yet a complete Rust-equivalent safety guarantee. In particular, cycle collection, complete alias analysis, generic containers, and closure/thread ownership semantics remain unfinished. See `documentation/Cranelift_Safety_Plan.md` for the verified AOT subset and release criteria.
 
 This guide breaks down the current working state of L++ and explains exactly how the compiler manages your memory under the hood.
 
@@ -80,7 +80,7 @@ def process():
         return y + 1
 ```
 
-Closures safely capture variables from their surrounding scope. If a closure outlives its scope (e.g., it is returned or passed to another thread), the compiler will automatically promote captured variables to the Managed Heap based on the Escape Analysis rules.
+Closures with immutable captures are experimental. Mutable capture-by-reference and safe cross-thread closure transfer are not implemented in the Cranelift backend; unsupported AOT cases are rejected rather than silently compiled with changed semantics.
 
 ## 6. Primitives (The `Int` Type) and Scalar Values
 
@@ -205,7 +205,7 @@ L++ provides a growing set of built-in functions for common operations, which ma
   - `list_push(list, value)`: Appends an element to the list, automatically growing storage if needed.
   - `list_get(list, index)`: Retrieves the element at `index` (type-checks to list's element type).
   - `list_len(list)`: Returns the current number of elements in the list.
-  - `list_free(list)`: Safely deallocates the list's memory.
+  - **AOT ownership mode:** `List[Int]` is released automatically at scope exit. Do not call `list_free` in Cranelift AOT code; it is rejected to prevent double release. The legacy C compatibility backend still exposes it.
 - **JSON Parsing**:
   - `json_parse("json_string")`: Parses a JSON string and returns a node handle (`Int`).
   - `json_get_int(node, "key")`: Retrieves an integer property value.

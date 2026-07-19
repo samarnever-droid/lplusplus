@@ -1,0 +1,12 @@
+# Expected output:
+# 3
+# 5
+# 13
+
+def main():
+    values := [3, 5, 8]
+    print(list_len(values))
+    print(list_get(values, 1))
+    list_push(values, 13)
+    print(list_get(values, 3))
+    # List[Int] is released automatically at scope exit.

@@ -1,0 +1,15 @@
+# Ownership audit: a closure captures a custom object across nested branch flow.
+# Expected output:
+# 0
+
+struct Box:
+    value: Int
+
+def main():
+    item := Box()
+    reader := fn() -> Int:
+        if 1 == 1:
+            return item.value
+        else:
+            return 0
+    print(reader())

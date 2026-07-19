@@ -181,6 +181,9 @@ impl<'a> MirLowerCtx<'a> {
             });
             let ty = self.resolve_type(&param.ty);
             let local = builder.new_local(ty, false, Some(param.name.clone()), binding_id);
+            // Function arguments are owned by the caller unless an eventual
+            // explicit `owned` parameter mode says otherwise.
+            builder.set_local_ownership(local, Ownership::Borrowed);
             builder.function.params.push(local);
             if let Some(binding_id) = binding_id {
                 binding_map.insert(binding_id, local);
@@ -198,6 +201,21 @@ impl<'a> MirLowerCtx<'a> {
         }
 
         Ok(builder.finish())
+    }
+
+    /// Select an explicit ownership operation for an assignment. A direct
+    /// `Local` read of an owned temporary is a move; identifiers of owned
+    /// variables lower to `Borrowed` and therefore stay usable after assignment.
+    fn assignment_rvalue(builder: &MirBuilder, destination: LocalId, operand: Operand) -> Rvalue {
+        if let Operand::Local(source) = operand {
+            if builder.function.locals[destination.0].ownership == Ownership::Owned
+                && builder.function.locals[source.0].ownership == Ownership::Owned
+            {
+                return Rvalue::Move(source);
+            }
+            return Rvalue::Use(Operand::Local(source));
+        }
+        Rvalue::Use(operand)
     }
 
     fn lower_stmt(
@@ -228,7 +246,8 @@ impl<'a> MirLowerCtx<'a> {
                 binding_map.insert(binding_id, local_id);
 
                 let operand = self.lower_expr(builder, value, binding_map)?;
-                builder.push_instr(MirInstr::Assign(local_id, Rvalue::Use(operand)))?;
+                let rvalue = Self::assignment_rvalue(builder, local_id, operand);
+                builder.push_instr(MirInstr::Assign(local_id, rvalue))?;
             }
             Stmt::Assign {
                 value, binding_id, ..
@@ -239,7 +258,8 @@ impl<'a> MirLowerCtx<'a> {
                 let binding_id = BindingId(ast_id);
                 let operand = self.lower_expr(builder, value, binding_map)?;
                 if let Some(local_id) = binding_map.get(&binding_id) {
-                    builder.push_instr(MirInstr::Assign(*local_id, Rvalue::Use(operand)))?;
+                    let rvalue = Self::assignment_rvalue(builder, *local_id, operand);
+                    builder.push_instr(MirInstr::Assign(*local_id, rvalue))?;
                 } else if let Some(env_ptr) = self.current_env_ptr {
                     if let Some(idx) = self.current_captures.iter().position(|&cid| cid == binding_id) {
                         builder.push_instr(MirInstr::AssignField {
@@ -257,7 +277,7 @@ impl<'a> MirLowerCtx<'a> {
             Stmt::AssignField { base, field, value } => {
                 let base_op = self.lower_expr(builder, base, binding_map)?;
                 let value_op = self.lower_expr(builder, value, binding_map)?;
-                if let Operand::Local(base_id) = base_op {
+                if let Operand::Local(base_id) | Operand::Borrowed(base_id) = base_op {
                     builder.push_instr(MirInstr::AssignField {
                         base: base_id,
                         field: field.clone(),
@@ -275,7 +295,29 @@ impl<'a> MirLowerCtx<'a> {
                     Some(expr) => Some(self.lower_expr(builder, expr, binding_map)?),
                     None => None,
                 };
-                builder.terminate_current_block(Terminator::Return(op))?;
+                // Function ownership contract: custom structs and closure
+                // capsules are returned *owned*. Returning an owned local moves
+                // its reference. Returning a borrowed parameter/field first
+                // retains it, thereby creating the caller's return reference.
+                let managed_return = match &op {
+                    Some(Operand::Local(local)) | Some(Operand::Borrowed(local)) => {
+                        matches!(
+                            &builder.function.locals[local.0].ty,
+                            TypeRef::Custom(_) | TypeRef::Function | TypeRef::Generic(_, _)
+                        )
+                        .then_some(*local)
+                    }
+                    _ => None,
+                };
+                let terminator = if let Some(local) = managed_return {
+                    if builder.function.locals[local.0].ownership == Ownership::Borrowed {
+                        builder.push_instr(MirInstr::Retain(local))?;
+                    }
+                    Terminator::ReturnOwned(Operand::Local(local))
+                } else {
+                    Terminator::Return(op)
+                };
+                builder.terminate_current_block(terminator)?;
                 let next = builder.new_block();
                 builder.switch_to_block(next);
             }
@@ -370,16 +412,32 @@ impl<'a> MirLowerCtx<'a> {
                     .ok_or_else(|| format!("Missing binding id for identifier '{}'", name))?;
                 let binding_id = BindingId(ast_id);
                 if let Some(local_id) = binding_map.get(&binding_id) {
-                    Ok(Operand::Local(*local_id))
+                    let local = &builder.function.locals[local_id.0];
+                    if local.ownership == Ownership::Owned {
+                        // Identifier reads borrow owned objects. A later ownership
+                        // operation decides whether to retain or move the value.
+                        Ok(Operand::Borrowed(*local_id))
+                    } else {
+                        Ok(Operand::Local(*local_id))
+                    }
                 } else if let Some(env_ptr) = self.current_env_ptr {
                     if let Some(idx) = self.current_captures.iter().position(|&cid| cid == binding_id) {
                         let cap_ty = self.symbol_table.bindings[binding_id.0].ty.clone().unwrap_or(TypeRef::Int);
-                        let temp = builder.new_local(cap_ty, false, Some(format!("cap_val_{}", name)), None);
+                        let temp = builder.new_local(cap_ty.clone(), false, Some(format!("cap_val_{}", name)), None);
+                        // A captured custom value is borrowed from the closure
+                        // environment; the environment owns the ARC edge.
+                        if matches!(cap_ty, TypeRef::Custom(_) | TypeRef::Generic(_, _)) {
+                            builder.set_local_ownership(temp, Ownership::Borrowed);
+                        }
                         builder.push_instr(MirInstr::Assign(
                             temp,
                             Rvalue::FieldAccess(Operand::Local(env_ptr), format!("cap_{}", idx)),
                         ))?;
-                        Ok(Operand::Local(temp))
+                        if builder.function.locals[temp.0].ownership == Ownership::Borrowed {
+                            Ok(Operand::Borrowed(temp))
+                        } else {
+                            Ok(Operand::Local(temp))
+                        }
                     } else {
                         Err(format!(
                             "Identifier '{}' (binding {}) was not mapped in locals or captures of '{}'",
@@ -465,7 +523,7 @@ impl<'a> MirLowerCtx<'a> {
                     if let Some(&struct_id) = self.type_table.structs_by_name.get(name) {
                         builder.push_instr(MirInstr::Assign(
                             temp,
-                            Rvalue::AllocateStruct(TypeRef::Custom(struct_id)),
+                            Rvalue::AllocateArcStruct(TypeRef::Custom(struct_id)),
                         ))?;
                         return Ok(Operand::Local(temp));
                     }
@@ -474,7 +532,7 @@ impl<'a> MirLowerCtx<'a> {
                         let (is_string, is_float) = match lowered_args.first() {
                             Some(Operand::String(_)) => (true, false),
                             Some(Operand::Float(_)) => (false, true),
-                            Some(Operand::Local(local_id)) => {
+                            Some(Operand::Local(local_id)) | Some(Operand::Borrowed(local_id)) => {
                                 let ty = &builder.function.locals[local_id.0].ty;
                                 (*ty == TypeRef::Str, *ty == TypeRef::Float)
                             }
@@ -514,15 +572,27 @@ impl<'a> MirLowerCtx<'a> {
             Expr::FieldAccess { base, field } => {
                 let base_op = self.lower_expr(builder, base, binding_map)?;
                 let base_ty = match &base_op {
-                    Operand::Local(local_id) => builder.function.locals[local_id.0].ty.clone(),
+                    Operand::Local(local_id) | Operand::Borrowed(local_id) => {
+                        builder.function.locals[local_id.0].ty.clone()
+                    }
                     _ => TypeRef::Void,
                 };
-                let temp = builder.new_local(self.get_field_type(&base_ty, field), false, None, None);
+                let field_ty = self.get_field_type(&base_ty, field);
+                let temp = builder.new_local(field_ty.clone(), false, None, None);
+                // Reading a custom-struct field borrows the field's ARC edge;
+                // it does not transfer ownership out of the containing object.
+                if matches!(field_ty, TypeRef::Custom(_) | TypeRef::Generic(_, _)) {
+                    builder.set_local_ownership(temp, Ownership::Borrowed);
+                }
                 builder.push_instr(MirInstr::Assign(
                     temp,
                     Rvalue::FieldAccess(base_op, field.clone()),
                 ))?;
-                Ok(Operand::Local(temp))
+                if builder.function.locals[temp.0].ownership == Ownership::Borrowed {
+                    Ok(Operand::Borrowed(temp))
+                } else {
+                    Ok(Operand::Local(temp))
+                }
             }
             Expr::ListLiteral(items) => {
                 let elem_ty = items
@@ -552,7 +622,13 @@ impl<'a> MirLowerCtx<'a> {
                 }
                 Ok(Operand::Local(temp))
             }
-            Expr::Spawn { closure } => self.lower_expr(builder, closure, binding_map),
+            // `spawn` was previously lowered as an ordinary closure expression, which
+            // silently ran neither a thread nor a validated ownership transfer. Reject
+            // it until the AOT ABI can move a closure environment safely to a thread.
+            Expr::Spawn { .. } => Err(
+                "AOT `spawn` is not implemented safely yet; use a synchronous closure instead"
+                    .to_string(),
+            ),
             Expr::Closure { params, return_type: opt_return_type, body } => {
                 let closure_scope = {
                     let mut scope = None;
@@ -570,6 +646,19 @@ impl<'a> MirLowerCtx<'a> {
                     ScopeKind::Closure { captures } => captures.clone(),
                     _ => Vec::new(),
                 };
+
+                // Mutable captures need a defined shared-cell / move ownership model.
+                // Copying them into an environment makes `x = ...` inside the closure
+                // silently diverge from the outer variable, which is not memory-safe or
+                // unsurprising language semantics. Reject this case until that model is
+                // implemented rather than compiling an incorrect program.
+                if let Some(capture) = captures.iter().find(|id| self.symbol_table.bindings[id.0].is_mut) {
+                    let binding = &self.symbol_table.bindings[capture.0];
+                    return Err(format!(
+                        "mutable capture '{}' is not supported safely by AOT closures yet",
+                        binding.name
+                    ));
+                }
 
                 // Register environment struct
                 let env_struct_name = format!("__lpp_closure_env_{}", closure_scope.0);
@@ -592,7 +681,7 @@ impl<'a> MirLowerCtx<'a> {
                 );
                 builder.push_instr(MirInstr::Assign(
                     env_local,
-                    Rvalue::AllocateStruct(TypeRef::Custom(env_struct_id)),
+                    Rvalue::AllocateArcStruct(TypeRef::Custom(env_struct_id)),
                 ))?;
 
                 // Populate captures
@@ -624,7 +713,7 @@ impl<'a> MirLowerCtx<'a> {
                         if let Stmt::Return(Some(expr)) = stmt {
                             // Best-effort typehint:
                             if let Ok(ty) = self.lower_expr(builder, expr, binding_map) {
-                                if let Operand::Local(lid) = ty {
+                                if let Operand::Local(lid) | Operand::Borrowed(lid) = ty {
                                     inferred_rt = builder.function.locals[lid.0].ty.clone();
                                 }
                             }
@@ -643,6 +732,7 @@ impl<'a> MirLowerCtx<'a> {
                     Some("__env".to_string()),
                     None,
                 );
+                closure_builder.set_local_ownership(env_ptr_local, Ownership::Borrowed);
                 closure_builder.function.params.push(env_ptr_local);
 
                 for param in params {
@@ -655,6 +745,7 @@ impl<'a> MirLowerCtx<'a> {
                         TypeRef::Int
                     };
                     let local = closure_builder.new_local(ty, false, Some(param.name.clone()), param_binding_id);
+                    closure_builder.set_local_ownership(local, Ownership::Borrowed);
                     closure_builder.function.params.push(local);
                     if let Some(bid) = param_binding_id {
                         closure_binding_map.insert(bid, local);

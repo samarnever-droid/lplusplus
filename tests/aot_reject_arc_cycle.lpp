@@ -1,0 +1,7 @@
+# AOT must reject strong ownership cycles until L++ has Weak/arena syntax.
+struct Node:
+    next: Node
+
+def main():
+    node := Node()
+    print(1)

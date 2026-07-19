@@ -1,0 +1,14 @@
+# Closure ownership capsule regression: captured Box is retained by the
+# environment and released through closure -> environment -> Box destructors.
+# Expected output:
+# 0
+
+struct Box:
+    value: Int
+
+def main():
+    item := Box()
+    reader := fn() -> Int:
+        return item.value
+    result := reader()
+    print(result)

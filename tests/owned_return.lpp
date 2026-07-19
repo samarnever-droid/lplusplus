@@ -1,0 +1,14 @@
+# Ownership regression: `make_box` transfers one owned ARC reference to caller.
+# Expected output:
+# 1
+
+struct Box:
+    value: Int
+
+def make_box() -> Box:
+    item := Box()
+    return item
+
+def main():
+    received := make_box()
+    print(1)

@@ -1,0 +1,18 @@
+# ARC/control-flow regression: each branch returns its own owned object.
+# Expected output:
+# 1
+
+struct Box:
+    value: Int
+
+def choose(flag: Int) -> Box:
+    if flag == 1:
+        left := Box()
+        return left
+    else:
+        right := Box()
+        return right
+
+def main():
+    result := choose(1)
+    print(1)
