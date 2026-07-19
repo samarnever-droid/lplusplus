@@ -234,7 +234,7 @@ LPP_FROM_SOURCE=1 ./install.sh
 # PowerShell: $env:LPP_FROM_SOURCE=1; .\install.ps1
 ```
 
-Release bundles currently target Linux x86-64 and Windows x86-64. macOS remains a source-build / future Mach-O target.
+Release bundles target Linux x86-64, Windows x86-64, macOS x86-64, and macOS arm64. macOS currently uses the verified clang host-link fallback while direct Mach-O work begins.
 
 ### Command model: files vs packages
 

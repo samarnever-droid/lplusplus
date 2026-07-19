@@ -16,7 +16,8 @@ This guide breaks down the current working state of L++ and explains exactly how
 | Ownership | ARC structs, aliases, owned/borrowed returns, closures, lists | Strong cycles are rejected until `Weak`/arena/cycle-collection support exists. |
 | Direct linker | `.text`, `.rodata`, GOT imports, ARC, closures, lists, King20 20/20 | File I/O, networking, threads, JSON, `.data`/`.bss`, and dynamic imports use fallback linking. |
 | C backend | Compatibility/debug path and observable parity suite | It is not the authoritative ownership implementation. |
-| Windows | COFF + `lpp_runtime.obj` + MSVC host-link fallback | Direct PE linker work is beginning. |
+| Windows | COFF + `lpp_runtime.obj` + MSVC host-link fallback | Direct PE runtime and King20 gate are in progress. |
+| macOS | Mach-O object + clang host-link fallback | Direct Mach-O work is planned; Intel and Apple Silicon release packaging is added. |
 
 ### Ownership vocabulary
 

@@ -73,8 +73,46 @@ jobs:
           name: lpp-windows-x86_64
           path: lpp-windows-x86_64.zip
 
+  macos-x86_64:
+    runs-on: macos-13
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build and package Intel macOS release
+        run: |
+          cargo build --release --locked --bin lpp --bin lpp-link
+          mkdir -p package/lpp-macos-x86_64/bin package/lpp-macos-x86_64/lib
+          cp target/release/lpp package/lpp-macos-x86_64/bin/
+          cp target/release/lpp-link package/lpp-macos-x86_64/bin/
+          clang -O2 -fPIC -c lpp_runtime.c -o package/lpp-macos-x86_64/lib/lpp_runtime.o
+          cp lpp_runtime.c package/lpp-macos-x86_64/lib/
+          tar -C package -czf lpp-macos-x86_64.tar.gz lpp-macos-x86_64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lpp-macos-x86_64
+          path: lpp-macos-x86_64.tar.gz
+
+  macos-arm64:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build and package Apple Silicon macOS release
+        run: |
+          cargo build --release --locked --bin lpp --bin lpp-link
+          mkdir -p package/lpp-macos-arm64/bin package/lpp-macos-arm64/lib
+          cp target/release/lpp package/lpp-macos-arm64/bin/
+          cp target/release/lpp-link package/lpp-macos-arm64/bin/
+          clang -O2 -fPIC -c lpp_runtime.c -o package/lpp-macos-arm64/lib/lpp_runtime.o
+          cp lpp_runtime.c package/lpp-macos-arm64/lib/
+          tar -C package -czf lpp-macos-arm64.tar.gz lpp-macos-arm64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lpp-macos-arm64
+          path: lpp-macos-arm64.tar.gz
+
   publish:
-    needs: [linux-x86_64, windows-x86_64]
+    needs: [linux-x86_64, windows-x86_64, macos-x86_64, macos-arm64]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -88,3 +126,5 @@ jobs:
           files: |
             artifacts/lpp-linux-x86_64/lpp-linux-x86_64.tar.gz
             artifacts/lpp-windows-x86_64/lpp-windows-x86_64.zip
+            artifacts/lpp-macos-x86_64/lpp-macos-x86_64.tar.gz
+            artifacts/lpp-macos-arm64/lpp-macos-arm64.tar.gz
