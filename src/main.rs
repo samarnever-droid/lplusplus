@@ -26,8 +26,21 @@ use std::env;
 use std::time::Instant;
 
 fn main() {
-    let args: Vec<String> = env::args().collect();
+    let mut args: Vec<String> = env::args().collect();
     
+    // The CLI has two intentionally separate modes:
+    // - package commands (`build`, `run`, `test`, …) operate on lpp.toml;
+    // - source commands (`check file.lpp`, `emit file.lpp`) operate on one file.
+    let mut explicit_emit = false;
+    let mut source_check_command = false;
+    if args.len() > 2 && args[1] == "emit" {
+        explicit_emit = true;
+        args.remove(1);
+    } else if args.len() > 2 && args[1] == "check" && args[2].ends_with(".lpp") {
+        source_check_command = true;
+        args.remove(1);
+    }
+
     if args.len() > 1 {
         let first_arg = &args[1];
         if first_arg == "init" || first_arg == "install" || first_arg == "add" ||
@@ -48,7 +61,8 @@ fn main() {
     let mut dump_escape = false;
     let mut dump_mir = false;
     let mut dump_c = false;
-    let mut check_only = false;
+    let mut check_only = source_check_command;
+    let mut emit_object = false;
     
     for arg in args.iter().skip(1) {
         if arg == "--version" || arg == "-v" {
@@ -74,6 +88,11 @@ fn main() {
             println!("  build            Build project into a native binary");
             println!("  run              Compile and run the project binary");
             println!("  test             Compile and run tests inside tests/");
+            println!("\nSource Commands:");
+            println!("  lpp check <file.lpp>          Type-check one file; emit no artifacts");
+            println!("  lpp emit <file.lpp>           Emit C source next to the input file");
+            println!("  lpp emit <file.lpp> --aot     Emit C source and a Cranelift object file");
+            println!("  lpp <file.lpp>                Legacy source invocation; emits C with guidance");
             println!("\nOptions (Compiler):");
             println!("  -v, --version    Show L++ compiler version");
             println!("  -h, --help       Show this help menu");
@@ -103,6 +122,8 @@ fn main() {
             dump_c = true;
         } else if arg == "--check" {
             check_only = true;
+        } else if arg == "--emit-object" || arg == "--aot" {
+            emit_object = true;
         } else if !arg.starts_with('-') {
             filename = Some(arg.as_str());
         }
@@ -235,7 +256,7 @@ fn main() {
             let mut aot_time = std::time::Duration::ZERO;
             // AOT compilation via Cranelift
             // Enabled by setting the LPP_AOT environment variable.
-            if env::var("LPP_AOT").is_ok() {
+            if env::var("LPP_AOT").is_ok() || emit_object {
                 let aot_start = Instant::now();
                 match cranelift_backend::compiler::AotCompiler::compile(&mir_program, &type_table) {
                     Ok(obj_bytes) => {
@@ -271,7 +292,12 @@ fn main() {
                    io_time.as_secs_f64(), lex_time.as_secs_f64(), parse_time.as_secs_f64(), sem_time.as_secs_f64(), ty_time.as_secs_f64(), esc_time.as_secs_f64(), mir_time.as_secs_f64(), aot_time.as_secs_f64(), total_time.as_secs_f64());
             } else if !dump_ast && !dump_symbols && !dump_types && !dump_escape && !dump_mir && !dump_c {
                 println!("L++ v0.1.0\n");
-                println!("Compiled successfully.");
+                if explicit_emit {
+                    println!("Artifacts emitted next to the source file.");
+                } else {
+                    println!("Source compilation completed; emitted C source next to the input.");
+                    println!("Tip: use `lpp emit <file.lpp>` for explicit artifact emission or `lpp build` for a package executable.");
+                }
                 println!("Time: {:.1} ms", total_time.as_secs_f64() * 1000.0);
             }
         },

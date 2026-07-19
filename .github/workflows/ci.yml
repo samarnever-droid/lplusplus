@@ -35,6 +35,8 @@ jobs:
         run: sh tests/test_lpp_link_negative.sh
       - name: Installed direct-link build
         run: sh tests/test_direct_installed_build.sh
+      - name: Source command split
+        run: sh tests/test_source_commands.sh
 
   king20-smoke:
     runs-on: ubuntu-latest

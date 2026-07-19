@@ -223,11 +223,17 @@ Global recognition depends on GitHub Linguist maintainers accepting the upstream
 ./install.ps1
 ```
 
-### Compile a file
+### Command model: files vs packages
 
-```bash
-lpp examples/calc.lpp
-```
+| Intent | Command | Result |
+|---|---|---|
+| Check one source file | `lpp check calc.lpp` | Diagnostics only; no artifacts |
+| Emit C source | `lpp emit calc.lpp` | `calc.c` next to source |
+| Emit C + AOT object | `lpp emit calc.lpp --aot` | `calc.c` and `calc.o` |
+| Build a package | `lpp build` | Executable from `lpp.toml` package |
+| Run a package | `lpp run` | Build then run package executable |
+
+`lpp calc.lpp` is kept as a legacy source invocation and prints guidance. Prefer `emit` for one-file artifacts and `build`/`run` for project executables.
 
 ### Create a project
 

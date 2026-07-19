@@ -639,6 +639,11 @@ fn print_help() {
     println!("  run                   Compile and run the project native target");
     println!("  test                  Compile and execute all tests in tests/ folder");
     println!("  help                  Show this help menu");
+    println!("\nSource-file commands (outside package mode):");
+    println!("  lpp check <file.lpp>          Check one source file without artifacts");
+    println!("  lpp emit <file.lpp>           Emit C source explicitly");
+    println!("  lpp emit <file.lpp> --aot     Emit C source plus Cranelift object");
+    println!("\nRule: `lpp build` builds an lpp.toml package; `lpp emit` handles one file.");
 }
 
 fn cmd_new(args: &[String]) {
