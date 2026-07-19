@@ -103,6 +103,12 @@ python3 benchmarks/comparison/run.py
 
 Missing toolchains are recorded as `SKIP`; they are never reported as benchmark values. See [`benchmarks/comparison/README.md`](benchmarks/comparison/README.md) for methodology.
 
+## GitHub language recognition
+
+L++ source uses the `.lpp` extension and the maintained VS Code TextMate scope `source.lpp`. Generated benchmark reports are marked with `linguist-generated=true` in `.gitattributes`, so they do not distort repository language statistics.
+
+Global GitHub language-bar recognition requires an upstream GitHub Linguist contribution; it cannot be forced by repository metadata alone. The maintained submission package is in [`linguist/UPSTREAM_LINGUIST_PR.md`](linguist/UPSTREAM_LINGUIST_PR.md), with a representative sample at [`linguist/samples/lpp/ownership_and_closures.lpp`](linguist/samples/lpp/ownership_and_closures.lpp).
+
 ## Getting Started
 
 Check out [Doc.md](Doc.md) for a comprehensive guide on the syntax and semantics of L++.

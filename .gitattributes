@@ -1,0 +1,14 @@
+# Generated benchmark reports should not affect GitHub language statistics.
+benchmarks/Benchmarks.md linguist-generated=true
+benchmarks/results.md linguist-generated=true
+benchmarks/comparison/latest.json linguist-generated=true
+benchmarks/comparison/latest.md linguist-generated=true
+benchmarks/king20/**/latest.json linguist-generated=true
+benchmarks/king20/**/latest.md linguist-generated=true
+benchmarks/scalability/generated/** linguist-generated=true
+benchmarks/scalability/latest.json linguist-generated=true
+benchmarks/scalability/latest.md linguist-generated=true
+
+# Generated compiler outputs are documentation/test artifacts, not language source.
+benchmarks/**/*.o linguist-generated=true
+benchmarks/**/*.exe linguist-generated=true
