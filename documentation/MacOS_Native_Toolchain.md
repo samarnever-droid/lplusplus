@@ -36,7 +36,9 @@ Normal macOS users can install a release bundle without Rust once the matching r
 
 ## M2 — Direct Mach-O MVP
 
-A real direct executable writer requires:
+Intel x86_64 can execute a narrow static direct Mach-O MVP. Apple Silicon cannot: production macOS rejects static `MH_EXECUTE` arm64 binaries and kills them instead of launching them. `lpp-link macho-arm64` therefore rejects this mode explicitly until the dynamic import path exists.
+
+A real ARM64 direct executable writer requires:
 
 ```text
 Mach header 64

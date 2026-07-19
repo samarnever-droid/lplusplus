@@ -1,5 +1,7 @@
 #!/usr/bin/env sh
-# Phase M2 ARM64 direct Mach-O smoke test. Run on Apple Silicon macOS CI.
+# Apple Silicon macOS rejects static MH_EXECUTE images. Until M3 adds dynamic
+# libSystem imports, lpp-link must reject this mode clearly instead of emitting
+# a binary that the OS kills with SIGKILL.
 set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
@@ -10,19 +12,21 @@ cleanup() { rm -rf "$TEMP"; }
 trap cleanup EXIT HUP INT TERM
 
 if [ "$(uname -s)" != "Darwin" ] || [ "$(uname -m)" != "arm64" ]; then
-    echo "SKIP: direct ARM64 Mach-O test requires Apple Silicon macOS"
+    echo "SKIP: ARM64 Mach-O policy test requires Apple Silicon macOS"
     exit 0
 fi
 if [ ! -x "$LPP" ] || [ ! -x "$LINKER" ]; then
     (cd "$ROOT" && cargo build --release --bin lpp --bin lpp-link)
 fi
-cat > "$TEMP/direct.lpp" <<'EOF'
+cat > "$TEMP/direct.lpp" <<'SRC'
 def main():
     x := 1
-EOF
+SRC
 LPP_AOT=1 "$LPP" "$TEMP/direct.lpp" >/dev/null
-"$LINKER" macho-arm64 "$TEMP/direct.o" -o "$TEMP/direct"
-file "$TEMP/direct" | grep -q "Mach-O"
-"$TEMP/direct"
-[ "$?" -eq 0 ]
-echo "PASS direct ARM64 Mach-O linker MVP"
+if "$LINKER" macho-arm64 "$TEMP/direct.o" -o "$TEMP/direct" >"$TEMP/out" 2>"$TEMP/err"; then
+    echo "FAIL: static ARM64 Mach-O unexpectedly linked" >&2
+    exit 1
+fi
+[ ! -e "$TEMP/direct" ]
+grep -q "dynamic libSystem imports are required" "$TEMP/err"
+echo "PASS ARM64 Mach-O policy rejection"
