@@ -31,6 +31,8 @@ jobs:
         run: sh tests/test_packaged_runtime.sh
       - name: Direct ELF linker MVP
         run: sh tests/test_lpp_link_elf.sh
+      - name: Direct ELF linker negative cases
+        run: sh tests/test_lpp_link_negative.sh
 
   king20-smoke:
     runs-on: ubuntu-latest
