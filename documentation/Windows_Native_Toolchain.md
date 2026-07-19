@@ -90,9 +90,11 @@ import table generation
 
 The direct PE linker must generate a valid import directory for the required Win32 APIs.
 
-## Phase W4 — King 20 Windows direct-link gate
+## Phase W4 — King 20 Windows direct-link gate — started
 
-The gate is:
+Windows CI now contains a direct PE King20 gate that compiles the freestanding Windows runtime, builds all 20 Stable inputs to COFF, links each with `lpp-link pe`, runs each `.exe`, and checks exact stdout.
+
+The completion gate remains:
 
 ```text
 King20 Stable
@@ -101,7 +103,7 @@ through lpp-link PE
 on Windows x86-64
 ```
 
-Until this gate passes, Windows continues to use the packaged `lpp_runtime.obj` plus MSVC linker fallback.
+Until that CI gate is green, Windows continues to use the packaged `lpp_runtime.obj` plus MSVC linker fallback for normal user builds.
 
 ## Design rule
 
