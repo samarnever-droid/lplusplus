@@ -596,6 +596,232 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
     Ok(())
 }
 
+
+const MACHO_BASE: u64 = 0x100000000;
+const MACHO_CPU_X86_64: u32 = 0x01000007;
+const MACHO_MH_EXECUTE: u32 = 2;
+const MACHO_LC_SEGMENT_64: u32 = 0x19;
+const MACHO_LC_MAIN: u32 = 0x80000028;
+const MACHO_LC_LOAD_DYLINKER: u32 = 0x0e;
+
+fn read_macho_input(path: &Path) -> Result<InputText, String> {
+    let bytes = fs::read(path).map_err(|error| format!("read '{}': {error}", path.display()))?;
+    let file = object::File::parse(&*bytes).map_err(|error| format!("parse '{}': {error}", path.display()))?;
+    if file.format() != BinaryFormat::MachO || file.architecture() != Architecture::X86_64 {
+        return Err(format!("'{}' is not an x86-64 Mach-O object", path.display()));
+    }
+    let mut text = Vec::new();
+    let mut section_bases = Vec::new();
+    let mut section_relocations = Vec::new();
+    for section in file.sections() {
+        if section.kind() != object::SectionKind::Text {
+            continue;
+        }
+        let base = align_up(text.len(), 16);
+        text.resize(base, 0x90);
+        let index = section.index();
+        let data = section.uncompressed_data()
+            .map_err(|error| format!("read text from '{}': {error}", path.display()))?
+            .into_owned();
+        text.extend_from_slice(&data);
+        section_bases.push((index, base));
+        for (offset, relocation) in section.relocations() {
+            section_relocations.push((index, base, offset, relocation));
+        }
+    }
+    if section_bases.is_empty() {
+        return Err(format!("'{}' has no executable Mach-O text section", path.display()));
+    }
+    let section_base = |index| section_bases.iter().find(|(candidate, _)| *candidate == index).map(|(_, base)| *base);
+    let mut text_symbols = Vec::new();
+    for symbol in file.symbols() {
+        if let SymbolSection::Section(index) = symbol.section() {
+            if let Some(base) = section_base(index) {
+                if let Ok(name) = symbol.name() {
+                    if !name.is_empty() && !name.starts_with("__text") {
+                        text_symbols.push((name.to_string(), base as u64 + symbol.address()));
+                    }
+                }
+            }
+        }
+    }
+    let mut relocations = Vec::new();
+    for (_, base, offset, relocation) in section_relocations {
+        let RelocationTarget::Symbol(symbol_index) = relocation.target() else {
+            return Err(format!("'{}' has unsupported non-symbol relocation", path.display()));
+        };
+        let symbol = file.symbol_by_index(symbol_index)
+            .map_err(|error| format!("read relocation symbol: {error}"))?;
+        let raw_name = symbol.name()
+            .map_err(|error| format!("read relocation symbol name: {error}"))?;
+        let target = if raw_name.is_empty() {
+            match symbol.section() {
+                SymbolSection::Section(index) if section_base(index).is_some() => {
+                    format!("__macho_text_section_{}", section_base(index).unwrap())
+                }
+                _ => return Err(format!("'{}' has unresolved anonymous Mach-O relocation", path.display())),
+            }
+        } else {
+            raw_name.to_string()
+        };
+        relocations.push(Relocation {
+            offset: base + usize::try_from(offset).map_err(|_| "relocation offset overflow")?,
+            target,
+            addend: relocation.addend(),
+            size: relocation.size(),
+            kind: relocation.kind(),
+        });
+    }
+    Ok(InputText {
+        path: path.to_path_buf(),
+        text,
+        rodata: Vec::new(),
+        text_symbols,
+        rodata_symbols: Vec::new(),
+        relocations,
+    })
+}
+
+fn write_fixed_name(buffer: &mut [u8], text: &str) {
+    let bytes = text.as_bytes();
+    let length = bytes.len().min(buffer.len());
+    buffer[..length].copy_from_slice(&bytes[..length]);
+}
+
+/// Phase M2: direct runtime-free x86-64 Mach-O executable. This intentionally
+/// supports only internal text relocations; Darwin runtime imports are the M3
+/// milestone and remain on clang fallback.
+fn write_macho(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
+    if inputs.is_empty() {
+        return Err("at least one input object is required".to_string());
+    }
+    let objects: Vec<InputText> = inputs.iter().map(|path| read_macho_input(path)).collect::<Result<_, _>>()?;
+    let mut text = Vec::new();
+    let mut bases = Vec::new();
+    let mut symbols: HashMap<String, u64> = HashMap::new();
+    for input in &objects {
+        let base = align_up(text.len(), 16);
+        text.resize(base, 0x90);
+        bases.push(base);
+        for (name, offset) in &input.text_symbols {
+            let absolute = base as u64 + offset;
+            if symbols.insert(name.clone(), absolute).is_some() {
+                return Err(format!("duplicate Mach-O definition of symbol '{name}'"));
+            }
+        }
+        text.extend_from_slice(&input.text);
+    }
+    let main = symbols.get("_main").or_else(|| symbols.get("main"))
+        .copied().ok_or_else(|| "required symbol main/_main not found".to_string())?;
+    let _lpp_main = symbols.get("_lpp_main").or_else(|| symbols.get("lpp_main"))
+        .ok_or_else(|| "required symbol lpp_main/_lpp_main not found".to_string())?;
+    for (index, input) in objects.iter().enumerate() {
+        let base = bases[index];
+        for relocation in &input.relocations {
+            if relocation.size != 32 {
+                return Err(format!("'{}': unsupported Mach-O relocation width {}", input.path.display(), relocation.size));
+            }
+            let target = if let Some(offset) = relocation.target.strip_prefix("__macho_text_section_") {
+                offset.parse::<u64>().map_err(|_| "invalid Mach-O section relocation")?
+            } else {
+                *symbols.get(&relocation.target).or_else(|| {
+                    relocation.target.strip_prefix('_').and_then(|name| symbols.get(name))
+                }).ok_or_else(|| format!("'{}': unresolved Mach-O symbol '{}'", input.path.display(), relocation.target))?
+            };
+            let patch = base + relocation.offset;
+            if patch + 4 > text.len() {
+                return Err(format!("'{}': Mach-O relocation patch out of range", input.path.display()));
+            }
+            let displacement = target as i64 + relocation.addend - patch as i64;
+            if displacement < i32::MIN as i64 || displacement > i32::MAX as i64 {
+                return Err("Mach-O PC-relative relocation out of range".to_string());
+            }
+            text[patch..patch + 4].copy_from_slice(&(displacement as i32).to_le_bytes());
+        }
+    }
+
+    // dyld enters this code through LC_MAIN. Call main then terminate through
+    // the Darwin x86-64 exit syscall (0x2000001).
+    let start_offset = text.len();
+    let main_addr = MACHO_BASE + 0x1000 + main;
+    let next = MACHO_BASE + 0x1000 + start_offset as u64 + 11;
+    let displacement = main_addr as i64 - next as i64;
+    if displacement < i32::MIN as i64 || displacement > i32::MAX as i64 {
+        return Err("Mach-O main call out of range".to_string());
+    }
+    let mut start = vec![0x31, 0xed, 0x48, 0x83, 0xe4, 0xf0, 0xe8, 0, 0, 0, 0, 0x89, 0xc7, 0xb8, 1, 0, 0, 2, 0x0f, 0x05];
+    start[7..11].copy_from_slice(&(displacement as i32).to_le_bytes());
+    text.extend_from_slice(&start);
+
+    let dylinker = b"/usr/lib/dyld\0";
+    let dylinker_size = align_up(12 + dylinker.len(), 8);
+    let pagezero_size = 72usize;
+    let text_segment_size = 72 + 80;
+    let main_command_size = 24usize;
+    let commands_size = pagezero_size + text_segment_size + main_command_size + dylinker_size;
+    let header_size = 32usize;
+    let code_offset = 0x1000usize;
+    let file_size = code_offset + text.len();
+    let text_vm_size = align_up(code_offset + text.len(), 0x1000) as u64;
+    let mut image = vec![0_u8; file_size];
+    put_u32(&mut image, 0, 0xfeedfacf); // MH_MAGIC_64
+    put_u32(&mut image, 4, MACHO_CPU_X86_64);
+    put_u32(&mut image, 8, 3); // CPU_SUBTYPE_X86_64_ALL
+    put_u32(&mut image, 12, MACHO_MH_EXECUTE);
+    put_u32(&mut image, 16, 4); // load commands
+    put_u32(&mut image, 20, commands_size as u32);
+    put_u32(&mut image, 24, 1); // MH_NOUNDEFS
+    put_u32(&mut image, 28, 0);
+    let mut command = header_size;
+    // __PAGEZERO
+    put_u32(&mut image, command, MACHO_LC_SEGMENT_64);
+    put_u32(&mut image, command + 4, pagezero_size as u32);
+    write_fixed_name(&mut image[command + 8..command + 24], "__PAGEZERO");
+    put_u64(&mut image, command + 24, 0);
+    put_u64(&mut image, command + 32, 0x1000);
+    command += pagezero_size;
+    // __TEXT + __text section
+    put_u32(&mut image, command, MACHO_LC_SEGMENT_64);
+    put_u32(&mut image, command + 4, text_segment_size as u32);
+    write_fixed_name(&mut image[command + 8..command + 24], "__TEXT");
+    put_u64(&mut image, command + 24, MACHO_BASE);
+    put_u64(&mut image, command + 32, text_vm_size);
+    put_u64(&mut image, command + 40, 0);
+    put_u64(&mut image, command + 48, file_size as u64);
+    put_u32(&mut image, command + 56, 7);
+    put_u32(&mut image, command + 60, 5);
+    put_u32(&mut image, command + 64, 1);
+    let section = command + 72;
+    write_fixed_name(&mut image[section..section + 16], "__text");
+    write_fixed_name(&mut image[section + 16..section + 32], "__TEXT");
+    put_u64(&mut image, section + 32, MACHO_BASE + code_offset as u64);
+    put_u64(&mut image, section + 40, text.len() as u64);
+    put_u32(&mut image, section + 48, code_offset as u32);
+    put_u32(&mut image, section + 52, 4);
+    put_u32(&mut image, section + 64, 0x80000400);
+    command += text_segment_size;
+    // LC_MAIN
+    put_u32(&mut image, command, MACHO_LC_MAIN);
+    put_u32(&mut image, command + 4, main_command_size as u32);
+    put_u64(&mut image, command + 8, (code_offset + start_offset) as u64);
+    command += main_command_size;
+    // LC_LOAD_DYLINKER
+    put_u32(&mut image, command, MACHO_LC_LOAD_DYLINKER);
+    put_u32(&mut image, command + 4, dylinker_size as u32);
+    put_u32(&mut image, command + 8, 12);
+    image[command + 12..command + 12 + dylinker.len()].copy_from_slice(dylinker);
+    image[code_offset..code_offset + text.len()].copy_from_slice(&text);
+    fs::write(output, image).map_err(|error| format!("write '{}': {error}", output.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = fs::metadata(output).map_err(|error| format!("stat '{}': {error}", output.display()))?.permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(output, permissions).map_err(|error| format!("chmod '{}': {error}", output.display()))?;
+    }
+    Ok(())
+}
+
 fn inspect_object(input: &Path) -> Result<(), String> {
     let bytes = fs::read(input).map_err(|error| format!("read '{}': {error}", input.display()))?;
     let file = object::File::parse(&*bytes).map_err(|error| format!("parse '{}': {error}", input.display()))?;
@@ -642,7 +868,8 @@ fn main() {
         return;
     }
     let pe_mode = args.first().map(String::as_str) == Some("pe");
-    let offset = if pe_mode { 1 } else { 0 };
+    let macho_mode = args.first().map(String::as_str) == Some("macho");
+    let offset = if pe_mode || macho_mode { 1 } else { 0 };
     let Some(output_relative) = args[offset..].iter().position(|arg| arg == "-o") else {
         usage();
         std::process::exit(2);
@@ -655,6 +882,8 @@ fn main() {
     let inputs = args[offset..output_index].iter().map(PathBuf::from).collect::<Vec<_>>();
     let result = if pe_mode {
         write_pe(&inputs, Path::new(&args[output_index + 1]))
+    } else if macho_mode {
+        write_macho(&inputs, Path::new(&args[output_index + 1]))
     } else {
         write_elf(&inputs, Path::new(&args[output_index + 1]))
     };
