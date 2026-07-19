@@ -1,0 +1,53 @@
+{
+  "generated_utc": "2026-07-19T09:08:14.201174+00:00",
+  "rows": [
+    {
+      "id": 1,
+      "name": "recursive-fib-35",
+      "passed": true,
+      "compile_ms": 3.1261750000339816,
+      "direct_link_ms": 1.844106999669748,
+      "runtime_ms": 54.10490799931722
+    },
+    {
+      "id": 2,
+      "name": "loop-10m",
+      "passed": true,
+      "compile_ms": 2.890394000132801,
+      "direct_link_ms": 1.6706779997548438,
+      "runtime_ms": 11.756271999729506
+    },
+    {
+      "id": 3,
+      "name": "call-chain-1m",
+      "passed": true,
+      "compile_ms": 2.645780999955605,
+      "direct_link_ms": 1.726385000438313,
+      "runtime_ms": 3.793822000261571
+    },
+    {
+      "id": 4,
+      "name": "integer-arithmetic",
+      "passed": true,
+      "compile_ms": 2.259591999973054,
+      "direct_link_ms": 1.6664209997543367,
+      "runtime_ms": 0.45958400005474687
+    },
+    {
+      "id": 5,
+      "name": "conditional-branches",
+      "passed": true,
+      "compile_ms": 2.644997999595944,
+      "direct_link_ms": 1.656213999922329,
+      "runtime_ms": 0.34502800008340273
+    },
+    {
+      "id": 6,
+      "name": "nested-direct-calls",
+      "passed": true,
+      "compile_ms": 2.6569929996185238,
+      "direct_link_ms": 1.652353999816114,
+      "runtime_ms": 0.4507330004344112
+    }
+  ]
+}

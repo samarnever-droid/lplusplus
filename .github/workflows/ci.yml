@@ -42,6 +42,8 @@ jobs:
         run: python3 benchmarks/king20/run.py --suite stable
       - name: Run King 20 Experimental
         run: python3 benchmarks/king20/run.py --suite experimental
+      - name: Run King 20 direct ELF subset
+        run: python3 benchmarks/king20/run_direct_elf.py
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4
         with:
@@ -51,6 +53,8 @@ jobs:
             benchmarks/king20/stable/v1/latest.md
             benchmarks/king20/experimental/latest.json
             benchmarks/king20/experimental/latest.md
+            benchmarks/king20/direct_elf_latest.json
+            benchmarks/king20/direct_elf_latest.md
 
   scalability-phase-analysis:
     runs-on: ubuntu-latest

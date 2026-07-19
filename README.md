@@ -75,7 +75,9 @@ python3 benchmarks/king20/run.py --suite experimental
 
 The latest checked-in Stable v1 sandbox run is recorded in [`benchmarks/king20/stable/v1/latest.md`](benchmarks/king20/stable/v1/latest.md): **20 / 20 passed** on a 2-core Intel Xeon Linux sandbox. The runner captures platform, CPU model, logical CPU count, memory, Python, Rust, and host C compiler information in suite-specific `latest.json` files.
 
-> Standalone AOT executables normally require a host linker because Cranelift emits native object files. Phase 2 now includes an experimental Linux x86-64 `lpp-link` ELF MVP that merges internal `.text`, `.rodata`, GOT runtime imports, and a freestanding syscall print runtime without a host final-link step. It is tested with runtime-free programs, `fib(35)`, and string output, but does not yet replace the host-link path for normal ARC/list/networking programs. The King 20 report separates linker time from compiler and runtime time.
+The direct-ELF King 20 subset currently passes workloads **1–6** with no host final linker. Its latest report is [`benchmarks/king20/direct_elf_latest.md`](benchmarks/king20/direct_elf_latest.md). In the current sandbox, direct linking takes about **1.7 ms** per supported workload, compared with roughly **200 ms** for the host-link path.
+
+> Standalone AOT executables normally require a host linker because Cranelift emits native object files. Phase 2 now includes an experimental Linux x86-64 `lpp-link` ELF MVP that merges internal `.text`, `.rodata`, GOT runtime imports, and a freestanding syscall print runtime without a host final-link step. It is tested with runtime-free programs, `fib(35)`, string output, and King 20 workloads 1–6, but does not yet replace the host-link path for normal ARC/list/networking programs. The King 20 report separates linker time from compiler and runtime time.
 
 ## Scalability phase analysis
 

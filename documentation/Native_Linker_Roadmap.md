@@ -78,6 +78,8 @@ runtime-free source → Cranelift object → lpp-link → ELF executable → exi
 fib(35) source + lpp_runtime_min.o → lpp-link → ELF executable → 9227465
 
 string literal + lpp_print_str → merged .rodata/GOT → ELF executable → hello linker
+
+King 20 workloads 1–6 → direct ELF subset → all pass without host final link
 ```
 
 Next Phase 2 increments are:
