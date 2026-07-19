@@ -1,6 +1,6 @@
 # L++ (L Plus Plus)
 
-Status on July 17, 2026: active experimental compiler prototype. The core frontend, analysis passes, C backend, and cross-platform CLI/build helpers are usable for development, but advanced runtime semantics and some AOT backend features are still incomplete.
+Status on July 19, 2026: active experimental compiler prototype. The core frontend, ownership-aware MIR, ARC runtime, Cranelift AOT backend, C compatibility backend, and cross-platform build helpers are usable for the tested subset. Advanced language semantics and full C/AOT ownership parity remain incomplete.
 
 L++ is a modern, experimental programming language that aims to combine the best aspects of four major paradigms:
 
@@ -39,7 +39,23 @@ Currently experimental or partial:
 - full ARC/runtime ownership behavior
 - package ecosystem and dependency resolution robustness
 
-Current builtin runtime coverage includes console/file I/O, lists, JSON helpers, threads, and TCP networking primitives (`net_connect`, `net_listen`, `net_accept`, `net_send`, `net_recv`, `net_close`).
+Current builtin runtime coverage includes console/file I/O, ARC-managed `List[Int]` and `List[Custom]`, JSON helpers, threads, and TCP networking primitives (`net_connect`, `net_listen`, `net_accept`, `net_send`, `net_recv`, `net_close`).
+
+## Benchmark Snapshot
+
+**Measured July 19, 2026** on the Arena Linux sandbox (`Linux 6.1.158+`, Debian `cc` 14.2.0). These are **single-run development measurements**, not cross-machine comparisons or statistical performance claims. The compiler was pre-built in release mode; compile timing below is the compiler pipeline and excludes rebuilding the compiler itself.
+
+| Workload | L++ compiler total | Cranelift AOT phase | C link step | Native runtime | Result | Executable size |
+|---|---:|---:|---:|---:|---|---:|
+| `fib(35)` | 0.974 ms | 0.828 ms | 339.118 ms | 71.029 ms | `9227465` | 24,120 B |
+| loop (10M) | 0.866 ms | 0.734 ms | 205.309 ms | 8.786 ms | `49999995000000` | 24,120 B |
+| call chain (1M) | 1.038 ms | 0.893 ms | 200.665 ms | 5.035 ms | `500000500000` | 24,176 B |
+
+Notes:
+
+- Native-link time is dominated by the host C toolchain and runtime link, not the L++ frontend or Cranelift object emission.
+- The AOT benchmark path links Cranelift PIC objects with `lpp_runtime.c` and verifies each expected program result.
+- Use the parity suite (`sh tests/run_aot_parity.sh`) to check supported C/AOT behavior rather than comparing these measurements to the older Windows/MSVC benchmark record.
 
 ## Getting Started
 
