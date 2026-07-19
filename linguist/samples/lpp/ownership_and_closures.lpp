@@ -1,0 +1,19 @@
+# L++ Linguist sample: significant whitespace, typed functions, closures,
+# ARC-managed custom values, lists, and control flow.
+
+struct Box:
+    value: Int
+
+def identity(value: Box) -> Box:
+    return value
+
+def main():
+    original := Box()
+    copied := identity(original)
+    values := [1, 2, 3]
+    reader := fn() -> Int:
+        if list_len(values) > 0:
+            return copied.value
+        else:
+            return 0
+    print(reader())
