@@ -298,24 +298,49 @@ fn read_coff_input(path: &Path) -> Result<InputText, String> {
     if file.format() != BinaryFormat::Coff || file.architecture() != Architecture::X86_64 {
         return Err(format!("'{}' is not an x86-64 COFF object", path.display()));
     }
-    let text_section = file.section_by_name(".text")
-        .ok_or_else(|| format!("'{}' has no .text section", path.display()))?;
-    let text_index = text_section.index();
-    let text = text_section.uncompressed_data()
-        .map_err(|error| format!("read .text from '{}': {error}", path.display()))?
-        .into_owned();
+
+    // MSVC often emits one COMDAT text section per function (`.text$mn`,
+    // `.text$...`) rather than one literal `.text`. Merge every text-kind
+    // section into the linker input while retaining per-section offsets.
+    let mut text = Vec::new();
+    let mut section_bases = Vec::new();
+    let mut section_relocations = Vec::new();
+    for section in file.sections() {
+        if section.kind() != object::SectionKind::Text {
+            continue;
+        }
+        let base = align_up(text.len(), 16);
+        text.resize(base, 0x90);
+        let index = section.index();
+        let data = section.uncompressed_data()
+            .map_err(|error| format!("read text from '{}': {error}", path.display()))?
+            .into_owned();
+        text.extend_from_slice(&data);
+        section_bases.push((index, base));
+        for (offset, relocation) in section.relocations() {
+            section_relocations.push((index, base, offset, relocation));
+        }
+    }
+    if section_bases.is_empty() {
+        return Err(format!("'{}' has no executable COFF text section", path.display()));
+    }
+    let section_base = |index| section_bases.iter().find(|(candidate, _)| *candidate == index).map(|(_, base)| *base);
+
     let mut text_symbols = Vec::new();
     for symbol in file.symbols() {
-        if symbol.section() == SymbolSection::Section(text_index) {
-            if let Ok(name) = symbol.name() {
-                if !name.is_empty() {
-                    text_symbols.push((name.to_string(), symbol.address()));
+        if let SymbolSection::Section(index) = symbol.section() {
+            if let Some(base) = section_base(index) {
+                if let Ok(name) = symbol.name() {
+                    if !name.is_empty() {
+                        text_symbols.push((name.to_string(), base as u64 + symbol.address()));
+                    }
                 }
             }
         }
     }
+
     let mut relocations = Vec::new();
-    for (offset, relocation) in text_section.relocations() {
+    for (_, base, offset, relocation) in section_relocations {
         let RelocationTarget::Symbol(symbol_index) = relocation.target() else {
             return Err(format!("'{}' has unsupported non-symbol relocation", path.display()));
         };
@@ -323,13 +348,18 @@ fn read_coff_input(path: &Path) -> Result<InputText, String> {
             .map_err(|error| format!("read relocation symbol: {error}"))?;
         let raw_name = symbol.name()
             .map_err(|error| format!("read relocation symbol name: {error}"))?;
-        let target = if raw_name.is_empty() && symbol.section() == SymbolSection::Section(text_index) {
-            "__self_text__".to_string()
+        let target = if raw_name.is_empty() {
+            match symbol.section() {
+                SymbolSection::Section(index) if section_base(index).is_some() => {
+                    format!("__coff_text_section_{}", section_base(index).unwrap())
+                }
+                _ => return Err(format!("'{}' has unresolved anonymous COFF relocation", path.display())),
+            }
         } else {
             raw_name.to_string()
         };
         relocations.push(Relocation {
-            offset: usize::try_from(offset).map_err(|_| "relocation offset overflow")?,
+            offset: base + usize::try_from(offset).map_err(|_| "relocation offset overflow")?,
             target,
             addend: relocation.addend(),
             size: relocation.size(),
@@ -438,6 +468,8 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
             }
             let target_rva: u32 = if relocation.target == "__self_text__" {
                 PE_SECTION_RVA + base as u32
+            } else if let Some(offset) = relocation.target.strip_prefix("__coff_text_section_") {
+                PE_SECTION_RVA + offset.parse::<u32>().map_err(|_| "invalid COFF section relocation")?
             } else if let Some(rva) = iat_rvas.get(&relocation.target) {
                 *rva
             } else {
