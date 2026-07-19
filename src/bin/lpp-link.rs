@@ -7,7 +7,7 @@
 //! compiler or linker during the final link step.
 
 use object::{Architecture, BinaryFormat, Object, ObjectSection, ObjectSymbol, RelocationKind, RelocationTarget, SymbolSection};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -290,17 +290,25 @@ fn inspect_object(input: &Path) -> Result<(), String> {
     let bytes = fs::read(input).map_err(|error| format!("read '{}': {error}", input.display()))?;
     let file = object::File::parse(&*bytes).map_err(|error| format!("parse '{}': {error}", input.display()))?;
     let mut relocations = 0usize;
+    let mut relocation_kinds: BTreeMap<String, usize> = BTreeMap::new();
     println!("format: {:?}", file.format());
     println!("architecture: {:?}", file.architecture());
     println!("sections:");
     for section in file.sections() {
-        relocations += section.relocations().count();
+        for (_, relocation) in section.relocations() {
+            relocations += 1;
+            *relocation_kinds.entry(format!("{:?}", relocation.kind())).or_default() += 1;
+        }
         println!("  {} size={} kind={:?}", section.name().unwrap_or("<unnamed>"), section.size(), section.kind());
     }
     let defined = file.symbols().filter(|symbol| !symbol.is_undefined()).count();
     let undefined = file.symbols().filter(|symbol| symbol.is_undefined()).count();
     println!("symbols: defined={} undefined={}", defined, undefined);
     println!("relocations: {}", relocations);
+    println!("relocation-kinds:");
+    for (kind, count) in relocation_kinds {
+        println!("  {}={}", kind, count);
+    }
     Ok(())
 }
 

@@ -84,6 +84,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      # windows-latest contains MSVC, but its environment is not loaded in a
+      # normal pwsh step. This action imports vcvars so cl.exe/link.exe resolve.
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
       - name: Build and unit-test Windows toolchain
         shell: pwsh
         run: |
@@ -104,6 +109,7 @@ jobs:
           $inspect | Out-File "$work\inspect.txt"
           if ($inspect -notmatch "format: Coff") { throw "Expected COFF inspection output" }
           if ($inspect -notmatch "architecture: X86_64") { throw "Expected x86-64 COFF object" }
+          if ($inspect -notmatch "relocation-kinds:") { throw "Expected COFF relocation classification" }
           cl.exe /nologo "$work\arith.o" "$work\lpp_runtime.obj" "/Fe:$work\arith.exe"
           & "$work\arith.exe" | Out-File "$work\output.txt"
           $actual = (Get-Content "$work\output.txt" | ForEach-Object { $_.Trim() }) -join "`n"

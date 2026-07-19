@@ -28,6 +28,7 @@ x86-64 architecture
 section names, sizes, and kinds
 defined / undefined symbol counts
 relocation count
+relocation-kind classification
 ```
 
 Windows CI compiles a Cranelift COFF object, runs this inspection command, verifies `Coff` and `X86_64`, then confirms the existing MSVC host-link fallback still runs the executable correctly.
