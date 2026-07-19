@@ -67,6 +67,7 @@ multiple x86-64 ELF objects
 + merged `.rodata` string literals
 + generated Linux _start syscall exit stub
 + freestanding syscall runtime (integer/string output)
++ mmap-backed ARC allocation, retain/release, destructors, and closure capsules
 = static ELF executable without host final link
 ```
 
@@ -84,11 +85,10 @@ King 20 workloads 1–6 → direct ELF subset → all pass without host final li
 
 Next Phase 2 increments are:
 
-- merge packaged full runtime objects
-- support `.rodata`, `.data`, `.bss`, and relocations beyond internal calls/GOT
-- extend the freestanding runtime for ARC, lists, and closures
+- support writable `.data` / `.bss` segments and writable relocations
+- add the freestanding List runtime (`List[Int]`, then `List[Custom]`)
 - add explicit dynamic libc/pthread imports for networking/files/threads
-- preserve the host-link fallback until King 20 runs through lpp-link
+- preserve the host-link fallback until all King 20 workloads run through lpp-link
 
 ### Phase 3 — Runtime migration
 

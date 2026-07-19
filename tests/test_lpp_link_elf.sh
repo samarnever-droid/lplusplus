@@ -47,4 +47,10 @@ EOF
 LPP_AOT=1 "$LPP" "$TEMP/string.lpp" >/dev/null
 "$LINKER" "$TEMP/string.o" "$TEMP/lpp_runtime_min.o" -o "$TEMP/string"
 [ "$("$TEMP/string")" = "hello linker" ]
-echo "PASS direct ELF linker MVP with freestanding runtime and rodata"
+
+# ARC/destructor chain: owned return uses mmap-backed ARC without libc.
+LPP_AOT=1 "$LPP" "$ROOT/tests/owned_return.lpp" >/dev/null
+cp "$ROOT/tests/owned_return.o" "$TEMP/owned_return.o"
+"$LINKER" "$TEMP/owned_return.o" "$TEMP/lpp_runtime_min.o" -o "$TEMP/owned_return"
+[ "$("$TEMP/owned_return")" = "1" ]
+echo "PASS direct ELF linker MVP with freestanding ARC runtime and rodata"
