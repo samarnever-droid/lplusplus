@@ -84,11 +84,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      # windows-latest contains MSVC, but its environment is not loaded in a
-      # normal pwsh step. This action imports vcvars so cl.exe/link.exe resolve.
-      - uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: x64
+      - name: Locate and load MSVC tools
+        shell: pwsh
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vs) { throw "Visual Studio C++ tools were not found" }
+          "VSCMD_BAT=$vs\VC\Auxiliary\Build\vcvars64.bat" | Out-File -FilePath $env:GITHUB_ENV -Append
       - name: Build and unit-test Windows toolchain
         shell: pwsh
         run: |
@@ -100,17 +102,24 @@ jobs:
         run: |
           $work = Join-Path $env:RUNNER_TEMP "lpp-windows-coff"
           New-Item -ItemType Directory -Force $work | Out-Null
-          cl.exe /nologo /O2 /c lpp_runtime.c "/Fo:$work\lpp_runtime.obj"
           Copy-Item tests\arith.lpp "$work\arith.lpp"
-          $env:LPP_AOT = "1"
-          & .\target\release\lpp.exe "$work\arith.lpp"
-          if ($LASTEXITCODE -ne 0) { throw "L++ AOT object generation failed" }
-          $inspect = & .\target\release\lpp-link.exe inspect "$work\arith.o"
-          $inspect | Out-File "$work\inspect.txt"
+          $cmd = Join-Path $work "build.cmd"
+          @"
+          @echo off
+          call "%VSCMD_BAT%" >nul || exit /b 1
+          cl.exe /nologo /O2 /c lpp_runtime.c "/Fo:$work\lpp_runtime.obj" || exit /b 1
+          set LPP_AOT=1
+          target\release\lpp.exe "$work\arith.lpp" || exit /b 1
+          target\release\lpp-link.exe inspect "$work\arith.o" > "$work\inspect.txt" || exit /b 1
+          cl.exe /nologo "$work\arith.o" "$work\lpp_runtime.obj" "/Fe:$work\arith.exe" || exit /b 1
+          "$work\arith.exe" > "$work\output.txt" || exit /b 1
+          exit /b 0
+          "@ | Set-Content -Path $cmd -Encoding ascii
+          cmd.exe /d /c $cmd
+          if ($LASTEXITCODE -ne 0) { throw "MSVC COFF fallback build failed" }
+          $inspect = Get-Content "$work\inspect.txt" -Raw
           if ($inspect -notmatch "format: Coff") { throw "Expected COFF inspection output" }
           if ($inspect -notmatch "architecture: X86_64") { throw "Expected x86-64 COFF object" }
           if ($inspect -notmatch "relocation-kinds:") { throw "Expected COFF relocation classification" }
-          cl.exe /nologo "$work\arith.o" "$work\lpp_runtime.obj" "/Fe:$work\arith.exe"
-          & "$work\arith.exe" | Out-File "$work\output.txt"
           $actual = (Get-Content "$work\output.txt" | ForEach-Object { $_.Trim() }) -join "`n"
           if ($actual -ne "15`n5`n50`n2") { throw "Unexpected Windows AOT output: $actual" }
