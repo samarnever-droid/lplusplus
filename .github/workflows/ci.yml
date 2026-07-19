@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - name: Show toolchain
         run: |
@@ -43,7 +43,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - name: Run King 20 Stable v1
         run: python3 benchmarks/king20/run.py --suite stable
@@ -67,7 +67,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - name: Run 10k / 50k / 100k phase scaling suite
         run: python3 benchmarks/scalability/run.py
@@ -83,7 +83,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - name: Locate and load MSVC tools
         shell: pwsh
@@ -151,3 +151,21 @@ jobs:
       - name: King20 direct PE gate
         shell: pwsh
         run: .\tests\test_direct_pe_king20.ps1
+
+  macos-host-link:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build and test macOS toolchain
+        run: |
+          cargo test --locked
+          cargo build --release --bin lpp --bin lpp-link
+      - name: Compile runtime and run Cranelift Mach-O fallback
+        run: |
+          clang -O2 -fPIC -c lpp_runtime.c -o /tmp/lpp_runtime.o
+          cp tests/arith.lpp /tmp/arith.lpp
+          LPP_AOT=1 target/release/lpp /tmp/arith.lpp
+          clang /tmp/arith.o /tmp/lpp_runtime.o -o /tmp/arith
+          test "$(/tmp/arith)" = $'15\n5\n50\n2'

@@ -66,7 +66,7 @@ fn main() {
     
     for arg in args.iter().skip(1) {
         if arg == "--version" || arg == "-v" {
-            println!("L++ Compiler v0.1.1");
+            println!("L++ Compiler v0.1.2");
             return;
         } else if arg == "--help" || arg == "-h" {
             println!("L++ (L Plus Plus) Compiler, Codegen Backend & Package Manager");
@@ -291,7 +291,7 @@ fn main() {
                 println!("TIMING_JSON: {{\"io\": {}, \"lex\": {}, \"parse\": {}, \"semantic\": {}, \"typecheck\": {}, \"escape\": {}, \"mir\": {}, \"aot\": {}, \"total\": {}}}", 
                    io_time.as_secs_f64(), lex_time.as_secs_f64(), parse_time.as_secs_f64(), sem_time.as_secs_f64(), ty_time.as_secs_f64(), esc_time.as_secs_f64(), mir_time.as_secs_f64(), aot_time.as_secs_f64(), total_time.as_secs_f64());
             } else if !dump_ast && !dump_symbols && !dump_types && !dump_escape && !dump_mir && !dump_c {
-                println!("L++ v0.1.1\n");
+                println!("L++ v0.1.2\n");
                 if explicit_emit {
                     println!("Artifacts emitted next to the source file.");
                 } else {

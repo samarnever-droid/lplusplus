@@ -5,8 +5,23 @@ PROJECT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 INSTALL_DIR=${LPP_INSTALL_DIR:-"$HOME/.lpp"}
 BIN_DIR="$INSTALL_DIR/bin"
 LIB_DIR="$INSTALL_DIR/lib"
-VERSION=${LPP_VERSION:-v0.1.0}
-RELEASE_URL="https://github.com/samarnever-droid/lplusplus/releases/download/$VERSION/lpp-linux-x86_64.tar.gz"
+VERSION=${LPP_VERSION:-v0.1.2}
+
+case "$(uname -s):$(uname -m)" in
+  Linux:x86_64|Linux:amd64)
+    RELEASE_TARGET="lpp-linux-x86_64"
+    ;;
+  Darwin:arm64)
+    RELEASE_TARGET="lpp-macos-arm64"
+    ;;
+  Darwin:x86_64)
+    RELEASE_TARGET="lpp-macos-x86_64"
+    ;;
+  *)
+    RELEASE_TARGET=""
+    ;;
+esac
+RELEASE_URL="https://github.com/samarnever-droid/lplusplus/releases/download/$VERSION/${RELEASE_TARGET}.tar.gz"
 
 printf '%s\n' "========================================================"
 printf '%s\n' "                 L++ GLOBAL INSTALLER                   "
@@ -15,6 +30,7 @@ printf '%s\n' "========================================================"
 mkdir -p "$BIN_DIR" "$LIB_DIR"
 
 install_release() {
+    [ -n "$RELEASE_TARGET" ] || return 1
     command -v curl >/dev/null 2>&1 || return 1
     command -v tar >/dev/null 2>&1 || return 1
     temp=$(mktemp -d "${TMPDIR:-/tmp}/lpp-release.XXXXXX")
@@ -24,7 +40,7 @@ install_release() {
         return 1
     fi
     tar -xzf "$temp/lpp.tar.gz" -C "$temp"
-    root="$temp/lpp-linux-x86_64"
+    root="$temp/$RELEASE_TARGET"
     [ -x "$root/bin/lpp" ] || return 1
     printf '%s\n' "[2/3] Installing compiler, linker, and packaged runtimes..."
     cp "$root/bin/lpp" "$BIN_DIR/lpp"
@@ -48,8 +64,10 @@ install_source() {
     cp "$PROJECT_DIR/lpp_runtime.c" "$LIB_DIR/lpp_runtime.c"
     if command -v cc >/dev/null 2>&1; then
         cc -O2 -fPIC -c "$LIB_DIR/lpp_runtime.c" -o "$LIB_DIR/lpp_runtime.o"
-        cc -O2 -ffreestanding -fno-stack-protector -fno-pic -mno-red-zone \
-            -c "$PROJECT_DIR/runtime/linux_x86_64_min.c" -o "$LIB_DIR/lpp_runtime_min.o" || true
+        if [ "$(uname -s):$(uname -m)" = "Linux:x86_64" ]; then
+            cc -O2 -ffreestanding -fno-stack-protector -fno-pic -mno-red-zone \
+                -c "$PROJECT_DIR/runtime/linux_x86_64_min.c" -o "$LIB_DIR/lpp_runtime_min.o" || true
+        fi
     fi
 }
 
