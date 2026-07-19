@@ -5,6 +5,7 @@ on:
     branches: [master]
   pull_request:
     branches: [master]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -147,3 +148,6 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "PE Kernel32 runtime build failed" }
           $actual = (Get-Content "$work\output.txt" | ForEach-Object { $_.Trim() }) -join "`n"
           if ($actual -ne "7") { throw "Unexpected direct PE output: $actual" }
+      - name: King20 direct PE gate
+        shell: pwsh
+        run: .\tests\test_direct_pe_king20.ps1
