@@ -34,17 +34,24 @@ Cranelift emits relocatable object files; it intentionally does not solve all ex
 
 King 20 and scalability reports now record compiler, AOT, and host-link time separately. Cross-language comparison also reports L++ AOT compile and host-link time separately.
 
-### Phase 1 — Bundled runtime objects
+### Phase 1 — Bundled runtime objects — implemented
 
-Build and package platform runtime objects during release:
+Installers now package a platform runtime object:
 
 ```text
-lpp_runtime_linux_x86_64.o
-lpp_runtime_windows_x86_64.obj
-lpp_runtime_macos_arm64.o
+Linux:   ~/.lpp/lib/lpp_runtime.o
+Windows: ~/.lpp/lib/lpp_runtime.obj
 ```
 
-This removes runtime C compilation from normal user builds, but still uses a system linker.
+Installed `lpp build` prefers this object and links it with the generated Cranelift object. It no longer recompiles `lpp_runtime.c` for each user project build. The source runtime remains a development fallback.
+
+Verified with a temporary installed-layout integration test:
+
+```text
+installed lpp → lpp new → lpp build → lpp run
+```
+
+This still uses a host linker; it removes only repeated runtime C compilation.
 
 ### Phase 2 — `lpp-link` ELF MVP
 

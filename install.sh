@@ -21,8 +21,11 @@ cp "$PROJECT_DIR/target/release/lpp" "$BIN_DIR/lpp"
 cp "$PROJECT_DIR/lpp_runtime.c" "$LIB_DIR/lpp_runtime.c"
 
 if command -v cc >/dev/null 2>&1; then
-    printf '%s\n' "  Precompiling runtime object with cc..."
-    cc -O2 -c "$LIB_DIR/lpp_runtime.c" -o "$LIB_DIR/lpp_runtime.o" || true
+    printf '%s\n' "  Packaging prebuilt runtime object with cc..."
+    cc -O2 -fPIC -c "$LIB_DIR/lpp_runtime.c" -o "$LIB_DIR/lpp_runtime.o"
+    printf '%s\n' "  Normal lpp builds will link this object without recompiling lpp_runtime.c."
+else
+    printf '%s\n' "  cc not found: runtime source fallback will be used by native builds."
 fi
 
 printf '\n%s\n' "[4/4] PATH guidance..."

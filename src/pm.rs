@@ -306,8 +306,9 @@ fn resolve_runtime_source() -> Option<PathBuf> {
 }
 
 fn resolve_runtime_object() -> Option<PathBuf> {
+    let extension = if cfg!(windows) { "obj" } else { "o" };
     installed_root_dir()
-        .map(|root| root.join("lib").join("lpp_runtime.obj"))
+        .map(|root| root.join("lib").join(format!("lpp_runtime.{}", extension)))
         .filter(|path| path.exists())
 }
 
@@ -325,6 +326,10 @@ fn output_path_for_name(dir: &Path, name: &str) -> PathBuf {
 
 enum LinkStrategy {
     MsvcLink { runtime_obj: PathBuf },
+    /// Host linker/compiler invocation with a prebuilt L++ runtime object.
+    /// This is Phase 1 of the native-linker roadmap: user builds no longer
+    /// compile lpp_runtime.c on every project build.
+    CCompilerObject { compiler: String, runtime_obj: PathBuf },
     CCompiler { compiler: String, runtime_src: PathBuf },
 }
 
@@ -347,10 +352,16 @@ fn detect_link_strategy() -> Result<LinkStrategy, String> {
         }
     }
 
-    let runtime_src = resolve_runtime_source()
-        .ok_or_else(|| "Failed to locate lpp_runtime.c for native linking.".to_string())?;
     for compiler in ["cc", "gcc", "clang"] {
         if command_available(compiler, &["--version"]) {
+            if let Some(runtime_obj) = resolve_runtime_object() {
+                return Ok(LinkStrategy::CCompilerObject {
+                    compiler: compiler.to_string(),
+                    runtime_obj,
+                });
+            }
+            let runtime_src = resolve_runtime_source()
+                .ok_or_else(|| "Failed to locate lpp_runtime.c for native linking.".to_string())?;
             return Ok(LinkStrategy::CCompiler {
                 compiler: compiler.to_string(),
                 runtime_src,
@@ -456,6 +467,42 @@ fn link_native_binary(obj_file: &Path, output_path: &Path) -> Result<(), String>
                 Ok(())
             } else {
                 Err(format!("link.exe failed while creating '{}'.", output_path.display()))
+            }
+        }
+        LinkStrategy::CCompilerObject {
+            compiler,
+            runtime_obj,
+        } => {
+            let mut cmd = std::process::Command::new(&compiler);
+            if compiler.eq_ignore_ascii_case("cl.exe") {
+                cmd.arg("/nologo")
+                    .arg("/O2")
+                    .arg(obj_file)
+                    .arg(&runtime_obj)
+                    .arg(format!("/Fe:{}", output_path.display()));
+            } else {
+                cmd.arg("-O2")
+                    .arg(obj_file)
+                    .arg(&runtime_obj)
+                    .arg("-o")
+                    .arg(output_path);
+                #[cfg(not(windows))]
+                {
+                    cmd.arg("-pthread");
+                }
+            }
+            let status = cmd
+                .stdin(std::process::Stdio::null())
+                .status()
+                .map_err(|e| format!("Failed to execute native linker '{}': {}", compiler, e))?;
+            if status.success() {
+                Ok(())
+            } else {
+                Err(format!(
+                    "Native linker '{}' failed while creating '{}'.",
+                    compiler,
+                    output_path.display()
+                ))
             }
         }
         LinkStrategy::CCompiler {
