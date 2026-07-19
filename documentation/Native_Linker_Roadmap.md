@@ -63,7 +63,8 @@ Current validated scope:
 multiple x86-64 ELF objects
 + merged .text sections
 + internal PC-relative calls
-+ GOTPCREL runtime imports
++ GOTPCREL runtime imports and readonly data imports
++ merged `.rodata` string literals
 + generated Linux _start syscall exit stub
 + freestanding syscall runtime (integer/string output)
 = static ELF executable without host final link
@@ -75,6 +76,8 @@ The integration test verifies both:
 runtime-free source → Cranelift object → lpp-link → ELF executable → exit 0
 
 fib(35) source + lpp_runtime_min.o → lpp-link → ELF executable → 9227465
+
+string literal + lpp_print_str → merged .rodata/GOT → ELF executable → hello linker
 ```
 
 Next Phase 2 increments are:

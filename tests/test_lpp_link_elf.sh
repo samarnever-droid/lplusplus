@@ -38,4 +38,13 @@ LPP_AOT=1 "$LPP" "$ROOT/benchmarks/bench_fib.lpp" >/dev/null
 cp "$ROOT/benchmarks/bench_fib.o" "$TEMP/bench_fib.o"
 "$LINKER" "$TEMP/bench_fib.o" "$TEMP/lpp_runtime_min.o" -o "$TEMP/fib"
 [ "$("$TEMP/fib")" = "9227465" ]
-echo "PASS direct ELF linker MVP with freestanding runtime"
+
+# Read-only data: string literal is merged and resolved through GOTPCREL.
+cat > "$TEMP/string.lpp" <<'EOF'
+def main():
+    print_str("hello linker")
+EOF
+LPP_AOT=1 "$LPP" "$TEMP/string.lpp" >/dev/null
+"$LINKER" "$TEMP/string.o" "$TEMP/lpp_runtime_min.o" -o "$TEMP/string"
+[ "$("$TEMP/string")" = "hello linker" ]
+echo "PASS direct ELF linker MVP with freestanding runtime and rodata"

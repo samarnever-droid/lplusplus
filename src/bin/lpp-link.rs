@@ -29,7 +29,9 @@ struct Relocation {
 struct InputText {
     path: PathBuf,
     text: Vec<u8>,
-    symbols: Vec<(String, u64)>,
+    rodata: Vec<u8>,
+    text_symbols: Vec<(String, u64)>,
+    rodata_symbols: Vec<(String, u64)>,
     relocations: Vec<Relocation>,
 }
 
@@ -58,13 +60,30 @@ fn read_input(path: &Path) -> Result<InputText, String> {
     let text = text_section.uncompressed_data()
         .map_err(|error| format!("read .text from '{}': {error}", path.display()))?
         .into_owned();
+    let (rodata_index, rodata) = if let Some(section) = file.section_by_name(".rodata") {
+        let index = section.index();
+        let data = section.uncompressed_data()
+            .map_err(|error| format!("read .rodata from '{}': {error}", path.display()))?
+            .into_owned();
+        (Some(index), data)
+    } else {
+        (None, Vec::new())
+    };
 
-    let mut symbols = Vec::new();
+    let mut text_symbols = Vec::new();
+    let mut rodata_symbols = Vec::new();
     for symbol in file.symbols() {
-        if symbol.section() == SymbolSection::Section(text_index) {
+        let destination = if symbol.section() == SymbolSection::Section(text_index) {
+            Some(&mut text_symbols)
+        } else if rodata_index.is_some_and(|index| symbol.section() == SymbolSection::Section(index)) {
+            Some(&mut rodata_symbols)
+        } else {
+            None
+        };
+        if let Some(destination) = destination {
             if let Ok(name) = symbol.name() {
                 if !name.is_empty() {
-                    symbols.push((name.to_string(), symbol.address()));
+                    destination.push((name.to_string(), symbol.address()));
                 }
             }
         }
@@ -88,7 +107,14 @@ fn read_input(path: &Path) -> Result<InputText, String> {
             kind: relocation.kind(),
         });
     }
-    Ok(InputText { path: path.to_path_buf(), text, symbols, relocations })
+    Ok(InputText {
+        path: path.to_path_buf(),
+        text,
+        rodata,
+        text_symbols,
+        rodata_symbols,
+        relocations,
+    })
 }
 
 fn write_elf(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
@@ -104,7 +130,7 @@ fn write_elf(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
         let base = align_up(text.len(), 16);
         text.resize(base, 0x90); // NOP padding between object text sections.
         bases.push(base);
-        for (name, offset) in &input.symbols {
+        for (name, offset) in &input.text_symbols {
             let absolute = u64::try_from(base).map_err(|_| "text offset overflow")? + offset;
             if symbols.insert(name.clone(), absolute).is_some() {
                 return Err(format!("duplicate definition of symbol '{name}'"));
@@ -115,9 +141,23 @@ fn write_elf(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
     let _lpp_main = *symbols.get("lpp_main").ok_or_else(|| "required symbol 'lpp_main' not found".to_string())?;
     let main = *symbols.get("main").ok_or_else(|| "required symbol 'main' not found".to_string())?;
 
-    // PIC Cranelift imports runtime functions through GOTPCREL relocations.
-    // Build a tiny read-only GOT immediately after .text; all entries point to
-    // symbols supplied by one of the input objects.
+    // Linux `_start`: align stack, call C ABI main, exit(main_status) via syscall.
+    let start_offset = text.len();
+    let main_address = ELF_BASE + CODE_OFFSET as u64 + main;
+    let call_next = ELF_BASE + CODE_OFFSET as u64 + start_offset as u64 + 11;
+    let call_displacement = main_address as i64 - call_next as i64;
+    if call_displacement < i32::MIN as i64 || call_displacement > i32::MAX as i64 {
+        return Err("main is out of range for startup call".to_string());
+    }
+    let mut start = vec![
+        0x31, 0xed, 0x48, 0x83, 0xe4, 0xf0, // xor ebp; and rsp,-16
+        0xe8, 0, 0, 0, 0,                   // call main
+        0x89, 0xc7, 0xb8, 60, 0, 0, 0, 0x0f, 0x05, // exit syscall
+    ];
+    start[7..11].copy_from_slice(&(call_displacement as i32).to_le_bytes());
+    text.extend_from_slice(&start);
+
+    // PIC Cranelift imports runtime functions and readonly data through GOTPCREL.
     let mut got_slots: HashMap<String, usize> = HashMap::new();
     for input in &objects {
         for relocation in &input.relocations {
@@ -129,6 +169,27 @@ fn write_elf(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
     }
     let got_offset = align_up(text.len(), 8);
     text.resize(got_offset + got_slots.len() * 8, 0);
+
+    // Merge readonly data after GOT. It stays in the same read/execute load
+    // segment for this MVP; writable data gets a separate segment later.
+    let mut rodata_bases = Vec::new();
+    let mut rodata_offset = align_up(text.len(), 16);
+    text.resize(rodata_offset, 0);
+    for input in &objects {
+        let base = rodata_offset;
+        rodata_bases.push(base);
+        for (name, offset) in &input.rodata_symbols {
+            let absolute = u64::try_from(base).map_err(|_| "rodata offset overflow")? + offset;
+            if symbols.insert(name.clone(), absolute).is_some() {
+                return Err(format!("duplicate definition of symbol '{name}'"));
+            }
+        }
+        text.extend_from_slice(&input.rodata);
+        rodata_offset = align_up(text.len(), 16);
+        text.resize(rodata_offset, 0);
+    }
+    let _ = rodata_bases; // Retained for upcoming rodata relocation support.
+
     for (name, slot) in &got_slots {
         let target = *symbols.get(name).ok_or_else(|| {
             format!("unresolved GOT symbol '{name}'")
@@ -162,25 +223,7 @@ fn write_elf(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
         }
     }
 
-    // Linux `_start`: align stack, call C ABI main, exit(main_status) via syscall.
-    let start_offset = text.len();
-    let main_address = ELF_BASE + CODE_OFFSET as u64 + main;
-    let call_next = ELF_BASE + CODE_OFFSET as u64 + start_offset as u64 + 11;
-    let call_displacement = main_address as i64 - call_next as i64;
-    if call_displacement < i32::MIN as i64 || call_displacement > i32::MAX as i64 {
-        return Err("main is out of range for startup call".to_string());
-    }
-    let mut start = vec![
-        0x31, 0xed,                         // xor ebp, ebp
-        0x48, 0x83, 0xe4, 0xf0,             // and rsp, -16
-        0xe8, 0, 0, 0, 0,                   // call main
-        0x89, 0xc7,                         // mov edi, eax
-        0xb8, 60, 0, 0, 0,                  // mov eax, 60 (exit)
-        0x0f, 0x05,                         // syscall
-    ];
-    start[7..11].copy_from_slice(&(call_displacement as i32).to_le_bytes());
-
-    let file_size = CODE_OFFSET + text.len() + start.len();
+    let file_size = CODE_OFFSET + text.len();
     let mut elf = vec![0_u8; file_size];
     elf[0..4].copy_from_slice(b"\x7fELF");
     elf[4] = 2; // ELFCLASS64
@@ -206,7 +249,6 @@ fn write_elf(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
     put_u64(&mut elf, ph + 48, 0x1000);
 
     elf[CODE_OFFSET..CODE_OFFSET + text.len()].copy_from_slice(&text);
-    elf[CODE_OFFSET + text.len()..].copy_from_slice(&start);
     fs::write(output, elf).map_err(|error| format!("write '{}': {error}", output.display()))?;
     #[cfg(unix)]
     {
