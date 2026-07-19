@@ -197,8 +197,9 @@ Windows currently supports:
 ✓ Windows CI build and COFF fallback smoke test
 ✓ `lpp-link inspect` COFF / x86-64 inspection gate
 ✓ Runtime-free direct PE MVP in Windows CI
-⏳ COFF runtime section merge and broad AMD64 relocation coverage
-⏳ PE imports, ARC runtime, and King20 direct PE
+✓ Kernel32 import table / IAT MVP (`WriteFile`, `VirtualAlloc`)
+⏳ COFF `.rdata` / `.data` / `.bss` merge and broad AMD64 relocation coverage
+⏳ PE base relocations, full ARC/list/closure validation, and King20 direct PE
 ```
 
 The Windows direct-toolchain plan is in [`documentation/Windows_Native_Toolchain.md`](documentation/Windows_Native_Toolchain.md).

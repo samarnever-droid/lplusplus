@@ -298,24 +298,51 @@ fn read_coff_input(path: &Path) -> Result<InputText, String> {
     if file.format() != BinaryFormat::Coff || file.architecture() != Architecture::X86_64 {
         return Err(format!("'{}' is not an x86-64 COFF object", path.display()));
     }
-    let text_section = file.section_by_name(".text")
-        .ok_or_else(|| format!("'{}' has no .text section", path.display()))?;
-    let text_index = text_section.index();
-    let text = text_section.uncompressed_data()
-        .map_err(|error| format!("read .text from '{}': {error}", path.display()))?
-        .into_owned();
+
+    // MSVC often emits one COMDAT text section per function (`.text$mn`,
+    // `.text$...`) rather than one literal `.text`. Merge every text-kind
+    // section into the linker input while retaining per-section offsets.
+    let mut text = Vec::new();
+    let mut section_bases = Vec::new();
+    let mut section_relocations = Vec::new();
+    for section in file.sections() {
+        if section.kind() != object::SectionKind::Text {
+            continue;
+        }
+        let base = align_up(text.len(), 16);
+        text.resize(base, 0x90);
+        let index = section.index();
+        let data = section.uncompressed_data()
+            .map_err(|error| format!("read text from '{}': {error}", path.display()))?
+            .into_owned();
+        text.extend_from_slice(&data);
+        section_bases.push((index, base));
+        for (offset, relocation) in section.relocations() {
+            section_relocations.push((index, base, offset, relocation));
+        }
+    }
+    if section_bases.is_empty() {
+        return Err(format!("'{}' has no executable COFF text section", path.display()));
+    }
+    let section_base = |index| section_bases.iter().find(|(candidate, _)| *candidate == index).map(|(_, base)| *base);
+
     let mut text_symbols = Vec::new();
     for symbol in file.symbols() {
-        if symbol.section() == SymbolSection::Section(text_index) {
-            if let Ok(name) = symbol.name() {
-                if !name.is_empty() {
-                    text_symbols.push((name.to_string(), symbol.address()));
+        if let SymbolSection::Section(index) = symbol.section() {
+            if let Some(base) = section_base(index) {
+                if let Ok(name) = symbol.name() {
+                    // COFF emits local section symbols such as `.text$mn`.
+                    // They are relocation anchors, not linkable global names.
+                    if !name.is_empty() && !name.starts_with(".text") && !name.starts_with('$') {
+                        text_symbols.push((name.to_string(), base as u64 + symbol.address()));
+                    }
                 }
             }
         }
     }
+
     let mut relocations = Vec::new();
-    for (offset, relocation) in text_section.relocations() {
+    for (_, base, offset, relocation) in section_relocations {
         let RelocationTarget::Symbol(symbol_index) = relocation.target() else {
             return Err(format!("'{}' has unsupported non-symbol relocation", path.display()));
         };
@@ -323,13 +350,18 @@ fn read_coff_input(path: &Path) -> Result<InputText, String> {
             .map_err(|error| format!("read relocation symbol: {error}"))?;
         let raw_name = symbol.name()
             .map_err(|error| format!("read relocation symbol name: {error}"))?;
-        let target = if raw_name.is_empty() && symbol.section() == SymbolSection::Section(text_index) {
-            "__self_text__".to_string()
+        let target = if raw_name.is_empty() {
+            match symbol.section() {
+                SymbolSection::Section(index) if section_base(index).is_some() => {
+                    format!("__coff_text_section_{}", section_base(index).unwrap())
+                }
+                _ => return Err(format!("'{}' has unresolved anonymous COFF relocation", path.display())),
+            }
         } else {
             raw_name.to_string()
         };
         relocations.push(Relocation {
-            offset: usize::try_from(offset).map_err(|_| "relocation offset overflow")?,
+            offset: base + usize::try_from(offset).map_err(|_| "relocation offset overflow")?,
             target,
             addend: relocation.addend(),
             size: relocation.size(),
@@ -353,6 +385,57 @@ fn pe_align(value: usize, alignment: usize) -> usize {
 /// Phase W2 PE MVP: merge runtime-free COFF `.text` sections into a console
 /// x86-64 PE executable. Runtime imports, data sections, and base relocations
 /// intentionally remain unsupported until W2 section/relocation coverage grows.
+fn build_kernel32_imports(
+    imports: &[String],
+    internal_refs: &[String],
+    section_rva: u32,
+) -> Result<(Vec<u8>, HashMap<String, u32>, HashMap<String, usize>), String> {
+    // descriptor + terminating descriptor; keep an .idata-like table even when
+    // only internal refptrs are present so code has a stable writable address.
+    let count = imports.len();
+    let descriptor_size = if count == 0 { 0 } else { 40usize };
+    let ilt_offset = align_up(descriptor_size, 8);
+    let iat_offset = ilt_offset + (count + 1) * 8;
+    let refptr_offset = align_up(iat_offset + if count == 0 { 0 } else { (count + 1) * 8 }, 8);
+    let mut data = vec![0_u8; refptr_offset + internal_refs.len() * 8];
+    let mut iat_rvas = HashMap::new();
+    let mut refptr_offsets = HashMap::new();
+
+    if count != 0 {
+        let dll_offset = data.len();
+        data.extend_from_slice(b"KERNEL32.dll\0");
+        while data.len() % 2 != 0 { data.push(0); }
+        let mut names = HashMap::new();
+        for import in imports {
+            let offset = data.len();
+            data.extend_from_slice(&[0, 0]); // hint
+            data.extend_from_slice(import.as_bytes());
+            data.push(0);
+            while data.len() % 2 != 0 { data.push(0); }
+            names.insert(import.clone(), offset);
+        }
+        for (index, import) in imports.iter().enumerate() {
+            let name_rva = section_rva + names[import] as u32;
+            let thunk = name_rva as u64;
+            let ilt = ilt_offset + index * 8;
+            let iat = iat_offset + index * 8;
+            data[ilt..ilt + 8].copy_from_slice(&thunk.to_le_bytes());
+            data[iat..iat + 8].copy_from_slice(&thunk.to_le_bytes());
+            iat_rvas.insert(format!("__imp_{import}"), section_rva + iat as u32);
+        }
+        put_u32(&mut data, 0, section_rva + ilt_offset as u32);
+        put_u32(&mut data, 12, section_rva + dll_offset as u32);
+        put_u32(&mut data, 16, section_rva + iat_offset as u32);
+    }
+    for (index, name) in internal_refs.iter().enumerate() {
+        refptr_offsets.insert(format!(".refptr.{name}"), refptr_offset + index * 8);
+    }
+    Ok((data, iat_rvas, refptr_offsets))
+}
+
+/// Phase W2: merge x86-64 COFF text and emit a console PE32+ image. The
+/// runtime imports are limited to KERNEL32.dll and use a generated import/IAT
+/// section. This is intentionally still a narrow static-layout linker.
 fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
     if inputs.is_empty() {
         return Err("at least one input object is required".to_string());
@@ -361,6 +444,8 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
     let mut text = Vec::new();
     let mut bases = Vec::new();
     let mut symbols: HashMap<String, u64> = HashMap::new();
+    let mut imports = Vec::new();
+    let mut internal_refs = Vec::new();
     for input in &objects {
         let base = align_up(text.len(), 16);
         text.resize(base, 0x90);
@@ -371,10 +456,36 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
                 return Err(format!("duplicate definition of symbol '{name}'"));
             }
         }
+        for relocation in &input.relocations {
+            if relocation.target.starts_with("__imp_") {
+                let name = relocation.target.trim_start_matches("__imp_").to_string();
+                if !imports.contains(&name) { imports.push(name); }
+            } else if let Some(name) = relocation.target.strip_prefix(".refptr.") {
+                let name = name.to_string();
+                if !internal_refs.contains(&name) { internal_refs.push(name); }
+            }
+        }
         text.extend_from_slice(&input.text);
     }
     let main = *symbols.get("main").ok_or_else(|| "required symbol 'main' not found".to_string())?;
     let _lpp_main = symbols.get("lpp_main").ok_or_else(|| "required symbol 'lpp_main' not found".to_string())?;
+
+    let headers_size = PE_FILE_ALIGNMENT;
+    let text_raw_size = pe_align(text.len(), PE_FILE_ALIGNMENT);
+    let idata_rva = pe_align(PE_SECTION_RVA as usize + text.len(), PE_SECTION_ALIGNMENT) as u32;
+    let (mut idata, iat_rvas, refptr_offsets) = build_kernel32_imports(&imports, &internal_refs, idata_rva)?;
+    // Cranelift COFF emits .refptr.<symbol> variables for runtime function
+    // addresses. Populate those slots with fixed-base addresses in this MVP.
+    for (ref_name, offset) in &refptr_offsets {
+        let symbol_name = ref_name.trim_start_matches(".refptr.");
+        let target = *symbols.get(symbol_name).ok_or_else(|| {
+            format!("unresolved internal refptr symbol '{symbol_name}'")
+        })?;
+        let value = PE_IMAGE_BASE + PE_SECTION_RVA as u64 + target;
+        idata[*offset..*offset + 8].copy_from_slice(&value.to_le_bytes());
+    }
+    let has_kernel_imports = !imports.is_empty();
+    let has_idata = !idata.is_empty();
 
     for (index, input) in objects.iter().enumerate() {
         let base = bases[index];
@@ -382,28 +493,32 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
             if relocation.size != 32 {
                 return Err(format!("'{}': unsupported COFF relocation width {}", input.path.display(), relocation.size));
             }
-            if relocation.kind == RelocationKind::GotRelative {
-                return Err(format!("'{}': PE MVP does not yet support runtime GOT import '{}'", input.path.display(), relocation.target));
-            }
-            let target = if relocation.target == "__self_text__" {
-                base as u64
+            let target_rva: u32 = if relocation.target == "__self_text__" {
+                PE_SECTION_RVA + base as u32
+            } else if let Some(offset) = relocation.target.strip_prefix("__coff_text_section_") {
+                PE_SECTION_RVA + offset.parse::<u32>().map_err(|_| "invalid COFF section relocation")?
+            } else if let Some(rva) = iat_rvas.get(&relocation.target) {
+                *rva
+            } else if let Some(offset) = refptr_offsets.get(&relocation.target) {
+                idata_rva + *offset as u32
             } else {
-                *symbols.get(&relocation.target).ok_or_else(|| {
+                PE_SECTION_RVA + *symbols.get(&relocation.target).ok_or_else(|| {
                     format!("'{}': unresolved external COFF symbol '{}'", input.path.display(), relocation.target)
-                })?
+                })? as u32
             };
             let patch = base + relocation.offset;
             if patch + 4 > text.len() {
                 return Err(format!("'{}': relocation patch out of range", input.path.display()));
             }
+            let patch_rva = PE_SECTION_RVA as i64 + patch as i64;
             if relocation.kind == RelocationKind::Absolute {
-                let value = PE_IMAGE_BASE as i64 + PE_SECTION_RVA as i64 + target as i64 + relocation.addend;
+                let value = PE_IMAGE_BASE as i64 + target_rva as i64 + relocation.addend;
                 if value < i32::MIN as i64 || value > i32::MAX as i64 {
-                    return Err("COFF absolute relocation out of range; base relocations are not implemented".to_string());
+                    return Err("COFF absolute relocation out of range; PE base relocations are not implemented".to_string());
                 }
                 text[patch..patch + 4].copy_from_slice(&(value as i32).to_le_bytes());
             } else {
-                let displacement = target as i64 + relocation.addend - patch as i64;
+                let displacement = target_rva as i64 + relocation.addend - patch_rva;
                 if displacement < i32::MIN as i64 || displacement > i32::MAX as i64 {
                     return Err("COFF PC-relative relocation out of range".to_string());
                 }
@@ -412,45 +527,71 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
         }
     }
 
-    let headers_size = PE_FILE_ALIGNMENT;
-    let raw_size = pe_align(text.len(), PE_FILE_ALIGNMENT);
-    let image_size = pe_align(PE_SECTION_RVA as usize + text.len(), PE_SECTION_ALIGNMENT);
-    let mut pe = vec![0_u8; headers_size + raw_size];
+    let idata_raw_size = if has_idata { pe_align(idata.len(), PE_FILE_ALIGNMENT) } else { 0 };
+    let idata_raw_offset = headers_size + text_raw_size;
+    let section_count = if has_idata { 2 } else { 1 };
+    let image_end = if has_idata {
+        idata_rva as usize + idata.len()
+    } else {
+        PE_SECTION_RVA as usize + text.len()
+    };
+    let image_size = pe_align(image_end, PE_SECTION_ALIGNMENT);
+    let mut pe = vec![0_u8; headers_size + text_raw_size + idata_raw_size];
     pe[0..2].copy_from_slice(b"MZ");
     put_u32(&mut pe, 0x3c, 0x80);
     let nt = 0x80;
     pe[nt..nt + 4].copy_from_slice(b"PE\0\0");
-    // COFF file header
-    put_u16(&mut pe, nt + 4, 0x8664); // AMD64
-    put_u16(&mut pe, nt + 6, 1);      // one section
-    put_u16(&mut pe, nt + 20, 0xF0);  // optional header size
-    put_u16(&mut pe, nt + 22, 0x0022); // executable + large address aware
+    put_u16(&mut pe, nt + 4, 0x8664);
+    put_u16(&mut pe, nt + 6, section_count);
+    put_u16(&mut pe, nt + 20, 0xF0);
+    put_u16(&mut pe, nt + 22, 0x0022);
     let opt = nt + 24;
-    put_u16(&mut pe, opt, 0x20b);     // PE32+
-    put_u32(&mut pe, opt + 4, raw_size as u32);
-    put_u32(&mut pe, opt + 16, PE_SECTION_RVA + main as u32); // entry RVA
+    put_u16(&mut pe, opt, 0x20b);
+    put_u32(&mut pe, opt + 4, text_raw_size as u32);
+    put_u32(&mut pe, opt + 8, idata_raw_size as u32);
+    put_u32(&mut pe, opt + 16, PE_SECTION_RVA + main as u32);
     put_u32(&mut pe, opt + 20, PE_SECTION_RVA);
     put_u64(&mut pe, opt + 24, PE_IMAGE_BASE);
     put_u32(&mut pe, opt + 32, PE_SECTION_ALIGNMENT as u32);
     put_u32(&mut pe, opt + 36, PE_FILE_ALIGNMENT as u32);
-    put_u16(&mut pe, opt + 40, 6);    // OS major
-    put_u16(&mut pe, opt + 48, 6);    // subsystem major
+    put_u16(&mut pe, opt + 40, 6);
+    put_u16(&mut pe, opt + 48, 6);
     put_u32(&mut pe, opt + 56, image_size as u32);
     put_u32(&mut pe, opt + 60, headers_size as u32);
-    put_u16(&mut pe, opt + 68, 3);    // Windows CUI
-    put_u64(&mut pe, opt + 72, 0x100000); // stack reserve
-    put_u64(&mut pe, opt + 80, 0x1000);   // stack commit
-    put_u64(&mut pe, opt + 88, 0x100000); // heap reserve
-    put_u64(&mut pe, opt + 96, 0x1000);   // heap commit
-    put_u32(&mut pe, opt + 108, 16);      // data directory count
+    put_u16(&mut pe, opt + 68, 3); // console
+    put_u64(&mut pe, opt + 72, 0x100000);
+    put_u64(&mut pe, opt + 80, 0x1000);
+    put_u64(&mut pe, opt + 88, 0x100000);
+    put_u64(&mut pe, opt + 96, 0x1000);
+    put_u32(&mut pe, opt + 108, 16);
+    if has_kernel_imports {
+        let directories = opt + 112;
+        put_u32(&mut pe, directories + 8, idata_rva); // import table directory #1
+        put_u32(&mut pe, directories + 12, 40);       // descriptor + terminator
+        let first_iat_rva = iat_rvas.values().copied().min().unwrap_or(idata_rva);
+        put_u32(&mut pe, directories + 12 * 8, first_iat_rva); // IAT directory #12
+        put_u32(&mut pe, directories + 12 * 8 + 4, (imports.len() as u32 + 1) * 8);
+    }
     let section = opt + 0xF0;
     pe[section..section + 5].copy_from_slice(b".text");
     put_u32(&mut pe, section + 8, text.len() as u32);
     put_u32(&mut pe, section + 12, PE_SECTION_RVA);
-    put_u32(&mut pe, section + 16, raw_size as u32);
+    put_u32(&mut pe, section + 16, text_raw_size as u32);
     put_u32(&mut pe, section + 20, headers_size as u32);
-    put_u32(&mut pe, section + 36, 0x60000020); // code | execute | read
+    put_u32(&mut pe, section + 36, 0x60000020);
+    if has_idata {
+        let idata_section = section + 40;
+        pe[idata_section..idata_section + 6].copy_from_slice(b".idata");
+        put_u32(&mut pe, idata_section + 8, idata.len() as u32);
+        put_u32(&mut pe, idata_section + 12, idata_rva);
+        put_u32(&mut pe, idata_section + 16, idata_raw_size as u32);
+        put_u32(&mut pe, idata_section + 20, idata_raw_offset as u32);
+        put_u32(&mut pe, idata_section + 36, 0xC0000040);
+    }
     pe[headers_size..headers_size + text.len()].copy_from_slice(&text);
+    if has_idata {
+        pe[idata_raw_offset..idata_raw_offset + idata.len()].copy_from_slice(&idata);
+    }
     fs::write(output, pe).map_err(|error| format!("write '{}': {error}", output.display()))?;
     Ok(())
 }

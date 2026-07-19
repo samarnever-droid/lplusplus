@@ -46,24 +46,33 @@ DOS header
 PE signature
 COFF file header
 PE32+ optional header
-one executable .text section
+.text section
+.idata import section
 console subsystem metadata
 entry point at L++ main
 internal relative relocation application
+Kernel32 import table / IAT generation
 ```
 
-Windows CI generates a runtime-free L++ program, emits COFF, invokes `lpp-link pe`, runs the resulting `.exe`, and requires exit status zero.
+Windows CI compiles the freestanding Windows runtime object, emits a COFF program containing `print(7)`, invokes `lpp-link pe`, runs the resulting `.exe`, and requires exact output `7`.
 
-Still required before normal Windows direct builds:
+The direct runtime MVP resolves these Kernel32 APIs:
 
 ```text
-COFF runtime-object merge
-AMD64 relocation coverage
-PE import directory
-base relocations
-kernel32 imports
-WriteFile / VirtualAlloc runtime
-ARC / List / closure direct runtime
+GetStdHandle
+WriteFile
+VirtualAlloc
+VirtualFree
+```
+
+Still required before complete Windows direct builds:
+
+```text
+COFF .rdata / .data / .bss merge
+full AMD64 relocation coverage
+PE base relocations
+ARC/list/closure runtime validation across King20
+file, networking, JSON, and thread imports
 King20 20 / 20 direct PE gate
 ```
 
