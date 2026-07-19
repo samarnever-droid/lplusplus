@@ -57,17 +57,25 @@ Notes:
 - The AOT benchmark path links Cranelift PIC objects with `lpp_runtime.c` and verifies each expected program result.
 - Use the parity suite (`sh tests/run_aot_parity.sh`) to check supported C/AOT behavior rather than comparing these measurements to the older Windows/MSVC benchmark record.
 
-## King 20 Standard
+## King 20 Standards
 
-The **King 20** suite is the project’s numbered AOT correctness-and-performance standard. It combines three runtime workloads with 17 ownership, ARC, closure, list, and branch regressions. Each case must match expected stdout and exit with status zero before timing is recorded.
+The **King 20** benchmark family has two tracks.
+
+| Track | Purpose | Change policy |
+|---|---|---|
+| **King 20 Stable v1** | Historical comparison baseline | Frozen forever; create `v2` rather than editing it |
+| **King 20 Experimental** | New ownership features, regressions, and optimization work | May evolve with the language |
+
+Each suite combines three runtime workloads with ownership, ARC, closure, list, and branch regressions. A case must match expected stdout and exit with status zero before timing is recorded.
 
 ```bash
-python3 benchmarks/king20/run.py
+python3 benchmarks/king20/run.py --suite stable
+python3 benchmarks/king20/run.py --suite experimental
 ```
 
-The latest checked-in sandbox run is recorded in [`benchmarks/king20/latest.md`](benchmarks/king20/latest.md): **20 / 20 passed** on a 2-core Intel Xeon Linux sandbox. The runner captures platform, CPU model, logical CPU count, memory, Python, Rust, and host C compiler information in `latest.json`.
+The latest checked-in Stable v1 sandbox run is recorded in [`benchmarks/king20/stable/v1/latest.md`](benchmarks/king20/stable/v1/latest.md): **20 / 20 passed** on a 2-core Intel Xeon Linux sandbox. The runner captures platform, CPU model, logical CPU count, memory, Python, Rust, and host C compiler information in suite-specific `latest.json` files.
 
-> Standalone AOT executables currently require a host linker because Cranelift emits native object files. The King 20 report separates linker time from compiler and runtime time; removing the host-linker requirement remains a future toolchain milestone.
+> Standalone AOT executables currently require a host linker because Cranelift emits native object files. The King 20 report separates linker time from compiler and runtime time. A direct executable emitter is a separate toolchain project; it cannot be safely replaced with a superficial flag.
 
 ## Getting Started
 

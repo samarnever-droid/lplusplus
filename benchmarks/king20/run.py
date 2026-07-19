@@ -7,6 +7,7 @@ single-run timing is recorded.
 """
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import platform
@@ -20,9 +21,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-MANIFEST = Path(__file__).with_name("manifest.json")
-RESULT_JSON = Path(__file__).with_name("latest.json")
-RESULT_MD = Path(__file__).with_name("latest.md")
+SUITE_ROOT = Path(__file__).resolve().parent
 
 
 def command_version(command: list[str]) -> str:
@@ -60,8 +59,8 @@ def system_info() -> dict[str, object]:
     }
 
 
-def benchmark() -> dict[str, object]:
-    manifest = json.loads(MANIFEST.read_text())
+def benchmark(manifest_path: Path) -> dict[str, object]:
+    manifest = json.loads(manifest_path.read_text())
     cc = os.environ.get("CC", "cc")
     if shutil.which("cargo") is None or shutil.which(cc) is None:
         raise RuntimeError("King 20 requires cargo and a host C compiler")
@@ -158,7 +157,22 @@ def render_markdown(result: dict[str, object]) -> str:
 
 
 if __name__ == "__main__":
-    result = benchmark()
-    RESULT_JSON.write_text(json.dumps(result, indent=2) + "\n")
-    RESULT_MD.write_text(render_markdown(result))
+    parser = argparse.ArgumentParser(description="Run an L++ King 20 benchmark suite")
+    parser.add_argument(
+        "--suite", choices=("stable", "experimental"), default="experimental",
+        help="stable runs frozen v1; experimental runs the evolving ownership suite",
+    )
+    options = parser.parse_args()
+    if options.suite == "stable":
+        manifest_path = SUITE_ROOT / "stable" / "v1" / "manifest.json"
+        result_dir = SUITE_ROOT / "stable" / "v1"
+    else:
+        manifest_path = SUITE_ROOT / "experimental" / "manifest.json"
+        result_dir = SUITE_ROOT / "experimental"
+
+    result = benchmark(manifest_path)
+    result_json = result_dir / "latest.json"
+    result_md = result_dir / "latest.md"
+    result_json.write_text(json.dumps(result, indent=2) + "\n")
+    result_md.write_text(render_markdown(result))
     print(render_markdown(result))
