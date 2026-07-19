@@ -77,6 +77,7 @@ impl<'a> Codegen<'a> {
         self.out.push_str("#include <stdio.h>\n");
         self.out.push_str("#include <stdlib.h>\n");
         self.out.push_str("#include <stdint.h>\n");
+        self.out.push_str("#include <limits.h>\n");
         self.out.push_str("#include <string.h>\n");
         // TODO-10: MSVC uses <malloc.h> for alloca; GCC/Clang use <alloca.h>
         self.out.push_str("#if defined(_MSC_VER)\n#  include <malloc.h>\n#else\n#  include <alloca.h>\n#endif\n");
@@ -823,7 +824,7 @@ impl<'a> Codegen<'a> {
                         | "list_push" | "list_free" | "net_close" => return TypeRef::Void,
                         "parse_int" | "json_parse" | "json_get_int"
                         | "json_get_obj" | "list_get" | "list_len"
-                        | "net_connect" | "net_listen" | "net_accept" | "net_send" => return TypeRef::Int,
+                        | "net_connect" | "net_listen" | "net_accept" | "net_send" | "net_send_all" | "net_set_timeout" => return TypeRef::Int,
                         "list_new" => return TypeRef::Generic("List".into(), vec![TypeRef::Int]),
                         _ => {}
                     }

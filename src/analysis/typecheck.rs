@@ -310,7 +310,7 @@ impl<'a> TypeChecker<'a> {
                         | "list_push" | "list_free" | "net_close" => Ok(TypeRef::Void),
                         "parse_int" | "json_parse" | "json_get_int"
                         | "json_get_obj" | "list_get" | "list_len"
-                        | "net_connect" | "net_listen" | "net_accept" | "net_send" => Ok(TypeRef::Int),
+                        | "net_connect" | "net_listen" | "net_accept" | "net_send" | "net_send_all" | "net_set_timeout" => Ok(TypeRef::Int),
                         "list_new" => Ok(TypeRef::Generic("List".to_string(), vec![TypeRef::Int])),
                         _ => Err(format!("Unresolved identifier '{}'", name)),
                     }

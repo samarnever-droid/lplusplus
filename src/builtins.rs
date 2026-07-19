@@ -316,6 +316,43 @@ pub fn get_builtins() -> &'static [Builtin] {
             cl_params: &[0, 0],
             cl_return: Some(0),
         },
+        // Writes the entire UTF-8 payload or returns -1. This is the safe
+        // default for request/response protocols: a single OS send may write
+        // only a prefix of a buffer.
+        Builtin {
+            name: "net_send_all",
+            symbol: "lpp_net_send_all",
+            params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Str)],
+            return_type: TypeRef::Int,
+            cl_params: &[0, 0],
+            cl_return: Some(0),
+        },
+        Builtin {
+            name: "lpp_net_send_all",
+            symbol: "lpp_net_send_all",
+            params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Str)],
+            return_type: TypeRef::Int,
+            cl_params: &[0, 0],
+            cl_return: Some(0),
+        },
+        // Applies both receive and send deadlines. Returns 1 on success and 0
+        // on invalid handles, unsupported platform configuration, or failure.
+        Builtin {
+            name: "net_set_timeout",
+            symbol: "lpp_net_set_timeout",
+            params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)],
+            return_type: TypeRef::Int,
+            cl_params: &[0, 0],
+            cl_return: Some(0),
+        },
+        Builtin {
+            name: "lpp_net_set_timeout",
+            symbol: "lpp_net_set_timeout",
+            params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)],
+            return_type: TypeRef::Int,
+            cl_params: &[0, 0],
+            cl_return: Some(0),
+        },
         Builtin {
             name: "net_recv",
             symbol: "lpp_net_recv",

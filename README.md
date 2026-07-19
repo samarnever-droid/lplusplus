@@ -126,7 +126,7 @@ freestanding integer/string output
 freestanding ARC, closures, and lists
 ```
 
-Networking, files, threads, JSON, writable data sections, Windows PE, and macOS Mach-O still use the host-link fallback. The roadmap is in [`documentation/Native_Linker_Roadmap.md`](documentation/Native_Linker_Roadmap.md).
+Networking, files, threads, JSON, writable data sections, Windows PE, and macOS Mach-O still use the host-link fallback. Networking uses native OS sockets—not cURL—and its current API/roadmap is in [`documentation/Networking.md`](documentation/Networking.md). The linker roadmap is in [`documentation/Native_Linker_Roadmap.md`](documentation/Native_Linker_Roadmap.md).
 
 ## King20 benchmark standards
 

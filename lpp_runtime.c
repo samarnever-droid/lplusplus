@@ -19,6 +19,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <limits.h>
 #include <errno.h>
 
 /* ── I/O ──────────────────────────────────────────────────────────────────── */
@@ -387,6 +388,7 @@ static void lpp__net_init(void) {
 #include <netdb.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <sys/time.h>
 typedef int lpp_socket_t;
 #define LPP_INVALID_SOCKET (-1)
 #define lpp_close_socket close
@@ -463,10 +465,51 @@ int64_t lpp_net_accept(int64_t listener) {
     return lpp__socket_store(client);
 }
 
-int64_t lpp_net_send(int64_t handle, const char *data) {
+/* Write the complete NUL-terminated L++ string. A successful send(2) is
+ * permitted to write fewer bytes than requested; exposing that behaviour as a
+ * successful protocol write corrupts HTTP and framed protocols. */
+int64_t lpp_net_send_all(int64_t handle, const char *data) {
     lpp_socket_t sock = lpp__socket_load(handle);
     if (sock == LPP_INVALID_SOCKET || !data) return -1;
-    return (int64_t)send(sock, data, (int)strlen(data), 0);
+    size_t length = strlen(data);
+    size_t sent_total = 0;
+    while (sent_total < length) {
+        size_t remaining = length - sent_total;
+#ifdef _WIN32
+        int chunk = remaining > (size_t)INT_MAX ? INT_MAX : (int)remaining;
+        int sent = send(sock, data + sent_total, chunk, 0);
+#else
+        int flags = 0;
+# ifdef MSG_NOSIGNAL
+        flags |= MSG_NOSIGNAL;
+# endif
+        ssize_t sent = send(sock, data + sent_total, remaining, flags);
+#endif
+        if (sent <= 0) return -1;
+        sent_total += (size_t)sent;
+    }
+    return (int64_t)sent_total;
+}
+
+/* net_send keeps its original API but now has complete-write semantics. */
+int64_t lpp_net_send(int64_t handle, const char *data) {
+    return lpp_net_send_all(handle, data);
+}
+
+int64_t lpp_net_set_timeout(int64_t handle, int64_t milliseconds) {
+    lpp_socket_t sock = lpp__socket_load(handle);
+    if (sock == LPP_INVALID_SOCKET || milliseconds <= 0) return 0;
+#ifdef _WIN32
+    DWORD timeout = milliseconds > (int64_t)DWORD_MAX ? DWORD_MAX : (DWORD)milliseconds;
+    return setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char *)&timeout, sizeof(timeout)) == 0
+        && setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, (const char *)&timeout, sizeof(timeout)) == 0;
+#else
+    struct timeval timeout;
+    timeout.tv_sec = (time_t)(milliseconds / 1000);
+    timeout.tv_usec = (suseconds_t)((milliseconds % 1000) * 1000);
+    return setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) == 0
+        && setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)) == 0;
+#endif
 }
 
 char *lpp_net_recv(int64_t handle, int64_t max_bytes) {

@@ -253,9 +253,12 @@ L++ provides a growing set of built-in functions for common operations, which ma
   - `net_connect(host, port) -> Int`: Opens a TCP client connection and returns a socket handle.
   - `net_listen(port) -> Int`: Binds a TCP listener on the given port and returns a listener handle.
   - `net_accept(listener) -> Int`: Accepts one inbound client from a listener handle.
-  - `net_send(socket, data) -> Int`: Sends a UTF-8 string and returns the number of bytes written.
+  - `net_send(socket, data) -> Int`: Compatibility API with complete-write semantics; returns all bytes or `-1`.
+  - `net_send_all(socket, data) -> Int`: Safely retries partial native socket writes; returns all bytes or `-1`.
+  - `net_set_timeout(socket, milliseconds) -> Int`: Applies native read/write deadlines; returns `1` or `0`.
   - `net_recv(socket, max_bytes) -> String`: Receives up to `max_bytes` and returns the payload as a string.
   - `net_close(handle) -> Void`: Closes a socket or listener handle.
+  - Uses Winsock/POSIX sockets directly—never cURL. Full scope and roadmap: [`documentation/Networking.md`](documentation/Networking.md).
 
 Example server:
 
@@ -300,7 +303,7 @@ L++ is designed as a multi-tier compilation pipeline:
 | Input      | `input()`, `parse_int(...)`     |
 | Files      | `read_file`, `write_file`       |
 | JSON       | Full (`json_parse`, `json_get_int`, `json_get_str`, `json_get_obj`, `json_free`) |
-| Networking | TCP built-ins (`net_connect`, `net_listen`, `net_accept`, `net_send`, `net_recv`, `net_close`) |
+| Networking | Native TCP sockets; complete writes and deadlines (`net_connect`, `net_listen`, `net_accept`, `net_send_all`, `net_set_timeout`, `net_recv`, `net_close`) |
 | Threads    | Parsed; direct AOT transfer is intentionally rejected pending ownership work |
 | Lists      | ARC-managed `List[Int]` and `List[Custom]` in the verified AOT subset |
 | Strings    | Basic output and literals; direct ELF supports `.rodata` literals |
