@@ -169,6 +169,8 @@ jobs:
           LPP_AOT=1 target/release/lpp /tmp/arith.lpp
           clang /tmp/arith.o /tmp/lpp_runtime.o -o /tmp/arith
           test "$(/tmp/arith)" = $'15\n5\n50\n2'
+      - name: Direct ARM64 Mach-O runtime-free MVP
+        run: sh tests/test_direct_macho_arm64.sh
 
   macos-x86-direct-link:
     runs-on: macos-13
