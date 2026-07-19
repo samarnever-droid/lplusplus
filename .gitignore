@@ -15,3 +15,5 @@ output.c
 /benchmarks/bench.rs
 /benchmarks/bench_pillars.lpp
 /benchmarks/bench_pillars.rs
+/website/node_modules/
+/website/dist/
