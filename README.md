@@ -215,15 +215,26 @@ Global recognition depends on GitHub Linguist maintainers accepting the upstream
 
 ## Getting started
 
-### Install
+### Install a release — Rust not required
+
+The default installers download a matching release bundle containing `lpp`, `lpp-link`, and packaged runtime objects. End users do **not** need Rust/Cargo for normal installation.
 
 ```bash
-# Linux / macOS shell
-./install.sh
+# Linux x86-64
+curl -fsSL https://raw.githubusercontent.com/samarnever-droid/lplusplus/master/install.sh | sh
 
 # Windows PowerShell
-./install.ps1
+irm https://raw.githubusercontent.com/samarnever-droid/lplusplus/master/install.ps1 | iex
 ```
+
+To build locally from a source checkout instead:
+
+```bash
+LPP_FROM_SOURCE=1 ./install.sh
+# PowerShell: $env:LPP_FROM_SOURCE=1; .\install.ps1
+```
+
+Release bundles currently target Linux x86-64 and Windows x86-64. macOS remains a source-build / future Mach-O target.
 
 ### Command model: files vs packages
 

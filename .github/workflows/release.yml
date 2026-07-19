@@ -1,0 +1,90 @@
+name: Release L++
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag, for example v0.1.0"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  linux-x86_64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build compiler and direct linker
+        run: cargo build --release --locked --bin lpp --bin lpp-link
+      - name: Package Linux runtime objects
+        run: |
+          mkdir -p package/lpp-linux-x86_64/bin package/lpp-linux-x86_64/lib
+          cp target/release/lpp package/lpp-linux-x86_64/bin/
+          cp target/release/lpp-link package/lpp-linux-x86_64/bin/
+          cc -O2 -fPIC -c lpp_runtime.c -o package/lpp-linux-x86_64/lib/lpp_runtime.o -pthread
+          cc -O2 -ffreestanding -fno-stack-protector -fno-pic -mno-red-zone \
+            -c runtime/linux_x86_64_min.c -o package/lpp-linux-x86_64/lib/lpp_runtime_min.o
+          cp lpp_runtime.c package/lpp-linux-x86_64/lib/
+          tar -C package -czf lpp-linux-x86_64.tar.gz lpp-linux-x86_64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lpp-linux-x86_64
+          path: lpp-linux-x86_64.tar.gz
+
+  windows-x86_64:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Locate MSVC tools
+        shell: pwsh
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vs) { throw "Visual Studio C++ tools were not found" }
+          "VSCMD_BAT=$vs\VC\Auxiliary\Build\vcvars64.bat" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - name: Build and package Windows release
+        shell: pwsh
+        run: |
+          cargo build --release --locked --bin lpp --bin lpp-link
+          $root = Join-Path $env:RUNNER_TEMP "lpp-windows-x86_64"
+          New-Item -ItemType Directory -Force "$root\bin", "$root\lib" | Out-Null
+          Copy-Item target\release\lpp.exe "$root\bin\lpp.exe"
+          Copy-Item target\release\lpp-link.exe "$root\bin\lpp-link.exe"
+          $cmd = Join-Path $env:RUNNER_TEMP "package-runtime.cmd"
+          @"
+          @echo off
+          call "%VSCMD_BAT%" >nul || exit /b 1
+          cl.exe /nologo /O2 /c lpp_runtime.c "/Fo:$root\lib\lpp_runtime.obj" || exit /b 1
+          cl.exe /nologo /O2 /GS- /c runtime\windows_x86_64_min.c "/Fo:$root\lib\lpp_runtime_min.obj" || exit /b 1
+          exit /b 0
+          "@ | Set-Content -Path $cmd -Encoding ascii
+          cmd.exe /d /c $cmd
+          if ($LASTEXITCODE -ne 0) { throw "Runtime object packaging failed" }
+          Copy-Item lpp_runtime.c "$root\lib\lpp_runtime.c"
+          Compress-Archive -Path $root -DestinationPath lpp-windows-x86_64.zip -Force
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lpp-windows-x86_64
+          path: lpp-windows-x86_64.zip
+
+  publish:
+    needs: [linux-x86_64, windows-x86_64]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          generate_release_notes: true
+          files: |
+            artifacts/lpp-linux-x86_64/lpp-linux-x86_64.tar.gz
+            artifacts/lpp-windows-x86_64/lpp-windows-x86_64.zip
