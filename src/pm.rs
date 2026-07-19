@@ -413,7 +413,42 @@ fn find_vcvars64() -> Option<PathBuf> {
     None
 }
 
+fn direct_link_binary(obj_file: &Path, output_path: &Path) -> Result<(), String> {
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    {
+        let linker = current_binary_dir()
+            .map(|dir| dir.join("lpp-link"))
+            .filter(|path| path.exists())
+            .ok_or_else(|| "Direct linker requested but lpp-link is not installed beside lpp.".to_string())?;
+        let runtime = installed_root_dir()
+            .map(|root| root.join("lib").join("lpp_runtime_min.o"))
+            .filter(|path| path.exists())
+            .ok_or_else(|| "Direct linker requested but packaged lpp_runtime_min.o is unavailable. Reinstall L++.".to_string())?;
+        let status = std::process::Command::new(linker)
+            .arg(obj_file)
+            .arg(runtime)
+            .arg("-o")
+            .arg(output_path)
+            .stdin(std::process::Stdio::null())
+            .status()
+            .map_err(|error| format!("Failed to execute lpp-link: {}", error))?;
+        return if status.success() {
+            Ok(())
+        } else {
+            Err("lpp-link failed while creating native executable.".to_string())
+        };
+    }
+    #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+    {
+        let _ = (obj_file, output_path);
+        Err("Direct linking is currently supported only on Linux x86-64.".to_string())
+    }
+}
+
 fn link_native_binary(obj_file: &Path, output_path: &Path) -> Result<(), String> {
+    if std::env::var("LPP_LINKER").ok().as_deref() == Some("direct") {
+        return direct_link_binary(obj_file, output_path);
+    }
     #[cfg(windows)]
     {
         if let Some(vcvars) = find_vcvars64() {

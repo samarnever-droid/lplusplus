@@ -15,9 +15,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 HERE = Path(__file__).resolve().parent
 MANIFEST = HERE / "stable" / "v1" / "manifest.json"
-# The freestanding runtime covers scalar output, ARC, and closures. List
-# objects still need their own relocatable runtime-data implementation.
-SUPPORTED_IDS = set(range(1, 21)) - {8, 17, 18}
+# The freestanding runtime covers scalar output, ARC, closures, and both list modes.
+SUPPORTED_IDS = set(range(1, 21))
 
 
 def main() -> None:

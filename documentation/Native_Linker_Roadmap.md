@@ -86,9 +86,17 @@ King 20 workloads 1–6 → direct ELF subset → all pass without host final li
 Next Phase 2 increments are:
 
 - support writable `.data` / `.bss` segments and writable relocations
-- add the freestanding List runtime (`List[Int]`, then `List[Custom]`)
 - add explicit dynamic libc/pthread imports for networking/files/threads
-- preserve the host-link fallback until all King 20 workloads run through lpp-link
+- add direct runtime coverage for file I/O, networking, JSON, and threads
+- preserve the host-link fallback for unsupported runtime/platform features
+
+## King20 direct-link gate — achieved
+
+```text
+King20 Stable: 20 / 20 through lpp-link
+```
+
+The direct runtime now covers ARC structs, destructor chains, closures, `List[Int]`, and `List[Custom]`. This is the correctness gate for making a future Linux `lpp build --linker=direct` mode practical.
 
 ### Phase 3 — Runtime migration
 

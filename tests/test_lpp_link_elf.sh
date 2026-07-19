@@ -53,4 +53,10 @@ LPP_AOT=1 "$LPP" "$ROOT/tests/owned_return.lpp" >/dev/null
 cp "$ROOT/tests/owned_return.o" "$TEMP/owned_return.o"
 "$LINKER" "$TEMP/owned_return.o" "$TEMP/lpp_runtime_min.o" -o "$TEMP/owned_return"
 [ "$("$TEMP/owned_return")" = "1" ]
-echo "PASS direct ELF linker MVP with freestanding ARC runtime and rodata"
+
+# List[Custom] validates direct allocator growth and element ARC ownership.
+LPP_AOT=1 "$LPP" "$ROOT/tests/arc_list_custom.lpp" >/dev/null
+cp "$ROOT/tests/arc_list_custom.o" "$TEMP/arc_list_custom.o"
+"$LINKER" "$TEMP/arc_list_custom.o" "$TEMP/lpp_runtime_min.o" -o "$TEMP/arc_list_custom"
+[ "$("$TEMP/arc_list_custom")" = "1" ]
+echo "PASS direct ELF linker MVP with ARC, lists, and rodata"

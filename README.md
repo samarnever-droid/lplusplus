@@ -75,9 +75,9 @@ python3 benchmarks/king20/run.py --suite experimental
 
 The latest checked-in Stable v1 sandbox run is recorded in [`benchmarks/king20/stable/v1/latest.md`](benchmarks/king20/stable/v1/latest.md): **20 / 20 passed** on a 2-core Intel Xeon Linux sandbox. The runner captures platform, CPU model, logical CPU count, memory, Python, Rust, and host C compiler information in suite-specific `latest.json` files.
 
-The direct-ELF King 20 subset currently passes **17 / 20** workloads with no host final linker. Its latest report is [`benchmarks/king20/direct_elf_latest.md`](benchmarks/king20/direct_elf_latest.md). In the current sandbox, direct linking takes about **1.5–2.1 ms** per supported workload, compared with roughly **200 ms** for the host-link path.
+King20 Stable now passes **20 / 20** workloads through `lpp-link` with no host final linker. Its latest direct report is [`benchmarks/king20/direct_elf_latest.md`](benchmarks/king20/direct_elf_latest.md). In the current sandbox, direct linking takes about **1.6–2.1 ms** per workload, compared with roughly **200 ms** for the host-link path.
 
-> Standalone AOT executables normally require a host linker because Cranelift emits native object files. Phase 2 now includes an experimental Linux x86-64 `lpp-link` ELF MVP that merges internal `.text`, `.rodata`, GOT runtime imports, and a freestanding syscall ARC runtime without a host final-link step. It is tested with runtime-free programs, scalar workloads, ARC structs, aliases, destructors, closures, and **17 / 20** King 20 workloads. The remaining direct-link gap is `List[Int]` / `List[Custom]`; networking, files, threads, and JSON still use the host-link fallback.
+> Phase 2 now includes an experimental Linux x86-64 `lpp-link` ELF runtime that merges internal `.text`, `.rodata`, GOT runtime imports, ARC, closures, `List[Int]`, and `List[Custom]` without a host final-link step. It is verified against all 20 King20 Stable workloads. Installed Linux x86-64 users can opt in with `LPP_LINKER=direct lpp build`. Networking, files, threads, JSON, writable data sections, and cross-platform executable formats still use the host-link fallback.
 
 ## Scalability phase analysis
 

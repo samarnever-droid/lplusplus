@@ -86,6 +86,7 @@ fn main() {
             println!("  --dump-c         Dump the generated transpiled C code");
             println!("\nEnvironment Variables:");
             println!("  LPP_AOT=1        Enable Cranelift AOT compilation to native object file");
+            println!("  LPP_LINKER=direct Use lpp-link on installed Linux x86-64 builds (experimental)");
             println!("  BENCHMARK=1      Suppress descriptive text and print sub-millisecond JSON timings");
             return;
         } else if arg == "--dump-ast" {

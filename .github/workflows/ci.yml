@@ -33,6 +33,8 @@ jobs:
         run: sh tests/test_lpp_link_elf.sh
       - name: Direct ELF linker negative cases
         run: sh tests/test_lpp_link_negative.sh
+      - name: Installed direct-link build
+        run: sh tests/test_direct_installed_build.sh
 
   king20-smoke:
     runs-on: ubuntu-latest

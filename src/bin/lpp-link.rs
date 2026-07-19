@@ -96,9 +96,17 @@ fn read_input(path: &Path) -> Result<InputText, String> {
         };
         let symbol = file.symbol_by_index(symbol_index)
             .map_err(|error| format!("read relocation symbol: {error}"))?;
-        let target = symbol.name()
-            .map_err(|error| format!("read relocation symbol name: {error}"))?
-            .to_string();
+        let raw_name = symbol.name()
+            .map_err(|error| format!("read relocation symbol name: {error}"))?;
+        // GCC may target a local section symbol (whose printable name is
+        // empty) for absolute function-pointer relocations.
+        let target = if raw_name.is_empty() && symbol.section() == SymbolSection::Section(text_index) {
+            "__self_text__".to_string()
+        } else if raw_name.is_empty() && rodata_index.is_some_and(|index| symbol.section() == SymbolSection::Section(index)) {
+            "__self_rodata__".to_string()
+        } else {
+            raw_name.to_string()
+        };
         relocations.push(Relocation {
             offset: usize::try_from(offset).map_err(|_| "relocation offset overflow")?,
             target,
@@ -188,8 +196,6 @@ fn write_elf(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
         rodata_offset = align_up(text.len(), 16);
         text.resize(rodata_offset, 0);
     }
-    let _ = rodata_bases; // Retained for upcoming rodata relocation support.
-
     for (name, slot) in &got_slots {
         let target = *symbols.get(name).ok_or_else(|| {
             format!("unresolved GOT symbol '{name}'")
@@ -210,16 +216,33 @@ fn write_elf(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
                     let slot = *got_slots.get(&relocation.target).ok_or_else(|| "missing GOT slot".to_string())?;
                     u64::try_from(got_offset + slot * 8).map_err(|_| "GOT offset overflow")?
                 }
+                _ if relocation.target == "__self_text__" => {
+                    u64::try_from(base).map_err(|_| "text offset overflow")?
+                }
+                _ if relocation.target == "__self_rodata__" => {
+                    u64::try_from(rodata_bases[index]).map_err(|_| "rodata offset overflow")?
+                }
                 _ => *symbols.get(&relocation.target).ok_or_else(|| {
                     format!("'{}': unresolved external relocation to '{}'", input.path.display(), relocation.target)
                 })?,
             };
             let patch = base + relocation.offset;
-            let displacement = target as i64 + relocation.addend - patch as i64;
-            if patch + 4 > text.len() || displacement < i32::MIN as i64 || displacement > i32::MAX as i64 {
-                return Err(format!("'{}': PC-relative relocation out of range", input.path.display()));
+            if patch + 4 > text.len() {
+                return Err(format!("'{}': relocation patch out of range", input.path.display()));
             }
-            text[patch..patch + 4].copy_from_slice(&(displacement as i32).to_le_bytes());
+            if relocation.kind == RelocationKind::Absolute {
+                let value = ELF_BASE as i64 + CODE_OFFSET as i64 + target as i64 + relocation.addend;
+                if value < i32::MIN as i64 || value > i32::MAX as i64 {
+                    return Err(format!("'{}': absolute relocation out of range", input.path.display()));
+                }
+                text[patch..patch + 4].copy_from_slice(&(value as i32).to_le_bytes());
+            } else {
+                let displacement = target as i64 + relocation.addend - patch as i64;
+                if displacement < i32::MIN as i64 || displacement > i32::MAX as i64 {
+                    return Err(format!("'{}': PC-relative relocation out of range", input.path.display()));
+                }
+                text[patch..patch + 4].copy_from_slice(&(displacement as i32).to_le_bytes());
+            }
         }
     }
 

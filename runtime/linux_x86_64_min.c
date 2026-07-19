@@ -138,3 +138,85 @@ void lpp_closure_destroy(void *closure) {
     lpp_arc_release(parts[1]);
 }
 
+/* ── Freestanding List runtime ──────────────────────────────────────────── */
+/* Keep the element ownership mode as an integer rather than a function
+ * pointer. This avoids runtime data relocations and lets the current direct
+ * ELF linker keep its read-only, relocation-light runtime boundary. */
+typedef struct {
+    int64_t *data;
+    int64_t len;
+    int64_t cap;
+    uint64_t data_map_size;
+    int arc_elements;
+} LppList;
+
+static void lpp_list_destroy(void *payload) {
+    LppList *list = (LppList *)payload;
+    if (!list) return;
+    if (list->arc_elements) {
+        for (int64_t i = 0; i < list->len; ++i) {
+            lpp_arc_release((void *)(intptr_t)list->data[i]);
+        }
+    }
+    if (list->data) lpp_sys_munmap(list->data, list->data_map_size);
+}
+
+static void *lpp_list_new_with_mode(int arc_elements) {
+    LppList *list = (LppList *)lpp_arc_alloc_with_destructor(
+        (int64_t)sizeof(LppList), lpp_list_destroy
+    );
+    if (!list) return 0;
+    list->arc_elements = arc_elements;
+    return list;
+}
+
+void *lpp_list_new(void) {
+    return lpp_list_new_with_mode(0);
+}
+
+void *lpp_list_new_arc(void) {
+    return lpp_list_new_with_mode(1);
+}
+
+void lpp_list_push(void *raw, int64_t value) {
+    LppList *list = (LppList *)raw;
+    if (!list) return;
+    if (list->len == list->cap) {
+        int64_t next_cap = list->cap == 0 ? 8 : list->cap * 2;
+        if (next_cap < list->cap || next_cap > (int64_t)(0x7fffffffffffffffLL / 8)) return;
+        uint64_t next_size = lpp_page_round((uint64_t)next_cap * sizeof(int64_t));
+        int64_t *next_data = (int64_t *)lpp_sys_mmap(next_size);
+        if (!next_data) return;
+        for (int64_t i = 0; i < list->len; ++i) next_data[i] = list->data[i];
+        if (list->data) lpp_sys_munmap(list->data, list->data_map_size);
+        list->data = next_data;
+        list->cap = next_cap;
+        list->data_map_size = next_size;
+    }
+    if (list->arc_elements) lpp_arc_retain((void *)(intptr_t)value);
+    list->data[list->len++] = value;
+}
+
+void lpp_list_push_arc(void *list, void *value) {
+    lpp_list_push(list, (int64_t)(intptr_t)value);
+}
+
+int64_t lpp_list_get(void *raw, int64_t index) {
+    LppList *list = (LppList *)raw;
+    if (!list || index < 0 || index >= list->len) return 0;
+    return list->data[index];
+}
+
+void *lpp_list_get_arc(void *list, int64_t index) {
+    return (void *)(intptr_t)lpp_list_get(list, index);
+}
+
+int64_t lpp_list_len(void *raw) {
+    LppList *list = (LppList *)raw;
+    return list ? list->len : 0;
+}
+
+void lpp_list_free(void *list) {
+    lpp_arc_release(list);
+}
+
