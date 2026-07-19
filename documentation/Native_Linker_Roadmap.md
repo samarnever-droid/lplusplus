@@ -60,25 +60,29 @@ A new Rust binary, `lpp-link`, now emits a real Linux x86-64 ELF executable with
 Current validated scope:
 
 ```text
-one Cranelift x86-64 ELF object
-+ .text section
-+ internal PC-relative main → lpp_main relocation
+multiple x86-64 ELF objects
++ merged .text sections
++ internal PC-relative calls
++ GOTPCREL runtime imports
 + generated Linux _start syscall exit stub
-= static runtime-free ELF executable
++ freestanding syscall runtime (integer/string output)
+= static ELF executable without host final link
 ```
 
-The integration test verifies:
+The integration test verifies both:
 
 ```text
-L++ source → Cranelift object → lpp-link → ELF executable → exit status 0
+runtime-free source → Cranelift object → lpp-link → ELF executable → exit 0
+
+fib(35) source + lpp_runtime_min.o → lpp-link → ELF executable → 9227465
 ```
 
-Current deliberate limitation: objects with runtime/libc imports are rejected rather than incorrectly linked. The next Phase 2 increments are:
+Next Phase 2 increments are:
 
-- merge packaged runtime objects
-- resolve internal runtime symbols
-- support `.rodata`, `.data`, `.bss`, and relocations beyond internal calls
-- add explicit dynamic libc/pthread imports
+- merge packaged full runtime objects
+- support `.rodata`, `.data`, `.bss`, and relocations beyond internal calls/GOT
+- extend the freestanding runtime for ARC, lists, and closures
+- add explicit dynamic libc/pthread imports for networking/files/threads
 - preserve the host-link fallback until King 20 runs through lpp-link
 
 ### Phase 3 — Runtime migration
