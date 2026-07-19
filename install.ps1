@@ -26,8 +26,8 @@ Write-Host "========================================================" -Foregroun
 Write-Host "                 L++ GLOBAL INSTALLER                   " -ForegroundColor Cyan
 Write-Host "========================================================" -ForegroundColor Cyan
 
-Write-Host "`n[1/4] Building release compiler..." -ForegroundColor Yellow
-$proc = Start-Process -FilePath "cargo" -ArgumentList "build --release" -WorkingDirectory $ProjectDir -NoNewWindow -Wait -PassThru
+Write-Host "`n[1/4] Building release compiler and linker MVP..." -ForegroundColor Yellow
+$proc = Start-Process -FilePath "cargo" -ArgumentList "build --release --bin lpp --bin lpp-link" -WorkingDirectory $ProjectDir -NoNewWindow -Wait -PassThru
 if ($proc.ExitCode -ne 0) {
     Write-Error "Cargo build failed. Make sure Rust is installed and cargo is on PATH."
     exit 1
@@ -39,6 +39,10 @@ New-Item -ItemType Directory -Force $LibDir | Out-Null
 
 Write-Host "`n[3/4] Installing compiler and runtime files..." -ForegroundColor Yellow
 Copy-Item -Path $CompilerSource -Destination $CompilerDest -Force
+$LinkerSource = Join-Path $ProjectDir "target\release\lpp-link.exe"
+if (Test-Path $LinkerSource) {
+    Copy-Item -Path $LinkerSource -Destination (Join-Path $BinDir "lpp-link.exe") -Force
+}
 Copy-Item -Path $RuntimeSource -Destination (Join-Path $LibDir "lpp_runtime.c") -Force
 
 if (Get-Command cl.exe -ErrorAction SilentlyContinue) {

@@ -10,14 +10,17 @@ printf '%s\n' "========================================================"
 printf '%s\n' "                 L++ GLOBAL INSTALLER                   "
 printf '%s\n' "========================================================"
 
-printf '\n%s\n' "[1/4] Building release compiler..."
-(cd "$PROJECT_DIR" && cargo build --release)
+printf '\n%s\n' "[1/4] Building release compiler and ELF linker MVP..."
+(cd "$PROJECT_DIR" && cargo build --release --bin lpp --bin lpp-link)
 
 printf '\n%s\n' "[2/4] Preparing install directories..."
 mkdir -p "$BIN_DIR" "$LIB_DIR"
 
 printf '\n%s\n' "[3/4] Installing compiler and runtime files..."
 cp "$PROJECT_DIR/target/release/lpp" "$BIN_DIR/lpp"
+if [ -f "$PROJECT_DIR/target/release/lpp-link" ]; then
+    cp "$PROJECT_DIR/target/release/lpp-link" "$BIN_DIR/lpp-link"
+fi
 cp "$PROJECT_DIR/lpp_runtime.c" "$LIB_DIR/lpp_runtime.c"
 
 if command -v cc >/dev/null 2>&1; then

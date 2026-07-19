@@ -75,7 +75,7 @@ python3 benchmarks/king20/run.py --suite experimental
 
 The latest checked-in Stable v1 sandbox run is recorded in [`benchmarks/king20/stable/v1/latest.md`](benchmarks/king20/stable/v1/latest.md): **20 / 20 passed** on a 2-core Intel Xeon Linux sandbox. The runner captures platform, CPU model, logical CPU count, memory, Python, Rust, and host C compiler information in suite-specific `latest.json` files.
 
-> Standalone AOT executables currently require a host linker because Cranelift emits native object files. The King 20 report separates linker time from compiler and runtime time. A direct executable emitter is a separate toolchain project; it cannot be safely replaced with a superficial flag.
+> Standalone AOT executables normally require a host linker because Cranelift emits native object files. Phase 2 now includes an experimental Linux x86-64 `lpp-link` ELF MVP for **runtime-free** objects; it is tested separately and does not yet replace the host-link path for normal programs. The King 20 report separates linker time from compiler and runtime time.
 
 ## Scalability phase analysis
 

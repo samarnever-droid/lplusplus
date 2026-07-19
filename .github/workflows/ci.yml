@@ -29,6 +29,8 @@ jobs:
         run: sh tests/run_aot_parity.sh
       - name: Packaged runtime object linking
         run: sh tests/test_packaged_runtime.sh
+      - name: Direct ELF linker MVP
+        run: sh tests/test_lpp_link_elf.sh
 
   king20-smoke:
     runs-on: ubuntu-latest

@@ -53,25 +53,33 @@ installed lpp → lpp new → lpp build → lpp run
 
 This still uses a host linker; it removes only repeated runtime C compilation.
 
-### Phase 2 — `lpp-link` ELF MVP
+### Phase 2 — `lpp-link` ELF MVP — started
 
-Support Linux x86-64 ELF first:
+A new Rust binary, `lpp-link`, now emits a real Linux x86-64 ELF executable without invoking `cc`, `gcc`, `clang`, or `ld`.
+
+Current validated scope:
 
 ```text
-Cranelift object + bundled runtime object
-    ↓
-lpp-link
-    ↓
-ELF executable
+one Cranelift x86-64 ELF object
++ .text section
++ internal PC-relative main → lpp_main relocation
++ generated Linux _start syscall exit stub
+= static runtime-free ELF executable
 ```
 
-Initial scope:
+The integration test verifies:
 
-- executable ELF headers and load segments
-- symbol resolution for L++ objects
-- static section layout and relocations
-- minimal `_start` / `main` bridge
-- explicit libc, pthread, and dynamic loader imports
+```text
+L++ source → Cranelift object → lpp-link → ELF executable → exit status 0
+```
+
+Current deliberate limitation: objects with runtime/libc imports are rejected rather than incorrectly linked. The next Phase 2 increments are:
+
+- merge packaged runtime objects
+- resolve internal runtime symbols
+- support `.rodata`, `.data`, `.bss`, and relocations beyond internal calls
+- add explicit dynamic libc/pthread imports
+- preserve the host-link fallback until King 20 runs through lpp-link
 
 ### Phase 3 — Runtime migration
 
