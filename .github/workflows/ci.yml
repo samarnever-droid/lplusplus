@@ -123,3 +123,19 @@ jobs:
           if ($inspect -notmatch "relocation-kinds:") { throw "Expected COFF relocation classification" }
           $actual = (Get-Content "$work\output.txt" | ForEach-Object { $_.Trim() }) -join "`n"
           if ($actual -ne "15`n5`n50`n2") { throw "Unexpected Windows AOT output: $actual" }
+      - name: Direct PE runtime-free MVP
+        shell: pwsh
+        run: |
+          $work = Join-Path $env:RUNNER_TEMP "lpp-windows-pe"
+          New-Item -ItemType Directory -Force $work | Out-Null
+          @"
+          def main():
+              x := 1
+          "@ | Set-Content -Path "$work\direct.lpp" -Encoding ascii
+          $env:LPP_AOT = "1"
+          & .\target\release\lpp.exe "$work\direct.lpp"
+          if ($LASTEXITCODE -ne 0) { throw "PE MVP object generation failed" }
+          & .\target\release\lpp-link.exe pe "$work\direct.o" -o "$work\direct.exe"
+          if ($LASTEXITCODE -ne 0) { throw "PE MVP link failed" }
+          & "$work\direct.exe"
+          if ($LASTEXITCODE -ne 0) { throw "PE MVP executable returned $LASTEXITCODE" }

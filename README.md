@@ -196,8 +196,9 @@ Windows currently supports:
 ✓ MSVC host-link fallback
 ✓ Windows CI build and COFF fallback smoke test
 ✓ `lpp-link inspect` COFF / x86-64 inspection gate
-⏳ COFF section merge and relocation application
-⏳ Direct PE emission
+✓ Runtime-free direct PE MVP in Windows CI
+⏳ COFF runtime section merge and broad AMD64 relocation coverage
+⏳ PE imports, ARC runtime, and King20 direct PE
 ```
 
 The Windows direct-toolchain plan is in [`documentation/Windows_Native_Toolchain.md`](documentation/Windows_Native_Toolchain.md).
