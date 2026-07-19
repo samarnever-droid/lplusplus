@@ -286,6 +286,175 @@ fn write_elf(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
     Ok(())
 }
 
+
+const PE_IMAGE_BASE: u64 = 0x140000000;
+const PE_SECTION_RVA: u32 = 0x1000;
+const PE_FILE_ALIGNMENT: usize = 0x200;
+const PE_SECTION_ALIGNMENT: usize = 0x1000;
+
+fn read_coff_input(path: &Path) -> Result<InputText, String> {
+    let bytes = fs::read(path).map_err(|error| format!("read '{}': {error}", path.display()))?;
+    let file = object::File::parse(&*bytes).map_err(|error| format!("parse '{}': {error}", path.display()))?;
+    if file.format() != BinaryFormat::Coff || file.architecture() != Architecture::X86_64 {
+        return Err(format!("'{}' is not an x86-64 COFF object", path.display()));
+    }
+    let text_section = file.section_by_name(".text")
+        .ok_or_else(|| format!("'{}' has no .text section", path.display()))?;
+    let text_index = text_section.index();
+    let text = text_section.uncompressed_data()
+        .map_err(|error| format!("read .text from '{}': {error}", path.display()))?
+        .into_owned();
+    let mut text_symbols = Vec::new();
+    for symbol in file.symbols() {
+        if symbol.section() == SymbolSection::Section(text_index) {
+            if let Ok(name) = symbol.name() {
+                if !name.is_empty() {
+                    text_symbols.push((name.to_string(), symbol.address()));
+                }
+            }
+        }
+    }
+    let mut relocations = Vec::new();
+    for (offset, relocation) in text_section.relocations() {
+        let RelocationTarget::Symbol(symbol_index) = relocation.target() else {
+            return Err(format!("'{}' has unsupported non-symbol relocation", path.display()));
+        };
+        let symbol = file.symbol_by_index(symbol_index)
+            .map_err(|error| format!("read relocation symbol: {error}"))?;
+        let raw_name = symbol.name()
+            .map_err(|error| format!("read relocation symbol name: {error}"))?;
+        let target = if raw_name.is_empty() && symbol.section() == SymbolSection::Section(text_index) {
+            "__self_text__".to_string()
+        } else {
+            raw_name.to_string()
+        };
+        relocations.push(Relocation {
+            offset: usize::try_from(offset).map_err(|_| "relocation offset overflow")?,
+            target,
+            addend: relocation.addend(),
+            size: relocation.size(),
+            kind: relocation.kind(),
+        });
+    }
+    Ok(InputText {
+        path: path.to_path_buf(),
+        text,
+        rodata: Vec::new(),
+        text_symbols,
+        rodata_symbols: Vec::new(),
+        relocations,
+    })
+}
+
+fn pe_align(value: usize, alignment: usize) -> usize {
+    (value + alignment - 1) & !(alignment - 1)
+}
+
+/// Phase W2 PE MVP: merge runtime-free COFF `.text` sections into a console
+/// x86-64 PE executable. Runtime imports, data sections, and base relocations
+/// intentionally remain unsupported until W2 section/relocation coverage grows.
+fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
+    if inputs.is_empty() {
+        return Err("at least one input object is required".to_string());
+    }
+    let objects: Vec<InputText> = inputs.iter().map(|path| read_coff_input(path)).collect::<Result<_, _>>()?;
+    let mut text = Vec::new();
+    let mut bases = Vec::new();
+    let mut symbols: HashMap<String, u64> = HashMap::new();
+    for input in &objects {
+        let base = align_up(text.len(), 16);
+        text.resize(base, 0x90);
+        bases.push(base);
+        for (name, offset) in &input.text_symbols {
+            let absolute = base as u64 + offset;
+            if symbols.insert(name.clone(), absolute).is_some() {
+                return Err(format!("duplicate definition of symbol '{name}'"));
+            }
+        }
+        text.extend_from_slice(&input.text);
+    }
+    let main = *symbols.get("main").ok_or_else(|| "required symbol 'main' not found".to_string())?;
+    let _lpp_main = symbols.get("lpp_main").ok_or_else(|| "required symbol 'lpp_main' not found".to_string())?;
+
+    for (index, input) in objects.iter().enumerate() {
+        let base = bases[index];
+        for relocation in &input.relocations {
+            if relocation.size != 32 {
+                return Err(format!("'{}': unsupported COFF relocation width {}", input.path.display(), relocation.size));
+            }
+            if relocation.kind == RelocationKind::GotRelative {
+                return Err(format!("'{}': PE MVP does not yet support runtime GOT import '{}'", input.path.display(), relocation.target));
+            }
+            let target = if relocation.target == "__self_text__" {
+                base as u64
+            } else {
+                *symbols.get(&relocation.target).ok_or_else(|| {
+                    format!("'{}': unresolved external COFF symbol '{}'", input.path.display(), relocation.target)
+                })?
+            };
+            let patch = base + relocation.offset;
+            if patch + 4 > text.len() {
+                return Err(format!("'{}': relocation patch out of range", input.path.display()));
+            }
+            if relocation.kind == RelocationKind::Absolute {
+                let value = PE_IMAGE_BASE as i64 + PE_SECTION_RVA as i64 + target as i64 + relocation.addend;
+                if value < i32::MIN as i64 || value > i32::MAX as i64 {
+                    return Err("COFF absolute relocation out of range; base relocations are not implemented".to_string());
+                }
+                text[patch..patch + 4].copy_from_slice(&(value as i32).to_le_bytes());
+            } else {
+                let displacement = target as i64 + relocation.addend - patch as i64;
+                if displacement < i32::MIN as i64 || displacement > i32::MAX as i64 {
+                    return Err("COFF PC-relative relocation out of range".to_string());
+                }
+                text[patch..patch + 4].copy_from_slice(&(displacement as i32).to_le_bytes());
+            }
+        }
+    }
+
+    let headers_size = PE_FILE_ALIGNMENT;
+    let raw_size = pe_align(text.len(), PE_FILE_ALIGNMENT);
+    let image_size = pe_align(PE_SECTION_RVA as usize + text.len(), PE_SECTION_ALIGNMENT);
+    let mut pe = vec![0_u8; headers_size + raw_size];
+    pe[0..2].copy_from_slice(b"MZ");
+    put_u32(&mut pe, 0x3c, 0x80);
+    let nt = 0x80;
+    pe[nt..nt + 4].copy_from_slice(b"PE\0\0");
+    // COFF file header
+    put_u16(&mut pe, nt + 4, 0x8664); // AMD64
+    put_u16(&mut pe, nt + 6, 1);      // one section
+    put_u16(&mut pe, nt + 20, 0xF0);  // optional header size
+    put_u16(&mut pe, nt + 22, 0x0022); // executable + large address aware
+    let opt = nt + 24;
+    put_u16(&mut pe, opt, 0x20b);     // PE32+
+    put_u32(&mut pe, opt + 4, raw_size as u32);
+    put_u32(&mut pe, opt + 16, PE_SECTION_RVA + main as u32); // entry RVA
+    put_u32(&mut pe, opt + 20, PE_SECTION_RVA);
+    put_u64(&mut pe, opt + 24, PE_IMAGE_BASE);
+    put_u32(&mut pe, opt + 32, PE_SECTION_ALIGNMENT as u32);
+    put_u32(&mut pe, opt + 36, PE_FILE_ALIGNMENT as u32);
+    put_u16(&mut pe, opt + 40, 6);    // OS major
+    put_u16(&mut pe, opt + 48, 6);    // subsystem major
+    put_u32(&mut pe, opt + 56, image_size as u32);
+    put_u32(&mut pe, opt + 60, headers_size as u32);
+    put_u16(&mut pe, opt + 68, 3);    // Windows CUI
+    put_u64(&mut pe, opt + 72, 0x100000); // stack reserve
+    put_u64(&mut pe, opt + 80, 0x1000);   // stack commit
+    put_u64(&mut pe, opt + 88, 0x100000); // heap reserve
+    put_u64(&mut pe, opt + 96, 0x1000);   // heap commit
+    put_u32(&mut pe, opt + 108, 16);      // data directory count
+    let section = opt + 0xF0;
+    pe[section..section + 5].copy_from_slice(b".text");
+    put_u32(&mut pe, section + 8, text.len() as u32);
+    put_u32(&mut pe, section + 12, PE_SECTION_RVA);
+    put_u32(&mut pe, section + 16, raw_size as u32);
+    put_u32(&mut pe, section + 20, headers_size as u32);
+    put_u32(&mut pe, section + 36, 0x60000020); // code | execute | read
+    pe[headers_size..headers_size + text.len()].copy_from_slice(&text);
+    fs::write(output, pe).map_err(|error| format!("write '{}': {error}", output.display()))?;
+    Ok(())
+}
+
 fn inspect_object(input: &Path) -> Result<(), String> {
     let bytes = fs::read(input).map_err(|error| format!("read '{}': {error}", input.display()))?;
     let file = object::File::parse(&*bytes).map_err(|error| format!("parse '{}': {error}", input.display()))?;
@@ -313,7 +482,7 @@ fn inspect_object(input: &Path) -> Result<(), String> {
 }
 
 fn usage() {
-    eprintln!("Usage: lpp-link <program.o> [runtime.o ...] -o <output>");
+    eprintln!("Usage: lpp-link <program.o> [runtime.o ...] -o <output>\n       lpp-link pe <program.obj> [runtime.obj ...] -o <output.exe>");
     eprintln!("       lpp-link inspect <object.o>");
     eprintln!("Phase 2: direct Linux x86-64 ELF linker; Windows W1 COFF inspection.");
 }
@@ -331,16 +500,24 @@ fn main() {
         }
         return;
     }
-    let Some(output_index) = args.iter().position(|arg| arg == "-o") else {
+    let pe_mode = args.first().map(String::as_str) == Some("pe");
+    let offset = if pe_mode { 1 } else { 0 };
+    let Some(output_relative) = args[offset..].iter().position(|arg| arg == "-o") else {
         usage();
         std::process::exit(2);
     };
-    if output_index == 0 || output_index + 2 != args.len() {
+    let output_index = offset + output_relative;
+    if output_index == offset || output_index + 2 != args.len() {
         usage();
         std::process::exit(2);
     }
-    let inputs = args[..output_index].iter().map(PathBuf::from).collect::<Vec<_>>();
-    if let Err(error) = write_elf(&inputs, Path::new(&args[output_index + 1])) {
+    let inputs = args[offset..output_index].iter().map(PathBuf::from).collect::<Vec<_>>();
+    let result = if pe_mode {
+        write_pe(&inputs, Path::new(&args[output_index + 1]))
+    } else {
+        write_elf(&inputs, Path::new(&args[output_index + 1]))
+    };
+    if let Err(error) = result {
         eprintln!("lpp-link error: {error}");
         std::process::exit(1);
     }

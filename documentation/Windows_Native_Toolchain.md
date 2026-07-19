@@ -35,22 +35,37 @@ Windows CI compiles a Cranelift COFF object, runs this inspection command, verif
 
 The next W1 step is COFF section merging and AMD64 relocation application. Direct PE output remains intentionally disabled until those object-level operations are tested.
 
-## Phase W2 — PE executable emitter
+## Phase W2 — PE executable emitter — started
 
-A real PE output requires:
+`lpp-link pe <program.obj> -o <program.exe>` now starts the direct PE path for a narrow, runtime-free x86-64 COFF input.
+
+Current PE MVP output includes:
 
 ```text
 DOS header
 PE signature
 COFF file header
-optional header
-section layout
-base relocations
-entry point
-subsystem metadata
+PE32+ optional header
+one executable .text section
+console subsystem metadata
+entry point at L++ main
+internal relative relocation application
 ```
 
-The first target is a runtime-free console executable that returns exit status zero.
+Windows CI generates a runtime-free L++ program, emits COFF, invokes `lpp-link pe`, runs the resulting `.exe`, and requires exit status zero.
+
+Still required before normal Windows direct builds:
+
+```text
+COFF runtime-object merge
+AMD64 relocation coverage
+PE import directory
+base relocations
+kernel32 imports
+WriteFile / VirtualAlloc runtime
+ARC / List / closure direct runtime
+King20 20 / 20 direct PE gate
+```
 
 ## Phase W3 — Windows direct runtime
 
