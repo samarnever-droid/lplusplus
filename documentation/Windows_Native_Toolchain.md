@@ -18,18 +18,21 @@ Direct PE executable emission      not implemented yet
 - Compile `lpp_runtime.c` to `lpp_runtime.obj` with MSVC.
 - Build and run a small Cranelift COFF program through the host-link fallback.
 
-## Phase W1 — COFF object inspection
+## Phase W1 — COFF object inspection — started
 
-The Windows `lpp-link` backend must parse:
+`lpp-link inspect <object.o>` now uses the shared object parser to report:
 
 ```text
-COFF section tables
-COFF symbols
-REL32 relocations
-AMD64 relocation types
+COFF format
+x86-64 architecture
+section names, sizes, and kinds
+defined / undefined symbol counts
+relocation count
 ```
 
-It must first merge internal `.text` sections and resolve direct calls just as the Linux MVP resolves ELF `.text` symbols.
+Windows CI compiles a Cranelift COFF object, runs this inspection command, verifies `Coff` and `X86_64`, then confirms the existing MSVC host-link fallback still runs the executable correctly.
+
+The next W1 step is COFF section merging and AMD64 relocation application. Direct PE output remains intentionally disabled until those object-level operations are tested.
 
 ## Phase W2 — PE executable emitter
 

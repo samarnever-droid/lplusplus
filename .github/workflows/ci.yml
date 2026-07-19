@@ -98,6 +98,10 @@ jobs:
           $env:LPP_AOT = "1"
           & .\target\release\lpp.exe "$work\arith.lpp"
           if ($LASTEXITCODE -ne 0) { throw "L++ AOT object generation failed" }
+          $inspect = & .\target\release\lpp-link.exe inspect "$work\arith.o"
+          $inspect | Out-File "$work\inspect.txt"
+          if ($inspect -notmatch "format: Coff") { throw "Expected COFF inspection output" }
+          if ($inspect -notmatch "architecture: X86_64") { throw "Expected x86-64 COFF object" }
           cl.exe /nologo "$work\arith.o" "$work\lpp_runtime.obj" "/Fe:$work\arith.exe"
           & "$work\arith.exe" | Out-File "$work\output.txt"
           $actual = (Get-Content "$work\output.txt" | ForEach-Object { $_.Trim() }) -join "`n"

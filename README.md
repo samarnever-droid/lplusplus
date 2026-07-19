@@ -195,6 +195,8 @@ Windows currently supports:
 ✓ lpp_runtime.obj packaging via install.ps1
 ✓ MSVC host-link fallback
 ✓ Windows CI build and COFF fallback smoke test
+✓ `lpp-link inspect` COFF / x86-64 inspection gate
+⏳ COFF section merge and relocation application
 ⏳ Direct PE emission
 ```
 

@@ -286,13 +286,43 @@ fn write_elf(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
     Ok(())
 }
 
+fn inspect_object(input: &Path) -> Result<(), String> {
+    let bytes = fs::read(input).map_err(|error| format!("read '{}': {error}", input.display()))?;
+    let file = object::File::parse(&*bytes).map_err(|error| format!("parse '{}': {error}", input.display()))?;
+    let mut relocations = 0usize;
+    println!("format: {:?}", file.format());
+    println!("architecture: {:?}", file.architecture());
+    println!("sections:");
+    for section in file.sections() {
+        relocations += section.relocations().count();
+        println!("  {} size={} kind={:?}", section.name().unwrap_or("<unnamed>"), section.size(), section.kind());
+    }
+    let defined = file.symbols().filter(|symbol| !symbol.is_undefined()).count();
+    let undefined = file.symbols().filter(|symbol| symbol.is_undefined()).count();
+    println!("symbols: defined={} undefined={}", defined, undefined);
+    println!("relocations: {}", relocations);
+    Ok(())
+}
+
 fn usage() {
     eprintln!("Usage: lpp-link <program.o> [runtime.o ...] -o <output>");
-    eprintln!("Phase 2: direct Linux x86-64 ELF linker for internal .text relocations.");
+    eprintln!("       lpp-link inspect <object.o>");
+    eprintln!("Phase 2: direct Linux x86-64 ELF linker; Windows W1 COFF inspection.");
 }
 
 fn main() {
     let args: Vec<String> = env::args().skip(1).collect();
+    if args.first().map(String::as_str) == Some("inspect") {
+        if args.len() != 2 {
+            usage();
+            std::process::exit(2);
+        }
+        if let Err(error) = inspect_object(Path::new(&args[1])) {
+            eprintln!("lpp-link inspect error: {error}");
+            std::process::exit(1);
+        }
+        return;
+    }
     let Some(output_index) = args.iter().position(|arg| arg == "-o") else {
         usage();
         std::process::exit(2);
