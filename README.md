@@ -57,6 +57,18 @@ Notes:
 - The AOT benchmark path links Cranelift PIC objects with `lpp_runtime.c` and verifies each expected program result.
 - Use the parity suite (`sh tests/run_aot_parity.sh`) to check supported C/AOT behavior rather than comparing these measurements to the older Windows/MSVC benchmark record.
 
+## King 20 Standard
+
+The **King 20** suite is the project’s numbered AOT correctness-and-performance standard. It combines three runtime workloads with 17 ownership, ARC, closure, list, and branch regressions. Each case must match expected stdout and exit with status zero before timing is recorded.
+
+```bash
+python3 benchmarks/king20/run.py
+```
+
+The latest checked-in sandbox run is recorded in [`benchmarks/king20/latest.md`](benchmarks/king20/latest.md): **20 / 20 passed** on a 2-core Intel Xeon Linux sandbox. The runner captures platform, CPU model, logical CPU count, memory, Python, Rust, and host C compiler information in `latest.json`.
+
+> Standalone AOT executables currently require a host linker because Cranelift emits native object files. The King 20 report separates linker time from compiler and runtime time; removing the host-linker requirement remains a future toolchain milestone.
+
 ## Getting Started
 
 Check out [Doc.md](Doc.md) for a comprehensive guide on the syntax and semantics of L++.

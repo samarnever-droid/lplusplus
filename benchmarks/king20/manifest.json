@@ -1,0 +1,27 @@
+{
+  "suite": "L++ King 20",
+  "version": 1,
+  "description": "A deterministic, ownership-aware AOT benchmark and correctness standard.",
+  "benchmarks": [
+    {"id": 1, "name": "recursive-fib-35", "source": "benchmarks/bench_fib.lpp", "expected": "9227465"},
+    {"id": 2, "name": "loop-10m", "source": "benchmarks/bench_loop.lpp", "expected": "49999995000000"},
+    {"id": 3, "name": "call-chain-1m", "source": "benchmarks/bench_calls.lpp", "expected": "500000500000"},
+    {"id": 4, "name": "integer-arithmetic", "source": "tests/arith.lpp", "expected": "15\n5\n50\n2"},
+    {"id": 5, "name": "conditional-branches", "source": "tests/branches.lpp", "expected": "1\n0\n1"},
+    {"id": 6, "name": "nested-direct-calls", "source": "tests/nested_calls.lpp", "expected": "120"},
+    {"id": 7, "name": "immutable-closure", "source": "tests/closure_test.lpp", "expected": "52"},
+    {"id": 8, "name": "arc-list-int", "source": "tests/list_safety.lpp", "expected": "3\n5\n13"},
+    {"id": 9, "name": "owned-struct-return", "source": "tests/owned_return.lpp", "expected": "1"},
+    {"id": 10, "name": "branch-owned-return", "source": "tests/arc_branch_return.lpp", "expected": "1"},
+    {"id": 11, "name": "nested-struct-destructor", "source": "tests/arc_nested_struct.lpp", "expected": "1"},
+    {"id": 12, "name": "direct-arc-alias", "source": "tests/arc_direct_alias.lpp", "expected": "1"},
+    {"id": 13, "name": "closure-arc-capture", "source": "tests/arc_closure_capture.lpp", "expected": "0"},
+    {"id": 14, "name": "borrowed-parameter-return", "source": "tests/arc_borrowed_return.lpp", "expected": "1"},
+    {"id": 15, "name": "borrowed-field-return", "source": "tests/arc_borrowed_field_return.lpp", "expected": "1"},
+    {"id": 16, "name": "field-alias", "source": "tests/arc_field_alias.lpp", "expected": "1"},
+    {"id": 17, "name": "list-int-alias", "source": "tests/arc_list_alias.lpp", "expected": "7"},
+    {"id": 18, "name": "list-custom-ownership", "source": "tests/arc_list_custom.lpp", "expected": "1"},
+    {"id": 19, "name": "nested-branch-alias", "source": "tests/arc_nested_branch_alias.lpp", "expected": "1"},
+    {"id": 20, "name": "closure-branch-capture", "source": "tests/arc_closure_branch_capture.lpp", "expected": "0"}
+  ]
+}

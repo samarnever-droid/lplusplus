@@ -1,0 +1,45 @@
+name: L++ CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  ownership-and-parity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Show toolchain
+        run: |
+          rustc --version
+          cargo --version
+          cc --version
+      - name: Rust unit tests
+        run: cargo test --locked
+      - name: Strict runtime C compilation
+        run: cc -std=c11 -Wall -Wextra -Werror -c lpp_runtime.c -o /tmp/lpp_runtime.o -pthread
+      - name: C / Cranelift AOT parity suite
+        run: sh tests/run_aot_parity.sh
+
+  king20-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Run King 20 benchmark/correctness standard
+        run: python3 benchmarks/king20/run.py
+      - name: Upload benchmark result
+        uses: actions/upload-artifact@v4
+        with:
+          name: king20-results
+          path: |
+            benchmarks/king20/latest.json
+            benchmarks/king20/latest.md
