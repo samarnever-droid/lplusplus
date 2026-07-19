@@ -98,6 +98,22 @@ impl<'a> Codegen<'a> {
             self.out.push_str("};\n\n");
         }
 
+        // Type-specific ARC destructors. C compatibility mode uses the same
+        // destructor-callback ABI as Cranelift: freeing a parent releases all
+        // managed child edges before the parent allocation is reclaimed.
+        for def in &self.type_table.definitions {
+            self.out.push_str(&format!(
+                "static void lpp_drop_{}(void* raw) {{\n    {}_t* self = ({}_t*)raw;\n",
+                def.name, def.name, def.name
+            ));
+            for (field_name, field_ty) in &def.fields {
+                if matches!(field_ty, TypeRef::Custom(_) | TypeRef::Generic(_, _)) {
+                    self.out.push_str(&format!("    lpp_arc_release(self->{});\n", field_name));
+                }
+            }
+            self.out.push_str("}\n\n");
+        }
+
         // Emitting function prototypes
         for decl in &program.declarations {
             if let TopLevel::Function(f) = decl {
@@ -401,7 +417,10 @@ impl<'a> Codegen<'a> {
                             Some(StorageClass::Value) =>
                                 format!("({}_t*)alloca(sizeof({}_t))", def.name, def.name),
                             Some(StorageClass::Arc) =>
-                                format!("({}_t*)lpp_arc_alloc(sizeof({}_t))", def.name, def.name),
+                                format!(
+                                    "({}_t*)lpp_arc_alloc_with_destructor(sizeof({}_t), lpp_drop_{})",
+                                    def.name, def.name, def.name
+                                ),
                             Some(StorageClass::Arena { .. }) =>
                                 format!("({}_t*)malloc(sizeof({}_t)) /* arena */", def.name, def.name),
                             None =>
