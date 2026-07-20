@@ -286,8 +286,8 @@ fn main() {
                 let mut cg = codegen::Codegen::new(&resolver.table, &type_table, &storage);
                 let c_code = cg.generate(&ast);
                 let c_path = filename.replace(".lpp", ".c");
-                if let Err(e) = fs::write(&c_path, &c_code) {
-                    eprintln!("Failed to write {}", c_path);
+                if let Err(error) = fs::write(&c_path, &c_code) {
+                    eprintln!("Failed to write {}: {}", c_path, error);
                 }
                 if dump_c {
                     println!("--- Generated C Code ---");

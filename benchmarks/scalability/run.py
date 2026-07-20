@@ -65,7 +65,9 @@ def main() -> None:
             copied = temp / source.name
             copied.write_text(source.read_text())
             env = os.environ.copy()
-            env.update({"LPP_AOT": "1", "LPP_RELEASE": "1", "BENCHMARK": "1"})
+            # Scalability measures the native object-build path; package builds do not
+            # need a compatibility C artifact after Cranelift emits the object.
+            env.update({"LPP_AOT": "1", "LPP_AOT_ONLY": "1", "LPP_RELEASE": "1", "BENCHMARK": "1"})
             compile_result = subprocess.run([str(compiler), str(copied)], env=env, text=True, capture_output=True)
             timing = next((json.loads(line.split("TIMING_JSON: ", 1)[1])
                            for line in compile_result.stdout.splitlines()
