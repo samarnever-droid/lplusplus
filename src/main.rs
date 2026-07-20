@@ -276,19 +276,25 @@ fn main() {
                 aot_time = aot_start.elapsed();
             }
 
-            let codegen_start = Instant::now();
-            let mut cg = codegen::Codegen::new(&resolver.table, &type_table, &storage);
-            let c_code = cg.generate(&ast);
-            let codegen_time = codegen_start.elapsed();
-            let c_path = filename.replace(".lpp", ".c");
-            if let Err(e) = fs::write(&c_path, &c_code) {
-                eprintln!("Failed to write {}: {}", c_path, e);
-            }
-            
-            if dump_c {
-                println!("--- Generated C Code ---");
-                println!("{}", c_code);
-            }
+            // Native package builds consume the Cranelift object directly.
+            // Explicit artifact emission still produces C for compatibility and
+            // debugging, but LPP_AOT_ONLY removes that redundant backend pass.
+            let codegen_time = if env::var("LPP_AOT_ONLY").is_ok() && !dump_c {
+                std::time::Duration::ZERO
+            } else {
+                let codegen_start = Instant::now();
+                let mut cg = codegen::Codegen::new(&resolver.table, &type_table, &storage);
+                let c_code = cg.generate(&ast);
+                let c_path = filename.replace(".lpp", ".c");
+                if let Err(e) = fs::write(&c_path, &c_code) {
+                    eprintln!("Failed to write {}", c_path);
+                }
+                if dump_c {
+                    println!("--- Generated C Code ---");
+                    println!("{}", c_code);
+                }
+                codegen_start.elapsed()
+            };
             
             let total_time = total_start.elapsed();
 

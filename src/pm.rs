@@ -377,6 +377,10 @@ fn compile_source_to_object(source_path: &Path) -> Result<PathBuf, String> {
     let obj_file = source_path.with_extension("o");
     let status = std::process::Command::new(&compiler_path)
         .env("LPP_AOT", "1")
+        // Package builds consume the object file directly. Skipping the
+        // compatibility C artifact avoids a second full backend pass without
+        // changing AOT semantics or explicit `lpp emit --aot` behavior.
+        .env("LPP_AOT_ONLY", "1")
         .env("BENCHMARK", "1")
         .arg(source_path)
         .stdin(std::process::Stdio::null())
