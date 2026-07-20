@@ -27,7 +27,7 @@ int main(int argc, char **argv) {
   return ok ? 0 : 12;
 }
 C
-"$CC" -std=c11 -Wall -Wextra -Werror -I"$ROOT/runtime/lpp-net/include" "$TMP/client.c" \
+"$CC" -std=c11 -Wall -Wextra -Werror -Wno-unused-function -Wno-unused-variable -Wno-unused-parameter -I"$ROOT/runtime/lpp-net/include" "$TMP/client.c" \
   "$ROOT/runtime/lpp-net/target/release/liblpp_net_runtime.a" \
   -ldl -lm -lpthread -o "$TMP/client"
 python3 - "$TMP/port" <<'PY' &

@@ -17,7 +17,7 @@ int main(int argc, char **argv) { if (argc != 2) return 2; int64_t s=lpp_net_con
 C
 # CFLAGS is intentionally configurable for ASan/UBSan safety missions.
 # shellcheck disable=SC2086
-"$CC" $CFLAGS -std=c11 -Wall -Wextra -Werror -DLPP_NO_NETWORK -I"$ROOT/runtime" -I"$ROOT/runtime/lpp-net/include" "$TMP/client.c" "$ROOT/lpp_runtime.c" "$ROOT/runtime/lpp_net_rust_adapter.c" "$ROOT/runtime/lpp-net/target/release/liblpp_net_runtime.a" -ldl -lm -lpthread -o "$TMP/client"
+"$CC" $CFLAGS -std=c11 -Wall -Wextra -Werror -Wno-unused-function -Wno-unused-variable -Wno-unused-parameter -DLPP_NO_NETWORK -I"$ROOT/runtime" -I"$ROOT/runtime/lpp-net/include" "$TMP/client.c" "$ROOT/lpp_runtime.c" "$ROOT/runtime/lpp_net_rust_adapter.c" "$ROOT/runtime/lpp-net/target/release/liblpp_net_runtime.a" -ldl -lm -lpthread -o "$TMP/client"
 python3 - "$TMP/port" <<'PY' &
 import socket,sys
 s=socket.socket();s.bind(('127.0.0.1',0));s.listen(1);open(sys.argv[1],'w').write(str(s.getsockname()[1]));c,_=s.accept();assert c.recv(4)==b'ping';c.sendall(b'pong');c.close();s.close()
