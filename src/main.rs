@@ -252,6 +252,9 @@ fn main() {
             // Inline only scalar straight-line direct calls; ownership-bearing
             // functions remain opaque so ARC semantics cannot be altered.
             mir::pass_inline::run(&mut mir_program);
+            // Straight-line scalar dead stores are removed only after folding
+            // and inlining, before ownership instrumentation.
+            mir::pass_dce::run(&mut mir_program);
             mir::pass_arc::run_arc_insertion_pass(&mut mir_program, &storage);
             
             if dump_mir {

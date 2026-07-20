@@ -3,6 +3,7 @@ pub mod ir;
 pub mod lower;
 pub mod pass_arc;
 pub mod pass_closure;
+pub mod pass_dce;
 pub mod pass_inline;
 pub mod pass_peephole;
 
