@@ -1,0 +1,45 @@
+name: Cross-language benchmark matrix
+
+on:
+  workflow_dispatch:
+    inputs:
+      repetitions:
+        description: 'Measured executions per language/workload'
+        required: false
+        default: '5'
+  schedule:
+    - cron: '17 3 * * 0'
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+      - name: Install optional language toolchains
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ruby-full zig || true
+      - name: Run correctness-first cross-language comparison
+        run: python3 benchmarks/comparison/run.py --repetitions ${{ inputs.repetitions || '5' }} --warmups 1
+      - name: Upload benchmark evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: cross-language-benchmark-linux
+          path: |
+            benchmarks/comparison/latest.json
+            benchmarks/comparison/latest.md
