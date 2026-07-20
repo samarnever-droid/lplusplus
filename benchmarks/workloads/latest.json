@@ -1,94 +1,94 @@
 {
-  "generated_utc": "2026-07-20T03:20:37.763116+00:00",
+  "generated_utc": "2026-07-20T03:26:50.604366+00:00",
   "rows": [
     {
       "workload": "arithmetic",
       "backend": "c",
       "status": "PASS",
-      "emit_ms": 2.103,
-      "link_ms": 144.407,
-      "run_ms": 1.357,
+      "emit_ms": 1.937,
+      "link_ms": 52.975,
+      "run_ms": 1.346,
       "stdout": "49999995000000"
     },
     {
       "workload": "arithmetic",
       "backend": "aot",
       "status": "PASS",
-      "emit_ms": 2.686,
-      "link_ms": 198.452,
-      "run_ms": 7.478,
+      "emit_ms": 2.431,
+      "link_ms": 194.844,
+      "run_ms": 7.364,
       "stdout": "49999995000000"
     },
     {
       "workload": "branches",
       "backend": "c",
       "status": "PASS",
-      "emit_ms": 1.852,
-      "link_ms": 55.456,
-      "run_ms": 13.361,
+      "emit_ms": 1.801,
+      "link_ms": 51.181,
+      "run_ms": 13.059,
       "stdout": "6666669"
     },
     {
       "workload": "branches",
       "backend": "aot",
       "status": "PASS",
-      "emit_ms": 2.771,
-      "link_ms": 197.89,
-      "run_ms": 52.35,
+      "emit_ms": 2.566,
+      "link_ms": 194.667,
+      "run_ms": 51.923,
       "stdout": "6666669"
     },
     {
       "workload": "calls",
       "backend": "c",
       "status": "PASS",
-      "emit_ms": 2.122,
-      "link_ms": 52.034,
-      "run_ms": 1.285,
+      "emit_ms": 1.949,
+      "link_ms": 48.912,
+      "run_ms": 1.241,
       "stdout": "149999995000000"
     },
     {
       "workload": "calls",
       "backend": "aot",
       "status": "PASS",
-      "emit_ms": 2.667,
-      "link_ms": 203.226,
-      "run_ms": 17.015,
+      "emit_ms": 2.51,
+      "link_ms": 197.202,
+      "run_ms": 16.543,
       "stdout": "149999995000000"
     },
     {
       "workload": "struct_list",
       "backend": "c",
       "status": "PASS",
-      "emit_ms": 2.023,
-      "link_ms": 68.425,
-      "run_ms": 2.072,
+      "emit_ms": 1.831,
+      "link_ms": 63.636,
+      "run_ms": 1.948,
       "stdout": "400005"
     },
     {
       "workload": "struct_list",
       "backend": "aot",
       "status": "PASS",
-      "emit_ms": 2.915,
-      "link_ms": 200.282,
-      "run_ms": 2.066,
+      "emit_ms": 2.511,
+      "link_ms": 198.102,
+      "run_ms": 1.943,
       "stdout": "400005"
     },
     {
       "workload": "list_labyrinth",
       "backend": "c",
       "status": "PASS",
-      "emit_ms": 124.418,
-      "link_ms": 9408.98,
-      "run_ms": 1.433,
+      "emit_ms": 118.73,
+      "link_ms": 9785.889,
+      "run_ms": 1.336,
       "stdout": "552"
     },
     {
       "workload": "list_labyrinth",
       "backend": "aot",
       "status": "PASS",
-      "emit_ms": 431.972,
-      "link_ms": 215.712,
-      "run_ms": 1.447,
+      "emit_ms": 462.147,
+      "link_ms": 212.076,
+      "run_ms": 1.382,
       "stdout": "552"
     }
   ]

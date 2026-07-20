@@ -2,13 +2,13 @@
 
 | Workload | Backend | Emit ms | Link ms | Run ms | Status |
 |---|---|---:|---:|---:|---|
-| arithmetic | c | 2.103 | 144.407 | 1.357 | PASS |
-| arithmetic | aot | 2.686 | 198.452 | 7.478 | PASS |
-| branches | c | 1.852 | 55.456 | 13.361 | PASS |
-| branches | aot | 2.771 | 197.890 | 52.350 | PASS |
-| calls | c | 2.122 | 52.034 | 1.285 | PASS |
-| calls | aot | 2.667 | 203.226 | 17.015 | PASS |
-| struct_list | c | 2.023 | 68.425 | 2.072 | PASS |
-| struct_list | aot | 2.915 | 200.282 | 2.066 | PASS |
-| list_labyrinth | c | 124.418 | 9408.980 | 1.433 | PASS |
-| list_labyrinth | aot | 431.972 | 215.712 | 1.447 | PASS |
+| arithmetic | c | 1.937 | 52.975 | 1.346 | PASS |
+| arithmetic | aot | 2.431 | 194.844 | 7.364 | PASS |
+| branches | c | 1.801 | 51.181 | 13.059 | PASS |
+| branches | aot | 2.566 | 194.667 | 51.923 | PASS |
+| calls | c | 1.949 | 48.912 | 1.241 | PASS |
+| calls | aot | 2.510 | 197.202 | 16.543 | PASS |
+| struct_list | c | 1.831 | 63.636 | 1.948 | PASS |
+| struct_list | aot | 2.511 | 198.102 | 1.943 | PASS |
+| list_labyrinth | c | 118.730 | 9785.889 | 1.336 | PASS |
+| list_labyrinth | aot | 462.147 | 212.076 | 1.382 | PASS |
