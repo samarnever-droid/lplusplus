@@ -661,13 +661,15 @@ impl<'a> MirLowerCtx<'a> {
                 }
                 Ok(Operand::Local(temp))
             }
-            // `spawn` was previously lowered as an ordinary closure expression, which
-            // silently ran neither a thread nor a validated ownership transfer. Reject
-            // it until the AOT ABI can move a closure environment safely to a thread.
-            Expr::Spawn { .. } => Err(
-                "AOT `spawn` is not implemented safely yet; use a synchronous closure instead"
-                    .to_string(),
-            ),
+            Expr::Spawn { closure } => {
+                let closure_op = self.lower_expr(builder, closure, binding_map)?;
+                let temp = builder.new_local(TypeRef::Void, false, None, None);
+                builder.push_instr(MirInstr::Assign(
+                    temp,
+                    Rvalue::SpawnThread(closure_op),
+                ))?;
+                Ok(Operand::Local(temp))
+            }
             Expr::Closure { params, return_type: opt_return_type, body } => {
                 let closure_scope = {
                     let mut scope = None;

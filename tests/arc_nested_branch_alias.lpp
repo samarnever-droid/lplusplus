@@ -11,7 +11,7 @@ struct Parent:
 
 def main():
     child := Child()
-    parent := Parent()
+    mut parent := Parent()
     parent.child = child
     if 1 == 1:
         alias := parent.child

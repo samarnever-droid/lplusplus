@@ -105,6 +105,7 @@ fn main() {
             println!("  --dump-c         Dump the generated transpiled C code");
             println!("\nEnvironment Variables:");
             println!("  LPP_AOT=1        Enable Cranelift AOT compilation to native object file");
+            println!("  LPP_LINKER=mold   Use mold high-performance linker for native links");
             println!("  LPP_LINKER=direct Use lpp-link on installed Linux x86-64 builds (experimental)");
             println!("  BENCHMARK=1      Suppress descriptive text and print sub-millisecond JSON timings");
             return;
@@ -155,7 +156,7 @@ fn main() {
     let tokens = match lexer.tokenize() {
         Ok(tokens) => tokens,
         Err(e) => {
-            eprintln!("Lexer error: {}", e);
+            eprintln!("Lexer Error in '{}':\n  {}", filename, e);
             return;
         }
     };
@@ -166,7 +167,7 @@ fn main() {
     let mut ast = match parser.parse() {
         Ok(ast) => ast,
         Err(e) => {
-            eprintln!("Parser error: {}", e);
+            eprintln!("Syntax Error in '{}':\n  {}", filename, e);
             return;
         }
     };
@@ -176,14 +177,14 @@ fn main() {
     let base_dir = file_path.parent().unwrap_or(std::path::Path::new("."));
     let mut imported_files = std::collections::HashSet::new();
     if let Err(e) = resolve_local_imports(&mut ast.declarations, &mut imported_files, base_dir) {
-        eprintln!("Import error: {}", e);
+        eprintln!("Import Error in '{}':\n  {}", filename, e);
         return;
     }
 
     let sem_start = Instant::now();
     let mut resolver = semantic::Resolver::new();
     if let Err(e) = resolver.resolve_program(&mut ast) {
-        eprintln!("Semantic error: {}", e);
+        eprintln!("Semantic Error in '{}':\n  {}", filename, e);
         return;
     }
     let sem_time = sem_start.elapsed();
@@ -192,7 +193,7 @@ fn main() {
     let mut type_table = {
         let mut type_checker = typecheck::TypeChecker::new(&mut resolver.table);
         if let Err(e) = type_checker.check_program(&ast) {
-            eprintln!("Type check error: {}", e);
+            eprintln!("Type Error in '{}':\n  {}", filename, e);
             return;
         }
         type_checker.type_table

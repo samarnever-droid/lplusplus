@@ -33,6 +33,7 @@ fn add_rvalue_uses(live: &mut HashSet<LocalId>, rvalue: &Rvalue) {
         }
         Rvalue::FieldAccess(base, _) => add_operand_use(live, base),
         Rvalue::Move(local) => { live.insert(*local); }
+        Rvalue::SpawnThread(closure) => add_operand_use(live, closure),
         Rvalue::AllocateStruct(_) | Rvalue::AllocateArcStruct(_) | Rvalue::AllocateList(_) => {}
     }
 }

@@ -14,7 +14,7 @@ def extract(parent: Parent) -> Child:
 
 def main():
     child := Child()
-    parent := Parent()
+    mut parent := Parent()
     parent.child = child
     extracted := extract(parent)
     print(1)

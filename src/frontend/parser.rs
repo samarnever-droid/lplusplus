@@ -1,24 +1,41 @@
 use crate::ast::*;
-use crate::lexer::Token;
+use crate::lexer::{Token, SpannedToken};
 
 pub struct Parser {
-    tokens: Vec<Token>,
+    tokens: Vec<SpannedToken>,
     pos: usize,
 }
 
 impl Parser {
-    pub fn new(tokens: Vec<Token>) -> Self {
+    pub fn new(tokens: Vec<SpannedToken>) -> Self {
         Self { tokens, pos: 0 }
     }
 
+    fn current_span(&self) -> (usize, usize) {
+        self.tokens
+            .get(self.pos)
+            .or_else(|| self.tokens.last())
+            .map(|st| (st.line, st.col))
+            .unwrap_or((1, 1))
+    }
+
+    fn error<T>(&self, msg: impl std::fmt::Display) -> Result<T, String> {
+        let (line, col) = self.current_span();
+        Err(format!("[line {}:col {}] Syntax Error: {}", line, col, msg))
+    }
+
     fn peek(&self) -> Option<&Token> {
-        self.tokens.get(self.pos)
+        self.tokens.get(self.pos).map(|st| &st.token)
     }
 
     fn advance(&mut self) -> Option<&Token> {
-        let t = self.tokens.get(self.pos);
-        self.pos += 1;
-        t
+        if self.pos < self.tokens.len() {
+            let t = &self.tokens[self.pos].token;
+            self.pos += 1;
+            Some(t)
+        } else {
+            None
+        }
     }
 
     fn match_token(&mut self, expected: &Token) -> bool {
@@ -47,7 +64,8 @@ impl Parser {
             } else if self.match_token(&Token::Import) {
                 declarations.push(TopLevel::Import(self.parse_import()?));
             } else {
-                return Err(format!("Expected 'def', 'struct', or 'import', found {:?}", self.peek()));
+                let found = self.peek().cloned();
+                return self.error(format!("Expected 'def', 'struct', or 'import', found {:?}", found));
             }
             self.skip_newlines();
         }
@@ -58,7 +76,7 @@ impl Parser {
     fn parse_import(&mut self) -> Result<String, String> {
         let name = match self.advance() {
             Some(Token::Ident(n)) => n.clone(),
-            _ => return Err("Expected module name after 'import'".to_string()),
+            _ => return self.error("Expected module name after 'import'"),
         };
         if self.peek() == Some(&Token::Newline) {
             self.advance();
@@ -69,21 +87,21 @@ impl Parser {
     fn parse_struct(&mut self) -> Result<StructDef, String> {
         let name = match self.advance() {
             Some(Token::Ident(n)) => n.clone(),
-            _ => return Err("Expected struct name".to_string()),
+            _ => return self.error("Expected struct name"),
         };
 
         if !self.match_token(&Token::Colon) {
-            return Err("Expected ':' after struct name".to_string());
+            return self.error("Expected ':' after struct name");
         }
 
         if !self.match_token(&Token::Newline) {
-            return Err("Expected newline after ':'".to_string());
+            return self.error("Expected newline after ':'");
         }
 
         self.skip_newlines();
 
         if !self.match_token(&Token::Indent) {
-            return Err("Expected indentation for struct fields".to_string());
+            return self.error("Expected indentation for struct fields");
         }
 
         let mut fields = Vec::new();
@@ -95,11 +113,11 @@ impl Parser {
 
             let field_name = match self.advance() {
                 Some(Token::Ident(n)) => n.clone(),
-                _ => return Err("Expected field name".to_string()),
+                _ => return self.error("Expected field name"),
             };
 
             if !self.match_token(&Token::Colon) {
-                return Err("Expected ':' after field name".to_string());
+                return self.error("Expected ':' after field name");
             }
 
             let ty = self.parse_type()?;
@@ -115,11 +133,11 @@ impl Parser {
     fn parse_function(&mut self) -> Result<Function, String> {
         let name = match self.advance() {
             Some(Token::Ident(n)) => n.clone(),
-            _ => return Err("Expected function name".to_string()),
+            _ => return self.error("Expected function name"),
         };
 
         if !self.match_token(&Token::LParen) {
-            return Err("Expected '(' after function name".to_string());
+            return self.error("Expected '(' after function name");
         }
 
         let mut params = Vec::new();
@@ -127,10 +145,10 @@ impl Parser {
             loop {
                 let param_name = match self.advance() {
                     Some(Token::Ident(n)) => n.clone(),
-                    _ => return Err("Expected parameter name".to_string()),
+                    _ => return self.error("Expected parameter name"),
                 };
                 if !self.match_token(&Token::Colon) {
-                    return Err("Expected ':' after parameter name".to_string());
+                    return self.error("Expected ':' after parameter name");
                 }
                 let ty = self.parse_type()?;
                 params.push(Param { name: param_name, ty });
@@ -142,7 +160,7 @@ impl Parser {
         }
 
         if !self.match_token(&Token::RParen) {
-            return Err("Expected ')' after parameters".to_string());
+            return self.error("Expected ')' after parameters");
         }
 
         let mut return_type = Type::Void;
@@ -151,17 +169,17 @@ impl Parser {
         }
 
         if !self.match_token(&Token::Colon) {
-            return Err("Expected ':' before function body".to_string());
+            return self.error("Expected ':' before function body");
         }
 
         if !self.match_token(&Token::Newline) {
-            return Err("Expected newline after ':'".to_string());
+            return self.error("Expected newline after ':'");
         }
 
         self.skip_newlines();
 
         if !self.match_token(&Token::Indent) {
-            return Err("Expected indentation for function body".to_string());
+            return self.error("Expected indentation for function body");
         }
 
         let mut body = Vec::new();
@@ -186,7 +204,7 @@ impl Parser {
     fn parse_type(&mut self) -> Result<Type, String> {
         let base_name = match self.advance() {
             Some(Token::Ident(n)) => n.clone(),
-            _ => return Err("Expected a type".to_string()),
+            _ => return self.error("Expected a type name"),
         };
 
         if self.match_token(&Token::LBracket) {
@@ -200,7 +218,7 @@ impl Parser {
                 }
             }
             if !self.match_token(&Token::RBracket) {
-                return Err("Expected ']' after generic type arguments".to_string());
+                return self.error("Expected ']' after generic type arguments");
             }
             return Ok(Type::Generic(base_name, type_args));
         }
@@ -221,14 +239,14 @@ impl Parser {
         if self.match_token(&Token::If) {
             let condition = self.parse_expr()?;
             if !self.match_token(&Token::Colon) {
-                return Err("Expected ':' after if condition".to_string());
+                return self.error("Expected ':' after if condition");
             }
             if !self.match_token(&Token::Newline) {
-                return Err("Expected newline after ':'".to_string());
+                return self.error("Expected newline after ':'");
             }
             self.skip_newlines();
             if !self.match_token(&Token::Indent) {
-                return Err("Expected indentation for if block".to_string());
+                return self.error("Expected indentation for if block");
             }
             let mut then_block = Vec::new();
             while self.peek() != Some(&Token::Dedent) && self.peek().is_some() {
@@ -244,21 +262,19 @@ impl Parser {
             let mut else_block = None;
             self.skip_newlines();
             if self.match_token(&Token::Else) {
-                // BUG-08: Support chained `else if <cond>:` without requiring `elif` keyword
                 if self.peek() == Some(&Token::If) {
-                    // Parse the `else if` branch as a full nested if statement and wrap it
                     let elif_stmt = self.parse_stmt()?;
                     else_block = Some(vec![elif_stmt]);
                 } else {
                     if !self.match_token(&Token::Colon) {
-                        return Err("Expected ':' or 'if' after 'else'".to_string());
+                        return self.error("Expected ':' or 'if' after 'else'");
                     }
                     if !self.match_token(&Token::Newline) {
-                        return Err("Expected newline after ':'".to_string());
+                        return self.error("Expected newline after ':'");
                     }
                     self.skip_newlines();
                     if !self.match_token(&Token::Indent) {
-                        return Err("Expected indentation for else block".to_string());
+                        return self.error("Expected indentation for else block");
                     }
                     let mut e_block = Vec::new();
                     while self.peek() != Some(&Token::Dedent) && self.peek().is_some() {
@@ -280,14 +296,14 @@ impl Parser {
         if self.match_token(&Token::While) {
             let condition = self.parse_expr()?;
             if !self.match_token(&Token::Colon) {
-                return Err("Expected ':' after while condition".to_string());
+                return self.error("Expected ':' after while condition");
             }
             if !self.match_token(&Token::Newline) {
-                return Err("Expected newline after ':'".to_string());
+                return self.error("Expected newline after ':'");
             }
             self.skip_newlines();
             if !self.match_token(&Token::Indent) {
-                return Err("Expected indentation for while block".to_string());
+                return self.error("Expected indentation for while block");
             }
             let mut body = Vec::new();
             while self.peek() != Some(&Token::Dedent) && self.peek().is_some() {
@@ -299,28 +315,27 @@ impl Parser {
                 self.skip_newlines();
             }
             self.match_token(&Token::Dedent);
-            
             return Ok(Stmt::While { condition, body });
         }
 
         if self.match_token(&Token::For) {
             let var_name = match self.advance() {
                 Some(Token::Ident(n)) => n.clone(),
-                _ => return Err("Expected identifier after 'for'".to_string()),
+                _ => return self.error("Expected identifier after 'for'"),
             };
             if !self.match_token(&Token::In) {
-                return Err("Expected 'in' after variable in 'for' loop".to_string());
+                return self.error("Expected 'in' after variable in 'for' loop");
             }
             let list_expr = self.parse_expr()?;
             if !self.match_token(&Token::Colon) {
-                return Err("Expected ':' after for loop list expression".to_string());
+                return self.error("Expected ':' after for loop list expression");
             }
             if !self.match_token(&Token::Newline) {
-                return Err("Expected newline after ':' in 'for' loop".to_string());
+                return self.error("Expected newline after ':' in 'for' loop");
             }
             self.skip_newlines();
             if !self.match_token(&Token::Indent) {
-                return Err("Expected indentation for 'for' block".to_string());
+                return self.error("Expected indentation for 'for' block");
             }
             let mut body = Vec::new();
             while self.peek() != Some(&Token::Dedent) && self.peek().is_some() {
@@ -333,47 +348,55 @@ impl Parser {
             }
             self.match_token(&Token::Dedent);
 
-            // `for i in range(end)` and `for i in range(start, end)` lower
-            // directly to integer while-loop MIR. `range` never reaches name
-            // resolution as a runtime function, so there is no hidden list
-            // allocation or iterator object in native code.
+            // Desugar `for x in range(...)` vs `for item in list`
             if let Expr::Call { callee, args } = &list_expr {
-                if matches!(&**callee, Expr::Identifier(name, _) if name == "range") {
-                    let (start, end) = match args.as_slice() {
-                        [end] => (Expr::IntLiteral(0), end.clone()),
-                        [start, end] => (start.clone(), end.clone()),
-                        _ => return Err("range in a for loop expects range(end) or range(start, end)".to_string()),
-                    };
-                    let unique_id = self.pos;
-                    let idx_var = format!("__lpp_for_range_idx_{}", unique_id);
-                    let idx_decl = Stmt::LetInferred {
-                        name: idx_var.clone(), is_mut: true, value: start,
-                        binding_id: std::cell::Cell::new(None),
-                    };
-                    let condition = Expr::BinaryOp {
-                        left: Box::new(Expr::Identifier(idx_var.clone(), std::cell::Cell::new(None))),
-                        op: BinaryOperator::Less, right: Box::new(end),
-                    };
-                    let mut while_body = vec![Stmt::LetInferred {
-                        name: var_name, is_mut: true,
-                        value: Expr::Identifier(idx_var.clone(), std::cell::Cell::new(None)),
-                        binding_id: std::cell::Cell::new(None),
-                    }];
-                    while_body.extend(body);
-                    while_body.push(Stmt::Assign {
-                        name: idx_var.clone(),
-                        value: Expr::BinaryOp {
-                            left: Box::new(Expr::Identifier(idx_var, std::cell::Cell::new(None))),
-                            op: BinaryOperator::Add, right: Box::new(Expr::IntLiteral(1)),
-                        }, binding_id: std::cell::Cell::new(None),
-                    });
-                    return Ok(Stmt::Block(vec![idx_decl, Stmt::While { condition, body: while_body }]));
+                if let Expr::Identifier(fn_name, _) = callee.as_ref() {
+                    if fn_name == "range" {
+                        let (start_expr, end_expr) = match args.len() {
+                            1 => (Expr::IntLiteral(0), args[0].clone()),
+                            2 => (args[0].clone(), args[1].clone()),
+                            _ => return self.error("range in a for loop expects range(end) or range(start, end)"),
+                        };
+
+                        let var_decl = Stmt::LetInferred {
+                            name: var_name.clone(),
+                            is_mut: true,
+                            value: start_expr,
+                            binding_id: std::cell::Cell::new(None),
+                        };
+
+                        let while_cond = Expr::BinaryOp {
+                            left: Box::new(Expr::Identifier(var_name.clone(), std::cell::Cell::new(None))),
+                            op: BinaryOperator::Less,
+                            right: Box::new(end_expr),
+                        };
+
+                        let mut while_body = body;
+                        let increment = Stmt::Assign {
+                            name: var_name.clone(),
+                            value: Expr::BinaryOp {
+                                left: Box::new(Expr::Identifier(var_name, std::cell::Cell::new(None))),
+                                op: BinaryOperator::Add,
+                                right: Box::new(Expr::IntLiteral(1)),
+                            },
+                            binding_id: std::cell::Cell::new(None),
+                        };
+                        while_body.push(increment);
+
+                        let while_stmt = Stmt::While {
+                            condition: while_cond,
+                            body: while_body,
+                        };
+
+                        return Ok(Stmt::Block(vec![var_decl, while_stmt]));
+                    }
                 }
             }
 
-            let unique_id = self.pos;
-            let list_var = format!("__lpp_for_list_{}", unique_id);
-            let idx_var = format!("__lpp_for_idx_{}", unique_id);
+            static FOR_TEMP_COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+            let id = FOR_TEMP_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let list_var = format!("__for_list_{}", id);
+            let idx_var = format!("__for_idx_{}", id);
 
             let list_decl = Stmt::LetInferred {
                 name: list_var.clone(),
@@ -389,27 +412,30 @@ impl Parser {
                 binding_id: std::cell::Cell::new(None),
             };
 
+            let len_call = Expr::Call {
+                callee: Box::new(Expr::Identifier("len".to_string(), std::cell::Cell::new(None))),
+                args: vec![Expr::Identifier(list_var.clone(), std::cell::Cell::new(None))],
+            };
+
             let while_cond = Expr::BinaryOp {
                 left: Box::new(Expr::Identifier(idx_var.clone(), std::cell::Cell::new(None))),
                 op: BinaryOperator::Less,
-                right: Box::new(Expr::Call {
-                    callee: Box::new(Expr::Identifier("list_len".to_string(), std::cell::Cell::new(None))),
-                    args: vec![Expr::Identifier(list_var.clone(), std::cell::Cell::new(None))],
-                }),
+                right: Box::new(len_call),
+            };
+
+            let element_access = Expr::Call {
+                callee: Box::new(Expr::Identifier("get".to_string(), std::cell::Cell::new(None))),
+                args: vec![
+                    Expr::Identifier(list_var, std::cell::Cell::new(None)),
+                    Expr::Identifier(idx_var.clone(), std::cell::Cell::new(None)),
+                ],
             };
 
             let mut while_body = Vec::new();
-
             let var_decl = Stmt::LetInferred {
                 name: var_name,
-                is_mut: true,
-                value: Expr::Call {
-                    callee: Box::new(Expr::Identifier("list_get".to_string(), std::cell::Cell::new(None))),
-                    args: vec![
-                        Expr::Identifier(list_var.clone(), std::cell::Cell::new(None)),
-                        Expr::Identifier(idx_var.clone(), std::cell::Cell::new(None)),
-                    ],
-                },
+                is_mut: false,
+                value: element_access,
                 binding_id: std::cell::Cell::new(None),
             };
             while_body.push(var_decl);
@@ -445,17 +471,17 @@ impl Parser {
         if self.match_token(&Token::Mut) {
             let name = match self.advance() {
                 Some(Token::Ident(n)) => n.clone(),
-                _ => return Err("Expected identifier after 'mut'".to_string()),
+                _ => return self.error("Expected identifier after 'mut'"),
             };
             if !self.match_token(&Token::Assign) {
-                return Err("Expected ':=' after mutable identifier".to_string());
+                return self.error("Expected ':=' after mutable identifier");
             }
             let value = self.parse_expr()?;
             return Ok(Stmt::LetInferred { name, is_mut: true, value, binding_id: std::cell::Cell::new(None) });
         }
 
         if let Some(Token::Ident(name)) = self.peek().cloned() {
-            let next = self.tokens.get(self.pos + 1);
+            let next = self.tokens.get(self.pos + 1).map(|st| &st.token);
             if next == Some(&Token::Assign) {
                 self.advance(); // consume name
                 self.advance(); // consume :=
@@ -474,7 +500,7 @@ impl Parser {
                 Expr::FieldAccess { base, field } => {
                     return Ok(Stmt::AssignField { base: *base, field, value });
                 }
-                _ => return Err("Invalid assignment target".to_string()),
+                _ => return self.error("Invalid assignment target"),
             }
         }
         Ok(Stmt::Expr(expr))
@@ -517,7 +543,7 @@ impl Parser {
 
     fn parse_closure(&mut self) -> Result<Expr, String> {
         if !self.match_token(&Token::LParen) {
-            return Err("Expected '(' after 'fn'".to_string());
+            return self.error("Expected '(' after 'fn'");
         }
 
         let mut params = Vec::new();
@@ -525,7 +551,7 @@ impl Parser {
             loop {
                 let param_name = match self.advance() {
                     Some(Token::Ident(n)) => n.clone(),
-                    _ => return Err("Expected parameter name in closure".to_string()),
+                    _ => return self.error("Expected parameter name in closure"),
                 };
                 
                 let mut ty = None;
@@ -542,7 +568,7 @@ impl Parser {
         }
 
         if !self.match_token(&Token::RParen) {
-            return Err("Expected ')' after closure parameters".to_string());
+            return self.error("Expected ')' after closure parameters");
         }
 
         let mut return_type = None;
@@ -551,14 +577,13 @@ impl Parser {
         }
 
         if !self.match_token(&Token::Colon) {
-            return Err("Expected ':' before closure body".to_string());
+            return self.error("Expected ':' before closure body");
         }
 
         let mut body = Vec::new();
         if self.match_token(&Token::Newline) {
-            // Block body
             if !self.match_token(&Token::Indent) {
-                return Err("Expected indentation for closure body".to_string());
+                return self.error("Expected indentation for closure body");
             }
             while self.peek() != Some(&Token::Dedent) && self.peek().is_some() {
                 self.skip_newlines();
@@ -570,7 +595,6 @@ impl Parser {
             }
             self.match_token(&Token::Dedent);
         } else {
-            // Inline body
             let expr = self.parse_expr()?;
             body.push(Stmt::Return(Some(expr)));
         }
@@ -630,7 +654,7 @@ impl Parser {
             if self.match_token(&Token::Dot) {
                 let field = match self.advance() {
                     Some(Token::Ident(n)) => n.clone(),
-                    _ => return Err("Expected field name after '.'".to_string()),
+                    _ => return self.error("Expected field name after '.'"),
                 };
                 expr = Expr::FieldAccess {
                     base: Box::new(expr),
@@ -647,7 +671,7 @@ impl Parser {
                     }
                 }
                 if !self.match_token(&Token::RParen) {
-                    return Err("Expected ')' after arguments".to_string());
+                    return self.error("Expected ')' after arguments");
                 }
                 expr = Expr::Call {
                     callee: Box::new(expr),
@@ -661,17 +685,20 @@ impl Parser {
     }
 
     fn parse_primary(&mut self) -> Result<Expr, String> {
-        let t = self.advance().ok_or_else(|| "Unexpected EOF".to_string())?;
+        let t = match self.advance() {
+            Some(t) => t.clone(),
+            None => return self.error("Unexpected EOF"),
+        };
         match t {
-            Token::Int(v) => Ok(Expr::IntLiteral(*v)),
-            Token::FloatLit(v) => Ok(Expr::FloatLiteral(*v)),
-            Token::StringLit(s) => Ok(Expr::StringLiteral(s.clone())),
-            Token::BoolLit(b) => Ok(Expr::BoolLiteral(*b)),
-            Token::Ident(n) => Ok(Expr::Identifier(n.clone(), std::cell::Cell::new(None))),
+            Token::Int(v) => Ok(Expr::IntLiteral(v)),
+            Token::FloatLit(v) => Ok(Expr::FloatLiteral(v)),
+            Token::StringLit(s) => Ok(Expr::StringLiteral(s)),
+            Token::BoolLit(b) => Ok(Expr::BoolLiteral(b)),
+            Token::Ident(n) => Ok(Expr::Identifier(n, std::cell::Cell::new(None))),
             Token::LParen => {
                 let expr = self.parse_expr()?;
                 if !self.match_token(&Token::RParen) {
-                    return Err("Expected ')'".to_string());
+                    return self.error("Expected ')'");
                 }
                 Ok(expr)
             }
@@ -686,11 +713,11 @@ impl Parser {
                     }
                 }
                 if !self.match_token(&Token::RBracket) {
-                    return Err("Expected ']'".to_string());
+                    return self.error("Expected ']'");
                 }
                 Ok(Expr::ListLiteral(elements))
             }
-            _ => Err(format!("Unexpected token in expression: {:?}", t)),
+            other => self.error(format!("Unexpected token in expression: {:?}", other)),
         }
     }
 }

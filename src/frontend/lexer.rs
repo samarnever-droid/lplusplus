@@ -54,26 +54,52 @@ pub enum Token {
     Eof,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct SpannedToken {
+    pub token: Token,
+    pub line: usize,
+    pub col: usize,
+}
+
 use std::collections::VecDeque;
 
 pub struct Lexer<'a> {
-    input: std::iter::Peekable<std::str::Chars<'a>>,
+    chars: std::iter::Peekable<std::str::Chars<'a>>,
+    line: usize,
+    col: usize,
     indent_stack: Vec<usize>,
-    pending_tokens: VecDeque<Token>,
+    pending_tokens: VecDeque<SpannedToken>,
     at_line_start: bool,
 }
 
 impl<'a> Lexer<'a> {
     pub fn new(input: &'a str) -> Self {
         Self {
-            input: input.chars().peekable(),
+            chars: input.chars().peekable(),
+            line: 1,
+            col: 1,
             indent_stack: vec![0],
             pending_tokens: VecDeque::new(),
             at_line_start: true,
         }
     }
 
-    pub fn tokenize(&mut self) -> Result<Vec<Token>, String> {
+    fn peek_c(&mut self) -> Option<char> {
+        self.chars.peek().copied()
+    }
+
+    fn next_c(&mut self) -> Option<char> {
+        let ch = self.chars.next()?;
+        if ch == '\n' {
+            self.line += 1;
+            self.col = 1;
+        } else {
+            self.col += 1;
+        }
+        Some(ch)
+    }
+
+    pub fn tokenize(&mut self) -> Result<Vec<SpannedToken>, String> {
         let mut tokens = Vec::new();
 
         loop {
@@ -82,16 +108,19 @@ impl<'a> Lexer<'a> {
                 continue;
             }
 
+            let tok_line = self.line;
+            let tok_col = self.col;
+
             if self.at_line_start {
                 self.at_line_start = false;
                 let mut spaces = 0;
                 
-                while let Some(&c) = self.input.peek() {
+                while let Some(c) = self.peek_c() {
                     if c == ' ' {
                         spaces += 1;
-                        self.input.next();
+                        self.next_c();
                     } else if c == '\t' {
-                        return Err("Tabs are not allowed for indentation. Use spaces.".to_string());
+                        return Err(format!("[line {}:col {}] Lexer error: Tabs are not allowed for indentation. Use spaces.", self.line, self.col));
                     } else if c == '\n' || c == '\r' {
                         // Empty line, ignore indentation
                         break;
@@ -100,21 +129,21 @@ impl<'a> Lexer<'a> {
                     }
                 }
 
-                if let Some(&c) = self.input.peek() {
+                if let Some(c) = self.peek_c() {
                     if c != '\n' && c != '\r' {
                         let current_indent = *self.indent_stack.last().unwrap_or(&0);
                         if spaces > current_indent {
                             self.indent_stack.push(spaces);
-                            tokens.push(Token::Indent);
+                            tokens.push(SpannedToken { token: Token::Indent, line: tok_line, col: tok_col });
                         } else if spaces < current_indent {
                             while let Some(&top) = self.indent_stack.last() {
                                 if top > spaces {
                                     self.indent_stack.pop();
-                                    tokens.push(Token::Dedent);
+                                    tokens.push(SpannedToken { token: Token::Dedent, line: tok_line, col: tok_col });
                                 } else if top == spaces {
                                     break;
                                 } else {
-                                    return Err("Inconsistent indentation level.".to_string());
+                                    return Err(format!("[line {}:col {}] Lexer error: Inconsistent indentation level.", self.line, self.col));
                                 }
                             }
                         }
@@ -122,101 +151,104 @@ impl<'a> Lexer<'a> {
                 }
             }
 
-            let c = match self.input.next() {
+            let start_line = self.line;
+            let start_col = self.col;
+            let c = match self.next_c() {
                 Some(c) => c,
                 None => {
                     while self.indent_stack.len() > 1 {
                         self.indent_stack.pop();
-                        tokens.push(Token::Dedent);
+                        tokens.push(SpannedToken { token: Token::Dedent, line: start_line, col: start_col });
                     }
-                    tokens.push(Token::Eof);
+                    tokens.push(SpannedToken { token: Token::Eof, line: start_line, col: start_col });
                     break;
                 }
             };
 
+            let mk_token = |t: Token| SpannedToken { token: t, line: start_line, col: start_col };
+
             match c {
-                ' ' => continue,
-                '\r' => continue,
+                ' ' | '\r' => continue,
                 '\n' => {
-                    tokens.push(Token::Newline);
+                    tokens.push(mk_token(Token::Newline));
                     self.at_line_start = true;
                 }
                 ':' => {
-                    if self.input.peek() == Some(&'=') {
-                        self.input.next();
-                        tokens.push(Token::Assign);
+                    if self.peek_c() == Some('=') {
+                        self.next_c();
+                        tokens.push(mk_token(Token::Assign));
                     } else {
-                        tokens.push(Token::Colon);
+                        tokens.push(mk_token(Token::Colon));
                     }
                 }
                 '-' => {
-                    if self.input.peek() == Some(&'>') {
-                        self.input.next();
-                        tokens.push(Token::Arrow);
+                    if self.peek_c() == Some('>') {
+                        self.next_c();
+                        tokens.push(mk_token(Token::Arrow));
                     } else {
-                        tokens.push(Token::Minus);
+                        tokens.push(mk_token(Token::Minus));
                     }
                 }
                 '=' => {
-                    if self.input.peek() == Some(&'=') {
-                        self.input.next();
-                        tokens.push(Token::EqEq);
+                    if self.peek_c() == Some('=') {
+                        self.next_c();
+                        tokens.push(mk_token(Token::EqEq));
                     } else {
-                        tokens.push(Token::Equal);
+                        tokens.push(mk_token(Token::Equal));
                     }
                 }
                 '<' => {
-                    if self.input.peek() == Some(&'=') {
-                        self.input.next();
-                        tokens.push(Token::LessEq);
+                    if self.peek_c() == Some('=') {
+                        self.next_c();
+                        tokens.push(mk_token(Token::LessEq));
                     } else {
-                        tokens.push(Token::Less);
+                        tokens.push(mk_token(Token::Less));
                     }
                 }
                 '>' => {
-                    if self.input.peek() == Some(&'=') {
-                        self.input.next();
-                        tokens.push(Token::GreaterEq);
+                    if self.peek_c() == Some('=') {
+                        self.next_c();
+                        tokens.push(mk_token(Token::GreaterEq));
                     } else {
-                        tokens.push(Token::Greater);
+                        tokens.push(mk_token(Token::Greater));
                     }
                 }
                 '!' => {
-                    if self.input.peek() == Some(&'=') {
-                        self.input.next();
-                        tokens.push(Token::NotEq);
+                    if self.peek_c() == Some('=') {
+                        self.next_c();
+                        tokens.push(mk_token(Token::NotEq));
                     } else {
-                        return Err("Unexpected character: !".to_string());
+                        return Err(format!("[line {}:col {}] Lexer error: Unexpected character: !", start_line, start_col));
                     }
                 }
-                '+' => tokens.push(Token::Plus),
-                '*' => tokens.push(Token::Star),
-                '/' => tokens.push(Token::Slash),
-                '%' => tokens.push(Token::Percent),
+                '+' => tokens.push(mk_token(Token::Plus)),
+                '*' => tokens.push(mk_token(Token::Star)),
+                '/' => tokens.push(mk_token(Token::Slash)),
+                '%' => tokens.push(mk_token(Token::Percent)),
                 '#' => {
-                    while let Some(&next_c) = self.input.peek() {
+                    while let Some(next_c) = self.peek_c() {
                         if next_c == '\n' || next_c == '\r' {
                             break;
                         }
-                        self.input.next();
+                        self.next_c();
                     }
                 }
-                '(' => tokens.push(Token::LParen),
-                ')' => tokens.push(Token::RParen),
-                '[' => tokens.push(Token::LBracket),
-                ']' => tokens.push(Token::RBracket),
-                ',' => tokens.push(Token::Comma),
-                '.' => tokens.push(Token::Dot),
+                '(' => tokens.push(mk_token(Token::LParen)),
+                ')' => tokens.push(mk_token(Token::RParen)),
+                '[' => tokens.push(mk_token(Token::LBracket)),
+                ']' => tokens.push(mk_token(Token::RBracket)),
+                ',' => tokens.push(mk_token(Token::Comma)),
+                '.' => tokens.push(mk_token(Token::Dot)),
                 '"' => {
                     let mut s = String::new();
                     let mut terminated = false;
-                    while let Some(ch) = self.input.next() {
+                    while let Some(ch) = self.next_c() {
                         if ch == '"' {
                             terminated = true;
                             break;
                         }
                         if ch == '\\' {
-                            if let Some(escaped) = self.input.next() {
+                            if let Some(escaped) = self.next_c() {
                                 match escaped {
                                     'n' => s.push('\n'),
                                     'r' => s.push('\r'),
@@ -229,30 +261,28 @@ impl<'a> Lexer<'a> {
                                     }
                                 }
                             } else {
-                                return Err("Unterminated string escape".to_string());
+                                return Err(format!("[line {}:col {}] Lexer error: Unterminated string escape", self.line, self.col));
                             }
                         } else {
                             s.push(ch);
                         }
                     }
                     if !terminated {
-                        return Err("Unterminated string literal".to_string());
+                        return Err(format!("[line {}:col {}] Lexer error: Unterminated string literal", start_line, start_col));
                     }
-                    tokens.push(Token::StringLit(s));
+                    tokens.push(mk_token(Token::StringLit(s)));
                 }
                 _ if c.is_ascii_digit() => {
                     let mut num = String::from(c);
                     let mut is_float = false;
-                    while let Some(&next_c) = self.input.peek() {
+                    while let Some(next_c) = self.peek_c() {
                         if next_c.is_ascii_digit() {
                             num.push(next_c);
-                            self.input.next();
+                            self.next_c();
                         } else if next_c == '.' {
-                            // Peak past the dot to see if there's a digit after it
-                            // Since we have a peekable iterator, we can inspect next.
                             is_float = true;
                             num.push(next_c);
-                            self.input.next();
+                            self.next_c();
                         } else {
                             break;
                         }
@@ -260,44 +290,44 @@ impl<'a> Lexer<'a> {
                     if is_float {
                         let value = num
                             .parse()
-                            .map_err(|_| format!("Float literal '{}' is invalid", num))?;
-                        tokens.push(Token::FloatLit(value));
+                            .map_err(|_| format!("[line {}:col {}] Lexer error: Float literal '{}' is invalid", start_line, start_col, num))?;
+                        tokens.push(mk_token(Token::FloatLit(value)));
                     } else {
                         let value = num
                             .parse()
-                            .map_err(|_| format!("Integer literal '{}' is out of range for Int", num))?;
-                        tokens.push(Token::Int(value));
+                            .map_err(|_| format!("[line {}:col {}] Lexer error: Integer literal '{}' is out of range for Int", start_line, start_col, num))?;
+                        tokens.push(mk_token(Token::Int(value)));
                     }
                 }
                 _ if c.is_alphabetic() || c == '_' => {
                     let mut ident = String::from(c);
-                    while let Some(&next_c) = self.input.peek() {
+                    while let Some(next_c) = self.peek_c() {
                         if next_c.is_alphanumeric() || next_c == '_' {
                             ident.push(next_c);
-                            self.input.next();
+                            self.next_c();
                         } else {
                             break;
                         }
                     }
                     match ident.as_str() {
-                        "def" => tokens.push(Token::Def),
-                        "return" => tokens.push(Token::Return),
-                        "mut" => tokens.push(Token::Mut),
-                        "struct" => tokens.push(Token::Struct),
-                        "fn" => tokens.push(Token::Fn),
-                        "spawn" => tokens.push(Token::Spawn),
-                        "import" => tokens.push(Token::Import),
-                        "if" => tokens.push(Token::If),
-                        "else" => tokens.push(Token::Else),
-                        "while" => tokens.push(Token::While),
-                        "for" => tokens.push(Token::For),
-                        "in" => tokens.push(Token::In),
-                        "true" => tokens.push(Token::BoolLit(true)),
-                        "false" => tokens.push(Token::BoolLit(false)),
-                        _ => tokens.push(Token::Ident(ident)),
+                        "def" => tokens.push(mk_token(Token::Def)),
+                        "return" => tokens.push(mk_token(Token::Return)),
+                        "mut" => tokens.push(mk_token(Token::Mut)),
+                        "struct" => tokens.push(mk_token(Token::Struct)),
+                        "fn" => tokens.push(mk_token(Token::Fn)),
+                        "spawn" => tokens.push(mk_token(Token::Spawn)),
+                        "import" => tokens.push(mk_token(Token::Import)),
+                        "if" => tokens.push(mk_token(Token::If)),
+                        "else" => tokens.push(mk_token(Token::Else)),
+                        "while" => tokens.push(mk_token(Token::While)),
+                        "for" => tokens.push(mk_token(Token::For)),
+                        "in" => tokens.push(mk_token(Token::In)),
+                        "true" => tokens.push(mk_token(Token::BoolLit(true))),
+                        "false" => tokens.push(mk_token(Token::BoolLit(false))),
+                        _ => tokens.push(mk_token(Token::Ident(ident))),
                     }
                 }
-                _ => return Err(format!("Unexpected character: {}", c)),
+                _ => return Err(format!("[line {}:col {}] Lexer error: Unexpected character: {}", start_line, start_col, c)),
             }
         }
         Ok(tokens)
@@ -313,19 +343,22 @@ mod tests {
         let mut lexer = Lexer::new("9223372036854775808");
         let err = lexer.tokenize().expect_err("lexer should reject overflowing Int literals");
         assert!(err.contains("out of range"));
+        assert!(err.contains("line 1"));
     }
 
     #[test]
     fn emits_distinct_bindings_tokens_for_shadowing_source() {
         let mut lexer = Lexer::new("def main():\n    x := 1\n    x := 2\n");
         let tokens = lexer.tokenize().expect("lexer should accept valid shadowing syntax");
-        assert!(tokens.contains(&Token::Assign));
+        let raw_tokens: Vec<Token> = tokens.into_iter().map(|st| st.token).collect();
+        assert!(raw_tokens.contains(&Token::Assign));
     }
 
     #[test]
     fn lexes_boolean_literals() {
         let mut lexer = Lexer::new("true false");
         let tokens = lexer.tokenize().expect("lexer should parse boolean literals");
-        assert_eq!(tokens, vec![Token::BoolLit(true), Token::BoolLit(false), Token::Eof]);
+        let raw_tokens: Vec<Token> = tokens.into_iter().map(|st| st.token).collect();
+        assert_eq!(raw_tokens, vec![Token::BoolLit(true), Token::BoolLit(false), Token::Eof]);
     }
 }

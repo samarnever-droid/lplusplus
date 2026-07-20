@@ -373,6 +373,18 @@ fn detect_link_strategy() -> Result<LinkStrategy, String> {
     Err("No supported native linker/compiler found. Install MSVC build tools, cc, gcc, or clang.".to_string())
 }
 
+fn should_use_mold(compiler: &str) -> Result<bool, String> {
+    if compiler.eq_ignore_ascii_case("cl.exe") {
+        return Ok(false);
+    }
+    let requested_mold = std::env::var("LPP_LINKER").ok().as_deref() == Some("mold");
+    let has_mold = command_available("mold", &["--version"]);
+    if requested_mold && !has_mold {
+        return Err("LPP_LINKER=mold was requested, but 'mold' binary was not found in PATH.".to_string());
+    }
+    Ok(requested_mold || has_mold)
+}
+
 fn package_cache_key(source_path: &Path) -> Result<String, String> {
     // Cache correctness is more important than cache hit rate: hash every L++
     // source in src/, the manifest, compiler version, target, and AOT profile.
@@ -390,6 +402,10 @@ fn package_cache_key(source_path: &Path) -> Result<String, String> {
     std::env::consts::OS.hash(&mut hasher);
     std::env::consts::ARCH.hash(&mut hasher);
     std::env::var("LPP_AOT_OPT").unwrap_or_else(|_| "none".to_string()).hash(&mut hasher);
+    if let Ok(linker_var) = std::env::var("LPP_LINKER") {
+        linker_var.hash(&mut hasher);
+    }
+    command_available("mold", &["--version"]).hash(&mut hasher);
     for path in files {
         path.to_string_lossy().hash(&mut hasher);
         fs::read(&path).map_err(|e| format!("read '{}' for cache: {}", path.display(), e))?.hash(&mut hasher);
@@ -557,6 +573,15 @@ fn link_native_binary(obj_file: &Path, output_path: &Path) -> Result<(), String>
                     .arg(&runtime_obj)
                     .arg(format!("/Fe:{}", output_path.display()));
             } else {
+                if should_use_mold(&compiler)? {
+                    cmd.arg("-fuse-ld=mold");
+                    cmd.arg("-Wl,--icf=all");
+                    cmd.arg("-Wl,--as-needed");
+                    cmd.arg("-Wl,-O1");
+                    if std::env::var("LPP_RELEASE").ok().as_deref() == Some("1") || std::env::var("RELEASE").ok().as_deref() == Some("1") {
+                        cmd.arg("-Wl,-s");
+                    }
+                }
                 cmd.arg("-O2")
                     .arg(obj_file)
                     .arg(&runtime_obj)
@@ -593,6 +618,15 @@ fn link_native_binary(obj_file: &Path, output_path: &Path) -> Result<(), String>
                     .arg(&runtime_src)
                     .arg(format!("/Fe:{}", output_path.display()));
             } else {
+                if should_use_mold(&compiler)? {
+                    cmd.arg("-fuse-ld=mold");
+                    cmd.arg("-Wl,--icf=all");
+                    cmd.arg("-Wl,--as-needed");
+                    cmd.arg("-Wl,-O1");
+                    if std::env::var("LPP_RELEASE").ok().as_deref() == Some("1") || std::env::var("RELEASE").ok().as_deref() == Some("1") {
+                        cmd.arg("-Wl,-s");
+                    }
+                }
                 cmd.arg("-O2")
                     .arg(obj_file)
                     .arg(&runtime_src)
@@ -1117,6 +1151,17 @@ mod tests {
         assert_eq!(pkgs[0].version.as_deref(), Some("1.2.3"));
         assert!(pkgs[0].source.contains("git+https://example.com/foo.git"));
         assert_eq!(pkgs[0].resolved.as_deref(), Some("C:/tmp/foo"));
+    }
+
+    #[test]
+    fn should_use_mold_returns_false_for_msvc() {
+        assert_eq!(super::should_use_mold("cl.exe").unwrap(), false);
+    }
+
+    #[test]
+    fn should_use_mold_checks_availability() {
+        let result = super::should_use_mold("gcc");
+        assert!(result.is_ok());
     }
 }
 

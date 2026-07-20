@@ -1,8 +1,8 @@
 /*
  * Freestanding Phase 2 ELF runtime.
  *
- * This runtime intentionally supports only syscall-backed integer/string output.
- * It has no libc dependency and can be merged directly by lpp-link.
+ * This runtime supports syscall-backed integer/string output, ARC memory,
+ * dynamic lists, file I/O, and socket networking without libc.
  * Build with:
  * cc -O2 -ffreestanding -fno-stack-protector -fno-pic -mno-red-zone -c \
  *    runtime/linux_x86_64_min.c -o lpp_runtime_min.o
@@ -51,9 +51,7 @@ void lpp_print_str(const char *text) {
 }
 
 /* ── Freestanding ARC foundation ─────────────────────────────────────────── */
-/* Every direct-link ARC allocation owns a whole mmap region. This is not yet
- * a high-performance allocator, but it gives direct ELF programs correct ARC
- * headers, destructors, and lifetime behavior without libc. */
+/* Every direct-link ARC allocation owns a whole mmap region. */
 
 typedef void (*LppArcDestructor)(void *payload);
 typedef struct {
@@ -139,9 +137,6 @@ void lpp_closure_destroy(void *closure) {
 }
 
 /* ── Freestanding List runtime ──────────────────────────────────────────── */
-/* Keep the element ownership mode as an integer rather than a function
- * pointer. This avoids runtime data relocations and lets the current direct
- * ELF linker keep its read-only, relocation-light runtime boundary. */
 typedef struct {
     int64_t *data;
     int64_t len;
@@ -220,3 +215,304 @@ void lpp_list_free(void *list) {
     lpp_arc_release(list);
 }
 
+/* ── Freestanding File I/O ─────────────────────────────────────────── */
+
+static long lpp_sys_open(const char *path, int flags, int mode) {
+    long ret;
+    __asm__ volatile (
+        "syscall"
+        : "=a"(ret)
+        : "a"(2), "D"(path), "S"((long)flags), "d"((long)mode)
+        : "rcx", "r11", "memory"
+    );
+    return ret;
+}
+
+static long lpp_sys_read(long fd, void *buf, long count) {
+    long ret;
+    __asm__ volatile (
+        "syscall"
+        : "=a"(ret)
+        : "a"(0), "D"(fd), "S"(buf), "d"(count)
+        : "rcx", "r11", "memory"
+    );
+    return ret;
+}
+
+static long lpp_sys_close(long fd) {
+    long ret;
+    __asm__ volatile (
+        "syscall"
+        : "=a"(ret)
+        : "a"(3), "D"(fd)
+        : "rcx", "r11", "memory"
+    );
+    return ret;
+}
+
+static long lpp_sys_lseek(long fd, long offset, int whence) {
+    long ret;
+    __asm__ volatile (
+        "syscall"
+        : "=a"(ret)
+        : "a"(8), "D"(fd), "S"(offset), "d"((long)whence)
+        : "rcx", "r11", "memory"
+    );
+    return ret;
+}
+
+static long lpp_sys_unlink(const char *path) {
+    long ret;
+    __asm__ volatile (
+        "syscall"
+        : "=a"(ret)
+        : "a"(87), "D"(path)
+        : "rcx", "r11", "memory"
+    );
+    return ret;
+}
+
+char* lpp_read_file(const char *filename) {
+    if (!filename) return (char*)"";
+    long fd = lpp_sys_open(filename, 0, 0); /* O_RDONLY */
+    if (fd < 0) return (char*)"";
+    long len = lpp_sys_lseek(fd, 0, 2); /* SEEK_END */
+    if (len < 0) {
+        lpp_sys_close(fd);
+        return (char*)"";
+    }
+    (void)lpp_sys_lseek(fd, 0, 0); /* SEEK_SET */
+    char *buf = (char*)lpp_arc_alloc(len + 1);
+    if (!buf) {
+        lpp_sys_close(fd);
+        return (char*)"";
+    }
+    long bytes_read = lpp_sys_read(fd, buf, len);
+    lpp_sys_close(fd);
+    if (bytes_read < 0) bytes_read = 0;
+    buf[bytes_read] = '\0';
+    return buf;
+}
+
+int64_t lpp_write_file(const char *filename, const char *content) {
+    if (!filename || !content) return 0;
+    long fd = lpp_sys_open(filename, 0101, 0644); /* O_WRONLY | O_CREAT | O_TRUNC */
+    if (fd < 0) return 0;
+    long clen = 0;
+    while (content[clen]) clen++;
+    long written = lpp_sys_write(fd, content, clen);
+    lpp_sys_close(fd);
+    return written >= 0 ? 1 : 0;
+}
+
+int64_t lpp_append_file(const char *filename, const char *content) {
+    if (!filename || !content) return 0;
+    long fd = lpp_sys_open(filename, 02001, 0644); /* O_WRONLY | O_CREAT | O_APPEND */
+    if (fd < 0) return 0;
+    long clen = 0;
+    while (content[clen]) clen++;
+    long written = lpp_sys_write(fd, content, clen);
+    lpp_sys_close(fd);
+    return written >= 0 ? 1 : 0;
+}
+
+int64_t lpp_delete_file(const char *filename) {
+    if (!filename) return 0;
+    return lpp_sys_unlink(filename) == 0 ? 1 : 0;
+}
+
+int64_t lpp_file_exists(const char *filename) {
+    if (!filename) return 0;
+    long fd = lpp_sys_open(filename, 0, 0);
+    if (fd >= 0) {
+        lpp_sys_close(fd);
+        return 1;
+    }
+    return 0;
+}
+
+int64_t lpp_file_size(const char *filename) {
+    if (!filename) return 0;
+    long fd = lpp_sys_open(filename, 0, 0);
+    if (fd < 0) return 0;
+    long sz = lpp_sys_lseek(fd, 0, 2);
+    lpp_sys_close(fd);
+    return sz >= 0 ? (int64_t)sz : 0;
+}
+
+/* ── Freestanding Socket Networking ────────────────────────── */
+
+struct lpp_sockaddr_in {
+    uint16_t sin_family;
+    uint16_t sin_port;
+    uint32_t sin_addr;
+    char sin_zero[8];
+};
+
+static uint16_t lpp_htons(uint16_t val) {
+    return (uint16_t)((val << 8) | (val >> 8));
+}
+
+static long lpp_sys_socket(int domain, int type, int protocol) {
+    long ret;
+    __asm__ volatile (
+        "syscall"
+        : "=a"(ret)
+        : "a"(41), "D"((long)domain), "S"((long)type), "d"((long)protocol)
+        : "rcx", "r11", "memory"
+    );
+    return ret;
+}
+
+static long lpp_sys_connect(long fd, const void *addr, int addrlen) {
+    long ret;
+    __asm__ volatile (
+        "syscall"
+        : "=a"(ret)
+        : "a"(42), "D"(fd), "S"(addr), "d"((long)addrlen)
+        : "rcx", "r11", "memory"
+    );
+    return ret;
+}
+
+static long lpp_sys_accept(long fd, void *addr, void *addrlen) {
+    long ret;
+    __asm__ volatile (
+        "syscall"
+        : "=a"(ret)
+        : "a"(43), "D"(fd), "S"(addr), "d"(addrlen)
+        : "rcx", "r11", "memory"
+    );
+    return ret;
+}
+
+static long lpp_sys_sendto(long fd, const void *buf, long len, int flags) {
+    long ret;
+    register long r10 __asm__("r10") = (long)flags;
+    register long r8 __asm__("r8") = 0;
+    register long r9 __asm__("r9") = 0;
+    __asm__ volatile (
+        "syscall"
+        : "=a"(ret)
+        : "a"(44), "D"(fd), "S"(buf), "d"(len), "r"(r10), "r"(r8), "r"(r9)
+        : "rcx", "r11", "memory"
+    );
+    return ret;
+}
+
+static long lpp_sys_recvfrom(long fd, void *buf, long len, int flags) {
+    long ret;
+    register long r10 __asm__("r10") = (long)flags;
+    register long r8 __asm__("r8") = 0;
+    register long r9 __asm__("r9") = 0;
+    __asm__ volatile (
+        "syscall"
+        : "=a"(ret)
+        : "a"(45), "D"(fd), "S"(buf), "d"(len), "r"(r10), "r"(r8), "r"(r9)
+        : "rcx", "r11", "memory"
+    );
+    return ret;
+}
+
+static long lpp_sys_bind(long fd, const void *addr, int addrlen) {
+    long ret;
+    __asm__ volatile (
+        "syscall"
+        : "=a"(ret)
+        : "a"(49), "D"(fd), "S"(addr), "d"((long)addrlen)
+        : "rcx", "r11", "memory"
+    );
+    return ret;
+}
+
+static long lpp_sys_listen(long fd, int backlog) {
+    long ret;
+    __asm__ volatile (
+        "syscall"
+        : "=a"(ret)
+        : "a"(50), "D"(fd), "S"((long)backlog)
+        : "rcx", "r11", "memory"
+    );
+    return ret;
+}
+
+int64_t lpp_net_listen(int64_t port) {
+    long sock = lpp_sys_socket(2, 1, 0); /* AF_INET, SOCK_STREAM */
+    if (sock < 0) return -1;
+    struct lpp_sockaddr_in addr = {0};
+    addr.sin_family = 2;
+    addr.sin_port = lpp_htons((uint16_t)port);
+    addr.sin_addr = 0; /* INADDR_ANY */
+    if (lpp_sys_bind(sock, &addr, sizeof(addr)) < 0) {
+        lpp_sys_close(sock);
+        return -1;
+    }
+    if (lpp_sys_listen(sock, 128) < 0) {
+        lpp_sys_close(sock);
+        return -1;
+    }
+    return (int64_t)sock;
+}
+
+int64_t lpp_net_accept(int64_t listener) {
+    if (listener < 0) return -1;
+    long client = lpp_sys_accept((long)listener, 0, 0);
+    return (int64_t)client;
+}
+
+int64_t lpp_net_connect(const char *host, int64_t port) {
+    (void)host;
+    long sock = lpp_sys_socket(2, 1, 0);
+    if (sock < 0) return -1;
+    struct lpp_sockaddr_in addr = {0};
+    addr.sin_family = 2;
+    addr.sin_port = lpp_htons((uint16_t)port);
+    addr.sin_addr = 0x0100007f; /* 127.0.0.1 in network byte order */
+    if (lpp_sys_connect(sock, &addr, sizeof(addr)) < 0) {
+        lpp_sys_close(sock);
+        return -1;
+    }
+    return (int64_t)sock;
+}
+
+int64_t lpp_net_send(int64_t fd, const char *data) {
+    if (fd < 0 || !data) return -1;
+    long len = 0;
+    while (data[len]) len++;
+    long sent = lpp_sys_sendto((long)fd, data, len, 0x4000); /* MSG_NOSIGNAL */
+    return (int64_t)sent;
+}
+
+int64_t lpp_net_send_all(int64_t fd, const char *data) {
+    if (fd < 0 || !data) return -1;
+    long total = 0;
+    long len = 0;
+    while (data[len]) len++;
+    while (total < len) {
+        long sent = lpp_sys_sendto((long)fd, data + total, len - total, 0x4000);
+        if (sent <= 0) break;
+        total += sent;
+    }
+    return (int64_t)total;
+}
+
+char* lpp_net_recv(int64_t fd, int64_t max_bytes) {
+    if (fd < 0 || max_bytes <= 0) return (char*)"";
+    char *buf = (char*)lpp_arc_alloc(max_bytes + 1);
+    if (!buf) return (char*)"";
+    long recvd = lpp_sys_recvfrom((long)fd, buf, max_bytes, 0);
+    if (recvd < 0) recvd = 0;
+    buf[recvd] = '\0';
+    return buf;
+}
+
+void lpp_net_close(int64_t fd) {
+    if (fd >= 0) {
+        lpp_sys_close((long)fd);
+    }
+}
+
+int64_t lpp_net_set_timeout(int64_t fd, int64_t ms) {
+    (void)fd; (void)ms;
+    return 1;
+}

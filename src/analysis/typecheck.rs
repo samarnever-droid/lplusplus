@@ -108,6 +108,51 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
+    fn verify_struct_cycles(type_table: &TypeTable) -> Result<(), String> {
+        use std::collections::HashSet;
+        fn reaches(
+            type_table: &TypeTable,
+            target: StructTypeId,
+            current: StructTypeId,
+            visited: &mut HashSet<StructTypeId>,
+        ) -> bool {
+            for (_, field_ty) in &type_table.definitions[current.0].fields {
+                let next = match field_ty {
+                    TypeRef::Custom(next) => Some(*next),
+                    TypeRef::Generic(name, args) if name == "List" && args.len() == 1 => {
+                        match args[0] {
+                            TypeRef::Custom(next) => Some(next),
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                };
+                if let Some(next) = next {
+                    if next == target {
+                        return true;
+                    }
+                    if visited.insert(next) && reaches(type_table, target, next, visited) {
+                        return true;
+                    }
+                }
+            }
+            false
+        }
+
+        for index in 0..type_table.definitions.len() {
+            let id = StructTypeId(index);
+            let mut visited = HashSet::new();
+            if reaches(type_table, id, id, &mut visited) {
+                let name = &type_table.definitions[index].name;
+                return Err(format!(
+                    "Type error: Cyclic owned struct '{}' detected. ARC cannot reclaim ownership cycles without explicit cycle collection.",
+                    name
+                ));
+            }
+        }
+        Ok(())
+    }
+
     pub fn check_program(&mut self, program: &Program) -> Result<(), String> {
         // Phase 1: Register all struct names (stubs) and map function return types
         for decl in &program.declarations {
@@ -129,7 +174,8 @@ impl<'a> TypeChecker<'a> {
         // Phase 2: Resolve struct fields and check for self-reference
         for decl in &program.declarations {
             if let TopLevel::Struct(s) = decl {
-                let id = *self.type_table.structs_by_name.get(&s.name).unwrap();
+                let id = *self.type_table.structs_by_name.get(&s.name)
+                    .ok_or_else(|| format!("Type error: Unknown struct definition '{}'", s.name))?;
                 
                 let mut resolved_fields = Vec::new();
                 let mut is_self_referential = false;
@@ -153,6 +199,9 @@ impl<'a> TypeChecker<'a> {
                 def.is_self_referential = is_self_referential;
             }
         }
+
+        // Check for cyclic ownership graphs in custom types
+        Self::verify_struct_cycles(&self.type_table)?;
 
         // Phase 3: Update all bindings in the symbol table with resolved TypeRefs
         for binding in &mut self.symbol_table.bindings {
@@ -205,7 +254,15 @@ impl<'a> TypeChecker<'a> {
                 } else {
                     None
                 };
-                self.infer_expr(value, current_scope, expected_ty)?;
+                let val_ty = self.infer_expr(value, current_scope, expected_ty.clone())?;
+                if let Some(exp) = expected_ty {
+                    if exp != val_ty {
+                        return Err(format!(
+                            "Type mismatch in assignment: cannot assign '{:?}' to variable '{}' of type '{:?}'",
+                            val_ty, name, exp
+                        ));
+                    }
+                }
             }
             Stmt::AssignField { base, field, value } => {
                 let base_ty = self.infer_expr(base, current_scope, None)?;
@@ -435,11 +492,13 @@ impl<'a> TypeChecker<'a> {
                     }
                 }
                 
-                let scope_id = closure_scope.expect("Closure scope not found");
+                let scope_id = closure_scope
+                    .ok_or_else(|| "Type error: Closure scope resolution failed".to_string())?;
                 
                 for param in params {
                     if param.ty.is_none() {
-                        let binding_id = self.symbol_table.resolve_name(scope_id, &param.name).unwrap();
+                        let binding_id = self.symbol_table.resolve_name(scope_id, &param.name)
+                            .ok_or_else(|| format!("Type error: Unresolved closure parameter '{}'", param.name))?;
                         let binding = &mut self.symbol_table.bindings[binding_id.0];
                         if binding.ty.is_none() {
                             binding.ty = Some(TypeRef::Int);
@@ -567,5 +626,32 @@ def main():
         type_checker
             .check_program(&ast)
             .expect("boolean program should typecheck");
+    }
+
+    #[test]
+    fn rejects_cyclic_owned_structs() {
+        let source = r#"
+struct Node:
+    next: Node
+
+def main():
+    print(0)
+"#;
+
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.tokenize().expect("source should lex");
+        let mut parser = Parser::new(tokens);
+        let mut ast = parser.parse().expect("source should parse");
+
+        let mut resolver = Resolver::new();
+        resolver
+            .resolve_program(&mut ast)
+            .expect("program should resolve");
+
+        let mut type_checker = TypeChecker::new(&mut resolver.table);
+        let err = type_checker
+            .check_program(&ast)
+            .expect_err("cyclic struct should fail typecheck");
+        assert!(err.contains("Cyclic owned struct 'Node' detected"));
     }
 }

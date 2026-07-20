@@ -80,6 +80,8 @@ pub enum Rvalue {
     AllocateArcStruct(TypeRef),
     /// Allocates memory for a new list
     AllocateList(TypeRef),
+    /// Spawns an asynchronous OS thread executing a closure callable.
+    SpawnThread(Operand),
 }
 
 impl std::fmt::Display for Operand {
@@ -137,6 +139,7 @@ impl std::fmt::Display for Rvalue {
             Rvalue::AllocateStruct(ty) => write!(f, "alloc_struct_raw({:?})", ty),
             Rvalue::AllocateArcStruct(ty) => write!(f, "alloc_arc_struct({:?})", ty),
             Rvalue::AllocateList(ty) => write!(f, "alloc_list({:?})", ty),
+            Rvalue::SpawnThread(closure_op) => write!(f, "spawn_thread({})", closure_op),
         }
     }
 }

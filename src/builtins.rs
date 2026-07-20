@@ -145,6 +145,14 @@ pub fn get_builtins() -> &'static [Builtin] {
             cl_params: &[0, 0],
             cl_return: None,
         },
+        Builtin {
+            name: "lpp_thread_spawn",
+            symbol: "lpp_thread_spawn",
+            params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)],
+            return_type: TypeRef::Void,
+            cl_params: &[0, 0],
+            cl_return: None,
+        },
         // Lists
         Builtin {
             name: "list_new",

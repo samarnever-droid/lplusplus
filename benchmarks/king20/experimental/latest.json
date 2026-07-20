@@ -1,7 +1,7 @@
 {
   "suite": "L++ King 20 Experimental",
   "version": "experimental",
-  "generated_utc": "2026-07-19T08:08:12.244795+00:00",
+  "generated_utc": "2026-07-20T18:17:44.863727+00:00",
   "system": {
     "platform": "Linux-6.1.158+-x86_64-with-glibc2.41",
     "python": "3.13.13",
@@ -20,12 +20,12 @@
       "actual": "9227465",
       "exit_code": 0,
       "passed": true,
-      "compiler_ms": 0.9155650000000001,
-      "aot_ms": 0.786142,
-      "link_ms": 200.24891399998523,
-      "runtime_ms": 71.9025230000625,
-      "object_bytes": 2424,
-      "executable_bytes": 24120
+      "compiler_ms": 0.999818,
+      "aot_ms": 0.831815,
+      "link_ms": 236.60798899999236,
+      "runtime_ms": 70.83028199997443,
+      "object_bytes": 2624,
+      "executable_bytes": 24424
     },
     {
       "id": 2,
@@ -35,12 +35,12 @@
       "actual": "49999995000000",
       "exit_code": 0,
       "passed": true,
-      "compiler_ms": 0.867137,
-      "aot_ms": 0.7070730000000001,
-      "link_ms": 199.41820799976995,
-      "runtime_ms": 11.790369000209466,
-      "object_bytes": 2320,
-      "executable_bytes": 24120
+      "compiler_ms": 0.8126369999999999,
+      "aot_ms": 0.67488,
+      "link_ms": 213.82939100004705,
+      "runtime_ms": 7.775777000006201,
+      "object_bytes": 2520,
+      "executable_bytes": 24424
     },
     {
       "id": 3,
@@ -50,12 +50,12 @@
       "actual": "500000500000",
       "exit_code": 0,
       "passed": true,
-      "compiler_ms": 1.121648,
-      "aot_ms": 0.964365,
-      "link_ms": 219.6692049997182,
-      "runtime_ms": 5.402417000368587,
-      "object_bytes": 2512,
-      "executable_bytes": 24176
+      "compiler_ms": 0.897367,
+      "aot_ms": 0.729583,
+      "link_ms": 215.49215299995694,
+      "runtime_ms": 3.5863859999949455,
+      "object_bytes": 2712,
+      "executable_bytes": 24480
     },
     {
       "id": 4,
@@ -65,12 +65,12 @@
       "actual": "15\n5\n50\n2",
       "exit_code": 0,
       "passed": true,
-      "compiler_ms": 0.843252,
-      "aot_ms": 0.652004,
-      "link_ms": 200.65205499986405,
-      "runtime_ms": 1.4591389999623061,
-      "object_bytes": 2352,
-      "executable_bytes": 24096
+      "compiler_ms": 0.695848,
+      "aot_ms": 0.553276,
+      "link_ms": 217.11904099998947,
+      "runtime_ms": 1.349936999986312,
+      "object_bytes": 2544,
+      "executable_bytes": 24392
     },
     {
       "id": 5,
@@ -80,12 +80,12 @@
       "actual": "1\n0\n1",
       "exit_code": 0,
       "passed": true,
-      "compiler_ms": 0.8152320000000001,
-      "aot_ms": 0.6863009999999999,
-      "link_ms": 203.69153999990885,
-      "runtime_ms": 1.331835999735631,
-      "object_bytes": 2464,
-      "executable_bytes": 24128
+      "compiler_ms": 0.763432,
+      "aot_ms": 0.638791,
+      "link_ms": 215.46102099995323,
+      "runtime_ms": 1.3361570000256506,
+      "object_bytes": 2664,
+      "executable_bytes": 24424
     },
     {
       "id": 6,
@@ -95,12 +95,12 @@
       "actual": "120",
       "exit_code": 0,
       "passed": true,
-      "compiler_ms": 0.936751,
-      "aot_ms": 0.794064,
-      "link_ms": 202.76909599988358,
-      "runtime_ms": 1.419992999672104,
-      "object_bytes": 2464,
-      "executable_bytes": 24152
+      "compiler_ms": 0.788332,
+      "aot_ms": 0.657608,
+      "link_ms": 215.51313300000174,
+      "runtime_ms": 1.7421790000184956,
+      "object_bytes": 2664,
+      "executable_bytes": 24456
     },
     {
       "id": 7,
@@ -110,12 +110,12 @@
       "actual": "52",
       "exit_code": 0,
       "passed": true,
-      "compiler_ms": 0.867807,
-      "aot_ms": 0.7303989999999999,
-      "link_ms": 202.50714900021194,
-      "runtime_ms": 1.3072719998490356,
-      "object_bytes": 2616,
-      "executable_bytes": 24192
+      "compiler_ms": 1.3398869999999998,
+      "aot_ms": 1.113263,
+      "link_ms": 213.95576399999072,
+      "runtime_ms": 1.3074440000195864,
+      "object_bytes": 2816,
+      "executable_bytes": 24496
     },
     {
       "id": 8,
@@ -125,12 +125,12 @@
       "actual": "3\n5\n13",
       "exit_code": 0,
       "passed": true,
-      "compiler_ms": 0.868448,
-      "aot_ms": 0.7349439999999999,
-      "link_ms": 202.1339689999877,
-      "runtime_ms": 1.6284909997921204,
-      "object_bytes": 2688,
-      "executable_bytes": 24096
+      "compiler_ms": 0.736709,
+      "aot_ms": 0.602042,
+      "link_ms": 215.35374699999466,
+      "runtime_ms": 1.3958679999745982,
+      "object_bytes": 2888,
+      "executable_bytes": 24392
     },
     {
       "id": 9,
@@ -140,12 +140,12 @@
       "actual": "1",
       "exit_code": 0,
       "passed": true,
-      "compiler_ms": 0.930912,
-      "aot_ms": 0.802221,
-      "link_ms": 197.72765500010792,
-      "runtime_ms": 1.445354000225052,
-      "object_bytes": 2472,
-      "executable_bytes": 24168
+      "compiler_ms": 0.691959,
+      "aot_ms": 0.571069,
+      "link_ms": 215.673105999997,
+      "runtime_ms": 1.406389000010222,
+      "object_bytes": 2672,
+      "executable_bytes": 24464
     },
     {
       "id": 10,
@@ -155,12 +155,12 @@
       "actual": "1",
       "exit_code": 0,
       "passed": true,
-      "compiler_ms": 0.9269630000000001,
-      "aot_ms": 0.7786489999999999,
-      "link_ms": 203.96803199992064,
-      "runtime_ms": 1.433802000065043,
-      "object_bytes": 2560,
-      "executable_bytes": 24160
+      "compiler_ms": 0.824255,
+      "aot_ms": 0.653293,
+      "link_ms": 222.0464669999842,
+      "runtime_ms": 1.3106879999895682,
+      "object_bytes": 2760,
+      "executable_bytes": 24464
     },
     {
       "id": 11,
@@ -170,12 +170,12 @@
       "actual": "1",
       "exit_code": 0,
       "passed": true,
-      "compiler_ms": 0.8347610000000001,
-      "aot_ms": 0.685192,
-      "link_ms": 208.86251599995376,
-      "runtime_ms": 1.6070960000433843,
-      "object_bytes": 2656,
-      "executable_bytes": 24176
+      "compiler_ms": 0.782109,
+      "aot_ms": 0.625907,
+      "link_ms": 215.34741199997143,
+      "runtime_ms": 1.39546899998777,
+      "object_bytes": 2856,
+      "executable_bytes": 24480
     },
     {
       "id": 12,
@@ -185,12 +185,12 @@
       "actual": "1",
       "exit_code": 0,
       "passed": true,
-      "compiler_ms": 0.771798,
-      "aot_ms": 0.656199,
-      "link_ms": 199.4110929999806,
-      "runtime_ms": 1.4350670003295818,
-      "object_bytes": 2472,
-      "executable_bytes": 24136
+      "compiler_ms": 0.7645310000000001,
+      "aot_ms": 0.6271490000000001,
+      "link_ms": 245.28130099997725,
+      "runtime_ms": 1.2729439999930037,
+      "object_bytes": 2664,
+      "executable_bytes": 24432
     },
     {
       "id": 13,
@@ -200,12 +200,12 @@
       "actual": "0",
       "exit_code": 0,
       "passed": true,
-      "compiler_ms": 1.1600810000000001,
-      "aot_ms": 0.945009,
-      "link_ms": 199.81433800012383,
-      "runtime_ms": 1.3834960000167484,
-      "object_bytes": 2856,
-      "executable_bytes": 24232
+      "compiler_ms": 0.879909,
+      "aot_ms": 0.7411530000000001,
+      "link_ms": 208.63116699996453,
+      "runtime_ms": 1.2944439999955648,
+      "object_bytes": 3056,
+      "executable_bytes": 24528
     },
     {
       "id": 14,
@@ -215,12 +215,12 @@
       "actual": "1",
       "exit_code": 0,
       "passed": true,
-      "compiler_ms": 0.9110499999999999,
-      "aot_ms": 0.785621,
-      "link_ms": 200.22844499999337,
-      "runtime_ms": 1.3849530000697996,
-      "object_bytes": 2576,
-      "executable_bytes": 24168
+      "compiler_ms": 0.841599,
+      "aot_ms": 0.7016490000000001,
+      "link_ms": 210.76221099997383,
+      "runtime_ms": 1.2972960000183775,
+      "object_bytes": 2776,
+      "executable_bytes": 24464
     },
     {
       "id": 15,
@@ -230,12 +230,12 @@
       "actual": "1",
       "exit_code": 0,
       "passed": true,
-      "compiler_ms": 0.915467,
-      "aot_ms": 0.779397,
-      "link_ms": 199.67329000019163,
-      "runtime_ms": 1.4083519999985583,
-      "object_bytes": 2840,
-      "executable_bytes": 24208
+      "compiler_ms": 0.8646189999999999,
+      "aot_ms": 0.731474,
+      "link_ms": 212.93649900002265,
+      "runtime_ms": 1.2809339999648728,
+      "object_bytes": 3040,
+      "executable_bytes": 24512
     },
     {
       "id": 16,
@@ -245,12 +245,12 @@
       "actual": "1",
       "exit_code": 0,
       "passed": true,
-      "compiler_ms": 1.029203,
-      "aot_ms": 0.891892,
-      "link_ms": 199.56963300001007,
-      "runtime_ms": 1.3213250003900612,
-      "object_bytes": 2752,
-      "executable_bytes": 24176
+      "compiler_ms": 0.866364,
+      "aot_ms": 0.726606,
+      "link_ms": 212.19434899995804,
+      "runtime_ms": 1.4544599999908314,
+      "object_bytes": 2952,
+      "executable_bytes": 24480
     },
     {
       "id": 17,
@@ -260,12 +260,12 @@
       "actual": "7",
       "exit_code": 0,
       "passed": true,
-      "compiler_ms": 0.719355,
-      "aot_ms": 0.593467,
-      "link_ms": 199.89267900018604,
-      "runtime_ms": 1.5976940003383788,
-      "object_bytes": 2464,
-      "executable_bytes": 24096
+      "compiler_ms": 0.66289,
+      "aot_ms": 0.536825,
+      "link_ms": 213.1312840000419,
+      "runtime_ms": 1.3255140000296706,
+      "object_bytes": 2664,
+      "executable_bytes": 24392
     },
     {
       "id": 18,
@@ -275,12 +275,12 @@
       "actual": "1",
       "exit_code": 0,
       "passed": true,
-      "compiler_ms": 0.823678,
-      "aot_ms": 0.690406,
-      "link_ms": 198.67846399984046,
-      "runtime_ms": 1.4319460001388506,
-      "object_bytes": 2648,
-      "executable_bytes": 24136
+      "compiler_ms": 0.861593,
+      "aot_ms": 0.7166889999999999,
+      "link_ms": 213.8845389999915,
+      "runtime_ms": 1.3134440000044378,
+      "object_bytes": 2840,
+      "executable_bytes": 24432
     },
     {
       "id": 19,
@@ -290,12 +290,12 @@
       "actual": "1",
       "exit_code": 0,
       "passed": true,
-      "compiler_ms": 1.02805,
-      "aot_ms": 0.827127,
-      "link_ms": 203.93204999982117,
-      "runtime_ms": 1.3019240000176069,
-      "object_bytes": 2768,
-      "executable_bytes": 24176
+      "compiler_ms": 0.912499,
+      "aot_ms": 0.763173,
+      "link_ms": 213.69436499998073,
+      "runtime_ms": 1.3352670000017497,
+      "object_bytes": 2968,
+      "executable_bytes": 24480
     },
     {
       "id": 20,
@@ -305,12 +305,12 @@
       "actual": "0",
       "exit_code": 0,
       "passed": true,
-      "compiler_ms": 1.024759,
-      "aot_ms": 0.8782030000000001,
-      "link_ms": 204.00984900015828,
-      "runtime_ms": 1.4299279996521364,
-      "object_bytes": 2880,
-      "executable_bytes": 24232
+      "compiler_ms": 1.084308,
+      "aot_ms": 0.918351,
+      "link_ms": 212.97040399997513,
+      "runtime_ms": 1.3113809999936166,
+      "object_bytes": 3080,
+      "executable_bytes": 24528
     }
   ]
 }

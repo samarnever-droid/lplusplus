@@ -11,6 +11,6 @@ struct Parent:
 
 def main():
     child := Child()
-    parent := Parent()
+    mut parent := Parent()
     parent.child = child
     print(1)

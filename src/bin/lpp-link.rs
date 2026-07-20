@@ -60,14 +60,23 @@ fn read_input(path: &Path) -> Result<InputText, String> {
     let text = text_section.uncompressed_data()
         .map_err(|error| format!("read .text from '{}': {error}", path.display()))?
         .into_owned();
-    let (rodata_index, rodata) = if let Some(section) = file.section_by_name(".rodata") {
-        let index = section.index();
-        let data = section.uncompressed_data()
-            .map_err(|error| format!("read .rodata from '{}': {error}", path.display()))?
-            .into_owned();
-        (Some(index), data)
-    } else {
-        (None, Vec::new())
+
+    let mut rodata_indices = std::collections::HashSet::new();
+    let mut rodata = Vec::new();
+    for section in file.sections() {
+        if let Ok(name) = section.name() {
+            if name == ".rodata" || name.starts_with(".rodata.") {
+                rodata_indices.insert(section.index());
+                if let Ok(data) = section.uncompressed_data() {
+                    rodata.extend_from_slice(&data);
+                }
+            }
+        }
+    }
+
+    let is_rodata_section = |sec: SymbolSection| match sec {
+        SymbolSection::Section(idx) => rodata_indices.contains(&idx),
+        _ => false,
     };
 
     let mut text_symbols = Vec::new();
@@ -75,7 +84,7 @@ fn read_input(path: &Path) -> Result<InputText, String> {
     for symbol in file.symbols() {
         let destination = if symbol.section() == SymbolSection::Section(text_index) {
             Some(&mut text_symbols)
-        } else if rodata_index.is_some_and(|index| symbol.section() == SymbolSection::Section(index)) {
+        } else if is_rodata_section(symbol.section()) {
             Some(&mut rodata_symbols)
         } else {
             None
@@ -98,11 +107,16 @@ fn read_input(path: &Path) -> Result<InputText, String> {
             .map_err(|error| format!("read relocation symbol: {error}"))?;
         let raw_name = symbol.name()
             .map_err(|error| format!("read relocation symbol name: {error}"))?;
-        // GCC may target a local section symbol (whose printable name is
-        // empty) for absolute function-pointer relocations.
-        let target = if raw_name.is_empty() && symbol.section() == SymbolSection::Section(text_index) {
+        // GCC/Clang may target a local section symbol (whose printable name is
+        // empty or section name like .rodata/.text) for function pointers and string literals.
+        let is_section_reloc = raw_name.is_empty() 
+            || symbol.kind() == object::SymbolKind::Section
+            || raw_name.starts_with(".rodata")
+            || raw_name.starts_with(".text");
+
+        let target = if is_section_reloc && symbol.section() == SymbolSection::Section(text_index) {
             "__self_text__".to_string()
-        } else if raw_name.is_empty() && rodata_index.is_some_and(|index| symbol.section() == SymbolSection::Section(index)) {
+        } else if is_section_reloc && is_rodata_section(symbol.section()) {
             "__self_rodata__".to_string()
         } else {
             raw_name.to_string()

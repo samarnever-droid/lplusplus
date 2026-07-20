@@ -233,6 +233,13 @@ impl Resolver {
                 self.resolve_expr(value)?;
                 if let Some(id) = self.table.resolve_name(self.current_scope, name) {
                     binding_id.set(Some(id.0));
+                    let binding = &self.table.bindings[id.0];
+                    if !binding.is_mut {
+                        return Err(format!(
+                            "Cannot reassign immutable variable '{}'. Declare it with 'mut {} := ...' to allow mutation.",
+                            name, name
+                        ));
+                    }
                 } else {
                     return Err(format!("Assignment to undeclared variable '{}'", name));
                 }
@@ -240,6 +247,17 @@ impl Resolver {
             Stmt::AssignField { base, field: _, value } => {
                 self.resolve_expr(base)?;
                 self.resolve_expr(value)?;
+                if let Expr::Identifier(name, ..) = base {
+                    if let Some(id) = self.table.resolve_name(self.current_scope, name) {
+                        let binding = &self.table.bindings[id.0];
+                        if !binding.is_mut {
+                            return Err(format!(
+                                "Cannot mutate field of immutable variable '{}'. Declare it with 'mut {} := ...' to allow field mutation.",
+                                name, name
+                            ));
+                        }
+                    }
+                }
             }
             Stmt::If { condition, then_block, else_block } => {
                 self.resolve_expr(condition)?;
@@ -416,5 +434,61 @@ mod tests {
         };
 
         assert_ne!(first, second, "shadowing should mint a fresh binding");
+    }
+
+    #[test]
+    fn rejects_reassigning_immutable_variable() {
+        let mut program = Program {
+            declarations: vec![TopLevel::Function(Function {
+                name: "main".to_string(),
+                params: vec![],
+                return_type: Type::Void,
+                body: vec![
+                    Stmt::LetInferred {
+                        name: "x".to_string(),
+                        is_mut: false,
+                        value: Expr::IntLiteral(1),
+                        binding_id: std::cell::Cell::new(None),
+                    },
+                    Stmt::Assign {
+                        name: "x".to_string(),
+                        value: Expr::IntLiteral(2),
+                        binding_id: std::cell::Cell::new(None),
+                    },
+                ],
+            })],
+        };
+
+        let mut resolver = Resolver::new();
+        let err = resolver.resolve_program(&mut program).expect_err("should reject immutable assignment");
+        assert!(err.contains("Cannot reassign immutable variable 'x'"));
+    }
+
+    #[test]
+    fn rejects_field_mutation_on_immutable_variable() {
+        let mut program = Program {
+            declarations: vec![TopLevel::Function(Function {
+                name: "main".to_string(),
+                params: vec![],
+                return_type: Type::Void,
+                body: vec![
+                    Stmt::LetInferred {
+                        name: "box".to_string(),
+                        is_mut: false,
+                        value: Expr::IntLiteral(1),
+                        binding_id: std::cell::Cell::new(None),
+                    },
+                    Stmt::AssignField {
+                        base: Expr::Identifier("box".to_string(), std::cell::Cell::new(None)),
+                        field: "val".to_string(),
+                        value: Expr::IntLiteral(10),
+                    },
+                ],
+            })],
+        };
+
+        let mut resolver = Resolver::new();
+        let err = resolver.resolve_program(&mut program).expect_err("should reject immutable field mutation");
+        assert!(err.contains("Cannot mutate field of immutable variable 'box'"));
     }
 }

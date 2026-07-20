@@ -492,6 +492,34 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                     results[0]
                 })
             }
+            Rvalue::SpawnThread(closure_op) => {
+                let closure_ptr = self.operand_to_value(builder, closure_op, local_vars)?;
+                let pointer_type = self.module.target_config().pointer_type();
+
+                let func_ptr = builder.ins().load(
+                    pointer_type,
+                    cranelift_codegen::ir::MemFlags::new(),
+                    closure_ptr,
+                    0,
+                );
+
+                let env_ptr = builder.ins().load(
+                    pointer_type,
+                    cranelift_codegen::ir::MemFlags::new(),
+                    closure_ptr,
+                    8,
+                );
+
+                let builtin_id = *self
+                    .builtin_ids
+                    .get("lpp_thread_spawn")
+                    .ok_or_else(|| "Builtin 'lpp_thread_spawn' was not declared in Cranelift module".to_string())?;
+
+                let func_ref = self.module.declare_func_in_func(builtin_id, builder.func);
+                builder.ins().call(func_ref, &[func_ptr, env_ptr]);
+
+                Ok(builder.ins().iconst(pointer_type, 0))
+            }
             Rvalue::AllocateStruct(_) => Err(
                 "raw struct allocation reached AOT; use AllocateArcStruct for owned objects".to_string(),
             ),

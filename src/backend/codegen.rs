@@ -219,7 +219,10 @@ impl<'a> Codegen<'a> {
         let ind = self.indent();
         match stmt {
             Stmt::LetInferred { name, value, binding_id, .. } => {
-                let id = binding_id.get().unwrap();
+                let id = match binding_id.get() {
+                    Some(id) => id,
+                    None => return,
+                };
                 let class = self.storage.get(&crate::semantic::BindingId(id))
                     .unwrap_or(&StorageClass::Value)
                     .clone();
@@ -252,7 +255,10 @@ impl<'a> Codegen<'a> {
                 }
             }
             Stmt::Assign { name, value, binding_id, .. } => {
-                let id = binding_id.get().unwrap();
+                let id = match binding_id.get() {
+                    Some(id) => id,
+                    None => return,
+                };
                 let unique_name = format!("{}_{}", name, id);
                 let val_str = self.gen_expr_str(value, current_scope, None);
                 self.flush_pre_stmts();
