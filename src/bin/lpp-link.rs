@@ -636,10 +636,210 @@ fn inspect_object(input: &Path) -> Result<(), String> {
     Ok(())
 }
 
+fn read_macho_input(path: &Path) -> Result<InputText, String> {
+    let bytes = fs::read(path).map_err(|error| format!("read '{}': {error}", path.display()))?;
+    let file = object::File::parse(&*bytes).map_err(|error| format!("parse '{}': {error}", path.display()))?;
+    if file.format() != BinaryFormat::MachO {
+        return Err(format!("'{}' is not a Mach-O relocatable object", path.display()));
+    }
+    let mut text = Vec::new();
+    let mut section_bases = Vec::new();
+    let mut section_relocations = Vec::new();
+
+    for section in file.sections() {
+        if section.kind() != object::SectionKind::Text {
+            continue;
+        }
+        let base = align_up(text.len(), 16);
+        text.resize(base, 0x90);
+        let index = section.index();
+        let data = section.uncompressed_data()
+            .map_err(|error| format!("read text from '{}': {error}", path.display()))?
+            .into_owned();
+        text.extend_from_slice(&data);
+        section_bases.push((index, base));
+        for (offset, relocation) in section.relocations() {
+            section_relocations.push((index, base, offset, relocation));
+        }
+    }
+    if section_bases.is_empty() {
+        return Err(format!("'{}' has no executable Mach-O text section", path.display()));
+    }
+    let section_base = |index| section_bases.iter().find(|(candidate, _)| *candidate == index).map(|(_, base)| *base);
+
+    let mut text_symbols = Vec::new();
+    for symbol in file.symbols() {
+        if let SymbolSection::Section(index) = symbol.section() {
+            if let Some(base) = section_base(index) {
+                if let Ok(name) = symbol.name() {
+                    let clean_name = name.strip_prefix('_').unwrap_or(name);
+                    if !clean_name.is_empty() {
+                        text_symbols.push((clean_name.to_string(), base as u64 + symbol.address()));
+                    }
+                }
+            }
+        }
+    }
+
+    let mut relocations = Vec::new();
+    for (_, base, offset, relocation) in section_relocations {
+        let RelocationTarget::Symbol(symbol_index) = relocation.target() else {
+            return Err(format!("'{}' has unsupported non-symbol relocation", path.display()));
+        };
+        let symbol = file.symbol_by_index(symbol_index)
+            .map_err(|error| format!("read relocation symbol: {error}"))?;
+        let raw_name = symbol.name()
+            .map_err(|error| format!("read relocation symbol name: {error}"))?;
+        let clean_name = raw_name.strip_prefix('_').unwrap_or(raw_name);
+        let target = if clean_name.is_empty() {
+            match symbol.section() {
+                SymbolSection::Section(index) if section_base(index).is_some() => {
+                    format!("__macho_text_section_{}", section_base(index).unwrap())
+                }
+                _ => return Err(format!("'{}' has unresolved anonymous Mach-O relocation", path.display())),
+            }
+        } else {
+            clean_name.to_string()
+        };
+        relocations.push(Relocation {
+            offset: base + usize::try_from(offset).map_err(|_| "relocation offset overflow")?,
+            target,
+            addend: relocation.addend(),
+            size: relocation.size(),
+            kind: relocation.kind(),
+        });
+    }
+    Ok(InputText {
+        path: path.to_path_buf(),
+        text,
+        rodata: Vec::new(),
+        text_symbols,
+        rodata_symbols: Vec::new(),
+        relocations,
+    })
+}
+
+fn write_macho(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
+    if inputs.is_empty() {
+        return Err("at least one input object is required".to_string());
+    }
+    let objects: Vec<InputText> = inputs.iter().map(|path| read_macho_input(path)).collect::<Result<_, _>>()?;
+    let mut text = Vec::new();
+    let mut bases = Vec::new();
+    let mut symbols: HashMap<String, u64> = HashMap::new();
+
+    for input in &objects {
+        let base = align_up(text.len(), 16);
+        text.resize(base, 0x90);
+        bases.push(base);
+        for (name, offset) in &input.text_symbols {
+            let absolute = base as u64 + offset;
+            if symbols.insert(name.clone(), absolute).is_some() {
+                return Err(format!("duplicate definition of symbol '{name}'"));
+            }
+        }
+        text.extend_from_slice(&input.text);
+    }
+
+    let main = *symbols.get("main").ok_or_else(|| "required symbol 'main' or '_main' not found".to_string())?;
+
+    for (index, input) in objects.iter().enumerate() {
+        let base = bases[index];
+        for relocation in &input.relocations {
+            let target_offset = if relocation.target == "__self_text__" {
+                base as u64
+            } else if let Some(offset) = relocation.target.strip_prefix("__macho_text_section_") {
+                offset.parse::<u64>().map_err(|_| "invalid Mach-O section relocation")?
+            } else {
+                *symbols.get(&relocation.target).ok_or_else(|| {
+                    format!("'{}': unresolved external symbol '{}'", input.path.display(), relocation.target)
+                })?
+            };
+            let patch = base + relocation.offset;
+            if patch + 4 > text.len() {
+                return Err(format!("'{}': relocation patch out of range", input.path.display()));
+            }
+            let displacement = target_offset as i64 + relocation.addend - patch as i64;
+            if displacement < i32::MIN as i64 || displacement > i32::MAX as i64 {
+                return Err(format!("'{}': PC-relative relocation out of range", input.path.display()));
+            }
+            text[patch..patch + 4].copy_from_slice(&(displacement as i32).to_le_bytes());
+        }
+    }
+
+    let text_page_size = align_up(text.len(), 4096);
+    let mut header = Vec::new();
+    header.extend_from_slice(&0xfeedfacf_u32.to_le_bytes()); // MH_MAGIC_64
+    header.extend_from_slice(&0x01000007_u32.to_le_bytes()); // CPU_TYPE_X86_64
+    header.extend_from_slice(&3_u32.to_le_bytes());          // CPU_SUBTYPE_ALL
+    header.extend_from_slice(&2_u32.to_le_bytes());          // MH_EXECUTE
+    header.extend_from_slice(&2_u32.to_le_bytes());          // ncmds (PAGEZERO, TEXT)
+    
+    let sizeofcmds = (72 + 152) as u32; // LC_SEGMENT_64 PAGEZERO + LC_SEGMENT_64 TEXT
+    header.extend_from_slice(&sizeofcmds.to_le_bytes());
+    header.extend_from_slice(&0x00200085_u32.to_le_bytes()); // MH_NOUNDEFS | MH_DYLDLINK | MH_TWOLEVEL | MH_PIE
+    header.extend_from_slice(&0_u32.to_le_bytes());          // reserved
+
+    // LC_SEGMENT_64 __PAGEZERO
+    header.extend_from_slice(&0x19_u32.to_le_bytes());       // LC_SEGMENT_64
+    header.extend_from_slice(&72_u32.to_le_bytes());         // cmdsize
+    let mut pagezero_name = [0_u8; 16];
+    pagezero_name[..10].copy_from_slice(b"__PAGEZERO");
+    header.extend_from_slice(&pagezero_name);
+    header.extend_from_slice(&0_u64.to_le_bytes());          // vmaddr
+    header.extend_from_slice(&0x100000000_u64.to_le_bytes());// vmsize = 4GB
+    header.extend_from_slice(&0_u64.to_le_bytes());          // fileoff
+    header.extend_from_slice(&0_u64.to_le_bytes());          // filesize
+    header.extend_from_slice(&0_u32.to_le_bytes());          // maxprot = 0
+    header.extend_from_slice(&0_u32.to_le_bytes());          // initprot = 0
+    header.extend_from_slice(&0_u32.to_le_bytes());          // nsects = 0
+    header.extend_from_slice(&0_u32.to_le_bytes());          // flags = 0
+
+    // LC_SEGMENT_64 __TEXT
+    header.extend_from_slice(&0x19_u32.to_le_bytes());       // LC_SEGMENT_64
+    header.extend_from_slice(&152_u32.to_le_bytes());        // cmdsize (72 + 80 section64)
+    let mut text_seg_name = [0_u8; 16];
+    text_seg_name[..6].copy_from_slice(b"__TEXT");
+    header.extend_from_slice(&text_seg_name);
+    header.extend_from_slice(&0x100000000_u64.to_le_bytes());// vmaddr = 0x100000000
+    header.extend_from_slice(&(4096 + text_page_size as u64).to_le_bytes()); // vmsize
+    header.extend_from_slice(&0_u64.to_le_bytes());          // fileoff
+    header.extend_from_slice(&(4096 + text.len() as u64).to_le_bytes()); // filesize
+    header.extend_from_slice(&7_u32.to_le_bytes());          // maxprot = R_W_X
+    header.extend_from_slice(&5_u32.to_le_bytes());          // initprot = R_X
+    header.extend_from_slice(&1_u32.to_le_bytes());          // nsects = 1
+    header.extend_from_slice(&0_u32.to_le_bytes());          // flags = 0
+
+    // Section __text
+    let mut text_sec_name = [0_u8; 16];
+    text_sec_name[..6].copy_from_slice(b"__text");
+    header.extend_from_slice(&text_sec_name);
+    header.extend_from_slice(&text_seg_name);
+    header.extend_from_slice(&(0x100000000 + 4096 + main).to_le_bytes()); // addr
+    header.extend_from_slice(&(text.len() as u64).to_le_bytes());          // size
+    header.extend_from_slice(&4096_u32.to_le_bytes());                     // offset
+    header.extend_from_slice(&4_u32.to_le_bytes());                        // align (2^4 = 16)
+    header.extend_from_slice(&0_u32.to_le_bytes());                        // reloff
+    header.extend_from_slice(&0_u32.to_le_bytes());                        // nreloc
+    header.extend_from_slice(&0x80000400_u32.to_le_bytes());               // flags
+    header.extend_from_slice(&0_u32.to_le_bytes());                        // reserved1
+    header.extend_from_slice(&0_u32.to_le_bytes());                        // reserved2
+    header.extend_from_slice(&0_u32.to_le_bytes());                        // reserved3
+
+    let mut binary = vec![0_u8; 4096];
+    binary[..header.len()].copy_from_slice(&header);
+    binary.extend_from_slice(&text);
+
+    fs::write(output, binary).map_err(|error| format!("write Mach-O binary '{}': {error}", output.display()))?;
+    Ok(())
+}
+
 fn usage() {
-    eprintln!("Usage: lpp-link <program.o> [runtime.o ...] -o <output>\n       lpp-link pe <program.obj> [runtime.obj ...] -o <output.exe>");
+    eprintln!("Usage: lpp-link <program.o> [runtime.o ...] -o <output>");
+    eprintln!("       lpp-link pe <program.obj> [runtime.obj ...] -o <output.exe>");
+    eprintln!("       lpp-link macho <program.o> [runtime.o ...] -o <output>");
     eprintln!("       lpp-link inspect <object.o>");
-    eprintln!("Phase 2: direct Linux x86-64 ELF linker; Windows W1 COFF inspection.");
+    eprintln!("Phases: direct Linux x86-64 ELF linker; Windows PE COFF linker; macOS Mach-O direct emitter.");
 }
 
 fn main() {
@@ -656,7 +856,8 @@ fn main() {
         return;
     }
     let pe_mode = args.first().map(String::as_str) == Some("pe");
-    let offset = if pe_mode { 1 } else { 0 };
+    let macho_mode = args.first().map(String::as_str) == Some("macho");
+    let offset = if pe_mode || macho_mode { 1 } else { 0 };
     let Some(output_relative) = args[offset..].iter().position(|arg| arg == "-o") else {
         usage();
         std::process::exit(2);
@@ -669,6 +870,8 @@ fn main() {
     let inputs = args[offset..output_index].iter().map(PathBuf::from).collect::<Vec<_>>();
     let result = if pe_mode {
         write_pe(&inputs, Path::new(&args[output_index + 1]))
+    } else if macho_mode {
+        write_macho(&inputs, Path::new(&args[output_index + 1]))
     } else {
         write_elf(&inputs, Path::new(&args[output_index + 1]))
     };
