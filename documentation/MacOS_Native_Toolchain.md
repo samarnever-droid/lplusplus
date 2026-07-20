@@ -74,3 +74,20 @@ on macOS x86-64 and arm64
 ```
 
 Until then, macOS uses the verified clang host-link fallback.
+
+## Current v0.1.3 status note — 2026-07-20
+
+This document is historical/design context. For current public capability claims,
+platform boundaries, filesystem APIs, package cache layout, and known missing
+features, see [Current Capabilities](CURRENT_CAPABILITIES.md).
+
+Current rules:
+
+```text
+- Do not claim fixed compile-time, binary-size, or C/Rust parity numbers.
+- Do not claim language-wide Rust-equivalent safety.
+- Host-linked AOT is the compatibility path for filesystem and networking work.
+- Linux direct ELF remains a verified subset; filesystem/networking are not direct-link features yet.
+- macOS ARM64 static direct output is rejected; dynamic libSystem imports are required.
+- L++ package outputs/cache are LppData/build/release and LppData/cache.
+```

@@ -38,3 +38,15 @@ The Rust runtime currently uses `std::net`. It is not yet an async Go-style sche
 - Current string ABI rejects binary payloads containing NUL; byte buffers are required before binary protocols are exposed safely.
 - TLS, HTTP, WebSockets, HTTP/2, HTTP/3, proxies, and cancellation are not complete.
 - Do not describe a raw socket handle API as Go-level networking.
+
+## v0.1.3 current-status note
+
+This page is maintained with the project, but current support claims are
+centralized in [Current Capabilities](../documentation/CURRENT_CAPABILITIES.md).
+
+```text
+Use LppData/build/release and LppData/cache for package artifacts.
+Use host-linked AOT for filesystem/networking work.
+Do not assume direct ELF supports files, networking, JSON, or threads.
+Do not claim language-wide Rust-equivalent safety outside the verified AOT subset.
+```

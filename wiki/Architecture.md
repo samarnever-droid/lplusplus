@@ -28,3 +28,15 @@ source
 ## Design constraints
 
 Every new runtime capability needs: a source-level contract, type checking, lowering/ABI support, ownership behavior, link packaging, cross-platform scope, and negative tests. A function declaration alone is not a completed language feature.
+
+## v0.1.3 current-status note
+
+This page is maintained with the project, but current support claims are
+centralized in [Current Capabilities](../documentation/CURRENT_CAPABILITIES.md).
+
+```text
+Use LppData/build/release and LppData/cache for package artifacts.
+Use host-linked AOT for filesystem/networking work.
+Do not assume direct ELF supports files, networking, JSON, or threads.
+Do not claim language-wide Rust-equivalent safety outside the verified AOT subset.
+```

@@ -15,3 +15,15 @@ Host-linking is the supported compatibility path. Intel direct Mach-O experiment
 ## Networking and direct linkers
 
 Networking uses host linking today. A Rust static network runtime cannot simply be inserted into a minimal direct linker: its archive/object requirements, allocation, symbols, and platform dependencies must be supported deliberately. Correctness takes priority over premature direct-link claims.
+
+## v0.1.3 current-status note
+
+This page is maintained with the project, but current support claims are
+centralized in [Current Capabilities](../documentation/CURRENT_CAPABILITIES.md).
+
+```text
+Use LppData/build/release and LppData/cache for package artifacts.
+Use host-linked AOT for filesystem/networking work.
+Do not assume direct ELF supports files, networking, JSON, or threads.
+Do not claim language-wide Rust-equivalent safety outside the verified AOT subset.
+```

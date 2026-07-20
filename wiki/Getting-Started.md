@@ -59,3 +59,15 @@ lpp run
 On Linux x86-64, `LPP_LINKER=direct lpp build` selects the direct ELF linker where the package only uses its supported runtime-free/direct-runtime subset.
 
 Do not use legacy `lpp file.lpp` as an implicit build command; it prints guidance to use `check`, `emit`, or `build` explicitly.
+
+## v0.1.3 current-status note
+
+This page is maintained with the project, but current support claims are
+centralized in [Current Capabilities](../documentation/CURRENT_CAPABILITIES.md).
+
+```text
+Use LppData/build/release and LppData/cache for package artifacts.
+Use host-linked AOT for filesystem/networking work.
+Do not assume direct ELF supports files, networking, JSON, or threads.
+Do not claim language-wide Rust-equivalent safety outside the verified AOT subset.
+```

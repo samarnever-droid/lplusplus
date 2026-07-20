@@ -23,3 +23,10 @@
 - Claiming full language-wide safety guarantee outside the verified subset.
 - Emitting macOS ARM64 static native executables that the OS will kill.
 - Using cURL as a substitute for a native L++ networking runtime.
+
+## v0.1.3 documentation status
+
+For the current supported subset and explicit feature boundaries, see
+[`documentation/CURRENT_CAPABILITIES.md`](../../documentation/CURRENT_CAPABILITIES.md).
+
+Do not use historical benchmark numbers or roadmap text as current guarantees.

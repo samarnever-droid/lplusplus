@@ -109,3 +109,20 @@ As of version 0.1.0, some advanced language features are syntactically parsed an
     *   *Backend compilation:* Basic list constructors compile to `lpp_list_new()` stubs. List index access (`list[i]`) and mutation are not fully connected in AOT codegen.
 3.  **Garbage Collection / Reference Cycle Collector:**
     *   *ARC insertions:* Reference count increment and decrement instructions are inserted in the MIR, but the physical runtime decrements/frees for cyclic structures (e.g. self-referencing nodes) require a cycle collector which is not yet present.
+
+## Current v0.1.3 status note — 2026-07-20
+
+This document is historical/design context. For current public capability claims,
+platform boundaries, filesystem APIs, package cache layout, and known missing
+features, see [Current Capabilities](CURRENT_CAPABILITIES.md).
+
+Current rules:
+
+```text
+- Do not claim fixed compile-time, binary-size, or C/Rust parity numbers.
+- Do not claim language-wide Rust-equivalent safety.
+- Host-linked AOT is the compatibility path for filesystem and networking work.
+- Linux direct ELF remains a verified subset; filesystem/networking are not direct-link features yet.
+- macOS ARM64 static direct output is rejected; dynamic libSystem imports are required.
+- L++ package outputs/cache are LppData/build/release and LppData/cache.
+```

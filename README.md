@@ -10,6 +10,7 @@
   <a href="benchmarks/king20/stable/v1/latest.md">King20 Stable</a> ·
   <a href="documentation/Native_Linker_Roadmap.md">Native Linker</a> ·
   <a href="Doc.md">Language Guide</a> ·
+  <a href="documentation/CURRENT_CAPABILITIES.md">Current Capabilities</a> ·
   <a href="linguist/UPSTREAM_LINGUIST_PR.md">Linguist Package</a>
 </p>
 
@@ -297,3 +298,10 @@ The logo is SVG/XML, so it can be reused in documentation, websites, packaging, 
 ---
 
 L++ is ambitious by design. The project prefers a narrow, verified capability over a broad unverified promise: if a feature lacks a correct ownership and runtime contract, the compiler should reject it rather than pretend it is safe.
+
+## v0.1.3 documentation status
+
+For the current supported subset and explicit feature boundaries, see
+[`documentation/CURRENT_CAPABILITIES.md`](../../documentation/CURRENT_CAPABILITIES.md).
+
+Do not use historical benchmark numbers or roadmap text as current guarantees.

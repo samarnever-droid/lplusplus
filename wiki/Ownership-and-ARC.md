@@ -31,3 +31,15 @@ Never add a type/backend shortcut that silently bypasses ownership cleanup. Reje
 ## Safety mission
 
 The project tracks evidence levels and does not claim full full language-wide safety guarantee today. See [`documentation/Safety_Mission.md`](../documentation/Safety_Mission.md).
+
+## v0.1.3 current-status note
+
+This page is maintained with the project, but current support claims are
+centralized in [Current Capabilities](../documentation/CURRENT_CAPABILITIES.md).
+
+```text
+Use LppData/build/release and LppData/cache for package artifacts.
+Use host-linked AOT for filesystem/networking work.
+Do not assume direct ELF supports files, networking, JSON, or threads.
+Do not claim language-wide Rust-equivalent safety outside the verified AOT subset.
+```

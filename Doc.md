@@ -291,9 +291,10 @@ L++ is designed as a multi-tier compilation pipeline:
 2. **C Transpiler:** Transpiles L++ directly into optimized C code, which can be compiled with standard GCC/Clang compilers.
 
 **Performance Characteristics:**
-- **Compile Time:** L++ compiles source to native machine code in **~3.0 ms** (Frontend + MIR + Cranelift AOT). Total compile time including linking is ~100–390 ms.
-- **Execution Speed:** Native L++ executables run at optimized C/Rust speeds (e.g., recursive Fibonacci(35) takes ~64 ms, matching optimized C and running ~20x faster than Python).
-- **Executable Size:** Native executables are extremely compact (~138 KB), requiring no bulky runtime VM or heavy standard library.
+- **Measure, do not assume:** compilation and executable size depend on workload, Cranelift optimization profile, host linker, and platform. Use the versioned reports under `benchmarks/` instead of fixed millisecond or binary-size claims.
+- **Compile paths:** package AOT builds use `LppData/cache/` to reuse a validated object for unchanged source/module/manifest/profile inputs; output is written to `LppData/build/release/`.
+- **Runtime:** struct/list and large List Labyrinth workloads are close to the C compatibility path in current measurements. Tight scalar loops, recursion, and call-heavy code remain active C-Speed optimization targets.
+- **Safety:** native AOT is ownership-aware for the verified subset; it is not a blanket Rust-equivalent safety claim.
 
 ### Standard Library & Built-ins Status
 

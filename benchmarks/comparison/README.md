@@ -26,3 +26,10 @@ The runner detects installed toolchains. Missing languages are marked `SKIP`, ne
 3. `calls1m` — function-call chain inside a loop
 
 The runner records compiler version, build latency, runtime latency, stdout correctness, and process status. It is intentionally a single-run development tool; use repeated pinned-hardware runs for publishable performance claims.
+
+## v0.1.3 documentation status
+
+For the current supported subset and explicit feature boundaries, see
+[`documentation/CURRENT_CAPABILITIES.md`](../../documentation/CURRENT_CAPABILITIES.md).
+
+Do not use historical benchmark numbers or roadmap text as current guarantees.
