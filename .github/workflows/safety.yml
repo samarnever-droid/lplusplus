@@ -1,0 +1,42 @@
+name: Safety mission gate
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'src/**'
+      - 'runtime/**'
+      - 'tests/**'
+      - 'safety/**'
+      - 'documentation/Safety_Mission.md'
+      - 'README.md'
+      - 'Doc.md'
+      - 'wiki/**'
+      - 'scripts/check_safety_mission.sh'
+      - '.github/workflows/safety.yml'
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'runtime/**'
+      - 'tests/**'
+      - 'safety/**'
+      - 'documentation/Safety_Mission.md'
+      - 'README.md'
+      - 'Doc.md'
+      - 'wiki/**'
+      - 'scripts/check_safety_mission.sh'
+
+permissions:
+  contents: read
+
+jobs:
+  claim-and-regression-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Validate safety contract and public claims
+        run: sh scripts/check_safety_mission.sh
+      - name: Run ownership AOT parity and rejection corpus
+        run: sh tests/run_aot_parity.sh

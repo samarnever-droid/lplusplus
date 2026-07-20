@@ -20,6 +20,6 @@
 ## Non-goals until supported
 
 - Claiming complete Go-level networking before async/runtime/protocol work exists.
-- Claiming Rust-equivalent safety outside the verified subset.
+- Claiming full language-wide safety guarantee outside the verified subset.
 - Emitting macOS ARM64 static native executables that the OS will kill.
 - Using cURL as a substitute for a native L++ networking runtime.

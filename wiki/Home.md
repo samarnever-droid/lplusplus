@@ -15,7 +15,7 @@ L++ is an experimental compiled language with Python-readable syntax, ownership-
 
 ## Important honesty rule
 
-L++ is not yet a complete Rust-equivalent safety guarantee, full Go-equivalent networking stack, or finished cross-platform direct linker. Read [[Roadmap]] before relying on an experimental path.
+L++ is not yet a complete full language-wide safety guarantee guarantee, full Go-equivalent networking stack, or finished cross-platform direct linker. Read [[Roadmap]] before relying on an experimental path.
 
 ## Navigation
 

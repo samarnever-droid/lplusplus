@@ -1,6 +1,6 @@
 # L++ Language Documentation
 
-L++ is an experimental prototype language aiming to be as readable as Python, as fast as C, and as safe as Rust. Its primary goal is to abstract away memory management without exposing a borrow checker or relying on a Tracing Garbage Collector (GC). 
+L++ is an experimental prototype language aiming to be as readable as Python, as fast as C, and ownership-aware with a verified AOT subset. Its primary goal is to abstract away memory management without exposing a borrow checker or relying on a Tracing Garbage Collector (GC). 
 
 **Current Reality:** L++ is an experimental compiled-language toolchain with a verified Linux x86-64 Cranelift AOT subset, a direct ELF linker path, and a C compatibility backend. The ownership model is stronger than a parser-only prototype: it has ownership-aware MIR, ARC allocation, `Borrow`/`Move`/`ReturnOwned`, generated destructor chains, closure capsules, `List[Int]`, `List[Custom]`, and strong-cycle rejection. It is still not a complete Rust-equivalent guarantee across every platform and library feature. Files, networking, threads, JSON, writable direct-link data, Windows PE, macOS Mach-O, and full C/AOT semantic parity remain in progress. Read `documentation/Cranelift_Ownership_Audit_2026-07-19.md`, `documentation/Native_Linker_Roadmap.md`, and `documentation/Windows_Native_Toolchain.md` for current boundaries.
 

@@ -27,3 +27,7 @@ Strong ownership cycles are rejected in AOT. ARC cannot reclaim a cycle safely. 
 ## Rule for contributors
 
 Never add a type/backend shortcut that silently bypasses ownership cleanup. Reject unsupported semantics with a diagnostic until the MIR, ARC pass, runtime ABI, and tests support them together.
+
+## Safety mission
+
+The project tracks evidence levels and does not claim full full language-wide safety guarantee today. See [`documentation/Safety_Mission.md`](../documentation/Safety_Mission.md).

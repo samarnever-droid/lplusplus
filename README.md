@@ -85,7 +85,7 @@ struct Node:
 
 until explicit `Weak`, arena, or cycle-collection semantics are available.
 
-Read the detailed audit: [`documentation/Cranelift_Ownership_Audit_2026-07-19.md`](documentation/Cranelift_Ownership_Audit_2026-07-19.md).
+Read the detailed audit: [`documentation/Cranelift_Ownership_Audit_2026-07-19.md`](documentation/Cranelift_Ownership_Audit_2026-07-19.md). The safety boundary and graduation criteria are in [`documentation/Safety_Mission.md`](documentation/Safety_Mission.md).
 
 ## Build paths
 
