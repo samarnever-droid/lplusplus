@@ -10,7 +10,7 @@ HERE = Path(__file__).resolve().parent
 WORKLOADS = {
     "arithmetic": (ROOT / "benchmarks/bench_loop.lpp", "49999995000000"),
     "branches": (ROOT / "benchmarks/bench_branch.lpp", "6666669"),
-    "calls": (ROOT / "benchmarks/bench_calls.lpp", "149999995000000"),
+    "calls": (ROOT / "benchmarks/bench_function_heavy.lpp", "149999995000000"),
     "struct_list": (ROOT / "benchmarks/bench_struct_list.lpp", "400005"),
     "list_labyrinth": (ROOT / "safety/generated/list_game_stress_10k.lpp", "552"),
 }
