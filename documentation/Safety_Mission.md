@@ -49,6 +49,20 @@ A feature cannot graduate from S1 to S2 without all of:
 - documented platform/linker boundary
 - benchmark only after correctness gates pass
 
+## S0 baseline: mandatory famous-tool safety testing
+
+Every safety mission change starts at S0 and must run the applicable established tools before it can be promoted:
+
+| Tool | What it catches | Required scope |
+|---|---|---|
+| AddressSanitizer (ASan) | out-of-bounds access, use-after-free, double-free | native C/runtime/adapter integration tests |
+| UndefinedBehaviorSanitizer (UBSan) | undefined integer/pointer/alignment behavior | native C/runtime/adapter integration tests |
+| Valgrind Memcheck | leaks, invalid reads/writes, invalid frees | Linux native ABI integration tests |
+| Rust `cargo test` | runtime functional and ownership-regression behavior | every Rust runtime change |
+| Rust `cargo fmt` | reproducible reviewed Rust source | every Rust runtime change |
+
+Sanitizers are evidence, not proof. A clean sanitizer run does not elevate an S0 feature by itself; it is the entry gate for further ownership, negative, parity, and platform tests.
+
 ## Mission workstreams
 
 1. **Ownership completeness:** audit every MIR instruction and terminator for ownership transfer/cleanup.

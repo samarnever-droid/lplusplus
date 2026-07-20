@@ -1,0 +1,41 @@
+name: Native safety tools
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'lpp_runtime.c'
+      - 'runtime/**'
+      - 'tests/test_rust_network_adapter.sh'
+      - '.github/workflows/safety-native.yml'
+  pull_request:
+    paths:
+      - 'lpp_runtime.c'
+      - 'runtime/**'
+      - 'tests/test_rust_network_adapter.sh'
+      - '.github/workflows/safety-native.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  native-memory-safety:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Valgrind Memcheck
+        run: sudo apt-get update && sudo apt-get install -y valgrind
+      - name: Rust runtime correctness baseline
+        run: cargo test --manifest-path runtime/lpp-net/Cargo.toml --locked
+      - name: ASan and UBSan adapter integration
+        env:
+          CFLAGS: -O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: sh tests/test_rust_network_adapter.sh
+      - name: Valgrind Memcheck adapter integration
+        env:
+          RUNNER: valgrind --leak-check=full --show-leak-kinds=all --errors-for-leak-kinds=definite --error-exitcode=97
+        run: sh tests/test_rust_network_adapter.sh
