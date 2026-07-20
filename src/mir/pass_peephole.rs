@@ -4,8 +4,9 @@
 //! allocations, moves, borrows, ARC instructions, or terminators. Therefore it
 //! cannot remove an ownership edge; ARC insertion still runs afterwards.
 
+use std::collections::HashMap;
 use crate::ast::BinaryOperator;
-use crate::mir::ir::{MirInstr, MirProgram, Operand, Rvalue};
+use crate::mir::ir::{LocalId, MirInstr, MirProgram, Operand, Ownership, Rvalue};
 
 fn int_binary(op: &BinaryOperator, left: i64, right: i64) -> Option<Operand> {
     let value = match op {
@@ -29,9 +30,7 @@ fn simplify(op: &BinaryOperator, left: &Operand, right: &Operand) -> Option<Oper
     if let (Operand::Int(a), Operand::Int(b)) = (left, right) {
         return int_binary(op, *a, *b);
     }
-    // Algebraic identities below are valid for L++ Int values and preserve the
-    // single evaluation already performed by MIR lowering. Do not apply float
-    // identities: NaN and signed-zero make them observable.
+    // Do not apply float identities: NaN and signed-zero are observable.
     match (op, left, right) {
         (BinaryOperator::Add, value, Operand::Int(0))
         | (BinaryOperator::Subtract, value, Operand::Int(0))
@@ -45,22 +44,53 @@ fn simplify(op: &BinaryOperator, left: &Operand, right: &Operand) -> Option<Oper
     }
 }
 
-/// Run before ARC insertion. Returns the number of rewritten scalar rvalues.
+fn scalar_constant(value: &Operand) -> bool {
+    matches!(value, Operand::Int(_) | Operand::Bool(_))
+}
+
+fn substitute(operand: &Operand, constants: &HashMap<LocalId, Operand>) -> Operand {
+    match operand {
+        // Only plain local scalar reads participate. Borrowed reads are an
+        // ownership contract and must remain visible to ARC analysis.
+        Operand::Local(id) => constants.get(id).cloned().unwrap_or_else(|| operand.clone()),
+        _ => operand.clone(),
+    }
+}
+
+/// Run before ARC insertion. Propagation is intentionally block-local: a
+/// branch/join can change a local's value, so no constant crosses a CFG edge.
 pub fn run(program: &mut MirProgram) -> usize {
     let mut rewrites = 0;
     for function in program.functions.values_mut() {
         for block in &mut function.blocks {
+            let mut constants: HashMap<LocalId, Operand> = HashMap::new();
             for instruction in &mut block.instrs {
                 let replacement = match instruction {
+                    MirInstr::Assign(destination, Rvalue::Use(value)) => {
+                        Some((*destination, Rvalue::Use(substitute(value, &constants)), false))
+                    }
                     MirInstr::Assign(destination, Rvalue::BinaryOp(op, left, right)) => {
-                        simplify(op, left, right)
-                            .map(|value| MirInstr::Assign(*destination, Rvalue::Use(value)))
+                        let left = substitute(left, &constants);
+                        let right = substitute(right, &constants);
+                        match simplify(op, &left, &right) {
+                            Some(value) => Some((*destination, Rvalue::Use(value), true)),
+                            None => Some((*destination, Rvalue::BinaryOp(op.clone(), left, right), false)),
+                        }
                     }
                     _ => None,
                 };
-                if let Some(replacement) = replacement {
-                    *instruction = replacement;
-                    rewrites += 1;
+                let Some((destination, rvalue, folded)) = replacement else { continue; };
+                *instruction = MirInstr::Assign(destination, rvalue.clone());
+                if folded { rewrites += 1; }
+                // Constants are tracked only for copy locals. This prevents a
+                // user-visible scalar simplification from ever treating an ARC
+                // pointer, borrowed field, or container as a duplicable value.
+                let copy_local = function.locals[destination.0].ownership == Ownership::Copy;
+                match rvalue {
+                    Rvalue::Use(value) if copy_local && scalar_constant(&value) => {
+                        constants.insert(destination, value);
+                    }
+                    _ => { constants.remove(&destination); }
                 }
             }
         }
