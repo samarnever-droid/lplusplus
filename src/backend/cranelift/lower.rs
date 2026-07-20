@@ -532,6 +532,23 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                     .ok_or_else(|| format!("Missing else-block mapping for {:?}", else_block))?;
                 builder.ins().brif(cond_bool, then_block, &[], else_block, &[]);
             }
+            Terminator::IfCmp { op, left, right, then_block, else_block } => {
+                let left = self.operand_to_value(builder, left, local_vars)?;
+                let right = self.operand_to_value(builder, right, local_vars)?;
+                let cc = match op {
+                    BinaryOperator::Eq => IntCC::Equal,
+                    BinaryOperator::NotEq => IntCC::NotEqual,
+                    BinaryOperator::Less => IntCC::SignedLessThan,
+                    BinaryOperator::Greater => IntCC::SignedGreaterThan,
+                    BinaryOperator::LessEq => IntCC::SignedLessThanOrEqual,
+                    BinaryOperator::GreaterEq => IntCC::SignedGreaterThanOrEqual,
+                    _ => return Err("non-comparison operator reached fused branch lowering".to_string()),
+                };
+                let comparison = builder.ins().icmp(cc, left, right);
+                let then_block = *cl_blocks.get(then_block).ok_or_else(|| "missing fused then block".to_string())?;
+                let else_block = *cl_blocks.get(else_block).ok_or_else(|| "missing fused else block".to_string())?;
+                builder.ins().brif(comparison, then_block, &[], else_block, &[]);
+            }
             Terminator::Return(Some(op)) | Terminator::ReturnOwned(op) => {
                 // ReturnOwned transfers an ARC reference in MIR; its machine ABI is
                 // the same return instruction as an ordinary return.

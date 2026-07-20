@@ -7,11 +7,8 @@ use std::collections::{HashMap, HashSet};
 fn successors(terminator: &Terminator) -> Vec<usize> {
     match terminator {
         Terminator::Goto(target) => vec![target.0],
-        Terminator::If {
-            then_block,
-            else_block,
-            ..
-        } => vec![then_block.0, else_block.0],
+        Terminator::If { then_block, else_block, .. }
+        | Terminator::IfCmp { then_block, else_block, .. } => vec![then_block.0, else_block.0],
         Terminator::Return(_) | Terminator::ReturnOwned(_) | Terminator::Unreachable => Vec::new(),
     }
 }

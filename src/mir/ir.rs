@@ -178,6 +178,9 @@ pub enum Terminator {
     
     /// Conditional jump based on a boolean operand
     If { cond: Operand, then_block: BlockId, else_block: BlockId },
+    /// Fused integer comparison branch. Avoids materializing a temporary Bool
+    /// local for hot while/if conditions before Cranelift lowering.
+    IfCmp { op: BinaryOperator, left: Operand, right: Operand, then_block: BlockId, else_block: BlockId },
     
     /// Return from the current function without transferring an owned local.
     Return(Option<Operand>),
@@ -207,6 +210,9 @@ impl std::fmt::Display for MirBlock {
             Terminator::Goto(target) => writeln!(f, "    goto bb{};", target.0),
             Terminator::If { cond, then_block, else_block } => {
                 writeln!(f, "    if {} goto bb{} else goto bb{};", cond, then_block.0, else_block.0)
+            },
+            Terminator::IfCmp { op, left, right, then_block, else_block } => {
+                writeln!(f, "    if {} {:?} {} goto bb{} else goto bb{};", left, op, right, then_block.0, else_block.0)
             },
             Terminator::Return(Some(op)) => writeln!(f, "    return {};", op),
             Terminator::Return(None) => writeln!(f, "    return;"),

@@ -47,6 +47,7 @@ pub fn run(program: &mut MirProgram) -> usize {
         match &block.terminator {
             Terminator::Return(Some(value)) | Terminator::ReturnOwned(value) => add_operand_use(&mut live, value),
             Terminator::If { cond, .. } => add_operand_use(&mut live, cond),
+            Terminator::IfCmp { left, right, .. } => { add_operand_use(&mut live, left); add_operand_use(&mut live, right); }
             _ => {}
         }
         let mut kept = Vec::with_capacity(block.instrs.len());
