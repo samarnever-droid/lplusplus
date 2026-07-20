@@ -103,10 +103,18 @@ char *lpp_read_file(const char *path) {
     fseek(f, 0, SEEK_END);
     long size = ftell(f);
     fseek(f, 0, SEEK_SET);
-    char *buf = (char *)malloc(size + 1);
+    if (size < 0) { fclose(f); return NULL; }
+    char *buf = (char *)malloc((size_t)size + 1);
     if (!buf) { fclose(f); return NULL; }
-    fread(buf, 1, size, f);
-    buf[size] = '\0';
+    size_t wanted = (size_t)size;
+    size_t read = fread(buf, 1, wanted, f);
+    if (read != wanted && ferror(f)) {
+        free(buf);
+        fclose(f);
+        return NULL;
+    }
+    /* A short read at EOF is valid; return precisely the bytes obtained. */
+    buf[read] = '\0';
     fclose(f);
     return buf;
 }
@@ -365,6 +373,7 @@ void lpp_list_free(void *list) {
     lpp_arc_release(list);
 }
 
+#if !defined(LPP_NO_NETWORK)
 /* Network sockets */
 #if defined(_WIN32)
 #if defined(_MSC_VER)
@@ -537,6 +546,8 @@ void lpp_net_close(int64_t handle) {
     lpp_close_socket(sock);
     lpp__socket_clear(handle);
 }
+
+#endif /* !LPP_NO_NETWORK */
 
 /* ── Thread (minimal) ────────────────────────────────────────────────────── */
 
