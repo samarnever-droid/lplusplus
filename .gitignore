@@ -20,3 +20,5 @@ output.c
 
 # Nested Rust runtime build products
 /runtime/lpp-net/target/
+
+/safety/generated/*.lpp
