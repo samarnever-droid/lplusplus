@@ -216,6 +216,7 @@ fn main() {
     let esc_start = Instant::now();
     match escape::EscapeAnalyzer::analyze(&ast, &resolver.table, &type_table) {
         Ok(storage) => {
+            let esc_time = esc_start.elapsed();
             if dump_ast {
                 println!("--- Abstract Syntax Tree ---");
                 println!("{:#?}", ast);
@@ -272,8 +273,10 @@ fn main() {
                 aot_time = aot_start.elapsed();
             }
 
+            let codegen_start = Instant::now();
             let mut cg = codegen::Codegen::new(&resolver.table, &type_table, &storage);
             let c_code = cg.generate(&ast);
+            let codegen_time = codegen_start.elapsed();
             let c_path = filename.replace(".lpp", ".c");
             if let Err(e) = fs::write(&c_path, &c_code) {
                 eprintln!("Failed to write {}: {}", c_path, e);
@@ -284,12 +287,11 @@ fn main() {
                 println!("{}", c_code);
             }
             
-            let esc_time = esc_start.elapsed();
             let total_time = total_start.elapsed();
 
             if env::var("BENCHMARK").is_ok() {
-                println!("TIMING_JSON: {{\"io\": {}, \"lex\": {}, \"parse\": {}, \"semantic\": {}, \"typecheck\": {}, \"escape\": {}, \"mir\": {}, \"aot\": {}, \"total\": {}}}", 
-                   io_time.as_secs_f64(), lex_time.as_secs_f64(), parse_time.as_secs_f64(), sem_time.as_secs_f64(), ty_time.as_secs_f64(), esc_time.as_secs_f64(), mir_time.as_secs_f64(), aot_time.as_secs_f64(), total_time.as_secs_f64());
+                println!("TIMING_JSON: {{\"io\": {}, \"lex\": {}, \"parse\": {}, \"semantic\": {}, \"typecheck\": {}, \"escape\": {}, \"mir\": {}, \"aot\": {}, \"c_codegen\": {}, \"total\": {}}}", 
+                   io_time.as_secs_f64(), lex_time.as_secs_f64(), parse_time.as_secs_f64(), sem_time.as_secs_f64(), ty_time.as_secs_f64(), esc_time.as_secs_f64(), mir_time.as_secs_f64(), aot_time.as_secs_f64(), codegen_time.as_secs_f64(), total_time.as_secs_f64());
             } else if !dump_ast && !dump_symbols && !dump_types && !dump_escape && !dump_mir && !dump_c {
                 println!("L++ v0.1.2\n");
                 if explicit_emit {

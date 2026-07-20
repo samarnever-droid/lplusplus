@@ -17,7 +17,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 HERE = Path(__file__).resolve().parent
 TARGETS = (10_000, 50_000, 100_000)
-PHASES = ("io", "lex", "parse", "semantic", "typecheck", "escape", "mir", "aot", "total")
+PHASES = ("io", "lex", "parse", "semantic", "typecheck", "escape", "mir", "aot", "c_codegen", "total")
 
 
 def command_version(command: list[str]) -> str:
@@ -98,12 +98,12 @@ def main() -> None:
         f"- Memory: `{result['system']['memory_mib']} MiB`", "",
         "## Phase scaling", "",
         "Single-run development measurements. Link time is reported separately because it is dominated by the host linker.", "",
-        "| LOC | I/O ms | Lex ms | Parse ms | Semantic ms | Typecheck ms | Escape ms | MIR ms | AOT ms | Compiler total ms | Link ms |", 
-        "|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "| LOC | I/O ms | Lex ms | Parse ms | Semantic ms | Typecheck ms | Escape ms | MIR ms | AOT ms | C codegen ms | Compiler total ms | Link ms |", 
+        "|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for row in rows:
         markdown.append(
-            "| {loc} | {io:.3f} | {lex:.3f} | {parse:.3f} | {semantic:.3f} | {typecheck:.3f} | {escape:.3f} | {mir:.3f} | {aot:.3f} | {total:.3f} | {link_ms:.3f} |".format(**row)
+            "| {loc} | {io:.3f} | {lex:.3f} | {parse:.3f} | {semantic:.3f} | {typecheck:.3f} | {escape:.3f} | {mir:.3f} | {aot:.3f} | {c_codegen:.3f} | {total:.3f} | {link_ms:.3f} |".format(**row)
         )
     (HERE / "latest.md").write_text("\n".join(markdown) + "\n")
     print((HERE / "latest.md").read_text())
