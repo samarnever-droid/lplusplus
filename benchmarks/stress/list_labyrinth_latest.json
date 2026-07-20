@@ -1,0 +1,27 @@
+{
+  "workload": {
+    "source": "safety/generated/list_game_stress_10k.lpp",
+    "lines": 18415,
+    "expected_stdout": "552"
+  },
+  "c_backend": {
+    "emit_ms": 188.234,
+    "host_link_ms": 9697.204,
+    "run_ms": 1.8,
+    "stdout": "552"
+  },
+  "cranelift_aot": {
+    "emit_ms": 432.783,
+    "host_link_ms": 232.298,
+    "run_ms": 1.409,
+    "stdout": "552"
+  },
+  "direct_linker": {
+    "available": true,
+    "supported": false,
+    "runtime_compile_ms": 76.763,
+    "link_ms": 9.2,
+    "exit_code": 1,
+    "diagnostic": "lpp-link error: unresolved GOT symbol 'lpp_write_file'"
+  }
+}
