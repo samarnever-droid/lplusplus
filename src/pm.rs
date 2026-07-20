@@ -326,6 +326,7 @@ fn output_path_for_name(dir: &Path, name: &str) -> PathBuf {
 }
 
 enum LinkStrategy {
+    #[cfg_attr(not(windows), allow(dead_code))]
     MsvcLink { runtime_obj: PathBuf },
     /// Host linker/compiler invocation with a prebuilt L++ runtime object.
     /// This is Phase 1 of the native-linker roadmap: user builds no longer
@@ -452,6 +453,7 @@ fn compile_source_to_object(source_path: &Path) -> Result<PathBuf, String> {
     Ok(obj_file)
 }
 
+#[cfg(windows)]
 fn find_vcvars64() -> Option<PathBuf> {
     let fallbacks = [
         "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Auxiliary\\Build\\vcvars64.bat",
@@ -1448,6 +1450,7 @@ pub fn load_msvc_env() {
 }
 
 #[cfg(not(windows))]
+#[allow(dead_code)]
 pub fn load_msvc_env() {}
 
 fn cmd_build() -> Option<String> {

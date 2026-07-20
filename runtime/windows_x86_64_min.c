@@ -153,3 +153,22 @@ int64_t lpp_list_get(void *raw, int64_t index) {
 void *lpp_list_get_arc(void *list, int64_t index) { return (void *)(intptr_t)lpp_list_get(list, index); }
 int64_t lpp_list_len(void *raw) { return raw ? ((LppList *)raw)->len : 0; }
 void lpp_list_free(void *list) { lpp_arc_release(list); }
+
+/* ── Thread spawn via CreateThread ─────────────────────────────────────── */
+typedef DWORD (__stdcall *LppThreadProc)(void *param);
+
+__declspec(dllimport) void *__stdcall CreateThread(
+    void *security, SIZE_T stack_size, LppThreadProc start,
+    void *param, DWORD flags, DWORD *thread_id);
+__declspec(dllimport) DWORD __stdcall WaitForSingleObject(void *handle, DWORD ms);
+__declspec(dllimport) BOOL __stdcall CloseHandle(void *handle);
+
+#define INFINITE 0xFFFFFFFF
+
+void lpp_thread_spawn(void *func_ptr, void *env_ptr) {
+    void *handle = CreateThread(0, 0, (LppThreadProc)func_ptr, env_ptr, 0, 0);
+    if (handle) {
+        WaitForSingleObject(handle, INFINITE);
+        CloseHandle(handle);
+    }
+}
