@@ -246,6 +246,9 @@ fn main() {
                     return;
                 }
             };
+            // C-Speed Project: simplify only scalar/copy MIR before ARC so
+            // no retain/release or ownership edge can be optimized away.
+            mir::pass_peephole::run(&mut mir_program);
             mir::pass_arc::run_arc_insertion_pass(&mut mir_program, &storage);
             
             if dump_mir {

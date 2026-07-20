@@ -3,6 +3,7 @@ pub mod ir;
 pub mod lower;
 pub mod pass_arc;
 pub mod pass_closure;
+pub mod pass_peephole;
 
 // MIR (Mid-level Intermediate Representation) will be defined here.
 // This is the bridge between the high-level AST (after analysis) and Cranelift.
