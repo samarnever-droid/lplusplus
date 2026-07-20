@@ -1,20 +1,14 @@
-# bench_calls.lpp — Deep function call chain benchmark
-# Measures function call/return overhead across 1M calls.
+# Function-call-heavy native workload: 10M direct scalar calls.
+def mix(value: Int) -> Int:
+    return value * 3 + 1
 
-def inc(n: Int) -> Int:
-    return n + 1
-
-def add(a: Int, b: Int) -> Int:
-    return a + b
-
-def chain(n: Int) -> Int:
-    mut r := 0
+def call_score(n: Int) -> Int:
     mut i := 0
+    mut score := 0
     while i < n:
-        r = add(r, inc(i))
+        score = score + mix(i)
         i = i + 1
-    return r
+    return score
 
 def main():
-    result := chain(1000000)
-    print(result)
+    print(call_score(10000000))

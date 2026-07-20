@@ -1,0 +1,14 @@
+# Struct + List[Int] ownership/runtime workload.
+struct Score:
+    value: Int
+
+def main():
+    values := [1, 2, 3, 4, 5]
+    score := Score()
+    score.value = 0
+    mut i := 0
+    while i < 100000:
+        list_push(values, i)
+        score.value = score.value + list_get(values, i % 5)
+        i = i + 1
+    print(score.value + list_len(values))

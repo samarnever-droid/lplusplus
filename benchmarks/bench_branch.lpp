@@ -1,0 +1,17 @@
+# Branch-heavy native workload: deterministic 10M-iteration branch mix.
+def branch_score(n: Int) -> Int:
+    mut i := 0
+    mut score := 0
+    while i < n:
+        if i % 3 == 0:
+            score = score + 3
+        else:
+            if i % 3 == 1:
+                score = score + 1
+            else:
+                score = score - 2
+        i = i + 1
+    return score
+
+def main():
+    print(branch_score(10000000))
