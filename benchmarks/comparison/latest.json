@@ -1,113 +1,311 @@
 {
-  "generated_utc": "2026-07-19T08:17:40.395768+00:00",
+  "generated_utc": "2026-07-20T02:55:26.084667+00:00",
+  "repetitions": 3,
+  "warmups": 1,
+  "system": {
+    "platform": "Linux-6.1.158+-x86_64-with-glibc2.41",
+    "cpu_count": 2
+  },
   "rows": [
     {
       "workload": "fib35",
-      "language": "lpp",
+      "language": "lpp-aot-none",
       "status": "PASS",
-      "compile_ms": 4.301608999867312,
-      "link_ms": 213.40601199972298,
-      "build_ms": 217.7076209995903,
-      "runtime_ms": 53.55177299998104,
+      "compile_ms": 3.313,
+      "link_ms": 355.299,
+      "build_ms": 358.612,
+      "runtime": {
+        "median_ms": 66.027,
+        "min_ms": 65.882,
+        "max_ms": 66.488,
+        "p95_ms": 66.488
+      },
+      "tool": "Cranelift AOT + host link"
+    },
+    {
+      "workload": "fib35",
+      "language": "lpp-aot-speed",
+      "status": "PASS",
+      "compile_ms": 2.692,
+      "link_ms": 197.521,
+      "build_ms": 200.213,
+      "runtime": {
+        "median_ms": 66.379,
+        "min_ms": 66.141,
+        "max_ms": 67.111,
+        "p95_ms": 67.111
+      },
       "tool": "Cranelift AOT + host link"
     },
     {
       "workload": "fib35",
       "language": "c",
       "status": "PASS",
-      "runtime_ms": 19.755009000164137,
-      "compile_ms": 76.59296900010304,
-      "link_ms": null,
-      "build_ms": 76.59296900010304,
+      "build": {
+        "median_ms": 67.869,
+        "min_ms": 67.609,
+        "max_ms": 82.054,
+        "p95_ms": 82.054
+      },
+      "runtime": {
+        "median_ms": 19.016,
+        "min_ms": 18.71,
+        "max_ms": 19.216,
+        "p95_ms": 19.216
+      },
       "tool": "cc (Debian 14.2.0-19) 14.2.0"
     },
     {
       "workload": "fib35",
       "language": "cpp",
       "status": "PASS",
-      "runtime_ms": 18.431909000355517,
-      "compile_ms": 123.8444199998412,
-      "link_ms": null,
-      "build_ms": 123.8444199998412,
+      "build": {
+        "median_ms": 85.084,
+        "min_ms": 80.455,
+        "max_ms": 288.376,
+        "p95_ms": 288.376
+      },
+      "runtime": {
+        "median_ms": 19.171,
+        "min_ms": 18.788,
+        "max_ms": 19.899,
+        "p95_ms": 19.899
+      },
       "tool": "c++ (Debian 14.2.0-19) 14.2.0"
     },
     {
       "workload": "fib35",
       "language": "rust",
       "status": "PASS",
-      "runtime_ms": 34.06998700029362,
-      "compile_ms": 84.9539430000732,
-      "link_ms": null,
-      "build_ms": 84.9539430000732,
+      "build": {
+        "median_ms": 72.363,
+        "min_ms": 71.453,
+        "max_ms": 92.471,
+        "p95_ms": 92.471
+      },
+      "runtime": {
+        "median_ms": 28.489,
+        "min_ms": 28.25,
+        "max_ms": 28.566,
+        "p95_ms": 28.566
+      },
       "tool": "rustc 1.97.1 (8bab26f4f 2026-07-14)"
     },
     {
       "workload": "fib35",
       "language": "go",
       "status": "SKIP",
-      "runtime_ms": null,
-      "tool": "unavailable"
+      "reason": "toolchain unavailable"
     },
     {
       "workload": "fib35",
       "language": "zig",
       "status": "SKIP",
-      "runtime_ms": null,
-      "tool": "unavailable"
+      "reason": "toolchain unavailable"
+    },
+    {
+      "workload": "fib35",
+      "language": "java",
+      "status": "PASS",
+      "build": {
+        "median_ms": 532.898,
+        "min_ms": 501.274,
+        "max_ms": 825.483,
+        "p95_ms": 825.483
+      },
+      "runtime": {
+        "median_ms": 104.59,
+        "min_ms": 103.652,
+        "max_ms": 105.035,
+        "p95_ms": 105.035
+      },
+      "tool": "javac 11"
+    },
+    {
+      "workload": "fib35",
+      "language": "python",
+      "status": "PASS",
+      "build": {
+        "median_ms": 0.0
+      },
+      "runtime": {
+        "median_ms": 1195.021,
+        "min_ms": 1193.934,
+        "max_ms": 1211.35,
+        "p95_ms": 1211.35
+      },
+      "tool": "Python 3.13.13"
+    },
+    {
+      "workload": "fib35",
+      "language": "node",
+      "status": "PASS",
+      "build": {
+        "median_ms": 0.0
+      },
+      "runtime": {
+        "median_ms": 128.308,
+        "min_ms": 127.288,
+        "max_ms": 128.966,
+        "p95_ms": 128.966
+      },
+      "tool": "v20.20.2"
+    },
+    {
+      "workload": "fib35",
+      "language": "ruby",
+      "status": "SKIP",
+      "reason": "toolchain unavailable"
     },
     {
       "workload": "loop10m",
-      "language": "lpp",
+      "language": "lpp-aot-none",
       "status": "PASS",
-      "compile_ms": 2.84185400005299,
-      "link_ms": 200.6075710000914,
-      "build_ms": 203.4494250001444,
-      "runtime_ms": 9.874158999991778,
+      "compile_ms": 2.466,
+      "link_ms": 199.755,
+      "build_ms": 202.221,
+      "runtime": {
+        "median_ms": 10.363,
+        "min_ms": 10.311,
+        "max_ms": 10.411,
+        "p95_ms": 10.411
+      },
+      "tool": "Cranelift AOT + host link"
+    },
+    {
+      "workload": "loop10m",
+      "language": "lpp-aot-speed",
+      "status": "PASS",
+      "compile_ms": 2.518,
+      "link_ms": 198.566,
+      "build_ms": 201.084,
+      "runtime": {
+        "median_ms": 7.291,
+        "min_ms": 7.168,
+        "max_ms": 7.453,
+        "p95_ms": 7.453
+      },
       "tool": "Cranelift AOT + host link"
     },
     {
       "workload": "loop10m",
       "language": "c",
       "status": "PASS",
-      "runtime_ms": 1.3007389998165308,
-      "compile_ms": 39.58516000011514,
-      "link_ms": null,
-      "build_ms": 39.58516000011514,
+      "build": {
+        "median_ms": 34.794,
+        "min_ms": 33.706,
+        "max_ms": 36.128,
+        "p95_ms": 36.128
+      },
+      "runtime": {
+        "median_ms": 1.186,
+        "min_ms": 1.147,
+        "max_ms": 1.267,
+        "p95_ms": 1.267
+      },
       "tool": "cc (Debian 14.2.0-19) 14.2.0"
     },
     {
       "workload": "loop10m",
       "language": "cpp",
       "status": "PASS",
-      "runtime_ms": 1.4524339999297808,
-      "compile_ms": 52.85882499993022,
-      "link_ms": null,
-      "build_ms": 52.85882499993022,
+      "build": {
+        "median_ms": 47.909,
+        "min_ms": 46.835,
+        "max_ms": 48.221,
+        "p95_ms": 48.221
+      },
+      "runtime": {
+        "median_ms": 1.164,
+        "min_ms": 1.115,
+        "max_ms": 1.194,
+        "p95_ms": 1.194
+      },
       "tool": "c++ (Debian 14.2.0-19) 14.2.0"
     },
     {
       "workload": "loop10m",
       "language": "rust",
       "status": "PASS",
-      "runtime_ms": 1.5744850002192834,
-      "compile_ms": 74.33290000017223,
-      "link_ms": null,
-      "build_ms": 74.33290000017223,
+      "build": {
+        "median_ms": 70.664,
+        "min_ms": 69.144,
+        "max_ms": 71.319,
+        "p95_ms": 71.319
+      },
+      "runtime": {
+        "median_ms": 1.428,
+        "min_ms": 1.362,
+        "max_ms": 1.435,
+        "p95_ms": 1.435
+      },
       "tool": "rustc 1.97.1 (8bab26f4f 2026-07-14)"
     },
     {
       "workload": "loop10m",
       "language": "go",
       "status": "SKIP",
-      "runtime_ms": null,
-      "tool": "unavailable"
+      "reason": "toolchain unavailable"
     },
     {
       "workload": "loop10m",
       "language": "zig",
       "status": "SKIP",
-      "runtime_ms": null,
-      "tool": "unavailable"
+      "reason": "toolchain unavailable"
+    },
+    {
+      "workload": "loop10m",
+      "language": "java",
+      "status": "PASS",
+      "build": {
+        "median_ms": 498.939,
+        "min_ms": 482.81,
+        "max_ms": 507.912,
+        "p95_ms": 507.912
+      },
+      "runtime": {
+        "median_ms": 63.76,
+        "min_ms": 63.08,
+        "max_ms": 64.166,
+        "p95_ms": 64.166
+      },
+      "tool": "javac 11"
+    },
+    {
+      "workload": "loop10m",
+      "language": "python",
+      "status": "PASS",
+      "build": {
+        "median_ms": 0.0
+      },
+      "runtime": {
+        "median_ms": 1038.542,
+        "min_ms": 1028.076,
+        "max_ms": 1039.38,
+        "p95_ms": 1039.38
+      },
+      "tool": "Python 3.13.13"
+    },
+    {
+      "workload": "loop10m",
+      "language": "node",
+      "status": "PASS",
+      "build": {
+        "median_ms": 0.0
+      },
+      "runtime": {
+        "median_ms": 348.065,
+        "min_ms": 347.928,
+        "max_ms": 349.455,
+        "p95_ms": 349.455
+      },
+      "tool": "v20.20.2"
+    },
+    {
+      "workload": "loop10m",
+      "language": "ruby",
+      "status": "SKIP",
+      "reason": "toolchain unavailable"
     }
   ]
 }
