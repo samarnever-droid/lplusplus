@@ -23,9 +23,17 @@ jobs:
         run: cargo build --release --locked --bin lpp --bin lpp-link
       - name: Package Linux runtime objects
         run: |
-          mkdir -p package/lpp-linux-x86_64/bin package/lpp-linux-x86_64/lib
+          # Phase 1 networking migration: ship the reviewed Rust static
+          # runtime beside L++ without changing the default C compatibility
+          # ABI. This keeps end-user installs Rust-free while giving package
+          # integration a reproducible, versioned native artifact.
+          cargo build --manifest-path runtime/lpp-net/Cargo.toml --release --locked
+          mkdir -p package/lpp-linux-x86_64/bin package/lpp-linux-x86_64/lib package/lpp-linux-x86_64/include
           cp target/release/lpp package/lpp-linux-x86_64/bin/
           cp target/release/lpp-link package/lpp-linux-x86_64/bin/
+          cp runtime/lpp-net/target/release/liblpp_net_runtime.a package/lpp-linux-x86_64/lib/
+          cp runtime/lpp-net/include/lpp_net_runtime.h package/lpp-linux-x86_64/include/
+          cp runtime/lpp-net/README.md package/lpp-linux-x86_64/lib/lpp_net_runtime.README.md
           cc -O2 -fPIC -c lpp_runtime.c -o package/lpp-linux-x86_64/lib/lpp_runtime.o -pthread
           cc -O2 -ffreestanding -fno-stack-protector -fno-pic -mno-red-zone \
             -c runtime/linux_x86_64_min.c -o package/lpp-linux-x86_64/lib/lpp_runtime_min.o
