@@ -250,6 +250,9 @@ fn main() {
             // C-Speed Project: simplify only scalar/copy MIR before ARC so
             // no retain/release or ownership edge can be optimized away.
             mir::pass_peephole::run(&mut mir_program);
+            // Propagate constant integers through basic blocks before
+            // inlining — constant addresses/offsets unlock further folding.
+            mir::pass_constprop::run(&mut mir_program);
             // Inline only scalar straight-line direct calls; ownership-bearing
             // functions remain opaque so ARC semantics cannot be altered.
             mir::pass_inline::run(&mut mir_program);
