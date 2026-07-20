@@ -38,5 +38,5 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Validate safety contract and public claims
         run: sh scripts/check_safety_mission.sh
-      - name: Run ownership AOT parity and rejection corpus
-        run: sh tests/run_aot_parity.sh
+      - name: Run S1 deterministic rejection corpus
+        run: sh scripts/run_s1_rejection.sh

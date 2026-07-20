@@ -31,6 +31,10 @@ The current public promise is narrower:
 9. Direct linkers reject unknown relocations/imports rather than emitting ambiguous binaries.
 10. Benchmark, website, wiki, and README claims must not exceed S2 evidence.
 
+## S1 active rejection gate
+
+The repository’s S1 gate is `sh scripts/run_s1_rejection.sh`. It runs the S0 famous-tool baseline and then proves that known unsafe ownership graphs, unsupported AOT shapes, malformed direct-link objects, unresolved imports, and prohibited macOS ARM64 static output do not result in a usable executable. The detailed cases are in `safety/s1/REJECTION_CONTRACT.md`.
+
 ## Current verified boundary
 
 S2 applies only to the documented Linux x86-64 Cranelift AOT ownership subset: ARC structs, moves/borrows/owned returns, aliases, closure capsules, supported lists, destructor chains, and strong-cycle rejection. It does **not** automatically extend to C compatibility code, unimplemented thread transfer, direct networking linkage, all platform linkers, or future async tasks.
