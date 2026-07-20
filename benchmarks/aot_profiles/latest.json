@@ -1,0 +1,26 @@
+{
+  "source_lines": 100000,
+  "rows": [
+    {
+      "profile": "none",
+      "aot_emit_ms": 454.976,
+      "host_link_ms": 220.58,
+      "run_ms": 1.424,
+      "object_bytes": 552288
+    },
+    {
+      "profile": "speed_and_size",
+      "aot_emit_ms": 850.736,
+      "host_link_ms": 198.456,
+      "run_ms": 1.411,
+      "object_bytes": 2304
+    },
+    {
+      "profile": "speed",
+      "aot_emit_ms": 859.365,
+      "host_link_ms": 196.646,
+      "run_ms": 1.305,
+      "object_bytes": 2304
+    }
+  ]
+}

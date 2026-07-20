@@ -175,13 +175,20 @@ impl AotCompiler {
         flag_builder
             .set("is_pic", "true")
             .map_err(|e| format!("set is_pic: {}", e))?;
-        let opt_level = if std::env::var("LPP_RELEASE").is_ok() {
-            "speed"
-        } else {
-            "none"
+        // Compilation latency is a first-class L++ pillar. Keep the existing
+        // release default, but make Cranelift's trade-off explicit and
+        // benchmarkable instead of forcing contributors to edit compiler code.
+        // Valid values are Cranelift's stable levels: none, speed, speed_and_size.
+        let opt_level = match std::env::var("LPP_AOT_OPT") {
+            Ok(value) if matches!(value.as_str(), "none" | "speed" | "speed_and_size") => value,
+            Ok(value) => return Err(format!(
+                "invalid LPP_AOT_OPT='{}'; expected none, speed, or speed_and_size", value
+            )),
+            Err(_) if std::env::var("LPP_RELEASE").is_ok() => "speed".to_string(),
+            Err(_) => "none".to_string(),
         };
         flag_builder
-            .set("opt_level", opt_level)
+            .set("opt_level", &opt_level)
             .map_err(|e| format!("set opt_level '{}': {}", opt_level, e))?;
 
         let isa = cranelift_codegen::isa::lookup(Triple::host())
