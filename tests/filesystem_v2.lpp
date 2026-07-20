@@ -1,0 +1,16 @@
+# Expected output:
+# 5
+# 0
+# 5
+# 0
+# 0
+# 0
+
+def main():
+    write_file("lpp_fs_source.tmp", "alpha")
+    print(file_size("lpp_fs_source.tmp"))
+    print(file_copy("lpp_fs_source.tmp", "lpp_fs_copy.tmp"))
+    print(file_size("lpp_fs_copy.tmp"))
+    print(file_move("lpp_fs_copy.tmp", "lpp_fs_moved.tmp"))
+    print(delete_file("lpp_fs_source.tmp"))
+    print(delete_file("lpp_fs_moved.tmp"))

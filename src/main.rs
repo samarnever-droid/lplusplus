@@ -66,7 +66,7 @@ fn main() {
     
     for arg in args.iter().skip(1) {
         if arg == "--version" || arg == "-v" {
-            println!("L++ Compiler v0.1.2");
+            println!("L++ Compiler v0.1.3");
             return;
         } else if arg == "--help" || arg == "-h" {
             println!("L++ (L Plus Plus) Compiler, Codegen Backend & Package Manager");
@@ -255,6 +255,9 @@ fn main() {
             // Straight-line scalar dead stores are removed only after folding
             // and inlining, before ownership instrumentation.
             mir::pass_dce::run(&mut mir_program);
+            // Fuses a trailing comparison temporary with its branch to avoid
+            // setcc/test materialization in hot native loops.
+            mir::pass_branch::run(&mut mir_program);
             mir::pass_arc::run_arc_insertion_pass(&mut mir_program, &storage);
             
             if dump_mir {
@@ -308,7 +311,7 @@ fn main() {
                 println!("TIMING_JSON: {{\"io\": {}, \"lex\": {}, \"parse\": {}, \"semantic\": {}, \"typecheck\": {}, \"escape\": {}, \"mir\": {}, \"aot\": {}, \"c_codegen\": {}, \"total\": {}}}", 
                    io_time.as_secs_f64(), lex_time.as_secs_f64(), parse_time.as_secs_f64(), sem_time.as_secs_f64(), ty_time.as_secs_f64(), esc_time.as_secs_f64(), mir_time.as_secs_f64(), aot_time.as_secs_f64(), codegen_time.as_secs_f64(), total_time.as_secs_f64());
             } else if !dump_ast && !dump_symbols && !dump_types && !dump_escape && !dump_mir && !dump_c {
-                println!("L++ v0.1.2\n");
+                println!("L++ v0.1.3\n");
                 if explicit_emit {
                     println!("Artifacts emitted next to the source file.");
                 } else {

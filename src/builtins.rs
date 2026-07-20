@@ -564,6 +564,12 @@ pub fn get_builtins() -> &'static [Builtin] {
             cl_params: &[0],
             cl_return: Some(1),
         },
+        Builtin { name: "file_size", symbol: "lpp_file_size", params: &[ParamType::Specific(TypeRef::Str)], return_type: TypeRef::Int, cl_params: &[0], cl_return: Some(0) },
+        Builtin { name: "lpp_file_size", symbol: "lpp_file_size", params: &[ParamType::Specific(TypeRef::Str)], return_type: TypeRef::Int, cl_params: &[0], cl_return: Some(0) },
+        Builtin { name: "file_copy", symbol: "lpp_file_copy", params: &[ParamType::Specific(TypeRef::Str), ParamType::Specific(TypeRef::Str)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
+        Builtin { name: "lpp_file_copy", symbol: "lpp_file_copy", params: &[ParamType::Specific(TypeRef::Str), ParamType::Specific(TypeRef::Str)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
+        Builtin { name: "file_move", symbol: "lpp_file_move", params: &[ParamType::Specific(TypeRef::Str), ParamType::Specific(TypeRef::Str)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
+        Builtin { name: "lpp_file_move", symbol: "lpp_file_move", params: &[ParamType::Specific(TypeRef::Str), ParamType::Specific(TypeRef::Str)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
     ];
     BUILTINS
 }

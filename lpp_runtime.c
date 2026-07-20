@@ -156,6 +156,43 @@ int8_t lpp_file_exists(const char *path) {
     return 0;
 }
 
+/* Returns file length in bytes, or -1 for an invalid/unreadable path. */
+int64_t lpp_file_size(const char *path) {
+    if (!path) return -1;
+    FILE *f = fopen(path, "rb");
+    if (!f) return -1;
+    if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return -1; }
+    long size = ftell(f);
+    fclose(f);
+    return size < 0 ? -1 : (int64_t)size;
+}
+
+/* Copies through a bounded buffer, checking every read/write/close result. */
+int64_t lpp_file_copy(const char *source, const char *destination) {
+    if (!source || !destination) return -1;
+    FILE *in = fopen(source, "rb");
+    if (!in) return -1;
+    FILE *out = fopen(destination, "wb");
+    if (!out) { fclose(in); return -1; }
+    unsigned char buffer[8192];
+    int failed = 0;
+    for (;;) {
+        size_t read = fread(buffer, 1, sizeof(buffer), in);
+        if (read && fwrite(buffer, 1, read, out) != read) { failed = 1; break; }
+        if (read < sizeof(buffer)) { if (ferror(in)) failed = 1; break; }
+    }
+    if (fclose(in) != 0 || fclose(out) != 0) failed = 1;
+    if (failed) { remove(destination); return -1; }
+    return 0;
+}
+
+/* Rename is atomic on a single filesystem on POSIX and delegates to the host
+ * CRT on Windows. It never reports success when rename itself failed. */
+int64_t lpp_file_move(const char *source, const char *destination) {
+    if (!source || !destination) return -1;
+    return rename(source, destination) == 0 ? 0 : -1;
+}
+
 
 /* ── ARC (Automatic Reference Counting) ──────────────────────────────────── */
 /*

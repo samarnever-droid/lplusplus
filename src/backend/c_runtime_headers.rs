@@ -83,12 +83,42 @@ static char* lpp_read_file(const char* filename) {
 }
 
 static int64_t lpp_write_file(const char* filename, const char* content) {
+    if (!filename || !content) return -1;
     FILE* f = fopen(filename, "wb");
-    if (f) {
-        fwrite(content, 1, strlen(content), f);
-        fclose(f);
+    if (!f) return -1;
+    size_t length = strlen(content);
+    int failed = fwrite(content, 1, length, f) != length || fclose(f) != 0;
+    return failed ? -1 : 0;
+}
+
+static int64_t lpp_file_size(const char* filename) {
+    if (!filename) return -1;
+    FILE* f = fopen(filename, "rb");
+    if (!f) return -1;
+    if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return -1; }
+    long size = ftell(f); fclose(f);
+    return size < 0 ? -1 : (int64_t)size;
+}
+
+static int64_t lpp_file_copy(const char* source, const char* destination) {
+    if (!source || !destination) return -1;
+    FILE* in = fopen(source, "rb");
+    if (!in) return -1;
+    FILE* out = fopen(destination, "wb");
+    if (!out) { fclose(in); return -1; }
+    unsigned char buffer[8192]; int failed = 0;
+    for (;;) {
+        size_t got = fread(buffer, 1, sizeof(buffer), in);
+        if (got && fwrite(buffer, 1, got, out) != got) { failed = 1; break; }
+        if (got < sizeof(buffer)) { if (ferror(in)) failed = 1; break; }
     }
+    if (fclose(in) != 0 || fclose(out) != 0) failed = 1;
+    if (failed) { remove(destination); return -1; }
     return 0;
+}
+
+static int64_t lpp_file_move(const char* source, const char* destination) {
+    return source && destination && rename(source, destination) == 0 ? 0 : -1;
 }
 
 typedef void (*LppListElementFn)(int64_t value);
