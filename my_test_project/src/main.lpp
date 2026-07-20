@@ -1,0 +1,47 @@
+import task_lib
+
+def main():
+    print_str("=== Welcome to the L++ Task Manager ===")
+    print_str("This is a multi-file project demo running on native Cranelift.")
+    
+    # Initialize a list of tasks
+    mut tasks := list_new()
+    
+    # Create two tasks dynamically
+    t1 := create_task(101, "Review Compiler Architecture")
+    t2 := create_task(102, "Optimize Memory Dataflow ARC")
+    
+    # Toggle the first task as completed
+    t1.completed = true
+    
+    # Push tasks to our list
+    list_push(tasks, t1)
+    list_push(tasks, t2)
+    
+    # Show how many tasks we have using list_len
+    total := list_len(tasks)
+    print_str("Total tasks registered:")
+    print(total)
+    
+    # Iterate through the tasks list and show their details
+    print_str("Listing all tasks:")
+    for t in tasks:
+        show_task(t)
+        
+    # Write task details to a local log file to verify File I/O
+    print_str("Writing summary to tasks_log.txt...")
+    log_res := write_file("tasks_log.txt", "L++ Task Verification Log\nStatus: Complete\n")
+    if log_res == 0:
+        print_str("File written successfully!")
+        
+        # Read the file contents back and print them
+        print_str("Reading log contents:")
+        contents := read_file("tasks_log.txt")
+        print_str(contents)
+        
+        # Delete file after read to clean up
+        delete_file("tasks_log.txt")
+    else:
+        print_str("Error writing log file.")
+
+    print_str("All tests passed successfully!")

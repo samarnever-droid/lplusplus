@@ -49,6 +49,7 @@ impl<'a> MirLowerCtx<'a> {
             Type::Int => TypeRef::Int,
             Type::Float => TypeRef::Float,
             Type::String => TypeRef::Str,
+            Type::Bool => TypeRef::Bool,
             Type::Void => TypeRef::Void,
             Type::Custom(name) => self
                 .type_table

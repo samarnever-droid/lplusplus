@@ -75,9 +75,15 @@ def main() -> None:
             obj = copied.with_suffix(".o")
             if compile_result.returncode != 0 or timing is None or not obj.exists():
                 raise RuntimeError(f"{lines} LOC compile failed:\n{compile_result.stderr}")
-            executable = temp / f"scale_{lines}"
+            exe_suffix = ".exe" if os.name == "nt" else ""
+            executable = temp / f"scale_{lines}{exe_suffix}"
             started = time.perf_counter()
-            subprocess.run([cc, "-O2", str(obj), str(ROOT / "lpp_runtime.c"), "-o", str(executable), "-pthread"], check=True, capture_output=True)
+            if "cl" in Path(cc).name.lower():
+                # MSVC Compiler
+                subprocess.run([cc, "/nologo", "/O2", str(obj), str(ROOT / "lpp_runtime.c"), f"/Fe:{executable}"], check=True, capture_output=True)
+            else:
+                # GCC / Clang
+                subprocess.run([cc, "-O2", str(obj), str(ROOT / "lpp_runtime.c"), "-o", str(executable), "-pthread"], check=True, capture_output=True)
             link_ms = (time.perf_counter() - started) * 1000
             run = subprocess.run([str(executable)], text=True, capture_output=True)
             expected = str(lines - 4)

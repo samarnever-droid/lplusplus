@@ -89,6 +89,7 @@ impl<'a> TypeChecker<'a> {
             Type::Int => TypeRef::Int,
             Type::Float => TypeRef::Float,
             Type::String => TypeRef::Str,
+            Type::Bool => TypeRef::Bool,
             Type::Void => TypeRef::Void,
             Type::Custom(name) => {
                 if let Some(&id) = type_table.structs_by_name.get(name) {

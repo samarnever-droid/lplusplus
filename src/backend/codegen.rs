@@ -771,6 +771,7 @@ impl<'a> Codegen<'a> {
             Type::Int           => "int64_t".to_string(),
             Type::Float         => "double".to_string(),
             Type::String        => "char*".to_string(),
+            Type::Bool          => "int".to_string(),
             Type::Void          => "void".to_string(),
             Type::Custom(n)     => format!("{}_t*", n),
             Type::Generic(_, _) => "void*".to_string(),

@@ -1,0 +1,7 @@
+.lpp_packages/
+target/
+output.c
+output.obj
+*.obj
+*.exe
+*.o

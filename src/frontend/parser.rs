@@ -207,7 +207,9 @@ impl Parser {
 
         match base_name.as_str() {
             "Int" => Ok(Type::Int),
+            "Float" => Ok(Type::Float),
             "String" => Ok(Type::String),
+            "Bool" => Ok(Type::Bool),
             "Void" => Ok(Type::Void),
             _ => Ok(Type::Custom(base_name)),
         }

@@ -3,6 +3,7 @@ pub enum Type {
     Int,
     Float,
     String,
+    Bool,
     Void,
     Custom(String),
     Generic(String, Vec<Type>),
