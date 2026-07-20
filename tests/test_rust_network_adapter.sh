@@ -23,4 +23,7 @@ import socket,sys
 s=socket.socket();s.bind(('127.0.0.1',0));s.listen(1);open(sys.argv[1],'w').write(str(s.getsockname()[1]));c,_=s.accept();assert c.recv(4)==b'ping';c.sendall(b'pong');c.close();s.close()
 PY
 p=$!; for _ in $(seq 1 100); do [ -s "$TMP/port" ] && break;sleep .01;done
-"$TMP/client" "$(cat "$TMP/port")";wait "$p";echo 'PASS Rust network compatibility adapter'
+# RUNNER permits Valgrind/Memcheck in the S0 safety gate without duplicating
+# the native ABI test. It is intentionally word-split for command + arguments.
+# shellcheck disable=SC2086
+$RUNNER "$TMP/client" "$(cat "$TMP/port")";wait "$p";echo 'PASS Rust network compatibility adapter'
