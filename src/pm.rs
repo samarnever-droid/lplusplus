@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::hash::{Hash, Hasher};
 
 #[derive(Debug)]
 #[allow(dead_code)]
@@ -372,9 +373,42 @@ fn detect_link_strategy() -> Result<LinkStrategy, String> {
     Err("No supported native linker/compiler found. Install MSVC build tools, cc, gcc, or clang.".to_string())
 }
 
+fn package_cache_key(source_path: &Path) -> Result<String, String> {
+    // Cache correctness is more important than cache hit rate: hash every L++
+    // source in src/, the manifest, compiler version, target, and AOT profile.
+    let mut files = Vec::new();
+    if Path::new("src").is_dir() {
+        for entry in fs::read_dir("src").map_err(|e| format!("read src for cache: {}", e))? {
+            let path = entry.map_err(|e| format!("read cache entry: {}", e))?.path();
+            if path.extension().is_some_and(|ext| ext == "lpp") { files.push(path); }
+        }
+    }
+    if !files.iter().any(|path| path == source_path) { files.push(source_path.to_path_buf()); }
+    files.sort();
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    env!("CARGO_PKG_VERSION").hash(&mut hasher);
+    std::env::consts::OS.hash(&mut hasher);
+    std::env::consts::ARCH.hash(&mut hasher);
+    std::env::var("LPP_AOT_OPT").unwrap_or_else(|_| "none".to_string()).hash(&mut hasher);
+    for path in files {
+        path.to_string_lossy().hash(&mut hasher);
+        fs::read(&path).map_err(|e| format!("read '{}' for cache: {}", path.display(), e))?.hash(&mut hasher);
+    }
+    if let Ok(manifest) = fs::read("lpp.toml") { manifest.hash(&mut hasher); }
+    Ok(format!("{:016x}", hasher.finish()))
+}
+
 fn compile_source_to_object(source_path: &Path) -> Result<PathBuf, String> {
     let compiler_path = current_compiler_path()?;
     let obj_file = source_path.with_extension("o");
+    let cache_dir = Path::new("LppData").join("cache");
+    let cache_key = package_cache_key(source_path)?;
+    let cache_object = cache_dir.join(format!("{}.o", cache_key));
+    if cache_object.exists() {
+        fs::copy(&cache_object, &obj_file).map_err(|e| format!("restore cached object: {}", e))?;
+        println!("  Cache hit: {}", cache_key);
+        return Ok(obj_file);
+    }
     let status = std::process::Command::new(&compiler_path)
         .env("LPP_AOT", "1")
         // Package builds consume the object file directly. Skipping the
@@ -396,6 +430,9 @@ fn compile_source_to_object(source_path: &Path) -> Result<PathBuf, String> {
             obj_file.display()
         ));
     }
+    fs::create_dir_all(&cache_dir).map_err(|e| format!("create LppData cache: {}", e))?;
+    fs::copy(&obj_file, &cache_object).map_err(|e| format!("write cached object: {}", e))?;
+    println!("  Cache miss: stored {}", cache_key);
     Ok(obj_file)
 }
 
@@ -1379,7 +1416,7 @@ fn cmd_build() -> Option<String> {
     
     cmd_install(false);
     
-    let target_dir = Path::new("target").join("release");
+    let target_dir = Path::new("LppData").join("build").join("release");
     let _ = fs::create_dir_all(&target_dir);
 
     println!("  Compiling {}...", entry_point.display());

@@ -22,3 +22,7 @@ output.c
 /runtime/lpp-net/target/
 
 /safety/generated/*.lpp
+
+/benchmarks/projects/*/generated/
+
+/LppData/

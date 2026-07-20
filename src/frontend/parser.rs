@@ -331,6 +331,44 @@ impl Parser {
             }
             self.match_token(&Token::Dedent);
 
+            // `for i in range(end)` and `for i in range(start, end)` lower
+            // directly to integer while-loop MIR. `range` never reaches name
+            // resolution as a runtime function, so there is no hidden list
+            // allocation or iterator object in native code.
+            if let Expr::Call { callee, args } = &list_expr {
+                if matches!(&**callee, Expr::Identifier(name, _) if name == "range") {
+                    let (start, end) = match args.as_slice() {
+                        [end] => (Expr::IntLiteral(0), end.clone()),
+                        [start, end] => (start.clone(), end.clone()),
+                        _ => return Err("range in a for loop expects range(end) or range(start, end)".to_string()),
+                    };
+                    let unique_id = self.pos;
+                    let idx_var = format!("__lpp_for_range_idx_{}", unique_id);
+                    let idx_decl = Stmt::LetInferred {
+                        name: idx_var.clone(), is_mut: true, value: start,
+                        binding_id: std::cell::Cell::new(None),
+                    };
+                    let condition = Expr::BinaryOp {
+                        left: Box::new(Expr::Identifier(idx_var.clone(), std::cell::Cell::new(None))),
+                        op: BinaryOperator::Less, right: Box::new(end),
+                    };
+                    let mut while_body = vec![Stmt::LetInferred {
+                        name: var_name, is_mut: true,
+                        value: Expr::Identifier(idx_var.clone(), std::cell::Cell::new(None)),
+                        binding_id: std::cell::Cell::new(None),
+                    }];
+                    while_body.extend(body);
+                    while_body.push(Stmt::Assign {
+                        name: idx_var.clone(),
+                        value: Expr::BinaryOp {
+                            left: Box::new(Expr::Identifier(idx_var, std::cell::Cell::new(None))),
+                            op: BinaryOperator::Add, right: Box::new(Expr::IntLiteral(1)),
+                        }, binding_id: std::cell::Cell::new(None),
+                    });
+                    return Ok(Stmt::Block(vec![idx_decl, Stmt::While { condition, body: while_body }]));
+                }
+            }
+
             let unique_id = self.pos;
             let list_var = format!("__lpp_for_list_{}", unique_id);
             let idx_var = format!("__lpp_for_idx_{}", unique_id);

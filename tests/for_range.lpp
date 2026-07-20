@@ -1,0 +1,7 @@
+# Expected output: 45
+# range supports one-argument and two-argument integer forms.
+def main():
+    mut total := 0
+    for i in range(0, 10):
+        total = total + i
+    print(total)
