@@ -62,6 +62,17 @@ pub fn get_builtins() -> &'static [Builtin] {
             cl_return: None,
         },
         Builtin {
+            name: "fmod",
+            symbol: "fmod",
+            params: &[
+                ParamType::Specific(TypeRef::Float),
+                ParamType::Specific(TypeRef::Float),
+            ],
+            return_type: TypeRef::Float,
+            cl_params: &[3, 3],
+            cl_return: Some(3),
+        },
+        Builtin {
             name: "input",
             symbol: "lpp_input",
             params: &[],

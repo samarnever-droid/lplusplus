@@ -79,6 +79,7 @@ impl<'a> Codegen<'a> {
         self.out.push_str("#include <stdint.h>\n");
         self.out.push_str("#include <limits.h>\n");
         self.out.push_str("#include <string.h>\n");
+        self.out.push_str("#include <math.h>\n");
         // TODO-10: MSVC uses <malloc.h> for alloca; GCC/Clang use <alloca.h>
         self.out.push_str(
             "#if defined(_MSC_VER)\n#  include <malloc.h>\n#else\n#  include <alloca.h>\n#endif\n",
@@ -471,6 +472,15 @@ impl<'a> Codegen<'a> {
                 }
             }
             Expr::BinaryOp { left, op, right } => {
+                let left_ty = self.expr_type(left, current_scope);
+                if *op == crate::ast::BinaryOperator::Modulo && left_ty == TypeRef::Float {
+                    self.out.push_str("fmod(");
+                    self.gen_expr(left, current_scope, target_class);
+                    self.out.push_str(", ");
+                    self.gen_expr(right, current_scope, target_class);
+                    self.out.push_str(")");
+                    return;
+                }
                 self.out.push_str("(");
                 self.gen_expr(left, current_scope, target_class);
                 let op_str = match op {

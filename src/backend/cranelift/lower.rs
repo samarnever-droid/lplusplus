@@ -289,15 +289,18 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                             builder.ins().sdiv(left, right)
                         }
                     }
-                    // Cranelift has no fmod instruction. Never silently compile `%`
-                    // as subtraction: reject float modulo until it has a runtime lowering.
                     BinaryOperator::Modulo => {
                         if is_float {
-                            return Err(
-                                "float modulo is not implemented by the AOT backend".to_string()
-                            );
+                            let fmod_id = *self.builtin_ids.get("fmod").ok_or_else(|| {
+                                "Builtin 'fmod' was not declared in Cranelift module".to_string()
+                            })?;
+                            let func_ref = self.module.declare_func_in_func(fmod_id, builder.func);
+                            let call = builder.ins().call(func_ref, &[left, right]);
+                            let results = builder.inst_results(call);
+                            results[0]
+                        } else {
+                            builder.ins().srem(left, right)
                         }
-                        builder.ins().srem(left, right)
                     }
                     BinaryOperator::Eq => {
                         if is_float {
