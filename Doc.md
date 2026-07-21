@@ -1,369 +1,327 @@
-# L++ Language Documentation
+# L++ Complete Language & Toolchain Specification
 
-L++ is an experimental prototype language aiming to be as readable as Python, as fast as C, and ownership-aware with a verified AOT subset. Its primary goal is to abstract away memory management without exposing a borrow checker or relying on a Tracing Garbage Collector (GC). 
+L++ is an experimental native programming language designed to combine the **readability of Python**, the **memory safety and control of Rust**, and the **build/iteration speed of Go**.
 
-**Current Reality:** L++ is an experimental compiled-language toolchain with a verified Linux x86-64 Cranelift AOT subset, a direct ELF linker path, and a C compatibility backend. The ownership model is stronger than a parser-only prototype: it has ownership-aware MIR, ARC allocation, `Borrow`/`Move`/`ReturnOwned`, generated destructor chains, closure capsules, `List[Int]`, `List[Custom]`, and strong-cycle rejection. It is still not a complete Rust-equivalent guarantee across every platform and library feature. Files, networking, threads, JSON, writable direct-link data, Windows PE, macOS Mach-O, and full C/AOT semantic parity remain in progress. Read `documentation/Cranelift_Ownership_Audit_2026-07-19.md`, `documentation/Native_Linker_Roadmap.md`, and `documentation/Windows_Native_Toolchain.md` for current boundaries.
-
-This guide breaks down the current working state of L++ and explains exactly how the compiler manages your memory under the hood.
+L++ features a multi-tier compilation pipeline: an ahead-of-time (AOT) Cranelift compiler producing native object files (`.o`/`.obj`), a custom tri-format direct linker (`lpp-link` for Linux ELF, Windows PE, and macOS Mach-O), a self-hosting package manager (`lpp-pm`), and an auxiliary C transpiler for debugging and cross-platform bootstrapping.
 
 ---
 
-## Current verified capability matrix
+## 1. Syntax Reference & Language Basics
 
-| Area | Verified now | Explicit boundary |
+### 1.1 Significant Whitespace & Comments
+L++ uses 4-space indentation and colons (`:`) to define blocks. Statements are terminated by newlines.
+Line comments start with `#`.
+
+```lpp
+# This is a single-line comment
+def main():
+    print("Hello, L++!")
+```
+
+### 1.2 Variables, Mutability & Shadowing
+Variables in L++ are **immutable by default**.
+- **`:=` Declaration**: Defines a new variable in the current lexical scope.
+- **`mut` Keyword**: Required to declare a variable as mutable.
+- **`=` Assignment**: Mutates an existing `mut` variable.
+- **Shadowing**: Re-declaring a name with `:=` in the same or nested scope creates a distinct lexical binding without mutating the previous binding.
+
+```lpp
+def demo_variables():
+    # Immutable binding
+    x := 10
+    # x = 20  <-- COMPILE ERROR: x is immutable
+
+    # Mutable binding
+    mut y := 5
+    y = 15    # OK: y was declared as mut
+
+    # Lexical shadowing
+    msg := "initial"
+    msg := "shadowed" # OK: creates a new distinct scope binding
+```
+
+### 1.3 Data Types
+L++ supports native primitives, custom structs, and parameterized lists (`List[T]`):
+
+| Type | Syntax | Description |
 |---|---|---|
-| Cranelift AOT | Linux x86-64, COFF object generation on Windows | Direct PE/Mach-O output is not implemented yet. |
-| Ownership | ARC structs, aliases, owned/borrowed returns, closures, lists | Strong cycles are rejected until `Weak`/arena/cycle-collection support exists. |
-| Direct linker | `.text`, `.rodata`, GOT imports, ARC, closures, lists, King20 20/20 | File I/O, networking, threads, JSON, `.data`/`.bss`, and dynamic imports use fallback linking. |
-| C backend | Compatibility/debug path and observable parity suite | It is not the authoritative ownership implementation. |
-| Windows | COFF + `lpp_runtime.obj` + MSVC host-link fallback | Direct PE runtime and King20 gate are in progress. |
-| macOS | Mach-O object + clang host-link fallback | Direct Mach-O work is planned; Intel and Apple Silicon release packaging is added. |
+| Integer | `Int` | 64-bit signed scalar integer (`int64_t`) |
+| Float | `Float` | 64-bit double-precision scalar float (`double`) |
+| Boolean | `Bool` | Boolean scalar (`true` or `false`) |
+| String | `String` or `Str` | NUL-terminated UTF-8 byte string |
+| Void | `Void` | Absence of return value |
+| Custom Struct | `typename` | Heap/stack-allocated user type |
+| Dynamic List | `List[T]` | Parameterized heap list (`T` = `Int`, `Bool`, `Str`, `Custom`) |
 
-### Ownership vocabulary
+---
 
-The compiler uses these internal concepts; they are not syntax users must write:
+## 2. Control Flow
+
+### 2.1 Branching (`if` / `else`)
+Branching evaluates boolean conditions:
+
+```lpp
+def check_score(score: Int) -> Void:
+    if score >= 90:
+        print_str("Grade: A")
+    else:
+        if score >= 70:
+            print_str("Grade: B")
+        else:
+            print_str("Grade: C")
+```
+
+### 2.2 Loops (`while` and `for`)
+L++ provides `while` loops, list iteration `for x in list:`, and integer range iteration `for i in range(n)` / `for i in range(start, end)`.
+
+```lpp
+def loop_demo():
+    # Standard while loop
+    mut i := 0
+    while i < 5:
+        lpp_print_int(i)
+        i = i + 1
+
+    # Range loop (desugars directly to an integer while loop without heap allocations)
+    for k in range(0, 10):
+        lpp_print_int(k)
+
+    # List iteration loop
+    items := [10, 20, 30]
+    for item in items:
+        lpp_print_int(item)
+```
+
+*(Note: `break` and `continue` keywords are currently in development and not yet available in loop bodies.)*
+
+---
+
+## 3. Functions, Structs & Closures
+
+### 3.1 Functions
+Top-level functions are declared using `def`. Function signatures must explicitly declare parameter types and return types. Function body local variables are automatically type-inferred.
+
+```lpp
+def multiply(a: Int, b: Int) -> Int:
+    return a * b
+
+def greet(name: String):
+    print_str(str_concat("Hello, ", name))
+```
+
+### 3.2 Structs
+Structs define custom composite data structures:
+
+```lpp
+struct Point:
+    x: Int
+    y: Int
+
+def create_point() -> Point:
+    p := Point() # Structs are instantiated with empty parentheses
+    p.x = 10
+    p.y = 20
+    return p
+```
+
+*(Note: Positional constructor parameters like `Point(10, 20)` are not implemented; fields are initialized post-construction).*
+
+### 3.3 Closures
+Closures are created using the `fn` keyword with automatic parameter and return type inference.
+
+```lpp
+def closure_demo():
+    factor := 3
+    # Anonymous closure capturing immutable scalar 'factor'
+    triple := fn(x) -> x * factor
+    result := triple(10) # 30
+```
+
+---
+
+## 4. Memory Management & Escape Analysis
+
+L++ employs a **Hybrid Memory Model** that combines stack allocation with Automatic Reference Counting (ARC) and Arena storage without exposing borrow-checker syntax or requiring a Tracing Garbage Collector (GC).
+
+### 4.1 Storage Classes
+1. **Value (Stack)**: Zero-cost, stack-allocated storage. The default for scalars and non-escaping structs.
+2. **Managed Heap (ARC)**: Objects whose lifetimes escape their initial frame are allocated with an `LppArcHeader` prefix containing an atomic reference count. The compiler emits `retain` and `release` operations into MIR basic blocks and attaches auto-generated recursive destructor chains (`lpp_drop_<struct>`) for cleaning up fields.
+3. **Arena**: Self-referential or recursive structs (e.g., linked list nodes) are detected during semantic analysis and allocated in contiguous arena blocks.
+
+### 4.2 Escape Analyzer Rules
+The Escape Analyzer checks five active escape conditions:
+- **Rule 1 (Returned Reference)**: Returning a custom struct or object instance escapes its stack frame and promotes it to Managed Heap (ARC). Returning scalar values (`Int`, `Float`, `Bool`) copies the primitive and does not promote the parent object.
+- **Rule 2 (Closure Capture)**: Capturing a struct or container inside an escaping closure promotes the captured storage to Managed Heap. Immutable primitives are copied onto the closure stack capsule.
+- **Rule 3 (Container Storage)**: Inserting an object into a `List` promotes the element object to Managed Heap.
+- **Rule 4 (Concurrency Boundary)**: Thread transfers require explicit ownership transfer contracts. Unsafe thread captures are caught and rejected at compile time.
+- **Rule 5 (Self-Referential Types)**: Struct definitions containing recursive references to themselves are automatically allocated via Arena memory.
+- **Cycle Rejection**: Direct or indirect strong ownership cycles (e.g., doubly linked nodes where `A.next = B` and `B.prev = A`) are detected at compile time and rejected to guarantee zero memory leaks without a tracing GC.
+
+---
+
+## 5. Standard Library & Built-ins Reference
+
+### 5.1 Console & System I/O
+```lpp
+print_str("text")            # Prints a NUL-terminated string to stdout
+lpp_print_int(123)           # Prints an integer with a trailing newline
+lpp_print_float(3.14159)     # Prints a float with a trailing newline
+input() -> String            # Reads one line from stdin
+parse_int(str) -> Int        # Parses string digits into a 64-bit integer
+```
+
+### 5.2 String Primitives (`lpp_str`)
+```lpp
+str_len(s) -> Int                            # Returns string length (strlen)
+str_concat(a, b) -> String                  # Concatenates two strings
+str_split(s, delim_char_code) -> List[Str]   # Splits string by delimiter
+str_find(haystack, needle) -> Int            # Returns index or -1
+str_replace(s, old_str, new_str) -> String   # Replaces substrings
+str_substr(s, start, length) -> String       # Extracts substring slice
+str_trim(s) -> String                        # Strips whitespace
+```
+
+### 5.3 Binary Buffer Library (`lpp_buf`)
+Binary buffers store raw byte sequences with an 8-byte length prefix:
+```lpp
+buf_alloc(size) -> Int                       # Allocates binary buffer handle
+buf_free(buf) -> Void                        # Frees binary buffer
+buf_len(buf) -> Int                          # Returns buffer length
+buf_get8(buf, offset) -> Int                 # Reads 1 byte (0-255)
+buf_set8(buf, offset, val) -> Void           # Writes 1 byte
+buf_get16le(buf, offset) -> Int              # Reads 16-bit little-endian integer
+buf_set16le(buf, offset, val) -> Void        # Writes 16-bit little-endian integer
+buf_get32le(buf, offset) -> Int              # Reads 32-bit little-endian integer
+buf_set32le(buf, offset, val) -> Void        # Writes 32-bit little-endian integer
+buf_copy(dst, dst_off, src, src_off, len)    # Copies byte ranges
+buf_read(path) -> Int                        # Reads entire file into buffer
+buf_write(path, buf) -> Int                  # Writes buffer to disk file
+buf_crc32(buf, offset, len) -> Int           # Calculates IEEE 802.3 CRC32 checksum
+buf_write_str(buf, offset, str) -> Int       # Writes UTF-8 string bytes into buffer
+buf_read_str(buf, offset, len) -> String     # Reads buffer section as String
+```
+
+### 5.4 Filesystem & Directory APIs (`lpp_dir`)
+```lpp
+read_file(path) -> String                    # Reads complete UTF-8 text file
+write_file(path, content) -> Int             # Overwrites text file (0 = success)
+append_file(path, content) -> Int            # Appends text content
+delete_file(path) -> Int                     # Removes file from disk
+file_exists(path) -> Bool                    # Returns true if path exists
+file_size(path) -> Int                       # Returns file size in bytes
+file_copy(src, dst) -> Int                   # Copies file
+file_move(src, dst) -> Int                   # Moves/renames file
+dir_create(path) -> Int                      # Creates directory
+dir_list(path) -> List[Str]                  # Lists directory entries
+dir_remove(path) -> Int                      # Removes directory recursively
+path_exists(path) -> Int                     # Checks if filesystem path exists
+path_join(base, child) -> String             # Combines path components safely
+```
+
+### 5.5 Process & Environment Control (`lpp_exec`)
+```lpp
+command_exec(cmd_string) -> Int              # Runs process and returns exit code
+command_output(cmd_string) -> String         # Runs process and returns stdout/stderr
+env_get(var_name) -> String                  # Returns environment variable value
+env_set(var_name, var_value) -> Int          # Sets environment variable
+```
+
+### 5.6 JSON Processing
+```lpp
+json_parse(json_str) -> Int                  # Parses JSON string -> handle
+json_get_int(handle, key) -> Int             # Reads integer property
+json_get_str(handle, key) -> String          # Reads string property
+json_get_obj(handle, key) -> Int             # Reads child object handle
+json_free(handle) -> Void                    # Recursively frees JSON node tree
+```
+
+### 5.7 Native Sockets & Networking (`lpp_net`)
+```lpp
+net_dial(host, port, timeout_ms) -> Int      # TCP client connection handle
+net_dial_udp(host, port, timeout_ms) -> Int  # UDP socket connection handle
+net_listen(port) -> Int                      # TCP server listener handle
+net_listen_udp(port) -> Int                  # UDP server listener handle
+net_accept(listener) -> Int                  # Accepts inbound TCP client socket
+net_accept_timeout(listener, timeout_ms)     # Inbound TCP accept with deadline
+net_send_all(socket, payload_str) -> Int     # Retries partial writes until done
+net_recv(socket, max_bytes) -> String        # Receives TCP data stream payload
+net_recv_udp(socket, max_bytes) -> String    # Receives UDP packet string
+net_set_timeout(socket, ms) -> Int           # Sets socket read/write timeouts
+net_set_deadline(socket, r_ms, w_ms) -> Int  # Sets individual deadlines
+net_set_keepalive(socket, enable, ...) -> Int# Configures TCP keepalive probes
+net_resolve(hostname) -> String              # Resolves DNS host name to IPv4
+net_close(handle) -> Void                    # Closes socket or listener handle
+http_get(url, timeout_ms) -> String          # Performs native HTTP GET request
+http_post(url, body, content_type, ms) -> Str# Performs native HTTP POST request
+```
+
+---
+
+## 6. Package Manager (`lpp-pm`) & Compiler Toolchain
+
+### 6.1 Package Directory Layout
+An L++ package created via `lpp new <name>` uses this standard directory structure:
 
 ```text
-AllocateArc   create one owned ARC reference
-Borrow        read an existing owner without transfer
-Move          transfer a temporary owner
-Retain        create another owner from a borrow
-Release       remove an owner
-ReturnOwned   transfer one owner to the caller
+my_project/
+├── lpp.toml         # Package manifest
+├── lpp.lock         # Locked dependency hash tree
+├── .gitignore
+└── src/
+    └── main.lpp     # Entry point
 ```
 
-A normal user program stays concise:
+### 6.2 CLI Command Matrix
+The `lpp` binary manages both source-level actions and package-level workflows:
 
-```lpp
-def identity(value: Box) -> Box:
-    return value
+```bash
+# Package Manager Commands
+lpp new <project_name>    # Scaffold a new package directory
+lpp init <project_name>   # Initialize package in current directory
+lpp build                 # Compile package into native binary under LppData/build/release/
+lpp run                   # Compile and execute package binary
+lpp check                 # Semantically check project files without emitting binaries
+lpp clean                 # Remove target directories and build artifacts
+lpp list                  # List direct dependencies in lpp.toml
+lpp tree                  # Print lockfile dependency tree
+lpp metadata              # Output package manifest summary
+
+# Single File Commands
+lpp check <file.lpp>      # Type-check a single L++ source file
+lpp emit <file.lpp>       # Emit transpiled C source
+lpp emit <file.lpp> --aot # Emit transpiled C source and Cranelift .o object file
+
+# Global Inspection & Verification
+lpp --checkall            # Recursively check all .lpp files in workspace
+lpp --version             # Display compiler version
 ```
 
-Internally, a borrowed parameter return is lowered as:
+### 6.3 Direct Linker (`lpp-link`)
+`lpp-link` is L++'s custom, direct tri-format linker that bypasses host C compiler linking:
 
-```text
-retain(value)
-return_owned(value)
+```bash
+# Direct link for Linux ELF:
+lpp-link program.o lpp_runtime_min.o -o executable
+
+# Direct link for Windows PE:
+lpp-link pe program.obj lpp_runtime_min.obj -o executable.exe
+
+# Direct link for macOS Mach-O:
+lpp-link macho program.o lpp_runtime_min.o -o executable
+
+# Inspect binary object sections and relocations:
+lpp-link inspect object.o
 ```
 
 ---
 
-## 1. Syntax Basics and Significant Whitespace
-
-L++ uses significant whitespace (indentation) and colons (`:`) to define blocks, just like Python. This forces clean, readable code and eliminates the need for curly braces.
-
-```lpp
-def main():
-    print("Hello, World!")
-```
-
-## 2. Mutability: Shadowing vs Mutation
-
-By default, all variables in L++ are **immutable**. This eliminates an entire class of concurrency and logic bugs.
-
-In L++, you declare a **new** variable using `:=`. You mutate an **existing** variable using `=`.
-
-```lpp
-def calculate():
-    x := 5
-    # x = 6  <-- ERROR: x is immutable by default
-
-    mut y := 10
-    y = 20   # OK: y was declared as mut
-```
-
-**Shadowing:** 
-Each declaration creates a completely new lexical binding. You can declare a *new* variable with the same name in the same or nested scope using `:=`. This does not mutate the old variable; it safely shadows it, with zero risk of collision!
-
-```lpp
-def greet():
-    prefix := "Hello"
-    prefix := "Goodbye" # Valid! This creates a new, distinct binding, shadowing the old one.
-```
-
-## 3. Functions and Explicit Signatures
-
-To reduce compile-time complexity through explicit interfaces, L++ requires explicit types on function parameters and return types. The compiler uses these to type-check without needing to heavily analyze the entire call graph.
-
-```lpp
-def add(a: Int, b: Int) -> Int:
-    return a + b
-```
-
-If a function doesn't return anything, you can omit the arrow or explicitly return `Void`. Local variables inside the function body are automatically type-inferred!
-
-## 4. Structs
-
-Structs define custom data types. You do not need to worry about memory allocation modifiers (like `Box` or `&`). The compiler will automatically use Value Semantics (stack allocation) where possible, and promote to Managed Heap if the struct is self-referential or escapes its scope.
-
-```lpp
-struct Node:
-    value: Int
-    next: Node  # The compiler detects self-reference and automatically uses Arenas/Managed Heap!
-```
-
-## 5. Closures
-
-Closures in L++ use the `fn` keyword. Because they are often short-lived, parameter and return types can be inferred automatically.
-
-**Inline Closures:**
-```lpp
-def process():
-    map(items, fn(x) -> x * 2)
-```
-
-**Block Closures:**
-```lpp
-def process():
-    callback := fn(x):
-        mut y := x * 2
-        return y + 1
-```
-
-Closures with immutable captures are experimental. Mutable capture-by-reference and safe cross-thread closure transfer are not implemented in the Cranelift backend; unsupported AOT cases are rejected rather than silently compiled with changed semantics.
-
-## 6. Primitives (The `Int` Type) and Scalar Values
-
-In L++, `Int` represents a primitive integer. It is a **scalar value**, meaning it is purely data with no internal pointers or references.
-
-Because `Int` (and other scalars like `Bool`) are just flat data, they are exclusively stack-allocated and passed around by **copy**. The compiler's escape analyzer knows that returning an `Int` or passing it to another function is completely safe and carries no risk of dangling references. Therefore, a scalar like `Int` will **never** trigger heap promotion (Managed Heap or Arena) on its own unless it is mutable and captured across a concurrency boundary. 
-
-This behavior is especially powerful when interacting with structs:
-
-```lpp
-struct Box:
-    inner: Node
-    count: Int
-
-def safe_return() -> Int:
-    my_box := Box()
-    return my_box.count # SAFE: 'count' is an Int (scalar). It gets copied out.
-                        # 'my_box' is safely destroyed at the end of the scope.
-```
-
-By understanding that `Int` operates purely by value, you can confidently write code that extracts and returns data from objects without forcing those objects to live on the heap.
-
----
-
-## 7. The Magic of L++: Escape Analysis
-
-The core innovation of L++ is its **Hybrid Memory Model**. You never write pointer or allocation modifiers (like `&`, `*`, `Box`, `Rc`, or `Arc`). You write simple, Python-like code, and the compiler performs a semantic pass called **Escape Analysis** to figure out how to optimally allocate your memory.
-
-### How it Works
-
-Every variable starts its life as a **Value** (Stack-allocated). Stack allocation is zero-cost and blazing fast.
-
-The compiler then checks a series of rules. If a variable breaks a rule, its storage is monotonically "promoted" to the Heap. The Escape Analyzer produces a side-table mapping every variable to its required storage class. The codegen backend uses this table to automatically manage memory (using managed heap storage or arenas) in the generated binary.
-
-### Summary of Storage Classes
-- **Value**: Stack-allocated. The default, zero-cost abstraction.
-- **Managed Heap (ARC)**: Heap-allocated storage managed automatically via **Automatic Reference Counting (ARC)**. The compiler automatically prepends a reference count header (`LppArcHeader`) containing an atomic count to every allocated object, incrementing (`retain`) or decrementing (`release`) it as references are passed around or go out of scope, and freeing it when the count hits zero.
-- **Arena**: Specialized high-performance heap allocation for recursive structures.
-
-### The Promotion Rules
-
-*L++'s design specifies six promotion rules in total. Rule 6 (required aliasing) depends on further language features that haven't been added yet, and will be documented here once implemented.*
-
-1. **Rule 1: Returned by Reference**
-   If a local variable or field reference is returned to the caller, it "escapes" its original stack frame. The compiler detects this and promotes the base object to **Managed Heap** storage.
-   ```lpp
-   struct Item:
-       value: Int
-
-   def create_item() -> Item:
-       item := Item()
-       return item # item is promoted to Managed Heap storage!
-   ```
-   *(Note: Returning a computed primitive value or field like `return box.count` does NOT promote the base object, because you are returning a copy of a primitive scalar rather than returning a reference to the escaping object storage.)*
-
-2. **Rule 2: Closure Capture**
-   If a reference is captured by an escaping closure, it escapes. Any custom struct captured will be promoted to **Managed Heap** storage. Immutable scalar primitives are cloned by value safely onto the stack! 
-   ```lpp
-   def process():
-       multiplier := 5
-       callback := fn(x) -> Int:
-           return x * multiplier # multiplier is an immutable scalar, safely cloned by value!
-   ```
-
-3. **Rule 3: Unbounded-Lifetime Containers**
-   If a reference is inserted into a heap-allocated container (like a `List`), it escapes because the container's lifetime is unbounded and dynamic.
-   ```lpp
-   def build_list() -> Void:
-       node := Node()
-       my_list := [node] # node is promoted to Managed Heap because it is stored in a list!
-   ```
-
-4. **Rule 4: Concurrency Boundary**
-   This is a language-design rule, not yet a completed direct-AOT promise. The Cranelift backend currently rejects `spawn` because safe thread transfer needs an explicit ownership and synchronization contract for the closure environment. L++ will add this only when moved, shared, and atomic capture modes are defined and tested.
-
-   ```text
-   Current AOT behavior: reject unsafe spawn transfer clearly.
-   Future behavior: explicit compiler-selected move/share contract.
-   ```
-
-5. **Rule 5: Self-Referential Structs (Arenas)**
-   If a struct contains a field of its own type (like a Linked List `Node`), the compiler detects this self-reference at the type level and automatically promotes instances of this struct to an **Arena**. 
-   Arenas are incredibly fast bulk-allocators used for graph-like data structures.
-
-L++ handles all of this invisibly, leaving you to focus entirely on your business logic.
-
----
-
-## 8. Current Features & Capabilities
-
-Because L++ is an active prototype, only a subset of planned language features is currently parsed and transpiled. 
-
-#### Language Features
-- **Data Types:** `Int` (64-bit), `String`, `Void`, and custom `struct` definitions.
-- **Variables & Mutability:** `:=` for initialization, `=` for assignment. `mut` keyword for mutable state.
-- **Functions:** `def` with typed arguments and return types.
-- **Closures:** Inline and block closures using `fn`, with lexical closure capture.
-- **Math Operations:** Basic arithmetic (`+`, `-`, `*`, `/`, `%` modulo).
-- **Data Structures:** 
-  - Struct instantiation and field access (`obj.field`).
-  - Heap-allocated Lists using square brackets (`[1, 2, 3]`).
-  - Dynamic Lists via standard library built-ins.
-- **Concurrency:** `spawn` is parsed, but direct AOT currently rejects it until closure transfer ownership is complete.
-- **Custom Local Libraries:** Relational module merging imports (e.g. `import math_helper` merges source elements).
-
-### Control Flow
-- **If / Else**: Fully implemented for branching logic (`if x == 10: ... else: ...`).
-- **While Loops**: Fully implemented for conditional repetition (`while i < 10: ...`).
-- **Relational Operators**: `==`, `!=`, `<`, `>`, `<=`, `>=` all return `Bool`.
-*(Note: `for` loops are currently under development and will require iterator protocols).*
-
-### Standard Library (Built-ins)
-L++ provides a growing set of built-in functions for common operations, which map directly to optimal C stdlib calls:
-- **Console I/O**: `print(value)` (prints strings or integers via automatic format selection), `print_str("string")`, `input()` (reads line from stdin), `parse_int("string")` (parses a string into an integer)
-- **File I/O**: `read_file("path")` (returns string), `write_file("path", "data")`
-- **Dynamic Lists**:
-  - `list_new()`: Creates a list with an inferred supported element type.
-  - `list_push(list, value)`: Appends an element to the list, automatically retaining ARC-managed custom elements.
-  - `list_get(list, index)`: Retrieves a borrowed element; assigning or returning an ARC element creates the required retain.
-  - `list_len(list)`: Returns the current number of elements in the list.
-  - **Supported AOT list types:** `List[Int]` and `List[Custom]`.
-  - **AOT ownership mode:** lists are released automatically at scope exit. Do not call `list_free` in Cranelift AOT code; it is rejected to prevent double release. The legacy C compatibility backend still exposes it.
-- **JSON Parsing**:
-  - `json_parse("json_string")`: Parses a JSON string and returns a node handle (`Int`).
-  - `json_get_int(node, "key")`: Retrieves an integer property value.
-  - `json_get_str(node, "key")`: Retrieves a string property value.
-  - `json_get_obj(node, "key")`: Retrieves a nested JSON object node handle (`Int`).
-  - `json_free(node)`: Recursively frees the parsed JSON tree memory.
-- **Networking**:
-  - `net_connect(host, port) -> Int`: Opens a TCP client connection and returns a socket handle.
-  - `net_listen(port) -> Int`: Binds a TCP listener on the given port and returns a listener handle.
-  - `net_accept(listener) -> Int`: Accepts one inbound client from a listener handle.
-  - `net_send(socket, data) -> Int`: Compatibility API with complete-write semantics; returns all bytes or `-1`.
-  - `net_send_all(socket, data) -> Int`: Safely retries partial native socket writes; returns all bytes or `-1`.
-  - `net_set_timeout(socket, milliseconds) -> Int`: Applies native read/write deadlines; returns `1` or `0`.
-  - `net_recv(socket, max_bytes) -> String`: Receives up to `max_bytes` and returns the payload as a string.
-  - `net_close(handle) -> Void`: Closes a socket or listener handle.
-  - Uses Winsock/POSIX sockets directly—never cURL. Full scope and roadmap: [`documentation/Networking.md`](documentation/Networking.md).
-
-Example server:
-
-```lpp
-def main():
-    listener := net_listen(9000)
-    client := net_accept(listener)
-    request := net_recv(client, 1024)
-    print_str(request)
-    net_send(client, "hello from lpp server")
-    net_close(client)
-    net_close(listener)
-```
-
-Example client:
-
-```lpp
-def main():
-    socket := net_connect("127.0.0.1", 9000)
-    net_send(socket, "ping")
-    response := net_recv(socket, 1024)
-    print_str(response)
-    net_close(socket)
-```
-
-### Compiler Architecture & Backends
-
-L++ is designed as a multi-tier compilation pipeline:
-1. **Cranelift AOT Backend (Default / Native):** Converts L++ AST into Mid-level IR (MIR), performs an ARC insertion pass, and uses Cranelift to emit native machine code object files (`.o`). These are linked against the lean C runtime library ([lpp_runtime.c](C:/Users/khati/lpp/lpp_runtime.c)) using `link.exe`, `cl.exe`, `cc`, `gcc`, or `clang` depending on the host toolchain.
-2. **C Transpiler:** Transpiles L++ directly into optimized C code, which can be compiled with standard GCC/Clang compilers.
-
-**Performance Characteristics:**
-- **Measure, do not assume:** compilation and executable size depend on workload, Cranelift optimization profile, host linker, and platform. Use the versioned reports under `benchmarks/` instead of fixed millisecond or binary-size claims.
-- **Compile paths:** package AOT builds use `LppData/cache/` to reuse a validated object for unchanged source/module/manifest/profile inputs; output is written to `LppData/build/release/`.
-- **Runtime:** struct/list and large List Labyrinth workloads are close to the C compatibility path in current measurements. Tight scalar loops, recursion, and call-heavy code remain active C-Speed optimization targets.
-- **Safety:** native AOT is ownership-aware for the verified subset; it is not a blanket Rust-equivalent safety claim.
-
-### Standard Library & Built-ins Status
-
-| Category   | Current Support                 |
-| ---------- | ------------------------------- |
-| Console    | `print(...)`, `print_str(...)`  |
-| Input      | `input()`, `parse_int(...)`     |
-| Files      | `read_file`, `write_file`       |
-| JSON       | Full (`json_parse`, `json_get_int`, `json_get_str`, `json_get_obj`, `json_free`) |
-| Networking | Native TCP sockets; complete writes and deadlines (`net_connect`, `net_listen`, `net_accept`, `net_send_all`, `net_set_timeout`, `net_recv`, `net_close`) |
-| Threads    | Parsed; direct AOT transfer is intentionally rejected pending ownership work |
-| Lists      | ARC-managed `List[Int]` and `List[Custom]` in the verified AOT subset |
-| Strings    | Basic output and literals; direct ELF supports `.rodata` literals |
-| Structs    | ARC destructors, aliases, returns, and nested ownership in the verified subset |
-
----
-
-## 9. Planned Features (Roadmap)
-
-- Modules & Imports
-- Generics & Interfaces
-- Pattern Matching
-- Package Manager
-- Standard Library Expansion (`io`, `math`, `string`, `collections`)
-- Async Runtime
-- Rule 6 (Required Aliasing)
-
----
-
-## 10. Toolchain & Installation
-
-L++ provides a simple and premium toolchain wrapper to install and run the compiler globally.
-
-### Global Installation
-
-To install the L++ compiler globally on your system:
-
-1. Open PowerShell and run the installer script from the project root:
-   ```powershell
-   .\install.ps1
-   ```
-2. The installer will:
-   - Build the compiler binary in release mode (`lpp-compiler.exe`).
-   - Create a global install directory at `%USERPROFILE%\.lpp`.
-   - Copy the pre-compiled C runtime library (`lpp_runtime.obj`) to `%USERPROFILE%\.lpp\lib`.
-   - Generate a global CLI wrapper (`lpp.bat`) at `%USERPROFILE%\.lpp\bin`.
-   - Add the binary directory to your user `PATH` environment variable.
-3. Restart your terminal or IDE, and you can now use the global `lpp` command directly!
-
-### Using the Global Command
-
-```cmd
-# Show compiler version
-lpp -v
-
-# Show help menu
-lpp -h
-
-# Compile a L++ file into a native executable
-lpp main.lpp
-```
-
-The global compiler automatically compiles the `.lpp` file to a native object file, invokes `link.exe` (auto-detecting your MSVC compiler environment), links it with the L++ runtime, and outputs a native executable (`main.exe`) while cleaning up any intermediate files!
-
-### Local Development Runner
-
-For quick local tests during development without installing globally, use the local runner script:
-
-```powershell
-# Compile, link, and run a L++ program instantly:
-.\run.ps1 tests\fib.lpp
-```
+## 7. Current Technical Boundaries & Missing Features
+
+To ensure predictability, the compiler rejects unsupported configurations at compile time rather than generating invalid machine code:
+
+1. **Control Flow**: `break` and `continue` keywords are currently missing.
+2. **Data Structures**: Hash maps (`Map[K,V]`), sets (`Set[T]`), fixed tuples, and algebraic data types (`enum`/`match`) are not yet implemented.
+3. **Methods & Polymorphism**: Interfaces, traits, class methods, and virtual dispatch are missing; all routines are top-level functions.
+4. **Constructors**: Struct instances do not accept positional initialization arguments (`Point()` followed by `p.x = ...`).
+5. **Float Modulo**: Floating-point modulo (`float % float`) is disabled in Cranelift AOT pending runtime `fmod` integration.
+6. **AOT Concurrency Transfer**: `spawn` expressions are transpiled in the C path but disabled in direct AOT until thread-safe atomic closure captures are finalized.

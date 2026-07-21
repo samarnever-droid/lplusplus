@@ -1,93 +1,81 @@
-# L++ Current Capabilities — v0.1.3
+# L++ Current Capabilities Matrix — v0.1.3
 
-Last reviewed: 2026-07-20.
+Last reviewed: 2026-07-21.
 
-This document is the source of truth for public feature claims. Experimental does not mean unavailable; it means its platform, safety, or compatibility boundary is explicitly limited.
+This document serves as the authoritative source of truth for verified compiler capabilities, toolchain commands, standard library primitives, and platform boundaries in L++.
 
-## Language
+---
 
-| Capability | Status | Boundary |
+## 1. Core Language & Compiler Pipeline
+
+| Capability | Status | Implementation Boundary |
 |---|---|---|
-| Functions, structs, `if`/`else`, `while` | Available | Cranelift AOT and C compatibility paths |
-| `for value in list` | Available | Desugars to index-based List iteration |
-| `for i in range(end)` / `range(start, end)` | Available | Desugars directly to integer `while` MIR; no range allocation |
-| `List[Int]` | Verified AOT | ARC-safe list lifetime |
-| `List[Custom]` | Verified AOT | Custom elements retained/released |
-| Strings | Basic | literals, input/output, file APIs; rich string operations are incomplete |
-| Struct constructor arguments | Not available | Initialize fields after `Struct()` |
-| `List[String]`, maps, sets, enums, traits | Not available | Require an owned string/container model |
-| `break`, `continue`, async, channels | Not available | Future control-flow/runtime work |
+| Functions (`def`) | **Available** | Top-level routines with explicit param and return types; local type inference |
+| Variables (`:=`, `mut`, `=`) | **Available** | Immutable by default; lexical shadowing supported across all scopes |
+| Structs (`struct`) | **Available** | Value semantics by default; promoted to ARC heap or Arena as required |
+| Control Flow (`if`/`else`, `while`) | **Available** | Full branching and conditional loops |
+| Range Loops (`for i in range(n)`) | **Available** | Zero-allocation MIR lowering to integer comparison `while` loops |
+| List Loops (`for item in list`) | **Available** | Desugars to index-based iteration over `List[T]` |
+| Closures (`fn`) | **Available** | Inline and block closures with lexical capture |
+| Dynamic Lists (`List[T]`) | **Available** | Supported elements: `Int`, `Bool`, `Str`, `CustomStruct` (ARC managed) |
+| Struct Constructors | **Partial** | No positional constructor arguments; instantiate via `Type()` and populate fields |
+| `break` / `continue` | **Not Available** | Planned control flow keywords |
+| `Map[K, V]`, `Set[T]`, Enums, Traits | **Not Available** | Planned container and algebraic type extensions |
 
-## Ownership and safety
+---
 
-Verified Cranelift AOT behavior includes ARC allocation, move/borrow/return handling, aliasing, field aliases, closure capsules, destructor chains, `List[Int]`, `List[Custom]`, and strong ownership-cycle rejection.
+## 2. Memory Model & Ownership Verification
 
-L++ must not be described as language-wide Rust-equivalent safe yet. The verified promise is the documented AOT subset; unsupported ownership behavior should be rejected rather than silently compiled. See [Safety Mission](Safety_Mission.md).
+L++ uses an automated, rule-based **Hybrid Memory Model**:
 
-## Filesystem
+- **Stack Allocation (Value)**: Scalars (`Int`, `Float`, `Bool`) and non-escaping structs are stack-allocated.
+- **Automatic Reference Counting (ARC)**: Structs or elements escaping through returns, closure capsules, or list insertion are heap-allocated with atomic headers (`LppArcHeader`) and automatic `retain`/`release` MIR insertions.
+- **Arena Storage**: Self-referential structs (`struct Node: next: Node`) are automatically allocated in arena memory.
+- **Cycle Rejection**: Direct and indirect ownership cycles are detected and rejected at compile time to guarantee zero leaks without requiring a tracing garbage collector.
 
-Host-linked scalar APIs:
+---
 
-```lpp
-read_file(path) -> Str
-write_file(path, data) -> Int
-write_file_atomic(path, data) -> Int
-append_file(path, data) -> Int
-delete_file(path) -> Int
-file_exists(path) -> Bool
-file_size(path) -> Int
-file_copy(source, destination) -> Int
-file_move(source, destination) -> Int
-make_dir(path) -> Int
-make_dir_all(path) -> Int
-remove_dir(path) -> Int
-file_is_dir(path) -> Bool
-```
+## 3. Verified Standard Library Primitives
 
-Directory listing, `List[String]`, binary buffers, streaming file handles, structured errors, and direct-link filesystem support remain incomplete.
+### 3.1 Console, System & Strings (`lpp_str`)
+- **Console**: `print(val)`, `print_str(s)`, `lpp_print_int(n)`, `lpp_print_float(f)`, `input()`, `parse_int(s)`
+- **String Primitives**: `str_len(s)`, `str_concat(a, b)`, `str_split(s, delim)`, `str_find(s, sub)`, `str_replace(s, old, new)`, `str_substr(s, start, len)`, `str_trim(s)`
 
-## Networking
+### 3.2 Binary Buffer Primitives (`lpp_buf`)
+- **Memory & Disk I/O**: `buf_alloc(sz)`, `buf_free(b)`, `buf_len(b)`, `buf_read(path)`, `buf_write(path, b)`
+- **8-bit / 16-bit / 32-bit LE Accessors**: `buf_get8`, `buf_set8`, `buf_get16le`, `buf_set16le`, `buf_get32le`, `buf_set32le`
+- **Data Operations**: `buf_copy`, `buf_crc32` (IEEE 802.3 CRC32 checksums), `buf_write_str`, `buf_read_str`
 
-Host-linked native TCP APIs exist: connect/listen/accept, complete writes, read/write deadlines, read, and close. A Rust socket runtime foundation provides TCP and connected UDP ABI work. TLS, HTTP, async networking, byte buffers, typed sockets, and `Result` errors are not complete. Networking never uses cURL.
+### 3.3 Filesystem & Directories (`lpp_dir`)
+- **File APIs**: `read_file`, `write_file`, `append_file`, `delete_file`, `file_exists`, `file_size`, `file_copy`, `file_move`
+- **Directory APIs**: `dir_create`, `dir_list`, `dir_remove`, `path_exists`, `path_join`
 
-## Build and packages
+### 3.4 Process Execution & Environment (`lpp_exec`)
+- `command_exec(cmd) -> Int`: Executes process and returns numeric exit code.
+- `command_output(cmd) -> String`: Executes process and captures combined stdout/stderr output.
+- `env_get(key) -> String`: Reads environment variable value.
+- `env_set(key, val) -> Int`: Sets environment variable.
 
-```text
-lpp check <file>
-lpp emit <file>
-lpp emit <file> --aot
-lpp build
-lpp run
-```
+### 3.5 Native Networking (`lpp_net`)
+- **TCP Sockets**: `net_dial`, `net_listen`, `net_accept`, `net_accept_timeout`, `net_send`, `net_send_all`, `net_recv`, `net_set_timeout`, `net_set_deadline`, `net_set_keepalive`, `net_close`
+- **UDP Sockets**: `net_dial_udp`, `net_listen_udp`, `net_recv_udp`
+- **DNS & HTTP**: `net_resolve`, `http_get`, `http_post`
 
-Package build artifacts and cache use:
+### 3.6 JSON Parsing
+- `json_parse`, `json_get_int`, `json_get_str`, `json_get_obj`, `json_free`
 
-```text
-LppData/build/release/<package>
-LppData/cache/<fingerprint>.o
-```
+---
 
-The cache hashes source modules, manifest, compiler version, platform, architecture, and AOT optimization profile.
+## 4. Package Manager & Toolchain Ecosystem
 
-## Native targets
-
-| Target | State |
-|---|---|
-| Linux x86-64 host-linked AOT | Supported |
-| Linux x86-64 direct ELF | Verified direct subset; files/networking/JSON/threads not supported |
-| Windows x86-64 | COFF/PE and host-link support; direct PE remains incomplete |
-| macOS host link | Supported compatibility path |
-| macOS Intel direct Mach-O | Experimental |
-| macOS ARM64 static direct Mach-O | Explicitly rejected; dynamic libSystem path required |
-
-## Performance claims
-
-Do not use fixed claims such as “3 ms compile” or “138 KB binaries.” Performance depends on workload, compiler mode, host linker, and target. Use the checked-in benchmark reports under `benchmarks/`.
-
-Recent verified findings:
-
-```text
-- 100k straight-line scalar AOT compilation improved substantially through safe MIR propagation and dead-store elimination.
-- Struct/List and List Labyrinth runtime workloads are near the C compatibility path in current local measurements.
-- Tight scalar loops and recursive/call-heavy programs remain the C-Speed optimization priority.
-```
+- **Self-Hosted PM (`lpp-pm`)**:
+  - `lpp new <name>`: Bootstraps self-hosted package manager from `pm/src/main.lpp` and scaffolds new package. Path resolution works seamlessly outside repo roots (e.g. `/tmp`).
+  - `lpp build`, `lpp run`, `lpp check`, `lpp clean`, `lpp list`, `lpp tree`, `lpp metadata`, `lpp outdated`
+- **Compiler Options**:
+  - `lpp check <file.lpp>`: Fast semantic/type check pass.
+  - `lpp emit <file.lpp> [--aot]`: Emits C transpile artifacts and optional Cranelift AOT object files.
+  - `lpp --checkall`: Recursive workspace-wide type verification.
+- **Direct Linker (`lpp-link`)**:
+  - **Linux x86-64**: Standalone ELF direct linker.
+  - **Windows x86-64**: Standalone multi-section PE COFF direct linker (`.text`, `.rdata`, `.data`, `.idata`, `.reloc`), fully compatible with `windows_x86_64_min.c` under `/DLPP_FREESTANDING`.
+  - **macOS x86-64/ARM64**: Mach-O direct object emitter.
