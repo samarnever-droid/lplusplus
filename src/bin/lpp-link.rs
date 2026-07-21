@@ -785,6 +785,7 @@ struct ImportData {
     #[allow(dead_code)]
     ilt_rva: u32,
     iat_rva: u32,
+    iat_size: u32,
     #[allow(dead_code)]
     dll_count: usize,
 }
@@ -903,6 +904,7 @@ fn build_imports(
         refptr_offsets,
         ilt_rva: section_rva + ilt_off as u32,
         iat_rva: section_rva + iat_off as u32,
+        iat_size: iat_size as u32,
         dll_count,
     })
 }
@@ -1244,14 +1246,6 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
     }
 
     // ── 7. Compute raw file offsets and active section count ─────────────
-    let headers_size = PE_FILE_ALIGN;
-    let text_raw_off = headers_size;
-    let rdata_raw_off = text_raw_off + text_raw_size;
-    let data_raw_off = rdata_raw_off + rdata_raw_size;
-    let tls_raw_off = data_raw_off + data_raw_size;
-    let idata_raw_off = tls_raw_off + tls_raw_size;
-    let reloc_raw_off = idata_raw_off + idata_raw_size;
-
     let has_text = !merged_text.is_empty();
     let has_rdata = !merged_rdata.is_empty();
     let has_data = !merged_data.is_empty() || !refptr_names.is_empty();
@@ -1263,6 +1257,19 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
     if has_tls { section_count += 1; }
     if has_idata { section_count += 1; }
     if has_reloc { section_count += 1; }
+
+    let nt = 0x80;
+    let opt = nt + 24;
+    let opt_size: u16 = 0xF0;
+    let required_headers_bytes = opt + opt_size as usize + (section_count as usize) * 40;
+    let headers_size = pe_align(required_headers_bytes, PE_FILE_ALIGN);
+
+    let text_raw_off = headers_size;
+    let rdata_raw_off = text_raw_off + text_raw_size;
+    let data_raw_off = rdata_raw_off + rdata_raw_size;
+    let tls_raw_off = data_raw_off + data_raw_size;
+    let idata_raw_off = tls_raw_off + tls_raw_size;
+    let reloc_raw_off = idata_raw_off + idata_raw_size;
 
     let image_end = if has_reloc {
         reloc_rva as usize + reloc_data.len()
@@ -1342,7 +1349,7 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
         put_u32(
             &mut pe,
             dirs + 12 * 8 + 4,
-            ((import.dll_count + 1) * 8) as u32,
+            import.iat_size,
         );
     }
     if has_reloc {
