@@ -713,12 +713,18 @@ pub fn direct_link_binary(obj_file: &Path, output_path: &Path) -> Result<(), Str
             format!("Direct linker requested but lpp_runtime_min.{} is unavailable. Reinstall L++ or compile runtime source.", ext)
         })?;
 
-    // lpp-link auto-detects format from the host OS.
-    let status = std::process::Command::new(&linker)
-        .arg(obj_file)
+    let mut cmd = std::process::Command::new(&linker);
+    if cfg!(target_os = "windows") {
+        cmd.arg("pe");
+    } else if cfg!(target_os = "macos") {
+        cmd.arg("macho");
+    }
+    cmd.arg(obj_file)
         .arg(&runtime)
         .arg("-o")
-        .arg(output_path)
+        .arg(output_path);
+
+    let status = cmd
         .stdin(std::process::Stdio::null())
         .status()
         .map_err(|e| format!("Failed to execute lpp-link: {e}"))?;

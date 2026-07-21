@@ -184,11 +184,19 @@ fn bootstrap_self_hosted_pm() -> Result<PathBuf, String> {
     let lib_dir = runtime_src.parent().unwrap_or_else(|| Path::new("."));
     let runtime_min_obj = lib_dir.join(runtime_min_name);
 
-    let link_status = std::process::Command::new(&lpp_link_bin)
+    let mut link_cmd = std::process::Command::new(&lpp_link_bin);
+    if cfg!(target_os = "windows") {
+        link_cmd.arg("pe");
+    } else if cfg!(target_os = "macos") {
+        link_cmd.arg("macho");
+    }
+    link_cmd
         .arg(&pm_obj)
         .arg(&runtime_min_obj)
         .arg("-o")
-        .arg(&pm_bin)
+        .arg(&pm_bin);
+
+    let link_status = link_cmd
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::inherit())
