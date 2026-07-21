@@ -476,12 +476,6 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
         else if let Some(name) = rel.target.strip_prefix(".refptr.") { let n = name.to_string(); if !refptr_names.contains(&n) { refptr_names.push(n); } }
     }}
     let refptr_data_off = merged_data.len(); merged_data.resize(refptr_data_off + refptr_names.len() * 8, 0);
-    for (i, name) in refptr_names.iter().enumerate() {
-        if let Some((_class, abs)) = global_syms.get(name) {
-            let addr = PE_IMAGE_BASE + PE_SECTION_RVA as u64 + *abs;
-            merged_data[refptr_data_off + i * 8..][..8].copy_from_slice(&addr.to_le_bytes());
-        }
-    }
     let text_rva = PE_SECTION_RVA; let text_raw_size = pe_align(merged_text.len(), PE_FILE_ALIGN);
     let rdata_rva = pe_align(text_rva as usize + merged_text.len(), PE_SECT_ALIGN) as u32;
     let rdata_raw_size = pe_align(merged_rdata.len(), PE_FILE_ALIGN);
@@ -491,6 +485,14 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
     let import = build_imports(&kernel_imports, &refptr_names, idata_rva)?;
     let has_idata = !import.data.is_empty();
     let idata_raw_size = if has_idata { pe_align(import.data.len(), PE_FILE_ALIGN) } else { 0 };
+
+    // Populate .refptr. slots with absolute addresses AFTER RVA layout is known.
+    for (i, name) in refptr_names.iter().enumerate() {
+        if let Some((class, abs)) = global_syms.get(name) {
+            let rva = match class { SectionClass::Text=>text_rva as u64+abs, SectionClass::Rodata=>rdata_rva as u64+abs, SectionClass::Data=>data_rva as u64+abs };
+            merged_data[refptr_data_off + i * 8..][..8].copy_from_slice(&(PE_IMAGE_BASE + rva).to_le_bytes());
+        }
+    }
 
     let mut all_writable = merged_data.clone(); if has_idata { all_writable.extend_from_slice(&import.data); }
     let reloc_data = generate_base_relocs(&all_writable, data_rva);
@@ -506,8 +508,16 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
             let target = resolve_pe_target(rel, &global_syms, &import.iat_rvas, &import.refptr_offsets, &bases[idx], text_rva, rdata_rva, data_rva, idata_rva)?;
             let rnum = coff_reloc_number(rel);
             match rnum {
-                AMD64_ADDR64 => { if patch + 8 > patch_buf.len() { return Err("ADDR64 patch OOB".into()); } patch_buf[patch..patch + 8].copy_from_slice(&(target as u64).to_le_bytes()); }
-                AMD64_ADDR32 | AMD64_ADDR32NB => { if patch + 4 > patch_buf.len() { return Err("ADDR32 patch OOB".into()); } let v = target; if v < i32::MIN as u64 || v > i32::MAX as u64 { return Err("ADDR32 overflow".into()); } patch_buf[patch..patch + 4].copy_from_slice(&(v as i32).to_le_bytes()); }
+                AMD64_ADDR64 => {
+                    if patch + 8 > patch_buf.len() { return Err("ADDR64 patch OOB".into()); }
+                    patch_buf[patch..patch + 8].copy_from_slice(&(PE_IMAGE_BASE + target).to_le_bytes());
+                }
+                AMD64_ADDR32 | AMD64_ADDR32NB => {
+                    if patch + 4 > patch_buf.len() { return Err("ADDR32 patch OOB".into()); }
+                    // ADDR32 stores a 32-bit VA (truncated from 64 bits).
+                    let abs32 = (PE_IMAGE_BASE + target) as u32;
+                    patch_buf[patch..patch + 4].copy_from_slice(&abs32.to_le_bytes());
+                }
                 AMD64_REL32 | AMD64_REL32_1 | AMD64_REL32_2 | AMD64_REL32_3 | AMD64_REL32_4 | AMD64_REL32_5 => {
                     if patch + 4 > patch_buf.len() { return Err("REL32 patch OOB".into()); }
                     let adj: i64 = match rnum { AMD64_REL32_1=>1,AMD64_REL32_2=>2,AMD64_REL32_3=>3,AMD64_REL32_4=>4,AMD64_REL32_5=>5,_=>0 };
@@ -587,17 +597,20 @@ fn section_class_for_offset(offset: usize, text_base: usize, text_len: usize, rd
     else if offset >= data_base && offset < data_base + data_len { SectionClass::Data } else { SectionClass::Text }
 }
 
+/// Resolve a relocation target to its RVA (NOT absolute address).  The
+/// caller adds PE_IMAGE_BASE for absolute relocation types and uses the
+/// bare RVA for PC-relative computations.
 fn resolve_pe_target(rel: &Relocation, global_syms: &HashMap<String, (SectionClass, u64)>, iat_rvas: &HashMap<String, u32>, _refptr_offsets: &HashMap<String, usize>, bases: &SectionBase, text_rva: u32, rdata_rva: u32, data_rva: u32, _idata_rva: u32) -> Result<u64, String> {
-    if rel.target.starts_with("__self_text__") { return Ok(PE_IMAGE_BASE + text_rva as u64 + bases.text_base as u64); }
-    if rel.target.starts_with("__self_rdata__") { return Ok(PE_IMAGE_BASE + rdata_rva as u64 + bases.rdata_base as u64); }
-    if rel.target.starts_with("__self_data__") { return Ok(PE_IMAGE_BASE + data_rva as u64 + bases.data_base as u64); }
-    if let Some(rest) = rel.target.strip_prefix("__ext_text__") { let eb: usize = rest.parse().map_err(|_| "invalid")?; return Ok(PE_IMAGE_BASE + text_rva as u64 + eb as u64); }
-    if let Some(rest) = rel.target.strip_prefix("__ext_rdata__") { let eb: usize = rest.parse().map_err(|_| "invalid")?; return Ok(PE_IMAGE_BASE + rdata_rva as u64 + eb as u64); }
-    if let Some(rest) = rel.target.strip_prefix("__ext_data__") { let eb: usize = rest.parse().map_err(|_| "invalid")?; return Ok(PE_IMAGE_BASE + data_rva as u64 + eb as u64); }
-    if let Some(rva) = iat_rvas.get(&rel.target) { return Ok(PE_IMAGE_BASE + *rva as u64); }
-    if let Some((class, abs)) = global_syms.get(&rel.target) { let rva = match class { SectionClass::Text=>text_rva as u64+abs, SectionClass::Rodata=>rdata_rva as u64+abs, SectionClass::Data=>data_rva as u64+abs }; return Ok(PE_IMAGE_BASE + rva); }
-    if let Some(name) = rel.target.strip_prefix(".refptr.") { if let Some((class, abs)) = global_syms.get(name) { let rva = match class { SectionClass::Text=>text_rva as u64+abs, SectionClass::Rodata=>rdata_rva as u64+abs, SectionClass::Data=>data_rva as u64+abs }; return Ok(PE_IMAGE_BASE + rva); } }
-    if let Some(rest) = rel.target.strip_prefix("__coff_text_section_") { let off: u32 = rest.parse().map_err(|_| "invalid")?; return Ok(PE_IMAGE_BASE + text_rva as u64 + off as u64); }
+    if rel.target.starts_with("__self_text__") { return Ok(text_rva as u64 + bases.text_base as u64); }
+    if rel.target.starts_with("__self_rdata__") { return Ok(rdata_rva as u64 + bases.rdata_base as u64); }
+    if rel.target.starts_with("__self_data__") { return Ok(data_rva as u64 + bases.data_base as u64); }
+    if let Some(rest) = rel.target.strip_prefix("__ext_text__") { let eb: usize = rest.parse().map_err(|_| "invalid")?; return Ok(text_rva as u64 + eb as u64); }
+    if let Some(rest) = rel.target.strip_prefix("__ext_rdata__") { let eb: usize = rest.parse().map_err(|_| "invalid")?; return Ok(rdata_rva as u64 + eb as u64); }
+    if let Some(rest) = rel.target.strip_prefix("__ext_data__") { let eb: usize = rest.parse().map_err(|_| "invalid")?; return Ok(data_rva as u64 + eb as u64); }
+    if let Some(rva) = iat_rvas.get(&rel.target) { return Ok(*rva as u64); }
+    if let Some((class, abs)) = global_syms.get(&rel.target) { return Ok(match class { SectionClass::Text=>text_rva as u64+abs, SectionClass::Rodata=>rdata_rva as u64+abs, SectionClass::Data=>data_rva as u64+abs }); }
+    if let Some(name) = rel.target.strip_prefix(".refptr.") { if let Some((class, abs)) = global_syms.get(name) { return Ok(match class { SectionClass::Text=>text_rva as u64+abs, SectionClass::Rodata=>rdata_rva as u64+abs, SectionClass::Data=>data_rva as u64+abs }); } }
+    if let Some(rest) = rel.target.strip_prefix("__coff_text_section_") { let off: u32 = rest.parse().map_err(|_| "invalid")?; return Ok(text_rva as u64 + off as u64); }
     Err(format!("unresolved external COFF symbol '{}'", rel.target))
 }
 
