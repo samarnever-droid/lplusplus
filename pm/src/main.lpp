@@ -1,35 +1,146 @@
 # main.lpp — L++ Package Manager entry point
+# Handles all PM commands. Prints __DELEGATE__ for commands
+# that need the Rust PM backend.
 
 import utils
 import new
 import build
 import install
 
+def delegate():
+    print_str("[lpp-pm] __DELEGATE__")
+
 def main():
     print_str("=== Self-Hosted L++ Package Manager v0.1.0 ===")
 
     mut cmd := env_get("LPP_PM_CMD")
+
+    # ── new / init ─────────────────────────────────────────────────────
     if str_find(cmd, "new") >= 0:
         mut name := env_get("LPP_PM_NAME")
         if len(name) == 0:
             name = "my_project"
-        new.scaffold(name)
+        scaffold(name)
         return
 
+    # ── build ──────────────────────────────────────────────────────────
     if str_find(cmd, "build") >= 0:
-        code := build.compile_project()
+        code := compile_project()
         if code == 0:
             print_str("[lpp-pm] build successful")
         return
 
-    if str_find(cmd, "install") >= 0:
-        install.install_deps()
-        return
-
+    # ── run ────────────────────────────────────────────────────────────
     if str_find(cmd, "run") >= 0:
-        code := build.compile_project()
+        code := compile_project()
         if code == 0:
             print_str("[lpp-pm] running project...")
         return
 
-    print_str("[lpp-pm] Commands: new <name>, build, run, install")
+    # ── install ────────────────────────────────────────────────────────
+    if str_find(cmd, "install") >= 0:
+        install_deps()
+        return
+
+    # ── check ──────────────────────────────────────────────────────────
+    if str_find(cmd, "check") >= 0:
+        entry := "src/main.lpp"
+        if check(entry) == 0:
+            print_str("[lpp-pm] no src/main.lpp found")
+            return
+        cc_cmd := str_concat("lpp check ", entry)
+        code := command_exec(cc_cmd)
+        if code == 0:
+            print_str("[lpp-pm] check passed")
+        return
+
+    # ── clean ──────────────────────────────────────────────────────────
+    if str_find(cmd, "clean") >= 0:
+        # Remove common build artifacts
+        if check("LppData") == 1:
+            cc := command_exec("rm -rf LppData")
+        if check("target") == 1:
+            cc := command_exec("rm -rf target")
+        if check(".lpp_cache") == 1:
+            cc := command_exec("rm -rf .lpp_cache")
+        # Remove loose artifacts
+        cc := command_exec("rm -f *.o *.obj *.exe output.c 2>/dev/null")
+        print_str("[lpp-pm] cleaned build artifacts")
+        return
+
+    # ── test ───────────────────────────────────────────────────────────
+    if str_find(cmd, "test") >= 0:
+        print_str("[lpp-pm] running tests...")
+        if check("tests") == 1:
+            result := command_exec("ls tests/*.lpp 2>/dev/null")
+            if result == 0:
+                print_str("[lpp-pm] test files found — delegating")
+                delegate()
+                return
+            else:
+                print_str("[lpp-pm] no test files")
+                return
+        else:
+            print_str("[lpp-pm] no tests/ directory")
+        return
+
+    # ── list ──────────────────────────────────────────────────────────
+    if str_find(cmd, "list") >= 0:
+        if check("lpp.toml") == 1:
+            raw := read("lpp.toml")
+            print_str("[lpp-pm] dependencies:")
+            # Show deps section
+            dep_start := str_find(raw, "[dependencies]")
+            if dep_start >= 0:
+                rest := str_substr(raw, dep_start, len(raw) - dep_start)
+                print_str(rest)
+        return
+
+    # ── tree ───────────────────────────────────────────────────────────
+    if str_find(cmd, "tree") >= 0:
+        if check("lpp.lock") == 1:
+            lock := read("lpp.lock")
+            print_str(lock)
+        else:
+            print_str("[lpp-pm] no lockfile — run install first")
+        return
+
+    # ── metadata ───────────────────────────────────────────────────────
+    if str_find(cmd, "metadata") >= 0:
+        if check("lpp.toml") == 1:
+            raw := read("lpp.toml")
+            print_str(raw)
+        return
+
+    # ── outdated ───────────────────────────────────────────────────────
+    if str_find(cmd, "outdated") >= 0:
+        if check("lpp.lock") == 1:
+            lock := read("lpp.lock")
+            print_str(lock)
+        else:
+            print_str("[lpp-pm] no lockfile")
+        return
+
+    # ── help ───────────────────────────────────────────────────────────
+    if str_find(cmd, "help") >= 0:
+        print_str("=== L++ Package Manager (self-hosted) ===")
+        print_str("  new <name>       Create a new L++ package")
+        print_str("  build            Build project (LPP_AOT=1)")
+        print_str("  run              Compile and run")
+        print_str("  install          Resolve and install deps")
+        print_str("  check            Type-check the project")
+        print_str("  list             Show dependencies")
+        print_str("  tree             Show lockfile")
+        print_str("  metadata         Show manifest")
+        print_str("  outdated         Show unpinned deps")
+        print_str("  clean            Remove build artifacts")
+        print_str("  test             Run tests (delegates)")
+        print_str("  add/remove       Add/remove deps (delegates)")
+        print_str("  update           Update deps (delegates)")
+        print_str("  search           Search registry (delegates)")
+        print_str("  bench            Run benchmarks (delegates)")
+        return
+
+    # ── add / remove / update / search / bench ─────────────────────────
+    # These need the Rust PM for Git operations, registry queries, linking
+    delegate()

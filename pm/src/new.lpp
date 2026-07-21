@@ -1,5 +1,7 @@
 # new.lpp — scaffold new L++ projects
 
+import utils
+
 def scaffold(name: String) -> Void:
     msg := str_concat("scaffolding ", name)
     print_str(msg)

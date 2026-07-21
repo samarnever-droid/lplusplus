@@ -19,10 +19,8 @@ def CH_SZ() -> Int:
 def EC_SZ() -> Int:
     return 22
 
-# ── Low-level write helpers ────────────────────────────────────────────────
-
 def _wr_local(buf: Int, off: Int, fname: String, crc: Int, size: Int):
-    fl := len(fname)
+    fl := str_len(fname)
     buf_set32le(buf, off,      L_SIG())
     buf_set16le(buf, off + 4,  20)
     buf_set16le(buf, off + 6,  0)
@@ -37,7 +35,7 @@ def _wr_local(buf: Int, off: Int, fname: String, crc: Int, size: Int):
     buf_write_str(buf, off + LH_SZ(), fname)
 
 def _wr_central(buf: Int, off: Int, fname: String, crc: Int, size: Int, loff: Int):
-    fl := len(fname)
+    fl := str_len(fname)
     buf_set32le(buf, off,      C_SIG())
     buf_set16le(buf, off + 4,  20)
     buf_set16le(buf, off + 6,  20)
@@ -67,79 +65,59 @@ def _wr_eocd(buf: Int, off: Int, n: Int, cd_sz: Int, cd_off: Int):
     buf_set32le(buf, off + 16, cd_off)
     buf_set16le(buf, off + 20, 0)
 
-# ── Create ZIP from a single file ──────────────────────────────────────────
-
 def zip_pack_file(zip_path: String, file_path: String) -> Int:
     fb := buf_read(file_path)
     if fb == 0:
-        print_str("[zip] cannot read input file")
         return 0 - 1
-
     sz := buf_len(fb)
     crc := buf_crc32(fb, 0, sz)
-    fl := len(file_path)
-
+    fl := str_len(file_path)
     total := LH_SZ() + fl + sz + CH_SZ() + fl + EC_SZ()
     out := buf_alloc(total)
     if out == 0:
         buf_free(fb)
         return 0 - 1
-
     _wr_local(out, 0, file_path, crc, sz)
     mut pos := LH_SZ() + fl
     buf_copy(out, pos, fb, 0, sz)
     pos = pos + sz
+    cd_start := pos
     _wr_central(out, pos, file_path, crc, sz, 0)
     pos = pos + CH_SZ() + fl
-    _wr_eocd(out, pos, 1, CH_SZ() + fl, 0)
-
+    _wr_eocd(out, pos, 1, CH_SZ() + fl, cd_start)
     result := buf_write(zip_path, out)
     buf_free(out)
     buf_free(fb)
     return result
 
-
-# ── Extract ZIP archive ────────────────────────────────────────────────────
-
 def zip_extract(zip_path: String, dest_dir: String) -> Int:
     buf := buf_read(zip_path)
     if buf == 0:
-        print_str("[zip] cannot read zip file")
         return 0 - 1
-
     blen := buf_len(buf)
     if blen < EC_SZ():
         buf_free(buf)
         return 0 - 1
-
-    # scan backwards for EOCD — without break, use found flag
-    mut eof := blen - EC_SZ()
-    mut found := 0
-    while eof >= 0:
-        if found == 0:
-            sig := buf_get32le(buf, eof)
-            if sig == E_SIG():
-                found = 1
+    mut scan := blen - EC_SZ()
+    mut eocd_pos := blen
+    while scan >= 0:
+        if eocd_pos == blen:
+            if buf_get32le(buf, scan) == E_SIG():
+                eocd_pos = scan
             else:
-                eof = eof - 1
+                scan = scan - 1
         else:
-            eof = 0 - 1
-
-    if found == 0:
-        print_str("[zip] EOCD not found — not a ZIP")
+            scan = 0 - 1
+    if eocd_pos == blen:
         buf_free(buf)
         return 0 - 1
-
-    n      := buf_get16le(buf, eof + 8)
-    cd_sz  := buf_get32le(buf, eof + 12)
-    cd_off := buf_get32le(buf, eof + 16)
-
+    n      := buf_get16le(buf, eocd_pos + 8)
+    cd_sz  := buf_get32le(buf, eocd_pos + 12)
+    cd_off := buf_get32le(buf, eocd_pos + 16)
     if n <= 0:
         buf_free(buf)
         return 0
-
     dir_create(dest_dir)
-
     mut cp := cd_off
     mut i := 0
     mut running := 1
@@ -147,8 +125,7 @@ def zip_extract(zip_path: String, dest_dir: String) -> Int:
         if i >= n:
             running = 0
         else:
-            sig := buf_get32le(buf, cp)
-            if sig == C_SIG():
+            if buf_get32le(buf, cp) == C_SIG():
                 fn_len  := buf_get16le(buf, cp + 28)
                 ex_len  := buf_get16le(buf, cp + 30)
                 cm_len  := buf_get16le(buf, cp + 32)
@@ -157,7 +134,6 @@ def zip_extract(zip_path: String, dest_dir: String) -> Int:
                 unc_sz  := buf_get32le(buf, cp + 24)
                 loc_off := buf_get32le(buf, cp + 42)
                 fname := buf_read_str(buf, cp + CH_SZ(), fn_len)
-
                 if method == 0:
                     lfn_len := buf_get16le(buf, loc_off + 26)
                     lex_len := buf_get16le(buf, loc_off + 28)
@@ -168,56 +144,36 @@ def zip_extract(zip_path: String, dest_dir: String) -> Int:
                         op := path_join(dest_dir, fname)
                         buf_write(op, ob)
                         buf_free(ob)
-                else:
-                    print_str("[zip] skipping compressed entry")
-
                 cp = cp + CH_SZ() + fn_len + ex_len + cm_len
                 i = i + 1
             else:
                 running = 0
-
     buf_free(buf)
-    print_str("[zip] extraction complete")
     return 0
-
-
-# ── List ZIP contents ──────────────────────────────────────────────────────
 
 def zip_list(zip_path: String) -> Int:
     buf := buf_read(zip_path)
     if buf == 0:
-        print_str("[zip] cannot read zip file")
         return 0 - 1
-
     blen := buf_len(buf)
     if blen < EC_SZ():
         buf_free(buf)
         return 0 - 1
-
-    # scan backwards for EOCD
-    mut eof := blen - EC_SZ()
-    mut found := 0
-    while eof >= 0:
-        if found == 0:
-            sig := buf_get32le(buf, eof)
-            if sig == E_SIG():
-                found = 1
+    mut scan := blen - EC_SZ()
+    mut eocd_pos := blen
+    while scan >= 0:
+        if eocd_pos == blen:
+            if buf_get32le(buf, scan) == E_SIG():
+                eocd_pos = scan
             else:
-                eof = eof - 1
+                scan = scan - 1
         else:
-            eof = 0 - 1
-
-    if found == 0:
-        print_str("[zip] not a ZIP file")
+            scan = 0 - 1
+    if eocd_pos == blen:
         buf_free(buf)
         return 0 - 1
-
-    n      := buf_get16le(buf, eof + 8)
-    cd_off := buf_get32le(buf, eof + 16)
-
-    print_str("  Size    Method  Name")
-    print_str("  ------  ------  ----")
-
+    n      := buf_get16le(buf, eocd_pos + 8)
+    cd_off := buf_get32le(buf, eocd_pos + 16)
     mut cp := cd_off
     mut i := 0
     mut running := 1
@@ -225,20 +181,15 @@ def zip_list(zip_path: String) -> Int:
         if i >= n:
             running = 0
         else:
-            sig := buf_get32le(buf, cp)
-            if sig == C_SIG():
-                fn_len  := buf_get16le(buf, cp + 28)
-                ex_len  := buf_get16le(buf, cp + 30)
-                cm_len  := buf_get16le(buf, cp + 32)
-                method  := buf_get16le(buf, cp + 10)
-                comp_sz := buf_get32le(buf, cp + 20)
-                unc_sz  := buf_get32le(buf, cp + 24)
+            if buf_get32le(buf, cp) == C_SIG():
+                fn_len := buf_get16le(buf, cp + 28)
+                ex_len := buf_get16le(buf, cp + 30)
+                cm_len := buf_get16le(buf, cp + 32)
                 fname := buf_read_str(buf, cp + CH_SZ(), fn_len)
                 print_str(fname)
                 cp = cp + CH_SZ() + fn_len + ex_len + cm_len
                 i = i + 1
             else:
                 running = 0
-
     buf_free(buf)
     return i

@@ -1242,6 +1242,22 @@ pub fn get_builtins() -> &'static [Builtin] {
         },
         // ── Binary buffer library (runtime/lpp_buf.c) ──────────────────────
         Builtin {
+            name: "str_len",
+            symbol: "lpp_str_len",
+            params: &[ParamType::Specific(TypeRef::Str)],
+            return_type: TypeRef::Int,
+            cl_params: &[0],
+            cl_return: Some(0),
+        },
+        Builtin {
+            name: "lpp_str_len",
+            symbol: "lpp_str_len",
+            params: &[ParamType::Specific(TypeRef::Str)],
+            return_type: TypeRef::Int,
+            cl_params: &[0],
+            cl_return: Some(0),
+        },
+        Builtin {
             name: "buf_alloc",
             symbol: "lpp_buf_alloc",
             params: &[ParamType::Specific(TypeRef::Int)],

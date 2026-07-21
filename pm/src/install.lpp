@@ -1,5 +1,7 @@
 # install.lpp — resolve and install dependencies
 
+import utils
+
 def install_deps() -> Int:
     manifest := "lpp.toml"
     if check(manifest) == 0:

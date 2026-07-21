@@ -1,5 +1,7 @@
 # build.lpp — compile and link an L++ project
 
+import utils
+
 def compile_project() -> Int:
     entry := "src/main.lpp"
     if check(entry) == 0:

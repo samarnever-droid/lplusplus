@@ -152,6 +152,13 @@ int64_t lpp_buf_crc32(void *ptr, int64_t off, int64_t len) {
     return (int64_t)(crc ^ 0xFFFFFFFFUL);
 }
 
+/* ── strlen for L++ strings ─────────────────────────────────────────────── */
+
+int64_t lpp_str_len(const char *s) {
+    if (!s) return 0;
+    return (int64_t)strlen(s);
+}
+
 /* ── String from buffer (for debug/tooling) ──────────────────────────────── */
 
 char *lpp_buf_to_str(void *ptr, int64_t off, int64_t len) {
@@ -173,6 +180,9 @@ int64_t lpp_buf_write_str(void *ptr, int64_t offset, const char *str) {
     int64_t len = (int64_t)strlen(str);
     if (offset < 0 || offset + len > size) return -1;
     memcpy(((uint8_t *)ptr) + 8 + offset, str, (size_t)len);
+    // Update the stored size to reflect the bytes actually written
+    int64_t new_end = offset + len;
+    if (new_end > size) { *(int64_t *)ptr = new_end; }
     return len;
 }
 

@@ -21,7 +21,6 @@ mod semantic;
 #[path = "analysis/typecheck.rs"]
 mod typecheck;
 
-use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -118,7 +117,11 @@ fn bootstrap_self_hosted_pm() -> Result<PathBuf, String> {
 }
 
 /// Delegate a PM command to the self-hosted PM binary.
+/// ALL PM commands route here. If the self-hosted PM is unavailable or
+/// signals `__DELEGATE__`, the Rust PM takes over.
 fn run_self_hosted_pm(args: &[String]) {
+    let cmd = args.first().map(|s| s.as_str()).unwrap_or("help");
+
     let pm_bin = match bootstrap_self_hosted_pm() {
         Ok(b) => b,
         Err(e) => {
@@ -129,60 +132,44 @@ fn run_self_hosted_pm(args: &[String]) {
         }
     };
 
-    let cmd = args.first().map(|s| s.as_str()).unwrap_or("help");
+    // Build owned env strings (avoid borrow issues)
+    let mut child = std::process::Command::new(&pm_bin);
+    child.env("LPP_PM_CMD", cmd);
 
-    // Map CLI args to self-hosted PM env vars
-    let mut cmd_env = HashMap::new();
+    // Pass sub-arguments through env vars
     match cmd {
-        "build" => {
-            cmd_env.insert("LPP_PM_CMD", "build");
-            cmd_env.insert("LPP_AOT", "1");
+        "new" | "init" => {
+            let name = args.get(1).map(|s| s.as_str()).unwrap_or("my_project");
+            child.env("LPP_PM_NAME", name);
         }
-        "run" => {
-            cmd_env.insert("LPP_PM_CMD", "run");
-            cmd_env.insert("LPP_AOT", "1");
-        }
-        "new" => {
-            cmd_env.insert("LPP_PM_CMD", "new");
-            if args.len() > 1 {
-                cmd_env.insert("LPP_PM_NAME", &args[1]);
+        "add" => {
+            if let Some(a1) = args.get(1) {
+                child.env("LPP_PM_ARG1", a1.as_str());
+                let rest: Vec<&str> = args.iter().skip(1).map(|s| s.as_str()).collect();
+                child.env("LPP_PM_ARGS", rest.join("\x1f"));
             }
         }
-        "init" => {
-            cmd_env.insert("LPP_PM_CMD", "new");
-            if args.len() > 1 {
-                cmd_env.insert("LPP_PM_NAME", &args[1]);
+        "remove" | "search" => {
+            if let Some(a1) = args.get(1) {
+                child.env("LPP_PM_ARG1", a1.as_str());
             }
-        }
-        "install" => {
-            cmd_env.insert("LPP_PM_CMD", "install");
-        }
-        // For commands the self-hosted PM doesn't yet handle,
-        // fall back to the Rust PM
-        "add" | "remove" | "update" | "search" | "list" | "tree"
-        | "metadata" | "outdated" | "clean" | "check" | "test"
-        | "bench" | "help" => {
-            pm::run_command(args);
-            return;
         }
         _ => {
-            pm::run_command(args);
-            return;
+            if args.len() > 1 {
+                let rest: Vec<&str> = args.iter().skip(1).map(|s| s.as_str()).collect();
+                child.env("LPP_PM_ARGS", rest.join("\x1f"));
+            }
         }
     }
 
-    let mut child = std::process::Command::new(&pm_bin);
-    for (k, v) in &cmd_env {
-        child.env(k, v);
+    // Pass through AOT/linker settings
+    for key in &["LPP_AOT", "LPP_LINKER", "BENCHMARK"] {
+        if let Ok(val) = env::var(key) {
+            child.env(key, val);
+        }
     }
-    // Pass through AOT and linker settings
-    if let Ok(aot) = env::var("LPP_AOT") {
-        child.env("LPP_AOT", aot);
-    }
-    if let Ok(linker) = env::var("LPP_LINKER") {
-        child.env("LPP_LINKER", linker);
-    }
-    // Ensure lpp is findable by the self-hosted PM
+
+    // Ensure lpp and git are findable
     if let Ok(exe) = env::current_exe() {
         if let Some(dir) = exe.parent() {
             let existing = env::var("PATH").unwrap_or_default();
@@ -190,20 +177,38 @@ fn run_self_hosted_pm(args: &[String]) {
         }
     }
 
-    let status = child
+    let output = child
         .stdin(std::process::Stdio::null())
-        .status();
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output();
 
-    match status {
-        Ok(s) if !s.success() => {
-            eprintln!("[L++] Self-hosted PM exited with code {:?}", s.code());
+    match output {
+        Ok(out) => {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            let stderr = String::from_utf8_lossy(&out.stderr);
+
+            if !stdout.is_empty() {
+                print!("{}", stdout);
+            }
+            if !stderr.is_empty() {
+                eprint!("{}", stderr);
+            }
+
+            // Check for delegation signal
+            if stdout.contains("__DELEGATE__") || stderr.contains("__DELEGATE__") {
+                pm::run_command(args);
+                return;
+            }
+
+            if !out.status.success() {
+                pm::run_command(args);
+            }
         }
         Err(e) => {
-            eprintln!("[L++] Failed to run self-hosted PM: {e}");
-            eprintln!("[L++] Falling back to built-in Rust PM.");
+            eprintln!("[L++] Failed to run self-hosted PM: {e}. Falling back.");
             pm::run_command(args);
         }
-        _ => {}
     }
 }
 
@@ -263,6 +268,7 @@ fn main() {
     let mut dump_mir = false;
     let mut dump_c = false;
     let mut check_only = source_check_command;
+    let mut check_all = false;
     let mut emit_object = false;
 
     for arg in args.iter().skip(1) {
@@ -330,11 +336,79 @@ fn main() {
             dump_c = true;
         } else if arg == "--check" {
             check_only = true;
+        } else if arg == "--checkall" {
+            check_all = true;
         } else if arg == "--emit-object" || arg == "--aot" {
             emit_object = true;
         } else if !arg.starts_with('-') {
             filename = Some(arg.as_str());
         }
+    }
+
+    if check_all {
+        // Scan current directory recursively for .lpp files and type-check all
+        let mut p = 0usize;
+        let mut all_fails: Vec<String> = Vec::new();
+        let mut all_files: Vec<PathBuf> = Vec::new();
+        fn walk(base: &Path, files: &mut Vec<PathBuf>) {
+            if let Ok(entries) = fs::read_dir(base) {
+                for entry in entries.flatten() {
+                    let p = entry.path();
+                    if p.is_dir() {
+                        let name = p.file_name().unwrap_or_default().to_string_lossy();
+                        if name.starts_with('.') || name == "target" || name == "LppData" || name == "node_modules" {
+                            continue;
+                        }
+                        walk(&p, files);
+                    } else if p.extension().map_or(false, |e| e == "lpp") {
+                        files.push(p);
+                    }
+                }
+            }
+        }
+        walk(Path::new("."), &mut all_files);
+        if all_files.is_empty() {
+            eprintln!("[L++] No .lpp files found in project.");
+            return;
+        }
+        all_files.sort();
+        eprintln!("[L++] --checkall: checking {} file(s)...", all_files.len());
+        let ta = Instant::now();
+        for fpath in &all_files {
+            let input = match fs::read_to_string(fpath) {
+                Ok(c) => c, Err(e) => { all_fails.push(format!("{}: read: {}", fpath.display(), e)); continue; }
+            };
+            let mut l = lexer::Lexer::new(&input);
+            let tokens = match l.tokenize() {
+                Ok(t) => t, Err(e) => { all_fails.push(format!("{}: lex: {}", fpath.display(), e)); continue; }
+            };
+            let mut par = parser::Parser::new(tokens);
+            let mut ast = match par.parse() {
+                Ok(a) => a, Err(e) => { all_fails.push(format!("{}: syntax: {}", fpath.display(), e)); continue; }
+            };
+            let base = fpath.parent().unwrap_or(Path::new("."));
+            let mut imp = std::collections::HashSet::new();
+            if let Err(e) = resolve_local_imports(&mut ast.declarations, &mut imp, base) {
+                all_fails.push(format!("{}: import: {}", fpath.display(), e)); continue;
+            }
+            let mut res = semantic::Resolver::new();
+            if let Err(e) = res.resolve_program(&mut ast) {
+                all_fails.push(format!("{}: semantic: {}", fpath.display(), e)); continue;
+            }
+            let mut tc = typecheck::TypeChecker::new(&mut res.table);
+            if let Err(e) = tc.check_program(&ast) {
+                all_fails.push(format!("{}: type: {}", fpath.display(), e)); continue;
+            }
+            p += 1;
+        }
+        let el = ta.elapsed();
+        if all_fails.is_empty() {
+            println!("[L++] --checkall: OK — {} file(s) passed in {:.1} ms", p, el.as_secs_f64() * 1000.0);
+        } else {
+            eprintln!("[L++] --checkall: {} passed, {} FAILED:", p, all_fails.len());
+            for f in &all_fails { eprintln!("  {}", f); }
+        }
+        return;
     }
 
     let filename = match filename {
