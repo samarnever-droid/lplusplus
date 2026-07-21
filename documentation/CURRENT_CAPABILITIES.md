@@ -20,7 +20,8 @@ This document serves as the authoritative source of truth for verified compiler 
 | Dynamic Lists (`List[T]`) | **Available** | Supported elements: `Int`, `Float`, `Bool`, `Str`, `CustomStruct` (ARC managed) |
 | Struct Constructors | **Available** | Supports both positional field initialization `Point(10, 20)` and zero-argument allocation `Point()` |
 | `break` / `continue` | **Available** | Fully supported in `while`, `for i in range(...)`, and `for item in list` |
-| `Map[K, V]`, `Set[T]`, Enums, Traits | **Not Available** | Planned container and algebraic type extensions |
+| Key-Value Maps (`Map[K, V]`) | **Available** | Open-addressing hash table supporting `Int` and `Str` keys with `Int`, `Float`, `Str` values |
+| `Set[T]`, Enums, Traits | **Not Available** | Planned container and algebraic type extensions |
 
 ---
 
@@ -63,6 +64,10 @@ L++ uses an automated, rule-based **Hybrid Memory Model**:
 
 ### 3.6 JSON Parsing
 - `json_parse`, `json_get_int`, `json_get_str`, `json_get_obj`, `json_free`
+
+### 3.7 Hash Maps (`lpp_map`)
+- `map_new()`, `map_put(m, k, v)`, `map_get(m, k)`, `map_has(m, k)`, `map_len(m)`, `map_remove(m, k)`
+- Native support across C Transpilation, Cranelift AOT, and direct freestanding `lpp-link` execution.
 
 ---
 

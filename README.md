@@ -14,7 +14,7 @@
   <a href="linguist/UPSTREAM_LINGUIST_PR.md">Linguist Package</a>
 </p>
 
-> **Status — July 21, 2026:** L++ is an active experimental native language toolchain. The supported Linux x86-64 and Windows x86-64 native subsets feature ownership-aware MIR, ARC destructors, closure capsules, `List[Int]`, `List[Bool]`, `List[Str]`, `List[Custom]`, binary buffer operations (`buf_*`), process execution (`command_*`), directory manipulation (`dir_*`), native networking (`net_*`), Cranelift AOT, self-hosting package manager (`lpp-pm`), and a tri-format direct linker path (`lpp-link`). Unsupported features are deliberately caught and rejected rather than silently compiled with unsafe semantics.
+> **Status — July 21, 2026:** L++ is an active experimental native language toolchain. The supported Linux x86-64 and Windows x86-64 native subsets feature ownership-aware MIR, ARC destructors, closure capsules, `List[T]` dynamic lists, `Map[K, V]` hash tables, binary buffer operations (`buf_*`), process execution (`command_*`), directory manipulation (`dir_*`), native networking (`net_*`), Cranelift AOT, self-hosting package manager (`lpp-pm`), and a tri-format direct linker path (`lpp-link`). Unsupported features are deliberately caught and rejected rather than silently compiled with unsafe semantics.
 
 ---
 
@@ -73,7 +73,7 @@ The current AOT ownership contract covers:
 ✓ branch-safe release insertion
 ✓ nested struct destructor chains
 ✓ closure capsules and closure environments
-✓ List[Int], List[Bool], List[Str], and List[Custom] element ownership
+✓ List[T] and Map[K, V] element and entry ownership
 ✓ binary buffer memory allocation, read/write, string conversions & CRC32
 ✓ strong ownership-cycle rejection
 ```

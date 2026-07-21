@@ -52,6 +52,7 @@ L++ supports native primitives, custom structs, and parameterized lists (`List[T
 | Void | `Void` | Absence of return value |
 | Custom Struct | `typename` | Heap/stack-allocated user type |
 | Dynamic List | `List[T]` | Parameterized heap list (`T` = `Int`, `Float`, `Bool`, `Str`, `Custom`) |
+| Hash Map | `Map[K, V]` | Parameterized open-addressing hash table (`K` = `Int`, `Str`; `V` = `Int`, `Float`, `Str`) |
 
 ---
 
@@ -227,7 +228,18 @@ env_get(var_name) -> String                  # Returns environment variable valu
 env_set(var_name, var_value) -> Int          # Sets environment variable
 ```
 
-### 5.6 JSON Processing
+### 5.7 Hash Map Primitives (`lpp_map`)
+Key-value hash maps with open-address linear probing supporting `Int` and `Str` keys:
+```lpp
+mut m := map_new()                          # Allocates a new heap-allocated hash map
+map_put(m, "apple", 100)                     # Inserts or updates key-value pair
+val := map_get(m, "apple")                   # Retrieves value for key (returns 0 if missing)
+exists := map_has(m, "apple")                # Returns true (1) if key is present, false (0) if absent
+length := map_len(m)                         # Returns count of active key-value entries
+map_remove(m, "apple")                       # Removes key-value pair from map
+```
+
+### 5.8 JSON Processing
 ```lpp
 json_parse(json_str) -> Int                  # Parses JSON string -> handle
 json_get_int(handle, key) -> Int             # Reads integer property
@@ -320,9 +332,6 @@ lpp-link inspect object.o
 
 To ensure predictability, the compiler rejects unsupported configurations at compile time rather than generating invalid machine code:
 
-1. **Control Flow**: `break` and `continue` keywords are currently missing.
-2. **Data Structures**: Hash maps (`Map[K,V]`), sets (`Set[T]`), fixed tuples, and algebraic data types (`enum`/`match`) are not yet implemented.
-3. **Methods & Polymorphism**: Interfaces, traits, class methods, and virtual dispatch are missing; all routines are top-level functions.
-4. **Constructors**: Struct instances do not accept positional initialization arguments (`Point()` followed by `p.x = ...`).
-5. **Float Modulo**: Floating-point modulo (`float % float`) is disabled in Cranelift AOT pending runtime `fmod` integration.
-6. **AOT Concurrency Transfer**: `spawn` expressions are transpiled in the C path but disabled in direct AOT until thread-safe atomic closure captures are finalized.
+1. **Data Structures**: Sets (`Set[T]`), fixed tuples, and algebraic data types (`enum`/`match`) are not yet implemented. (`Map[K, V]` and `List[T]` are fully supported).
+2. **Methods & Polymorphism**: Interfaces, traits, class methods, and virtual dispatch are missing; all routines are top-level functions.
+3. **AOT Concurrency Transfer**: `spawn` expressions are transpiled in the C path but disabled in direct AOT until thread-safe atomic closure captures are finalized.
