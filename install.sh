@@ -5,7 +5,7 @@ PROJECT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 INSTALL_DIR=${LPP_INSTALL_DIR:-"$HOME/.lpp"}
 BIN_DIR="$INSTALL_DIR/bin"
 LIB_DIR="$INSTALL_DIR/lib"
-VERSION=${LPP_VERSION:-v0.1.2}
+VERSION=${LPP_VERSION:-v0.1.3}
 
 case "$(uname -s):$(uname -m)" in
   Linux:x86_64|Linux:amd64)
@@ -45,7 +45,7 @@ install_release() {
     printf '%s\n' "[2/3] Installing compiler, linker, and packaged runtimes..."
     cp "$root/bin/lpp" "$BIN_DIR/lpp"
     cp "$root/bin/lpp-link" "$BIN_DIR/lpp-link"
-    cp "$root/lib/"* "$LIB_DIR/"
+    cp -r "$root/lib/"* "$LIB_DIR/"
     rm -rf "$temp"
     trap - EXIT HUP INT TERM
     return 0
@@ -62,6 +62,9 @@ install_source() {
     cp "$PROJECT_DIR/target/release/lpp" "$BIN_DIR/lpp"
     cp "$PROJECT_DIR/target/release/lpp-link" "$BIN_DIR/lpp-link"
     cp "$PROJECT_DIR/lpp_runtime.c" "$LIB_DIR/lpp_runtime.c"
+    if [ -d "$PROJECT_DIR/runtime" ]; then
+        cp -r "$PROJECT_DIR/runtime" "$LIB_DIR/runtime"
+    fi
     if command -v cc >/dev/null 2>&1; then
         cc -O2 -fPIC -c "$LIB_DIR/lpp_runtime.c" -o "$LIB_DIR/lpp_runtime.o"
         if [ "$(uname -s):$(uname -m)" = "Linux:x86_64" ]; then

@@ -8,7 +8,7 @@ $ProjectDir = $PSScriptRoot
 $InstallDir = if ($env:LPP_INSTALL_DIR) { $env:LPP_INSTALL_DIR } else { Join-Path $HOME ".lpp" }
 $BinDir = Join-Path $InstallDir "bin"
 $LibDir = Join-Path $InstallDir "lib"
-$Version = if ($env:LPP_VERSION) { $env:LPP_VERSION } else { "v0.1.0" }
+$Version = if ($env:LPP_VERSION) { $env:LPP_VERSION } else { "v0.1.3" }
 $ReleaseUrl = "https://github.com/samarnever-droid/lplusplus/releases/download/$Version/lpp-windows-x86_64.zip"
 
 New-Item -ItemType Directory -Force $BinDir, $LibDir | Out-Null

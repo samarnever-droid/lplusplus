@@ -1,71 +1,74 @@
 <#
 .SYNOPSIS
-    Installs the L++ compiler and runtime assets to a per-user directory.
-
-.DESCRIPTION
-    Builds the release compiler, copies `lpp.exe` and `lpp_runtime.c` into
-    `$HOME\.lpp`, and optionally precompiles `lpp_runtime.obj` when MSVC is
-    available. The installed `lpp.exe` is the primary CLI entrypoint.
-
-.EXAMPLE
-    .\install.ps1
+Installs a prebuilt L++ release on Windows. Use `$env:LPP_FROM_SOURCE=1` to build from a local source checkout.
 #>
 
 $ErrorActionPreference = "Stop"
-
 $ProjectDir = $PSScriptRoot
 $InstallDir = if ($env:LPP_INSTALL_DIR) { $env:LPP_INSTALL_DIR } else { Join-Path $HOME ".lpp" }
 $BinDir = Join-Path $InstallDir "bin"
 $LibDir = Join-Path $InstallDir "lib"
-$CompilerSource = Join-Path $ProjectDir "target\release\lpp.exe"
-$CompilerDest = Join-Path $BinDir "lpp.exe"
-$RuntimeSource = Join-Path $ProjectDir "lpp_runtime.c"
-$RuntimeObject = Join-Path $LibDir "lpp_runtime.obj"
+$Version = if ($env:LPP_VERSION) { $env:LPP_VERSION } else { "v0.1.3" }
+$ReleaseUrl = "https://github.com/samarnever-droid/lplusplus/releases/download/$Version/lpp-windows-x86_64.zip"
 
-Write-Host "========================================================" -ForegroundColor Cyan
-Write-Host "                 L++ GLOBAL INSTALLER                   " -ForegroundColor Cyan
-Write-Host "========================================================" -ForegroundColor Cyan
+New-Item -ItemType Directory -Force $BinDir, $LibDir | Out-Null
 
-Write-Host "`n[1/4] Building release compiler and linker MVP..." -ForegroundColor Yellow
-$proc = Start-Process -FilePath "cargo" -ArgumentList "build --release --bin lpp --bin lpp-link" -WorkingDirectory $ProjectDir -NoNewWindow -Wait -PassThru
-if ($proc.ExitCode -ne 0) {
-    Write-Error "Cargo build failed. Make sure Rust is installed and cargo is on PATH."
-    exit 1
+function Install-Release {
+    $temp = Join-Path $env:TEMP "lpp-release-$([guid]::NewGuid())"
+    New-Item -ItemType Directory -Force $temp | Out-Null
+    try {
+        Write-Host "[1/3] Downloading L++ $Version release..." -ForegroundColor Yellow
+        Invoke-WebRequest -Uri $ReleaseUrl -OutFile "$temp\lpp.zip" -UseBasicParsing
+        Expand-Archive -Path "$temp\lpp.zip" -DestinationPath $temp -Force
+        $root = Join-Path $temp "lpp-windows-x86_64"
+        if (-not (Test-Path "$root\bin\lpp.exe")) { throw "Release archive is missing lpp.exe" }
+        Write-Host "[2/3] Installing compiler, linker, and runtime objects..." -ForegroundColor Yellow
+        Copy-Item "$root\bin\lpp.exe" "$BinDir\lpp.exe" -Force
+        Copy-Item "$root\bin\lpp-link.exe" "$BinDir\lpp-link.exe" -Force
+        Copy-Item "$root\lib\*" $LibDir -Force
+        return $true
+    } catch {
+        Write-Warning "Release installation failed: $($_.Exception.Message)"
+        return $false
+    } finally {
+        Remove-Item $temp -Recurse -Force -ErrorAction SilentlyContinue
+    }
 }
 
-Write-Host "`n[2/4] Preparing install directories..." -ForegroundColor Yellow
-New-Item -ItemType Directory -Force $BinDir | Out-Null
-New-Item -ItemType Directory -Force $LibDir | Out-Null
-
-Write-Host "`n[3/4] Installing compiler and runtime files..." -ForegroundColor Yellow
-Copy-Item -Path $CompilerSource -Destination $CompilerDest -Force
-$LinkerSource = Join-Path $ProjectDir "target\release\lpp-link.exe"
-if (Test-Path $LinkerSource) {
-    Copy-Item -Path $LinkerSource -Destination (Join-Path $BinDir "lpp-link.exe") -Force
+function Install-Source {
+    if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
+        throw "Cargo is required for source installation. Install Rust or use a published release asset."
+    }
+    Write-Host "[1/3] Building L++ compiler and linker from source..." -ForegroundColor Yellow
+    cargo build --release --bin lpp --bin lpp-link
+    if ($LASTEXITCODE -ne 0) { throw "Cargo build failed." }
+    Write-Host "[2/3] Packaging compiler and runtime objects..." -ForegroundColor Yellow
+    Copy-Item "$ProjectDir\target\release\lpp.exe" "$BinDir\lpp.exe" -Force
+    Copy-Item "$ProjectDir\target\release\lpp-link.exe" "$BinDir\lpp-link.exe" -Force
+    Copy-Item "$ProjectDir\lpp_runtime.c" "$LibDir\lpp_runtime.c" -Force
+    Copy-Item "$ProjectDir\runtime" "$LibDir\runtime" -Recurse -Force
+    $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+    if (Test-Path $vswhere) {
+        $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+        if ($vs) {
+            cmd.exe /d /c "call `"$vs\VC\Auxiliary\Build\vcvars64.bat`" >nul && cl.exe /nologo /O2 /c `"$ProjectDir\lpp_runtime.c`" /Fo:`"$LibDir\lpp_runtime.obj`""
+            cmd.exe /d /c "call `"$vs\VC\Auxiliary\Build\vcvars64.bat`" >nul && cl.exe /nologo /O2 /GS- /DLPP_FREESTANDING /c `"$ProjectDir\runtime\windows_x86_64_min.c`" /Fo:`"$LibDir\lpp_runtime_min.obj`""
+        }
+    }
 }
-Copy-Item -Path $RuntimeSource -Destination (Join-Path $LibDir "lpp_runtime.c") -Force
 
-if (Get-Command cl.exe -ErrorAction SilentlyContinue) {
-    Write-Host "  Precompiling runtime object with cl.exe..." -ForegroundColor Yellow
-    & cl.exe /nologo /O2 /c (Join-Path $LibDir "lpp_runtime.c") "/Fo:$RuntimeObject" 2>&1 | Out-Null
-} else {
-    Write-Host "  MSVC not detected. Native builds will compile lpp_runtime.c at link time." -ForegroundColor DarkYellow
+if ($env:LPP_FROM_SOURCE -eq "1") {
+    Install-Source
+} elseif (-not (Install-Release)) {
+    Write-Warning "Falling back to local source installation."
+    Install-Source
 }
 
-Write-Host "`n[4/4] Updating PATH guidance..." -ForegroundColor Yellow
 $registryKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey("Environment", $true)
 $currentPath = $registryKey.GetValue("Path", "", [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
-
 if ($currentPath -split ";" -notcontains $BinDir) {
-    $newPath = ($currentPath + ";" + $BinDir) -replace ";+", ";"
-    $registryKey.SetValue("Path", $newPath, [Microsoft.Win32.RegistryValueKind]::String)
-    Write-Host "  Added $BinDir to Current User PATH." -ForegroundColor Green
-    Write-Host "  Restart your terminal to pick up the PATH change." -ForegroundColor Green
-} else {
-    Write-Host "  $BinDir is already present in Current User PATH." -ForegroundColor Green
+    $registryKey.SetValue("Path", ($currentPath + ";" + $BinDir) -replace ";+", ";", [Microsoft.Win32.RegistryValueKind]::String)
 }
 $registryKey.Close()
-
-Write-Host "`n========================================================" -ForegroundColor Green
-Write-Host "       L++ INSTALLED. TRY: lpp.exe -h OR lpp -h         " -ForegroundColor Green
-Write-Host "========================================================" -ForegroundColor Green
+Write-Host "[3/3] Installed commands: lpp, lpp-link" -ForegroundColor Green
+Write-Host "Restart your terminal, then run: lpp -h" -ForegroundColor Green
