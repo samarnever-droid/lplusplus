@@ -1181,30 +1181,45 @@ fn cmd_add(args: &[String]) {
     }
 
     if git_url.is_none() && path.is_none() {
-        if let Some(entry) = resolve_registry_package(&package_name) {
-            println!("[L++] Resolved '{}' from registry:", package_name);
-            println!("  Git: {}", entry.git);
-            if let Some(ref b) = entry.branch {
-                println!("  Branch: {}", b);
+        // Auto-resolve @owner/repo → https://github.com/owner/repo.git
+        if package_name.starts_with('@') {
+            if let Some(slash_idx) = package_name.find('/') {
+                let owner = &package_name[1..slash_idx];
+                let repo = &package_name[slash_idx + 1..];
+                let url = format!("https://github.com/{}/{}.git", owner, repo);
+                println!("[L++] Auto-resolved @{}/{} → {}", owner, repo, url);
+                git_url = Some(url);
+                branch = Some("master".to_string());
+                package_name = repo.to_string();
             }
-            if let Some(ref t) = entry.tag {
-                println!("  Tag: {}", t);
-            }
-            git_url = Some(entry.git);
-            branch = entry.branch;
-            tag = entry.tag;
+        }
 
-            if package_name.starts_with('@') {
-                if let Some(slash_idx) = package_name.find('/') {
-                    package_name = package_name[slash_idx + 1..].to_string();
+        if git_url.is_none() {
+            if let Some(entry) = resolve_registry_package(&package_name) {
+                println!("[L++] Resolved '{}' from registry:", package_name);
+                println!("  Git: {}", entry.git);
+                if let Some(ref b) = entry.branch {
+                    println!("  Branch: {}", b);
                 }
+                if let Some(ref t) = entry.tag {
+                    println!("  Tag: {}", t);
+                }
+                git_url = Some(entry.git);
+                branch = entry.branch;
+                tag = entry.tag;
+
+                if package_name.starts_with('@') {
+                    if let Some(slash_idx) = package_name.find('/') {
+                        package_name = package_name[slash_idx + 1..].to_string();
+                    }
+                }
+            } else {
+                eprintln!(
+                    "Error: Package '{}' not found in registry. Use --git <url> or @owner/repo format.",
+                    package_name
+                );
+                return;
             }
-        } else {
-            eprintln!(
-                "Error: Package '{}' not found in registry. You must specify --git or --path to add an unregistered package.",
-                package_name
-            );
-            return;
         }
     }
 

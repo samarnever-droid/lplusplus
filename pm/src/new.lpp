@@ -1,8 +1,8 @@
 # new.lpp — scaffold new L++ projects
 
 def scaffold(name: String) -> Void:
-    info := str_concat("scaffolding ", name)
-    print_str(info)
+    msg := str_concat("scaffolding ", name)
+    print_str(msg)
     dir_create(name)
     src := joined(name, "src")
     dir_create(src)

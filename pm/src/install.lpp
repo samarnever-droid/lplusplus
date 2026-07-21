@@ -7,8 +7,8 @@ def install_deps() -> Int:
         return 1
 
     raw := read(manifest)
-    info := "resolving dependencies..."
-    print_str(info)
+    msg := "resolving dependencies..."
+    print_str(msg)
 
     pkg_dir := ".lpp_packages"
     if check(pkg_dir) == 0:
@@ -25,15 +25,23 @@ def install_deps() -> Int:
     return 0
 
 def process_deps(section: String, pkg_dir: String) -> Void:
-    lines := str_split(section, 10)  # split by newline
-    count := len(lines)
-    mut i := 0
-    while i < count:
-        line := trim(get(lines, i))
+    # Walk through the raw section string line by line
+    # str_split returns Void in current runtime, so we scan manually
+    mut pos := 0
+    end_pos := len(section)
+    while pos < end_pos:
+        # Find next newline
+        mut nl := str_find(str_substr(section, pos, end_pos - pos), "\n")
+        if nl < 0:
+            nl = end_pos - pos
+        line := str_substr(section, pos, nl)
+        pos = pos + nl + 1
+        if pos > end_pos:
+            pos = end_pos
+
         if str_find(line, "=") >= 0:
-            info := "installing " + line
-            print_str(info)
-        i = i + 1
+            msg2 := str_concat("installing ", line)
+            print_str(msg2)
 
 def trim(s: String) -> String:
     return str_trim(s)

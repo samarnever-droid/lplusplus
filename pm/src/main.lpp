@@ -8,7 +8,7 @@ import install
 def main():
     print_str("=== Self-Hosted L++ Package Manager v0.1.0 ===")
 
-    cmd := env_get("LPP_PM_CMD")
+    mut cmd := env_get("LPP_PM_CMD")
     if str_find(cmd, "new") >= 0:
         mut name := env_get("LPP_PM_NAME")
         if len(name) == 0:

@@ -21,9 +21,197 @@ mod semantic;
 #[path = "analysis/typecheck.rs"]
 mod typecheck;
 
+use std::collections::HashMap;
 use std::env;
 use std::fs;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
+
+/// Bootstrap the self-hosted L++ PM: compile pm/src/main.lpp → cached binary.
+/// Returns the path to the cached PM binary, or an error string.
+fn bootstrap_self_hosted_pm() -> Result<PathBuf, String> {
+    let lpp_bin = env::current_exe()
+        .map_err(|e| format!("cannot locate lpp binary: {e}"))?;
+
+    let cache_dir = dirs_next().unwrap_or_else(|| PathBuf::from(".lpp_cache"));
+    let _ = fs::create_dir_all(&cache_dir);
+
+    let pm_bin = cache_dir.join(format!("lpp-pm{}", env::consts::EXE_SUFFIX));
+
+    // Check if already built and up-to-date
+    let pm_main = Path::new("pm/src/main.lpp");
+    if pm_bin.exists() && pm_main.exists() {
+        let bin_meta = fs::metadata(&pm_bin).ok();
+        let src_meta = fs::metadata(pm_main).ok();
+        if let (Some(b), Some(s)) = (bin_meta, src_meta) {
+            if let (Ok(bt), Ok(st)) = (b.modified(), s.modified()) {
+                if bt >= st {
+                    return Ok(pm_bin);
+                }
+            }
+        }
+    }
+
+    eprintln!("[L++] Bootstrapping self-hosted PM...");
+
+    // Compile pm/src/main.lpp → pm/src/main.o
+    let status = std::process::Command::new(&lpp_bin)
+        .env("LPP_AOT", "1")
+        .env("LPP_AOT_ONLY", "1")
+        .env("BENCHMARK", "1")
+        .arg(pm_main)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::inherit())
+        .status()
+        .map_err(|e| format!("failed to spawn lpp compiler: {e}"))?;
+
+    if !status.success() {
+        return Err("self-hosted PM compilation failed".to_string());
+    }
+
+    let pm_obj = Path::new("pm/src/main.o");
+    if !pm_obj.exists() {
+        return Err("pm/src/main.o not generated".to_string());
+    }
+
+    // Link with host cc
+    let runtime_src = if Path::new("lpp_runtime.c").exists() {
+        "lpp_runtime.c".to_string()
+    } else {
+        return Err("lpp_runtime.c not found".to_string());
+    };
+
+    let cc = ["cc", "gcc", "clang"]
+        .iter()
+        .find(|c| {
+            std::process::Command::new(c)
+                .arg("--version")
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .is_ok()
+        })
+        .copied()
+        .unwrap_or("cc");
+
+    let link_status = std::process::Command::new(cc)
+        .arg("-O2")
+        .arg(&pm_obj)
+        .arg(&runtime_src)
+        .arg("-o")
+        .arg(&pm_bin)
+        .arg("-pthread")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::inherit())
+        .status()
+        .map_err(|e| format!("failed to link PM binary: {e}"))?;
+
+    let _ = fs::remove_file(&pm_obj);
+
+    if !link_status.success() {
+        return Err("linking self-hosted PM failed".to_string());
+    }
+
+    Ok(pm_bin)
+}
+
+/// Delegate a PM command to the self-hosted PM binary.
+fn run_self_hosted_pm(args: &[String]) {
+    let pm_bin = match bootstrap_self_hosted_pm() {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("[L++] Self-hosted PM unavailable: {e}");
+            eprintln!("[L++] Falling back to built-in Rust PM.");
+            pm::run_command(args);
+            return;
+        }
+    };
+
+    let cmd = args.first().map(|s| s.as_str()).unwrap_or("help");
+
+    // Map CLI args to self-hosted PM env vars
+    let mut cmd_env = HashMap::new();
+    match cmd {
+        "build" => {
+            cmd_env.insert("LPP_PM_CMD", "build");
+            cmd_env.insert("LPP_AOT", "1");
+        }
+        "run" => {
+            cmd_env.insert("LPP_PM_CMD", "run");
+            cmd_env.insert("LPP_AOT", "1");
+        }
+        "new" => {
+            cmd_env.insert("LPP_PM_CMD", "new");
+            if args.len() > 1 {
+                cmd_env.insert("LPP_PM_NAME", &args[1]);
+            }
+        }
+        "init" => {
+            cmd_env.insert("LPP_PM_CMD", "new");
+            if args.len() > 1 {
+                cmd_env.insert("LPP_PM_NAME", &args[1]);
+            }
+        }
+        "install" => {
+            cmd_env.insert("LPP_PM_CMD", "install");
+        }
+        // For commands the self-hosted PM doesn't yet handle,
+        // fall back to the Rust PM
+        "add" | "remove" | "update" | "search" | "list" | "tree"
+        | "metadata" | "outdated" | "clean" | "check" | "test"
+        | "bench" | "help" => {
+            pm::run_command(args);
+            return;
+        }
+        _ => {
+            pm::run_command(args);
+            return;
+        }
+    }
+
+    let mut child = std::process::Command::new(&pm_bin);
+    for (k, v) in &cmd_env {
+        child.env(k, v);
+    }
+    // Pass through AOT and linker settings
+    if let Ok(aot) = env::var("LPP_AOT") {
+        child.env("LPP_AOT", aot);
+    }
+    if let Ok(linker) = env::var("LPP_LINKER") {
+        child.env("LPP_LINKER", linker);
+    }
+    // Ensure lpp is findable by the self-hosted PM
+    if let Ok(exe) = env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let existing = env::var("PATH").unwrap_or_default();
+            child.env("PATH", format!("{}:{}", dir.display(), existing));
+        }
+    }
+
+    let status = child
+        .stdin(std::process::Stdio::null())
+        .status();
+
+    match status {
+        Ok(s) if !s.success() => {
+            eprintln!("[L++] Self-hosted PM exited with code {:?}", s.code());
+        }
+        Err(e) => {
+            eprintln!("[L++] Failed to run self-hosted PM: {e}");
+            eprintln!("[L++] Falling back to built-in Rust PM.");
+            pm::run_command(args);
+        }
+        _ => {}
+    }
+}
+
+fn dirs_next() -> Option<PathBuf> {
+    // Compute cache dir: working-dir/.lpp_cache
+    let cwd = env::current_dir().ok()?;
+    Some(cwd.join(".lpp_cache"))
+}
 
 fn main() {
     let mut args: Vec<String> = env::args().collect();
@@ -60,8 +248,9 @@ fn main() {
             || first_arg == "clean"
             || first_arg == "outdated"
             || first_arg == "help"
+            || first_arg == "bench"
         {
-            pm::run_command(&args[1..]);
+            run_self_hosted_pm(&args[1..]);
             return;
         }
     }

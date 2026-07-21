@@ -7,6 +7,18 @@
     "YTDownloader": {
       "git": "https://github.com/Okrabai/YTDownloader.git",
       "branch": "main"
+    },
+    "lpp-zip": {
+      "git": "https://github.com/samarnever-droid/lplusplus.git",
+      "branch": "master"
+    },
+    "@samarnever-droid/lpp-zip": {
+      "git": "https://github.com/samarnever-droid/lplusplus.git",
+      "branch": "master"
+    },
+    "lpp-pm": {
+      "git": "https://github.com/samarnever-droid/lplusplus.git",
+      "branch": "master"
     }
   }
 }

@@ -7,17 +7,17 @@
 import zip
 
 def main():
-    cmd := env_get("LPP_ZIP_CMD")
+    mut cmd := env_get("LPP_ZIP_CMD")
 
     if str_find(cmd, "create") >= 0:
-        out := env_get("LPP_ZIP_OUT")
+        mut out := env_get("LPP_ZIP_OUT")
         inp := env_get("LPP_ZIP_FILE")
         if len(out) == 0:
             out = "archive.zip"
         if len(inp) == 0:
             print_str("[lpp-zip] LPP_ZIP_FILE not set")
             return
-        result := zip.zip_pack_file(out, inp)
+        result := zip_pack_file(out, inp)
         if result == 0:
             print_str("[lpp-zip] created successfully")
         else:
@@ -26,13 +26,13 @@ def main():
 
     if str_find(cmd, "extract") >= 0:
         inp := env_get("LPP_ZIP_FILE")
-        out_dir := env_get("LPP_ZIP_DIR")
+        mut out_dir := env_get("LPP_ZIP_DIR")
         if len(inp) == 0:
             print_str("[lpp-zip] LPP_ZIP_FILE not set")
             return
         if len(out_dir) == 0:
             out_dir = "."
-        result := zip.zip_extract(inp, out_dir)
+        result := zip_extract(inp, out_dir)
         if result == 0:
             print_str("[lpp-zip] extracted successfully")
         else:
@@ -44,7 +44,7 @@ def main():
         if len(inp) == 0:
             print_str("[lpp-zip] LPP_ZIP_FILE not set")
             return
-        count := zip.zip_list(inp)
+        count := zip_list(inp)
         return
 
     print_str("[lpp-zip] commands: create, extract, list")

@@ -19,8 +19,8 @@ def compile_project() -> Int:
         return 1
 
     # Compile to object
-    cmd := str_concat("lpp ", entry)
-    code := command_exec(cmd)
+    cc_cmd := str_concat("lpp ", entry)
+    code := command_exec(cc_cmd)
     if code != 0:
         print_str("[lpp-pm] compilation failed")
         return code
@@ -46,16 +46,17 @@ def extract_name(toml_raw: String) -> String:
     return str_substr(rest, 0, end)
 
 def detect_cc() -> String:
-    cmd := command_output("cc --version 2>&1 || echo FAIL")
-    if str_find(cmd, "cc") >= 0 and str_find(cmd, "FAIL") < 0:
-        return "cc"
-    cmd = command_output("gcc --version 2>&1 || echo FAIL")
-    if str_find(cmd, "FAIL") < 0:
+    mut cc_out := command_output("cc --version 2>&1 || echo FAIL")
+    if str_find(cc_out, "cc") >= 0:
+        if str_find(cc_out, "FAIL") < 0:
+            return "cc"
+    cc_out = command_output("gcc --version 2>&1 || echo FAIL")
+    if str_find(cc_out, "FAIL") < 0:
         return "gcc"
-    cmd = command_output("clang --version 2>&1 || echo FAIL")
-    if str_find(cmd, "FAIL") < 0:
+    cc_out = command_output("clang --version 2>&1 || echo FAIL")
+    if str_find(cc_out, "FAIL") < 0:
         return "clang"
-    cmd = command_output("cl.exe /? 2>&1 || echo FAIL")
-    if str_find(cmd, "FAIL") < 0:
+    cc_out = command_output("cl.exe /? 2>&1 || echo FAIL")
+    if str_find(cc_out, "FAIL") < 0:
         return "cl.exe"
     return "cc"
