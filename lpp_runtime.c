@@ -301,11 +301,18 @@ typedef struct {
 } LppList;
 
 static void lpp_list_arc_retain_element(int64_t value) {
-    lpp_arc_retain((void *)(intptr_t)value);
+    /* Only retain heap pointers. Skip raw/static pointers (string literals,
+     * small integers) that don't have an ARC header. A valid ARC header is
+     * 8-byte aligned and points to a non-null heap address. */
+    void *ptr = (void *)(intptr_t)value;
+    if (!ptr || ((uintptr_t)ptr & 7) != 0 || (uintptr_t)ptr < 0x1000) return;
+    lpp_arc_retain(ptr);
 }
 
 static void lpp_list_arc_drop_element(int64_t value) {
-    lpp_arc_release((void *)(intptr_t)value);
+    void *ptr = (void *)(intptr_t)value;
+    if (!ptr || ((uintptr_t)ptr & 7) != 0 || (uintptr_t)ptr < 0x1000) return;
+    lpp_arc_release(ptr);
 }
 
 static void lpp_list_destroy(void *payload) {
