@@ -11,6 +11,7 @@
 /// Set freestanding runtime compilation mode flag for direct linker targets.
 pub const LPP_FREESTANDING: bool = true;
 
+use object::read::archive::ArchiveFile;
 use object::{
     Architecture, BinaryFormat, Object, ObjectSection, ObjectSymbol, RelocationKind,
     RelocationTarget, SymbolSection,
@@ -106,10 +107,7 @@ const EM_X86_64: u16 = 62;
 const PT_LOAD: u32 = 1;
 const PF_R_X: u32 = 5;
 
-fn read_elf_input(path: &Path) -> Result<ElfInput, String> {
-    let bytes = fs::read(path).map_err(|e| format!("read '{}': {e}", path.display()))?;
-    let file =
-        object::File::parse(&*bytes).map_err(|e| format!("parse '{}': {e}", path.display()))?;
+fn parse_elf_object(file: &object::File, path: &Path) -> Result<ElfInput, String> {
     if file.format() != BinaryFormat::Elf || file.architecture() != Architecture::X86_64 {
         return Err(format!(
             "'{}' is not an x86-64 ELF relocatable object",
@@ -214,14 +212,38 @@ fn read_elf_input(path: &Path) -> Result<ElfInput, String> {
     })
 }
 
+fn load_elf_inputs(path: &Path, out: &mut Vec<ElfInput>) -> Result<(), String> {
+    let bytes = fs::read(path).map_err(|e| format!("read '{}': {e}", path.display()))?;
+    if let Ok(archive) = ArchiveFile::parse(&*bytes) {
+        for member in archive.members() {
+            if let Ok(member) = member {
+                if let Ok(data) = member.data(&*bytes) {
+                    if let Ok(file) = object::File::parse(data) {
+                        if file.format() == BinaryFormat::Elf && file.architecture() == Architecture::X86_64 {
+                            let member_name = String::from_utf8_lossy(member.name()).to_string();
+                            let member_path = path.join(&member_name);
+                            out.push(parse_elf_object(&file, &member_path)?);
+                        }
+                    }
+                }
+            }
+        }
+        return Ok(());
+    }
+
+    let file = object::File::parse(&*bytes).map_err(|e| format!("parse '{}': {e}", path.display()))?;
+    out.push(parse_elf_object(&file, path)?);
+    Ok(())
+}
+
 fn write_elf(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
     if inputs.is_empty() {
         return Err("at least one input object is required".to_string());
     }
-    let objs: Vec<ElfInput> = inputs
-        .iter()
-        .map(|p| read_elf_input(p))
-        .collect::<Result<_, _>>()?;
+    let mut objs: Vec<ElfInput> = Vec::new();
+    for p in inputs {
+        load_elf_inputs(p, &mut objs)?;
+    }
 
     let mut text = Vec::new();
     let mut bases = Vec::new();
@@ -460,16 +482,11 @@ fn coff_reloc_number(rel: &Relocation) -> u8 {
     }
 }
 
-/// Read one COFF object, splitting its sections into text / rdata / data / tls
-/// classes so the linker can lay them out independently.
-fn read_coff_full(path: &Path) -> Result<CoffSections, String> {
-    let bytes = fs::read(path).map_err(|e| format!("read '{}': {e}", path.display()))?;
-    let file =
-        object::File::parse(&*bytes).map_err(|e| format!("parse '{}': {e}", path.display()))?;
-    if file.format() != BinaryFormat::Coff || file.architecture() != Architecture::X86_64 {
-        return Err(format!("'{}' is not an x86-64 COFF object", path.display()));
-    }
-
+fn parse_coff_object(
+    file: &object::File,
+    path: &Path,
+    _bytes: &[u8],
+) -> Result<CoffSections, String> {
     let mut text_buf = Vec::new();
     let mut rdata_buf = Vec::new();
     let mut data_buf = Vec::new();
@@ -613,6 +630,35 @@ fn read_coff_full(path: &Path) -> Result<CoffSections, String> {
         symbols: syms,
         relocations: relocs,
     })
+}
+
+fn load_coff_inputs(path: &Path, out: &mut Vec<CoffSections>) -> Result<(), String> {
+    let bytes = fs::read(path).map_err(|e| format!("read '{}': {e}", path.display()))?;
+
+    // Check if path is a static library archive (.lib / .a)
+    if let Ok(archive) = ArchiveFile::parse(&*bytes) {
+        for member in archive.members() {
+            if let Ok(member) = member {
+                if let Ok(data) = member.data(&*bytes) {
+                    if let Ok(file) = object::File::parse(data) {
+                        if file.format() == BinaryFormat::Coff && file.architecture() == Architecture::X86_64 {
+                            let member_name = String::from_utf8_lossy(member.name()).to_string();
+                            let member_path = path.join(&member_name);
+                            out.push(parse_coff_object(&file, &member_path, data)?);
+                        }
+                    }
+                }
+            }
+        }
+        return Ok(());
+    }
+
+    let file = object::File::parse(&*bytes).map_err(|e| format!("parse '{}': {e}", path.display()))?;
+    if file.format() != BinaryFormat::Coff || file.architecture() != Architecture::X86_64 {
+        return Err(format!("'{}' is not an x86-64 COFF object or library archive", path.display()));
+    }
+    out.push(parse_coff_object(&file, path, &bytes)?);
+    Ok(())
 }
 
 fn resolve_coff_target(
@@ -904,11 +950,11 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
         return Err("at least one input object is required".to_string());
     }
 
-    // ── 1. Read & classify all inputs ────────────────────────────────────
-    let objs: Vec<CoffSections> = inputs
-        .iter()
-        .map(|p| read_coff_full(p))
-        .collect::<Result<_, _>>()?;
+    // ── 1. Read & classify all inputs (including .lib / .a archives) ───
+    let mut objs: Vec<CoffSections> = Vec::new();
+    for p in inputs {
+        load_coff_inputs(p, &mut objs)?;
+    }
 
     // ── 2. Merge sections ────────────────────────────────────────────────
     let mut merged_text = Vec::new();
@@ -1851,8 +1897,36 @@ fn usage() {
     );
 }
 
+fn expand_response_files(args: Vec<String>) -> Result<Vec<String>, String> {
+    let mut expanded = Vec::new();
+    for arg in args {
+        if let Some(rsp_path) = arg.strip_prefix('@') {
+            let content = fs::read_to_string(rsp_path)
+                .map_err(|e| format!("failed to read response file '@{}': {}", rsp_path, e))?;
+            for line in content.lines() {
+                let trimmed = line.trim();
+                if !trimmed.is_empty() && !trimmed.starts_with('#') {
+                    for token in trimmed.split_whitespace() {
+                        expanded.push(token.to_string());
+                    }
+                }
+            }
+        } else {
+            expanded.push(arg);
+        }
+    }
+    Ok(expanded)
+}
+
 fn main() {
-    let args: Vec<String> = env::args().skip(1).collect();
+    let raw_args: Vec<String> = env::args().skip(1).collect();
+    let args = match expand_response_files(raw_args) {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("lpp-link error: {e}");
+            std::process::exit(1);
+        }
+    };
     if args.first().map(String::as_str) == Some("inspect") {
         if args.len() != 2 {
             usage();
