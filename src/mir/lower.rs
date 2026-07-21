@@ -107,7 +107,7 @@ impl<'a> MirLowerCtx<'a> {
                         .unwrap_or(TypeRef::Int),
                 ],
             ),
-            Expr::Call { callee, .. } => {
+            Expr::Call { callee, args } => {
                 if let Expr::Identifier(name, _) = &**callee {
                     if let Some(ty) = self.func_return_types.get(name) {
                         return ty.clone();
@@ -136,7 +136,19 @@ impl<'a> MirLowerCtx<'a> {
                         | "net_set_timeout" | "net_set_deadline" | "net_set_keepalive" => {
                             TypeRef::Int
                         }
-                        "list_new" => TypeRef::Generic("List".to_string(), vec![TypeRef::Int]),
+                        "map_get" | "lpp_map_get" => {
+                            let map_ty = args.first().map(|arg| self.expr_type_hint(arg, builder, binding_map));
+                            if let Some(TypeRef::Generic(_, params)) = map_ty {
+                                if params.len() >= 2 {
+                                    return params[1].clone();
+                                }
+                            }
+                            TypeRef::Int
+                        }
+                        "map_new" => TypeRef::Generic("Map".to_string(), vec![TypeRef::Int, TypeRef::Int]),
+                        "map_has" => TypeRef::Bool,
+                        "map_len" => TypeRef::Int,
+                        "map_put" | "map_remove" => TypeRef::Void,
                         "print" | "print_str" | "json_free" | "list_push" | "list_free"
                         | "net_close" => TypeRef::Void,
                         _ => TypeRef::Int,
@@ -814,7 +826,58 @@ impl<'a> MirLowerCtx<'a> {
                     }
 
                     let builtin_symbol =
-                        if name == "list_push" || name == "list_get" || name == "push" || name == "get" {
+                        if (name == "map_put" || name == "lpp_map_put" || name == "map_get" || name == "lpp_map_get" || name == "map_has" || name == "lpp_map_has" || name == "map_remove" || name == "lpp_map_remove") && args.len() >= 2 {
+                            let key_ty = self.expr_type_hint(&args[1], builder, binding_map);
+                            let val_ty = if args.len() >= 3 {
+                                self.expr_type_hint(&args[2], builder, binding_map)
+                            } else if name == "map_get" || name == "lpp_map_get" {
+                                let map_ty = self.expr_type_hint(&args[0], builder, binding_map);
+                                if let TypeRef::Generic(_, ref params) = map_ty {
+                                    params.get(1).cloned().unwrap_or(TypeRef::Int)
+                                } else {
+                                    TypeRef::Int
+                                }
+                            } else {
+                                TypeRef::Int
+                            };
+                            let is_str_key = key_ty == TypeRef::Str;
+                            let is_float_val = val_ty == TypeRef::Float;
+                            Some(match name.as_str() {
+                                "map_put" | "lpp_map_put" => {
+                                    if is_str_key {
+                                        "lpp_map_put_str".to_string()
+                                    } else if is_float_val {
+                                        "lpp_map_put_float".to_string()
+                                    } else {
+                                        "lpp_map_put".to_string()
+                                    }
+                                }
+                                "map_get" | "lpp_map_get" => {
+                                    if is_str_key {
+                                        "lpp_map_get_str".to_string()
+                                    } else if is_float_val {
+                                        "lpp_map_get_float".to_string()
+                                    } else {
+                                        "lpp_map_get".to_string()
+                                    }
+                                }
+                                "map_has" | "lpp_map_has" => {
+                                    if is_str_key {
+                                        "lpp_map_has_str".to_string()
+                                    } else {
+                                        "lpp_map_has".to_string()
+                                    }
+                                }
+                                "map_remove" | "lpp_map_remove" => {
+                                    if is_str_key {
+                                        "lpp_map_remove_str".to_string()
+                                    } else {
+                                        "lpp_map_remove".to_string()
+                                    }
+                                }
+                                _ => "lpp_map_get".to_string(),
+                            })
+                        } else if name == "list_push" || name == "list_get" || name == "push" || name == "get" {
                             let list_ty = args
                                 .first()
                                 .map(|arg| self.expr_type_hint(arg, builder, binding_map));

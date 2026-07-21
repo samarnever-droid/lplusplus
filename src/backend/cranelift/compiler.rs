@@ -73,10 +73,11 @@ fn validate_aot_program(program: &MirProgram, type_table: &TypeTable) -> Result<
     fn validate_type(ty: &TypeRef, where_: &str) -> Result<(), String> {
         match ty {
             TypeRef::Generic(name, args)
-                if name == "List"
-                    && args.len() == 1
-                    && matches!(args[0], TypeRef::Int | TypeRef::Float | TypeRef::Custom(_) | TypeRef::Str | TypeRef::Bool) =>
+                if (name == "List" && args.len() == 1) || (name == "Map" && args.len() == 2) =>
             {
+                for arg in args {
+                    validate_type(arg, where_)?;
+                }
                 Ok(())
             }
             TypeRef::Generic(name, args) => Err(format!(

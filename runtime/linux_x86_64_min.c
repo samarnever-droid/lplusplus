@@ -559,3 +559,280 @@ int64_t lpp_net_set_timeout(int64_t fd, int64_t ms) {
     (void)fd; (void)ms;
     return 1;
 }
+
+/* ── Freestanding Map Runtime ───────────────────────────────────────────── */
+typedef struct LppMapEntry {
+    int64_t key;
+    int64_t val;
+    int is_str_key;
+    int occupied;
+} LppMapEntry;
+
+typedef struct LppMap {
+    LppMapEntry *entries;
+    int64_t cap;
+    int64_t len;
+    uint64_t entries_map_size;
+} LppMap;
+
+static uint64_t lpp_hash_str(const char *s) {
+    if (!s) return 0;
+    uint64_t hash = 14695981039346656037ULL;
+    while (*s) {
+        hash ^= (unsigned char)(*s++);
+        hash *= 1099511628211ULL;
+    }
+    return hash;
+}
+
+static uint64_t lpp_hash_int(int64_t key) {
+    uint64_t k = (uint64_t)key;
+    k = (~k) + (k << 21);
+    k = k ^ (k >> 24);
+    k = (k + (k << 3)) + (k << 8);
+    k = k ^ (k >> 14);
+    k = (k + (k << 2)) + (k << 4);
+    k = k ^ (k >> 28);
+    k = k + (k << 31);
+    return k;
+}
+
+static int lpp_map_key_equal(int64_t k1, int64_t k2) {
+    if (k1 == k2) return 1;
+    if (k1 >= 0x400000 && k2 >= 0x400000) {
+        const char *s1 = (const char *)(uintptr_t)k1;
+        const char *s2 = (const char *)(uintptr_t)k2;
+        int i = 0;
+        while (s1[i] && s1[i] == s2[i]) i++;
+        if (s1[i] == s2[i]) return 1;
+    }
+    return 0;
+}
+
+void lpp_map_destroy(void *payload) {
+    LppMap *m = (LppMap *)payload;
+    if (!m) return;
+    if (m->entries) lpp_sys_munmap(m->entries, m->entries_map_size);
+    m->entries = 0;
+    m->cap = 0;
+    m->len = 0;
+}
+
+void *lpp_map_new(void) {
+    LppMap *m = (LppMap *)lpp_arc_alloc_with_destructor((int64_t)sizeof(LppMap), lpp_map_destroy);
+    if (!m) return 0;
+    m->cap = 16;
+    m->len = 0;
+    m->entries_map_size = lpp_page_round((uint64_t)m->cap * sizeof(LppMapEntry));
+    m->entries = (LppMapEntry *)lpp_sys_mmap(m->entries_map_size);
+    return m;
+}
+
+static void lpp_map_rehash(LppMap *m) {
+    int64_t old_cap = m->cap;
+    LppMapEntry *old_entries = m->entries;
+    uint64_t old_size = m->entries_map_size;
+
+    m->cap = old_cap * 2;
+    m->entries_map_size = lpp_page_round((uint64_t)m->cap * sizeof(LppMapEntry));
+    m->entries = (LppMapEntry *)lpp_sys_mmap(m->entries_map_size);
+    m->len = 0;
+
+    for (int64_t i = 0; i < old_cap; i++) {
+        if (old_entries[i].occupied == 1) {
+            int64_t key = old_entries[i].key;
+            int64_t val = old_entries[i].val;
+            int is_str = old_entries[i].is_str_key;
+            uint64_t h = is_str ? lpp_hash_str((const char *)(uintptr_t)key) : lpp_hash_int(key);
+            int64_t idx = (int64_t)(h % (uint64_t)m->cap);
+            while (m->entries[idx].occupied == 1) {
+                idx = (idx + 1) % m->cap;
+            }
+            m->entries[idx].key = key;
+            m->entries[idx].val = val;
+            m->entries[idx].is_str_key = is_str;
+            m->entries[idx].occupied = 1;
+            m->len++;
+        }
+    }
+    if (old_entries) lpp_sys_munmap(old_entries, old_size);
+}
+
+static void lpp_map_put_internal(LppMap *m, int64_t key, int64_t val, int is_str) {
+    if (!m) return;
+    if (m->len * 10 >= m->cap * 7) {
+        lpp_map_rehash(m);
+    }
+
+    uint64_t h = is_str ? lpp_hash_str((const char *)(uintptr_t)key) : lpp_hash_int(key);
+    int64_t idx = (int64_t)(h % (uint64_t)m->cap);
+    int64_t first_tombstone = -1;
+
+    while (m->entries[idx].occupied != 0) {
+        if (m->entries[idx].occupied == 1 && m->entries[idx].is_str_key == is_str) {
+            int match = is_str
+                ? lpp_map_key_equal(m->entries[idx].key, key)
+                : (m->entries[idx].key == key);
+            if (match) {
+                m->entries[idx].val = val;
+                return;
+            }
+        }
+        if (m->entries[idx].occupied == 2 && first_tombstone == -1) {
+            first_tombstone = idx;
+        }
+        idx = (idx + 1) % m->cap;
+    }
+
+    if (first_tombstone != -1) {
+        idx = first_tombstone;
+    }
+
+    m->entries[idx].key = key;
+    m->entries[idx].val = val;
+    m->entries[idx].is_str_key = is_str;
+    m->entries[idx].occupied = 1;
+    m->len++;
+}
+
+void lpp_map_put(void *map, int64_t key, int64_t val) {
+    lpp_map_put_internal((LppMap *)map, key, val, 0);
+}
+
+void lpp_map_put_str(void *map, const char *key, int64_t val) {
+    lpp_map_put_internal((LppMap *)map, (int64_t)(uintptr_t)key, val, 1);
+}
+
+int64_t lpp_map_get(void *map, int64_t key) {
+    LppMap *m = (LppMap *)map;
+    if (!m || m->len == 0) return 0;
+
+    uint64_t h = lpp_hash_int(key);
+    int64_t idx = (int64_t)(h % (uint64_t)m->cap);
+    int64_t start_idx = idx;
+
+    while (m->entries[idx].occupied != 0) {
+        if (m->entries[idx].occupied == 1 && m->entries[idx].is_str_key == 0 && m->entries[idx].key == key) {
+            return m->entries[idx].val;
+        }
+        idx = (idx + 1) % m->cap;
+        if (idx == start_idx) break;
+    }
+    return 0;
+}
+
+int64_t lpp_map_get_str(void *map, const char *key) {
+    LppMap *m = (LppMap *)map;
+    if (!m || !key || m->len == 0) return 0;
+
+    uint64_t h = lpp_hash_str(key);
+    int64_t idx = (int64_t)(h % (uint64_t)m->cap);
+    int64_t start_idx = idx;
+
+    while (m->entries[idx].occupied != 0) {
+        if (m->entries[idx].occupied == 1 && m->entries[idx].is_str_key == 1) {
+            if (lpp_map_key_equal(m->entries[idx].key, (int64_t)(uintptr_t)key)) {
+                return m->entries[idx].val;
+            }
+        }
+        idx = (idx + 1) % m->cap;
+        if (idx == start_idx) break;
+    }
+    return 0;
+}
+
+int64_t lpp_map_has(void *map, int64_t key) {
+    LppMap *m = (LppMap *)map;
+    if (!m || m->len == 0) return 0;
+
+    uint64_t h = lpp_hash_int(key);
+    int64_t idx = (int64_t)(h % (uint64_t)m->cap);
+    int64_t start_idx = idx;
+
+    while (m->entries[idx].occupied != 0) {
+        if (m->entries[idx].occupied == 1 && m->entries[idx].is_str_key == 0 && m->entries[idx].key == key) {
+            return 1;
+        }
+        idx = (idx + 1) % m->cap;
+        if (idx == start_idx) break;
+    }
+    return 0;
+}
+
+int64_t lpp_map_has_str(void *map, const char *key) {
+    LppMap *m = (LppMap *)map;
+    if (!m || !key || m->len == 0) return 0;
+
+    uint64_t h = lpp_hash_str(key);
+    int64_t idx = (int64_t)(h % (uint64_t)m->cap);
+    int64_t start_idx = idx;
+
+    while (m->entries[idx].occupied != 0) {
+        if (m->entries[idx].occupied == 1 && m->entries[idx].is_str_key == 1) {
+            if (lpp_map_key_equal(m->entries[idx].key, (int64_t)(uintptr_t)key)) {
+                return 1;
+            }
+        }
+        idx = (idx + 1) % m->cap;
+        if (idx == start_idx) break;
+    }
+    return 0;
+}
+
+int64_t lpp_map_len(void *map) {
+    LppMap *m = (LppMap *)map;
+    return m ? m->len : 0;
+}
+
+void lpp_map_remove(void *map, int64_t key) {
+    LppMap *m = (LppMap *)map;
+    if (!m || m->len == 0) return;
+
+    uint64_t h = lpp_hash_int(key);
+    int64_t idx = (int64_t)(h % (uint64_t)m->cap);
+    int64_t start_idx = idx;
+
+    while (m->entries[idx].occupied != 0) {
+        if (m->entries[idx].occupied == 1 && m->entries[idx].is_str_key == 0 && m->entries[idx].key == key) {
+            m->entries[idx].occupied = 2;
+            m->len--;
+            return;
+        }
+        idx = (idx + 1) % m->cap;
+        if (idx == start_idx) break;
+    }
+}
+
+void lpp_map_remove_str(void *map, const char *key) {
+    LppMap *m = (LppMap *)map;
+    if (!m || !key || m->len == 0) return;
+
+    uint64_t h = lpp_hash_str(key);
+    int64_t idx = (int64_t)(h % (uint64_t)m->cap);
+    int64_t start_idx = idx;
+
+    while (m->entries[idx].occupied != 0) {
+        if (m->entries[idx].occupied == 1 && m->entries[idx].is_str_key == 1) {
+            if (lpp_map_key_equal(m->entries[idx].key, (int64_t)(uintptr_t)key)) {
+                m->entries[idx].occupied = 2;
+                m->len--;
+                return;
+            }
+        }
+        idx = (idx + 1) % m->cap;
+        if (idx == start_idx) break;
+    }
+}
+
+void lpp_map_put_float(void *map, int64_t key, double val) {
+    int64_t ival;
+    for (int i = 0; i < 8; i++) ((char*)&ival)[i] = ((char*)&val)[i];
+    lpp_map_put(map, key, ival);
+}
+
+double lpp_map_get_float(void *map, int64_t key) {
+    int64_t ival = lpp_map_get(map, key);
+    double fval;
+    for (int i = 0; i < 8; i++) ((char*)&fval)[i] = ((char*)&ival)[i];
+    return fval;
+}

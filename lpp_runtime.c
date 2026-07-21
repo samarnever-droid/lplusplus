@@ -1012,4 +1012,5 @@ void lpp_json_free(void *json) {
 #include "runtime/lpp_exec.c"
 #include "runtime/lpp_dir.c"
 #include "runtime/lpp_buf.c"
+#include "runtime/lpp_map.c"
 

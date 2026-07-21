@@ -1,0 +1,37 @@
+def test_string_keys() -> Void:
+    print_str("start test_string_keys")
+    mut m := map_new()
+    print_str("created map")
+    map_put(m, "apple", 100)
+    print_str("put apple")
+    map_put(m, "banana", 200)
+    print_str("put banana")
+
+    if map_has(m, "apple"):
+        val1 := map_get(m, "apple")
+        lpp_print_int(val1) # expect 100
+
+    if map_has(m, "banana"):
+        val2 := map_get(m, "banana")
+        lpp_print_int(val2) # expect 200
+
+    lpp_print_int(map_len(m)) # expect 2
+
+    map_remove(m, "apple")
+    lpp_print_int(map_len(m)) # expect 1
+
+def test_integer_keys() -> Void:
+    print_str("start test_integer_keys")
+    mut m := map_new()
+    map_put(m, 42, 999)
+    map_put(m, 100, 888)
+
+    v1 := map_get(m, 42)
+    lpp_print_int(v1) # expect 999
+
+    v2 := map_get(m, 100)
+    lpp_print_int(v2) # expect 888
+
+def main():
+    test_string_keys()
+    test_integer_keys()

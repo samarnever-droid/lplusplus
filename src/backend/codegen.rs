@@ -541,6 +541,42 @@ impl<'a> Codegen<'a> {
                         }
                         return;
                     }
+                    if (n == "map_put" || n == "lpp_map_put" || n == "map_get" || n == "lpp_map_get" || n == "map_has" || n == "lpp_map_has" || n == "map_remove" || n == "lpp_map_remove") && args.len() >= 2 {
+                        let key_ty = self.expr_type(&args[1], current_scope);
+                        let val_ty = if args.len() >= 3 {
+                            self.expr_type(&args[2], current_scope)
+                        } else if n == "map_get" || n == "lpp_map_get" {
+                            let map_ty = self.expr_type(&args[0], current_scope);
+                            if let TypeRef::Generic(_, ref params) = map_ty {
+                                params.get(1).cloned().unwrap_or(TypeRef::Int)
+                            } else {
+                                TypeRef::Int
+                            }
+                        } else {
+                            TypeRef::Int
+                        };
+                        let is_str_key = key_ty == TypeRef::Str;
+                        let is_float_val = val_ty == TypeRef::Float;
+                        if is_str_key || is_float_val {
+                            let symbol = match n.as_str() {
+                                "map_put" | "lpp_map_put" => if is_str_key { "lpp_map_put_str" } else { "lpp_map_put_float" },
+                                "map_get" | "lpp_map_get" => if is_str_key { "lpp_map_get_str" } else { "lpp_map_get_float" },
+                                "map_has" | "lpp_map_has" => if is_str_key { "lpp_map_has_str" } else { "lpp_map_has" },
+                                "map_remove" | "lpp_map_remove" => if is_str_key { "lpp_map_remove_str" } else { "lpp_map_remove" },
+                                _ => "lpp_map_get",
+                            };
+                            self.out.push_str(symbol);
+                            self.out.push_str("(");
+                            for (i, arg) in args.iter().enumerate() {
+                                if i > 0 {
+                                    self.out.push_str(", ");
+                                }
+                                self.gen_expr(arg, current_scope, None);
+                            }
+                            self.out.push_str(")");
+                            return;
+                        }
+                    }
                     if (n == "list_push" || n == "list_get" || n == "push" || n == "get") && !args.is_empty() {
                         let list_ty = self.expr_type(&args[0], current_scope);
                         if let TypeRef::Generic(_, ref params) = list_ty {
@@ -1107,15 +1143,26 @@ impl<'a> Codegen<'a> {
                             }
                         }
                     }
+                    if name == "map_get" || name == "lpp_map_get" {
+                        if let Some(first) = args.first() {
+                            if let TypeRef::Generic(_, params) = self.expr_type(first, scope) {
+                                if params.len() >= 2 {
+                                    return params[1].clone();
+                                }
+                            }
+                        }
+                    }
                     match name.as_str() {
                         "input" | "read_file" | "json_get_str" | "net_recv" => return TypeRef::Str,
                         "print" | "print_str" | "write_file" | "json_free" | "list_push"
-                        | "list_free" | "net_close" => return TypeRef::Void,
+                        | "list_free" | "net_close" | "map_put" | "map_remove" => return TypeRef::Void,
                         "parse_int" | "json_parse" | "json_get_int" | "json_get_obj"
                         | "list_get" | "list_len" | "file_size" | "file_copy" | "file_move"
                         | "net_connect" | "net_listen" | "net_accept" | "net_send"
-                        | "net_send_all" | "net_set_timeout" => return TypeRef::Int,
+                        | "net_send_all" | "net_set_timeout" | "map_len" => return TypeRef::Int,
+                        "map_has" => return TypeRef::Bool,
                         "list_new" => return TypeRef::Generic("List".into(), vec![TypeRef::Int]),
+                        "map_new" => return TypeRef::Generic("Map".into(), vec![TypeRef::Int, TypeRef::Int]),
                         _ => {}
                     }
                     if let Some(&id) = self.type_table.structs_by_name.get(name) {

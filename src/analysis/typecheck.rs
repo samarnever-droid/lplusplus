@@ -454,12 +454,14 @@ impl<'a> TypeChecker<'a> {
                     match name.as_str() {
                         "input" | "read_file" | "json_get_str" | "net_recv" => Ok(TypeRef::Str),
                         "print" | "print_str" | "write_file" | "json_free" | "list_push"
-                        | "list_free" | "net_close" => Ok(TypeRef::Void),
+                        | "list_free" | "net_close" | "map_put" | "map_remove" => Ok(TypeRef::Void),
                         "parse_int" | "json_parse" | "json_get_int" | "json_get_obj"
                         | "list_get" | "list_len" | "file_size" | "file_copy" | "file_move"
                         | "net_connect" | "net_listen" | "net_accept" | "net_send"
-                        | "net_send_all" | "net_set_timeout" => Ok(TypeRef::Int),
+                        | "net_send_all" | "net_set_timeout" | "map_len" => Ok(TypeRef::Int),
+                        "map_has" => Ok(TypeRef::Bool),
                         "list_new" => Ok(TypeRef::Generic("List".to_string(), vec![TypeRef::Int])),
+                        "map_new" => Ok(TypeRef::Generic("Map".to_string(), vec![TypeRef::Int, TypeRef::Int])),
                         _ => Err(format!("Unresolved identifier '{}'", name)),
                     }
                 }
@@ -596,6 +598,25 @@ impl<'a> TypeChecker<'a> {
                                 "list_get first argument must be a List, got {:?}",
                                 list_ty
                             ));
+                        }
+
+                        if name == "map_new" || name == "lpp_map_new" {
+                            if let Some(TypeRef::Generic(map_name, params)) = expected_ty {
+                                if map_name == "Map" && params.len() == 2 {
+                                    return Ok(TypeRef::Generic("Map".to_string(), params));
+                                }
+                            }
+                            return Ok(TypeRef::Generic("Map".to_string(), vec![TypeRef::Int, TypeRef::Int]));
+                        }
+
+                        if name == "map_get" || name == "lpp_map_get" {
+                            let map_ty = arg_tys[0].clone();
+                            if let TypeRef::Generic(ref name, ref params) = map_ty {
+                                if name == "Map" && params.len() >= 2 {
+                                    return Ok(params[1].clone());
+                                }
+                            }
+                            return Ok(TypeRef::Int);
                         }
 
                         return Ok(builtin.return_type.clone());
@@ -791,6 +812,38 @@ def main():
         type_checker
             .check_program(&ast)
             .expect("boolean program should typecheck");
+    }
+
+    #[test]
+    fn map_operations_typecheck() {
+        let source = r#"
+def main():
+    mut m := map_new()
+    map_put(m, "apple", 100)
+    map_put(m, "banana", 200)
+
+    if map_has(m, "apple"):
+        val := map_get(m, "apple")
+        lpp_print_int(val)
+
+    lpp_print_int(map_len(m))
+    map_remove(m, "apple")
+"#;
+
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.tokenize().expect("source should lex");
+        let mut parser = Parser::new(tokens);
+        let mut ast = parser.parse().expect("source should parse");
+
+        let mut resolver = Resolver::new();
+        resolver
+            .resolve_program(&mut ast)
+            .expect("program should resolve");
+
+        let mut type_checker = TypeChecker::new(&mut resolver.table);
+        type_checker
+            .check_program(&ast)
+            .expect("map operations should typecheck");
     }
 
     #[test]

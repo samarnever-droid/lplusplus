@@ -265,12 +265,17 @@ fn write_elf(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
     start[7..11].copy_from_slice(&(disp as i32).to_le_bytes());
     text.extend_from_slice(&start);
 
-    let mut got: HashMap<String, usize> = HashMap::new();
-    for inp in &objs {
+    let mut got: HashMap<(String, u64, usize), usize> = HashMap::new();
+    for (idx, inp) in objs.iter().enumerate() {
         for rel in &inp.relocations {
             if rel.kind == RelocationKind::GotRelative {
+                let sym_offset = if rel.target == "__self_rodata__" || rel.target == "__self_text__" {
+                    (rel.addend + 4) as u64
+                } else {
+                    0u64
+                };
                 let n = got.len();
-                got.entry(rel.target.clone()).or_insert(n);
+                got.entry((rel.target.clone(), sym_offset, idx)).or_insert(n);
             }
         }
     }
@@ -293,10 +298,15 @@ fn write_elf(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
         rodata_off = align_up(text.len(), 16);
         text.resize(rodata_off, 0);
     }
-    for (name, slot) in &got {
-        let tgt = *syms
-            .get(name)
-            .ok_or_else(|| format!("unresolved GOT symbol '{name}'"))?;
+    for ((name, sym_offset, obj_idx), slot) in &got {
+        let base_tgt = match name.as_str() {
+            "__self_text__" => bases[*obj_idx] as u64,
+            "__self_rodata__" => rodata_bases[*obj_idx] as u64,
+            _ => *syms
+                .get(name)
+                .ok_or_else(|| format!("unresolved GOT symbol '{name}'"))?,
+        };
+        let tgt = base_tgt + sym_offset;
         let loc = got_off + slot * 8;
         let addr = ELF_BASE + CODE_OFFSET as u64 + tgt;
         text[loc..loc + 8].copy_from_slice(&addr.to_le_bytes());
@@ -312,36 +322,48 @@ fn write_elf(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
                     rel.size
                 ));
             }
-            let tgt = match rel.kind {
+            let (tgt, effective_addend) = match rel.kind {
                 RelocationKind::GotRelative => {
+                    let (sym_offset, instr_addend) =
+                        if rel.target == "__self_rodata__" || rel.target == "__self_text__" {
+                            ((rel.addend + 4) as u64, -4i64)
+                        } else {
+                            (0u64, rel.addend)
+                        };
                     let slot = *got
-                        .get(&rel.target)
+                        .get(&(rel.target.clone(), sym_offset, idx))
                         .ok_or_else(|| "missing GOT slot".to_string())?;
-                    u64::try_from(got_off + slot * 8).map_err(|_| "GOT overflow")?
+                    (
+                        u64::try_from(got_off + slot * 8).map_err(|_| "GOT overflow")?,
+                        instr_addend,
+                    )
                 }
                 _ if rel.target == "__self_text__" => {
-                    u64::try_from(base).map_err(|_| "text overflow")?
+                    (u64::try_from(base).map_err(|_| "text overflow")?, rel.addend)
                 }
                 _ if rel.target == "__self_rodata__" => {
-                    u64::try_from(rodata_bases[idx]).map_err(|_| "rodata overflow")?
+                    (u64::try_from(rodata_bases[idx]).map_err(|_| "rodata overflow")?, rel.addend)
                 }
-                _ => *syms.get(&rel.target).ok_or_else(|| {
-                    format!(
-                        "'{}': unresolved external relocation to '{}'",
-                        inp.path.display(),
-                        rel.target
-                    )
-                })?,
+                _ => (
+                    *syms.get(&rel.target).ok_or_else(|| {
+                        format!(
+                            "'{}': unresolved external relocation to '{}'",
+                            inp.path.display(),
+                            rel.target
+                        )
+                    })?,
+                    rel.addend,
+                ),
             };
             let patch = base + rel.offset;
             if patch + 4 > text.len() {
                 return Err(format!("'{}': patch out of range", inp.path.display()));
             }
             if rel.kind == RelocationKind::Absolute {
-                let v = ELF_BASE as i64 + CODE_OFFSET as i64 + tgt as i64 + rel.addend;
+                let v = ELF_BASE as i64 + CODE_OFFSET as i64 + tgt as i64 + effective_addend;
                 text[patch..patch + 4].copy_from_slice(&(v as i32).to_le_bytes());
             } else {
-                let d = tgt as i64 + rel.addend - patch as i64;
+                let d = tgt as i64 + effective_addend - patch as i64;
                 text[patch..patch + 4].copy_from_slice(&(d as i32).to_le_bytes());
             }
         }
