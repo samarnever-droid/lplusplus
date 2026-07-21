@@ -25,9 +25,7 @@ def main():
 
     # ── build ──────────────────────────────────────────────────────────
     if str_find(cmd, "build") >= 0:
-        code := compile_project()
-        if code == 0:
-            print_str("[lpp-pm] build successful")
+        delegate()
         return
 
     # ── run ────────────────────────────────────────────────────────────

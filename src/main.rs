@@ -192,8 +192,11 @@ fn bootstrap_self_hosted_pm() -> Result<PathBuf, String> {
         .copied()
         .unwrap_or("cc");
 
+    let lib_dir = runtime_src.parent().unwrap_or_else(|| Path::new("."));
+
     let link_status = std::process::Command::new(cc)
         .arg("-O2")
+        .arg(format!("-I{}", lib_dir.display()))
         .arg(&pm_obj)
         .arg(&runtime_src)
         .arg("-o")

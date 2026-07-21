@@ -308,10 +308,55 @@ fn installed_root_dir() -> Option<PathBuf> {
 }
 
 fn resolve_runtime_source() -> Option<PathBuf> {
+    for var in &["LPP_HOME", "LPP_DIR"] {
+        if let Ok(val) = std::env::var(var) {
+            let rt = PathBuf::from(&val).join("lpp_runtime.c");
+            if rt.exists() {
+                return Some(rt);
+            }
+            let lib_rt = PathBuf::from(&val).join("lib").join("lpp_runtime.c");
+            if lib_rt.exists() {
+                return Some(lib_rt);
+            }
+        }
+    }
+
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let candidates = [
+                exe_dir.join("lpp_runtime.c"),
+                exe_dir.join("lib/lpp_runtime.c"),
+                exe_dir.join("../lpp_runtime.c"),
+                exe_dir.join("../lib/lpp_runtime.c"),
+                exe_dir.join("../../lpp_runtime.c"),
+                exe_dir.join("../../lib/lpp_runtime.c"),
+                exe_dir.join("../../../lpp_runtime.c"),
+                exe_dir.join("../../../lib/lpp_runtime.c"),
+            ];
+            for c in &candidates {
+                if c.exists() {
+                    return Some(c.clone());
+                }
+            }
+        }
+    }
+
+    if let Ok(home) = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")) {
+        let home_rt = PathBuf::from(&home).join(".lpp/lib/lpp_runtime.c");
+        if home_rt.exists() {
+            return Some(home_rt);
+        }
+        let home_rt_root = PathBuf::from(&home).join(".lpp/lpp_runtime.c");
+        if home_rt_root.exists() {
+            return Some(home_rt_root);
+        }
+    }
+
     let workspace_runtime = Path::new("lpp_runtime.c");
     if workspace_runtime.exists() {
         return Some(workspace_runtime.to_path_buf());
     }
+
     installed_root_dir()
         .map(|root| root.join("lib").join("lpp_runtime.c"))
         .filter(|path| path.exists())
@@ -319,8 +364,43 @@ fn resolve_runtime_source() -> Option<PathBuf> {
 
 fn resolve_runtime_object() -> Option<PathBuf> {
     let extension = if cfg!(windows) { "obj" } else { "o" };
+    let filename = format!("lpp_runtime.{}", extension);
+
+    for var in &["LPP_HOME", "LPP_DIR"] {
+        if let Ok(val) = std::env::var(var) {
+            let lib_obj = PathBuf::from(val).join("lib").join(&filename);
+            if lib_obj.exists() {
+                return Some(lib_obj);
+            }
+        }
+    }
+
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let candidates = [
+                exe_dir.join(&filename),
+                exe_dir.join(format!("lib/{}", filename)),
+                exe_dir.join(format!("../lib/{}", filename)),
+                exe_dir.join(format!("../../lib/{}", filename)),
+                exe_dir.join(format!("../../../lib/{}", filename)),
+            ];
+            for c in &candidates {
+                if c.exists() {
+                    return Some(c.clone());
+                }
+            }
+        }
+    }
+
+    if let Ok(home) = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")) {
+        let home_obj = PathBuf::from(&home).join(".lpp/lib").join(&filename);
+        if home_obj.exists() {
+            return Some(home_obj);
+        }
+    }
+
     installed_root_dir()
-        .map(|root| root.join("lib").join(format!("lpp_runtime.{}", extension)))
+        .map(|root| root.join("lib").join(&filename))
         .filter(|path| path.exists())
 }
 
@@ -571,9 +651,11 @@ fn link_native_binary(obj_file: &Path, output_path: &Path) -> Result<(), String>
                 use std::io::Write;
                 if let Some(mut stdin) = child.stdin.take() {
                     let _ = writeln!(stdin, "call \"{}\" > nul", vcvars.display());
+                    let lib_dir = runtime_src.parent().unwrap_or_else(|| Path::new("."));
                     let _ = writeln!(
                         stdin,
-                        "cl.exe /nologo /O2 \"{}\" \"{}\" /Fe:\"{}\"",
+                        "cl.exe /nologo /O2 /I\"{}\" \"{}\" \"{}\" /Fe:\"{}\"",
+                        lib_dir.display(),
                         obj_file.display(),
                         runtime_src.display(),
                         output_path.display()
@@ -669,9 +751,11 @@ fn link_native_binary(obj_file: &Path, output_path: &Path) -> Result<(), String>
             runtime_src,
         } => {
             let mut cmd = std::process::Command::new(&compiler);
+            let lib_dir = runtime_src.parent().unwrap_or_else(|| Path::new("."));
             if compiler.eq_ignore_ascii_case("cl.exe") {
                 cmd.arg("/nologo")
                     .arg("/O2")
+                    .arg(format!("/I{}", lib_dir.display()))
                     .arg(obj_file)
                     .arg(&runtime_src)
                     .arg(format!("/Fe:{}", output_path.display()));
@@ -688,6 +772,7 @@ fn link_native_binary(obj_file: &Path, output_path: &Path) -> Result<(), String>
                     }
                 }
                 cmd.arg("-O2")
+                    .arg(format!("-I{}", lib_dir.display()))
                     .arg(obj_file)
                     .arg(&runtime_src)
                     .arg("-o")
