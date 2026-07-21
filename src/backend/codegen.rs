@@ -559,8 +559,24 @@ impl<'a> Codegen<'a> {
                         let is_float_val = val_ty == TypeRef::Float;
                         if is_str_key || is_float_val {
                             let symbol = match n.as_str() {
-                                "map_put" | "lpp_map_put" => if is_str_key { "lpp_map_put_str" } else { "lpp_map_put_float" },
-                                "map_get" | "lpp_map_get" => if is_str_key { "lpp_map_get_str" } else { "lpp_map_get_float" },
+                                "map_put" | "lpp_map_put" => {
+                                    if is_str_key && is_float_val {
+                                        "lpp_map_put_str_float"
+                                    } else if is_str_key {
+                                        "lpp_map_put_str"
+                                    } else {
+                                        "lpp_map_put_float"
+                                    }
+                                }
+                                "map_get" | "lpp_map_get" => {
+                                    if is_str_key && is_float_val {
+                                        "lpp_map_get_str_float"
+                                    } else if is_str_key {
+                                        "lpp_map_get_str"
+                                    } else {
+                                        "lpp_map_get_float"
+                                    }
+                                }
                                 "map_has" | "lpp_map_has" => if is_str_key { "lpp_map_has_str" } else { "lpp_map_has" },
                                 "map_remove" | "lpp_map_remove" => if is_str_key { "lpp_map_remove_str" } else { "lpp_map_remove" },
                                 _ => "lpp_map_get",

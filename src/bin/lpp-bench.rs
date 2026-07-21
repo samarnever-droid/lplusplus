@@ -140,6 +140,7 @@ impl Platform {
         }
     }
 
+    #[allow(dead_code)]
     fn host_link_flags(&self, cc: &str) -> Vec<String> {
         if cc.contains("cl.exe") || cc == "cl" {
             vec!["/nologo".into(), "/O2".into(), "/Fe:".into()]
@@ -286,10 +287,12 @@ fn load_vcvars_env(vcvars: &Path) -> Result<(), String> {
 }
 
 #[cfg(not(target_os = "windows"))]
+#[allow(dead_code)]
 fn find_vcvars64() -> Option<PathBuf> {
     None
 }
 #[cfg(not(target_os = "windows"))]
+#[allow(dead_code)]
 fn load_vcvars_env(_vcvars: &Path) -> Result<(), String> {
     Ok(())
 }

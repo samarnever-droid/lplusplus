@@ -836,3 +836,16 @@ double lpp_map_get_float(void *map, int64_t key) {
     for (int i = 0; i < 8; i++) ((char*)&fval)[i] = ((char*)&ival)[i];
     return fval;
 }
+
+void lpp_map_put_str_float(void *map, const char *key, double val) {
+    int64_t ival;
+    for (int i = 0; i < 8; i++) ((char*)&ival)[i] = ((char*)&val)[i];
+    lpp_map_put_str(map, key, ival);
+}
+
+double lpp_map_get_str_float(void *map, const char *key) {
+    int64_t ival = lpp_map_get_str(map, key);
+    double fval;
+    for (int i = 0; i < 8; i++) ((char*)&fval)[i] = ((char*)&ival)[i];
+    return fval;
+}

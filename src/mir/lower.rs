@@ -732,50 +732,60 @@ impl<'a> MirLowerCtx<'a> {
 
                 let mut return_type = TypeRef::Void;
                 if let Expr::Identifier(name, _) = &**callee {
-                    if let Some(ty) = self.func_return_types.get(name) {
-                        return_type = ty.clone();
-                    } else if let Some(&struct_id) = self.type_table.structs_by_name.get(name) {
-                        return_type = TypeRef::Custom(struct_id);
-                    } else if let Some(builtin) = crate::builtins::get_builtins()
-                        .iter()
-                        .find(|b| b.name == name)
-                    {
-                        if name == "list_get" || name == "get" {
-                            let list_ty = args
-                                .first()
-                                .map(|arg| self.expr_type_hint(arg, builder, binding_map))
-                                .unwrap_or(TypeRef::Int);
-                            if let TypeRef::Generic(_, params) = list_ty {
-                                if let Some(element_ty) = params.first() {
-                                    return_type = element_ty.clone();
-                                }
+                    if (name == "map_get" || name == "lpp_map_get") && !args.is_empty() {
+                        let map_ty = self.expr_type_hint(&args[0], builder, binding_map);
+                        if let TypeRef::Generic(_, ref params) = map_ty {
+                            if params.len() >= 2 {
+                                return_type = params[1].clone();
                             }
-                        } else if name != "list_new" {
-                            return_type = builtin.return_type.clone();
-                        } else {
-                            // list_new is special-cased because of generic list type inference
-                            return_type = TypeRef::Generic("List".to_string(), vec![TypeRef::Int]);
                         }
-                    } else {
-                        return_type = match name.as_str() {
-                            "input" | "read_file" | "json_get_str" | "net_recv"
-                            | "net_recv_udp" | "net_resolve" | "http_get" | "http_post"
-                            | "command_output" | "env_get" | "str_concat" | "str_replace"
-                            | "str_substr" | "str_trim" | "path_join" => TypeRef::Str,
-                            "parse_int" | "json_parse" | "json_get_int" | "json_get_obj"
-                            | "list_get" | "list_len" | "get" | "net_connect" | "net_listen"
-                            | "net_listen_udp" | "net_accept" | "net_accept_timeout"
-                            | "net_send" | "net_send_all" | "net_dial" | "net_dial_udp"
-                            | "net_set_timeout" | "net_set_deadline" | "net_set_keepalive"
-                            | "command_exec" | "str_find" | "str_split" | "dir_create"
-                            | "dir_remove" | "path_exists" | "file_copy" | "file_move"
-                            | "delete_file" | "append_file" | "file_size" | "file_exists"
-                            | "env_set" => TypeRef::Int,
-                            "list_new" => TypeRef::Generic("List".to_string(), vec![TypeRef::Int]),
-                            "print" | "print_str" | "json_free" | "list_push" | "list_free"
-                            | "net_close" => TypeRef::Void,
-                            _ => TypeRef::Int,
-                        };
+                    }
+                    if return_type == TypeRef::Void {
+                        if let Some(ty) = self.func_return_types.get(name) {
+                            return_type = ty.clone();
+                        } else if let Some(&struct_id) = self.type_table.structs_by_name.get(name) {
+                            return_type = TypeRef::Custom(struct_id);
+                        } else if let Some(builtin) = crate::builtins::get_builtins()
+                            .iter()
+                            .find(|b| b.name == name)
+                        {
+                            if name == "list_get" || name == "get" {
+                                let list_ty = args
+                                    .first()
+                                    .map(|arg| self.expr_type_hint(arg, builder, binding_map))
+                                    .unwrap_or(TypeRef::Int);
+                                if let TypeRef::Generic(_, params) = list_ty {
+                                    if let Some(element_ty) = params.first() {
+                                        return_type = element_ty.clone();
+                                    }
+                                }
+                            } else if name != "list_new" {
+                                return_type = builtin.return_type.clone();
+                            } else {
+                                // list_new is special-cased because of generic list type inference
+                                return_type = TypeRef::Generic("List".to_string(), vec![TypeRef::Int]);
+                            }
+                        } else {
+                            return_type = match name.as_str() {
+                                "input" | "read_file" | "json_get_str" | "net_recv"
+                                | "net_recv_udp" | "net_resolve" | "http_get" | "http_post"
+                                | "command_output" | "env_get" | "str_concat" | "str_replace"
+                                | "str_substr" | "str_trim" | "path_join" => TypeRef::Str,
+                                "parse_int" | "json_parse" | "json_get_int" | "json_get_obj"
+                                | "list_get" | "list_len" | "get" | "net_connect" | "net_listen"
+                                | "net_listen_udp" | "net_accept" | "net_accept_timeout"
+                                | "net_send" | "net_send_all" | "net_dial" | "net_dial_udp"
+                                | "net_set_timeout" | "net_set_deadline" | "net_set_keepalive"
+                                | "command_exec" | "str_find" | "str_split" | "dir_create"
+                                | "dir_remove" | "path_exists" | "file_copy" | "file_move"
+                                | "delete_file" | "append_file" | "file_size" | "file_exists"
+                                | "env_set" => TypeRef::Int,
+                                "list_new" => TypeRef::Generic("List".to_string(), vec![TypeRef::Int]),
+                                "print" | "print_str" | "json_free" | "list_push" | "list_free"
+                                | "net_close" => TypeRef::Void,
+                                _ => TypeRef::Int,
+                            };
+                        }
                     }
                 } else {
                     return_type = TypeRef::Int;
@@ -844,7 +854,9 @@ impl<'a> MirLowerCtx<'a> {
                             let is_float_val = val_ty == TypeRef::Float;
                             Some(match name.as_str() {
                                 "map_put" | "lpp_map_put" => {
-                                    if is_str_key {
+                                    if is_str_key && is_float_val {
+                                        "lpp_map_put_str_float".to_string()
+                                    } else if is_str_key {
                                         "lpp_map_put_str".to_string()
                                     } else if is_float_val {
                                         "lpp_map_put_float".to_string()
@@ -853,7 +865,9 @@ impl<'a> MirLowerCtx<'a> {
                                     }
                                 }
                                 "map_get" | "lpp_map_get" => {
-                                    if is_str_key {
+                                    if is_str_key && is_float_val {
+                                        "lpp_map_get_str_float".to_string()
+                                    } else if is_str_key {
                                         "lpp_map_get_str".to_string()
                                     } else if is_float_val {
                                         "lpp_map_get_float".to_string()

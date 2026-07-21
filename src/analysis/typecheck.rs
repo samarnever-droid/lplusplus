@@ -609,6 +609,22 @@ impl<'a> TypeChecker<'a> {
                             return Ok(TypeRef::Generic("Map".to_string(), vec![TypeRef::Int, TypeRef::Int]));
                         }
 
+                        if name == "map_put" || name == "lpp_map_put" {
+                            if args.len() >= 3 {
+                                let key_ty = arg_tys[1].clone();
+                                let val_ty = arg_tys[2].clone();
+                                if let Expr::Identifier(_, ref cell) = args[0] {
+                                    if let Some(id) = cell.get() {
+                                        self.symbol_table.bindings[id].ty = Some(TypeRef::Generic(
+                                            "Map".to_string(),
+                                            vec![key_ty, val_ty],
+                                        ));
+                                    }
+                                }
+                            }
+                            return Ok(TypeRef::Void);
+                        }
+
                         if name == "map_get" || name == "lpp_map_get" {
                             let map_ty = arg_tys[0].clone();
                             if let TypeRef::Generic(ref name, ref params) = map_ty {

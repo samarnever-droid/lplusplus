@@ -270,6 +270,19 @@ double lpp_map_get_float(void *map, int64_t key) {
     return fval;
 }
 
+void lpp_map_put_str_float(void *map, const char *key, double val) {
+    int64_t ival;
+    memcpy(&ival, &val, sizeof(double));
+    lpp_map_put_str(map, key, ival);
+}
+
+double lpp_map_get_str_float(void *map, const char *key) {
+    int64_t ival = lpp_map_get_str(map, key);
+    double fval;
+    memcpy(&fval, &ival, sizeof(double));
+    return fval;
+}
+
 #define lpp_map_get(m, k) lpp_map_get((m), (int64_t)(uintptr_t)(k))
 #define lpp_map_has(m, k) lpp_map_has((m), (int64_t)(uintptr_t)(k))
 #define lpp_map_remove(m, k) lpp_map_remove((m), (int64_t)(uintptr_t)(k))

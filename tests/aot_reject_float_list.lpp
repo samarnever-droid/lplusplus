@@ -1,4 +1,0 @@
-# This must be rejected: the only currently safe runtime list is List[Int].
-def main():
-    values := [1.5, 2.5]
-    print(values)

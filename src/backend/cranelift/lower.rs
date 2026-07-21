@@ -660,20 +660,40 @@ impl<'a, M: Module> FunctionLower<'a, M> {
             } => {
                 let left = self.operand_to_value(builder, left, local_vars)?;
                 let right = self.operand_to_value(builder, right, local_vars)?;
-                let cc = match op {
-                    BinaryOperator::Eq => IntCC::Equal,
-                    BinaryOperator::NotEq => IntCC::NotEqual,
-                    BinaryOperator::Less => IntCC::SignedLessThan,
-                    BinaryOperator::Greater => IntCC::SignedGreaterThan,
-                    BinaryOperator::LessEq => IntCC::SignedLessThanOrEqual,
-                    BinaryOperator::GreaterEq => IntCC::SignedGreaterThanOrEqual,
-                    _ => {
-                        return Err(
-                            "non-comparison operator reached fused branch lowering".to_string()
-                        );
-                    }
+                let is_float = builder.func.dfg.value_type(left) == cl_types::F64;
+
+                let comparison = if is_float {
+                    let float_cc = match op {
+                        BinaryOperator::Eq => FloatCC::Equal,
+                        BinaryOperator::NotEq => FloatCC::NotEqual,
+                        BinaryOperator::Less => FloatCC::LessThan,
+                        BinaryOperator::Greater => FloatCC::GreaterThan,
+                        BinaryOperator::LessEq => FloatCC::LessThanOrEqual,
+                        BinaryOperator::GreaterEq => FloatCC::GreaterThanOrEqual,
+                        _ => {
+                            return Err(
+                                "non-comparison operator reached fused branch lowering".to_string()
+                            );
+                        }
+                    };
+                    builder.ins().fcmp(float_cc, left, right)
+                } else {
+                    let int_cc = match op {
+                        BinaryOperator::Eq => IntCC::Equal,
+                        BinaryOperator::NotEq => IntCC::NotEqual,
+                        BinaryOperator::Less => IntCC::SignedLessThan,
+                        BinaryOperator::Greater => IntCC::SignedGreaterThan,
+                        BinaryOperator::LessEq => IntCC::SignedLessThanOrEqual,
+                        BinaryOperator::GreaterEq => IntCC::SignedGreaterThanOrEqual,
+                        _ => {
+                            return Err(
+                                "non-comparison operator reached fused branch lowering".to_string()
+                            );
+                        }
+                    };
+                    builder.ins().icmp(int_cc, left, right)
                 };
-                let comparison = builder.ins().icmp(cc, left, right);
+
                 let then_block = *cl_blocks
                     .get(then_block)
                     .ok_or_else(|| "missing fused then block".to_string())?;

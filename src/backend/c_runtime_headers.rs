@@ -1278,12 +1278,27 @@ static double lpp_map_get_float(void *map, int64_t key) {
     return fval;
 }
 
+static void lpp_map_put_str_float(void *map, const char *key, double val) {
+    int64_t ival;
+    memcpy(&ival, &val, sizeof(double));
+    lpp_map_put_str(map, key, ival);
+}
+
+static double lpp_map_get_str_float(void *map, const char *key) {
+    int64_t ival = lpp_map_get_str(map, key);
+    double fval;
+    memcpy(&fval, &ival, sizeof(double));
+    return fval;
+}
+
 #define lpp_map_get(m, k) lpp_map_get((m), (int64_t)(uintptr_t)(k))
 #define lpp_map_has(m, k) lpp_map_has((m), (int64_t)(uintptr_t)(k))
 #define lpp_map_remove(m, k) lpp_map_remove((m), (int64_t)(uintptr_t)(k))
 #define lpp_map_put(m, k, v) lpp_map_put((m), (int64_t)(uintptr_t)(k), (int64_t)(uintptr_t)(v))
 #define lpp_map_put_float(m, k, v) lpp_map_put_float((m), (int64_t)(uintptr_t)(k), (v))
 #define lpp_map_get_float(m, k) lpp_map_get_float((m), (int64_t)(uintptr_t)(k))
+#define lpp_map_put_str_float(m, k, v) lpp_map_put_str_float((m), (const char*)(uintptr_t)(k), (v))
+#define lpp_map_get_str_float(m, k) lpp_map_get_str_float((m), (const char*)(uintptr_t)(k))
 "#;
 
 pub const C_BUILTINS_JSON: &str = r#"

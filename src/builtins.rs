@@ -361,6 +361,22 @@ pub fn get_builtins() -> &'static [Builtin] {
             cl_return: None,
         },
         Builtin {
+            name: "lpp_map_put_str_float",
+            symbol: "lpp_map_put_str_float",
+            params: &[ParamType::Any, ParamType::Specific(TypeRef::Str), ParamType::Specific(TypeRef::Float)],
+            return_type: TypeRef::Void,
+            cl_params: &[0, 0, 3],
+            cl_return: None,
+        },
+        Builtin {
+            name: "lpp_map_get_str_float",
+            symbol: "lpp_map_get_str_float",
+            params: &[ParamType::Any, ParamType::Specific(TypeRef::Str)],
+            return_type: TypeRef::Float,
+            cl_params: &[0, 0],
+            cl_return: Some(3),
+        },
+        Builtin {
             name: "map_get",
             symbol: "lpp_map_get",
             params: &[ParamType::Any, ParamType::Any],

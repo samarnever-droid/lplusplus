@@ -35,7 +35,7 @@ run_c_backend() {
     c_file="${src%.lpp}.c"
     exe="$TMP/${base}.c.exe"
     [ -f "$c_file" ] || { echo "C backend produced no C file" >&2; return 1; }
-    "$CC" -std=c11 -Wall -Wextra -Wno-unused-function -Wno-unused-variable -Wno-unused-parameter "$c_file" -o "$exe" -pthread
+    "$CC" -std=c11 -Wall -Wextra -Wno-unused-function -Wno-unused-variable -Wno-unused-parameter "$c_file" -o "$exe" -pthread -lm
     "$exe"
 }
 
@@ -46,7 +46,7 @@ run_aot_backend() {
     obj_file="${src%.lpp}.o"
     exe="$TMP/${base}.aot.exe"
     [ -f "$obj_file" ] || { echo "AOT backend produced no object file" >&2; return 1; }
-    "$CC" -std=c11 -Wall -Wextra -Wno-unused-function -Wno-unused-variable -Wno-unused-parameter "$obj_file" "$ROOT/lpp_runtime.c" -o "$exe" -pthread
+    "$CC" -std=c11 -Wall -Wextra -Wno-unused-function -Wno-unused-variable -Wno-unused-parameter "$obj_file" "$ROOT/lpp_runtime.c" -o "$exe" -pthread -lm
     "$exe"
 }
 
@@ -94,7 +94,6 @@ while IFS='|' read -r file expected; do
 done < "$MANIFEST"
 
 for rejected_case in \
-    "aot_reject_float_list:not supported safely yet" \
     "aot_reject_arc_cycle:ARC cannot reclaim ownership cycles" \
     "aot_reject_list_arc_cycle:ARC cannot reclaim ownership cycles"
 do
