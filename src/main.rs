@@ -26,22 +26,123 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+fn resolve_pm_source() -> Option<PathBuf> {
+    for var in &["LPP_HOME", "LPP_DIR"] {
+        if let Ok(val) = env::var(var) {
+            let candidate = PathBuf::from(val).join("pm/src/main.lpp");
+            if candidate.exists() {
+                return Some(candidate);
+            }
+        }
+    }
+
+    if let Ok(exe_path) = env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let candidates = [
+                exe_dir.join("pm/src/main.lpp"),
+                exe_dir.join("../pm/src/main.lpp"),
+                exe_dir.join("../../pm/src/main.lpp"),
+                exe_dir.join("../../../pm/src/main.lpp"),
+            ];
+            for c in &candidates {
+                if c.exists() {
+                    return Some(c.clone());
+                }
+            }
+        }
+    }
+
+    if let Ok(home) = env::var("HOME").or_else(|_| env::var("USERPROFILE")) {
+        let home_pm = PathBuf::from(home).join(".lpp/pm/src/main.lpp");
+        if home_pm.exists() {
+            return Some(home_pm);
+        }
+    }
+
+    let cwd_pm = PathBuf::from("pm/src/main.lpp");
+    if cwd_pm.exists() {
+        return Some(cwd_pm);
+    }
+
+    None
+}
+
+fn resolve_runtime_source_for_bootstrap(pm_main: &Path) -> Option<PathBuf> {
+    if let Some(root) = pm_main.parent().and_then(|p| p.parent()).and_then(|p| p.parent()) {
+        let rt = root.join("lpp_runtime.c");
+        if rt.exists() {
+            return Some(rt);
+        }
+    }
+
+    for var in &["LPP_HOME", "LPP_DIR"] {
+        if let Ok(val) = env::var(var) {
+            let rt = PathBuf::from(val).join("lpp_runtime.c");
+            if rt.exists() {
+                return Some(rt);
+            }
+        }
+    }
+
+    if let Ok(exe_path) = env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let candidates = [
+                exe_dir.join("lpp_runtime.c"),
+                exe_dir.join("../lpp_runtime.c"),
+                exe_dir.join("../../lpp_runtime.c"),
+                exe_dir.join("../../../lpp_runtime.c"),
+            ];
+            for c in &candidates {
+                if c.exists() {
+                    return Some(c.clone());
+                }
+            }
+        }
+    }
+
+    if let Ok(home) = env::var("HOME").or_else(|_| env::var("USERPROFILE")) {
+        let home_rt = PathBuf::from(home).join(".lpp/lpp_runtime.c");
+        if home_rt.exists() {
+            return Some(home_rt);
+        }
+    }
+
+    let cwd_rt = PathBuf::from("lpp_runtime.c");
+    if cwd_rt.exists() {
+        return Some(cwd_rt);
+    }
+
+    None
+}
+
+fn resolve_pm_cache_dir() -> PathBuf {
+    if let Ok(var) = env::var("LPP_HOME").or_else(|_| env::var("LPP_DIR")) {
+        return PathBuf::from(var).join("cache");
+    }
+    if let Ok(home) = env::var("HOME").or_else(|_| env::var("USERPROFILE")) {
+        return PathBuf::from(home).join(".lpp").join("cache");
+    }
+    env::temp_dir().join(".lpp_cache")
+}
+
 /// Bootstrap the self-hosted L++ PM: compile pm/src/main.lpp → cached binary.
 /// Returns the path to the cached PM binary, or an error string.
 fn bootstrap_self_hosted_pm() -> Result<PathBuf, String> {
     let lpp_bin = env::current_exe()
         .map_err(|e| format!("cannot locate lpp binary: {e}"))?;
 
-    let cache_dir = dirs_next().unwrap_or_else(|| PathBuf::from(".lpp_cache"));
+    let pm_main = resolve_pm_source()
+        .ok_or_else(|| "cannot locate pm/src/main.lpp".to_string())?;
+
+    let cache_dir = resolve_pm_cache_dir();
     let _ = fs::create_dir_all(&cache_dir);
 
     let pm_bin = cache_dir.join(format!("lpp-pm{}", env::consts::EXE_SUFFIX));
 
     // Check if already built and up-to-date
-    let pm_main = Path::new("pm/src/main.lpp");
     if pm_bin.exists() && pm_main.exists() {
         let bin_meta = fs::metadata(&pm_bin).ok();
-        let src_meta = fs::metadata(pm_main).ok();
+        let src_meta = fs::metadata(&pm_main).ok();
         if let (Some(b), Some(s)) = (bin_meta, src_meta) {
             if let (Ok(bt), Ok(st)) = (b.modified(), s.modified()) {
                 if bt >= st {
@@ -53,12 +154,12 @@ fn bootstrap_self_hosted_pm() -> Result<PathBuf, String> {
 
     eprintln!("[L++] Bootstrapping self-hosted PM...");
 
-    // Compile pm/src/main.lpp → pm/src/main.o
+    // Compile pm/src/main.lpp → pm_obj
     let status = std::process::Command::new(&lpp_bin)
         .env("LPP_AOT", "1")
         .env("LPP_AOT_ONLY", "1")
         .env("BENCHMARK", "1")
-        .arg(pm_main)
+        .arg(&pm_main)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::inherit())
@@ -69,17 +170,14 @@ fn bootstrap_self_hosted_pm() -> Result<PathBuf, String> {
         return Err("self-hosted PM compilation failed".to_string());
     }
 
-    let pm_obj = Path::new("pm/src/main.o");
+    let pm_obj = pm_main.with_extension("o");
     if !pm_obj.exists() {
-        return Err("pm/src/main.o not generated".to_string());
+        return Err(format!("{} not generated", pm_obj.display()));
     }
 
     // Link with host cc
-    let runtime_src = if Path::new("lpp_runtime.c").exists() {
-        "lpp_runtime.c".to_string()
-    } else {
-        return Err("lpp_runtime.c not found".to_string());
-    };
+    let runtime_src = resolve_runtime_source_for_bootstrap(&pm_main)
+        .ok_or_else(|| "lpp_runtime.c not found".to_string())?;
 
     let cc = ["cc", "gcc", "clang"]
         .iter()
@@ -212,11 +310,7 @@ fn run_self_hosted_pm(args: &[String]) {
     }
 }
 
-fn dirs_next() -> Option<PathBuf> {
-    // Compute cache dir: working-dir/.lpp_cache
-    let cwd = env::current_dir().ok()?;
-    Some(cwd.join(".lpp_cache"))
-}
+
 
 fn main() {
     let mut args: Vec<String> = env::args().collect();

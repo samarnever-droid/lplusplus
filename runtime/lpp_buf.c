@@ -10,12 +10,12 @@
 
 /* ── Core buffer ops ─────────────────────────────────────────────────────── */
 
-void *lpp_buf_alloc(int64_t size) {
-    if (size < 0) return NULL;
+int64_t lpp_buf_alloc(int64_t size) {
+    if (size < 0) return 0;
     uint8_t *buf = (uint8_t *)calloc(1, (size_t)(8 + size));
-    if (!buf) return NULL;
+    if (!buf) return 0;
     *(int64_t *)buf = size;
-    return buf;
+    return (int64_t)(uintptr_t)buf;
 }
 
 void lpp_buf_free(void *ptr) {
@@ -93,23 +93,23 @@ void lpp_buf_copy(void *dst, int64_t dst_off, void *src, int64_t src_off, int64_
 
 /* ── File I/O ────────────────────────────────────────────────────────────── */
 
-void *lpp_buf_read(const char *path) {
-    if (!path) return NULL;
+int64_t lpp_buf_read(const char *path) {
+    if (!path) return 0;
     FILE *f = fopen(path, "rb");
-    if (!f) return NULL;
+    if (!f) return 0;
     fseek(f, 0, SEEK_END);
     long sz = ftell(f);
     fseek(f, 0, SEEK_SET);
-    if (sz < 0) { fclose(f); return NULL; }
-    void *buf = lpp_buf_alloc((int64_t)sz);
-    if (!buf) { fclose(f); return NULL; }
+    if (sz < 0) { fclose(f); return 0; }
+    void *buf = (void *)(uintptr_t)lpp_buf_alloc((int64_t)sz);
+    if (!buf) { fclose(f); return 0; }
     size_t read = fread(((uint8_t *)buf) + 8, 1, (size_t)sz, f);
     fclose(f);
     if (read != (size_t)sz) {
         lpp_buf_free(buf);
-        return NULL;
+        return 0;
     }
-    return buf;
+    return (int64_t)(uintptr_t)buf;
 }
 
 int64_t lpp_buf_write(const char *path, void *ptr) {
@@ -190,3 +190,19 @@ int64_t lpp_buf_write_str(void *ptr, int64_t offset, const char *str) {
 char *lpp_buf_read_str(void *ptr, int64_t offset, int64_t len) {
     return lpp_buf_to_str(ptr, offset, len);
 }
+
+/* ── Macro wrappers casting integer buffer pointers to void* for C callers ─ */
+#define lpp_buf_free(p) lpp_buf_free((void*)(uintptr_t)(p))
+#define lpp_buf_len(p) lpp_buf_len((void*)(uintptr_t)(p))
+#define lpp_buf_get8(p, o) lpp_buf_get8((void*)(uintptr_t)(p), (o))
+#define lpp_buf_set8(p, o, v) lpp_buf_set8((void*)(uintptr_t)(p), (o), (v))
+#define lpp_buf_set32le(p, o, v) lpp_buf_set32le((void*)(uintptr_t)(p), (o), (v))
+#define lpp_buf_get32le(p, o) lpp_buf_get32le((void*)(uintptr_t)(p), (o))
+#define lpp_buf_set16le(p, o, v) lpp_buf_set16le((void*)(uintptr_t)(p), (o), (v))
+#define lpp_buf_get16le(p, o) lpp_buf_get16le((void*)(uintptr_t)(p), (o))
+#define lpp_buf_copy(d, do, s, so, l) lpp_buf_copy((void*)(uintptr_t)(d), (do), (void*)(uintptr_t)(s), (so), (l))
+#define lpp_buf_write(f, p) lpp_buf_write((f), (void*)(uintptr_t)(p))
+#define lpp_buf_crc32(p, o, l) lpp_buf_crc32((void*)(uintptr_t)(p), (o), (l))
+#define lpp_buf_write_str(p, o, s) lpp_buf_write_str((void*)(uintptr_t)(p), (o), (s))
+#define lpp_buf_read_str(p, o, l) lpp_buf_read_str((void*)(uintptr_t)(p), (o), (l))
+

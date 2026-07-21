@@ -22,7 +22,7 @@ def install_deps() -> Int:
         print_str("[lpp-pm] no dependencies declared")
         return 0
 
-    section := str_substr(raw, dep_start, len(raw) - dep_start)
+    section := str_substr(raw, dep_start, str_len(raw) - dep_start)
     process_deps(section, pkg_dir)
     return 0
 
@@ -30,7 +30,7 @@ def process_deps(section: String, pkg_dir: String) -> Void:
     # Walk through the raw section string line by line
     # str_split returns Void in current runtime, so we scan manually
     mut pos := 0
-    end_pos := len(section)
+    end_pos := str_len(section)
     while pos < end_pos:
         # Find next newline
         mut nl := str_find(str_substr(section, pos, end_pos - pos), "\n")

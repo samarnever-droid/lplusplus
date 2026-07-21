@@ -44,12 +44,39 @@ static void lpp_arc_release(void* p) {
     }
 }
 
-
 /* ARC closure payload: [code pointer, owned environment pointer]. */
 static void lpp_closure_destroy(void* closure) {
     if (!closure) return;
     void** parts = (void**)closure;
     lpp_arc_release(parts[1]);
+}
+
+static void lpp_print_int(int64_t value) {
+    printf("%lld\n", (long long)value);
+    fflush(stdout);
+}
+
+static void lpp_print_float(double value) {
+    printf("%f\n", value);
+    fflush(stdout);
+}
+
+static void lpp_print_str(const char *ptr) {
+    if (ptr) { puts(ptr); fflush(stdout); }
+}
+
+static void lpp_free_str(char *ptr) {
+    free(ptr);
+}
+
+static int64_t lpp_parse_int(const char *str) {
+    if (!str || *str == '\0') return 0;
+    const char *p = str;
+    while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
+    if (*p == '\0') return 0;
+    char *endptr;
+    long long val = strtoll(p, &endptr, 10);
+    return (int64_t)val;
 }
 
 static char* lpp_input() {
@@ -411,6 +438,568 @@ static void lpp_net_close(int64_t handle) {
     lpp_close_socket(sock);
     lpp__socket_clear(handle);
 }
+
+/* ── String library (runtime/lpp_str.c) ───────────────────────────────── */
+static char *lpp_str_concat(const char *a, const char *b) {
+    if (!a) a = "";
+    if (!b) b = "";
+    size_t la = strlen(a), lb = strlen(b);
+    char *out = (char *)lpp_arc_alloc((int64_t)(la + lb + 1));
+    if (!out) return (char *)"";
+    memcpy(out, a, la);
+    memcpy(out + la, b, lb);
+    out[la + lb] = 0;
+    return out;
+}
+
+static void *lpp_str_split(const char *s, int64_t delim) {
+    void *list = lpp_list_new_arc();
+    if (!list) return 0;
+    if (!s || !*s) return list;
+
+    char ch = (char)delim;
+    const char *start = s;
+
+    for (;;) {
+        if (*s == ch || *s == 0) {
+            int64_t len = (int64_t)(s - start);
+            char *piece = (char *)lpp_arc_alloc(len + 1);
+            if (piece) {
+                memcpy(piece, start, (size_t)len);
+                piece[len] = 0;
+                lpp_list_push_arc(list, piece);
+                lpp_arc_release(piece);
+            }
+            if (*s == 0) break;
+            start = s + 1;
+        }
+        s++;
+    }
+    return list;
+}
+
+static int64_t lpp_str_find(const char *haystack, const char *needle) {
+    if (!haystack || !needle) return -1;
+    const char *found = strstr(haystack, needle);
+    if (!found) return -1;
+    return (int64_t)(found - haystack);
+}
+
+static char *lpp_str_replace(const char *s, const char *old, const char *new_) {
+    if (!s) s = "";
+    if (!old || !*old) return (char *)s;
+    if (!new_) new_ = "";
+
+    size_t slen = strlen(s), olen = strlen(old), nlen = strlen(new_);
+    int64_t count = 0;
+    const char *scan = s;
+    while ((scan = strstr(scan, old))) { count++; scan += olen; }
+
+    size_t outlen = slen + (size_t)count * (nlen - olen) + 1;
+    char *out = (char *)lpp_arc_alloc((int64_t)outlen);
+    if (!out) return (char *)"";
+
+    char *dst = out;
+    const char *src = s;
+    while (*src) {
+        const char *next = strstr(src, old);
+        if (!next) { strcpy(dst, src); break; }
+        size_t prefix = (size_t)(next - src);
+        memcpy(dst, src, prefix); dst += prefix;
+        memcpy(dst, new_, nlen);   dst += nlen;
+        src = next + olen;
+    }
+    return out;
+}
+
+static char *lpp_str_substr(const char *s, int64_t start, int64_t length) {
+    if (!s) s = "";
+    size_t slen = strlen(s);
+    if (start < 0) start = 0;
+    if (start > (int64_t)slen) return (char *)"";
+
+    size_t remain = slen - (size_t)start;
+    size_t copy = (length < 0 || (size_t)length > remain) ? remain : (size_t)length;
+
+    char *out = (char *)lpp_arc_alloc((int64_t)(copy + 1));
+    if (!out) return (char *)"";
+    memcpy(out, s + start, copy);
+    out[copy] = 0;
+    return out;
+}
+
+static char *lpp_str_trim(const char *s) {
+    if (!s) return (char *)"";
+    while (*s == ' ' || *s == '\t' || *s == '\n' || *s == '\r') s++;
+    const char *end = s + strlen(s);
+    while (end > s && (end[-1] == ' ' || end[-1] == '\t' || end[-1] == '\n' || end[-1] == '\r'))
+        end--;
+
+    int64_t len = (int64_t)(end - s);
+    char *out = (char *)lpp_arc_alloc(len + 1);
+    if (!out) return (char *)"";
+    memcpy(out, s, (size_t)len);
+    out[len] = 0;
+    return out;
+}
+
+/* ── Process execution (runtime/lpp_exec.c) ────────────────────────────── */
+#if defined(_WIN32)
+static int64_t lpp_command_exec(const char *cmdline) {
+    if (!cmdline) return -1;
+    STARTUPINFOA si = {sizeof(si)};
+    PROCESS_INFORMATION pi = {0};
+    si.dwFlags = STARTF_USESTDHANDLES;
+    char *dup = malloc(strlen(cmdline) + 1); if (dup) strcpy(dup, cmdline);
+    if (!dup) return -1;
+    BOOL ok = CreateProcessA(NULL, dup, NULL, NULL, FALSE,
+                              CREATE_NO_WINDOW, NULL, NULL, &si, &pi);
+    free(dup);
+    if (!ok) return -1;
+    WaitForSingleObject(pi.hProcess, INFINITE);
+    DWORD code;
+    GetExitCodeProcess(pi.hProcess, &code);
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+    return (int64_t)(int)code;
+}
+
+static char *lpp_command_output(const char *cmdline) {
+    if (!cmdline) return (char *)"";
+    HANDLE hRead, hWrite;
+    SECURITY_ATTRIBUTES sa = {sizeof(sa), NULL, TRUE};
+    if (!CreatePipe(&hRead, &hWrite, &sa, 0)) return (char *)"";
+
+    STARTUPINFOA si = {sizeof(si)};
+    PROCESS_INFORMATION pi = {0};
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdOutput = hWrite;
+    si.hStdError  = hWrite;
+
+    char *dup = malloc(strlen(cmdline) + 1); if (dup) strcpy(dup, cmdline);
+    BOOL ok = CreateProcessA(NULL, dup, NULL, NULL, TRUE,
+                              CREATE_NO_WINDOW, NULL, NULL, &si, &pi);
+    free(dup);
+    CloseHandle(hWrite);
+    if (!ok) { CloseHandle(hRead); return (char *)""; }
+
+    WaitForSingleObject(pi.hProcess, INFINITE);
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+
+    int cap = 4096, len = 0;
+    char *buf = (char *)lpp_arc_alloc((int64_t)(cap + 1));
+    if (!buf) { CloseHandle(hRead); return (char *)""; }
+    for (;;) {
+        if (len + 1024 >= cap) {
+            int nc = cap * 2;
+            char *nb = (char *)lpp_arc_alloc((int64_t)(nc + 1));
+            if (!nb) break;
+            memcpy(nb, buf, (size_t)len);
+            lpp_arc_release(buf);
+            buf = nb; cap = nc;
+        }
+        DWORD n;
+        if (!ReadFile(hRead, buf + len, (DWORD)(cap - len), &n, NULL) || n == 0) break;
+        len += (int)n;
+    }
+    CloseHandle(hRead);
+    buf[len] = 0;
+    return buf;
+}
+
+static char *lpp_env_get(const char *name) {
+    if (!name) return (char *)"";
+    char val[4096];
+    DWORD n = GetEnvironmentVariableA(name, val, sizeof(val));
+    if (n == 0 || n >= sizeof(val)) return (char *)"";
+    char *out = (char *)lpp_arc_alloc((int64_t)(n + 1));
+    if (!out) return (char *)"";
+    memcpy(out, val, n);
+    out[n] = 0;
+    return out;
+}
+
+static int64_t lpp_env_set(const char *name, const char *value) {
+    if (!name) return -1;
+    return SetEnvironmentVariableA(name, value ? value : "") ? 0 : -1;
+}
+#else
+#include <sys/wait.h>
+#include <unistd.h>
+#include <spawn.h>
+
+extern char **environ;
+
+static int64_t lpp_command_exec(const char *cmdline) {
+    if (!cmdline) return -1;
+    pid_t pid;
+    char *sh = "/bin/sh";
+    char *argv[] = {sh, (char *)"-c", (char *)cmdline, NULL};
+    int status = posix_spawn(&pid, sh, NULL, NULL, argv, environ);
+    if (status != 0) return -1;
+    waitpid(pid, &status, 0);
+    return WIFEXITED(status) ? (int64_t)WEXITSTATUS(status) : -1;
+}
+
+static char *lpp_command_output(const char *cmdline) {
+    if (!cmdline) return (char *)"";
+    int pipefd[2];
+    if (pipe(pipefd) < 0) return (char *)"";
+
+    pid_t pid = fork();
+    if (pid < 0) { close(pipefd[0]); close(pipefd[1]); return (char *)""; }
+
+    if (pid == 0) {
+        close(pipefd[0]);
+        dup2(pipefd[1], STDOUT_FILENO);
+        dup2(pipefd[1], STDERR_FILENO);
+        close(pipefd[1]);
+        execl("/bin/sh", "sh", "-c", cmdline, (char *)NULL);
+        _exit(127);
+    }
+
+    close(pipefd[1]);
+    int cap = 4096, len = 0;
+    char *buf = (char *)lpp_arc_alloc((int64_t)(cap + 1));
+    if (!buf) { close(pipefd[0]); waitpid(pid, NULL, 0); return (char *)""; }
+
+    for (;;) {
+        if (len + 1024 >= cap) {
+            int nc = cap * 2;
+            char *nb = (char *)lpp_arc_alloc((int64_t)(nc + 1));
+            if (!nb) break;
+            memcpy(nb, buf, (size_t)len);
+            lpp_arc_release(buf);
+            buf = nb; cap = nc;
+        }
+        ssize_t n = read(pipefd[0], buf + len, (size_t)(cap - len));
+        if (n <= 0) break;
+        len += (int)n;
+    }
+    close(pipefd[0]);
+    waitpid(pid, NULL, 0);
+    buf[len] = 0;
+    return buf;
+}
+
+static char *lpp_env_get(const char *name) {
+    if (!name) return (char *)"";
+    const char *val = getenv(name);
+    if (!val) return (char *)"";
+    int64_t len = (int64_t)strlen(val);
+    char *out = (char *)lpp_arc_alloc(len + 1);
+    if (!out) return (char *)"";
+    memcpy(out, val, (size_t)len);
+    out[len] = 0;
+    return out;
+}
+
+static int64_t lpp_env_set(const char *name, const char *value) {
+    if (!name) return -1;
+    return setenv(name, value ? value : "", 1) == 0 ? 0 : -1;
+}
+#endif
+
+/* ── Directory / filesystem (runtime/lpp_dir.c) ────────────────────────── */
+#if defined(_WIN32)
+static int64_t lpp_dir_create(const char *path) {
+    if (!path) return -1;
+    return CreateDirectoryA(path, NULL) ? 0 : -1;
+}
+
+static void *lpp_dir_list(const char *path) {
+    void *list = lpp_list_new_arc();
+    if (!list) return 0;
+    if (!path) return list;
+
+    char pattern[MAX_PATH];
+    snprintf(pattern, sizeof(pattern), "%s\\*", path);
+    WIN32_FIND_DATAA fd;
+    HANDLE h = FindFirstFileA(pattern, &fd);
+    if (h == INVALID_HANDLE_VALUE) return list;
+
+    do {
+        if (strcmp(fd.cFileName, ".") == 0 || strcmp(fd.cFileName, "..") == 0)
+            continue;
+        size_t len = strlen(fd.cFileName);
+        char *copy = (char *)lpp_arc_alloc((int64_t)(len + 1));
+        if (copy) { memcpy(copy, fd.cFileName, len); copy[len] = 0;
+                    lpp_list_push_arc(list, copy); lpp_arc_release(copy); }
+    } while (FindNextFileA(h, &fd));
+    FindClose(h);
+    return list;
+}
+
+static int64_t lpp_dir_remove(const char *path) {
+    if (!path) return -1;
+    char cmd[MAX_PATH + 32];
+    snprintf(cmd, sizeof(cmd), "rmdir /s /q \"%s\"", path);
+    return system(cmd) == 0 ? 0 : -1;
+}
+
+static int64_t lpp_path_exists(const char *path) {
+    if (!path) return 0;
+    DWORD attr = GetFileAttributesA(path);
+    return (attr != INVALID_FILE_ATTRIBUTES) ? 1 : 0;
+}
+
+static char *lpp_path_join(const char *base, const char *child) {
+    if (!base) base = "";
+    if (!child) child = "";
+    size_t blen = strlen(base), clen = strlen(child);
+    int need_sep = (blen > 0 && base[blen - 1] != '\\' && base[blen - 1] != '/');
+    int64_t total = (int64_t)(blen + (need_sep ? 1 : 0) + clen + 1);
+    char *out = (char *)lpp_arc_alloc(total);
+    if (!out) return (char *)"";
+    memcpy(out, base, blen);
+    size_t off = blen;
+    if (need_sep) out[off++] = '\\';
+    memcpy(out + off, child, clen);
+    out[off + clen] = 0;
+    return out;
+}
+#else
+#include <sys/stat.h>
+#include <dirent.h>
+
+static int64_t lpp_dir_create(const char *path) {
+    if (!path) return -1;
+    return mkdir(path, 0755) == 0 ? 0 : -1;
+}
+
+static void *lpp_dir_list(const char *path) {
+    void *list = lpp_list_new_arc();
+    if (!list) return 0;
+    if (!path) return list;
+
+    DIR *d = opendir(path);
+    if (!d) return list;
+
+    struct dirent *entry;
+    while ((entry = readdir(d)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+            continue;
+        size_t len = strlen(entry->d_name);
+        char *copy = (char *)lpp_arc_alloc((int64_t)(len + 1));
+        if (copy) { memcpy(copy, entry->d_name, len); copy[len] = 0;
+                    lpp_list_push_arc(list, copy); lpp_arc_release(copy); }
+    }
+    closedir(d);
+    return list;
+}
+
+static int64_t lpp_dir_remove(const char *path) {
+    if (!path) return -1;
+    char cmd[4096];
+    snprintf(cmd, sizeof(cmd), "rm -rf \"%s\"", path);
+    return system(cmd) == 0 ? 0 : -1;
+}
+
+static int64_t lpp_path_exists(const char *path) {
+    if (!path) return 0;
+    struct stat st;
+    return stat(path, &st) == 0 ? 1 : 0;
+}
+
+static char *lpp_path_join(const char *base, const char *child) {
+    if (!base) base = "";
+    if (!child) child = "";
+    size_t blen = strlen(base), clen = strlen(child);
+    int need_sep = (blen > 0 && base[blen - 1] != '/');
+    int64_t total = (int64_t)(blen + (need_sep ? 1 : 0) + clen + 1);
+    char *out = (char *)lpp_arc_alloc(total);
+    if (!out) return (char *)"";
+    memcpy(out, base, blen);
+    size_t off = blen;
+    if (need_sep) out[off++] = '/';
+    memcpy(out + off, child, clen);
+    out[off + clen] = 0;
+    return out;
+}
+#endif
+
+/* ── Binary buffer library (runtime/lpp_buf.c) ────────────────────────── */
+static int64_t lpp_buf_alloc(int64_t size) {
+    if (size < 0) return 0;
+    uint8_t *buf = (uint8_t *)calloc(1, (size_t)(8 + size));
+    if (!buf) return 0;
+    *(int64_t *)buf = size;
+    return (int64_t)(uintptr_t)buf;
+}
+
+static void lpp_buf_free(void *ptr) {
+    free(ptr);
+}
+
+static int64_t lpp_buf_len(void *ptr) {
+    if (!ptr) return 0;
+    return *(int64_t *)ptr;
+}
+
+static int64_t lpp_buf_get8(void *ptr, int64_t offset) {
+    if (!ptr) return 0;
+    int64_t size = *(int64_t *)ptr;
+    if (offset < 0 || offset >= size) return 0;
+    return ((uint8_t *)ptr)[8 + offset];
+}
+
+static void lpp_buf_set8(void *ptr, int64_t offset, int64_t value) {
+    if (!ptr) return;
+    int64_t size = *(int64_t *)ptr;
+    if (offset < 0 || offset >= size) return;
+    ((uint8_t *)ptr)[8 + offset] = (uint8_t)(value & 0xFF);
+}
+
+static void lpp_buf_set32le(void *ptr, int64_t offset, int64_t value) {
+    if (!ptr) return;
+    int64_t size = *(int64_t *)ptr;
+    if (offset < 0 || offset + 4 > size) return;
+    uint8_t *base = ((uint8_t *)ptr) + 8 + offset;
+    uint32_t v = (uint32_t)value;
+    base[0] = (uint8_t)(v);
+    base[1] = (uint8_t)(v >> 8);
+    base[2] = (uint8_t)(v >> 16);
+    base[3] = (uint8_t)(v >> 24);
+}
+
+static int64_t lpp_buf_get32le(void *ptr, int64_t offset) {
+    if (!ptr) return 0;
+    int64_t size = *(int64_t *)ptr;
+    if (offset < 0 || offset + 4 > size) return 0;
+    uint8_t *base = ((uint8_t *)ptr) + 8 + offset;
+    return (int64_t)((uint32_t)base[0] | ((uint32_t)base[1] << 8) |
+                     ((uint32_t)base[2] << 16) | ((uint32_t)base[3] << 24));
+}
+
+static void lpp_buf_set16le(void *ptr, int64_t offset, int64_t value) {
+    if (!ptr) return;
+    int64_t size = *(int64_t *)ptr;
+    if (offset < 0 || offset + 2 > size) return;
+    uint8_t *base = ((uint8_t *)ptr) + 8 + offset;
+    uint16_t v = (uint16_t)value;
+    base[0] = (uint8_t)(v);
+    base[1] = (uint8_t)(v >> 8);
+}
+
+static int64_t lpp_buf_get16le(void *ptr, int64_t offset) {
+    if (!ptr) return 0;
+    int64_t size = *(int64_t *)ptr;
+    if (offset < 0 || offset + 2 > size) return 0;
+    uint8_t *base = ((uint8_t *)ptr) + 8 + offset;
+    return (int64_t)((uint16_t)base[0] | ((uint16_t)base[1] << 8));
+}
+
+static void lpp_buf_copy(void *dst, int64_t dst_off, void *src, int64_t src_off, int64_t len) {
+    if (!dst || !src) return;
+    int64_t dst_size = *(int64_t *)dst;
+    int64_t src_size = *(int64_t *)src;
+    if (dst_off < 0 || dst_off + len > dst_size) return;
+    if (src_off < 0 || src_off + len > src_size) return;
+    memcpy(((uint8_t *)dst) + 8 + dst_off, ((uint8_t *)src) + 8 + src_off, (size_t)len);
+}
+
+static int64_t lpp_buf_read(const char *path) {
+    if (!path) return 0;
+    FILE *f = fopen(path, "rb");
+    if (!f) return 0;
+    fseek(f, 0, SEEK_END);
+    long sz = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    if (sz < 0) { fclose(f); return 0; }
+    void *buf = (void *)(uintptr_t)lpp_buf_alloc((int64_t)sz);
+    if (!buf) { fclose(f); return 0; }
+    size_t read = fread(((uint8_t *)buf) + 8, 1, (size_t)sz, f);
+    fclose(f);
+    if (read != (size_t)sz) {
+        lpp_buf_free(buf);
+        return 0;
+    }
+    return (int64_t)(uintptr_t)buf;
+}
+
+static int64_t lpp_buf_write(const char *path, void *ptr) {
+    if (!path || !ptr) return -1;
+    int64_t size = *(int64_t *)ptr;
+    FILE *f = fopen(path, "wb");
+    if (!f) return -1;
+    size_t written = fwrite(((uint8_t *)ptr) + 8, 1, (size_t)size, f);
+    fclose(f);
+    return (written == (size_t)size) ? 0 : -1;
+}
+
+static uint32_t crc32_table[256];
+static int crc32_table_ready = 0;
+
+static void crc32_init_table(void) {
+    if (crc32_table_ready) return;
+    for (uint32_t i = 0; i < 256; i++) {
+        uint32_t crc = i;
+        for (int j = 0; j < 8; j++) {
+            crc = (crc >> 1) ^ ((crc & 1) ? 0xEDB88320UL : 0);
+        }
+        crc32_table[i] = crc;
+    }
+    crc32_table_ready = 1;
+}
+
+static int64_t lpp_buf_crc32(void *ptr, int64_t off, int64_t len) {
+    if (!ptr) return 0;
+    int64_t size = *(int64_t *)ptr;
+    if (off < 0 || len < 0 || off + len > size) return 0;
+    crc32_init_table();
+    uint32_t crc = 0xFFFFFFFFUL;
+    uint8_t *data = ((uint8_t *)ptr) + 8 + off;
+    for (int64_t i = 0; i < len; i++) {
+        crc = crc32_table[(crc ^ data[i]) & 0xFF] ^ (crc >> 8);
+    }
+    return (int64_t)(crc ^ 0xFFFFFFFFUL);
+}
+
+static int64_t lpp_str_len(const char *s) {
+    if (!s) return 0;
+    return (int64_t)strlen(s);
+}
+
+static char *lpp_buf_to_str(void *ptr, int64_t off, int64_t len) {
+    if (!ptr) return NULL;
+    int64_t size = *(int64_t *)ptr;
+    if (off < 0 || len < 0 || off + len > size) return NULL;
+    char *s = (char *)malloc((size_t)len + 1);
+    if (!s) return NULL;
+    memcpy(s, ((uint8_t *)ptr) + 8 + off, (size_t)len);
+    s[len] = 0;
+    return s;
+}
+
+static int64_t lpp_buf_write_str(void *ptr, int64_t offset, const char *str) {
+    if (!ptr || !str) return -1;
+    int64_t size = *(int64_t *)ptr;
+    int64_t len = (int64_t)strlen(str);
+    if (offset < 0 || offset + len > size) return -1;
+    memcpy(((uint8_t *)ptr) + 8 + offset, str, (size_t)len);
+    int64_t new_end = offset + len;
+    if (new_end > size) { *(int64_t *)ptr = new_end; }
+    return len;
+}
+
+static char *lpp_buf_read_str(void *ptr, int64_t offset, int64_t len) {
+    return lpp_buf_to_str(ptr, offset, len);
+}
+
+#define lpp_buf_free(p) lpp_buf_free((void*)(uintptr_t)(p))
+#define lpp_buf_len(p) lpp_buf_len((void*)(uintptr_t)(p))
+#define lpp_buf_get8(p, o) lpp_buf_get8((void*)(uintptr_t)(p), (o))
+#define lpp_buf_set8(p, o, v) lpp_buf_set8((void*)(uintptr_t)(p), (o), (v))
+#define lpp_buf_set32le(p, o, v) lpp_buf_set32le((void*)(uintptr_t)(p), (o), (v))
+#define lpp_buf_get32le(p, o) lpp_buf_get32le((void*)(uintptr_t)(p), (o))
+#define lpp_buf_set16le(p, o, v) lpp_buf_set16le((void*)(uintptr_t)(p), (o), (v))
+#define lpp_buf_get16le(p, o) lpp_buf_get16le((void*)(uintptr_t)(p), (o))
+#define lpp_buf_copy(d, do, s, so, l) lpp_buf_copy((void*)(uintptr_t)(d), (do), (void*)(uintptr_t)(s), (so), (l))
+#define lpp_buf_write(f, p) lpp_buf_write((f), (void*)(uintptr_t)(p))
+#define lpp_buf_crc32(p, o, l) lpp_buf_crc32((void*)(uintptr_t)(p), (o), (l))
+#define lpp_buf_write_str(p, o, s) lpp_buf_write_str((void*)(uintptr_t)(p), (o), (s))
+#define lpp_buf_read_str(p, o, l) lpp_buf_read_str((void*)(uintptr_t)(p), (o), (l))
 "#;
 
 pub const C_BUILTINS_JSON: &str = r#"

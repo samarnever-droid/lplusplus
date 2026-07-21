@@ -124,12 +124,13 @@ impl Platform {
 
     fn runtime_flags(&self, cc: &str) -> Vec<String> {
         if cc.contains("cl.exe") || cc == "cl" {
-            vec!["/O2".into(), "/GS-".into(), "/c".into()]
+            vec!["/O2".into(), "/GS-".into(), "/DLPP_FREESTANDING".into(), "/c".into()]
         } else if cfg!(target_os = "macos") {
-            vec!["-O2".into(), "-fPIC".into(), "-c".into()]
+            vec!["-O2".into(), "-DLPP_FREESTANDING".into(), "-fPIC".into(), "-c".into()]
         } else {
             vec![
                 "-O2".into(),
+                "-DLPP_FREESTANDING".into(),
                 "-ffreestanding".into(),
                 "-fno-stack-protector".into(),
                 "-fno-pic".into(),

@@ -18,7 +18,7 @@ def main():
     # ── new / init ─────────────────────────────────────────────────────
     if str_find(cmd, "new") >= 0:
         mut name := env_get("LPP_PM_NAME")
-        if len(name) == 0:
+        if str_len(name) == 0:
             name = "my_project"
         scaffold(name)
         return
@@ -92,7 +92,7 @@ def main():
             # Show deps section
             dep_start := str_find(raw, "[dependencies]")
             if dep_start >= 0:
-                rest := str_substr(raw, dep_start, len(raw) - dep_start)
+                rest := str_substr(raw, dep_start, str_len(raw) - dep_start)
                 print_str(rest)
         return
 

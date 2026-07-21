@@ -34,7 +34,7 @@ $cmd = Join-Path $Work "build_runtime.cmd"
 @"
 @echo off
 call "%VSCMD_BAT%" >nul || exit /b 1
-cl.exe /nologo /O2 /GS- /c "$Root\runtime\windows_x86_64_min.c" "/Fo:$Work\lpp_runtime_min.obj" || exit /b 1
+cl.exe /nologo /O2 /GS- /DLPP_FREESTANDING /c "$Root\runtime\windows_x86_64_min.c" "/Fo:$Work\lpp_runtime_min.obj" || exit /b 1
 exit /b 0
 "@ | Set-Content -Path $cmd -Encoding ascii
 cmd.exe /d /c $cmd

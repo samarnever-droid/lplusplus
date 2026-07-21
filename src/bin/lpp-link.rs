@@ -8,6 +8,9 @@
 //! exactly the section and relocation support it needs for the verified
 //! workload set — nothing more, nothing less.
 
+/// Set freestanding runtime compilation mode flag for direct linker targets.
+pub const LPP_FREESTANDING: bool = true;
+
 use object::{
     Architecture, BinaryFormat, Object, ObjectSection, ObjectSymbol, RelocationKind,
     RelocationTarget, SymbolSection,
