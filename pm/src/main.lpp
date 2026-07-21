@@ -1,0 +1,41 @@
+# main.lpp — L++ Package Manager entry point
+
+import utils
+import new
+import build
+import install
+
+def main():
+    print_str("L++ Package Manager v0.1.0")
+
+    cmd := command_output("lpp-pm-internal-cmd")
+    if str_find(cmd, "new") >= 0:
+        args := str_split(cmd, 32)  # split by space
+        name := get(args, 1)
+        if len(args) > 1:
+            name = get(args, 1)
+        if len(args) <= 1:
+            name = "my_project"
+        new.scaffold(name)
+        return
+
+    if str_find(cmd, "build") >= 0:
+        code := build.compile_project()
+        if code == 0:
+            print_str("[lpp-pm] build successful")
+        return
+
+    if str_find(cmd, "install") >= 0:
+        install.install_deps()
+        return
+
+    if str_find(cmd, "run") >= 0:
+        code := build.compile_project()
+        if code == 0:
+            bin := command_output("ls -t *.exe 2>/dev/null | head -1")
+            bin = str_trim(bin)
+            if len(bin) > 0:
+                command_exec(str_concat("./", bin))
+        return
+
+    print_str("commands: new <name>, build, run, install")

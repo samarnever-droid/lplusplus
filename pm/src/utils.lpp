@@ -1,0 +1,19 @@
+# utils.lpp — shared utilities for the L++ package manager
+
+def info(msg: String) -> Void:
+    print_str(str_concat("[lpp-pm] ", msg))
+
+def error(msg: String) -> Void:
+    print_str(str_concat("[lpp-pm] ERROR: ", msg))
+
+def joined(base: String, child: String) -> String:
+    return path_join(base, child)
+
+def write(path: String, data: String) -> Int:
+    return write_file(path, data)
+
+def read(path: String) -> String:
+    return read_file(path)
+
+def check(path: String) -> Int:
+    return path_exists(path)

@@ -109,7 +109,7 @@ impl<'a> MirLowerCtx<'a> {
                         }
                     }
                     return match name.as_str() {
-                        "input" | "read_file" | "json_get_str" | "net_recv" | "net_recv_udp" | "net_resolve" | "http_get" | "http_post" => TypeRef::Str,
+                        "input" | "read_file" | "json_get_str" | "net_recv" | "net_recv_udp" | "net_resolve" | "http_get" | "http_post" | "command_output" | "env_get" | "str_concat" | "str_replace" | "str_substr" | "str_trim" | "path_join" => TypeRef::Str,
                         "parse_int" | "json_parse" | "json_get_int" | "json_get_obj" | "list_get" | "list_len" | "len" | "get"
                         | "net_connect" | "net_listen" | "net_listen_udp" | "net_accept" | "net_accept_timeout" | "net_send" | "net_send_all" | "net_dial" | "net_dial_udp" | "net_set_timeout" | "net_set_deadline" | "net_set_keepalive" => TypeRef::Int,
                         "list_new" => TypeRef::Generic("List".to_string(), vec![TypeRef::Int]),
@@ -499,19 +499,19 @@ impl<'a> MirLowerCtx<'a> {
                         }
                     } else {
                         return_type = match name.as_str() {
-                            "input" | "read_file" | "json_get_str" | "net_recv" | "net_recv_udp" | "net_resolve" | "http_get" | "http_post" => TypeRef::Str,
+                            "input" | "read_file" | "json_get_str" | "net_recv" | "net_recv_udp" | "net_resolve" | "http_get" | "http_post" | "command_output" | "env_get" | "str_concat" | "str_replace" | "str_substr" | "str_trim" | "path_join" => TypeRef::Str,
                             "parse_int"
                             | "json_parse"
                             | "json_get_int"
                             | "json_get_obj"
                             | "list_get"
                             | "list_len"
-                            | "len"
+                            
                             | "get"
                             | "net_connect"
                             | "net_listen" | "net_listen_udp"
                             | "net_accept" | "net_accept_timeout"
-                            | "net_send" | "net_send_all" | "net_dial" | "net_dial_udp" | "net_set_timeout" | "net_set_deadline" | "net_set_keepalive" => TypeRef::Int,
+                            | "net_send" | "net_send_all" | "net_dial" | "net_dial_udp" | "net_set_timeout" | "net_set_deadline" | "net_set_keepalive" | "command_exec" | "str_find" | "str_split" | "dir_create" | "dir_remove" | "path_exists" | "file_copy" | "file_move" | "delete_file" | "append_file" | "file_size" | "file_exists" | "env_set" => TypeRef::Int,
                             "list_new" => TypeRef::Generic("List".to_string(), vec![TypeRef::Int]),
                             "print" | "print_str" | "json_free" | "list_push" | "list_free" | "net_close" => TypeRef::Void,
                             _ => TypeRef::Int,

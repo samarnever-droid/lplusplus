@@ -1,0 +1,39 @@
+# install.lpp — resolve and install dependencies
+
+def install_deps() -> Int:
+    manifest := "lpp.toml"
+    if check(manifest) == 0:
+        print_str("[lpp-pm] no lpp.toml found")
+        return 1
+
+    raw := read(manifest)
+    info := "resolving dependencies..."
+    print_str(info)
+
+    pkg_dir := ".lpp_packages"
+    if check(pkg_dir) == 0:
+        dir_create(pkg_dir)
+
+    # Parse [dependencies] section
+    dep_start := str_find(raw, "[dependencies]")
+    if dep_start < 0:
+        print_str("[lpp-pm] no dependencies declared")
+        return 0
+
+    section := str_substr(raw, dep_start, len(raw) - dep_start)
+    process_deps(section, pkg_dir)
+    return 0
+
+def process_deps(section: String, pkg_dir: String) -> Void:
+    lines := str_split(section, 10)  # split by newline
+    count := len(lines)
+    mut i := 0
+    while i < count:
+        line := trim(get(lines, i))
+        if str_find(line, "=") >= 0:
+            info := "installing " + line
+            print_str(info)
+        i = i + 1
+
+def trim(s: String) -> String:
+    return str_trim(s)

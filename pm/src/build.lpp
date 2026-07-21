@@ -1,0 +1,55 @@
+# build.lpp — compile and link an L++ project
+
+def compile_project() -> Int:
+    entry := "src/main.lpp"
+    if check(entry) == 0:
+        print_str("[lpp-pm] no src/main.lpp found")
+        return 1
+
+    # Load manifest for project name
+    bin_name := "output"
+    manifest := "lpp.toml"
+    if check(manifest) == 1:
+        raw := read(manifest)
+        bin_name = extract_name(raw)
+
+    aot := env_get("LPP_AOT")
+    if str_find(aot, "1") < 0:
+        print_str("[lpp-pm] set LPP_AOT=1 for native builds")
+        return 1
+
+    # Compile to object
+    cmd := str_concat("lpp ", entry)
+    code := command_exec(cmd)
+    if code != 0:
+        print_str("[lpp-pm] compilation failed")
+        return code
+
+    # Link with host compiler
+    obj := str_replace(entry, ".lpp", ".o")
+    out := str_concat(bin_name, ".exe")
+    cc := detect_cc()
+    link_cmd := str_concat(str_concat(str_concat(str_concat(cc, " -O2 "), obj), " lpp_runtime.c -o "), out)
+    link_cmd = str_concat(link_cmd, " -pthread")
+    result := command_exec(link_cmd)
+    return result
+
+def extract_name(toml_raw: String) -> String:
+    line_start := str_find(toml_raw, "name = \"")
+    if line_start < 0:
+        return "output"
+    start := line_start + 8
+    rest := str_substr(toml_raw, start, 128)
+    end := str_find(rest, "\"")
+    if end < 0:
+        return "output"
+    return str_substr(rest, 0, end)
+
+def detect_cc() -> String:
+    if command_exec("cc --version > /dev/null 2>&1") == 0:
+        return "cc"
+    if command_exec("gcc --version > /dev/null 2>&1") == 0:
+        return "gcc"
+    if command_exec("clang --version > /dev/null 2>&1") == 0:
+        return "clang"
+    return "cc"
