@@ -448,20 +448,23 @@ impl<'a> Codegen<'a> {
                         }
                         return;
                     }
-                    if (n == "list_push" || n == "list_get") && !args.is_empty() {
+                    if (n == "list_push" || n == "list_get" || n == "push" || n == "get") && !args.is_empty() {
                         let list_ty = self.expr_type(&args[0], current_scope);
                         let is_arc_list = matches!(
                             list_ty,
                             TypeRef::Generic(_, ref params)
-                                if matches!(params.first(), Some(TypeRef::Custom(_)))
+                                if matches!(
+                                    params.first(),
+                                    Some(TypeRef::Custom(_) | TypeRef::Str | TypeRef::Bool)
+                                )
                         );
                         if is_arc_list {
-                            let symbol = if n == "list_push" {
+                            let symbol = if n == "list_push" || n == "push" {
                                 "lpp_list_push_arc"
                             } else {
                                 "lpp_list_get_arc"
                             };
-                            if n == "list_get" {
+                            if n == "list_get" || n == "get" {
                                 self.out.push_str("((void*)");
                             }
                             self.out.push_str(symbol);
@@ -473,7 +476,7 @@ impl<'a> Codegen<'a> {
                                 self.gen_expr(arg, current_scope, None);
                             }
                             self.out.push_str(")");
-                            if n == "list_get" {
+                            if n == "list_get" || n == "get" {
                                 self.out.push_str(")");
                             }
                             return;
@@ -548,7 +551,8 @@ impl<'a> Codegen<'a> {
                     .first()
                     .map(|element| self.expr_type(element, current_scope))
                     .unwrap_or(TypeRef::Int);
-                let is_arc_element = matches!(element_ty, TypeRef::Custom(_));
+                let is_arc_element =
+                    matches!(element_ty, TypeRef::Custom(_) | TypeRef::Str | TypeRef::Bool);
                 self.pre_stmts.push(format!(
                     "{}void* {} = {}();\n",
                     ind,

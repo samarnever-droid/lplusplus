@@ -524,7 +524,7 @@ impl<'a> MirLowerCtx<'a> {
                         .iter()
                         .find(|b| b.name == name)
                     {
-                        if name == "list_get" {
+                        if name == "list_get" || name == "get" {
                             let list_ty = args
                                 .first()
                                 .map(|arg| self.expr_type_hint(arg, builder, binding_map))
@@ -567,8 +567,11 @@ impl<'a> MirLowerCtx<'a> {
 
                 let list_get_borrows_element = matches!(
                     &**callee,
-                    Expr::Identifier(name, _) if name == "list_get"
-                ) && matches!(&return_type, TypeRef::Custom(_));
+                    Expr::Identifier(name, _) if name == "list_get" || name == "get"
+                ) && matches!(
+                    &return_type,
+                    TypeRef::Custom(_) | TypeRef::Str | TypeRef::Bool
+                );
                 let temp = builder.new_local(return_type, false, None, None);
                 if list_get_borrows_element {
                     // List[ARC] owns the element edge; get returns only a
@@ -593,11 +596,18 @@ impl<'a> MirLowerCtx<'a> {
                         return Ok(Operand::Local(temp));
                     }
 
-                    let builtin_symbol = if (name == "list_push" || name == "list_get")
-                        && matches!(
-                            args.first().map(|arg| self.expr_type_hint(arg, builder, binding_map)),
-                            Some(TypeRef::Generic(_, ref params)) if matches!(params.first(), Some(TypeRef::Custom(_)))
-                        ) {
+                    let builtin_symbol =
+                        if (name == "list_push" || name == "list_get" || name == "push" || name == "get")
+                            && matches!(
+                            args.first()
+                                .map(|arg| self.expr_type_hint(arg, builder, binding_map)),
+                            Some(TypeRef::Generic(_, ref params))
+                                if matches!(
+                                    params.first(),
+                                    Some(TypeRef::Custom(_) | TypeRef::Str | TypeRef::Bool)
+                                )
+                        )
+                    {
                         Some(if name == "list_push" {
                             "lpp_list_push_arc".to_string()
                         } else {
@@ -695,7 +705,8 @@ impl<'a> MirLowerCtx<'a> {
                     temp,
                     Rvalue::AllocateList(elem_ty.clone()),
                 ))?;
-                let push_symbol = if matches!(elem_ty, TypeRef::Custom(_)) {
+                let push_symbol = if matches!(elem_ty, TypeRef::Custom(_) | TypeRef::Str | TypeRef::Bool)
+                {
                     "lpp_list_push_arc"
                 } else {
                     "lpp_list_push"

@@ -463,7 +463,7 @@ impl<'a> TypeChecker<'a> {
                                 param_tys = vec![list_ty.clone(), params[0].clone()];
                             }
                         }
-                    } else if name == "list_get" && args.len() >= 2 {
+                    } else if (name == "list_get" || name == "get") && args.len() >= 2 {
                         let list_ty = self.infer_expr(&args[0], current_scope, None)?;
                         if let TypeRef::Generic(ref list_name, ref params) = list_ty {
                             if list_name == "List" && !params.is_empty() {
@@ -540,7 +540,7 @@ impl<'a> TypeChecker<'a> {
                             return Ok(TypeRef::Generic("List".to_string(), vec![TypeRef::Int]));
                         }
 
-                        if name == "list_get" || name == "lpp_list_get" {
+                        if name == "list_get" || name == "lpp_list_get" || name == "get" {
                             let list_ty = arg_tys[0].clone();
                             if let TypeRef::Generic(ref name, ref params) = list_ty {
                                 if name == "List" && !params.is_empty() {
@@ -655,7 +655,7 @@ impl<'a> TypeChecker<'a> {
                         ));
                     }
                 }
-                if !matches!(elem_ty, TypeRef::Int | TypeRef::Custom(_)) {
+                if !matches!(elem_ty, TypeRef::Int | TypeRef::Custom(_) | TypeRef::Str | TypeRef::Bool) {
                     return Err(format!(
                         "List element type {:?} is not supported safely yet",
                         elem_ty

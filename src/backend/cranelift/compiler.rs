@@ -75,7 +75,7 @@ fn validate_aot_program(program: &MirProgram, type_table: &TypeTable) -> Result<
             TypeRef::Generic(name, args)
                 if name == "List"
                     && args.len() == 1
-                    && matches!(args[0], TypeRef::Int | TypeRef::Custom(_)) =>
+                    && matches!(args[0], TypeRef::Int | TypeRef::Custom(_) | TypeRef::Str | TypeRef::Bool) =>
             {
                 Ok(())
             }
@@ -134,7 +134,10 @@ fn validate_aot_program(program: &MirProgram, type_table: &TypeTable) -> Result<
                         ));
                     }
                     MirInstr::Assign(_, Rvalue::AllocateList(element_ty))
-                        if !matches!(element_ty, TypeRef::Int | TypeRef::Custom(_)) =>
+                        if !matches!(
+                            element_ty,
+                            TypeRef::Int | TypeRef::Custom(_) | TypeRef::Str | TypeRef::Bool
+                        ) =>
                     {
                         return Err(format!(
                             "AOT supports List[Int] and List[Custom], but '{}' allocates List[{:?}]",

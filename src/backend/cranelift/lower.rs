@@ -421,11 +421,11 @@ impl<'a, M: Module> FunctionLower<'a, M> {
             }
             Rvalue::AllocateList(element_ty) => {
                 let allocator = match element_ty {
-                    TypeRef::Int => "lpp_list_new",
-                    TypeRef::Custom(_) => "lpp_list_new_arc",
+                    TypeRef::Int | TypeRef::Bool => "lpp_list_new",
+                    TypeRef::Custom(_) | TypeRef::Str => "lpp_list_new_arc",
                     _ => {
                         return Err(format!(
-                            "AOT supports List[Int] and List[Custom], got List[{:?}]",
+                            "AOT supports List[Int/Bool/Str/Custom], got List[{:?}]",
                             element_ty
                         ));
                     }
