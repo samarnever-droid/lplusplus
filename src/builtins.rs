@@ -240,6 +240,14 @@ pub fn get_builtins() -> &'static [Builtin] {
             cl_return: None,
         },
         Builtin {
+            name: "lpp_list_push_float",
+            symbol: "lpp_list_push_float",
+            params: &[ParamType::Any, ParamType::Specific(TypeRef::Float)],
+            return_type: TypeRef::Void,
+            cl_params: &[0, 3],
+            cl_return: None,
+        },
+        Builtin {
             name: "list_get",
             symbol: "lpp_list_get",
             params: &[ParamType::Any, ParamType::Specific(TypeRef::Int)],
@@ -262,6 +270,14 @@ pub fn get_builtins() -> &'static [Builtin] {
             return_type: TypeRef::Int,
             cl_params: &[0, 0],
             cl_return: Some(0),
+        },
+        Builtin {
+            name: "lpp_list_get_float",
+            symbol: "lpp_list_get_float",
+            params: &[ParamType::Any, ParamType::Specific(TypeRef::Int)],
+            return_type: TypeRef::Float,
+            cl_params: &[0, 0],
+            cl_return: Some(3),
         },
         Builtin {
             name: "list_len",

@@ -391,6 +391,12 @@ void lpp_list_push_arc(void *list, void *value) {
     lpp_list_push(list, (int64_t)(intptr_t)value);
 }
 
+void lpp_list_push_float(void *list, double value) {
+    int64_t ival;
+    memcpy(&ival, &value, sizeof(double));
+    lpp_list_push(list, ival);
+}
+
 int64_t lpp_list_get(void *list, int64_t index) {
     LppList *l = (LppList *)list;
     if (!l || index < 0 || index >= l->len) {
@@ -398,6 +404,13 @@ int64_t lpp_list_get(void *list, int64_t index) {
         abort();
     }
     return l->data[index];
+}
+
+double lpp_list_get_float(void *list, int64_t index) {
+    int64_t ival = lpp_list_get(list, index);
+    double fval;
+    memcpy(&fval, &ival, sizeof(double));
+    return fval;
 }
 
 /* List element reads are borrowed; callers retain only when they create an

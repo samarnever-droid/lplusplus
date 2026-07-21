@@ -548,13 +548,10 @@ impl<'a> MirLowerCtx<'a> {
                 });
 
                 builder.switch_to_block(body_block_id);
-                let get_symbol = if matches!(
-                    elem_ty,
-                    TypeRef::Custom(_) | TypeRef::Str | TypeRef::Bool
-                ) {
-                    "lpp_list_get_arc"
-                } else {
-                    "lpp_list_get"
+                let get_symbol = match &elem_ty {
+                    TypeRef::Float => "lpp_list_get_float",
+                    TypeRef::Custom(_) | TypeRef::Str | TypeRef::Bool => "lpp_list_get_arc",
+                    _ => "lpp_list_get",
                 };
                 let elem_temp = builder.new_local(elem_ty.clone(), false, None, None);
                 if matches!(elem_ty, TypeRef::Custom(_) | TypeRef::Str | TypeRef::Bool) {
@@ -817,23 +814,36 @@ impl<'a> MirLowerCtx<'a> {
                     }
 
                     let builtin_symbol =
-                        if (name == "list_push" || name == "list_get" || name == "push" || name == "get")
-                            && matches!(
-                            args.first()
-                                .map(|arg| self.expr_type_hint(arg, builder, binding_map)),
-                            Some(TypeRef::Generic(_, ref params))
-                                if matches!(
-                                    params.first(),
-                                    Some(TypeRef::Custom(_) | TypeRef::Str | TypeRef::Bool)
-                                )
-                        )
-                    {
-                        Some(if name == "list_push" {
-                            "lpp_list_push_arc".to_string()
-                        } else {
-                            "lpp_list_get_arc".to_string()
-                        })
-                    } else if name == "print" {
+                        if name == "list_push" || name == "list_get" || name == "push" || name == "get" {
+                            let list_ty = args
+                                .first()
+                                .map(|arg| self.expr_type_hint(arg, builder, binding_map));
+                            if let Some(TypeRef::Generic(_, ref params)) = list_ty {
+                                if let Some(elem_ty) = params.first() {
+                                    if name == "list_push" || name == "push" {
+                                        Some(match elem_ty {
+                                            TypeRef::Float => "lpp_list_push_float".to_string(),
+                                            TypeRef::Custom(_) | TypeRef::Str | TypeRef::Bool => {
+                                                "lpp_list_push_arc".to_string()
+                                            }
+                                            _ => "lpp_list_push".to_string(),
+                                        })
+                                    } else {
+                                        Some(match elem_ty {
+                                            TypeRef::Float => "lpp_list_get_float".to_string(),
+                                            TypeRef::Custom(_) | TypeRef::Str | TypeRef::Bool => {
+                                                "lpp_list_get_arc".to_string()
+                                            }
+                                            _ => "lpp_list_get".to_string(),
+                                        })
+                                    }
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            }
+                        } else if name == "print" {
                         let (is_string, is_float) = match lowered_args.first() {
                             Some(Operand::String(_)) => (true, false),
                             Some(Operand::Float(_)) => (false, true),
@@ -925,11 +935,10 @@ impl<'a> MirLowerCtx<'a> {
                     temp,
                     Rvalue::AllocateList(elem_ty.clone()),
                 ))?;
-                let push_symbol = if matches!(elem_ty, TypeRef::Custom(_) | TypeRef::Str | TypeRef::Bool)
-                {
-                    "lpp_list_push_arc"
-                } else {
-                    "lpp_list_push"
+                let push_symbol = match &elem_ty {
+                    TypeRef::Float => "lpp_list_push_float",
+                    TypeRef::Custom(_) | TypeRef::Str | TypeRef::Bool => "lpp_list_push_arc",
+                    _ => "lpp_list_push",
                 };
                 for item in items {
                     let item_op = self.lower_expr(builder, item, binding_map)?;

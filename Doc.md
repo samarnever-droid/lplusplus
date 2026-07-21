@@ -51,7 +51,7 @@ L++ supports native primitives, custom structs, and parameterized lists (`List[T
 | String | `String` or `Str` | NUL-terminated UTF-8 byte string |
 | Void | `Void` | Absence of return value |
 | Custom Struct | `typename` | Heap/stack-allocated user type |
-| Dynamic List | `List[T]` | Parameterized heap list (`T` = `Int`, `Bool`, `Str`, `Custom`) |
+| Dynamic List | `List[T]` | Parameterized heap list (`T` = `Int`, `Float`, `Bool`, `Str`, `Custom`) |
 
 ---
 

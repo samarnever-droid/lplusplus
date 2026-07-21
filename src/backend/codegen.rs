@@ -396,7 +396,7 @@ impl<'a> Codegen<'a> {
                     _ => TypeRef::Int,
                 };
                 let c_elem_type = self.c_type(&elem_ty);
-                let is_arc_elem = matches!(elem_ty, TypeRef::Custom(_) | TypeRef::Str | TypeRef::Bool);
+                let _is_arc_elem = matches!(elem_ty, TypeRef::Custom(_) | TypeRef::Str | TypeRef::Bool);
 
                 self.out.push_str(&format!("{}void* {} = {};\n", ind, tmp_list, list_str));
                 self.out.push_str(&format!("{}int64_t {} = lpp_list_len({});\n", ind, tmp_len, tmp_list));
@@ -406,7 +406,11 @@ impl<'a> Codegen<'a> {
                 ));
                 self.indent_depth += 1;
                 let ind_inner = self.indent();
-                let get_fn = if is_arc_elem { "(void*)lpp_list_get_arc" } else { "lpp_list_get" };
+                let get_fn = match elem_ty {
+                    TypeRef::Float => "lpp_list_get_float",
+                    TypeRef::Custom(_) | TypeRef::Str | TypeRef::Bool => "(void*)lpp_list_get_arc",
+                    _ => "lpp_list_get",
+                };
                 self.out.push_str(&format!(
                     "{}{} {} = ({}){}({}, {});\n",
                     ind_inner, c_elem_type, unique_name, c_elem_type, get_fn, tmp_list, tmp_i
@@ -539,6 +543,27 @@ impl<'a> Codegen<'a> {
                     }
                     if (n == "list_push" || n == "list_get" || n == "push" || n == "get") && !args.is_empty() {
                         let list_ty = self.expr_type(&args[0], current_scope);
+                        if let TypeRef::Generic(_, ref params) = list_ty {
+                            if let Some(elem_ty) = params.first() {
+                                if *elem_ty == TypeRef::Float {
+                                    let symbol = if n == "list_push" || n == "push" {
+                                        "lpp_list_push_float"
+                                    } else {
+                                        "lpp_list_get_float"
+                                    };
+                                    self.out.push_str(symbol);
+                                    self.out.push_str("(");
+                                    for (i, arg) in args.iter().enumerate() {
+                                        if i > 0 {
+                                            self.out.push_str(", ");
+                                        }
+                                        self.gen_expr(arg, current_scope, None);
+                                    }
+                                    self.out.push_str(")");
+                                    return;
+                                }
+                            }
+                        }
                         let is_arc_list = matches!(
                             list_ty,
                             TypeRef::Generic(_, ref params)
@@ -675,7 +700,12 @@ impl<'a> Codegen<'a> {
                     }
                 ));
                 for el_str in elem_strs {
-                    if is_arc_element {
+                    if element_ty == TypeRef::Float {
+                        self.pre_stmts.push(format!(
+                            "{}lpp_list_push_float({}, (double)({}));\n",
+                            ind, tmp, el_str
+                        ));
+                    } else if is_arc_element {
                         self.pre_stmts.push(format!(
                             "{}lpp_list_push_arc({}, (void*)({}));\n",
                             ind, tmp, el_str

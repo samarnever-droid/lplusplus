@@ -226,10 +226,23 @@ void lpp_list_push_arc(void *list, void *value) {
     lpp_list_push(list, (int64_t)(intptr_t)value);
 }
 
+void lpp_list_push_float(void *list, double value) {
+    int64_t ival;
+    for (int i = 0; i < 8; i++) ((char*)&ival)[i] = ((char*)&value)[i];
+    lpp_list_push(list, ival);
+}
+
 int64_t lpp_list_get(void *raw, int64_t index) {
     LppList *list = (LppList *)raw;
     if (!list || index < 0 || index >= list->len) return 0;
     return list->data[index];
+}
+
+double lpp_list_get_float(void *list, int64_t index) {
+    int64_t ival = lpp_list_get(list, index);
+    double fval;
+    for (int i = 0; i < 8; i++) ((char*)&fval)[i] = ((char*)&ival)[i];
+    return fval;
 }
 
 void *lpp_list_get_arc(void *list, int64_t index) {

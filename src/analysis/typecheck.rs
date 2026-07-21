@@ -720,7 +720,7 @@ impl<'a> TypeChecker<'a> {
                         ));
                     }
                 }
-                if !matches!(elem_ty, TypeRef::Int | TypeRef::Custom(_) | TypeRef::Str | TypeRef::Bool) {
+                if !matches!(elem_ty, TypeRef::Int | TypeRef::Float | TypeRef::Custom(_) | TypeRef::Str | TypeRef::Bool) {
                     return Err(format!(
                         "List element type {:?} is not supported safely yet",
                         elem_ty
