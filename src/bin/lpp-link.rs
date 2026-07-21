@@ -1100,7 +1100,10 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
     // Import directory (index 1)
     if has_idata {
         put_u32(&mut pe, dirs + 8, idata_rva);
-        put_u32(&mut pe, dirs + 12, import.data.len() as u32);
+        // Only count the actual import descriptor/ILT/IAT/DLL-name data,
+        // excluding refptr padding that lives in the same buffer.
+        let real_import_size = import.data.len() - refptr_names.len() * 8;
+        put_u32(&mut pe, dirs + 12, real_import_size as u32);
         // IAT directory (index 12)
         put_u32(&mut pe, dirs + 12 * 8, import.iat_rva);
         put_u32(
