@@ -83,7 +83,36 @@ size_t strlen(const char *s) { size_t n=0; while(s&&s[n]) n++; return n; }
 
 static void lpp_write(const char *b, DWORD n) { DWORD w=0; WriteFile(GetStdHandle(STD_OUTPUT_HANDLE),b,n,&w,0); }
 void lpp_print_int(int64_t v) { char b[32],*c=b+32; uint64_t m=v<0?(uint64_t)(-(v+1))+1:(uint64_t)v; *--c='\n'; do{*--c=(char)('0'+m%10);m/=10;}while(m); if(v<0)*--c='-'; lpp_write(c,(DWORD)((b+32)-c)); }
+
+void lpp_print_float(double v) {
+    char buffer[64];
+    char *cursor = buffer + sizeof(buffer);
+    *--cursor = '\n';
+    int negative = (v < 0.0);
+    if (negative) v = -v;
+    int64_t ipart = (int64_t)v;
+    double fpart = v - (double)ipart;
+    int64_t frac = (int64_t)(fpart * 1000000.0 + 0.5);
+    for (int i = 0; i < 6; i++) {
+        *--cursor = (char)('0' + (frac % 10));
+        frac /= 10;
+    }
+    *--cursor = '.';
+    uint64_t magnitude = (uint64_t)ipart;
+    do {
+        *--cursor = (char)('0' + (magnitude % 10));
+        magnitude /= 10;
+    } while (magnitude != 0);
+    if (negative) *--cursor = '-';
+    lpp_write(cursor, (DWORD)((buffer + sizeof(buffer)) - cursor));
+}
 void lpp_print_str(const char *t) { if(!t)return; int n=lpp_strlen(t); lpp_write(t,(DWORD)n); lpp_write("\n",1); }
+
+double fmod(double x, double y) {
+    if (y == 0.0) return 0.0;
+    int64_t i = (int64_t)(x / y);
+    return x - (double)i * y;
+}
 
 void *lpp_arc_alloc_with_destructor(int64_t sz, LppArcDestructor dtor) { if(sz<0)return 0; uint64_t t=lpp_page_round((uint64_t)sz+sizeof(LppArcHeader)); LppArcHeader *h=(LppArcHeader*)VirtualAlloc(0,t,MEM_COMMIT|MEM_RESERVE,PAGE_READWRITE); if(!h)return 0; h->refcount=1;h->destructor=dtor;h->allocation_size=t; return h+1; }
 void *lpp_arc_alloc(int64_t sz) { return lpp_arc_alloc_with_destructor(sz,0); }

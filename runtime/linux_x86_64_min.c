@@ -41,6 +41,29 @@ void lpp_print_int(int64_t value) {
     (void)lpp_sys_write(1, cursor, (long)((buffer + sizeof(buffer)) - cursor));
 }
 
+void lpp_print_float(double v) {
+    char buffer[64];
+    char *cursor = buffer + sizeof(buffer);
+    *--cursor = '\n';
+    int negative = (v < 0.0);
+    if (negative) v = -v;
+    int64_t ipart = (int64_t)v;
+    double fpart = v - (double)ipart;
+    int64_t frac = (int64_t)(fpart * 1000000.0 + 0.5);
+    for (int i = 0; i < 6; i++) {
+        *--cursor = (char)('0' + (frac % 10));
+        frac /= 10;
+    }
+    *--cursor = '.';
+    uint64_t magnitude = (uint64_t)ipart;
+    do {
+        *--cursor = (char)('0' + (magnitude % 10));
+        magnitude /= 10;
+    } while (magnitude != 0);
+    if (negative) *--cursor = '-';
+    (void)lpp_sys_write(1, cursor, (long)((buffer + sizeof(buffer)) - cursor));
+}
+
 void lpp_print_str(const char *text) {
     const char *end = text;
     char newline = '\n';
@@ -48,6 +71,13 @@ void lpp_print_str(const char *text) {
     while (*end) end++;
     (void)lpp_sys_write(1, text, (long)(end - text));
     (void)lpp_sys_write(1, &newline, 1);
+}
+
+/* ── Floating-point math primitives ──────────────────────────────────────── */
+double fmod(double x, double y) {
+    if (y == 0.0) return 0.0;
+    int64_t i = (int64_t)(x / y);
+    return x - (double)i * y;
 }
 
 /* ── Freestanding ARC foundation ─────────────────────────────────────────── */

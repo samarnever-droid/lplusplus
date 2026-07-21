@@ -15,7 +15,7 @@ use object::{
     Architecture, BinaryFormat, Object, ObjectSection, ObjectSymbol, RelocationKind,
     RelocationTarget, SymbolSection,
 };
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -122,12 +122,15 @@ fn read_elf_input(path: &Path) -> Result<ElfInput, String> {
         .map_err(|e| format!("read .text from '{}': {e}", path.display()))?
         .into_owned();
 
-    let mut rodata_idxs = HashSet::new();
+    let mut rodata_map: HashMap<object::SectionIndex, usize> = HashMap::new();
     let mut rodata = Vec::new();
     for sec in file.sections() {
         if let Ok(name) = sec.name() {
             if name == ".rodata" || name.starts_with(".rodata.") {
-                rodata_idxs.insert(sec.index());
+                let align = usize::try_from(sec.align()).unwrap_or(16).max(1);
+                let base = align_up(rodata.len(), align);
+                rodata.resize(base, 0);
+                rodata_map.insert(sec.index(), base);
                 if let Ok(d) = sec.uncompressed_data() {
                     rodata.extend_from_slice(&d);
                 }
@@ -135,7 +138,7 @@ fn read_elf_input(path: &Path) -> Result<ElfInput, String> {
         }
     }
     let is_rodata = |s: SymbolSection| match s {
-        SymbolSection::Section(i) => rodata_idxs.contains(&i),
+        SymbolSection::Section(i) => rodata_map.contains_key(&i),
         _ => false,
     };
 
@@ -152,7 +155,11 @@ fn read_elf_input(path: &Path) -> Result<ElfInput, String> {
         if let Some(dst) = dst {
             if let Ok(n) = sym.name() {
                 if !n.is_empty() {
-                    dst.push((n.to_string(), sym.address()));
+                    let sec_base = match sym.section() {
+                        SymbolSection::Section(i) => rodata_map.get(&i).copied().unwrap_or(0),
+                        _ => 0,
+                    };
+                    dst.push((n.to_string(), sec_base as u64 + sym.address()));
                 }
             }
         }
@@ -172,21 +179,24 @@ fn read_elf_input(path: &Path) -> Result<ElfInput, String> {
         let raw = sym
             .name()
             .map_err(|e| format!("read relocation symbol name: {e}"))?;
-        let is_section = raw.is_empty()
-            || sym.kind() == object::SymbolKind::Section
-            || raw.starts_with(".rodata")
-            || raw.starts_with(".text");
-        let target = if is_section && sym.section() == SymbolSection::Section(text_idx) {
-            "__self_text__".to_string()
-        } else if is_section && is_rodata(sym.section()) {
-            "__self_rodata__".to_string()
-        } else {
-            raw.to_string()
+        let (target, addend) = match sym.section() {
+            SymbolSection::Section(i) if i == text_idx => (
+                "__self_text__".to_string(),
+                rel.addend() + sym.address() as i64,
+            ),
+            SymbolSection::Section(i) if rodata_map.contains_key(&i) => {
+                let sec_base = rodata_map[&i] as i64;
+                (
+                    "__self_rodata__".to_string(),
+                    rel.addend() + sec_base + sym.address() as i64,
+                )
+            }
+            _ => (raw.to_string(), rel.addend()),
         };
         relocs.push(Relocation {
             offset: usize::try_from(off).map_err(|_| "relocation offset overflow")?,
             target,
-            addend: rel.addend(),
+            addend,
             size: rel.size(),
             kind: rel.kind(),
         });
