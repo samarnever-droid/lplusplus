@@ -361,7 +361,10 @@ fn read_coff_full(path: &Path) -> Result<CoffSections, String> {
             if let Some((_, class, base)) = map.iter().find(|(i, _, _)| *i == idx) {
                 if let Ok(name) = sym.name() {
                     if !name.is_empty() && !name.starts_with(".text") && !name.starts_with(".rdata")
-                        && !name.starts_with(".data") && !name.starts_with(".bss") && !name.starts_with('$')
+                        && !name.starts_with(".data") && !name.starts_with(".bss")
+                        && !name.starts_with(".xdata") && !name.starts_with(".pdata")
+                        && !name.starts_with(".debug") && !name.starts_with(".drectve")
+                        && !name.starts_with(".chks64") && !name.starts_with('$')
                     { syms.push((name.to_string(), *class, *base as u64 + sym.address())); }
                 }
             }
@@ -374,7 +377,10 @@ fn resolve_coff_target(raw_name: &str, sym: &object::Symbol<'_, '_>,
     map: &[(object::SectionIndex, SectionClass, usize)], self_class: SectionClass) -> String {
     let anon = raw_name.is_empty() || sym.kind() == object::SymbolKind::Section
         || raw_name.starts_with(".text") || raw_name.starts_with(".rdata")
-        || raw_name.starts_with(".data") || raw_name.starts_with('$');
+        || raw_name.starts_with(".data") || raw_name.starts_with('$')
+        || raw_name.starts_with(".xdata") || raw_name.starts_with(".pdata")
+        || raw_name.starts_with(".debug") || raw_name.starts_with(".drectve")
+        || raw_name.starts_with(".chks64");
     if anon {
         if let SymbolSection::Section(idx) = sym.section() {
             if let Some((_, sc, base)) = map.iter().find(|(i, _, _)| *i == idx) {

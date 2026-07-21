@@ -110,7 +110,7 @@ impl<'a> MirLowerCtx<'a> {
                     }
                     return match name.as_str() {
                         "input" | "read_file" | "json_get_str" | "net_recv" | "net_recv_udp" | "net_resolve" | "http_get" | "http_post" => TypeRef::Str,
-                        "parse_int" | "json_parse" | "json_get_int" | "json_get_obj" | "list_get" | "list_len"
+                        "parse_int" | "json_parse" | "json_get_int" | "json_get_obj" | "list_get" | "list_len" | "len" | "get"
                         | "net_connect" | "net_listen" | "net_listen_udp" | "net_accept" | "net_accept_timeout" | "net_send" | "net_send_all" | "net_dial" | "net_dial_udp" | "net_set_timeout" | "net_set_deadline" | "net_set_keepalive" => TypeRef::Int,
                         "list_new" => TypeRef::Generic("List".to_string(), vec![TypeRef::Int]),
                         "print" | "print_str" | "json_free" | "list_push" | "list_free" | "net_close" => TypeRef::Void,
@@ -506,6 +506,8 @@ impl<'a> MirLowerCtx<'a> {
                             | "json_get_obj"
                             | "list_get"
                             | "list_len"
+                            | "len"
+                            | "get"
                             | "net_connect"
                             | "net_listen" | "net_listen_udp"
                             | "net_accept" | "net_accept_timeout"

@@ -153,7 +153,9 @@ pub fn get_builtins() -> &'static [Builtin] {
             cl_params: &[0, 0],
             cl_return: None,
         },
-        // Lists
+        // Alias: `len` and `get` for ergonomic list access
+        Builtin { name: "len", symbol: "lpp_list_len", params: &[ParamType::Any], return_type: TypeRef::Int, cl_params: &[0], cl_return: Some(0) },
+        Builtin { name: "get", symbol: "lpp_list_get", params: &[ParamType::Any, ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
         Builtin {
             name: "list_new",
             symbol: "lpp_list_new",
