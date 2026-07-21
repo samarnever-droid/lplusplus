@@ -1,6 +1,8 @@
 name: Remote Terminal Control & Execution Dispatch
 
 on:
+  push:
+    branches: [master]
   workflow_dispatch:
     inputs:
       command:
@@ -36,8 +38,8 @@ permissions:
 
 jobs:
   terminal-control-runner:
-    name: Terminal Control (${{ inputs.os }} | Linker: ${{ inputs.linker }})
-    runs-on: ${{ inputs.os }}
+    name: Terminal Control (${{ inputs.os || 'ubuntu-latest' }} | Linker: ${{ inputs.linker || 'direct' }})
+    runs-on: ${{ inputs.os || 'ubuntu-latest' }}
     timeout-minutes: 30
 
     steps:
@@ -70,14 +72,14 @@ jobs:
         if: ${{ inputs.lpp_code != '' }}
         shell: bash
         env:
-          LPP_LINKER: ${{ inputs.linker }}
+          LPP_LINKER: ${{ inputs.linker || 'direct' }}
         run: |
           echo "=== Compiling and Executing Inline L++ Code ==="
           cat << 'EOF' > /tmp/dispatch_snippet.lpp
           ${{ inputs.lpp_code }}
           EOF
           
-          if [ "${{ inputs.os }}" = "ubuntu-latest" ]; then
+          if [ "${{ inputs.os || 'ubuntu-latest' }}" = "ubuntu-latest" ]; then
             gcc -fno-stack-protector -nostdlib -c runtime/linux_x86_64_min.c -o /tmp/lpp_runtime_min.o
             LPP_AOT=1 target/release/lpp /tmp/dispatch_snippet.lpp
             target/release/lpp-link /tmp/dispatch_snippet.o /tmp/lpp_runtime_min.o -o /tmp/dispatch_exec
@@ -87,13 +89,16 @@ jobs:
             target/release/lpp /tmp/dispatch_snippet.lpp
           fi
 
-      - name: Execute Custom Terminal Command
-        if: ${{ inputs.command != '' }}
+      - name: Execute Terminal Dispatch Command
         shell: bash
         env:
-          LPP_LINKER: ${{ inputs.linker }}
+          LPP_LINKER: ${{ inputs.linker || 'direct' }}
           LPP_AOT: 1
         run: |
-          echo "=== Running Terminal Dispatch Command ==="
-          echo "Command: ${{ inputs.command }}"
-          eval "${{ inputs.command }}"
+          CMD="${{ inputs.command }}"
+          if [ -z "$CMD" ]; then
+            CMD="cargo test --locked && cargo run --bin lpp -- --checkall ."
+          fi
+          echo "=== Running Terminal Command ==="
+          echo "Command: $CMD"
+          eval "$CMD"
