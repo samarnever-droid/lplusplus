@@ -177,11 +177,27 @@ fn repo_root() -> PathBuf {
 fn detect_c_compiler() -> Option<String> {
     #[cfg(target_os = "windows")]
     {
-        for cc in &["cl.exe", "cl", "gcc", "clang"] {
-            if try_run(cc, &["--version"]) || try_run(cc, &["/?", ">/nul"]) {
+        // Try cl.exe on PATH first (already in VS command prompt)
+        for cc in &["cl.exe", "cl"] {
+            if try_run(cc, &["/?", ">/nul"]) || try_run(cc, &["--version"]) {
                 return Some(cc.to_string());
             }
         }
+        // Auto-detect MSVC via vcvars64.bat, same as pm.rs
+        if let Some(vcvars) = find_vcvars64() {
+            if load_vcvars_env(&vcvars).is_ok() {
+                if try_run("cl.exe", &["/?", ">/nul"]) || try_run("cl", &["/?", ">/nul"]) {
+                    return Some("cl.exe".to_string());
+                }
+                for cc in &["gcc", "clang"] {
+                    if try_run(cc, &["--version"]) { return Some(cc.to_string()); }
+                }
+            }
+        }
+        for cc in &["gcc", "clang"] {
+            if try_run(cc, &["--version"]) { return Some(cc.to_string()); }
+        }
+        return None;
     }
     #[cfg(not(target_os = "windows"))]
     {
@@ -191,6 +207,53 @@ fn detect_c_compiler() -> Option<String> {
     }
     None
 }
+
+/// Locate vcvars64.bat at standard MSVC install paths (Windows only).
+#[cfg(target_os = "windows")]
+fn find_vcvars64() -> Option<PathBuf> {
+    let fallbacks = [
+        r"C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat",
+        r"C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Auxiliary\Build\vcvars64.bat",
+        r"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat",
+        r"C:\Program Files\Microsoft Visual Studio\2019\Community\VC\Auxiliary\Build\vcvars64.bat",
+        r"C:\Program Files\Microsoft Visual Studio\2019\Professional\VC\Auxiliary\Build\vcvars64.bat",
+        r"C:\Program Files\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvars64.bat",
+    ];
+    for f in &fallbacks {
+        let p = Path::new(f);
+        if p.exists() { return Some(p.to_path_buf()); }
+    }
+    None
+}
+
+/// Load environment from a vcvars64.bat script (Windows only).
+#[cfg(target_os = "windows")]
+fn load_vcvars_env(vcvars: &Path) -> Result<(), String> {
+    let temp_dir = std::env::temp_dir();
+    let bat_path = temp_dir.join("lpp_bench_vcvars.bat");
+    let bat_content = format!("@echo off\ncall \"{}\" > nul\nset\n", vcvars.display());
+    fs::write(&bat_path, bat_content).map_err(|e| format!("write batch: {e}"))?;
+    let output = Command::new("cmd.exe")
+        .args(["/c", &bat_path.to_string_lossy()])
+        .output()
+        .map_err(|e| format!("run cmd: {e}"))?;
+    let _ = fs::remove_file(&bat_path);
+    if !output.status.success() { return Err("vcvars failed".to_string()); }
+    let env_dump = String::from_utf8_lossy(&output.stdout);
+    for line in env_dump.lines() {
+        if let Some(eq_idx) = line.find('=') {
+            let name = &line[..eq_idx];
+            let val = &line[eq_idx + 1..];
+            unsafe { std::env::set_var(name, val); }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn find_vcvars64() -> Option<PathBuf> { None }
+#[cfg(not(target_os = "windows"))]
+fn load_vcvars_env(_vcvars: &Path) -> Result<(), String> { Ok(()) }
 
 fn try_run(cmd: &str, args: &[&str]) -> bool {
     Command::new(cmd).args(args)
