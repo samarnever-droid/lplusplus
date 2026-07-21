@@ -1,5 +1,5 @@
 use crate::ast::*;
-use crate::lexer::{Token, SpannedToken};
+use crate::lexer::{SpannedToken, Token};
 
 pub struct Parser {
     tokens: Vec<SpannedToken>,
@@ -65,7 +65,10 @@ impl Parser {
                 declarations.push(TopLevel::Import(self.parse_import()?));
             } else {
                 let found = self.peek().cloned();
-                return self.error(format!("Expected 'def', 'struct', or 'import', found {:?}", found));
+                return self.error(format!(
+                    "Expected 'def', 'struct', or 'import', found {:?}",
+                    found
+                ));
             }
             self.skip_newlines();
         }
@@ -121,7 +124,10 @@ impl Parser {
             }
 
             let ty = self.parse_type()?;
-            fields.push(Param { name: field_name, ty });
+            fields.push(Param {
+                name: field_name,
+                ty,
+            });
 
             self.skip_newlines();
         }
@@ -151,7 +157,10 @@ impl Parser {
                     return self.error("Expected ':' after parameter name");
                 }
                 let ty = self.parse_type()?;
-                params.push(Param { name: param_name, ty });
+                params.push(Param {
+                    name: param_name,
+                    ty,
+                });
 
                 if !self.match_token(&Token::Comma) {
                     break;
@@ -258,7 +267,7 @@ impl Parser {
                 self.skip_newlines();
             }
             self.match_token(&Token::Dedent);
-            
+
             let mut else_block = None;
             self.skip_newlines();
             if self.match_token(&Token::Else) {
@@ -289,8 +298,12 @@ impl Parser {
                     else_block = Some(e_block);
                 }
             }
-            
-            return Ok(Stmt::If { condition, then_block, else_block });
+
+            return Ok(Stmt::If {
+                condition,
+                then_block,
+                else_block,
+            });
         }
 
         if self.match_token(&Token::While) {
@@ -352,11 +365,14 @@ impl Parser {
             if let Expr::Call { callee, args } = &list_expr {
                 if let Expr::Identifier(fn_name, _) = callee.as_ref() {
                     if fn_name == "range" {
-                        let (start_expr, end_expr) = match args.len() {
-                            1 => (Expr::IntLiteral(0), args[0].clone()),
-                            2 => (args[0].clone(), args[1].clone()),
-                            _ => return self.error("range in a for loop expects range(end) or range(start, end)"),
-                        };
+                        let (start_expr, end_expr) =
+                            match args.len() {
+                                1 => (Expr::IntLiteral(0), args[0].clone()),
+                                2 => (args[0].clone(), args[1].clone()),
+                                _ => return self.error(
+                                    "range in a for loop expects range(end) or range(start, end)",
+                                ),
+                            };
 
                         let var_decl = Stmt::LetInferred {
                             name: var_name.clone(),
@@ -366,7 +382,10 @@ impl Parser {
                         };
 
                         let while_cond = Expr::BinaryOp {
-                            left: Box::new(Expr::Identifier(var_name.clone(), std::cell::Cell::new(None))),
+                            left: Box::new(Expr::Identifier(
+                                var_name.clone(),
+                                std::cell::Cell::new(None),
+                            )),
                             op: BinaryOperator::Less,
                             right: Box::new(end_expr),
                         };
@@ -375,7 +394,10 @@ impl Parser {
                         let increment = Stmt::Assign {
                             name: var_name.clone(),
                             value: Expr::BinaryOp {
-                                left: Box::new(Expr::Identifier(var_name, std::cell::Cell::new(None))),
+                                left: Box::new(Expr::Identifier(
+                                    var_name,
+                                    std::cell::Cell::new(None),
+                                )),
                                 op: BinaryOperator::Add,
                                 right: Box::new(Expr::IntLiteral(1)),
                             },
@@ -393,7 +415,8 @@ impl Parser {
                 }
             }
 
-            static FOR_TEMP_COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+            static FOR_TEMP_COUNTER: std::sync::atomic::AtomicUsize =
+                std::sync::atomic::AtomicUsize::new(0);
             let id = FOR_TEMP_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let list_var = format!("__for_list_{}", id);
             let idx_var = format!("__for_idx_{}", id);
@@ -413,18 +436,30 @@ impl Parser {
             };
 
             let len_call = Expr::Call {
-                callee: Box::new(Expr::Identifier("len".to_string(), std::cell::Cell::new(None))),
-                args: vec![Expr::Identifier(list_var.clone(), std::cell::Cell::new(None))],
+                callee: Box::new(Expr::Identifier(
+                    "len".to_string(),
+                    std::cell::Cell::new(None),
+                )),
+                args: vec![Expr::Identifier(
+                    list_var.clone(),
+                    std::cell::Cell::new(None),
+                )],
             };
 
             let while_cond = Expr::BinaryOp {
-                left: Box::new(Expr::Identifier(idx_var.clone(), std::cell::Cell::new(None))),
+                left: Box::new(Expr::Identifier(
+                    idx_var.clone(),
+                    std::cell::Cell::new(None),
+                )),
                 op: BinaryOperator::Less,
                 right: Box::new(len_call),
             };
 
             let element_access = Expr::Call {
-                callee: Box::new(Expr::Identifier("get".to_string(), std::cell::Cell::new(None))),
+                callee: Box::new(Expr::Identifier(
+                    "get".to_string(),
+                    std::cell::Cell::new(None),
+                )),
                 args: vec![
                     Expr::Identifier(list_var, std::cell::Cell::new(None)),
                     Expr::Identifier(idx_var.clone(), std::cell::Cell::new(None)),
@@ -477,7 +512,12 @@ impl Parser {
                 return self.error("Expected ':=' after mutable identifier");
             }
             let value = self.parse_expr()?;
-            return Ok(Stmt::LetInferred { name, is_mut: true, value, binding_id: std::cell::Cell::new(None) });
+            return Ok(Stmt::LetInferred {
+                name,
+                is_mut: true,
+                value,
+                binding_id: std::cell::Cell::new(None),
+            });
         }
 
         if let Some(Token::Ident(name)) = self.peek().cloned() {
@@ -486,7 +526,12 @@ impl Parser {
                 self.advance(); // consume name
                 self.advance(); // consume :=
                 let value = self.parse_expr()?;
-                return Ok(Stmt::LetInferred { name: name.clone(), is_mut: false, value, binding_id: std::cell::Cell::new(None) });
+                return Ok(Stmt::LetInferred {
+                    name: name.clone(),
+                    is_mut: false,
+                    value,
+                    binding_id: std::cell::Cell::new(None),
+                });
             }
         }
 
@@ -495,10 +540,18 @@ impl Parser {
             let value = self.parse_expr()?;
             match expr {
                 Expr::Identifier(name, _) => {
-                    return Ok(Stmt::Assign { name, value, binding_id: std::cell::Cell::new(None) });
+                    return Ok(Stmt::Assign {
+                        name,
+                        value,
+                        binding_id: std::cell::Cell::new(None),
+                    });
                 }
                 Expr::FieldAccess { base, field } => {
-                    return Ok(Stmt::AssignField { base: *base, field, value });
+                    return Ok(Stmt::AssignField {
+                        base: *base,
+                        field,
+                        value,
+                    });
                 }
                 _ => return self.error("Invalid assignment target"),
             }
@@ -512,7 +565,9 @@ impl Parser {
         }
         if self.match_token(&Token::Spawn) {
             let closure = self.parse_expr()?;
-            return Ok(Expr::Spawn { closure: Box::new(closure) });
+            return Ok(Expr::Spawn {
+                closure: Box::new(closure),
+            });
         }
         self.parse_relational()
     }
@@ -553,13 +608,16 @@ impl Parser {
                     Some(Token::Ident(n)) => n.clone(),
                     _ => return self.error("Expected parameter name in closure"),
                 };
-                
+
                 let mut ty = None;
                 if self.match_token(&Token::Colon) {
                     ty = Some(self.parse_type()?);
                 }
-                
-                params.push(ClosureParam { name: param_name, ty });
+
+                params.push(ClosureParam {
+                    name: param_name,
+                    ty,
+                });
 
                 if !self.match_token(&Token::Comma) {
                     break;

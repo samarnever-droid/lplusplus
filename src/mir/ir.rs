@@ -1,5 +1,5 @@
-use crate::typecheck::TypeRef;
 use crate::ast::BinaryOperator;
+use crate::typecheck::TypeRef;
 use std::collections::HashMap;
 
 /// Unique identifier for a local variable or temporary binding within a MIR function.
@@ -50,7 +50,7 @@ pub enum Operand {
     Bool(bool),
 }
 
-/// An Rvalue computes a new value from Operands. 
+/// An Rvalue computes a new value from Operands.
 /// Rvalues are side-effect free (mostly) except for calls, but represent the right-hand side of assignments.
 #[derive(Debug, Clone)]
 pub enum Rvalue {
@@ -106,35 +106,43 @@ impl std::fmt::Display for Rvalue {
             Rvalue::CallDirect(func_id, args) => {
                 write!(f, "call fn_{}(", func_id.0)?;
                 for (i, arg) in args.iter().enumerate() {
-                    if i > 0 { write!(f, ", ")?; }
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
                     write!(f, "{}", arg)?;
                 }
                 write!(f, ")")
-            },
+            }
             Rvalue::CallIndirect(callee, args) => {
                 write!(f, "call_indirect {}(", callee)?;
                 for (i, arg) in args.iter().enumerate() {
-                    if i > 0 { write!(f, ", ")?; }
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
                     write!(f, "{}", arg)?;
                 }
                 write!(f, ")")
-            },
+            }
             Rvalue::BuiltinCall(name, args) => {
                 write!(f, "{}(", name)?;
                 for (i, arg) in args.iter().enumerate() {
-                    if i > 0 { write!(f, ", ")?; }
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
                     write!(f, "{}", arg)?;
                 }
                 write!(f, ")")
-            },
+            }
             Rvalue::MakeClosure(func_id, captures) => {
                 write!(f, "make_closure(fn_{}, [", func_id.0)?;
                 for (i, arg) in captures.iter().enumerate() {
-                    if i > 0 { write!(f, ", ")?; }
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
                     write!(f, "{}", arg)?;
                 }
                 write!(f, "])")
-            },
+            }
             Rvalue::FieldAccess(base, field) => write!(f, "{}.{}", base, field),
             Rvalue::AllocateStruct(ty) => write!(f, "alloc_struct_raw({:?})", ty),
             Rvalue::AllocateArcStruct(ty) => write!(f, "alloc_arc_struct({:?})", ty),
@@ -149,15 +157,18 @@ impl std::fmt::Display for Rvalue {
 pub enum MirInstr {
     /// Computes the Rvalue and assigns it to the LocalId.
     Assign(LocalId, Rvalue),
-    
+
     /// Writes to a field of a custom struct.
-    AssignField { base: LocalId, field: String, value: Operand },
-    
+    AssignField {
+        base: LocalId,
+        field: String,
+        value: Operand,
+    },
+
     // --- Instructions below are typically inserted by later MIR passes ---
-    
     /// Explicit increment of a reference count. Inserted by the ARC pass.
     Retain(LocalId),
-    
+
     /// Explicit decrement of a reference count. Inserted by the ARC pass.
     Release(LocalId),
 }
@@ -166,7 +177,9 @@ impl std::fmt::Display for MirInstr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             MirInstr::Assign(local, rvalue) => write!(f, "_{} = {}", local.0, rvalue),
-            MirInstr::AssignField { base, field, value } => write!(f, "_{}.{} = {}", base.0, field, value),
+            MirInstr::AssignField { base, field, value } => {
+                write!(f, "_{}.{} = {}", base.0, field, value)
+            }
             MirInstr::Retain(local) => write!(f, "retain(_{})", local.0),
             MirInstr::Release(local) => write!(f, "release(_{})", local.0),
         }
@@ -178,19 +191,29 @@ impl std::fmt::Display for MirInstr {
 pub enum Terminator {
     /// Unconditional jump to another block
     Goto(BlockId),
-    
+
     /// Conditional jump based on a boolean operand
-    If { cond: Operand, then_block: BlockId, else_block: BlockId },
+    If {
+        cond: Operand,
+        then_block: BlockId,
+        else_block: BlockId,
+    },
     /// Fused integer comparison branch. Avoids materializing a temporary Bool
     /// local for hot while/if conditions before Cranelift lowering.
-    IfCmp { op: BinaryOperator, left: Operand, right: Operand, then_block: BlockId, else_block: BlockId },
-    
+    IfCmp {
+        op: BinaryOperator,
+        left: Operand,
+        right: Operand,
+        then_block: BlockId,
+        else_block: BlockId,
+    },
+
     /// Return from the current function without transferring an owned local.
     Return(Option<Operand>),
 
     /// Return an owned local and transfer its ARC reference to the caller.
     ReturnOwned(Operand),
-    
+
     /// Panic or abort the program
     Unreachable,
 }
@@ -211,12 +234,30 @@ impl std::fmt::Display for MirBlock {
         }
         match &self.terminator {
             Terminator::Goto(target) => writeln!(f, "    goto bb{};", target.0),
-            Terminator::If { cond, then_block, else_block } => {
-                writeln!(f, "    if {} goto bb{} else goto bb{};", cond, then_block.0, else_block.0)
-            },
-            Terminator::IfCmp { op, left, right, then_block, else_block } => {
-                writeln!(f, "    if {} {:?} {} goto bb{} else goto bb{};", left, op, right, then_block.0, else_block.0)
-            },
+            Terminator::If {
+                cond,
+                then_block,
+                else_block,
+            } => {
+                writeln!(
+                    f,
+                    "    if {} goto bb{} else goto bb{};",
+                    cond, then_block.0, else_block.0
+                )
+            }
+            Terminator::IfCmp {
+                op,
+                left,
+                right,
+                then_block,
+                else_block,
+            } => {
+                writeln!(
+                    f,
+                    "    if {} {:?} {} goto bb{} else goto bb{};",
+                    left, op, right, then_block.0, else_block.0
+                )
+            }
             Terminator::Return(Some(op)) => writeln!(f, "    return {};", op),
             Terminator::Return(None) => writeln!(f, "    return;"),
             Terminator::ReturnOwned(op) => writeln!(f, "    return_owned {};", op),
@@ -246,19 +287,27 @@ pub struct MirProgram {
 impl std::fmt::Display for MirProgram {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for func in self.functions.values() {
-            writeln!(f, "fn {} (fn_{}) -> {:?} {{", func.name, func.id.0, func.return_type)?;
-            
+            writeln!(
+                f,
+                "fn {} (fn_{}) -> {:?} {{",
+                func.name, func.id.0, func.return_type
+            )?;
+
             // Print locals
             for local in &func.locals {
                 let name_str = local.debug_name.as_deref().unwrap_or("<anon>");
-                writeln!(f, "  let mut _{}: {:?} /* {} */;", local.id.0, local.ty, name_str)?;
+                writeln!(
+                    f,
+                    "  let mut _{}: {:?} /* {} */;",
+                    local.id.0, local.ty, name_str
+                )?;
             }
-            
+
             // Print blocks
             for block in &func.blocks {
                 write!(f, "{}", block)?;
             }
-            
+
             writeln!(f, "}}\n")?;
         }
         Ok(())

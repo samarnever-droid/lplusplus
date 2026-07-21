@@ -3,7 +3,7 @@ use crate::ast::BinaryOperator;
 use crate::mir::ir::*;
 use crate::typecheck::{TypeRef, TypeTable};
 use cranelift_codegen::entity::EntityRef;
-use cranelift_codegen::ir::condcodes::{IntCC, FloatCC};
+use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 use cranelift_codegen::ir::types as cl_types;
 use cranelift_codegen::ir::{AbiParam, InstBuilder, Value};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
@@ -29,13 +29,16 @@ impl<'a, M: Module> FunctionLower<'a, M> {
             sig.params.push(AbiParam::new(type_to_cl(&decl.ty)));
         }
         if mir_fn.return_type != TypeRef::Void {
-            sig.returns.push(AbiParam::new(type_to_cl(&mir_fn.return_type)));
+            sig.returns
+                .push(AbiParam::new(type_to_cl(&mir_fn.return_type)));
         }
 
-        let func_id = *self
-            .func_ids
-            .get(&mir_fn.id)
-            .ok_or_else(|| format!("Missing Cranelift function id for MIR function '{}'", mir_fn.name))?;
+        let func_id = *self.func_ids.get(&mir_fn.id).ok_or_else(|| {
+            format!(
+                "Missing Cranelift function id for MIR function '{}'",
+                mir_fn.name
+            )
+        })?;
         let mut ctx = self.module.make_context();
         ctx.func.signature = sig;
         ctx.func.name = cranelift_codegen::ir::UserFuncName::user(0, func_id.as_u32());
@@ -68,15 +71,18 @@ impl<'a, M: Module> FunctionLower<'a, M> {
             builder.append_block_params_for_function_params(entry_block);
             let param_vals: Vec<Value> = builder.block_params(entry_block).to_vec();
             for (index, param_id) in mir_fn.params.iter().enumerate() {
-                let variable = *local_vars
-                    .get(param_id)
-                    .ok_or_else(|| format!("Missing Cranelift variable for parameter {:?}", param_id))?;
+                let variable = *local_vars.get(param_id).ok_or_else(|| {
+                    format!("Missing Cranelift variable for parameter {:?}", param_id)
+                })?;
                 builder.def_var(variable, param_vals[index]);
             }
 
             for (index, block) in mir_fn.blocks.iter().enumerate() {
                 let cl_block = *cl_blocks.get(&block.id).ok_or_else(|| {
-                    format!("Missing Cranelift block mapping for block {:?} in '{}'", block.id, mir_fn.name)
+                    format!(
+                        "Missing Cranelift block mapping for block {:?} in '{}'",
+                        block.id, mir_fn.name
+                    )
                 })?;
                 if index != 0 {
                     builder.switch_to_block(cl_block);
@@ -118,7 +124,9 @@ impl<'a, M: Module> FunctionLower<'a, M> {
             }
             Operand::Int(value) => Ok(builder.ins().iconst(cl_types::I64, *value)),
             Operand::Float(value) => Ok(builder.ins().f64const(*value)),
-            Operand::Bool(value) => Ok(builder.ins().iconst(cl_types::I8, if *value { 1 } else { 0 })),
+            Operand::Bool(value) => Ok(builder
+                .ins()
+                .iconst(cl_types::I8, if *value { 1 } else { 0 })),
             Operand::String(value) => {
                 let symbol_name = format!("str_lit_{}_{}", self.fn_name, self.next_str_idx);
                 self.next_str_idx += 1;
@@ -152,26 +160,40 @@ impl<'a, M: Module> FunctionLower<'a, M> {
     ) -> Result<(), String> {
         match instr {
             MirInstr::Assign(dest, rvalue) => {
-                let value = self.lower_rvalue_inner(builder, rvalue, local_vars, locals, Some(&locals[dest.0].ty))?;
-                let variable = *local_vars
-                    .get(dest)
-                    .ok_or_else(|| format!("Missing Cranelift variable for destination local {:?}", dest))?;
+                let value = self.lower_rvalue_inner(
+                    builder,
+                    rvalue,
+                    local_vars,
+                    locals,
+                    Some(&locals[dest.0].ty),
+                )?;
+                let variable = *local_vars.get(dest).ok_or_else(|| {
+                    format!(
+                        "Missing Cranelift variable for destination local {:?}",
+                        dest
+                    )
+                })?;
                 builder.def_var(variable, value);
             }
             MirInstr::AssignField { base, field, value } => {
-                let base_variable = *local_vars
-                    .get(base)
-                    .ok_or_else(|| format!("Missing Cranelift variable for base local {:?}", base))?;
+                let base_variable = *local_vars.get(base).ok_or_else(|| {
+                    format!("Missing Cranelift variable for base local {:?}", base)
+                })?;
                 let base_value = builder.use_var(base_variable);
                 let base_ty = &locals[base.0].ty;
                 let value_value = self.operand_to_value(builder, value, local_vars)?;
                 if let TypeRef::Custom(struct_id) = base_ty {
                     let struct_def = &self.type_table.definitions[struct_id.0];
-                    if let Some(field_index) = struct_def.fields.iter().position(|(name, _)| name == field) {
+                    if let Some(field_index) =
+                        struct_def.fields.iter().position(|(name, _)| name == field)
+                    {
                         let (layout, _) = struct_layout(self.type_table, *struct_id);
                         let field_layout = layout[field_index];
                         if builder.func.dfg.value_type(value_value) != field_layout.ty {
-                            return Err(format!("Type mismatch storing field '{}' of '{}'", field, struct_def.name));
+                            return Err(format!(
+                                "Type mismatch storing field '{}' of '{}'",
+                                field, struct_def.name
+                            ));
                         }
                         builder.ins().store(
                             cranelift_codegen::ir::MemFlags::new(),
@@ -200,9 +222,10 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                 } else {
                     "lpp_arc_release"
                 };
-                let builtin_id = *self.builtin_ids.get(symbol).ok_or_else(|| {
-                    format!("ARC runtime symbol '{}' was not declared", symbol)
-                })?;
+                let builtin_id = *self
+                    .builtin_ids
+                    .get(symbol)
+                    .ok_or_else(|| format!("ARC runtime symbol '{}' was not declared", symbol))?;
                 let func_ref = self.module.declare_func_in_func(builtin_id, builder.func);
                 let value = self.operand_to_value(builder, &Operand::Local(*local), local_vars)?;
                 builder.ins().call(func_ref, &[value]);
@@ -230,57 +253,97 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                 let is_float = builder.func.dfg.value_type(left) == cl_types::F64;
                 let is_comparison = matches!(
                     op,
-                    BinaryOperator::Eq | BinaryOperator::NotEq | BinaryOperator::Less |
-                    BinaryOperator::Greater | BinaryOperator::LessEq | BinaryOperator::GreaterEq
+                    BinaryOperator::Eq
+                        | BinaryOperator::NotEq
+                        | BinaryOperator::Less
+                        | BinaryOperator::Greater
+                        | BinaryOperator::LessEq
+                        | BinaryOperator::GreaterEq
                 );
                 let value = match op {
                     BinaryOperator::Add => {
-                        if is_float { builder.ins().fadd(left, right) }
-                        else { builder.ins().iadd(left, right) }
+                        if is_float {
+                            builder.ins().fadd(left, right)
+                        } else {
+                            builder.ins().iadd(left, right)
+                        }
                     }
                     BinaryOperator::Subtract => {
-                        if is_float { builder.ins().fsub(left, right) }
-                        else { builder.ins().isub(left, right) }
+                        if is_float {
+                            builder.ins().fsub(left, right)
+                        } else {
+                            builder.ins().isub(left, right)
+                        }
                     }
                     BinaryOperator::Multiply => {
-                        if is_float { builder.ins().fmul(left, right) }
-                        else { builder.ins().imul(left, right) }
+                        if is_float {
+                            builder.ins().fmul(left, right)
+                        } else {
+                            builder.ins().imul(left, right)
+                        }
                     }
                     BinaryOperator::Divide => {
-                        if is_float { builder.ins().fdiv(left, right) }
-                        else { builder.ins().sdiv(left, right) }
+                        if is_float {
+                            builder.ins().fdiv(left, right)
+                        } else {
+                            builder.ins().sdiv(left, right)
+                        }
                     }
                     // Cranelift has no fmod instruction. Never silently compile `%`
                     // as subtraction: reject float modulo until it has a runtime lowering.
                     BinaryOperator::Modulo => {
                         if is_float {
-                            return Err("float modulo is not implemented by the AOT backend".to_string());
+                            return Err(
+                                "float modulo is not implemented by the AOT backend".to_string()
+                            );
                         }
                         builder.ins().srem(left, right)
                     }
                     BinaryOperator::Eq => {
-                        if is_float { builder.ins().fcmp(FloatCC::Equal, left, right) }
-                        else { builder.ins().icmp(IntCC::Equal, left, right) }
+                        if is_float {
+                            builder.ins().fcmp(FloatCC::Equal, left, right)
+                        } else {
+                            builder.ins().icmp(IntCC::Equal, left, right)
+                        }
                     }
                     BinaryOperator::NotEq => {
-                        if is_float { builder.ins().fcmp(FloatCC::NotEqual, left, right) }
-                        else { builder.ins().icmp(IntCC::NotEqual, left, right) }
+                        if is_float {
+                            builder.ins().fcmp(FloatCC::NotEqual, left, right)
+                        } else {
+                            builder.ins().icmp(IntCC::NotEqual, left, right)
+                        }
                     }
                     BinaryOperator::Less => {
-                        if is_float { builder.ins().fcmp(FloatCC::LessThan, left, right) }
-                        else { builder.ins().icmp(IntCC::SignedLessThan, left, right) }
+                        if is_float {
+                            builder.ins().fcmp(FloatCC::LessThan, left, right)
+                        } else {
+                            builder.ins().icmp(IntCC::SignedLessThan, left, right)
+                        }
                     }
                     BinaryOperator::Greater => {
-                        if is_float { builder.ins().fcmp(FloatCC::GreaterThan, left, right) }
-                        else { builder.ins().icmp(IntCC::SignedGreaterThan, left, right) }
+                        if is_float {
+                            builder.ins().fcmp(FloatCC::GreaterThan, left, right)
+                        } else {
+                            builder.ins().icmp(IntCC::SignedGreaterThan, left, right)
+                        }
                     }
                     BinaryOperator::LessEq => {
-                        if is_float { builder.ins().fcmp(FloatCC::LessThanOrEqual, left, right) }
-                        else { builder.ins().icmp(IntCC::SignedLessThanOrEqual, left, right) }
+                        if is_float {
+                            builder.ins().fcmp(FloatCC::LessThanOrEqual, left, right)
+                        } else {
+                            builder
+                                .ins()
+                                .icmp(IntCC::SignedLessThanOrEqual, left, right)
+                        }
                     }
                     BinaryOperator::GreaterEq => {
-                        if is_float { builder.ins().fcmp(FloatCC::GreaterThanOrEqual, left, right) }
-                        else { builder.ins().icmp(IntCC::SignedGreaterThanOrEqual, left, right) }
+                        if is_float {
+                            builder.ins().fcmp(FloatCC::GreaterThanOrEqual, left, right)
+                        } else {
+                            builder
+                                .ins()
+                                .icmp(IntCC::SignedGreaterThanOrEqual, left, right)
+                        }
                     }
                 };
                 // Cranelift 0.113 represents integer/float comparisons as I8,
@@ -291,7 +354,10 @@ impl<'a, M: Module> FunctionLower<'a, M> {
             }
             Rvalue::CallDirect(mir_func_id, args) => {
                 let cl_id = *self.func_ids.get(mir_func_id).ok_or_else(|| {
-                    format!("Missing direct-call target for MIR function id {:?}", mir_func_id)
+                    format!(
+                        "Missing direct-call target for MIR function id {:?}",
+                        mir_func_id
+                    )
                 })?;
                 let func_ref = self.module.declare_func_in_func(cl_id, builder.func);
                 let arg_values: Vec<Value> = args
@@ -307,10 +373,12 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                 })
             }
             Rvalue::BuiltinCall(symbol, args) => {
-                let cl_id = *self
-                    .builtin_ids
-                    .get(symbol)
-                    .ok_or_else(|| format!("Builtin '{}' was not declared in the Cranelift module", symbol))?;
+                let cl_id = *self.builtin_ids.get(symbol).ok_or_else(|| {
+                    format!(
+                        "Builtin '{}' was not declared in the Cranelift module",
+                        symbol
+                    )
+                })?;
                 let func_ref = self.module.declare_func_in_func(cl_id, builder.func);
                 let arg_values: Vec<Value> = args
                     .iter()
@@ -330,13 +398,20 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                 let builtin_id = *self
                     .builtin_ids
                     .get("lpp_arc_alloc_with_destructor")
-                    .ok_or_else(|| "Builtin 'lpp_arc_alloc_with_destructor' was not declared".to_string())?;
+                    .ok_or_else(|| {
+                        "Builtin 'lpp_arc_alloc_with_destructor' was not declared".to_string()
+                    })?;
                 let func_ref = self.module.declare_func_in_func(builtin_id, builder.func);
                 let drop_id = *self.drop_ids.get(struct_id).ok_or_else(|| {
-                    format!("missing generated ARC destructor for struct {:?}", struct_id)
+                    format!(
+                        "missing generated ARC destructor for struct {:?}",
+                        struct_id
+                    )
                 })?;
                 let drop_ref = self.module.declare_func_in_func(drop_id, builder.func);
-                let drop_addr = builder.ins().func_addr(self.module.target_config().pointer_type(), drop_ref);
+                let drop_addr = builder
+                    .ins()
+                    .func_addr(self.module.target_config().pointer_type(), drop_ref);
                 let call = builder.ins().call(func_ref, &[size_val, drop_addr]);
                 let results = builder.inst_results(call);
                 results
@@ -350,7 +425,8 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                     TypeRef::Custom(_) => "lpp_list_new_arc",
                     _ => {
                         return Err(format!(
-                            "AOT supports List[Int] and List[Custom], got List[{:?}]", element_ty
+                            "AOT supports List[Int] and List[Custom], got List[{:?}]",
+                            element_ty
                         ));
                     }
                 };
@@ -373,7 +449,9 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                 let base_ty = &locals[base_id.0].ty;
                 if let TypeRef::Custom(struct_id) = base_ty {
                     let struct_def = &self.type_table.definitions[struct_id.0];
-                    if let Some(field_index) = struct_def.fields.iter().position(|(name, _)| name == field) {
+                    if let Some(field_index) =
+                        struct_def.fields.iter().position(|(name, _)| name == field)
+                    {
                         let (layout, _) = struct_layout(self.type_table, *struct_id);
                         let field_layout = layout[field_index];
                         Ok(builder.ins().load(
@@ -400,22 +478,28 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                 let builtin_id = *self
                     .builtin_ids
                     .get("lpp_arc_alloc_with_destructor")
-                    .ok_or_else(|| "Builtin 'lpp_arc_alloc_with_destructor' was not declared".to_string())?;
+                    .ok_or_else(|| {
+                        "Builtin 'lpp_arc_alloc_with_destructor' was not declared".to_string()
+                    })?;
                 let alloc_func_ref = self.module.declare_func_in_func(builtin_id, builder.func);
                 let destroy_id = *self
                     .builtin_ids
                     .get("lpp_closure_destroy")
                     .ok_or_else(|| "Builtin 'lpp_closure_destroy' was not declared".to_string())?;
                 let destroy_ref = self.module.declare_func_in_func(destroy_id, builder.func);
-                let destroy_addr = builder.ins().func_addr(
-                    self.module.target_config().pointer_type(),
-                    destroy_ref,
-                );
-                let call = builder.ins().call(alloc_func_ref, &[size_val, destroy_addr]);
+                let destroy_addr = builder
+                    .ins()
+                    .func_addr(self.module.target_config().pointer_type(), destroy_ref);
+                let call = builder
+                    .ins()
+                    .call(alloc_func_ref, &[size_val, destroy_addr]);
                 let closure_ptr = builder.inst_results(call)[0];
 
                 let cl_id = *self.func_ids.get(mir_func_id).ok_or_else(|| {
-                    format!("Missing direct-call target for MIR function id {:?}", mir_func_id)
+                    format!(
+                        "Missing direct-call target for MIR function id {:?}",
+                        mir_func_id
+                    )
                 })?;
                 let func_ref = self.module.declare_func_in_func(cl_id, builder.func);
                 let pointer_type = self.module.target_config().pointer_type();
@@ -470,12 +554,14 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                         Operand::Bool(_) => TypeRef::Bool,
                         Operand::String(_) => TypeRef::Str,
                     };
-                    sig.params.push(AbiParam::new(super::types::type_to_cl(&arg_ty)));
+                    sig.params
+                        .push(AbiParam::new(super::types::type_to_cl(&arg_ty)));
                 }
 
                 let ret_ty = dest_ty.cloned().unwrap_or(TypeRef::Void);
                 if ret_ty != TypeRef::Void {
-                    sig.returns.push(AbiParam::new(super::types::type_to_cl(&ret_ty)));
+                    sig.returns
+                        .push(AbiParam::new(super::types::type_to_cl(&ret_ty)));
                 }
 
                 let sig_ref = builder.import_signature(sig);
@@ -510,10 +596,9 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                     8,
                 );
 
-                let builtin_id = *self
-                    .builtin_ids
-                    .get("lpp_thread_spawn")
-                    .ok_or_else(|| "Builtin 'lpp_thread_spawn' was not declared in Cranelift module".to_string())?;
+                let builtin_id = *self.builtin_ids.get("lpp_thread_spawn").ok_or_else(|| {
+                    "Builtin 'lpp_thread_spawn' was not declared in Cranelift module".to_string()
+                })?;
 
                 let func_ref = self.module.declare_func_in_func(builtin_id, builder.func);
                 builder.ins().call(func_ref, &[func_ptr, env_ptr]);
@@ -521,11 +606,12 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                 Ok(builder.ins().iconst(pointer_type, 0))
             }
             Rvalue::AllocateStruct(_) => Err(
-                "raw struct allocation reached AOT; use AllocateArcStruct for owned objects".to_string(),
+                "raw struct allocation reached AOT; use AllocateArcStruct for owned objects"
+                    .to_string(),
             ),
-            Rvalue::AllocateArcStruct(_) => Err(
-                "AllocateArcStruct requires a resolved custom struct type".to_string(),
-            ),
+            Rvalue::AllocateArcStruct(_) => {
+                Err("AllocateArcStruct requires a resolved custom struct type".to_string())
+            }
             Rvalue::FieldAccess(_, _) => Ok(builder.ins().iconst(cl_types::I64, 0)),
         }
     }
@@ -558,9 +644,17 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                 let else_block = *cl_blocks
                     .get(else_block)
                     .ok_or_else(|| format!("Missing else-block mapping for {:?}", else_block))?;
-                builder.ins().brif(cond_bool, then_block, &[], else_block, &[]);
+                builder
+                    .ins()
+                    .brif(cond_bool, then_block, &[], else_block, &[]);
             }
-            Terminator::IfCmp { op, left, right, then_block, else_block } => {
+            Terminator::IfCmp {
+                op,
+                left,
+                right,
+                then_block,
+                else_block,
+            } => {
                 let left = self.operand_to_value(builder, left, local_vars)?;
                 let right = self.operand_to_value(builder, right, local_vars)?;
                 let cc = match op {
@@ -570,12 +664,22 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                     BinaryOperator::Greater => IntCC::SignedGreaterThan,
                     BinaryOperator::LessEq => IntCC::SignedLessThanOrEqual,
                     BinaryOperator::GreaterEq => IntCC::SignedGreaterThanOrEqual,
-                    _ => return Err("non-comparison operator reached fused branch lowering".to_string()),
+                    _ => {
+                        return Err(
+                            "non-comparison operator reached fused branch lowering".to_string()
+                        );
+                    }
                 };
                 let comparison = builder.ins().icmp(cc, left, right);
-                let then_block = *cl_blocks.get(then_block).ok_or_else(|| "missing fused then block".to_string())?;
-                let else_block = *cl_blocks.get(else_block).ok_or_else(|| "missing fused else block".to_string())?;
-                builder.ins().brif(comparison, then_block, &[], else_block, &[]);
+                let then_block = *cl_blocks
+                    .get(then_block)
+                    .ok_or_else(|| "missing fused then block".to_string())?;
+                let else_block = *cl_blocks
+                    .get(else_block)
+                    .ok_or_else(|| "missing fused else block".to_string())?;
+                builder
+                    .ins()
+                    .brif(comparison, then_block, &[], else_block, &[]);
             }
             Terminator::Return(Some(op)) | Terminator::ReturnOwned(op) => {
                 // ReturnOwned transfers an ARC reference in MIR; its machine ABI is
@@ -592,11 +696,13 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                     let zero = match return_type {
                         TypeRef::Float => builder.ins().f64const(0.0),
                         TypeRef::Bool => builder.ins().iconst(cl_types::I8, 0),
-                        TypeRef::Int | TypeRef::Str | TypeRef::Custom(_)
-                        | TypeRef::Generic(_, _) | TypeRef::Unresolved(_)
-                        | TypeRef::Function | TypeRef::Void => {
-                            builder.ins().iconst(cl_types::I64, 0)
-                        }
+                        TypeRef::Int
+                        | TypeRef::Str
+                        | TypeRef::Custom(_)
+                        | TypeRef::Generic(_, _)
+                        | TypeRef::Unresolved(_)
+                        | TypeRef::Function
+                        | TypeRef::Void => builder.ins().iconst(cl_types::I64, 0),
                     };
                     builder.ins().return_(&[zero]);
                 }

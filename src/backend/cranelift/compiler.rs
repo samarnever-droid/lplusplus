@@ -1,27 +1,25 @@
-use cranelift_codegen::settings::{self, Configurable};
-use cranelift_codegen::ir::{AbiParam, InstBuilder, MemFlags};
+use super::lower::FunctionLower;
+use super::types::{struct_layout, type_to_cl};
+use crate::mir::ir::*;
+use crate::typecheck::{StructTypeId, TypeRef, TypeTable};
 use cranelift_codegen::ir::types as cl_types;
+use cranelift_codegen::ir::{AbiParam, InstBuilder, MemFlags};
+use cranelift_codegen::settings::{self, Configurable};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_module::{Linkage, Module};
 use cranelift_object::{ObjectBuilder, ObjectModule};
-use target_lexicon::Triple;
-use crate::mir::ir::*;
-use crate::typecheck::{StructTypeId, TypeRef, TypeTable};
-use super::lower::FunctionLower;
-use super::types::{struct_layout, type_to_cl};
 use std::collections::{HashMap, HashSet};
-
+use target_lexicon::Triple;
 
 fn decode_ty(tag: u8) -> cranelift_codegen::ir::Type {
-    match tag { 
-        0 => cl_types::I64, 
-        1 => cl_types::I8, 
-        2 => cl_types::I32, 
+    match tag {
+        0 => cl_types::I64,
+        1 => cl_types::I8,
+        2 => cl_types::I32,
         3 => cl_types::F64,
-        _ => cl_types::I64 
+        _ => cl_types::I64,
     }
 }
-
 
 /// Find structs whose owned custom fields form a cycle. ARC cannot reclaim a
 /// strongly connected ownership graph, so the AOT backend refuses to allocate
@@ -36,9 +34,7 @@ fn arc_cycle_structs(type_table: &TypeTable) -> HashSet<StructTypeId> {
         for (_, field_ty) in &type_table.definitions[current.0].fields {
             let next = match field_ty {
                 TypeRef::Custom(next) => Some(*next),
-                TypeRef::Generic(name, args)
-                    if name == "List" && args.len() == 1 =>
-                {
+                TypeRef::Generic(name, args) if name == "List" && args.len() == 1 => {
                     match args[0] {
                         TypeRef::Custom(next) => Some(next),
                         _ => None,
@@ -82,14 +78,19 @@ fn validate_aot_program(program: &MirProgram, type_table: &TypeTable) -> Result<
                     && matches!(args[0], TypeRef::Int | TypeRef::Custom(_)) =>
             {
                 Ok(())
-            },
+            }
             TypeRef::Generic(name, args) => Err(format!(
-                "AOT does not yet support {}[{}] in {}", name,
-                args.iter().map(|arg| format!("{:?}", arg)).collect::<Vec<_>>().join(", "),
+                "AOT does not yet support {}[{}] in {}",
+                name,
+                args.iter()
+                    .map(|arg| format!("{:?}", arg))
+                    .collect::<Vec<_>>()
+                    .join(", "),
                 where_
             )),
             TypeRef::Unresolved(name) => Err(format!(
-                "unresolved type '{}' reached the AOT backend in {}", name, where_
+                "unresolved type '{}' reached the AOT backend in {}",
+                name, where_
             )),
             _ => Ok(()),
         }
@@ -104,15 +105,22 @@ fn validate_aot_program(program: &MirProgram, type_table: &TypeTable) -> Result<
     let cyclic_structs = arc_cycle_structs(type_table);
 
     for function in program.functions.values() {
-        validate_type(&function.return_type, &format!("return type of '{}'", function.name))?;
+        validate_type(
+            &function.return_type,
+            &format!("return type of '{}'", function.name),
+        )?;
         for local in &function.locals {
-            validate_type(&local.ty, &format!("local {:?} in '{}'", local.debug_name, function.name))?;
+            validate_type(
+                &local.ty,
+                &format!("local {:?} in '{}'", local.debug_name, function.name),
+            )?;
         }
         for block in &function.blocks {
             for instruction in &block.instrs {
                 match instruction {
                     MirInstr::Assign(_, Rvalue::AllocateArcStruct(TypeRef::Custom(struct_id)))
-                        if cyclic_structs.contains(struct_id) => {
+                        if cyclic_structs.contains(struct_id) =>
+                    {
                         let name = &type_table.definitions[struct_id.0].name;
                         return Err(format!(
                             "AOT rejects cyclic owned struct '{}': ARC cannot reclaim ownership cycles. Use a future Weak/arena annotation or remove the cycle.",
@@ -126,22 +134,28 @@ fn validate_aot_program(program: &MirProgram, type_table: &TypeTable) -> Result<
                         ));
                     }
                     MirInstr::Assign(_, Rvalue::AllocateList(element_ty))
-                        if !matches!(element_ty, TypeRef::Int | TypeRef::Custom(_)) => {
+                        if !matches!(element_ty, TypeRef::Int | TypeRef::Custom(_)) =>
+                    {
                         return Err(format!(
                             "AOT supports List[Int] and List[Custom], but '{}' allocates List[{:?}]",
                             function.name, element_ty
                         ));
                     }
-                    MirInstr::Assign(_, Rvalue::BuiltinCall(symbol, _)) if symbol == "lpp_list_free" => {
+                    MirInstr::Assign(_, Rvalue::BuiltinCall(symbol, _))
+                        if symbol == "lpp_list_free" =>
+                    {
                         return Err(format!(
                             "AOT List[Int] uses automatic ARC cleanup; remove manual list_free in '{}'",
                             function.name
                         ));
                     }
-                    MirInstr::Assign(_, Rvalue::MakeClosure(_, captures)) if captures.len() != 1 => {
+                    MirInstr::Assign(_, Rvalue::MakeClosure(_, captures))
+                        if captures.len() != 1 =>
+                    {
                         return Err(format!(
                             "invalid closure environment in '{}': expected exactly one environment pointer, got {}",
-                            function.name, captures.len()
+                            function.name,
+                            captures.len()
                         ));
                     }
                     _ => {}
@@ -156,9 +170,9 @@ fn validate_aot_program(program: &MirProgram, type_table: &TypeTable) -> Result<
 
 pub struct AotCompiler {
     pub module: ObjectModule,
-    pub func_ids:    HashMap<FuncId, cranelift_module::FuncId>,
+    pub func_ids: HashMap<FuncId, cranelift_module::FuncId>,
     pub builtin_ids: HashMap<String, cranelift_module::FuncId>,
-    pub drop_ids:    HashMap<StructTypeId, cranelift_module::FuncId>,
+    pub drop_ids: HashMap<StructTypeId, cranelift_module::FuncId>,
     /// C ABI `main` wrapper around the L++ user-level `main` function.
     pub entrypoint_id: Option<cranelift_module::FuncId>,
 }
@@ -181,9 +195,12 @@ impl AotCompiler {
         // Valid values are Cranelift's stable levels: none, speed, speed_and_size.
         let opt_level = match std::env::var("LPP_AOT_OPT") {
             Ok(value) if matches!(value.as_str(), "none" | "speed" | "speed_and_size") => value,
-            Ok(value) => return Err(format!(
-                "invalid LPP_AOT_OPT='{}'; expected none, speed, or speed_and_size", value
-            )),
+            Ok(value) => {
+                return Err(format!(
+                    "invalid LPP_AOT_OPT='{}'; expected none, speed, or speed_and_size",
+                    value
+                ));
+            }
             Err(_) if std::env::var("LPP_RELEASE").is_ok() => "speed".to_string(),
             Err(_) => "none".to_string(),
         };
@@ -226,7 +243,8 @@ impl AotCompiler {
             if let Some(r) = builtin.cl_return {
                 sig.returns.push(AbiParam::new(decode_ty(r)));
             }
-            let id = self.module
+            let id = self
+                .module
                 .declare_function(builtin.symbol, Linkage::Import, &sig)
                 .map_err(|e| format!("declare builtin '{}': {:?}", builtin.symbol, e))?;
             self.builtin_ids.insert(builtin.symbol.to_string(), id);
@@ -308,15 +326,22 @@ impl AotCompiler {
         for (mir_id, mir_fn) in &program.functions {
             let mut sig = self.module.make_signature();
             for param_id in &mir_fn.params {
-                sig.params.push(AbiParam::new(type_to_cl(&mir_fn.locals[param_id.0].ty)));
+                sig.params
+                    .push(AbiParam::new(type_to_cl(&mir_fn.locals[param_id.0].ty)));
             }
             if mir_fn.return_type != TypeRef::Void {
-                sig.returns.push(AbiParam::new(type_to_cl(&mir_fn.return_type)));
+                sig.returns
+                    .push(AbiParam::new(type_to_cl(&mir_fn.return_type)));
             }
             // Keep the user function internal as `lpp_main`; a generated C ABI
             // `main` wrapper returns a defined process status of zero.
-            let symbol_name = if mir_fn.name == "main" { "lpp_main" } else { &mir_fn.name };
-            let id = self.module
+            let symbol_name = if mir_fn.name == "main" {
+                "lpp_main"
+            } else {
+                &mir_fn.name
+            };
+            let id = self
+                .module
                 .declare_function(symbol_name, Linkage::Local, &sig)
                 .map_err(|e| format!("declare '{}': {:?}", mir_fn.name, e))?;
             self.func_ids.insert(*mir_id, id);
@@ -328,7 +353,11 @@ impl AotCompiler {
     /// linker. The L++ source-level `main` may be `Void`, which is not itself a
     /// valid C process-entry ABI.
     pub fn declare_entrypoint_wrapper(&mut self, program: &MirProgram) -> Result<(), String> {
-        if !program.functions.values().any(|function| function.name == "main") {
+        if !program
+            .functions
+            .values()
+            .any(|function| function.name == "main")
+        {
             return Ok(());
         }
         let mut signature = self.module.make_signature();
@@ -357,7 +386,10 @@ impl AotCompiler {
             .ok_or_else(|| "missing declared L++ main function".to_string())?;
 
         let mut ctx = self.module.make_context();
-        ctx.func.signature.returns.push(AbiParam::new(cl_types::I32));
+        ctx.func
+            .signature
+            .returns
+            .push(AbiParam::new(cl_types::I32));
         let mut fn_ctx = FunctionBuilderContext::new();
         {
             let mut builder = FunctionBuilder::new(&mut ctx.func, &mut fn_ctx);
@@ -377,17 +409,23 @@ impl AotCompiler {
     }
 
     /// Lower all function bodies.
-    pub fn lower_functions(&mut self, program: &MirProgram, type_table: &TypeTable) -> Result<(), String> {
+    pub fn lower_functions(
+        &mut self,
+        program: &MirProgram,
+        type_table: &TypeTable,
+    ) -> Result<(), String> {
         let mir_fns: Vec<MirFunction> = program.functions.values().cloned().collect();
         for mir_fn in &mir_fns {
-            if mir_fn.blocks.is_empty() { continue; }
+            if mir_fn.blocks.is_empty() {
+                continue;
+            }
             let mut lower = FunctionLower {
-                module:      &mut self.module,
-                func_ids:    &self.func_ids,
+                module: &mut self.module,
+                func_ids: &self.func_ids,
                 builtin_ids: &self.builtin_ids,
-                drop_ids:     &self.drop_ids,
+                drop_ids: &self.drop_ids,
                 type_table,
-                fn_name:     mir_fn.name.clone(),
+                fn_name: mir_fn.name.clone(),
                 next_str_idx: 0,
             };
             lower.lower_function(mir_fn)?;
@@ -396,7 +434,10 @@ impl AotCompiler {
     }
 
     pub fn finish(self) -> Result<Vec<u8>, String> {
-        self.module.finish().emit().map_err(|e| format!("emit: {:?}", e))
+        self.module
+            .finish()
+            .emit()
+            .map_err(|e| format!("emit: {:?}", e))
     }
 
     /// Full pipeline: builtins → declare → lower → emit.

@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use crate::ast::*;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ScopeId(pub usize);
@@ -102,7 +102,9 @@ impl SymbolTable {
                 let binding = &self.bindings[binding_id.0];
                 if binding.kind == BindingKind::Local || binding.kind == BindingKind::Param {
                     for closure_scope_id in capture_chain {
-                        if let ScopeKind::Closure { ref mut captures } = self.scopes[closure_scope_id.0].kind {
+                        if let ScopeKind::Closure { ref mut captures } =
+                            self.scopes[closure_scope_id.0].kind
+                        {
                             if !captures.contains(&binding_id) {
                                 captures.push(binding_id);
                             }
@@ -177,11 +179,41 @@ impl Resolver {
                 TopLevel::Import(module) => {
                     if module == "json" {
                         self.imports.push(module.clone());
-                        self.table.add_binding(self.current_scope, "json_parse".to_string(), false, Some(Type::Custom("Function".into())), BindingKind::FunctionName);
-                        self.table.add_binding(self.current_scope, "json_get_int".to_string(), false, Some(Type::Custom("Function".into())), BindingKind::FunctionName);
-                        self.table.add_binding(self.current_scope, "json_get_str".to_string(), false, Some(Type::Custom("Function".into())), BindingKind::FunctionName);
-                        self.table.add_binding(self.current_scope, "json_get_obj".to_string(), false, Some(Type::Custom("Function".into())), BindingKind::FunctionName);
-                        self.table.add_binding(self.current_scope, "json_free".to_string(), false, Some(Type::Custom("Function".into())), BindingKind::FunctionName);
+                        self.table.add_binding(
+                            self.current_scope,
+                            "json_parse".to_string(),
+                            false,
+                            Some(Type::Custom("Function".into())),
+                            BindingKind::FunctionName,
+                        );
+                        self.table.add_binding(
+                            self.current_scope,
+                            "json_get_int".to_string(),
+                            false,
+                            Some(Type::Custom("Function".into())),
+                            BindingKind::FunctionName,
+                        );
+                        self.table.add_binding(
+                            self.current_scope,
+                            "json_get_str".to_string(),
+                            false,
+                            Some(Type::Custom("Function".into())),
+                            BindingKind::FunctionName,
+                        );
+                        self.table.add_binding(
+                            self.current_scope,
+                            "json_get_obj".to_string(),
+                            false,
+                            Some(Type::Custom("Function".into())),
+                            BindingKind::FunctionName,
+                        );
+                        self.table.add_binding(
+                            self.current_scope,
+                            "json_free".to_string(),
+                            false,
+                            Some(Type::Custom("Function".into())),
+                            BindingKind::FunctionName,
+                        );
                     } else {
                         // Custom local library module - parsed and merged at driver level
                     }
@@ -200,7 +232,12 @@ impl Resolver {
 
     fn resolve_function(&mut self, func: &mut Function) -> Result<(), String> {
         let parent = self.current_scope;
-        let func_scope = self.table.new_scope(Some(parent), ScopeKind::Function { name: func.name.clone() });
+        let func_scope = self.table.new_scope(
+            Some(parent),
+            ScopeKind::Function {
+                name: func.name.clone(),
+            },
+        );
         self.current_scope = func_scope;
 
         for param in &func.params {
@@ -223,7 +260,12 @@ impl Resolver {
 
     fn resolve_stmt(&mut self, stmt: &mut Stmt) -> Result<(), String> {
         match stmt {
-            Stmt::LetInferred { name, is_mut, value, binding_id } => {
+            Stmt::LetInferred {
+                name,
+                is_mut,
+                value,
+                binding_id,
+            } => {
                 self.resolve_expr(value)?; // Resolve value before shadowing occurs!
                 let id = self.table.add_binding(
                     self.current_scope,
@@ -234,7 +276,11 @@ impl Resolver {
                 );
                 binding_id.set(Some(id.0));
             }
-            Stmt::Assign { name, value, binding_id } => {
+            Stmt::Assign {
+                name,
+                value,
+                binding_id,
+            } => {
                 self.resolve_expr(value)?;
                 if let Some(id) = self.table.resolve_name(self.current_scope, name) {
                     binding_id.set(Some(id.0));
@@ -249,7 +295,11 @@ impl Resolver {
                     return Err(format!("Assignment to undeclared variable '{}'", name));
                 }
             }
-            Stmt::AssignField { base, field: _, value } => {
+            Stmt::AssignField {
+                base,
+                field: _,
+                value,
+            } => {
                 self.resolve_expr(base)?;
                 self.resolve_expr(value)?;
                 if let Expr::Identifier(name, ..) = base {
@@ -264,19 +314,27 @@ impl Resolver {
                     }
                 }
             }
-            Stmt::If { condition, then_block, else_block } => {
+            Stmt::If {
+                condition,
+                then_block,
+                else_block,
+            } => {
                 self.resolve_expr(condition)?;
-                
-                let then_scope = self.table.new_scope(Some(self.current_scope), ScopeKind::Block);
+
+                let then_scope = self
+                    .table
+                    .new_scope(Some(self.current_scope), ScopeKind::Block);
                 let old_scope = self.current_scope;
                 self.current_scope = then_scope;
                 for s in then_block {
                     self.resolve_stmt(s)?;
                 }
                 self.current_scope = old_scope;
-                
+
                 if let Some(else_b) = else_block {
-                    let else_scope = self.table.new_scope(Some(self.current_scope), ScopeKind::Block);
+                    let else_scope = self
+                        .table
+                        .new_scope(Some(self.current_scope), ScopeKind::Block);
                     self.current_scope = else_scope;
                     for s in else_b {
                         self.resolve_stmt(s)?;
@@ -286,7 +344,9 @@ impl Resolver {
             }
             Stmt::While { condition, body } => {
                 self.resolve_expr(condition)?;
-                let body_scope = self.table.new_scope(Some(self.current_scope), ScopeKind::Block);
+                let body_scope = self
+                    .table
+                    .new_scope(Some(self.current_scope), ScopeKind::Block);
                 let old_scope = self.current_scope;
                 self.current_scope = body_scope;
                 for s in body {
@@ -311,7 +371,10 @@ impl Resolver {
     }
 
     fn is_builtin_resolved(&self, name: &str) -> bool {
-        if let Some(builtin) = crate::builtins::get_builtins().iter().find(|b| b.name == name) {
+        if let Some(builtin) = crate::builtins::get_builtins()
+            .iter()
+            .find(|b| b.name == name)
+        {
             if builtin.name.starts_with("json_") {
                 return self.imports.iter().any(|imp| imp == "json");
             }
@@ -322,7 +385,10 @@ impl Resolver {
 
     fn resolve_expr(&mut self, expr: &mut Expr) -> Result<(), String> {
         match expr {
-            Expr::IntLiteral(_) | Expr::FloatLiteral(_) | Expr::StringLiteral(_) | Expr::BoolLiteral(_) => {}
+            Expr::IntLiteral(_)
+            | Expr::FloatLiteral(_)
+            | Expr::StringLiteral(_)
+            | Expr::BoolLiteral(_) => {}
             Expr::Identifier(name, binding_id_cell) => {
                 // Ignore builtins for now
                 if !self.is_builtin_resolved(name) {
@@ -343,7 +409,10 @@ impl Resolver {
                 if let Expr::FieldAccess { base, field } = &**callee {
                     if let Expr::Identifier(module_name, _) = &**base {
                         if self.imports.contains(module_name) {
-                            rewritten = Some(Expr::Identifier(format!("{}_{}", module_name, field), std::cell::Cell::new(None)));
+                            rewritten = Some(Expr::Identifier(
+                                format!("{}_{}", module_name, field),
+                                std::cell::Cell::new(None),
+                            ));
                         }
                     }
                 }
@@ -358,7 +427,12 @@ impl Resolver {
             }
             Expr::Closure { params, body, .. } => {
                 let parent = self.current_scope;
-                let closure_scope = self.table.new_scope(Some(parent), ScopeKind::Closure { captures: Vec::new() });
+                let closure_scope = self.table.new_scope(
+                    Some(parent),
+                    ScopeKind::Closure {
+                        captures: Vec::new(),
+                    },
+                );
                 self.current_scope = closure_scope;
 
                 for param in params {
@@ -423,7 +497,9 @@ mod tests {
         };
 
         let mut resolver = Resolver::new();
-        resolver.resolve_program(&mut program).expect("program should resolve");
+        resolver
+            .resolve_program(&mut program)
+            .expect("program should resolve");
 
         let TopLevel::Function(func) = &program.declarations[0] else {
             panic!("expected function");
@@ -465,7 +541,9 @@ mod tests {
         };
 
         let mut resolver = Resolver::new();
-        let err = resolver.resolve_program(&mut program).expect_err("should reject immutable assignment");
+        let err = resolver
+            .resolve_program(&mut program)
+            .expect_err("should reject immutable assignment");
         assert!(err.contains("Cannot reassign immutable variable 'x'"));
     }
 
@@ -493,7 +571,9 @@ mod tests {
         };
 
         let mut resolver = Resolver::new();
-        let err = resolver.resolve_program(&mut program).expect_err("should reject immutable field mutation");
+        let err = resolver
+            .resolve_program(&mut program)
+            .expect_err("should reject immutable field mutation");
         assert!(err.contains("Cannot mutate field of immutable variable 'box'"));
     }
 }

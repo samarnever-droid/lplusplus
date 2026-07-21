@@ -9,8 +9,8 @@
 //! workload set — nothing more, nothing less.
 
 use object::{
-    Architecture, BinaryFormat, Object, ObjectSection, ObjectSymbol,
-    RelocationKind, RelocationTarget, SymbolSection,
+    Architecture, BinaryFormat, Object, ObjectSection, ObjectSymbol, RelocationKind,
+    RelocationTarget, SymbolSection,
 };
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::env;
@@ -101,10 +101,9 @@ const PT_LOAD: u32 = 1;
 const PF_R_X: u32 = 5;
 
 fn read_elf_input(path: &Path) -> Result<ElfInput, String> {
-    let bytes = fs::read(path)
-        .map_err(|e| format!("read '{}': {e}", path.display()))?;
-    let file = object::File::parse(&*bytes)
-        .map_err(|e| format!("parse '{}': {e}", path.display()))?;
+    let bytes = fs::read(path).map_err(|e| format!("read '{}': {e}", path.display()))?;
+    let file =
+        object::File::parse(&*bytes).map_err(|e| format!("parse '{}': {e}", path.display()))?;
     if file.format() != BinaryFormat::Elf || file.architecture() != Architecture::X86_64 {
         return Err(format!(
             "'{}' is not an x86-64 ELF relocatable object",
@@ -234,7 +233,8 @@ fn write_elf(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
     } else {
         None
     };
-    let entry = entry.ok_or_else(|| "required symbol 'main' (or 'lpp_main') not found".to_string())?;
+    let entry =
+        entry.ok_or_else(|| "required symbol 'main' (or 'lpp_main') not found".to_string())?;
     let entry = *entry; // deref: &u64 → u64
 
     let start_off = text.len();
@@ -281,7 +281,9 @@ fn write_elf(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
         text.resize(rodata_off, 0);
     }
     for (name, slot) in &got {
-        let tgt = *syms.get(name).ok_or_else(|| format!("unresolved GOT symbol '{name}'"))?;
+        let tgt = *syms
+            .get(name)
+            .ok_or_else(|| format!("unresolved GOT symbol '{name}'"))?;
         let loc = got_off + slot * 8;
         let addr = ELF_BASE + CODE_OFFSET as u64 + tgt;
         text[loc..loc + 8].copy_from_slice(&addr.to_le_bytes());
@@ -341,7 +343,11 @@ fn write_elf(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
     put_u16(&mut elf, 16, 2);
     put_u16(&mut elf, 18, EM_X86_64);
     put_u32(&mut elf, 20, 1);
-    put_u64(&mut elf, 24, ELF_BASE + CODE_OFFSET as u64 + start_off as u64);
+    put_u64(
+        &mut elf,
+        24,
+        ELF_BASE + CODE_OFFSET as u64 + start_off as u64,
+    );
     put_u64(&mut elf, 32, 64);
     put_u16(&mut elf, 52, 64);
     put_u16(&mut elf, 54, 56);
@@ -356,8 +362,7 @@ fn write_elf(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
     put_u64(&mut elf, ph + 40, fsize as u64);
     put_u64(&mut elf, ph + 48, 0x1000);
     elf[CODE_OFFSET..CODE_OFFSET + text.len()].copy_from_slice(&text);
-    fs::write(output, elf)
-        .map_err(|e| format!("write '{}': {e}", output.display()))?;
+    fs::write(output, elf).map_err(|e| format!("write '{}': {e}", output.display()))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -420,15 +425,11 @@ fn coff_reloc_number(rel: &Relocation) -> u8 {
 /// Read one COFF object, splitting its sections into text / rdata / data
 /// classes so the linker can lay them out independently.
 fn read_coff_full(path: &Path) -> Result<CoffSections, String> {
-    let bytes =
-        fs::read(path).map_err(|e| format!("read '{}': {e}", path.display()))?;
-    let file = object::File::parse(&*bytes)
-        .map_err(|e| format!("parse '{}': {e}", path.display()))?;
+    let bytes = fs::read(path).map_err(|e| format!("read '{}': {e}", path.display()))?;
+    let file =
+        object::File::parse(&*bytes).map_err(|e| format!("parse '{}': {e}", path.display()))?;
     if file.format() != BinaryFormat::Coff || file.architecture() != Architecture::X86_64 {
-        return Err(format!(
-            "'{}' is not an x86-64 COFF object",
-            path.display()
-        ));
+        return Err(format!("'{}' is not an x86-64 COFF object", path.display()));
     }
 
     let mut text_buf = Vec::new();
@@ -453,8 +454,9 @@ fn read_coff_full(path: &Path) -> Result<CoffSections, String> {
 
         let class = match kind {
             object::SectionKind::Text => SectionClass::Text,
-            object::SectionKind::ReadOnlyData
-            | object::SectionKind::ReadOnlyString => SectionClass::Rodata,
+            object::SectionKind::ReadOnlyData | object::SectionKind::ReadOnlyString => {
+                SectionClass::Rodata
+            }
             object::SectionKind::UninitializedData
             | object::SectionKind::UninitializedTls
             | object::SectionKind::Data => SectionClass::Data,
@@ -472,8 +474,7 @@ fn read_coff_full(path: &Path) -> Result<CoffSections, String> {
         // virtual space.  `uncompressed_data()` panics for these in the object crate.
         let is_zero_fill = matches!(
             kind,
-            object::SectionKind::UninitializedData
-                | object::SectionKind::UninitializedTls
+            object::SectionKind::UninitializedData | object::SectionKind::UninitializedTls
         );
         if is_zero_fill {
             let sz = sec.size() as usize;
@@ -574,17 +575,11 @@ fn resolve_coff_target(
 
     if is_anonymous {
         if let SymbolSection::Section(idx) = sym.section() {
-            if let Some((_, sclass, base)) =
-                map.iter().find(|(i, _, _)| *i == idx)
-            {
+            if let Some((_, sclass, base)) = map.iter().find(|(i, _, _)| *i == idx) {
                 if *sclass == self_class {
                     return format!("__self_{}__", section_class_tag(self_class));
                 }
-                return format!(
-                    "__ext_{}__{}",
-                    section_class_tag(*sclass),
-                    base
-                );
+                return format!("__ext_{}__{}", section_class_tag(*sclass), base);
             }
         }
         // Section symbol pointing to an undefined external
@@ -696,10 +691,7 @@ fn build_imports(
 }
 
 /// Generate base relocations (`.reloc` section) for a writable block.
-fn generate_base_relocs(
-    data: &[u8],
-    section_rva: u32,
-) -> Vec<u8> {
+fn generate_base_relocs(data: &[u8], section_rva: u32) -> Vec<u8> {
     let page_size = 0x1000usize;
     let mut reloc = Vec::new();
 
@@ -935,8 +927,8 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
                     let abs32 = (PE_IMAGE_BASE + target) as u32;
                     patch_buf[patch..patch + 4].copy_from_slice(&abs32.to_le_bytes());
                 }
-                AMD64_REL32 | AMD64_REL32_1 | AMD64_REL32_2
-                | AMD64_REL32_3 | AMD64_REL32_4 | AMD64_REL32_5 => {
+                AMD64_REL32 | AMD64_REL32_1 | AMD64_REL32_2 | AMD64_REL32_3 | AMD64_REL32_4
+                | AMD64_REL32_5 => {
                     if patch + 4 > patch_buf.len() {
                         return Err(format!("'{}': REL32 patch OOB", obj.path.display()));
                     }
@@ -956,8 +948,7 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
                             obj.path.display()
                         ));
                     }
-                    patch_buf[patch..patch + 4]
-                        .copy_from_slice(&(disp as i32).to_le_bytes());
+                    patch_buf[patch..patch + 4].copy_from_slice(&(disp as i32).to_le_bytes());
                 }
                 AMD64_SECTION => {
                     // Section index reloc — not needed in executable, skip
@@ -986,9 +977,7 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
         if pos + 8 > merged_data.len() {
             continue;
         }
-        let val = u64::from_le_bytes(
-            merged_data[pos..pos + 8].try_into().unwrap(),
-        );
+        let val = u64::from_le_bytes(merged_data[pos..pos + 8].try_into().unwrap());
         if val != 0 {
             continue; // Already resolved
         }
@@ -1026,10 +1015,13 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
         section_count += 1;
     }
 
-    let image_end = reloc_rva as usize
-        + if has_reloc { reloc_data.len() } else { 0 };
+    let image_end = reloc_rva as usize + if has_reloc { reloc_data.len() } else { 0 };
     let image_size = pe_align(
-        if image_end > 0 { image_end } else { data_rva as usize + merged_data.len() },
+        if image_end > 0 {
+            image_end
+        } else {
+            data_rva as usize + merged_data.len()
+        },
         PE_SECT_ALIGN,
     );
     let file_size = reloc_raw_off + reloc_raw_size;
@@ -1122,23 +1114,22 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
     let mut sec = opt + opt_size as usize;
 
     // Helper to emit a section header.
-    let emit_section =
-        |pe: &mut [u8],
-         sec: &mut usize,
-         name: &[u8; 8],
-         rva: u32,
-         raw_size: usize,
-         raw_off: usize,
-         virt_size: usize,
-         characteristics: u32| {
-            pe[*sec..*sec + 8].copy_from_slice(name);
-            put_u32(pe, *sec + 8, virt_size as u32);
-            put_u32(pe, *sec + 12, rva);
-            put_u32(pe, *sec + 16, raw_size as u32);
-            put_u32(pe, *sec + 20, raw_off as u32);
-            put_u32(pe, *sec + 36, characteristics);
-            *sec += 40;
-        };
+    let emit_section = |pe: &mut [u8],
+                        sec: &mut usize,
+                        name: &[u8; 8],
+                        rva: u32,
+                        raw_size: usize,
+                        raw_off: usize,
+                        virt_size: usize,
+                        characteristics: u32| {
+        pe[*sec..*sec + 8].copy_from_slice(name);
+        put_u32(pe, *sec + 8, virt_size as u32);
+        put_u32(pe, *sec + 12, rva);
+        put_u32(pe, *sec + 16, raw_size as u32);
+        put_u32(pe, *sec + 20, raw_off as u32);
+        put_u32(pe, *sec + 36, characteristics);
+        *sec += 40;
+    };
 
     // .text
     let mut tname = [0u8; 8];
@@ -1219,27 +1210,21 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
     }
 
     // ── 10. Write section data ──────────────────────────────────────────
-    pe[text_raw_off..text_raw_off + merged_text.len()]
-        .copy_from_slice(&merged_text);
+    pe[text_raw_off..text_raw_off + merged_text.len()].copy_from_slice(&merged_text);
     if !merged_rdata.is_empty() {
-        pe[rdata_raw_off..rdata_raw_off + merged_rdata.len()]
-            .copy_from_slice(&merged_rdata);
+        pe[rdata_raw_off..rdata_raw_off + merged_rdata.len()].copy_from_slice(&merged_rdata);
     }
     if !merged_data.is_empty() || !refptr_names.is_empty() {
-        pe[data_raw_off..data_raw_off + merged_data.len()]
-            .copy_from_slice(&merged_data);
+        pe[data_raw_off..data_raw_off + merged_data.len()].copy_from_slice(&merged_data);
     }
     if has_idata {
-        pe[idata_raw_off..idata_raw_off + import.data.len()]
-            .copy_from_slice(&import.data);
+        pe[idata_raw_off..idata_raw_off + import.data.len()].copy_from_slice(&import.data);
     }
     if has_reloc {
-        pe[reloc_raw_off..reloc_raw_off + reloc_data.len()]
-            .copy_from_slice(&reloc_data);
+        pe[reloc_raw_off..reloc_raw_off + reloc_data.len()].copy_from_slice(&reloc_data);
     }
 
-    fs::write(output, pe)
-        .map_err(|e| format!("write '{}': {e}", output.display()))?;
+    fs::write(output, pe).map_err(|e| format!("write '{}': {e}", output.display()))?;
     Ok(())
 }
 
@@ -1345,10 +1330,7 @@ fn resolve_pe_target(
         return Ok(text_rva as u64 + off as u64);
     }
 
-    Err(format!(
-        "unresolved external COFF symbol '{}'",
-        rel.target
-    ))
+    Err(format!("unresolved external COFF symbol '{}'", rel.target))
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1356,10 +1338,9 @@ fn resolve_pe_target(
 // ═══════════════════════════════════════════════════════════════════════════
 
 fn read_macho_input(path: &Path) -> Result<MachoInput, String> {
-    let bytes = fs::read(path)
-        .map_err(|e| format!("read '{}': {e}", path.display()))?;
-    let file = object::File::parse(&*bytes)
-        .map_err(|e| format!("parse '{}': {e}", path.display()))?;
+    let bytes = fs::read(path).map_err(|e| format!("read '{}': {e}", path.display()))?;
+    let file =
+        object::File::parse(&*bytes).map_err(|e| format!("parse '{}': {e}", path.display()))?;
     if file.format() != BinaryFormat::MachO {
         return Err(format!(
             "'{}' is not a Mach-O relocatable object",
@@ -1393,13 +1374,9 @@ fn read_macho_input(path: &Path) -> Result<MachoInput, String> {
             path.display()
         ));
     }
-    let find_base =
-        |idx: object::SectionIndex| -> Option<usize> {
-            sec_bases
-                .iter()
-                .find(|(i, _)| *i == idx)
-                .map(|(_, b)| *b)
-        };
+    let find_base = |idx: object::SectionIndex| -> Option<usize> {
+        sec_bases.iter().find(|(i, _)| *i == idx).map(|(_, b)| *b)
+    };
 
     let mut text_syms = Vec::new();
     for sym in file.symbols() {
@@ -1408,8 +1385,7 @@ fn read_macho_input(path: &Path) -> Result<MachoInput, String> {
                 if let Ok(name) = sym.name() {
                     let clean = name.strip_prefix('_').unwrap_or(name);
                     if !clean.is_empty() {
-                        text_syms
-                            .push((clean.to_string(), base as u64 + sym.address()));
+                        text_syms.push((clean.to_string(), base as u64 + sym.address()));
                     }
                 }
             }
@@ -1447,8 +1423,7 @@ fn read_macho_input(path: &Path) -> Result<MachoInput, String> {
             clean.to_string()
         };
         relocs.push(Relocation {
-            offset: base
-                + usize::try_from(off).map_err(|_| "relocation offset overflow")?,
+            offset: base + usize::try_from(off).map_err(|_| "relocation offset overflow")?,
             target,
             addend: rel.addend(),
             size: rel.size(),
@@ -1496,9 +1471,7 @@ fn write_macho(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
         for rel in &inp.relocations {
             let tgt_off = if rel.target == "__self_text__" {
                 base as u64
-            } else if let Some(off) =
-                rel.target.strip_prefix("__macho_text_section_")
-            {
+            } else if let Some(off) = rel.target.strip_prefix("__macho_text_section_") {
                 off.parse::<u64>()
                     .map_err(|_| "invalid Mach-O section relocation")?
             } else {
@@ -1598,10 +1571,9 @@ fn write_macho(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
 // ═══════════════════════════════════════════════════════════════════════════
 
 fn inspect_object(input: &Path) -> Result<(), String> {
-    let bytes = fs::read(input)
-        .map_err(|e| format!("read '{}': {e}", input.display()))?;
-    let file = object::File::parse(&*bytes)
-        .map_err(|e| format!("parse '{}': {e}", input.display()))?;
+    let bytes = fs::read(input).map_err(|e| format!("read '{}': {e}", input.display()))?;
+    let file =
+        object::File::parse(&*bytes).map_err(|e| format!("parse '{}': {e}", input.display()))?;
     let mut reloc_count = 0usize;
     let mut reloc_kinds: BTreeMap<String, usize> = BTreeMap::new();
     println!("format: {:?}", file.format());
@@ -1610,9 +1582,7 @@ fn inspect_object(input: &Path) -> Result<(), String> {
     for sec in file.sections() {
         for (_, rel) in sec.relocations() {
             reloc_count += 1;
-            *reloc_kinds
-                .entry(format!("{:?}", rel.kind()))
-                .or_default() += 1;
+            *reloc_kinds.entry(format!("{:?}", rel.kind())).or_default() += 1;
         }
         println!(
             "  {} size={} kind={:?}",
@@ -1671,8 +1641,7 @@ fn main() {
         usage();
         std::process::exit(2);
     }
-    let inputs: Vec<PathBuf> =
-        args[offset..out_idx].iter().map(PathBuf::from).collect();
+    let inputs: Vec<PathBuf> = args[offset..out_idx].iter().map(PathBuf::from).collect();
     let result = if pe_mode {
         write_pe(&inputs, Path::new(&args[out_idx + 1]))
     } else if macho_mode {

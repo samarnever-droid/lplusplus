@@ -58,9 +58,10 @@ impl<'a> MirLowerCtx<'a> {
                 .copied()
                 .map(TypeRef::Custom)
                 .unwrap_or_else(|| TypeRef::Unresolved(name.clone())),
-            Type::Generic(name, args) => {
-                TypeRef::Generic(name.clone(), args.iter().map(|arg| self.resolve_type(arg)).collect())
-            }
+            Type::Generic(name, args) => TypeRef::Generic(
+                name.clone(),
+                args.iter().map(|arg| self.resolve_type(arg)).collect(),
+            ),
         }
     }
 
@@ -89,10 +90,12 @@ impl<'a> MirLowerCtx<'a> {
             }
             Expr::ListLiteral(items) => TypeRef::Generic(
                 "List".to_string(),
-                vec![items
-                    .first()
-                    .map(|item| self.expr_type_hint(item, builder, binding_map))
-                    .unwrap_or(TypeRef::Int)],
+                vec![
+                    items
+                        .first()
+                        .map(|item| self.expr_type_hint(item, builder, binding_map))
+                        .unwrap_or(TypeRef::Int),
+                ],
             ),
             Expr::Call { callee, .. } => {
                 if let Expr::Identifier(name, _) = &**callee {
@@ -102,18 +105,30 @@ impl<'a> MirLowerCtx<'a> {
                     if let Some(&struct_id) = self.type_table.structs_by_name.get(name) {
                         return TypeRef::Custom(struct_id);
                     }
-                    if let Some(builtin) = crate::builtins::get_builtins().iter().find(|b| b.name == name) {
+                    if let Some(builtin) = crate::builtins::get_builtins()
+                        .iter()
+                        .find(|b| b.name == name)
+                    {
                         // list_new is special-cased because of generic parameter type inference
                         if name != "list_new" {
                             return builtin.return_type.clone();
                         }
                     }
                     return match name.as_str() {
-                        "input" | "read_file" | "json_get_str" | "net_recv" | "net_recv_udp" | "net_resolve" | "http_get" | "http_post" | "command_output" | "env_get" | "str_concat" | "str_replace" | "str_substr" | "str_trim" | "path_join" => TypeRef::Str,
-                        "parse_int" | "json_parse" | "json_get_int" | "json_get_obj" | "list_get" | "list_len" | "len" | "get"
-                        | "net_connect" | "net_listen" | "net_listen_udp" | "net_accept" | "net_accept_timeout" | "net_send" | "net_send_all" | "net_dial" | "net_dial_udp" | "net_set_timeout" | "net_set_deadline" | "net_set_keepalive" => TypeRef::Int,
+                        "input" | "read_file" | "json_get_str" | "net_recv" | "net_recv_udp"
+                        | "net_resolve" | "http_get" | "http_post" | "command_output"
+                        | "env_get" | "str_concat" | "str_replace" | "str_substr" | "str_trim"
+                        | "path_join" => TypeRef::Str,
+                        "parse_int" | "json_parse" | "json_get_int" | "json_get_obj"
+                        | "list_get" | "list_len" | "len" | "get" | "net_connect"
+                        | "net_listen" | "net_listen_udp" | "net_accept" | "net_accept_timeout"
+                        | "net_send" | "net_send_all" | "net_dial" | "net_dial_udp"
+                        | "net_set_timeout" | "net_set_deadline" | "net_set_keepalive" => {
+                            TypeRef::Int
+                        }
                         "list_new" => TypeRef::Generic("List".to_string(), vec![TypeRef::Int]),
-                        "print" | "print_str" | "json_free" | "list_push" | "list_free" | "net_close" => TypeRef::Void,
+                        "print" | "print_str" | "json_free" | "list_push" | "list_free"
+                        | "net_close" => TypeRef::Void,
                         _ => TypeRef::Int,
                     };
                 }
@@ -159,14 +174,18 @@ impl<'a> MirLowerCtx<'a> {
             mir_functions.insert(id, func);
         }
 
-        Ok(MirProgram { functions: mir_functions })
+        Ok(MirProgram {
+            functions: mir_functions,
+        })
     }
 
     fn lower_function(&mut self, func: &Function) -> Result<MirFunction, String> {
-        let func_id = *self
-            .functions
-            .get(&func.name)
-            .ok_or_else(|| format!("Internal error: missing MIR function id for '{}'", func.name))?;
+        let func_id = *self.functions.get(&func.name).ok_or_else(|| {
+            format!(
+                "Internal error: missing MIR function id for '{}'",
+                func.name
+            )
+        })?;
         let return_type = self.resolve_type(&func.return_type);
         let mut builder = MirBuilder::new(func_id, func.name.clone(), return_type);
         let mut binding_map = HashMap::new();
@@ -232,9 +251,9 @@ impl<'a> MirLowerCtx<'a> {
                 binding_id,
                 ..
             } => {
-                let ast_id = binding_id
-                    .get()
-                    .ok_or_else(|| format!("Missing binding id while lowering declaration '{}'", name))?;
+                let ast_id = binding_id.get().ok_or_else(|| {
+                    format!("Missing binding id while lowering declaration '{}'", name)
+                })?;
                 let binding_id = BindingId(ast_id);
                 let ty = self
                     .symbol_table
@@ -262,14 +281,21 @@ impl<'a> MirLowerCtx<'a> {
                     let rvalue = Self::assignment_rvalue(builder, *local_id, operand);
                     builder.push_instr(MirInstr::Assign(*local_id, rvalue))?;
                 } else if let Some(env_ptr) = self.current_env_ptr {
-                    if let Some(idx) = self.current_captures.iter().position(|&cid| cid == binding_id) {
+                    if let Some(idx) = self
+                        .current_captures
+                        .iter()
+                        .position(|&cid| cid == binding_id)
+                    {
                         builder.push_instr(MirInstr::AssignField {
                             base: env_ptr,
                             field: format!("cap_{}", idx),
                             value: operand,
                         })?;
                     } else {
-                        return Err(format!("Missing MIR local or capture for binding {}", ast_id));
+                        return Err(format!(
+                            "Missing MIR local or capture for binding {}",
+                            ast_id
+                        ));
                     }
                 } else {
                     return Err(format!("Missing MIR local for binding {}", ast_id));
@@ -301,13 +327,11 @@ impl<'a> MirLowerCtx<'a> {
                 // its reference. Returning a borrowed parameter/field first
                 // retains it, thereby creating the caller's return reference.
                 let managed_return = match &op {
-                    Some(Operand::Local(local)) | Some(Operand::Borrowed(local)) => {
-                        matches!(
-                            &builder.function.locals[local.0].ty,
-                            TypeRef::Custom(_) | TypeRef::Function | TypeRef::Generic(_, _)
-                        )
-                        .then_some(*local)
-                    }
+                    Some(Operand::Local(local)) | Some(Operand::Borrowed(local)) => matches!(
+                        &builder.function.locals[local.0].ty,
+                        TypeRef::Custom(_) | TypeRef::Function | TypeRef::Generic(_, _)
+                    )
+                    .then_some(*local),
                     _ => None,
                 };
                 let terminator = if let Some(local) = managed_return {
@@ -422,9 +446,21 @@ impl<'a> MirLowerCtx<'a> {
                         Ok(Operand::Local(*local_id))
                     }
                 } else if let Some(env_ptr) = self.current_env_ptr {
-                    if let Some(idx) = self.current_captures.iter().position(|&cid| cid == binding_id) {
-                        let cap_ty = self.symbol_table.bindings[binding_id.0].ty.clone().unwrap_or(TypeRef::Int);
-                        let temp = builder.new_local(cap_ty.clone(), false, Some(format!("cap_val_{}", name)), None);
+                    if let Some(idx) = self
+                        .current_captures
+                        .iter()
+                        .position(|&cid| cid == binding_id)
+                    {
+                        let cap_ty = self.symbol_table.bindings[binding_id.0]
+                            .ty
+                            .clone()
+                            .unwrap_or(TypeRef::Int);
+                        let temp = builder.new_local(
+                            cap_ty.clone(),
+                            false,
+                            Some(format!("cap_val_{}", name)),
+                            None,
+                        );
                         // A captured custom value is borrowed from the closure
                         // environment; the environment owns the ARC edge.
                         if matches!(cap_ty, TypeRef::Custom(_) | TypeRef::Generic(_, _)) {
@@ -457,9 +493,12 @@ impl<'a> MirLowerCtx<'a> {
                 let left = self.lower_expr(builder, left, binding_map)?;
                 let right = self.lower_expr(builder, right, binding_map)?;
                 let res_ty = match op {
-                    BinaryOperator::Eq | BinaryOperator::NotEq |
-                    BinaryOperator::Less | BinaryOperator::LessEq |
-                    BinaryOperator::Greater | BinaryOperator::GreaterEq => TypeRef::Bool,
+                    BinaryOperator::Eq
+                    | BinaryOperator::NotEq
+                    | BinaryOperator::Less
+                    | BinaryOperator::LessEq
+                    | BinaryOperator::Greater
+                    | BinaryOperator::GreaterEq => TypeRef::Bool,
                     _ => left_ty,
                 };
                 let temp = builder.new_local(res_ty, false, None, None);
@@ -481,9 +520,13 @@ impl<'a> MirLowerCtx<'a> {
                         return_type = ty.clone();
                     } else if let Some(&struct_id) = self.type_table.structs_by_name.get(name) {
                         return_type = TypeRef::Custom(struct_id);
-                    } else if let Some(builtin) = crate::builtins::get_builtins().iter().find(|b| b.name == name) {
+                    } else if let Some(builtin) = crate::builtins::get_builtins()
+                        .iter()
+                        .find(|b| b.name == name)
+                    {
                         if name == "list_get" {
-                            let list_ty = args.first()
+                            let list_ty = args
+                                .first()
                                 .map(|arg| self.expr_type_hint(arg, builder, binding_map))
                                 .unwrap_or(TypeRef::Int);
                             if let TypeRef::Generic(_, params) = list_ty {
@@ -499,21 +542,22 @@ impl<'a> MirLowerCtx<'a> {
                         }
                     } else {
                         return_type = match name.as_str() {
-                            "input" | "read_file" | "json_get_str" | "net_recv" | "net_recv_udp" | "net_resolve" | "http_get" | "http_post" | "command_output" | "env_get" | "str_concat" | "str_replace" | "str_substr" | "str_trim" | "path_join" => TypeRef::Str,
-                            "parse_int"
-                            | "json_parse"
-                            | "json_get_int"
-                            | "json_get_obj"
-                            | "list_get"
-                            | "list_len"
-                            
-                            | "get"
-                            | "net_connect"
-                            | "net_listen" | "net_listen_udp"
-                            | "net_accept" | "net_accept_timeout"
-                            | "net_send" | "net_send_all" | "net_dial" | "net_dial_udp" | "net_set_timeout" | "net_set_deadline" | "net_set_keepalive" | "command_exec" | "str_find" | "str_split" | "dir_create" | "dir_remove" | "path_exists" | "file_copy" | "file_move" | "delete_file" | "append_file" | "file_size" | "file_exists" | "env_set" => TypeRef::Int,
+                            "input" | "read_file" | "json_get_str" | "net_recv"
+                            | "net_recv_udp" | "net_resolve" | "http_get" | "http_post"
+                            | "command_output" | "env_get" | "str_concat" | "str_replace"
+                            | "str_substr" | "str_trim" | "path_join" => TypeRef::Str,
+                            "parse_int" | "json_parse" | "json_get_int" | "json_get_obj"
+                            | "list_get" | "list_len" | "get" | "net_connect" | "net_listen"
+                            | "net_listen_udp" | "net_accept" | "net_accept_timeout"
+                            | "net_send" | "net_send_all" | "net_dial" | "net_dial_udp"
+                            | "net_set_timeout" | "net_set_deadline" | "net_set_keepalive"
+                            | "command_exec" | "str_find" | "str_split" | "dir_create"
+                            | "dir_remove" | "path_exists" | "file_copy" | "file_move"
+                            | "delete_file" | "append_file" | "file_size" | "file_exists"
+                            | "env_set" => TypeRef::Int,
                             "list_new" => TypeRef::Generic("List".to_string(), vec![TypeRef::Int]),
-                            "print" | "print_str" | "json_free" | "list_push" | "list_free" | "net_close" => TypeRef::Void,
+                            "print" | "print_str" | "json_free" | "list_push" | "list_free"
+                            | "net_close" => TypeRef::Void,
                             _ => TypeRef::Int,
                         };
                     }
@@ -553,8 +597,7 @@ impl<'a> MirLowerCtx<'a> {
                         && matches!(
                             args.first().map(|arg| self.expr_type_hint(arg, builder, binding_map)),
                             Some(TypeRef::Generic(_, ref params)) if matches!(params.first(), Some(TypeRef::Custom(_)))
-                        )
-                    {
+                        ) {
                         Some(if name == "list_push" {
                             "lpp_list_push_arc".to_string()
                         } else {
@@ -570,15 +613,19 @@ impl<'a> MirLowerCtx<'a> {
                             }
                             _ => (false, false),
                         };
-                        Some(if is_string {
-                            "lpp_print_str"
-                        } else if is_float {
-                            "lpp_print_float"
-                        } else {
-                            "lpp_print_int"
-                        }.to_string())
+                        Some(
+                            if is_string {
+                                "lpp_print_str"
+                            } else if is_float {
+                                "lpp_print_float"
+                            } else {
+                                "lpp_print_int"
+                            }
+                            .to_string(),
+                        )
                     } else {
-                        crate::builtins::get_builtins().iter()
+                        crate::builtins::get_builtins()
+                            .iter()
                             .find(|b| b.name == name)
                             .map(|b| b.symbol.to_string())
                     };
@@ -589,11 +636,14 @@ impl<'a> MirLowerCtx<'a> {
                                 temp,
                                 Rvalue::BuiltinCall(symbol, lowered_args),
                             ))?;
-                            return Ok(if builder.function.locals[temp.0].ownership == Ownership::Borrowed {
-                                Operand::Borrowed(temp)
-                            } else {
-                                Operand::Local(temp)
-                            });
+                            return Ok(
+                                if builder.function.locals[temp.0].ownership == Ownership::Borrowed
+                                {
+                                    Operand::Borrowed(temp)
+                                } else {
+                                    Operand::Local(temp)
+                                },
+                            );
                         }
                     }
                 }
@@ -666,13 +716,14 @@ impl<'a> MirLowerCtx<'a> {
             Expr::Spawn { closure } => {
                 let closure_op = self.lower_expr(builder, closure, binding_map)?;
                 let temp = builder.new_local(TypeRef::Void, false, None, None);
-                builder.push_instr(MirInstr::Assign(
-                    temp,
-                    Rvalue::SpawnThread(closure_op),
-                ))?;
+                builder.push_instr(MirInstr::Assign(temp, Rvalue::SpawnThread(closure_op)))?;
                 Ok(Operand::Local(temp))
             }
-            Expr::Closure { params, return_type: opt_return_type, body } => {
+            Expr::Closure {
+                params,
+                return_type: opt_return_type,
+                body,
+            } => {
                 let closure_scope = {
                     let mut scope = None;
                     for i in self.closure_scope_idx..self.symbol_table.scopes.len() {
@@ -695,7 +746,10 @@ impl<'a> MirLowerCtx<'a> {
                 // silently diverge from the outer variable, which is not memory-safe or
                 // unsurprising language semantics. Reject this case until that model is
                 // implemented rather than compiling an incorrect program.
-                if let Some(capture) = captures.iter().find(|id| self.symbol_table.bindings[id.0].is_mut) {
+                if let Some(capture) = captures
+                    .iter()
+                    .find(|id| self.symbol_table.bindings[id.0].is_mut)
+                {
                     let binding = &self.symbol_table.bindings[capture.0];
                     return Err(format!(
                         "mutable capture '{}' is not supported safely by AOT closures yet",
@@ -706,7 +760,7 @@ impl<'a> MirLowerCtx<'a> {
                 // Register environment struct
                 let env_struct_name = format!("__lpp_closure_env_{}", closure_scope.0);
                 let env_struct_id = self.type_table.register_struct(env_struct_name);
-                
+
                 let mut fields = Vec::new();
                 for (i, &cap_id) in captures.iter().enumerate() {
                     let binding = &self.symbol_table.bindings[cap_id.0];
@@ -732,7 +786,10 @@ impl<'a> MirLowerCtx<'a> {
                     let binding = &self.symbol_table.bindings[cap_id.0];
                     let val_op = self.lower_expr(
                         builder,
-                        &Expr::Identifier(binding.name.clone(), std::cell::Cell::new(Some(cap_id.0))),
+                        &Expr::Identifier(
+                            binding.name.clone(),
+                            std::cell::Cell::new(Some(cap_id.0)),
+                        ),
                         binding_map,
                     )?;
                     builder.push_instr(MirInstr::AssignField {
@@ -766,7 +823,8 @@ impl<'a> MirLowerCtx<'a> {
                     inferred_rt
                 };
 
-                let mut closure_builder = MirBuilder::new(closure_func_id, closure_name.clone(), return_type);
+                let mut closure_builder =
+                    MirBuilder::new(closure_func_id, closure_name.clone(), return_type);
                 let mut closure_binding_map = HashMap::new();
 
                 let env_ptr_local = closure_builder.new_local(
@@ -779,15 +837,26 @@ impl<'a> MirLowerCtx<'a> {
                 closure_builder.function.params.push(env_ptr_local);
 
                 for param in params {
-                    let param_binding_id = self.symbol_table.scopes[closure_scope.0].bindings.get(&param.name).copied();
+                    let param_binding_id = self.symbol_table.scopes[closure_scope.0]
+                        .bindings
+                        .get(&param.name)
+                        .copied();
                     let ty = if let Some(ref t) = param.ty {
                         self.resolve_type(t)
                     } else if let Some(bid) = param_binding_id {
-                        self.symbol_table.bindings[bid.0].ty.clone().unwrap_or(TypeRef::Int)
+                        self.symbol_table.bindings[bid.0]
+                            .ty
+                            .clone()
+                            .unwrap_or(TypeRef::Int)
                     } else {
                         TypeRef::Int
                     };
-                    let local = closure_builder.new_local(ty, false, Some(param.name.clone()), param_binding_id);
+                    let local = closure_builder.new_local(
+                        ty,
+                        false,
+                        Some(param.name.clone()),
+                        param_binding_id,
+                    );
                     closure_builder.set_local_ownership(local, Ownership::Borrowed);
                     closure_builder.function.params.push(local);
                     if let Some(bid) = param_binding_id {
@@ -798,7 +867,7 @@ impl<'a> MirLowerCtx<'a> {
                 // Set closure lowering context
                 let saved_env_ptr = self.current_env_ptr;
                 let saved_captures = std::mem::take(&mut self.current_captures);
-                
+
                 self.current_env_ptr = Some(env_ptr_local);
                 self.current_captures = captures;
 

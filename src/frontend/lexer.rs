@@ -23,27 +23,27 @@ pub enum Token {
     FloatLit(f64),
 
     // Operators and Punctuation
-    Assign, // :=
-    Equal,  // =
-    EqEq,   // ==
-    NotEq,  // !=
-    Less,   // <
-    Greater,// >
-    LessEq, // <=
-    GreaterEq,// >=
-    Colon,  // :
-    Arrow,  // ->
-    Plus,   // +
-    Minus,  // -
-    Star,   // *
-    Slash,  // /
-    Percent,// %
-    LParen, // (
-    RParen, // )
-    LBracket, // [
-    RBracket, // ]
-    Comma,  // ,
-    Dot,    // .
+    Assign,    // :=
+    Equal,     // =
+    EqEq,      // ==
+    NotEq,     // !=
+    Less,      // <
+    Greater,   // >
+    LessEq,    // <=
+    GreaterEq, // >=
+    Colon,     // :
+    Arrow,     // ->
+    Plus,      // +
+    Minus,     // -
+    Star,      // *
+    Slash,     // /
+    Percent,   // %
+    LParen,    // (
+    RParen,    // )
+    LBracket,  // [
+    RBracket,  // ]
+    Comma,     // ,
+    Dot,       // .
 
     // Significant Whitespace
     Newline,
@@ -114,13 +114,16 @@ impl<'a> Lexer<'a> {
             if self.at_line_start {
                 self.at_line_start = false;
                 let mut spaces = 0;
-                
+
                 while let Some(c) = self.peek_c() {
                     if c == ' ' {
                         spaces += 1;
                         self.next_c();
                     } else if c == '\t' {
-                        return Err(format!("[line {}:col {}] Lexer error: Tabs are not allowed for indentation. Use spaces.", self.line, self.col));
+                        return Err(format!(
+                            "[line {}:col {}] Lexer error: Tabs are not allowed for indentation. Use spaces.",
+                            self.line, self.col
+                        ));
                     } else if c == '\n' || c == '\r' {
                         // Empty line, ignore indentation
                         break;
@@ -134,16 +137,27 @@ impl<'a> Lexer<'a> {
                         let current_indent = *self.indent_stack.last().unwrap_or(&0);
                         if spaces > current_indent {
                             self.indent_stack.push(spaces);
-                            tokens.push(SpannedToken { token: Token::Indent, line: tok_line, col: tok_col });
+                            tokens.push(SpannedToken {
+                                token: Token::Indent,
+                                line: tok_line,
+                                col: tok_col,
+                            });
                         } else if spaces < current_indent {
                             while let Some(&top) = self.indent_stack.last() {
                                 if top > spaces {
                                     self.indent_stack.pop();
-                                    tokens.push(SpannedToken { token: Token::Dedent, line: tok_line, col: tok_col });
+                                    tokens.push(SpannedToken {
+                                        token: Token::Dedent,
+                                        line: tok_line,
+                                        col: tok_col,
+                                    });
                                 } else if top == spaces {
                                     break;
                                 } else {
-                                    return Err(format!("[line {}:col {}] Lexer error: Inconsistent indentation level.", self.line, self.col));
+                                    return Err(format!(
+                                        "[line {}:col {}] Lexer error: Inconsistent indentation level.",
+                                        self.line, self.col
+                                    ));
                                 }
                             }
                         }
@@ -158,14 +172,26 @@ impl<'a> Lexer<'a> {
                 None => {
                     while self.indent_stack.len() > 1 {
                         self.indent_stack.pop();
-                        tokens.push(SpannedToken { token: Token::Dedent, line: start_line, col: start_col });
+                        tokens.push(SpannedToken {
+                            token: Token::Dedent,
+                            line: start_line,
+                            col: start_col,
+                        });
                     }
-                    tokens.push(SpannedToken { token: Token::Eof, line: start_line, col: start_col });
+                    tokens.push(SpannedToken {
+                        token: Token::Eof,
+                        line: start_line,
+                        col: start_col,
+                    });
                     break;
                 }
             };
 
-            let mk_token = |t: Token| SpannedToken { token: t, line: start_line, col: start_col };
+            let mk_token = |t: Token| SpannedToken {
+                token: t,
+                line: start_line,
+                col: start_col,
+            };
 
             match c {
                 ' ' | '\r' => continue,
@@ -218,7 +244,10 @@ impl<'a> Lexer<'a> {
                         self.next_c();
                         tokens.push(mk_token(Token::NotEq));
                     } else {
-                        return Err(format!("[line {}:col {}] Lexer error: Unexpected character: !", start_line, start_col));
+                        return Err(format!(
+                            "[line {}:col {}] Lexer error: Unexpected character: !",
+                            start_line, start_col
+                        ));
                     }
                 }
                 '+' => tokens.push(mk_token(Token::Plus)),
@@ -261,14 +290,20 @@ impl<'a> Lexer<'a> {
                                     }
                                 }
                             } else {
-                                return Err(format!("[line {}:col {}] Lexer error: Unterminated string escape", self.line, self.col));
+                                return Err(format!(
+                                    "[line {}:col {}] Lexer error: Unterminated string escape",
+                                    self.line, self.col
+                                ));
                             }
                         } else {
                             s.push(ch);
                         }
                     }
                     if !terminated {
-                        return Err(format!("[line {}:col {}] Lexer error: Unterminated string literal", start_line, start_col));
+                        return Err(format!(
+                            "[line {}:col {}] Lexer error: Unterminated string literal",
+                            start_line, start_col
+                        ));
                     }
                     tokens.push(mk_token(Token::StringLit(s)));
                 }
@@ -288,9 +323,12 @@ impl<'a> Lexer<'a> {
                         }
                     }
                     if is_float {
-                        let value = num
-                            .parse()
-                            .map_err(|_| format!("[line {}:col {}] Lexer error: Float literal '{}' is invalid", start_line, start_col, num))?;
+                        let value = num.parse().map_err(|_| {
+                            format!(
+                                "[line {}:col {}] Lexer error: Float literal '{}' is invalid",
+                                start_line, start_col, num
+                            )
+                        })?;
                         tokens.push(mk_token(Token::FloatLit(value)));
                     } else {
                         let value = num
@@ -327,7 +365,12 @@ impl<'a> Lexer<'a> {
                         _ => tokens.push(mk_token(Token::Ident(ident))),
                     }
                 }
-                _ => return Err(format!("[line {}:col {}] Lexer error: Unexpected character: {}", start_line, start_col, c)),
+                _ => {
+                    return Err(format!(
+                        "[line {}:col {}] Lexer error: Unexpected character: {}",
+                        start_line, start_col, c
+                    ));
+                }
             }
         }
         Ok(tokens)
@@ -341,7 +384,9 @@ mod tests {
     #[test]
     fn rejects_out_of_range_integer_literals() {
         let mut lexer = Lexer::new("9223372036854775808");
-        let err = lexer.tokenize().expect_err("lexer should reject overflowing Int literals");
+        let err = lexer
+            .tokenize()
+            .expect_err("lexer should reject overflowing Int literals");
         assert!(err.contains("out of range"));
         assert!(err.contains("line 1"));
     }
@@ -349,7 +394,9 @@ mod tests {
     #[test]
     fn emits_distinct_bindings_tokens_for_shadowing_source() {
         let mut lexer = Lexer::new("def main():\n    x := 1\n    x := 2\n");
-        let tokens = lexer.tokenize().expect("lexer should accept valid shadowing syntax");
+        let tokens = lexer
+            .tokenize()
+            .expect("lexer should accept valid shadowing syntax");
         let raw_tokens: Vec<Token> = tokens.into_iter().map(|st| st.token).collect();
         assert!(raw_tokens.contains(&Token::Assign));
     }
@@ -357,8 +404,13 @@ mod tests {
     #[test]
     fn lexes_boolean_literals() {
         let mut lexer = Lexer::new("true false");
-        let tokens = lexer.tokenize().expect("lexer should parse boolean literals");
+        let tokens = lexer
+            .tokenize()
+            .expect("lexer should parse boolean literals");
         let raw_tokens: Vec<Token> = tokens.into_iter().map(|st| st.token).collect();
-        assert_eq!(raw_tokens, vec![Token::BoolLit(true), Token::BoolLit(false), Token::Eof]);
+        assert_eq!(
+            raw_tokens,
+            vec![Token::BoolLit(true), Token::BoolLit(false), Token::Eof]
+        );
     }
 }

@@ -1,18 +1,18 @@
+use crate::typecheck::{StructTypeId, TypeRef, TypeTable};
 use cranelift_codegen::ir::types as cl_types;
-use crate::typecheck::{TypeRef, TypeTable, StructTypeId};
 
 /// Maps a L++ TypeRef to a Cranelift IR type.
 pub fn type_to_cl(ty: &TypeRef) -> cranelift_codegen::ir::Type {
     match ty {
-        TypeRef::Int              => cl_types::I64,
-        TypeRef::Float            => cl_types::F64,
-        TypeRef::Bool             => cl_types::I8,
-        TypeRef::Str              => cl_types::I64, // pointer (MVP: null for now)
-        TypeRef::Void             => cl_types::I64, // dummy; callers check != Void
-        TypeRef::Custom(_)        => cl_types::I64, // opaque struct pointer
-        TypeRef::Generic(_, _)    => cl_types::I64, // opaque container pointer
-        TypeRef::Unresolved(_)    => cl_types::I64, // not yet resolved; treat as ptr
-        TypeRef::Function         => cl_types::I64, // function pointer placeholder
+        TypeRef::Int => cl_types::I64,
+        TypeRef::Float => cl_types::F64,
+        TypeRef::Bool => cl_types::I8,
+        TypeRef::Str => cl_types::I64,  // pointer (MVP: null for now)
+        TypeRef::Void => cl_types::I64, // dummy; callers check != Void
+        TypeRef::Custom(_) => cl_types::I64, // opaque struct pointer
+        TypeRef::Generic(_, _) => cl_types::I64, // opaque container pointer
+        TypeRef::Unresolved(_) => cl_types::I64, // not yet resolved; treat as ptr
+        TypeRef::Function => cl_types::I64, // function pointer placeholder
     }
 }
 
@@ -33,8 +33,13 @@ fn align_up(value: usize, align: usize) -> usize {
 pub fn type_size_align(ty: &TypeRef) -> (usize, usize) {
     match ty {
         TypeRef::Bool => (1, 1),
-        TypeRef::Int | TypeRef::Float | TypeRef::Str | TypeRef::Custom(_)
-        | TypeRef::Generic(_, _) | TypeRef::Unresolved(_) | TypeRef::Function
+        TypeRef::Int
+        | TypeRef::Float
+        | TypeRef::Str
+        | TypeRef::Custom(_)
+        | TypeRef::Generic(_, _)
+        | TypeRef::Unresolved(_)
+        | TypeRef::Function
         | TypeRef::Void => (8, 8),
     }
 }
@@ -48,7 +53,10 @@ pub fn struct_layout(table: &TypeTable, id: StructTypeId) -> (Vec<FieldLayout>, 
     for (_, ty) in &def.fields {
         let (size, align) = type_size_align(ty);
         offset = align_up(offset, align);
-        fields.push(FieldLayout { offset, ty: type_to_cl(ty) });
+        fields.push(FieldLayout {
+            offset,
+            ty: type_to_cl(ty),
+        });
         offset += size;
         struct_align = struct_align.max(align);
     }

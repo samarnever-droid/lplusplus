@@ -1,6 +1,6 @@
-use std::collections::HashMap;
 use crate::ast::*;
-use crate::semantic::{SymbolTable, ScopeId, ScopeKind};
+use crate::semantic::{ScopeId, ScopeKind, SymbolTable};
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct StructTypeId(pub usize);
@@ -55,7 +55,7 @@ pub struct TypeChecker<'a> {
     pub type_table: TypeTable,
     pub symbol_table: &'a mut SymbolTable,
     pub closure_scope_idx: usize,
-    pub block_scope_idx: usize,    // BUG-11: tracks Block scopes for if/while bodies
+    pub block_scope_idx: usize, // BUG-11: tracks Block scopes for if/while bodies
     pub func_return_types: HashMap<String, TypeRef>,
     pub func_param_types: HashMap<String, Vec<TypeRef>>,
 }
@@ -164,7 +164,9 @@ impl<'a> TypeChecker<'a> {
             if let TopLevel::Function(f) = decl {
                 let ret_ty = Self::convert_ast_type(&self.type_table, &f.return_type);
                 self.func_return_types.insert(f.name.clone(), ret_ty);
-                let param_tys: Vec<TypeRef> = f.params.iter()
+                let param_tys: Vec<TypeRef> = f
+                    .params
+                    .iter()
                     .map(|p| Self::convert_ast_type(&self.type_table, &p.ty))
                     .collect();
                 self.func_param_types.insert(f.name.clone(), param_tys);
@@ -174,15 +176,18 @@ impl<'a> TypeChecker<'a> {
         // Phase 2: Resolve struct fields and check for self-reference
         for decl in &program.declarations {
             if let TopLevel::Struct(s) = decl {
-                let id = *self.type_table.structs_by_name.get(&s.name)
+                let id = *self
+                    .type_table
+                    .structs_by_name
+                    .get(&s.name)
                     .ok_or_else(|| format!("Type error: Unknown struct definition '{}'", s.name))?;
-                
+
                 let mut resolved_fields = Vec::new();
                 let mut is_self_referential = false;
 
                 for field in &s.fields {
                     let field_ty = Self::convert_ast_type(&self.type_table, &field.ty);
-                    
+
                     if let TypeRef::Custom(ref_id) = field_ty {
                         if ref_id == id {
                             is_self_referential = true;
@@ -237,15 +242,26 @@ impl<'a> TypeChecker<'a> {
 
     fn infer_stmt(&mut self, stmt: &Stmt, current_scope: ScopeId) -> Result<(), String> {
         match stmt {
-            Stmt::LetInferred { name: _, is_mut: _, value, binding_id } => {
+            Stmt::LetInferred {
+                name: _,
+                is_mut: _,
+                value,
+                binding_id,
+            } => {
                 let inferred_type = self.infer_expr(value, current_scope, None)?;
-                let b_id = binding_id.get().ok_or_else(|| "Binding ID not set".to_string())?;
+                let b_id = binding_id
+                    .get()
+                    .ok_or_else(|| "Binding ID not set".to_string())?;
                 let binding = &mut self.symbol_table.bindings[b_id];
                 if binding.ty.is_none() {
                     binding.ty = Some(inferred_type);
                 }
             }
-            Stmt::Assign { name, value, binding_id } => {
+            Stmt::Assign {
+                name,
+                value,
+                binding_id,
+            } => {
                 let expected_ty = if let Some(b_id) = binding_id.get() {
                     self.symbol_table.bindings[b_id].ty.clone()
                 } else if let Some(b_id) = self.symbol_table.resolve_name(current_scope, name) {
@@ -269,14 +285,18 @@ impl<'a> TypeChecker<'a> {
                 let mut expected_ty = None;
                 if let TypeRef::Custom(struct_id) = base_ty {
                     let struct_def = &self.type_table.definitions[struct_id.0];
-                    if let Some(field_entry) = struct_def.fields.iter().find(|(name, _)| name == field) {
+                    if let Some(field_entry) =
+                        struct_def.fields.iter().find(|(name, _)| name == field)
+                    {
                         expected_ty = Some(field_entry.1.clone());
                     }
                 }
                 let val_ty = self.infer_expr(value, current_scope, expected_ty)?;
                 if let TypeRef::Custom(struct_id) = base_ty {
                     let struct_def = &self.type_table.definitions[struct_id.0];
-                    if let Some(field_entry) = struct_def.fields.iter().find(|(name, _)| name == field) {
+                    if let Some(field_entry) =
+                        struct_def.fields.iter().find(|(name, _)| name == field)
+                    {
                         if field_entry.1 != val_ty {
                             return Err(format!(
                                 "Type mismatch in field assignment: expected {:?}, got {:?}",
@@ -284,26 +304,39 @@ impl<'a> TypeChecker<'a> {
                             ));
                         }
                     } else {
-                        return Err(format!("Field '{}' not found on struct '{}'", field, struct_def.name));
+                        return Err(format!(
+                            "Field '{}' not found on struct '{}'",
+                            field, struct_def.name
+                        ));
                     }
                 } else {
-                    return Err(format!("Cannot access field '{}' on non-struct type {:?}", field, base_ty));
+                    return Err(format!(
+                        "Cannot access field '{}' on non-struct type {:?}",
+                        field, base_ty
+                    ));
                 }
             }
-            Stmt::If { condition, then_block, else_block } => {
+            Stmt::If {
+                condition,
+                then_block,
+                else_block,
+            } => {
                 let cond_ty = self.infer_expr(condition, current_scope, None)?;
                 if cond_ty != TypeRef::Bool {
                     if cond_ty != TypeRef::Int {
-                        return Err(format!("'if' condition must be Bool or Int, found {:?}", cond_ty));
+                        return Err(format!(
+                            "'if' condition must be Bool or Int, found {:?}",
+                            cond_ty
+                        ));
                     }
                 }
-                
+
                 // BUG-11: use the block's own scope, not the outer function scope
                 let then_scope = self.next_block_scope(current_scope);
                 for stmt in then_block {
                     self.infer_stmt(stmt, then_scope)?
                 }
-                
+
                 if let Some(else_b) = else_block {
                     // BUG-11: use the block's own scope, not the outer function scope
                     let else_scope = self.next_block_scope(current_scope);
@@ -315,9 +348,12 @@ impl<'a> TypeChecker<'a> {
             Stmt::While { condition, body } => {
                 let cond_ty = self.infer_expr(condition, current_scope, None)?;
                 if cond_ty != TypeRef::Bool && cond_ty != TypeRef::Int {
-                    return Err(format!("'while' condition must be Bool or Int, found {:?}", cond_ty));
+                    return Err(format!(
+                        "'while' condition must be Bool or Int, found {:?}",
+                        cond_ty
+                    ));
                 }
-                
+
                 // BUG-11: use the while body's own block scope
                 let body_scope = self.next_block_scope(current_scope);
                 for stmt in body {
@@ -349,7 +385,12 @@ impl<'a> TypeChecker<'a> {
         Ok(())
     }
 
-    fn infer_expr(&mut self, expr: &Expr, current_scope: ScopeId, expected_ty: Option<TypeRef>) -> Result<TypeRef, String> {
+    fn infer_expr(
+        &mut self,
+        expr: &Expr,
+        current_scope: ScopeId,
+        expected_ty: Option<TypeRef>,
+    ) -> Result<TypeRef, String> {
         match expr {
             Expr::IntLiteral(_) => Ok(TypeRef::Int),
             Expr::FloatLiteral(_) => Ok(TypeRef::Float),
@@ -358,17 +399,21 @@ impl<'a> TypeChecker<'a> {
             Expr::Identifier(name, binding_id_cell) => {
                 if let Some(id) = binding_id_cell.get() {
                     let binding = &self.symbol_table.bindings[id];
-                    binding.ty.clone().ok_or_else(|| "Type of identifier not yet inferred".to_string())
+                    binding
+                        .ty
+                        .clone()
+                        .ok_or_else(|| "Type of identifier not yet inferred".to_string())
                 } else {
                     // BUG-05: Builtin identifiers have no binding_id (semantic resolver skips them).
                     // Return their known types instead of panicking with "Unresolved identifier".
                     match name.as_str() {
                         "input" | "read_file" | "json_get_str" | "net_recv" => Ok(TypeRef::Str),
-                        "print" | "print_str" | "write_file" | "json_free"
-                        | "list_push" | "list_free" | "net_close" => Ok(TypeRef::Void),
-                        "parse_int" | "json_parse" | "json_get_int"
-                        | "json_get_obj" | "list_get" | "list_len"
-                        | "file_size" | "file_copy" | "file_move" | "net_connect" | "net_listen" | "net_accept" | "net_send" | "net_send_all" | "net_set_timeout" => Ok(TypeRef::Int),
+                        "print" | "print_str" | "write_file" | "json_free" | "list_push"
+                        | "list_free" | "net_close" => Ok(TypeRef::Void),
+                        "parse_int" | "json_parse" | "json_get_int" | "json_get_obj"
+                        | "list_get" | "list_len" | "file_size" | "file_copy" | "file_move"
+                        | "net_connect" | "net_listen" | "net_accept" | "net_send"
+                        | "net_send_all" | "net_set_timeout" => Ok(TypeRef::Int),
                         "list_new" => Ok(TypeRef::Generic("List".to_string(), vec![TypeRef::Int])),
                         _ => Err(format!("Unresolved identifier '{}'", name)),
                     }
@@ -379,20 +424,31 @@ impl<'a> TypeChecker<'a> {
                 let right_ty = self.infer_expr(right, current_scope, None)?;
                 let is_ptr_null_check = match (&left_ty, &right_ty) {
                     (&TypeRef::Custom(_), &TypeRef::Int) | (&TypeRef::Int, &TypeRef::Custom(_)) => {
-                        matches!(op, crate::ast::BinaryOperator::Eq | crate::ast::BinaryOperator::NotEq)
+                        matches!(
+                            op,
+                            crate::ast::BinaryOperator::Eq | crate::ast::BinaryOperator::NotEq
+                        )
                     }
                     _ => false,
                 };
                 if left_ty != right_ty && !is_ptr_null_check {
-                    return Err(format!("Type mismatch in binary operation: {:?} and {:?}", left_ty, right_ty));
+                    return Err(format!(
+                        "Type mismatch in binary operation: {:?} and {:?}",
+                        left_ty, right_ty
+                    ));
                 }
                 match op {
-                    crate::ast::BinaryOperator::Add | crate::ast::BinaryOperator::Subtract | 
-                    crate::ast::BinaryOperator::Multiply | crate::ast::BinaryOperator::Divide |
-                    crate::ast::BinaryOperator::Modulo => Ok(left_ty),
-                    crate::ast::BinaryOperator::Eq | crate::ast::BinaryOperator::NotEq |
-                    crate::ast::BinaryOperator::Less | crate::ast::BinaryOperator::LessEq |
-                    crate::ast::BinaryOperator::Greater | crate::ast::BinaryOperator::GreaterEq => Ok(TypeRef::Bool),
+                    crate::ast::BinaryOperator::Add
+                    | crate::ast::BinaryOperator::Subtract
+                    | crate::ast::BinaryOperator::Multiply
+                    | crate::ast::BinaryOperator::Divide
+                    | crate::ast::BinaryOperator::Modulo => Ok(left_ty),
+                    crate::ast::BinaryOperator::Eq
+                    | crate::ast::BinaryOperator::NotEq
+                    | crate::ast::BinaryOperator::Less
+                    | crate::ast::BinaryOperator::LessEq
+                    | crate::ast::BinaryOperator::Greater
+                    | crate::ast::BinaryOperator::GreaterEq => Ok(TypeRef::Bool),
                 }
             }
             Expr::Call { callee, args } => {
@@ -422,13 +478,26 @@ impl<'a> TypeChecker<'a> {
                     let expected_arg_ty = param_tys.get(i);
                     arg_tys.push(self.infer_expr(arg, current_scope, expected_arg_ty.cloned())?);
                 }
-                
+
                 if let Expr::Identifier(name, _) = &**callee {
-                    if let Some(builtin) = crate::builtins::get_builtins().iter().find(|b| b.name == name) {
-                        if builtin.params.len() != args.len() && !builtin.params.iter().any(|p| matches!(p, crate::builtins::ParamType::Any)) {
-                            return Err(format!("{} expects {} arguments, got {}", name, builtin.params.len(), args.len()));
+                    if let Some(builtin) = crate::builtins::get_builtins()
+                        .iter()
+                        .find(|b| b.name == name)
+                    {
+                        if builtin.params.len() != args.len()
+                            && !builtin
+                                .params
+                                .iter()
+                                .any(|p| matches!(p, crate::builtins::ParamType::Any))
+                        {
+                            return Err(format!(
+                                "{} expects {} arguments, got {}",
+                                name,
+                                builtin.params.len(),
+                                args.len()
+                            ));
                         }
-                        
+
                         for (i, param) in builtin.params.iter().enumerate() {
                             match param {
                                 crate::builtins::ParamType::Specific(expected_ty) => {
@@ -441,7 +510,13 @@ impl<'a> TypeChecker<'a> {
                                                 }
                                             }
                                         }
-                                        return Err(format!("{} expects parameter {} to be {:?}, got {:?}", name, i + 1, expected_ty, arg_ty));
+                                        return Err(format!(
+                                            "{} expects parameter {} to be {:?}, got {:?}",
+                                            name,
+                                            i + 1,
+                                            expected_ty,
+                                            arg_ty
+                                        ));
                                     }
                                 }
                                 crate::builtins::ParamType::Any => {}
@@ -452,9 +527,14 @@ impl<'a> TypeChecker<'a> {
                             if let Some(TypeRef::Generic(list_name, params)) = expected_ty {
                                 if list_name == "List" {
                                     if params.len() != 1 {
-                                        return Err("List requires exactly one element type".to_string());
+                                        return Err(
+                                            "List requires exactly one element type".to_string()
+                                        );
                                     }
-                                    return Ok(TypeRef::Generic("List".to_string(), params.clone()));
+                                    return Ok(TypeRef::Generic(
+                                        "List".to_string(),
+                                        params.clone(),
+                                    ));
                                 }
                             }
                             return Ok(TypeRef::Generic("List".to_string(), vec![TypeRef::Int]));
@@ -467,7 +547,10 @@ impl<'a> TypeChecker<'a> {
                                     return Ok(params[0].clone());
                                 }
                             }
-                            return Err(format!("list_get first argument must be a List, got {:?}", list_ty));
+                            return Err(format!(
+                                "list_get first argument must be a List, got {:?}",
+                                list_ty
+                            ));
                         }
 
                         return Ok(builtin.return_type.clone());
@@ -480,9 +563,13 @@ impl<'a> TypeChecker<'a> {
                         return Ok(ty.clone());
                     }
                 }
-                Ok(TypeRef::Int) 
+                Ok(TypeRef::Int)
             }
-            Expr::Closure { params, body, return_type } => {
+            Expr::Closure {
+                params,
+                body,
+                return_type,
+            } => {
                 let mut closure_scope = None;
                 for i in self.closure_scope_idx..self.symbol_table.scopes.len() {
                     if let ScopeKind::Closure { .. } = self.symbol_table.scopes[i].kind {
@@ -491,26 +578,30 @@ impl<'a> TypeChecker<'a> {
                         break;
                     }
                 }
-                
+
                 let scope_id = closure_scope
                     .ok_or_else(|| "Type error: Closure scope resolution failed".to_string())?;
-                
+
                 for param in params {
                     if param.ty.is_none() {
-                        let binding_id = self.symbol_table.resolve_name(scope_id, &param.name)
-                            .ok_or_else(|| format!("Type error: Unresolved closure parameter '{}'", param.name))?;
+                        let binding_id = self
+                            .symbol_table
+                            .resolve_name(scope_id, &param.name)
+                            .ok_or_else(|| {
+                                format!("Type error: Unresolved closure parameter '{}'", param.name)
+                            })?;
                         let binding = &mut self.symbol_table.bindings[binding_id.0];
                         if binding.ty.is_none() {
                             binding.ty = Some(TypeRef::Int);
                         }
                     }
                 }
-                
+
                 // Traverse body
                 for stmt in body {
                     self.infer_stmt(stmt, scope_id)?;
                 }
-                
+
                 // Check an explicit/inferred result type for diagnostics, but
                 // the expression itself is a callable ownership capsule, not
                 // the value it will eventually return when invoked.
@@ -530,12 +621,20 @@ impl<'a> TypeChecker<'a> {
                 let base_ty = self.infer_expr(base, current_scope, None)?;
                 if let TypeRef::Custom(struct_id) = base_ty {
                     let struct_def = &self.type_table.definitions[struct_id.0];
-                    if let Some(field_entry) = struct_def.fields.iter().find(|(name, _)| name == field) {
+                    if let Some(field_entry) =
+                        struct_def.fields.iter().find(|(name, _)| name == field)
+                    {
                         return Ok(field_entry.1.clone());
                     }
-                    Err(format!("Field '{}' not found on struct '{}'", field, struct_def.name))
+                    Err(format!(
+                        "Field '{}' not found on struct '{}'",
+                        field, struct_def.name
+                    ))
                 } else {
-                    Err(format!("Cannot access field '{}' on non-struct type {:?}", field, base_ty))
+                    Err(format!(
+                        "Cannot access field '{}' on non-struct type {:?}",
+                        field, base_ty
+                    ))
                 }
             }
             Expr::Spawn { closure } => {
@@ -558,7 +657,8 @@ impl<'a> TypeChecker<'a> {
                 }
                 if !matches!(elem_ty, TypeRef::Int | TypeRef::Custom(_)) {
                     return Err(format!(
-                        "List element type {:?} is not supported safely yet", elem_ty
+                        "List element type {:?} is not supported safely yet",
+                        elem_ty
                     ));
                 }
                 Ok(TypeRef::Generic("List".to_string(), vec![elem_ty]))

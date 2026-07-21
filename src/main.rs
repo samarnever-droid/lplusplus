@@ -1,33 +1,33 @@
 #[path = "frontend/ast.rs"]
 mod ast;
 mod builtins;
+#[path = "backend/c_runtime_headers.rs"]
+mod c_runtime_headers;
+#[path = "backend/codegen.rs"]
+mod codegen;
+#[path = "backend/cranelift/mod.rs"]
+pub mod cranelift_backend;
+#[path = "analysis/escape.rs"]
+mod escape;
 #[path = "frontend/lexer.rs"]
 mod lexer;
+#[path = "mir/mod.rs"]
+pub mod mir;
 #[path = "frontend/parser.rs"]
 mod parser;
+mod pm;
 #[path = "analysis/semantic.rs"]
 mod semantic;
 #[path = "analysis/typecheck.rs"]
 mod typecheck;
-#[path = "analysis/escape.rs"]
-mod escape;
-#[path = "backend/codegen.rs"]
-mod codegen;
-#[path = "backend/c_runtime_headers.rs"]
-mod c_runtime_headers;
-#[path = "backend/cranelift/mod.rs"]
-pub mod cranelift_backend;
-#[path = "mir/mod.rs"]
-pub mod mir;
-mod pm;
 
-use std::fs;
 use std::env;
+use std::fs;
 use std::time::Instant;
 
 fn main() {
     let mut args: Vec<String> = env::args().collect();
-    
+
     // The CLI has two intentionally separate modes:
     // - package commands (`build`, `run`, `test`, …) operate on lpp.toml;
     // - source commands (`check file.lpp`, `emit file.lpp`) operate on one file.
@@ -43,17 +43,29 @@ fn main() {
 
     if args.len() > 1 {
         let first_arg = &args[1];
-        if first_arg == "init" || first_arg == "install" || first_arg == "add" ||
-           first_arg == "remove" || first_arg == "update" || first_arg == "check" ||
-           first_arg == "build" || first_arg == "run" || first_arg == "test" ||
-           first_arg == "new" || first_arg == "search" || first_arg == "list" ||
-           first_arg == "tree" || first_arg == "metadata" || first_arg == "clean" ||
-           first_arg == "outdated" || first_arg == "help" {
+        if first_arg == "init"
+            || first_arg == "install"
+            || first_arg == "add"
+            || first_arg == "remove"
+            || first_arg == "update"
+            || first_arg == "check"
+            || first_arg == "build"
+            || first_arg == "run"
+            || first_arg == "test"
+            || first_arg == "new"
+            || first_arg == "search"
+            || first_arg == "list"
+            || first_arg == "tree"
+            || first_arg == "metadata"
+            || first_arg == "clean"
+            || first_arg == "outdated"
+            || first_arg == "help"
+        {
             pm::run_command(&args[1..]);
             return;
         }
     }
-    
+
     let mut filename = None;
     let mut dump_ast = false;
     let mut dump_symbols = false;
@@ -63,7 +75,7 @@ fn main() {
     let mut dump_c = false;
     let mut check_only = source_check_command;
     let mut emit_object = false;
-    
+
     for arg in args.iter().skip(1) {
         if arg == "--version" || arg == "-v" {
             println!("L++ Compiler v0.1.3");
@@ -92,7 +104,9 @@ fn main() {
             println!("  lpp check <file.lpp>          Type-check one file; emit no artifacts");
             println!("  lpp emit <file.lpp>           Emit C source next to the input file");
             println!("  lpp emit <file.lpp> --aot     Emit C source and a Cranelift object file");
-            println!("  lpp <file.lpp>                Legacy source invocation; emits C with guidance");
+            println!(
+                "  lpp <file.lpp>                Legacy source invocation; emits C with guidance"
+            );
             println!("\nOptions (Compiler):");
             println!("  -v, --version    Show L++ compiler version");
             println!("  -h, --help       Show this help menu");
@@ -106,8 +120,12 @@ fn main() {
             println!("\nEnvironment Variables:");
             println!("  LPP_AOT=1        Enable Cranelift AOT compilation to native object file");
             println!("  LPP_LINKER=mold   Use mold high-performance linker for native links");
-            println!("  LPP_LINKER=direct Use lpp-link on installed Linux x86-64 builds (experimental)");
-            println!("  BENCHMARK=1      Suppress descriptive text and print sub-millisecond JSON timings");
+            println!(
+                "  LPP_LINKER=direct Use lpp-link on installed Linux x86-64 builds (experimental)"
+            );
+            println!(
+                "  BENCHMARK=1      Suppress descriptive text and print sub-millisecond JSON timings"
+            );
             return;
         } else if arg == "--dump-ast" {
             dump_ast = true;
@@ -138,9 +156,9 @@ fn main() {
             return;
         }
     };
-    
+
     let total_start = Instant::now();
-    
+
     let io_start = Instant::now();
     let input = match fs::read_to_string(filename) {
         Ok(content) => content,
@@ -199,12 +217,19 @@ fn main() {
         type_checker.type_table
     };
     let ty_time = ty_start.elapsed();
-    
+
     if check_only {
         let total_time = total_start.elapsed();
         if env::var("BENCHMARK").is_ok() {
-            println!("TIMING_JSON: {{\"io\": {}, \"lex\": {}, \"parse\": {}, \"semantic\": {}, \"typecheck\": {}, \"total\": {}}}", 
-               io_time.as_secs_f64(), lex_time.as_secs_f64(), parse_time.as_secs_f64(), sem_time.as_secs_f64(), ty_time.as_secs_f64(), total_time.as_secs_f64());
+            println!(
+                "TIMING_JSON: {{\"io\": {}, \"lex\": {}, \"parse\": {}, \"semantic\": {}, \"typecheck\": {}, \"total\": {}}}",
+                io_time.as_secs_f64(),
+                lex_time.as_secs_f64(),
+                parse_time.as_secs_f64(),
+                sem_time.as_secs_f64(),
+                ty_time.as_secs_f64(),
+                total_time.as_secs_f64()
+            );
         } else {
             println!("L++ check: OK");
             println!("Time: {:.1} ms", total_time.as_secs_f64() * 1000.0);
@@ -237,7 +262,7 @@ fn main() {
                     println!("  Binding '{}' -> {:?}", binding.name, class);
                 }
             }
-            
+
             let mir_start = Instant::now();
             let mut mir_ctx = mir::lower::MirLowerCtx::new(&resolver.table, &mut type_table);
             let mut mir_program = match mir_ctx.lower_program(&ast) {
@@ -263,7 +288,7 @@ fn main() {
             // setcc/test materialization in hot native loops.
             mir::pass_branch::run(&mut mir_program);
             mir::pass_arc::run_arc_insertion_pass(&mut mir_program, &storage);
-            
+
             if dump_mir {
                 println!("--- Generated MIR ---");
                 println!("{}", mir_program);
@@ -280,7 +305,13 @@ fn main() {
                         let obj_path = filename.replace(".lpp", ".o");
                         if let Err(e) = fs::write(&obj_path, &obj_bytes) {
                             eprintln!("Failed to write {}: {}", obj_path, e);
-                        } else if env::var("BENCHMARK").is_err() && !dump_ast && !dump_symbols && !dump_types && !dump_escape && !dump_mir {
+                        } else if env::var("BENCHMARK").is_err()
+                            && !dump_ast
+                            && !dump_symbols
+                            && !dump_types
+                            && !dump_escape
+                            && !dump_mir
+                        {
                             println!("[L++] AOT object file written to {}", obj_path);
                         }
                     }
@@ -308,23 +339,42 @@ fn main() {
                 }
                 codegen_start.elapsed()
             };
-            
+
             let total_time = total_start.elapsed();
 
             if env::var("BENCHMARK").is_ok() {
-                println!("TIMING_JSON: {{\"io\": {}, \"lex\": {}, \"parse\": {}, \"semantic\": {}, \"typecheck\": {}, \"escape\": {}, \"mir\": {}, \"aot\": {}, \"c_codegen\": {}, \"total\": {}}}", 
-                   io_time.as_secs_f64(), lex_time.as_secs_f64(), parse_time.as_secs_f64(), sem_time.as_secs_f64(), ty_time.as_secs_f64(), esc_time.as_secs_f64(), mir_time.as_secs_f64(), aot_time.as_secs_f64(), codegen_time.as_secs_f64(), total_time.as_secs_f64());
-            } else if !dump_ast && !dump_symbols && !dump_types && !dump_escape && !dump_mir && !dump_c {
+                println!(
+                    "TIMING_JSON: {{\"io\": {}, \"lex\": {}, \"parse\": {}, \"semantic\": {}, \"typecheck\": {}, \"escape\": {}, \"mir\": {}, \"aot\": {}, \"c_codegen\": {}, \"total\": {}}}",
+                    io_time.as_secs_f64(),
+                    lex_time.as_secs_f64(),
+                    parse_time.as_secs_f64(),
+                    sem_time.as_secs_f64(),
+                    ty_time.as_secs_f64(),
+                    esc_time.as_secs_f64(),
+                    mir_time.as_secs_f64(),
+                    aot_time.as_secs_f64(),
+                    codegen_time.as_secs_f64(),
+                    total_time.as_secs_f64()
+                );
+            } else if !dump_ast
+                && !dump_symbols
+                && !dump_types
+                && !dump_escape
+                && !dump_mir
+                && !dump_c
+            {
                 println!("L++ v0.1.3\n");
                 if explicit_emit {
                     println!("Artifacts emitted next to the source file.");
                 } else {
                     println!("Source compilation completed; emitted C source next to the input.");
-                    println!("Tip: use `lpp emit <file.lpp>` for explicit artifact emission or `lpp build` for a package executable.");
+                    println!(
+                        "Tip: use `lpp emit <file.lpp>` for explicit artifact emission or `lpp build` for a package executable."
+                    );
                 }
                 println!("Time: {:.1} ms", total_time.as_secs_f64() * 1000.0);
             }
-        },
+        }
         Err(e) => {
             eprintln!("Escape Analysis error: {}", e);
             return;
@@ -339,7 +389,7 @@ fn resolve_local_imports(
 ) -> Result<(), String> {
     let mut new_decls = Vec::new();
     let mut imports_to_process = Vec::new();
-    
+
     for decl in declarations.iter() {
         if let ast::TopLevel::Import(module) = decl {
             if module != "json" && !imported_files.contains(module) {
@@ -347,7 +397,7 @@ fn resolve_local_imports(
             }
         }
     }
-    
+
     for module in imports_to_process {
         imported_files.insert(module.clone());
         let mut filepath = base_dir.join(format!("{}.lpp", module));
@@ -376,19 +426,19 @@ fn resolve_local_imports(
         }
         let content = std::fs::read_to_string(&filepath)
             .map_err(|e| format!("Failed to read library '{}': {}", filepath.display(), e))?;
-            
+
         let mut lex = lexer::Lexer::new(&content);
         let tokens = lex.tokenize()?;
         let mut par = parser::Parser::new(tokens);
         let mut lib_ast = par.parse()?;
-        
+
         // Recursively resolve imports of the library using its own base directory
         let lib_base_dir = filepath.parent().unwrap_or(std::path::Path::new("."));
         resolve_local_imports(&mut lib_ast.declarations, imported_files, lib_base_dir)?;
-        
+
         new_decls.extend(lib_ast.declarations);
     }
-    
+
     declarations.extend(new_decls);
     Ok(())
 }

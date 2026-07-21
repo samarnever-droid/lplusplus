@@ -1,7 +1,7 @@
-use std::collections::HashMap;
 use crate::ast::*;
-use crate::semantic::{SymbolTable, ScopeId, ScopeKind, BindingId};
-use crate::typecheck::{TypeTable, TypeRef, StructTypeId};
+use crate::semantic::{BindingId, ScopeId, ScopeKind, SymbolTable};
+use crate::typecheck::{StructTypeId, TypeRef, TypeTable};
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StorageClass {
@@ -13,9 +13,13 @@ pub enum StorageClass {
 pub struct EscapeAnalyzer;
 
 impl EscapeAnalyzer {
-    fn promote(storage: &mut HashMap<BindingId, StorageClass>, binding_id: BindingId, new_class: StorageClass) {
+    fn promote(
+        storage: &mut HashMap<BindingId, StorageClass>,
+        binding_id: BindingId,
+        new_class: StorageClass,
+    ) {
         let current = storage.entry(binding_id).or_insert(StorageClass::Value);
-        
+
         match (&current, &new_class) {
             (StorageClass::Value, _) => {
                 *current = new_class;
@@ -63,16 +67,22 @@ impl EscapeAnalyzer {
         for binding in &symbol_table.bindings {
             if let Some(TypeRef::Custom(struct_id)) = &binding.ty {
                 if type_table.definitions[struct_id.0].is_self_referential {
-                    Self::promote(&mut storage, binding.id, StorageClass::Arena { region: *struct_id });
+                    Self::promote(
+                        &mut storage,
+                        binding.id,
+                        StorageClass::Arena { region: *struct_id },
+                    );
                 }
             }
         }
 
-        let closure_scopes: Vec<ScopeId> = symbol_table.scopes.iter()
+        let closure_scopes: Vec<ScopeId> = symbol_table
+            .scopes
+            .iter()
             .filter(|s| matches!(s.kind, ScopeKind::Closure { .. }))
             .map(|s| s.id)
             .collect();
-        
+
         let mut closure_idx = 0;
 
         let mut func_scopes = HashMap::new();
@@ -86,7 +96,15 @@ impl EscapeAnalyzer {
             if let TopLevel::Function(func) = decl {
                 if let Some(&scope_id) = func_scopes.get(&func.name) {
                     for stmt in &func.body {
-                        Self::walk_stmt_rule1(stmt, scope_id, symbol_table, type_table, &closure_scopes, &mut closure_idx, &mut storage)?;
+                        Self::walk_stmt_rule1(
+                            stmt,
+                            scope_id,
+                            symbol_table,
+                            type_table,
+                            &closure_scopes,
+                            &mut closure_idx,
+                            &mut storage,
+                        )?;
                     }
                 }
             }
@@ -95,7 +113,11 @@ impl EscapeAnalyzer {
         Ok(storage)
     }
 
-    fn get_root_binding(mut expr: &Expr, _current_scope: ScopeId, _symbol_table: &SymbolTable) -> Option<BindingId> {
+    fn get_root_binding(
+        mut expr: &Expr,
+        _current_scope: ScopeId,
+        _symbol_table: &SymbolTable,
+    ) -> Option<BindingId> {
         loop {
             match expr {
                 Expr::Identifier(_, binding_id_cell) => {
@@ -113,7 +135,7 @@ impl EscapeAnalyzer {
         expr: &Expr,
         current_scope: ScopeId,
         symbol_table: &SymbolTable,
-        type_table: &TypeTable
+        type_table: &TypeTable,
     ) -> Option<TypeRef> {
         match expr {
             Expr::Identifier(_, _) => {
@@ -130,7 +152,7 @@ impl EscapeAnalyzer {
                 }
                 None
             }
-            _ => None
+            _ => None,
         }
     }
 
@@ -147,7 +169,8 @@ impl EscapeAnalyzer {
         let Some(source) = Self::get_root_binding(value, current_scope, symbol_table) else {
             return;
         };
-        let Some(source_ty) = Self::get_expr_type(value, current_scope, symbol_table, type_table) else {
+        let Some(source_ty) = Self::get_expr_type(value, current_scope, symbol_table, type_table)
+        else {
             return;
         };
         if matches!(source_ty, TypeRef::Custom(_) | TypeRef::Generic(_, _)) {
@@ -157,78 +180,202 @@ impl EscapeAnalyzer {
     }
 
     fn walk_stmt_rule1(
-        stmt: &Stmt, 
-        current_scope: ScopeId, 
+        stmt: &Stmt,
+        current_scope: ScopeId,
         symbol_table: &SymbolTable,
         type_table: &TypeTable,
-        closure_scopes: &[ScopeId], 
+        closure_scopes: &[ScopeId],
         closure_idx: &mut usize,
-        storage: &mut HashMap<BindingId, StorageClass>
+        storage: &mut HashMap<BindingId, StorageClass>,
     ) -> Result<(), String> {
         match stmt {
-            Stmt::LetInferred { value, binding_id, .. } => {
+            Stmt::LetInferred {
+                value, binding_id, ..
+            } => {
                 if let Some(id) = binding_id.get() {
                     Self::promote_direct_alias(
-                        BindingId(id), value, current_scope, symbol_table, type_table, storage,
+                        BindingId(id),
+                        value,
+                        current_scope,
+                        symbol_table,
+                        type_table,
+                        storage,
                     );
                 }
-                Self::walk_expr_rule1(value, current_scope, symbol_table, type_table, closure_scopes, closure_idx, storage)?;
+                Self::walk_expr_rule1(
+                    value,
+                    current_scope,
+                    symbol_table,
+                    type_table,
+                    closure_scopes,
+                    closure_idx,
+                    storage,
+                )?;
             }
-            Stmt::Assign { value, binding_id, .. } => {
+            Stmt::Assign {
+                value, binding_id, ..
+            } => {
                 if let Some(id) = binding_id.get() {
                     Self::promote_direct_alias(
-                        BindingId(id), value, current_scope, symbol_table, type_table, storage,
+                        BindingId(id),
+                        value,
+                        current_scope,
+                        symbol_table,
+                        type_table,
+                        storage,
                     );
                 }
-                Self::walk_expr_rule1(value, current_scope, symbol_table, type_table, closure_scopes, closure_idx, storage)?;
+                Self::walk_expr_rule1(
+                    value,
+                    current_scope,
+                    symbol_table,
+                    type_table,
+                    closure_scopes,
+                    closure_idx,
+                    storage,
+                )?;
             }
-            Stmt::AssignField { base, field: _, value } => {
-                Self::walk_expr_rule1(base, current_scope, symbol_table, type_table, closure_scopes, closure_idx, storage)?;
-                Self::walk_expr_rule1(value, current_scope, symbol_table, type_table, closure_scopes, closure_idx, storage)?;
+            Stmt::AssignField {
+                base,
+                field: _,
+                value,
+            } => {
+                Self::walk_expr_rule1(
+                    base,
+                    current_scope,
+                    symbol_table,
+                    type_table,
+                    closure_scopes,
+                    closure_idx,
+                    storage,
+                )?;
+                Self::walk_expr_rule1(
+                    value,
+                    current_scope,
+                    symbol_table,
+                    type_table,
+                    closure_scopes,
+                    closure_idx,
+                    storage,
+                )?;
             }
-            Stmt::If { condition, then_block, else_block } => {
-                Self::walk_expr_rule1(condition, current_scope, symbol_table, type_table, closure_scopes, closure_idx, storage)?;
+            Stmt::If {
+                condition,
+                then_block,
+                else_block,
+            } => {
+                Self::walk_expr_rule1(
+                    condition,
+                    current_scope,
+                    symbol_table,
+                    type_table,
+                    closure_scopes,
+                    closure_idx,
+                    storage,
+                )?;
                 for stmt in then_block {
-                    Self::walk_stmt_rule1(stmt, current_scope, symbol_table, type_table, closure_scopes, closure_idx, storage)?;
+                    Self::walk_stmt_rule1(
+                        stmt,
+                        current_scope,
+                        symbol_table,
+                        type_table,
+                        closure_scopes,
+                        closure_idx,
+                        storage,
+                    )?;
                 }
                 if let Some(else_b) = else_block {
                     for stmt in else_b {
-                        Self::walk_stmt_rule1(stmt, current_scope, symbol_table, type_table, closure_scopes, closure_idx, storage)?;
+                        Self::walk_stmt_rule1(
+                            stmt,
+                            current_scope,
+                            symbol_table,
+                            type_table,
+                            closure_scopes,
+                            closure_idx,
+                            storage,
+                        )?;
                     }
                 }
             }
             Stmt::While { condition, body } => {
-                Self::walk_expr_rule1(condition, current_scope, symbol_table, type_table, closure_scopes, closure_idx, storage)?;
+                Self::walk_expr_rule1(
+                    condition,
+                    current_scope,
+                    symbol_table,
+                    type_table,
+                    closure_scopes,
+                    closure_idx,
+                    storage,
+                )?;
                 for stmt in body {
-                    Self::walk_stmt_rule1(stmt, current_scope, symbol_table, type_table, closure_scopes, closure_idx, storage)?;
+                    Self::walk_stmt_rule1(
+                        stmt,
+                        current_scope,
+                        symbol_table,
+                        type_table,
+                        closure_scopes,
+                        closure_idx,
+                        storage,
+                    )?;
                 }
             }
             Stmt::Block(stmts) => {
                 for stmt in stmts {
-                    Self::walk_stmt_rule1(stmt, current_scope, symbol_table, type_table, closure_scopes, closure_idx, storage)?;
+                    Self::walk_stmt_rule1(
+                        stmt,
+                        current_scope,
+                        symbol_table,
+                        type_table,
+                        closure_scopes,
+                        closure_idx,
+                        storage,
+                    )?;
                 }
             }
             Stmt::Expr(expr) => {
-                Self::walk_expr_rule1(expr, current_scope, symbol_table, type_table, closure_scopes, closure_idx, storage)?;
+                Self::walk_expr_rule1(
+                    expr,
+                    current_scope,
+                    symbol_table,
+                    type_table,
+                    closure_scopes,
+                    closure_idx,
+                    storage,
+                )?;
             }
             Stmt::Return(Some(expr)) => {
                 let mut should_promote = false;
-                if let Some(ty) = Self::get_expr_type(expr, current_scope, symbol_table, type_table) {
+                if let Some(ty) = Self::get_expr_type(expr, current_scope, symbol_table, type_table)
+                {
                     if matches!(ty, TypeRef::Custom(_)) {
                         should_promote = true;
                     }
                 }
 
                 if should_promote {
-                    if let Some(binding_id) = Self::get_root_binding(expr, current_scope, symbol_table) {
+                    if let Some(binding_id) =
+                        Self::get_root_binding(expr, current_scope, symbol_table)
+                    {
                         let binding = &symbol_table.bindings[binding_id.0];
-                        if !matches!(symbol_table.scopes[binding.declared_in.0].kind, ScopeKind::Global) {
+                        if !matches!(
+                            symbol_table.scopes[binding.declared_in.0].kind,
+                            ScopeKind::Global
+                        ) {
                             Self::promote(storage, binding_id, StorageClass::Arc);
                         }
                     }
                 }
-                
-                Self::walk_expr_rule1(expr, current_scope, symbol_table, type_table, closure_scopes, closure_idx, storage)?;
+
+                Self::walk_expr_rule1(
+                    expr,
+                    current_scope,
+                    symbol_table,
+                    type_table,
+                    closure_scopes,
+                    closure_idx,
+                    storage,
+                )?;
             }
             Stmt::Return(None) => {}
         }
@@ -236,44 +383,102 @@ impl EscapeAnalyzer {
     }
 
     fn walk_expr_rule1(
-        expr: &Expr, 
-        current_scope: ScopeId, 
+        expr: &Expr,
+        current_scope: ScopeId,
         symbol_table: &SymbolTable,
         type_table: &TypeTable,
-        closure_scopes: &[ScopeId], 
+        closure_scopes: &[ScopeId],
         closure_idx: &mut usize,
-        storage: &mut HashMap<BindingId, StorageClass>
+        storage: &mut HashMap<BindingId, StorageClass>,
     ) -> Result<(), String> {
         match expr {
             Expr::BinaryOp { left, right, .. } => {
-                Self::walk_expr_rule1(left, current_scope, symbol_table, type_table, closure_scopes, closure_idx, storage)?;
-                Self::walk_expr_rule1(right, current_scope, symbol_table, type_table, closure_scopes, closure_idx, storage)?;
+                Self::walk_expr_rule1(
+                    left,
+                    current_scope,
+                    symbol_table,
+                    type_table,
+                    closure_scopes,
+                    closure_idx,
+                    storage,
+                )?;
+                Self::walk_expr_rule1(
+                    right,
+                    current_scope,
+                    symbol_table,
+                    type_table,
+                    closure_scopes,
+                    closure_idx,
+                    storage,
+                )?;
             }
             Expr::Call { callee, args } => {
-                Self::walk_expr_rule1(callee, current_scope, symbol_table, type_table, closure_scopes, closure_idx, storage)?;
+                Self::walk_expr_rule1(
+                    callee,
+                    current_scope,
+                    symbol_table,
+                    type_table,
+                    closure_scopes,
+                    closure_idx,
+                    storage,
+                )?;
                 for arg in args {
-                    Self::walk_expr_rule1(arg, current_scope, symbol_table, type_table, closure_scopes, closure_idx, storage)?;
+                    Self::walk_expr_rule1(
+                        arg,
+                        current_scope,
+                        symbol_table,
+                        type_table,
+                        closure_scopes,
+                        closure_idx,
+                        storage,
+                    )?;
                 }
             }
             Expr::Closure { body, .. } => {
                 let scope_id = closure_scopes[*closure_idx];
                 *closure_idx += 1;
-                
+
                 for stmt in body {
-                    Self::walk_stmt_rule1(stmt, scope_id, symbol_table, type_table, closure_scopes, closure_idx, storage)?;
+                    Self::walk_stmt_rule1(
+                        stmt,
+                        scope_id,
+                        symbol_table,
+                        type_table,
+                        closure_scopes,
+                        closure_idx,
+                        storage,
+                    )?;
                 }
             }
             Expr::FieldAccess { base, .. } => {
-                Self::walk_expr_rule1(base, current_scope, symbol_table, type_table, closure_scopes, closure_idx, storage)?;
+                Self::walk_expr_rule1(
+                    base,
+                    current_scope,
+                    symbol_table,
+                    type_table,
+                    closure_scopes,
+                    closure_idx,
+                    storage,
+                )?;
             }
             Expr::Spawn { closure } => {
                 // Rule 4: Crossing a concurrency boundary.
-                Self::walk_expr_rule1(closure, current_scope, symbol_table, type_table, closure_scopes, closure_idx, storage)?;
+                Self::walk_expr_rule1(
+                    closure,
+                    current_scope,
+                    symbol_table,
+                    type_table,
+                    closure_scopes,
+                    closure_idx,
+                    storage,
+                )?;
             }
             Expr::ListLiteral(elements) => {
                 for element in elements {
                     let mut should_promote = false;
-                    if let Some(ty) = Self::get_expr_type(element, current_scope, symbol_table, type_table) {
+                    if let Some(ty) =
+                        Self::get_expr_type(element, current_scope, symbol_table, type_table)
+                    {
                         if matches!(ty, TypeRef::Custom(_)) {
                             should_promote = true;
                         }
@@ -281,14 +486,27 @@ impl EscapeAnalyzer {
 
                     if should_promote {
                         // Rule 3: Unbounded lifetime container.
-                        if let Some(binding_id) = Self::get_root_binding(element, current_scope, symbol_table) {
+                        if let Some(binding_id) =
+                            Self::get_root_binding(element, current_scope, symbol_table)
+                        {
                             let binding = &symbol_table.bindings[binding_id.0];
-                            if !matches!(symbol_table.scopes[binding.declared_in.0].kind, ScopeKind::Global) {
+                            if !matches!(
+                                symbol_table.scopes[binding.declared_in.0].kind,
+                                ScopeKind::Global
+                            ) {
                                 Self::promote(storage, binding_id, StorageClass::Arc);
                             }
                         }
                     }
-                    Self::walk_expr_rule1(element, current_scope, symbol_table, type_table, closure_scopes, closure_idx, storage)?;
+                    Self::walk_expr_rule1(
+                        element,
+                        current_scope,
+                        symbol_table,
+                        type_table,
+                        closure_scopes,
+                        closure_idx,
+                        storage,
+                    )?;
                 }
             }
             _ => {}

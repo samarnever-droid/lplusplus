@@ -4,9 +4,9 @@
 //! allocations, moves, borrows, ARC instructions, or terminators. Therefore it
 //! cannot remove an ownership edge; ARC insertion still runs afterwards.
 
-use std::collections::HashMap;
 use crate::ast::BinaryOperator;
 use crate::mir::ir::{LocalId, MirInstr, MirProgram, Operand, Ownership, Rvalue};
+use std::collections::HashMap;
 
 fn int_binary(op: &BinaryOperator, left: i64, right: i64) -> Option<Operand> {
     let value = match op {
@@ -52,7 +52,10 @@ fn substitute(operand: &Operand, constants: &HashMap<LocalId, Operand>) -> Opera
     match operand {
         // Only plain local scalar reads participate. Borrowed reads are an
         // ownership contract and must remain visible to ARC analysis.
-        Operand::Local(id) => constants.get(id).cloned().unwrap_or_else(|| operand.clone()),
+        Operand::Local(id) => constants
+            .get(id)
+            .cloned()
+            .unwrap_or_else(|| operand.clone()),
         _ => operand.clone(),
     }
 }
@@ -66,22 +69,32 @@ pub fn run(program: &mut MirProgram) -> usize {
             let mut constants: HashMap<LocalId, Operand> = HashMap::new();
             for instruction in &mut block.instrs {
                 let replacement = match instruction {
-                    MirInstr::Assign(destination, Rvalue::Use(value)) => {
-                        Some((*destination, Rvalue::Use(substitute(value, &constants)), false))
-                    }
+                    MirInstr::Assign(destination, Rvalue::Use(value)) => Some((
+                        *destination,
+                        Rvalue::Use(substitute(value, &constants)),
+                        false,
+                    )),
                     MirInstr::Assign(destination, Rvalue::BinaryOp(op, left, right)) => {
                         let left = substitute(left, &constants);
                         let right = substitute(right, &constants);
                         match simplify(op, &left, &right) {
                             Some(value) => Some((*destination, Rvalue::Use(value), true)),
-                            None => Some((*destination, Rvalue::BinaryOp(op.clone(), left, right), false)),
+                            None => Some((
+                                *destination,
+                                Rvalue::BinaryOp(op.clone(), left, right),
+                                false,
+                            )),
                         }
                     }
                     _ => None,
                 };
-                let Some((destination, rvalue, folded)) = replacement else { continue; };
+                let Some((destination, rvalue, folded)) = replacement else {
+                    continue;
+                };
                 *instruction = MirInstr::Assign(destination, rvalue.clone());
-                if folded { rewrites += 1; }
+                if folded {
+                    rewrites += 1;
+                }
                 // Constants are tracked only for copy locals. This prevents a
                 // user-visible scalar simplification from ever treating an ARC
                 // pointer, borrowed field, or container as a duplicable value.
@@ -90,7 +103,9 @@ pub fn run(program: &mut MirProgram) -> usize {
                     Rvalue::Use(value) if copy_local && scalar_constant(&value) => {
                         constants.insert(destination, value);
                     }
-                    _ => { constants.remove(&destination); }
+                    _ => {
+                        constants.remove(&destination);
+                    }
                 }
             }
         }
@@ -103,8 +118,18 @@ mod tests {
     use super::*;
     #[test]
     fn folds_constants_and_keeps_divide_by_zero_unmodified() {
-        assert!(matches!(simplify(&BinaryOperator::Multiply, &Operand::Int(9), &Operand::Int(0)), Some(Operand::Int(0))));
-        assert!(matches!(simplify(&BinaryOperator::Less, &Operand::Int(2), &Operand::Int(3)), Some(Operand::Bool(true))));
+        assert!(matches!(
+            simplify(
+                &BinaryOperator::Multiply,
+                &Operand::Int(9),
+                &Operand::Int(0)
+            ),
+            Some(Operand::Int(0))
+        ));
+        assert!(matches!(
+            simplify(&BinaryOperator::Less, &Operand::Int(2), &Operand::Int(3)),
+            Some(Operand::Bool(true))
+        ));
         assert!(simplify(&BinaryOperator::Divide, &Operand::Int(9), &Operand::Int(0)).is_none());
     }
 }

@@ -27,7 +27,7 @@ int64_t lpp_command_exec(const char *cmdline) {
     STARTUPINFOA si = {sizeof(si)};
     PROCESS_INFORMATION pi = {0};
     si.dwFlags = STARTF_USESTDHANDLES;
-    char *dup = malloc(strlen(cmdline) + 1); if (dup) strcpy(dup, cmdline)(cmdline);
+    char *dup = malloc(strlen(cmdline) + 1); if (dup) strcpy(dup, cmdline);
     if (!dup) return -1;
     BOOL ok = CreateProcessA(NULL, dup, NULL, NULL, FALSE,
                               CREATE_NO_WINDOW, NULL, NULL, &si, &pi);
@@ -53,7 +53,7 @@ char *lpp_command_output(const char *cmdline) {
     si.hStdOutput = hWrite;
     si.hStdError  = hWrite;
 
-    char *dup = malloc(strlen(cmdline) + 1); if (dup) strcpy(dup, cmdline)(cmdline);
+    char *dup = malloc(strlen(cmdline) + 1); if (dup) strcpy(dup, cmdline);
     BOOL ok = CreateProcessA(NULL, dup, NULL, NULL, TRUE,
                               CREATE_NO_WINDOW, NULL, NULL, &si, &pi);
     free(dup);

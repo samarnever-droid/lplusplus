@@ -1,6 +1,6 @@
 use std::fs;
-use std::path::{Path, PathBuf};
 use std::hash::{Hash, Hasher};
+use std::path::{Path, PathBuf};
 
 #[derive(Debug)]
 #[allow(dead_code)]
@@ -43,24 +43,24 @@ pub fn parse_toml(content: &str) -> Result<Package, String> {
     let mut author = None;
     let mut entry = None;
     let mut dependencies = Vec::new();
-    
+
     let mut current_section = "";
-    
+
     for (line_idx, raw_line) in content.lines().enumerate() {
         let line = raw_line.trim();
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        
+
         if line.starts_with('[') && line.ends_with(']') {
-            current_section = &line[1..line.len()-1];
+            current_section = &line[1..line.len() - 1];
             continue;
         }
-        
+
         if let Some(eq_idx) = line.find('=') {
             let key = line[..eq_idx].trim();
-            let val_str = line[eq_idx+1..].trim();
-            
+            let val_str = line[eq_idx + 1..].trim();
+
             match current_section {
                 "package" => {
                     let cleaned_val = val_str.trim_matches('"').trim_matches('\'').to_string();
@@ -76,17 +76,22 @@ pub fn parse_toml(content: &str) -> Result<Package, String> {
                 }
                 "dependencies" => {
                     if val_str.starts_with('{') && val_str.ends_with('}') {
-                        let inline = &val_str[1..val_str.len()-1];
+                        let inline = &val_str[1..val_str.len() - 1];
                         let mut git = None;
                         let mut version = None;
                         let mut tag = None;
                         let mut branch = None;
                         let mut path = None;
-                        
+
                         for part in inline.split(',') {
                             if let Some(p_eq) = part.find('=') {
                                 let pk = part[..p_eq].trim();
-                                let pv = part[p_eq+1..].trim().trim_matches('"').trim_matches('\'').trim().to_string();
+                                let pv = part[p_eq + 1..]
+                                    .trim()
+                                    .trim_matches('"')
+                                    .trim_matches('\'')
+                                    .trim()
+                                    .to_string();
                                 if pk == "git" {
                                     git = Some(pv);
                                 } else if pk == "version" {
@@ -111,24 +116,29 @@ pub fn parse_toml(content: &str) -> Result<Package, String> {
                     } else {
                         return Err(format!(
                             "Line {}: invalid dependency value '{}'. Must be an inline table {{ ... }}",
-                            line_idx + 1, val_str
+                            line_idx + 1,
+                            val_str
                         ));
                     }
                 }
                 _ => {}
             }
         } else {
-            return Err(format!("Line {}: invalid TOML syntax '{}'", line_idx + 1, line));
+            return Err(format!(
+                "Line {}: invalid TOML syntax '{}'",
+                line_idx + 1,
+                line
+            ));
         }
     }
-    
+
     if name.is_empty() {
         return Err("Missing package name in [package] section".to_string());
     }
     if version.is_empty() {
         return Err("Missing package version in [package] section".to_string());
     }
-    
+
     Ok(Package {
         name,
         version,
@@ -195,8 +205,8 @@ fn write_project_scaffold(base_dir: &Path, package_name: &str) -> Result<(), Str
 }
 
 fn read_manifest() -> Result<Package, String> {
-    let content = fs::read_to_string("lpp.toml")
-        .map_err(|e| format!("Failed to read lpp.toml: {}", e))?;
+    let content =
+        fs::read_to_string("lpp.toml").map_err(|e| format!("Failed to read lpp.toml: {}", e))?;
     parse_toml(&content)
 }
 
@@ -247,7 +257,8 @@ fn read_lockfile() -> Vec<LockedPackage> {
 }
 
 fn registry_package_names() -> Vec<String> {
-    let json = fs::read_to_string(Path::new("githubpage").join("registry.json")).unwrap_or_default();
+    let json =
+        fs::read_to_string(Path::new("githubpage").join("registry.json")).unwrap_or_default();
     let mut names = Vec::new();
     let mut in_packages = false;
     for raw_line in json.lines() {
@@ -331,8 +342,14 @@ enum LinkStrategy {
     /// Host linker/compiler invocation with a prebuilt L++ runtime object.
     /// This is Phase 1 of the native-linker roadmap: user builds no longer
     /// compile lpp_runtime.c on every project build.
-    CCompilerObject { compiler: String, runtime_obj: PathBuf },
-    CCompiler { compiler: String, runtime_src: PathBuf },
+    CCompilerObject {
+        compiler: String,
+        runtime_obj: PathBuf,
+    },
+    CCompiler {
+        compiler: String,
+        runtime_src: PathBuf,
+    },
 }
 
 fn detect_link_strategy() -> Result<LinkStrategy, String> {
@@ -371,7 +388,10 @@ fn detect_link_strategy() -> Result<LinkStrategy, String> {
         }
     }
 
-    Err("No supported native linker/compiler found. Install MSVC build tools, cc, gcc, or clang.".to_string())
+    Err(
+        "No supported native linker/compiler found. Install MSVC build tools, cc, gcc, or clang."
+            .to_string(),
+    )
 }
 
 fn should_use_mold(compiler: &str) -> Result<bool, String> {
@@ -381,7 +401,9 @@ fn should_use_mold(compiler: &str) -> Result<bool, String> {
     let requested_mold = std::env::var("LPP_LINKER").ok().as_deref() == Some("mold");
     let has_mold = command_available("mold", &["--version"]);
     if requested_mold && !has_mold {
-        return Err("LPP_LINKER=mold was requested, but 'mold' binary was not found in PATH.".to_string());
+        return Err(
+            "LPP_LINKER=mold was requested, but 'mold' binary was not found in PATH.".to_string(),
+        );
     }
     Ok(requested_mold || has_mold)
 }
@@ -392,26 +414,38 @@ fn package_cache_key(source_path: &Path) -> Result<String, String> {
     let mut files = Vec::new();
     if Path::new("src").is_dir() {
         for entry in fs::read_dir("src").map_err(|e| format!("read src for cache: {}", e))? {
-            let path = entry.map_err(|e| format!("read cache entry: {}", e))?.path();
-            if path.extension().is_some_and(|ext| ext == "lpp") { files.push(path); }
+            let path = entry
+                .map_err(|e| format!("read cache entry: {}", e))?
+                .path();
+            if path.extension().is_some_and(|ext| ext == "lpp") {
+                files.push(path);
+            }
         }
     }
-    if !files.iter().any(|path| path == source_path) { files.push(source_path.to_path_buf()); }
+    if !files.iter().any(|path| path == source_path) {
+        files.push(source_path.to_path_buf());
+    }
     files.sort();
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     env!("CARGO_PKG_VERSION").hash(&mut hasher);
     std::env::consts::OS.hash(&mut hasher);
     std::env::consts::ARCH.hash(&mut hasher);
-    std::env::var("LPP_AOT_OPT").unwrap_or_else(|_| "none".to_string()).hash(&mut hasher);
+    std::env::var("LPP_AOT_OPT")
+        .unwrap_or_else(|_| "none".to_string())
+        .hash(&mut hasher);
     if let Ok(linker_var) = std::env::var("LPP_LINKER") {
         linker_var.hash(&mut hasher);
     }
     command_available("mold", &["--version"]).hash(&mut hasher);
     for path in files {
         path.to_string_lossy().hash(&mut hasher);
-        fs::read(&path).map_err(|e| format!("read '{}' for cache: {}", path.display(), e))?.hash(&mut hasher);
+        fs::read(&path)
+            .map_err(|e| format!("read '{}' for cache: {}", path.display(), e))?
+            .hash(&mut hasher);
     }
-    if let Ok(manifest) = fs::read("lpp.toml") { manifest.hash(&mut hasher); }
+    if let Ok(manifest) = fs::read("lpp.toml") {
+        manifest.hash(&mut hasher);
+    }
     Ok(format!("{:016x}", hasher.finish()))
 }
 
@@ -436,10 +470,19 @@ fn compile_source_to_object(source_path: &Path) -> Result<PathBuf, String> {
         .arg(source_path)
         .stdin(std::process::Stdio::null())
         .status()
-        .map_err(|e| format!("Failed to start compiler '{}': {}", compiler_path.display(), e))?;
+        .map_err(|e| {
+            format!(
+                "Failed to start compiler '{}': {}",
+                compiler_path.display(),
+                e
+            )
+        })?;
 
     if !status.success() {
-        return Err(format!("Compilation failed for '{}'.", source_path.display()));
+        return Err(format!(
+            "Compilation failed for '{}'.",
+            source_path.display()
+        ));
     }
     if !obj_file.exists() {
         return Err(format!(
@@ -476,10 +519,16 @@ fn direct_link_binary(obj_file: &Path, output_path: &Path) -> Result<(), String>
     let linker = current_binary_dir()
         .map(|dir| dir.join(format!("lpp-link{}", std::env::consts::EXE_SUFFIX)))
         .filter(|path| path.exists())
-        .ok_or_else(|| "Direct linker requested but lpp-link is not installed beside lpp.".to_string())?;
+        .ok_or_else(|| {
+            "Direct linker requested but lpp-link is not installed beside lpp.".to_string()
+        })?;
 
     let runtime = {
-        let ext = if cfg!(target_os = "windows") { "obj" } else { "o" };
+        let ext = if cfg!(target_os = "windows") {
+            "obj"
+        } else {
+            "o"
+        };
         installed_root_dir()
             .map(|root| root.join("lib").join(format!("lpp_runtime_min.{ext}")))
             .filter(|path| path.exists())
@@ -495,7 +544,11 @@ fn direct_link_binary(obj_file: &Path, output_path: &Path) -> Result<(), String>
         .stdin(std::process::Stdio::null())
         .status()
         .map_err(|e| format!("Failed to execute lpp-link: {e}"))?;
-    if status.success() { Ok(()) } else { Err("lpp-link failed while creating native executable.".to_string()) }
+    if status.success() {
+        Ok(())
+    } else {
+        Err("lpp-link failed while creating native executable.".to_string())
+    }
 }
 
 fn link_native_binary(obj_file: &Path, output_path: &Path) -> Result<(), String> {
@@ -511,7 +564,9 @@ fn link_native_binary(obj_file: &Path, output_path: &Path) -> Result<(), String>
             cmd.stdin(std::process::Stdio::piped());
             cmd.stdout(std::process::Stdio::null());
             cmd.stderr(std::process::Stdio::null());
-            let mut child = cmd.spawn().map_err(|e| format!("Failed to spawn cmd.exe: {}", e))?;
+            let mut child = cmd
+                .spawn()
+                .map_err(|e| format!("Failed to spawn cmd.exe: {}", e))?;
             {
                 use std::io::Write;
                 if let Some(mut stdin) = child.stdin.take() {
@@ -526,7 +581,9 @@ fn link_native_binary(obj_file: &Path, output_path: &Path) -> Result<(), String>
                     let _ = writeln!(stdin, "exit");
                 }
             }
-            let status = child.wait().map_err(|e| format!("Failed to wait for cmd.exe: {}", e))?;
+            let status = child
+                .wait()
+                .map_err(|e| format!("Failed to wait for cmd.exe: {}", e))?;
             if status.success() {
                 // Delete temporary MSVC outputs generated in current dir
                 let obj_in_curr_dir = Path::new("lpp_runtime.obj");
@@ -554,7 +611,10 @@ fn link_native_binary(obj_file: &Path, output_path: &Path) -> Result<(), String>
             if status.success() {
                 Ok(())
             } else {
-                Err(format!("link.exe failed while creating '{}'.", output_path.display()))
+                Err(format!(
+                    "link.exe failed while creating '{}'.",
+                    output_path.display()
+                ))
             }
         }
         LinkStrategy::CCompilerObject {
@@ -574,7 +634,9 @@ fn link_native_binary(obj_file: &Path, output_path: &Path) -> Result<(), String>
                     cmd.arg("-Wl,--icf=all");
                     cmd.arg("-Wl,--as-needed");
                     cmd.arg("-Wl,-O1");
-                    if std::env::var("LPP_RELEASE").ok().as_deref() == Some("1") || std::env::var("RELEASE").ok().as_deref() == Some("1") {
+                    if std::env::var("LPP_RELEASE").ok().as_deref() == Some("1")
+                        || std::env::var("RELEASE").ok().as_deref() == Some("1")
+                    {
                         cmd.arg("-Wl,-s");
                     }
                 }
@@ -619,7 +681,9 @@ fn link_native_binary(obj_file: &Path, output_path: &Path) -> Result<(), String>
                     cmd.arg("-Wl,--icf=all");
                     cmd.arg("-Wl,--as-needed");
                     cmd.arg("-Wl,-O1");
-                    if std::env::var("LPP_RELEASE").ok().as_deref() == Some("1") || std::env::var("RELEASE").ok().as_deref() == Some("1") {
+                    if std::env::var("LPP_RELEASE").ok().as_deref() == Some("1")
+                        || std::env::var("RELEASE").ok().as_deref() == Some("1")
+                    {
                         cmd.arg("-Wl,-s");
                     }
                 }
@@ -651,13 +715,12 @@ fn link_native_binary(obj_file: &Path, output_path: &Path) -> Result<(), String>
     }
 }
 
-
 pub fn run_command(args: &[String]) {
     if args.is_empty() {
         print_help();
         return;
     }
-    
+
     match args[0].as_str() {
         "new" => cmd_new(&args[1..]),
         "init" => cmd_init(&args[1..]),
@@ -727,7 +790,10 @@ fn cmd_new(args: &[String]) {
     let package_name = normalize_package_name(raw_name);
     let project_dir = PathBuf::from(raw_name);
     if project_dir.exists() {
-        eprintln!("[L++] Error: directory '{}' already exists.", project_dir.display());
+        eprintln!(
+            "[L++] Error: directory '{}' already exists.",
+            project_dir.display()
+        );
         return;
     }
     println!("[L++] Creating new project '{}'...", raw_name);
@@ -736,13 +802,18 @@ fn cmd_new(args: &[String]) {
         return;
     }
     match write_project_scaffold(&project_dir, &package_name) {
-        Ok(()) => println!("[L++] Project '{}' created at {}.", package_name, project_dir.display()),
+        Ok(()) => println!(
+            "[L++] Project '{}' created at {}.",
+            package_name,
+            project_dir.display()
+        ),
         Err(e) => eprintln!("{}", e),
     }
 }
 
 fn cmd_init(args: &[String]) {
-    let project_name = normalize_package_name(args.get(0).map(|s| s.as_str()).unwrap_or("my_project"));
+    let project_name =
+        normalize_package_name(args.get(0).map(|s| s.as_str()).unwrap_or("my_project"));
     println!("[L++] Initializing new project '{}'...", project_name);
     match write_project_scaffold(Path::new("."), &project_name) {
         Ok(()) => println!("[L++] Project '{}' initialized successfully!", project_name),
@@ -755,20 +826,29 @@ pub fn resolve_from_json(json_str: &str, target_name: &str) -> Option<RegistryEn
     if let Some(target_idx) = json_str.find(&quoted_target) {
         let rest = &json_str[target_idx + quoted_target.len()..];
         if let Some(colon_idx) = rest.find(':') {
-            let block_rest = &rest[colon_idx+1..];
+            let block_rest = &rest[colon_idx + 1..];
             if let Some(open_brace) = block_rest.find('{') {
-                let entry_content = &block_rest[open_brace+1..];
+                let entry_content = &block_rest[open_brace + 1..];
                 if let Some(close_brace) = entry_content.find('}') {
                     let entry_str = &entry_content[..close_brace];
-                    
+
                     let mut git = String::new();
                     let mut branch = None;
                     let mut tag = None;
-                    
+
                     for field_part in entry_str.split(',') {
                         if let Some(eq_idx) = field_part.find(':') {
-                            let key = field_part[..eq_idx].trim().trim_matches('"').trim_matches('\'').trim();
-                            let val = field_part[eq_idx+1..].trim().trim_matches('"').trim_matches('\'').trim().to_string();
+                            let key = field_part[..eq_idx]
+                                .trim()
+                                .trim_matches('"')
+                                .trim_matches('\'')
+                                .trim();
+                            let val = field_part[eq_idx + 1..]
+                                .trim()
+                                .trim_matches('"')
+                                .trim_matches('\'')
+                                .trim()
+                                .to_string();
                             if key == "git" {
                                 git = val;
                             } else if key == "branch" {
@@ -778,7 +858,7 @@ pub fn resolve_from_json(json_str: &str, target_name: &str) -> Option<RegistryEn
                             }
                         }
                     }
-                    
+
                     if !git.is_empty() {
                         return Some(RegistryEntry { git, branch, tag });
                     }
@@ -838,7 +918,7 @@ fn cmd_install(force_update: bool) {
         eprintln!("[L++] Error: lpp.toml not found in the current directory.");
         return;
     }
-    
+
     let content = match fs::read_to_string("lpp.toml") {
         Ok(c) => c,
         Err(e) => {
@@ -846,7 +926,7 @@ fn cmd_install(force_update: bool) {
             return;
         }
     };
-    
+
     let package = match parse_toml(&content) {
         Ok(pkg) => pkg,
         Err(e) => {
@@ -854,7 +934,7 @@ fn cmd_install(force_update: bool) {
             return;
         }
     };
-    
+
     let pkg_dir = std::path::Path::new(".lpp_packages");
     if !pkg_dir.exists() {
         if let Err(e) = fs::create_dir_all(pkg_dir) {
@@ -862,29 +942,35 @@ fn cmd_install(force_update: bool) {
             return;
         }
     }
-    
+
     let mut lock_content = String::from("# Generated by L++ Package Manager. Do not edit.\n\n");
-    
+
     for dep in &package.dependencies {
         println!("[L++] Installing '{}'...", dep.name);
         let dest_path = pkg_dir.join(&dep.name);
-        
+
         let mut dep_git = dep.git.clone();
         let mut dep_branch = dep.branch.clone();
         let mut dep_tag = dep.tag.clone();
-        
+
         if dep_git.is_none() && dep.path.is_none() {
             if let Some(entry) = resolve_registry_package(&dep.name) {
-                println!("[L++] Resolved '{}' from registry -> {}", dep.name, entry.git);
+                println!(
+                    "[L++] Resolved '{}' from registry -> {}",
+                    dep.name, entry.git
+                );
                 dep_git = Some(entry.git);
                 dep_branch = entry.branch;
                 dep_tag = entry.tag;
             } else {
-                eprintln!("[L++] Error: dependency '{}' has no source (git/path) and is not in the registry.", dep.name);
+                eprintln!(
+                    "[L++] Error: dependency '{}' has no source (git/path) and is not in the registry.",
+                    dep.name
+                );
                 continue;
             }
         }
-        
+
         if let Some(ref git_url) = dep_git {
             let mut git_checkout_needed = false;
             if dest_path.exists() {
@@ -892,12 +978,18 @@ fn cmd_install(force_update: bool) {
                     println!("  Updating '{}' from {}...", dep.name, git_url);
                     let status = std::process::Command::new("git")
                         .env("GIT_TERMINAL_PROMPT", "0")
-                        .args(&["-c", "credential.helper=", "-C", dest_path.to_str().unwrap(), "pull"])
+                        .args(&[
+                            "-c",
+                            "credential.helper=",
+                            "-C",
+                            dest_path.to_str().unwrap(),
+                            "pull",
+                        ])
                         .status();
                     match status {
                         Ok(s) if s.success() => {
                             git_checkout_needed = true;
-                        },
+                        }
                         _ => {
                             eprintln!("  Failed to pull updates for '{}'. skipping.", dep.name);
                             continue;
@@ -910,38 +1002,65 @@ fn cmd_install(force_update: bool) {
                 println!("  Cloning '{}' from {}...", dep.name, git_url);
                 let status = std::process::Command::new("git")
                     .env("GIT_TERMINAL_PROMPT", "0")
-                    .args(&["-c", "credential.helper=", "clone", git_url, dest_path.to_str().unwrap()])
+                    .args(&[
+                        "-c",
+                        "credential.helper=",
+                        "clone",
+                        git_url,
+                        dest_path.to_str().unwrap(),
+                    ])
                     .status();
                 match status {
                     Ok(s) if s.success() => {
                         git_checkout_needed = true;
-                    },
+                    }
                     _ => {
                         eprintln!("  Failed to clone '{}'. skipping.", dep.name);
                         continue;
                     }
                 }
             }
-            
+
             if git_checkout_needed {
                 if let Some(ref tag) = dep_tag {
                     println!("  Checking out tag '{}'...", tag);
                     let _ = std::process::Command::new("git")
                         .env("GIT_TERMINAL_PROMPT", "0")
-                        .args(&["-c", "credential.helper=", "-C", dest_path.to_str().unwrap(), "checkout", tag])
+                        .args(&[
+                            "-c",
+                            "credential.helper=",
+                            "-C",
+                            dest_path.to_str().unwrap(),
+                            "checkout",
+                            tag,
+                        ])
                         .status();
                 } else if let Some(ref branch) = dep_branch {
                     println!("  Checking out branch '{}'...", branch);
                     let _ = std::process::Command::new("git")
                         .env("GIT_TERMINAL_PROMPT", "0")
-                        .args(&["-c", "credential.helper=", "-C", dest_path.to_str().unwrap(), "checkout", branch])
+                        .args(&[
+                            "-c",
+                            "credential.helper=",
+                            "-C",
+                            dest_path.to_str().unwrap(),
+                            "checkout",
+                            branch,
+                        ])
                         .status();
                 }
             }
-            
+
             let commit_output = std::process::Command::new("git")
                 .env("GIT_TERMINAL_PROMPT", "0")
-                .args(&["-c", "credential.helper=", "-C", dest_path.to_str().unwrap(), "rev-parse", "HEAD"])
+                .args(&[
+                    "-c",
+                    "credential.helper=",
+                    "-C",
+                    dest_path.to_str().unwrap(),
+                    "rev-parse",
+                    "HEAD",
+                ])
                 .output();
             let commit_hash = if let Ok(out) = commit_output {
                 if out.status.success() {
@@ -952,7 +1071,7 @@ fn cmd_install(force_update: bool) {
             } else {
                 "unknown".to_string()
             };
-            
+
             lock_content.push_str(&format!(
                 "[[package]]\nname = \"{}\"\nversion = \"{}\"\nsource = \"git+{}#{}\"\nresolved = \"{}\"\n\n",
                 dep.name,
@@ -965,10 +1084,13 @@ fn cmd_install(force_update: bool) {
             println!("  Linked path: {}", path);
             let path_ref = std::path::Path::new(path);
             if !path_ref.exists() {
-                eprintln!("  [L++] Error: path '{}' for dependency '{}' does not exist.", path, dep.name);
+                eprintln!(
+                    "  [L++] Error: path '{}' for dependency '{}' does not exist.",
+                    path, dep.name
+                );
                 continue;
             }
-            
+
             lock_content.push_str(&format!(
                 "[[package]]\nname = \"{}\"\nversion = \"{}\"\nsource = \"path+{}\"\nresolved = \"{}\"\n\n",
                 dep.name,
@@ -978,35 +1100,37 @@ fn cmd_install(force_update: bool) {
             ));
         }
     }
-    
+
     if let Err(e) = fs::write("lpp.lock", lock_content) {
         eprintln!("Failed to write lpp.lock: {}", e);
     } else {
         println!("[L++] lpp.lock file generated.");
     }
-    
+
     println!("[L++] Dependencies resolved successfully.");
 }
 
 fn cmd_add(args: &[String]) {
     if args.is_empty() {
-        eprintln!("Usage: lpp add <package_name> [--git <url> [--tag <tag>] [--branch <branch>]] [--path <local_path>] [--version <semver>]");
+        eprintln!(
+            "Usage: lpp add <package_name> [--git <url> [--tag <tag>] [--branch <branch>]] [--path <local_path>] [--version <semver>]"
+        );
         return;
     }
-    
+
     let mut package_name = args[0].clone();
     let mut git_url = None;
     let mut tag = None;
     let mut branch = None;
     let mut path = None;
     let mut version = None;
-    
+
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
             "--git" => {
                 if i + 1 < args.len() {
-                    git_url = Some(args[i+1].clone());
+                    git_url = Some(args[i + 1].clone());
                     i += 2;
                 } else {
                     eprintln!("Error: --git expects a URL argument");
@@ -1015,7 +1139,7 @@ fn cmd_add(args: &[String]) {
             }
             "--tag" => {
                 if i + 1 < args.len() {
-                    tag = Some(args[i+1].clone());
+                    tag = Some(args[i + 1].clone());
                     i += 2;
                 } else {
                     eprintln!("Error: --tag expects a tag name argument");
@@ -1024,7 +1148,7 @@ fn cmd_add(args: &[String]) {
             }
             "--branch" => {
                 if i + 1 < args.len() {
-                    branch = Some(args[i+1].clone());
+                    branch = Some(args[i + 1].clone());
                     i += 2;
                 } else {
                     eprintln!("Error: --branch expects a branch name argument");
@@ -1042,7 +1166,7 @@ fn cmd_add(args: &[String]) {
             }
             "--path" => {
                 if i + 1 < args.len() {
-                    path = Some(args[i+1].clone());
+                    path = Some(args[i + 1].clone());
                     i += 2;
                 } else {
                     eprintln!("Error: --path expects a directory path argument");
@@ -1055,7 +1179,7 @@ fn cmd_add(args: &[String]) {
             }
         }
     }
-    
+
     if git_url.is_none() && path.is_none() {
         if let Some(entry) = resolve_registry_package(&package_name) {
             println!("[L++] Resolved '{}' from registry:", package_name);
@@ -1069,23 +1193,26 @@ fn cmd_add(args: &[String]) {
             git_url = Some(entry.git);
             branch = entry.branch;
             tag = entry.tag;
-            
+
             if package_name.starts_with('@') {
                 if let Some(slash_idx) = package_name.find('/') {
-                    package_name = package_name[slash_idx+1..].to_string();
+                    package_name = package_name[slash_idx + 1..].to_string();
                 }
             }
         } else {
-            eprintln!("Error: Package '{}' not found in registry. You must specify --git or --path to add an unregistered package.", package_name);
+            eprintln!(
+                "Error: Package '{}' not found in registry. You must specify --git or --path to add an unregistered package.",
+                package_name
+            );
             return;
         }
     }
-    
+
     if !std::path::Path::new("lpp.toml").exists() {
         eprintln!("Error: lpp.toml not found. Run 'lpp init' first.");
         return;
     }
-    
+
     let mut content = match fs::read_to_string("lpp.toml") {
         Ok(c) => c,
         Err(e) => {
@@ -1093,7 +1220,7 @@ fn cmd_add(args: &[String]) {
             return;
         }
     };
-    
+
     let mut dep_line = format!("\n{} = {{ ", package_name);
     if let Some(ref url) = git_url {
         dep_line.push_str(&format!("git = \"{}\"", url));
@@ -1112,14 +1239,14 @@ fn cmd_add(args: &[String]) {
         }
     }
     dep_line.push_str(" }\n");
-    
+
     content.push_str(&dep_line);
-    
+
     if let Err(e) = fs::write("lpp.toml", content) {
         eprintln!("Failed to update lpp.toml: {}", e);
         return;
     }
-    
+
     println!("[L++] Added dependency '{}' to lpp.toml.", package_name);
     cmd_install(false);
 }
@@ -1183,35 +1310,37 @@ fn cmd_remove(args: &[String]) {
             return;
         }
     };
-    
+
     let mut new_lines = Vec::new();
     let mut found = false;
     for line in content.lines() {
         let trimmed = line.trim();
-        if trimmed.starts_with(&format!("{} =", package_name)) || trimmed.starts_with(&format!("{}=", package_name)) {
+        if trimmed.starts_with(&format!("{} =", package_name))
+            || trimmed.starts_with(&format!("{}=", package_name))
+        {
             found = true;
             continue;
         }
         new_lines.push(line);
     }
-    
+
     if !found {
         println!("[L++] Dependency '{}' not found in lpp.toml.", package_name);
         return;
     }
-    
+
     if let Err(e) = fs::write("lpp.toml", new_lines.join("\n")) {
         eprintln!("Failed to update lpp.toml: {}", e);
         return;
     }
     println!("[L++] Removed dependency '{}' from lpp.toml.", package_name);
-    
+
     let dest_path = std::path::Path::new(".lpp_packages").join(package_name);
     if dest_path.exists() {
         let _ = fs::remove_dir_all(dest_path);
         println!("[L++] Cleaned up package directory for '{}'.", package_name);
     }
-    
+
     cmd_install(false);
 }
 
@@ -1246,7 +1375,10 @@ fn cmd_list() {
                 return;
             }
             for dep in pkg.dependencies {
-                let source = dep.path.or(dep.git).unwrap_or_else(|| "registry".to_string());
+                let source = dep
+                    .path
+                    .or(dep.git)
+                    .unwrap_or_else(|| "registry".to_string());
                 let version = dep.version.unwrap_or_else(|| "unbounded".to_string());
                 println!("  {} {} [{}]", dep.name, version, source);
             }
@@ -1340,7 +1472,10 @@ fn cmd_check() {
     let entry_point_str = resolve_entry_point();
     let entry_point = Path::new(&entry_point_str);
     if !entry_point.exists() {
-        eprintln!("[L++] Error: entry point '{}' not found.", entry_point.display());
+        eprintln!(
+            "[L++] Error: entry point '{}' not found.",
+            entry_point.display()
+        );
         return;
     }
 
@@ -1384,7 +1519,7 @@ pub fn load_msvc_env() {
     {
         return;
     }
-    
+
     let mut vcvars = std::path::PathBuf::new();
     let fallbacks = [
         "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Auxiliary\\Build\\vcvars64.bat",
@@ -1394,7 +1529,7 @@ pub fn load_msvc_env() {
         "C:\\Program Files\\Microsoft Visual Studio\\2019\\Professional\\VC\\Auxiliary\\Build\\vcvars64.bat",
         "C:\\Program Files\\Microsoft Visual Studio\\2019\\Enterprise\\VC\\Auxiliary\\Build\\vcvars64.bat",
     ];
-    
+
     for fallback in &fallbacks {
         let p = std::path::Path::new(fallback);
         if p.exists() {
@@ -1402,7 +1537,7 @@ pub fn load_msvc_env() {
             break;
         }
     }
-    
+
     if vcvars.exists() {
         println!("  Loading MSVC environment via: {}", vcvars.display());
         let temp_dir = std::env::temp_dir();
@@ -1418,9 +1553,12 @@ pub fn load_msvc_env() {
             let _ = fs::remove_file(&bat_path);
             res
         } else {
-            Err(std::io::Error::new(std::io::ErrorKind::Other, "Failed to write temp batch file"))
+            Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "Failed to write temp batch file",
+            ))
         };
-            
+
         match output {
             Ok(out) if out.status.success() => {
                 let env_dump = String::from_utf8_lossy(&out.stdout);
@@ -1428,8 +1566,10 @@ pub fn load_msvc_env() {
                 for line in env_dump.lines() {
                     if let Some(eq_idx) = line.find('=') {
                         let name = &line[..eq_idx];
-                        let val = &line[eq_idx+1..];
-                        unsafe { std::env::set_var(name, val); }
+                        let val = &line[eq_idx + 1..];
+                        unsafe {
+                            std::env::set_var(name, val);
+                        }
                         loaded_count += 1;
                     }
                 }
@@ -1457,12 +1597,15 @@ fn cmd_build() -> Option<String> {
     let entry_point_str = resolve_entry_point();
     let entry_point = Path::new(&entry_point_str);
     if !entry_point.exists() {
-        eprintln!("[L++] Error: entry point '{}' not found.", entry_point.display());
+        eprintln!(
+            "[L++] Error: entry point '{}' not found.",
+            entry_point.display()
+        );
         return None;
     }
-    
+
     cmd_install(false);
-    
+
     let target_dir = Path::new("LppData").join("build").join("release");
     let _ = fs::create_dir_all(&target_dir);
 
@@ -1474,7 +1617,7 @@ fn cmd_build() -> Option<String> {
             return None;
         }
     };
-    
+
     let mut bin_name = "output".to_string();
     if Path::new("lpp.toml").exists() {
         if let Ok(content) = fs::read_to_string("lpp.toml") {
@@ -1483,7 +1626,7 @@ fn cmd_build() -> Option<String> {
             }
         }
     }
-    
+
     let exe_path = output_path_for_name(&target_dir, &bin_name);
 
     println!("  Linking {}...", exe_path.display());
@@ -1516,9 +1659,7 @@ fn cmd_bench() {
         .filter(|p| p.exists());
     if let Some(bench) = bench_bin {
         let args: Vec<String> = std::env::args().skip(2).collect();
-        let status = std::process::Command::new(&bench)
-            .args(&args)
-            .status();
+        let status = std::process::Command::new(&bench).args(&args).status();
         match status {
             Ok(s) if s.success() => {}
             Ok(s) => std::process::exit(s.code().unwrap_or(1)),
@@ -1528,7 +1669,9 @@ fn cmd_bench() {
             }
         }
     } else {
-        eprintln!("[L++] lpp-bench not found. Build it with: cargo build --release --bin lpp-bench");
+        eprintln!(
+            "[L++] lpp-bench not found. Build it with: cargo build --release --bin lpp-bench"
+        );
         std::process::exit(1);
     }
 }
@@ -1543,7 +1686,7 @@ fn cmd_test() {
         println!("[L++] No tests/ or test/ directory found.");
         return;
     };
-    
+
     let paths = match fs::read_dir(test_dir) {
         Ok(p) => p,
         Err(e) => {
@@ -1551,7 +1694,7 @@ fn cmd_test() {
             return;
         }
     };
-    
+
     let mut test_files = Vec::new();
     for entry in paths {
         if let Ok(entry) = entry {
@@ -1561,22 +1704,22 @@ fn cmd_test() {
             }
         }
     }
-    
+
     if test_files.is_empty() {
         println!("[L++] No test files found in directory '{}'.", test_dir);
         return;
     }
-    
+
     let mut passed = 0;
     let mut failed = 0;
 
     let target_test_dir = Path::new("target").join("test");
     let _ = fs::create_dir_all(&target_test_dir);
-    
+
     for test_path in test_files {
         let test_name = test_path.file_name().unwrap().to_str().unwrap();
         print!("  test {} ... ", test_name);
-        
+
         let base_name = format!("test_{}", test_name.replace(".lpp", ""));
         let temp_exe = output_path_for_name(&target_test_dir, &base_name);
 
@@ -1588,7 +1731,7 @@ fn cmd_test() {
                 if link_result.is_ok() && temp_exe.exists() {
                     let run_output = std::process::Command::new(&temp_exe).output();
                     let _ = fs::remove_file(&temp_exe);
-                    
+
                     match run_output {
                         Ok(out) if out.status.success() => {
                             println!("ok");
@@ -1610,6 +1753,11 @@ fn cmd_test() {
             }
         }
     }
-    
-    println!("\ntest result: {}. {} passed; {} failed", if failed == 0 { "ok" } else { "FAILED" }, passed, failed);
+
+    println!(
+        "\ntest result: {}. {} passed; {} failed",
+        if failed == 0 { "ok" } else { "FAILED" },
+        passed,
+        failed
+    );
 }

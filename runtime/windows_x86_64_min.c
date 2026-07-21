@@ -42,6 +42,10 @@ __declspec(dllimport) void   __stdcall Sleep(DWORD ms);
 #define INFINITE 0xFFFFFFFF
 #define INVALID_HANDLE_VALUE ((HANDLE)(intptr_t)-1)
 #define INVALID_FILE_ATTRIBUTES ((DWORD)-1)
+#define TRUE 1
+#define FALSE 0
+#define STARTF_USESTDHANDLES 0x100
+#define CREATE_NO_WINDOW 0x08000000
 
 /* real STARTUPINFOA = 104 bytes, PROCESS_INFORMATION = 24 bytes */
 typedef struct { char _[104]; } REAL_STARTUPINFOA;
