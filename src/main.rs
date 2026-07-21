@@ -171,38 +171,29 @@ fn bootstrap_self_hosted_pm() -> Result<PathBuf, String> {
         return Err(format!("{} not generated", pm_obj.display()));
     }
 
-    // Link with host cc
+    // Link with lpp-link direct native linker
+    let lpp_link_bin = lpp_bin
+        .parent()
+        .map(|dir| dir.join(format!("lpp-link{}", env::consts::EXE_SUFFIX)))
+        .unwrap_or_else(|| PathBuf::from(format!("lpp-link{}", env::consts::EXE_SUFFIX)));
+
     let runtime_src = resolve_runtime_source_for_bootstrap(&pm_main)
         .ok_or_else(|| "lpp_runtime.c not found".to_string())?;
 
-    let cc = ["cc", "gcc", "clang"]
-        .iter()
-        .find(|c| {
-            std::process::Command::new(c)
-                .arg("--version")
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status()
-                .is_ok()
-        })
-        .copied()
-        .unwrap_or("cc");
-
+    let runtime_min_name = if cfg!(target_os = "windows") { "lpp_runtime_min.obj" } else { "lpp_runtime_min.o" };
     let lib_dir = runtime_src.parent().unwrap_or_else(|| Path::new("."));
+    let runtime_min_obj = lib_dir.join(runtime_min_name);
 
-    let link_status = std::process::Command::new(cc)
-        .arg("-O2")
-        .arg(format!("-I{}", lib_dir.display()))
+    let link_status = std::process::Command::new(&lpp_link_bin)
         .arg(&pm_obj)
-        .arg(&runtime_src)
+        .arg(&runtime_min_obj)
         .arg("-o")
         .arg(&pm_bin)
-        .arg("-pthread")
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::inherit())
         .status()
-        .map_err(|e| format!("failed to link PM binary: {e}"))?;
+        .map_err(|e| format!("failed to link PM binary via lpp-link: {e}"))?;
 
     let _ = fs::remove_file(&pm_obj);
 
@@ -318,7 +309,9 @@ fn main() {
     // - package commands (`build`, `run`, `test`, …) operate on lpp.toml;
     // - source commands (`check file.lpp`, `emit file.lpp`) operate on one file.
     let mut source_check_command = false;
+    let mut is_emit_cmd = false;
     if args.len() > 2 && args[1] == "emit" {
+        is_emit_cmd = true;
         args.remove(1);
     } else if args.len() > 2 && args[1] == "check" && args[2].ends_with(".lpp") {
         source_check_command = true;
@@ -359,7 +352,7 @@ fn main() {
     let mut dump_mir = false;
     let mut check_only = source_check_command;
     let mut check_all = false;
-    let mut emit_object = false;
+    let mut emit_object = is_emit_cmd || env::var("LPP_AOT").is_ok() || env::var("LPP_AOT_ONLY").is_ok();
 
     for arg in args.iter().skip(1) {
         if arg == "--version" || arg == "-v" {

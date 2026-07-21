@@ -600,9 +600,69 @@ fn find_vcvars64() -> Option<PathBuf> {
     None
 }
 
+#[allow(dead_code)]
 fn resolve_min_runtime_object() -> Option<PathBuf> {
     let ext = if cfg!(target_os = "windows") { "obj" } else { "o" };
     let filename = format!("lpp_runtime_min.{}", ext);
+
+    let src_name = if cfg!(target_os = "windows") {
+        "runtime/windows_x86_64_min.c"
+    } else {
+        "runtime/linux_x86_64_min.c"
+    };
+
+    let local_src = Path::new(src_name);
+    let cache_dir = Path::new("LppData").join("cache");
+    let cache_obj = cache_dir.join(&filename);
+
+    if local_src.exists() {
+        let needs_rebuild = if cache_obj.exists() {
+            match (cache_obj.metadata(), local_src.metadata()) {
+                (Ok(cm), Ok(sm)) => match (cm.modified(), sm.modified()) {
+                    (Ok(ct), Ok(st)) => ct < st,
+                    _ => true,
+                },
+                _ => true,
+            }
+        } else {
+            true
+        };
+
+        if needs_rebuild {
+            let _ = fs::create_dir_all(&cache_dir);
+            let cc = if cfg!(windows) { "cl.exe" } else { "gcc" };
+            let mut cmd = std::process::Command::new(cc);
+            if cfg!(windows) {
+                cmd.arg("/nologo")
+                    .arg("/O2")
+                    .arg("/GS-")
+                    .arg("/DLPP_FREESTANDING")
+                    .arg("/c")
+                    .arg(local_src)
+                    .arg(format!("/Fo:{}", cache_obj.display()));
+            } else {
+                cmd.arg("-O2")
+                    .arg("-fno-stack-protector")
+                    .arg("-ffreestanding")
+                    .arg("-fno-pic")
+                    .arg("-mno-red-zone")
+                    .arg("-DLPP_FREESTANDING")
+                    .arg("-c")
+                    .arg(local_src)
+                    .arg("-o")
+                    .arg(&cache_obj);
+            }
+            if cmd.status().map_or(false, |s| s.success()) && cache_obj.exists() {
+                return Some(cache_obj);
+            }
+        } else {
+            return Some(cache_obj);
+        }
+    }
+
+    if cache_obj.exists() {
+        return Some(cache_obj);
+    }
 
     for var in &["LPP_HOME", "LPP_DIR"] {
         if let Ok(val) = std::env::var(var) {
@@ -636,71 +696,7 @@ fn resolve_min_runtime_object() -> Option<PathBuf> {
         }
     }
 
-    let cache_obj = Path::new("LppData").join("cache").join(&filename);
-    if cache_obj.exists() {
-        return Some(cache_obj);
-    }
-
-    let src_name = if cfg!(target_os = "windows") {
-        "runtime/windows_x86_64_min.c"
-    } else {
-        "runtime/linux_x86_64_min.c"
-    };
-
-    let src_path = installed_root_dir()
-        .map(|r| r.join("lib").join(src_name))
-        .filter(|p| p.exists())
-        .or_else(|| {
-            if Path::new(src_name).exists() {
-                Some(PathBuf::from(src_name))
-            } else {
-                None
-            }
-        });
-
-    if let Some(src) = src_path {
-        let cache_dir = Path::new("LppData").join("cache");
-        let _ = fs::create_dir_all(&cache_dir);
-        let out_obj = cache_dir.join(&filename);
-
-        println!("[L++] Direct runtime object missing; auto-compiling {}...", src.display());
-
-        let compilers = if cfg!(windows) {
-            ["cl.exe", "gcc", "clang"]
-        } else {
-            ["gcc", "clang", "cc"]
-        };
-
-        for cc in compilers {
-            if command_available(cc, if cc == "cl.exe" { &["/?"] } else { &["--version"] }) {
-                let mut cmd = std::process::Command::new(cc);
-                if cc == "cl.exe" {
-                    cmd.arg("/nologo")
-                        .arg("/O2")
-                        .arg("/GS-")
-                        .arg("/DLPP_FREESTANDING")
-                        .arg("/c")
-                        .arg(&src)
-                        .arg(format!("/Fo:{}", out_obj.display()));
-                } else {
-                    cmd.arg("-O2")
-                        .arg("-fno-stack-protector")
-                        .arg("-DLPP_FREESTANDING")
-                        .arg("-c")
-                        .arg(&src)
-                        .arg("-o")
-                        .arg(&out_obj);
-                }
-                if cmd.status().map_or(false, |s| s.success()) && out_obj.exists() {
-                    return Some(out_obj);
-                }
-            }
-        }
-    }
-
-    installed_root_dir()
-        .map(|root| root.join("lib").join(&filename))
-        .filter(|path| path.exists())
+    None
 }
 
 pub fn direct_link_binary(obj_file: &Path, output_path: &Path) -> Result<(), String> {
@@ -799,8 +795,8 @@ fn print_help() {
     println!("  help                  Show this help menu");
     println!("\nSource-file commands (outside package mode):");
     println!("  lpp check <file.lpp>          Check one source file without artifacts");
-    println!("  lpp emit <file.lpp>           Emit C source explicitly");
-    println!("  lpp emit <file.lpp> --aot     Emit C source plus Cranelift object");
+    println!("  lpp emit <file.lpp>           Emit Cranelift native object file (.o / .obj)");
+    println!("  lpp emit <file.lpp> --aot     Emit Cranelift native object file (.o / .obj)");
     println!("\nBenchmark commands:");
     println!("  lpp bench --self-test         Run 15 integration tests");
     println!("  lpp bench --disk --mem --json King20 across all linkers with stats");

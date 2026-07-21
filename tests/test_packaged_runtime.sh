@@ -6,6 +6,7 @@ set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 COMPILER="$ROOT/target/release/lpp"
+LINKER="$ROOT/target/release/lpp-link"
 CC=${CC:-cc}
 TEMP=$(mktemp -d "${TMPDIR:-/tmp}/lpp-packaged-runtime.XXXXXX")
 cleanup() { rm -rf "$TEMP"; }
@@ -16,12 +17,14 @@ if ! command -v cargo >/dev/null 2>&1 || ! command -v "$CC" >/dev/null 2>&1; the
     exit 0
 fi
 
-if [ ! -x "$COMPILER" ]; then
-    (cd "$ROOT" && cargo build --release)
+if [ ! -x "$COMPILER" ] || [ ! -x "$LINKER" ]; then
+    (cd "$ROOT" && cargo build --release --bin lpp --bin lpp-link)
 fi
 mkdir -p "$TEMP/install/bin" "$TEMP/install/lib" "$TEMP/work"
 cp "$COMPILER" "$TEMP/install/bin/lpp"
-"$CC" -O2 -fPIC -c "$ROOT/lpp_runtime.c" -o "$TEMP/install/lib/lpp_runtime.o" -pthread
+cp "$LINKER" "$TEMP/install/bin/lpp-link"
+"$CC" -O2 -ffreestanding -fno-stack-protector -fno-pic -mno-red-zone \
+    -c "$ROOT/runtime/linux_x86_64_min.c" -o "$TEMP/install/lib/lpp_runtime_min.o"
 
 cd "$TEMP/work"
 "$TEMP/install/bin/lpp" new packaged_runtime_demo >/dev/null

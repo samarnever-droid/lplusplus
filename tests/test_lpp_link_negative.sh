@@ -32,7 +32,7 @@ cat > "$TEMP/needs_runtime.lpp" <<'EOF'
 def main():
     print(7)
 EOF
-LPP_AOT=1 "$LPP" "$TEMP/needs_runtime.lpp" >/dev/null
+"$LPP" emit "$TEMP/needs_runtime.lpp" --aot >/dev/null
 if "$LINKER" "$TEMP/needs_runtime.o" -o "$TEMP/missing_runtime" >"$TEMP/missing.out" 2>"$TEMP/missing.err"; then
     echo "FAIL: unresolved runtime import unexpectedly linked" >&2
     exit 1

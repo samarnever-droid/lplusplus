@@ -21,12 +21,10 @@ def main():
 EOF
 
 "$LPP" check "$TEMP/example.lpp" >/dev/null
-[ ! -e "$TEMP/example.c" ]
 [ ! -e "$TEMP/example.o" ]
 
 "$LPP" emit "$TEMP/example.lpp" >/dev/null
-[ -e "$TEMP/example.c" ]
-[ ! -e "$TEMP/example.o" ]
+[ -e "$TEMP/example.o" ]
 
 "$LPP" emit "$TEMP/example.lpp" --aot >/dev/null
 [ -e "$TEMP/example.o" ]

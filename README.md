@@ -167,8 +167,8 @@ LPP_FROM_SOURCE=1 ./install.sh
 | Intent | Command | Result |
 |---|---|---|
 | Check one source file | `lpp check calc.lpp` | Diagnostics only; no artifacts |
-| Emit C source | `lpp emit calc.lpp` | `calc.c` next to source |
-| Emit C + AOT object | `lpp emit calc.lpp --aot` | `calc.c` and `calc.o` |
+| Emit native object file | `lpp emit calc.lpp` | `calc.o` / `calc.obj` next to source |
+| Emit native object file | `lpp emit calc.lpp --aot` | `calc.o` / `calc.obj` next to source |
 | Build a package | `lpp build` | Executable from `lpp.toml` package |
 | Run a package | `lpp run` | Build then run package executable |
 

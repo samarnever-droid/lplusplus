@@ -69,7 +69,7 @@ L++ uses an automated, rule-based **Hybrid Memory Model**:
 
 ### 3.7 Hash Maps (`lpp_map`)
 - `map_new()`, `map_put(m, k, v)`, `map_get(m, k)`, `map_has(m, k)`, `map_len(m)`, `map_remove(m, k)`
-- Native support across C Transpilation, Cranelift AOT, and direct freestanding `lpp-link` execution.
+- Native support across Cranelift AOT and direct freestanding `lpp-link` execution.
 
 ---
 
@@ -80,7 +80,7 @@ L++ uses an automated, rule-based **Hybrid Memory Model**:
   - `lpp build`, `lpp run`, `lpp check`, `lpp clean`, `lpp list`, `lpp tree`, `lpp metadata`, `lpp outdated`
 - **Compiler Options**:
   - `lpp check <file.lpp>`: Fast semantic/type check pass.
-  - `lpp emit <file.lpp> [--aot]`: Emits C transpile artifacts and optional Cranelift AOT object files.
+  - `lpp emit <file.lpp> [--aot]`: Emits Cranelift AOT object files (`.o` / `.obj`).
   - `lpp --checkall`: Recursive workspace-wide type verification.
 - **Direct Linker (`lpp-link`)**:
   - **Linux x86-64**: Standalone ELF direct linker.

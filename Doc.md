@@ -301,8 +301,8 @@ lpp metadata              # Output package manifest summary
 
 # Single File Commands
 lpp check <file.lpp>      # Type-check a single L++ source file
-lpp emit <file.lpp>       # Emit transpiled C source
-lpp emit <file.lpp> --aot # Emit transpiled C source and Cranelift .o object file
+lpp emit <file.lpp>       # Emit Cranelift native object file (.o / .obj)
+lpp emit <file.lpp> --aot # Emit Cranelift native object file (.o / .obj)
 
 # Global Inspection & Verification
 lpp --checkall            # Recursively check all .lpp files in workspace

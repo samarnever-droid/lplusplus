@@ -28,25 +28,26 @@ if [ ! -x "$COMPILER" ]; then
     (cd "$ROOT" && cargo build --release)
 fi
 
-run_c_backend() {
+run_native_aot() {
     src=$1
     base=$2
-    "$COMPILER" "$src" >/dev/null
-    c_file="${src%.lpp}.c"
-    exe="$TMP/${base}.c.exe"
-    [ -f "$c_file" ] || { echo "C backend produced no C file" >&2; return 1; }
-    "$CC" -std=c11 -Wall -Wextra -Wno-unused-function -Wno-unused-variable -Wno-unused-parameter "$c_file" -o "$exe" -pthread -lm
-    "$exe"
-}
-
-run_aot_backend() {
-    src=$1
-    base=$2
-    LPP_AOT=1 "$COMPILER" "$src" >/dev/null
+    LPP_AOT=1 "$COMPILER" "$src" --aot >/dev/null
     obj_file="${src%.lpp}.o"
     exe="$TMP/${base}.aot.exe"
     [ -f "$obj_file" ] || { echo "AOT backend produced no object file" >&2; return 1; }
     "$CC" -std=c11 -Wall -Wextra -Wno-unused-function -Wno-unused-variable -Wno-unused-parameter "$obj_file" "$ROOT/lpp_runtime.c" -o "$exe" -pthread -lm
+    "$exe"
+}
+
+run_direct_link() {
+    src=$1
+    base=$2
+    "$COMPILER" "$src" >/dev/null
+    exe="${src%.lpp}"
+    if [ -f "${exe}.exe" ]; then
+        exe="${exe}.exe"
+    fi
+    [ -f "$exe" ] || { echo "Direct link produced no executable" >&2; return 1; }
     "$exe"
 }
 
@@ -77,14 +78,14 @@ while IFS='|' read -r file expected; do
     cp "$ROOT/tests/$file" "$src"
     base=${file%.lpp}
 
-    if c_output=$(run_c_backend "$src" "$base") && aot_output=$(run_aot_backend "$src" "$base"); then
+    if aot_output=$(run_native_aot "$src" "$base") && direct_output=$(run_direct_link "$src" "$base"); then
         wanted=$(printf '%b' "$expected")
-        if [ "$c_output" = "$wanted" ] && [ "$aot_output" = "$wanted" ]; then
+        if [ "$aot_output" = "$wanted" ] && [ "$direct_output" = "$wanted" ]; then
             echo "PASS $file"
             PASS=$((PASS + 1))
         else
             echo "FAIL $file: backend output mismatch" >&2
-            printf '  expected: %s\n  C:        %s\n  AOT:      %s\n' "$wanted" "$c_output" "$aot_output" >&2
+            printf '  expected: %s\n  AOT:      %s\n  Direct:   %s\n' "$wanted" "$aot_output" "$direct_output" >&2
             FAIL=$((FAIL + 1))
         fi
     else
