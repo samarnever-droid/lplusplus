@@ -96,14 +96,11 @@ impl SymbolTable {
         while let Some(scope_id) = current {
             let scope = &self.scopes[scope_id.0];
             if let Some(&binding_id) = scope.bindings.get(name) {
-                // If we found it, and we passed through any closures, register
-                // the capture — BUT only for runtime values (locals, params).
-                // Global functions, struct constructors, and builtins are
-                // resolved statically and do not need a runtime environment edge.
-                let needs_capture = self.bindings[binding_id.0].kind == BindingKind::Local
-                    || self.bindings[binding_id.0].kind == BindingKind::Param;
-
-                if needs_capture {
+                // Only capture runtime values (locals, params) — global
+                // functions, struct constructors, and builtins are resolved
+                // statically and never need an environment edge.
+                let binding = &self.bindings[binding_id.0];
+                if binding.kind == BindingKind::Local || binding.kind == BindingKind::Param {
                     for closure_scope_id in capture_chain {
                         if let ScopeKind::Closure { ref mut captures } = self.scopes[closure_scope_id.0].kind {
                             if !captures.contains(&binding_id) {
