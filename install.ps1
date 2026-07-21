@@ -47,12 +47,23 @@ function Install-Source {
     Copy-Item "$ProjectDir\target\release\lpp-link.exe" "$BinDir\lpp-link.exe" -Force
     Copy-Item "$ProjectDir\lpp_runtime.c" "$LibDir\lpp_runtime.c" -Force
     Copy-Item "$ProjectDir\runtime" "$LibDir\runtime" -Recurse -Force
+    $compiled = $false
     $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
     if (Test-Path $vswhere) {
         $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
         if ($vs) {
             cmd.exe /d /c "call `"$vs\VC\Auxiliary\Build\vcvars64.bat`" >nul && cl.exe /nologo /O2 /c `"$ProjectDir\lpp_runtime.c`" /Fo:`"$LibDir\lpp_runtime.obj`""
             cmd.exe /d /c "call `"$vs\VC\Auxiliary\Build\vcvars64.bat`" >nul && cl.exe /nologo /O2 /GS- /DLPP_FREESTANDING /c `"$ProjectDir\runtime\windows_x86_64_min.c`" /Fo:`"$LibDir\lpp_runtime_min.obj`""
+            $compiled = $true
+        }
+    }
+    if (-not $compiled) {
+        if (Get-Command gcc -ErrorAction SilentlyContinue) {
+            gcc -O2 -c "$ProjectDir\lpp_runtime.c" -o "$LibDir\lpp_runtime.obj"
+            gcc -O2 -fno-stack-protector -DLPP_FREESTANDING -c "$ProjectDir\runtime\windows_x86_64_min.c" -o "$LibDir\lpp_runtime_min.obj"
+        } elseif (Get-Command clang -ErrorAction SilentlyContinue) {
+            clang -O2 -c "$ProjectDir\lpp_runtime.c" -o "$LibDir\lpp_runtime.obj"
+            clang -O2 -fno-stack-protector -DLPP_FREESTANDING -c "$ProjectDir\runtime\windows_x86_64_min.c" -o "$LibDir\lpp_runtime_min.obj"
         }
     }
 }

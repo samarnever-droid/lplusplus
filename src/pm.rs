@@ -595,6 +595,109 @@ fn find_vcvars64() -> Option<PathBuf> {
     None
 }
 
+fn resolve_min_runtime_object() -> Option<PathBuf> {
+    let ext = if cfg!(target_os = "windows") { "obj" } else { "o" };
+    let filename = format!("lpp_runtime_min.{}", ext);
+
+    for var in &["LPP_HOME", "LPP_DIR"] {
+        if let Ok(val) = std::env::var(var) {
+            let lib_obj = PathBuf::from(val).join("lib").join(&filename);
+            if lib_obj.exists() {
+                return Some(lib_obj);
+            }
+        }
+    }
+
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let candidates = [
+                exe_dir.join(&filename),
+                exe_dir.join(format!("lib/{}", filename)),
+                exe_dir.join(format!("../lib/{}", filename)),
+                exe_dir.join(format!("../../lib/{}", filename)),
+            ];
+            for c in &candidates {
+                if c.exists() {
+                    return Some(c.clone());
+                }
+            }
+        }
+    }
+
+    if let Ok(home) = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")) {
+        let home_obj = PathBuf::from(&home).join(".lpp/lib").join(&filename);
+        if home_obj.exists() {
+            return Some(home_obj);
+        }
+    }
+
+    let cache_obj = Path::new("LppData").join("cache").join(&filename);
+    if cache_obj.exists() {
+        return Some(cache_obj);
+    }
+
+    let src_name = if cfg!(target_os = "windows") {
+        "runtime/windows_x86_64_min.c"
+    } else {
+        "runtime/linux_x86_64_min.c"
+    };
+
+    let src_path = installed_root_dir()
+        .map(|r| r.join("lib").join(src_name))
+        .filter(|p| p.exists())
+        .or_else(|| {
+            if Path::new(src_name).exists() {
+                Some(PathBuf::from(src_name))
+            } else {
+                None
+            }
+        });
+
+    if let Some(src) = src_path {
+        let cache_dir = Path::new("LppData").join("cache");
+        let _ = fs::create_dir_all(&cache_dir);
+        let out_obj = cache_dir.join(&filename);
+
+        println!("[L++] Direct runtime object missing; auto-compiling {}...", src.display());
+
+        let compilers = if cfg!(windows) {
+            ["cl.exe", "gcc", "clang"]
+        } else {
+            ["gcc", "clang", "cc"]
+        };
+
+        for cc in compilers {
+            if command_available(cc, if cc == "cl.exe" { &["/?"] } else { &["--version"] }) {
+                let mut cmd = std::process::Command::new(cc);
+                if cc == "cl.exe" {
+                    cmd.arg("/nologo")
+                        .arg("/O2")
+                        .arg("/GS-")
+                        .arg("/DLPP_FREESTANDING")
+                        .arg("/c")
+                        .arg(&src)
+                        .arg(format!("/Fo:{}", out_obj.display()));
+                } else {
+                    cmd.arg("-O2")
+                        .arg("-fno-stack-protector")
+                        .arg("-DLPP_FREESTANDING")
+                        .arg("-c")
+                        .arg(&src)
+                        .arg("-o")
+                        .arg(&out_obj);
+                }
+                if cmd.status().map_or(false, |s| s.success()) && out_obj.exists() {
+                    return Some(out_obj);
+                }
+            }
+        }
+    }
+
+    installed_root_dir()
+        .map(|root| root.join("lib").join(&filename))
+        .filter(|path| path.exists())
+}
+
 fn direct_link_binary(obj_file: &Path, output_path: &Path) -> Result<(), String> {
     let linker = current_binary_dir()
         .map(|dir| dir.join(format!("lpp-link{}", std::env::consts::EXE_SUFFIX)))
@@ -603,17 +706,11 @@ fn direct_link_binary(obj_file: &Path, output_path: &Path) -> Result<(), String>
             "Direct linker requested but lpp-link is not installed beside lpp.".to_string()
         })?;
 
-    let runtime = {
-        let ext = if cfg!(target_os = "windows") {
-            "obj"
-        } else {
-            "o"
-        };
-        installed_root_dir()
-            .map(|root| root.join("lib").join(format!("lpp_runtime_min.{ext}")))
-            .filter(|path| path.exists())
-            .ok_or_else(|| format!("Direct linker requested but lpp_runtime_min.{ext} is unavailable. Reinstall L++."))?
-    };
+    let runtime = resolve_min_runtime_object()
+        .ok_or_else(|| {
+            let ext = if cfg!(target_os = "windows") { "obj" } else { "o" };
+            format!("Direct linker requested but lpp_runtime_min.{} is unavailable. Reinstall L++ or compile runtime source.", ext)
+        })?;
 
     // lpp-link auto-detects format from the host OS.
     let status = std::process::Command::new(&linker)
