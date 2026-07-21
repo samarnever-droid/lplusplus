@@ -13,21 +13,21 @@ def main():
         mut name := env_get("LPP_PM_NAME")
         if len(name) == 0:
             name = "my_project"
-        scaffold(name)
+        new.scaffold(name)
         return
 
     if str_find(cmd, "build") >= 0:
-        code := compile_project()
+        code := build.compile_project()
         if code == 0:
             print_str("[lpp-pm] build successful")
         return
 
     if str_find(cmd, "install") >= 0:
-        install_deps()
+        install.install_deps()
         return
 
     if str_find(cmd, "run") >= 0:
-        code := compile_project()
+        code := build.compile_project()
         if code == 0:
             print_str("[lpp-pm] running project...")
         return

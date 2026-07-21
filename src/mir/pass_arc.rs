@@ -162,8 +162,9 @@ pub fn run_arc_insertion_pass(
                         if arc_locals.contains(&destination) {
                             live.insert(destination);
                             // A borrow becomes an additional owner at this
-                            // assignment boundary. Fresh allocation/call/move
-                            // values already carry their transferred reference.
+                            // assignment boundary ONLY when the destination
+                            // is itself an ARC-managed local.  Retaining a
+                            // scalar destination (Int/Bool/Float) is UB.
                             if borrowed_source.is_some() {
                                 rewritten.push(MirInstr::Retain(destination));
                             }

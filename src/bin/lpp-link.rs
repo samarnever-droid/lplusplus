@@ -235,6 +235,7 @@ fn write_elf(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
         None
     };
     let entry = entry.ok_or_else(|| "required symbol 'main' (or 'lpp_main') not found".to_string())?;
+    let entry = *entry; // deref: &u64 → u64
 
     let start_off = text.len();
     let entry_addr = ELF_BASE + CODE_OFFSET as u64 + entry;

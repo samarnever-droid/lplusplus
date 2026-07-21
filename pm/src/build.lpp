@@ -46,10 +46,16 @@ def extract_name(toml_raw: String) -> String:
     return str_substr(rest, 0, end)
 
 def detect_cc() -> String:
-    if command_exec("cc --version > /dev/null 2>&1") == 0:
+    cmd := command_output("cc --version 2>&1 || echo FAIL")
+    if str_find(cmd, "cc") >= 0 and str_find(cmd, "FAIL") < 0:
         return "cc"
-    if command_exec("gcc --version > /dev/null 2>&1") == 0:
+    cmd = command_output("gcc --version 2>&1 || echo FAIL")
+    if str_find(cmd, "FAIL") < 0:
         return "gcc"
-    if command_exec("clang --version > /dev/null 2>&1") == 0:
+    cmd = command_output("clang --version 2>&1 || echo FAIL")
+    if str_find(cmd, "FAIL") < 0:
         return "clang"
+    cmd = command_output("cl.exe /? 2>&1 || echo FAIL")
+    if str_find(cmd, "FAIL") < 0:
+        return "cl.exe"
     return "cc"

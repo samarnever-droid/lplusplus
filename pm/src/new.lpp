@@ -11,7 +11,8 @@ def scaffold(name: String) -> Void:
     content = str_concat(content, "!\")\n")
     write(main_lpp, content)
     toml_path := joined(name, "lpp.toml")
-    mut toml_content := str_concat("[package]\nname = \"", name)
+    mut toml_content := "[package]\nname = \""
+    toml_content = str_concat(toml_content, name)
     toml_content = str_concat(toml_content, "\"\nversion = \"0.1.0\"\n")
     toml_content = str_concat(toml_content, "author = \"L++\"\nentry = \"src/main.lpp\"\n\n[dependencies]\n")
     write(toml_path, toml_content)
