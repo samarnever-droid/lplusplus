@@ -140,6 +140,7 @@ pub struct Resolver {
     pub table: SymbolTable,
     current_scope: ScopeId,
     pub imports: Vec<String>,
+    loop_depth: usize,
 }
 
 impl Resolver {
@@ -150,6 +151,7 @@ impl Resolver {
             table,
             current_scope: global,
             imports: Vec::new(),
+            loop_depth: 0,
         }
     }
 
@@ -349,10 +351,73 @@ impl Resolver {
                     .new_scope(Some(self.current_scope), ScopeKind::Block);
                 let old_scope = self.current_scope;
                 self.current_scope = body_scope;
+                self.loop_depth += 1;
                 for s in body {
                     self.resolve_stmt(s)?;
                 }
+                self.loop_depth -= 1;
                 self.current_scope = old_scope;
+            }
+            Stmt::ForRange {
+                var_name,
+                start,
+                end,
+                body,
+                binding_id,
+            } => {
+                self.resolve_expr(start)?;
+                self.resolve_expr(end)?;
+                let body_scope = self
+                    .table
+                    .new_scope(Some(self.current_scope), ScopeKind::Block);
+                let old_scope = self.current_scope;
+                self.current_scope = body_scope;
+                let b_id = self.table.add_binding(
+                    self.current_scope,
+                    var_name.clone(),
+                    true,
+                    Some(Type::Int),
+                    BindingKind::Local,
+                );
+                binding_id.set(Some(b_id.0));
+                self.loop_depth += 1;
+                for s in body {
+                    self.resolve_stmt(s)?;
+                }
+                self.loop_depth -= 1;
+                self.current_scope = old_scope;
+            }
+            Stmt::ForIn {
+                var_name,
+                list,
+                body,
+                binding_id,
+            } => {
+                self.resolve_expr(list)?;
+                let body_scope = self
+                    .table
+                    .new_scope(Some(self.current_scope), ScopeKind::Block);
+                let old_scope = self.current_scope;
+                self.current_scope = body_scope;
+                let b_id = self.table.add_binding(
+                    self.current_scope,
+                    var_name.clone(),
+                    false,
+                    None, // Inferred in typecheck from list element type
+                    BindingKind::Local,
+                );
+                binding_id.set(Some(b_id.0));
+                self.loop_depth += 1;
+                for s in body {
+                    self.resolve_stmt(s)?;
+                }
+                self.loop_depth -= 1;
+                self.current_scope = old_scope;
+            }
+            Stmt::Break | Stmt::Continue => {
+                if self.loop_depth == 0 {
+                    return Err("Cannot use 'break' or 'continue' outside of a loop".to_string());
+                }
             }
             Stmt::Block(stmts) => {
                 for s in stmts {
@@ -575,5 +640,23 @@ mod tests {
             .resolve_program(&mut program)
             .expect_err("should reject immutable field mutation");
         assert!(err.contains("Cannot mutate field of immutable variable 'box'"));
+    }
+
+    #[test]
+    fn rejects_break_outside_loop() {
+        let mut program = Program {
+            declarations: vec![TopLevel::Function(Function {
+                name: "main".to_string(),
+                params: vec![],
+                return_type: Type::Void,
+                body: vec![Stmt::Break],
+            })],
+        };
+
+        let mut resolver = Resolver::new();
+        let err = resolver
+            .resolve_program(&mut program)
+            .expect_err("should reject break outside loop");
+        assert!(err.contains("outside of a loop"));
     }
 }

@@ -360,6 +360,50 @@ impl<'a> TypeChecker<'a> {
                     self.infer_stmt(stmt, body_scope)?;
                 }
             }
+            Stmt::ForRange {
+                var_name: _,
+                start,
+                end,
+                body,
+                binding_id,
+            } => {
+                let start_ty = self.infer_expr(start, current_scope, None)?;
+                let end_ty = self.infer_expr(end, current_scope, None)?;
+                if start_ty != TypeRef::Int || end_ty != TypeRef::Int {
+                    return Err(format!(
+                        "'for range' boundaries must be Int, found {:?} and {:?}",
+                        start_ty, end_ty
+                    ));
+                }
+                if let Some(ast_id) = binding_id.get() {
+                    self.symbol_table.bindings[ast_id].ty = Some(TypeRef::Int);
+                }
+                let body_scope = self.next_block_scope(current_scope);
+                for stmt in body {
+                    self.infer_stmt(stmt, body_scope)?;
+                }
+            }
+            Stmt::ForIn {
+                var_name: _,
+                list,
+                body,
+                binding_id,
+            } => {
+                let list_ty = self.infer_expr(list, current_scope, None)?;
+                let elem_ty = match list_ty {
+                    TypeRef::Generic(ref name, ref params) if name == "List" && !params.is_empty() => {
+                        params[0].clone()
+                    }
+                    _ => TypeRef::Int,
+                };
+                if let Some(ast_id) = binding_id.get() {
+                    self.symbol_table.bindings[ast_id].ty = Some(elem_ty);
+                }
+                let body_scope = self.next_block_scope(current_scope);
+                for stmt in body {
+                    self.infer_stmt(stmt, body_scope)?;
+                }
+            }
             Stmt::Block(stmts) => {
                 for stmt in stmts {
                     self.infer_stmt(stmt, current_scope)?;
@@ -368,6 +412,7 @@ impl<'a> TypeChecker<'a> {
             Stmt::Expr(expr) => {
                 self.infer_expr(expr, current_scope, None)?;
             }
+            Stmt::Break | Stmt::Continue => {}
             Stmt::Return(Some(expr)) => {
                 let mut expected_ret_ty = None;
                 let mut curr = Some(current_scope);

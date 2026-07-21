@@ -343,6 +343,85 @@ impl<'a> Codegen<'a> {
                 self.indent_depth -= 1;
                 self.out.push_str(&format!("{}}}\n", ind));
             }
+            Stmt::ForRange {
+                var_name,
+                start,
+                end,
+                body,
+                binding_id,
+            } => {
+                let unique_name = if let Some(id) = binding_id.get() {
+                    format!("{}_{}", var_name, id)
+                } else {
+                    var_name.clone()
+                };
+                let start_str = self.gen_expr_str(start, current_scope, None);
+                let end_str = self.gen_expr_str(end, current_scope, None);
+                self.flush_pre_stmts();
+                self.out.push_str(&format!(
+                    "{}for (int64_t {} = {}; {} < {}; {}++) {{\n",
+                    ind, unique_name, start_str, unique_name, end_str, unique_name
+                ));
+                self.indent_depth += 1;
+                for s in body {
+                    self.gen_stmt(s, current_scope);
+                }
+                self.indent_depth -= 1;
+                self.out.push_str(&format!("{}}}\n", ind));
+            }
+            Stmt::ForIn {
+                var_name,
+                list,
+                body,
+                binding_id,
+            } => {
+                let unique_name = if let Some(id) = binding_id.get() {
+                    format!("{}_{}", var_name, id)
+                } else {
+                    var_name.clone()
+                };
+                let list_str = self.gen_expr_str(list, current_scope, None);
+                let tmp_list = format!("__lpp_for_list_{}", self.tmp_count);
+                let tmp_len = format!("__lpp_for_len_{}", self.tmp_count);
+                let tmp_i = format!("__lpp_for_i_{}", self.tmp_count);
+                self.tmp_count += 1;
+                self.flush_pre_stmts();
+
+                let list_ty = self.expr_type(list, current_scope);
+                let elem_ty = match &list_ty {
+                    TypeRef::Generic(name, params) if name == "List" && !params.is_empty() => {
+                        params[0].clone()
+                    }
+                    _ => TypeRef::Int,
+                };
+                let c_elem_type = self.c_type(&elem_ty);
+                let is_arc_elem = matches!(elem_ty, TypeRef::Custom(_) | TypeRef::Str | TypeRef::Bool);
+
+                self.out.push_str(&format!("{}void* {} = {};\n", ind, tmp_list, list_str));
+                self.out.push_str(&format!("{}int64_t {} = lpp_list_len({});\n", ind, tmp_len, tmp_list));
+                self.out.push_str(&format!(
+                    "{}for (int64_t {} = 0; {} < {}; {}++) {{\n",
+                    ind, tmp_i, tmp_i, tmp_len, tmp_i
+                ));
+                self.indent_depth += 1;
+                let ind_inner = self.indent();
+                let get_fn = if is_arc_elem { "(void*)lpp_list_get_arc" } else { "lpp_list_get" };
+                self.out.push_str(&format!(
+                    "{}{} {} = ({}){}({}, {});\n",
+                    ind_inner, c_elem_type, unique_name, c_elem_type, get_fn, tmp_list, tmp_i
+                ));
+                for s in body {
+                    self.gen_stmt(s, current_scope);
+                }
+                self.indent_depth -= 1;
+                self.out.push_str(&format!("{}}}\n", ind));
+            }
+            Stmt::Break => {
+                self.out.push_str(&format!("{}break;\n", ind));
+            }
+            Stmt::Continue => {
+                self.out.push_str(&format!("{}continue;\n", ind));
+            }
             Stmt::Block(stmts) => {
                 for stmt in stmts {
                     self.gen_stmt(stmt, current_scope);

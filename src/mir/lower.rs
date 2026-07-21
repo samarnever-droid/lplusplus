@@ -5,6 +5,12 @@ use crate::semantic::{BindingId, ScopeKind, SymbolTable};
 use crate::typecheck::{TypeRef, TypeTable};
 use std::collections::HashMap;
 
+#[derive(Debug, Clone, Copy)]
+pub struct LoopTargets {
+    pub break_block: BlockId,
+    pub continue_block: BlockId,
+}
+
 pub struct MirLowerCtx<'a> {
     pub symbol_table: &'a SymbolTable,
     pub type_table: &'a mut TypeTable,
@@ -17,6 +23,9 @@ pub struct MirLowerCtx<'a> {
     pub closure_scope_idx: usize,
     pub current_env_ptr: Option<LocalId>,
     pub current_captures: Vec<BindingId>,
+
+    // Loop target stack for break and continue
+    pub loop_stack: Vec<LoopTargets>,
 }
 
 impl<'a> MirLowerCtx<'a> {
@@ -31,6 +40,7 @@ impl<'a> MirLowerCtx<'a> {
             closure_scope_idx: 0,
             current_env_ptr: None,
             current_captures: Vec::new(),
+            loop_stack: Vec::new(),
         }
     }
 
@@ -401,6 +411,11 @@ impl<'a> MirLowerCtx<'a> {
                     else_block: end_block_id,
                 })?;
 
+                self.loop_stack.push(LoopTargets {
+                    break_block: end_block_id,
+                    continue_block: cond_block_id,
+                });
+
                 builder.switch_to_block(body_block_id);
                 for stmt in body {
                     self.lower_stmt(builder, stmt, binding_map)?;
@@ -409,7 +424,199 @@ impl<'a> MirLowerCtx<'a> {
                     builder.terminate_current_block(Terminator::Goto(cond_block_id))?;
                 }
 
+                self.loop_stack.pop();
+
                 builder.switch_to_block(end_block_id);
+            }
+            Stmt::ForRange {
+                var_name,
+                start,
+                end,
+                body,
+                binding_id,
+            } => {
+                let start_op = self.lower_expr(builder, start, binding_map)?;
+                let end_op = self.lower_expr(builder, end, binding_map)?;
+
+                let var_binding_id = binding_id.get().map(BindingId);
+                let var_local = builder.new_local(TypeRef::Int, true, Some(var_name.clone()), var_binding_id);
+                if let Some(bid) = var_binding_id {
+                    binding_map.insert(bid, var_local);
+                }
+                builder.push_instr(MirInstr::Assign(var_local, Rvalue::Use(start_op)))?;
+
+                let cond_block_id = builder.new_block();
+                let body_block_id = builder.new_block();
+                let step_block_id = builder.new_block();
+                let end_block_id = builder.new_block();
+
+                builder.terminate_current_block(Terminator::Goto(cond_block_id))?;
+
+                builder.switch_to_block(cond_block_id);
+                let cmp_temp = builder.new_local(TypeRef::Bool, false, None, None);
+                builder.push_instr(MirInstr::Assign(
+                    cmp_temp,
+                    Rvalue::BinaryOp(BinaryOperator::Less, Operand::Local(var_local), end_op),
+                ))?;
+                builder.terminate_current_block(Terminator::If {
+                    cond: Operand::Local(cmp_temp),
+                    then_block: body_block_id,
+                    else_block: end_block_id,
+                })?;
+
+                self.loop_stack.push(LoopTargets {
+                    break_block: end_block_id,
+                    continue_block: step_block_id,
+                });
+
+                builder.switch_to_block(body_block_id);
+                for stmt in body {
+                    self.lower_stmt(builder, stmt, binding_map)?;
+                }
+                if builder.current_block().is_ok() {
+                    builder.terminate_current_block(Terminator::Goto(step_block_id))?;
+                }
+
+                builder.switch_to_block(step_block_id);
+                let add_temp = builder.new_local(TypeRef::Int, false, None, None);
+                builder.push_instr(MirInstr::Assign(
+                    add_temp,
+                    Rvalue::BinaryOp(
+                        BinaryOperator::Add,
+                        Operand::Local(var_local),
+                        Operand::Int(1),
+                    ),
+                ))?;
+                builder.push_instr(MirInstr::Assign(var_local, Rvalue::Use(Operand::Local(add_temp))))?;
+                builder.terminate_current_block(Terminator::Goto(cond_block_id))?;
+
+                self.loop_stack.pop();
+                builder.switch_to_block(end_block_id);
+            }
+            Stmt::ForIn {
+                var_name,
+                list,
+                body,
+                binding_id,
+            } => {
+                let list_op = self.lower_expr(builder, list, binding_map)?;
+                let list_ty = self.expr_type_hint(list, builder, binding_map);
+                let elem_ty = match &list_ty {
+                    TypeRef::Generic(name, params) if name == "List" && !params.is_empty() => {
+                        params[0].clone()
+                    }
+                    _ => TypeRef::Int,
+                };
+
+                let list_local = builder.new_local(list_ty, false, Some("__for_list".to_string()), None);
+                builder.push_instr(MirInstr::Assign(list_local, Rvalue::Use(list_op)))?;
+
+                let idx_local = builder.new_local(TypeRef::Int, true, Some("__for_idx".to_string()), None);
+                builder.push_instr(MirInstr::Assign(idx_local, Rvalue::Use(Operand::Int(0))))?;
+
+                let cond_block_id = builder.new_block();
+                let body_block_id = builder.new_block();
+                let step_block_id = builder.new_block();
+                let end_block_id = builder.new_block();
+
+                builder.terminate_current_block(Terminator::Goto(cond_block_id))?;
+
+                builder.switch_to_block(cond_block_id);
+                let len_temp = builder.new_local(TypeRef::Int, false, None, None);
+                builder.push_instr(MirInstr::Assign(
+                    len_temp,
+                    Rvalue::BuiltinCall("lpp_list_len".to_string(), vec![Operand::Local(list_local)]),
+                ))?;
+                let cmp_temp = builder.new_local(TypeRef::Bool, false, None, None);
+                builder.push_instr(MirInstr::Assign(
+                    cmp_temp,
+                    Rvalue::BinaryOp(
+                        BinaryOperator::Less,
+                        Operand::Local(idx_local),
+                        Operand::Local(len_temp),
+                    ),
+                ))?;
+                builder.terminate_current_block(Terminator::If {
+                    cond: Operand::Local(cmp_temp),
+                    then_block: body_block_id,
+                    else_block: end_block_id,
+                })?;
+
+                self.loop_stack.push(LoopTargets {
+                    break_block: end_block_id,
+                    continue_block: step_block_id,
+                });
+
+                builder.switch_to_block(body_block_id);
+                let get_symbol = if matches!(
+                    elem_ty,
+                    TypeRef::Custom(_) | TypeRef::Str | TypeRef::Bool
+                ) {
+                    "lpp_list_get_arc"
+                } else {
+                    "lpp_list_get"
+                };
+                let elem_temp = builder.new_local(elem_ty.clone(), false, None, None);
+                if matches!(elem_ty, TypeRef::Custom(_) | TypeRef::Str | TypeRef::Bool) {
+                    builder.set_local_ownership(elem_temp, Ownership::Borrowed);
+                }
+                builder.push_instr(MirInstr::Assign(
+                    elem_temp,
+                    Rvalue::BuiltinCall(
+                        get_symbol.to_string(),
+                        vec![Operand::Local(list_local), Operand::Local(idx_local)],
+                    ),
+                ))?;
+
+                let var_binding_id = binding_id.get().map(BindingId);
+                let var_local = builder.new_local(elem_ty, false, Some(var_name.clone()), var_binding_id);
+                if let Some(bid) = var_binding_id {
+                    binding_map.insert(bid, var_local);
+                }
+                builder.push_instr(MirInstr::Assign(var_local, Rvalue::Use(Operand::Local(elem_temp))))?;
+
+                for stmt in body {
+                    self.lower_stmt(builder, stmt, binding_map)?;
+                }
+                if builder.current_block().is_ok() {
+                    builder.terminate_current_block(Terminator::Goto(step_block_id))?;
+                }
+
+                builder.switch_to_block(step_block_id);
+                let add_temp = builder.new_local(TypeRef::Int, false, None, None);
+                builder.push_instr(MirInstr::Assign(
+                    add_temp,
+                    Rvalue::BinaryOp(
+                        BinaryOperator::Add,
+                        Operand::Local(idx_local),
+                        Operand::Int(1),
+                    ),
+                ))?;
+                builder.push_instr(MirInstr::Assign(idx_local, Rvalue::Use(Operand::Local(add_temp))))?;
+                builder.terminate_current_block(Terminator::Goto(cond_block_id))?;
+
+                self.loop_stack.pop();
+                builder.switch_to_block(end_block_id);
+            }
+            Stmt::Break => {
+                let target = self
+                    .loop_stack
+                    .last()
+                    .ok_or_else(|| "break statement outside of loop".to_string())?
+                    .break_block;
+                builder.terminate_current_block(Terminator::Goto(target))?;
+                let dead_block = builder.new_block();
+                builder.switch_to_block(dead_block);
+            }
+            Stmt::Continue => {
+                let target = self
+                    .loop_stack
+                    .last()
+                    .ok_or_else(|| "continue statement outside of loop".to_string())?
+                    .continue_block;
+                builder.terminate_current_block(Terminator::Goto(target))?;
+                let dead_block = builder.new_block();
+                builder.switch_to_block(dead_block);
             }
             Stmt::Block(stmts) => {
                 for stmt in stmts {

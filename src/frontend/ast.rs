@@ -84,6 +84,21 @@ pub enum Stmt {
         condition: Expr,
         body: Vec<Stmt>,
     },
+    ForRange {
+        var_name: String,
+        start: Expr,
+        end: Expr,
+        body: Vec<Stmt>,
+        binding_id: std::cell::Cell<Option<usize>>,
+    },
+    ForIn {
+        var_name: String,
+        list: Expr,
+        body: Vec<Stmt>,
+        binding_id: std::cell::Cell<Option<usize>>,
+    },
+    Break,
+    Continue,
     Block(Vec<Stmt>),
 }
 

@@ -72,27 +72,31 @@ def check_score(score: Int) -> Void:
 ```
 
 ### 2.2 Loops (`while` and `for`)
-L++ provides `while` loops, list iteration `for x in list:`, and integer range iteration `for i in range(n)` / `for i in range(start, end)`.
+L++ provides `while` loops, list iteration `for x in list:`, and integer range iteration `for i in range(n)` / `for i in range(start, end)`. `break` and `continue` control-flow statements are supported across all loop forms.
 
 ```lpp
 def loop_demo():
-    # Standard while loop
+    # Standard while loop with break & continue
     mut i := 0
-    while i < 5:
-        lpp_print_int(i)
+    while i < 10:
+        if i == 5:
+            break
         i = i + 1
 
-    # Range loop (desugars directly to an integer while loop without heap allocations)
+    # Range loop with continue
+    mut sum := 0
     for k in range(0, 10):
-        lpp_print_int(k)
+        if k % 2 == 0:
+            continue
+        sum = sum + k
 
     # List iteration loop
-    items := [10, 20, 30]
+    items := [10, 20, 30, 40]
     for item in items:
+        if item == 30:
+            break
         lpp_print_int(item)
 ```
-
-*(Note: `break` and `continue` keywords are currently in development and not yet available in loop bodies.)*
 
 ---
 

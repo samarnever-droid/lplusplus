@@ -361,138 +361,33 @@ impl Parser {
             }
             self.match_token(&Token::Dedent);
 
-            // Desugar `for x in range(...)` vs `for item in list`
             if let Expr::Call { callee, args } = &list_expr {
                 if let Expr::Identifier(fn_name, _) = callee.as_ref() {
                     if fn_name == "range" {
-                        let (start_expr, end_expr) =
-                            match args.len() {
-                                1 => (Expr::IntLiteral(0), args[0].clone()),
-                                2 => (args[0].clone(), args[1].clone()),
-                                _ => return self.error(
-                                    "range in a for loop expects range(end) or range(start, end)",
-                                ),
-                            };
-
-                        let var_decl = Stmt::LetInferred {
-                            name: var_name.clone(),
-                            is_mut: true,
-                            value: start_expr,
+                        let (start, end) = match args.len() {
+                            1 => (Expr::IntLiteral(0), args[0].clone()),
+                            2 => (args[0].clone(), args[1].clone()),
+                            _ => return self.error(
+                                "range in a for loop expects range(end) or range(start, end)",
+                            ),
+                        };
+                        return Ok(Stmt::ForRange {
+                            var_name,
+                            start,
+                            end,
+                            body,
                             binding_id: std::cell::Cell::new(None),
-                        };
-
-                        let while_cond = Expr::BinaryOp {
-                            left: Box::new(Expr::Identifier(
-                                var_name.clone(),
-                                std::cell::Cell::new(None),
-                            )),
-                            op: BinaryOperator::Less,
-                            right: Box::new(end_expr),
-                        };
-
-                        let mut while_body = body;
-                        let increment = Stmt::Assign {
-                            name: var_name.clone(),
-                            value: Expr::BinaryOp {
-                                left: Box::new(Expr::Identifier(
-                                    var_name,
-                                    std::cell::Cell::new(None),
-                                )),
-                                op: BinaryOperator::Add,
-                                right: Box::new(Expr::IntLiteral(1)),
-                            },
-                            binding_id: std::cell::Cell::new(None),
-                        };
-                        while_body.push(increment);
-
-                        let while_stmt = Stmt::While {
-                            condition: while_cond,
-                            body: while_body,
-                        };
-
-                        return Ok(Stmt::Block(vec![var_decl, while_stmt]));
+                        });
                     }
                 }
             }
 
-            static FOR_TEMP_COUNTER: std::sync::atomic::AtomicUsize =
-                std::sync::atomic::AtomicUsize::new(0);
-            let id = FOR_TEMP_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            let list_var = format!("__for_list_{}", id);
-            let idx_var = format!("__for_idx_{}", id);
-
-            let list_decl = Stmt::LetInferred {
-                name: list_var.clone(),
-                is_mut: false,
-                value: list_expr,
+            return Ok(Stmt::ForIn {
+                var_name,
+                list: list_expr,
+                body,
                 binding_id: std::cell::Cell::new(None),
-            };
-
-            let idx_decl = Stmt::LetInferred {
-                name: idx_var.clone(),
-                is_mut: true,
-                value: Expr::IntLiteral(0),
-                binding_id: std::cell::Cell::new(None),
-            };
-
-            let len_call = Expr::Call {
-                callee: Box::new(Expr::Identifier(
-                    "len".to_string(),
-                    std::cell::Cell::new(None),
-                )),
-                args: vec![Expr::Identifier(
-                    list_var.clone(),
-                    std::cell::Cell::new(None),
-                )],
-            };
-
-            let while_cond = Expr::BinaryOp {
-                left: Box::new(Expr::Identifier(
-                    idx_var.clone(),
-                    std::cell::Cell::new(None),
-                )),
-                op: BinaryOperator::Less,
-                right: Box::new(len_call),
-            };
-
-            let element_access = Expr::Call {
-                callee: Box::new(Expr::Identifier(
-                    "get".to_string(),
-                    std::cell::Cell::new(None),
-                )),
-                args: vec![
-                    Expr::Identifier(list_var, std::cell::Cell::new(None)),
-                    Expr::Identifier(idx_var.clone(), std::cell::Cell::new(None)),
-                ],
-            };
-
-            let mut while_body = Vec::new();
-            let var_decl = Stmt::LetInferred {
-                name: var_name,
-                is_mut: false,
-                value: element_access,
-                binding_id: std::cell::Cell::new(None),
-            };
-            while_body.push(var_decl);
-            while_body.extend(body);
-
-            let increment = Stmt::Assign {
-                name: idx_var.clone(),
-                value: Expr::BinaryOp {
-                    left: Box::new(Expr::Identifier(idx_var, std::cell::Cell::new(None))),
-                    op: BinaryOperator::Add,
-                    right: Box::new(Expr::IntLiteral(1)),
-                },
-                binding_id: std::cell::Cell::new(None),
-            };
-            while_body.push(increment);
-
-            let while_stmt = Stmt::While {
-                condition: while_cond,
-                body: while_body,
-            };
-
-            return Ok(Stmt::Block(vec![list_decl, idx_decl, while_stmt]));
+            });
         }
 
         if self.match_token(&Token::Return) {
@@ -501,6 +396,14 @@ impl Parser {
             }
             let expr = self.parse_expr()?;
             return Ok(Stmt::Return(Some(expr)));
+        }
+
+        if self.match_token(&Token::Break) {
+            return Ok(Stmt::Break);
+        }
+
+        if self.match_token(&Token::Continue) {
+            return Ok(Stmt::Continue);
         }
 
         if self.match_token(&Token::Mut) {

@@ -320,6 +320,61 @@ impl EscapeAnalyzer {
                     )?;
                 }
             }
+            Stmt::ForRange {
+                start, end, body, ..
+            } => {
+                Self::walk_expr_rule1(
+                    start,
+                    current_scope,
+                    symbol_table,
+                    type_table,
+                    closure_scopes,
+                    closure_idx,
+                    storage,
+                )?;
+                Self::walk_expr_rule1(
+                    end,
+                    current_scope,
+                    symbol_table,
+                    type_table,
+                    closure_scopes,
+                    closure_idx,
+                    storage,
+                )?;
+                for stmt in body {
+                    Self::walk_stmt_rule1(
+                        stmt,
+                        current_scope,
+                        symbol_table,
+                        type_table,
+                        closure_scopes,
+                        closure_idx,
+                        storage,
+                    )?;
+                }
+            }
+            Stmt::ForIn { list, body, .. } => {
+                Self::walk_expr_rule1(
+                    list,
+                    current_scope,
+                    symbol_table,
+                    type_table,
+                    closure_scopes,
+                    closure_idx,
+                    storage,
+                )?;
+                for stmt in body {
+                    Self::walk_stmt_rule1(
+                        stmt,
+                        current_scope,
+                        symbol_table,
+                        type_table,
+                        closure_scopes,
+                        closure_idx,
+                        storage,
+                    )?;
+                }
+            }
             Stmt::Block(stmts) => {
                 for stmt in stmts {
                     Self::walk_stmt_rule1(
@@ -344,6 +399,7 @@ impl EscapeAnalyzer {
                     storage,
                 )?;
             }
+            Stmt::Break | Stmt::Continue => {}
             Stmt::Return(Some(expr)) => {
                 let mut should_promote = false;
                 if let Some(ty) = Self::get_expr_type(expr, current_scope, symbol_table, type_table)

@@ -19,7 +19,7 @@ This document serves as the authoritative source of truth for verified compiler 
 | Closures (`fn`) | **Available** | Inline and block closures with lexical capture |
 | Dynamic Lists (`List[T]`) | **Available** | Supported elements: `Int`, `Bool`, `Str`, `CustomStruct` (ARC managed) |
 | Struct Constructors | **Partial** | No positional constructor arguments; instantiate via `Type()` and populate fields |
-| `break` / `continue` | **Not Available** | Planned control flow keywords |
+| `break` / `continue` | **Available** | Fully supported in `while`, `for i in range(...)`, and `for item in list` |
 | `Map[K, V]`, `Set[T]`, Enums, Traits | **Not Available** | Planned container and algebraic type extensions |
 
 ---

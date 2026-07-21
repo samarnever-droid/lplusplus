@@ -14,6 +14,8 @@ pub enum Token {
     While,
     For,
     In,
+    Break,
+    Continue,
 
     // Identifiers and Literals
     Ident(String),
@@ -360,6 +362,8 @@ impl<'a> Lexer<'a> {
                         "while" => tokens.push(mk_token(Token::While)),
                         "for" => tokens.push(mk_token(Token::For)),
                         "in" => tokens.push(mk_token(Token::In)),
+                        "break" => tokens.push(mk_token(Token::Break)),
+                        "continue" => tokens.push(mk_token(Token::Continue)),
                         "true" => tokens.push(mk_token(Token::BoolLit(true))),
                         "false" => tokens.push(mk_token(Token::BoolLit(false))),
                         _ => tokens.push(mk_token(Token::Ident(ident))),
@@ -411,6 +415,19 @@ mod tests {
         assert_eq!(
             raw_tokens,
             vec![Token::BoolLit(true), Token::BoolLit(false), Token::Eof]
+        );
+    }
+
+    #[test]
+    fn lexes_break_and_continue_keywords() {
+        let mut lexer = Lexer::new("break continue");
+        let tokens = lexer
+            .tokenize()
+            .expect("lexer should parse break and continue keywords");
+        let raw_tokens: Vec<Token> = tokens.into_iter().map(|st| st.token).collect();
+        assert_eq!(
+            raw_tokens,
+            vec![Token::Break, Token::Continue, Token::Eof]
         );
     }
 }
