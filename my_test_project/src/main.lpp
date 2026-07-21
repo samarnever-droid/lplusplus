@@ -8,7 +8,7 @@ def main():
     mut tasks := list_new()
     
     # Create two tasks dynamically
-    t1 := create_task(101, "Review Compiler Architecture")
+    mut t1 := create_task(101, "Review Compiler Architecture")
     t2 := create_task(102, "Optimize Memory Dataflow ARC")
     
     # Toggle the first task as completed

@@ -4,7 +4,7 @@ struct Task:
     completed: Bool
 
 def create_task(id: Int, title: String) -> Task:
-    t := Task()
+    mut t := Task()
     t.id = id
     t.title = title
     t.completed = false

@@ -46,6 +46,7 @@ function Install-Source {
     Copy-Item "$ProjectDir\target\release\lpp.exe" "$BinDir\lpp.exe" -Force
     Copy-Item "$ProjectDir\target\release\lpp-link.exe" "$BinDir\lpp-link.exe" -Force
     Copy-Item "$ProjectDir\lpp_runtime.c" "$LibDir\lpp_runtime.c" -Force
+    Copy-Item "$ProjectDir\runtime" "$LibDir\runtime" -Recurse -Force
     $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
     if (Test-Path $vswhere) {
         $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath

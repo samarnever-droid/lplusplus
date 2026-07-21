@@ -987,3 +987,8 @@ static void lpp_json_free_node(lpp_JsonNode *node) {
 void lpp_json_free(void *json) {
     lpp_json_free_node((lpp_JsonNode *)json);
 }
+
+#include "runtime/lpp_str.c"
+#include "runtime/lpp_exec.c"
+#include "runtime/lpp_dir.c"
+

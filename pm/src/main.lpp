@@ -11,7 +11,7 @@ def main():
     cmd := command_output("lpp-pm-internal-cmd")
     if str_find(cmd, "new") >= 0:
         args := str_split(cmd, 32)  # split by space
-        name := get(args, 1)
+        mut name := get(args, 1)
         if len(args) > 1:
             name = get(args, 1)
         if len(args) <= 1:
