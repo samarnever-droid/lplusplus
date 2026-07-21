@@ -1,8 +1,8 @@
-# L++ Complete Language & Toolchain Specification
+# L++ v2.0.0 Complete Language & Toolchain Specification
 
-L++ is an experimental native programming language designed to combine the **readability of Python**, the **memory safety and control of Rust**, and the **build/iteration speed of Go**.
+L++ is a high-performance, pure native programming language designed to combine the **readability of Python**, the **memory safety and control of Rust**, and the **build/iteration speed of Go**.
 
-L++ features a multi-tier compilation pipeline: an ahead-of-time (AOT) Cranelift compiler producing native object files (`.o`/`.obj`), a custom tri-format direct linker (`lpp-link` for Linux ELF, Windows PE, and macOS Mach-O), a self-hosting package manager (`lpp-pm`), and an auxiliary C transpiler for debugging and cross-platform bootstrapping.
+L++ 2.0 features a 100% pure native compilation pipeline: an ahead-of-time (AOT) Cranelift compiler producing native object files (`.o`/`.obj`), a custom tri-format direct linker (`lpp-link` for Linux ELF, Windows PE, and macOS Mach-O), a self-hosting package manager (`lpp-pm`), and zero reliance on external C transpilation passes or system C compilers (`gcc`, `clang`, `cl.exe`).
 
 ---
 

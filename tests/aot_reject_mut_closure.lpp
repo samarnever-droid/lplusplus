@@ -1,0 +1,4 @@
+def main():
+    mut x := 10
+    f := fn():
+        x = 20

@@ -14,7 +14,7 @@
   <a href="linguist/UPSTREAM_LINGUIST_PR.md">Linguist Package</a>
 </p>
 
-> **Status — July 21, 2026:** L++ is an active experimental native language toolchain. The supported Linux x86-64 and Windows x86-64 native subsets feature ownership-aware MIR, ARC destructors, closure capsules, `List[T]` dynamic lists, `Map[K, V]` hash tables, binary buffer operations (`buf_*`), process execution (`command_*`), directory manipulation (`dir_*`), native networking (`net_*`), Cranelift AOT, self-hosting package manager (`lpp-pm`), and a tri-format direct linker path (`lpp-link`). Unsupported features are deliberately caught and rejected rather than silently compiled with unsafe semantics.
+> **Status — L++ 2.0 Release (July 21, 2026):** L++ is a 100% pure native language toolchain. The supported Linux x86-64 and Windows x86-64 native platforms feature ownership-aware MIR, ARC destructors, closure capsules, `List[T]` dynamic lists, `Map[K, V]` key-value hash tables, binary buffer operations (`buf_*`), process execution (`command_*`), directory manipulation (`dir_*`), native networking (`net_*`), Cranelift AOT, self-hosting package manager (`lpp-pm`), and a tri-format direct linker path (`lpp-link`). External host C compilers (`gcc`, `clang`, `cl.exe`) and C transpilation passes are completely removed from the primary build pipeline.
 
 ---
 

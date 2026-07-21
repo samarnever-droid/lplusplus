@@ -307,6 +307,7 @@ fn installed_root_dir() -> Option<PathBuf> {
     }
 }
 
+#[allow(dead_code)]
 fn resolve_runtime_source() -> Option<PathBuf> {
     for var in &["LPP_HOME", "LPP_DIR"] {
         if let Ok(val) = std::env::var(var) {
@@ -362,6 +363,7 @@ fn resolve_runtime_source() -> Option<PathBuf> {
         .filter(|path| path.exists())
 }
 
+#[allow(dead_code)]
 fn resolve_runtime_object() -> Option<PathBuf> {
     let extension = if cfg!(windows) { "obj" } else { "o" };
     let filename = format!("lpp_runtime.{}", extension);
@@ -416,6 +418,7 @@ fn output_path_for_name(dir: &Path, name: &str) -> PathBuf {
     dir.join(binary_file_name(name))
 }
 
+#[allow(dead_code)]
 enum LinkStrategy {
     #[cfg_attr(not(windows), allow(dead_code))]
     MsvcLink { runtime_obj: PathBuf },
@@ -432,6 +435,7 @@ enum LinkStrategy {
     },
 }
 
+#[allow(dead_code)]
 fn detect_link_strategy() -> Result<LinkStrategy, String> {
     #[cfg(windows)]
     {
@@ -474,6 +478,7 @@ fn detect_link_strategy() -> Result<LinkStrategy, String> {
     )
 }
 
+#[allow(dead_code)]
 fn should_use_mold(compiler: &str) -> Result<bool, String> {
     if compiler.eq_ignore_ascii_case("cl.exe") {
         return Ok(false);
@@ -698,7 +703,7 @@ fn resolve_min_runtime_object() -> Option<PathBuf> {
         .filter(|path| path.exists())
 }
 
-fn direct_link_binary(obj_file: &Path, output_path: &Path) -> Result<(), String> {
+pub fn direct_link_binary(obj_file: &Path, output_path: &Path) -> Result<(), String> {
     let linker = current_binary_dir()
         .map(|dir| dir.join(format!("lpp-link{}", std::env::consts::EXE_SUFFIX)))
         .filter(|path| path.exists())
@@ -729,172 +734,7 @@ fn direct_link_binary(obj_file: &Path, output_path: &Path) -> Result<(), String>
 }
 
 fn link_native_binary(obj_file: &Path, output_path: &Path) -> Result<(), String> {
-    if std::env::var("LPP_LINKER").ok().as_deref() == Some("direct") {
-        return direct_link_binary(obj_file, output_path);
-    }
-    #[cfg(windows)]
-    {
-        if let Some(vcvars) = find_vcvars64() {
-            let runtime_src = resolve_runtime_source()
-                .ok_or_else(|| "Failed to locate lpp_runtime.c for native linking.".to_string())?;
-            let mut cmd = std::process::Command::new("cmd.exe");
-            cmd.stdin(std::process::Stdio::piped());
-            cmd.stdout(std::process::Stdio::null());
-            cmd.stderr(std::process::Stdio::null());
-            let mut child = cmd
-                .spawn()
-                .map_err(|e| format!("Failed to spawn cmd.exe: {}", e))?;
-            {
-                use std::io::Write;
-                if let Some(mut stdin) = child.stdin.take() {
-                    let _ = writeln!(stdin, "call \"{}\" > nul", vcvars.display());
-                    let lib_dir = runtime_src.parent().unwrap_or_else(|| Path::new("."));
-                    let _ = writeln!(
-                        stdin,
-                        "cl.exe /nologo /O2 /I\"{}\" \"{}\" \"{}\" /Fe:\"{}\"",
-                        lib_dir.display(),
-                        obj_file.display(),
-                        runtime_src.display(),
-                        output_path.display()
-                    );
-                    let _ = writeln!(stdin, "exit");
-                }
-            }
-            let status = child
-                .wait()
-                .map_err(|e| format!("Failed to wait for cmd.exe: {}", e))?;
-            if status.success() {
-                // Delete temporary MSVC outputs generated in current dir
-                let obj_in_curr_dir = Path::new("lpp_runtime.obj");
-                if obj_in_curr_dir.exists() {
-                    let _ = fs::remove_file(obj_in_curr_dir);
-                }
-                return Ok(());
-            } else {
-                return Err(format!("cl.exe compilation/linking failed."));
-            }
-        }
-    }
-
-    match detect_link_strategy()? {
-        LinkStrategy::MsvcLink { runtime_obj } => {
-            let status = std::process::Command::new("link.exe")
-                .arg("/nologo")
-                .arg(obj_file)
-                .arg(runtime_obj)
-                .arg(format!("/out:{}", output_path.display()))
-                .arg("/SUBSYSTEM:CONSOLE")
-                .stdin(std::process::Stdio::null())
-                .status()
-                .map_err(|e| format!("Failed to execute link.exe: {}", e))?;
-            if status.success() {
-                Ok(())
-            } else {
-                Err(format!(
-                    "link.exe failed while creating '{}'.",
-                    output_path.display()
-                ))
-            }
-        }
-        LinkStrategy::CCompilerObject {
-            compiler,
-            runtime_obj,
-        } => {
-            let mut cmd = std::process::Command::new(&compiler);
-            if compiler.eq_ignore_ascii_case("cl.exe") {
-                cmd.arg("/nologo")
-                    .arg("/O2")
-                    .arg(obj_file)
-                    .arg(&runtime_obj)
-                    .arg(format!("/Fe:{}", output_path.display()));
-            } else {
-                if should_use_mold(&compiler)? {
-                    cmd.arg("-fuse-ld=mold");
-                    cmd.arg("-Wl,--icf=all");
-                    cmd.arg("-Wl,--as-needed");
-                    cmd.arg("-Wl,-O1");
-                    if std::env::var("LPP_RELEASE").ok().as_deref() == Some("1")
-                        || std::env::var("RELEASE").ok().as_deref() == Some("1")
-                    {
-                        cmd.arg("-Wl,-s");
-                    }
-                }
-                cmd.arg("-O2")
-                    .arg(obj_file)
-                    .arg(&runtime_obj)
-                    .arg("-o")
-                    .arg(output_path);
-                #[cfg(not(windows))]
-                {
-                    cmd.arg("-pthread");
-                }
-            }
-            let status = cmd
-                .stdin(std::process::Stdio::null())
-                .status()
-                .map_err(|e| format!("Failed to execute native linker '{}': {}", compiler, e))?;
-            if status.success() {
-                Ok(())
-            } else {
-                Err(format!(
-                    "Native linker '{}' failed while creating '{}'.",
-                    compiler,
-                    output_path.display()
-                ))
-            }
-        }
-        LinkStrategy::CCompiler {
-            compiler,
-            runtime_src,
-        } => {
-            let mut cmd = std::process::Command::new(&compiler);
-            let lib_dir = runtime_src.parent().unwrap_or_else(|| Path::new("."));
-            if compiler.eq_ignore_ascii_case("cl.exe") {
-                cmd.arg("/nologo")
-                    .arg("/O2")
-                    .arg(format!("/I{}", lib_dir.display()))
-                    .arg(obj_file)
-                    .arg(&runtime_src)
-                    .arg(format!("/Fe:{}", output_path.display()));
-            } else {
-                if should_use_mold(&compiler)? {
-                    cmd.arg("-fuse-ld=mold");
-                    cmd.arg("-Wl,--icf=all");
-                    cmd.arg("-Wl,--as-needed");
-                    cmd.arg("-Wl,-O1");
-                    if std::env::var("LPP_RELEASE").ok().as_deref() == Some("1")
-                        || std::env::var("RELEASE").ok().as_deref() == Some("1")
-                    {
-                        cmd.arg("-Wl,-s");
-                    }
-                }
-                cmd.arg("-O2")
-                    .arg(format!("-I{}", lib_dir.display()))
-                    .arg(obj_file)
-                    .arg(&runtime_src)
-                    .arg("-o")
-                    .arg(output_path);
-                #[cfg(not(windows))]
-                {
-                    cmd.arg("-pthread");
-                }
-            }
-
-            let status = cmd
-                .stdin(std::process::Stdio::null())
-                .status()
-                .map_err(|e| format!("Failed to execute native compiler '{}': {}", compiler, e))?;
-            if status.success() {
-                Ok(())
-            } else {
-                Err(format!(
-                    "Native compiler '{}' failed while creating '{}'.",
-                    compiler,
-                    output_path.display()
-                ))
-            }
-        }
-    }
+    direct_link_binary(obj_file, output_path)
 }
 
 pub fn run_command(args: &[String]) {

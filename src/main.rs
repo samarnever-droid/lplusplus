@@ -1,10 +1,6 @@
 #[path = "frontend/ast.rs"]
 mod ast;
 mod builtins;
-#[path = "backend/c_runtime_headers.rs"]
-mod c_runtime_headers;
-#[path = "backend/codegen.rs"]
-mod codegen;
 #[path = "backend/cranelift/mod.rs"]
 pub mod cranelift_backend;
 #[path = "analysis/escape.rs"]
@@ -321,10 +317,8 @@ fn main() {
     // The CLI has two intentionally separate modes:
     // - package commands (`build`, `run`, `test`, …) operate on lpp.toml;
     // - source commands (`check file.lpp`, `emit file.lpp`) operate on one file.
-    let mut explicit_emit = false;
     let mut source_check_command = false;
     if args.len() > 2 && args[1] == "emit" {
-        explicit_emit = true;
         args.remove(1);
     } else if args.len() > 2 && args[1] == "check" && args[2].ends_with(".lpp") {
         source_check_command = true;
@@ -363,17 +357,16 @@ fn main() {
     let mut dump_types = false;
     let mut dump_escape = false;
     let mut dump_mir = false;
-    let mut dump_c = false;
     let mut check_only = source_check_command;
     let mut check_all = false;
     let mut emit_object = false;
 
     for arg in args.iter().skip(1) {
         if arg == "--version" || arg == "-v" {
-            println!("L++ Compiler v0.1.3");
+            println!("L++ Compiler v2.0.0 (Pure Native AOT)");
             return;
         } else if arg == "--help" || arg == "-h" {
-            println!("L++ (L Plus Plus) Compiler, Codegen Backend & Package Manager");
+            println!("L++ (L Plus Plus) Pure Native Compiler, Cranelift AOT & Direct Linker Toolchain v2.0.0");
             println!("Usage: lpp [command] [options]");
             println!("\nCommands (Package Manager):");
             println!("  new <name>       Create a new L++ package");
@@ -389,16 +382,13 @@ fn main() {
             println!("  outdated         Show dependencies without pinned versions");
             println!("  clean            Remove build output and generated artifacts");
             println!("  check            Check the project for compilation errors");
-            println!("  build            Build project into a native binary");
-            println!("  run              Compile and run the project binary");
+            println!("  build            Build project into a native binary via direct lpp-link");
+            println!("  run              Compile and run the project native executable");
             println!("  test             Compile and run tests inside tests/");
             println!("\nSource Commands:");
-            println!("  lpp check <file.lpp>          Type-check one file; emit no artifacts");
-            println!("  lpp emit <file.lpp>           Emit C source next to the input file");
-            println!("  lpp emit <file.lpp> --aot     Emit C source and a Cranelift object file");
-            println!(
-                "  lpp <file.lpp>                Legacy source invocation; emits C with guidance"
-            );
+            println!("  lpp <file.lpp>               Compile L++ source into direct native executable");
+            println!("  lpp check <file.lpp>         Type-check one file; emit no artifacts");
+            println!("  lpp emit <file.lpp> --aot    Emit Cranelift native object file (.o / .obj)");
             println!("\nOptions (Compiler):");
             println!("  -v, --version    Show L++ compiler version");
             println!("  -h, --help       Show this help menu");
@@ -408,16 +398,8 @@ fn main() {
             println!("  --dump-types     Dump the typechecker type table");
             println!("  --dump-escape    Dump the escape analysis classifications");
             println!("  --dump-mir       Dump the generated Mid-level IR (MIR)");
-            println!("  --dump-c         Dump the generated transpiled C code");
             println!("\nEnvironment Variables:");
-            println!("  LPP_AOT=1        Enable Cranelift AOT compilation to native object file");
-            println!("  LPP_LINKER=mold   Use mold high-performance linker for native links");
-            println!(
-                "  LPP_LINKER=direct Use lpp-link on installed Linux x86-64 builds (experimental)"
-            );
-            println!(
-                "  BENCHMARK=1      Suppress descriptive text and print sub-millisecond JSON timings"
-            );
+            println!("  BENCHMARK=1      Suppress descriptive text and print sub-millisecond JSON timings");
             return;
         } else if arg == "--dump-ast" {
             dump_ast = true;
@@ -429,8 +411,6 @@ fn main() {
             dump_escape = true;
         } else if arg == "--dump-mir" {
             dump_mir = true;
-        } else if arg == "--dump-c" {
-            dump_c = true;
         } else if arg == "--check" {
             check_only = true;
         } else if arg == "--checkall" {
@@ -655,56 +635,57 @@ fn main() {
             }
             mir_time = mir_start.elapsed();
 
-            let mut aot_time = std::time::Duration::ZERO;
-            // AOT compilation via Cranelift
-            // Enabled by setting the LPP_AOT environment variable.
-            if env::var("LPP_AOT").is_ok() || emit_object {
-                let aot_start = Instant::now();
-                match cranelift_backend::compiler::AotCompiler::compile(&mir_program, &type_table) {
-                    Ok(obj_bytes) => {
-                        let obj_path = filename.replace(".lpp", ".o");
-                        if let Err(e) = fs::write(&obj_path, &obj_bytes) {
-                            eprintln!("Failed to write {}: {}", obj_path, e);
-                        } else if env::var("BENCHMARK").is_err()
-                            && !dump_ast
-                            && !dump_symbols
-                            && !dump_types
-                            && !dump_escape
-                            && !dump_mir
-                        {
-                            println!("[L++] AOT object file written to {}", obj_path);
-                        }
-                    }
-                    Err(e) => eprintln!("[L++] AOT error: {}", e),
+            // L++ 2.0 Pure Native Cranelift AOT Backend
+            let aot_start = Instant::now();
+            let obj_bytes = match cranelift_backend::compiler::AotCompiler::compile(&mir_program, &type_table) {
+                Ok(bytes) => bytes,
+                Err(e) => {
+                    eprintln!("[L++] Cranelift AOT compilation error: {}", e);
+                    return;
                 }
-                aot_time = aot_start.elapsed();
-            }
-
-            // Native package builds consume the Cranelift object directly.
-            // Explicit artifact emission still produces C for compatibility and
-            // debugging, but LPP_AOT_ONLY removes that redundant backend pass.
-            let codegen_time = if env::var("LPP_AOT_ONLY").is_ok() && !dump_c {
-                std::time::Duration::ZERO
-            } else {
-                let codegen_start = Instant::now();
-                let mut cg = codegen::Codegen::new(&resolver.table, &type_table, &storage);
-                let c_code = cg.generate(&ast);
-                let c_path = filename.replace(".lpp", ".c");
-                if let Err(error) = fs::write(&c_path, &c_code) {
-                    eprintln!("Failed to write {}: {}", c_path, error);
-                }
-                if dump_c {
-                    println!("--- Generated C Code ---");
-                    println!("{}", c_code);
-                }
-                codegen_start.elapsed()
             };
+            let aot_time = aot_start.elapsed();
+
+            let ext = if cfg!(target_os = "windows") { "obj" } else { "o" };
+            let obj_path = filename.replace(".lpp", &format!(".{}", ext));
+            if let Err(e) = fs::write(&obj_path, &obj_bytes) {
+                eprintln!("Failed to write object file {}: {}", obj_path, e);
+                return;
+            }
 
             let total_time = total_start.elapsed();
 
+            if check_only {
+                return;
+            }
+
+            if emit_object {
+                if env::var("BENCHMARK").is_err()
+                    && !dump_ast
+                    && !dump_symbols
+                    && !dump_types
+                    && !dump_escape
+                    && !dump_mir
+                {
+                    println!("[L++] Native Cranelift object emitted at {}", obj_path);
+                    println!("Time: {:.1} ms", total_time.as_secs_f64() * 1000.0);
+                }
+                return;
+            }
+
+            // Direct Native Executable Link via lpp-link
+            let exe_ext = std::env::consts::EXE_SUFFIX;
+            let exe_path = filename.replace(".lpp", exe_ext);
+
+            if let Err(e) = pm::direct_link_binary(Path::new(&obj_path), Path::new(&exe_path)) {
+                eprintln!("[L++] Native Link Error: {}", e);
+                return;
+            }
+            let _ = fs::remove_file(&obj_path);
+
             if env::var("BENCHMARK").is_ok() {
                 println!(
-                    "TIMING_JSON: {{\"io\": {}, \"lex\": {}, \"parse\": {}, \"semantic\": {}, \"typecheck\": {}, \"escape\": {}, \"mir\": {}, \"aot\": {}, \"c_codegen\": {}, \"total\": {}}}",
+                    "TIMING_JSON: {{\"io\": {}, \"lex\": {}, \"parse\": {}, \"semantic\": {}, \"typecheck\": {}, \"escape\": {}, \"mir\": {}, \"aot\": {}, \"total\": {}}}",
                     io_time.as_secs_f64(),
                     lex_time.as_secs_f64(),
                     parse_time.as_secs_f64(),
@@ -713,7 +694,6 @@ fn main() {
                     esc_time.as_secs_f64(),
                     mir_time.as_secs_f64(),
                     aot_time.as_secs_f64(),
-                    codegen_time.as_secs_f64(),
                     total_time.as_secs_f64()
                 );
             } else if !dump_ast
@@ -721,17 +701,9 @@ fn main() {
                 && !dump_types
                 && !dump_escape
                 && !dump_mir
-                && !dump_c
             {
-                println!("L++ v0.1.3\n");
-                if explicit_emit {
-                    println!("Artifacts emitted next to the source file.");
-                } else {
-                    println!("Source compilation completed; emitted C source next to the input.");
-                    println!(
-                        "Tip: use `lpp emit <file.lpp>` for explicit artifact emission or `lpp build` for a package executable."
-                    );
-                }
+                println!("L++ v2.0.0 (Pure Native Executable)\n");
+                println!("Compiled and linked native binary: {}", exe_path);
                 println!("Time: {:.1} ms", total_time.as_secs_f64() * 1000.0);
             }
         }

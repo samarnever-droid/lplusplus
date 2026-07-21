@@ -1069,7 +1069,7 @@ impl<'a> MirLowerCtx<'a> {
                 {
                     let binding = &self.symbol_table.bindings[capture.0];
                     return Err(format!(
-                        "mutable capture '{}' is not supported safely by AOT closures yet",
+                        "mutable capture '{}' is not supported safely yet",
                         binding.name
                     ));
                 }

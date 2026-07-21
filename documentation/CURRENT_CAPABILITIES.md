@@ -1,12 +1,14 @@
-# L++ Current Capabilities Matrix — v0.1.3
+# L++ Current Capabilities Matrix — v2.0.0 Pure Native Release
 
 Last reviewed: 2026-07-21.
 
-This document serves as the authoritative source of truth for verified compiler capabilities, toolchain commands, standard library primitives, and platform boundaries in L++.
+This document serves as the authoritative source of truth for verified compiler capabilities, toolchain commands, standard library primitives, and platform boundaries in L++ 2.0.
 
 ---
 
-## 1. Core Language & Compiler Pipeline
+## 1. Core Language & Pure Native Pipeline
+
+L++ 2.0 operates as a 100% pure native toolchain. Source code is compiled directly via Cranelift AOT into native machine objects and linked using `lpp-link` without requiring intermediate C code generation or external host C compilers (`gcc`, `clang`, `cl.exe`).
 
 | Capability | Status | Implementation Boundary |
 |---|---|---|

@@ -5,7 +5,7 @@ PROJECT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 INSTALL_DIR=${LPP_INSTALL_DIR:-"$HOME/.lpp"}
 BIN_DIR="$INSTALL_DIR/bin"
 LIB_DIR="$INSTALL_DIR/lib"
-VERSION=${LPP_VERSION:-v0.1.3}
+VERSION=${LPP_VERSION:-v2.0.0}
 
 case "$(uname -s):$(uname -m)" in
   Linux:x86_64|Linux:amd64)
