@@ -1,0 +1,7 @@
+[package]
+name = "lpp-zip"
+version = "0.1.0"
+author = "0x4171341"
+entry = "src/main.lpp"
+
+[dependencies]

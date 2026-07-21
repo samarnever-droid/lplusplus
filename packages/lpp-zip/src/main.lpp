@@ -1,0 +1,53 @@
+# main.lpp — L++ ZIP CLI tool
+# Usage: set env vars then run
+#   LPP_ZIP_CMD=create  LPP_ZIP_OUT=archive.zip  LPP_ZIP_FILE=input.txt  lpp-zip
+#   LPP_ZIP_CMD=extract LPP_ZIP_FILE=archive.zip LPP_ZIP_DIR=./out       lpp-zip
+#   LPP_ZIP_CMD=list    LPP_ZIP_FILE=archive.zip                          lpp-zip
+
+import zip
+
+def main():
+    cmd := env_get("LPP_ZIP_CMD")
+
+    if str_find(cmd, "create") >= 0:
+        out := env_get("LPP_ZIP_OUT")
+        inp := env_get("LPP_ZIP_FILE")
+        if len(out) == 0:
+            out = "archive.zip"
+        if len(inp) == 0:
+            print_str("[lpp-zip] LPP_ZIP_FILE not set")
+            return
+        result := zip.zip_pack_file(out, inp)
+        if result == 0:
+            print_str("[lpp-zip] created successfully")
+        else:
+            print_str("[lpp-zip] failed to create archive")
+        return
+
+    if str_find(cmd, "extract") >= 0:
+        inp := env_get("LPP_ZIP_FILE")
+        out_dir := env_get("LPP_ZIP_DIR")
+        if len(inp) == 0:
+            print_str("[lpp-zip] LPP_ZIP_FILE not set")
+            return
+        if len(out_dir) == 0:
+            out_dir = "."
+        result := zip.zip_extract(inp, out_dir)
+        if result == 0:
+            print_str("[lpp-zip] extracted successfully")
+        else:
+            print_str("[lpp-zip] extraction failed")
+        return
+
+    if str_find(cmd, "list") >= 0:
+        inp := env_get("LPP_ZIP_FILE")
+        if len(inp) == 0:
+            print_str("[lpp-zip] LPP_ZIP_FILE not set")
+            return
+        count := zip.zip_list(inp)
+        return
+
+    print_str("[lpp-zip] commands: create, extract, list")
+    print_str("  LPP_ZIP_CMD=create  LPP_ZIP_OUT=out.zip  LPP_ZIP_FILE=input")
+    print_str("  LPP_ZIP_CMD=extract LPP_ZIP_FILE=in.zip  LPP_ZIP_DIR=./out")
+    print_str("  LPP_ZIP_CMD=list    LPP_ZIP_FILE=archive.zip")

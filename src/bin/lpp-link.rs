@@ -1077,7 +1077,7 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
     // Subsystem = console
     put_u16(&mut pe, opt + 68, 3);
     // DLL characteristics
-    put_u16(&mut pe, opt + 70, 0x8100); // NX_COMPAT | HIGH_ENTROPY_VA (fixed base address)
+    put_u16(&mut pe, opt + 70, 0x8140); // NX_COMPAT | DYNAMIC_BASE | HIGH_ENTROPY_VA
     // Stack reserve / commit
     put_u64(&mut pe, opt + 72, 0x100000);
     put_u64(&mut pe, opt + 80, 0x1000);
@@ -1092,8 +1092,10 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
     // Import directory (index 1)
     if has_idata {
         put_u32(&mut pe, dirs + 8, idata_rva);
-        // Size of Import Directory Table array is 40 bytes (1 descriptor for KERNEL32.dll + 1 NULL descriptor)
-        put_u32(&mut pe, dirs + 12, 40);
+        // Only count the actual import descriptor/ILT/IAT/DLL-name data,
+        // excluding refptr padding that lives in the same buffer.
+        let real_import_size = import.data.len() - refptr_names.len() * 8;
+        put_u32(&mut pe, dirs + 12, real_import_size as u32);
         // IAT directory (index 12)
         put_u32(&mut pe, dirs + 12 * 8, import.iat_rva);
         put_u32(

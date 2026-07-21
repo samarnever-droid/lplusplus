@@ -70,13 +70,9 @@ static int lpp_isspace(char c) { return c==' '||c=='\t'||c=='\n'||c=='\r'; }
 
 /* MSVC intrinsic stubs — MSVC emits calls to memcpy/memset even when
    we use our own lpp_memcpy. These thin wrappers prevent linker errors. */
-#pragma function(memcpy)
 void *memcpy(void *d, const void *s, size_t n) { char *dd=(char*)d; const char *ss=(const char*)s; size_t i; for(i=0;i<n;i++) dd[i]=ss[i]; return d; }
-#pragma function(memset)
 void *memset(void *d, int c, size_t n) { unsigned char *dd=(unsigned char*)d; size_t i; for(i=0;i<n;i++) dd[i]=(unsigned char)c; return d; }
-#pragma function(strlen)
 size_t strlen(const char *s) { size_t n=0; while(s&&s[n]) n++; return n; }
-void __chkstk(void) {}
 
 static void lpp_write(const char *b, DWORD n) { DWORD w=0; WriteFile(GetStdHandle(STD_OUTPUT_HANDLE),b,n,&w,0); }
 void lpp_print_int(int64_t v) { char b[32],*c=b+32; uint64_t m=v<0?(uint64_t)(-(v+1))+1:(uint64_t)v; *--c='\n'; do{*--c=(char)('0'+m%10);m/=10;}while(m); if(v<0)*--c='-'; lpp_write(c,(DWORD)((b+32)-c)); }

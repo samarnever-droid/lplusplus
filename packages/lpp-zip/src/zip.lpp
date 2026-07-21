@@ -1,0 +1,225 @@
+# zip.lpp — Core ZIP library for L++
+# Create, extract, and list ZIP archives (store method).
+# Uses buf_* builtins for binary buffer I/O.
+
+def L_SIG(): return 0x04034b50
+def C_SIG(): return 0x02014b50
+def E_SIG(): return 0x06054b50
+def LH_SZ(): return 30
+def CH_SZ(): return 46
+def EC_SZ(): return 22
+
+# ── Low-level write helpers ────────────────────────────────────────────────
+
+def _wr_local(buf, off, fname, crc, size):
+    fl = len(fname)
+    buf_set32le(buf, off,      L_SIG())
+    buf_set16le(buf, off + 4,  20)
+    buf_set16le(buf, off + 6,  0)
+    buf_set16le(buf, off + 8,  0)
+    buf_set16le(buf, off + 10, 0)
+    buf_set16le(buf, off + 12, 0)
+    buf_set32le(buf, off + 14, crc)
+    buf_set32le(buf, off + 18, size)
+    buf_set32le(buf, off + 22, size)
+    buf_set16le(buf, off + 26, fl)
+    buf_set16le(buf, off + 28, 0)
+    buf_write_str(buf, off + LH_SZ(), fname)
+
+def _wr_central(buf, off, fname, crc, size, loff):
+    fl = len(fname)
+    buf_set32le(buf, off,      C_SIG())
+    buf_set16le(buf, off + 4,  20)
+    buf_set16le(buf, off + 6,  20)
+    buf_set16le(buf, off + 8,  0)
+    buf_set16le(buf, off + 10, 0)
+    buf_set16le(buf, off + 12, 0)
+    buf_set16le(buf, off + 14, 0)
+    buf_set32le(buf, off + 16, crc)
+    buf_set32le(buf, off + 20, size)
+    buf_set32le(buf, off + 24, size)
+    buf_set16le(buf, off + 28, fl)
+    buf_set16le(buf, off + 30, 0)
+    buf_set16le(buf, off + 32, 0)
+    buf_set16le(buf, off + 34, 0)
+    buf_set16le(buf, off + 36, 0)
+    buf_set32le(buf, off + 38, 0)
+    buf_set32le(buf, off + 42, loff)
+    buf_write_str(buf, off + CH_SZ(), fname)
+
+def _wr_eocd(buf, off, n, cd_sz, cd_off):
+    buf_set32le(buf, off,      E_SIG())
+    buf_set16le(buf, off + 4,  0)
+    buf_set16le(buf, off + 6,  0)
+    buf_set16le(buf, off + 8,  n)
+    buf_set16le(buf, off + 10, n)
+    buf_set32le(buf, off + 12, cd_sz)
+    buf_set32le(buf, off + 16, cd_off)
+    buf_set16le(buf, off + 20, 0)
+
+# ── Create ZIP from a single file ──────────────────────────────────────────
+
+def zip_pack_file(zip_path, file_path):
+    fb = buf_read(file_path)
+    if fb == 0:
+        print_str("[zip] cannot read input file")
+        return -1
+
+    sz = buf_len(fb)
+    crc = buf_crc32(fb, 0, sz)
+    fl = len(file_path)
+
+    # total = local_hdr(30+fl) + data(sz) + central(46+fl) + eocd(22)
+    total = LH_SZ() + fl + sz + CH_SZ() + fl + EC_SZ()
+    out = buf_alloc(total)
+    if out == 0:
+        buf_free(fb)
+        return -1
+
+    _wr_local(out, 0, file_path, crc, sz)
+    mut pos = LH_SZ() + fl
+    buf_copy(out, pos, fb, 0, sz)
+    pos = pos + sz
+    _wr_central(out, pos, file_path, crc, sz, 0)
+    pos = pos + CH_SZ() + fl
+    _wr_eocd(out, pos, 1, CH_SZ() + fl, 0)
+
+    result = buf_write(zip_path, out)
+    buf_free(out)
+    buf_free(fb)
+    return result
+
+
+# ── Extract ZIP archive ────────────────────────────────────────────────────
+
+def zip_extract(zip_path, dest_dir):
+    buf = buf_read(zip_path)
+    if buf == 0:
+        print_str("[zip] cannot read zip file")
+        return -1
+
+    blen = buf_len(buf)
+    if blen < EC_SZ():
+        buf_free(buf)
+        return -1
+
+    # scan backwards for EOCD
+    mut eof = blen - EC_SZ()
+    while eof >= 0:
+        if buf_get32le(buf, eof) == E_SIG():
+            break
+        eof = eof - 1
+
+    if eof < 0:
+        print_str("[zip] EOCD not found — not a ZIP")
+        buf_free(buf)
+        return -1
+
+    n   = buf_get16le(buf, eof + 8)
+    cd_sz = buf_get32le(buf, eof + 12)
+    cd_off = buf_get32le(buf, eof + 16)
+
+    if n <= 0:
+        buf_free(buf)
+        return 0
+
+    dir_create(dest_dir)
+
+    mut cp = cd_off
+    mut i = 0
+    while i < n:
+        sig = buf_get32le(buf, cp)
+        if sig != C_SIG():
+            break
+
+        fn_len  = buf_get16le(buf, cp + 28)
+        ex_len  = buf_get16le(buf, cp + 30)
+        cm_len  = buf_get16le(buf, cp + 32)
+        method  = buf_get16le(buf, cp + 10)
+        comp_sz = buf_get32le(buf, cp + 20)
+        unc_sz  = buf_get32le(buf, cp + 24)
+        loc_off = buf_get32le(buf, cp + 42)
+
+        fname = buf_read_str(buf, cp + CH_SZ(), fn_len)
+
+        if method == 0:
+            # store — read local header to find data offset
+            lfn_len = buf_get16le(buf, loc_off + 26)
+            lex_len = buf_get16le(buf, loc_off + 28)
+            data_off = loc_off + LH_SZ() + lfn_len + lex_len
+
+            ob = buf_alloc(unc_sz)
+            if ob != 0:
+                buf_copy(ob, 0, buf, data_off, unc_sz)
+                op = path_join(dest_dir, fname)
+                buf_write(op, ob)
+                buf_free(ob)
+        else:
+            print_str("[zip] skipping compressed entry (deflate not supported)")
+
+        cp = cp + CH_SZ() + fn_len + ex_len + cm_len
+        i = i + 1
+
+    buf_free(buf)
+    print_str("[zip] extraction complete")
+    return 0
+
+
+# ── List ZIP contents ──────────────────────────────────────────────────────
+
+def zip_list(zip_path):
+    buf = buf_read(zip_path)
+    if buf == 0:
+        print_str("[zip] cannot read zip file")
+        return -1
+
+    blen = buf_len(buf)
+    if blen < EC_SZ():
+        buf_free(buf)
+        return -1
+
+    mut eof = blen - EC_SZ()
+    while eof >= 0:
+        if buf_get32le(buf, eof) == E_SIG():
+            break
+        eof = eof - 1
+
+    if eof < 0:
+        print_str("[zip] not a ZIP file")
+        buf_free(buf)
+        return -1
+
+    n      = buf_get16le(buf, eof + 8)
+    cd_off = buf_get32le(buf, eof + 16)
+
+    print_str("  Size    Method  Name")
+    print_str("  ------  ------  ----")
+
+    mut cp = cd_off
+    mut i = 0
+    while i < n:
+        sig = buf_get32le(buf, cp)
+        if sig != C_SIG():
+            break
+
+        fn_len  = buf_get16le(buf, cp + 28)
+        ex_len  = buf_get16le(buf, cp + 30)
+        cm_len  = buf_get16le(buf, cp + 32)
+        method  = buf_get16le(buf, cp + 10)
+        comp_sz = buf_get32le(buf, cp + 20)
+        unc_sz  = buf_get32le(buf, cp + 24)
+
+        fname = buf_read_str(buf, cp + CH_SZ(), fn_len)
+
+        mstr = "store"
+        if method != 0:
+            mstr = "deflate"
+
+        # Print size + method + name (simple output)
+        print_str(fname)
+
+        cp = cp + CH_SZ() + fn_len + ex_len + cm_len
+        i = i + 1
+
+    buf_free(buf)
+    return i
