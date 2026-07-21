@@ -259,140 +259,58 @@ pub fn get_builtins() -> &'static [Builtin] {
             cl_params: &[0],
             cl_return: None,
         },
-        // Networking
-        Builtin {
-            name: "net_connect",
-            symbol: "lpp_net_connect",
-            params: &[ParamType::Specific(TypeRef::Str), ParamType::Specific(TypeRef::Int)],
-            return_type: TypeRef::Int,
-            cl_params: &[0, 0],
-            cl_return: Some(0),
-        },
-        Builtin {
-            name: "lpp_net_connect",
-            symbol: "lpp_net_connect",
-            params: &[ParamType::Specific(TypeRef::Str), ParamType::Specific(TypeRef::Int)],
-            return_type: TypeRef::Int,
-            cl_params: &[0, 0],
-            cl_return: Some(0),
-        },
-        Builtin {
-            name: "net_listen",
-            symbol: "lpp_net_listen",
-            params: &[ParamType::Specific(TypeRef::Int)],
-            return_type: TypeRef::Int,
-            cl_params: &[0],
-            cl_return: Some(0),
-        },
-        Builtin {
-            name: "lpp_net_listen",
-            symbol: "lpp_net_listen",
-            params: &[ParamType::Specific(TypeRef::Int)],
-            return_type: TypeRef::Int,
-            cl_params: &[0],
-            cl_return: Some(0),
-        },
-        Builtin {
-            name: "net_accept",
-            symbol: "lpp_net_accept",
-            params: &[ParamType::Specific(TypeRef::Int)],
-            return_type: TypeRef::Int,
-            cl_params: &[0],
-            cl_return: Some(0),
-        },
-        Builtin {
-            name: "lpp_net_accept",
-            symbol: "lpp_net_accept",
-            params: &[ParamType::Specific(TypeRef::Int)],
-            return_type: TypeRef::Int,
-            cl_params: &[0],
-            cl_return: Some(0),
-        },
-        Builtin {
-            name: "net_send",
-            symbol: "lpp_net_send",
-            params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Str)],
-            return_type: TypeRef::Int,
-            cl_params: &[0, 0],
-            cl_return: Some(0),
-        },
-        Builtin {
-            name: "lpp_net_send",
-            symbol: "lpp_net_send",
-            params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Str)],
-            return_type: TypeRef::Int,
-            cl_params: &[0, 0],
-            cl_return: Some(0),
-        },
-        // Writes the entire UTF-8 payload or returns -1. This is the safe
-        // default for request/response protocols: a single OS send may write
-        // only a prefix of a buffer.
-        Builtin {
-            name: "net_send_all",
-            symbol: "lpp_net_send_all",
-            params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Str)],
-            return_type: TypeRef::Int,
-            cl_params: &[0, 0],
-            cl_return: Some(0),
-        },
-        Builtin {
-            name: "lpp_net_send_all",
-            symbol: "lpp_net_send_all",
-            params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Str)],
-            return_type: TypeRef::Int,
-            cl_params: &[0, 0],
-            cl_return: Some(0),
-        },
-        // Applies both receive and send deadlines. Returns 1 on success and 0
-        // on invalid handles, unsupported platform configuration, or failure.
-        Builtin {
-            name: "net_set_timeout",
-            symbol: "lpp_net_set_timeout",
-            params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)],
-            return_type: TypeRef::Int,
-            cl_params: &[0, 0],
-            cl_return: Some(0),
-        },
-        Builtin {
-            name: "lpp_net_set_timeout",
-            symbol: "lpp_net_set_timeout",
-            params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)],
-            return_type: TypeRef::Int,
-            cl_params: &[0, 0],
-            cl_return: Some(0),
-        },
-        Builtin {
-            name: "net_recv",
-            symbol: "lpp_net_recv",
-            params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)],
-            return_type: TypeRef::Str,
-            cl_params: &[0, 0],
-            cl_return: Some(0),
-        },
-        Builtin {
-            name: "lpp_net_recv",
-            symbol: "lpp_net_recv",
-            params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)],
-            return_type: TypeRef::Str,
-            cl_params: &[0, 0],
-            cl_return: Some(0),
-        },
-        Builtin {
-            name: "net_close",
-            symbol: "lpp_net_close",
-            params: &[ParamType::Specific(TypeRef::Int)],
-            return_type: TypeRef::Void,
-            cl_params: &[0],
-            cl_return: None,
-        },
-        Builtin {
-            name: "lpp_net_close",
-            symbol: "lpp_net_close",
-            params: &[ParamType::Specific(TypeRef::Int)],
-            return_type: TypeRef::Void,
-            cl_params: &[0],
-            cl_return: None,
-        },
+        // Networking — Full Go-style API
+        // Dial (TCP + DNS + deadline)
+        Builtin { name: "net_dial", symbol: "lpp_net_dial", params: &[ParamType::Specific(TypeRef::Str), ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0, 0], cl_return: Some(0) },
+        Builtin { name: "lpp_net_dial", symbol: "lpp_net_dial", params: &[ParamType::Specific(TypeRef::Str), ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0, 0], cl_return: Some(0) },
+        // Dial UDP
+        Builtin { name: "net_dial_udp", symbol: "lpp_net_dial_udp", params: &[ParamType::Specific(TypeRef::Str), ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0, 0], cl_return: Some(0) },
+        Builtin { name: "lpp_net_dial_udp", symbol: "lpp_net_dial_udp", params: &[ParamType::Specific(TypeRef::Str), ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0, 0], cl_return: Some(0) },
+        // Listen TCP
+        Builtin { name: "net_listen", symbol: "lpp_net_listen", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0], cl_return: Some(0) },
+        Builtin { name: "lpp_net_listen", symbol: "lpp_net_listen", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0], cl_return: Some(0) },
+        // Listen UDP
+        Builtin { name: "net_listen_udp", symbol: "lpp_net_listen_udp", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0], cl_return: Some(0) },
+        Builtin { name: "lpp_net_listen_udp", symbol: "lpp_net_listen_udp", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0], cl_return: Some(0) },
+        // Accept (with timeout)
+        Builtin { name: "net_accept", symbol: "lpp_net_accept", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0], cl_return: Some(0) },
+        Builtin { name: "lpp_net_accept", symbol: "lpp_net_accept", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0], cl_return: Some(0) },
+        Builtin { name: "net_accept_timeout", symbol: "lpp_net_accept_timeout", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
+        Builtin { name: "lpp_net_accept_timeout", symbol: "lpp_net_accept_timeout", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
+        // Send
+        Builtin { name: "net_send", symbol: "lpp_net_send", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Str)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
+        Builtin { name: "lpp_net_send", symbol: "lpp_net_send", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Str)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
+        // Send all
+        Builtin { name: "net_send_all", symbol: "lpp_net_send_all", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Str)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
+        Builtin { name: "lpp_net_send_all", symbol: "lpp_net_send_all", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Str)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
+        // Recv
+        Builtin { name: "net_recv", symbol: "lpp_net_recv", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Str, cl_params: &[0, 0], cl_return: Some(0) },
+        Builtin { name: "lpp_net_recv", symbol: "lpp_net_recv", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Str, cl_params: &[0, 0], cl_return: Some(0) },
+        // Recv UDP
+        Builtin { name: "net_recv_udp", symbol: "lpp_net_recv_udp", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Str, cl_params: &[0, 0], cl_return: Some(0) },
+        Builtin { name: "lpp_net_recv_udp", symbol: "lpp_net_recv_udp", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Str, cl_params: &[0, 0], cl_return: Some(0) },
+        // Close
+        Builtin { name: "net_close", symbol: "lpp_net_close", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Void, cl_params: &[0], cl_return: None },
+        Builtin { name: "lpp_net_close", symbol: "lpp_net_close", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Void, cl_params: &[0], cl_return: None },
+        // Deadlines
+        Builtin { name: "net_set_deadline", symbol: "lpp_net_set_deadline", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0, 0], cl_return: Some(0) },
+        Builtin { name: "lpp_net_set_deadline", symbol: "lpp_net_set_deadline", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0, 0], cl_return: Some(0) },
+        Builtin { name: "net_set_timeout", symbol: "lpp_net_set_timeout", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
+        Builtin { name: "lpp_net_set_timeout", symbol: "lpp_net_set_timeout", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
+        // Keepalive
+        Builtin { name: "net_set_keepalive", symbol: "lpp_net_set_keepalive", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0, 0, 0, 0], cl_return: Some(0) },
+        Builtin { name: "lpp_net_set_keepalive", symbol: "lpp_net_set_keepalive", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0, 0, 0, 0], cl_return: Some(0) },
+        // DNS
+        Builtin { name: "net_resolve", symbol: "lpp_net_resolve", params: &[ParamType::Specific(TypeRef::Str)], return_type: TypeRef::Str, cl_params: &[0], cl_return: Some(0) },
+        Builtin { name: "lpp_net_resolve", symbol: "lpp_net_resolve", params: &[ParamType::Specific(TypeRef::Str)], return_type: TypeRef::Str, cl_params: &[0], cl_return: Some(0) },
+        // HTTP
+        Builtin { name: "http_get", symbol: "lpp_http_get", params: &[ParamType::Specific(TypeRef::Str), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Str, cl_params: &[0, 0], cl_return: Some(0) },
+        Builtin { name: "lpp_http_get", symbol: "lpp_http_get", params: &[ParamType::Specific(TypeRef::Str), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Str, cl_params: &[0, 0], cl_return: Some(0) },
+        Builtin { name: "http_post", symbol: "lpp_http_post", params: &[ParamType::Specific(TypeRef::Str), ParamType::Specific(TypeRef::Str), ParamType::Specific(TypeRef::Str), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Str, cl_params: &[0, 0, 0, 0], cl_return: Some(0) },
+        Builtin { name: "lpp_http_post", symbol: "lpp_http_post", params: &[ParamType::Specific(TypeRef::Str), ParamType::Specific(TypeRef::Str), ParamType::Specific(TypeRef::Str), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Str, cl_params: &[0, 0, 0, 0], cl_return: Some(0) },
+        // Legacy compat
+        Builtin { name: "net_connect", symbol: "lpp_net_connect", params: &[ParamType::Specific(TypeRef::Str), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
+        Builtin { name: "lpp_net_connect", symbol: "lpp_net_connect", params: &[ParamType::Specific(TypeRef::Str), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
         // JSON parsing
         Builtin {
             name: "json_parse",

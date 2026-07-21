@@ -1,14 +1,29 @@
 def main():
-    listener := net_listen(9000)
-    print_str("Listening on port 9000")
+    # Test DNS resolution
+    ip := net_resolve("localhost")
+    print_str("resolve localhost:")
+    print_str(ip)
 
-    client := net_accept(listener)
-    print_str("Client connected")
+    # Start echo server
+    print_str("starting echo server on 8081...")
+    listener := net_listen(8081)
+    print_listener("listener fd:")
+    print(listener)
 
-    request := net_recv(client, 1024)
-    print_str("Received:")
-    print_str(request)
+    # Accept client in a spawn
+    fn handle_client(listener: Int) -> Void:
+        print_str("accepting...")
+        client := net_accept(listener)
+        print_str("client accepted:")
+        print(client)
+        if client >= 0:
+            msg := net_recv(client, 1024)
+            print_str("received:")
+            print_str(msg)
+            sent := net_send_all(client, msg)
+            print_str("echoed bytes:")
+            print(sent)
+            net_close(client)
+        net_close(listener)
 
-    net_send(client, "hello from lpp server")
-    net_close(client)
-    net_close(listener)
+    spawn fn(): Void -> handle_client(listener)

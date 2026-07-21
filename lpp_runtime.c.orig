@@ -584,15 +584,7 @@ void lpp_net_close(int64_t handle) {
     lpp__socket_clear(handle);
 }
 
-/* ── Extended networking (net_dial, UDP, deadlines, keepalive, DNS, HTTP) ─── */
-
-static char* lpp_net_strdup_impl(const char *s) {
-    if (!s) return NULL;
-    size_t len = strlen(s);
-    char *d = (char *)malloc(len + 1);
-    if (d) { memcpy(d, s, len); d[len] = 0; }
-    return d;
-}
+/* ── Extended networking (net_dial, UDP, deadlines, HTTP) ─────────────── */
 
 int64_t lpp_net_dial(const char *host, int64_t port, int64_t timeout_ms) {
     lpp__net_init();
@@ -612,9 +604,8 @@ int64_t lpp_net_dial(const char *host, int64_t port, int64_t timeout_ms) {
     }
     freeaddrinfo(result);
     if (sock == LPP_INVALID_SOCKET) return 0;
-    int64_t handle = lpp__socket_store(sock);
-    if (timeout_ms > 0) lpp_net_set_timeout(handle, timeout_ms);
-    return handle;
+    int64_t handle = lpp__socket_store(sock); if (timeout_ms > 0) lpp_net_set_timeout(handle, timeout_ms);
+    return lpp__socket_store(sock);
 }
 
 int64_t lpp_net_dial_udp(const char *host, int64_t port, int64_t timeout_ms) {
@@ -635,9 +626,8 @@ int64_t lpp_net_dial_udp(const char *host, int64_t port, int64_t timeout_ms) {
     }
     freeaddrinfo(result);
     if (sock == LPP_INVALID_SOCKET) return 0;
-    int64_t handle = lpp__socket_store(sock);
-    if (timeout_ms > 0) lpp_net_set_timeout(handle, timeout_ms);
-    return handle;
+    int64_t handle = lpp__socket_store(sock); if (timeout_ms > 0) lpp_net_set_timeout(handle, timeout_ms);
+    return lpp__socket_store(sock);
 }
 
 int64_t lpp_net_listen_udp(int64_t port) {
@@ -702,29 +692,27 @@ int64_t lpp_net_set_keepalive(int64_t fd, int64_t enable, int64_t idle_s, int64_
 }
 
 char* lpp_net_resolve(const char *host) {
-    if (!host || !*host) return lpp_net_strdup_impl("");
+    if (!host) return strdup("");
     struct addrinfo hints, *result = NULL;
     memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_INET; hints.ai_socktype = SOCK_STREAM;
-    if (getaddrinfo(host, NULL, &hints, &result) != 0) return lpp_net_strdup_impl("");
+    if (getaddrinfo(host, NULL, &hints, &result) != 0) return strdup("");
     char ip[INET_ADDRSTRLEN]; ip[0] = 0;
-    if (result && result->ai_addr) {
+    if (result) {
         struct sockaddr_in *addr = (struct sockaddr_in *)result->ai_addr;
         inet_ntop(AF_INET, &addr->sin_addr, ip, sizeof(ip));
         freeaddrinfo(result);
-        return lpp_net_strdup_impl(ip);
     }
-    if (result) freeaddrinfo(result);
-    return lpp_net_strdup_impl("");
+    return strdup(ip);
 }
 
 char* lpp_net_recv_udp(int64_t fd, int64_t max_bytes) { return lpp_net_recv(fd, max_bytes); }
 
 char* lpp_http_get(const char *url, int64_t timeout_ms) {
-    if (!url) return lpp_net_strdup_impl("");
+    if (!url) return strdup("");
     const char *p = url;
     if (strncmp(p, "http://", 7) == 0) p += 7;
-    else return lpp_net_strdup_impl("");
+    else return strdup("invalid URL");
     char host[256]; int hl = 0;
     while (*p && *p != ':' && *p != '/' && hl < 255) host[hl++] = *p++;
     host[hl] = 0;
@@ -733,23 +721,23 @@ char* lpp_http_get(const char *url, int64_t timeout_ms) {
     const char *path = (*p == '/') ? p : "/";
     if (!*path) path = "/";
     int64_t fd = lpp_net_dial(host, (int64_t)port, timeout_ms);
-    if (fd <= 0) return lpp_net_strdup_impl("");
+    if (fd <= 0) return strdup("");
     char req[2048];
     snprintf(req, sizeof(req), "GET %s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\nAccept: */*\r\nUser-Agent: L++/0.1.3\r\n\r\n", path, host);
     lpp_net_send_all(fd, req);
     char *body = lpp_net_recv(fd, 65536);
     lpp_net_close(fd);
-    if (!body) return lpp_net_strdup_impl("");
+    if (!body) return strdup("");
     char *sep = strstr(body, "\r\n\r\n");
-    if (sep) { sep += 4; char *r = lpp_net_strdup_impl(sep); free(body); return r; }
+    if (sep) { sep += 4; char *r = strdup(sep); free(body); return r; }
     return body;
 }
 
 char* lpp_http_post(const char *url, const char *data, const char *content_type, int64_t timeout_ms) {
-    if (!url) return lpp_net_strdup_impl("");
+    if (!url) return strdup("");
     const char *p = url;
     if (strncmp(p, "http://", 7) == 0) p += 7;
-    else return lpp_net_strdup_impl("");
+    else return strdup("invalid URL");
     char host[256]; int hl = 0;
     while (*p && *p != ':' && *p != '/' && hl < 255) host[hl++] = *p++;
     host[hl] = 0;
@@ -760,7 +748,7 @@ char* lpp_http_post(const char *url, const char *data, const char *content_type,
     if (!data) data = "";
     if (!content_type) content_type = "application/x-www-form-urlencoded";
     int64_t fd = lpp_net_dial(host, (int64_t)port, timeout_ms);
-    if (fd <= 0) return lpp_net_strdup_impl("");
+    if (fd <= 0) return strdup("");
     char req[4096];
     snprintf(req, sizeof(req),
         "POST %s HTTP/1.1\r\nHost: %s\r\nContent-Type: %s\r\nContent-Length: %d\r\nConnection: close\r\nAccept: */*\r\nUser-Agent: L++/0.1.3\r\n\r\n%s",
@@ -768,9 +756,9 @@ char* lpp_http_post(const char *url, const char *data, const char *content_type,
     lpp_net_send_all(fd, req);
     char *body = lpp_net_recv(fd, 65536);
     lpp_net_close(fd);
-    if (!body) return lpp_net_strdup_impl("");
+    if (!body) return strdup("");
     char *sep = strstr(body, "\r\n\r\n");
-    if (sep) { sep += 4; char *r = lpp_net_strdup_impl(sep); free(body); return r; }
+    if (sep) { sep += 4; char *r = strdup(sep); free(body); return r; }
     return body;
 }
 
