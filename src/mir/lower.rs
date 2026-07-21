@@ -800,6 +800,19 @@ impl<'a> MirLowerCtx<'a> {
                             temp,
                             Rvalue::AllocateArcStruct(TypeRef::Custom(struct_id)),
                         ))?;
+                        if !lowered_args.is_empty() {
+                            let struct_def = &self.type_table.definitions[struct_id.0];
+                            for (i, val_op) in lowered_args.into_iter().enumerate() {
+                                if i < struct_def.fields.len() {
+                                    let field_name = &struct_def.fields[i].0;
+                                    builder.push_instr(MirInstr::AssignField {
+                                        base: temp,
+                                        field: field_name.clone(),
+                                        value: val_op,
+                                    })?;
+                                }
+                            }
+                        }
                         return Ok(Operand::Local(temp));
                     }
 

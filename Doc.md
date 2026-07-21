@@ -114,7 +114,7 @@ def greet(name: String):
 ```
 
 ### 3.2 Structs
-Structs define custom composite data structures:
+Structs define custom composite data structures. Structs can be instantiated with 0 arguments (empty initialization) or with positional constructor arguments corresponding to field definitions:
 
 ```lpp
 struct Point:
@@ -122,13 +122,10 @@ struct Point:
     y: Int
 
 def create_point() -> Point:
-    p := Point() # Structs are instantiated with empty parentheses
-    p.x = 10
-    p.y = 20
+    # Direct positional constructor initialization
+    p := Point(10, 20)
     return p
 ```
-
-*(Note: Positional constructor parameters like `Point(10, 20)` are not implemented; fields are initialized post-construction).*
 
 ### 3.3 Closures
 Closures are created using the `fn` keyword with automatic parameter and return type inference.

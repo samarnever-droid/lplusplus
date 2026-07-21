@@ -18,7 +18,7 @@ This document serves as the authoritative source of truth for verified compiler 
 | List Loops (`for item in list`) | **Available** | Desugars to index-based iteration over `List[T]` |
 | Closures (`fn`) | **Available** | Inline and block closures with lexical capture |
 | Dynamic Lists (`List[T]`) | **Available** | Supported elements: `Int`, `Bool`, `Str`, `CustomStruct` (ARC managed) |
-| Struct Constructors | **Partial** | No positional constructor arguments; instantiate via `Type()` and populate fields |
+| Struct Constructors | **Available** | Supports both positional field initialization `Point(10, 20)` and zero-argument allocation `Point()` |
 | `break` / `continue` | **Available** | Fully supported in `while`, `for i in range(...)`, and `for item in list` |
 | `Map[K, V]`, `Set[T]`, Enums, Traits | **Not Available** | Planned container and algebraic type extensions |
 

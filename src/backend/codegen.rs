@@ -596,7 +596,29 @@ impl<'a> Codegen<'a> {
                                 format!("({}_t*)lpp_arc_alloc(sizeof({}_t))", def.name, def.name)
                             }
                         };
-                        self.out.push_str(&alloc_str);
+                        if args.is_empty() {
+                            self.out.push_str(&alloc_str);
+                        } else {
+                            let tmp = format!("__lpp_struct_{}", self.tmp_count);
+                            self.tmp_count += 1;
+                            let ind = self.indent();
+                            let c_type = format!("{}_t*", def.name);
+                            self.pre_stmts.push(format!(
+                                "{}{} {} = {};\n",
+                                ind, c_type, tmp, alloc_str
+                            ));
+                            for (i, arg) in args.iter().enumerate() {
+                                if i < def.fields.len() {
+                                    let arg_str = self.gen_expr_str(arg, current_scope, None);
+                                    let field_name = &def.fields[i].0;
+                                    self.pre_stmts.push(format!(
+                                        "{}{}->{} = {};\n",
+                                        ind, tmp, field_name, arg_str
+                                    ));
+                                }
+                            }
+                            self.out.push_str(&tmp);
+                        }
                         return;
                     }
                 }

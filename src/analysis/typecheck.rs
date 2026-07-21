@@ -602,6 +602,26 @@ impl<'a> TypeChecker<'a> {
                     }
 
                     if let Some(&id) = self.type_table.structs_by_name.get(name) {
+                        let def = &self.type_table.definitions[id.0];
+                        if !args.is_empty() {
+                            if args.len() != def.fields.len() {
+                                return Err(format!(
+                                    "Struct '{}' constructor expects {} arguments or 0, got {}",
+                                    def.name,
+                                    def.fields.len(),
+                                    args.len()
+                                ));
+                            }
+                            for (i, (field_name, field_ty)) in def.fields.iter().enumerate() {
+                                let arg_ty = &arg_tys[i];
+                                if field_ty != arg_ty {
+                                    return Err(format!(
+                                        "Struct '{}' field '{}' expects {:?}, got {:?}",
+                                        def.name, field_name, field_ty, arg_ty
+                                    ));
+                                }
+                            }
+                        }
                         return Ok(TypeRef::Custom(id));
                     }
                     if let Some(ty) = self.func_return_types.get(name) {
@@ -771,6 +791,34 @@ def main():
         type_checker
             .check_program(&ast)
             .expect("boolean program should typecheck");
+    }
+
+    #[test]
+    fn positional_struct_constructor_typechecks() {
+        let source = r#"
+struct Point:
+    x: Int
+    y: Int
+
+def main():
+    p := Point(10, 20)
+    lpp_print_int(p.x)
+"#;
+
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.tokenize().expect("source should lex");
+        let mut parser = Parser::new(tokens);
+        let mut ast = parser.parse().expect("source should parse");
+
+        let mut resolver = Resolver::new();
+        resolver
+            .resolve_program(&mut ast)
+            .expect("program should resolve");
+
+        let mut type_checker = TypeChecker::new(&mut resolver.table);
+        type_checker
+            .check_program(&ast)
+            .expect("positional struct constructor should typecheck");
     }
 
     #[test]

@@ -1,0 +1,25 @@
+struct Point:
+    x: Int
+    y: Int
+
+struct Rectangle:
+    top_left: Point
+    width: Int
+    height: Int
+
+def test_point_constructor() -> Void:
+    p := Point(10, 20)
+    lpp_print_int(p.x) # expect 10
+    lpp_print_int(p.y) # expect 20
+
+def test_nested_struct_constructor() -> Void:
+    p := Point(5, 15)
+    rect := Rectangle(p, 100, 200)
+    lpp_print_int(rect.top_left.x) # expect 5
+    lpp_print_int(rect.top_left.y) # expect 15
+    lpp_print_int(rect.width)      # expect 100
+    lpp_print_int(rect.height)     # expect 200
+
+def main():
+    test_point_constructor()
+    test_nested_struct_constructor()
