@@ -53,7 +53,7 @@ function Install-Source {
         $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
         if ($vs) {
             cmd.exe /d /c "call `"$vs\VC\Auxiliary\Build\vcvars64.bat`" >nul && cl.exe /nologo /O2 /c `"$ProjectDir\lpp_runtime.c`" /Fo:`"$LibDir\lpp_runtime.obj`""
-            cmd.exe /d /c "call `"$vs\VC\Auxiliary\Build\vcvars64.bat`" >nul && cl.exe /nologo /O2 /GS- /DLPP_FREESTANDING /c `"$ProjectDir\runtime\windows_x86_64_min.c`" /Fo:`"$LibDir\lpp_runtime_min.obj`""
+            cmd.exe /d /c "call `"$vs\VC\Auxiliary\Build\vcvars64.bat`" >nul && cl.exe /nologo /O2 /GS- /Gs1000000 /DLPP_FREESTANDING /c `"$ProjectDir\runtime\windows_x86_64_min.c`" /Fo:`"$LibDir\lpp_runtime_min.obj`""
             $compiled = $true
         }
     }

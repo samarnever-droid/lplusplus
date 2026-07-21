@@ -81,6 +81,7 @@ static int lpp_isspace(char c) { return c==' '||c=='\t'||c=='\n'||c=='\r'; }
 void *memcpy(void *d, const void *s, size_t n) { char *dd=(char*)d; const char *ss=(const char*)s; size_t i; for(i=0;i<n;i++) dd[i]=ss[i]; return d; }
 void *memset(void *d, int c, size_t n) { unsigned char *dd=(unsigned char*)d; size_t i; for(i=0;i<n;i++) dd[i]=(unsigned char)c; return d; }
 size_t strlen(const char *s) { size_t n=0; while(s&&s[n]) n++; return n; }
+void __chkstk(void) {}
 #endif
 
 static void lpp_write(const char *b, DWORD n) { DWORD w=0; WriteFile(GetStdHandle(STD_OUTPUT_HANDLE),b,n,&w,0); }

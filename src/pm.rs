@@ -636,6 +636,7 @@ fn resolve_min_runtime_object() -> Option<PathBuf> {
                 cmd.arg("/nologo")
                     .arg("/O2")
                     .arg("/GS-")
+                    .arg("/Gs1000000")
                     .arg("/DLPP_FREESTANDING")
                     .arg("/c")
                     .arg(local_src)

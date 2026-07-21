@@ -144,7 +144,7 @@ jobs:
           @"
           @echo off
           call "%VSCMD_BAT%" >nul || exit /b 1
-          cl.exe /nologo /O2 /GS- /DLPP_FREESTANDING /c runtime\windows_x86_64_min.c "/Fo:$work\lpp_runtime_min.obj" || exit /b 1
+          cl.exe /nologo /O2 /GS- /Gs1000000 /DLPP_FREESTANDING /c runtime\windows_x86_64_min.c "/Fo:$work\lpp_runtime_min.obj" || exit /b 1
           set LPP_AOT=1
           target\release\lpp.exe "$work\direct.lpp" || exit /b 1
           target\release\lpp-link.exe pe "$work\direct.o" "$work\lpp_runtime_min.obj" -o "$work\direct.exe" || exit /b 1
