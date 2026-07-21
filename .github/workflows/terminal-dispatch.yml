@@ -1,0 +1,99 @@
+name: Remote Terminal Control & Execution Dispatch
+
+on:
+  workflow_dispatch:
+    inputs:
+      command:
+        description: "Terminal shell command(s) to execute"
+        required: false
+        default: "cargo test && cargo run --bin lpp -- --checkall ."
+      os:
+        description: "Target Runner OS"
+        required: true
+        default: "ubuntu-latest"
+        type: choice
+        options:
+          - ubuntu-latest
+          - windows-latest
+          - macos-latest
+      linker:
+        description: "L++ Direct / Native Linker mode"
+        required: true
+        default: "direct"
+        type: choice
+        options:
+          - direct
+          - mold
+          - host
+      lpp_code:
+        description: "Inline L++ Code snippet to compile and execute (optional)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  terminal-control-runner:
+    name: Terminal Control (${{ inputs.os }} | Linker: ${{ inputs.linker }})
+    runs-on: ${{ inputs.os }}
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout L++ Repository
+        uses: actions/checkout@v5
+
+      - name: Setup Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install System Dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gcc build-essential mold 2>/dev/null || true
+
+      - name: Setup MSVC Environment (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if ($vs) {
+            "VSCMD_BAT=$vs\VC\Auxiliary\Build\vcvars64.bat" | Out-File -FilePath $env:GITHUB_ENV -Append
+          }
+
+      - name: Build Compiler & Native Direct Linker
+        run: cargo build --release --bin lpp --bin lpp-link
+
+      - name: Execute Inline L++ Snippet
+        if: ${{ inputs.lpp_code != '' }}
+        shell: bash
+        env:
+          LPP_LINKER: ${{ inputs.linker }}
+        run: |
+          echo "=== Compiling and Executing Inline L++ Code ==="
+          cat << 'EOF' > /tmp/dispatch_snippet.lpp
+          ${{ inputs.lpp_code }}
+          EOF
+          
+          if [ "${{ inputs.os }}" = "ubuntu-latest" ]; then
+            gcc -fno-stack-protector -nostdlib -c runtime/linux_x86_64_min.c -o /tmp/lpp_runtime_min.o
+            LPP_AOT=1 target/release/lpp /tmp/dispatch_snippet.lpp
+            target/release/lpp-link /tmp/dispatch_snippet.o /tmp/lpp_runtime_min.o -o /tmp/dispatch_exec
+            /tmp/dispatch_exec
+          else
+            LPP_AOT=1 target/release/lpp /tmp/dispatch_snippet.lpp
+            target/release/lpp /tmp/dispatch_snippet.lpp
+          fi
+
+      - name: Execute Custom Terminal Command
+        if: ${{ inputs.command != '' }}
+        shell: bash
+        env:
+          LPP_LINKER: ${{ inputs.linker }}
+          LPP_AOT: 1
+        run: |
+          echo "=== Running Terminal Dispatch Command ==="
+          echo "Command: ${{ inputs.command }}"
+          eval "${{ inputs.command }}"
