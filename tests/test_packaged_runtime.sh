@@ -29,7 +29,7 @@ cd packaged_runtime_demo
 # Do not copy lpp_runtime.c: success proves the object path was selected.
 "$TEMP/install/bin/lpp" build >/dev/null
 # Find the binary in the target directory
-BINARY=$(find target -name "packaged_runtime_demo" -type f -executable 2>/dev/null | head -1)
+BINARY=$(find . -name "packaged_runtime_demo" -type f -executable 2>/dev/null | head -1)
 if [ -z "$BINARY" ]; then
     echo "ERROR: packaged_runtime_demo binary not found after build"
     exit 1
