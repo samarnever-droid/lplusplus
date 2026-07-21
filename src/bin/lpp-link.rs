@@ -46,6 +46,7 @@ enum SectionClass {
     Text,
     Rodata,
     Data,
+    Tls,
 }
 
 struct Relocation {
@@ -66,6 +67,8 @@ struct CoffSections {
     rdata: Vec<u8>,
     /// Merged writable data bytes.
     data: Vec<u8>,
+    /// Merged thread-local storage bytes.
+    tls: Vec<u8>,
     /// Each element: (section_index, class, base_offset_within_class_buffer).
     #[allow(dead_code)]
     section_map: Vec<(object::SectionIndex, SectionClass, usize)>,
@@ -457,7 +460,7 @@ fn coff_reloc_number(rel: &Relocation) -> u8 {
     }
 }
 
-/// Read one COFF object, splitting its sections into text / rdata / data
+/// Read one COFF object, splitting its sections into text / rdata / data / tls
 /// classes so the linker can lay them out independently.
 fn read_coff_full(path: &Path) -> Result<CoffSections, String> {
     let bytes = fs::read(path).map_err(|e| format!("read '{}': {e}", path.display()))?;
@@ -470,43 +473,63 @@ fn read_coff_full(path: &Path) -> Result<CoffSections, String> {
     let mut text_buf = Vec::new();
     let mut rdata_buf = Vec::new();
     let mut data_buf = Vec::new();
+    let mut tls_buf = Vec::new();
     let mut map: Vec<(object::SectionIndex, SectionClass, usize)> = Vec::new();
     let mut relocs = Vec::new();
 
     for sec in file.sections() {
         let idx = sec.index();
-        let kind = sec.kind();
+        let name = sec.name().unwrap_or("");
 
-        // Skip non-loadable sections entirely — their symbols are local anchors,
-        // not global definitions, and their data should not appear in the image.
-        if kind == object::SectionKind::Debug
-            || kind == object::SectionKind::Linker
-            || kind == object::SectionKind::Metadata
-            || kind == object::SectionKind::Other
+        // Skip non-loadable debug and directive sections
+        if name.starts_with(".debug")
+            || name.starts_with(".drectve")
+            || name.starts_with(".comment")
+            || name.starts_with(".note")
         {
             continue;
         }
 
-        let class = match kind {
-            object::SectionKind::Text => SectionClass::Text,
-            object::SectionKind::ReadOnlyData | object::SectionKind::ReadOnlyString => {
-                SectionClass::Rodata
+        // Check PE section characteristics: skip IMAGE_SCN_LNK_REMOVE (0x800) or INFO (0x200)
+        if let object::SectionFlags::Coff { characteristics } = sec.flags() {
+            if (characteristics & 0x00000800) != 0 || (characteristics & 0x00000200) != 0 {
+                continue;
             }
-            object::SectionKind::UninitializedData
-            | object::SectionKind::UninitializedTls
-            | object::SectionKind::Data => SectionClass::Data,
-            _ => SectionClass::Data,
+        }
+
+        let kind = sec.kind();
+        let class = if name.starts_with(".text") || kind == object::SectionKind::Text {
+            SectionClass::Text
+        } else if name.starts_with(".rdata")
+            || name.starts_with(".rodata")
+            || name.starts_with(".xdata")
+            || name.starts_with(".pdata")
+            || kind == object::SectionKind::ReadOnlyData
+            || kind == object::SectionKind::ReadOnlyString
+        {
+            SectionClass::Rodata
+        } else if name.starts_with(".tls") || kind == object::SectionKind::UninitializedTls {
+            SectionClass::Tls
+        } else if name.starts_with(".data")
+            || name.starts_with(".bss")
+            || kind == object::SectionKind::Data
+            || kind == object::SectionKind::UninitializedData
+        {
+            SectionClass::Data
+        } else {
+            continue;
         };
+
         let buf: &mut Vec<u8> = match class {
             SectionClass::Text => &mut text_buf,
             SectionClass::Rodata => &mut rdata_buf,
             SectionClass::Data => &mut data_buf,
+            SectionClass::Tls => &mut tls_buf,
         };
         let base = align_up(buf.len(), 16);
         buf.resize(base, 0x00);
 
-        // BSS / uninitialized sections have zero on-disk size; just reserve
-        // virtual space.  `uncompressed_data()` panics for these in the object crate.
+        // BSS / uninitialized sections have zero on-disk size; just reserve virtual space.
         let is_zero_fill = matches!(
             kind,
             object::SectionKind::UninitializedData | object::SectionKind::UninitializedTls
@@ -566,6 +589,7 @@ fn read_coff_full(path: &Path) -> Result<CoffSections, String> {
                         && !name.starts_with(".rdata")
                         && !name.starts_with(".data")
                         && !name.starts_with(".bss")
+                        && !name.starts_with(".tls")
                         && !name.starts_with(".xdata")
                         && !name.starts_with(".pdata")
                         && !name.starts_with(".debug")
@@ -584,6 +608,7 @@ fn read_coff_full(path: &Path) -> Result<CoffSections, String> {
         text: text_buf,
         rdata: rdata_buf,
         data: data_buf,
+        tls: tls_buf,
         section_map: map,
         symbols: syms,
         relocations: relocs,
@@ -628,6 +653,7 @@ fn section_class_tag(c: SectionClass) -> &'static str {
         SectionClass::Text => "text",
         SectionClass::Rodata => "rdata",
         SectionClass::Data => "data",
+        SectionClass::Tls => "tls",
     }
 }
 
@@ -640,10 +666,72 @@ struct SectionBase {
     text_base: usize,
     rdata_base: usize,
     data_base: usize,
+    tls_base: usize,
+}
+
+fn is_crt_symbol(name: &str) -> bool {
+    let clean = name.strip_prefix("__imp_").unwrap_or(name);
+    matches!(
+        clean,
+        "malloc"
+            | "free"
+            | "realloc"
+            | "calloc"
+            | "printf"
+            | "puts"
+            | "memset"
+            | "memcpy"
+            | "memmove"
+            | "strlen"
+            | "strcmp"
+            | "strncmp"
+            | "strcpy"
+            | "strncpy"
+            | "strcat"
+            | "strchr"
+            | "strstr"
+            | "sprintf"
+            | "sscanf"
+            | "exit"
+            | "abort"
+            | "sin"
+            | "cos"
+            | "tan"
+            | "pow"
+            | "sqrt"
+            | "ceil"
+            | "floor"
+            | "fmod"
+            | "fabs"
+            | "atan2"
+            | "log"
+            | "exp"
+            | "getchar"
+            | "putchar"
+            | "fopen"
+            | "fclose"
+            | "fread"
+            | "fwrite"
+            | "fflush"
+            | "fprintf"
+            | "fseek"
+            | "ftell"
+            | "getenv"
+            | "system"
+            | "time"
+            | "clock"
+            | "_errno"
+            | "__getmainargs"
+            | "__set_app_type"
+            | "_acmdln"
+            | "_initterm"
+            | "_initterm_e"
+            | "_configthreadlocale"
+    )
 }
 
 /// Build the combined import descriptor + ILT + IAT + hint/name table for
-/// KERNEL32.dll.  Also reserves space for `.refptr.` internal symbols.
+/// KERNEL32.dll and msvcrt.dll.  Also reserves space for `.refptr.` internal symbols.
 struct ImportData {
     data: Vec<u8>,
     iat_rvas: HashMap<String, u32>,
@@ -656,18 +744,45 @@ struct ImportData {
 }
 
 fn build_imports(
-    kernel_imports: &[String],
+    raw_imports: &[String],
     refptrs: &[String],
     section_rva: u32,
 ) -> Result<ImportData, String> {
-    let count = kernel_imports.len();
-    // IMAGE_IMPORT_DESCRIPTOR is 20 bytes; we need count+1 (terminator).
-    let desc_count = if count == 0 { 0 } else { count + 1 };
-    let desc_size = desc_count * 20;
-    // ILT (Import Lookup Table) and IAT each have (count+1) × 8 bytes.
-    let ilt_count = if count == 0 { 0 } else { count + 1 };
-    let ilt_size = ilt_count * 8;
-    let iat_size = ilt_count * 8;
+    let mut kernel_imports = Vec::new();
+    let mut crt_imports = Vec::new();
+
+    for imp in raw_imports {
+        let clean = imp.strip_prefix("__imp_").unwrap_or(imp).to_string();
+        if is_crt_symbol(&clean) {
+            if !crt_imports.contains(&clean) {
+                crt_imports.push(clean);
+            }
+        } else {
+            if !kernel_imports.contains(&clean) {
+                kernel_imports.push(clean);
+            }
+        }
+    }
+
+    let dll_list = [
+        ("KERNEL32.dll", &kernel_imports),
+        ("msvcrt.dll", &crt_imports),
+    ];
+    let active_dlls: Vec<(&str, &Vec<String>)> = dll_list
+        .into_iter()
+        .filter(|(_, funcs)| !funcs.is_empty())
+        .collect();
+
+    let dll_count = active_dlls.len();
+    let desc_size = if dll_count == 0 { 0 } else { (dll_count + 1) * 20 };
+
+    let mut total_ilt_iat_entries = 0;
+    for (_, funcs) in &active_dlls {
+        total_ilt_iat_entries += funcs.len() + 1; // including null terminator for each DLL
+    }
+
+    let ilt_size = total_ilt_iat_entries * 8;
+    let iat_size = total_ilt_iat_entries * 8;
 
     let ilt_off = align_up(desc_size, 8);
     let iat_off = ilt_off + ilt_size;
@@ -677,38 +792,59 @@ fn build_imports(
     let mut iat_rvas = HashMap::new();
     let mut refptr_offsets = HashMap::new();
 
-    // DLL name and hint/name entries come after the tables.
-    if count > 0 {
-        let dll_off = data.len();
-        data.extend_from_slice(b"KERNEL32.dll\0");
-        while data.len() % 2 != 0 {
-            data.push(0);
-        }
-        let mut hint_names: HashMap<String, usize> = HashMap::new();
-        for imp in kernel_imports {
-            let off = data.len();
-            data.extend_from_slice(&[0u8, 0u8]); // Hint
-            data.extend_from_slice(imp.as_bytes());
+    if dll_count > 0 {
+        let mut cur_desc_pos = 0;
+        let mut cur_ilt_pos = ilt_off;
+        let mut cur_iat_pos = iat_off;
+
+        for (dll_name, funcs) in &active_dlls {
+            let dll_name_off = data.len();
+            data.extend_from_slice(dll_name.as_bytes());
             data.push(0);
             while data.len() % 2 != 0 {
                 data.push(0);
             }
-            hint_names.insert(imp.clone(), off);
-        }
 
-        for (i, imp) in kernel_imports.iter().enumerate() {
-            let name_rva = section_rva + hint_names[imp] as u32;
-            let thunk = name_rva as u64;
-            let ilt_pos = ilt_off + i * 8;
-            let iat_pos = iat_off + i * 8;
-            data[ilt_pos..ilt_pos + 8].copy_from_slice(&thunk.to_le_bytes());
-            data[iat_pos..iat_pos + 8].copy_from_slice(&thunk.to_le_bytes());
-            iat_rvas.insert(format!("__imp_{imp}"), section_rva + iat_pos as u32);
+            let mut hint_offsets = HashMap::new();
+            for f in *funcs {
+                let h_off = data.len();
+                data.extend_from_slice(&[0u8, 0u8]); // Hint
+                data.extend_from_slice(f.as_bytes());
+                data.push(0);
+                while data.len() % 2 != 0 {
+                    data.push(0);
+                }
+                hint_offsets.insert(f.clone(), h_off);
+            }
+
+            let this_ilt_rva = section_rva + cur_ilt_pos as u32;
+            let this_iat_rva = section_rva + cur_iat_pos as u32;
+            let this_dll_name_rva = section_rva + dll_name_off as u32;
+
+            put_u32(&mut data, cur_desc_pos, this_ilt_rva);
+            put_u32(&mut data, cur_desc_pos + 12, this_dll_name_rva);
+            put_u32(&mut data, cur_desc_pos + 16, this_iat_rva);
+            cur_desc_pos += 20;
+
+            for f in *funcs {
+                let name_rva = section_rva + hint_offsets[f] as u32;
+                let thunk = name_rva as u64;
+
+                data[cur_ilt_pos..cur_ilt_pos + 8].copy_from_slice(&thunk.to_le_bytes());
+                data[cur_iat_pos..cur_iat_pos + 8].copy_from_slice(&thunk.to_le_bytes());
+
+                let iat_entry_rva = section_rva + cur_iat_pos as u32;
+                iat_rvas.insert(format!("__imp_{f}"), iat_entry_rva);
+                iat_rvas.insert(f.clone(), iat_entry_rva);
+
+                cur_ilt_pos += 8;
+                cur_iat_pos += 8;
+            }
+
+            // End of ILT / IAT array for this DLL
+            cur_ilt_pos += 8;
+            cur_iat_pos += 8;
         }
-        // IMAGE_IMPORT_DESCRIPTOR
-        put_u32(&mut data, 0, section_rva + ilt_off as u32); // OriginalFirstThunk
-        put_u32(&mut data, 12, section_rva + dll_off as u32); // Name
-        put_u32(&mut data, 16, section_rva + iat_off as u32); // FirstThunk
     }
 
     for (i, name) in refptrs.iter().enumerate() {
@@ -721,7 +857,7 @@ fn build_imports(
         refptr_offsets,
         ilt_rva: section_rva + ilt_off as u32,
         iat_rva: section_rva + iat_off as u32,
-        dll_count: if count > 0 { 1 } else { 0 },
+        dll_count,
     })
 }
 
@@ -778,6 +914,7 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
     let mut merged_text = Vec::new();
     let mut merged_rdata = Vec::new();
     let mut merged_data = Vec::new();
+    let mut merged_tls = Vec::new();
 
     let mut bases: Vec<SectionBase> = Vec::new();
     let mut global_syms: HashMap<String, (SectionClass, u64)> = HashMap::new();
@@ -789,11 +926,14 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
         merged_rdata.resize(rb, 0x00);
         let db = align_up(merged_data.len(), 16);
         merged_data.resize(db, 0x00);
+        let tlsb = align_up(merged_tls.len(), 16);
+        merged_tls.resize(tlsb, 0x00);
 
         bases.push(SectionBase {
             text_base: tb,
             rdata_base: rb,
             data_base: db,
+            tls_base: tlsb,
         });
 
         for (name, class, off) in &obj.symbols {
@@ -801,6 +941,7 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
                 SectionClass::Text => tb as u64 + off,
                 SectionClass::Rodata => rb as u64 + off,
                 SectionClass::Data => db as u64 + off,
+                SectionClass::Tls => tlsb as u64 + off,
             };
             if global_syms.insert(name.clone(), (*class, abs)).is_some() {
                 return Err(format!("duplicate definition of symbol '{name}'"));
@@ -810,18 +951,23 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
         merged_text.extend_from_slice(&obj.text);
         merged_rdata.extend_from_slice(&obj.rdata);
         merged_data.extend_from_slice(&obj.data);
+        merged_tls.extend_from_slice(&obj.tls);
     }
 
     // ── 3. Collect imports and refptrs ───────────────────────────────────
-    let mut kernel_imports: Vec<String> = Vec::new();
+    let mut raw_imports: Vec<String> = Vec::new();
     let mut refptr_names: Vec<String> = Vec::new();
 
     for obj in &objs {
         for rel in &obj.relocations {
             if let Some(name) = rel.target.strip_prefix("__imp_") {
                 let n = name.to_string();
-                if !kernel_imports.contains(&n) {
-                    kernel_imports.push(n);
+                if !raw_imports.contains(&n) {
+                    raw_imports.push(n);
+                }
+            } else if is_crt_symbol(&rel.target) {
+                if !raw_imports.contains(&rel.target) {
+                    raw_imports.push(rel.target.clone());
                 }
             } else if let Some(name) = rel.target.strip_prefix(".refptr.") {
                 let n = name.to_string();
@@ -848,13 +994,53 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
     let data_rva = pe_align(rdata_rva as usize + merged_rdata.len(), PE_SECT_ALIGN) as u32;
     let data_raw_size = pe_align(merged_data.len(), PE_FILE_ALIGN);
 
-    // Now fill .refptr. slots using the now-known RVAs.
+    let has_tls = !merged_tls.is_empty();
+    let tls_rva = pe_align(data_rva as usize + merged_data.len(), PE_SECT_ALIGN) as u32;
+    let tls_raw_size = if has_tls {
+        pe_align(merged_tls.len(), PE_FILE_ALIGN)
+    } else {
+        0
+    };
+
+    let idata_rva = pe_align(
+        if has_tls {
+            tls_rva as usize + merged_tls.len()
+        } else {
+            data_rva as usize + merged_data.len()
+        },
+        PE_SECT_ALIGN,
+    ) as u32;
+
+    // Build TLS Directory if TLS data is present
+    let mut tls_dir_rva = 0u32;
+    if has_tls {
+        let tls_index_data_off = merged_data.len();
+        merged_data.resize(tls_index_data_off + 8, 0);
+
+        let tls_dir_off = merged_rdata.len();
+        merged_rdata.resize(tls_dir_off + 40, 0);
+
+        tls_dir_rva = rdata_rva + tls_dir_off as u32;
+        let start_va = PE_IMAGE_BASE + tls_rva as u64;
+        let end_va = start_va + merged_tls.len() as u64;
+        let index_va = PE_IMAGE_BASE + data_rva as u64 + tls_index_data_off as u64;
+
+        put_u64(&mut merged_rdata, tls_dir_off, start_va);      // StartAddressOfRawData
+        put_u64(&mut merged_rdata, tls_dir_off + 8, end_va);    // EndAddressOfRawData
+        put_u64(&mut merged_rdata, tls_dir_off + 16, index_va); // AddressOfIndex
+        put_u64(&mut merged_rdata, tls_dir_off + 24, 0);        // AddressOfCallBacks
+        put_u32(&mut merged_rdata, tls_dir_off + 32, 0);        // SizeOfZeroFill
+        put_u32(&mut merged_rdata, tls_dir_off + 36, 0);        // Characteristics
+    }
+
+    // Fill .refptr. slots using the now-known RVAs.
     for (i, name) in refptr_names.iter().enumerate() {
         if let Some((class, abs)) = global_syms.get(name) {
             let rva = match class {
                 SectionClass::Text => text_rva as u64 + abs,
                 SectionClass::Rodata => rdata_rva as u64 + abs,
                 SectionClass::Data => data_rva as u64 + abs,
+                SectionClass::Tls => tls_rva as u64 + abs,
             };
             let addr = PE_IMAGE_BASE + rva;
             merged_data[refptr_data_off + i * 8..][..8].copy_from_slice(&addr.to_le_bytes());
@@ -862,8 +1048,7 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
     }
 
     // Build imports
-    let idata_rva = pe_align(data_rva as usize + merged_data.len(), PE_SECT_ALIGN) as u32;
-    let import = build_imports(&kernel_imports, &refptr_names, idata_rva)?;
+    let import = build_imports(&raw_imports, &refptr_names, idata_rva)?;
     let has_idata = !import.data.is_empty();
     let idata_raw_size = if has_idata {
         pe_align(import.data.len(), PE_FILE_ALIGN)
@@ -872,8 +1057,6 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
     };
 
     // ── 5. Resolve relocations ───────────────────────────────────────────
-    // We need to apply relocations into the merged buffers.
-    // First, build a lookup: symbol name → (class, rva-relative offset)
     let mut abs_rvas: Vec<u32> = Vec::new();
 
     // Record .refptr. table slot RVAs for base relocations (ASLR)
@@ -894,11 +1077,14 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
                 merged_rdata.len(),
                 b.data_base,
                 merged_data.len(),
+                b.tls_base,
+                merged_tls.len(),
             );
             let (patch_buf, patch_rva) = match patch_class {
                 SectionClass::Text => (&mut merged_text, text_rva),
                 SectionClass::Rodata => (&mut merged_rdata, rdata_rva),
                 SectionClass::Data => (&mut merged_data, data_rva),
+                SectionClass::Tls => (&mut merged_tls, tls_rva),
             };
             let patch = rel.offset;
             let patch_rva_addr = patch_rva as i64 + patch as i64;
@@ -913,6 +1099,7 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
                 text_rva,
                 rdata_rva,
                 data_rva,
+                tls_rva,
                 idata_rva,
             )?;
 
@@ -923,7 +1110,6 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
                     if patch + 8 > patch_buf.len() {
                         return Err(format!("'{}': ADDR64 patch OOB", obj.path.display()));
                     }
-                    // ADDR64 stores a 64-bit absolute virtual address.
                     let abs_addr = PE_IMAGE_BASE + target;
                     patch_buf[patch..patch + 8].copy_from_slice(&abs_addr.to_le_bytes());
                     abs_rvas.push(patch_rva_addr as u32);
@@ -932,7 +1118,6 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
                     if patch + 4 > patch_buf.len() {
                         return Err(format!("'{}': ADDR32 patch OOB", obj.path.display()));
                     }
-                    // ADDR32 stores a 32-bit truncated absolute virtual address.
                     let abs32 = (PE_IMAGE_BASE + target) as u32;
                     patch_buf[patch..patch + 4].copy_from_slice(&abs32.to_le_bytes());
                 }
@@ -949,7 +1134,6 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
                         AMD64_REL32_5 => 5,
                         _ => 0,
                     };
-                    // REL32 displacement = target_RVA - (next_instruction_RVA)
                     let disp = target as i64 + rel.addend - (patch_rva_addr + 4 + adjustment);
                     if disp < i32::MIN as i64 || disp > i32::MAX as i64 {
                         return Err(format!(
@@ -959,14 +1143,11 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
                     }
                     patch_buf[patch..patch + 4].copy_from_slice(&(disp as i32).to_le_bytes());
                 }
-                AMD64_SECTION => {
-                    // Section index reloc — not needed in executable, skip
-                }
+                AMD64_SECTION => {}
                 AMD64_SECREL => {
                     if patch + 4 > patch_buf.len() {
                         return Err(format!("'{}': SECREL patch OOB", obj.path.display()));
                     }
-                    // SECREL: stored as 32-bit unsigned value.
                     let val32 = target as u32;
                     patch_buf[patch..patch + 4].copy_from_slice(&val32.to_le_bytes());
                 }
@@ -983,14 +1164,7 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
     // Generate base relocations table for ASLR
     let reloc_data = generate_base_relocs_from_rvas(&abs_rvas);
     let reloc_rva = if !reloc_data.is_empty() {
-        pe_align(
-            if has_idata {
-                idata_rva as usize + import.data.len()
-            } else {
-                data_rva as usize + merged_data.len()
-            },
-            PE_SECT_ALIGN,
-        ) as u32
+        pe_align(idata_rva as usize + import.data.len(), PE_SECT_ALIGN) as u32
     } else {
         0
     };
@@ -1000,106 +1174,6 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
     } else {
         0
     };
-
-    // ── 5. Resolve relocations ───────────────────────────────────────────
-    // We need to apply relocations into the merged buffers.
-    // First, build a lookup: symbol name → (class, rva-relative offset)
-
-    for (idx, obj) in objs.iter().enumerate() {
-        let b = &bases[idx];
-        for rel in &obj.relocations {
-            let patch_class = section_class_for_offset(
-                rel.offset,
-                b.text_base,
-                merged_text.len(),
-                b.rdata_base,
-                merged_rdata.len(),
-                b.data_base,
-                merged_data.len(),
-            );
-            let (patch_buf, patch_rva) = match patch_class {
-                SectionClass::Text => (&mut merged_text, text_rva),
-                SectionClass::Rodata => (&mut merged_rdata, rdata_rva),
-                SectionClass::Data => (&mut merged_data, data_rva),
-            };
-            let patch = rel.offset;
-            let patch_rva_addr = patch_rva as i64 + patch as i64;
-
-            // Resolve target
-            let target = resolve_pe_target(
-                &rel,
-                &global_syms,
-                &import.iat_rvas,
-                &import.refptr_offsets,
-                &bases[idx],
-                text_rva,
-                rdata_rva,
-                data_rva,
-                idata_rva,
-            )?;
-
-            let rnum = coff_reloc_number(rel);
-
-            match rnum {
-                AMD64_ADDR64 => {
-                    if patch + 8 > patch_buf.len() {
-                        return Err(format!("'{}': ADDR64 patch OOB", obj.path.display()));
-                    }
-                    // ADDR64 stores a 64-bit absolute virtual address.
-                    let abs_addr = PE_IMAGE_BASE + target;
-                    patch_buf[patch..patch + 8].copy_from_slice(&abs_addr.to_le_bytes());
-                }
-                AMD64_ADDR32 | AMD64_ADDR32NB => {
-                    if patch + 4 > patch_buf.len() {
-                        return Err(format!("'{}': ADDR32 patch OOB", obj.path.display()));
-                    }
-                    // ADDR32 stores a 32-bit truncated absolute virtual address.
-                    let abs32 = (PE_IMAGE_BASE + target) as u32;
-                    patch_buf[patch..patch + 4].copy_from_slice(&abs32.to_le_bytes());
-                }
-                AMD64_REL32 | AMD64_REL32_1 | AMD64_REL32_2 | AMD64_REL32_3 | AMD64_REL32_4
-                | AMD64_REL32_5 => {
-                    if patch + 4 > patch_buf.len() {
-                        return Err(format!("'{}': REL32 patch OOB", obj.path.display()));
-                    }
-                    let adjustment: i64 = match rnum {
-                        AMD64_REL32_1 => 1,
-                        AMD64_REL32_2 => 2,
-                        AMD64_REL32_3 => 3,
-                        AMD64_REL32_4 => 4,
-                        AMD64_REL32_5 => 5,
-                        _ => 0,
-                    };
-                    // REL32 displacement = target_RVA - (next_instruction_RVA)
-                    let disp = target as i64 + rel.addend - (patch_rva_addr + 4 + adjustment);
-                    if disp < i32::MIN as i64 || disp > i32::MAX as i64 {
-                        return Err(format!(
-                            "'{}': REL32 displacement overflow ({disp})",
-                            obj.path.display()
-                        ));
-                    }
-                    patch_buf[patch..patch + 4].copy_from_slice(&(disp as i32).to_le_bytes());
-                }
-                AMD64_SECTION => {
-                    // Section index reloc — not needed in executable, skip
-                }
-                AMD64_SECREL => {
-                    if patch + 4 > patch_buf.len() {
-                        return Err(format!("'{}': SECREL patch OOB", obj.path.display()));
-                    }
-                    // SECREL: stored as 32-bit unsigned value.
-                    let val32 = target as u32;
-                    patch_buf[patch..patch + 4].copy_from_slice(&val32.to_le_bytes());
-                }
-                _ => {
-                    return Err(format!(
-                        "'{}': unsupported COFF relocation type {rnum}",
-                        obj.path.display()
-                    ));
-                }
-            }
-        }
-    }
 
     // ── 6. Resolve .refptr. data section entries ─────────────────────────
     for (i, name) in refptr_names.iter().enumerate() {
@@ -1116,44 +1190,48 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
                 SectionClass::Text => text_rva as u64 + abs,
                 SectionClass::Rodata => rdata_rva as u64 + abs,
                 SectionClass::Data => data_rva as u64 + abs,
+                SectionClass::Tls => tls_rva as u64 + abs,
             };
             let addr = PE_IMAGE_BASE + rva;
             merged_data[pos..pos + 8].copy_from_slice(&addr.to_le_bytes());
         }
     }
 
-    // ── 7. Compute raw file offsets ──────────────────────────────────────
+    // ── 7. Compute raw file offsets and active section count ─────────────
     let headers_size = PE_FILE_ALIGN;
     let text_raw_off = headers_size;
     let rdata_raw_off = text_raw_off + text_raw_size;
     let data_raw_off = rdata_raw_off + rdata_raw_size;
-    let idata_raw_off = data_raw_off + data_raw_size;
+    let tls_raw_off = data_raw_off + data_raw_size;
+    let idata_raw_off = tls_raw_off + tls_raw_size;
     let reloc_raw_off = idata_raw_off + idata_raw_size;
 
-    // Section count
-    let mut section_count: u16 = 1; // .text always present
-    if !merged_rdata.is_empty() {
-        section_count += 1;
-    }
-    if !merged_data.is_empty() || !refptr_names.is_empty() {
-        section_count += 1;
-    }
-    if has_idata {
-        section_count += 1;
-    }
-    if has_reloc {
-        section_count += 1;
-    }
+    let has_text = !merged_text.is_empty();
+    let has_rdata = !merged_rdata.is_empty();
+    let has_data = !merged_data.is_empty() || !refptr_names.is_empty();
 
-    let image_end = reloc_rva as usize + if has_reloc { reloc_data.len() } else { 0 };
-    let image_size = pe_align(
-        if image_end > 0 {
-            image_end
-        } else {
-            data_rva as usize + merged_data.len()
-        },
-        PE_SECT_ALIGN,
-    );
+    let mut section_count: u16 = 0;
+    if has_text { section_count += 1; }
+    if has_rdata { section_count += 1; }
+    if has_data { section_count += 1; }
+    if has_tls { section_count += 1; }
+    if has_idata { section_count += 1; }
+    if has_reloc { section_count += 1; }
+
+    let image_end = if has_reloc {
+        reloc_rva as usize + reloc_data.len()
+    } else if has_idata {
+        idata_rva as usize + import.data.len()
+    } else if has_tls {
+        tls_rva as usize + merged_tls.len()
+    } else if has_data {
+        data_rva as usize + merged_data.len()
+    } else if has_rdata {
+        rdata_rva as usize + merged_rdata.len()
+    } else {
+        text_rva as usize + merged_text.len()
+    };
+    let image_size = pe_align(image_end, PE_SECT_ALIGN);
     let file_size = reloc_raw_off + reloc_raw_size;
 
     let mut pe = vec![0u8; file_size.max(headers_size)];
@@ -1165,22 +1243,19 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
     pe[nt..nt + 4].copy_from_slice(b"PE\0\0");
     put_u16(&mut pe, nt + 4, 0x8664); // x86-64
     put_u16(&mut pe, nt + 6, section_count);
-    // SizeOfOptionalHeader
     let opt_size: u16 = 0xF0;
     put_u16(&mut pe, nt + 20, opt_size);
     put_u16(&mut pe, nt + 22, 0x0022); // EXE, large-address-aware
 
     let opt = nt + 24;
     put_u16(&mut pe, opt, 0x20b); // PE32+
-    // SizeOfCode
     put_u32(&mut pe, opt + 4, text_raw_size as u32);
-    // SizeOfInitializedData
     put_u32(
         &mut pe,
         opt + 8,
-        (rdata_raw_size + data_raw_size + idata_raw_size) as u32,
+        (rdata_raw_size + data_raw_size + tls_raw_size + idata_raw_size) as u32,
     );
-    // SizeOfUninitializedData = 0 (bss is merged into .data)
+
     // EntryPoint
     let main_entry = ["mainCRTStartup", "main", "_main", "WinMain", "lpp_main"]
         .iter()
@@ -1191,62 +1266,51 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
         SectionClass::Text => text_rva as u64 + main_entry.1,
         SectionClass::Rodata => rdata_rva as u64 + main_entry.1,
         SectionClass::Data => data_rva as u64 + main_entry.1,
+        SectionClass::Tls => tls_rva as u64 + main_entry.1,
     };
     put_u32(&mut pe, opt + 16, main_abs as u32);
-    // BaseOfCode
     put_u32(&mut pe, opt + 20, text_rva);
-    // ImageBase
     put_u64(&mut pe, opt + 24, PE_IMAGE_BASE);
-    // SectionAlignment / FileAlignment
     put_u32(&mut pe, opt + 32, PE_SECT_ALIGN as u32);
     put_u32(&mut pe, opt + 36, PE_FILE_ALIGN as u32);
-    // MajorOSVersion / MinorOSVersion
     put_u16(&mut pe, opt + 40, 6);
     put_u16(&mut pe, opt + 48, 6);
-    // SizeOfImage
     put_u32(&mut pe, opt + 56, image_size as u32);
-    // SizeOfHeaders
     put_u32(&mut pe, opt + 60, headers_size as u32);
-    // Subsystem = console
-    put_u16(&mut pe, opt + 68, 3);
-    // DLL characteristics
+    put_u16(&mut pe, opt + 68, 3); // Console subsystem
     put_u16(&mut pe, opt + 70, 0x8140); // NX_COMPAT | DYNAMIC_BASE | HIGH_ENTROPY_VA
-    // Stack reserve / commit
     put_u64(&mut pe, opt + 72, 0x100000);
     put_u64(&mut pe, opt + 80, 0x1000);
-    // Heap reserve / commit
     put_u64(&mut pe, opt + 88, 0x100000);
     put_u64(&mut pe, opt + 96, 0x1000);
-    // NumberOfRvaAndSizes
     put_u32(&mut pe, opt + 108, 16);
 
     // Data directories
     let dirs = opt + 112;
-    // Import directory (index 1)
     if has_idata {
-        put_u32(&mut pe, dirs + 8, idata_rva);
-        // Only count the actual import descriptor/ILT/IAT/DLL-name data,
-        // excluding refptr padding that lives in the same buffer.
+        put_u32(&mut pe, dirs + 8, idata_rva); // Import directory (index 1)
         let real_import_size = import.data.len() - refptr_names.len() * 8;
         put_u32(&mut pe, dirs + 12, real_import_size as u32);
-        // IAT directory (index 12)
-        put_u32(&mut pe, dirs + 12 * 8, import.iat_rva);
+
+        put_u32(&mut pe, dirs + 12 * 8, import.iat_rva); // IAT directory (index 12)
         put_u32(
             &mut pe,
             dirs + 12 * 8 + 4,
-            ((kernel_imports.len() + 1) * 8) as u32,
+            ((import.dll_count + 1) * 8) as u32,
         );
     }
-    // Base relocation directory (index 5)
     if has_reloc {
-        put_u32(&mut pe, dirs + 5 * 8, reloc_rva);
+        put_u32(&mut pe, dirs + 5 * 8, reloc_rva); // Base relocation directory (index 5)
         put_u32(&mut pe, dirs + 5 * 8 + 4, reloc_data.len() as u32);
+    }
+    if has_tls {
+        put_u32(&mut pe, dirs + 9 * 8, tls_dir_rva); // TLS directory (index 9)
+        put_u32(&mut pe, dirs + 9 * 8 + 4, 40);
     }
 
     // ── 9. Section headers ───────────────────────────────────────────────
     let mut sec = opt + opt_size as usize;
 
-    // Helper to emit a section header.
     let emit_section = |pe: &mut [u8],
                         sec: &mut usize,
                         name: &[u8; 8],
@@ -1264,22 +1328,22 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
         *sec += 40;
     };
 
-    // .text
-    let mut tname = [0u8; 8];
-    tname[..5].copy_from_slice(b".text");
-    emit_section(
-        &mut pe,
-        &mut sec,
-        &tname,
-        text_rva,
-        text_raw_size,
-        text_raw_off,
-        merged_text.len(),
-        0x60000020, // RX | CNT_CODE | MEM_EXECUTE | MEM_READ
-    );
+    if has_text {
+        let mut tname = [0u8; 8];
+        tname[..5].copy_from_slice(b".text");
+        emit_section(
+            &mut pe,
+            &mut sec,
+            &tname,
+            text_rva,
+            text_raw_size,
+            text_raw_off,
+            merged_text.len(),
+            0x60000020, // RX | CNT_CODE | MEM_EXECUTE | MEM_READ
+        );
+    }
 
-    // .rdata
-    if !merged_rdata.is_empty() {
+    if has_rdata {
         let mut rname = [0u8; 8];
         rname[..6].copy_from_slice(b".rdata");
         emit_section(
@@ -1294,8 +1358,7 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
         );
     }
 
-    // .data
-    if !merged_data.is_empty() || !refptr_names.is_empty() {
+    if has_data {
         let mut dname = [0u8; 8];
         dname[..5].copy_from_slice(b".data");
         emit_section(
@@ -1310,7 +1373,21 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
         );
     }
 
-    // .idata
+    if has_tls {
+        let mut tlsname = [0u8; 8];
+        tlsname[..4].copy_from_slice(b".tls");
+        emit_section(
+            &mut pe,
+            &mut sec,
+            &tlsname,
+            tls_rva,
+            tls_raw_size,
+            tls_raw_off,
+            merged_tls.len(),
+            0xC0000040, // RW | CNT_INITIALIZED_DATA | MEM_READ | MEM_WRITE
+        );
+    }
+
     if has_idata {
         let mut iname = [0u8; 8];
         iname[..6].copy_from_slice(b".idata");
@@ -1326,7 +1403,6 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
         );
     }
 
-    // .reloc
     if has_reloc {
         let mut rlname = [0u8; 8];
         rlname[..6].copy_from_slice(b".reloc");
@@ -1343,12 +1419,17 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
     }
 
     // ── 10. Write section data ──────────────────────────────────────────
-    pe[text_raw_off..text_raw_off + merged_text.len()].copy_from_slice(&merged_text);
-    if !merged_rdata.is_empty() {
+    if has_text {
+        pe[text_raw_off..text_raw_off + merged_text.len()].copy_from_slice(&merged_text);
+    }
+    if has_rdata {
         pe[rdata_raw_off..rdata_raw_off + merged_rdata.len()].copy_from_slice(&merged_rdata);
     }
-    if !merged_data.is_empty() || !refptr_names.is_empty() {
+    if has_data {
         pe[data_raw_off..data_raw_off + merged_data.len()].copy_from_slice(&merged_data);
+    }
+    if has_tls {
+        pe[tls_raw_off..tls_raw_off + merged_tls.len()].copy_from_slice(&merged_tls);
     }
     if has_idata {
         pe[idata_raw_off..idata_raw_off + import.data.len()].copy_from_slice(&import.data);
@@ -1371,6 +1452,8 @@ fn section_class_for_offset(
     rdata_len: usize,
     data_base: usize,
     data_len: usize,
+    tls_base: usize,
+    tls_len: usize,
 ) -> SectionClass {
     if offset >= text_base && offset < text_base + text_len {
         SectionClass::Text
@@ -1378,6 +1461,8 @@ fn section_class_for_offset(
         SectionClass::Rodata
     } else if offset >= data_base && offset < data_base + data_len {
         SectionClass::Data
+    } else if offset >= tls_base && offset < tls_base + tls_len {
+        SectionClass::Tls
     } else {
         SectionClass::Text // fallback
     }
@@ -1395,6 +1480,7 @@ fn resolve_pe_target(
     text_rva: u32,
     rdata_rva: u32,
     data_rva: u32,
+    tls_rva: u32,
     idata_rva: u32,
 ) -> Result<u64, String> {
     // Self-references — return the RVA of the section base within this input
@@ -1406,6 +1492,9 @@ fn resolve_pe_target(
     }
     if rel.target.starts_with("__self_data__") {
         return Ok(data_rva as u64 + bases.data_base as u64);
+    }
+    if rel.target.starts_with("__self_tls__") {
+        return Ok(tls_rva as u64 + bases.tls_base as u64);
     }
 
     // External section references ("__ext_text__<base>", etc.)
@@ -1427,6 +1516,12 @@ fn resolve_pe_target(
             .map_err(|_| format!("invalid __ext_data__ tag: {}", rel.target))?;
         return Ok(data_rva as u64 + ext_base as u64);
     }
+    if let Some(rest) = rel.target.strip_prefix("__ext_tls__") {
+        let ext_base: usize = rest
+            .parse()
+            .map_err(|_| format!("invalid __ext_tls__ tag: {}", rel.target))?;
+        return Ok(tls_rva as u64 + ext_base as u64);
+    }
 
     // IAT entry — returned as bare RVA
     if let Some(rva) = iat_rvas.get(&rel.target) {
@@ -1444,6 +1539,7 @@ fn resolve_pe_target(
             SectionClass::Text => text_rva as u64 + abs,
             SectionClass::Rodata => rdata_rva as u64 + abs,
             SectionClass::Data => data_rva as u64 + abs,
+            SectionClass::Tls => tls_rva as u64 + abs,
         };
         return Ok(rva);
     }
@@ -1455,6 +1551,7 @@ fn resolve_pe_target(
                 SectionClass::Text => text_rva as u64 + abs,
                 SectionClass::Rodata => rdata_rva as u64 + abs,
                 SectionClass::Data => data_rva as u64 + abs,
+                SectionClass::Tls => tls_rva as u64 + abs,
             };
             return Ok(rva);
         }
@@ -1780,6 +1877,21 @@ fn main() {
         std::process::exit(2);
     }
     let inputs: Vec<PathBuf> = args[offset..out_idx].iter().map(PathBuf::from).collect();
+    for path in &inputs {
+        if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
+            let ext_lower = ext.to_lowercase();
+            if ext_lower == "c" || ext_lower == "cpp" || ext_lower == "cc" || ext_lower == "lpp" {
+                eprintln!(
+                    "lpp-link error: Input file '{}' is a source code file. lpp-link requires compiled binary object files (.obj or .o).\nPlease compile the runtime source into a COFF object file first (e.g. 'cl /c /DLPP_FREESTANDING {}' or 'gcc -c -DLPP_FREESTANDING {} -o {}.obj').",
+                    path.display(),
+                    path.display(),
+                    path.display(),
+                    path.file_stem().unwrap_or_default().to_string_lossy()
+                );
+                std::process::exit(1);
+            }
+        }
+    }
     let result = if pe_mode {
         write_pe(&inputs, Path::new(&args[out_idx + 1]))
     } else if macho_mode {
