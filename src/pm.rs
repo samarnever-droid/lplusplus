@@ -677,6 +677,7 @@ pub fn run_command(args: &[String]) {
         }
         "run" => cmd_run(),
         "test" => cmd_test(),
+        "bench" => cmd_bench(),
         "help" => print_help(),
         cmd => {
             eprintln!("[L++] Unknown package manager command: '{}'", cmd);
@@ -709,11 +710,15 @@ fn print_help() {
     println!("  build                 Build project into native target executable");
     println!("  run                   Compile and run the project native target");
     println!("  test                  Compile and execute all tests in tests/ folder");
+    println!("  bench                 Run King20 benchmarks across all 3 linkers");
     println!("  help                  Show this help menu");
     println!("\nSource-file commands (outside package mode):");
     println!("  lpp check <file.lpp>          Check one source file without artifacts");
     println!("  lpp emit <file.lpp>           Emit C source explicitly");
     println!("  lpp emit <file.lpp> --aot     Emit C source plus Cranelift object");
+    println!("\nBenchmark commands:");
+    println!("  lpp bench --self-test         Run 15 integration tests");
+    println!("  lpp bench --disk --mem --json King20 across all linkers with stats");
     println!("\nRule: `lpp build` builds an lpp.toml package; `lpp emit` handles one file.");
 }
 
@@ -1501,6 +1506,30 @@ fn cmd_run() {
         if let Err(e) = status {
             eprintln!("[L++] Failed to execute target: {}", e);
         }
+    }
+}
+
+fn cmd_bench() {
+    println!("[L++] Launching lpp-bench...");
+    let bench_bin = current_binary_dir()
+        .map(|dir| dir.join(format!("lpp-bench{}", std::env::consts::EXE_SUFFIX)))
+        .filter(|p| p.exists());
+    if let Some(bench) = bench_bin {
+        let args: Vec<String> = std::env::args().skip(2).collect();
+        let status = std::process::Command::new(&bench)
+            .args(&args)
+            .status();
+        match status {
+            Ok(s) if s.success() => {}
+            Ok(s) => std::process::exit(s.code().unwrap_or(1)),
+            Err(e) => {
+                eprintln!("[L++] Failed to launch lpp-bench: {e}");
+                std::process::exit(1);
+            }
+        }
+    } else {
+        eprintln!("[L++] lpp-bench not found. Build it with: cargo build --release --bin lpp-bench");
+        std::process::exit(1);
     }
 }
 
