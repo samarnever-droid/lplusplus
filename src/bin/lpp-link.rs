@@ -55,7 +55,7 @@ struct Relocation {
 }
 
 struct CoffSections {
-    path: PathBuf, text: Vec<u8>, rdata: Vec<u8>, data: Vec<u8>,
+    #[allow(dead_code)] path: PathBuf, text: Vec<u8>, rdata: Vec<u8>, data: Vec<u8>,
     #[allow(dead_code)] section_map: Vec<(object::SectionIndex, SectionClass, usize)>,
     symbols: Vec<(String, SectionClass, u64)>, relocations: Vec<Relocation>,
 }
@@ -67,7 +67,7 @@ struct ElfInput {
 }
 
 struct MachoInput {
-    path: PathBuf, text: Vec<u8>,
+    #[allow(dead_code)] path: PathBuf, text: Vec<u8>,
     text_symbols: Vec<(String, u64)>, relocations: Vec<Relocation>,
 }
 
@@ -300,16 +300,45 @@ fn read_coff_full(path: &Path) -> Result<CoffSections, String> {
 
     for sec in file.sections() {
         let idx = sec.index();
-        let class = match sec.kind() {
+        let kind = sec.kind();
+        // Skip debug, directive, and other non-loadable sections so their
+        // anonymous symbols don't pollute the merged output.
+        if kind == object::SectionKind::Debug
+            || kind == object::SectionKind::Linker
+            || kind == object::SectionKind::Metadata
+            || kind == object::SectionKind::Other
+        {
+            continue;
+        }
+        let class = match kind {
             object::SectionKind::Text => SectionClass::Text,
-            object::SectionKind::ReadOnlyData | object::SectionKind::ReadOnlyString => SectionClass::Rodata,
+            object::SectionKind::ReadOnlyData
+            | object::SectionKind::ReadOnlyString => SectionClass::Rodata,
+            object::SectionKind::UninitializedData
+            | object::SectionKind::UninitializedTls => SectionClass::Data,
             _ => SectionClass::Data,
         };
         let buf: &mut Vec<u8> = match class {
             SectionClass::Text => &mut text_buf, SectionClass::Rodata => &mut rdata_buf, SectionClass::Data => &mut data_buf,
         };
-        let base = align_up(buf.len(), 16); buf.resize(base, 0x00);
-        let data = sec.uncompressed_data().map_err(|e| format!("read section: {e}"))?.into_owned();
+        let base = align_up(buf.len(), 16);
+        buf.resize(base, 0x00);
+        // BSS / uninitialized sections have zero on-disk size; just reserve
+        // virtual space. `uncompressed_data()` may fail for these.
+        let is_zero_fill = matches!(kind,
+            object::SectionKind::UninitializedData
+            | object::SectionKind::UninitializedTls);
+        if is_zero_fill {
+            let sz = sec.size() as usize;
+            buf.resize(buf.len() + sz, 0x00);
+            map.push((idx, class, base));
+            let padded = align_up(buf.len(), 16);
+            buf.resize(padded, 0x00);
+            continue;
+        }
+        let data = sec.uncompressed_data()
+            .map_err(|e| format!("read section: {e}"))?
+            .into_owned();
         buf.extend_from_slice(&data);
         map.push((idx, class, base));
 

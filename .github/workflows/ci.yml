@@ -22,6 +22,9 @@ jobs:
           rustc --version
           cargo --version
           cc --version
+      - name: Install mold linker
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq mold 2>/dev/null || echo "mold not available, continuing without it"
       - name: Rust unit tests
         run: cargo test --locked
       - name: Strict runtime C compilation
@@ -45,6 +48,8 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
+      - name: Install mold linker
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq mold 2>/dev/null || true
       - name: Run King 20 Stable v1
         run: python3 benchmarks/king20/run.py --suite stable
       - name: Run King 20 Experimental
@@ -69,6 +74,8 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
+      - name: Install mold linker
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq mold 2>/dev/null || true
       - name: Run 10k / 50k / 100k phase scaling suite
         run: python3 benchmarks/scalability/run.py
       - name: Upload scalability result
