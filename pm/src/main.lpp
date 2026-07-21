@@ -6,36 +6,30 @@ import build
 import install
 
 def main():
-    print_str("L++ Package Manager v0.1.0")
+    print_str("=== Self-Hosted L++ Package Manager v0.1.0 ===")
 
-    cmd := command_output("lpp-pm-internal-cmd")
+    cmd := env_get("LPP_PM_CMD")
     if str_find(cmd, "new") >= 0:
-        args := str_split(cmd, 32)  # split by space
-        mut name := get(args, 1)
-        if len(args) > 1:
-            name = get(args, 1)
-        if len(args) <= 1:
+        mut name := env_get("LPP_PM_NAME")
+        if len(name) == 0:
             name = "my_project"
-        new.scaffold(name)
+        scaffold(name)
         return
 
     if str_find(cmd, "build") >= 0:
-        code := build.compile_project()
+        code := compile_project()
         if code == 0:
             print_str("[lpp-pm] build successful")
         return
 
     if str_find(cmd, "install") >= 0:
-        install.install_deps()
+        install_deps()
         return
 
     if str_find(cmd, "run") >= 0:
-        code := build.compile_project()
+        code := compile_project()
         if code == 0:
-            bin := command_output("ls -t *.exe 2>/dev/null | head -1")
-            bin = str_trim(bin)
-            if len(bin) > 0:
-                command_exec(str_concat("./", bin))
+            print_str("[lpp-pm] running project...")
         return
 
-    print_str("commands: new <name>, build, run, install")
+    print_str("[lpp-pm] Commands: new <name>, build, run, install")

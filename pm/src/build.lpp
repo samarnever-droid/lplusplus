@@ -7,7 +7,7 @@ def compile_project() -> Int:
         return 1
 
     # Load manifest for project name
-    bin_name := "output"
+    mut bin_name := "output"
     manifest := "lpp.toml"
     if check(manifest) == 1:
         raw := read(manifest)
@@ -29,7 +29,7 @@ def compile_project() -> Int:
     obj := str_replace(entry, ".lpp", ".o")
     out := str_concat(bin_name, ".exe")
     cc := detect_cc()
-    link_cmd := str_concat(str_concat(str_concat(str_concat(cc, " -O2 "), obj), " lpp_runtime.c -o "), out)
+    mut link_cmd := str_concat(str_concat(str_concat(str_concat(cc, " -O2 "), obj), " lpp_runtime.c -o "), out)
     link_cmd = str_concat(link_cmd, " -pthread")
     result := command_exec(link_cmd)
     return result

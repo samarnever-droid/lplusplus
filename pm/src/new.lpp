@@ -1,20 +1,21 @@
 # new.lpp — scaffold new L++ projects
 
 def scaffold(name: String) -> Void:
-    info := "scaffolding " + name + "..."
+    info := str_concat("scaffolding ", name)
     print_str(info)
     dir_create(name)
     src := joined(name, "src")
     dir_create(src)
     main_lpp := joined(src, "main.lpp")
-    content := "def main():\n    print_str(\"Hello from " + name + "!\")\n"
+    mut content := str_concat("def main():\n    print_str(\"Hello from ", name)
+    content = str_concat(content, "!\")\n")
     write(main_lpp, content)
     toml_path := joined(name, "lpp.toml")
-    toml_content := str_concat("[package]\nname = \"", name)
+    mut toml_content := str_concat("[package]\nname = \"", name)
     toml_content = str_concat(toml_content, "\"\nversion = \"0.1.0\"\n")
     toml_content = str_concat(toml_content, "author = \"L++\"\nentry = \"src/main.lpp\"\n\n[dependencies]\n")
     write(toml_path, toml_content)
     gitignore := joined(name, ".gitignore")
     write(gitignore, ".lpp_packages/\ntarget/\n*.o\n*.obj\n*.exe\n")
-    done := "created project " + name
+    done := str_concat("created project ", name)
     print_str(done)
