@@ -28,6 +28,7 @@ cd "$TEMP/work"
 "$TEMP/install/bin/lpp" new direct_install_demo >/dev/null
 cd direct_install_demo
 LPP_LINKER=direct "$TEMP/install/bin/lpp" build >/dev/null
-OUTPUT=$(target/release/direct_install_demo)
+BINARY=$(find LppData -name direct_install_demo -type f -executable 2>/dev/null | head -1)
+OUTPUT=$("$BINARY" 2>/dev/null)
 [ "$OUTPUT" = "Hello from L++ project!" ]
 echo "PASS installed direct linker build"
