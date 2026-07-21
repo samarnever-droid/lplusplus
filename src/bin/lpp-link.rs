@@ -725,50 +725,40 @@ fn build_imports(
     })
 }
 
-/// Generate base relocations (`.reloc` section) for a writable block.
-fn generate_base_relocs(data: &[u8], section_rva: u32) -> Vec<u8> {
-    let page_size = 0x1000usize;
+fn generate_base_relocs_from_rvas(rvas: &[u32]) -> Vec<u8> {
+    if rvas.is_empty() {
+        return Vec::new();
+    }
+    let mut sorted = rvas.to_vec();
+    sorted.sort_unstable();
+    sorted.dedup();
+
     let mut reloc = Vec::new();
+    let page_size = 0x1000u32;
 
-    let mut page = 0usize;
-    let mut entries_for_page: Vec<u16> = Vec::new();
+    let mut i = 0;
+    while i < sorted.len() {
+        let page_rva = sorted[i] & !(page_size - 1);
+        let mut page_entries = Vec::new();
+        while i < sorted.len() && (sorted[i] & !(page_size - 1)) == page_rva {
+            let offset_in_page = (sorted[i] & (page_size - 1)) as u16;
+            let entry = 0xA000u16 | offset_in_page; // IMAGE_REL_BASED_DIR64
+            page_entries.push(entry);
+            i += 1;
+        }
 
-    let flush_page = |page: usize, entries: &mut Vec<u16>, out: &mut Vec<u8>| {
-        if entries.is_empty() {
-            return;
-        }
-        let block_size = 8 + entries.len() * 2;
-        // Align block to 4 bytes
-        let padded = align_up(block_size, 4);
-        let start = out.len();
-        out.resize(start + padded, 0);
-        put_u32(out, start, (section_rva as usize + page) as u32);
-        put_u32(out, start + 4, padded as u32);
-        for (i, e) in entries.iter().enumerate() {
-            put_u16(out, start + 8 + i * 2, *e);
-        }
-        entries.clear();
-    };
+        let entry_bytes_len = page_entries.len() * 2;
+        let block_size = 8 + entry_bytes_len;
+        let padded_size = align_up(block_size, 4);
 
-    // For each 8-byte aligned address in the data, check if it might be an
-    // absolute pointer. Only entries that look like image-base-relative
-    // addresses (>= PE_IMAGE_BASE, < PE_IMAGE_BASE + 4GB) need relocs.
-    for off in (0..data.len()).step_by(8) {
-        if off + 8 > data.len() {
-            break;
-        }
-        let val = u64::from_le_bytes(data[off..off + 8].try_into().unwrap());
-        if val >= PE_IMAGE_BASE && val < PE_IMAGE_BASE + 0x100000000 {
-            let cur_page = off & !(page_size - 1);
-            if cur_page != page {
-                flush_page(page, &mut entries_for_page, &mut reloc);
-                page = cur_page;
-            }
-            let entry = 0xA000u16 | ((off - cur_page) as u16); // IMAGE_REL_BASED_DIR64
-            entries_for_page.push(entry);
+        let start = reloc.len();
+        reloc.resize(start + padded_size, 0);
+        put_u32(&mut reloc, start, page_rva);
+        put_u32(&mut reloc, start + 4, padded_size as u32);
+        for (idx, e) in page_entries.iter().enumerate() {
+            put_u16(&mut reloc, start + 8 + idx * 2, *e);
         }
     }
-    flush_page(page, &mut entries_for_page, &mut reloc);
     reloc
 }
 
@@ -881,12 +871,117 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
         0
     };
 
-    // Base relocations on .data + .idata
-    let mut all_writable = merged_data.clone();
-    if has_idata {
-        all_writable.extend_from_slice(&import.data);
+    // ── 5. Resolve relocations ───────────────────────────────────────────
+    // We need to apply relocations into the merged buffers.
+    // First, build a lookup: symbol name → (class, rva-relative offset)
+    let mut abs_rvas: Vec<u32> = Vec::new();
+
+    // Record .refptr. table slot RVAs for base relocations (ASLR)
+    for (name, slot_off) in &import.refptr_offsets {
+        if name.starts_with(".refptr.") {
+            abs_rvas.push(idata_rva + *slot_off as u32);
+        }
     }
-    let reloc_data = generate_base_relocs(&all_writable, data_rva);
+
+    for (idx, obj) in objs.iter().enumerate() {
+        let b = &bases[idx];
+        for rel in &obj.relocations {
+            let patch_class = section_class_for_offset(
+                rel.offset,
+                b.text_base,
+                merged_text.len(),
+                b.rdata_base,
+                merged_rdata.len(),
+                b.data_base,
+                merged_data.len(),
+            );
+            let (patch_buf, patch_rva) = match patch_class {
+                SectionClass::Text => (&mut merged_text, text_rva),
+                SectionClass::Rodata => (&mut merged_rdata, rdata_rva),
+                SectionClass::Data => (&mut merged_data, data_rva),
+            };
+            let patch = rel.offset;
+            let patch_rva_addr = patch_rva as i64 + patch as i64;
+
+            // Resolve target
+            let target = resolve_pe_target(
+                &rel,
+                &global_syms,
+                &import.iat_rvas,
+                &import.refptr_offsets,
+                &bases[idx],
+                text_rva,
+                rdata_rva,
+                data_rva,
+                idata_rva,
+            )?;
+
+            let rnum = coff_reloc_number(rel);
+
+            match rnum {
+                AMD64_ADDR64 => {
+                    if patch + 8 > patch_buf.len() {
+                        return Err(format!("'{}': ADDR64 patch OOB", obj.path.display()));
+                    }
+                    // ADDR64 stores a 64-bit absolute virtual address.
+                    let abs_addr = PE_IMAGE_BASE + target;
+                    patch_buf[patch..patch + 8].copy_from_slice(&abs_addr.to_le_bytes());
+                    abs_rvas.push(patch_rva_addr as u32);
+                }
+                AMD64_ADDR32 | AMD64_ADDR32NB => {
+                    if patch + 4 > patch_buf.len() {
+                        return Err(format!("'{}': ADDR32 patch OOB", obj.path.display()));
+                    }
+                    // ADDR32 stores a 32-bit truncated absolute virtual address.
+                    let abs32 = (PE_IMAGE_BASE + target) as u32;
+                    patch_buf[patch..patch + 4].copy_from_slice(&abs32.to_le_bytes());
+                }
+                AMD64_REL32 | AMD64_REL32_1 | AMD64_REL32_2 | AMD64_REL32_3 | AMD64_REL32_4
+                | AMD64_REL32_5 => {
+                    if patch + 4 > patch_buf.len() {
+                        return Err(format!("'{}': REL32 patch OOB", obj.path.display()));
+                    }
+                    let adjustment: i64 = match rnum {
+                        AMD64_REL32_1 => 1,
+                        AMD64_REL32_2 => 2,
+                        AMD64_REL32_3 => 3,
+                        AMD64_REL32_4 => 4,
+                        AMD64_REL32_5 => 5,
+                        _ => 0,
+                    };
+                    // REL32 displacement = target_RVA - (next_instruction_RVA)
+                    let disp = target as i64 + rel.addend - (patch_rva_addr + 4 + adjustment);
+                    if disp < i32::MIN as i64 || disp > i32::MAX as i64 {
+                        return Err(format!(
+                            "'{}': REL32 displacement overflow ({disp})",
+                            obj.path.display()
+                        ));
+                    }
+                    patch_buf[patch..patch + 4].copy_from_slice(&(disp as i32).to_le_bytes());
+                }
+                AMD64_SECTION => {
+                    // Section index reloc — not needed in executable, skip
+                }
+                AMD64_SECREL => {
+                    if patch + 4 > patch_buf.len() {
+                        return Err(format!("'{}': SECREL patch OOB", obj.path.display()));
+                    }
+                    // SECREL: stored as 32-bit unsigned value.
+                    let val32 = target as u32;
+                    patch_buf[patch..patch + 4].copy_from_slice(&val32.to_le_bytes());
+                }
+                _ => {
+                    return Err(format!(
+                        "'{}': unsupported COFF relocation type {rnum}",
+                        obj.path.display()
+                    ));
+                }
+            }
+        }
+    }
+
+    // Generate base relocations table for ASLR
+    let reloc_data = generate_base_relocs_from_rvas(&abs_rvas);
     let reloc_rva = if !reloc_data.is_empty() {
         pe_align(
             if has_idata {
@@ -1087,13 +1182,16 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
     );
     // SizeOfUninitializedData = 0 (bss is merged into .data)
     // EntryPoint
-    let main_abs = global_syms
-        .get("main")
-        .map(|(c, a)| match c {
-            SectionClass::Text => text_rva as u64 + a,
-            _ => text_rva as u64 + a,
-        })
-        .ok_or_else(|| "required symbol 'main' not found".to_string())?;
+    let main_entry = ["mainCRTStartup", "main", "_main", "WinMain", "lpp_main"]
+        .iter()
+        .find_map(|&name| global_syms.get(name))
+        .ok_or_else(|| "required entry symbol ('mainCRTStartup', 'main', '_main', 'WinMain', or 'lpp_main') not found".to_string())?;
+
+    let main_abs = match main_entry.0 {
+        SectionClass::Text => text_rva as u64 + main_entry.1,
+        SectionClass::Rodata => rdata_rva as u64 + main_entry.1,
+        SectionClass::Data => data_rva as u64 + main_entry.1,
+    };
     put_u32(&mut pe, opt + 16, main_abs as u32);
     // BaseOfCode
     put_u32(&mut pe, opt + 20, text_rva);
@@ -1292,12 +1390,12 @@ fn resolve_pe_target(
     rel: &Relocation,
     global_syms: &HashMap<String, (SectionClass, u64)>,
     iat_rvas: &HashMap<String, u32>,
-    _refptr_offsets: &HashMap<String, usize>,
+    refptr_offsets: &HashMap<String, usize>,
     bases: &SectionBase,
     text_rva: u32,
     rdata_rva: u32,
     data_rva: u32,
-    _idata_rva: u32,
+    idata_rva: u32,
 ) -> Result<u64, String> {
     // Self-references — return the RVA of the section base within this input
     if rel.target.starts_with("__self_text__") {
@@ -1335,6 +1433,11 @@ fn resolve_pe_target(
         return Ok(*rva as u64);
     }
 
+    // .refptr. entry — return RVA of .refptr. table slot inside idata
+    if let Some(&off) = refptr_offsets.get(&rel.target) {
+        return Ok(idata_rva as u64 + off as u64);
+    }
+
     // Global symbol — compute RVA from section base + internal offset
     if let Some((class, abs)) = global_syms.get(&rel.target) {
         let rva = match class {
@@ -1345,7 +1448,7 @@ fn resolve_pe_target(
         return Ok(rva);
     }
 
-    // .refptr. symbols — fallback to the underlying symbol's RVA
+    // .refptr. fallback if not present in refptr_offsets table
     if let Some(name) = rel.target.strip_prefix(".refptr.") {
         if let Some((class, abs)) = global_syms.get(name) {
             let rva = match class {
