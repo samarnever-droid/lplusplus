@@ -140,21 +140,27 @@ jobs:
           def main():
               print(7)
           "@ | Set-Content -Path "$work\direct.lpp" -Encoding ascii
-          $cmd = Join-Path $work "direct.cmd"
+          # Step 1: compile freestanding runtime
+          $buildRt = Join-Path $work "build_rt.cmd"
           @"
           @echo off
           call "%VSCMD_BAT%" >nul || exit /b 1
           cl.exe /nologo /O2 /GS- /Gs1000000 /DLPP_FREESTANDING /c runtime\windows_x86_64_min.c "/Fo:$work\lpp_runtime_min.obj" || exit /b 1
-          set LPP_AOT=1
-          target\release\lpp.exe "$work\direct.lpp" || exit /b 1
-          target\release\lpp-link.exe pe "$work\direct.obj" "$work\lpp_runtime_min.obj" -o "$work\direct.exe" || exit /b 1
-          "$work\direct.exe" > "$work\output.txt" || exit /b 1
-          exit /b 0
-          "@ | Set-Content -Path $cmd -Encoding ascii
-          cmd.exe /d /c $cmd
-          if ($LASTEXITCODE -ne 0) { throw "PE Kernel32 runtime build failed" }
-          $actual = (Get-Content "$work\output.txt" | ForEach-Object { $_.Trim() }) -join "`n"
-          if ($actual -ne "7") { throw "Unexpected direct PE output: $actual" }
+          "@ | Set-Content -Path $buildRt -Encoding ascii
+          cmd.exe /d /c $buildRt
+          if ($LASTEXITCODE -ne 0) { throw "Failed to compile freestanding runtime" }
+          # Step 2: compile L++ source to COFF object
+          $env:LPP_AOT = "1"
+          & target\release\lpp.exe "$work\direct.lpp"
+          if ($LASTEXITCODE -ne 0) { throw "L++ AOT compile failed" }
+          if (-not (Test-Path "$work\direct.obj")) { throw "direct.obj not created" }
+          # Step 3: link with lpp-link PE direct linker
+          & target\release\lpp-link.exe pe "$work\direct.obj" "$work\lpp_runtime_min.obj" -o "$work\direct.exe" 2>&1
+          if ($LASTEXITCODE -ne 0) { throw "lpp-link PE link failed (exit $LASTEXITCODE)" }
+          # Step 4: run and verify output
+          $actual = (& "$work\direct.exe" 2>&1 | ForEach-Object { $_.Trim() }) -join "`n"
+          if ($LASTEXITCODE -ne 0 -or $actual -ne "7") { throw "Unexpected direct PE output: '$actual' (exit $LASTEXITCODE)" }
+          Write-Host "PASS Direct PE: output=$actual"
       - name: King20 direct PE gate
         shell: pwsh
         run: .\tests\test_direct_pe_king20.ps1
