@@ -56,56 +56,80 @@ jobs:
       - name: Start API server and tunnel
         shell: pwsh
         run: |
-          # Use Python as a reliable cross-platform HTTP server
+          # Register URL ACL for HttpListener
+          netsh http add urlacl url=http://+:7681/ user=Everyone 2>&1 | Out-Null
+          # PowerShell API server script
           @'
-          import http.server, subprocess, urllib.parse, os, json
-          os.chdir(r"C:\lpp")
-          class H(http.server.BaseHTTPRequestHandler):
-              def do_POST(self):
-                  if self.path == "/exec":
-                      n = int(self.headers.get("Content-Length", 0))
-                      body = self.rfile.read(n).decode()
-                      params = urllib.parse.parse_qs(body)
-                      cmd = params.get("cmd", ["echo no cmd"])[0]
-                      try:
-                          r = subprocess.run(["powershell","-EP","Bypass","-C",cmd],
-                              capture_output=True, text=True, timeout=120, cwd=r"C:\lpp")
-                          out = r.stdout + r.stderr
-                      except Exception as e:
-                          out = f"ERROR: {e}"
-                      self.send_response(200)
-                      self.send_header("Content-Type","text/plain; charset=utf-8")
-                      self.end_headers()
-                      self.wfile.write(out.encode("utf-8","replace"))
-                  else:
-                      self.send_response(200)
-                      self.end_headers()
-                      self.wfile.write(b"ok")
-              def do_GET(self):
-                  self.send_response(200)
-                  self.end_headers()
-                  self.wfile.write(b"ok")
-              def log_message(self, *a): pass
-          s = http.server.HTTPServer(("127.0.0.1", 7681), H)
-          print("API on 7681")
-          s.serve_forever()
-          '@ | Set-Content C:\srv.py -Encoding UTF8
-          Start-Process python -ArgumentList "C:\srv.py" -WindowStyle Hidden
-          Start-Sleep 3
-          # Verify port is listening
-          $test = try { (Invoke-WebRequest -Uri http://localhost:7681/health -TimeoutSec 3 -UseBasicParsing).StatusCode } catch { "FAIL: $_" }
-          Write-Host "API test: $test"
+          Add-Type -AssemblyName System.Web
+          $l = New-Object System.Net.HttpListener
+          $l.Prefixes.Add("http://+:7681/")
+          $l.Start()
+          [Console]::Error.WriteLine("API listening on :7681")
+          while ($true) {
+            try {
+              $c = $l.GetContext()
+              $rq = $c.Request; $rs = $c.Response
+              if ($rq.HttpMethod -eq "POST" -and $rq.RawUrl -eq "/exec") {
+                $rd = New-Object System.IO.StreamReader($rq.InputStream,[System.Text.Encoding]::UTF8)
+                $bd = $rd.ReadToEnd(); $rd.Close()
+                $cmd = ([System.Web.HttpUtility]::ParseQueryString($bd))["cmd"]
+                try {
+                  $psi = New-Object System.Diagnostics.ProcessStartInfo
+                  $psi.FileName = "powershell.exe"
+                  $psi.Arguments = "-EP Bypass -C `"Set-Location C:\lpp; $cmd`""
+                  $psi.UseShellExecute = $false
+                  $psi.RedirectStandardOutput = $true
+                  $psi.RedirectStandardError = $true
+                  $psi.CreateNoWindow = $true
+                  $p = [System.Diagnostics.Process]::Start($psi)
+                  $o = $p.StandardOutput.ReadToEnd() + $p.StandardError.ReadToEnd()
+                  $p.WaitForExit(120000)
+                } catch { $o = "ERROR: $_" }
+                $b = [System.Text.Encoding]::UTF8.GetBytes($o)
+                $rs.ContentType = "text/plain; charset=utf-8"
+                $rs.StatusCode = 200
+                $rs.ContentLength64 = $b.Length
+                $rs.OutputStream.Write($b, 0, $b.Length)
+                $rs.Close()
+              } else {
+                $b = [System.Text.Encoding]::UTF8.GetBytes("ok")
+                $rs.StatusCode = 200
+                $rs.ContentLength64 = $b.Length
+                $rs.OutputStream.Write($b, 0, $b.Length)
+                $rs.Close()
+              }
+            } catch {
+              [Console]::Error.WriteLine("Listener error: $_")
+            }
+          }
+          '@ | Set-Content C:\srv.ps1 -Encoding UTF8
+          # Start server and capture any startup errors
+          $proc = Start-Process powershell -ArgumentList "-EP","Bypass","-File","C:\srv.ps1" `
+            -PassThru -RedirectStandardError C:\srv_err.txt -WindowStyle Hidden
+          Start-Sleep 5
+          Write-Host "Server PID: $($proc.Id) HasExited: $($proc.HasExited)"
+          if (Test-Path C:\srv_err.txt) { Get-Content C:\srv_err.txt | Select-Object -First 3 }
+          # Verify port
+          $test = try { (Invoke-WebRequest -Uri http://localhost:7681/ -TimeoutSec 5 -UseBasicParsing).Content } catch { "FAIL: $_" }
+          Write-Host "API self-test: $test"
           # Cloudflare tunnel
           Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile C:\cf.exe
-          Start-Process C:\cf.exe -ArgumentList "tunnel","--url","http://localhost:7681" -NoNewWindow -PassThru -RedirectStandardOutput C:\cf_out.txt -RedirectStandardError C:\cf_err.txt
+          Start-Process C:\cf.exe -ArgumentList "tunnel","--url","http://localhost:7681" `
+            -NoNewWindow -PassThru -RedirectStandardOutput C:\cf_out.txt -RedirectStandardError C:\cf_err.txt
           Start-Sleep 15
           $url = ""
-          for ($t = 0; $t -lt 15; $t++) {
+          for ($t = 0; $t -lt 20; $t++) {
             Start-Sleep 2
             $log = (Get-Content C:\cf_out.txt -Raw -EA SilentlyContinue) + (Get-Content C:\cf_err.txt -Raw -EA SilentlyContinue)
             if ($log -match "(https://[a-z0-9-]+\.trycloudflare\.com)") { $url = $Matches[1]; break }
           }
           Write-Host "TUNNEL_URL=$url"
+          # Quick tunnel verification
+          if ($url) {
+            Start-Sleep 3
+            $ext = try { (Invoke-WebRequest -Uri "$url/" -TimeoutSec 10 -UseBasicParsing).Content } catch { "ExtFail: $_" }
+            Write-Host "External test: $ext"
+          }
           $url | Out-File C:\tunnel_url.txt
           "TUNNEL_URL=$url" | Out-File -FilePath $env:GITHUB_ENV -Append
 
