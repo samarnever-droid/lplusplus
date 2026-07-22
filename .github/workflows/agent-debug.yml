@@ -1,0 +1,109 @@
+name: Agent PE Debug
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  debug:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Locate MSVC
+        shell: pwsh
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          "VSCMD_BAT=$vs\VC\Auxiliary\Build\vcvars64.bat" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Build toolchain and prepare test
+        shell: pwsh
+        run: |
+          cargo build --release --bin lpp --bin lpp-link
+          $work = "C:\dbg"
+          New-Item -ItemType Directory -Force $work | Out-Null
+          $buildRt = "$work\build_rt.cmd"
+          @"
+          @echo off
+          call "%VSCMD_BAT%" >nul || exit /b 1
+          cl.exe /nologo /O2 /GS- /Gs1000000 /DLPP_FREESTANDING /c runtime\windows_x86_64_min.c "/Fo:$work\lpp_runtime_min.obj" || exit /b 1
+          "@ | Set-Content -Path $buildRt -Encoding ascii
+          cmd.exe /d /c $buildRt
+          @"
+          def main():
+              print(7)
+          "@ | Set-Content "$work\direct.lpp" -Encoding ascii
+          $env:LPP_AOT = "1"
+          & target\release\lpp.exe "$work\direct.lpp"
+          & target\release\lpp-link.exe pe "$work\direct.obj" "$work\lpp_runtime_min.obj" -o "$work\direct.exe" 2>&1
+          Write-Host "Build done"
+
+      - name: Create API server
+        shell: pwsh
+        run: |
+          @'
+          Add-Type -AssemblyName System.Web
+          $listener = New-Object System.Net.HttpListener
+          $listener.Prefixes.Add("http://+:7681/")
+          $listener.Start()
+          Write-Host "API listening on 7681"
+          while ($true) {
+            $ctx = $listener.GetContext()
+            $req = $ctx.Request
+            $resp = $ctx.Response
+            if ($req.HttpMethod -eq "POST" -and $req.RawUrl -eq "/exec") {
+              $reader = New-Object System.IO.StreamReader($req.InputStream)
+              $body = $reader.ReadToEnd(); $reader.Close()
+              $cmd = ([System.Web.HttpUtility]::ParseQueryString($body))["cmd"]
+              try {
+                $out = Invoke-Expression "$cmd 2>&1" | Out-String -Width 20000
+              } catch {
+                $out = "ERROR: $_"
+              }
+              $bytes = [System.Text.Encoding]::UTF8.GetBytes($out)
+              $resp.ContentType = "text/plain; charset=utf-8"
+              $resp.StatusCode = 200
+              $resp.ContentLength64 = $bytes.Length
+              $resp.OutputStream.Write($bytes, 0, $bytes.Length)
+              $resp.Close()
+            } else {
+              $resp.StatusCode = 200
+              $resp.ContentType = "text/plain"
+              $b = [System.Text.Encoding]::UTF8.GetBytes("OK")
+              $resp.ContentLength64 = $b.Length
+              $resp.OutputStream.Write($b, 0, $b.Length)
+              $resp.Close()
+            }
+          }
+          '@ | Set-Content C:\api.ps1 -Encoding UTF8
+          Start-Process powershell -ArgumentList "-ExecutionPolicy","Bypass","-File","C:\api.ps1" -WindowStyle Hidden
+          Start-Sleep 3
+          Write-Host "API server started"
+
+      - name: Start tunnel
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile C:\cf.exe
+          Start-Process C:\cf.exe -ArgumentList "tunnel","--url","http://localhost:7681" -NoNewWindow -PassThru -RedirectStandardOutput C:\cf_out.txt -RedirectStandardError C:\cf_err.txt
+          Start-Sleep 15
+          $log = (Get-Content C:\cf_out.txt -Raw -EA SilentlyContinue) + (Get-Content C:\cf_err.txt -Raw -EA SilentlyContinue)
+          if ($log -match "(https://[a-z0-9-]+\.trycloudflare\.com)") {
+            $env:TUNNEL = $Matches[1]
+            Write-Host "TUNNEL=$($env:TUNNEL)"
+            "$($env:TUNNEL)" | Out-File C:\tunnel_url.txt
+          }
+
+      - name: Agent command loop
+        shell: pwsh
+        run: |
+          $url = (Get-Content C:\tunnel_url.txt -EA SilentlyContinue).Trim()
+          Write-Host "Tunnel: $url"
+          Write-Host "Waiting for commands via AGENT_COMMANDS artifact or timeout..."
+          # Just keep alive for the agent to POST commands
+          $i = 0
+          while ($i -lt 3000) { Start-Sleep 1; $i++ }

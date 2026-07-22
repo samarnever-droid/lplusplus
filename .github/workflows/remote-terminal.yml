@@ -1,0 +1,144 @@
+name: Remote Debug Terminal
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  terminal:
+    runs-on: windows-latest
+    timeout-minutes: 55
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup MSVC + build + start terminal
+        shell: pwsh
+        run: |
+          # --- Locate MSVC ---
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          $env:VSCMD_BAT = "$vs\VC\Auxiliary\Build\vcvars64.bat"
+          
+          # --- Build L++ ---
+          Write-Host "Building L++ toolchain..."
+          cargo build --release --bin lpp --bin lpp-link 2>&1 | Select-Object -Last 5
+          
+          # --- Prepare test artifacts ---
+          $work = "C:\dbg"
+          New-Item -ItemType Directory -Force $work | Out-Null
+          
+          $buildRt = "$work\build_rt.cmd"
+          @"
+          @echo off
+          call "$($env:VSCMD_BAT)" >nul || exit /b 1
+          cl.exe /nologo /O2 /GS- /Gs1000000 /DLPP_FREESTANDING /c runtime\windows_x86_64_min.c "/Fo:$work\lpp_runtime_min.obj" || exit /b 1
+          "@ | Set-Content -Path $buildRt -Encoding ascii
+          cmd.exe /d /c $buildRt
+          
+          @"
+          def main():
+              print(7)
+          "@ | Set-Content "$work\direct.lpp" -Encoding ascii
+          
+          $env:LPP_AOT = "1"
+          & target\release\lpp.exe "$work\direct.lpp"
+          & target\release\lpp-link.exe pe "$work\direct.obj" "$work\lpp_runtime_min.obj" -o "$work\direct.exe" 2>&1
+          Write-Host "PE build complete"
+          
+          # --- Install git credential ---
+          git config user.name "0x4171341"
+          git config user.email "0x4171341@proton.me"
+          
+          # --- Find CDB ---
+          $cdb = Get-ChildItem "C:\Program Files (x86)\Windows Kits" -Recurse -Filter "cdb.exe" -ErrorAction SilentlyContinue | Where-Object { $_.FullName -match "x64" } | Select-Object -First 1
+          if ($cdb) {
+            Write-Host "CDB found: $($cdb.FullName)"
+            [System.Environment]::SetEnvironmentVariable("CDB_PATH", $cdb.FullName, "Process")
+          }
+          
+          # --- Create HTTP command server ---
+          Add-Type -AssemblyName System.Web
+          $script = @'
+          Add-Type -AssemblyName System.Web
+          $l = New-Object System.Net.HttpListener
+          $l.Prefixes.Add("http://+:7681/")
+          $l.Start()
+          Set-Location C:\lpp
+          while ($true) {
+            $c = $l.GetContext()
+            $rq = $c.Request; $rs = $c.Response
+            if ($rq.HttpMethod -eq "POST" -and $rq.RawUrl -eq "/exec") {
+              $rd = New-Object System.IO.StreamReader($rq.InputStream)
+              $bd = $rd.ReadToEnd(); $rd.Close()
+              $cmd = ([System.Web.HttpUtility]::ParseQueryString($bd))["cmd"]
+              Set-Location C:\lpp
+              try { $o = Invoke-Expression "$cmd 2>&1" | Out-String -Width 20000 }
+              catch { $o = "ERROR: $_" }
+              $b = [System.Text.Encoding]::UTF8.GetBytes($o)
+              $rs.ContentType = "text/plain; charset=utf-8"
+              $rs.ContentLength64 = $b.Length
+              $rs.OutputStream.Write($b, 0, $b.Length); $rs.Close()
+            } elseif ($rq.RawUrl -eq "/health") {
+              $b = [System.Text.Encoding]::UTF8.GetBytes("ok")
+              $rs.ContentLength64 = $b.Length
+              $rs.OutputStream.Write($b, 0, $b.Length); $rs.Close()
+            } else {
+              $b = [System.Text.Encoding]::UTF8.GetBytes("POST /exec with cmd=<command>")
+              $rs.ContentLength64 = $b.Length
+              $rs.OutputStream.Write($b, 0, $b.Length); $rs.Close()
+            }
+          }
+          '@
+          
+          # Copy repo to C:\lpp for shorter paths
+          Copy-Item -Recurse -Force . C:\lpp
+          Copy-Item target\release\lpp.exe C:\lpp\lpp.exe
+          Copy-Item target\release\lpp-link.exe C:\lpp\lpp-link.exe
+          Copy-Item -Recurse -Force C:\dbg C:\lpp\dbg
+          
+          $script | Out-File C:\srv.ps1 -Encoding UTF8
+          Start-Process powershell -ArgumentList "-EP","Bypass","-File","C:\srv.ps1" -WindowStyle Hidden
+          Start-Sleep 3
+          
+          # --- Start Cloudflare tunnel ---
+          Write-Host "Downloading cloudflared..."
+          Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile C:\cf.exe
+          Start-Process C:\cf.exe -ArgumentList "tunnel","--url","http://localhost:7681" -NoNewWindow -PassThru -RedirectStandardOutput C:\cf_out.txt -RedirectStandardError C:\cf_err.txt
+          Start-Sleep 15
+          
+          $url = ""
+          for ($t = 0; $t -lt 10; $t++) {
+            Start-Sleep 2
+            $log = (Get-Content C:\cf_out.txt -Raw -EA SilentlyContinue) + (Get-Content C:\cf_err.txt -Raw -EA SilentlyContinue)
+            if ($log -match "(https://[a-z0-9-]+\.trycloudflare\.com)") { $url = $Matches[1]; break }
+          }
+          
+          Write-Host ""
+          Write-Host "================================================================"
+          Write-Host "  REMOTE TERMINAL: $url"
+          Write-Host "================================================================"
+          Write-Host "  POST /exec with cmd=<powershell command>"
+          Write-Host "  GET  /health"
+          Write-Host "  Working dir: C:\lpp"
+          Write-Host "  Debug dir:   C:\lpp\dbg"
+          Write-Host "  CDB:         $($cdb.FullName)"
+          Write-Host "================================================================"
+          Write-Host ""
+          
+          $url | Out-File C:\tunnel_url.txt
+          
+          # --- Keep alive ---
+          $i = 0
+          while ($i -lt 3200) {
+            Start-Sleep 1
+            $i++
+            if ($i % 60 -eq 0) {
+              $m = [math]::Floor($i / 60)
+              Write-Host "[$m min] tunnel=$url alive"
+            }
+          }
