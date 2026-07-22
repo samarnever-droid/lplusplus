@@ -88,18 +88,32 @@ jobs:
             Write-Host "Exit: $($p.ExitCode)"
           }
 
-          # Also dump raw hex of key sections
-          Write-Host "`n===== RAW HEX: .text first 256 bytes ====="
+          # Hex dump around lpp_print_int (offset 0x2360 in .text, file offset 0x400+0x2360=0x2760)
+          Write-Host "`n===== PE lpp_print_int (64 bytes at .text+0x2360) ====="
           $bytes = [System.IO.File]::ReadAllBytes("$w\test_lpp.exe")
-          $hex = ($bytes[0x400..0x4FF] | ForEach-Object { '{0:X2}' -f $_ }) -join ' '
+          $off = 0x400 + 0x2360
+          $hex = ($bytes[$off..($off+63)] | ForEach-Object { '{0:X2}' -f $_ }) -join ' '
           Write-Host $hex
-          Write-Host "`n===== RAW HEX: .data first 32 bytes ====="
-          # Find .data offset from headers
-          $hex2 = ($bytes[0x4400..0x441F] | ForEach-Object { '{0:X2}' -f $_ }) -join ' '
-          Write-Host $hex2
-          Write-Host "`n===== RAW HEX: .idata first 128 bytes ====="
-          $hex3 = ($bytes[0x4600..0x467F] | ForEach-Object { '{0:X2}' -f $_ }) -join ' '
-          Write-Host $hex3
+
+          # Now extract lpp_print_int directly from the COFF runtime object using dumpbin
+          Write-Host "`n===== rt.obj SECTIONS with sizes ====="
+          $rtDump = @"
+          @echo off
+          call "%VSCMD_BAT%" >nul || exit /b 1
+          dumpbin /sections "$w\rt.obj"
+          "@
+          $rtDump | Set-Content "$w\rt_sections.cmd" -Encoding ascii
+          cmd.exe /d /c "$w\rt_sections.cmd"
+
+          # Dump rt.obj raw section data for the section containing lpp_print_int
+          Write-Host "`n===== rt.obj SYMBOLS for lpp_print_int and lpp_write ====="
+          $symDump = @"
+          @echo off
+          call "%VSCMD_BAT%" >nul || exit /b 1
+          dumpbin /symbols "$w\rt.obj" | findstr /i "lpp_print_int lpp_write lpp_print_float lpp_print_str"
+          "@
+          $symDump | Set-Content "$w\sym_dump.cmd" -Encoding ascii
+          cmd.exe /d /c "$w\sym_dump.cmd"
 
       - name: Upload artifacts
         if: always()
