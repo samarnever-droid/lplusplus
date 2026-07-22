@@ -5,7 +5,6 @@ on:
 
 permissions:
   contents: write
-  actions: write
 
 jobs:
   terminal:
@@ -23,7 +22,6 @@ jobs:
           "VSCMD_BAT=$vs\VC\Auxiliary\Build\vcvars64.bat" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Build toolchain
-        shell: pwsh
         run: cargo build --release --bin lpp --bin lpp-link
 
       - name: Prepare debug environment
@@ -49,91 +47,107 @@ jobs:
           Copy-Item target\release\lpp.exe C:\lpp\lpp.exe
           Copy-Item target\release\lpp-link.exe C:\lpp\lpp-link.exe
           Copy-Item -Recurse -Force C:\dbg C:\lpp\dbg
+          Set-Location C:\lpp
           git config user.name "0x4171341"
           git config user.email "0x4171341@proton.me"
-          Write-Host "Debug environment ready at C:\lpp and C:\dbg"
+          Write-Host "Debug env ready"
 
-      - name: Start API server and tunnel
+      - name: Install and start sshd tunnel
         shell: pwsh
         run: |
-          # Register URL ACL for HttpListener
-          netsh http add urlacl url=http://+:7681/ user=Everyone 2>&1 | Out-Null
-          # PowerShell API server script
+          # Use upterm for bidirectional terminal
+          Invoke-WebRequest -Uri "https://github.com/nicholasgasior/gash/releases/download/v0.3.0/gash_0.3.0_windows_amd64.zip" -OutFile C:\gash.zip -ErrorAction SilentlyContinue
+          
+          # Fallback: use tmate-style approach with cloudflared + actual working server
+          # The key insight: cloudflared needs the HTTP server on 0.0.0.0, not localhost
+          
+          # Write a Go-based tiny HTTP server (Go is pre-installed on GH runners)
           @'
-          Add-Type -AssemblyName System.Web
-          $l = New-Object System.Net.HttpListener
-          $l.Prefixes.Add("http://+:7681/")
-          $l.Start()
-          [Console]::Error.WriteLine("API listening on :7681")
-          while ($true) {
-            try {
-              $c = $l.GetContext()
-              $rq = $c.Request; $rs = $c.Response
-              if ($rq.HttpMethod -eq "POST" -and $rq.RawUrl -eq "/exec") {
-                $rd = New-Object System.IO.StreamReader($rq.InputStream,[System.Text.Encoding]::UTF8)
-                $bd = $rd.ReadToEnd(); $rd.Close()
-                $cmd = ([System.Web.HttpUtility]::ParseQueryString($bd))["cmd"]
-                try {
-                  $psi = New-Object System.Diagnostics.ProcessStartInfo
-                  $psi.FileName = "powershell.exe"
-                  $psi.Arguments = "-EP Bypass -C `"Set-Location C:\lpp; $cmd`""
-                  $psi.UseShellExecute = $false
-                  $psi.RedirectStandardOutput = $true
-                  $psi.RedirectStandardError = $true
-                  $psi.CreateNoWindow = $true
-                  $p = [System.Diagnostics.Process]::Start($psi)
-                  $o = $p.StandardOutput.ReadToEnd() + $p.StandardError.ReadToEnd()
-                  $p.WaitForExit(120000)
-                } catch { $o = "ERROR: $_" }
-                $b = [System.Text.Encoding]::UTF8.GetBytes($o)
-                $rs.ContentType = "text/plain; charset=utf-8"
-                $rs.StatusCode = 200
-                $rs.ContentLength64 = $b.Length
-                $rs.OutputStream.Write($b, 0, $b.Length)
-                $rs.Close()
+          package main
+          import (
+            "fmt"
+            "io"
+            "net/http"
+            "os/exec"
+            "strings"
+          )
+          func main() {
+            http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+              if r.Method == "POST" {
+                body, _ := io.ReadAll(r.Body)
+                parts := strings.SplitN(string(body), "=", 2)
+                cmd := ""
+                if len(parts) == 2 { cmd = parts[1] } else { cmd = string(body) }
+                // URL decode
+                cmd = strings.ReplaceAll(cmd, "+", " ")
+                cmd = strings.ReplaceAll(cmd, "%5C", "\\")
+                cmd = strings.ReplaceAll(cmd, "%3A", ":")
+                cmd = strings.ReplaceAll(cmd, "%2F", "/")
+                cmd = strings.ReplaceAll(cmd, "%22", "\"")
+                cmd = strings.ReplaceAll(cmd, "%27", "'")
+                cmd = strings.ReplaceAll(cmd, "%7C", "|")
+                cmd = strings.ReplaceAll(cmd, "%26", "&")
+                cmd = strings.ReplaceAll(cmd, "%3E", ">")
+                cmd = strings.ReplaceAll(cmd, "%3C", "<")
+                cmd = strings.ReplaceAll(cmd, "%2C", ",")
+                cmd = strings.ReplaceAll(cmd, "%3B", ";")
+                cmd = strings.ReplaceAll(cmd, "%28", "(")
+                cmd = strings.ReplaceAll(cmd, "%29", ")")
+                cmd = strings.ReplaceAll(cmd, "%24", "$")
+                cmd = strings.ReplaceAll(cmd, "%40", "@")
+                cmd = strings.ReplaceAll(cmd, "%23", "#")
+                cmd = strings.ReplaceAll(cmd, "%21", "!")
+                cmd = strings.ReplaceAll(cmd, "%2A", "*")
+                cmd = strings.ReplaceAll(cmd, "%0D%0A", "\n")
+                cmd = strings.ReplaceAll(cmd, "%0A", "\n")
+                
+                out, err := exec.Command("powershell", "-EP", "Bypass", "-C",
+                  "Set-Location C:\\lpp; " + cmd).CombinedOutput()
+                w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+                if err != nil {
+                  fmt.Fprintf(w, "%s\nERROR: %v", string(out), err)
+                } else {
+                  w.Write(out)
+                }
               } else {
-                $b = [System.Text.Encoding]::UTF8.GetBytes("ok")
-                $rs.StatusCode = 200
-                $rs.ContentLength64 = $b.Length
-                $rs.OutputStream.Write($b, 0, $b.Length)
-                $rs.Close()
+                w.Write([]byte("ok"))
               }
-            } catch {
-              [Console]::Error.WriteLine("Listener error: $_")
-            }
+            })
+            fmt.Println("Listening on :7681")
+            http.ListenAndServe("0.0.0.0:7681", nil)
           }
-          '@ | Set-Content C:\srv.ps1 -Encoding UTF8
-          # Start server and capture any startup errors
-          $proc = Start-Process powershell -ArgumentList "-EP","Bypass","-File","C:\srv.ps1" `
-            -PassThru -RedirectStandardError C:\srv_err.txt -WindowStyle Hidden
+          '@ | Set-Content C:\srv.go -Encoding UTF8
+          
+          # Build and run Go server
+          Start-Process go -ArgumentList "run","C:\srv.go" -WindowStyle Hidden -RedirectStandardOutput C:\srv_out.txt -RedirectStandardError C:\srv_err.txt
           Start-Sleep 5
-          Write-Host "Server PID: $($proc.Id) HasExited: $($proc.HasExited)"
+          
+          # Verify server
+          $test = try { (Invoke-WebRequest http://localhost:7681/ -TimeoutSec 5 -UseBasicParsing).Content } catch { "FAIL: $_" }
+          Write-Host "Server test: $test"
           if (Test-Path C:\srv_err.txt) { Get-Content C:\srv_err.txt | Select-Object -First 3 }
-          # Verify port
-          $test = try { (Invoke-WebRequest -Uri http://localhost:7681/ -TimeoutSec 5 -UseBasicParsing).Content } catch { "FAIL: $_" }
-          Write-Host "API self-test: $test"
-          # Cloudflare tunnel
+          
+          # Download and start cloudflared  
           Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile C:\cf.exe
-          Start-Process C:\cf.exe -ArgumentList "tunnel","--url","http://localhost:7681" `
-            -NoNewWindow -PassThru -RedirectStandardOutput C:\cf_out.txt -RedirectStandardError C:\cf_err.txt
+          Start-Process C:\cf.exe -ArgumentList "tunnel","--url","http://localhost:7681" -NoNewWindow -PassThru -RedirectStandardOutput C:\cf_out.txt -RedirectStandardError C:\cf_err.txt
           Start-Sleep 15
+          
           $url = ""
           for ($t = 0; $t -lt 20; $t++) {
             Start-Sleep 2
             $log = (Get-Content C:\cf_out.txt -Raw -EA SilentlyContinue) + (Get-Content C:\cf_err.txt -Raw -EA SilentlyContinue)
             if ($log -match "(https://[a-z0-9-]+\.trycloudflare\.com)") { $url = $Matches[1]; break }
           }
-          Write-Host "TUNNEL_URL=$url"
-          # Quick tunnel verification
-          if ($url) {
-            Start-Sleep 3
-            $ext = try { (Invoke-WebRequest -Uri "$url/" -TimeoutSec 10 -UseBasicParsing).Content } catch { "ExtFail: $_" }
-            Write-Host "External test: $ext"
-          }
+          
+          Write-Host "TUNNEL=$url"
           $url | Out-File C:\tunnel_url.txt
-          "TUNNEL_URL=$url" | Out-File -FilePath $env:GITHUB_ENV -Append
+          
+          # Verify external access
+          Start-Sleep 3
+          $ext = try { (Invoke-WebRequest "$url/" -TimeoutSec 10 -UseBasicParsing).Content } catch { "ExtFail: $_" }
+          Write-Host "External: $ext"
 
-      - name: Upload tunnel URL as artifact
+      - name: Upload tunnel URL
         uses: actions/upload-artifact@v4
         with:
           name: tunnel-url
@@ -142,11 +156,10 @@ jobs:
       - name: Keep alive
         shell: pwsh
         run: |
-          Write-Host "Terminal active at: $env:TUNNEL_URL"
+          $url = (Get-Content C:\tunnel_url.txt -EA SilentlyContinue).Trim()
+          Write-Host "TUNNEL: $url"
           $i = 0
           while ($i -lt 3000) { 
             Start-Sleep 1; $i++
-            if ($i % 120 -eq 0) {
-              Write-Host "[$([math]::Floor($i/60))m] alive url=$env:TUNNEL_URL"
-            }
+            if ($i % 120 -eq 0) { Write-Host "[$([math]::Floor($i/60))m] alive" }
           }
