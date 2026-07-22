@@ -154,9 +154,22 @@ jobs:
           & target\release\lpp.exe "$work\direct.lpp"
           if ($LASTEXITCODE -ne 0) { throw "L++ AOT compile failed" }
           if (-not (Test-Path "$work\direct.obj")) { throw "direct.obj not created" }
+          # Step 2b: inspect COFF objects
+          & target\release\lpp-link.exe inspect "$work\direct.obj" 2>&1 | Write-Host
+          & target\release\lpp-link.exe inspect "$work\lpp_runtime_min.obj" 2>&1 | Write-Host
           # Step 3: link with lpp-link PE direct linker
           & target\release\lpp-link.exe pe "$work\direct.obj" "$work\lpp_runtime_min.obj" -o "$work\direct.exe" 2>&1
           if ($LASTEXITCODE -ne 0) { throw "lpp-link PE link failed (exit $LASTEXITCODE)" }
+          # Step 3b: dump PE headers with dumpbin
+          $dumpCmd = Join-Path $work "dump.cmd"
+          @"
+          @echo off
+          call "%VSCMD_BAT%" >nul || exit /b 1
+          dumpbin /headers "$work\direct.exe"
+          dumpbin /imports "$work\direct.exe"
+          dumpbin /relocations "$work\direct.exe"
+          "@ | Set-Content -Path $dumpCmd -Encoding ascii
+          cmd.exe /d /c $dumpCmd
           # Step 4: run and verify output
           $actual = (& "$work\direct.exe" 2>&1 | ForEach-Object { $_.Trim() }) -join "`n"
           if ($LASTEXITCODE -ne 0 -or $actual -ne "7") { throw "Unexpected direct PE output: '$actual' (exit $LASTEXITCODE)" }
