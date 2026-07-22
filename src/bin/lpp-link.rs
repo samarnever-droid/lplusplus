@@ -1123,24 +1123,6 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
     };
 
     // ── 5. Resolve relocations ───────────────────────────────────────────
-    let verbose = env::var("LPP_LINK_VERBOSE").is_ok();
-    if verbose {
-        eprintln!("[lpp-link] text_rva=0x{:X} rdata_rva=0x{:X} data_rva=0x{:X} idata_rva=0x{:X}",
-            text_rva, rdata_rva, data_rva, idata_rva);
-        eprintln!("[lpp-link] text_len={} rdata_len={} data_len={} idata_len={}",
-            merged_text.len(), merged_rdata.len(), merged_data.len(), import.data.len());
-        for (name, rva) in &import.iat_rvas {
-            eprintln!("[lpp-link] IAT: {} -> 0x{:X}", name, rva);
-        }
-        for (name, rva) in &refptr_rvas {
-            eprintln!("[lpp-link] refptr: {} -> 0x{:X}", name, rva);
-        }
-        for (name, (cls, off)) in &global_syms {
-            if name.contains("main") || name.contains("print") || name.contains("refptr") || name.contains("write") || name.contains("Write") {
-                eprintln!("[lpp-link] global: {} -> {:?} off={}", name, cls, off);
-            }
-        }
-    }
     let mut abs_rvas: Vec<u32> = Vec::new();
 
     // Record .refptr. data slot RVAs for base relocations (ASLR)
@@ -1178,11 +1160,6 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
             )?;
 
             let rnum = coff_reloc_number(rel);
-
-            if verbose && idx == 0 {
-                eprintln!("[lpp-link] obj[0] rel: target='{}' section={:?} offset={} rnum={} -> target_rva=0x{:X}",
-                    rel.target, rel.section_class, rel.offset, rnum, target);
-            }
 
             match rnum {
                 AMD64_ADDR64 => {
@@ -1507,30 +1484,6 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
 
 /// Find which section class an offset (relative to the merged buffer start)
 /// belongs to.
-fn section_class_for_offset(
-    offset: usize,
-    text_base: usize,
-    text_len: usize,
-    rdata_base: usize,
-    rdata_len: usize,
-    data_base: usize,
-    data_len: usize,
-    tls_base: usize,
-    tls_len: usize,
-) -> SectionClass {
-    if offset >= text_base && offset < text_base + text_len {
-        SectionClass::Text
-    } else if offset >= rdata_base && offset < rdata_base + rdata_len {
-        SectionClass::Rodata
-    } else if offset >= data_base && offset < data_base + data_len {
-        SectionClass::Data
-    } else if offset >= tls_base && offset < tls_base + tls_len {
-        SectionClass::Tls
-    } else {
-        SectionClass::Text // fallback
-    }
-}
-
 /// Resolve a PE relocation target to its RVA (NOT absolute address).  The
 /// caller adds PE_IMAGE_BASE for absolute relocation types (ADDR64, ADDR32)
 /// and uses the bare RVA for PC-relative computations (REL32).
@@ -1544,7 +1497,7 @@ fn resolve_pe_target(
     rdata_rva: u32,
     data_rva: u32,
     tls_rva: u32,
-    idata_rva: u32,
+    _idata_rva: u32,
 ) -> Result<u64, String> {
     // Self-references — return the RVA of the section base within this input
     if rel.target.starts_with("__self_text__") {
