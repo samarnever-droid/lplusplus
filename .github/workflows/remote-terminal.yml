@@ -52,76 +52,47 @@ jobs:
           git config user.email "0x4171341@proton.me"
           Write-Host "Debug env ready"
 
-      - name: Install and start sshd tunnel
+      - name: Start terminal server and tunnel
         shell: pwsh
         run: |
-          # Write a Go-based tiny HTTP server (Go is pre-installed on GH runners)
-          @'
-          package main
-          import (
-            "fmt"
-            "io"
-            "net/http"
-            "os/exec"
-            "strings"
-          )
-          func main() {
-            http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-              if r.Method == "POST" {
-                body, _ := io.ReadAll(r.Body)
-                parts := strings.SplitN(string(body), "=", 2)
-                cmd := ""
-                if len(parts) == 2 { cmd = parts[1] } else { cmd = string(body) }
-                // URL decode
-                cmd = strings.ReplaceAll(cmd, "+", " ")
-                cmd = strings.ReplaceAll(cmd, "%5C", "\\")
-                cmd = strings.ReplaceAll(cmd, "%3A", ":")
-                cmd = strings.ReplaceAll(cmd, "%2F", "/")
-                cmd = strings.ReplaceAll(cmd, "%22", "\"")
-                cmd = strings.ReplaceAll(cmd, "%27", "'")
-                cmd = strings.ReplaceAll(cmd, "%7C", "|")
-                cmd = strings.ReplaceAll(cmd, "%26", "&")
-                cmd = strings.ReplaceAll(cmd, "%3E", ">")
-                cmd = strings.ReplaceAll(cmd, "%3C", "<")
-                cmd = strings.ReplaceAll(cmd, "%2C", ",")
-                cmd = strings.ReplaceAll(cmd, "%3B", ";")
-                cmd = strings.ReplaceAll(cmd, "%28", "(")
-                cmd = strings.ReplaceAll(cmd, "%29", ")")
-                cmd = strings.ReplaceAll(cmd, "%24", "$")
-                cmd = strings.ReplaceAll(cmd, "%40", "@")
-                cmd = strings.ReplaceAll(cmd, "%23", "#")
-                cmd = strings.ReplaceAll(cmd, "%21", "!")
-                cmd = strings.ReplaceAll(cmd, "%2A", "*")
-                cmd = strings.ReplaceAll(cmd, "%0D%0A", "\n")
-                cmd = strings.ReplaceAll(cmd, "%0A", "\n")
-                
-                out, err := exec.Command("powershell", "-EP", "Bypass", "-C",
-                  "Set-Location C:\\lpp; " + cmd).CombinedOutput()
-                w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-                if err != nil {
-                  fmt.Fprintf(w, "%s\nERROR: %v", string(out), err)
-                } else {
-                  w.Write(out)
+          # Node.js HTTP server (pre-installed on GH runners, most reliable)
+          @"
+          const http = require('http');
+          const { execSync } = require('child_process');
+          const server = http.createServer((req, res) => {
+            if (req.method === 'POST') {
+              let body = '';
+              req.on('data', c => body += c);
+              req.on('end', () => {
+                let cmd = body;
+                if (body.startsWith('cmd=')) cmd = decodeURIComponent(body.slice(4).replace(/\+/g,' '));
+                try {
+                  const out = execSync('powershell -EP Bypass -C "Set-Location C:\\lpp; ' + cmd.replace(/"/g,'`"') + '"',
+                    {timeout: 120000, maxBuffer: 10*1024*1024}).toString();
+                  res.writeHead(200, {'Content-Type':'text/plain; charset=utf-8'});
+                  res.end(out);
+                } catch(e) {
+                  res.writeHead(200, {'Content-Type':'text/plain; charset=utf-8'});
+                  res.end((e.stdout||'')+(e.stderr||'')+'\nEXIT: '+(e.status||'error'));
                 }
-              } else {
-                w.Write([]byte("ok"))
-              }
-            })
-            fmt.Println("Listening on :7681")
-            http.ListenAndServe("0.0.0.0:7681", nil)
-          }
-          '@ | Set-Content C:\srv.go -Encoding UTF8
+              });
+            } else {
+              res.writeHead(200, {'Content-Type':'text/plain'});
+              res.end('ok');
+            }
+          });
+          server.listen(7681, '0.0.0.0', () => console.log('Listening on :7681'));
+          "@ | Set-Content C:\srv.js -Encoding UTF8
           
-          # Build and run Go server
-          Start-Process go -ArgumentList "run","C:\srv.go" -WindowStyle Hidden -RedirectStandardOutput C:\srv_out.txt -RedirectStandardError C:\srv_err.txt
-          Start-Sleep 5
+          Start-Process node -ArgumentList "C:\srv.js" -WindowStyle Hidden -RedirectStandardOutput C:\srv_out.txt -RedirectStandardError C:\srv_err.txt
+          Start-Sleep 3
           
-          # Verify server
+          # Verify
           $test = try { (Invoke-WebRequest http://localhost:7681/ -TimeoutSec 5 -UseBasicParsing).Content } catch { "FAIL: $_" }
           Write-Host "Server test: $test"
-          if (Test-Path C:\srv_err.txt) { Get-Content C:\srv_err.txt | Select-Object -First 3 }
+          if (Test-Path C:\srv_err.txt) { Get-Content C:\srv_err.txt }
           
-          # Download and start cloudflared  
+          # Cloudflare tunnel
           Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile C:\cf.exe
           Start-Process C:\cf.exe -ArgumentList "tunnel","--url","http://localhost:7681" -NoNewWindow -PassThru -RedirectStandardOutput C:\cf_out.txt -RedirectStandardError C:\cf_err.txt
           Start-Sleep 15
@@ -136,10 +107,12 @@ jobs:
           Write-Host "TUNNEL=$url"
           $url | Out-File C:\tunnel_url.txt
           
-          # Verify external access
-          Start-Sleep 3
-          $ext = try { (Invoke-WebRequest "$url/" -TimeoutSec 10 -UseBasicParsing).Content } catch { "ExtFail: $_" }
-          Write-Host "External: $ext"
+          # Verify external
+          if ($url) {
+            Start-Sleep 3
+            $ext = try { (Invoke-WebRequest "$url/" -TimeoutSec 10 -UseBasicParsing).Content } catch { "ExtFail: $_" }
+            Write-Host "External: $ext"
+          }
 
       - name: Upload tunnel URL
         uses: actions/upload-artifact@v4
