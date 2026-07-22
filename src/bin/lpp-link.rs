@@ -550,7 +550,7 @@ fn parse_coff_object(
             SectionClass::Data => &mut data_buf,
             SectionClass::Tls => &mut tls_buf,
         };
-        let sec_align = usize::try_from(sec.align()).unwrap_or(16).max(1);
+        let sec_align = usize::try_from(sec.align()).unwrap_or(16).max(16);
         let base = align_up(buf.len(), sec_align);
         buf.resize(base, if class == SectionClass::Text { 0xCC } else { 0x00 });
 
@@ -1180,12 +1180,20 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
                     patch_buf[patch..patch + 8].copy_from_slice(&abs_addr.to_le_bytes());
                     abs_rvas.push(patch_rva_addr as u32);
                 }
-                AMD64_ADDR32 | AMD64_ADDR32NB => {
+                AMD64_ADDR32 => {
                     if patch + 4 > patch_buf.len() {
                         return Err(format!("'{}': ADDR32 patch OOB", obj.path.display()));
                     }
                     let abs32 = (PE_IMAGE_BASE + target) as u32;
                     patch_buf[patch..patch + 4].copy_from_slice(&abs32.to_le_bytes());
+                }
+                AMD64_ADDR32NB => {
+                    // ADDR32NB = address NOT based (image-relative RVA, no PE_IMAGE_BASE)
+                    if patch + 4 > patch_buf.len() {
+                        return Err(format!("'{}': ADDR32NB patch OOB", obj.path.display()));
+                    }
+                    let rva32 = target as u32;
+                    patch_buf[patch..patch + 4].copy_from_slice(&rva32.to_le_bytes());
                 }
                 AMD64_REL32 | AMD64_REL32_1 | AMD64_REL32_2 | AMD64_REL32_3 | AMD64_REL32_4
                 | AMD64_REL32_5 => {
