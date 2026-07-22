@@ -56,37 +56,45 @@ jobs:
       - name: Start API server and tunnel
         shell: pwsh
         run: |
-          # API server
+          # Use Python as a reliable cross-platform HTTP server
           @'
-          Add-Type -AssemblyName System.Web
-          $l = New-Object System.Net.HttpListener
-          $l.Prefixes.Add("http://+:7681/")
-          $l.Start()
-          Set-Location C:\lpp
-          while ($true) {
-            $c = $l.GetContext()
-            $rq = $c.Request; $rs = $c.Response
-            if ($rq.HttpMethod -eq "POST" -and $rq.RawUrl -eq "/exec") {
-              $rd = New-Object System.IO.StreamReader($rq.InputStream)
-              $bd = $rd.ReadToEnd(); $rd.Close()
-              $cmd = ([System.Web.HttpUtility]::ParseQueryString($bd))["cmd"]
-              Set-Location C:\lpp
-              try { $o = Invoke-Expression "$cmd 2>&1" | Out-String -Width 20000 }
-              catch { $o = "ERROR: $_" }
-              $b = [System.Text.Encoding]::UTF8.GetBytes($o)
-              $rs.ContentType = "text/plain; charset=utf-8"
-              $rs.ContentLength64 = $b.Length
-              $rs.OutputStream.Write($b, 0, $b.Length); $rs.Close()
-            } else {
-              $b = [System.Text.Encoding]::UTF8.GetBytes("ok")
-              $rs.ContentType = "text/plain"
-              $rs.ContentLength64 = $b.Length
-              $rs.OutputStream.Write($b, 0, $b.Length); $rs.Close()
-            }
-          }
-          '@ | Set-Content C:\srv.ps1 -Encoding UTF8
-          Start-Process powershell -ArgumentList "-EP","Bypass","-File","C:\srv.ps1" -WindowStyle Hidden
+          import http.server, subprocess, urllib.parse, os, json
+          os.chdir(r"C:\lpp")
+          class H(http.server.BaseHTTPRequestHandler):
+              def do_POST(self):
+                  if self.path == "/exec":
+                      n = int(self.headers.get("Content-Length", 0))
+                      body = self.rfile.read(n).decode()
+                      params = urllib.parse.parse_qs(body)
+                      cmd = params.get("cmd", ["echo no cmd"])[0]
+                      try:
+                          r = subprocess.run(["powershell","-EP","Bypass","-C",cmd],
+                              capture_output=True, text=True, timeout=120, cwd=r"C:\lpp")
+                          out = r.stdout + r.stderr
+                      except Exception as e:
+                          out = f"ERROR: {e}"
+                      self.send_response(200)
+                      self.send_header("Content-Type","text/plain; charset=utf-8")
+                      self.end_headers()
+                      self.wfile.write(out.encode("utf-8","replace"))
+                  else:
+                      self.send_response(200)
+                      self.end_headers()
+                      self.wfile.write(b"ok")
+              def do_GET(self):
+                  self.send_response(200)
+                  self.end_headers()
+                  self.wfile.write(b"ok")
+              def log_message(self, *a): pass
+          s = http.server.HTTPServer(("127.0.0.1", 7681), H)
+          print("API on 7681")
+          s.serve_forever()
+          '@ | Set-Content C:\srv.py -Encoding UTF8
+          Start-Process python -ArgumentList "C:\srv.py" -WindowStyle Hidden
           Start-Sleep 3
+          # Verify port is listening
+          $test = try { (Invoke-WebRequest -Uri http://localhost:7681/health -TimeoutSec 3 -UseBasicParsing).StatusCode } catch { "FAIL: $_" }
+          Write-Host "API test: $test"
           # Cloudflare tunnel
           Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile C:\cf.exe
           Start-Process C:\cf.exe -ArgumentList "tunnel","--url","http://localhost:7681" -NoNewWindow -PassThru -RedirectStandardOutput C:\cf_out.txt -RedirectStandardError C:\cf_err.txt
