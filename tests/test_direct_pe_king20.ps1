@@ -50,7 +50,7 @@ foreach ($case in $cases) {
     & $Lpp $copied | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "AOT compile failed for $($case[0])" }
     $exe = Join-Path $Work ("{0:D2}.exe" -f $index)
-    & $Linker pe ($copied.Replace(".lpp", ".o")) "$Work\lpp_runtime_min.obj" -o $exe
+    & $Linker pe ($copied.Replace(".lpp", ".obj")) "$Work\lpp_runtime_min.obj" -o $exe
     if ($LASTEXITCODE -ne 0) { throw "Direct PE link failed for $($case[0])" }
     $actual = (& $exe | ForEach-Object { $_.Trim() }) -join "`n"
     if ($LASTEXITCODE -ne 0 -or $actual -ne $case[1]) {

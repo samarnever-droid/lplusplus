@@ -166,7 +166,8 @@ fn bootstrap_self_hosted_pm() -> Result<PathBuf, String> {
         return Err("self-hosted PM compilation failed".to_string());
     }
 
-    let pm_obj = pm_main.with_extension("o");
+    let obj_ext = if cfg!(target_os = "windows") { "obj" } else { "o" };
+    let pm_obj = pm_main.with_extension(obj_ext);
     if !pm_obj.exists() {
         return Err(format!("{} not generated", pm_obj.display()));
     }
@@ -661,8 +662,20 @@ fn main() {
             }
 
             if emit_object {
-                if env::var("BENCHMARK").is_err()
-                    && !dump_ast
+                if env::var("BENCHMARK").is_ok() {
+                    println!(
+                        "TIMING_JSON: {{\"io\": {}, \"lex\": {}, \"parse\": {}, \"semantic\": {}, \"typecheck\": {}, \"escape\": {}, \"mir\": {}, \"aot\": {}, \"total\": {}}}",
+                        io_time.as_secs_f64(),
+                        lex_time.as_secs_f64(),
+                        parse_time.as_secs_f64(),
+                        sem_time.as_secs_f64(),
+                        ty_time.as_secs_f64(),
+                        esc_time.as_secs_f64(),
+                        mir_time.as_secs_f64(),
+                        aot_time.as_secs_f64(),
+                        total_time.as_secs_f64()
+                    );
+                } else if !dump_ast
                     && !dump_symbols
                     && !dump_types
                     && !dump_escape

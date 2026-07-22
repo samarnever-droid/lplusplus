@@ -118,8 +118,8 @@ jobs:
           cl.exe /nologo /O2 /c lpp_runtime.c "/Fo:$work\lpp_runtime.obj" || exit /b 1
           set LPP_AOT=1
           target\release\lpp.exe "$work\arith.lpp" || exit /b 1
-          target\release\lpp-link.exe inspect "$work\arith.o" > "$work\inspect.txt" || exit /b 1
-          cl.exe /nologo "$work\arith.o" "$work\lpp_runtime.obj" "/Fe:$work\arith.exe" || exit /b 1
+          target\release\lpp-link.exe inspect "$work\arith.obj" > "$work\inspect.txt" || exit /b 1
+          cl.exe /nologo "$work\arith.obj" "$work\lpp_runtime.obj" "/Fe:$work\arith.exe" || exit /b 1
           "$work\arith.exe" > "$work\output.txt" || exit /b 1
           exit /b 0
           "@ | Set-Content -Path $cmd -Encoding ascii
@@ -147,7 +147,7 @@ jobs:
           cl.exe /nologo /O2 /GS- /Gs1000000 /DLPP_FREESTANDING /c runtime\windows_x86_64_min.c "/Fo:$work\lpp_runtime_min.obj" || exit /b 1
           set LPP_AOT=1
           target\release\lpp.exe "$work\direct.lpp" || exit /b 1
-          target\release\lpp-link.exe pe "$work\direct.o" "$work\lpp_runtime_min.obj" -o "$work\direct.exe" || exit /b 1
+          target\release\lpp-link.exe pe "$work\direct.obj" "$work\lpp_runtime_min.obj" -o "$work\direct.exe" || exit /b 1
           "$work\direct.exe" > "$work\output.txt" || exit /b 1
           exit /b 0
           "@ | Set-Content -Path $cmd -Encoding ascii
