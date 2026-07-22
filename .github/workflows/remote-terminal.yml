@@ -92,10 +92,10 @@ jobs:
           Write-Host "Server test: $test"
           if (Test-Path C:\srv_err.txt) { Get-Content C:\srv_err.txt }
           
-          # Cloudflare tunnel
+          # Try cloudflared with --protocol h2mux to avoid HTTP/2 issues
           Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile C:\cf.exe
-          Start-Process C:\cf.exe -ArgumentList "tunnel","--url","http://localhost:7681" -NoNewWindow -PassThru -RedirectStandardOutput C:\cf_out.txt -RedirectStandardError C:\cf_err.txt
-          Start-Sleep 15
+          Start-Process C:\cf.exe -ArgumentList "tunnel","--url","http://127.0.0.1:7681","--protocol","h2mux" -NoNewWindow -PassThru -RedirectStandardOutput C:\cf_out.txt -RedirectStandardError C:\cf_err.txt
+          Start-Sleep 20
           
           $url = ""
           for ($t = 0; $t -lt 20; $t++) {
@@ -107,12 +107,19 @@ jobs:
           Write-Host "TUNNEL=$url"
           $url | Out-File C:\tunnel_url.txt
           
+          # Verify local first
+          $loc = try { (Invoke-WebRequest "http://127.0.0.1:7681/" -TimeoutSec 5 -UseBasicParsing).Content } catch { "LocalFail: $_" }
+          Write-Host "Local: $loc"
+          
           # Verify external
           if ($url) {
-            Start-Sleep 3
-            $ext = try { (Invoke-WebRequest "$url/" -TimeoutSec 10 -UseBasicParsing).Content } catch { "ExtFail: $_" }
+            Start-Sleep 5
+            $ext = try { (Invoke-WebRequest "$url/" -TimeoutSec 15 -UseBasicParsing).Content } catch { "ExtFail: $_" }
             Write-Host "External: $ext"
           }
+          
+          # Show cloudflared logs for debugging
+          if (Test-Path C:\cf_err.txt) { Get-Content C:\cf_err.txt | Select-Object -Last 10 }
 
       - name: Upload tunnel URL
         uses: actions/upload-artifact@v4
