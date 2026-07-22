@@ -56,6 +56,8 @@ struct Relocation {
     addend: i64,
     size: u8,
     kind: RelocationKind,
+    /// Which merged section this relocation patches (set during COFF parse).
+    section_class: SectionClass,
 }
 
 /// Merged input data for one object file, split by section class so the
@@ -200,6 +202,7 @@ fn parse_elf_object(file: &object::File, path: &Path) -> Result<ElfInput, String
             addend,
             size: rel.size(),
             kind: rel.kind(),
+            section_class: SectionClass::Text,
         });
     }
     Ok(ElfInput {
@@ -588,6 +591,7 @@ fn parse_coff_object(
                 addend: rel.addend(),
                 size: rel.size(),
                 kind: rel.kind(),
+                section_class: class,
             });
         }
 
@@ -1124,18 +1128,10 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
     for (idx, obj) in objs.iter().enumerate() {
         let b = &bases[idx];
         for rel in &obj.relocations {
-            let patch_class = section_class_for_offset(
-                rel.offset,
-                b.text_base,
-                merged_text.len(),
-                b.rdata_base,
-                merged_rdata.len(),
-                b.data_base,
-                merged_data.len(),
-                b.tls_base,
-                merged_tls.len(),
-            );
-            let (patch_buf, patch_rva) = match patch_class {
+            // Use the section class recorded during COFF parse instead of
+            // guessing from offset ranges (which fails when text_base ==
+            // rdata_base == 0 for the first object).
+            let (patch_buf, patch_rva) = match rel.section_class {
                 SectionClass::Text => (&mut merged_text, text_rva),
                 SectionClass::Rodata => (&mut merged_rdata, rdata_rva),
                 SectionClass::Data => (&mut merged_data, data_rva),
@@ -1725,6 +1721,7 @@ fn read_macho_input(path: &Path) -> Result<MachoInput, String> {
             addend: rel.addend(),
             size: rel.size(),
             kind: rel.kind(),
+            section_class: SectionClass::Text,
         });
     }
     Ok(MachoInput {
