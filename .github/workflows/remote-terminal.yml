@@ -101,14 +101,11 @@ jobs:
           $url | Out-File C:\tunnel_url.txt
           "TUNNEL_URL=$url" | Out-File -FilePath $env:GITHUB_ENV -Append
 
-      - name: Print tunnel URL
-        shell: pwsh
-        run: |
-          Write-Host ""
-          Write-Host "=============================================="
-          Write-Host "  REMOTE TERMINAL: $env:TUNNEL_URL"
-          Write-Host "=============================================="
-          Write-Host ""
+      - name: Upload tunnel URL as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tunnel-url
+          path: C:\tunnel_url.txt
 
       - name: Keep alive
         shell: pwsh
