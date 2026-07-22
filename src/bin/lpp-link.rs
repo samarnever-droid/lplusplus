@@ -58,6 +58,8 @@ struct Relocation {
     kind: RelocationKind,
     /// Which merged section this relocation patches (set during COFF parse).
     section_class: SectionClass,
+    /// Raw COFF relocation type (IMAGE_REL_AMD64_*), 0 for ELF/Mach-O.
+    coff_type: u16,
 }
 
 /// Merged input data for one object file, split by section class so the
@@ -203,6 +205,7 @@ fn parse_elf_object(file: &object::File, path: &Path) -> Result<ElfInput, String
             size: rel.size(),
             kind: rel.kind(),
             section_class: SectionClass::Text,
+                coff_type: 0,
         });
     }
     Ok(ElfInput {
@@ -465,9 +468,11 @@ const AMD64_SECREL: u8 = 11;
 /// AMD64 relocation number when possible.  Falls back to treating `Absolute`
 /// as ADDR32 and `Relative` as REL32.
 fn coff_reloc_number(rel: &Relocation) -> u8 {
-    // The object crate exposes the raw COFF relocation type through its
-    // `RelocationKind` discriminant.  We can't directly access it, but
-    // Cranelift only emits a few kinds, so we classify heuristically.
+    // Use the raw COFF type when available (avoids misclassification).
+    if rel.coff_type != 0 {
+        return rel.coff_type as u8;
+    }
+    // Fallback for ELF/Mach-O objects (not COFF).
     match rel.kind {
         RelocationKind::Absolute if rel.size == 64 => AMD64_ADDR64,
         RelocationKind::Absolute => AMD64_ADDR32,
@@ -475,7 +480,6 @@ fn coff_reloc_number(rel: &Relocation) -> u8 {
         RelocationKind::SectionIndex => AMD64_SECTION,
         RelocationKind::SectionOffset => AMD64_SECREL,
         _ => {
-            // Unknown — treat 64-bit as ADDR64, 32-bit as REL32 (safe default)
             if rel.size == 64 {
                 AMD64_ADDR64
             } else {
@@ -590,6 +594,10 @@ fn parse_coff_object(
             // rel.addend(), but our patching code overwrites the bytes with
             // the final computed value.  Using the crate's addend would
             // double-count it, so we always zero it for COFF objects.
+            let coff_type = match rel.flags() {
+                object::RelocationFlags::Coff { typ } => typ,
+                _ => 0,
+            };
             relocs.push(Relocation {
                 offset: base + raw_off,
                 target,
@@ -597,6 +605,7 @@ fn parse_coff_object(
                 size: rel.size(),
                 kind: rel.kind(),
                 section_class: class,
+                coff_type,
             });
         }
 
@@ -1703,6 +1712,7 @@ fn read_macho_input(path: &Path) -> Result<MachoInput, String> {
             size: rel.size(),
             kind: rel.kind(),
             section_class: SectionClass::Text,
+                coff_type: 0,
         });
     }
     Ok(MachoInput {
