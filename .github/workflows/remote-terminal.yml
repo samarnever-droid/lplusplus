@@ -55,12 +55,6 @@ jobs:
       - name: Install and start sshd tunnel
         shell: pwsh
         run: |
-          # Use upterm for bidirectional terminal
-          Invoke-WebRequest -Uri "https://github.com/nicholasgasior/gash/releases/download/v0.3.0/gash_0.3.0_windows_amd64.zip" -OutFile C:\gash.zip -ErrorAction SilentlyContinue
-          
-          # Fallback: use tmate-style approach with cloudflared + actual working server
-          # The key insight: cloudflared needs the HTTP server on 0.0.0.0, not localhost
-          
           # Write a Go-based tiny HTTP server (Go is pre-installed on GH runners)
           @'
           package main
