@@ -1247,6 +1247,8 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
             };
             let addr = PE_IMAGE_BASE + rva;
             merged_data[pos..pos + 8].copy_from_slice(&addr.to_le_bytes());
+            // Track for ASLR base relocations — these are absolute addresses
+            abs_rvas.push(data_rva + pos as u32);
         }
     }
 
@@ -1581,7 +1583,25 @@ fn resolve_pe_target(
         return Ok(tls_rva as u64 + ext_base as u64);
     }
 
-    // IAT entry — returned as bare RVA
+    // Global symbol — compute RVA from section base + internal offset.
+    // Check local definitions BEFORE IAT entries so that symbols defined
+    // in the freestanding runtime (memcpy, memset, __chkstk, etc.) resolve
+    // to their actual code rather than to IAT pointer data.  Only explicit
+    // __imp_ prefixed references should go through the IAT.
+    if !rel.target.starts_with("__imp_") {
+        if let Some((class, abs)) = global_syms.get(&rel.target) {
+            let rva = match class {
+                SectionClass::Text => text_rva as u64 + abs,
+                SectionClass::Rodata => rdata_rva as u64 + abs,
+                SectionClass::Data => data_rva as u64 + abs,
+                SectionClass::Tls => tls_rva as u64 + abs,
+            };
+            return Ok(rva);
+        }
+    }
+
+    // IAT entry — returned as bare RVA (for __imp_ symbols and truly
+    // external symbols not defined locally)
     if let Some(rva) = iat_rvas.get(&rel.target) {
         return Ok(*rva as u64);
     }
@@ -1589,17 +1609,6 @@ fn resolve_pe_target(
     // .refptr. entry — return RVA of .refptr. table slot inside idata
     if let Some(&off) = refptr_offsets.get(&rel.target) {
         return Ok(idata_rva as u64 + off as u64);
-    }
-
-    // Global symbol — compute RVA from section base + internal offset
-    if let Some((class, abs)) = global_syms.get(&rel.target) {
-        let rva = match class {
-            SectionClass::Text => text_rva as u64 + abs,
-            SectionClass::Rodata => rdata_rva as u64 + abs,
-            SectionClass::Data => data_rva as u64 + abs,
-            SectionClass::Tls => tls_rva as u64 + abs,
-        };
-        return Ok(rva);
     }
 
     // .refptr. fallback if not present in refptr_offsets table
