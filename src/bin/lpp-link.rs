@@ -1337,7 +1337,7 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
     put_u32(&mut pe, opt + 56, image_size as u32);
     put_u32(&mut pe, opt + 60, headers_size as u32);
     put_u16(&mut pe, opt + 68, 3); // Console subsystem
-    put_u16(&mut pe, opt + 70, 0x8140); // NX_COMPAT | DYNAMIC_BASE | HIGH_ENTROPY_VA
+    put_u16(&mut pe, opt + 70, 0x0100); // NX_COMPAT only (no ASLR for now)
     put_u64(&mut pe, opt + 72, 0x100000);
     put_u64(&mut pe, opt + 80, 0x1000);
     put_u64(&mut pe, opt + 88, 0x100000);
