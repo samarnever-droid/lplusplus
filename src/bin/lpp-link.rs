@@ -1118,6 +1118,24 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
     };
 
     // ── 5. Resolve relocations ───────────────────────────────────────────
+    let verbose = env::var("LPP_LINK_VERBOSE").is_ok();
+    if verbose {
+        eprintln!("[lpp-link] text_rva=0x{:X} rdata_rva=0x{:X} data_rva=0x{:X} idata_rva=0x{:X}",
+            text_rva, rdata_rva, data_rva, idata_rva);
+        eprintln!("[lpp-link] text_len={} rdata_len={} data_len={} idata_len={}",
+            merged_text.len(), merged_rdata.len(), merged_data.len(), import.data.len());
+        for (name, rva) in &import.iat_rvas {
+            eprintln!("[lpp-link] IAT: {} -> 0x{:X}", name, rva);
+        }
+        for (name, rva) in &refptr_rvas {
+            eprintln!("[lpp-link] refptr: {} -> 0x{:X}", name, rva);
+        }
+        for (name, (cls, off)) in &global_syms {
+            if name.contains("main") || name.contains("print") || name.contains("refptr") || name.contains("write") || name.contains("Write") {
+                eprintln!("[lpp-link] global: {} -> {:?} off={}", name, cls, off);
+            }
+        }
+    }
     let mut abs_rvas: Vec<u32> = Vec::new();
 
     // Record .refptr. data slot RVAs for base relocations (ASLR)
@@ -1155,6 +1173,11 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
             )?;
 
             let rnum = coff_reloc_number(rel);
+
+            if verbose && idx == 0 {
+                eprintln!("[lpp-link] obj[0] rel: target='{}' section={:?} offset={} rnum={} -> target_rva=0x{:X}",
+                    rel.target, rel.section_class, rel.offset, rnum, target);
+            }
 
             match rnum {
                 AMD64_ADDR64 => {

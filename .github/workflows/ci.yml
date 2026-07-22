@@ -158,7 +158,9 @@ jobs:
           & target\release\lpp-link.exe inspect "$work\direct.obj" 2>&1 | Write-Host
           & target\release\lpp-link.exe inspect "$work\lpp_runtime_min.obj" 2>&1 | Write-Host
           # Step 3: link with lpp-link PE direct linker
+          $env:LPP_LINK_VERBOSE = "1"
           & target\release\lpp-link.exe pe "$work\direct.obj" "$work\lpp_runtime_min.obj" -o "$work\direct.exe" 2>&1
+          Remove-Item Env:\LPP_LINK_VERBOSE
           if ($LASTEXITCODE -ne 0) { throw "lpp-link PE link failed (exit $LASTEXITCODE)" }
           # Step 3b: dump PE headers with dumpbin
           $dumpCmd = Join-Path $work "dump.cmd"
