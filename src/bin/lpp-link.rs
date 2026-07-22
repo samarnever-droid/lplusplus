@@ -585,10 +585,15 @@ fn parse_coff_object(
                 .name()
                 .map_err(|e| format!("read relocation symbol name: {e}"))?;
             let target = resolve_coff_target(&raw_name, &sym, &map, class);
+            // COFF REL32 relocations have an implicit addend of -4 from the
+            // `object` crate, but our displacement formula already accounts
+            // for the 4-byte fixup field size via `(patch_rva + 4)`.  Zero
+            // the addend to avoid double-subtracting.
+            let addend = if rel.kind() == RelocationKind::Relative { 0 } else { rel.addend() };
             relocs.push(Relocation {
                 offset: base + raw_off,
                 target,
-                addend: rel.addend(),
+                addend,
                 size: rel.size(),
                 kind: rel.kind(),
                 section_class: class,
