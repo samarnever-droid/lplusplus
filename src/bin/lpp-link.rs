@@ -1013,7 +1013,12 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
                 if !raw_imports.contains(&n) {
                     raw_imports.push(n);
                 }
-            } else if is_crt_symbol(&rel.target) {
+            } else if is_crt_symbol(&rel.target) && !global_syms.contains_key(&rel.target) {
+                // Only import CRT symbols from msvcrt.dll if they are NOT
+                // defined locally in any input object.  The freestanding
+                // runtime provides its own memcpy/memset/etc.; redirecting
+                // those through the IAT would cause the call to land on
+                // pointer data instead of executable code (ACCESS_VIOLATION).
                 if !raw_imports.contains(&rel.target) {
                     raw_imports.push(rel.target.clone());
                 }
