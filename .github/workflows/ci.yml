@@ -157,21 +157,16 @@ jobs:
           # Step 3: link with lpp-link PE direct linker
           & target\release\lpp-link.exe pe "$work\direct.obj" "$work\lpp_runtime_min.obj" -o "$work\direct.exe" 2>&1
           if ($LASTEXITCODE -ne 0) { throw "lpp-link PE link failed (exit $LASTEXITCODE)" }
-          # Step 3b: also try linking with MSVC linker as control test
-          $linkCmd = Join-Path $work "msvc_link.cmd"
+          # Step 3b: minimal exit-only test (no runtime needed)
           @"
-          @echo off
-          call "%VSCMD_BAT%" >nul || exit /b 1
-          link.exe /NOLOGO /SUBSYSTEM:CONSOLE /ENTRY:main "$work\direct.obj" "$work\lpp_runtime_min.obj" kernel32.lib /OUT:"$work\direct_msvc.exe" || exit /b 1
-          "@ | Set-Content -Path $linkCmd -Encoding ascii
-          cmd.exe /d /c $linkCmd
-          Write-Host "MSVC link exit: $LASTEXITCODE"
-          # Step 4: test MSVC-linked version as control
-          if (Test-Path "$work\direct_msvc.exe") {
-            $msvc_out = (& "$work\direct_msvc.exe" 2>&1 | ForEach-Object { $_.Trim() }) -join "`n"
-            Write-Host "MSVC PE output: '$msvc_out' (exit $LASTEXITCODE)"
-          }
-          # Step 5: test lpp-link version
+          def main():
+              x = 1
+          "@ | Set-Content -Path "$work\exit_only.lpp" -Encoding ascii
+          & target\release\lpp.exe "$work\exit_only.lpp"
+          & target\release\lpp-link.exe pe "$work\exit_only.obj" -o "$work\exit_only.exe" 2>&1
+          & "$work\exit_only.exe"
+          Write-Host "exit_only result: $LASTEXITCODE"
+          # Step 4: test full version
           $actual = (& "$work\direct.exe" 2>&1 | ForEach-Object { $_.Trim() }) -join "`n"
           if ($LASTEXITCODE -ne 0 -or $actual -ne "7") { throw "Unexpected direct PE output: '$actual' (exit $LASTEXITCODE)" }
           Write-Host "PASS Direct PE: output=$actual"
