@@ -1,0 +1,109 @@
+name: PE Crash Debug
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  debug:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Locate MSVC
+        shell: pwsh
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          "VSCMD_BAT=$vs\VC\Auxiliary\Build\vcvars64.bat" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Build and debug
+        shell: pwsh
+        run: |
+          $w = "C:\dbg"
+          New-Item -ItemType Directory -Force $w | Out-Null
+
+          # Build
+          cargo build --release --bin lpp --bin lpp-link 2>&1 | Select-Object -Last 3
+
+          # Compile runtime
+          $cmd = @"
+          @echo off
+          call "%VSCMD_BAT%" >nul || exit /b 1
+          cl.exe /nologo /O2 /GS- /Gs1000000 /DLPP_FREESTANDING /c runtime\windows_x86_64_min.c "/Fo:$w\rt.obj" || exit /b 1
+          "@ 
+          $cmd | Set-Content "$w\rt.cmd" -Encoding ascii
+          cmd.exe /d /c "$w\rt.cmd"
+
+          # Compile L++ test
+          @"
+          def main():
+              print(7)
+          "@ | Set-Content "$w\test.lpp" -Encoding ascii
+          $env:LPP_AOT = "1"
+          & target\release\lpp.exe "$w\test.lpp"
+
+          # Link with lpp-link
+          & target\release\lpp-link.exe pe "$w\test.obj" "$w\rt.obj" -o "$w\test_lpp.exe" 2>&1
+
+          # Dump symbols from both objects
+          $dumpCmd = @"
+          @echo off
+          call "%VSCMD_BAT%" >nul || exit /b 1
+          echo ===== test.obj SYMBOLS =====
+          dumpbin /symbols "$w\test.obj"
+          echo ===== test.obj RELOCATIONS =====
+          dumpbin /relocations "$w\test.obj"
+          echo ===== rt.obj RELOCATIONS (first 100) =====
+          dumpbin /relocations "$w\rt.obj"
+          echo ===== lpp-link PE HEADERS =====
+          dumpbin /headers "$w\test_lpp.exe"
+          echo ===== lpp-link PE IMPORTS =====
+          dumpbin /imports "$w\test_lpp.exe"
+          echo ===== lpp-link PE DISASM (first 512 bytes of .text) =====
+          dumpbin /disasm /range:0x1000,0x1200 "$w\test_lpp.exe"
+          echo ===== lpp-link PE RELOCATIONS =====
+          dumpbin /relocations "$w\test_lpp.exe"
+          "@
+          $dumpCmd | Set-Content "$w\dump.cmd" -Encoding ascii
+          cmd.exe /d /c "$w\dump.cmd" > "$w\dumpbin_output.txt" 2>&1
+          Get-Content "$w\dumpbin_output.txt"
+
+          # Find CDB (Windows debugger)
+          $cdb = Get-ChildItem "C:\Program Files (x86)\Windows Kits" -Recurse -Filter "cdb.exe" -ErrorAction SilentlyContinue | Where-Object { $_.FullName -match "x64" } | Select-Object -First 1
+          if ($cdb) {
+            Write-Host "`n===== CDB CRASH ANALYSIS ====="
+            # Run with CDB: execute, on crash dump registers + stack + analyze
+            $cdbArgs = "-g", "-G", "-c", ".ecxr;r;kb 20;u @rip L10;dps @rsp L20;!analyze -v;q", "$w\test_lpp.exe"
+            $cdbOut = & $cdb.FullName @cdbArgs 2>&1 | Out-String
+            $cdbOut | Out-File "$w\cdb_output.txt"
+            Write-Host $cdbOut
+          } else {
+            Write-Host "CDB not found - running directly"
+            $p = Start-Process "$w\test_lpp.exe" -PassThru -Wait -NoNewWindow
+            Write-Host "Exit: $($p.ExitCode)"
+          }
+
+          # Also dump raw hex of key sections
+          Write-Host "`n===== RAW HEX: .text first 256 bytes ====="
+          $bytes = [System.IO.File]::ReadAllBytes("$w\test_lpp.exe")
+          $hex = ($bytes[0x400..0x4FF] | ForEach-Object { '{0:X2}' -f $_ }) -join ' '
+          Write-Host $hex
+          Write-Host "`n===== RAW HEX: .data first 32 bytes ====="
+          # Find .data offset from headers
+          $hex2 = ($bytes[0x4400..0x441F] | ForEach-Object { '{0:X2}' -f $_ }) -join ' '
+          Write-Host $hex2
+          Write-Host "`n===== RAW HEX: .idata first 128 bytes ====="
+          $hex3 = ($bytes[0x4600..0x467F] | ForEach-Object { '{0:X2}' -f $_ }) -join ' '
+          Write-Host $hex3
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pe-debug
+          path: C:\dbg\
