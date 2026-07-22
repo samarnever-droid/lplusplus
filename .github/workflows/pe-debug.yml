@@ -1,0 +1,132 @@
+name: PE Debug Session
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  pe-debug:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Locate MSVC
+        shell: pwsh
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          "VSCMD_BAT=$vs\VC\Auxiliary\Build\vcvars64.bat" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Build toolchain
+        run: cargo build --release --bin lpp --bin lpp-link
+
+      - name: Prepare debug artifacts
+        shell: pwsh
+        run: |
+          $work = "C:\pe_debug"
+          New-Item -ItemType Directory -Force $work | Out-Null
+
+          # Build freestanding runtime
+          $buildRt = "$work\build_rt.cmd"
+          @"
+          @echo off
+          call "%VSCMD_BAT%" >nul || exit /b 1
+          cl.exe /nologo /O2 /GS- /Gs1000000 /DLPP_FREESTANDING /c runtime\windows_x86_64_min.c "/Fo:$work\lpp_runtime_min.obj" || exit /b 1
+          "@ | Set-Content -Path $buildRt -Encoding ascii
+          cmd.exe /d /c $buildRt
+
+          # Create test program
+          @"
+          def main():
+              print(7)
+          "@ | Set-Content -Path "$work\direct.lpp" -Encoding ascii
+
+          # Compile to COFF
+          $env:LPP_AOT = "1"
+          & target\release\lpp.exe "$work\direct.lpp"
+          Remove-Item Env:\LPP_AOT
+
+          # Link with lpp-link
+          & target\release\lpp-link.exe pe "$work\direct.obj" "$work\lpp_runtime_min.obj" -o "$work\direct.exe" 2>&1
+          Write-Host "lpp-link exit: $LASTEXITCODE"
+
+          # Also link with MSVC as control (adding stubs for missing symbols)
+          $stubCmd = "$work\stub_link.cmd"
+          @"
+          @echo off
+          call "%VSCMD_BAT%" >nul || exit /b 1
+          link.exe /NOLOGO /SUBSYSTEM:CONSOLE /ENTRY:main "$work\direct.obj" "$work\lpp_runtime_min.obj" kernel32.lib /FORCE:UNRESOLVED /OUT:"$work\direct_msvc.exe" 2>&1
+          "@ | Set-Content -Path $stubCmd -Encoding ascii
+          cmd.exe /d /c $stubCmd
+
+          # Dump info
+          $dumpCmd = "$work\dump.cmd"
+          @"
+          @echo off
+          call "%VSCMD_BAT%" >nul || exit /b 1
+          echo === lpp-link PE ===
+          dumpbin /headers "$work\direct.exe"
+          dumpbin /imports "$work\direct.exe"
+          dumpbin /disasm "$work\direct.exe" > "$work\disasm_lpplink.txt"
+          echo === MSVC PE ===
+          if exist "$work\direct_msvc.exe" (
+            dumpbin /headers "$work\direct_msvc.exe"
+            dumpbin /imports "$work\direct_msvc.exe"
+            dumpbin /disasm "$work\direct_msvc.exe" > "$work\disasm_msvc.txt"
+          )
+          echo === direct.obj symbols ===
+          dumpbin /symbols "$work\direct.obj"
+          echo === runtime symbols ===
+          dumpbin /symbols "$work\lpp_runtime_min.obj" > "$work\runtime_syms.txt"
+          echo "Symbols written to $work\runtime_syms.txt"
+          "@ | Set-Content -Path $dumpCmd -Encoding ascii
+          cmd.exe /d /c $dumpCmd
+
+          # Install WinDbg via winget (Windows SDK debugger)
+          Write-Host "Checking for cdb.exe..."
+          $cdb = Get-ChildItem "C:\Program Files (x86)\Windows Kits" -Recurse -Filter "cdb.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($cdb) {
+            Write-Host "Found: $($cdb.FullName)"
+            "CDB_PATH=$($cdb.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
+          } else {
+            Write-Host "cdb.exe not found, trying to locate ntsd or WinDbg..."
+            # Try WinDbgX from store
+            $wdbg = Get-ChildItem "C:\Program Files" -Recurse -Filter "WinDbgX.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($wdbg) { Write-Host "Found WinDbgX: $($wdbg.FullName)" }
+          }
+
+          # Run lpp-link version with CDB if available
+          if ($cdb) {
+            Write-Host "=== CDB crash analysis ==="
+            $cdbOut = & $cdb.FullName -g -G -c ".ecxr;kb;!analyze -v;q" "$work\direct.exe" 2>&1 | Out-String
+            Write-Host $cdbOut
+          } else {
+            Write-Host "=== Manual crash test ==="
+            $p = Start-Process -FilePath "$work\direct.exe" -PassThru -Wait -NoNewWindow -RedirectStandardOutput "$work\stdout.txt" -RedirectStandardError "$work\stderr.txt"
+            Write-Host "Exit code: $($p.ExitCode)"
+            if (Test-Path "$work\stdout.txt") { Get-Content "$work\stdout.txt" }
+            if (Test-Path "$work\stderr.txt") { Get-Content "$work\stderr.txt" }
+          }
+
+          # Test MSVC version too
+          if (Test-Path "$work\direct_msvc.exe") {
+            Write-Host "=== MSVC-linked test ==="
+            $p2 = Start-Process -FilePath "$work\direct_msvc.exe" -PassThru -Wait -NoNewWindow -RedirectStandardOutput "$work\msvc_stdout.txt" -RedirectStandardError "$work\msvc_stderr.txt"
+            Write-Host "MSVC exit code: $($p2.ExitCode)"
+            if (Test-Path "$work\msvc_stdout.txt") { Get-Content "$work\msvc_stdout.txt" }
+          }
+
+      - name: Upload debug artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pe-debug-artifacts
+          path: |
+            C:\pe_debug\*.exe
+            C:\pe_debug\*.obj
+            C:\pe_debug\*.txt
+            C:\pe_debug\*.lpp
