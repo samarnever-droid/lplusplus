@@ -579,6 +579,11 @@ fn parse_coff_object(
             .into_owned();
         buf.extend_from_slice(&data);
         map.push((idx, class, base));
+        // Debug: check if this extend_from_slice overwrote a watched byte
+        if class == SectionClass::Text && buf.len() > 0x233F && base <= 0x233F {
+            eprintln!("[WATCH] After SECT copy: text[0x233F]={:#04x} section={} base={:#x} end={:#x}",
+                buf[0x233F], name, base, base + data.len());
+        }
 
         for (off, rel) in sec.relocations() {
             let raw_off = usize::try_from(off).map_err(|_| "reloc offset overflow")?;
@@ -1159,6 +1164,13 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
             };
             let patch = rel.offset;
             let patch_rva_addr = patch_rva as i64 + patch as i64;
+
+            // Watch for corruption of lpp_print_int byte 47
+            let watch_offset = 0x23AF; // 0x2360 + 47 + padding
+            if rel.section_class == SectionClass::Text && patch <= watch_offset && patch + 8 > watch_offset {
+                eprintln!("[WATCH-REL] about to patch text[{}..{}] target='{}' rnum={} section={:?}",
+                    patch, patch + 8, rel.target, coff_reloc_number(&rel), rel.section_class);
+            }
 
             // Resolve target
             let target = resolve_pe_target(
