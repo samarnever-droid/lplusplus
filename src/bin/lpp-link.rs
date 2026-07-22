@@ -585,15 +585,15 @@ fn parse_coff_object(
                 .name()
                 .map_err(|e| format!("read relocation symbol name: {e}"))?;
             let target = resolve_coff_target(&raw_name, &sym, &map, class);
-            // COFF REL32 relocations have an implicit addend of -4 from the
-            // `object` crate, but our displacement formula already accounts
-            // for the 4-byte fixup field size via `(patch_rva + 4)`.  Zero
-            // the addend to avoid double-subtracting.
-            let addend = if rel.kind() == RelocationKind::Relative { 0 } else { rel.addend() };
+            // COFF uses implicit addends baked into the instruction bytes.
+            // The `object` crate reads that implicit value and returns it as
+            // rel.addend(), but our patching code overwrites the bytes with
+            // the final computed value.  Using the crate's addend would
+            // double-count it, so we always zero it for COFF objects.
             relocs.push(Relocation {
                 offset: base + raw_off,
                 target,
-                addend,
+                addend: 0,
                 size: rel.size(),
                 kind: rel.kind(),
                 section_class: class,
