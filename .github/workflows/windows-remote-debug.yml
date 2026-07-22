@@ -10,515 +10,229 @@ jobs:
     timeout-minutes: 240
 
     steps:
-      # ── 1. Bootstrap L++ repo ──────────────────────────────────
       - name: Clone L++ repository
         shell: pwsh
         run: |
           if (Test-Path C:\lpp_cmp) {
-            Write-Host ">>> C:\lpp_cmp exists – pulling latest master"
             Set-Location C:\lpp_cmp
             git fetch origin master
             git checkout master
             git pull origin master
           } else {
-            Write-Host ">>> Cloning into C:\lpp_cmp"
             git clone https://github.com/samarnever-droid/lplusplus.git C:\lpp_cmp
             Set-Location C:\lpp_cmp
           }
           git log -1 --oneline
 
-      # ── 2. MSVC toolchain ───────────────────────────────────────
       - name: Install MSVC Build Tools
         shell: pwsh
         run: |
-          Write-Host ">>> Checking MSVC..."
-          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
           $vcVars = "${env:ProgramFiles}\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
-
           if (-not (Test-Path $vcVars)) {
-            Write-Host "MSVC not found – installing VS Build Tools..."
             Invoke-WebRequest -Uri "https://aka.ms/vs/17/release/vs_buildtools.exe" -OutFile C:\vs_buildtools.exe
-            Start-Process -FilePath "C:\vs_buildtools.exe" -ArgumentList "--add", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64", "--add", "Microsoft.VisualStudio.Component.Windows11SDK.22621", "--quiet", "--norestart", "--wait" -NoNewWindow -Wait
+            Start-Process -FilePath "C:\vs_buildtools.exe" -ArgumentList "--add","Microsoft.VisualStudio.Component.VC.Tools.x86.x64","--add","Microsoft.VisualStudio.Component.Windows11SDK.22621","--quiet","--norestart","--wait" -NoNewWindow -Wait
           }
-
-          if (Test-Path $vcVars) {
-            & "$vcVars" > $null
-            Write-Host "✅ MSVC vcvars64 loaded"
-          }
+          if (Test-Path $vcVars) { & "$vcVars" > $null }
           cl.exe /version 2>&1 | Select-Object -First 1
 
-      # ── 3. Rust ─────────────────────────────────────────────────
       - name: Install Rust toolchain
         shell: pwsh
         run: |
           if (-not (Get-Command rustc -ErrorAction SilentlyContinue)) {
-            Write-Host ">>> Installing Rust..."
             Invoke-WebRequest -Uri "https://win.rustup.rs" -OutFile C:\rustup-init.exe
-            Start-Process -FilePath "C:\rustup-init.exe" -ArgumentList "-y", "--default-toolchain", "stable", "--profile", "minimal" -NoNewWindow -Wait
-            $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+            Start-Process -FilePath "C:\rustup-init.exe" -ArgumentList "-y","--default-toolchain","stable","--profile","minimal" -NoNewWindow -Wait
           }
+          $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
           rustc --version
-          cargo --version
 
-      # ── 4. Build L++ from source ────────────────────────────────
       - name: Build L++ from source
         shell: pwsh
         run: |
           Set-Location C:\lpp_cmp
-          Write-Host ">>> Building L++..."
-          cargo build --release 2>&1 | Tee-Object -FilePath C:\lpp_cmp\build.log
-
+          cargo build --release 2>&1 | Tee-Object -FilePath C:\build.log
           if (Test-Path C:\lpp_cmp\target\release\lpp.exe) {
             Copy-Item C:\lpp_cmp\target\release\lpp.exe C:\lpp_cmp\lpp.exe -Force
-            Write-Host "✅ L++ build SUCCESS"
+            Write-Host "L++ build SUCCESS"
           } else {
-            Write-Host "❌ L++ build FAILED"
-            Get-Content C:\lpp_cmp\build.log | Select-Object -Last 30
+            Get-Content C:\build.log | Select-Object -Last 20
             exit 1
           }
 
-      # ── 5. Start web shell on port 7681 ─────────────────────────
-      - name: Start web terminal on port 7681
+      - name: Write web shell script
         shell: pwsh
         run: |
-          Write-Host ">>> Starting web shell on port 7681..."
+          $lines = @()
+          $lines += 'param([int]$port = 7681)'
+          $lines += '$l = New-Object System.Net.HttpListener'
+          $lines += '$l.Prefixes.Add("http://+:$port/")'
+          $lines += '$l.Start()'
+          $lines += 'Write-Host ("Listening on port $port")'
+          $lines += '$hn = $env:COMPUTERNAME'
+          $lines += '$wu = whoami'
+          $lines += 'Set-Location C:\lpp_cmp'
+          $lines += '$gi = git log -1 --format="%h - %s" 2>&1'
+          $lines += 'while ($true) {'
+          $lines += '  $c = $l.GetContextAsync().GetAwaiter().GetResult()'
+          $lines += '  $r = $c.Request'
+          $lines += '  $s = $c.Response'
+          $lines += '  if ($r.HttpMethod -eq "POST" -and $r.RawUrl -eq "/exec") {'
+          $lines += '    $rd = New-Object System.IO.StreamReader($r.InputStream)'
+          $lines += '    $bd = $rd.ReadToEnd(); $rd.Close()'
+          $lines += '    $cs = ([System.Web.HttpUtility]::ParseQueryString($bd))["cmd"]'
+          $lines += '    $od = $PWD'
+          $lines += '    Set-Location C:\lpp_cmp'
+          $lines += '    try { $ou = Invoke-Expression "$cs 2>&1" | Out-String -Width 10000 } catch { $ou = "Error: $_" }'
+          $lines += '    Set-Location $od'
+          $lines += '    $bu = [System.Text.Encoding]::UTF8.GetBytes($ou)'
+          $lines += '    $s.ContentType = "text/plain"; $s.StatusCode = 200'
+          $lines += '    $s.ContentLength64 = $bu.Length'
+          $lines += '    $s.OutputStream.Write($bu, 0, $bu.Length); $s.Close()'
+          $lines += '  } else {'
+          $lines += '    $h = "<!DOCTYPE html><html><head><meta charset=utf-8><title>L++ Debug</title>"
+          $lines += '    $h += "<style>'
+          $lines += '    *{box-sizing:border-box;margin:0;padding:0}'
+          $lines += '    body{background:#0f0f17;color:#c5cce8;font-family:Cascadia,Consolas,monospace;height:100vh;display:flex;flex-direction:column;font-size:14px}'
+          $lines += '    #b{background:linear-gradient(90deg,#7c3aed,#2563eb);color:white;padding:10px 24px;font-size:15px;font-weight:bold;text-align:center}'
+          $lines += '    #h{background:#1a1a2e;padding:12px 24px;border-bottom:2px solid #7c3aed;display:flex;gap:12px;align-items:center}'
+          $lines += '    #h h1{font-size:16px;color:#a78bfa}'
+          $lines += '    .s{background:#1a1a2e;border-radius:6px;padding:12px 16px;margin:4px 0;border-left:3px solid #7c3aed;font-size:13px}'
+          $lines += '    .t{color:#a78bfa;font-weight:bold}'
+          $lines += '    .k{color:#67e8f9}'
+          $lines += '    .d{color:#9ca3af}'
+          $lines += '    #t{flex:1;overflow-y:auto;padding:16px 24px}'
+          $lines += '    .ln{white-space:pre-wrap;word-break:break-all;line-height:1.7}'
+          $lines += '    #in{background:#1a1a2e;padding:12px 24px;border-top:1px solid #2d2d44;display:flex;gap:8px;align-items:center}'
+          $lines += '    #pr{color:#a78bfa}'
+          $lines += '    #i{flex:1;background:#11111f;color:#e2e8f0;border:1px solid #3d3d5c;border-radius:6px;padding:8px 12px;font-family:inherit;font-size:14px;outline:none}'
+          $lines += '    #i:focus{border-color:#7c3aed}'
+          $lines += '    #b2{background:#7c3aed;color:white;border:none;border-radius:6px;padding:8px 16px;cursor:pointer;font-weight:bold;font-family:inherit}'
+          $lines += '    #s2{background:#0a0a14;padding:4px 24px;font-size:11px;color:#4b5563}'
+          $lines += '    </style></head><body>"'
+          $lines += '    $h += "<div id=b>L++ Remote Debug Terminal -- Live Windows Shell</div>"'
+          $lines += '    $h += "<div id=h><h1>Terminal</h1><span style=background:#7c3aed;color:white;padding:2px 8px;border-radius:10px;font-size:12px>v2.0.0</span>"'
+          $lines += '    $h += "<span style=margin-left:auto;font-size:12px;color:#6b7280>HOST: $hn | USER: $wu | C:\lpp_cmp</span></div>"'
+          $lines += '    $h += "<div id=t>"
+          $lines += '    $h += "<div class=s><span class=t>Connected</span><br><span class=k>Git:</span> <span class=d>$gi</span><br><span class=k>Binary:</span> <span class=d>C:\lpp_cmp\lpp.exe</span></div>"'
+          $lines += '    $h += "<div class=s><span class=t>Quick Commands</span><br>"'
+          $lines += '    $h += "<span class=k>lpp hello.lpp</span> <span class=d>- Compile L++ source</span><br>"'
+          $lines += '    $h += "<span class=k>.\hello.exe</span> <span class=d>- Run generated exe</span><br>"'
+          $lines += '    $h += "<span class=k>lpp hello.lpp --run</span> <span class=d>- Compile and run</span><br>"'
+          $lines += '    $h += "<span class=k>cargo build --release</span> <span class=d>- Rebuild L++</span><br>"'
+          $lines += '    $h += "<span class=k>git pull</span> <span class=d>- Update source</span><br>"'
+          $lines += '    $h += "<span class=k>Format-Hex .\hello.exe -Count 512</span> <span class=d>- Inspect PE headers</span></div>"'
+          $lines += '    $h += "</div>"'
+          $lines += '    $h += "<div id=in><span id=pr>PS C:\lpp_cmp&gt;&nbsp;</span><input id=i placeholder="Type a command..." autocomplete=off autofocus /><button id=b2 onclick=sc()>Run</button></div>"'
+          $lines += '    $h += "<div id=s2><span style=color:#34d399>*</span> Shell active | L++ v2.0.0 | Cloudflare Tunnel</div>"'
+          $lines += '    $h += "<script>const i=document.getElementById(`"i`"),t=document.getElementById(`"t`");'
+          $lines += 'i.addEventListener(`"keydown`",e=>{if(e.key==`"Enter`")sc()});'
+          $lines += 'async function sc(){const c=i.value.trim();if(!c)return;i.value=`"`";'
+          $lines += 'const el=document.createElement(`"div`");el.className=`"ln`";el.style.color=`"#a78bfa`";'
+          $lines += 'el.textContent=`"PS C:\\lpp_cmp> `"+c;t.appendChild(el);'
+          $lines += 'try{const r=await fetch(`"/exec`",{method:`"POST`",body:new URLSearchParams({cmd:c})});'
+          $lines += 'const tx=await r.text();const o=document.createElement(`"div`");'
+          $lines += 'o.className=`"ln`";o.style.color=r.ok?`"#c5cce8`":`"#f87171`";o.textContent=tx||`"(empty)`";t.appendChild(o)}'
+          $lines += 'catch(e){const o=document.createElement(`"div`");o.className=`"ln`";o.style.color=`"#f87171`";o.textContent=`"Error: `"+e.message;t.appendChild(o)}'
+          $lines += 't.scrollTop=t.scrollHeight;i.focus()};i.focus()</script></body></html>"'
+          $lines += '    $bu = [System.Text.Encoding]::UTF8.GetBytes($h)'
+          $lines += '    $s.ContentType = "text/html; charset=utf-8"; $s.StatusCode = 200'
+          $lines += '    $s.ContentLength64 = $bu.Length'
+          $lines += '    $s.OutputStream.Write($bu, 0, $bu.Length); $s.Close()'
+          $lines += '  }'
+          $lines += '}'
+          $lines += ''
+          $lines | Out-File -FilePath C:\web-shell.ps1 -Encoding UTF8
+          Write-Host "Script written: C:\web-shell.ps1 ($($lines.Count) lines)"
 
-          $webShellScript = @"
-`$port = 7681
-`$listener = New-Object System.Net.HttpListener
-`$listener.Prefixes.Add("http://+:`$port/")
-`$listener.Start()
-Write-Host "[Web Shell] Listening on port `$(`$port)"
+      - name: Start web shell
+        shell: pwsh
+        run: |
+          Start-Process powershell -ArgumentList "-ExecutionPolicy","Bypass","-File","C:\web-shell.ps1" -WindowStyle Hidden
+          Start-Sleep -Seconds 3
+          try {
+            $r = Invoke-WebRequest -Uri "http://localhost:7681/" -TimeoutSec 5 -UseBasicParsing
+            Write-Host "Web shell OK: HTTP $($r.StatusCode)"
+          } catch {
+            Write-Host "Web shell check: $($_.Exception.Message)"
+          }
 
-while (`$true) {
-    `$context = `$listener.GetContextAsync().GetAwaiter().GetResult()
-    `$request = `$context.Request
-    `$response = `$context.Response
-
-    if (`$request.HttpMethod -eq 'POST' -and `$request.RawUrl -eq '/exec') {
-        `$reader = New-Object System.IO.StreamReader(`$request.InputStream)
-        `$body = `$reader.ReadToEnd()
-        `$reader.Close()
-        `$cmd = ([System.Web.HttpUtility]::ParseQueryString(`$body))['cmd']
-
-        `$oldDir = `$PWD
-        Set-Location C:\lpp_cmp
-        try {
-            `$output = Invoke-Expression "`$cmd 2>&1" | Out-String -Width 10000
-        } catch {
-            `$output = "Error: `$(`$_.Exception.Message)"
-        }
-        Set-Location `$oldDir
-
-        `$buffer = [System.Text.Encoding]::UTF8.GetBytes(`$output)
-        `$response.ContentType = 'text/plain; charset=utf-8'
-        `$response.StatusCode = 200
-        `$response.ContentLength64 = `$buffer.Length
-        `$response.OutputStream.Write(`$buffer, 0, `$buffer.Length)
-        `$response.Close()
-    } else {
-        `$hostname = `$env:COMPUTERNAME
-        `$whoami = whoami
-        `$lppVersion = "L++ v2.0.0 Pure Native (commit: $(Set-Location C:\lpp_cmp; git log -1 --format='%h' 2>&1))"
-        Set-Location C:\lpp_cmp
-        `$gitInfo = git log -1 --format='%h - %s' 2>&1
-
-        `$html = @'
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>L++ Remote Debug Terminal</title>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      background: #0f0f17;
-      color: #c5cce8;
-      font-family: 'Cascadia Code', 'Consolas', 'Courier New', monospace;
-      height: 100vh;
-      display: flex;
-      flex-direction: column;
-      font-size: 14px;
-    }
-    #header {
-      background: #1a1a2e;
-      padding: 14px 24px;
-      border-bottom: 2px solid #7c3aed;
-      display: flex;
-      align-items: center;
-      gap: 16px;
-      flex-shrink: 0;
-    }
-    #header h1 {
-      font-size: 17px;
-      color: #a78bfa;
-      letter-spacing: 0.5px;
-    }
-    #header .badge {
-      background: #7c3aed;
-      color: white;
-      padding: 2px 10px;
-      border-radius: 12px;
-      font-size: 12px;
-    }
-    #header .info {
-      margin-left: auto;
-      font-size: 12px;
-      color: #6b7280;
-    }
-    #terminal {
-      flex: 1;
-      overflow-y: auto;
-      padding: 16px 24px;
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-    }
-    .line { white-space: pre-wrap; word-break: break-all; line-height: 1.7; }
-    .prompt-line { color: #a78bfa; }
-    .prompt-cmd { color: #67e8f9; }
-    .stdout { color: #c5cce8; }
-    .stderr { color: #f87171; }
-    .success { color: #34d399; }
-    .warn { color: #fbbf24; }
-    .section {
-      background: #1a1a2e;
-      border-radius: 8px;
-      padding: 14px 18px;
-      margin: 4px 0;
-      border-left: 3px solid #7c3aed;
-    }
-    .section-title { color: #a78bfa; font-weight: bold; margin-bottom: 8px; }
-    .cmd-grid {
-      display: grid;
-      grid-template-columns: auto 1fr;
-      gap: 4px 16px;
-      font-size: 13px;
-    }
-    .cmd-key { color: #67e8f9; }
-    .cmd-desc { color: #9ca3af; }
-    #input-area {
-      background: #1a1a2e;
-      padding: 14px 24px;
-      border-top: 1px solid #2d2d44;
-      display: flex;
-      gap: 8px;
-      align-items: center;
-      flex-shrink: 0;
-    }
-    #prompt { color: #a78bfa; white-space: nowrap; font-size: 14px; }
-    #cmd {
-      flex: 1;
-      background: #11111f;
-      color: #e2e8f0;
-      border: 1px solid #3d3d5c;
-      border-radius: 6px;
-      padding: 10px 14px;
-      font-family: inherit;
-      font-size: 14px;
-      outline: none;
-    }
-    #cmd:focus { border-color: #7c3aed; box-shadow: 0 0 0 2px rgba(124,58,237,0.25); }
-    #run-btn {
-      background: #7c3aed;
-      color: white;
-      border: none;
-      border-radius: 6px;
-      padding: 10px 20px;
-      cursor: pointer;
-      font-weight: bold;
-      font-size: 14px;
-      font-family: inherit;
-    }
-    #run-btn:hover { background: #8b5cf6; }
-    #run-btn:active { background: #6d28d9; }
-    #status-bar {
-      background: #0a0a14;
-      padding: 5px 24px;
-      font-size: 11px;
-      color: #4b5563;
-      display: flex;
-      gap: 16px;
-      flex-shrink: 0;
-    }
-    .dot { color: #34d399; }
-    #tunnel-banner {
-      background: linear-gradient(90deg, #7c3aed, #2563eb);
-      color: white;
-      padding: 12px 24px;
-      font-size: 15px;
-      font-weight: bold;
-      text-align: center;
-      flex-shrink: 0;
-    }
-    #tunnel-banner a { color: #bfdbfe; }
-  </style>
-</head>
-<body>
-  <div id="tunnel-banner">🐉 L++ Remote Debug Terminal — Live on GitHub Actions Windows Runner</div>
-  <div id="header">
-    <h1>Terminal</h1>
-    <span class="badge">v2.0.0</span>
-    <span class="info">HOST: ' + $hostname + ' | USER: ' + $whoami + ' | WORKDIR: C:\lpp_cmp</span>
-  </div>
-  <div id="terminal">
-    <div class="section">
-      <div class="section-title">✅ Connection Ready</div>
-      <div class="cmd-grid">
-        <span class="cmd-key">Git HEAD:</span><span class="cmd-desc">' + $gitInfo + '</span>
-        <span class="cmd-key">L++ binary:</span><span class="cmd-desc">C:\lpp_cmp\lpp.exe</span>
-        <span class="cmd-key">Web shell:</span><span class="cmd-desc">localhost:7681</span>
-      </div>
-    </div>
-    <div class="section">
-      <div class="section-title">Quick Commands</div>
-      <div class="cmd-grid">
-        <span class="cmd-key">lpp hello.lpp</span><span class="cmd-desc">→ Compile L++ source to .exe</span>
-        <span class="cmd-key">.\hello.exe</span><span class="cmd-desc">→ Run generated executable</span>
-        <span class="cmd-key">lpp hello.lpp --run</span><span class="cmd-desc">→ Compile and run in one step</span>
-        <span class="cmd-key">cargo build --release</span><span class="cmd-desc">→ Rebuild L++ from source</span>
-        <span class="cmd-key">git pull origin master</span><span class="cmd-desc">→ Pull latest L++ code</span>
-        <span class="cmd-key">cl /EHsc test.c</span><span class="cmd-desc">→ Compile C with MSVC</span>
-        <span class="cmd-key">.\install.ps1</span><span class="cmd-desc">→ Run full L++ installation</span>
-        <span class="cmd-key">Format-Hex .\hello.exe -Count 512</span><span class="cmd-desc">→ Inspect PE headers</span>
-      </div>
-    </div>
-  </div>
-  <div id="input-area">
-    <span id="prompt">PS C:\lpp_cmp&gt;&nbsp;</span>
-    <input type="text" id="cmd" placeholder="Type a PowerShell command and press Enter..." autocomplete="off" autofocus />
-    <button id="run-btn" onclick="sendCmd()">Run</button>
-  </div>
-  <div id="status-bar">
-    <span><span class="dot">●</span> Shell active</span>
-    <span>L++ v2.0.0 Pure Native</span>
-    <span>Windows GitHub Actions Runner</span>
-    <span>Cloudflare Tunnel</span>
-  </div>
-  <script>
-    const cmdInput = document.getElementById('cmd');
-    const terminal = document.getElementById('terminal');
-
-    cmdInput.addEventListener('keydown', function(e) {
-      if (e.key === 'Enter') { e.preventDefault(); sendCmd(); }
-    });
-
-    async function sendCmd() {
-      const cmd = cmdInput.value.trim();
-      if (!cmd) return;
-      cmdInput.value = '';
-
-      const echo = document.createElement('div');
-      echo.className = 'line prompt-line';
-      echo.textContent = 'PS C:\\lpp_cmp> ' + cmd;
-      terminal.appendChild(echo);
-
-      try {
-        const resp = await fetch('/exec', { method: 'POST', body: new URLSearchParams({ cmd }) });
-        const text = await resp.text();
-        const out = document.createElement('div');
-        out.className = 'line ' + (resp.ok ? 'stdout' : 'stderr');
-        out.textContent = text || '(empty output)';
-        terminal.appendChild(out);
-      } catch(e) {
-        const err = document.createElement('div');
-        err.className = 'line stderr';
-        err.textContent = 'Network error: ' + e.message;
-        terminal.appendChild(err);
-      }
-
-      terminal.scrollTop = terminal.scrollHeight;
-      cmdInput.focus();
-    }
-
-    cmdInput.focus();
-  </script>
-</body>
-</html>
-'@
-        `$buffer = [System.Text.Encoding]::UTF8.GetBytes(`$html)
-        `$response.ContentType = 'text/html; charset=utf-8'
-        `$response.StatusCode = 200
-        `$response.ContentLength64 = `$buffer.Length
-        `$response.OutputStream.Write(`$buffer, 0, `$buffer.Length)
-        `$response.Close()
-    }
-}
-"@
-
-          $webShellScript | Out-File -FilePath C:\web-shell.ps1 -Encoding UTF8
-          Write-Host "[Web Shell] Script written to C:\web-shell.ps1"
-          Start-Process powershell -ArgumentList "-ExecutionPolicy", "Bypass", "-File", "C:\web-shell.ps1" -WindowStyle", "Hidden"
-          Start-Sleep -Seconds 2
-          Write-Host "✅ Web shell started on port 7681"
-
-      # ── 6. Download cloudflared ──────────────────────────────────
       - name: Download cloudflared
         shell: pwsh
         run: |
-          Write-Host ">>> Downloading cloudflared..."
-          $cfPath = "C:\cloudflared.exe"
-          if (-not (Test-Path $cfPath)) {
-            Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile $cfPath
+          if (-not (Test-Path C:\cloudflared.exe)) {
+            Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile C:\cloudflared.exe
           }
-          & $cfPath --version
-          Write-Host "✅ cloudflared ready"
+          & C:\cloudflared.exe --version
 
-      # ── 7. Start Cloudflare tunnel (quick temp URL) ──────────────
-      - name: Start Cloudflare tunnel (quick temp URL)
+      - name: Start Cloudflare quick tunnel
         shell: pwsh
         run: |
-          Write-Host ">>> Starting Cloudflare quick tunnel..."
-          $cfPath = "C:\cloudflared.exe"
-
-          # Start cloudflared tunnel to web shell on port 7681
-          # --url gives a random trycloudflare.com URL instantly (no token needed)
-          $proc = Start-Process $cfPath -ArgumentList "tunnel", "--url", "http://localhost:7681" -NoNewWindow -PassThru -RedirectStandardOutput C:\cloudflared.log -RedirectStandardError C:\cloudflared-err.log
+          $proc = Start-Process C:\cloudflared.exe -ArgumentList "tunnel","--url","http://localhost:7681" -NoNewWindow -PassThru -RedirectStandardOutput C:\cflog.txt -RedirectStandardError C:\cferr.txt
           Write-Host "cloudflared PID: $($proc.Id)"
-          Start-Sleep -Seconds 8
-
-          if ($proc.HasExited) {
-            Write-Host "❌ cloudflared exited with code: $($proc.ExitCode)"
-            Write-Host "STDOUT:"
-            Get-Content C:\cloudflared.log | Select-Object -First 20
-            Write-Host "STDERR:"
-            Get-Content C:\cloudflared-err.log | Select-Object -First 10
-          } else {
-            Write-Host "✅ cloudflared is running"
-          }
-
-          # Extract the tunnel URL from cloudflared output
-          $tunnelUrl = ""
-          $attempts = 0
-          while ($attempts -lt 15 -and [string]::IsNullOrWhiteSpace($tunnelUrl)) {
+          Start-Sleep -Seconds 12
+          $url = ""
+          $try = 0
+          while ($try -lt 10 -and [string]::IsNullOrWhiteSpace($url)) {
             Start-Sleep -Seconds 2
-            $attempts += 2
-            $log = Get-Content C:\cloudflared.log -Raw -ErrorAction SilentlyContinue
-            if ($log -match 'https://[a-z0-9-]+\.trycloudflare\.com') {
-              $tunnelUrl = $Matches[0]
-            }
+            $log = Get-Content C:\cflog.txt -Raw -ErrorAction SilentlyContinue
+            if ($log -match "https://[a-z0-9-]+\.trycloudflare\.com") { $url = $Matches[0] }
+            $try += 2
           }
-
-          if ($tunnelUrl) {
+          if ($url) {
             Write-Host ""
-            Write-Host "═══════════════════════════════════════════════════════════════════"
-            Write-Host "  🐉 WINDOWS REMOTE DEBUG TERMINAL IS LIVE"
-            Write-Host "═══════════════════════════════════════════════════════════════════"
-            Write-Host ""
-            Write-Host "  🌐 OPEN THIS URL IN YOUR BROWSER:"
-            Write-Host ""
-            Write-Host "  $tunnelUrl"
-            Write-Host ""
-            Write-Host "  You get a full interactive PowerShell terminal on Windows!"
-            Write-Host ""
-            Write-Host "═══════════════════════════════════════════════════════════════════"
-            Write-Host ""
-            Write-Host "##vso[task.setvariable variable=TUNNEL_URL;isoutput=true;]$tunnelUrl"
+            Write-Host "======================================================================"
+            Write-Host "  LIVE: $url"
+            Write-Host "======================================================================"
+            Write-Host "  Open this URL in your browser for a live Windows PowerShell shell"
+            Write-Host "  Try: lpp hello.lpp && .\hello.exe"
+            Write-Host "======================================================================"
+            Write-Host "##vso[task.setvariable variable=TUNNEL_URL;isoutput=true]$url"
           } else {
-            Write-Host "❌ Could not get tunnel URL. Check C:\cloudflared.log"
-            Get-Content C:\cloudflared.log | Select-Object -First 20
+            Write-Host "No tunnel URL found"
+            Get-Content C:\cflog.txt | Select-Object -First 15
           }
 
-      # ── 8. Verify everything ─────────────────────────────────────
       - name: Verify setup
         shell: pwsh
         run: |
-          Write-Host ">>> Verifying setup..."
-
-          # Check web shell
-          try {
-            $r = Invoke-WebRequest -Uri "http://localhost:7681/" -TimeoutSec 5 -UseBasicParsing
-            Write-Host "✅ Web shell: HTTP $($r.StatusCode)"
-          } catch {
-            Write-Host "⚠️  Web shell: $($_.Exception.Message)"
-          }
-
-          # Check L++
           Set-Location C:\lpp_cmp
-          $v = & C:\lpp_cmp\lpp.exe --version 2>&1
-          Write-Host "✅ L++: $v"
-
-          # Check MSVC
-          $c = & cl.exe /version 2>&1 | Select-Object -First 1
-          Write-Host "✅ MSVC: $c"
-
-          # Check cloudflared log for tunnel URL
-          $log = Get-Content C:\cloudflared.log -Raw -ErrorAction SilentlyContinue
-          if ($log -match 'https://[a-z0-9-]+\.trycloudflare\.com') {
-            $url = $Matches[0]
-            Write-Host "🌐 Tunnel URL: $url"
+          Write-Host "L++: $(& C:\lpp_cmp\lpp.exe --version 2>&1)"
+          Write-Host "MSVC: $(& cl.exe /version 2>&1 | Select-Object -First 1)"
+          $log = Get-Content C:\cflog.txt -Raw -ErrorAction SilentlyContinue
+          if ($log -match "https://[a-z0-9-]+\.trycloudflare\.com") {
+            Write-Host "Tunnel: $($Matches[0])"
           }
 
-      # ── 9. Keep-alive loop ───────────────────────────────────────
       - name: Keep tunnel alive
         shell: pwsh
         run: |
-          Write-Host ">>> Starting keep-alive loop (4 hour max)..."
-
-          $tunnelUrl = ""
-          $log = Get-Content C:\cloudflared.log -Raw -ErrorAction SilentlyContinue
-          if ($log -match 'https://[a-z0-9-]+\.trycloudflare\.com') {
-            $tunnelUrl = $Matches[0]
-          }
-
+          $url = ""
+          $log = Get-Content C:\cflog.txt -Raw -ErrorAction SilentlyContinue
+          if ($log -match "https://[a-z0-9-]+\.trycloudflare\.com") { $url = $Matches[0] }
           Write-Host ""
-          Write-Host "═══════════════════════════════════════════════════════════════════"
-          Write-Host "  🐉 OPEN IN BROWSER: $tunnelUrl"
-          Write-Host "═══════════════════════════════════════════════════════════════════"
+          Write-Host "======================================================================"
+          Write-Host "  OPEN IN BROWSER: $url"
+          Write-Host "======================================================================"
+          Write-Host "  Try: lpp hello.lpp && .\hello.exe"
+          Write-Host "  Fix: notepad C:\lpp_cmp\src\pm.rs"
+          Write-Host "  Push: git add . && git commit -m 'fix' && git push"
+          Write-Host "  Cancel workflow to shut down"
+          Write-Host "======================================================================"
           Write-Host ""
-          Write-Host "  Quick test commands to try:"
-          Write-Host "    lpp hello.lpp && .\hello.exe"
-          Write-Host "    git log --oneline -5"
-          Write-Host "    cargo build --release"
-          Write-Host "    Format-Hex .\hello.exe -Count 512 | Select-Object -First 20"
-          Write-Host ""
-          Write-Host "  The URL above stays the same for the entire session."
-          Write-Host "  Cancel the workflow to shut down the terminal."
-          Write-Host ""
-          Write-Host "═══════════════════════════════════════════════════════════════════"
-          Write-Host ""
-
-          # Heartbeat every 30s
-          $count = 0
-          while ($count -lt 480) {
+          $i = 0
+          while ($i -lt 480) {
             Start-Sleep -Seconds 30
-            $count++
-
-            $mins = [math]::Round($count * 0.5)
-            $health = "unknown"
-
-            try {
-              $h = Invoke-WebRequest -Uri "http://localhost:7681/" -TimeoutSec 3 -UseBasicParsing -ErrorAction SilentlyContinue
-              $health = if ($h.StatusCode -eq 200) { "✅" } else { "⚠ $($h.StatusCode)" }
-            } catch {
-              $health = "⚠ unreachable"
-            }
-
-            Write-Host "[$('{0:D2}' -f $mins)m] web-shell: $health | tunnel: $tunnelUrl"
-
-            # Refresh tunnel URL if needed
-            if ([string]::IsNullOrWhiteSpace($tunnelUrl)) {
-              $log = Get-Content C:\cloudflared.log -Raw -ErrorAction SilentlyContinue
-              if ($log -match 'https://[a-z0-9-]+\.trycloudflare\.com') {
-                $tunnelUrl = $Matches[0]
-                Write-Host "##vso[task.setvariable variable=TUNNEL_URL;isoutput=true;]$tunnelUrl"
-              }
-            }
+            $i++
+            $m = [math]::Round($i * 0.5)
+            $h = "DOWN"
+            try { $r = Invoke-WebRequest -Uri "http://localhost:7681/" -TimeoutSec 3 -UseBasicParsing -ErrorAction SilentlyContinue; $h = if ($r.StatusCode -eq 200) { "OK" } else { "HTTP $($r.StatusCode)" } } catch {}
+            Write-Host "[$('{0:D2}' -f $m)m] shell=$h url=$url"
           }
 
-          Write-Host ">>> Session ended (4 hour limit)"
-
-      # ── 10. Final report ─────────────────────────────────────────
       - name: Final report
         if: always()
         shell: pwsh
         run: |
-          Write-Host ">>> Final Report"
           Set-Location C:\lpp_cmp
           Write-Host "L++ HEAD: $(git log -1 --oneline)"
-          if (Test-Path C:\lpp_cmp\lpp.exe) {
-            $size = [math]::Round((Get-Item C:\lpp_cmp\lpp.exe).Length / 1MB, 2)
-            Write-Host "L++ binary: EXISTS ($size MB)"
-          }
-          Write-Host "Cloudflared log (last 10):"
-          Get-Content C:\cloudflared.log -ErrorAction SilentlyContinue | Select-Object -Last 10
+          if (Test-Path C:\lpp_cmp\lpp.exe) { $mb = [math]::Round((Get-Item C:\lpp_cmp\lpp.exe).Length / 1MB, 2); Write-Host "Binary: $mb MB" }
+          Get-Content C:\cflog.txt -ErrorAction SilentlyContinue | Select-Object -Last 5
