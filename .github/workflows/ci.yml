@@ -173,6 +173,13 @@ jobs:
           "@ | Set-Content -Path $dumpCmd -Encoding ascii
           cmd.exe /d /c $dumpCmd
           # Step 4: run and verify output
+          # Dump raw hex of first 128 bytes of .text for inspection
+          $bytes = [System.IO.File]::ReadAllBytes("$work\direct.exe")
+          $textOff = 0x400  # text raw offset from header
+          Write-Host "TEXT hex (first 128 bytes):"
+          $hex = ($bytes[$textOff..($textOff+127)] | ForEach-Object { '{0:X2}' -f $_ }) -join ' '
+          Write-Host $hex
+          # Try running
           $actual = (& "$work\direct.exe" 2>&1 | ForEach-Object { $_.Trim() }) -join "`n"
           if ($LASTEXITCODE -ne 0 -or $actual -ne "7") { throw "Unexpected direct PE output: '$actual' (exit $LASTEXITCODE)" }
           Write-Host "PASS Direct PE: output=$actual"
