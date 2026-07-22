@@ -505,11 +505,16 @@ fn parse_coff_object(
         let idx = sec.index();
         let name = sec.name().unwrap_or("");
 
-        // Skip non-loadable debug and directive sections
+        // Skip non-loadable debug, directive, and exception handling sections.
+        // .xdata and .pdata are Windows SEH tables — they cause SECREL
+        // relocations that corrupt .text when improperly handled.  The
+        // freestanding runtime doesn't need exception unwinding.
         if name.starts_with(".debug")
             || name.starts_with(".drectve")
             || name.starts_with(".comment")
             || name.starts_with(".note")
+            || name.starts_with(".xdata")
+            || name.starts_with(".pdata")
         {
             continue;
         }
@@ -1222,8 +1227,19 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
                     if patch + 4 > patch_buf.len() {
                         return Err(format!("'{}': SECREL patch OOB", obj.path.display()));
                     }
-                    let val32 = target as u32;
-                    patch_buf[patch..patch + 4].copy_from_slice(&val32.to_le_bytes());
+                    // SECREL = offset of target from the beginning of target's section.
+                    // resolve_pe_target returns the full RVA; subtract the section base.
+                    // Determine which section the target is in by checking RVA ranges.
+                    let secrel_val = if target < rdata_rva as u64 {
+                        target - text_rva as u64   // target in .text
+                    } else if target < data_rva as u64 {
+                        target - rdata_rva as u64  // target in .rdata
+                    } else if target < idata_rva as u64 {
+                        target - data_rva as u64   // target in .data
+                    } else {
+                        target // fallback
+                    };
+                    patch_buf[patch..patch + 4].copy_from_slice(&(secrel_val as u32).to_le_bytes());
                 }
                 _ => {
                     return Err(format!(
@@ -1515,7 +1531,7 @@ fn resolve_pe_target(
     rdata_rva: u32,
     data_rva: u32,
     tls_rva: u32,
-    _idata_rva: u32,
+    idata_rva: u32,
 ) -> Result<u64, String> {
     // Self-references — return the RVA of the section base within this input
     if rel.target.starts_with("__self_text__") {
