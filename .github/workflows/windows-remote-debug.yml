@@ -24,39 +24,19 @@ jobs:
           }
           git log -1 --oneline
 
-      - name: Install MSVC Build Tools
-        shell: pwsh
-        run: |
-          $vcVars = "${env:ProgramFiles}\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
-          if (-not (Test-Path $vcVars)) {
-            Invoke-WebRequest -Uri "https://aka.ms/vs/17/release/vs_buildtools.exe" -OutFile C:\vs_buildtools.exe
-            Start-Process -FilePath "C:\vs_buildtools.exe" -ArgumentList "--add","Microsoft.VisualStudio.Component.VC.Tools.x86.x64","--add","Microsoft.VisualStudio.Component.Windows11SDK.22621","--quiet","--norestart","--wait" -NoNewWindow -Wait
-          }
-          if (Test-Path $vcVars) { & "$vcVars" > $null }
-          cl.exe /version 2>&1 | Select-Object -First 1
-
-      - name: Install Rust toolchain
-        shell: pwsh
-        run: |
-          if (-not (Get-Command rustc -ErrorAction SilentlyContinue)) {
-            Invoke-WebRequest -Uri "https://win.rustup.rs" -OutFile C:\rustup-init.exe
-            Start-Process -FilePath "C:\rustup-init.exe" -ArgumentList "-y","--default-toolchain","stable","--profile","minimal" -NoNewWindow -Wait
-          }
-          $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
-          rustc --version
-
-      - name: Build L++ from source
+      - name: Check pre-built lpp.exe
         shell: pwsh
         run: |
           Set-Location C:\lpp_cmp
-          cargo build --release 2>&1 | Tee-Object -FilePath C:\build.log
-          if (Test-Path C:\lpp_cmp\target\release\lpp.exe) {
-            Copy-Item C:\lpp_cmp\target\release\lpp.exe C:\lpp_cmp\lpp.exe -Force
-            Write-Host "L++ build SUCCESS"
+          # Check if we have a pre-built lpp.exe from release
+          if (Test-Path C:\lpp_cmp\lpp.exe) {
+            $v = & C:\lpp_cmp\lpp.exe --version 2>&1
+            Write-Host "Pre-built lpp.exe found: $v"
           } else {
-            Get-Content C:\build.log | Select-Object -Last 20
-            exit 1
+            Write-Host "No pre-built lpp.exe found"
           }
+          # Always check git HEAD
+          Write-Host "L++ HEAD: $(git log -1 --oneline)"
 
       - name: Write web shell script
         shell: pwsh
@@ -111,18 +91,22 @@ jobs:
           $lines += '    $h += "<div id=b>L++ Remote Debug Terminal -- Live Windows Shell</div>"'
           $lines += '    $h += "<div id=h><h1>Terminal</h1><span style=background:#7c3aed;color:white;padding:2px 8px;border-radius:10px;font-size:12px>v2.0.0</span>"'
           $lines += '    $h += "<span style=margin-left:auto;font-size:12px;color:#6b7280>HOST: $hn | USER: $wu | C:\lpp_cmp</span></div>"'
-          $lines += '    $h += "<div id=t>"
+          $lines += '    $h += "<div id=t>'
           $lines += '    $h += "<div class=s><span class=t>Connected</span><br><span class=k>Git:</span> <span class=d>$gi</span><br><span class=k>Binary:</span> <span class=d>C:\lpp_cmp\lpp.exe</span></div>"'
+          $lines += '    $h += "<div class=s><span class=t>L++ v2.0.0 Pure Native Pipeline</span><br>"'
+          $lines += '    $h += "The L++ compiler uses Cranelift AOT to emit native PE .exe files.<br>"'
+          $lines += '    $h += "No C transpilation or MSVC compilation needed at build time.</div>"'
           $lines += '    $h += "<div class=s><span class=t>Quick Commands</span><br>"'
-          $lines += '    $h += "<span class=k>lpp hello.lpp</span> <span class=d>- Compile L++ source</span><br>"'
-          $lines += '    $h += "<span class=k>.\hello.exe</span> <span class=d>- Run generated exe</span><br>"'
-          $lines += '    $h += "<span class=k>lpp hello.lpp --run</span> <span class=d>- Compile and run</span><br>"'
-          $lines += '    $h += "<span class=k>cargo build --release</span> <span class=d>- Rebuild L++</span><br>"'
-          $lines += '    $h += "<span class=k>git pull</span> <span class=d>- Update source</span><br>"'
-          $lines += '    $h += "<span class=k>Format-Hex .\hello.exe -Count 512</span> <span class=d>- Inspect PE headers</span></div>"'
+          $lines += '    $h += "<span class=k>lpp hello.lpp</span> <span class=d>- Compile L++ source to native .exe</span><br>"'
+          $lines += '    $h += "<span class=k>.\hello.exe</span> <span class=d>- Run generated native exe</span><br>"'
+          $lines += '    $h += "<span class=k>lpp hello.lpp --run</span> <span class=d>- Compile and run in one step</span><br>"'
+          $lines += '    $h += "<span class=k>git pull origin master</span> <span class=d>- Update to latest code</span><br>"'
+          $lines += '    $h += "<span class=k>git status && git log --oneline -5</span> <span class=d>- Check git state</span><br>"'
+          $lines += '    $h += "<span class=k>Format-Hex .\hello.exe -Count 512</span> <span class=d>- Inspect PE headers (MZ, PE, sections)</span><br>"'
+          $lines += '    $h += "<span class=k>git add . && git commit -m \"fix\" && git push</span> <span class=d>- Push fixes to GitHub</span></div>"'
           $lines += '    $h += "</div>"'
           $lines += '    $h += "<div id=in><span id=pr>PS C:\lpp_cmp&gt;&nbsp;</span><input id=i placeholder="Type a command..." autocomplete=off autofocus /><button id=b2 onclick=sc()>Run</button></div>"'
-          $lines += '    $h += "<div id=s2><span style=color:#34d399>*</span> Shell active | L++ v2.0.0 | Cloudflare Tunnel</div>"'
+          $lines += '    $h += "<div id=s2><span style=color:#34d399>*</span> Shell active | L++ v2.0.0 Pure Native | Cloudflare Tunnel</div>"'
           $lines += '    $h += "<script>const i=document.getElementById(`"i`"),t=document.getElementById(`"t`");'
           $lines += 'i.addEventListener(`"keydown`",e=>{if(e.key==`"Enter`")sc()});'
           $lines += 'async function sc(){const c=i.value.trim();if(!c)return;i.value=`"`";'
@@ -195,8 +179,9 @@ jobs:
         shell: pwsh
         run: |
           Set-Location C:\lpp_cmp
-          Write-Host "L++: $(& C:\lpp_cmp\lpp.exe --version 2>&1)"
-          Write-Host "MSVC: $(& cl.exe /version 2>&1 | Select-Object -First 1)"
+          $v = & C:\lpp_cmp\lpp.exe --version 2>&1
+          Write-Host "L++: $v"
+          Write-Host "Git: $(git log -1 --oneline)"
           $log = Get-Content C:\cflog.txt -Raw -ErrorAction SilentlyContinue
           if ($log -match "https://[a-z0-9-]+\.trycloudflare\.com") {
             Write-Host "Tunnel: $($Matches[0])"
@@ -212,10 +197,13 @@ jobs:
           Write-Host "======================================================================"
           Write-Host "  OPEN IN BROWSER: $url"
           Write-Host "======================================================================"
-          Write-Host "  Try: lpp hello.lpp && .\hello.exe"
-          Write-Host "  Fix: notepad C:\lpp_cmp\src\pm.rs"
-          Write-Host "  Push: git add . && git commit -m 'fix' && git push"
-          Write-Host "  Cancel workflow to shut down"
+          Write-Host "  L++ v2.0.0 Pure Native Pipeline - no cl.exe needed!"
+          Write-Host ""
+          Write-Host "  TEST: lpp hello.lpp && .\hello.exe"
+          Write-Host "  FIX:  notepad C:\lpp_cmp\src\pm.rs"
+          Write-Host "  PUSH: git add . && git commit -m 'fix' && git push origin master"
+          Write-Host ""
+          Write-Host "  Cancel workflow to shut down the terminal"
           Write-Host "======================================================================"
           Write-Host ""
           $i = 0
