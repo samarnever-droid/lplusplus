@@ -159,8 +159,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "lpp-link PE link failed (exit $LASTEXITCODE)" }
           # Step 3b: minimal exit-only test (no runtime needed)
           @"
+          def noop() -> Int:
+              return 0
           def main():
-              x = 1
+              noop()
           "@ | Set-Content -Path "$work\exit_only.lpp" -Encoding ascii
           & target\release\lpp.exe "$work\exit_only.lpp"
           & target\release\lpp-link.exe pe "$work\exit_only.obj" -o "$work\exit_only.exe" 2>&1
