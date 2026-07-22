@@ -1086,8 +1086,12 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
         put_u32(&mut merged_rdata, tls_dir_off + 36, 0);        // Characteristics
     }
 
-    // Fill .refptr. slots using the now-known RVAs.
+    // Fill .refptr. slots in .data using the now-known RVAs.
+    // Build refptr_offsets mapping ".refptr.X" → full RVA of the slot in .data.
+    let mut refptr_rvas: HashMap<String, usize> = HashMap::new();
     for (i, name) in refptr_names.iter().enumerate() {
+        let slot_rva = data_rva as usize + refptr_data_off + i * 8;
+        refptr_rvas.insert(format!(".refptr.{name}"), slot_rva);
         if let Some((class, abs)) = global_syms.get(name) {
             let rva = match class {
                 SectionClass::Text => text_rva as u64 + abs,
@@ -1100,8 +1104,8 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
         }
     }
 
-    // Build imports
-    let import = build_imports(&raw_imports, &refptr_names, idata_rva)?;
+    // Build imports (refptrs no longer stored in .idata — pass empty slice)
+    let import = build_imports(&raw_imports, &[], idata_rva)?;
     let has_idata = !import.data.is_empty();
     let idata_raw_size = if has_idata {
         pe_align(import.data.len(), PE_FILE_ALIGN)
@@ -1112,11 +1116,9 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
     // ── 5. Resolve relocations ───────────────────────────────────────────
     let mut abs_rvas: Vec<u32> = Vec::new();
 
-    // Record .refptr. table slot RVAs for base relocations (ASLR)
-    for (name, slot_off) in &import.refptr_offsets {
-        if name.starts_with(".refptr.") {
-            abs_rvas.push(idata_rva + *slot_off as u32);
-        }
+    // Record .refptr. data slot RVAs for base relocations (ASLR)
+    for (_, slot_rva) in &refptr_rvas {
+        abs_rvas.push(*slot_rva as u32);
     }
 
     for (idx, obj) in objs.iter().enumerate() {
@@ -1147,7 +1149,7 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
                 &rel,
                 &global_syms,
                 &import.iat_rvas,
-                &import.refptr_offsets,
+                &refptr_rvas,
                 &bases[idx],
                 text_rva,
                 rdata_rva,
@@ -1228,29 +1230,7 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
         0
     };
 
-    // ── 6. Resolve .refptr. data section entries ─────────────────────────
-    for (i, name) in refptr_names.iter().enumerate() {
-        let pos = refptr_data_off + i * 8;
-        if pos + 8 > merged_data.len() {
-            continue;
-        }
-        let val = u64::from_le_bytes(merged_data[pos..pos + 8].try_into().unwrap());
-        if val != 0 {
-            continue; // Already resolved
-        }
-        if let Some((class, abs)) = global_syms.get(name) {
-            let rva = match class {
-                SectionClass::Text => text_rva as u64 + abs,
-                SectionClass::Rodata => rdata_rva as u64 + abs,
-                SectionClass::Data => data_rva as u64 + abs,
-                SectionClass::Tls => tls_rva as u64 + abs,
-            };
-            let addr = PE_IMAGE_BASE + rva;
-            merged_data[pos..pos + 8].copy_from_slice(&addr.to_le_bytes());
-            // Track for ASLR base relocations — these are absolute addresses
-            abs_rvas.push(data_rva + pos as u32);
-        }
-    }
+    // ── 6. (refptr data slots already filled above) ───────────────────────
 
     // ── 7. Compute raw file offsets and active section count ─────────────
     let has_text = !merged_text.is_empty();
@@ -1349,8 +1329,7 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
     let dirs = opt + 112;
     if has_idata {
         put_u32(&mut pe, dirs + 8, idata_rva); // Import directory (index 1)
-        let real_import_size = import.data.len() - refptr_names.len() * 8;
-        put_u32(&mut pe, dirs + 12, real_import_size as u32);
+        put_u32(&mut pe, dirs + 12, import.data.len() as u32);
 
         put_u32(&mut pe, dirs + 12 * 8, import.iat_rva); // IAT directory (index 12)
         put_u32(
@@ -1583,6 +1562,27 @@ fn resolve_pe_target(
         return Ok(tls_rva as u64 + ext_base as u64);
     }
 
+    // .refptr. entry — resolve via the linker-managed slot in .data that
+    // was filled with (PE_IMAGE_BASE + target_rva).  Do NOT use the original
+    // .rdata$.refptr section from the COFF object (it contains zeros).
+    if rel.target.starts_with(".refptr.") {
+        if let Some(&rva) = refptr_offsets.get(&rel.target) {
+            return Ok(rva as u64);
+        }
+        // Fallback: resolve the underlying symbol directly
+        if let Some(name) = rel.target.strip_prefix(".refptr.") {
+            if let Some((class, abs)) = global_syms.get(name) {
+                let rva = match class {
+                    SectionClass::Text => text_rva as u64 + abs,
+                    SectionClass::Rodata => rdata_rva as u64 + abs,
+                    SectionClass::Data => data_rva as u64 + abs,
+                    SectionClass::Tls => tls_rva as u64 + abs,
+                };
+                return Ok(rva);
+            }
+        }
+    }
+
     // Global symbol — compute RVA from section base + internal offset.
     // Check local definitions BEFORE IAT entries so that symbols defined
     // in the freestanding runtime (memcpy, memset, __chkstk, etc.) resolve
@@ -1604,11 +1604,6 @@ fn resolve_pe_target(
     // external symbols not defined locally)
     if let Some(rva) = iat_rvas.get(&rel.target) {
         return Ok(*rva as u64);
-    }
-
-    // .refptr. entry — return RVA of .refptr. table slot inside idata
-    if let Some(&off) = refptr_offsets.get(&rel.target) {
-        return Ok(idata_rva as u64 + off as u64);
     }
 
     // .refptr. fallback if not present in refptr_offsets table
