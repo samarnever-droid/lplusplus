@@ -550,8 +550,9 @@ fn parse_coff_object(
             SectionClass::Data => &mut data_buf,
             SectionClass::Tls => &mut tls_buf,
         };
-        let base = align_up(buf.len(), 16);
-        buf.resize(base, 0x00);
+        let sec_align = usize::try_from(sec.align()).unwrap_or(16).max(1);
+        let base = align_up(buf.len(), sec_align);
+        buf.resize(base, if class == SectionClass::Text { 0xCC } else { 0x00 });
 
         // BSS / uninitialized sections have zero on-disk size; just reserve virtual space.
         let is_zero_fill = matches!(
@@ -610,8 +611,8 @@ fn parse_coff_object(
         }
 
         // Pad to alignment for next section of same class
-        let padded = align_up(buf.len(), 16);
-        buf.resize(padded, 0x00);
+        let padded = align_up(buf.len(), sec_align);
+        buf.resize(padded, if class == SectionClass::Text { 0xCC } else { 0x00 });
     }
 
     let mut syms = Vec::new();
