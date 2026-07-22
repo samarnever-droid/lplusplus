@@ -581,7 +581,6 @@ fn parse_coff_object(
         map.push((idx, class, base));
         // Debug: check if this extend_from_slice overwrote a watched byte
         if class == SectionClass::Text && buf.len() > 0x233F && base <= 0x233F {
-            eprintln!("[WATCH] After SECT copy: text[0x233F]={:#04x} section={} base={:#x} end={:#x}",
                 buf[0x233F], name, base, base + data.len());
         }
 
@@ -1156,19 +1155,23 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
             // Use the section class recorded during COFF parse instead of
             // guessing from offset ranges (which fails when text_base ==
             // rdata_base == 0 for the first object).
+            // Add the per-object section base to get the merged buffer offset.
             let (patch_buf, patch_rva) = match rel.section_class {
                 SectionClass::Text => (&mut merged_text, text_rva),
                 SectionClass::Rodata => (&mut merged_rdata, rdata_rva),
                 SectionClass::Data => (&mut merged_data, data_rva),
                 SectionClass::Tls => (&mut merged_tls, tls_rva),
             };
-            let patch = rel.offset;
+            let section_base = match rel.section_class {
+                SectionClass::Text => b.text_base,
+                SectionClass::Rodata => b.rdata_base,
+                SectionClass::Data => b.data_base,
+                SectionClass::Tls => b.tls_base,
+            };
+            let patch = section_base + rel.offset;
             let patch_rva_addr = patch_rva as i64 + patch as i64;
 
             // Watch for corruption of lpp_print_int byte 47
-            let watch_offset = 0x23AF; // 0x2360 + 47 + padding
-            if rel.section_class == SectionClass::Text && patch <= watch_offset && patch + 8 > watch_offset {
-                eprintln!("[WATCH-REL] about to patch text[{}..{}] target='{}' rnum={} section={:?}",
                     patch, patch + 8, rel.target, coff_reloc_number(&rel), rel.section_class);
             }
 
