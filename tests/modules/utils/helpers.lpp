@@ -1,2 +1,8 @@
 def double(x: Int) -> Int:
     return x * 2
+
+def triple(x: Int) -> Int:
+    return x * 3
+
+def is_positive(x: Int) -> Bool:
+    return x > 0

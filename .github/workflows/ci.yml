@@ -56,6 +56,44 @@ jobs:
         run: python3 benchmarks/king20/run.py --suite experimental
       - name: Run King 20 direct ELF
         run: python3 benchmarks/king20/run_direct_elf.py
+      - name: Multi-file import project (Linux ELF)
+        run: |
+          cargo build --release --bin lpp --bin lpp-link 2>/dev/null
+          WORK=$(mktemp -d)
+          cp tests/modules/*.lpp "$WORK/"
+          mkdir -p "$WORK/utils"
+          cp tests/modules/utils/*.lpp "$WORK/utils/"
+
+          # Compile full project
+          LPP_AOT=1 target/release/lpp "$WORK/test_full_project.lpp"
+          cc -O2 -fPIC -c lpp_runtime.c -o "$WORK/rt.o"
+          target/release/lpp-link elf "$WORK/test_full_project.o" "$WORK/rt.o" -o "$WORK/test_full_project"
+          chmod +x "$WORK/test_full_project"
+          
+          OUT=$("$WORK/test_full_project")
+          EXPECTED=$(printf '30\n30\n49\n42\n30\n27\nhello from greet module\ngoodbye from greet module')
+          if [ "$OUT" = "$EXPECTED" ]; then
+            echo "PASS test_full_project (Linux ELF)"
+          else
+            echo "FAIL! Expected: $EXPECTED"
+            echo "Got: $OUT"
+            exit 1
+          fi
+
+          # Test from X import Y
+          LPP_AOT=1 target/release/lpp "$WORK/test_from_import.lpp"
+          target/release/lpp-link elf "$WORK/test_from_import.o" "$WORK/rt.o" -o "$WORK/test_from_import"
+          chmod +x "$WORK/test_from_import"
+          OUT2=$("$WORK/test_from_import")
+          EXPECTED2=$(printf '300\n121\n50')
+          if [ "$OUT2" = "$EXPECTED2" ]; then
+            echo "PASS test_from_import (Linux ELF)"
+          else
+            echo "FAIL! Expected: $EXPECTED2"
+            echo "Got: $OUT2"
+            exit 1
+          fi
+          echo "ALL MODULE TESTS PASSED (Linux)"
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4
         with:
@@ -175,6 +213,64 @@ jobs:
       - name: King20 direct PE gate
         shell: pwsh
         run: .\tests\test_direct_pe_king20.ps1
+
+      - name: Multi-file import project (Windows PE)
+        shell: pwsh
+        run: |
+          $work = Join-Path $env:RUNNER_TEMP "lpp-modules-test"
+          New-Item -ItemType Directory -Force $work | Out-Null
+
+          # Copy module test files
+          Copy-Item tests\modules\*.lpp $work\
+          New-Item -ItemType Directory -Force "$work\utils" | Out-Null
+          Copy-Item tests\modules\utils\*.lpp "$work\utils\"
+
+          # --- Test 1: full project with import math + import greet + import utils.helpers ---
+          Write-Host "=== Test 1: import math + greet + utils.helpers ==="
+          $env:LPP_AOT = "1"
+          & target\release\lpp.exe "$work\test_full_project.lpp"
+          if ($LASTEXITCODE -ne 0) { throw "Compile test_full_project.lpp failed" }
+          $obj = "$work\test_full_project.obj"
+          if (-not (Test-Path $obj)) { throw "Object not created" }
+
+          # Build freestanding runtime
+          $buildRt = "$work\build_rt.cmd"
+          @"
+          @echo off
+          call "%VSCMD_BAT%" >nul || exit /b 1
+          cl.exe /nologo /O2 /GS- /Gs1000000 /DLPP_FREESTANDING /c runtime\windows_x86_64_min.c "/Fo:$work\rt.obj" || exit /b 1
+          "@ | Set-Content -Path $buildRt -Encoding ascii
+          cmd.exe /d /c $buildRt
+          if ($LASTEXITCODE -ne 0) { throw "Runtime compile failed" }
+
+          # Link with lpp-link PE
+          & target\release\lpp-link.exe pe "$obj" "$work\rt.obj" -o "$work\test_full_project.exe" 2>&1
+          if ($LASTEXITCODE -ne 0) { throw "lpp-link PE failed" }
+
+          # Run and check output
+          $out = (& "$work\test_full_project.exe" 2>&1) -join "`n"
+          Write-Host "Output:`n$out"
+          $expected = "30`n30`n49`n42`n30`n27`nhello from greet module`ngoodbye from greet module"
+          if ($out.Trim() -ne $expected.Trim()) {
+            throw "MISMATCH! Expected:`n$expected`nGot:`n$out"
+          }
+          Write-Host "PASS test_full_project"
+
+          # --- Test 2: from X import Y ---
+          Write-Host "`n=== Test 2: from math import add, square + from utils.helpers import double ==="
+          & target\release\lpp.exe "$work\test_from_import.lpp"
+          if ($LASTEXITCODE -ne 0) { throw "Compile test_from_import.lpp failed" }
+          & target\release\lpp-link.exe pe "$work\test_from_import.obj" "$work\rt.obj" -o "$work\test_from_import.exe" 2>&1
+          if ($LASTEXITCODE -ne 0) { throw "lpp-link PE failed for from_import" }
+          $out2 = (& "$work\test_from_import.exe" 2>&1) -join "`n"
+          Write-Host "Output:`n$out2"
+          $expected2 = "300`n121`n50"
+          if ($out2.Trim() -ne $expected2.Trim()) {
+            throw "MISMATCH! Expected:`n$expected2`nGot:`n$out2"
+          }
+          Write-Host "PASS test_from_import"
+
+          Write-Host "`n=== ALL MODULE TESTS PASSED ==="
 
   macos-host-link:
     runs-on: macos-latest

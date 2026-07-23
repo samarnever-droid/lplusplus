@@ -1,5 +1,16 @@
 def add(a: Int, b: Int) -> Int:
     return a + b
 
+def subtract(a: Int, b: Int) -> Int:
+    return a - b
+
 def multiply(a: Int, b: Int) -> Int:
     return a * b
+
+def square(x: Int) -> Int:
+    return multiply(x, x)
+
+def abs_val(x: Int) -> Int:
+    if x < 0:
+        return subtract(0, x)
+    return x

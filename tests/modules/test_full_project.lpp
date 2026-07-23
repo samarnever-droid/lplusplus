@@ -1,0 +1,25 @@
+import math
+import greet
+import utils.helpers
+
+def main():
+    a := add(10, 20)
+    print(a)
+
+    b := multiply(5, 6)
+    print(b)
+
+    c := square(7)
+    print(c)
+
+    d := abs_val(-42)
+    print(d)
+
+    e := double(15)
+    print(e)
+
+    f := triple(9)
+    print(f)
+
+    hello()
+    farewell()

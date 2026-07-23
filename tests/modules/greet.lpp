@@ -1,0 +1,5 @@
+def hello():
+    print_str("hello from greet module")
+
+def farewell():
+    print_str("goodbye from greet module")

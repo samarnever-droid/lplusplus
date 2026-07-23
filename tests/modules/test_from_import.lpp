@@ -1,7 +1,12 @@
-from math import add, multiply
+from math import add, square
+from utils.helpers import double
 
 def main():
-    a := add(10, 20)
-    b := multiply(5, 6)
+    a := add(100, 200)
     print(a)
+
+    b := square(11)
     print(b)
+
+    c := double(25)
+    print(c)
