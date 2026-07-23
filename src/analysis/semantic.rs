@@ -178,7 +178,11 @@ impl Resolver {
                         BindingKind::FunctionName,
                     );
                 }
-                TopLevel::Import(module) => {
+                TopLevel::Import(import_kind) => {
+                    let module = match import_kind {
+                        crate::ast::ImportKind::Module { path, .. } => path.last().cloned().unwrap_or_default(),
+                        crate::ast::ImportKind::Selective { path, .. } => path.last().cloned().unwrap_or_default(),
+                    };
                     if module == "json" {
                         self.imports.push(module.clone());
                         self.table.add_binding(

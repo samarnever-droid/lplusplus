@@ -737,29 +737,38 @@ fn resolve_local_imports(
     let mut imports_to_process = Vec::new();
 
     for decl in declarations.iter() {
-        if let ast::TopLevel::Import(module) = decl {
-            if module != "json" && !imported_files.contains(module) {
-                imports_to_process.push(module.clone());
+        if let ast::TopLevel::Import(import_kind) = decl {
+            let (path, _items) = match import_kind {
+                ast::ImportKind::Module { path, .. } => (path.clone(), None),
+                ast::ImportKind::Selective { path, items } => (path.clone(), Some(items.clone())),
+            };
+            // Convert dotted path to filesystem path: ["utils", "math"] → "utils/math"
+            let module = path.join("/");
+            let module_name = path.last().cloned().unwrap_or_default();
+            if module_name != "json" && !imported_files.contains(&module) {
+                imports_to_process.push(module);
             }
         }
     }
 
     for module in imports_to_process {
         imported_files.insert(module.clone());
+        // module is "math" or "utils/math" for dotted paths
+        let leaf_name = module.split('/').last().unwrap_or(&module);
         let mut filepath = base_dir.join(format!("{}.lpp", module));
         if !filepath.exists() {
-            // Check in .lpp_packages/module/module.lpp
+            // Check in .lpp_packages/leaf/leaf.lpp
             let pkg_path = std::path::Path::new(".lpp_packages")
-                .join(&module)
-                .join(format!("{}.lpp", module));
+                .join(leaf_name)
+                .join(format!("{}.lpp", leaf_name));
             if pkg_path.exists() {
                 filepath = pkg_path;
             } else {
-                // Check in .lpp_packages/module/src/module.lpp
+                // Check in .lpp_packages/leaf/src/leaf.lpp
                 let pkg_src_path = std::path::Path::new(".lpp_packages")
-                    .join(&module)
+                    .join(leaf_name)
                     .join("src")
-                    .join(format!("{}.lpp", module));
+                    .join(format!("{}.lpp", leaf_name));
                 if pkg_src_path.exists() {
                     filepath = pkg_src_path;
                 } else {

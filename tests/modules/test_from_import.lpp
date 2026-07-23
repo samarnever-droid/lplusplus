@@ -1,0 +1,7 @@
+from math import add, multiply
+
+def main():
+    a := add(10, 20)
+    b := multiply(5, 6)
+    print(a)
+    print(b)

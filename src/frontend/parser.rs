@@ -63,10 +63,12 @@ impl Parser {
                 declarations.push(TopLevel::Struct(self.parse_struct()?));
             } else if self.match_token(&Token::Import) {
                 declarations.push(TopLevel::Import(self.parse_import()?));
+            } else if self.match_token(&Token::From) {
+                declarations.push(TopLevel::Import(self.parse_from_import()?));
             } else {
                 let found = self.peek().cloned();
                 return self.error(format!(
-                    "Expected 'def', 'struct', or 'import', found {:?}",
+                    "Expected 'def', 'struct', 'import', or 'from', found {:?}",
                     found
                 ));
             }
@@ -76,15 +78,76 @@ impl Parser {
         Ok(Program { declarations })
     }
 
-    fn parse_import(&mut self) -> Result<String, String> {
-        let name = match self.advance() {
+    /// Parse `import math`, `import utils.math`, `import math as m`
+    fn parse_import(&mut self) -> Result<ImportKind, String> {
+        let mut path = Vec::new();
+        let first = match self.advance() {
             Some(Token::Ident(n)) => n.clone(),
             _ => return self.error("Expected module name after 'import'"),
+        };
+        path.push(first);
+        // Parse dotted path: import utils.math.helpers
+        while self.peek() == Some(&Token::Dot) {
+            self.advance(); // consume '.'
+            match self.advance() {
+                Some(Token::Ident(n)) => path.push(n.clone()),
+                _ => return self.error("Expected identifier after '.' in import path"),
+            }
+        }
+        // Check for 'as' alias
+        let alias = if self.peek() == Some(&Token::As) {
+            self.advance(); // consume 'as'
+            match self.advance() {
+                Some(Token::Ident(n)) => Some(n.clone()),
+                _ => return self.error("Expected identifier after 'as'"),
+            }
+        } else {
+            None
         };
         if self.peek() == Some(&Token::Newline) {
             self.advance();
         }
-        Ok(name)
+        Ok(ImportKind::Module { path, alias })
+    }
+
+    /// Parse `from math import sqrt, PI`
+    fn parse_from_import(&mut self) -> Result<ImportKind, String> {
+        let mut path = Vec::new();
+        let first = match self.advance() {
+            Some(Token::Ident(n)) => n.clone(),
+            _ => return self.error("Expected module name after 'from'"),
+        };
+        path.push(first);
+        // Parse dotted path
+        while self.peek() == Some(&Token::Dot) {
+            self.advance();
+            match self.advance() {
+                Some(Token::Ident(n)) => path.push(n.clone()),
+                _ => return self.error("Expected identifier after '.' in module path"),
+            }
+        }
+        // Expect 'import'
+        if !self.match_token(&Token::Import) {
+            return self.error("Expected 'import' after module path in 'from ... import'");
+        }
+        // Parse item list: sqrt, PI, calculate
+        let mut items = Vec::new();
+        loop {
+            match self.advance() {
+                Some(Token::Ident(n)) => items.push(n.clone()),
+                _ => return self.error("Expected identifier in import list"),
+            }
+            if !self.match_token(&Token::Comma) {
+                break;
+            }
+        }
+        if items.is_empty() {
+            return self.error("Expected at least one item in 'from ... import' list");
+        }
+        if self.peek() == Some(&Token::Newline) {
+            self.advance();
+        }
+        Ok(ImportKind::Selective { path, items })
     }
 
     fn parse_struct(&mut self) -> Result<StructDef, String> {

@@ -129,10 +129,24 @@ pub struct StructDef {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum ImportKind {
+    /// `import math` — imports module, access via `math.func()`
+    Module {
+        path: Vec<String>,     // ["math"] or ["utils", "math"]
+        alias: Option<String>, // `import math as m` → alias = Some("m")
+    },
+    /// `from math import sqrt, PI` — imports specific items into scope
+    Selective {
+        path: Vec<String>,   // ["math"] or ["utils", "math"]
+        items: Vec<String>,  // ["sqrt", "PI"]
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum TopLevel {
     Function(Function),
     Struct(StructDef),
-    Import(String),
+    Import(ImportKind),
 }
 
 #[derive(Debug, Clone, PartialEq)]
