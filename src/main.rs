@@ -645,7 +645,7 @@ fn main() {
             }
 
             let mir_start = Instant::now();
-            let mut mir_ctx = mir::lower::MirLowerCtx::new(&resolver.table, &mut type_table);
+            let mut mir_ctx = mir::lower::MirLowerCtx::new(&resolver.table, &mut type_table, &ast);
             let mut mir_program = match mir_ctx.lower_program(&ast) {
                 Ok(program) => program,
                 Err(e) => {

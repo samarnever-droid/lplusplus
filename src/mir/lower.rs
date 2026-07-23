@@ -18,6 +18,9 @@ pub struct MirLowerCtx<'a> {
     pub func_return_types: HashMap<String, TypeRef>,
     pub next_func_id: usize,
 
+    // Program reference for enum lookups
+    pub program: &'a crate::ast::Program,
+
     // Closure compilation context
     pub lifted_functions: HashMap<FuncId, MirFunction>,
     pub closure_scope_idx: usize,
@@ -29,13 +32,14 @@ pub struct MirLowerCtx<'a> {
 }
 
 impl<'a> MirLowerCtx<'a> {
-    pub fn new(symbol_table: &'a SymbolTable, type_table: &'a mut TypeTable) -> Self {
+    pub fn new(symbol_table: &'a SymbolTable, type_table: &'a mut TypeTable, program: &'a crate::ast::Program) -> Self {
         Self {
             symbol_table,
             type_table,
             functions: HashMap::new(),
             func_return_types: HashMap::new(),
             next_func_id: 0,
+            program,
             lifted_functions: HashMap::new(),
             closure_scope_idx: 0,
             current_env_ptr: None,
@@ -162,6 +166,8 @@ impl<'a> MirLowerCtx<'a> {
             }
             Expr::Closure { .. } => TypeRef::Function,
             Expr::Spawn { .. } => TypeRef::Void,
+            Expr::EnumVariantConstruct { enum_name, .. } => TypeRef::Custom(enum_name.clone()),
+            Expr::Match { .. } => TypeRef::Int, // match expression returns Int for now
         }
     }
 
@@ -631,6 +637,48 @@ impl<'a> MirLowerCtx<'a> {
                 for stmt in stmts {
                     self.lower_stmt(builder, stmt, binding_map)?;
                 }
+            }
+            Stmt::Match { subject, arms } => {
+                // Lower match as a chain of if/else on the enum tag.
+                // Enums are represented as tagged integers: tag = variant index (0, 1, 2, ...)
+                let subject_val = self.lower_expr(builder, subject, binding_map)?;
+                let end_block = builder.new_block();
+
+                for (i, arm) in arms.iter().enumerate() {
+                    let arm_block = builder.new_block();
+                    let next_block = if i + 1 < arms.len() {
+                        builder.new_block()
+                    } else {
+                        end_block
+                    };
+
+                    // Compare tag: subject_val == i
+                    let tag_local = builder.new_local(TypeRef::Int, false, None, None);
+                    builder.push_instr(MirInstr::Assign(tag_local, Rvalue::Use(Operand::Int(i as i64))))?;
+                    let cmp_local = builder.new_local(TypeRef::Bool, false, None, None);
+                    builder.push_instr(MirInstr::Assign(
+                        cmp_local,
+                        Rvalue::BinaryOp(BinaryOperator::Eq, subject_val.clone(), Operand::Local(tag_local)),
+                    ))?;
+                    builder.terminate_current_block(Terminator::If {
+                        cond: Operand::Local(cmp_local),
+                        then_block: arm_block,
+                        else_block: next_block,
+                    })?;
+
+                    // Arm body
+                    builder.switch_to_block(arm_block);
+                    for stmt in &arm.body {
+                        self.lower_stmt(builder, stmt, binding_map)?;
+                    }
+                    builder.terminate_current_block(Terminator::Goto(end_block))?;
+
+                    if i + 1 < arms.len() {
+                        builder.switch_to_block(next_block);
+                    }
+                }
+
+                builder.switch_to_block(end_block);
             }
         }
         Ok(())
@@ -1219,6 +1267,63 @@ impl<'a> MirLowerCtx<'a> {
 
                 Ok(Operand::Local(closure_local))
             }
+            Expr::EnumVariantConstruct { enum_name, variant, args: _ } => {
+                // For simple enums (no data), the variant is just its tag index.
+                // Find the variant index from the program's enum definitions.
+                let tag = self.get_enum_variant_tag(enum_name, variant);
+                let temp = builder.new_local(TypeRef::Custom(enum_name.clone()), false, None, None);
+                builder.push_instr(MirInstr::Assign(temp, Rvalue::Use(Operand::Const(tag as i64))))?;
+                Ok(Operand::Local(temp))
+            }
+            Expr::Match { subject, arms } => {
+                // Match as expression — same as statement match for now
+                let subject_val = self.lower_expr(builder, subject, binding_map)?;
+                let result = builder.new_local(TypeRef::Int, false, None, None);
+                let end_block = builder.new_block();
+
+                for (i, arm) in arms.iter().enumerate() {
+                    let arm_block = builder.new_block();
+                    let next_block = if i + 1 < arms.len() { builder.new_block() } else { end_block };
+                    let tag_local = builder.new_local(TypeRef::Int, false, None, None);
+                    builder.push_instr(MirInstr::Assign(tag_local, Rvalue::Use(Operand::Int(i as i64))))?;
+                    let cmp_local = builder.new_local(TypeRef::Bool, false, None, None);
+                    builder.push_instr(MirInstr::Assign(
+                        cmp_local,
+                        Rvalue::BinaryOp(BinaryOperator::Eq, subject_val.clone(), Operand::Local(tag_local)),
+                    ))?;
+                    builder.terminate_current_block(Terminator::If {
+                        cond: Operand::Local(cmp_local),
+                        then_block: arm_block,
+                        else_block: next_block,
+                    })?;
+                    builder.switch_to_block(arm_block);
+                    for stmt in &arm.body {
+                        self.lower_stmt(builder, stmt, binding_map)?;
+                    }
+                    builder.terminate_current_block(Terminator::Goto(end_block))?;
+                    if i + 1 < arms.len() {
+                        builder.switch_to_block(next_block);
+                    }
+                }
+                builder.switch_to_block(end_block);
+                Ok(Operand::Local(result))
+            }
         }
+    }
+
+    fn get_enum_variant_tag(&self, enum_name: &str, variant: &str) -> usize {
+        // Search through the program's enum definitions for the variant index
+        for decl in &self.program.declarations {
+            if let crate::ast::TopLevel::Enum(e) = decl {
+                if e.name == enum_name {
+                    for (i, v) in e.variants.iter().enumerate() {
+                        if v.name == variant {
+                            return i;
+                        }
+                    }
+                }
+            }
+        }
+        0 // fallback
     }
 }

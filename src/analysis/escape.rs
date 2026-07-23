@@ -400,6 +400,14 @@ impl EscapeAnalyzer {
                 )?;
             }
             Stmt::Break | Stmt::Continue => {}
+            Stmt::Match { subject, arms } => {
+                self.classify_expr(subject, current_scope, symbol_table, type_table)?;
+                for arm in arms {
+                    for s in &arm.body {
+                        self.classify_stmt(s, current_scope, symbol_table, type_table)?;
+                    }
+                }
+            }
             Stmt::Return(Some(expr)) => {
                 let mut should_promote = false;
                 if let Some(ty) = Self::get_expr_type(expr, current_scope, symbol_table, type_table)

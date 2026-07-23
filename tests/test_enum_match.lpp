@@ -1,0 +1,27 @@
+enum Direction:
+    North
+    South
+    East
+    West
+
+def describe(d: Int):
+    match d:
+        North:
+            print_str("going north")
+        South:
+            print_str("going south")
+        East:
+            print_str("going east")
+        West:
+            print_str("going west")
+
+def main():
+    n := Direction.North
+    s := Direction.South
+    e := Direction.East
+    w := Direction.West
+
+    describe(n)
+    describe(s)
+    describe(e)
+    describe(w)

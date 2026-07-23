@@ -1,0 +1,14 @@
+enum Color:
+    Red
+    Green
+    Blue
+
+def main():
+    c := Color.Red
+    match c:
+        Red:
+            print(0)
+        Green:
+            print(1)
+        Blue:
+            print(2)

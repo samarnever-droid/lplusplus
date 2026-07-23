@@ -178,6 +178,27 @@ impl Resolver {
                         BindingKind::FunctionName,
                     );
                 }
+                TopLevel::Enum(e) => {
+                    // Register enum name and each variant as constructors
+                    self.table.add_binding(
+                        self.current_scope,
+                        e.name.clone(),
+                        false,
+                        Some(Type::Custom(e.name.clone())),
+                        BindingKind::FunctionName,
+                    );
+                    for variant in &e.variants {
+                        // Register EnumName.Variant as a callable
+                        let variant_full = format!("{}.{}", e.name, variant.name);
+                        self.table.add_binding(
+                            self.current_scope,
+                            variant_full,
+                            false,
+                            Some(Type::Custom(e.name.clone())),
+                            BindingKind::FunctionName,
+                        );
+                    }
+                }
                 TopLevel::Import(import_kind) => {
                     let module = match import_kind {
                         crate::ast::ImportKind::Module { path, .. } => path.last().cloned().unwrap_or_default(),
@@ -423,6 +444,28 @@ impl Resolver {
                     return Err("Cannot use 'break' or 'continue' outside of a loop".to_string());
                 }
             }
+            Stmt::Match { subject, arms } => {
+                self.resolve_expr(subject)?;
+                for arm in arms {
+                    let old_scope = self.current_scope;
+                    self.current_scope = self.table.push_scope(old_scope);
+                    // Register bindings from match arm
+                    for binding_name in &arm.bindings {
+                        arm.body.len(); // just to use arm
+                        self.table.add_binding(
+                            self.current_scope,
+                            binding_name.clone(),
+                            false,
+                            None, // type inferred from enum variant
+                            BindingKind::Variable,
+                        );
+                    }
+                    for s in &mut arm.body {
+                        self.resolve_stmt(s)?;
+                    }
+                    self.current_scope = old_scope;
+                }
+            }
             Stmt::Block(stmts) => {
                 for s in stmts {
                     self.resolve_stmt(s)?;
@@ -529,6 +572,19 @@ impl Resolver {
             Expr::ListLiteral(elements) => {
                 for element in elements {
                     self.resolve_expr(element)?;
+                }
+            }
+            Expr::Match { subject, arms } => {
+                self.resolve_expr(subject)?;
+                for arm in arms {
+                    for s in &mut arm.body {
+                        self.resolve_stmt(s)?;
+                    }
+                }
+            }
+            Expr::EnumVariantConstruct { args, .. } => {
+                for arg in args {
+                    self.resolve_expr(arg)?;
                 }
             }
         }

@@ -61,6 +61,8 @@ impl Parser {
                 declarations.push(TopLevel::Function(self.parse_function()?));
             } else if self.match_token(&Token::Struct) {
                 declarations.push(TopLevel::Struct(self.parse_struct()?));
+            } else if self.match_token(&Token::Enum) {
+                declarations.push(TopLevel::Enum(self.parse_enum()?));
             } else if self.match_token(&Token::Import) {
                 declarations.push(TopLevel::Import(self.parse_import()?));
             } else if self.match_token(&Token::From) {
@@ -68,7 +70,7 @@ impl Parser {
             } else {
                 let found = self.peek().cloned();
                 return self.error(format!(
-                    "Expected 'def', 'struct', 'import', or 'from', found {:?}",
+                    "Expected 'def', 'struct', 'enum', 'import', or 'from', found {:?}",
                     found
                 ));
             }
@@ -148,6 +150,75 @@ impl Parser {
             self.advance();
         }
         Ok(ImportKind::Selective { path, items })
+    }
+
+    /// Parse: `enum Color: Red, Green, Blue(intensity: Int)`
+    fn parse_enum(&mut self) -> Result<EnumDef, String> {
+        let name = match self.advance() {
+            Some(Token::Ident(n)) => n.clone(),
+            _ => return self.error("Expected enum name"),
+        };
+
+        if !self.match_token(&Token::Colon) {
+            return self.error("Expected ':' after enum name");
+        }
+
+        if !self.match_token(&Token::Newline) {
+            return self.error("Expected newline after ':'");
+        }
+
+        self.skip_newlines();
+
+        if !self.match_token(&Token::Indent) {
+            return self.error("Expected indentation for enum variants");
+        }
+
+        let mut variants = Vec::new();
+        while self.peek() != Some(&Token::Dedent) && self.peek().is_some() {
+            self.skip_newlines();
+            if self.peek() == Some(&Token::Dedent) {
+                break;
+            }
+
+            let variant_name = match self.advance() {
+                Some(Token::Ident(n)) => n.clone(),
+                _ => return self.error("Expected variant name"),
+            };
+
+            // Optional fields: `Ok(value: Int)` or `Blue(r: Int, g: Int, b: Int)`
+            let mut fields = Vec::new();
+            if self.match_token(&Token::LParen) {
+                if self.peek() != Some(&Token::RParen) {
+                    loop {
+                        let field_name = match self.advance() {
+                            Some(Token::Ident(n)) => n.clone(),
+                            _ => return self.error("Expected field name in variant"),
+                        };
+                        if !self.match_token(&Token::Colon) {
+                            return self.error("Expected ':' after variant field name");
+                        }
+                        let ty = self.parse_type()?;
+                        fields.push(Param { name: field_name, ty });
+                        if !self.match_token(&Token::Comma) {
+                            break;
+                        }
+                    }
+                }
+                if !self.match_token(&Token::RParen) {
+                    return self.error("Expected ')' after variant fields");
+                }
+            }
+
+            variants.push(EnumVariant { name: variant_name, fields });
+            self.skip_newlines();
+        }
+        self.match_token(&Token::Dedent);
+
+        if variants.is_empty() {
+            return self.error("Enum must have at least one variant");
+        }
+
+        Ok(EnumDef { name, variants })
     }
 
     fn parse_struct(&mut self) -> Result<StructDef, String> {
@@ -392,6 +463,88 @@ impl Parser {
             }
             self.match_token(&Token::Dedent);
             return Ok(Stmt::While { condition, body });
+        }
+
+        // match subject:
+        //     Variant(binding):
+        //         body
+        if self.match_token(&Token::Match) {
+            let subject = self.parse_expr()?;
+            if !self.match_token(&Token::Colon) {
+                return self.error("Expected ':' after match subject");
+            }
+            if !self.match_token(&Token::Newline) {
+                return self.error("Expected newline after ':'");
+            }
+            self.skip_newlines();
+            if !self.match_token(&Token::Indent) {
+                return self.error("Expected indentation for match arms");
+            }
+
+            let mut arms = Vec::new();
+            while self.peek() != Some(&Token::Dedent) && self.peek().is_some() {
+                self.skip_newlines();
+                if self.peek() == Some(&Token::Dedent) {
+                    break;
+                }
+
+                // Parse variant name
+                let variant = match self.advance() {
+                    Some(Token::Ident(n)) => n.clone(),
+                    _ => return self.error("Expected variant name in match arm"),
+                };
+
+                // Optional bindings: Ok(value) or Ok(v, msg)
+                let mut bindings = Vec::new();
+                if self.match_token(&Token::LParen) {
+                    if self.peek() != Some(&Token::RParen) {
+                        loop {
+                            match self.advance() {
+                                Some(Token::Ident(n)) => bindings.push(n.clone()),
+                                _ => return self.error("Expected binding name"),
+                            }
+                            if !self.match_token(&Token::Comma) {
+                                break;
+                            }
+                        }
+                    }
+                    if !self.match_token(&Token::RParen) {
+                        return self.error("Expected ')' after match bindings");
+                    }
+                }
+
+                if !self.match_token(&Token::Colon) {
+                    return self.error("Expected ':' after match arm");
+                }
+                if !self.match_token(&Token::Newline) {
+                    return self.error("Expected newline after match arm ':'");
+                }
+                self.skip_newlines();
+                if !self.match_token(&Token::Indent) {
+                    return self.error("Expected indentation for match arm body");
+                }
+
+                let mut body = Vec::new();
+                while self.peek() != Some(&Token::Dedent) && self.peek().is_some() {
+                    self.skip_newlines();
+                    if self.peek() == Some(&Token::Dedent) {
+                        break;
+                    }
+                    body.push(self.parse_stmt()?);
+                    self.skip_newlines();
+                }
+                self.match_token(&Token::Dedent);
+
+                arms.push(MatchArm { variant, bindings, body });
+                self.skip_newlines();
+            }
+            self.match_token(&Token::Dedent);
+
+            if arms.is_empty() {
+                return self.error("match must have at least one arm");
+            }
+
+            return Ok(Stmt::Match { subject, arms });
         }
 
         if self.match_token(&Token::For) {
@@ -696,6 +849,17 @@ impl Parser {
                 }
                 if !self.match_token(&Token::RParen) {
                     return self.error("Expected ')' after arguments");
+                }
+                // Check for EnumName.Variant(args) pattern
+                if let Expr::FieldAccess { base, field } = &expr {
+                    if let Expr::Identifier(enum_name, _) = base.as_ref() {
+                        expr = Expr::EnumVariantConstruct {
+                            enum_name: enum_name.clone(),
+                            variant: field.clone(),
+                            args,
+                        };
+                        continue;
+                    }
                 }
                 expr = Expr::Call {
                     callee: Box::new(expr),

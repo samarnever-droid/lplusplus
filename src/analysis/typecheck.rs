@@ -154,10 +154,14 @@ impl<'a> TypeChecker<'a> {
     }
 
     pub fn check_program(&mut self, program: &Program) -> Result<(), String> {
-        // Phase 1: Register all struct names (stubs) and map function return types
+        // Phase 1: Register all struct and enum names (stubs) and map function return types
         for decl in &program.declarations {
             if let TopLevel::Struct(s) = decl {
                 self.type_table.register_struct(s.name.clone());
+            }
+            if let TopLevel::Enum(e) = decl {
+                // Register enum as a custom type (like a struct)
+                self.type_table.register_struct(e.name.clone());
             }
         }
         for decl in &program.declarations {
@@ -413,6 +417,14 @@ impl<'a> TypeChecker<'a> {
                 self.infer_expr(expr, current_scope, None)?;
             }
             Stmt::Break | Stmt::Continue => {}
+            Stmt::Match { subject, arms } => {
+                self.infer_expr(subject, current_scope, None)?;
+                for arm in arms {
+                    for s in &arm.body {
+                        self.check_stmt(s, current_scope, return_type)?;
+                    }
+                }
+            }
             Stmt::Return(Some(expr)) => {
                 let mut expected_ret_ty = None;
                 let mut curr = Some(current_scope);
@@ -764,6 +776,21 @@ impl<'a> TypeChecker<'a> {
                     ));
                 }
                 Ok(TypeRef::Generic("List".to_string(), vec![elem_ty]))
+            }
+            Expr::Match { subject, arms } => {
+                let _subject_ty = self.infer_expr(subject, current_scope, None)?;
+                // For now, match returns Void (statement-level match)
+                // Type-check each arm body
+                for arm in arms {
+                    for stmt in &arm.body {
+                        self.check_stmt(stmt, current_scope, &TypeRef::Void)?;
+                    }
+                }
+                Ok(TypeRef::Void)
+            }
+            Expr::EnumVariantConstruct { enum_name, .. } => {
+                // Returns the enum type
+                Ok(TypeRef::Custom(enum_name.clone()))
             }
         }
     }

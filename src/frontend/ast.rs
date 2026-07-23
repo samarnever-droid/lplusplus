@@ -53,6 +53,17 @@ pub enum Expr {
         closure: Box<Expr>,
     },
     ListLiteral(Vec<Expr>),
+    /// `match expr: Ok(v): ..., Err(e): ...`
+    Match {
+        subject: Box<Expr>,
+        arms: Vec<MatchArm>,
+    },
+    /// `Result.Ok(42)` — enum variant constructor
+    EnumVariantConstruct {
+        enum_name: String,
+        variant: String,
+        args: Vec<Expr>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -100,6 +111,11 @@ pub enum Stmt {
     Break,
     Continue,
     Block(Vec<Stmt>),
+    /// `match expr: Ok(v): ..., Err(e): ...`
+    Match {
+        subject: Expr,
+        arms: Vec<MatchArm>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -128,6 +144,28 @@ pub struct StructDef {
     pub fields: Vec<Param>,
 }
 
+/// Enum variant: `Ok(value: Int)` or `None` (no data)
+#[derive(Debug, Clone, PartialEq)]
+pub struct EnumVariant {
+    pub name: String,
+    pub fields: Vec<Param>, // empty for unit variants like `None`
+}
+
+/// Enum definition: `enum Result: Ok(value: Int), Err(msg: Str)`
+#[derive(Debug, Clone, PartialEq)]
+pub struct EnumDef {
+    pub name: String,
+    pub variants: Vec<EnumVariant>,
+}
+
+/// A single arm in a match expression
+#[derive(Debug, Clone, PartialEq)]
+pub struct MatchArm {
+    pub variant: String,                    // "Ok", "Err", "None"
+    pub bindings: Vec<String>,              // ["value"], ["msg"], []
+    pub body: Vec<Stmt>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum ImportKind {
     /// `import math` — imports module, access via `math.func()`
@@ -146,6 +184,7 @@ pub enum ImportKind {
 pub enum TopLevel {
     Function(Function),
     Struct(StructDef),
+    Enum(EnumDef),
     Import(ImportKind),
 }
 
