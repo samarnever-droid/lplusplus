@@ -1167,10 +1167,6 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
             let patch = section_base + rel.offset;
             let patch_rva_addr = patch_rva as i64 + patch as i64;
 
-            // Watch for corruption of lpp_print_int byte 47
-                    patch, patch + 8, rel.target, coff_reloc_number(&rel), rel.section_class);
-            }
-
             // Resolve target
             let target = resolve_pe_target(
                 &rel,
