@@ -12,7 +12,7 @@ def main():
     c := square(7)
     print(c)
 
-    d := abs_val(-42)
+    d := abs_val(42)
     print(d)
 
     e := double(15)

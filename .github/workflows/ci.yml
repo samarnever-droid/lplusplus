@@ -67,11 +67,12 @@ jobs:
           # Compile full project
           LPP_AOT=1 target/release/lpp "$WORK/test_full_project.lpp"
           cc -O2 -fPIC -c lpp_runtime.c -o "$WORK/rt.o"
-          target/release/lpp-link elf "$WORK/test_full_project.o" "$WORK/rt.o" -o "$WORK/test_full_project"
+          target/release/lpp-link "$WORK/test_full_project.o" "$WORK/rt.o" -o "$WORK/test_full_project"
           chmod +x "$WORK/test_full_project"
           
           OUT=$("$WORK/test_full_project")
           EXPECTED=$(printf '30\n30\n49\n42\n30\n27\nhello from greet module\ngoodbye from greet module')
+          # abs_val(42)=42
           if [ "$OUT" = "$EXPECTED" ]; then
             echo "PASS test_full_project (Linux ELF)"
           else
@@ -82,7 +83,7 @@ jobs:
 
           # Test from X import Y
           LPP_AOT=1 target/release/lpp "$WORK/test_from_import.lpp"
-          target/release/lpp-link elf "$WORK/test_from_import.o" "$WORK/rt.o" -o "$WORK/test_from_import"
+          target/release/lpp-link "$WORK/test_from_import.o" "$WORK/rt.o" -o "$WORK/test_from_import"
           chmod +x "$WORK/test_from_import"
           OUT2=$("$WORK/test_from_import")
           EXPECTED2=$(printf '300\n121\n50')
@@ -251,6 +252,7 @@ jobs:
           $out = (& "$work\test_full_project.exe" 2>&1) -join "`n"
           Write-Host "Output:`n$out"
           $expected = "30`n30`n49`n42`n30`n27`nhello from greet module`ngoodbye from greet module"
+          # Note: abs_val(42)=42 since L++ doesn't support unary minus literals
           if ($out.Trim() -ne $expected.Trim()) {
             throw "MISMATCH! Expected:`n$expected`nGot:`n$out"
           }
