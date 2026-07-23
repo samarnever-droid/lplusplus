@@ -129,3 +129,19 @@ char *lpp_str_trim(const char *s) {
     out[len] = 0;
     return out;
 }
+
+/* ── str_repeat(s, n) → ARC-allocated string repeated n times ──────────── */
+/* O(1) allocation instead of O(n) str_concat calls.                        */
+char *lpp_str_repeat(const char *s, int64_t n) {
+    if (!s || n <= 0) return (char *)"";
+    size_t slen = strlen(s);
+    if (slen == 0) return (char *)"";
+    size_t total = slen * (size_t)n;
+    char *out = (char *)lpp_arc_alloc((int64_t)(total + 1));
+    if (!out) return (char *)"";
+    for (int64_t i = 0; i < n; i++) {
+        memcpy(out + i * slen, s, slen);
+    }
+    out[total] = 0;
+    return out;
+}

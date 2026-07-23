@@ -1163,6 +1163,28 @@ pub fn get_builtins() -> &'static [Builtin] {
             cl_return: Some(0),
         },
         Builtin {
+            name: "str_repeat",
+            symbol: "lpp_str_repeat",
+            params: &[
+                ParamType::Specific(TypeRef::Str),
+                ParamType::Specific(TypeRef::Int),
+            ],
+            return_type: TypeRef::Str,
+            cl_params: &[0, 0],
+            cl_return: Some(0),
+        },
+        Builtin {
+            name: "lpp_str_repeat",
+            symbol: "lpp_str_repeat",
+            params: &[
+                ParamType::Specific(TypeRef::Str),
+                ParamType::Specific(TypeRef::Int),
+            ],
+            return_type: TypeRef::Str,
+            cl_params: &[0, 0],
+            cl_return: Some(0),
+        },
+        Builtin {
             name: "str_split",
             symbol: "lpp_str_split",
             params: &[

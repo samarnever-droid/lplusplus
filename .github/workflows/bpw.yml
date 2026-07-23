@@ -91,7 +91,7 @@ jobs:
           #  BENCH 1: CPU-HEAVY (fib40 + primes)
           # ══════════════════════════════════════════
           echo ""
-          echo "=== Bench 1: CPU Heavy (fib(40) + count_primes(10000)) ==="
+          echo "=== Bench 1: CPU Heavy (fib(40) + count_primes(50000)) ==="
 
           cat > "$W/cpu.lpp" << 'EOF'
           def fib(n: Int) -> Int:
@@ -125,7 +125,7 @@ jobs:
               return count
           def main():
               print(fib(40))
-              print(count_primes(10000))
+              print(count_primes(50000))
           EOF
 
           cat > "$W/cpu.rs" << 'EOF'
@@ -144,7 +144,7 @@ jobs:
           fn count_primes(limit: i64) -> i64 {
               (2..limit).filter(|&n| is_prime(n)).count() as i64
           }
-          fn main() { println!("{}", fib(40)); println!("{}", count_primes(10000)); }
+          fn main() { println!("{}", fib(40)); println!("{}", count_primes(50000)); }
           EOF
 
           cat > "$W/cpu.go" << 'EOF'
@@ -166,10 +166,10 @@ jobs:
               for n := int64(2); n < limit; n++ { if isPrime(n) { c++ } }
               return c
           }
-          func main() { fmt.Println(fib(40)); fmt.Println(countPrimes(10000)) }
+          func main() { fmt.Println(fib(40)); fmt.Println(countPrimes(50000)) }
           EOF
 
-          CPU_EXP=$(printf '102334155\n1229')
+          CPU_EXP=$(printf '102334155\n5133')
 
           # Build all
           LPP_AOT=1 target/release/lpp "$W/cpu.lpp"
@@ -201,22 +201,22 @@ jobs:
           #  BENCH 2: RAM-HEAVY (100k list)
           # ══════════════════════════════════════════
           echo ""
-          echo "=== Bench 2: RAM Heavy (100k list alloc+fill) ==="
+          echo "=== Bench 2: RAM Heavy (500k list alloc+fill) ==="
           cat > "$W/ram.lpp" << 'EOF'
           def main():
               mut lst := list_new()
               mut i := 0
-              while i < 100000:
+              while i < 500000:
                   list_push(lst, i * 3)
                   i = i + 1
               print(list_len(lst))
-              print(list_get(lst, 99999))
+              print(list_get(lst, 499999))
           EOF
           cat > "$W/ram.rs" << 'EOF'
           fn main() {
               let mut v: Vec<i64> = Vec::new();
-              for i in 0..100000i64 { v.push(i * 3); }
-              println!("{}", v.len()); println!("{}", v[99999]);
+              for i in 0..500000i64 { v.push(i * 3); }
+              println!("{}", v.len()); println!("{}", v[499999]);
           }
           EOF
           cat > "$W/ram.go" << 'EOF'
@@ -224,11 +224,11 @@ jobs:
           import "fmt"
           func main() {
               v := make([]int64, 0)
-              for i := int64(0); i < 100000; i++ { v = append(v, i*3) }
-              fmt.Println(len(v)); fmt.Println(v[99999])
+              for i := int64(0); i < 500000; i++ { v = append(v, i*3) }
+              fmt.Println(len(v)); fmt.Println(v[499999])
           }
           EOF
-          RAM_EXP=$(printf '100000\n299997')
+          RAM_EXP=$(printf '500000\n1499997')
 
           LPP_AOT=1 target/release/lpp "$W/ram.lpp"
           cc "$W/ram.o" "$W/rt.o" -o "$W/ram_lpp" -lm -lpthread
@@ -248,17 +248,13 @@ jobs:
           echo "  L++:  avg=${LPP_RAM_AVG}ms  Rust: avg=${RS_RAM_AVG}ms  Go: avg=${GO_RAM_AVG}ms"
 
           # ══════════════════════════════════════════
-          #  BENCH 3: FILE I/O (write+read 40KB)
+          #  BENCH 3: FILE I/O (write+read 400KB)
           # ══════════════════════════════════════════
           echo ""
-          echo "=== Bench 3: File I/O (write+read 40KB) ==="
+          echo "=== Bench 3: File I/O (write+read 400KB) ==="
           cat > "$W/fio.lpp" << 'EOF'
           def main():
-              mut data := ""
-              mut i := 0
-              while i < 1000:
-                  data = str_concat(data, "line of test data for file io benchmark\n")
-                  i = i + 1
+              data := str_repeat("line of test data for file io benchmark\n", 10000)
               write_file("/tmp/lpp_bio.txt", data)
               content := read_file("/tmp/lpp_bio.txt")
               print(str_len(content))
@@ -266,7 +262,7 @@ jobs:
           cat > "$W/fio.rs" << 'EOF'
           use std::fs;
           fn main() {
-              let data: String = (0..1000).map(|_| "line of test data for file io benchmark\n").collect();
+              let data: String = (0..10000).map(|_| "line of test data for file io benchmark\n").collect();
               fs::write("/tmp/rs_bio.txt", &data).unwrap();
               let c = fs::read_to_string("/tmp/rs_bio.txt").unwrap();
               println!("{}", c.len());
@@ -277,7 +273,7 @@ jobs:
           import ("fmt";"os";"strings")
           func main() {
               var b strings.Builder
-              for i := 0; i < 1000; i++ { b.WriteString("line of test data for file io benchmark\n") }
+              for i := 0; i < 10000; i++ { b.WriteString("line of test data for file io benchmark\n") }
               os.WriteFile("/tmp/go_bio.txt", []byte(b.String()), 0644)
               c, _ := os.ReadFile("/tmp/go_bio.txt")
               fmt.Println(len(c))
@@ -397,19 +393,19 @@ jobs:
             },
             "benchmarks": {
               "cpu_heavy": {
-                "description": "fib(40) + count_primes(10000)",
+                "description": "fib(40) + count_primes(50000)",
                 "lpp":  {"avg_ms":$LPP_CPU_AVG,"min_ms":$LPP_CPU_MIN,"max_ms":$LPP_CPU_MAX,"stddev_ms":$LPP_CPU_SD,"binary_bytes":$LPP_CPU_SZ,"correct":$([ "$LPP_CPU_V" = "$CPU_EXP" ] && echo true || echo false)},
                 "rust": {"avg_ms":$RS_CPU_AVG,"min_ms":$RS_CPU_MIN,"max_ms":$RS_CPU_MAX,"stddev_ms":$RS_CPU_SD,"binary_bytes":$RS_CPU_SZ,"correct":$([ "$RS_CPU_V" = "$CPU_EXP" ] && echo true || echo false)},
                 "go":   {"avg_ms":$GO_CPU_AVG,"min_ms":$GO_CPU_MIN,"max_ms":$GO_CPU_MAX,"stddev_ms":$GO_CPU_SD,"binary_bytes":$GO_CPU_SZ,"correct":$([ "$GO_CPU_V" = "$CPU_EXP" ] && echo true || echo false)}
               },
               "ram_heavy": {
-                "description": "allocate+fill 100k list",
+                "description": "allocate+fill 500k list",
                 "lpp":  {"avg_ms":$LPP_RAM_AVG,"min_ms":$LPP_RAM_MIN,"max_ms":$LPP_RAM_MAX,"stddev_ms":$LPP_RAM_SD,"binary_bytes":$LPP_RAM_SZ,"correct":$([ "$LPP_RAM_V" = "$RAM_EXP" ] && echo true || echo false)},
                 "rust": {"avg_ms":$RS_RAM_AVG,"min_ms":$RS_RAM_MIN,"max_ms":$RS_RAM_MAX,"stddev_ms":$RS_RAM_SD,"binary_bytes":$RS_RAM_SZ,"correct":$([ "$RS_RAM_V" = "$RAM_EXP" ] && echo true || echo false)},
                 "go":   {"avg_ms":$GO_RAM_AVG,"min_ms":$GO_RAM_MIN,"max_ms":$GO_RAM_MAX,"stddev_ms":$GO_RAM_SD,"binary_bytes":$GO_RAM_SZ,"correct":$([ "$GO_RAM_V" = "$RAM_EXP" ] && echo true || echo false)}
               },
               "file_io": {
-                "description": "write+read 40KB file",
+                "description": "write+read 400KB file (10k lines)",
                 "lpp":  {"avg_ms":$LPP_FIO_AVG,"min_ms":$LPP_FIO_MIN,"max_ms":$LPP_FIO_MAX,"stddev_ms":$LPP_FIO_SD,"binary_bytes":$LPP_FIO_SZ,"output":"$LPP_FIO_OUT"},
                 "rust": {"avg_ms":$RS_FIO_AVG,"min_ms":$RS_FIO_MIN,"max_ms":$RS_FIO_MAX,"stddev_ms":$RS_FIO_SD,"binary_bytes":$RS_FIO_SZ,"output":"$RS_FIO_OUT"},
                 "go":   {"avg_ms":$GO_FIO_AVG,"min_ms":$GO_FIO_MIN,"max_ms":$GO_FIO_MAX,"stddev_ms":$GO_FIO_SD,"binary_bytes":$GO_FIO_SZ,"output":"$GO_FIO_OUT"}
@@ -536,13 +532,13 @@ jobs:
               return count
           def main():
               print(fib(40))
-              print(count_primes(10000))
+              print(count_primes(50000))
           "@ | Set-Content "$W\cpu.lpp" -Encoding ascii
 
           $env:LPP_AOT = "1"
           & target\release\lpp.exe "$W\cpu.lpp"
           & target\release\lpp-link.exe pe "$W\cpu.obj" "$W\rt.obj" -o "$W\cpu_lpp.exe" 2>&1
-          $cpuExp = "102334155`n1229"
+          $cpuExp = "102334155`n5133"
 
           if (Test-Path "$W\cpu_lpp.exe") {
             $lppCpuV = (& "$W\cpu_lpp.exe" 2>&1) -join "`n"
@@ -557,7 +553,7 @@ jobs:
           fn fib(n:i64)->i64{if n<=1{return n;}let(mut a,mut b)=(0i64,1i64);for _ in 2..=n{let c=a+b;a=b;b=c;}b}
           fn is_prime(n:i64)->bool{if n<2{return false;}let mut d=2i64;while d*d<=n{if n%d==0{return false;}d+=1;}true}
           fn count_primes(l:i64)->i64{(2..l).filter(|&n|is_prime(n)).count() as i64}
-          fn main(){println!("{}",fib(40));println!("{}",count_primes(10000));}
+          fn main(){println!("{}",fib(40));println!("{}",count_primes(50000));}
           "@ | Set-Content "$W\cpu.rs" -Encoding ascii
           New-Item -ItemType Directory -Force "$W\rcpu\src" | Out-Null
           "[package]`nname = `"b`"`nversion = `"0.1.0`"`nedition = `"2021`"" | Set-Content "$W\rcpu\Cargo.toml" -Encoding ascii
@@ -575,7 +571,7 @@ jobs:
           func fib(n int64) int64{if n<=1{return n};a,b:=int64(0),int64(1);for i:=int64(2);i<=n;i++{a,b=b,a+b};return b}
           func isPrime(n int64) bool{if n<2{return false};for d:=int64(2);d*d<=n;d++{if n%d==0{return false}};return true}
           func countPrimes(l int64) int64{c:=int64(0);for n:=int64(2);n<l;n++{if isPrime(n){c++}};return c}
-          func main(){fmt.Println(fib(40));fmt.Println(countPrimes(10000))}
+          func main(){fmt.Println(fib(40));fmt.Println(countPrimes(50000))}
           "@ | Set-Content "$W\cpu.go" -Encoding ascii
           Push-Location $W; go build -o "$W\cpu_go.exe" cpu.go; Pop-Location
           $goCpu = Run-Bench "$W\cpu_go.exe" $RUNS
@@ -588,11 +584,11 @@ jobs:
           def main():
               mut lst := list_new()
               mut i := 0
-              while i < 100000:
+              while i < 500000:
                   list_push(lst, i * 3)
                   i = i + 1
               print(list_len(lst))
-              print(list_get(lst, 99999))
+              print(list_get(lst, 499999))
           "@ | Set-Content "$W\ram.lpp" -Encoding ascii
           & target\release\lpp.exe "$W\ram.lpp"
           & target\release\lpp-link.exe pe "$W\ram.obj" "$W\rt.obj" -o "$W\ram_lpp.exe" 2>&1
@@ -657,13 +653,13 @@ jobs:
             }
             benchmarks = @{
               cpu_heavy = @{
-                description = "fib(40) + count_primes(10000)"
+                description = "fib(40) + count_primes(50000)"
                 lpp = @{avg_ms=$lppCpu.avg;min_ms=$lppCpu.min;max_ms=$lppCpu.max;stddev_ms=$lppCpu.sd;binary_bytes=$lppCpuSz;correct=($lppCpuV.Trim() -eq $cpuExp)}
                 rust = @{avg_ms=$rsCpu.avg;min_ms=$rsCpu.min;max_ms=$rsCpu.max;stddev_ms=$rsCpu.sd;binary_bytes=$rsCpuSz}
                 go = @{avg_ms=$goCpu.avg;min_ms=$goCpu.min;max_ms=$goCpu.max;stddev_ms=$goCpu.sd;binary_bytes=$goCpuSz}
               }
               ram_heavy = @{
-                description = "100k list alloc"
+                description = "500k list alloc"
                 lpp = @{avg_ms=$lppRam.avg;min_ms=$lppRam.min;max_ms=$lppRam.max;stddev_ms=$lppRam.sd;binary_bytes=$lppRamSz}
               }
               multi_file = @{
