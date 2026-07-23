@@ -518,7 +518,9 @@ impl<'a> TypeChecker<'a> {
                     | crate::ast::BinaryOperator::Less
                     | crate::ast::BinaryOperator::LessEq
                     | crate::ast::BinaryOperator::Greater
-                    | crate::ast::BinaryOperator::GreaterEq => Ok(TypeRef::Bool),
+                    | crate::ast::BinaryOperator::GreaterEq
+                    | crate::ast::BinaryOperator::And
+                    | crate::ast::BinaryOperator::Or => Ok(TypeRef::Bool),
                 }
             }
             Expr::Call { callee, args } => {
