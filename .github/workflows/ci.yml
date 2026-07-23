@@ -93,6 +93,21 @@ jobs:
             exit 1
           fi
           echo "ALL MODULE TESTS PASSED (Linux)"
+
+          # --- Test 3: stdlib (pure L++) ---
+          echo "=== Test 3: stdlib math ==="
+          cp -r stdlib "$WORK/stdlib"
+          LPP_AOT=1 target/release/lpp "$WORK/test_stdlib_full.lpp"
+          cc "$WORK/test_stdlib_full.o" "$WORK/rt.o" -o "$WORK/test_stdlib_full" -lm -lpthread
+          OUT3=$("$WORK/test_stdlib_full")
+          EXPECTED3=$(printf '42\n3\n7\n256\n55\n120\n4\n1')
+          if [ "$OUT3" = "$EXPECTED3" ]; then
+            echo "PASS test_stdlib_full (Linux)"
+          else
+            echo "FAIL! Expected: $EXPECTED3"
+            echo "Got: $OUT3"
+            exit 1
+          fi
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4
         with:
@@ -270,7 +285,24 @@ jobs:
           }
           Write-Host "PASS test_from_import"
 
-          Write-Host "`n=== ALL MODULE TESTS PASSED ==="
+          # --- Test 3: stdlib (pure L++) on Windows PE ---
+          Write-Host "`n=== Test 3: stdlib math (Windows PE) ==="
+          Copy-Item -Recurse -Force stdlib "$work\stdlib"
+          Copy-Item tests\modules\test_stdlib_full.lpp "$work\"
+          $env:LPP_AOT = "1"
+          & target\release\lpp.exe "$work\test_stdlib_full.lpp"
+          if ($LASTEXITCODE -ne 0) { throw "stdlib compile failed" }
+          & target\release\lpp-link.exe pe "$work\test_stdlib_full.obj" "$work\rt.obj" -o "$work\test_stdlib_full.exe" 2>&1
+          if ($LASTEXITCODE -ne 0) { throw "lpp-link PE stdlib failed" }
+          $out3 = (& "$work\test_stdlib_full.exe" 2>&1) -join "`n"
+          Write-Host "Output:`n$out3"
+          $expected3 = "42`n3`n7`n256`n55`n120`n4`n1"
+          if ($out3.Trim() -ne $expected3.Trim()) {
+            throw "MISMATCH! Expected:`n$expected3`nGot:`n$out3"
+          }
+          Write-Host "PASS test_stdlib_full (Windows PE)"
+
+          Write-Host "`n=== ALL MODULE + STDLIB TESTS PASSED ==="
 
   macos-host-link:
     runs-on: macos-latest

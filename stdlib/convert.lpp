@@ -1,0 +1,46 @@
+## L++ Standard Library: Type Conversion Utilities
+## Pure L++ — no C runtime, no linker changes.
+## Usage: from stdlib.convert import int_to_str, bool_to_str
+
+def int_to_str(n: Int) -> Str:
+    if n == 0:
+        return "0"
+    is_neg := n < 0
+    val := n
+    if is_neg:
+        val = 0 - n
+    result := ""
+    while val > 0:
+        digit := val - (val / 10) * 10
+        if digit == 0:
+            result = str_concat("0", result)
+        if digit == 1:
+            result = str_concat("1", result)
+        if digit == 2:
+            result = str_concat("2", result)
+        if digit == 3:
+            result = str_concat("3", result)
+        if digit == 4:
+            result = str_concat("4", result)
+        if digit == 5:
+            result = str_concat("5", result)
+        if digit == 6:
+            result = str_concat("6", result)
+        if digit == 7:
+            result = str_concat("7", result)
+        if digit == 8:
+            result = str_concat("8", result)
+        if digit == 9:
+            result = str_concat("9", result)
+        val = val / 10
+    if is_neg:
+        result = str_concat("-", result)
+    return result
+
+def bool_to_str(b: Bool) -> Str:
+    if b:
+        return "true"
+    return "false"
+
+def str_to_bool(s: Str) -> Bool:
+    return s == "true" || s == "1" || s == "yes"
