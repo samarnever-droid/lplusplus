@@ -513,7 +513,12 @@ impl<'a> TypeChecker<'a> {
                     | crate::ast::BinaryOperator::Subtract
                     | crate::ast::BinaryOperator::Multiply
                     | crate::ast::BinaryOperator::Divide
-                    | crate::ast::BinaryOperator::Modulo => Ok(left_ty),
+                    | crate::ast::BinaryOperator::Modulo
+                    | crate::ast::BinaryOperator::BitAnd
+                    | crate::ast::BinaryOperator::BitOr
+                    | crate::ast::BinaryOperator::BitXor
+                    | crate::ast::BinaryOperator::Shl
+                    | crate::ast::BinaryOperator::Shr => Ok(left_ty),
                     crate::ast::BinaryOperator::Eq
                     | crate::ast::BinaryOperator::NotEq
                     | crate::ast::BinaryOperator::Less

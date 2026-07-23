@@ -74,6 +74,17 @@ impl Parser {
                 let value = self.parse_expr()?;
                 if self.peek() == Some(&Token::Newline) { self.advance(); }
                 declarations.push(TopLevel::Const { name, value });
+            } else if self.match_token(&Token::TypeKw) {
+                let name = match self.advance() {
+                    Some(Token::Ident(n)) => n.clone(),
+                    _ => return self.error("Expected type name after 'type'"),
+                };
+                if !self.match_token(&Token::Equal) {
+                    return self.error("Expected '=' after type name");
+                }
+                let target = self.parse_type()?;
+                if self.peek() == Some(&Token::Newline) { self.advance(); }
+                declarations.push(TopLevel::TypeAlias { name, target });
             } else if self.match_token(&Token::Import) {
                 declarations.push(TopLevel::Import(self.parse_import()?));
             } else if self.match_token(&Token::From) {
@@ -81,7 +92,7 @@ impl Parser {
             } else {
                 let found = self.peek().cloned();
                 return self.error(format!(
-                    "Expected 'def', 'struct', 'enum', 'const', 'import', or 'from', found {:?}",
+                    "Expected 'def', 'struct', 'enum', 'const', 'type', 'import', or 'from', found {:?}",
                     found
                 ));
             }
@@ -822,6 +833,11 @@ impl Parser {
             let op = match t {
                 Token::Plus => BinaryOperator::Add,
                 Token::Minus => BinaryOperator::Subtract,
+                Token::BitAnd => BinaryOperator::BitAnd,
+                Token::BitOr => BinaryOperator::BitOr,
+                Token::BitXor => BinaryOperator::BitXor,
+                Token::Shl => BinaryOperator::Shl,
+                Token::Shr => BinaryOperator::Shr,
                 _ => break,
             };
             self.advance();

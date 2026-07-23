@@ -30,6 +30,11 @@ pub enum BinaryOperator {
     GreaterEq,
     And,       // &&
     Or,        // ||
+    BitAnd,    // &
+    BitOr,     // |
+    BitXor,    // ^
+    Shl,       // <<
+    Shr,       // >>
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -211,6 +216,11 @@ pub enum TopLevel {
     Const {
         name: String,
         value: Expr,
+    },
+    /// `type Name = Str`
+    TypeAlias {
+        name: String,
+        target: Type,
     },
 }
 

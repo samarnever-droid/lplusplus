@@ -349,12 +349,25 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                         }
                     }
                     BinaryOperator::And => {
-                        // a && b → a & b (bitwise AND on booleans i8)
                         builder.ins().band(left, right)
                     }
                     BinaryOperator::Or => {
-                        // a || b → a | b (bitwise OR on booleans i8)
                         builder.ins().bor(left, right)
+                    }
+                    BinaryOperator::BitAnd => {
+                        builder.ins().band(left, right)
+                    }
+                    BinaryOperator::BitOr => {
+                        builder.ins().bor(left, right)
+                    }
+                    BinaryOperator::BitXor => {
+                        builder.ins().bxor(left, right)
+                    }
+                    BinaryOperator::Shl => {
+                        builder.ins().ishl(left, right)
+                    }
+                    BinaryOperator::Shr => {
+                        builder.ins().sshr(left, right)
                     }
                 };
                 // Cranelift 0.113 represents integer/float comparisons as I8,

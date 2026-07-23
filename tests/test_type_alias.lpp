@@ -1,0 +1,9 @@
+type Name = Str
+type Age = Int
+
+def greet(name: Name, age: Age):
+    print_str(name)
+    print(age)
+
+def main():
+    greet("Alice", 30)

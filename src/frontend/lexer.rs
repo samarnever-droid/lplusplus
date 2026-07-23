@@ -14,6 +14,7 @@ pub enum Token {
     As,
     Pub,
     Const,
+    TypeKw,
 
     If,
     Else,
@@ -41,6 +42,11 @@ pub enum Token {
     GreaterEq, // >=
     And,       // &&
     Or,        // ||
+    BitAnd,    // &
+    BitOr,     // |
+    BitXor,    // ^
+    Shl,       // <<
+    Shr,       // >>
     Colon,     // :
     Arrow,     // ->
     Plus,      // +
@@ -247,6 +253,9 @@ impl<'a> Lexer<'a> {
                     if self.peek_c() == Some('=') {
                         self.next_c();
                         tokens.push(mk_token(Token::LessEq));
+                    } else if self.peek_c() == Some('<') {
+                        self.next_c();
+                        tokens.push(mk_token(Token::Shl));
                     } else {
                         tokens.push(mk_token(Token::Less));
                     }
@@ -255,6 +264,9 @@ impl<'a> Lexer<'a> {
                     if self.peek_c() == Some('=') {
                         self.next_c();
                         tokens.push(mk_token(Token::GreaterEq));
+                    } else if self.peek_c() == Some('>') {
+                        self.next_c();
+                        tokens.push(mk_token(Token::Shr));
                     } else {
                         tokens.push(mk_token(Token::Greater));
                     }
@@ -276,14 +288,19 @@ impl<'a> Lexer<'a> {
                     if self.peek_c() == Some('&') {
                         self.next_c();
                         tokens.push(mk_token(Token::And));
+                    } else {
+                        tokens.push(mk_token(Token::BitAnd));
                     }
                 }
                 '|' => {
                     if self.peek_c() == Some('|') {
                         self.next_c();
                         tokens.push(mk_token(Token::Or));
+                    } else {
+                        tokens.push(mk_token(Token::BitOr));
                     }
                 }
+                '^' => tokens.push(mk_token(Token::BitXor)),
                 '#' => {
                     while let Some(next_c) = self.peek_c() {
                         if next_c == '\n' || next_c == '\r' {
@@ -391,6 +408,7 @@ impl<'a> Lexer<'a> {
                         "as" => tokens.push(mk_token(Token::As)),
                         "pub" => tokens.push(mk_token(Token::Pub)),
                         "const" => tokens.push(mk_token(Token::Const)),
+                        "type" => tokens.push(mk_token(Token::TypeKw)),
                         "if" => tokens.push(mk_token(Token::If)),
                         "else" => tokens.push(mk_token(Token::Else)),
                         "elif" => {
