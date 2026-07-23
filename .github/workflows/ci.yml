@@ -56,6 +56,10 @@ jobs:
         run: python3 benchmarks/king20/run.py --suite experimental
       - name: Run King 20 direct ELF
         run: python3 benchmarks/king20/run_direct_elf.py
+      - name: "checkall: verify all .lpp files"
+        run: |
+          cargo build --release --bin lpp 2>/dev/null
+          target/release/lpp --checkall
       - name: Multi-file import project (Linux ELF)
         run: |
           cargo build --release --bin lpp --bin lpp-link 2>/dev/null
