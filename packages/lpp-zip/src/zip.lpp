@@ -1,49 +1,19 @@
 # lpp-zip: ZIP archive library for L++
 # Pure L++ implementation using buf_* binary primitives.
 # Supports ZIP format (PKZIP 2.0, STORE method — no compression).
-#
-# Usage:
-#   import zip
-#   archive := zip_create()
-#   zip_add_file(archive, "hello.txt", "Hello, World!\n")
-#   zip_add_file(archive, "data/numbers.txt", "1 2 3 4 5\n")
-#   zip_save(archive, "output.zip")
-#   zip_free(archive)
-#
-# Reading:
-#   info := zip_open("output.zip")
-#   count := zip_entry_count(info)
-#   name := zip_entry_name(info, 0)
-#   data := zip_entry_data(info, 0)
-#   zip_close(info)
-
-# ── Internal: ZIP format constants ──
-# Local file header signature: PK\x03\x04 = 0x04034b50
-# Central directory header:    PK\x01\x02 = 0x02014b50
-# End of central directory:    PK\x05\x06 = 0x06054b50
-
-# ── ZIP Entry (stored in a list) ──
-# Each entry is represented as: name_buf, data_buf, crc32, sizes stored in lists
-
-# Maximum 256 files per archive (simple implementation)
 
 def zip_create() -> Int:
-    # Returns a handle (buffer) that stores the archive state
-    # Layout: [4 bytes: entry_count] [... entry data appended via zip_add_file]
-    handle := buf_alloc(8)
+    # Handle layout: [4 bytes: entry_count]
+    handle := buf_alloc(4)
     buf_set32le(handle, 0, 0)
-    buf_set32le(handle, 4, 0)
     return handle
 
 def zip_add_file(archive: Int, filename: Str, content: Str):
-    # Get current entry count
     mut count := buf_get32le(archive, 0)
-
-    # Build local file header + data
     name_len := str_len(filename)
     data_len := str_len(content)
 
-    # Calculate CRC32 of content
+    # CRC32 of content
     data_buf := buf_alloc(data_len)
     buf_write_str(data_buf, 0, content)
     crc := buf_crc32(data_buf, 0, data_len)
@@ -52,54 +22,42 @@ def zip_add_file(archive: Int, filename: Str, content: Str):
     entry_size := 30 + name_len + data_len
     entry := buf_alloc(entry_size)
 
-    # Signature: PK\x03\x04
+    # PK\x03\x04 = 0x04034b50 = 67324752
     buf_set32le(entry, 0, 67324752)
-    # Version needed: 20 (2.0)
     buf_set16le(entry, 4, 20)
-    # General purpose bit flag: 0
     buf_set16le(entry, 6, 0)
-    # Compression method: 0 (STORE)
     buf_set16le(entry, 8, 0)
-    # Mod time: 0
     buf_set16le(entry, 10, 0)
-    # Mod date: 0
     buf_set16le(entry, 12, 0)
-    # CRC-32
     buf_set32le(entry, 14, crc)
-    # Compressed size = uncompressed size (STORE method)
     buf_set32le(entry, 18, data_len)
-    # Uncompressed size
     buf_set32le(entry, 22, data_len)
-    # Filename length
     buf_set16le(entry, 26, name_len)
-    # Extra field length: 0
     buf_set16le(entry, 28, 0)
-    # Filename
     buf_write_str(entry, 30, filename)
-    # File data
     buf_copy(entry, 30 + name_len, data_buf, 0, data_len)
-
     buf_free(data_buf)
 
-    # Store entry handle and metadata using write_file to a temp staging area
-    # We append entry data to a staging file
-    staging_path := str_concat("/tmp/lpp_zip_entry_", str_concat(int_to_str(count), ".bin"))
+    # Save entry to temp file
+    staging_path := str_concat("/tmp/lpp_zip_e", int_to_str_z(count))
     buf_write(staging_path, entry)
-
-    # Store metadata
-    meta_path := str_concat("/tmp/lpp_zip_meta_", str_concat(int_to_str(count), ".txt"))
-    mut meta := str_concat(filename, str_concat("\n", int_to_str(data_len)))
-    meta = str_concat(meta, str_concat("\n", int_to_str(crc)))
-    meta = str_concat(meta, str_concat("\n", int_to_str(name_len)))
-    write_file(meta_path, meta)
-
     buf_free(entry)
 
-    # Increment count
+    # Save metadata as binary: [4: data_len][4: crc][4: name_len][name_len: filename]
+    meta_size := 12 + name_len
+    meta_buf := buf_alloc(meta_size)
+    buf_set32le(meta_buf, 0, data_len)
+    buf_set32le(meta_buf, 4, crc)
+    buf_set32le(meta_buf, 8, name_len)
+    buf_write_str(meta_buf, 12, filename)
+    meta_path := str_concat("/tmp/lpp_zip_m", int_to_str_z(count))
+    buf_write(meta_path, meta_buf)
+    buf_free(meta_buf)
+
     count = count + 1
     buf_set32le(archive, 0, count)
 
-def int_to_str(n: Int) -> Str:
+def int_to_str_z(n: Int) -> Str:
     if n == 0:
         return "0"
     mut val := n
@@ -130,43 +88,37 @@ def int_to_str(n: Int) -> Str:
     return result
 
 def zip_save(archive: Int, output_path: Str):
-    mut count := buf_get32le(archive, 0)
+    count := buf_get32le(archive, 0)
 
-    # Phase 1: calculate total size
-    # Read all entries and compute offsets
+    # Phase 1: total size of local headers
     mut total_local := 0
     mut i := 0
     while i < count:
-        entry_path := str_concat("/tmp/lpp_zip_entry_", str_concat(int_to_str(i), ".bin"))
+        entry_path := str_concat("/tmp/lpp_zip_e", int_to_str_z(i))
         entry_buf := buf_read(entry_path)
         total_local = total_local + buf_len(entry_buf)
         buf_free(entry_buf)
         i = i + 1
 
-    # Phase 2: build central directory
-    # Each central dir entry = 46 + filename_len bytes
+    # Phase 2: total size of central directory
     mut total_central := 0
     i = 0
     while i < count:
-        meta_path := str_concat("/tmp/lpp_zip_meta_", str_concat(int_to_str(i), ".txt"))
-        mut meta := read_file(meta_path)
-        parts := str_split(meta, 10)
-        name_len := parse_int(list_get(parts, 3))
+        meta_path := str_concat("/tmp/lpp_zip_m", int_to_str_z(i))
+        meta_buf := buf_read(meta_path)
+        name_len := buf_get32le(meta_buf, 8)
         total_central = total_central + 46 + name_len
+        buf_free(meta_buf)
         i = i + 1
 
-    # End of central directory: 22 bytes
     total_size := total_local + total_central + 22
-
-    # Phase 3: write final ZIP
     out := buf_alloc(total_size)
-    mut offset := 0
-    mut cd_offset := total_local
 
-    # Write local file headers + data
+    # Phase 3: write local file headers
+    mut offset := 0
     i = 0
     while i < count:
-        entry_path := str_concat("/tmp/lpp_zip_entry_", str_concat(int_to_str(i), ".bin"))
+        entry_path := str_concat("/tmp/lpp_zip_e", int_to_str_z(i))
         entry_buf := buf_read(entry_path)
         entry_len := buf_len(entry_buf)
         buf_copy(out, offset, entry_buf, 0, entry_len)
@@ -174,94 +126,68 @@ def zip_save(archive: Int, output_path: Str):
         offset = offset + entry_len
         i = i + 1
 
-    # Write central directory entries
+    # Phase 4: write central directory
+    mut cd_offset := total_local
     mut local_offset := 0
     i = 0
     while i < count:
-        meta_path := str_concat("/tmp/lpp_zip_meta_", str_concat(int_to_str(i), ".txt"))
-        mut meta := read_file(meta_path)
-        parts := str_split(meta, 10)
-        filename := list_get(parts, 0)
-        data_len := parse_int(list_get(parts, 1))
-        crc := parse_int(list_get(parts, 2))
-        name_len := parse_int(list_get(parts, 3))
+        meta_path := str_concat("/tmp/lpp_zip_m", int_to_str_z(i))
+        meta_buf := buf_read(meta_path)
+        data_len := buf_get32le(meta_buf, 0)
+        crc := buf_get32le(meta_buf, 4)
+        name_len := buf_get32le(meta_buf, 8)
 
-        # Central directory header: PK\x01\x02 = 0x02014b50
+        # PK\x01\x02 = 0x02014b50 = 33639248
         buf_set32le(out, cd_offset, 33639248)
-        # Version made by: 20
         buf_set16le(out, cd_offset + 4, 20)
-        # Version needed: 20
         buf_set16le(out, cd_offset + 6, 20)
-        # Flags: 0
         buf_set16le(out, cd_offset + 8, 0)
-        # Compression: STORE(0)
         buf_set16le(out, cd_offset + 10, 0)
-        # Mod time/date: 0
         buf_set16le(out, cd_offset + 12, 0)
         buf_set16le(out, cd_offset + 14, 0)
-        # CRC32
         buf_set32le(out, cd_offset + 16, crc)
-        # Compressed/uncompressed size
         buf_set32le(out, cd_offset + 20, data_len)
         buf_set32le(out, cd_offset + 24, data_len)
-        # Filename length
         buf_set16le(out, cd_offset + 28, name_len)
-        # Extra/comment/disk/attrs: 0
         buf_set16le(out, cd_offset + 30, 0)
         buf_set16le(out, cd_offset + 32, 0)
         buf_set16le(out, cd_offset + 34, 0)
         buf_set16le(out, cd_offset + 36, 0)
         buf_set32le(out, cd_offset + 38, 0)
-        # Local header offset
         buf_set32le(out, cd_offset + 42, local_offset)
-        # Filename
-        buf_write_str(out, cd_offset + 46, filename)
+        # Copy filename from metadata buffer
+        buf_copy(out, cd_offset + 46, meta_buf, 12, name_len)
 
+        buf_free(meta_buf)
         local_offset = local_offset + 30 + name_len + data_len
         cd_offset = cd_offset + 46 + name_len
         i = i + 1
 
-    # End of central directory record
+    # Phase 5: EOCD
+    # PK\x05\x06 = 0x06054b50 = 101010256
     eocd := cd_offset
-    # Signature: PK\x05\x06 = 0x06054b50
     buf_set32le(out, eocd, 101010256)
-    # Disk number: 0
     buf_set16le(out, eocd + 4, 0)
-    # Disk with CD: 0
     buf_set16le(out, eocd + 6, 0)
-    # Entries on this disk
     buf_set16le(out, eocd + 8, count)
-    # Total entries
     buf_set16le(out, eocd + 10, count)
-    # Central directory size
     buf_set32le(out, eocd + 12, total_central)
-    # CD offset
     buf_set32le(out, eocd + 16, total_local)
-    # Comment length: 0
     buf_set16le(out, eocd + 20, 0)
 
     buf_write(output_path, out)
     buf_free(out)
 
 def zip_free(archive: Int):
-    # Clean up temp files
-    mut count := buf_get32le(archive, 0)
-    mut i := 0
-    while i < count:
-        # Temp files will be cleaned by OS
-        i = i + 1
     buf_free(archive)
 
-# ── Reading ZIP files ──
+# ── Reading ──
 
 def zip_open(path: Str) -> Int:
-    # Returns handle to the ZIP file buffer
     return buf_read(path)
 
 def zip_entry_count(handle: Int) -> Int:
-    # Find EOCD record at the end
     size := buf_len(handle)
-    # EOCD is last 22 bytes (for no-comment ZIPs)
     eocd := size - 22
     sig := buf_get32le(handle, eocd)
     if sig == 101010256:
@@ -269,45 +195,39 @@ def zip_entry_count(handle: Int) -> Int:
     return 0
 
 def zip_entry_name(handle: Int, index: Int) -> Str:
-    # Walk central directory to find entry by index
     size := buf_len(handle)
     eocd := size - 22
-    mut cd_offset := buf_get32le(handle, eocd + 16)
-    mut count := buf_get16le(handle, eocd + 10)
-
-    mut offset := cd_offset
+    mut cd_off := buf_get32le(handle, eocd + 16)
+    count := buf_get16le(handle, eocd + 10)
     mut i := 0
     while i < count:
         if i == index:
-            name_len := buf_get16le(handle, offset + 28)
-            return buf_read_str(handle, offset + 46, name_len)
-        name_len := buf_get16le(handle, offset + 28)
-        extra_len := buf_get16le(handle, offset + 30)
-        comment_len := buf_get16le(handle, offset + 32)
-        offset = offset + 46 + name_len + extra_len + comment_len
+            name_len := buf_get16le(handle, cd_off + 28)
+            return buf_read_str(handle, cd_off + 46, name_len)
+        name_len := buf_get16le(handle, cd_off + 28)
+        extra_len := buf_get16le(handle, cd_off + 30)
+        comment_len := buf_get16le(handle, cd_off + 32)
+        cd_off = cd_off + 46 + name_len + extra_len + comment_len
         i = i + 1
     return ""
 
 def zip_entry_data(handle: Int, index: Int) -> Str:
-    # Find local file header for entry and extract data
     size := buf_len(handle)
     eocd := size - 22
-    mut cd_offset := buf_get32le(handle, eocd + 16)
-    mut count := buf_get16le(handle, eocd + 10)
-
-    mut offset := cd_offset
+    mut cd_off := buf_get32le(handle, eocd + 16)
+    count := buf_get16le(handle, eocd + 10)
     mut i := 0
     while i < count:
         if i == index:
-            local_off := buf_get32le(handle, offset + 42)
+            local_off := buf_get32le(handle, cd_off + 42)
             name_len := buf_get16le(handle, local_off + 26)
             data_len := buf_get32le(handle, local_off + 18)
             data_start := local_off + 30 + name_len
             return buf_read_str(handle, data_start, data_len)
-        name_len := buf_get16le(handle, offset + 28)
-        extra_len := buf_get16le(handle, offset + 30)
-        comment_len := buf_get16le(handle, offset + 32)
-        offset = offset + 46 + name_len + extra_len + comment_len
+        name_len := buf_get16le(handle, cd_off + 28)
+        extra_len := buf_get16le(handle, cd_off + 30)
+        comment_len := buf_get16le(handle, cd_off + 32)
+        cd_off = cd_off + 46 + name_len + extra_len + comment_len
         i = i + 1
     return ""
 
