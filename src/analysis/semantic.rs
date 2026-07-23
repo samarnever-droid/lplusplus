@@ -447,7 +447,16 @@ impl Resolver {
             Stmt::Match { subject, arms } => {
                 self.resolve_expr(subject)?;
                 for arm in arms {
-                    // Resolve arm body in current scope (bindings TBD for data-carrying variants)
+                    // Register match arm bindings as local variables
+                    for binding_name in &arm.bindings {
+                        self.table.add_binding(
+                            self.current_scope,
+                            binding_name.clone(),
+                            false,
+                            Some(Type::Int), // data is Int (packed lower 32 bits)
+                            BindingKind::Local,
+                        );
+                    }
                     for s in &mut arm.body {
                         self.resolve_stmt(s)?;
                     }

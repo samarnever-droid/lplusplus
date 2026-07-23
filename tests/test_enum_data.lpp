@@ -1,0 +1,23 @@
+enum Result:
+    Ok(value: Int)
+    Err(code: Int)
+
+def safe_divide(a: Int, b: Int) -> Int:
+    if b == 0:
+        return Result.Err(0)
+    return Result.Ok(a / b)
+
+def main():
+    r := safe_divide(10, 3)
+    match r:
+        Ok(v):
+            print(v)
+        Err(c):
+            print(c)
+
+    r2 := safe_divide(10, 0)
+    match r2:
+        Ok(v):
+            print(v)
+        Err(c):
+            print_str("division by zero")

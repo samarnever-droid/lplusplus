@@ -1,0 +1,34 @@
+## L++ Standard Library: Result and Option types
+## Built on enums — no C runtime, no linker changes.
+
+enum Result:
+    Ok(value: Int)
+    Err(code: Int)
+
+enum Option:
+    Some(value: Int)
+    None
+
+def is_ok(r: Int) -> Bool:
+    tag := r / 4294967296
+    return tag == 0
+
+def is_err(r: Int) -> Bool:
+    tag := r / 4294967296
+    return tag == 1
+
+def unwrap(r: Int) -> Int:
+    return r - (r / 4294967296) * 4294967296
+
+def is_some(o: Int) -> Bool:
+    tag := o / 4294967296
+    return tag == 0
+
+def is_none(o: Int) -> Bool:
+    tag := o / 4294967296
+    return tag == 1
+
+def unwrap_or(o: Int, default: Int) -> Int:
+    if is_some(o):
+        return unwrap(o)
+    return default

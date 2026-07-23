@@ -29,6 +29,9 @@ pub struct MirLowerCtx<'a> {
 
     // Loop target stack for break and continue
     pub loop_stack: Vec<LoopTargets>,
+
+    // Match arm bindings (name → local_id for data extraction)
+    pub match_bindings: HashMap<String, LocalId>,
 }
 
 impl<'a> MirLowerCtx<'a> {
@@ -45,6 +48,7 @@ impl<'a> MirLowerCtx<'a> {
             current_env_ptr: None,
             current_captures: Vec::new(),
             loop_stack: Vec::new(),
+            match_bindings: HashMap::new(),
         }
     }
 
@@ -659,9 +663,27 @@ impl<'a> MirLowerCtx<'a> {
                 }
             }
             Stmt::Match { subject, arms } => {
-                // Lower match as a chain of if/else on the enum tag.
-                // Enums are represented as tagged integers: tag = variant index (0, 1, 2, ...)
+                // Enum representation: packed i64 = (tag << 32) | (data & 0xFFFFFFFF)
+                // Extract tag: value / 4294967296 (arithmetic right shift by 32)
+                // Extract data: value % 4294967296 (mask lower 32 bits)
                 let subject_val = self.lower_expr(builder, subject, binding_map)?;
+
+                // Extract tag = subject >> 32 (using divide by 2^32)
+                let shift_const = builder.new_local(TypeRef::Int, false, None, None);
+                builder.push_instr(MirInstr::Assign(shift_const, Rvalue::Use(Operand::Int(4294967296))))?;
+                let tag_val = builder.new_local(TypeRef::Int, false, None, None);
+                builder.push_instr(MirInstr::Assign(
+                    tag_val,
+                    Rvalue::BinaryOp(BinaryOperator::Divide, subject_val.clone(), Operand::Local(shift_const)),
+                ))?;
+
+                // Extract data = subject & 0xFFFFFFFF (using modulo 2^32)
+                let data_val = builder.new_local(TypeRef::Int, false, None, None);
+                builder.push_instr(MirInstr::Assign(
+                    data_val,
+                    Rvalue::BinaryOp(BinaryOperator::Modulo, subject_val.clone(), Operand::Local(shift_const)),
+                ))?;
+
                 let end_block = builder.new_block();
 
                 for (i, arm) in arms.iter().enumerate() {
@@ -672,13 +694,13 @@ impl<'a> MirLowerCtx<'a> {
                         end_block
                     };
 
-                    // Compare tag: subject_val == i
-                    let tag_local = builder.new_local(TypeRef::Int, false, None, None);
-                    builder.push_instr(MirInstr::Assign(tag_local, Rvalue::Use(Operand::Int(i as i64))))?;
+                    // Compare tag
+                    let expected_tag = builder.new_local(TypeRef::Int, false, None, None);
+                    builder.push_instr(MirInstr::Assign(expected_tag, Rvalue::Use(Operand::Int(i as i64))))?;
                     let cmp_local = builder.new_local(TypeRef::Bool, false, None, None);
                     builder.push_instr(MirInstr::Assign(
                         cmp_local,
-                        Rvalue::BinaryOp(BinaryOperator::Eq, subject_val.clone(), Operand::Local(tag_local)),
+                        Rvalue::BinaryOp(BinaryOperator::Eq, Operand::Local(tag_val), Operand::Local(expected_tag)),
                     ))?;
                     builder.terminate_current_block(Terminator::If {
                         cond: Operand::Local(cmp_local),
@@ -686,10 +708,22 @@ impl<'a> MirLowerCtx<'a> {
                         else_block: next_block,
                     })?;
 
-                    // Arm body
+                    // Arm body — bind data to the first binding name if present
                     builder.switch_to_block(arm_block);
+                    if !arm.bindings.is_empty() {
+                        let binding_name = &arm.bindings[0];
+                        let bound_local = builder.new_local(TypeRef::Int, true, None, None);
+                        builder.push_instr(MirInstr::Assign(
+                            bound_local,
+                            Rvalue::Use(Operand::Local(data_val)),
+                        ))?;
+                        self.match_bindings.insert(binding_name.clone(), bound_local);
+                    }
                     for stmt in &arm.body {
                         self.lower_stmt(builder, stmt, binding_map)?;
+                    }
+                    if !arm.bindings.is_empty() {
+                        self.match_bindings.remove(&arm.bindings[0]);
                     }
                     builder.terminate_current_block(Terminator::Goto(end_block))?;
 
@@ -716,6 +750,10 @@ impl<'a> MirLowerCtx<'a> {
             Expr::StringLiteral(value) => Ok(Operand::String(value.clone())),
             Expr::BoolLiteral(value) => Ok(Operand::Bool(*value)),
             Expr::Identifier(name, cell) => {
+                // Check match arm bindings first
+                if let Some(&local_id) = self.match_bindings.get(name) {
+                    return Ok(Operand::Local(local_id));
+                }
                 let ast_id = cell
                     .get()
                     .ok_or_else(|| format!("Missing binding id for identifier '{}'", name))?;
@@ -1046,15 +1084,16 @@ impl<'a> MirLowerCtx<'a> {
                     for decl in &self.program.declarations {
                         if let crate::ast::TopLevel::Enum(e) = decl {
                             if e.name == *name {
-                                // It's an enum variant — return the tag
+                                // It's a unit enum variant — return tag shifted
                                 let tag = e.variants.iter().position(|v| v.name == *field).unwrap_or(0);
                                 let ty = if let Some(id) = self.type_table.lookup_struct(name) {
                                     TypeRef::Custom(id)
                                 } else {
                                     TypeRef::Int
                                 };
+                                let tag_val = (tag as i64) << 32;
                                 let temp = builder.new_local(ty, false, None, None);
-                                builder.push_instr(MirInstr::Assign(temp, Rvalue::Use(Operand::Int(tag as i64))))?;
+                                builder.push_instr(MirInstr::Assign(temp, Rvalue::Use(Operand::Int(tag_val))))?;
                                 return Ok(Operand::Local(temp));
                             }
                         }
@@ -1306,18 +1345,47 @@ impl<'a> MirLowerCtx<'a> {
 
                 Ok(Operand::Local(closure_local))
             }
-            Expr::EnumVariantConstruct { enum_name, variant, args: _ } => {
-                // For simple enums (no data), the variant is just its tag index.
-                // Find the variant index from the program's enum definitions.
+            Expr::EnumVariantConstruct { enum_name, variant, args } => {
                 let tag = self.get_enum_variant_tag(enum_name, variant);
                 let ty = if let Some(id) = self.type_table.lookup_struct(enum_name) {
                     TypeRef::Custom(id)
                 } else {
                     TypeRef::Int
                 };
-                let temp = builder.new_local(ty, false, None, None);
-                builder.push_instr(MirInstr::Assign(temp, Rvalue::Use(Operand::Int(tag as i64))))?;
-                Ok(Operand::Local(temp))
+
+                if args.is_empty() {
+                    // Unit variant: just the tag shifted left
+                    let tag_val = (tag as i64) << 32;
+                    let temp = builder.new_local(ty, false, None, None);
+                    builder.push_instr(MirInstr::Assign(temp, Rvalue::Use(Operand::Int(tag_val))))?;
+                    Ok(Operand::Local(temp))
+                } else {
+                    // Data variant: pack (tag << 32) | (data & 0xFFFFFFFF)
+                    let data_op = self.lower_expr(builder, &args[0], binding_map)?;
+
+                    let tag_shifted = builder.new_local(TypeRef::Int, false, None, None);
+                    builder.push_instr(MirInstr::Assign(
+                        tag_shifted,
+                        Rvalue::Use(Operand::Int((tag as i64) << 32)),
+                    ))?;
+
+                    // Mask data to 32 bits
+                    let mask = builder.new_local(TypeRef::Int, false, None, None);
+                    builder.push_instr(MirInstr::Assign(mask, Rvalue::Use(Operand::Int(0xFFFFFFFF))))?;
+                    let masked_data = builder.new_local(TypeRef::Int, false, None, None);
+                    builder.push_instr(MirInstr::Assign(
+                        masked_data,
+                        Rvalue::BinaryOp(BinaryOperator::Modulo, data_op, Operand::Local(mask)),
+                    ))?;
+
+                    // Combine: tag_shifted + masked_data (using Add since we have no bitwise OR)
+                    let combined = builder.new_local(ty, false, None, None);
+                    builder.push_instr(MirInstr::Assign(
+                        combined,
+                        Rvalue::BinaryOp(BinaryOperator::Add, Operand::Local(tag_shifted), Operand::Local(masked_data)),
+                    ))?;
+                    Ok(Operand::Local(combined))
+                }
             }
             Expr::Match { subject, arms } => {
                 // Match as expression — same as statement match for now
