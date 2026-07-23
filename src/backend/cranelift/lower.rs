@@ -746,6 +746,7 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                         | TypeRef::Generic(_, _)
                         | TypeRef::Unresolved(_)
                         | TypeRef::Function
+                        | TypeRef::TypeParam(_)
                         | TypeRef::Void => builder.ins().iconst(cl_types::I64, 0),
                     };
                     builder.ins().return_(&[zero]);

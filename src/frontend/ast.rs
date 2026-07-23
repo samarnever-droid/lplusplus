@@ -159,6 +159,7 @@ pub struct ClosureParam {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Function {
     pub name: String,
+    pub type_params: Vec<String>,  // generic type parameters: fn foo[T, U](...)
     pub params: Vec<Param>,
     pub return_type: Type,
     pub body: Vec<Stmt>,
@@ -167,6 +168,7 @@ pub struct Function {
 #[derive(Debug, Clone, PartialEq)]
 pub struct StructDef {
     pub name: String,
+    pub type_params: Vec<String>,  // generic type parameters: struct Pair[T, U]:
     pub fields: Vec<Param>,
 }
 
@@ -177,10 +179,11 @@ pub struct EnumVariant {
     pub fields: Vec<Param>, // empty for unit variants like `None`
 }
 
-/// Enum definition: `enum Result: Ok(value: Int), Err(msg: Str)`
+/// Enum definition: `enum Result[T, E]: Ok(value: T), Err(msg: E)`
 #[derive(Debug, Clone, PartialEq)]
 pub struct EnumDef {
     pub name: String,
+    pub type_params: Vec<String>,  // generic type parameters
     pub variants: Vec<EnumVariant>,
 }
 

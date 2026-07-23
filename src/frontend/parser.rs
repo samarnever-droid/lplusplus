@@ -181,6 +181,9 @@ impl Parser {
             _ => return self.error("Expected enum name"),
         };
 
+        // Optional generic type parameters: enum Result[T, E]:
+        let type_params = self.parse_type_params();
+
         if !self.match_token(&Token::Colon) {
             return self.error("Expected ':' after enum name");
         }
@@ -240,7 +243,7 @@ impl Parser {
             return self.error("Enum must have at least one variant");
         }
 
-        Ok(EnumDef { name, variants })
+        Ok(EnumDef { name, type_params, variants })
     }
 
     fn parse_struct(&mut self) -> Result<StructDef, String> {
@@ -248,6 +251,9 @@ impl Parser {
             Some(Token::Ident(n)) => n.clone(),
             _ => return self.error("Expected struct name"),
         };
+
+        // Optional generic type parameters: struct Pair[T, U]:
+        let type_params = self.parse_type_params();
 
         if !self.match_token(&Token::Colon) {
             return self.error("Expected ':' after struct name");
@@ -289,7 +295,24 @@ impl Parser {
         }
         self.match_token(&Token::Dedent);
 
-        Ok(StructDef { name, fields })
+        Ok(StructDef { name, type_params, fields })
+    }
+
+    /// Parse optional type parameters: `[T, U]`
+    fn parse_type_params(&mut self) -> Vec<String> {
+        let mut type_params = Vec::new();
+        if self.match_token(&Token::LBracket) {
+            loop {
+                if let Some(Token::Ident(n)) = self.advance() {
+                    type_params.push(n.clone());
+                }
+                if !self.match_token(&Token::Comma) {
+                    break;
+                }
+            }
+            self.match_token(&Token::RBracket);
+        }
+        type_params
     }
 
     fn parse_function(&mut self) -> Result<Function, String> {
@@ -297,6 +320,9 @@ impl Parser {
             Some(Token::Ident(n)) => n.clone(),
             _ => return self.error("Expected function name"),
         };
+
+        // Optional generic type parameters: fn foo[T, U](...)
+        let type_params = self.parse_type_params();
 
         if !self.match_token(&Token::LParen) {
             return self.error("Expected '(' after function name");
@@ -360,6 +386,7 @@ impl Parser {
 
         Ok(Function {
             name,
+            type_params,
             params,
             return_type,
             body,

@@ -13,6 +13,7 @@ pub fn type_to_cl(ty: &TypeRef) -> cranelift_codegen::ir::Type {
         TypeRef::Generic(_, _) => cl_types::I64, // opaque container pointer
         TypeRef::Unresolved(_) => cl_types::I64, // not yet resolved; treat as ptr
         TypeRef::Function => cl_types::I64, // function pointer placeholder
+        TypeRef::TypeParam(_) => cl_types::I64, // generic type param — erased to i64
     }
 }
 
@@ -40,6 +41,7 @@ pub fn type_size_align(ty: &TypeRef) -> (usize, usize) {
         | TypeRef::Generic(_, _)
         | TypeRef::Unresolved(_)
         | TypeRef::Function
+        | TypeRef::TypeParam(_)
         | TypeRef::Void => (8, 8),
     }
 }

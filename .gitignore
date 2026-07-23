@@ -26,3 +26,5 @@ output.c
 /benchmarks/projects/*/generated/
 
 /LppData/
+*.o
+tests/test_generics

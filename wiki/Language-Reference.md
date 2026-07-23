@@ -319,3 +319,45 @@ content := read_file("out.txt")
 for i in range(5):                # 0, 1, 2, 3, 4
     print(i)
 ```
+
+## Generics
+
+Functions, structs, and enums can be parameterized with type variables using square-bracket syntax.
+
+### Generic Functions
+
+```lpp
+def identity[T](x: T) -> T:
+    return x
+
+def first[A, B](a: A, b: B) -> A:
+    return a
+
+# Usage — type is inferred from arguments:
+x := identity(42)        # T = Int → returns Int
+s := identity("hello")   # T = Str → returns Str
+```
+
+### Generic Structs
+
+```lpp
+struct Box[T]:
+    value: T
+
+b := Box(42)
+print(b.value)   # 42
+```
+
+### Generic Enums
+
+```lpp
+enum Option[T]:
+    Some(value: T)
+    None
+
+enum Result[T, E]:
+    Ok(value: T)
+    Err(error: E)
+```
+
+> **Note:** Generic type parameters are erased to `i64` at the Cranelift backend level (type erasure). This means all values are uniformly represented as 64-bit words. Full monomorphization is planned for a future release.

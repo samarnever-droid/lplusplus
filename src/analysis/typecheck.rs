@@ -16,6 +16,7 @@ pub enum TypeRef {
     Generic(String, Vec<TypeRef>),
     Unresolved(String),
     Function, // Just a placeholder for function names
+    TypeParam(String), // Generic type parameter (e.g. T, U) — erased to i64 at codegen
 }
 
 #[derive(Debug, Clone)]
@@ -64,6 +65,15 @@ pub struct TypeChecker<'a> {
     pub func_param_types: HashMap<String, Vec<TypeRef>>,
 }
 
+/// Check if two types are compatible, treating TypeParam as a wildcard.
+fn types_compatible(expected: &TypeRef, actual: &TypeRef) -> bool {
+    if expected == actual {
+        return true;
+    }
+    // TypeParam is compatible with any concrete type (type erasure)
+    matches!(expected, TypeRef::TypeParam(_)) || matches!(actual, TypeRef::TypeParam(_))
+}
+
 impl<'a> TypeChecker<'a> {
     pub fn new(symbol_table: &'a mut SymbolTable) -> Self {
         Self {
@@ -89,6 +99,10 @@ impl<'a> TypeChecker<'a> {
     }
 
     fn convert_ast_type(type_table: &TypeTable, ast_ty: &Type) -> TypeRef {
+        Self::convert_ast_type_with_params(type_table, ast_ty, &[])
+    }
+
+    fn convert_ast_type_with_params(type_table: &TypeTable, ast_ty: &Type, type_params: &[String]) -> TypeRef {
         match ast_ty {
             Type::Int => TypeRef::Int,
             Type::Float => TypeRef::Float,
@@ -96,6 +110,10 @@ impl<'a> TypeChecker<'a> {
             Type::Bool => TypeRef::Bool,
             Type::Void => TypeRef::Void,
             Type::Custom(name) => {
+                // Check if this is a type parameter first
+                if type_params.iter().any(|tp| tp == name) {
+                    return TypeRef::TypeParam(name.clone());
+                }
                 if let Some(&id) = type_table.structs_by_name.get(name) {
                     TypeRef::Custom(id)
                 } else {
@@ -105,7 +123,7 @@ impl<'a> TypeChecker<'a> {
             Type::Generic(base_name, args) => {
                 let mut ref_args = Vec::new();
                 for arg in args {
-                    ref_args.push(Self::convert_ast_type(type_table, arg));
+                    ref_args.push(Self::convert_ast_type_with_params(type_table, arg, type_params));
                 }
                 TypeRef::Generic(base_name.clone(), ref_args)
             }
@@ -170,12 +188,13 @@ impl<'a> TypeChecker<'a> {
         }
         for decl in &program.declarations {
             if let TopLevel::Function(f) = decl {
-                let ret_ty = Self::convert_ast_type(&self.type_table, &f.return_type);
+                let tp = &f.type_params;
+                let ret_ty = Self::convert_ast_type_with_params(&self.type_table, &f.return_type, tp);
                 self.func_return_types.insert(f.name.clone(), ret_ty);
                 let param_tys: Vec<TypeRef> = f
                     .params
                     .iter()
-                    .map(|p| Self::convert_ast_type(&self.type_table, &p.ty))
+                    .map(|p| Self::convert_ast_type_with_params(&self.type_table, &p.ty, tp))
                     .collect();
                 self.func_param_types.insert(f.name.clone(), param_tys);
             }
@@ -194,7 +213,7 @@ impl<'a> TypeChecker<'a> {
                 let mut is_self_referential = false;
 
                 for field in &s.fields {
-                    let field_ty = Self::convert_ast_type(&self.type_table, &field.ty);
+                    let field_ty = Self::convert_ast_type_with_params(&self.type_table, &field.ty, &s.type_params);
 
                     if let TypeRef::Custom(ref_id) = field_ty {
                         if ref_id == id {
@@ -216,10 +235,23 @@ impl<'a> TypeChecker<'a> {
         // Check for cyclic ownership graphs in custom types
         Self::verify_struct_cycles(&self.type_table)?;
 
+        // Collect all type parameter names from all generic functions/structs/enums
+        let mut all_type_params: Vec<String> = Vec::new();
+        for decl in &program.declarations {
+            match decl {
+                TopLevel::Function(f) => all_type_params.extend(f.type_params.clone()),
+                TopLevel::Struct(s) => all_type_params.extend(s.type_params.clone()),
+                TopLevel::Enum(e) => all_type_params.extend(e.type_params.clone()),
+                _ => {}
+            }
+        }
+        all_type_params.sort();
+        all_type_params.dedup();
+
         // Phase 3: Update all bindings in the symbol table with resolved TypeRefs
         for binding in &mut self.symbol_table.bindings {
             if let Some(ast_ty) = &binding.ast_ty {
-                binding.ty = Some(Self::convert_ast_type(&self.type_table, ast_ty));
+                binding.ty = Some(Self::convert_ast_type_with_params(&self.type_table, ast_ty, &all_type_params));
             }
         }
 
@@ -280,7 +312,7 @@ impl<'a> TypeChecker<'a> {
                 };
                 let val_ty = self.infer_expr(value, current_scope, expected_ty.clone())?;
                 if let Some(exp) = expected_ty {
-                    if exp != val_ty {
+                    if !types_compatible(&exp, &val_ty) {
                         return Err(format!(
                             "Type mismatch in assignment: cannot assign '{:?}' to variable '{}' of type '{:?}'",
                             val_ty, name, exp
@@ -305,7 +337,7 @@ impl<'a> TypeChecker<'a> {
                     if let Some(field_entry) =
                         struct_def.fields.iter().find(|(name, _)| name == field)
                     {
-                        if field_entry.1 != val_ty {
+                        if !types_compatible(&field_entry.1, &val_ty) {
                             return Err(format!(
                                 "Type mismatch in field assignment: expected {:?}, got {:?}",
                                 field_entry.1, val_ty
@@ -580,7 +612,7 @@ impl<'a> TypeChecker<'a> {
                             match param {
                                 crate::builtins::ParamType::Specific(expected_ty) => {
                                     let arg_ty = &arg_tys[i];
-                                    if expected_ty != arg_ty {
+                                    if !types_compatible(expected_ty, arg_ty) {
                                         if let TypeRef::Generic(expected_name, _) = expected_ty {
                                             if let TypeRef::Generic(arg_name, _) = arg_ty {
                                                 if expected_name == arg_name {
@@ -682,7 +714,7 @@ impl<'a> TypeChecker<'a> {
                             }
                             for (i, (field_name, field_ty)) in def.fields.iter().enumerate() {
                                 let arg_ty = &arg_tys[i];
-                                if field_ty != arg_ty {
+                                if !types_compatible(field_ty, arg_ty) {
                                     return Err(format!(
                                         "Struct '{}' field '{}' expects {:?}, got {:?}",
                                         def.name, field_name, field_ty, arg_ty
@@ -693,6 +725,19 @@ impl<'a> TypeChecker<'a> {
                         return Ok(TypeRef::Custom(id));
                     }
                     if let Some(ty) = self.func_return_types.get(name) {
+                        // Generic type inference: if return type is TypeParam,
+                        // substitute it based on the actual argument types
+                        if let TypeRef::TypeParam(tp_name) = ty {
+                            if let Some(param_types) = self.func_param_types.get(name) {
+                                for (i, pt) in param_types.iter().enumerate() {
+                                    if let TypeRef::TypeParam(pn) = pt {
+                                        if pn == tp_name && i < arg_tys.len() {
+                                            return Ok(arg_tys[i].clone());
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         return Ok(ty.clone());
                     }
                 }

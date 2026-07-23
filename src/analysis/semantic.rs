@@ -620,7 +620,7 @@ mod tests {
     fn same_scope_shadowing_creates_distinct_bindings() {
         let mut program = Program {
             declarations: vec![TopLevel::Function(Function {
-                name: "main".to_string(),
+                type_params: vec![], name: "main".to_string(),
                 params: vec![],
                 return_type: Type::Void,
                 body: vec![
@@ -665,7 +665,7 @@ mod tests {
     fn rejects_reassigning_immutable_variable() {
         let mut program = Program {
             declarations: vec![TopLevel::Function(Function {
-                name: "main".to_string(),
+                type_params: vec![], name: "main".to_string(),
                 params: vec![],
                 return_type: Type::Void,
                 body: vec![
@@ -695,7 +695,7 @@ mod tests {
     fn rejects_field_mutation_on_immutable_variable() {
         let mut program = Program {
             declarations: vec![TopLevel::Function(Function {
-                name: "main".to_string(),
+                type_params: vec![], name: "main".to_string(),
                 params: vec![],
                 return_type: Type::Void,
                 body: vec![
@@ -725,7 +725,7 @@ mod tests {
     fn rejects_break_outside_loop() {
         let mut program = Program {
             declarations: vec![TopLevel::Function(Function {
-                name: "main".to_string(),
+                type_params: vec![], name: "main".to_string(),
                 params: vec![],
                 return_type: Type::Void,
                 body: vec![Stmt::Break],

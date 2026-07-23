@@ -35,6 +35,9 @@ pub struct MirLowerCtx<'a> {
 
     // Top-level constants (name → value)
     pub constants: HashMap<String, i64>,
+
+    // Current function's type parameters (for generics)
+    pub current_type_params: Vec<String>,
 }
 
 impl<'a> MirLowerCtx<'a> {
@@ -53,6 +56,7 @@ impl<'a> MirLowerCtx<'a> {
             loop_stack: Vec::new(),
             match_bindings: HashMap::new(),
             constants: HashMap::new(),
+            current_type_params: Vec::new(),
         }
     }
 
@@ -73,13 +77,18 @@ impl<'a> MirLowerCtx<'a> {
             Type::String => TypeRef::Str,
             Type::Bool => TypeRef::Bool,
             Type::Void => TypeRef::Void,
-            Type::Custom(name) => self
-                .type_table
-                .structs_by_name
-                .get(name)
-                .copied()
-                .map(TypeRef::Custom)
-                .unwrap_or_else(|| TypeRef::Unresolved(name.clone())),
+            Type::Custom(name) => {
+                // Check if it's a type parameter first
+                if self.current_type_params.iter().any(|tp| tp == name) {
+                    return TypeRef::TypeParam(name.clone());
+                }
+                self.type_table
+                    .structs_by_name
+                    .get(name)
+                    .copied()
+                    .map(TypeRef::Custom)
+                    .unwrap_or_else(|| TypeRef::Unresolved(name.clone()))
+            }
             Type::Generic(name, args) => TypeRef::Generic(
                 name.clone(),
                 args.iter().map(|arg| self.resolve_type(arg)).collect(),
@@ -227,8 +236,11 @@ impl<'a> MirLowerCtx<'a> {
                 let id = FuncId(self.next_func_id);
                 self.next_func_id += 1;
                 self.functions.insert(f.name.clone(), id);
+                // Temporarily set type params so resolve_type can recognize T, U, etc.
+                let prev = std::mem::replace(&mut self.current_type_params, f.type_params.clone());
                 self.func_return_types
                     .insert(f.name.clone(), self.resolve_type(&f.return_type));
+                self.current_type_params = prev;
             }
         }
 
@@ -256,6 +268,9 @@ impl<'a> MirLowerCtx<'a> {
     }
 
     fn lower_function(&mut self, func: &Function) -> Result<MirFunction, String> {
+        // Set current type parameters for this function's generics
+        let prev_type_params = std::mem::replace(&mut self.current_type_params, func.type_params.clone());
+
         let func_id = *self.functions.get(&func.name).ok_or_else(|| {
             format!(
                 "Internal error: missing MIR function id for '{}'",
@@ -295,6 +310,9 @@ impl<'a> MirLowerCtx<'a> {
                 builder.set_terminator(current_block, Terminator::Return(None))?;
             }
         }
+
+        // Restore previous type parameters
+        self.current_type_params = prev_type_params;
 
         Ok(builder.finish())
     }
@@ -952,6 +970,29 @@ impl<'a> MirLowerCtx<'a> {
                     if return_type == TypeRef::Void {
                         if let Some(ty) = self.func_return_types.get(name) {
                             return_type = ty.clone();
+                            // Generic type inference at MIR level: if return type is TypeParam,
+                            // infer from the argument types
+                            if let TypeRef::TypeParam(ref tp_name) = return_type {
+                                // Find the function AST to get param type info
+                                for decl in &self.program.declarations {
+                                    if let TopLevel::Function(f) = decl {
+                                        if &f.name == name {
+                                            let prev = std::mem::replace(&mut self.current_type_params, f.type_params.clone());
+                                            for (i, param) in f.params.iter().enumerate() {
+                                                let param_resolved = self.resolve_type(&param.ty);
+                                                if let TypeRef::TypeParam(ref pn) = param_resolved {
+                                                    if pn == tp_name && i < args.len() {
+                                                        return_type = self.expr_type_hint(&args[i], builder, binding_map);
+                                                        break;
+                                                    }
+                                                }
+                                            }
+                                            self.current_type_params = prev;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
                         } else if let Some(&struct_id) = self.type_table.structs_by_name.get(name) {
                             return_type = TypeRef::Custom(struct_id);
                         } else if let Some(builtin) = crate::builtins::get_builtins()
