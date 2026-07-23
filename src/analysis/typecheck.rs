@@ -39,6 +39,10 @@ impl TypeTable {
         }
     }
 
+    pub fn lookup_struct(&self, name: &str) -> Option<StructTypeId> {
+        self.structs_by_name.get(name).copied()
+    }
+
     pub fn register_struct(&mut self, name: String) -> StructTypeId {
         let id = StructTypeId(self.definitions.len());
         self.structs_by_name.insert(name.clone(), id);
@@ -421,7 +425,7 @@ impl<'a> TypeChecker<'a> {
                 self.infer_expr(subject, current_scope, None)?;
                 for arm in arms {
                     for s in &arm.body {
-                        self.check_stmt(s, current_scope, return_type)?;
+                        self.infer_stmt(s, current_scope)?;
                     }
                 }
             }
@@ -783,14 +787,18 @@ impl<'a> TypeChecker<'a> {
                 // Type-check each arm body
                 for arm in arms {
                     for stmt in &arm.body {
-                        self.check_stmt(stmt, current_scope, &TypeRef::Void)?;
+                        self.infer_stmt(stmt, current_scope)?;
                     }
                 }
                 Ok(TypeRef::Void)
             }
             Expr::EnumVariantConstruct { enum_name, .. } => {
                 // Returns the enum type
-                Ok(TypeRef::Custom(enum_name.clone()))
+                if let Some(id) = self.type_table.lookup_struct(enum_name) {
+                    Ok(TypeRef::Custom(id))
+                } else {
+                    Ok(TypeRef::Int)
+                }
             }
         }
     }

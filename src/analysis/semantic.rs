@@ -447,23 +447,10 @@ impl Resolver {
             Stmt::Match { subject, arms } => {
                 self.resolve_expr(subject)?;
                 for arm in arms {
-                    let old_scope = self.current_scope;
-                    self.current_scope = self.table.push_scope(old_scope);
-                    // Register bindings from match arm
-                    for binding_name in &arm.bindings {
-                        arm.body.len(); // just to use arm
-                        self.table.add_binding(
-                            self.current_scope,
-                            binding_name.clone(),
-                            false,
-                            None, // type inferred from enum variant
-                            BindingKind::Variable,
-                        );
-                    }
+                    // Resolve arm body in current scope (bindings TBD for data-carrying variants)
                     for s in &mut arm.body {
                         self.resolve_stmt(s)?;
                     }
-                    self.current_scope = old_scope;
                 }
             }
             Stmt::Block(stmts) => {

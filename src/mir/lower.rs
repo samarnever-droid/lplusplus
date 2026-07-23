@@ -166,7 +166,14 @@ impl<'a> MirLowerCtx<'a> {
             }
             Expr::Closure { .. } => TypeRef::Function,
             Expr::Spawn { .. } => TypeRef::Void,
-            Expr::EnumVariantConstruct { enum_name, .. } => TypeRef::Custom(enum_name.clone()),
+            Expr::EnumVariantConstruct { enum_name, .. } => {
+                // Look up the enum type ID from the type table
+                if let Some(id) = self.type_table.lookup_struct(enum_name) {
+                    TypeRef::Custom(id)
+                } else {
+                    TypeRef::Int // fallback
+                }
+            }
             Expr::Match { .. } => TypeRef::Int, // match expression returns Int for now
         }
     }
@@ -1271,8 +1278,13 @@ impl<'a> MirLowerCtx<'a> {
                 // For simple enums (no data), the variant is just its tag index.
                 // Find the variant index from the program's enum definitions.
                 let tag = self.get_enum_variant_tag(enum_name, variant);
-                let temp = builder.new_local(TypeRef::Custom(enum_name.clone()), false, None, None);
-                builder.push_instr(MirInstr::Assign(temp, Rvalue::Use(Operand::Const(tag as i64))))?;
+                let ty = if let Some(id) = self.type_table.lookup_struct(enum_name) {
+                    TypeRef::Custom(id)
+                } else {
+                    TypeRef::Int
+                };
+                let temp = builder.new_local(ty, false, None, None);
+                builder.push_instr(MirInstr::Assign(temp, Rvalue::Use(Operand::Int(tag as i64))))?;
                 Ok(Operand::Local(temp))
             }
             Expr::Match { subject, arms } => {

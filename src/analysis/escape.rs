@@ -401,10 +401,10 @@ impl EscapeAnalyzer {
             }
             Stmt::Break | Stmt::Continue => {}
             Stmt::Match { subject, arms } => {
-                self.classify_expr(subject, current_scope, symbol_table, type_table)?;
+                Self::walk_expr_rule1(subject, current_scope, symbol_table, type_table, storage)?;
                 for arm in arms {
                     for s in &arm.body {
-                        self.classify_stmt(s, current_scope, symbol_table, type_table)?;
+                        Self::walk_stmt_rule1(s, current_scope, symbol_table, type_table, closure_scopes, closure_idx, storage)?;
                     }
                 }
             }
