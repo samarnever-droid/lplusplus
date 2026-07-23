@@ -1,27 +1,23 @@
 ## L++ Standard Library: Algorithms
 ## Pure L++ — no C runtime, no linker changes.
-## Usage: from stdlib.algo import sort, binary_search
-
-def swap_list(lst: List[Int], i: Int, j: Int):
-    a := list_get(lst, i)
-    b := list_get(lst, j)
-    list_set(lst, i, b)
-    list_set(lst, j, a)
 
 def bubble_sort(lst: List[Int]):
     n := list_len(lst)
-    i := 0
+    mut i := 0
     while i < n:
-        j := 0
+        mut j := 0
         while j < n - i - 1:
             if list_get(lst, j) > list_get(lst, j + 1):
-                swap_list(lst, j, j + 1)
+                a := list_get(lst, j)
+                b := list_get(lst, j + 1)
+                list_set(lst, j, b)
+                list_set(lst, j + 1, a)
             j = j + 1
         i = i + 1
 
 def binary_search(lst: List[Int], target: Int) -> Int:
-    lo := 0
-    hi := list_len(lst) - 1
+    mut lo := 0
+    mut hi := list_len(lst) - 1
     while lo <= hi:
         mid := (lo + hi) / 2
         val := list_get(lst, mid)
@@ -35,7 +31,7 @@ def binary_search(lst: List[Int], target: Int) -> Int:
 
 def list_fill(n: Int, value: Int) -> List[Int]:
     result := List[Int]()
-    i := 0
+    mut i := 0
     while i < n:
         list_push(result, value)
         i = i + 1
@@ -43,21 +39,8 @@ def list_fill(n: Int, value: Int) -> List[Int]:
 
 def list_range(start: Int, end: Int) -> List[Int]:
     result := List[Int]()
-    i := start
+    mut i := start
     while i < end:
         list_push(result, i)
         i = i + 1
-    return result
-
-def list_map_double(lst: List[Int]) -> List[Int]:
-    result := List[Int]()
-    for item in lst:
-        list_push(result, item * 2)
-    return result
-
-def list_filter_positive(lst: List[Int]) -> List[Int]:
-    result := List[Int]()
-    for item in lst:
-        if item > 0:
-            list_push(result, item)
     return result

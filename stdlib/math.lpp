@@ -1,6 +1,5 @@
 ## L++ Standard Library: Math Utilities
 ## Pure L++ — no C runtime needed, no linker changes.
-## Usage: from math import abs, min, max, clamp
 
 def abs(x: Int) -> Int:
     if x < 0:
@@ -32,24 +31,17 @@ def sign(x: Int) -> Int:
     return 0
 
 def gcd(a: Int, b: Int) -> Int:
-    x := abs(a)
-    y := abs(b)
+    mut x := abs(a)
+    mut y := abs(b)
     while y > 0:
         t := y
         y = x - (x / y) * y
         x = t
     return x
 
-def lcm(a: Int, b: Int) -> Int:
-    if a == 0:
-        return 0
-    if b == 0:
-        return 0
-    return abs(a) / gcd(a, b) * abs(b)
-
 def pow(base: Int, exp: Int) -> Int:
-    result := 1
-    i := 0
+    mut result := 1
+    mut i := 0
     while i < exp:
         result = result * base
         i = i + 1
@@ -58,8 +50,8 @@ def pow(base: Int, exp: Int) -> Int:
 def factorial(n: Int) -> Int:
     if n <= 1:
         return 1
-    result := 1
-    i := 2
+    mut result := 1
+    mut i := 2
     while i <= n:
         result = result * i
         i = i + 1
@@ -68,9 +60,9 @@ def factorial(n: Int) -> Int:
 def fib(n: Int) -> Int:
     if n <= 1:
         return n
-    a := 0
-    b := 1
-    i := 2
+    mut a := 0
+    mut b := 1
+    mut i := 2
     while i <= n:
         c := a + b
         a = b

@@ -1,15 +1,14 @@
 ## L++ Standard Library: Type Conversion Utilities
 ## Pure L++ — no C runtime, no linker changes.
-## Usage: from stdlib.convert import int_to_str, bool_to_str
 
 def int_to_str(n: Int) -> Str:
     if n == 0:
         return "0"
     is_neg := n < 0
-    val := n
+    mut val := n
     if is_neg:
         val = 0 - n
-    result := ""
+    mut result := ""
     while val > 0:
         digit := val - (val / 10) * 10
         if digit == 0:
@@ -41,6 +40,3 @@ def bool_to_str(b: Bool) -> Str:
     if b:
         return "true"
     return "false"
-
-def str_to_bool(s: Str) -> Bool:
-    return s == "true" || s == "1" || s == "yes"
