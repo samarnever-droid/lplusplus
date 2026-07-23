@@ -401,7 +401,7 @@ impl EscapeAnalyzer {
             }
             Stmt::Break | Stmt::Continue => {}
             Stmt::Match { subject, arms } => {
-                Self::walk_expr_rule1(subject, current_scope, symbol_table, type_table, storage)?;
+                Self::walk_expr_rule1(subject, current_scope, symbol_table, type_table, closure_scopes, closure_idx, storage)?;
                 for arm in arms {
                     for s in &arm.body {
                         Self::walk_stmt_rule1(s, current_scope, symbol_table, type_table, closure_scopes, closure_idx, storage)?;
