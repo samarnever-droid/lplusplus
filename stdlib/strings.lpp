@@ -1,0 +1,64 @@
+## L++ Standard Library: String Utilities
+## Pure L++ — no C runtime needed, no linker changes.
+## Usage: from strings import str_repeat, str_contains
+
+def str_repeat(s: Str, n: Int) -> Str:
+    result := ""
+    i := 0
+    while i < n:
+        result = str_concat(result, s)
+        i = i + 1
+    return result
+
+def str_contains(haystack: Str, needle: Str) -> Bool:
+    pos := str_find(haystack, needle)
+    return pos >= 0
+
+def str_starts_with(s: Str, prefix: Str) -> Bool:
+    if str_len(prefix) > str_len(s):
+        return false
+    sub := str_substr(s, 0, str_len(prefix))
+    return sub == prefix
+
+def str_ends_with(s: Str, suffix: Str) -> Bool:
+    slen := str_len(s)
+    suflen := str_len(suffix)
+    if suflen > slen:
+        return false
+    sub := str_substr(s, slen - suflen, suflen)
+    return sub == suffix
+
+def str_reverse(s: Str) -> Str:
+    result := ""
+    i := str_len(s) - 1
+    while i >= 0:
+        ch := str_substr(s, i, 1)
+        result = str_concat(result, ch)
+        i = i - 1
+    return result
+
+def str_count(s: Str, sub: Str) -> Int:
+    count := 0
+    pos := 0
+    sublen := str_len(sub)
+    while pos >= 0:
+        pos = str_find(str_substr(s, pos, str_len(s) - pos), sub)
+        if pos >= 0:
+            count = count + 1
+            pos = pos + sublen
+    return count
+
+def str_is_empty(s: Str) -> Bool:
+    return str_len(s) == 0
+
+def str_pad_left(s: Str, width: Int, pad_char: Str) -> Str:
+    result := s
+    while str_len(result) < width:
+        result = str_concat(pad_char, result)
+    return result
+
+def str_pad_right(s: Str, width: Int, pad_char: Str) -> Str:
+    result := s
+    while str_len(result) < width:
+        result = str_concat(result, pad_char)
+    return result
