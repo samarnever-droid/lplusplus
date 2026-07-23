@@ -64,11 +64,10 @@ jobs:
           mkdir -p "$WORK/utils"
           cp tests/modules/utils/*.lpp "$WORK/utils/"
 
-          # Compile full project
+          # Compile full project (use cc to link with libc for the standard runtime)
           LPP_AOT=1 target/release/lpp "$WORK/test_full_project.lpp"
           cc -O2 -fPIC -c lpp_runtime.c -o "$WORK/rt.o"
-          target/release/lpp-link "$WORK/test_full_project.o" "$WORK/rt.o" -o "$WORK/test_full_project"
-          chmod +x "$WORK/test_full_project"
+          cc "$WORK/test_full_project.o" "$WORK/rt.o" -o "$WORK/test_full_project" -lm -lpthread
           
           OUT=$("$WORK/test_full_project")
           EXPECTED=$(printf '30\n30\n49\n42\n30\n27\nhello from greet module\ngoodbye from greet module')
@@ -83,8 +82,7 @@ jobs:
 
           # Test from X import Y
           LPP_AOT=1 target/release/lpp "$WORK/test_from_import.lpp"
-          target/release/lpp-link "$WORK/test_from_import.o" "$WORK/rt.o" -o "$WORK/test_from_import"
-          chmod +x "$WORK/test_from_import"
+          cc "$WORK/test_from_import.o" "$WORK/rt.o" -o "$WORK/test_from_import" -lm -lpthread
           OUT2=$("$WORK/test_from_import")
           EXPECTED2=$(printf '300\n121\n50')
           if [ "$OUT2" = "$EXPECTED2" ]; then
