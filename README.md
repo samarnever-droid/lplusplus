@@ -4,181 +4,258 @@
 
 <h1 align="center">L++</h1>
 
-<p align="center"><strong>Readable like Python. Ownership-aware like Rust. Fast iteration like Go. Native by default.</strong></p>
+<p align="center"><strong>Readable like Python · Safe like Rust · Fast like Go · Native by default</strong></p>
 
 <p align="center">
-  <a href="benchmarks/king20/stable/v1/latest.md">King20 Stable</a> ·
-  <a href="documentation/Native_Linker_Roadmap.md">Native Linker</a> ·
+  <a href="#install">Install</a> ·
+  <a href="#quick-start">Quick Start</a> ·
   <a href="Doc.md">Language Guide</a> ·
-  <a href="documentation/CURRENT_CAPABILITIES.md">Current Capabilities</a> ·
-  <a href="linguist/UPSTREAM_LINGUIST_PR.md">Linguist Package</a>
+  <a href="wiki/">Wiki</a> ·
+  <a href="benchmarks/king20/stable/v1/latest.md">Benchmarks</a>
 </p>
-
-> **Status — L++ 2.0 Release (July 21, 2026):** L++ is a 100% pure native language toolchain. The supported Linux x86-64 and Windows x86-64 native platforms feature ownership-aware MIR, ARC destructors, closure capsules, `List[T]` dynamic lists, `Map[K, V]` key-value hash tables, binary buffer operations (`buf_*`), process execution (`command_*`), directory manipulation (`dir_*`), native networking (`net_*`), Cranelift AOT, self-hosting package manager (`lpp-pm`), and a tri-format direct linker path (`lpp-link`). External host C compilers (`gcc`, `clang`, `cl.exe`) and C transpilation passes are completely removed from the primary build pipeline.
 
 ---
 
-## Why L++ exists
+## What is L++?
 
-L++ is built around a difficult four-way design goal:
-
-```text
-                 Python-like readability
-                         ▲
-                         │
-      Rust-inspired ◄────┼────► Go-like iteration speed
-      ownership safety    │
-                         ▼
-                 Native executable performance
-```
-
-The language tries to make the safe path the pleasant path:
+L++ is a compiled, ownership-aware programming language that combines Python's readability with Rust's safety model and Go's compilation speed. It compiles to native executables via Cranelift AOT — no interpreter, no VM, no garbage collector.
 
 ```lpp
-struct Box:
-    value: Int
+struct User:
+    name: Str
+    age: Int
 
-def identity(value: Box) -> Box:
-    return value
+def greet(user: User):
+    print_str(user.name)
+    print(user.age)
 
 def main():
-    original := Box()
-    returned := identity(original)
-    lpp_print_int(returned.value)
+    u := User("Alice", 30)
+    greet(u)
 ```
 
-There are no user-visible `Arc`, `Rc`, raw pointers, or manual frees in this example. L++ lowers the program into explicit internal ownership operations:
+## Key Features
 
-```text
-AllocateArc → Borrow → Retain → Move → ReturnOwned → Release
-```
+| Feature | Description |
+|---------|-------------|
+| **Python-like syntax** | Significant whitespace, `:=` declarations, `def`/`struct`/`enum` |
+| **Ownership & ARC** | Automatic reference counting, borrow tracking, cycle rejection |
+| **Enums + match** | Algebraic data types with pattern matching and data extraction |
+| **Error handling** | `Result` type + `?` operator for error propagation |
+| **Multi-file modules** | `import math`, `from utils import calc`, dotted paths |
+| **Native compilation** | Cranelift AOT → ELF (Linux) / PE (Windows) / Mach-O (macOS) |
+| **Direct linker** | `lpp-link` produces standalone executables without `gcc`/`clang`/MSVC |
+| **Package manager** | `lpp new`, `lpp build`, `lpp run` — self-hosted in L++ |
+| **Standard library** | math, strings, collections, algorithms, zip archives |
+| **15KB binaries** | Windows PE freestanding executables as small as 15.5KB |
 
-## The four pillars
-
-| Pillar | L++ approach |
-|---|---|
-| **Readable** | Significant whitespace, `def`, `struct`, inferred locals, explicit public signatures. |
-| **Safe by construction** | Ownership-aware MIR, ARC, borrow/return contracts, generated destructors, cycle rejection. |
-| **Fast to iterate** | Small Rust compiler pipeline, explicit types, phase timing, fast Cranelift object emission. |
-| **Native** | Cranelift AOT, PIC objects, direct ELF / PE linking via `lpp-link`. |
-
-## Verified ownership model
-
-The current AOT ownership contract covers:
-
-```text
-✓ ARC allocation and destructor callbacks
-✓ owned returns and borrowed parameter returns
-✓ direct aliases and field aliases
-✓ branch-safe release insertion
-✓ nested struct destructor chains
-✓ closure capsules and closure environments
-✓ List[T] and Map[K, V] element and entry ownership
-✓ binary buffer memory allocation, read/write, string conversions & CRC32
-✓ strong ownership-cycle rejection
-```
-
-The compiler rejects direct or indirect strong ownership cycles such as:
-
-```lpp
-struct Node:
-    next: Node
-```
-
-until explicit `Weak`, arena, or cycle-collection semantics are available.
-
-Read the detailed audit: [`documentation/Cranelift_Ownership_Audit_2026-07-19.md`](documentation/Cranelift_Ownership_Audit_2026-07-19.md). The safety boundary and graduation criteria are in [`documentation/Safety_Mission.md`](documentation/Safety_Mission.md).
-
-## Build paths
-
-### Host-link fallback
-
-Portable development path:
-
-```text
-L++ source → Cranelift object → packaged runtime object → host linker → executable
-```
-
-Phase 1 packages `lpp_runtime.o` / `lpp_runtime.obj`, so installed builds no longer recompile the full C runtime for every project build.
-
-### Direct Linker (`lpp-link`)
-
-Native direct link path bypassing host C compilers:
-
-```text
-L++ source → Cranelift object + freestanding runtime → lpp-link → static executable
-```
-
-Use it via CLI or package builds:
+## Install
 
 ```bash
-LPP_LINKER=direct lpp build
-```
-
-Supported Direct Targets:
-
-```text
-- Linux x86-64 ELF (.text, .rodata, GOT imports, freestanding ARC/lists)
-- Windows x86-64 PE COFF (.text, .rdata, .data, .idata, .reloc with /DLPP_FREESTANDING)
-- macOS Mach-O direct object emitter (experimental)
-```
-
-Networking, files, threads, JSON, and process execution feature native runtime bindings. Networking uses native OS sockets (Winsock2 / POSIX sockets)—never cURL—and its current API is documented in [`documentation/Networking.md`](documentation/Networking.md). The linker roadmap is in [`documentation/Native_Linker_Roadmap.md`](documentation/Native_Linker_Roadmap.md).
-
-## King20 benchmark standards
-
-| Track | Purpose | Policy |
-|---|---|---|
-| [**King20 Stable v1**](benchmarks/king20/stable/v1/README.md) | Historical correctness and performance baseline | Frozen forever; cut `v2` instead of editing it. |
-| [**King20 Experimental**](benchmarks/king20/experimental/README.md) | New ownership features, regressions, and optimization experiments | Evolves with the toolchain. |
-| [**King20 Direct ELF**](benchmarks/king20/direct_elf_latest.md) | Host-link-free Linux validation | Must preserve exact stdout and exit status. |
-
-Run them:
-
-```bash
-python3 benchmarks/king20/run.py --suite stable
-python3 benchmarks/king20/run.py --suite experimental
-python3 benchmarks/king20/run_direct_elf.py
-```
-
-## Getting started
-
-### Install a release — Rust not required
-
-The default installers download a matching release bundle containing `lpp`, `lpp-link`, and packaged runtime objects. End users do **not** need Rust/Cargo for normal installation.
-
-```bash
-# Linux x86-64
+# Linux / macOS
 curl -fsSL https://raw.githubusercontent.com/samarnever-droid/lplusplus/master/install.sh | sh
 
-# Windows PowerShell
+# Windows (PowerShell)
 irm https://raw.githubusercontent.com/samarnever-droid/lplusplus/master/install.ps1 | iex
+
+# From source
+git clone https://github.com/samarnever-droid/lplusplus.git
+cd lplusplus && cargo build --release --bin lpp --bin lpp-link
 ```
 
-To build locally from a source checkout instead:
+## Quick Start
 
 ```bash
-LPP_FROM_SOURCE=1 ./install.sh
-# PowerShell: $env:LPP_FROM_SOURCE=1; .\install.ps1
+# Create a project
+lpp new myapp && cd myapp
+
+# Edit src/main.lpp
+cat > src/main.lpp << 'EOF'
+def main():
+    print_str("Hello from L++!")
+    print(42)
+EOF
+
+# Build and run
+lpp build && lpp run
 ```
 
-### Command model: files vs packages
+## Language Overview
 
-| Intent | Command | Result |
-|---|---|---|
-| Check one source file | `lpp check calc.lpp` | Diagnostics only; no artifacts |
-| Emit native object file | `lpp emit calc.lpp` | `calc.o` / `calc.obj` next to source |
-| Emit native object file | `lpp emit calc.lpp --aot` | `calc.o` / `calc.obj` next to source |
-| Build a package | `lpp build` | Executable from `lpp.toml` package |
-| Run a package | `lpp run` | Build then run package executable |
+### Variables & Types
 
-### Create a project
-
-```bash
-lpp new testproj
-cd testproj
-lpp build
-lpp run
+```lpp
+x := 42              # immutable Int (inferred)
+mut y := 10           # mutable
+name := "Alice"       # Str
+pi := 3.14159         # Float
+flag := true          # Bool
 ```
 
-For complete language syntax, semantics, standard library function signatures, and current boundaries, see [`Doc.md`](Doc.md) and [`documentation/CURRENT_CAPABILITIES.md`](documentation/CURRENT_CAPABILITIES.md).
+### Functions
+
+```lpp
+def add(a: Int, b: Int) -> Int:
+    return a + b
+
+def greet(name: Str):
+    print_str(str_concat("Hello, ", name))
+```
+
+### Structs
+
+```lpp
+struct Point:
+    x: Int
+    y: Int
+
+p := Point(10, 20)
+print(p.x)
+```
+
+### Enums + Match
+
+```lpp
+enum Result:
+    Ok(value: Int)
+    Err(code: Int)
+
+def safe_divide(a: Int, b: Int) -> Int:
+    if b == 0:
+        return Result.Err(1)
+    return Result.Ok(a / b)
+
+def main():
+    match safe_divide(10, 3):
+        Ok(v):
+            print(v)
+        Err(c):
+            print_str("error")
+```
+
+### Error Propagation (`?` operator)
+
+```lpp
+def process(x: Int) -> Int:
+    v := might_fail(x)?     # returns Err automatically if failed
+    return Result.Ok(v + 1)
+```
+
+### Multi-file Imports
+
+```lpp
+import math                    # loads math.lpp
+import utils.helpers           # loads utils/helpers.lpp
+from stdlib.math import abs, pow   # selective import
+```
+
+### Collections
+
+```lpp
+# Lists
+mut lst := list_new()
+list_push(lst, 10)
+list_push(lst, 20)
+print(list_get(lst, 0))    # 10
+
+# Maps
+m := map_new()
+map_put(m, 1, 100)
+print(map_get(m, 1))       # 100
+```
+
+### Closures & Threads
+
+```lpp
+adder := fn(x: Int) -> Int:
+    return x + 10
+
+print(adder(5))   # 15
+
+spawn fn():
+    print_str("running in thread")
+```
+
+## Compiler Pipeline
+
+```
+Source (.lpp)
+    │
+    ├── Lexer → Tokens
+    ├── Parser → AST
+    ├── Semantic Analysis → Scopes, Bindings
+    ├── Type Checker → Type Resolution
+    ├── Escape Analysis → Ownership Classification
+    ├── MIR Lowering → Mid-level IR
+    │   ├── ARC Pass (retain/release insertion)
+    │   ├── Closure Lifting
+    │   ├── Constant Propagation
+    │   ├── Dead Code Elimination
+    │   ├── Branch Optimization
+    │   ├── Peephole Optimization
+    │   └── Inlining
+    ├── Cranelift Codegen → Native Object (.o/.obj)
+    └── lpp-link → Executable (ELF/PE/Mach-O)
+```
+
+## Benchmark Results (BPW v3)
+
+| Benchmark | L++ | Rust | Go | L++ Binary | Go Binary |
+|-----------|-----|------|-----|-----------|----------|
+| CPU-Heavy (fib40+primes) | 4ms | 3ms | 5ms | **47KB** | 2345KB |
+| RAM-Heavy (500k list) | 3ms | 2ms | 5ms | **47KB** | 2345KB |
+| File I/O (400KB) | **1ms** | 6ms | 5ms | **47KB** | 2470KB |
+| Win PE binary | — | — | — | **15.5KB** | — |
+
+## Project Structure
+
+```
+src/
+  frontend/     Lexer, Parser, AST
+  analysis/     Semantic, Typecheck, Escape
+  mir/          MIR IR, Builder, 7 optimization passes
+  backend/      Cranelift AOT compiler
+  bin/          lpp-link (ELF/PE/Mach-O direct linker)
+  config.rs     User config (~/.lpp/config.json)
+  builtins.rs   91 builtin function declarations
+  pm.rs         Package manager backend
+  main.rs       CLI entry point
+
+stdlib/         Pure L++ standard library
+  math.lpp      abs, min, max, pow, gcd, fib, factorial
+  strings.lpp   str_repeat, str_contains, str_reverse
+  collections.lpp  list_sum, list_max, list_reverse
+  algo.lpp      bubble_sort, binary_search
+  result.lpp    Result, Option enums + helpers
+  convert.lpp   int_to_str, bool_to_str
+
+packages/       Published packages
+  lpp-zip/      ZIP archive library (pure L++)
+
+runtime/        Platform runtimes
+  lpp_runtime.c           Host runtime (libc)
+  windows_x86_64_min.c    Windows freestanding (Kernel32 only)
+  linux_x86_64_min.c      Linux freestanding (syscalls only)
+```
+
+## CI Status
+
+| Job | What it tests |
+|-----|--------------|
+| **king20-smoke** | 20 benchmark programs + stdlib + module imports + zip library |
+| **scalability** | 10K/50K/100K line compile scaling |
+| **ownership-and-parity** | ARC ownership verification suite |
+| **windows-coff-fallback** | Windows PE direct linker + King20 PE gate |
+| **macos-host-link** | macOS Mach-O compilation |
+
+## License
+
+MIT
+
+## Links
+
+- [Language Guide](Doc.md)
+- [Package Registry](https://samarnever-droid.github.io/lplusplus/registry/index.json)
+- [Benchmarks](benchmarks/king20/stable/v1/latest.md)
+- [Native Linker Roadmap](documentation/Native_Linker_Roadmap.md)
+- [Safety Mission](documentation/Safety_Mission.md)
