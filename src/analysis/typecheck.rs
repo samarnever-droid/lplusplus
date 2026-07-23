@@ -737,18 +737,31 @@ impl<'a> TypeChecker<'a> {
             }
             Expr::FieldAccess { base, field } => {
                 let base_ty = self.infer_expr(base, current_scope, None)?;
-                if let TypeRef::Custom(struct_id) = base_ty {
+                if let TypeRef::Custom(struct_id) = &base_ty {
                     let struct_def = &self.type_table.definitions[struct_id.0];
+                    // Check if it's a regular struct field
                     if let Some(field_entry) =
                         struct_def.fields.iter().find(|(name, _)| name == field)
                     {
                         return Ok(field_entry.1.clone());
+                    }
+                    // Check if it's an enum variant (enum has no fields in type table)
+                    if struct_def.fields.is_empty() {
+                        // Likely an enum — treat field access as variant constructor
+                        return Ok(TypeRef::Custom(*struct_id));
                     }
                     Err(format!(
                         "Field '{}' not found on struct '{}'",
                         field, struct_def.name
                     ))
                 } else {
+                    // Could be an enum accessed via FunctionName binding
+                    // Check if base is an identifier that matches a registered enum
+                    if let Expr::Identifier(name, _) = base.as_ref() {
+                        if let Some(id) = self.type_table.lookup_struct(name) {
+                            return Ok(TypeRef::Custom(id));
+                        }
+                    }
                     Err(format!(
                         "Cannot access field '{}' on non-struct type {:?}",
                         field, base_ty

@@ -99,6 +99,19 @@ impl<'a> MirLowerCtx<'a> {
                 TypeRef::Int
             }
             Expr::FieldAccess { base, field } => {
+                // Check for enum variant
+                if let Expr::Identifier(name, _) = base.as_ref() {
+                    if let Some(id) = self.type_table.lookup_struct(name) {
+                        // Check if it's an enum
+                        for decl in &self.program.declarations {
+                            if let crate::ast::TopLevel::Enum(e) = decl {
+                                if e.name == *name {
+                                    return TypeRef::Custom(id);
+                                }
+                            }
+                        }
+                    }
+                }
                 let base_ty = self.expr_type_hint(base, builder, binding_map);
                 self.get_field_type(&base_ty, field)
             }
@@ -1028,6 +1041,25 @@ impl<'a> MirLowerCtx<'a> {
                 Ok(Operand::Local(temp))
             }
             Expr::FieldAccess { base, field } => {
+                // Check if this is an enum variant access (e.g., Color.Red)
+                if let Expr::Identifier(name, _) = base.as_ref() {
+                    for decl in &self.program.declarations {
+                        if let crate::ast::TopLevel::Enum(e) = decl {
+                            if e.name == *name {
+                                // It's an enum variant — return the tag
+                                let tag = e.variants.iter().position(|v| v.name == *field).unwrap_or(0);
+                                let ty = if let Some(id) = self.type_table.lookup_struct(name) {
+                                    TypeRef::Custom(id)
+                                } else {
+                                    TypeRef::Int
+                                };
+                                let temp = builder.new_local(ty, false, None, None);
+                                builder.push_instr(MirInstr::Assign(temp, Rvalue::Use(Operand::Int(tag as i64))))?;
+                                return Ok(Operand::Local(temp));
+                            }
+                        }
+                    }
+                }
                 let base_op = self.lower_expr(builder, base, binding_map)?;
                 let base_ty = match &base_op {
                     Operand::Local(local_id) | Operand::Borrowed(local_id) => {
