@@ -88,7 +88,7 @@ def zip_add_file(archive: Int, filename: Str, content: Str):
 
     # Store metadata
     meta_path := str_concat("/tmp/lpp_zip_meta_", str_concat(int_to_str(count), ".txt"))
-    meta := str_concat(filename, str_concat("\n", int_to_str(data_len)))
+    mut meta := str_concat(filename, str_concat("\n", int_to_str(data_len)))
     meta = str_concat(meta, str_concat("\n", int_to_str(crc)))
     meta = str_concat(meta, str_concat("\n", int_to_str(name_len)))
     write_file(meta_path, meta)
@@ -130,7 +130,7 @@ def int_to_str(n: Int) -> Str:
     return result
 
 def zip_save(archive: Int, output_path: Str):
-    count := buf_get32le(archive, 0)
+    mut count := buf_get32le(archive, 0)
 
     # Phase 1: calculate total size
     # Read all entries and compute offsets
@@ -149,7 +149,7 @@ def zip_save(archive: Int, output_path: Str):
     i = 0
     while i < count:
         meta_path := str_concat("/tmp/lpp_zip_meta_", str_concat(int_to_str(i), ".txt"))
-        meta := read_file(meta_path)
+        mut meta := read_file(meta_path)
         parts := str_split(meta, 10)
         name_len := parse_int(list_get(parts, 3))
         total_central = total_central + 46 + name_len
@@ -179,7 +179,7 @@ def zip_save(archive: Int, output_path: Str):
     i = 0
     while i < count:
         meta_path := str_concat("/tmp/lpp_zip_meta_", str_concat(int_to_str(i), ".txt"))
-        meta := read_file(meta_path)
+        mut meta := read_file(meta_path)
         parts := str_split(meta, 10)
         filename := list_get(parts, 0)
         data_len := parse_int(list_get(parts, 1))
@@ -245,7 +245,7 @@ def zip_save(archive: Int, output_path: Str):
 
 def zip_free(archive: Int):
     # Clean up temp files
-    count := buf_get32le(archive, 0)
+    mut count := buf_get32le(archive, 0)
     mut i := 0
     while i < count:
         # Temp files will be cleaned by OS
@@ -272,8 +272,8 @@ def zip_entry_name(handle: Int, index: Int) -> Str:
     # Walk central directory to find entry by index
     size := buf_len(handle)
     eocd := size - 22
-    cd_offset := buf_get32le(handle, eocd + 16)
-    count := buf_get16le(handle, eocd + 10)
+    mut cd_offset := buf_get32le(handle, eocd + 16)
+    mut count := buf_get16le(handle, eocd + 10)
 
     mut offset := cd_offset
     mut i := 0
@@ -292,8 +292,8 @@ def zip_entry_data(handle: Int, index: Int) -> Str:
     # Find local file header for entry and extract data
     size := buf_len(handle)
     eocd := size - 22
-    cd_offset := buf_get32le(handle, eocd + 16)
-    count := buf_get16le(handle, eocd + 10)
+    mut cd_offset := buf_get32le(handle, eocd + 16)
+    mut count := buf_get16le(handle, eocd + 10)
 
     mut offset := cd_offset
     mut i := 0
