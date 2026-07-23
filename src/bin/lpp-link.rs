@@ -579,10 +579,6 @@ fn parse_coff_object(
             .into_owned();
         buf.extend_from_slice(&data);
         map.push((idx, class, base));
-        // Debug: check if this extend_from_slice overwrote a watched byte
-        if class == SectionClass::Text && buf.len() > 0x233F && base <= 0x233F {
-                buf[0x233F], name, base, base + data.len());
-        }
 
         for (off, rel) in sec.relocations() {
             let raw_off = usize::try_from(off).map_err(|_| "reloc offset overflow")?;
