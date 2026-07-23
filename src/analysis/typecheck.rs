@@ -823,9 +823,17 @@ impl<'a> TypeChecker<'a> {
                 }
             }
             Expr::Try(inner) => {
-                // ? unwraps Ok value — returns the inner type (Int for now)
                 let _inner_ty = self.infer_expr(inner, current_scope, None)?;
                 Ok(TypeRef::Int)
+            }
+            Expr::Index { base, index } => {
+                let base_ty = self.infer_expr(base, current_scope, None)?;
+                self.infer_expr(index, current_scope, None)?;
+                match base_ty {
+                    TypeRef::Str => Ok(TypeRef::Str), // str[i] → single char as Str
+                    TypeRef::Generic(ref name, _) if name == "List" => Ok(TypeRef::Int),
+                    _ => Ok(TypeRef::Int), // fallback
+                }
             }
         }
     }

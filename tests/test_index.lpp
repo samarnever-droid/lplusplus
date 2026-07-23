@@ -1,0 +1,10 @@
+def main():
+    s := "hello"
+    ch := s[0]
+    print_str(ch)
+
+    ch2 := s[4]
+    print_str(ch2)
+
+    name := "world"
+    print_str(name[0])

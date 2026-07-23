@@ -202,7 +202,11 @@ impl<'a> MirLowerCtx<'a> {
                 }
             }
             Expr::Match { .. } => TypeRef::Int,
-            Expr::Try(_) => TypeRef::Int, // ? unwraps to the Ok data (Int)
+            Expr::Try(_) => TypeRef::Int,
+            Expr::Index { base, .. } => {
+                let base_ty = self.expr_type_hint(base, builder, binding_map);
+                if base_ty == TypeRef::Str { TypeRef::Str } else { TypeRef::Int }
+            }
         }
     }
 
@@ -862,6 +866,48 @@ impl<'a> MirLowerCtx<'a> {
                 }
             }
             Expr::BinaryOp { left, op, right } => {
+                // Short-circuit && and ||
+                if *op == BinaryOperator::And {
+                    let result = builder.new_local(TypeRef::Bool, true, None, None);
+                    let left_val = self.lower_expr(builder, left, binding_map)?;
+                    let eval_right = builder.new_block();
+                    let end_block = builder.new_block();
+                    // If left is false, result = false, skip right
+                    builder.push_instr(MirInstr::Assign(result, Rvalue::Use(Operand::Bool(false))))?;
+                    builder.terminate_current_block(Terminator::If {
+                        cond: left_val,
+                        then_block: eval_right,
+                        else_block: end_block,
+                    })?;
+                    // Left was true — evaluate right
+                    builder.switch_to_block(eval_right);
+                    let right_val = self.lower_expr(builder, right, binding_map)?;
+                    builder.push_instr(MirInstr::Assign(result, Rvalue::Use(right_val)))?;
+                    builder.terminate_current_block(Terminator::Goto(end_block))?;
+                    builder.switch_to_block(end_block);
+                    return Ok(Operand::Local(result));
+                }
+                if *op == BinaryOperator::Or {
+                    let result = builder.new_local(TypeRef::Bool, true, None, None);
+                    let left_val = self.lower_expr(builder, left, binding_map)?;
+                    let eval_right = builder.new_block();
+                    let end_block = builder.new_block();
+                    // If left is true, result = true, skip right
+                    builder.push_instr(MirInstr::Assign(result, Rvalue::Use(Operand::Bool(true))))?;
+                    builder.terminate_current_block(Terminator::If {
+                        cond: left_val,
+                        then_block: end_block,
+                        else_block: eval_right,
+                    })?;
+                    // Left was false — evaluate right
+                    builder.switch_to_block(eval_right);
+                    let right_val = self.lower_expr(builder, right, binding_map)?;
+                    builder.push_instr(MirInstr::Assign(result, Rvalue::Use(right_val)))?;
+                    builder.terminate_current_block(Terminator::Goto(end_block))?;
+                    builder.switch_to_block(end_block);
+                    return Ok(Operand::Local(result));
+                }
+
                 let left_ty = self.expr_type_hint(left, builder, binding_map);
                 let left = self.lower_expr(builder, left, binding_map)?;
                 let right = self.lower_expr(builder, right, binding_map)?;
@@ -871,9 +917,7 @@ impl<'a> MirLowerCtx<'a> {
                     | BinaryOperator::Less
                     | BinaryOperator::LessEq
                     | BinaryOperator::Greater
-                    | BinaryOperator::GreaterEq
-                    | BinaryOperator::And
-                    | BinaryOperator::Or => TypeRef::Bool,
+                    | BinaryOperator::GreaterEq => TypeRef::Bool,
                     _ => left_ty,
                 };
                 let temp = builder.new_local(res_ty, false, None, None);
@@ -1516,6 +1560,27 @@ impl<'a> MirLowerCtx<'a> {
                     Rvalue::BinaryOp(BinaryOperator::Modulo, val, Operand::Local(shift)),
                 ))?;
                 Ok(Operand::Local(data))
+            }
+            Expr::Index { base, index } => {
+                // Desugar subscript:
+                //   str[i]  → str_substr(str, i, 1)
+                //   lst[i]  → list_get(lst, i)
+                let base_ty = self.expr_type_hint(base, builder, binding_map);
+                if base_ty == TypeRef::Str {
+                    // str_substr(base, index, 1)
+                    let desugared = Expr::Call {
+                        callee: Box::new(Expr::Identifier("str_substr".to_string(), std::cell::Cell::new(None))),
+                        args: vec![*base.clone(), *index.clone(), Expr::IntLiteral(1)],
+                    };
+                    self.lower_expr(builder, &desugared, binding_map)
+                } else {
+                    // list_get(base, index)
+                    let desugared = Expr::Call {
+                        callee: Box::new(Expr::Identifier("list_get".to_string(), std::cell::Cell::new(None))),
+                        args: vec![*base.clone(), *index.clone()],
+                    };
+                    self.lower_expr(builder, &desugared, binding_map)
+                }
             }
         }
     }

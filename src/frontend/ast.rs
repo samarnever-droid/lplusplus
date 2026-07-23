@@ -73,6 +73,11 @@ pub enum Expr {
     },
     /// `expr?` — try operator: unwrap Ok or return Err early
     Try(Box<Expr>),
+    /// `expr[index]` — subscript/index access
+    Index {
+        base: Box<Expr>,
+        index: Box<Expr>,
+    },
     /// `Result.Ok(42)` — enum variant constructor
     EnumVariantConstruct {
         enum_name: String,

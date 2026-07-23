@@ -598,6 +598,10 @@ impl Resolver {
             Expr::Try(inner) => {
                 self.resolve_expr(inner)?;
             }
+            Expr::Index { base, index } => {
+                self.resolve_expr(base)?;
+                self.resolve_expr(index)?;
+            }
         }
         Ok(())
     }

@@ -908,6 +908,18 @@ impl Parser {
             } else if self.match_token(&Token::Question) {
                 // Postfix ? operator: try/unwrap Result
                 expr = Expr::Try(Box::new(expr));
+            } else if self.match_token(&Token::LBracket) {
+                // Subscript: expr[index]
+                let index = self.parse_expr()?;
+                if !self.match_token(&Token::RBracket) {
+                    return self.error("Expected ']' after index");
+                }
+                // Desugar: str[i] → str_substr(str, i, 1)
+                //          lst[i] → list_get(lst, i)
+                expr = Expr::Index {
+                    base: Box::new(expr),
+                    index: Box::new(index),
+                };
             } else {
                 break;
             }
