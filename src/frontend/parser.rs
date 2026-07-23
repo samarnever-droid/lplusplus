@@ -861,10 +861,20 @@ impl Parser {
                         continue;
                     }
                 }
-                expr = Expr::Call {
-                    callee: Box::new(expr),
-                    args,
-                };
+                // Method call: expr.method(args) → method(expr, args)
+                if let Expr::FieldAccess { base, field } = expr.clone() {
+                    let mut method_args = vec![*base];
+                    method_args.extend(args);
+                    expr = Expr::Call {
+                        callee: Box::new(Expr::Identifier(field, std::cell::Cell::new(None))),
+                        args: method_args,
+                    };
+                } else {
+                    expr = Expr::Call {
+                        callee: Box::new(expr),
+                        args,
+                    };
+                }
             } else if self.match_token(&Token::Question) {
                 // Postfix ? operator: try/unwrap Result
                 expr = Expr::Try(Box::new(expr));
@@ -876,6 +886,24 @@ impl Parser {
     }
 
     fn parse_primary(&mut self) -> Result<Expr, String> {
+        // Handle unary prefix operators: -x, !b
+        if self.peek() == Some(&Token::Minus) {
+            self.advance();
+            let operand = self.parse_postfix()?;
+            return Ok(Expr::UnaryOp {
+                op: UnaryOperator::Negate,
+                operand: Box::new(operand),
+            });
+        }
+        if self.peek() == Some(&Token::Not) {
+            self.advance();
+            let operand = self.parse_postfix()?;
+            return Ok(Expr::UnaryOp {
+                op: UnaryOperator::Not,
+                operand: Box::new(operand),
+            });
+        }
+
         let t = match self.advance() {
             Some(t) => t.clone(),
             None => return self.error("Unexpected EOF"),

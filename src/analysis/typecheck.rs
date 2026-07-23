@@ -482,6 +482,13 @@ impl<'a> TypeChecker<'a> {
                     }
                 }
             }
+            Expr::UnaryOp { op, operand } => {
+                let ty = self.infer_expr(operand, current_scope, hint)?;
+                match op {
+                    UnaryOperator::Negate => Ok(ty), // -Int→Int, -Float→Float
+                    UnaryOperator::Not => Ok(TypeRef::Bool), // !Bool→Bool
+                }
+            }
             Expr::BinaryOp { left, op, right } => {
                 let left_ty = self.infer_expr(left, current_scope, None)?;
                 let right_ty = self.infer_expr(right, current_scope, None)?;

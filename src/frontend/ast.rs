@@ -10,6 +10,12 @@ pub enum Type {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum UnaryOperator {
+    Negate,   // -x
+    Not,      // !x
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum BinaryOperator {
     Add,
     Subtract,
@@ -31,6 +37,11 @@ pub enum Expr {
     StringLiteral(String),
     BoolLiteral(bool),
     Identifier(String, std::cell::Cell<Option<usize>>),
+    /// `-x` or `!b`
+    UnaryOp {
+        op: UnaryOperator,
+        operand: Box<Expr>,
+    },
     BinaryOp {
         left: Box<Expr>,
         op: BinaryOperator,

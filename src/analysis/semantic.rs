@@ -507,6 +507,9 @@ impl Resolver {
                     }
                 }
             }
+            Expr::UnaryOp { operand, .. } => {
+                self.resolve_expr(operand)?;
+            }
             Expr::BinaryOp { left, right, .. } => {
                 self.resolve_expr(left)?;
                 self.resolve_expr(right)?;

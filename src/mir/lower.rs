@@ -177,6 +177,12 @@ impl<'a> MirLowerCtx<'a> {
                 }
                 TypeRef::Int
             }
+            Expr::UnaryOp { op, operand } => {
+                match op {
+                    UnaryOperator::Not => TypeRef::Bool,
+                    UnaryOperator::Negate => self.expr_type_hint(operand, builder, binding_map),
+                }
+            }
             Expr::BinaryOp { left, .. } => {
                 let left_ty = self.expr_type_hint(left, builder, binding_map);
                 left_ty
@@ -809,6 +815,33 @@ impl<'a> MirLowerCtx<'a> {
                         "Identifier '{}' (binding {}) was not mapped into MIR locals for '{}'",
                         name, ast_id, builder.function.name
                     ))
+                }
+            }
+            Expr::UnaryOp { op, operand } => {
+                let val = self.lower_expr(builder, operand, binding_map)?;
+                match op {
+                    UnaryOperator::Negate => {
+                        // -x = 0 - x
+                        let zero = builder.new_local(TypeRef::Int, false, None, None);
+                        builder.push_instr(MirInstr::Assign(zero, Rvalue::Use(Operand::Int(0))))?;
+                        let result = builder.new_local(TypeRef::Int, false, None, None);
+                        builder.push_instr(MirInstr::Assign(
+                            result,
+                            Rvalue::BinaryOp(BinaryOperator::Subtract, Operand::Local(zero), val),
+                        ))?;
+                        Ok(Operand::Local(result))
+                    }
+                    UnaryOperator::Not => {
+                        // !b = b == false
+                        let false_val = builder.new_local(TypeRef::Bool, false, None, None);
+                        builder.push_instr(MirInstr::Assign(false_val, Rvalue::Use(Operand::Bool(false))))?;
+                        let result = builder.new_local(TypeRef::Bool, false, None, None);
+                        builder.push_instr(MirInstr::Assign(
+                            result,
+                            Rvalue::BinaryOp(BinaryOperator::Eq, val, Operand::Local(false_val)),
+                        ))?;
+                        Ok(Operand::Local(result))
+                    }
                 }
             }
             Expr::BinaryOp { left, op, right } => {

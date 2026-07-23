@@ -46,6 +46,7 @@ pub enum Token {
     Slash,     // /
     Percent,   // %
     Question,  // ?
+    Not,       // !
     LParen,    // (
     RParen,    // )
     LBracket,  // [
@@ -252,10 +253,7 @@ impl<'a> Lexer<'a> {
                         self.next_c();
                         tokens.push(mk_token(Token::NotEq));
                     } else {
-                        return Err(format!(
-                            "[line {}:col {}] Lexer error: Unexpected character: !",
-                            start_line, start_col
-                        ));
+                        tokens.push(mk_token(Token::Not));
                     }
                 }
                 '+' => tokens.push(mk_token(Token::Plus)),
