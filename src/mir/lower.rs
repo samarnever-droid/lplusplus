@@ -191,7 +191,8 @@ impl<'a> MirLowerCtx<'a> {
                     TypeRef::Int // fallback
                 }
             }
-            Expr::Match { .. } => TypeRef::Int, // match expression returns Int for now
+            Expr::Match { .. } => TypeRef::Int,
+            Expr::Try(_) => TypeRef::Int, // ? unwraps to the Ok data (Int)
         }
     }
 
@@ -1419,6 +1420,50 @@ impl<'a> MirLowerCtx<'a> {
                 }
                 builder.switch_to_block(end_block);
                 Ok(Operand::Local(result))
+            }
+            Expr::Try(inner) => {
+                // expr? — unwrap Ok or return Err early
+                // 1. Evaluate inner expression (should be a Result = packed i64)
+                let val = self.lower_expr(builder, inner, binding_map)?;
+
+                // 2. Extract tag = val / 4294967296
+                let shift = builder.new_local(TypeRef::Int, false, None, None);
+                builder.push_instr(MirInstr::Assign(shift, Rvalue::Use(Operand::Int(4294967296))))?;
+                let tag = builder.new_local(TypeRef::Int, false, None, None);
+                builder.push_instr(MirInstr::Assign(
+                    tag,
+                    Rvalue::BinaryOp(BinaryOperator::Divide, val.clone(), Operand::Local(shift)),
+                ))?;
+
+                // 3. If tag != 0 (is Err), return the whole value (propagate error)
+                let zero = builder.new_local(TypeRef::Int, false, None, None);
+                builder.push_instr(MirInstr::Assign(zero, Rvalue::Use(Operand::Int(0))))?;
+                let is_ok = builder.new_local(TypeRef::Bool, false, None, None);
+                builder.push_instr(MirInstr::Assign(
+                    is_ok,
+                    Rvalue::BinaryOp(BinaryOperator::Eq, Operand::Local(tag), Operand::Local(zero)),
+                ))?;
+
+                let ok_block = builder.new_block();
+                let err_block = builder.new_block();
+                builder.terminate_current_block(Terminator::If {
+                    cond: Operand::Local(is_ok),
+                    then_block: ok_block,
+                    else_block: err_block,
+                })?;
+
+                // Err path: return the packed value (tag+data) immediately
+                builder.switch_to_block(err_block);
+                builder.terminate_current_block(Terminator::Return(Some(val.clone())))?;
+
+                // Ok path: extract data = val % 4294967296
+                builder.switch_to_block(ok_block);
+                let data = builder.new_local(TypeRef::Int, false, None, None);
+                builder.push_instr(MirInstr::Assign(
+                    data,
+                    Rvalue::BinaryOp(BinaryOperator::Modulo, val, Operand::Local(shift)),
+                ))?;
+                Ok(Operand::Local(data))
             }
         }
     }

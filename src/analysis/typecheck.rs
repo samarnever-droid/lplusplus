@@ -813,6 +813,11 @@ impl<'a> TypeChecker<'a> {
                     Ok(TypeRef::Int)
                 }
             }
+            Expr::Try(inner) => {
+                // ? unwraps Ok value — returns the inner type (Int for now)
+                let _inner_ty = self.infer_expr(inner, current_scope, hint)?;
+                Ok(TypeRef::Int)
+            }
         }
     }
 }

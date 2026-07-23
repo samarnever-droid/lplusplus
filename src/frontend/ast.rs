@@ -58,6 +58,8 @@ pub enum Expr {
         subject: Box<Expr>,
         arms: Vec<MatchArm>,
     },
+    /// `expr?` — try operator: unwrap Ok or return Err early
+    Try(Box<Expr>),
     /// `Result.Ok(42)` — enum variant constructor
     EnumVariantConstruct {
         enum_name: String,

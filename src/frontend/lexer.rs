@@ -45,6 +45,7 @@ pub enum Token {
     Star,      // *
     Slash,     // /
     Percent,   // %
+    Question,  // ?
     LParen,    // (
     RParen,    // )
     LBracket,  // [
@@ -261,6 +262,7 @@ impl<'a> Lexer<'a> {
                 '*' => tokens.push(mk_token(Token::Star)),
                 '/' => tokens.push(mk_token(Token::Slash)),
                 '%' => tokens.push(mk_token(Token::Percent)),
+                '?' => tokens.push(mk_token(Token::Question)),
                 '#' => {
                     while let Some(next_c) = self.peek_c() {
                         if next_c == '\n' || next_c == '\r' {

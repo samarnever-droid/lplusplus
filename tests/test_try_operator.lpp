@@ -1,0 +1,27 @@
+enum Result:
+    Ok(value: Int)
+    Err(code: Int)
+
+def might_fail(x: Int) -> Int:
+    if x < 0:
+        return Result.Err(1)
+    return Result.Ok(x * 2)
+
+def process(x: Int) -> Int:
+    v := might_fail(x)?
+    return Result.Ok(v + 100)
+
+def main():
+    r := process(5)
+    match r:
+        Ok(v):
+            print(v)
+        Err(c):
+            print(c)
+
+    r2 := process(0 - 1)
+    match r2:
+        Ok(v):
+            print(v)
+        Err(c):
+            print(c)

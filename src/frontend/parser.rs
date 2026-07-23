@@ -865,6 +865,9 @@ impl Parser {
                     callee: Box::new(expr),
                     args,
                 };
+            } else if self.match_token(&Token::Question) {
+                // Postfix ? operator: try/unwrap Result
+                expr = Expr::Try(Box::new(expr));
             } else {
                 break;
             }

@@ -583,6 +583,9 @@ impl Resolver {
                     self.resolve_expr(arg)?;
                 }
             }
+            Expr::Try(inner) => {
+                self.resolve_expr(inner)?;
+            }
         }
         Ok(())
     }
