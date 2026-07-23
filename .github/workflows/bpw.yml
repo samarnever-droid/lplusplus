@@ -4,8 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches: [master]
-    paths:
-      - '.github/workflows/bpw.yml'
+    paths: ['.github/workflows/bpw.yml']
 
 permissions:
   contents: write
@@ -18,42 +17,31 @@ jobs:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-go@v5
-        with:
-          go-version: 'stable'
+        with: { go-version: 'stable' }
 
       - name: Build L++ toolchain
         run: cargo build --release --bin lpp --bin lpp-link
 
-      - name: "BPW: Full benchmark suite"
+      - name: "BPW: Linux full suite"
+        shell: bash
         run: |
           set -e
-          WORK=$(mktemp -d)
-          RESULTS="$WORK/results"
-          mkdir -p "$RESULTS"
+          W=$(mktemp -d)
+          R="$W/results"
+          mkdir -p "$R"
 
-          echo "========================================"
-          echo " BPW: Benchmark Package Workflow"
-          echo " Platform: Linux x86_64"
-          echo "========================================"
+          cc -O2 -fPIC -c lpp_runtime.c -o "$W/rt.o" -pthread
 
-          # ═══════════════════════════════════════
-          # 1. CREATE MULTI-FILE L++ PROJECT
-          # ═══════════════════════════════════════
-          echo ""
-          echo "=== Phase 1: Create L++ multi-file project ==="
-          
-          PRJ="$WORK/lpp_project"
-          mkdir -p "$PRJ/utils" "$PRJ/stdlib"
-          cp -r stdlib/* "$PRJ/stdlib/" 2>/dev/null || true
+          measure() {
+            local START=$(date +%s%N)
+            eval "$1"
+            local END=$(date +%s%N)
+            echo $(( (END - START) / 1000000 ))
+          }
 
-          cat > "$PRJ/utils/calc.lpp" << 'LPP'
-          def add(a: Int, b: Int) -> Int:
-              return a + b
-          def multiply(a: Int, b: Int) -> Int:
-              return a * b
-          LPP
-
-          cat > "$PRJ/bench_fib.lpp" << 'LPP'
+          # ======= BENCH 1: CPU-HEAVY (fib 40 iterative + prime sieve) =======
+          echo "=== Bench 1: CPU Heavy ==="
+          cat > "$W/cpu.lpp" << 'EOF'
           def fib(n: Int) -> Int:
               if n <= 1:
                   return n
@@ -66,130 +54,53 @@ jobs:
                   b = c
                   i = i + 1
               return b
-          LPP
 
-          cat > "$PRJ/main.lpp" << 'LPP'
-          import utils.calc
-          import bench_fib
+          def is_prime(n: Int) -> Bool:
+              if n < 2:
+                  return false
+              mut d := 2
+              while d * d <= n:
+                  if n - (n / d) * d == 0:
+                      return false
+                  d = d + 1
+              return true
+
+          def count_primes(limit: Int) -> Int:
+              mut count := 0
+              mut n := 2
+              while n < limit:
+                  if is_prime(n):
+                      count = count + 1
+                  n = n + 1
+              return count
 
           def main():
-              result := fib(35)
-              print(result)
-              s := add(100, 200)
-              print(s)
-              p := multiply(6, 7)
-              print(p)
-          LPP
+              print(fib(40))
+              print(count_primes(10000))
+          EOF
 
-          # ═══════════════════════════════════════
-          # 2. BUILD WITH BOTH LINKERS
-          # ═══════════════════════════════════════
-          echo ""
-          echo "=== Phase 2: Build L++ with both linkers ==="
-
-          # Compile runtime
-          cc -O2 -fPIC -c lpp_runtime.c -o "$WORK/lpp_runtime.o" -pthread
-          cc -O2 -ffreestanding -fno-stack-protector -fno-pic -mno-red-zone \
-            -c runtime/linux_x86_64_min.c -o "$WORK/lpp_runtime_min.o" 2>/dev/null || true
-
-          # --- L++ with host linker (cc) ---
-          echo "  Building with host linker (cc)..."
-          HOST_COMPILE_START=$(date +%s%N)
-          LPP_AOT=1 target/release/lpp "$PRJ/main.lpp"
-          HOST_COMPILE_END=$(date +%s%N)
-          HOST_COMPILE_MS=$(( (HOST_COMPILE_END - HOST_COMPILE_START) / 1000000 ))
-
-          HOST_LINK_START=$(date +%s%N)
-          cc "$PRJ/main.o" "$WORK/lpp_runtime.o" -o "$WORK/lpp_host" -lm -lpthread
-          HOST_LINK_END=$(date +%s%N)
-          HOST_LINK_MS=$(( (HOST_LINK_END - HOST_LINK_START) / 1000000 ))
-          HOST_SIZE=$(stat -c%s "$WORK/lpp_host")
-
-          HOST_RUN_START=$(date +%s%N)
-          HOST_OUT=$("$WORK/lpp_host")
-          HOST_RUN_END=$(date +%s%N)
-          HOST_RUN_MS=$(( (HOST_RUN_END - HOST_RUN_START) / 1000000 ))
-
-          echo "  Host: compile=${HOST_COMPILE_MS}ms link=${HOST_LINK_MS}ms run=${HOST_RUN_MS}ms size=${HOST_SIZE}"
-
-          # --- L++ with direct linker (lpp-link) ---
-          echo "  Building with direct linker (lpp-link)..."
-          DIRECT_LINK_START=$(date +%s%N)
-          if [ -f "$WORK/lpp_runtime_min.o" ]; then
-            target/release/lpp-link "$PRJ/main.o" "$WORK/lpp_runtime_min.o" -o "$WORK/lpp_direct" 2>/dev/null && \
-              DIRECT_OK=1 || DIRECT_OK=0
-          else
-            target/release/lpp-link "$PRJ/main.o" "$WORK/lpp_runtime.o" -o "$WORK/lpp_direct" 2>/dev/null && \
-              DIRECT_OK=1 || DIRECT_OK=0
-          fi
-          DIRECT_LINK_END=$(date +%s%N)
-          DIRECT_LINK_MS=$(( (DIRECT_LINK_END - DIRECT_LINK_START) / 1000000 ))
-
-          if [ "$DIRECT_OK" = "1" ]; then
-            chmod +x "$WORK/lpp_direct"
-            DIRECT_SIZE=$(stat -c%s "$WORK/lpp_direct")
-            DIRECT_RUN_START=$(date +%s%N)
-            DIRECT_OUT=$("$WORK/lpp_direct")
-            DIRECT_RUN_END=$(date +%s%N)
-            DIRECT_RUN_MS=$(( (DIRECT_RUN_END - DIRECT_RUN_START) / 1000000 ))
-            echo "  Direct: link=${DIRECT_LINK_MS}ms run=${DIRECT_RUN_MS}ms size=${DIRECT_SIZE}"
-          else
-            DIRECT_SIZE=0; DIRECT_RUN_MS=0; DIRECT_OUT="N/A"
-            echo "  Direct: SKIPPED (link failed)"
-          fi
-
-          # ═══════════════════════════════════════
-          # 3. RUST EQUIVALENT
-          # ═══════════════════════════════════════
-          echo ""
-          echo "=== Phase 3: Rust equivalent ==="
-
-          mkdir -p "$WORK/rust_bench/src"
-          cat > "$WORK/rust_bench/Cargo.toml" << 'TOML'
-          [package]
-          name = "bench"
-          version = "0.1.0"
-          edition = "2021"
-          TOML
-
-          cat > "$WORK/rust_bench/src/main.rs" << 'RUST'
+          cat > "$W/cpu.rs" << 'EOF'
           fn fib(n: i64) -> i64 {
               if n <= 1 { return n; }
               let (mut a, mut b) = (0i64, 1i64);
-              for _ in 2..=n { let c = a + b; a = b; b = c; }
+              for _ in 2..=n { let c = a+b; a=b; b=c; }
               b
           }
-          fn add(a: i64, b: i64) -> i64 { a + b }
-          fn multiply(a: i64, b: i64) -> i64 { a * b }
-          fn main() {
-              println!("{}", fib(35));
-              println!("{}", add(100, 200));
-              println!("{}", multiply(6, 7));
+          fn is_prime(n: i64) -> bool {
+              if n < 2 { return false; }
+              let mut d = 2i64;
+              while d*d <= n { if n % d == 0 { return false; } d += 1; }
+              true
           }
-          RUST
+          fn count_primes(limit: i64) -> i64 {
+              let mut c = 0i64;
+              for n in 2..limit { if is_prime(n) { c += 1; } }
+              c
+          }
+          fn main() { println!("{}", fib(40)); println!("{}", count_primes(10000)); }
+          EOF
 
-          RUST_COMPILE_START=$(date +%s%N)
-          cd "$WORK/rust_bench" && cargo build --release 2>/dev/null
-          RUST_COMPILE_END=$(date +%s%N)
-          RUST_COMPILE_MS=$(( (RUST_COMPILE_END - RUST_COMPILE_START) / 1000000 ))
-          RUST_SIZE=$(stat -c%s "$WORK/rust_bench/target/release/bench")
-
-          RUST_RUN_START=$(date +%s%N)
-          RUST_OUT=$("$WORK/rust_bench/target/release/bench")
-          RUST_RUN_END=$(date +%s%N)
-          RUST_RUN_MS=$(( (RUST_RUN_END - RUST_RUN_START) / 1000000 ))
-
-          echo "  Rust: compile=${RUST_COMPILE_MS}ms run=${RUST_RUN_MS}ms size=${RUST_SIZE}"
-          cd "$GITHUB_WORKSPACE"
-
-          # ═══════════════════════════════════════
-          # 4. GO EQUIVALENT
-          # ═══════════════════════════════════════
-          echo ""
-          echo "=== Phase 4: Go equivalent ==="
-
-          mkdir -p "$WORK/go_bench"
-          cat > "$WORK/go_bench/main.go" << 'GO'
+          cat > "$W/cpu.go" << 'EOF'
           package main
           import "fmt"
           func fib(n int64) int64 {
@@ -198,162 +109,252 @@ jobs:
               for i := int64(2); i <= n; i++ { a, b = b, a+b }
               return b
           }
-          func add(a, b int64) int64 { return a + b }
-          func multiply(a, b int64) int64 { return a * b }
+          func isPrime(n int64) bool {
+              if n < 2 { return false }
+              for d := int64(2); d*d <= n; d++ { if n%d == 0 { return false } }
+              return true
+          }
+          func countPrimes(limit int64) int64 {
+              c := int64(0)
+              for n := int64(2); n < limit; n++ { if isPrime(n) { c++ } }
+              return c
+          }
+          func main() { fmt.Println(fib(40)); fmt.Println(countPrimes(10000)) }
+          EOF
+
+          CPU_EXPECTED=$(printf '102334155\n1229')
+
+          # L++
+          LPP_CPU_C=$(measure "LPP_AOT=1 target/release/lpp $W/cpu.lpp")
+          LPP_CPU_L=$(measure "cc $W/cpu.o $W/rt.o -o $W/cpu_lpp -lm -lpthread")
+          LPP_CPU_R=$(measure "LPP_CPU_OUT=\$($W/cpu_lpp)")
+          LPP_CPU_OUT=$($W/cpu_lpp)
+          LPP_CPU_SZ=$(stat -c%s "$W/cpu_lpp")
+
+          # Rust
+          mkdir -p "$W/rcpu/src"
+          echo '[package]\nname="b"\nversion="0.1.0"\nedition="2021"' > "$W/rcpu/Cargo.toml"
+          cp "$W/cpu.rs" "$W/rcpu/src/main.rs"
+          RS_CPU_C=$(measure "cd $W/rcpu && cargo build --release 2>/dev/null")
+          RS_CPU_SZ=$(stat -c%s "$W/rcpu/target/release/b")
+          RS_CPU_R=$(measure "RS_CPU_OUT=\$($W/rcpu/target/release/b)")
+          RS_CPU_OUT=$($W/rcpu/target/release/b)
+
+          # Go
+          GO_CPU_C=$(measure "cd $W && go build -o $W/cpu_go cpu.go")
+          GO_CPU_SZ=$(stat -c%s "$W/cpu_go")
+          GO_CPU_R=$(measure "GO_CPU_OUT=\$($W/cpu_go)")
+          GO_CPU_OUT=$($W/cpu_go)
+
+          echo "  L++:  compile=${LPP_CPU_C}ms link=${LPP_CPU_L}ms run=${LPP_CPU_R}ms size=${LPP_CPU_SZ}"
+          echo "  Rust: compile=${RS_CPU_C}ms run=${RS_CPU_R}ms size=${RS_CPU_SZ}"
+          echo "  Go:   compile=${GO_CPU_C}ms run=${GO_CPU_R}ms size=${GO_CPU_SZ}"
+
+          # ======= BENCH 2: RAM-HEAVY (allocate + fill large list) =======
+          echo ""
+          echo "=== Bench 2: RAM Heavy (list allocation) ==="
+          cat > "$W/ram.lpp" << 'EOF'
+          def main():
+              lst := List[Int]()
+              mut i := 0
+              while i < 100000:
+                  list_push(lst, i * 3)
+                  i = i + 1
+              total := list_len(lst)
+              last := list_get(lst, 99999)
+              print(total)
+              print(last)
+          EOF
+
+          cat > "$W/ram.rs" << 'EOF'
+          fn main() {
+              let mut v: Vec<i64> = Vec::new();
+              for i in 0..100000i64 { v.push(i * 3); }
+              println!("{}", v.len());
+              println!("{}", v[99999]);
+          }
+          EOF
+
+          cat > "$W/ram.go" << 'EOF'
+          package main
+          import "fmt"
           func main() {
-              fmt.Println(fib(35))
-              fmt.Println(add(100, 200))
-              fmt.Println(multiply(6, 7))
+              v := make([]int64, 0)
+              for i := int64(0); i < 100000; i++ { v = append(v, i*3) }
+              fmt.Println(len(v))
+              fmt.Println(v[99999])
           }
-          GO
+          EOF
 
-          GO_COMPILE_START=$(date +%s%N)
-          cd "$WORK/go_bench" && go build -o bench main.go
-          GO_COMPILE_END=$(date +%s%N)
-          GO_COMPILE_MS=$(( (GO_COMPILE_END - GO_COMPILE_START) / 1000000 ))
-          GO_SIZE=$(stat -c%s "$WORK/go_bench/bench")
+          RAM_EXPECTED=$(printf '100000\n299997')
 
-          GO_RUN_START=$(date +%s%N)
-          GO_OUT=$("$WORK/go_bench/bench")
-          GO_RUN_END=$(date +%s%N)
-          GO_RUN_MS=$(( (GO_RUN_END - GO_RUN_START) / 1000000 ))
+          LPP_RAM_C=$(measure "LPP_AOT=1 target/release/lpp $W/ram.lpp")
+          LPP_RAM_L=$(measure "cc $W/ram.o $W/rt.o -o $W/ram_lpp -lm -lpthread")
+          LPP_RAM_R=$(measure "true"); LPP_RAM_OUT=$($W/ram_lpp)
+          LPP_RAM_SZ=$(stat -c%s "$W/ram_lpp")
 
-          echo "  Go: compile=${GO_COMPILE_MS}ms run=${GO_RUN_MS}ms size=${GO_SIZE}"
-          cd "$GITHUB_WORKSPACE"
+          mkdir -p "$W/rram/src"
+          echo '[package]\nname="b"\nversion="0.1.0"\nedition="2021"' > "$W/rram/Cargo.toml"
+          cp "$W/ram.rs" "$W/rram/src/main.rs"
+          RS_RAM_C=$(measure "cd $W/rram && cargo build --release 2>/dev/null")
+          RS_RAM_SZ=$(stat -c%s "$W/rram/target/release/b")
+          RS_RAM_OUT=$($W/rram/target/release/b)
 
-          # ═══════════════════════════════════════
-          # 5. VERIFY ALL PRODUCE SAME OUTPUT
-          # ═══════════════════════════════════════
+          GO_RAM_C=$(measure "cd $W && go build -o $W/ram_go ram.go")
+          GO_RAM_SZ=$(stat -c%s "$W/ram_go")
+          GO_RAM_OUT=$($W/ram_go)
+
+          echo "  L++:  compile=${LPP_RAM_C}ms size=${LPP_RAM_SZ}"
+          echo "  Rust: compile=${RS_RAM_C}ms size=${RS_RAM_SZ}"
+          echo "  Go:   compile=${GO_RAM_C}ms size=${GO_RAM_SZ}"
+
+          # ======= BENCH 3: FILE I/O HEAVY (write + read large file) =======
           echo ""
-          echo "=== Phase 5: Output verification ==="
-          EXPECTED=$(printf '9227465\n300\n42')
-          
-          verify() {
-            local name="$1" out="$2"
-            if [ "$out" = "$EXPECTED" ]; then
-              echo "  $name: PASS ✓"
-            else
-              echo "  $name: FAIL ✗ (got: $out)"
-            fi
+          echo "=== Bench 3: File I/O Heavy ==="
+          cat > "$W/fio.lpp" << 'EOF'
+          def main():
+              mut data := ""
+              mut i := 0
+              while i < 1000:
+                  data = str_concat(data, "line of test data for file io benchmark\n")
+                  i = i + 1
+              write_file("/tmp/lpp_bench_io.txt", data)
+              content := read_file("/tmp/lpp_bench_io.txt")
+              print(str_len(content))
+          EOF
+
+          cat > "$W/fio.rs" << 'EOF'
+          use std::fs;
+          fn main() {
+              let data: String = (0..1000).map(|_| "line of test data for file io benchmark\n").collect();
+              fs::write("/tmp/rs_bench_io.txt", &data).unwrap();
+              let content = fs::read_to_string("/tmp/rs_bench_io.txt").unwrap();
+              println!("{}", content.len());
           }
-          verify "L++ (host)"   "$HOST_OUT"
-          [ "$DIRECT_OK" = "1" ] && verify "L++ (direct)" "$DIRECT_OUT"
-          verify "Rust"         "$RUST_OUT"
-          verify "Go"           "$GO_OUT"
+          EOF
 
-          # ═══════════════════════════════════════
-          # 6. GENERATE JSON REPORT
-          # ═══════════════════════════════════════
+          cat > "$W/fio.go" << 'EOF'
+          package main
+          import ("fmt"; "os"; "strings")
+          func main() {
+              var b strings.Builder
+              for i := 0; i < 1000; i++ { b.WriteString("line of test data for file io benchmark\n") }
+              data := b.String()
+              os.WriteFile("/tmp/go_bench_io.txt", []byte(data), 0644)
+              content, _ := os.ReadFile("/tmp/go_bench_io.txt")
+              fmt.Println(len(content))
+          }
+          EOF
+
+          LPP_FIO_C=$(measure "LPP_AOT=1 target/release/lpp $W/fio.lpp")
+          LPP_FIO_L=$(measure "cc $W/fio.o $W/rt.o -o $W/fio_lpp -lm -lpthread")
+          LPP_FIO_R=$(measure "LPP_FIO_OUT=\$($W/fio_lpp)")
+          LPP_FIO_OUT=$($W/fio_lpp)
+          LPP_FIO_SZ=$(stat -c%s "$W/fio_lpp")
+
+          mkdir -p "$W/rfio/src"
+          echo '[package]\nname="b"\nversion="0.1.0"\nedition="2021"' > "$W/rfio/Cargo.toml"
+          cp "$W/fio.rs" "$W/rfio/src/main.rs"
+          RS_FIO_C=$(measure "cd $W/rfio && cargo build --release 2>/dev/null")
+          RS_FIO_SZ=$(stat -c%s "$W/rfio/target/release/b")
+          RS_FIO_R=$(measure "RS_FIO_OUT=\$($W/rfio/target/release/b)")
+          RS_FIO_OUT=$($W/rfio/target/release/b)
+
+          GO_FIO_C=$(measure "cd $W && go build -o $W/fio_go fio.go")
+          GO_FIO_SZ=$(stat -c%s "$W/fio_go")
+          GO_FIO_R=$(measure "GO_FIO_OUT=\$($W/fio_go)")
+          GO_FIO_OUT=$($W/fio_go)
+
+          echo "  L++:  compile=${LPP_FIO_C}ms run=${LPP_FIO_R}ms size=${LPP_FIO_SZ}"
+          echo "  Rust: compile=${RS_FIO_C}ms run=${RS_FIO_R}ms size=${RS_FIO_SZ}"
+          echo "  Go:   compile=${GO_FIO_C}ms run=${GO_FIO_R}ms size=${GO_FIO_SZ}"
+
+          # ======= BENCH 4: MULTI-FILE IMPORT PROJECT =======
           echo ""
-          echo "=== Phase 6: Generate reports ==="
+          echo "=== Bench 4: Multi-file import project ==="
+          mkdir -p "$W/mf/utils"
+          cat > "$W/mf/utils/calc.lpp" << 'EOF'
+          def add(a: Int, b: Int) -> Int:
+              return a + b
+          def multiply(a: Int, b: Int) -> Int:
+              return a * b
+          EOF
+          cat > "$W/mf/fib_mod.lpp" << 'EOF'
+          def fib(n: Int) -> Int:
+              if n <= 1:
+                  return n
+              mut a := 0
+              mut b := 1
+              mut i := 2
+              while i <= n:
+                  c := a + b
+                  a = b
+                  b = c
+                  i = i + 1
+              return b
+          EOF
+          cat > "$W/mf/main.lpp" << 'EOF'
+          import utils.calc
+          import fib_mod
+          def main():
+              print(fib(35))
+              print(add(100, 200))
+              print(multiply(6, 7))
+          EOF
+          MF_EXPECTED=$(printf '9227465\n300\n42')
+          LPP_MF_C=$(measure "LPP_AOT=1 target/release/lpp $W/mf/main.lpp")
+          LPP_MF_L=$(measure "cc $W/mf/main.o $W/rt.o -o $W/mf_lpp -lm -lpthread")
+          LPP_MF_OUT=$($W/mf_lpp)
+          LPP_MF_SZ=$(stat -c%s "$W/mf_lpp")
+          echo "  L++ multi-file: compile=${LPP_MF_C}ms link=${LPP_MF_L}ms size=${LPP_MF_SZ} output_ok=$([ "$LPP_MF_OUT" = "$MF_EXPECTED" ] && echo true || echo false)"
 
-          cat > "$RESULTS/bpw_report.json" << JSONEOF
+          # ======= GENERATE JSON =======
+          echo ""
+          echo "=== Generating JSON report ==="
+          cat > "$R/bpw_report.json" << ENDJSON
           {
-            "bpw_version": "1.0",
+            "bpw_version": "2.0",
             "platform": "linux-x86_64",
             "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-            "project": {
-              "files": 3,
-              "modules": ["utils.calc", "bench_fib"],
-              "stdlib_used": false,
-              "language_features": ["import", "from_import", "dotted_path", "multi_file"]
-            },
             "benchmarks": {
-              "lpp_host": {
-                "linker": "cc (host, libc)",
-                "compile_ms": $HOST_COMPILE_MS,
-                "link_ms": $HOST_LINK_MS,
-                "run_ms": $HOST_RUN_MS,
-                "binary_bytes": $HOST_SIZE,
-                "output_correct": $([ "$HOST_OUT" = "$EXPECTED" ] && echo true || echo false)
+              "cpu_heavy": {
+                "description": "fib(40) + count_primes(10000)",
+                "lpp": {"compile_ms":$LPP_CPU_C,"link_ms":$LPP_CPU_L,"run_ms":$LPP_CPU_R,"binary_bytes":$LPP_CPU_SZ,"correct":$([ "$LPP_CPU_OUT" = "$CPU_EXPECTED" ] && echo true || echo false)},
+                "rust": {"compile_ms":$RS_CPU_C,"run_ms":$RS_CPU_R,"binary_bytes":$RS_CPU_SZ,"correct":$([ "$RS_CPU_OUT" = "$CPU_EXPECTED" ] && echo true || echo false)},
+                "go": {"compile_ms":$GO_CPU_C,"run_ms":$GO_CPU_R,"binary_bytes":$GO_CPU_SZ,"correct":$([ "$GO_CPU_OUT" = "$CPU_EXPECTED" ] && echo true || echo false)}
               },
-              "lpp_direct": {
-                "linker": "lpp-link (freestanding)",
-                "compile_ms": $HOST_COMPILE_MS,
-                "link_ms": $DIRECT_LINK_MS,
-                "run_ms": $DIRECT_RUN_MS,
-                "binary_bytes": $DIRECT_SIZE,
-                "output_correct": $([ "$DIRECT_OK" = "1" ] && [ "$DIRECT_OUT" = "$EXPECTED" ] && echo true || echo false)
+              "ram_heavy": {
+                "description": "allocate 100k-element list",
+                "lpp": {"compile_ms":$LPP_RAM_C,"link_ms":$LPP_RAM_L,"binary_bytes":$LPP_RAM_SZ,"correct":$([ "$LPP_RAM_OUT" = "$RAM_EXPECTED" ] && echo true || echo false)},
+                "rust": {"compile_ms":$RS_RAM_C,"binary_bytes":$RS_RAM_SZ,"correct":$([ "$RS_RAM_OUT" = "$RAM_EXPECTED" ] && echo true || echo false)},
+                "go": {"compile_ms":$GO_RAM_C,"binary_bytes":$GO_RAM_SZ,"correct":$([ "$GO_RAM_OUT" = "$RAM_EXPECTED" ] && echo true || echo false)}
               },
-              "rust": {
-                "compile_ms": $RUST_COMPILE_MS,
-                "run_ms": $RUST_RUN_MS,
-                "binary_bytes": $RUST_SIZE,
-                "output_correct": $([ "$RUST_OUT" = "$EXPECTED" ] && echo true || echo false)
+              "file_io": {
+                "description": "write+read 40KB file (1000 lines)",
+                "lpp": {"compile_ms":$LPP_FIO_C,"link_ms":$LPP_FIO_L,"run_ms":$LPP_FIO_R,"binary_bytes":$LPP_FIO_SZ,"output":"$LPP_FIO_OUT"},
+                "rust": {"compile_ms":$RS_FIO_C,"run_ms":$RS_FIO_R,"binary_bytes":$RS_FIO_SZ,"output":"$RS_FIO_OUT"},
+                "go": {"compile_ms":$GO_FIO_C,"run_ms":$GO_FIO_R,"binary_bytes":$GO_FIO_SZ,"output":"$GO_FIO_OUT"}
               },
-              "go": {
-                "compile_ms": $GO_COMPILE_MS,
-                "run_ms": $GO_RUN_MS,
-                "binary_bytes": $GO_SIZE,
-                "output_correct": $([ "$GO_OUT" = "$EXPECTED" ] && echo true || echo false)
+              "multi_file_import": {
+                "description": "3-file project with import + dotted path",
+                "lpp": {"compile_ms":$LPP_MF_C,"link_ms":$LPP_MF_L,"binary_bytes":$LPP_MF_SZ,"correct":$([ "$LPP_MF_OUT" = "$MF_EXPECTED" ] && echo true || echo false)}
               }
-            },
-            "comparison": {
-              "fastest_compile": "$([ $HOST_COMPILE_MS -lt $GO_COMPILE_MS ] && echo 'lpp' || echo 'go')",
-              "smallest_binary": "$([ $HOST_SIZE -lt $GO_SIZE ] && echo 'lpp_host' || echo 'go')",
-              "lpp_vs_rust_compile_ratio": "$(echo "scale=1; $RUST_COMPILE_MS / ($HOST_COMPILE_MS + $HOST_LINK_MS + 1)" | bc 2>/dev/null || echo 'N/A')x",
-              "lpp_vs_go_compile_ratio": "$(echo "scale=1; $GO_COMPILE_MS / ($HOST_COMPILE_MS + $HOST_LINK_MS + 1)" | bc 2>/dev/null || echo 'N/A')x"
             }
           }
-          JSONEOF
+          ENDJSON
 
-          # ═══════════════════════════════════════
-          # 7. GENERATE MARKDOWN REPORT
-          # ═══════════════════════════════════════
-          cat > "$RESULTS/bpw_report.md" << MDEOF
-          # BPW: Benchmark Package Workflow Report
+          cat "$R/bpw_report.json"
 
-          **Platform:** Linux x86_64  
-          **Date:** $(date -u +%Y-%m-%d)  
-          **Project:** 3-file L++ project with multi-file imports
+          # Copy source files
+          mkdir -p "$R/sources"
+          cp "$W/cpu.lpp" "$W/cpu.rs" "$W/cpu.go" "$R/sources/"
+          cp "$W/ram.lpp" "$W/ram.rs" "$W/ram.go" "$R/sources/"
+          cp "$W/fio.lpp" "$W/fio.rs" "$W/fio.go" "$R/sources/"
+          cp -r "$W/mf" "$R/sources/multi_file_project"
 
-          ## Compile + Link Time
-
-          | Language | Compile (ms) | Link (ms) | Total (ms) |
-          |----------|-------------|-----------|------------|
-          | **L++ (host cc)** | ${HOST_COMPILE_MS} | ${HOST_LINK_MS} | $((HOST_COMPILE_MS + HOST_LINK_MS)) |
-          | **L++ (lpp-link)** | ${HOST_COMPILE_MS} | ${DIRECT_LINK_MS} | $((HOST_COMPILE_MS + DIRECT_LINK_MS)) |
-          | **Rust** | ${RUST_COMPILE_MS} | — | ${RUST_COMPILE_MS} |
-          | **Go** | ${GO_COMPILE_MS} | — | ${GO_COMPILE_MS} |
-
-          ## Runtime Performance
-
-          | Language | Run (ms) | Binary Size |
-          |----------|----------|-------------|
-          | **L++ (host)** | ${HOST_RUN_MS} | $(echo "scale=1; $HOST_SIZE/1024" | bc)K |
-          | **L++ (direct)** | ${DIRECT_RUN_MS} | $(echo "scale=1; $DIRECT_SIZE/1024" | bc 2>/dev/null || echo N/A)K |
-          | **Rust** | ${RUST_RUN_MS} | $(echo "scale=1; $RUST_SIZE/1024" | bc)K |
-          | **Go** | ${GO_RUN_MS} | $(echo "scale=1; $GO_SIZE/1024" | bc)K |
-
-          ## Output Verification
-
-          All languages produce identical output: \`9227465\`, \`300\`, \`42\` ✓
-
-          ## L++ Project Structure
-          \`\`\`
-          main.lpp          import utils.calc, import bench_fib
-          utils/calc.lpp    add(), multiply()
-          bench_fib.lpp     fib(35) iterative
-          \`\`\`
-          MDEOF
-
-          echo ""
-          echo "=== Reports generated ==="
-          cat "$RESULTS/bpw_report.md"
-          echo ""
-          echo "JSON: $RESULTS/bpw_report.json"
-          
-          # Copy project files for artifact
-          cp -r "$PRJ" "$RESULTS/lpp_project"
-          cp "$WORK/rust_bench/src/main.rs" "$RESULTS/rust_main.rs" 2>/dev/null || true
-          cp "$WORK/go_bench/main.go" "$RESULTS/go_main.go" 2>/dev/null || true
-          [ -f "$WORK/lpp_host" ] && cp "$WORK/lpp_host" "$RESULTS/lpp_host_binary" || true
-          [ -f "$WORK/lpp_direct" ] && cp "$WORK/lpp_direct" "$RESULTS/lpp_direct_binary" || true
-
-      - name: Upload BPW results
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: bpw-linux-results
+          name: bpw-linux
           path: /tmp/tmp.*/results/
 
   bpw-windows:
@@ -363,39 +364,38 @@ jobs:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-go@v5
-        with:
-          go-version: 'stable'
-
+        with: { go-version: 'stable' }
       - name: Locate MSVC
         shell: pwsh
         run: |
           $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
           $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
           "VSCMD_BAT=$vs\VC\Auxiliary\Build\vcvars64.bat" | Out-File -FilePath $env:GITHUB_ENV -Append
-
       - name: Build L++ toolchain
         run: cargo build --release --bin lpp --bin lpp-link
 
-      - name: "BPW: Full benchmark suite (Windows)"
+      - name: "BPW: Windows full suite"
         shell: pwsh
         run: |
-          $work = Join-Path $env:RUNNER_TEMP "bpw"
-          $results = Join-Path $work "results"
-          New-Item -ItemType Directory -Force $work, $results, "$work\prj\utils" | Out-Null
+          $W = Join-Path $env:RUNNER_TEMP "bpw"
+          $R = Join-Path $W "results"
+          New-Item -ItemType Directory -Force $W,$R,"$W\mf\utils","$R\sources" | Out-Null
 
-          Write-Host "========================================"
-          Write-Host " BPW: Benchmark Package Workflow"
-          Write-Host " Platform: Windows x86_64"
-          Write-Host "========================================"
-
-          # --- Create L++ project ---
+          # Build freestanding runtime
+          $rtCmd = "$W\rt.cmd"
           @"
-          def add(a: Int, b: Int) -> Int:
-              return a + b
-          def multiply(a: Int, b: Int) -> Int:
-              return a * b
-          "@ | Set-Content "$work\prj\utils\calc.lpp" -Encoding ascii
+          @echo off
+          call "%VSCMD_BAT%" >nul || exit /b 1
+          cl.exe /nologo /O2 /GS- /Gs1000000 /DLPP_FREESTANDING /c runtime\windows_x86_64_min.c "/Fo:$W\rt.obj" || exit /b 1
+          "@ | Set-Content $rtCmd -Encoding ascii
+          cmd.exe /d /c $rtCmd
 
+          function Measure-Ms { param($sb) $sw=[System.Diagnostics.Stopwatch]::StartNew(); & $sb; $sw.Stop(); $sw.ElapsedMilliseconds }
+
+          Write-Host "=== BPW Windows ==="
+
+          # ======= BENCH 1: CPU HEAVY =======
+          Write-Host "`n=== Bench 1: CPU Heavy ==="
           @"
           def fib(n: Int) -> Int:
               if n <= 1:
@@ -409,169 +409,260 @@ jobs:
                   b = c
                   i = i + 1
               return b
-          "@ | Set-Content "$work\prj\bench_fib.lpp" -Encoding ascii
-
-          @"
-          import utils.calc
-          import bench_fib
-
+          def is_prime(n: Int) -> Bool:
+              if n < 2:
+                  return false
+              mut d := 2
+              while d * d <= n:
+                  if n - (n / d) * d == 0:
+                      return false
+                  d = d + 1
+              return true
+          def count_primes(limit: Int) -> Int:
+              mut count := 0
+              mut n := 2
+              while n < limit:
+                  if is_prime(n):
+                      count = count + 1
+                  n = n + 1
+              return count
           def main():
-              result := fib(35)
-              print(result)
-              s := add(100, 200)
-              print(s)
-              p := multiply(6, 7)
-              print(p)
-          "@ | Set-Content "$work\prj\main.lpp" -Encoding ascii
+              print(fib(40))
+              print(count_primes(10000))
+          "@ | Set-Content "$W\cpu.lpp" -Encoding ascii
 
-          # --- Compile runtime ---
-          $rtCmd = "$work\build_rt.cmd"
           @"
-          @echo off
-          call "%VSCMD_BAT%" >nul || exit /b 1
-          cl.exe /nologo /O2 /GS- /Gs1000000 /DLPP_FREESTANDING /c runtime\windows_x86_64_min.c "/Fo:$work\rt.obj" || exit /b 1
-          "@ | Set-Content $rtCmd -Encoding ascii
-          cmd.exe /d /c $rtCmd
+          fn fib(n: i64) -> i64 { if n<=1{return n;} let(mut a,mut b)=(0i64,1i64); for _ in 2..=n{let c=a+b;a=b;b=c;} b }
+          fn is_prime(n: i64) -> bool { if n<2{return false;} let mut d=2i64; while d*d<=n{if n%d==0{return false;}d+=1;} true }
+          fn count_primes(limit: i64) -> i64 { let mut c=0i64; for n in 2..limit{if is_prime(n){c+=1;}} c }
+          fn main() { println!("{}",fib(40)); println!("{}",count_primes(10000)); }
+          "@ | Set-Content "$W\cpu.rs" -Encoding ascii
 
-          # --- L++ compile ---
-          $sw = [System.Diagnostics.Stopwatch]::StartNew()
-          $env:LPP_AOT = "1"
-          & target\release\lpp.exe "$work\prj\main.lpp"
-          $sw.Stop()
-          $lppCompileMs = $sw.ElapsedMilliseconds
-
-          # --- L++ direct link (lpp-link pe) ---
-          $sw.Restart()
-          & target\release\lpp-link.exe pe "$work\prj\main.obj" "$work\rt.obj" -o "$work\lpp_direct.exe" 2>&1
-          $sw.Stop()
-          $directLinkMs = $sw.ElapsedMilliseconds
-          $directSize = if (Test-Path "$work\lpp_direct.exe") { (Get-Item "$work\lpp_direct.exe").Length } else { 0 }
-
-          $sw.Restart()
-          $directOut = if (Test-Path "$work\lpp_direct.exe") { (& "$work\lpp_direct.exe" 2>&1) -join "`n" } else { "N/A" }
-          $sw.Stop()
-          $directRunMs = $sw.ElapsedMilliseconds
-
-          Write-Host "L++ (direct): compile=${lppCompileMs}ms link=${directLinkMs}ms run=${directRunMs}ms size=$directSize"
-
-          # --- Rust ---
-          New-Item -ItemType Directory -Force "$work\rust\src" | Out-Null
-          @"
-          [package]
-          name = "bench"
-          version = "0.1.0"
-          edition = "2021"
-          "@ | Set-Content "$work\rust\Cargo.toml" -Encoding ascii
-          @"
-          fn fib(n: i64) -> i64 {
-              if n <= 1 { return n; }
-              let (mut a, mut b) = (0i64, 1i64);
-              for _ in 2..=n { let c = a + b; a = b; b = c; }
-              b
-          }
-          fn add(a: i64, b: i64) -> i64 { a + b }
-          fn multiply(a: i64, b: i64) -> i64 { a * b }
-          fn main() {
-              println!("{}", fib(35));
-              println!("{}", add(100, 200));
-              println!("{}", multiply(6, 7));
-          }
-          "@ | Set-Content "$work\rust\src\main.rs" -Encoding ascii
-
-          $sw.Restart()
-          Push-Location "$work\rust"
-          cargo build --release 2>&1 | Out-Null
-          Pop-Location
-          $sw.Stop()
-          $rustCompileMs = $sw.ElapsedMilliseconds
-          $rustSize = (Get-Item "$work\rust\target\release\bench.exe").Length
-          $sw.Restart()
-          $rustOut = (& "$work\rust\target\release\bench.exe" 2>&1) -join "`n"
-          $sw.Stop()
-          $rustRunMs = $sw.ElapsedMilliseconds
-          Write-Host "Rust: compile=${rustCompileMs}ms run=${rustRunMs}ms size=$rustSize"
-
-          # --- Go ---
-          New-Item -ItemType Directory -Force "$work\go_bench" | Out-Null
           @"
           package main
           import "fmt"
-          func fib(n int64) int64 {
-              if n <= 1 { return n }
-              a, b := int64(0), int64(1)
-              for i := int64(2); i <= n; i++ { a, b = b, a+b }
+          func fib(n int64) int64 { if n<=1{return n}; a,b:=int64(0),int64(1); for i:=int64(2);i<=n;i++{a,b=b,a+b}; return b }
+          func isPrime(n int64) bool { if n<2{return false}; for d:=int64(2);d*d<=n;d++{if n%d==0{return false}}; return true }
+          func countPrimes(l int64) int64 { c:=int64(0); for n:=int64(2);n<l;n++{if isPrime(n){c++}}; return c }
+          func main() { fmt.Println(fib(40)); fmt.Println(countPrimes(10000)) }
+          "@ | Set-Content "$W\cpu.go" -Encoding ascii
+
+          $cpuExp = "102334155`n1229"
+
+          # L++ (lpp-link pe direct)
+          $lppCpuC = Measure-Ms { $env:LPP_AOT="1"; & target\release\lpp.exe "$W\cpu.lpp" }
+          $lppCpuL = Measure-Ms { & target\release\lpp-link.exe pe "$W\cpu.obj" "$W\rt.obj" -o "$W\cpu_lpp.exe" 2>&1 }
+          $lppCpuSz = if(Test-Path "$W\cpu_lpp.exe"){(Get-Item "$W\cpu_lpp.exe").Length}else{0}
+          $sw=[System.Diagnostics.Stopwatch]::StartNew(); $lppCpuOut = if(Test-Path "$W\cpu_lpp.exe"){(& "$W\cpu_lpp.exe" 2>&1) -join "`n"}else{"N/A"}; $sw.Stop(); $lppCpuR=$sw.ElapsedMilliseconds
+          Write-Host "  L++: compile=${lppCpuC}ms link=${lppCpuL}ms run=${lppCpuR}ms size=$lppCpuSz"
+
+          # Rust
+          New-Item -ItemType Directory -Force "$W\rcpu\src" | Out-Null
+          '[package]\nname="b"\nversion="0.1.0"\nedition="2021"' | Set-Content "$W\rcpu\Cargo.toml"
+          Copy-Item "$W\cpu.rs" "$W\rcpu\src\main.rs"
+          $rsCpuC = Measure-Ms { Push-Location "$W\rcpu"; cargo build --release 2>&1 | Out-Null; Pop-Location }
+          $rsCpuSz = (Get-Item "$W\rcpu\target\release\b.exe").Length
+          $sw.Restart(); $rsCpuOut = (& "$W\rcpu\target\release\b.exe" 2>&1) -join "`n"; $sw.Stop(); $rsCpuR=$sw.ElapsedMilliseconds
+          Write-Host "  Rust: compile=${rsCpuC}ms run=${rsCpuR}ms size=$rsCpuSz"
+
+          # Go
+          $goCpuC = Measure-Ms { Push-Location $W; go build -o "$W\cpu_go.exe" cpu.go; Pop-Location }
+          $goCpuSz = (Get-Item "$W\cpu_go.exe").Length
+          $sw.Restart(); $goCpuOut = (& "$W\cpu_go.exe" 2>&1) -join "`n"; $sw.Stop(); $goCpuR=$sw.ElapsedMilliseconds
+          Write-Host "  Go: compile=${goCpuC}ms run=${goCpuR}ms size=$goCpuSz"
+
+          # ======= BENCH 2: RAM HEAVY =======
+          Write-Host "`n=== Bench 2: RAM Heavy ==="
+          @"
+          def main():
+              lst := List[Int]()
+              mut i := 0
+              while i < 100000:
+                  list_push(lst, i * 3)
+                  i = i + 1
+              print(list_len(lst))
+              print(list_get(lst, 99999))
+          "@ | Set-Content "$W\ram.lpp" -Encoding ascii
+
+          $lppRamC = Measure-Ms { $env:LPP_AOT="1"; & target\release\lpp.exe "$W\ram.lpp" }
+          $lppRamL = Measure-Ms { & target\release\lpp-link.exe pe "$W\ram.obj" "$W\rt.obj" -o "$W\ram_lpp.exe" 2>&1 }
+          $lppRamSz = if(Test-Path "$W\ram_lpp.exe"){(Get-Item "$W\ram_lpp.exe").Length}else{0}
+          $lppRamOut = if(Test-Path "$W\ram_lpp.exe"){(& "$W\ram_lpp.exe" 2>&1) -join "`n"}else{"N/A"}
+          Write-Host "  L++: compile=${lppRamC}ms link=${lppRamL}ms size=$lppRamSz"
+
+          # ======= BENCH 3: MULTI-FILE =======
+          Write-Host "`n=== Bench 3: Multi-file import ==="
+          @"
+          def add(a: Int, b: Int) -> Int:
+              return a + b
+          def multiply(a: Int, b: Int) -> Int:
+              return a * b
+          "@ | Set-Content "$W\mf\utils\calc.lpp" -Encoding ascii
+          @"
+          def fib(n: Int) -> Int:
+              if n <= 1:
+                  return n
+              mut a := 0
+              mut b := 1
+              mut i := 2
+              while i <= n:
+                  c := a + b
+                  a = b
+                  b = c
+                  i = i + 1
               return b
-          }
-          func add(a, b int64) int64 { return a + b }
-          func multiply(a, b int64) int64 { return a * b }
-          func main() {
-              fmt.Println(fib(35))
-              fmt.Println(add(100, 200))
-              fmt.Println(multiply(6, 7))
-          }
-          "@ | Set-Content "$work\go_bench\main.go" -Encoding ascii
+          "@ | Set-Content "$W\mf\fib_mod.lpp" -Encoding ascii
+          @"
+          import utils.calc
+          import fib_mod
+          def main():
+              print(fib(35))
+              print(add(100, 200))
+              print(multiply(6, 7))
+          "@ | Set-Content "$W\mf\main.lpp" -Encoding ascii
 
-          $sw.Restart()
-          Push-Location "$work\go_bench"
-          go build -o bench.exe main.go
-          Pop-Location
-          $sw.Stop()
-          $goCompileMs = $sw.ElapsedMilliseconds
-          $goSize = (Get-Item "$work\go_bench\bench.exe").Length
-          $sw.Restart()
-          $goOut = (& "$work\go_bench\bench.exe" 2>&1) -join "`n"
-          $sw.Stop()
-          $goRunMs = $sw.ElapsedMilliseconds
-          Write-Host "Go: compile=${goCompileMs}ms run=${goRunMs}ms size=$goSize"
+          $mfExp = "9227465`n300`n42"
+          $lppMfC = Measure-Ms { $env:LPP_AOT="1"; & target\release\lpp.exe "$W\mf\main.lpp" }
+          $lppMfL = Measure-Ms { & target\release\lpp-link.exe pe "$W\mf\main.obj" "$W\rt.obj" -o "$W\mf_lpp.exe" 2>&1 }
+          $lppMfSz = if(Test-Path "$W\mf_lpp.exe"){(Get-Item "$W\mf_lpp.exe").Length}else{0}
+          $lppMfOut = if(Test-Path "$W\mf_lpp.exe"){(& "$W\mf_lpp.exe" 2>&1) -join "`n"}else{"N/A"}
+          Write-Host "  L++ multi-file: compile=${lppMfC}ms link=${lppMfL}ms size=$lppMfSz correct=$(if($lppMfOut.Trim() -eq $mfExp){'true'}else{'false'})"
 
-          # --- Verify ---
-          $expected = "9227465`n300`n42"
-          Write-Host "`n=== Output Verification ==="
-          Write-Host "L++ direct: $(if($directOut.Trim() -eq $expected){'PASS'}else{'FAIL'})"
-          Write-Host "Rust:       $(if($rustOut.Trim() -eq $expected){'PASS'}else{'FAIL'})"
-          Write-Host "Go:         $(if($goOut.Trim() -eq $expected){'PASS'}else{'FAIL'})"
-
-          # --- JSON report ---
+          # ======= JSON =======
           @"
           {
-            "bpw_version": "1.0",
+            "bpw_version": "2.0",
             "platform": "windows-x86_64",
             "timestamp": "$(Get-Date -Format 'yyyy-MM-ddTHH:mm:ssZ')",
             "benchmarks": {
-              "lpp_direct": {
-                "linker": "lpp-link pe (freestanding)",
-                "compile_ms": $lppCompileMs,
-                "link_ms": $directLinkMs,
-                "run_ms": $directRunMs,
-                "binary_bytes": $directSize,
-                "output_correct": $(if($directOut.Trim() -eq $expected){'true'}else{'false'})
+              "cpu_heavy": {
+                "description": "fib(40) + count_primes(10000)",
+                "lpp": {"compile_ms":$lppCpuC,"link_ms":$lppCpuL,"run_ms":$lppCpuR,"binary_bytes":$lppCpuSz,"correct":$(if($lppCpuOut.Trim() -eq $cpuExp){'true'}else{'false'})},
+                "rust": {"compile_ms":$rsCpuC,"run_ms":$rsCpuR,"binary_bytes":$rsCpuSz,"correct":$(if($rsCpuOut.Trim() -eq $cpuExp){'true'}else{'false'})},
+                "go": {"compile_ms":$goCpuC,"run_ms":$goCpuR,"binary_bytes":$goCpuSz,"correct":$(if($goCpuOut.Trim() -eq $cpuExp){'true'}else{'false'})}
               },
-              "rust": {
-                "compile_ms": $rustCompileMs,
-                "run_ms": $rustRunMs,
-                "binary_bytes": $rustSize,
-                "output_correct": $(if($rustOut.Trim() -eq $expected){'true'}else{'false'})
+              "ram_heavy": {
+                "description": "allocate 100k-element list",
+                "lpp": {"compile_ms":$lppRamC,"link_ms":$lppRamL,"binary_bytes":$lppRamSz}
               },
-              "go": {
-                "compile_ms": $goCompileMs,
-                "run_ms": $goRunMs,
-                "binary_bytes": $goSize,
-                "output_correct": $(if($goOut.Trim() -eq $expected){'true'}else{'false'})
+              "multi_file_import": {
+                "description": "3-file project with import + dotted path (lpp-link PE direct)",
+                "lpp": {"compile_ms":$lppMfC,"link_ms":$lppMfL,"binary_bytes":$lppMfSz,"correct":$(if($lppMfOut.Trim() -eq $mfExp){'true'}else{'false'})}
               }
             }
           }
-          "@ | Set-Content "$results\bpw_report.json" -Encoding ascii
+          "@ | Set-Content "$R\bpw_report.json" -Encoding ascii
 
-          Write-Host "`n=== BPW Complete ==="
-          Write-Host "L++ compile: ${lppCompileMs}ms | Rust: ${rustCompileMs}ms | Go: ${goCompileMs}ms"
-          Write-Host "L++ binary: $directSize bytes | Rust: $rustSize bytes | Go: $goSize bytes"
+          Get-Content "$R\bpw_report.json"
+          Write-Host "`n=== BPW Windows Complete ==="
 
-          # Copy project files
-          Copy-Item -Recurse "$work\prj" "$results\lpp_project"
-          if (Test-Path "$work\lpp_direct.exe") { Copy-Item "$work\lpp_direct.exe" "$results\" }
+          Copy-Item "$W\cpu.lpp","$W\ram.lpp" -Destination "$R\sources\" -ErrorAction SilentlyContinue
+          Copy-Item -Recurse "$W\mf" "$R\sources\multi_file_project" -ErrorAction SilentlyContinue
+          if(Test-Path "$W\cpu_lpp.exe"){Copy-Item "$W\cpu_lpp.exe" "$R\"}
+          if(Test-Path "$W\mf_lpp.exe"){Copy-Item "$W\mf_lpp.exe" "$R\"}
 
-      - name: Upload BPW results
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: bpw-windows-results
+          name: bpw-windows
           path: ${{ runner.temp }}/bpw/results/
+
+  bpw-merge:
+    needs: [bpw-linux, bpw-windows]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: bpw-linux
+          path: linux/
+      - uses: actions/download-artifact@v4
+        with:
+          name: bpw-windows
+          path: windows/
+
+      - name: Merge reports and print summary
+        run: |
+          echo "========================================"
+          echo " BPW: MERGED CROSS-PLATFORM REPORT"
+          echo "========================================"
+
+          # Find the JSON files
+          LINUX_JSON=$(find linux/ -name "bpw_report.json" | head -1)
+          WIN_JSON=$(find windows/ -name "bpw_report.json" | head -1)
+
+          echo ""
+          echo "=== Linux Report ==="
+          cat "$LINUX_JSON" 2>/dev/null || echo "Not found"
+
+          echo ""
+          echo "=== Windows Report ==="
+          cat "$WIN_JSON" 2>/dev/null || echo "Not found"
+
+          # Merge into single JSON
+          mkdir -p merged
+          python3 << 'PYEOF'
+          import json, glob, os
+          from datetime import datetime
+
+          merged = {
+            "bpw_version": "2.0",
+            "merged_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "platforms": {}
+          }
+
+          for pattern, name in [("linux/**/bpw_report.json", "linux-x86_64"), ("windows/**/bpw_report.json", "windows-x86_64")]:
+            files = glob.glob(pattern, recursive=True)
+            if files:
+              with open(files[0]) as f:
+                data = json.load(f)
+                merged["platforms"][name] = data
+
+          # Print summary table
+          print("\n" + "=" * 70)
+          print(" BPW CROSS-PLATFORM COMPARISON")
+          print("=" * 70)
+          print(f"{'Benchmark':<25} {'Lang':<8} {'Linux ms':<12} {'Windows ms':<12} {'Linux KB':<10} {'Win KB':<10}")
+          print("-" * 70)
+
+          for plat_name, plat_data in merged["platforms"].items():
+            benchmarks = plat_data.get("benchmarks", {})
+            for bench_name, bench_data in benchmarks.items():
+              for lang in ["lpp", "rust", "go"]:
+                if lang in bench_data:
+                  d = bench_data[lang]
+                  compile = d.get("compile_ms", 0)
+                  link = d.get("link_ms", 0)
+                  total = compile + link
+                  size_kb = round(d.get("binary_bytes", 0) / 1024, 1)
+                  correct = d.get("correct", "?")
+                  check = "✓" if correct == True or correct == "true" else ("✗" if correct == False else "")
+                  
+                  if plat_name == "linux-x86_64":
+                    print(f"{bench_name:<25} {lang:<8} {total:<12} {'—':<12} {size_kb:<10} {'—':<10} {check}")
+                  else:
+                    print(f"{bench_name:<25} {lang:<8} {'—':<12} {total:<12} {'—':<10} {size_kb:<10} {check}")
+
+          print("=" * 70)
+
+          with open("merged/bpw_merged.json", "w") as f:
+            json.dump(merged, f, indent=2)
+          print(f"\nMerged JSON: merged/bpw_merged.json")
+          PYEOF
+
+          echo ""
+          echo "=== Merged JSON ==="
+          cat merged/bpw_merged.json
+
+          echo ""
+          echo "=== Directory listing ==="
+          echo "--- Linux artifacts ---"
+          find linux/ -type f | sort
+          echo "--- Windows artifacts ---"
+          find windows/ -type f | sort
+          echo "--- Merged ---"
+          find merged/ -type f | sort
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bpw-merged-report
+          path: merged/
