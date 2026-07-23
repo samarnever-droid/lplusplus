@@ -63,6 +63,17 @@ impl Parser {
                 declarations.push(TopLevel::Struct(self.parse_struct()?));
             } else if self.match_token(&Token::Enum) {
                 declarations.push(TopLevel::Enum(self.parse_enum()?));
+            } else if self.match_token(&Token::Const) {
+                let name = match self.advance() {
+                    Some(Token::Ident(n)) => n.clone(),
+                    _ => return self.error("Expected constant name after 'const'"),
+                };
+                if !self.match_token(&Token::Equal) {
+                    return self.error("Expected '=' after constant name");
+                }
+                let value = self.parse_expr()?;
+                if self.peek() == Some(&Token::Newline) { self.advance(); }
+                declarations.push(TopLevel::Const { name, value });
             } else if self.match_token(&Token::Import) {
                 declarations.push(TopLevel::Import(self.parse_import()?));
             } else if self.match_token(&Token::From) {
@@ -70,7 +81,7 @@ impl Parser {
             } else {
                 let found = self.peek().cloned();
                 return self.error(format!(
-                    "Expected 'def', 'struct', 'enum', 'import', or 'from', found {:?}",
+                    "Expected 'def', 'struct', 'enum', 'const', 'import', or 'from', found {:?}",
                     found
                 ));
             }
@@ -931,6 +942,31 @@ impl Parser {
             Token::Int(v) => Ok(Expr::IntLiteral(v)),
             Token::FloatLit(v) => Ok(Expr::FloatLiteral(v)),
             Token::StringLit(s) => Ok(Expr::StringLiteral(s)),
+            Token::FStringLit(parts) => {
+                // Desugar f"hello {name}" into str_concat chain
+                use crate::lexer::FStringPart;
+                let mut result: Option<Expr> = None;
+                for part in parts {
+                    let part_expr = match part {
+                        FStringPart::Literal(s) => Expr::StringLiteral(s),
+                        FStringPart::Expr(expr_str) => {
+                            // Re-lex and parse the expression
+                            let mut inner_lex = crate::lexer::Lexer::new(&expr_str);
+                            let inner_tokens = inner_lex.tokenize().map_err(|e| format!("f-string expr: {}", e))?;
+                            let mut inner_parser = Parser::new(inner_tokens);
+                            inner_parser.parse_expr()?
+                        }
+                    };
+                    result = Some(match result {
+                        None => part_expr,
+                        Some(acc) => Expr::Call {
+                            callee: Box::new(Expr::Identifier("str_concat".to_string(), std::cell::Cell::new(None))),
+                            args: vec![acc, part_expr],
+                        },
+                    });
+                }
+                Ok(result.unwrap_or(Expr::StringLiteral(String::new())))
+            }
             Token::BoolLit(b) => Ok(Expr::BoolLiteral(b)),
             Token::Ident(n) => Ok(Expr::Identifier(n, std::cell::Cell::new(None))),
             Token::LParen => {

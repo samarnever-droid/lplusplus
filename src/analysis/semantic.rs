@@ -199,6 +199,15 @@ impl Resolver {
                         );
                     }
                 }
+                TopLevel::Const { name, .. } => {
+                    self.table.add_binding(
+                        self.current_scope,
+                        name.clone(),
+                        false,
+                        Some(Type::Int), // constants are Int for now
+                        BindingKind::Local,
+                    );
+                }
                 TopLevel::Import(import_kind) => {
                     let module = match import_kind {
                         crate::ast::ImportKind::Module { path, .. } => path.last().cloned().unwrap_or_default(),

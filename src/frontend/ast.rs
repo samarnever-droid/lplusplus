@@ -201,6 +201,11 @@ pub enum TopLevel {
     Struct(StructDef),
     Enum(EnumDef),
     Import(ImportKind),
+    /// `const MAX_SIZE = 1024`
+    Const {
+        name: String,
+        value: Expr,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]

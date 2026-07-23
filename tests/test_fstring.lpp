@@ -1,0 +1,9 @@
+def main():
+    name := "world"
+    msg := f"hello {name}!"
+    print_str(msg)
+
+    greeting := "hi"
+    who := "Alice"
+    full := f"{greeting}, {who}!"
+    print_str(full)

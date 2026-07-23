@@ -13,6 +13,7 @@ pub enum Token {
     From,
     As,
     Pub,
+    Const,
 
     If,
     Else,
@@ -49,6 +50,8 @@ pub enum Token {
     Percent,   // %
     Question,  // ?
     Not,       // !
+    /// f"hello {name}" — interpolated string (stores parts + expressions)
+    FStringLit(Vec<FStringPart>),
     LParen,    // (
     RParen,    // )
     LBracket,  // [
@@ -66,6 +69,12 @@ pub enum Token {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
+pub enum FStringPart {
+    Literal(String),
+    Expr(String), // the expression text inside {}
+}
+
 pub struct SpannedToken {
     pub token: Token,
     pub line: usize,
@@ -381,6 +390,7 @@ impl<'a> Lexer<'a> {
                         "from" => tokens.push(mk_token(Token::From)),
                         "as" => tokens.push(mk_token(Token::As)),
                         "pub" => tokens.push(mk_token(Token::Pub)),
+                        "const" => tokens.push(mk_token(Token::Const)),
                         "if" => tokens.push(mk_token(Token::If)),
                         "else" => tokens.push(mk_token(Token::Else)),
                         "while" => tokens.push(mk_token(Token::While)),
@@ -390,7 +400,57 @@ impl<'a> Lexer<'a> {
                         "continue" => tokens.push(mk_token(Token::Continue)),
                         "true" => tokens.push(mk_token(Token::BoolLit(true))),
                         "false" => tokens.push(mk_token(Token::BoolLit(false))),
-                        _ => tokens.push(mk_token(Token::Ident(ident))),
+                        _ => {
+                            // Check for f"..." string interpolation
+                            if ident == "f" && self.peek_c() == Some('"') {
+                                self.next_c(); // consume opening "
+                                let mut parts = Vec::new();
+                                let mut current = String::new();
+                                let mut terminated = false;
+                                while let Some(ch) = self.next_c() {
+                                    if ch == '"' {
+                                        terminated = true;
+                                        break;
+                                    }
+                                    if ch == '{' {
+                                        if !current.is_empty() {
+                                            parts.push(FStringPart::Literal(current.clone()));
+                                            current.clear();
+                                        }
+                                        let mut expr_str = String::new();
+                                        while let Some(ec) = self.next_c() {
+                                            if ec == '}' { break; }
+                                            expr_str.push(ec);
+                                        }
+                                        parts.push(FStringPart::Expr(expr_str));
+                                    } else if ch == '\\' {
+                                        if let Some(esc) = self.next_c() {
+                                            match esc {
+                                                'n' => current.push('\n'),
+                                                't' => current.push('\t'),
+                                                '"' => current.push('"'),
+                                                '\\' => current.push('\\'),
+                                                _ => { current.push('\\'); current.push(esc); }
+                                            }
+                                        }
+                                    } else {
+                                        current.push(ch);
+                                    }
+                                }
+                                if !current.is_empty() {
+                                    parts.push(FStringPart::Literal(current));
+                                }
+                                if !terminated {
+                                    return Err(format!(
+                                        "[line {}:col {}] Lexer error: Unterminated f-string",
+                                        self.line, self.col
+                                    ));
+                                }
+                                tokens.push(mk_token(Token::FStringLit(parts)));
+                            } else {
+                                tokens.push(mk_token(Token::Ident(ident)));
+                            }
+                        }
                     }
                 }
                 _ => {

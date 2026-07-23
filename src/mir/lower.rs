@@ -32,6 +32,9 @@ pub struct MirLowerCtx<'a> {
 
     // Match arm bindings (name → local_id for data extraction)
     pub match_bindings: HashMap<String, LocalId>,
+
+    // Top-level constants (name → value)
+    pub constants: HashMap<String, i64>,
 }
 
 impl<'a> MirLowerCtx<'a> {
@@ -49,6 +52,7 @@ impl<'a> MirLowerCtx<'a> {
             current_captures: Vec::new(),
             loop_stack: Vec::new(),
             match_bindings: HashMap::new(),
+            constants: HashMap::new(),
         }
     }
 
@@ -204,6 +208,15 @@ impl<'a> MirLowerCtx<'a> {
 
     pub fn lower_program(&mut self, program: &Program) -> Result<MirProgram, String> {
         let mut mir_functions = HashMap::new();
+
+        // Register top-level constants
+        for decl in &program.declarations {
+            if let TopLevel::Const { name, value } = decl {
+                if let Expr::IntLiteral(v) = value {
+                    self.constants.insert(name.clone(), *v);
+                }
+            }
+        }
 
         for decl in &program.declarations {
             if let TopLevel::Function(f) = decl {
@@ -757,7 +770,11 @@ impl<'a> MirLowerCtx<'a> {
             Expr::StringLiteral(value) => Ok(Operand::String(value.clone())),
             Expr::BoolLiteral(value) => Ok(Operand::Bool(*value)),
             Expr::Identifier(name, cell) => {
-                // Check match arm bindings first
+                // Check constants first
+                if let Some(&val) = self.constants.get(name) {
+                    return Ok(Operand::Int(val));
+                }
+                // Check match arm bindings
                 if let Some(&local_id) = self.match_bindings.get(name) {
                     return Ok(Operand::Local(local_id));
                 }

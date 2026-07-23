@@ -1,0 +1,13 @@
+const MAX_SIZE = 100
+const PI_APPROX = 314
+const VERSION = 2
+
+def main():
+    print(MAX_SIZE)
+    print(PI_APPROX)
+    print(VERSION)
+
+    if MAX_SIZE > 50:
+        print(1)
+    else:
+        print(0)
