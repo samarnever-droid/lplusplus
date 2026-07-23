@@ -372,6 +372,7 @@ impl<'a> TypeChecker<'a> {
                 var_name: _,
                 start,
                 end,
+                step: _,
                 body,
                 binding_id,
             } => {

@@ -119,6 +119,7 @@ pub enum Stmt {
         var_name: String,
         start: Expr,
         end: Expr,
+        step: Option<Expr>,
         body: Vec<Stmt>,
         binding_id: std::cell::Cell<Option<usize>>,
     },

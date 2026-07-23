@@ -1,0 +1,15 @@
+def classify(x: Int):
+    if x > 100:
+        print_str("big")
+    elif x > 50:
+        print_str("medium")
+    elif x > 0:
+        print_str("small")
+    else:
+        print_str("non-positive")
+
+def main():
+    classify(200)
+    classify(75)
+    classify(25)
+    classify(0)

@@ -591,17 +591,19 @@ impl Parser {
             if let Expr::Call { callee, args } = &list_expr {
                 if let Expr::Identifier(fn_name, _) = callee.as_ref() {
                     if fn_name == "range" {
-                        let (start, end) = match args.len() {
-                            1 => (Expr::IntLiteral(0), args[0].clone()),
-                            2 => (args[0].clone(), args[1].clone()),
+                        let (start, end, step) = match args.len() {
+                            1 => (Expr::IntLiteral(0), args[0].clone(), None),
+                            2 => (args[0].clone(), args[1].clone(), None),
+                            3 => (args[0].clone(), args[1].clone(), Some(args[2].clone())),
                             _ => return self.error(
-                                "range in a for loop expects range(end) or range(start, end)",
+                                "range expects range(end), range(start, end), or range(start, end, step)",
                             ),
                         };
                         return Ok(Stmt::ForRange {
                             var_name,
                             start,
                             end,
+                            step,
                             body,
                             binding_id: std::cell::Cell::new(None),
                         });

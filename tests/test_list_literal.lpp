@@ -1,0 +1,8 @@
+def main():
+    nums := [10, 20, 30, 40, 50]
+    print(list_len(nums))
+    print(nums[0])
+    print(nums[4])
+
+    for x in nums:
+        print(x)

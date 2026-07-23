@@ -393,6 +393,11 @@ impl<'a> Lexer<'a> {
                         "const" => tokens.push(mk_token(Token::Const)),
                         "if" => tokens.push(mk_token(Token::If)),
                         "else" => tokens.push(mk_token(Token::Else)),
+                        "elif" => {
+                            // elif → Else + If (synthetic two tokens)
+                            tokens.push(mk_token(Token::Else));
+                            tokens.push(mk_token(Token::If));
+                        }
                         "while" => tokens.push(mk_token(Token::While)),
                         "for" => tokens.push(mk_token(Token::For)),
                         "in" => tokens.push(mk_token(Token::In)),

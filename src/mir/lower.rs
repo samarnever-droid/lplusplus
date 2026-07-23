@@ -498,6 +498,7 @@ impl<'a> MirLowerCtx<'a> {
                 var_name,
                 start,
                 end,
+                step,
                 body,
                 binding_id,
             } => {
@@ -544,13 +545,18 @@ impl<'a> MirLowerCtx<'a> {
                 }
 
                 builder.switch_to_block(step_block_id);
+                let step_val = if let Some(step_expr) = step {
+                    self.lower_expr(builder, step_expr, binding_map)?
+                } else {
+                    Operand::Int(1)
+                };
                 let add_temp = builder.new_local(TypeRef::Int, false, None, None);
                 builder.push_instr(MirInstr::Assign(
                     add_temp,
                     Rvalue::BinaryOp(
                         BinaryOperator::Add,
                         Operand::Local(var_local),
-                        Operand::Int(1),
+                        step_val,
                     ),
                 ))?;
                 builder.push_instr(MirInstr::Assign(var_local, Rvalue::Use(Operand::Local(add_temp))))?;

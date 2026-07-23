@@ -396,6 +396,7 @@ impl Resolver {
                 var_name,
                 start,
                 end,
+                step: _,
                 body,
                 binding_id,
             } => {

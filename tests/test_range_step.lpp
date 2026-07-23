@@ -1,0 +1,8 @@
+def main():
+    # range with step
+    for i in range(0, 10, 2):
+        print(i)
+
+    # range with step 3
+    for j in range(0, 15, 3):
+        print(j)
