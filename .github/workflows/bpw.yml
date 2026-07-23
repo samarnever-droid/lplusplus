@@ -204,7 +204,7 @@ jobs:
           echo "=== Bench 2: RAM Heavy (100k list alloc+fill) ==="
           cat > "$W/ram.lpp" << 'EOF'
           def main():
-              lst := List[Int]()
+              mut lst := list_new()
               mut i := 0
               while i < 100000:
                   list_push(lst, i * 3)
@@ -586,7 +586,7 @@ jobs:
           Write-Host "`n=== Bench 2: RAM Heavy ==="
           @"
           def main():
-              lst := List[Int]()
+              mut lst := list_new()
               mut i := 0
               while i < 100000:
                   list_push(lst, i * 3)

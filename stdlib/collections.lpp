@@ -32,7 +32,7 @@ def list_contains(lst: List[Int], target: Int) -> Bool:
     return false
 
 def list_reverse(lst: List[Int]) -> List[Int]:
-    result := List[Int]()
+    result := list_new()
     mut i := list_len(lst) - 1
     while i >= 0:
         list_push(result, list_get(lst, i))

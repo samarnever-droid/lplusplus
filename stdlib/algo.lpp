@@ -30,7 +30,7 @@ def binary_search(lst: List[Int], target: Int) -> Int:
     return 0 - 1
 
 def list_fill(n: Int, value: Int) -> List[Int]:
-    result := List[Int]()
+    result := list_new()
     mut i := 0
     while i < n:
         list_push(result, value)
@@ -38,7 +38,7 @@ def list_fill(n: Int, value: Int) -> List[Int]:
     return result
 
 def list_range(start: Int, end: Int) -> List[Int]:
-    result := List[Int]()
+    result := list_new()
     mut i := start
     while i < end:
         list_push(result, i)
