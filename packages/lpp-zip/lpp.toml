@@ -1,7 +1,9 @@
 [package]
 name = "lpp-zip"
 version = "0.1.0"
-author = "0x4171341"
-entry = "src/main.lpp"
+description = "ZIP archive create/read library for L++ — pure L++ using buf_* primitives"
+authors = ["0x4171341 <0x4171341@proton.me>"]
+license = "MIT"
+repository = "https://github.com/samarnever-droid/lplusplus"
 
 [dependencies]

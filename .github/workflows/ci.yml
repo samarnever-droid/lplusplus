@@ -108,6 +108,18 @@ jobs:
             echo "Got: $OUT3"
             exit 1
           fi
+
+          # --- Test 4: lpp-zip package (pure L++ ZIP library) ---
+          echo "=== Test 4: lpp-zip library ==="
+          cp packages/lpp-zip/src/zip.lpp "$WORK/"
+          cp packages/lpp-zip/tests/test_zip.lpp "$WORK/"
+          LPP_AOT=1 target/release/lpp "$WORK/test_zip.lpp"
+          cc "$WORK/test_zip.o" "$WORK/rt.o" -o "$WORK/test_zip" -lm -lpthread
+          ZIP_OUT=$("$WORK/test_zip")
+          echo "ZIP output: $ZIP_OUT"
+          echo "$ZIP_OUT" | grep -q "ZIP created" && echo "$ZIP_OUT" | grep -q "ZIP verified" && \
+            echo "PASS lpp-zip (Linux)" || { echo "FAIL lpp-zip"; exit 1; }
+
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4
         with:
@@ -302,7 +314,24 @@ jobs:
           }
           Write-Host "PASS test_stdlib_full (Windows PE)"
 
-          Write-Host "`n=== ALL MODULE + STDLIB TESTS PASSED ==="
+          # --- Test 4: lpp-zip package (Windows PE) ---
+          Write-Host "`n=== Test 4: lpp-zip library (Windows PE) ==="
+          Copy-Item packages\lpp-zip\src\zip.lpp "$work\"
+          Copy-Item packages\lpp-zip\tests\test_zip.lpp "$work\"
+          $env:LPP_AOT = "1"
+          & target\release\lpp.exe "$work\test_zip.lpp"
+          if ($LASTEXITCODE -ne 0) { throw "zip compile failed" }
+          & target\release\lpp-link.exe pe "$work\test_zip.obj" "$work\rt.obj" -o "$work\test_zip.exe" 2>&1
+          if ($LASTEXITCODE -ne 0) { throw "zip link failed" }
+          $zipOut = (& "$work\test_zip.exe" 2>&1) -join "`n"
+          Write-Host "ZIP output:`n$zipOut"
+          if ($zipOut -match "ZIP created" -and $zipOut -match "ZIP verified") {
+            Write-Host "PASS lpp-zip (Windows PE)"
+          } else {
+            throw "FAIL lpp-zip"
+          }
+
+          Write-Host "`n=== ALL MODULE + STDLIB + ZIP TESTS PASSED ==="
 
   macos-host-link:
     runs-on: macos-latest

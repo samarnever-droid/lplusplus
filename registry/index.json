@@ -1,0 +1,84 @@
+{
+  "registry": {
+    "name": "L++ Package Registry",
+    "version": "1.0",
+    "url": "https://samarnever-droid.github.io/lplusplus/registry",
+    "description": "Official L++ package registry — Git-based, JSON-indexed"
+  },
+  "packages": {
+    "lpp-zip": {
+      "name": "lpp-zip",
+      "description": "ZIP archive create/read library — pure L++ using buf_* primitives",
+      "version": "0.1.0",
+      "authors": ["0x4171341"],
+      "license": "MIT",
+      "repository": "https://github.com/samarnever-droid/lplusplus",
+      "path": "packages/lpp-zip",
+      "source": "packages/lpp-zip/src/zip.lpp",
+      "dependencies": [],
+      "keywords": ["zip", "archive", "binary", "file", "compression"],
+      "features": [
+        "Create ZIP archives with multiple files",
+        "Read ZIP archives and extract entries",
+        "CRC32 verification",
+        "STORE method (no compression)",
+        "Pure L++ — no C code, no linker changes"
+      ],
+      "api": {
+        "zip_create": "() -> Int — create new archive handle",
+        "zip_add_file": "(archive: Int, filename: Str, content: Str) — add file to archive",
+        "zip_save": "(archive: Int, path: Str) — write ZIP to disk",
+        "zip_free": "(archive: Int) — release archive memory",
+        "zip_open": "(path: Str) -> Int — open ZIP file for reading",
+        "zip_entry_count": "(handle: Int) -> Int — number of entries",
+        "zip_entry_name": "(handle: Int, index: Int) -> Str — get entry filename",
+        "zip_entry_data": "(handle: Int, index: Int) -> Str — get entry content",
+        "zip_close": "(handle: Int) — close ZIP handle"
+      }
+    },
+    "lpp-math": {
+      "name": "lpp-math",
+      "description": "Math utilities — abs, min, max, pow, gcd, lcm, fib, factorial",
+      "version": "0.1.0",
+      "authors": ["0x4171341"],
+      "license": "MIT",
+      "path": "stdlib/math.lpp",
+      "source": "stdlib/math.lpp",
+      "dependencies": [],
+      "keywords": ["math", "stdlib"]
+    },
+    "lpp-strings": {
+      "name": "lpp-strings",
+      "description": "String utilities — repeat, contains, starts_with, reverse, pad",
+      "version": "0.1.0",
+      "authors": ["0x4171341"],
+      "license": "MIT",
+      "path": "stdlib/strings.lpp",
+      "source": "stdlib/strings.lpp",
+      "dependencies": [],
+      "keywords": ["string", "text", "stdlib"]
+    },
+    "lpp-collections": {
+      "name": "lpp-collections",
+      "description": "Collection utilities — list_sum, list_max, list_min, list_reverse",
+      "version": "0.1.0",
+      "authors": ["0x4171341"],
+      "license": "MIT",
+      "path": "stdlib/collections.lpp",
+      "source": "stdlib/collections.lpp",
+      "dependencies": [],
+      "keywords": ["list", "collections", "stdlib"]
+    },
+    "lpp-algo": {
+      "name": "lpp-algo",
+      "description": "Algorithm library — bubble_sort, binary_search, list_range, list_fill",
+      "version": "0.1.0",
+      "authors": ["0x4171341"],
+      "license": "MIT",
+      "path": "stdlib/algo.lpp",
+      "source": "stdlib/algo.lpp",
+      "dependencies": [],
+      "keywords": ["algorithm", "sort", "search", "stdlib"]
+    }
+  }
+}
