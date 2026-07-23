@@ -208,6 +208,9 @@ impl Resolver {
                         BindingKind::Local,
                     );
                 }
+                TopLevel::TypeAlias { .. } => {
+                    // Type aliases are resolved at parse/typecheck level
+                }
                 TopLevel::Import(import_kind) => {
                     let module = match import_kind {
                         crate::ast::ImportKind::Module { path, .. } => path.last().cloned().unwrap_or_default(),
