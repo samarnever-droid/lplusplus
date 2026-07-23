@@ -1,6 +1,7 @@
 #[path = "frontend/ast.rs"]
 mod ast;
 mod builtins;
+mod config;
 #[path = "backend/cranelift/mod.rs"]
 pub mod cranelift_backend;
 #[path = "analysis/escape.rs"]
@@ -327,6 +328,29 @@ fn main() {
         args.remove(1);
     }
 
+    // Handle config command
+    if args.len() > 1 && args[1] == "config" {
+        if args.len() > 2 && args[2] == "set" && args.len() > 4 && args[3] == "linker" {
+            let mut cfg = config::LppConfig::load_or_create();
+            let val = &args[4];
+            if val == "direct" || val == "host" || val == "auto" {
+                cfg.linker = val.clone();
+                if let Err(e) = cfg.save() {
+                    eprintln!("Failed to save config: {e}");
+                    std::process::exit(1);
+                }
+                println!("Linker set to: {val}");
+            } else {
+                eprintln!("Invalid linker value: {val}. Use 'direct', 'host', or 'auto'.");
+                std::process::exit(1);
+            }
+        } else {
+            let cfg = config::LppConfig::load_or_create();
+            cfg.print_summary();
+        }
+        return;
+    }
+
     if args.len() > 1 {
         let first_arg = &args[1];
         if first_arg == "init"
@@ -400,6 +424,11 @@ fn main() {
             println!("  --dump-types     Dump the typechecker type table");
             println!("  --dump-escape    Dump the escape analysis classifications");
             println!("  --dump-mir       Dump the generated Mid-level IR (MIR)");
+            println!("  --linker direct  Use lpp-link (no external compiler needed)");
+            println!("  --linker host    Use system cc/cl.exe linker");
+            println!("\nConfiguration:");
+            println!("  config                       Show current config (~/.lpp/config.json)");
+            println!("  config set linker <value>    Set default linker (direct|host|auto)");
             println!("\nEnvironment Variables:");
             println!("  BENCHMARK=1      Suppress descriptive text and print sub-millisecond JSON timings");
             return;
@@ -419,8 +448,18 @@ fn main() {
             check_all = true;
         } else if arg == "--emit-object" || arg == "--aot" {
             emit_object = true;
+        } else if arg == "--linker" {
+            // Handled below after arg loop
         } else if !arg.starts_with('-') {
             filename = Some(arg.as_str());
+        }
+    }
+
+    // Parse --linker <value> (needs look-ahead)
+    let mut cli_linker: Option<String> = None;
+    for i in 1..args.len() {
+        if args[i] == "--linker" && i + 1 < args.len() {
+            cli_linker = Some(args[i + 1].clone());
         }
     }
 
