@@ -679,6 +679,34 @@ impl Parser {
         }
 
         let expr = self.parse_expr()?;
+
+        // Augmented assignment: x += 1 → x = x + 1
+        let aug_op = match self.peek() {
+            Some(Token::PlusEq) => Some(BinaryOperator::Add),
+            Some(Token::MinusEq) => Some(BinaryOperator::Subtract),
+            Some(Token::StarEq) => Some(BinaryOperator::Multiply),
+            Some(Token::SlashEq) => Some(BinaryOperator::Divide),
+            Some(Token::PercentEq) => Some(BinaryOperator::Modulo),
+            _ => None,
+        };
+        if let Some(op) = aug_op {
+            self.advance(); // consume +=, -=, etc.
+            let rhs = self.parse_expr()?;
+            if let Expr::Identifier(name, _) = &expr {
+                let value = Expr::BinaryOp {
+                    left: Box::new(expr.clone()),
+                    op,
+                    right: Box::new(rhs),
+                };
+                return Ok(Stmt::Assign {
+                    name: name.clone(),
+                    value,
+                    binding_id: std::cell::Cell::new(None),
+                });
+            }
+            return self.error("Augmented assignment target must be a variable");
+        }
+
         if self.match_token(&Token::Equal) {
             let value = self.parse_expr()?;
             match expr {

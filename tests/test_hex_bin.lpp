@@ -1,0 +1,12 @@
+def main():
+    a := 0xFF
+    print(a)
+
+    b := 0b1010
+    print(b)
+
+    c := 0x10
+    print(c)
+
+    d := 1_000_000
+    print(d)

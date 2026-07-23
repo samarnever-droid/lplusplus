@@ -47,6 +47,11 @@ pub enum Token {
     BitXor,    // ^
     Shl,       // <<
     Shr,       // >>
+    PlusEq,    // +=
+    MinusEq,   // -=
+    StarEq,    // *=
+    SlashEq,   // /=
+    PercentEq, // %=
     Colon,     // :
     Arrow,     // ->
     Plus,      // +
@@ -237,6 +242,9 @@ impl<'a> Lexer<'a> {
                     if self.peek_c() == Some('>') {
                         self.next_c();
                         tokens.push(mk_token(Token::Arrow));
+                    } else if self.peek_c() == Some('=') {
+                        self.next_c();
+                        tokens.push(mk_token(Token::MinusEq));
                     } else {
                         tokens.push(mk_token(Token::Minus));
                     }
@@ -279,10 +287,22 @@ impl<'a> Lexer<'a> {
                         tokens.push(mk_token(Token::Not));
                     }
                 }
-                '+' => tokens.push(mk_token(Token::Plus)),
-                '*' => tokens.push(mk_token(Token::Star)),
-                '/' => tokens.push(mk_token(Token::Slash)),
-                '%' => tokens.push(mk_token(Token::Percent)),
+                '+' => {
+                    if self.peek_c() == Some('=') { self.next_c(); tokens.push(mk_token(Token::PlusEq)); }
+                    else { tokens.push(mk_token(Token::Plus)); }
+                }
+                '*' => {
+                    if self.peek_c() == Some('=') { self.next_c(); tokens.push(mk_token(Token::StarEq)); }
+                    else { tokens.push(mk_token(Token::Star)); }
+                }
+                '/' => {
+                    if self.peek_c() == Some('=') { self.next_c(); tokens.push(mk_token(Token::SlashEq)); }
+                    else { tokens.push(mk_token(Token::Slash)); }
+                }
+                '%' => {
+                    if self.peek_c() == Some('=') { self.next_c(); tokens.push(mk_token(Token::PercentEq)); }
+                    else { tokens.push(mk_token(Token::Percent)); }
+                }
                 '?' => tokens.push(mk_token(Token::Question)),
                 '&' => {
                     if self.peek_c() == Some('&') {
@@ -316,6 +336,38 @@ impl<'a> Lexer<'a> {
                 ',' => tokens.push(mk_token(Token::Comma)),
                 '.' => tokens.push(mk_token(Token::Dot)),
                 '"' => {
+                    // Check for triple-quote multiline string
+                    if self.peek_c() == Some('"') {
+                        self.next_c(); // second "
+                        if self.peek_c() == Some('"') {
+                            self.next_c(); // third "
+                            let mut s = String::new();
+                            let mut terminated = false;
+                            loop {
+                                match self.next_c() {
+                                    Some('"') if self.peek_c() == Some('"') => {
+                                        self.next_c();
+                                        if self.peek_c() == Some('"') {
+                                            self.next_c();
+                                            terminated = true;
+                                            break;
+                                        }
+                                        s.push('"'); s.push('"');
+                                    }
+                                    Some(ch) => s.push(ch),
+                                    None => break,
+                                }
+                            }
+                            if !terminated {
+                                return Err(format!("[line {}:col {}] Lexer error: Unterminated triple-quote string", start_line, start_col));
+                            }
+                            tokens.push(mk_token(Token::StringLit(s)));
+                            continue;
+                        }
+                        // Just two quotes: empty string ""
+                        tokens.push(mk_token(Token::StringLit(String::new())));
+                        continue;
+                    }
                     let mut s = String::new();
                     let mut terminated = false;
                     while let Some(ch) = self.next_c() {
@@ -355,6 +407,33 @@ impl<'a> Lexer<'a> {
                     tokens.push(mk_token(Token::StringLit(s)));
                 }
                 _ if c.is_ascii_digit() => {
+                    // Check for hex (0x) or binary (0b) literals
+                    if c == '0' {
+                        if self.peek_c() == Some('x') || self.peek_c() == Some('X') {
+                            self.next_c(); // consume x
+                            let mut hex = String::new();
+                            while let Some(hc) = self.peek_c() {
+                                if hc.is_ascii_hexdigit() { hex.push(hc); self.next_c(); }
+                                else { break; }
+                            }
+                            let value = i64::from_str_radix(&hex, 16).map_err(|_|
+                                format!("[line {}:col {}] Lexer error: Invalid hex literal '0x{}'", start_line, start_col, hex))?;
+                            tokens.push(mk_token(Token::Int(value)));
+                            continue;
+                        }
+                        if self.peek_c() == Some('b') || self.peek_c() == Some('B') {
+                            self.next_c(); // consume b
+                            let mut bin = String::new();
+                            while let Some(bc) = self.peek_c() {
+                                if bc == '0' || bc == '1' { bin.push(bc); self.next_c(); }
+                                else { break; }
+                            }
+                            let value = i64::from_str_radix(&bin, 2).map_err(|_|
+                                format!("[line {}:col {}] Lexer error: Invalid binary literal '0b{}'", start_line, start_col, bin))?;
+                            tokens.push(mk_token(Token::Int(value)));
+                            continue;
+                        }
+                    }
                     let mut num = String::from(c);
                     let mut is_float = false;
                     while let Some(next_c) = self.peek_c() {
@@ -365,6 +444,8 @@ impl<'a> Lexer<'a> {
                             is_float = true;
                             num.push(next_c);
                             self.next_c();
+                        } else if next_c == '_' {
+                            self.next_c(); // skip underscores in numbers (1_000_000)
                         } else {
                             break;
                         }
