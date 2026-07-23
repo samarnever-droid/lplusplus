@@ -1,0 +1,48 @@
+## L++ Standard Library: Collection Utilities
+## Pure L++ — built on top of List[T] and Map[K,V].
+## Usage: from collections import list_sum, list_max
+
+def list_sum(lst: List[Int]) -> Int:
+    total := 0
+    for item in lst:
+        total = total + item
+    return total
+
+def list_max(lst: List[Int]) -> Int:
+    if list_len(lst) == 0:
+        return 0
+    best := list_get(lst, 0)
+    for item in lst:
+        if item > best:
+            best = item
+    return best
+
+def list_min(lst: List[Int]) -> Int:
+    if list_len(lst) == 0:
+        return 0
+    best := list_get(lst, 0)
+    for item in lst:
+        if item < best:
+            best = item
+    return best
+
+def list_contains(lst: List[Int], target: Int) -> Bool:
+    for item in lst:
+        if item == target:
+            return true
+    return false
+
+def list_reverse(lst: List[Int]) -> List[Int]:
+    result := List[Int]()
+    i := list_len(lst) - 1
+    while i >= 0:
+        list_push(result, list_get(lst, i))
+        i = i - 1
+    return result
+
+def list_count(lst: List[Int], target: Int) -> Int:
+    c := 0
+    for item in lst:
+        if item == target:
+            c = c + 1
+    return c

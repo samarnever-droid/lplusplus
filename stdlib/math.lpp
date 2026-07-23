@@ -1,0 +1,85 @@
+## L++ Standard Library: Math Utilities
+## Pure L++ — no C runtime needed, no linker changes.
+## Usage: from math import abs, min, max, clamp
+
+def abs(x: Int) -> Int:
+    if x < 0:
+        return 0 - x
+    return x
+
+def min(a: Int, b: Int) -> Int:
+    if a < b:
+        return a
+    return b
+
+def max(a: Int, b: Int) -> Int:
+    if a > b:
+        return a
+    return b
+
+def clamp(x: Int, lo: Int, hi: Int) -> Int:
+    if x < lo:
+        return lo
+    if x > hi:
+        return hi
+    return x
+
+def sign(x: Int) -> Int:
+    if x > 0:
+        return 1
+    if x < 0:
+        return 0 - 1
+    return 0
+
+def gcd(a: Int, b: Int) -> Int:
+    x := abs(a)
+    y := abs(b)
+    while y > 0:
+        t := y
+        y = x - (x / y) * y
+        x = t
+    return x
+
+def lcm(a: Int, b: Int) -> Int:
+    if a == 0:
+        return 0
+    if b == 0:
+        return 0
+    return abs(a) / gcd(a, b) * abs(b)
+
+def pow(base: Int, exp: Int) -> Int:
+    result := 1
+    i := 0
+    while i < exp:
+        result = result * base
+        i = i + 1
+    return result
+
+def factorial(n: Int) -> Int:
+    if n <= 1:
+        return 1
+    result := 1
+    i := 2
+    while i <= n:
+        result = result * i
+        i = i + 1
+    return result
+
+def fib(n: Int) -> Int:
+    if n <= 1:
+        return n
+    a := 0
+    b := 1
+    i := 2
+    while i <= n:
+        c := a + b
+        a = b
+        b = c
+        i = i + 1
+    return b
+
+def is_even(x: Int) -> Bool:
+    return x - (x / 2) * 2 == 0
+
+def is_odd(x: Int) -> Bool:
+    return x - (x / 2) * 2 != 0

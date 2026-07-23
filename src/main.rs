@@ -811,8 +811,28 @@ fn resolve_local_imports(
                 if pkg_src_path.exists() {
                     filepath = pkg_src_path;
                 } else {
+                // Check in stdlib/ (shipped standard library)
+                let stdlib_path = if let Ok(exe) = std::env::current_exe() {
+                    let exe_dir = exe.parent().unwrap_or(std::path::Path::new("."));
+                    // Check alongside the binary: exe_dir/../stdlib/module.lpp
+                    let candidates = [
+                        exe_dir.join(format!("../stdlib/{}.lpp", module)),
+                        exe_dir.join(format!("../../stdlib/{}.lpp", module)),
+                        exe_dir.join(format!("stdlib/{}.lpp", module)),
+                        std::path::PathBuf::from(format!("stdlib/{}.lpp", module)),
+                    ];
+                    candidates.into_iter().find(|p| p.exists())
+                } else {
+                    None
+                };
+                if let Some(stdlib) = stdlib_path {
+                    filepath = stdlib;
+                } else {
                     return Err(format!(
-                        "Imported library file '{}' not found in local directory or .lpp_packages",
+                        "Imported module '{}' not found in:\n  - {}\n  - .lpp_packages/{}/{}.lpp\n  - stdlib/{}.lpp",
+                        module,
+                        base_dir.join(format!("{}.lpp", module)).display(),
+                        leaf_name, leaf_name,
                         module
                     ));
                 }
