@@ -348,6 +348,14 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                                 .icmp(IntCC::SignedGreaterThanOrEqual, left, right)
                         }
                     }
+                    BinaryOperator::And => {
+                        // a && b → a & b (bitwise AND on booleans i8)
+                        builder.ins().band(left, right)
+                    }
+                    BinaryOperator::Or => {
+                        // a || b → a | b (bitwise OR on booleans i8)
+                        builder.ins().bor(left, right)
+                    }
                 };
                 // Cranelift 0.113 represents integer/float comparisons as I8,
                 // which is also L++'s stable Bool ABI. Keep the value unchanged;

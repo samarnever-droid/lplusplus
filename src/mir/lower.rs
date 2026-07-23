@@ -854,7 +854,9 @@ impl<'a> MirLowerCtx<'a> {
                     | BinaryOperator::Less
                     | BinaryOperator::LessEq
                     | BinaryOperator::Greater
-                    | BinaryOperator::GreaterEq => TypeRef::Bool,
+                    | BinaryOperator::GreaterEq
+                    | BinaryOperator::And
+                    | BinaryOperator::Or => TypeRef::Bool,
                     _ => left_ty,
                 };
                 let temp = builder.new_local(res_ty, false, None, None);

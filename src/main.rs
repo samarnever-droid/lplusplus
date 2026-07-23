@@ -456,10 +456,10 @@ fn main() {
     }
 
     // Parse --linker <value> (needs look-ahead)
-    let mut cli_linker: Option<String> = None;
+    let mut _cli_linker: Option<String> = None;
     for i in 1..args.len() {
         if args[i] == "--linker" && i + 1 < args.len() {
-            cli_linker = Some(args[i + 1].clone());
+            _cli_linker = Some(args[i + 1].clone());
         }
     }
 

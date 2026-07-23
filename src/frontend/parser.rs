@@ -688,7 +688,26 @@ impl Parser {
                 closure: Box::new(closure),
             });
         }
-        self.parse_relational()
+        self.parse_logical()
+    }
+
+    fn parse_logical(&mut self) -> Result<Expr, String> {
+        let mut left = self.parse_relational()?;
+        while let Some(t) = self.peek() {
+            let op = match t {
+                Token::And => BinaryOperator::And,
+                Token::Or => BinaryOperator::Or,
+                _ => break,
+            };
+            self.advance();
+            let right = self.parse_relational()?;
+            left = Expr::BinaryOp {
+                left: Box::new(left),
+                op,
+                right: Box::new(right),
+            };
+        }
+        Ok(left)
     }
 
     fn parse_relational(&mut self) -> Result<Expr, String> {

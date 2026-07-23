@@ -38,6 +38,8 @@ pub enum Token {
     Greater,   // >
     LessEq,    // <=
     GreaterEq, // >=
+    And,       // &&
+    Or,        // ||
     Colon,     // :
     Arrow,     // ->
     Plus,      // +
@@ -261,6 +263,18 @@ impl<'a> Lexer<'a> {
                 '/' => tokens.push(mk_token(Token::Slash)),
                 '%' => tokens.push(mk_token(Token::Percent)),
                 '?' => tokens.push(mk_token(Token::Question)),
+                '&' => {
+                    if self.peek_c() == Some('&') {
+                        self.next_c();
+                        tokens.push(mk_token(Token::And));
+                    }
+                }
+                '|' => {
+                    if self.peek_c() == Some('|') {
+                        self.next_c();
+                        tokens.push(mk_token(Token::Or));
+                    }
+                }
                 '#' => {
                     while let Some(next_c) = self.peek_c() {
                         if next_c == '\n' || next_c == '\r' {

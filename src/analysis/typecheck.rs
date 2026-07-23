@@ -483,7 +483,7 @@ impl<'a> TypeChecker<'a> {
                 }
             }
             Expr::UnaryOp { op, operand } => {
-                let ty = self.infer_expr(operand, current_scope, hint)?;
+                let ty = self.infer_expr(operand, current_scope, None)?;
                 match op {
                     UnaryOperator::Negate => Ok(ty), // -Int→Int, -Float→Float
                     UnaryOperator::Not => Ok(TypeRef::Bool), // !Bool→Bool
@@ -822,7 +822,7 @@ impl<'a> TypeChecker<'a> {
             }
             Expr::Try(inner) => {
                 // ? unwraps Ok value — returns the inner type (Int for now)
-                let _inner_ty = self.infer_expr(inner, current_scope, hint)?;
+                let _inner_ty = self.infer_expr(inner, current_scope, None)?;
                 Ok(TypeRef::Int)
             }
         }

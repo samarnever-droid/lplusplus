@@ -28,6 +28,8 @@ pub enum BinaryOperator {
     Greater,
     LessEq,
     GreaterEq,
+    And,       // &&
+    Or,        // ||
 }
 
 #[derive(Debug, Clone, PartialEq)]
