@@ -15,7 +15,7 @@ Variants with data carry a payload. `Ok(42)` stores the success value, `Err(1)` 
 ## Creating Results
 
 ```lpp
-def divide(a: Int, b: Int) -> Int:
+def divide(a: Int, b: Int) -> Result:
     if b == 0:
         return Result.Err(1)     # error: division by zero
     return Result.Ok(a / b)      # success with value
@@ -40,7 +40,7 @@ Match bindings (`value`, `code`) extract the data from the variant.
 The `?` operator unwraps `Ok` or returns `Err` early:
 
 ```lpp
-def process(x: Int) -> Int:
+def process(x: Int) -> Result:
     a := step1(x)?          # if Err, return it immediately
     b := step2(a)?          # same
     return Result.Ok(b)     # only reached if both succeeded
@@ -76,7 +76,7 @@ enum Option:
     Some(value: Int)
     None
 
-def find_item(lst: List, target: Int) -> Int:
+def find_item(lst: List, target: Int) -> Option:
     # ... search logic
     return Option.None          # not found
 

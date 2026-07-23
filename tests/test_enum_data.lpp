@@ -2,7 +2,7 @@ enum Result:
     Ok(value: Int)
     Err(code: Int)
 
-def safe_divide(a: Int, b: Int) -> Int:
+def safe_divide(a: Int, b: Int) -> Result:
     if b == 0:
         return Result.Err(0)
     return Result.Ok(a / b)

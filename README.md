@@ -120,7 +120,7 @@ enum Result:
     Ok(value: Int)
     Err(code: Int)
 
-def safe_divide(a: Int, b: Int) -> Int:
+def safe_divide(a: Int, b: Int) -> Result:
     if b == 0:
         return Result.Err(1)
     return Result.Ok(a / b)
@@ -136,7 +136,7 @@ def main():
 ### Error Propagation (`?` operator)
 
 ```lpp
-def process(x: Int) -> Int:
+def process(x: Int) -> Result:
     v := might_fail(x)?     # returns Err automatically if failed
     return Result.Ok(v + 1)
 ```

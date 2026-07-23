@@ -2,12 +2,12 @@ enum Result:
     Ok(value: Int)
     Err(code: Int)
 
-def might_fail(x: Int) -> Int:
+def might_fail(x: Int) -> Result:
     if x < 0:
         return Result.Err(1)
     return Result.Ok(x * 2)
 
-def process(x: Int) -> Int:
+def process(x: Int) -> Result:
     v := might_fail(x)?
     return Result.Ok(v + 100)
 
