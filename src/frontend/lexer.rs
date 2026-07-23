@@ -69,12 +69,12 @@ pub enum Token {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-#[derive(Debug, Clone, PartialEq)]
 pub enum FStringPart {
     Literal(String),
-    Expr(String), // the expression text inside {}
+    Expr(String),
 }
 
+#[derive(Debug, Clone, PartialEq)]
 pub struct SpannedToken {
     pub token: Token,
     pub line: usize,
