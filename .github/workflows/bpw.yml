@@ -175,7 +175,7 @@ jobs:
           LPP_AOT=1 target/release/lpp "$W/cpu.lpp"
           cc "$W/cpu.o" "$W/rt.o" -o "$W/cpu_lpp" -lm -lpthread
           mkdir -p "$W/rcpu/src"
-          printf '[package]\nname="b"\nversion="0.1.0"\nedition="2021"' > "$W/rcpu/Cargo.toml"
+          echo -e "[package]\nname = \"b\"\nversion = \"0.1.0\"\nedition = \"2021\"" > "$W/rcpu/Cargo.toml"
           cp "$W/cpu.rs" "$W/rcpu/src/main.rs"
           cd "$W/rcpu" && cargo build --release 2>/dev/null && cd "$GITHUB_WORKSPACE"
           cd "$W" && go build -o "$W/cpu_go" cpu.go && cd "$GITHUB_WORKSPACE"
@@ -233,7 +233,7 @@ jobs:
           LPP_AOT=1 target/release/lpp "$W/ram.lpp"
           cc "$W/ram.o" "$W/rt.o" -o "$W/ram_lpp" -lm -lpthread
           mkdir -p "$W/rram/src"
-          printf '[package]\nname="b"\nversion="0.1.0"\nedition="2021"' > "$W/rram/Cargo.toml"
+          echo -e "[package]\nname = \"b\"\nversion = \"0.1.0\"\nedition = \"2021\"" > "$W/rram/Cargo.toml"
           cp "$W/ram.rs" "$W/rram/src/main.rs"
           cd "$W/rram" && cargo build --release 2>/dev/null && cd "$GITHUB_WORKSPACE"
           cd "$W" && go build -o "$W/ram_go" ram.go && cd "$GITHUB_WORKSPACE"
@@ -287,7 +287,7 @@ jobs:
           LPP_AOT=1 target/release/lpp "$W/fio.lpp"
           cc "$W/fio.o" "$W/rt.o" -o "$W/fio_lpp" -lm -lpthread
           mkdir -p "$W/rfio/src"
-          printf '[package]\nname="b"\nversion="0.1.0"\nedition="2021"' > "$W/rfio/Cargo.toml"
+          echo -e "[package]\nname = \"b\"\nversion = \"0.1.0\"\nedition = \"2021\"" > "$W/rfio/Cargo.toml"
           cp "$W/fio.rs" "$W/rfio/src/main.rs"
           cd "$W/rfio" && cargo build --release 2>/dev/null && cd "$GITHUB_WORKSPACE"
           cd "$W" && go build -o "$W/fio_go" fio.go && cd "$GITHUB_WORKSPACE"
@@ -560,7 +560,7 @@ jobs:
           fn main(){println!("{}",fib(40));println!("{}",count_primes(10000));}
           "@ | Set-Content "$W\cpu.rs" -Encoding ascii
           New-Item -ItemType Directory -Force "$W\rcpu\src" | Out-Null
-          '[package]\nname="b"\nversion="0.1.0"\nedition="2021"' | Set-Content "$W\rcpu\Cargo.toml"
+          "[package]`nname = `"b`"`nversion = `"0.1.0`"`nedition = `"2021`"" | Set-Content "$W\rcpu\Cargo.toml" -Encoding ascii
           Copy-Item "$W\cpu.rs" "$W\rcpu\src\main.rs"
           Push-Location "$W\rcpu"; cargo build --release 2>&1 | Out-Null; Pop-Location
           $rsCpuV = (& "$W\rcpu\target\release\b.exe" 2>&1) -join "`n"
