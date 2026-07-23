@@ -1,0 +1,107 @@
+{
+  "registry": {
+    "name": "L++ Package Registry",
+    "version": "1.0.0",
+    "url": "https://samarnever-droid.github.io/lplusplus/registry",
+    "api": "https://samarnever-droid.github.io/lplusplus/registry/index.json",
+    "source": "https://github.com/samarnever-droid/lplusplus",
+    "description": "Official L++ package registry — Git-based, JSON-indexed, GitHub Pages hosted"
+  },
+  "packages": {
+    "lpp-zip": {
+      "name": "lpp-zip",
+      "version": "0.1.0",
+      "description": "ZIP archive create/read library — pure L++ using buf_* binary primitives",
+      "authors": ["0x4171341"],
+      "license": "MIT",
+      "repository": "https://github.com/samarnever-droid/lplusplus",
+      "source_path": "packages/lpp-zip/src/zip.lpp",
+      "source_url": "https://raw.githubusercontent.com/samarnever-droid/lplusplus/master/packages/lpp-zip/src/zip.lpp",
+      "dependencies": [],
+      "keywords": ["zip", "archive", "binary", "file"],
+      "api": {
+        "zip_create": "() -> Int",
+        "zip_add_file": "(archive: Int, filename: Str, content: Str)",
+        "zip_save": "(archive: Int, path: Str)",
+        "zip_free": "(archive: Int)",
+        "zip_open": "(path: Str) -> Int",
+        "zip_entry_count": "(handle: Int) -> Int",
+        "zip_entry_name": "(handle: Int, index: Int) -> Str",
+        "zip_entry_data": "(handle: Int, index: Int) -> Str",
+        "zip_close": "(handle: Int)"
+      }
+    },
+    "lpp-math": {
+      "name": "lpp-math",
+      "version": "0.1.0",
+      "description": "Math utilities — abs, min, max, pow, gcd, lcm, fib, factorial",
+      "authors": ["0x4171341"],
+      "license": "MIT",
+      "source_url": "https://raw.githubusercontent.com/samarnever-droid/lplusplus/master/stdlib/math.lpp",
+      "dependencies": [],
+      "keywords": ["math", "stdlib"],
+      "api": {
+        "abs": "(x: Int) -> Int",
+        "min": "(a: Int, b: Int) -> Int",
+        "max": "(a: Int, b: Int) -> Int",
+        "clamp": "(x: Int, lo: Int, hi: Int) -> Int",
+        "pow": "(base: Int, exp: Int) -> Int",
+        "gcd": "(a: Int, b: Int) -> Int",
+        "fib": "(n: Int) -> Int",
+        "factorial": "(n: Int) -> Int",
+        "is_even": "(x: Int) -> Bool",
+        "is_odd": "(x: Int) -> Bool"
+      }
+    },
+    "lpp-strings": {
+      "name": "lpp-strings",
+      "version": "0.1.0",
+      "description": "String utilities — repeat, contains, starts_with, reverse, pad",
+      "authors": ["0x4171341"],
+      "license": "MIT",
+      "source_url": "https://raw.githubusercontent.com/samarnever-droid/lplusplus/master/stdlib/strings.lpp",
+      "dependencies": [],
+      "keywords": ["string", "text", "stdlib"],
+      "api": {
+        "str_repeat": "(s: Str, n: Int) -> Str",
+        "str_contains": "(haystack: Str, needle: Str) -> Bool",
+        "str_starts_with": "(s: Str, prefix: Str) -> Bool",
+        "str_ends_with": "(s: Str, suffix: Str) -> Bool",
+        "str_reverse": "(s: Str) -> Str",
+        "str_is_empty": "(s: Str) -> Bool",
+        "str_pad_left": "(s: Str, width: Int, pad_char: Str) -> Str",
+        "str_pad_right": "(s: Str, width: Int, pad_char: Str) -> Str"
+      }
+    },
+    "lpp-collections": {
+      "name": "lpp-collections",
+      "version": "0.1.0",
+      "description": "Collection utilities — list_sum, list_max, list_min, list_reverse",
+      "authors": ["0x4171341"],
+      "license": "MIT",
+      "source_url": "https://raw.githubusercontent.com/samarnever-droid/lplusplus/master/stdlib/collections.lpp",
+      "dependencies": [],
+      "keywords": ["list", "collections", "stdlib"]
+    },
+    "lpp-algo": {
+      "name": "lpp-algo",
+      "version": "0.1.0",
+      "description": "Algorithms — bubble_sort, binary_search, list_range, list_fill",
+      "authors": ["0x4171341"],
+      "license": "MIT",
+      "source_url": "https://raw.githubusercontent.com/samarnever-droid/lplusplus/master/stdlib/algo.lpp",
+      "dependencies": [],
+      "keywords": ["algorithm", "sort", "search", "stdlib"]
+    },
+    "lpp-convert": {
+      "name": "lpp-convert",
+      "version": "0.1.0",
+      "description": "Type conversion utilities — int_to_str, bool_to_str",
+      "authors": ["0x4171341"],
+      "license": "MIT",
+      "source_url": "https://raw.githubusercontent.com/samarnever-droid/lplusplus/master/stdlib/convert.lpp",
+      "dependencies": [],
+      "keywords": ["convert", "stdlib"]
+    }
+  }
+}
