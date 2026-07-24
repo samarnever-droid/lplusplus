@@ -40,7 +40,8 @@ L++ currently supports:
 - Enums with data-carrying variants
 - `match` with bindings
 - Rust-like `?` error propagation
-- Generic functions, structs, and enums, phase 1
+- Generic functions, structs, and enums (phase 1, type-erased)
+- Traits and `impl` blocks with static dispatch
 - Constants
 - Type aliases, parsed/experimental
 - List literals and indexing

@@ -61,10 +61,27 @@ This prevents a large class of memory leaks.
 
 ## Generics safety
 
-Generics are phase 1. Type parameters are accepted by the type checker and erased to the native value representation. Full trait bounds and monomorphization are future work.
+Generics are phase 1. Type parameters are accepted by the type checker and erased to the native value representation (`i64`). Return type inference works at call sites — `identity(42)` correctly infers the result is `Int`. Full trait bounds and monomorphization are future work.
+
+## Traits and static dispatch
+
+Traits define method interfaces. `impl` blocks provide implementations for specific types.
+
+```lpp
+trait Area:
+    def area(self) -> Int
+
+impl Area for Circle:
+    def area(self) -> Int:
+        return 3 * self.radius * self.radius
+```
+
+Dispatch is entirely **static** — `c.area()` resolves at compile time to `Circle_area(c)` via name mangling. There are no vtables or dynamic dispatch. This keeps the binary small and fast.
 
 ## Current limitations
 
 - Type aliases are parsed but full substitution is still experimental.
 - Generic enum payloads and rich `Result[T]` style APIs are on the roadmap.
+- Trait bounds on generic parameters (`T: Display`) are not yet supported.
+- Trait conformance is not enforced (missing methods not flagged at `impl` time).
 - Some older scratch examples in the repository intentionally fail safety checks.

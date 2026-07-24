@@ -212,7 +212,60 @@ Current limitations:
 - Generic function inference works for common call-site cases.
 - Generic values are erased to `i64` in codegen.
 - Generic functions cannot yet dispatch overloaded builtins such as `print(x)` when `x: T`; use concrete calls like `print_str` where needed.
-- Trait bounds and monomorphization are future work.
+- Trait bounds on type parameters are future work.
+- Full monomorphization is future work.
+
+## Traits and impl
+
+Traits define interfaces. `impl` blocks provide concrete implementations for structs. Method dispatch is static (compile-time) via name mangling.
+
+```lpp
+trait Describe:
+    def describe(self) -> Str
+
+struct Point:
+    x: Int
+    y: Int
+
+struct Circle:
+    radius: Int
+
+impl Describe for Point:
+    def describe(self) -> Str:
+        return str_concat("Point(", str_concat(int_to_str(self.x), str_concat(", ", str_concat(int_to_str(self.y), ")"))))
+
+impl Describe for Circle:
+    def describe(self) -> Str:
+        return str_concat("Circle(r=", str_concat(int_to_str(self.radius), ")"))
+
+trait Area:
+    def area(self) -> Int
+
+impl Area for Circle:
+    def area(self) -> Int:
+        return 3 * self.radius * self.radius
+
+def main():
+    p := Point(10, 20)
+    c := Circle(5)
+
+    print_str(p.describe())   # Point(10, 20)
+    print_str(c.describe())   # Circle(r=5)
+    print(c.area())           # 75
+```
+
+How it works:
+
+- `impl Describe for Point` generates `Point_describe(self: Point)`.
+- `p.describe()` is desugared via UFCS to `describe(p)`.
+- At compile time, the receiver type (`Point`) is used to resolve `Point_describe`.
+- The `self` parameter requires no type annotation — its type is inferred from the `impl` target.
+
+Current limitations:
+
+- Static dispatch only (no trait objects / dynamic dispatch / vtables).
+- No trait bounds on generic type parameters yet.
+- Trait conformance is not enforced (missing methods are not flagged at `impl` time).
 
 ## Closures
 

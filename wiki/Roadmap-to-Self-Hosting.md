@@ -2,22 +2,26 @@
 
 Self-hosting means writing the L++ compiler in L++.
 
-L++ already has many compiler-writing ingredients:
+## What is already done
 
-- functions
-- structs
-- enums
-- match
-- imports
-- lists and maps
-- strings and files
-- generics phase 1
-- error propagation
-- native compilation
+L++ now has most compiler-writing ingredients:
 
-The remaining important gaps are below.
+- ✅ Functions with default parameters
+- ✅ Structs with field access
+- ✅ Enums with match and data-carrying variants
+- ✅ Generics (phase 1, type-erased): `def identity[T](x: T) -> T`
+- ✅ Traits and impl blocks: `trait Display` + `impl Display for Point`
+- ✅ Imports and multi-file modules
+- ✅ Lists and maps
+- ✅ 15+ string builtins: `char_at`, `ord`, `chr`, `str_find`, `str_contains`, `str_replace`, `str_upper`, `str_lower`, `str_trim`, `int_to_str`, `str_to_int`
+- ✅ Error propagation with `?` try operator
+- ✅ Native AOT compilation to ELF/PE/Mach-O
+- ✅ Constants, closures, threads
+- ✅ F-strings, hex/binary literals, multiline strings
 
-## 1. Stronger generics
+## Remaining gaps
+
+### 1. Stronger generics
 
 Needed for:
 
@@ -27,57 +31,44 @@ Map[Str, Type]
 Result[AstNode]
 ```
 
-Current generics are phase 1 with type erasure. Self-hosting needs more precise generic substitution, better payload handling, and likely monomorphization or a stable erased representation with runtime tags.
+Current generics use type erasure. Self-hosting needs monomorphization or runtime type tags for safe generic containers.
 
-## 2. Traits / interfaces
+### 2. Trait bounds on generics
 
-Needed for reusable compiler abstractions:
-
-```text
-Display
-Iterator
-Visitor
-ParserBackend
-CodegenTarget
+```lpp
+def print_all[T: Display](items: List[T]):
+    for item in items:
+        print_str(item.display())
 ```
 
-## 3. Char type and richer string iteration
+Traits exist but cannot yet constrain generic parameters.
 
-A lexer wants to process text one character at a time. L++ currently has string indexing and `char_at`, `ord`, `chr`, but a dedicated `Char` type and efficient string iteration would make lexer code cleaner.
+### 3. Char type and string iteration
 
-## 4. Better Result and error objects
+A lexer wants to process text one character at a time. `char_at`, `ord`, and `chr` work, but a dedicated `Char` type and efficient string iteration (`for c in s:`) would make lexer code cleaner.
 
-Current `Result` examples use integer error codes. A compiler needs structured errors:
+### 4. Structured error objects
 
-```text
-message
-file
-line
-column
-error kind
-```
+Current `Result` examples use integer error codes. A compiler needs structured errors with message, file, line, column, and error kind.
 
-## 5. Arrays and slices
+### 5. String-keyed hash maps
 
-Useful for token buffers, bytecode buffers, and linker data structures.
+The current `map_*` builtins support integer keys. A compiler needs `Map[Str, Type]` for symbol tables and scope resolution.
 
-## 6. Standard library hardening
+### 6. Standard library hardening
 
 Self-hosting requires stable modules for:
 
-- string builder
-- file paths
-- JSON/TOML parsing
-- command-line parsing
-- hash maps with string keys
-- testing helpers
+- String builder (efficient concatenation)
+- File path operations
+- Command-line argument parsing
+- Testing helpers
 
 ## Suggested order
 
-1. Fix type alias substitution fully.
-2. Strengthen generics.
-3. Add traits/interfaces.
-4. Add Char and string iterator support.
+1. Add string-keyed map builtins.
+2. Add trait bounds on generics.
+3. Start a self-hosted lexer in L++.
+4. Add Char type and string iteration.
 5. Add structured compiler errors.
-6. Start a small self-hosted lexer in L++.
-7. Expand to parser, AST, type checker, MIR.
+6. Expand to parser, AST, type checker, MIR.

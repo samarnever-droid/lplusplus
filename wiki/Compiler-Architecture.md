@@ -31,12 +31,14 @@ The parser is recursive descent and builds the AST.
 
 Top-level AST declarations:
 
-- `Function`
-- `Struct`
-- `Enum`
+- `Function` — with optional type parameters and default parameter values
+- `Struct` — with optional type parameters
+- `Enum` — with optional type parameters and data-carrying variants
 - `Import`
 - `Const`
 - `TypeAlias`
+- `Trait` — interface definitions with method signatures
+- `Impl` — trait implementations for a target type; methods are mangled as `TargetType_method`
 
 ## Semantic analysis
 

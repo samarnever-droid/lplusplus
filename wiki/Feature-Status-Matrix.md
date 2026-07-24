@@ -44,8 +44,8 @@ This page separates **implemented**, **experimental**, and **planned** features 
 | Bitwise operators | Working | `&`, `|`, `^`, `<<`, `>>` |
 | `pub` keyword | Experimental/reserved | lexer recognizes it; visibility enforcement is future work |
 | Import aliases | Experimental | parser supports `import x as y`; namespace behavior is still limited |
-| Traits/interfaces | Planned | needed for self-hosting ergonomics |
-| Full monomorphized generics | Planned | needed for robust `Result[T]`, `List[Token]`, etc. |
+| Traits/interfaces | Working | `trait Name:` + `impl Trait for Type:` with static dispatch |
+| Full monomorphized generics | Planned | current generics use type erasure; monomorphization is future work |
 | Char type | Planned | currently use one-character `Str`, `ord`, `chr`, `char_at` |
 
 ## Standard library status
