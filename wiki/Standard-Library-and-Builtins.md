@@ -10,6 +10,7 @@ L++ has two standard-library layers:
 | Function | Meaning |
 |---|---|
 | `print(x)` | print integer/bool-ish value |
+| `lpp_print_float(x)` | low-level float print used by tests |
 | `print_str(s)` | print string |
 | `input()` | read a line |
 | `parse_int(s)` | parse integer |
@@ -57,14 +58,19 @@ list_len(list)
 list_free(list)
 ```
 
-List literals are also supported:
+List literals are also supported. Lists can hold integers and floats in current tests:
 
 ```lpp
 nums := [10, 20, 30]
 print(nums[0])
+
+values := [1.5, 2.5, 3.5]
+lpp_print_float(values[0])
 ```
 
 ## Maps
+
+Maps support integer keys and string keys in current runtime tests.
 
 ```lpp
 map_new()
@@ -151,3 +157,24 @@ json_free(obj)
 | `stdlib.assert` | assertions and panic helpers |
 
 Some stdlib files are still experimental; the core verified examples avoid the experimental modules that are not yet repo-wide `--checkall` clean.
+
+
+## Low-level `lpp_*` symbols
+
+Some runtime symbols are exposed and used by tests, such as:
+
+```lpp
+lpp_print_int(42)
+lpp_print_float(3.14)
+```
+
+Prefer public names such as `print` and `print_str` where available. The `lpp_*` names are closer to runtime internals.
+
+## Experimental stdlib modules
+
+Some pure L++ stdlib files are still experimental:
+
+- `stdlib.algo` currently depends on `list_set`, which is not a stable public builtin yet.
+- `stdlib.result` helper functions are experimental because enum values are custom types, while helper arithmetic currently expects integer-like representation.
+
+The language-level enum/match/`?` examples are the reliable way to use Result-style control flow today.

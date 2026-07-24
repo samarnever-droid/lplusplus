@@ -72,3 +72,13 @@ Packages currently include:
 - `lpp-collections`
 - `lpp-algo`
 - `lpp-convert`
+
+## Import aliases
+
+Alias syntax is parsed:
+
+```lpp
+import utils.mathx as mathx
+```
+
+Namespace behavior for aliases is still experimental, so stable examples should prefer plain `import module` or `from module import item`.

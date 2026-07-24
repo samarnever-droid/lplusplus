@@ -34,12 +34,12 @@ f"hello {name}" # f-string interpolation for string expressions
 | Type | Meaning |
 |---|---|
 | `Int` | 64-bit signed integer |
-| `Float` | 64-bit floating point |
+| `Float` | 64-bit floating point; `%` uses `fmod` |
 | `Str` | ARC-managed string |
 | `Bool` | boolean |
 | `Void` | no value |
 | `List[Int]` | dynamic list handle |
-| `Map[Int, Int]` | map handle |
+| `Map[Int, Int]` | map handle; runtime also supports string keys |
 | custom structs | user-defined records |
 | custom enums | tagged values |
 | type params | `T`, `A`, `B` in generics |
@@ -261,3 +261,20 @@ def main():
     map_put(m, 1, 100)
     print(map_get(m, 1))
 ```
+
+
+## Float output
+
+L++ currently has `print` for integer-like values and `print_str` for strings. Float tests use the low-level runtime symbol:
+
+```lpp
+def main():
+    x := 10.5 % 3.0
+    lpp_print_float(x)
+```
+
+A friendlier public `print_float` alias is a good future cleanup.
+
+## `pub` keyword
+
+`pub` is recognized by the lexer and reserved for visibility, but public/private enforcement is not complete yet. Treat it as experimental/reserved.

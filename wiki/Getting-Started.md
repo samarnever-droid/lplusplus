@@ -125,3 +125,30 @@ Per-run override:
 lpp --linker direct app.lpp
 lpp --linker host app.lpp
 ```
+
+
+## Linux install troubleshooting
+
+Release Linux binaries are intended to be static/musl-friendly so they work in small Alpine-like environments.
+
+If the shell says `lpp: not found` after install:
+
+1. Check PATH:
+
+```bash
+echo "$PATH"
+ls -l "$HOME/.lpp/bin"
+```
+
+2. Add L++ to PATH:
+
+```bash
+export PATH="$HOME/.lpp/bin:$PATH"
+```
+
+3. Confirm architecture:
+
+```bash
+uname -m
+file "$HOME/.lpp/bin/lpp"
+```

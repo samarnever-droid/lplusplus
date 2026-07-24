@@ -50,3 +50,23 @@ The strongest observed L++ advantages are:
 - very small direct-linked binaries
 - fast compile times
 - competitive native runtime on simple workloads
+
+
+## BPW artifacts
+
+The BPW workflow has separate platform jobs and a merge job:
+
+```text
+bpw-linux
+bpw-windows
+bpw-merge
+```
+
+The merge job downloads platform artifacts, combines JSON reports, prints a cross-platform table, and uploads a merged report artifact.
+
+Typical artifact contents:
+
+- source benchmark files
+- per-platform `bpw_report.json`
+- merged `bpw_merged.json`
+- selected binaries where workflow configuration preserves them

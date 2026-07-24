@@ -20,7 +20,12 @@ L++ is not an interpreter and not a VM language. Source files compile ahead-of-t
 8. [[Direct Linker and Runtime]] — ELF, PE, Mach-O, freestanding runtimes
 9. [[Verified Examples]] — examples checked with `lpp --checkall`
 10. [[Benchmarks and CI]] — BPW benchmark workflow and CI jobs
-11. [[Roadmap to Self Hosting]] — what is still needed for a compiler written in L++
+11. [[Feature Status Matrix]] — stable vs experimental vs planned features
+12. [[Runtime Compatibility Matrix]] — host vs direct runtime builtin support
+13. [[Compiler Debugging Guide]] — dump flags, MIR, lpp-link inspect
+14. [[Package Registry and lpp-zip]] — registry format and ZIP package API
+15. [[Known Stale and Negative Files]] — why repo-wide checkall finds intentional failures
+16. [[Roadmap to Self Hosting]] — what is still needed for a compiler written in L++
 
 ## Current capability snapshot
 

@@ -59,3 +59,15 @@ These avoid libc/CRT dependencies and are the reason direct-linked binaries can 
 ## Windows PE linker note
 
 The PE linker has support for COFF sections, imports, relocations, and freestanding Kernel32-based binaries. It should not be modified for normal language features.
+
+
+## Inspect objects
+
+Use `inspect` to debug object files before linking:
+
+```bash
+lpp-link inspect file.o
+lpp-link inspect file.obj
+```
+
+This helps diagnose unresolved symbols, COFF section layout, and relocation problems.
