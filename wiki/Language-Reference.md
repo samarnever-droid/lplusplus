@@ -309,6 +309,42 @@ Current limitations:
 - Trait conformance is not enforced (missing methods are not flagged at `impl` time).
 - Trait objects cannot yet be stored in lists or returned from functions.
 
+## FFI / extern
+
+L++ can call C functions directly via `extern` blocks. No wrappers needed.
+
+```lpp
+extern "C":
+    def abs(x: Int) -> Int
+    def getpid() -> Int
+
+def main():
+    print(abs(-42))     # 42
+    print(getpid())     # actual process ID
+```
+
+### Linking shared libraries
+
+Use `link "libname"` to link against shared libraries:
+
+```lpp
+extern "C" link "SDL2":
+    def SDL_Init(flags: Int) -> Int
+    def SDL_CreateWindow(title: Str, x: Int, y: Int, w: Int, h: Int, flags: Int) -> Int
+    def SDL_Delay(ms: Int) -> Void
+    def SDL_Quit() -> Void
+```
+
+When `extern` blocks are present, L++ automatically uses the host C linker (`cc` / `cl.exe`) instead of `lpp-link`, passing `-lSDL2` or equivalent flags.
+
+### How it works
+
+1. `extern "C":` declares C-ABI function signatures (no body)
+2. Functions are imported as external symbols during Cranelift compilation
+3. Calls lower to the same `BuiltinCall` mechanism used for runtime builtins
+4. Unknown symbols are auto-declared as FFI imports with i64 params/return (C ABI)
+5. The host linker resolves them against libc and any `-l` libraries
+
 ## Closures
 
 ```lpp

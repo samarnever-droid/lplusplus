@@ -13,7 +13,7 @@ use std::collections::HashMap;
 pub struct FunctionLower<'a, M: Module> {
     pub module: &'a mut M,
     pub func_ids: &'a HashMap<FuncId, CLFuncId>,
-    pub builtin_ids: &'a HashMap<String, CLFuncId>,
+    pub builtin_ids: &'a mut HashMap<String, CLFuncId>,
     /// Generated type-specific destructors used by AllocateArcStruct.
     pub drop_ids: &'a HashMap<crate::typecheck::StructTypeId, CLFuncId>,
     pub type_table: &'a TypeTable,
@@ -397,12 +397,28 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                 })
             }
             Rvalue::BuiltinCall(symbol, args) => {
-                let cl_id = *self.builtin_ids.get(symbol).ok_or_else(|| {
-                    format!(
-                        "Builtin '{}' was not declared in the Cranelift module",
-                        symbol
-                    )
-                })?;
+                // Look up known builtins first; auto-declare unknown symbols as FFI imports
+                let cl_id = if let Some(&id) = self.builtin_ids.get(symbol) {
+                    id
+                } else {
+                    // Auto-declare as FFI import: all params and return are i64 (C ABI)
+                    let mut sig = self.module.make_signature();
+                    for _ in args {
+                        sig.params.push(AbiParam::new(cl_types::I64));
+                    }
+                    // Assume i64 return (covers pointers, ints, handles)
+                    let ret_cl = dest_ty
+                        .map(|t| super::types::type_to_cl(t))
+                        .unwrap_or(cl_types::I64);
+                    if dest_ty.map_or(true, |t| *t != TypeRef::Void) {
+                        sig.returns.push(AbiParam::new(ret_cl));
+                    }
+                    let id = self.module
+                        .declare_function(symbol, Linkage::Import, &sig)
+                        .map_err(|e| format!("declare FFI '{}': {:?}", symbol, e))?;
+                    self.builtin_ids.insert(symbol.clone(), id);
+                    id
+                };
                 let func_ref = self.module.declare_func_in_func(cl_id, builder.func);
                 let arg_values: Vec<Value> = args
                     .iter()

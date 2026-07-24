@@ -234,6 +234,18 @@ impl Resolver {
                         }
                     }
                 }
+                TopLevel::Extern(extern_block) => {
+                    // Register each extern function as a builtin-like name
+                    for ef in &extern_block.functions {
+                        self.table.add_binding(
+                            self.current_scope,
+                            ef.name.clone(),
+                            false,
+                            Some(Type::Custom("Function".into())),
+                            BindingKind::FunctionName,
+                        );
+                    }
+                }
                 TopLevel::Import(import_kind) => {
                     let module = match import_kind {
                         crate::ast::ImportKind::Module { path, .. } => path.last().cloned().unwrap_or_default(),

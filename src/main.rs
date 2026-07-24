@@ -730,7 +730,28 @@ fn main() {
             let exe_ext = std::env::consts::EXE_SUFFIX;
             let exe_path = filename.replace(".lpp", exe_ext);
 
-            if let Err(e) = pm::direct_link_binary(Path::new(&obj_path), Path::new(&exe_path)) {
+            // Collect FFI link libraries from extern blocks
+            let mut link_libs: Vec<String> = Vec::new();
+            for decl in &ast.declarations {
+                if let crate::ast::TopLevel::Extern(ext) = decl {
+                    if let Some(ref lib) = ext.link_lib {
+                        if !link_libs.contains(lib) {
+                            link_libs.push(lib.clone());
+                        }
+                    }
+                }
+            }
+
+            // Check if any extern blocks exist (FFI requires host linker)
+            let has_extern = ast.declarations.iter().any(|d| matches!(d, crate::ast::TopLevel::Extern(_)));
+
+            let link_result = if has_extern {
+                // FFI requires host linker for shared library / libc linking
+                pm::host_link_binary(Path::new(&obj_path), Path::new(&exe_path), &link_libs)
+            } else {
+                pm::direct_link_binary(Path::new(&obj_path), Path::new(&exe_path))
+            };
+            if let Err(e) = link_result {
                 eprintln!("[L++] Native Link Error: {}", e);
                 return;
             }

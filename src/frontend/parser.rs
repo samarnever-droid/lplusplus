@@ -89,6 +89,8 @@ impl Parser {
                 declarations.push(TopLevel::Trait(self.parse_trait()?));
             } else if self.match_token(&Token::ImplKw) {
                 declarations.push(TopLevel::Impl(self.parse_impl()?));
+            } else if self.match_token(&Token::Extern) {
+                declarations.push(TopLevel::Extern(self.parse_extern()?));
             } else if self.match_token(&Token::Import) {
                 declarations.push(TopLevel::Import(self.parse_import()?));
             } else if self.match_token(&Token::From) {
@@ -96,7 +98,7 @@ impl Parser {
             } else {
                 let found = self.peek().cloned();
                 return self.error(format!(
-                    "Expected 'def', 'struct', 'enum', 'trait', 'impl', 'const', 'type', 'import', or 'from', found {:?}",
+                    "Expected 'def', 'struct', 'enum', 'trait', 'impl', 'extern', 'const', 'type', 'import', or 'from', found {:?}",
                     found
                 ));
             }
@@ -299,6 +301,86 @@ impl Parser {
         self.match_token(&Token::Dedent);
 
         Ok(ImplBlock { trait_name, target_type, methods })
+    }
+
+    /// Parse `extern "C": def func(args) -> Type` or `extern "C" link "SDL2": ...`
+    fn parse_extern(&mut self) -> Result<ExternBlock, String> {
+        // Parse ABI string: extern "C"
+        let abi = match self.advance() {
+            Some(Token::StringLit(s)) => s.clone(),
+            _ => return self.error("Expected ABI string after 'extern' (e.g. \"C\")"),
+        };
+
+        // Optional: link "libname"
+        let link_lib = if let Some(Token::Ident(kw)) = self.peek().cloned() {
+            if kw == "link" {
+                self.advance(); // consume "link"
+                match self.advance() {
+                    Some(Token::StringLit(s)) => Some(s.clone()),
+                    _ => return self.error("Expected library name string after 'link'"),
+                }
+            } else { None }
+        } else { None };
+
+        if !self.match_token(&Token::Colon) {
+            return self.error("Expected ':' after extern declaration");
+        }
+        if !self.match_token(&Token::Newline) {
+            return self.error("Expected newline after ':'");
+        }
+        self.skip_newlines();
+        if !self.match_token(&Token::Indent) {
+            return self.error("Expected indentation for extern body");
+        }
+
+        let mut functions = Vec::new();
+        while self.peek() != Some(&Token::Dedent) && self.peek().is_some() {
+            self.skip_newlines();
+            if self.peek() == Some(&Token::Dedent) { break; }
+
+            if !self.match_token(&Token::Def) {
+                return self.error("Expected 'def' in extern body");
+            }
+            let name = match self.advance() {
+                Some(Token::Ident(n)) => n.clone(),
+                _ => return self.error("Expected function name in extern"),
+            };
+            if !self.match_token(&Token::LParen) {
+                return self.error("Expected '(' after extern function name");
+            }
+            let mut params = Vec::new();
+            if self.peek() != Some(&Token::RParen) {
+                loop {
+                    let param_name = match self.advance() {
+                        Some(Token::Ident(n)) => n.clone(),
+                        _ => return self.error("Expected parameter name"),
+                    };
+                    if !self.match_token(&Token::Colon) {
+                        return self.error("Expected ':' after parameter name");
+                    }
+                    let ty = self.parse_type()?;
+                    params.push(Param { name: param_name, ty, default: None });
+                    if !self.match_token(&Token::Comma) { break; }
+                }
+            }
+            if !self.match_token(&Token::RParen) {
+                return self.error("Expected ')' after extern parameters");
+            }
+            let mut return_type = Type::Void;
+            if self.match_token(&Token::Arrow) {
+                return_type = self.parse_type()?;
+            }
+            functions.push(ExternFunc {
+                symbol: name.clone(),
+                name,
+                params,
+                return_type,
+            });
+            self.skip_newlines();
+        }
+        self.match_token(&Token::Dedent);
+
+        Ok(ExternBlock { abi, functions, link_lib })
     }
 
     fn parse_enum(&mut self) -> Result<EnumDef, String> {

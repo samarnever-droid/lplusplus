@@ -233,6 +233,23 @@ pub struct ImplBlock {
     pub methods: Vec<Function>,
 }
 
+/// An extern function signature (no body, linked from a C library)
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExternFunc {
+    pub name: String,
+    pub params: Vec<Param>,
+    pub return_type: Type,
+    pub symbol: String,        // C symbol name (usually same as name)
+}
+
+/// An extern block: `extern "C": def SDL_Init(flags: Int) -> Int`
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExternBlock {
+    pub abi: String,           // "C" for now
+    pub functions: Vec<ExternFunc>,
+    pub link_lib: Option<String>,  // optional: link "SDL2"
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum TopLevel {
     Function(Function),
@@ -253,6 +270,8 @@ pub enum TopLevel {
     Trait(TraitDef),
     /// `impl Display for Point: def show(self) -> Str: ...`
     Impl(ImplBlock),
+    /// `extern "C": def SDL_Init(flags: Int) -> Int`
+    Extern(ExternBlock),
 }
 
 #[derive(Debug, Clone, PartialEq)]

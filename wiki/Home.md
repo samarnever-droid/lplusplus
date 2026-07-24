@@ -42,6 +42,7 @@ L++ currently supports:
 - Rust-like `?` error propagation
 - Generic functions, structs, and enums (phase 1, type-erased)
 - Traits and `impl` blocks with static and dynamic dispatch
+- FFI / `extern "C"` blocks for calling C libraries (SDL2, OpenGL, etc.)
 - Constants
 - Type aliases, parsed/experimental
 - List literals and indexing

@@ -32,3 +32,4 @@ tests/test_defaults
 tests/test_string_ops
 tests/test_traits
 tests/test_dyn_dispatch
+tests/test_ffi

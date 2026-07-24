@@ -221,6 +221,19 @@ impl<'a> TypeChecker<'a> {
                     self.func_param_types.insert(method.name.clone(), param_tys);
                 }
             }
+            // Register extern function types
+            if let TopLevel::Extern(ext) = decl {
+                for ef in &ext.functions {
+                    let ret_ty = Self::convert_ast_type(&self.type_table, &ef.return_type);
+                    self.func_return_types.insert(ef.name.clone(), ret_ty);
+                    let param_tys: Vec<TypeRef> = ef
+                        .params
+                        .iter()
+                        .map(|p| Self::convert_ast_type(&self.type_table, &p.ty))
+                        .collect();
+                    self.func_param_types.insert(ef.name.clone(), param_tys);
+                }
+            }
         }
 
         // Phase 2: Resolve struct fields and check for self-reference

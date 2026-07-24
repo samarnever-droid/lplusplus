@@ -47,6 +47,8 @@ pub struct MirLowerCtx<'a> {
     pub trait_names: std::collections::HashSet<String>,
     // Current function's vtable locals: param_name → (trait_name, method_name → LocalId)
     pub current_vtable_locals: HashMap<String, (String, HashMap<String, LocalId>)>,
+    // Extern (FFI) function names → C symbol names
+    pub extern_symbols: HashMap<String, String>,
 }
 
 impl<'a> MirLowerCtx<'a> {
@@ -70,6 +72,7 @@ impl<'a> MirLowerCtx<'a> {
             impl_registry: HashMap::new(),
             trait_names: std::collections::HashSet::new(),
             current_vtable_locals: HashMap::new(),
+            extern_symbols: HashMap::new(),
         }
     }
 
@@ -252,6 +255,17 @@ impl<'a> MirLowerCtx<'a> {
                     (ib.trait_name.clone(), ib.target_type.clone()),
                     mangled_names,
                 );
+            }
+        }
+
+        // Register extern (FFI) function symbols
+        for decl in &program.declarations {
+            if let TopLevel::Extern(ext) = decl {
+                for ef in &ext.functions {
+                    self.extern_symbols.insert(ef.name.clone(), ef.symbol.clone());
+                    // Also register return types
+                    self.func_return_types.insert(ef.name.clone(), self.resolve_type(&ef.return_type));
+                }
             }
         }
 
@@ -1394,6 +1408,17 @@ impl<'a> MirLowerCtx<'a> {
                                 },
                             );
                         }
+                    }
+                }
+
+                // Check for extern (FFI) function call
+                if let Expr::Identifier(name, _) = &**callee {
+                    if let Some(symbol) = self.extern_symbols.get(name) {
+                        builder.push_instr(MirInstr::Assign(
+                            temp,
+                            Rvalue::BuiltinCall(symbol.clone(), lowered_args),
+                        ))?;
+                        return Ok(Operand::Local(temp));
                     }
                 }
 

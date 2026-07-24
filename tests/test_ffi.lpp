@@ -1,0 +1,16 @@
+# FFI — calling C functions directly
+
+extern "C":
+    def abs(x: Int) -> Int
+    def getpid() -> Int
+
+def main():
+    # Call C stdlib abs()
+    n := abs(-42)
+    print(n)
+
+    # Call getpid()
+    pid := getpid()
+    print(pid)
+
+    print("ffi works!")

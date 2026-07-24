@@ -39,6 +39,7 @@ Top-level AST declarations:
 - `TypeAlias`
 - `Trait` — interface definitions with method signatures
 - `Impl` — trait implementations for a target type; methods mangled as `TargetType_method`; supports static and dynamic dispatch via hidden function pointer params
+- `Extern` — FFI declarations: `extern "C" link "SDL2":` with function signatures; auto-links via host C compiler
 
 ## Semantic analysis
 

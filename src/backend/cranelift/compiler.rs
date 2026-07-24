@@ -426,7 +426,7 @@ impl AotCompiler {
             let mut lower = FunctionLower {
                 module: &mut self.module,
                 func_ids: &self.func_ids,
-                builtin_ids: &self.builtin_ids,
+                builtin_ids: &mut self.builtin_ids,
                 drop_ids: &self.drop_ids,
                 type_table,
                 fn_name: mir_fn.name.clone(),

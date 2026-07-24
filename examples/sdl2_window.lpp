@@ -1,0 +1,52 @@
+# SDL2 Window — L++ GUI via FFI
+#
+# Requires SDL2 installed:
+#   Ubuntu/Debian: sudo apt install libsdl2-dev
+#   macOS:         brew install sdl2
+#   Windows:       download SDL2 development libraries
+#
+# Compile: lpp sdl2_window.lpp
+# (automatically links with -lSDL2 via host linker)
+
+extern "C" link "SDL2":
+    def SDL_Init(flags: Int) -> Int
+    def SDL_CreateWindow(title: Str, x: Int, y: Int, w: Int, h: Int, flags: Int) -> Int
+    def SDL_CreateRenderer(window: Int, index: Int, flags: Int) -> Int
+    def SDL_SetRenderDrawColor(renderer: Int, r: Int, g: Int, b: Int, a: Int) -> Int
+    def SDL_RenderClear(renderer: Int) -> Int
+    def SDL_RenderPresent(renderer: Int) -> Void
+    def SDL_Delay(ms: Int) -> Void
+    def SDL_DestroyRenderer(renderer: Int) -> Void
+    def SDL_DestroyWindow(window: Int) -> Void
+    def SDL_Quit() -> Void
+    def SDL_PollEvent(event: Int) -> Int
+    def SDL_RenderFillRect(renderer: Int, rect: Int) -> Int
+
+const SDL_INIT_VIDEO = 32
+const SDL_WINDOWPOS_CENTERED = 805240832
+const SDL_RENDERER_ACCELERATED = 2
+
+def main():
+    SDL_Init(SDL_INIT_VIDEO)
+
+    window := SDL_CreateWindow(
+        "L++ SDL2 Window",
+        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+        800, 600, 0
+    )
+    renderer := SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED)
+
+    # Draw a blue background
+    SDL_SetRenderDrawColor(renderer, 30, 30, 180, 255)
+    SDL_RenderClear(renderer)
+
+    # Draw a white rectangle
+    SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255)
+
+    SDL_RenderPresent(renderer)
+    SDL_Delay(3000)
+
+    SDL_DestroyRenderer(renderer)
+    SDL_DestroyWindow(window)
+    SDL_Quit()
+    print("SDL2 window closed")

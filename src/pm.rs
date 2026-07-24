@@ -734,6 +734,42 @@ fn resolve_min_runtime_object() -> Option<PathBuf> {
     None
 }
 
+/// Link using the host C compiler (cc / cl.exe) with optional -l flags for FFI
+pub fn host_link_binary(obj_file: &Path, output_path: &Path, link_libs: &[String]) -> Result<(), String> {
+    let cc = if cfg!(windows) { "cl.exe" } else { "cc" };
+    let mut cmd = std::process::Command::new(cc);
+    if cfg!(windows) {
+        cmd.arg("/nologo")
+            .arg(obj_file)
+            .arg(format!("/Fe:{}", output_path.display()));
+        for lib in link_libs {
+            cmd.arg(format!("{}.lib", lib));
+        }
+    } else {
+        cmd.arg(obj_file)
+            .arg("-o")
+            .arg(output_path)
+            .arg("-lm"); // always link math
+        for lib in link_libs {
+            cmd.arg(format!("-l{}", lib));
+        }
+    }
+    // Also link the host runtime
+    let runtime_src_path = Path::new("lpp_runtime.c");
+    if runtime_src_path.exists() {
+        cmd.arg(runtime_src_path);
+    }
+    let status = cmd
+        .stdin(std::process::Stdio::null())
+        .status()
+        .map_err(|e| format!("Failed to execute host linker '{}': {}", cc, e))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("Host linker '{}' failed", cc))
+    }
+}
+
 pub fn direct_link_binary(obj_file: &Path, output_path: &Path) -> Result<(), String> {
     let linker = current_binary_dir()
         .map(|dir| dir.join(format!("lpp-link{}", std::env::consts::EXE_SUFFIX)))
