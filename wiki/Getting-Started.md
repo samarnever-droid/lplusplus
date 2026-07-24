@@ -1,23 +1,31 @@
 # Getting Started
 
-## Install
+This page walks through installing L++, compiling a first program, creating a package project, and understanding which linker is used.
 
-Release installers are intended to let end users install L++ without installing Rust:
+## Install from release
 
-```sh
+Linux/macOS:
+
+```bash
 curl -fsSL https://raw.githubusercontent.com/samarnever-droid/lplusplus/master/install.sh | sh
+export PATH="$HOME/.lpp/bin:$PATH"
+lpp --version
 ```
 
 Windows PowerShell:
 
 ```powershell
 irm https://raw.githubusercontent.com/samarnever-droid/lplusplus/master/install.ps1 | iex
+lpp --version
 ```
 
-For source development, install a current Rust toolchain and build:
+## Build from source
 
-```sh
-cargo build --release
+```bash
+git clone https://github.com/samarnever-droid/lplusplus.git
+cd lplusplus
+cargo build --release --bin lpp --bin lpp-link
+./target/release/lpp --version
 ```
 
 ## First program
@@ -26,48 +34,94 @@ Create `hello.lpp`:
 
 ```lpp
 def main():
-    print("Hello, L++")
+    print_str("Hello from L++!")
+    print(42)
 ```
 
-Check it without writing artifacts:
+Run:
 
-```sh
-lpp check hello.lpp
+```bash
+lpp hello.lpp
 ```
 
-Emit C explicitly:
+Or from a source checkout:
 
-```sh
-lpp emit hello.lpp
+```bash
+./target/release/lpp hello.lpp
 ```
 
-Emit C plus Cranelift object output:
+## Check without compiling
 
-```sh
-lpp emit hello.lpp --aot
+```bash
+lpp --check hello.lpp
 ```
 
-## Packages
+For a directory of `.lpp` files:
 
-A package has an `lpp.toml` manifest and source entry point. Use:
+```bash
+lpp --checkall
+```
 
-```sh
+## Create a package project
+
+```bash
+lpp new myapp
+cd myapp
 lpp build
 lpp run
 ```
 
-On Linux x86-64, `LPP_LINKER=direct lpp build` selects the direct ELF linker where the package only uses its supported runtime-free/direct-runtime subset.
-
-Do not use legacy `lpp file.lpp` as an implicit build command; it prints guidance to use `check`, `emit`, or `build` explicitly.
-
-## v0.1.3 current-status note
-
-This page is maintained with the project, but current support claims are
-centralized in [Current Capabilities](../documentation/CURRENT_CAPABILITIES.md).
+Typical layout:
 
 ```text
-Use LppData/build/release and LppData/cache for package artifacts.
-Use host-linked AOT for filesystem/networking work.
-Do not assume direct ELF supports files, networking, JSON, or threads.
-Do not claim language-wide Rust-equivalent safety outside the verified AOT subset.
+myapp/
+  lpp.toml
+  src/
+    main.lpp
+  tests/
+```
+
+## Package commands
+
+```bash
+lpp new <name>       # create project
+lpp init <name>      # initialize current directory
+lpp install          # install dependencies
+lpp add <name>       # add dependency
+lpp remove <name>    # remove dependency
+lpp update           # refresh lockfile
+lpp list             # list dependencies
+lpp tree             # dependency tree
+lpp metadata         # package metadata
+lpp outdated         # unpinned dependencies
+lpp clean            # remove build output
+lpp check            # check package
+lpp build            # build native binary
+lpp run              # build and run
+lpp test             # run tests/
+```
+
+## Linker choice
+
+L++ supports two linker paths:
+
+| Linker | Command style | Use case |
+|---|---|---|
+| Direct linker | `lpp-link` | zero external toolchain, small freestanding binaries |
+| Host linker | `cc`, `clang`, `cl.exe` | full libc/CRT compatibility |
+
+Config is stored in `~/.lpp/config.json`:
+
+```bash
+lpp config
+lpp config set linker direct
+lpp config set linker host
+lpp config set linker auto
+```
+
+Per-run override:
+
+```bash
+lpp --linker direct app.lpp
+lpp --linker host app.lpp
 ```

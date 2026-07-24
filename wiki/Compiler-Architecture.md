@@ -1,74 +1,134 @@
 # Compiler Architecture
 
-## Pipeline
+The L++ compiler is written in Rust and is organized as a classic native compiler pipeline.
 
+```text
+.lpp source
+  -> lexer
+  -> parser / AST
+  -> semantic analysis
+  -> type checking
+  -> escape analysis
+  -> MIR lowering
+  -> MIR optimization passes
+  -> Cranelift codegen
+  -> object file
+  -> host linker or lpp-link
+  -> executable
 ```
-Source (.lpp) → Lexer → Parser → Semantic → Typecheck → Escape → MIR → Cranelift → lpp-link → Executable
+
+## Frontend
+
+Files:
+
+- `src/frontend/lexer.rs`
+- `src/frontend/parser.rs`
+- `src/frontend/ast.rs`
+
+The lexer handles indentation tokens, comments, literals, keywords, operators, f-strings, multiline strings, hex/binary literals, and underscore digit separators.
+
+The parser is recursive descent and builds the AST.
+
+Top-level AST declarations:
+
+- `Function`
+- `Struct`
+- `Enum`
+- `Import`
+- `Const`
+- `TypeAlias`
+
+## Semantic analysis
+
+File:
+
+- `src/analysis/semantic.rs`
+
+Responsibilities:
+
+- lexical scopes
+- binding IDs
+- variable/function resolution
+- mutability checks
+- import resolution
+- match-binding scope setup
+
+## Type checker
+
+File:
+
+- `src/analysis/typecheck.rs`
+
+Key type representations:
+
+```rust
+TypeRef::Int
+TypeRef::Float
+TypeRef::Str
+TypeRef::Bool
+TypeRef::Void
+TypeRef::Custom(StructTypeId)
+TypeRef::Generic(String, Vec<TypeRef>)
+TypeRef::TypeParam(String)
+TypeRef::Unresolved(String)
 ```
 
-## Stages
+Generics phase 1 is implemented through type parameters and erasure to `i64` at codegen.
 
-### 1. Lexer (`src/frontend/lexer.rs`)
-Converts source text to tokens. Handles significant whitespace (Indent/Dedent), 21 keywords, string/int/float/bool literals, operators.
+## Escape analysis
 
-### 2. Parser (`src/frontend/parser.rs`)
-Recursive descent parser. Produces AST with: functions, structs, enums, imports, statements (if/while/for/match/break/continue), expressions (binary ops, calls, field access, closures, enum constructors, try operator).
+File:
 
-### 3. Semantic Analysis (`src/analysis/semantic.rs`)
-- Scope resolution (lexical scoping with function/closure/block nesting)
-- Binding tracking (every variable gets a unique BindingId)
-- Name resolution (identifiers → binding lookups)
-- Import resolution (multi-file, dotted paths, stdlib)
+- `src/analysis/escape.rs`
 
-### 4. Type Checker (`src/analysis/typecheck.rs`)
-- Type inference for `:=` declarations
-- Explicit type checking at function boundaries
-- Struct field type resolution
-- Enum variant type checking
-- Builtin function parameter/return type validation
+Classifies values as:
 
-### 5. Escape Analysis (`src/analysis/escape.rs`)
-- Classifies every binding as Stack, Heap (ARC), or Arena
-- Rule 1: Values returned from functions → promoted to Heap
-- Rule 2: Values stored in containers → promoted to Heap
-- Rule 3: Self-referential structs → Arena allocation
-- Cycle detection and rejection
+- stack
+- ARC heap
+- arena / rejected cycle
 
-### 6. MIR Lowering (`src/mir/lower.rs`)
-Lowers AST to Mid-level IR (typed SSA-like representation). 7 optimization passes:
+This is where ownership safety is enforced before code generation.
 
-| Pass | File | What it does |
-|------|------|-------------|
-| ARC | `pass_arc.rs` | Insert retain/release for ownership |
-| Closure | `pass_closure.rs` | Lift closures to top-level functions |
-| Const Prop | `pass_constprop.rs` | Fold constant expressions |
-| DCE | `pass_dce.rs` | Remove dead code |
-| Branch | `pass_branch.rs` | Simplify conditional branches |
-| Peephole | `pass_peephole.rs` | Local instruction optimization |
-| Inline | `pass_inline.rs` | Inline small functions |
+## MIR
 
-### 7. Cranelift Codegen (`src/backend/cranelift/`)
-- `compiler.rs` — Module setup, function declarations, entry point wrapper
-- `lower.rs` — MIR → Cranelift IR translation, register allocation
-- `types.rs` — L++ type → Cranelift type mapping
+Files:
 
-### 8. Direct Linker (`src/bin/lpp-link.rs`)
-Custom linker producing standalone executables:
-- **Linux ELF** — Program headers, segments, entry point
-- **Windows PE** — COFF sections (.text/.rdata/.data/.idata/.reloc), IAT, base relocations
-- **macOS Mach-O** — Load commands, segments
+- `src/mir/lower.rs`
+- `src/mir/ir.rs`
+- `src/mir/pass_*.rs`
 
-## File Sizes
+MIR lowering desugars high-level syntax:
 
-| Component | Lines |
-|-----------|-------|
-| Compiler total | ~14,800 |
-| Builtins declarations | ~1,800 |
-| Linker (lpp-link) | ~2,000 |
-| Package manager | ~1,800 |
-| Cranelift backend | ~1,300 |
-| MIR (IR + passes) | ~2,500 |
-| Parser | ~900 |
-| Type checker | ~800 |
-| Semantic analysis | ~600 |
-| Escape analysis | ~600 |
+- `p.method()` -> `method(p)`
+- `x += y` -> `x = x + y`
+- `s[i]` -> `str_substr(s, i, 1)`
+- list indexing -> `list_get`
+- `?` -> branch + early return
+- match -> tag tests + branches
+- short-circuit `&&` and `||` -> control-flow branches
+
+Optimization passes include ARC insertion, closure lifting, constant propagation, DCE, branch simplification, peephole optimization, and inlining.
+
+## Backend
+
+Files:
+
+- `src/backend/cranelift/compiler.rs`
+- `src/backend/cranelift/lower.rs`
+- `src/backend/cranelift/types.rs`
+
+The backend lowers MIR to Cranelift IR and emits native object files.
+
+## Link stage
+
+File:
+
+- `src/bin/lpp-link.rs`
+
+The direct linker supports:
+
+- Linux ELF
+- Windows PE/COFF
+- macOS Mach-O
+
+Most language features never touch `lpp-link`. Builtins usually require runtime work, not linker work.
