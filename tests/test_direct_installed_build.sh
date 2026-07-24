@@ -21,7 +21,8 @@ fi
 mkdir -p "$TEMP/install/bin" "$TEMP/install/lib" "$TEMP/work"
 cp "$LPP" "$TEMP/install/bin/lpp"
 cp "$LINKER" "$TEMP/install/bin/lpp-link"
-"$CC" -O2 -ffreestanding -fno-stack-protector -fno-pic -mno-red-zone \
+"$CC" -Os -ffreestanding -fno-stack-protector -fno-pic -mno-red-zone \
+    -fno-reorder-blocks-and-partition \
     -c "$ROOT/runtime/linux_x86_64_min.c" -o "$TEMP/install/lib/lpp_runtime_min.o"
 
 cd "$TEMP/work"

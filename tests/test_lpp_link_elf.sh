@@ -32,7 +32,8 @@ LPP_AOT=1 "$LPP" "$TEMP/no_runtime.lpp" >/dev/null
 file "$TEMP/no_runtime" | grep -q "ELF 64-bit"
 
 # Freestanding runtime import: lpp_print_int is resolved through a merged GOT.
-"$CC" -O2 -ffreestanding -fno-stack-protector -fno-pic -mno-red-zone \
+"$CC" -Os -ffreestanding -fno-stack-protector -fno-pic -mno-red-zone \
+    -fno-reorder-blocks-and-partition \
     -c "$ROOT/runtime/linux_x86_64_min.c" -o "$TEMP/lpp_runtime_min.o"
 LPP_AOT=1 "$LPP" "$ROOT/benchmarks/bench_fib.lpp" >/dev/null
 cp "$ROOT/benchmarks/bench_fib.o" "$TEMP/bench_fib.o"

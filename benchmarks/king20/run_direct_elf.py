@@ -33,7 +33,8 @@ def main() -> None:
         temp = Path(td)
         runtime = temp / "lpp_runtime_min.o"
         subprocess.run([
-            "cc", "-O2", "-ffreestanding", "-fno-stack-protector", "-fno-pic", "-mno-red-zone",
+            "cc", "-Os", "-ffreestanding", "-fno-stack-protector", "-fno-pic", "-mno-red-zone",
+            "-fno-reorder-blocks-and-partition",
             "-c", str(ROOT / "runtime" / "linux_x86_64_min.c"), "-o", str(runtime),
         ], check=True)
         for case in cases:

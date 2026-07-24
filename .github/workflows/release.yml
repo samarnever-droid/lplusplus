@@ -39,7 +39,8 @@ jobs:
           cp runtime/lpp-net/include/lpp_net_runtime.h package/lpp-linux-x86_64/include/
           cp runtime/lpp-net/README.md package/lpp-linux-x86_64/lib/lpp_net_runtime.README.md
           cc -O2 -fPIC -c lpp_runtime.c -o package/lpp-linux-x86_64/lib/lpp_runtime.o -pthread
-          cc -O2 -ffreestanding -fno-stack-protector -fno-pic -mno-red-zone \
+          cc -Os -ffreestanding -fno-stack-protector -fno-pic -mno-red-zone \
+            -fno-reorder-blocks-and-partition \
             -c runtime/linux_x86_64_min.c -o package/lpp-linux-x86_64/lib/lpp_runtime_min.o
           cp lpp_runtime.c package/lpp-linux-x86_64/lib/
           tar -C package -czf lpp-linux-x86_64.tar.gz lpp-linux-x86_64

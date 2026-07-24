@@ -38,7 +38,7 @@ def main() -> int:
         direct = {"available": DIRECT.exists(), "supported": False}
         if DIRECT.exists():
             runtime_obj = work / "direct-runtime.o"
-            runtime_compile = run([cc, "-O2", "-ffreestanding", "-fno-stack-protector", "-fno-pic", "-mno-red-zone", "-c", str(RUNTIME), "-o", str(runtime_obj)], work)
+            runtime_compile = run([cc, "-Os", "-ffreestanding", "-fno-stack-protector", "-fno-pic", "-mno-red-zone", "-fno-reorder-blocks-and-partition", "-c", str(RUNTIME), "-o", str(runtime_obj)], work)
             direct_try = run([str(DIRECT), str(obj), str(runtime_obj), "-o", str(work / "aot-direct")], work, allow_fail=True)
             direct.update({"runtime_compile_ms": runtime_compile["ms"], "link_ms": direct_try["ms"], "exit_code": direct_try["code"], "diagnostic": (direct_try["stdout"] + direct_try["stderr"]).strip()[:1000]})
         result = {
