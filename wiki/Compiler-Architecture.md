@@ -38,7 +38,7 @@ Top-level AST declarations:
 - `Const`
 - `TypeAlias`
 - `Trait` — interface definitions with method signatures
-- `Impl` — trait implementations for a target type; methods are mangled as `TargetType_method`
+- `Impl` — trait implementations for a target type; methods mangled as `TargetType_method`; supports static and dynamic dispatch via hidden function pointer params
 
 ## Semantic analysis
 

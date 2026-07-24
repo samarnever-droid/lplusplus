@@ -551,25 +551,41 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                 Ok(closure_ptr)
             }
             Rvalue::CallIndirect(callee, args) => {
-                let closure_ptr = self.operand_to_value(builder, callee, local_vars)?;
+                let callee_val = self.operand_to_value(builder, callee, local_vars)?;
                 let pointer_type = self.module.target_config().pointer_type();
 
-                let func_ptr = builder.ins().load(
-                    pointer_type,
-                    cranelift_codegen::ir::MemFlags::new(),
-                    closure_ptr,
-                    0,
-                );
+                // Check if this is a direct function pointer (trait dispatch)
+                // or a closure struct pointer. Trait dispatch uses plain function pointers,
+                // closures use a struct with (func_ptr, env_ptr).
+                let is_direct_fptr = match callee {
+                    Operand::Local(id) | Operand::Borrowed(id) => {
+                        matches!(locals[id.0].ty, TypeRef::Int | TypeRef::Function)
+                    }
+                    _ => false,
+                };
 
-                let env_ptr = builder.ins().load(
-                    pointer_type,
-                    cranelift_codegen::ir::MemFlags::new(),
-                    closure_ptr,
-                    8,
-                );
+                let (func_ptr, env_ptr_opt) = if is_direct_fptr {
+                    // Direct function pointer (from FuncRef / trait vtable)
+                    (callee_val, None)
+                } else {
+                    // Closure struct: load func_ptr and env_ptr
+                    let fp = builder.ins().load(
+                        pointer_type,
+                        cranelift_codegen::ir::MemFlags::new(),
+                        callee_val, 0,
+                    );
+                    let ep = builder.ins().load(
+                        pointer_type,
+                        cranelift_codegen::ir::MemFlags::new(),
+                        callee_val, 8,
+                    );
+                    (fp, Some(ep))
+                };
 
                 let mut sig = self.module.make_signature();
-                sig.params.push(AbiParam::new(pointer_type));
+                if env_ptr_opt.is_some() {
+                    sig.params.push(AbiParam::new(pointer_type)); // env_ptr for closures
+                }
                 for arg in args {
                     let arg_ty = match arg {
                         Operand::Local(id) | Operand::Borrowed(id) => locals[id.0].ty.clone(),
@@ -589,7 +605,10 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                 }
 
                 let sig_ref = builder.import_signature(sig);
-                let mut call_args = vec![env_ptr];
+                let mut call_args = Vec::new();
+                if let Some(ep) = env_ptr_opt {
+                    call_args.push(ep);
+                }
                 for arg in args {
                     call_args.push(self.operand_to_value(builder, arg, local_vars)?);
                 }
@@ -637,6 +656,14 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                 Err("AllocateArcStruct requires a resolved custom struct type".to_string())
             }
             Rvalue::FieldAccess(_, _) => Ok(builder.ins().iconst(cl_types::I64, 0)),
+            Rvalue::FuncRef(mir_func_id) => {
+                let func_id = *self.func_ids.get(mir_func_id).ok_or_else(|| {
+                    format!("FuncRef: unknown MIR function id fn_{}", mir_func_id.0)
+                })?;
+                let func_ref = self.module.declare_func_in_func(func_id, builder.func);
+                let pointer_type = self.module.target_config().pointer_type();
+                Ok(builder.ins().func_addr(pointer_type, func_ref))
+            }
         }
     }
 

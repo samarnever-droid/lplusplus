@@ -38,6 +38,15 @@ pub struct MirLowerCtx<'a> {
 
     // Current function's type parameters (for generics)
     pub current_type_params: Vec<String>,
+
+    // Trait definitions: trait_name → list of method names
+    pub trait_defs: HashMap<String, Vec<String>>,
+    // Impl registry: (trait_name, target_type) → mangled method names
+    pub impl_registry: HashMap<(String, String), Vec<String>>,
+    // Set of known trait names for type resolution
+    pub trait_names: std::collections::HashSet<String>,
+    // Current function's vtable locals: param_name → (trait_name, method_name → LocalId)
+    pub current_vtable_locals: HashMap<String, (String, HashMap<String, LocalId>)>,
 }
 
 impl<'a> MirLowerCtx<'a> {
@@ -57,6 +66,10 @@ impl<'a> MirLowerCtx<'a> {
             match_bindings: HashMap::new(),
             constants: HashMap::new(),
             current_type_params: Vec::new(),
+            trait_defs: HashMap::new(),
+            impl_registry: HashMap::new(),
+            trait_names: std::collections::HashSet::new(),
+            current_vtable_locals: HashMap::new(),
         }
     }
 
@@ -81,6 +94,10 @@ impl<'a> MirLowerCtx<'a> {
                 // Check if it's a type parameter first
                 if self.current_type_params.iter().any(|tp| tp == name) {
                     return TypeRef::TypeParam(name.clone());
+                }
+                // Trait names resolve to Int (trait objects are opaque i64 pointers)
+                if self.trait_names.contains(name) {
+                    return TypeRef::Int;
                 }
                 self.type_table
                     .structs_by_name
@@ -222,6 +239,22 @@ impl<'a> MirLowerCtx<'a> {
     pub fn lower_program(&mut self, program: &Program) -> Result<MirProgram, String> {
         let mut mir_functions = HashMap::new();
 
+        // Register trait definitions and impl blocks for dynamic dispatch
+        for decl in &program.declarations {
+            if let TopLevel::Trait(t) = decl {
+                let method_names: Vec<String> = t.methods.iter().map(|m| m.name.clone()).collect();
+                self.trait_defs.insert(t.name.clone(), method_names);
+                self.trait_names.insert(t.name.clone());
+            }
+            if let TopLevel::Impl(ib) = decl {
+                let mangled_names: Vec<String> = ib.methods.iter().map(|m| m.name.clone()).collect();
+                self.impl_registry.insert(
+                    (ib.trait_name.clone(), ib.target_type.clone()),
+                    mangled_names,
+                );
+            }
+        }
+
         // Register top-level constants
         for decl in &program.declarations {
             if let TopLevel::Const { name, value } = decl {
@@ -282,6 +315,10 @@ impl<'a> MirLowerCtx<'a> {
         let mut builder = MirBuilder::new(func_id, func.name.clone(), return_type);
         let mut binding_map = HashMap::new();
 
+        // Track which params are trait-typed and their vtable locals
+        // vtable_locals: param_name → (trait_name, HashMap<method_name, LocalId>)
+        let mut vtable_locals: HashMap<String, (String, HashMap<String, LocalId>)> = HashMap::new();
+
         for param in &func.params {
             let binding_id = self.symbol_table.scopes.iter().find_map(|scope| {
                 if let ScopeKind::Function { name } = &scope.kind {
@@ -292,15 +329,43 @@ impl<'a> MirLowerCtx<'a> {
                 None
             });
             let ty = self.resolve_type(&param.ty);
+
+            // Check if this param's type is a trait name
+            let trait_name_for_param = if let Type::Custom(ref tname) = param.ty {
+                if self.trait_names.contains(tname) { Some(tname.clone()) } else { None }
+            } else { None };
+
             let local = builder.new_local(ty, false, Some(param.name.clone()), binding_id);
-            // Function arguments are owned by the caller unless an eventual
-            // explicit `owned` parameter mode says otherwise.
             builder.set_local_ownership(local, Ownership::Borrowed);
             builder.function.params.push(local);
             if let Some(binding_id) = binding_id {
                 binding_map.insert(binding_id, local);
             }
+
+            // For trait-typed params, add hidden vtable params (one per trait method)
+            if let Some(ref tname) = trait_name_for_param {
+                if let Some(methods) = self.trait_defs.get(tname) {
+                    let mut method_locals = HashMap::new();
+                    for method_name in methods {
+                        let vtable_param_name = format!("_vtable_{}_{}", param.name, method_name);
+                        let vtable_local = builder.new_local(
+                            TypeRef::Int, false,
+                            Some(vtable_param_name), None,
+                        );
+                        builder.set_local_ownership(vtable_local, Ownership::Borrowed);
+                        builder.function.params.push(vtable_local);
+                        method_locals.insert(method_name.clone(), vtable_local);
+                    }
+                    vtable_locals.insert(param.name.clone(), (tname.clone(), method_locals));
+                }
+            }
         }
+
+        // Store vtable locals for use during method call lowering
+        let prev_vtable_locals = std::mem::replace(
+            &mut self.current_vtable_locals,
+            vtable_locals,
+        );
 
         for stmt in &func.body {
             self.lower_stmt(&mut builder, stmt, &mut binding_map)?;
@@ -312,8 +377,9 @@ impl<'a> MirLowerCtx<'a> {
             }
         }
 
-        // Restore previous type parameters
+        // Restore previous type parameters and vtable locals
         self.current_type_params = prev_type_params;
+        self.current_vtable_locals = prev_vtable_locals;
 
         Ok(builder.finish())
     }
@@ -1097,7 +1163,25 @@ impl<'a> MirLowerCtx<'a> {
                     // Try direct function lookup first
                     let mut resolved_func_id = self.functions.get(name).copied();
 
-                    // Trait method dispatch: if not found, try StructName_method
+                    // Dynamic dispatch: if the first arg has a vtable for this method,
+                    // use CallIndirect through the function pointer
+                    if resolved_func_id.is_none() && !effective_args.is_empty() {
+                        if let Expr::Identifier(recv_name, _) = &effective_args[0] {
+                            if let Some((_tname, method_map)) = self.current_vtable_locals.get(recv_name) {
+                                if let Some(&vtable_local) = method_map.get(name) {
+                                    // Dynamic dispatch: call through function pointer
+                                    let fptr = Operand::Local(vtable_local);
+                                    builder.push_instr(MirInstr::Assign(
+                                        temp,
+                                        Rvalue::CallIndirect(fptr, lowered_args),
+                                    ))?;
+                                    return Ok(Operand::Local(temp));
+                                }
+                            }
+                        }
+                    }
+
+                    // Static trait method dispatch: if not found, try StructName_method
                     if resolved_func_id.is_none() && !effective_args.is_empty() {
                         // Infer the type of the first argument (the receiver)
                         let receiver_type_name = self.expr_type_hint(&effective_args[0], builder, binding_map);
@@ -1116,6 +1200,45 @@ impl<'a> MirLowerCtx<'a> {
                     }
 
                     if let Some(func_id) = resolved_func_id {
+                        // Dynamic dispatch: if the callee has trait-typed params,
+                        // append function pointer args for each trait method
+                        let callee_func = self.program.declarations.iter().find_map(|d| {
+                            match d {
+                                TopLevel::Function(f) if &f.name == name => Some(f),
+                                TopLevel::Impl(ib) => ib.methods.iter().find(|m| &m.name == name),
+                                _ => None,
+                            }
+                        });
+                        if let Some(cf) = callee_func {
+                            for (pi, param) in cf.params.iter().enumerate() {
+                                if let Type::Custom(ref tname) = param.ty {
+                                    if self.trait_names.contains(tname) {
+                                        // This param is trait-typed. Find the concrete type of the arg.
+                                        if pi < effective_args.len() {
+                                            let concrete_ty = self.expr_type_hint(&effective_args[pi], builder, binding_map);
+                                            if let TypeRef::Custom(sid) = &concrete_ty {
+                                                let struct_name = self.type_table.definitions[sid.0].name.clone();
+                                                // For each trait method, pass the FuncId as an i64
+                                                if let Some(methods) = self.trait_defs.get(tname) {
+                                                    for method_name in methods {
+                                                        let mangled = format!("{}_{}", struct_name, method_name);
+                                                        if let Some(&mfid) = self.functions.get(&mangled) {
+                                                            let fptr_local = builder.new_local(TypeRef::Int, false, None, None);
+                                                            builder.push_instr(MirInstr::Assign(
+                                                                fptr_local,
+                                                                Rvalue::FuncRef(mfid),
+                                                            ))?;
+                                                            lowered_args.push(Operand::Local(fptr_local));
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
                         builder.push_instr(MirInstr::Assign(
                             temp,
                             Rvalue::CallDirect(func_id, lowered_args),

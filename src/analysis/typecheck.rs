@@ -63,6 +63,7 @@ pub struct TypeChecker<'a> {
     pub block_scope_idx: usize, // BUG-11: tracks Block scopes for if/while bodies
     pub func_return_types: HashMap<String, TypeRef>,
     pub func_param_types: HashMap<String, Vec<TypeRef>>,
+    pub trait_names: std::collections::HashSet<String>,
 }
 
 /// Check if two types are compatible, treating TypeParam as a wildcard.
@@ -83,6 +84,7 @@ impl<'a> TypeChecker<'a> {
             block_scope_idx: 0,
             func_return_types: HashMap::new(),
             func_param_types: HashMap::new(),
+            trait_names: std::collections::HashSet::new(),
         }
     }
 
@@ -176,6 +178,13 @@ impl<'a> TypeChecker<'a> {
     }
 
     pub fn check_program(&mut self, program: &Program) -> Result<(), String> {
+        // Phase 0.5: Collect trait names
+        for decl in &program.declarations {
+            if let TopLevel::Trait(t) = decl {
+                self.trait_names.insert(t.name.clone());
+            }
+        }
+
         // Phase 1: Register all struct and enum names (stubs) and map function return types
         for decl in &program.declarations {
             if let TopLevel::Struct(s) = decl {
@@ -258,6 +267,10 @@ impl<'a> TypeChecker<'a> {
                 TopLevel::Enum(e) => all_type_params.extend(e.type_params.clone()),
                 _ => {}
             }
+        }
+        // Also treat trait names as type params so they resolve to TypeParam (→ i64)
+        for tn in &self.trait_names {
+            all_type_params.push(tn.clone());
         }
         all_type_params.sort();
         all_type_params.dedup();

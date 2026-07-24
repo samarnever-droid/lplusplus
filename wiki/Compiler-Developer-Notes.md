@@ -33,13 +33,29 @@ They should not touch `lpp-link` unless the executable format itself changes.
 
 ## Trait / impl internals
 
-Impl methods are **name-mangled** as `TargetType_methodName` and treated as regular top-level functions throughout the compiler pipeline. The `self` parameter type is rewritten from `Self` to the concrete target type during parsing. UFCS dispatch (`p.method()` → `method(p)`) resolves the mangled name at MIR lowering time by inspecting the receiver's type.
+Impl methods are **name-mangled** as `TargetType_methodName` and treated as regular top-level functions throughout the compiler pipeline. The `self` parameter type is rewritten from `Self` to the concrete target type during parsing.
 
-Key files:
+### Static dispatch
+
+UFCS dispatch (`p.method()` → `method(p)`) resolves the mangled name at MIR lowering time by inspecting the receiver's type. If `p` is a `Point`, the compiler calls `Point_method(p)` directly.
+
+### Dynamic dispatch
+
+When a function parameter's type is a trait name (e.g., `def f(x: Speak)`), the compiler:
+
+1. Adds hidden function pointer parameters (one per trait method) to the function signature
+2. At call sites, fills in the concrete impl method's `FuncRef` (via `Rvalue::FuncRef`)
+3. Inside the function, method calls on the trait-typed param dispatch via `CallIndirect` through the function pointer
+
+This uses the new `Rvalue::FuncRef(FuncId)` MIR instruction, which lowers to Cranelift's `func_addr` to get a callable function pointer.
+
+### Key files
+
 - Parser: `parse_trait()`, `parse_impl()` in `parser.rs`
 - Semantic: trait method short names tracked in `trait_method_names` set
-- Type checker: `func_return_types` / `func_param_types` populated for mangled names
-- MIR: trait dispatch fallback in `Expr::Call` handler — tries `StructName_method` when direct lookup fails
+- Type checker: `func_return_types` / `func_param_types` populated for mangled names; `trait_names` set for type resolution
+- MIR: `trait_defs`, `impl_registry`, `current_vtable_locals` on `MirLowerCtx`; `Rvalue::FuncRef` for function pointers
+- Cranelift: `FuncRef` → `func_addr`; `CallIndirect` distinguishes closure structs from direct function pointers
 
 ## Runtime cache
 

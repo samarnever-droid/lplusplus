@@ -76,7 +76,10 @@ impl Area for Circle:
         return 3 * self.radius * self.radius
 ```
 
-Dispatch is entirely **static** — `c.area()` resolves at compile time to `Circle_area(c)` via name mangling. There are no vtables or dynamic dispatch. This keeps the binary small and fast.
+L++ supports both **static** and **dynamic** dispatch:
+
+- **Static dispatch**: when the receiver's concrete type is known at compile time, the compiler resolves `c.area()` → `Circle_area(c)` directly via name mangling. Zero runtime cost.
+- **Dynamic dispatch**: when a function accepts a trait-typed parameter (`def f(x: Speak)`), the compiler passes hidden function pointers at the call site. Inside the function, method calls dispatch through those pointers via `CallIndirect`. This is similar to Go's interfaces or Rust's `impl Trait`.
 
 ## Current limitations
 

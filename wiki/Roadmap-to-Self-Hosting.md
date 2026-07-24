@@ -10,7 +10,7 @@ L++ now has most compiler-writing ingredients:
 - ✅ Structs with field access
 - ✅ Enums with match and data-carrying variants
 - ✅ Generics (phase 1, type-erased): `def identity[T](x: T) -> T`
-- ✅ Traits and impl blocks: `trait Display` + `impl Display for Point`
+- ✅ Traits and impl blocks with static and dynamic dispatch
 - ✅ Imports and multi-file modules
 - ✅ Lists and maps
 - ✅ 15+ string builtins: `char_at`, `ord`, `chr`, `str_find`, `str_contains`, `str_replace`, `str_upper`, `str_lower`, `str_trim`, `int_to_str`, `str_to_int`

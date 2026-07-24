@@ -82,6 +82,8 @@ pub enum Rvalue {
     AllocateList(TypeRef),
     /// Spawns an asynchronous OS thread executing a closure callable.
     SpawnThread(Operand),
+    /// Gets the address of a function as an i64 function pointer.
+    FuncRef(FuncId),
 }
 
 impl std::fmt::Display for Operand {
@@ -148,6 +150,7 @@ impl std::fmt::Display for Rvalue {
             Rvalue::AllocateArcStruct(ty) => write!(f, "alloc_arc_struct({:?})", ty),
             Rvalue::AllocateList(ty) => write!(f, "alloc_list({:?})", ty),
             Rvalue::SpawnThread(closure_op) => write!(f, "spawn_thread({})", closure_op),
+            Rvalue::FuncRef(fid) => write!(f, "func_ref(fn_{})", fid.0),
         }
     }
 }

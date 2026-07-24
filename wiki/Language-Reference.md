@@ -261,11 +261,53 @@ How it works:
 - At compile time, the receiver type (`Point`) is used to resolve `Point_describe`.
 - The `self` parameter requires no type annotation — its type is inferred from the `impl` target.
 
+## Dynamic dispatch
+
+Functions can accept trait-typed parameters. The concrete type does not need to be known inside the function — dispatch happens through hidden function pointers.
+
+```lpp
+struct Dog:
+    name: Str
+
+struct Cat:
+    name: Str
+
+trait Speak:
+    def speak(self) -> Int
+
+impl Speak for Dog:
+    def speak(self) -> Int:
+        print(42)
+        return 1
+
+impl Speak for Cat:
+    def speak(self) -> Int:
+        print(99)
+        return 2
+
+# Accepts ANY type implementing Speak
+def make_speak(animal: Speak) -> Int:
+    return animal.speak()
+
+def main():
+    d := Dog("Rex")
+    c := Cat("Whiskers")
+    make_speak(d)    # prints 42
+    make_speak(c)    # prints 99
+```
+
+How it works:
+
+- When a parameter type is a trait name, the compiler adds hidden function pointer arguments (one per trait method).
+- At the call site, the compiler fills in the concrete impl method pointers.
+- Inside the function, `animal.speak()` dispatches through the function pointer via `CallIndirect`.
+- This is similar to Rust's `impl Trait` / Go's interface mechanism.
+
 Current limitations:
 
-- Static dispatch only (no trait objects / dynamic dispatch / vtables).
 - No trait bounds on generic type parameters yet.
 - Trait conformance is not enforced (missing methods are not flagged at `impl` time).
+- Trait objects cannot yet be stored in lists or returned from functions.
 
 ## Closures
 
