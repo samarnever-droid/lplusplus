@@ -141,6 +141,8 @@ pub struct Resolver {
     current_scope: ScopeId,
     pub imports: Vec<String>,
     loop_depth: usize,
+    /// Short method names from impl blocks (e.g. "val" from "impl GetVal for Box")
+    pub trait_method_names: std::collections::HashSet<String>,
 }
 
 impl Resolver {
@@ -152,6 +154,7 @@ impl Resolver {
             current_scope: global,
             imports: Vec::new(),
             loop_depth: 0,
+            trait_method_names: std::collections::HashSet::new(),
         }
     }
 
@@ -211,6 +214,26 @@ impl Resolver {
                 TopLevel::TypeAlias { .. } => {
                     // Type aliases are resolved at parse/typecheck level
                 }
+                TopLevel::Trait(_) => {
+                    // Trait definitions are metadata only; no bindings needed
+                }
+                TopLevel::Impl(impl_block) => {
+                    // Register each impl method as a top-level function
+                    for method in &impl_block.methods {
+                        self.table.add_binding(
+                            self.current_scope,
+                            method.name.clone(),
+                            false,
+                            Some(Type::Custom("Function".into())),
+                            BindingKind::FunctionName,
+                        );
+                        // Track the short method name (without StructName_ prefix)
+                        // so semantic analysis can allow UFCS calls
+                        if let Some(short) = method.name.split('_').last() {
+                            self.trait_method_names.insert(short.to_string());
+                        }
+                    }
+                }
                 TopLevel::Import(import_kind) => {
                     let module = match import_kind {
                         crate::ast::ImportKind::Module { path, .. } => path.last().cloned().unwrap_or_default(),
@@ -262,8 +285,16 @@ impl Resolver {
 
         // Now walk bodies
         for decl in &mut program.declarations {
-            if let TopLevel::Function(func) = decl {
-                self.resolve_function(func)?;
+            match decl {
+                TopLevel::Function(func) => {
+                    self.resolve_function(func)?;
+                }
+                TopLevel::Impl(impl_block) => {
+                    for method in &mut impl_block.methods {
+                        self.resolve_function(method)?;
+                    }
+                }
+                _ => {}
             }
         }
         Ok(())
@@ -492,6 +523,10 @@ impl Resolver {
     }
 
     fn is_builtin_resolved(&self, name: &str) -> bool {
+        // Check if it's a trait method (UFCS short name)
+        if self.trait_method_names.contains(name) {
+            return true;
+        }
         if let Some(builtin) = crate::builtins::get_builtins()
             .iter()
             .find(|b| b.name == name)

@@ -1,0 +1,42 @@
+# Traits — interface definitions and implementations
+
+struct Point:
+    x: Int
+    y: Int
+
+struct Circle:
+    radius: Int
+
+trait Describe:
+    def describe(self) -> Str
+
+impl Describe for Point:
+    def describe(self) -> Str:
+        return str_concat("Point(", str_concat(int_to_str(self.x), str_concat(", ", str_concat(int_to_str(self.y), ")"))))
+
+impl Describe for Circle:
+    def describe(self) -> Str:
+        return str_concat("Circle(r=", str_concat(int_to_str(self.radius), ")"))
+
+trait Area:
+    def area(self) -> Int
+
+impl Area for Circle:
+    def area(self) -> Int:
+        return 3 * self.radius * self.radius
+
+def main():
+    p := Point(10, 20)
+    c := Circle(5)
+
+    # Method call via UFCS → Point_describe(p)
+    d1 := p.describe()
+    print(d1)
+
+    d2 := c.describe()
+    print(d2)
+
+    a := c.area()
+    print(a)
+
+    print("traits work!")

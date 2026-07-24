@@ -231,29 +231,30 @@ impl<'a> MirLowerCtx<'a> {
             }
         }
 
+        // Collect all functions: top-level + impl methods
+        let mut all_functions: Vec<&Function> = Vec::new();
         for decl in &program.declarations {
             if let TopLevel::Function(f) = decl {
-                let id = FuncId(self.next_func_id);
-                self.next_func_id += 1;
-                self.functions.insert(f.name.clone(), id);
-                // Temporarily set type params so resolve_type can recognize T, U, etc.
-                let prev = std::mem::replace(&mut self.current_type_params, f.type_params.clone());
-                self.func_return_types
-                    .insert(f.name.clone(), self.resolve_type(&f.return_type));
-                self.current_type_params = prev;
+                all_functions.push(f);
+            }
+            if let TopLevel::Impl(impl_block) = decl {
+                for method in &impl_block.methods {
+                    all_functions.push(method);
+                }
             }
         }
 
-        let ast_functions: Vec<_> = program
-            .declarations
-            .iter()
-            .filter_map(|decl| match decl {
-                TopLevel::Function(f) => Some(f),
-                _ => None,
-            })
-            .collect();
+        for f in &all_functions {
+            let id = FuncId(self.next_func_id);
+            self.next_func_id += 1;
+            self.functions.insert(f.name.clone(), id);
+            let prev = std::mem::replace(&mut self.current_type_params, f.type_params.clone());
+            self.func_return_types
+                .insert(f.name.clone(), self.resolve_type(&f.return_type));
+            self.current_type_params = prev;
+        }
 
-        for function in ast_functions {
+        for function in &all_functions {
             let mir_fn = self.lower_function(function)?;
             mir_functions.insert(mir_fn.id, mir_fn);
         }
@@ -1056,7 +1057,21 @@ impl<'a> MirLowerCtx<'a> {
                                 "list_new" => TypeRef::Generic("List".to_string(), vec![TypeRef::Int]),
                                 "print" | "print_str" | "json_free" | "list_push" | "list_free"
                                 | "net_close" => TypeRef::Void,
-                                _ => TypeRef::Int,
+                                _ => {
+                                    // Try trait method: infer receiver type, look up StructName_method
+                                    let mut trait_ret = TypeRef::Int;
+                                    if !effective_args.is_empty() {
+                                        let recv_ty = self.expr_type_hint(&effective_args[0], builder, binding_map);
+                                        if let TypeRef::Custom(sid) = &recv_ty {
+                                            let sname = self.type_table.definitions[sid.0].name.clone();
+                                            let mangled = format!("{}_{}", sname, name);
+                                            if let Some(rt) = self.func_return_types.get(&mangled) {
+                                                trait_ret = rt.clone();
+                                            }
+                                        }
+                                    }
+                                    trait_ret
+                                },
                             };
                         }
                     }
@@ -1079,7 +1094,28 @@ impl<'a> MirLowerCtx<'a> {
                 }
 
                 if let Expr::Identifier(name, _) = &**callee {
-                    if let Some(&func_id) = self.functions.get(name) {
+                    // Try direct function lookup first
+                    let mut resolved_func_id = self.functions.get(name).copied();
+
+                    // Trait method dispatch: if not found, try StructName_method
+                    if resolved_func_id.is_none() && !effective_args.is_empty() {
+                        // Infer the type of the first argument (the receiver)
+                        let receiver_type_name = self.expr_type_hint(&effective_args[0], builder, binding_map);
+
+                        if let TypeRef::Custom(sid) = &receiver_type_name {
+                            let struct_name = &self.type_table.definitions[sid.0].name;
+                            let mangled = format!("{}_{}", struct_name, name);
+                            if let Some(&fid) = self.functions.get(&mangled) {
+                                resolved_func_id = Some(fid);
+                                // Also fix return type
+                                if let Some(rt) = self.func_return_types.get(&mangled) {
+                                    builder.function.locals[temp.0].ty = rt.clone();
+                                }
+                            }
+                        }
+                    }
+
+                    if let Some(func_id) = resolved_func_id {
                         builder.push_instr(MirInstr::Assign(
                             temp,
                             Rvalue::CallDirect(func_id, lowered_args),

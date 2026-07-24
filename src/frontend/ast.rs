@@ -210,6 +210,29 @@ pub enum ImportKind {
     },
 }
 
+/// Trait method signature (no body)
+#[derive(Debug, Clone, PartialEq)]
+pub struct TraitMethod {
+    pub name: String,
+    pub params: Vec<Param>,        // includes `self` as first param
+    pub return_type: Type,
+}
+
+/// Trait definition: `trait Display: def show(self) -> Str`
+#[derive(Debug, Clone, PartialEq)]
+pub struct TraitDef {
+    pub name: String,
+    pub methods: Vec<TraitMethod>,
+}
+
+/// Impl block: `impl Display for Point: def show(self) -> Str: ...`
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImplBlock {
+    pub trait_name: String,
+    pub target_type: String,       // "Point", "Vec2", etc.
+    pub methods: Vec<Function>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum TopLevel {
     Function(Function),
@@ -226,6 +249,10 @@ pub enum TopLevel {
         name: String,
         target: Type,
     },
+    /// `trait Display: def show(self) -> Str`
+    Trait(TraitDef),
+    /// `impl Display for Point: def show(self) -> Str: ...`
+    Impl(ImplBlock),
 }
 
 #[derive(Debug, Clone, PartialEq)]

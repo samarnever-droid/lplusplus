@@ -92,8 +92,13 @@ impl EscapeAnalyzer {
             }
         }
 
+        // Collect all functions: top-level + impl methods
+        let mut all_funcs_for_escape: Vec<&Function> = Vec::new();
         for decl in &program.declarations {
-            if let TopLevel::Function(func) = decl {
+            if let TopLevel::Function(f) = decl { all_funcs_for_escape.push(f); }
+            if let TopLevel::Impl(ib) = decl { for m in &ib.methods { all_funcs_for_escape.push(m); } }
+        }
+        for func in &all_funcs_for_escape {
                 if let Some(&scope_id) = func_scopes.get(&func.name) {
                     for stmt in &func.body {
                         Self::walk_stmt_rule1(
@@ -107,7 +112,6 @@ impl EscapeAnalyzer {
                         )?;
                     }
                 }
-            }
         }
 
         Ok(storage)

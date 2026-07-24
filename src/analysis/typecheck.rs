@@ -198,6 +198,20 @@ impl<'a> TypeChecker<'a> {
                     .collect();
                 self.func_param_types.insert(f.name.clone(), param_tys);
             }
+            // Register impl method types (they are mangled as TargetType_method)
+            if let TopLevel::Impl(impl_block) = decl {
+                for method in &impl_block.methods {
+                    let tp = &method.type_params;
+                    let ret_ty = Self::convert_ast_type_with_params(&self.type_table, &method.return_type, tp);
+                    self.func_return_types.insert(method.name.clone(), ret_ty);
+                    let param_tys: Vec<TypeRef> = method
+                        .params
+                        .iter()
+                        .map(|p| Self::convert_ast_type_with_params(&self.type_table, &p.ty, tp))
+                        .collect();
+                    self.func_param_types.insert(method.name.clone(), param_tys);
+                }
+            }
         }
 
         // Phase 2: Resolve struct fields and check for self-reference
@@ -256,23 +270,31 @@ impl<'a> TypeChecker<'a> {
         }
 
         // Phase 4: Local Type Inference
+        // Collect all functions: top-level + impl methods
+        let mut all_funcs: Vec<&Function> = Vec::new();
         for decl in &program.declarations {
             if let TopLevel::Function(func) = decl {
-                // Find the function scope
-                let mut func_scope_id = None;
-                for scope in &self.symbol_table.scopes {
-                    if let ScopeKind::Function { name } = &scope.kind {
-                        if name == &func.name {
-                            func_scope_id = Some(scope.id);
-                            break;
-                        }
+                all_funcs.push(func);
+            }
+            if let TopLevel::Impl(impl_block) = decl {
+                for method in &impl_block.methods {
+                    all_funcs.push(method);
+                }
+            }
+        }
+        for func in &all_funcs {
+            let mut func_scope_id = None;
+            for scope in &self.symbol_table.scopes {
+                if let ScopeKind::Function { name } = &scope.kind {
+                    if name == &func.name {
+                        func_scope_id = Some(scope.id);
+                        break;
                     }
                 }
-
-                if let Some(scope_id) = func_scope_id {
-                    for stmt in &func.body {
-                        self.infer_stmt(stmt, scope_id)?;
-                    }
+            }
+            if let Some(scope_id) = func_scope_id {
+                for stmt in &func.body {
+                    self.infer_stmt(stmt, scope_id)?;
                 }
             }
         }
@@ -739,6 +761,16 @@ impl<'a> TypeChecker<'a> {
                             }
                         }
                         return Ok(ty.clone());
+                    }
+                    // Trait method dispatch: try StructName_method
+                    if !arg_tys.is_empty() {
+                        if let TypeRef::Custom(sid) = &arg_tys[0] {
+                            let struct_name = &self.type_table.definitions[sid.0].name;
+                            let mangled = format!("{}_{}", struct_name, name);
+                            if let Some(ty) = self.func_return_types.get(&mangled) {
+                                return Ok(ty.clone());
+                            }
+                        }
                     }
                 }
                 Ok(TypeRef::Int)

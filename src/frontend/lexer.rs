@@ -15,6 +15,8 @@ pub enum Token {
     Pub,
     Const,
     TypeKw,
+    Trait,
+    ImplKw,
 
     If,
     Else,
@@ -490,6 +492,8 @@ impl<'a> Lexer<'a> {
                         "pub" => tokens.push(mk_token(Token::Pub)),
                         "const" => tokens.push(mk_token(Token::Const)),
                         "type" => tokens.push(mk_token(Token::TypeKw)),
+                        "trait" => tokens.push(mk_token(Token::Trait)),
+                        "impl" => tokens.push(mk_token(Token::ImplKw)),
                         "if" => tokens.push(mk_token(Token::If)),
                         "else" => tokens.push(mk_token(Token::Else)),
                         "elif" => {

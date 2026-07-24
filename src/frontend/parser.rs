@@ -85,6 +85,10 @@ impl Parser {
                 let target = self.parse_type()?;
                 if self.peek() == Some(&Token::Newline) { self.advance(); }
                 declarations.push(TopLevel::TypeAlias { name, target });
+            } else if self.match_token(&Token::Trait) {
+                declarations.push(TopLevel::Trait(self.parse_trait()?));
+            } else if self.match_token(&Token::ImplKw) {
+                declarations.push(TopLevel::Impl(self.parse_impl()?));
             } else if self.match_token(&Token::Import) {
                 declarations.push(TopLevel::Import(self.parse_import()?));
             } else if self.match_token(&Token::From) {
@@ -92,7 +96,7 @@ impl Parser {
             } else {
                 let found = self.peek().cloned();
                 return self.error(format!(
-                    "Expected 'def', 'struct', 'enum', 'const', 'type', 'import', or 'from', found {:?}",
+                    "Expected 'def', 'struct', 'enum', 'trait', 'impl', 'const', 'type', 'import', or 'from', found {:?}",
                     found
                 ));
             }
@@ -175,6 +179,128 @@ impl Parser {
     }
 
     /// Parse: `enum Color: Red, Green, Blue(intensity: Int)`
+    /// Parse `trait Display: def show(self) -> Str`
+    fn parse_trait(&mut self) -> Result<TraitDef, String> {
+        let name = match self.advance() {
+            Some(Token::Ident(n)) => n.clone(),
+            _ => return self.error("Expected trait name"),
+        };
+
+        if !self.match_token(&Token::Colon) {
+            return self.error("Expected ':' after trait name");
+        }
+        if !self.match_token(&Token::Newline) {
+            return self.error("Expected newline after ':'");
+        }
+        self.skip_newlines();
+        if !self.match_token(&Token::Indent) {
+            return self.error("Expected indentation for trait body");
+        }
+
+        let mut methods = Vec::new();
+        while self.peek() != Some(&Token::Dedent) && self.peek().is_some() {
+            self.skip_newlines();
+            if self.peek() == Some(&Token::Dedent) { break; }
+
+            if !self.match_token(&Token::Def) {
+                return self.error("Expected 'def' in trait body");
+            }
+            let method_name = match self.advance() {
+                Some(Token::Ident(n)) => n.clone(),
+                _ => return self.error("Expected method name"),
+            };
+            if !self.match_token(&Token::LParen) {
+                return self.error("Expected '(' after method name");
+            }
+            let mut params = Vec::new();
+            if self.peek() != Some(&Token::RParen) {
+                loop {
+                    let param_name = match self.advance() {
+                        Some(Token::Ident(n)) => n.clone(),
+                        _ => return self.error("Expected parameter name"),
+                    };
+                    // `self` param has implicit type of the implementing struct
+                    let ty = if param_name == "self" {
+                        Type::Custom("Self".to_string())
+                    } else {
+                        if !self.match_token(&Token::Colon) {
+                            return self.error("Expected ':' after parameter name");
+                        }
+                        self.parse_type()?
+                    };
+                    params.push(Param { name: param_name, ty, default: None });
+                    if !self.match_token(&Token::Comma) { break; }
+                }
+            }
+            if !self.match_token(&Token::RParen) {
+                return self.error("Expected ')' after parameters");
+            }
+            let mut return_type = Type::Void;
+            if self.match_token(&Token::Arrow) {
+                return_type = self.parse_type()?;
+            }
+            methods.push(TraitMethod { name: method_name, params, return_type });
+            self.skip_newlines();
+        }
+        self.match_token(&Token::Dedent);
+
+        if methods.is_empty() {
+            return self.error("Trait must have at least one method");
+        }
+
+        Ok(TraitDef { name, methods })
+    }
+
+    /// Parse `impl Display for Point: def show(self) -> Str: ...`
+    fn parse_impl(&mut self) -> Result<ImplBlock, String> {
+        let trait_name = match self.advance() {
+            Some(Token::Ident(n)) => n.clone(),
+            _ => return self.error("Expected trait name after 'impl'"),
+        };
+        if !self.match_token(&Token::For) {
+            return self.error("Expected 'for' after trait name in impl");
+        }
+        let target_type = match self.advance() {
+            Some(Token::Ident(n)) => n.clone(),
+            _ => return self.error("Expected type name after 'for'"),
+        };
+        if !self.match_token(&Token::Colon) {
+            return self.error("Expected ':' after type name in impl");
+        }
+        if !self.match_token(&Token::Newline) {
+            return self.error("Expected newline after ':'");
+        }
+        self.skip_newlines();
+        if !self.match_token(&Token::Indent) {
+            return self.error("Expected indentation for impl body");
+        }
+
+        let mut methods = Vec::new();
+        while self.peek() != Some(&Token::Dedent) && self.peek().is_some() {
+            self.skip_newlines();
+            if self.peek() == Some(&Token::Dedent) { break; }
+
+            if !self.match_token(&Token::Def) {
+                return self.error("Expected 'def' in impl body");
+            }
+            let mut func = self.parse_function()?;
+            // Mangle name: TraitName_methodName_TargetType
+            let mangled = format!("{}_{}", target_type, func.name);
+            // Replace `self` param type with the target struct type
+            for param in &mut func.params {
+                if param.name == "self" {
+                    param.ty = Type::Custom(target_type.clone());
+                }
+            }
+            func.name = mangled;
+            methods.push(func);
+            self.skip_newlines();
+        }
+        self.match_token(&Token::Dedent);
+
+        Ok(ImplBlock { trait_name, target_type, methods })
+    }
+
     fn parse_enum(&mut self) -> Result<EnumDef, String> {
         let name = match self.advance() {
             Some(Token::Ident(n)) => n.clone(),
@@ -336,10 +462,15 @@ impl Parser {
                     Some(Token::Ident(n)) => n.clone(),
                     _ => return self.error("Expected parameter name"),
                 };
-                if !self.match_token(&Token::Colon) {
-                    return self.error("Expected ':' after parameter name");
-                }
-                let ty = self.parse_type()?;
+                // `self` param has implicit type — no `:` required
+                let ty = if param_name == "self" && self.peek() != Some(&Token::Colon) {
+                    Type::Custom("Self".to_string())
+                } else {
+                    if !self.match_token(&Token::Colon) {
+                        return self.error("Expected ':' after parameter name");
+                    }
+                    self.parse_type()?
+                };
                 // Optional default value: def foo(x: Int = 10)
                 let default = if self.match_token(&Token::Equal) {
                     Some(self.parse_expr()?)
@@ -962,14 +1093,17 @@ impl Parser {
                     return self.error("Expected ')' after arguments");
                 }
                 // Check for EnumName.Variant(args) pattern
+                // Only match if the base identifier starts with uppercase (type name convention)
                 if let Expr::FieldAccess { base, field } = &expr {
                     if let Expr::Identifier(enum_name, _) = base.as_ref() {
-                        expr = Expr::EnumVariantConstruct {
-                            enum_name: enum_name.clone(),
-                            variant: field.clone(),
-                            args,
-                        };
-                        continue;
+                        if enum_name.chars().next().map_or(false, |c| c.is_uppercase()) {
+                            expr = Expr::EnumVariantConstruct {
+                                enum_name: enum_name.clone(),
+                                variant: field.clone(),
+                                args,
+                            };
+                            continue;
+                        }
                     }
                 }
                 // Method call: expr.method(args) → method(expr, args)
