@@ -39,14 +39,19 @@ def main():
 | Feature | Description |
 |---------|-------------|
 | **Python-like syntax** | Significant whitespace, `:=` declarations, `def`/`struct`/`enum` |
-| **Ownership & ARC** | Automatic reference counting, borrow tracking, cycle rejection |
+| **Generics** | `def identity[T](x: T) -> T`, generic structs and enums |
+| **Traits + dispatch** | `trait`/`impl` with both static and dynamic dispatch |
+| **FFI / extern** | `extern "C" link "SDL2"` — call any C library directly |
+| **Ownership & ARC** | Automatic reference counting, escape analysis, cycle rejection |
 | **Enums + match** | Algebraic data types with pattern matching and data extraction |
 | **Error handling** | `Result` type + `?` operator for error propagation |
+| **Default params** | `def foo(x: Int, y: Int = 10)` |
 | **Multi-file modules** | `import math`, `from utils import calc`, dotted paths |
-| **Native compilation** | Cranelift AOT → ELF (Linux) / PE (Windows) / Mach-O (macOS) |
+| **Native compilation** | Cranelift AOT → ELF / PE / Mach-O, 9 MIR optimization passes |
 | **Direct linker** | `lpp-link` produces standalone executables without `gcc`/`clang`/MSVC |
-| **Package manager** | `lpp new`, `lpp build`, `lpp run` — self-hosted in L++ |
-| **Standard library** | math, strings, collections, algorithms, zip archives |
+| **Package manager** | `lpp new`, `lpp build`, `lpp run`, `lpp publish` |
+| **100+ builtins** | strings, lists, maps, files, network, JSON, buffers |
+| **C-competitive perf** | Matches GCC -O2 on real workloads (primes: 1.0x) |
 | **15KB binaries** | Windows PE freestanding executables as small as 15.5KB |
 
 ## Install
@@ -164,6 +169,47 @@ map_put(m, 1, 100)
 print(map_get(m, 1))       # 100
 ```
 
+### Generics
+
+```lpp
+def identity[T](x: T) -> T:
+    return x
+
+struct Box[T]:
+    value: T
+
+print(identity(42))         # 42
+print(identity("hello"))    # hello
+```
+
+### Traits & Dynamic Dispatch
+
+```lpp
+trait Speak:
+    def speak(self) -> Int
+
+struct Dog:
+    name: Str
+
+impl Speak for Dog:
+    def speak(self) -> Int:
+        print(1)
+        return 1
+
+# Accepts any Speak implementor (dynamic dispatch)
+def make_speak(animal: Speak) -> Int:
+    return animal.speak()
+```
+
+### FFI / Calling C Libraries
+
+```lpp
+extern "C" link "SDL2":
+    def SDL_Init(flags: Int) -> Int
+    def SDL_CreateWindow(title: Str, x: Int, y: Int, w: Int, h: Int, flags: Int) -> Int
+    def SDL_Quit() -> Void
+```
+
 ### Closures & Threads
 
 ```lpp
@@ -189,12 +235,15 @@ Source (.lpp)
     ├── MIR Lowering → Mid-level IR
     │   ├── ARC Pass (retain/release insertion)
     │   ├── Closure Lifting
-    │   ├── Constant Propagation
-    │   ├── Dead Code Elimination
-    │   ├── Branch Optimization
     │   ├── Peephole Optimization
-    │   └── Inlining
-    ├── Cranelift Codegen → Native Object (.o/.obj)
+    │   ├── Constant Propagation
+    │   ├── Inlining
+    │   ├── Dead Code Elimination
+    │   ├── Copy Propagation
+    │   ├── Strength Reduction
+    │   ├── Branch Optimization
+    │   └── ARC Pass (retain/release insertion)
+    ├── Cranelift Codegen (opt_level=speed) → Native Object (.o/.obj)
     └── lpp-link → Executable (ELF/PE/Mach-O)
 ```
 

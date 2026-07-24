@@ -389,48 +389,73 @@ fn main() {
 
     for arg in args.iter().skip(1) {
         if arg == "--version" || arg == "-v" {
-            println!("L++ Compiler v2.0.0 (Pure Native AOT)");
+            println!("L++ Compiler v3.0.0 (Pure Native AOT)");
             return;
         } else if arg == "--help" || arg == "-h" {
-            println!("L++ (L Plus Plus) Pure Native Compiler, Cranelift AOT & Direct Linker Toolchain v2.0.0");
-            println!("Usage: lpp [command] [options]");
-            println!("\nCommands (Package Manager):");
+            println!("L++ (L Plus Plus) v3.0.0 — Pure Native Compiler & Toolchain");
+            println!("Cranelift AOT backend, 9 MIR optimization passes, direct ELF/PE/Mach-O linker");
+            println!();
+            println!("Usage: lpp <file.lpp> [options]");
+            println!("       lpp <command> [args]");
+            println!();
+            println!("Compilation:");
+            println!("  lpp <file.lpp>             Compile to native executable (direct lpp-link)");
+            println!("  lpp <file.lpp> --emit-obj  Emit native object file only (.o / .obj)");
+            println!("  lpp <file.lpp> --check     Type-check without compiling");
+            println!("  lpp --checkall             Check all .lpp files in current directory");
+            println!();
+            println!("Package Manager:");
             println!("  new <name>       Create a new L++ package");
-            println!("  init <name>      Initialize a project in the current directory");
+            println!("  init <name>      Initialize in current directory");
             println!("  install          Resolve and install dependencies");
             println!("  add <name>       Add a dependency to lpp.toml");
-            println!("  remove <name>    Remove a dependency from lpp.toml");
+            println!("  remove <name>    Remove a dependency");
             println!("  update           Refresh dependencies and rewrite lpp.lock");
             println!("  search <query>   Search the package registry");
-            println!("  list             List direct dependencies from lpp.toml");
-            println!("  tree             Print dependency tree/lockfile view");
-            println!("  metadata         Print package metadata summary");
+            println!("  list             List direct dependencies");
+            println!("  tree             Print dependency tree");
+            println!("  metadata         Print package metadata");
             println!("  outdated         Show dependencies without pinned versions");
-            println!("  clean            Remove build output and generated artifacts");
-            println!("  check            Check the project for compilation errors");
-            println!("  build            Build project into a native binary via direct lpp-link");
-            println!("  run              Compile and run the project native executable");
-            println!("  test             Compile and run tests inside tests/");
-            println!("\nSource Commands:");
-            println!("  lpp <file.lpp>               Compile L++ source into direct native executable");
-            println!("  lpp check <file.lpp>         Type-check one file; emit no artifacts");
-            println!("  lpp emit <file.lpp> --aot    Emit Cranelift native object file (.o / .obj)");
-            println!("\nOptions (Compiler):");
-            println!("  -v, --version    Show L++ compiler version");
-            println!("  -h, --help       Show this help menu");
-            println!("  --check          Check a single file without compiling");
-            println!("  --dump-ast       Dump the Abstract Syntax Tree");
-            println!("  --dump-symbols   Dump the resolved symbol table");
-            println!("  --dump-types     Dump the typechecker type table");
-            println!("  --dump-escape    Dump the escape analysis classifications");
-            println!("  --dump-mir       Dump the generated Mid-level IR (MIR)");
-            println!("  --linker direct  Use lpp-link (no external compiler needed)");
-            println!("  --linker host    Use system cc/cl.exe linker");
-            println!("\nConfiguration:");
-            println!("  config                       Show current config (~/.lpp/config.json)");
-            println!("  config set linker <value>    Set default linker (direct|host|auto)");
-            println!("\nEnvironment Variables:");
-            println!("  BENCHMARK=1      Suppress descriptive text and print sub-millisecond JSON timings");
+            println!("  clean            Remove build output and artifacts");
+            println!("  check            Check project for errors");
+            println!("  build            Build project to native binary");
+            println!("  run              Compile and run project");
+            println!("  test             Run tests in tests/ directory");
+            println!("  bench            Run benchmarks");
+            println!("  publish          Publish package to registry");
+            println!();
+            println!("Debug & Inspection:");
+            println!("  --dump-ast       Dump Abstract Syntax Tree");
+            println!("  --dump-symbols   Dump resolved symbol table");
+            println!("  --dump-types     Dump type checker output");
+            println!("  --dump-escape    Dump escape analysis classifications");
+            println!("  --dump-mir       Dump Mid-level IR (MIR)");
+            println!();
+            println!("Linker:");
+            println!("  --linker direct  Use lpp-link (no external tools needed)");
+            println!("  --linker host    Use system cc/cl.exe (required for FFI/extern)");
+            println!();
+            println!("Configuration:");
+            println!("  config                         Show config (~/.lpp/config.json)");
+            println!("  config set linker <value>      Set default linker (direct|host|auto)");
+            println!();
+            println!("Options:");
+            println!("  -v, --version    Show version");
+            println!("  -h, --help       Show this help");
+            println!();
+            println!("Language Features (v3.0.0):");
+            println!("  Functions, default params, closures, threads");
+            println!("  Structs, enums, match with bindings");
+            println!("  Generics: def foo[T](x: T) -> T");
+            println!("  Traits:   trait Name / impl Trait for Type (static + dynamic dispatch)");
+            println!("  FFI:      extern \"C\" link \"SDL2\" (call any C library)");
+            println!("  Try:      result? operator for error propagation");
+            println!("  Builtins: 100+ (strings, lists, maps, files, network, JSON)");
+            println!("  Ownership: ARC + escape analysis, cycle rejection");
+            println!();
+            println!("Environment:");
+            println!("  BENCHMARK=1           Print JSON timings instead of descriptive output");
+            println!("  LPP_AOT_OPT=speed    Set Cranelift optimization level (none|speed|speed_and_size)");
             return;
         } else if arg == "--dump-ast" {
             dump_ast = true;
@@ -782,7 +807,7 @@ fn main() {
                 && !dump_escape
                 && !dump_mir
             {
-                println!("L++ v2.0.0 (Pure Native Executable)\n");
+                println!("L++ v3.0.0 (Pure Native Executable)\n");
                 println!("Compiled and linked native binary: {}", exe_path);
                 println!("Time: {:.1} ms", total_time.as_secs_f64() * 1000.0);
             }

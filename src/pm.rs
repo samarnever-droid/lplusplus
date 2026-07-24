@@ -845,39 +845,45 @@ pub fn run_command(args: &[String]) {
 }
 
 fn print_help() {
-    println!("L++ Package Manager (lpp-pm)");
+    println!("L++ Package Manager v3.0.0");
     println!("Usage: lpp [command] [options]");
-    println!("\nCommands:");
-    println!("  new <project_name>    Create a new package directory with scaffold");
-    println!("  init <project_name>   Initialize the current directory as a package");
-    println!("  install               Resolve, download and install all dependencies");
-    println!("  add <name>            Add dependency from online registry");
-    println!("  add @owner/repo       Add dependency directly from GitHub repository");
-    println!("  add <name> --git <U>  Add dependency via explicit git URL");
-    println!("  add <name> --path <P> Add dependency via local folder path");
-    println!("  add <name> --version <V> Record an expected dependency version");
-    println!("  remove <name>         Remove a dependency from lpp.toml");
-    println!("  update                Update all resolved dependencies");
-    println!("  search <query>        Search packages from the local registry cache");
-    println!("  list                  List direct dependencies from lpp.toml");
-    println!("  tree                  Print lockfile dependency tree");
+    println!();
+    println!("Package Commands:");
+    println!("  new <name>            Create a new L++ package");
+    println!("  init <name>           Initialize package in current directory");
+    println!("  install               Resolve and install all dependencies");
+    println!("  add <name>            Add dependency from registry");
+    println!("  add @owner/repo       Add dependency from GitHub");
+    println!("  add <name> --git <U>  Add via explicit git URL");
+    println!("  add <name> --path <P> Add via local path");
+    println!("  add <name> --version <V>  Pin dependency version");
+    println!("  remove <name>         Remove a dependency");
+    println!("  update                Refresh dependencies and lockfile");
+    println!("  search <query>        Search package registry");
+    println!("  list                  List direct dependencies");
+    println!("  tree                  Print dependency tree");
     println!("  metadata              Print package metadata");
-    println!("  outdated              Show dependencies without pinned versions");
-    println!("  clean                 Remove target/ and generated build artifacts");
-    println!("  check                 Validate grammar, scope and types in project");
-    println!("  build                 Build project into native target executable");
-    println!("  run                   Compile and run the project native target");
-    println!("  test                  Compile and execute all tests in tests/ folder");
-    println!("  bench                 Run King20 benchmarks across all 3 linkers");
-    println!("  help                  Show this help menu");
-    println!("\nSource-file commands (outside package mode):");
-    println!("  lpp check <file.lpp>          Check one source file without artifacts");
-    println!("  lpp emit <file.lpp>           Emit Cranelift native object file (.o / .obj)");
-    println!("  lpp emit <file.lpp> --aot     Emit Cranelift native object file (.o / .obj)");
-    println!("\nBenchmark commands:");
-    println!("  lpp bench --self-test         Run 15 integration tests");
-    println!("  lpp bench --disk --mem --json King20 across all linkers with stats");
-    println!("\nRule: `lpp build` builds an lpp.toml package; `lpp emit` handles one file.");
+    println!("  outdated              Show unpinned dependencies");
+    println!("  clean                 Remove build output and artifacts");
+    println!("  check                 Check project for compilation errors");
+    println!("  build                 Build to native binary (lpp-link or host)");
+    println!("  run                   Compile and run project");
+    println!("  test                  Run tests in tests/ directory");
+    println!("  bench                 Run benchmarks");
+    println!("  publish               Publish package to registry (requires git)");
+    println!("  help                  Show this help");
+    println!();
+    println!("Single-file Commands:");
+    println!("  lpp <file.lpp>              Compile to native executable");
+    println!("  lpp <file.lpp> --check      Type-check without compiling");
+    println!("  lpp <file.lpp> --emit-obj   Emit native object file (.o / .obj)");
+    println!("  lpp --checkall              Check all .lpp files in directory");
+    println!();
+    println!("Benchmarks:");
+    println!("  lpp bench --self-test       Run integration tests");
+    println!("  lpp bench --disk --mem      King20 benchmark suite");
+    println!();
+    println!("Note: `lpp build` builds a package; `lpp file.lpp` compiles one file.");
 }
 
 fn cmd_new(args: &[String]) {
