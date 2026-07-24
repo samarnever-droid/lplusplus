@@ -601,6 +601,33 @@ fn find_vcvars64() -> Option<PathBuf> {
 }
 
 #[allow(dead_code)]
+/// Compute a simple hash of a file's contents for cache invalidation.
+/// Uses Rust's built-in DefaultHasher (SipHash) — not cryptographic, but
+/// fast and sufficient for detecting source changes.
+fn file_content_hash(path: &Path) -> Option<u64> {
+    let data = fs::read(path).ok()?;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    data.hash(&mut hasher);
+    Some(hasher.finish())
+}
+
+/// Target triple string for multi-arch cache layout.
+fn runtime_cache_target() -> &'static str {
+    if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+        "linux-x86_64"
+    } else if cfg!(all(target_os = "linux", target_arch = "aarch64")) {
+        "linux-aarch64"
+    } else if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
+        "windows-x86_64"
+    } else if cfg!(all(target_os = "macos", target_arch = "x86_64")) {
+        "macos-x86_64"
+    } else if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+        "macos-arm64"
+    } else {
+        "unknown"
+    }
+}
+
 fn resolve_min_runtime_object() -> Option<PathBuf> {
     let ext = if cfg!(target_os = "windows") { "obj" } else { "o" };
     let filename = format!("lpp_runtime_min.{}", ext);
@@ -612,20 +639,21 @@ fn resolve_min_runtime_object() -> Option<PathBuf> {
     };
 
     let local_src = Path::new(src_name);
-    let cache_dir = Path::new("LppData").join("cache");
+    // Multi-arch cache: LppData/cache/<target>/lpp_runtime_min.o
+    let cache_dir = Path::new("LppData").join("cache").join(runtime_cache_target());
     let cache_obj = cache_dir.join(&filename);
+    let cache_hash = cache_dir.join("runtime.hash");
 
     if local_src.exists() {
-        let needs_rebuild = if cache_obj.exists() {
-            match (cache_obj.metadata(), local_src.metadata()) {
-                (Ok(cm), Ok(sm)) => match (cm.modified(), sm.modified()) {
-                    (Ok(ct), Ok(st)) => ct < st,
-                    _ => true,
-                },
-                _ => true,
-            }
-        } else {
-            true
+        // Hash-based invalidation: compare source hash with stored hash
+        let current_hash = file_content_hash(local_src);
+        let stored_hash = fs::read_to_string(&cache_hash)
+            .ok()
+            .and_then(|s| s.trim().parse::<u64>().ok());
+
+        let needs_rebuild = match (current_hash, stored_hash) {
+            (Some(cur), Some(stored)) => cur != stored || !cache_obj.exists(),
+            _ => true, // no hash or can't read → rebuild
         };
 
         if needs_rebuild {
@@ -655,6 +683,10 @@ fn resolve_min_runtime_object() -> Option<PathBuf> {
                     .arg(&cache_obj);
             }
             if cmd.status().map_or(false, |s| s.success()) && cache_obj.exists() {
+                // Store the hash for next time
+                if let Some(h) = current_hash {
+                    let _ = fs::write(&cache_hash, format!("{}\n", h));
+                }
                 return Some(cache_obj);
             }
         } else {
@@ -666,6 +698,7 @@ fn resolve_min_runtime_object() -> Option<PathBuf> {
         return Some(cache_obj);
     }
 
+    // Fallback: search installed locations (flat filename for backwards compat)
     for var in &["LPP_HOME", "LPP_DIR"] {
         if let Ok(val) = std::env::var(var) {
             let lib_obj = PathBuf::from(val).join("lib").join(&filename);
