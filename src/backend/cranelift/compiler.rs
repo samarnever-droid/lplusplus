@@ -206,7 +206,7 @@ impl AotCompiler {
                 ));
             }
             Err(_) if std::env::var("LPP_RELEASE").is_ok() => "speed".to_string(),
-            Err(_) => "none".to_string(),
+            Err(_) => "speed".to_string(), // Always optimize — Cranelift speed mode is fast enough
         };
         flag_builder
             .set("opt_level", &opt_level)
