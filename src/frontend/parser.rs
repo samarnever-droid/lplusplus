@@ -223,7 +223,7 @@ impl Parser {
                             return self.error("Expected ':' after variant field name");
                         }
                         let ty = self.parse_type()?;
-                        fields.push(Param { name: field_name, ty });
+                        fields.push(Param { name: field_name, ty, default: None });
                         if !self.match_token(&Token::Comma) {
                             break;
                         }
@@ -289,6 +289,7 @@ impl Parser {
             fields.push(Param {
                 name: field_name,
                 ty,
+                default: None,
             });
 
             self.skip_newlines();
@@ -339,9 +340,16 @@ impl Parser {
                     return self.error("Expected ':' after parameter name");
                 }
                 let ty = self.parse_type()?;
+                // Optional default value: def foo(x: Int = 10)
+                let default = if self.match_token(&Token::Equal) {
+                    Some(self.parse_expr()?)
+                } else {
+                    None
+                };
                 params.push(Param {
                     name: param_name,
                     ty,
+                    default,
                 });
 
                 if !self.match_token(&Token::Comma) {

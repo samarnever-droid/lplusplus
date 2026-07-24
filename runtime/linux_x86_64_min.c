@@ -849,3 +849,209 @@ double lpp_map_get_str_float(void *map, const char *key) {
     for (int i = 0; i < 8; i++) ((char*)&fval)[i] = ((char*)&ival)[i];
     return fval;
 }
+
+/* ── String builtins (freestanding, using lpp_alloc/lpp_sys_mmap) ── */
+
+static int64_t lpp_strlen(const char *s) {
+    if (!s) return 0;
+    int64_t n = 0;
+    while (s[n]) n++;
+    return n;
+}
+
+int64_t lpp_str_len(const char *s) {
+    return lpp_strlen(s);
+}
+
+char *lpp_str_concat(const char *a, const char *b) {
+    int64_t alen = lpp_strlen(a);
+    int64_t blen = lpp_strlen(b);
+    char *out = (char *)lpp_alloc(alen + blen + 1);
+    for (int64_t i = 0; i < alen; i++) out[i] = a[i];
+    for (int64_t i = 0; i < blen; i++) out[alen + i] = b[i];
+    out[alen + blen] = 0;
+    return out;
+}
+
+char *lpp_str_substr(const char *s, int64_t start, int64_t length) {
+    if (!s) return (char *)lpp_alloc(1);
+    int64_t slen = lpp_strlen(s);
+    if (start < 0) start = 0;
+    if (start >= slen || length <= 0) {
+        char *out = (char *)lpp_alloc(1);
+        out[0] = 0;
+        return out;
+    }
+    if (start + length > slen) length = slen - start;
+    char *out = (char *)lpp_alloc(length + 1);
+    for (int64_t i = 0; i < length; i++) out[i] = s[start + i];
+    out[length] = 0;
+    return out;
+}
+
+char *lpp_str_repeat(const char *s, int64_t n) {
+    if (!s || n <= 0) { char *e = (char *)lpp_alloc(1); e[0] = 0; return e; }
+    int64_t slen = lpp_strlen(s);
+    int64_t total = slen * n;
+    char *out = (char *)lpp_alloc(total + 1);
+    for (int64_t i = 0; i < n; i++)
+        for (int64_t j = 0; j < slen; j++)
+            out[i * slen + j] = s[j];
+    out[total] = 0;
+    return out;
+}
+
+char *lpp_char_at(const char *s, int64_t idx) {
+    if (!s) return (char *)lpp_alloc(1);
+    int64_t slen = lpp_strlen(s);
+    if (idx < 0 || idx >= slen) return (char *)lpp_alloc(1);
+    char *out = (char *)lpp_alloc(2);
+    out[0] = s[idx];
+    out[1] = 0;
+    return out;
+}
+
+int64_t lpp_ord(const char *s) {
+    if (!s || !s[0]) return 0;
+    return (int64_t)(unsigned char)s[0];
+}
+
+char *lpp_chr(int64_t code) {
+    char *out = (char *)lpp_alloc(2);
+    out[0] = (char)(code & 0xFF);
+    out[1] = 0;
+    return out;
+}
+
+int64_t lpp_str_find(const char *haystack, const char *needle) {
+    if (!haystack || !needle) return -1;
+    int64_t hlen = lpp_strlen(haystack);
+    int64_t nlen = lpp_strlen(needle);
+    if (nlen == 0) return 0;
+    if (nlen > hlen) return -1;
+    for (int64_t i = 0; i <= hlen - nlen; i++) {
+        int64_t j = 0;
+        while (j < nlen && haystack[i + j] == needle[j]) j++;
+        if (j == nlen) return i;
+    }
+    return -1;
+}
+
+int64_t lpp_str_contains(const char *haystack, const char *needle) {
+    return lpp_str_find(haystack, needle) >= 0 ? 1 : 0;
+}
+
+int64_t lpp_str_starts_with(const char *s, const char *prefix) {
+    if (!s || !prefix) return 0;
+    int64_t plen = lpp_strlen(prefix);
+    for (int64_t i = 0; i < plen; i++) {
+        if (s[i] != prefix[i] || s[i] == 0) return 0;
+    }
+    return 1;
+}
+
+int64_t lpp_str_ends_with(const char *s, const char *suffix) {
+    if (!s || !suffix) return 0;
+    int64_t slen = lpp_strlen(s);
+    int64_t xlen = lpp_strlen(suffix);
+    if (xlen > slen) return 0;
+    for (int64_t i = 0; i < xlen; i++) {
+        if (s[slen - xlen + i] != suffix[i]) return 0;
+    }
+    return 1;
+}
+
+char *lpp_str_upper(const char *s) {
+    if (!s) return (char *)lpp_alloc(1);
+    int64_t len = lpp_strlen(s);
+    char *out = (char *)lpp_alloc(len + 1);
+    for (int64_t i = 0; i < len; i++)
+        out[i] = (s[i] >= 'a' && s[i] <= 'z') ? s[i] - 32 : s[i];
+    out[len] = 0;
+    return out;
+}
+
+char *lpp_str_lower(const char *s) {
+    if (!s) return (char *)lpp_alloc(1);
+    int64_t len = lpp_strlen(s);
+    char *out = (char *)lpp_alloc(len + 1);
+    for (int64_t i = 0; i < len; i++)
+        out[i] = (s[i] >= 'A' && s[i] <= 'Z') ? s[i] + 32 : s[i];
+    out[len] = 0;
+    return out;
+}
+
+char *lpp_str_trim(const char *s) {
+    if (!s) return (char *)lpp_alloc(1);
+    int64_t len = lpp_strlen(s);
+    int64_t start = 0, end = len;
+    while (start < len && (s[start] == ' ' || s[start] == '\t' || s[start] == '\n' || s[start] == '\r')) start++;
+    while (end > start && (s[end-1] == ' ' || s[end-1] == '\t' || s[end-1] == '\n' || s[end-1] == '\r')) end--;
+    int64_t rlen = end - start;
+    char *out = (char *)lpp_alloc(rlen + 1);
+    for (int64_t i = 0; i < rlen; i++) out[i] = s[start + i];
+    out[rlen] = 0;
+    return out;
+}
+
+char *lpp_str_replace(const char *s, const char *old, const char *new_) {
+    if (!s || !old || !new_) return (char *)lpp_alloc(1);
+    int64_t slen = lpp_strlen(s);
+    int64_t olen = lpp_strlen(old);
+    int64_t nlen = lpp_strlen(new_);
+    if (olen == 0) { /* copy */ char *out = (char *)lpp_alloc(slen + 1); for (int64_t i = 0; i <= slen; i++) out[i] = s[i]; return out; }
+    /* count occurrences */
+    int64_t count = 0;
+    for (int64_t i = 0; i <= slen - olen; i++) {
+        int64_t j = 0;
+        while (j < olen && s[i+j] == old[j]) j++;
+        if (j == olen) { count++; i += olen - 1; }
+    }
+    int64_t rlen = slen + count * (nlen - olen);
+    char *out = (char *)lpp_alloc(rlen + 1);
+    int64_t w = 0;
+    for (int64_t i = 0; i < slen; ) {
+        int64_t j = 0;
+        if (i <= slen - olen) { while (j < olen && s[i+j] == old[j]) j++; }
+        if (j == olen) {
+            for (int64_t k = 0; k < nlen; k++) out[w++] = new_[k];
+            i += olen;
+        } else {
+            out[w++] = s[i++];
+        }
+    }
+    out[rlen] = 0;
+    return out;
+}
+
+char *lpp_int_to_str(int64_t val) {
+    char buf[24];
+    int neg = val < 0;
+    if (neg) val = -val;
+    int i = 23;
+    buf[i] = 0;
+    do { buf[--i] = '0' + (val % 10); val /= 10; } while (val);
+    if (neg) buf[--i] = '-';
+    int64_t len = 23 - i;
+    char *out = (char *)lpp_alloc(len + 1);
+    for (int64_t j = 0; j <= len; j++) out[j] = buf[i + j];
+    return out;
+}
+
+int64_t lpp_str_to_int(const char *s) {
+    if (!s) return 0;
+    int64_t val = 0, neg = 0;
+    int64_t i = 0;
+    while (s[i] == ' ' || s[i] == '\t') i++;
+    if (s[i] == '-') { neg = 1; i++; }
+    else if (s[i] == '+') i++;
+    while (s[i] >= '0' && s[i] <= '9') { val = val * 10 + (s[i] - '0'); i++; }
+    return neg ? -val : val;
+}
+
+const char *lpp_input(void) {
+    /* stub: freestanding has no stdin */
+    char *out = (char *)lpp_alloc(1);
+    out[0] = 0;
+    return out;
+}

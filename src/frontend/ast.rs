@@ -148,6 +148,7 @@ pub enum Stmt {
 pub struct Param {
     pub name: String,
     pub ty: Type,
+    pub default: Option<Expr>,  // default parameter value: def foo(x: Int = 10)
 }
 
 #[derive(Debug, Clone, PartialEq)]

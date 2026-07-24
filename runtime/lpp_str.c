@@ -145,3 +145,87 @@ char *lpp_str_repeat(const char *s, int64_t n) {
     out[total] = 0;
     return out;
 }
+
+/* ── char_at: return single character at index as a 1-char string ── */
+char *lpp_char_at(const char *s, int64_t idx) {
+    if (!s) return NULL;
+    int64_t len = (int64_t)strlen(s);
+    if (idx < 0 || idx >= len) return NULL;
+    char *out = (char *)malloc(2);
+    out[0] = s[idx];
+    out[1] = 0;
+    return out;
+}
+
+/* ── ord: return ASCII/Unicode codepoint of first character ── */
+int64_t lpp_ord(const char *s) {
+    if (!s || !s[0]) return 0;
+    return (int64_t)(unsigned char)s[0];
+}
+
+/* ── chr: return 1-char string from codepoint ── */
+char *lpp_chr(int64_t code) {
+    char *out = (char *)malloc(2);
+    out[0] = (char)(code & 0xFF);
+    out[1] = 0;
+    return out;
+}
+
+/* ── str_contains: check if needle is in haystack ── */
+int64_t lpp_str_contains(const char *haystack, const char *needle) {
+    if (!haystack || !needle) return 0;
+    return strstr(haystack, needle) != NULL ? 1 : 0;
+}
+
+/* ── str_starts_with ── */
+int64_t lpp_str_starts_with(const char *s, const char *prefix) {
+    if (!s || !prefix) return 0;
+    size_t plen = strlen(prefix);
+    return strncmp(s, prefix, plen) == 0 ? 1 : 0;
+}
+
+/* ── str_ends_with ── */
+int64_t lpp_str_ends_with(const char *s, const char *suffix) {
+    if (!s || !suffix) return 0;
+    size_t slen = strlen(s);
+    size_t xlen = strlen(suffix);
+    if (xlen > slen) return 0;
+    return strcmp(s + slen - xlen, suffix) == 0 ? 1 : 0;
+}
+
+/* ── str_upper: uppercase copy ── */
+char *lpp_str_upper(const char *s) {
+    if (!s) return NULL;
+    size_t len = strlen(s);
+    char *out = (char *)malloc(len + 1);
+    for (size_t i = 0; i < len; i++)
+        out[i] = (s[i] >= 'a' && s[i] <= 'z') ? s[i] - 32 : s[i];
+    out[len] = 0;
+    return out;
+}
+
+/* ── str_lower: lowercase copy ── */
+char *lpp_str_lower(const char *s) {
+    if (!s) return NULL;
+    size_t len = strlen(s);
+    char *out = (char *)malloc(len + 1);
+    for (size_t i = 0; i < len; i++)
+        out[i] = (s[i] >= 'A' && s[i] <= 'Z') ? s[i] + 32 : s[i];
+    out[len] = 0;
+    return out;
+}
+
+/* ── int_to_str: convert integer to string ── */
+char *lpp_int_to_str(int64_t val) {
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%lld", (long long)val);
+    char *out = (char *)malloc(strlen(buf) + 1);
+    strcpy(out, buf);
+    return out;
+}
+
+/* ── str_to_int: parse integer from string ── */
+int64_t lpp_str_to_int(const char *s) {
+    if (!s) return 0;
+    return (int64_t)strtoll(s, NULL, 10);
+}

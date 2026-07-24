@@ -642,11 +642,12 @@ fn resolve_min_runtime_object() -> Option<PathBuf> {
                     .arg(local_src)
                     .arg(format!("/Fo:{}", cache_obj.display()));
             } else {
-                cmd.arg("-O2")
+                cmd.arg("-Os")
                     .arg("-fno-stack-protector")
                     .arg("-ffreestanding")
                     .arg("-fno-pic")
                     .arg("-mno-red-zone")
+                    .arg("-fno-reorder-blocks-and-partition")
                     .arg("-DLPP_FREESTANDING")
                     .arg("-c")
                     .arg(local_src)

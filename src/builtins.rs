@@ -1791,6 +1791,281 @@ pub fn get_builtins() -> &'static [Builtin] {
             cl_params: &[0, 0, 0],
             cl_return: Some(0),
         },
+        // ── String character operations ──────────────────────────────
+        Builtin {
+            name: "char_at",
+            symbol: "lpp_char_at",
+            params: &[
+                ParamType::Specific(TypeRef::Str),
+                ParamType::Specific(TypeRef::Int),
+            ],
+            return_type: TypeRef::Str,
+            cl_params: &[0, 0],
+            cl_return: Some(0),
+        },
+        Builtin {
+            name: "lpp_char_at",
+            symbol: "lpp_char_at",
+            params: &[
+                ParamType::Specific(TypeRef::Str),
+                ParamType::Specific(TypeRef::Int),
+            ],
+            return_type: TypeRef::Str,
+            cl_params: &[0, 0],
+            cl_return: Some(0),
+        },
+        Builtin {
+            name: "ord",
+            symbol: "lpp_ord",
+            params: &[
+                ParamType::Specific(TypeRef::Str),
+            ],
+            return_type: TypeRef::Int,
+            cl_params: &[0],
+            cl_return: Some(0),
+        },
+        Builtin {
+            name: "lpp_ord",
+            symbol: "lpp_ord",
+            params: &[
+                ParamType::Specific(TypeRef::Str),
+            ],
+            return_type: TypeRef::Int,
+            cl_params: &[0],
+            cl_return: Some(0),
+        },
+        Builtin {
+            name: "chr",
+            symbol: "lpp_chr",
+            params: &[
+                ParamType::Specific(TypeRef::Int),
+            ],
+            return_type: TypeRef::Str,
+            cl_params: &[0],
+            cl_return: Some(0),
+        },
+        Builtin {
+            name: "lpp_chr",
+            symbol: "lpp_chr",
+            params: &[
+                ParamType::Specific(TypeRef::Int),
+            ],
+            return_type: TypeRef::Str,
+            cl_params: &[0],
+            cl_return: Some(0),
+        },
+        Builtin {
+            name: "str_find",
+            symbol: "lpp_str_find",
+            params: &[
+                ParamType::Specific(TypeRef::Str),
+                ParamType::Specific(TypeRef::Str),
+            ],
+            return_type: TypeRef::Int,
+            cl_params: &[0, 0],
+            cl_return: Some(0),
+        },
+        Builtin {
+            name: "lpp_str_find",
+            symbol: "lpp_str_find",
+            params: &[
+                ParamType::Specific(TypeRef::Str),
+                ParamType::Specific(TypeRef::Str),
+            ],
+            return_type: TypeRef::Int,
+            cl_params: &[0, 0],
+            cl_return: Some(0),
+        },
+        Builtin {
+            name: "str_contains",
+            symbol: "lpp_str_contains",
+            params: &[
+                ParamType::Specific(TypeRef::Str),
+                ParamType::Specific(TypeRef::Str),
+            ],
+            return_type: TypeRef::Int,
+            cl_params: &[0, 0],
+            cl_return: Some(0),
+        },
+        Builtin {
+            name: "lpp_str_contains",
+            symbol: "lpp_str_contains",
+            params: &[
+                ParamType::Specific(TypeRef::Str),
+                ParamType::Specific(TypeRef::Str),
+            ],
+            return_type: TypeRef::Int,
+            cl_params: &[0, 0],
+            cl_return: Some(0),
+        },
+        Builtin {
+            name: "str_starts_with",
+            symbol: "lpp_str_starts_with",
+            params: &[
+                ParamType::Specific(TypeRef::Str),
+                ParamType::Specific(TypeRef::Str),
+            ],
+            return_type: TypeRef::Int,
+            cl_params: &[0, 0],
+            cl_return: Some(0),
+        },
+        Builtin {
+            name: "lpp_str_starts_with",
+            symbol: "lpp_str_starts_with",
+            params: &[
+                ParamType::Specific(TypeRef::Str),
+                ParamType::Specific(TypeRef::Str),
+            ],
+            return_type: TypeRef::Int,
+            cl_params: &[0, 0],
+            cl_return: Some(0),
+        },
+        Builtin {
+            name: "str_ends_with",
+            symbol: "lpp_str_ends_with",
+            params: &[
+                ParamType::Specific(TypeRef::Str),
+                ParamType::Specific(TypeRef::Str),
+            ],
+            return_type: TypeRef::Int,
+            cl_params: &[0, 0],
+            cl_return: Some(0),
+        },
+        Builtin {
+            name: "lpp_str_ends_with",
+            symbol: "lpp_str_ends_with",
+            params: &[
+                ParamType::Specific(TypeRef::Str),
+                ParamType::Specific(TypeRef::Str),
+            ],
+            return_type: TypeRef::Int,
+            cl_params: &[0, 0],
+            cl_return: Some(0),
+        },
+        Builtin {
+            name: "str_upper",
+            symbol: "lpp_str_upper",
+            params: &[
+                ParamType::Specific(TypeRef::Str),
+            ],
+            return_type: TypeRef::Str,
+            cl_params: &[0],
+            cl_return: Some(0),
+        },
+        Builtin {
+            name: "lpp_str_upper",
+            symbol: "lpp_str_upper",
+            params: &[
+                ParamType::Specific(TypeRef::Str),
+            ],
+            return_type: TypeRef::Str,
+            cl_params: &[0],
+            cl_return: Some(0),
+        },
+        Builtin {
+            name: "str_lower",
+            symbol: "lpp_str_lower",
+            params: &[
+                ParamType::Specific(TypeRef::Str),
+            ],
+            return_type: TypeRef::Str,
+            cl_params: &[0],
+            cl_return: Some(0),
+        },
+        Builtin {
+            name: "lpp_str_lower",
+            symbol: "lpp_str_lower",
+            params: &[
+                ParamType::Specific(TypeRef::Str),
+            ],
+            return_type: TypeRef::Str,
+            cl_params: &[0],
+            cl_return: Some(0),
+        },
+        Builtin {
+            name: "str_trim",
+            symbol: "lpp_str_trim",
+            params: &[
+                ParamType::Specific(TypeRef::Str),
+            ],
+            return_type: TypeRef::Str,
+            cl_params: &[0],
+            cl_return: Some(0),
+        },
+        Builtin {
+            name: "lpp_str_trim",
+            symbol: "lpp_str_trim",
+            params: &[
+                ParamType::Specific(TypeRef::Str),
+            ],
+            return_type: TypeRef::Str,
+            cl_params: &[0],
+            cl_return: Some(0),
+        },
+        Builtin {
+            name: "str_replace",
+            symbol: "lpp_str_replace",
+            params: &[
+                ParamType::Specific(TypeRef::Str),
+                ParamType::Specific(TypeRef::Str),
+                ParamType::Specific(TypeRef::Str),
+            ],
+            return_type: TypeRef::Str,
+            cl_params: &[0, 0, 0],
+            cl_return: Some(0),
+        },
+        Builtin {
+            name: "lpp_str_replace",
+            symbol: "lpp_str_replace",
+            params: &[
+                ParamType::Specific(TypeRef::Str),
+                ParamType::Specific(TypeRef::Str),
+                ParamType::Specific(TypeRef::Str),
+            ],
+            return_type: TypeRef::Str,
+            cl_params: &[0, 0, 0],
+            cl_return: Some(0),
+        },
+        Builtin {
+            name: "int_to_str",
+            symbol: "lpp_int_to_str",
+            params: &[
+                ParamType::Specific(TypeRef::Int),
+            ],
+            return_type: TypeRef::Str,
+            cl_params: &[0],
+            cl_return: Some(0),
+        },
+        Builtin {
+            name: "lpp_int_to_str",
+            symbol: "lpp_int_to_str",
+            params: &[
+                ParamType::Specific(TypeRef::Int),
+            ],
+            return_type: TypeRef::Str,
+            cl_params: &[0],
+            cl_return: Some(0),
+        },
+        Builtin {
+            name: "str_to_int",
+            symbol: "lpp_str_to_int",
+            params: &[
+                ParamType::Specific(TypeRef::Str),
+            ],
+            return_type: TypeRef::Int,
+            cl_params: &[0],
+            cl_return: Some(0),
+        },
+        Builtin {
+            name: "lpp_str_to_int",
+            symbol: "lpp_str_to_int",
+            params: &[
+                ParamType::Specific(TypeRef::Str),
+            ],
+            return_type: TypeRef::Int,
+            cl_params: &[0],
+            cl_return: Some(0),
+        },
     ];
     BUILTINS
 }

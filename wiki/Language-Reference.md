@@ -361,3 +361,58 @@ enum Result[T, E]:
 ```
 
 > **Note:** Generic type parameters are erased to `i64` at the Cranelift backend level (type erasure). This means all values are uniformly represented as 64-bit words. Full monomorphization is planned for a future release.
+
+## Default Parameter Values
+
+Function parameters can have default values. When calling, omitted trailing arguments use their defaults.
+
+```lpp
+def add(a: Int, b: Int = 10) -> Int:
+    return a + b
+
+def greet(name: Str, greeting: Str = "Hello"):
+    print(str_concat(greeting, str_concat(" ", name)))
+
+# Usage:
+add(5)        # → 15 (b defaults to 10)
+add(5, 20)    # → 25 (b overridden)
+greet("world")         # → Hello world
+greet("world", "Hi")   # → Hi world
+```
+
+## String Operations
+
+```lpp
+# Character access
+char_at("hello", 0)       # → "h"
+ord("A")                  # → 65
+chr(65)                   # → "A"
+
+# Search
+str_find("hello", "ll")   # → 2 (index, or -1)
+str_contains("hello", "ll")  # → 1 (true)
+
+# Prefix/suffix
+str_starts_with("hello", "hel")  # → 1
+str_ends_with("hello", "lo")    # → 1
+
+# Case
+str_upper("hello")        # → "HELLO"
+str_lower("HELLO")        # → "hello"
+
+# Whitespace
+str_trim("  hello  ")     # → "hello"
+
+# Replace
+str_replace("foo bar foo", "foo", "baz")  # → "baz bar baz"
+
+# Conversion
+int_to_str(42)            # → "42"
+str_to_int("123")         # → 123
+
+# Existing ops
+str_len("hello")          # → 5
+str_concat("a", "b")     # → "ab"
+str_substr("hello", 1, 3) # → "ell"
+str_repeat("ha", 3)      # → "hahaha"
+```

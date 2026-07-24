@@ -952,8 +952,31 @@ impl<'a> MirLowerCtx<'a> {
                 Ok(Operand::Local(temp))
             }
             Expr::Call { callee, args } => {
+                // Fill in default parameter values if fewer args than params
+                let effective_args: Vec<&Expr>;
+                let mut default_owned: Vec<Expr> = Vec::new();
+                if let Expr::Identifier(name, _) = &**callee {
+                    let func_def = self.program.declarations.iter().find_map(|d| {
+                        if let TopLevel::Function(f) = d {
+                            if &f.name == name { Some(f) } else { None }
+                        } else { None }
+                    });
+                    if let Some(f) = func_def {
+                        if args.len() < f.params.len() {
+                            // Clone defaults for missing args
+                            for i in args.len()..f.params.len() {
+                                if let Some(ref default_expr) = f.params[i].default {
+                                    default_owned.push(default_expr.clone());
+                                }
+                            }
+                        }
+                    }
+                }
+                // Build effective arg list: provided args + defaults
+                effective_args = args.iter().chain(default_owned.iter()).collect();
+
                 let mut lowered_args = Vec::new();
-                for arg in args {
+                for arg in &effective_args {
                     lowered_args.push(self.lower_expr(builder, arg, binding_map)?);
                 }
 
