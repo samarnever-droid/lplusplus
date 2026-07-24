@@ -209,3 +209,95 @@ void lpp_map_put_float(void *map, int64_t key, double val) { int64_t ival; lpp_m
 double lpp_map_get_float(void *map, int64_t key) { int64_t ival = lpp_map_get(map, key); double fval; lpp_memcpy((char*)&fval, (const char*)&ival, 8); return fval; }
 void lpp_map_put_str_float(void *map, const char *key, double val) { int64_t ival; lpp_memcpy((char*)&ival, (const char*)&val, 8); lpp_map_put_str(map, key, ival); }
 double lpp_map_get_str_float(void *map, const char *key) { int64_t ival = lpp_map_get_str(map, key); double fval; lpp_memcpy((char*)&fval, (const char*)&ival, 8); return fval; }
+
+/* ── String builtins (freestanding, using lpp_alloc/VirtualAlloc) ── */
+
+static int64_t lpp_strlen(const char *s) { if (!s) return 0; int64_t n = 0; while (s[n]) n++; return n; }
+
+int64_t lpp_str_len(const char *s) { return lpp_strlen(s); }
+
+char *lpp_str_concat(const char *a, const char *b) { int64_t alen = lpp_strlen(a), blen = lpp_strlen(b); char *out = (char *)lpp_alloc(alen+blen+1); int64_t i; for (i = 0; i < alen; i++) out[i] = a[i]; for (i = 0; i < blen; i++) out[alen+i] = b[i]; out[alen+blen] = 0; return out; }
+
+char *lpp_str_substr(const char *s, int64_t start, int64_t length) { if (!s) { char *e = (char*)lpp_alloc(1); e[0]=0; return e; } int64_t slen = lpp_strlen(s); if (start<0) start=0; if (start>=slen||length<=0) { char *e=(char*)lpp_alloc(1); e[0]=0; return e; } if (start+length>slen) length=slen-start; char *out=(char*)lpp_alloc(length+1); int64_t i; for(i=0;i<length;i++) out[i]=s[start+i]; out[length]=0; return out; }
+
+char *lpp_str_repeat(const char *s, int64_t n) { if(!s||n<=0){char *e=(char*)lpp_alloc(1);e[0]=0;return e;} int64_t slen=lpp_strlen(s),total=slen*n; char *out=(char*)lpp_alloc(total+1); int64_t i,j; for(i=0;i<n;i++) for(j=0;j<slen;j++) out[i*slen+j]=s[j]; out[total]=0; return out; }
+
+char *lpp_char_at(const char *s, int64_t idx) { if(!s){char *e=(char*)lpp_alloc(1);e[0]=0;return e;} int64_t slen=lpp_strlen(s); if(idx<0||idx>=slen){char *e=(char*)lpp_alloc(1);e[0]=0;return e;} char *out=(char*)lpp_alloc(2); out[0]=s[idx]; out[1]=0; return out; }
+
+int64_t lpp_ord(const char *s) { if(!s||!s[0]) return 0; return (int64_t)(unsigned char)s[0]; }
+
+char *lpp_chr(int64_t code) { char *out=(char*)lpp_alloc(2); out[0]=(char)(code&0xFF); out[1]=0; return out; }
+
+int64_t lpp_str_find(const char *h, const char *n) { if(!h||!n) return -1; int64_t hl=lpp_strlen(h),nl=lpp_strlen(n); if(nl==0) return 0; if(nl>hl) return -1; int64_t i,j; for(i=0;i<=hl-nl;i++){j=0;while(j<nl&&h[i+j]==n[j])j++;if(j==nl)return i;} return -1; }
+
+int64_t lpp_str_contains(const char *h, const char *n) { return lpp_str_find(h,n)>=0?1:0; }
+
+int64_t lpp_str_starts_with(const char *s, const char *p) { if(!s||!p)return 0; int64_t pl=lpp_strlen(p),i; for(i=0;i<pl;i++){if(s[i]!=p[i]||s[i]==0)return 0;} return 1; }
+
+int64_t lpp_str_ends_with(const char *s, const char *x) { if(!s||!x)return 0; int64_t sl=lpp_strlen(s),xl=lpp_strlen(x); if(xl>sl)return 0; int64_t i; for(i=0;i<xl;i++){if(s[sl-xl+i]!=x[i])return 0;} return 1; }
+
+char *lpp_str_upper(const char *s) { if(!s){char *e=(char*)lpp_alloc(1);e[0]=0;return e;} int64_t len=lpp_strlen(s); char *out=(char*)lpp_alloc(len+1); int64_t i; for(i=0;i<len;i++) out[i]=(s[i]>='a'&&s[i]<='z')?s[i]-32:s[i]; out[len]=0; return out; }
+
+char *lpp_str_lower(const char *s) { if(!s){char *e=(char*)lpp_alloc(1);e[0]=0;return e;} int64_t len=lpp_strlen(s); char *out=(char*)lpp_alloc(len+1); int64_t i; for(i=0;i<len;i++) out[i]=(s[i]>='A'&&s[i]<='Z')?s[i]+32:s[i]; out[len]=0; return out; }
+
+char *lpp_str_trim(const char *s) { if(!s){char *e=(char*)lpp_alloc(1);e[0]=0;return e;} int64_t len=lpp_strlen(s),start=0,end=len; while(start<len&&(s[start]==' '||s[start]=='\t'||s[start]=='\n'||s[start]=='\r'))start++; while(end>start&&(s[end-1]==' '||s[end-1]=='\t'||s[end-1]=='\n'||s[end-1]=='\r'))end--; int64_t rlen=end-start; char *out=(char*)lpp_alloc(rlen+1); int64_t i; for(i=0;i<rlen;i++) out[i]=s[start+i]; out[rlen]=0; return out; }
+
+char *lpp_str_replace(const char *s, const char *old, const char *new_) { if(!s||!old||!new_){char *e=(char*)lpp_alloc(1);e[0]=0;return e;} int64_t slen=lpp_strlen(s),olen=lpp_strlen(old),nlen=lpp_strlen(new_); if(olen==0){char *out=(char*)lpp_alloc(slen+1);int64_t i;for(i=0;i<=slen;i++)out[i]=s[i];return out;} int64_t count=0,i,j; for(i=0;i<=slen-olen;i++){j=0;while(j<olen&&s[i+j]==old[j])j++;if(j==olen){count++;i+=olen-1;}} int64_t rlen=slen+count*(nlen-olen); char *out=(char*)lpp_alloc(rlen+1); int64_t w=0; for(i=0;i<slen;){j=0;if(i<=slen-olen){while(j<olen&&s[i+j]==old[j])j++;} if(j==olen){int64_t k;for(k=0;k<nlen;k++)out[w++]=new_[k];i+=olen;}else{out[w++]=s[i++];}} out[rlen]=0; return out; }
+
+char *lpp_int_to_str(int64_t val) { char buf[24]; int neg=val<0; if(neg)val=-val; int i=23; buf[i]=0; do{buf[--i]='0'+(val%10);val/=10;}while(val); if(neg)buf[--i]='-'; int64_t len=23-i; char *out=(char*)lpp_alloc(len+1); int64_t j; for(j=0;j<=len;j++)out[j]=buf[i+j]; return out; }
+
+int64_t lpp_str_to_int(const char *s) { if(!s)return 0; int64_t val=0,neg=0,i=0; while(s[i]==' '||s[i]=='\t')i++; if(s[i]=='-'){neg=1;i++;}else if(s[i]=='+')i++; while(s[i]>='0'&&s[i]<='9'){val=val*10+(s[i]-'0');i++;} return neg?-val:val; }
+
+/* ── I/O using Kernel32 ── */
+
+const char *lpp_input(void) {
+    HANDLE h = GetStdHandle((DWORD)-10); /* STD_INPUT_HANDLE */
+    char buf[4096];
+    DWORD read_count = 0;
+    ReadFile(h, buf, sizeof(buf)-1, &read_count, 0);
+    if (read_count > 0 && buf[read_count-1] == '\n') read_count--;
+    if (read_count > 0 && buf[read_count-1] == '\r') read_count--;
+    char *out = (char *)lpp_alloc(read_count + 1);
+    int64_t i;
+    for (i = 0; i < (int64_t)read_count; i++) out[i] = buf[i];
+    out[read_count] = 0;
+    return out;
+}
+
+int64_t lpp_write_file(const char *path, const char *data) {
+    HANDLE h = CreateFileA(path, GENERIC_WRITE, 0, 0, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0);
+    if (h == INVALID_HANDLE_VALUE) return -1;
+    DWORD written = 0;
+    int64_t len = lpp_strlen(data);
+    WriteFile(h, data, (DWORD)len, &written, 0);
+    CloseHandle(h);
+    return (int64_t)written;
+}
+
+char *lpp_read_file(const char *path) {
+    HANDLE h = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
+    if (h == INVALID_HANDLE_VALUE) { char *e = (char*)lpp_alloc(1); e[0]=0; return e; }
+    DWORD size = GetFileSize(h, 0);
+    char *buf = (char *)lpp_alloc(size + 1);
+    DWORD read_count = 0;
+    ReadFile(h, buf, size, &read_count, 0);
+    buf[read_count] = 0;
+    CloseHandle(h);
+    return buf;
+}
+
+int64_t lpp_append_file(const char *path, const char *data) {
+    HANDLE h = CreateFileA(path, FILE_APPEND_DATA, 0, 0, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0);
+    if (h == INVALID_HANDLE_VALUE) return -1;
+    DWORD written = 0;
+    int64_t len = lpp_strlen(data);
+    WriteFile(h, data, (DWORD)len, &written, 0);
+    CloseHandle(h);
+    return (int64_t)written;
+}
+
+int64_t lpp_delete_file(const char *path) { return DeleteFileA(path) ? 0 : -1; }
+
+int64_t lpp_file_exists(const char *path) { DWORD a = GetFileAttributesA(path); return (a != INVALID_FILE_ATTRIBUTES) ? 1 : 0; }
+
+int64_t lpp_file_size(const char *path) { HANDLE h = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0); if (h == INVALID_HANDLE_VALUE) return -1; DWORD sz = GetFileSize(h, 0); CloseHandle(h); return (int64_t)sz; }
