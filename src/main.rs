@@ -665,6 +665,12 @@ fn main() {
             // Straight-line scalar dead stores are removed only after folding
             // and inlining, before ownership instrumentation.
             mir::pass_dce::run(&mut mir_program);
+            // Copy propagation: _tmp = _a + _b; _a = _tmp → _a = _a + _b
+            // Eliminates extra register moves in tight loops.
+            mir::pass_copyprop::run(&mut mir_program);
+            // Strength reduction: x % power_of_2 → x & (power_of_2 - 1)
+            // Avoids expensive idiv on x86 for common modulo patterns.
+            mir::pass_strength::run(&mut mir_program);
             // Fuses a trailing comparison temporary with its branch to avoid
             // setcc/test materialization in hot native loops.
             mir::pass_branch::run(&mut mir_program);
