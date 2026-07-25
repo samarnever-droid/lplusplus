@@ -483,6 +483,7 @@ impl<'a> TypeChecker<'a> {
                     TypeRef::Generic(ref name, ref params) if name == "List" && !params.is_empty() => {
                         params[0].clone()
                     }
+                    TypeRef::Str => TypeRef::Str, // for c in "hello": → c is Str
                     _ => TypeRef::Int,
                 };
                 if let Some(ast_id) = binding_id.get() {

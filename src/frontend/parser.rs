@@ -1229,9 +1229,14 @@ impl Parser {
         if self.peek() == Some(&Token::Minus) {
             self.advance();
             let operand = self.parse_postfix()?;
-            return Ok(Expr::UnaryOp {
-                op: UnaryOperator::Negate,
-                operand: Box::new(operand),
+            // Constant fold: -42 → IntLiteral(-42), -3.14 → FloatLiteral(-3.14)
+            return Ok(match operand {
+                Expr::IntLiteral(v) => Expr::IntLiteral(-v),
+                Expr::FloatLiteral(v) => Expr::FloatLiteral(-v),
+                other => Expr::UnaryOp {
+                    op: UnaryOperator::Negate,
+                    operand: Box::new(other),
+                },
             });
         }
         if self.peek() == Some(&Token::Not) {

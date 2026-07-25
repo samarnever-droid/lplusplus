@@ -227,6 +227,16 @@ impl<'a> Lexer<'a> {
                 col: start_col,
             };
 
+            // Line continuation: backslash at end of line joins with next
+            if c == '\\' && self.peek_c() == Some('\n') {
+                self.next_c(); // consume \n
+                // Skip whitespace on next line (but don't emit Indent/Dedent)
+                while self.peek_c() == Some(' ') || self.peek_c() == Some('\t') {
+                    self.next_c();
+                }
+                continue;
+            }
+
             match c {
                 ' ' | '\r' => continue,
                 '\n' => {

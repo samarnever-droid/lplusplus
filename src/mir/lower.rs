@@ -679,6 +679,10 @@ impl<'a> MirLowerCtx<'a> {
                     _ => TypeRef::Int,
                 };
 
+                // Detect string iteration: for c in "hello": → char_at loop
+                let is_string_iter = list_ty == TypeRef::Str;
+                let len_symbol = if is_string_iter { "lpp_str_len" } else { "lpp_list_len" };
+
                 let list_local = builder.new_local(list_ty, false, Some("__for_list".to_string()), None);
                 builder.push_instr(MirInstr::Assign(list_local, Rvalue::Use(list_op)))?;
 
@@ -696,7 +700,7 @@ impl<'a> MirLowerCtx<'a> {
                 let len_temp = builder.new_local(TypeRef::Int, false, None, None);
                 builder.push_instr(MirInstr::Assign(
                     len_temp,
-                    Rvalue::BuiltinCall("lpp_list_len".to_string(), vec![Operand::Local(list_local)]),
+                    Rvalue::BuiltinCall(len_symbol.to_string(), vec![Operand::Local(list_local)]),
                 ))?;
                 let cmp_temp = builder.new_local(TypeRef::Bool, false, None, None);
                 builder.push_instr(MirInstr::Assign(
@@ -719,13 +723,19 @@ impl<'a> MirLowerCtx<'a> {
                 });
 
                 builder.switch_to_block(body_block_id);
-                let get_symbol = match &elem_ty {
-                    TypeRef::Float => "lpp_list_get_float",
-                    TypeRef::Custom(_) | TypeRef::Str | TypeRef::Bool => "lpp_list_get_arc",
-                    _ => "lpp_list_get",
+                let get_symbol = if is_string_iter {
+                    "lpp_char_at"
+                } else {
+                    match &elem_ty {
+                        TypeRef::Float => "lpp_list_get_float",
+                        TypeRef::Custom(_) | TypeRef::Str | TypeRef::Bool => "lpp_list_get_arc",
+                        _ => "lpp_list_get",
+                    }
                 };
-                let elem_temp = builder.new_local(elem_ty.clone(), false, None, None);
-                if matches!(elem_ty, TypeRef::Custom(_) | TypeRef::Str | TypeRef::Bool) {
+                // For string iteration, elem_ty is Str (each char is a 1-char string)
+                let actual_elem_ty = if is_string_iter { TypeRef::Str } else { elem_ty.clone() };
+                let elem_temp = builder.new_local(actual_elem_ty.clone(), false, None, None);
+                if matches!(actual_elem_ty, TypeRef::Custom(_) | TypeRef::Str | TypeRef::Bool) {
                     builder.set_local_ownership(elem_temp, Ownership::Borrowed);
                 }
                 builder.push_instr(MirInstr::Assign(
@@ -737,7 +747,7 @@ impl<'a> MirLowerCtx<'a> {
                 ))?;
 
                 let var_binding_id = binding_id.get().map(BindingId);
-                let var_local = builder.new_local(elem_ty, false, Some(var_name.clone()), var_binding_id);
+                let var_local = builder.new_local(actual_elem_ty, false, Some(var_name.clone()), var_binding_id);
                 if let Some(bid) = var_binding_id {
                     binding_map.insert(bid, var_local);
                 }
