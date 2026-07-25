@@ -34,6 +34,10 @@ __declspec(dllimport) BOOL   __stdcall FindClose(HANDLE f);
 __declspec(dllimport) DWORD  __stdcall GetFileAttributesA(const char *p);
 __declspec(dllimport) BOOL   __stdcall DeleteFileA(const char *p);
 __declspec(dllimport) void   __stdcall Sleep(DWORD ms);
+__declspec(dllimport) void   __stdcall ExitProcess(unsigned int code);
+__declspec(dllimport) void * __stdcall LoadLibraryA(const char *name);
+__declspec(dllimport) void * __stdcall GetProcAddress(void *module, const char *name);
+__declspec(dllimport) unsigned long long __stdcall GetTickCount64(void);
 
 #define STD_OUTPUT_HANDLE ((DWORD)-11)
 #define MEM_COMMIT  0x00001000UL
@@ -338,17 +342,12 @@ void lpp_random_seed(int64_t seed) { (void)seed; }
 int64_t lpp_random(void) { return 42; /* stub — full impl needs writable .data */ }
 int64_t lpp_random_range(int64_t lo, int64_t hi) { return lo < hi ? lo : 0; }
 
-/* ── Time (using Kernel32) ── */
-int64_t lpp_time_ms(void) {
-    LARGE_INTEGER freq, count;
-    QueryPerformanceFrequency(&freq);
-    QueryPerformanceCounter(&count);
-    return (int64_t)((count.QuadPart * 1000) / freq.QuadPart);
-}
+/* ── Time (using Kernel32 GetTickCount64) ── */
+int64_t lpp_time_ms(void) { return (int64_t)GetTickCount64(); }
 void lpp_sleep_ms(int64_t ms) { Sleep((DWORD)ms); }
 
 /* ── Process ── */
-void lpp_exit(int64_t code) { ExitProcess((UINT)code); }
+void lpp_exit(int64_t code) { ExitProcess((unsigned int)code); }
 
 /* ── Buffer builtins (using VirtualAlloc) ── */
 int64_t lpp_buf_alloc(int64_t size) {
@@ -463,7 +462,7 @@ static pInet_addr fn_inet_addr = 0;
 static int lpp_ws2_loaded = 0;
 static void lpp_ws2_init(void) {
     if (lpp_ws2_loaded) return;
-    HMODULE ws2 = LoadLibraryA("ws2_32.dll");
+    void *ws2 = LoadLibraryA("ws2_32.dll");
     if (!ws2) return;
     pWSAStartup pStartup = (pWSAStartup)GetProcAddress(ws2, "WSAStartup");
     if (pStartup) { char wsadata[408]; pStartup(0x0202, wsadata); }
