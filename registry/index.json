@@ -1,107 +1,172 @@
 {
   "registry": {
     "name": "L++ Package Registry",
-    "version": "1.0.0",
+    "version": "1.0",
     "url": "https://samarnever-droid.github.io/lplusplus/registry",
-    "api": "https://samarnever-droid.github.io/lplusplus/registry/index.json",
-    "source": "https://github.com/samarnever-droid/lplusplus",
-    "description": "Official L++ package registry — Git-based, JSON-indexed, GitHub Pages hosted"
+    "description": "Official L++ package registry \u2014 Git-based, JSON-indexed"
   },
   "packages": {
     "lpp-zip": {
       "name": "lpp-zip",
+      "description": "ZIP archive create/read library \u2014 pure L++ using buf_* primitives",
       "version": "0.1.0",
-      "description": "ZIP archive create/read library — pure L++ using buf_* binary primitives",
-      "authors": ["0x4171341"],
+      "authors": [
+        "0x4171341"
+      ],
       "license": "MIT",
       "repository": "https://github.com/samarnever-droid/lplusplus",
-      "source_path": "packages/lpp-zip/src/zip.lpp",
-      "source_url": "https://raw.githubusercontent.com/samarnever-droid/lplusplus/master/packages/lpp-zip/src/zip.lpp",
+      "path": "packages/lpp-zip",
+      "source": "packages/lpp-zip/src/zip.lpp",
       "dependencies": [],
-      "keywords": ["zip", "archive", "binary", "file"],
+      "keywords": [
+        "zip",
+        "archive",
+        "binary",
+        "file",
+        "compression"
+      ],
+      "features": [
+        "Create ZIP archives with multiple files",
+        "Read ZIP archives and extract entries",
+        "CRC32 verification",
+        "STORE method (no compression)",
+        "Pure L++ \u2014 no C code, no linker changes"
+      ],
       "api": {
-        "zip_create": "() -> Int",
-        "zip_add_file": "(archive: Int, filename: Str, content: Str)",
-        "zip_save": "(archive: Int, path: Str)",
-        "zip_free": "(archive: Int)",
-        "zip_open": "(path: Str) -> Int",
-        "zip_entry_count": "(handle: Int) -> Int",
-        "zip_entry_name": "(handle: Int, index: Int) -> Str",
-        "zip_entry_data": "(handle: Int, index: Int) -> Str",
-        "zip_close": "(handle: Int)"
+        "zip_create": "() -> Int \u2014 create new archive handle",
+        "zip_add_file": "(archive: Int, filename: Str, content: Str) \u2014 add file to archive",
+        "zip_save": "(archive: Int, path: Str) \u2014 write ZIP to disk",
+        "zip_free": "(archive: Int) \u2014 release archive memory",
+        "zip_open": "(path: Str) -> Int \u2014 open ZIP file for reading",
+        "zip_entry_count": "(handle: Int) -> Int \u2014 number of entries",
+        "zip_entry_name": "(handle: Int, index: Int) -> Str \u2014 get entry filename",
+        "zip_entry_data": "(handle: Int, index: Int) -> Str \u2014 get entry content",
+        "zip_close": "(handle: Int) \u2014 close ZIP handle"
       }
     },
     "lpp-math": {
       "name": "lpp-math",
+      "description": "Math utilities \u2014 abs, min, max, pow, gcd, lcm, fib, factorial",
       "version": "0.1.0",
-      "description": "Math utilities — abs, min, max, pow, gcd, lcm, fib, factorial",
-      "authors": ["0x4171341"],
+      "authors": [
+        "0x4171341"
+      ],
       "license": "MIT",
-      "source_url": "https://raw.githubusercontent.com/samarnever-droid/lplusplus/master/stdlib/math.lpp",
+      "path": "stdlib/math.lpp",
+      "source": "stdlib/math.lpp",
       "dependencies": [],
-      "keywords": ["math", "stdlib"],
-      "api": {
-        "abs": "(x: Int) -> Int",
-        "min": "(a: Int, b: Int) -> Int",
-        "max": "(a: Int, b: Int) -> Int",
-        "clamp": "(x: Int, lo: Int, hi: Int) -> Int",
-        "pow": "(base: Int, exp: Int) -> Int",
-        "gcd": "(a: Int, b: Int) -> Int",
-        "fib": "(n: Int) -> Int",
-        "factorial": "(n: Int) -> Int",
-        "is_even": "(x: Int) -> Bool",
-        "is_odd": "(x: Int) -> Bool"
-      }
+      "keywords": [
+        "math",
+        "stdlib"
+      ]
     },
     "lpp-strings": {
       "name": "lpp-strings",
+      "description": "String utilities \u2014 repeat, contains, starts_with, reverse, pad",
       "version": "0.1.0",
-      "description": "String utilities — repeat, contains, starts_with, reverse, pad",
-      "authors": ["0x4171341"],
+      "authors": [
+        "0x4171341"
+      ],
       "license": "MIT",
-      "source_url": "https://raw.githubusercontent.com/samarnever-droid/lplusplus/master/stdlib/strings.lpp",
+      "path": "stdlib/strings.lpp",
+      "source": "stdlib/strings.lpp",
       "dependencies": [],
-      "keywords": ["string", "text", "stdlib"],
-      "api": {
-        "str_repeat": "(s: Str, n: Int) -> Str",
-        "str_contains": "(haystack: Str, needle: Str) -> Bool",
-        "str_starts_with": "(s: Str, prefix: Str) -> Bool",
-        "str_ends_with": "(s: Str, suffix: Str) -> Bool",
-        "str_reverse": "(s: Str) -> Str",
-        "str_is_empty": "(s: Str) -> Bool",
-        "str_pad_left": "(s: Str, width: Int, pad_char: Str) -> Str",
-        "str_pad_right": "(s: Str, width: Int, pad_char: Str) -> Str"
-      }
+      "keywords": [
+        "string",
+        "text",
+        "stdlib"
+      ]
     },
     "lpp-collections": {
       "name": "lpp-collections",
+      "description": "Collection utilities \u2014 list_sum, list_max, list_min, list_reverse",
       "version": "0.1.0",
-      "description": "Collection utilities — list_sum, list_max, list_min, list_reverse",
-      "authors": ["0x4171341"],
+      "authors": [
+        "0x4171341"
+      ],
       "license": "MIT",
-      "source_url": "https://raw.githubusercontent.com/samarnever-droid/lplusplus/master/stdlib/collections.lpp",
+      "path": "stdlib/collections.lpp",
+      "source": "stdlib/collections.lpp",
       "dependencies": [],
-      "keywords": ["list", "collections", "stdlib"]
+      "keywords": [
+        "list",
+        "collections",
+        "stdlib"
+      ]
     },
     "lpp-algo": {
       "name": "lpp-algo",
+      "description": "Algorithm library \u2014 bubble_sort, binary_search, list_range, list_fill",
       "version": "0.1.0",
-      "description": "Algorithms — bubble_sort, binary_search, list_range, list_fill",
-      "authors": ["0x4171341"],
+      "authors": [
+        "0x4171341"
+      ],
       "license": "MIT",
-      "source_url": "https://raw.githubusercontent.com/samarnever-droid/lplusplus/master/stdlib/algo.lpp",
+      "path": "stdlib/algo.lpp",
+      "source": "stdlib/algo.lpp",
       "dependencies": [],
-      "keywords": ["algorithm", "sort", "search", "stdlib"]
+      "keywords": [
+        "algorithm",
+        "sort",
+        "search",
+        "stdlib"
+      ]
     },
-    "lpp-convert": {
-      "name": "lpp-convert",
+    "lpp-opencode": {
+      "name": "lpp-opencode",
       "version": "0.1.0",
-      "description": "Type conversion utilities — int_to_str, bool_to_str",
-      "authors": ["0x4171341"],
+      "description": "OpenCode port foundation in L++ \u2014 terminal UI, session model, provider abstraction, and coding-agent scaffold",
+      "authors": [
+        "0x4171341"
+      ],
       "license": "MIT",
-      "source_url": "https://raw.githubusercontent.com/samarnever-droid/lplusplus/master/stdlib/convert.lpp",
+      "repository": "https://github.com/samarnever-droid/lpp-opencode",
+      "source_url": "https://raw.githubusercontent.com/samarnever-droid/lpp-opencode/main/src/main.lpp",
+      "path": "src/main.lpp",
+      "dependencies": [
+        "lpp-tui"
+      ],
+      "keywords": [
+        "opencode",
+        "coding-agent",
+        "tui",
+        "terminal",
+        "ai",
+        "llm"
+      ],
+      "features": [
+        "OpenCode-style terminal coding agent scaffold",
+        "Provider abstraction",
+        "Session model",
+        "File/context tool helpers",
+        "ANSI TUI rendering"
+      ]
+    },
+    "lpp-tui": {
+      "name": "lpp-tui",
+      "version": "0.1.0",
+      "description": "Reusable ANSI terminal UI helpers extracted from the L++ OpenCode port",
+      "authors": [
+        "0x4171341"
+      ],
+      "license": "MIT",
+      "repository": "https://github.com/samarnever-droid/lpp-opencode",
+      "source_url": "https://raw.githubusercontent.com/samarnever-droid/lpp-opencode/main/src/tui/ansi.lpp",
+      "path": "src/tui",
       "dependencies": [],
-      "keywords": ["convert", "stdlib"]
+      "keywords": [
+        "tui",
+        "ansi",
+        "terminal",
+        "opencode",
+        "ui"
+      ],
+      "features": [
+        "ANSI colors",
+        "Cursor movement",
+        "Screen clearing",
+        "Simple frame/prompt rendering"
+      ]
     }
   }
 }
