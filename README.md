@@ -56,34 +56,17 @@ def main():
 
 ## Install
 
-### 🐧 Linux / macOS
-```bash
-curl -fsSL https://raw.githubusercontent.com/samarnever-droid/lplusplus/master/install.sh | sh
-```
-
-### 🪟 Windows (PowerShell)
-```powershell
-irm https://raw.githubusercontent.com/samarnever-droid/lplusplus/master/install.ps1 | iex
-```
-
-### 📦 From Source
-```bash
-git clone https://github.com/samarnever-droid/lplusplus.git
-cd lplusplus
-cargo build --release --bin lpp --bin lpp-link
-```
-
-### ⚡ Use Without Installing (run from build directory)
 ```bash
 # Linux / macOS
-./target/release/lpp myfile.lpp
+curl -fsSL https://raw.githubusercontent.com/samarnever-droid/lplusplus/master/install.sh | sh
 
-# Windows PowerShell
-.\target\release\lpp.exe myfile.lpp
+# Windows (PowerShell)
+irm https://raw.githubusercontent.com/samarnever-droid/lplusplus/master/install.ps1 | iex
+
+# From source
+git clone https://github.com/samarnever-droid/lplusplus.git
+cd lplusplus && cargo build --release --bin lpp --bin lpp-link
 ```
-
-### 📥 Pre-built Releases
-Download binaries for Linux, Windows, and macOS from the [Releases page](https://github.com/samarnever-droid/lplusplus/releases/latest).
 
 ## Quick Start
 
@@ -313,14 +296,6 @@ runtime/        Platform runtimes
 | **ownership-and-parity** | ARC ownership verification suite |
 | **windows-coff-fallback** | Windows PE direct linker + King20 PE gate |
 | **macos-host-link** | macOS Mach-O compilation |
-
-## Built with L++
-
-| Project | Description | Repo |
-|---|---|---|
-| **lpp-http** | HTTP/1.1 static file server (~100 LOC) | [lpp-http](https://github.com/samarnever-droid/lpp-http) |
-| **lua-in-lplusplus** | Lua interpreter written in L++ | [lua-in-lplusplus](https://github.com/samarnever-droid/lua-in-lplusplus) |
-| **godot-lplusplus** | L++ scripting for Godot Engine | [godot-lplusplus](https://github.com/samarnever-droid/godot-lplusplus) |
 
 ## License
 

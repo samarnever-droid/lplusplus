@@ -1,0 +1,41 @@
+# stdlib/io.lpp — I/O helpers
+
+def prompt(message: Str) -> Str:
+    # Print message without newline, read input
+    print_str(message)
+    return input()
+
+def read_lines(path: Str) -> Int:
+    # Read a file and split into a list of lines
+    # Returns list of string pointers
+    content := read_file(path)
+    lines := list_new()
+    mut start := 0
+    for i in range(str_len(content)):
+        c := char_at(content, i)
+        if c == "\n":
+            line := str_substr(content, start, i - start)
+            # Remove trailing \r
+            if str_len(line) > 0 && str_ends_with(line, "\r"):
+                line = str_substr(line, 0, str_len(line) - 1)
+            list_push(lines, line)
+            start = i + 1
+    # Last line (no trailing newline)
+    if start < str_len(content):
+        line := str_substr(content, start, str_len(content) - start)
+        list_push(lines, line)
+    return lines
+
+def write_lines(path: Str, lines: Int):
+    # Write list of strings as lines to file
+    mut content := ""
+    for i in range(list_len(lines)):
+        line := list_get(lines, i)
+        content = str_concat(content, line)
+        content = str_concat(content, "\n")
+    write_file(path, content)
+
+def file_read_or_default(path: Str, default: Str) -> Str:
+    if file_exists(path) == 1:
+        return read_file(path)
+    return default

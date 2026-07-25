@@ -1,0 +1,85 @@
+# stdlib/json.lpp — Minimal JSON parser/builder (pure L++)
+# Handles: strings, numbers, booleans, null, objects, arrays
+
+def json_get_string(json: Str, key: Str) -> Str:
+    # Find "key":"value" in a JSON string
+    search := str_concat("\"", str_concat(key, "\":\""))
+    idx := str_find(json, search)
+    if idx < 0:
+        # Try with space: "key": "value"
+        search = str_concat("\"", str_concat(key, "\": \""))
+        idx = str_find(json, search)
+        if idx < 0:
+            return ""
+    start := idx + str_len(search)
+    mut end := start
+    mut escaped := 0
+    while end < str_len(json):
+        c := char_at(json, end)
+        if escaped == 1:
+            escaped = 0
+            end += 1
+        elif c == "\\":
+            escaped = 1
+            end += 1
+        elif c == "\"":
+            return str_substr(json, start, end - start)
+        else:
+            end += 1
+    return ""
+
+def json_get_int(json: Str, key: Str) -> Int:
+    # Find "key":123 in a JSON string
+    search := str_concat("\"", str_concat(key, "\":"))
+    idx := str_find(json, search)
+    if idx < 0:
+        search = str_concat("\"", str_concat(key, "\": "))
+        idx = str_find(json, search)
+        if idx < 0:
+            return 0
+    start := idx + str_len(search)
+    # Skip whitespace
+    while start < str_len(json) && char_at(json, start) == " ":
+        start += 1
+    mut end := start
+    while end < str_len(json):
+        c := char_at(json, end)
+        if c == "," || c == "}" || c == " " || c == "\n":
+            return str_to_int(str_substr(json, start, end - start))
+        end += 1
+    return str_to_int(str_substr(json, start, end - start))
+
+def json_get_bool(json: Str, key: Str) -> Int:
+    search := str_concat("\"", str_concat(key, "\":"))
+    idx := str_find(json, search)
+    if idx < 0:
+        search = str_concat("\"", str_concat(key, "\": "))
+        idx = str_find(json, search)
+        if idx < 0:
+            return 0
+    start := idx + str_len(search)
+    while start < str_len(json) && char_at(json, start) == " ":
+        start += 1
+    if str_starts_with(str_substr(json, start, 4), "true"):
+        return 1
+    return 0
+
+def json_object(pairs: Str) -> Str:
+    # Build {"key":"val","key2":"val2"} from pre-formatted pairs
+    return str_concat("{", str_concat(pairs, "}"))
+
+def json_kv_str(key: Str, value: Str) -> Str:
+    # "key":"value"
+    mut r := "\""
+    r = str_concat(r, key)
+    r = str_concat(r, "\":\"")
+    r = str_concat(r, value)
+    r = str_concat(r, "\"")
+    return r
+
+def json_kv_int(key: Str, value: Int) -> Str:
+    mut r := "\""
+    r = str_concat(r, key)
+    r = str_concat(r, "\":")
+    r = str_concat(r, int_to_str(value))
+    return r

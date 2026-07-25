@@ -1,0 +1,41 @@
+# stdlib/args.lpp — Command-line argument parsing
+# Note: L++ doesn't have OS-level argv access in freestanding mode.
+# This module provides helpers for when args are passed via env or config.
+
+def parse_flags(input: Str) -> Int:
+    # Count flags (words starting with -) in a space-separated string
+    mut count := 0
+    mut in_flag := 0
+    for c in input:
+        if c == "-" && in_flag == 0:
+            in_flag = 1
+            count += 1
+        elif c == " ":
+            in_flag = 0
+    return count
+
+def get_flag_value(input: Str, flag: Str) -> Str:
+    # Extract value after --flag=value or --flag value
+    eq_form := str_concat(flag, "=")
+    idx := str_find(input, eq_form)
+    if idx >= 0:
+        start := idx + str_len(eq_form)
+        mut end := start
+        while end < str_len(input) && char_at(input, end) != " ":
+            end += 1
+        return str_substr(input, start, end - start)
+    # Try --flag value form
+    idx = str_find(input, flag)
+    if idx >= 0:
+        start := idx + str_len(flag)
+        # Skip spaces
+        while start < str_len(input) && char_at(input, start) == " ":
+            start += 1
+        mut end := start
+        while end < str_len(input) && char_at(input, end) != " ":
+            end += 1
+        return str_substr(input, start, end - start)
+    return ""
+
+def has_flag(input: Str, flag: Str) -> Int:
+    return str_contains(input, flag)

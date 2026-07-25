@@ -1,0 +1,25 @@
+# stdlib/map_str.lpp — String-keyed map helpers
+# Wraps the builtin map_put_str/map_get_str with convenience functions
+
+def map_str_new() -> Int:
+    return map_new()
+
+def map_str_set(m: Int, key: Str, value: Int):
+    map_put_str(m, key, value)
+
+def map_str_get(m: Int, key: Str) -> Int:
+    return map_get_str(m, key)
+
+def map_str_has(m: Int, key: Str) -> Int:
+    return map_has_str(m, key)
+
+def map_str_set_str(m: Int, key: Str, value: Str):
+    # Store string pointer as int value
+    map_put_str(m, key, value)
+
+def map_str_get_str(m: Int, key: Str) -> Str:
+    # Retrieve string from int value
+    return map_get_str(m, key)
+
+def map_str_remove(m: Int, key: Str):
+    map_remove_str(m, key)

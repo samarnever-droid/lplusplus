@@ -1,0 +1,34 @@
+# stdlib/time_util.lpp — Timer and duration helpers
+
+def timer_start() -> Int:
+    return time_ms()
+
+def timer_elapsed(start: Int) -> Int:
+    return time_ms() - start
+
+def format_duration(ms: Int) -> Str:
+    if ms < 1000:
+        return str_concat(int_to_str(ms), "ms")
+    elif ms < 60000:
+        secs := ms / 1000
+        remainder := ms % 1000
+        result := str_concat(int_to_str(secs), ".")
+        # Pad to 3 digits
+        if remainder < 10:
+            result = str_concat(result, "00")
+        elif remainder < 100:
+            result = str_concat(result, "0")
+        result = str_concat(result, int_to_str(remainder))
+        return str_concat(result, "s")
+    else:
+        mins := ms / 60000
+        secs := (ms % 60000) / 1000
+        result := str_concat(int_to_str(mins), "m ")
+        result = str_concat(result, int_to_str(secs))
+        return str_concat(result, "s")
+
+def benchmark(label: Str, start: Int):
+    elapsed := timer_elapsed(start)
+    msg := str_concat(label, ": ")
+    msg = str_concat(msg, format_duration(elapsed))
+    print_str(msg)

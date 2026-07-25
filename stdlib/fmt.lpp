@@ -1,0 +1,51 @@
+# stdlib/fmt.lpp — String formatting helpers
+
+def pad_left(s: Str, width: Int, ch: Str = " ") -> Str:
+    mut result := s
+    while str_len(result) < width:
+        result = str_concat(ch, result)
+    return result
+
+def pad_right(s: Str, width: Int, ch: Str = " ") -> Str:
+    mut result := s
+    while str_len(result) < width:
+        result = str_concat(result, ch)
+    return result
+
+def center(s: Str, width: Int, ch: Str = " ") -> Str:
+    diff := width - str_len(s)
+    if diff <= 0:
+        return s
+    left := diff / 2
+    right := diff - left
+    mut result := str_repeat(ch, left)
+    result = str_concat(result, s)
+    result = str_concat(result, str_repeat(ch, right))
+    return result
+
+def repeat_char(ch: Str, count: Int) -> Str:
+    return str_repeat(ch, count)
+
+def join_strs(sep: Str, a: Str, b: Str) -> Str:
+    return str_concat(a, str_concat(sep, b))
+
+def bool_str(v: Int) -> Str:
+    if v == 1:
+        return "true"
+    return "false"
+
+def hex(n: Int) -> Str:
+    if n == 0:
+        return "0x0"
+    mut result := ""
+    mut val := n
+    if val < 0:
+        val = 0 - val
+    while val > 0:
+        digit := val % 16
+        if digit < 10:
+            result = str_concat(chr(48 + digit), result)
+        else:
+            result = str_concat(chr(87 + digit), result)
+        val = val / 16
+    return str_concat("0x", result)

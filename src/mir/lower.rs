@@ -679,10 +679,6 @@ impl<'a> MirLowerCtx<'a> {
                     _ => TypeRef::Int,
                 };
 
-                // Detect string iteration: for c in "hello": → char_at loop
-                let is_string_iter = list_ty == TypeRef::Str;
-                let len_symbol = if is_string_iter { "lpp_str_len" } else { "lpp_list_len" };
-
                 let list_local = builder.new_local(list_ty, false, Some("__for_list".to_string()), None);
                 builder.push_instr(MirInstr::Assign(list_local, Rvalue::Use(list_op)))?;
 
@@ -700,7 +696,7 @@ impl<'a> MirLowerCtx<'a> {
                 let len_temp = builder.new_local(TypeRef::Int, false, None, None);
                 builder.push_instr(MirInstr::Assign(
                     len_temp,
-                    Rvalue::BuiltinCall(len_symbol.to_string(), vec![Operand::Local(list_local)]),
+                    Rvalue::BuiltinCall("lpp_list_len".to_string(), vec![Operand::Local(list_local)]),
                 ))?;
                 let cmp_temp = builder.new_local(TypeRef::Bool, false, None, None);
                 builder.push_instr(MirInstr::Assign(
@@ -723,19 +719,13 @@ impl<'a> MirLowerCtx<'a> {
                 });
 
                 builder.switch_to_block(body_block_id);
-                let get_symbol = if is_string_iter {
-                    "lpp_char_at"
-                } else {
-                    match &elem_ty {
-                        TypeRef::Float => "lpp_list_get_float",
-                        TypeRef::Custom(_) | TypeRef::Str | TypeRef::Bool => "lpp_list_get_arc",
-                        _ => "lpp_list_get",
-                    }
+                let get_symbol = match &elem_ty {
+                    TypeRef::Float => "lpp_list_get_float",
+                    TypeRef::Custom(_) | TypeRef::Str | TypeRef::Bool => "lpp_list_get_arc",
+                    _ => "lpp_list_get",
                 };
-                // For string iteration, elem_ty is Str (each char is a 1-char string)
-                let actual_elem_ty = if is_string_iter { TypeRef::Str } else { elem_ty.clone() };
-                let elem_temp = builder.new_local(actual_elem_ty.clone(), false, None, None);
-                if matches!(actual_elem_ty, TypeRef::Custom(_) | TypeRef::Str | TypeRef::Bool) {
+                let elem_temp = builder.new_local(elem_ty.clone(), false, None, None);
+                if matches!(elem_ty, TypeRef::Custom(_) | TypeRef::Str | TypeRef::Bool) {
                     builder.set_local_ownership(elem_temp, Ownership::Borrowed);
                 }
                 builder.push_instr(MirInstr::Assign(
@@ -747,7 +737,7 @@ impl<'a> MirLowerCtx<'a> {
                 ))?;
 
                 let var_binding_id = binding_id.get().map(BindingId);
-                let var_local = builder.new_local(actual_elem_ty, false, Some(var_name.clone()), var_binding_id);
+                let var_local = builder.new_local(elem_ty, false, Some(var_name.clone()), var_binding_id);
                 if let Some(bid) = var_binding_id {
                     binding_map.insert(bid, var_local);
                 }
@@ -1033,33 +1023,9 @@ impl<'a> MirLowerCtx<'a> {
                     | BinaryOperator::LessEq
                     | BinaryOperator::Greater
                     | BinaryOperator::GreaterEq => TypeRef::Bool,
-                    _ => left_ty.clone(),
+                    _ => left_ty,
                 };
                 let temp = builder.new_local(res_ty, false, None, None);
-
-                // String equality: use lpp_str_eq for value comparison
-                if left_ty == TypeRef::Str && matches!(op, BinaryOperator::Eq | BinaryOperator::NotEq) {
-                    let eq_result = builder.new_local(TypeRef::Int, false, None, None);
-                    builder.push_instr(MirInstr::Assign(
-                        eq_result,
-                        Rvalue::BuiltinCall("lpp_str_eq".to_string(), vec![left, right]),
-                    ))?;
-                    if *op == BinaryOperator::Eq {
-                        // str_eq returns 1 for equal → convert to Bool
-                        builder.push_instr(MirInstr::Assign(
-                            temp,
-                            Rvalue::BinaryOp(BinaryOperator::Eq, Operand::Local(eq_result), Operand::Int(1)),
-                        ))?;
-                    } else {
-                        // NotEq: str_eq returns 0 for not equal
-                        builder.push_instr(MirInstr::Assign(
-                            temp,
-                            Rvalue::BinaryOp(BinaryOperator::Eq, Operand::Local(eq_result), Operand::Int(0)),
-                        ))?;
-                    }
-                    return Ok(Operand::Local(temp));
-                }
-
                 builder.push_instr(MirInstr::Assign(
                     temp,
                     Rvalue::BinaryOp(op.clone(), left, right),
@@ -1401,44 +1367,15 @@ impl<'a> MirLowerCtx<'a> {
                                 None
                             }
                         } else if name == "print" {
-                        let (is_string, is_float, is_bool) = match lowered_args.first() {
-                            Some(Operand::String(_)) => (true, false, false),
-                            Some(Operand::Float(_)) => (false, true, false),
-                            Some(Operand::Bool(_)) => (false, false, true),
+                        let (is_string, is_float) = match lowered_args.first() {
+                            Some(Operand::String(_)) => (true, false),
+                            Some(Operand::Float(_)) => (false, true),
                             Some(Operand::Local(local_id)) | Some(Operand::Borrowed(local_id)) => {
                                 let ty = &builder.function.locals[local_id.0].ty;
-                                (*ty == TypeRef::Str, *ty == TypeRef::Float, *ty == TypeRef::Bool)
+                                (*ty == TypeRef::Str, *ty == TypeRef::Float)
                             }
-                            _ => (false, false, false),
+                            _ => (false, false),
                         };
-                        // Bool → Int conversion: extend i8 to i64 before printing
-                        if is_bool {
-                            if let Some(bool_op) = lowered_args.first() {
-                                let int_local = builder.new_local(TypeRef::Int, false, None, None);
-                                // Use BinaryOp to convert: bool_val + 0 coerces i8 → i64
-                                // Actually just use a conditional: if bool then 1 else 0
-                                let one = builder.new_local(TypeRef::Int, false, None, None);
-                                let zero = builder.new_local(TypeRef::Int, false, None, None);
-                                builder.push_instr(MirInstr::Assign(one, Rvalue::Use(Operand::Int(1))))?;
-                                builder.push_instr(MirInstr::Assign(zero, Rvalue::Use(Operand::Int(0))))?;
-                                let true_block = builder.new_block();
-                                let false_block = builder.new_block();
-                                let merge_block = builder.new_block();
-                                builder.terminate_current_block(Terminator::If {
-                                    cond: bool_op.clone(),
-                                    then_block: true_block,
-                                    else_block: false_block,
-                                })?;
-                                builder.switch_to_block(true_block);
-                                builder.push_instr(MirInstr::Assign(int_local, Rvalue::Use(Operand::Int(1))))?;
-                                builder.terminate_current_block(Terminator::Goto(merge_block))?;
-                                builder.switch_to_block(false_block);
-                                builder.push_instr(MirInstr::Assign(int_local, Rvalue::Use(Operand::Int(0))))?;
-                                builder.terminate_current_block(Terminator::Goto(merge_block))?;
-                                builder.switch_to_block(merge_block);
-                                lowered_args = vec![Operand::Local(int_local)];
-                            }
-                        }
                         Some(
                             if is_string {
                                 "lpp_print_str"

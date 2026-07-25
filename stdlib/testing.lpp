@@ -1,0 +1,38 @@
+# stdlib/testing.lpp — Simple testing framework
+
+const TEST_PASS_COUNT = 0
+const TEST_FAIL_COUNT = 0
+
+def assert_eq_int(actual: Int, expected: Int, msg: Str = ""):
+    if actual == expected:
+        label := str_concat("  PASS: ", msg)
+        print_str(label)
+    else:
+        label := str_concat("  FAIL: ", msg)
+        label = str_concat(label, " — expected ")
+        label = str_concat(label, int_to_str(expected))
+        label = str_concat(label, ", got ")
+        label = str_concat(label, int_to_str(actual))
+        print_str(label)
+
+def assert_eq_str(actual: Str, expected: Str, msg: Str = ""):
+    if actual == expected:
+        label := str_concat("  PASS: ", msg)
+        print_str(label)
+    else:
+        label := str_concat("  FAIL: ", msg)
+        label = str_concat(label, " — expected '")
+        label = str_concat(label, expected)
+        label = str_concat(label, "', got '")
+        label = str_concat(label, actual)
+        label = str_concat(label, "'")
+        print_str(label)
+
+def assert_true(cond: Int, msg: Str = ""):
+    assert_eq_int(cond, 1, msg)
+
+def assert_false(cond: Int, msg: Str = ""):
+    assert_eq_int(cond, 0, msg)
+
+def test_section(name: Str):
+    print_str(str_concat("=== ", str_concat(name, " ===")))

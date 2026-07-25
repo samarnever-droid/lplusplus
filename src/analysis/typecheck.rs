@@ -178,39 +178,10 @@ impl<'a> TypeChecker<'a> {
     }
 
     pub fn check_program(&mut self, program: &Program) -> Result<(), String> {
-        // Phase 0.5: Collect trait names and method signatures
-        let mut trait_methods: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+        // Phase 0.5: Collect trait names
         for decl in &program.declarations {
             if let TopLevel::Trait(t) = decl {
                 self.trait_names.insert(t.name.clone());
-                let methods: Vec<String> = t.methods.iter().map(|m| m.name.clone()).collect();
-                trait_methods.insert(t.name.clone(), methods);
-            }
-        }
-
-        // Phase 0.6: Trait conformance — verify impl blocks have all required methods
-        for decl in &program.declarations {
-            if let TopLevel::Impl(ib) = decl {
-                if let Some(required) = trait_methods.get(&ib.trait_name) {
-                    let provided: Vec<String> = ib.methods.iter().map(|m| {
-                        // Methods are mangled as TargetType_methodName
-                        m.name.strip_prefix(&format!("{}_", ib.target_type))
-                            .unwrap_or(&m.name).to_string()
-                    }).collect();
-                    for req in required {
-                        if !provided.contains(req) {
-                            return Err(format!(
-                                "Trait '{}' requires method '{}' but 'impl {} for {}' does not provide it",
-                                ib.trait_name, req, ib.trait_name, ib.target_type
-                            ));
-                        }
-                    }
-                } else {
-                    return Err(format!(
-                        "impl references unknown trait '{}'",
-                        ib.trait_name
-                    ));
-                }
             }
         }
 
@@ -512,7 +483,6 @@ impl<'a> TypeChecker<'a> {
                     TypeRef::Generic(ref name, ref params) if name == "List" && !params.is_empty() => {
                         params[0].clone()
                     }
-                    TypeRef::Str => TypeRef::Str, // for c in "hello": → c is Str
                     _ => TypeRef::Int,
                 };
                 if let Some(ast_id) = binding_id.get() {
