@@ -114,7 +114,7 @@
     },
     "lpp-opencode": {
       "name": "lpp-opencode",
-      "version": "0.5.1",
+      "version": "0.5.2",
       "description": "OpenCode/OpenClaude port foundation in L++ — installable lpp-opencode command, Claude router, TUI, sessions, commands, tools, and agent scaffold",
       "authors": [
         "0x4171341"
@@ -135,6 +135,7 @@
         "llm"
       ],
       "features": [
+        "Direct-link-safe default command entrypoint for Windows (file tools disabled until host tool mode)",
         "Immediate current-session PowerShell PATH fix for lpp-opencode command",
         "Installable lpp-opencode command on Linux, macOS, and Windows",
         "Unix shell launcher and Windows PowerShell/CMD launchers",
