@@ -676,6 +676,7 @@ fn resolve_min_runtime_object() -> Option<PathBuf> {
                     .arg("-fno-pic")
                     .arg("-mno-red-zone")
                     .arg("-fno-reorder-blocks-and-partition")
+                    .arg("-fno-asynchronous-unwind-tables")
                     .arg("-DLPP_FREESTANDING")
                     .arg("-c")
                     .arg(local_src)

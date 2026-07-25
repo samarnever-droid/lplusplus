@@ -1055,3 +1055,48 @@ const char *lpp_input(void) {
     out[0] = 0;
     return out;
 }
+
+/* ── Math builtins ── */
+int64_t lpp_abs(int64_t x) { return x < 0 ? -x : x; }
+int64_t lpp_min(int64_t a, int64_t b) { return a < b ? a : b; }
+int64_t lpp_max(int64_t a, int64_t b) { return a > b ? a : b; }
+int64_t lpp_int_pow(int64_t base, int64_t exp) {
+    int64_t result = 1;
+    while (exp > 0) { if (exp & 1) result *= base; base *= base; exp >>= 1; }
+    return result;
+}
+
+/* ── Random (xorshift64) ── */
+static uint64_t lpp_rng_state = 0;
+void lpp_random_seed(int64_t seed) { lpp_rng_state = (uint64_t)seed; }
+int64_t lpp_random(void) {
+    if (lpp_rng_state == 0) lpp_rng_state = 0x1234567890ABCDEFULL;
+    lpp_rng_state ^= lpp_rng_state << 13;
+    lpp_rng_state ^= lpp_rng_state >> 7;
+    lpp_rng_state ^= lpp_rng_state << 17;
+    return (int64_t)(lpp_rng_state & 0x7FFFFFFFFFFFFFFFULL);
+}
+int64_t lpp_random_range(int64_t min, int64_t max) {
+    if (min >= max) return min;
+    return min + (lpp_random() % (max - min));
+}
+
+/* ── Time (via clock_gettime syscall 228) ── */
+int64_t lpp_time_ms(void) {
+    uint64_t buf[2]; /* tv_sec, tv_nsec */
+    /* syscall 228 = clock_gettime, clock_id 1 = CLOCK_MONOTONIC */
+    __asm__ volatile ("syscall" : "=a"(buf[0]) : "a"(228), "D"(1), "S"(buf) : "rcx", "r11", "memory");
+    return (int64_t)(buf[0] * 1000 + buf[1] / 1000000);
+}
+void lpp_sleep_ms(int64_t ms) {
+    uint64_t buf[2]; /* tv_sec, tv_nsec */
+    buf[0] = (uint64_t)(ms / 1000);
+    buf[1] = (uint64_t)((ms % 1000) * 1000000);
+    __asm__ volatile ("syscall" : : "a"(35), "D"(buf), "S"(0) : "rcx", "r11", "memory"); /* nanosleep */
+}
+
+/* ── Process ── */
+void lpp_exit(int64_t code) {
+    __asm__ volatile ("syscall" : : "a"(60), "D"(code) : "rcx", "r11"); /* exit */
+    __builtin_unreachable();
+}
