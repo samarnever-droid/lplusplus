@@ -242,6 +242,63 @@ fn load_elf_inputs(path: &Path, out: &mut Vec<ElfInput>) -> Result<(), String> {
     Ok(())
 }
 
+/// When shared libraries are needed (-lSDL2 etc.), delegate to the system
+/// linker for dynamic linking. Pure L++ programs still use our direct static path.
+fn write_elf_dynamic(inputs: &[PathBuf], output: &Path, link_libs: &[String]) -> Result<(), String> {
+    if link_libs.is_empty() {
+        return write_elf(inputs, output);
+    }
+
+    // Dynamic linking: use system ld/cc to link object files with shared libraries.
+    // This is the same approach Rust, Go, and Zig use — the system linker handles
+    // .dynamic, .dynsym, .got.plt, DT_NEEDED, PT_INTERP for us.
+    let cc = std::env::var("CC").unwrap_or_else(|_| "cc".to_string());
+    let mut cmd = std::process::Command::new(&cc);
+    for input in inputs {
+        // Skip freestanding runtime objects (non-PIE, incompatible with dynamic linking)
+        let fname = input.file_name().and_then(|f| f.to_str()).unwrap_or("");
+        if fname.contains("runtime_min") {
+            continue;
+        }
+        cmd.arg(input);
+    }
+    // Include host runtime source if available (beside the lpp-link binary or cwd)
+    let rt_candidates = [
+        std::env::current_dir().ok().map(|d| d.join("lpp_runtime.c")),
+        std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join("lpp_runtime.c"))),
+        std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join("../lpp_runtime.c"))),
+    ];
+    let mut found_rt = false;
+    for candidate in &rt_candidates {
+        if let Some(path) = candidate {
+            if path.exists() {
+                cmd.arg(path);
+                found_rt = true;
+                break;
+            }
+        }
+    }
+    if !found_rt {
+        eprintln!("lpp-link warning: lpp_runtime.c not found; dynamic binary may have unresolved runtime symbols");
+    }
+    cmd.arg("-o").arg(output);
+    for lib in link_libs {
+        cmd.arg(format!("-l{}", lib));
+    }
+    cmd.arg("-lm");
+
+    let status = cmd
+        .stdin(std::process::Stdio::null())
+        .status()
+        .map_err(|e| format!("failed to execute '{}' for dynamic linking: {}", cc, e))?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("dynamic linking with '{}' failed (exit {}). Install a C compiler (gcc/clang) for shared library support.", cc, status.code().unwrap_or(-1)))
+    }
+}
+
 fn write_elf(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
     if inputs.is_empty() {
         return Err("at least one input object is required".to_string());
@@ -1977,16 +2034,38 @@ fn main() {
     let pe_mode = args.first().map(String::as_str) == Some("pe");
     let macho_mode = args.first().map(String::as_str) == Some("macho");
     let offset = if pe_mode || macho_mode { 1 } else { 0 };
-    let Some(output_rel) = args[offset..].iter().position(|a| a == "-o") else {
+    // Parse -l flags for shared library linking
+    let mut link_libs: Vec<String> = Vec::new();
+    let mut filtered_args: Vec<String> = Vec::new();
+    let mut skip_next = false;
+    for (i, arg) in args[offset..].iter().enumerate() {
+        if skip_next { skip_next = false; continue; }
+        if arg == "-o" {
+            filtered_args.push(arg.clone());
+            if let Some(next) = args[offset..].get(i + 1) {
+                filtered_args.push(next.clone());
+            }
+            skip_next = true;
+        } else if arg.starts_with("-l") {
+            let lib = arg[2..].to_string();
+            if !lib.is_empty() {
+                link_libs.push(lib);
+            }
+        } else {
+            filtered_args.push(arg.clone());
+        }
+    }
+
+    let Some(output_rel) = filtered_args.iter().position(|a| a == "-o") else {
         usage();
         std::process::exit(2);
     };
-    let out_idx = offset + output_rel;
-    if out_idx == offset || out_idx + 2 != args.len() {
+    let out_idx = output_rel;
+    if out_idx == 0 || out_idx + 2 != filtered_args.len() {
         usage();
         std::process::exit(2);
     }
-    let inputs: Vec<PathBuf> = args[offset..out_idx].iter().map(PathBuf::from).collect();
+    let inputs: Vec<PathBuf> = filtered_args[..out_idx].iter().map(PathBuf::from).collect();
     for path in &inputs {
         if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
             let ext_lower = ext.to_lowercase();
@@ -2002,12 +2081,13 @@ fn main() {
             }
         }
     }
+    let out_path = Path::new(&filtered_args[out_idx + 1]);
     let result = if pe_mode {
-        write_pe(&inputs, Path::new(&args[out_idx + 1]))
+        write_pe(&inputs, out_path)
     } else if macho_mode {
-        write_macho(&inputs, Path::new(&args[out_idx + 1]))
+        write_macho(&inputs, out_path)
     } else {
-        write_elf(&inputs, Path::new(&args[out_idx + 1]))
+        write_elf_dynamic(&inputs, out_path, &link_libs)
     };
     if let Err(e) = result {
         eprintln!("lpp-link error: {e}");

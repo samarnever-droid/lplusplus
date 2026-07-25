@@ -763,8 +763,10 @@ fn main() {
 
             // Collect FFI link libraries from extern blocks
             let mut link_libs: Vec<String> = Vec::new();
+            let mut has_extern = false;
             for decl in &ast.declarations {
                 if let crate::ast::TopLevel::Extern(ext) = decl {
+                    has_extern = true;
                     if let Some(ref lib) = ext.link_lib {
                         if !link_libs.contains(lib) {
                             link_libs.push(lib.clone());
@@ -772,16 +774,16 @@ fn main() {
                     }
                 }
             }
+            // extern blocks without explicit link still need libc
+            if has_extern && link_libs.is_empty() {
+                link_libs.push("c".to_string());
+            }
 
-            // Check if any extern blocks exist (FFI requires host linker)
-            let has_extern = ast.declarations.iter().any(|d| matches!(d, crate::ast::TopLevel::Extern(_)));
-
-            let link_result = if has_extern {
-                // FFI requires host linker for shared library / libc linking
-                pm::host_link_binary(Path::new(&obj_path), Path::new(&exe_path), &link_libs)
-            } else {
-                pm::direct_link_binary(Path::new(&obj_path), Path::new(&exe_path))
-            };
+            // Always use lpp-link. When -l flags are present (FFI), lpp-link
+            // delegates to the system linker for dynamic linking transparently.
+            let link_result = pm::direct_link_binary_with_libs(
+                Path::new(&obj_path), Path::new(&exe_path), &link_libs
+            );
             if let Err(e) = link_result {
                 eprintln!("[L++] Native Link Error: {}", e);
                 return;

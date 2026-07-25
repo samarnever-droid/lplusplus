@@ -771,6 +771,10 @@ pub fn host_link_binary(obj_file: &Path, output_path: &Path, link_libs: &[String
 }
 
 pub fn direct_link_binary(obj_file: &Path, output_path: &Path) -> Result<(), String> {
+    direct_link_binary_with_libs(obj_file, output_path, &[])
+}
+
+pub fn direct_link_binary_with_libs(obj_file: &Path, output_path: &Path, link_libs: &[String]) -> Result<(), String> {
     let linker = current_binary_dir()
         .map(|dir| dir.join(format!("lpp-link{}", std::env::consts::EXE_SUFFIX)))
         .filter(|path| path.exists())
@@ -791,8 +795,12 @@ pub fn direct_link_binary(obj_file: &Path, output_path: &Path) -> Result<(), Str
         cmd.arg("macho");
     }
     cmd.arg(obj_file)
-        .arg(&runtime)
-        .arg("-o")
+        .arg(&runtime);
+    // Pass -l flags for shared library linking
+    for lib in link_libs {
+        cmd.arg(format!("-l{}", lib));
+    }
+    cmd.arg("-o")
         .arg(output_path);
 
     let status = cmd
