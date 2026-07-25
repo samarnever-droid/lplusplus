@@ -114,8 +114,8 @@
     },
     "lpp-opencode": {
       "name": "lpp-opencode",
-      "version": "0.4.0",
-      "description": "OpenCode/OpenClaude port foundation in L++ — Windows install/run support, Claude provider router, TUI, sessions, commands, tools, and agent scaffold",
+      "version": "0.5.0",
+      "description": "OpenCode/OpenClaude port foundation in L++ — installable lpp-opencode command, Claude router, TUI, sessions, commands, tools, and agent scaffold",
       "authors": [
         "0x4171341"
       ],
@@ -135,6 +135,8 @@
         "llm"
       ],
       "features": [
+        "Installable lpp-opencode command on Linux, macOS, and Windows",
+        "Unix shell launcher and Windows PowerShell/CMD launchers",
         "Windows PowerShell installer and runner",
         "Windows CI check and AOT object generation",
         "Claude/Anthropic provider router",
@@ -142,11 +144,7 @@
         "OpenCode-style terminal coding agent scaffold",
         "Slash commands: /help, /provider, /model, /payload, /read, /save, /exit",
         "Transcript save/append helpers",
-        "Provider debug and model selection helpers",
-        "Session and message formatting model",
-        "File/context and conservative patch helpers",
-        "ANSI TUI renderer with line screen buffer",
-        "Install and run scripts for Linux/macOS/Windows"
+        "ANSI TUI renderer with line screen buffer"
       ]
     },
     "lpp-tui": {
