@@ -114,8 +114,8 @@
     },
     "lpp-opencode": {
       "name": "lpp-opencode",
-      "version": "0.2.0",
-      "description": "OpenCode port foundation in L++ — terminal UI, session model, provider abstraction, commands, tools, and coding-agent scaffold",
+      "version": "0.3.0",
+      "description": "OpenCode/OpenClaude port foundation in L++ — Claude provider router, TUI, sessions, commands, tools, and agent scaffold",
       "authors": [
         "0x4171341"
       ],
@@ -135,10 +135,13 @@
         "llm"
       ],
       "features": [
+        "Claude/Anthropic provider router",
+        "Anthropic Messages API payload builder",
         "OpenCode-style terminal coding agent scaffold",
-        "Provider abstraction and OpenAI-compatible payload builder",
+        "Slash commands: /help, /provider, /model, /payload, /read, /save, /exit",
+        "Transcript save/append helpers",
+        "Provider debug and model selection helpers",
         "Session and message formatting model",
-        "Slash command parser (/help, /model, /read, /exit)",
         "File/context and conservative patch helpers",
         "ANSI TUI renderer with line screen buffer",
         "Install and run scripts"
