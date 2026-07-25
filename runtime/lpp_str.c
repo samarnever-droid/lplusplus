@@ -229,5 +229,3 @@ int64_t lpp_str_to_int(const char *s) {
     if (!s) return 0;
     return (int64_t)strtoll(s, NULL, 10);
 }
-
-int64_t lpp_str_eq(const char *a, const char *b) { if(a==b)return 1; if(!a||!b)return 0; while(*a&&*a==*b){a++;b++;} return *a==*b?1:0; }
