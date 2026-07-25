@@ -24,6 +24,8 @@ __declspec(dllimport) BOOL   __stdcall CreateProcessA(const char *a, char *c, vo
 __declspec(dllimport) BOOL   __stdcall GetExitCodeProcess(HANDLE p, DWORD *c);
 __declspec(dllimport) BOOL   __stdcall CreatePipe(HANDLE *r, HANDLE *w, void *a, DWORD s);
 __declspec(dllimport) BOOL   __stdcall ReadFile(HANDLE f, void *b, DWORD n, DWORD *rx, void *o);
+__declspec(dllimport) HANDLE __stdcall CreateFileA(const char *p, DWORD access, DWORD share, void *sec, DWORD create, DWORD flags, HANDLE template_file);
+__declspec(dllimport) DWORD  __stdcall GetFileSize(HANDLE h, DWORD *high);
 __declspec(dllimport) DWORD  __stdcall GetEnvironmentVariableA(const char *n, char *b, DWORD s);
 __declspec(dllimport) BOOL   __stdcall SetEnvironmentVariableA(const char *n, const char *v);
 __declspec(dllimport) BOOL   __stdcall CreateDirectoryA(const char *p, void *a);
