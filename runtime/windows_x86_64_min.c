@@ -296,3 +296,120 @@ int64_t lpp_append_file(const char *path, const char *data) {
 int64_t lpp_delete_file(const char *path) { return DeleteFileA(path) ? 0 : -1; }
 int64_t lpp_file_exists(const char *path) { DWORD a = GetFileAttributesA(path); return (a != ((DWORD)-1)) ? 1 : 0; }
 int64_t lpp_file_size(const char *path) { HANDLE h = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0); if (h == INVALID_HANDLE_VALUE) return -1; DWORD sz = GetFileSize(h, 0); CloseHandle(h); return (int64_t)sz; }
+
+/* ── Math builtins ── */
+int64_t lpp_abs(int64_t x) { return x < 0 ? -x : x; }
+int64_t lpp_min(int64_t a, int64_t b) { return a < b ? a : b; }
+int64_t lpp_max(int64_t a, int64_t b) { return a > b ? a : b; }
+int64_t lpp_int_pow(int64_t base, int64_t exp) {
+    int64_t result = 1;
+    while (exp > 0) { if (exp & 1) result *= base; base *= base; exp >>= 1; }
+    return result;
+}
+double lpp_int_to_float(int64_t x) { return (double)x; }
+int64_t lpp_float_to_int(double x) { return (int64_t)x; }
+
+double lpp_sqrt(double x) {
+    if (x <= 0.0) return 0.0;
+    double guess = x;
+    int i; for (i = 0; i < 50; i++) guess = 0.5 * (guess + x / guess);
+    return guess;
+}
+double lpp_floor(double x) { int64_t i = (int64_t)x; return (double)(x < (double)i ? i - 1 : i); }
+double lpp_ceil(double x) { int64_t i = (int64_t)x; return (double)(x > (double)i ? i + 1 : i); }
+double lpp_pow(double base, double exp) {
+    int64_t iexp = (int64_t)exp;
+    if ((double)iexp == exp && iexp >= 0) {
+        double result = 1.0;
+        while (iexp > 0) { if (iexp & 1) result *= base; base *= base; iexp >>= 1; }
+        return result;
+    }
+    if (base <= 0.0) return 0.0;
+    double xm = (base - 1.0) / (base + 1.0), ln_base = 0.0, term = xm;
+    int k; for (k = 0; k < 30; k++) { ln_base += term / (double)(2*k+1); term *= xm*xm; }
+    ln_base *= 2.0;
+    double y = exp * ln_base, result = 1.0, t = 1.0;
+    for (k = 1; k < 30; k++) { t *= y / (double)k; result += t; }
+    return result;
+}
+
+/* ── Random (using Kernel32 QueryPerformanceCounter for seed) ── */
+void lpp_random_seed(int64_t seed) { (void)seed; }
+int64_t lpp_random(void) { return 42; /* stub — full impl needs writable .data */ }
+int64_t lpp_random_range(int64_t lo, int64_t hi) { return lo < hi ? lo : 0; }
+
+/* ── Time (using Kernel32) ── */
+int64_t lpp_time_ms(void) {
+    LARGE_INTEGER freq, count;
+    QueryPerformanceFrequency(&freq);
+    QueryPerformanceCounter(&count);
+    return (int64_t)((count.QuadPart * 1000) / freq.QuadPart);
+}
+void lpp_sleep_ms(int64_t ms) { Sleep((DWORD)ms); }
+
+/* ── Process ── */
+void lpp_exit(int64_t code) { ExitProcess((UINT)code); }
+
+/* ── Buffer builtins (using VirtualAlloc) ── */
+int64_t lpp_buf_alloc(int64_t size) {
+    if (size <= 0) size = 64;
+    int64_t total = size + 8;
+    void *mem = VirtualAlloc(0, lpp_page_round((uint64_t)total), MEM_COMMIT|MEM_RESERVE, PAGE_READWRITE);
+    if (!mem) return 0;
+    *(int64_t *)mem = size;
+    return (int64_t)(uintptr_t)((char *)mem + 8);
+}
+void lpp_buf_free(void *ptr) {
+    if (!ptr) return;
+    VirtualFree((char *)ptr - 8, 0, MEM_RELEASE);
+}
+int64_t lpp_buf_len(void *ptr) {
+    if (!ptr) return 0;
+    return *(int64_t *)((char *)ptr - 8);
+}
+int64_t lpp_buf_get8(void *ptr, int64_t offset) {
+    if (!ptr) return 0;
+    return (int64_t)(unsigned char)((char *)ptr)[offset];
+}
+void lpp_buf_set8(void *ptr, int64_t offset, int64_t value) {
+    if (!ptr) return;
+    ((char *)ptr)[offset] = (char)(value & 0xFF);
+}
+void lpp_buf_set16le(void *ptr, int64_t offset, int64_t value) {
+    if (!ptr) return;
+    char *p = (char *)ptr + offset;
+    p[0] = (char)(value & 0xFF);
+    p[1] = (char)((value >> 8) & 0xFF);
+}
+int64_t lpp_buf_get16le(void *ptr, int64_t offset) {
+    if (!ptr) return 0;
+    unsigned char *p = (unsigned char *)((char *)ptr + offset);
+    return (int64_t)p[0] | ((int64_t)p[1] << 8);
+}
+void lpp_buf_set32le(void *ptr, int64_t offset, int64_t value) {
+    if (!ptr) return;
+    char *p = (char *)ptr + offset;
+    p[0] = (char)(value & 0xFF);
+    p[1] = (char)((value >> 8) & 0xFF);
+    p[2] = (char)((value >> 16) & 0xFF);
+    p[3] = (char)((value >> 24) & 0xFF);
+}
+int64_t lpp_buf_get32le(void *ptr, int64_t offset) {
+    if (!ptr) return 0;
+    unsigned char *p = (unsigned char *)((char *)ptr + offset);
+    return (int64_t)p[0] | ((int64_t)p[1] << 8) | ((int64_t)p[2] << 16) | ((int64_t)p[3] << 24);
+}
+void lpp_buf_copy(void *dst, int64_t dst_off, void *src, int64_t src_off, int64_t len) {
+    if (!dst || !src || len <= 0) return;
+    char *d = (char *)dst + dst_off;
+    char *s = (char *)src + src_off;
+    int64_t i; for (i = 0; i < len; i++) d[i] = s[i];
+}
+char *lpp_buf_read_str(void *ptr, int64_t offset, int64_t len) {
+    if (!ptr || len <= 0) { char *e = (char *)lpp_arc_alloc(1); e[0] = 0; return e; }
+    char *out = (char *)lpp_arc_alloc(len + 1);
+    char *s = (char *)ptr + offset;
+    int64_t i; for (i = 0; i < len; i++) out[i] = s[i];
+    out[len] = 0;
+    return out;
+}

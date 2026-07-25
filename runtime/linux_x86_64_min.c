@@ -1094,3 +1094,127 @@ void lpp_exit(int64_t code) {
     __asm__ volatile ("syscall" : : "a"(60), "D"(code) : "rcx", "r11"); /* exit */
     __builtin_unreachable();
 }
+
+/* ── Float math (freestanding, no libm — manual implementations) ── */
+double lpp_int_to_float(int64_t x) { return (double)x; }
+int64_t lpp_float_to_int(double x) { return (int64_t)x; }
+
+double lpp_sqrt(double x) {
+    if (x <= 0.0) return 0.0;
+    double guess = x;
+    for (int i = 0; i < 50; i++) {
+        guess = 0.5 * (guess + x / guess);
+    }
+    return guess;
+}
+
+double lpp_floor(double x) {
+    int64_t i = (int64_t)x;
+    return (double)(x < (double)i ? i - 1 : i);
+}
+
+double lpp_ceil(double x) {
+    int64_t i = (int64_t)x;
+    return (double)(x > (double)i ? i + 1 : i);
+}
+
+double lpp_pow(double base, double exp) {
+    /* Integer exponent fast path */
+    int64_t iexp = (int64_t)exp;
+    if ((double)iexp == exp && iexp >= 0) {
+        double result = 1.0;
+        while (iexp > 0) {
+            if (iexp & 1) result *= base;
+            base *= base;
+            iexp >>= 1;
+        }
+        return result;
+    }
+    /* Fractional exponent: exp(exp * ln(base)) via Taylor series */
+    /* Limited precision but works for common cases */
+    if (base <= 0.0) return 0.0;
+    /* ln(base) via series: ln(x) = 2 * sum( ((x-1)/(x+1))^(2k+1) / (2k+1) ) */
+    double xm = (base - 1.0) / (base + 1.0);
+    double ln_base = 0.0;
+    double term = xm;
+    for (int k = 0; k < 30; k++) {
+        ln_base += term / (double)(2 * k + 1);
+        term *= xm * xm;
+    }
+    ln_base *= 2.0;
+    /* exp(y) via series */
+    double y = exp * ln_base;
+    double result = 1.0;
+    double t = 1.0;
+    for (int k = 1; k < 30; k++) {
+        t *= y / (double)k;
+        result += t;
+    }
+    return result;
+}
+
+/* ── Buffer builtins (freestanding, using mmap) ── */
+int64_t lpp_buf_alloc(int64_t size) {
+    if (size <= 0) size = 64;
+    int64_t total = size + 8; /* 8 bytes for length header */
+    void *mem = lpp_sys_mmap(lpp_page_round((uint64_t)total));
+    if (!mem) return 0;
+    *(int64_t *)mem = size;
+    return (int64_t)(uintptr_t)((char *)mem + 8);
+}
+void lpp_buf_free(void *ptr) {
+    if (!ptr) return;
+    char *base = (char *)ptr - 8;
+    int64_t size = *(int64_t *)base;
+    lpp_sys_munmap(base, lpp_page_round((uint64_t)(size + 8)));
+}
+int64_t lpp_buf_len(void *ptr) {
+    if (!ptr) return 0;
+    return *(int64_t *)((char *)ptr - 8);
+}
+int64_t lpp_buf_get8(void *ptr, int64_t offset) {
+    if (!ptr) return 0;
+    return (int64_t)(unsigned char)((char *)ptr)[offset];
+}
+void lpp_buf_set8(void *ptr, int64_t offset, int64_t value) {
+    if (!ptr) return;
+    ((char *)ptr)[offset] = (char)(value & 0xFF);
+}
+void lpp_buf_set16le(void *ptr, int64_t offset, int64_t value) {
+    if (!ptr) return;
+    char *p = (char *)ptr + offset;
+    p[0] = (char)(value & 0xFF);
+    p[1] = (char)((value >> 8) & 0xFF);
+}
+int64_t lpp_buf_get16le(void *ptr, int64_t offset) {
+    if (!ptr) return 0;
+    unsigned char *p = (unsigned char *)((char *)ptr + offset);
+    return (int64_t)p[0] | ((int64_t)p[1] << 8);
+}
+void lpp_buf_set32le(void *ptr, int64_t offset, int64_t value) {
+    if (!ptr) return;
+    char *p = (char *)ptr + offset;
+    p[0] = (char)(value & 0xFF);
+    p[1] = (char)((value >> 8) & 0xFF);
+    p[2] = (char)((value >> 16) & 0xFF);
+    p[3] = (char)((value >> 24) & 0xFF);
+}
+int64_t lpp_buf_get32le(void *ptr, int64_t offset) {
+    if (!ptr) return 0;
+    unsigned char *p = (unsigned char *)((char *)ptr + offset);
+    return (int64_t)p[0] | ((int64_t)p[1] << 8) | ((int64_t)p[2] << 16) | ((int64_t)p[3] << 24);
+}
+void lpp_buf_copy(void *dst, int64_t dst_off, void *src, int64_t src_off, int64_t len) {
+    if (!dst || !src || len <= 0) return;
+    char *d = (char *)dst + dst_off;
+    char *s = (char *)src + src_off;
+    for (int64_t i = 0; i < len; i++) d[i] = s[i];
+}
+char *lpp_buf_read_str(void *ptr, int64_t offset, int64_t len) {
+    if (!ptr || len <= 0) { char *e = (char *)lpp_alloc(1); e[0] = 0; return e; }
+    char *out = (char *)lpp_alloc(len + 1);
+    char *s = (char *)ptr + offset;
+    for (int64_t i = 0; i < len; i++) out[i] = s[i];
+    out[len] = 0;
+    return out;
+}
