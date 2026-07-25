@@ -8,8 +8,13 @@ $ProjectDir = $PSScriptRoot
 $InstallDir = if ($env:LPP_INSTALL_DIR) { $env:LPP_INSTALL_DIR } else { Join-Path $HOME ".lpp" }
 $BinDir = Join-Path $InstallDir "bin"
 $LibDir = Join-Path $InstallDir "lib"
-$Version = if ($env:LPP_VERSION) { $env:LPP_VERSION } else { "v2.0.0" }
-$ReleaseUrl = "https://github.com/samarnever-droid/lplusplus/releases/download/$Version/lpp-windows-x86_64.zip"
+$Version = if ($env:LPP_VERSION) { $env:LPP_VERSION } else { "latest" }
+if (($Version -ne "latest") -and (-not $Version.StartsWith("v"))) { $Version = "v$Version" }
+if ($Version -eq "latest") {
+    $ReleaseUrl = "https://github.com/samarnever-droid/lplusplus/releases/latest/download/lpp-windows-x86_64.zip"
+} else {
+    $ReleaseUrl = "https://github.com/samarnever-droid/lplusplus/releases/download/$Version/lpp-windows-x86_64.zip"
+}
 
 New-Item -ItemType Directory -Force $BinDir, $LibDir | Out-Null
 
@@ -17,7 +22,7 @@ function Install-Release {
     $temp = Join-Path $env:TEMP "lpp-release-$([guid]::NewGuid())"
     New-Item -ItemType Directory -Force $temp | Out-Null
     try {
-        Write-Host "[1/3] Downloading L++ $Version release..." -ForegroundColor Yellow
+        Write-Host "[1/3] Downloading L++ $Version release asset..." -ForegroundColor Yellow
         Invoke-WebRequest -Uri $ReleaseUrl -OutFile "$temp\lpp.zip" -UseBasicParsing
         Expand-Archive -Path "$temp\lpp.zip" -DestinationPath $temp -Force
         $root = Join-Path $temp "lpp-windows-x86_64"
