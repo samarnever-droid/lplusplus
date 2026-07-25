@@ -3,12 +3,12 @@
     "name": "L++ Package Registry",
     "version": "1.0",
     "url": "https://samarnever-droid.github.io/lplusplus/registry",
-    "description": "Official L++ package registry \u2014 Git-based, JSON-indexed"
+    "description": "Official L++ package registry — Git-based, JSON-indexed"
   },
   "packages": {
     "lpp-zip": {
       "name": "lpp-zip",
-      "description": "ZIP archive create/read library \u2014 pure L++ using buf_* primitives",
+      "description": "ZIP archive create/read library — pure L++ using buf_* primitives",
       "version": "0.1.0",
       "authors": [
         "0x4171341"
@@ -30,23 +30,23 @@
         "Read ZIP archives and extract entries",
         "CRC32 verification",
         "STORE method (no compression)",
-        "Pure L++ \u2014 no C code, no linker changes"
+        "Pure L++ — no C code, no linker changes"
       ],
       "api": {
-        "zip_create": "() -> Int \u2014 create new archive handle",
-        "zip_add_file": "(archive: Int, filename: Str, content: Str) \u2014 add file to archive",
-        "zip_save": "(archive: Int, path: Str) \u2014 write ZIP to disk",
-        "zip_free": "(archive: Int) \u2014 release archive memory",
-        "zip_open": "(path: Str) -> Int \u2014 open ZIP file for reading",
-        "zip_entry_count": "(handle: Int) -> Int \u2014 number of entries",
-        "zip_entry_name": "(handle: Int, index: Int) -> Str \u2014 get entry filename",
-        "zip_entry_data": "(handle: Int, index: Int) -> Str \u2014 get entry content",
-        "zip_close": "(handle: Int) \u2014 close ZIP handle"
+        "zip_create": "() -> Int — create new archive handle",
+        "zip_add_file": "(archive: Int, filename: Str, content: Str) — add file to archive",
+        "zip_save": "(archive: Int, path: Str) — write ZIP to disk",
+        "zip_free": "(archive: Int) — release archive memory",
+        "zip_open": "(path: Str) -> Int — open ZIP file for reading",
+        "zip_entry_count": "(handle: Int) -> Int — number of entries",
+        "zip_entry_name": "(handle: Int, index: Int) -> Str — get entry filename",
+        "zip_entry_data": "(handle: Int, index: Int) -> Str — get entry content",
+        "zip_close": "(handle: Int) — close ZIP handle"
       }
     },
     "lpp-math": {
       "name": "lpp-math",
-      "description": "Math utilities \u2014 abs, min, max, pow, gcd, lcm, fib, factorial",
+      "description": "Math utilities — abs, min, max, pow, gcd, lcm, fib, factorial",
       "version": "0.1.0",
       "authors": [
         "0x4171341"
@@ -62,7 +62,7 @@
     },
     "lpp-strings": {
       "name": "lpp-strings",
-      "description": "String utilities \u2014 repeat, contains, starts_with, reverse, pad",
+      "description": "String utilities — repeat, contains, starts_with, reverse, pad",
       "version": "0.1.0",
       "authors": [
         "0x4171341"
@@ -79,7 +79,7 @@
     },
     "lpp-collections": {
       "name": "lpp-collections",
-      "description": "Collection utilities \u2014 list_sum, list_max, list_min, list_reverse",
+      "description": "Collection utilities — list_sum, list_max, list_min, list_reverse",
       "version": "0.1.0",
       "authors": [
         "0x4171341"
@@ -96,7 +96,7 @@
     },
     "lpp-algo": {
       "name": "lpp-algo",
-      "description": "Algorithm library \u2014 bubble_sort, binary_search, list_range, list_fill",
+      "description": "Algorithm library — bubble_sort, binary_search, list_range, list_fill",
       "version": "0.1.0",
       "authors": [
         "0x4171341"
@@ -114,8 +114,8 @@
     },
     "lpp-opencode": {
       "name": "lpp-opencode",
-      "version": "0.1.0",
-      "description": "OpenCode port foundation in L++ \u2014 terminal UI, session model, provider abstraction, and coding-agent scaffold",
+      "version": "0.2.0",
+      "description": "OpenCode port foundation in L++ — terminal UI, session model, provider abstraction, commands, tools, and coding-agent scaffold",
       "authors": [
         "0x4171341"
       ],
@@ -136,15 +136,17 @@
       ],
       "features": [
         "OpenCode-style terminal coding agent scaffold",
-        "Provider abstraction",
-        "Session model",
-        "File/context tool helpers",
-        "ANSI TUI rendering"
+        "Provider abstraction and OpenAI-compatible payload builder",
+        "Session and message formatting model",
+        "Slash command parser (/help, /model, /read, /exit)",
+        "File/context and conservative patch helpers",
+        "ANSI TUI renderer with line screen buffer",
+        "Install and run scripts"
       ]
     },
     "lpp-tui": {
       "name": "lpp-tui",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "description": "Reusable ANSI terminal UI helpers extracted from the L++ OpenCode port",
       "authors": [
         "0x4171341"
@@ -162,10 +164,11 @@
         "ui"
       ],
       "features": [
-        "ANSI colors",
-        "Cursor movement",
-        "Screen clearing",
-        "Simple frame/prompt rendering"
+        "ANSI colors and cursor helpers",
+        "Screen clearing and alternate screen helpers",
+        "Simple frame/prompt/assistant rendering",
+        "Line-buffer screen renderer",
+        "Minimal key classifier for future raw input loop"
       ]
     }
   }
