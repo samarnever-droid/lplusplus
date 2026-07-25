@@ -258,8 +258,15 @@ int64_t lpp_random(void) {
 int64_t lpp_random_range(int64_t lo, int64_t hi) { if (lo >= hi) return lo; return lo + (lpp_random() % (hi - lo)); }
 
 /* ── Time ── */
+/* ── Time (platform-conditional) ── */
+#ifdef _WIN32
+#include <windows.h>
+int64_t lpp_time_ms(void) { return (int64_t)GetTickCount64(); }
+void lpp_sleep_ms(int64_t ms) { Sleep((DWORD)ms); }
+#else
 int64_t lpp_time_ms(void) { struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); return (int64_t)ts.tv_sec * 1000 + (int64_t)ts.tv_nsec / 1000000; }
 void lpp_sleep_ms(int64_t ms) { struct timespec ts; ts.tv_sec = ms / 1000; ts.tv_nsec = (ms % 1000) * 1000000; nanosleep(&ts, NULL); }
+#endif
 void lpp_exit(int64_t code) { exit((int)code); }
 
 int64_t lpp_str_eq(const char *a, const char *b) {
