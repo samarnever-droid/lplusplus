@@ -5,7 +5,11 @@ PROJECT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 INSTALL_DIR=${LPP_INSTALL_DIR:-"$HOME/.lpp"}
 BIN_DIR="$INSTALL_DIR/bin"
 LIB_DIR="$INSTALL_DIR/lib"
-VERSION=${LPP_VERSION:-v2.0.0}
+VERSION=${LPP_VERSION:-latest}
+case "$VERSION" in
+  latest|v*) ;;
+  *) VERSION="v$VERSION" ;;
+esac
 
 case "$(uname -s):$(uname -m)" in
   Linux:x86_64|Linux:amd64)
@@ -21,7 +25,11 @@ case "$(uname -s):$(uname -m)" in
     RELEASE_TARGET=""
     ;;
 esac
-RELEASE_URL="https://github.com/samarnever-droid/lplusplus/releases/download/$VERSION/${RELEASE_TARGET}.tar.gz"
+if [ "$VERSION" = "latest" ]; then
+  RELEASE_URL="https://github.com/samarnever-droid/lplusplus/releases/latest/download/${RELEASE_TARGET}.tar.gz"
+else
+  RELEASE_URL="https://github.com/samarnever-droid/lplusplus/releases/download/$VERSION/${RELEASE_TARGET}.tar.gz"
+fi
 
 printf '%s\n' "========================================================"
 printf '%s\n' "                 L++ GLOBAL INSTALLER                   "
@@ -35,7 +43,7 @@ install_release() {
     command -v tar >/dev/null 2>&1 || return 1
     temp=$(mktemp -d "${TMPDIR:-/tmp}/lpp-release.XXXXXX")
     trap 'rm -rf "$temp"' EXIT HUP INT TERM
-    printf '%s\n' "[1/3] Downloading L++ $VERSION release..."
+    printf '%s\n' "[1/3] Downloading L++ $VERSION release asset..."
     if ! curl -fsSL "$RELEASE_URL" -o "$temp/lpp.tar.gz"; then
         return 1
     fi
