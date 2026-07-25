@@ -1055,3 +1055,49 @@ const char *lpp_input(void) {
     out[0] = 0;
     return out;
 }
+
+/* ── Math builtins ── */
+int64_t lpp_abs(int64_t x) { return x < 0 ? -x : x; }
+int64_t lpp_min(int64_t a, int64_t b) { return a < b ? a : b; }
+int64_t lpp_max(int64_t a, int64_t b) { return a > b ? a : b; }
+int64_t lpp_int_pow(int64_t base, int64_t exp) { int64_t r=1; while(exp>0){if(exp&1)r*=base;base*=base;exp>>=1;} return r; }
+double lpp_int_to_float(int64_t x) { return (double)x; }
+int64_t lpp_float_to_int(double x) { return (int64_t)x; }
+double lpp_sqrt(double x) { if(x<=0)return 0; double g=x; for(int i=0;i<50;i++)g=0.5*(g+x/g); return g; }
+double lpp_floor(double x) { int64_t i=(int64_t)x; return (double)(x<(double)i?i-1:i); }
+double lpp_ceil(double x) { int64_t i=(int64_t)x; return (double)(x>(double)i?i+1:i); }
+double lpp_pow(double b,double e) { int64_t ie=(int64_t)e; if((double)ie==e&&ie>=0){double r=1;while(ie>0){if(ie&1)r*=b;b*=b;ie>>=1;}return r;} return 0; }
+
+/* ── Random (stubs — no writable .bss in static freestanding) ── */
+void lpp_random_seed(int64_t seed) { (void)seed; }
+int64_t lpp_random(void) { return 42; }
+int64_t lpp_random_range(int64_t lo, int64_t hi) { return lo < hi ? lo : 0; }
+
+/* ── Time (syscalls) ── */
+int64_t lpp_time_ms(void) { uint64_t buf[2]; __asm__ volatile("syscall":"=a"(buf[0]):"a"(228),"D"(1),"S"(buf):"rcx","r11","memory"); return (int64_t)(buf[0]*1000+buf[1]/1000000); }
+void lpp_sleep_ms(int64_t ms) { uint64_t buf[2]; buf[0]=(uint64_t)(ms/1000); buf[1]=(uint64_t)((ms%1000)*1000000); __asm__ volatile("syscall"::"a"(35),"D"(buf),"S"(0):"rcx","r11","memory"); }
+void lpp_exit(int64_t code) { __asm__ volatile("syscall"::"a"(60),"D"(code):"rcx","r11"); __builtin_unreachable(); }
+
+/* ── String equality ── */
+int64_t lpp_str_eq(const char *a, const char *b) { if(a==b)return 1; if(!a||!b)return 0; while(*a&&*a==*b){a++;b++;} return *a==*b?1:0; }
+
+/* ── Buffers ── */
+int64_t lpp_buf_alloc(int64_t size) { if(size<=0)size=64; int64_t t=size+8; void*m=lpp_sys_mmap(lpp_page_round((uint64_t)t)); if(!m)return 0; *(int64_t*)m=size; return(int64_t)(uintptr_t)((char*)m+8); }
+void lpp_buf_free(void*p) { if(!p)return; char*b=(char*)p-8; int64_t s=*(int64_t*)b; lpp_sys_munmap(b,lpp_page_round((uint64_t)(s+8))); }
+int64_t lpp_buf_len(void*p) { if(!p)return 0; return*(int64_t*)((char*)p-8); }
+int64_t lpp_buf_get8(void*p,int64_t o) { if(!p)return 0; return(int64_t)(unsigned char)((char*)p)[o]; }
+void lpp_buf_set8(void*p,int64_t o,int64_t v) { if(!p)return; ((char*)p)[o]=(char)(v&0xFF); }
+void lpp_buf_set16le(void*p,int64_t o,int64_t v) { if(!p)return; char*d=(char*)p+o; d[0]=(char)(v&0xFF); d[1]=(char)((v>>8)&0xFF); }
+int64_t lpp_buf_get16le(void*p,int64_t o) { if(!p)return 0; unsigned char*d=(unsigned char*)((char*)p+o); return(int64_t)d[0]|((int64_t)d[1]<<8); }
+void lpp_buf_set32le(void*p,int64_t o,int64_t v) { if(!p)return; char*d=(char*)p+o; d[0]=(char)(v&0xFF); d[1]=(char)((v>>8)&0xFF); d[2]=(char)((v>>16)&0xFF); d[3]=(char)((v>>24)&0xFF); }
+int64_t lpp_buf_get32le(void*p,int64_t o) { if(!p)return 0; unsigned char*d=(unsigned char*)((char*)p+o); return(int64_t)d[0]|((int64_t)d[1]<<8)|((int64_t)d[2]<<16)|((int64_t)d[3]<<24); }
+void lpp_buf_copy(void*dst,int64_t do2,void*src,int64_t so,int64_t len) { if(!dst||!src||len<=0)return; char*d=(char*)dst+do2; char*s=(char*)src+so; for(int64_t i=0;i<len;i++)d[i]=s[i]; }
+char*lpp_buf_read_str(void*p,int64_t o,int64_t len) { if(!p||len<=0){char*e=(char*)lpp_alloc(1);e[0]=0;return e;} char*out=(char*)lpp_alloc(len+1); char*s=(char*)p+o; for(int64_t i=0;i<len;i++)out[i]=s[i]; out[len]=0; return out; }
+
+/* ── Additional net stubs ── */
+int64_t lpp_net_accept_timeout(int64_t l,int64_t t){(void)t;return lpp_net_accept(l);}
+int64_t lpp_net_dial(const char*h,int64_t p,int64_t t){(void)t;return lpp_net_connect(h,p);}
+int64_t lpp_net_dial_udp(const char*h,int64_t p,int64_t t){(void)h;(void)p;(void)t;return 0;}
+int64_t lpp_net_listen_udp(int64_t p){(void)p;return 0;}
+int64_t lpp_net_set_deadline(int64_t f,int64_t r,int64_t w){return lpp_net_set_timeout(f,r>w?r:w);}
+int64_t lpp_net_set_keepalive(int64_t f,int64_t e,int64_t i,int64_t v,int64_t c){(void)f;(void)e;(void)i;(void)v;(void)c;return 1;}

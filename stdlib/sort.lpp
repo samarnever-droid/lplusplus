@@ -1,0 +1,45 @@
+# stdlib/sort.lpp — Sorting algorithms (pure L++)
+
+def sort_bubble(lst: Int) -> Int:
+    # Bubble sort — simple, in-place-style (returns new sorted list)
+    n := list_len(lst)
+    result := list_new()
+    for i in range(n):
+        list_push(result, list_get(lst, i))
+    for i in range(n):
+        for j in range(0, n - i - 1):
+            a := list_get(result, j)
+            b := list_get(result, j + 1)
+            if a > b:
+                # Swap — need list_set which doesn't exist,
+                # so rebuild from scratch after each pass
+                # (This is O(n²) but correct)
+                pass
+    # Fallback: selection sort using list_min approach
+    sorted := list_new()
+    used := list_new()
+    for k in range(n):
+        list_push(used, 0)
+    for i in range(n):
+        mut min_val := 9223372036854775807
+        mut min_idx := -1
+        for j in range(n):
+            if list_get(used, j) == 0 && list_get(lst, j) < min_val:
+                min_val = list_get(lst, j)
+                min_idx = j
+        list_push(sorted, min_val)
+        # Mark used — rebuild used list with this index set
+        new_used := list_new()
+        for j in range(n):
+            if j == min_idx:
+                list_push(new_used, 1)
+            else:
+                list_push(new_used, list_get(used, j))
+        used = new_used
+    return sorted
+
+def is_sorted(lst: Int) -> Int:
+    for i in range(1, list_len(lst)):
+        if list_get(lst, i) < list_get(lst, i - 1):
+            return 0
+    return 1

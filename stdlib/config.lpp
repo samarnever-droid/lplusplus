@@ -1,0 +1,60 @@
+# stdlib/config.lpp — Simple key=value config file parser
+
+def config_load(path: Str) -> Int:
+    # Parse a key=value config file into a string-keyed map
+    m := map_new()
+    if file_exists(path) == 0:
+        return m
+    content := read_file(path)
+    mut start := 0
+    for i in range(str_len(content)):
+        c := char_at(content, i)
+        if c == "\n":
+            line := str_substr(content, start, i - start)
+            if str_len(line) > 0 && char_at(line, str_len(line) - 1) == "\r":
+                line = str_substr(line, 0, str_len(line) - 1)
+            # Skip comments and empty lines
+            if str_len(line) > 0 && char_at(line, 0) != "#":
+                eq := str_find(line, "=")
+                if eq > 0:
+                    key := str_trim(str_substr(line, 0, eq))
+                    val := str_trim(str_substr(line, eq + 1, str_len(line) - eq - 1))
+                    map_put_str(m, key, val)
+            start = i + 1
+    # Last line
+    if start < str_len(content):
+        line := str_substr(content, start, str_len(content) - start)
+        if str_len(line) > 0 && char_at(line, 0) != "#":
+            eq := str_find(line, "=")
+            if eq > 0:
+                key := str_trim(str_substr(line, 0, eq))
+                val := str_trim(str_substr(line, eq + 1, str_len(line) - eq - 1))
+                map_put_str(m, key, val)
+    return m
+
+def config_get(m: Int, key: Str, default: Str = "") -> Str:
+    if map_has_str(m, key) == 1:
+        return map_get_str(m, key)
+    return default
+
+def config_save(path: Str, m: Int, keys: Str):
+    # Save key=value pairs for given pipe-separated keys: "key1|key2|key3"
+    mut content := ""
+    mut start := 0
+    for i in range(str_len(keys)):
+        if char_at(keys, i) == "|":
+            key := str_substr(keys, start, i - start)
+            if map_has_str(m, key) == 1:
+                content = str_concat(content, key)
+                content = str_concat(content, "=")
+                content = str_concat(content, map_get_str(m, key))
+                content = str_concat(content, "\n")
+            start = i + 1
+    # Last key
+    key := str_substr(keys, start, str_len(keys) - start)
+    if str_len(key) > 0 && map_has_str(m, key) == 1:
+        content = str_concat(content, key)
+        content = str_concat(content, "=")
+        content = str_concat(content, map_get_str(m, key))
+        content = str_concat(content, "\n")
+    write_file(path, content)
