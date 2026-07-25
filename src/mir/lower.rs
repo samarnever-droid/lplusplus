@@ -1401,15 +1401,44 @@ impl<'a> MirLowerCtx<'a> {
                                 None
                             }
                         } else if name == "print" {
-                        let (is_string, is_float) = match lowered_args.first() {
-                            Some(Operand::String(_)) => (true, false),
-                            Some(Operand::Float(_)) => (false, true),
+                        let (is_string, is_float, is_bool) = match lowered_args.first() {
+                            Some(Operand::String(_)) => (true, false, false),
+                            Some(Operand::Float(_)) => (false, true, false),
+                            Some(Operand::Bool(_)) => (false, false, true),
                             Some(Operand::Local(local_id)) | Some(Operand::Borrowed(local_id)) => {
                                 let ty = &builder.function.locals[local_id.0].ty;
-                                (*ty == TypeRef::Str, *ty == TypeRef::Float)
+                                (*ty == TypeRef::Str, *ty == TypeRef::Float, *ty == TypeRef::Bool)
                             }
-                            _ => (false, false),
+                            _ => (false, false, false),
                         };
+                        // Bool → Int conversion: extend i8 to i64 before printing
+                        if is_bool {
+                            if let Some(bool_op) = lowered_args.first() {
+                                let int_local = builder.new_local(TypeRef::Int, false, None, None);
+                                // Use BinaryOp to convert: bool_val + 0 coerces i8 → i64
+                                // Actually just use a conditional: if bool then 1 else 0
+                                let one = builder.new_local(TypeRef::Int, false, None, None);
+                                let zero = builder.new_local(TypeRef::Int, false, None, None);
+                                builder.push_instr(MirInstr::Assign(one, Rvalue::Use(Operand::Int(1))))?;
+                                builder.push_instr(MirInstr::Assign(zero, Rvalue::Use(Operand::Int(0))))?;
+                                let true_block = builder.new_block();
+                                let false_block = builder.new_block();
+                                let merge_block = builder.new_block();
+                                builder.terminate_current_block(Terminator::If {
+                                    cond: bool_op.clone(),
+                                    then_block: true_block,
+                                    else_block: false_block,
+                                })?;
+                                builder.switch_to_block(true_block);
+                                builder.push_instr(MirInstr::Assign(int_local, Rvalue::Use(Operand::Int(1))))?;
+                                builder.terminate_current_block(Terminator::Goto(merge_block))?;
+                                builder.switch_to_block(false_block);
+                                builder.push_instr(MirInstr::Assign(int_local, Rvalue::Use(Operand::Int(0))))?;
+                                builder.terminate_current_block(Terminator::Goto(merge_block))?;
+                                builder.switch_to_block(merge_block);
+                                lowered_args = vec![Operand::Local(int_local)];
+                            }
+                        }
                         Some(
                             if is_string {
                                 "lpp_print_str"
