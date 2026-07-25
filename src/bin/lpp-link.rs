@@ -196,7 +196,40 @@ fn parse_elf_object(file: &object::File, path: &Path) -> Result<ElfInput, String
                     rel.addend() + sec_base + sym.address() as i64,
                 )
             }
-            _ => (raw.to_string(), rel.addend()),
+            _ => {
+                let name = if raw.is_empty() {
+                    // Section symbols have empty names — use the section name instead.
+                    // Map section-relative relocations to our internal names.
+                    if let SymbolSection::Section(sec_idx) = sym.section() {
+                        if let Ok(sec) = file.section_by_index(sec_idx) {
+                            let sec_name = sec.name().unwrap_or("");
+                            if sec_name == ".text" || sec_name.starts_with(".text.") {
+                                "__self_text__".to_string()
+                            } else if sec_name.starts_with(".rodata") {
+                                "__self_rodata__".to_string()
+                            } else if sec_name.starts_with(".data") {
+                                "__self_text__".to_string() // data in text for freestanding
+                            } else if sec_name.starts_with(".bss") {
+                                "__self_text__".to_string()
+                            } else {
+                                format!("__section_{}", sec_name.replace('.', "_"))
+                            }
+                        } else {
+                            raw.to_string()
+                        }
+                    } else {
+                        raw.to_string()
+                    }
+                } else {
+                    raw.to_string()
+                };
+                let addr_addend = if let SymbolSection::Section(_) = sym.section() {
+                    rel.addend() + sym.address() as i64
+                } else {
+                    rel.addend()
+                };
+                (name, addr_addend)
+            },
         };
         relocs.push(Relocation {
             offset: usize::try_from(off).map_err(|_| "relocation offset overflow")?,

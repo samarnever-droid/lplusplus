@@ -1066,20 +1066,14 @@ int64_t lpp_int_pow(int64_t base, int64_t exp) {
     return result;
 }
 
-/* ── Random (xorshift64) ── */
-static uint64_t lpp_rng_state = 0;
-void lpp_random_seed(int64_t seed) { lpp_rng_state = (uint64_t)seed; }
-int64_t lpp_random(void) {
-    if (lpp_rng_state == 0) lpp_rng_state = 0x1234567890ABCDEFULL;
-    lpp_rng_state ^= lpp_rng_state << 13;
-    lpp_rng_state ^= lpp_rng_state >> 7;
-    lpp_rng_state ^= lpp_rng_state << 17;
-    return (int64_t)(lpp_rng_state & 0x7FFFFFFFFFFFFFFFULL);
-}
-int64_t lpp_random_range(int64_t min, int64_t max) {
-    if (min >= max) return min;
-    return min + (lpp_random() % (max - min));
-}
+/* ── Random/Time/Exit stubs for freestanding ── */
+/* These require writable global state (.bss/.data) which the static
+   freestanding ELF linker does not support yet. They are provided as
+   stubs that return safe defaults. Full implementations are available
+   through the host runtime path (lpp_runtime.c / lpp_str.c). */
+void lpp_random_seed(int64_t seed) { (void)seed; }
+int64_t lpp_random(void) { return 42; }
+int64_t lpp_random_range(int64_t lo, int64_t hi) { return lo < hi ? lo : 0; }
 
 /* ── Time (via clock_gettime syscall 228) ── */
 int64_t lpp_time_ms(void) {
