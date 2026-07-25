@@ -314,6 +314,14 @@ runtime/        Platform runtimes
 | **windows-coff-fallback** | Windows PE direct linker + King20 PE gate |
 | **macos-host-link** | macOS Mach-O compilation |
 
+## Built with L++
+
+| Project | Description | Repo |
+|---|---|---|
+| **lpp-http** | HTTP/1.1 static file server (~100 LOC) | [lpp-http](https://github.com/samarnever-droid/lpp-http) |
+| **lua-in-lplusplus** | Lua interpreter written in L++ | [lua-in-lplusplus](https://github.com/samarnever-droid/lua-in-lplusplus) |
+| **godot-lplusplus** | L++ scripting for Godot Engine | [godot-lplusplus](https://github.com/samarnever-droid/godot-lplusplus) |
+
 ## License
 
 MIT
