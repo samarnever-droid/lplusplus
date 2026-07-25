@@ -1033,9 +1033,33 @@ impl<'a> MirLowerCtx<'a> {
                     | BinaryOperator::LessEq
                     | BinaryOperator::Greater
                     | BinaryOperator::GreaterEq => TypeRef::Bool,
-                    _ => left_ty,
+                    _ => left_ty.clone(),
                 };
                 let temp = builder.new_local(res_ty, false, None, None);
+
+                // String equality: use lpp_str_eq for value comparison
+                if left_ty == TypeRef::Str && matches!(op, BinaryOperator::Eq | BinaryOperator::NotEq) {
+                    let eq_result = builder.new_local(TypeRef::Int, false, None, None);
+                    builder.push_instr(MirInstr::Assign(
+                        eq_result,
+                        Rvalue::BuiltinCall("lpp_str_eq".to_string(), vec![left, right]),
+                    ))?;
+                    if *op == BinaryOperator::Eq {
+                        // str_eq returns 1 for equal → convert to Bool
+                        builder.push_instr(MirInstr::Assign(
+                            temp,
+                            Rvalue::BinaryOp(BinaryOperator::Eq, Operand::Local(eq_result), Operand::Int(1)),
+                        ))?;
+                    } else {
+                        // NotEq: str_eq returns 0 for not equal
+                        builder.push_instr(MirInstr::Assign(
+                            temp,
+                            Rvalue::BinaryOp(BinaryOperator::Eq, Operand::Local(eq_result), Operand::Int(0)),
+                        ))?;
+                    }
+                    return Ok(Operand::Local(temp));
+                }
+
                 builder.push_instr(MirInstr::Assign(
                     temp,
                     Rvalue::BinaryOp(op.clone(), left, right),

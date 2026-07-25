@@ -609,3 +609,10 @@ int64_t lpp_net_dial_udp(const char *host, int64_t port, int64_t timeout_ms) {
     lpp_win_sock_table[idx] = s;
     return (int64_t)(idx + 1);
 }
+
+int64_t lpp_str_eq(const char *a, const char *b) {
+    if (a == b) return 1;
+    if (!a || !b) return 0;
+    while (*a && *a == *b) { a++; b++; }
+    return *a == *b ? 1 : 0;
+}

@@ -2098,6 +2098,7 @@ pub fn get_builtins() -> &'static [Builtin] {
         Builtin { name: "lpp_sleep_ms", symbol: "lpp_sleep_ms", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Void, cl_params: &[0], cl_return: None },
         Builtin { name: "exit", symbol: "lpp_exit", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Void, cl_params: &[0], cl_return: None },
         Builtin { name: "lpp_exit", symbol: "lpp_exit", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Void, cl_params: &[0], cl_return: None },
+        Builtin { name: "lpp_str_eq", symbol: "lpp_str_eq", params: &[ParamType::Specific(TypeRef::Str), ParamType::Specific(TypeRef::Str)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
     ];
     BUILTINS
 }

@@ -1268,3 +1268,10 @@ int64_t lpp_net_set_keepalive(int64_t fd, int64_t enable, int64_t idle_s, int64_
     (void)idle_s; (void)interval; (void)count; (void)enable;
     return 1;
 }
+
+int64_t lpp_str_eq(const char *a, const char *b) {
+    if (a == b) return 1;
+    if (!a || !b) return 0;
+    while (*a && *a == *b) { a++; b++; }
+    return *a == *b ? 1 : 0;
+}
