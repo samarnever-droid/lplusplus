@@ -2066,42 +2066,6 @@ pub fn get_builtins() -> &'static [Builtin] {
             cl_params: &[0],
             cl_return: Some(0),
         },
-        // ── Math builtins ──
-        Builtin { name: "abs", symbol: "lpp_abs", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0], cl_return: Some(0) },
-        Builtin { name: "lpp_abs", symbol: "lpp_abs", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0], cl_return: Some(0) },
-        Builtin { name: "min", symbol: "lpp_min", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
-        Builtin { name: "lpp_min", symbol: "lpp_min", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
-        Builtin { name: "max", symbol: "lpp_max", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
-        Builtin { name: "lpp_max", symbol: "lpp_max", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
-        Builtin { name: "sqrt", symbol: "lpp_sqrt", params: &[ParamType::Specific(TypeRef::Float)], return_type: TypeRef::Float, cl_params: &[3], cl_return: Some(3) },
-        Builtin { name: "lpp_sqrt", symbol: "lpp_sqrt", params: &[ParamType::Specific(TypeRef::Float)], return_type: TypeRef::Float, cl_params: &[3], cl_return: Some(3) },
-        Builtin { name: "floor", symbol: "lpp_floor", params: &[ParamType::Specific(TypeRef::Float)], return_type: TypeRef::Float, cl_params: &[3], cl_return: Some(3) },
-        Builtin { name: "lpp_floor", symbol: "lpp_floor", params: &[ParamType::Specific(TypeRef::Float)], return_type: TypeRef::Float, cl_params: &[3], cl_return: Some(3) },
-        Builtin { name: "ceil", symbol: "lpp_ceil", params: &[ParamType::Specific(TypeRef::Float)], return_type: TypeRef::Float, cl_params: &[3], cl_return: Some(3) },
-        Builtin { name: "lpp_ceil", symbol: "lpp_ceil", params: &[ParamType::Specific(TypeRef::Float)], return_type: TypeRef::Float, cl_params: &[3], cl_return: Some(3) },
-        Builtin { name: "pow", symbol: "lpp_pow", params: &[ParamType::Specific(TypeRef::Float), ParamType::Specific(TypeRef::Float)], return_type: TypeRef::Float, cl_params: &[3, 3], cl_return: Some(3) },
-        Builtin { name: "lpp_pow", symbol: "lpp_pow", params: &[ParamType::Specific(TypeRef::Float), ParamType::Specific(TypeRef::Float)], return_type: TypeRef::Float, cl_params: &[3, 3], cl_return: Some(3) },
-        Builtin { name: "int_pow", symbol: "lpp_int_pow", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
-        Builtin { name: "lpp_int_pow", symbol: "lpp_int_pow", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
-        Builtin { name: "int_to_float", symbol: "lpp_int_to_float", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Float, cl_params: &[0], cl_return: Some(3) },
-        Builtin { name: "lpp_int_to_float", symbol: "lpp_int_to_float", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Float, cl_params: &[0], cl_return: Some(3) },
-        Builtin { name: "float_to_int", symbol: "lpp_float_to_int", params: &[ParamType::Specific(TypeRef::Float)], return_type: TypeRef::Int, cl_params: &[3], cl_return: Some(0) },
-        Builtin { name: "lpp_float_to_int", symbol: "lpp_float_to_int", params: &[ParamType::Specific(TypeRef::Float)], return_type: TypeRef::Int, cl_params: &[3], cl_return: Some(0) },
-        // ── Random builtins ──
-        Builtin { name: "random", symbol: "lpp_random", params: &[], return_type: TypeRef::Int, cl_params: &[], cl_return: Some(0) },
-        Builtin { name: "lpp_random", symbol: "lpp_random", params: &[], return_type: TypeRef::Int, cl_params: &[], cl_return: Some(0) },
-        Builtin { name: "random_range", symbol: "lpp_random_range", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
-        Builtin { name: "lpp_random_range", symbol: "lpp_random_range", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
-        Builtin { name: "random_seed", symbol: "lpp_random_seed", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Void, cl_params: &[0], cl_return: None },
-        Builtin { name: "lpp_random_seed", symbol: "lpp_random_seed", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Void, cl_params: &[0], cl_return: None },
-        // ── Time builtins ──
-        Builtin { name: "time_ms", symbol: "lpp_time_ms", params: &[], return_type: TypeRef::Int, cl_params: &[], cl_return: Some(0) },
-        Builtin { name: "lpp_time_ms", symbol: "lpp_time_ms", params: &[], return_type: TypeRef::Int, cl_params: &[], cl_return: Some(0) },
-        Builtin { name: "sleep_ms", symbol: "lpp_sleep_ms", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Void, cl_params: &[0], cl_return: None },
-        Builtin { name: "lpp_sleep_ms", symbol: "lpp_sleep_ms", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Void, cl_params: &[0], cl_return: None },
-        // ── Process builtins ──
-        Builtin { name: "exit", symbol: "lpp_exit", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Void, cl_params: &[0], cl_return: None },
-        Builtin { name: "lpp_exit", symbol: "lpp_exit", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Void, cl_params: &[0], cl_return: None },
     ];
     BUILTINS
 }

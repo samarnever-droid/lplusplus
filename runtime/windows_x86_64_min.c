@@ -413,3 +413,199 @@ char *lpp_buf_read_str(void *ptr, int64_t offset, int64_t len) {
     out[len] = 0;
     return out;
 }
+
+/* ── Networking builtins (Windows freestanding, ws2_32.dll via LoadLibrary) ── */
+
+#ifndef AF_INET
+#define AF_INET 2
+#define SOCK_STREAM 1
+#define SOCK_DGRAM 2
+#define SOL_SOCKET 0xFFFF
+#define SO_REUSEADDR 0x0004
+#define SO_RCVTIMEO 0x1006
+#define SO_SNDTIMEO 0x1005
+#define SO_KEEPALIVE 0x0008
+#define IPPROTO_TCP 6
+#endif
+#ifndef INVALID_SOCKET
+#define INVALID_SOCKET (~(uintptr_t)0)
+#endif
+
+typedef uintptr_t SOCKET;
+typedef struct { uint16_t family; uint16_t port; uint32_t addr; char pad[8]; } lpp_sockaddr_in;
+
+/* ws2_32 function pointers — loaded lazily */
+typedef int (__stdcall *pWSAStartup)(uint16_t, void*);
+typedef SOCKET (__stdcall *pSocket)(int, int, int);
+typedef int (__stdcall *pConnect)(SOCKET, void*, int);
+typedef int (__stdcall *pBind)(SOCKET, void*, int);
+typedef int (__stdcall *pListen)(SOCKET, int);
+typedef SOCKET (__stdcall *pAccept)(SOCKET, void*, int*);
+typedef int (__stdcall *pSend)(SOCKET, const char*, int, int);
+typedef int (__stdcall *pRecv)(SOCKET, char*, int, int);
+typedef int (__stdcall *pClosesocket)(SOCKET);
+typedef int (__stdcall *pSetsockopt)(SOCKET, int, int, const char*, int);
+typedef uint16_t (__stdcall *pHtons)(uint16_t);
+typedef uint32_t (__stdcall *pInet_addr)(const char*);
+
+static pSocket fn_socket = 0;
+static pConnect fn_connect = 0;
+static pBind fn_bind = 0;
+static pListen fn_listen = 0;
+static pAccept fn_accept = 0;
+static pSend fn_send = 0;
+static pRecv fn_recv = 0;
+static pClosesocket fn_closesocket = 0;
+static pSetsockopt fn_setsockopt = 0;
+static pHtons fn_htons = 0;
+static pInet_addr fn_inet_addr = 0;
+
+static int lpp_ws2_loaded = 0;
+static void lpp_ws2_init(void) {
+    if (lpp_ws2_loaded) return;
+    HMODULE ws2 = LoadLibraryA("ws2_32.dll");
+    if (!ws2) return;
+    pWSAStartup pStartup = (pWSAStartup)GetProcAddress(ws2, "WSAStartup");
+    if (pStartup) { char wsadata[408]; pStartup(0x0202, wsadata); }
+    fn_socket = (pSocket)GetProcAddress(ws2, "socket");
+    fn_connect = (pConnect)GetProcAddress(ws2, "connect");
+    fn_bind = (pBind)GetProcAddress(ws2, "bind");
+    fn_listen = (pListen)GetProcAddress(ws2, "listen");
+    fn_accept = (pAccept)GetProcAddress(ws2, "accept");
+    fn_send = (pSend)GetProcAddress(ws2, "send");
+    fn_recv = (pRecv)GetProcAddress(ws2, "recv");
+    fn_closesocket = (pClosesocket)GetProcAddress(ws2, "closesocket");
+    fn_setsockopt = (pSetsockopt)GetProcAddress(ws2, "setsockopt");
+    fn_htons = (pHtons)GetProcAddress(ws2, "htons");
+    fn_inet_addr = (pInet_addr)GetProcAddress(ws2, "inet_addr");
+    lpp_ws2_loaded = 1;
+}
+
+static SOCKET lpp_win_sock_table[256];
+static int lpp_win_sock_count = 0;
+
+int64_t lpp_net_connect(const char *host, int64_t port) {
+    lpp_ws2_init();
+    if (!fn_socket || !host) return 0;
+    SOCKET s = fn_socket(AF_INET, SOCK_STREAM, 0);
+    if (s == INVALID_SOCKET) return 0;
+    lpp_sockaddr_in addr; for (int i=0;i<16;i++) ((char*)&addr)[i]=0;
+    addr.family = AF_INET;
+    addr.port = fn_htons ? fn_htons((uint16_t)port) : (uint16_t)((port>>8)|(port<<8));
+    addr.addr = fn_inet_addr ? fn_inet_addr(host) : 0;
+    if (fn_connect(s, &addr, 16) != 0) { fn_closesocket(s); return 0; }
+    int idx = lpp_win_sock_count++;
+    lpp_win_sock_table[idx] = s;
+    return (int64_t)(idx + 1);
+}
+
+int64_t lpp_net_listen(int64_t port) {
+    lpp_ws2_init();
+    if (!fn_socket) return 0;
+    SOCKET s = fn_socket(AF_INET, SOCK_STREAM, 0);
+    if (s == INVALID_SOCKET) return 0;
+    int yes = 1; if (fn_setsockopt) fn_setsockopt(s, SOL_SOCKET, SO_REUSEADDR, (char*)&yes, 4);
+    lpp_sockaddr_in addr; for (int i=0;i<16;i++) ((char*)&addr)[i]=0;
+    addr.family = AF_INET;
+    addr.port = fn_htons ? fn_htons((uint16_t)port) : 0;
+    if (fn_bind(s, &addr, 16) != 0) { fn_closesocket(s); return 0; }
+    if (fn_listen(s, 128) != 0) { fn_closesocket(s); return 0; }
+    int idx = lpp_win_sock_count++;
+    lpp_win_sock_table[idx] = s;
+    return (int64_t)(idx + 1);
+}
+
+int64_t lpp_net_accept(int64_t listener) {
+    if (listener < 1 || listener > 256) return 0;
+    SOCKET server = lpp_win_sock_table[(int)listener - 1];
+    SOCKET client = fn_accept ? fn_accept(server, 0, 0) : INVALID_SOCKET;
+    if (client == INVALID_SOCKET) return 0;
+    int idx = lpp_win_sock_count++;
+    lpp_win_sock_table[idx] = client;
+    return (int64_t)(idx + 1);
+}
+
+int64_t lpp_net_accept_timeout(int64_t listener, int64_t timeout_ms) {
+    return lpp_net_accept(listener);
+}
+
+int64_t lpp_net_send(int64_t handle, const char *data) {
+    if (handle < 1 || handle > 256 || !data || !fn_send) return -1;
+    SOCKET s = lpp_win_sock_table[(int)handle - 1];
+    return (int64_t)fn_send(s, data, (int)lpp_strlen(data), 0);
+}
+
+int64_t lpp_net_send_all(int64_t handle, const char *data) {
+    return lpp_net_send(handle, data);
+}
+
+char *lpp_net_recv(int64_t handle, int64_t max_bytes) {
+    if (handle < 1 || handle > 256 || max_bytes <= 0 || !fn_recv) {
+        char *e = (char *)lpp_arc_alloc(1); e[0] = 0; return e;
+    }
+    SOCKET s = lpp_win_sock_table[(int)handle - 1];
+    char *buf = (char *)lpp_arc_alloc(max_bytes + 1);
+    int n = fn_recv(s, buf, (int)max_bytes, 0);
+    if (n <= 0) { buf[0] = 0; return buf; }
+    buf[n] = 0;
+    return buf;
+}
+
+void lpp_net_close(int64_t handle) {
+    if (handle < 1 || handle > 256 || !fn_closesocket) return;
+    fn_closesocket(lpp_win_sock_table[(int)handle - 1]);
+}
+
+int64_t lpp_net_set_timeout(int64_t handle, int64_t milliseconds) {
+    if (handle < 1 || handle > 256 || !fn_setsockopt) return 0;
+    SOCKET s = lpp_win_sock_table[(int)handle - 1];
+    DWORD tv = (DWORD)milliseconds;
+    fn_setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (char*)&tv, 4);
+    fn_setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, (char*)&tv, 4);
+    return 1;
+}
+
+int64_t lpp_net_set_deadline(int64_t fd, int64_t read_ms, int64_t write_ms) {
+    return lpp_net_set_timeout(fd, read_ms > write_ms ? read_ms : write_ms);
+}
+
+int64_t lpp_net_set_keepalive(int64_t handle, int64_t enable, int64_t idle_s, int64_t interval, int64_t count) {
+    if (handle < 1 || handle > 256 || !fn_setsockopt) return 0;
+    SOCKET s = lpp_win_sock_table[(int)handle - 1];
+    int val = (int)enable;
+    fn_setsockopt(s, SOL_SOCKET, SO_KEEPALIVE, (char*)&val, 4);
+    return 1;
+}
+
+int64_t lpp_net_listen_udp(int64_t port) {
+    lpp_ws2_init();
+    if (!fn_socket) return 0;
+    SOCKET s = fn_socket(AF_INET, SOCK_DGRAM, 0);
+    if (s == INVALID_SOCKET) return 0;
+    lpp_sockaddr_in addr; for (int i=0;i<16;i++) ((char*)&addr)[i]=0;
+    addr.family = AF_INET;
+    addr.port = fn_htons ? fn_htons((uint16_t)port) : 0;
+    if (fn_bind(s, &addr, 16) != 0) { fn_closesocket(s); return 0; }
+    int idx = lpp_win_sock_count++;
+    lpp_win_sock_table[idx] = s;
+    return (int64_t)(idx + 1);
+}
+
+int64_t lpp_net_dial(const char *host, int64_t port, int64_t timeout_ms) {
+    return lpp_net_connect(host, port);
+}
+
+int64_t lpp_net_dial_udp(const char *host, int64_t port, int64_t timeout_ms) {
+    lpp_ws2_init();
+    if (!fn_socket || !host) return 0;
+    SOCKET s = fn_socket(AF_INET, SOCK_DGRAM, 0);
+    if (s == INVALID_SOCKET) return 0;
+    lpp_sockaddr_in addr; for (int i=0;i<16;i++) ((char*)&addr)[i]=0;
+    addr.family = AF_INET;
+    addr.port = fn_htons ? fn_htons((uint16_t)port) : 0;
+    addr.addr = fn_inet_addr ? fn_inet_addr(host) : 0;
+    if (fn_connect(s, &addr, 16) != 0) { fn_closesocket(s); return 0; }
+    int idx = lpp_win_sock_count++;
+    lpp_win_sock_table[idx] = s;
+    return (int64_t)(idx + 1);
+}

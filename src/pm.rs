@@ -676,7 +676,6 @@ fn resolve_min_runtime_object() -> Option<PathBuf> {
                     .arg("-fno-pic")
                     .arg("-mno-red-zone")
                     .arg("-fno-reorder-blocks-and-partition")
-                    .arg("-fno-asynchronous-unwind-tables")
                     .arg("-DLPP_FREESTANDING")
                     .arg("-c")
                     .arg(local_src)
@@ -772,10 +771,6 @@ pub fn host_link_binary(obj_file: &Path, output_path: &Path, link_libs: &[String
 }
 
 pub fn direct_link_binary(obj_file: &Path, output_path: &Path) -> Result<(), String> {
-    direct_link_binary_with_libs(obj_file, output_path, &[])
-}
-
-pub fn direct_link_binary_with_libs(obj_file: &Path, output_path: &Path, link_libs: &[String]) -> Result<(), String> {
     let linker = current_binary_dir()
         .map(|dir| dir.join(format!("lpp-link{}", std::env::consts::EXE_SUFFIX)))
         .filter(|path| path.exists())
@@ -796,12 +791,8 @@ pub fn direct_link_binary_with_libs(obj_file: &Path, output_path: &Path, link_li
         cmd.arg("macho");
     }
     cmd.arg(obj_file)
-        .arg(&runtime);
-    // Pass -l flags for shared library linking
-    for lib in link_libs {
-        cmd.arg(format!("-l{}", lib));
-    }
-    cmd.arg("-o")
+        .arg(&runtime)
+        .arg("-o")
         .arg(output_path);
 
     let status = cmd

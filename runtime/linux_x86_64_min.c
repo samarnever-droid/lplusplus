@@ -1218,3 +1218,53 @@ char *lpp_buf_read_str(void *ptr, int64_t offset, int64_t len) {
     out[len] = 0;
     return out;
 }
+
+
+/* ── Additional networking builtins ── */
+static uint32_t lpp_parse_ipv4(const char *host) {
+    uint32_t parts[4] = {0,0,0,0}; int pi = 0;
+    if (!host) return 0;
+    for (int i = 0; host[i] && pi < 4; i++) {
+        if (host[i] == '.') pi++;
+        else if (host[i] >= '0' && host[i] <= '9') parts[pi] = parts[pi]*10 + (host[i]-'0');
+    }
+    return parts[0] | (parts[1]<<8) | (parts[2]<<16) | (parts[3]<<24);
+}
+
+int64_t lpp_net_accept_timeout(int64_t listener, int64_t timeout_ms) {
+    (void)timeout_ms;
+    return lpp_net_accept(listener);
+}
+int64_t lpp_net_dial(const char *host, int64_t port, int64_t timeout_ms) {
+    (void)timeout_ms;
+    return lpp_net_connect(host, port);
+}
+int64_t lpp_net_dial_udp(const char *host, int64_t port, int64_t timeout_ms) {
+    (void)timeout_ms;
+    long sock = lpp_sys_socket(2, 2, 0);
+    if (sock < 0) return 0;
+    struct lpp_sockaddr_in addr = {0};
+    addr.sin_family = 2;
+    addr.sin_port = lpp_htons((uint16_t)port);
+    addr.sin_addr = lpp_parse_ipv4(host);
+    long r; __asm__ volatile("syscall":"=a"(r):"a"(42),"D"((int)sock),"S"(&addr),"d"(16):"rcx","r11","memory");
+    if (r < 0) { __asm__ volatile("syscall"::"a"(3),"D"((int)sock):"rcx","r11"); return 0; }
+    return sock;
+}
+int64_t lpp_net_listen_udp(int64_t port) {
+    long sock = lpp_sys_socket(2, 2, 0);
+    if (sock < 0) return 0;
+    struct lpp_sockaddr_in addr = {0};
+    addr.sin_family = 2;
+    addr.sin_port = lpp_htons((uint16_t)port);
+    long r; __asm__ volatile("syscall":"=a"(r):"a"(49),"D"((int)sock),"S"(&addr),"d"(16):"rcx","r11","memory");
+    if (r < 0) { __asm__ volatile("syscall"::"a"(3),"D"((int)sock):"rcx","r11"); return 0; }
+    return sock;
+}
+int64_t lpp_net_set_deadline(int64_t fd, int64_t read_ms, int64_t write_ms) {
+    return lpp_net_set_timeout(fd, read_ms > write_ms ? read_ms : write_ms);
+}
+int64_t lpp_net_set_keepalive(int64_t fd, int64_t enable, int64_t idle_s, int64_t interval, int64_t count) {
+    (void)idle_s; (void)interval; (void)count; (void)enable;
+    return 1;
+}
