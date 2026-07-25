@@ -56,17 +56,34 @@ def main():
 
 ## Install
 
+### 🐧 Linux / macOS
+```bash
+curl -fsSL https://raw.githubusercontent.com/samarnever-droid/lplusplus/master/install.sh | sh
+```
+
+### 🪟 Windows (PowerShell)
+```powershell
+irm https://raw.githubusercontent.com/samarnever-droid/lplusplus/master/install.ps1 | iex
+```
+
+### 📦 From Source
+```bash
+git clone https://github.com/samarnever-droid/lplusplus.git
+cd lplusplus
+cargo build --release --bin lpp --bin lpp-link
+```
+
+### ⚡ Use Without Installing (run from build directory)
 ```bash
 # Linux / macOS
-curl -fsSL https://raw.githubusercontent.com/samarnever-droid/lplusplus/master/install.sh | sh
+./target/release/lpp myfile.lpp
 
-# Windows (PowerShell)
-irm https://raw.githubusercontent.com/samarnever-droid/lplusplus/master/install.ps1 | iex
-
-# From source
-git clone https://github.com/samarnever-droid/lplusplus.git
-cd lplusplus && cargo build --release --bin lpp --bin lpp-link
+# Windows PowerShell
+.\target\release\lpp.exe myfile.lpp
 ```
+
+### 📥 Pre-built Releases
+Download binaries for Linux, Windows, and macOS from the [Releases page](https://github.com/samarnever-droid/lplusplus/releases/latest).
 
 ## Quick Start
 
