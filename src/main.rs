@@ -7,6 +7,8 @@ mod diagnostics;
 pub mod cranelift_backend;
 #[path = "analysis/escape.rs"]
 mod escape;
+#[path = "analysis/monomorph.rs"]
+mod monomorph;
 #[path = "frontend/lexer.rs"]
 mod lexer;
 #[path = "mir/mod.rs"]
@@ -586,6 +588,9 @@ fn main() {
             if let Err(e) = resolve_local_imports(&mut ast.declarations, &mut imp, base) {
                 all_fails.push(format!("{}: import: {}", fpath.display(), e)); continue;
             }
+            if let Err(e) = monomorph::Monomorphizer::process_program(&mut ast) {
+                all_fails.push(format!("{}: monomorph: {}", fpath.display(), e)); continue;
+            }
             let mut res = semantic::Resolver::new();
             if let Err(e) = res.resolve_program(&mut ast) {
                 all_fails.push(format!("{}: semantic: {}", fpath.display(), e)); continue;
@@ -654,6 +659,11 @@ fn main() {
     let mut imported_files = std::collections::HashSet::new();
     if let Err(e) = resolve_local_imports(&mut ast.declarations, &mut imported_files, base_dir) {
         eprint!("{}", diagnostics::render_error_string(&filename, &input, diagnostics::DiagnosticKind::Import, &e));
+        return;
+    }
+
+    if let Err(e) = monomorph::Monomorphizer::process_program(&mut ast) {
+        eprint!("{}", diagnostics::render_error_string(&filename, &input, diagnostics::DiagnosticKind::Semantic, &e));
         return;
     }
 
