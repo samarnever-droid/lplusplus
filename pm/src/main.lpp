@@ -10,7 +10,7 @@ import registry
 import add_remove
 
 def main():
-    print_str("=== Self-Hosted L++ Package Manager v3.3.1 ===")
+    print_str("=== Self-Hosted L++ Package Manager v3.4.0 ===")
 
     mut cmd := env_get("LPP_PM_CMD")
     if str_len(cmd) == 0:
@@ -157,7 +157,7 @@ def main():
         return
 
     # ── help ───────────────────────────────────────────────────────────
-    print_str("=== L++ Package Manager v3.3.1 (Pure L++ Native) ===")
+    print_str("=== L++ Package Manager v3.4.0 (Pure L++ Native) ===")
     print_str("  new <name>            Create a new L++ package")
     print_str("  init <name>           Initialize package in current directory")
     print_str("  install               Resolve and install all dependencies")

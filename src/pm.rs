@@ -876,7 +876,7 @@ pub fn run_command(args: &[String]) {
 }
 
 fn print_help() {
-    println!("L++ Package Manager v3.3.1");
+    println!("L++ Package Manager v3.4.0");
     println!("Usage: lpp [command] [options]");
     println!();
     println!("Package Commands:");

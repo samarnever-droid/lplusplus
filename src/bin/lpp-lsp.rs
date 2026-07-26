@@ -100,7 +100,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         },
                         "serverInfo": {
                             "name": "lpp-lsp",
-                            "version": "3.3.1"
+                            "version": "3.4.0"
                         }
                     })),
                     error: None,
