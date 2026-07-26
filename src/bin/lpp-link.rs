@@ -800,6 +800,44 @@ fn is_crt_symbol(name: &str) -> bool {
     )
 }
 
+fn is_kernel32_symbol(name: &str) -> bool {
+    let clean = name.strip_prefix("__imp_").unwrap_or(name);
+    matches!(
+        clean,
+        "ExitProcess"
+            | "GetTickCount64"
+            | "LoadLibraryA"
+            | "GetProcAddress"
+            | "GetStdHandle"
+            | "WriteFile"
+            | "ReadFile"
+            | "VirtualAlloc"
+            | "VirtualFree"
+            | "CreateThread"
+            | "WaitForSingleObject"
+            | "CloseHandle"
+            | "CreateFileA"
+            | "GetFileSize"
+            | "SetFilePointer"
+            | "DeleteFileA"
+            | "GetFileAttributesA"
+            | "CreateDirectoryA"
+            | "RemoveDirectoryA"
+            | "FindFirstFileA"
+            | "FindNextFileA"
+            | "FindClose"
+            | "Sleep"
+            | "CreateProcessA"
+            | "GetExitCodeProcess"
+            | "CreatePipe"
+            | "GetEnvironmentVariableA"
+            | "SetEnvironmentVariableA"
+            | "GetModuleFileNameA"
+            | "QueryPerformanceCounter"
+            | "QueryPerformanceFrequency"
+    )
+}
+
 /// Build the combined import descriptor + ILT + IAT + hint/name table for
 /// KERNEL32.dll and msvcrt.dll.  Also reserves space for `.refptr.` internal symbols.
 struct ImportData {
@@ -1036,6 +1074,11 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
                 let n = name.to_string();
                 if !raw_imports.contains(&n) {
                     raw_imports.push(n);
+                }
+            } else if is_kernel32_symbol(&rel.target) && !global_syms.contains_key(&rel.target) {
+                // Kernel32 functions (ExitProcess, GetTickCount64, etc.)
+                if !raw_imports.contains(&rel.target) {
+                    raw_imports.push(rel.target.clone());
                 }
             } else if is_crt_symbol(&rel.target) && !global_syms.contains_key(&rel.target) {
                 // Only import CRT symbols from msvcrt.dll if they are NOT
