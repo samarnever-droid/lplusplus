@@ -150,6 +150,48 @@ void lpp_gui_draw_rect(int64_t win_id, int64_t x, int64_t y, int64_t w, int64_t 
     DeleteObject(brush);
 }
 
+void lpp_gui_draw_rounded_rect(int64_t win_id, int64_t x, int64_t y, int64_t w, int64_t h, int64_t radius, int64_t hex_color) {
+    if (win_id < 0 || win_id >= g_win_count || !g_windows[win_id].is_open) return;
+    BYTE r_val = (BYTE)((hex_color >> 16) & 0xFF);
+    BYTE g_val = (BYTE)((hex_color >> 8) & 0xFF);
+    BYTE b_val = (BYTE)(hex_color & 0xFF);
+
+    COLORREF col = RGB(r_val, g_val, b_val);
+    HBRUSH brush = CreateSolidBrush(col);
+    HBRUSH old_brush = (HBRUSH)SelectObject(g_windows[win_id].mem_dc, brush);
+    HPEN pen = CreatePen(PS_NULL, 0, 0);
+    HPEN old_pen = (HPEN)SelectObject(g_windows[win_id].mem_dc, pen);
+
+    int r_diam = (int)(radius * 2);
+    RoundRect(g_windows[win_id].mem_dc, (int)x, (int)y, (int)(x + w), (int)(y + h), r_diam, r_diam);
+
+    SelectObject(g_windows[win_id].mem_dc, old_brush);
+    SelectObject(g_windows[win_id].mem_dc, old_pen);
+    DeleteObject(brush);
+    DeleteObject(pen);
+}
+
+int64_t lpp_gui_mouse_x(int64_t win_id) {
+    if (win_id < 0 || win_id >= g_win_count || !g_windows[win_id].is_open) return 0;
+    POINT pt;
+    GetCursorPos(&pt);
+    ScreenToClient(g_windows[win_id].hwnd, &pt);
+    return (int64_t)pt.x;
+}
+
+int64_t lpp_gui_mouse_y(int64_t win_id) {
+    if (win_id < 0 || win_id >= g_win_count || !g_windows[win_id].is_open) return 0;
+    POINT pt;
+    GetCursorPos(&pt);
+    ScreenToClient(g_windows[win_id].hwnd, &pt);
+    return (int64_t)pt.y;
+}
+
+int64_t lpp_gui_mouse_down(int64_t win_id) {
+    if (win_id < 0 || win_id >= g_win_count || !g_windows[win_id].is_open) return 0;
+    return (GetAsyncKeyState(VK_LBUTTON) & 0x8000) ? 1 : 0;
+}
+
 void lpp_gui_draw_text(int64_t win_id, int64_t x, int64_t y, const char *text, int64_t hex_color) {
     if (win_id < 0 || win_id >= g_win_count || !g_windows[win_id].is_open || !text) return;
     BYTE r_val = (BYTE)((hex_color >> 16) & 0xFF);
@@ -195,6 +237,12 @@ void lpp_gui_clear(int64_t win_id, int64_t hex_color) { (void)win_id; (void)hex_
 void lpp_gui_draw_rect(int64_t win_id, int64_t x, int64_t y, int64_t w, int64_t h, int64_t hex_color) {
     (void)win_id; (void)x; (void)y; (void)w; (void)h; (void)hex_color;
 }
+void lpp_gui_draw_rounded_rect(int64_t win_id, int64_t x, int64_t y, int64_t w, int64_t h, int64_t radius, int64_t hex_color) {
+    (void)win_id; (void)x; (void)y; (void)w; (void)h; (void)radius; (void)hex_color;
+}
+int64_t lpp_gui_mouse_x(int64_t win_id) { (void)win_id; return 0; }
+int64_t lpp_gui_mouse_y(int64_t win_id) { (void)win_id; return 0; }
+int64_t lpp_gui_mouse_down(int64_t win_id) { (void)win_id; return 0; }
 void lpp_gui_draw_text(int64_t win_id, int64_t x, int64_t y, const char *text, int64_t hex_color) {
     (void)win_id; (void)x; (void)y; (void)text; (void)hex_color;
 }

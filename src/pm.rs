@@ -639,6 +639,12 @@ fn file_content_hash(path: &Path) -> Option<u64> {
     let data = fs::read(path).ok()?;
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     data.hash(&mut hasher);
+    let gui_path = Path::new("runtime/lpp_gui.c");
+    if gui_path.exists() {
+        if let Ok(gui_data) = fs::read(gui_path) {
+            gui_data.hash(&mut hasher);
+        }
+    }
     Some(hasher.finish())
 }
 
@@ -689,6 +695,8 @@ fn resolve_min_runtime_object() -> Option<PathBuf> {
 
         if needs_rebuild {
             let _ = fs::create_dir_all(&cache_dir);
+            #[cfg(windows)]
+            load_msvc_env();
             let cc = if cfg!(windows) { "cl.exe" } else { "gcc" };
             let mut cmd = std::process::Command::new(cc);
             if cfg!(windows) {

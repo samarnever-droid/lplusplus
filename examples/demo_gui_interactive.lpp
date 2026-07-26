@@ -1,0 +1,103 @@
+import gui
+
+def main():
+    win := gui.create("Modern Interactive L++ GUI Dashboard (Direct Linker Supported)", 800, 520)
+    print_str("[L++] Modern Interactive GUI Application Started!")
+
+    if win >= 0:
+        mut running := 1
+        mut clicks := 0
+        mut active_tab := "Analysis"
+
+        # Continuous Interactive Loop (Stays open until user closes window)
+        while running == 1:
+            running = gui.poll_events(win)
+            if running == 0:
+                break
+
+            mx := gui.mouse_x(win)
+            my := gui.mouse_y(win)
+            down := gui.mouse_down(win)
+
+            # 1. Dark Background (#121212)
+            gui.clear(win, 0x121212)
+
+            # 2. Header Bar with Rounded Container (Radius: 10px)
+            gui.draw_rounded_rect(win, 15, 15, 770, 50, 10, 0x1F1F23)
+            gui.draw_text(win, 35, 30, "L++ MODERN INTERACTIVE DASHBOARD", 0x007ACC)
+            gui.draw_text(win, 630, 30, "EARC Engine", 0x888888)
+
+            # 3. Main Hero Card (Curvy Rounded Card - Radius 14px)
+            gui.draw_rounded_rect(win, 30, 85, 450, 190, 14, 0x005999)
+            gui.draw_text(win, 55, 110, "Fast, Safe & Native by Default", 0xFFFFFF)
+            gui.draw_text(win, 55, 145, "No Garbage Collector | No Interpreter", 0xCCCCCC)
+            gui.draw_text(win, 55, 170, "EARC (Escape-Assisted Ref Counting)", 0xCCCCCC)
+            gui.draw_text(win, 55, 215, "[ Standalone Direct Linker: lpp-link ]", 0x66FF66)
+
+            # 4. Stat Tile 1 (Memory Footprint)
+            gui.draw_rounded_rect(win, 500, 85, 270, 88, 12, 0x252526)
+            gui.draw_text(win, 520, 100, "MEMORY FOOTPRINT", 0x888888)
+            gui.draw_text(win, 520, 125, "15.5 KB Freestanding PE", 0x00FFCC)
+
+            # 5. Stat Tile 2 (Total Clicks)
+            gui.draw_rounded_rect(win, 500, 187, 270, 88, 12, 0x252526)
+            gui.draw_text(win, 520, 202, "INTERACTIVE CLICKS", 0x888888)
+            mut click_str := str_concat("Total Clicks: ", int_to_str(clicks))
+            gui.draw_text(win, 520, 227, click_str, 0xFFCC00)
+
+            # 6. Interactive Button 1: "Run Analysis" (30..250, 295..340)
+            mut btn1_color := 0x007ACC
+            if mx >= 30 && mx <= 250 && my >= 295 && my <= 340:
+                btn1_color = 0x0099FF # Hover state
+                if down == 1:
+                    btn1_color = 0x005599 # Click state
+                    clicks = clicks + 1
+                    active_tab = "Analysis"
+                    print_str("[GUI Event] Button 'Run Analysis' clicked!")
+
+            gui.draw_rounded_rect(win, 30, 295, 220, 45, 12, btn1_color)
+            gui.draw_text(win, 65, 310, "Run Analysis", 0xFFFFFF)
+
+            # 7. Interactive Button 2: "Settings" (270..480, 295..340)
+            mut btn2_color := 0x333337
+            if mx >= 270 && mx <= 480 && my >= 295 && my <= 340:
+                btn2_color = 0x44444C # Hover state
+                if down == 1:
+                    btn2_color = 0x222225 # Click state
+                    clicks = clicks + 1
+                    active_tab = "Settings"
+                    print_str("[GUI Event] Button 'Settings' clicked!")
+
+            gui.draw_rounded_rect(win, 270, 295, 210, 45, 12, btn2_color)
+            gui.draw_text(win, 310, 310, "System Settings", 0xCCCCCC)
+
+            # 8. Interactive Button 3: "Deploy Binary" (500..770, 295..340)
+            mut btn3_color := 0x28A745
+            if mx >= 500 && mx <= 770 && my >= 295 && my <= 340:
+                btn3_color = 0x34CE57 # Hover state
+                if down == 1:
+                    btn3_color = 0x1E7E34 # Click state
+                    clicks = clicks + 1
+                    active_tab = "Deploy"
+                    print_str("[GUI Event] Button 'Deploy Binary' clicked!")
+
+            gui.draw_rounded_rect(win, 500, 295, 270, 45, 12, btn3_color)
+            gui.draw_text(win, 550, 310, "Deploy Native Binary", 0xFFFFFF)
+
+            # 9. Live Mouse Coordinates & Tab Log Terminal
+            gui.draw_rounded_rect(win, 30, 360, 740, 95, 10, 0x1E1E1E)
+            mut pos_str := str_concat("Mouse Position: X=", str_concat(int_to_str(mx), str_concat(" Y=", int_to_str(my))))
+            gui.draw_text(win, 45, 375, pos_str, 0x00FF00)
+            mut status_str := str_concat("Active Tab: ", str_concat(active_tab, " | Direct Linker (USER32/GDI32 COFF Resolved)"))
+            gui.draw_text(win, 45, 400, status_str, 0xAAAAAA)
+            gui.draw_text(win, 45, 425, "Status: Listening for Win32 mouse & window events", 0x888888)
+
+            # 10. Bottom Status Bar
+            gui.draw_rounded_rect(win, 0, 490, 800, 30, 0, 0x007ACC)
+            gui.draw_text(win, 15, 497, "Ready | Direct Linker Enabled | Win32 GDI Curvy Render | 60 FPS", 0xFFFFFF)
+
+            # Swap Double-Buffered Frame
+            gui.present(win)
+
+        gui.close(win)
+        print_str("[L++] Interactive GUI closed by user.")

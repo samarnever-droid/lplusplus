@@ -323,3 +323,17 @@ void lpp_exit(int64_t code) { ExitProcess((unsigned int)code); }
 
 /* ── String equality ── */
 int64_t lpp_str_eq(const char *a, const char *b) { if(a==b)return 1; if(!a||!b)return 0; while(*a&&*a==*b){a++;b++;} return *a==*b?1:0; }
+
+/* ── GUI Stubs for Freestanding ── */
+int64_t lpp_gui_window_create(const char *t, int64_t w, int64_t h) { (void)t; (void)w; (void)h; return -1; }
+int64_t lpp_gui_window_is_open(int64_t id) { (void)id; return 0; }
+int64_t lpp_gui_window_poll_events(int64_t id) { (void)id; return 0; }
+void lpp_gui_clear(int64_t id, int64_t c) { (void)id; (void)c; }
+void lpp_gui_draw_rect(int64_t id, int64_t x, int64_t y, int64_t w, int64_t h, int64_t c) { (void)id; (void)x; (void)y; (void)w; (void)h; (void)c; }
+void lpp_gui_draw_rounded_rect(int64_t id, int64_t x, int64_t y, int64_t w, int64_t h, int64_t r, int64_t c) { (void)id; (void)x; (void)y; (void)w; (void)h; (void)r; (void)c; }
+int64_t lpp_gui_mouse_x(int64_t id) { (void)id; return 0; }
+int64_t lpp_gui_mouse_y(int64_t id) { (void)id; return 0; }
+int64_t lpp_gui_mouse_down(int64_t id) { (void)id; return 0; }
+void lpp_gui_draw_text(int64_t id, int64_t x, int64_t y, const char *txt, int64_t c) { (void)id; (void)x; (void)y; (void)txt; (void)c; }
+void lpp_gui_present(int64_t id) { (void)id; }
+void lpp_gui_window_close(int64_t id) { (void)id; }

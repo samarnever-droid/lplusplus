@@ -838,6 +838,47 @@ fn is_kernel32_symbol(name: &str) -> bool {
     )
 }
 
+fn is_user32_symbol(name: &str) -> bool {
+    let clean = name.strip_prefix("__imp_").unwrap_or(name);
+    matches!(
+        clean,
+        "CreateWindowExA"
+            | "DestroyWindow"
+            | "DefWindowProcA"
+            | "PostQuitMessage"
+            | "RegisterClassA"
+            | "GetDC"
+            | "ReleaseDC"
+            | "LoadCursorA"
+            | "PeekMessageA"
+            | "TranslateMessage"
+            | "DispatchMessageA"
+            | "GetAsyncKeyState"
+            | "GetCursorPos"
+            | "ScreenToClient"
+            | "FillRect"
+    )
+}
+
+fn is_gdi32_symbol(name: &str) -> bool {
+    let clean = name.strip_prefix("__imp_").unwrap_or(name);
+    matches!(
+        clean,
+        "CreateCompatibleDC"
+            | "CreateCompatibleBitmap"
+            | "SelectObject"
+            | "DeleteDC"
+            | "DeleteObject"
+            | "CreateSolidBrush"
+            | "CreatePen"
+            | "RoundRect"
+            | "TextOutA"
+            | "SetBkMode"
+            | "SetTextColor"
+            | "BitBlt"
+    )
+}
+
 /// Build the combined import descriptor + ILT + IAT + hint/name table for
 /// KERNEL32.dll and msvcrt.dll.  Also reserves space for `.refptr.` internal symbols.
 struct ImportData {
@@ -858,11 +899,21 @@ fn build_imports(
     section_rva: u32,
 ) -> Result<ImportData, String> {
     let mut kernel_imports = Vec::new();
+    let mut user32_imports = Vec::new();
+    let mut gdi32_imports = Vec::new();
     let mut crt_imports = Vec::new();
 
     for imp in raw_imports {
         let clean = imp.strip_prefix("__imp_").unwrap_or(imp).to_string();
-        if is_crt_symbol(&clean) {
+        if is_user32_symbol(&clean) {
+            if !user32_imports.contains(&clean) {
+                user32_imports.push(clean);
+            }
+        } else if is_gdi32_symbol(&clean) {
+            if !gdi32_imports.contains(&clean) {
+                gdi32_imports.push(clean);
+            }
+        } else if is_crt_symbol(&clean) {
             if !crt_imports.contains(&clean) {
                 crt_imports.push(clean);
             }
@@ -875,6 +926,8 @@ fn build_imports(
 
     let dll_list = [
         ("KERNEL32.dll", &kernel_imports),
+        ("USER32.dll", &user32_imports),
+        ("GDI32.dll", &gdi32_imports),
         ("msvcrt.dll", &crt_imports),
     ];
     let active_dlls: Vec<(&str, &Vec<String>)> = dll_list
@@ -1075,8 +1128,7 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
                 if !raw_imports.contains(&n) {
                     raw_imports.push(n);
                 }
-            } else if is_kernel32_symbol(&rel.target) && !global_syms.contains_key(&rel.target) {
-                // Kernel32 functions (ExitProcess, GetTickCount64, etc.)
+            } else if (is_kernel32_symbol(&rel.target) || is_user32_symbol(&rel.target) || is_gdi32_symbol(&rel.target)) && !global_syms.contains_key(&rel.target) {
                 if !raw_imports.contains(&rel.target) {
                     raw_imports.push(rel.target.clone());
                 }

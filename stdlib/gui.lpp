@@ -15,6 +15,18 @@ def clear(win_id: Int, hex_color: Int) -> Void:
 def draw_rect(win_id: Int, x: Int, y: Int, width: Int, height: Int, hex_color: Int) -> Void:
     gui_draw_rect(win_id, x, y, width, height, hex_color)
 
+def draw_rounded_rect(win_id: Int, x: Int, y: Int, width: Int, height: Int, radius: Int, hex_color: Int) -> Void:
+    gui_draw_rounded_rect(win_id, x, y, width, height, radius, hex_color)
+
+def mouse_x(win_id: Int) -> Int:
+    return gui_mouse_x(win_id)
+
+def mouse_y(win_id: Int) -> Int:
+    return gui_mouse_y(win_id)
+
+def mouse_down(win_id: Int) -> Int:
+    return gui_mouse_down(win_id)
+
 def draw_text(win_id: Int, x: Int, y: Int, text: Str, hex_color: Int) -> Void:
     gui_draw_text(win_id, x, y, text, hex_color)
 
