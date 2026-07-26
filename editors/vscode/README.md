@@ -2,7 +2,7 @@
 
 This extension provides rich, production-grade language tooling for the **L++** programming language directly in Visual Studio Code.
 
-![L++ Logo](lpp-logo.svg)
+<!-- ![L++ Logo](lpp-logo.svg) -->
 
 ---
 

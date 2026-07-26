@@ -2,8 +2,12 @@
     "name": "lpp-vscode",
     "displayName": "L++ Language Support",
     "description": "Rich support for L++, featuring syntax highlighting, compiler diagnostics, outline symbols, and escape-analysis visual hover hints.",
-    "version": "0.1.0",
+    "version": "3.4.0",
     "publisher": "lpp-lang",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/samarnever-droid/lplusplus.git"
+    },
     "engines": {
         "vscode": "^1.74.0"
     },
