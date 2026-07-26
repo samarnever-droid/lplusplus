@@ -15,6 +15,10 @@ path = "src/bin/lpp-link.rs"
 name = "lpp-bench"
 path = "src/bin/lpp-bench.rs"
 
+[[bin]]
+name = "lpp-lsp"
+path = "src/bin/lpp-lsp.rs"
+
 [dependencies]
 cranelift-codegen = { version = "0.113", features = ["x86", "all-arch"] }
 cranelift-frontend = "0.113"
