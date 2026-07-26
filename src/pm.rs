@@ -257,24 +257,39 @@ fn read_lockfile() -> Vec<LockedPackage> {
 }
 
 fn registry_package_names() -> Vec<String> {
-    let json =
-        fs::read_to_string(Path::new("githubpage").join("registry.json")).unwrap_or_default();
+    let json = fetch_registry_json().unwrap_or_default();
     let mut names = Vec::new();
     let mut in_packages = false;
+    let mut depth: i32 = 0;
     for raw_line in json.lines() {
         let line = raw_line.trim();
-        if line.starts_with("\"packages\"") {
-            in_packages = true;
+        if !in_packages {
+            if line.contains("\"packages\"") {
+                in_packages = true;
+                // Count braces on this line to set initial depth
+                for ch in line.chars() {
+                    if ch == '{' { depth += 1; }
+                    if ch == '}' { depth -= 1; }
+                }
+            }
             continue;
         }
-        if in_packages && line.starts_with('}') {
-            break;
-        }
-        if in_packages && line.starts_with('"') {
+        // Capture package name BEFORE counting braces on this line
+        // A package name is a quoted string followed by : { at depth 1
+        if depth == 1 && line.starts_with('"') && line.contains(':') {
             if let Some(end_quote) = line[1..].find('"') {
-                names.push(line[1..1 + end_quote].to_string());
+                let name = &line[1..1 + end_quote];
+                if !name.is_empty() {
+                    names.push(name.to_string());
+                }
             }
         }
+        // NOW count braces
+        for ch in line.chars() {
+            if ch == '{' { depth += 1; }
+            if ch == '}' { depth -= 1; }
+        }
+        if depth <= 0 { break; }
     }
     names
 }
@@ -950,7 +965,7 @@ pub fn resolve_from_json(json_str: &str, target_name: &str) -> Option<RegistryEn
                                 .trim_matches('\'')
                                 .trim()
                                 .to_string();
-                            if key == "git" {
+                            if key == "git" || key == "repository" {
                                 git = val;
                             } else if key == "branch" {
                                 branch = Some(val);
@@ -971,12 +986,18 @@ pub fn resolve_from_json(json_str: &str, target_name: &str) -> Option<RegistryEn
 }
 
 fn fetch_registry_json() -> Option<String> {
-    let local_registry = Path::new("githubpage").join("registry.json");
-    if local_registry.exists() {
-        return fs::read_to_string(local_registry).ok();
+    // Try local registry first (in repo checkout)
+    let local_paths = [
+        Path::new("registry").join("index.json"),
+        Path::new("website").join("public").join("registry").join("index.json"),
+    ];
+    for local in &local_paths {
+        if local.exists() {
+            return fs::read_to_string(local).ok();
+        }
     }
 
-    let url = "https://raw.githubusercontent.com/samarnever-droid/Lpp-a-programing-langauge-/master/githubpage/registry.json";
+    let url = "https://samarnever-droid.github.io/lplusplus/registry/index.json";
 
     if command_available("curl", &["--version"]) {
         let output = std::process::Command::new("curl")
