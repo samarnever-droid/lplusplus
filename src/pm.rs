@@ -25,6 +25,7 @@ pub struct Package {
 
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct RegistryEntry {
+    #[serde(alias = "repository")]
     pub git: String,
     pub branch: Option<String>,
     pub tag: Option<String>,
@@ -285,7 +286,12 @@ fn registry_package_entries() -> Vec<(String, RegistryEntry)> {
         } else if let Ok(val) = serde_json::from_str::<serde_json::Value>(&json) {
             if let Some(pkgs) = val.get("packages").and_then(|p| p.as_object()) {
                 for (k, v) in pkgs {
-                    let git = v.get("git").and_then(|g| g.as_str()).unwrap_or("").to_string();
+                    let git = v
+                        .get("git")
+                        .or_else(|| v.get("repository"))
+                        .and_then(|g| g.as_str())
+                        .unwrap_or("")
+                        .to_string();
                     let branch = v.get("branch").and_then(|b| b.as_str()).map(String::from);
                     let tag = v.get("tag").and_then(|t| t.as_str()).map(String::from);
                     let description = v.get("description").and_then(|d| d.as_str()).map(String::from);
@@ -971,7 +977,11 @@ pub fn resolve_from_json(json_str: &str, target_name: &str) -> Option<RegistryEn
             for (k, v) in pkgs {
                 let k_leaf = k.split('/').last().unwrap_or(k);
                 if k.eq_ignore_ascii_case(target_name) || k_leaf.eq_ignore_ascii_case(repo_leaf) {
-                    let git = v.get("git").and_then(|g| g.as_str())?.to_string();
+                    let git = v
+                        .get("git")
+                        .or_else(|| v.get("repository"))
+                        .and_then(|g| g.as_str())?
+                        .to_string();
                     let branch = v.get("branch").and_then(|b| b.as_str()).map(String::from);
                     let tag = v.get("tag").and_then(|t| t.as_str()).map(String::from);
                     let description = v.get("description").and_then(|d| d.as_str()).map(String::from);
@@ -984,17 +994,29 @@ pub fn resolve_from_json(json_str: &str, target_name: &str) -> Option<RegistryEn
 }
 
 fn fetch_registry_json() -> Option<String> {
-    let candidates = [
+    let local_paths = [
+        PathBuf::from("registry").join("index.json"),
+        PathBuf::from("website").join("public").join("registry").join("index.json"),
         PathBuf::from("githubpage").join("registry.json"),
         PathBuf::from("registry.json"),
     ];
 
+    for local in &local_paths {
+        if local.exists() {
+            if let Ok(content) = fs::read_to_string(local) {
+                return Some(content);
+            }
+        }
+    }
+
     if let Ok(exe) = std::env::current_exe() {
         if let Some(parent) = exe.parent() {
             let exe_candidates = [
+                parent.join("registry/index.json"),
+                parent.join("../registry/index.json"),
+                parent.join("../../registry/index.json"),
                 parent.join("githubpage/registry.json"),
                 parent.join("../githubpage/registry.json"),
-                parent.join("../../githubpage/registry.json"),
             ];
             for candidate in &exe_candidates {
                 if candidate.exists() {
@@ -1006,33 +1028,27 @@ fn fetch_registry_json() -> Option<String> {
         }
     }
 
-    for candidate in &candidates {
-        if candidate.exists() {
-            if let Ok(content) = fs::read_to_string(candidate) {
-                return Some(content);
-            }
-        }
-    }
-
-    let url = "https://raw.githubusercontent.com/samarnever-droid/Lpp-a-programing-langauge-/master/githubpage/registry.json";
+    let primary_url = "https://samarnever-droid.github.io/lplusplus/registry/index.json";
+    let fallback_url = "https://raw.githubusercontent.com/samarnever-droid/Lpp-a-programing-langauge-/master/githubpage/registry.json";
     let mut fetched_json: Option<String> = None;
 
-    if command_available("curl", &["--version"]) {
-        let output = std::process::Command::new("curl")
-            .args(["-fsSL", "--max-time", "5", url])
-            .output()
-            .ok();
-        if let Some(out) = output {
-            if out.status.success() {
-                let text = String::from_utf8_lossy(&out.stdout).into_owned();
-                if !text.trim().is_empty() && text.contains("packages") {
-                    fetched_json = Some(text);
+    for url in &[primary_url, fallback_url] {
+        if command_available("curl", &["--version"]) {
+            let output = std::process::Command::new("curl")
+                .args(["-fsSL", "--max-time", "5", url])
+                .output()
+                .ok();
+            if let Some(out) = output {
+                if out.status.success() {
+                    let text = String::from_utf8_lossy(&out.stdout).into_owned();
+                    if !text.trim().is_empty() && text.contains("packages") {
+                        fetched_json = Some(text);
+                        break;
+                    }
                 }
             }
         }
-    }
 
-    if fetched_json.is_none() {
         #[cfg(windows)]
         {
             let cmd_arg = format!("Invoke-RestMethod -Uri '{}' -TimeoutSec 5 | ConvertTo-Json -Depth 5", url);
@@ -1045,6 +1061,7 @@ fn fetch_registry_json() -> Option<String> {
                     let text = String::from_utf8_lossy(&out.stdout).into_owned();
                     if !text.trim().is_empty() && text.contains("packages") {
                         fetched_json = Some(text);
+                        break;
                     }
                 }
             }
