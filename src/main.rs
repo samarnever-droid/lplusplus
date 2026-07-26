@@ -2,6 +2,7 @@
 mod ast;
 mod builtins;
 mod config;
+mod diagnostics;
 #[path = "backend/cranelift/mod.rs"]
 pub mod cranelift_backend;
 #[path = "analysis/escape.rs"]
@@ -631,7 +632,7 @@ fn main() {
     let tokens = match lexer.tokenize() {
         Ok(tokens) => tokens,
         Err(e) => {
-            eprintln!("Lexer Error in '{}':\n  {}", filename, e);
+            eprint!("{}", diagnostics::render_error_string(&filename, &input, diagnostics::DiagnosticKind::Lexer, &e));
             return;
         }
     };
@@ -642,7 +643,7 @@ fn main() {
     let mut ast = match parser.parse() {
         Ok(ast) => ast,
         Err(e) => {
-            eprintln!("Syntax Error in '{}':\n  {}", filename, e);
+            eprint!("{}", diagnostics::render_error_string(&filename, &input, diagnostics::DiagnosticKind::Syntax, &e));
             return;
         }
     };
@@ -652,14 +653,14 @@ fn main() {
     let base_dir = file_path.parent().unwrap_or(std::path::Path::new("."));
     let mut imported_files = std::collections::HashSet::new();
     if let Err(e) = resolve_local_imports(&mut ast.declarations, &mut imported_files, base_dir) {
-        eprintln!("Import Error in '{}':\n  {}", filename, e);
+        eprint!("{}", diagnostics::render_error_string(&filename, &input, diagnostics::DiagnosticKind::Import, &e));
         return;
     }
 
     let sem_start = Instant::now();
     let mut resolver = semantic::Resolver::new();
     if let Err(e) = resolver.resolve_program(&mut ast) {
-        eprintln!("Semantic Error in '{}':\n  {}", filename, e);
+        eprint!("{}", diagnostics::render_error_string(&filename, &input, diagnostics::DiagnosticKind::Semantic, &e));
         return;
     }
     let sem_time = sem_start.elapsed();
@@ -668,7 +669,7 @@ fn main() {
     let mut type_table = {
         let mut type_checker = typecheck::TypeChecker::new(&mut resolver.table);
         if let Err(e) = type_checker.check_program(&ast) {
-            eprintln!("Type Error in '{}':\n  {}", filename, e);
+            eprint!("{}", diagnostics::render_error_string(&filename, &input, diagnostics::DiagnosticKind::Type, &e));
             return;
         }
         type_checker.type_table
