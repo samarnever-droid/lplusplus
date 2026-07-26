@@ -134,6 +134,19 @@ impl<'a> TypeChecker<'a> {
 
     fn verify_struct_cycles(type_table: &TypeTable) -> Result<(), String> {
         use std::collections::HashSet;
+
+        fn collect_custom_ids(ty: &TypeRef, ids: &mut Vec<StructTypeId>) {
+            match ty {
+                TypeRef::Custom(id) => ids.push(*id),
+                TypeRef::Generic(_, args) => {
+                    for arg in args {
+                        collect_custom_ids(arg, ids);
+                    }
+                }
+                _ => {}
+            }
+        }
+
         fn reaches(
             type_table: &TypeTable,
             target: StructTypeId,
@@ -141,17 +154,9 @@ impl<'a> TypeChecker<'a> {
             visited: &mut HashSet<StructTypeId>,
         ) -> bool {
             for (_, field_ty) in &type_table.definitions[current.0].fields {
-                let next = match field_ty {
-                    TypeRef::Custom(next) => Some(*next),
-                    TypeRef::Generic(name, args) if name == "List" && args.len() == 1 => {
-                        match args[0] {
-                            TypeRef::Custom(next) => Some(next),
-                            _ => None,
-                        }
-                    }
-                    _ => None,
-                };
-                if let Some(next) = next {
+                let mut field_targets = Vec::new();
+                collect_custom_ids(field_ty, &mut field_targets);
+                for next in field_targets {
                     if next == target {
                         return true;
                     }
@@ -1094,5 +1099,32 @@ def main():
             .check_program(&ast)
             .expect_err("cyclic struct should fail typecheck");
         assert!(err.contains("Cyclic owned struct 'Node' detected"));
+    }
+
+    #[test]
+    fn rejects_generic_nested_cyclic_structs() {
+        let source = r#"
+struct GraphNode:
+    neighbors: Map[Str, GraphNode]
+
+def main():
+    print(0)
+"#;
+
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.tokenize().expect("source should lex");
+        let mut parser = Parser::new(tokens);
+        let mut ast = parser.parse().expect("source should parse");
+
+        let mut resolver = Resolver::new();
+        resolver
+            .resolve_program(&mut ast)
+            .expect("program should resolve");
+
+        let mut type_checker = TypeChecker::new(&mut resolver.table);
+        let err = type_checker
+            .check_program(&ast)
+            .expect_err("generic nested cyclic struct should fail typecheck");
+        assert!(err.contains("Cyclic owned struct 'GraphNode' detected"));
     }
 }
