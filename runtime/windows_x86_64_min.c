@@ -337,3 +337,22 @@ int64_t lpp_gui_mouse_down(int64_t id) { (void)id; return 0; }
 void lpp_gui_draw_text(int64_t id, int64_t x, int64_t y, const char *txt, int64_t c) { (void)id; (void)x; (void)y; (void)txt; (void)c; }
 void lpp_gui_present(int64_t id) { (void)id; }
 void lpp_gui_window_close(int64_t id) { (void)id; }
+
+/* ── JSON Stubs for Freestanding ── */
+int64_t lpp_json_parse(const char *json) { (void)json; return 0; }
+char *lpp_json_get_str(int64_t handle, const char *key) { (void)handle; (void)key; return ""; }
+int64_t lpp_json_get_int(int64_t handle, const char *key) { (void)handle; (void)key; return 0; }
+double lpp_json_get_float(int64_t handle, const char *key) { (void)handle; (void)key; return 0.0; }
+char *lpp_json_stringify(int64_t handle) { (void)handle; return "{}"; }
+void lpp_json_free(int64_t handle) { (void)handle; }
+int64_t lpp_net_listen(int64_t port) { (void)port; return -1; }
+int64_t lpp_net_accept(int64_t listener) { (void)listener; return -1; }
+int64_t lpp_net_connect(const char *host, int64_t port) { (void)host; (void)port; return -1; }
+int64_t lpp_net_send(int64_t socket, const char *data) { (void)socket; (void)data; return -1; }
+char *lpp_net_recv(int64_t socket, int64_t max_bytes) { (void)socket; (void)max_bytes; return ""; }
+void lpp_net_close(int64_t socket) { (void)socket; }
+int64_t lpp_net_bind_udp(int64_t port) { (void)port; return -1; }
+int64_t lpp_net_send_udp(int64_t socket, const char *host, int64_t port, const char *data) { (void)socket; (void)host; (void)port; (void)data; return -1; }
+char *lpp_net_recv_udp(int64_t socket, int64_t max_bytes) { (void)socket; (void)max_bytes; return ""; }
+char *lpp_http_get(const char *url) { (void)url; return ""; }
+char *lpp_http_post(const char *url, const char *body, const char *content_type) { (void)url; (void)body; (void)content_type; return ""; }

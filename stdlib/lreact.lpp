@@ -10,7 +10,7 @@ struct LreactRequest:
 
 def start_server(port: Int) -> Int:
     listener := net_listen(port)
-    if listener < 0:
+    if listener <= 0:
         print_str("[Lreact] Error: Failed to bind IPC socket port")
         return -1
     print_str(str_concat("[Lreact] Pure L++ IPC Bridge listening on port ", int_to_str(port)))

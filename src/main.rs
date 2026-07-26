@@ -837,8 +837,10 @@ fn main() {
 
             // Check if any extern blocks or explicit host libraries exist (FFI/host linking required)
             let has_extern = ast.declarations.iter().any(|d| matches!(d, crate::ast::TopLevel::Extern(_)));
-            let use_host = cli_linker.as_deref() == Some("host")
-                || (cli_linker.as_deref() != Some("direct") && (has_extern || !link_libs.is_empty()));
+            let env_linker = env::var("LPP_LINKER").ok();
+            let effective_linker = cli_linker.or(env_linker);
+            let use_host = effective_linker.as_deref() == Some("host")
+                || (effective_linker.as_deref() != Some("direct") && (has_extern || !link_libs.is_empty()));
 
             let link_result = if use_host {
                 #[cfg(windows)]

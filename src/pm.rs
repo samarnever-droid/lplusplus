@@ -665,25 +665,44 @@ fn runtime_cache_target() -> &'static str {
     }
 }
 
-fn resolve_min_runtime_object() -> Option<PathBuf> {
-    let ext = if cfg!(target_os = "windows") { "obj" } else { "o" };
-    let filename = format!("lpp_runtime_min.{}", ext);
-
+fn resolve_min_runtime_source() -> Option<PathBuf> {
     let src_name = if cfg!(target_os = "windows") {
         "runtime/windows_x86_64_min.c"
     } else {
         "runtime/linux_x86_64_min.c"
     };
 
-    let local_src = Path::new(src_name);
+    let p = PathBuf::from(src_name);
+    if p.exists() {
+        return Some(p);
+    }
+
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            for ancestor in &[exe_dir.to_path_buf(), exe_dir.join(".."), exe_dir.join("../.."), exe_dir.join("../../..")] {
+                let candidate = ancestor.join(src_name);
+                if candidate.exists() {
+                    return Some(candidate);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn resolve_min_runtime_object() -> Option<PathBuf> {
+    let ext = if cfg!(target_os = "windows") { "obj" } else { "o" };
+    let filename = format!("lpp_runtime_min.{}", ext);
+
+    let local_src = resolve_min_runtime_source();
     // Multi-arch cache: LppData/cache/<target>/lpp_runtime_min.o
     let cache_dir = Path::new("LppData").join("cache").join(runtime_cache_target());
     let cache_obj = cache_dir.join(&filename);
     let cache_hash = cache_dir.join("runtime.hash");
 
-    if local_src.exists() {
+    if let Some(ref src_path) = local_src {
         // Hash-based invalidation: compare source hash with stored hash
-        let current_hash = file_content_hash(local_src);
+        let current_hash = file_content_hash(src_path);
         let stored_hash = fs::read_to_string(&cache_hash)
             .ok()
             .and_then(|s| s.trim().parse::<u64>().ok());
@@ -706,7 +725,7 @@ fn resolve_min_runtime_object() -> Option<PathBuf> {
                     .arg("/Gs1000000")
                     .arg("/DLPP_FREESTANDING")
                     .arg("/c")
-                    .arg(local_src)
+                    .arg(src_path)
                     .arg(format!("/Fo:{}", cache_obj.display()));
             } else {
                 cmd.arg("-Os")
@@ -717,7 +736,7 @@ fn resolve_min_runtime_object() -> Option<PathBuf> {
                     .arg("-fno-reorder-blocks-and-partition")
                     .arg("-DLPP_FREESTANDING")
                     .arg("-c")
-                    .arg(local_src)
+                    .arg(src_path)
                     .arg("-o")
                     .arg(&cache_obj);
             }
@@ -779,11 +798,17 @@ pub fn host_link_binary(obj_file: &Path, output_path: &Path, link_libs: &[String
     let mut cmd = std::process::Command::new(cc);
     if cfg!(windows) {
         cmd.arg("/nologo")
-            .arg(obj_file)
-            .arg(format!("/Fe:{}", output_path.display()));
+            .arg(obj_file);
         for lib in link_libs {
             cmd.arg(format!("{}.lib", lib));
         }
+        if let Some(runtime_src_path) = resolve_runtime_source() {
+            cmd.arg(&runtime_src_path);
+            cmd.arg("ws2_32.lib");
+            cmd.arg("user32.lib");
+            cmd.arg("gdi32.lib");
+        }
+        cmd.arg(format!("/Fe:{}", output_path.display()));
     } else {
         cmd.arg(obj_file)
             .arg("-o")
@@ -792,11 +817,9 @@ pub fn host_link_binary(obj_file: &Path, output_path: &Path, link_libs: &[String
         for lib in link_libs {
             cmd.arg(format!("-l{}", lib));
         }
-    }
-    // Also link the host runtime
-    let runtime_src_path = Path::new("lpp_runtime.c");
-    if runtime_src_path.exists() {
-        cmd.arg(runtime_src_path);
+        if let Some(runtime_src_path) = resolve_runtime_source() {
+            cmd.arg(&runtime_src_path);
+        }
     }
     let status = cmd
         .stdin(std::process::Stdio::null())

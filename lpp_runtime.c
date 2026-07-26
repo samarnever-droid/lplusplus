@@ -595,15 +595,25 @@ int64_t lpp_net_connect(const char *host, int64_t port) {
 int64_t lpp_net_listen(int64_t port) {
     lpp__net_init();
     lpp_socket_t sock = (lpp_socket_t)socket(AF_INET, SOCK_STREAM, 0);
-    if (sock == LPP_INVALID_SOCKET) return 0;
+    if (sock == LPP_INVALID_SOCKET) {
+        #ifdef _WIN32
+        printf("[Lreact Debug] socket() failed with error code: %d\n", WSAGetLastError());
+        fflush(stdout);
+        #endif
+        return 0;
+    }
     int yes = 1;
     setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, (const char *)&yes, sizeof(yes));
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    addr.sin_addr.s_addr = inet_addr("127.0.0.1");
     addr.sin_port = htons((unsigned short)port);
     if (bind(sock, (struct sockaddr *)&addr, sizeof(addr)) != 0 || listen(sock, 16) != 0) {
+        #ifdef _WIN32
+        printf("[Lreact Debug] socket bind error code: %d\n", WSAGetLastError());
+        fflush(stdout);
+        #endif
         lpp_close_socket(sock);
         return 0;
     }
