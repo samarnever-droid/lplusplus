@@ -46,15 +46,13 @@ impl EscapeAnalyzer {
             if let ScopeKind::Closure { captures } = &scope.kind {
                 for &captured_id in captures {
                     let binding = &symbol_table.bindings[captured_id.0];
-                    let is_struct = matches!(binding.ty, Some(TypeRef::Custom(_)));
+                    let is_arc_eligible = matches!(
+                        binding.ty,
+                        Some(TypeRef::Custom(_)) | Some(TypeRef::Generic(_, _)) | Some(TypeRef::Str)
+                    );
                     let is_mut = binding.is_mut;
 
-                    // Only custom structs currently use the ARC header runtime ABI.
-                    // Scalars are copied into closure environments; promoting an `Int`/`Bool`
-                    // merely because it is mutable would make the AOT backend pass a non-pointer
-                    // to lpp_arc_retain/release (undefined behaviour). Generic containers and
-                    // strings need their own ref-counted representation before they can opt in.
-                    if is_struct {
+                    if is_arc_eligible {
                         Self::promote(&mut storage, captured_id, StorageClass::Arc);
                     } else if is_mut {
                         // Mutable scalar captures are copied today, not shared. Keep this as a
@@ -177,7 +175,7 @@ impl EscapeAnalyzer {
         else {
             return;
         };
-        if matches!(source_ty, TypeRef::Custom(_) | TypeRef::Generic(_, _)) {
+        if matches!(source_ty, TypeRef::Custom(_) | TypeRef::Generic(_, _) | TypeRef::Str) {
             Self::promote(storage, source, StorageClass::Arc);
             Self::promote(storage, destination, StorageClass::Arc);
         }
@@ -580,5 +578,56 @@ impl EscapeAnalyzer {
             _ => {}
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::semantic::BindingKind;
+
+    #[test]
+    fn promotes_strings_and_containers_to_arc_when_captured_or_aliased() {
+        let mut symbol_table = SymbolTable::new();
+        let global_scope = symbol_table.scopes.len();
+        symbol_table.scopes.push(crate::semantic::Scope {
+            id: ScopeId(global_scope),
+            parent: None,
+            kind: ScopeKind::Global,
+            bindings: HashMap::new(),
+        });
+
+        let str_binding_id = BindingId(symbol_table.bindings.len());
+        symbol_table.bindings.push(crate::semantic::Binding {
+            id: str_binding_id,
+            name: "msg".to_string(),
+            declared_in: ScopeId(global_scope),
+            ast_ty: None,
+            ty: Some(TypeRef::Str),
+            is_mut: false,
+            kind: BindingKind::Local,
+        });
+
+        let closure_scope_id = ScopeId(symbol_table.scopes.len());
+        symbol_table.scopes.push(crate::semantic::Scope {
+            id: closure_scope_id,
+            parent: Some(ScopeId(global_scope)),
+            kind: ScopeKind::Closure {
+                captures: vec![str_binding_id],
+            },
+            bindings: HashMap::new(),
+        });
+
+        let program = Program { declarations: vec![] };
+        let type_table = TypeTable::new();
+
+        let storage = EscapeAnalyzer::analyze(&program, &symbol_table, &type_table)
+            .expect("escape analysis should succeed");
+
+        assert_eq!(
+            storage.get(&str_binding_id),
+            Some(&StorageClass::Arc),
+            "captured Str variable should be promoted to StorageClass::Arc"
+        );
     }
 }
