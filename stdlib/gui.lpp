@@ -1,0 +1,25 @@
+# gui.lpp — Native 2D GUI and Windowing library for L++
+
+def create(title: Str, width: Int, height: Int) -> Int:
+    return gui_window_create(title, width, height)
+
+def is_open(win_id: Int) -> Int:
+    return gui_window_is_open(win_id)
+
+def poll_events(win_id: Int) -> Int:
+    return gui_window_poll_events(win_id)
+
+def clear(win_id: Int, hex_color: Int) -> Void:
+    gui_clear(win_id, hex_color)
+
+def draw_rect(win_id: Int, x: Int, y: Int, width: Int, height: Int, hex_color: Int) -> Void:
+    gui_draw_rect(win_id, x, y, width, height, hex_color)
+
+def draw_text(win_id: Int, x: Int, y: Int, text: Str, hex_color: Int) -> Void:
+    gui_draw_text(win_id, x, y, text, hex_color)
+
+def present(win_id: Int) -> Void:
+    gui_present(win_id)
+
+def close(win_id: Int) -> Void:
+    gui_window_close(win_id)

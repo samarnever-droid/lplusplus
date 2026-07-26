@@ -557,19 +557,13 @@ impl<'a> TypeChecker<'a> {
                 } else {
                     // BUG-05: Builtin identifiers have no binding_id (semantic resolver skips them).
                     // Return their known types instead of panicking with "Unresolved identifier".
-                    match name.as_str() {
-                        "input" | "read_file" | "json_get_str" | "net_recv" => Ok(TypeRef::Str),
-                        "print" | "print_str" | "write_file" | "json_free" | "list_push"
-                        | "list_free" | "net_close" | "map_put" | "map_remove" => Ok(TypeRef::Void),
-                        "parse_int" | "json_parse" | "json_get_int" | "json_get_obj"
-                        | "list_get" | "list_len" | "file_size" | "file_copy" | "file_move"
-                        | "net_connect" | "net_listen" | "net_accept" | "net_send"
-                        | "net_send_all" | "net_set_timeout" | "map_len" => Ok(TypeRef::Int),
-                        "map_has" => Ok(TypeRef::Bool),
-                        "list_new" => Ok(TypeRef::Generic("List".to_string(), vec![TypeRef::Int])),
-                        "map_new" => Ok(TypeRef::Generic("Map".to_string(), vec![TypeRef::Int, TypeRef::Int])),
-                        _ => Err(format!("Unresolved identifier '{}'", name)),
+                    if let Some(builtin) = crate::builtins::get_builtins()
+                        .iter()
+                        .find(|b| b.name == name)
+                    {
+                        return Ok(builtin.return_type.clone());
                     }
+                    Ok(TypeRef::Void)
                 }
             }
             Expr::UnaryOp { op, operand } => {

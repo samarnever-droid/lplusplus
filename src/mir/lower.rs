@@ -887,9 +887,18 @@ impl<'a> MirLowerCtx<'a> {
                 if let Some(&local_id) = self.match_bindings.get(name) {
                     return Ok(Operand::Local(local_id));
                 }
-                let ast_id = cell
-                    .get()
-                    .ok_or_else(|| format!("Missing binding id for identifier '{}'", name))?;
+                let ast_id = match cell.get() {
+                    Some(id) => id,
+                    None => {
+                        if crate::builtins::get_builtins().iter().any(|b| b.name == name)
+                            || self.functions.contains_key(name)
+                            || self.extern_symbols.contains_key(name)
+                        {
+                            return Ok(Operand::Int(0));
+                        }
+                        return Err(format!("Missing binding id for identifier '{}'", name));
+                    }
+                };
                 let binding_id = BindingId(ast_id);
                 if let Some(local_id) = binding_map.get(&binding_id) {
                     let local = &builder.function.locals[local_id.0];

@@ -251,8 +251,8 @@ impl Resolver {
                         crate::ast::ImportKind::Module { path, .. } => path.last().cloned().unwrap_or_default(),
                         crate::ast::ImportKind::Selective { path, .. } => path.last().cloned().unwrap_or_default(),
                     };
+                    self.imports.push(module.clone());
                     if module == "json" {
-                        self.imports.push(module.clone());
                         self.table.add_binding(
                             self.current_scope,
                             "json_parse".to_string(),
@@ -288,8 +288,6 @@ impl Resolver {
                             Some(Type::Custom("Function".into())),
                             BindingKind::FunctionName,
                         );
-                    } else {
-                        // Custom local library module - parsed and merged at driver level
                     }
                 }
             }
@@ -569,8 +567,8 @@ impl Resolver {
             | Expr::StringLiteral(_)
             | Expr::BoolLiteral(_) => {}
             Expr::Identifier(name, binding_id_cell) => {
-                // Ignore builtins for now
-                if !self.is_builtin_resolved(name) {
+                // Ignore builtins and imported module namespaces for now
+                if !self.is_builtin_resolved(name) && !self.imports.contains(name) {
                     if let Some(id) = self.table.resolve_name(self.current_scope, name) {
                         binding_id_cell.set(Some(id.0));
                     } else {
@@ -586,19 +584,42 @@ impl Resolver {
                 self.resolve_expr(right)?;
             }
             Expr::Call { callee, args } => {
-                // Check if calling an imported module's function (e.g., json.parse)
+                // Check if calling an imported module's function (e.g. gui.create) or UFCS method call (e.g. p.speak)
                 let mut rewritten = None;
+                let mut prepend_base = false;
+
                 if let Expr::FieldAccess { base, field } = &**callee {
+                    let mut is_module_call = false;
                     if let Expr::Identifier(module_name, _) = &**base {
                         if self.imports.contains(module_name) {
-                            rewritten = Some(Expr::Identifier(
-                                format!("{}_{}", module_name, field),
-                                std::cell::Cell::new(None),
-                            ));
+                            is_module_call = true;
+                            let mangled = format!("{}_{}", module_name, field);
+                            if self.table.resolve_name_immutable(self.current_scope, &mangled).is_some()
+                                || self.is_builtin_resolved(&mangled)
+                            {
+                                rewritten = Some(Expr::Identifier(mangled, std::cell::Cell::new(None)));
+                            } else if self.table.resolve_name_immutable(self.current_scope, field).is_some()
+                                || self.is_builtin_resolved(field)
+                            {
+                                rewritten = Some(Expr::Identifier(field.clone(), std::cell::Cell::new(None)));
+                            } else {
+                                rewritten = Some(Expr::Identifier(mangled, std::cell::Cell::new(None)));
+                            }
                         }
                     }
+
+                    if !is_module_call {
+                        rewritten = Some(Expr::Identifier(field.clone(), std::cell::Cell::new(None)));
+                        prepend_base = true;
+                    }
                 }
+
                 if let Some(new_callee) = rewritten {
+                    if prepend_base {
+                        if let Expr::FieldAccess { base, .. } = &**callee {
+                            args.insert(0, *base.clone());
+                        }
+                    }
                     *callee = Box::new(new_callee);
                 }
 

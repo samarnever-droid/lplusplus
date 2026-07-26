@@ -1188,20 +1188,11 @@ impl Parser {
                         }
                     }
                 }
-                // Method call: expr.method(args) → method(expr, args)
-                if let Expr::FieldAccess { base, field } = expr.clone() {
-                    let mut method_args = vec![*base];
-                    method_args.extend(args);
-                    expr = Expr::Call {
-                        callee: Box::new(Expr::Identifier(field, std::cell::Cell::new(None))),
-                        args: method_args,
-                    };
-                } else {
-                    expr = Expr::Call {
-                        callee: Box::new(expr),
-                        args,
-                    };
-                }
+                // Function or Method Call: expr(args) or expr.method(args)
+                expr = Expr::Call {
+                    callee: Box::new(expr),
+                    args,
+                };
             } else if self.match_token(&Token::Question) {
                 // Postfix ? operator: try/unwrap Result
                 expr = Expr::Try(Box::new(expr));

@@ -25,10 +25,15 @@
 #include <stdarg.h>
 
 #if defined(_WIN32)
-#include <windows.h>
+#  ifndef WIN32_LEAN_AND_MEAN
+#    define WIN32_LEAN_AND_MEAN
+#  endif
+#  include <winsock2.h>
+#  include <ws2tcpip.h>
+#  include <windows.h>
 typedef USHORT (WINAPI *lpp_CaptureStackBackTrace_fn)(ULONG, ULONG, PVOID*, PULONG);
 #elif defined(__linux__) || defined(__APPLE__)
-#include <execinfo.h>
+#  include <execinfo.h>
 #endif
 
 static int g_lpp_crash_handler_installed = 0;
@@ -1095,4 +1100,5 @@ void lpp_json_free(void *json) {
 #include "runtime/lpp_dir.c"
 #include "runtime/lpp_buf.c"
 #include "runtime/lpp_map.c"
+#include "runtime/lpp_gui.c"
 

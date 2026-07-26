@@ -441,7 +441,11 @@ fn main() {
     let mut check_all = false;
     let mut emit_object = is_emit_cmd || env::var("LPP_AOT").is_ok() || env::var("LPP_AOT_ONLY").is_ok();
 
-    for arg in args.iter().skip(1) {
+    let mut idx = 1;
+    let mut cli_linker: Option<String> = None;
+
+    while idx < args.len() {
+        let arg = &args[idx];
         if arg == "--version" || arg == "-v" {
             println!("L++ Compiler v3.4.0 (Pure Native AOT)");
             return;
@@ -504,7 +508,7 @@ fn main() {
             println!("  Traits:   trait Name / impl Trait for Type (static + dynamic dispatch)");
             println!("  FFI:      extern \"C\" link \"SDL2\" (call any C library)");
             println!("  Try:      result? operator for error propagation");
-            println!("  Builtins: 100+ (strings, lists, maps, files, network, JSON)");
+            println!("  Builtins: 100+ (strings, lists, maps, files, network, JSON, GUI)");
             println!("  Ownership: ARC + escape analysis, cycle rejection");
             println!();
             println!("Environment:");
@@ -528,18 +532,14 @@ fn main() {
         } else if arg == "--emit-object" || arg == "--aot" {
             emit_object = true;
         } else if arg == "--linker" {
-            // Handled below after arg loop
+            if idx + 1 < args.len() {
+                cli_linker = Some(args[idx + 1].clone());
+                idx += 1;
+            }
         } else if !arg.starts_with('-') {
             filename = Some(arg.as_str());
         }
-    }
-
-    // Parse --linker <value> (needs look-ahead)
-    let mut _cli_linker: Option<String> = None;
-    for i in 1..args.len() {
-        if args[i] == "--linker" && i + 1 < args.len() {
-            _cli_linker = Some(args[i + 1].clone());
-        }
+        idx += 1;
     }
 
     if check_all {
@@ -835,11 +835,14 @@ fn main() {
                 }
             }
 
-            // Check if any extern blocks exist (FFI requires host linker)
+            // Check if any extern blocks or explicit host libraries exist (FFI/host linking required)
             let has_extern = ast.declarations.iter().any(|d| matches!(d, crate::ast::TopLevel::Extern(_)));
+            let use_host = cli_linker.as_deref() == Some("host")
+                || (cli_linker.as_deref() != Some("direct") && (has_extern || !link_libs.is_empty()));
 
-            let link_result = if has_extern {
-                // FFI requires host linker for shared library / libc linking
+            let link_result = if use_host {
+                #[cfg(windows)]
+                pm::load_msvc_env();
                 pm::host_link_binary(Path::new(&obj_path), Path::new(&exe_path), &link_libs)
             } else {
                 pm::direct_link_binary(Path::new(&obj_path), Path::new(&exe_path))
