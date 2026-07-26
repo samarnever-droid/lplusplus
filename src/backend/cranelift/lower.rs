@@ -575,7 +575,9 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                 // closures use a struct with (func_ptr, env_ptr).
                 let is_direct_fptr = match callee {
                     Operand::Local(id) | Operand::Borrowed(id) => {
-                        matches!(locals[id.0].ty, TypeRef::Int | TypeRef::Function)
+                        // Only Int locals are direct function pointers (from FuncRef/trait vtable).
+                        // Function-typed locals are closures (struct with [fptr, env_ptr]).
+                        matches!(locals[id.0].ty, TypeRef::Int)
                     }
                     _ => false,
                 };
