@@ -114,7 +114,7 @@
     },
     "lpp-opencode": {
       "name": "lpp-opencode",
-      "version": "0.5.3",
+      "version": "0.6.0",
       "description": "OpenCode/OpenClaude port foundation in L++ — installable lpp-opencode command, Claude router, TUI, sessions, commands, tools, and agent scaffold",
       "authors": [
         "0x4171341"
@@ -135,6 +135,9 @@
         "llm"
       ],
       "features": [
+        "Large terminal logo and command-hint screen",
+        "Interactive OpenCode-style prompt loop when run without arguments",
+        "Launcher compiles silently and runs the produced executable",
         "Windows direct runtime compatible after L++ v3.3.1 CreateFileA import fix",
         "Direct-link-safe default command entrypoint for Windows (file tools disabled until host tool mode)",
         "Immediate current-session PowerShell PATH fix for lpp-opencode command",
@@ -179,7 +182,7 @@
     },
     "lpp-openclaude": {
       "name": "lpp-openclaude",
-      "version": "0.5.3",
+      "version": "0.6.0",
       "description": "OpenClaude alias for lpp-opencode — Claude-oriented OpenCode port foundation in L++",
       "authors": [
         "0x4171341"
@@ -203,6 +206,9 @@
         "anthropic"
       ],
       "features": [
+        "Large terminal logo and command-hint screen",
+        "Interactive OpenCode-style prompt loop when run without arguments",
+        "Launcher compiles silently and runs the produced executable",
         "Windows direct runtime compatible after L++ v3.3.1 CreateFileA import fix",
         "Direct-link-safe default command entrypoint for Windows (file tools disabled until host tool mode)",
         "Immediate current-session PowerShell PATH fix for lpp-opencode command",
@@ -221,7 +227,7 @@
     },
     "openclaude": {
       "name": "openclaude",
-      "version": "0.5.3",
+      "version": "0.6.0",
       "description": "OpenClaude short alias for lpp-opencode",
       "authors": [
         "0x4171341"
@@ -245,6 +251,9 @@
         "anthropic"
       ],
       "features": [
+        "Large terminal logo and command-hint screen",
+        "Interactive OpenCode-style prompt loop when run without arguments",
+        "Launcher compiles silently and runs the produced executable",
         "Windows direct runtime compatible after L++ v3.3.1 CreateFileA import fix",
         "Direct-link-safe default command entrypoint for Windows (file tools disabled until host tool mode)",
         "Immediate current-session PowerShell PATH fix for lpp-opencode command",
