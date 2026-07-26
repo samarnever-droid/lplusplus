@@ -298,3 +298,28 @@ int64_t lpp_append_file(const char *path, const char *data) {
 int64_t lpp_delete_file(const char *path) { return DeleteFileA(path) ? 0 : -1; }
 int64_t lpp_file_exists(const char *path) { DWORD a = GetFileAttributesA(path); return (a != ((DWORD)-1)) ? 1 : 0; }
 int64_t lpp_file_size(const char *path) { HANDLE h = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0); if (h == INVALID_HANDLE_VALUE) return -1; DWORD sz = GetFileSize(h, 0); CloseHandle(h); return (int64_t)sz; }
+
+/* ── Math builtins ── */
+int64_t lpp_abs(int64_t x) { return x < 0 ? -x : x; }
+int64_t lpp_min(int64_t a, int64_t b) { return a < b ? a : b; }
+int64_t lpp_max(int64_t a, int64_t b) { return a > b ? a : b; }
+int64_t lpp_int_pow(int64_t base, int64_t exp) { int64_t r=1; while(exp>0){if(exp&1)r*=base;base*=base;exp>>=1;} return r; }
+double lpp_int_to_float(int64_t x) { return (double)x; }
+int64_t lpp_float_to_int(double x) { return (int64_t)x; }
+double lpp_sqrt(double x) { if(x<=0)return 0; double g=x; int i; for(i=0;i<50;i++)g=0.5*(g+x/g); return g; }
+double lpp_floor(double x) { int64_t i=(int64_t)x; return (double)(x<(double)i?i-1:i); }
+double lpp_ceil(double x) { int64_t i=(int64_t)x; return (double)(x>(double)i?i+1:i); }
+double lpp_pow(double b,double e) { int64_t ie=(int64_t)e; if((double)ie==e&&ie>=0){double r=1;while(ie>0){if(ie&1)r*=b;b*=b;ie>>=1;}return r;} return 0; }
+
+/* ── Random (stubs) ── */
+void lpp_random_seed(int64_t seed) { (void)seed; }
+int64_t lpp_random(void) { return 42; }
+int64_t lpp_random_range(int64_t lo, int64_t hi) { return lo < hi ? lo : 0; }
+
+/* ── Time ── */
+int64_t lpp_time_ms(void) { return (int64_t)GetTickCount64(); }
+void lpp_sleep_ms(int64_t ms) { Sleep((DWORD)ms); }
+void lpp_exit(int64_t code) { ExitProcess((unsigned int)code); }
+
+/* ── String equality ── */
+int64_t lpp_str_eq(const char *a, const char *b) { if(a==b)return 1; if(!a||!b)return 0; while(*a&&*a==*b){a++;b++;} return *a==*b?1:0; }
