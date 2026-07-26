@@ -620,6 +620,12 @@ impl<'a> TypeChecker<'a> {
                         .clone()
                         .ok_or_else(|| "Type of identifier not yet inferred".to_string())
                 } else {
+                    if let Some(b_id) = self.symbol_table.resolve_name(current_scope, name) {
+                        binding_id_cell.set(Some(b_id.0));
+                        if let Some(ref ty) = self.symbol_table.bindings[b_id.0].ty {
+                            return Ok(ty.clone());
+                        }
+                    }
                     // BUG-05: Builtin identifiers have no binding_id (semantic resolver skips them).
                     // Return their known types instead of panicking with "Unresolved identifier".
                     if let Some(builtin) = crate::builtins::get_builtins()
@@ -864,6 +870,13 @@ impl<'a> TypeChecker<'a> {
                             if let Some(ty) = self.func_return_types.get(&mangled) {
                                 return Ok(ty.clone());
                             }
+                        }
+                    }
+                } else if let Expr::FieldAccess { base, field } = &**callee {
+                    if let Expr::Identifier(mod_name, _) = &**base {
+                        let mangled = format!("{}_{}", mod_name, field);
+                        if let Some(ty) = self.func_return_types.get(&mangled) {
+                            return Ok(ty.clone());
                         }
                     }
                 }

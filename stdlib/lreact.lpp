@@ -16,6 +16,22 @@ def start_server(port: Int) -> Int:
     print_str(str_concat("[Lreact] Pure L++ IPC Bridge listening on port ", int_to_str(port)))
     return listener
 
+def make_json_response(body: Str) -> Str:
+    len_str := int_to_str(str_len(body))
+    mut resp := "HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Headers: *\r\nContent-Type: application/json\r\nContent-Length: "
+    resp = str_concat(resp, len_str)
+    resp = str_concat(resp, "\r\n\r\n")
+    resp = str_concat(resp, body)
+    return resp
+
+def make_html_response(body: Str) -> Str:
+    len_str := int_to_str(str_len(body))
+    mut resp := "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: "
+    resp = str_concat(resp, len_str)
+    resp = str_concat(resp, "\r\n\r\n")
+    resp = str_concat(resp, body)
+    return resp
+
 def handle_request(client_fd: Int, request_raw: Str) -> Str:
     # Parse HTTP body
     body_idx := str_find(request_raw, "\r\n\r\n")
@@ -54,4 +70,4 @@ def create_response(req_id: Str, json_result: Str) -> Str:
 
 def launch_frontend(url: Str) -> Void:
     print_str(str_concat("[Lreact] Opening frontend container at ", url))
-    command_exec(str_concat("start \"\" \"", str_concat(url, "\"")))
+    status := command_exec(str_concat("explorer \"", str_concat(url, "\"")))

@@ -300,8 +300,21 @@ impl<'a> Lexer<'a> {
                     else { tokens.push(mk_token(Token::Star)); }
                 }
                 '/' => {
-                    if self.peek_c() == Some('=') { self.next_c(); tokens.push(mk_token(Token::SlashEq)); }
-                    else { tokens.push(mk_token(Token::Slash)); }
+                    if self.peek_c() == Some('/') {
+                        self.next_c();
+                        while let Some(next_c) = self.peek_c() {
+                            if next_c == '\n' {
+                                break;
+                            }
+                            self.next_c();
+                        }
+                        continue;
+                    } else if self.peek_c() == Some('=') {
+                        self.next_c();
+                        tokens.push(mk_token(Token::SlashEq));
+                    } else {
+                        tokens.push(mk_token(Token::Slash));
+                    }
                 }
                 '%' => {
                     if self.peek_c() == Some('=') { self.next_c(); tokens.push(mk_token(Token::PercentEq)); }
