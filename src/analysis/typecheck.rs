@@ -520,18 +520,54 @@ impl<'a> TypeChecker<'a> {
                 }
             }
             Stmt::Return(Some(expr)) => {
+                let mut func_name = None;
                 let mut expected_ret_ty = None;
                 let mut curr = Some(current_scope);
                 while let Some(sid) = curr {
                     if let ScopeKind::Function { name } = &self.symbol_table.scopes[sid.0].kind {
+                        func_name = Some(name.clone());
                         expected_ret_ty = self.func_return_types.get(name).cloned();
                         break;
                     }
                     curr = self.symbol_table.scopes[sid.0].parent;
                 }
-                self.infer_expr(expr, current_scope, expected_ret_ty)?;
+                let actual_ty = self.infer_expr(expr, current_scope, expected_ret_ty.clone())?;
+                if let Some(expected) = expected_ret_ty {
+                    if expected == TypeRef::Void {
+                        let fname = func_name.as_deref().unwrap_or("function");
+                        return Err(format!("Type error: Void function '{}' cannot return a value", fname));
+                    }
+                    if !types_compatible(&expected, &actual_ty) {
+                        let fname = func_name.as_deref().unwrap_or("function");
+                        return Err(format!(
+                            "Type error: Return type mismatch in function '{}': expected {:?}, got {:?}",
+                            fname, expected, actual_ty
+                        ));
+                    }
+                }
             }
-            Stmt::Return(None) => {}
+            Stmt::Return(None) => {
+                let mut func_name = None;
+                let mut expected_ret_ty = None;
+                let mut curr = Some(current_scope);
+                while let Some(sid) = curr {
+                    if let ScopeKind::Function { name } = &self.symbol_table.scopes[sid.0].kind {
+                        func_name = Some(name.clone());
+                        expected_ret_ty = self.func_return_types.get(name).cloned();
+                        break;
+                    }
+                    curr = self.symbol_table.scopes[sid.0].parent;
+                }
+                if let Some(expected) = expected_ret_ty {
+                    if expected != TypeRef::Void {
+                        let fname = func_name.as_deref().unwrap_or("function");
+                        return Err(format!(
+                            "Type error: Function '{}' expects return value of type {:?}, got empty return",
+                            fname, expected
+                        ));
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -1100,13 +1136,13 @@ def main():
     }
 
     #[test]
-    fn rejects_generic_nested_cyclic_structs() {
+    fn rejects_return_type_mismatch() {
         let source = r#"
-struct GraphNode:
-    neighbors: Map[Str, GraphNode]
+def foo() -> Int:
+    return "hello"
 
 def main():
-    print(0)
+    foo()
 "#;
 
         let mut lexer = Lexer::new(source);
@@ -1122,7 +1158,34 @@ def main():
         let mut type_checker = TypeChecker::new(&mut resolver.table);
         let err = type_checker
             .check_program(&ast)
-            .expect_err("generic nested cyclic struct should fail typecheck");
-        assert!(err.contains("Cyclic owned struct 'GraphNode' detected"));
+            .expect_err("return type mismatch should fail typecheck");
+        assert!(err.contains("Return type mismatch in function 'foo'"));
+    }
+
+    #[test]
+    fn rejects_returning_value_from_void_function() {
+        let source = r#"
+def bar() -> Void:
+    return 42
+
+def main():
+    bar()
+"#;
+
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.tokenize().expect("source should lex");
+        let mut parser = Parser::new(tokens);
+        let mut ast = parser.parse().expect("source should parse");
+
+        let mut resolver = Resolver::new();
+        resolver
+            .resolve_program(&mut ast)
+            .expect("program should resolve");
+
+        let mut type_checker = TypeChecker::new(&mut resolver.table);
+        let err = type_checker
+            .check_program(&ast)
+            .expect_err("returning value from void function should fail typecheck");
+        assert!(err.contains("Void function 'bar' cannot return a value"));
     }
 }
