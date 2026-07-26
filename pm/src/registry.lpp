@@ -1,0 +1,161 @@
+# registry.lpp — Package registry resolution and search in pure L++
+
+import utils
+import json
+
+struct RegistryPackage:
+    name: Str
+    git: Str
+    branch: Str
+    tag: Str
+    description: Str
+
+def fetch_registry_json() -> Str:
+    # 1. Local path candidates in workspace
+    if check("registry/index.json") == 1:
+        return read("registry/index.json")
+    if check("website/public/registry/index.json") == 1:
+        return read("website/public/registry/index.json")
+    if check("githubpage/registry.json") == 1:
+        return read("githubpage/registry.json")
+    if check("registry.json") == 1:
+        return read("registry.json")
+
+    # 2. Remote HTTP lookup via built-in http_get
+    mut primary_url := "https://samarnever-droid.github.io/lplusplus/registry/index.json"
+    mut remote_json := http_get(primary_url, 5000)
+
+    if str_len(remote_json) > 0:
+        if str_find(remote_json, "packages") >= 0:
+            write(".lpp_registry_cache.json", remote_json)
+            return remote_json
+
+    mut fallback_url := "https://raw.githubusercontent.com/samarnever-droid/Lpp-a-programing-langauge-/master/githubpage/registry.json"
+    remote_json = http_get(fallback_url, 5000)
+    if str_len(remote_json) > 0:
+        if str_find(remote_json, "packages") >= 0:
+            write(".lpp_registry_cache.json", remote_json)
+            return remote_json
+
+    # 3. Offline cache fallback
+    if check(".lpp_registry_cache.json") == 1:
+        return read(".lpp_registry_cache.json")
+
+    return ""
+
+def search_registry(query: Str) -> Void:
+    json_text := fetch_registry_json()
+    if str_len(json_text) == 0:
+        error("Failed to fetch or load package registry.")
+        return
+
+    info("Registry matches:")
+    mut lower_query := str_to_lower(query)
+    mut found_count := 0
+
+    # Parse JSON root node using L++ builtin json_parse
+    h_json := json_parse(json_text)
+    if h_json != 0:
+        h_pkgs := json_get_obj(h_json, "packages")
+        if h_pkgs != 0:
+            _ := h_pkgs
+
+    # Fallback line-by-line scanner for flexible matching across any JSON layout
+    mut pos := 0
+    end_pos := str_len(json_text)
+    mut in_packages := 0
+    mut current_pkg := ""
+
+    while pos < end_pos:
+        mut nl := str_find(str_substr(json_text, pos, end_pos - pos), "\n")
+        if nl < 0:
+            nl = end_pos - pos
+        line := str_substr(json_text, pos, nl)
+        pos = pos + nl + 1
+
+        if str_find(line, "\"packages\"") >= 0:
+            in_packages = 1
+            continue
+
+        if in_packages == 1:
+            if str_find(line, ": {") >= 0:
+                # Extract package name before : {
+                q1 := str_find(line, "\"")
+                if q1 >= 0:
+                    rest := str_substr(line, q1 + 1, str_len(line) - q1 - 1)
+                    q2 := str_find(rest, "\"")
+                    if q2 >= 0:
+                        current_pkg = str_substr(rest, 0, q2)
+                        mut lower_pkg := str_to_lower(current_pkg)
+                        if str_len(lower_query) == 0:
+                            print_str(str_concat("  ", current_pkg))
+                            found_count = found_count + 1
+                        else:
+                            if str_find(lower_pkg, lower_query) >= 0:
+                                print_str(str_concat("  ", current_pkg))
+                                found_count = found_count + 1
+
+    if h_json != 0:
+        json_free(h_json)
+
+    if found_count == 0:
+        if str_len(query) > 0:
+            print_str(str_concat("  No packages matched '", str_concat(query, "'")))
+        else:
+            print_str("  No packages available in registry.")
+
+def resolve_registry_pkg(name: Str) -> Str:
+    # Auto-resolve @owner/repo syntax to git URL
+    if str_find(name, "@") == 0:
+        slash := str_find(name, "/")
+        if slash > 1:
+            owner := str_substr(name, 1, slash - 1)
+            repo := str_substr(name, slash + 1, str_len(name) - slash - 1)
+            url := str_concat(str_concat("https://github.com/", owner), str_concat("/", str_concat(repo, ".git")))
+            info(str_concat("Auto-resolved ", str_concat(name, str_concat(" -> ", url))))
+            return str_concat("git|", str_concat(url, "|main|"))
+
+    json_text := fetch_registry_json()
+    if str_len(json_text) == 0:
+        return ""
+
+    h_json := json_parse(json_text)
+    if h_json != 0:
+        h_pkgs := json_get_obj(h_json, "packages")
+        if h_pkgs != 0:
+            h_entry := json_get_obj(h_pkgs, name)
+            if h_entry != 0:
+                mut git_url := json_get_str(h_entry, "git")
+                if str_len(git_url) == 0:
+                    git_url = json_get_str(h_entry, "repository")
+                branch := json_get_str(h_entry, "branch")
+                tag := json_get_str(h_entry, "tag")
+                json_free(h_json)
+                if str_len(git_url) > 0:
+                    return str_concat("git|", str_concat(git_url, str_concat("|", str_concat(branch, str_concat("|", tag)))))
+
+        json_free(h_json)
+
+    # String fallback search for leaf matching
+    leaf_name := name
+    mut target_pattern := str_concat("\"", str_concat(leaf_name, "\": {"))
+    idx := str_find(json_text, target_pattern)
+    if idx >= 0:
+        rest := str_substr(json_text, idx, str_len(json_text) - idx)
+        end_brace := str_find(rest, "}")
+        if end_brace >= 0:
+            block := str_substr(rest, 0, end_brace)
+            mut g_idx := str_find(block, "\"git\": \"")
+            if g_idx < 0:
+                g_idx = str_find(block, "\"repository\": \"")
+            if g_idx >= 0:
+                g_rest := str_substr(block, g_idx + 8, str_len(block) - g_idx - 8)
+                g_end := str_find(g_rest, "\"")
+                if g_end >= 0:
+                    git_url := str_substr(g_rest, 0, g_end)
+                    return str_concat("git|", str_concat(git_url, "|main|"))
+
+    return ""
+
+def str_to_lower(s: Str) -> Str:
+    return s

@@ -36,7 +36,7 @@ def compile_project() -> Int:
     result := command_exec(link_cmd)
     return result
 
-def extract_name(toml_raw: String) -> String:
+def extract_name(toml_raw: Str) -> Str:
     line_start := str_find(toml_raw, "name = \"")
     if line_start < 0:
         return "output"
@@ -47,7 +47,7 @@ def extract_name(toml_raw: String) -> String:
         return "output"
     return str_substr(rest, 0, end)
 
-def detect_cc() -> String:
+def detect_cc() -> Str:
     mut cc_out := command_output("cc --version 2>&1 || echo FAIL")
     if str_find(cc_out, "cc") >= 0:
         if str_find(cc_out, "FAIL") < 0:

@@ -2,7 +2,7 @@
 
 import utils
 
-def scaffold(name: String) -> Void:
+def scaffold(name: Str) -> Void:
     msg := str_concat("scaffolding ", name)
     print_str(msg)
     dir_create(name)

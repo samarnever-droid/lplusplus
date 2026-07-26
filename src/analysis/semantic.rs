@@ -553,13 +553,10 @@ impl Resolver {
         if self.trait_method_names.contains(name) {
             return true;
         }
-        if let Some(builtin) = crate::builtins::get_builtins()
+        if let Some(_builtin) = crate::builtins::get_builtins()
             .iter()
             .find(|b| b.name == name)
         {
-            if builtin.name.starts_with("json_") {
-                return self.imports.iter().any(|imp| imp == "json");
-            }
             return true;
         }
         false

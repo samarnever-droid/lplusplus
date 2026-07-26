@@ -173,41 +173,57 @@ fn bootstrap_self_hosted_pm() -> Result<PathBuf, String> {
         return Err(format!("{} not generated", pm_obj.display()));
     }
 
-    // Link with lpp-link direct native linker
+    let mut link_ok = false;
+
     let lpp_link_bin = lpp_bin
         .parent()
         .map(|dir| dir.join(format!("lpp-link{}", env::consts::EXE_SUFFIX)))
         .unwrap_or_else(|| PathBuf::from(format!("lpp-link{}", env::consts::EXE_SUFFIX)));
 
-    let runtime_src = resolve_runtime_source_for_bootstrap(&pm_main)
-        .ok_or_else(|| "lpp_runtime.c not found".to_string())?;
+    if lpp_link_bin.exists() {
+        if let Some(runtime_src) = resolve_runtime_source_for_bootstrap(&pm_main) {
+            let runtime_min_name = if cfg!(target_os = "windows") { "lpp_runtime_min.obj" } else { "lpp_runtime_min.o" };
+            let lib_dir = runtime_src.parent().unwrap_or_else(|| Path::new("."));
+            let runtime_min_obj = lib_dir.join(runtime_min_name);
+            if runtime_min_obj.exists() {
+                let mut link_cmd = std::process::Command::new(&lpp_link_bin);
+                if cfg!(target_os = "windows") {
+                    link_cmd.arg("pe");
+                } else if cfg!(target_os = "macos") {
+                    link_cmd.arg("macho");
+                }
+                link_cmd
+                    .arg(&pm_obj)
+                    .arg(&runtime_min_obj)
+                    .arg("-o")
+                    .arg(&pm_bin);
 
-    let runtime_min_name = if cfg!(target_os = "windows") { "lpp_runtime_min.obj" } else { "lpp_runtime_min.o" };
-    let lib_dir = runtime_src.parent().unwrap_or_else(|| Path::new("."));
-    let runtime_min_obj = lib_dir.join(runtime_min_name);
-
-    let mut link_cmd = std::process::Command::new(&lpp_link_bin);
-    if cfg!(target_os = "windows") {
-        link_cmd.arg("pe");
-    } else if cfg!(target_os = "macos") {
-        link_cmd.arg("macho");
+                if let Ok(st) = link_cmd
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::inherit())
+                    .status()
+                {
+                    if st.success() {
+                        link_ok = true;
+                    }
+                }
+            }
+        }
     }
-    link_cmd
-        .arg(&pm_obj)
-        .arg(&runtime_min_obj)
-        .arg("-o")
-        .arg(&pm_bin);
 
-    let link_status = link_cmd
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::inherit())
-        .status()
-        .map_err(|e| format!("failed to link PM binary via lpp-link: {e}"))?;
+    if !link_ok {
+        #[cfg(windows)]
+        pm::load_msvc_env();
+
+        if pm::host_link_binary(&pm_obj, &pm_bin, &[]).is_ok() {
+            link_ok = true;
+        }
+    }
 
     let _ = fs::remove_file(&pm_obj);
 
-    if !link_status.success() {
+    if !link_ok {
         return Err("linking self-hosted PM failed".to_string());
     }
 
@@ -243,8 +259,43 @@ fn run_self_hosted_pm(args: &[String]) {
         "add" => {
             if let Some(a1) = args.get(1) {
                 child.env("LPP_PM_ARG1", a1.as_str());
-                let rest: Vec<&str> = args.iter().skip(1).map(|s| s.as_str()).collect();
-                child.env("LPP_PM_ARGS", rest.join("\x1f"));
+                let mut i = 2;
+                while i < args.len() {
+                    match args[i].as_str() {
+                        "--git" => {
+                            if i + 1 < args.len() {
+                                child.env("LPP_PM_GIT", &args[i + 1]);
+                                i += 1;
+                            }
+                        }
+                        "--branch" => {
+                            if i + 1 < args.len() {
+                                child.env("LPP_PM_BRANCH", &args[i + 1]);
+                                i += 1;
+                            }
+                        }
+                        "--tag" => {
+                            if i + 1 < args.len() {
+                                child.env("LPP_PM_TAG", &args[i + 1]);
+                                i += 1;
+                            }
+                        }
+                        "--path" => {
+                            if i + 1 < args.len() {
+                                child.env("LPP_PM_PATH", &args[i + 1]);
+                                i += 1;
+                            }
+                        }
+                        "--version" => {
+                            if i + 1 < args.len() {
+                                child.env("LPP_PM_VERSION", &args[i + 1]);
+                                i += 1;
+                            }
+                        }
+                        _ => {}
+                    }
+                    i += 1;
+                }
             }
         }
         "remove" | "search" => {
@@ -843,6 +894,9 @@ fn resolve_local_imports(
     }
 
     for module in imports_to_process {
+        if imported_files.contains(&module) {
+            continue;
+        }
         imported_files.insert(module.clone());
         // module is "math" or "utils/math" for dotted paths
         let leaf_name = module.split('/').last().unwrap_or(&module);
