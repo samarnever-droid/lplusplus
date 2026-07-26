@@ -2047,6 +2047,46 @@ pub fn get_builtins() -> &'static [Builtin] {
             cl_return: Some(0),
         },
         Builtin {
+            name: "float_to_str",
+            symbol: "lpp_float_to_str",
+            params: &[
+                ParamType::Specific(TypeRef::Float),
+            ],
+            return_type: TypeRef::Str,
+            cl_params: &[3],
+            cl_return: Some(0),
+        },
+        Builtin {
+            name: "lpp_float_to_str",
+            symbol: "lpp_float_to_str",
+            params: &[
+                ParamType::Specific(TypeRef::Float),
+            ],
+            return_type: TypeRef::Str,
+            cl_params: &[3],
+            cl_return: Some(0),
+        },
+        Builtin {
+            name: "bool_to_str",
+            symbol: "lpp_bool_to_str",
+            params: &[
+                ParamType::Specific(TypeRef::Bool),
+            ],
+            return_type: TypeRef::Str,
+            cl_params: &[0],
+            cl_return: Some(0),
+        },
+        Builtin {
+            name: "lpp_bool_to_str",
+            symbol: "lpp_bool_to_str",
+            params: &[
+                ParamType::Specific(TypeRef::Bool),
+            ],
+            return_type: TypeRef::Str,
+            cl_params: &[0],
+            cl_return: Some(0),
+        },
+        Builtin {
             name: "str_to_int",
             symbol: "lpp_str_to_int",
             params: &[

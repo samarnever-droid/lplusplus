@@ -220,7 +220,27 @@ char *lpp_int_to_str(int64_t val) {
     char buf[32];
     snprintf(buf, sizeof(buf), "%lld", (long long)val);
     char *out = (char *)malloc(strlen(buf) + 1);
+    if (!out) return (char *)"";
     strcpy(out, buf);
+    return out;
+}
+
+/* ── float_to_str: convert float to string ── */
+char *lpp_float_to_str(double val) {
+    char buf[64];
+    snprintf(buf, sizeof(buf), "%g", val);
+    char *out = (char *)malloc(strlen(buf) + 1);
+    if (!out) return (char *)"";
+    strcpy(out, buf);
+    return out;
+}
+
+/* ── bool_to_str: convert bool to string ── */
+char *lpp_bool_to_str(int64_t val) {
+    const char *str = val ? "true" : "false";
+    char *out = (char *)malloc(strlen(str) + 1);
+    if (!out) return (char *)"";
+    strcpy(out, str);
     return out;
 }
 

@@ -71,6 +71,10 @@ fn types_compatible(expected: &TypeRef, actual: &TypeRef) -> bool {
     if expected == actual {
         return true;
     }
+    // Allow coercion from Int/Float/Bool to Str for str_concat / string interpolation
+    if expected == &TypeRef::Str && matches!(actual, TypeRef::Int | TypeRef::Float | TypeRef::Bool) {
+        return true;
+    }
     // TypeParam is compatible with any concrete type (type erasure)
     matches!(expected, TypeRef::TypeParam(_)) || matches!(actual, TypeRef::TypeParam(_))
 }
