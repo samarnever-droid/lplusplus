@@ -234,7 +234,7 @@ void lpp_list_push_float(void *list, double value) {
 
 int64_t lpp_list_get(void *raw, int64_t index) {
     LppList *list = (LppList *)raw;
-    if (!list || index < 0 || index >= list->len) return 0;
+    if (!list || index < 0 || index >= list->len) exit(101);
     return list->data[index];
 }
 

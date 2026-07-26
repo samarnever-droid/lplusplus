@@ -21,6 +21,95 @@
 #include <stdint.h>
 #include <limits.h>
 #include <errno.h>
+#include <signal.h>
+#include <stdarg.h>
+
+#if defined(_WIN32)
+#include <windows.h>
+typedef USHORT (WINAPI *lpp_CaptureStackBackTrace_fn)(ULONG, ULONG, PVOID*, PULONG);
+#elif defined(__linux__) || defined(__APPLE__)
+#include <execinfo.h>
+#endif
+
+static int g_lpp_crash_handler_installed = 0;
+
+void lpp_print_backtrace(void) {
+    fprintf(stderr, "\nStack Backtrace:\n");
+#if defined(_WIN32)
+    void *stack[32];
+    HMODULE hKernel32 = GetModuleHandleA("kernel32.dll");
+    if (hKernel32) {
+        lpp_CaptureStackBackTrace_fn pCapture = (lpp_CaptureStackBackTrace_fn)(void*)GetProcAddress(hKernel32, "RtlCaptureStackBackTrace");
+        if (pCapture) {
+            USHORT frames = pCapture(0, 32, stack, NULL);
+            for (USHORT i = 0; i < frames; i++) {
+                fprintf(stderr, "  [%2u] 0x%p\n", (unsigned int)i, stack[i]);
+            }
+            return;
+        }
+    }
+    fprintf(stderr, "  (backtrace unavailable)\n");
+#elif defined(__linux__) || defined(__APPLE__)
+    void *buffer[32];
+    int nptrs = backtrace(buffer, 32);
+    char **strings = backtrace_symbols(buffer, nptrs);
+    if (strings) {
+        for (int i = 0; i < nptrs; i++) {
+            fprintf(stderr, "  [%2d] %s\n", i, strings[i]);
+        }
+        free(strings);
+    } else {
+        for (int i = 0; i < nptrs; i++) {
+            fprintf(stderr, "  [%2d] %p\n", i, buffer[i]);
+        }
+    }
+#else
+    fprintf(stderr, "  (backtrace unavailable)\n");
+#endif
+}
+
+void lpp_panic(const char *fmt, ...) {
+    fprintf(stderr, "\n===================================================================\n");
+    fprintf(stderr, "💥 L++ RUNTIME PANIC\n");
+    fprintf(stderr, "===================================================================\n");
+    fprintf(stderr, "Reason: ");
+    va_list args;
+    va_start(args, fmt);
+    vfprintf(stderr, fmt, args);
+    va_end(args);
+    fprintf(stderr, "\n");
+
+    lpp_print_backtrace();
+    fprintf(stderr, "===================================================================\n\n");
+    fflush(stderr);
+    exit(101);
+}
+
+static void lpp_signal_handler(int sig) {
+    const char *sig_name = "Unknown Signal";
+    switch (sig) {
+        case SIGSEGV: sig_name = "Segmentation Fault (SIGSEGV) - Null pointer or invalid memory access"; break;
+        case SIGFPE:  sig_name = "Floating Point Exception (SIGFPE) - Integer division by zero or arithmetic error"; break;
+        case SIGABRT: sig_name = "Abort Signal (SIGABRT) - Process abort triggered"; break;
+        case SIGILL:  sig_name = "Illegal Instruction (SIGILL) - Invalid CPU instruction execute attempt"; break;
+    }
+    lpp_panic("Fatal Hardware/OS Signal Received: %s", sig_name);
+}
+
+void lpp_init_crash_handler(void) {
+    if (g_lpp_crash_handler_installed) return;
+    g_lpp_crash_handler_installed = 1;
+    signal(SIGSEGV, lpp_signal_handler);
+    signal(SIGFPE,  lpp_signal_handler);
+    signal(SIGABRT, lpp_signal_handler);
+    signal(SIGILL,  lpp_signal_handler);
+}
+
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((constructor)) static void lpp_auto_init_crash_handler(void) {
+    lpp_init_crash_handler();
+}
+#endif
 
 /* ── I/O ──────────────────────────────────────────────────────────────────── */
 
@@ -57,40 +146,36 @@ void lpp_free_str(char *ptr) {
 
 int64_t lpp_parse_int(const char *str) {
     if (!str || *str == '\0') {
-        fprintf(stderr, "[L++ Runtime Error] Invalid integer format: empty string\n");
-        exit(1);
+        lpp_panic("Invalid integer format: empty string");
     }
-    
+
     // Skip leading whitespace
     const char *p = str;
     while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') {
         p++;
     }
-    
+
     if (*p == '\0') {
-        fprintf(stderr, "[L++ Runtime Error] Invalid integer format: \"%s\"\n", str);
-        exit(1);
+        lpp_panic("Invalid integer format: \"%s\"", str);
     }
-    
+
     char *endptr;
     errno = 0;
     long long val = strtoll(p, &endptr, 10);
-    
+
     // Check for overflow/underflow
     if (errno == ERANGE) {
-        fprintf(stderr, "[L++ Runtime Error] Integer overflow/underflow: \"%s\" exceeds 64-bit limits\n", str);
-        exit(1);
+        lpp_panic("Integer overflow/underflow: \"%s\" exceeds 64-bit limits", str);
     }
-    
+
     // Check for trailing garbage (invalid chars)
     while (*endptr == ' ' || *endptr == '\t' || *endptr == '\r' || *endptr == '\n') {
         endptr++;
     }
     if (*endptr != '\0') {
-        fprintf(stderr, "[L++ Runtime Error] Invalid integer format: \"%s\"\n", str);
-        exit(1);
+        lpp_panic("Invalid integer format: \"%s\"", str);
     }
-    
+
     return (int64_t)val;
 }
 
@@ -337,8 +422,7 @@ static void *lpp_list_new_with_ownership(
         (int64_t)sizeof(LppList), lpp_list_destroy
     );
     if (!l) {
-        fprintf(stderr, "[L++ Runtime Error] out of memory while creating list\n");
-        abort();
+        lpp_panic("out of memory while creating list");
     }
     l->retain_element = retain_element;
     l->drop_element = drop_element;
@@ -361,23 +445,19 @@ void *lpp_list_new_arc(void) {
 void lpp_list_push(void *list, int64_t value) {
     LppList *l = (LppList *)list;
     if (!l) {
-        fprintf(stderr, "[L++ Runtime Error] push to null list\n");
-        abort();
+        lpp_panic("push attempted on null list pointer");
     }
     if (l->len == l->cap) {
         if (l->cap > INT64_MAX / 2) {
-            fprintf(stderr, "[L++ Runtime Error] list capacity overflow\n");
-            abort();
+            lpp_panic("list capacity overflow");
         }
         int64_t new_cap = l->cap == 0 ? 8 : l->cap * 2;
         if (new_cap > INT64_MAX / (int64_t)sizeof(int64_t)) {
-            fprintf(stderr, "[L++ Runtime Error] list allocation size overflow\n");
-            abort();
+            lpp_panic("list allocation size overflow");
         }
         int64_t *new_data = (int64_t *)realloc(l->data, (size_t)new_cap * sizeof(int64_t));
         if (!new_data) {
-            fprintf(stderr, "[L++ Runtime Error] out of memory while growing list\n");
-            abort();
+            lpp_panic("out of memory while growing list");
         }
         l->data = new_data;
         l->cap = new_cap;
@@ -399,9 +479,11 @@ void lpp_list_push_float(void *list, double value) {
 
 int64_t lpp_list_get(void *list, int64_t index) {
     LppList *l = (LppList *)list;
-    if (!l || index < 0 || index >= l->len) {
-        fprintf(stderr, "[L++ Runtime Error] list index out of bounds: %lld\n", (long long)index);
-        abort();
+    if (!l) {
+        lpp_panic("list index access attempted on null list pointer");
+    }
+    if (index < 0 || index >= l->len) {
+        lpp_panic("list index out of bounds: index %lld, len %lld", (long long)index, (long long)l->len);
     }
     return l->data[index];
 }
