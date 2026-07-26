@@ -884,6 +884,102 @@ fn main() {
     }
 }
 
+fn find_stdlib_module(clean_module: &str, leaf_name: &str) -> Option<PathBuf> {
+    if let Ok(exe) = std::env::current_exe() {
+        let exe_dir = exe.parent().unwrap_or(std::path::Path::new("."));
+        let candidates = [
+            exe_dir.join(format!("../stdlib/{}.lpp", clean_module)),
+            exe_dir.join(format!("../../stdlib/{}.lpp", clean_module)),
+            exe_dir.join(format!("stdlib/{}.lpp", clean_module)),
+            exe_dir.join(format!("../stdlib/{}.lpp", leaf_name)),
+            exe_dir.join(format!("../../stdlib/{}.lpp", leaf_name)),
+            exe_dir.join(format!("stdlib/{}.lpp", leaf_name)),
+            std::path::PathBuf::from(format!("stdlib/{}.lpp", clean_module)),
+            std::path::PathBuf::from(format!("stdlib/{}.lpp", leaf_name)),
+        ];
+        for c in candidates {
+            if c.exists() {
+                return Some(c);
+            }
+        }
+    }
+    None
+}
+
+fn resolve_module_filepath(module: &str, base_dir: &std::path::Path) -> Result<PathBuf, String> {
+    let clean_module = module.strip_prefix("stdlib/").unwrap_or(module);
+    let leaf_name = clean_module.split('/').last().unwrap_or(clean_module);
+
+    let is_explicit_stdlib = module.starts_with("stdlib/") || module.starts_with("stdlib.");
+
+    // Core shipped standard library modules
+    let is_known_stdlib = matches!(
+        leaf_name,
+        "math" | "strings" | "collections" | "gui" | "convert" | "assert" | "result"
+        | "algo" | "sort" | "testing" | "env" | "args" | "path" | "http" | "hash"
+        | "uuid" | "io" | "csv" | "base64" | "list_util" | "map_str" | "color" | "config"
+        | "log" | "time_util" | "regex_lite"
+    );
+
+    // 1. Check local file in project base_dir (unless explicitly prefixed with stdlib.)
+    if !is_explicit_stdlib {
+        let local_path = base_dir.join(format!("{}.lpp", module));
+        if local_path.exists() {
+            return Ok(local_path);
+        }
+    }
+
+    // 2. Standard Library protection: stdlib modules take precedence over third-party packages
+    if is_explicit_stdlib || is_known_stdlib {
+        if let Some(stdlib_file) = find_stdlib_module(clean_module, leaf_name) {
+            return Ok(stdlib_file);
+        }
+    }
+
+    // 3. Check third-party package dependencies in .lpp_packages/
+    let pkg_dir = std::path::Path::new(".lpp_packages").join(leaf_name);
+    if pkg_dir.exists() {
+        let manifest_path = pkg_dir.join("lpp.toml");
+        if manifest_path.exists() {
+            if let Ok(content) = std::fs::read_to_string(&manifest_path) {
+                if let Ok(pkg) = pm::parse_toml(&content) {
+                    if let Some(entry) = pkg.entry {
+                        let custom_entry = pkg_dir.join(entry);
+                        if custom_entry.exists() {
+                            return Ok(custom_entry);
+                        }
+                    }
+                }
+            }
+        }
+
+        let candidates = [
+            pkg_dir.join(format!("{}.lpp", leaf_name)),
+            pkg_dir.join("src").join(format!("{}.lpp", leaf_name)),
+            pkg_dir.join("src").join("main.lpp"),
+            pkg_dir.join("main.lpp"),
+        ];
+        for c in candidates {
+            if c.exists() {
+                return Ok(c);
+            }
+        }
+    }
+
+    // 4. Fallback check stdlib if not checked earlier
+    if let Some(stdlib_file) = find_stdlib_module(clean_module, leaf_name) {
+        return Ok(stdlib_file);
+    }
+
+    Err(format!(
+        "Imported module '{}' not found in:\n  - {}\n  - stdlib/{}.lpp\n  - .lpp_packages/{}/{}.lpp",
+        module,
+        base_dir.join(format!("{}.lpp", module)).display(),
+        leaf_name,
+        leaf_name, leaf_name
+    ))
+}
+
 fn resolve_local_imports(
     declarations: &mut Vec<ast::TopLevel>,
     imported_files: &mut std::collections::HashSet<String>,
@@ -898,7 +994,6 @@ fn resolve_local_imports(
                 ast::ImportKind::Module { path, .. } => (path.clone(), None),
                 ast::ImportKind::Selective { path, items } => (path.clone(), Some(items.clone())),
             };
-            // Convert dotted path to filesystem path: ["utils", "math"] → "utils/math"
             let module = path.join("/");
             let module_name = path.last().cloned().unwrap_or_default();
             if module_name != "json" && !imported_files.contains(&module) {
@@ -908,79 +1003,15 @@ fn resolve_local_imports(
     }
 
     for module in imports_to_process {
-        if imported_files.contains(&module) {
+        let filepath = resolve_module_filepath(&module, base_dir)?;
+        let canonical_key = filepath.canonicalize().unwrap_or_else(|_| filepath.clone()).to_string_lossy().to_string();
+
+        if imported_files.contains(&canonical_key) || imported_files.contains(&module) {
             continue;
         }
+        imported_files.insert(canonical_key.clone());
         imported_files.insert(module.clone());
-        // module is "math" or "utils/math" for dotted paths
-        let leaf_name = module.split('/').last().unwrap_or(&module);
-        let mut filepath = base_dir.join(format!("{}.lpp", module));
-        if !filepath.exists() {
-            // Check package candidates in .lpp_packages/leaf
-            let pkg_dir = std::path::Path::new(".lpp_packages").join(leaf_name);
-            let mut resolved_pkg_path = None;
 
-            if pkg_dir.exists() {
-                // Check lpp.toml manifest for entry point
-                let manifest_path = pkg_dir.join("lpp.toml");
-                if manifest_path.exists() {
-                    if let Ok(content) = std::fs::read_to_string(&manifest_path) {
-                        if let Ok(pkg) = pm::parse_toml(&content) {
-                            if let Some(entry) = pkg.entry {
-                                let custom_entry = pkg_dir.join(entry);
-                                if custom_entry.exists() {
-                                    resolved_pkg_path = Some(custom_entry);
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if resolved_pkg_path.is_none() {
-                    let candidates = [
-                        pkg_dir.join(format!("{}.lpp", leaf_name)),
-                        pkg_dir.join("src").join(format!("{}.lpp", leaf_name)),
-                        pkg_dir.join("src").join("main.lpp"),
-                        pkg_dir.join("main.lpp"),
-                    ];
-                    for c in candidates {
-                        if c.exists() {
-                            resolved_pkg_path = Some(c);
-                            break;
-                        }
-                    }
-                }
-            }
-
-            if let Some(pkg_path) = resolved_pkg_path {
-                filepath = pkg_path;
-            } else {
-                    // Check in stdlib/ (shipped standard library)
-                    let stdlib_path = if let Ok(exe) = std::env::current_exe() {
-                        let exe_dir = exe.parent().unwrap_or(std::path::Path::new("."));
-                        let candidates = [
-                            exe_dir.join(format!("../stdlib/{}.lpp", module)),
-                            exe_dir.join(format!("../../stdlib/{}.lpp", module)),
-                            exe_dir.join(format!("stdlib/{}.lpp", module)),
-                            std::path::PathBuf::from(format!("stdlib/{}.lpp", module)),
-                        ];
-                        candidates.into_iter().find(|p| p.exists())
-                    } else {
-                        None
-                    };
-                    if let Some(stdlib) = stdlib_path {
-                        filepath = stdlib;
-                    } else {
-                        return Err(format!(
-                            "Imported module '{}' not found in:\n  - {}\n  - .lpp_packages/{}/{}.lpp\n  - stdlib/{}.lpp",
-                            module,
-                            base_dir.join(format!("{}.lpp", module)).display(),
-                            leaf_name, leaf_name,
-                            module
-                        ));
-                    }
-            }
-        }
         let content = std::fs::read_to_string(&filepath)
             .map_err(|e| format!("Failed to read library '{}': {}", filepath.display(), e))?;
 
@@ -998,4 +1029,18 @@ fn resolve_local_imports(
 
     declarations.extend(new_decls);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolves_stdlib_with_precedence_over_packages() {
+        let base_dir = Path::new("tests");
+        let res = resolve_module_filepath("math", base_dir);
+        assert!(res.is_ok(), "math module should resolve");
+        let path = res.unwrap();
+        assert!(path.to_string_lossy().contains("stdlib"), "stdlib/math.lpp should take precedence");
+    }
 }
