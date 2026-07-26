@@ -1,0 +1,7 @@
+[package]
+name = "lreact-demo"
+version = "0.1.0"
+author = "L++ Framework"
+entry = "src/main.lpp"
+
+[dependencies]

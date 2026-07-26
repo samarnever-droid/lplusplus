@@ -1,0 +1,16 @@
+# main.lpp — Lreact (React + L++ Desktop Framework) Native Backend
+# Pure L++ backend compiled to native executable via Cranelift AOT.
+
+import lreact
+
+def main():
+    print_str("=== Lreact Native Desktop App (React Frontend + L++ Backend) ===")
+
+    # 1. Start L++ IPC bridge server on port 8765
+    port := lreact.start_server(8765)
+
+    # 2. Launch web frontend container in browser or webview
+    lreact.launch_frontend("http://127.0.0.1:8765")
+
+    # 3. Main Event Loop
+    print_str("[Lreact] Backend initialized and ready for React IPC requests.")

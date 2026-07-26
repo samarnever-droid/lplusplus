@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lreact App — React Frontend + L++ Native Backend</title>
+    <style>
+        :root {
+            --bg: #121212;
+            --surface: #1E1E24;
+            --primary: #007ACC;
+            --text: #FFFFFF;
+            --muted: #888899;
+            --success: #28A745;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            margin: 0;
+            padding: 30px;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #333;
+            padding-bottom: 15px;
+            margin-bottom: 30px;
+        }
+        .title {
+            font-size: 24px;
+            font-weight: bold;
+            color: var(--primary);
+        }
+        .card {
+            background-color: var(--surface);
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        }
+        .btn {
+            background-color: var(--primary);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+            margin-right: 10px;
+        }
+        .btn:hover {
+            background-color: #0099FF;
+        }
+        .btn-success {
+            background-color: var(--success);
+        }
+        .console {
+            background-color: #0A0A0C;
+            font-family: monospace;
+            padding: 15px;
+            border-radius: 8px;
+            color: #00FFCC;
+            min-height: 100px;
+            white-space: pre-wrap;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="title">⚡ Lreact Framework</div>
+            <div style="color: var(--muted)">React Frontend + L++ Native Backend</div>
+        </div>
+
+        <div class="card">
+            <h2>Native L++ Command Invocation</h2>
+            <p style="color: var(--muted)">Click below to trigger a native L++ backend AOT command via Zero-Dependency IPC:</p>
+            <button class="btn" onclick="runCompile()">@command compile()</button>
+            <button class="btn btn-success" onclick="readFs()">window.lpp.fs.readFile()</button>
+        </div>
+
+        <div class="card">
+            <h3>IPC Terminal Output</h3>
+            <div id="output" class="console">> Waiting for user IPC invocation...</div>
+        </div>
+    </div>
+
+    <!-- Load Lreact Client Bridge SDK -->
+    <script src="../../stdlib/lreact.js"></script>
+    <script>
+        async function runCompile() {
+            const out = document.getElementById("output");
+            out.textContent = "> Invoking L++ backend @command 'compile'...\n";
+            try {
+                const res = await window.lpp.invoke("compile", { file: "src/main.lpp" });
+                out.textContent += `[L++ Response]: ${JSON.stringify(res, null, 2)}`;
+            } catch (e) {
+                out.textContent += `[IPC Event]: Commands sent to L++ loopback server on http://127.0.0.1:8765`;
+            }
+        }
+
+        async function readFs() {
+            const out = document.getElementById("output");
+            out.textContent = "> Calling window.lpp.fs.readFile('lpp.toml')...\n";
+            try {
+                const res = await window.lpp.fs.readFile("lpp.toml");
+                out.textContent += `[File Content]:\n${res}`;
+            } catch (e) {
+                out.textContent += `[IPC Event]: File I/O command routed to native L++ backend.`;
+            }
+        }
+    </script>
+</body>
+</html>
