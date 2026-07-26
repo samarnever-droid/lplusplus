@@ -23,10 +23,19 @@ pub struct Package {
     pub dependencies: Vec<Dependency>,
 }
 
+#[derive(Debug, Clone, serde::Deserialize)]
 pub struct RegistryEntry {
     pub git: String,
     pub branch: Option<String>,
     pub tag: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct RegistryManifest {
+    #[serde(default)]
+    pub packages: std::collections::HashMap<String, RegistryEntry>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -256,27 +265,43 @@ fn read_lockfile() -> Vec<LockedPackage> {
         .unwrap_or_default()
 }
 
-fn registry_package_names() -> Vec<String> {
-    let json =
-        fs::read_to_string(Path::new("githubpage").join("registry.json")).unwrap_or_default();
-    let mut names = Vec::new();
-    let mut in_packages = false;
-    for raw_line in json.lines() {
-        let line = raw_line.trim();
-        if line.starts_with("\"packages\"") {
-            in_packages = true;
-            continue;
-        }
-        if in_packages && line.starts_with('}') {
-            break;
-        }
-        if in_packages && line.starts_with('"') {
-            if let Some(end_quote) = line[1..].find('"') {
-                names.push(line[1..1 + end_quote].to_string());
+fn resolve_registry_cache_path() -> PathBuf {
+    if let Ok(var) = std::env::var("LPP_HOME").or_else(|_| std::env::var("LPP_DIR")) {
+        return PathBuf::from(var).join("cache").join("registry_cache.json");
+    }
+    if let Ok(home) = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")) {
+        return PathBuf::from(home).join(".lpp").join("cache").join("registry_cache.json");
+    }
+    std::env::temp_dir().join(".lpp_registry_cache.json")
+}
+
+fn registry_package_entries() -> Vec<(String, RegistryEntry)> {
+    let mut entries = Vec::new();
+    if let Some(json) = fetch_registry_json() {
+        if let Ok(manifest) = serde_json::from_str::<RegistryManifest>(&json) {
+            for (name, entry) in manifest.packages {
+                entries.push((name, entry));
+            }
+        } else if let Ok(val) = serde_json::from_str::<serde_json::Value>(&json) {
+            if let Some(pkgs) = val.get("packages").and_then(|p| p.as_object()) {
+                for (k, v) in pkgs {
+                    let git = v.get("git").and_then(|g| g.as_str()).unwrap_or("").to_string();
+                    let branch = v.get("branch").and_then(|b| b.as_str()).map(String::from);
+                    let tag = v.get("tag").and_then(|t| t.as_str()).map(String::from);
+                    let description = v.get("description").and_then(|d| d.as_str()).map(String::from);
+                    entries.push((k.clone(), RegistryEntry { git, branch, tag, description }));
+                }
             }
         }
     }
-    names
+    entries
+}
+
+fn registry_package_names() -> Vec<String> {
+    registry_package_entries()
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect()
 }
 
 fn command_available(program: &str, probe_args: &[&str]) -> bool {
@@ -923,46 +948,34 @@ fn cmd_init(args: &[String]) {
 }
 
 pub fn resolve_from_json(json_str: &str, target_name: &str) -> Option<RegistryEntry> {
-    let quoted_target = format!("\"{}\"", target_name);
-    if let Some(target_idx) = json_str.find(&quoted_target) {
-        let rest = &json_str[target_idx + quoted_target.len()..];
-        if let Some(colon_idx) = rest.find(':') {
-            let block_rest = &rest[colon_idx + 1..];
-            if let Some(open_brace) = block_rest.find('{') {
-                let entry_content = &block_rest[open_brace + 1..];
-                if let Some(close_brace) = entry_content.find('}') {
-                    let entry_str = &entry_content[..close_brace];
-
-                    let mut git = String::new();
-                    let mut branch = None;
-                    let mut tag = None;
-
-                    for field_part in entry_str.split(',') {
-                        if let Some(eq_idx) = field_part.find(':') {
-                            let key = field_part[..eq_idx]
-                                .trim()
-                                .trim_matches('"')
-                                .trim_matches('\'')
-                                .trim();
-                            let val = field_part[eq_idx + 1..]
-                                .trim()
-                                .trim_matches('"')
-                                .trim_matches('\'')
-                                .trim()
-                                .to_string();
-                            if key == "git" {
-                                git = val;
-                            } else if key == "branch" {
-                                branch = Some(val);
-                            } else if key == "tag" {
-                                tag = Some(val);
-                            }
-                        }
-                    }
-
-                    if !git.is_empty() {
-                        return Some(RegistryEntry { git, branch, tag });
-                    }
+    if let Ok(manifest) = serde_json::from_str::<RegistryManifest>(json_str) {
+        if let Some(entry) = manifest.packages.get(target_name) {
+            return Some(entry.clone());
+        }
+        let lower_target = target_name.to_lowercase();
+        for (k, v) in &manifest.packages {
+            if k.to_lowercase() == lower_target {
+                return Some(v.clone());
+            }
+        }
+        let repo_leaf = target_name.split('/').last().unwrap_or(target_name);
+        for (k, v) in &manifest.packages {
+            let k_leaf = k.split('/').last().unwrap_or(k);
+            if k_leaf.eq_ignore_ascii_case(repo_leaf) {
+                return Some(v.clone());
+            }
+        }
+    } else if let Ok(val) = serde_json::from_str::<serde_json::Value>(json_str) {
+        if let Some(pkgs) = val.get("packages").and_then(|p| p.as_object()) {
+            let repo_leaf = target_name.split('/').last().unwrap_or(target_name);
+            for (k, v) in pkgs {
+                let k_leaf = k.split('/').last().unwrap_or(k);
+                if k.eq_ignore_ascii_case(target_name) || k_leaf.eq_ignore_ascii_case(repo_leaf) {
+                    let git = v.get("git").and_then(|g| g.as_str())?.to_string();
+                    let branch = v.get("branch").and_then(|b| b.as_str()).map(String::from);
+                    let tag = v.get("tag").and_then(|t| t.as_str()).map(String::from);
+                    let description = v.get("description").and_then(|d| d.as_str()).map(String::from);
+                    return Some(RegistryEntry { git, branch, tag, description });
                 }
             }
         }
@@ -971,32 +984,88 @@ pub fn resolve_from_json(json_str: &str, target_name: &str) -> Option<RegistryEn
 }
 
 fn fetch_registry_json() -> Option<String> {
-    let local_registry = Path::new("githubpage").join("registry.json");
-    if local_registry.exists() {
-        return fs::read_to_string(local_registry).ok();
-    }
+    let candidates = [
+        PathBuf::from("githubpage").join("registry.json"),
+        PathBuf::from("registry.json"),
+    ];
 
-    let url = "https://raw.githubusercontent.com/samarnever-droid/Lpp-a-programing-langauge-/master/githubpage/registry.json";
-
-    if command_available("curl", &["--version"]) {
-        let output = std::process::Command::new("curl")
-            .args(["-fsSL", url])
-            .output()
-            .ok()?;
-        if output.status.success() {
-            return Some(String::from_utf8_lossy(&output.stdout).into_owned());
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(parent) = exe.parent() {
+            let exe_candidates = [
+                parent.join("githubpage/registry.json"),
+                parent.join("../githubpage/registry.json"),
+                parent.join("../../githubpage/registry.json"),
+            ];
+            for candidate in &exe_candidates {
+                if candidate.exists() {
+                    if let Ok(content) = fs::read_to_string(candidate) {
+                        return Some(content);
+                    }
+                }
+            }
         }
     }
 
-    #[cfg(windows)]
-    {
-        let cmd_arg = format!("Invoke-RestMethod -Uri '{}' | ConvertTo-Json -Depth 5", url);
-        let output = std::process::Command::new("powershell")
-            .args(["-Command", &cmd_arg])
+    for candidate in &candidates {
+        if candidate.exists() {
+            if let Ok(content) = fs::read_to_string(candidate) {
+                return Some(content);
+            }
+        }
+    }
+
+    let url = "https://raw.githubusercontent.com/samarnever-droid/Lpp-a-programing-langauge-/master/githubpage/registry.json";
+    let mut fetched_json: Option<String> = None;
+
+    if command_available("curl", &["--version"]) {
+        let output = std::process::Command::new("curl")
+            .args(["-fsSL", "--max-time", "5", url])
             .output()
-            .ok()?;
-        if output.status.success() {
-            return Some(String::from_utf8_lossy(&output.stdout).into_owned());
+            .ok();
+        if let Some(out) = output {
+            if out.status.success() {
+                let text = String::from_utf8_lossy(&out.stdout).into_owned();
+                if !text.trim().is_empty() && text.contains("packages") {
+                    fetched_json = Some(text);
+                }
+            }
+        }
+    }
+
+    if fetched_json.is_none() {
+        #[cfg(windows)]
+        {
+            let cmd_arg = format!("Invoke-RestMethod -Uri '{}' -TimeoutSec 5 | ConvertTo-Json -Depth 5", url);
+            let output = std::process::Command::new("powershell")
+                .args(["-Command", &cmd_arg])
+                .output()
+                .ok();
+            if let Some(out) = output {
+                if out.status.success() {
+                    let text = String::from_utf8_lossy(&out.stdout).into_owned();
+                    if !text.trim().is_empty() && text.contains("packages") {
+                        fetched_json = Some(text);
+                    }
+                }
+            }
+        }
+    }
+
+    let cache_path = resolve_registry_cache_path();
+
+    if let Some(ref content) = fetched_json {
+        if let Some(parent) = cache_path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        let _ = fs::write(&cache_path, content);
+        return fetched_json;
+    }
+
+    if cache_path.exists() {
+        if let Ok(content) = fs::read_to_string(&cache_path) {
+            if !content.trim().is_empty() {
+                return Some(content);
+            }
         }
     }
 
@@ -1045,8 +1114,14 @@ fn cmd_install(force_update: bool) {
     }
 
     let mut lock_content = String::from("# Generated by L++ Package Manager. Do not edit.\n\n");
+    let mut worklist = package.dependencies;
+    let mut processed = std::collections::HashSet::new();
 
-    for dep in &package.dependencies {
+    while let Some(dep) = worklist.pop() {
+        if !processed.insert(dep.name.clone()) {
+            continue;
+        }
+
         println!("[L++] Installing '{}'...", dep.name);
         let dest_path = pkg_dir.join(&dep.name);
 
@@ -1072,8 +1147,9 @@ fn cmd_install(force_update: bool) {
             }
         }
 
-        if let Some(ref git_url) = dep_git {
+        let installed_successfully = if let Some(ref git_url) = dep_git {
             let mut git_checkout_needed = false;
+            let mut clone_ok = true;
             if dest_path.exists() {
                 if force_update {
                     println!("  Updating '{}' from {}...", dep.name, git_url);
@@ -1093,7 +1169,7 @@ fn cmd_install(force_update: bool) {
                         }
                         _ => {
                             eprintln!("  Failed to pull updates for '{}'. skipping.", dep.name);
-                            continue;
+                            clone_ok = false;
                         }
                     }
                 } else {
@@ -1117,12 +1193,12 @@ fn cmd_install(force_update: bool) {
                     }
                     _ => {
                         eprintln!("  Failed to clone '{}'. skipping.", dep.name);
-                        continue;
+                        clone_ok = false;
                     }
                 }
             }
 
-            if git_checkout_needed {
+            if clone_ok && git_checkout_needed {
                 if let Some(ref tag) = dep_tag {
                     println!("  Checking out tag '{}'...", tag);
                     let _ = std::process::Command::new("git")
@@ -1152,35 +1228,40 @@ fn cmd_install(force_update: bool) {
                 }
             }
 
-            let commit_output = std::process::Command::new("git")
-                .env("GIT_TERMINAL_PROMPT", "0")
-                .args(&[
-                    "-c",
-                    "credential.helper=",
-                    "-C",
-                    dest_path.to_str().unwrap(),
-                    "rev-parse",
-                    "HEAD",
-                ])
-                .output();
-            let commit_hash = if let Ok(out) = commit_output {
-                if out.status.success() {
-                    String::from_utf8_lossy(&out.stdout).trim().to_string()
+            if clone_ok {
+                let commit_output = std::process::Command::new("git")
+                    .env("GIT_TERMINAL_PROMPT", "0")
+                    .args(&[
+                        "-c",
+                        "credential.helper=",
+                        "-C",
+                        dest_path.to_str().unwrap(),
+                        "rev-parse",
+                        "HEAD",
+                    ])
+                    .output();
+                let commit_hash = if let Ok(out) = commit_output {
+                    if out.status.success() {
+                        String::from_utf8_lossy(&out.stdout).trim().to_string()
+                    } else {
+                        "unknown".to_string()
+                    }
                 } else {
                     "unknown".to_string()
-                }
-            } else {
-                "unknown".to_string()
-            };
+                };
 
-            lock_content.push_str(&format!(
-                "[[package]]\nname = \"{}\"\nversion = \"{}\"\nsource = \"git+{}#{}\"\nresolved = \"{}\"\n\n",
-                dep.name,
-                dep.version.clone().unwrap_or_else(|| "unbounded".to_string()),
-                git_url,
-                commit_hash,
-                dest_path.display()
-            ));
+                lock_content.push_str(&format!(
+                    "[[package]]\nname = \"{}\"\nversion = \"{}\"\nsource = \"git+{}#{}\"\nresolved = \"{}\"\n\n",
+                    dep.name,
+                    dep.version.clone().unwrap_or_else(|| "unbounded".to_string()),
+                    git_url,
+                    commit_hash,
+                    dest_path.display()
+                ));
+                true
+            } else {
+                false
+            }
         } else if let Some(ref path) = dep.path {
             println!("  Linked path: {}", path);
             let path_ref = std::path::Path::new(path);
@@ -1189,16 +1270,34 @@ fn cmd_install(force_update: bool) {
                     "  [L++] Error: path '{}' for dependency '{}' does not exist.",
                     path, dep.name
                 );
-                continue;
+                false
+            } else {
+                lock_content.push_str(&format!(
+                    "[[package]]\nname = \"{}\"\nversion = \"{}\"\nsource = \"path+{}\"\nresolved = \"{}\"\n\n",
+                    dep.name,
+                    dep.version.clone().unwrap_or_else(|| "workspace".to_string()),
+                    path,
+                    path_ref.display()
+                ));
+                true
             }
+        } else {
+            false
+        };
 
-            lock_content.push_str(&format!(
-                "[[package]]\nname = \"{}\"\nversion = \"{}\"\nsource = \"path+{}\"\nresolved = \"{}\"\n\n",
-                dep.name,
-                dep.version.clone().unwrap_or_else(|| "workspace".to_string()),
-                path,
-                path_ref.display()
-            ));
+        if installed_successfully {
+            let sub_manifest_path = dest_path.join("lpp.toml");
+            if sub_manifest_path.exists() {
+                if let Ok(sub_content) = fs::read_to_string(&sub_manifest_path) {
+                    if let Ok(sub_pkg) = parse_toml(&sub_content) {
+                        for sub_dep in sub_pkg.dependencies {
+                            if !processed.contains(&sub_dep.name) {
+                                worklist.push(sub_dep);
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -1407,6 +1506,24 @@ mod tests {
         let result = super::should_use_mold("gcc");
         assert!(result.is_ok());
     }
+
+    #[test]
+    fn resolve_from_json_parses_registry_packages() {
+        let json = r#"{
+          "packages": {
+            "YTDownloader": { "git": "https://github.com/Okrabai/YTDownloader.git", "branch": "main", "description": "YouTube downloader tool" },
+            "@samarnever-droid/lpp-zip": { "git": "https://github.com/samarnever-droid/lplusplus.git", "branch": "master" }
+          }
+        }"#;
+
+        let entry1 = super::resolve_from_json(json, "ytdownloader").expect("case insensitive match");
+        assert_eq!(entry1.git, "https://github.com/Okrabai/YTDownloader.git");
+        assert_eq!(entry1.branch.as_deref(), Some("main"));
+        assert_eq!(entry1.description.as_deref(), Some("YouTube downloader tool"));
+
+        let entry2 = super::resolve_from_json(json, "lpp-zip").expect("scoped leaf match");
+        assert_eq!(entry2.git, "https://github.com/samarnever-droid/lplusplus.git");
+    }
 }
 
 fn cmd_remove(args: &[String]) {
@@ -1467,18 +1584,44 @@ fn cmd_update() {
 
 fn cmd_search(args: &[String]) {
     let query = args.get(0).map(|s| s.to_lowercase()).unwrap_or_default();
-    let mut results = registry_package_names();
-    results.sort();
+    let mut results = registry_package_entries();
+    results.sort_by(|a, b| a.0.cmp(&b.0));
+
     if !query.is_empty() {
-        results.retain(|name| name.to_lowercase().contains(&query));
+        results.retain(|(name, entry)| {
+            name.to_lowercase().contains(&query)
+                || entry.git.to_lowercase().contains(&query)
+                || entry
+                    .description
+                    .as_deref()
+                    .unwrap_or("")
+                    .to_lowercase()
+                    .contains(&query)
+        });
     }
+
     if results.is_empty() {
-        println!("[L++] No registry packages matched '{}'.", query);
+        if query.is_empty() {
+            println!("[L++] No packages available in registry.");
+        } else {
+            println!("[L++] No registry packages matched '{}'.", query);
+        }
         return;
     }
+
     println!("[L++] Registry matches:");
-    for name in results {
-        println!("  {}", name);
+    for (name, entry) in results {
+        let mut detail = format!("  {}", name);
+        if let Some(ref desc) = entry.description {
+            detail.push_str(&format!(" - {}", desc));
+        }
+        detail.push_str(&format!(" ({})", entry.git));
+        if let Some(ref b) = entry.branch {
+            detail.push_str(&format!(" [branch: {}]", b));
+        } else if let Some(ref t) = entry.tag {
+            detail.push_str(&format!(" [tag: {}]", t));
+        }
+        println!("{}", detail);
     }
 }
 

@@ -848,21 +848,45 @@ fn resolve_local_imports(
         let leaf_name = module.split('/').last().unwrap_or(&module);
         let mut filepath = base_dir.join(format!("{}.lpp", module));
         if !filepath.exists() {
-            // Check in .lpp_packages/leaf/leaf.lpp
-            let pkg_path = std::path::Path::new(".lpp_packages")
-                .join(leaf_name)
-                .join(format!("{}.lpp", leaf_name));
-            if pkg_path.exists() {
+            // Check package candidates in .lpp_packages/leaf
+            let pkg_dir = std::path::Path::new(".lpp_packages").join(leaf_name);
+            let mut resolved_pkg_path = None;
+
+            if pkg_dir.exists() {
+                // Check lpp.toml manifest for entry point
+                let manifest_path = pkg_dir.join("lpp.toml");
+                if manifest_path.exists() {
+                    if let Ok(content) = std::fs::read_to_string(&manifest_path) {
+                        if let Ok(pkg) = pm::parse_toml(&content) {
+                            if let Some(entry) = pkg.entry {
+                                let custom_entry = pkg_dir.join(entry);
+                                if custom_entry.exists() {
+                                    resolved_pkg_path = Some(custom_entry);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if resolved_pkg_path.is_none() {
+                    let candidates = [
+                        pkg_dir.join(format!("{}.lpp", leaf_name)),
+                        pkg_dir.join("src").join(format!("{}.lpp", leaf_name)),
+                        pkg_dir.join("src").join("main.lpp"),
+                        pkg_dir.join("main.lpp"),
+                    ];
+                    for c in candidates {
+                        if c.exists() {
+                            resolved_pkg_path = Some(c);
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if let Some(pkg_path) = resolved_pkg_path {
                 filepath = pkg_path;
             } else {
-                // Check in .lpp_packages/leaf/src/leaf.lpp
-                let pkg_src_path = std::path::Path::new(".lpp_packages")
-                    .join(leaf_name)
-                    .join("src")
-                    .join(format!("{}.lpp", leaf_name));
-                if pkg_src_path.exists() {
-                    filepath = pkg_src_path;
-                } else {
                     // Check in stdlib/ (shipped standard library)
                     let stdlib_path = if let Ok(exe) = std::env::current_exe() {
                         let exe_dir = exe.parent().unwrap_or(std::path::Path::new("."));
@@ -887,7 +911,6 @@ fn resolve_local_imports(
                             module
                         ));
                     }
-                }
             }
         }
         let content = std::fs::read_to_string(&filepath)
