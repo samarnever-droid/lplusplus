@@ -7,6 +7,7 @@ pub fn type_to_cl(ty: &TypeRef) -> cranelift_codegen::ir::Type {
         TypeRef::Int => cl_types::I64,
         TypeRef::Float => cl_types::F64,
         TypeRef::Bool => cl_types::I8,
+        TypeRef::Char => cl_types::I64, // 64-bit scalar char/code point
         TypeRef::Str => cl_types::I64,  // pointer (MVP: null for now)
         TypeRef::Void => cl_types::I64, // dummy; callers check != Void
         TypeRef::Custom(_) => cl_types::I64, // opaque struct pointer
@@ -34,7 +35,8 @@ fn align_up(value: usize, align: usize) -> usize {
 pub fn type_size_align(ty: &TypeRef) -> (usize, usize) {
     match ty {
         TypeRef::Bool => (1, 1),
-        TypeRef::Int
+        TypeRef::Char
+        | TypeRef::Int
         | TypeRef::Float
         | TypeRef::Str
         | TypeRef::Custom(_)

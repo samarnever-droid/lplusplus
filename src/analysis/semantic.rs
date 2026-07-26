@@ -565,6 +565,7 @@ impl Resolver {
             Expr::IntLiteral(_)
             | Expr::FloatLiteral(_)
             | Expr::StringLiteral(_)
+            | Expr::CharLiteral(_)
             | Expr::BoolLiteral(_) => {}
             Expr::Identifier(name, binding_id_cell) => {
                 // Ignore builtins and imported module namespaces for now

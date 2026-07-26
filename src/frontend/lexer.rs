@@ -31,6 +31,7 @@ pub enum Token {
     Ident(String),
     Int(i64),
     StringLit(String),
+    CharLit(char),
     BoolLit(bool),
     FloatLit(f64),
 
@@ -338,6 +339,26 @@ impl<'a> Lexer<'a> {
                 ']' => tokens.push(mk_token(Token::RBracket)),
                 ',' => tokens.push(mk_token(Token::Comma)),
                 '.' => tokens.push(mk_token(Token::Dot)),
+                '\'' => {
+                    let ch = match self.next_c() {
+                        Some('\\') => match self.next_c() {
+                            Some('n') => '\n',
+                            Some('r') => '\r',
+                            Some('t') => '\t',
+                            Some('0') => '\0',
+                            Some('\'') => '\'',
+                            Some('\\') => '\\',
+                            Some(c) => c,
+                            None => return Err(format!("[line {}:col {}] Unterminated char escape", start_line, start_col)),
+                        },
+                        Some(c) => c,
+                        None => return Err(format!("[line {}:col {}] Unterminated char literal", start_line, start_col)),
+                    };
+                    if self.next_c() != Some('\'') {
+                        return Err(format!("[line {}:col {}] Unclosed char literal", start_line, start_col));
+                    }
+                    tokens.push(mk_token(Token::CharLit(ch)));
+                }
                 '"' => {
                     // Check for triple-quote multiline string
                     if self.peek_c() == Some('"') {
@@ -600,15 +621,15 @@ mod tests {
     }
 
     #[test]
-    fn lexes_boolean_literals() {
-        let mut lexer = Lexer::new("true false");
+    fn lexes_char_literals() {
+        let mut lexer = Lexer::new("'a' '\\n' '\\t'");
         let tokens = lexer
             .tokenize()
-            .expect("lexer should parse boolean literals");
+            .expect("lexer should parse char literals");
         let raw_tokens: Vec<Token> = tokens.into_iter().map(|st| st.token).collect();
         assert_eq!(
             raw_tokens,
-            vec![Token::BoolLit(true), Token::BoolLit(false), Token::Eof]
+            vec![Token::CharLit('a'), Token::CharLit('\n'), Token::CharLit('\t'), Token::Eof]
         );
     }
 

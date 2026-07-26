@@ -38,6 +38,17 @@ impl Monomorphizer {
             }
         }
 
+        // Collect trait impls for bound checking
+        let mut trait_impls: HashMap<String, HashSet<String>> = HashMap::new();
+        for decl in &program.declarations {
+            if let TopLevel::Impl(impl_block) = decl {
+                trait_impls
+                    .entry(impl_block.target_type.clone())
+                    .or_insert_with(HashSet::new)
+                    .insert(impl_block.trait_name.clone());
+            }
+        }
+
         if generic_funcs.is_empty() && generic_structs.is_empty() {
             return Ok(());
         }
@@ -45,10 +56,10 @@ impl Monomorphizer {
         // Walk function bodies to discover and rewrite generic call/struct sites
         for decl in &mut program.declarations {
             if let TopLevel::Function(func) = decl {
-                self.walk_statements(&mut func.body, &generic_funcs, &generic_structs);
+                self.walk_statements(&mut func.body, &generic_funcs, &generic_structs, &trait_impls);
             } else if let TopLevel::Impl(impl_block) = decl {
                 for method in &mut impl_block.methods {
-                    self.walk_statements(&mut method.body, &generic_funcs, &generic_structs);
+                    self.walk_statements(&mut method.body, &generic_funcs, &generic_structs, &trait_impls);
                 }
             }
         }
@@ -69,40 +80,41 @@ impl Monomorphizer {
         stmts: &mut [Stmt],
         generic_funcs: &HashMap<String, Function>,
         generic_structs: &HashMap<String, StructDef>,
+        trait_impls: &HashMap<String, HashSet<String>>,
     ) {
         for stmt in stmts {
             match stmt {
                 Stmt::LetInferred { value, .. } => {
-                    self.walk_expr(value, generic_funcs, generic_structs);
+                    self.walk_expr(value, generic_funcs, generic_structs, trait_impls);
                 }
                 Stmt::Assign { value, .. } => {
-                    self.walk_expr(value, generic_funcs, generic_structs);
+                    self.walk_expr(value, generic_funcs, generic_structs, trait_impls);
                 }
                 Stmt::AssignField { base, value, .. } => {
-                    self.walk_expr(base, generic_funcs, generic_structs);
-                    self.walk_expr(value, generic_funcs, generic_structs);
+                    self.walk_expr(base, generic_funcs, generic_structs, trait_impls);
+                    self.walk_expr(value, generic_funcs, generic_structs, trait_impls);
                 }
                 Stmt::If { condition, then_block, else_block } => {
-                    self.walk_expr(condition, generic_funcs, generic_structs);
-                    self.walk_statements(then_block, generic_funcs, generic_structs);
+                    self.walk_expr(condition, generic_funcs, generic_structs, trait_impls);
+                    self.walk_statements(then_block, generic_funcs, generic_structs, trait_impls);
                     if let Some(eb) = else_block {
-                        self.walk_statements(eb, generic_funcs, generic_structs);
+                        self.walk_statements(eb, generic_funcs, generic_structs, trait_impls);
                     }
                 }
                 Stmt::While { condition, body } => {
-                    self.walk_expr(condition, generic_funcs, generic_structs);
-                    self.walk_statements(body, generic_funcs, generic_structs);
+                    self.walk_expr(condition, generic_funcs, generic_structs, trait_impls);
+                    self.walk_statements(body, generic_funcs, generic_structs, trait_impls);
                 }
                 Stmt::ForRange { start, end, body, .. } => {
-                    self.walk_expr(start, generic_funcs, generic_structs);
-                    self.walk_expr(end, generic_funcs, generic_structs);
-                    self.walk_statements(body, generic_funcs, generic_structs);
+                    self.walk_expr(start, generic_funcs, generic_structs, trait_impls);
+                    self.walk_expr(end, generic_funcs, generic_structs, trait_impls);
+                    self.walk_statements(body, generic_funcs, generic_structs, trait_impls);
                 }
                 Stmt::Return(Some(expr)) => {
-                    self.walk_expr(expr, generic_funcs, generic_structs);
+                    self.walk_expr(expr, generic_funcs, generic_structs, trait_impls);
                 }
                 Stmt::Expr(expr) => {
-                    self.walk_expr(expr, generic_funcs, generic_structs);
+                    self.walk_expr(expr, generic_funcs, generic_structs, trait_impls);
                 }
                 _ => {}
             }
@@ -114,11 +126,12 @@ impl Monomorphizer {
         expr: &mut Expr,
         generic_funcs: &HashMap<String, Function>,
         generic_structs: &HashMap<String, StructDef>,
+        trait_impls: &HashMap<String, HashSet<String>>,
     ) {
         match expr {
             Expr::Call { callee, args } => {
                 for arg in args.iter_mut() {
-                    self.walk_expr(arg, generic_funcs, generic_structs);
+                    self.walk_expr(arg, generic_funcs, generic_structs, trait_impls);
                 }
 
                 if let Expr::Identifier(ref name, _) = **callee {
@@ -130,7 +143,7 @@ impl Monomorphizer {
                         for (i, param) in tmpl.params.iter().enumerate() {
                             if i < args.len() {
                                 if let Type::Custom(ref tp_name) = param.ty {
-                                    if tmpl.type_params.contains(tp_name) {
+                                    if tmpl.type_params.iter().any(|tp| &tp.name == tp_name) {
                                         let arg_ty = infer_simple_expr_type(&args[i]);
                                         subst_map.insert(tp_name.clone(), arg_ty);
                                     }
@@ -139,7 +152,24 @@ impl Monomorphizer {
                         }
 
                         if !subst_map.is_empty() {
-                            let mangled_name = format!("{}__{}", name, mangle_types(&subst_map, &tmpl.type_params));
+                            // Check trait bounds before monomorphizing
+                            for tp in &tmpl.type_params {
+                                if let Some(ref bound) = tp.bound {
+                                    if let Some(concrete) = subst_map.get(&tp.name) {
+                                        let concrete_name = type_to_name(concrete);
+                                        let has_impl = trait_impls
+                                            .get(&concrete_name)
+                                            .map_or(false, |impls| impls.contains(bound));
+                                        if !has_impl {
+                                            // Skip this instantiation — bound not satisfied
+                                            return;
+                                        }
+                                    }
+                                }
+                            }
+
+                            let tp_names: Vec<String> = tmpl.type_params.iter().map(|tp| tp.name.clone()).collect();
+                            let mangled_name = format!("{}__{}",  name, mangle_types(&subst_map, &tp_names));
                             let key = mangled_name.clone();
 
                             if !self.instantiated_keys.contains(&key) {
@@ -169,7 +199,7 @@ impl Monomorphizer {
                         for (i, field) in tmpl.fields.iter().enumerate() {
                             if i < args.len() {
                                 if let Type::Custom(ref tp_name) = field.ty {
-                                    if tmpl.type_params.contains(tp_name) {
+                                    if tmpl.type_params.iter().any(|tp| &tp.name == tp_name) {
                                         let arg_ty = infer_simple_expr_type(&args[i]);
                                         subst_map.insert(tp_name.clone(), arg_ty);
                                     }
@@ -178,7 +208,8 @@ impl Monomorphizer {
                         }
 
                         if !subst_map.is_empty() {
-                            let mangled_name = format!("{}__{}", name, mangle_types(&subst_map, &tmpl.type_params));
+                            let tp_names: Vec<String> = tmpl.type_params.iter().map(|tp| tp.name.clone()).collect();
+                            let mangled_name = format!("{}__{}",  name, mangle_types(&subst_map, &tp_names));
                             let key = mangled_name.clone();
 
                             if !self.instantiated_keys.contains(&key) {
@@ -201,18 +232,18 @@ impl Monomorphizer {
                 }
             }
             Expr::UnaryOp { operand, .. } => {
-                self.walk_expr(operand, generic_funcs, generic_structs);
+                self.walk_expr(operand, generic_funcs, generic_structs, trait_impls);
             }
             Expr::BinaryOp { left, right, .. } => {
-                self.walk_expr(left, generic_funcs, generic_structs);
-                self.walk_expr(right, generic_funcs, generic_structs);
+                self.walk_expr(left, generic_funcs, generic_structs, trait_impls);
+                self.walk_expr(right, generic_funcs, generic_structs, trait_impls);
             }
             Expr::FieldAccess { base, .. } => {
-                self.walk_expr(base, generic_funcs, generic_structs);
+                self.walk_expr(base, generic_funcs, generic_structs, trait_impls);
             }
             Expr::ListLiteral(items) => {
                 for item in items {
-                    self.walk_expr(item, generic_funcs, generic_structs);
+                    self.walk_expr(item, generic_funcs, generic_structs, trait_impls);
                 }
             }
             _ => {}
@@ -307,11 +338,25 @@ fn substitute_ast_type(ty: &mut Type, map: &HashMap<String, Type>) {
     }
 }
 
+fn type_to_name(ty: &Type) -> String {
+    match ty {
+        Type::Int => "Int".to_string(),
+        Type::Float => "Float".to_string(),
+        Type::String => "Str".to_string(),
+        Type::Char => "Char".to_string(),
+        Type::Bool => "Bool".to_string(),
+        Type::Custom(s) => s.clone(),
+        Type::Generic(g, _) => g.clone(),
+        Type::Void => "Void".to_string(),
+    }
+}
+
 fn infer_simple_expr_type(expr: &Expr) -> Type {
     match expr {
         Expr::IntLiteral(_) => Type::Int,
         Expr::FloatLiteral(_) => Type::Float,
         Expr::StringLiteral(_) => Type::String,
+        Expr::CharLiteral(_) => Type::Char,
         Expr::BoolLiteral(_) => Type::Bool,
         _ => Type::Int, // default fallback for monomorphization key
     }
@@ -325,6 +370,7 @@ fn mangle_types(map: &HashMap<String, Type>, order: &[String]) -> String {
                 Type::Int => "Int".to_string(),
                 Type::Float => "Float".to_string(),
                 Type::String => "Str".to_string(),
+                Type::Char => "Char".to_string(),
                 Type::Bool => "Bool".to_string(),
                 Type::Custom(s) => s.clone(),
                 Type::Generic(g, _) => g.clone(),
@@ -348,7 +394,7 @@ mod tests {
             declarations: vec![
                 TopLevel::Function(Function {
                     name: "identity".to_string(),
-                    type_params: vec!["T".to_string()],
+                    type_params: vec![TypeParam::plain("T".to_string())],
                     params: vec![Param {
                         name: "x".to_string(),
                         ty: Type::Custom("T".to_string()),
@@ -381,5 +427,55 @@ mod tests {
             .collect();
 
         assert!(func_names.contains(&"identity__Int".to_string()), "should create specialized identity__Int function");
+    }
+
+    #[test]
+    fn trait_bound_blocks_invalid_instantiation() {
+        let mut program = Program {
+            declarations: vec![
+                TopLevel::Trait(TraitDef {
+                    name: "Display".to_string(),
+                    methods: vec![TraitMethod {
+                        name: "show".to_string(),
+                        params: vec![Param { name: "self".to_string(), ty: Type::Custom("Self".to_string()), default: None }],
+                        return_type: Type::String,
+                    }],
+                }),
+                TopLevel::Function(Function {
+                    name: "print_it".to_string(),
+                    type_params: vec![TypeParam { name: "T".to_string(), bound: Some("Display".to_string()) }],
+                    params: vec![Param {
+                        name: "x".to_string(),
+                        ty: Type::Custom("T".to_string()),
+                        default: None,
+                    }],
+                    return_type: Type::Void,
+                    body: vec![],
+                }),
+                TopLevel::Function(Function {
+                    name: "main".to_string(),
+                    type_params: vec![],
+                    params: vec![],
+                    return_type: Type::Void,
+                    body: vec![
+                        Stmt::Expr(Expr::Call {
+                            callee: Box::new(Expr::Identifier("print_it".to_string(), std::cell::Cell::new(None))),
+                            args: vec![Expr::IntLiteral(42)],
+                        }),
+                    ],
+                }),
+            ],
+        };
+
+        Monomorphizer::process_program(&mut program).expect("monomorphization should succeed");
+
+        let func_names: Vec<String> = program
+            .declarations
+            .iter()
+            .filter_map(|d| if let TopLevel::Function(f) = d { Some(f.name.clone()) } else { None })
+            .collect();
+
+        assert!(!func_names.contains(&"print_it__Int".to_string()),
+            "should NOT create print_it__Int because Int does not impl Display");
     }
 }

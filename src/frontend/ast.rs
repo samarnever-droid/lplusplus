@@ -4,6 +4,7 @@ pub enum Type {
     Float,
     String,
     Bool,
+    Char,
     Void,
     Custom(String),
     Generic(String, Vec<Type>),
@@ -42,6 +43,7 @@ pub enum Expr {
     IntLiteral(i64),
     FloatLiteral(f64),
     StringLiteral(String),
+    CharLiteral(char),
     BoolLiteral(bool),
     Identifier(String, std::cell::Cell<Option<usize>>),
     /// `-x` or `!b`
@@ -160,7 +162,7 @@ pub struct ClosureParam {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Function {
     pub name: String,
-    pub type_params: Vec<String>,  // generic type parameters: fn foo[T, U](...)
+    pub type_params: Vec<TypeParam>,  // generic type parameters: fn foo[T, U](...)
     pub params: Vec<Param>,
     pub return_type: Type,
     pub body: Vec<Stmt>,
@@ -169,7 +171,7 @@ pub struct Function {
 #[derive(Debug, Clone, PartialEq)]
 pub struct StructDef {
     pub name: String,
-    pub type_params: Vec<String>,  // generic type parameters: struct Pair[T, U]:
+    pub type_params: Vec<TypeParam>,  // generic type parameters: struct Pair[T, U]:
     pub fields: Vec<Param>,
 }
 
@@ -184,7 +186,7 @@ pub struct EnumVariant {
 #[derive(Debug, Clone, PartialEq)]
 pub struct EnumDef {
     pub name: String,
-    pub type_params: Vec<String>,  // generic type parameters
+    pub type_params: Vec<TypeParam>,  // generic type parameters
     pub variants: Vec<EnumVariant>,
 }
 
@@ -231,6 +233,19 @@ pub struct ImplBlock {
     pub trait_name: String,
     pub target_type: String,       // "Point", "Vec2", etc.
     pub methods: Vec<Function>,
+}
+
+/// A generic type parameter with an optional trait bound: `T` or `T: Display`
+#[derive(Debug, Clone, PartialEq)]
+pub struct TypeParam {
+    pub name: String,
+    pub bound: Option<String>,
+}
+
+impl TypeParam {
+    pub fn plain(name: String) -> Self {
+        Self { name, bound: None }
+    }
 }
 
 /// An extern function signature (no body, linked from a C library)

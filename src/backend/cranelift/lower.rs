@@ -786,6 +786,7 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                         TypeRef::Float => builder.ins().f64const(0.0),
                         TypeRef::Bool => builder.ins().iconst(cl_types::I8, 0),
                         TypeRef::Int
+                        | TypeRef::Char
                         | TypeRef::Str
                         | TypeRef::Custom(_)
                         | TypeRef::Generic(_, _)

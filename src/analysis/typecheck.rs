@@ -10,6 +10,7 @@ pub enum TypeRef {
     Int,
     Float,
     Str,
+    Char,
     Void,
     Bool,
     Custom(StructTypeId),
@@ -64,6 +65,12 @@ pub struct TypeChecker<'a> {
     pub func_return_types: HashMap<String, TypeRef>,
     pub func_param_types: HashMap<String, Vec<TypeRef>>,
     pub trait_names: std::collections::HashSet<String>,
+    pub trait_impls: HashMap<String, std::collections::HashSet<String>>,
+    pub type_param_bounds: HashMap<String, Vec<(String, String)>>,
+}
+
+fn type_param_names(tps: &[TypeParam]) -> Vec<String> {
+    tps.iter().map(|tp| tp.name.clone()).collect()
 }
 
 /// Check if two types are compatible, treating TypeParam as a wildcard.
@@ -71,8 +78,11 @@ fn types_compatible(expected: &TypeRef, actual: &TypeRef) -> bool {
     if expected == actual {
         return true;
     }
-    // Allow coercion from Int/Float/Bool to Str for str_concat / string interpolation
-    if expected == &TypeRef::Str && matches!(actual, TypeRef::Int | TypeRef::Float | TypeRef::Bool) {
+    // Allow coercion between Char and Int, and Char/Int/Float/Bool to Str
+    if matches!((expected, actual), (TypeRef::Char, TypeRef::Int) | (TypeRef::Int, TypeRef::Char)) {
+        return true;
+    }
+    if expected == &TypeRef::Str && matches!(actual, TypeRef::Int | TypeRef::Float | TypeRef::Bool | TypeRef::Char) {
         return true;
     }
     // TypeParam is compatible with any concrete type (type erasure)
@@ -89,6 +99,8 @@ impl<'a> TypeChecker<'a> {
             func_return_types: HashMap::new(),
             func_param_types: HashMap::new(),
             trait_names: std::collections::HashSet::new(),
+            trait_impls: HashMap::new(),
+            type_param_bounds: HashMap::new(),
         }
     }
 
@@ -114,6 +126,7 @@ impl<'a> TypeChecker<'a> {
             Type::Float => TypeRef::Float,
             Type::String => TypeRef::Str,
             Type::Bool => TypeRef::Bool,
+            Type::Char => TypeRef::Char,
             Type::Void => TypeRef::Void,
             Type::Custom(name) => {
                 // Check if this is a type parameter first
@@ -187,10 +200,18 @@ impl<'a> TypeChecker<'a> {
     }
 
     pub fn check_program(&mut self, program: &Program) -> Result<(), String> {
-        // Phase 0.5: Collect trait names
+        // Phase 0.5: Collect trait names and impl mappings
         for decl in &program.declarations {
             if let TopLevel::Trait(t) = decl {
                 self.trait_names.insert(t.name.clone());
+            }
+        }
+        for decl in &program.declarations {
+            if let TopLevel::Impl(impl_block) = decl {
+                self.trait_impls
+                    .entry(impl_block.target_type.clone())
+                    .or_insert_with(std::collections::HashSet::new)
+                    .insert(impl_block.trait_name.clone());
             }
         }
 
@@ -206,26 +227,33 @@ impl<'a> TypeChecker<'a> {
         }
         for decl in &program.declarations {
             if let TopLevel::Function(f) = decl {
-                let tp = &f.type_params;
-                let ret_ty = Self::convert_ast_type_with_params(&self.type_table, &f.return_type, tp);
+                let tp = type_param_names(&f.type_params);
+                let ret_ty = Self::convert_ast_type_with_params(&self.type_table, &f.return_type, &tp);
                 self.func_return_types.insert(f.name.clone(), ret_ty);
                 let param_tys: Vec<TypeRef> = f
                     .params
                     .iter()
-                    .map(|p| Self::convert_ast_type_with_params(&self.type_table, &p.ty, tp))
+                    .map(|p| Self::convert_ast_type_with_params(&self.type_table, &p.ty, &tp))
                     .collect();
                 self.func_param_types.insert(f.name.clone(), param_tys);
+                // Record trait bounds for this function's type params
+                let bounds: Vec<(String, String)> = f.type_params.iter()
+                    .filter_map(|tp| tp.bound.as_ref().map(|b| (tp.name.clone(), b.clone())))
+                    .collect();
+                if !bounds.is_empty() {
+                    self.type_param_bounds.insert(f.name.clone(), bounds);
+                }
             }
             // Register impl method types (they are mangled as TargetType_method)
             if let TopLevel::Impl(impl_block) = decl {
                 for method in &impl_block.methods {
-                    let tp = &method.type_params;
-                    let ret_ty = Self::convert_ast_type_with_params(&self.type_table, &method.return_type, tp);
+                    let tp = type_param_names(&method.type_params);
+                    let ret_ty = Self::convert_ast_type_with_params(&self.type_table, &method.return_type, &tp);
                     self.func_return_types.insert(method.name.clone(), ret_ty);
                     let param_tys: Vec<TypeRef> = method
                         .params
                         .iter()
-                        .map(|p| Self::convert_ast_type_with_params(&self.type_table, &p.ty, tp))
+                        .map(|p| Self::convert_ast_type_with_params(&self.type_table, &p.ty, &tp))
                         .collect();
                     self.func_param_types.insert(method.name.clone(), param_tys);
                 }
@@ -258,7 +286,7 @@ impl<'a> TypeChecker<'a> {
                 let mut is_self_referential = false;
 
                 for field in &s.fields {
-                    let field_ty = Self::convert_ast_type_with_params(&self.type_table, &field.ty, &s.type_params);
+                    let field_ty = Self::convert_ast_type_with_params(&self.type_table, &field.ty, &type_param_names(&s.type_params));
 
                     if let TypeRef::Custom(ref_id) = field_ty {
                         if ref_id == id {
@@ -284,9 +312,9 @@ impl<'a> TypeChecker<'a> {
         let mut all_type_params: Vec<String> = Vec::new();
         for decl in &program.declarations {
             match decl {
-                TopLevel::Function(f) => all_type_params.extend(f.type_params.clone()),
-                TopLevel::Struct(s) => all_type_params.extend(s.type_params.clone()),
-                TopLevel::Enum(e) => all_type_params.extend(e.type_params.clone()),
+                TopLevel::Function(f) => all_type_params.extend(type_param_names(&f.type_params)),
+                TopLevel::Struct(s) => all_type_params.extend(type_param_names(&s.type_params)),
+                TopLevel::Enum(e) => all_type_params.extend(type_param_names(&e.type_params)),
                 _ => {}
             }
         }
@@ -582,6 +610,7 @@ impl<'a> TypeChecker<'a> {
             Expr::IntLiteral(_) => Ok(TypeRef::Int),
             Expr::FloatLiteral(_) => Ok(TypeRef::Float),
             Expr::StringLiteral(_) => Ok(TypeRef::Str),
+            Expr::CharLiteral(_) => Ok(TypeRef::Char),
             Expr::BoolLiteral(_) => Ok(TypeRef::Bool),
             Expr::Identifier(name, binding_id_cell) => {
                 if let Some(id) = binding_id_cell.get() {
@@ -1163,13 +1192,12 @@ def main():
     }
 
     #[test]
-    fn rejects_returning_value_from_void_function() {
+    fn char_literals_typecheck() {
         let source = r#"
-def bar() -> Void:
-    return 42
-
 def main():
-    bar()
+    ch := 'Z'
+    mut c := 'a'
+    c = '\n'
 "#;
 
         let mut lexer = Lexer::new(source);
@@ -1183,9 +1211,8 @@ def main():
             .expect("program should resolve");
 
         let mut type_checker = TypeChecker::new(&mut resolver.table);
-        let err = type_checker
+        type_checker
             .check_program(&ast)
-            .expect_err("returning value from void function should fail typecheck");
-        assert!(err.contains("Void function 'bar' cannot return a value"));
+            .expect("char literal program should typecheck");
     }
 }

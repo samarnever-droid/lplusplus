@@ -507,13 +507,28 @@ impl Parser {
         Ok(StructDef { name, type_params, fields })
     }
 
-    /// Parse optional type parameters: `[T, U]`
-    fn parse_type_params(&mut self) -> Vec<String> {
+    /// Parse optional type parameters: `[T, U]` or `[T: Display, U: Hash]`
+    fn parse_type_params(&mut self) -> Vec<TypeParam> {
         let mut type_params = Vec::new();
         if self.match_token(&Token::LBracket) {
             loop {
                 if let Some(Token::Ident(n)) = self.advance() {
-                    type_params.push(n.clone());
+                    let name = n.clone();
+                    let bound = if self.match_token(&Token::Colon) {
+                        match self.peek() {
+                            Some(Token::Ident(_)) => {
+                                if let Some(Token::Ident(b)) = self.advance() {
+                                    Some(b.clone())
+                                } else {
+                                    None
+                                }
+                            }
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    };
+                    type_params.push(TypeParam { name, bound });
                 }
                 if !self.match_token(&Token::Comma) {
                     break;
@@ -641,6 +656,7 @@ impl Parser {
             "Float" => Ok(Type::Float),
             "String" | "Str" => Ok(Type::String),
             "Bool" => Ok(Type::Bool),
+            "Char" => Ok(Type::Char),
             "Void" => Ok(Type::Void),
             _ => Ok(Type::Custom(base_name)),
         }
@@ -1242,6 +1258,7 @@ impl Parser {
             Token::Int(v) => Ok(Expr::IntLiteral(v)),
             Token::FloatLit(v) => Ok(Expr::FloatLiteral(v)),
             Token::StringLit(s) => Ok(Expr::StringLiteral(s)),
+            Token::CharLit(c) => Ok(Expr::CharLiteral(c)),
             Token::FStringLit(parts) => {
                 // Desugar f"hello {name}" into str_concat chain
                 use crate::lexer::FStringPart;

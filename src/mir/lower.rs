@@ -92,6 +92,7 @@ impl<'a> MirLowerCtx<'a> {
             Type::Float => TypeRef::Float,
             Type::String => TypeRef::Str,
             Type::Bool => TypeRef::Bool,
+            Type::Char => TypeRef::Char,
             Type::Void => TypeRef::Void,
             Type::Custom(name) => {
                 // Check if it's a type parameter first
@@ -126,6 +127,7 @@ impl<'a> MirLowerCtx<'a> {
             Expr::IntLiteral(_) => TypeRef::Int,
             Expr::FloatLiteral(_) => TypeRef::Float,
             Expr::StringLiteral(_) => TypeRef::Str,
+            Expr::CharLiteral(_) => TypeRef::Char,
             Expr::BoolLiteral(_) => TypeRef::Bool,
             Expr::Identifier(_, cell) => {
                 if let Some(ast_id) = cell.get() {
@@ -295,7 +297,7 @@ impl<'a> MirLowerCtx<'a> {
             let id = FuncId(self.next_func_id);
             self.next_func_id += 1;
             self.functions.insert(f.name.clone(), id);
-            let prev = std::mem::replace(&mut self.current_type_params, f.type_params.clone());
+            let prev = std::mem::replace(&mut self.current_type_params, f.type_params.iter().map(|tp| tp.name.clone()).collect());
             self.func_return_types
                 .insert(f.name.clone(), self.resolve_type(&f.return_type));
             self.current_type_params = prev;
@@ -317,7 +319,7 @@ impl<'a> MirLowerCtx<'a> {
 
     fn lower_function(&mut self, func: &Function) -> Result<MirFunction, String> {
         // Set current type parameters for this function's generics
-        let prev_type_params = std::mem::replace(&mut self.current_type_params, func.type_params.clone());
+        let prev_type_params = std::mem::replace(&mut self.current_type_params, func.type_params.iter().map(|tp| tp.name.clone()).collect());
 
         let func_id = *self.functions.get(&func.name).ok_or_else(|| {
             format!(
@@ -877,6 +879,7 @@ impl<'a> MirLowerCtx<'a> {
             Expr::IntLiteral(value) => Ok(Operand::Int(*value)),
             Expr::FloatLiteral(value) => Ok(Operand::Float(*value)),
             Expr::StringLiteral(value) => Ok(Operand::String(value.clone())),
+            Expr::CharLiteral(ch) => Ok(Operand::Int(*ch as i64)),
             Expr::BoolLiteral(value) => Ok(Operand::Bool(*value)),
             Expr::Identifier(name, cell) => {
                 // Check constants first
@@ -1090,7 +1093,7 @@ impl<'a> MirLowerCtx<'a> {
                                 for decl in &self.program.declarations {
                                     if let TopLevel::Function(f) = decl {
                                         if &f.name == name {
-                                            let prev = std::mem::replace(&mut self.current_type_params, f.type_params.clone());
+                                            let prev = std::mem::replace(&mut self.current_type_params, f.type_params.iter().map(|tp| tp.name.clone()).collect());
                                             for (i, param) in f.params.iter().enumerate() {
                                                 let param_resolved = self.resolve_type(&param.ty);
                                                 if let TypeRef::TypeParam(ref pn) = param_resolved {
