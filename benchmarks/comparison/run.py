@@ -114,7 +114,7 @@ def main() -> None:
                 env = os.environ | {"LPP_AOT": "1", "LPP_AOT_OPT": profile}
                 compile_run, compile_ms = invoke([str(lpp), "emit", str(source), "--aot"], temp, args.timeout)
                 exe = temp / f"{workload}-lpp-{profile}"
-                link_run, link_ms = invoke(["cc", "-O2", str(source.with_suffix('.o')), str(ROOT / "lpp_runtime.c"), "-o", str(exe), "-pthread"], temp, args.timeout) if compile_run.returncode == 0 else (subprocess.CompletedProcess([], 1, "", "compile failed"), 0.0)
+                link_run, link_ms = invoke(["cc", "-O2", str(source.with_suffix('.o')), str(ROOT / "lpp_runtime.c"), "-o", str(exe), "-pthread", "-lm"], temp, args.timeout) if compile_run.returncode == 0 else (subprocess.CompletedProcess([], 1, "", "compile failed"), 0.0)
                 samples=[]; output=""
                 if link_run.returncode == 0:
                     for _ in range(args.warmups): invoke([str(exe)], temp, args.timeout)

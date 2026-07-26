@@ -34,7 +34,7 @@ def main():
                 if p.returncode: raise RuntimeError(p.stderr)
                 exe=work/f"{name}-{backend}"
                 inputs=[str(src.with_suffix(".o")),str(ROOT/"lpp_runtime.c")] if backend=="aot" else [str(src.with_suffix(".c"))]
-                p,link=command([cc,"-O2",*inputs,"-o",str(exe),"-pthread"],work)
+                p,link=command([cc,"-O2",*inputs,"-o",str(exe),"-pthread", "-lm"],work)
                 if p.returncode: raise RuntimeError(p.stderr)
                 p,run=command([str(exe)],work)
                 rows.append({"workload":name,"backend":backend,"status":"PASS" if p.returncode==0 and p.stdout.strip()==expected else "FAIL","emit_ms":round(emit,3),"link_ms":round(link,3),"run_ms":round(run,3),"stdout":p.stdout.strip()})

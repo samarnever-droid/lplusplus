@@ -29,11 +29,11 @@ def main() -> int:
         work = Path(temp); source = work / "labyrinth.lpp"; shutil.copy2(SOURCE, source)
         c_emit = run([str(COMPILER), "emit", str(source)], work)
         c_file = source.with_suffix(".c"); c_exe = work / "c-backend"
-        c_link = run([cc, "-O2", str(c_file), "-o", str(c_exe), "-pthread"], work)
+        c_link = run([cc, "-O2", str(c_file), "-o", str(c_exe), "-pthread", "-lm"], work)
         c_run = run([str(c_exe)], work)
         aot_emit = run([str(COMPILER), "emit", str(source), "--aot"], work)
         obj = source.with_suffix(".o"); aot_exe = work / "aot-host"
-        aot_link = run([cc, "-O2", str(obj), str(ROOT / "lpp_runtime.c"), "-o", str(aot_exe), "-pthread"], work)
+        aot_link = run([cc, "-O2", str(obj), str(ROOT / "lpp_runtime.c"), "-o", str(aot_exe), "-pthread", "-lm"], work)
         aot_run = run([str(aot_exe)], work)
         direct = {"available": DIRECT.exists(), "supported": False}
         if DIRECT.exists():

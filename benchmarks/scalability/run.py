@@ -83,7 +83,7 @@ def main() -> None:
                 subprocess.run([cc, "/nologo", "/O2", str(obj), str(ROOT / "lpp_runtime.c"), f"/Fe:{executable}"], check=True, capture_output=True)
             else:
                 # GCC / Clang
-                subprocess.run([cc, "-O2", str(obj), str(ROOT / "lpp_runtime.c"), "-o", str(executable), "-pthread"], check=True, capture_output=True)
+                subprocess.run([cc, "-O2", str(obj), str(ROOT / "lpp_runtime.c"), "-o", str(executable), "-pthread", "-lm"], check=True, capture_output=True)
             link_ms = (time.perf_counter() - started) * 1000
             run = subprocess.run([str(executable)], text=True, capture_output=True)
             expected = str(lines - 4)

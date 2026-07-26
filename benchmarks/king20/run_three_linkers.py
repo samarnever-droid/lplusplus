@@ -45,19 +45,19 @@ with tempfile.TemporaryDirectory(prefix="lpp-3linkers-") as temp_dir:
         # 1. Host Linker (recompiling lpp_runtime.c)
         exe_host_c = temp / f"host_c_{case_id}"
         t0 = time.perf_counter()
-        subprocess.run([cc, "-O2", str(obj), str(ROOT / "lpp_runtime.c"), "-o", str(exe_host_c), "-pthread"], check=True, capture_output=True)
+        subprocess.run([cc, "-O2", str(obj), str(ROOT / "lpp_runtime.c"), "-o", str(exe_host_c), "-pthread", "-lm"], check=True, capture_output=True)
         link_host_recompile_c_ms = (time.perf_counter() - t0) * 1000.0
 
         # 2. Host Linker (prebuilt lpp_runtime.o)
         exe_host_obj = temp / f"host_obj_{case_id}"
         t0 = time.perf_counter()
-        subprocess.run([cc, "-O2", str(obj), str(runtime_obj), "-o", str(exe_host_obj), "-pthread"], check=True, capture_output=True)
+        subprocess.run([cc, "-O2", str(obj), str(runtime_obj), "-o", str(exe_host_obj), "-pthread", "-lm"], check=True, capture_output=True)
         link_host_prebuilt_ms = (time.perf_counter() - t0) * 1000.0
         
         # 3. Mold Linker (-fuse-ld=mold with prebuilt lpp_runtime.o)
         exe_mold = temp / f"mold_{case_id}"
         t0 = time.perf_counter()
-        subprocess.run([cc, "-fuse-ld=mold", "-O2", str(obj), str(runtime_obj), "-o", str(exe_mold), "-pthread"], check=True, capture_output=True)
+        subprocess.run([cc, "-fuse-ld=mold", "-O2", str(obj), str(runtime_obj), "-o", str(exe_mold), "-pthread", "-lm"], check=True, capture_output=True)
         link_mold_ms = (time.perf_counter() - t0) * 1000.0
         
         # 4. Direct Linker (lpp-link with lpp_runtime_min.o)

@@ -96,7 +96,7 @@ def benchmark(manifest_path: Path) -> dict[str, object]:
             executable = temp / f"{case['id']:02d}_{case['name']}"
             link_start = time.perf_counter()
             subprocess.run(
-                [cc, "-O2", str(obj), str(ROOT / "lpp_runtime.c"), "-o", str(executable), "-pthread"],
+                [cc, "-O2", str(obj), str(ROOT / "lpp_runtime.c"), "-o", str(executable), "-pthread", "-lm", "-lm"],
                 check=True, capture_output=True, text=True,
             )
             link_seconds = time.perf_counter() - link_start
