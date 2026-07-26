@@ -384,7 +384,21 @@ impl Resolver {
             } => {
                 self.resolve_expr(base)?;
                 self.resolve_expr(value)?;
-                if let Expr::Identifier(name, ..) = base {
+                let mut curr: &Expr = base;
+                let mut root_name = None;
+                loop {
+                    match curr {
+                        Expr::Identifier(name, ..) => {
+                            root_name = Some(name.as_str());
+                            break;
+                        }
+                        Expr::FieldAccess { base: sub_base, .. } => {
+                            curr = sub_base;
+                        }
+                        _ => break,
+                    }
+                }
+                if let Some(name) = root_name {
                     if let Some(id) = self.table.resolve_name(self.current_scope, name) {
                         let binding = &self.table.bindings[id.0];
                         if !binding.is_mut {
@@ -766,6 +780,39 @@ mod tests {
             .resolve_program(&mut program)
             .expect_err("should reject immutable field mutation");
         assert!(err.contains("Cannot mutate field of immutable variable 'box'"));
+    }
+
+    #[test]
+    fn rejects_nested_field_mutation_on_immutable_variable() {
+        let mut program = Program {
+            declarations: vec![TopLevel::Function(Function {
+                type_params: vec![], name: "main".to_string(),
+                params: vec![],
+                return_type: Type::Void,
+                body: vec![
+                    Stmt::LetInferred {
+                        name: "player".to_string(),
+                        is_mut: false,
+                        value: Expr::IntLiteral(1),
+                        binding_id: std::cell::Cell::new(None),
+                    },
+                    Stmt::AssignField {
+                        base: Expr::FieldAccess {
+                            base: Box::new(Expr::Identifier("player".to_string(), std::cell::Cell::new(None))),
+                            field: "pos".to_string(),
+                        },
+                        field: "x".to_string(),
+                        value: Expr::IntLiteral(10),
+                    },
+                ],
+            })],
+        };
+
+        let mut resolver = Resolver::new();
+        let err = resolver
+            .resolve_program(&mut program)
+            .expect_err("should reject nested field mutation on immutable root");
+        assert!(err.contains("Cannot mutate field of immutable variable 'player'"));
     }
 
     #[test]
