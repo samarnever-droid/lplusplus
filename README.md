@@ -39,17 +39,19 @@ def main():
 | Feature | Description |
 |---------|-------------|
 | **Python-like syntax** | Significant whitespace, `:=` declarations, `def`/`struct`/`enum` |
-| **Generics** | `def identity[T](x: T) -> T`, generic structs and enums |
+| **Generics** | `def identity[T](x: T) -> T`, generic structs and enums with static cycle detection |
 | **Traits + dispatch** | `trait`/`impl` with both static and dynamic dispatch |
 | **FFI / extern** | `extern "C" link "SDL2"` — call any C library directly |
-| **Ownership & ARC** | Automatic reference counting, escape analysis, cycle rejection |
+| **Ownership & ARC** | Automatic reference counting, escape analysis, container ARC promotion |
 | **Enums + match** | Algebraic data types with pattern matching and data extraction |
 | **Error handling** | `Result` type + `?` operator for error propagation |
+| **Diagnostics & Panic** | Rust-style error cards (`E0001`–`E0005`) + C runtime stack backtrace engine |
 | **Default params** | `def foo(x: Int, y: Int = 10)` |
 | **Multi-file modules** | `import math`, `from utils import calc`, dotted paths |
 | **Native compilation** | Cranelift AOT → ELF / PE / Mach-O, 9 MIR optimization passes |
 | **Direct linker** | `lpp-link` produces standalone executables without `gcc`/`clang`/MSVC |
-| **Package manager** | `lpp new`, `lpp build`, `lpp run`, `lpp publish` |
+| **LSP Language Server** | `lpp-lsp` stdio JSON-RPC server for editor Intellisense, hovers & diagnostics |
+| **Package manager** | 100% self-hosted `lpp-pm` written in pure L++ with embedded Git & HTTP engine |
 | **100+ builtins** | strings, lists, maps, files, network, JSON, buffers |
 | **C-competitive perf** | Matches GCC -O2 on real workloads (primes: 1.0x) |
 | **15KB binaries** | Windows PE freestanding executables as small as 15.5KB |

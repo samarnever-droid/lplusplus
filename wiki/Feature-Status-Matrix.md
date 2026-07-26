@@ -17,7 +17,7 @@ This page separates **implemented**, **experimental**, and **planned** features 
 |---|---:|---|
 | Functions | Stable | `def name(args) -> Type:` |
 | Default parameters | Working | `def add(a: Int, b: Int = 10)` |
-| Immutable variables | Stable | `x := 1` |
+| Immutable variables | Stable | `x := 1`, deep field mutation check enforced (`a.b.c = 2` rejected if `a` is immutable) |
 | Mutable variables | Stable | `mut x := 1`, then `x = 2` |
 | Constants | Working | top-level `const NAME = value` |
 | Structs | Stable | positional constructor: `Point(1, 2)` |
@@ -27,16 +27,16 @@ This page separates **implemented**, **experimental**, and **planned** features 
 | Match | Working | variant arms and bindings work |
 | `?` try operator | Working | works with packed Result-like enum values |
 | Generic functions | Experimental | phase 1, type-erased, common inference works |
-| Generic structs | Experimental | `struct Box[T]` parses and works for simple cases |
+| Generic structs | Working | `struct Box[T]` with static cycle detection for recursive fields |
 | Generic enums | Experimental | syntax exists, payload limitations remain |
 | Type aliases | Experimental | parsed, but full typechecker substitution is incomplete |
-| Closures | Working | `fn(...) -> Type:` syntax and captures |
+| Closures | Working | `fn(...) -> Type:` syntax, automatic ARC escape promotion for `List`, `Map`, `Str` |
 | Threads | Working | `spawn fn(): ...` |
 | List literals | Working | `[1, 2, 3]`, float lists also work |
 | Maps | Working | integer and string keys work in runtime builtins |
 | String indexing | Working | `s[0]` returns a one-character `Str` |
 | List indexing | Working | `list[0]` lowers to `list_get` |
-| F-strings | Working | string expressions work; use `int_to_str(x)` for integers |
+| F-strings | Stable | string expressions with automatic coercion (`int_to_str`, `float_to_str`, `bool_to_str`) |
 | Multiline strings | Working | triple quotes `"""..."""` |
 | Hex/binary literals | Working | `0xFF`, `0b1010`, underscores allowed |
 | Float modulo | Working | `%` on floats lowers to `fmod` |
@@ -46,6 +46,10 @@ This page separates **implemented**, **experimental**, and **planned** features 
 | Import aliases | Experimental | parser supports `import x as y`; namespace behavior is still limited |
 | Traits/interfaces | Working | `trait Name:` + `impl Trait for Type:` with static and dynamic dispatch |
 | FFI / extern "C" | Working | `extern "C":` blocks, auto host linker, `link "lib"` support |
+| Rust-style Diagnostics | Stable | Error codes (`E0001`–`E0005`), line previews, carets, help hints |
+| Runtime Panic Engine | Stable | `lpp_panic`, signal handlers (`SIGSEGV`, `SIGFPE`, `SIGABRT`), stack backtrace |
+| Stdio LSP Server | Stable | `lpp-lsp` binary for editor completions, hovers, jump-to-def, diagnostics |
+| Self-Hosted PM | Stable | `lpp-pm` fully written in L++ (`pm/src/main.lpp`) with embedded Git & HTTP engine |
 | Full monomorphized generics | Planned | current generics use type erasure; monomorphization is future work |
 | Char type | Planned | currently use one-character `Str`, `ord`, `chr`, `char_at` |
 

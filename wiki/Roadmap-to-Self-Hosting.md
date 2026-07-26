@@ -6,18 +6,22 @@ Self-hosting means writing the L++ compiler in L++.
 
 L++ now has most compiler-writing ingredients:
 
+- ✅ **Self-Hosted Package Manager**: `lpp-pm` fully written and self-hosted in pure L++ (`pm/src/main.lpp`, `git.lpp`, `registry.lpp`, `install.lpp`, `add_remove.lpp`)
 - ✅ Functions with default parameters
-- ✅ Structs with field access
+- ✅ Structs with field access and deep immutability safety checks (`a.b.c = ...`)
 - ✅ Enums with match and data-carrying variants
-- ✅ Generics (phase 1, type-erased): `def identity[T](x: T) -> T`
+- ✅ Generics (phase 1, type-erased): `def identity[T](x: T) -> T` with generic recursive cycle detection
 - ✅ Traits and impl blocks with static and dynamic dispatch
 - ✅ Imports and multi-file modules
-- ✅ Lists and maps
-- ✅ 15+ string builtins: `char_at`, `ord`, `chr`, `str_find`, `str_contains`, `str_replace`, `str_upper`, `str_lower`, `str_trim`, `int_to_str`, `str_to_int`
+- ✅ Lists and maps (including string-keyed maps `lpp_map_put_str`, `lpp_map_get_str`)
+- ✅ String builtins: `char_at`, `ord`, `chr`, `str_find`, `str_contains`, `str_replace`, `str_upper`, `str_lower`, `str_trim`, `int_to_str`, `float_to_str`, `bool_to_str`
 - ✅ Error propagation with `?` try operator
 - ✅ Native AOT compilation to ELF/PE/Mach-O
 - ✅ Constants, closures, threads
-- ✅ F-strings, hex/binary literals, multiline strings
+- ✅ F-strings with automatic coercion (`f"val: {x}"`), hex/binary literals, multiline strings
+- ✅ Rust-style compiler diagnostics engine with line previews, carets, and contextual help (`E0001`–`E0005`)
+- ✅ C runtime panic engine with OS signal handlers and stack backtraces (`lpp_panic`, `lpp_print_backtrace`)
+- ✅ Stdio Language Server Protocol binary (`lpp-lsp`) for IDE Intellisense
 
 ## Remaining gaps
 
