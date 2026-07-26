@@ -268,4 +268,3 @@ void lpp_sleep_ms(int64_t ms) { struct timespec ts; ts.tv_sec = ms / 1000; ts.tv
 void lpp_exit(int64_t code) { exit((int)code); }
 
 /* ── String equality ── */
-int64_t lpp_str_eq(const char *a, const char *b) { if(a==b)return 1; if(!a||!b)return 0; while(*a&&*a==*b){a++;b++;} return *a==*b?1:0; }
