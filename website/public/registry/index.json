@@ -269,6 +269,51 @@
         "ANSI TUI renderer with line screen buffer"
       ],
       "provides": "lpp-opencode"
+    },
+    "lreact": {
+      "name": "lreact",
+      "version": "1.0.0",
+      "description": "Tauri-like GUI framework for L++ using React/HTML frontend + native L++ HTTP IPC backend",
+      "authors": [
+        "samarnever-droid"
+      ],
+      "license": "MIT",
+      "repository": "https://github.com/samarnever-droid/lreact",
+      "git": "https://github.com/samarnever-droid/lreact.git",
+      "branch": "main",
+      "source_url": "https://raw.githubusercontent.com/samarnever-droid/lreact/main/src/lreact.lpp",
+      "path": "src/lreact.lpp",
+      "dependencies": [],
+      "keywords": [
+        "lreact",
+        "react",
+        "tauri",
+        "gui",
+        "desktop",
+        "ipc",
+        "frontend"
+      ]
+    },
+    "lpp-lreact": {
+      "name": "lpp-lreact",
+      "version": "1.0.0",
+      "description": "Alias for lreact — Tauri-like GUI framework for L++",
+      "authors": [
+        "samarnever-droid"
+      ],
+      "license": "MIT",
+      "repository": "https://github.com/samarnever-droid/lreact",
+      "git": "https://github.com/samarnever-droid/lreact.git",
+      "branch": "main",
+      "source_url": "https://raw.githubusercontent.com/samarnever-droid/lreact/main/src/lreact.lpp",
+      "path": "src/lreact.lpp",
+      "dependencies": [],
+      "keywords": [
+        "lreact",
+        "react",
+        "tauri",
+        "gui"
+      ]
     }
   }
 }

@@ -19,6 +19,21 @@
     "lpp-pm": {
       "git": "https://github.com/samarnever-droid/lplusplus.git",
       "branch": "master"
+    },
+    "lreact": {
+      "git": "https://github.com/samarnever-droid/lreact.git",
+      "branch": "main",
+      "description": "Tauri-like GUI framework for L++ using React/HTML frontend + native L++ HTTP IPC backend"
+    },
+    "@samarnever-droid/lreact": {
+      "git": "https://github.com/samarnever-droid/lreact.git",
+      "branch": "main",
+      "description": "Tauri-like GUI framework for L++ using React/HTML frontend + native L++ HTTP IPC backend"
+    },
+    "lpp-lreact": {
+      "git": "https://github.com/samarnever-droid/lreact.git",
+      "branch": "main",
+      "description": "Alias for lreact — Tauri-like GUI framework for L++"
     }
   }
 }
