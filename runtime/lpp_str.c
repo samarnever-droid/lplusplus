@@ -231,3 +231,41 @@ int64_t lpp_str_to_int(const char *s) {
 }
 
 int64_t lpp_str_eq(const char *a, const char *b) { if(a==b)return 1; if(!a||!b)return 0; while(*a&&*a==*b){a++;b++;} return *a==*b?1:0; }
+
+/* ── Math builtins (host runtime) ── */
+#include <math.h>
+#include <time.h>
+int64_t lpp_abs(int64_t x) { return x < 0 ? -x : x; }
+int64_t lpp_min(int64_t a, int64_t b) { return a < b ? a : b; }
+int64_t lpp_max(int64_t a, int64_t b) { return a > b ? a : b; }
+int64_t lpp_int_pow(int64_t base, int64_t exp) { int64_t r=1; while(exp>0){if(exp&1)r*=base;base*=base;exp>>=1;} return r; }
+double lpp_sqrt(double x) { return sqrt(x); }
+double lpp_floor(double x) { return floor(x); }
+double lpp_ceil(double x) { return ceil(x); }
+double lpp_pow(double base, double exp) { return pow(base, exp); }
+double lpp_int_to_float(int64_t x) { return (double)x; }
+int64_t lpp_float_to_int(double x) { return (int64_t)x; }
+
+/* ── Random ── */
+static uint64_t lpp_rng_state = 0;
+void lpp_random_seed(int64_t seed) { lpp_rng_state = (uint64_t)seed; }
+int64_t lpp_random(void) {
+    if (lpp_rng_state == 0) lpp_rng_state = (uint64_t)time(NULL) ^ 0x1234567890ABCDEFULL;
+    lpp_rng_state ^= lpp_rng_state << 13; lpp_rng_state ^= lpp_rng_state >> 7; lpp_rng_state ^= lpp_rng_state << 17;
+    return (int64_t)(lpp_rng_state & 0x7FFFFFFFFFFFFFFFULL);
+}
+int64_t lpp_random_range(int64_t lo, int64_t hi) { if (lo >= hi) return lo; return lo + (lpp_random() % (hi - lo)); }
+
+/* ── Time (platform-conditional) ── */
+#ifdef _WIN32
+#include <windows.h>
+int64_t lpp_time_ms(void) { return (int64_t)GetTickCount64(); }
+void lpp_sleep_ms(int64_t ms) { Sleep((DWORD)ms); }
+#else
+int64_t lpp_time_ms(void) { struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); return (int64_t)ts.tv_sec * 1000 + (int64_t)ts.tv_nsec / 1000000; }
+void lpp_sleep_ms(int64_t ms) { struct timespec ts; ts.tv_sec = ms / 1000; ts.tv_nsec = (ms % 1000) * 1000000; nanosleep(&ts, NULL); }
+#endif
+void lpp_exit(int64_t code) { exit((int)code); }
+
+/* ── String equality ── */
+int64_t lpp_str_eq(const char *a, const char *b) { if(a==b)return 1; if(!a||!b)return 0; while(*a&&*a==*b){a++;b++;} return *a==*b?1:0; }
