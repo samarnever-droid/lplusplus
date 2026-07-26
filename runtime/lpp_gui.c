@@ -225,27 +225,209 @@ void lpp_gui_window_close(int64_t win_id) {
 }
 
 #else
-/* Unix / Headless Fallback Implementation */
+/* ── Unix (Linux / macOS) X11 & Headless Implementation ───────────────── */
+#include <dlfcn.h>
+#include <unistd.h>
+
+typedef struct {
+    void *display;
+    unsigned long window;
+    unsigned long gc;
+    int width;
+    int height;
+    int is_open;
+} LppUnixWindow;
+
+static LppUnixWindow g_unix_windows[8];
+static int g_unix_win_count = 0;
+static void *g_x11_lib = NULL;
+
+/* X11 Function Pointers */
+typedef void* (*fn_XOpenDisplay)(const char*);
+typedef unsigned long (*fn_XCreateSimpleWindow)(void*, unsigned long, int, int, unsigned int, unsigned int, unsigned int, unsigned long, unsigned long);
+typedef int (*fn_XSelectInput)(void*, unsigned long, long);
+typedef int (*fn_XMapWindow)(void*, unsigned long);
+typedef void* (*fn_XCreateGC)(void*, unsigned long, unsigned long, void*);
+typedef int (*fn_XSetForeground)(void*, void*, unsigned long);
+typedef int (*fn_XFillRectangle)(void*, unsigned long, void*, int, int, unsigned int, unsigned int);
+typedef int (*fn_XDrawString)(void*, unsigned long, void*, int, int, const char*, int);
+typedef int (*fn_XFlush)(void*);
+typedef int (*fn_XPending)(void*);
+typedef int (*fn_XNextEvent)(void*, void*);
+typedef int (*fn_XQueryPointer)(void*, unsigned long, unsigned long*, unsigned long*, int*, int*, int*, int*, unsigned int*);
+typedef int (*fn_XCloseDisplay)(void*);
+typedef int (*fn_XDestroyWindow)(void*, unsigned long);
+
+static fn_XOpenDisplay p_XOpenDisplay = NULL;
+static fn_XCreateSimpleWindow p_XCreateSimpleWindow = NULL;
+static fn_XSelectInput p_XSelectInput = NULL;
+static fn_XMapWindow p_XMapWindow = NULL;
+static fn_XCreateGC p_XCreateGC = NULL;
+static fn_XSetForeground p_XSetForeground = NULL;
+static fn_XFillRectangle p_XFillRectangle = NULL;
+static fn_XDrawString p_XDrawString = NULL;
+static fn_XFlush p_XFlush = NULL;
+static fn_XPending p_XPending = NULL;
+static fn_XNextEvent p_XNextEvent = NULL;
+static fn_XQueryPointer p_XQueryPointer = NULL;
+static fn_XCloseDisplay p_XCloseDisplay = NULL;
+static fn_XDestroyWindow p_XDestroyWindow = NULL;
+
+static int init_x11(void) {
+    if (g_x11_lib) return 1;
+    g_x11_lib = dlopen("libX11.so.6", RTLD_LAZY);
+    if (!g_x11_lib) g_x11_lib = dlopen("libX11.so", RTLD_LAZY);
+    if (!g_x11_lib) return 0;
+
+    p_XOpenDisplay = (fn_XOpenDisplay)dlsym(g_x11_lib, "XOpenDisplay");
+    p_XCreateSimpleWindow = (fn_XCreateSimpleWindow)dlsym(g_x11_lib, "XCreateSimpleWindow");
+    p_XSelectInput = (fn_XSelectInput)dlsym(g_x11_lib, "XSelectInput");
+    p_XMapWindow = (fn_XMapWindow)dlsym(g_x11_lib, "XMapWindow");
+    p_XCreateGC = (fn_XCreateGC)dlsym(g_x11_lib, "XCreateGC");
+    p_XSetForeground = (fn_XSetForeground)dlsym(g_x11_lib, "XSetForeground");
+    p_XFillRectangle = (fn_XFillRectangle)dlsym(g_x11_lib, "XFillRectangle");
+    p_XDrawString = (fn_XDrawString)dlsym(g_x11_lib, "XDrawString");
+    p_XFlush = (fn_XFlush)dlsym(g_x11_lib, "XFlush");
+    p_XPending = (fn_XPending)dlsym(g_x11_lib, "XPending");
+    p_XNextEvent = (fn_XNextEvent)dlsym(g_x11_lib, "XNextEvent");
+    p_XQueryPointer = (fn_XQueryPointer)dlsym(g_x11_lib, "XQueryPointer");
+    p_XCloseDisplay = (fn_XCloseDisplay)dlsym(g_x11_lib, "XCloseDisplay");
+    p_XDestroyWindow = (fn_XDestroyWindow)dlsym(g_x11_lib, "XDestroyWindow");
+
+    return p_XOpenDisplay && p_XCreateSimpleWindow && p_XMapWindow;
+}
+
 int64_t lpp_gui_window_create(const char *title, int64_t width, int64_t height) {
+    if (g_unix_win_count >= 8) return -1;
+
+    if (init_x11()) {
+        void *display = p_XOpenDisplay(NULL);
+        if (display) {
+            unsigned long root = 0; // DefaultRootWindow fallback
+            unsigned long win = p_XCreateSimpleWindow(display, root, 10, 10, (unsigned int)width, (unsigned int)height, 1, 0, 0x121212);
+            p_XSelectInput(display, win, 0x1L | 0x4L | 0x8L); // ExposureMask | ButtonPressMask | PointerMotionMask
+            p_XMapWindow(display, win);
+            void *gc = p_XCreateGC(display, win, 0, NULL);
+
+            int id = g_unix_win_count++;
+            g_unix_windows[id].display = display;
+            g_unix_windows[id].window = win;
+            g_unix_windows[id].gc = (unsigned long)(uintptr_t)gc;
+            g_unix_windows[id].width = (int)width;
+            g_unix_windows[id].height = (int)height;
+            g_unix_windows[id].is_open = 1;
+            return (int64_t)id;
+        }
+    }
+
     printf("[L++ GUI] Initialized Window '%s' (%lldx%lld)\n", title ? title : "L++ App", (long long)width, (long long)height);
+    int id = g_unix_win_count++;
+    g_unix_windows[id].is_open = 1;
+    return (int64_t)id;
+}
+
+int64_t lpp_gui_window_is_open(int64_t win_id) {
+    if (win_id < 0 || win_id >= g_unix_win_count) return 0;
+    return g_unix_windows[win_id].is_open ? 1 : 0;
+}
+
+int64_t lpp_gui_window_poll_events(int64_t win_id) {
+    if (win_id < 0 || win_id >= g_unix_win_count || !g_unix_windows[win_id].is_open) return 0;
+    if (g_unix_windows[win_id].display && p_XPending) {
+        char event_buf[256];
+        while (p_XPending(g_unix_windows[win_id].display)) {
+            p_XNextEvent(g_unix_windows[win_id].display, event_buf);
+        }
+    }
+    return g_unix_windows[win_id].is_open ? 1 : 0;
+}
+
+void lpp_gui_clear(int64_t win_id, int64_t hex_color) {
+    if (win_id < 0 || win_id >= g_unix_win_count || !g_unix_windows[win_id].is_open) return;
+    if (g_unix_windows[win_id].display && p_XSetForeground && p_XFillRectangle) {
+        void *gc = (void *)(uintptr_t)g_unix_windows[win_id].gc;
+        p_XSetForeground(g_unix_windows[win_id].display, gc, (unsigned long)hex_color);
+        p_XFillRectangle(g_unix_windows[win_id].display, g_unix_windows[win_id].window, gc, 0, 0, (unsigned int)g_unix_windows[win_id].width, (unsigned int)g_unix_windows[win_id].height);
+    }
+}
+
+void lpp_gui_draw_rect(int64_t win_id, int64_t x, int64_t y, int64_t w, int64_t h, int64_t hex_color) {
+    if (win_id < 0 || win_id >= g_unix_win_count || !g_unix_windows[win_id].is_open) return;
+    if (g_unix_windows[win_id].display && p_XSetForeground && p_XFillRectangle) {
+        void *gc = (void *)(uintptr_t)g_unix_windows[win_id].gc;
+        p_XSetForeground(g_unix_windows[win_id].display, gc, (unsigned long)hex_color);
+        p_XFillRectangle(g_unix_windows[win_id].display, g_unix_windows[win_id].window, gc, (int)x, (int)y, (unsigned int)w, (unsigned int)h);
+    }
+}
+
+void lpp_gui_draw_rounded_rect(int64_t win_id, int64_t x, int64_t y, int64_t w, int64_t h, int64_t radius, int64_t hex_color) {
+    (void)radius;
+    lpp_gui_draw_rect(win_id, x, y, w, h, hex_color);
+}
+
+int64_t lpp_gui_mouse_x(int64_t win_id) {
+    if (win_id < 0 || win_id >= g_unix_win_count || !g_unix_windows[win_id].is_open) return 0;
+    if (g_unix_windows[win_id].display && p_XQueryPointer) {
+        unsigned long root, child;
+        int rx, ry, wx, wy;
+        unsigned int mask;
+        if (p_XQueryPointer(g_unix_windows[win_id].display, g_unix_windows[win_id].window, &root, &child, &rx, &ry, &wx, &wy, &mask)) {
+            return (int64_t)wx;
+        }
+    }
     return 0;
 }
 
-int64_t lpp_gui_window_is_open(int64_t win_id) { (void)win_id; return 0; }
-int64_t lpp_gui_window_poll_events(int64_t win_id) { (void)win_id; return 0; }
-void lpp_gui_clear(int64_t win_id, int64_t hex_color) { (void)win_id; (void)hex_color; }
-void lpp_gui_draw_rect(int64_t win_id, int64_t x, int64_t y, int64_t w, int64_t h, int64_t hex_color) {
-    (void)win_id; (void)x; (void)y; (void)w; (void)h; (void)hex_color;
+int64_t lpp_gui_mouse_y(int64_t win_id) {
+    if (win_id < 0 || win_id >= g_unix_win_count || !g_unix_windows[win_id].is_open) return 0;
+    if (g_unix_windows[win_id].display && p_XQueryPointer) {
+        unsigned long root, child;
+        int rx, ry, wx, wy;
+        unsigned int mask;
+        if (p_XQueryPointer(g_unix_windows[win_id].display, g_unix_windows[win_id].window, &root, &child, &rx, &ry, &wx, &wy, &mask)) {
+            return (int64_t)wy;
+        }
+    }
+    return 0;
 }
-void lpp_gui_draw_rounded_rect(int64_t win_id, int64_t x, int64_t y, int64_t w, int64_t h, int64_t radius, int64_t hex_color) {
-    (void)win_id; (void)x; (void)y; (void)w; (void)h; (void)radius; (void)hex_color;
+
+int64_t lpp_gui_mouse_down(int64_t win_id) {
+    if (win_id < 0 || win_id >= g_unix_win_count || !g_unix_windows[win_id].is_open) return 0;
+    if (g_unix_windows[win_id].display && p_XQueryPointer) {
+        unsigned long root, child;
+        int rx, ry, wx, wy;
+        unsigned int mask;
+        if (p_XQueryPointer(g_unix_windows[win_id].display, g_unix_windows[win_id].window, &root, &child, &rx, &ry, &wx, &wy, &mask)) {
+            return (mask & (1 << 8)) ? 1 : 0; // Button1Mask (0x100)
+        }
+    }
+    return 0;
 }
-int64_t lpp_gui_mouse_x(int64_t win_id) { (void)win_id; return 0; }
-int64_t lpp_gui_mouse_y(int64_t win_id) { (void)win_id; return 0; }
-int64_t lpp_gui_mouse_down(int64_t win_id) { (void)win_id; return 0; }
+
 void lpp_gui_draw_text(int64_t win_id, int64_t x, int64_t y, const char *text, int64_t hex_color) {
-    (void)win_id; (void)x; (void)y; (void)text; (void)hex_color;
+    if (win_id < 0 || win_id >= g_unix_win_count || !g_unix_windows[win_id].is_open || !text) return;
+    if (g_unix_windows[win_id].display && p_XSetForeground && p_XDrawString) {
+        void *gc = (void *)(uintptr_t)g_unix_windows[win_id].gc;
+        p_XSetForeground(g_unix_windows[win_id].display, gc, (unsigned long)hex_color);
+        p_XDrawString(g_unix_windows[win_id].display, g_unix_windows[win_id].window, gc, (int)x, (int)y, text, (int)strlen(text));
+    }
 }
-void lpp_gui_present(int64_t win_id) { (void)win_id; }
-void lpp_gui_window_close(int64_t win_id) { (void)win_id; }
+
+void lpp_gui_present(int64_t win_id) {
+    if (win_id < 0 || win_id >= g_unix_win_count || !g_unix_windows[win_id].is_open) return;
+    if (g_unix_windows[win_id].display && p_XFlush) {
+        p_XFlush(g_unix_windows[win_id].display);
+    }
+}
+
+void lpp_gui_window_close(int64_t win_id) {
+    if (win_id < 0 || win_id >= g_unix_win_count) return;
+    if (g_unix_windows[win_id].is_open) {
+        g_unix_windows[win_id].is_open = 0;
+        if (g_unix_windows[win_id].display && p_XDestroyWindow && p_XCloseDisplay) {
+            p_XDestroyWindow(g_unix_windows[win_id].display, g_unix_windows[win_id].window);
+            p_XCloseDisplay(g_unix_windows[win_id].display);
+        }
+    }
+}
 #endif
