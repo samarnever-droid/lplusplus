@@ -606,6 +606,15 @@ impl Resolver {
                             } else {
                                 rewritten = Some(Expr::Identifier(mangled, std::cell::Cell::new(None)));
                             }
+                        } else {
+                            // Loophole Fix: Check if user wrote unimported module syntax like gui.key_down() or net.listen()
+                            let mangled = format!("{}_{}", module_name, field);
+                            if self.is_builtin_resolved(&mangled) || matches!(module_name.as_str(), "gui" | "math" | "net" | "json" | "http" | "io" | "physics" | "ecs" | "ui" | "lreact") {
+                                return Err(format!(
+                                    "Import Error: Module '{}' is used but not imported. Add 'import {}' at the top of your file.",
+                                    module_name, module_name
+                                ));
+                            }
                         }
                     }
 
