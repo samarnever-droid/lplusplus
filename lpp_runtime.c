@@ -501,12 +501,12 @@ void lpp_list_set(void *list, int64_t index, int64_t value) {
     if (index < 0 || index >= l->len) {
         lpp_panic("list index out of bounds on set: index %lld, len %lld", (long long)index, (long long)l->len);
     }
-    if (l->drop_elem && l->data[index]) {
-        l->drop_elem((void *)(intptr_t)l->data[index]);
+    if (l->drop_element && l->data[index]) {
+        l->drop_element(l->data[index]);
     }
     l->data[index] = value;
-    if (l->retain_elem && value) {
-        l->retain_elem((void *)(intptr_t)value);
+    if (l->retain_element && value) {
+        l->retain_element(value);
     }
 }
 

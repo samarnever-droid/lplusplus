@@ -1,0 +1,7 @@
+{
+  "name": "db-benchmark",
+  "version": "1.0.0",
+  "description": "High-Parallel Benchmarking Engine for LppStore Database (OPS, Parallel Reads & Writes, Latency Analysis)",
+  "main": "src/main.lpp",
+  "dependencies": {}
+}
