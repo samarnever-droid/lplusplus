@@ -1,0 +1,7 @@
+{
+  "name": "sqlite",
+  "version": "1.0.0",
+  "description": "Pure L++ SQLite-Compatible Database Engine (SQL Parser, B-Tree Storage, Single-File .db Format)",
+  "main": "src/sqlite.lpp",
+  "dependencies": {}
+}

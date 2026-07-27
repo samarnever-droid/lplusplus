@@ -1,0 +1,4 @@
+# L++ SQLite Database File v1.0
+SCHEMA|users|CREATED
+DATA|users|(1, 'Alice', 'alice@lpp.org')
+DATA|users|(2, 'Bob', 'bob@lpp.org')

@@ -1,0 +1,29 @@
+# demo.lpp — Demo application for Pure L++ SQLite Database Engine
+
+import sqlite
+
+def main():
+    print_str("==========================================================")
+    print_str("        Pure L++ SQLite Database Engine (lpp-sqlite)      ")
+    print_str("==========================================================")
+
+    db_path := "app_database.db"
+    db := sqlite.open(db_path)
+
+    # 1. CREATE TABLE
+    r1 := sqlite.exec(db, db_path, "CREATE TABLE users (id INT, name TEXT, email TEXT)")
+    print_str(str_concat("1. Create Table Result: ", r1))
+
+    # 2. INSERT INTO
+    r2 := sqlite.exec(db, db_path, "INSERT INTO users VALUES (1, 'Alice', 'alice@lpp.org')")
+    print_str(str_concat("2. Insert Row 1 Result: ", r2))
+
+    r3 := sqlite.exec(db, db_path, "INSERT INTO users VALUES (2, 'Bob', 'bob@lpp.org')")
+    print_str(str_concat("3. Insert Row 2 Result: ", r3))
+
+    # 3. SELECT * FROM
+    r4 := sqlite.exec(db, db_path, "SELECT * FROM users")
+    print_str(str_concat("4. Select Query Result: ", r4))
+
+    sqlite.close(db)
+    print_str("==========================================================")

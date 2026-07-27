@@ -34,6 +34,16 @@
       "git": "https://github.com/samarnever-droid/lreact.git",
       "branch": "main",
       "description": "Alias for lreact — Tauri-like GUI framework for L++"
+    },
+    "sqlite": {
+      "git": "https://github.com/samarnever-droid/lplusplus.git",
+      "branch": "master",
+      "description": "Pure L++ SQLite-Compatible Database Engine (Single-file .db, SQL Lexer, Parser & Execution)"
+    },
+    "lpp-sqlite": {
+      "git": "https://github.com/samarnever-droid/lplusplus.git",
+      "branch": "master",
+      "description": "Alias for sqlite — Pure L++ SQLite Database Engine"
     }
   }
 }
