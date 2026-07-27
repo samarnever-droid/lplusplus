@@ -557,10 +557,17 @@ impl<'a> TypeChecker<'a> {
                 let mut expected_ret_ty = None;
                 let mut curr = Some(current_scope);
                 while let Some(sid) = curr {
-                    if let ScopeKind::Function { name } = &self.symbol_table.scopes[sid.0].kind {
-                        func_name = Some(name.clone());
-                        expected_ret_ty = self.func_return_types.get(name).cloned();
-                        break;
+                    match &self.symbol_table.scopes[sid.0].kind {
+                        ScopeKind::Function { name } => {
+                            func_name = Some(name.clone());
+                            expected_ret_ty = self.func_return_types.get(name).cloned();
+                            break;
+                        }
+                        ScopeKind::Closure { .. } => {
+                            // Closure return boundary — returns from closure, not outer function
+                            break;
+                        }
+                        _ => {}
                     }
                     curr = self.symbol_table.scopes[sid.0].parent;
                 }
@@ -584,10 +591,17 @@ impl<'a> TypeChecker<'a> {
                 let mut expected_ret_ty = None;
                 let mut curr = Some(current_scope);
                 while let Some(sid) = curr {
-                    if let ScopeKind::Function { name } = &self.symbol_table.scopes[sid.0].kind {
-                        func_name = Some(name.clone());
-                        expected_ret_ty = self.func_return_types.get(name).cloned();
-                        break;
+                    match &self.symbol_table.scopes[sid.0].kind {
+                        ScopeKind::Function { name } => {
+                            func_name = Some(name.clone());
+                            expected_ret_ty = self.func_return_types.get(name).cloned();
+                            break;
+                        }
+                        ScopeKind::Closure { .. } => {
+                            // Closure return boundary — returns from closure, not outer function
+                            break;
+                        }
+                        _ => {}
                     }
                     curr = self.symbol_table.scopes[sid.0].parent;
                 }
