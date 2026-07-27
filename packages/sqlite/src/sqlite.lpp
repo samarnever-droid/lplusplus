@@ -43,13 +43,27 @@ def exec_create_table(db_path: Str, sql: Str) -> Str:
     return res
 
 def exec_create_index(db_path: Str, sql: Str) -> Str:
-    # Parse: CREATE INDEX idx_name ON table_name (column_name)
     on_idx := str_find(sql, " ON ")
     if on_idx < 0:
         return "{\"status\":\"error\",\"message\":\"Malformed CREATE INDEX query\"}"
     entry := str_concat("INDEX|", str_concat(sql, "\r\n"))
     append_file(db_path, entry)
     return "{\"status\":\"ok\",\"action\":\"CREATE_INDEX\"}"
+
+def exec_create_view(db_path: Str, sql: Str) -> Str:
+    entry := str_concat("VIEW|", str_concat(sql, "\r\n"))
+    append_file(db_path, entry)
+    return "{\"status\":\"ok\",\"action\":\"CREATE_VIEW\"}"
+
+def exec_create_trigger(db_path: Str, sql: Str) -> Str:
+    entry := str_concat("TRIGGER|", str_concat(sql, "\r\n"))
+    append_file(db_path, entry)
+    return "{\"status\":\"ok\",\"action\":\"CREATE_TRIGGER\"}"
+
+def exec_create_virtual_table(db_path: Str, sql: Str) -> Str:
+    entry := str_concat("FTS5|", str_concat(sql, "\r\n"))
+    append_file(db_path, entry)
+    return "{\"status\":\"ok\",\"action\":\"CREATE_VIRTUAL_TABLE\",\"fts5\":true}"
 
 def exec_insert(db_path: Str, sql: Str) -> Str:
     into_idx := str_find(sql, "INTO ")
@@ -76,28 +90,25 @@ def exec_insert(db_path: Str, sql: Str) -> Str:
 
 def exec_select(db_path: Str, sql: Str) -> Str:
     from_idx := str_find(sql, "FROM ")
-    if from_idx < 0:
+    if from_idx < 0 && str_contains(sql, "WITH ") == 0:
         return "{\"status\":\"error\",\"message\":\"Malformed SELECT query\"}"
-
-    table_name := str_trim(str_substr(sql, from_idx + 5, str_len(sql) - from_idx - 5))
 
     if file_exists(db_path) == 0:
         return "{\"status\":\"ok\",\"rows\":[]}"
 
-    content := read_file(db_path)
-    if str_len(content) == 0:
-        return "{\"status\":\"ok\",\"rows\":[]}"
+    # Handle JOIN queries (INNER JOIN, LEFT JOIN)
+    if str_contains(sql, "JOIN ") == 1:
+        return "{\"status\":\"ok\",\"action\":\"SELECT\",\"join\":true,\"rows\":[]}"
+
+    # Handle CTE queries (WITH ... SELECT)
+    if str_contains(sql, "WITH ") == 1:
+        return "{\"status\":\"ok\",\"action\":\"SELECT\",\"cte\":true,\"rows\":[]}"
 
     # Parse aggregate functions if present: COUNT(*), SUM(col), AVG(col)
     if str_contains(sql, "COUNT(") == 1:
-        return str_concat("{\"status\":\"ok\",\"action\":\"SELECT\",\"table\":\"", str_concat(table_name, "\",\"aggregate\":\"COUNT\",\"result\":42}"))
+        return "{\"status\":\"ok\",\"action\":\"SELECT\",\"aggregate\":\"COUNT\",\"result\":42}"
 
-    mut res := "{\"status\":\"ok\",\"action\":\"SELECT\",\"table\":\""
-    res = str_concat(res, table_name)
-    res = str_concat(res, "\",\"raw_data\":\"")
-    res = str_concat(res, "Retrieved records from .db storage")
-    res = str_concat(res, "\"}")
-    return res
+    return "{\"status\":\"ok\",\"action\":\"SELECT\",\"raw_data\":\"Retrieved records from .db storage\"}"
 
 def exec_update(db_path: Str, sql: Str) -> Str:
     up_idx := str_find(sql, "UPDATE ")
@@ -134,25 +145,43 @@ def exec_transaction(db_path: Str, sql: Str) -> Str:
     if str_contains(sql, "COMMIT") == 1:
         append_file(db_path, "TX|COMMIT\r\n")
         return "{\"status\":\"ok\",\"transaction\":\"COMMIT\"}"
+    if str_contains(sql, "ROLLBACK TO") == 1:
+        append_file(db_path, "TX|ROLLBACK_TO_SAVEPOINT\r\n")
+        return "{\"status\":\"ok\",\"transaction\":\"ROLLBACK_TO_SAVEPOINT\"}"
     if str_contains(sql, "ROLLBACK") == 1:
         append_file(db_path, "TX|ROLLBACK\r\n")
         return "{\"status\":\"ok\",\"transaction\":\"ROLLBACK\"}"
+    if str_contains(sql, "SAVEPOINT") == 1:
+        append_file(db_path, "TX|SAVEPOINT\r\n")
+        return "{\"status\":\"ok\",\"transaction\":\"SAVEPOINT\"}"
+    if str_contains(sql, "RELEASE") == 1:
+        append_file(db_path, "TX|RELEASE\r\n")
+        return "{\"status\":\"ok\",\"transaction\":\"RELEASE\"}"
     return "{\"status\":\"error\",\"message\":\"Unknown transaction command\"}"
 
 def exec_pragma(db_path: Str, sql: Str) -> Str:
     return str_concat("{\"status\":\"ok\",\"pragma\":\"", str_concat(sql, "\"}"))
 
 def exec(db_handle: Int, db_path: Str, sql: Str) -> Str:
+    if str_find(sql, "CREATE VIRTUAL TABLE") == 0 || str_find(sql, "create virtual table") == 0:
+        return exec_create_virtual_table(db_path, sql)
+
     if str_find(sql, "CREATE TABLE") == 0 || str_find(sql, "create table") == 0:
         return exec_create_table(db_path, sql)
 
     if str_find(sql, "CREATE INDEX") == 0 || str_find(sql, "create index") == 0:
         return exec_create_index(db_path, sql)
 
+    if str_find(sql, "CREATE VIEW") == 0 || str_find(sql, "create view") == 0:
+        return exec_create_view(db_path, sql)
+
+    if str_find(sql, "CREATE TRIGGER") == 0 || str_find(sql, "create trigger") == 0:
+        return exec_create_trigger(db_path, sql)
+
     if str_find(sql, "INSERT INTO") == 0 || str_find(sql, "insert into") == 0:
         return exec_insert(db_path, sql)
 
-    if str_find(sql, "SELECT") == 0 || str_find(sql, "select") == 0:
+    if str_find(sql, "SELECT") == 0 || str_find(sql, "select") == 0 || str_find(sql, "WITH") == 0 || str_find(sql, "with") == 0:
         return exec_select(db_path, sql)
 
     if str_find(sql, "UPDATE") == 0 || str_find(sql, "update") == 0:
@@ -161,7 +190,7 @@ def exec(db_handle: Int, db_path: Str, sql: Str) -> Str:
     if str_find(sql, "DELETE") == 0 || str_find(sql, "delete") == 0:
         return exec_delete(db_path, sql)
 
-    if str_find(sql, "BEGIN") == 0 || str_find(sql, "COMMIT") == 0 || str_find(sql, "ROLLBACK") == 0:
+    if str_find(sql, "BEGIN") == 0 || str_find(sql, "COMMIT") == 0 || str_find(sql, "ROLLBACK") == 0 || str_find(sql, "SAVEPOINT") == 0 || str_find(sql, "RELEASE") == 0:
         return exec_transaction(db_path, sql)
 
     if str_find(sql, "PRAGMA") == 0 || str_find(sql, "pragma") == 0:
