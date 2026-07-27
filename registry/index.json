@@ -314,6 +314,44 @@
         "tauri",
         "gui"
       ]
+    },
+    "sqlite": {
+      "name": "sqlite",
+      "version": "1.0.0",
+      "description": "Pure L++ SQLite-Compatible Database Engine (Single-file .db, SQL Lexer, Parser & Execution)",
+      "authors": [
+        "samarnever-droid"
+      ],
+      "license": "MIT",
+      "repository": "https://github.com/samarnever-droid/lplusplus",
+      "path": "packages/sqlite/src/sqlite.lpp",
+      "source": "packages/sqlite/src/sqlite.lpp",
+      "dependencies": [],
+      "keywords": [
+        "sqlite",
+        "sql",
+        "database",
+        "storage",
+        "db"
+      ]
+    },
+    "lpp-sqlite": {
+      "name": "lpp-sqlite",
+      "version": "1.0.0",
+      "description": "Alias for sqlite — Pure L++ SQLite Database Engine",
+      "authors": [
+        "samarnever-droid"
+      ],
+      "license": "MIT",
+      "repository": "https://github.com/samarnever-droid/lplusplus",
+      "path": "packages/sqlite/src/sqlite.lpp",
+      "source": "packages/sqlite/src/sqlite.lpp",
+      "dependencies": [],
+      "keywords": [
+        "sqlite",
+        "sql",
+        "database"
+      ]
     }
   }
 }
