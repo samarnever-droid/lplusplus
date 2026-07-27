@@ -11,6 +11,11 @@
  */
 
 /* Expose POSIX networking declarations (getaddrinfo, addrinfo) under strict C. */
+#if defined(__APPLE__) || defined(__MACH__)
+#  ifndef _DARWIN_C_SOURCE
+#    define _DARWIN_C_SOURCE
+#  endif
+#endif
 #if !defined(_WIN32) && !defined(_POSIX_C_SOURCE)
 #  define _POSIX_C_SOURCE 200112L
 #endif
