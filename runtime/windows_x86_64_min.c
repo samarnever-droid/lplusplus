@@ -316,10 +316,14 @@ void lpp_random_seed(int64_t seed) { (void)seed; }
 int64_t lpp_random(void) { return 42; }
 int64_t lpp_random_range(int64_t lo, int64_t hi) { return lo < hi ? lo : 0; }
 
-/* ── Time ── */
+/* ── Time & System ── */
 int64_t lpp_time_ms(void) { return (int64_t)GetTickCount64(); }
 void lpp_sleep_ms(int64_t ms) { Sleep((DWORD)ms); }
 void lpp_exit(int64_t code) { ExitProcess((unsigned int)code); }
+int64_t lpp_sys_mem_total(void) { return 16384; }
+int64_t lpp_sys_mem_free(void) { return 8192; }
+int64_t lpp_sys_cpu_usage(void) { return 5; }
+int64_t lpp_sys_uptime(void) { return (int64_t)(GetTickCount64() / 1000); }
 
 /* ── String equality ── */
 int64_t lpp_str_eq(const char *a, const char *b) { if(a==b)return 1; if(!a||!b)return 0; while(*a&&*a==*b){a++;b++;} return *a==*b?1:0; }

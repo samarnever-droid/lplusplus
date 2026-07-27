@@ -288,7 +288,20 @@ def dispatch_api(req: Str) -> Str:
     if str_contains(req, "\"cmd\":\"greet\""):
         return "{\"status\":\"ok\",\"message\":\"Hello from L++ Native Backend!\"}"
     if str_contains(req, "\"cmd\":\"stats\""):
-        return "{\"status\":\"ok\",\"cpu\":\"0.5%\",\"ram\":\"16 MB\",\"uptime\":\"99.9%\"}"
+        total_ram := sys_mem_total()
+        free_ram := sys_mem_free()
+        cpu := sys_cpu_usage()
+        uptime := sys_uptime()
+        mut json := "{\"status\":\"ok\",\"total_ram_mb\":"
+        json = str_concat(json, int_to_str(total_ram))
+        json = str_concat(json, ",\"free_ram_mb\":")
+        json = str_concat(json, int_to_str(free_ram))
+        json = str_concat(json, ",\"cpu_load_pct\":")
+        json = str_concat(json, int_to_str(cpu))
+        json = str_concat(json, ",\"uptime_sec\":")
+        json = str_concat(json, int_to_str(uptime))
+        json = str_concat(json, "}")
+        return json
     return "{\"status\":\"ok\",\"message\":\"Lreact API endpoint ready\"}"
 
 def main():
