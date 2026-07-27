@@ -76,7 +76,7 @@ pub fn run_arc_insertion_pass(
                 local.ownership == Ownership::Owned
                     && matches!(
                         &local.ty,
-                        TypeRef::Custom(_) | TypeRef::Function | TypeRef::Generic(_, _)
+                        TypeRef::Custom(_) | TypeRef::Function | TypeRef::Generic(_, _) | TypeRef::Str
                     )
             })
             .map(|local| local.id)

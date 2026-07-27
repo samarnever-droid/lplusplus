@@ -239,6 +239,11 @@ fn bootstrap_self_hosted_pm() -> Result<PathBuf, String> {
 fn run_self_hosted_pm(args: &[String]) {
     let cmd = args.first().map(|s| s.as_str()).unwrap_or("help");
 
+    if cmd == "create" || cmd == "dev" || args.iter().any(|a| a == "web" || a == "--release") {
+        pm::run_command(args);
+        return;
+    }
+
     let pm_bin = match bootstrap_self_hosted_pm() {
         Ok(b) => b,
         Err(e) => {
@@ -408,6 +413,8 @@ fn main() {
     if args.len() > 1 {
         let first_arg = &args[1];
         if first_arg == "init"
+            || first_arg == "create"
+            || first_arg == "dev"
             || first_arg == "install"
             || first_arg == "add"
             || first_arg == "remove"

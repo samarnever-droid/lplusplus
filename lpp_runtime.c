@@ -28,6 +28,15 @@
 #  ifndef WIN32_LEAN_AND_MEAN
 #    define WIN32_LEAN_AND_MEAN
 #  endif
+
+/* Forward declarations for ARC and List runtime functions */
+void *lpp_arc_alloc(int64_t size);
+void  lpp_arc_release(void *ptr);
+void *lpp_list_new_arc(void);
+void  lpp_list_push_arc(void *list, void *value);
+int64_t lpp_list_len(void *list);
+void *lpp_list_get_arc(void *list, int64_t index);
+void  lpp_list_free(void *list);
 #  include <winsock2.h>
 #  include <ws2tcpip.h>
 #  include <windows.h>
@@ -312,7 +321,10 @@ int64_t lpp_file_move(const char *source, const char *destination) {
 
 typedef void (*LppArcDestructor)(void *payload);
 
+#define LPP_ARC_MAGIC 0x41524331U
+
 typedef struct {
+    uint32_t magic;
     lpp_atomic32_t refcount;
     /* Called exactly once, immediately before the payload is freed. */
     LppArcDestructor destructor;
@@ -322,6 +334,7 @@ typedef struct {
 void *lpp_arc_alloc_with_destructor(int64_t size, LppArcDestructor destructor) {
     LppArcHeader *hdr = (LppArcHeader *)calloc(1, sizeof(LppArcHeader) + (size_t)size);
     if (!hdr) return NULL;
+    hdr->magic = LPP_ARC_MAGIC;
 #if defined(_MSC_VER)
     hdr->refcount = 1;
 #else
@@ -336,22 +349,31 @@ void *lpp_arc_alloc(int64_t size) {
     return lpp_arc_alloc_with_destructor(size, NULL);
 }
 
+static inline int lpp__is_valid_arc_ptr(const void *ptr) {
+    if (!ptr) return 0;
+    uintptr_t addr = (uintptr_t)ptr;
+    if ((addr & 7) != 0 || addr < 0x10000) return 0;
+    const LppArcHeader *hdr = (const LppArcHeader *)ptr - 1;
+    return hdr->magic == LPP_ARC_MAGIC;
+}
+
 /* Increment the reference count. Safe to call with NULL. */
 void lpp_arc_retain(void *ptr) {
-    if (!ptr) return;
+    if (!lpp__is_valid_arc_ptr(ptr)) return;
     LppArcHeader *hdr = (LppArcHeader *)ptr - 1;
     LPP_ARC_INC(&hdr->refcount);
 }
 
 /* Decrement the reference count. Free when it reaches zero. */
 void lpp_arc_release(void *ptr) {
-    if (!ptr) return;
+    if (!lpp__is_valid_arc_ptr(ptr)) return;
     LppArcHeader *hdr = (LppArcHeader *)ptr - 1;
     int32_t prev = (int32_t)LPP_ARC_DEC(&hdr->refcount);
     if (prev == 1) {
         /* Refcount just hit zero. Destroy owned child references before the
          * payload/header are released; child releases may recursively invoke
          * their own generated destructors. */
+        hdr->magic = 0;
         if (hdr->destructor) hdr->destructor(ptr);
         free(hdr);
     }
@@ -624,7 +646,7 @@ int64_t lpp_net_listen(int64_t port) {
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
     addr.sin_port = htons((unsigned short)port);
     if (bind(sock, (struct sockaddr *)&addr, sizeof(addr)) != 0 || listen(sock, 16) != 0) {
         #ifdef _WIN32
@@ -695,12 +717,12 @@ int64_t lpp_net_set_timeout(int64_t handle, int64_t milliseconds) {
 char *lpp_net_recv(int64_t handle, int64_t max_bytes) {
     lpp_socket_t sock = lpp__socket_load(handle);
     if (sock == LPP_INVALID_SOCKET || max_bytes <= 0) {
-        char *empty = (char *)malloc(1);
+        char *empty = (char *)lpp_arc_alloc(1);
         if (empty) empty[0] = '\0';
         return empty;
     }
     int size = (int)max_bytes;
-    char *buf = (char *)malloc((size_t)size + 1);
+    char *buf = (char *)lpp_arc_alloc((size_t)size + 1);
     if (!buf) return NULL;
     int received = recv(sock, buf, size, 0);
     if (received <= 0) {
@@ -714,6 +736,11 @@ char *lpp_net_recv(int64_t handle, int64_t max_bytes) {
 void lpp_net_close(int64_t handle) {
     lpp_socket_t sock = lpp__socket_load(handle);
     if (sock == LPP_INVALID_SOCKET) return;
+#if defined(_WIN32)
+    shutdown(sock, SD_SEND);
+#else
+    shutdown(sock, SHUT_WR);
+#endif
     lpp_close_socket(sock);
     lpp__socket_clear(handle);
 }

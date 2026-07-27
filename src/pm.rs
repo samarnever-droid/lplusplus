@@ -47,6 +47,78 @@ pub struct LockedPackage {
     pub resolved: Option<String>,
 }
 
+pub fn parse_json_manifest(content: &str) -> Result<Package, String> {
+    let val: serde_json::Value = serde_json::from_str(content)
+        .map_err(|e| format!("JSON syntax error in manifest: {e}"))?;
+
+    let name = val
+        .get("name")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "Missing 'name' in lpp.json".to_string())?
+        .to_string();
+
+    let version = val
+        .get("version")
+        .and_then(|v| v.as_str())
+        .unwrap_or("0.1.0")
+        .to_string();
+
+    let author = val.get("author").and_then(|v| v.as_str()).map(String::from);
+
+    let entry = val
+        .get("main")
+        .or_else(|| val.get("entry"))
+        .and_then(|v| v.as_str())
+        .map(String::from);
+
+    let mut dependencies = Vec::new();
+    if let Some(deps) = val.get("dependencies").and_then(|d| d.as_object()) {
+        for (dep_name, dep_val) in deps {
+            let mut version = None;
+            let mut git = None;
+            let mut tag = None;
+            let mut branch = None;
+            let mut path = None;
+
+            if let Some(v_str) = dep_val.as_str() {
+                if v_str.starts_with("http://")
+                    || v_str.starts_with("https://")
+                    || v_str.ends_with(".git")
+                {
+                    git = Some(v_str.to_string());
+                } else if v_str.starts_with("./") || v_str.starts_with("../") {
+                    path = Some(v_str.to_string());
+                } else {
+                    version = Some(v_str.to_string());
+                }
+            } else if let Some(obj) = dep_val.as_object() {
+                version = obj.get("version").and_then(|v| v.as_str()).map(String::from);
+                git = obj.get("git").and_then(|v| v.as_str()).map(String::from);
+                tag = obj.get("tag").and_then(|v| v.as_str()).map(String::from);
+                branch = obj.get("branch").and_then(|v| v.as_str()).map(String::from);
+                path = obj.get("path").and_then(|v| v.as_str()).map(String::from);
+            }
+
+            dependencies.push(Dependency {
+                name: dep_name.clone(),
+                version,
+                git,
+                tag,
+                branch,
+                path,
+            });
+        }
+    }
+
+    Ok(Package {
+        name,
+        version,
+        author,
+        entry,
+        dependencies,
+    })
+}
+
 pub fn parse_toml(content: &str) -> Result<Package, String> {
     let mut name = String::new();
     let mut version = String::new();
@@ -196,6 +268,261 @@ fn scaffold_toml(package_name: &str) -> String {
     )
 }
 
+fn write_web_scaffold(base_dir: &Path, package_name: &str) -> Result<(), String> {
+    fs::create_dir_all(base_dir.join("src"))
+        .map_err(|e| format!("Failed to create src/ directory: {}", e))?;
+    fs::create_dir_all(base_dir.join("www"))
+        .map_err(|e| format!("Failed to create www/ directory: {}", e))?;
+
+    let lpp_json = format!(
+        "{{\n  \"name\": \"{}\",\n  \"version\": \"1.0.0\",\n  \"description\": \"Lreact Desktop Web App in L++\",\n  \"main\": \"src/main.lpp\",\n  \"dependencies\": {{\n    \"lreact\": \"1.0.0\"\n  }}\n}}\n",
+        package_name
+    );
+    fs::write(base_dir.join("lpp.json"), lpp_json)
+        .map_err(|e| format!("Failed to write lpp.json: {}", e))?;
+
+    let main_lpp = r#"# main.lpp - Lreact Web Application Backend
+import lreact
+
+def dispatch_api(req: Str) -> Str:
+    if str_contains(req, "\"cmd\":\"greet\""):
+        return "{\"status\":\"ok\",\"message\":\"Hello from L++ Native Backend!\"}"
+    if str_contains(req, "\"cmd\":\"stats\""):
+        return "{\"status\":\"ok\",\"cpu\":\"0.5%\",\"ram\":\"16 MB\",\"uptime\":\"99.9%\"}"
+    return "{\"status\":\"ok\",\"message\":\"Lreact API endpoint ready\"}"
+
+def main():
+    print_str("==========================================================")
+    print_str("        Lreact Web Application (L++ Native IPC Server)    ")
+    print_str("        Dev Server: http://localhost:3000                 ")
+    print_str("==========================================================")
+
+    server := lreact.start_server(3000)
+    if server <= 0:
+        print_str("[Lreact] Error: Server port 3000 unavailable or already bound.")
+        return
+
+    lreact.launch_frontend("http://localhost:3000")
+
+    mut running := 1
+    while running == 1:
+        client := net_accept(server)
+        if client > 0:
+            raw_req := net_recv(client, 4096)
+            if str_contains(raw_req, "GET /"):
+                if str_contains(raw_req, "GET /app.js"):
+                    net_send(client, lreact.serve_file("www/app.js", "application/javascript"))
+                elif str_contains(raw_req, "GET /style.css"):
+                    net_send(client, lreact.serve_file("www/style.css", "text/css"))
+                elif str_contains(raw_req, "GET /lreact.js"):
+                    net_send(client, lreact.serve_file("www/lreact.js", "application/javascript"))
+                else:
+                    net_send(client, lreact.serve_file("www/index.html", "text/html"))
+            elif str_contains(raw_req, "OPTIONS"):
+                cors := "HTTP/1.1 204 No Content\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Headers: *\r\n\r\n"
+                net_send(client, cors)
+            else:
+                api_result := dispatch_api(raw_req)
+                api_resp := lreact.make_json_response(api_result)
+                net_send(client, api_resp)
+            net_close(client)
+"#;
+    fs::write(base_dir.join("src").join("main.lpp"), main_lpp)
+        .map_err(|e| format!("Failed to write src/main.lpp: {}", e))?;
+
+    let index_html = r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lreact App</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="lreact.js"></script>
+</head>
+<body>
+  <div class="container">
+    <div class="card">
+      <div class="badge">⚛️ Lreact Web App</div>
+      <h1 id="title">Powered by L++ Native Backend</h1>
+      <p class="subtitle">React/HTML Frontend + Pure AOT L++ Binary (No GC, Zero Pauses)</p>
+
+      <div class="btn-group">
+        <button id="btn-greet" class="btn primary">Invoke L++ API</button>
+        <button id="btn-stats" class="btn secondary">Get System Metrics</button>
+      </div>
+
+      <div id="output" class="output-box">
+        <span class="placeholder">Click a button above to invoke native L++ backend code...</span>
+      </div>
+    </div>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>
+"#;
+    fs::write(base_dir.join("www").join("index.html"), index_html)
+        .map_err(|e| format!("Failed to write www/index.html: {}", e))?;
+
+    let style_css = r#"body {
+  font-family: system-ui, -apple-system, sans-serif;
+  background: #0f172a;
+  color: #f8fafc;
+  margin: 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
+}
+.container {
+  width: 100%;
+  max-width: 560px;
+  padding: 1rem;
+}
+.card {
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 16px;
+  padding: 2.5rem;
+  box-shadow: 0 20px 40px rgba(0,0,0,0.4);
+  text-align: center;
+}
+.badge {
+  display: inline-block;
+  background: #38bdf8;
+  color: #0f172a;
+  font-weight: bold;
+  padding: 0.25rem 0.75rem;
+  border-radius: 20px;
+  font-size: 0.85rem;
+  margin-bottom: 1rem;
+}
+h1 {
+  margin: 0 0 0.5rem 0;
+  font-size: 1.75rem;
+}
+.subtitle {
+  color: #94a3b8;
+  font-size: 0.95rem;
+  margin-bottom: 2rem;
+}
+.btn-group {
+  display: flex;
+  gap: 1rem;
+  justify-content: center;
+  margin-bottom: 1.5rem;
+}
+.btn {
+  padding: 0.75rem 1.5rem;
+  font-size: 1rem;
+  font-weight: 600;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.btn.primary {
+  background: #3b82f6;
+  color: white;
+}
+.btn.primary:hover {
+  background: #2563eb;
+}
+.btn.secondary {
+  background: #334155;
+  color: #f8fafc;
+}
+.btn.secondary:hover {
+  background: #475569;
+}
+.output-box {
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  padding: 1rem;
+  font-family: monospace;
+  font-size: 0.9rem;
+  color: #38bdf8;
+  min-height: 50px;
+  text-align: left;
+  word-break: break-all;
+}
+.placeholder {
+  color: #64748b;
+  font-style: italic;
+}
+"#;
+    fs::write(base_dir.join("www").join("style.css"), style_css)
+        .map_err(|e| format!("Failed to write www/style.css: {}", e))?;
+
+    let app_js = r#"document.getElementById('btn-greet').onclick = async () => {
+  const out = document.getElementById('output');
+  out.innerText = "Invoking L++ greet command...";
+  try {
+    const res = await window.lpp.invoke('greet', {});
+    out.innerText = JSON.stringify(res, null, 2);
+  } catch (err) {
+    out.innerText = "Error: " + err.message;
+  }
+};
+
+document.getElementById('btn-stats').onclick = async () => {
+  const out = document.getElementById('output');
+  out.innerText = "Fetching L++ system metrics...";
+  try {
+    const res = await window.lpp.invoke('stats', {});
+    out.innerText = JSON.stringify(res, null, 2);
+  } catch (err) {
+    out.innerText = "Error: " + err.message;
+  }
+};
+"#;
+    fs::write(base_dir.join("www").join("app.js"), app_js)
+        .map_err(|e| format!("Failed to write www/app.js: {}", e))?;
+
+    let lreact_js = r#"/**
+ * Lreact Client SDK (http://localhost:3000)
+ */
+(function () {
+  const LREACT_PORT = 3000;
+  const LREACT_URL = `http://localhost:${LREACT_PORT}`;
+
+  window.lpp = {
+    invoke: async function (cmd, args = {}) {
+      try {
+        const response = await fetch(`${LREACT_URL}/api/invoke`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ cmd, args }),
+        });
+        return await response.json();
+      } catch (err) {
+        console.error("[Lreact IPC Error]", err);
+        throw err;
+      }
+    }
+  };
+  console.log("[Lreact Client SDK] Ready.");
+})();
+"#;
+    fs::write(base_dir.join("www").join("lreact.js"), lreact_js)
+        .map_err(|e| format!("Failed to write www/lreact.js: {}", e))?;
+
+    let readme_md = format!(
+        "# {} - Lreact Web App ⚛️⚡\n\nCreated with `lpp create web {}`.\n\n## Quick Start\n\n- `lpp dev`: Start local dev server & open http://localhost:3000\n- `lpp build --release`: Compile optimized standalone native executable into `dist/`\n",
+        package_name, package_name
+    );
+    fs::write(base_dir.join("README.md"), readme_md)
+        .map_err(|e| format!("Failed to write README.md: {}", e))?;
+
+    fs::write(
+        base_dir.join(".gitignore"),
+        ".lpp_packages/\ntarget/\ndist/\n*.obj\n*.exe\n*.o\n",
+    )
+    .map_err(|e| format!("Failed to write .gitignore: {}", e))?;
+
+    Ok(())
+}
+
 fn write_project_scaffold(base_dir: &Path, package_name: &str) -> Result<(), String> {
     fs::create_dir_all(base_dir.join("src"))
         .map_err(|e| format!("Failed to create src/ directory: {}", e))?;
@@ -215,9 +542,17 @@ fn write_project_scaffold(base_dir: &Path, package_name: &str) -> Result<(), Str
 }
 
 fn read_manifest() -> Result<Package, String> {
-    let content =
-        fs::read_to_string("lpp.toml").map_err(|e| format!("Failed to read lpp.toml: {}", e))?;
-    parse_toml(&content)
+    if std::path::Path::new("lpp.json").exists() {
+        let content = fs::read_to_string("lpp.json")
+            .map_err(|e| format!("Failed to read lpp.json: {}", e))?;
+        parse_json_manifest(&content)
+    } else if std::path::Path::new("lpp.toml").exists() {
+        let content = fs::read_to_string("lpp.toml")
+            .map_err(|e| format!("Failed to read lpp.toml: {}", e))?;
+        parse_toml(&content)
+    } else {
+        Err("No lpp.json or lpp.toml manifest found in current directory.".to_string())
+    }
 }
 
 fn parse_lockfile(content: &str) -> Vec<LockedPackage> {
@@ -567,10 +902,11 @@ fn package_cache_key(source_path: &Path) -> Result<String, String> {
 
 fn compile_source_to_object(source_path: &Path) -> Result<PathBuf, String> {
     let compiler_path = current_compiler_path()?;
-    let obj_file = source_path.with_extension("o");
+    let ext = if cfg!(target_os = "windows") { "obj" } else { "o" };
+    let obj_file = source_path.with_extension(ext);
     let cache_dir = Path::new("LppData").join("cache");
     let cache_key = package_cache_key(source_path)?;
-    let cache_object = cache_dir.join(format!("{}.o", cache_key));
+    let cache_object = cache_dir.join(format!("{}.{}", cache_key, ext));
     if cache_object.exists() {
         fs::copy(&cache_object, &obj_file).map_err(|e| format!("restore cached object: {}", e))?;
         println!("  Cache hit: {}", cache_key);
@@ -869,7 +1205,14 @@ pub fn direct_link_binary(obj_file: &Path, output_path: &Path) -> Result<(), Str
 }
 
 fn link_native_binary(obj_file: &Path, output_path: &Path) -> Result<(), String> {
-    direct_link_binary(obj_file, output_path)
+    let use_host = std::env::var("LPP_LINKER").as_deref() == Ok("host");
+    if use_host {
+        #[cfg(windows)]
+        load_msvc_env();
+        host_link_binary(obj_file, output_path, &[])
+    } else {
+        direct_link_binary(obj_file, output_path)
+    }
 }
 
 pub fn run_command(args: &[String]) {
@@ -879,7 +1222,8 @@ pub fn run_command(args: &[String]) {
     }
 
     match args[0].as_str() {
-        "new" => cmd_new(&args[1..]),
+        "new" | "create" => cmd_new(&args[1..]),
+        "dev" => cmd_dev(),
         "init" => cmd_init(&args[1..]),
         "install" => cmd_install(false),
         "add" => cmd_add(&args[1..]),
@@ -893,7 +1237,8 @@ pub fn run_command(args: &[String]) {
         "clean" => cmd_clean(),
         "check" => cmd_check(),
         "build" => {
-            let _ = cmd_build();
+            let is_release = args.iter().any(|a| a == "--release");
+            let _ = cmd_build_opts(is_release);
         }
         "run" => cmd_run(),
         "test" => cmd_test(),
@@ -907,10 +1252,13 @@ pub fn run_command(args: &[String]) {
 }
 
 fn print_help() {
-    println!("L++ Package Manager v3.4.0");
+    println!("L++ Package Manager v3.6.0");
     println!("Usage: lpp [command] [options]");
     println!();
     println!("Package Commands:");
+    println!("  create web <name>     Create a new Lreact desktop web application");
+    println!("  dev                   Start Lreact development server (http://localhost:3000)");
+    println!("  build --release       Build standalone release binary & bundle web assets in dist/");
     println!("  new <name>            Create a new L++ package");
     println!("  init <name>           Initialize package in current directory");
     println!("  install               Resolve and install all dependencies");
@@ -940,6 +1288,7 @@ fn print_help() {
     println!("  lpp <file.lpp> --check      Type-check without compiling");
     println!("  lpp <file.lpp> --emit-obj   Emit native object file (.o / .obj)");
     println!("  lpp --checkall              Check all .lpp files in directory");
+    println!("  lpp --checkall --fix        Check and automatically repair source files");
     println!();
     println!("Benchmarks:");
     println!("  lpp bench --self-test       Run integration tests");
@@ -949,9 +1298,21 @@ fn print_help() {
 }
 
 fn cmd_new(args: &[String]) {
-    let raw_name = args.get(0).map(|s| s.as_str()).unwrap_or("my_project");
+    let mut is_web = false;
+    let mut name_arg = None;
+
+    for arg in args {
+        if arg == "web" || arg == "--web" || arg == "lreact" {
+            is_web = true;
+        } else if !arg.starts_with('-') {
+            name_arg = Some(arg.as_str());
+        }
+    }
+
+    let raw_name = name_arg.unwrap_or("my_app");
     let package_name = normalize_package_name(raw_name);
     let project_dir = PathBuf::from(raw_name);
+
     if project_dir.exists() {
         eprintln!(
             "[L++] Error: directory '{}' already exists.",
@@ -959,18 +1320,45 @@ fn cmd_new(args: &[String]) {
         );
         return;
     }
-    println!("[L++] Creating new project '{}'...", raw_name);
-    if let Err(e) = fs::create_dir_all(&project_dir) {
-        eprintln!("Failed to create project directory: {}", e);
-        return;
-    }
-    match write_project_scaffold(&project_dir, &package_name) {
-        Ok(()) => println!(
-            "[L++] Project '{}' created at {}.",
-            package_name,
-            project_dir.display()
-        ),
-        Err(e) => eprintln!("{}", e),
+
+    if is_web {
+        println!("[Lreact] Creating new Lreact Web App '{}'...", raw_name);
+        if let Err(e) = fs::create_dir_all(&project_dir) {
+            eprintln!("Failed to create project directory: {}", e);
+            return;
+        }
+        match write_web_scaffold(&project_dir, &package_name) {
+            Ok(()) => {
+                println!("[Lreact] Web App '{}' created at {}.", package_name, project_dir.display());
+                println!("[L++] Installing lreact dependency into {}...", project_dir.display());
+                let old_cwd = std::env::current_dir().ok();
+                if std::env::set_current_dir(&project_dir).is_ok() {
+                    cmd_install(false);
+                    if let Some(old) = old_cwd {
+                        let _ = std::env::set_current_dir(old);
+                    }
+                }
+                println!("\nNext steps:");
+                println!("  cd {}", raw_name);
+                println!("  lpp dev              # Start local Lreact dev server at http://localhost:3000");
+                println!("  lpp build --release  # Build standalone native executable in dist/");
+            }
+            Err(e) => eprintln!("{}", e),
+        }
+    } else {
+        println!("[L++] Creating new project '{}'...", raw_name);
+        if let Err(e) = fs::create_dir_all(&project_dir) {
+            eprintln!("Failed to create project directory: {}", e);
+            return;
+        }
+        match write_project_scaffold(&project_dir, &package_name) {
+            Ok(()) => println!(
+                "[L++] Project '{}' created at {}.",
+                package_name,
+                project_dir.display()
+            ),
+            Err(e) => eprintln!("{}", e),
+        }
     }
 }
 
@@ -1132,23 +1520,10 @@ pub fn resolve_registry_package(name: &str) -> Option<RegistryEntry> {
 
 fn cmd_install(force_update: bool) {
     println!("[L++] Resolving dependencies...");
-    if !std::path::Path::new("lpp.toml").exists() {
-        eprintln!("[L++] Error: lpp.toml not found in the current directory.");
-        return;
-    }
-
-    let content = match fs::read_to_string("lpp.toml") {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("Failed to read lpp.toml: {}", e);
-            return;
-        }
-    };
-
-    let package = match parse_toml(&content) {
+    let package = match read_manifest() {
         Ok(pkg) => pkg,
         Err(e) => {
-            eprintln!("[L++] TOML Parse error: {}", e);
+            eprintln!("[L++] Manifest error: {}", e);
             return;
         }
     };
@@ -1334,15 +1709,21 @@ fn cmd_install(force_update: bool) {
         };
 
         if installed_successfully {
-            let sub_manifest_path = dest_path.join("lpp.toml");
-            if sub_manifest_path.exists() {
-                if let Ok(sub_content) = fs::read_to_string(&sub_manifest_path) {
-                    if let Ok(sub_pkg) = parse_toml(&sub_content) {
-                        for sub_dep in sub_pkg.dependencies {
-                            if !processed.contains(&sub_dep.name) {
-                                worklist.push(sub_dep);
-                            }
-                        }
+            let sub_pkg_res = if dest_path.join("lpp.json").exists() {
+                fs::read_to_string(dest_path.join("lpp.json"))
+                    .ok()
+                    .and_then(|c| parse_json_manifest(&c).ok())
+            } else if dest_path.join("lpp.toml").exists() {
+                fs::read_to_string(dest_path.join("lpp.toml"))
+                    .ok()
+                    .and_then(|c| parse_toml(&c).ok())
+            } else {
+                None
+            };
+            if let Some(sub_pkg) = sub_pkg_res {
+                for sub_dep in sub_pkg.dependencies {
+                    if !processed.contains(&sub_dep.name) {
+                        worklist.push(sub_dep);
                     }
                 }
             }
@@ -1899,8 +2280,27 @@ pub fn load_msvc_env() {
 #[allow(dead_code)]
 pub fn load_msvc_env() {}
 
+fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
+    fs::create_dir_all(dst)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let ty = entry.file_type()?;
+        let dst_path = dst.join(entry.file_name());
+        if ty.is_dir() {
+            copy_dir_all(&entry.path(), &dst_path)?;
+        } else {
+            fs::copy(entry.path(), dst_path)?;
+        }
+    }
+    Ok(())
+}
+
 fn cmd_build() -> Option<String> {
-    println!("[L++] Building project...");
+    cmd_build_opts(false)
+}
+
+fn cmd_build_opts(is_release: bool) -> Option<String> {
+    println!("[L++] Building project (release={})...", is_release);
     let entry_point_str = resolve_entry_point();
     let entry_point = Path::new(&entry_point_str);
     if !entry_point.exists() {
@@ -1913,7 +2313,11 @@ fn cmd_build() -> Option<String> {
 
     cmd_install(false);
 
-    let target_dir = Path::new("LppData").join("build").join("release");
+    let target_dir = if is_release {
+        PathBuf::from("dist")
+    } else {
+        Path::new("LppData").join("build").join("release")
+    };
     let _ = fs::create_dir_all(&target_dir);
 
     println!("  Compiling {}...", entry_point.display());
@@ -1926,12 +2330,8 @@ fn cmd_build() -> Option<String> {
     };
 
     let mut bin_name = "output".to_string();
-    if Path::new("lpp.toml").exists() {
-        if let Ok(content) = fs::read_to_string("lpp.toml") {
-            if let Ok(pkg) = parse_toml(&content) {
-                bin_name = pkg.name;
-            }
-        }
+    if let Ok(pkg) = read_manifest() {
+        bin_name = pkg.name;
     }
 
     let exe_path = output_path_for_name(&target_dir, &bin_name);
@@ -1944,8 +2344,48 @@ fn cmd_build() -> Option<String> {
         eprintln!("[L++] Error: {}", e);
         None
     } else {
-        println!("[L++] Build successful: {}", exe_path.display());
+        if is_release {
+            println!("[L++] Standalone Release build successful: {}", exe_path.display());
+            let www_dir = Path::new("www");
+            if www_dir.exists() {
+                let dist_www = target_dir.join("www");
+                if let Err(e) = copy_dir_all(www_dir, &dist_www) {
+                    eprintln!("  Warning: failed to bundle www assets into dist/www: {}", e);
+                } else {
+                    println!("[Lreact] Bundled static web assets into {}", dist_www.display());
+                }
+            }
+        } else {
+            println!("[L++] Build successful: {}", exe_path.display());
+        }
         Some(exe_path.to_string_lossy().into_owned())
+    }
+}
+
+fn cmd_dev() {
+    let entry_point_str = resolve_entry_point();
+    let entry_point = Path::new(&entry_point_str);
+    if !entry_point.exists() {
+        eprintln!("[Lreact Dev] Error: entry point '{}' not found.", entry_point_str);
+        return;
+    }
+
+    let pkg_dir = Path::new(".lpp_packages");
+    if !pkg_dir.exists() {
+        cmd_install(false);
+    }
+
+    println!("==========================================================");
+    println!("        Lreact Dev Server (L++ Native IPC Backend)       ");
+    println!("        Dev URL: http://localhost:3000                   ");
+    println!("==========================================================");
+
+    if let Some(exe_path) = cmd_build_opts(false) {
+        println!("[Lreact Dev] Running native dev server {}...", exe_path);
+        let status = std::process::Command::new(&exe_path).status();
+        if let Err(e) = status {
+            eprintln!("[Lreact Dev] Execution failed: {}", e);
+        }
     }
 }
 

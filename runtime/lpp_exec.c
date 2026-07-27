@@ -24,21 +24,7 @@ extern void  lpp_arc_release(void *ptr);
 
 int64_t lpp_command_exec(const char *cmdline) {
     if (!cmdline) return -1;
-    STARTUPINFOA si = {sizeof(si)};
-    PROCESS_INFORMATION pi = {0};
-    si.dwFlags = STARTF_USESTDHANDLES;
-    char *dup = malloc(strlen(cmdline) + 1); if (dup) strcpy(dup, cmdline);
-    if (!dup) return -1;
-    BOOL ok = CreateProcessA(NULL, dup, NULL, NULL, FALSE,
-                              CREATE_NO_WINDOW, NULL, NULL, &si, &pi);
-    free(dup);
-    if (!ok) return -1;
-    WaitForSingleObject(pi.hProcess, INFINITE);
-    DWORD code;
-    GetExitCodeProcess(pi.hProcess, &code);
-    CloseHandle(pi.hProcess);
-    CloseHandle(pi.hThread);
-    return (int64_t)(int)code;
+    return (int64_t)system(cmdline);
 }
 
 char *lpp_command_output(const char *cmdline) {
