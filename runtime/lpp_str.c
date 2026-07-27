@@ -259,7 +259,6 @@ int64_t lpp_abs(int64_t x) { return x < 0 ? -x : x; }
 int64_t lpp_min(int64_t a, int64_t b) { return a < b ? a : b; }
 int64_t lpp_max(int64_t a, int64_t b) { return a > b ? a : b; }
 int64_t lpp_int_pow(int64_t base, int64_t exp) { int64_t r=1; while(exp>0){if(exp&1)r*=base;base*=base;exp>>=1;} return r; }
-double lpp_sqrt(double x) { return sqrt(x); }
 double lpp_floor(double x) { return floor(x); }
 double lpp_ceil(double x) { return ceil(x); }
 double lpp_pow(double base, double exp) { return pow(base, exp); }

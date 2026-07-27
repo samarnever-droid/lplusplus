@@ -27,6 +27,9 @@ def mouse_y(win_id: Int) -> Int:
 def mouse_down(win_id: Int) -> Int:
     return gui_mouse_down(win_id)
 
+def key_down(win_id: Int, key_code: Int) -> Int:
+    return gui_key_down(win_id, key_code)
+
 def draw_text(win_id: Int, x: Int, y: Int, text: Str, hex_color: Int) -> Void:
     gui_draw_text(win_id, x, y, text, hex_color)
 

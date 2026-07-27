@@ -2243,6 +2243,17 @@ pub fn get_builtins() -> &'static [Builtin] {
             cl_return: Some(0),
         },
         Builtin {
+            name: "gui_key_down",
+            symbol: "lpp_gui_key_down",
+            params: &[
+                ParamType::Specific(TypeRef::Int),
+                ParamType::Specific(TypeRef::Int),
+            ],
+            return_type: TypeRef::Int,
+            cl_params: &[0, 0],
+            cl_return: Some(0),
+        },
+        Builtin {
             name: "gui_draw_text",
             symbol: "lpp_gui_draw_text",
             params: &[

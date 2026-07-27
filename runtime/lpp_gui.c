@@ -192,6 +192,11 @@ int64_t lpp_gui_mouse_down(int64_t win_id) {
     return (GetAsyncKeyState(VK_LBUTTON) & 0x8000) ? 1 : 0;
 }
 
+int64_t lpp_gui_key_down(int64_t win_id, int64_t key_code) {
+    if (win_id < 0 || win_id >= g_win_count || !g_windows[win_id].is_open) return 0;
+    return (GetAsyncKeyState((int)key_code) & 0x8000) ? 1 : 0;
+}
+
 void lpp_gui_draw_text(int64_t win_id, int64_t x, int64_t y, const char *text, int64_t hex_color) {
     if (win_id < 0 || win_id >= g_win_count || !g_windows[win_id].is_open || !text) return;
     BYTE r_val = (BYTE)((hex_color >> 16) & 0xFF);

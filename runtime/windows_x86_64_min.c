@@ -341,6 +341,7 @@ void lpp_gui_draw_rounded_rect(int64_t id, int64_t x, int64_t y, int64_t w, int6
 int64_t lpp_gui_mouse_x(int64_t id) { (void)id; return 0; }
 int64_t lpp_gui_mouse_y(int64_t id) { (void)id; return 0; }
 int64_t lpp_gui_mouse_down(int64_t id) { (void)id; return 0; }
+int64_t lpp_gui_key_down(int64_t id, int64_t key_code) { (void)id; (void)key_code; return 0; }
 void lpp_gui_draw_text(int64_t id, int64_t x, int64_t y, const char *txt, int64_t c) { (void)id; (void)x; (void)y; (void)txt; (void)c; }
 void lpp_gui_present(int64_t id) { (void)id; }
 void lpp_gui_window_close(int64_t id) { (void)id; }
