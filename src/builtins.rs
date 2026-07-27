@@ -768,6 +768,51 @@ pub fn get_builtins() -> &'static [Builtin] {
             cl_params: &[0, 0],
             cl_return: Some(0),
         },
+        // Non-blocking & Polling builtins for async C100K event loops
+        Builtin {
+            name: "net_set_nonblocking",
+            symbol: "lpp_net_set_nonblocking",
+            params: &[
+                ParamType::Specific(TypeRef::Int),
+                ParamType::Specific(TypeRef::Int),
+            ],
+            return_type: TypeRef::Int,
+            cl_params: &[0, 0],
+            cl_return: Some(0),
+        },
+        Builtin {
+            name: "lpp_net_set_nonblocking",
+            symbol: "lpp_net_set_nonblocking",
+            params: &[
+                ParamType::Specific(TypeRef::Int),
+                ParamType::Specific(TypeRef::Int),
+            ],
+            return_type: TypeRef::Int,
+            cl_params: &[0, 0],
+            cl_return: Some(0),
+        },
+        Builtin {
+            name: "net_poll",
+            symbol: "lpp_net_poll",
+            params: &[
+                ParamType::Specific(TypeRef::Int),
+                ParamType::Specific(TypeRef::Int),
+            ],
+            return_type: TypeRef::Int,
+            cl_params: &[0, 0],
+            cl_return: Some(0),
+        },
+        Builtin {
+            name: "lpp_net_poll",
+            symbol: "lpp_net_poll",
+            params: &[
+                ParamType::Specific(TypeRef::Int),
+                ParamType::Specific(TypeRef::Int),
+            ],
+            return_type: TypeRef::Int,
+            cl_params: &[0, 0],
+            cl_return: Some(0),
+        },
         // Keepalive
         Builtin {
             name: "net_set_keepalive",
@@ -2250,7 +2295,14 @@ pub fn get_builtins() -> &'static [Builtin] {
         Builtin { name: "lpp_abs", symbol: "lpp_abs", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0], cl_return: Some(0) },
         Builtin { name: "lpp_min", symbol: "lpp_min", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
         Builtin { name: "lpp_max", symbol: "lpp_max", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
+        Builtin { name: "sqrt", symbol: "lpp_sqrt", params: &[ParamType::Specific(TypeRef::Float)], return_type: TypeRef::Float, cl_params: &[3], cl_return: Some(3) },
         Builtin { name: "lpp_sqrt", symbol: "lpp_sqrt", params: &[ParamType::Specific(TypeRef::Float)], return_type: TypeRef::Float, cl_params: &[3], cl_return: Some(3) },
+        Builtin { name: "sin", symbol: "lpp_sin", params: &[ParamType::Specific(TypeRef::Float)], return_type: TypeRef::Float, cl_params: &[3], cl_return: Some(3) },
+        Builtin { name: "lpp_sin", symbol: "lpp_sin", params: &[ParamType::Specific(TypeRef::Float)], return_type: TypeRef::Float, cl_params: &[3], cl_return: Some(3) },
+        Builtin { name: "cos", symbol: "lpp_cos", params: &[ParamType::Specific(TypeRef::Float)], return_type: TypeRef::Float, cl_params: &[3], cl_return: Some(3) },
+        Builtin { name: "lpp_cos", symbol: "lpp_cos", params: &[ParamType::Specific(TypeRef::Float)], return_type: TypeRef::Float, cl_params: &[3], cl_return: Some(3) },
+        Builtin { name: "tan", symbol: "lpp_tan", params: &[ParamType::Specific(TypeRef::Float)], return_type: TypeRef::Float, cl_params: &[3], cl_return: Some(3) },
+        Builtin { name: "lpp_tan", symbol: "lpp_tan", params: &[ParamType::Specific(TypeRef::Float)], return_type: TypeRef::Float, cl_params: &[3], cl_return: Some(3) },
         Builtin { name: "lpp_floor", symbol: "lpp_floor", params: &[ParamType::Specific(TypeRef::Float)], return_type: TypeRef::Float, cl_params: &[3], cl_return: Some(3) },
         Builtin { name: "lpp_ceil", symbol: "lpp_ceil", params: &[ParamType::Specific(TypeRef::Float)], return_type: TypeRef::Float, cl_params: &[3], cl_return: Some(3) },
         Builtin { name: "lpp_pow", symbol: "lpp_pow", params: &[ParamType::Specific(TypeRef::Float), ParamType::Specific(TypeRef::Float)], return_type: TypeRef::Float, cl_params: &[3, 3], cl_return: Some(3) },

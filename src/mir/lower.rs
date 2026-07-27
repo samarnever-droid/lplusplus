@@ -1142,6 +1142,7 @@ impl<'a> MirLowerCtx<'a> {
                                 | "net_listen_udp" | "net_accept" | "net_accept_timeout"
                                 | "net_send" | "net_send_all" | "net_dial" | "net_dial_udp"
                                 | "net_set_timeout" | "net_set_deadline" | "net_set_keepalive"
+                                | "net_set_nonblocking" | "net_poll"
                                 | "command_exec" | "str_find" | "str_split" | "dir_create"
                                 | "dir_remove" | "path_exists" | "file_copy" | "file_move"
                                 | "delete_file" | "append_file" | "file_size" | "file_exists"

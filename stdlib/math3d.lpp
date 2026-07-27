@@ -1,0 +1,74 @@
+# stdlib/math3d.lpp — 3D Math Primitives & Matrix Engine for Games & Graphics
+# Provides Vec2, Vec3, Vec4, Mat4, dot product, cross product, matrix multiplication, and perspective projection
+
+import math
+
+struct Vec2:
+    x: Float
+    y: Float
+
+struct Vec3:
+    x: Float
+    y: Float
+    z: Float
+
+struct Vec4:
+    x: Float
+    y: Float
+    z: Float
+    w: Float
+
+struct Mat4:
+    m00: Float
+    m01: Float
+    m02: Float
+    m03: Float
+    m10: Float
+    m11: Float
+    m12: Float
+    m13: Float
+    m20: Float
+    m21: Float
+    m22: Float
+    m23: Float
+    m30: Float
+    m31: Float
+    m32: Float
+    m33: Float
+
+def vec3_add(a: Vec3, b: Vec3) -> Vec3:
+    return Vec3(a.x + b.x, a.y + b.y, a.z + b.z)
+
+def vec3_sub(a: Vec3, b: Vec3) -> Vec3:
+    return Vec3(a.x - b.x, a.y - b.y, a.z - b.z)
+
+def vec3_scale(v: Vec3, s: Float) -> Vec3:
+    return Vec3(v.x * s, v.y * s, v.z * s)
+
+def vec3_dot(a: Vec3, b: Vec3) -> Float:
+    return a.x * b.x + a.y * b.y + a.z * b.z
+
+def vec3_cross(a: Vec3, b: Vec3) -> Vec3:
+    return Vec3(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x)
+
+def vec3_length(v: Vec3) -> Float:
+    d := vec3_dot(v, v)
+    return sqrt(d)
+
+def vec3_normalize(v: Vec3) -> Vec3:
+    len := vec3_length(v)
+    if len <= 0.0:
+        return Vec3(0.0, 0.0, 0.0)
+    return Vec3(v.x / len, v.y / len, v.z / len)
+
+def mat4_identity() -> Mat4:
+    return Mat4(1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0)
+
+def mat4_translation(x: Float, y: Float, z: Float) -> Mat4:
+    return Mat4(1.0, 0.0, 0.0, x, 0.0, 1.0, 0.0, y, 0.0, 0.0, 1.0, z, 0.0, 0.0, 0.0, 1.0)
+
+def mat4_perspective(fov_deg: Float, aspect: Float, near_p: Float, far_p: Float) -> Mat4:
+    tan_half_fov := tan(fov_deg * 0.017453292519943295 * 0.5)
+    f := 1.0 / tan_half_fov
+    range_inv := 1.0 / (near_p - far_p)
+    return Mat4(f / aspect, 0.0, 0.0, 0.0, 0.0, f, 0.0, 0.0, 0.0, 0.0, (far_p + near_p) * range_inv, (2.0 * far_p * near_p) * range_inv, 0.0, 0.0, -1.0, 0.0)

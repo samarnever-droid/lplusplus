@@ -452,6 +452,7 @@ fn main() {
 
     let mut idx = 1;
     let mut cli_linker: Option<String> = None;
+    let mut cli_target: Option<String> = None;
 
     while idx < args.len() {
         let arg = &args[idx];
@@ -545,6 +546,11 @@ fn main() {
         } else if arg == "--linker" {
             if idx + 1 < args.len() {
                 cli_linker = Some(args[idx + 1].clone());
+                idx += 1;
+            }
+        } else if arg == "--target" {
+            if idx + 1 < args.len() {
+                cli_target = Some(args[idx + 1].clone());
                 idx += 1;
             }
         } else if !arg.starts_with('-') {

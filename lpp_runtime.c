@@ -23,6 +23,7 @@
 #include <errno.h>
 #include <signal.h>
 #include <stdarg.h>
+#include <math.h>
 
 #if defined(_WIN32)
 #  ifndef WIN32_LEAN_AND_MEAN
@@ -237,6 +238,12 @@ int64_t lpp_append_file(const char *path, const char *data) {
     fclose(f);
     return 0;
 }
+
+/* ── Math Builtins ── */
+double lpp_sqrt(double x) { return sqrt(x); }
+double lpp_sin(double x) { return sin(x); }
+double lpp_cos(double x) { return cos(x); }
+double lpp_tan(double x) { return tan(x); }
 
 /* Delete file. Returns 0 on success, -1 on error. */
 int64_t lpp_delete_file(const char *path) {
@@ -774,6 +781,33 @@ int64_t lpp_net_set_timeout(int64_t handle, int64_t milliseconds) {
     return setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) == 0
         && setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)) == 0;
 #endif
+}
+
+int64_t lpp_net_set_nonblocking(int64_t handle, int64_t enable) {
+    lpp_socket_t sock = lpp__socket_load(handle);
+    if (sock == LPP_INVALID_SOCKET) return 0;
+#ifdef _WIN32
+    u_long mode = enable ? 1 : 0;
+    return ioctlsocket(sock, FIONBIO, &mode) == 0 ? 1 : 0;
+#else
+    int flags = fcntl(sock, F_GETFL, 0);
+    if (flags < 0) return 0;
+    flags = enable ? (flags | O_NONBLOCK) : (flags & ~O_NONBLOCK);
+    return fcntl(sock, F_SETFL, flags) == 0 ? 1 : 0;
+#endif
+}
+
+int64_t lpp_net_poll(int64_t handle, int64_t timeout_ms) {
+    lpp_socket_t sock = lpp__socket_load(handle);
+    if (sock == LPP_INVALID_SOCKET) return 0;
+    fd_set fds;
+    FD_ZERO(&fds);
+    FD_SET(sock, &fds);
+    struct timeval tv;
+    tv.tv_sec = (long)(timeout_ms / 1000);
+    tv.tv_usec = (long)((timeout_ms % 1000) * 1000);
+    int res = select((int)(sock + 1), &fds, NULL, NULL, &tv);
+    return res > 0 ? 1 : 0;
 }
 
 char *lpp_net_recv(int64_t handle, int64_t max_bytes) {

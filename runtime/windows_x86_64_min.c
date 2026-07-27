@@ -307,6 +307,9 @@ int64_t lpp_int_pow(int64_t base, int64_t exp) { int64_t r=1; while(exp>0){if(ex
 double lpp_int_to_float(int64_t x) { return (double)x; }
 int64_t lpp_float_to_int(double x) { return (int64_t)x; }
 double lpp_sqrt(double x) { if(x<=0)return 0; double g=x; int i; for(i=0;i<50;i++)g=0.5*(g+x/g); return g; }
+double lpp_sin(double x) { double t=x, s=x; int i; for(i=3;i<=11;i+=2){t*=-x*x/((i-1)*i); s+=t;} return s; }
+double lpp_cos(double x) { double t=1, s=1; int i; for(i=2;i<=10;i+=2){t*=-x*x/((i-1)*i); s+=t;} return s; }
+double lpp_tan(double x) { double c=lpp_cos(x); return c!=0.0 ? lpp_sin(x)/c : 0.0; }
 double lpp_floor(double x) { int64_t i=(int64_t)x; return (double)(x<(double)i?i-1:i); }
 double lpp_ceil(double x) { int64_t i=(int64_t)x; return (double)(x>(double)i?i+1:i); }
 double lpp_pow(double b,double e) { int64_t ie=(int64_t)e; if((double)ie==e&&ie>=0){double r=1;while(ie>0){if(ie&1)r*=b;b*=b;ie>>=1;}return r;} return 0; }
@@ -355,6 +358,8 @@ int64_t lpp_net_connect(const char *host, int64_t port) { (void)host; (void)port
 int64_t lpp_net_send(int64_t socket, const char *data) { (void)socket; (void)data; return -1; }
 char *lpp_net_recv(int64_t socket, int64_t max_bytes) { (void)socket; (void)max_bytes; return ""; }
 void lpp_net_close(int64_t socket) { (void)socket; }
+int64_t lpp_net_set_nonblocking(int64_t handle, int64_t enable) { (void)handle; (void)enable; return 1; }
+int64_t lpp_net_poll(int64_t handle, int64_t timeout_ms) { (void)handle; (void)timeout_ms; return 1; }
 int64_t lpp_net_bind_udp(int64_t port) { (void)port; return -1; }
 int64_t lpp_net_send_udp(int64_t socket, const char *host, int64_t port, const char *data) { (void)socket; (void)host; (void)port; (void)data; return -1; }
 char *lpp_net_recv_udp(int64_t socket, int64_t max_bytes) { (void)socket; (void)max_bytes; return ""; }
