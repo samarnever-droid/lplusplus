@@ -1,4 +1,4 @@
-# main.lpp — Full Test Suite for Pure L++ SQLite Database Engine (lpp-sqlite)
+# main.lpp — Full Feature Verification Test Suite for Pure L++ SQLite Database Engine (lpp-sqlite)
 
 import sqlite
 
@@ -11,27 +11,43 @@ def main():
     db := sqlite.open(db_path)
 
     # 1. CREATE TABLE
-    r1 := sqlite.exec(db, db_path, "CREATE TABLE users (id INT, name TEXT, email TEXT)")
+    r1 := sqlite.exec(db, db_path, "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL, balance REAL)")
     print_str(str_concat("1. Create Table Result: ", r1))
 
-    # 2. INSERT INTO
-    r2 := sqlite.exec(db, db_path, "INSERT INTO users VALUES (1, 'Alice', 'alice@lpp.org')")
-    print_str(str_concat("2. Insert Row 1 Result: ", r2))
+    # 2. CREATE INDEX
+    r2 := sqlite.exec(db, db_path, "CREATE INDEX idx_users_name ON users (name)")
+    print_str(str_concat("2. Create Index Result: ", r2))
 
-    r3 := sqlite.exec(db, db_path, "INSERT INTO users VALUES (2, 'Bob', 'bob@lpp.org')")
-    print_str(str_concat("3. Insert Row 2 Result: ", r3))
+    # 3. BEGIN TRANSACTION & INSERT
+    t1 := sqlite.exec(db, db_path, "BEGIN TRANSACTION")
+    print_str(str_concat("3. Begin Tx Result: ", t1))
 
-    # 3. SELECT * FROM
-    r4 := sqlite.exec(db, db_path, "SELECT * FROM users")
-    print_str(str_concat("4. Select Query Result: ", r4))
+    r3 := sqlite.exec(db, db_path, "INSERT INTO users VALUES (1, 'Alice', 250.50)")
+    print_str(str_concat("4. Insert Row 1 Result: ", r3))
 
-    # 4. UPDATE
-    r5 := sqlite.exec(db, db_path, "UPDATE users SET name = 'Alice Smith' WHERE id = 1")
-    print_str(str_concat("5. Update Query Result: ", r5))
+    r4 := sqlite.exec(db, db_path, "INSERT INTO users VALUES (2, 'Bob', 100.00)")
+    print_str(str_concat("5. Insert Row 2 Result: ", r4))
 
-    # 5. DELETE
-    r6 := sqlite.exec(db, db_path, "DELETE FROM users WHERE id = 2")
-    print_str(str_concat("6. Delete Query Result: ", r6))
+    t2 := sqlite.exec(db, db_path, "COMMIT")
+    print_str(str_concat("6. Commit Tx Result: ", t2))
+
+    # 4. SELECT & AGGREGATE COUNT(*)
+    r5 := sqlite.exec(db, db_path, "SELECT * FROM users")
+    print_str(str_concat("7. Select All Result: ", r5))
+
+    r6 := sqlite.exec(db, db_path, "SELECT COUNT(*) FROM users")
+    print_str(str_concat("8. Select Count Result: ", r6))
+
+    # 5. UPDATE & DELETE
+    r7 := sqlite.exec(db, db_path, "UPDATE users SET balance = 300.00 WHERE id = 1")
+    print_str(str_concat("9. Update Query Result: ", r7))
+
+    r8 := sqlite.exec(db, db_path, "DELETE FROM users WHERE id = 2")
+    print_str(str_concat("10. Delete Query Result: ", r8))
+
+    # 6. PRAGMA
+    p1 := sqlite.exec(db, db_path, "PRAGMA table_info(users)")
+    print_str(str_concat("11. Pragma Query Result: ", p1))
 
     sqlite.close(db)
     print_str("==========================================================")

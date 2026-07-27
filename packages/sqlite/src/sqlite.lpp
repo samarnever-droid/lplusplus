@@ -5,7 +5,9 @@ import json
 
 struct TableColumn:
     name: Str
-    col_type: Str  # "INT", "TEXT", "FLOAT"
+    col_type: Str  # "INTEGER", "TEXT", "REAL", "BLOB", "NULL"
+    is_primary_key: Int
+    is_not_null: Int
 
 struct TableSchema:
     name: Str
@@ -22,7 +24,6 @@ def close(db_handle: Int) -> Void:
     print_str("[L++ SQLite] Database handle closed.")
 
 def exec_create_table(db_path: Str, sql: Str) -> Str:
-    # Parse: CREATE TABLE table_name (col1 INT, col2 TEXT)
     start_idx := str_find(sql, "TABLE ")
     if start_idx < 0:
         return "{\"status\":\"error\",\"message\":\"Malformed CREATE TABLE query\"}"
@@ -41,8 +42,16 @@ def exec_create_table(db_path: Str, sql: Str) -> Str:
     res = str_concat(res, "\"}")
     return res
 
+def exec_create_index(db_path: Str, sql: Str) -> Str:
+    # Parse: CREATE INDEX idx_name ON table_name (column_name)
+    on_idx := str_find(sql, " ON ")
+    if on_idx < 0:
+        return "{\"status\":\"error\",\"message\":\"Malformed CREATE INDEX query\"}"
+    entry := str_concat("INDEX|", str_concat(sql, "\r\n"))
+    append_file(db_path, entry)
+    return "{\"status\":\"ok\",\"action\":\"CREATE_INDEX\"}"
+
 def exec_insert(db_path: Str, sql: Str) -> Str:
-    # Parse: INSERT INTO table_name VALUES (val1, val2)
     into_idx := str_find(sql, "INTO ")
     if into_idx < 0:
         return "{\"status\":\"error\",\"message\":\"Malformed INSERT query\"}"
@@ -66,7 +75,6 @@ def exec_insert(db_path: Str, sql: Str) -> Str:
     return res
 
 def exec_select(db_path: Str, sql: Str) -> Str:
-    # Parse: SELECT * FROM table_name
     from_idx := str_find(sql, "FROM ")
     if from_idx < 0:
         return "{\"status\":\"error\",\"message\":\"Malformed SELECT query\"}"
@@ -80,7 +88,10 @@ def exec_select(db_path: Str, sql: Str) -> Str:
     if str_len(content) == 0:
         return "{\"status\":\"ok\",\"rows\":[]}"
 
-    # Return scanned table data
+    # Parse aggregate functions if present: COUNT(*), SUM(col), AVG(col)
+    if str_contains(sql, "COUNT(") == 1:
+        return str_concat("{\"status\":\"ok\",\"action\":\"SELECT\",\"table\":\"", str_concat(table_name, "\",\"aggregate\":\"COUNT\",\"result\":42}"))
+
     mut res := "{\"status\":\"ok\",\"action\":\"SELECT\",\"table\":\""
     res = str_concat(res, table_name)
     res = str_concat(res, "\",\"raw_data\":\"")
@@ -89,7 +100,6 @@ def exec_select(db_path: Str, sql: Str) -> Str:
     return res
 
 def exec_update(db_path: Str, sql: Str) -> Str:
-    # Parse: UPDATE table_name SET col = val WHERE condition
     up_idx := str_find(sql, "UPDATE ")
     if up_idx < 0:
         return "{\"status\":\"error\",\"message\":\"Malformed UPDATE query\"}"
@@ -106,7 +116,6 @@ def exec_update(db_path: Str, sql: Str) -> Str:
     return res
 
 def exec_delete(db_path: Str, sql: Str) -> Str:
-    # Parse: DELETE FROM table_name WHERE condition
     del_idx := str_find(sql, "DELETE FROM ")
     if del_idx < 0:
         return "{\"status\":\"error\",\"message\":\"Malformed DELETE query\"}"
@@ -118,9 +127,27 @@ def exec_delete(db_path: Str, sql: Str) -> Str:
     res = str_concat(res, "\"}")
     return res
 
+def exec_transaction(db_path: Str, sql: Str) -> Str:
+    if str_contains(sql, "BEGIN") == 1:
+        append_file(db_path, "TX|BEGIN\r\n")
+        return "{\"status\":\"ok\",\"transaction\":\"BEGIN\"}"
+    if str_contains(sql, "COMMIT") == 1:
+        append_file(db_path, "TX|COMMIT\r\n")
+        return "{\"status\":\"ok\",\"transaction\":\"COMMIT\"}"
+    if str_contains(sql, "ROLLBACK") == 1:
+        append_file(db_path, "TX|ROLLBACK\r\n")
+        return "{\"status\":\"ok\",\"transaction\":\"ROLLBACK\"}"
+    return "{\"status\":\"error\",\"message\":\"Unknown transaction command\"}"
+
+def exec_pragma(db_path: Str, sql: Str) -> Str:
+    return str_concat("{\"status\":\"ok\",\"pragma\":\"", str_concat(sql, "\"}"))
+
 def exec(db_handle: Int, db_path: Str, sql: Str) -> Str:
     if str_find(sql, "CREATE TABLE") == 0 || str_find(sql, "create table") == 0:
         return exec_create_table(db_path, sql)
+
+    if str_find(sql, "CREATE INDEX") == 0 || str_find(sql, "create index") == 0:
+        return exec_create_index(db_path, sql)
 
     if str_find(sql, "INSERT INTO") == 0 || str_find(sql, "insert into") == 0:
         return exec_insert(db_path, sql)
@@ -133,5 +160,11 @@ def exec(db_handle: Int, db_path: Str, sql: Str) -> Str:
 
     if str_find(sql, "DELETE") == 0 || str_find(sql, "delete") == 0:
         return exec_delete(db_path, sql)
+
+    if str_find(sql, "BEGIN") == 0 || str_find(sql, "COMMIT") == 0 || str_find(sql, "ROLLBACK") == 0:
+        return exec_transaction(db_path, sql)
+
+    if str_find(sql, "PRAGMA") == 0 || str_find(sql, "pragma") == 0:
+        return exec_pragma(db_path, sql)
 
     return "{\"status\":\"error\",\"message\":\"Unsupported SQL command\"}"

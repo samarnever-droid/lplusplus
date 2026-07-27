@@ -7,3 +7,11 @@ DATA|users|(1, 'Alice', 'alice@lpp.org')
 DATA|users|(2, 'Bob', 'bob@lpp.org')
 UPDATE|users|MODIFIED
 DELETE|users WHERE id = 2|REMOVED
+SCHEMA|users|CREATED
+INDEX|CREATE INDEX idx_users_name ON users (name)
+TX|BEGIN
+DATA|users|(1, 'Alice', 250.50)
+DATA|users|(2, 'Bob', 100.00)
+TX|COMMIT
+UPDATE|users|MODIFIED
+DELETE|users WHERE id = 2|REMOVED
