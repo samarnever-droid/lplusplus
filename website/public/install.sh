@@ -54,6 +54,8 @@ install_release() {
     cp "$root/bin/lpp" "$BIN_DIR/lpp"
     cp "$root/bin/lpp-link" "$BIN_DIR/lpp-link"
     cp -r "$root/lib/"* "$LIB_DIR/"
+    if [ -d "$root/pm" ]; then rm -rf "$INSTALL_DIR/pm"; cp -r "$root/pm" "$INSTALL_DIR/pm"; fi
+    if [ -d "$root/registry" ]; then rm -rf "$INSTALL_DIR/registry"; cp -r "$root/registry" "$INSTALL_DIR/registry"; fi
     rm -rf "$temp"
     trap - EXIT HUP INT TERM
     return 0
@@ -70,6 +72,8 @@ install_source() {
     cp "$PROJECT_DIR/target/release/lpp" "$BIN_DIR/lpp"
     cp "$PROJECT_DIR/target/release/lpp-link" "$BIN_DIR/lpp-link"
     cp "$PROJECT_DIR/lpp_runtime.c" "$LIB_DIR/lpp_runtime.c"
+    if [ -d "$PROJECT_DIR/pm" ]; then rm -rf "$INSTALL_DIR/pm"; cp -r "$PROJECT_DIR/pm" "$INSTALL_DIR/pm"; fi
+    if [ -d "$PROJECT_DIR/registry" ]; then rm -rf "$INSTALL_DIR/registry"; cp -r "$PROJECT_DIR/registry" "$INSTALL_DIR/registry"; fi
     if [ -d "$PROJECT_DIR/runtime" ]; then
         cp -r "$PROJECT_DIR/runtime" "$LIB_DIR/runtime"
     fi

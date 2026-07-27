@@ -30,7 +30,14 @@ def fetch_registry_json() -> Str:
             write(".lpp_registry_cache.json", remote_json)
             return remote_json
 
-    mut fallback_url := "https://raw.githubusercontent.com/samarnever-droid/Lpp-a-programing-langauge-/master/githubpage/registry.json"
+    mut fallback_url := "https://raw.githubusercontent.com/samarnever-droid/lplusplus/master/website/public/registry/index.json"
+    remote_json = http_get(fallback_url, 5000)
+    if str_len(remote_json) > 0:
+        if str_find(remote_json, "packages") >= 0:
+            write(".lpp_registry_cache.json", remote_json)
+            return remote_json
+
+    fallback_url = "https://raw.githubusercontent.com/samarnever-droid/lplusplus/master/registry/index.json"
     remote_json = http_get(fallback_url, 5000)
     if str_len(remote_json) > 0:
         if str_find(remote_json, "packages") >= 0:

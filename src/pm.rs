@@ -1260,7 +1260,7 @@ pub fn run_command(args: &[String]) {
         "new" | "create" => cmd_new(&args[1..]),
         "dev" => cmd_dev(),
         "init" => cmd_init(&args[1..]),
-        "install" => cmd_install(false),
+        "install" => cmd_install_command(&args[1..]),
         "add" => cmd_add(&args[1..]),
         "remove" => cmd_remove(&args[1..]),
         "update" => cmd_update(),
@@ -1299,7 +1299,7 @@ fn print_help() {
     println!("  build --release       Build standalone release binary & bundle web assets in dist/");
     println!("  new <name>            Create a new L++ package");
     println!("  init <name>           Initialize package in current directory");
-    println!("  install               Resolve and install all dependencies");
+    println!("  install [name]        Resolve project deps, or install known global app packages");
     println!("  add <name>            Add dependency from registry");
     println!("  add @owner/repo       Add dependency from GitHub");
     println!("  add <name> --git <U>  Add via explicit git URL");
@@ -1485,11 +1485,14 @@ fn fetch_registry_json() -> Option<String> {
         }
     }
 
-    let primary_url = "https://samarnever-droid.github.io/lplusplus/registry/index.json";
-    let fallback_url = "https://raw.githubusercontent.com/samarnever-droid/Lpp-a-programing-langauge-/master/githubpage/registry.json";
+    let registry_urls = [
+        "https://samarnever-droid.github.io/lplusplus/registry/index.json",
+        "https://raw.githubusercontent.com/samarnever-droid/lplusplus/master/website/public/registry/index.json",
+        "https://raw.githubusercontent.com/samarnever-droid/lplusplus/master/registry/index.json",
+    ];
     let mut fetched_json: Option<String> = None;
 
-    for url in &[primary_url, fallback_url] {
+    for url in &registry_urls {
         if command_available("curl", &["--version"]) {
             let output = std::process::Command::new("curl")
                 .args(["-fsSL", "--max-time", "5", url])
@@ -1554,6 +1557,56 @@ pub fn resolve_registry_package(name: &str) -> Option<RegistryEntry> {
         }
     }
     None
+}
+
+fn is_lpp_opencode_alias(name: &str) -> bool {
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "lpp-opencode" | "opencode" | "openclaude" | "lpp-openclaude"
+    )
+}
+
+fn install_lpp_opencode_global() {
+    println!("[L++] Installing lpp-opencode globally...");
+    #[cfg(windows)]
+    {
+        let script = "irm https://raw.githubusercontent.com/samarnever-droid/lpp-opencode/main/scripts/install.ps1 | iex";
+        let status = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script])
+            .status();
+        match status {
+            Ok(s) if s.success() => println!("[L++] lpp-opencode installed. Run: lpp-opencode /provider"),
+            Ok(s) => eprintln!("[L++] lpp-opencode installer exited with status {}", s),
+            Err(e) => eprintln!("[L++] Failed to run PowerShell installer: {}", e),
+        }
+        return;
+    }
+    #[cfg(not(windows))]
+    {
+        let script = "curl -fsSL https://raw.githubusercontent.com/samarnever-droid/lpp-opencode/main/scripts/install.sh | sh";
+        let status = std::process::Command::new("sh").args(["-c", script]).status();
+        match status {
+            Ok(s) if s.success() => println!("[L++] lpp-opencode installed. Run: lpp-opencode /provider"),
+            Ok(s) => eprintln!("[L++] lpp-opencode installer exited with status {}", s),
+            Err(e) => eprintln!("[L++] Failed to run shell installer: {}", e),
+        }
+    }
+}
+
+fn cmd_install_command(args: &[String]) {
+    if !args.is_empty() && !Path::new("lpp.toml").exists() {
+        let package = &args[0];
+        if is_lpp_opencode_alias(package) {
+            install_lpp_opencode_global();
+            return;
+        }
+        eprintln!("[L++] Error: lpp.toml not found in the current directory.");
+        eprintln!("[L++] '{}' is a dependency install command inside a project.", package);
+        eprintln!("[L++] For app-style global installs, known aliases include: lpp-opencode, opencode, openclaude, lpp-openclaude.");
+        eprintln!("[L++] For library dependencies, run inside a project or use: lpp new <name>");
+        return;
+    }
+    cmd_install(false);
 }
 
 fn cmd_install(force_update: bool) {

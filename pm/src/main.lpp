@@ -10,7 +10,7 @@ import registry
 import add_remove
 
 def main():
-    print_str("=== Self-Hosted L++ Package Manager v3.4.0 ===")
+    print_str("=== Self-Hosted L++ Package Manager v4.2.0 ===")
 
     mut cmd := env_get("LPP_PM_CMD")
     if str_len(cmd) == 0:
@@ -46,6 +46,17 @@ def main():
 
     # ── install ────────────────────────────────────────────────────────
     if str_find(cmd, "install") >= 0:
+        pkg := env_get("LPP_PM_ARG1")
+        if str_len(pkg) > 0:
+            if str_find(pkg, "opencode") >= 0 || str_find(pkg, "openclaude") >= 0:
+                info("Installing lpp-opencode globally...")
+                os_name := env_get("OS")
+                if str_find(os_name, "Windows") >= 0:
+                    command_exec("powershell -NoProfile -ExecutionPolicy Bypass -Command \"irm https://raw.githubusercontent.com/samarnever-droid/lpp-opencode/main/scripts/install.ps1 | iex\"")
+                else:
+                    command_exec("sh -c 'curl -fsSL https://raw.githubusercontent.com/samarnever-droid/lpp-opencode/main/scripts/install.sh | sh'")
+                info("Installed lpp-opencode. Run: lpp-opencode /provider")
+                return
         install_deps()
         return
 
@@ -157,7 +168,7 @@ def main():
         return
 
     # ── help ───────────────────────────────────────────────────────────
-    print_str("=== L++ Package Manager v3.4.0 (Pure L++ Native) ===")
+    print_str("=== L++ Package Manager v4.2.0 (Pure L++ Native) ===")
     print_str("  new <name>            Create a new L++ package")
     print_str("  init <name>           Initialize package in current directory")
     print_str("  install               Resolve and install all dependencies")

@@ -33,6 +33,8 @@ jobs:
           # integration a reproducible, versioned native artifact.
           cargo build --manifest-path runtime/lpp-net/Cargo.toml --release --locked --target x86_64-unknown-linux-musl
           mkdir -p package/lpp-linux-x86_64/bin package/lpp-linux-x86_64/lib package/lpp-linux-x86_64/include
+          cp -r pm package/lpp-linux-x86_64/
+          cp -r registry package/lpp-linux-x86_64/
           cp target/x86_64-unknown-linux-musl/release/lpp package/lpp-linux-x86_64/bin/
           cp target/x86_64-unknown-linux-musl/release/lpp-link package/lpp-linux-x86_64/bin/
           cp runtime/lpp-net/target/x86_64-unknown-linux-musl/release/liblpp_net_runtime.a package/lpp-linux-x86_64/lib/
@@ -67,6 +69,8 @@ jobs:
           cargo build --release --locked --bin lpp --bin lpp-link
           $root = Join-Path $env:RUNNER_TEMP "lpp-windows-x86_64"
           New-Item -ItemType Directory -Force "$root\bin", "$root\lib" | Out-Null
+          Copy-Item pm "$root\pm" -Recurse -Force
+          Copy-Item registry "$root\registry" -Recurse -Force
           Copy-Item target\release\lpp.exe "$root\bin\lpp.exe"
           Copy-Item target\release\lpp-link.exe "$root\bin\lpp-link.exe"
           $cmd = Join-Path $env:RUNNER_TEMP "package-runtime.cmd"
@@ -95,6 +99,8 @@ jobs:
         run: |
           cargo build --release --locked --bin lpp --bin lpp-link
           mkdir -p package/lpp-macos-arm64/bin package/lpp-macos-arm64/lib
+          cp -r pm package/lpp-macos-arm64/
+          cp -r registry package/lpp-macos-arm64/
           cp target/release/lpp package/lpp-macos-arm64/bin/
           cp target/release/lpp-link package/lpp-macos-arm64/bin/
           clang -O2 -fPIC -c lpp_runtime.c -o package/lpp-macos-arm64/lib/lpp_runtime.o

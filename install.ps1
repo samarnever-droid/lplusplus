@@ -31,6 +31,8 @@ function Install-Release {
         Copy-Item "$root\bin\lpp.exe" "$BinDir\lpp.exe" -Force
         Copy-Item "$root\bin\lpp-link.exe" "$BinDir\lpp-link.exe" -Force
         Copy-Item "$root\lib\*" $LibDir -Force
+        if (Test-Path "$root\pm") { Remove-Item "$InstallDir\pm" -Recurse -Force -ErrorAction SilentlyContinue; Copy-Item "$root\pm" "$InstallDir\pm" -Recurse -Force }
+        if (Test-Path "$root\registry") { Remove-Item "$InstallDir\registry" -Recurse -Force -ErrorAction SilentlyContinue; Copy-Item "$root\registry" "$InstallDir\registry" -Recurse -Force }
         return $true
     } catch {
         Write-Warning "Release installation failed: $($_.Exception.Message)"
@@ -51,6 +53,8 @@ function Install-Source {
     Copy-Item "$ProjectDir\target\release\lpp.exe" "$BinDir\lpp.exe" -Force
     Copy-Item "$ProjectDir\target\release\lpp-link.exe" "$BinDir\lpp-link.exe" -Force
     Copy-Item "$ProjectDir\lpp_runtime.c" "$LibDir\lpp_runtime.c" -Force
+    if (Test-Path "$ProjectDir\pm") { Remove-Item "$InstallDir\pm" -Recurse -Force -ErrorAction SilentlyContinue; Copy-Item "$ProjectDir\pm" "$InstallDir\pm" -Recurse -Force }
+    if (Test-Path "$ProjectDir\registry") { Remove-Item "$InstallDir\registry" -Recurse -Force -ErrorAction SilentlyContinue; Copy-Item "$ProjectDir\registry" "$InstallDir\registry" -Recurse -Force }
     Copy-Item "$ProjectDir\runtime" "$LibDir\runtime" -Recurse -Force
     $compiled = $false
     $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"

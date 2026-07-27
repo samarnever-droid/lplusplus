@@ -10,6 +10,8 @@
 
 #include <stdint.h>
 
+void lpp_exit(int64_t code);
+
 static long lpp_sys_write(long fd, const void *buffer, long count) {
     long result;
     __asm__ volatile (
