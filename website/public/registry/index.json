@@ -3,12 +3,12 @@
     "name": "L++ Package Registry",
     "version": "1.0",
     "url": "https://samarnever-droid.github.io/lplusplus/registry",
-    "description": "Official L++ package registry — Git-based, JSON-indexed"
+    "description": "Official L++ package registry \u2014 Git-based, JSON-indexed"
   },
   "packages": {
     "lpp-zip": {
       "name": "lpp-zip",
-      "description": "ZIP archive create/read library — pure L++ using buf_* primitives",
+      "description": "ZIP archive create/read library \u2014 pure L++ using buf_* primitives",
       "version": "0.1.0",
       "authors": [
         "0x4171341"
@@ -30,23 +30,23 @@
         "Read ZIP archives and extract entries",
         "CRC32 verification",
         "STORE method (no compression)",
-        "Pure L++ — no C code, no linker changes"
+        "Pure L++ \u2014 no C code, no linker changes"
       ],
       "api": {
-        "zip_create": "() -> Int — create new archive handle",
-        "zip_add_file": "(archive: Int, filename: Str, content: Str) — add file to archive",
-        "zip_save": "(archive: Int, path: Str) — write ZIP to disk",
-        "zip_free": "(archive: Int) — release archive memory",
-        "zip_open": "(path: Str) -> Int — open ZIP file for reading",
-        "zip_entry_count": "(handle: Int) -> Int — number of entries",
-        "zip_entry_name": "(handle: Int, index: Int) -> Str — get entry filename",
-        "zip_entry_data": "(handle: Int, index: Int) -> Str — get entry content",
-        "zip_close": "(handle: Int) — close ZIP handle"
+        "zip_create": "() -> Int \u2014 create new archive handle",
+        "zip_add_file": "(archive: Int, filename: Str, content: Str) \u2014 add file to archive",
+        "zip_save": "(archive: Int, path: Str) \u2014 write ZIP to disk",
+        "zip_free": "(archive: Int) \u2014 release archive memory",
+        "zip_open": "(path: Str) -> Int \u2014 open ZIP file for reading",
+        "zip_entry_count": "(handle: Int) -> Int \u2014 number of entries",
+        "zip_entry_name": "(handle: Int, index: Int) -> Str \u2014 get entry filename",
+        "zip_entry_data": "(handle: Int, index: Int) -> Str \u2014 get entry content",
+        "zip_close": "(handle: Int) \u2014 close ZIP handle"
       }
     },
     "lpp-math": {
       "name": "lpp-math",
-      "description": "Math utilities — abs, min, max, pow, gcd, lcm, fib, factorial",
+      "description": "Math utilities \u2014 abs, min, max, pow, gcd, lcm, fib, factorial",
       "version": "0.1.0",
       "authors": [
         "0x4171341"
@@ -62,7 +62,7 @@
     },
     "lpp-strings": {
       "name": "lpp-strings",
-      "description": "String utilities — repeat, contains, starts_with, reverse, pad",
+      "description": "String utilities \u2014 repeat, contains, starts_with, reverse, pad",
       "version": "0.1.0",
       "authors": [
         "0x4171341"
@@ -79,7 +79,7 @@
     },
     "lpp-collections": {
       "name": "lpp-collections",
-      "description": "Collection utilities — list_sum, list_max, list_min, list_reverse",
+      "description": "Collection utilities \u2014 list_sum, list_max, list_min, list_reverse",
       "version": "0.1.0",
       "authors": [
         "0x4171341"
@@ -96,7 +96,7 @@
     },
     "lpp-algo": {
       "name": "lpp-algo",
-      "description": "Algorithm library — bubble_sort, binary_search, list_range, list_fill",
+      "description": "Algorithm library \u2014 bubble_sort, binary_search, list_range, list_fill",
       "version": "0.1.0",
       "authors": [
         "0x4171341"
@@ -115,7 +115,7 @@
     "lpp-opencode": {
       "name": "lpp-opencode",
       "version": "0.6.0",
-      "description": "OpenCode/OpenClaude port foundation in L++ — installable lpp-opencode command, Claude router, TUI, sessions, commands, tools, and agent scaffold",
+      "description": "OpenCode/OpenClaude port foundation in L++ \u2014 installable lpp-opencode command, Claude router, TUI, sessions, commands, tools, and agent scaffold",
       "authors": [
         "0x4171341"
       ],
@@ -183,7 +183,7 @@
     "lpp-openclaude": {
       "name": "lpp-openclaude",
       "version": "0.6.0",
-      "description": "OpenClaude alias for lpp-opencode — Claude-oriented OpenCode port foundation in L++",
+      "description": "OpenClaude alias for lpp-opencode \u2014 Claude-oriented OpenCode port foundation in L++",
       "authors": [
         "0x4171341"
       ],
@@ -297,7 +297,7 @@
     "lpp-lreact": {
       "name": "lpp-lreact",
       "version": "1.0.0",
-      "description": "Alias for lreact — Tauri-like GUI framework for L++",
+      "description": "Alias for lreact \u2014 Tauri-like GUI framework for L++",
       "authors": [
         "samarnever-droid"
       ],
@@ -315,42 +315,50 @@
         "gui"
       ]
     },
-    "sqlite": {
-      "name": "sqlite",
+    "lppdb": {
+      "name": "lppdb",
       "version": "1.0.0",
-      "description": "Pure L++ SQLite-Compatible Database Engine (Single-file .db, SQL Lexer, Parser & Execution)",
+      "description": "A real embedded SQL database engine in pure L++: binary page storage, typed cells, real parser/executor, disk persistence. Replaces the former non-functional sqlite stub.",
       "authors": [
-        "samarnever-droid"
+        "arena-audit"
       ],
       "license": "MIT",
       "repository": "https://github.com/samarnever-droid/lplusplus",
-      "path": "packages/sqlite/src/sqlite.lpp",
-      "source": "packages/sqlite/src/sqlite.lpp",
+      "path": "packages/lppdb/src/lppdb.lpp",
+      "source": "packages/lppdb/src/lppdb.lpp",
       "dependencies": [],
       "keywords": [
-        "sqlite",
-        "sql",
         "database",
-        "storage",
-        "db"
-      ]
-    },
-    "lpp-sqlite": {
-      "name": "lpp-sqlite",
-      "version": "1.0.0",
-      "description": "Alias for sqlite — Pure L++ SQLite Database Engine",
-      "authors": [
-        "samarnever-droid"
-      ],
-      "license": "MIT",
-      "repository": "https://github.com/samarnever-droid/lplusplus",
-      "path": "packages/sqlite/src/sqlite.lpp",
-      "source": "packages/sqlite/src/sqlite.lpp",
-      "dependencies": [],
-      "keywords": [
-        "sqlite",
         "sql",
-        "database"
+        "storage",
+        "db",
+        "embedded",
+        "binary"
+      ],
+      "features": [
+        "Real binary page-oriented storage persisted to disk (buf_read/buf_write)",
+        "Typed cells: INTEGER (8-byte LE), TEXT (length-prefixed), NULL",
+        "Real SQL tokenizer/parser/executor - results computed from stored data",
+        "CREATE TABLE, INSERT (multi-row, explicit columns), SELECT (*, columns)",
+        "Aggregates COUNT(*)/SUM/MIN/MAX computed over matching rows",
+        "WHERE (=,!=,<>,<,<=,>,>=, AND), ORDER BY ASC/DESC, LIMIT",
+        "UPDATE ... SET ... WHERE, DELETE FROM ... WHERE, DROP TABLE",
+        "Persistence verified across close/reopen",
+        "Works with --linker host and zero-dependency --linker direct",
+        "Pure L++ over buf_* builtins - no C code, no linker changes"
+      ],
+      "api": {
+        "db_open": "(path: Str) -> Int - open or create a database file",
+        "db_exec": "(handle: Int, sql: Str) -> Str - run a statement, returns JSON",
+        "db_save": "(handle: Int, path: Str) - flush to disk",
+        "db_close": "(handle: Int) - release memory"
+      },
+      "limitations": [
+        "Single-table queries only (no JOIN/subquery/CTE)",
+        "No FTS, views, triggers, indexes, or transactions",
+        "No REAL/floating-point type (stored as TEXT)",
+        "Linear row scan (no B-tree); not for very large tables",
+        "Own binary format - NOT SQLite file-format compatible"
       ]
     }
   }

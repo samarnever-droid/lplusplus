@@ -1041,73 +1041,53 @@ fn resolve_min_runtime_source() -> Option<PathBuf> {
     None
 }
 
+/// Resolve the shared user-level runtime-object cache directory.
+///
+/// The old implementation cached the compiled freestanding runtime at
+/// `./LppData/cache/<target>` relative to the *current working directory*,
+/// so every fresh project directory silently re-invoked the C compiler for
+/// the exact same object. The cache now lives in one per-user, per-target
+/// location shared by every build:
+///   - `$LPP_CACHE_DIR/<target>`              (explicit override, useful in CI)
+///   - `%LOCALAPPDATA%/lpp/cache/<target>`    (Windows)
+///   - `$XDG_CACHE_HOME/lpp/<target>`         (Linux/macOS, XDG)
+///   - `$HOME/.cache/lpp/<target>`            (Linux/macOS fallback)
+fn shared_runtime_cache_dir() -> Option<PathBuf> {
+    let target = runtime_cache_target();
+
+    if let Ok(dir) = std::env::var("LPP_CACHE_DIR") {
+        if !dir.is_empty() {
+            return Some(PathBuf::from(dir).join(target));
+        }
+    }
+
+    if cfg!(target_os = "windows") {
+        if let Ok(local) = std::env::var("LOCALAPPDATA") {
+            if !local.is_empty() {
+                return Some(PathBuf::from(local).join("lpp").join("cache").join(target));
+            }
+        }
+    }
+
+    if let Ok(xdg) = std::env::var("XDG_CACHE_HOME") {
+        if !xdg.is_empty() {
+            return Some(PathBuf::from(xdg).join("lpp").join(target));
+        }
+    }
+
+    std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .ok()
+        .map(|h| PathBuf::from(h).join(".cache").join("lpp").join(target))
+}
+
 fn resolve_min_runtime_object() -> Option<PathBuf> {
     let ext = if cfg!(target_os = "windows") { "obj" } else { "o" };
     let filename = format!("lpp_runtime_min.{}", ext);
 
-    let local_src = resolve_min_runtime_source();
-    // Multi-arch cache: LppData/cache/<target>/lpp_runtime_min.o
-    let cache_dir = Path::new("LppData").join("cache").join(runtime_cache_target());
-    let cache_obj = cache_dir.join(&filename);
-    let cache_hash = cache_dir.join("runtime.hash");
-
-    if let Some(ref src_path) = local_src {
-        // Hash-based invalidation: compare source hash with stored hash
-        let current_hash = file_content_hash(src_path);
-        let stored_hash = fs::read_to_string(&cache_hash)
-            .ok()
-            .and_then(|s| s.trim().parse::<u64>().ok());
-
-        let needs_rebuild = match (current_hash, stored_hash) {
-            (Some(cur), Some(stored)) => cur != stored || !cache_obj.exists(),
-            _ => true, // no hash or can't read → rebuild
-        };
-
-        if needs_rebuild {
-            let _ = fs::create_dir_all(&cache_dir);
-            #[cfg(windows)]
-            load_msvc_env();
-            let cc = if cfg!(windows) { "cl.exe" } else { "gcc" };
-            let mut cmd = std::process::Command::new(cc);
-            if cfg!(windows) {
-                cmd.arg("/nologo")
-                    .arg("/O2")
-                    .arg("/GS-")
-                    .arg("/Gs1000000")
-                    .arg("/DLPP_FREESTANDING")
-                    .arg("/c")
-                    .arg(src_path)
-                    .arg(format!("/Fo:{}", cache_obj.display()));
-            } else {
-                cmd.arg("-Os")
-                    .arg("-fno-stack-protector")
-                    .arg("-ffreestanding")
-                    .arg("-fno-pic")
-                    .arg("-mno-red-zone")
-                    .arg("-fno-reorder-blocks-and-partition")
-                    .arg("-DLPP_FREESTANDING")
-                    .arg("-c")
-                    .arg(src_path)
-                    .arg("-o")
-                    .arg(&cache_obj);
-            }
-            if cmd.status().map_or(false, |s| s.success()) && cache_obj.exists() {
-                // Store the hash for next time
-                if let Some(h) = current_hash {
-                    let _ = fs::write(&cache_hash, format!("{}\n", h));
-                }
-                return Some(cache_obj);
-            }
-        } else {
-            return Some(cache_obj);
-        }
-    }
-
-    if cache_obj.exists() {
-        return Some(cache_obj);
-    }
-
-    // Fallback: search installed locations (flat filename for backwards compat)
+    // 1. Prebuilt runtime shipped with the toolchain (release tarball / install
+    //    layout). These objects are never rebuilt, so an installed toolchain
+    //    never needs a C compiler on the direct-link path.
     for var in &["LPP_HOME", "LPP_DIR"] {
         if let Ok(val) = std::env::var(var) {
             let lib_obj = PathBuf::from(val).join("lib").join(&filename);
@@ -1140,8 +1120,81 @@ fn resolve_min_runtime_object() -> Option<PathBuf> {
         }
     }
 
+    // 2. Legacy per-project cache produced by older L++ versions
+    //    (read-only compatibility; new builds no longer write here).
+    let legacy_obj = Path::new("LppData")
+        .join("cache")
+        .join(runtime_cache_target())
+        .join(&filename);
+    if legacy_obj.exists() {
+        return Some(legacy_obj);
+    }
+
+    // 3. Shared user cache: compiled from source once (hash-invalidated when
+    //    the runtime source changes) and reused by every directory/project.
+    let cache_dir = shared_runtime_cache_dir()?;
+    let cache_obj = cache_dir.join(&filename);
+    let cache_hash = cache_dir.join("runtime.hash");
+
+    if let Some(src_path) = resolve_min_runtime_source() {
+        // Hash-based invalidation: compare source hash with stored hash
+        let current_hash = file_content_hash(&src_path);
+        let stored_hash = fs::read_to_string(&cache_hash)
+            .ok()
+            .and_then(|s| s.trim().parse::<u64>().ok());
+
+        let needs_rebuild = match (current_hash, stored_hash) {
+            (Some(cur), Some(stored)) => cur != stored || !cache_obj.exists(),
+            _ => true, // no hash or can't read -> rebuild
+        };
+
+        if needs_rebuild {
+            let _ = fs::create_dir_all(&cache_dir);
+            #[cfg(windows)]
+            load_msvc_env();
+            let cc = if cfg!(windows) { "cl.exe" } else { "gcc" };
+            let mut cmd = std::process::Command::new(cc);
+            if cfg!(windows) {
+                cmd.arg("/nologo")
+                    .arg("/O2")
+                    .arg("/GS-")
+                    .arg("/Gs1000000")
+                    .arg("/DLPP_FREESTANDING")
+                    .arg("/c")
+                    .arg(&src_path)
+                    .arg(format!("/Fo:{}", cache_obj.display()));
+            } else {
+                cmd.arg("-Os")
+                    .arg("-fno-stack-protector")
+                    .arg("-ffreestanding")
+                    .arg("-fno-pic")
+                    .arg("-mno-red-zone")
+                    .arg("-fno-reorder-blocks-and-partition")
+                    .arg("-DLPP_FREESTANDING")
+                    .arg("-c")
+                    .arg(&src_path)
+                    .arg("-o")
+                    .arg(&cache_obj);
+            }
+            if cmd.status().map_or(false, |s| s.success()) && cache_obj.exists() {
+                // Store the hash for next time
+                if let Some(h) = current_hash {
+                    let _ = fs::write(&cache_hash, format!("{}\n", h));
+                }
+                return Some(cache_obj);
+            }
+        } else {
+            return Some(cache_obj);
+        }
+    }
+
+    if cache_obj.exists() {
+        return Some(cache_obj);
+    }
+
     None
 }
+
 
 /// Link using the host C compiler (cc / cl.exe) with optional -l flags for FFI
 pub fn host_link_binary(obj_file: &Path, output_path: &Path, link_libs: &[String]) -> Result<(), String> {

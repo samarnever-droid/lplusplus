@@ -78,11 +78,24 @@ install_source() {
         cp -r "$PROJECT_DIR/runtime" "$LIB_DIR/runtime"
     fi
     if command -v cc >/dev/null 2>&1; then
-        cc -O2 -fPIC -c "$LIB_DIR/lpp_runtime.c" -o "$LIB_DIR/lpp_runtime.o"
-        if [ "$(uname -s):$(uname -m)" = "Linux:x86_64" ]; then
-            cc -O2 -ffreestanding -fno-stack-protector -fno-pic -mno-red-zone \
-                -c "$PROJECT_DIR/runtime/linux_x86_64_min.c" -o "$LIB_DIR/lpp_runtime_min.o" || true
+        if ! cc -O2 -fPIC -c "$LIB_DIR/lpp_runtime.c" -o "$LIB_DIR/lpp_runtime.o"; then
+            printf '%s\n' "ERROR: failed to compile lpp_runtime.c (host runtime)." >&2
+            exit 1
         fi
+        if [ "$(uname -s):$(uname -m)" = "Linux:x86_64" ]; then
+            # Flags must match release.yml and pm.rs auto-rebuild so every install
+            # path produces the same freestanding runtime object.
+            if ! cc -Os -ffreestanding -fno-stack-protector -fno-pic -mno-red-zone \
+                    -fno-reorder-blocks-and-partition -DLPP_FREESTANDING \
+                    -c "$PROJECT_DIR/runtime/linux_x86_64_min.c" -o "$LIB_DIR/lpp_runtime_min.o"; then
+                printf '%s\n' "ERROR: failed to compile linux_x86_64_min.c (direct-link runtime)." >&2
+                printf '%s\n' "       '--linker direct' builds will not work until this is fixed." >&2
+                exit 1
+            fi
+        fi
+    else
+        printf '%s\n' "WARNING: no C compiler (cc) found; runtime objects were not prebuilt." >&2
+        printf '%s\n' "         The first '--linker direct' build will need gcc to compile them." >&2
     fi
 }
 

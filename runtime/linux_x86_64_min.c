@@ -1096,6 +1096,12 @@ int64_t lpp_buf_get32le(void*p,int64_t o) { if(!p)return 0; unsigned char*d=(uns
 void lpp_buf_copy(void*dst,int64_t do2,void*src,int64_t so,int64_t len) { if(!dst||!src||len<=0)return; char*d=(char*)dst+do2; char*s=(char*)src+so; for(int64_t i=0;i<len;i++)d[i]=s[i]; }
 char*lpp_buf_read_str(void*p,int64_t o,int64_t len) { if(!p||len<=0){char*e=(char*)lpp_alloc(1);e[0]=0;return e;} char*out=(char*)lpp_alloc(len+1); char*s=(char*)p+o; for(int64_t i=0;i<len;i++)out[i]=s[i]; out[len]=0; return out; }
 
+/* Mirror runtime/lpp_buf.c semantics: 0 on success, -1 on error. */
+void *lpp_buf_read(const char*path) { if(!path)return 0; long fd=lpp_sys_open(path,0,0); if(fd<0)return 0; long size=lpp_sys_lseek(fd,0,2); (void)lpp_sys_lseek(fd,0,0); if(size<0){lpp_sys_close(fd);return 0;} void*buf=(void*)(uintptr_t)lpp_buf_alloc(size); if(!buf){lpp_sys_close(fd);return 0;} long off=0; while(off<size){ long r=lpp_sys_read(fd,(char*)buf+off,size-off); if(r<=0)break; off+=r; } lpp_sys_close(fd); if(off!=size){lpp_buf_free(buf);return 0;} return buf; }
+int64_t lpp_buf_write(const char*path,void*p) { if(!path||!p)return -1; int64_t size=*(int64_t*)((char*)p-8); long fd=lpp_sys_open(path,0101,0644); if(fd<0)return -1; int64_t off=0; while(off<size){ long w=lpp_sys_write(fd,(char*)p+off,size-off); if(w<=0){lpp_sys_close(fd);return -1;} off+=w; } lpp_sys_close(fd); return 0; }
+int64_t lpp_buf_write_str(void*p,int64_t o,const char*str) { if(!p||!str)return -1; int64_t n=0; while(str[n])n++; int64_t cap=lpp_buf_len(p); if(o<0||o+n>cap)return -1; char*d=(char*)p+o; for(int64_t i=0;i<n;i++)d[i]=str[i]; return n; }
+int64_t lpp_buf_crc32(void*p,int64_t off,int64_t len) { if(!p||len<0)return 0; int64_t cap=lpp_buf_len(p); if(off<0||off+len>cap)return 0; const unsigned char*d=(const unsigned char*)((char*)p+off); uint32_t crc=0xFFFFFFFFu; for(int64_t i=0;i<len;i++){ crc^=d[i]; for(int b=0;b<8;b++){ uint32_t m=~(crc&1u)+1u; crc=(crc>>1)^(0xEDB88320u&m); } } return (int64_t)(uint32_t)(~crc); }
+
 /* ── Additional net stubs ── */
 int64_t lpp_net_accept_timeout(int64_t l,int64_t t){(void)t;return lpp_net_accept(l);}
 int64_t lpp_net_dial(const char*h,int64_t p,int64_t t){(void)t;return lpp_net_connect(h,p);}

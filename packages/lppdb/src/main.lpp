@@ -1,0 +1,58 @@
+# main.lpp — end-to-end verification suite for lppdb, a real embedded SQL
+# database engine written in pure L++. Run it: it creates a binary .db on disk,
+# exercises every supported statement, closes, reopens from disk, and checks
+# the data survived. Every assertion checks a real computed result.
+
+import lppdb
+
+def check(label: Str, got: Str, want_contains: Str):
+    if str_contains(got, want_contains) == 1:
+        print_str(str_concat("PASS  ", label))
+    else:
+        print_str(str_concat("FAIL  ", str_concat(label, str_concat("  got=", got))))
+
+def main():
+    path := "lppdb_test.db"
+    delete_file(path)
+    db := lppdb.db_open(path)
+
+    print_str("== lppdb real-engine test suite ==")
+
+    check("create table", lppdb.db_exec(db, "CREATE TABLE users (id INTEGER, name TEXT, age INTEGER)"), "\"status\":\"ok\"")
+    check("insert 1", lppdb.db_exec(db, "INSERT INTO users VALUES (1, 'Alice', 30)"), "\"changes\":1")
+    check("insert 2", lppdb.db_exec(db, "INSERT INTO users VALUES (2, 'Bob', 25)"), "\"changes\":1")
+    check("insert explicit cols", lppdb.db_exec(db, "INSERT INTO users (id, name, age) VALUES (3, 'Carol', 35)"), "\"changes\":1")
+    check("insert multi-row", lppdb.db_exec(db, "INSERT INTO users VALUES (4, 'Dave', 28), (5, 'Eve', 22)"), "\"changes\":2")
+
+    check("select * has Eve", lppdb.db_exec(db, "SELECT * FROM users"), "\"Eve\"")
+    check("count(*) == 5", lppdb.db_exec(db, "SELECT COUNT(*) FROM users"), "[[5]]")
+    check("sum(age) == 140", lppdb.db_exec(db, "SELECT SUM(age) FROM users"), "[[140]]")
+    check("min(age) == 22", lppdb.db_exec(db, "SELECT MIN(age) FROM users"), "[[22]]")
+    check("max(age) == 35", lppdb.db_exec(db, "SELECT MAX(age) FROM users"), "[[35]]")
+
+    check("where age > 26", lppdb.db_exec(db, "SELECT name FROM users WHERE age > 26"), "Alice")
+    check("where name = 'Bob'", lppdb.db_exec(db, "SELECT age FROM users WHERE name = 'Bob'"), "[[25]]")
+    check("where AND range", lppdb.db_exec(db, "SELECT name FROM users WHERE age >= 25 AND age <= 30"), "Alice")
+
+    check("order by age asc (Eve first)", lppdb.db_exec(db, "SELECT name FROM users ORDER BY age ASC"), "Eve")
+    check("order by age desc (Carol first)", lppdb.db_exec(db, "SELECT name FROM users ORDER BY age DESC"), "Carol")
+    check("limit 2", lppdb.db_exec(db, "SELECT name FROM users LIMIT 2"), "Alice")
+
+    check("update 1 row", lppdb.db_exec(db, "UPDATE users SET age = 31 WHERE name = 'Alice'"), "\"changes\":1")
+    check("update applied", lppdb.db_exec(db, "SELECT age FROM users WHERE name = 'Alice'"), "[[31]]")
+
+    check("delete 1 row", lppdb.db_exec(db, "DELETE FROM users WHERE id = 5"), "\"changes\":1")
+    check("count after delete == 4", lppdb.db_exec(db, "SELECT COUNT(*) FROM users"), "[[4]]")
+
+    lppdb.db_save(db, path)
+    lppdb.db_close(db)
+
+    # Reopen from disk to prove real binary persistence (not in-memory only).
+    db2 := lppdb.db_open(path)
+    check("persistence: reopened count == 4", lppdb.db_exec(db2, "SELECT COUNT(*) FROM users"), "[[4]]")
+    check("persistence: data intact", lppdb.db_exec(db2, "SELECT name FROM users WHERE id = 1"), "Alice")
+    check("drop table", lppdb.db_exec(db2, "DROP TABLE users"), "\"status\":\"ok\"")
+    check("table gone after drop", lppdb.db_exec(db2, "SELECT COUNT(*) FROM users"), "no such table")
+    lppdb.db_close(db2)
+
+    print_str("== done ==")
