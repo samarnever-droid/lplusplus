@@ -23,7 +23,9 @@
 #include <errno.h>
 #include <signal.h>
 #include <stdarg.h>
+#include <time.h>
 #include <math.h>
+#include <sys/types.h>
 
 #if defined(_WIN32)
 #  ifndef WIN32_LEAN_AND_MEAN
