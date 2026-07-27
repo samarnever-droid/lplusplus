@@ -56,7 +56,7 @@ def search_registry(query: Str) -> Void:
         error("Failed to fetch or load package registry.")
         return
 
-    info("Registry matches:")
+    print_str(str_concat("[lpp-pm] Registry matches for: ", query))
     mut lower_query := str_to_lower(query)
     mut found_count := 0
 
@@ -108,6 +108,7 @@ def search_registry(query: Str) -> Void:
     if found_count == 0:
         if str_len(query) > 0:
             print_str(str_concat("  No packages matched '", str_concat(query, "'")))
+            print_str("  Try: lpp search opencode | lpp search sqlite | lpp search math")
         else:
             print_str("  No packages available in registry.")
 

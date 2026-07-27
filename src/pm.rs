@@ -1287,52 +1287,59 @@ pub fn run_command(args: &[String]) {
 }
 
 fn print_help() {
-    println!("L++ Package Manager v3.6.0");
-    println!("Usage: lpp [command] [options]");
+    println!("L++ Package Manager v4.2.0");
+    println!("Usage:");
+    println!("  lpp <file.lpp> [options]          Compile one source file");
+    println!("  lpp <command> [args]              Package/app workflow");
     println!();
-    println!("Package Commands:");
-    println!("  create web <name>     Create a new Lreact desktop web application");
-    println!("  lpp lreact create <N> Create a new Lreact web application");
-    println!("  lpp lreact dev        Start Lreact development server");
-    println!("  lpp lreact build      Build standalone release binary in dist/");
-    println!("  dev                   Start Lreact development server (http://localhost:3000)");
-    println!("  build --release       Build standalone release binary & bundle web assets in dist/");
-    println!("  new <name>            Create a new L++ package");
-    println!("  init <name>           Initialize package in current directory");
-    println!("  install [name]        Resolve project deps, or install known global app packages");
-    println!("  add <name>            Add dependency from registry");
-    println!("  add @owner/repo       Add dependency from GitHub");
-    println!("  add <name> --git <U>  Add via explicit git URL");
-    println!("  add <name> --path <P> Add via local path");
-    println!("  add <name> --version <V>  Pin dependency version");
-    println!("  remove <name>         Remove a dependency");
-    println!("  update                Refresh dependencies and lockfile");
-    println!("  search <query>        Search package registry");
-    println!("  list                  List direct dependencies");
-    println!("  tree                  Print dependency tree");
-    println!("  metadata              Print package metadata");
-    println!("  outdated              Show unpinned dependencies");
-    println!("  clean                 Remove build output and artifacts");
-    println!("  check                 Check project for compilation errors");
-    println!("  build                 Build to native binary (lpp-link or host)");
-    println!("  run                   Compile and run project");
-    println!("  test                  Run tests in tests/ directory");
-    println!("  bench                 Run benchmarks");
-    println!("  publish               Publish package to registry (requires git)");
-    println!("  help                  Show this help");
+    println!("Project workflow:");
+    println!("  new <name>                        Create a new L++ package directory");
+    println!("  init [name]                       Initialize lpp.toml in current directory");
+    println!("  add <pkg>                         Add a dependency to lpp.toml");
+    println!("  add @owner/repo                   Add dependency from GitHub");
+    println!("  add <pkg> --git <url>             Add dependency from explicit git URL");
+    println!("  add <pkg> --path <dir>            Add local path dependency");
+    println!("  install                           Install dependencies from lpp.toml");
+    println!("  update                            Refresh dependencies and lockfile");
+    println!("  remove <pkg>                      Remove dependency from lpp.toml");
+    println!("  list                              List direct dependencies");
+    println!("  tree                              Print lockfile dependency tree");
+    println!("  metadata                          Print package manifest");
+    println!("  outdated                          Show unpinned dependencies");
     println!();
-    println!("Single-file Commands:");
-    println!("  lpp <file.lpp>              Compile to native executable");
-    println!("  lpp <file.lpp> --check      Type-check without compiling");
-    println!("  lpp <file.lpp> --emit-obj   Emit native object file (.o / .obj)");
-    println!("  lpp --checkall              Check all .lpp files in directory");
-    println!("  lpp --checkall --fix        Check and automatically repair source files");
+    println!("Global app workflow:");
+    println!("  install lpp-opencode              Install lpp-opencode command globally");
+    println!("  install opencode                  Alias for lpp-opencode");
+    println!("  install openclaude                Alias for lpp-opencode");
     println!();
-    println!("Benchmarks:");
-    println!("  lpp bench --self-test       Run integration tests");
-    println!("  lpp bench --disk --mem      King20 benchmark suite");
+    println!("Build/test workflow:");
+    println!("  check                             Type-check project");
+    println!("  build                             Build project to native binary");
+    println!("  run                               Compile and run project");
+    println!("  test                              Run tests in tests/ directory");
+    println!("  clean                             Remove build output/artifacts");
+    println!("  bench                             Run benchmarks");
     println!();
-    println!("Note: `lpp build` builds a package; `lpp file.lpp` compiles one file.");
+    println!("Registry:");
+    println!("  search <query>                    Search package registry");
+    println!("  publish                           Publish package to registry (requires git)");
+    println!();
+    println!("Lreact/web workflow:");
+    println!("  create web <name>                 Create a new Lreact desktop web app");
+    println!("  lpp lreact create <name>          Create a new Lreact web app");
+    println!("  lpp lreact dev                    Start Lreact development server");
+    println!("  lpp lreact build                  Build release bundle in dist/");
+    println!();
+    println!("Single-file options:");
+    println!("  lpp <file.lpp> --check            Type-check without compiling");
+    println!("  lpp <file.lpp> --emit-obj         Emit native object file (.o/.obj)");
+    println!("  lpp --checkall                    Check all .lpp files in directory");
+    println!("  lpp --checkall --fix              Check and automatically repair source files");
+    println!();
+    println!("Difference between add and install:");
+    println!("  lpp add <pkg>                     Writes dependency into this project's lpp.toml");
+    println!("  lpp install                       Installs dependencies listed in lpp.toml");
+    println!("  lpp install lpp-opencode          Installs a known app globally, no project needed");
 }
 
 fn cmd_new(args: &[String]) {
@@ -1600,10 +1607,15 @@ fn cmd_install_command(args: &[String]) {
             install_lpp_opencode_global();
             return;
         }
-        eprintln!("[L++] Error: lpp.toml not found in the current directory.");
-        eprintln!("[L++] '{}' is a dependency install command inside a project.", package);
-        eprintln!("[L++] For app-style global installs, known aliases include: lpp-opencode, opencode, openclaude, lpp-openclaude.");
-        eprintln!("[L++] For library dependencies, run inside a project or use: lpp new <name>");
+        eprintln!("[L++] No lpp.toml found here, so this is not a project dependency install.");
+        eprintln!("[L++] '{}' is not a known global app alias.", package);
+        eprintln!("");
+        eprintln!("What you probably want:");
+        eprintln!("  Global app:        lpp install lpp-opencode");
+        eprintln!("  Search registry:   lpp search {}", package);
+        eprintln!("  New project:       lpp new my_app && cd my_app && lpp add {}", package);
+        eprintln!("");
+        eprintln!("Known global app aliases: lpp-opencode, opencode, openclaude, lpp-openclaude");
         return;
     }
     cmd_install(false);
@@ -2125,11 +2137,14 @@ fn cmd_search(args: &[String]) {
             println!("[L++] No packages available in registry.");
         } else {
             println!("[L++] No registry packages matched '{}'.", query);
+            println!("[L++] Try: lpp search opencode | lpp search sqlite | lpp search math");
         }
         return;
     }
 
-    println!("[L++] Registry matches:");
+    println!("[L++] Registry matches for '{}': {}", if query.is_empty() { "*" } else { &query }, results.len());
+    println!("[L++] Use `lpp add <name>` inside a project, or `lpp install lpp-opencode` for global apps.");
+    println!();
     for (name, entry) in results {
         let mut detail = format!("  {}", name);
         if let Some(ref desc) = entry.description {
