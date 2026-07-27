@@ -480,16 +480,18 @@ document.getElementById('btn-stats').onclick = async () => {
         .map_err(|e| format!("Failed to write www/app.js: {}", e))?;
 
     let lreact_js = r#"/**
- * Lreact Client SDK (http://localhost:3000)
+ * Lreact Client SDK
  */
 (function () {
-  const LREACT_PORT = 3000;
-  const LREACT_URL = `http://localhost:${LREACT_PORT}`;
+  const defaultUrl = 'http://localhost:3000';
+  const baseUrl = (window.location.origin && window.location.origin.startsWith('http'))
+    ? window.location.origin
+    : defaultUrl;
 
   window.lpp = {
     invoke: async function (cmd, args = {}) {
       try {
-        const response = await fetch(`${LREACT_URL}/api/invoke`, {
+        const response = await fetch(`${baseUrl}/api/invoke`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ cmd, args }),
