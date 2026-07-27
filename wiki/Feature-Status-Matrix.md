@@ -26,13 +26,13 @@ This page separates **implemented**, **experimental**, and **planned** features 
 | Enums | Working | unit and integer-payload variants work |
 | Match | Working | variant arms and bindings work |
 | `?` try operator | Working | works with packed Result-like enum values |
-| Generic functions | Experimental | phase 1, type-erased, common inference works |
-| Generic structs | Working | `struct Box[T]` with static cycle detection for recursive fields |
-| Generic enums | Experimental | syntax exists, payload limitations remain |
-| Type aliases | Experimental | parsed, but full typechecker substitution is incomplete |
+| Generic functions | Stable | Monomorphized zero-overhead generics with trait bounds (`[T: Display]`) |
+| Generic structs | Stable | `struct Box[T]` with monomorphization & static cycle detection |
+| Generic enums | Working | Monomorphized generic payload enums |
+| Type aliases | Working | `type Name = Target` type alias substitution |
 | Closures | Working | `fn(...) -> Type:` syntax, automatic ARC escape promotion for `List`, `Map`, `Str` |
 | Threads | Working | `spawn fn(): ...` |
-| List literals | Working | `[1, 2, 3]`, float lists also work |
+| List literals | Working | `[1, 2, 3]`, float lists, in-place `list_set` |
 | Maps | Working | integer and string keys work in runtime builtins |
 | String indexing | Working | `s[0]` returns a one-character `Str` |
 | List indexing | Working | `list[0]` lowers to `list_get` |
@@ -43,28 +43,30 @@ This page separates **implemented**, **experimental**, and **planned** features 
 | Logical operators | Working | `&&`, `||`, `!`, with short-circuit for `&&`/`||` |
 | Bitwise operators | Working | `&`, `|`, `^`, `<<`, `>>` |
 | `pub` keyword | Experimental/reserved | lexer recognizes it; visibility enforcement is future work |
-| Import aliases | Experimental | parser supports `import x as y`; namespace behavior is still limited |
-| Traits/interfaces | Working | `trait Name:` + `impl Trait for Type:` with static and dynamic dispatch |
+| Import aliases | Working | parser and resolver support `import x as y` |
+| Traits/interfaces | Stable | `trait Name:` + `impl Trait for Type:` with static/dynamic dispatch and generic bounds |
 | FFI / extern "C" | Working | `extern "C":` blocks, auto host linker, `link "lib"` support |
-| Rust-style Diagnostics | Stable | Error codes (`E0001`–`E0005`), line previews, carets, help hints |
+| Rust-style Diagnostics | Stable | Error codes (`E0001`–`E0005`), line:col coordinates, carets, help hints, `[suggestion]` |
+| Auto-Fix Engine | Stable | `lpp --checkall --fix` automatically repairs code on disk |
 | Runtime Panic Engine | Stable | `lpp_panic`, signal handlers (`SIGSEGV`, `SIGFPE`, `SIGABRT`), stack backtrace |
 | Stdio LSP Server | Stable | `lpp-lsp` binary for editor completions, hovers, jump-to-def, diagnostics |
 | Self-Hosted PM | Stable | `lpp-pm` fully written in L++ (`pm/src/main.lpp`) with embedded Git & HTTP engine |
-| Full monomorphized generics | Planned | current generics use type erasure; monomorphization is future work |
-| Char type | Planned | currently use one-character `Str`, `ord`, `chr`, `char_at` |
+| Char Primitive Type | Stable | Dedicated `Char` primitive type (`'a'`, `'\n'`, `'\t'`, `'\\'`) across compiler pipeline |
 
 ## Standard library status
 
 | Module | Status | Notes |
 |---|---:|---|
-| `stdlib.math` | Working | arithmetic helpers such as `pow`, `gcd`, `fib` |
-| `stdlib.strings` | Working/experimental | helpers built on string builtins |
-| `stdlib.collections` | Working/experimental | list helpers |
-| `stdlib.convert` | Working | `int_to_str`, `bool_to_str` style helpers |
-| `stdlib.assert` | Experimental | implemented in pure L++; process-exit behavior is not a true compiler trap |
-| `stdlib.algo` | Experimental | currently depends on missing `list_set` in some functions |
-| `stdlib.result` | Experimental | enum helper arithmetic is not fully type-safe yet |
-| `packages/lpp-zip` | Experimental | pure L++ ZIP package, host-runtime path recommended |
+| `stdlib.math` | Stable | arithmetic helpers such as `pow`, `gcd`, `fib` |
+| `stdlib.strings` | Stable | helpers built on string builtins |
+| `stdlib.collections` | Stable | list helpers |
+| `stdlib.convert` | Stable | `int_to_str`, `bool_to_str` style helpers |
+| `stdlib.assert` | Stable | assertion helpers |
+| `stdlib.algo` | Stable | sorting & search algorithms using `list_set` |
+| `stdlib.result` | Stable | enum Result/Option types with pattern matching and arithmetic tag unwrapping |
+| `stdlib.lreact` | Stable | pure L++ Tauri-like React desktop GUI framework bridge |
+| `packages/lpp-zip` | Stable | pure L++ ZIP package |
+| `packages/lppstore` | Stable | enterprise WAL database engine handling 164,563 OPS |
 
 ## Runtime and linker status
 
