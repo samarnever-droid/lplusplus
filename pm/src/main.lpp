@@ -10,7 +10,7 @@ import registry
 import add_remove
 
 def main():
-    print_str("=== Self-Hosted L++ Package Manager v4.2.0 ===")
+    print_str("=== Self-Hosted L++ Package Manager v4.2.1 ===")
 
     mut cmd := env_get("LPP_PM_CMD")
     if str_len(cmd) == 0:
@@ -168,7 +168,7 @@ def main():
         return
 
     # ── help ───────────────────────────────────────────────────────────
-    print_str("=== L++ Package Manager v4.2.0 (Pure L++ Native) ===")
+    print_str("=== L++ Package Manager v4.2.1 (Pure L++ Native) ===")
     print_str("Usage:")
     print_str("  lpp <file.lpp> [options]       Compile one file")
     print_str("  lpp <command> [args]           Package/app workflow")
