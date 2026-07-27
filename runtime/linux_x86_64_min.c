@@ -234,7 +234,7 @@ void lpp_list_push_float(void *list, double value) {
 
 int64_t lpp_list_get(void *raw, int64_t index) {
     LppList *list = (LppList *)raw;
-    if (!list || index < 0 || index >= list->len) exit(101);
+    if (!list || index < 0 || index >= list->len) { __asm__ volatile("syscall"::"a"(60),"D"(101):"rcx","r11"); for(;;); }
     return list->data[index];
 }
 
@@ -1076,7 +1076,7 @@ int64_t lpp_random_range(int64_t lo, int64_t hi) { return lo < hi ? lo : 0; }
 /* ── Time (syscalls) ── */
 int64_t lpp_time_ms(void) { uint64_t buf[2]; __asm__ volatile("syscall":"=a"(buf[0]):"a"(228),"D"(1),"S"(buf):"rcx","r11","memory"); return (int64_t)(buf[0]*1000+buf[1]/1000000); }
 void lpp_sleep_ms(int64_t ms) { uint64_t buf[2]; buf[0]=(uint64_t)(ms/1000); buf[1]=(uint64_t)((ms%1000)*1000000); __asm__ volatile("syscall"::"a"(35),"D"(buf),"S"(0):"rcx","r11","memory"); }
-void lpp_exit(int64_t code) { __asm__ volatile("syscall"::"a"(60),"D"(code):"rcx","r11"); __builtin_unreachable(); }
+void lpp_exit(int64_t code) { __asm__ volatile("syscall"::"a"(60),"D"(code):"rcx","r11"); for(;;); }
 
 /* ── String equality ── */
 int64_t lpp_str_eq(const char *a, const char *b) { if(a==b)return 1; if(!a||!b)return 0; while(*a&&*a==*b){a++;b++;} return *a==*b?1:0; }

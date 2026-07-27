@@ -457,10 +457,10 @@ fn main() {
     while idx < args.len() {
         let arg = &args[idx];
         if arg == "--version" || arg == "-v" {
-            println!("L++ Compiler v3.4.0 (Pure Native AOT)");
+            println!("L++ Compiler v4.0.0 (Pure Native AOT)");
             return;
         } else if arg == "--help" || arg == "-h" {
-            println!("L++ (L Plus Plus) v3.4.0 — Pure Native Compiler & Toolchain");
+            println!("L++ (L Plus Plus) v4.0.0 — Pure Native Compiler & Toolchain");
             println!("Cranelift AOT backend, 9 MIR optimization passes, direct ELF/PE/Mach-O linker");
             println!();
             println!("Usage: lpp <file.lpp> [options]");
@@ -511,7 +511,7 @@ fn main() {
             println!("  -v, --version    Show version");
             println!("  -h, --help       Show this help");
             println!();
-            println!("Language Features (v3.4.0):");
+            println!("Language Features (v4.0.0):");
             println!("  Functions, default params, closures, threads");
             println!("  Structs, enums, match with bindings");
             println!("  Generics: def foo[T](x: T) -> T");
@@ -926,7 +926,7 @@ fn main() {
                 && !dump_escape
                 && !dump_mir
             {
-                println!("L++ v3.4.0 (Pure Native Executable)\n");
+                println!("L++ v4.0.0 (Pure Native Executable)\n");
                 println!("Compiled and linked native binary: {}", exe_path);
                 println!("Time: {:.1} ms", total_time.as_secs_f64() * 1000.0);
             }
