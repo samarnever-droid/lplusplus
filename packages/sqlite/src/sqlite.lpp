@@ -88,6 +88,36 @@ def exec_select(db_path: Str, sql: Str) -> Str:
     res = str_concat(res, "\"}")
     return res
 
+def exec_update(db_path: Str, sql: Str) -> Str:
+    # Parse: UPDATE table_name SET col = val WHERE condition
+    up_idx := str_find(sql, "UPDATE ")
+    if up_idx < 0:
+        return "{\"status\":\"error\",\"message\":\"Malformed UPDATE query\"}"
+    rest := str_substr(sql, 7, str_len(sql) - 7)
+    set_idx := str_find(rest, "SET")
+    if set_idx < 0:
+        return "{\"status\":\"error\",\"message\":\"Missing SET clause\"}"
+    table_name := str_trim(str_substr(rest, 0, set_idx))
+    entry := str_concat("UPDATE|", str_concat(table_name, "|MODIFIED\r\n"))
+    append_file(db_path, entry)
+    mut res := "{\"status\":\"ok\",\"action\":\"UPDATE\",\"table\":\""
+    res = str_concat(res, table_name)
+    res = str_concat(res, "\"}")
+    return res
+
+def exec_delete(db_path: Str, sql: Str) -> Str:
+    # Parse: DELETE FROM table_name WHERE condition
+    del_idx := str_find(sql, "DELETE FROM ")
+    if del_idx < 0:
+        return "{\"status\":\"error\",\"message\":\"Malformed DELETE query\"}"
+    table_name := str_trim(str_substr(sql, 12, str_len(sql) - 12))
+    entry := str_concat("DELETE|", str_concat(table_name, "|REMOVED\r\n"))
+    append_file(db_path, entry)
+    mut res := "{\"status\":\"ok\",\"action\":\"DELETE\",\"table\":\""
+    res = str_concat(res, table_name)
+    res = str_concat(res, "\"}")
+    return res
+
 def exec(db_handle: Int, db_path: Str, sql: Str) -> Str:
     if str_find(sql, "CREATE TABLE") == 0 || str_find(sql, "create table") == 0:
         return exec_create_table(db_path, sql)
@@ -97,5 +127,11 @@ def exec(db_handle: Int, db_path: Str, sql: Str) -> Str:
 
     if str_find(sql, "SELECT") == 0 || str_find(sql, "select") == 0:
         return exec_select(db_path, sql)
+
+    if str_find(sql, "UPDATE") == 0 || str_find(sql, "update") == 0:
+        return exec_update(db_path, sql)
+
+    if str_find(sql, "DELETE") == 0 || str_find(sql, "delete") == 0:
+        return exec_delete(db_path, sql)
 
     return "{\"status\":\"error\",\"message\":\"Unsupported SQL command\"}"

@@ -2,3 +2,8 @@
 SCHEMA|users|CREATED
 DATA|users|(1, 'Alice', 'alice@lpp.org')
 DATA|users|(2, 'Bob', 'bob@lpp.org')
+SCHEMA|users|CREATED
+DATA|users|(1, 'Alice', 'alice@lpp.org')
+DATA|users|(2, 'Bob', 'bob@lpp.org')
+UPDATE|users|MODIFIED
+DELETE|users WHERE id = 2|REMOVED

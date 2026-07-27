@@ -1008,38 +1008,50 @@ fn resolve_module_filepath(module: &str, base_dir: &std::path::Path) -> Result<P
             }
         }
 
-        let manifest_path_json = pkg_dir.join("lpp.json");
-        let manifest_path_toml = pkg_dir.join("lpp.toml");
-        let parsed_pkg = if manifest_path_json.exists() {
-            std::fs::read_to_string(&manifest_path_json)
-                .ok()
-                .and_then(|c| pm::parse_json_manifest(&c).ok())
-        } else if manifest_path_toml.exists() {
-            std::fs::read_to_string(&manifest_path_toml)
-                .ok()
-                .and_then(|c| pm::parse_toml(&c).ok())
-        } else {
-            None
-        };
+        // Check root and subfolder (e.g. .lpp_packages/sqlite/packages/sqlite)
+        let search_dirs = [
+            pkg_dir.clone(),
+            pkg_dir.join("packages").join(pkg_name),
+            pkg_dir.join(pkg_name),
+        ];
 
-        if let Some(pkg) = parsed_pkg {
-            if let Some(entry) = pkg.entry {
-                let custom_entry = pkg_dir.join(entry);
-                if custom_entry.exists() {
-                    return Ok(custom_entry);
+        for s_dir in &search_dirs {
+            if !s_dir.exists() { continue; }
+
+            let manifest_path_json = s_dir.join("lpp.json");
+            let manifest_path_toml = s_dir.join("lpp.toml");
+            let parsed_pkg = if manifest_path_json.exists() {
+                std::fs::read_to_string(&manifest_path_json)
+                    .ok()
+                    .and_then(|c| pm::parse_json_manifest(&c).ok())
+            } else if manifest_path_toml.exists() {
+                std::fs::read_to_string(&manifest_path_toml)
+                    .ok()
+                    .and_then(|c| pm::parse_toml(&c).ok())
+            } else {
+                None
+            };
+
+            if let Some(pkg) = parsed_pkg {
+                if let Some(entry) = pkg.entry {
+                    let custom_entry = s_dir.join(entry);
+                    if custom_entry.exists() {
+                        return Ok(custom_entry);
+                    }
                 }
             }
-        }
 
-        let candidates = [
-            pkg_dir.join(format!("{}.lpp", pkg_name)),
-            pkg_dir.join("src").join(format!("{}.lpp", pkg_name)),
-            pkg_dir.join("src").join("main.lpp"),
-            pkg_dir.join("main.lpp"),
-        ];
-        for c in &candidates {
-            if c.exists() {
-                return Ok(c.clone());
+            let candidates = [
+                s_dir.join(format!("{}.lpp", pkg_name)),
+                s_dir.join("src").join(format!("{}.lpp", pkg_name)),
+                s_dir.join("src").join("main.lpp"),
+                s_dir.join("main.lpp"),
+                s_dir.join("src").join("sqlite.lpp"),
+            ];
+            for c in &candidates {
+                if c.exists() {
+                    return Ok(c.clone());
+                }
             }
         }
     }
