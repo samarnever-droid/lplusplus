@@ -8,9 +8,9 @@ def base64_encode(input: Str) -> Str:
     len := str_len(input)
     while i < len:
         b0 := ord(char_at(input, i))
-        b1 := 0
-        b2 := 0
-        pad := 0
+        mut b1 := 0
+        mut b2 := 0
+        mut pad := 0
         if i + 1 < len:
             b1 = ord(char_at(input, i + 1))
         else:

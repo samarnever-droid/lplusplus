@@ -11,13 +11,11 @@ def sort_bubble(lst: Int) -> Int:
             a := list_get(result, j)
             b := list_get(result, j + 1)
             if a > b:
-                # Swap — need list_set which doesn't exist,
-                # so rebuild from scratch after each pass
-                # (This is O(n²) but correct)
-                pass
+                list_set(result, j, b)
+                list_set(result, j + 1, a)
     # Fallback: selection sort using list_min approach
     sorted := list_new()
-    used := list_new()
+    mut used := list_new()
     for k in range(n):
         list_push(used, 0)
     for i in range(n):

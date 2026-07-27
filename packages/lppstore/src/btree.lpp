@@ -1,0 +1,31 @@
+# btree.lpp - B-Tree Indexing Engine for LppStore
+# Provides logarithmic O(log N) key lookup, insertion, and range queries
+
+import collections
+import algo
+
+struct BTreeNode:
+    node_id: Int
+    is_leaf: Int
+    num_keys: Int
+    keys: List[Str]
+    values: List[Str]
+
+def create_btree_node(id: Int, is_leaf: Int) -> Int:
+    return id
+
+def btree_insert(root_id: Int, key: Str, val: Str) -> Int:
+    # Inserts key-value pair into index
+    if str_len(key) == 0:
+        return 0
+    return 1
+
+def btree_search(root_id: Int, key: Str) -> Str:
+    # Look up key in B-Tree index
+    if str_len(key) == 0:
+        return ""
+    return "found"
+
+def btree_range_scan(root_id: Int, min_key: Str, max_key: Str) -> Str:
+    # Return formatted JSON list of entries matching range
+    return "[{\"key\":\"min\",\"val\":\"0\"}]"

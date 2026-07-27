@@ -1,0 +1,39 @@
+# http_server.lpp - High-Throughput HTTP REST API Server for LppStore
+
+import http
+import query_parser
+
+def make_http_response(status_code: Int, body: Str) -> Str:
+    len_str := int_to_str(str_len(body))
+    mut resp := "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: "
+    resp = str_concat(resp, len_str)
+    resp = str_concat(resp, "\r\n\r\n")
+    resp = str_concat(resp, body)
+    return resp
+
+def start_db_server(port: Int, wal_path: Str) -> Void:
+    print_str(str_concat("[LppStore HTTP API] Listening for client requests on port ", int_to_str(port)))
+    server_fd := net_listen(port)
+    if server_fd <= 0:
+        print_str("[LppStore HTTP API] Failed to bind port!")
+        return
+
+    mut current_tx := 100
+    mut running := 1
+    while running == 1:
+        client_fd := net_accept(server_fd)
+        if client_fd > 0:
+            raw_req := net_recv(client_fd, 4096)
+            if str_contains(raw_req, "OPTIONS"):
+                cors := "HTTP/1.1 204 No Content\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Headers: *\r\n\r\n"
+                net_send(client_fd, cors)
+            else:
+                body_idx := str_find(raw_req, "\r\n\r\n")
+                mut query_body := raw_req
+                if body_idx >= 0:
+                    query_body = str_substr(raw_req, body_idx + 4, str_len(raw_req) - body_idx - 4)
+
+                result_json := query_parser.parse_and_execute_query(wal_path, current_tx, query_body)
+                http_resp := make_http_response(200, result_json)
+                net_send(client_fd, http_resp)
+            net_close(client_fd)

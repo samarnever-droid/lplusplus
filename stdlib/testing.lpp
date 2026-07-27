@@ -8,7 +8,7 @@ def assert_eq_int(actual: Int, expected: Int, msg: Str = ""):
         label := str_concat("  PASS: ", msg)
         print_str(label)
     else:
-        label := str_concat("  FAIL: ", msg)
+        mut label := str_concat("  FAIL: ", msg)
         label = str_concat(label, " — expected ")
         label = str_concat(label, int_to_str(expected))
         label = str_concat(label, ", got ")
@@ -20,7 +20,7 @@ def assert_eq_str(actual: Str, expected: Str, msg: Str = ""):
         label := str_concat("  PASS: ", msg)
         print_str(label)
     else:
-        label := str_concat("  FAIL: ", msg)
+        mut label := str_concat("  FAIL: ", msg)
         label = str_concat(label, " — expected '")
         label = str_concat(label, expected)
         label = str_concat(label, "', got '")

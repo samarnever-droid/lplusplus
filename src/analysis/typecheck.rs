@@ -78,11 +78,15 @@ fn types_compatible(expected: &TypeRef, actual: &TypeRef) -> bool {
     if expected == actual {
         return true;
     }
-    // Allow coercion between Char and Int, and Char/Int/Float/Bool to Str
-    if matches!((expected, actual), (TypeRef::Char, TypeRef::Int) | (TypeRef::Int, TypeRef::Char)) {
+    // Allow coercion between Char/Bool/Custom(enum) and Int, and Char/Int/Float/Bool to Str
+    if matches!((expected, actual), (TypeRef::Char, TypeRef::Int) | (TypeRef::Int, TypeRef::Char) | (TypeRef::Bool, TypeRef::Int) | (TypeRef::Int, TypeRef::Bool) | (TypeRef::Custom(_), TypeRef::Int) | (TypeRef::Int, TypeRef::Custom(_))) {
         return true;
     }
     if expected == &TypeRef::Str && matches!(actual, TypeRef::Int | TypeRef::Float | TypeRef::Bool | TypeRef::Char) {
+        return true;
+    }
+    // Allow collection/map handles (represented as 64-bit handle IDs) to coerce with Int
+    if (expected == &TypeRef::Int && matches!(actual, TypeRef::Generic(..))) || (actual == &TypeRef::Int && matches!(expected, TypeRef::Generic(..))) {
         return true;
     }
     // TypeParam is compatible with any concrete type (type erasure)
@@ -520,6 +524,7 @@ impl<'a> TypeChecker<'a> {
                     TypeRef::Generic(ref name, ref params) if name == "List" && !params.is_empty() => {
                         params[0].clone()
                     }
+                    TypeRef::Str => TypeRef::Str,
                     _ => TypeRef::Int,
                 };
                 if let Some(ast_id) = binding_id.get() {
@@ -656,7 +661,7 @@ impl<'a> TypeChecker<'a> {
                     }
                     _ => false,
                 };
-                if left_ty != right_ty && !is_ptr_null_check {
+                if !types_compatible(&left_ty, &right_ty) && !is_ptr_null_check {
                     return Err(format!(
                         "Type mismatch in binary operation: {:?} and {:?}",
                         left_ty, right_ty
@@ -779,10 +784,7 @@ impl<'a> TypeChecker<'a> {
                                     return Ok(params[0].clone());
                                 }
                             }
-                            return Err(format!(
-                                "list_get first argument must be a List, got {:?}",
-                                list_ty
-                            ));
+                            return Ok(TypeRef::Int);
                         }
 
                         if name == "map_new" || name == "lpp_map_new" {

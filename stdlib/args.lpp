@@ -17,9 +17,9 @@ def parse_flags(input: Str) -> Int:
 def get_flag_value(input: Str, flag: Str) -> Str:
     # Extract value after --flag=value or --flag value
     eq_form := str_concat(flag, "=")
-    idx := str_find(input, eq_form)
+    mut idx := str_find(input, eq_form)
     if idx >= 0:
-        start := idx + str_len(eq_form)
+        mut start := idx + str_len(eq_form)
         mut end := start
         while end < str_len(input) && char_at(input, end) != " ":
             end += 1
@@ -27,7 +27,7 @@ def get_flag_value(input: Str, flag: Str) -> Str:
     # Try --flag value form
     idx = str_find(input, flag)
     if idx >= 0:
-        start := idx + str_len(flag)
+        mut start := idx + str_len(flag)
         # Skip spaces
         while start < str_len(input) && char_at(input, start) == " ":
             start += 1

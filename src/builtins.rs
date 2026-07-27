@@ -248,6 +248,22 @@ pub fn get_builtins() -> &'static [Builtin] {
             cl_return: None,
         },
         Builtin {
+            name: "list_set",
+            symbol: "lpp_list_set",
+            params: &[ParamType::Any, ParamType::Specific(TypeRef::Int), ParamType::Any],
+            return_type: TypeRef::Void,
+            cl_params: &[0, 0, 0],
+            cl_return: None,
+        },
+        Builtin {
+            name: "lpp_list_set",
+            symbol: "lpp_list_set",
+            params: &[ParamType::Any, ParamType::Specific(TypeRef::Int), ParamType::Any],
+            return_type: TypeRef::Void,
+            cl_params: &[0, 0, 0],
+            cl_return: None,
+        },
+        Builtin {
             name: "list_get",
             symbol: "lpp_list_get",
             params: &[ParamType::Any, ParamType::Specific(TypeRef::Int)],

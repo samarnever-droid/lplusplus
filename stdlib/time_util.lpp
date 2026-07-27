@@ -12,7 +12,7 @@ def format_duration(ms: Int) -> Str:
     elif ms < 60000:
         secs := ms / 1000
         remainder := ms % 1000
-        result := str_concat(int_to_str(secs), ".")
+        mut result := str_concat(int_to_str(secs), ".")
         # Pad to 3 digits
         if remainder < 10:
             result = str_concat(result, "00")
@@ -23,12 +23,12 @@ def format_duration(ms: Int) -> Str:
     else:
         mins := ms / 60000
         secs := (ms % 60000) / 1000
-        result := str_concat(int_to_str(mins), "m ")
+        mut result := str_concat(int_to_str(mins), "m ")
         result = str_concat(result, int_to_str(secs))
         return str_concat(result, "s")
 
 def benchmark(label: Str, start: Int):
     elapsed := timer_elapsed(start)
-    msg := str_concat(label, ": ")
+    mut msg := str_concat(label, ": ")
     msg = str_concat(msg, format_duration(elapsed))
     print_str(msg)

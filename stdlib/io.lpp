@@ -14,7 +14,7 @@ def read_lines(path: Str) -> Int:
     for i in range(str_len(content)):
         c := char_at(content, i)
         if c == "\n":
-            line := str_substr(content, start, i - start)
+            mut line := str_substr(content, start, i - start)
             # Remove trailing \r
             if str_len(line) > 0 && str_ends_with(line, "\r"):
                 line = str_substr(line, 0, str_len(line) - 1)

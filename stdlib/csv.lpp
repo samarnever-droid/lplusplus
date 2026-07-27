@@ -27,7 +27,7 @@ def csv_parse_file(path: Str) -> Int:
     for i in range(str_len(content)):
         c := char_at(content, i)
         if c == "\n":
-            line := str_substr(content, start, i - start)
+            mut line := str_substr(content, start, i - start)
             if str_len(line) > 0 && char_at(line, str_len(line) - 1) == "\r":
                 line = str_substr(line, 0, str_len(line) - 1)
             if str_len(line) > 0:

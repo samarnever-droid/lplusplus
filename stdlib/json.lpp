@@ -3,15 +3,15 @@
 
 def json_get_string(json: Str, key: Str) -> Str:
     # Find "key":"value" in a JSON string
-    search := str_concat("\"", str_concat(key, "\":\""))
-    idx := str_find(json, search)
+    mut search := str_concat("\"", str_concat(key, "\":\""))
+    mut idx := str_find(json, search)
     if idx < 0:
         # Try with space: "key": "value"
         search = str_concat("\"", str_concat(key, "\": \""))
         idx = str_find(json, search)
         if idx < 0:
             return ""
-    start := idx + str_len(search)
+    mut start := idx + str_len(search)
     mut end := start
     mut escaped := 0
     while end < str_len(json):
@@ -30,14 +30,14 @@ def json_get_string(json: Str, key: Str) -> Str:
 
 def json_get_int(json: Str, key: Str) -> Int:
     # Find "key":123 in a JSON string
-    search := str_concat("\"", str_concat(key, "\":"))
-    idx := str_find(json, search)
+    mut search := str_concat("\"", str_concat(key, "\":"))
+    mut idx := str_find(json, search)
     if idx < 0:
         search = str_concat("\"", str_concat(key, "\": "))
         idx = str_find(json, search)
         if idx < 0:
             return 0
-    start := idx + str_len(search)
+    mut start := idx + str_len(search)
     # Skip whitespace
     while start < str_len(json) && char_at(json, start) == " ":
         start += 1
@@ -50,14 +50,14 @@ def json_get_int(json: Str, key: Str) -> Int:
     return str_to_int(str_substr(json, start, end - start))
 
 def json_get_bool(json: Str, key: Str) -> Int:
-    search := str_concat("\"", str_concat(key, "\":"))
-    idx := str_find(json, search)
+    mut search := str_concat("\"", str_concat(key, "\":"))
+    mut idx := str_find(json, search)
     if idx < 0:
         search = str_concat("\"", str_concat(key, "\": "))
         idx = str_find(json, search)
         if idx < 0:
             return 0
-    start := idx + str_len(search)
+    mut start := idx + str_len(search)
     while start < str_len(json) && char_at(json, start) == " ":
         start += 1
     if str_starts_with(str_substr(json, start, 4), "true"):

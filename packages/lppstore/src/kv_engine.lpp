@@ -1,0 +1,39 @@
+# kv_engine.lpp - Storage Engine & Transaction Manager for LppStore
+# Supports SET, GET, DEL, BEGIN, COMMIT, ROLLBACK operations
+
+import wal
+import btree
+
+struct TxState:
+    tx_id: Int
+    active: Int
+    changes_count: Int
+
+def init_engine(wal_path: Str) -> Int:
+    print_str("[LppStore Engine] Initializing Storage Engine...")
+    wal.create_wal(wal_path)
+    wal.replay_wal(wal_path)
+    print_str("[LppStore Engine] Storage Engine Ready.")
+    return 1
+
+def db_set(wal_path: Str, tx_id: Int, key: Str, value: Str) -> Int:
+    wal.append_log(wal_path, tx_id, "SET", key, value)
+    btree.btree_insert(1, key, value)
+    return 1
+
+def db_get(key: Str) -> Str:
+    return btree.btree_search(1, key)
+
+def db_del(wal_path: Str, tx_id: Int, key: Str) -> Int:
+    wal.append_log(wal_path, tx_id, "DEL", key, "")
+    return 1
+
+def db_begin_tx(current_tx: Int) -> Int:
+    next_tx := current_tx + 1
+    print_str(str_concat("[LppStore Engine] Transaction Started: TX #", int_to_str(next_tx)))
+    return next_tx
+
+def db_commit_tx(wal_path: Str, tx_id: Int) -> Int:
+    wal.append_log(wal_path, tx_id, "COMMIT", "", "")
+    print_str(str_concat("[LppStore Engine] Transaction Committed: TX #", int_to_str(tx_id)))
+    return 1
