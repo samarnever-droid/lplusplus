@@ -1224,6 +1224,26 @@ pub fn run_command(args: &[String]) {
     }
 
     match args[0].as_str() {
+        "lreact" => {
+            let sub = args.get(1).map(|s| s.as_str()).unwrap_or("help");
+            match sub {
+                "create" | "new" => {
+                    let mut web_args = vec!["web".to_string()];
+                    web_args.extend(args.iter().skip(2).cloned());
+                    cmd_new(&web_args);
+                }
+                "dev" | "run" => cmd_dev(),
+                "build" => {
+                    let _ = cmd_build_opts(true);
+                }
+                _ => {
+                    println!("Lreact Framework CLI Commands:");
+                    println!("  lpp lreact create <name>   Create a new Lreact web desktop application");
+                    println!("  lpp lreact dev             Start local dev server (http://localhost:3000)");
+                    println!("  lpp lreact build           Build standalone release executable & assets in dist/");
+                }
+            }
+        }
         "new" | "create" => cmd_new(&args[1..]),
         "dev" => cmd_dev(),
         "init" => cmd_init(&args[1..]),
@@ -1259,6 +1279,9 @@ fn print_help() {
     println!();
     println!("Package Commands:");
     println!("  create web <name>     Create a new Lreact desktop web application");
+    println!("  lpp lreact create <N> Create a new Lreact web application");
+    println!("  lpp lreact dev        Start Lreact development server");
+    println!("  lpp lreact build      Build standalone release binary in dist/");
     println!("  dev                   Start Lreact development server (http://localhost:3000)");
     println!("  build --release       Build standalone release binary & bundle web assets in dist/");
     println!("  new <name>            Create a new L++ package");

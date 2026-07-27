@@ -239,7 +239,7 @@ fn bootstrap_self_hosted_pm() -> Result<PathBuf, String> {
 fn run_self_hosted_pm(args: &[String]) {
     let cmd = args.first().map(|s| s.as_str()).unwrap_or("help");
 
-    if cmd == "create" || cmd == "dev" || args.iter().any(|a| a == "web" || a == "--release") {
+    if cmd == "create" || cmd == "dev" || cmd == "lreact" || args.iter().any(|a| a == "web" || a == "--release") {
         pm::run_command(args);
         return;
     }
@@ -414,6 +414,7 @@ fn main() {
         let first_arg = &args[1];
         if first_arg == "init"
             || first_arg == "create"
+            || first_arg == "lreact"
             || first_arg == "dev"
             || first_arg == "install"
             || first_arg == "add"
@@ -984,31 +985,55 @@ fn resolve_module_filepath(module: &str, base_dir: &std::path::Path) -> Result<P
     }
 
     // 3. Check third-party package dependencies in .lpp_packages/
-    let pkg_dir = std::path::Path::new(".lpp_packages").join(leaf_name);
+    let parts: Vec<&str> = clean_module.split(|c| c == '/' || c == '.').collect();
+    let pkg_name = parts[0];
+    let pkg_dir = std::path::Path::new(".lpp_packages").join(pkg_name);
     if pkg_dir.exists() {
-        let manifest_path = pkg_dir.join("lpp.toml");
-        if manifest_path.exists() {
-            if let Ok(content) = std::fs::read_to_string(&manifest_path) {
-                if let Ok(pkg) = pm::parse_toml(&content) {
-                    if let Some(entry) = pkg.entry {
-                        let custom_entry = pkg_dir.join(entry);
-                        if custom_entry.exists() {
-                            return Ok(custom_entry);
-                        }
-                    }
+        if parts.len() > 1 {
+            let sub_path = parts[1..].join("/");
+            let candidates = [
+                pkg_dir.join(format!("{}.lpp", sub_path)),
+                pkg_dir.join("src").join(format!("{}.lpp", sub_path)),
+            ];
+            for c in &candidates {
+                if c.exists() {
+                    return Ok(c.clone());
+                }
+            }
+        }
+
+        let manifest_path_json = pkg_dir.join("lpp.json");
+        let manifest_path_toml = pkg_dir.join("lpp.toml");
+        let parsed_pkg = if manifest_path_json.exists() {
+            std::fs::read_to_string(&manifest_path_json)
+                .ok()
+                .and_then(|c| pm::parse_json_manifest(&c).ok())
+        } else if manifest_path_toml.exists() {
+            std::fs::read_to_string(&manifest_path_toml)
+                .ok()
+                .and_then(|c| pm::parse_toml(&c).ok())
+        } else {
+            None
+        };
+
+        if let Some(pkg) = parsed_pkg {
+            if let Some(entry) = pkg.entry {
+                let custom_entry = pkg_dir.join(entry);
+                if custom_entry.exists() {
+                    return Ok(custom_entry);
                 }
             }
         }
 
         let candidates = [
-            pkg_dir.join(format!("{}.lpp", leaf_name)),
-            pkg_dir.join("src").join(format!("{}.lpp", leaf_name)),
+            pkg_dir.join(format!("{}.lpp", pkg_name)),
+            pkg_dir.join("src").join(format!("{}.lpp", pkg_name)),
             pkg_dir.join("src").join("main.lpp"),
             pkg_dir.join("main.lpp"),
         ];
-        for c in candidates {
+        for c in &candidates {
             if c.exists() {
-                return Ok(c);
+                return Ok(c.clone());
             }
         }
     }
