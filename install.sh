@@ -96,6 +96,20 @@ else
     printf '%s\n' "[3/3] Source installation complete."
 fi
 
-printf '%s\n' "  Add this to your shell profile if needed:"
-printf '  export PATH="%s:$PATH"\n' "$BIN_DIR"
+INSTALLED_VERSION="$($BIN_DIR/lpp -v 2>/dev/null || true)"
+
+printf '%s\n' ""
 printf '%s\n' "Installed commands: lpp, lpp-link"
+printf '%s\n' "Requested release: $VERSION"
+if [ -n "${RELEASE_TARGET:-}" ]; then
+    printf '%s\n' "Release asset: $RELEASE_TARGET"
+    printf '%s\n' "Download URL: $RELEASE_URL"
+fi
+if [ -n "$INSTALLED_VERSION" ]; then
+    printf '%s\n' "Installed version: $INSTALLED_VERSION"
+else
+    printf '%s\n' "Installed version: unable to execute $BIN_DIR/lpp"
+fi
+printf '%s\n' "Install path: $INSTALL_DIR"
+printf '%s\n' "Add this to your shell profile if needed:"
+printf '  export PATH="%s:$PATH"\n' "$BIN_DIR"

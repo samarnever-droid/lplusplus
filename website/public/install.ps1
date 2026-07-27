@@ -90,5 +90,23 @@ if ($currentPath -split ";" -notcontains $BinDir) {
     $registryKey.SetValue("Path", ($currentPath + ";" + $BinDir) -replace ";+", ";", [Microsoft.Win32.RegistryValueKind]::String)
 }
 $registryKey.Close()
+
+# Make lpp available in this PowerShell immediately too.
+if (($env:Path -split ";") -notcontains $BinDir) {
+    $env:Path = "$BinDir;$env:Path"
+}
+
+$InstalledVersion = "unable to execute $BinDir\lpp.exe"
+try {
+    if (Test-Path "$BinDir\lpp.exe") {
+        $InstalledVersion = (& "$BinDir\lpp.exe" -v 2>$null) -join " "
+    }
+} catch {}
+
 Write-Host "[3/3] Installed commands: lpp, lpp-link" -ForegroundColor Green
-Write-Host "Restart your terminal, then run: lpp -h" -ForegroundColor Green
+Write-Host "Requested release: $Version" -ForegroundColor Green
+Write-Host "Release asset: lpp-windows-x86_64.zip" -ForegroundColor Green
+Write-Host "Download URL: $ReleaseUrl" -ForegroundColor Green
+Write-Host "Installed version: $InstalledVersion" -ForegroundColor Green
+Write-Host "Install path: $InstallDir" -ForegroundColor Green
+Write-Host "You can run now: lpp -v" -ForegroundColor Green
