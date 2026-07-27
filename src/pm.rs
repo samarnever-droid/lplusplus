@@ -2114,6 +2114,32 @@ fn cmd_update() {
     cmd_install(true);
 }
 
+fn is_app_package_name(name: &str) -> bool {
+    let n = name.to_ascii_lowercase();
+    n == "lpp-opencode" || n == "opencode" || n == "openclaude" || n == "lpp-openclaude"
+}
+
+fn print_search_item(name: &str, entry: &RegistryEntry, app: bool) {
+    println!("  {}", name);
+    if let Some(ref desc) = entry.description {
+        println!("      {}", desc);
+    }
+    println!("      repo: {}", entry.git);
+    if let Some(ref b) = entry.branch {
+        println!("      branch: {}", b);
+    }
+    if let Some(ref t) = entry.tag {
+        println!("      tag: {}", t);
+    }
+    if app {
+        println!("      install: lpp install {}", name);
+        println!("      run:     lpp-opencode");
+    } else {
+        println!("      add:     lpp add {}", name);
+        println!("      install: lpp install   # inside your project");
+    }
+}
+
 fn cmd_search(args: &[String]) {
     let query = args.get(0).map(|s| s.to_lowercase()).unwrap_or_default();
     let mut results = registry_package_entries();
@@ -2137,27 +2163,51 @@ fn cmd_search(args: &[String]) {
             println!("[L++] No packages available in registry.");
         } else {
             println!("[L++] No registry packages matched '{}'.", query);
-            println!("[L++] Try: lpp search opencode | lpp search sqlite | lpp search math");
+            println!();
+            println!("Try:");
+            println!("  lpp search opencode     # app / command package");
+            println!("  lpp search sqlite       # database library");
+            println!("  lpp search math         # stdlib/helper package");
         }
         return;
     }
 
-    println!("[L++] Registry matches for '{}': {}", if query.is_empty() { "*" } else { &query }, results.len());
-    println!("[L++] Use `lpp add <name>` inside a project, or `lpp install lpp-opencode` for global apps.");
+    let apps: Vec<_> = results
+        .iter()
+        .filter(|(name, _)| is_app_package_name(name))
+        .collect();
+    let libs: Vec<_> = results
+        .iter()
+        .filter(|(name, _)| !is_app_package_name(name))
+        .collect();
+
+    println!("[L++] Registry search");
+    println!("  query: {}", if query.is_empty() { "*" } else { &query });
+    println!("  results: {}", results.len());
     println!();
-    for (name, entry) in results {
-        let mut detail = format!("  {}", name);
-        if let Some(ref desc) = entry.description {
-            detail.push_str(&format!(" - {}", desc));
+
+    if !apps.is_empty() {
+        println!("Applications / global commands");
+        println!("──────────────────────────────");
+        for (name, entry) in apps {
+            print_search_item(name, entry, true);
+            println!();
         }
-        detail.push_str(&format!(" ({})", entry.git));
-        if let Some(ref b) = entry.branch {
-            detail.push_str(&format!(" [branch: {}]", b));
-        } else if let Some(ref t) = entry.tag {
-            detail.push_str(&format!(" [tag: {}]", t));
-        }
-        println!("{}", detail);
     }
+
+    if !libs.is_empty() {
+        println!("Libraries / project dependencies");
+        println!("────────────────────────────────");
+        for (name, entry) in libs {
+            print_search_item(name, entry, false);
+            println!();
+        }
+    }
+
+    println!("Usage guide");
+    println!("───────────");
+    println!("  Global app:  lpp install lpp-opencode");
+    println!("  Project dep: lpp add <name>  &&  lpp install");
 }
 
 fn cmd_list() {

@@ -50,15 +50,26 @@ def fetch_registry_json() -> Str:
 
     return ""
 
+def registry_is_app(name: Str) -> Bool:
+    if str_find(name, "opencode") >= 0:
+        return true
+    if str_find(name, "openclaude") >= 0:
+        return true
+    return false
+
 def search_registry(query: Str) -> Void:
     json_text := fetch_registry_json()
     if str_len(json_text) == 0:
         error("Failed to fetch or load package registry.")
         return
 
-    print_str(str_concat("[lpp-pm] Registry matches for: ", query))
+    print_str("[lpp-pm] Registry search")
+    print_str(str_concat("  query: ", query))
+    print_str("")
     mut lower_query := str_to_lower(query)
     mut found_count := 0
+    mut app_header := 0
+    mut lib_header := 0
 
     # Parse JSON root node using L++ builtin json_parse
     h_json := json_parse(json_text)
@@ -86,7 +97,6 @@ def search_registry(query: Str) -> Void:
 
         if in_packages == 1:
             if str_find(line, ": {") >= 0:
-                # Extract package name before : {
                 q1 := str_find(line, "\"")
                 if q1 >= 0:
                     rest := str_substr(line, q1 + 1, str_len(line) - q1 - 1)
@@ -94,13 +104,30 @@ def search_registry(query: Str) -> Void:
                     if q2 >= 0:
                         current_pkg = str_substr(rest, 0, q2)
                         mut lower_pkg := str_to_lower(current_pkg)
+                        mut matched := false
                         if str_len(lower_query) == 0:
-                            print_str(str_concat("  ", current_pkg))
-                            found_count = found_count + 1
+                            matched = true
                         else:
                             if str_find(lower_pkg, lower_query) >= 0:
+                                matched = true
+                        if matched:
+                            if registry_is_app(lower_pkg):
+                                if app_header == 0:
+                                    print_str("Applications / global commands")
+                                    print_str("──────────────────────────────")
+                                    app_header = 1
                                 print_str(str_concat("  ", current_pkg))
-                                found_count = found_count + 1
+                                print_str(str_concat("      install: lpp install ", current_pkg))
+                                print_str("      run:     lpp-opencode")
+                            else:
+                                if lib_header == 0:
+                                    print_str("Libraries / project dependencies")
+                                    print_str("────────────────────────────────")
+                                    lib_header = 1
+                                print_str(str_concat("  ", current_pkg))
+                                print_str(str_concat("      add:     lpp add ", current_pkg))
+                                print_str("      install: lpp install   # inside your project")
+                            found_count = found_count + 1
 
     if h_json != 0:
         json_free(h_json)
@@ -111,6 +138,12 @@ def search_registry(query: Str) -> Void:
             print_str("  Try: lpp search opencode | lpp search sqlite | lpp search math")
         else:
             print_str("  No packages available in registry.")
+    else:
+        print_str("")
+        print_str("Usage guide")
+        print_str("───────────")
+        print_str("  Global app:  lpp install lpp-opencode")
+        print_str("  Project dep: lpp add <name>  &&  lpp install")
 
 def resolve_registry_pkg(name: Str) -> Str:
     # Auto-resolve @owner/repo syntax to git URL
