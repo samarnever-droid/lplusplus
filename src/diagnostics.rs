@@ -102,7 +102,7 @@ impl<'a> Diagnostic<'a> {
 /// Helper function to parse error strings formatted like `[line 14:col 5] Message`
 /// and render them using `Diagnostic`.
 pub fn render_error_string(filename: &str, source: &str, kind: DiagnosticKind, raw_err: &str) -> String {
-    let (line, col, msg) = parse_line_col_message(raw_err);
+    let (line, col, msg) = parse_line_col_message_with_source(raw_err, source);
 
     let help = derive_help_message(raw_err, &kind);
 
@@ -116,6 +116,85 @@ pub fn render_error_string(filename: &str, source: &str, kind: DiagnosticKind, r
         help: help.as_deref(),
     };
     diag.render()
+}
+
+pub fn parse_line_col_message_with_source(raw_err: &str, source: &str) -> (usize, usize, String) {
+    let (mut line, mut col, msg) = parse_line_col_message(raw_err);
+    if line == 1 && col == 1 && !raw_err.contains("[line ") {
+        let (loc_line, loc_col) = locate_symbol_in_source(source, raw_err);
+        line = loc_line;
+        col = loc_col;
+    }
+    (line, col, msg)
+}
+
+pub fn locate_symbol_in_source(source: &str, raw_err: &str) -> (usize, usize) {
+    let var_target = if let Some(s) = raw_err.find("variable '") {
+        let rest = &raw_err[s + 10..];
+        rest.find('\'').map(|e| &rest[..e])
+    } else if let Some(s) = raw_err.find("struct '") {
+        let rest = &raw_err[s + 8..];
+        rest.find('\'').map(|e| &rest[..e])
+    } else if let Some(s) = raw_err.find("identifier '") {
+        let rest = &raw_err[s + 13..];
+        rest.find('\'').map(|e| &rest[..e])
+    } else if let Some(s) = raw_err.find("function '") {
+        let rest = &raw_err[s + 10..];
+        rest.find('\'').map(|e| &rest[..e])
+    } else {
+        None
+    };
+
+    if let Some(target) = var_target {
+        for (line_idx, line) in source.lines().enumerate() {
+            if let Some(col_idx) = line.find(target) {
+                return (line_idx + 1, col_idx + 1);
+            }
+        }
+    }
+    (1, 1)
+}
+
+/// Attempt to generate an automatic fix for a given error and source code.
+/// Returns `Some((fixed_source, fix_description))` if an automatic fix is available.
+pub fn try_auto_fix(source: &str, raw_err: &str) -> Option<(String, String)> {
+    if raw_err.contains("immutable variable '") {
+        if let Some(s) = raw_err.find("variable '") {
+            let rest = &raw_err[s + 10..];
+            if let Some(e) = rest.find('\'') {
+                let var_name = &rest[..e];
+                let target = format!("{} :=", var_name);
+                let target_no_space = format!("{}:=", var_name);
+                if source.contains(&target) {
+                    let replacement = format!("mut {} :=", var_name);
+                    let new_src = source.replacen(&target, &replacement, 1);
+                    let desc = format!("convert '{}:=' to 'mut {} :='", var_name, var_name);
+                    return Some((new_src, desc));
+                } else if source.contains(&target_no_space) {
+                    let replacement = format!("mut {}:=", var_name);
+                    let new_src = source.replacen(&target_no_space, &replacement, 1);
+                    let desc = format!("convert '{}:=' to 'mut {}:='", var_name, var_name);
+                    return Some((new_src, desc));
+                }
+            }
+        }
+    }
+    if raw_err.contains("Void function '") && raw_err.contains("' cannot return a value") {
+        if let Some(s) = raw_err.find("function '") {
+            let rest = &raw_err[s + 10..];
+            if let Some(e) = rest.find('\'') {
+                let func_name = &rest[..e];
+                let target = format!("def {}():", func_name);
+                if source.contains(&target) {
+                    let replacement = format!("def {}() -> Int:", func_name);
+                    let new_src = source.replacen(&target, &replacement, 1);
+                    let desc = format!("add return type '-> Int' to function '{}'", func_name);
+                    return Some((new_src, desc));
+                }
+            }
+        }
+    }
+    None
 }
 
 fn parse_line_col_message(raw_err: &str) -> (usize, usize, String) {

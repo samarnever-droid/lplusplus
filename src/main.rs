@@ -439,6 +439,7 @@ fn main() {
     let mut dump_mir = false;
     let mut check_only = source_check_command;
     let mut check_all = false;
+    let mut do_fix = false;
     let mut emit_object = is_emit_cmd || env::var("LPP_AOT").is_ok() || env::var("LPP_AOT_ONLY").is_ok();
 
     let mut idx = 1;
@@ -529,6 +530,8 @@ fn main() {
             check_only = true;
         } else if arg == "--checkall" {
             check_all = true;
+        } else if arg == "--fix" {
+            do_fix = true;
         } else if arg == "--emit-object" || arg == "--aot" {
             emit_object = true;
         } else if arg == "--linker" {
@@ -571,42 +574,77 @@ fn main() {
         all_files.sort();
         eprintln!("[L++] --checkall: checking {} file(s)...", all_files.len());
         let ta = Instant::now();
+        let mut fixed_files_count = 0usize;
         for fpath in &all_files {
-            let input = match fs::read_to_string(fpath) {
-                Ok(c) => c, Err(e) => { all_fails.push(format!("{}: read: {}", fpath.display(), e)); continue; }
+            let mut input = match fs::read_to_string(fpath) {
+                Ok(c) => c, Err(e) => { all_fails.push(format!("{}:1:1: read: {}", fpath.display(), e)); continue; }
             };
+
+            let mut err_tuple: Option<(&'static str, String)> = None;
+
             let mut l = lexer::Lexer::new(&input);
-            let tokens = match l.tokenize() {
-                Ok(t) => t, Err(e) => { all_fails.push(format!("{}: lex: {}", fpath.display(), e)); continue; }
-            };
-            let mut par = parser::Parser::new(tokens);
-            let mut ast = match par.parse() {
-                Ok(a) => a, Err(e) => { all_fails.push(format!("{}: syntax: {}", fpath.display(), e)); continue; }
-            };
-            let base = fpath.parent().unwrap_or(Path::new("."));
-            let mut imp = std::collections::HashSet::new();
-            if let Err(e) = resolve_local_imports(&mut ast.declarations, &mut imp, base) {
-                all_fails.push(format!("{}: import: {}", fpath.display(), e)); continue;
+            match l.tokenize() {
+                Ok(t) => {
+                    let mut par = parser::Parser::new(t);
+                    match par.parse() {
+                        Ok(mut ast) => {
+                            let base = fpath.parent().unwrap_or(Path::new("."));
+                            let mut imp = std::collections::HashSet::new();
+                            if let Err(e) = resolve_local_imports(&mut ast.declarations, &mut imp, base) {
+                                err_tuple = Some(("import", e));
+                            } else if let Err(e) = monomorph::Monomorphizer::process_program(&mut ast) {
+                                err_tuple = Some(("monomorph", e));
+                            } else {
+                                let mut res = semantic::Resolver::new();
+                                if let Err(e) = res.resolve_program(&mut ast) {
+                                    err_tuple = Some(("semantic", e));
+                                } else {
+                                    let mut tc = typecheck::TypeChecker::new(&mut res.table);
+                                    if let Err(e) = tc.check_program(&ast) {
+                                        err_tuple = Some(("type", e));
+                                    }
+                                }
+                            }
+                        }
+                        Err(e) => { err_tuple = Some(("syntax", e)); }
+                    }
+                }
+                Err(e) => { err_tuple = Some(("lex", e)); }
             }
-            if let Err(e) = monomorph::Monomorphizer::process_program(&mut ast) {
-                all_fails.push(format!("{}: monomorph: {}", fpath.display(), e)); continue;
+
+            if let Some((stage, raw_err)) = err_tuple {
+                let (line, col, msg) = diagnostics::parse_line_col_message_with_source(&raw_err, &input);
+                let auto_fix = diagnostics::try_auto_fix(&input, &raw_err);
+
+                if let Some((new_src, desc)) = auto_fix {
+                    if do_fix {
+                        if fs::write(fpath, &new_src).is_ok() {
+                            fixed_files_count += 1;
+                            println!("[L++] Fixed {}:{}:{}: {} [{}]", fpath.display(), line, col, stage, desc);
+                            p += 1;
+                            continue;
+                        }
+                    }
+                    all_fails.push(format!("{}:{}:{}: {}: {} [suggestion: {}]", fpath.display(), line, col, stage, msg, desc));
+                } else {
+                    all_fails.push(format!("{}:{}:{}: {}: {}", fpath.display(), line, col, stage, msg));
+                }
+            } else {
+                p += 1;
             }
-            let mut res = semantic::Resolver::new();
-            if let Err(e) = res.resolve_program(&mut ast) {
-                all_fails.push(format!("{}: semantic: {}", fpath.display(), e)); continue;
-            }
-            let mut tc = typecheck::TypeChecker::new(&mut res.table);
-            if let Err(e) = tc.check_program(&ast) {
-                all_fails.push(format!("{}: type: {}", fpath.display(), e)); continue;
-            }
-            p += 1;
         }
         let el = ta.elapsed();
         if all_fails.is_empty() {
             println!("[L++] --checkall: OK — {} file(s) passed in {:.1} ms", p, el.as_secs_f64() * 1000.0);
+            if do_fix && fixed_files_count > 0 {
+                println!("[L++] --fix: Automatically repaired {} file(s).", fixed_files_count);
+            }
         } else {
             eprintln!("[L++] --checkall: {} passed, {} FAILED:", p, all_fails.len());
             for f in &all_fails { eprintln!("  {}", f); }
+            if do_fix && fixed_files_count > 0 {
+                eprintln!("[L++] --fix: Automatically repaired {} file(s).", fixed_files_count);
+            }
         }
         return;
     }
