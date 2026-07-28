@@ -1,0 +1,73 @@
+import mem
+import varint
+import tap
+
+def roundtrip(T: Int, label: Str, v: Int, expect_len: Int):
+    b := buf_alloc(16)
+    n := varint.vi_put(b, 0, v)
+    tap.eq_i(T, str_concat(label, " len"), n, expect_len)
+    tap.eq_i(T, str_concat(label, " vi_len"), varint.vi_len(b, 0), expect_len)
+    tap.eq_i(T, str_concat(label, " size_of"), varint.vi_size_of(v), expect_len)
+    tap.eq_i(T, str_concat(label, " value"), varint.vi_get(b, 0), v)
+    buf_free(b)
+
+def main():
+    T := tap.t_new()
+
+    tap.eq_i(T, "ushr pos", mem.ushr(256, 4), 16)
+    tap.eq_i(T, "ushr neg1 by 60", mem.ushr(0 - 1, 60), 15)
+    tap.eq_i(T, "ushr neg1 by 1", mem.ushr(0 - 1, 1), 9223372036854775807)
+    tap.eq_i(T, "ushr by 0", mem.ushr(5, 0), 5)
+    tap.eq_i(T, "ushr by 64", mem.ushr(0 - 1, 64), 0)
+
+    roundtrip(T, "0", 0, 1)
+    roundtrip(T, "1", 1, 1)
+    roundtrip(T, "127", 127, 1)
+    roundtrip(T, "128", 128, 2)
+    roundtrip(T, "16383", 16383, 2)
+    roundtrip(T, "16384", 16384, 3)
+    roundtrip(T, "2097151", 2097151, 3)
+    roundtrip(T, "2097152", 2097152, 4)
+    roundtrip(T, "268435455", 268435455, 4)
+    roundtrip(T, "268435456", 268435456, 5)
+    roundtrip(T, "34359738367", 34359738367, 5)
+    roundtrip(T, "34359738368", 34359738368, 6)
+    roundtrip(T, "4398046511103", 4398046511103, 6)
+    roundtrip(T, "4398046511104", 4398046511104, 7)
+    roundtrip(T, "562949953421311", 562949953421311, 7)
+    roundtrip(T, "562949953421312", 562949953421312, 8)
+    roundtrip(T, "72057594037927935", 72057594037927935, 8)
+    roundtrip(T, "72057594037927936", 72057594037927936, 9)
+    roundtrip(T, "maxi64", 9223372036854775807, 9)
+    roundtrip(T, "neg1", 0 - 1, 9)
+    roundtrip(T, "neg2", 0 - 2, 9)
+
+    # Exact byte patterns from the SQLite spec.
+    b := buf_alloc(16)
+    varint.vi_put(b, 0, 128)
+    tap.eq_i(T, "128 byte0", buf_get8(b, 0), 129)
+    tap.eq_i(T, "128 byte1", buf_get8(b, 1), 0)
+
+    varint.vi_put(b, 0, 300)
+    tap.eq_i(T, "300 byte0", buf_get8(b, 0), 130)
+    tap.eq_i(T, "300 byte1", buf_get8(b, 1), 44)
+
+    varint.vi_put(b, 0, 1000000)
+    tap.eq_i(T, "1e6 b0", buf_get8(b, 0), 189)
+    tap.eq_i(T, "1e6 b1", buf_get8(b, 1), 132)
+    tap.eq_i(T, "1e6 b2", buf_get8(b, 2), 64)
+
+    varint.vi_put(b, 0, 0 - 1)
+    tap.eq_i(T, "neg1 b0", buf_get8(b, 0), 255)
+    tap.eq_i(T, "neg1 b8", buf_get8(b, 8), 255)
+
+    # vec push path
+    v := mem.vec_new(4)
+    varint.vi_push(v, 300)
+    varint.vi_push(v, 5)
+    tap.eq_i(T, "vec varint len", mem.vec_len(v), 3)
+    d := mem.vec_data(v)
+    tap.eq_i(T, "vec varint v0", varint.vi_get(d, 0), 300)
+    tap.eq_i(T, "vec varint v1", varint.vi_get(d, 2), 5)
+
+    tap.t_report(T, "varint")

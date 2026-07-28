@@ -1,0 +1,123 @@
+import mem
+import varint
+import value
+import record
+import pager
+import btree
+import btwrite
+import cursor
+import tap
+
+def mkrow(id: Int, name: Str, age: Int) -> Int:
+    vv := value.vv_new()
+    value.vv_push(vv, value.v_null())
+    value.vv_push(vv, value.v_from_str(name))
+    value.vv_push(vv, value.v_from_int(age))
+    r := record.encode(vv)
+    value.vv_free_all(vv)
+    return r
+
+def main():
+    T := tap.t_new()
+
+    p := pager.pg_create(4096)
+    tap.eq_i(T, "pagesize", pager.pg_size(p), 4096)
+    tap.eq_i(T, "pagecount", pager.pg_count(p), 1)
+    tap.eq_i(T, "page1 is leaf", btree.is_leaf(p, 1), 1)
+    tap.eq_i(T, "page1 cells", btree.cell_count(p, 1), 0)
+
+    # Build a table on page 2.
+    root := pager.pg_new_page(p)
+    btree.init_page(p, root, 13)
+    tap.eq_i(T, "root pageno", root, 2)
+    tap.eq_i(T, "root leaf", btree.is_leaf(p, root), 1)
+
+    # Insert enough rows to force several splits.
+    N := 500
+    mut i := 1
+    while i <= N:
+        r := mkrow(i, str_concat("user", int_to_str(i)), 20 + (i % 50))
+        btwrite.insert(p, root, i, mem.vec_data(r), mem.vec_len(r))
+        mem.vec_free(r)
+        i = i + 1
+
+    tap.eq_i(T, "row count after inserts", cursor.count_rows(p, root), N)
+    tap.okb(T, "tree grew", pager.pg_count(p) > 2)
+    tap.eq_i(T, "root now interior", btree.is_leaf(p, root), 0)
+
+    # Verify every rowid is present and in ascending order.
+    c := cursor.cu_new(p, root)
+    cursor.cu_first(c)
+    mut expect := 1
+    mut ok := 1
+    mut seen := 0
+    while cursor.cu_valid(c) == 1:
+        rid := cursor.cu_rowid(c)
+        if rid != expect:
+            ok = 0
+        pay := cursor.cu_payload(c)
+        vv := record.decode(mem.vec_data(pay), 0, mem.vec_len(pay))
+        nm := value.v_bytes_str(value.vv_get(vv, 1))
+        want := str_concat("user", int_to_str(expect))
+        if lpp_str_eq(nm, want) == 0:
+            ok = 0
+        value.vv_free_all(vv)
+        mem.vec_free(pay)
+        seen = seen + 1
+        expect = expect + 1
+        cursor.cu_next(c)
+    cursor.cu_free(c)
+    tap.eq_i(T, "scan order + payload", ok, 1)
+    tap.eq_i(T, "scan count", seen, N)
+
+    # Point lookups through the interior nodes.
+    mut good := 1
+    mut k := 1
+    while k <= N:
+        pay := btwrite.find_row(p, root, k)
+        if pay == 0:
+            good = 0
+        else:
+            vv := record.decode(mem.vec_data(pay), 0, mem.vec_len(pay))
+            if value.v_int(value.vv_get(vv, 2)) != 20 + (k % 50):
+                good = 0
+            value.vv_free_all(vv)
+            mem.vec_free(pay)
+        k = k + 37
+    tap.eq_i(T, "point lookups", good, 1)
+
+    tap.eq_i(T, "max rowid", btree.max_rowid(p, root), N)
+
+    # Deletion
+    tap.eq_i(T, "delete existing", btwrite.delete(p, root, 250), 1)
+    tap.eq_i(T, "count after delete", cursor.count_rows(p, root), N - 1)
+    tap.eq_i(T, "deleted row gone", btwrite.find_row(p, root, 250), 0)
+
+    # A large payload that must overflow onto extra pages.
+    root2 := pager.pg_new_page(p)
+    btree.init_page(p, root2, 13)
+    big := mem.vec_new(9000)
+    mut z := 0
+    while z < 9000:
+        mem.vec_push_u8(big, 65 + (z % 26))
+        z = z + 1
+    vv2 := value.vv_new()
+    value.vv_push(vv2, value.v_from_bytes(value.TTEXT(), mem.vec_data(big), 0, 9000))
+    rec2 := record.encode(vv2)
+    btwrite.insert(p, root2, 1, mem.vec_data(rec2), mem.vec_len(rec2))
+    got := btwrite.find_row(p, root2, 1)
+    tap.okb(T, "overflow row found", got != 0)
+    dv := record.decode(mem.vec_data(got), 0, mem.vec_len(got))
+    tap.eq_i(T, "overflow len", value.v_len(value.vv_get(dv, 0)), 9000)
+    tap.eq_i(T, "overflow byte0", buf_get8(value.v_ptr(value.vv_get(dv, 0)), 0), 65)
+    tap.eq_i(T, "overflow byte8999", buf_get8(value.v_ptr(value.vv_get(dv, 0)), 8999), 65 + (8999 % 26))
+    value.vv_free_all(dv)
+    mem.vec_free(got)
+    mem.vec_free(rec2)
+    value.vv_free_all(vv2)
+    mem.vec_free(big)
+
+    pager.pg_save(p, "bt_test.db")
+    tap.eq_i(T, "file written", file_exists("bt_test.db"), 1)
+
+    tap.t_report(T, "btree")

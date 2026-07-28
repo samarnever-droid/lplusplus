@@ -1,0 +1,594 @@
+# lexer.lpp — SQL tokenizer.
+#
+# Tokens are stored in parallel arrays inside one handle so no list-of-struct
+# is ever needed:
+#   [0]  kinds   (iv)
+#   [8]  texts   (sv)      — literal text of the token
+#   [16] ivals   (iv)      — integer value for TK_INT
+#   [24] count
+#
+# String literals keep their decoded contents in `texts`.
+
+import mem
+import strbuf
+
+def TK_EOF() -> Int:
+    return 0
+def TK_ID() -> Int:
+    return 1
+def TK_KW() -> Int:
+    return 2
+def TK_INT() -> Int:
+    return 3
+def TK_FLOAT() -> Int:
+    return 4
+def TK_STR() -> Int:
+    return 5
+def TK_BLOB() -> Int:
+    return 6
+def TK_PUNCT() -> Int:
+    return 7
+def TK_VAR() -> Int:
+    return 8
+def TK_ERR() -> Int:
+    return 9
+
+def lx_kinds(t: Int) -> Int:
+    return mem.bget64(t, 0)
+
+def lx_texts(t: Int) -> Int:
+    return mem.bget64(t, 8)
+
+def lx_ivals(t: Int) -> Int:
+    return mem.bget64(t, 16)
+
+def lx_count(t: Int) -> Int:
+    return mem.iv_len(mem.bget64(t, 0))
+
+def lx_kind(t: Int, i: Int) -> Int:
+    if i >= lx_count(t):
+        return TK_EOF()
+    return mem.iv_get(lx_kinds(t), i)
+
+def lx_text(t: Int, i: Int) -> Str:
+    if i >= lx_count(t):
+        return ""
+    return strbuf.sv_get(lx_texts(t), i)
+
+def lx_ival(t: Int, i: Int) -> Int:
+    if i >= lx_count(t):
+        return 0
+    return mem.iv_get(lx_ivals(t), i)
+
+def lx_free(t: Int):
+    mem.iv_free(lx_kinds(t))
+    strbuf.sv_free(lx_texts(t))
+    mem.iv_free(lx_ivals(t))
+    buf_free(t)
+
+def push_tok(t: Int, kind: Int, text: Str, ival: Int):
+    mem.iv_push(lx_kinds(t), kind)
+    strbuf.sv_push(lx_texts(t), text)
+    mem.iv_push(lx_ivals(t), ival)
+
+# Is `w` a reserved SQL keyword? (used to decide TK_KW vs TK_ID)
+def is_keyword(w: Str) -> Int:
+    u := strbuf.to_upper(w)
+    if kw_group1(u) == 1:
+        return 1
+    if kw_group2(u) == 1:
+        return 1
+    if kw_group3(u) == 1:
+        return 1
+    return 0
+
+def kw_group1(u: Str) -> Int:
+    if lpp_str_eq(u, "SELECT") == 1:
+        return 1
+    if lpp_str_eq(u, "FROM") == 1:
+        return 1
+    if lpp_str_eq(u, "WHERE") == 1:
+        return 1
+    if lpp_str_eq(u, "INSERT") == 1:
+        return 1
+    if lpp_str_eq(u, "INTO") == 1:
+        return 1
+    if lpp_str_eq(u, "VALUES") == 1:
+        return 1
+    if lpp_str_eq(u, "UPDATE") == 1:
+        return 1
+    if lpp_str_eq(u, "SET") == 1:
+        return 1
+    if lpp_str_eq(u, "DELETE") == 1:
+        return 1
+    if lpp_str_eq(u, "CREATE") == 1:
+        return 1
+    if lpp_str_eq(u, "TABLE") == 1:
+        return 1
+    if lpp_str_eq(u, "DROP") == 1:
+        return 1
+    if lpp_str_eq(u, "INDEX") == 1:
+        return 1
+    if lpp_str_eq(u, "VIEW") == 1:
+        return 1
+    if lpp_str_eq(u, "TRIGGER") == 1:
+        return 1
+    if lpp_str_eq(u, "ORDER") == 1:
+        return 1
+    if lpp_str_eq(u, "BY") == 1:
+        return 1
+    if lpp_str_eq(u, "GROUP") == 1:
+        return 1
+    if lpp_str_eq(u, "HAVING") == 1:
+        return 1
+    if lpp_str_eq(u, "LIMIT") == 1:
+        return 1
+    if lpp_str_eq(u, "OFFSET") == 1:
+        return 1
+    if lpp_str_eq(u, "DISTINCT") == 1:
+        return 1
+    if lpp_str_eq(u, "ALL") == 1:
+        return 1
+    if lpp_str_eq(u, "AS") == 1:
+        return 1
+    return 0
+
+def kw_group2(u: Str) -> Int:
+    if lpp_str_eq(u, "AND") == 1:
+        return 1
+    if lpp_str_eq(u, "OR") == 1:
+        return 1
+    if lpp_str_eq(u, "NOT") == 1:
+        return 1
+    if lpp_str_eq(u, "NULL") == 1:
+        return 1
+    if lpp_str_eq(u, "IS") == 1:
+        return 1
+    if lpp_str_eq(u, "IN") == 1:
+        return 1
+    if lpp_str_eq(u, "LIKE") == 1:
+        return 1
+    if lpp_str_eq(u, "GLOB") == 1:
+        return 1
+    if lpp_str_eq(u, "BETWEEN") == 1:
+        return 1
+    if lpp_str_eq(u, "CASE") == 1:
+        return 1
+    if lpp_str_eq(u, "WHEN") == 1:
+        return 1
+    if lpp_str_eq(u, "THEN") == 1:
+        return 1
+    if lpp_str_eq(u, "ELSE") == 1:
+        return 1
+    if lpp_str_eq(u, "END") == 1:
+        return 1
+    if lpp_str_eq(u, "JOIN") == 1:
+        return 1
+    if lpp_str_eq(u, "LEFT") == 1:
+        return 1
+    if lpp_str_eq(u, "RIGHT") == 1:
+        return 1
+    if lpp_str_eq(u, "FULL") == 1:
+        return 1
+    if lpp_str_eq(u, "INNER") == 1:
+        return 1
+    if lpp_str_eq(u, "OUTER") == 1:
+        return 1
+    if lpp_str_eq(u, "CROSS") == 1:
+        return 1
+    if lpp_str_eq(u, "ON") == 1:
+        return 1
+    if lpp_str_eq(u, "USING") == 1:
+        return 1
+    if lpp_str_eq(u, "UNION") == 1:
+        return 1
+    if lpp_str_eq(u, "EXCEPT") == 1:
+        return 1
+    if lpp_str_eq(u, "INTERSECT") == 1:
+        return 1
+    return 0
+
+def kw_group3(u: Str) -> Int:
+    if lpp_str_eq(u, "PRIMARY") == 1:
+        return 1
+    if lpp_str_eq(u, "KEY") == 1:
+        return 1
+    if lpp_str_eq(u, "UNIQUE") == 1:
+        return 1
+    if lpp_str_eq(u, "CHECK") == 1:
+        return 1
+    if lpp_str_eq(u, "DEFAULT") == 1:
+        return 1
+    if lpp_str_eq(u, "REFERENCES") == 1:
+        return 1
+    if lpp_str_eq(u, "FOREIGN") == 1:
+        return 1
+    if lpp_str_eq(u, "AUTOINCREMENT") == 1:
+        return 1
+    if lpp_str_eq(u, "COLLATE") == 1:
+        return 1
+    if lpp_str_eq(u, "ASC") == 1:
+        return 1
+    if lpp_str_eq(u, "DESC") == 1:
+        return 1
+    if lpp_str_eq(u, "IF") == 1:
+        return 1
+    if lpp_str_eq(u, "EXISTS") == 1:
+        return 1
+    if lpp_str_eq(u, "BEGIN") == 1:
+        return 1
+    if lpp_str_eq(u, "COMMIT") == 1:
+        return 1
+    if lpp_str_eq(u, "ROLLBACK") == 1:
+        return 1
+    if lpp_str_eq(u, "TRANSACTION") == 1:
+        return 1
+    if lpp_str_eq(u, "PRAGMA") == 1:
+        return 1
+    if lpp_str_eq(u, "EXPLAIN") == 1:
+        return 1
+    if lpp_str_eq(u, "CAST") == 1:
+        return 1
+    if lpp_str_eq(u, "REPLACE") == 1:
+        return 1
+    if lpp_str_eq(u, "CONFLICT") == 1:
+        return 1
+    if lpp_str_eq(u, "IGNORE") == 1:
+        return 1
+    if lpp_str_eq(u, "ABORT") == 1:
+        return 1
+    if lpp_str_eq(u, "FAIL") == 1:
+        return 1
+    if lpp_str_eq(u, "TEMP") == 1:
+        return 1
+    if lpp_str_eq(u, "TEMPORARY") == 1:
+        return 1
+    if lpp_str_eq(u, "WITH") == 1:
+        return 1
+    if lpp_str_eq(u, "ALTER") == 1:
+        return 1
+    if lpp_str_eq(u, "SAVEPOINT") == 1:
+        return 1
+    if lpp_str_eq(u, "RELEASE") == 1:
+        return 1
+    if lpp_str_eq(u, "ATTACH") == 1:
+        return 1
+    if lpp_str_eq(u, "VACUUM") == 1:
+        return 1
+    if lpp_str_eq(u, "ANALYZE") == 1:
+        return 1
+    if lpp_str_eq(u, "NATURAL") == 1:
+        return 1
+    if lpp_str_eq(u, "ESCAPE") == 1:
+        return 1
+    if lpp_str_eq(u, "OVER") == 1:
+        return 1
+    if lpp_str_eq(u, "RECURSIVE") == 1:
+        return 1
+    if lpp_str_eq(u, "CONSTRAINT") == 1:
+        return 1
+    if lpp_str_eq(u, "ISNULL") == 1:
+        return 1
+    if lpp_str_eq(u, "NOTNULL") == 1:
+        return 1
+    if lpp_str_eq(u, "ADD") == 1:
+        return 1
+    if lpp_str_eq(u, "COLUMN") == 1:
+        return 1
+    if lpp_str_eq(u, "WITHOUT") == 1:
+        return 1
+    if lpp_str_eq(u, "ROWID") == 1:
+        return 1
+    return 0
+
+# Tokenize `sql`. Always returns a token array; a TK_ERR token marks failure.
+def tokenize(sql: Str) -> Int:
+    t := buf_alloc(32)
+    mem.bset64(t, 0, mem.iv_new(16))
+    mem.bset64(t, 8, strbuf.sv_new())
+    mem.bset64(t, 16, mem.iv_new(16))
+    n := str_len(sql)
+    mut i := 0
+    while i < n:
+        c := strbuf.ch_at(sql, i)
+        if strbuf.is_space_c(c) == 1:
+            i = i + 1
+        elif c == 45:
+            if i + 1 < n:
+                if strbuf.ch_at(sql, i + 1) == 45:
+                    i = skip_line_comment(sql, i + 2, n)
+                else:
+                    push_tok(t, TK_PUNCT(), "-", 0)
+                    i = i + 1
+            else:
+                push_tok(t, TK_PUNCT(), "-", 0)
+                i = i + 1
+        elif c == 47:
+            if i + 1 < n:
+                if strbuf.ch_at(sql, i + 1) == 42:
+                    i = skip_block_comment(sql, i + 2, n)
+                else:
+                    push_tok(t, TK_PUNCT(), "/", 0)
+                    i = i + 1
+            else:
+                push_tok(t, TK_PUNCT(), "/", 0)
+                i = i + 1
+        elif strbuf.is_digit_c(c) == 1:
+            i = lex_number(t, sql, i, n)
+        elif c == 46:
+            if i + 1 < n:
+                if strbuf.is_digit_c(strbuf.ch_at(sql, i + 1)) == 1:
+                    i = lex_number(t, sql, i, n)
+                else:
+                    push_tok(t, TK_PUNCT(), ".", 0)
+                    i = i + 1
+            else:
+                push_tok(t, TK_PUNCT(), ".", 0)
+                i = i + 1
+        elif c == 39:
+            i = lex_qstring(t, sql, i, n, 39, TK_STR())
+        elif c == 34:
+            i = lex_qstring(t, sql, i, n, 34, TK_ID())
+        elif c == 96:
+            i = lex_qstring(t, sql, i, n, 96, TK_ID())
+        elif c == 91:
+            i = lex_bracket(t, sql, i, n)
+        elif c == 63:
+            i = lex_param(t, sql, i, n)
+        elif c == 58:
+            i = lex_named_param(t, sql, i, n)
+        elif c == 64:
+            i = lex_named_param(t, sql, i, n)
+        elif c == 36:
+            i = lex_named_param(t, sql, i, n)
+        elif strbuf.is_alpha_c(c) == 1:
+            i = lex_word(t, sql, i, n)
+        else:
+            i = lex_operator(t, sql, i, n)
+    push_tok(t, TK_EOF(), "", 0)
+    return t
+
+def skip_line_comment(s: Str, i: Int, n: Int) -> Int:
+    mut j := i
+    while j < n:
+        if strbuf.ch_at(s, j) == 10:
+            return j + 1
+        j = j + 1
+    return n
+
+def skip_block_comment(s: Str, i: Int, n: Int) -> Int:
+    mut j := i
+    while j + 1 < n:
+        if strbuf.ch_at(s, j) == 42:
+            if strbuf.ch_at(s, j + 1) == 47:
+                return j + 2
+        j = j + 1
+    return n
+
+def lex_number(t: Int, s: Str, i: Int, n: Int) -> Int:
+    mut j := i
+    mut isfloat := 0
+    # hex literal
+    if strbuf.ch_at(s, j) == 48:
+        if j + 1 < n:
+            c1 := strbuf.ch_at(s, j + 1)
+            if c1 == 120:
+                return lex_hex(t, s, j + 2, n)
+            if c1 == 88:
+                return lex_hex(t, s, j + 2, n)
+    mut go := 1
+    while go == 1:
+        if j >= n:
+            go = 0
+        else:
+            c := strbuf.ch_at(s, j)
+            if strbuf.is_digit_c(c) == 1:
+                j = j + 1
+            elif c == 46:
+                isfloat = 1
+                j = j + 1
+            elif c == 101:
+                isfloat = 1
+                j = j + 1
+                if j < n:
+                    cc := strbuf.ch_at(s, j)
+                    if cc == 43:
+                        j = j + 1
+                    elif cc == 45:
+                        j = j + 1
+            elif c == 69:
+                isfloat = 1
+                j = j + 1
+                if j < n:
+                    cc := strbuf.ch_at(s, j)
+                    if cc == 43:
+                        j = j + 1
+                    elif cc == 45:
+                        j = j + 1
+            else:
+                go = 0
+    txt := str_substr(s, i, j - i)
+    if isfloat == 1:
+        push_tok(t, TK_FLOAT(), txt, 0)
+    else:
+        push_tok(t, TK_INT(), txt, str_to_int(txt))
+    return j
+
+def lex_hex(t: Int, s: Str, i: Int, n: Int) -> Int:
+    mut j := i
+    mut v := 0
+    mut go := 1
+    while go == 1:
+        if j >= n:
+            go = 0
+        else:
+            c := strbuf.ch_at(s, j)
+            if strbuf.is_hex_c(c) == 1:
+                v = v * 16 + strbuf.hex_val(c)
+                j = j + 1
+            else:
+                go = 0
+    push_tok(t, TK_INT(), int_to_str(v), v)
+    return j
+
+# Quoted string / identifier. The quote char may be doubled to escape it.
+def lex_qstring(t: Int, s: Str, i: Int, n: Int, q: Int, kind: Int) -> Int:
+    sb := strbuf.sb_new()
+    mut j := i + 1
+    mut done := 0
+    while done == 0:
+        if j >= n:
+            done = 1
+        else:
+            c := strbuf.ch_at(s, j)
+            if c == q:
+                if j + 1 < n:
+                    if strbuf.ch_at(s, j + 1) == q:
+                        strbuf.sb_add_ch(sb, q)
+                        j = j + 2
+                    else:
+                        j = j + 1
+                        done = 1
+                else:
+                    j = j + 1
+                    done = 1
+            else:
+                strbuf.sb_add_ch(sb, c)
+                j = j + 1
+    push_tok(t, kind, strbuf.sb_str(sb), 0)
+    strbuf.sb_free(sb)
+    return j
+
+def lex_bracket(t: Int, s: Str, i: Int, n: Int) -> Int:
+    sb := strbuf.sb_new()
+    mut j := i + 1
+    mut done := 0
+    while done == 0:
+        if j >= n:
+            done = 1
+        else:
+            c := strbuf.ch_at(s, j)
+            if c == 93:
+                j = j + 1
+                done = 1
+            else:
+                strbuf.sb_add_ch(sb, c)
+                j = j + 1
+    push_tok(t, TK_ID(), strbuf.sb_str(sb), 0)
+    strbuf.sb_free(sb)
+    return j
+
+def lex_param(t: Int, s: Str, i: Int, n: Int) -> Int:
+    mut j := i + 1
+    mut v := 0
+    mut has := 0
+    mut go := 1
+    while go == 1:
+        if j >= n:
+            go = 0
+        else:
+            c := strbuf.ch_at(s, j)
+            if strbuf.is_digit_c(c) == 1:
+                v = v * 10 + (c - 48)
+                has = 1
+                j = j + 1
+            else:
+                go = 0
+    push_tok(t, TK_VAR(), "?", v)
+    return j
+
+def lex_named_param(t: Int, s: Str, i: Int, n: Int) -> Int:
+    mut j := i + 1
+    mut go := 1
+    while go == 1:
+        if j >= n:
+            go = 0
+        elif strbuf.is_alnum_c(strbuf.ch_at(s, j)) == 1:
+            j = j + 1
+        else:
+            go = 0
+    push_tok(t, TK_VAR(), str_substr(s, i, j - i), 0)
+    return j
+
+def lex_word(t: Int, s: Str, i: Int, n: Int) -> Int:
+    mut j := i
+    mut go := 1
+    while go == 1:
+        if j >= n:
+            go = 0
+        elif strbuf.is_alnum_c(strbuf.ch_at(s, j)) == 1:
+            j = j + 1
+        else:
+            go = 0
+    w := str_substr(s, i, j - i)
+    # x'...' blob literal
+    if j < n:
+        if strbuf.ch_at(s, j) == 39:
+            if strbuf.eq_ci(w, "x") == 1:
+                return lex_blob(t, s, j, n)
+    if is_keyword(w) == 1:
+        push_tok(t, TK_KW(), strbuf.to_upper(w), 0)
+    else:
+        push_tok(t, TK_ID(), w, 0)
+    return j
+
+def lex_blob(t: Int, s: Str, i: Int, n: Int) -> Int:
+    sb := strbuf.sb_new()
+    mut j := i + 1
+    mut done := 0
+    while done == 0:
+        if j >= n:
+            done = 1
+        elif strbuf.ch_at(s, j) == 39:
+            j = j + 1
+            done = 1
+        else:
+            hi := strbuf.ch_at(s, j)
+            if j + 1 < n:
+                lo := strbuf.ch_at(s, j + 1)
+                if strbuf.is_hex_c(hi) == 1:
+                    if strbuf.is_hex_c(lo) == 1:
+                        strbuf.sb_add_ch(sb, strbuf.hex_val(hi) * 16 + strbuf.hex_val(lo))
+                j = j + 2
+            else:
+                j = j + 1
+    push_tok(t, TK_BLOB(), strbuf.sb_str(sb), 0)
+    strbuf.sb_free(sb)
+    return j
+
+def lex_operator(t: Int, s: Str, i: Int, n: Int) -> Int:
+    c := strbuf.ch_at(s, i)
+    if i + 1 < n:
+        c2 := strbuf.ch_at(s, i + 1)
+        # two-character operators
+        if c == 60:
+            if c2 == 61:
+                push_tok(t, TK_PUNCT(), "<=", 0)
+                return i + 2
+            if c2 == 62:
+                push_tok(t, TK_PUNCT(), "<>", 0)
+                return i + 2
+            if c2 == 60:
+                push_tok(t, TK_PUNCT(), "<<", 0)
+                return i + 2
+        if c == 62:
+            if c2 == 61:
+                push_tok(t, TK_PUNCT(), ">=", 0)
+                return i + 2
+            if c2 == 62:
+                push_tok(t, TK_PUNCT(), ">>", 0)
+                return i + 2
+        if c == 33:
+            if c2 == 61:
+                push_tok(t, TK_PUNCT(), "!=", 0)
+                return i + 2
+        if c == 61:
+            if c2 == 61:
+                push_tok(t, TK_PUNCT(), "=", 0)
+                return i + 2
+        if c == 124:
+            if c2 == 124:
+                push_tok(t, TK_PUNCT(), "||", 0)
+                return i + 2
+    push_tok(t, TK_PUNCT(), str_substr(s, i, 1), 0)
+    return i + 1

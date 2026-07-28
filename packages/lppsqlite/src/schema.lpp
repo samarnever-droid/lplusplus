@@ -1,0 +1,511 @@
+# schema.lpp — the sqlite_schema (a.k.a. sqlite_master) catalogue.
+#
+# Page 1 holds a table b-tree whose rows are:
+#     (type TEXT, name TEXT, tbl_name TEXT, rootpage INTEGER, sql TEXT)
+# This is exactly what the real sqlite3 reads to discover tables, so getting
+# it right is what makes our files openable by SQLite (and vice versa).
+#
+# In-memory schema handle:
+#   [0]  names     (sv)  table name
+#   [8]  roots     (iv)  root page
+#   [16] sqls      (sv)  original CREATE TABLE text
+#   [24] colnames  (sv)  "col1\x1fcol2\x1f..." per table (unit-separator joined)
+#   [32] coltypes  (sv)  declared types, same encoding
+#   [40] flags     (iv)  bit0: has INTEGER PRIMARY KEY alias; bits 8+: its index
+#   [48] types     (sv)  "table" or "index"
+#   [56] count
+
+import mem
+import value
+import record
+import pager
+import btree
+import btwrite
+import cursor
+import strbuf
+import lexer
+
+def SEP() -> Int:
+    return 31
+
+def sc_names(s: Int) -> Int:
+    return mem.bget64(s, 0)
+
+def sc_roots(s: Int) -> Int:
+    return mem.bget64(s, 8)
+
+def sc_sqls(s: Int) -> Int:
+    return mem.bget64(s, 16)
+
+def sc_colnames(s: Int) -> Int:
+    return mem.bget64(s, 24)
+
+def sc_coltypes(s: Int) -> Int:
+    return mem.bget64(s, 32)
+
+def sc_flags(s: Int) -> Int:
+    return mem.bget64(s, 40)
+
+def sc_types(s: Int) -> Int:
+    return mem.bget64(s, 48)
+
+def sc_count(s: Int) -> Int:
+    return mem.iv_len(mem.bget64(s, 8))
+
+def sc_new() -> Int:
+    s := buf_alloc(64)
+    mem.bset64(s, 0, strbuf.sv_new())
+    mem.bset64(s, 8, mem.iv_new(8))
+    mem.bset64(s, 16, strbuf.sv_new())
+    mem.bset64(s, 24, strbuf.sv_new())
+    mem.bset64(s, 32, strbuf.sv_new())
+    mem.bset64(s, 40, mem.iv_new(8))
+    mem.bset64(s, 48, strbuf.sv_new())
+    return s
+
+def sc_free(s: Int):
+    strbuf.sv_free(sc_names(s))
+    mem.iv_free(sc_roots(s))
+    strbuf.sv_free(sc_sqls(s))
+    strbuf.sv_free(sc_colnames(s))
+    strbuf.sv_free(sc_coltypes(s))
+    mem.iv_free(sc_flags(s))
+    strbuf.sv_free(sc_types(s))
+    buf_free(s)
+
+def sc_add(s: Int, kind: Str, name: Str, root: Int, sql: Str, cols: Str, types: Str, flags: Int):
+    strbuf.sv_push(sc_types(s), kind)
+    strbuf.sv_push(sc_names(s), name)
+    mem.iv_push(sc_roots(s), root)
+    strbuf.sv_push(sc_sqls(s), sql)
+    strbuf.sv_push(sc_colnames(s), cols)
+    strbuf.sv_push(sc_coltypes(s), types)
+    mem.iv_push(sc_flags(s), flags)
+
+def sc_find(s: Int, name: Str) -> Int:
+    n := sc_count(s)
+    mut i := 0
+    while i < n:
+        if strbuf.eq_ci(strbuf.sv_get(sc_names(s), i), name) == 1:
+            if strbuf.eq_ci(strbuf.sv_get(sc_types(s), i), "table") == 1:
+                return i
+        i = i + 1
+    return 0 - 1
+
+def sc_find_any(s: Int, name: Str) -> Int:
+    n := sc_count(s)
+    mut i := 0
+    while i < n:
+        if strbuf.eq_ci(strbuf.sv_get(sc_names(s), i), name) == 1:
+            return i
+        i = i + 1
+    return 0 - 1
+
+def sc_name(s: Int, i: Int) -> Str:
+    return strbuf.sv_get(sc_names(s), i)
+
+def sc_root(s: Int, i: Int) -> Int:
+    return mem.iv_get(sc_roots(s), i)
+
+def sc_sql(s: Int, i: Int) -> Str:
+    return strbuf.sv_get(sc_sqls(s), i)
+
+def sc_kind(s: Int, i: Int) -> Str:
+    return strbuf.sv_get(sc_types(s), i)
+
+def sc_flag(s: Int, i: Int) -> Int:
+    return mem.iv_get(sc_flags(s), i)
+
+def sc_set_root(s: Int, i: Int, r: Int):
+    mem.iv_set(sc_roots(s), i, r)
+
+# ── column list encoding (SEP-joined) ──
+
+def split_cols(joined: Str) -> Int:
+    out := strbuf.sv_new()
+    n := str_len(joined)
+    if n == 0:
+        return out
+    mut start := 0
+    mut i := 0
+    while i < n:
+        if strbuf.ch_at(joined, i) == SEP():
+            strbuf.sv_push(out, str_substr(joined, start, i - start))
+            start = i + 1
+        i = i + 1
+    strbuf.sv_push(out, str_substr(joined, start, n - start))
+    return out
+
+def join_cols(sv: Int) -> Str:
+    n := strbuf.sv_len(sv)
+    sb := strbuf.sb_new()
+    mut i := 0
+    while i < n:
+        if i > 0:
+            strbuf.sb_add_ch(sb, SEP())
+        strbuf.sb_add(sb, strbuf.sv_get(sv, i))
+        i = i + 1
+    r := strbuf.sb_str(sb)
+    strbuf.sb_free(sb)
+    return r
+
+def sc_cols(s: Int, i: Int) -> Int:
+    return split_cols(strbuf.sv_get(sc_colnames(s), i))
+
+def sc_types_of(s: Int, i: Int) -> Int:
+    return split_cols(strbuf.sv_get(sc_coltypes(s), i))
+
+def sc_ncols(s: Int, i: Int) -> Int:
+    cs := sc_cols(s, i)
+    n := strbuf.sv_len(cs)
+    strbuf.sv_free(cs)
+    return n
+
+def sc_col_index(s: Int, ti: Int, col: Str) -> Int:
+    cs := sc_cols(s, ti)
+    r := strbuf.sv_find_ci(cs, col)
+    strbuf.sv_free(cs)
+    return r
+
+# Index of the INTEGER PRIMARY KEY column (rowid alias), or -1.
+def sc_ipk(s: Int, i: Int) -> Int:
+    f := sc_flag(s, i)
+    if (f & 1) == 0:
+        return 0 - 1
+    return f >> 8
+
+def make_flags(ipk: Int) -> Int:
+    if ipk < 0:
+        return 0
+    return 1 | (ipk << 8)
+
+# ── type affinity (SQLite rules, in order) ──
+
+def AFF_BLOB() -> Int:
+    return 0
+def AFF_TEXT() -> Int:
+    return 1
+def AFF_NUMERIC() -> Int:
+    return 2
+def AFF_INTEGER() -> Int:
+    return 3
+def AFF_REAL() -> Int:
+    return 4
+
+def affinity_of(decl: Str) -> Int:
+    u := strbuf.to_upper(decl)
+    if str_contains(u, "INT") == 1:
+        return AFF_INTEGER()
+    if str_contains(u, "CHAR") == 1:
+        return AFF_TEXT()
+    if str_contains(u, "CLOB") == 1:
+        return AFF_TEXT()
+    if str_contains(u, "TEXT") == 1:
+        return AFF_TEXT()
+    if str_contains(u, "BLOB") == 1:
+        return AFF_BLOB()
+    if str_len(u) == 0:
+        return AFF_BLOB()
+    if str_contains(u, "REAL") == 1:
+        return AFF_REAL()
+    if str_contains(u, "FLOA") == 1:
+        return AFF_REAL()
+    if str_contains(u, "DOUB") == 1:
+        return AFF_REAL()
+    return AFF_NUMERIC()
+
+# Apply column affinity to a value about to be stored.
+def apply_affinity(v: Int, aff: Int) -> Int:
+    t := value.v_type(v)
+    if aff == AFF_BLOB():
+        return v
+    if aff == AFF_TEXT():
+        if t == value.TINT():
+            r := value.v_from_str(int_to_str(value.v_int(v)))
+            value.v_free(v)
+            return r
+        if t == value.TREAL():
+            r := value.v_from_str(value.v_to_text(v))
+            value.v_free(v)
+            return r
+        return v
+    # numeric-ish affinities: try to convert text that looks numeric
+    if t == value.TTEXT():
+        s := value.v_bytes_str(v)
+        if value.text_is_int(s) == 1:
+            r := value.v_from_int(str_to_int(s))
+            value.v_free(v)
+            return r
+        if value.text_is_number(s) == 1:
+            r := value.v_from_real(value.v_to_real(v))
+            value.v_free(v)
+            return r
+        return v
+    if aff == AFF_INTEGER():
+        if t == value.TREAL():
+            d := value.v_real(v)
+            iv := float_to_int(d)
+            if int_to_float(iv) == d:
+                r := value.v_from_int(iv)
+                value.v_free(v)
+                return r
+        return v
+    if aff == AFF_REAL():
+        if t == value.TINT():
+            r := value.v_from_real(int_to_float(value.v_int(v)))
+            value.v_free(v)
+            return r
+    return v
+
+# ── reading the catalogue off page 1 ──
+
+def load(p: Int) -> Int:
+    s := sc_new()
+    if pager.pg_count(p) < 1:
+        return s
+    c := cursor.cu_new(p, 1)
+    cursor.cu_first(c)
+    while cursor.cu_valid(c) == 1:
+        pay := cursor.cu_payload(c)
+        vv := record.decode(mem.vec_data(pay), 0, mem.vec_len(pay))
+        if value.vv_len(vv) >= 5:
+            kind := value.v_bytes_str(value.vv_get(vv, 0))
+            nm := value.v_bytes_str(value.vv_get(vv, 1))
+            rp := value.v_to_int(value.vv_get(vv, 3))
+            sq := value.v_bytes_str(value.vv_get(vv, 4))
+            cols := strbuf.sv_new()
+            types := strbuf.sv_new()
+            ipk := parse_create_cols(sq, cols, types)
+            sc_add(s, kind, nm, rp, sq, join_cols(cols), join_cols(types), make_flags(ipk))
+            strbuf.sv_free(cols)
+            strbuf.sv_free(types)
+        value.vv_free_all(vv)
+        mem.vec_free(pay)
+        cursor.cu_next(c)
+    cursor.cu_free(c)
+    return s
+
+# Append one row to sqlite_schema on disk.
+def write_entry(p: Int, kind: Str, name: Str, tbl: Str, root: Int, sql: Str):
+    vv := value.vv_new()
+    value.vv_push(vv, value.v_from_str(kind))
+    value.vv_push(vv, value.v_from_str(name))
+    value.vv_push(vv, value.v_from_str(tbl))
+    value.vv_push(vv, value.v_from_int(root))
+    value.vv_push(vv, value.v_from_str(sql))
+    rec := record.encode(vv)
+    rid := btree.max_rowid(p, 1) + 1
+    btwrite.insert(p, 1, rid, mem.vec_data(rec), mem.vec_len(rec))
+    mem.vec_free(rec)
+    value.vv_free_all(vv)
+
+# Remove the sqlite_schema row whose name matches.
+def delete_entry(p: Int, name: Str) -> Int:
+    c := cursor.cu_new(p, 1)
+    cursor.cu_first(c)
+    mut target := 0 - 1
+    while cursor.cu_valid(c) == 1:
+        pay := cursor.cu_payload(c)
+        vv := record.decode(mem.vec_data(pay), 0, mem.vec_len(pay))
+        if value.vv_len(vv) >= 2:
+            if strbuf.eq_ci(value.v_bytes_str(value.vv_get(vv, 1)), name) == 1:
+                target = cursor.cu_rowid(c)
+        value.vv_free_all(vv)
+        mem.vec_free(pay)
+        cursor.cu_next(c)
+    cursor.cu_free(c)
+    if target >= 0:
+        return btwrite.delete(p, 1, target)
+    return 0
+
+# ── parsing CREATE TABLE column definitions ──
+# Fills `cols` and `types`; returns the INTEGER PRIMARY KEY index or -1.
+
+def parse_create_cols(sql: Str, cols: Int, types: Int) -> Int:
+    mut t := lexer.tokenize(sql)
+    n := lexer.lx_count(t)
+    # find the '(' that opens the column list
+    mut i := 0
+    mut open := 0 - 1
+    while i < n:
+        if lexer.lx_kind(t, i) == lexer.TK_PUNCT():
+            if lpp_str_eq(lexer.lx_text(t, i), "(") == 1:
+                open = i
+                i = n
+        i = i + 1
+    if open < 0:
+        lexer.lx_free(t)
+        return 0 - 1
+
+    mut ipk := 0 - 1
+    mut idx := 0
+    mut j := open + 1
+    mut depth := 0
+    mut go := 1
+    while go == 1:
+        if j >= n:
+            go = 0
+        else:
+            k := lexer.lx_kind(t, j)
+            if k == lexer.TK_EOF():
+                go = 0
+            else:
+                txt := lexer.lx_text(t, j)
+                # skip table-level constraints
+                if depth == 0:
+                    if is_table_constraint_kw(t, j) == 1:
+                        j = skip_to_comma(t, j, n)
+                    else:
+                        cname := txt
+                        ck := lexer.lx_kind(t, j)
+                        if ck == lexer.TK_ID():
+                            strbuf.sv_push(cols, cname)
+                            r := scan_col_def(t, j + 1, n)
+                            tp := coltype_text(t, j + 1, type_end(t, j + 1, n))
+                            strbuf.sv_push(types, tp)
+                            if col_is_ipk(t, j + 1, n) == 1:
+                                ipk = idx
+                            idx = idx + 1
+                            j = r
+                        elif ck == lexer.TK_KW():
+                            # a keyword used as a column name (SQLite allows many)
+                            strbuf.sv_push(cols, cname)
+                            tp := coltype_text(t, j + 1, type_end(t, j + 1, n))
+                            strbuf.sv_push(types, tp)
+                            if col_is_ipk(t, j + 1, n) == 1:
+                                ipk = idx
+                            idx = idx + 1
+                            j = scan_col_def(t, j + 1, n)
+                        else:
+                            j = j + 1
+                else:
+                    j = j + 1
+                if j < n:
+                    tk := lexer.lx_text(t, j)
+                    if lpp_str_eq(tk, ",") == 1:
+                        j = j + 1
+                    elif lpp_str_eq(tk, ")") == 1:
+                        go = 0
+                    elif lexer.lx_kind(t, j) == lexer.TK_EOF():
+                        go = 0
+    lexer.lx_free(t)
+    return ipk
+
+def is_table_constraint_kw(t: Int, i: Int) -> Int:
+    if lexer.lx_kind(t, i) != lexer.TK_KW():
+        return 0
+    x := lexer.lx_text(t, i)
+    if lpp_str_eq(x, "PRIMARY") == 1:
+        return 1
+    if lpp_str_eq(x, "UNIQUE") == 1:
+        return 1
+    if lpp_str_eq(x, "CHECK") == 1:
+        return 1
+    if lpp_str_eq(x, "FOREIGN") == 1:
+        return 1
+    if lpp_str_eq(x, "CONSTRAINT") == 1:
+        return 1
+    return 0
+
+# Walk to the comma (or closing paren) that ends this column definition.
+def scan_col_def(t: Int, i: Int, n: Int) -> Int:
+    mut j := i
+    mut depth := 0
+    mut go := 1
+    while go == 1:
+        if j >= n:
+            go = 0
+        else:
+            k := lexer.lx_kind(t, j)
+            if k == lexer.TK_EOF():
+                go = 0
+            else:
+                x := lexer.lx_text(t, j)
+                if lpp_str_eq(x, "(") == 1:
+                    depth = depth + 1
+                    j = j + 1
+                elif lpp_str_eq(x, ")") == 1:
+                    if depth == 0:
+                        go = 0
+                    else:
+                        depth = depth - 1
+                        j = j + 1
+                elif lpp_str_eq(x, ",") == 1:
+                    if depth == 0:
+                        go = 0
+                    else:
+                        j = j + 1
+                else:
+                    j = j + 1
+    return j
+
+def skip_to_comma(t: Int, i: Int, n: Int) -> Int:
+    return scan_col_def(t, i, n)
+
+# End of the declared type (stops at a constraint keyword).
+def type_end(t: Int, i: Int, n: Int) -> Int:
+    mut j := i
+    mut depth := 0
+    mut go := 1
+    while go == 1:
+        if j >= n:
+            go = 0
+        else:
+            k := lexer.lx_kind(t, j)
+            x := lexer.lx_text(t, j)
+            if k == lexer.TK_EOF():
+                go = 0
+            elif lpp_str_eq(x, "(") == 1:
+                depth = depth + 1
+                j = j + 1
+            elif lpp_str_eq(x, ")") == 1:
+                if depth == 0:
+                    go = 0
+                else:
+                    depth = depth - 1
+                    j = j + 1
+            elif lpp_str_eq(x, ",") == 1:
+                if depth == 0:
+                    go = 0
+                else:
+                    j = j + 1
+            elif depth == 0:
+                if k == lexer.TK_KW():
+                    go = 0
+                else:
+                    j = j + 1
+            else:
+                j = j + 1
+    return j
+
+def coltype_text(t: Int, i: Int, e: Int) -> Str:
+    sb := strbuf.sb_new()
+    mut j := i
+    while j < e:
+        if j > i:
+            strbuf.sb_add_ch(sb, 32)
+        strbuf.sb_add(sb, lexer.lx_text(t, j))
+        j = j + 1
+    r := strbuf.sb_str(sb)
+    strbuf.sb_free(sb)
+    return r
+
+# Does this column definition say INTEGER PRIMARY KEY?
+def col_is_ipk(t: Int, i: Int, n: Int) -> Int:
+    e := scan_col_def(t, i, n)
+    mut sawint := 0
+    mut sawpk := 0
+    mut j := i
+    while j < e:
+        x := lexer.lx_text(t, j)
+        if strbuf.eq_ci(x, "INTEGER") == 1:
+            sawint = 1
+        if lpp_str_eq(x, "PRIMARY") == 1:
+            if j + 1 < e:
+                if lpp_str_eq(lexer.lx_text(t, j + 1), "KEY") == 1:
+                    sawpk = 1
+        j = j + 1
+    if sawint == 1:
+        if sawpk == 1:
+            return 1
+    return 0

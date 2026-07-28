@@ -457,10 +457,10 @@ fn main() {
     while idx < args.len() {
         let arg = &args[idx];
         if arg == "--version" || arg == "-v" {
-            println!("L++ Compiler v4.3.0 (Pure Native AOT)");
+            println!("L++ Compiler v4.4.0 (Pure Native AOT)");
             return;
         } else if arg == "--help" || arg == "-h" {
-            println!("L++ (L Plus Plus) v4.3.0 — Pure Native Compiler & Toolchain");
+            println!("L++ (L Plus Plus) v4.4.0 — Pure Native Compiler & Toolchain");
             println!("Cranelift AOT backend, 9 MIR optimization passes, direct ELF/PE/Mach-O linker");
             println!();
             println!("Usage: lpp <file.lpp> [options]");
@@ -511,7 +511,7 @@ fn main() {
             println!("  -v, --version    Show version");
             println!("  -h, --help       Show this help");
             println!();
-            println!("Language Features (v4.3.0):");
+            println!("Language Features (v4.4.0):");
             println!("  Functions, default params, closures, threads");
             println!("  Structs, enums, match with bindings");
             println!("  Generics: def foo[T](x: T) -> T");
@@ -1077,6 +1077,7 @@ fn resolve_local_imports(
 ) -> Result<(), String> {
     let mut new_decls = Vec::new();
     let mut imports_to_process = Vec::new();
+    let mut module_of_decl: Vec<(String, String)> = Vec::new();
 
     for decl in declarations.iter() {
         if let ast::TopLevel::Import(import_kind) = decl {
@@ -1114,10 +1115,72 @@ fn resolve_local_imports(
         let lib_base_dir = filepath.parent().unwrap_or(std::path::Path::new("."));
         resolve_local_imports(&mut lib_ast.declarations, imported_files, lib_base_dir)?;
 
+        // Record which module each declaration came from so that a name
+        // collision can name both sides.
+        for decl in &lib_ast.declarations {
+            if let Some(name) = declaration_name(decl) {
+                module_of_decl.push((name, module.clone()));
+            }
+        }
+
         new_decls.extend(lib_ast.declarations);
     }
 
     declarations.extend(new_decls);
+
+    // Imported modules are flattened into one global declaration list, so two
+    // modules defining the same function name would silently collapse into a
+    // single symbol: `a.shared()` and `b.shared()` would both call whichever
+    // was linked last, with no diagnostic. Detect that here and fail loudly.
+    check_duplicate_declarations(declarations, &module_of_decl)?;
+
+    Ok(())
+}
+
+/// The name a top-level declaration introduces into the global namespace.
+fn declaration_name(decl: &ast::TopLevel) -> Option<String> {
+    match decl {
+        ast::TopLevel::Function(function) => Some(function.name.clone()),
+        ast::TopLevel::Struct(def) => Some(def.name.clone()),
+        ast::TopLevel::Enum(def) => Some(def.name.clone()),
+        ast::TopLevel::Const { name, .. } => Some(name.clone()),
+        ast::TopLevel::TypeAlias { name, .. } => Some(name.clone()),
+        _ => None,
+    }
+}
+
+/// Reject two declarations of the same name coming from different files.
+fn check_duplicate_declarations(
+    declarations: &[ast::TopLevel],
+    module_of_decl: &[(String, String)],
+) -> Result<(), String> {
+    use std::collections::HashMap;
+
+    // Map every imported declaration name to the module that defined it.
+    let mut origin: HashMap<&str, &str> = HashMap::new();
+    let mut duplicates: Vec<(String, String, String)> = Vec::new();
+    for (name, module) in module_of_decl {
+        if let Some(previous) = origin.get(name.as_str()) {
+            if *previous != module.as_str() {
+                duplicates.push((name.clone(), (*previous).to_string(), module.clone()));
+            }
+        } else {
+            origin.insert(name.as_str(), module.as_str());
+        }
+    }
+
+    let _ = declarations;
+
+    if let Some((name, first, second)) = duplicates.first() {
+        return Err(format!(
+            "duplicate definition of '{}': defined in both '{}.lpp' and '{}.lpp'.\n  \
+             Imported modules share one global namespace in L++, so two modules \
+             cannot define the same function, struct, enum, const or type name.\n  \
+             Rename one of them.",
+            name, first, second
+        ));
+    }
+
     Ok(())
 }
 

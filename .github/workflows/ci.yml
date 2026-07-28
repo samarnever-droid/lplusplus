@@ -155,6 +155,48 @@ jobs:
             benchmarks/scalability/latest.json
             benchmarks/scalability/latest.md
 
+  lppsqlite-sqlite-compat:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Show sqlite3 version
+        run: python3 -c "import sqlite3; print('sqlite3', sqlite3.sqlite_version)"
+      - name: Build the L++ compiler
+        run: cargo build --release --bin lpp --bin lpp-link
+      - name: Build lppsqlite engine and tests
+        run: sh packages/lppsqlite/build.sh --tests
+      - name: Unit suites (485 assertions)
+        run: sh packages/lppsqlite/run-tests.sh --unit
+      - name: Differential suite vs real sqlite3
+        run: sh packages/lppsqlite/run-tests.sh --diff
+      - name: Round-trip proof - real sqlite3 must accept our file
+        run: |
+          set -e
+          DB=$RUNNER_TEMP/ci.db
+          rm -f "$DB"
+          sh -c "packages/lppsqlite/lppsqlite $DB \"CREATE TABLE users(id INTEGER PRIMARY KEY, name TEXT, score REAL);\""
+          sh -c "packages/lppsqlite/lppsqlite $DB \"INSERT INTO users VALUES (1,'Alice',91.5),(2,'Bob',82.25),(3,'Cy',70.0);\""
+          sh -c "packages/lppsqlite/lppsqlite $DB \"UPDATE users SET score = 99.5 WHERE id = 2; DELETE FROM users WHERE id = 3;\""
+          python3 - "$DB" <<'EOF'
+          import sqlite3, sys
+          db = sys.argv[1]
+          con = sqlite3.connect(db)
+          integrity = con.execute("PRAGMA integrity_check").fetchone()[0]
+          assert integrity == "ok", f"integrity_check failed: {integrity}"
+          rows = con.execute("SELECT id, name, score FROM users ORDER BY id").fetchall()
+          assert rows == [(1, "Alice", 91.5), (2, "Bob", 99.5)], rows
+          # real sqlite3 writes into the file the L++ engine created
+          con.execute("INSERT INTO users VALUES (4,'Dee',60.5)")
+          con.commit(); con.close()
+          print("real sqlite3: integrity ok, rows verified, wrote row 4")
+          EOF
+          OUT=$(sh -c "packages/lppsqlite/lppsqlite $DB \"SELECT name FROM users WHERE id = 4;\"")
+          echo "lppsqlite read back: $OUT"
+          [ "$OUT" = "Dee" ] || { echo "FAIL: expected Dee, got $OUT"; exit 1; }
+          echo "PASS bidirectional SQLite compatibility"
+
   windows-coff-fallback:
     runs-on: windows-latest
     timeout-minutes: 20

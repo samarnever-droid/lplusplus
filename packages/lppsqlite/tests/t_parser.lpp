@@ -1,0 +1,145 @@
+import mem
+import strbuf
+import lexer
+import ast
+import parser
+import tap
+
+def pstmt(sql: Str) -> Int:
+    p := parser.ps_new(sql)
+    s := parser.parse_statement(p)
+    return p
+
+def main():
+    T := tap.t_new()
+
+    p1 := parser.ps_new("SELECT a, b AS x FROM t WHERE a > 1 ORDER BY b DESC LIMIT 10")
+    s1 := parser.parse_statement(p1)
+    tap.eq_i(T, "s1 no error", parser.ps_failed(p1), 0)
+    tap.eq_i(T, "s1 kind", parser.st_kind(s1), parser.S_SELECT())
+    tap.eq_i(T, "s1 nresults", mem.iv_len(parser.st_results(s1)), 2)
+    tap.eq_s(T, "s1 alias", strbuf.sv_get(parser.st_aliases(s1), 1), "x")
+    tap.eq_i(T, "s1 nfrom", strbuf.sv_len(parser.st_from(s1)), 1)
+    tap.eq_s(T, "s1 from", strbuf.sv_get(parser.st_from(s1), 0), "t")
+    tap.okb(T, "s1 has where", parser.st_where(s1) >= 0)
+    tap.eq_i(T, "s1 order n", mem.iv_len(parser.st_order(s1)), 1)
+    tap.eq_i(T, "s1 order desc", mem.iv_get(parser.st_order_dirs(s1), 0), 1)
+    tap.okb(T, "s1 has limit", parser.st_limit(s1) >= 0)
+
+    ar := parser.ps_arena(p1)
+    w := parser.st_where(s1)
+    tap.eq_i(T, "where is binop", ast.kind(ar, w), ast.N_BINOP())
+    tap.eq_s(T, "where op", ast.text_of(ar, w), ">")
+    tap.eq_i(T, "where lhs col", ast.kind(ar, ast.a_of(ar, w)), ast.N_COL())
+    tap.eq_s(T, "where lhs name", ast.text_of(ar, ast.a_of(ar, w)), "a")
+    tap.eq_i(T, "where rhs int", ast.int_of(ar, ast.b_of(ar, w)), 1)
+
+    # precedence: a + b * c
+    p2 := parser.ps_new("SELECT a + b * c")
+    s2 := parser.parse_statement(p2)
+    ar2 := parser.ps_arena(p2)
+    r := mem.iv_get(parser.st_results(s2), 0)
+    tap.eq_s(T, "prec root", ast.text_of(ar2, r), "+")
+    rhs := ast.b_of(ar2, r)
+    tap.eq_s(T, "prec rhs", ast.text_of(ar2, rhs), "*")
+
+    # precedence: OR/AND
+    p3 := parser.ps_new("SELECT 1 WHERE a = 1 OR b = 2 AND c = 3")
+    s3 := parser.parse_statement(p3)
+    ar3 := parser.ps_arena(p3)
+    w3 := parser.st_where(s3)
+    tap.eq_s(T, "or at root", ast.text_of(ar3, w3), "OR")
+    tap.eq_s(T, "and below", ast.text_of(ar3, ast.b_of(ar3, w3)), "AND")
+
+    # INSERT
+    p4 := parser.ps_new("INSERT INTO t (a, b) VALUES (1, 'x'), (2, 'y')")
+    s4 := parser.parse_statement(p4)
+    tap.eq_i(T, "insert kind", parser.st_kind(s4), parser.S_INSERT())
+    tap.eq_s(T, "insert table", parser.st_table(s4), "t")
+    tap.eq_i(T, "insert ncols", strbuf.sv_len(parser.st_ins_cols(s4)), 2)
+    tap.eq_i(T, "insert nrows", mem.iv_len(parser.st_val_rows(s4)), 2)
+    ar4 := parser.ps_arena(p4)
+    slot0 := mem.iv_get(parser.st_val_rows(s4), 0)
+    tap.eq_i(T, "insert row0 nvals", ast.av_count(ar4, slot0), 2)
+
+    # UPDATE
+    p5 := parser.ps_new("UPDATE t SET a = 1, b = b + 1 WHERE id = 5")
+    s5 := parser.parse_statement(p5)
+    tap.eq_i(T, "update kind", parser.st_kind(s5), parser.S_UPDATE())
+    tap.eq_i(T, "update nset", strbuf.sv_len(parser.st_set_cols(s5)), 2)
+    tap.okb(T, "update where", parser.st_where(s5) >= 0)
+
+    # DELETE
+    p6 := parser.ps_new("DELETE FROM t WHERE x < 3")
+    s6 := parser.parse_statement(p6)
+    tap.eq_i(T, "delete kind", parser.st_kind(s6), parser.S_DELETE())
+    tap.eq_s(T, "delete table", parser.st_table(s6), "t")
+
+    # CREATE / DROP
+    p7 := parser.ps_new("CREATE TABLE t (a INTEGER PRIMARY KEY, b TEXT)")
+    s7 := parser.parse_statement(p7)
+    tap.eq_i(T, "create kind", parser.st_kind(s7), parser.S_CREATE_TABLE())
+    tap.eq_s(T, "create name", parser.st_table(s7), "t")
+
+    p8 := parser.ps_new("DROP TABLE IF EXISTS t")
+    s8 := parser.parse_statement(p8)
+    tap.eq_i(T, "drop kind", parser.st_kind(s8), parser.S_DROP_TABLE())
+    tap.eq_i(T, "drop ifexists", parser.st_ifexists(s8), 1)
+
+    # functions and aggregates
+    p9 := parser.ps_new("SELECT COUNT(*), SUM(x), upper(name) FROM t GROUP BY g HAVING COUNT(*) > 1")
+    s9 := parser.parse_statement(p9)
+    ar9 := parser.ps_arena(p9)
+    f0 := mem.iv_get(parser.st_results(s9), 0)
+    tap.eq_i(T, "func node", ast.kind(ar9, f0), ast.N_FUNC())
+    tap.eq_s(T, "func name", ast.text_of(ar9, f0), "COUNT")
+    tap.eq_i(T, "func nargs", ast.av_count(ar9, ast.list_of(ar9, f0)), 1)
+    tap.eq_i(T, "group n", mem.iv_len(parser.st_group(s9)), 1)
+    tap.okb(T, "having", parser.st_having(s9) >= 0)
+
+    # joins
+    p10 := parser.ps_new("SELECT * FROM a JOIN b ON a.id = b.aid LEFT JOIN c ON c.x = a.x")
+    s10 := parser.parse_statement(p10)
+    tap.eq_i(T, "join nfrom", strbuf.sv_len(parser.st_from(s10)), 3)
+    tap.eq_i(T, "join type1", mem.iv_get(parser.st_join_types(s10), 1), 1)
+    tap.eq_i(T, "join type2", mem.iv_get(parser.st_join_types(s10), 2), 2)
+    tap.okb(T, "join cond1", mem.iv_get(parser.st_join_conds(s10), 1) >= 0)
+
+    # IN / BETWEEN / LIKE / IS NULL / CASE / CAST
+    p11 := parser.ps_new("SELECT 1 WHERE a IN (1,2,3) AND b BETWEEN 1 AND 9 AND c LIKE 'x%' AND d IS NULL")
+    s11 := parser.parse_statement(p11)
+    tap.eq_i(T, "complex where ok", parser.ps_failed(p11), 0)
+
+    p12 := parser.ps_new("SELECT CASE WHEN a > 1 THEN 'big' ELSE 'small' END, CAST(x AS INTEGER)")
+    s12 := parser.parse_statement(p12)
+    ar12 := parser.ps_arena(p12)
+    c0 := mem.iv_get(parser.st_results(s12), 0)
+    tap.eq_i(T, "case node", ast.kind(ar12, c0), ast.N_CASE())
+    c1 := mem.iv_get(parser.st_results(s12), 1)
+    tap.eq_i(T, "cast node", ast.kind(ar12, c1), ast.N_CAST())
+    tap.eq_s(T, "cast type", ast.text_of(ar12, c1), "INTEGER")
+
+    # qualified columns
+    p13 := parser.ps_new("SELECT t.a, u.* FROM t, u")
+    s13 := parser.parse_statement(p13)
+    ar13 := parser.ps_arena(p13)
+    q0 := mem.iv_get(parser.st_results(s13), 0)
+    tap.eq_i(T, "qual col kind", ast.kind(ar13, q0), ast.N_COL())
+    tap.eq_s(T, "qual col name", ast.text_of(ar13, q0), "a")
+    q1 := mem.iv_get(parser.st_results(s13), 1)
+    tap.eq_i(T, "qual star", ast.kind(ar13, q1), ast.N_STAR())
+    tap.eq_s(T, "qual star tbl", ast.text_of(ar13, q1), "u")
+
+    # DISTINCT + compound
+    p14 := parser.ps_new("SELECT DISTINCT a FROM t UNION ALL SELECT b FROM u")
+    s14 := parser.parse_statement(p14)
+    tap.eq_i(T, "distinct", parser.st_distinct(s14), 1)
+    tap.okb(T, "compound", parser.st_compound(s14) != 0)
+    tap.eq_i(T, "compound op union all", parser.st_compound_op(s14), 2)
+
+    # error reporting
+    p15 := parser.ps_new("SELECT FROM")
+    s15 := parser.parse_statement(p15)
+    tap.eq_i(T, "syntax error flagged", parser.ps_failed(p15), 1)
+
+    tap.t_report(T, "parser")

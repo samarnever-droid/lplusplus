@@ -360,6 +360,69 @@
         "Linear row scan (no B-tree); not for very large tables",
         "Own binary format - NOT SQLite file-format compatible"
       ]
+    },
+    "lppsqlite": {
+      "name": "lppsqlite",
+      "version": "1.0.0",
+      "description": "SQLite-file-format-compatible database engine in pure L++ \u2014 real .db files, B+trees, overflow pages, freelist, sqlite_schema, SQL parser and executor.",
+      "authors": [
+        "arena-audit"
+      ],
+      "license": "MIT",
+      "repository": "https://github.com/samarnever-droid/lplusplus",
+      "path": "packages/lppsqlite",
+      "source": "packages/lppsqlite/src/exec.lpp",
+      "dependencies": [],
+      "keywords": [
+        "sqlite",
+        "database",
+        "sql",
+        "btree",
+        "storage",
+        "embedded",
+        "file-format",
+        "compatible"
+      ],
+      "features": [
+        "Real SQLite on-disk format: 100-byte header, page-aligned B+trees, varints, record serial types",
+        "Files pass the real sqlite3's PRAGMA integrity_check (verified in CI)",
+        "Reads AND writes databases created by real SQLite, including REAL/BLOB/NULL and overflow rows",
+        "Overflow page chains for payloads larger than one page",
+        "Freelist with trunk/leaf pages and page reuse; empty-leaf pruning on delete",
+        "SELECT with WHERE, GROUP BY, HAVING, ORDER BY, LIMIT/OFFSET, DISTINCT",
+        "INNER/LEFT/CROSS joins, table aliases, qualified columns",
+        "UNION, UNION ALL, EXCEPT, INTERSECT",
+        "Subqueries: scalar (SELECT ...), IN (SELECT ...), EXISTS / NOT EXISTS",
+        "Aggregates COUNT/SUM/TOTAL/AVG/MIN/MAX/GROUP_CONCAT with DISTINCT",
+        "~30 scalar functions (substr, replace, instr, printf, hex, round, typeof, iif, ...)",
+        "SQLite type affinity, three-valued logic, and SQLite's NULL<num<text<blob ordering",
+        "INTEGER PRIMARY KEY rowid aliasing; rowid/_rowid_/oid",
+        "CLI shell with list/CSV/JSON output and .tables/.schema/.dump dot-commands",
+        "485 in-engine assertions plus 87 differential cases compared against real sqlite3"
+      ],
+      "api": {
+        "exec.open_db": "(path: Str) -> Int \u2014 open or create a database file",
+        "exec.open_memory": "() -> Int \u2014 transient in-memory database",
+        "exec.exec": "(db: Int, sql: Str) -> Int \u2014 run one statement, returns a rowset",
+        "exec.exec_script": "(db: Int, sql: Str) -> Int \u2014 run several ';'-separated statements",
+        "exec.close_db": "(db: Int) \u2014 flush to disk and release",
+        "rowset.rs_nrows": "(r: Int) -> Int \u2014 row count",
+        "rowset.rs_ncols": "(r: Int) -> Int \u2014 column count",
+        "rowset.rs_name": "(r: Int, i: Int) -> Str \u2014 column name",
+        "rowset.rs_cell": "(r: Int, row: Int, col: Int) -> Int \u2014 value handle",
+        "rowset.rs_err": "(r: Int) -> Int \u2014 1 on error",
+        "rowset.rs_errmsg": "(r: Int) -> Str \u2014 error text",
+        "rowset.rs_changes": "(r: Int) -> Int \u2014 rows modified by INSERT/UPDATE/DELETE",
+        "value.v_display": "(v: Int) -> Str \u2014 render a value for output",
+        "value.v_typename": "(v: Int) -> Str \u2014 null|integer|real|text|blob"
+      },
+      "limitations": [
+        "No indexes: CREATE INDEX is accepted but never used for planning; scans are linear",
+        "BEGIN/COMMIT parse but there is no journal or WAL; ROLLBACK does not undo",
+        "Correlated subqueries do not see the outer row",
+        "No views, triggers, window functions, date/time functions, or ALTER TABLE",
+        "WITH/ALTER/SAVEPOINT/ATTACH/VACUUM/NATURAL JOIN are rejected with a clear error"
+      ]
     }
   }
 }

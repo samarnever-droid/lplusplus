@@ -35,3 +35,5 @@ tests/test_dyn_dispatch
 tests/test_ffi
 # Added by code-review-graph
 .code-review-graph/
+/packages/lppsqlite/build/
+*.db

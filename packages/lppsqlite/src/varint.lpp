@@ -1,0 +1,81 @@
+# varint.lpp — SQLite's big-endian base-128 variable-length integers.
+#
+# Format (per the SQLite file-format spec): 1..9 bytes. In bytes 1..8 the high
+# bit means "another byte follows" and the low 7 bits carry data. If a 9th byte
+# is reached it contributes all 8 of its bits, giving a full 64-bit value.
+# Values are conceptually unsigned; a negative i64 therefore always encodes to
+# the maximal 9-byte form.
+
+import mem
+
+# Mask of bits 56..63. If any are set the value needs the 9-byte form.
+def vi_himask() -> Int:
+    return 0 - 72057594037927936
+
+# Number of bytes `v` will occupy when encoded.
+def vi_size_of(v: Int) -> Int:
+    if (v & vi_himask()) != 0:
+        return 9
+    mut u := v
+    mut n := 0
+    mut go := 1
+    while go == 1:
+        n = n + 1
+        u = mem.ushr(u, 7)
+        if u == 0:
+            go = 0
+    return n
+
+# Write `v` at buf[off]; returns the number of bytes written.
+def vi_put(b: Int, off: Int, v: Int) -> Int:
+    if (v & vi_himask()) != 0:
+        buf_set8(b, off + 8, v & 255)
+        mut u := mem.ushr(v, 8)
+        mut i := 7
+        while i >= 0:
+            buf_set8(b, off + i, (u & 127) | 128)
+            u = mem.ushr(u, 7)
+            i = i - 1
+        return 9
+    n := vi_size_of(v)
+    mut u2 := v
+    mut j := n - 1
+    while j >= 0:
+        mut byte := u2 & 127
+        if j != n - 1:
+            byte = byte | 128
+        buf_set8(b, off + j, byte)
+        u2 = mem.ushr(u2, 7)
+        j = j - 1
+    return n
+
+# Number of bytes the varint stored at buf[off] occupies.
+def vi_len(b: Int, off: Int) -> Int:
+    mut i := 0
+    while i < 8:
+        if buf_get8(b, off + i) < 128:
+            return i + 1
+        i = i + 1
+    return 9
+
+# Decode the varint stored at buf[off].
+def vi_get(b: Int, off: Int) -> Int:
+    mut r := 0
+    mut i := 0
+    while i < 8:
+        c := buf_get8(b, off + i)
+        if c < 128:
+            return (r << 7) | c
+        r = (r << 7) | (c & 127)
+        i = i + 1
+    return (r << 8) | buf_get8(b, off + 8)
+
+# Append a varint to a growable vec; returns bytes appended.
+def vi_push(vh: Int, v: Int) -> Int:
+    n := vi_size_of(v)
+    mem.vec_reserve(vh, n)
+    d := mem.vec_data(vh)
+    ln := mem.vec_len(vh)
+    vi_put(d, ln, v)
+    mem.vec_set_len(vh, ln + n)
+    return n

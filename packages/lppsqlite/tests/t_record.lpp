@@ -1,0 +1,111 @@
+import mem
+import varint
+import value
+import record
+import ieee754
+import tap
+
+def hexout(v: Int):
+    n := mem.vec_len(v)
+    d := mem.vec_data(v)
+    mut s := ""
+    mut i := 0
+    while i < n:
+        b := buf_get8(d, i)
+        hi := b >> 4
+        lo := b & 15
+        s = str_concat(s, hexch(hi))
+        s = str_concat(s, hexch(lo))
+        i = i + 1
+    print_str(s)
+
+def hexch(x: Int) -> Str:
+    if x < 10:
+        return chr(48 + x)
+    return chr(97 + x - 10)
+
+def main():
+    T := tap.t_new()
+
+    tap.eq_i(T, "serial null", record.serial_of(value.v_null()), 0)
+    tap.eq_i(T, "serial 0", record.serial_of(value.v_from_int(0)), 8)
+    tap.eq_i(T, "serial 1", record.serial_of(value.v_from_int(1)), 9)
+    tap.eq_i(T, "serial 2", record.serial_of(value.v_from_int(2)), 1)
+    tap.eq_i(T, "serial 127", record.serial_of(value.v_from_int(127)), 1)
+    tap.eq_i(T, "serial 128", record.serial_of(value.v_from_int(128)), 2)
+    tap.eq_i(T, "serial 32768", record.serial_of(value.v_from_int(32768)), 3)
+    tap.eq_i(T, "serial 8388608", record.serial_of(value.v_from_int(8388608)), 4)
+    tap.eq_i(T, "serial 2147483648", record.serial_of(value.v_from_int(2147483648)), 5)
+    tap.eq_i(T, "serial 2^48", record.serial_of(value.v_from_int(281474976710656)), 6)
+    tap.eq_i(T, "serial real", record.serial_of(value.v_from_real(1.5)), 7)
+    tap.eq_i(T, "serial text3", record.serial_of(value.v_from_str("abc")), 19)
+    tap.eq_i(T, "serial text0", record.serial_of(value.v_from_str("")), 13)
+
+    tap.eq_i(T, "size st1", record.serial_size(1), 1)
+    tap.eq_i(T, "size st5", record.serial_size(5), 6)
+    tap.eq_i(T, "size st6", record.serial_size(6), 8)
+    tap.eq_i(T, "size st7", record.serial_size(7), 8)
+    tap.eq_i(T, "size st19", record.serial_size(19), 3)
+    tap.eq_i(T, "size st20", record.serial_size(20), 4)
+
+    # round-trip a mixed row
+    vv := value.vv_new()
+    value.vv_push(vv, value.v_from_int(1))
+    value.vv_push(vv, value.v_from_str("Alice"))
+    value.vv_push(vv, value.v_from_int(30))
+    rec := record.encode(vv)
+    d := mem.vec_data(rec)
+    back := record.decode(d, 0, mem.vec_len(rec))
+    tap.eq_i(T, "rt ncols", value.vv_len(back), 3)
+    tap.eq_i(T, "rt c0", value.v_int(value.vv_get(back, 0)), 1)
+    tap.eq_s(T, "rt c1", value.v_bytes_str(value.vv_get(back, 1)), "Alice")
+    tap.eq_i(T, "rt c2", value.v_int(value.vv_get(back, 2)), 30)
+    tap.eq_i(T, "colcount", record.column_count(d, 0), 3)
+    tap.eq_s(T, "decode_one", value.v_bytes_str(record.decode_one(d, 0, 1)), "Alice")
+
+    # print the exact bytes so the harness can diff against real SQLite
+    print_str("REC1:")
+    hexout(rec)
+
+    # wide value coverage
+    vv2 := value.vv_new()
+    value.vv_push(vv2, value.v_null())
+    value.vv_push(vv2, value.v_from_int(0))
+    value.vv_push(vv2, value.v_from_int(1))
+    value.vv_push(vv2, value.v_from_int(0 - 1))
+    value.vv_push(vv2, value.v_from_int(1000))
+    value.vv_push(vv2, value.v_from_int(0 - 100000))
+    value.vv_push(vv2, value.v_from_int(123456789012))
+    value.vv_push(vv2, value.v_from_real(3.5))
+    value.vv_push(vv2, value.v_from_str("hi"))
+    rec2 := record.encode(vv2)
+    print_str("REC2:")
+    hexout(rec2)
+    d2 := mem.vec_data(rec2)
+    b2 := record.decode(d2, 0, mem.vec_len(rec2))
+    tap.eq_i(T, "w ncols", value.vv_len(b2), 9)
+    tap.eq_i(T, "w null", value.v_type(value.vv_get(b2, 0)), value.TNULL())
+    tap.eq_i(T, "w 0", value.v_int(value.vv_get(b2, 1)), 0)
+    tap.eq_i(T, "w 1", value.v_int(value.vv_get(b2, 2)), 1)
+    tap.eq_i(T, "w -1", value.v_int(value.vv_get(b2, 3)), 0 - 1)
+    tap.eq_i(T, "w 1000", value.v_int(value.vv_get(b2, 4)), 1000)
+    tap.eq_i(T, "w -100000", value.v_int(value.vv_get(b2, 5)), 0 - 100000)
+    tap.eq_i(T, "w big", value.v_int(value.vv_get(b2, 6)), 123456789012)
+    tap.eq_i(T, "w real", ieee754.f2bits(value.v_real(value.vv_get(b2, 7))), ieee754.f2bits(3.5))
+    tap.eq_s(T, "w text", value.v_bytes_str(value.vv_get(b2, 8)), "hi")
+
+    # comparison semantics
+    tap.eq_i(T, "cmp null<int", value.v_cmp(value.v_null(), value.v_from_int(0)), 0 - 1)
+    tap.eq_i(T, "cmp int<text", value.v_cmp(value.v_from_int(99), value.v_from_str("a")), 0 - 1)
+    tap.eq_i(T, "cmp int eq", value.v_cmp(value.v_from_int(5), value.v_from_int(5)), 0)
+    tap.eq_i(T, "cmp int lt", value.v_cmp(value.v_from_int(4), value.v_from_int(5)), 0 - 1)
+    tap.eq_i(T, "cmp int/real", value.v_cmp(value.v_from_int(5), value.v_from_real(5.5)), 0 - 1)
+    tap.eq_i(T, "cmp text", value.v_cmp(value.v_from_str("abc"), value.v_from_str("abd")), 0 - 1)
+    tap.eq_i(T, "cmp text pfx", value.v_cmp(value.v_from_str("ab"), value.v_from_str("abc")), 0 - 1)
+
+    tap.eq_s(T, "typename int", value.v_typename(value.v_from_int(1)), "integer")
+    tap.eq_s(T, "typename real", value.v_typename(value.v_from_real(1.0)), "real")
+    tap.eq_s(T, "typename text", value.v_typename(value.v_from_str("x")), "text")
+    tap.eq_s(T, "typename null", value.v_typename(value.v_null()), "null")
+
+    tap.t_report(T, "record")

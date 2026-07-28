@@ -1,0 +1,122 @@
+import mem
+import strbuf
+import lexer
+import tap
+
+def kinds(t: Int) -> Str:
+    n := lexer.lx_count(t)
+    sb := strbuf.sb_new()
+    mut i := 0
+    while i < n:
+        strbuf.sb_add(sb, int_to_str(lexer.lx_kind(t, i)))
+        strbuf.sb_add(sb, ",")
+        i = i + 1
+    r := strbuf.sb_str(sb)
+    strbuf.sb_free(sb)
+    return r
+
+def texts(t: Int) -> Str:
+    n := lexer.lx_count(t)
+    sb := strbuf.sb_new()
+    mut i := 0
+    while i < n - 1:
+        strbuf.sb_add(sb, "[")
+        strbuf.sb_add(sb, lexer.lx_text(t, i))
+        strbuf.sb_add(sb, "]")
+        i = i + 1
+    r := strbuf.sb_str(sb)
+    strbuf.sb_free(sb)
+    return r
+
+def main():
+    T := tap.t_new()
+
+    # strbuf basics
+    sb := strbuf.sb_new()
+    strbuf.sb_add(sb, "hello")
+    strbuf.sb_add_ch(sb, 32)
+    strbuf.sb_add_int(sb, 42)
+    tap.eq_s(T, "strbuf", strbuf.sb_str(sb), "hello 42")
+    strbuf.sb_free(sb)
+
+    tap.eq_i(T, "eq_ci yes", strbuf.eq_ci("SeLeCt", "select"), 1)
+    tap.eq_i(T, "eq_ci no", strbuf.eq_ci("abc", "abd"), 0)
+    tap.eq_s(T, "to_lower", strbuf.to_lower("ABC"), "abc")
+    tap.eq_s(T, "to_upper", strbuf.to_upper("abc"), "ABC")
+    tap.eq_s(T, "sql_quote", strbuf.sql_quote("it's"), "'it''s'")
+    tap.eq_s(T, "json_escape", strbuf.json_escape("a\"b"), "\"a\\\"b\"")
+
+    # sv
+    sv := strbuf.sv_new()
+    strbuf.sv_push(sv, "alpha")
+    strbuf.sv_push(sv, "beta")
+    strbuf.sv_push(sv, "")
+    strbuf.sv_push(sv, "gamma")
+    tap.eq_i(T, "sv len", strbuf.sv_len(sv), 4)
+    tap.eq_s(T, "sv 0", strbuf.sv_get(sv, 0), "alpha")
+    tap.eq_s(T, "sv 1", strbuf.sv_get(sv, 1), "beta")
+    tap.eq_s(T, "sv 2 empty", strbuf.sv_get(sv, 2), "")
+    tap.eq_s(T, "sv 3", strbuf.sv_get(sv, 3), "gamma")
+    tap.eq_i(T, "sv find", strbuf.sv_find_ci(sv, "BETA"), 1)
+    tap.eq_i(T, "sv find miss", strbuf.sv_find_ci(sv, "zzz"), 0 - 1)
+    strbuf.sv_free(sv)
+
+    # tokenizer
+    t1 := lexer.tokenize("SELECT * FROM users WHERE age >= 30")
+    tap.eq_i(T, "t1 count", lexer.lx_count(t1), 9)
+    tap.eq_i(T, "t1 k0 kw", lexer.lx_kind(t1, 0), lexer.TK_KW())
+    tap.eq_s(T, "t1 select", lexer.lx_text(t1, 0), "SELECT")
+    tap.eq_s(T, "t1 star", lexer.lx_text(t1, 1), "*")
+    tap.eq_s(T, "t1 from", lexer.lx_text(t1, 2), "FROM")
+    tap.eq_i(T, "t1 users is id", lexer.lx_kind(t1, 3), lexer.TK_ID())
+    tap.eq_s(T, "t1 ge", lexer.lx_text(t1, 6), ">=")
+    tap.eq_i(T, "t1 int kind", lexer.lx_kind(t1, 7), lexer.TK_INT())
+    tap.eq_i(T, "t1 int val", lexer.lx_ival(t1, 7), 30)
+    lexer.lx_free(t1)
+
+    t2 := lexer.tokenize("INSERT INTO t VALUES (1, 'O''Brien', 2.5, NULL)")
+    tap.eq_s(T, "t2 str esc", lexer.lx_text(t2, 7), "O'Brien")
+    tap.eq_i(T, "t2 str kind", lexer.lx_kind(t2, 7), lexer.TK_STR())
+    tap.eq_i(T, "t2 float kind", lexer.lx_kind(t2, 9), lexer.TK_FLOAT())
+    tap.eq_s(T, "t2 float text", lexer.lx_text(t2, 9), "2.5")
+    tap.eq_s(T, "t2 null kw", lexer.lx_text(t2, 11), "NULL")
+    lexer.lx_free(t2)
+
+    t3 := lexer.tokenize("a <> b != c <= d >= e || f << g")
+    tap.eq_s(T, "t3 ne1", lexer.lx_text(t3, 1), "<>")
+    tap.eq_s(T, "t3 ne2", lexer.lx_text(t3, 3), "!=")
+    tap.eq_s(T, "t3 le", lexer.lx_text(t3, 5), "<=")
+    tap.eq_s(T, "t3 ge", lexer.lx_text(t3, 7), ">=")
+    tap.eq_s(T, "t3 concat", lexer.lx_text(t3, 9), "||")
+    tap.eq_s(T, "t3 shl", lexer.lx_text(t3, 11), "<<")
+    lexer.lx_free(t3)
+
+    t4 := lexer.tokenize("-- comment\nSELECT /* inline */ 1")
+    tap.eq_i(T, "t4 count", lexer.lx_count(t4), 3)
+    tap.eq_s(T, "t4 tok0", lexer.lx_text(t4, 0), "SELECT")
+    tap.eq_i(T, "t4 tok1", lexer.lx_ival(t4, 1), 1)
+    lexer.lx_free(t4)
+
+    t5 := lexer.tokenize("\"quoted id\" `back` [brack] 0xFF x'414243'")
+    tap.eq_s(T, "t5 dq", lexer.lx_text(t5, 0), "quoted id")
+    tap.eq_s(T, "t5 bt", lexer.lx_text(t5, 1), "back")
+    tap.eq_s(T, "t5 br", lexer.lx_text(t5, 2), "brack")
+    tap.eq_i(T, "t5 hex", lexer.lx_ival(t5, 3), 255)
+    tap.eq_i(T, "t5 blob kind", lexer.lx_kind(t5, 4), lexer.TK_BLOB())
+    tap.eq_s(T, "t5 blob val", lexer.lx_text(t5, 4), "ABC")
+    lexer.lx_free(t5)
+
+    t6 := lexer.tokenize("? ?3 :name @x $y")
+    tap.eq_i(T, "t6 var0", lexer.lx_kind(t6, 0), lexer.TK_VAR())
+    tap.eq_i(T, "t6 var1 idx", lexer.lx_ival(t6, 1), 3)
+    tap.eq_s(T, "t6 named", lexer.lx_text(t6, 2), ":name")
+    lexer.lx_free(t6)
+
+    t7 := lexer.tokenize("1e5 1.5e-3 .25")
+    tap.eq_i(T, "t7 e kind", lexer.lx_kind(t7, 0), lexer.TK_FLOAT())
+    tap.eq_s(T, "t7 e text", lexer.lx_text(t7, 0), "1e5")
+    tap.eq_s(T, "t7 neg exp", lexer.lx_text(t7, 1), "1.5e-3")
+    tap.eq_s(T, "t7 dot", lexer.lx_text(t7, 2), ".25")
+    lexer.lx_free(t7)
+
+    tap.t_report(T, "lexer")

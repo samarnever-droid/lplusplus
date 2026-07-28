@@ -1,0 +1,406 @@
+# main.lpp — lppsqlite command-line shell.
+#
+#   lppsqlite <file.db> "SQL"     run one statement (or several, ;-separated)
+#   lppsqlite <file.db>           interactive REPL
+#   lppsqlite :memory: "SQL"      transient in-memory database
+#
+# Dot-commands: .tables .schema [t] .headers on|off .mode list|csv|json
+#               .read FILE .dump .quit .help
+
+import mem
+import strbuf
+import value
+import rowset
+import exec
+import schema
+
+def M_LIST() -> Int:
+    return 0
+def M_CSV() -> Int:
+    return 1
+def M_JSON() -> Int:
+    return 2
+def M_COLUMN() -> Int:
+    return 3
+
+# Shell options: [0]=headers [8]=mode
+def opt_new() -> Int:
+    o := buf_alloc(16)
+    mem.bset64(o, 0, 0)
+    mem.bset64(o, 8, M_LIST())
+    return o
+
+def print_result(r: Int, o: Int):
+    if rowset.rs_err(r) == 1:
+        print_str(str_concat("Error: ", rowset.rs_errmsg(r)))
+        return
+    nc := rowset.rs_ncols(r)
+    if nc == 0:
+        return
+    mode := mem.bget64(o, 8)
+    if mode == M_JSON():
+        print_json(r)
+        return
+    if mem.bget64(o, 0) == 1:
+        sb := strbuf.sb_new()
+        mut j := 0
+        while j < nc:
+            if j > 0:
+                strbuf.sb_add_ch(sb, sepchar(mode))
+            strbuf.sb_add(sb, rowset.rs_name(r, j))
+            j = j + 1
+        print_str(strbuf.sb_str(sb))
+        strbuf.sb_free(sb)
+    n := rowset.rs_nrows(r)
+    mut i := 0
+    while i < n:
+        sb := strbuf.sb_new()
+        mut j := 0
+        while j < nc:
+            if j > 0:
+                strbuf.sb_add_ch(sb, sepchar(mode))
+            v := rowset.rs_cell(r, i, j)
+            if mode == M_CSV():
+                strbuf.sb_add(sb, csv_cell(v))
+            else:
+                strbuf.sb_add(sb, value.v_display(v))
+            j = j + 1
+        print_str(strbuf.sb_str(sb))
+        strbuf.sb_free(sb)
+        i = i + 1
+
+def sepchar(mode: Int) -> Int:
+    if mode == M_CSV():
+        return 44
+    return 124
+
+def csv_cell(v: Int) -> Str:
+    if value.v_is_null(v) == 1:
+        return ""
+    s := value.v_to_text(v)
+    if needs_quote(s) == 1:
+        sb := strbuf.sb_new()
+        strbuf.sb_add_ch(sb, 34)
+        n := str_len(s)
+        mut i := 0
+        while i < n:
+            c := strbuf.ch_at(s, i)
+            if c == 34:
+                strbuf.sb_add_ch(sb, 34)
+            strbuf.sb_add_ch(sb, c)
+            i = i + 1
+        strbuf.sb_add_ch(sb, 34)
+        r := strbuf.sb_str(sb)
+        strbuf.sb_free(sb)
+        return r
+    return s
+
+def needs_quote(s: Str) -> Int:
+    n := str_len(s)
+    mut i := 0
+    while i < n:
+        c := strbuf.ch_at(s, i)
+        if c == 44:
+            return 1
+        if c == 34:
+            return 1
+        if c == 10:
+            return 1
+        i = i + 1
+    return 0
+
+def print_json(r: Int):
+    n := rowset.rs_nrows(r)
+    nc := rowset.rs_ncols(r)
+    print_str("[")
+    mut i := 0
+    while i < n:
+        sb := strbuf.sb_new()
+        strbuf.sb_add(sb, "  {")
+        mut j := 0
+        while j < nc:
+            if j > 0:
+                strbuf.sb_add(sb, ",")
+            strbuf.sb_add(sb, strbuf.json_escape(rowset.rs_name(r, j)))
+            strbuf.sb_add(sb, ":")
+            v := rowset.rs_cell(r, i, j)
+            t := value.v_type(v)
+            if t == value.TNULL():
+                strbuf.sb_add(sb, "null")
+            elif t == value.TINT():
+                strbuf.sb_add(sb, int_to_str(value.v_int(v)))
+            elif t == value.TREAL():
+                strbuf.sb_add(sb, value.v_to_text(v))
+            else:
+                strbuf.sb_add(sb, strbuf.json_escape(value.v_to_text(v)))
+            j = j + 1
+        strbuf.sb_add(sb, "}")
+        if i < n - 1:
+            strbuf.sb_add(sb, ",")
+        print_str(strbuf.sb_str(sb))
+        strbuf.sb_free(sb)
+        i = i + 1
+    print_str("]")
+
+def run_sql(d: Int, sql: Str, o: Int):
+    r := exec.exec_script(d, sql)
+    print_result(r, o)
+    rowset.rs_free(r)
+
+# ── dot commands ──
+
+def is_dot(s: Str) -> Int:
+    t := trim(s)
+    if str_len(t) == 0:
+        return 0
+    if strbuf.ch_at(t, 0) == 46:
+        return 1
+    return 0
+
+def trim(s: Str) -> Str:
+    n := str_len(s)
+    mut b := 0
+    mut e := n
+    mut g := 1
+    while g == 1:
+        if b >= e:
+            g = 0
+        elif strbuf.is_space_c(strbuf.ch_at(s, b)) == 1:
+            b = b + 1
+        else:
+            g = 0
+    mut g2 := 1
+    while g2 == 1:
+        if e <= b:
+            g2 = 0
+        elif strbuf.is_space_c(strbuf.ch_at(s, e - 1)) == 1:
+            e = e - 1
+        else:
+            g2 = 0
+    return str_substr(s, b, e - b)
+
+def word_at(s: Str, idx: Int) -> Str:
+    n := str_len(s)
+    mut i := 0
+    mut w := 0
+    while w < idx:
+        mut g := 1
+        while g == 1:
+            if i >= n:
+                g = 0
+            elif strbuf.is_space_c(strbuf.ch_at(s, i)) == 1:
+                g = 0
+            else:
+                i = i + 1
+        mut g2 := 1
+        while g2 == 1:
+            if i >= n:
+                g2 = 0
+            elif strbuf.is_space_c(strbuf.ch_at(s, i)) == 1:
+                i = i + 1
+            else:
+                g2 = 0
+        w = w + 1
+    mut st := i
+    mut g3 := 1
+    while g3 == 1:
+        if i >= n:
+            g3 = 0
+        elif strbuf.is_space_c(strbuf.ch_at(s, i)) == 1:
+            g3 = 0
+        else:
+            i = i + 1
+    return str_substr(s, st, i - st)
+
+# Returns 1 to continue, 0 to quit.
+def do_dot(d: Int, line: Str, o: Int) -> Int:
+    cmd := word_at(trim(line), 0)
+    if strbuf.eq_ci(cmd, ".quit") == 1:
+        return 0
+    if strbuf.eq_ci(cmd, ".exit") == 1:
+        return 0
+    if strbuf.eq_ci(cmd, ".help") == 1:
+        print_help()
+        return 1
+    if strbuf.eq_ci(cmd, ".tables") == 1:
+        sc := exec.db_schema(d)
+        n := schema.sc_count(sc)
+        sb := strbuf.sb_new()
+        mut i := 0
+        while i < n:
+            if strbuf.eq_ci(schema.sc_kind(sc, i), "table") == 1:
+                if i > 0:
+                    strbuf.sb_add_ch(sb, 32)
+                strbuf.sb_add(sb, schema.sc_name(sc, i))
+            i = i + 1
+        print_str(strbuf.sb_str(sb))
+        strbuf.sb_free(sb)
+        return 1
+    if strbuf.eq_ci(cmd, ".schema") == 1:
+        want := word_at(trim(line), 1)
+        sc := exec.db_schema(d)
+        n := schema.sc_count(sc)
+        mut i := 0
+        while i < n:
+            mut show := 1
+            if str_len(want) > 0:
+                show = strbuf.eq_ci(schema.sc_name(sc, i), want)
+            if show == 1:
+                print_str(str_concat(schema.sc_sql(sc, i), ";"))
+            i = i + 1
+        return 1
+    if strbuf.eq_ci(cmd, ".headers") == 1:
+        a := word_at(trim(line), 1)
+        if strbuf.eq_ci(a, "on") == 1:
+            mem.bset64(o, 0, 1)
+        else:
+            mem.bset64(o, 0, 0)
+        return 1
+    if strbuf.eq_ci(cmd, ".mode") == 1:
+        a := word_at(trim(line), 1)
+        if strbuf.eq_ci(a, "csv") == 1:
+            mem.bset64(o, 8, M_CSV())
+        elif strbuf.eq_ci(a, "json") == 1:
+            mem.bset64(o, 8, M_JSON())
+        else:
+            mem.bset64(o, 8, M_LIST())
+        return 1
+    if strbuf.eq_ci(cmd, ".read") == 1:
+        rf := word_at(trim(line), 1)
+        if file_exists(rf) == 1:
+            run_sql(d, read_file(rf), o)
+        else:
+            print_str(str_concat("cannot open: ", rf))
+        return 1
+    if strbuf.eq_ci(cmd, ".dump") == 1:
+        dump_db(d)
+        return 1
+    if strbuf.eq_ci(cmd, ".databases") == 1:
+        print_str(str_concat("main: ", exec.db_path(d)))
+        return 1
+    print_str(str_concat("unknown command: ", cmd))
+    return 1
+
+def print_help():
+    print_str(".tables            list tables")
+    print_str(".schema [TABLE]    show CREATE statements")
+    print_str(".headers on|off    column headers")
+    print_str(".mode list|csv|json")
+    print_str(".read FILE         execute SQL from a file")
+    print_str(".dump              dump the database as SQL")
+    print_str(".quit              exit")
+
+def dump_db(d: Int):
+    print_str("BEGIN TRANSACTION;")
+    sc := exec.db_schema(d)
+    n := schema.sc_count(sc)
+    mut i := 0
+    while i < n:
+        if strbuf.eq_ci(schema.sc_kind(sc, i), "table") == 1:
+            print_str(str_concat(schema.sc_sql(sc, i), ";"))
+            tname := schema.sc_name(sc, i)
+            r := exec.exec(d, str_concat("SELECT * FROM ", strbuf.ident_quote(tname)))
+            if rowset.rs_err(r) == 0:
+                nr := rowset.rs_nrows(r)
+                ncq := rowset.rs_ncols(r)
+                mut a := 0
+                while a < nr:
+                    sb := strbuf.sb_new()
+                    strbuf.sb_add(sb, "INSERT INTO ")
+                    strbuf.sb_add(sb, strbuf.ident_quote(tname))
+                    strbuf.sb_add(sb, " VALUES(")
+                    mut b := 0
+                    while b < ncq:
+                        if b > 0:
+                            strbuf.sb_add(sb, ",")
+                        v := rowset.rs_cell(r, a, b)
+                        t := value.v_type(v)
+                        if t == value.TNULL():
+                            strbuf.sb_add(sb, "NULL")
+                        elif t == value.TTEXT():
+                            strbuf.sb_add(sb, strbuf.sql_quote(value.v_to_text(v)))
+                        elif t == value.TBLOB():
+                            strbuf.sb_add(sb, "X''")
+                        else:
+                            strbuf.sb_add(sb, value.v_to_text(v))
+                        b = b + 1
+                    strbuf.sb_add(sb, ");")
+                    print_str(strbuf.sb_str(sb))
+                    strbuf.sb_free(sb)
+                    a = a + 1
+            rowset.rs_free(r)
+        i = i + 1
+    print_str("COMMIT;")
+
+def repl(d: Int, o: Int):
+    print_str("lppsqlite — SQLite-compatible engine written in L++")
+    print_str("Enter SQL statements terminated with ';'. Type .help for commands.")
+    mut buf := ""
+    mut go := 1
+    while go == 1:
+        line := input()
+        if str_len(line) == 0:
+            if str_len(buf) == 0:
+                go = 0
+        if go == 1:
+            t := trim(line)
+            if str_len(buf) == 0:
+                if is_dot(t) == 1:
+                    go = do_dot(d, t, o)
+                elif str_len(t) > 0:
+                    buf = t
+            else:
+                buf = str_concat(buf, str_concat(" ", t))
+            if str_len(buf) > 0:
+                if ends_semi(buf) == 1:
+                    run_sql(d, buf, o)
+                    buf = ""
+
+def ends_semi(s: Str) -> Int:
+    n := str_len(s)
+    if n == 0:
+        return 0
+    if strbuf.ch_at(s, n - 1) == 59:
+        return 1
+    return 0
+
+# L++ v4.3.0 exposes no OS-level argv, so the shell is driven by environment
+# variables (see the `lppsqlite` wrapper script):
+#     LPPSQLITE_DB   database path, or :memory:
+#     LPPSQLITE_SQL  SQL / dot-command to run; empty starts the REPL
+def main():
+    o := opt_new()
+    mut path := env_get("LPPSQLITE_DB")
+    if str_len(path) == 0:
+        path = ":memory:"
+    mut d := 0
+    if lpp_str_eq(path, ":memory:") == 1:
+        d = exec.open_memory()
+    else:
+        d = exec.open_db(path)
+
+    hdr := env_get("LPPSQLITE_HEADERS")
+    if strbuf.eq_ci(hdr, "on") == 1:
+        mem.bset64(o, 0, 1)
+    md := env_get("LPPSQLITE_MODE")
+    if strbuf.eq_ci(md, "csv") == 1:
+        mem.bset64(o, 8, M_CSV())
+    if strbuf.eq_ci(md, "json") == 1:
+        mem.bset64(o, 8, M_JSON())
+
+    sql := env_get("LPPSQLITE_SQL")
+    if str_len(sql) > 0:
+        if is_dot(sql) == 1:
+            do_dot(d, sql, o)
+        else:
+            run_sql(d, sql, o)
+    else:
+        sf := env_get("LPPSQLITE_FILE")
+        if str_len(sf) > 0:
+            if file_exists(sf) == 1:
+                run_sql(d, read_file(sf), o)
+            else:
+                print_str(str_concat("cannot open: ", sf))
+        else:
+            repl(d, o)
+    exec.close_db(d)

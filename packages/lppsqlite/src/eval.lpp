@@ -1,0 +1,941 @@
+# eval.lpp — expression evaluation against a row context.
+#
+# Context handle (row bindings for the current candidate row):
+#   [0]  values (iv of value handles), one per visible column
+#   [8]  names  (sv) column names, parallel to values
+#   [16] quals  (sv) table qualifier for each column ("" if none)
+#   [24] rowid
+#   [32] params (iv of value handles) for ? bindings
+#   [40] database handle (for subqueries; 0 if none)
+#   [48] error message (sv)
+#   [56] error flag
+
+import mem
+import strbuf
+import value
+import ieee754
+import ast
+import schema
+import func
+import exec
+
+def cx_vals(c: Int) -> Int:
+    return mem.bget64(c, 0)
+
+def cx_names(c: Int) -> Int:
+    return mem.bget64(c, 8)
+
+def cx_quals(c: Int) -> Int:
+    return mem.bget64(c, 16)
+
+def cx_rowid(c: Int) -> Int:
+    return mem.bget64(c, 24)
+
+def cx_set_rowid(c: Int, r: Int):
+    mem.bset64(c, 24, r)
+
+def cx_params(c: Int) -> Int:
+    return mem.bget64(c, 32)
+
+# Database handle, used to run scalar / IN / EXISTS subqueries.
+def cx_db(c: Int) -> Int:
+    return mem.bget64(c, 40)
+
+def cx_set_db(c: Int, d: Int):
+    mem.bset64(c, 40, d)
+
+def cx_err(c: Int) -> Int:
+    return mem.bget64(c, 56)
+
+def cx_errmsg(c: Int) -> Str:
+    e := mem.bget64(c, 48)
+    if strbuf.sv_len(e) == 0:
+        return ""
+    return strbuf.sv_get(e, 0)
+
+def cx_fail(c: Int, msg: Str):
+    if mem.bget64(c, 56) == 0:
+        mem.bset64(c, 56, 1)
+        strbuf.sv_push(mem.bget64(c, 48), msg)
+
+def cx_new() -> Int:
+    c := buf_alloc(64)
+    mem.bset64(c, 0, mem.iv_new(8))
+    mem.bset64(c, 8, strbuf.sv_new())
+    mem.bset64(c, 16, strbuf.sv_new())
+    mem.bset64(c, 24, 0)
+    mem.bset64(c, 32, mem.iv_new(4))
+    mem.bset64(c, 40, 0)
+    mem.bset64(c, 48, strbuf.sv_new())
+    mem.bset64(c, 56, 0)
+    return c
+
+def cx_free(c: Int):
+    mem.iv_free(cx_vals(c))
+    strbuf.sv_free(cx_names(c))
+    strbuf.sv_free(cx_quals(c))
+    mem.iv_free(cx_params(c))
+    strbuf.sv_free(mem.bget64(c, 48))
+    buf_free(c)
+
+def cx_clear_cols(c: Int):
+    mem.iv_clear(cx_vals(c))
+    # names/quals are rebuilt by the executor when the row shape changes
+
+def cx_bind(c: Int, name: Str, qual: Str, v: Int):
+    mem.iv_push(cx_vals(c), v)
+    strbuf.sv_push(cx_names(c), name)
+    strbuf.sv_push(cx_quals(c), qual)
+
+def cx_ncols(c: Int) -> Int:
+    return mem.iv_len(cx_vals(c))
+
+def cx_val(c: Int, i: Int) -> Int:
+    return mem.iv_get(cx_vals(c), i)
+
+def cx_set_val(c: Int, i: Int, v: Int):
+    mem.iv_set(cx_vals(c), i, v)
+
+# Resolve a column reference, honouring an optional table qualifier.
+def cx_lookup(c: Int, name: Str, qual: Str) -> Int:
+    n := cx_ncols(c)
+    mut i := 0
+    while i < n:
+        if strbuf.eq_ci(strbuf.sv_get(cx_names(c), i), name) == 1:
+            if str_len(qual) == 0:
+                return i
+            if strbuf.eq_ci(strbuf.sv_get(cx_quals(c), i), qual) == 1:
+                return i
+        i = i + 1
+    return 0 - 1
+
+# ── evaluation ──
+# Every eval_* returns a NEW value handle the caller owns.
+
+def eval(ar: Int, n: Int, c: Int) -> Int:
+    if n < 0:
+        return value.v_null()
+    k := ast.kind(ar, n)
+
+    if k == ast.N_NULL():
+        return value.v_null()
+    if k == ast.N_INT():
+        return value.v_from_int(ast.int_of(ar, n))
+    if k == ast.N_REAL():
+        return value.v_from_real(ieee754.parse_float(ast.text_of(ar, n)))
+    if k == ast.N_STR():
+        return value.v_from_str(ast.text_of(ar, n))
+    if k == ast.N_BLOB():
+        s := ast.text_of(ar, n)
+        ln := str_len(s)
+        b := buf_alloc(ln + 1)
+        if ln > 0:
+            buf_write_str(b, 0, s)
+        return value.v_own_bytes(value.TBLOB(), b, ln)
+    if k == ast.N_PARAM():
+        idx := ast.int_of(ar, n)
+        ps := cx_params(c)
+        mut want := idx - 1
+        if idx == 0:
+            want = 0
+        if want < mem.iv_len(ps):
+            if want >= 0:
+                return value.v_clone(mem.iv_get(ps, want))
+        return value.v_null()
+
+    if k == ast.N_COL():
+        return eval_col(ar, n, c)
+
+    if k == ast.N_STAR():
+        return value.v_null()
+
+    if k == ast.N_UNOP():
+        return eval_unop(ar, n, c)
+
+    if k == ast.N_BINOP():
+        return eval_binop(ar, n, c)
+
+    if k == ast.N_ISNULL():
+        v := eval(ar, ast.a_of(ar, n), c)
+        isn := value.v_is_null(v)
+        value.v_free(v)
+        neg := ast.int_of(ar, n)
+        if neg == 1:
+            return value.v_from_int(1 - isn)
+        return value.v_from_int(isn)
+
+    if k == ast.N_BETWEEN():
+        return eval_between(ar, n, c)
+
+    if k == ast.N_INLIST():
+        return eval_inlist(ar, n, c)
+
+    if k == ast.N_LIKE():
+        return eval_like(ar, n, c)
+
+    if k == ast.N_CASE():
+        return eval_case(ar, n, c)
+
+    if k == ast.N_CAST():
+        v := eval(ar, ast.a_of(ar, n), c)
+        r := do_cast(v, ast.text_of(ar, n))
+        value.v_free(v)
+        return r
+
+    if k == ast.N_COLLATE():
+        return eval(ar, ast.a_of(ar, n), c)
+
+    if k == ast.N_FUNC():
+        return eval_func(ar, n, c)
+
+    if k == ast.N_SUBQUERY():
+        return exec.subquery_scalar(cx_db(c), ast.a_of(ar, n), ar, c)
+
+    if k == ast.N_EXISTS():
+        return exec.subquery_exists(cx_db(c), ast.a_of(ar, n), ar, c)
+
+    return value.v_null()
+
+def eval_col(ar: Int, n: Int, c: Int) -> Int:
+    name := ast.text_of(ar, n)
+    mut qual := ""
+    q := ast.b_of(ar, n)
+    if q > 0:
+        qual = ast.text_of(ar, q)
+    # rowid aliases
+    if str_len(qual) == 0:
+        if strbuf.eq_ci(name, "rowid") == 1:
+            if cx_lookup(c, name, "") < 0:
+                return value.v_from_int(cx_rowid(c))
+        if strbuf.eq_ci(name, "_rowid_") == 1:
+            return value.v_from_int(cx_rowid(c))
+        if strbuf.eq_ci(name, "oid") == 1:
+            if cx_lookup(c, name, "") < 0:
+                return value.v_from_int(cx_rowid(c))
+    i := cx_lookup(c, name, qual)
+    if i < 0:
+        cx_fail(c, str_concat("no such column: ", name))
+        return value.v_null()
+    return value.v_clone(cx_val(c, i))
+
+def eval_unop(ar: Int, n: Int, c: Int) -> Int:
+    op := ast.text_of(ar, n)
+    v := eval(ar, ast.a_of(ar, n), c)
+    if lpp_str_eq(op, "-") == 1:
+        t := value.v_type(v)
+        if t == value.TNULL():
+            return v
+        if t == value.TREAL():
+            r := value.v_from_real(0.0 - value.v_real(v))
+            value.v_free(v)
+            return r
+        r := value.v_from_int(0 - value.v_to_int(v))
+        value.v_free(v)
+        return r
+    if lpp_str_eq(op, "~") == 1:
+        if value.v_is_null(v) == 1:
+            return v
+        r := value.v_from_int(0 - value.v_to_int(v) - 1)
+        value.v_free(v)
+        return r
+    if lpp_str_eq(op, "NOT") == 1:
+        if value.v_is_null(v) == 1:
+            return v
+        r := value.v_from_int(1 - value.v_truthy(v))
+        value.v_free(v)
+        return r
+    return v
+
+def eval_binop(ar: Int, n: Int, c: Int) -> Int:
+    op := ast.text_of(ar, n)
+
+    # short-circuit logical operators with SQL three-valued logic
+    if lpp_str_eq(op, "AND") == 1:
+        l := eval(ar, ast.a_of(ar, n), c)
+        ln := value.v_is_null(l)
+        lt := value.v_truthy(l)
+        value.v_free(l)
+        if ln == 0:
+            if lt == 0:
+                return value.v_from_int(0)
+        r := eval(ar, ast.b_of(ar, n), c)
+        rn := value.v_is_null(r)
+        rt := value.v_truthy(r)
+        value.v_free(r)
+        if rn == 0:
+            if rt == 0:
+                return value.v_from_int(0)
+        if ln == 1:
+            return value.v_null()
+        if rn == 1:
+            return value.v_null()
+        return value.v_from_int(1)
+
+    if lpp_str_eq(op, "OR") == 1:
+        l := eval(ar, ast.a_of(ar, n), c)
+        ln := value.v_is_null(l)
+        lt := value.v_truthy(l)
+        value.v_free(l)
+        if ln == 0:
+            if lt == 1:
+                return value.v_from_int(1)
+        r := eval(ar, ast.b_of(ar, n), c)
+        rn := value.v_is_null(r)
+        rt := value.v_truthy(r)
+        value.v_free(r)
+        if rn == 0:
+            if rt == 1:
+                return value.v_from_int(1)
+        if ln == 1:
+            return value.v_null()
+        if rn == 1:
+            return value.v_null()
+        return value.v_from_int(0)
+
+    a := eval(ar, ast.a_of(ar, n), c)
+    b := eval(ar, ast.b_of(ar, n), c)
+    r := apply_binop(op, a, b)
+    value.v_free(a)
+    value.v_free(b)
+    return r
+
+def apply_binop(op: Str, a: Int, b: Int) -> Int:
+    # IS / IS NOT treat NULL as a comparable value
+    if lpp_str_eq(op, "IS") == 1:
+        return value.v_from_int(is_same(a, b))
+    if lpp_str_eq(op, "IS NOT") == 1:
+        return value.v_from_int(1 - is_same(a, b))
+
+    if lpp_str_eq(op, "||") == 1:
+        if value.v_is_null(a) == 1:
+            return value.v_null()
+        if value.v_is_null(b) == 1:
+            return value.v_null()
+        return concat_vals(a, b)
+
+    an := value.v_is_null(a)
+    bn := value.v_is_null(b)
+    if an == 1:
+        return value.v_null()
+    if bn == 1:
+        return value.v_null()
+
+    if is_cmp(op) == 1:
+        cv := compare_operands(a, b)
+        return value.v_from_int(cmp_result(op, cv))
+
+    # arithmetic
+    if lpp_str_eq(op, "+") == 1:
+        return arith(a, b, 0)
+    if lpp_str_eq(op, "-") == 1:
+        return arith(a, b, 1)
+    if lpp_str_eq(op, "*") == 1:
+        return arith(a, b, 2)
+    if lpp_str_eq(op, "/") == 1:
+        return arith(a, b, 3)
+    if lpp_str_eq(op, "%") == 1:
+        return arith(a, b, 4)
+
+    # bitwise (integers only)
+    if lpp_str_eq(op, "&") == 1:
+        return value.v_from_int(value.v_to_int(a) & value.v_to_int(b))
+    if lpp_str_eq(op, "|") == 1:
+        return value.v_from_int(value.v_to_int(a) | value.v_to_int(b))
+    if lpp_str_eq(op, "<<") == 1:
+        return value.v_from_int(value.v_to_int(a) << value.v_to_int(b))
+    if lpp_str_eq(op, ">>") == 1:
+        return value.v_from_int(value.v_to_int(a) >> value.v_to_int(b))
+
+    return value.v_null()
+
+def is_same(a: Int, b: Int) -> Int:
+    an := value.v_is_null(a)
+    bn := value.v_is_null(b)
+    if an == 1:
+        if bn == 1:
+            return 1
+        return 0
+    if bn == 1:
+        return 0
+    if value.v_cmp(a, b) == 0:
+        return 1
+    return 0
+
+def is_cmp(op: Str) -> Int:
+    if lpp_str_eq(op, "=") == 1:
+        return 1
+    if lpp_str_eq(op, "==") == 1:
+        return 1
+    if lpp_str_eq(op, "!=") == 1:
+        return 1
+    if lpp_str_eq(op, "<>") == 1:
+        return 1
+    if lpp_str_eq(op, "<") == 1:
+        return 1
+    if lpp_str_eq(op, "<=") == 1:
+        return 1
+    if lpp_str_eq(op, ">") == 1:
+        return 1
+    if lpp_str_eq(op, ">=") == 1:
+        return 1
+    return 0
+
+# SQLite applies numeric affinity when comparing a number with numeric-looking
+# text; otherwise types order NULL < num < text < blob.
+def compare_operands(a: Int, b: Int) -> Int:
+    ta := value.v_type(a)
+    tb := value.v_type(b)
+    mut anum := 0
+    if ta == value.TINT():
+        anum = 1
+    if ta == value.TREAL():
+        anum = 1
+    mut bnum := 0
+    if tb == value.TINT():
+        bnum = 1
+    if tb == value.TREAL():
+        bnum = 1
+    if anum == 1:
+        if tb == value.TTEXT():
+            s := value.v_bytes_str(b)
+            if value.text_is_number(s) == 1:
+                return cmp_reals(value.v_to_real(a), value.v_to_real(b))
+    if bnum == 1:
+        if ta == value.TTEXT():
+            s := value.v_bytes_str(a)
+            if value.text_is_number(s) == 1:
+                return cmp_reals(value.v_to_real(a), value.v_to_real(b))
+    return value.v_cmp(a, b)
+
+def cmp_reals(x: Float, y: Float) -> Int:
+    if x < y:
+        return 0 - 1
+    if x > y:
+        return 1
+    return 0
+
+def cmp_result(op: Str, cv: Int) -> Int:
+    if lpp_str_eq(op, "=") == 1:
+        if cv == 0:
+            return 1
+        return 0
+    if lpp_str_eq(op, "==") == 1:
+        if cv == 0:
+            return 1
+        return 0
+    if lpp_str_eq(op, "!=") == 1:
+        if cv != 0:
+            return 1
+        return 0
+    if lpp_str_eq(op, "<>") == 1:
+        if cv != 0:
+            return 1
+        return 0
+    if lpp_str_eq(op, "<") == 1:
+        if cv < 0:
+            return 1
+        return 0
+    if lpp_str_eq(op, "<=") == 1:
+        if cv <= 0:
+            return 1
+        return 0
+    if lpp_str_eq(op, ">") == 1:
+        if cv > 0:
+            return 1
+        return 0
+    if lpp_str_eq(op, ">=") == 1:
+        if cv >= 0:
+            return 1
+        return 0
+    return 0
+
+def wants_real(a: Int, b: Int) -> Int:
+    if value.v_type(a) == value.TREAL():
+        return 1
+    if value.v_type(b) == value.TREAL():
+        return 1
+    if value.v_type(a) == value.TTEXT():
+        if value.text_is_int(value.v_bytes_str(a)) == 0:
+            return 1
+    if value.v_type(b) == value.TTEXT():
+        if value.text_is_int(value.v_bytes_str(b)) == 0:
+            return 1
+    return 0
+
+def arith(a: Int, b: Int, op: Int) -> Int:
+    if wants_real(a, b) == 1:
+        x := value.v_to_real(a)
+        y := value.v_to_real(b)
+        if op == 0:
+            return value.v_from_real(x + y)
+        if op == 1:
+            return value.v_from_real(x - y)
+        if op == 2:
+            return value.v_from_real(x * y)
+        if op == 3:
+            if y == 0.0:
+                return value.v_null()
+            return value.v_from_real(x / y)
+        if y == 0.0:
+            return value.v_null()
+        xi := value.v_to_int(a)
+        yi := value.v_to_int(b)
+        if yi == 0:
+            return value.v_null()
+        return value.v_from_int(xi % yi)
+    x := value.v_to_int(a)
+    y := value.v_to_int(b)
+    if op == 0:
+        return value.v_from_int(x + y)
+    if op == 1:
+        return value.v_from_int(x - y)
+    if op == 2:
+        return value.v_from_int(x * y)
+    if op == 3:
+        if y == 0:
+            return value.v_null()
+        return value.v_from_int(x / y)
+    if y == 0:
+        return value.v_null()
+    return value.v_from_int(x % y)
+
+def concat_vals(a: Int, b: Int) -> Int:
+    sa := value.v_to_text(a)
+    sb2 := value.v_to_text(b)
+    la := str_len(sa)
+    lb := str_len(sb2)
+    p := buf_alloc(la + lb + 1)
+    if la > 0:
+        buf_write_str(p, 0, sa)
+    if lb > 0:
+        buf_write_str(p, la, sb2)
+    return value.v_own_bytes(value.TTEXT(), p, la + lb)
+
+def eval_between(ar: Int, n: Int, c: Int) -> Int:
+    v := eval(ar, ast.a_of(ar, n), c)
+    lo := eval(ar, ast.b_of(ar, n), c)
+    hi := eval(ar, ast.c_of(ar, n), c)
+    mut r := 0
+    if value.v_is_null(v) == 1:
+        value.v_free(v)
+        value.v_free(lo)
+        value.v_free(hi)
+        return value.v_null()
+    if value.v_is_null(lo) == 1:
+        value.v_free(v)
+        value.v_free(lo)
+        value.v_free(hi)
+        return value.v_null()
+    if value.v_is_null(hi) == 1:
+        value.v_free(v)
+        value.v_free(lo)
+        value.v_free(hi)
+        return value.v_null()
+    if compare_operands(v, lo) >= 0:
+        if compare_operands(v, hi) <= 0:
+            r = 1
+    value.v_free(v)
+    value.v_free(lo)
+    value.v_free(hi)
+    neg := ast.int_of(ar, n)
+    if neg == 1:
+        return value.v_from_int(1 - r)
+    return value.v_from_int(r)
+
+def eval_inlist(ar: Int, n: Int, c: Int) -> Int:
+    # IN (SELECT ...) — the parser marks these with text "SUB" and stores the
+    # sub-statement in slot c.
+    if lpp_str_eq(ast.text_of(ar, n), "SUB") == 1:
+        return exec.subquery_in(cx_db(c), ast.c_of(ar, n), ar, c, ast.a_of(ar, n), ast.int_of(ar, n))
+    v := eval(ar, ast.a_of(ar, n), c)
+    slot := ast.list_of(ar, n)
+    cnt := ast.av_count(ar, slot)
+    neg := ast.int_of(ar, n)
+    if value.v_is_null(v) == 1:
+        value.v_free(v)
+        if cnt == 0:
+            return value.v_from_int(neg)
+        return value.v_null()
+    mut found := 0
+    mut sawnull := 0
+    mut i := 0
+    while i < cnt:
+        e := eval(ar, ast.av_get(ar, slot, i), c)
+        if value.v_is_null(e) == 1:
+            sawnull = 1
+        elif compare_operands(v, e) == 0:
+            found = 1
+        value.v_free(e)
+        i = i + 1
+    value.v_free(v)
+    if found == 1:
+        if neg == 1:
+            return value.v_from_int(0)
+        return value.v_from_int(1)
+    if sawnull == 1:
+        return value.v_null()
+    if neg == 1:
+        return value.v_from_int(1)
+    return value.v_from_int(0)
+
+def eval_case(ar: Int, n: Int, c: Int) -> Int:
+    basei := ast.a_of(ar, n)
+    slot := ast.list_of(ar, n)
+    cnt := ast.av_count(ar, slot)
+    mut base := 0
+    mut hasbase := 0
+    if basei >= 0:
+        base = eval(ar, basei, c)
+        hasbase = 1
+    mut i := 0
+    while i + 1 < cnt:
+        cond := eval(ar, ast.av_get(ar, slot, i), c)
+        mut hit := 0
+        if hasbase == 1:
+            if value.v_is_null(base) == 0:
+                if value.v_is_null(cond) == 0:
+                    if compare_operands(base, cond) == 0:
+                        hit = 1
+        else:
+            if value.v_is_null(cond) == 0:
+                hit = value.v_truthy(cond)
+        value.v_free(cond)
+        if hit == 1:
+            r := eval(ar, ast.av_get(ar, slot, i + 1), c)
+            if hasbase == 1:
+                value.v_free(base)
+            return r
+        i = i + 2
+    if hasbase == 1:
+        value.v_free(base)
+    els := ast.b_of(ar, n)
+    if els >= 0:
+        return eval(ar, els, c)
+    return value.v_null()
+
+# ── LIKE / GLOB ──
+
+def eval_like(ar: Int, n: Int, c: Int) -> Int:
+    l := eval(ar, ast.a_of(ar, n), c)
+    r := eval(ar, ast.b_of(ar, n), c)
+    if value.v_is_null(l) == 1:
+        value.v_free(l)
+        value.v_free(r)
+        return value.v_null()
+    if value.v_is_null(r) == 1:
+        value.v_free(l)
+        value.v_free(r)
+        return value.v_null()
+    s := value.v_to_text(l)
+    pat := value.v_to_text(r)
+    mut esc := 0
+    ei := ast.c_of(ar, n)
+    if ei >= 0:
+        ev := eval(ar, ei, c)
+        es := value.v_to_text(ev)
+        if str_len(es) > 0:
+            esc = strbuf.ch_at(es, 0)
+        value.v_free(ev)
+    mut m := 0
+    if lpp_str_eq(ast.text_of(ar, n), "GLOB") == 1:
+        m = glob_match(pat, s, 0, 0)
+    else:
+        m = like_match(pat, s, 0, 0, esc)
+    value.v_free(l)
+    value.v_free(r)
+    neg := ast.int_of(ar, n)
+    if neg == 1:
+        return value.v_from_int(1 - m)
+    return value.v_from_int(m)
+
+# LIKE: '%' any sequence, '_' any single char, case-insensitive for ASCII.
+def like_match(pat: Str, s: Str, pi: Int, si: Int, esc: Int) -> Int:
+    pn := str_len(pat)
+    sn := str_len(s)
+    mut p := pi
+    mut i := si
+    while p < pn:
+        pc := strbuf.ch_at(pat, p)
+        if esc != 0:
+            if pc == esc:
+                if p + 1 < pn:
+                    lc := strbuf.ch_at(pat, p + 1)
+                    if i >= sn:
+                        return 0
+                    if strbuf.lower_c(strbuf.ch_at(s, i)) != strbuf.lower_c(lc):
+                        return 0
+                    p = p + 2
+                    i = i + 1
+                else:
+                    return 0
+            elif pc == 37:
+                return like_star(pat, s, p, i, esc)
+            elif pc == 95:
+                if i >= sn:
+                    return 0
+                p = p + 1
+                i = i + 1
+            else:
+                if i >= sn:
+                    return 0
+                if strbuf.lower_c(strbuf.ch_at(s, i)) != strbuf.lower_c(pc):
+                    return 0
+                p = p + 1
+                i = i + 1
+        elif pc == 37:
+            return like_star(pat, s, p, i, esc)
+        elif pc == 95:
+            if i >= sn:
+                return 0
+            p = p + 1
+            i = i + 1
+        else:
+            if i >= sn:
+                return 0
+            if strbuf.lower_c(strbuf.ch_at(s, i)) != strbuf.lower_c(pc):
+                return 0
+            p = p + 1
+            i = i + 1
+    if i == sn:
+        return 1
+    return 0
+
+def like_star(pat: Str, s: Str, p: Int, i: Int, esc: Int) -> Int:
+    pn := str_len(pat)
+    sn := str_len(s)
+    # collapse consecutive '%'
+    mut np := p
+    while np < pn:
+        if strbuf.ch_at(pat, np) == 37:
+            np = np + 1
+        else:
+            np = pn + 1
+    if np > pn:
+        np = np - 1
+    else:
+        return 1
+    mut k := i
+    while k <= sn:
+        if like_match(pat, s, np, k, esc) == 1:
+            return 1
+        k = k + 1
+    return 0
+
+# GLOB: '*' any sequence, '?' one char, [abc] class; case-sensitive.
+def glob_match(pat: Str, s: Str, pi: Int, si: Int) -> Int:
+    pn := str_len(pat)
+    sn := str_len(s)
+    mut p := pi
+    mut i := si
+    while p < pn:
+        pc := strbuf.ch_at(pat, p)
+        if pc == 42:
+            mut np := p
+            while np < pn:
+                if strbuf.ch_at(pat, np) == 42:
+                    np = np + 1
+                else:
+                    np = pn + 1
+            if np > pn:
+                np = np - 1
+            else:
+                return 1
+            mut k := i
+            while k <= sn:
+                if glob_match(pat, s, np, k) == 1:
+                    return 1
+                k = k + 1
+            return 0
+        if pc == 63:
+            if i >= sn:
+                return 0
+            p = p + 1
+            i = i + 1
+        elif pc == 91:
+            if i >= sn:
+                return 0
+            e := class_end(pat, p)
+            if class_match(pat, p, e, strbuf.ch_at(s, i)) == 0:
+                return 0
+            p = e + 1
+            i = i + 1
+        else:
+            if i >= sn:
+                return 0
+            if strbuf.ch_at(s, i) != pc:
+                return 0
+            p = p + 1
+            i = i + 1
+    if i == sn:
+        return 1
+    return 0
+
+def class_end(pat: Str, start: Int) -> Int:
+    pn := str_len(pat)
+    mut j := start + 1
+    if j < pn:
+        if strbuf.ch_at(pat, j) == 94:
+            j = j + 1
+    if j < pn:
+        if strbuf.ch_at(pat, j) == 93:
+            j = j + 1
+    while j < pn:
+        if strbuf.ch_at(pat, j) == 93:
+            return j
+        j = j + 1
+    return pn - 1
+
+def class_match(pat: Str, start: Int, end: Int, ch: Int) -> Int:
+    mut j := start + 1
+    mut neg := 0
+    if j < end:
+        if strbuf.ch_at(pat, j) == 94:
+            neg = 1
+            j = j + 1
+    mut hit := 0
+    while j < end:
+        cj := strbuf.ch_at(pat, j)
+        if j + 2 < end:
+            if strbuf.ch_at(pat, j + 1) == 45:
+                hi := strbuf.ch_at(pat, j + 2)
+                if ch >= cj:
+                    if ch <= hi:
+                        hit = 1
+                j = j + 3
+            else:
+                if ch == cj:
+                    hit = 1
+                j = j + 1
+        else:
+            if ch == cj:
+                hit = 1
+            j = j + 1
+    if neg == 1:
+        return 1 - hit
+    return hit
+
+# ── CAST ──
+
+def do_cast(v: Int, ty: Str) -> Int:
+    aff := schema.affinity_of(ty)
+    if aff == schema.AFF_TEXT():
+        if value.v_is_null(v) == 1:
+            return value.v_null()
+        return value.v_from_str(value.v_to_text(v))
+    if aff == schema.AFF_BLOB():
+        if value.v_is_null(v) == 1:
+            return value.v_null()
+        s := value.v_to_text(v)
+        ln := str_len(s)
+        b := buf_alloc(ln + 1)
+        if ln > 0:
+            buf_write_str(b, 0, s)
+        return value.v_own_bytes(value.TBLOB(), b, ln)
+    if value.v_is_null(v) == 1:
+        return value.v_null()
+    if aff == schema.AFF_INTEGER():
+        return value.v_from_int(cast_to_int(v))
+    if aff == schema.AFF_REAL():
+        return value.v_from_real(cast_to_real(v))
+    # NUMERIC: integer if exactly representable
+    d := cast_to_real(v)
+    iv := float_to_int(d)
+    if int_to_float(iv) == d:
+        return value.v_from_int(iv)
+    return value.v_from_real(d)
+
+# CAST of text takes the longest numeric prefix (SQLite behaviour).
+def cast_to_int(v: Int) -> Int:
+    t := value.v_type(v)
+    if t == value.TINT():
+        return value.v_int(v)
+    if t == value.TREAL():
+        return float_to_int(value.v_real(v))
+    s := value.v_to_text(v)
+    return float_to_int(prefix_real(s))
+
+def cast_to_real(v: Int) -> Float:
+    t := value.v_type(v)
+    if t == value.TINT():
+        return int_to_float(value.v_int(v))
+    if t == value.TREAL():
+        return value.v_real(v)
+    return prefix_real(value.v_to_text(v))
+
+def prefix_real(s: Str) -> Float:
+    n := str_len(s)
+    mut i := 0
+    mut skip := 1
+    while skip == 1:
+        if i >= n:
+            skip = 0
+        elif strbuf.is_space_c(strbuf.ch_at(s, i)) == 1:
+            i = i + 1
+        else:
+            skip = 0
+    mut start := i
+    mut j := start
+    if j < n:
+        cj := strbuf.ch_at(s, j)
+        if cj == 45:
+            j = j + 1
+        elif cj == 43:
+            j = j + 1
+    mut seen := 0
+    mut go := 1
+    while go == 1:
+        if j >= n:
+            go = 0
+        elif strbuf.is_digit_c(strbuf.ch_at(s, j)) == 1:
+            seen = 1
+            j = j + 1
+        else:
+            go = 0
+    if j < n:
+        if strbuf.ch_at(s, j) == 46:
+            j = j + 1
+            mut g2 := 1
+            while g2 == 1:
+                if j >= n:
+                    g2 = 0
+                elif strbuf.is_digit_c(strbuf.ch_at(s, j)) == 1:
+                    seen = 1
+                    j = j + 1
+                else:
+                    g2 = 0
+    if seen == 0:
+        return 0.0
+    if j < n:
+        ce := strbuf.ch_at(s, j)
+        mut ise := 0
+        if ce == 101:
+            ise = 1
+        if ce == 69:
+            ise = 1
+        if ise == 1:
+            mut k := j + 1
+            if k < n:
+                ck := strbuf.ch_at(s, k)
+                if ck == 45:
+                    k = k + 1
+                elif ck == 43:
+                    k = k + 1
+            mut edig := 0
+            mut g3 := 1
+            while g3 == 1:
+                if k >= n:
+                    g3 = 0
+                elif strbuf.is_digit_c(strbuf.ch_at(s, k)) == 1:
+                    edig = 1
+                    k = k + 1
+                else:
+                    g3 = 0
+            if edig == 1:
+                j = k
+    return ieee754.parse_float(str_substr(s, start, j - start))
+
+# Scalar functions live in func.lpp (imported cyclically, which this compiler
+# supports). Aggregates are handled by the executor, which pre-computes them
+# and rebinds the result before the expression is evaluated.
+def eval_func(ar: Int, n: Int, c: Int) -> Int:
+    return func.scalar(ar, n, c)

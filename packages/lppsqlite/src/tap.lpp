@@ -1,0 +1,69 @@
+# tap.lpp — minimal test harness.
+# L++ has no global mutable state, so the counters live in a 24-byte buffer
+# handle that the caller threads through every assertion.
+#   [0]=pass  [8]=fail  [16]=checks
+
+def t_new() -> Int:
+    h := buf_alloc(24)
+    buf_set32le(h, 0, 0)
+    buf_set32le(h, 8, 0)
+    buf_set32le(h, 16, 0)
+    return h
+
+def t_pass(h: Int) -> Int:
+    return buf_get32le(h, 0)
+
+def t_fail(h: Int) -> Int:
+    return buf_get32le(h, 8)
+
+def t_bump_pass(h: Int):
+    buf_set32le(h, 0, buf_get32le(h, 0) + 1)
+
+def t_bump_fail(h: Int):
+    buf_set32le(h, 8, buf_get32le(h, 8) + 1)
+
+# Accepts a Bool expression (e.g. `a > b`). The compiler types comparisons as
+# i8, so this overload keeps them out of Int-typed parameters.
+def okb(h: Int, label: Str, cond: Bool):
+    if cond:
+        t_bump_pass(h)
+    else:
+        t_bump_fail(h)
+        print_str(str_concat("  FAIL  ", label))
+
+def ok(h: Int, label: Str, cond: Int):
+    if cond != 0:
+        t_bump_pass(h)
+    else:
+        t_bump_fail(h)
+        print_str(str_concat("  FAIL  ", label))
+
+def eq_i(h: Int, label: Str, got: Int, want: Int):
+    if got == want:
+        t_bump_pass(h)
+    else:
+        t_bump_fail(h)
+        print_str(str_concat("  FAIL  ", str_concat(label, str_concat("  got=", str_concat(int_to_str(got), str_concat(" want=", int_to_str(want)))))))
+
+def eq_s(h: Int, label: Str, got: Str, want: Str):
+    if lpp_str_eq(got, want) == 1:
+        t_bump_pass(h)
+    else:
+        t_bump_fail(h)
+        print_str(str_concat("  FAIL  ", str_concat(label, str_concat("  got=[", str_concat(got, str_concat("] want=[", str_concat(want, "]")))))))
+
+def contains(h: Int, label: Str, got: Str, needle: Str):
+    if str_contains(got, needle) == 1:
+        t_bump_pass(h)
+    else:
+        t_bump_fail(h)
+        print_str(str_concat("  FAIL  ", str_concat(label, str_concat("  got=[", str_concat(got, str_concat("] want-contains=[", str_concat(needle, "]")))))))
+
+def t_report(h: Int, suite: Str) -> Int:
+    p := t_pass(h)
+    f := t_fail(h)
+    if f == 0:
+        print_str(str_concat("PASS  ", str_concat(suite, str_concat("  (", str_concat(int_to_str(p), " checks)")))))
+        return 0
+    print_str(str_concat("FAIL  ", str_concat(suite, str_concat("  ", str_concat(int_to_str(f), str_concat("/", str_concat(int_to_str(p + f), " failed")))))))
+    return 1

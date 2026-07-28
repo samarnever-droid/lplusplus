@@ -1,0 +1,71 @@
+import mem
+import strbuf
+import value
+import rowset
+import exec
+import tap
+
+def dump(r: Int) -> Str:
+    if rowset.rs_err(r) == 1:
+        return str_concat("ERROR: ", rowset.rs_errmsg(r))
+    sb := strbuf.sb_new()
+    n := rowset.rs_nrows(r)
+    nc := rowset.rs_ncols(r)
+    mut i := 0
+    while i < n:
+        if i > 0:
+            strbuf.sb_add_ch(sb, 59)
+        mut j := 0
+        while j < nc:
+            if j > 0:
+                strbuf.sb_add_ch(sb, 124)
+            strbuf.sb_add(sb, value.v_display(rowset.rs_cell(r, i, j)))
+            j = j + 1
+        i = i + 1
+    s := strbuf.sb_str(sb)
+    strbuf.sb_free(sb)
+    return s
+
+def q(T: Int, d: Int, label: Str, sql: Str, want: Str):
+    r := exec.exec(d, sql)
+    tap.eq_s(T, label, dump(r), want)
+    rowset.rs_free(r)
+
+def main():
+    T := tap.t_new()
+
+    # Read a database created by the real sqlite3 library.
+    d := exec.open_db("from_real_sqlite.db")
+
+    q(T, d, "read real: count", "SELECT COUNT(*) FROM people", "6")
+    q(T, d, "read real: names", "SELECT name FROM people ORDER BY id LIMIT 3", "Ada;Grace;Alan")
+    q(T, d, "read real: types", "SELECT typeof(id), typeof(name), typeof(height), typeof(data) FROM people WHERE id = 1", "integer|text|real|blob")
+    q(T, d, "read real: real value", "SELECT height FROM people WHERE id = 1", "1.68")
+    q(T, d, "read real: null", "SELECT COUNT(*) FROM people WHERE nickname IS NULL", "2")
+    q(T, d, "read real: negative", "SELECT balance FROM people WHERE id = 3", "-250")
+    q(T, d, "read real: big int", "SELECT bignum FROM people WHERE id = 4", "9007199254740993")
+    q(T, d, "read real: unicode", "SELECT name FROM people WHERE id = 5", "Ștefan")
+    q(T, d, "read real: aggregate", "SELECT SUM(balance) FROM people", "1100")
+    q(T, d, "read real: where+order", "SELECT name FROM people WHERE balance > 0 ORDER BY balance DESC", "Grace;Ada;Ștefan")
+    q(T, d, "read real: many rows", "SELECT COUNT(*) FROM wide", "500")
+    q(T, d, "read real: deep row", "SELECT val FROM wide WHERE k = 499", "row-499")
+    q(T, d, "read real: overflow text len", "SELECT length(blobtext) FROM bigrow WHERE id = 1", "9000")
+
+    # Write into that same file, then hand it back to real sqlite3.
+    r1 := exec.exec(d, "INSERT INTO people (id, name, nickname, height, balance, bignum, data) VALUES (7, 'Lpp', 'engine', 2.5, 42, 123456789012345, NULL)")
+    tap.eq_i(T, "write into real db", rowset.rs_changes(r1), 1)
+    rowset.rs_free(r1)
+    q(T, d, "readback own insert", "SELECT name, height FROM people WHERE id = 7", "Lpp|2.5")
+    q(T, d, "count after insert", "SELECT COUNT(*) FROM people", "7")
+
+    r2 := exec.exec(d, "UPDATE people SET balance = 999 WHERE id = 2")
+    tap.eq_i(T, "update real db", rowset.rs_changes(r2), 1)
+    rowset.rs_free(r2)
+
+    r3 := exec.exec(d, "DELETE FROM wide WHERE k >= 400")
+    tap.eq_i(T, "delete 100 rows", rowset.rs_changes(r3), 100)
+    rowset.rs_free(r3)
+    q(T, d, "wide after delete", "SELECT COUNT(*) FROM wide", "400")
+
+    exec.close_db(d)
+    tap.t_report(T, "interop")

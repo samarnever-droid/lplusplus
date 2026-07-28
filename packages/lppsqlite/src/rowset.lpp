@@ -1,0 +1,109 @@
+# rowset.lpp — an in-memory result set (rows of value handles).
+#
+#   [0]  ncols
+#   [8]  colnames (sv)
+#   [16] cells (iv of value handles, row-major)
+#   [24] nrows
+#   [32] error message (sv)
+#   [40] error flag
+#   [48] changes (rows modified by a DML statement)
+#   [56] last insert rowid
+
+import mem
+import strbuf
+import value
+
+def rs_new(ncols: Int) -> Int:
+    r := buf_alloc(64)
+    mem.bset64(r, 0, ncols)
+    mem.bset64(r, 8, strbuf.sv_new())
+    mem.bset64(r, 16, mem.iv_new(16))
+    mem.bset64(r, 24, 0)
+    mem.bset64(r, 32, strbuf.sv_new())
+    mem.bset64(r, 40, 0)
+    mem.bset64(r, 48, 0)
+    mem.bset64(r, 56, 0)
+    return r
+
+def rs_ncols(r: Int) -> Int:
+    return mem.bget64(r, 0)
+
+def rs_set_ncols(r: Int, n: Int):
+    mem.bset64(r, 0, n)
+
+def rs_names(r: Int) -> Int:
+    return mem.bget64(r, 8)
+
+def rs_cells(r: Int) -> Int:
+    return mem.bget64(r, 16)
+
+def rs_nrows(r: Int) -> Int:
+    return mem.bget64(r, 24)
+
+def rs_err(r: Int) -> Int:
+    return mem.bget64(r, 40)
+
+def rs_errmsg(r: Int) -> Str:
+    e := mem.bget64(r, 32)
+    if strbuf.sv_len(e) == 0:
+        return ""
+    return strbuf.sv_get(e, 0)
+
+def rs_fail(r: Int, msg: Str):
+    if mem.bget64(r, 40) == 0:
+        mem.bset64(r, 40, 1)
+        strbuf.sv_push(mem.bget64(r, 32), msg)
+
+def rs_changes(r: Int) -> Int:
+    return mem.bget64(r, 48)
+
+def rs_set_changes(r: Int, n: Int):
+    mem.bset64(r, 48, n)
+
+def rs_last_id(r: Int) -> Int:
+    return mem.bget64(r, 56)
+
+def rs_set_last_id(r: Int, n: Int):
+    mem.bset64(r, 56, n)
+
+def rs_add_name(r: Int, s: Str):
+    strbuf.sv_push(rs_names(r), s)
+
+def rs_name(r: Int, i: Int) -> Str:
+    if i >= strbuf.sv_len(rs_names(r)):
+        return ""
+    return strbuf.sv_get(rs_names(r), i)
+
+# Append a row; `vals` is an iv of value handles which this takes ownership of.
+def rs_add_row(r: Int, vals: Int):
+    n := mem.iv_len(vals)
+    cells := rs_cells(r)
+    mut i := 0
+    while i < n:
+        mem.iv_push(cells, mem.iv_get(vals, i))
+        i = i + 1
+    mem.bset64(r, 24, mem.bget64(r, 24) + 1)
+
+def rs_cell(r: Int, row: Int, col: Int) -> Int:
+    return mem.iv_get(rs_cells(r), row * rs_ncols(r) + col)
+
+def rs_set_cell(r: Int, row: Int, col: Int, v: Int):
+    mem.iv_set(rs_cells(r), row * rs_ncols(r) + col, v)
+
+def rs_free(r: Int):
+    cells := rs_cells(r)
+    n := mem.iv_len(cells)
+    mut i := 0
+    while i < n:
+        value.v_free(mem.iv_get(cells, i))
+        i = i + 1
+    mem.iv_free(cells)
+    strbuf.sv_free(rs_names(r))
+    strbuf.sv_free(mem.bget64(r, 32))
+    buf_free(r)
+
+# Swap the cell array wholesale (used by ORDER BY / DISTINCT).
+def rs_replace_cells(r: Int, newcells: Int, nrows: Int):
+    mem.iv_free(rs_cells(r))
+    mem.bset64(r, 16, newcells)
+    mem.bset64(r, 24, nrows)

@@ -1,0 +1,50 @@
+#!/bin/sh
+# lppsqlite — command-line shell for the L++ SQLite-compatible engine.
+#
+#   lppsqlite <file.db> "SQL ..."     run SQL (multiple ;-separated statements)
+#   lppsqlite <file.db> .tables       run a dot-command
+#   lppsqlite <file.db>               interactive REPL
+#   lppsqlite :memory: "SQL"          transient database
+#
+# Options (before the database argument):
+#   -header       print column headers
+#   -csv          CSV output
+#   -json         JSON output
+#   -f FILE       execute SQL read from FILE
+#
+# L++ has no OS-level argv, so arguments are passed through the environment.
+
+DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+BIN="$DIR/build/lppsqlite"
+
+if [ ! -x "$BIN" ]; then
+    echo "lppsqlite: engine not built; run: $DIR/build.sh" >&2
+    exit 1
+fi
+
+HEADERS=off
+MODE=list
+SQLFILE=
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -header|-headers) HEADERS=on; shift ;;
+        -csv)  MODE=csv;  shift ;;
+        -json) MODE=json; shift ;;
+        -f)    SQLFILE=$2; shift 2 ;;
+        --)    shift; break ;;
+        -*)    echo "lppsqlite: unknown option $1" >&2; exit 2 ;;
+        *)     break ;;
+    esac
+done
+
+DB=${1:-:memory:}
+[ $# -gt 0 ] && shift
+SQL="$*"
+
+LPPSQLITE_DB="$DB" \
+LPPSQLITE_SQL="$SQL" \
+LPPSQLITE_FILE="$SQLFILE" \
+LPPSQLITE_HEADERS="$HEADERS" \
+LPPSQLITE_MODE="$MODE" \
+exec "$BIN"
