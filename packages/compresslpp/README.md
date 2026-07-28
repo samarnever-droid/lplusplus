@@ -167,6 +167,12 @@ or return a list created inside a function.
   members, empty members; directories/links/PAX headers are skipped on read
 - **gzip (RFC 1952)** — read and write, optional FNAME/FEXTRA/FCOMMENT headers
   skipped on read, CRC-32 and ISIZE verified
+- **ZIP64** — read and write. On read, sizes and local-header offsets stored as
+  the `0xFFFFFFFF` sentinel are promoted from extra field `0x0001`, and the true
+  entry count comes from the ZIP64 end-of-central-directory record. On write the
+  ZIP64 records are emitted only when a field would actually overflow, so small
+  archives stay byte-for-byte classic. Verified by writing a 65,600-entry
+  archive and reading it back with Python's `zipfile` and `unzip -t`
 
 ---
 
@@ -176,7 +182,6 @@ or return a list created inside a function.
   fixed-Huffman blocks, so our output is a few percent larger than zlib's at
   the same level. Perfectly valid DEFLATE either way.
 - **AES / WinZip AE-x encryption.** Only traditional ZipCrypto.
-- **ZIP64** — archives above 4 GB or 65,535 entries.
 - **bzip2, LZMA, XZ, Zstandard.**
 - **TAR extras** — long names (>100 bytes) are rejected rather than truncated;
   symlinks, device nodes, sparse files and PAX metadata are ignored.
@@ -212,7 +217,7 @@ encryption (not implemented here) or encrypt the archive separately.
 | `t_gzip` | 7 | round-trips plus reading Python's `.gz` |
 | **`verify.py`** | **32** | **zlib / zipfile / tarfile / gzip + `unzip -t` and `tar -xO` must accept our output** |
 
-Total: **50 in-engine checks + 32 cross-verifications**, all passing.
+Total: **59 in-engine checks + 38 cross-verifications**, all passing.
 
 `tests/fixtures.py` regenerates every reference input, so the suite never
 depends on committed binaries.

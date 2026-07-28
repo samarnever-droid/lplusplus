@@ -125,6 +125,51 @@ def main():
             bits.vec_free(v)
         zip.zr_free(p3)
 
+    # ── ZIP64 ──
+    #
+    # Reading: the true sizes/offset may live in extra field 0x0001 behind a
+    # 0xFFFFFFFF sentinel, and the true entry count in the zip64 EOCD record.
+    # Ignoring either silently drops data instead of failing loudly.
+    z5 := zip.zr_open("py_z64_force.zip")
+    sayb(z5 != 0, "open zip64 archive (force_zip64 local headers)")
+    if z5 != 0:
+        say(zip.zr_count(z5) - 2, "zip64 force: entry count (3)")
+        i5 := zip.zr_find(z5, "z1.txt")
+        v5 := zip.zr_extract(z5, i5, "")
+        sayb(v5 != 0, "zip64 force: extract + CRC verify")
+        if v5 != 0:
+            bits.vec_free(v5)
+        zip.zr_free(z5)
+
+    z6 := zip.zr_open("py_z64_sentinel.zip")
+    sayb(z6 != 0, "open zip64 archive (0xFFFFFFFF sentinels in central dir)")
+    if z6 != 0:
+        say(zip.zr_usize(z6, 0) - 199, "zip64 sentinel: size read from extra field (200)")
+        v6 := zip.zr_extract(z6, 0, "")
+        sayb(v6 != 0, "zip64 sentinel: extract + CRC verify")
+        if v6 != 0:
+            bits.vec_free(v6)
+        zip.zr_free(z6)
+
+    # Writing: >65535 entries cannot be represented in the classic EOCD, whose
+    # count field is 16 bits. Without a zip64 EOCD this reads back as 65535.
+    zb := zip.zw_new()
+    mut wi := 0
+    while wi < 65600:
+        zip.zw_add_str(zb, str_concat("n", str_concat(int_to_str(wi), ".txt")), "x", 0, "")
+        wi = wi + 1
+    zip.zw_save(zb, "out_z64_many.zip")
+    zip.zw_free(zb)
+    zm := zip.zr_open("out_z64_many.zip")
+    sayb(zm != 0, "reopen own >65535-entry archive")
+    if zm != 0:
+        say(zip.zr_count(zm) - 65599, "zip64 write: round-trips 65600 entries")
+        vm := zip.zr_extract(zm, 65599, "")
+        sayb(vm != 0, "zip64 write: last entry extracts")
+        if vm != 0:
+            bits.vec_free(vm)
+        zip.zr_free(zm)
+
     p4 := zip.zr_open("py_multi.zip")
     if p4 != 0:
         say(zip.zr_count(p4) - 9, "python multi-entry count (10)")

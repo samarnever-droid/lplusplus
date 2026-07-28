@@ -10,9 +10,13 @@
 # (bit 3 of the flags) by trusting the central directory, which is where the
 # authoritative sizes live.
 #
-# Not supported: ZIP64 (archives >4 GB or >65535 entries), AES/AE-x encryption,
-# multi-disk archives, bzip2/LZMA methods. Each is rejected with a clear error
-# rather than silently mis-read.
+# ZIP64 is supported in both directions: on read, 0xFFFFFFFF sentinels are
+# promoted from extra field 0x0001 and the entry count comes from the ZIP64
+# EOCD record; on write, the ZIP64 records appear only when a field would
+# actually overflow, so small archives stay byte-for-byte classic.
+#
+# Not supported: AES/AE-x encryption, multi-disk archives, bzip2/LZMA methods.
+# Each is rejected with a clear error rather than silently mis-read.
 #
 # Archive handle (writer):
 #   [0]  names   (sv-style: bytes vec + offsets iv + lens iv)
@@ -34,6 +38,14 @@ def SIG_CENTRAL() -> Int:
     return 33639248          # 0x02014b50
 def SIG_EOCD() -> Int:
     return 101010256         # 0x06054b50
+def SIG_EOCD64() -> Int:
+    return 101075792         # 0x06064b50  zip64 end of central directory
+def SIG_LOC64() -> Int:
+    return 117853008         # 0x07064b50  zip64 EOCD locator
+
+# Header id of the ZIP64 extended information extra field.
+def EXT_ZIP64() -> Int:
+    return 1                 # 0x0001
 
 def M_STORE() -> Int:
     return 0
@@ -201,34 +213,111 @@ def zw_build(z: Int) -> Int:
     while j < n:
         name := sv_get(names, j)
         body := bits.iv_get(bodies, j)
+        csz := bits.vec_len(body)
+        usz := bits.iv_get(usizes, j)
+        lho := bits.iv_get(offsets, j)
+        # A field that does not fit in 32 bits is written as the 0xFFFFFFFF
+        # sentinel and moved into the zip64 extra field. Only saturated fields
+        # go in the extra, and they keep the order usize, csize, offset.
+        mut big_u := 0
+        if usz >= bits.MAX32():
+            big_u = 1
+        mut big_c := 0
+        if csz >= bits.MAX32():
+            big_c = 1
+        mut big_o := 0
+        if lho >= bits.MAX32():
+            big_o = 1
+        nextra := (big_u + big_c + big_o) * 8
+        mut ver := 20
+        if nextra > 0:
+            ver = 45                                     # 4.5 = zip64 required
         bits.vec_push_u32(out, SIG_CENTRAL())
-        bits.vec_push_u16(out, 20)                       # version made by
-        bits.vec_push_u16(out, 20)                       # version needed
+        bits.vec_push_u16(out, ver)                      # version made by
+        bits.vec_push_u16(out, ver)                      # version needed
         bits.vec_push_u16(out, bits.iv_get(flagsv, j))
         bits.vec_push_u16(out, bits.iv_get(methods, j))
         bits.vec_push_u16(out, 0)
         bits.vec_push_u16(out, 33)
         bits.vec_push_u32(out, bits.iv_get(crcs, j))
-        bits.vec_push_u32(out, bits.vec_len(body))
-        bits.vec_push_u32(out, bits.iv_get(usizes, j))
+        if big_c == 1:
+            bits.vec_push_u32(out, bits.MAX32())
+        else:
+            bits.vec_push_u32(out, csz)
+        if big_u == 1:
+            bits.vec_push_u32(out, bits.MAX32())
+        else:
+            bits.vec_push_u32(out, usz)
         bits.vec_push_u16(out, str_len(name))
-        bits.vec_push_u16(out, 0)                        # extra
+        if nextra > 0:
+            bits.vec_push_u16(out, nextra + 4)           # extra length
+        else:
+            bits.vec_push_u16(out, 0)
         bits.vec_push_u16(out, 0)                        # comment
         bits.vec_push_u16(out, 0)                        # disk number
         bits.vec_push_u16(out, 0)                        # internal attrs
         bits.vec_push_u32(out, 32)                       # external attrs
-        bits.vec_push_u32(out, bits.iv_get(offsets, j))
+        if big_o == 1:
+            bits.vec_push_u32(out, bits.MAX32())
+        else:
+            bits.vec_push_u32(out, lho)
         bits.vec_push_str(out, name)
+        if nextra > 0:
+            bits.vec_push_u16(out, EXT_ZIP64())
+            bits.vec_push_u16(out, nextra)
+            if big_u == 1:
+                bits.vec_push_u64(out, usz)
+            if big_c == 1:
+                bits.vec_push_u64(out, csz)
+            if big_o == 1:
+                bits.vec_push_u64(out, lho)
         j = j + 1
     cd_size := bits.vec_len(out) - cd_start
+
+    # Emit the zip64 EOCD + locator when any classic EOCD field would overflow.
+    # Writing only the truncated classic record is what makes a 70,000-entry
+    # archive silently read back as 65,535.
+    mut need64 := 0
+    if n >= 65535:
+        need64 = 1
+    elif cd_size >= bits.MAX32():
+        need64 = 1
+    elif cd_start >= bits.MAX32():
+        need64 = 1
+    if need64 == 1:
+        e64 := bits.vec_len(out)
+        bits.vec_push_u32(out, SIG_EOCD64())
+        bits.vec_push_u64(out, 44)                       # size of remaining record
+        bits.vec_push_u16(out, 45)
+        bits.vec_push_u16(out, 45)
+        bits.vec_push_u32(out, 0)                        # this disk
+        bits.vec_push_u32(out, 0)                        # cd start disk
+        bits.vec_push_u64(out, n)                        # entries on this disk
+        bits.vec_push_u64(out, n)                        # entries total
+        bits.vec_push_u64(out, cd_size)
+        bits.vec_push_u64(out, cd_start)
+        bits.vec_push_u32(out, SIG_LOC64())
+        bits.vec_push_u32(out, 0)                        # disk with eocd64
+        bits.vec_push_u64(out, e64)
+        bits.vec_push_u32(out, 1)                        # total disks
 
     bits.vec_push_u32(out, SIG_EOCD())
     bits.vec_push_u16(out, 0)
     bits.vec_push_u16(out, 0)
-    bits.vec_push_u16(out, n)
-    bits.vec_push_u16(out, n)
-    bits.vec_push_u32(out, cd_size)
-    bits.vec_push_u32(out, cd_start)
+    if need64 == 1:
+        bits.vec_push_u16(out, 65535)
+        bits.vec_push_u16(out, 65535)
+    else:
+        bits.vec_push_u16(out, n)
+        bits.vec_push_u16(out, n)
+    if cd_size >= bits.MAX32():
+        bits.vec_push_u32(out, bits.MAX32())
+    else:
+        bits.vec_push_u32(out, cd_size)
+    if cd_start >= bits.MAX32():
+        bits.vec_push_u32(out, bits.MAX32())
+    else:
+        bits.vec_push_u32(out, cd_start)
     bits.vec_push_u16(out, 0)
     bits.iv_free(offsets)
     return out
@@ -302,6 +391,86 @@ def zr_find(r: Int, name: Str) -> Int:
         i = i + 1
     return 0 - 1
 
+# ── ZIP64 extra field ──
+#
+# The central header keeps 0xFFFFFFFF in any field too large for 32 bits and
+# moves the real value into extra field 0x0001. The values appear in a FIXED
+# order — uncompressed size, compressed size, local-header offset, disk number
+# — but ONLY the ones whose 32-bit slot was saturated are present. So the field
+# cannot be parsed positionally; it has to be walked in step with which slots
+# held the sentinel. Getting this wrong reads the compressed size as the offset.
+#
+# Returns a 32-byte scratch record: [0]=usize [8]=csize [16]=lho [24]=found.
+def z64_parse(data: Int, epos: Int, elen: Int, usz: Int, csz: Int, lho: Int) -> Int:
+    out := buf_alloc(32)
+    bits.bset64(out, 0, usz)
+    bits.bset64(out, 8, csz)
+    bits.bset64(out, 16, lho)
+    bits.bset64(out, 24, 0)
+    mut p := epos
+    limit := epos + elen
+    while p + 4 <= limit:
+        hid := bits.rd_u16(data, p)
+        hsz := bits.rd_u16(data, p + 2)
+        if p + 4 + hsz > limit:
+            p = limit
+        elif hid == EXT_ZIP64():
+            mut q := p + 4
+            stop := p + 4 + hsz
+            if usz == bits.MAX32():
+                if q + 8 <= stop:
+                    bits.bset64(out, 0, bits.rd_u64(data, q))
+                    q = q + 8
+            if csz == bits.MAX32():
+                if q + 8 <= stop:
+                    bits.bset64(out, 8, bits.rd_u64(data, q))
+                    q = q + 8
+            if lho == bits.MAX32():
+                if q + 8 <= stop:
+                    bits.bset64(out, 16, bits.rd_u64(data, q))
+                    q = q + 8
+            bits.bset64(out, 24, 1)
+            p = limit
+        else:
+            p = p + 4 + hsz
+    return out
+
+# Locate the start of the central directory and the true entry count.
+#
+# A ZIP64 archive still carries a classic EOCD, but with 0xFFFF / 0xFFFFFFFF in
+# any saturated field. Trusting those blindly is what silently truncates a
+# 70,000-entry archive to 65,535 — the failure is invisible because the archive
+# still "opens" and lists files.
+#
+# Returns a 24-byte record: [0]=count [8]=cd_off [16]=is_zip64.
+def z64_locate(data: Int, size: Int, eocd: Int) -> Int:
+    out := buf_alloc(24)
+    count := bits.rd_u16(data, eocd + 10)
+    cd_off := bits.rd_u32(data, eocd + 16)
+    bits.bset64(out, 0, count)
+    bits.bset64(out, 8, cd_off)
+    bits.bset64(out, 16, 0)
+
+    # The locator sits immediately before the EOCD when zip64 is in use.
+    loc := eocd - 20
+    if loc < 0:
+        return out
+    if bits.rd_u32(data, loc) != SIG_LOC64():
+        return out
+    e64 := bits.rd_u64(data, loc + 8)
+    if e64 < 0:
+        return out
+    if e64 + 56 > size:
+        return out
+    if bits.rd_u32(data, e64) != SIG_EOCD64():
+        return out
+
+    # Authoritative 64-bit values.
+    bits.bset64(out, 0, bits.rd_u64(data, e64 + 32))
+    bits.bset64(out, 8, bits.rd_u64(data, e64 + 48))
+    bits.bset64(out, 16, 1)
+    return out
+
 # Open an archive from disk. Returns 0 if it is not a readable ZIP.
 def zr_open(path: Str) -> Int:
     if file_exists(path) == 0:
@@ -324,8 +493,19 @@ def zr_open(path: Str) -> Int:
         buf_free(data)
         return 0
 
-    count := bits.rd_u16(data, eocd + 10)
-    cd_off := bits.rd_u32(data, eocd + 16)
+    loc := z64_locate(data, size, eocd)
+    count := bits.bget64(loc, 0)
+    cd_off := bits.bget64(loc, 8)
+    buf_free(loc)
+    if count < 0:
+        buf_free(data)
+        return 0
+    if cd_off < 0:
+        buf_free(data)
+        return 0
+    if cd_off > size:
+        buf_free(data)
+        return 0
 
     names := sv_new()
     offs := bits.iv_new(count + 1)
@@ -360,10 +540,20 @@ def zr_open(path: Str) -> Int:
             mut nm := ""
             if nlen > 0:
                 nm = buf_read_str(data, pos + 46, nlen)
+            # Promote any field that was too big for its 32-bit slot.
+            mut r_usz := usz
+            mut r_csz := csz
+            mut r_lho := lho
+            if elen > 0:
+                z := z64_parse(data, pos + 46 + nlen, elen, usz, csz, lho)
+                r_usz = bits.bget64(z, 0)
+                r_csz = bits.bget64(z, 8)
+                r_lho = bits.bget64(z, 16)
+                buf_free(z)
             sv_push(names, nm)
-            bits.iv_push(offs, lho)
-            bits.iv_push(csizes, csz)
-            bits.iv_push(usizes, usz)
+            bits.iv_push(offs, r_lho)
+            bits.iv_push(csizes, r_csz)
+            bits.iv_push(usizes, r_usz)
             bits.iv_push(methods, mth)
             bits.iv_push(flags, fl)
             bits.iv_push(crcs, crc)

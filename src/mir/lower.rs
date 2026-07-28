@@ -233,6 +233,9 @@ impl<'a> MirLowerCtx<'a> {
                 }
             }
             Expr::Match { .. } => TypeRef::Int,
+            // Monomorphization rewrites every GenericCall into a plain Call,
+            // so reaching here means the pass did not run.
+            Expr::GenericCall { .. } => TypeRef::Int,
             Expr::Try(_) => TypeRef::Int,
             Expr::Index { base, .. } => {
                 let base_ty = self.expr_type_hint(base, builder, binding_map);
@@ -794,26 +797,44 @@ impl<'a> MirLowerCtx<'a> {
                 }
             }
             Stmt::Match { subject, arms } => {
-                // Enum representation: packed i64 = (tag << 32) | (data & 0xFFFFFFFF)
-                // Extract tag: value / 4294967296 (arithmetic right shift by 32)
-                // Extract data: value % 4294967296 (mask lower 32 bits)
+                // Enums are heap objects: `__tag` plus one payload slot per
+                // variant. Each arm reads its own slot, so the payload keeps
+                // its real type and full width.
                 let subject_val = self.lower_expr(builder, subject, binding_map)?;
+                let subject_ty = match &subject_val {
+                    Operand::Local(id) | Operand::Borrowed(id) => {
+                        builder.function.locals[id.0].ty.clone()
+                    }
+                    _ => TypeRef::Int,
+                };
+                let enum_struct_id = match subject_ty {
+                    TypeRef::Custom(id) => Some(id),
+                    _ => None,
+                };
 
-                // Extract tag = subject >> 32 (using divide by 2^32)
-                let shift_const = builder.new_local(TypeRef::Int, false, None, None);
-                builder.push_instr(MirInstr::Assign(shift_const, Rvalue::Use(Operand::Int(4294967296))))?;
                 let tag_val = builder.new_local(TypeRef::Int, false, None, None);
-                builder.push_instr(MirInstr::Assign(
-                    tag_val,
-                    Rvalue::BinaryOp(BinaryOperator::Divide, subject_val.clone(), Operand::Local(shift_const)),
-                ))?;
-
-                // Extract data = subject & 0xFFFFFFFF (using modulo 2^32)
-                let data_val = builder.new_local(TypeRef::Int, false, None, None);
-                builder.push_instr(MirInstr::Assign(
-                    data_val,
-                    Rvalue::BinaryOp(BinaryOperator::Modulo, subject_val.clone(), Operand::Local(shift_const)),
-                ))?;
+                if enum_struct_id.is_some() {
+                    builder.push_instr(MirInstr::Assign(
+                        tag_val,
+                        Rvalue::FieldAccess(subject_val.clone(), "__tag".to_string()),
+                    ))?;
+                } else {
+                    // Legacy scalar form, still used when the subject's type is
+                    // not a known enum object.
+                    let shift_const = builder.new_local(TypeRef::Int, false, None, None);
+                    builder.push_instr(MirInstr::Assign(
+                        shift_const,
+                        Rvalue::Use(Operand::Int(4294967296)),
+                    ))?;
+                    builder.push_instr(MirInstr::Assign(
+                        tag_val,
+                        Rvalue::BinaryOp(
+                            BinaryOperator::Divide,
+                            subject_val.clone(),
+                            Operand::Local(shift_const),
+                        ),
+                    ))?;
+                }
 
                 let end_block = builder.new_block();
 
@@ -839,15 +860,46 @@ impl<'a> MirLowerCtx<'a> {
                         else_block: next_block,
                     })?;
 
-                    // Arm body — bind data to the first binding name if present
+                    // Arm body — bind this variant's payload slot, at its real
+                    // type, so a Str stays a Str instead of a truncated int.
                     builder.switch_to_block(arm_block);
                     if !arm.bindings.is_empty() {
                         let binding_name = &arm.bindings[0];
-                        let bound_local = builder.new_local(TypeRef::Int, true, None, None);
-                        builder.push_instr(MirInstr::Assign(
-                            bound_local,
-                            Rvalue::Use(Operand::Local(data_val)),
-                        ))?;
+                        let field = format!("__v{}", i);
+                        let payload_ty = enum_struct_id
+                            .and_then(|sid| {
+                                self.type_table.definitions[sid.0]
+                                    .fields
+                                    .iter()
+                                    .find(|(n, _)| *n == field)
+                                    .map(|(_, t)| t.clone())
+                            })
+                            .unwrap_or(TypeRef::Int);
+                        let bound_local = builder.new_local(payload_ty.clone(), true, None, None);
+                        if enum_struct_id.is_some() {
+                            // Reading a field borrows the container's ARC edge.
+                            if matches!(payload_ty, TypeRef::Custom(_) | TypeRef::Str | TypeRef::Generic(_, _)) {
+                                builder.set_local_ownership(bound_local, Ownership::Borrowed);
+                            }
+                            builder.push_instr(MirInstr::Assign(
+                                bound_local,
+                                Rvalue::FieldAccess(subject_val.clone(), field),
+                            ))?;
+                        } else {
+                            let shift_const = builder.new_local(TypeRef::Int, false, None, None);
+                            builder.push_instr(MirInstr::Assign(
+                                shift_const,
+                                Rvalue::Use(Operand::Int(4294967296)),
+                            ))?;
+                            builder.push_instr(MirInstr::Assign(
+                                bound_local,
+                                Rvalue::BinaryOp(
+                                    BinaryOperator::Modulo,
+                                    subject_val.clone(),
+                                    Operand::Local(shift_const),
+                                ),
+                            ))?;
+                        }
                         self.match_bindings.insert(binding_name.clone(), bound_local);
                     }
                     for stmt in &arm.body {
@@ -1448,16 +1500,28 @@ impl<'a> MirLowerCtx<'a> {
                     for decl in &self.program.declarations {
                         if let crate::ast::TopLevel::Enum(e) = decl {
                             if e.name == *name {
-                                // It's a unit enum variant — return tag shifted
+                                // Unit enum variant (`Color.Red`) — same heap
+                                // layout as a data variant, just no payload.
                                 let tag = e.variants.iter().position(|v| v.name == *field).unwrap_or(0);
-                                let ty = if let Some(id) = self.type_table.lookup_struct(name) {
-                                    TypeRef::Custom(id)
-                                } else {
-                                    TypeRef::Int
-                                };
-                                let tag_val = (tag as i64) << 32;
-                                let temp = builder.new_local(ty, false, None, None);
-                                builder.push_instr(MirInstr::Assign(temp, Rvalue::Use(Operand::Int(tag_val))))?;
+                                if let Some(id) = self.type_table.lookup_struct(name) {
+                                    let ty = TypeRef::Custom(id);
+                                    let temp = builder.new_local(ty.clone(), false, None, None);
+                                    builder.push_instr(MirInstr::Assign(
+                                        temp,
+                                        Rvalue::AllocateArcStruct(ty),
+                                    ))?;
+                                    builder.push_instr(MirInstr::AssignField {
+                                        base: temp,
+                                        field: "__tag".to_string(),
+                                        value: Operand::Int(tag as i64),
+                                    })?;
+                                    return Ok(Operand::Local(temp));
+                                }
+                                let temp = builder.new_local(TypeRef::Int, false, None, None);
+                                builder.push_instr(MirInstr::Assign(
+                                    temp,
+                                    Rvalue::Use(Operand::Int((tag as i64) << 32)),
+                                ))?;
                                 return Ok(Operand::Local(temp));
                             }
                         }
@@ -1710,50 +1774,65 @@ impl<'a> MirLowerCtx<'a> {
                 Ok(Operand::Local(closure_local))
             }
             Expr::EnumVariantConstruct { enum_name, variant, args } => {
+                // Allocate a real ARC object: `__tag` plus the payload slot for
+                // this variant. The old packed-i64 form truncated the payload
+                // to 32 bits, which corrupted Str/Float/large-Int values.
                 let tag = self.get_enum_variant_tag(enum_name, variant);
-                let ty = if let Some(id) = self.type_table.lookup_struct(enum_name) {
-                    TypeRef::Custom(id)
-                } else {
-                    TypeRef::Int
+                let struct_id = match self.type_table.lookup_struct(enum_name) {
+                    Some(id) => id,
+                    None => {
+                        // Not a known enum — preserve the old scalar behaviour.
+                        let temp = builder.new_local(TypeRef::Int, false, None, None);
+                        builder.push_instr(MirInstr::Assign(
+                            temp,
+                            Rvalue::Use(Operand::Int((tag as i64) << 32)),
+                        ))?;
+                        return Ok(Operand::Local(temp));
+                    }
                 };
-
-                if args.is_empty() {
-                    // Unit variant: just the tag shifted left
-                    let tag_val = (tag as i64) << 32;
-                    let temp = builder.new_local(ty, false, None, None);
-                    builder.push_instr(MirInstr::Assign(temp, Rvalue::Use(Operand::Int(tag_val))))?;
-                    Ok(Operand::Local(temp))
-                } else {
-                    // Data variant: pack (tag << 32) | (data & 0xFFFFFFFF)
+                let ty = TypeRef::Custom(struct_id);
+                let temp = builder.new_local(ty.clone(), false, None, None);
+                builder.push_instr(MirInstr::Assign(temp, Rvalue::AllocateArcStruct(ty)))?;
+                builder.push_instr(MirInstr::AssignField {
+                    base: temp,
+                    field: "__tag".to_string(),
+                    value: Operand::Int(tag as i64),
+                })?;
+                if !args.is_empty() {
                     let data_op = self.lower_expr(builder, &args[0], binding_map)?;
-
-                    let tag_shifted = builder.new_local(TypeRef::Int, false, None, None);
-                    builder.push_instr(MirInstr::Assign(
-                        tag_shifted,
-                        Rvalue::Use(Operand::Int((tag as i64) << 32)),
-                    ))?;
-
-                    // Mask data to 32 bits
-                    let mask = builder.new_local(TypeRef::Int, false, None, None);
-                    builder.push_instr(MirInstr::Assign(mask, Rvalue::Use(Operand::Int(0xFFFFFFFF))))?;
-                    let masked_data = builder.new_local(TypeRef::Int, false, None, None);
-                    builder.push_instr(MirInstr::Assign(
-                        masked_data,
-                        Rvalue::BinaryOp(BinaryOperator::Modulo, data_op, Operand::Local(mask)),
-                    ))?;
-
-                    // Combine: tag_shifted + masked_data (using Add since we have no bitwise OR)
-                    let combined = builder.new_local(ty, false, None, None);
-                    builder.push_instr(MirInstr::Assign(
-                        combined,
-                        Rvalue::BinaryOp(BinaryOperator::Add, Operand::Local(tag_shifted), Operand::Local(masked_data)),
-                    ))?;
-                    Ok(Operand::Local(combined))
+                    builder.push_instr(MirInstr::AssignField {
+                        base: temp,
+                        field: format!("__v{}", tag),
+                        value: data_op,
+                    })?;
                 }
+                Ok(Operand::Local(temp))
             }
             Expr::Match { subject, arms } => {
-                // Match as expression — same as statement match for now
+                // Match as expression — same as statement match for now.
+                // The tag lives in a field now, so compare against that rather
+                // than against the object handle itself.
                 let subject_val = self.lower_expr(builder, subject, binding_map)?;
+                let subject_is_enum = matches!(
+                    match &subject_val {
+                        Operand::Local(id) | Operand::Borrowed(id) =>
+                            builder.function.locals[id.0].ty.clone(),
+                        _ => TypeRef::Int,
+                    },
+                    TypeRef::Custom(_)
+                );
+                let subject_tag = builder.new_local(TypeRef::Int, false, None, None);
+                if subject_is_enum {
+                    builder.push_instr(MirInstr::Assign(
+                        subject_tag,
+                        Rvalue::FieldAccess(subject_val.clone(), "__tag".to_string()),
+                    ))?;
+                } else {
+                    builder.push_instr(MirInstr::Assign(
+                        subject_tag,
+                        Rvalue::Use(subject_val.clone()),
+                    ))?;
+                }
                 let result = builder.new_local(TypeRef::Int, false, None, None);
                 let end_block = builder.new_block();
 
@@ -1765,7 +1844,7 @@ impl<'a> MirLowerCtx<'a> {
                     let cmp_local = builder.new_local(TypeRef::Bool, false, None, None);
                     builder.push_instr(MirInstr::Assign(
                         cmp_local,
-                        Rvalue::BinaryOp(BinaryOperator::Eq, subject_val.clone(), Operand::Local(tag_local)),
+                        Rvalue::BinaryOp(BinaryOperator::Eq, Operand::Local(subject_tag), Operand::Local(tag_local)),
                     ))?;
                     builder.terminate_current_block(Terminator::If {
                         cond: Operand::Local(cmp_local),
@@ -1785,18 +1864,34 @@ impl<'a> MirLowerCtx<'a> {
                 Ok(Operand::Local(result))
             }
             Expr::Try(inner) => {
-                // expr? — unwrap Ok or return Err early
-                // 1. Evaluate inner expression (should be a Result = packed i64)
+                // expr? — unwrap Ok (variant 0) or return the whole value early.
+                // Enums are heap objects, so the tag and payload are fields.
                 let val = self.lower_expr(builder, inner, binding_map)?;
+                let val_ty = match &val {
+                    Operand::Local(id) | Operand::Borrowed(id) => {
+                        builder.function.locals[id.0].ty.clone()
+                    }
+                    _ => TypeRef::Int,
+                };
+                let enum_struct_id = match val_ty {
+                    TypeRef::Custom(id) => Some(id),
+                    _ => None,
+                };
 
-                // 2. Extract tag = val / 4294967296
                 let shift = builder.new_local(TypeRef::Int, false, None, None);
                 builder.push_instr(MirInstr::Assign(shift, Rvalue::Use(Operand::Int(4294967296))))?;
                 let tag = builder.new_local(TypeRef::Int, false, None, None);
-                builder.push_instr(MirInstr::Assign(
-                    tag,
-                    Rvalue::BinaryOp(BinaryOperator::Divide, val.clone(), Operand::Local(shift)),
-                ))?;
+                if enum_struct_id.is_some() {
+                    builder.push_instr(MirInstr::Assign(
+                        tag,
+                        Rvalue::FieldAccess(val.clone(), "__tag".to_string()),
+                    ))?;
+                } else {
+                    builder.push_instr(MirInstr::Assign(
+                        tag,
+                        Rvalue::BinaryOp(BinaryOperator::Divide, val.clone(), Operand::Local(shift)),
+                    ))?;
+                }
 
                 // 3. If tag != 0 (is Err), return the whole value (propagate error)
                 let zero = builder.new_local(TypeRef::Int, false, None, None);
@@ -1815,19 +1910,48 @@ impl<'a> MirLowerCtx<'a> {
                     else_block: err_block,
                 })?;
 
-                // Err path: return the packed value (tag+data) immediately
+                // Err path: propagate the value immediately. It must leave as
+                // ReturnOwned, otherwise the ARC pass emits a release for the
+                // very object being returned and the caller reads freed memory.
                 builder.switch_to_block(err_block);
-                builder.terminate_current_block(Terminator::Return(Some(val.clone())))?;
+                if enum_struct_id.is_some() {
+                    builder.terminate_current_block(Terminator::ReturnOwned(val.clone()))?;
+                } else {
+                    builder.terminate_current_block(Terminator::Return(Some(val.clone())))?;
+                }
 
-                // Ok path: extract data = val % 4294967296
+                // Ok path: read variant 0's payload slot at its real type.
                 builder.switch_to_block(ok_block);
-                let data = builder.new_local(TypeRef::Int, false, None, None);
-                builder.push_instr(MirInstr::Assign(
-                    data,
-                    Rvalue::BinaryOp(BinaryOperator::Modulo, val, Operand::Local(shift)),
-                ))?;
+                let payload_ty = enum_struct_id
+                    .and_then(|sid| {
+                        self.type_table.definitions[sid.0]
+                            .fields
+                            .iter()
+                            .find(|(n, _)| n == "__v0")
+                            .map(|(_, t)| t.clone())
+                    })
+                    .unwrap_or(TypeRef::Int);
+                let data = builder.new_local(payload_ty.clone(), false, None, None);
+                if enum_struct_id.is_some() {
+                    if matches!(payload_ty, TypeRef::Custom(_) | TypeRef::Str | TypeRef::Generic(_, _)) {
+                        builder.set_local_ownership(data, Ownership::Borrowed);
+                    }
+                    builder.push_instr(MirInstr::Assign(
+                        data,
+                        Rvalue::FieldAccess(val, "__v0".to_string()),
+                    ))?;
+                } else {
+                    builder.push_instr(MirInstr::Assign(
+                        data,
+                        Rvalue::BinaryOp(BinaryOperator::Modulo, val, Operand::Local(shift)),
+                    ))?;
+                }
                 Ok(Operand::Local(data))
             }
+            Expr::GenericCall { .. } => Err(
+                "internal error: generic call with explicit type arguments reached MIR lowering; monomorphization should have resolved it"
+                    .to_string(),
+            ),
             Expr::Index { base, index } => {
                 // Desugar subscript:
                 //   str[i]  → str_substr(str, i, 1)

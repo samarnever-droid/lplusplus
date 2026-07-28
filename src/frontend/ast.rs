@@ -60,6 +60,14 @@ pub enum Expr {
         callee: Box<Expr>,
         args: Vec<Expr>,
     },
+    /// `identity[Int](x)` — a call with explicit type arguments (turbofish).
+    /// Monomorphization rewrites this into a plain `Call` naming the
+    /// specialised function, so no later stage ever sees this variant.
+    GenericCall {
+        callee: Box<Expr>,
+        type_args: Vec<Type>,
+        args: Vec<Expr>,
+    },
     Closure {
         params: Vec<ClosureParam>,
         return_type: Option<Type>,

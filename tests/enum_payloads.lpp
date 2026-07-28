@@ -1,0 +1,61 @@
+# Enum payloads must survive at full width.
+#
+# Enums used to be a single packed i64 — (tag << 32) | (payload & 0xFFFFFFFF) —
+# so anything wider than 32 bits was silently corrupted:
+#   * a Str payload became a truncated pointer      -> SIGSEGV on use
+#   * an Int above 2^32 came back as a different number
+#   * a Float could not even be declared (checker forced the binding to Int)
+# Each line below returned garbage or crashed before enums became real objects.
+
+enum Payload:
+    Text(value: Str)
+    Big(value: Int)
+    Real(value: Float)
+    Nothing
+
+def describe(p: Payload) -> Int:
+    match p:
+        Text(v):
+            print_str(v)
+        Big(v):
+            print(v)
+        Real(v):
+            print_str(float_to_str(v))
+        Nothing:
+            print_str("nothing")
+    return 0
+
+enum Result:
+    Ok(value: Int)
+    Err(code: Int)
+
+def might_fail(x: Int) -> Result:
+    if x < 0:
+        return Result.Err(1)
+    return Result.Ok(x * 2)
+
+# The `?` operator propagates Err. The early return has to hand back an owned
+# value; releasing it first made the caller read freed memory.
+def process(x: Int) -> Result:
+    v := might_fail(x)?
+    return Result.Ok(v + 100)
+
+def main():
+    describe(Payload.Text("str payload survives"))
+    describe(Payload.Big(5000000000))
+    describe(Payload.Real(2.5))
+    describe(Payload.Nothing)
+
+    r := process(5)
+    match r:
+        Ok(v):
+            print(v)
+        Err(c):
+            print(c)
+
+    r2 := process(0 - 1)
+    match r2:
+        Ok(v):
+            print(v)
+        Err(c):
+            print(c)

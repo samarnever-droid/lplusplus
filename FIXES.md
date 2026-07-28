@@ -346,14 +346,130 @@ is itself a type parameter, which previously emitted nonsense like `Box__T`.
 structs, generic structs as parameters, generic functions returning generic
 structs, nested generic calls, and multi-parameter generics (`Pair[A, B]`).
 
-### Still not supported
+### Still not supported (at the time of that change)
 
-Explicit turbofish (`identity[Int](x)`) is parsed but not resolved, and there
-are no generic enums, no generic methods inside `impl` blocks, and no generic
-trait implementations. Inference is local: an argument whose type cannot be
-determined from a literal, a tracked local, or a struct constructor still falls
-back to `Int`.
+Explicit turbofish, generic enums and generic methods in `impl` blocks were
+listed here as unsupported. All three are addressed in the follow-up section
+below. Generic *trait implementations* (`impl Show for Box[T]`) remain
+unsupported.
 
 Nesting a generic struct inside itself (`Box(Box(5))`) does work — the
 fixed-point loop resolves it, and is capped at 16 rounds to guarantee
 termination.
+
+---
+
+## Enum payload representation, turbofish & generic methods
+
+Chasing "finish monomorphization" surfaced a deeper defect: generic enums could
+not be made to work because the *enum representation itself* was lossy, for
+plain enums as much as generic ones.
+
+### The representation bug
+
+Every enum value was a single packed `i64`:
+
+```
+(tag << 32) | (payload & 0xFFFFFFFF)
+```
+
+The payload was masked to 32 bits, so anything wider was silently destroyed:
+
+| Program | Before | After |
+|---|---|---|
+| `Msg.Text("hello")` then `match` | SIGSEGV (pointer truncated) | `hello` |
+| `Num.N(5000000000)` | `705032705` | `5000000000` |
+| `Num.F(2.5)` | rejected: "expects Float, got Int" | `2.5` |
+| `Opt.Some(5)` + `Opt.Some("hi")` | SIGSEGV on the second | `5`, `hi` |
+
+The wrong-number case is the dangerous one — no crash, no diagnostic, just a
+different number than the program stored.
+
+Enums are now ordinary ARC heap objects that reuse the existing struct
+machinery. `typecheck.rs` gives each enum a field layout of `__tag` plus one
+`__vN` slot per data variant, so each variant's payload keeps its declared type
+at full width instead of being erased to a masked `i64`.
+
+Three consequences had to be handled:
+
+- **`semantic.rs`** bound every match arm as `Type::Int`. It now looks up the
+  variant's declared payload type, which is what makes a `Float` or `Str`
+  binding type-check.
+- **The `?` operator** still read the packed form, and its error path emitted
+  `Return`, so the ARC pass inserted `release(_2); return _2` — a
+  use-after-free. `tests/test_try_operator.lpp` segfaulted on the `Err` path
+  both before and after the representation change; it now returns `ReturnOwned`
+  and prints `110` / `1`.
+- **`Enum.Variant` resolution** used "this type has no fields" to distinguish an
+  enum from a struct. That test silently became false once enums had fields, so
+  the type checker now tracks enum names explicitly (`enum_names`).
+
+### Turbofish
+
+`identity[Int](42)` parsed but never resolved, so the call named a template
+that monomorphization had already pruned and the user saw
+`Undeclared identifier 'identity'`.
+
+There is now an `Expr::GenericCall` node. The parser only reads `name[...]` as
+type arguments when the brackets contain identifiers/commas **and** are
+followed immediately by `(`; `xs[1]` and `s[2]` still parse as subscripts, which
+`generics_turbofish.lpp` asserts. Monomorphization takes the bindings directly
+from the written arguments and rewrites the node to a plain call, so no later
+stage ever sees it. Mistakes are reported rather than inferred around:
+
+```
+error[E0003]: 'identity' expects 1 type argument(s) but 2 were given
+error[E0003]: 'plain' does not take type arguments, or monomorphization could not resolve them
+error[E0003]: type 'Rock' does not implement trait 'Speak' required by generic parameter 'T' of 'make_noise'
+```
+
+### Generic methods in `impl` blocks
+
+A generic method was walked but never specialised, so it reached the backend
+still generic and Cranelift failed its own verifier:
+
+```
+VerifierError { message: "arg 1 (v4) has type f64, expected i64" }
+```
+
+The parser already mangles impl methods to `Target_method`, so after that
+rewrite they are just free functions. They are now registered as generic
+templates, specialised per call site (`Holder_pick__Float`), and the templates
+are pruned from the impl block. `h.pick(7)`, `h.pick("s")` and `h.pick(0.5)`
+all work in one program.
+
+### Missing runtime symbol
+
+`float_to_str` linked under `--linker host` but failed under the default
+internal linker with `unresolved GOT symbol 'lpp_float_to_str'`. The function
+existed only in `runtime/lpp_str.c` (the host path) and was missing from
+`runtime/linux_x86_64_min.c`. It is implemented there now, formatting by hand
+and trimming trailing zeros since that build has no `snprintf`.
+
+This was **pre-existing**, not caused by this work: a three-line program calling
+`float_to_str` fails identically on an unmodified `b38019c`. It is fixed here
+because it blocked `generics_full.lpp` in the parity suite.
+
+### Verification
+
+| | |
+|---|---|
+| `cargo test` | 38 pass (3 new: turbofish, turbofish arity, generic impl method) |
+| `tests/aot_parity.tsv` | 30/30, with new `enum_payloads.lpp` and `generics_turbofish.lpp` |
+| `scripts/check_safety_mission.sh` | pass |
+| `packages/lppsqlite` | 485 unit checks + 118/118 differential vs real sqlite3 |
+| `packages/compresslpp` | 59 unit checks + 38 cross-verifications |
+
+### Still not supported
+
+Generic trait implementations (`impl Show for Box[T]`) are still a parse error,
+and inherent `impl Type:` blocks without a trait are not accepted — only
+`impl Trait for Type:` parses. Inference remains local: an argument whose type
+cannot be determined from a literal, a tracked local, or a struct constructor
+still falls back to `Int`, though turbofish now provides an explicit escape
+hatch when that guess is wrong.
+
+Enum payloads are limited to **one field per variant**; `Pair(a: Int, b: Int)`
+as a variant keeps only the first. The layout supports more (`__vN` could be
+widened to `__vN_M`), but the constructor and match paths currently read a
+single slot, so this is documented rather than silently half-working.

@@ -53,6 +53,17 @@ impl Monomorphizer {
                 if !s.type_params.is_empty() {
                     generic_structs.insert(s.name.clone(), s.clone());
                 }
+            } else if let TopLevel::Impl(ib) = decl {
+                // A generic method inside an impl block is, after the parser's
+                // `Target_method` mangling, just a free function. Registering it
+                // here is what makes `h.pick(2.5)` specialise instead of
+                // reaching the backend still generic — which crashed Cranelift
+                // with "arg 1 has type f64, expected i64".
+                for m in &ib.methods {
+                    if !m.type_params.is_empty() {
+                        generic_funcs.insert(m.name.clone(), m.clone());
+                    }
+                }
             }
         }
 
@@ -126,6 +137,14 @@ impl Monomorphizer {
             TopLevel::Struct(s) => s.type_params.is_empty(),
             _ => true,
         });
+        // Same for generic methods: the template mentions an unbound `T`, so
+        // only the specialised copies (appended below as free functions) are
+        // real code.
+        for decl in program.declarations.iter_mut() {
+            if let TopLevel::Impl(ib) = decl {
+                ib.methods.retain(|m| m.type_params.is_empty());
+            }
+        }
 
         // Append generated monomorphized functions & structs to top-level declarations
         for (_, func) in self.specialized_funcs.drain() {
@@ -198,9 +217,156 @@ impl Monomorphizer {
         trait_impls: &HashMap<String, HashSet<String>>,
     ) {
         match expr {
+            // Turbofish: `identity[Int](x)`. The bindings come straight from
+            // the written type arguments instead of being inferred, then the
+            // node collapses to an ordinary call on the specialised name so no
+            // later stage has to know about it.
+            Expr::GenericCall { callee, type_args, args } => {
+                for arg in args.iter_mut() {
+                    self.walk_expr(arg, generic_funcs, generic_structs, trait_impls);
+                }
+                let name = match &**callee {
+                    Expr::Identifier(n, _) => n.clone(),
+                    _ => return,
+                };
+                let (tmpl_params, is_struct) = if let Some(f) = generic_funcs.get(&name) {
+                    (f.type_params.clone(), false)
+                } else if let Some(s) = generic_structs.get(&name) {
+                    (s.type_params.clone(), true)
+                } else {
+                    self.bound_errors.push(format!(
+                        "'{}' is not generic, so it cannot take type arguments",
+                        name
+                    ));
+                    return;
+                };
+                if type_args.len() != tmpl_params.len() {
+                    self.bound_errors.push(format!(
+                        "'{}' expects {} type argument(s) but {} were given",
+                        name,
+                        tmpl_params.len(),
+                        type_args.len()
+                    ));
+                    return;
+                }
+                let mut subst_map = HashMap::new();
+                for (tp, ty) in tmpl_params.iter().zip(type_args.iter()) {
+                    subst_map.insert(tp.name.clone(), ty.clone());
+                }
+                for tp in &tmpl_params {
+                    if let Some(ref bound) = tp.bound {
+                        if let Some(concrete) = subst_map.get(&tp.name) {
+                            let cname = type_to_name(concrete);
+                            let ok = trait_impls
+                                .get(&cname)
+                                .map_or(false, |impls| impls.contains(bound));
+                            if !ok {
+                                self.bound_errors.push(format!(
+                                    "type '{}' does not implement trait '{}' required by generic parameter '{}' of '{}'",
+                                    cname, bound, tp.name, name
+                                ));
+                                return;
+                            }
+                        }
+                    }
+                }
+                let order: Vec<String> = tmpl_params.iter().map(|tp| tp.name.clone()).collect();
+                let mangled = format!("{}__{}", name, mangle_types(&subst_map, &order));
+                if is_struct {
+                    self.instantiate_struct(&name, &subst_map, generic_structs);
+                } else if !self.instantiated_keys.contains(&mangled) {
+                    self.instantiated_keys.insert(mangled.clone());
+                    let tmpl = generic_funcs.get(&name).cloned().unwrap();
+                    let mut specialized = tmpl;
+                    specialized.name = mangled.clone();
+                    specialized.type_params.clear();
+                    let mut pending: Vec<(String, HashMap<String, Type>)> = Vec::new();
+                    for p in &mut specialized.params {
+                        substitute_ast_type(&mut p.ty, &subst_map);
+                        concretize_generic_struct(&mut p.ty, generic_structs, &mut pending);
+                    }
+                    substitute_ast_type(&mut specialized.return_type, &subst_map);
+                    concretize_generic_struct(
+                        &mut specialized.return_type,
+                        generic_structs,
+                        &mut pending,
+                    );
+                    for (sname, smap) in pending {
+                        self.instantiate_struct(&sname, &smap, generic_structs);
+                    }
+                    self.substitute_stmts(&mut specialized.body, &subst_map);
+                    self.specialized_funcs.insert(mangled.clone(), specialized);
+                }
+                *expr = Expr::Call {
+                    callee: Box::new(Expr::Identifier(mangled, std::cell::Cell::new(None))),
+                    args: std::mem::take(args),
+                };
+            }
             Expr::Call { callee, args } => {
                 for arg in args.iter_mut() {
                     self.walk_expr(arg, generic_funcs, generic_structs, trait_impls);
+                }
+
+                // Method call `recv.m(a)`. The parser mangles impl methods to
+                // `Target_m`, so if that name is generic, specialise it here and
+                // rewrite the call to the specialised free function with the
+                // receiver passed as the explicit first argument.
+                if let Expr::FieldAccess { base, field } = &**callee {
+                    self.walk_expr_ro(base, generic_funcs, generic_structs, trait_impls);
+                    let recv_ty = self.infer_expr_type(base, generic_structs);
+                    if let Type::Custom(ref tname) = recv_ty {
+                        let mangled_tmpl = format!("{}_{}", tname, field);
+                        if let Some(tmpl) = generic_funcs.get(&mangled_tmpl).cloned() {
+                            let tp_names: HashSet<String> =
+                                tmpl.type_params.iter().map(|tp| tp.name.clone()).collect();
+                            let mut subst_map = HashMap::new();
+                            // params[0] is `self`; user args line up from 1.
+                            for (i, param) in tmpl.params.iter().skip(1).enumerate() {
+                                if i < args.len() {
+                                    let aty = self.infer_expr_type(&args[i], generic_structs);
+                                    unify_type(&param.ty, &aty, &tp_names, &mut subst_map);
+                                }
+                            }
+                            if !subst_map.is_empty() && bindings_are_concrete(&subst_map) {
+                                let order: Vec<String> =
+                                    tmpl.type_params.iter().map(|tp| tp.name.clone()).collect();
+                                let mangled =
+                                    format!("{}__{}", mangled_tmpl, mangle_types(&subst_map, &order));
+                                if !self.instantiated_keys.contains(&mangled) {
+                                    self.instantiated_keys.insert(mangled.clone());
+                                    let mut sp = tmpl.clone();
+                                    sp.name = mangled.clone();
+                                    sp.type_params.clear();
+                                    let mut pending: Vec<(String, HashMap<String, Type>)> = Vec::new();
+                                    for p in &mut sp.params {
+                                        substitute_ast_type(&mut p.ty, &subst_map);
+                                        concretize_generic_struct(
+                                            &mut p.ty, generic_structs, &mut pending,
+                                        );
+                                    }
+                                    substitute_ast_type(&mut sp.return_type, &subst_map);
+                                    concretize_generic_struct(
+                                        &mut sp.return_type, generic_structs, &mut pending,
+                                    );
+                                    for (sn, sm) in pending {
+                                        self.instantiate_struct(&sn, &sm, generic_structs);
+                                    }
+                                    self.substitute_stmts(&mut sp.body, &subst_map);
+                                    self.specialized_funcs.insert(mangled.clone(), sp);
+                                }
+                                let mut new_args = vec![(**base).clone()];
+                                new_args.append(args);
+                                *expr = Expr::Call {
+                                    callee: Box::new(Expr::Identifier(
+                                        mangled,
+                                        std::cell::Cell::new(None),
+                                    )),
+                                    args: new_args,
+                                };
+                                return;
+                            }
+                        }
+                    }
                 }
 
                 if let Expr::Identifier(ref name, _) = **callee {
@@ -340,8 +506,33 @@ impl Monomorphizer {
                     self.walk_expr(item, generic_funcs, generic_structs, trait_impls);
                 }
             }
+            Expr::Try(inner) => {
+                self.walk_expr(inner, generic_funcs, generic_structs, trait_impls);
+            }
+            Expr::Index { base, index } => {
+                self.walk_expr(base, generic_funcs, generic_structs, trait_impls);
+                self.walk_expr(index, generic_funcs, generic_structs, trait_impls);
+            }
+            Expr::EnumVariantConstruct { args, .. } => {
+                for arg in args {
+                    self.walk_expr(arg, generic_funcs, generic_structs, trait_impls);
+                }
+            }
             _ => {}
         }
+    }
+
+    /// Walk an expression that is only being inspected (a method receiver),
+    /// so nested generic calls inside it still get specialised.
+    fn walk_expr_ro(
+        &mut self,
+        expr: &Expr,
+        generic_funcs: &HashMap<String, Function>,
+        generic_structs: &HashMap<String, StructDef>,
+        trait_impls: &HashMap<String, HashSet<String>>,
+    ) {
+        let mut clone = expr.clone();
+        self.walk_expr(&mut clone, generic_funcs, generic_structs, trait_impls);
     }
 
     /// Create the specialised copy of a generic struct if it does not exist.
@@ -452,6 +643,18 @@ impl Monomorphizer {
         match expr {
             Expr::Call { callee, args } => {
                 self.substitute_expr(callee, map);
+                for arg in args {
+                    self.substitute_expr(arg, map);
+                }
+            }
+            Expr::GenericCall { callee, type_args, args } => {
+                self.substitute_expr(callee, map);
+                // `def outer[T](x: T): return identity[T](x)` — the explicit
+                // argument is itself a type parameter and must be replaced by
+                // the binding for this instantiation.
+                for ty in type_args.iter_mut() {
+                    substitute_ast_type(ty, map);
+                }
                 for arg in args {
                     self.substitute_expr(arg, map);
                 }
@@ -827,6 +1030,155 @@ mod tests {
         assert!(fns.contains(&"twice__Int".to_string()), "fns = {:?}", fns);
         assert!(fns.contains(&"identity__Int".to_string()),
             "nested generic call was not specialised: {:?}", fns);
+    }
+
+    #[test]
+    fn turbofish_uses_explicit_type_arguments() {
+        // `identity[Str](x)` must specialise on Str even though the argument
+        // expression alone would infer Int.
+        let tp = |n: &str| TypeParam { name: n.to_string(), bound: None };
+        let mut program = Program {
+            declarations: vec![
+                TopLevel::Function(Function {
+                    name: "identity".to_string(),
+                    type_params: vec![tp("T")],
+                    params: vec![Param { name: "x".to_string(), ty: Type::Custom("T".to_string()), default: None }],
+                    return_type: Type::Custom("T".to_string()),
+                    body: vec![],
+                }),
+                TopLevel::Function(Function {
+                    name: "main".to_string(),
+                    type_params: vec![],
+                    params: vec![],
+                    return_type: Type::Void,
+                    body: vec![Stmt::Expr(Expr::GenericCall {
+                        callee: Box::new(Expr::Identifier("identity".to_string(), std::cell::Cell::new(None))),
+                        type_args: vec![Type::String],
+                        args: vec![Expr::IntLiteral(0)],
+                    })],
+                }),
+            ],
+        };
+
+        Monomorphizer::process_program(&mut program).expect("should monomorphize");
+        let fns: Vec<String> = program.declarations.iter()
+            .filter_map(|d| if let TopLevel::Function(f) = d { Some(f.name.clone()) } else { None })
+            .collect();
+        assert!(fns.contains(&"identity__Str".to_string()), "fns = {:?}", fns);
+        assert!(!fns.contains(&"identity__Int".to_string()),
+            "explicit type argument was ignored: {:?}", fns);
+
+        // The node must be rewritten to a plain call; later stages reject
+        // GenericCall outright.
+        let main = program.declarations.iter().find_map(|d| match d {
+            TopLevel::Function(f) if f.name == "main" => Some(f),
+            _ => None,
+        }).unwrap();
+        match &main.body[0] {
+            Stmt::Expr(Expr::Call { callee, .. }) => match &**callee {
+                Expr::Identifier(n, _) => assert_eq!(n, "identity__Str"),
+                other => panic!("callee not rewritten: {:?}", other),
+            },
+            other => panic!("turbofish left in AST: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn turbofish_arity_mismatch_is_reported() {
+        let tp = |n: &str| TypeParam { name: n.to_string(), bound: None };
+        let mut program = Program {
+            declarations: vec![
+                TopLevel::Function(Function {
+                    name: "identity".to_string(),
+                    type_params: vec![tp("T")],
+                    params: vec![Param { name: "x".to_string(), ty: Type::Custom("T".to_string()), default: None }],
+                    return_type: Type::Custom("T".to_string()),
+                    body: vec![],
+                }),
+                TopLevel::Function(Function {
+                    name: "main".to_string(),
+                    type_params: vec![],
+                    params: vec![],
+                    return_type: Type::Void,
+                    body: vec![Stmt::Expr(Expr::GenericCall {
+                        callee: Box::new(Expr::Identifier("identity".to_string(), std::cell::Cell::new(None))),
+                        type_args: vec![Type::Int, Type::String],
+                        args: vec![Expr::IntLiteral(0)],
+                    })],
+                }),
+            ],
+        };
+        let err = Monomorphizer::process_program(&mut program)
+            .expect_err("wrong type-argument count must be reported");
+        assert!(err.contains("1 type argument"), "unhelpful message: {}", err);
+    }
+
+    #[test]
+    fn specializes_generic_method_in_impl_block() {
+        // The parser mangles impl methods to `Target_method`. A generic one
+        // must still be specialised, or it reaches the backend generic and
+        // Cranelift fails its verifier instead of producing a diagnostic.
+        let tp = |n: &str| TypeParam { name: n.to_string(), bound: None };
+        let mut program = Program {
+            declarations: vec![
+                TopLevel::Struct(StructDef {
+                    name: "Holder".to_string(),
+                    type_params: vec![],
+                    fields: vec![Param { name: "n".to_string(), ty: Type::Int, default: None }],
+                }),
+                TopLevel::Impl(ImplBlock {
+                    trait_name: "Getter".to_string(),
+                    target_type: "Holder".to_string(),
+                    methods: vec![Function {
+                        name: "Holder_pick".to_string(),
+                        type_params: vec![tp("T")],
+                        params: vec![
+                            Param { name: "self".to_string(), ty: Type::Custom("Holder".to_string()), default: None },
+                            Param { name: "x".to_string(), ty: Type::Custom("T".to_string()), default: None },
+                        ],
+                        return_type: Type::Custom("T".to_string()),
+                        body: vec![],
+                    }],
+                }),
+                TopLevel::Function(Function {
+                    name: "main".to_string(),
+                    type_params: vec![],
+                    params: vec![],
+                    return_type: Type::Void,
+                    body: vec![
+                        Stmt::LetInferred {
+                            name: "h".to_string(),
+                            value: Expr::Call {
+                                callee: Box::new(Expr::Identifier("Holder".to_string(), std::cell::Cell::new(None))),
+                                args: vec![Expr::IntLiteral(1)],
+                            },
+                            binding_id: std::cell::Cell::new(None),
+                            is_mut: false,
+                        },
+                        Stmt::Expr(Expr::Call {
+                            callee: Box::new(Expr::FieldAccess {
+                                base: Box::new(Expr::Identifier("h".to_string(), std::cell::Cell::new(None))),
+                                field: "pick".to_string(),
+                            }),
+                            args: vec![Expr::FloatLiteral(2.5)],
+                        }),
+                    ],
+                }),
+            ],
+        };
+
+        Monomorphizer::process_program(&mut program).expect("should monomorphize");
+        let fns: Vec<String> = program.declarations.iter()
+            .filter_map(|d| if let TopLevel::Function(f) = d { Some(f.name.clone()) } else { None })
+            .collect();
+        assert!(fns.contains(&"Holder_pick__Float".to_string()),
+            "generic method not specialised: {:?}", fns);
+        // The template must be gone from the impl block.
+        let leftover = program.declarations.iter().any(|d| match d {
+            TopLevel::Impl(ib) => ib.methods.iter().any(|m| !m.type_params.is_empty()),
+            _ => false,
+        });
+        assert!(!leftover, "generic method template was not pruned");
     }
 
     #[test]

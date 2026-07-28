@@ -1164,6 +1164,44 @@ impl Parser {
         Ok(left)
     }
 
+    /// True when the `[` at the cursor opens a turbofish rather than a
+    /// subscript: every token inside must be an identifier or a comma, and the
+    /// closing `]` must be followed immediately by `(`.
+    ///
+    /// `xs[i]` fails on the non-type token, `xs[0]` fails on the literal, and
+    /// `xs[i](y)` would be a call on an element — but L++ has no first-class
+    /// function values in lists, so requiring the `(` is unambiguous in
+    /// practice and never silently reinterprets a real index.
+    fn turbofish_ahead(&self) -> bool {
+        let mut i = self.pos + 1;
+        let mut saw_ident = false;
+        loop {
+            match self.tokens.get(i).map(|st| &st.token) {
+                Some(Token::Ident(_)) => {
+                    saw_ident = true;
+                    i += 1;
+                }
+                Some(Token::Comma) => {
+                    i += 1;
+                }
+                Some(Token::LBracket) | Some(Token::RBracket)
+                    if matches!(self.tokens.get(i).map(|st| &st.token), Some(Token::LBracket)) =>
+                {
+                    // Nested generic argument such as `f[Box[Int]](x)`.
+                    i += 1;
+                }
+                Some(Token::RBracket) => {
+                    return saw_ident
+                        && matches!(
+                            self.tokens.get(i + 1).map(|st| &st.token),
+                            Some(Token::LParen)
+                        );
+                }
+                _ => return false,
+            }
+        }
+    }
+
     fn parse_postfix(&mut self) -> Result<Expr, String> {
         let mut expr = self.parse_primary()?;
 
@@ -1212,6 +1250,50 @@ impl Parser {
             } else if self.match_token(&Token::Question) {
                 // Postfix ? operator: try/unwrap Result
                 expr = Expr::Try(Box::new(expr));
+            } else if self.peek() == Some(&Token::LBracket)
+                && self.turbofish_ahead()
+            {
+                // Turbofish: `identity[Int](x)`. Explicit type arguments are
+                // recorded so monomorphization can specialise without having to
+                // infer from the argument (and so `f[Str]("x")` is checked
+                // against what the caller actually asked for).
+                //
+                // `name[...]` is ambiguous with indexing, so this only fires
+                // when the brackets contain a comma-separated list of type
+                // names AND are immediately followed by `(`.
+                self.advance(); // consume '['
+                let mut type_args = Vec::new();
+                if self.peek() != Some(&Token::RBracket) {
+                    loop {
+                        type_args.push(self.parse_type()?);
+                        if !self.match_token(&Token::Comma) {
+                            break;
+                        }
+                    }
+                }
+                if !self.match_token(&Token::RBracket) {
+                    return self.error("Expected ']' after generic type arguments");
+                }
+                if !self.match_token(&Token::LParen) {
+                    return self.error("Expected '(' after generic type arguments");
+                }
+                let mut args = Vec::new();
+                if self.peek() != Some(&Token::RParen) {
+                    loop {
+                        args.push(self.parse_expr()?);
+                        if !self.match_token(&Token::Comma) {
+                            break;
+                        }
+                    }
+                }
+                if !self.match_token(&Token::RParen) {
+                    return self.error("Expected ')' after arguments");
+                }
+                expr = Expr::GenericCall {
+                    callee: Box::new(expr),
+                    type_args,
+                    args,
+                };
             } else if self.match_token(&Token::LBracket) {
                 // Subscript: expr[index]
                 let index = self.parse_expr()?;

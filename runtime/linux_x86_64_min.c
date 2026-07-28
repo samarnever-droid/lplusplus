@@ -1040,6 +1040,46 @@ char *lpp_int_to_str(int64_t val) {
     return out;
 }
 
+/* float_to_str: the host runtime uses snprintf("%g"), which this freestanding
+ * build has no libc for. Formatting is done by hand with the same six-decimal
+ * fixed form lpp_print_float already uses, then trailing zeros are trimmed so
+ * 2.5 prints as "2.5" rather than "2.500000".
+ *
+ * Without this symbol the internal lpp-link fails with
+ * "unresolved GOT symbol 'lpp_float_to_str'" for any program that calls
+ * float_to_str — the function existed only in runtime/lpp_str.c (host path). */
+char *lpp_float_to_str(double val) {
+    char buffer[64];
+    int64_t w = 0;
+    int negative = (val < 0.0);
+    if (negative) val = -val;
+    int64_t ipart = (int64_t)val;
+    double fpart = val - (double)ipart;
+    int64_t frac = (int64_t)(fpart * 1000000.0 + 0.5);
+    if (frac >= 1000000) { frac -= 1000000; ipart += 1; }
+
+    char tmp[32];
+    int64_t t = 0;
+    uint64_t magnitude = (uint64_t)ipart;
+    do { tmp[t++] = (char)('0' + (magnitude % 10)); magnitude /= 10; } while (magnitude != 0);
+    if (negative) buffer[w++] = '-';
+    while (t > 0) buffer[w++] = tmp[--t];
+
+    char fbuf[8];
+    for (int i = 5; i >= 0; i--) { fbuf[i] = (char)('0' + (frac % 10)); frac /= 10; }
+    int64_t flen = 6;
+    while (flen > 0 && fbuf[flen - 1] == '0') flen--;
+    if (flen > 0) {
+        buffer[w++] = '.';
+        for (int64_t i = 0; i < flen; i++) buffer[w++] = fbuf[i];
+    }
+    buffer[w] = 0;
+
+    char *out = (char *)lpp_alloc(w + 1);
+    for (int64_t i = 0; i <= w; i++) out[i] = buffer[i];
+    return out;
+}
+
 int64_t lpp_str_to_int(const char *s) {
     if (!s) return 0;
     int64_t val = 0, neg = 0;

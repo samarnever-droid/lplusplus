@@ -123,6 +123,24 @@ def vec_push_u32(h: Int, v: Int):
     vec_push(h, (v >> 16) & 255)
     vec_push(h, (v >> 24) & 255)
 
+# ZIP64 stores sizes, offsets and counts as 8-byte little-endian fields.
+# buf_get32le zero-extends, so composing two halves reproduces the exact i64
+# for every value below 2^63 (far past the 2^64-1 the format allows on paper,
+# but any archive that large cannot be addressed by an i64 offset anyway).
+def vec_push_u64(h: Int, v: Int):
+    vec_push_u32(h, v & 4294967295)
+    vec_push_u32(h, ushr(v, 32) & 4294967295)
+
+def rd_u64(b: Int, off: Int) -> Int:
+    lo := buf_get32le(b, off)
+    hi := buf_get32le(b, off + 4)
+    return lo | (hi << 32)
+
+# The all-ones 32-bit value. In ZIP64 this is a sentinel meaning "the real
+# value does not fit here, read it from the ZIP64 extra field / EOCD64 record".
+def MAX32() -> Int:
+    return 4294967295
+
 def rd_u16(b: Int, off: Int) -> Int:
     return buf_get8(b, off) | (buf_get8(b, off + 1) << 8)
 

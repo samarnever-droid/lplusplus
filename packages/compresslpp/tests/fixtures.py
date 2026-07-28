@@ -12,6 +12,7 @@ import gzip as pygzip
 import io
 import os
 import random
+import struct
 import subprocess
 import tarfile
 import zipfile
@@ -96,6 +97,39 @@ if not made:
                      len(body), len(data), len(name), 0, 0, 0, 0, 32, 0) + name
     eocd = struct.pack('<IHHHHIIH', 0x06054b50, 0, 0, 1, 1, len(cd), len(out), 0)
     open('py_crypt.zip', 'wb').write(out + cd + eocd)
+
+# ── ZIP64 fixtures ──
+#
+# py_z64_force.zip   entries written with force_zip64, so the LOCAL header
+#                    carries a zip64 extra field
+# py_z64_sentinel.zip hand-built so the CENTRAL header stores 0xFFFFFFFF in
+#                    usize, csize AND the local-header offset, with the true
+#                    values in extra field 0x0001. This is the layout a real
+#                    >4 GB archive uses; building one for real is impractical
+#                    in a test, so the sentinels are written directly.
+with zipfile.ZipFile('py_z64_force.zip', 'w', zipfile.ZIP_DEFLATED) as z:
+    for i in range(3):
+        with z.open(zipfile.ZipInfo(f'z{i}.txt'), 'w', force_zip64=True) as f:
+            f.write((f'zip64 entry {i} ').encode() * 40)
+
+_name = b'sentinel.txt'
+_body = b'ZIP64-sentinel-path\n' * 10
+_crc = zlib.crc32(_body) & 0xFFFFFFFF
+_n = len(_body)
+_lex = struct.pack('<HH', 0x0001, 16) + struct.pack('<QQ', _n, _n)
+_out = struct.pack('<IHHHHHIIIHH', 0x04034b50, 45, 0, 0, 0, 33, _crc,
+                   0xFFFFFFFF, 0xFFFFFFFF, len(_name), len(_lex)) + _name + _lex + _body
+_cd_start = len(_out)
+_cex = struct.pack('<HH', 0x0001, 24) + struct.pack('<QQQ', _n, _n, 0)
+_out += struct.pack('<IHHHHHHIIIHHHHHII', 0x02014b50, 45, 45, 0, 0, 0, 33, _crc,
+                    0xFFFFFFFF, 0xFFFFFFFF, len(_name), len(_cex),
+                    0, 0, 0, 32, 0xFFFFFFFF) + _name + _cex
+_cd_size = len(_out) - _cd_start
+_e64 = len(_out)
+_out += struct.pack('<IQHHIIQQQQ', 0x06064b50, 44, 45, 45, 0, 0, 1, 1, _cd_size, _cd_start)
+_out += struct.pack('<IIQI', 0x07064b50, 0, _e64, 1)
+_out += struct.pack('<IHHHHIIH', 0x06054b50, 0, 0, 0xFFFF, 0xFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0)
+open('py_z64_sentinel.zip', 'wb').write(_out)
 
 # ── TAR written by Python ──
 with tarfile.open('py.tar', 'w', format=tarfile.USTAR_FORMAT) as t:

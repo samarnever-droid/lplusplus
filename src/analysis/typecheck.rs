@@ -67,6 +67,10 @@ pub struct TypeChecker<'a> {
     pub trait_names: std::collections::HashSet<String>,
     pub trait_impls: HashMap<String, std::collections::HashSet<String>>,
     pub type_param_bounds: HashMap<String, Vec<(String, String)>>,
+    /// Names of declared enums. Enums now carry a real field layout
+    /// (`__tag` + payload slots), so "has no fields" can no longer be used to
+    /// tell an enum from a struct when resolving `Enum.Variant`.
+    pub enum_names: std::collections::HashSet<String>,
 }
 
 fn type_param_names(tps: &[TypeParam]) -> Vec<String> {
@@ -105,6 +109,7 @@ impl<'a> TypeChecker<'a> {
             trait_names: std::collections::HashSet::new(),
             trait_impls: HashMap::new(),
             type_param_bounds: HashMap::new(),
+            enum_names: std::collections::HashSet::new(),
         }
     }
 
@@ -227,6 +232,7 @@ impl<'a> TypeChecker<'a> {
             if let TopLevel::Enum(e) = decl {
                 // Register enum as a custom type (like a struct)
                 self.type_table.register_struct(e.name.clone());
+                self.enum_names.insert(e.name.clone());
             }
         }
         for decl in &program.declarations {
@@ -306,6 +312,39 @@ impl<'a> TypeChecker<'a> {
                 let def = &mut self.type_table.definitions[id.0];
                 def.fields = resolved_fields;
                 def.is_self_referential = is_self_referential;
+            }
+        }
+
+        // Phase 2b: Give every enum a real field layout.
+        //
+        // Enums used to be a single packed i64: (tag << 32) | (payload & 0xFFFFFFFF).
+        // That silently truncated any payload wider than 32 bits — a Str or a
+        // struct pointer became a garbage address (SIGSEGV on use) and an Int
+        // above 2^32 came back as a different number. Laying an enum out as a
+        // real heap object with a tag plus one slot per variant keeps the
+        // payload at full width and reuses the existing ARC machinery.
+        //
+        // Layout: field 0 is `__tag`, then `__vN` for variant N's payload.
+        // Variants share the object but not their slots, so the payload type
+        // stays exact instead of being erased to i64.
+        for decl in &program.declarations {
+            if let TopLevel::Enum(e) = decl {
+                let id = *self
+                    .type_table
+                    .structs_by_name
+                    .get(&e.name)
+                    .ok_or_else(|| format!("Type error: Unknown enum definition '{}'", e.name))?;
+                let tp = type_param_names(&e.type_params);
+                let mut fields = vec![("__tag".to_string(), TypeRef::Int)];
+                for (i, variant) in e.variants.iter().enumerate() {
+                    if let Some(p) = variant.fields.first() {
+                        let ty = Self::convert_ast_type_with_params(&self.type_table, &p.ty, &tp);
+                        let ty = if matches!(ty, TypeRef::Unresolved(_)) { TypeRef::Int } else { ty };
+                        fields.push((format!("__v{}", i), ty));
+                    }
+                }
+                let def = &mut self.type_table.definitions[id.0];
+                def.fields = fields;
             }
         }
 
@@ -631,6 +670,10 @@ impl<'a> TypeChecker<'a> {
             Expr::StringLiteral(_) => Ok(TypeRef::Str),
             Expr::CharLiteral(_) => Ok(TypeRef::Char),
             Expr::BoolLiteral(_) => Ok(TypeRef::Bool),
+            Expr::GenericCall { .. } => Err(
+                "internal error: unresolved generic call with explicit type arguments"
+                    .to_string(),
+            ),
             Expr::Identifier(name, binding_id_cell) => {
                 if let Some(id) = binding_id_cell.get() {
                     let binding = &self.symbol_table.bindings[id];
@@ -960,9 +1003,10 @@ impl<'a> TypeChecker<'a> {
                     {
                         return Ok(field_entry.1.clone());
                     }
-                    // Check if it's an enum variant (enum has no fields in type table)
-                    if struct_def.fields.is_empty() {
-                        // Likely an enum — treat field access as variant constructor
+                    // `Enum.Variant` — a variant constructor, not a field.
+                    // Enums carry `__tag`/`__vN` slots now, so this must test
+                    // the enum name rather than "the type has no fields".
+                    if self.enum_names.contains(&struct_def.name) || struct_def.fields.is_empty() {
                         return Ok(TypeRef::Custom(*struct_id));
                     }
                     Err(format!(

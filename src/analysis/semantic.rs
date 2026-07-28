@@ -143,6 +143,10 @@ pub struct Resolver {
     loop_depth: usize,
     /// Short method names from impl blocks (e.g. "val" from "impl GetVal for Box")
     pub trait_method_names: std::collections::HashSet<String>,
+    /// Variant name → declared payload type, so a match arm binds the payload
+    /// at its real type. Binding everything as Int used to make
+    /// `match m: F(v): float_to_str(v)` fail with "expected Float, got Int".
+    variant_payload_types: std::collections::HashMap<String, Type>,
 }
 
 impl Resolver {
@@ -155,6 +159,7 @@ impl Resolver {
             imports: Vec::new(),
             loop_depth: 0,
             trait_method_names: std::collections::HashSet::new(),
+            variant_payload_types: std::collections::HashMap::new(),
         }
     }
 
@@ -191,6 +196,12 @@ impl Resolver {
                         BindingKind::FunctionName,
                     );
                     for variant in &e.variants {
+                        // Remember the payload type so match arms can bind it
+                        // at full width instead of assuming Int.
+                        if let Some(p) = variant.fields.first() {
+                            self.variant_payload_types
+                                .insert(variant.name.clone(), p.ty.clone());
+                        }
                         // Register EnumName.Variant as a callable
                         let variant_full = format!("{}.{}", e.name, variant.name);
                         self.table.add_binding(
@@ -515,13 +526,21 @@ impl Resolver {
             Stmt::Match { subject, arms } => {
                 self.resolve_expr(subject)?;
                 for arm in arms {
-                    // Register match arm bindings as local variables
+                    // Register match arm bindings at the variant's declared
+                    // payload type. Falling back to Int is only correct for
+                    // integer payloads; a Float or Str binding needs its own
+                    // type or the checker rejects legitimate uses.
+                    let payload_ty = self
+                        .variant_payload_types
+                        .get(&arm.variant)
+                        .cloned()
+                        .unwrap_or(Type::Int);
                     for binding_name in &arm.bindings {
                         self.table.add_binding(
                             self.current_scope,
                             binding_name.clone(),
                             false,
-                            Some(Type::Int), // data is Int (packed lower 32 bits)
+                            Some(payload_ty.clone()),
                             BindingKind::Local,
                         );
                     }
@@ -576,6 +595,20 @@ impl Resolver {
                         return Err(format!("Undeclared identifier '{}'", name));
                     }
                 }
+            }
+            // Turbofish should already be gone: monomorphization runs before
+            // name resolution and rewrites it to a call on the specialised
+            // name. Surfacing it as an error beats resolving the template name
+            // and silently calling the wrong (unspecialised) function.
+            Expr::GenericCall { callee, .. } => {
+                let name = match &**callee {
+                    Expr::Identifier(n, _) => n.clone(),
+                    _ => "<expr>".to_string(),
+                };
+                return Err(format!(
+                    "'{}' does not take type arguments, or monomorphization could not resolve them",
+                    name
+                ));
             }
             Expr::UnaryOp { operand, .. } => {
                 self.resolve_expr(operand)?;

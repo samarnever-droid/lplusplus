@@ -85,6 +85,36 @@ if have('unzip'):
 else:
     print('SKIP  unzip CLI not installed')
 
+# ── ZIP64 ────────────────────────────────────────────────────────────────
+# The >65535-entry archive t_zip writes must be readable by real tools. The
+# classic EOCD count field is 16 bits, so this only works if the zip64 EOCD
+# record is present AND the classic record carries the 0xFFFF sentinel.
+print()
+print('== ZIP64 (python zipfile + unzip) ==')
+if os.path.exists('out_z64_many.zip'):
+    with open('out_z64_many.zip', 'rb') as f:
+        raw = f.read()
+    chk(raw.rfind(b'PK\x06\x06') > 0, 'zip64 EOCD record emitted')
+    chk(raw.rfind(b'PK\x06\x07') > 0, 'zip64 EOCD locator emitted')
+    with zipfile.ZipFile('out_z64_many.zip') as z:
+        names = z.namelist()
+        chk(len(names) == 65600, f'python reads all 65600 entries (got {len(names)})')
+        chk(z.read('n65599.txt') == b'x', 'python reads the last entry')
+        chk(z.testzip() is None, 'testzip(): no CRC errors across 65600 entries')
+    if have('unzip'):
+        r = subprocess.run(['unzip', '-t', 'out_z64_many.zip'],
+                           capture_output=True, text=True)
+        chk(r.returncode == 0 and 'No errors' in r.stdout, 'unzip -t: zip64 archive OK')
+else:
+    print('SKIP  out_z64_many.zip not produced')
+
+# A small archive must NOT gain zip64 records; emitting them unconditionally
+# would break readers that predate the extension.
+with open('out_plain.zip', 'rb') as f:
+    small = f.read()
+chk(small.find(b'PK\x06\x06') < 0 and small.find(b'PK\x06\x07') < 0,
+    'small archive stays classic (no zip64 records)')
+
 # ── TAR ──────────────────────────────────────────────────────────────────
 print()
 print('== TAR (python tarfile) ==')
