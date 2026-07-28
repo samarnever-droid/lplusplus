@@ -2,6 +2,7 @@ pub mod builder;
 pub mod ir;
 pub mod lower;
 pub mod pass_arc;
+pub mod pass_moveout;
 pub mod pass_arc_local;
 pub mod pass_branch;
 pub mod pass_closure;

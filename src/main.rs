@@ -814,6 +814,10 @@ fn main() {
             // setcc/test materialization in hot native loops.
             mir::pass_branch::run(&mut mir_program);
             mir::pass_arc::run_arc_insertion_pass(&mut mir_program, &storage);
+            // Values handed to a thread and never touched again are moved, not
+            // shared: drop the refcount pair that only existed to model a
+            // second owner that never overlaps the first.
+            mir::pass_moveout::run(&mut mir_program);
 
             if dump_mir {
                 println!("--- Generated MIR ---");

@@ -1,0 +1,44 @@
+# Move-out must not change observable behaviour, only refcount traffic.
+#
+# A value captured by a spawned closure and never touched again by the spawning
+# thread is *transferred*, not shared: there is one owner before the spawn and
+# one after, never two at once. The retain/release pair that modelled a second
+# owner is removed.
+#
+# The risk this guards against is a premature free: if the pass elided a retain
+# that was actually needed, the spawning thread would drop the last reference
+# while the new thread still held it, and the payload would be freed underneath
+# a live user.
+#
+# This runs under the host linker only (the freestanding runtime has no thread
+# primitive at all -- `spawn` there fails to link with "unresolved GOT symbol
+# 'lpp_thread_spawn'"), so it is not in the AOT parity manifest, which requires
+# both linkers to agree.
+
+struct Job:
+    id: Int
+
+def run_job(j: Job):
+    print(j.id)
+
+def main():
+    # Handoff: `moved` is dead in this thread after the spawn.
+    moved := Job(1)
+    spawn fn() -> Void:
+        run_job(moved)
+
+    # Genuine share: `kept` is read here after the spawn, so the refcount pair
+    # must survive and both owners stay valid.
+    kept := Job(2)
+    spawn fn() -> Void:
+        run_job(kept)
+    print(kept.id)
+
+    # A handoff inside a branch: still a transfer on the taken path.
+    flag := 1
+    if flag == 1:
+        branched := Job(3)
+        spawn fn() -> Void:
+            run_job(branched)
+
+    print(99)

@@ -603,3 +603,108 @@ documented "returning a list created inside a function" hazard.
 signal about ARC atomicity rather than a duplicate report of a known backend
 fault. It passes under both linkers, and its object file contains three
 `retain_local` and three `release_local` calls with zero atomic ARC calls.
+
+---
+
+## Move-out: transferring to a thread is not sharing
+
+### The finding that redirected this work
+
+The obvious home for this analysis is `analysis/escape.rs`, which classifies
+bindings `Value`/`Arc`/`Arena` and has an explicit "Rule 4: crossing a
+concurrency boundary" case. **That map is dead code.**
+`run_arc_insertion_pass` takes it as `_escape_map` — underscore-prefixed,
+unused — and decides everything from MIR `Ownership` instead. Its only real
+consumer is the `--dump-escape` printer.
+
+Verified rather than assumed:
+
+```
+$ grep -n "storage" src/main.rs        # the map analyze() returns
+  Ok(storage) => {                      # bound
+  for (id, class) in &storage {         # printed by --dump-escape
+  run_arc_insertion_pass(&mut mir_program, &storage);   # ignored
+```
+
+An audit for the same pattern across `src/mir`, `src/backend` and
+`src/analysis` found no other disconnected consumer — the two remaining
+underscore params are unused arguments of a small local helper
+(`get_root_binding`), not a severed pipeline.
+
+So Rule 4 does classify a pure handoff as `Arc`, exactly as suspected, but
+changing that classification would alter a diagnostic and nothing else. The
+proof had to move to MIR, where retain/release are actually emitted.
+
+### The distinction
+
+Crossing a concurrency boundary is not sharing. If the spawning thread never
+touches the value again there is one owner before the spawn and one after,
+never two at once — that is a move, and nothing needs counting. Only when both
+sides hold a live reference simultaneously is a refcount earning its keep.
+
+MIR makes this decidable, because capture, spawn and later uses are all
+explicit in one function body:
+
+```text
+    _env.cap_0 = borrow(_0)
+    retain(_0)                  <-- second owner, for the thread
+    _c = make_closure(f, [_env])
+    _  = spawn_thread(_c)
+    ...anything reading _0 after this point?...
+    release(_0)
+```
+
+If nothing reads `_0` afterwards, the pair is pure overhead — a reference
+created only to be destroyed, and on the atomic path each half is a locked RMW
+on a contended line.
+
+Measured on the two shapes:
+
+| program | before | after |
+|---|---|---|
+| handoff (`j` dead after spawn) | 1 retain, 3 releases | **0 retains, 2 releases** |
+| share (`j` read after spawn) | 1 retain, 3 releases | 1 retain, 3 releases (unchanged) |
+
+### Conservatism
+
+Every uncertainty keeps the retain:
+
+- any read of the local after the spawn, in any reachable block;
+- a spawn inside a **loop** is never eligible — a later iteration re-reads the
+  same lexical binding, so "dead after this point" stops being meaningful.
+  Cycles are excluded wholesale rather than reasoned about;
+- the local must be released exactly once, so the removed pair is balanced;
+- uses in branches that rejoin after the spawn count as uses.
+
+### On use-after-move
+
+No "use of moved value" diagnostic is needed, because this is a liveness
+*proof* rather than a declaration. A binding is only treated as moved when no
+later read exists; if one exists, the value stays shared and refcounted. That
+inverts Rust's ordering — Rust declares the move then rejects later uses, L++
+observes that there are no later uses. The case that would need the error is
+simply classified as a share instead, so there is no soundness hole to close.
+
+### Verification
+
+| | |
+|---|---|
+| `cargo test` | 48 pass (5 new: handoff, later use, loop, successor-block use, non-spawn retain) |
+| `tests/aot_parity.tsv` | 31/31 |
+| `scripts/check_safety_mission.sh` | pass |
+| `packages/lppsqlite` | 485 checks + 118/118 differential |
+| `packages/compresslpp` | 59 checks + 38 cross-verifications |
+
+Runtime soundness was checked directly: three moved payloads read inside their
+spawned threads printed `11 22 33` on five consecutive runs. A premature free
+would show as garbage or a crash. `tests/moveout_spawn.lpp` covers handoff,
+genuine share, and a handoff inside a branch; it is host-linker only, since the
+freestanding runtime has no thread primitive (`spawn` there fails to link), and
+the parity harness requires both linkers to agree.
+
+### Not addressed
+
+This removes false positives — syntactic sharing that is semantically a
+handoff. Genuinely shared mutable state across threads still pays full atomic
+cost, exactly as it would in Rust with `Arc<Mutex<T>>`. The physics of a
+contended cache line do not change.
