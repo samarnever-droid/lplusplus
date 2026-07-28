@@ -1436,7 +1436,7 @@ pub fn run_command(args: &[String]) {
 }
 
 fn print_help() {
-    println!("L++ Package Manager v4.3.0");
+    println!("L++ Package Manager v4.5.0");
     println!("Usage:");
     println!("  lpp <file.lpp> [options]          Compile one source file");
     println!("  lpp <command> [args]              Package/app workflow");

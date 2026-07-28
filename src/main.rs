@@ -457,10 +457,10 @@ fn main() {
     while idx < args.len() {
         let arg = &args[idx];
         if arg == "--version" || arg == "-v" {
-            println!("L++ Compiler v4.4.0 (Pure Native AOT)");
+            println!("L++ Compiler v4.5.0 (Pure Native AOT)");
             return;
         } else if arg == "--help" || arg == "-h" {
-            println!("L++ (L Plus Plus) v4.4.0 — Pure Native Compiler & Toolchain");
+            println!("L++ (L Plus Plus) v4.5.0 — Pure Native Compiler & Toolchain");
             println!("Cranelift AOT backend, 9 MIR optimization passes, direct ELF/PE/Mach-O linker");
             println!();
             println!("Usage: lpp <file.lpp> [options]");
@@ -511,7 +511,7 @@ fn main() {
             println!("  -v, --version    Show version");
             println!("  -h, --help       Show this help");
             println!();
-            println!("Language Features (v4.4.0):");
+            println!("Language Features (v4.5.0):");
             println!("  Functions, default params, closures, threads");
             println!("  Structs, enums, match with bindings");
             println!("  Generics: def foo[T](x: T) -> T");
