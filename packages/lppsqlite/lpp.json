@@ -1,7 +1,7 @@
 {
   "name": "lppsqlite",
-  "version": "1.0.0",
-  "description": "SQLite-file-format-compatible database engine in pure L++. Files it writes pass the real sqlite3's PRAGMA integrity_check, and databases created by real SQLite can be read and modified.",
+  "version": "1.2.0",
+  "description": "SQLite-file-format-compatible database engine in pure L++: real .db files with secondary indexes, correlated subqueries, real ROLLBACK, advisory locking and rowid/index fast paths.",
   "main": "src/exec.lpp",
   "dependencies": {}
 }

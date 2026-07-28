@@ -22,7 +22,16 @@ pub struct FunctionLower<'a, M: Module> {
 }
 
 impl<'a, M: Module> FunctionLower<'a, M> {
-    pub fn lower_function(&mut self, mir_fn: &MirFunction) -> Result<(), String> {
+    /// Build Cranelift IR for `mir_fn` without compiling it.
+    ///
+    /// Split out from `lower_function` so the backend can construct IR serially
+    /// (it mutates the module: callee references and string-literal data
+    /// objects are interned on demand) and then compile the bodies in
+    /// parallel, which is the expensive half.
+    pub fn build_function_ir(
+        &mut self,
+        mir_fn: &MirFunction,
+    ) -> Result<(CLFuncId, cranelift_codegen::Context), String> {
         let mut sig = self.module.make_signature();
         for param_id in &mir_fn.params {
             let decl = &mir_fn.locals[param_id.0];
@@ -103,6 +112,12 @@ impl<'a, M: Module> FunctionLower<'a, M> {
             builder.finalize();
         }
 
+        Ok((func_id, ctx))
+    }
+
+    /// Build IR and immediately define the function (serial path).
+    pub fn lower_function(&mut self, mir_fn: &MirFunction) -> Result<(), String> {
+        let (func_id, mut ctx) = self.build_function_ir(mir_fn)?;
         self.module
             .define_function(func_id, &mut ctx)
             .map_err(|e| format!("define_function '{}': {:?}", mir_fn.name, e))?;

@@ -166,6 +166,70 @@ is withdrawn.
 
 ---
 
+---
+
+## Build-speed work (same tree)
+
+Two independent changes, both verified to leave output byte-identical.
+
+### 1. Cache the compiled C runtime — `src/pm.rs`
+
+The host linker passed `lpp_runtime.c` to `cc` on **every** link, recompiling a
+~40 KLOC translation unit (it `#include`s the whole `runtime/` tree) each time.
+That was ~180 ms of a ~200 ms link.
+
+It is now compiled once into `$LPP_HOME/cache/lpp_runtime-<hash>.o` and reused.
+The key covers the source path, size, mtime and compiler name, so editing the
+runtime or switching compilers invalidates it. Compilation writes to a
+pid-unique temp file and renames, so concurrent builds cannot see a partial
+object. `LPP_NO_RUNTIME_CACHE=1` disables it; a failed compile falls back to
+passing the `.c` directly.
+
+### 2. Parallel machine-code generation — `src/backend/cranelift/compiler.rs`
+
+`lower_functions` now runs in three phases:
+
+1. **serial** — build Cranelift IR (must stay serial: it mutates the module,
+   interning callee references and string-literal data objects)
+2. **parallel** — `ctx.compile()` per function on a worker pool; this is the
+   expensive half (regalloc + instruction selection) and each function is
+   independent
+3. **serial** — `define_function_bytes` in source order
+
+Thread count comes from `available_parallelism()`, overridable with
+`LPP_CODEGEN_THREADS`; modules under 8 functions stay serial because thread
+setup costs more than it saves.
+
+### 3. Deterministic output (prerequisite for the above)
+
+While validating phase 2 I found the object file was **already
+non-deterministic**: `MirProgram::functions` is a `HashMap`, so
+`declare_functions` and `lower_functions` emitted symbols in a different order
+on every run. Verified against a pristine build of upstream `13e73c2` — three
+runs of the *same* compiler on the *same* input produced three different
+objects.
+
+Both loops now iterate in `FuncId` order. Output is byte-identical across runs
+*and* across thread counts, which is what makes the parallel path safe to trust:
+
+```
+threads=1  fbe1681025e2af1e  fbe1681025e2af1e  fbe1681025e2af1e
+threads=2  fbe1681025e2af1e  fbe1681025e2af1e  fbe1681025e2af1e
+threads=4  fbe1681025e2af1e  fbe1681025e2af1e
+```
+
+### Measured (lppsqlite, 9.8 KLOC, 2-core container)
+
+| Stage | before | after |
+|---|---|---|
+| codegen (`--emit-obj`) | 183 ms | **149 ms** |
+| full build (codegen + link) | 380 ms | **174 ms** |
+
+Roughly **2.2× faster end to end**; the runtime cache is the larger share. On
+machines with more cores the codegen phase scales further.
+
+---
+
 ## Regression testing
 
 | Suite | Result |

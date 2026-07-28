@@ -363,8 +363,8 @@
     },
     "lppsqlite": {
       "name": "lppsqlite",
-      "version": "1.0.0",
-      "description": "SQLite-file-format-compatible database engine in pure L++ \u2014 real .db files, B+trees, overflow pages, freelist, sqlite_schema, SQL parser and executor.",
+      "version": "1.2.0",
+      "description": "SQLite-file-format-compatible database engine in pure L++ \u2014 real .db files, B+trees, secondary indexes, overflow pages, freelist, correlated subqueries, real transactions and advisory locking.",
       "authors": [
         "arena-audit"
       ],
@@ -398,7 +398,15 @@
         "SQLite type affinity, three-valued logic, and SQLite's NULL<num<text<blob ordering",
         "INTEGER PRIMARY KEY rowid aliasing; rowid/_rowid_/oid",
         "CLI shell with list/CSV/JSON output and .tables/.schema/.dump dot-commands",
-        "485 in-engine assertions plus 87 differential cases compared against real sqlite3"
+        "Correlated subqueries: inner SELECT resolves columns from the outer row",
+        "Real transactions: BEGIN/COMMIT/ROLLBACK, where ROLLBACK genuinely undoes DML and DDL",
+        "Advisory cross-process file locking so concurrent writers cannot corrupt the database",
+        "Rowid fast path: WHERE id = ? seeks the B-tree instead of scanning (~11x on 20k rows)",
+        "Secondary indexes: CREATE INDEX / DROP INDEX build real SQLite index b-trees (0x0a leaves, 0x02 interior root)",
+        "Real sqlite3 reads those indexes and its planner reports SEARCH ... USING COVERING INDEX",
+        "Indexes created by real SQLite are used for lookups here, and stay valid after this engine writes",
+        "Index-driven equality lookups on the leading column; indexes rebuilt after INSERT/UPDATE/DELETE",
+        "485 in-engine assertions plus 118 differential cases compared against real sqlite3"
       ],
       "api": {
         "exec.open_db": "(path: Str) -> Int \u2014 open or create a database file",
@@ -417,9 +425,11 @@
         "value.v_typename": "(v: Int) -> Str \u2014 null|integer|real|text|blob"
       },
       "limitations": [
-        "No indexes: CREATE INDEX is accepted but never used for planning; scans are linear",
-        "BEGIN/COMMIT parse but there is no journal or WAL; ROLLBACK does not undo",
-        "Correlated subqueries do not see the outer row",
+        "Indexes are consulted only for equality on the leading column; ranges, ORDER BY and LIKE still scan",
+        "UNIQUE indexes are parsed but uniqueness is not enforced",
+        "Index maintenance rebuilds the index after each writing statement (O(rows)); bulk-load before CREATE INDEX",
+        "ROLLBACK is in-memory (shadow copy), so it is not crash-safe; no journal or WAL",
+        "The advisory lock is exclusive, so concurrent readers serialise too",
         "No views, triggers, window functions, date/time functions, or ALTER TABLE",
         "WITH/ALTER/SAVEPOINT/ATTACH/VACUUM/NATURAL JOIN are rejected with a clear error"
       ]

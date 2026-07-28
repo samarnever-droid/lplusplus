@@ -11,6 +11,34 @@ use cranelift_object::{ObjectBuilder, ObjectModule};
 use std::collections::{HashMap, HashSet};
 use target_lexicon::Triple;
 
+/// A function body compiled off-thread, waiting to be defined in the module.
+struct CompiledFunction {
+    func_id: cranelift_module::FuncId,
+    alignment: u64,
+    bytes: Vec<u8>,
+    relocs: Vec<cranelift_codegen::FinalizedMachReloc>,
+    func: cranelift_codegen::ir::Function,
+}
+
+/// How many worker threads to use for machine-code generation.
+///
+/// `LPP_CODEGEN_THREADS` overrides; `1` forces the serial path. Small modules
+/// stay serial because thread setup costs more than it saves.
+fn codegen_threads(function_count: usize) -> usize {
+    if let Ok(value) = std::env::var("LPP_CODEGEN_THREADS") {
+        if let Ok(n) = value.trim().parse::<usize>() {
+            return n.max(1).min(function_count.max(1));
+        }
+    }
+    if function_count < 8 {
+        return 1;
+    }
+    let available = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1);
+    available.min(function_count).max(1)
+}
+
 fn decode_ty(tag: u8) -> cranelift_codegen::ir::Type {
     match tag {
         0 => cl_types::I64,
@@ -327,7 +355,12 @@ impl AotCompiler {
 
     /// Declare all user functions so they can call each other.
     pub fn declare_functions(&mut self, program: &MirProgram) -> Result<(), String> {
-        for (mir_id, mir_fn) in &program.functions {
+        // Deterministic order: `program.functions` is a HashMap, so iterating it
+        // directly makes symbol layout (and therefore the object file) differ
+        // between runs of the *same* compiler on the *same* input.
+        let mut ordered: Vec<(&FuncId, &MirFunction)> = program.functions.iter().collect();
+        ordered.sort_by_key(|(id, _)| id.0);
+        for (mir_id, mir_fn) in ordered {
             let mut sig = self.module.make_signature();
             for param_id in &mir_fn.params {
                 sig.params
@@ -418,7 +451,18 @@ impl AotCompiler {
         program: &MirProgram,
         type_table: &TypeTable,
     ) -> Result<(), String> {
-        let mir_fns: Vec<MirFunction> = program.functions.values().cloned().collect();
+        // Same deterministic ordering as declare_functions.
+        let mut ordered: Vec<(&FuncId, &MirFunction)> = program.functions.iter().collect();
+        ordered.sort_by_key(|(id, _)| id.0);
+        let mir_fns: Vec<MirFunction> = ordered.into_iter().map(|(_, f)| f.clone()).collect();
+
+        // Phase 1 (serial): build Cranelift IR for every function.
+        //
+        // IR construction must stay serial because it mutates the module:
+        // `declare_func_in_func` interns callee references and string literals
+        // are declared as new data objects on demand.
+        let mut pending: Vec<(cranelift_module::FuncId, cranelift_codegen::Context)> =
+            Vec::with_capacity(mir_fns.len());
         for mir_fn in &mir_fns {
             if mir_fn.blocks.is_empty() {
                 continue;
@@ -432,7 +476,123 @@ impl AotCompiler {
                 fn_name: mir_fn.name.clone(),
                 next_str_idx: 0,
             };
-            lower.lower_function(mir_fn)?;
+            let (func_id, ctx) = lower.build_function_ir(mir_fn)?;
+            pending.push((func_id, ctx));
+        }
+
+        // Phase 2 (parallel): optimise + emit machine code.
+        //
+        // This is the expensive half — regalloc and instruction selection — and
+        // each function is independent, so it scales across cores. Defining the
+        // results back into the module (phase 3) stays serial and is cheap.
+        let threads = codegen_threads(pending.len());
+        if threads > 1 {
+            self.define_functions_parallel(pending, threads)
+        } else {
+            for (func_id, mut ctx) in pending {
+                self.module
+                    .define_function(func_id, &mut ctx)
+                    .map_err(|e| format!("define_function: {:?}", e))?;
+            }
+            Ok(())
+        }
+    }
+
+    /// Compile function bodies on a worker pool, then define them in order.
+    ///
+    /// Results are collected keyed by their original index so the object file
+    /// is byte-for-byte identical to a serial build; only wall time changes.
+    fn define_functions_parallel(
+        &mut self,
+        pending: Vec<(cranelift_module::FuncId, cranelift_codegen::Context)>,
+        threads: usize,
+    ) -> Result<(), String> {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::{Arc, Mutex};
+
+        let isa = self.module.isa();
+        let total = pending.len();
+        let next = AtomicUsize::new(0);
+        let inputs: Vec<Mutex<Option<(cranelift_module::FuncId, cranelift_codegen::Context)>>> =
+            pending.into_iter().map(|item| Mutex::new(Some(item))).collect();
+        let inputs = Arc::new(inputs);
+        let results: Vec<Mutex<Option<CompiledFunction>>> =
+            (0..total).map(|_| Mutex::new(None)).collect();
+        let results = Arc::new(results);
+        let failure: Mutex<Option<String>> = Mutex::new(None);
+
+        std::thread::scope(|scope| {
+            for _ in 0..threads {
+                let inputs = Arc::clone(&inputs);
+                let results = Arc::clone(&results);
+                let next = &next;
+                let failure = &failure;
+                scope.spawn(move || {
+                    loop {
+                        let index = next.fetch_add(1, Ordering::Relaxed);
+                        if index >= total {
+                            break;
+                        }
+                        if failure.lock().map(|g| g.is_some()).unwrap_or(true) {
+                            break;
+                        }
+                        let taken = inputs[index].lock().ok().and_then(|mut slot| slot.take());
+                        let (func_id, mut ctx) = match taken {
+                            Some(item) => item,
+                            None => continue,
+                        };
+                        let mut ctrl = cranelift_codegen::control::ControlPlane::default();
+                        let fn_label = ctx.func.name.to_string();
+                        match ctx.compile(isa, &mut ctrl) {
+                            Ok(code) => {
+                                let compiled = CompiledFunction {
+                                    func_id,
+                                    alignment: code.buffer.alignment as u64,
+                                    bytes: code.code_buffer().to_vec(),
+                                    relocs: code.buffer.relocs().to_vec(),
+                                    func: ctx.func.clone(),
+                                };
+                                if let Ok(mut slot) = results[index].lock() {
+                                    *slot = Some(compiled);
+                                }
+                            }
+                            Err(error) => {
+                                if let Ok(mut slot) = failure.lock() {
+                                    if slot.is_none() {
+                                        *slot = Some(format!(
+                                            "define_function '{}': {:?}",
+                                            fn_label, error.inner
+                                        ));
+                                    }
+                                }
+                                break;
+                            }
+                        }
+                    }
+                });
+            }
+        });
+
+        if let Some(message) = failure.into_inner().map_err(|_| "codegen thread panicked")? {
+            return Err(message);
+        }
+
+        // Phase 3 (serial): register the finished bodies in source order.
+        let results = Arc::try_unwrap(results).map_err(|_| "codegen results still shared")?;
+        for slot in results {
+            let compiled = slot
+                .into_inner()
+                .map_err(|_| "codegen result poisoned")?
+                .ok_or_else(|| "codegen produced no result for a function".to_string())?;
+            self.module
+                .define_function_bytes(
+                    compiled.func_id,
+                    &compiled.func,
+                    compiled.alignment,
+                    &compiled.bytes,
+                    &compiled.relocs,
+                )
+                .map_err(|e| format!("define_function_bytes: {:?}", e))?;
         }
         Ok(())
     }

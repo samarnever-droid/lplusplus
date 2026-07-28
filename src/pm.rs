@@ -1197,6 +1197,96 @@ fn resolve_min_runtime_object() -> Option<PathBuf> {
 
 
 /// Link using the host C compiler (cc / cl.exe) with optional -l flags for FFI
+/// Directory holding cached build artifacts (compiled runtime objects).
+fn runtime_cache_dir() -> PathBuf {
+    if let Ok(var) = std::env::var("LPP_HOME").or_else(|_| std::env::var("LPP_DIR")) {
+        return PathBuf::from(var).join("cache");
+    }
+    if let Ok(home) = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")) {
+        return PathBuf::from(home).join(".lpp").join("cache");
+    }
+    std::env::temp_dir().join(".lpp_cache")
+}
+
+/// Compile `lpp_runtime.c` once and reuse the object file on later builds.
+///
+/// The host linker used to hand `lpp_runtime.c` to `cc` on *every* link, so a
+/// ~40 KLOC C translation unit (it `#include`s the whole `runtime/` tree) was
+/// recompiled for each build. That dominated link time: ~180 ms of a ~200 ms
+/// link on a 2-core machine.
+///
+/// The cache key is the runtime source's size and modification time plus the
+/// compiler name, so editing the runtime or switching compilers invalidates it
+/// automatically. Returns `None` when compilation fails, in which case the
+/// caller falls back to passing the `.c` file directly.
+fn cached_runtime_object(runtime_src: &Path, cc: &str) -> Option<PathBuf> {
+    if std::env::var("LPP_NO_RUNTIME_CACHE").is_ok() {
+        return None;
+    }
+
+    let meta = fs::metadata(runtime_src).ok()?;
+    let mtime = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    runtime_src.to_string_lossy().hash(&mut hasher);
+    meta.len().hash(&mut hasher);
+    mtime.hash(&mut hasher);
+    cc.hash(&mut hasher);
+    let key = hasher.finish();
+
+    let dir = runtime_cache_dir();
+    let _ = fs::create_dir_all(&dir);
+    let ext = if cfg!(windows) { "obj" } else { "o" };
+    let cached = dir.join(format!("lpp_runtime-{:016x}.{}", key, ext));
+
+    if cached.exists() {
+        return Some(cached);
+    }
+
+    // Compile to a process-unique temporary first, then rename, so concurrent
+    // builds cannot observe a half-written object.
+    let tmp = dir.join(format!(
+        "lpp_runtime-{:016x}.{}.tmp{}",
+        key,
+        ext,
+        std::process::id()
+    ));
+
+    let mut cmd = std::process::Command::new(cc);
+    if cfg!(windows) {
+        cmd.arg("/nologo")
+            .arg("/c")
+            .arg(runtime_src)
+            .arg(format!("/Fo:{}", tmp.display()));
+    } else {
+        cmd.arg("-c")
+            .arg(runtime_src)
+            .arg("-o")
+            .arg(&tmp)
+            .arg("-O2")
+            .arg("-pthread");
+    }
+    let status = cmd.stdin(std::process::Stdio::null()).status().ok()?;
+    if !status.success() {
+        let _ = fs::remove_file(&tmp);
+        return None;
+    }
+
+    // Another process may have won the race; either outcome is fine.
+    if fs::rename(&tmp, &cached).is_err() {
+        let _ = fs::remove_file(&tmp);
+        if !cached.exists() {
+            return None;
+        }
+    }
+    Some(cached)
+}
+
 pub fn host_link_binary(obj_file: &Path, output_path: &Path, link_libs: &[String]) -> Result<(), String> {
     let cc = if cfg!(windows) { "cl.exe" } else { "cc" };
     let mut cmd = std::process::Command::new(cc);
@@ -1207,7 +1297,10 @@ pub fn host_link_binary(obj_file: &Path, output_path: &Path, link_libs: &[String
             cmd.arg(format!("{}.lib", lib));
         }
         if let Some(runtime_src_path) = resolve_runtime_source() {
-            cmd.arg(&runtime_src_path);
+            match cached_runtime_object(&runtime_src_path, cc) {
+                Some(obj) => cmd.arg(obj),
+                None => cmd.arg(&runtime_src_path),
+            };
             cmd.arg("ws2_32.lib");
             cmd.arg("user32.lib");
             cmd.arg("gdi32.lib");
@@ -1222,7 +1315,10 @@ pub fn host_link_binary(obj_file: &Path, output_path: &Path, link_libs: &[String
             cmd.arg(format!("-l{}", lib));
         }
         if let Some(runtime_src_path) = resolve_runtime_source() {
-            cmd.arg(&runtime_src_path);
+            match cached_runtime_object(&runtime_src_path, cc) {
+                Some(obj) => cmd.arg(obj),
+                None => cmd.arg(&runtime_src_path),
+            };
         }
     }
     let status = cmd
@@ -1340,7 +1436,7 @@ pub fn run_command(args: &[String]) {
 }
 
 fn print_help() {
-    println!("L++ Package Manager v4.4.0");
+    println!("L++ Package Manager v4.3.0");
     println!("Usage:");
     println!("  lpp <file.lpp> [options]          Compile one source file");
     println!("  lpp <command> [args]              Package/app workflow");

@@ -201,10 +201,43 @@ def interior_cell_size(p: Int, pno: Int, i: Int) -> Int:
     d := pager.pg_data(p)
     return 4 + varint.vi_len(d, cell_at(p, pno, i) + 4)
 
+# On-page size of cell i, for any of the four page kinds.
+#
+# Index pages (0x0a leaf / 0x02 interior) have no rowid varint: a leaf cell is
+# [payload varint][record] and an interior cell is [child u32][payload varint]
+# [record]. Treating them like table cells mis-measures every cell, which shows
+# up as "Fragmentation of N bytes reported as 0" in integrity_check.
 def cell_size(p: Int, pno: Int, i: Int) -> Int:
+    f := pg_flag(p, pno)
+    if f == 10:
+        return index_leaf_cell_size(p, pno, i)
+    if f == 2:
+        return index_interior_cell_size(p, pno, i)
     if is_leaf(p, pno) == 1:
         return leaf_cell_size(p, pno, i)
     return interior_cell_size(p, pno, i)
+
+def index_leaf_cell_size(p: Int, pno: Int, i: Int) -> Int:
+    d := pager.pg_data(p)
+    off := cell_at(p, pno, i)
+    total := varint.vi_get(d, off)
+    n1 := varint.vi_len(d, off)
+    loc := local_size(p, total)
+    mut sz := n1 + loc
+    if loc < total:
+        sz = sz + 4
+    return sz
+
+def index_interior_cell_size(p: Int, pno: Int, i: Int) -> Int:
+    d := pager.pg_data(p)
+    off := cell_at(p, pno, i)
+    total := varint.vi_get(d, off + 4)
+    n1 := varint.vi_len(d, off + 4)
+    loc := local_size(p, total)
+    mut sz := 4 + n1 + loc
+    if loc < total:
+        sz = sz + 4
+    return sz
 
 # ── overflow chains ──
 

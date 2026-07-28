@@ -155,7 +155,8 @@ page_count | encoding`.
   aliases, qualified `tbl.col` and `tbl.*`
 - Compound queries: `UNION`, `UNION ALL`, `EXCEPT`, `INTERSECT`
 - Subqueries: scalar `(SELECT …)`, `IN (SELECT …)`, `NOT IN (SELECT …)`,
-  `EXISTS` / `NOT EXISTS` (uncorrelated — see limitations)
+  `EXISTS` / `NOT EXISTS` — **including correlated** subqueries that reference
+  columns of the outer row
 - Predicates: `=` `==` `!=` `<>` `<` `<=` `>` `>=`, `AND`/`OR`/`NOT`,
   `IS [NOT] NULL`, `IS [NOT]`, `IN (list)`, `BETWEEN`, `LIKE` (with `ESCAPE`),
   `GLOB` (incl. `[a-z]` classes), `ISNULL`/`NOTNULL`
@@ -169,6 +170,47 @@ page_count | encoding`.
 `replace` `instr` `coalesce` `ifnull` `nullif` `typeof` `round` `min` `max`
 `hex` `quote` `char` `unicode` `printf`/`format` `iif` `sign` `like`
 `zeroblob` `random` `sqlite_version`.
+
+### Transactions
+`BEGIN` snapshots the database image; `COMMIT` writes through and drops the
+snapshot; **`ROLLBACK` genuinely restores it**, undoing inserts, updates,
+deletes and even `CREATE`/`DROP TABLE`. This is a shadow-copy scheme, not
+SQLite's rollback journal — correct in-process, but not crash-safe.
+
+### Concurrency
+Opening a file-backed database takes an advisory lock (a lock *directory*
+beside the file, created with `mkdir`, which is atomic on POSIX and Windows).
+A second writer waits ~2 s and then fails with
+`database is locked by another lppsqlite process` instead of corrupting the
+file. Set `LPPSQLITE_NO_LOCK=1` to disable.
+
+> Measured: three processes each inserting 200 rows concurrently produce
+> 600/600 rows with locking, and **382/600 without** it.
+
+### Indexes
+`CREATE INDEX` / `DROP INDEX` build **real SQLite index B-trees** — page type
+`0x0a` leaves under a `0x02` interior root, keyed by a record of the indexed
+columns followed by the rowid. The real `sqlite3` reads them, reports
+`integrity_check` = `ok`, and its planner picks them up:
+
+```
+sqlite> EXPLAIN QUERY PLAN SELECT id FROM t WHERE name='cy';
+SEARCH t USING COVERING INDEX idx_name (name=?)
+```
+
+The engine's own planner uses an index for equality on its **leading column**,
+and indexes are rebuilt automatically after `INSERT`/`UPDATE`/`DELETE`.
+Indexes created by real SQLite are used for lookups here too.
+
+### Query performance
+Equality on the rowid — `WHERE id = 42`, `WHERE rowid = 42`, or an
+`INTEGER PRIMARY KEY` column, optionally `AND`-ed with other predicates —
+seeks through the B-tree instead of scanning. On a 20,000-row table a point
+lookup takes ~6 ms versus ~67 ms for a non-key column: **~11× faster**.
+
+Indexed columns take a similar path: on a 3,000-row table an indexed equality
+lookup is ~7 ms versus ~16 ms for an unindexed column. Anything without a
+usable index is still a linear scan.
 
 ### Storage semantics
 - All five storage classes: NULL, INTEGER (1/2/3/4/6/8-byte + the 0/1 literal
@@ -194,27 +236,36 @@ These are **rejected with a clear error**, never silently mis-executed:
 
 Also absent:
 
-- **Indexes** — `CREATE INDEX` is parsed and accepted but no index B-tree is
-  built and the planner never uses one; all scans are linear.
+- **Index-aware planning beyond equality** — an index is only consulted for
+  equality on its leading column. Range predicates (`>`, `BETWEEN`), `ORDER BY`
+  and `LIKE 'prefix%'` do not yet use one, and `UNIQUE` is not enforced.
+- **Incremental index maintenance** — after a mutation the affected indexes are
+  rebuilt from the table rather than patched entry by entry. Correct, but
+  O(rows) per writing statement, so bulk loads are best done before
+  `CREATE INDEX` (or inside one transaction).
 - **Views, triggers, virtual tables, FTS, R-Tree, JSON1, window functions,
   date/time functions, RIGHT/FULL OUTER JOIN, `UPSERT` (`ON CONFLICT DO …`),
   generated columns, `WITHOUT ROWID` tables, foreign-key enforcement,
   `CHECK`/`NOT NULL`/`UNIQUE` constraint enforcement, collations other than
   BINARY, `AUTOINCREMENT` semantics.**
-- **Real transactions** — `BEGIN`/`COMMIT`/`ROLLBACK` parse and succeed, but
-  there is no journal or WAL and `ROLLBACK` does **not** undo anything. Each
-  statement is written through to the file.
-- **Concurrency** — no locking; a file must not be used by two writers at once.
+- **Crash-safe transactions** — `ROLLBACK` works in-process (see above), but the
+  snapshot lives in memory: there is no journal or WAL, so a process killed
+  mid-`COMMIT` can still leave a partially written file. Nested transactions
+  and `SAVEPOINT` are not supported.
+- **Multi-process reader concurrency** — the advisory lock is exclusive, so
+  concurrent *readers* also serialise. It is cooperative and does not
+  coordinate with the real `sqlite3`.
 - **WAL mode**, incremental vacuum, and `PRAGMA` beyond the handful listed above.
 
 ---
 
 ## Known differences from SQLite
 
-1. **Correlated subqueries** evaluate their inner `SELECT` without access to the
-   outer row, so a correlated reference resolves against the subquery's own
-   tables (or errors). Uncorrelated subqueries are correct.
-2. **`ROLLBACK` is a no-op** (see above) — do not rely on it for atomicity.
+1. **Correlated subqueries are re-evaluated per candidate row.** They are
+   correct, but a correlated subquery over an N-row outer query costs N inner
+   queries; there is no caching or decorrelation.
+2. **`ROLLBACK` is in-memory only** — correct while the process lives, but not
+   crash-safe.
 3. **Deleted pages are recycled through the freelist**, but the database file is
    never truncated, so a file can stay larger than `sqlite3` would leave it.
 4. **`PRAGMA integrity_check`** always reports `ok` from this engine; use the
@@ -248,9 +299,14 @@ Also absent:
 | `t_sql` | 48 | end-to-end SQL incl. joins, aggregates, persistence |
 | `t_interop` | 19 | reading *and writing* a database authored by real `sqlite3` |
 | `t_stress` | 28 | 3,000 rows, mass delete/update, overflow, edge values |
-| **`difftest.py`** | **87** | **same SQL through both engines + `integrity_check`** |
+| **`difftest.py`** | **118** | **same SQL through both engines + `integrity_check`** |
 
-Total: **485 in-engine assertions + 87 differential cases**, all passing.
+Total: **485 in-engine assertions + 118 differential cases**, all passing.
+The differential suite covers correlated subqueries, the rowid fast path
+(including cases where it must *not* apply, such as `id = 1 OR id = 3`),
+`COMMIT`/`ROLLBACK` semantics, and secondary indexes — equality lookups,
+duplicate and NULL keys, maintenance across `INSERT`/`UPDATE`/`DELETE`,
+`DROP INDEX`, rollback, and an 800-row multi-page index.
 
 ---
 
@@ -261,12 +317,17 @@ Measured in the dev container (2 vCPU), engine compiled with the host linker:
 | Workload | Result |
 |---|---|
 | 3,000 single-row `INSERT` statements (each parsed, executed and flushed) | ~1.0 s |
+| Point lookup by rowid, 20,000-row table | **~6 ms** |
+| Equality on a non-indexed column, same table | ~67 ms |
+| Indexed equality lookup, 3,000-row table | **~7 ms** |
+| Same query without an index | ~16 ms |
 | Full scan + aggregate over 2,000 rows | milliseconds |
 | 3,000-row database file | 48 pages / 192 KB |
 
-Every statement currently re-writes the whole database image to disk, which
-dominates insert cost; batching in a transaction is the obvious next
-optimisation. There are no indexes, so all lookups are O(rows).
+Each statement outside a transaction re-writes the whole database image, which
+dominates insert cost — wrapping a batch in `BEGIN … COMMIT` avoids that, since
+writes are held until commit. Note that indexes are rebuilt after each writing
+statement, so bulk-load first and `CREATE INDEX` afterwards.
 
 ---
 

@@ -13,7 +13,7 @@
 #   [32] coltypes  (sv)  declared types, same encoding
 #   [40] flags     (iv)  bit0: has INTEGER PRIMARY KEY alias; bits 8+: its index
 #   [48] types     (sv)  "table" or "index"
-#   [56] count
+#   [56] tblnames  (sv)  owning table (same as name for tables)
 
 import mem
 import value
@@ -49,6 +49,17 @@ def sc_flags(s: Int) -> Int:
 def sc_types(s: Int) -> Int:
     return mem.bget64(s, 48)
 
+# The table an entry belongs to: itself for a table, the indexed table for an
+# index (sqlite_schema's tbl_name column).
+def sc_tblnames(s: Int) -> Int:
+    return mem.bget64(s, 56)
+
+def sc_tblname(s: Int, i: Int) -> Str:
+    tn := mem.bget64(s, 56)
+    if i >= strbuf.sv_len(tn):
+        return ""
+    return strbuf.sv_get(tn, i)
+
 def sc_count(s: Int) -> Int:
     return mem.iv_len(mem.bget64(s, 8))
 
@@ -61,6 +72,7 @@ def sc_new() -> Int:
     mem.bset64(s, 32, strbuf.sv_new())
     mem.bset64(s, 40, mem.iv_new(8))
     mem.bset64(s, 48, strbuf.sv_new())
+    mem.bset64(s, 56, strbuf.sv_new())
     return s
 
 def sc_free(s: Int):
@@ -71,9 +83,14 @@ def sc_free(s: Int):
     strbuf.sv_free(sc_coltypes(s))
     mem.iv_free(sc_flags(s))
     strbuf.sv_free(sc_types(s))
+    strbuf.sv_free(sc_tblnames(s))
     buf_free(s)
 
 def sc_add(s: Int, kind: Str, name: Str, root: Int, sql: Str, cols: Str, types: Str, flags: Int):
+    sc_add_full(s, kind, name, name, root, sql, cols, types, flags)
+
+def sc_add_full(s: Int, kind: Str, name: Str, tbl: Str, root: Int, sql: Str, cols: Str, types: Str, flags: Int):
+    strbuf.sv_push(sc_tblnames(s), tbl)
     strbuf.sv_push(sc_types(s), kind)
     strbuf.sv_push(sc_names(s), name)
     mem.iv_push(sc_roots(s), root)
@@ -271,12 +288,13 @@ def load(p: Int) -> Int:
         if value.vv_len(vv) >= 5:
             kind := value.v_bytes_str(value.vv_get(vv, 0))
             nm := value.v_bytes_str(value.vv_get(vv, 1))
+            tb := value.v_bytes_str(value.vv_get(vv, 2))
             rp := value.v_to_int(value.vv_get(vv, 3))
             sq := value.v_bytes_str(value.vv_get(vv, 4))
             cols := strbuf.sv_new()
             types := strbuf.sv_new()
             ipk := parse_create_cols(sq, cols, types)
-            sc_add(s, kind, nm, rp, sq, join_cols(cols), join_cols(types), make_flags(ipk))
+            sc_add_full(s, kind, nm, tb, rp, sq, join_cols(cols), join_cols(types), make_flags(ipk))
             strbuf.sv_free(cols)
             strbuf.sv_free(types)
         value.vv_free_all(vv)
@@ -317,6 +335,81 @@ def delete_entry(p: Int, name: Str) -> Int:
     if target >= 0:
         return btwrite.delete(p, 1, target)
     return 0
+
+# Rewrite the rootpage of an existing sqlite_schema entry.
+def set_entry_root(p: Int, name: Str, root: Int) -> Int:
+    c := cursor.cu_new(p, 1)
+    cursor.cu_first(c)
+    mut target := 0 - 1
+    mut payload := 0
+    while cursor.cu_valid(c) == 1:
+        pay := cursor.cu_payload(c)
+        vv := record.decode(mem.vec_data(pay), 0, mem.vec_len(pay))
+        if value.vv_len(vv) >= 5:
+            if strbuf.eq_ci(value.v_bytes_str(value.vv_get(vv, 1)), name) == 1:
+                target = cursor.cu_rowid(c)
+                value.v_free(value.vv_get(vv, 3))
+                value.vv_set(vv, 3, value.v_from_int(root))
+                payload = record.encode(vv)
+        value.vv_free_all(vv)
+        mem.vec_free(pay)
+        cursor.cu_next(c)
+    cursor.cu_free(c)
+    if target < 0:
+        return 0
+    btwrite.delete(p, 1, target)
+    btwrite.insert(p, 1, target, mem.vec_data(payload), mem.vec_len(payload))
+    mem.vec_free(payload)
+    return 1
+
+# Column names listed in a CREATE INDEX statement.
+def index_columns(sql: Str) -> Int:
+    out := strbuf.sv_new()
+    t := lexer.tokenize(sql)
+    n := lexer.lx_count(t)
+    mut i := 0
+    mut open := 0 - 1
+    while i < n:
+        if lexer.lx_kind(t, i) == lexer.TK_PUNCT():
+            if lpp_str_eq(lexer.lx_text(t, i), "(") == 1:
+                open = i
+                i = n
+        i = i + 1
+    if open < 0:
+        lexer.lx_free(t)
+        return out
+    mut j := open + 1
+    mut go := 1
+    while go == 1:
+        if j >= n:
+            go = 0
+        else:
+            k := lexer.lx_kind(t, j)
+            x := lexer.lx_text(t, j)
+            if k == lexer.TK_EOF():
+                go = 0
+            elif lpp_str_eq(x, ")") == 1:
+                go = 0
+            elif lpp_str_eq(x, ",") == 1:
+                j = j + 1
+            elif k == lexer.TK_ID():
+                strbuf.sv_push(out, x)
+                j = j + 1
+            elif k == lexer.TK_KW():
+                mut skip := 0
+                if strbuf.eq_ci(x, "ASC") == 1:
+                    skip = 1
+                if strbuf.eq_ci(x, "DESC") == 1:
+                    skip = 1
+                if strbuf.eq_ci(x, "COLLATE") == 1:
+                    skip = 1
+                if skip == 0:
+                    strbuf.sv_push(out, x)
+                j = j + 1
+            else:
+                j = j + 1
+    lexer.lx_free(t)
+    return out
 
 # ── parsing CREATE TABLE column definitions ──
 # Fills `cols` and `types`; returns the INTEGER PRIMARY KEY index or -1.

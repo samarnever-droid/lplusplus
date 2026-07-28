@@ -9,6 +9,7 @@
 #   [40] database handle (for subqueries; 0 if none)
 #   [48] error message (sv)
 #   [56] error flag
+#   [64] enclosing context, for correlated subqueries (0 at the outermost level)
 
 import mem
 import strbuf
@@ -59,7 +60,7 @@ def cx_fail(c: Int, msg: Str):
         strbuf.sv_push(mem.bget64(c, 48), msg)
 
 def cx_new() -> Int:
-    c := buf_alloc(64)
+    c := buf_alloc(72)
     mem.bset64(c, 0, mem.iv_new(8))
     mem.bset64(c, 8, strbuf.sv_new())
     mem.bset64(c, 16, strbuf.sv_new())
@@ -68,7 +69,16 @@ def cx_new() -> Int:
     mem.bset64(c, 40, 0)
     mem.bset64(c, 48, strbuf.sv_new())
     mem.bset64(c, 56, 0)
+    mem.bset64(c, 64, 0)
     return c
+
+# Link to the enclosing query's context so an inner SELECT can resolve columns
+# belonging to the outer row (a correlated subquery).
+def cx_outer(c: Int) -> Int:
+    return mem.bget64(c, 64)
+
+def cx_set_outer(c: Int, outer: Int):
+    mem.bset64(c, 64, outer)
 
 def cx_free(c: Int):
     mem.iv_free(cx_vals(c))
@@ -196,6 +206,22 @@ def eval(ar: Int, n: Int, c: Int) -> Int:
 
     return value.v_null()
 
+# Resolve a column against this context, then any enclosing ones. Returns the
+# context that owns the column, or 0. The index is written into `slot`.
+def cx_resolve(c: Int, name: Str, qual: Str, slot: Int) -> Int:
+    mut cur := c
+    mut guard := 0
+    while guard < 32:
+        if cur == 0:
+            return 0
+        i := cx_lookup(cur, name, qual)
+        if i >= 0:
+            mem.bset64(slot, 0, i)
+            return cur
+        cur = cx_outer(cur)
+        guard = guard + 1
+    return 0
+
 def eval_col(ar: Int, n: Int, c: Int) -> Int:
     name := ast.text_of(ar, n)
     mut qual := ""
@@ -212,11 +238,18 @@ def eval_col(ar: Int, n: Int, c: Int) -> Int:
         if strbuf.eq_ci(name, "oid") == 1:
             if cx_lookup(c, name, "") < 0:
                 return value.v_from_int(cx_rowid(c))
-    i := cx_lookup(c, name, qual)
-    if i < 0:
+    slot := buf_alloc(8)
+    owner := cx_resolve(c, name, qual, slot)
+    if owner == 0:
+        buf_free(slot)
         cx_fail(c, str_concat("no such column: ", name))
         return value.v_null()
-    return value.v_clone(cx_val(c, i))
+    i := mem.bget64(slot, 0)
+    buf_free(slot)
+    v := cx_val(owner, i)
+    if v == 0:
+        return value.v_null()
+    return value.v_clone(v)
 
 def eval_unop(ar: Int, n: Int, c: Int) -> Int:
     op := ast.text_of(ar, n)

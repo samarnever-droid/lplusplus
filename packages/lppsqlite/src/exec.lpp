@@ -25,6 +25,7 @@ import btree
 import btwrite
 import cursor
 import schema
+import idx
 import lexer
 import ast
 import parser
@@ -56,10 +57,55 @@ def db_set_last_id(d: Int, v: Int):
 def db_changes(d: Int) -> Int:
     return mem.bget64(d, 48)
 
+# ── advisory file locking ──
+#
+# L++ exposes no flock/LockFileEx builtin, but `dir_create` maps to mkdir(2) /
+# CreateDirectoryA, which fail atomically when the target already exists. That
+# makes a lock *directory* a portable mutex.
+#
+# This is advisory and cooperative: it stops two lppsqlite processes from
+# writing the same file concurrently (which previously corrupted it). It does
+# not coordinate with the real sqlite3, and a process killed mid-write leaves a
+# stale lock that must be removed by hand or waited out.
+
+def LOCK_SPINS() -> Int:
+    return 200
+
+def lock_path(path: Str) -> Str:
+    return str_concat(path, "-lppsqlite-lock")
+
+# Try to take the lock; 1 on success. Waits up to ~2 s for a busy database.
+def acquire_lock(path: Str) -> Int:
+    if str_len(path) == 0:
+        return 1
+    if str_len(env_get("LPPSQLITE_NO_LOCK")) > 0:
+        return 1
+    lp := lock_path(path)
+    mut tries := 0
+    while tries < LOCK_SPINS():
+        if dir_create(lp) == 0:
+            return 1
+        sleep_ms(10)
+        tries = tries + 1
+    return 0
+
+def release_lock(path: Str):
+    if str_len(path) == 0:
+        return
+    if str_len(env_get("LPPSQLITE_NO_LOCK")) > 0:
+        return
+    dir_remove(lock_path(path))
+
 # ── open / close ──
 
 def open_db(path: Str) -> Int:
-    d := buf_alloc(64)
+    d := buf_alloc(72)
+    mut locked := 0
+    if str_len(path) > 0:
+        if acquire_lock(path) == 1:
+            locked = 1
+        else:
+            locked = 0 - 1
     mut pg := 0
     if file_exists(path) == 1:
         raw := buf_read(path)
@@ -78,10 +124,11 @@ def open_db(path: Str) -> Int:
     mem.bset64(d, 40, 0)
     mem.bset64(d, 48, 0)
     mem.bset64(d, 56, 1)
+    mem.bset64(d, 64, locked)
     return d
 
 def open_memory() -> Int:
-    d := buf_alloc(64)
+    d := buf_alloc(72)
     pg := pager.pg_create(4096)
     mem.bset64(d, 0, pg)
     mem.bset64(d, 8, schema.load(pg))
@@ -95,14 +142,94 @@ def open_memory() -> Int:
     mem.bset64(d, 56, 1)
     return d
 
+# ── transactions ──
+#
+# A transaction snapshots the whole database image before the first mutation.
+# COMMIT drops the snapshot and writes through; ROLLBACK restores it. This is
+# a shadow-copy scheme rather than SQLite's rollback journal: it is simple and
+# genuinely correct in-process, but it is not crash-safe and provides no
+# cross-process locking (see the package README).
+
+def in_transaction(d: Int) -> Int:
+    if mem.bget64(d, 24) == 0:
+        return 1
+    return 0
+
+def begin_txn(d: Int):
+    if in_transaction(d) == 1:
+        return
+    mem.bset64(d, 24, 0)          # autocommit off
+    snapshot(d)
+
+# Copy the current image so ROLLBACK can restore it.
+def snapshot(d: Int):
+    old := mem.bget64(d, 32)
+    if old != 0:
+        mem.vec_free(old)
+    p := db_pager(d)
+    img := pager.pg_img(p)
+    n := mem.vec_len(img)
+    copy := mem.vec_new(n + 1)
+    mem.vec_push_bytes(copy, mem.vec_data(img), 0, n)
+    mem.bset64(d, 32, copy)
+
+def drop_snapshot(d: Int):
+    snap := mem.bget64(d, 32)
+    if snap != 0:
+        mem.vec_free(snap)
+    mem.bset64(d, 32, 0)
+
+def commit_txn(d: Int):
+    drop_snapshot(d)
+    mem.bset64(d, 24, 1)          # autocommit on
+    flush(d)
+
+def rollback_txn(d: Int):
+    snap := mem.bget64(d, 32)
+    if snap != 0:
+        p := db_pager(d)
+        img := pager.pg_img(p)
+        n := mem.vec_len(snap)
+        mem.vec_clear(img)
+        mem.vec_push_bytes(img, mem.vec_data(snap), 0, n)
+        ps := pager.pg_size(p)
+        if ps > 0:
+            pager.pg_set_count(p, n / ps)
+        mem.vec_free(snap)
+    mem.bset64(d, 32, 0)
+    mem.bset64(d, 24, 1)
+    # The catalogue may have changed (CREATE/DROP), so rebuild it.
+    reload_schema(d)
+    flush(d)
+
+# Write through to disk unless a transaction is open, in which case the file is
+# left untouched until COMMIT.
+def autoflush(d: Int) -> Int:
+    if in_transaction(d) == 1:
+        return 0
+    return flush(d)
+
 def flush(d: Int) -> Int:
     p := db_path(d)
     if str_len(p) == 0:
         return 0
     return pager.pg_save(db_pager(d), p)
 
+# Did this handle actually take the lock? (0 for :memory: or when disabled)
+def db_locked(d: Int) -> Int:
+    return mem.bget64(d, 64)
+
+# 1 when a file-backed database could not be locked, so every statement fails
+# loudly instead of racing another writer.
+def db_busy(d: Int) -> Int:
+    if mem.bget64(d, 64) == 0 - 1:
+        return 1
+    return 0
+
 def close_db(d: Int):
     flush(d)
+    if db_locked(d) == 1:
+        release_lock(db_path(d))
     schema.sc_free(db_schema(d))
     pager.pg_free(db_pager(d))
     strbuf.sv_free(mem.bget64(d, 16))
@@ -118,6 +245,10 @@ def exec(d: Int, sql: Str) -> Int:
     return exec_params(d, sql, 0)
 
 def exec_params(d: Int, sql: Str, params: Int) -> Int:
+    if db_busy(d) == 1:
+        r := rowset.rs_new(0)
+        rowset.rs_fail(r, "database is locked by another lppsqlite process")
+        return r
     p := parser.ps_new(sql)
     st := parser.parse_statement(p)
     if parser.ps_failed(p) == 1:
@@ -246,19 +377,20 @@ def run_stmt(d: Int, st: Int, ar: Int, sql: Str, params: Int) -> Int:
     if k == parser.S_DROP_TABLE():
         return do_drop_table(d, st)
     if k == parser.S_BEGIN():
+        begin_txn(d)
         return rowset.rs_new(0)
     if k == parser.S_COMMIT():
-        flush(d)
+        commit_txn(d)
         return rowset.rs_new(0)
     if k == parser.S_ROLLBACK():
+        rollback_txn(d)
         return rowset.rs_new(0)
     if k == parser.S_PRAGMA():
         return do_pragma(d, st)
     if k == parser.S_CREATE_INDEX():
-        # Indexes are parsed and recorded but not used for planning yet.
-        return rowset.rs_new(0)
+        return do_create_index(d, st, sql)
     if k == parser.S_DROP_INDEX():
-        return rowset.rs_new(0)
+        return do_drop_index(d, st)
     r := rowset.rs_new(0)
     rowset.rs_fail(r, "unsupported statement")
     return r
@@ -280,7 +412,7 @@ def do_create_table(d: Int, st: Int, sql: Str) -> Int:
     norm := normalize_create(sql)
     schema.write_entry(p, "table", name, name, root, norm)
     reload_schema(d)
-    flush(d)
+    autoflush(d)
     return r
 
 # Store the CREATE statement text as given (trimmed), like SQLite does.
@@ -328,7 +460,7 @@ def do_drop_table(d: Int, st: Int) -> Int:
     free_tree(p, root)
     schema.delete_entry(p, name)
     reload_schema(d)
-    flush(d)
+    autoflush(d)
     return r
 
 # Collect and free all pages belonging to a b-tree rooted at `root`.
@@ -388,6 +520,165 @@ def collect_overflow(p: Int, pno: Int, i: Int, out: Int):
             nxt := mem.be_get32(pager.pg_data(p), pager.pg_offset(p, ov))
             ov = nxt
             guard = guard + 1
+
+# ════════════════════ CREATE / DROP INDEX ════════════════════
+
+def do_create_index(d: Int, st: Int, sql: Str) -> Int:
+    r := rowset.rs_new(0)
+    name := parser.st_table(st)
+    sc := db_schema(d)
+    if schema.sc_find_any(sc, name) >= 0:
+        if parser.st_ifexists(st) == 1:
+            return r
+        rowset.rs_fail(r, str_concat("index ", str_concat(name, " already exists")))
+        return r
+    froms := parser.st_from(st)
+    if strbuf.sv_len(froms) == 0:
+        rowset.rs_fail(r, "CREATE INDEX requires a table")
+        return r
+    tname := strbuf.sv_get(froms, 0)
+    ti := schema.sc_find(sc, tname)
+    if ti < 0:
+        rowset.rs_fail(r, str_concat("no such table: ", tname))
+        return r
+
+    # Resolve the indexed column names against the table.
+    idxcols := mem.bget64(parser.st_ext(st), 96)
+    ncols := strbuf.sv_len(idxcols)
+    if ncols == 0:
+        rowset.rs_fail(r, "CREATE INDEX requires at least one column")
+        return r
+    tcols := schema.sc_cols(sc, ti)
+    colidx := mem.iv_new(4)
+    mut bad := ""
+    mut i := 0
+    while i < ncols:
+        cn := strbuf.sv_get(idxcols, i)
+        ci := strbuf.sv_find_ci(tcols, cn)
+        if ci < 0:
+            bad = cn
+        else:
+            mem.iv_push(colidx, ci)
+        i = i + 1
+    strbuf.sv_free(tcols)
+    if str_len(bad) > 0:
+        mem.iv_free(colidx)
+        rowset.rs_fail(r, str_concat("no such column: ", bad))
+        return r
+
+    p := db_pager(d)
+    root := idx.build(d, p, schema.sc_root(sc, ti), schema.sc_ipk(sc, ti), schema.sc_ncols(sc, ti), colidx)
+    mem.iv_free(colidx)
+    if root == 0:
+        # Too large for a single leaf page. Record nothing so the planner never
+        # sees a half-built index; queries keep working via table scans.
+        rowset.rs_fail(r, "index too large for this engine (single-page index limit)")
+        return r
+    schema.write_entry(p, "index", name, tname, root, normalize_create(sql))
+    reload_schema(d)
+    autoflush(d)
+    return r
+
+def do_drop_index(d: Int, st: Int) -> Int:
+    r := rowset.rs_new(0)
+    name := parser.st_table(st)
+    sc := db_schema(d)
+    ii := schema.sc_find_any(sc, name)
+    mut isindex := 0
+    if ii >= 0:
+        if strbuf.eq_ci(schema.sc_kind(sc, ii), "index") == 1:
+            isindex = 1
+    if isindex == 0:
+        if parser.st_ifexists(st) == 1:
+            return r
+        rowset.rs_fail(r, str_concat("no such index: ", name))
+        return r
+    p := db_pager(d)
+    free_tree(p, schema.sc_root(sc, ii))
+    schema.delete_entry(p, name)
+    reload_schema(d)
+    autoflush(d)
+    return r
+
+# ── index maintenance ──
+#
+# Every index on a table must stay in step with its rows. Indexes are rebuilt
+# from scratch after a mutation: correct and simple, and cheap at the scale a
+# single-page index supports. An index that no longer fits is dropped from the
+# catalogue so the planner falls back to a scan rather than reading stale data.
+def reindex_table(d: Int, tname: Str):
+    sc := db_schema(d)
+    n := schema.sc_count(sc)
+    names := strbuf.sv_new()
+    mut i := 0
+    while i < n:
+        if strbuf.eq_ci(schema.sc_kind(sc, i), "index") == 1:
+            if strbuf.eq_ci(index_table_of(d, i), tname) == 1:
+                strbuf.sv_push(names, schema.sc_name(sc, i))
+        i = i + 1
+    m := strbuf.sv_len(names)
+    mut j := 0
+    while j < m:
+        rebuild_one_index(d, strbuf.sv_get(names, j))
+        j = j + 1
+    strbuf.sv_free(names)
+
+# The table an index belongs to, read from its sqlite_schema tbl_name column.
+def index_table_of(d: Int, si: Int) -> Str:
+    sc := db_schema(d)
+    return schema.sc_tblname(sc, si)
+
+def rebuild_one_index(d: Int, iname: Str):
+    sc := db_schema(d)
+    ii := schema.sc_find_any(sc, iname)
+    if ii < 0:
+        return
+    tname := schema.sc_tblname(sc, ii)
+    ti := schema.sc_find(sc, tname)
+    if ti < 0:
+        return
+    colidx := index_colidx(d, ii, ti)
+    if colidx == 0:
+        return
+    p := db_pager(d)
+    oldroot := schema.sc_root(sc, ii)
+    if oldroot > 0:
+        free_tree(p, oldroot)
+    root := idx.build(d, p, schema.sc_root(sc, ti), schema.sc_ipk(sc, ti), schema.sc_ncols(sc, ti), colidx)
+    mem.iv_free(colidx)
+    if root == 0:
+        # No longer fits: remove it so no stale index is ever consulted.
+        schema.delete_entry(p, iname)
+        reload_schema(d)
+        return
+    schema.set_entry_root(p, iname, root)
+    reload_schema(d)
+
+# Column positions an index covers, parsed from its stored CREATE INDEX text.
+def index_colidx(d: Int, ii: Int, ti: Int) -> Int:
+    sc := db_schema(d)
+    names := schema.index_columns(schema.sc_sql(sc, ii))
+    n := strbuf.sv_len(names)
+    if n == 0:
+        strbuf.sv_free(names)
+        return 0
+    tcols := schema.sc_cols(sc, ti)
+    out := mem.iv_new(4)
+    mut ok := 1
+    mut i := 0
+    while i < n:
+        ci := strbuf.sv_find_ci(tcols, strbuf.sv_get(names, i))
+        if ci < 0:
+            ok = 0
+        else:
+            mem.iv_push(out, ci)
+        i = i + 1
+    strbuf.sv_free(tcols)
+    strbuf.sv_free(names)
+    if ok == 0:
+        mem.iv_free(out)
+        return 0
+    return out
 
 def do_pragma(d: Int, st: Int) -> Int:
     nm := parser.st_table(st)
@@ -628,7 +919,9 @@ def do_insert(d: Int, st: Int, ar: Int, params: Int) -> Int:
     rowset.rs_set_changes(r, changes)
     rowset.rs_set_last_id(r, db_last_id(d))
     mem.bset64(d, 48, changes)
-    flush(d)
+    if changes > 0:
+        reindex_table(d, name)
+    autoflush(d)
     return r
 
 def col_type(types: Int, i: Int) -> Str:
@@ -679,6 +972,251 @@ def scan_table(d: Int, ti: Int) -> Int:
     cursor.cu_free(c)
     return out
 
+# ── rowid fast path ──
+#
+# Table b-trees are keyed by rowid, so an equality test against the rowid (or
+# against an INTEGER PRIMARY KEY column, which aliases it) can seek straight to
+# the leaf instead of materialising every row. This turns the common
+# `WHERE id = ?` lookup from O(rows) into O(log rows).
+#
+# Only a top-level `col = <literal>` conjunct qualifies; anything else falls
+# back to the full scan, so results are always identical.
+
+# Return the constant rowid implied by `where`, or a negative marker.
+#   -1  no usable rowid predicate
+def rowid_probe(ar: Int, where: Int, sc: Int, ti: Int, cx: Int) -> Int:
+    if where < 0:
+        return 0 - 1
+    k := ast.kind(ar, where)
+    if k == ast.N_BINOP():
+        op := ast.text_of(ar, where)
+        if lpp_str_eq(op, "AND") == 1:
+            left := rowid_probe(ar, ast.a_of(ar, where), sc, ti, cx)
+            if left >= 0:
+                return left
+            return rowid_probe(ar, ast.b_of(ar, where), sc, ti, cx)
+        mut iseq := 0
+        if lpp_str_eq(op, "=") == 1:
+            iseq = 1
+        if lpp_str_eq(op, "==") == 1:
+            iseq = 1
+        if iseq == 1:
+            a := ast.a_of(ar, where)
+            b := ast.b_of(ar, where)
+            if is_rowid_col(ar, a, sc, ti) == 1:
+                return const_rowid(ar, b, cx)
+            if is_rowid_col(ar, b, sc, ti) == 1:
+                return const_rowid(ar, a, cx)
+    return 0 - 1
+
+# Is this node the table's rowid (or its INTEGER PRIMARY KEY alias)?
+def is_rowid_col(ar: Int, n: Int, sc: Int, ti: Int) -> Int:
+    if ast.kind(ar, n) != ast.N_COL():
+        return 0
+    name := ast.text_of(ar, n)
+    if strbuf.eq_ci(name, "rowid") == 1:
+        return 1
+    if strbuf.eq_ci(name, "_rowid_") == 1:
+        return 1
+    if strbuf.eq_ci(name, "oid") == 1:
+        return 1
+    ipk := schema.sc_ipk(sc, ti)
+    if ipk < 0:
+        return 0
+    cols := schema.sc_cols(sc, ti)
+    mut hit := 0
+    if ipk < strbuf.sv_len(cols):
+        if strbuf.eq_ci(strbuf.sv_get(cols, ipk), name) == 1:
+            hit = 1
+    strbuf.sv_free(cols)
+    return hit
+
+# Evaluate a constant integer operand; returns -1 when not usable.
+def const_rowid(ar: Int, n: Int, cx: Int) -> Int:
+    k := ast.kind(ar, n)
+    mut ok := 0
+    if k == ast.N_INT():
+        ok = 1
+    if k == ast.N_PARAM():
+        ok = 1
+    if ok == 0:
+        return 0 - 1
+    v := eval.eval(ar, n, cx)
+    if value.v_type(v) != value.TINT():
+        value.v_free(v)
+        return 0 - 1
+    r := value.v_int(v)
+    value.v_free(v)
+    if r < 0:
+        return 0 - 1
+    return r
+
+# Materialise a single row by rowid, or an empty list if it does not exist.
+def scan_table_rowid(d: Int, ti: Int, rid: Int) -> Int:
+    p := db_pager(d)
+    sc := db_schema(d)
+    root := schema.sc_root(sc, ti)
+    ipk := schema.sc_ipk(sc, ti)
+    ncols := schema.sc_ncols(sc, ti)
+    out := mem.iv_new(2)
+    pay := btwrite.find_row(p, root, rid)
+    if pay == 0:
+        return out
+    vv := record.decode(mem.vec_data(pay), 0, mem.vec_len(pay))
+    mut i := value.vv_len(vv)
+    while i < ncols:
+        value.vv_push(vv, value.v_null())
+        i = i + 1
+    if ipk >= 0:
+        value.v_free(value.vv_get(vv, ipk))
+        value.vv_set(vv, ipk, value.v_from_int(rid))
+    row := buf_alloc(16)
+    mem.bset64(row, 0, rid)
+    mem.bset64(row, 8, vv)
+    mem.iv_push(out, row)
+    mem.vec_free(pay)
+    return out
+
+# ── index-driven planning ──
+#
+# Find a usable index for the WHERE clause and return the matching rowids, or 0
+# when no index applies (the caller then scans). Only equality on the index's
+# leading column is used; that covers the common `WHERE col = ?` lookup.
+def index_probe(d: Int, ar: Int, where: Int, sc: Int, ti: Int, cx: Int) -> Int:
+    if where < 0:
+        return 0
+    tname := schema.sc_name(sc, ti)
+    n := schema.sc_count(sc)
+    mut si := 0
+    while si < n:
+        mut usable := 0
+        if strbuf.eq_ci(schema.sc_kind(sc, si), "index") == 1:
+            if strbuf.eq_ci(schema.sc_tblname(sc, si), tname) == 1:
+                usable = 1
+        if usable == 1:
+            cols := schema.index_columns(schema.sc_sql(sc, si))
+            if strbuf.sv_len(cols) > 0:
+                lead := strbuf.sv_get(cols, 0)
+                v := eq_value_for(ar, where, lead, cx)
+                if v != 0:
+                    probe := value.vv_new()
+                    value.vv_push(probe, v)
+                    p := db_pager(d)
+                    root := schema.sc_root(sc, si)
+                    ids := idx.seek_eq(p, root, probe, 1)
+                    value.vv_free_all(probe)
+                    strbuf.sv_free(cols)
+                    return ids
+            strbuf.sv_free(cols)
+        si = si + 1
+    return 0
+
+# The constant that `col` is compared equal to at the top level of `where`,
+# or 0. Returns a fresh value the caller owns.
+def eq_value_for(ar: Int, where: Int, col: Str, cx: Int) -> Int:
+    if where < 0:
+        return 0
+    if ast.kind(ar, where) != ast.N_BINOP():
+        return 0
+    op := ast.text_of(ar, where)
+    if lpp_str_eq(op, "AND") == 1:
+        l := eq_value_for(ar, ast.a_of(ar, where), col, cx)
+        if l != 0:
+            return l
+        return eq_value_for(ar, ast.b_of(ar, where), col, cx)
+    mut iseq := 0
+    if lpp_str_eq(op, "=") == 1:
+        iseq = 1
+    if lpp_str_eq(op, "==") == 1:
+        iseq = 1
+    if iseq == 0:
+        return 0
+    a := ast.a_of(ar, where)
+    b := ast.b_of(ar, where)
+    if named_col(ar, a, col) == 1:
+        return const_value(ar, b, cx)
+    if named_col(ar, b, col) == 1:
+        return const_value(ar, a, cx)
+    return 0
+
+def named_col(ar: Int, n: Int, col: Str) -> Int:
+    if ast.kind(ar, n) != ast.N_COL():
+        return 0
+    if strbuf.eq_ci(ast.text_of(ar, n), col) == 1:
+        return 1
+    return 0
+
+# A literal or bound parameter, evaluated once; 0 if the node is not constant.
+def const_value(ar: Int, n: Int, cx: Int) -> Int:
+    k := ast.kind(ar, n)
+    mut ok := 0
+    if k == ast.N_INT():
+        ok = 1
+    if k == ast.N_STR():
+        ok = 1
+    if k == ast.N_REAL():
+        ok = 1
+    if k == ast.N_PARAM():
+        ok = 1
+    if ok == 0:
+        return 0
+    return eval.eval(ar, n, cx)
+
+# Materialise exactly the rows named by `rowids`, in rowid order.
+def scan_table_rowids(d: Int, ti: Int, rowids: Int) -> Int:
+    p := db_pager(d)
+    sc := db_schema(d)
+    root := schema.sc_root(sc, ti)
+    ipk := schema.sc_ipk(sc, ti)
+    ncols := schema.sc_ncols(sc, ti)
+    out := mem.iv_new(8)
+    sorted := mem.iv_new(mem.iv_len(rowids) + 1)
+    mut a := 0
+    while a < mem.iv_len(rowids):
+        mem.iv_push(sorted, mem.iv_get(rowids, a))
+        a = a + 1
+    sort_iv(sorted)
+    mut i := 0
+    while i < mem.iv_len(sorted):
+        rid := mem.iv_get(sorted, i)
+        pay := btwrite.find_row(p, root, rid)
+        if pay != 0:
+            vv := record.decode(mem.vec_data(pay), 0, mem.vec_len(pay))
+            mut j := value.vv_len(vv)
+            while j < ncols:
+                value.vv_push(vv, value.v_null())
+                j = j + 1
+            if ipk >= 0:
+                value.v_free(value.vv_get(vv, ipk))
+                value.vv_set(vv, ipk, value.v_from_int(rid))
+            row := buf_alloc(16)
+            mem.bset64(row, 0, rid)
+            mem.bset64(row, 8, vv)
+            mem.iv_push(out, row)
+            mem.vec_free(pay)
+        i = i + 1
+    mem.iv_free(sorted)
+    return out
+
+# Insertion sort; index result sets are small by construction.
+def sort_iv(h: Int):
+    n := mem.iv_len(h)
+    mut i := 1
+    while i < n:
+        v := mem.iv_get(h, i)
+        mut j := i - 1
+        mut go := 1
+        while go == 1:
+            if j < 0:
+                go = 0
+            elif mem.iv_get(h, j) > v:
+                mem.iv_set(h, j + 1, mem.iv_get(h, j))
+                j = j - 1
+            else:
+                go = 0
+        mem.iv_set(h, j + 1, v)
+        i = i + 1
+
 def row_rowid(row: Int) -> Int:
     return mem.bget64(row, 0)
 
@@ -698,12 +1236,19 @@ def free_rows(rows: Int):
 # ════════════════════ SELECT ════════════════════
 
 def do_select(d: Int, st: Int, ar: Int, params: Int) -> Int:
+    return do_select_in(d, st, ar, params, 0)
+
+# `outer` is the enclosing query's context (0 at the top level). Columns that
+# are not found locally resolve against it, which is what makes a correlated
+# subquery see the outer row.
+def do_select_in(d: Int, st: Int, ar: Int, params: Int, outer: Int) -> Int:
     sc := db_schema(d)
     froms := parser.st_from(st)
     nf := strbuf.sv_len(froms)
 
     cx := eval.cx_new()
     eval.cx_set_db(cx, d)
+    eval.cx_set_outer(cx, outer)
     bind_params(cx, params)
 
     # No FROM: evaluate the result expressions once.
@@ -738,12 +1283,29 @@ def do_select(d: Int, st: Int, ar: Int, params: Int) -> Int:
         mem.iv_push(tidx, ti)
         fi = fi + 1
 
-    # Materialise each table.
+    # Materialise each table. A single-table query whose WHERE pins the rowid
+    # seeks straight to that row instead of scanning.
     tables := mem.iv_new(4)
+    mut probe := 0 - 1
+    mut rowids := 0
+    if nf == 1:
+        probe = rowid_probe(ar, parser.st_where(st), sc, mem.iv_get(tidx, 0), cx)
+        if probe < 0:
+            rowids = index_probe(d, ar, parser.st_where(st), sc, mem.iv_get(tidx, 0), cx)
     mut ti2 := 0
     while ti2 < nf:
-        mem.iv_push(tables, scan_table(d, mem.iv_get(tidx, ti2)))
+        if ti2 == 0:
+            if probe >= 0:
+                mem.iv_push(tables, scan_table_rowid(d, mem.iv_get(tidx, 0), probe))
+            elif rowids != 0:
+                mem.iv_push(tables, scan_table_rowids(d, mem.iv_get(tidx, 0), rowids))
+            else:
+                mem.iv_push(tables, scan_table(d, mem.iv_get(tidx, ti2)))
+        else:
+            mem.iv_push(tables, scan_table(d, mem.iv_get(tidx, ti2)))
         ti2 = ti2 + 1
+    if rowids != 0:
+        mem.iv_free(rowids)
 
     # Column layout for the joined row.
     setup_context(cx, sc, tidx, froms, parser.st_from_alias(st))
@@ -790,7 +1352,7 @@ def do_select(d: Int, st: Int, ar: Int, params: Int) -> Int:
     # compound SELECT (UNION / UNION ALL / EXCEPT / INTERSECT)
     nxt := parser.st_compound(st)
     if nxt != 0:
-        r2 := do_select(d, nxt, ar, params)
+        r2 := do_select_in(d, nxt, ar, params, outer)
         combine(r, r2, parser.st_compound_op(st))
         rowset.rs_free(r2)
 
@@ -1803,7 +2365,7 @@ def run_subselect(d: Int, sub: Int, ar: Int, outer: Int) -> Int:
     mut params := 0
     if outer != 0:
         params = eval.cx_params(outer)
-    return do_select(d, sub, ar, params)
+    return do_select_in(d, sub, ar, params, outer)
 
 # (SELECT ...) used as a value: first column of the first row, else NULL.
 def subquery_scalar(d: Int, sub: Int, ar: Int, outer: Int) -> Int:
@@ -1982,7 +2544,9 @@ def do_update(d: Int, st: Int, ar: Int, params: Int) -> Int:
     eval.cx_free(cx)
     rowset.rs_set_changes(r, changes)
     mem.bset64(d, 48, changes)
-    flush(d)
+    if changes > 0:
+        reindex_table(d, name)
+    autoflush(d)
     return r
 
 def do_delete(d: Int, st: Int, ar: Int, params: Int) -> Int:
@@ -2044,5 +2608,7 @@ def do_delete(d: Int, st: Int, ar: Int, params: Int) -> Int:
     eval.cx_free(cx)
     rowset.rs_set_changes(r, changes)
     mem.bset64(d, 48, changes)
-    flush(d)
+    if changes > 0:
+        reindex_table(d, name)
+    autoflush(d)
     return r

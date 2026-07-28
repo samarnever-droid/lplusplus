@@ -340,6 +340,151 @@ CASES = [
     ("where with function",
      "CREATE TABLE t(s TEXT); INSERT INTO t VALUES ('Apple'),('banana');",
      "SELECT s FROM t WHERE lower(s) LIKE 'a%';"),
+    # --- correlated subqueries (outer-row scope) ---
+    ("correlated scalar subquery",
+     "CREATE TABLE emp(id INTEGER, dept TEXT, sal INTEGER);"
+     "INSERT INTO emp VALUES (1,'a',100),(2,'a',300),(3,'b',200),(4,'b',50);",
+     "SELECT id FROM emp e WHERE sal > (SELECT AVG(sal) FROM emp x WHERE x.dept = e.dept) ORDER BY id;"),
+    ("correlated exists",
+     "CREATE TABLE emp(id INTEGER, dept TEXT, sal INTEGER);"
+     "INSERT INTO emp VALUES (1,'a',100),(2,'a',300),(3,'b',200),(4,'b',50);",
+     "SELECT id FROM emp e WHERE EXISTS (SELECT 1 FROM emp x WHERE x.dept=e.dept AND x.sal>e.sal) ORDER BY id;"),
+    ("correlated not exists",
+     "CREATE TABLE emp(id INTEGER, dept TEXT, sal INTEGER);"
+     "INSERT INTO emp VALUES (1,'a',100),(2,'a',300),(3,'b',200),(4,'b',50);",
+     "SELECT id FROM emp e WHERE NOT EXISTS (SELECT 1 FROM emp x WHERE x.dept=e.dept AND x.sal>e.sal) ORDER BY id;"),
+    ("correlated in select list",
+     "CREATE TABLE emp(id INTEGER, dept TEXT, sal INTEGER);"
+     "INSERT INTO emp VALUES (1,'a',100),(2,'a',300),(3,'b',200),(4,'b',50);",
+     "SELECT id, (SELECT MAX(sal) FROM emp x WHERE x.dept = e.dept) FROM emp e ORDER BY id;"),
+    ("correlated in",
+     "CREATE TABLE a(x INTEGER); CREATE TABLE b(y INTEGER, z INTEGER);"
+     "INSERT INTO a VALUES (1),(2),(3); INSERT INTO b VALUES (1,10),(3,30);",
+     "SELECT x FROM a WHERE x IN (SELECT y FROM b WHERE b.y = a.x) ORDER BY x;"),
+
+    # --- rowid fast path must agree with a full scan ---
+    ("rowid equality",
+     "CREATE TABLE t(id INTEGER PRIMARY KEY, s TEXT);"
+     "INSERT INTO t VALUES (1,'a'),(2,'b'),(3,'c');",
+     "SELECT s FROM t WHERE id = 2;"),
+    ("rowid keyword equality",
+     "CREATE TABLE t(id INTEGER PRIMARY KEY, s TEXT);"
+     "INSERT INTO t VALUES (1,'a'),(2,'b'),(3,'c');",
+     "SELECT s FROM t WHERE rowid = 3;"),
+    ("rowid miss",
+     "CREATE TABLE t(id INTEGER PRIMARY KEY, s TEXT); INSERT INTO t VALUES (1,'a');",
+     "SELECT COUNT(*) FROM t WHERE id = 99;"),
+    ("rowid with extra predicate",
+     "CREATE TABLE t(id INTEGER PRIMARY KEY, s TEXT, n INTEGER);"
+     "INSERT INTO t VALUES (1,'a',5),(2,'b',6);",
+     "SELECT s FROM t WHERE id = 2 AND n > 5;"),
+    ("rowid predicate that excludes",
+     "CREATE TABLE t(id INTEGER PRIMARY KEY, s TEXT, n INTEGER);"
+     "INSERT INTO t VALUES (1,'a',5),(2,'b',6);",
+     "SELECT COUNT(*) FROM t WHERE id = 2 AND n > 99;"),
+    ("rowid or is not a fast path",
+     "CREATE TABLE t(id INTEGER PRIMARY KEY, s TEXT);"
+     "INSERT INTO t VALUES (1,'a'),(2,'b'),(3,'c');",
+     "SELECT s FROM t WHERE id = 1 OR id = 3 ORDER BY id;"),
+    ("non-key equality still scans",
+     "CREATE TABLE t(id INTEGER PRIMARY KEY, n INTEGER);"
+     "INSERT INTO t VALUES (1,5),(2,5),(3,7);",
+     "SELECT COUNT(*) FROM t WHERE n = 5;"),
+
+    # --- transactions ---
+    ("commit persists",
+     "CREATE TABLE t(a INTEGER); INSERT INTO t VALUES (1);"
+     "BEGIN; INSERT INTO t VALUES (2),(3); COMMIT;",
+     "SELECT a FROM t ORDER BY a;"),
+    ("rollback undoes inserts",
+     "CREATE TABLE t(a INTEGER); INSERT INTO t VALUES (1);"
+     "BEGIN; INSERT INTO t VALUES (2),(3); ROLLBACK;",
+     "SELECT a FROM t ORDER BY a;"),
+    ("rollback undoes update",
+     "CREATE TABLE t(a INTEGER); INSERT INTO t VALUES (1),(2);"
+     "BEGIN; UPDATE t SET a = 99; ROLLBACK;",
+     "SELECT a FROM t ORDER BY a;"),
+    ("rollback undoes delete",
+     "CREATE TABLE t(a INTEGER); INSERT INTO t VALUES (1),(2),(3);"
+     "BEGIN; DELETE FROM t; ROLLBACK;",
+     "SELECT COUNT(*) FROM t;"),
+
+    # --- secondary indexes ---
+    ("index equality lookup",
+     "CREATE TABLE t(id INTEGER PRIMARY KEY, name TEXT);"
+     "INSERT INTO t VALUES (1,'ada'),(2,'bob'),(3,'cy');"
+     "CREATE INDEX ix ON t(name);",
+     "SELECT id FROM t WHERE name = 'bob';"),
+    ("index miss",
+     "CREATE TABLE t(id INTEGER PRIMARY KEY, name TEXT);"
+     "INSERT INTO t VALUES (1,'ada'); CREATE INDEX ix ON t(name);",
+     "SELECT COUNT(*) FROM t WHERE name = 'zzz';"),
+    ("index duplicate keys",
+     "CREATE TABLE t(id INTEGER PRIMARY KEY, k TEXT);"
+     "INSERT INTO t VALUES (1,'a'),(2,'a'),(3,'b');"
+     "CREATE INDEX ix ON t(k);",
+     "SELECT id FROM t WHERE k = 'a' ORDER BY id;"),
+    ("index on integer column",
+     "CREATE TABLE t(id INTEGER PRIMARY KEY, n INTEGER);"
+     "INSERT INTO t VALUES (1,10),(2,20),(3,10);"
+     "CREATE INDEX ix ON t(n);",
+     "SELECT id FROM t WHERE n = 10 ORDER BY id;"),
+    ("index plus extra predicate",
+     "CREATE TABLE t(id INTEGER PRIMARY KEY, k TEXT, n INTEGER);"
+     "INSERT INTO t VALUES (1,'a',5),(2,'a',9),(3,'b',5);"
+     "CREATE INDEX ix ON t(k);",
+     "SELECT id FROM t WHERE k = 'a' AND n > 6;"),
+    ("index maintained after insert",
+     "CREATE TABLE t(id INTEGER PRIMARY KEY, k TEXT);"
+     "INSERT INTO t VALUES (1,'a'); CREATE INDEX ix ON t(k);"
+     "INSERT INTO t VALUES (2,'b'),(3,'a');",
+     "SELECT id FROM t WHERE k = 'a' ORDER BY id;"),
+    ("index maintained after update",
+     "CREATE TABLE t(id INTEGER PRIMARY KEY, k TEXT);"
+     "INSERT INTO t VALUES (1,'a'),(2,'b'); CREATE INDEX ix ON t(k);"
+     "UPDATE t SET k = 'c' WHERE id = 1;",
+     "SELECT id FROM t WHERE k = 'c';"),
+    ("index maintained after update - old key gone",
+     "CREATE TABLE t(id INTEGER PRIMARY KEY, k TEXT);"
+     "INSERT INTO t VALUES (1,'a'),(2,'b'); CREATE INDEX ix ON t(k);"
+     "UPDATE t SET k = 'c' WHERE id = 1;",
+     "SELECT COUNT(*) FROM t WHERE k = 'a';"),
+    ("index maintained after delete",
+     "CREATE TABLE t(id INTEGER PRIMARY KEY, k TEXT);"
+     "INSERT INTO t VALUES (1,'a'),(2,'b'); CREATE INDEX ix ON t(k);"
+     "DELETE FROM t WHERE id = 1;",
+     "SELECT COUNT(*) FROM t WHERE k = 'a';"),
+    ("drop index then query",
+     "CREATE TABLE t(id INTEGER PRIMARY KEY, k TEXT);"
+     "INSERT INTO t VALUES (1,'a'),(2,'b'); CREATE INDEX ix ON t(k);"
+     "DROP INDEX ix;",
+     "SELECT id FROM t WHERE k = 'b';"),
+    ("multi column index leading col",
+     "CREATE TABLE t(id INTEGER PRIMARY KEY, a TEXT, b INTEGER);"
+     "INSERT INTO t VALUES (1,'x',1),(2,'x',2),(3,'y',3);"
+     "CREATE INDEX ix ON t(a,b);",
+     "SELECT id FROM t WHERE a = 'x' ORDER BY id;"),
+    ("index with null values",
+     "CREATE TABLE t(id INTEGER PRIMARY KEY, k TEXT);"
+     "INSERT INTO t VALUES (1,'a'),(2,NULL),(3,'a');"
+     "CREATE INDEX ix ON t(k);",
+     "SELECT id FROM t WHERE k = 'a' ORDER BY id;"),
+    ("index rollback",
+     "CREATE TABLE t(id INTEGER PRIMARY KEY, k TEXT);"
+     "INSERT INTO t VALUES (1,'a'); CREATE INDEX ix ON t(k);"
+     "BEGIN; INSERT INTO t VALUES (2,'a'); ROLLBACK;",
+     "SELECT id FROM t WHERE k = 'a' ORDER BY id;"),
+    ("large index multi page",
+     "CREATE TABLE t(id INTEGER PRIMARY KEY, k TEXT);" +
+     "INSERT INTO t VALUES " + ",".join(f"({i},'key{i:05d}')" for i in range(1, 801)) + ";"
+     "CREATE INDEX ix ON t(k);",
+     "SELECT id FROM t WHERE k = 'key00400';"),
+    ("large index boundary keys",
+     "CREATE TABLE t(id INTEGER PRIMARY KEY, k TEXT);" +
+     "INSERT INTO t VALUES " + ",".join(f"({i},'key{i:05d}')" for i in range(1, 801)) + ";"
+     "CREATE INDEX ix ON t(k);",
+     "SELECT id FROM t WHERE k = 'key00001' OR k = 'key00800' ORDER BY id;"),
+
     ("aggregate over join with where",
      "CREATE TABLE a(id INTEGER, n TEXT); CREATE TABLE b(aid INTEGER, v INTEGER);"
      "INSERT INTO a VALUES (1,'x'),(2,'y'); INSERT INTO b VALUES (1,10),(1,20),(2,30);",
