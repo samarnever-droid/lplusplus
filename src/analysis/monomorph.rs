@@ -5,6 +5,16 @@ pub struct Monomorphizer {
     specialized_funcs: HashMap<String, Function>,
     specialized_structs: HashMap<String, StructDef>,
     instantiated_keys: HashSet<String>,
+    /// Types of locals in the function currently being walked. Without this a
+    /// call like `f := 1.5; identity(f)` cannot see that the argument is a
+    /// Float and silently falls back to Int, producing a wrongly specialised
+    /// copy (and a confusing type error at the use site).
+    locals: HashMap<String, Type>,
+    /// Every struct name in the program, so a constructor call like `Dog(3)`
+    /// is typed as `Dog` and can be matched against a trait bound.
+    struct_names: HashSet<String>,
+    /// Unsatisfied trait bounds discovered while instantiating.
+    bound_errors: Vec<String>,
 }
 
 impl Monomorphizer {
@@ -13,6 +23,9 @@ impl Monomorphizer {
             specialized_funcs: HashMap::new(),
             specialized_structs: HashMap::new(),
             instantiated_keys: HashSet::new(),
+            locals: HashMap::new(),
+            struct_names: HashSet::new(),
+            bound_errors: Vec::new(),
         }
     }
 
@@ -25,6 +38,11 @@ impl Monomorphizer {
     fn run(&mut self, program: &mut Program) -> Result<(), String> {
         let mut generic_funcs: HashMap<String, Function> = HashMap::new();
         let mut generic_structs: HashMap<String, StructDef> = HashMap::new();
+        for decl in &program.declarations {
+            if let TopLevel::Struct(s) = decl {
+                self.struct_names.insert(s.name.clone());
+            }
+        }
 
         for decl in &program.declarations {
             if let TopLevel::Function(func) = decl {
@@ -56,6 +74,10 @@ impl Monomorphizer {
         // Walk function bodies to discover and rewrite generic call/struct sites
         for decl in &mut program.declarations {
             if let TopLevel::Function(func) = decl {
+                self.locals.clear();
+                for p in &func.params {
+                    self.locals.insert(p.name.clone(), p.ty.clone());
+                }
                 self.walk_statements(&mut func.body, &generic_funcs, &generic_structs, &trait_impls);
             } else if let TopLevel::Impl(impl_block) = decl {
                 for method in &mut impl_block.methods {
@@ -64,12 +86,57 @@ impl Monomorphizer {
             }
         }
 
+        // Specialised bodies can themselves contain generic calls
+        // (`def twice[T](x: T): return identity(x)`), so keep resolving until
+        // no new instantiations appear. Without this the nested call still
+        // names the template, which no longer exists after pruning.
+        let mut guard = 0;
+        loop {
+            guard += 1;
+            if guard > 16 {
+                break;
+            }
+            let pending: Vec<String> = self.specialized_funcs.keys().cloned().collect();
+            let before = self.instantiated_keys.len();
+            for key in pending {
+                if let Some(mut f) = self.specialized_funcs.remove(&key) {
+                    let saved = std::mem::take(&mut self.locals);
+                    for p in &f.params {
+                        self.locals.insert(p.name.clone(), p.ty.clone());
+                    }
+                    self.walk_statements(
+                        &mut f.body, &generic_funcs, &generic_structs, &trait_impls,
+                    );
+                    self.locals = saved;
+                    self.specialized_funcs.insert(key, f);
+                }
+            }
+            if self.instantiated_keys.len() == before {
+                break;
+            }
+        }
+
+        // Drop the generic templates. They are not compilable on their own -
+        // a body like `return b.value` where `b: Box[T]` still mentions the
+        // unbound parameter, so the type checker rejects it with
+        // "Cannot access field 'value' on non-struct type Generic(Box,[T])".
+        // Only the specialised copies below are real code.
+        program.declarations.retain(|decl| match decl {
+            TopLevel::Function(f) => f.type_params.is_empty(),
+            TopLevel::Struct(s) => s.type_params.is_empty(),
+            _ => true,
+        });
+
         // Append generated monomorphized functions & structs to top-level declarations
         for (_, func) in self.specialized_funcs.drain() {
             program.declarations.push(TopLevel::Function(func));
         }
         for (_, struct_def) in self.specialized_structs.drain() {
             program.declarations.push(TopLevel::Struct(struct_def));
+        }
+
+        if let Some(first) = self.bound_errors.first() {
+            return Err(first.clone());
         }
 
         Ok(())
@@ -84,8 +151,10 @@ impl Monomorphizer {
     ) {
         for stmt in stmts {
             match stmt {
-                Stmt::LetInferred { value, .. } => {
+                Stmt::LetInferred { name, value, .. } => {
                     self.walk_expr(value, generic_funcs, generic_structs, trait_impls);
+                    let ty = self.infer_expr_type(value, generic_structs);
+                    self.locals.insert(name.clone(), ty);
                 }
                 Stmt::Assign { value, .. } => {
                     self.walk_expr(value, generic_funcs, generic_structs, trait_impls);
@@ -139,19 +208,21 @@ impl Monomorphizer {
                     if let Some(tmpl) = generic_funcs.get(name) {
                         let mut subst_map = HashMap::new();
 
-                        // Infer type parameter bindings from argument types
+                        // Infer type parameter bindings by unifying each
+                        // declared parameter type against the argument's type.
+                        // Structural unification is what lets `Box[T]` bind
+                        // T from a `Box__Int` argument; matching only bare
+                        // `Type::Custom("T")` misses every nested position.
+                        let tp_names: HashSet<String> =
+                            tmpl.type_params.iter().map(|tp| tp.name.clone()).collect();
                         for (i, param) in tmpl.params.iter().enumerate() {
                             if i < args.len() {
-                                if let Type::Custom(ref tp_name) = param.ty {
-                                    if tmpl.type_params.iter().any(|tp| &tp.name == tp_name) {
-                                        let arg_ty = infer_simple_expr_type(&args[i]);
-                                        subst_map.insert(tp_name.clone(), arg_ty);
-                                    }
-                                }
+                                let arg_ty = self.infer_expr_type(&args[i], generic_structs);
+                                unify_type(&param.ty, &arg_ty, &tp_names, &mut subst_map);
                             }
                         }
 
-                        if !subst_map.is_empty() {
+                        if !subst_map.is_empty() && bindings_are_concrete(&subst_map) {
                             // Check trait bounds before monomorphizing
                             for tp in &tmpl.type_params {
                                 if let Some(ref bound) = tp.bound {
@@ -161,7 +232,15 @@ impl Monomorphizer {
                                             .get(&concrete_name)
                                             .map_or(false, |impls| impls.contains(bound));
                                         if !has_impl {
-                                            // Skip this instantiation — bound not satisfied
+                                            // Record the violation. Silently
+                                            // skipping leaves the call naming a
+                                            // template that gets pruned, which
+                                            // surfaces as a confusing
+                                            // "Undeclared identifier" later.
+                                            self.bound_errors.push(format!(
+                                                "type '{}' does not implement trait '{}' required by generic parameter '{}' of '{}'",
+                                                concrete_name, bound, tp.name, name
+                                            ));
                                             return;
                                         }
                                     }
@@ -179,11 +258,26 @@ impl Monomorphizer {
                                 specialized.name = mangled_name.clone();
                                 specialized.type_params.clear();
 
-                                // Substitute params & return type
+                                // Substitute params & return type. A generic
+                                // struct used as a parameter (e.g. `Box[T]`)
+                                // also has to be instantiated and renamed to
+                                // its specialised form, otherwise the type
+                                // checker sees `Generic("Box",[TypeParam T])`
+                                // and rejects every field access on it.
+                                let mut pending: Vec<(String, HashMap<String, Type>)> = Vec::new();
                                 for p in &mut specialized.params {
                                     substitute_ast_type(&mut p.ty, &subst_map);
+                                    concretize_generic_struct(
+                                        &mut p.ty, generic_structs, &mut pending,
+                                    );
                                 }
                                 substitute_ast_type(&mut specialized.return_type, &subst_map);
+                                concretize_generic_struct(
+                                    &mut specialized.return_type, generic_structs, &mut pending,
+                                );
+                                for (sname, smap) in pending {
+                                    self.instantiate_struct(&sname, &smap, generic_structs);
+                                }
 
                                 // Substitute statements body
                                 self.substitute_stmts(&mut specialized.body, &subst_map);
@@ -196,18 +290,18 @@ impl Monomorphizer {
                     } else if let Some(tmpl) = generic_structs.get(name) {
                         // Struct constructor call: e.g. Box(42)
                         let mut subst_map = HashMap::new();
+                        let tp_names: HashSet<String> =
+                            tmpl.type_params.iter().map(|tp| tp.name.clone()).collect();
                         for (i, field) in tmpl.fields.iter().enumerate() {
                             if i < args.len() {
-                                if let Type::Custom(ref tp_name) = field.ty {
-                                    if tmpl.type_params.iter().any(|tp| &tp.name == tp_name) {
-                                        let arg_ty = infer_simple_expr_type(&args[i]);
-                                        subst_map.insert(tp_name.clone(), arg_ty);
-                                    }
-                                }
+                                let arg_ty = self.infer_expr_type(&args[i], generic_structs);
+                                unify_type(&field.ty, &arg_ty, &tp_names, &mut subst_map);
                             }
                         }
 
-                        if !subst_map.is_empty() {
+                        // Refuse to specialise on a binding that is itself a
+                        // type parameter (produces nonsense like `Box__T`).
+                        if !subst_map.is_empty() && bindings_are_concrete(&subst_map) {
                             let tp_names: Vec<String> = tmpl.type_params.iter().map(|tp| tp.name.clone()).collect();
                             let mangled_name = format!("{}__{}",  name, mangle_types(&subst_map, &tp_names));
                             let key = mangled_name.clone();
@@ -247,6 +341,70 @@ impl Monomorphizer {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Create the specialised copy of a generic struct if it does not exist.
+    fn instantiate_struct(
+        &mut self,
+        name: &str,
+        subst_map: &HashMap<String, Type>,
+        generic_structs: &HashMap<String, StructDef>,
+    ) {
+        let tmpl = match generic_structs.get(name) {
+            Some(t) => t.clone(),
+            None => return,
+        };
+        let tp_names: Vec<String> = tmpl.type_params.iter().map(|tp| tp.name.clone()).collect();
+        let mangled = format!("{}__{}", name, mangle_types(subst_map, &tp_names));
+        if self.instantiated_keys.contains(&mangled) {
+            return;
+        }
+        self.instantiated_keys.insert(mangled.clone());
+        let mut specialized = tmpl;
+        specialized.name = mangled.clone();
+        specialized.type_params.clear();
+        for f in &mut specialized.fields {
+            substitute_ast_type(&mut f.ty, subst_map);
+        }
+        self.specialized_structs.insert(mangled, specialized);
+    }
+
+    /// Best-effort type of an expression, using literals, known locals and
+    /// specialised struct constructors.
+    fn infer_expr_type(&self, expr: &Expr, generic_structs: &HashMap<String, StructDef>) -> Type {
+        match expr {
+            Expr::IntLiteral(_) => Type::Int,
+            Expr::FloatLiteral(_) => Type::Float,
+            Expr::StringLiteral(_) => Type::String,
+            Expr::CharLiteral(_) => Type::Char,
+            Expr::BoolLiteral(_) => Type::Bool,
+            Expr::Identifier(name, _) => self
+                .locals
+                .get(name)
+                .cloned()
+                .unwrap_or(Type::Int),
+            Expr::Call { callee, .. } => {
+                if let Expr::Identifier(ref name, _) = **callee {
+                    // A rewritten constructor call (`Box__Int(...)`) names the
+                    // specialised struct directly.
+                    if self.specialized_structs.contains_key(name) {
+                        return Type::Custom(name.clone());
+                    }
+                    if self.struct_names.contains(name) {
+                        return Type::Custom(name.clone());
+                    }
+                    if generic_structs.contains_key(name) {
+                        return Type::Custom(name.clone());
+                    }
+                    if let Some(f) = self.specialized_funcs.get(name) {
+                        return f.return_type.clone();
+                    }
+                }
+                Type::Int
+            }
+            Expr::BinaryOp { left, .. } => self.infer_expr_type(left, generic_structs),
+            _ => Type::Int,
         }
     }
 
@@ -314,6 +472,89 @@ impl Monomorphizer {
                 }
             }
             _ => {}
+        }
+    }
+}
+
+/// True when no binding is still an unresolved single-letter type parameter.
+/// Specialising on `T` would emit `Box__T`, which the type checker rejects.
+fn bindings_are_concrete(map: &HashMap<String, Type>) -> bool {
+    map.values().all(|t| match t {
+        Type::Custom(n) => !(n.len() == 1 && n.chars().all(|c| c.is_ascii_uppercase())),
+        _ => true,
+    })
+}
+
+/// Bind type parameters by structurally matching a declared type against a
+/// concrete one.
+///
+///   declared `T`            vs `Int`        -> T = Int
+///   declared `Box[T]`       vs `Box__Int`   -> T = Int   (via the mangled name)
+///   declared `Pair[A, B]`   vs `Pair__Int_Str` -> A = Int, B = Str
+fn unify_type(
+    declared: &Type,
+    concrete: &Type,
+    tp_names: &HashSet<String>,
+    out: &mut HashMap<String, Type>,
+) {
+    match declared {
+        Type::Custom(name) => {
+            if tp_names.contains(name) {
+                out.entry(name.clone()).or_insert_with(|| concrete.clone());
+            }
+        }
+        Type::Generic(_base, args) => {
+            // The argument arrives already specialised, e.g. `Box__Int`, so
+            // recover the type arguments from the mangled suffix.
+            if let Type::Custom(cname) = concrete {
+                if let Some((_, suffix)) = cname.split_once("__") {
+                    let parts: Vec<&str> = suffix.split('_').collect();
+                    for (i, arg) in args.iter().enumerate() {
+                        if let Some(part) = parts.get(i) {
+                            unify_type(arg, &name_to_type(part), tp_names, out);
+                        }
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Inverse of `type_to_name` for the primitive labels used in mangling.
+fn name_to_type(name: &str) -> Type {
+    match name {
+        "Int" => Type::Int,
+        "Float" => Type::Float,
+        "Str" => Type::String,
+        "Char" => Type::Char,
+        "Bool" => Type::Bool,
+        "Void" => Type::Void,
+        other => Type::Custom(other.to_string()),
+    }
+}
+
+/// Rewrite a fully-concrete generic struct type (`Box[Int]`) into its
+/// specialised nominal form (`Box__Int`), recording the instantiation needed.
+fn concretize_generic_struct(
+    ty: &mut Type,
+    generic_structs: &HashMap<String, StructDef>,
+    pending: &mut Vec<(String, HashMap<String, Type>)>,
+) {
+    if let Type::Generic(base, args) = ty.clone() {
+        if let Some(tmpl) = generic_structs.get(&base) {
+            // Only rewrite once every argument is concrete.
+            if args.iter().all(|a| !matches!(a, Type::Custom(n) if n.len() == 1)) {
+                let mut map = HashMap::new();
+                for (tp, arg) in tmpl.type_params.iter().zip(args.iter()) {
+                    map.insert(tp.name.clone(), arg.clone());
+                }
+                let tp_names: Vec<String> =
+                    tmpl.type_params.iter().map(|tp| tp.name.clone()).collect();
+                let mangled = format!("{}__{}", base, mangle_types(&map, &tp_names));
+                pending.push((base.clone(), map));
+                *ty = Type::Custom(mangled);
+            }
         }
     }
 }
@@ -430,6 +671,165 @@ mod tests {
     }
 
     #[test]
+    fn unifies_generic_struct_parameter() {
+        // `Box[T]` as a parameter type must bind T and be rewritten to the
+        // specialised struct; matching only bare `Custom("T")` missed this.
+        let tp = |n: &str| TypeParam { name: n.to_string(), bound: None };
+        let mut program = Program {
+            declarations: vec![
+                TopLevel::Struct(StructDef {
+                    name: "Box".to_string(),
+                    type_params: vec![tp("T")],
+                    fields: vec![Param { name: "value".to_string(), ty: Type::Custom("T".to_string()), default: None }],
+                }),
+                TopLevel::Function(Function {
+                    name: "unwrap".to_string(),
+                    type_params: vec![tp("T")],
+                    params: vec![Param {
+                        name: "b".to_string(),
+                        ty: Type::Generic("Box".to_string(), vec![Type::Custom("T".to_string())]),
+                        default: None,
+                    }],
+                    return_type: Type::Custom("T".to_string()),
+                    body: vec![],
+                }),
+                TopLevel::Function(Function {
+                    name: "main".to_string(),
+                    type_params: vec![],
+                    params: vec![],
+                    return_type: Type::Void,
+                    body: vec![
+                        Stmt::LetInferred {
+                            name: "b".to_string(),
+                            value: Expr::Call {
+                                callee: Box::new(Expr::Identifier("Box".to_string(), std::cell::Cell::new(None))),
+                                args: vec![Expr::IntLiteral(42)],
+                            },
+                            binding_id: std::cell::Cell::new(None),
+                            is_mut: false,
+                        },
+                        Stmt::Expr(Expr::Call {
+                            callee: Box::new(Expr::Identifier("unwrap".to_string(), std::cell::Cell::new(None))),
+                            args: vec![Expr::Identifier("b".to_string(), std::cell::Cell::new(None))],
+                        }),
+                    ],
+                }),
+            ],
+        };
+
+        Monomorphizer::process_program(&mut program).expect("should monomorphize");
+
+        let fns: Vec<String> = program.declarations.iter()
+            .filter_map(|d| if let TopLevel::Function(f) = d { Some(f.name.clone()) } else { None })
+            .collect();
+        let structs: Vec<String> = program.declarations.iter()
+            .filter_map(|d| if let TopLevel::Struct(s) = d { Some(s.name.clone()) } else { None })
+            .collect();
+
+        assert!(fns.contains(&"unwrap__Int".to_string()), "fns = {:?}", fns);
+        assert!(structs.contains(&"Box__Int".to_string()), "structs = {:?}", structs);
+        // Templates must be gone: their bodies still mention the unbound `T`.
+        assert!(!fns.contains(&"unwrap".to_string()), "generic template not pruned");
+        assert!(!structs.contains(&"Box".to_string()), "generic struct not pruned");
+
+        // The specialised parameter must be the nominal struct, not Generic.
+        let unwrap_int = program.declarations.iter().find_map(|d| match d {
+            TopLevel::Function(f) if f.name == "unwrap__Int" => Some(f),
+            _ => None,
+        }).unwrap();
+        assert_eq!(unwrap_int.params[0].ty, Type::Custom("Box__Int".to_string()));
+    }
+
+    #[test]
+    fn infers_from_local_variable_type() {
+        // `f := 1.5; identity(f)` must specialise on Float. Previously the
+        // argument was not a literal so inference fell back to Int.
+        let tp = |n: &str| TypeParam { name: n.to_string(), bound: None };
+        let mut program = Program {
+            declarations: vec![
+                TopLevel::Function(Function {
+                    name: "identity".to_string(),
+                    type_params: vec![tp("T")],
+                    params: vec![Param { name: "x".to_string(), ty: Type::Custom("T".to_string()), default: None }],
+                    return_type: Type::Custom("T".to_string()),
+                    body: vec![],
+                }),
+                TopLevel::Function(Function {
+                    name: "main".to_string(),
+                    type_params: vec![],
+                    params: vec![],
+                    return_type: Type::Void,
+                    body: vec![
+                        Stmt::LetInferred {
+                            name: "f".to_string(),
+                            value: Expr::FloatLiteral(1.5),
+                            binding_id: std::cell::Cell::new(None),
+                            is_mut: false,
+                        },
+                        Stmt::Expr(Expr::Call {
+                            callee: Box::new(Expr::Identifier("identity".to_string(), std::cell::Cell::new(None))),
+                            args: vec![Expr::Identifier("f".to_string(), std::cell::Cell::new(None))],
+                        }),
+                    ],
+                }),
+            ],
+        };
+
+        Monomorphizer::process_program(&mut program).expect("should monomorphize");
+        let fns: Vec<String> = program.declarations.iter()
+            .filter_map(|d| if let TopLevel::Function(f) = d { Some(f.name.clone()) } else { None })
+            .collect();
+        assert!(fns.contains(&"identity__Float".to_string()), "fns = {:?}", fns);
+        assert!(!fns.contains(&"identity__Int".to_string()), "wrong specialisation: {:?}", fns);
+    }
+
+    #[test]
+    fn specializes_nested_generic_calls() {
+        // A specialised body may itself call a generic function; that call has
+        // to be resolved too, or it names a template that gets pruned.
+        let tp = |n: &str| TypeParam { name: n.to_string(), bound: None };
+        let mut program = Program {
+            declarations: vec![
+                TopLevel::Function(Function {
+                    name: "identity".to_string(),
+                    type_params: vec![tp("T")],
+                    params: vec![Param { name: "x".to_string(), ty: Type::Custom("T".to_string()), default: None }],
+                    return_type: Type::Custom("T".to_string()),
+                    body: vec![],
+                }),
+                TopLevel::Function(Function {
+                    name: "twice".to_string(),
+                    type_params: vec![tp("T")],
+                    params: vec![Param { name: "x".to_string(), ty: Type::Custom("T".to_string()), default: None }],
+                    return_type: Type::Custom("T".to_string()),
+                    body: vec![Stmt::Return(Some(Expr::Call {
+                        callee: Box::new(Expr::Identifier("identity".to_string(), std::cell::Cell::new(None))),
+                        args: vec![Expr::Identifier("x".to_string(), std::cell::Cell::new(None))],
+                    }))],
+                }),
+                TopLevel::Function(Function {
+                    name: "main".to_string(),
+                    type_params: vec![],
+                    params: vec![],
+                    return_type: Type::Void,
+                    body: vec![Stmt::Expr(Expr::Call {
+                        callee: Box::new(Expr::Identifier("twice".to_string(), std::cell::Cell::new(None))),
+                        args: vec![Expr::IntLiteral(7)],
+                    })],
+                }),
+            ],
+        };
+
+        Monomorphizer::process_program(&mut program).expect("should monomorphize");
+        let fns: Vec<String> = program.declarations.iter()
+            .filter_map(|d| if let TopLevel::Function(f) = d { Some(f.name.clone()) } else { None })
+            .collect();
+        assert!(fns.contains(&"twice__Int".to_string()), "fns = {:?}", fns);
+        assert!(fns.contains(&"identity__Int".to_string()),
+            "nested generic call was not specialised: {:?}", fns);
+    }
+
+    #[test]
     fn trait_bound_blocks_invalid_instantiation() {
         let mut program = Program {
             declarations: vec![
@@ -467,7 +867,14 @@ mod tests {
             ],
         };
 
-        Monomorphizer::process_program(&mut program).expect("monomorphization should succeed");
+        // An unsatisfied bound is now a hard error rather than a silent skip:
+        // skipping left the call site naming a template that later gets pruned,
+        // which surfaced as a confusing "Undeclared identifier".
+        let result = Monomorphizer::process_program(&mut program);
+        assert!(result.is_err(), "unsatisfied trait bound must be reported");
+        let msg = result.unwrap_err();
+        assert!(msg.contains("Display"), "error should name the trait: {}", msg);
+        assert!(msg.contains("Int"), "error should name the offending type: {}", msg);
 
         let func_names: Vec<String> = program
             .declarations

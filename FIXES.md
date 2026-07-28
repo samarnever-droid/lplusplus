@@ -263,3 +263,97 @@ cd ~/bugs && lpp cm.lpp    --linker host              # duplicate-definition err
 
 Build with `-j1`: the container has 2 GB RAM and parallel cranelift codegen
 gets OOM-killed.
+---
+
+## Monomorphization completion
+
+Generics were only half-implemented: the pass existed and handled the simplest
+case, but four gaps made anything realistic either fail to compile or compile
+to the wrong code. All four are fixed in `src/analysis/monomorph.rs`.
+
+### 1. Generic structs as parameter types were never specialised
+
+```lpp
+struct Box[T]:
+    value: T
+
+def unwrap[T](b: Box[T]) -> T:
+    return b.value          # error[E0004]: Cannot access field 'value'
+                            #   on non-struct type Generic("Box",[TypeParam("T")])
+```
+
+Type-parameter inference only matched a bare `Type::Custom("T")`, so a
+parameter declared `Box[T]` bound nothing. Replaced with structural
+unification (`unify_type`) that recurses into generic arguments and recovers
+bindings from an already-specialised argument's mangled name
+(`Box__Int` -> `T = Int`). A concrete `Box[Int]` in a signature is now rewritten
+to the nominal `Box__Int` and that struct instantiated on demand.
+
+### 2. Arguments that were variables inferred as Int
+
+```lpp
+f := 1.5
+identity(f)     # specialised as identity__Int, not identity__Float
+```
+
+`infer_simple_expr_type` only understood literals and fell back to `Int` for
+everything else — silently producing a wrongly-typed specialisation that
+surfaced later as a confusing error at the *use* site. The pass now tracks
+local variable types (seeded from parameters, updated at each `let`) and also
+recognises struct-constructor calls.
+
+### 3. Generic templates were left in the AST
+
+A template body such as `return b.value` where `b: Box[T]` mentions an unbound
+`T` and is not compilable on its own. Templates are now pruned after
+specialisation, keeping only the concrete copies.
+
+### 4. Nested generic calls in specialised bodies
+
+```lpp
+def twice[T](x: T) -> T:
+    return identity(identity(x))    # identity stayed generic
+```
+
+Specialised bodies are re-walked to a fixed point, so generic calls *inside*
+them are specialised too. Combined with (3) this was essential: previously the
+nested call named a template that no longer existed.
+
+### Bonus: unsatisfied trait bounds are now reported
+
+A violated bound used to `return` silently, leaving the call site naming a
+pruned template — which surfaced as `Undeclared identifier 'make_noise'`. It is
+now a real diagnostic:
+
+```
+error[E0003]: type 'Rock' does not implement trait 'Speak'
+              required by generic parameter 'T' of 'make_noise'
+```
+
+A guard (`bindings_are_concrete`) also prevents specialising on a binding that
+is itself a type parameter, which previously emitted nonsense like `Box__T`.
+
+### Verification
+
+| | |
+|---|---|
+| `cargo test` | 35 pass (3 new monomorphization regression tests) |
+| `tests/aot_parity.tsv` | 25/25, including a new `generics_full.lpp` end-to-end case |
+| `packages/lppsqlite` | 118/118 differential vs real sqlite3 |
+| `packages/compresslpp` | 50 checks + 32 cross-verifications |
+
+`generics_full.lpp` exercises generic functions at Int/Str/Float, generic
+structs, generic structs as parameters, generic functions returning generic
+structs, nested generic calls, and multi-parameter generics (`Pair[A, B]`).
+
+### Still not supported
+
+Explicit turbofish (`identity[Int](x)`) is parsed but not resolved, and there
+are no generic enums, no generic methods inside `impl` blocks, and no generic
+trait implementations. Inference is local: an argument whose type cannot be
+determined from a literal, a tracked local, or a struct constructor still falls
+back to `Int`.
+
+Nesting a generic struct inside itself (`Box(Box(5))`) does work — the
+fixed-point loop resolves it, and is capped at 16 rounds to guarantee
+termination.
