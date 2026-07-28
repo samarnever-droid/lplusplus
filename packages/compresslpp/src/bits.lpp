@@ -1,0 +1,317 @@
+# bits.lpp — LSB-first bit reader/writer and byte vectors for DEFLATE.
+#
+# DEFLATE packs bits into bytes starting at the least-significant bit, but
+# Huffman codes are transmitted most-significant-bit first. Both directions are
+# provided here so the codec never has to think about it again.
+#
+# Every dynamic structure in this package is a raw byte buffer with an explicit
+# handle, because the L++ compiler cannot nest lists, store structs in lists, or
+# return a list created inside a function.
+
+# ── 64-bit accessors ──
+# buf_get32le zero-extends, so composing two halves reproduces the exact i64.
+
+def bset64(b: Int, off: Int, v: Int):
+    buf_set32le(b, off, v & 4294967295)
+    buf_set32le(b, off + 4, (v >> 32) & 4294967295)
+
+def bget64(b: Int, off: Int) -> Int:
+    lo := buf_get32le(b, off)
+    hi := buf_get32le(b, off + 4)
+    return lo | (hi << 32)
+
+# Logical (zero-filling) right shift; L++ `>>` is arithmetic.
+def ushr(v: Int, n: Int) -> Int:
+    if n <= 0:
+        return v
+    if n >= 64:
+        return 0
+    if v >= 0:
+        return v >> n
+    return ((v >> 1) & 9223372036854775807) >> (n - 1)
+
+# ── growable byte vector ──
+# Handle: [0]=data ptr  [8]=len  [16]=cap
+
+def vec_new(cap0: Int) -> Int:
+    mut c := cap0
+    if c < 32:
+        c = 32
+    h := buf_alloc(24)
+    d := buf_alloc(c)
+    bset64(h, 0, d)
+    bset64(h, 8, 0)
+    bset64(h, 16, c)
+    return h
+
+def vec_data(h: Int) -> Int:
+    return bget64(h, 0)
+
+def vec_len(h: Int) -> Int:
+    return bget64(h, 8)
+
+def vec_cap(h: Int) -> Int:
+    return bget64(h, 16)
+
+def vec_set_len(h: Int, n: Int):
+    bset64(h, 8, n)
+
+def vec_free(h: Int):
+    d := vec_data(h)
+    if d != 0:
+        buf_free(d)
+    bset64(h, 0, 0)
+    buf_free(h)
+
+def vec_reserve(h: Int, extra: Int):
+    need := vec_len(h) + extra
+    cap := vec_cap(h)
+    if need <= cap:
+        return
+    mut nc := cap
+    if nc < 32:
+        nc = 32
+    while nc < need:
+        nc = nc * 2
+    nd := buf_alloc(nc)
+    od := vec_data(h)
+    ln := vec_len(h)
+    if ln > 0:
+        buf_copy(nd, 0, od, 0, ln)
+    buf_free(od)
+    bset64(h, 0, nd)
+    bset64(h, 16, nc)
+
+def vec_push(h: Int, byte: Int):
+    vec_reserve(h, 1)
+    n := vec_len(h)
+    buf_set8(vec_data(h), n, byte & 255)
+    vec_set_len(h, n + 1)
+
+def vec_push_bytes(h: Int, src: Int, off: Int, n: Int):
+    if n <= 0:
+        return
+    vec_reserve(h, n)
+    buf_copy(vec_data(h), vec_len(h), src, off, n)
+    vec_set_len(h, vec_len(h) + n)
+
+def vec_push_str(h: Int, s: Str):
+    n := str_len(s)
+    if n <= 0:
+        return
+    vec_reserve(h, n)
+    buf_write_str(vec_data(h), vec_len(h), s)
+    vec_set_len(h, vec_len(h) + n)
+
+def vec_get(h: Int, i: Int) -> Int:
+    return buf_get8(vec_data(h), i)
+
+def vec_set(h: Int, i: Int, v: Int):
+    buf_set8(vec_data(h), i, v & 255)
+
+def vec_clear(h: Int):
+    bset64(h, 8, 0)
+
+# Little-endian scalar writers (ZIP headers are all little-endian).
+def vec_push_u16(h: Int, v: Int):
+    vec_push(h, v & 255)
+    vec_push(h, (v >> 8) & 255)
+
+def vec_push_u32(h: Int, v: Int):
+    vec_push(h, v & 255)
+    vec_push(h, (v >> 8) & 255)
+    vec_push(h, (v >> 16) & 255)
+    vec_push(h, (v >> 24) & 255)
+
+def rd_u16(b: Int, off: Int) -> Int:
+    return buf_get8(b, off) | (buf_get8(b, off + 1) << 8)
+
+def rd_u32(b: Int, off: Int) -> Int:
+    return buf_get8(b, off) | (buf_get8(b, off + 1) << 8) | (buf_get8(b, off + 2) << 16) | (buf_get8(b, off + 3) << 24)
+
+def wr_u16(b: Int, off: Int, v: Int):
+    buf_set8(b, off, v & 255)
+    buf_set8(b, off + 1, (v >> 8) & 255)
+
+def wr_u32(b: Int, off: Int, v: Int):
+    buf_set8(b, off, v & 255)
+    buf_set8(b, off + 1, (v >> 8) & 255)
+    buf_set8(b, off + 2, (v >> 16) & 255)
+    buf_set8(b, off + 3, (v >> 24) & 255)
+
+# Copy exactly `n` bytes into a fresh buffer sized exactly `n`.
+#
+# buf_write persists the WHOLE buffer, so a scratch buffer allocated as
+# `n + 1` silently appends a stray NUL byte to every file written. Archive
+# formats are length-sensitive, so always size the buffer exactly.
+def exact_buf(src: Int, n: Int) -> Int:
+    if n <= 0:
+        return buf_alloc(0)
+    b := buf_alloc(n)
+    buf_copy(b, 0, src, 0, n)
+    return b
+
+# ── bit writer (LSB first) ──
+# Handle: [0]=out vec  [8]=bit accumulator  [16]=bit count
+
+def bw_new() -> Int:
+    h := buf_alloc(24)
+    bset64(h, 0, vec_new(256))
+    bset64(h, 8, 0)
+    bset64(h, 16, 0)
+    return h
+
+def bw_out(h: Int) -> Int:
+    return bget64(h, 0)
+
+def bw_free(h: Int):
+    vec_free(bw_out(h))
+    buf_free(h)
+
+# Free the writer but keep (and return) its output vector.
+def bw_take(h: Int) -> Int:
+    v := bw_out(h)
+    buf_free(h)
+    return v
+
+# Write `n` low bits of `v`, least-significant bit first.
+def bw_bits(h: Int, v: Int, n: Int):
+    mut acc := bget64(h, 8)
+    mut cnt := bget64(h, 16)
+    acc = acc | ((v & ((1 << n) - 1)) << cnt)
+    cnt = cnt + n
+    out := bw_out(h)
+    while cnt >= 8:
+        vec_push(out, acc & 255)
+        acc = acc >> 8
+        cnt = cnt - 8
+    bset64(h, 8, acc)
+    bset64(h, 16, cnt)
+
+# Huffman codes travel most-significant bit first, so reverse before emitting.
+def bw_code(h: Int, code: Int, n: Int):
+    mut r := 0
+    mut i := 0
+    while i < n:
+        r = (r << 1) | ((code >> i) & 1)
+        i = i + 1
+    bw_bits(h, r, n)
+
+def bw_align(h: Int):
+    cnt := bget64(h, 16)
+    if cnt > 0:
+        vec_push(bw_out(h), bget64(h, 8) & 255)
+        bset64(h, 8, 0)
+        bset64(h, 16, 0)
+
+def bw_len(h: Int) -> Int:
+    return vec_len(bw_out(h))
+
+# ── bit reader (LSB first) ──
+# Handle: [0]=data ptr  [8]=size  [16]=byte pos  [24]=bit accumulator
+#         [32]=bit count  [40]=overrun flag
+
+def br_new(data: Int, size: Int) -> Int:
+    h := buf_alloc(48)
+    bset64(h, 0, data)
+    bset64(h, 8, size)
+    bset64(h, 16, 0)
+    bset64(h, 24, 0)
+    bset64(h, 32, 0)
+    bset64(h, 40, 0)
+    return h
+
+def br_free(h: Int):
+    buf_free(h)
+
+def br_overrun(h: Int) -> Int:
+    return bget64(h, 40)
+
+def br_bytepos(h: Int) -> Int:
+    return bget64(h, 16)
+
+# Read `n` bits, LSB first. Sets the overrun flag past end of input.
+def br_bits(h: Int, n: Int) -> Int:
+    mut acc := bget64(h, 24)
+    mut cnt := bget64(h, 32)
+    data := bget64(h, 0)
+    size := bget64(h, 8)
+    mut pos := bget64(h, 16)
+    while cnt < n:
+        mut byte := 0
+        if pos < size:
+            byte = buf_get8(data, pos)
+            pos = pos + 1
+        else:
+            bset64(h, 40, 1)
+            pos = pos + 1
+        acc = acc | (byte << cnt)
+        cnt = cnt + 8
+    r := acc & ((1 << n) - 1)
+    bset64(h, 24, acc >> n)
+    bset64(h, 32, cnt - n)
+    bset64(h, 16, pos)
+    return r
+
+def br_bit(h: Int) -> Int:
+    return br_bits(h, 1)
+
+# Discard buffered bits and resume at the next byte boundary.
+def br_align(h: Int):
+    bset64(h, 24, 0)
+    bset64(h, 32, 0)
+
+# ── int vector (for Huffman tables) ──
+
+def iv_new(cap0: Int) -> Int:
+    mut c := cap0
+    if c < 8:
+        c = 8
+    h := buf_alloc(24)
+    bset64(h, 0, buf_alloc(c * 8))
+    bset64(h, 8, 0)
+    bset64(h, 16, c)
+    return h
+
+def iv_data(h: Int) -> Int:
+    return bget64(h, 0)
+
+def iv_len(h: Int) -> Int:
+    return bget64(h, 8)
+
+def iv_free(h: Int):
+    d := iv_data(h)
+    if d != 0:
+        buf_free(d)
+    bset64(h, 0, 0)
+    buf_free(h)
+
+def iv_push(h: Int, v: Int):
+    n := iv_len(h)
+    cap := bget64(h, 16)
+    if n >= cap:
+        nc := cap * 2
+        nd := buf_alloc(nc * 8)
+        od := iv_data(h)
+        if n > 0:
+            buf_copy(nd, 0, od, 0, n * 8)
+        buf_free(od)
+        bset64(h, 0, nd)
+        bset64(h, 16, nc)
+    bset64(iv_data(h), n * 8, v)
+    bset64(h, 8, n + 1)
+
+def iv_get(h: Int, i: Int) -> Int:
+    return bget64(iv_data(h), i * 8)
+
+def iv_set(h: Int, i: Int, v: Int):
+    bset64(iv_data(h), i * 8, v)
+
+# A fixed-size, zero-filled int array.
+def iv_zeros(n: Int) -> Int:
+    h := iv_new(n + 1)
+    mut i := 0
+    while i < n:
+        iv_push(h, 0)
+        i = i + 1
+    return h

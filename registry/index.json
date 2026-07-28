@@ -433,6 +433,60 @@
         "No views, triggers, window functions, date/time functions, or ALTER TABLE",
         "WITH/ALTER/SAVEPOINT/ATTACH/VACUUM/NATURAL JOIN are rejected with a clear error"
       ]
+    },
+    "compresslpp": {
+      "name": "compresslpp",
+      "version": "1.0.0",
+      "description": "Archive and compression library in pure L++ \u2014 real DEFLATE (RFC 1951), ZIP with ZipCrypto passwords, USTAR tar and gzip, verified against zlib/zipfile/tarfile.",
+      "authors": [
+        "arena-audit"
+      ],
+      "license": "MIT",
+      "repository": "https://github.com/samarnever-droid/lplusplus",
+      "path": "packages/compresslpp",
+      "source": "packages/compresslpp/src/zip.lpp",
+      "dependencies": [],
+      "keywords": [
+        "zip",
+        "tar",
+        "gzip",
+        "deflate",
+        "compression",
+        "archive",
+        "password",
+        "zipcrypto"
+      ],
+      "features": [
+        "Real DEFLATE (RFC 1951): stored, fixed and dynamic Huffman decoding; LZ77 hash-chain encoder",
+        "zlib inflates every stream we write, and we reproduce zlib's output byte-for-byte",
+        "ZIP read/write with STORE and DEFLATE, nested paths and CRC-32 verification",
+        "Password-protected ZIP (ZipCrypto): interoperates with `zip -P` and zipfile.setpassword()",
+        "USTAR tar read/write, validated by python tarfile and GNU tar",
+        "gzip (RFC 1952) read/write, validated by python gzip",
+        "Command-line tool: zip, unzip, list, tar, untar, gzip, gunzip",
+        "50 in-engine checks plus 32 cross-verifications against python and the unzip/tar CLIs"
+      ],
+      "api": {
+        "deflate.deflate": "(data: Int, n: Int, level: Int) -> Int \u2014 compress to a byte vector",
+        "inflate.inflate": "(ptr: Int, size: Int) -> Int \u2014 decompress, 0 on malformed input",
+        "zip.zw_new": "() -> Int \u2014 new archive writer",
+        "zip.zw_add_file": "(z, name, path, level, password) -> Int \u2014 add a file",
+        "zip.zw_save": "(z, path) -> Int \u2014 write the archive",
+        "zip.zr_open": "(path: Str) -> Int \u2014 open an archive, 0 if unreadable",
+        "zip.zr_extract": "(r, i, password) -> Int \u2014 extract entry, 0 on bad password/CRC",
+        "tar.tw_new": "() -> Int \u2014 new tar writer",
+        "tar.tr_open": "(path: Str) -> Int \u2014 open a tar",
+        "gzip.gz_compress": "(data, n, level) -> Int \u2014 gzip member",
+        "gzip.gz_decompress": "(ptr, size) -> Int \u2014 0 on bad header or CRC"
+      },
+      "limitations": [
+        "Encoder emits fixed-Huffman blocks only; output is a few percent larger than zlib",
+        "ZipCrypto is cryptographically weak \u2014 interoperability only, not real confidentiality",
+        "No AES/AE-x encryption, no ZIP64, no bzip2/LZMA/XZ/Zstandard",
+        "Everything is processed in memory; not suitable for files larger than RAM",
+        "TAR long names (>100 bytes) are rejected; symlinks, sparse files and PAX metadata ignored",
+        "Permissions, ownership and timestamps are not preserved"
+      ]
     }
   }
 }

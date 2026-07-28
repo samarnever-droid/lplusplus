@@ -1,0 +1,85 @@
+import bits
+import tar
+
+def say(ok: Int, label: Str):
+    if ok == 1:
+        print_str(str_concat("PASS  ", label))
+    else:
+        print_str(str_concat("FAIL  ", label))
+
+def sayb(ok: Bool, label: Str):
+    if ok:
+        print_str(str_concat("PASS  ", label))
+    else:
+        print_str(str_concat("FAIL  ", label))
+
+def eq_vec_str(v: Int, s: Str) -> Int:
+    if v == 0:
+        return 0
+    n := bits.vec_len(v)
+    if n != str_len(s):
+        return 0
+    d := bits.vec_data(v)
+    mut i := 0
+    while i < n:
+        if buf_get8(d, i) != ord(str_substr(s, i, 1)):
+            return 0
+        i = i + 1
+    return 1
+
+def main():
+    # write a tar for Python/GNU tar to validate
+    t := tar.tw_new()
+    tar.tw_add_str(t, "one.txt", "first member\n")
+    tar.tw_add_str(t, "two.txt", "second member with more text in it\n")
+    tar.tw_add_str(t, "dir/three.txt", "nested member\n")
+    tar.tw_add_str(t, "empty.txt", "")
+    tar.tw_save(t, "out.tar")
+    tar.tw_free(t)
+    say(file_exists("out.tar"), "wrote out.tar")
+
+    # read it back
+    r := tar.tr_open("out.tar")
+    sayb(r != 0, "reopen out.tar")
+    if r != 0:
+        say(tar.tr_count(r) - 3, "4 members")
+        i := tar.tr_find(r, "two.txt")
+        v := tar.tr_extract(r, i)
+        say(eq_vec_str(v, "second member with more text in it\n"), "extract member")
+        if v != 0:
+            bits.vec_free(v)
+        j := tar.tr_find(r, "dir/three.txt")
+        v2 := tar.tr_extract(r, j)
+        say(eq_vec_str(v2, "nested member\n"), "extract nested member")
+        if v2 != 0:
+            bits.vec_free(v2)
+        k := tar.tr_find(r, "empty.txt")
+        v3 := tar.tr_extract(r, k)
+        mut emptyok := 0
+        if v3 != 0:
+            if bits.vec_len(v3) == 0:
+                emptyok = 1
+            bits.vec_free(v3)
+        say(emptyok, "empty member")
+        tar.tr_free(r)
+
+    # read a tar PYTHON wrote
+    p := tar.tr_open("py.tar")
+    sayb(p != 0, "open python tar")
+    if p != 0:
+        say(tar.tr_count(p) - 4, "5 python members")
+        i := tar.tr_find(p, "alpha.txt")
+        v := tar.tr_extract(p, i)
+        say(eq_vec_str(v, "alpha from python\n"), "read python member")
+        if v != 0:
+            bits.vec_free(v)
+        # a larger member spanning several blocks
+        j := tar.tr_find(p, "big.bin")
+        v2 := tar.tr_extract(p, j)
+        mut bigok := 0
+        if v2 != 0:
+            if bits.vec_len(v2) == 4096:
+                bigok = 1
+            bits.vec_free(v2)
+        say(bigok, "read multi-block member (4096 bytes)")
+        tar.tr_free(p)

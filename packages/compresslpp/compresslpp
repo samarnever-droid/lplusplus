@@ -1,0 +1,54 @@
+#!/bin/sh
+# compresslpp — archive tool written in pure L++.
+#
+#   compresslpp zip    ARCHIVE.zip FILE...  [-p PASS] [-0..-9]
+#   compresslpp unzip  ARCHIVE.zip [-d DIR] [-p PASS]
+#   compresslpp list   ARCHIVE.zip
+#   compresslpp tar    ARCHIVE.tar FILE...
+#   compresslpp untar  ARCHIVE.tar [-d DIR]
+#   compresslpp gzip   FILE [-o OUT] [-0..-9]
+#   compresslpp gunzip FILE.gz -o OUT
+#
+# L++ has no OS-level argv, so arguments are passed through the environment.
+
+DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+BIN="$DIR/build/compresslpp"
+
+if [ ! -x "$BIN" ]; then
+    echo "compresslpp: not built; run: $DIR/build.sh" >&2
+    exit 1
+fi
+
+CMD=$1
+[ $# -gt 0 ] && shift
+
+FILE=
+PASS=
+LEVEL=6
+OUT=
+ARGS=
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -p)  PASS=$2; shift 2 ;;
+        -d)  OUT=$2;  shift 2 ;;
+        -o)  OUT=$2;  shift 2 ;;
+        -0|-1|-2|-3|-4|-5|-6|-7|-8|-9)
+             LEVEL=${1#-}; shift ;;
+        *)   if [ -z "$FILE" ]; then
+                 FILE=$1
+             else
+                 ARGS="$ARGS$1
+"
+             fi
+             shift ;;
+    esac
+done
+
+CLPP_CMD="$CMD" \
+CLPP_FILE="$FILE" \
+CLPP_ARGS="$ARGS" \
+CLPP_PASS="$PASS" \
+CLPP_LEVEL="$LEVEL" \
+CLPP_OUT="$OUT" \
+exec "$BIN"

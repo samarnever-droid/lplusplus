@@ -1,0 +1,217 @@
+# main.lpp — compresslpp command-line tool.
+#
+# L++ v4.4.0 exposes no OS-level argv, so the shell wrapper passes arguments
+# through the environment:
+#   CLPP_CMD    zip | unzip | list | tar | untar | gzip | gunzip
+#   CLPP_FILE   archive path
+#   CLPP_ARGS   newline-separated member paths (for create commands)
+#   CLPP_PASS   password (ZipCrypto)
+#   CLPP_LEVEL  0..9 compression level
+#   CLPP_OUT    output directory or file
+
+import bits
+import deflate
+import inflate
+import crypt
+import zip
+import tar
+import gzip
+
+def getenv_or(name: Str, dflt: Str) -> Str:
+    v := env_get(name)
+    if str_len(v) == 0:
+        return dflt
+    return v
+
+def level_of() -> Int:
+    s := getenv_or("CLPP_LEVEL", "6")
+    n := str_to_int(s)
+    if n < 0:
+        return 0
+    if n > 9:
+        return 9
+    return n
+
+# Split CLPP_ARGS on newlines.
+def arg_list() -> Int:
+    raw := env_get("CLPP_ARGS")
+    out := zip.sv_new()
+    n := str_len(raw)
+    mut start := 0
+    mut i := 0
+    while i < n:
+        if ord(str_substr(raw, i, 1)) == 10:
+            if i > start:
+                zip.sv_push(out, str_substr(raw, start, i - start))
+            start = i + 1
+        i = i + 1
+    if n > start:
+        zip.sv_push(out, str_substr(raw, start, n - start))
+    return out
+
+def basename(p: Str) -> Str:
+    n := str_len(p)
+    mut cut := 0
+    mut i := 0
+    while i < n:
+        if ord(str_substr(p, i, 1)) == 47:
+            cut = i + 1
+        i = i + 1
+    return str_substr(p, cut, n - cut)
+
+def cmd_zip():
+    archive := env_get("CLPP_FILE")
+    pass := env_get("CLPP_PASS")
+    lvl := level_of()
+    files := arg_list()
+    n := zip.sv_len(files)
+    if n == 0:
+        print_str("compresslpp: no input files")
+        return
+    z := zip.zw_new()
+    mut added := 0
+    mut i := 0
+    while i < n:
+        p := zip.sv_get(files, i)
+        if zip.zw_add_file(z, basename(p), p, lvl, pass) == 1:
+            added = added + 1
+            print_str(str_concat("  adding: ", p))
+        else:
+            print_str(str_concat("  skipped (not found): ", p))
+        i = i + 1
+    zip.zw_save(z, archive)
+    zip.zw_free(z)
+    zip.sv_free(files)
+    print_str(str_concat(int_to_str(added), str_concat(" file(s) -> ", archive)))
+
+def cmd_list():
+    archive := env_get("CLPP_FILE")
+    r := zip.zr_open(archive)
+    if r == 0:
+        print_str(str_concat("compresslpp: cannot open ", archive))
+        return
+    n := zip.zr_count(r)
+    print_str("  Length  Method  Crypt  Name")
+    mut i := 0
+    while i < n:
+        mut meth := "store"
+        if zip.zr_method(r, i) == 8:
+            meth = "defl"
+        mut enc := "no"
+        if zip.zr_encrypted(r, i) == 1:
+            enc = "yes"
+        line := str_concat("  ", str_concat(int_to_str(zip.zr_usize(r, i)), str_concat("  ", str_concat(meth, str_concat("   ", str_concat(enc, str_concat("   ", zip.zr_name(r, i))))))))
+        print_str(line)
+        i = i + 1
+    print_str(str_concat(int_to_str(n), " entries"))
+    zip.zr_free(r)
+
+def cmd_unzip():
+    archive := env_get("CLPP_FILE")
+    pass := env_get("CLPP_PASS")
+    outdir := getenv_or("CLPP_OUT", ".")
+    r := zip.zr_open(archive)
+    if r == 0:
+        print_str(str_concat("compresslpp: cannot open ", archive))
+        return
+    n := zip.zr_count(r)
+    mut ok := 0
+    mut i := 0
+    while i < n:
+        name := zip.zr_name(r, i)
+        dest := str_concat(outdir, str_concat("/", basename(name)))
+        if zip.zr_extract_to(r, i, dest, pass) == 1:
+            ok = ok + 1
+            print_str(str_concat("  extracting: ", dest))
+        else:
+            mut why := "  FAILED: "
+            if zip.zr_encrypted(r, i) == 1:
+                why = "  FAILED (bad password or corrupt): "
+            print_str(str_concat(why, name))
+        i = i + 1
+    print_str(str_concat(int_to_str(ok), str_concat("/", str_concat(int_to_str(n), " extracted"))))
+    zip.zr_free(r)
+
+def cmd_tar():
+    archive := env_get("CLPP_FILE")
+    files := arg_list()
+    n := zip.sv_len(files)
+    t := tar.tw_new()
+    mut added := 0
+    mut i := 0
+    while i < n:
+        p := zip.sv_get(files, i)
+        if tar.tw_add_file(t, basename(p), p) == 1:
+            added = added + 1
+            print_str(str_concat("  adding: ", p))
+        i = i + 1
+    tar.tw_save(t, archive)
+    tar.tw_free(t)
+    zip.sv_free(files)
+    print_str(str_concat(int_to_str(added), str_concat(" file(s) -> ", archive)))
+
+def cmd_untar():
+    archive := env_get("CLPP_FILE")
+    outdir := getenv_or("CLPP_OUT", ".")
+    r := tar.tr_open(archive)
+    if r == 0:
+        print_str(str_concat("compresslpp: cannot open ", archive))
+        return
+    n := tar.tr_count(r)
+    mut i := 0
+    while i < n:
+        name := tar.tr_name(r, i)
+        dest := str_concat(outdir, str_concat("/", basename(name)))
+        tar.tr_extract_to(r, i, dest)
+        print_str(str_concat("  extracting: ", dest))
+        i = i + 1
+    print_str(str_concat(int_to_str(n), " extracted"))
+    tar.tr_free(r)
+
+def cmd_gzip():
+    src := env_get("CLPP_FILE")
+    dst := getenv_or("CLPP_OUT", str_concat(src, ".gz"))
+    if gzip.gz_compress_file(src, dst, level_of()) == 1:
+        print_str(str_concat(src, str_concat(" -> ", dst)))
+    else:
+        print_str(str_concat("compresslpp: cannot read ", src))
+
+def cmd_gunzip():
+    src := env_get("CLPP_FILE")
+    dst := getenv_or("CLPP_OUT", "out.bin")
+    if gzip.gz_decompress_file(src, dst) == 1:
+        print_str(str_concat(src, str_concat(" -> ", dst)))
+    else:
+        print_str(str_concat("compresslpp: not a valid gzip file: ", src))
+
+def usage():
+    print_str("compresslpp — archive tool written in pure L++")
+    print_str("")
+    print_str("  compresslpp zip    ARCHIVE.zip FILE...   [-p PASS] [-N]")
+    print_str("  compresslpp unzip  ARCHIVE.zip [-d DIR]  [-p PASS]")
+    print_str("  compresslpp list   ARCHIVE.zip")
+    print_str("  compresslpp tar    ARCHIVE.tar FILE...")
+    print_str("  compresslpp untar  ARCHIVE.tar [-d DIR]")
+    print_str("  compresslpp gzip   FILE [-o OUT] [-N]")
+    print_str("  compresslpp gunzip FILE.gz -o OUT")
+    print_str("")
+    print_str("  -p PASS   ZipCrypto password      -N   level 0-9 (default 6)")
+
+def main():
+    cmd := env_get("CLPP_CMD")
+    if lpp_str_eq(cmd, "zip") == 1:
+        cmd_zip()
+    elif lpp_str_eq(cmd, "unzip") == 1:
+        cmd_unzip()
+    elif lpp_str_eq(cmd, "list") == 1:
+        cmd_list()
+    elif lpp_str_eq(cmd, "tar") == 1:
+        cmd_tar()
+    elif lpp_str_eq(cmd, "untar") == 1:
+        cmd_untar()
+    elif lpp_str_eq(cmd, "gzip") == 1:
+        cmd_gzip()
+    elif lpp_str_eq(cmd, "gunzip") == 1:
+        cmd_gunzip()
+    else:
+        usage()

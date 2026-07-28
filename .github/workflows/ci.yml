@@ -221,6 +221,51 @@ jobs:
           [ "$OUT" = "Dee" ] || { echo "FAIL: expected Dee, got $OUT"; exit 1; }
           echo "PASS bidirectional SQLite compatibility"
 
+  compresslpp-codec-compat:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install zip/unzip
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq zip unzip 2>/dev/null || true
+      - name: Build the L++ compiler
+        run: cargo build --release --bin lpp --bin lpp-link
+      - name: Build compresslpp and its tests
+        run: sh packages/compresslpp/build.sh --tests
+      - name: Unit suites
+        run: sh packages/compresslpp/run-tests.sh --unit
+      - name: Cross-verify against zlib / zipfile / tarfile / gzip
+        run: sh packages/compresslpp/run-tests.sh --diff
+      - name: End-to-end proof - real tools must accept our archives
+        run: |
+          set -e
+          WORK=$RUNNER_TEMP/clpp
+          rm -rf "$WORK" && mkdir -p "$WORK/out"
+          echo "payload for the archive" > "$WORK/a.txt"
+          python3 -c "open('$WORK/b.txt','w').write('compress me '*500)"
+          packages/compresslpp/compresslpp zip "$WORK/x.zip" "$WORK/a.txt" "$WORK/b.txt" -9
+          packages/compresslpp/compresslpp zip "$WORK/e.zip" "$WORK/a.txt" -p s3cret
+          unzip -t "$WORK/x.zip"
+          unzip -P s3cret -t "$WORK/e.zip"
+          packages/compresslpp/compresslpp tar "$WORK/x.tar" "$WORK/a.txt" "$WORK/b.txt"
+          tar -tf "$WORK/x.tar"
+          packages/compresslpp/compresslpp gzip "$WORK/b.txt" -o "$WORK/b.gz" -9
+          python3 - "$WORK" <<'EOF'
+          import gzip, os, sys, zipfile
+          w = sys.argv[1]
+          with zipfile.ZipFile(os.path.join(w, 'x.zip')) as z:
+              assert z.testzip() is None
+              assert z.read('b.txt').startswith(b'compress me')
+          with zipfile.ZipFile(os.path.join(w, 'e.zip')) as z:
+              z.setpassword(b's3cret')
+              assert z.read('a.txt') == b'payload for the archive\n'
+          raw = open(os.path.join(w, 'b.txt'), 'rb').read()
+          assert gzip.decompress(open(os.path.join(w, 'b.gz'), 'rb').read()) == raw
+          print('python: zip, encrypted zip and gzip all verified')
+          EOF
+          echo "PASS compresslpp interoperability"
+
   windows-coff-fallback:
     runs-on: windows-latest
     timeout-minutes: 20

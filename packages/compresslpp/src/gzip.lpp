@@ -1,0 +1,131 @@
+# gzip.lpp — RFC 1952 gzip container over the DEFLATE codec.
+#
+# A gzip member is:
+#   [1f 8b 08 flags mtime(4) xfl os]  optional extras  DEFLATE data  crc32 isize
+#
+# This makes `.gz` and `.tar.gz` work with the same deflate/inflate core the
+# ZIP writer uses. Only the standard member layout is produced; multi-member
+# streams are read (each member's output is concatenated, as gzip specifies).
+
+import bits
+import deflate
+import inflate
+
+def ID1() -> Int:
+    return 31
+def ID2() -> Int:
+    return 139
+def CM_DEFLATE() -> Int:
+    return 8
+
+# Compress `n` bytes into a gzip member. Returns a vec the caller frees.
+def gz_compress(data: Int, n: Int, level: Int) -> Int:
+    out := bits.vec_new(n / 2 + 64)
+    bits.vec_push(out, ID1())
+    bits.vec_push(out, ID2())
+    bits.vec_push(out, CM_DEFLATE())
+    bits.vec_push(out, 0)            # FLG: no name, no extra, no comment
+    bits.vec_push_u32(out, 0)        # MTIME 0 = not available
+    bits.vec_push(out, 0)            # XFL
+    bits.vec_push(out, 3)            # OS = Unix
+    d := deflate.deflate(data, n, level)
+    bits.vec_push_bytes(out, bits.vec_data(d), 0, bits.vec_len(d))
+    bits.vec_free(d)
+    mut crc := 0
+    if n > 0:
+        crc = buf_crc32(data, 0, n)
+    bits.vec_push_u32(out, crc)
+    bits.vec_push_u32(out, n & 4294967295)
+    return out
+
+# Decompress a gzip stream. Returns a vec, or 0 on a bad header/CRC.
+def gz_decompress(data: Int, size: Int) -> Int:
+    if size < 18:
+        return 0
+    if buf_get8(data, 0) != ID1():
+        return 0
+    if buf_get8(data, 1) != ID2():
+        return 0
+    if buf_get8(data, 2) != CM_DEFLATE():
+        return 0
+    flg := buf_get8(data, 3)
+    mut pos := 10
+
+    if (flg & 4) == 4:               # FEXTRA
+        xlen := buf_get8(data, pos) | (buf_get8(data, pos + 1) << 8)
+        pos = pos + 2 + xlen
+    if (flg & 8) == 8:               # FNAME
+        pos = skip_cstr(data, size, pos)
+    if (flg & 16) == 16:             # FCOMMENT
+        pos = skip_cstr(data, size, pos)
+    if (flg & 2) == 2:               # FHCRC
+        pos = pos + 2
+    if pos >= size:
+        return 0
+
+    # The trailer is the last 8 bytes.
+    dlen := size - pos - 8
+    if dlen <= 0:
+        return 0
+    sub := buf_alloc(dlen + 1)
+    buf_copy(sub, 0, data, pos, dlen)
+    out := inflate.inflate(sub, dlen)
+    buf_free(sub)
+    if out == 0:
+        return 0
+
+    want_crc := bits.rd_u32(data, size - 8)
+    want_len := bits.rd_u32(data, size - 4)
+    n := bits.vec_len(out)
+    if (n & 4294967295) != want_len:
+        bits.vec_free(out)
+        return 0
+    if n > 0:
+        if buf_crc32(bits.vec_data(out), 0, n) != want_crc:
+            bits.vec_free(out)
+            return 0
+    return out
+
+def skip_cstr(data: Int, size: Int, pos: Int) -> Int:
+    mut p := pos
+    mut go := 1
+    while go == 1:
+        if p >= size:
+            go = 0
+        elif buf_get8(data, p) == 0:
+            p = p + 1
+            go = 0
+        else:
+            p = p + 1
+    return p
+
+# ── file helpers ──
+
+def gz_compress_file(src: Str, dst: Str, level: Int) -> Int:
+    if file_exists(src) == 0:
+        return 0
+    b := buf_read(src)
+    srclen := buf_len(b)
+    v := gz_compress(b, srclen, level)
+    outlen := bits.vec_len(v)
+    o := exact_buf(bits.vec_data(v), outlen)
+    buf_write(dst, o)
+    buf_free(o)
+    bits.vec_free(v)
+    buf_free(b)
+    return 1
+
+def gz_decompress_file(src: Str, dst: Str) -> Int:
+    if file_exists(src) == 0:
+        return 0
+    b := buf_read(src)
+    v := gz_decompress(b, buf_len(b))
+    buf_free(b)
+    if v == 0:
+        return 0
+    outlen := bits.vec_len(v)
+    o := exact_buf(bits.vec_data(v), outlen)
+    buf_write(dst, o)
+    buf_free(o)
+    bits.vec_free(v)
+    return 1

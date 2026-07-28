@@ -1,0 +1,52 @@
+#!/bin/sh
+# build.sh — compile the compresslpp engine (and optionally its tests) with L++.
+#
+# Finds the compiler in this order:
+#   1. $LPP           explicit path to the lpp binary
+#   2. $LPP_TOOLCHAIN/bin/lpp
+#   3. ../../target/release/lpp        (building inside the lplusplus repo)
+#   4. ~/lpp-toolchain/bin/lpp
+#   5. lpp on $PATH
+set -e
+
+DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+REPO=$(CDPATH= cd -- "$DIR/../.." && pwd)
+
+find_lpp() {
+    [ -n "$LPP" ] && [ -x "$LPP" ] && { echo "$LPP"; return; }
+    [ -n "$LPP_TOOLCHAIN" ] && [ -x "$LPP_TOOLCHAIN/bin/lpp" ] && { echo "$LPP_TOOLCHAIN/bin/lpp"; return; }
+    [ -x "$REPO/target/release/lpp" ] && { echo "$REPO/target/release/lpp"; return; }
+    [ -x "$HOME/lpp-toolchain/bin/lpp" ] && { echo "$HOME/lpp-toolchain/bin/lpp"; return; }
+    command -v lpp 2>/dev/null && return
+    return 1
+}
+
+LPP_BIN=$(find_lpp) || {
+    echo "build.sh: no L++ compiler found." >&2
+    echo "  Build one with:  cargo build --release --bin lpp --bin lpp-link" >&2
+    echo "  or set LPP=/path/to/lpp" >&2
+    exit 1
+}
+
+echo "using compiler: $LPP_BIN"
+mkdir -p "$DIR/build"
+cd "$DIR/build"
+
+# `import x` resolves relative to the file being compiled, so stage the sources
+# next to the entry point.
+cp "$DIR"/src/*.lpp .
+
+echo "compiling compresslpp ..."
+"$LPP_BIN" main.lpp --linker host >/dev/null
+mv main compresslpp
+echo "built: $DIR/build/compresslpp"
+
+if [ "$1" = "--tests" ] || [ "$1" = "-t" ]; then
+    cp "$DIR"/tests/*.lpp .
+    for t in t_inflate t_deflate t_zip t_tar t_gzip; do
+        [ -f "$t.lpp" ] || continue
+        echo "compiling $t ..."
+        "$LPP_BIN" "$t.lpp" --linker host >/dev/null
+    done
+    echo "tests built in $DIR/build"
+fi

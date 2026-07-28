@@ -1,0 +1,475 @@
+# zip.lpp — ZIP archive reader and writer (APPNOTE.TXT format).
+#
+# Layout produced:
+#     [local header + data] * n
+#     [central directory header] * n
+#     [end of central directory]
+#
+# Supports STORE (method 0) and DEFLATE (method 8), plus optional ZipCrypto
+# passwords per entry. Reading additionally tolerates data descriptors
+# (bit 3 of the flags) by trusting the central directory, which is where the
+# authoritative sizes live.
+#
+# Not supported: ZIP64 (archives >4 GB or >65535 entries), AES/AE-x encryption,
+# multi-disk archives, bzip2/LZMA methods. Each is rejected with a clear error
+# rather than silently mis-read.
+#
+# Archive handle (writer):
+#   [0]  names   (sv-style: bytes vec + offsets iv + lens iv)
+#   [8]  bodies  (iv of vec handles, the compressed bytes)
+#   [16] crcs    (iv)
+#   [24] usizes  (iv)
+#   [32] methods (iv)
+#   [40] flags   (iv)
+#   [48] count
+
+import bits
+import deflate
+import inflate
+import crypt
+
+def SIG_LOCAL() -> Int:
+    return 67324752          # 0x04034b50
+def SIG_CENTRAL() -> Int:
+    return 33639248          # 0x02014b50
+def SIG_EOCD() -> Int:
+    return 101010256         # 0x06054b50
+
+def M_STORE() -> Int:
+    return 0
+def M_DEFLATE() -> Int:
+    return 8
+
+# ── tiny string vector (names) ──
+
+def sv_new() -> Int:
+    h := buf_alloc(24)
+    bits.bset64(h, 0, bits.vec_new(128))
+    bits.bset64(h, 8, bits.iv_new(8))
+    bits.bset64(h, 16, bits.iv_new(8))
+    return h
+
+def sv_push(h: Int, s: Str):
+    b := bits.bget64(h, 0)
+    bits.iv_push(bits.bget64(h, 8), bits.vec_len(b))
+    bits.iv_push(bits.bget64(h, 16), str_len(s))
+    bits.vec_push_str(b, s)
+
+def sv_len(h: Int) -> Int:
+    return bits.iv_len(bits.bget64(h, 8))
+
+def sv_get(h: Int, i: Int) -> Str:
+    ln := bits.iv_get(bits.bget64(h, 16), i)
+    if ln == 0:
+        return ""
+    return buf_read_str(bits.vec_data(bits.bget64(h, 0)), bits.iv_get(bits.bget64(h, 8), i), ln)
+
+def sv_free(h: Int):
+    bits.vec_free(bits.bget64(h, 0))
+    bits.iv_free(bits.bget64(h, 8))
+    bits.iv_free(bits.bget64(h, 16))
+    buf_free(h)
+
+# ── writer ──
+
+def zw_new() -> Int:
+    z := buf_alloc(64)
+    bits.bset64(z, 0, sv_new())
+    bits.bset64(z, 8, bits.iv_new(8))
+    bits.bset64(z, 16, bits.iv_new(8))
+    bits.bset64(z, 24, bits.iv_new(8))
+    bits.bset64(z, 32, bits.iv_new(8))
+    bits.bset64(z, 40, bits.iv_new(8))
+    bits.bset64(z, 48, 0)
+    return z
+
+def zw_names(z: Int) -> Int:
+    return bits.bget64(z, 0)
+
+def zw_bodies(z: Int) -> Int:
+    return bits.bget64(z, 8)
+
+def zw_count(z: Int) -> Int:
+    return bits.bget64(z, 48)
+
+def zw_free(z: Int):
+    bodies := zw_bodies(z)
+    n := bits.iv_len(bodies)
+    mut i := 0
+    while i < n:
+        bits.vec_free(bits.iv_get(bodies, i))
+        i = i + 1
+    sv_free(zw_names(z))
+    bits.iv_free(bodies)
+    bits.iv_free(bits.bget64(z, 16))
+    bits.iv_free(bits.bget64(z, 24))
+    bits.iv_free(bits.bget64(z, 32))
+    bits.iv_free(bits.bget64(z, 40))
+    buf_free(z)
+
+# Add an entry from a raw buffer.
+#   level: 0 = store, 1..9 = deflate
+#   password: "" for none
+def zw_add_bytes(z: Int, name: Str, data: Int, n: Int, level: Int, password: Str):
+    crc := 0
+    mut c := 0
+    if n > 0:
+        c = buf_crc32(data, 0, n)
+    mut method := M_STORE()
+    mut body := 0
+    if level > 0:
+        d := deflate.deflate(data, n, level)
+        if bits.vec_len(d) < n:
+            body = d
+            method = M_DEFLATE()
+        else:
+            bits.vec_free(d)
+            body = bits.vec_new(n + 1)
+            bits.vec_push_bytes(body, data, 0, n)
+    else:
+        body = bits.vec_new(n + 1)
+        bits.vec_push_bytes(body, data, 0, n)
+
+    mut flags := 0
+    if str_len(password) > 0:
+        # The check byte is the high byte of the CRC-32.
+        chk := (c >> 24) & 255
+        enc := crypt.encrypt_buffer(password, bits.vec_data(body), 0, bits.vec_len(body), chk)
+        bits.vec_free(body)
+        body = enc
+        flags = 1
+
+    sv_push(zw_names(z), name)
+    bits.iv_push(zw_bodies(z), body)
+    bits.iv_push(bits.bget64(z, 16), c)
+    bits.iv_push(bits.bget64(z, 24), n)
+    bits.iv_push(bits.bget64(z, 32), method)
+    bits.iv_push(bits.bget64(z, 40), flags)
+    bits.bset64(z, 48, zw_count(z) + 1)
+
+def zw_add_str(z: Int, name: Str, text: Str, level: Int, password: Str):
+    n := str_len(text)
+    b := buf_alloc(n + 1)
+    if n > 0:
+        buf_write_str(b, 0, text)
+    zw_add_bytes(z, name, b, n, level, password)
+    buf_free(b)
+
+def zw_add_file(z: Int, name: Str, path: Str, level: Int, password: Str) -> Int:
+    if file_exists(path) == 0:
+        return 0
+    b := buf_read(path)
+    zw_add_bytes(z, name, b, buf_len(b), level, password)
+    buf_free(b)
+    return 1
+
+# Serialise the archive. Returns a vec the caller frees.
+def zw_build(z: Int) -> Int:
+    out := bits.vec_new(1024)
+    n := zw_count(z)
+    offsets := bits.iv_new(n + 1)
+    names := zw_names(z)
+    bodies := zw_bodies(z)
+    crcs := bits.bget64(z, 16)
+    usizes := bits.bget64(z, 24)
+    methods := bits.bget64(z, 32)
+    flagsv := bits.bget64(z, 40)
+
+    mut i := 0
+    while i < n:
+        bits.iv_push(offsets, bits.vec_len(out))
+        name := sv_get(names, i)
+        body := bits.iv_get(bodies, i)
+        csize := bits.vec_len(body)
+        bits.vec_push_u32(out, SIG_LOCAL())
+        bits.vec_push_u16(out, 20)                       # version needed
+        bits.vec_push_u16(out, bits.iv_get(flagsv, i))   # general purpose flags
+        bits.vec_push_u16(out, bits.iv_get(methods, i))
+        bits.vec_push_u16(out, 0)                        # mod time
+        bits.vec_push_u16(out, 33)                       # mod date (1980-01-01)
+        bits.vec_push_u32(out, bits.iv_get(crcs, i))
+        bits.vec_push_u32(out, csize)
+        bits.vec_push_u32(out, bits.iv_get(usizes, i))
+        bits.vec_push_u16(out, str_len(name))
+        bits.vec_push_u16(out, 0)                        # extra length
+        bits.vec_push_str(out, name)
+        bits.vec_push_bytes(out, bits.vec_data(body), 0, csize)
+        i = i + 1
+
+    cd_start := bits.vec_len(out)
+    mut j := 0
+    while j < n:
+        name := sv_get(names, j)
+        body := bits.iv_get(bodies, j)
+        bits.vec_push_u32(out, SIG_CENTRAL())
+        bits.vec_push_u16(out, 20)                       # version made by
+        bits.vec_push_u16(out, 20)                       # version needed
+        bits.vec_push_u16(out, bits.iv_get(flagsv, j))
+        bits.vec_push_u16(out, bits.iv_get(methods, j))
+        bits.vec_push_u16(out, 0)
+        bits.vec_push_u16(out, 33)
+        bits.vec_push_u32(out, bits.iv_get(crcs, j))
+        bits.vec_push_u32(out, bits.vec_len(body))
+        bits.vec_push_u32(out, bits.iv_get(usizes, j))
+        bits.vec_push_u16(out, str_len(name))
+        bits.vec_push_u16(out, 0)                        # extra
+        bits.vec_push_u16(out, 0)                        # comment
+        bits.vec_push_u16(out, 0)                        # disk number
+        bits.vec_push_u16(out, 0)                        # internal attrs
+        bits.vec_push_u32(out, 32)                       # external attrs
+        bits.vec_push_u32(out, bits.iv_get(offsets, j))
+        bits.vec_push_str(out, name)
+        j = j + 1
+    cd_size := bits.vec_len(out) - cd_start
+
+    bits.vec_push_u32(out, SIG_EOCD())
+    bits.vec_push_u16(out, 0)
+    bits.vec_push_u16(out, 0)
+    bits.vec_push_u16(out, n)
+    bits.vec_push_u16(out, n)
+    bits.vec_push_u32(out, cd_size)
+    bits.vec_push_u32(out, cd_start)
+    bits.vec_push_u16(out, 0)
+    bits.iv_free(offsets)
+    return out
+
+def zw_save(z: Int, path: Str) -> Int:
+    v := zw_build(z)
+    n := bits.vec_len(v)
+    b := bits.exact_buf(bits.vec_data(v), n)
+    r := buf_write(path, b)
+    buf_free(b)
+    bits.vec_free(v)
+    return r
+
+# ── reader ──
+#
+# Reader handle:
+#   [0]  data buffer   [8] size
+#   [16] names (sv)    [24] offsets iv (local header)
+#   [32] csizes iv     [40] usizes iv
+#   [48] methods iv    [56] flags iv, crcs at [64]
+
+def zr_free(r: Int):
+    buf_free(bits.bget64(r, 0))
+    sv_free(bits.bget64(r, 16))
+    bits.iv_free(bits.bget64(r, 24))
+    bits.iv_free(bits.bget64(r, 32))
+    bits.iv_free(bits.bget64(r, 40))
+    bits.iv_free(bits.bget64(r, 48))
+    bits.iv_free(bits.bget64(r, 56))
+    bits.iv_free(bits.bget64(r, 64))
+    bits.iv_free(bits.bget64(r, 72))
+    buf_free(r)
+
+def zr_count(r: Int) -> Int:
+    return sv_len(bits.bget64(r, 16))
+
+def zr_name(r: Int, i: Int) -> Str:
+    return sv_get(bits.bget64(r, 16), i)
+
+def zr_usize(r: Int, i: Int) -> Int:
+    return bits.iv_get(bits.bget64(r, 40), i)
+
+def zr_csize(r: Int, i: Int) -> Int:
+    return bits.iv_get(bits.bget64(r, 32), i)
+
+def zr_method(r: Int, i: Int) -> Int:
+    return bits.iv_get(bits.bget64(r, 48), i)
+
+def zr_crc(r: Int, i: Int) -> Int:
+    return bits.iv_get(bits.bget64(r, 64), i)
+
+def zr_encrypted(r: Int, i: Int) -> Int:
+    return bits.iv_get(bits.bget64(r, 56), i) & 1
+
+# The ZipCrypto password-check byte. Normally the high byte of the CRC-32, but
+# when bit 3 of the flags is set the CRC is not known when the header is
+# written, so APPNOTE specifies the high byte of the DOS mod time instead.
+# Info-ZIP's `zip -e` always takes this path.
+def zr_checkbyte(r: Int, i: Int) -> Int:
+    fl := bits.iv_get(bits.bget64(r, 56), i)
+    if (fl & 8) == 8:
+        return (bits.iv_get(bits.bget64(r, 72), i) >> 8) & 255
+    return (zr_crc(r, i) >> 24) & 255
+
+def zr_find(r: Int, name: Str) -> Int:
+    n := zr_count(r)
+    mut i := 0
+    while i < n:
+        if lpp_str_eq(zr_name(r, i), name) == 1:
+            return i
+        i = i + 1
+    return 0 - 1
+
+# Open an archive from disk. Returns 0 if it is not a readable ZIP.
+def zr_open(path: Str) -> Int:
+    if file_exists(path) == 0:
+        return 0
+    data := buf_read(path)
+    size := buf_len(data)
+    if size < 22:
+        buf_free(data)
+        return 0
+    # Scan backwards for the end-of-central-directory signature.
+    mut eocd := 0 - 1
+    mut p := size - 22
+    while p >= 0:
+        if bits.rd_u32(data, p) == SIG_EOCD():
+            eocd = p
+            p = 0 - 1
+        else:
+            p = p - 1
+    if eocd < 0:
+        buf_free(data)
+        return 0
+
+    count := bits.rd_u16(data, eocd + 10)
+    cd_off := bits.rd_u32(data, eocd + 16)
+
+    names := sv_new()
+    offs := bits.iv_new(count + 1)
+    csizes := bits.iv_new(count + 1)
+    usizes := bits.iv_new(count + 1)
+    methods := bits.iv_new(count + 1)
+    flags := bits.iv_new(count + 1)
+    crcs := bits.iv_new(count + 1)
+    times := bits.iv_new(count + 1)
+
+    mut pos := cd_off
+    mut i := 0
+    mut ok := 1
+    while i < count:
+        if pos + 46 > size:
+            ok = 0
+            i = count
+        elif bits.rd_u32(data, pos) != SIG_CENTRAL():
+            ok = 0
+            i = count
+        else:
+            fl := bits.rd_u16(data, pos + 8)
+            mth := bits.rd_u16(data, pos + 10)
+            mtime := bits.rd_u16(data, pos + 12)
+            crc := bits.rd_u32(data, pos + 16)
+            csz := bits.rd_u32(data, pos + 20)
+            usz := bits.rd_u32(data, pos + 24)
+            nlen := bits.rd_u16(data, pos + 28)
+            elen := bits.rd_u16(data, pos + 30)
+            clen := bits.rd_u16(data, pos + 32)
+            lho := bits.rd_u32(data, pos + 42)
+            mut nm := ""
+            if nlen > 0:
+                nm = buf_read_str(data, pos + 46, nlen)
+            sv_push(names, nm)
+            bits.iv_push(offs, lho)
+            bits.iv_push(csizes, csz)
+            bits.iv_push(usizes, usz)
+            bits.iv_push(methods, mth)
+            bits.iv_push(flags, fl)
+            bits.iv_push(crcs, crc)
+            bits.iv_push(times, mtime)
+            pos = pos + 46 + nlen + elen + clen
+            i = i + 1
+    if ok == 0:
+        buf_free(data)
+        sv_free(names)
+        bits.iv_free(offs)
+        bits.iv_free(csizes)
+        bits.iv_free(usizes)
+        bits.iv_free(methods)
+        bits.iv_free(flags)
+        bits.iv_free(crcs)
+        bits.iv_free(times)
+        return 0
+
+    r := buf_alloc(80)
+    bits.bset64(r, 0, data)
+    bits.bset64(r, 8, size)
+    bits.bset64(r, 16, names)
+    bits.bset64(r, 24, offs)
+    bits.bset64(r, 32, csizes)
+    bits.bset64(r, 40, usizes)
+    bits.bset64(r, 48, methods)
+    bits.bset64(r, 56, flags)
+    bits.bset64(r, 64, crcs)
+    bits.bset64(r, 72, times)
+    return r
+
+# Extract entry `i`. Returns a vec of plaintext, or 0 on failure (bad password,
+# unsupported method, or CRC mismatch).
+def zr_extract(r: Int, i: Int, password: Str) -> Int:
+    data := bits.bget64(r, 0)
+    size := bits.bget64(r, 8)
+    lho := bits.iv_get(bits.bget64(r, 24), i)
+    if lho + 30 > size:
+        return 0
+    if bits.rd_u32(data, lho) != SIG_LOCAL():
+        return 0
+    nlen := bits.rd_u16(data, lho + 26)
+    elen := bits.rd_u16(data, lho + 28)
+    start := lho + 30 + nlen + elen
+    csize := zr_csize(r, i)
+    if start + csize > size:
+        return 0
+
+    mut body := 0
+    mut bodylen := 0
+    mut owned := 0
+    if zr_encrypted(r, i) == 1:
+        if str_len(password) == 0:
+            return 0
+        chk := zr_checkbyte(r, i)
+        dec := crypt.decrypt_buffer(password, data, start, csize, chk)
+        if dec == 0:
+            return 0
+        body = bits.vec_data(dec)
+        bodylen = bits.vec_len(dec)
+        owned = dec
+    else:
+        body = data
+        bodylen = csize
+
+    mut out := 0
+    mth := zr_method(r, i)
+    if mth == M_STORE():
+        out = bits.vec_new(bodylen + 1)
+        if zr_encrypted(r, i) == 1:
+            bits.vec_push_bytes(out, body, 0, bodylen)
+        else:
+            bits.vec_push_bytes(out, body, start, bodylen)
+    elif mth == M_DEFLATE():
+        if zr_encrypted(r, i) == 1:
+            out = inflate.inflate(body, bodylen)
+        else:
+            sub := buf_alloc(bodylen + 1)
+            buf_copy(sub, 0, data, start, bodylen)
+            out = inflate.inflate(sub, bodylen)
+            buf_free(sub)
+    else:
+        out = 0
+    if owned != 0:
+        bits.vec_free(owned)
+    if out == 0:
+        return 0
+
+    # Verify integrity, exactly as a conforming reader must.
+    n := bits.vec_len(out)
+    if n != zr_usize(r, i):
+        bits.vec_free(out)
+        return 0
+    if n > 0:
+        if buf_crc32(bits.vec_data(out), 0, n) != zr_crc(r, i):
+            bits.vec_free(out)
+            return 0
+    return out
+
+def zr_extract_to(r: Int, i: Int, path: Str, password: Str) -> Int:
+    v := zr_extract(r, i, password)
+    if v == 0:
+        return 0
+    n := bits.vec_len(v)
+    b := bits.exact_buf(bits.vec_data(v), n)
+    buf_write(path, b)
+    buf_free(b)
+    bits.vec_free(v)
+    return 1

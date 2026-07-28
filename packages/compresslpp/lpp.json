@@ -1,0 +1,7 @@
+{
+  "name": "compresslpp",
+  "version": "1.0.0",
+  "description": "Archive and compression library in pure L++: real DEFLATE (RFC 1951), ZIP with ZipCrypto passwords, USTAR tar, and gzip (RFC 1952). Verified byte-for-byte against zlib, zipfile, tarfile and the unzip/tar CLIs.",
+  "main": "src/zip.lpp",
+  "dependencies": {}
+}

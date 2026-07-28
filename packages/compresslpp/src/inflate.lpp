@@ -1,0 +1,393 @@
+# inflate.lpp — RFC 1951 DEFLATE decompressor.
+#
+# Handles all three block types: stored (00), fixed Huffman (01) and dynamic
+# Huffman (10). Huffman decoding uses canonical code reconstruction from code
+# lengths, exactly as the RFC describes, with a count/offset table per length
+# rather than a bit-by-bit tree walk.
+#
+# A decoded Huffman table is a handle:
+#   [0]  counts  (iv, one entry per bit length 0..15)
+#   [8]  symbols (iv, symbols ordered by code)
+
+import bits
+
+def MAXBITS() -> Int:
+    return 15
+
+def tbl_counts(t: Int) -> Int:
+    return bits.bget64(t, 0)
+
+def tbl_symbols(t: Int) -> Int:
+    return bits.bget64(t, 8)
+
+def tbl_free(t: Int):
+    bits.iv_free(tbl_counts(t))
+    bits.iv_free(tbl_symbols(t))
+    buf_free(t)
+
+# Build a canonical Huffman table from a list of code lengths.
+def build_table(lengths: Int, n: Int) -> Int:
+    counts := bits.iv_zeros(MAXBITS() + 1)
+    mut i := 0
+    while i < n:
+        l := bits.iv_get(lengths, i)
+        bits.iv_set(counts, l, bits.iv_get(counts, l) + 1)
+        i = i + 1
+    # Length 0 means "symbol unused"; it must not occupy code space.
+    bits.iv_set(counts, 0, 0)
+
+    offs := bits.iv_zeros(MAXBITS() + 2)
+    mut acc := 0
+    mut l2 := 1
+    while l2 <= MAXBITS():
+        bits.iv_set(offs, l2, acc)
+        acc = acc + bits.iv_get(counts, l2)
+        l2 = l2 + 1
+
+    symbols := bits.iv_zeros(n + 1)
+    mut s := 0
+    while s < n:
+        ln := bits.iv_get(lengths, s)
+        if ln != 0:
+            o := bits.iv_get(offs, ln)
+            bits.iv_set(symbols, o, s)
+            bits.iv_set(offs, ln, o + 1)
+        s = s + 1
+
+    bits.iv_free(offs)
+    t := buf_alloc(16)
+    bits.bset64(t, 0, counts)
+    bits.bset64(t, 8, symbols)
+    return t
+
+# Decode one symbol. Returns -1 on a malformed code.
+def decode_sym(br: Int, t: Int) -> Int:
+    counts := tbl_counts(t)
+    symbols := tbl_symbols(t)
+    mut code := 0
+    mut first := 0
+    mut index := 0
+    mut len := 1
+    while len <= MAXBITS():
+        code = code | bits.br_bit(br)
+        count := bits.iv_get(counts, len)
+        if code - first < count:
+            return bits.iv_get(symbols, index + (code - first))
+        index = index + count
+        first = (first + count) << 1
+        code = code << 1
+        len = len + 1
+    return 0 - 1
+
+# ── length / distance tables (RFC 1951 §3.2.5) ──
+
+def len_base(i: Int) -> Int:
+    if i < 8:
+        return 3 + i
+    if i == 8:
+        return 11
+    if i == 9:
+        return 13
+    if i == 10:
+        return 15
+    if i == 11:
+        return 17
+    if i == 12:
+        return 19
+    if i == 13:
+        return 23
+    if i == 14:
+        return 27
+    if i == 15:
+        return 31
+    if i == 16:
+        return 35
+    if i == 17:
+        return 43
+    if i == 18:
+        return 51
+    if i == 19:
+        return 59
+    if i == 20:
+        return 67
+    if i == 21:
+        return 83
+    if i == 22:
+        return 99
+    if i == 23:
+        return 115
+    if i == 24:
+        return 131
+    if i == 25:
+        return 163
+    if i == 26:
+        return 195
+    if i == 27:
+        return 227
+    return 258
+
+def len_extra(i: Int) -> Int:
+    if i < 8:
+        return 0
+    if i > 27:
+        return 0
+    return (i - 4) / 4
+
+def dist_base(i: Int) -> Int:
+    if i < 4:
+        return 1 + i
+    half := i / 2
+    e := half - 1
+    rem := i % 2
+    return (1 << half) + 1 + rem * (1 << e)
+
+def dist_extra(i: Int) -> Int:
+    if i < 2:
+        return 0
+    return (i / 2) - 1
+
+# ── fixed Huffman tables (RFC 1951 §3.2.6) ──
+
+def fixed_lit_table() -> Int:
+    lengths := bits.iv_zeros(288)
+    mut i := 0
+    while i < 144:
+        bits.iv_set(lengths, i, 8)
+        i = i + 1
+    while i < 256:
+        bits.iv_set(lengths, i, 9)
+        i = i + 1
+    while i < 280:
+        bits.iv_set(lengths, i, 7)
+        i = i + 1
+    while i < 288:
+        bits.iv_set(lengths, i, 8)
+        i = i + 1
+    t := build_table(lengths, 288)
+    bits.iv_free(lengths)
+    return t
+
+def fixed_dist_table() -> Int:
+    lengths := bits.iv_zeros(30)
+    mut i := 0
+    while i < 30:
+        bits.iv_set(lengths, i, 5)
+        i = i + 1
+    t := build_table(lengths, 30)
+    bits.iv_free(lengths)
+    return t
+
+# Order in which code-length codes appear in a dynamic block header.
+def clc_order(i: Int) -> Int:
+    if i == 0:
+        return 16
+    if i == 1:
+        return 17
+    if i == 2:
+        return 18
+    if i == 3:
+        return 0
+    if i == 4:
+        return 8
+    if i == 5:
+        return 7
+    if i == 6:
+        return 9
+    if i == 7:
+        return 6
+    if i == 8:
+        return 10
+    if i == 9:
+        return 5
+    if i == 10:
+        return 11
+    if i == 11:
+        return 4
+    if i == 12:
+        return 12
+    if i == 13:
+        return 3
+    if i == 14:
+        return 13
+    if i == 15:
+        return 2
+    if i == 16:
+        return 14
+    if i == 17:
+        return 1
+    return 15
+
+# ── main entry point ──
+#
+# Inflate `size` bytes at `data`. Returns a bits.vec of output, or 0 on error.
+def inflate(data: Int, size: Int) -> Int:
+    br := bits.br_new(data, size)
+    out := bits.vec_new(size * 4 + 64)
+    mut ok := 1
+    mut done := 0
+    while done == 0:
+        final := bits.br_bit(br)
+        btype := bits.br_bits(br, 2)
+        if btype == 0:
+            if stored_block(br, out) == 0:
+                ok = 0
+                done = 1
+        elif btype == 1:
+            lt := fixed_lit_table()
+            dt := fixed_dist_table()
+            r := huffman_block(br, out, lt, dt)
+            tbl_free(lt)
+            tbl_free(dt)
+            if r == 0:
+                ok = 0
+                done = 1
+        elif btype == 2:
+            if dynamic_block(br, out) == 0:
+                ok = 0
+                done = 1
+        else:
+            ok = 0
+            done = 1
+        if bits.br_overrun(br) == 1:
+            ok = 0
+            done = 1
+        if final == 1:
+            done = 1
+    bits.br_free(br)
+    if ok == 0:
+        bits.vec_free(out)
+        return 0
+    return out
+
+def stored_block(br: Int, out: Int) -> Int:
+    bits.br_align(br)
+    data := bits.bget64(br, 0)
+    size := bits.bget64(br, 8)
+    mut pos := bits.bget64(br, 16)
+    if pos + 4 > size:
+        return 0
+    ln := buf_get8(data, pos) | (buf_get8(data, pos + 1) << 8)
+    nlen := buf_get8(data, pos + 2) | (buf_get8(data, pos + 3) << 8)
+    pos = pos + 4
+    if (ln ^ 65535) != nlen:
+        return 0
+    if pos + ln > size:
+        return 0
+    bits.vec_push_bytes(out, data, pos, ln)
+    bits.bset64(br, 16, pos + ln)
+    return 1
+
+def dynamic_block(br: Int, out: Int) -> Int:
+    hlit := bits.br_bits(br, 5) + 257
+    hdist := bits.br_bits(br, 5) + 1
+    hclen := bits.br_bits(br, 4) + 4
+
+    clc_lengths := bits.iv_zeros(19)
+    mut i := 0
+    while i < hclen:
+        bits.iv_set(clc_lengths, clc_order(i), bits.br_bits(br, 3))
+        i = i + 1
+    clc := build_table(clc_lengths, 19)
+    bits.iv_free(clc_lengths)
+
+    total := hlit + hdist
+    lengths := bits.iv_zeros(total + 1)
+    mut n := 0
+    mut ok := 1
+    while n < total:
+        sym := decode_sym(br, clc)
+        if sym < 0:
+            ok = 0
+            n = total
+        elif sym < 16:
+            bits.iv_set(lengths, n, sym)
+            n = n + 1
+        elif sym == 16:
+            if n == 0:
+                ok = 0
+                n = total
+            else:
+                prev := bits.iv_get(lengths, n - 1)
+                rep := 3 + bits.br_bits(br, 2)
+                mut k := 0
+                while k < rep:
+                    if n < total:
+                        bits.iv_set(lengths, n, prev)
+                        n = n + 1
+                    k = k + 1
+        elif sym == 17:
+            rep := 3 + bits.br_bits(br, 3)
+            mut k := 0
+            while k < rep:
+                if n < total:
+                    bits.iv_set(lengths, n, 0)
+                    n = n + 1
+                k = k + 1
+        else:
+            rep := 11 + bits.br_bits(br, 7)
+            mut k := 0
+            while k < rep:
+                if n < total:
+                    bits.iv_set(lengths, n, 0)
+                    n = n + 1
+                k = k + 1
+    tbl_free(clc)
+    if ok == 0:
+        bits.iv_free(lengths)
+        return 0
+
+    lit_lengths := bits.iv_zeros(hlit + 1)
+    mut a := 0
+    while a < hlit:
+        bits.iv_set(lit_lengths, a, bits.iv_get(lengths, a))
+        a = a + 1
+    dist_lengths := bits.iv_zeros(hdist + 1)
+    mut b := 0
+    while b < hdist:
+        bits.iv_set(dist_lengths, b, bits.iv_get(lengths, hlit + b))
+        b = b + 1
+    bits.iv_free(lengths)
+
+    lt := build_table(lit_lengths, hlit)
+    dt := build_table(dist_lengths, hdist)
+    bits.iv_free(lit_lengths)
+    bits.iv_free(dist_lengths)
+    r := huffman_block(br, out, lt, dt)
+    tbl_free(lt)
+    tbl_free(dt)
+    return r
+
+def huffman_block(br: Int, out: Int, lt: Int, dt: Int) -> Int:
+    mut go := 1
+    while go == 1:
+        sym := decode_sym(br, lt)
+        if sym < 0:
+            return 0
+        if bits.br_overrun(br) == 1:
+            return 0
+        if sym < 256:
+            bits.vec_push(out, sym)
+        elif sym == 256:
+            go = 0
+        else:
+            li := sym - 257
+            if li > 28:
+                return 0
+            length := len_base(li) + bits.br_bits(br, len_extra(li))
+            dsym := decode_sym(br, dt)
+            if dsym < 0:
+                return 0
+            if dsym > 29:
+                return 0
+            distance := dist_base(dsym) + bits.br_bits(br, dist_extra(dsym))
+            n := bits.vec_len(out)
+            if distance > n:
+                return 0
+            # Overlapping copies are legal and common (run-length encoding),
+            # so copy one byte at a time from the sliding window.
+            mut src := n - distance
+            mut k := 0
+            while k < length:
+                bits.vec_push(out, bits.vec_get(out, src + k))
+                k = k + 1
+    return 1

@@ -37,3 +37,7 @@ tests/test_ffi
 .code-review-graph/
 /packages/lppsqlite/build/
 *.db
+/packages/compresslpp/build/
+*.zip
+*.tar
+*.gz

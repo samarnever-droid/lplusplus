@@ -1,0 +1,49 @@
+import bits
+import deflate
+import inflate
+
+# Compress a file, write the result, and verify our own inflater round-trips it.
+def roundtrip(label: Str, path: Str, outpath: Str, level: Int):
+    raw := buf_read(path)
+    n := buf_len(raw)
+    c := deflate.deflate(raw, n, level)
+    cn := bits.vec_len(c)
+    # write compressed output for the Python harness to check
+    outb := buf_alloc(cn + 1)
+    if cn > 0:
+        buf_copy(outb, 0, bits.vec_data(c), 0, cn)
+    buf_write(outpath, outb)
+    buf_free(outb)
+
+    back := inflate.inflate(bits.vec_data(c), cn)
+    mut ok := 1
+    if back == 0:
+        ok = 0
+    else:
+        if bits.vec_len(back) != n:
+            ok = 0
+        else:
+            bd := bits.vec_data(back)
+            mut i := 0
+            while i < n:
+                if buf_get8(bd, i) != buf_get8(raw, i):
+                    ok = 0
+                    i = n
+                i = i + 1
+        bits.vec_free(back)
+    if ok == 1:
+        print_str(str_concat("PASS  ", str_concat(label, str_concat("  ", str_concat(int_to_str(n), str_concat(" -> ", int_to_str(cn)))))))
+    else:
+        print_str(str_concat("FAIL  ", label))
+    bits.vec_free(c)
+    buf_free(raw)
+
+def main():
+    roundtrip("stored lvl0", "r_fixed.bin", "o_stored.bin", 0)
+    roundtrip("tiny", "r_stored.bin", "o_tiny.bin", 6)
+    roundtrip("text", "r_fixed.bin", "o_text.bin", 6)
+    roundtrip("dynamic-ish", "r_dynamic.bin", "o_dynamic.bin", 6)
+    roundtrip("repetitive", "r_repeat.bin", "o_repeat.bin", 9)
+    roundtrip("binary", "r_binary.bin", "o_binary.bin", 6)
+    roundtrip("empty", "r_empty.bin", "o_empty.bin", 6)
+    roundtrip("large", "r_large.bin", "o_large.bin", 9)

@@ -1,0 +1,267 @@
+# deflate.lpp — RFC 1951 DEFLATE compressor.
+#
+# Emits fixed-Huffman blocks with LZ77 back-references found through a hash
+# chain over 3-byte prefixes, plus a stored-block fallback when compression
+# would expand the data (as the RFC requires for incompressible input).
+#
+# Output is standards-compliant DEFLATE: zlib, Python's zipfile and any other
+# conforming inflater read it. It is not byte-identical to zlib's output —
+# nothing requires that, and the test suite verifies round-trips through
+# *both* inflaters instead.
+#
+# Scope: fixed Huffman only. Dynamic Huffman (computing optimal per-block code
+# lengths) would compress a few percent better; the decoder handles it, the
+# encoder does not emit it. Documented in the README.
+
+import bits
+
+def WSIZE() -> Int:
+    return 32768
+
+def MIN_MATCH() -> Int:
+    return 3
+
+def MAX_MATCH() -> Int:
+    return 258
+
+def HASH_BITS() -> Int:
+    return 15
+
+def HASH_SIZE() -> Int:
+    return 32768
+
+# ── fixed Huffman code emission (RFC 1951 §3.2.6) ──
+#
+#   0..143   -> 8 bits, 0x30..0xBF
+# 144..255   -> 9 bits, 0x190..0x1FF
+# 256..279   -> 7 bits, 0x000..0x017
+# 280..287   -> 8 bits, 0xC0..0xC7
+def emit_lit(bw: Int, sym: Int):
+    if sym < 144:
+        bits.bw_code(bw, 48 + sym, 8)
+    elif sym < 256:
+        bits.bw_code(bw, 400 + (sym - 144), 9)
+    elif sym < 280:
+        bits.bw_code(bw, sym - 256, 7)
+    else:
+        bits.bw_code(bw, 192 + (sym - 280), 8)
+
+# Length code for a match length (257..285), with its extra bits.
+def length_code(n: Int) -> Int:
+    if n < 11:
+        return 254 + n
+    if n < 19:
+        return 265 + (n - 11) / 2
+    if n < 35:
+        return 269 + (n - 19) / 4
+    if n < 67:
+        return 273 + (n - 35) / 8
+    if n < 131:
+        return 277 + (n - 67) / 16
+    if n < 258:
+        return 281 + (n - 131) / 32
+    return 285
+
+def length_extra_bits(code: Int) -> Int:
+    if code < 265:
+        return 0
+    if code > 284:
+        return 0
+    return (code - 261) / 4
+
+def length_base(code: Int) -> Int:
+    if code < 265:
+        return code - 254
+    if code == 285:
+        return 258
+    e := (code - 261) / 4
+    return ((code - 265) % 4 + 4) * (1 << e) + 3
+
+def dist_code(d: Int) -> Int:
+    if d < 5:
+        return d - 1
+    mut c := 0
+    mut base := 4
+    mut e := 1
+    mut go := 1
+    while go == 1:
+        if d <= base + 2 * (1 << e):
+            go = 0
+        else:
+            base = base + 2 * (1 << e)
+            e = e + 1
+    half := 1 << e
+    off := d - base - 1
+    c = 2 + 2 * e
+    if off >= half:
+        c = c + 1
+    return c
+
+def dist_extra_bits(code: Int) -> Int:
+    if code < 2:
+        return 0
+    return (code / 2) - 1
+
+def dist_base_of(code: Int) -> Int:
+    if code < 4:
+        return code + 1
+    e := (code / 2) - 1
+    rem := code % 2
+    return (1 << (e + 1)) + 1 + rem * (1 << e)
+
+def emit_match(bw: Int, length: Int, distance: Int):
+    lc := length_code(length)
+    emit_lit(bw, lc)
+    le := length_extra_bits(lc)
+    if le > 0:
+        bits.bw_bits(bw, length - length_base(lc), le)
+    dc := dist_code(distance)
+    bits.bw_code(bw, dc, 5)
+    de := dist_extra_bits(dc)
+    if de > 0:
+        bits.bw_bits(bw, distance - dist_base_of(dc), de)
+
+# ── LZ77 matching ──
+
+def hash3(a: Int, b: Int, c: Int) -> Int:
+    return ((a << 10) ^ (b << 5) ^ c) & (HASH_SIZE() - 1)
+
+# Longest match for `pos` in `data`, searching the hash chain.
+# Returns (length << 32) | distance, or 0 when no useful match exists.
+def find_match(data: Int, size: Int, pos: Int, head: Int, prev: Int, max_chain: Int) -> Int:
+    if pos + MIN_MATCH() > size:
+        return 0
+    h := hash3(buf_get8(data, pos), buf_get8(data, pos + 1), buf_get8(data, pos + 2))
+    mut cand := bits.iv_get(head, h)
+    mut best_len := 0
+    mut best_dist := 0
+    mut chain := 0
+    mut limit := size - pos
+    if limit > MAX_MATCH():
+        limit = MAX_MATCH()
+    while chain < max_chain:
+        if cand < 0:
+            chain = max_chain
+        else:
+            dist := pos - cand
+            if dist <= 0:
+                chain = max_chain
+            elif dist > WSIZE():
+                chain = max_chain
+            else:
+                # Count matching bytes. A sentinel like `n = limit + 1000`
+                # would be wrong here: for matches longer than the sentinel
+                # offset it cannot be undone, silently corrupting the length.
+                mut n := 0
+                mut scan := 1
+                while scan == 1:
+                    if n >= limit:
+                        scan = 0
+                    elif buf_get8(data, cand + n) != buf_get8(data, pos + n):
+                        scan = 0
+                    else:
+                        n = n + 1
+                if n > best_len:
+                    best_len = n
+                    best_dist = dist
+                cand = bits.iv_get(prev, cand & (WSIZE() - 1))
+                chain = chain + 1
+    if best_len < MIN_MATCH():
+        return 0
+    return (best_len << 32) | best_dist
+
+# ── entry point ──
+#
+# Compress `size` bytes at `data`. `level` 0 stores, 1..9 selects match effort.
+# Returns a bits.vec of DEFLATE data (caller frees).
+def deflate(data: Int, size: Int, level: Int) -> Int:
+    if level <= 0:
+        return stored_stream(data, size)
+    mut chain := 16
+    if level >= 4:
+        chain = 64
+    if level >= 7:
+        chain = 256
+
+    bw := bits.bw_new()
+    bits.bw_bits(bw, 1, 1)      # BFINAL
+    bits.bw_bits(bw, 1, 2)      # BTYPE = fixed Huffman
+
+    head := bits.iv_new(HASH_SIZE() + 1)
+    mut i := 0
+    while i < HASH_SIZE():
+        bits.iv_push(head, 0 - 1)
+        i = i + 1
+    prev := bits.iv_new(WSIZE() + 1)
+    mut j := 0
+    while j < WSIZE():
+        bits.iv_push(prev, 0 - 1)
+        j = j + 1
+
+    mut pos := 0
+    while pos < size:
+        m := find_match(data, size, pos, head, prev, chain)
+        mut mlen := 0
+        mut mdist := 0
+        if m != 0:
+            mlen = m >> 32
+            mdist = m & 4294967295
+        if mlen >= MIN_MATCH():
+            emit_match(bw, mlen, mdist)
+            mut k := 0
+            while k < mlen:
+                insert_hash(data, size, pos + k, head, prev)
+                k = k + 1
+            pos = pos + mlen
+        else:
+            emit_lit(bw, buf_get8(data, pos))
+            insert_hash(data, size, pos, head, prev)
+            pos = pos + 1
+
+    emit_lit(bw, 256)           # end-of-block
+    bits.bw_align(bw)
+    bits.iv_free(head)
+    bits.iv_free(prev)
+    out := bits.bw_take(bw)
+
+    # The RFC guarantees stored blocks never expand by more than 5 bytes per
+    # 65535; if Huffman coding made things worse, fall back to stored.
+    if bits.vec_len(out) >= size + 5:
+        bits.vec_free(out)
+        return stored_stream(data, size)
+    return out
+
+def insert_hash(data: Int, size: Int, pos: Int, head: Int, prev: Int):
+    if pos + MIN_MATCH() > size:
+        return
+    h := hash3(buf_get8(data, pos), buf_get8(data, pos + 1), buf_get8(data, pos + 2))
+    bits.iv_set(prev, pos & (WSIZE() - 1), bits.iv_get(head, h))
+    bits.iv_set(head, h, pos)
+
+# Emit the input as stored (uncompressed) DEFLATE blocks.
+def stored_stream(data: Int, size: Int) -> Int:
+    out := bits.vec_new(size + 16)
+    if size == 0:
+        bits.vec_push(out, 1)       # BFINAL=1, BTYPE=00
+        bits.vec_push(out, 0)
+        bits.vec_push(out, 0)
+        bits.vec_push(out, 255)
+        bits.vec_push(out, 255)
+        return out
+    mut off := 0
+    while off < size:
+        mut n := size - off
+        if n > 65535:
+            n = 65535
+        mut final := 0
+        if off + n >= size:
+            final = 1
+        bits.vec_push(out, final)
+        bits.vec_push(out, n & 255)
+        bits.vec_push(out, (n >> 8) & 255)
+        inv := n ^ 65535
+        bits.vec_push(out, inv & 255)
+        bits.vec_push(out, (inv >> 8) & 255)
+        bits.vec_push_bytes(out, data, off, n)
+        off = off + n
+    return out

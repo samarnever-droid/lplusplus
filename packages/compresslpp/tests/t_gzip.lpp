@@ -1,0 +1,56 @@
+import bits
+import gzip
+import deflate
+import inflate
+
+def say(ok: Int, label: Str):
+    if ok == 1:
+        print_str(str_concat("PASS  ", label))
+    else:
+        print_str(str_concat("FAIL  ", label))
+
+def rt(label: Str, path: Str, outp: Str, level: Int):
+    raw := buf_read(path)
+    n := buf_len(raw)
+    v := gzip.gz_compress(raw, n, level)
+    cn := bits.vec_len(v)
+    o := buf_alloc(cn + 1)
+    buf_copy(o, 0, bits.vec_data(v), 0, cn)
+    buf_write(outp, o)
+    buf_free(o)
+    back := gzip.gz_decompress(bits.vec_data(v), cn)
+    mut ok := 0
+    if back != 0:
+        if bits.vec_len(back) == n:
+            ok = 1
+            bd := bits.vec_data(back)
+            mut i := 0
+            while i < n:
+                if buf_get8(bd, i) != buf_get8(raw, i):
+                    ok = 0
+                    i = n
+                i = i + 1
+        bits.vec_free(back)
+    say(ok, str_concat(label, str_concat("  ", str_concat(int_to_str(n), str_concat(" -> ", int_to_str(cn))))))
+    bits.vec_free(v)
+    buf_free(raw)
+
+def read_py(label: Str, path: Str, wantlen: Int):
+    b := buf_read(path)
+    v := gzip.gz_decompress(b, buf_len(b))
+    mut ok := 0
+    if v != 0:
+        if bits.vec_len(v) == wantlen:
+            ok = 1
+        bits.vec_free(v)
+    say(ok, label)
+    buf_free(b)
+
+def main():
+    rt("gzip text", "r_dynamic.bin", "o_dyn.gz", 6)
+    rt("gzip repetitive", "r_repeat.bin", "o_rep.gz", 9)
+    rt("gzip binary", "r_binary.bin", "o_bin.gz", 6)
+    rt("gzip empty", "r_empty.bin", "o_empty.gz", 6)
+    rt("gzip large", "r_large.bin", "o_large.gz", 9)
+    read_py("read python .gz", "py_text.gz", 1800)
+    read_py("read python .gz (large)", "py_large.gz", 17100)
