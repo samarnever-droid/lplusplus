@@ -152,6 +152,28 @@ void lpp_arc_release(void *payload) {
     }
 }
 
+/* Non-atomic ARC, emitted when the compiler proves the program is
+ * single-threaded. See the long comment in lpp_runtime.c.
+ *
+ * This build is doubly safe to use them: the freestanding runtime exposes no
+ * thread primitive at all (no pthreads, no clone), so a program linked against
+ * it cannot create a second thread even in principle. Every `lock xadd` it
+ * executes today is pure overhead with nothing to synchronise against. */
+void lpp_arc_retain_local(void *payload) {
+    if (!payload) return;
+    LppArcHeader *header = (LppArcHeader *)payload - 1;
+    header->refcount += 1;
+}
+
+void lpp_arc_release_local(void *payload) {
+    if (!payload) return;
+    LppArcHeader *header = (LppArcHeader *)payload - 1;
+    if (--header->refcount == 0) {
+        if (header->destructor) header->destructor(payload);
+        lpp_sys_munmap(header, header->map_size);
+    }
+}
+
 void *lpp_alloc(int64_t size) {
     return lpp_arc_alloc(size);
 }

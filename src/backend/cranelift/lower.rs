@@ -19,6 +19,8 @@ pub struct FunctionLower<'a, M: Module> {
     pub type_table: &'a TypeTable,
     pub fn_name: String,
     pub next_str_idx: usize,
+    /// Emit non-atomic ARC when the whole program is proven single-threaded.
+    pub arc_non_atomic: bool,
 }
 
 impl<'a, M: Module> FunctionLower<'a, M> {
@@ -232,10 +234,15 @@ impl<'a, M: Module> FunctionLower<'a, M> {
             MirInstr::Retain(local) | MirInstr::Release(local) => {
                 // ARC operations are part of MIR semantics, not optional hints.  Emit
                 // the runtime call so AOT has the same ownership behavior as the model.
-                let symbol = if matches!(instr, MirInstr::Retain(_)) {
-                    "lpp_arc_retain"
-                } else {
-                    "lpp_arc_release"
+                // When the whole program is proven single-threaded, call the
+                // non-atomic variants. The `lock` prefix on every refcount
+                // update is pure overhead if no second thread can exist, and
+                // it is what makes shared objects ping-pong between cores.
+                let symbol = match (matches!(instr, MirInstr::Retain(_)), self.arc_non_atomic) {
+                    (true, false) => "lpp_arc_retain",
+                    (true, true) => "lpp_arc_retain_local",
+                    (false, false) => "lpp_arc_release",
+                    (false, true) => "lpp_arc_release_local",
                 };
                 let builtin_id = *self
                     .builtin_ids

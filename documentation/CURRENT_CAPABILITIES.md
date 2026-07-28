@@ -23,7 +23,10 @@ L++ 2.0 operates as a 100% pure native toolchain. Source code is compiled direct
 | Struct Constructors | **Available** | Supports both positional field initialization `Point(10, 20)` and zero-argument allocation `Point()` |
 | `break` / `continue` | **Available** | Fully supported in `while`, `for i in range(...)`, and `for item in list` |
 | Key-Value Maps (`Map[K, V]`) | **Available** | Open-addressing hash table supporting `Int` and `Str` keys with `Int`, `Float`, `Str` values |
-| `Set[T]`, Enums, Traits | **Not Available** | Planned container and algebraic type extensions |
+| Enums & Match | **Available** | Data-carrying enums with full 64-bit width payloads (`Int`, `Float`, `Str`), pattern matching, and `?` try operator |
+| Traits & Impl | **Available** | Traits with static/dynamic dispatch and generic trait bounds (`[T: Display]`) |
+| Generics | **Available** | Monomorphized zero-overhead generics for functions, structs, enums, and `impl` methods with turbofish (`[T]`) |
+| `Set[T]` | **Not Available** | Planned container extension |
 
 ---
 

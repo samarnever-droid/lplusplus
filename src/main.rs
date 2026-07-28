@@ -823,7 +823,15 @@ fn main() {
 
             // L++ 2.0 Pure Native Cranelift AOT Backend
             let aot_start = Instant::now();
-            let obj_bytes = match cranelift_backend::compiler::AotCompiler::compile(&mir_program, &type_table) {
+            let has_extern_decl = ast
+                .declarations
+                .iter()
+                .any(|d| matches!(d, crate::ast::TopLevel::Extern(_)));
+            let obj_bytes = match cranelift_backend::compiler::AotCompiler::compile_with_options(
+                &mir_program,
+                &type_table,
+                has_extern_decl,
+            ) {
                 Ok(bytes) => bytes,
                 Err(e) => {
                     eprintln!("[L++] Cranelift AOT compilation error: {}", e);

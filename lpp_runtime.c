@@ -485,6 +485,58 @@ void lpp_arc_release(void *ptr) {
     }
 }
 
+/* ── Thread-local ARC fast path ──────────────────────────────────────────────
+ *
+ * An atomic RMW is not expensive because it is "atomic"; it is expensive
+ * because it locks a cache line. When two cores retain/release the same object
+ * the line ping-pongs between them and throughput collapses — measured here at
+ * ~5x slower than the same number of uncontended atomics, with two threads
+ * finishing slower than one.
+ *
+ * The escape analysis already proves, for the whole program, whether any object
+ * can reach a second thread: an L++ program that never evaluates `spawn` has no
+ * way to create one. When that holds, the compiler emits these non-atomic
+ * variants instead and the `lock` prefix disappears entirely.
+ *
+ * This is deliberately a *static* choice, not a runtime flag on the header.
+ * A flag would have to be loaded from the very cache line under contention,
+ * which measured *worse* than plain atomics in the shared case (0.487s -> 0.770s
+ * for 2 threads). Deciding at compile time costs nothing at run time.
+ *
+ * Semantics are otherwise identical to the atomic versions: same header, same
+ * destructor contract, same NULL/foreign-pointer tolerance. Only the ordering
+ * guarantee is dropped, and it is only dropped where the compiler has proven
+ * there is no second thread to order against.
+ */
+void lpp_arc_retain_local(void *ptr) {
+    if (!lpp__is_valid_arc_ptr(ptr)) return;
+    LppArcHeader *hdr = (LppArcHeader *)ptr - 1;
+#if defined(_MSC_VER)
+    hdr->refcount += 1;
+#else
+    atomic_store_explicit(&hdr->refcount,
+        atomic_load_explicit(&hdr->refcount, memory_order_relaxed) + 1,
+        memory_order_relaxed);
+#endif
+}
+
+void lpp_arc_release_local(void *ptr) {
+    if (!lpp__is_valid_arc_ptr(ptr)) return;
+    LppArcHeader *hdr = (LppArcHeader *)ptr - 1;
+#if defined(_MSC_VER)
+    int32_t prev = hdr->refcount;
+    hdr->refcount = prev - 1;
+#else
+    int32_t prev = atomic_load_explicit(&hdr->refcount, memory_order_relaxed);
+    atomic_store_explicit(&hdr->refcount, prev - 1, memory_order_relaxed);
+#endif
+    if (prev == 1) {
+        hdr->magic = 0;
+        if (hdr->destructor) hdr->destructor(ptr);
+        free(hdr);
+    }
+}
+
 /* An ARC-managed closure payload is two pointer-sized words:
  * [code pointer, environment pointer].  The code pointer is non-owning; the
  * environment is an owned ARC reference transferred into the closure. */

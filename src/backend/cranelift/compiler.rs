@@ -207,6 +207,9 @@ pub struct AotCompiler {
     pub drop_ids: HashMap<StructTypeId, cranelift_module::FuncId>,
     /// C ABI `main` wrapper around the L++ user-level `main` function.
     pub entrypoint_id: Option<cranelift_module::FuncId>,
+    /// When the whole program is proven single-threaded, ARC uses the
+    /// non-atomic runtime entry points. See `mir::pass_arc_local`.
+    pub arc_non_atomic: bool,
 }
 
 impl AotCompiler {
@@ -254,6 +257,7 @@ impl AotCompiler {
             module,
             func_ids: HashMap::new(),
             builtin_ids: HashMap::new(),
+            arc_non_atomic: false,
             drop_ids: HashMap::new(),
             entrypoint_id: None,
         })
@@ -463,6 +467,8 @@ impl AotCompiler {
         // are declared as new data objects on demand.
         let mut pending: Vec<(cranelift_module::FuncId, cranelift_codegen::Context)> =
             Vec::with_capacity(mir_fns.len());
+        // Read before the loop: `self` is borrowed mutably inside it.
+        let arc_non_atomic = self.arc_non_atomic;
         for mir_fn in &mir_fns {
             if mir_fn.blocks.is_empty() {
                 continue;
@@ -475,6 +481,7 @@ impl AotCompiler {
                 type_table,
                 fn_name: mir_fn.name.clone(),
                 next_str_idx: 0,
+                arc_non_atomic,
             };
             let (func_id, ctx) = lower.build_function_ir(mir_fn)?;
             pending.push((func_id, ctx));
@@ -606,8 +613,20 @@ impl AotCompiler {
 
     /// Full pipeline: builtins → declare → lower → emit.
     pub fn compile(program: &MirProgram, type_table: &TypeTable) -> Result<Vec<u8>, String> {
+        Self::compile_with_options(program, type_table, false)
+    }
+
+    /// `has_extern` reports whether the source declared any FFI block. Foreign
+    /// code can spawn threads with no MIR evidence, so it forces atomic ARC.
+    pub fn compile_with_options(
+        program: &MirProgram,
+        type_table: &TypeTable,
+        has_extern: bool,
+    ) -> Result<Vec<u8>, String> {
         validate_aot_program(program, type_table)?;
         let mut c = Self::new_for_host()?;
+        c.arc_non_atomic =
+            crate::mir::pass_arc_local::is_provably_single_threaded(program, has_extern);
         c.declare_builtins()?;
         c.declare_drop_functions(type_table)?;
         c.declare_functions(program)?;

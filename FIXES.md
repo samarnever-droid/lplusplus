@@ -473,3 +473,133 @@ Enum payloads are limited to **one field per variant**; `Pair(a: Int, b: Int)`
 as a variant keeps only the first. The layout supports more (`__vN` could be
 widened to `__vN_M`), but the constructor and match paths currently read a
 single slot, so this is documented rather than silently half-working.
+
+---
+
+## ARC atomic contention
+
+Every retain/release used an atomic read-modify-write unconditionally. An
+atomic RMW is not costly because it is atomic — it is costly because it takes
+exclusive ownership of a cache line. When two cores touch the same object's
+refcount that line ping-pongs between them and throughput collapses.
+
+Measured on this machine (2 cores, 20M retain/release pairs, same object):
+
+| scenario | throughput |
+|---|---|
+| 1 thread, non-atomic | 225.9 M/s |
+| 1 thread, atomic `ACQ_REL` (what L++ did) | 78.7 M/s |
+| 2 threads, private objects | 156.1 M/s |
+| 2 threads, **sharing one object** | 31.3 M/s |
+
+Two threads sharing an object finish **slower than one thread**. The atomics
+themselves cost 2.87x; the contention on top of that costs a further ~5x.
+
+### What was rejected, and why
+
+**Weakening the memory order** (relaxed retain, release/acquire-fence decrement)
+is the textbook fix. Measured: **1.01x** — no effect. On x86 the `lock` prefix
+dominates and the ordering flags are nearly free. Shipping it would have been
+theatre.
+
+**A per-object "is shared" flag** checked at run time is the other obvious
+design. It is actively harmful: the check must load the flag from the very cache
+line that is already contended, taking the shared 2-thread case from 0.487s to
+**0.770s** — worse than plain atomics. Measured before it was written, not after.
+
+### What was done
+
+A whole-program MIR pass (`src/mir/pass_arc_local.rs`) proves whether the
+program can ever create a second thread. When it cannot, codegen emits
+`lpp_arc_retain_local` / `lpp_arc_release_local`, which drop the `lock` prefix
+entirely. The decision is made at compile time, so it costs nothing at run time
+and cannot regress the contended path.
+
+This mirrors Rust's `Rc`/`Arc` split, but inferred rather than annotated —
+L++'s philosophy is that the compiler proves ownership properties instead of
+asking the programmer to declare them.
+
+The proof is conservative. Any of the following keeps the atomic path:
+
+- `Rvalue::SpawnThread` anywhere in the program;
+- a call to the `lpp_thread_spawn` builtin;
+- any `CallIndirect`, since the callee is unknown and might spawn;
+- any `extern` block, since foreign code can spawn threads invisibly.
+
+Verified by inspecting emitted relocations: an identical struct program uses
+`_local` with no `spawn`, atomic with a `spawn`, and atomic with an `extern`
+block.
+
+Both runtimes gained the non-atomic pair. The freestanding runtime
+(`runtime/linux_x86_64_min.c`, used by the *default* internal linker) is a
+notable case: it exposes no thread primitive at all — no pthreads, no `clone` —
+so a program linked against it cannot create a thread even in principle. Every
+`lock xadd` it executed was pure overhead with nothing to synchronise against.
+
+### Results
+
+| | |
+|---|---|
+| Micro-benchmark, 1 thread | 78.7 -> 225.9 M/s (**2.87x**) |
+| End-to-end L++ program, 3M ARC-heavy iterations | 0.0466s -> 0.0394s (**1.18x**) |
+
+The end-to-end figure is much smaller than the micro-benchmark, and honestly so:
+real programs also allocate, branch and do I/O, and ARC is only part of the
+total. The 2.87x is the ceiling for the ARC operations themselves.
+
+### Verification
+
+| | |
+|---|---|
+| `cargo test` | 43 pass (5 new soundness tests for the pass) |
+| `tests/aot_parity.tsv` | 31/31 (new `arc_local_refcount.lpp`) |
+| `scripts/check_safety_mission.sh` | pass |
+| `packages/lppsqlite` | 485 checks + 118/118 differential |
+| `packages/compresslpp` | 59 checks + 38 cross-verifications |
+
+`tests/arc_local_refcount.lpp` exercises the paths where a miscount would show
+up as a double free or a leak: one object held through three live aliases, and
+100 short-lived objects each aliased once. Its object file contains three
+`retain_local` / three `release_local` calls and zero atomic ARC calls, and it
+exits cleanly under both linkers — so the counts balance exactly.
+
+### Not addressed
+
+The gain applies only to programs that never spawn. A genuinely multi-threaded
+L++ server still pays full atomic cost on shared objects — that needs biased or
+deferred reference counting, which requires an owner field in the header and a
+safe ownership-transfer protocol, and is a much larger change.
+
+**Separately found, pre-existing:** several ARC-on-struct shapes segfault at
+exit under the **freestanding** runtime (`runtime/linux_x86_64_min.c`, the
+default internal linker). The host runtime is clean and the printed values are
+correct in every case — the fault is in teardown. Confirmed triggers:
+
+- returning a struct from a function;
+- nested struct construction, `Outer(Inner(11), 1)`;
+- taking a struct as a parameter and aliasing it inside the callee.
+
+Minimal reproduction:
+
+```
+struct Inner:
+    n: Int
+
+def pass_through(i: Inner) -> Inner:
+    copy := i
+    return copy
+
+def main():
+    r := pass_through(Inner(23))
+    print(r.n)          # prints 23, then SIGSEGV at exit
+```
+
+Verified pre-existing by stashing every change in this section, rebuilding
+unmodified `13f3ef8`, and reproducing byte-identical failures. Not caused by
+this work and not fixed here; it is very likely the same family as the
+documented "returning a list created inside a function" hazard.
+
+`tests/arc_local_refcount.lpp` deliberately avoids those shapes so it stays a
+signal about ARC atomicity rather than a duplicate report of a known backend
+fault. It passes under both linkers, and its object file contains three
+`retain_local` and three `release_local` calls with zero atomic ARC calls.

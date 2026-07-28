@@ -123,6 +123,10 @@ void *lpp_arc_alloc_with_destructor(int64_t sz, LppArcDestructor dtor) { if(sz<0
 void *lpp_arc_alloc(int64_t sz) { return lpp_arc_alloc_with_destructor(sz,0); }
 void lpp_arc_retain(void *p) { if(p)_InterlockedIncrement(&((LppArcHeader*)p-1)->refcount); }
 void lpp_arc_release(void *p) { if(!p)return; LppArcHeader *h=(LppArcHeader*)p-1; if(_InterlockedDecrement(&h->refcount)==0){if(h->destructor)h->destructor(p);VirtualFree(h,0,MEM_RELEASE);} }
+/* Non-atomic ARC, emitted when the compiler proves the program never spawns a
+ * thread. See the long comment in lpp_runtime.c. */
+void lpp_arc_retain_local(void *p) { if(p)((LppArcHeader*)p-1)->refcount += 1; }
+void lpp_arc_release_local(void *p) { if(!p)return; LppArcHeader *h=(LppArcHeader*)p-1; if(--h->refcount==0){if(h->destructor)h->destructor(p);VirtualFree(h,0,MEM_RELEASE);} }
 void *lpp_alloc(int64_t sz){return lpp_arc_alloc(sz);}
 void lpp_free(void *p,int64_t sz){(void)sz;lpp_arc_release(p);}
 void lpp_closure_destroy(void *c){if(c)lpp_arc_release(((void**)c)[1]);}

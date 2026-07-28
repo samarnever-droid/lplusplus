@@ -104,6 +104,24 @@ pub fn get_builtins() -> &'static [Builtin] {
             cl_params: &[0],
             cl_return: None,
         },
+        // Non-atomic ARC. Emitted in place of the atomic pair when the
+        // whole-program analysis proves no thread is ever spawned.
+        Builtin {
+            name: "lpp_arc_retain_local",
+            symbol: "lpp_arc_retain_local",
+            params: &[ParamType::Specific(TypeRef::Int)],
+            return_type: TypeRef::Void,
+            cl_params: &[0],
+            cl_return: None,
+        },
+        Builtin {
+            name: "lpp_arc_release_local",
+            symbol: "lpp_arc_release_local",
+            params: &[ParamType::Specific(TypeRef::Int)],
+            return_type: TypeRef::Void,
+            cl_params: &[0],
+            cl_return: None,
+        },
         Builtin {
             name: "lpp_arc_release",
             symbol: "lpp_arc_release",
