@@ -8,6 +8,9 @@
 #include <string.h>
 #include <stdio.h>
 
+extern void *lpp_arc_alloc(int64_t size);
+extern char *lpp_empty_str(void);
+
 /* ── Core buffer ops ─────────────────────────────────────────────────────── */
 
 int64_t lpp_buf_alloc(int64_t size) {
@@ -162,11 +165,14 @@ int64_t lpp_str_len(const char *s) {
 /* ── String from buffer (for debug/tooling) ──────────────────────────────── */
 
 char *lpp_buf_to_str(void *ptr, int64_t off, int64_t len) {
-    if (!ptr) return NULL;
+    /* The result is an owned `Str` in generated code, so it must come from ARC
+     * and carry a header -- a malloc'd buffer here would be released through
+     * lpp_arc_release and read 24 bytes in front of a malloc block. */
+    if (!ptr) return lpp_empty_str();
     int64_t size = *(int64_t *)ptr;
-    if (off < 0 || len < 0 || off + len > size) return NULL;
-    char *s = (char *)malloc((size_t)len + 1);
-    if (!s) return NULL;
+    if (off < 0 || len < 0 || off + len > size) return lpp_empty_str();
+    char *s = (char *)lpp_arc_alloc((int64_t)len + 1);
+    if (!s) return lpp_empty_str();
     memcpy(s, ((uint8_t *)ptr) + 8 + off, (size_t)len);
     s[len] = 0;
     return s;

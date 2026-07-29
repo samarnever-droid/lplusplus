@@ -13,6 +13,7 @@
 
 /* ── ARC helpers (declared in lpp_runtime.c) ──────────────────────────── */
 extern void *lpp_arc_alloc(int64_t size);
+extern char *lpp_empty_str(void);
 extern void  lpp_arc_release(void *ptr);
 extern void *lpp_list_new_arc(void);
 extern void  lpp_list_push_arc(void *list, void *value);
@@ -26,7 +27,7 @@ char *lpp_str_concat(const char *a, const char *b) {
     if (!b) b = "";
     size_t la = strlen(a), lb = strlen(b);
     char *out = (char *)lpp_arc_alloc((int64_t)(la + lb + 1));
-    if (!out) return (char *)"";
+    if (!out) return lpp_empty_str();
     memcpy(out, a, la);
     memcpy(out + la, b, lb);
     out[la + lb] = 0;
@@ -71,7 +72,15 @@ int64_t lpp_str_find(const char *haystack, const char *needle) {
 /* ── str_replace(s, old, new) → ARC-allocated with replacements ───────── */
 char *lpp_str_replace(const char *s, const char *old, const char *new_) {
     if (!s) s = "";
-    if (!old || !*old) return (char *)s; /* no pattern → no change */
+    /* Must return a NEW owned string, never the argument: the caller releases
+     * the result independently of the input, so aliasing double-releases. */
+    if (!old || !*old) {
+        size_t sl = strlen(s);
+        char *copy = (char *)lpp_arc_alloc((int64_t)(sl + 1));
+        if (!copy) return lpp_empty_str();
+        memcpy(copy, s, sl + 1);
+        return copy;
+    }
     if (!new_) new_ = "";
 
     size_t slen = strlen(s), olen = strlen(old), nlen = strlen(new_);
@@ -82,7 +91,7 @@ char *lpp_str_replace(const char *s, const char *old, const char *new_) {
 
     size_t outlen = slen + (size_t)count * (nlen - olen) + 1;
     char *out = (char *)lpp_arc_alloc((int64_t)outlen);
-    if (!out) return (char *)"";
+    if (!out) return lpp_empty_str();
 
     char *dst = out;
     const char *src = s;
@@ -102,13 +111,13 @@ char *lpp_str_substr(const char *s, int64_t start, int64_t length) {
     if (!s) s = "";
     size_t slen = strlen(s);
     if (start < 0) start = 0;
-    if (start > (int64_t)slen) return (char *)"";
+    if (start > (int64_t)slen) return lpp_empty_str();
 
     size_t remain = slen - (size_t)start;
     size_t copy = (length < 0 || (size_t)length > remain) ? remain : (size_t)length;
 
     char *out = (char *)lpp_arc_alloc((int64_t)(copy + 1));
-    if (!out) return (char *)"";
+    if (!out) return lpp_empty_str();
     memcpy(out, s + start, copy);
     out[copy] = 0;
     return out;
@@ -116,7 +125,7 @@ char *lpp_str_substr(const char *s, int64_t start, int64_t length) {
 
 /* ── str_trim(s) → ARC-allocated with leading/trailing whitespace removed */
 char *lpp_str_trim(const char *s) {
-    if (!s) return (char *)"";
+    if (!s) return lpp_empty_str();
     while (*s == ' ' || *s == '\t' || *s == '\n' || *s == '\r') s++;
     const char *end = s + strlen(s);
     while (end > s && (end[-1] == ' ' || end[-1] == '\t' || end[-1] == '\n' || end[-1] == '\r'))
@@ -124,7 +133,7 @@ char *lpp_str_trim(const char *s) {
 
     int64_t len = (int64_t)(end - s);
     char *out = (char *)lpp_arc_alloc(len + 1);
-    if (!out) return (char *)"";
+    if (!out) return lpp_empty_str();
     memcpy(out, s, (size_t)len);
     out[len] = 0;
     return out;
@@ -133,12 +142,12 @@ char *lpp_str_trim(const char *s) {
 /* ── str_repeat(s, n) → ARC-allocated string repeated n times ──────────── */
 /* O(1) allocation instead of O(n) str_concat calls.                        */
 char *lpp_str_repeat(const char *s, int64_t n) {
-    if (!s || n <= 0) return (char *)"";
+    if (!s || n <= 0) return lpp_empty_str();
     size_t slen = strlen(s);
-    if (slen == 0) return (char *)"";
+    if (slen == 0) return lpp_empty_str();
     size_t total = slen * (size_t)n;
     char *out = (char *)lpp_arc_alloc((int64_t)(total + 1));
-    if (!out) return (char *)"";
+    if (!out) return lpp_empty_str();
     for (int64_t i = 0; i < n; i++) {
         memcpy(out + i * slen, s, slen);
     }
@@ -151,7 +160,7 @@ char *lpp_char_at(const char *s, int64_t idx) {
     if (!s) return NULL;
     int64_t len = (int64_t)strlen(s);
     if (idx < 0 || idx >= len) return NULL;
-    char *out = (char *)malloc(2);
+    char *out = (char *)lpp_arc_alloc((int64_t)(2));
     out[0] = s[idx];
     out[1] = 0;
     return out;
@@ -165,7 +174,7 @@ int64_t lpp_ord(const char *s) {
 
 /* ── chr: return 1-char string from codepoint ── */
 char *lpp_chr(int64_t code) {
-    char *out = (char *)malloc(2);
+    char *out = (char *)lpp_arc_alloc((int64_t)(2));
     out[0] = (char)(code & 0xFF);
     out[1] = 0;
     return out;
@@ -197,7 +206,7 @@ int64_t lpp_str_ends_with(const char *s, const char *suffix) {
 char *lpp_str_upper(const char *s) {
     if (!s) return NULL;
     size_t len = strlen(s);
-    char *out = (char *)malloc(len + 1);
+    char *out = (char *)lpp_arc_alloc((int64_t)(len + 1));
     for (size_t i = 0; i < len; i++)
         out[i] = (s[i] >= 'a' && s[i] <= 'z') ? s[i] - 32 : s[i];
     out[len] = 0;
@@ -208,7 +217,7 @@ char *lpp_str_upper(const char *s) {
 char *lpp_str_lower(const char *s) {
     if (!s) return NULL;
     size_t len = strlen(s);
-    char *out = (char *)malloc(len + 1);
+    char *out = (char *)lpp_arc_alloc((int64_t)(len + 1));
     for (size_t i = 0; i < len; i++)
         out[i] = (s[i] >= 'A' && s[i] <= 'Z') ? s[i] + 32 : s[i];
     out[len] = 0;
@@ -219,8 +228,8 @@ char *lpp_str_lower(const char *s) {
 char *lpp_int_to_str(int64_t val) {
     char buf[32];
     snprintf(buf, sizeof(buf), "%lld", (long long)val);
-    char *out = (char *)malloc(strlen(buf) + 1);
-    if (!out) return (char *)"";
+    char *out = (char *)lpp_arc_alloc((int64_t)(strlen(buf)) + 1);
+    if (!out) return lpp_empty_str();
     strcpy(out, buf);
     return out;
 }
@@ -229,8 +238,8 @@ char *lpp_int_to_str(int64_t val) {
 char *lpp_float_to_str(double val) {
     char buf[64];
     snprintf(buf, sizeof(buf), "%g", val);
-    char *out = (char *)malloc(strlen(buf) + 1);
-    if (!out) return (char *)"";
+    char *out = (char *)lpp_arc_alloc((int64_t)(strlen(buf)) + 1);
+    if (!out) return lpp_empty_str();
     strcpy(out, buf);
     return out;
 }
@@ -238,8 +247,8 @@ char *lpp_float_to_str(double val) {
 /* ── bool_to_str: convert bool to string ── */
 char *lpp_bool_to_str(int64_t val) {
     const char *str = val ? "true" : "false";
-    char *out = (char *)malloc(strlen(str) + 1);
-    if (!out) return (char *)"";
+    char *out = (char *)lpp_arc_alloc((int64_t)(strlen(str)) + 1);
+    if (!out) return lpp_empty_str();
     strcpy(out, str);
     return out;
 }

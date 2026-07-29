@@ -546,10 +546,18 @@ impl<'a> MirLowerCtx<'a> {
                 // capsules are returned *owned*. Returning an owned local moves
                 // its reference. Returning a borrowed parameter/field first
                 // retains it, thereby creating the caller's return reference.
+                // `Str` is in this set now that string locals are owned. Without
+                // it, `return str_substr(s, b, e - b)` lowered to a plain
+                // `Return`, so the ARC pass released the string it was about to
+                // hand back and the caller read freed memory -- ASan caught this
+                // as a use-after-free in lppsqlite's `trim`.
                 let managed_return = match &op {
                     Some(Operand::Local(local)) | Some(Operand::Borrowed(local)) => matches!(
                         &builder.function.locals[local.0].ty,
-                        TypeRef::Custom(_) | TypeRef::Function | TypeRef::Generic(_, _)
+                        TypeRef::Custom(_)
+                            | TypeRef::Function
+                            | TypeRef::Generic(_, _)
+                            | TypeRef::Str
                     )
                     .then_some(*local),
                     _ => None,

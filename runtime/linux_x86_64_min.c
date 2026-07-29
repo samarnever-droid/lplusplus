@@ -95,6 +95,39 @@ typedef struct {
     uint64_t map_size;
 } LppArcHeader;
 
+/* ── Immortal objects ─────────────────────────────────────────────────────
+ *
+ * A string literal lives in .rodata and must never be freed -- but generated
+ * code cannot tell it apart from a heap string, because both are just a
+ * `char *`. Previously the compiler worked around this by refusing to treat
+ * `Str` as owned at all, which traded a crash for an unbounded leak.
+ *
+ * Instead every string literal now carries a real 24-byte ARC header, emitted
+ * into .rodata immediately before its bytes, whose refcount field holds this
+ * sentinel. Retain and release test for it and return without touching memory.
+ *
+ * Two properties make this work:
+ *
+ *   * The check is a *read* of a mapped, read-only page. It never writes, so
+ *     it cannot fault on .rodata. A plain "large refcount" would still be
+ *     decremented, and the write would fault.
+ *   * The sentinel value is the same 32-bit constant as LPP_ARC_MAGIC in the
+ *     host runtime. That is deliberate: the host header places `magic` at
+ *     offset 0 and `refcount` at offset 4, this header places `refcount` at
+ *     offset 0, so a literal whose first *two* words are both the constant is
+ *     simultaneously "valid magic" to the host runtime and "immortal" to both.
+ *     One blob emitted by the compiler is correct under either runtime, which
+ *     matters because the same object file links against either.
+ *
+ * A genuine object never reaches this count: it would need ~1.1 billion live
+ * references, which cannot exist in an address space that must also hold them.
+ */
+#define LPP_ARC_IMMORTAL 0x41524331U
+
+static inline int lpp__is_immortal(const LppArcHeader *header) {
+    return (uint32_t)header->refcount == LPP_ARC_IMMORTAL;
+}
+
 static uint64_t lpp_page_round(uint64_t size) {
     const uint64_t page = 4096;
     return (size + page - 1) & ~(page - 1);
@@ -216,6 +249,8 @@ void *lpp_arc_alloc(int64_t payload_size) {
 int64_t lpp_weak_generation(void *payload) {
     if (!payload) return 0;
     LppArcHeader *header = (LppArcHeader *)payload - 1;
+    /* An immortal target never dies, so any non-zero generation is stable. */
+    if (lpp__is_immortal(header)) return (int64_t)LPP_ARC_IMMORTAL;
     return (int64_t)__atomic_load_n(&header->generation, __ATOMIC_ACQUIRE);
 }
 
@@ -223,6 +258,9 @@ int64_t lpp_weak_get(int64_t raw, int64_t expected_generation) {
     void *payload = (void *)(intptr_t)raw;
     if (!payload || expected_generation == 0) return 0;
     LppArcHeader *header = (LppArcHeader *)payload - 1;
+    if (lpp__is_immortal(header)) {
+        return expected_generation == (int64_t)LPP_ARC_IMMORTAL ? raw : 0;
+    }
     int now = __atomic_load_n(&header->generation, __ATOMIC_ACQUIRE);
     if ((int64_t)now != expected_generation) return 0;
     return raw;
@@ -231,6 +269,9 @@ int64_t lpp_weak_get(int64_t raw, int64_t expected_generation) {
 void lpp_arc_retain(void *payload) {
     if (!payload) return;
     LppArcHeader *header = (LppArcHeader *)payload - 1;
+    /* Immortal (string literal in .rodata): never counted, never freed, and
+     * crucially never written to -- the page is read-only. */
+    if (lpp__is_immortal(header)) return;
     (void)__atomic_add_fetch(&header->refcount, 1, __ATOMIC_ACQ_REL);
 }
 
@@ -251,6 +292,7 @@ static void lpp_arc_free(LppArcHeader *header) {
 void lpp_arc_release(void *payload) {
     if (!payload) return;
     LppArcHeader *header = (LppArcHeader *)payload - 1;
+    if (lpp__is_immortal(header)) return;
     if (__atomic_sub_fetch(&header->refcount, 1, __ATOMIC_ACQ_REL) == 0) {
         (void)__atomic_add_fetch(&header->generation, 1, __ATOMIC_RELEASE);
         if (header->destructor) header->destructor(payload);
@@ -268,12 +310,14 @@ void lpp_arc_release(void *payload) {
 void lpp_arc_retain_local(void *payload) {
     if (!payload) return;
     LppArcHeader *header = (LppArcHeader *)payload - 1;
+    if (lpp__is_immortal(header)) return;
     header->refcount += 1;
 }
 
 void lpp_arc_release_local(void *payload) {
     if (!payload) return;
     LppArcHeader *header = (LppArcHeader *)payload - 1;
+    if (lpp__is_immortal(header)) return;
     if (--header->refcount == 0) {
         (void)__atomic_add_fetch(&header->generation, 1, __ATOMIC_RELEASE);
         if (header->destructor) header->destructor(payload);

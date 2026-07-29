@@ -16,6 +16,7 @@
 
 /* ── ARC helpers (defined in lpp_runtime.c) ───────────────────────────── */
 extern void *lpp_arc_alloc(int64_t size);
+extern char *lpp_empty_str(void);
 extern void  lpp_arc_release(void *ptr);
 
 #if defined(_WIN32)
@@ -28,10 +29,10 @@ int64_t lpp_command_exec(const char *cmdline) {
 }
 
 char *lpp_command_output(const char *cmdline) {
-    if (!cmdline) return (char *)"";
+    if (!cmdline) return lpp_empty_str();
     HANDLE hRead, hWrite;
     SECURITY_ATTRIBUTES sa = {sizeof(sa), NULL, TRUE};
-    if (!CreatePipe(&hRead, &hWrite, &sa, 0)) return (char *)"";
+    if (!CreatePipe(&hRead, &hWrite, &sa, 0)) return lpp_empty_str();
 
     STARTUPINFOA si = {sizeof(si)};
     PROCESS_INFORMATION pi = {0};
@@ -44,7 +45,7 @@ char *lpp_command_output(const char *cmdline) {
                               CREATE_NO_WINDOW, NULL, NULL, &si, &pi);
     free(dup);
     CloseHandle(hWrite);
-    if (!ok) { CloseHandle(hRead); return (char *)""; }
+    if (!ok) { CloseHandle(hRead); return lpp_empty_str(); }
 
     WaitForSingleObject(pi.hProcess, INFINITE);
     CloseHandle(pi.hProcess);
@@ -52,7 +53,7 @@ char *lpp_command_output(const char *cmdline) {
 
     int cap = 4096, len = 0;
     char *buf = (char *)lpp_arc_alloc((int64_t)(cap + 1));
-    if (!buf) { CloseHandle(hRead); return (char *)""; }
+    if (!buf) { CloseHandle(hRead); return lpp_empty_str(); }
     for (;;) {
         if (len + 1024 >= cap) {
             int nc = cap * 2;
@@ -72,12 +73,12 @@ char *lpp_command_output(const char *cmdline) {
 }
 
 char *lpp_env_get(const char *name) {
-    if (!name) return (char *)"";
+    if (!name) return lpp_empty_str();
     char val[4096];
     DWORD n = GetEnvironmentVariableA(name, val, sizeof(val));
-    if (n == 0 || n >= sizeof(val)) return (char *)"";
+    if (n == 0 || n >= sizeof(val)) return lpp_empty_str();
     char *out = (char *)lpp_arc_alloc((int64_t)(n + 1));
-    if (!out) return (char *)"";
+    if (!out) return lpp_empty_str();
     memcpy(out, val, n);
     out[n] = 0;
     return out;
@@ -109,12 +110,12 @@ int64_t lpp_command_exec(const char *cmdline) {
 }
 
 char *lpp_command_output(const char *cmdline) {
-    if (!cmdline) return (char *)"";
+    if (!cmdline) return lpp_empty_str();
     int pipefd[2];
-    if (pipe(pipefd) < 0) return (char *)"";
+    if (pipe(pipefd) < 0) return lpp_empty_str();
 
     pid_t pid = fork();
-    if (pid < 0) { close(pipefd[0]); close(pipefd[1]); return (char *)""; }
+    if (pid < 0) { close(pipefd[0]); close(pipefd[1]); return lpp_empty_str(); }
 
     if (pid == 0) {
         /* child */
@@ -129,7 +130,7 @@ char *lpp_command_output(const char *cmdline) {
     close(pipefd[1]);
     int cap = 4096, len = 0;
     char *buf = (char *)lpp_arc_alloc((int64_t)(cap + 1));
-    if (!buf) { close(pipefd[0]); waitpid(pid, NULL, 0); return (char *)""; }
+    if (!buf) { close(pipefd[0]); waitpid(pid, NULL, 0); return lpp_empty_str(); }
 
     for (;;) {
         if (len + 1024 >= cap) {
@@ -151,12 +152,12 @@ char *lpp_command_output(const char *cmdline) {
 }
 
 char *lpp_env_get(const char *name) {
-    if (!name) return (char *)"";
+    if (!name) return lpp_empty_str();
     const char *val = getenv(name);
-    if (!val) return (char *)"";
+    if (!val) return lpp_empty_str();
     int64_t len = (int64_t)strlen(val);
     char *out = (char *)lpp_arc_alloc(len + 1);
-    if (!out) return (char *)"";
+    if (!out) return lpp_empty_str();
     memcpy(out, val, (size_t)len);
     out[len] = 0;
     return out;

@@ -60,6 +60,13 @@ typedef struct { DWORD a; DWORD b; DWORD c; DWORD d; DWORD e; DWORD f; DWORD g;
     DWORD  h; DWORD  i; DWORD  j; } WIN32_FIND_DATAA;
 
 typedef struct { long refcount; LppArcDestructor destructor; uint64_t allocation_size; } LppArcHeader;
+
+/* Immortal objects: a string literal carries a real ARC header emitted into
+ * read-only data whose refcount is this sentinel. Retain/release detect it and
+ * return without writing -- the page is not writable. See the long comment in
+ * runtime/linux_x86_64_min.c for why the constant equals LPP_ARC_MAGIC. */
+#define LPP_ARC_IMMORTAL 0x41524331U
+static int lpp__is_immortal(const LppArcHeader *h) { return (unsigned)h->refcount == LPP_ARC_IMMORTAL; }
 typedef struct { int64_t *data; int64_t len; int64_t cap; uint64_t data_bytes; int arc_elements; } LppList;
 
 static uint64_t lpp_page_round(uint64_t s) { return (s+4095)&~4095ULL; }
@@ -121,12 +128,19 @@ double fmod(double x, double y) {
 
 void *lpp_arc_alloc_with_destructor(int64_t sz, LppArcDestructor dtor) { if(sz<0)return 0; uint64_t t=lpp_page_round((uint64_t)sz+sizeof(LppArcHeader)); LppArcHeader *h=(LppArcHeader*)VirtualAlloc(0,t,MEM_COMMIT|MEM_RESERVE,PAGE_READWRITE); if(!h)return 0; h->refcount=1;h->destructor=dtor;h->allocation_size=t; return h+1; }
 void *lpp_arc_alloc(int64_t sz) { return lpp_arc_alloc_with_destructor(sz,0); }
-void lpp_arc_retain(void *p) { if(p)_InterlockedIncrement(&((LppArcHeader*)p-1)->refcount); }
-void lpp_arc_release(void *p) { if(!p)return; LppArcHeader *h=(LppArcHeader*)p-1; if(_InterlockedDecrement(&h->refcount)==0){if(h->destructor)h->destructor(p);VirtualFree(h,0,MEM_RELEASE);} }
+
+/* Shared immortal empty string: runtime error paths return this instead of a
+ * bare C literal, so every Str handed to generated code has a valid header. */
+__declspec(align(16)) static const unsigned int lpp__empty_str_blob[8] = {
+    LPP_ARC_IMMORTAL, LPP_ARC_IMMORTAL, 0, 0, 0, 0, 0, 0
+};
+char *lpp_empty_str(void) { return (char *)(const char *)&lpp__empty_str_blob[6]; }
+void lpp_arc_retain(void *p) { if(!p)return; LppArcHeader *h=(LppArcHeader*)p-1; if(lpp__is_immortal(h))return; _InterlockedIncrement(&h->refcount); }
+void lpp_arc_release(void *p) { if(!p)return; LppArcHeader *h=(LppArcHeader*)p-1; if(lpp__is_immortal(h))return; if(_InterlockedDecrement(&h->refcount)==0){if(h->destructor)h->destructor(p);VirtualFree(h,0,MEM_RELEASE);} }
 /* Non-atomic ARC, emitted when the compiler proves the program never spawns a
  * thread. See the long comment in lpp_runtime.c. */
-void lpp_arc_retain_local(void *p) { if(p)((LppArcHeader*)p-1)->refcount += 1; }
-void lpp_arc_release_local(void *p) { if(!p)return; LppArcHeader *h=(LppArcHeader*)p-1; if(--h->refcount==0){if(h->destructor)h->destructor(p);VirtualFree(h,0,MEM_RELEASE);} }
+void lpp_arc_retain_local(void *p) { if(!p)return; LppArcHeader *h=(LppArcHeader*)p-1; if(lpp__is_immortal(h))return; h->refcount += 1; }
+void lpp_arc_release_local(void *p) { if(!p)return; LppArcHeader *h=(LppArcHeader*)p-1; if(lpp__is_immortal(h))return; if(--h->refcount==0){if(h->destructor)h->destructor(p);VirtualFree(h,0,MEM_RELEASE);} }
 void *lpp_alloc(int64_t sz){return lpp_arc_alloc(sz);}
 void lpp_free(void *p,int64_t sz){(void)sz;lpp_arc_release(p);}
 void lpp_closure_destroy(void *c){if(c)lpp_arc_release(((void**)c)[1]);}
@@ -147,18 +161,18 @@ void lpp_list_free(void*l){lpp_arc_release(l);}
 void lpp_thread_spawn(void*fn,void*env){HANDLE h=CreateThread(0,0,(DWORD(__stdcall*)(void*))fn,env,0,0);if(h){WaitForSingleObject(h,INFINITE);CloseHandle(h);}}
 
 /* ═══ STRING ═══════════════════════════════════════════════════════════════ */
-char *lpp_str_concat(const char *a, const char *b) { if(!a)a="";if(!b)b=""; int la=lpp_strlen(a),lb=lpp_strlen(b); char*o=(char*)lpp_arc_alloc(la+lb+1); if(!o)return(char*)""; lpp_memcpy(o,a,la);lpp_memcpy(o+la,b,lb);o[la+lb]=0; return o; }
-char *lpp_str_repeat(const char *s, int64_t n) { if(!s||n<=0)return(char*)""; int slen=lpp_strlen(s); if(!slen)return(char*)""; int64_t total=(int64_t)slen*n; char*o=(char*)lpp_arc_alloc(total+1); if(!o)return(char*)""; int64_t i; for(i=0;i<n;i++)lpp_memcpy(o+i*slen,s,slen); o[total]=0; return o; }
+char *lpp_str_concat(const char *a, const char *b) { if(!a)a="";if(!b)b=""; int la=lpp_strlen(a),lb=lpp_strlen(b); char*o=(char*)lpp_arc_alloc(la+lb+1); if(!o)return lpp_empty_str(); lpp_memcpy(o,a,la);lpp_memcpy(o+la,b,lb);o[la+lb]=0; return o; }
+char *lpp_str_repeat(const char *s, int64_t n) { if(!s||n<=0)return lpp_empty_str(); int slen=lpp_strlen(s); if(!slen)return lpp_empty_str(); int64_t total=(int64_t)slen*n; char*o=(char*)lpp_arc_alloc(total+1); if(!o)return lpp_empty_str(); int64_t i; for(i=0;i<n;i++)lpp_memcpy(o+i*slen,s,slen); o[total]=0; return o; }
 void *lpp_str_split(const char *s,int64_t d) { void*l=lpp_list_new_arc();if(!l)return 0;if(!s||!*s)return l; char ch=(char)d;const char*st=s; for(;;){if(*s==ch||*s==0){int64_t ln=(int64_t)(s-st);char*pc=(char*)lpp_arc_alloc(ln+1);if(pc){lpp_memcpy(pc,st,(int)ln);pc[ln]=0;lpp_list_push_arc(l,pc);lpp_arc_release(pc);}if(*s==0)break;st=s+1;}s++;} return l; }
 int64_t lpp_str_find(const char *h,const char *n){if(!h||!n)return-1;const char*f=lpp_strstr(h,n); return f?(int64_t)(f-h):-1;}
-char *lpp_str_replace(const char *s,const char *o,const char *nw){if(!s)s="";if(!o||!*o)return(char*)s;if(!nw)nw="";int sl=lpp_strlen(s),ol=lpp_strlen(o),nl=lpp_strlen(nw);int64_t c=0;const char*sc=s;while((sc=lpp_strstr(sc,o))){c++;sc+=ol;}int ol2=sl+(int)c*(nl-ol)+1;char*ou=(char*)lpp_arc_alloc(ol2);if(!ou)return(char*)"";char*d=ou;const char*sr=s;while(*sr){const char*nx=lpp_strstr(sr,o);if(!nx){lpp_strcpy(d,sr);break;}int pfx=(int)(nx-sr);lpp_memcpy(d,sr,pfx);d+=pfx;lpp_memcpy(d,nw,nl);d+=nl;sr=nx+ol;}return ou;}
-char *lpp_str_substr(const char *s,int64_t st,int64_t ln){if(!s)s="";int sl=lpp_strlen(s);if(st<0)st=0;if(st>(int64_t)sl)return(char*)"";int rm=sl-(int)st;int cp=(ln<0||(size_t)ln>(size_t)rm)?rm:(int)ln;char*o=(char*)lpp_arc_alloc(cp+1);if(!o)return(char*)"";lpp_memcpy(o,s+st,cp);o[cp]=0;return o;}
-char *lpp_str_trim(const char *s){if(!s)return(char*)"";while(lpp_isspace(*s))s++;int ln=lpp_strlen(s);while(ln>0&&lpp_isspace(s[ln-1]))ln--;char*o=(char*)lpp_arc_alloc(ln+1);if(!o)return(char*)"";lpp_memcpy(o,s,ln);o[ln]=0;return o;}
+char *lpp_str_replace(const char *s,const char *o,const char *nw){if(!s)s="";if(!o||!*o){int sl0=lpp_strlen(s);char*cp=(char*)lpp_arc_alloc(sl0+1);if(!cp)return lpp_empty_str();lpp_memcpy(cp,s,sl0);cp[sl0]=0;return cp;}if(!nw)nw="";int sl=lpp_strlen(s),ol=lpp_strlen(o),nl=lpp_strlen(nw);int64_t c=0;const char*sc=s;while((sc=lpp_strstr(sc,o))){c++;sc+=ol;}int ol2=sl+(int)c*(nl-ol)+1;char*ou=(char*)lpp_arc_alloc(ol2);if(!ou)return lpp_empty_str();char*d=ou;const char*sr=s;while(*sr){const char*nx=lpp_strstr(sr,o);if(!nx){lpp_strcpy(d,sr);break;}int pfx=(int)(nx-sr);lpp_memcpy(d,sr,pfx);d+=pfx;lpp_memcpy(d,nw,nl);d+=nl;sr=nx+ol;}return ou;}
+char *lpp_str_substr(const char *s,int64_t st,int64_t ln){if(!s)s="";int sl=lpp_strlen(s);if(st<0)st=0;if(st>(int64_t)sl)return lpp_empty_str();int rm=sl-(int)st;int cp=(ln<0||(size_t)ln>(size_t)rm)?rm:(int)ln;char*o=(char*)lpp_arc_alloc(cp+1);if(!o)return lpp_empty_str();lpp_memcpy(o,s+st,cp);o[cp]=0;return o;}
+char *lpp_str_trim(const char *s){if(!s)return lpp_empty_str();while(lpp_isspace(*s))s++;int ln=lpp_strlen(s);while(ln>0&&lpp_isspace(s[ln-1]))ln--;char*o=(char*)lpp_arc_alloc(ln+1);if(!o)return lpp_empty_str();lpp_memcpy(o,s,ln);o[ln]=0;return o;}
 
 /* ═══ EXEC ═════════════════════════════════════════════════════════════════ */
 int64_t lpp_command_exec(const char *cmd) { if(!cmd||!*cmd)return-1; char *d=lpp_strdup(cmd); if(!d)return-1; REAL_STARTUPINFOA si; int i;for(i=0;i<(int)sizeof(si);i++)((char*)&si)[i]=0; *(DWORD*)&si=sizeof(si); *(DWORD*)((char*)&si+60)=STARTF_USESTDHANDLES; PROCESS_INFORMATION pi; BOOL ok=CreateProcessA(NULL,d,NULL,NULL,FALSE,0x08000000,NULL,NULL,&si,&pi); DWORD ec=1; if(ok){WaitForSingleObject(pi.hProcess,INFINITE);GetExitCodeProcess(pi.hProcess,&ec);CloseHandle(pi.hProcess);CloseHandle(pi.hThread);} if(d)VirtualFree(d,0,MEM_RELEASE); return ok?(int64_t)(int)ec:-1;}
-char *lpp_command_output(const char *cmd){if(!cmd)return(char*)"";HANDLE r,w;if(!CreatePipe(&r,&w,NULL,0))return(char*)"";REAL_STARTUPINFOA si;int i;for(i=0;i<(int)sizeof(si);i++)((char*)&si)[i]=0;*(DWORD*)&si=sizeof(si);((HANDLE*)((char*)&si+64))[0]=w;((HANDLE*)((char*)&si+64))[1]=w;*(DWORD*)((char*)&si+60)=STARTF_USESTDHANDLES;char*d=lpp_strdup(cmd);PROCESS_INFORMATION pi;BOOL ok=CreateProcessA(NULL,d,NULL,NULL,TRUE,0x08000000,NULL,NULL,&si,&pi);if(d)VirtualFree(d,0,MEM_RELEASE);CloseHandle(w);if(!ok){CloseHandle(r);return(char*)"";}WaitForSingleObject(pi.hProcess,INFINITE);CloseHandle(pi.hProcess);CloseHandle(pi.hThread);int cap=4096,len=0;char*b=(char*)lpp_arc_alloc(cap+1);if(!b){CloseHandle(r);return(char*)"";}for(;;){if(len+1024>=cap){int nc=cap*2;char*nb=(char*)lpp_arc_alloc(nc+1);if(!nb)break;lpp_memcpy(nb,b,len);lpp_arc_release(b);b=nb;cap=nc;}DWORD n;if(!ReadFile(r,b+len,(DWORD)(cap-len),&n,NULL)||n==0)break;len+=(int)n;}CloseHandle(r);b[len]=0;return b;}
-char *lpp_env_get(const char *n){if(!n)return(char*)"";char v[4096];DWORD x=GetEnvironmentVariableA(n,v,sizeof(v));if(x==0||x>=sizeof(v))return(char*)"";char*o=(char*)lpp_arc_alloc((int64_t)(x+1));if(!o)return(char*)"";lpp_memcpy(o,v,(int)x);o[x]=0;return o;}
+char *lpp_command_output(const char *cmd){if(!cmd)return lpp_empty_str();HANDLE r,w;if(!CreatePipe(&r,&w,NULL,0))return lpp_empty_str();REAL_STARTUPINFOA si;int i;for(i=0;i<(int)sizeof(si);i++)((char*)&si)[i]=0;*(DWORD*)&si=sizeof(si);((HANDLE*)((char*)&si+64))[0]=w;((HANDLE*)((char*)&si+64))[1]=w;*(DWORD*)((char*)&si+60)=STARTF_USESTDHANDLES;char*d=lpp_strdup(cmd);PROCESS_INFORMATION pi;BOOL ok=CreateProcessA(NULL,d,NULL,NULL,TRUE,0x08000000,NULL,NULL,&si,&pi);if(d)VirtualFree(d,0,MEM_RELEASE);CloseHandle(w);if(!ok){CloseHandle(r);return lpp_empty_str();}WaitForSingleObject(pi.hProcess,INFINITE);CloseHandle(pi.hProcess);CloseHandle(pi.hThread);int cap=4096,len=0;char*b=(char*)lpp_arc_alloc(cap+1);if(!b){CloseHandle(r);return lpp_empty_str();}for(;;){if(len+1024>=cap){int nc=cap*2;char*nb=(char*)lpp_arc_alloc(nc+1);if(!nb)break;lpp_memcpy(nb,b,len);lpp_arc_release(b);b=nb;cap=nc;}DWORD n;if(!ReadFile(r,b+len,(DWORD)(cap-len),&n,NULL)||n==0)break;len+=(int)n;}CloseHandle(r);b[len]=0;return b;}
+char *lpp_env_get(const char *n){if(!n)return lpp_empty_str();char v[4096];DWORD x=GetEnvironmentVariableA(n,v,sizeof(v));if(x==0||x>=sizeof(v))return lpp_empty_str();char*o=(char*)lpp_arc_alloc((int64_t)(x+1));if(!o)return lpp_empty_str();lpp_memcpy(o,v,(int)x);o[x]=0;return o;}
 int64_t lpp_env_set(const char *n,const char *v){if(!n)return-1;return SetEnvironmentVariableA(n,v?v:"")?0:-1;}
 
 /* ═══ DIR ══════════════════════════════════════════════════════════════════ */
@@ -192,7 +206,7 @@ static void lpp_dir_remove_recursive(const char *p) {
 
 int64_t lpp_dir_remove(const char *p) { if(!p)return-1; lpp_dir_remove_recursive(p); return 0; }
 int64_t lpp_path_exists(const char *p){if(!p)return 0;DWORD a=GetFileAttributesA(p);return(a!=INVALID_FILE_ATTRIBUTES)?1:0;}
-char *lpp_path_join(const char *b,const char *c){if(!b)b="";if(!c)c="";int bl=lpp_strlen(b),cl=lpp_strlen(c);int ns=(bl>0&&b[bl-1]!='\\'&&b[bl-1]!='/');int64_t t=(int64_t)(bl+(ns?1:0)+cl+1);char*o=(char*)lpp_arc_alloc(t);if(!o)return(char*)"";lpp_memcpy(o,b,bl);int off=bl;if(ns)o[off++]='\\';lpp_memcpy(o+off,c,cl);o[off+cl]=0;return o;}
+char *lpp_path_join(const char *b,const char *c){if(!b)b="";if(!c)c="";int bl=lpp_strlen(b),cl=lpp_strlen(c);int ns=(bl>0&&b[bl-1]!='\\'&&b[bl-1]!='/');int64_t t=(int64_t)(bl+(ns?1:0)+cl+1);char*o=(char*)lpp_arc_alloc(t);if(!o)return lpp_empty_str();lpp_memcpy(o,b,bl);int off=bl;if(ns)o[off++]='\\';lpp_memcpy(o+off,c,cl);o[off+cl]=0;return o;}
 
 typedef struct LppMapEntry { int64_t key; int64_t val; int is_str_key; int occupied; } LppMapEntry;
 typedef struct LppMap { LppMapEntry *entries; int64_t cap; int64_t len; } LppMap;
@@ -233,9 +247,9 @@ int64_t lpp_str_starts_with(const char *s, const char *p) { if(!s||!p)return 0; 
 
 int64_t lpp_str_ends_with(const char *s, const char *x) { if(!s||!x)return 0; int64_t sl=(int64_t)lpp_strlen(s),xl=(int64_t)lpp_strlen(x); if(xl>sl)return 0; int64_t i; for(i=0;i<xl;i++){if(s[sl-xl+i]!=x[i])return 0;} return 1; }
 
-char *lpp_str_upper(const char *s) { if(!s)return(char*)""; int ln=lpp_strlen(s); char *out=(char*)lpp_arc_alloc(ln+1); int i; for(i=0;i<ln;i++) out[i]=(s[i]>='a'&&s[i]<='z')?s[i]-32:s[i]; out[ln]=0; return out; }
+char *lpp_str_upper(const char *s) { if(!s)return lpp_empty_str(); int ln=lpp_strlen(s); char *out=(char*)lpp_arc_alloc(ln+1); int i; for(i=0;i<ln;i++) out[i]=(s[i]>='a'&&s[i]<='z')?s[i]-32:s[i]; out[ln]=0; return out; }
 
-char *lpp_str_lower(const char *s) { if(!s)return(char*)""; int ln=lpp_strlen(s); char *out=(char*)lpp_arc_alloc(ln+1); int i; for(i=0;i<ln;i++) out[i]=(s[i]>='A'&&s[i]<='Z')?s[i]+32:s[i]; out[ln]=0; return out; }
+char *lpp_str_lower(const char *s) { if(!s)return lpp_empty_str(); int ln=lpp_strlen(s); char *out=(char*)lpp_arc_alloc(ln+1); int i; for(i=0;i<ln;i++) out[i]=(s[i]>='A'&&s[i]<='Z')?s[i]+32:s[i]; out[ln]=0; return out; }
 
 char *lpp_int_to_str(int64_t val) { char buf[24]; int neg=val<0; if(neg)val=-val; int i=23; buf[i]=0; do{buf[--i]='0'+(int)(val%10);val/=10;}while(val); if(neg)buf[--i]='-'; int ln=23-i; char *out=(char*)lpp_arc_alloc(ln+1); lpp_memcpy(out,buf+i,ln+1); return out; }
 

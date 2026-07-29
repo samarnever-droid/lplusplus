@@ -153,17 +153,51 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                     .declare_data(&symbol_name, Linkage::Local, false, false)
                     .map_err(|e| format!("declare_data '{}': {:?}", symbol_name, e))?;
 
-                let mut data_ctx = DataDescription::new();
-                let mut bytes = value.as_bytes().to_vec();
+                // A string literal is emitted with a real 24-byte ARC header in
+                // front of its bytes, and the pointer handed to generated code
+                // points *past* that header -- exactly like a heap string from
+                // `lpp_arc_alloc`.
+                //
+                // This is what lets a `Str` local be owned at all. Without a
+                // header, `release` on a literal reads 24 bytes in front of
+                // .rodata and decrements whatever it finds; with one, release
+                // reads a well-formed header, sees the immortal sentinel and
+                // returns. The alternative -- never owning `Str` -- is what
+                // caused the unbounded string leak this replaces.
+                //
+                // The layout satisfies BOTH runtimes at once, which is required
+                // because the same object file links against either:
+                //
+                //   offset 0..4   LPP_ARC_MAGIC   host: `magic`    | free: `refcount`
+                //   offset 4..8   LPP_ARC_MAGIC   host: `refcount` | free: `generation`
+                //   offset 8..24  zero            destructor = NULL, map_size = 0
+                //
+                // The same constant sits in both of the first two words, so it
+                // reads as valid magic to the host runtime and as the immortal
+                // refcount sentinel to whichever runtime inspects it.
+                const LPP_ARC_MAGIC: u32 = 0x4152_4331;
+                let mut bytes = Vec::with_capacity(24 + value.len() + 1);
+                bytes.extend_from_slice(&LPP_ARC_MAGIC.to_le_bytes());
+                bytes.extend_from_slice(&LPP_ARC_MAGIC.to_le_bytes());
+                bytes.extend_from_slice(&[0u8; 16]);
+                bytes.extend_from_slice(value.as_bytes());
                 bytes.push(0);
+
+                let mut data_ctx = DataDescription::new();
                 data_ctx.define(bytes.into_boxed_slice());
+                // The header must be 8-byte aligned for the runtime's pointer
+                // sanity check (`(addr & 7) != 0` is rejected); 16 keeps the
+                // payload itself aligned too.
+                data_ctx.set_align(16);
                 self.module
                     .define_data(data_id, &data_ctx)
                     .map_err(|e| format!("define_data '{}': {:?}", symbol_name, e))?;
 
                 let local_id = self.module.declare_data_in_func(data_id, &mut builder.func);
                 let pointer_type = self.module.target_config().pointer_type();
-                Ok(builder.ins().symbol_value(pointer_type, local_id))
+                let base = builder.ins().symbol_value(pointer_type, local_id);
+                // Hand out a pointer to the payload, past the header.
+                Ok(builder.ins().iadd_imm(base, 24))
             }
         }
     }

@@ -13,6 +13,7 @@
 #include <stdio.h>
 
 extern void *lpp_arc_alloc(int64_t size);
+extern char *lpp_empty_str(void);
 extern void  lpp_arc_release(void *ptr);
 extern void *lpp_list_new_arc(void);
 extern void  lpp_list_push_arc(void *list, void *value);
@@ -72,7 +73,7 @@ char *lpp_path_join(const char *base, const char *child) {
     int need_sep = (blen > 0 && base[blen - 1] != '\\' && base[blen - 1] != '/');
     int64_t total = (int64_t)(blen + (need_sep ? 1 : 0) + clen + 1);
     char *out = (char *)lpp_arc_alloc(total);
-    if (!out) return (char *)"";
+    if (!out) return lpp_empty_str();
     memcpy(out, base, blen);
     size_t off = blen;
     if (need_sep) out[off++] = '\\';
@@ -135,7 +136,7 @@ char *lpp_path_join(const char *base, const char *child) {
     int need_sep = (blen > 0 && base[blen - 1] != '/');
     int64_t total = (int64_t)(blen + (need_sep ? 1 : 0) + clen + 1);
     char *out = (char *)lpp_arc_alloc(total);
-    if (!out) return (char *)"";
+    if (!out) return lpp_empty_str();
     memcpy(out, base, blen);
     size_t off = blen;
     if (need_sep) out[off++] = '/';

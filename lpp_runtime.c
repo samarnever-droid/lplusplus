@@ -32,6 +32,13 @@
 #include <math.h>
 #include <sys/types.h>
 
+/* Forward declarations: the string builtins below hand their results to
+ * generated L++ code as owned `Str` values, so they must allocate through ARC
+ * even though the ARC implementation appears further down this file. */
+void *lpp_arc_alloc(int64_t size);
+void lpp_arc_release(void *ptr);
+char *lpp_empty_str(void);
+
 #if defined(_WIN32)
 #  ifndef WIN32_LEAN_AND_MEAN
 #    define WIN32_LEAN_AND_MEAN
@@ -156,7 +163,7 @@ char *lpp_input(void) {
     if (!fgets(buf, sizeof(buf), stdin)) return NULL;
     size_t len = strlen(buf);
     if (len > 0 && buf[len - 1] == '\n') buf[--len] = '\0';
-    char *result = (char *)malloc(len + 1);
+    char *result = (char *)lpp_arc_alloc((int64_t)(len + 1));
     if (!result) return NULL;
     memcpy(result, buf, len + 1);
     return result;
@@ -211,12 +218,12 @@ char *lpp_read_file(const char *path) {
     long size = ftell(f);
     fseek(f, 0, SEEK_SET);
     if (size < 0) { fclose(f); return NULL; }
-    char *buf = (char *)malloc((size_t)size + 1);
+    char *buf = (char *)lpp_arc_alloc((int64_t)size + 1);
     if (!buf) { fclose(f); return NULL; }
     size_t wanted = (size_t)size;
     size_t read = fread(buf, 1, wanted, f);
     if (read != wanted && ferror(f)) {
-        free(buf);
+        lpp_arc_release(buf);
         fclose(f);
         return NULL;
     }
@@ -442,6 +449,10 @@ typedef void (*LppArcDestructor)(void *payload);
 
 #define LPP_ARC_MAGIC 0x41524331U
 
+/* Immortal sentinel: a refcount value that means "static, never freed".
+ * Deliberately the same constant as the magic above -- see lpp__is_immortal. */
+#define LPP_ARC_IMMORTAL 0x41524331U
+
 typedef struct {
     uint32_t magic;
     lpp_atomic32_t refcount;
@@ -483,6 +494,58 @@ void *lpp_arc_alloc_with_destructor(int64_t size, LppArcDestructor destructor) {
 /* Backwards-compatible allocation for runtime values with no child owners. */
 void *lpp_arc_alloc(int64_t size) {
     return lpp_arc_alloc_with_destructor(size, NULL);
+}
+
+/* ── The immortal empty string ────────────────────────────────────────────
+ *
+ * Runtime error paths used to `return (char *)""`, handing generated code a
+ * bare C literal with no ARC header. Once `Str` locals are owned that pointer
+ * reaches `lpp_arc_release`, which would read 24 bytes in front of a .rodata
+ * literal. This gives every such path one shared, never-freed, correctly
+ * headed string instead, so the "every Str has a valid header" invariant holds
+ * on error paths too -- not just happy paths.
+ *
+ * `lpp__empty_str_blob` is laid out to be simultaneously valid under this
+ * runtime's header (magic@0, refcount@4) and the freestanding one
+ * (refcount@0): both of the first two words hold the constant. */
+#if defined(_MSC_VER)
+__declspec(align(16))
+static const uint32_t lpp__empty_str_blob[8] = {
+#else
+static const uint32_t lpp__empty_str_blob[8] __attribute__((aligned(16))) = {
+#endif
+    LPP_ARC_MAGIC,     /* host: magic          | freestanding: refcount (immortal) */
+    LPP_ARC_IMMORTAL,  /* host: refcount       | freestanding: generation           */
+    0, 0,              /* host: generation+pad | freestanding: destructor = NULL    */
+    0, 0,              /* destructor / map_size = 0                                 */
+    0, 0               /* payload: "" plus padding                                  */
+};
+
+char *lpp_empty_str(void) {
+    return (char *)(const char *)&lpp__empty_str_blob[6];
+}
+
+/* ── Immortal objects ─────────────────────────────────────────────────────
+ *
+ * String literals live in .rodata and must never be freed, but generated code
+ * sees them as plain `char *`, indistinguishable from a heap string. The
+ * compiler therefore emits a real 24-byte ARC header in front of every literal
+ * whose refcount field holds this sentinel; retain and release detect it and
+ * return without writing, which matters because the page is read-only.
+ *
+ * The sentinel is deliberately the same constant as LPP_ARC_MAGIC. This header
+ * puts `magic` at offset 0 and `refcount` at offset 4, while the freestanding
+ * header puts `refcount` at offset 0. A literal prefixed with the constant in
+ * BOTH of its first two words is therefore simultaneously well-formed to this
+ * runtime and immortal to either -- and one emitted blob stays correct no
+ * matter which runtime the object file is finally linked against. */
+static inline int lpp__is_immortal(const LppArcHeader *hdr) {
+#if defined(_MSC_VER)
+    return (uint32_t)hdr->refcount == LPP_ARC_IMMORTAL;
+#else
+    return (uint32_t)atomic_load_explicit(&hdr->refcount, memory_order_relaxed)
+           == LPP_ARC_IMMORTAL;
+#endif
 }
 
 static inline int lpp__is_valid_arc_ptr(const void *ptr) {
@@ -553,6 +616,7 @@ int64_t lpp_weak_get(int64_t raw, int64_t expected_generation) {
 void lpp_arc_retain(void *ptr) {
     if (!lpp__is_valid_arc_ptr(ptr)) return;
     LppArcHeader *hdr = (LppArcHeader *)ptr - 1;
+    if (lpp__is_immortal(hdr)) return;
     LPP_ARC_INC(&hdr->refcount);
 }
 
@@ -560,6 +624,7 @@ void lpp_arc_retain(void *ptr) {
 void lpp_arc_release(void *ptr) {
     if (!lpp__is_valid_arc_ptr(ptr)) return;
     LppArcHeader *hdr = (LppArcHeader *)ptr - 1;
+    if (lpp__is_immortal(hdr)) return;
     int32_t prev = (int32_t)LPP_ARC_DEC(&hdr->refcount);
     if (prev == 1) {
         /* Refcount just hit zero. Destroy owned child references before the
@@ -598,6 +663,7 @@ void lpp_arc_release(void *ptr) {
 void lpp_arc_retain_local(void *ptr) {
     if (!lpp__is_valid_arc_ptr(ptr)) return;
     LppArcHeader *hdr = (LppArcHeader *)ptr - 1;
+    if (lpp__is_immortal(hdr)) return;
 #if defined(_MSC_VER)
     hdr->refcount += 1;
 #else
@@ -610,6 +676,7 @@ void lpp_arc_retain_local(void *ptr) {
 void lpp_arc_release_local(void *ptr) {
     if (!lpp__is_valid_arc_ptr(ptr)) return;
     LppArcHeader *hdr = (LppArcHeader *)ptr - 1;
+    if (lpp__is_immortal(hdr)) return;
 #if defined(_MSC_VER)
     int32_t prev = hdr->refcount;
     hdr->refcount = prev - 1;
@@ -1021,10 +1088,12 @@ void lpp_net_close(int64_t handle) {
 
 /* ── Extended networking (net_dial, UDP, deadlines, keepalive, DNS, HTTP) ─── */
 
+/* Results are handed to generated L++ code as `Str`, so they must carry an ARC
+ * header like every other owned string. */
 static char* lpp_net_strdup_impl(const char *s) {
     if (!s) return NULL;
     size_t len = strlen(s);
-    char *d = (char *)malloc(len + 1);
+    char *d = (char *)lpp_arc_alloc((int64_t)(len + 1));
     if (d) { memcpy(d, s, len); d[len] = 0; }
     return d;
 }
@@ -1272,7 +1341,9 @@ static char *parse_json_string(const char **p) {
         (*p)++;
     }
     size_t len = *p - start;
-    char *res = malloc(len + 1);
+    /* Returned to L++ via lpp_json_get_str, so it needs a real ARC header. */
+    char *res = (char *)lpp_arc_alloc((int64_t)(len + 1));
+    if (!res) return NULL;
     memcpy(res, start, len);
     res[len] = '\0';
     if (**p == '"') (*p)++; // skip '"'
@@ -1373,18 +1444,18 @@ int64_t lpp_json_get_int(void *json, const char *key) {
 
 const char *lpp_json_get_str(void *json, const char *key) {
     lpp_JsonNode *node = (lpp_JsonNode *)json;
-    if (!node) return "";
+    if (!node) return lpp_empty_str();
     if (node->type == 2) {
         lpp_JsonNode *curr = node->value.obj_val;
         while (curr) {
             if (curr->key && strcmp(curr->key, key) == 0) {
-                if (curr->type == 1) return curr->value.str_val ? curr->value.str_val : "";
-                return "";
+                if (curr->type == 1) return curr->value.str_val ? curr->value.str_val : lpp_empty_str();
+                return lpp_empty_str();
             }
             curr = curr->next;
         }
     }
-    return "";
+    return lpp_empty_str();
 }
 
 void *lpp_json_get_obj(void *json, const char *key) {
@@ -1407,7 +1478,7 @@ static void lpp_json_free_node(lpp_JsonNode *node) {
     if (!node) return;
     if (node->key) free(node->key);
     if (node->type == 1) {
-        if (node->value.str_val) free(node->value.str_val);
+        if (node->value.str_val) lpp_arc_release(node->value.str_val);
     } else if (node->type == 2) {
         lpp_JsonNode *curr = node->value.obj_val;
         while (curr) {

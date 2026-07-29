@@ -91,8 +91,25 @@ fn collect_terminator_reads(t: &Terminator, out: &mut HashSet<LocalId>) {
 /// assignment creates/replaces the destination owner.
 fn transfer_live(
     instructions: &[MirInstr],
+    live: HashSet<LocalId>,
+    arc_locals: &HashSet<LocalId>,
+) -> HashSet<LocalId> {
+    transfer_live_with_drops(instructions, live, arc_locals, None)
+}
+
+/// As `transfer_live`, but also removes the owners the rewriter will release at
+/// the end of this block.
+///
+/// The end-of-block rule and the return-block rule are two separate release
+/// sites, and the dataflow that feeds the second must know what the first will
+/// do. When it did not, an owner released at the end of a loop body was still
+/// "definitely live" on entry to the `return` block, which released it again --
+/// a double free that ASan caught in lppsqlite's `sc_find`.
+fn transfer_live_with_drops(
+    instructions: &[MirInstr],
     mut live: HashSet<LocalId>,
     arc_locals: &HashSet<LocalId>,
+    dropped: Option<&HashSet<LocalId>>,
 ) -> HashSet<LocalId> {
     for instruction in instructions {
         if let MirInstr::Assign(destination, rvalue) = instruction {
@@ -114,7 +131,19 @@ fn transfer_live(
             }
         }
     }
+    if let Some(dropped) = dropped {
+        for local in dropped {
+            live.remove(local);
+        }
+    }
     live
+}
+
+/// Does this block assign `local` (i.e. create the reference it holds)?
+fn block_defines(instructions: &[MirInstr], local: LocalId) -> bool {
+    instructions
+        .iter()
+        .any(|instruction| matches!(instruction, MirInstr::Assign(dest, _) if *dest == local))
 }
 
 /// Insert ARC operations from explicit ownership information in MIR.
@@ -166,41 +195,6 @@ pub fn run_arc_insertion_pass_with_weak(
             for successor in successors(&block.terminator) {
                 if successor < block_count {
                     predecessors[successor].push(block.id.0);
-                }
-            }
-        }
-
-        // `entry_live[block]` is an intersection over all predecessor exits.
-        // Start empty: an empty set is always safe until a fixed point proves
-        // that an owner is initialized on every incoming path.
-        let mut entry_live: Vec<HashSet<LocalId>> = vec![HashSet::new(); block_count];
-        let mut changed = true;
-        while changed {
-            changed = false;
-            for block in &function.blocks {
-                if block.id == function.start_block {
-                    continue;
-                }
-                let preds = &predecessors[block.id.0];
-                if preds.is_empty() {
-                    continue;
-                }
-                let mut incoming = transfer_live(
-                    &function.blocks[preds[0]].instrs,
-                    entry_live[preds[0]].clone(),
-                    &arc_locals,
-                );
-                for predecessor in &preds[1..] {
-                    let predecessor_exit = transfer_live(
-                        &function.blocks[*predecessor].instrs,
-                        entry_live[*predecessor].clone(),
-                        &arc_locals,
-                    );
-                    incoming.retain(|local| predecessor_exit.contains(local));
-                }
-                if incoming != entry_live[block.id.0] {
-                    entry_live[block.id.0] = incoming;
-                    changed = true;
                 }
             }
         }
@@ -347,6 +341,88 @@ pub fn run_arc_insertion_pass_with_weak(
             multi
         };
 
+        // `entry_live[block]` is an intersection over all predecessor exits, and
+        // `block_dropped[block]` is the set the end-of-block rule will release.
+        //
+        // These two are mutually dependent: what a block drops depends on what
+        // it owns on entry, and what a block owns on entry depends on what its
+        // predecessors dropped. They are therefore solved together, to a fixed
+        // point, instead of computing liveness once against instructions that do
+        // not yet contain the releases the rewriter is about to insert.
+        let mut entry_live: Vec<HashSet<LocalId>> = vec![HashSet::new(); block_count];
+        let mut block_dropped: Vec<HashSet<LocalId>> = vec![HashSet::new(); block_count];
+        loop {
+            let mut changed = true;
+            while changed {
+                changed = false;
+                for block in &function.blocks {
+                    if block.id == function.start_block {
+                        continue;
+                    }
+                    let preds = &predecessors[block.id.0];
+                    if preds.is_empty() {
+                        continue;
+                    }
+                    let mut incoming = transfer_live_with_drops(
+                        &function.blocks[preds[0]].instrs,
+                        entry_live[preds[0]].clone(),
+                        &arc_locals,
+                        Some(&block_dropped[preds[0]]),
+                    );
+                    for predecessor in &preds[1..] {
+                        let predecessor_exit = transfer_live_with_drops(
+                            &function.blocks[*predecessor].instrs,
+                            entry_live[*predecessor].clone(),
+                            &arc_locals,
+                            Some(&block_dropped[*predecessor]),
+                        );
+                        incoming.retain(|local| predecessor_exit.contains(local));
+                    }
+                    if incoming != entry_live[block.id.0] {
+                        entry_live[block.id.0] = incoming;
+                        changed = true;
+                    }
+                }
+            }
+
+            // Recompute what each block drops under the liveness just solved.
+            let mut next_dropped: Vec<HashSet<LocalId>> = vec![HashSet::new(); block_count];
+            for block in &function.blocks {
+                if matches!(
+                    &block.terminator,
+                    Terminator::Return(_) | Terminator::ReturnOwned(_)
+                ) || !loop_blocks.contains(&block.id.0)
+                {
+                    continue;
+                }
+                let exit = transfer_live_with_drops(
+                    &block.instrs,
+                    entry_live[block.id.0].clone(),
+                    &arc_locals,
+                    None,
+                );
+                let entry = &entry_live[block.id.0];
+                for local in exit {
+                    // Only owners *created in this block* are dropped here.
+                    // An owner that merely flows through a loop header still
+                    // belongs to whoever created it, and stealing it here left
+                    // the function's return block with nothing to release --
+                    // a leak of one allocation per such value.
+                    if !entry.contains(&local)
+                        && !live_out[block.id.0].contains(&local)
+                        && !loop_carried.contains(&local)
+                        && block_defines(&block.instrs, local)
+                    {
+                        next_dropped[block.id.0].insert(local);
+                    }
+                }
+            }
+            if next_dropped == block_dropped {
+                break;
+            }
+            block_dropped = next_dropped;
+        }
+
         for block in &mut function.blocks {
             let mut live = entry_live[block.id.0].clone();
             let original = std::mem::take(&mut block.instrs);
@@ -374,11 +450,57 @@ pub fn run_arc_insertion_pass_with_weak(
                             _ => None,
                         };
 
-                        // Reassignment drops the old owned reference first.
+                        // Reassignment drops the old owned reference.
+                        //
+                        // ORDER MATTERS. Releasing *before* the instruction is
+                        // only safe when the new value does not derive from the
+                        // old one. For a self-referential update such as
+                        // `s = s + "ab"`, lowered to
+                        // `_0 = lpp_str_concat(borrow(_0), "ab")`, an early
+                        // release frees the buffer the call is about to read --
+                        // a use-after-free that returned a truncated string
+                        // ("ab" instead of "ababab") rather than crashing.
+                        //
+                        // When the destination is also read by this
+                        // instruction, the old reference is therefore released
+                        // *after* the new value has been computed. The release
+                        // targets the old pointer, so it is materialised into a
+                        // temporary first; otherwise the release would decrement
+                        // the freshly assigned object instead.
+                        let mut reads = HashSet::new();
+                        collect_reads(&instruction, &mut reads);
+                        let self_referential = reads.contains(&destination);
+
+                        let mut deferred_release: Option<LocalId> = None;
                         if arc_locals.contains(&destination) && live.remove(&destination) {
-                            rewritten.push(MirInstr::Release(destination));
+                            if self_referential {
+                                deferred_release = Some(destination);
+                            } else {
+                                rewritten.push(MirInstr::Release(destination));
+                            }
                         }
-                        rewritten.push(instruction);
+
+                        if let Some(old) = deferred_release {
+                            // Stash the old pointer, run the instruction, then
+                            // release what the local used to hold.
+                            let saved = LocalId(function.locals.len());
+                            function.locals.push(LocalDecl {
+                                id: saved,
+                                ty: function.locals[old.0].ty.clone(),
+                                is_mut: false,
+                                ownership: Ownership::Borrowed,
+                                binding_id: None,
+                                debug_name: None,
+                            });
+                            rewritten.push(MirInstr::Assign(
+                                saved,
+                                Rvalue::Use(Operand::Borrowed(old)),
+                            ));
+                            rewritten.push(instruction);
+                            rewritten.push(MirInstr::Release(saved));
+                        } else {
+                            rewritten.push(instruction);
+                        }
 
                         if let Some(source) = moved_source {
                             live.remove(&source);
@@ -497,19 +619,14 @@ pub fn run_arc_insertion_pass_with_weak(
                 // that is allocated once per iteration, which is the leak this
                 // exists to close. Releasing it here also removes it from
                 // `live`, so the return block no longer sees it as an owner.
-                if loop_blocks.contains(&block.id.0) {
-                    let entry = &entry_live[block.id.0];
-                    let mut to_release: Vec<LocalId> = live
-                        .iter()
-                        .filter(|l| !entry.contains(*l))
-                        .filter(|l| !live_out[block.id.0].contains(*l))
-                        .filter(|l| !loop_carried.contains(*l))
-                        .copied()
-                        .collect();
-                    to_release.sort_by_key(|l| l.0); // deterministic output
-                    for local in to_release {
+                // Exactly the set the fixpoint above already accounted for, so
+                // successor blocks agree this local is no longer owned.
+                let mut to_release: Vec<LocalId> =
+                    block_dropped[block.id.0].iter().copied().collect();
+                to_release.sort_by_key(|l| l.0); // deterministic output
+                for local in to_release {
+                    if live.remove(&local) {
                         rewritten.push(MirInstr::Release(local));
-                        live.remove(&local);
                     }
                 }
             }

@@ -7,6 +7,8 @@
 #include <string.h>
 #include "lpp-net/include/lpp_net_runtime.h"
 
+extern void *lpp_arc_alloc(int64_t size);
+
 int64_t lpp_net_connect(const char *host, int64_t port) {
     return lpp_net_rs_connect(host, port, 30000);
 }
@@ -19,7 +21,8 @@ char *lpp_net_recv(int64_t handle, int64_t max_bytes) {
     char *rust = lpp_net_rs_recv(handle, max_bytes);
     if (!rust) return NULL;
     size_t length = strlen(rust);
-    char *compat = (char *)malloc(length + 1);
+    /* Handed to generated code as an owned `Str`, so it needs an ARC header. */
+    char *compat = (char *)lpp_arc_alloc((int64_t)(length + 1));
     if (compat) memcpy(compat, rust, length + 1);
     lpp_net_rs_free_string(rust);
     return compat;

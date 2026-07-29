@@ -32,3 +32,4 @@ arc_memory_edges.lpp|10\n5\n11\n7\nhello\nababab\n80\n3
 cycle_broken_node.lpp|1\n2
 cycle_broken_list.lpp|1
 recursive_structures.lpp|13\n6\n1\n2
+string_provenance.lpp|4
