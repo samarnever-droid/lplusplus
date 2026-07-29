@@ -213,6 +213,11 @@ pub struct AotCompiler {
     /// Fields demoted to non-owning by `analysis::cyclebreak`. Their
     /// destructors must not release, and their stores must not retain.
     pub weak_fields: std::collections::HashSet<(StructTypeId, String)>,
+    /// Per function, the locals the escape solver classified `Shared`. Only
+    /// these need atomic refcount updates; everything else can use the
+    /// non-atomic entry points even in a program that spawns threads.
+    /// An absent function means "no information", which is treated as shared.
+    pub shared_locals: HashMap<FuncId, std::collections::HashSet<LocalId>>,
 }
 
 impl AotCompiler {
@@ -262,6 +267,7 @@ impl AotCompiler {
             builtin_ids: HashMap::new(),
             arc_non_atomic: false,
             weak_fields: std::collections::HashSet::new(),
+            shared_locals: HashMap::new(),
             drop_ids: HashMap::new(),
             entrypoint_id: None,
         })
@@ -483,6 +489,7 @@ impl AotCompiler {
             Vec::with_capacity(mir_fns.len());
         // Read before the loop: `self` is borrowed mutably inside it.
         let arc_non_atomic = self.arc_non_atomic;
+        let shared_by_fn = std::mem::take(&mut self.shared_locals);
         for mir_fn in &mir_fns {
             if mir_fn.blocks.is_empty() {
                 continue;
@@ -496,6 +503,7 @@ impl AotCompiler {
                 fn_name: mir_fn.name.clone(),
                 next_str_idx: 0,
                 arc_non_atomic,
+                shared_locals: shared_by_fn.get(&mir_fn.id),
             };
             let (func_id, ctx) = lower.build_function_ir(mir_fn)?;
             pending.push((func_id, ctx));
@@ -643,6 +651,30 @@ impl AotCompiler {
         c.weak_fields = weak_fields.clone();
         c.arc_non_atomic =
             crate::mir::pass_arc_local::is_provably_single_threaded(program, has_extern);
+        // Per-object refinement of the same question. The whole-program proof
+        // above is all-or-nothing: one `spawn` anywhere makes every refcount in
+        // the program atomic. The escape solver already knows which individual
+        // locals can reach a second thread, so the rest can keep the cheap
+        // entry points even when the program does spawn.
+        //
+        // Skipped entirely when FFI is present: foreign code can share an
+        // object without any MIR evidence, so no per-local claim is safe.
+        if !has_extern {
+            let facts = crate::mir::escape_solver::solve(program, type_table);
+            for (fid, function) in &program.functions {
+                let mut shared = std::collections::HashSet::new();
+                if let Some(f) = facts.functions.get(fid) {
+                    for local in &function.locals {
+                        if f.locals.get(local.id.0).copied()
+                            == Some(crate::mir::escape_solver::Storage::Shared)
+                        {
+                            shared.insert(local.id);
+                        }
+                    }
+                }
+                c.shared_locals.insert(*fid, shared);
+            }
+        }
         c.declare_builtins()?;
         c.declare_drop_functions(type_table)?;
         c.declare_functions(program)?;

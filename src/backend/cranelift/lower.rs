@@ -23,6 +23,10 @@ pub struct FunctionLower<'a, M: Module> {
     pub next_str_idx: usize,
     /// Emit non-atomic ARC when the whole program is proven single-threaded.
     pub arc_non_atomic: bool,
+    /// Locals the escape solver classified `Shared`, i.e. reachable from a
+    /// second thread. Only these need atomic refcounts. `None` means the
+    /// information is unavailable, which is treated as "assume shared".
+    pub shared_locals: Option<&'a std::collections::HashSet<LocalId>>,
 }
 
 impl<'a, M: Module> FunctionLower<'a, M> {
@@ -270,11 +274,30 @@ impl<'a, M: Module> FunctionLower<'a, M> {
             MirInstr::Retain(local) | MirInstr::Release(local) => {
                 // ARC operations are part of MIR semantics, not optional hints.  Emit
                 // the runtime call so AOT has the same ownership behavior as the model.
-                // When the whole program is proven single-threaded, call the
-                // non-atomic variants. The `lock` prefix on every refcount
-                // update is pure overhead if no second thread can exist, and
-                // it is what makes shared objects ping-pong between cores.
-                let symbol = match (matches!(instr, MirInstr::Retain(_)), self.arc_non_atomic) {
+                //
+                // Atomic or not is decided per object, not per program. The
+                // whole-program proof (`arc_non_atomic`) is all-or-nothing: a
+                // single `spawn` anywhere forces `lock`-prefixed refcounts onto
+                // every object in the program, including the overwhelming
+                // majority that never leave the thread that made them.
+                //
+                // The escape solver already computes which locals can reach a
+                // second thread -- that is exactly `Storage::Shared`. A local
+                // below `Shared` cannot be reached by another thread, so its
+                // refcount has nothing to synchronise against and the atomic is
+                // pure overhead even in a program that does spawn.
+                //
+                // This is strictly more permissive than the old rule and never
+                // less safe: `Shared` is only reachable through
+                // `Rvalue::SpawnThread`, and anything the solver cannot see
+                // through (indirect calls, unlisted builtins) is already raised
+                // to at least `Owned` and is treated conservatively below.
+                let local_is_shared = self
+                    .shared_locals
+                    .map(|s| s.contains(local))
+                    .unwrap_or(true);
+                let use_non_atomic = self.arc_non_atomic || !local_is_shared;
+                let symbol = match (matches!(instr, MirInstr::Retain(_)), use_non_atomic) {
                     (true, false) => "lpp_arc_retain",
                     (true, true) => "lpp_arc_retain_local",
                     (false, false) => "lpp_arc_release",

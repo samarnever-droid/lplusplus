@@ -1,0 +1,57 @@
+# Owners created before a loop must still be released after it.
+#
+# `entry_live` in pass_arc is a MUST analysis -- "this local is definitely an
+# owner on every path reaching this block". It was initialised to the empty set
+# for every block, which is the wrong bottom element for an intersection: at a
+# loop header the intersection is taken against the back edge, whose set is
+# still empty on the first sweep, so the header is emptied permanently and every
+# successor inherits the loss.
+#
+# The consequence was a bounded leak. Anything created *before* a loop and not
+# read after it became invisible to the return block, so no release was emitted:
+# a captured struct plus its closure capsule leaked 3 allocations in any
+# function that also contained a loop, at 10, 500 or 5000 iterations alike.
+#
+# Non-entry blocks now start at TOP and the fixpoint shrinks toward the answer.
+# Two cases below guard the two ways that could go wrong.
+
+struct C:
+    n: Int
+
+struct Dog:
+    n: Int
+
+struct Kennel:
+    pet: Dog
+
+# 1. Owner + closure capsule created before a loop. Both must be released at
+#    the return, even though neither is read inside the loop.
+def before_loop(count: Int) -> Int:
+    c := C(7)
+    g := fn() -> Void:
+        print_str("")
+    mut i := 0
+    while i < count:
+        d := C(i)
+        i = i + 1
+    return c.n
+
+# 2. Nested construction plus a loop. `Kennel(Dog(11))` transfers the inner
+#    object into the field, so the parent's destructor owns it -- the local must
+#    NOT be released again at the return.
+#
+#    This is the failure mode of the first attempt at the fix: starting from TOP
+#    without also modelling the field-store transfer in the liveness transfer
+#    function resurrected the transferred local and double-freed the Dog, which
+#    ASan caught inside __lpp_drop_Kennel.
+def nested_with_loop(count: Int) -> Int:
+    k := Kennel(Dog(11))
+    mut i := 0
+    while i < count:
+        i = i + 1
+    return k.pet.n
+
+def main() -> Void:
+    print(before_loop(50))
+    print(nested_with_loop(50))
+    print_str("preloop-ok")

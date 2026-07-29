@@ -112,23 +112,43 @@ fn transfer_live_with_drops(
     dropped: Option<&HashSet<LocalId>>,
 ) -> HashSet<LocalId> {
     for instruction in instructions {
-        if let MirInstr::Assign(destination, rvalue) = instruction {
-            match rvalue {
-                Rvalue::Move(source) => {
-                    live.remove(source);
-                }
-                // Closure construction transfers the owned environment into
-                // the closure capsule; the capsule destructor releases it.
-                Rvalue::MakeClosure(_, captures) => {
-                    if let Some(Operand::Local(environment)) = captures.first() {
-                        live.remove(environment);
+        match instruction {
+            MirInstr::Assign(destination, rvalue) => {
+                match rvalue {
+                    Rvalue::Move(source) => {
+                        live.remove(source);
                     }
+                    // Closure construction transfers the owned environment into
+                    // the closure capsule; the capsule destructor releases it.
+                    Rvalue::MakeClosure(_, captures) => {
+                        if let Some(Operand::Local(environment)) = captures.first() {
+                            live.remove(environment);
+                        }
+                    }
+                    _ => {}
                 }
-                _ => {}
+                if arc_locals.contains(destination) {
+                    live.insert(*destination);
+                }
             }
-            if arc_locals.contains(destination) {
-                live.insert(*destination);
+            // Storing an owned local into a field hands the reference to the
+            // parent, whose destructor will release it. The local therefore
+            // stops being an owner here, exactly as the rewriter below models.
+            //
+            // This case used to be missing. While every block started from the
+            // empty set that was invisible -- the local was never "live" long
+            // enough for the omission to matter. Once the analysis was
+            // corrected to start from TOP, the transferred local stayed in the
+            // set and the return block released it a second time, after the
+            // parent's destructor had already freed it: `Kennel(Dog(11))`
+            // double-freed the inner Dog.
+            MirInstr::AssignField {
+                value: Operand::Local(source),
+                ..
+            } => {
+                live.remove(source);
             }
+            _ => {}
         }
     }
     if let Some(dropped) = dropped {
@@ -349,7 +369,29 @@ pub fn run_arc_insertion_pass_with_weak(
         // predecessors dropped. They are therefore solved together, to a fixed
         // point, instead of computing liveness once against instructions that do
         // not yet contain the releases the rewriter is about to insert.
-        let mut entry_live: Vec<HashSet<LocalId>> = vec![HashSet::new(); block_count];
+        // `entry_live` is a MUST analysis: "this local is definitely an owner on
+        // every path reaching this block". For an intersection dataflow the
+        // correct initial value is TOP -- every candidate -- for all blocks
+        // except the entry, which starts at BOTTOM because nothing is owned
+        // before the function begins. Iterating intersections then shrinks
+        // monotonically to the fixed point, and a local survives only if it is
+        // genuinely present on every incoming path.
+        //
+        // Initialising every block to the empty set instead was a real bug, not
+        // a conservative choice. At a loop header the intersection is taken
+        // against the back edge, whose entry set is still empty on the first
+        // sweep; that empties the header permanently and every successor
+        // inherits the loss. An owner created *before* a loop was therefore
+        // invisible after it, the return block emitted no release, and the
+        // value leaked -- bounded, but real: three allocations for a captured
+        // struct plus its closure capsule in any function that also has a loop.
+        //
+        // Starting from TOP cannot over-release: the fixpoint only removes
+        // locals, so anything still present at the end is owned on all paths.
+        let mut entry_live: Vec<HashSet<LocalId>> = vec![arc_locals.clone(); block_count];
+        if function.start_block.0 < block_count {
+            entry_live[function.start_block.0] = HashSet::new();
+        }
         let mut block_dropped: Vec<HashSet<LocalId>> = vec![HashSet::new(); block_count];
         loop {
             let mut changed = true;
@@ -361,6 +403,16 @@ pub fn run_arc_insertion_pass_with_weak(
                     }
                     let preds = &predecessors[block.id.0];
                     if preds.is_empty() {
+                        // Unreachable block. It was initialised to TOP for the
+                        // intersection above, but nothing flows into it, so TOP
+                        // would claim it owns everything and the rewriter would
+                        // emit releases for locals that were never created.
+                        // Nothing reaches it at run time either way; empty is
+                        // the only safe value.
+                        if !entry_live[block.id.0].is_empty() {
+                            entry_live[block.id.0] = HashSet::new();
+                            changed = true;
+                        }
                         continue;
                     }
                     let mut incoming = transfer_live_with_drops(

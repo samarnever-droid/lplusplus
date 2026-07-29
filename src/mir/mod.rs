@@ -9,6 +9,7 @@ pub mod pass_closure;
 pub mod pass_constprop;
 pub mod pass_copyprop;
 pub mod pass_dce;
+pub mod escape_solver;
 pub mod pass_escape;
 pub mod pass_strength;
 pub mod pass_inline;

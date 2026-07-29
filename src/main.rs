@@ -834,10 +834,13 @@ fn main() {
             // retain/release; running first means the ARC pass simply never sees
             // it as an owner.
             //
-            // The escape map is consulted as a veto only -- see pass_escape for
-            // why "absent from the map" is not by itself a licence to promote.
-            let escape_stats =
-                mir::pass_escape::run(&mut mir_program, &type_table, &storage);
+            // One escape fact for the whole program, computed once over MIR and
+            // read by every consumer that needs it. This replaces the private
+            // use-scan that pass_escape used to carry: three partial answers to
+            // the same question is how the double-free and the nondeterministic
+            // release order happened.
+            let escape_facts = mir::escape_solver::solve(&mir_program, &type_table);
+            let escape_stats = mir::pass_escape::run(&mut mir_program, &escape_facts);
             if dump_escape {
                 println!(
                     "  stack-promoted {} of {} candidate struct locals",

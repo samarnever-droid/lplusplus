@@ -36,3 +36,5 @@ string_provenance.lpp|literal\nliteral\nababab\nabc\n2\nprovenance-ok
 escape_stack_alloc.lpp|1\n5\n7\n43\n16\nescape-ok
 list_ownership_leak.lpp|2000
 escape_soundness.lpp|1\n2\n3\n9\nsoundness-ok
+escape_alias_safety.lpp|15\n4950\n8\nalias-ok
+arc_preloop_owner.lpp|7\n11\npreloop-ok
