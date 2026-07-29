@@ -15,6 +15,13 @@ pub struct Monomorphizer {
     struct_names: HashSet<String>,
     /// Unsatisfied trait bounds discovered while instantiating.
     bound_errors: Vec<String>,
+    /// Every generic-struct instantiation made so far:
+    /// mangled name -> (base name, type arguments in declared order).
+    /// Generic impls are resolved against this, so an impl is specialised
+    /// exactly when its target type is.
+    struct_instantiations: HashMap<String, (String, Vec<Type>)>,
+    /// Specialised impl blocks, keyed by `{mangled_target}:{trait}`.
+    specialized_impls: HashMap<String, ImplBlock>,
 }
 
 impl Monomorphizer {
@@ -26,6 +33,8 @@ impl Monomorphizer {
             locals: HashMap::new(),
             struct_names: HashSet::new(),
             bound_errors: Vec::new(),
+            struct_instantiations: HashMap::new(),
+            specialized_impls: HashMap::new(),
         }
     }
 
@@ -38,6 +47,7 @@ impl Monomorphizer {
     fn run(&mut self, program: &mut Program) -> Result<(), String> {
         let mut generic_funcs: HashMap<String, Function> = HashMap::new();
         let mut generic_structs: HashMap<String, StructDef> = HashMap::new();
+        let mut generic_impls: Vec<ImplBlock> = Vec::new();
         for decl in &program.declarations {
             if let TopLevel::Struct(s) = decl {
                 self.struct_names.insert(s.name.clone());
@@ -54,6 +64,9 @@ impl Monomorphizer {
                     generic_structs.insert(s.name.clone(), s.clone());
                 }
             } else if let TopLevel::Impl(ib) = decl {
+                if !ib.type_params.is_empty() {
+                    generic_impls.push(ib.clone());
+                }
                 // A generic method inside an impl block is, after the parser's
                 // `Target_method` mangling, just a free function. Registering it
                 // here is what makes `h.pick(2.5)` specialise instead of
@@ -122,9 +135,19 @@ impl Monomorphizer {
                     self.specialized_funcs.insert(key, f);
                 }
             }
-            if self.instantiated_keys.len() == before {
+            // Impl specialisation joins the loop: a body specialised this
+            // round may have instantiated a struct that needs its impl too.
+            let made_impls = self.specialize_impls(&generic_impls, &generic_structs, &trait_impls);
+            if self.instantiated_keys.len() == before && !made_impls {
                 break;
             }
+        }
+        // A program that exhausts the round cap would otherwise emit a
+        // half-specialised AST; fail loudly instead.
+        if guard > 16 {
+            self.bound_errors.push(
+                "generic specialisation did not reach a fixed point within 16 rounds".to_string(),
+            );
         }
 
         // Drop the generic templates. They are not compilable on their own -
@@ -140,6 +163,12 @@ impl Monomorphizer {
         // Same for generic methods: the template mentions an unbound `T`, so
         // only the specialised copies (appended below as free functions) are
         // real code.
+        // Generic impl templates mention an unbound T in `self` and in method
+        // bodies; only the specialised copies are real code.
+        program.declarations.retain(|decl| match decl {
+            TopLevel::Impl(ib) => ib.type_params.is_empty(),
+            _ => true,
+        });
         for decl in program.declarations.iter_mut() {
             if let TopLevel::Impl(ib) = decl {
                 ib.methods.retain(|m| m.type_params.is_empty());
@@ -152,6 +181,11 @@ impl Monomorphizer {
         }
         for (_, struct_def) in self.specialized_structs.drain() {
             program.declarations.push(TopLevel::Struct(struct_def));
+        }
+        let mut impls: Vec<(String, ImplBlock)> = self.specialized_impls.drain().collect();
+        impls.sort_by(|a, b| a.0.cmp(&b.0)); // deterministic output order
+        for (_, ib) in impls {
+            program.declarations.push(TopLevel::Impl(ib));
         }
 
         if let Some(first) = self.bound_errors.first() {
@@ -311,11 +345,15 @@ impl Monomorphizer {
                 // `Target_m`, so if that name is generic, specialise it here and
                 // rewrite the call to the specialised free function with the
                 // receiver passed as the explicit first argument.
-                if let Expr::FieldAccess { base, field } = &**callee {
-                    self.walk_expr_ro(base, generic_funcs, generic_structs, trait_impls);
+                if let Expr::FieldAccess { base, field } = &mut **callee {
+                    // Walk the receiver in place. Walking a clone discarded the
+                    // rewrite, so an inline constructor receiver -- `Box(5).show()`
+                    // -- kept naming the pruned generic template and failed with
+                    // "Undeclared identifier 'Box'".
+                    self.walk_expr(base, generic_funcs, generic_structs, trait_impls);
                     let recv_ty = self.infer_expr_type(base, generic_structs);
                     if let Type::Custom(ref tname) = recv_ty {
-                        let mangled_tmpl = format!("{}_{}", tname, field);
+                        let mangled_tmpl = format!("{}_{}", tname, field.clone());
                         if let Some(tmpl) = generic_funcs.get(&mangled_tmpl).cloned() {
                             let tp_names: HashSet<String> =
                                 tmpl.type_params.iter().map(|tp| tp.name.clone()).collect();
@@ -483,6 +521,12 @@ impl Monomorphizer {
                                     substitute_ast_type(&mut f.ty, &subst_map);
                                 }
 
+                                let ordered: Vec<Type> = tp_names
+                                    .iter()
+                                    .map(|n| subst_map.get(n).cloned().unwrap_or(Type::Int))
+                                    .collect();
+                                self.struct_instantiations
+                                    .insert(key.clone(), (name.clone(), ordered));
                                 self.specialized_structs.insert(key, specialized);
                             }
 
@@ -535,6 +579,156 @@ impl Monomorphizer {
         self.walk_expr(&mut clone, generic_funcs, generic_structs, trait_impls);
     }
 
+    /// Specialise generic impls for every generic-struct instantiation seen.
+    ///
+    /// Runs inside the fixed-point loop, not before or after it: specialisation
+    /// is transitive (a specialised body can instantiate another generic
+    /// struct), so an impl pass placed outside the loop would silently miss
+    /// impls for anything instantiated in a later round.
+    ///
+    /// Returns true if it produced anything new, so the loop knows to continue.
+    fn specialize_impls(
+        &mut self,
+        generic_impls: &[ImplBlock],
+        generic_structs: &HashMap<String, StructDef>,
+        trait_impls: &HashMap<String, HashSet<String>>,
+    ) -> bool {
+        if generic_impls.is_empty() {
+            return false;
+        }
+        let mut produced = false;
+        let targets: Vec<(String, String, Vec<Type>)> = self
+            .struct_instantiations
+            .iter()
+            .map(|(m, (base, args))| (m.clone(), base.clone(), args.clone()))
+            .collect();
+
+        for (mangled_target, base, args) in targets {
+            // Candidate impls for this base type, grouped by trait.
+            let mut by_trait: HashMap<String, Vec<&ImplBlock>> = HashMap::new();
+            for ib in generic_impls.iter().filter(|i| i.target_type == base) {
+                by_trait.entry(ib.trait_name.clone()).or_default().push(ib);
+            }
+
+            for (trait_name, candidates) in by_trait {
+                let key = format!("{}:{}", mangled_target, trait_name);
+                if self.specialized_impls.contains_key(&key) {
+                    continue;
+                }
+
+                // Keep only impls whose target pattern unifies with this
+                // instantiation, recording the bindings each one implies.
+                let mut applicable: Vec<(&ImplBlock, HashMap<String, Type>, usize)> = Vec::new();
+                for ib in candidates {
+                    let tp_names: HashSet<String> =
+                        ib.type_params.iter().map(|tp| tp.name.clone()).collect();
+                    let mut binds = HashMap::new();
+                    let mut ok = ib.target_args.len() == args.len();
+                    if ok {
+                        for (pat, actual) in ib.target_args.iter().zip(args.iter()) {
+                            match pat {
+                                Type::Custom(n) if tp_names.contains(n) => {
+                                    binds.insert(n.clone(), actual.clone());
+                                }
+                                // A concrete position must match exactly.
+                                other => {
+                                    if type_to_name(other) != type_to_name(actual) {
+                                        ok = false;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if !ok {
+                        continue;
+                    }
+                    // Specificity: how many positions are concrete. Sound only
+                    // for a single type parameter, which the parser enforces.
+                    let concrete = ib
+                        .target_args
+                        .iter()
+                        .filter(|t| !matches!(t, Type::Custom(n) if tp_names.contains(n)))
+                        .count();
+                    applicable.push((ib, binds, concrete));
+                }
+
+                if applicable.is_empty() {
+                    continue;
+                }
+                let best = applicable.iter().map(|(_, _, c)| *c).max().unwrap_or(0);
+                let winners: Vec<_> = applicable.iter().filter(|(_, _, c)| *c == best).collect();
+                if winners.len() > 1 {
+                    self.bound_errors.push(format!(
+                        "conflicting implementations of trait '{}' for '{}'",
+                        trait_name, mangled_target
+                    ));
+                    continue;
+                }
+                let (tmpl, binds, _) = winners[0];
+
+                // Bounds on the impl's own parameters are checked here, using
+                // the same map that backs generic-function bound errors.
+                let mut bound_ok = true;
+                for tp in &tmpl.type_params {
+                    if let Some(ref bound) = tp.bound {
+                        if let Some(concrete) = binds.get(&tp.name) {
+                            let cname = type_to_name(concrete);
+                            let has = trait_impls
+                                .get(&cname)
+                                .map_or(false, |set| set.contains(bound));
+                            if !has {
+                                self.bound_errors.push(format!(
+                                    "type '{}' does not implement trait '{}' required by generic parameter '{}' of 'impl {} for {}'",
+                                    cname, bound, tp.name, trait_name, tmpl.target_type
+                                ));
+                                bound_ok = false;
+                            }
+                        }
+                    }
+                }
+                if !bound_ok {
+                    continue;
+                }
+
+                // Emit the specialised block: methods renamed onto the
+                // specialised target so the existing name-based MIR dispatch
+                // (`{struct}_{method}`) finds them with no changes.
+                let mut sp: ImplBlock = (*tmpl).clone();
+                sp.target_type = mangled_target.clone();
+                sp.type_params.clear();
+                sp.target_args.clear();
+                for m in &mut sp.methods {
+                    let short = m
+                        .name
+                        .strip_prefix(&format!("{}_", base))
+                        .unwrap_or(&m.name)
+                        .to_string();
+                    m.name = format!("{}_{}", mangled_target, short);
+                    m.type_params.clear();
+                    let mut pending: Vec<(String, HashMap<String, Type>)> = Vec::new();
+                    for prm in &mut m.params {
+                        if prm.name == "self" {
+                            prm.ty = Type::Custom(mangled_target.clone());
+                        } else {
+                            substitute_ast_type(&mut prm.ty, binds);
+                            concretize_generic_struct(&mut prm.ty, generic_structs, &mut pending);
+                        }
+                    }
+                    substitute_ast_type(&mut m.return_type, binds);
+                    concretize_generic_struct(&mut m.return_type, generic_structs, &mut pending);
+                    for (sn, sm) in pending {
+                        self.instantiate_struct(&sn, &sm, generic_structs);
+                    }
+                    self.substitute_stmts(&mut m.body, binds);
+                }
+                self.specialized_impls.insert(key, sp);
+                produced = true;
+            }
+        }
+        produced
+    }
+
     /// Create the specialised copy of a generic struct if it does not exist.
     fn instantiate_struct(
         &mut self,
@@ -558,6 +752,12 @@ impl Monomorphizer {
         for f in &mut specialized.fields {
             substitute_ast_type(&mut f.ty, subst_map);
         }
+        let ordered: Vec<Type> = tp_names
+            .iter()
+            .map(|n| subst_map.get(n).cloned().unwrap_or(Type::Int))
+            .collect();
+        self.struct_instantiations
+            .insert(mangled.clone(), (name.to_string(), ordered));
         self.specialized_structs.insert(mangled, specialized);
     }
 
@@ -1129,6 +1329,8 @@ mod tests {
                 TopLevel::Impl(ImplBlock {
                     trait_name: "Getter".to_string(),
                     target_type: "Holder".to_string(),
+                    type_params: vec![],
+                    target_args: vec![],
                     methods: vec![Function {
                         name: "Holder_pick".to_string(),
                         type_params: vec![tp("T")],
@@ -1179,6 +1381,131 @@ mod tests {
             _ => false,
         });
         assert!(!leftover, "generic method template was not pruned");
+    }
+
+    #[test]
+    fn specializes_generic_trait_impl_per_instantiation() {
+        // impl[T] Show for Box[T] must produce one impl per Box instantiation,
+        // named so the existing `{struct}_{method}` MIR lookup finds it.
+        let tp = |n: &str| TypeParam { name: n.to_string(), bound: None };
+        let mk_main = |args: Vec<Expr>| Function {
+            name: "main".to_string(),
+            type_params: vec![],
+            params: vec![],
+            return_type: Type::Void,
+            body: args
+                .into_iter()
+                .map(|a| {
+                    Stmt::Expr(Expr::Call {
+                        callee: Box::new(Expr::Identifier("Box".to_string(), std::cell::Cell::new(None))),
+                        args: vec![a],
+                    })
+                })
+                .collect(),
+        };
+        let mut program = Program {
+            declarations: vec![
+                TopLevel::Struct(StructDef {
+                    name: "Box".to_string(),
+                    type_params: vec![tp("T")],
+                    fields: vec![Param { name: "value".to_string(), ty: Type::Custom("T".to_string()), default: None }],
+                }),
+                TopLevel::Impl(ImplBlock {
+                    trait_name: "Show".to_string(),
+                    target_type: "Box".to_string(),
+                    type_params: vec![tp("T")],
+                    target_args: vec![Type::Custom("T".to_string())],
+                    methods: vec![Function {
+                        name: "Box_show".to_string(),
+                        type_params: vec![tp("T")],
+                        params: vec![Param {
+                            name: "self".to_string(),
+                            ty: Type::Generic("Box".to_string(), vec![Type::Custom("T".to_string())]),
+                            default: None,
+                        }],
+                        return_type: Type::Int,
+                        body: vec![],
+                    }],
+                }),
+                TopLevel::Function(mk_main(vec![Expr::IntLiteral(1), Expr::StringLiteral("s".to_string())])),
+            ],
+        };
+
+        Monomorphizer::process_program(&mut program).expect("should monomorphize");
+        let impls: Vec<(String, Vec<String>)> = program
+            .declarations
+            .iter()
+            .filter_map(|d| match d {
+                TopLevel::Impl(ib) => {
+                    Some((ib.target_type.clone(), ib.methods.iter().map(|m| m.name.clone()).collect()))
+                }
+                _ => None,
+            })
+            .collect();
+        let targets: Vec<&String> = impls.iter().map(|(t, _)| t).collect();
+        assert!(targets.iter().any(|t| *t == "Box__Int"), "impls = {:?}", impls);
+        assert!(targets.iter().any(|t| *t == "Box__Str"), "impls = {:?}", impls);
+        // The generic template must be pruned; its `self` mentions an unbound T.
+        assert!(!targets.iter().any(|t| *t == "Box"), "template not pruned: {:?}", impls);
+        // Methods must be renamed onto the specialised target.
+        let all: Vec<String> = impls.iter().flat_map(|(_, m)| m.clone()).collect();
+        assert!(all.contains(&"Box__Int_show".to_string()), "methods = {:?}", all);
+        assert!(all.contains(&"Box__Str_show".to_string()), "methods = {:?}", all);
+    }
+
+    #[test]
+    fn concrete_impl_beats_generic_one() {
+        // Most-specific-wins: impl[T] Show for Box[Int] outranks Box[T].
+        let tp = |n: &str| TypeParam { name: n.to_string(), bound: None };
+        let mk_impl = |arg: Type, ret: i64| TopLevel::Impl(ImplBlock {
+            trait_name: "Show".to_string(),
+            target_type: "Box".to_string(),
+            type_params: vec![tp("T")],
+            target_args: vec![arg],
+            methods: vec![Function {
+                name: "Box_show".to_string(),
+                type_params: vec![tp("T")],
+                params: vec![Param {
+                    name: "self".to_string(),
+                    ty: Type::Custom("Box".to_string()),
+                    default: None,
+                }],
+                return_type: Type::Int,
+                body: vec![Stmt::Return(Some(Expr::IntLiteral(ret)))],
+            }],
+        });
+        let mut program = Program {
+            declarations: vec![
+                TopLevel::Struct(StructDef {
+                    name: "Box".to_string(),
+                    type_params: vec![tp("T")],
+                    fields: vec![Param { name: "value".to_string(), ty: Type::Custom("T".to_string()), default: None }],
+                }),
+                mk_impl(Type::Custom("T".to_string()), 1),
+                mk_impl(Type::Int, 99),
+                TopLevel::Function(Function {
+                    name: "main".to_string(),
+                    type_params: vec![],
+                    params: vec![],
+                    return_type: Type::Void,
+                    body: vec![Stmt::Expr(Expr::Call {
+                        callee: Box::new(Expr::Identifier("Box".to_string(), std::cell::Cell::new(None))),
+                        args: vec![Expr::IntLiteral(5)],
+                    })],
+                }),
+            ],
+        };
+
+        Monomorphizer::process_program(&mut program).expect("should monomorphize");
+        let body = program.declarations.iter().find_map(|d| match d {
+            TopLevel::Impl(ib) if ib.target_type == "Box__Int" => Some(ib.methods[0].body.clone()),
+            _ => None,
+        }).expect("Box__Int impl must exist");
+        assert_eq!(
+            body,
+            vec![Stmt::Return(Some(Expr::IntLiteral(99)))],
+            "the more specific Box[Int] impl should win"
+        );
     }
 
     #[test]

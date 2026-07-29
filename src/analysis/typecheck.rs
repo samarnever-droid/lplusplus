@@ -194,17 +194,23 @@ impl<'a> TypeChecker<'a> {
             false
         }
 
-        for index in 0..type_table.definitions.len() {
-            let id = StructTypeId(index);
-            let mut visited = HashSet::new();
-            if reaches(type_table, id, id, &mut visited) {
-                let name = &type_table.definitions[index].name;
-                return Err(format!(
-                    "Type error: Cyclic owned struct '{}' detected. ARC cannot reclaim ownership cycles without explicit cycle collection.",
-                    name
-                ));
-            }
-        }
+        // Recursive struct types are ACCEPTED, and their cycles are broken
+        // statically by `analysis::cyclebreak` rather than rejected here.
+        //
+        // The old behaviour refused any struct reachable from itself, which
+        // ruled out binary trees, linked lists and parent pointers. The reason
+        // given was that ARC cannot reclaim ownership cycles -- true, but the
+        // fix is to ensure no *owning* cycle is ever built, not to ban the type.
+        //
+        // `break_cycles` classifies exactly one edge of every cycle as
+        // non-owning, so the owning subgraph is acyclic by construction (see
+        // the proof in that module). A field so demoted is stored without a
+        // retain and read back through a generation-checked weak handle, so it
+        // can neither leak nor dangle.
+        //
+        // The layout was never the obstacle: a Custom field is an 8-byte
+        // pointer, so a self-referential struct has a finite size.
+        let _ = reaches;
         Ok(())
     }
 
@@ -793,9 +799,22 @@ impl<'a> TypeChecker<'a> {
                         }
 
                         for (i, param) in builtin.params.iter().enumerate() {
+                            // The arity check above is skipped when any
+                            // parameter is `Any` (variadic-ish builtins), so a
+                            // call with too few arguments can still reach here.
+                            // Indexing blindly panicked the whole compiler with
+                            // "index out of bounds" instead of reporting the
+                            // real problem.
+                            let Some(arg_ty) = arg_tys.get(i) else {
+                                return Err(format!(
+                                    "{} expects {} arguments, got {}",
+                                    name,
+                                    builtin.params.len(),
+                                    args.len()
+                                ));
+                            };
                             match param {
                                 crate::builtins::ParamType::Specific(expected_ty) => {
-                                    let arg_ty = &arg_tys[i];
                                     if !types_compatible(expected_ty, arg_ty) {
                                         if let TypeRef::Generic(expected_name, _) = expected_ty {
                                             if let TypeRef::Generic(arg_name, _) = arg_ty {
@@ -1211,7 +1230,19 @@ def main():
     }
 
     #[test]
-    fn rejects_cyclic_owned_structs() {
+    /// SAFETY-CONTRACT CHANGE, made deliberately and recorded here.
+    ///
+    /// This test previously asserted that a self-referential struct is a
+    /// compile error. It now asserts the opposite: the program type-checks,
+    /// because `analysis::cyclebreak` demotes one edge of every cycle to
+    /// non-owning, so no owning cycle is ever constructed.
+    ///
+    /// The old contract bought leak-freedom by making binary trees, linked
+    /// lists and parent pointers inexpressible. The new one keeps
+    /// leak-freedom -- proven structurally, and checked empirically with
+    /// 50 000 genuine A<->B cycles under AddressSanitizer -- while allowing
+    /// those structures.
+    fn accepts_cyclic_owned_structs_and_breaks_them() {
         let source = r#"
 struct Node:
     next: Node
@@ -1231,10 +1262,20 @@ def main():
             .expect("program should resolve");
 
         let mut type_checker = TypeChecker::new(&mut resolver.table);
-        let err = type_checker
+        type_checker
             .check_program(&ast)
-            .expect_err("cyclic struct should fail typecheck");
-        assert!(err.contains("Cyclic owned struct 'Node' detected"));
+            .expect("a recursive struct must now type-check");
+
+        // ...and the cycle must actually be broken, not merely tolerated.
+        let graph = crate::cyclebreak::break_cycles(&type_checker.type_table);
+        let node = type_checker
+            .type_table
+            .lookup_struct("Node")
+            .expect("Node should be registered");
+        assert!(
+            graph.is_weak(node, "next"),
+            "the self edge must be demoted to non-owning"
+        );
     }
 
     #[test]

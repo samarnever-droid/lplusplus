@@ -1,0 +1,88 @@
+# Concurrent stress for the move-out elision.
+#
+# A handful of quiet runs is evidence, not proof: the failure mode is a race
+# (the spawning thread dropping the last reference while the new thread still
+# reads the payload), and a narrow race need not surface in a few local runs.
+#
+# This spawns 8 threads that each read their moved payload 200k times while the
+# main thread performs 1.5M allocations to churn the allocator. Every read
+# checks the invariant `check == tag * 7`, so a recycled allocation is detected
+# rather than silently tolerated -- a corrupted payload prints a negative number.
+#
+# Run under sanitizers for real coverage (host linker; the freestanding runtime
+# has no thread primitive):
+#
+#   lpp tests/moveout_stress.lpp --emit-object
+#   gcc -fsanitize=address -g moveout_stress.o lpp_runtime.c -o s -pthread -lm
+#   gcc -fsanitize=thread  -g moveout_stress.o lpp_runtime.c -o s -pthread -lm
+#
+# Expected: tags 1-8 printed, then 999. No negative numbers, no sanitizer
+# reports. ASan will report leaks -- those are a pre-existing loop-scoped-struct
+# leak unrelated to move-out (see FIXES.md), not a move-out regression.
+
+#
+# Five sequential runs of a single delayed read is evidence, not proof. The
+# failure mode being hunted is a premature free: the spawning thread drops the
+# last reference while the new thread still holds the payload. That is a race,
+# so it needs contention and volume, not a quiet single read.
+#
+# This spawns many threads that each read their moved payload repeatedly, while
+# the main thread keeps allocating and freeing to churn the allocator. If a
+# retain was wrongly elided, a payload gets recycled underneath a live reader
+# and the checksum diverges (or it crashes).
+
+struct Payload:
+    tag: Int
+    check: Int
+
+# Read the payload many times and confirm its invariant still holds.
+# check must always equal tag * 7; a freed-and-recycled object will not satisfy
+# this, so a mismatch is a detected use-after-free rather than a silent pass.
+def hammer(p: Payload):
+    mut bad := 0
+    mut i := 0
+    while i < 200000:
+        if p.check != p.tag * 7:
+            bad = bad + 1
+        i = i + 1
+    if bad > 0:
+        print(0 - bad)
+    else:
+        print(p.tag)
+
+def main():
+    # 8 moved payloads, each hammered inside its own thread.
+    a := Payload(1, 7)
+    spawn fn() -> Void:
+        hammer(a)
+    b := Payload(2, 14)
+    spawn fn() -> Void:
+        hammer(b)
+    c := Payload(3, 21)
+    spawn fn() -> Void:
+        hammer(c)
+    d := Payload(4, 28)
+    spawn fn() -> Void:
+        hammer(d)
+    e := Payload(5, 35)
+    spawn fn() -> Void:
+        hammer(e)
+    f := Payload(6, 42)
+    spawn fn() -> Void:
+        hammer(f)
+    g := Payload(7, 49)
+    spawn fn() -> Void:
+        hammer(g)
+    h := Payload(8, 56)
+    spawn fn() -> Void:
+        hammer(h)
+
+    # Churn the allocator hard while those threads run. If a moved payload was
+    # freed early, this is what reuses its memory and corrupts the reader.
+    mut k := 0
+    while k < 1500000:
+        tmp := Payload(k, k * 7)
+        if tmp.check != tmp.tag * 7:
+            print(0 - 1)
+        k = k + 1
+    print(999)

@@ -239,7 +239,16 @@ pub struct TraitDef {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ImplBlock {
     pub trait_name: String,
-    pub target_type: String,       // "Point", "Vec2", etc.
+    /// Base name of the target: "Point", or "Box" for `impl[T] Show for Box[T]`.
+    /// Kept as the base name so every existing consumer of concrete impls
+    /// (impl_registry, the resolver, trait-bound checking) is unaffected.
+    pub target_type: String,
+    /// Type parameters bound by the impl itself: `impl[T] ...`. Empty for a
+    /// concrete impl, which is what distinguishes the two.
+    pub type_params: Vec<TypeParam>,
+    /// Type arguments applied to the target: `[T]` in `Box[T]`. Empty for a
+    /// concrete impl.
+    pub target_args: Vec<Type>,
     pub methods: Vec<Function>,
 }
 

@@ -90,6 +90,9 @@ struct ElfInput {
     rodata: Vec<u8>,
     text_symbols: Vec<(String, u64)>,
     rodata_symbols: Vec<(String, u64)>,
+    /// Writable data (.data materialised, .bss zero-filled).
+    data: Vec<u8>,
+    data_symbols: Vec<(String, u64)>,
     relocations: Vec<Relocation>,
 }
 
@@ -110,6 +113,12 @@ const CODE_OFFSET: usize = 0x1000;
 const EM_X86_64: u16 = 62;
 const PT_LOAD: u32 = 1;
 const PF_R_X: u32 = 5;
+/// Read + write + execute. The writer emits a single load segment covering
+/// text, rodata and data, so it must be writable for mutable globals to work at
+/// all -- without W the first store to a global faults. Splitting into separate
+/// RX and RW segments would be better hygiene; this preserves the
+/// single-segment layout the writer is built around.
+const PF_R_W_X: u32 = 7;
 
 fn parse_elf_object(file: &object::File, path: &Path) -> Result<ElfInput, String> {
     if file.format() != BinaryFormat::Elf || file.architecture() != Architecture::X86_64 {
@@ -142,18 +151,54 @@ fn parse_elf_object(file: &object::File, path: &Path) -> Result<ElfInput, String
             }
         }
     }
+    // Writable data. Previously only .rodata was gathered, so any object with a
+    // mutable global produced a relocation whose symbol resolved to nothing and
+    // the link failed with "unresolved external relocation to ''". That made
+    // `static` variables unusable in the freestanding runtime -- which is why
+    // the runtime had none, and why its allocator could not keep state.
+    //
+    // .bss is NOBITS (occupies no file bytes), so it is materialised here as
+    // zeroes, exactly as the loader would.
+    let mut data_map: HashMap<object::SectionIndex, usize> = HashMap::new();
+    let mut data_image = Vec::new();
+    for sec in file.sections() {
+        if let Ok(name) = sec.name() {
+            let is_data = name == ".data" || name.starts_with(".data.");
+            let is_bss = name == ".bss" || name.starts_with(".bss.");
+            if is_data || is_bss {
+                let align = usize::try_from(sec.align()).unwrap_or(16).max(1);
+                let base = align_up(data_image.len(), align);
+                data_image.resize(base, 0);
+                data_map.insert(sec.index(), base);
+                if is_bss {
+                    let n = usize::try_from(sec.size()).unwrap_or(0);
+                    data_image.resize(base + n, 0);
+                } else if let Ok(d) = sec.uncompressed_data() {
+                    data_image.extend_from_slice(&d);
+                }
+            }
+        }
+    }
+
     let is_rodata = |s: SymbolSection| match s {
         SymbolSection::Section(i) => rodata_map.contains_key(&i),
+        _ => false,
+    };
+    let is_data_sec = |s: SymbolSection| match s {
+        SymbolSection::Section(i) => data_map.contains_key(&i),
         _ => false,
     };
 
     let mut text_syms = Vec::new();
     let mut rodata_syms = Vec::new();
+    let mut data_syms = Vec::new();
     for sym in file.symbols() {
         let dst = if sym.section() == SymbolSection::Section(text_idx) {
             Some(&mut text_syms)
         } else if is_rodata(sym.section()) {
             Some(&mut rodata_syms)
+        } else if is_data_sec(sym.section()) {
+            Some(&mut data_syms)
         } else {
             None
         };
@@ -161,7 +206,11 @@ fn parse_elf_object(file: &object::File, path: &Path) -> Result<ElfInput, String
             if let Ok(n) = sym.name() {
                 if !n.is_empty() {
                     let sec_base = match sym.section() {
-                        SymbolSection::Section(i) => rodata_map.get(&i).copied().unwrap_or(0),
+                        SymbolSection::Section(i) => rodata_map
+                            .get(&i)
+                            .or_else(|| data_map.get(&i))
+                            .copied()
+                            .unwrap_or(0),
                         _ => 0,
                     };
                     dst.push((n.to_string(), sec_base as u64 + sym.address()));
@@ -196,6 +245,13 @@ fn parse_elf_object(file: &object::File, path: &Path) -> Result<ElfInput, String
                     rel.addend() + sec_base + sym.address() as i64,
                 )
             }
+            SymbolSection::Section(i) if data_map.contains_key(&i) => {
+                let sec_base = data_map[&i] as i64;
+                (
+                    "__self_data__".to_string(),
+                    rel.addend() + sec_base + sym.address() as i64,
+                )
+            }
             _ => (raw.to_string(), rel.addend()),
         };
         relocs.push(Relocation {
@@ -214,6 +270,8 @@ fn parse_elf_object(file: &object::File, path: &Path) -> Result<ElfInput, String
         rodata,
         text_symbols: text_syms,
         rodata_symbols: rodata_syms,
+        data: data_image,
+        data_symbols: data_syms,
         relocations: relocs,
     })
 }
@@ -300,7 +358,10 @@ fn write_elf(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
     for (idx, inp) in objs.iter().enumerate() {
         for rel in &inp.relocations {
             if rel.kind == RelocationKind::GotRelative {
-                let sym_offset = if rel.target == "__self_rodata__" || rel.target == "__self_text__" {
+                let sym_offset = if rel.target == "__self_rodata__"
+                    || rel.target == "__self_text__"
+                    || rel.target == "__self_data__"
+                {
                     (rel.addend + 4) as u64
                 } else {
                     0u64
@@ -329,10 +390,29 @@ fn write_elf(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
         rodata_off = align_up(text.len(), 16);
         text.resize(rodata_off, 0);
     }
+    // Writable data follows rodata in the same mapped image.
+    let mut data_bases = Vec::new();
+    let mut data_off = align_up(text.len(), 16);
+    text.resize(data_off, 0);
+    for inp in &objs {
+        let base = data_off;
+        data_bases.push(base);
+        for (n, o) in &inp.data_symbols {
+            let abs = u64::try_from(base).map_err(|_| "data offset overflow")? + o;
+            if syms.insert(n.clone(), abs).is_some() {
+                return Err(format!("duplicate definition of symbol '{n}'"));
+            }
+        }
+        text.extend_from_slice(&inp.data);
+        data_off = align_up(text.len(), 16);
+        text.resize(data_off, 0);
+    }
+
     for ((name, sym_offset, obj_idx), slot) in &got {
         let base_tgt = match name.as_str() {
             "__self_text__" => bases[*obj_idx] as u64,
             "__self_rodata__" => rodata_bases[*obj_idx] as u64,
+            "__self_data__" => data_bases[*obj_idx] as u64,
             _ => *syms
                 .get(name)
                 .ok_or_else(|| format!("unresolved GOT symbol '{name}'"))?,
@@ -374,6 +454,9 @@ fn write_elf(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
                 }
                 _ if rel.target == "__self_rodata__" => {
                     (u64::try_from(rodata_bases[idx]).map_err(|_| "rodata overflow")?, rel.addend)
+                }
+                _ if rel.target == "__self_data__" => {
+                    (u64::try_from(data_bases[idx]).map_err(|_| "data overflow")?, rel.addend)
                 }
                 _ => (
                     *syms.get(&rel.target).ok_or_else(|| {
@@ -420,7 +503,7 @@ fn write_elf(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
     put_u16(&mut elf, 56, 1);
     let ph = 64;
     put_u32(&mut elf, ph, PT_LOAD);
-    put_u32(&mut elf, ph + 4, PF_R_X);
+    put_u32(&mut elf, ph + 4, PF_R_W_X);
     put_u64(&mut elf, ph + 8, 0);
     put_u64(&mut elf, ph + 16, ELF_BASE);
     put_u64(&mut elf, ph + 24, ELF_BASE);

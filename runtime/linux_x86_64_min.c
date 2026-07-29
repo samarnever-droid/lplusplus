@@ -88,6 +88,9 @@ double fmod(double x, double y) {
 typedef void (*LppArcDestructor)(void *payload);
 typedef struct {
     int refcount;
+    /* Bumped immediately BEFORE the payload is released; a weak handle compares
+     * against the value it captured. See lpp_weak_get. */
+    int generation;
     LppArcDestructor destructor;
     uint64_t map_size;
 } LppArcHeader;
@@ -122,19 +125,107 @@ static void lpp_sys_munmap(void *address, uint64_t size) {
     );
 }
 
+/* ── Object allocator ─────────────────────────────────────────────────────
+ *
+ * Every ARC object used to own a whole mmap region: one syscall and one 4 KB
+ * page for a 16-byte struct. Measured on a 3M-iteration allocation loop the
+ * freestanding runtime took 18.3 s against the host runtime's 0.037 s -- a
+ * 493x penalty, paid by the *default* linker.
+ *
+ * Objects are now carved from 1 MiB mmap'd chunks by a bump pointer, and freed
+ * blocks go on a per-size-class free list for reuse, so the syscall count
+ * tracks peak live memory rather than total allocations.
+ *
+ * The header's `map_size` field is reused to record the size class, leaving the
+ * layout and every existing reader unchanged. A value of 0, or anything above
+ * the class count, means "owns its own mmap region" -- the path large objects
+ * still take.
+ */
+
+/* Monotonic source of object generations; see the host runtime for why this
+ * must not be derived per-object. */
+static int lpp__generation_counter = 1;
+
+#define LPP_CHUNK_BYTES   (1024 * 1024)
+#define LPP_SIZE_CLASSES  8
+
+/* Class i holds blocks of 32 << i bytes: 32 .. 4096. */
+static void *lpp_free_lists[LPP_SIZE_CLASSES];
+static char *lpp_bump_cursor;
+static uint64_t lpp_bump_left;
+
+static uint64_t lpp_class_bytes(int cls) { return (uint64_t)32 << cls; }
+
+static int lpp_class_for(uint64_t need) {
+    int cls = 0;
+    while (cls < LPP_SIZE_CLASSES && lpp_class_bytes(cls) < need) cls++;
+    return cls;
+}
+
 void *lpp_arc_alloc_with_destructor(int64_t payload_size, LppArcDestructor destructor) {
     if (payload_size < 0) return 0;
-    uint64_t total = lpp_page_round((uint64_t)payload_size + sizeof(LppArcHeader));
-    LppArcHeader *header = (LppArcHeader *)lpp_sys_mmap(total);
-    if (!header) return 0;
+    uint64_t need = (uint64_t)payload_size + sizeof(LppArcHeader);
+    int cls = lpp_class_for(need);
+
+    LppArcHeader *header;
+    if (cls >= LPP_SIZE_CLASSES) {
+        uint64_t total = lpp_page_round(need);
+        header = (LppArcHeader *)lpp_sys_mmap(total);
+        if (!header) return 0;
+        header->map_size = total;
+    } else {
+        uint64_t bytes = lpp_class_bytes(cls);
+        if (lpp_free_lists[cls]) {
+            header = (LppArcHeader *)lpp_free_lists[cls];
+            /* The first word of a free block is the next-free link. */
+            lpp_free_lists[cls] = *(void **)header;
+        } else {
+            if (lpp_bump_left < bytes) {
+                char *chunk = (char *)lpp_sys_mmap(LPP_CHUNK_BYTES);
+                if (!chunk) return 0;
+                lpp_bump_cursor = chunk;
+                lpp_bump_left = LPP_CHUNK_BYTES;
+            }
+            header = (LppArcHeader *)lpp_bump_cursor;
+            lpp_bump_cursor += bytes;
+            lpp_bump_left -= bytes;
+        }
+        /* Recycled blocks must look freshly mapped: callers rely on
+         * zero-initialised payload fields. The generation is assigned from the
+         * process-global counter below, so a reused address never reuses a
+         * generation. */
+        char *raw = (char *)header;
+        for (uint64_t i = 0; i < bytes; i++) raw[i] = 0;
+        header->map_size = (uint64_t)(cls + 1);
+    }
     header->refcount = 1;
+    /* Generations come from a monotonic global, never restarting, so a stale
+     * weak handle can never match a new occupant of a reused address. */
+    header->generation = __atomic_add_fetch(&lpp__generation_counter, 1, __ATOMIC_RELAXED);
     header->destructor = destructor;
-    header->map_size = total;
     return (void *)(header + 1);
 }
 
 void *lpp_arc_alloc(int64_t payload_size) {
     return lpp_arc_alloc_with_destructor(payload_size, 0);
+}
+
+/* Weak (non-owning) field support; see lpp_runtime.c for the ordering
+ * argument. Free bumps the generation with release ordering before releasing
+ * the block; reads load it with acquire ordering before dereferencing. */
+int64_t lpp_weak_generation(void *payload) {
+    if (!payload) return 0;
+    LppArcHeader *header = (LppArcHeader *)payload - 1;
+    return (int64_t)__atomic_load_n(&header->generation, __ATOMIC_ACQUIRE);
+}
+
+int64_t lpp_weak_get(int64_t raw, int64_t expected_generation) {
+    void *payload = (void *)(intptr_t)raw;
+    if (!payload || expected_generation == 0) return 0;
+    LppArcHeader *header = (LppArcHeader *)payload - 1;
+    int now = __atomic_load_n(&header->generation, __ATOMIC_ACQUIRE);
+    if ((int64_t)now != expected_generation) return 0;
+    return raw;
 }
 
 void lpp_arc_retain(void *payload) {
@@ -143,12 +234,27 @@ void lpp_arc_retain(void *payload) {
     (void)__atomic_add_fetch(&header->refcount, 1, __ATOMIC_ACQ_REL);
 }
 
+/* Return a dead object to its size-class free list, or unmap it if it owns a
+ * whole region. `map_size` distinguishes the two: a value in 1..=classes is a
+ * size class plus one, anything else is a byte count for munmap. */
+static void lpp_arc_free(LppArcHeader *header) {
+    uint64_t tag = header->map_size;
+    if (tag >= 1 && tag <= LPP_SIZE_CLASSES) {
+        int cls = (int)(tag - 1);
+        *(void **)header = lpp_free_lists[cls];
+        lpp_free_lists[cls] = (void *)header;
+        return;
+    }
+    lpp_sys_munmap(header, tag);
+}
+
 void lpp_arc_release(void *payload) {
     if (!payload) return;
     LppArcHeader *header = (LppArcHeader *)payload - 1;
     if (__atomic_sub_fetch(&header->refcount, 1, __ATOMIC_ACQ_REL) == 0) {
+        (void)__atomic_add_fetch(&header->generation, 1, __ATOMIC_RELEASE);
         if (header->destructor) header->destructor(payload);
-        lpp_sys_munmap(header, header->map_size);
+        lpp_arc_free(header);
     }
 }
 
@@ -169,8 +275,9 @@ void lpp_arc_release_local(void *payload) {
     if (!payload) return;
     LppArcHeader *header = (LppArcHeader *)payload - 1;
     if (--header->refcount == 0) {
+        (void)__atomic_add_fetch(&header->generation, 1, __ATOMIC_RELEASE);
         if (header->destructor) header->destructor(payload);
-        lpp_sys_munmap(header, header->map_size);
+        lpp_arc_free(header);
     }
 }
 

@@ -253,8 +253,35 @@ impl Parser {
         Ok(TraitDef { name, methods })
     }
 
-    /// Parse `impl Display for Point: def show(self) -> Str: ...`
+    /// Parse `impl Display for Point: ...` or `impl[T] Show for Box[T]: ...`
     fn parse_impl(&mut self) -> Result<ImplBlock, String> {
+        // Optional binder: `impl[T]` / `impl[T: Display]`. Requiring it means
+        // `T` in the target position is never ambiguous between "the concrete
+        // type named T" and "for every T".
+        let mut type_params: Vec<TypeParam> = Vec::new();
+        if self.match_token(&Token::LBracket) {
+            loop {
+                let name = match self.advance() {
+                    Some(Token::Ident(n)) => n.clone(),
+                    _ => return self.error("Expected type parameter name after 'impl['"),
+                };
+                let mut bound = None;
+                if self.match_token(&Token::Colon) {
+                    bound = match self.advance() {
+                        Some(Token::Ident(b)) => Some(b.clone()),
+                        _ => return self.error("Expected trait name after ':' in type parameter"),
+                    };
+                }
+                type_params.push(TypeParam { name, bound });
+                if !self.match_token(&Token::Comma) {
+                    break;
+                }
+            }
+            if !self.match_token(&Token::RBracket) {
+                return self.error("Expected ']' after impl type parameters");
+            }
+        }
+
         let trait_name = match self.advance() {
             Some(Token::Ident(n)) => n.clone(),
             _ => return self.error("Expected trait name after 'impl'"),
@@ -266,6 +293,51 @@ impl Parser {
             Some(Token::Ident(n)) => n.clone(),
             _ => return self.error("Expected type name after 'for'"),
         };
+
+        // Target arguments: the `[T]` in `Box[T]`.
+        let mut target_args: Vec<Type> = Vec::new();
+        if self.match_token(&Token::LBracket) {
+            loop {
+                target_args.push(self.parse_type()?);
+                if !self.match_token(&Token::Comma) {
+                    break;
+                }
+            }
+            if !self.match_token(&Token::RBracket) {
+                return self.error("Expected ']' after impl target type arguments");
+            }
+        }
+
+        // An unbound parameter in the target is the ambiguous case the binder
+        // exists to remove; say so instead of failing on the next token.
+        if type_params.is_empty() && !target_args.is_empty() {
+            let unbound: Vec<String> = target_args
+                .iter()
+                .filter_map(|t| match t {
+                    Type::Custom(n) if n.len() == 1 && n.chars().all(|c| c.is_ascii_uppercase()) => {
+                        Some(n.clone())
+                    }
+                    _ => None,
+                })
+                .collect();
+            if !unbound.is_empty() {
+                return self.error(format!(
+                    "generic parameter '{}' is not bound by this impl; write 'impl[{}] {} for {}[{}]' to implement for every {}",
+                    unbound[0], unbound[0], trait_name, target_type, unbound[0], unbound[0]
+                ));
+            }
+        }
+
+        // Counting specificity only orders impls when there is one position;
+        // see the design note. Reject rather than order them wrongly.
+        if type_params.len() > 1 {
+            return self.error(format!(
+                "generic impls are limited to a single type parameter, but '{}' declares {}; implement the trait for each concrete instantiation for now",
+                target_type,
+                type_params.len()
+            ));
+        }
+
         if !self.match_token(&Token::Colon) {
             return self.error("Expected ':' after type name in impl");
         }
@@ -286,12 +358,28 @@ impl Parser {
                 return self.error("Expected 'def' in impl body");
             }
             let mut func = self.parse_function()?;
-            // Mangle name: TraitName_methodName_TargetType
+            // Mangle name: TargetType_methodName
             let mangled = format!("{}_{}", target_type, func.name);
-            // Replace `self` param type with the target struct type
+            // Replace `self` param type with the target type. For a generic
+            // impl this must stay `Box[T]`, not `Box`, so monomorphization can
+            // substitute T and concretize it to the specialised `Box__Int`.
+            let self_ty = if target_args.is_empty() {
+                Type::Custom(target_type.clone())
+            } else {
+                Type::Generic(target_type.clone(), target_args.clone())
+            };
             for param in &mut func.params {
                 if param.name == "self" {
-                    param.ty = Type::Custom(target_type.clone());
+                    param.ty = self_ty.clone();
+                }
+            }
+            // The impl's type parameters scope over each method. Only extend
+            // here: a method may declare its own (`def pick[U](...)` inside a
+            // concrete impl), and overwriting that made monomorphization stop
+            // seeing it as generic.
+            for tp in &type_params {
+                if !func.type_params.iter().any(|e| e.name == tp.name) {
+                    func.type_params.push(tp.clone());
                 }
             }
             func.name = mangled;
@@ -300,7 +388,7 @@ impl Parser {
         }
         self.match_token(&Token::Dedent);
 
-        Ok(ImplBlock { trait_name, target_type, methods })
+        Ok(ImplBlock { trait_name, target_type, type_params, target_args, methods })
     }
 
     /// Parse `extern "C": def func(args) -> Type` or `extern "C" link "SDL2": ...`

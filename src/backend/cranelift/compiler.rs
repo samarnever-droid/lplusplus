@@ -147,15 +147,10 @@ fn validate_aot_program(program: &MirProgram, type_table: &TypeTable) -> Result<
         for block in &function.blocks {
             for instruction in &block.instrs {
                 match instruction {
-                    MirInstr::Assign(_, Rvalue::AllocateArcStruct(TypeRef::Custom(struct_id)))
-                        if cyclic_structs.contains(struct_id) =>
-                    {
-                        let name = &type_table.definitions[struct_id.0].name;
-                        return Err(format!(
-                            "AOT rejects cyclic owned struct '{}': ARC cannot reclaim ownership cycles. Use a future Weak/arena annotation or remove the cycle.",
-                            name
-                        ));
-                    }
+                    // Recursive struct types are accepted; `analysis::cyclebreak`
+                    // has already demoted one edge of every cycle to non-owning,
+                    // so no owning cycle can reach here to leak.
+                    _ if false => unreachable!(),
                     MirInstr::Assign(_, Rvalue::AllocateStruct(_)) => {
                         return Err(format!(
                             "raw struct allocation reached AOT in '{}'; ownership lowering is required",
@@ -210,6 +205,9 @@ pub struct AotCompiler {
     /// When the whole program is proven single-threaded, ARC uses the
     /// non-atomic runtime entry points. See `mir::pass_arc_local`.
     pub arc_non_atomic: bool,
+    /// Fields demoted to non-owning by `analysis::cyclebreak`. Their
+    /// destructors must not release, and their stores must not retain.
+    pub weak_fields: std::collections::HashSet<(StructTypeId, String)>,
 }
 
 impl AotCompiler {
@@ -258,6 +256,7 @@ impl AotCompiler {
             func_ids: HashMap::new(),
             builtin_ids: HashMap::new(),
             arc_non_atomic: false,
+            weak_fields: std::collections::HashSet::new(),
             drop_ids: HashMap::new(),
             entrypoint_id: None,
         })
@@ -335,7 +334,17 @@ impl AotCompiler {
                 let release_ref = self.module.declare_func_in_func(release_id, builder.func);
                 let (layout, _) = struct_layout(type_table, struct_id);
 
-                for ((_, field_type), field_layout) in definition.fields.iter().zip(layout.iter()) {
+                for ((field_name, field_type), field_layout) in
+                    definition.fields.iter().zip(layout.iter())
+                {
+                    // A field demoted by the static cycle breaker is NOT an
+                    // owning edge: it was stored without a retain, so releasing
+                    // it here would over-release. Skipping it is precisely what
+                    // makes the cycle collectable -- the remaining owning
+                    // subgraph is acyclic, so refcounts reach zero.
+                    if self.weak_fields.contains(&(struct_id, field_name.clone())) {
+                        continue;
+                    }
                     if matches!(field_type, TypeRef::Custom(_) | TypeRef::Generic(_, _)) {
                         let child = builder.ins().load(
                             cl_types::I64,
@@ -613,7 +622,7 @@ impl AotCompiler {
 
     /// Full pipeline: builtins → declare → lower → emit.
     pub fn compile(program: &MirProgram, type_table: &TypeTable) -> Result<Vec<u8>, String> {
-        Self::compile_with_options(program, type_table, false)
+        Self::compile_with_options(program, type_table, false, &std::collections::HashSet::new())
     }
 
     /// `has_extern` reports whether the source declared any FFI block. Foreign
@@ -622,9 +631,11 @@ impl AotCompiler {
         program: &MirProgram,
         type_table: &TypeTable,
         has_extern: bool,
+        weak_fields: &std::collections::HashSet<(StructTypeId, String)>,
     ) -> Result<Vec<u8>, String> {
         validate_aot_program(program, type_table)?;
         let mut c = Self::new_for_host()?;
+        c.weak_fields = weak_fields.clone();
         c.arc_non_atomic =
             crate::mir::pass_arc_local::is_provably_single_threaded(program, has_extern);
         c.declare_builtins()?;

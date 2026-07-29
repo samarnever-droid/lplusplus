@@ -16,7 +16,13 @@ if grep -RIni --exclude='Safety_Mission.md' --exclude='check_safety_mission.sh' 
   exit 1
 fi
 # Existing negative AOT contracts are required safety regressions.
-grep -Fq 'aot_reject_arc_cycle' "$ROOT/tests/run_aot_parity.sh"
-grep -Fq 'aot_reject_list_arc_cycle' "$ROOT/tests/run_aot_parity.sh"
 grep -Fq 'not supported safely yet' "$ROOT/tests/run_aot_parity.sh"
+# SAFETY-CONTRACT CHANGE: the two ARC-cycle rejection contracts were replaced
+# by positive ones. Cycles are broken statically rather than refused, so the
+# guard now checks that the breaker, its acyclicity proof and the programs that
+# exercise it are all still present.
+grep -Fq 'cycle_broken_node.lpp' "$ROOT/tests/aot_parity.tsv"
+grep -Fq 'cycle_broken_list.lpp' "$ROOT/tests/aot_parity.tsv"
+grep -Fq 'owning subgraph' "$ROOT/src/analysis/cyclebreak.rs"
+grep -Fq 'owning_subgraph_is_acyclic_property' "$ROOT/src/analysis/cyclebreak.rs"
 echo 'PASS L++ safety mission claim and regression gate'

@@ -406,6 +406,43 @@ impl<'a> MirLowerCtx<'a> {
     /// Select an explicit ownership operation for an assignment. A direct
     /// `Local` read of an owned temporary is a move; identifiers of owned
     /// variables lower to `Borrowed` and therefore stay usable after assignment.
+    /// True when a local holds an ARC-managed reference.
+    fn is_arc_managed(builder: &MirBuilder, local: LocalId) -> bool {
+        matches!(
+            &builder.function.locals[local.0].ty,
+            TypeRef::Custom(_) | TypeRef::Function | TypeRef::Generic(_, _) | TypeRef::Str
+        )
+    }
+
+    /// Aliasing a *borrowed* value into an owned local creates a second owner,
+    /// so it needs its own reference: `c := p` where `p` is a parameter.
+    ///
+    /// Without this the ARC pass sees an owned local and emits `release(c)` at
+    /// scope exit, but nothing ever retained it -- the callee frees an object
+    /// the caller still owns, and the caller then reads freed memory. The
+    /// symptom is a SIGSEGV after the function returns, with printed values all
+    /// correct because the corruption only bites at teardown.
+    fn retain_if_aliasing_borrow(
+        builder: &mut MirBuilder,
+        destination: LocalId,
+        rvalue: &Rvalue,
+    ) -> Result<(), String> {
+        let source = match rvalue {
+            Rvalue::Use(Operand::Local(source)) | Rvalue::Use(Operand::Borrowed(source)) => *source,
+            _ => return Ok(()),
+        };
+        if builder.function.locals[destination.0].ownership != Ownership::Owned {
+            return Ok(());
+        }
+        if builder.function.locals[source.0].ownership != Ownership::Borrowed {
+            return Ok(());
+        }
+        if !Self::is_arc_managed(builder, source) {
+            return Ok(());
+        }
+        builder.push_instr(MirInstr::Retain(destination))
+    }
+
     fn assignment_rvalue(builder: &MirBuilder, destination: LocalId, operand: Operand) -> Rvalue {
         if let Operand::Local(source) = operand {
             if builder.function.locals[destination.0].ownership == Ownership::Owned
@@ -447,7 +484,8 @@ impl<'a> MirLowerCtx<'a> {
 
                 let operand = self.lower_expr(builder, value, binding_map)?;
                 let rvalue = Self::assignment_rvalue(builder, local_id, operand);
-                builder.push_instr(MirInstr::Assign(local_id, rvalue))?;
+                builder.push_instr(MirInstr::Assign(local_id, rvalue.clone()))?;
+                Self::retain_if_aliasing_borrow(builder, local_id, &rvalue)?;
             }
             Stmt::Assign {
                 value, binding_id, ..
@@ -458,8 +496,10 @@ impl<'a> MirLowerCtx<'a> {
                 let binding_id = BindingId(ast_id);
                 let operand = self.lower_expr(builder, value, binding_map)?;
                 if let Some(local_id) = binding_map.get(&binding_id) {
-                    let rvalue = Self::assignment_rvalue(builder, *local_id, operand);
-                    builder.push_instr(MirInstr::Assign(*local_id, rvalue))?;
+                    let local_id = *local_id;
+                    let rvalue = Self::assignment_rvalue(builder, local_id, operand);
+                    builder.push_instr(MirInstr::Assign(local_id, rvalue.clone()))?;
+                    Self::retain_if_aliasing_borrow(builder, local_id, &rvalue)?;
                 } else if let Some(env_ptr) = self.current_env_ptr {
                     if let Some(idx) = self
                         .current_captures
@@ -1035,6 +1075,24 @@ impl<'a> MirLowerCtx<'a> {
                 }
             }
             Expr::BinaryOp { left, op, right } => {
+                // `a + b` on two Str values means concatenation. The type
+                // checker allows Add on any two matching types, so this reached
+                // the backend and emitted `iadd` on two pointers: it compiled
+                // clean, then segfaulted with no diagnostic at all.
+                if *op == BinaryOperator::Add {
+                    let lt = self.expr_type_hint(left, builder, binding_map);
+                    let rt = self.expr_type_hint(right, builder, binding_map);
+                    if lt == TypeRef::Str && rt == TypeRef::Str {
+                        let desugared = Expr::Call {
+                            callee: Box::new(Expr::Identifier(
+                                "str_concat".to_string(),
+                                std::cell::Cell::new(None),
+                            )),
+                            args: vec![(**left).clone(), (**right).clone()],
+                        };
+                        return self.lower_expr(builder, &desugared, binding_map);
+                    }
+                }
                 // Short-circuit && and ||
                 if *op == BinaryOperator::And {
                     let result = builder.new_local(TypeRef::Bool, true, None, None);

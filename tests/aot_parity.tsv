@@ -27,3 +27,8 @@ generics_full.lpp|42\nhello\n2.5\n7\nwrapped\n9\n3\nthree
 enum_payloads.lpp|str payload survives\n5000000000\n2.5\nnothing\n110\n1
 generics_turbofish.lpp|42\nturbofished\n1.25\n7\n99\n7\nmethod generic\n0.5\nc\n20
 arc_local_refcount.lpp|5\n5\n5\n4950
+generic_trait_impls.lpp|99\n1\n5\ns\n8\n99\n1
+arc_memory_edges.lpp|10\n5\n11\n7\nhello\nababab\n80\n3
+cycle_broken_node.lpp|1\n2
+cycle_broken_list.lpp|1
+recursive_structures.lpp|13\n6\n1\n2

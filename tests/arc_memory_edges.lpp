@@ -1,0 +1,84 @@
+# ARC lifetime edges that used to corrupt memory or leak.
+#
+# Every case below printed correct values and *then* crashed at teardown, or
+# quietly leaked. Both shapes are dangerous: the program looks like it works.
+#
+#   1. Aliasing a borrowed parameter (`c := p`) made the alias an owner with no
+#      retain, so the callee freed an object its caller still owned.
+#   2. Nested construction (`Kennel(Dog(1))`) released the inner object twice --
+#      once via the parent's destructor, once at scope exit.
+#   3. `"he" + "llo"` type-checked as Str and emitted `iadd` on two pointers,
+#      with no diagnostic at all.
+#   4. A value allocated inside a loop was never released: the ARC pass only
+#      emitted releases at `return`, so every iteration leaked. Worse, a value
+#      created on one arm of a branch *inside* a loop was invisible even to a
+#      back-edge rule, because it is not definitely-live at the join.
+#
+# Verified under AddressSanitizer: no leaks, no use-after-free, no double-free.
+
+struct Dog:
+    n: Int
+
+struct Kennel:
+    pet: Dog
+
+struct Deep:
+    inner: Kennel
+
+# 1. Alias a borrowed parameter, twice, and read both.
+def alias_param(d: Dog) -> Int:
+    a := d
+    b := a
+    return a.n + b.n
+
+def read_pet(k: Kennel) -> Int:
+    return k.pet.n
+
+# 4. Allocation inside a loop, including one arm of a branch.
+def loop_alloc(count: Int) -> Int:
+    mut total := 0
+    mut i := 0
+    while i < count:
+        d := Dog(i)
+        k := Kennel(d)
+        total = total + k.pet.n
+        if i > 2:
+            extra := Dog(i * 10)
+            total = total + extra.n
+        i = i + 1
+    return total
+
+# A loop-carried owner reassigned each iteration must survive to the next one.
+def loop_carried(count: Int) -> Int:
+    mut held := Dog(0)
+    mut i := 0
+    while i < count:
+        held = Dog(i)
+        i = i + 1
+    return held.n
+
+def main():
+    d := Dog(5)
+    print(alias_param(d))
+    print(d.n)
+
+    # 2. Nested construction, read back through a second function.
+    k := Kennel(Dog(11))
+    print(read_pet(k))
+
+    # Three levels deep.
+    deep := Deep(Kennel(Dog(7)))
+    print(deep.inner.pet.n)
+
+    # 3. Str + Str must concatenate, not add pointers.
+    print_str("he" + "llo")
+    mut s := ""
+    mut j := 0
+    while j < 3:
+        s = s + "ab"
+        j = j + 1
+    print_str(s)
+
+    # 0+1+2+3+4 = 10, plus 30+40 from the branch arm = 80
+    print(loop_alloc(5))
+    print(loop_carried(4))

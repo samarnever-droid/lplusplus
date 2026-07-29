@@ -7,6 +7,8 @@ mod diagnostics;
 pub mod cranelift_backend;
 #[path = "analysis/escape.rs"]
 mod escape;
+#[path = "analysis/cyclebreak.rs"]
+mod cyclebreak;
 #[path = "analysis/monomorph.rs"]
 mod monomorph;
 #[path = "frontend/lexer.rs"]
@@ -813,7 +815,12 @@ fn main() {
             // Fuses a trailing comparison temporary with its branch to avoid
             // setcc/test materialization in hot native loops.
             mir::pass_branch::run(&mut mir_program);
-            mir::pass_arc::run_arc_insertion_pass(&mut mir_program, &storage);
+            // Break every ownership cycle statically before ARC insertion, so
+            // the owning subgraph the pass reasons about is acyclic. See
+            // analysis::cyclebreak for the proof.
+            let ownership_graph = cyclebreak::break_cycles(&type_table);
+            let weak_fields = ownership_graph.weak_fields();
+            mir::pass_arc::run_arc_insertion_pass_with_weak(&mut mir_program, &weak_fields);
             // Values handed to a thread and never touched again are moved, not
             // shared: drop the refcount pair that only existed to model a
             // second owner that never overlaps the first.
@@ -835,6 +842,7 @@ fn main() {
                 &mir_program,
                 &type_table,
                 has_extern_decl,
+                &weak_fields,
             ) {
                 Ok(bytes) => bytes,
                 Err(e) => {

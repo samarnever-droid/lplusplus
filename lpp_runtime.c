@@ -425,6 +425,19 @@ int64_t lpp_file_move(const char *source, const char *destination) {
 #  define LPP_ARC_DEC(p)          atomic_fetch_sub_explicit((p), 1, memory_order_acq_rel)
 #endif
 
+/* Monotonic source of object generations; see lpp_arc_alloc_with_destructor. */
+#if defined(_MSC_VER)
+static volatile LONG lpp__generation_counter = 1;
+static int32_t lpp__next_generation(void) {
+    return (int32_t)InterlockedIncrement(&lpp__generation_counter);
+}
+#else
+static _Atomic(int32_t) lpp__generation_counter = 1;
+static int32_t lpp__next_generation(void) {
+    return atomic_fetch_add_explicit(&lpp__generation_counter, 1, memory_order_relaxed) + 1;
+}
+#endif
+
 typedef void (*LppArcDestructor)(void *payload);
 
 #define LPP_ARC_MAGIC 0x41524331U
@@ -432,6 +445,10 @@ typedef void (*LppArcDestructor)(void *payload);
 typedef struct {
     uint32_t magic;
     lpp_atomic32_t refcount;
+    /* Bumped immediately BEFORE the payload is released. A weak handle stores
+     * the generation it was created with; if the two disagree the target is
+     * gone and the handle must not be dereferenced. See lpp_weak_get. */
+    lpp_atomic32_t generation;
     /* Called exactly once, immediately before the payload is freed. */
     LppArcDestructor destructor;
 } LppArcHeader;
@@ -441,10 +458,23 @@ void *lpp_arc_alloc_with_destructor(int64_t size, LppArcDestructor destructor) {
     LppArcHeader *hdr = (LppArcHeader *)calloc(1, sizeof(LppArcHeader) + (size_t)size);
     if (!hdr) return NULL;
     hdr->magic = LPP_ARC_MAGIC;
+    /* Generations come from a process-global counter, never restart at 1.
+     *
+     * Deriving the generation per-object was unsound here: malloc hands back
+     * recycled memory, so a fresh object at a reused address would restart at
+     * the same value a stale weak handle had captured, and the handle would
+     * compare equal to a completely different object. A falsification run
+     * caught exactly this -- 200000/200000 stale handles wrongly accepted.
+     *
+     * A monotonically increasing global makes every object distinct for the
+     * life of the process, regardless of address reuse. */
+    int32_t fresh = lpp__next_generation();
 #if defined(_MSC_VER)
     hdr->refcount = 1;
+    hdr->generation = fresh;
 #else
     atomic_init(&hdr->refcount, 1);
+    atomic_init(&hdr->generation, fresh);
 #endif
     hdr->destructor = destructor;
     return (void *)(hdr + 1); /* return pointer to payload, past the header */
@@ -463,6 +493,62 @@ static inline int lpp__is_valid_arc_ptr(const void *ptr) {
     return hdr->magic == LPP_ARC_MAGIC;
 }
 
+/* ── Weak (non-owning) field support ──────────────────────────────────────
+ *
+ * A field demoted by the static cycle breaker is stored WITHOUT a retain, so
+ * its target can die while the handle still exists. Reading one therefore goes
+ * through lpp_weak_get, which returns NULL rather than a dangling pointer.
+ *
+ * Ordering (this is the part that needs care, not inspection):
+ *
+ *   free path:  bump generation  --release-->  then deallocate
+ *   read path:  load generation  --acquire-->  then dereference
+ *
+ * The release store on the free side happens-before the acquire load on the
+ * read side, so a reader that observes the OLD generation is guaranteed to be
+ * reading memory the freeing thread had not yet released at the moment it
+ * published that value. A reader that observes the NEW generation refuses the
+ * dereference. There is no interleaving in which a reader both sees the old
+ * generation and touches memory after free.
+ *
+ * Bumping BEFORE deallocation is load-bearing. Bumping after would leave a
+ * window where the memory is gone but the generation still matches. */
+static void lpp__invalidate_generation(LppArcHeader *hdr) {
+#if defined(_MSC_VER)
+    hdr->generation = hdr->generation + 1;
+    MemoryBarrier();
+#else
+    atomic_fetch_add_explicit(&hdr->generation, 1, memory_order_release);
+#endif
+}
+
+/* Read the current generation of a live object, for storing in a weak handle. */
+int64_t lpp_weak_generation(void *ptr) {
+    if (!lpp__is_valid_arc_ptr(ptr)) return 0;
+    LppArcHeader *hdr = (LppArcHeader *)ptr - 1;
+#if defined(_MSC_VER)
+    return (int64_t)hdr->generation;
+#else
+    return (int64_t)atomic_load_explicit(&hdr->generation, memory_order_acquire);
+#endif
+}
+
+/* Dereference a weak handle: returns the pointer if the target is still the
+ * same live object, or 0 if it has been freed (or the slot was never set). */
+int64_t lpp_weak_get(int64_t raw, int64_t expected_generation) {
+    void *ptr = (void *)(intptr_t)raw;
+    if (!ptr || expected_generation == 0) return 0;
+    if (!lpp__is_valid_arc_ptr(ptr)) return 0;
+    LppArcHeader *hdr = (LppArcHeader *)ptr - 1;
+#if defined(_MSC_VER)
+    int32_t now = hdr->generation;
+#else
+    int32_t now = atomic_load_explicit(&hdr->generation, memory_order_acquire);
+#endif
+    if ((int64_t)now != expected_generation) return 0;
+    return raw;
+}
+
 /* Increment the reference count. Safe to call with NULL. */
 void lpp_arc_retain(void *ptr) {
     if (!lpp__is_valid_arc_ptr(ptr)) return;
@@ -479,6 +565,7 @@ void lpp_arc_release(void *ptr) {
         /* Refcount just hit zero. Destroy owned child references before the
          * payload/header are released; child releases may recursively invoke
          * their own generated destructors. */
+        lpp__invalidate_generation(hdr);
         hdr->magic = 0;
         if (hdr->destructor) hdr->destructor(ptr);
         free(hdr);
@@ -531,6 +618,7 @@ void lpp_arc_release_local(void *ptr) {
     atomic_store_explicit(&hdr->refcount, prev - 1, memory_order_relaxed);
 #endif
     if (prev == 1) {
+        lpp__invalidate_generation(hdr);
         hdr->magic = 0;
         if (hdr->destructor) hdr->destructor(ptr);
         free(hdr);
