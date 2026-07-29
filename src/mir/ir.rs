@@ -84,14 +84,16 @@ pub enum Rvalue {
     /// Only `pass_escape` produces this, and only for a local it has proved
     /// cannot outlive the frame: assigned once, never returned, never captured,
     /// never passed to a call, never stored into another object's field, and
-    /// belonging to a struct type whose own fields are all scalars. The payload
-    /// layout is identical to the heap form, so every field load/store path is
-    /// unchanged; what disappears is the allocator call, the header, and the
-    /// retain/release traffic.
+    /// belonging to a non-self-referential struct type. The payload layout is
+    /// identical to the heap form, so every field load/store path is unchanged.
+    /// Owned fields remain heap references and are released by a direct call to
+    /// the generated struct destructor at scope exit; only the outer header,
+    /// allocator call, and outer retain/release traffic disappear.
     ///
     /// A pointer to one of these must never reach `lpp_arc_retain`/`release` --
-    /// there is no header in front of it. The use-scan in `pass_escape` is what
-    /// guarantees that, which is why the promotion is deliberately narrow.
+    /// there is no header in front of it. The escape solver and ARC cleanup pass
+    /// preserve that invariant; `Release` on a promoted custom local is lowered
+    /// to the direct destructor call instead.
     AllocateStackStruct(TypeRef),
     /// Allocates memory for a new list
     AllocateList(TypeRef),

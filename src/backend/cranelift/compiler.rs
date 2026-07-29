@@ -356,7 +356,13 @@ impl AotCompiler {
                     if self.weak_fields.contains(&(struct_id, field_name.clone())) {
                         continue;
                     }
-                    if matches!(field_type, TypeRef::Custom(_) | TypeRef::Generic(_, _)) {
+                    if matches!(
+                        field_type,
+                        TypeRef::Custom(_)
+                            | TypeRef::Generic(_, _)
+                            | TypeRef::Str
+                            | TypeRef::Function
+                    ) {
                         let child = builder.ins().load(
                             cl_types::I64,
                             MemFlags::new(),

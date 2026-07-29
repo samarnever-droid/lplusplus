@@ -1666,7 +1666,13 @@ impl<'a> MirLowerCtx<'a> {
                 let temp = builder.new_local(field_ty.clone(), false, None, None);
                 // Reading a custom-struct field borrows the field's ARC edge;
                 // it does not transfer ownership out of the containing object.
-                if matches!(field_ty, TypeRef::Custom(_) | TypeRef::Generic(_, _)) {
+                if matches!(
+                    field_ty,
+                    TypeRef::Custom(_)
+                        | TypeRef::Generic(_, _)
+                        | TypeRef::Str
+                        | TypeRef::Function
+                ) {
                     builder.set_local_ownership(temp, Ownership::Borrowed);
                 }
                 builder.push_instr(MirInstr::Assign(

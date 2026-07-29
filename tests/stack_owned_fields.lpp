@@ -1,0 +1,39 @@
+# A frame-local struct may own heap fields. Its payload has no ARC header,
+# so scope exit must call the generated destructor directly.
+
+struct Box:
+    text: Str
+
+struct Child:
+    value: Int
+
+struct Parent:
+    child: Child
+
+struct Bag:
+    items: List[Int]
+
+def local_box() -> Int:
+    box := Box("owned-field")
+    print_str(box.text)
+    return str_len(box.text)
+
+def heap_box() -> Int:
+    box := Box(str_concat("heap-", "field"))
+    return str_len(box.text)
+
+def nested_parent() -> Int:
+    child := Child(41)
+    parent := Parent(child)
+    return parent.child.value + 1
+
+def list_parent() -> Int:
+    bag := Bag([1, 2, 3])
+    return list_len(bag.items)
+
+def main() -> Void:
+    print(local_box())
+    print(heap_box())
+    print(nested_parent())
+    print(list_parent())
+    print_str("stack-owned-ok")

@@ -246,25 +246,25 @@ fn scc_reverse_topo(
     st.out
 }
 
-/// A struct whose fields are all scalars owns nothing, so its destructor has no
-/// work and removing its header removes nothing observable.
-pub fn struct_is_scalar_only(type_table: &TypeTable, id: StructTypeId) -> bool {
-    let Some(def) = type_table.definitions.get(id.0) else {
-        return false;
-    };
-    if def.is_self_referential {
-        return false;
-    }
-    def.fields.iter().all(|(_, ty)| {
-        matches!(
-            ty,
-            TypeRef::Int | TypeRef::Float | TypeRef::Bool | TypeRef::Void
-        )
-    })
+/// A non-self-referential struct can live in a frame slot when the solver has
+/// proved that the struct pointer itself does not escape.  Its owned fields are
+/// still heap references, so the generated destructor must be called directly
+/// at frame exit rather than through `lpp_arc_release` (the stack payload has no
+/// ARC header).
+///
+/// Self-referential structs stay heap allocated: their cycle-breaking and
+/// destructor rules are defined in terms of ARC object identity, and a stack
+/// payload cannot safely participate in that graph.
+pub fn struct_can_stack_allocate(type_table: &TypeTable, id: StructTypeId) -> bool {
+    type_table
+        .definitions
+        .get(id.0)
+        .map(|def| !def.is_self_referential)
+        .unwrap_or(false)
 }
 
 /// Solve the whole program.
-pub fn solve(program: &MirProgram, type_table: &TypeTable) -> EscapeFacts {
+pub fn solve(program: &MirProgram, _type_table: &TypeTable) -> EscapeFacts {
     let ids: Vec<FuncId> = program.functions.keys().copied().collect();
     let mut edges: HashMap<FuncId, HashSet<FuncId>> = HashMap::new();
     for (id, function) in &program.functions {
@@ -295,7 +295,7 @@ pub fn solve(program: &MirProgram, type_table: &TypeTable) -> EscapeFacts {
                 let Some(function) = program.functions.get(&fid) else {
                     continue;
                 };
-                let solved = solve_function(function, type_table, &summaries);
+                let solved = solve_function(function, &summaries);
                 let before = summaries.get(&fid).cloned().unwrap_or_default();
                 if solved.params_escape != before {
                     // Monotone: a parameter can only go false -> true.
@@ -316,7 +316,6 @@ pub fn solve(program: &MirProgram, type_table: &TypeTable) -> EscapeFacts {
 /// Intraprocedural solve for one function, given current callee summaries.
 fn solve_function(
     function: &MirFunction,
-    type_table: &TypeTable,
     summaries: &HashMap<FuncId, Vec<bool>>,
 ) -> FnFacts {
     let n = function.locals.len();
@@ -406,16 +405,10 @@ fn solve_function(
         }
     }
 
-    // A local holding a struct that owns other objects is not a stack candidate
-    // yet: releasing its fields at scope exit is separate work. Keep it Owned so
-    // no consumer can place it in a frame slot.
-    for (i, decl) in function.locals.iter().enumerate() {
-        if let TypeRef::Custom(sid) = &decl.ty {
-            if !struct_is_scalar_only(type_table, *sid) {
-                storage[i] = storage[i].join(Storage::Owned);
-            }
-        }
-    }
+    // A non-self-referential custom struct may be frame-local even when it owns
+    // ARC-managed fields.  `pass_arc` will arrange a direct call to its generated
+    // destructor at frame exit; keeping that decision out of this fact solver is
+    // important because the solver answers reachability, not cleanup mechanics.
 
     let params_escape = function
         .params

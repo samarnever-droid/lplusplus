@@ -92,9 +92,9 @@ fn collect_terminator_reads(t: &Terminator, out: &mut HashSet<LocalId>) {
 fn transfer_live(
     instructions: &[MirInstr],
     live: HashSet<LocalId>,
-    arc_locals: &HashSet<LocalId>,
+    cleanup_locals: &HashSet<LocalId>,
 ) -> HashSet<LocalId> {
-    transfer_live_with_drops(instructions, live, arc_locals, None)
+    transfer_live_with_drops(instructions, live, cleanup_locals, None)
 }
 
 /// As `transfer_live`, but also removes the owners the rewriter will release at
@@ -108,7 +108,7 @@ fn transfer_live(
 fn transfer_live_with_drops(
     instructions: &[MirInstr],
     mut live: HashSet<LocalId>,
-    arc_locals: &HashSet<LocalId>,
+    cleanup_locals: &HashSet<LocalId>,
     dropped: Option<&HashSet<LocalId>>,
 ) -> HashSet<LocalId> {
     for instruction in instructions {
@@ -127,7 +127,7 @@ fn transfer_live_with_drops(
                     }
                     _ => {}
                 }
-                if arc_locals.contains(destination) {
+                if cleanup_locals.contains(destination) {
                     live.insert(*destination);
                 }
             }
@@ -204,8 +204,26 @@ pub fn run_arc_insertion_pass_with_weak(
             })
             .map(|local| local.id)
             .collect();
+        // `pass_escape` changes promoted custom locals to `Copy`. They still
+        // have a lifetime that must be ended, but their cleanup is a direct call
+        // to the generated destructor rather than an ARC release (there is no
+        // header in front of a stack payload). Keep them in the same liveness
+        // dataflow and let the backend distinguish the two Release meanings.
+        let stack_locals: HashSet<LocalId> = function
+            .locals
+            .iter()
+            .filter(|local| {
+                local.ownership == Ownership::Copy
+                    && matches!(local.ty, TypeRef::Custom(_))
+            })
+            .map(|local| local.id)
+            .collect();
+        let cleanup_locals: HashSet<LocalId> = arc_locals
+            .union(&stack_locals)
+            .copied()
+            .collect();
 
-        if arc_locals.is_empty() {
+        if cleanup_locals.is_empty() {
             continue;
         }
 
@@ -347,7 +365,7 @@ pub fn run_arc_insertion_pass_with_weak(
                 let mut in_this: HashSet<LocalId> = HashSet::new();
                 for i in &b.instrs {
                     if let MirInstr::Assign(d, _) = i {
-                        if arc_locals.contains(d) {
+                        if cleanup_locals.contains(d) {
                             in_this.insert(*d);
                         }
                     }
@@ -388,7 +406,7 @@ pub fn run_arc_insertion_pass_with_weak(
         //
         // Starting from TOP cannot over-release: the fixpoint only removes
         // locals, so anything still present at the end is owned on all paths.
-        let mut entry_live: Vec<HashSet<LocalId>> = vec![arc_locals.clone(); block_count];
+        let mut entry_live: Vec<HashSet<LocalId>> = vec![cleanup_locals.clone(); block_count];
         if function.start_block.0 < block_count {
             entry_live[function.start_block.0] = HashSet::new();
         }
@@ -418,14 +436,14 @@ pub fn run_arc_insertion_pass_with_weak(
                     let mut incoming = transfer_live_with_drops(
                         &function.blocks[preds[0]].instrs,
                         entry_live[preds[0]].clone(),
-                        &arc_locals,
+                        &cleanup_locals,
                         Some(&block_dropped[preds[0]]),
                     );
                     for predecessor in &preds[1..] {
                         let predecessor_exit = transfer_live_with_drops(
                             &function.blocks[*predecessor].instrs,
                             entry_live[*predecessor].clone(),
-                            &arc_locals,
+                            &cleanup_locals,
                             Some(&block_dropped[*predecessor]),
                         );
                         incoming.retain(|local| predecessor_exit.contains(local));
@@ -450,7 +468,7 @@ pub fn run_arc_insertion_pass_with_weak(
                 let exit = transfer_live_with_drops(
                     &block.instrs,
                     entry_live[block.id.0].clone(),
-                    &arc_locals,
+                    &cleanup_locals,
                     None,
                 );
                 let entry = &entry_live[block.id.0];
@@ -478,7 +496,7 @@ pub fn run_arc_insertion_pass_with_weak(
         for block in &mut function.blocks {
             let mut live = entry_live[block.id.0].clone();
             let original = std::mem::take(&mut block.instrs);
-            let mut rewritten = Vec::with_capacity(original.len() + arc_locals.len());
+            let mut rewritten = Vec::with_capacity(original.len() + cleanup_locals.len());
 
             for instruction in original {
                 match &instruction {
@@ -524,8 +542,14 @@ pub fn run_arc_insertion_pass_with_weak(
                         let self_referential = reads.contains(&destination);
 
                         let mut deferred_release: Option<LocalId> = None;
-                        if arc_locals.contains(&destination) && live.remove(&destination) {
-                            if self_referential {
+                        if cleanup_locals.contains(&destination) && live.remove(&destination) {
+                            if stack_locals.contains(&destination) {
+                                // A promoted object has no ARC header. `Release`
+                                // is intentionally used as the cleanup opcode,
+                                // and the backend turns it into a direct call to
+                                // the type-specific destructor.
+                                rewritten.push(MirInstr::Release(destination));
+                            } else if self_referential {
                                 deferred_release = Some(destination);
                             } else {
                                 rewritten.push(MirInstr::Release(destination));
@@ -557,13 +581,13 @@ pub fn run_arc_insertion_pass_with_weak(
                         if let Some(source) = moved_source {
                             live.remove(&source);
                         }
-                        if arc_locals.contains(&destination) {
+                        if cleanup_locals.contains(&destination) {
                             live.insert(destination);
                             // A borrow becomes an additional owner at this
                             // assignment boundary ONLY when the destination
-                            // is itself an ARC-managed local.  Retaining a
-                            // scalar destination (Int/Bool/Float) is UB.
-                            if borrowed_source.is_some() {
+                            // is itself an ARC-managed local. Stack payloads
+                            // have no header and are never retained.
+                            if arc_locals.contains(&destination) && borrowed_source.is_some() {
                                 rewritten.push(MirInstr::Retain(destination));
                             }
                         }
@@ -572,10 +596,14 @@ pub fn run_arc_insertion_pass_with_weak(
                         base,
                         field,
                         value: Operand::Borrowed(source),
-                    } if matches!(
-                        &function.locals[source.0].ty,
-                        TypeRef::Custom(_) | TypeRef::Generic(_, _)
-                    ) =>
+                    } if arc_locals.contains(source)
+                        && matches!(
+                            &function.locals[source.0].ty,
+                            TypeRef::Custom(_)
+                                | TypeRef::Generic(_, _)
+                                | TypeRef::Str
+                                | TypeRef::Function
+                        ) =>
                     {
                         let source = *source;
                         let is_weak = match &function.locals[base.0].ty {

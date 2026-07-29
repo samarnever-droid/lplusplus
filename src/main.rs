@@ -840,7 +840,7 @@ fn main() {
             // the same question is how the double-free and the nondeterministic
             // release order happened.
             let escape_facts = mir::escape_solver::solve(&mir_program, &type_table);
-            let escape_stats = mir::pass_escape::run(&mut mir_program, &escape_facts);
+            let escape_stats = mir::pass_escape::run(&mut mir_program, &escape_facts, &type_table);
             if dump_escape {
                 println!(
                     "  stack-promoted {} of {} candidate struct locals",

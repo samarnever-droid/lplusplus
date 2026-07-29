@@ -271,37 +271,58 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                     ));
                 }
             }
-            MirInstr::Retain(local) | MirInstr::Release(local) => {
-                // ARC operations are part of MIR semantics, not optional hints.  Emit
-                // the runtime call so AOT has the same ownership behavior as the model.
-                //
-                // Atomic or not is decided per object, not per program. The
-                // whole-program proof (`arc_non_atomic`) is all-or-nothing: a
-                // single `spawn` anywhere forces `lock`-prefixed refcounts onto
-                // every object in the program, including the overwhelming
-                // majority that never leave the thread that made them.
-                //
-                // The escape solver already computes which locals can reach a
-                // second thread -- that is exactly `Storage::Shared`. A local
-                // below `Shared` cannot be reached by another thread, so its
-                // refcount has nothing to synchronise against and the atomic is
-                // pure overhead even in a program that does spawn.
-                //
-                // This is strictly more permissive than the old rule and never
-                // less safe: `Shared` is only reachable through
-                // `Rvalue::SpawnThread`, and anything the solver cannot see
-                // through (indirect calls, unlisted builtins) is already raised
-                // to at least `Owned` and is treated conservatively below.
+            MirInstr::Retain(local) => {
+                // A stack payload has no ARC header and must never reach this
+                // path. `pass_arc` only emits Retain for ARC-managed locals.
+                if matches!(locals[local.0].ownership, Ownership::Copy) {
+                    return Err(format!("attempted to retain stack local {:?}", local));
+                }
                 let local_is_shared = self
                     .shared_locals
                     .map(|s| s.contains(local))
                     .unwrap_or(true);
                 let use_non_atomic = self.arc_non_atomic || !local_is_shared;
-                let symbol = match (matches!(instr, MirInstr::Retain(_)), use_non_atomic) {
-                    (true, false) => "lpp_arc_retain",
-                    (true, true) => "lpp_arc_retain_local",
-                    (false, false) => "lpp_arc_release",
-                    (false, true) => "lpp_arc_release_local",
+                let symbol = if use_non_atomic {
+                    "lpp_arc_retain_local"
+                } else {
+                    "lpp_arc_retain"
+                };
+                let builtin_id = *self
+                    .builtin_ids
+                    .get(symbol)
+                    .ok_or_else(|| format!("ARC runtime symbol '{}' was not declared", symbol))?;
+                let func_ref = self.module.declare_func_in_func(builtin_id, builder.func);
+                let value = self.operand_to_value(builder, &Operand::Local(*local), local_vars)?;
+                builder.ins().call(func_ref, &[value]);
+            }
+            MirInstr::Release(local) => {
+                // `pass_arc` also uses Release as the lifetime-end opcode for a
+                // promoted custom struct. In that case the payload is a stack
+                // slot, so call the generated destructor directly; asking the
+                // runtime to inspect bytes before the slot would be a header
+                // violation. The destructor preserves the cycle-breaker's weak
+                // field skips and releases each owned child exactly once.
+                if let TypeRef::Custom(struct_id) = locals[local.0].ty {
+                    if matches!(locals[local.0].ownership, Ownership::Copy) {
+                        let drop_id = *self.drop_ids.get(&struct_id).ok_or_else(|| {
+                            format!("missing stack destructor for struct {:?}", struct_id)
+                        })?;
+                        let drop_ref = self.module.declare_func_in_func(drop_id, builder.func);
+                        let value = self.operand_to_value(builder, &Operand::Local(*local), local_vars)?;
+                        builder.ins().call(drop_ref, &[value]);
+                        return Ok(());
+                    }
+                }
+
+                let local_is_shared = self
+                    .shared_locals
+                    .map(|s| s.contains(local))
+                    .unwrap_or(true);
+                let use_non_atomic = self.arc_non_atomic || !local_is_shared;
+                let symbol = if use_non_atomic {
+                    "lpp_arc_release_local"
+                } else {
+                    "lpp_arc_release"
                 };
                 let builtin_id = *self
                     .builtin_ids

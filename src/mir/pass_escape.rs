@@ -10,8 +10,9 @@
 //! MIR with a compiler-enforced exhaustive match. This pass is what remains:
 //! read the fact, rewrite the allocation.
 
-use super::escape_solver::{EscapeFacts, Storage};
+use super::escape_solver::{struct_can_stack_allocate, EscapeFacts, Storage};
 use super::ir::*;
+use crate::typecheck::{TypeRef, TypeTable};
 use std::collections::{HashMap, HashSet};
 
 /// Reported by `--dump-escape`.
@@ -23,7 +24,11 @@ pub struct EscapeStats {
 
 /// Rewrite `AllocateArcStruct` to `AllocateStackStruct` for every local the
 /// solver proved cannot outlive its frame.
-pub fn run(program: &mut MirProgram, facts: &EscapeFacts) -> EscapeStats {
+pub fn run(
+    program: &mut MirProgram,
+    facts: &EscapeFacts,
+    type_table: &TypeTable,
+) -> EscapeStats {
     let mut stats = EscapeStats::default();
 
     for (fid, function) in program.functions.iter_mut() {
@@ -58,11 +63,36 @@ pub fn run(program: &mut MirProgram, facts: &EscapeFacts) -> EscapeStats {
                 == Storage::Frame
         };
 
-        let mut promote: HashSet<LocalId> = HashSet::new();
+        let mut allocation_count: HashMap<LocalId, usize> = HashMap::new();
         for block in &function.blocks {
             for instruction in &block.instrs {
                 if let MirInstr::Assign(dest, Rvalue::AllocateArcStruct(_)) = instruction {
+                    *allocation_count.entry(*dest).or_insert(0) += 1;
+                }
+            }
+        }
+
+        let mut promote: HashSet<LocalId> = HashSet::new();
+        for block in &function.blocks {
+            for instruction in &block.instrs {
+                if let MirInstr::Assign(dest, Rvalue::AllocateArcStruct(ty)) = instruction {
                     stats.considered += 1;
+                    let stackable = match ty {
+                        TypeRef::Custom(id) => struct_can_stack_allocate(type_table, *id),
+                        _ => false,
+                    };
+                    if !stackable {
+                        continue;
+                    }
+                    // A local with multiple allocation instructions may be
+                    // initialized on different control-flow paths. Keep that
+                    // shape heap-backed: a single stack slot must not be
+                    // mistaken for several statically distinct objects. A
+                    // single allocation instruction in a loop is one reusable
+                    // frame slot and is handled by the loop cleanup analysis.
+                    if allocation_count.get(dest).copied().unwrap_or(0) != 1 {
+                        continue;
+                    }
                     // Both halves of a construct-then-move pair must be frame
                     // locals; the object is one lifetime.
                     let dest_ok = frame_local(*dest);

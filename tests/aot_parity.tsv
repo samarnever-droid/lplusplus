@@ -38,3 +38,4 @@ list_ownership_leak.lpp|2000
 escape_soundness.lpp|1\n2\n3\n9\nsoundness-ok
 escape_alias_safety.lpp|15\n4950\n8\nalias-ok
 arc_preloop_owner.lpp|7\n11\npreloop-ok
+stack_owned_fields.lpp|owned-field\n11\n10\n42\n3\nstack-owned-ok
