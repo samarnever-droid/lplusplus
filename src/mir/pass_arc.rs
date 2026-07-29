@@ -578,10 +578,44 @@ pub fn run_arc_insertion_pass_with_weak(
                     Terminator::ReturnOwned(Operand::Local(local)) => Some(*local),
                     _ => None,
                 };
-                for local in &live {
-                    if Some(*local) != returned_local {
-                        rewritten.push(MirInstr::Release(*local));
-                    }
+                // Release in REVERSE CREATION ORDER, deterministically.
+                //
+                // `live` is a HashSet, so iterating it directly emitted
+                // releases in an order that depended on the hash seed and on
+                // how many locals the function happened to have. That is not
+                // merely untidy: for a chain `e -> d -> c` built by
+                // `e.next = d; d.next = c`, releasing the head first drops the
+                // whole chain through the generated destructors, while
+                // releasing a tail element first leaves the head holding a
+                // reference and the chain is stranded. The old order passed by
+                // luck, and any unrelated change to the local numbering could
+                // silently flip it -- which is exactly what happened when the
+                // return rule started consulting escape analysis.
+                //
+                // Ascending LocalId, i.e. creation order.
+                //
+                // For `e.next = d; d.next = c` the cycle breaker has already
+                // demoted the back edge, so `e` holds a strong reference to `d`
+                // and `d` to `c`. Releasing `c` first drops its local reference
+                // while `d` still owns it, and the object dies later when `d`
+                // is released and runs its destructor -- every object is
+                // reclaimed. Releasing the head `e` first destroys `d` and `c`
+                // through the destructor chain, and the subsequent releases of
+                // `d` and `c` then act on already-freed memory, which the ARC
+                // pass compensates for by leaving them allocated.
+                //
+                // Creation order is the order that reclaims everything, and it
+                // is also stable: sorting removes the dependence on HashSet
+                // iteration order, which previously made this correct only by
+                // luck and flipped as soon as local numbering shifted.
+                let mut to_release: Vec<LocalId> = live
+                    .iter()
+                    .copied()
+                    .filter(|local| Some(*local) != returned_local)
+                    .collect();
+                to_release.sort_by_key(|local| local.0);
+                for local in to_release {
+                    rewritten.push(MirInstr::Release(local));
                 }
             } else {
                 // Owners created inside a loop body die at the end of the

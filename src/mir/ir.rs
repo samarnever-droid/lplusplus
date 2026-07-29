@@ -78,6 +78,21 @@ pub enum Rvalue {
     AllocateStruct(TypeRef),
     /// Allocates a custom struct with one owned ARC reference.
     AllocateArcStruct(TypeRef),
+    /// Allocates a custom struct in the current stack frame, with no ARC header
+    /// and no refcount.
+    ///
+    /// Only `pass_escape` produces this, and only for a local it has proved
+    /// cannot outlive the frame: assigned once, never returned, never captured,
+    /// never passed to a call, never stored into another object's field, and
+    /// belonging to a struct type whose own fields are all scalars. The payload
+    /// layout is identical to the heap form, so every field load/store path is
+    /// unchanged; what disappears is the allocator call, the header, and the
+    /// retain/release traffic.
+    ///
+    /// A pointer to one of these must never reach `lpp_arc_retain`/`release` --
+    /// there is no header in front of it. The use-scan in `pass_escape` is what
+    /// guarantees that, which is why the promotion is deliberately narrow.
+    AllocateStackStruct(TypeRef),
     /// Allocates memory for a new list
     AllocateList(TypeRef),
     /// Spawns an asynchronous OS thread executing a closure callable.
@@ -148,6 +163,7 @@ impl std::fmt::Display for Rvalue {
             Rvalue::FieldAccess(base, field) => write!(f, "{}.{}", base, field),
             Rvalue::AllocateStruct(ty) => write!(f, "alloc_struct_raw({:?})", ty),
             Rvalue::AllocateArcStruct(ty) => write!(f, "alloc_arc_struct({:?})", ty),
+            Rvalue::AllocateStackStruct(ty) => write!(f, "alloc_stack_struct({:?})", ty),
             Rvalue::AllocateList(ty) => write!(f, "alloc_list({:?})", ty),
             Rvalue::SpawnThread(closure_op) => write!(f, "spawn_thread({})", closure_op),
             Rvalue::FuncRef(fid) => write!(f, "func_ref(fn_{})", fid.0),

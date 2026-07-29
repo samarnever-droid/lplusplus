@@ -1,0 +1,63 @@
+# Value-by-default: structs that provably cannot outlive their frame are
+# stack-allocated; every escaping shape must still be heap-allocated and ARC'd.
+#
+# The negative cases below are the ones that matter. `analysis::escape` walks
+# into call arguments, field stores and struct-literal fields WITHOUT promoting
+# the value placed there, so if this pass trusted the escape map alone, each of
+# these would be wrongly stack-allocated and would hand out a pointer into a
+# dead frame. They are here to prove the MIR use-scan catches them on its own.
+
+struct P:
+    x: Int
+    y: Int
+
+struct Holder:
+    p: P
+
+# NEGATIVE 1: returned. Must stay heap.
+def make_escaping() -> P:
+    e := P(1, 2)
+    return e
+
+# NEGATIVE 2: passed to a call. Escape analysis does not promote call
+# arguments, so only the use-scan prevents this one.
+def consume(q: P) -> Int:
+    return q.x
+
+def passes_to_call() -> Int:
+    a := P(5, 6)
+    return consume(a)
+
+# NEGATIVE 3: stored into another object's field. Also not promoted by the
+# escape walker.
+def stores_in_field() -> Int:
+    inner := P(7, 8)
+    mut h := Holder(inner)
+    return h.p.x
+
+# POSITIVE: never leaves the frame. Should be stack-allocated.
+def stays_local() -> Int:
+    mut v := P(20, 22)
+    v.x = v.x + 1
+    return v.x + v.y
+
+# POSITIVE: a fresh struct per iteration, never escaping. This is the shape
+# that used to cost one heap allocation and a refcount pair per iteration.
+def loop_local(n: Int) -> Int:
+    mut total := 0
+    mut i := 0
+    while i < n:
+        mut t := P(i, i)
+        t.y = t.y + 1
+        total = total + t.x + t.y
+        i = i + 1
+    return total
+
+def main() -> Void:
+    r := make_escaping()
+    print(r.x)
+    print(passes_to_call())
+    print(stores_in_field())
+    print(stays_local())
+    print(loop_local(4))
+    print_str("escape-ok")

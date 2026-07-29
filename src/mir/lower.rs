@@ -49,6 +49,13 @@ pub struct MirLowerCtx<'a> {
     pub current_vtable_locals: HashMap<String, (String, HashMap<String, LocalId>)>,
     // Extern (FFI) function names → C symbol names
     pub extern_symbols: HashMap<String, String>,
+    /// Storage classification from `analysis::escape`.
+    ///
+    /// The return rule below used to be purely type-shaped: any
+    /// `Custom`/`Function`/`Generic`/`Str` was returned owned, and the escape
+    /// analysis had no say. This is how the analysis finally participates in
+    /// that decision.
+    pub escape_map: HashMap<crate::semantic::BindingId, crate::escape::StorageClass>,
 }
 
 impl<'a> MirLowerCtx<'a> {
@@ -73,7 +80,29 @@ impl<'a> MirLowerCtx<'a> {
             trait_names: std::collections::HashSet::new(),
             current_vtable_locals: HashMap::new(),
             extern_symbols: HashMap::new(),
+            escape_map: HashMap::new(),
         }
+    }
+
+    /// Supply the storage classification computed by `analysis::escape`.
+    pub fn with_escape_map(
+        mut self,
+        map: HashMap<crate::semantic::BindingId, crate::escape::StorageClass>,
+    ) -> Self {
+        self.escape_map = map;
+        self
+    }
+
+    /// Does the escape analysis say this binding escapes?
+    ///
+    /// Only ever consulted alongside the type-shaped rule, never instead of it
+    /// -- see the comment at the return terminator for why the two are unioned.
+    fn escape_says_owned(&self, binding_id: Option<crate::semantic::BindingId>) -> bool {
+        use crate::escape::StorageClass;
+        matches!(
+            binding_id.and_then(|b| self.escape_map.get(&b)),
+            Some(StorageClass::Arc) | Some(StorageClass::Arena { .. })
+        )
     }
 
     fn get_field_type(&self, base_ty: &TypeRef, field: &str) -> TypeRef {
@@ -551,15 +580,48 @@ impl<'a> MirLowerCtx<'a> {
                 // `Return`, so the ARC pass released the string it was about to
                 // hand back and the caller read freed memory -- ASan caught this
                 // as a use-after-free in lppsqlite's `trim`.
+                // The decision is the UNION of two inputs, not the type shape
+                // alone:
+                //
+                //   owned = type_is_managed(local) || escape_analysis_says_arc(local)
+                //
+                // Escape analysis is a real participant here now -- Rule 1 in
+                // `analysis::escape` promotes exactly the bindings that are
+                // returned, and this is where that classification finally
+                // reaches codegen.
+                //
+                // It is a union rather than a replacement on purpose. The type
+                // check is conservative in the safe direction: it can only
+                // over-approximate ownership, which costs a refcount, never
+                // correctness. The escape walker is a recursive descent over
+                // ~40 AST forms and I cannot prove it exhaustive, so deleting
+                // the type check would make a missed match arm into a dangling
+                // pointer. Both are compile-time predicates, so the union is
+                // free at run time.
                 let managed_return = match &op {
-                    Some(Operand::Local(local)) | Some(Operand::Borrowed(local)) => matches!(
-                        &builder.function.locals[local.0].ty,
-                        TypeRef::Custom(_)
-                            | TypeRef::Function
-                            | TypeRef::Generic(_, _)
-                            | TypeRef::Str
-                    )
-                    .then_some(*local),
+                    Some(Operand::Local(local)) | Some(Operand::Borrowed(local)) => {
+                        let decl = &builder.function.locals[local.0];
+                        let type_says_managed = matches!(
+                            &decl.ty,
+                            TypeRef::Custom(_)
+                                | TypeRef::Function
+                                | TypeRef::Generic(_, _)
+                                | TypeRef::Str
+                        );
+                        let escape_says = self.escape_says_owned(decl.binding_id);
+                        // A scalar can never carry an ARC reference, so the
+                        // escape map must not be allowed to promote one: that
+                        // would emit a retain on an integer.
+                        let is_managed_shape = !matches!(
+                            &decl.ty,
+                            TypeRef::Int
+                                | TypeRef::Float
+                                | TypeRef::Bool
+                                | TypeRef::Char
+                                | TypeRef::Void
+                        );
+                        ((type_says_managed || escape_says) && is_managed_shape).then_some(*local)
+                    }
                     _ => None,
                 };
                 let terminator = if let Some(local) = managed_return {

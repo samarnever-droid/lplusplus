@@ -786,7 +786,11 @@ fn main() {
             }
 
             let mir_start = Instant::now();
-            let mut mir_ctx = mir::lower::MirLowerCtx::new(&resolver.table, &mut type_table, &ast);
+            // Hand the storage classification to lowering. The return-ownership
+            // decision consults it alongside the type shape, so escape analysis
+            // is a real input to codegen rather than a diagnostic.
+            let mut mir_ctx = mir::lower::MirLowerCtx::new(&resolver.table, &mut type_table, &ast)
+                .with_escape_map(storage.clone());
             let mut mir_program = match mir_ctx.lower_program(&ast) {
                 Ok(program) => program,
                 Err(e) => {
@@ -820,6 +824,26 @@ fn main() {
             // analysis::cyclebreak for the proof.
             let ownership_graph = cyclebreak::break_cycles(&type_table);
             let weak_fields = ownership_graph.weak_fields();
+            // Value-by-default. This is where the escape classification finally
+            // reaches codegen: a struct that provably cannot outlive its frame
+            // is moved to a stack slot, losing its header, its allocator call
+            // and its retain/release traffic.
+            //
+            // It must run BEFORE ARC insertion. A promoted local has no ARC
+            // header, so it must never enter `arc_locals` and never be handed to
+            // retain/release; running first means the ARC pass simply never sees
+            // it as an owner.
+            //
+            // The escape map is consulted as a veto only -- see pass_escape for
+            // why "absent from the map" is not by itself a licence to promote.
+            let escape_stats =
+                mir::pass_escape::run(&mut mir_program, &type_table, &storage);
+            if dump_escape {
+                println!(
+                    "  stack-promoted {} of {} candidate struct locals",
+                    escape_stats.promoted, escape_stats.considered
+                );
+            }
             mir::pass_arc::run_arc_insertion_pass_with_weak(&mut mir_program, &weak_fields);
             // Values handed to a thread and never touched again are moved, not
             // shared: drop the refcount pair that only existed to model a

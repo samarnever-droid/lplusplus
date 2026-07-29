@@ -126,6 +126,7 @@ fn count_rvalue(rvalue: &Rvalue, counts: &mut [u32]) {
         Rvalue::SpawnThread(closure) => count_operand(closure, counts),
         Rvalue::AllocateStruct(_)
         | Rvalue::AllocateArcStruct(_)
+        | Rvalue::AllocateStackStruct(_)
         | Rvalue::AllocateList(_)
         | Rvalue::FuncRef(_) => {}
     }

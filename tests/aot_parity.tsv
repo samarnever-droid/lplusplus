@@ -32,4 +32,7 @@ arc_memory_edges.lpp|10\n5\n11\n7\nhello\nababab\n80\n3
 cycle_broken_node.lpp|1\n2
 cycle_broken_list.lpp|1
 recursive_structures.lpp|13\n6\n1\n2
-string_provenance.lpp|4
+string_provenance.lpp|literal\nliteral\nababab\nabc\n2\nprovenance-ok
+escape_stack_alloc.lpp|1\n5\n7\n43\n16\nescape-ok
+list_ownership_leak.lpp|2000
+escape_soundness.lpp|1\n2\n3\n9\nsoundness-ok

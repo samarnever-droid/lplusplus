@@ -57,7 +57,11 @@ fn add_rvalue_uses(live: &mut HashSet<LocalId>, rvalue: &Rvalue) {
             live.insert(*local);
         }
         Rvalue::SpawnThread(closure) => add_operand_use(live, closure),
-        Rvalue::AllocateStruct(_) | Rvalue::AllocateArcStruct(_) | Rvalue::AllocateList(_) | Rvalue::FuncRef(_) => {}
+        Rvalue::AllocateStruct(_)
+        | Rvalue::AllocateArcStruct(_)
+        | Rvalue::AllocateStackStruct(_)
+        | Rvalue::AllocateList(_)
+        | Rvalue::FuncRef(_) => {}
     }
 }
 

@@ -158,6 +158,47 @@ impl EscapeAnalyzer {
         }
     }
 
+    /// Promote the root binding of `expr` to `Arc` when it names a managed
+    /// object.
+    ///
+    /// Used at the positions where a value is handed to something that can
+    /// outlive the current frame: a call argument, a field store, or a field of
+    /// a struct literal. Each of those used to recurse without classifying the
+    /// value placed there, which left genuinely escaping bindings marked
+    /// `Value`.
+    ///
+    /// This is monotone -- `promote` only moves `Value -> Arc` and never back
+    /// (see `promote`) -- so every call here can only make the classification
+    /// more conservative.
+    fn promote_if_managed(
+        expr: &Expr,
+        current_scope: ScopeId,
+        symbol_table: &SymbolTable,
+        type_table: &TypeTable,
+        storage: &mut HashMap<BindingId, StorageClass>,
+    ) {
+        let Some(ty) = Self::get_expr_type(expr, current_scope, symbol_table, type_table) else {
+            return;
+        };
+        if !matches!(
+            ty,
+            TypeRef::Custom(_) | TypeRef::Generic(_, _) | TypeRef::Str
+        ) {
+            return;
+        }
+        let Some(binding_id) = Self::get_root_binding(expr, current_scope, symbol_table) else {
+            return;
+        };
+        let binding = &symbol_table.bindings[binding_id.0];
+        if matches!(
+            symbol_table.scopes[binding.declared_in.0].kind,
+            ScopeKind::Global
+        ) {
+            return;
+        }
+        Self::promote(storage, binding_id, StorageClass::Arc);
+    }
+
     /// Rule 6: direct aliases of a custom object (`b := a` or `b = a`)
     /// give both bindings ownership of the same ARC object.
     fn promote_direct_alias(
@@ -251,6 +292,10 @@ impl EscapeAnalyzer {
                     closure_idx,
                     storage,
                 )?;
+                // SOUNDNESS: `parent.child = n` gives the parent a reference to
+                // `n`, and the parent can outlive it. This position previously
+                // only recursed, leaving `n` classified `Value`.
+                Self::promote_if_managed(value, current_scope, symbol_table, type_table, storage);
                 Self::walk_expr_rule1(
                     value,
                     current_scope,
@@ -489,6 +534,24 @@ impl EscapeAnalyzer {
                     storage,
                 )?;
                 for arg in args {
+                    // SOUNDNESS: an argument may be stored by the callee, and
+                    // this analysis cannot see the callee's body. Passing a
+                    // managed object to a call therefore has to be treated as
+                    // an escape.
+                    //
+                    // Previously this position only recursed, so `store_it(n)`
+                    // left `n` classified `Value` even when the callee kept it.
+                    // Anything downstream that read "not promoted" as "safe to
+                    // keep in the frame" would have handed out a pointer into a
+                    // dead frame. `promote` only ever moves Value -> Arc, so
+                    // adding this can cost performance but cannot cost safety.
+                    Self::promote_if_managed(
+                        arg,
+                        current_scope,
+                        symbol_table,
+                        type_table,
+                        storage,
+                    );
                     Self::walk_expr_rule1(
                         arg,
                         current_scope,

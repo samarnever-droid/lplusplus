@@ -151,6 +151,11 @@ fn validate_aot_program(program: &MirProgram, type_table: &TypeTable) -> Result<
                     // has already demoted one edge of every cycle to non-owning,
                     // so no owning cycle can reach here to leak.
                     _ if false => unreachable!(),
+                    // `AllocateStruct` is the legacy raw form and stays rejected:
+                    // it has no header and no proof that it does not need one.
+                    // `AllocateStackStruct` is different -- it is only ever
+                    // produced by `pass_escape`, which proves the local cannot
+                    // outlive the frame before emitting it.
                     MirInstr::Assign(_, Rvalue::AllocateStruct(_)) => {
                         return Err(format!(
                             "raw struct allocation reached AOT in '{}'; ownership lowering is required",

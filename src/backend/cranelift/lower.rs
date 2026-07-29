@@ -5,7 +5,9 @@ use crate::typecheck::{TypeRef, TypeTable};
 use cranelift_codegen::entity::EntityRef;
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 use cranelift_codegen::ir::types as cl_types;
-use cranelift_codegen::ir::{AbiParam, InstBuilder, Value};
+use cranelift_codegen::ir::{
+    AbiParam, InstBuilder, MemFlags, StackSlotData, StackSlotKind, Value,
+};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use cranelift_module::{DataDescription, FuncId as CLFuncId, Linkage, Module};
 use std::collections::HashMap;
@@ -515,6 +517,37 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                     .copied()
                     .ok_or_else(|| "Allocator call returned no value".to_string())
             }
+            Rvalue::AllocateStackStruct(TypeRef::Custom(struct_id)) => {
+                // A frame-local struct: same payload layout as the heap form,
+                // so every field load/store below is unchanged. What is gone is
+                // the header, the allocator call and the refcount traffic.
+                //
+                // Zero-initialised to match `lpp_arc_alloc_with_destructor`,
+                // which uses calloc -- reading a field before writing it must
+                // behave identically either way.
+                let (_, layout_size) = struct_layout(self.type_table, *struct_id);
+                let slot_size = layout_size.max(1) as u32;
+                let slot = builder.create_sized_stack_slot(StackSlotData::new(
+                    StackSlotKind::ExplicitSlot,
+                    slot_size,
+                    3, // 2^3 = 8-byte alignment, matching the heap payload
+                ));
+                let pointer_type = self.module.target_config().pointer_type();
+                let addr = builder.ins().stack_addr(pointer_type, slot, 0);
+                let zero = builder.ins().iconst(cl_types::I64, 0);
+                let mut offset = 0i32;
+                while (offset as u32) < slot_size {
+                    builder
+                        .ins()
+                        .store(MemFlags::trusted(), zero, addr, offset);
+                    offset += 8;
+                }
+                Ok(addr)
+            }
+            Rvalue::AllocateStackStruct(other) => Err(format!(
+                "stack struct allocation requires a custom struct type, got {:?}",
+                other
+            )),
             Rvalue::AllocateList(element_ty) => {
                 let allocator = match element_ty {
                     TypeRef::Int | TypeRef::Float | TypeRef::Bool => "lpp_list_new",
