@@ -1,66 +1,50 @@
 # L++ Wiki
 
-Welcome to the L++ wiki.
+**Current status: 2026-07-30.** Start with
+[Current Capabilities](../documentation/CURRENT_CAPABILITIES.md) and the
+[full status report](../documentation/STATUS-2026-07-30.md).
 
-L++ is a native, ownership-aware programming language built around a simple idea:
-
-> **Readable like Python, safe like Rust, fast like Go, native by default.**
-
-L++ is not an interpreter and not a VM language. Source files compile ahead-of-time through a Rust compiler frontend, a MIR optimization pipeline, Cranelift native code generation, and either the system linker or the custom `lpp-link` direct linker.
+L++ is a native ownership-aware language. The Rust compiler frontend lowers to
+MIR, solves ownership over MIR, and emits native objects through Cranelift by
+default or LLVM optionally. Objects are linked by the host linker or `lpp-link`.
 
 ## Start here
 
-1. [[Getting Started]] — install, build, run, and first project
-2. [[Language Reference]] — syntax, types, operators, functions, structs, enums, match, generics
-3. [[Errors and Result]] — `enum Result`, `match`, and the `?` operator
-4. [[Modules and Packages]] — imports, package manager, registry
-5. [[Standard Library and Builtins]] — strings, lists, maps, files, buffers, network, JSON
-6. [[Compiler Architecture]] — lexer to executable
-7. [[Type System and Safety]] — mutability, ownership, ARC, escape analysis
-8. [[Direct Linker and Runtime]] — ELF, PE, Mach-O, freestanding runtimes
-9. [[Verified Examples]] — examples checked with `lpp --checkall`
-10. [[Benchmarks and CI]] — BPW benchmark workflow and CI jobs
-11. [[Feature Status Matrix]] — stable vs experimental vs planned features
-12. [[Runtime Compatibility Matrix]] — host vs direct runtime builtin support
-13. [[Compiler Debugging Guide]] — dump flags, MIR, lpp-link inspect
-14. [[Package Registry and lpp-zip]] — registry format and ZIP package API
-15. [[Known Stale and Negative Files]] — why repo-wide checkall finds intentional failures
-16. [[Roadmap to Self Hosting]] — what is still needed for a compiler written in L++
+1. [Getting Started](Getting-Started.md)
+2. [Language Reference](Language-Reference.md)
+3. [Errors and Result](Errors-and-Result.md)
+4. [Modules and Packages](Modules-and-Packages.md)
+5. [Standard Library and Builtins](Standard-Library-and-Builtins.md)
+6. [Compiler Architecture](Compiler-Architecture.md)
+7. [Type System and Safety](Type-System-and-Safety.md)
+8. [Direct Linker and Runtime](Direct-Linker-and-Runtime.md)
+9. [Feature Status Matrix](Feature-Status-Matrix.md)
+10. [Runtime Compatibility Matrix](Runtime-Compatibility-Matrix.md)
+11. [Known Historical and Negative Files](Known-Stale-and-Negative-Files.md)
 
-## Current capability snapshot
+## Current highlights
 
-L++ currently supports:
+- immutable-by-default variables and `mut`;
+- structs, enums, match, generics, traits, closures, and threads;
+- MIR ownership facts: `Frame < Owned < Shared`;
+- stack payloads, ARC, Arena regions, cycle breaking, and generated destructors;
+- Cranelift default backend;
+- optional LLVM backend with host/direct linker support;
+- explicit `VectorI64x2` operations and long SIMD workload;
+- Linux ELF, Windows PE, and macOS Mach-O linker paths for their verified
+  subsets.
 
-- Native AOT compilation with Cranelift
-- Direct executable generation through `lpp-link`
-- Python-like indentation syntax
-- Immutable-by-default variables and `mut`
-- Functions with typed parameters and default parameter values
-- Structs and UFCS-style method calls
-- Enums with data-carrying variants
-- `match` with bindings
-- Rust-like `?` error propagation
-- Generic functions, structs, and enums (phase 1, type-erased)
-- Traits and `impl` blocks with static and dynamic dispatch
-- FFI / `extern "C"` blocks for calling C libraries (SDL2, OpenGL, etc.)
-- Constants
-- Type aliases, parsed/experimental
-- List literals and indexing
-- String indexing, f-strings, multiline strings
-- `if`, `elif`, `else`, `while`, `for`, `range(start, end, step)`
-- Short-circuit `&&` and `||`
-- Unary `-x` and `!flag`
-- Bitwise operators
-- File, directory, process, buffer, JSON, HTTP, TCP/UDP builtins
-- A pure L++ standard library
-- A GitHub Pages JSON package registry
+## Accuracy policy
 
-## Important accuracy note
+Do not use old reports as current implementation evidence. A current feature claim
+must point to a test or validation command. The primary commands are:
 
-The examples in this wiki were checked in a clean documentation example project using:
-
-```bash
-target/release/lpp --checkall
+```sh
+cargo test --release -j1
+sh tests/run_aot_parity.sh
+sh scripts/check_safety_mission.sh
 ```
 
-The full repository also contains old negative tests and deliberately invalid files used to test compiler rejection paths, so repo-wide `--checkall` is not the same as documentation-example validation.
+Package validation runs from the package directories. Windows LLVM execution
+still needs a Windows CI runner, and general automatic vectorization/LTO/PGO are
+not current claims.

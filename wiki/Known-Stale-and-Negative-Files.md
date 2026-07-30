@@ -1,76 +1,41 @@
-# Known Stale and Negative Files
+# Known historical and negative files
 
-Repo-wide `lpp --checkall` currently checks every `.lpp` file it can find. The repository also contains:
+This page is retained because the repository contains both executable tests and
+historical notes. It is not a claim that every `.lpp` file in the repository is
+a positive compile test.
 
-- negative tests that are supposed to fail,
-- old stress/scratch files,
-- stale examples from earlier language versions,
-- package tests that require a specific working directory/import layout.
+## Negative tests
 
-Therefore, full repo `--checkall` is not currently expected to be clean.
+Some files intentionally test diagnostics or rejection contracts, such as the
+mutable-capture rejection case used by `tests/run_aot_parity.sh`. Read the
+individual test comments before treating a non-zero compile result as a bug.
 
-## Known categories
+## Historical documents
 
-### Negative safety tests
-
-These intentionally fail to prove the compiler rejects unsafe ownership cycles:
-
-```text
-tests/aot_reject_arc_cycle.lpp
-tests/aot_reject_list_arc_cycle.lpp
-```
-
-### Old scratch/stress files
-
-Examples include root-level or `test/` scratch files that may use older mutability rules or old struct-cycle behavior.
-
-Typical failures:
+The following old planning/report files were removed because their present-tense
+claims no longer matched the compiler:
 
 ```text
-Cannot mutate field of immutable variable
-Cyclic owned struct detected
+ImprovementKiro.md
+improvementcodex.md
+LPP_Comprehensive_Report.md
 ```
 
-### Experimental stdlib files
+Use these current documents instead:
 
-Some stdlib modules are ahead of stable builtin coverage.
+- `documentation/STATUS-2026-07-30.md`;
+- `documentation/CURRENT_CAPABILITIES.md`;
+- `documentation/Compiler_Reality.md`;
+- `documentation/Cranelift_Safety_Plan.md`.
 
-Known examples:
+## Current validation boundaries
 
-```text
-stdlib/algo.lpp       # uses list_set, which is not currently public/stable
-stdlib/result.lpp     # helper arithmetic over enum custom type is experimental
-```
+Package tests should run from their package directories. Windows LLVM runtime
+execution requires a Windows runner. General automatic vectorization and LLVM
+LTO/PGO are not implemented.
 
-### Package layout issues
+## Cleanup policy
 
-Some package tests assume a package-root working directory. If run from the wrong directory, imports may fail.
-
-Example:
-
-```text
-packages/lpp-zip/tests/test_zip.lpp may not find import zip unless src/zip.lpp is on the import path
-```
-
-## Recommended documentation validation
-
-For wiki/docs examples, create a clean directory and run:
-
-```bash
-lpp --checkall
-```
-
-Do not use the entire repository as the documentation validation unit until negative/stale files are isolated.
-
-## Recommended cleanup task
-
-Future cleanup should move files into:
-
-```text
-tests/positive/
-tests/negative/
-examples/current/
-examples/legacy/
-```
-
-Then `lpp --checkall` can become a clean positive-only gate.
+New feature claims belong in the current status document and must include a
+measured test command. Historical benchmark numbers must be labeled historical
+rather than presented as current guarantees.

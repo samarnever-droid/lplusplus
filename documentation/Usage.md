@@ -1,80 +1,72 @@
-# L++ Compiler Usage Guide
+# L++ usage
 
-This guide explains how to compile L++ programs, configure execution modes, and use the compiler's debugging interface.
+**Current as of 2026-07-30.**
 
----
+## Compile and run
 
-## 1. CLI Commands & Wrapper Options
-
-When installed globally via `.\install.ps1`, the L++ compiler command `lpp` is added to your environment `PATH`.
-
-### 1.1 Compilation
-To compile an L++ source file into a native Windows executable:
-```cmd
-lpp [filename.lpp]
-```
-This performs ahead-of-time (AOT) compilation using the Cranelift backend to generate an object file, links it with the precompiled L++ C runtime library using MSVC `link.exe`, and outputs a standalone executable `[filename].exe` in the same directory.
-
-### 1.2 Run Compiled Binary Directly
-To compile and execute the program immediately in one step:
-```cmd
-lpp [filename.lpp] --run
+```sh
+lpp app.lpp
+./app
 ```
 
----
+The default backend is Cranelift. Select LLVM explicitly:
 
-## 2. Compiler Debugging Dumps
+```sh
+lpp app.lpp --backend llvm
+lpp app.lpp --backend llvm --linker direct
+```
 
-For inspecting the compiler's internal pipeline representation, use the `--dump-*` options when running the compiler binary:
+Emit an object without linking:
+
+```sh
+lpp app.lpp --backend llvm --emit-object
+```
+
+`clang` must be installed for the LLVM backend. Set `LPP_LLVM_CC` if it has a
+non-standard path. `LPP_LLVM_MARCH=native` enables host LLVM CPU features.
+
+## Debugging and inspection
 
 | Flag | Purpose |
 |---|---|
-| `--dump-ast` | Prints the parsed Abstract Syntax Tree (AST) structure in Rust debug format. |
-| `--dump-symbols` | Prints the symbol tree and scope binding associations resolved during semantic analysis. |
-| `--dump-types` | Prints the typechecker's inferred types for all identifiers and expressions. |
-| `--dump-escape` | Prints the storage classification map (which variables are allocated on stack vs. heap). |
-| `--dump-mir` | Prints the lowered Mid-level IR (MIR) control-flow graph basic blocks. |
-| `--dump-c` | Prints the transpiled C99 code produced by the C backend. |
+| `--dump-ast` | Print the parsed AST |
+| `--dump-symbols` | Print semantic bindings/scopes |
+| `--dump-types` | Print inferred types |
+| `--dump-escape` | Print MIR Frame/Owned/Shared facts and stack-promotion summary |
+| `--dump-mir` | Print lowered/cleaned MIR |
+| `--check` | Frontend/type-check without native linking |
+| `--checkall` | Check all project `.lpp` files |
 
-*Example:* To dump the control-flow graph (MIR) of your calculator:
-```cmd
-lpp-compiler calc.lpp --dump-mir
+There is no C-transpiler dump and no Turbo mode in the current repository.
+
+## Linkers
+
+```sh
+lpp app.lpp --linker host
+lpp app.lpp --linker direct
 ```
 
----
+The host path uses the platform C linker/runtime. The direct path uses
+`lpp-link` with the platform freestanding runtime for its verified target
+subset.
 
-## 3. Local Script Runners (For Compiler Developers)
+## Environment
 
-Inside the repository root, there are two utility scripts:
+- `BENCHMARK=1`: print timing JSON;
+- `LPP_AOT=1`: emit native object mode;
+- `LPP_LLVM_CC=/path/to/clang`: LLVM compiler executable;
+- `LPP_LLVM_MARCH=native`: request LLVM host CPU features;
+- `LPP_CRANELIFT_SIMD=0`: disable Cranelift host SIMD feature selection.
 
-1.  **`.\run.ps1 [file.lpp]`**
-    *   Compiles the file, runs it, and automatically cleans up the generated object (`.o`) and executable (`.exe`) files. Very useful for quick tests.
-2.  **`.\install.ps1`**
-    *   Builds the compiler in release mode, copies the binary to `%USERPROFILE%\.lpp\bin`, compiles `lpp_runtime.c` to `lpp_runtime.obj`, generates the global command wrapper, and appends it permanently to the user's `PATH`.
+## Validation commands
 
----
-
-## 4. Environment Variables
-
-*   **`LPP_AOT=1`**: Triggers Cranelift compilation to a native object file.
-*   **`BENCHMARK=1`**: Suppresses diagnostic logs and prints timing metrics as a single JSON line:
-    ```json
-    TIMING_JSON: {"io": 0.00016, "lex": 0.00006, "parse": 0.00004, "semantic": 0.00003, "typecheck": 0.000008, "escape": 0.002, "mir": 0.00004, "aot": 0.002, "total": 0.003}
-    ```
-
-## Current v0.1.3 status note — 2026-07-20
-
-This document is historical/design context. For current public capability claims,
-platform boundaries, filesystem APIs, package cache layout, and known missing
-features, see [Current Capabilities](CURRENT_CAPABILITIES.md).
-
-Current rules:
-
-```text
-- Do not claim fixed compile-time, binary-size, or C/Rust parity numbers.
-- Do not claim language-wide Rust-equivalent safety.
-- Host-linked AOT is the compatibility path for filesystem and networking work.
-- Linux direct ELF remains a verified subset; filesystem/networking are not direct-link features yet.
-- macOS ARM64 static direct output is rejected; dynamic libSystem imports are required.
-- L++ package outputs/cache are LppData/build/release and LppData/cache.
+```sh
+cargo test --release -j1
+sh tests/run_aot_parity.sh
+sh scripts/check_safety_mission.sh
+(cd packages/lppsqlite && sh run-tests.sh)
+(cd packages/compresslpp && sh run-tests.sh)
 ```
+
+Read [Current Capabilities](CURRENT_CAPABILITIES.md) for the supported feature
+boundary and [STATUS-2026-07-30](STATUS-2026-07-30.md) for measured results.

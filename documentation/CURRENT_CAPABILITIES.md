@@ -1,91 +1,73 @@
-# L++ Current Capabilities Matrix — v2.0.0 Pure Native Release
+# Current capabilities
 
-Last reviewed: 2026-07-21.
+**Last reviewed: 2026-07-30.** This file is a compact index; the detailed
+implementation status is in [STATUS-2026-07-30.md](STATUS-2026-07-30.md).
 
-This document serves as the authoritative source of truth for verified compiler capabilities, toolchain commands, standard library primitives, and platform boundaries in L++ 2.0.
+## Compiler
 
----
+| Capability | Status |
+|---|---|
+| Python-readable indentation syntax | Available |
+| Functions, defaults, loops, break/continue | Available |
+| Structs, enums, match, `?` | Available |
+| Generics and turbofish | Available and monomorphized |
+| Traits with static/dynamic dispatch | Available |
+| FFI / `extern "C"` | Available through host linking |
+| Closures and thread spawn | Available |
+| Lists, maps, strings, buffers, files, networking | Available in the supported runtime paths |
+| LSP server and diagnostics | Available |
+| Self-hosted package tooling | Available for the tested package workflows |
 
-## 1. Core Language & Pure Native Pipeline
+## Ownership
 
-L++ 2.0 operates as a 100% pure native toolchain. Source code is compiled directly via Cranelift AOT into native machine objects and linked using `lpp-link` without requiring intermediate C code generation or external host C compilers (`gcc`, `clang`, `cl.exe`).
+- MIR is the single source of escape/storage truth.
+- `Frame < Owned < Shared` is the escape lattice.
+- Non-escaping ordinary structs use stack payloads.
+- Escaping values use ARC.
+- Self-referential structs use Arena regions with ARC-compatible node headers.
+- The static cycle breaker demotes one edge per ownership cycle to non-owning.
+- Closures use ARC environments; non-escaping closure capsules can be stack-resident.
 
-| Capability | Status | Implementation Boundary |
-|---|---|---|
-| Functions (`def`) | **Available** | Top-level routines with explicit param and return types; local type inference |
-| Variables (`:=`, `mut`, `=`) | **Available** | Immutable by default; lexical shadowing supported across all scopes |
-| Structs (`struct`) | **Available** | Value semantics by default; promoted to ARC heap or Arena as required |
-| Control Flow (`if`/`else`, `while`) | **Available** | Full branching and conditional loops |
-| Range Loops (`for i in range(n)`) | **Available** | Zero-allocation MIR lowering to integer comparison `while` loops |
-| List Loops (`for item in list`) | **Available** | Desugars to index-based iteration over `List[T]` |
-| Closures (`fn`) | **Available** | Inline and block closures with lexical capture |
-| Dynamic Lists (`List[T]`) | **Available** | Supported elements: `Int`, `Float`, `Bool`, `Str`, `CustomStruct` (ARC managed) |
-| Struct Constructors | **Available** | Supports both positional field initialization `Point(10, 20)` and zero-argument allocation `Point()` |
-| `break` / `continue` | **Available** | Fully supported in `while`, `for i in range(...)`, and `for item in list` |
-| Key-Value Maps (`Map[K, V]`) | **Available** | Open-addressing hash table supporting `Int` and `Str` keys with `Int`, `Float`, `Str` values |
-| Enums & Match | **Available** | Data-carrying enums with full 64-bit width payloads (`Int`, `Float`, `Str`), pattern matching, and `?` try operator |
-| Traits & Impl | **Available** | Traits with static/dynamic dispatch and generic trait bounds (`[T: Display]`) |
-| Generics | **Available** | Monomorphized zero-overhead generics for functions, structs, enums, and `impl` methods with turbofish (`[T]`) |
-| `Set[T]` | **Not Available** | Planned container extension |
+## Backends and linkers
 
----
+| Combination | Status |
+|---|---|
+| Cranelift + host linker | Production/default |
+| Cranelift + direct ELF/PE/Mach-O linker | Production for the verified targets |
+| LLVM + host linker | Optional, tested |
+| LLVM + direct linker | Optional, tested |
+| Windows LLVM execution | Needs Windows CI validation |
 
-## 2. Memory Model & Ownership Verification
+Select the optional backend explicitly:
 
-L++ uses an automated, rule-based **Hybrid Memory Model**:
+```sh
+lpp app.lpp --backend llvm --linker direct
+```
 
-- **Stack Allocation (Value)**: Scalars (`Int`, `Float`, `Bool`) and non-escaping structs are stack-allocated.
-- **Automatic Reference Counting (ARC)**: Structs or elements escaping through returns, closure capsules, or list insertion are heap-allocated with atomic headers (`LppArcHeader`) and automatic `retain`/`release` MIR insertions.
-- **Arena Storage**: Self-referential structs (`struct Node: next: Node`) are automatically allocated in arena memory.
-- **Cycle Rejection**: Direct and indirect ownership cycles are detected and rejected at compile time to guarantee zero leaks without requiring a tracing garbage collector.
+There is no Turbo mode in the current repository. Cranelift remains the fast
+compile-time default; LLVM is the optional optimization backend.
 
----
+## Explicit vectors
 
-## 3. Verified Standard Library Primitives
+The common API supports `VectorI64x2` construction, splat, add, subtract,
+multiply, XOR, constant right shift, lane extraction, and horizontal sum. The
+long checksum workload also has a four-lane LLVM IR path and an AVX2 runtime
+path for Cranelift.
 
-### 3.1 Console, System & Strings (`lpp_str`)
-- **Console**: `print(val)`, `print_str(s)`, `lpp_print_int(n)`, `lpp_print_float(f)`, `input()`, `parse_int(s)`
-- **String Primitives**: `str_len(s)`, `str_concat(a, b)`, `str_split(s, delim)`, `str_find(s, sub)`, `str_replace(s, old, new)`, `str_substr(s, start, len)`, `str_trim(s)`
+## Verified gates
 
-### 3.2 Binary Buffer Primitives (`lpp_buf`)
-- **Memory & Disk I/O**: `buf_alloc(sz)`, `buf_free(b)`, `buf_len(b)`, `buf_read(path)`, `buf_write(path, b)`
-- **8-bit / 16-bit / 32-bit LE Accessors**: `buf_get8`, `buf_set8`, `buf_get16le`, `buf_set16le`, `buf_get32le`, `buf_set32le`
-- **Data Operations**: `buf_copy`, `buf_crc32` (IEEE 802.3 CRC32 checksums), `buf_write_str`, `buf_read_str`
+- Cargo tests: 66/66.
+- Cranelift AOT parity: 44/44.
+- LLVM corpus in the LLVM validation clone: 86/86.
+- lppsqlite differential: 118/118.
+- compresslpp cross-verification: all pass.
+- Safety mission: pass.
+- Sanitizer coverage: closures, strings, owned fields, recursive structures,
+  Arena return, and vectors are clean in the recorded runs.
 
-### 3.3 Filesystem & Directories (`lpp_dir`)
-- **File APIs**: `read_file`, `write_file`, `append_file`, `delete_file`, `file_exists`, `file_size`, `file_copy`, `file_move`
-- **Directory APIs**: `dir_create`, `dir_list`, `dir_remove`, `path_exists`, `path_join`
+## Not yet claimed
 
-### 3.4 Process Execution & Environment (`lpp_exec`)
-- `command_exec(cmd) -> Int`: Executes process and returns numeric exit code.
-- `command_output(cmd) -> String`: Executes process and captures combined stdout/stderr output.
-- `env_get(key) -> String`: Reads environment variable value.
-- `env_set(key, val) -> Int`: Sets environment variable.
-
-### 3.5 Native Networking (`lpp_net`)
-- **TCP Sockets**: `net_dial`, `net_listen`, `net_accept`, `net_accept_timeout`, `net_send`, `net_send_all`, `net_recv`, `net_set_timeout`, `net_set_deadline`, `net_set_keepalive`, `net_close`
-- **UDP Sockets**: `net_dial_udp`, `net_listen_udp`, `net_recv_udp`
-- **DNS & HTTP**: `net_resolve`, `http_get`, `http_post`
-
-### 3.6 JSON Parsing
-- `json_parse`, `json_get_int`, `json_get_str`, `json_get_obj`, `json_free`
-
-### 3.7 Hash Maps (`lpp_map`)
-- `map_new()`, `map_put(m, k, v)`, `map_get(m, k)`, `map_has(m, k)`, `map_len(m)`, `map_remove(m, k)`
-- Native support across Cranelift AOT and direct freestanding `lpp-link` execution.
-
----
-
-## 4. Package Manager & Toolchain Ecosystem
-
-- **Self-Hosted PM (`lpp-pm`)**:
-  - `lpp new <name>`: Bootstraps self-hosted package manager from `pm/src/main.lpp` and scaffolds new package. Path resolution works seamlessly outside repo roots (e.g. `/tmp`).
-  - `lpp build`, `lpp run`, `lpp check`, `lpp clean`, `lpp list`, `lpp tree`, `lpp metadata`, `lpp outdated`
-- **Compiler Options**:
-  - `lpp check <file.lpp>`: Fast semantic/type check pass.
-  - `lpp emit <file.lpp> [--aot]`: Emits Cranelift AOT object files (`.o` / `.obj`).
-  - `lpp --checkall`: Recursive workspace-wide type verification.
-- **Direct Linker (`lpp-link`)**:
-  - **Linux x86-64**: Standalone ELF direct linker.
-  - **Windows x86-64**: Standalone multi-section PE COFF direct linker (`.text`, `.rdata`, `.data`, `.idata`, `.reloc`), fully compatible with `windows_x86_64_min.c` under `/DLPP_FREESTANDING`.
-  - **macOS x86-64/ARM64**: Mach-O direct object emitter.
+- General source-level automatic vectorization of arbitrary loops.
+- Windows LLVM runtime execution.
+- LLVM LTO/PGO.
+- Arena bump/chunk allocation performance optimization.

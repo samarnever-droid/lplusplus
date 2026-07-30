@@ -1,128 +1,113 @@
-# L++ Compiler: Reality & Implementation Status
+# Compiler reality — 2026-07-30
 
-This document describes the exact implementation details, pipeline architecture, and current limitations of the L++ compiler as of version 0.1.0.
+This document replaces the old v0.1 notes. The current compiler is a native
+Rust/MIR compiler; there is no C transpilation stage in the production pipeline.
 
-Current classification:
-
-- Stable enough for local experimentation: frontend pipeline, semantic/type passes, MIR lowering, C backend, cross-platform CLI flow
-- Experimental: Cranelift AOT coverage outside the core subset, package manager ergonomics, runtime ownership details
-- Stubbed or partial: full closure environment lowering, backend parity for all list behaviors, cycle collection
-
----
-
-## 1. Compiler Pipeline Architecture
-
-The L++ compiler is written in Rust and operates via a standard multi-stage ahead-of-time (AOT) pipeline:
-
-```
-[L++ Source File]
-       │
-       ▼ (lexer::Lexer)
-   [Tokens]
-       │
-       ▼ (parser::Parser)
-  [AST (Abstract Syntax Tree)]
-       │
-       ▼ (semantic::Resolver)
-[Scope-Resolved AST & Symbol Table]
-       │
-       ▼ (typecheck::TypeChecker)
-  [Typechecked AST & Type Table]
-       │
-       ▼ (escape::EscapeAnalyzer)
-[Storage Classification Map (Value/Arc)]
-       │
-       ▼ (mir::lower::MirLowerCtx)
-  [Mid-level IR (MIR) in CFG form]
-       │
-       ▼ (mir::pass_arc)
-[ARC Reference Counting Insertions]
-       │
- ┌─────┴────────────────────────┐
- ▼ (codegen::Codegen)          ▼ (cranelift_backend::compiler::AotCompiler)
-[Transpiled C Code]           [Native Object File (.o)]
- │                             │
- ▼ (cl.exe / GCC / Clang)      ▼ (link.exe / MSVC Linker)
-[Executable (.exe)]           [Native Executable (.exe)]
-```
-
----
-
-## 2. Compiler Stages in Detail
-
-### 2.1 Lexer (`src/frontend/lexer.rs`)
-*   **What it does:** Tokenizes L++ source code into a stream of tokens.
-*   **Indentation Handling:** Converts spaces/tabs at the beginning of lines into `Token::Indent` and `Token::Dedent` markers to represent lexical blocks (similar to Python).
-*   **Reality:** Solid for the current language subset. Handles nested scopes, newlines, comments (`#`), string literals, and now reports out-of-range integer literals as lexer errors instead of crashing.
-
-### 2.2 Parser (`src/frontend/parser.rs`)
-*   **What it does:** Parsers the token stream into an Abstract Syntax Tree (AST) structure defined in `src/frontend/ast.rs`.
-*   **Reality:** Parses top-level functions, structs, variables, function calls, arithmetic/boolean expressions, `if/else` conditionals, and `while` loops. Skip-newline logic is implemented before checking block indentations to handle blank lines between statements correctly.
-
-### 2.3 Semantic Analysis (`src/analysis/semantic.rs`)
-*   **What it does:** Performs identifier binding resolution, scope checking, and name binding lookup. Generates a scope tree and registers global user functions and structs.
-*   **Built-in Registry:** Built-ins like `print`, `print_str`, `input`, `read_file`, `write_file`, and `parse_int` are registered as known identifiers that do not require user-defined declarations.
-
-### 2.4 Typechecker (`src/analysis/typecheck.rs`)
-*   **What it does:** Performs static type-inference and type safety checks on the scope-resolved AST.
-*   **Types supported:** `Int` (64-bit signed), `Str` (immutable string pointer), `Bool` (boolean), `Void` (no value), `Custom(StructId)` (struct type), and `Generic("List", [T])` (templated list type).
-*   **Reality:** Statically checks parameter matching, loop/conditional conditional types, assignment compatibility, and struct field layout types. Assigning incompatible types or passing incorrect arguments triggers typecheck compilation errors.
-
-### 2.5 Escape Analysis (`src/analysis/escape.rs`)
-*   **What it does:** Determines whether variables can be allocated on the execution stack (`StorageClass::Value`) or require heap allocation with reference counting (`StorageClass::Arc`).
-*   **Reality:** Fully implemented. Walks the AST and constructs safety bounds. Currently defaults custom structs and structures to stack/heap based on escapes, preparing references for automatic memory management.
-
-### 2.6 Mid-level IR (MIR) (`src/mir/`)
-*   **What it does:** Lowers the high-level AST into a flat control-flow graph (CFG) representation comprising Basic Blocks (`bb0`, `bb1`, etc.) containing 3-address instructions.
-*   **ARC Pass (`src/mir/pass_arc.rs`):** Inspects the MIR instructions and automatically inserts increment (`Retain`) and decrement (`Release`) instructions for reference-counted variables.
-*   **Reality:** The lowered MIR is clean and handles loops/branches via explicit jump conditionals (`goto`, `if goto else`). Call temporaries are typed from known signatures, and MIR lowering now returns structured errors for missing bindings instead of panicking.
-
----
-
-## 3. Backends & Compilation Reality
-
-### 3.1 C Transpilation Backend (`src/backend/codegen.rs`)
-*   **How it works:** Directly walks the AST and emits standard, conforming C99 code.
-*   **MSVC Compatibility:** Refactored to not rely on GCC statement expressions (`({ ... })`) or the `__auto_type` keyword. Uses concrete variable types resolved from the symbol table. It is intended to compile under Microsoft Visual C++ (`cl.exe`), GCC, and Clang, but backend feature parity is still incomplete.
-*   **Built-ins:** Standard built-ins are generated as static C helper functions prepended to the output file.
-
-### 3.2 Cranelift AOT Backend (`src/backend/cranelift/`)
-*   **How it works:** Directly lowers the flat MIR control-flow graph into Cranelift IR using `cranelift-frontend` and outputs an ELF/COFF object file (`.o`).
-*   **Struct Memory Layout:** Custom structures compile to flat 64-bit unboxed fields in heap memory. Offset for field `i` is calculated as `i * 8` bytes.
-*   **Dynamic Allocations:** Struct allocations are compiled as native calls to the runtime function `lpp_alloc(size)` (backed by `calloc` in C).
-*   **String Literals:** Handled by creating static symbols in the object file's data section (`DataDescription`), loading the symbol address dynamically inside the builder context.
-*   **Reliability note:** Recent cleanup replaced several `unwrap()`-style backend assumptions with propagated `Result` errors so lowering failures are surfaced as compiler diagnostics instead of process crashes.
-*   **Linking:** Native project builds now prefer platform-aware linking in the package manager: `link.exe` plus `lpp_runtime.obj` on Windows when available, otherwise `cl.exe`, `cc`, `gcc`, or `clang` compile/link against `lpp_runtime.c`. Installer helpers exist for both `install.ps1` and `install.sh`.
-
----
-
-## 4. Current Limitations & Stubbed Features
-
-As of version 0.1.0, some advanced language features are syntactically parsed and typechecked, but their backend implementations are stubs:
-
-1.  **Closures & Environment Lifting (`Rvalue::MakeClosure`, `Rvalue::CallIndirect`):**
-    *   *Parsed & Typechecked:* Yes.
-    *   *MIR representation:* Exists.
-    *   *Backend compilation:* Currently stubbed to return `0` (null/empty values) in the Cranelift AOT backend. Environment struct lifting (wrapping captured free variables into a dynamic closure structure) is not yet implemented.
-2.  **Lists (`Rvalue::AllocateList`, `lpp_list_*` built-ins):**
-    *   *Parsed & Typechecked:* Yes.
-    *   *Backend compilation:* Basic list constructors compile to `lpp_list_new()` stubs. List index access (`list[i]`) and mutation are not fully connected in AOT codegen.
-3.  **Garbage Collection / Reference Cycle Collector:**
-    *   *ARC insertions:* Reference count increment and decrement instructions are inserted in the MIR, but the physical runtime decrements/frees for cyclic structures (e.g. self-referencing nodes) require a cycle collector which is not yet present.
-
-## Current v0.1.3 status note — 2026-07-20
-
-This document is historical/design context. For current public capability claims,
-platform boundaries, filesystem APIs, package cache layout, and known missing
-features, see [Current Capabilities](CURRENT_CAPABILITIES.md).
-
-Current rules:
+## Pipeline
 
 ```text
-- Do not claim fixed compile-time, binary-size, or C/Rust parity numbers.
-- Do not claim language-wide Rust-equivalent safety.
-- Host-linked AOT is the compatibility path for filesystem and networking work.
-- Linux direct ELF remains a verified subset; filesystem/networking are not direct-link features yet.
-- macOS ARM64 static direct output is rejected; dynamic libSystem imports are required.
-- L++ package outputs/cache are LppData/build/release and LppData/cache.
+lexer/parser
+  -> semantic resolver
+  -> type checker
+  -> monomorphization
+  -> MIR lowering
+  -> scalar MIR passes
+  -> static cycle breaking
+  -> MIR escape solver
+  -> stack/ARC/Arena cleanup
+  -> Cranelift or optional LLVM object backend
+  -> host linker or lpp-link
 ```
+
+The relevant source files are:
+
+- `src/frontend/lexer.rs`, `parser.rs`, `ast.rs`;
+- `src/analysis/semantic.rs`, `typecheck.rs`, `cyclebreak.rs`, `monomorph.rs`;
+- `src/mir/lower.rs`, `ir.rs`, `escape_solver.rs`, and `pass_*.rs`;
+- `src/backend/cranelift/`;
+- `src/backend/llvm.rs`;
+- `src/bin/lpp-link.rs`.
+
+## MIR escape solver
+
+`src/mir/escape_solver.rs` computes one whole-program fact over MIR. The
+lattice is:
+
+```text
+Frame < Owned < Shared
+```
+
+MIR matching is exhaustive over the value forms. Indirect calls and unknown
+builtins remain conservative local sinks. The old `src/analysis/escape.rs` AST
+analyzer is retired and no longer exists in the current tree.
+
+## Ownership lowering
+
+- `Ownership::Managed` identifies pointer-shaped values during lowering.
+- The solver determines whether their storage can be Frame, Owned, or Shared.
+- `pass_escape` changes provably frame-local struct/closure payloads to stack
+  allocations.
+- `pass_arc` inserts deterministic retain/release or direct stack destructors.
+- `pass_moveout` removes balanced thread handoff reference traffic when the
+  source is proven dead after the spawn.
+
+## Arena regions
+
+Self-referential structs receive a lazily created region. Arena nodes have
+ARC-compatible headers and are registered with the region. The region survives
+as long as nodes reference it and is reclaimed after the last node dies. The
+cycle breaker ensures that one edge of every type cycle is non-owning, so the
+owning subgraph is acyclic.
+
+This is a correctness-first Arena implementation. It is not yet a bump/chunk
+allocator benchmark claim.
+
+## Cranelift backend
+
+Cranelift is the default because its compile latency is low and it integrates
+well with the existing custom object/linker path. It supports the full verified
+MIR corpus, ARC, closures, lists, maps, and Arena nodes.
+
+The explicit `VectorI64x2` API lowers to Cranelift SIMD values when the target
+supports them. The long checksum intrinsic has an AVX2 runtime fast path and a
+scalar fallback.
+
+## LLVM backend
+
+`src/backend/llvm.rs` is optional and selected with:
+
+```sh
+lpp file.lpp --backend llvm
+```
+
+It emits textual LLVM IR and invokes `clang` to create an object. It supports
+the current tested aggregate/ARC/closure/list/map/Arena paths and uses the same
+host or direct linker. LLVM is slower to compile but can produce stronger
+optimized/vectorized code for large numeric loops.
+
+LLVM does not silently replace Cranelift. If it cannot lower a MIR form, it
+returns a diagnostic.
+
+## Linkers and runtimes
+
+- Host linking uses `cc`/MSVC and the host runtime.
+- `lpp-link` emits direct ELF, PE/COFF, or Mach-O according to target support.
+- Linux freestanding and Windows freestanding runtime sources contain ARC,
+  closure, list, string, and Arena symbols.
+- Windows LLVM execution still needs a real Windows CI runner; Linux host/direct
+  behavior is the current measured environment.
+
+## Verification
+
+The current recorded gates are:
+
+- cargo tests: 66/66;
+- Cranelift parity: 44/44;
+- LLVM corpus: 86/86 in the validation clone;
+- lppsqlite: 118/118 differential;
+- compresslpp: all cross-verification pass;
+- ASan/UBSan and TSan targeted ownership/vector tests: clean.
+
+Old reports that mention C backend stubs, `EscapeAnalyzer`, rejected recursive
+structs, or unimplemented closure lifting are historical and should not be read
+as current status.

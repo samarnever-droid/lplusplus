@@ -1,9 +1,39 @@
-# L++ Documentation
+# L++ documentation
 
-## Current status first
+## Read this first
 
-Read [Current Capabilities](CURRENT_CAPABILITIES.md) before relying on any older guide, benchmark number, or roadmap statement. It records the v0.1.3 supported subset, filesystem APIs, package cache layout, platform boundaries, and explicit missing features.
+- [Current status — 2026-07-30](STATUS-2026-07-30.md)
+- [Current capabilities](CURRENT_CAPABILITIES.md)
+- [Compiler reality](Compiler_Reality.md)
+- [Safety contract](Cranelift_Safety_Plan.md)
 
-## Version-controlled wiki
+These files describe the current MIR-first compiler. Older reports and design
+notes are historical unless they are linked from the status page.
 
-The project wiki source lives in [`wiki/`](../wiki/README.md). It is maintained in-tree so API claims, architecture guidance, and roadmap changes can be reviewed alongside implementation.
+## Main guides
+
+- [Language guide](../Doc.md)
+- [Usage](Usage.md)
+- [Networking](Networking.md)
+- [Windows native toolchain](Windows_Native_Toolchain.md)
+- [macOS native toolchain](MacOS_Native_Toolchain.md)
+- [Native linker roadmap](Native_Linker_Roadmap.md)
+- [Runtime architecture](../runtime/ARCHITECTURE.md)
+- [Safety mission](Safety_Mission.md)
+
+## Wiki
+
+The version-controlled wiki is in [`wiki/`](../wiki/README.md). Architecture,
+type-system, status, and linker pages are updated against the same status source.
+
+## Verification
+
+The repository's primary executable checks are:
+
+```sh
+cargo test --release -j1
+sh tests/run_aot_parity.sh
+sh scripts/check_safety_mission.sh
+```
+
+Package validation is documented in the status page and handoff notes.

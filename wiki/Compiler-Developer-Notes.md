@@ -1,6 +1,6 @@
-# Compiler Developer Notes
+# Compiler developer notes
 
-This page is for contributors working inside the Rust compiler implementation.
+**Current as of 2026-07-30.**
 
 ## Important files
 
@@ -8,73 +8,69 @@ This page is for contributors working inside the Rust compiler implementation.
 |---|---|
 | `src/frontend/lexer.rs` | tokens, literals, indentation |
 | `src/frontend/parser.rs` | recursive descent parser |
-| `src/frontend/ast.rs` | AST definitions |
+| `src/frontend/ast.rs` | syntax tree |
 | `src/analysis/semantic.rs` | scopes and binding resolution |
-| `src/analysis/typecheck.rs` | type table and inference |
-| `src/analysis/escape.rs` | ownership / escape analysis |
+| `src/analysis/typecheck.rs` | types and inference |
+| `src/analysis/monomorph.rs` | generic specialization |
+| `src/analysis/cyclebreak.rs` | static ownership-cycle edge demotion |
 | `src/mir/lower.rs` | AST to MIR lowering |
-| `src/mir/pass_*.rs` | MIR optimizations |
-| `src/backend/cranelift/lower.rs` | MIR to Cranelift |
+| `src/mir/escape_solver.rs` | single MIR ownership fact |
+| `src/mir/pass_arc.rs` | retain/release and destructor cleanup |
+| `src/mir/pass_escape.rs` | stack promotion |
+| `src/backend/cranelift/` | default object backend |
+| `src/backend/llvm.rs` | optional LLVM object backend |
 | `src/bin/lpp-link.rs` | direct linker |
 | `src/builtins.rs` | builtin signatures |
 
-## Rule of thumb
+The old AST escape analyzer and Turbo mode are not part of the current tree.
 
-Language features usually touch:
+## Adding a feature
 
-1. AST (`src/frontend/ast.rs`)
-2. lexer/parser
-3. semantic analysis
-4. type checker
-5. MIR lowering
-6. Cranelift lowering only if a new operator or primitive operation is introduced
+Most language features touch:
 
-They should not touch `lpp-link` unless the executable format itself changes.
+1. AST;
+2. lexer/parser;
+3. semantic resolver;
+4. type checker;
+5. MIR lowering;
+6. every backend that supports the new MIR form;
+7. runtime symbols if the feature crosses the runtime boundary.
 
-## Trait / impl internals
+Do not edit `lpp-link` for an ordinary language feature unless object format or
+relocation support changes.
 
-Impl methods are **name-mangled** as `TargetType_methodName` and treated as regular top-level functions throughout the compiler pipeline. The `self` parameter type is rewritten from `Self` to the concrete target type during parsing.
+## Ownership rules
 
-### Static dispatch
+Ownership is solved over MIR using `Frame < Owned < Shared`. Do not introduce a
+second escape analysis. A new pointer-bearing MIR rvalue must be classified in
+the exhaustive solver match and tested through both backends.
 
-UFCS dispatch (`p.method()` → `method(p)`) resolves the mangled name at MIR lowering time by inspecting the receiver's type. If `p` is a `Point`, the compiler calls `Point_method(p)` directly.
+Arena-backed recursive nodes must preserve region lifetime and static cycle-break
+invariants. Stack payloads must never be sent to ARC header functions.
 
-### Dynamic dispatch
+## Vector rules
 
-When a function parameter's type is a trait name (e.g., `def f(x: Speak)`), the compiler:
+Explicit `VectorI64x2` builtins are ordinary value MIR. They must not be treated
+as managed pointers. If a new vector operation is added, implement it in both
+Cranelift and LLVM or return a clear unsupported-backend diagnostic.
 
-1. Adds hidden function pointer parameters (one per trait method) to the function signature
-2. At call sites, fills in the concrete impl method's `FuncRef` (via `Rvalue::FuncRef`)
-3. Inside the function, method calls on the trait-typed param dispatch via `CallIndirect` through the function pointer
+Do not claim automatic vectorization from a scalar benchmark without checking the
+object for SIMD instructions.
 
-This uses the new `Rvalue::FuncRef(FuncId)` MIR instruction, which lowers to Cranelift's `func_addr` to get a callable function pointer.
+## Validation
 
-### Key files
-
-- Parser: `parse_trait()`, `parse_impl()` in `parser.rs`
-- Semantic: trait method short names tracked in `trait_method_names` set
-- Type checker: `func_return_types` / `func_param_types` populated for mangled names; `trait_names` set for type resolution
-- MIR: `trait_defs`, `impl_registry`, `current_vtable_locals` on `MirLowerCtx`; `Rvalue::FuncRef` for function pointers
-- Cranelift: `FuncRef` → `func_addr`; `CallIndirect` distinguishes closure structs from direct function pointers
-
-## Runtime cache
-
-The freestanding runtime object is cached at `LppData/cache/<target>/lpp_runtime_min.o`. Invalidation uses a **content hash** of the C source (stored in `runtime.hash`), not timestamps. See [[Direct Linker and Runtime]] for details.
-
-## Builtin features
-
-New builtins usually touch:
-
-1. `src/builtins.rs`
-2. host runtime implementation
-3. freestanding runtime implementation if direct linker support is required
-
-## Always verify examples
-
-For documentation examples, use a clean directory and run:
-
-```bash
-target/release/lpp --checkall
+```sh
+cargo test --release -j1
+sh tests/run_aot_parity.sh
+sh scripts/check_safety_mission.sh
+(cd packages/lppsqlite && sh run-tests.sh)
+(cd packages/compresslpp && sh run-tests.sh)
 ```
 
-Do not use repo-wide `--checkall` as a documentation gate unless old negative/scratch files are excluded.
+For LLVM:
+
+```sh
+LPP_LLVM_CC=/usr/bin/clang tests/run_llvm_smoke.sh
+```
+
+Use ASan/UBSan for ownership changes and TSan for thread/region changes.

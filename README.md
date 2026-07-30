@@ -18,7 +18,7 @@
 
 ## What is L++?
 
-L++ is a compiled, ownership-aware programming language that combines Python's readability with Rust's safety model and Go's compilation speed. It compiles to native executables via Cranelift AOT — no interpreter, no VM, no garbage collector.
+L++ is a compiled, ownership-aware programming language that combines Python's readability with Rust-inspired ownership and Go-like compilation speed. It compiles to native executables through a Cranelift-first AOT pipeline; an optional LLVM backend is available for optimized builds. There is no interpreter or VM.
 
 ```lpp
 struct User:
@@ -48,8 +48,10 @@ def main():
 | **Diagnostics & Panic** | Rust-style error cards (`E0001`–`E0005`) + C runtime stack backtrace engine |
 | **Default params** | `def foo(x: Int, y: Int = 10)` |
 | **Multi-file modules** | `import math`, `from utils import calc`, dotted paths |
-| **Native compilation** | Cranelift AOT → ELF / PE / Mach-O, 9 MIR optimization passes |
-| **Direct linker** | `lpp-link` produces standalone executables without `gcc`/`clang`/MSVC |
+| **Native compilation** | Cranelift AOT by default; optional LLVM object backend |
+| **Direct linker** | `lpp-link` produces standalone ELF / PE / Mach-O executables |
+| **Arena regions** | Recursive structs use region-backed nodes with cycle-broken ownership |
+| **Explicit vectors** | `VectorI64x2` operations in both Cranelift and LLVM |
 | **LSP Language Server** | `lpp-lsp` stdio JSON-RPC server for editor Intellisense, hovers & diagnostics |
 | **Package manager** | 100% self-hosted `lpp-pm` written in pure L++ with embedded Git & HTTP engine |
 | **100+ builtins** | strings, lists, maps, files, network, JSON, buffers |
@@ -233,8 +235,8 @@ Source (.lpp)
     ├── Parser → AST
     ├── Semantic Analysis → Scopes, Bindings
     ├── Type Checker → Type Resolution
-    ├── Escape Analysis → Ownership Classification
     ├── MIR Lowering → Mid-level IR
+    ├── MIR Escape Solver → Frame / Owned / Shared facts
     │   ├── ARC Pass (retain/release insertion)
     │   ├── Closure Lifting
     │   ├── Peephole Optimization
@@ -245,8 +247,9 @@ Source (.lpp)
     │   ├── Strength Reduction
     │   ├── Branch Optimization
     │   └── ARC Pass (retain/release insertion)
-    ├── Cranelift Codegen (opt_level=speed) → Native Object (.o/.obj)
-    └── lpp-link → Executable (ELF/PE/Mach-O)
+    ├── Cranelift Codegen (default) or LLVM Codegen (optional)
+    │       → Native Object (.o/.obj)
+    └── Host linker or lpp-link → Executable (ELF/PE/Mach-O)
 ```
 
 ## Benchmark Results (BPW v3)
@@ -263,9 +266,9 @@ Source (.lpp)
 ```
 src/
   frontend/     Lexer, Parser, AST
-  analysis/     Semantic, Typecheck, Escape
-  mir/          MIR IR, Builder, 7 optimization passes
-  backend/      Cranelift AOT compiler
+  analysis/     Semantic, Typecheck, Monomorphization, Cycle Breaker
+  mir/          MIR IR, Builder, Escape Solver, ARC and cleanup passes
+  backend/      Cranelift default + optional LLVM object backend
   bin/          lpp-link (ELF/PE/Mach-O direct linker)
   config.rs     User config (~/.lpp/config.json)
   builtins.rs   91 builtin function declarations

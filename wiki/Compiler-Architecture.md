@@ -1,137 +1,94 @@
-# Compiler Architecture
+# Compiler architecture
 
-The L++ compiler is written in Rust and is organized as a classic native compiler pipeline.
+**Current as of 2026-07-30.** For verified status and known boundaries, see
+[Current Capabilities](../documentation/CURRENT_CAPABILITIES.md) and
+[Compiler Reality](../documentation/Compiler_Reality.md).
+
+## Pipeline
 
 ```text
 .lpp source
-  -> lexer
-  -> parser / AST
-  -> semantic analysis
-  -> type checking
-  -> escape analysis
+  -> lexer/parser
+  -> semantic resolver
+  -> type checker
+  -> monomorphization
   -> MIR lowering
-  -> MIR optimization passes
-  -> Cranelift codegen
-  -> object file
+  -> MIR scalar passes
+  -> cycle breaker
+  -> MIR escape solver
+  -> stack/ARC/Arena cleanup
+  -> Cranelift (default) or LLVM (optional)
   -> host linker or lpp-link
   -> executable
 ```
 
 ## Frontend
 
-Files:
+- `src/frontend/lexer.rs` handles indentation, literals, keywords, comments,
+  and operators.
+- `src/frontend/parser.rs` builds the AST.
+- `src/analysis/semantic.rs` assigns binding IDs and checks scopes/mutability.
+- `src/analysis/typecheck.rs` checks types and struct/enum layouts.
+- `src/analysis/monomorph.rs` specializes generic functions, structs, enums,
+  methods, and trait implementations.
+- `src/analysis/cyclebreak.rs` classifies one edge of each ownership cycle as
+  non-owning.
 
-- `src/frontend/lexer.rs`
-- `src/frontend/parser.rs`
-- `src/frontend/ast.rs`
+## MIR and ownership
 
-The lexer handles indentation tokens, comments, literals, keywords, operators, f-strings, multiline strings, hex/binary literals, and underscore digit separators.
+MIR is the ownership boundary. The old AST escape analyzer was removed.
+`src/mir/escape_solver.rs` computes the single reachability fact:
 
-The parser is recursive descent and builds the AST.
-
-Top-level AST declarations:
-
-- `Function` — with optional type parameters and default parameter values
-- `Struct` — with optional type parameters
-- `Enum` — with optional type parameters and data-carrying variants
-- `Import`
-- `Const`
-- `TypeAlias`
-- `Trait` — interface definitions with method signatures
-- `Impl` — trait implementations for a target type; methods mangled as `TargetType_method`; supports static and dynamic dispatch via hidden function pointer params
-- `Extern` — FFI declarations: `extern "C" link "SDL2":` with function signatures; auto-links via host C compiler
-
-## Semantic analysis
-
-File:
-
-- `src/analysis/semantic.rs`
-
-Responsibilities:
-
-- lexical scopes
-- binding IDs
-- variable/function resolution
-- mutability checks
-- import resolution
-- match-binding scope setup
-
-## Type checker
-
-File:
-
-- `src/analysis/typecheck.rs`
-
-Key type representations:
-
-```rust
-TypeRef::Int
-TypeRef::Float
-TypeRef::Str
-TypeRef::Bool
-TypeRef::Void
-TypeRef::Custom(StructTypeId)
-TypeRef::Generic(String, Vec<TypeRef>)
-TypeRef::TypeParam(String)
-TypeRef::Unresolved(String)
+```text
+Frame < Owned < Shared
 ```
 
-Generics phase 1 is implemented through type parameters and erasure to `i64` at codegen.
+`pass_escape` performs stack promotion for frame-local structs and closure
+capsules. `pass_arc` inserts cleanup. Stack payload cleanup calls generated
+destructors directly; ARC payload cleanup calls the runtime. `pass_moveout`
+removes balanced handoff retains/releases only after a liveness proof.
 
-## Escape analysis
+Arena regions are selected for self-referential struct allocations. Arena nodes
+retain ARC-compatible headers and a region handle; cycle breaking ensures that
+owning edges remain acyclic.
 
-File:
+## Backends
 
-- `src/analysis/escape.rs`
+### Cranelift
 
-Classifies values as:
+`src/backend/cranelift/` is the default production backend. It lowers MIR to
+Cranelift IR and emits native objects. It has the lowest compile latency and
+supports the full verified language/runtime subset.
 
-- stack
-- ARC heap
-- arena / rejected cycle
+### LLVM
 
-This is where ownership safety is enforced before code generation.
+`src/backend/llvm.rs` is an explicit optional backend:
 
-## MIR
+```sh
+lpp program.lpp --backend llvm --linker direct
+```
 
-Files:
+It emits textual LLVM IR and invokes `clang`. It supports the current corpus,
+including aggregate ownership, closures, lists/maps, Arena nodes, and explicit
+vectors. Unsupported future MIR forms must produce an error rather than a
+fallback or placeholder.
 
-- `src/mir/lower.rs`
-- `src/mir/ir.rs`
-- `src/mir/pass_*.rs`
+## Explicit vector layer
 
-MIR lowering desugars high-level syntax:
-
-- `p.method()` -> `method(p)`
-- `x += y` -> `x = x + y`
-- `s[i]` -> `str_substr(s, i, 1)`
-- list indexing -> `list_get`
-- `?` -> branch + early return
-- match -> tag tests + branches
-- short-circuit `&&` and `||` -> control-flow branches
-
-Optimization passes include ARC insertion, closure lifting, constant propagation, DCE, branch simplification, peephole optimization, and inlining.
-
-## Backend
-
-Files:
-
-- `src/backend/cranelift/compiler.rs`
-- `src/backend/cranelift/lower.rs`
-- `src/backend/cranelift/types.rs`
-
-The backend lowers MIR to Cranelift IR and emits native object files.
+Both backends support `VectorI64x2` builtins for construction, splat, arithmetic,
+XOR, constant shift, lane extraction, and sum. LLVM also has a four-lane
+checksum IR path. The repository does not claim automatic vectorization of every
+arbitrary list loop.
 
 ## Link stage
 
-File:
+`src/bin/lpp-link.rs` supports the direct native object path for the verified
+ELF/PE/Mach-O targets. Most language features are implemented in the backend or
+runtime; the linker resolves objects and platform runtime symbols.
 
-- `src/bin/lpp-link.rs`
+## Current non-goals
 
-The direct linker supports:
-
-- Linux ELF
-- Windows PE/COFF
-- macOS Mach-O
-
-Most language features never touch `lpp-link`. Builtins usually require runtime work, not linker work.
+- No Turbo mode is in the current repository.
+- No LLVM LTO/PGO integration.
+- No measured Arena bump/chunk allocator yet.
+- Windows LLVM execution still needs Windows CI validation.

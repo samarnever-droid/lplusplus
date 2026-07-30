@@ -1,90 +1,82 @@
-# Type System and Safety
+# Type system and safety
 
-L++ is designed to be safe without a tracing garbage collector.
+**Current as of 2026-07-30.**
 
-## Immutable by default
+## Mutability
+
+Bindings are immutable by default:
 
 ```lpp
 x := 1
 mut y := 2
-y += 3
+y = 3
 ```
 
-A non-`mut` binding cannot be reassigned or have fields mutated.
-
-## Parameters are immutable
-
-Function parameters cannot be reassigned directly. Use a local mutable copy:
-
-```lpp
-def double_it(x: Int) -> Int:
-    mut result := x
-    result *= 2
-    return result
-```
+Field mutation also requires a mutable binding. Parameters are caller-owned and
+cannot be reassigned directly.
 
 ## Ownership model
 
-L++ uses a hybrid strategy:
-
-| Value kind | Strategy |
+| Value kind | Current strategy |
 |---|---|
-| primitives | copied |
-| strings | ARC-managed |
-| structs | stack unless escaping |
-| escaping structs | ARC heap |
-| containers | ARC handles |
-| ownership cycles | rejected or arena-classified |
+| Scalars | Copy/value |
+| Non-escaping ordinary structs | Stack payload |
+| Escaping single-thread values | ARC heap |
+| Values reachable across a thread boundary | Atomic ARC |
+| Strings | Immortal-header literals or ARC heap strings |
+| Self-referential structs | Arena-backed nodes with ARC-compatible headers |
+| Closure environments | ARC-managed |
+| Non-escaping closure capsules | Stack-resident capsule with direct destructor |
 
 ## Escape analysis
 
-The compiler checks whether a value escapes its local scope.
+The compiler solves escape/storage facts over MIR in
+`src/mir/escape_solver.rs`. It does not use the old AST analyzer.
 
-Examples of escaping:
+```text
+Frame < Owned < Shared
+```
 
-- returned from a function
-- stored in a list or map
-- captured by a closure
+The solver is conservative for direct calls, indirect calls, unknown builtins,
+field stores, closure capture, lists, and thread boundaries. A missed fact costs
+an optimization; it must not create a dangling pointer.
 
-Escaping values are promoted to ARC-managed storage.
+## Cycles and Arena
 
-## Cycle rejection
-
-Owned cycles are rejected because ARC alone cannot reclaim them.
+Recursive struct types are accepted. The static cycle breaker demotes one edge
+of each type cycle to non-owning, so the owning subgraph is acyclic. A
+self-referential allocation gets an Arena region. The region remains alive while
+its nodes are referenced and is reclaimed after the final node dies.
 
 ```lpp
 struct Node:
-    next: Node   # rejected as cyclic owned struct
+    value: Int
+    next: Node
 ```
 
-This prevents a large class of memory leaks.
+This is no longer a rejection contract. It is covered by recursive-structure
+and Arena-return tests.
 
-## Generics safety
+## Vectors
 
-Generics are phase 1. Type parameters are accepted by the type checker and erased to the native value representation (`i64`). Return type inference works at call sites — `identity(42)` correctly infers the result is `Int`. Full trait bounds and monomorphization are future work.
+The current explicit vector API supports `VectorI64x2` construction, splat,
+add/subtract/multiply/XOR, constant shift, lane extraction, and sum. It is
+implemented in both Cranelift and LLVM. General automatic vectorization of
+arbitrary list loops is not yet claimed.
 
-## Traits and static dispatch
+## Generics and traits
 
-Traits define method interfaces. `impl` blocks provide implementations for specific types.
+Generics are monomorphized in the tested compiler pipeline. Traits support
+static and dynamic dispatch, including generic trait implementations in the
+verified corpus. Unsupported or unresolved types are rejected before backend
+code generation.
 
-```lpp
-trait Area:
-    def area(self) -> Int
+## Safety boundaries
 
-impl Area for Circle:
-    def area(self) -> Int:
-        return 3 * self.radius * self.radius
-```
-
-L++ supports both **static** and **dynamic** dispatch:
-
-- **Static dispatch**: when the receiver's concrete type is known at compile time, the compiler resolves `c.area()` → `Circle_area(c)` directly via name mangling. Zero runtime cost.
-- **Dynamic dispatch**: when a function accepts a trait-typed parameter (`def f(x: Speak)`), the compiler passes hidden function pointers at the call site. Inside the function, method calls dispatch through those pointers via `CallIndirect`. This is similar to Go's interfaces or Rust's `impl Trait`.
-
-## Current limitations
-
-- Type aliases are parsed but full substitution is still experimental.
-- Generic enum payloads and rich `Result[T]` style APIs are on the roadmap.
-- Trait bounds on generic parameters (`T: Display`) are not yet supported.
-- Trait conformance is not enforced (missing methods not flagged at `impl` time).
-- Some older scratch examples in the repository intentionally fail safety checks.
+- FFI is inherently outside MIR ownership proofs and uses conservative runtime
+  behavior.
+- Windows LLVM object/runtime execution still needs a Windows CI runner.
+- LLVM LTO/PGO is not implemented.
+- Arena currently prioritizes correctness over bump-allocation performance.
+- Sanitizer coverage is targeted and recorded; it is not a proof of all possible
+  programs.
