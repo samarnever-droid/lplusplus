@@ -1307,10 +1307,7 @@ pub fn host_link_binary(obj_file: &Path, output_path: &Path, link_libs: &[String
         }
         cmd.arg(format!("/Fe:{}", output_path.display()));
     } else {
-        cmd.arg(obj_file)
-            .arg("-o")
-            .arg(output_path)
-            .arg("-lm"); // always link math
+        cmd.arg(obj_file).arg("-o").arg(output_path);
         for lib in link_libs {
             cmd.arg(format!("-l{}", lib));
         }
@@ -1320,6 +1317,7 @@ pub fn host_link_binary(obj_file: &Path, output_path: &Path, link_libs: &[String
                 None => cmd.arg(&runtime_src_path),
             };
         }
+        cmd.arg("-lm"); // runtime math references must precede the library
     }
     let status = cmd
         .stdin(std::process::Stdio::null())

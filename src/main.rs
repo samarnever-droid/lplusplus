@@ -5,8 +5,8 @@ mod config;
 mod diagnostics;
 #[path = "backend/cranelift/mod.rs"]
 pub mod cranelift_backend;
-#[path = "analysis/escape.rs"]
-mod escape;
+#[path = "backend/llvm.rs"]
+mod llvm_backend;
 #[path = "analysis/cyclebreak.rs"]
 mod cyclebreak;
 #[path = "analysis/monomorph.rs"]
@@ -454,7 +454,8 @@ fn main() {
 
     let mut idx = 1;
     let mut cli_linker: Option<String> = None;
-    let mut cli_target: Option<String> = None;
+    let mut backend = "cranelift".to_string();
+    let mut _cli_target: Option<String> = None;
 
     while idx < args.len() {
         let arg = &args[idx];
@@ -471,6 +472,7 @@ fn main() {
             println!("Compilation:");
             println!("  lpp <file.lpp>             Compile to native executable (direct lpp-link)");
             println!("  lpp <file.lpp> --emit-obj  Emit native object file only (.o / .obj)");
+            println!("  lpp <file.lpp> --backend llvm  Use the optional LLVM object backend");
             println!("  lpp <file.lpp> --check     Type-check without compiling");
             println!("  lpp --checkall             Check all .lpp files in current directory");
             println!();
@@ -498,7 +500,7 @@ fn main() {
             println!("  --dump-ast       Dump Abstract Syntax Tree");
             println!("  --dump-symbols   Dump resolved symbol table");
             println!("  --dump-types     Dump type checker output");
-            println!("  --dump-escape    Dump escape analysis classifications");
+            println!("  --dump-escape    Dump MIR escape/storage classifications");
             println!("  --dump-mir       Dump Mid-level IR (MIR)");
             println!();
             println!("Linker:");
@@ -545,6 +547,11 @@ fn main() {
             do_fix = true;
         } else if arg == "--emit-object" || arg == "--aot" {
             emit_object = true;
+        } else if arg == "--backend" {
+            if idx + 1 < args.len() {
+                backend = args[idx + 1].clone();
+                idx += 1;
+            }
         } else if arg == "--linker" {
             if idx + 1 < args.len() {
                 cli_linker = Some(args[idx + 1].clone());
@@ -552,7 +559,7 @@ fn main() {
             }
         } else if arg == "--target" {
             if idx + 1 < args.len() {
-                cli_target = Some(args[idx + 1].clone());
+                _cli_target = Some(args[idx + 1].clone());
                 idx += 1;
             }
         } else if !arg.starts_with('-') {
@@ -592,7 +599,7 @@ fn main() {
         let ta = Instant::now();
         let mut fixed_files_count = 0usize;
         for fpath in &all_files {
-            let mut input = match fs::read_to_string(fpath) {
+            let input = match fs::read_to_string(fpath) {
                 Ok(c) => c, Err(e) => { all_fails.push(format!("{}:1:1: read: {}", fpath.display(), e)); continue; }
             };
 
@@ -761,227 +768,239 @@ fn main() {
 
     #[allow(unused_assignments)]
     let mut mir_time = std::time::Duration::ZERO;
-    let esc_start = Instant::now();
-    match escape::EscapeAnalyzer::analyze(&ast, &resolver.table, &type_table) {
-        Ok(storage) => {
-            let esc_time = esc_start.elapsed();
-            if dump_ast {
-                println!("--- Abstract Syntax Tree ---");
-                println!("{:#?}", ast);
-            }
-            if dump_symbols {
-                println!("--- Symbol Table ---");
-                println!("{:#?}", resolver.table);
-            }
-            if dump_types {
-                println!("--- Type Table ---");
-                println!("{:#?}", type_table);
-            }
-            if dump_escape {
-                println!("--- Storage Classification Map ---");
-                for (id, class) in &storage {
-                    let binding = &resolver.table.bindings[id.0];
-                    println!("  Binding '{}' -> {:?}", binding.name, class);
-                }
-            }
+    // Ownership is solved once over the lowered MIR. The old AST walker is no
+    // longer a code-generation input; keeping one source of truth prevents a
+    // missed AST form from disagreeing with the exhaustive MIR analysis.
+    let escape_start = Instant::now();
+    if dump_ast {
+        println!("--- Abstract Syntax Tree ---");
+        println!("{:#?}", ast);
+    }
+    if dump_symbols {
+        println!("--- Symbol Table ---");
+        println!("{:#?}", resolver.table);
+    }
+    if dump_types {
+        println!("--- Type Table ---");
+        println!("{:#?}", type_table);
+    }
 
-            let mir_start = Instant::now();
-            // Hand the storage classification to lowering. The return-ownership
-            // decision consults it alongside the type shape, so escape analysis
-            // is a real input to codegen rather than a diagnostic.
-            let mut mir_ctx = mir::lower::MirLowerCtx::new(&resolver.table, &mut type_table, &ast)
-                .with_escape_map(storage.clone());
-            let mut mir_program = match mir_ctx.lower_program(&ast) {
-                Ok(program) => program,
-                Err(e) => {
-                    eprintln!("MIR lowering error: {}", e);
-                    return;
-                }
-            };
-            // C-Speed Project: simplify only scalar/copy MIR before ARC so
-            // no retain/release or ownership edge can be optimized away.
-            mir::pass_peephole::run(&mut mir_program);
-            // Propagate constant integers through basic blocks before
-            // inlining — constant addresses/offsets unlock further folding.
-            mir::pass_constprop::run(&mut mir_program);
-            // Inline only scalar straight-line direct calls; ownership-bearing
-            // functions remain opaque so ARC semantics cannot be altered.
-            mir::pass_inline::run(&mut mir_program);
-            // Straight-line scalar dead stores are removed only after folding
-            // and inlining, before ownership instrumentation.
-            mir::pass_dce::run(&mut mir_program);
-            // Copy propagation: _tmp = _a + _b; _a = _tmp → _a = _a + _b
-            // Eliminates extra register moves in tight loops.
-            mir::pass_copyprop::run(&mut mir_program);
-            // Strength reduction: x % power_of_2 → x & (power_of_2 - 1)
-            // Avoids expensive idiv on x86 for common modulo patterns.
-            mir::pass_strength::run(&mut mir_program);
-            // Fuses a trailing comparison temporary with its branch to avoid
-            // setcc/test materialization in hot native loops.
-            mir::pass_branch::run(&mut mir_program);
-            // Break every ownership cycle statically before ARC insertion, so
-            // the owning subgraph the pass reasons about is acyclic. See
-            // analysis::cyclebreak for the proof.
-            let ownership_graph = cyclebreak::break_cycles(&type_table);
-            let weak_fields = ownership_graph.weak_fields();
-            // Value-by-default. This is where the escape classification finally
-            // reaches codegen: a struct that provably cannot outlive its frame
-            // is moved to a stack slot, losing its header, its allocator call
-            // and its retain/release traffic.
-            //
-            // It must run BEFORE ARC insertion. A promoted local has no ARC
-            // header, so it must never enter `arc_locals` and never be handed to
-            // retain/release; running first means the ARC pass simply never sees
-            // it as an owner.
-            //
-            // One escape fact for the whole program, computed once over MIR and
-            // read by every consumer that needs it. This replaces the private
-            // use-scan that pass_escape used to carry: three partial answers to
-            // the same question is how the double-free and the nondeterministic
-            // release order happened.
-            let escape_facts = mir::escape_solver::solve(&mir_program, &type_table);
-            let escape_stats = mir::pass_escape::run(&mut mir_program, &escape_facts, &type_table);
-            if dump_escape {
-                println!(
-                    "  stack-promoted {} of {} candidate struct locals",
-                    escape_stats.promoted, escape_stats.considered
-                );
-            }
-            mir::pass_arc::run_arc_insertion_pass_with_weak(&mut mir_program, &weak_fields);
-            // Values handed to a thread and never touched again are moved, not
-            // shared: drop the refcount pair that only existed to model a
-            // second owner that never overlaps the first.
-            mir::pass_moveout::run(&mut mir_program);
-
-            if dump_mir {
-                println!("--- Generated MIR ---");
-                println!("{}", mir_program);
-            }
-            mir_time = mir_start.elapsed();
-
-            // L++ 2.0 Pure Native Cranelift AOT Backend
-            let aot_start = Instant::now();
-            let has_extern_decl = ast
-                .declarations
-                .iter()
-                .any(|d| matches!(d, crate::ast::TopLevel::Extern(_)));
-            let obj_bytes = match cranelift_backend::compiler::AotCompiler::compile_with_options(
-                &mir_program,
-                &type_table,
-                has_extern_decl,
-                &weak_fields,
-            ) {
-                Ok(bytes) => bytes,
-                Err(e) => {
-                    eprintln!("[L++] Cranelift AOT compilation error: {}", e);
-                    return;
-                }
-            };
-            let aot_time = aot_start.elapsed();
-
-            let ext = if cfg!(target_os = "windows") { "obj" } else { "o" };
-            let obj_path = filename.replace(".lpp", &format!(".{}", ext));
-            if let Err(e) = fs::write(&obj_path, &obj_bytes) {
-                eprintln!("Failed to write object file {}: {}", obj_path, e);
-                return;
-            }
-
-            let total_time = total_start.elapsed();
-
-            if check_only {
-                return;
-            }
-
-            if emit_object {
-                if env::var("BENCHMARK").is_ok() {
-                    println!(
-                        "TIMING_JSON: {{\"io\": {}, \"lex\": {}, \"parse\": {}, \"semantic\": {}, \"typecheck\": {}, \"escape\": {}, \"mir\": {}, \"aot\": {}, \"total\": {}}}",
-                        io_time.as_secs_f64(),
-                        lex_time.as_secs_f64(),
-                        parse_time.as_secs_f64(),
-                        sem_time.as_secs_f64(),
-                        ty_time.as_secs_f64(),
-                        esc_time.as_secs_f64(),
-                        mir_time.as_secs_f64(),
-                        aot_time.as_secs_f64(),
-                        total_time.as_secs_f64()
-                    );
-                } else if !dump_ast
-                    && !dump_symbols
-                    && !dump_types
-                    && !dump_escape
-                    && !dump_mir
-                {
-                    println!("[L++] Native Cranelift object emitted at {}", obj_path);
-                    println!("Time: {:.1} ms", total_time.as_secs_f64() * 1000.0);
-                }
-                return;
-            }
-
-            // Direct Native Executable Link via lpp-link
-            let exe_ext = std::env::consts::EXE_SUFFIX;
-            let exe_path = filename.replace(".lpp", exe_ext);
-
-            // Collect FFI link libraries from extern blocks
-            let mut link_libs: Vec<String> = Vec::new();
-            for decl in &ast.declarations {
-                if let crate::ast::TopLevel::Extern(ext) = decl {
-                    if let Some(ref lib) = ext.link_lib {
-                        if !link_libs.contains(lib) {
-                            link_libs.push(lib.clone());
-                        }
-                    }
-                }
-            }
-
-            // Check if any extern blocks or explicit host libraries exist (FFI/host linking required)
-            let has_extern = ast.declarations.iter().any(|d| matches!(d, crate::ast::TopLevel::Extern(_)));
-            let env_linker = env::var("LPP_LINKER").ok();
-            let effective_linker = cli_linker.or(env_linker);
-            let use_host = effective_linker.as_deref() == Some("host")
-                || (effective_linker.as_deref() != Some("direct") && (has_extern || !link_libs.is_empty()));
-
-            let link_result = if use_host {
-                #[cfg(windows)]
-                pm::load_msvc_env();
-                pm::host_link_binary(Path::new(&obj_path), Path::new(&exe_path), &link_libs)
-            } else {
-                pm::direct_link_binary(Path::new(&obj_path), Path::new(&exe_path))
-            };
-            if let Err(e) = link_result {
-                eprintln!("[L++] Native Link Error: {}", e);
-                return;
-            }
-            let _ = fs::remove_file(&obj_path);
-
-            if env::var("BENCHMARK").is_ok() {
-                println!(
-                    "TIMING_JSON: {{\"io\": {}, \"lex\": {}, \"parse\": {}, \"semantic\": {}, \"typecheck\": {}, \"escape\": {}, \"mir\": {}, \"aot\": {}, \"total\": {}}}",
-                    io_time.as_secs_f64(),
-                    lex_time.as_secs_f64(),
-                    parse_time.as_secs_f64(),
-                    sem_time.as_secs_f64(),
-                    ty_time.as_secs_f64(),
-                    esc_time.as_secs_f64(),
-                    mir_time.as_secs_f64(),
-                    aot_time.as_secs_f64(),
-                    total_time.as_secs_f64()
-                );
-            } else if !dump_ast
-                && !dump_symbols
-                && !dump_types
-                && !dump_escape
-                && !dump_mir
-            {
-                println!("L++ v4.2.2 (Pure Native Executable)\n");
-                println!("Compiled and linked native binary: {}", exe_path);
-                println!("Time: {:.1} ms", total_time.as_secs_f64() * 1000.0);
-            }
-        }
+    let mir_start = Instant::now();
+    let mut mir_ctx = mir::lower::MirLowerCtx::new(&resolver.table, &mut type_table, &ast);
+    let mut mir_program = match mir_ctx.lower_program(&ast) {
+        Ok(program) => program,
         Err(e) => {
-            eprintln!("Escape Analysis error: {}", e);
+            eprintln!("MIR lowering error: {}", e);
             return;
         }
+    };
+    // C-Speed Project: simplify only scalar/copy MIR before ARC so
+    // no retain/release or ownership edge can be optimized away.
+    mir::pass_peephole::run(&mut mir_program);
+    // Propagate constant integers through basic blocks before
+    // inlining — constant addresses/offsets unlock further folding.
+    mir::pass_constprop::run(&mut mir_program);
+    // Inline only scalar straight-line direct calls; ownership-bearing
+    // functions remain opaque so ARC semantics cannot be altered.
+    mir::pass_inline::run(&mut mir_program);
+    // Straight-line scalar dead stores are removed only after folding
+    // and inlining, before ownership instrumentation.
+    mir::pass_dce::run(&mut mir_program);
+    // Copy propagation: _tmp = _a + _b; _a = _tmp → _a = _a + _b
+    // Eliminates extra register moves in tight loops.
+    mir::pass_copyprop::run(&mut mir_program);
+    // Strength reduction: x % power_of_2 → x & (power_of_2 - 1)
+    // Avoids expensive idiv on x86 for common modulo patterns.
+    mir::pass_strength::run(&mut mir_program);
+    // Fuses a trailing comparison temporary with its branch to avoid
+    // setcc/test materialization in hot native loops.
+    mir::pass_branch::run(&mut mir_program);
+    // Break every ownership cycle statically before ARC insertion, so
+    // the owning subgraph the pass reasons about is acyclic. See
+    // analysis::cyclebreak for the proof.
+    let ownership_graph = cyclebreak::break_cycles(&type_table);
+    let weak_fields = ownership_graph.weak_fields();
+    // Value-by-default. This is where the escape classification finally
+    // reaches codegen: a struct that provably cannot outlive its frame
+    // is moved to a stack slot, losing its header, its allocator call
+    // and its retain/release traffic.
+    //
+    // It must run BEFORE ARC insertion. A promoted local has no ARC
+    // header, so it must never enter `arc_locals` and never be handed to
+    // retain/release; running first means the ARC pass simply never sees
+    // it as an owner.
+    //
+    // One escape fact for the whole program, computed once over MIR and
+    // read by every consumer that needs it. This replaces the private
+    // use-scan that pass_escape used to carry: three partial answers to
+    // the same question is how the double-free and the nondeterministic
+    // release order happened.
+    let escape_facts = mir::escape_solver::solve(&mir_program);
+    if dump_escape {
+        println!("--- MIR Ownership Facts ---");
+        let mut ordered_functions: Vec<_> = mir_program.functions.values().collect();
+        ordered_functions.sort_by_key(|function| function.id.0);
+        for function in ordered_functions {
+            println!("  fn {}:", function.name);
+            if let Some(facts) = escape_facts.functions.get(&function.id) {
+                for local in &function.locals {
+                    let name = local.debug_name.as_deref().unwrap_or("<anon>");
+                    let storage = facts
+                        .locals
+                        .get(local.id.0)
+                        .copied()
+                        .unwrap_or(mir::escape_solver::Storage::Owned);
+                    println!(
+                        "    _{} ({}) : {:?}",
+                        local.id.0, name, storage
+                    );
+                }
+            }
+        }
+    }
+    let escape_stats = mir::pass_escape::run(&mut mir_program, &escape_facts, &type_table);
+    if dump_escape {
+        println!("--- MIR Ownership Summary ---");
+        println!(
+            "  stack-promoted {} of {} candidate managed locals",
+            escape_stats.promoted, escape_stats.considered
+        );
+    }
+    mir::pass_arc::run_arc_insertion_pass_with_weak(&mut mir_program, &weak_fields);
+    // Values handed to a thread and never touched again are moved, not
+    // shared: drop the refcount pair that only existed to model a
+    // second owner that never overlaps the first.
+    mir::pass_moveout::run(&mut mir_program);
+
+    if dump_mir {
+        println!("--- Generated MIR ---");
+        println!("{}", mir_program);
+    }
+    let escape_time = escape_start.elapsed();
+    mir_time = mir_start.elapsed();
+
+    // L++ 2.0 Pure Native Cranelift AOT Backend
+    let aot_start = Instant::now();
+    let has_extern_decl = ast
+        .declarations
+        .iter()
+        .any(|d| matches!(d, crate::ast::TopLevel::Extern(_)));
+    let backend_result = match backend.as_str() {
+        "cranelift" => cranelift_backend::compiler::AotCompiler::compile_with_options(
+            &mir_program,
+            &type_table,
+            has_extern_decl,
+            &weak_fields,
+        ),
+        "llvm" => llvm_backend::compile(&mir_program, &type_table, &weak_fields),
+        other => Err(format!("unknown backend '{}'; expected cranelift or llvm", other)),
+    };
+    let obj_bytes = match backend_result {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            eprintln!("[L++] {} backend compilation error: {}", backend, e);
+            return;
+        }
+    };
+    let aot_time = aot_start.elapsed();
+
+    let ext = if cfg!(target_os = "windows") { "obj" } else { "o" };
+    let obj_path = filename.replace(".lpp", &format!(".{}", ext));
+    if let Err(e) = fs::write(&obj_path, &obj_bytes) {
+        eprintln!("Failed to write object file {}: {}", obj_path, e);
+        return;
+    }
+
+    let total_time = total_start.elapsed();
+
+    if check_only {
+        return;
+    }
+
+    if emit_object {
+        if env::var("BENCHMARK").is_ok() {
+            println!(
+                "TIMING_JSON: {{\"io\": {}, \"lex\": {}, \"parse\": {}, \"semantic\": {}, \"typecheck\": {}, \"escape\": {}, \"mir\": {}, \"aot\": {}, \"total\": {}}}",
+                io_time.as_secs_f64(),
+                lex_time.as_secs_f64(),
+                parse_time.as_secs_f64(),
+                sem_time.as_secs_f64(),
+                ty_time.as_secs_f64(),
+                escape_time.as_secs_f64(),
+                mir_time.as_secs_f64(),
+                aot_time.as_secs_f64(),
+                total_time.as_secs_f64()
+            );
+        } else if !dump_ast
+            && !dump_symbols
+            && !dump_types
+            && !dump_escape
+            && !dump_mir
+        {
+            println!("[L++] Native Cranelift object emitted at {}", obj_path);
+            println!("Time: {:.1} ms", total_time.as_secs_f64() * 1000.0);
+        }
+        return;
+    }
+
+    // Direct Native Executable Link via lpp-link
+    let exe_ext = std::env::consts::EXE_SUFFIX;
+    let exe_path = filename.replace(".lpp", exe_ext);
+
+    // Collect FFI link libraries from extern blocks
+    let mut link_libs: Vec<String> = Vec::new();
+    for decl in &ast.declarations {
+        if let crate::ast::TopLevel::Extern(ext) = decl {
+            if let Some(ref lib) = ext.link_lib {
+                if !link_libs.contains(lib) {
+                    link_libs.push(lib.clone());
+                }
+            }
+        }
+    }
+
+    // Check if any extern blocks or explicit host libraries exist (FFI/host linking required)
+    let has_extern = ast.declarations.iter().any(|d| matches!(d, crate::ast::TopLevel::Extern(_)));
+    let env_linker = env::var("LPP_LINKER").ok();
+    let effective_linker = cli_linker.or(env_linker);
+    let use_host = effective_linker.as_deref() == Some("host")
+        || (effective_linker.as_deref() != Some("direct") && (has_extern || !link_libs.is_empty()));
+
+    let link_result = if use_host {
+        #[cfg(windows)]
+        pm::load_msvc_env();
+        pm::host_link_binary(Path::new(&obj_path), Path::new(&exe_path), &link_libs)
+    } else {
+        pm::direct_link_binary(Path::new(&obj_path), Path::new(&exe_path))
+    };
+    if let Err(e) = link_result {
+        eprintln!("[L++] Native Link Error: {}", e);
+        return;
+    }
+    let _ = fs::remove_file(&obj_path);
+
+    if env::var("BENCHMARK").is_ok() {
+        println!(
+            "TIMING_JSON: {{\"io\": {}, \"lex\": {}, \"parse\": {}, \"semantic\": {}, \"typecheck\": {}, \"escape\": {}, \"mir\": {}, \"aot\": {}, \"total\": {}}}",
+            io_time.as_secs_f64(),
+            lex_time.as_secs_f64(),
+            parse_time.as_secs_f64(),
+            sem_time.as_secs_f64(),
+            ty_time.as_secs_f64(),
+            escape_time.as_secs_f64(),
+            mir_time.as_secs_f64(),
+            aot_time.as_secs_f64(),
+            total_time.as_secs_f64()
+        );
+    } else if !dump_ast
+        && !dump_symbols
+        && !dump_types
+        && !dump_escape
+        && !dump_mir
+    {
+        println!("L++ v4.2.2 (Pure Native Executable)\n");
+        println!("Compiled and linked native binary: {}", exe_path);
+        println!("Time: {:.1} ms", total_time.as_secs_f64() * 1000.0);
     }
 }
 

@@ -31,9 +31,26 @@ def list_parent() -> Int:
     bag := Bag([1, 2, 3])
     return list_len(bag.items)
 
+def nonescaping_closure() -> Int:
+    item := Box("captured")
+    unused := fn() -> Int:
+        return str_len(item.text)
+    return str_len(item.text)
+
+def loop_owned_field(n: Int) -> Int:
+    mut total := 0
+    mut i := 0
+    while i < n:
+        box := Box(str_concat("x", "y"))
+        total = total + str_len(box.text)
+        i = i + 1
+    return total
+
 def main() -> Void:
     print(local_box())
     print(heap_box())
     print(nested_parent())
     print(list_parent())
+    print(nonescaping_closure())
+    print(loop_owned_field(3))
     print_str("stack-owned-ok")

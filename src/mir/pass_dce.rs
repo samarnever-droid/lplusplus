@@ -6,7 +6,7 @@
 //! modulo because those may have observable effects or traps.
 
 use crate::ast::BinaryOperator;
-use crate::mir::ir::{LocalId, MirInstr, MirProgram, Operand, Ownership, Rvalue, Terminator};
+use crate::mir::ir::{LocalId, MirInstr, MirProgram, Operand, Rvalue, Terminator};
 use std::collections::HashSet;
 
 fn add_operand_use(live: &mut HashSet<LocalId>, operand: &Operand) {
@@ -47,7 +47,8 @@ fn add_rvalue_uses(live: &mut HashSet<LocalId>, rvalue: &Rvalue) {
         Rvalue::CallDirect(_, args)
         | Rvalue::CallIndirect(_, args)
         | Rvalue::BuiltinCall(_, args)
-        | Rvalue::MakeClosure(_, args) => {
+        | Rvalue::MakeClosure(_, args)
+        | Rvalue::MakeStackClosure(_, args) => {
             for value in args {
                 add_operand_use(live, value);
             }
@@ -62,6 +63,7 @@ fn add_rvalue_uses(live: &mut HashSet<LocalId>, rvalue: &Rvalue) {
         | Rvalue::AllocateStackStruct(_)
         | Rvalue::AllocateList(_)
         | Rvalue::FuncRef(_) => {}
+        Rvalue::AllocateArenaStruct(_, arena) => add_operand_use(live, arena),
     }
 }
 
@@ -89,7 +91,7 @@ pub fn run(program: &mut MirProgram) -> usize {
         for instruction in block.instrs.drain(..).rev() {
             match &instruction {
                 MirInstr::Assign(destination, rvalue)
-                    if function.locals[destination.0].ownership == Ownership::Copy
+                    if function.locals[destination.0].ownership.is_copy()
                         && pure_nontrapping(rvalue)
                         && !live.contains(destination) =>
                 {

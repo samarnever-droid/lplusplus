@@ -21,8 +21,27 @@ pub struct FuncId(pub usize);
 pub enum Ownership {
     Copy,
     Owned,
+    Managed,
     Borrowed,
 }
+
+impl Ownership {
+    #[inline]
+    pub fn is_copy(&self) -> bool {
+        matches!(self, Ownership::Copy)
+    }
+
+    #[inline]
+    pub fn is_managed(&self) -> bool {
+        matches!(self, Ownership::Managed | Ownership::Owned)
+    }
+
+    #[inline]
+    pub fn is_borrowed(&self) -> bool {
+        matches!(self, Ownership::Borrowed)
+    }
+}
+
 
 /// A declared local variable or temporary.
 #[derive(Debug, Clone)]
@@ -69,15 +88,23 @@ pub enum Rvalue {
     /// A call to a known L++ runtime builtin (print, input, read_file, etc.)
     /// The String is the canonical builtin name, e.g. "lpp_print_int".
     BuiltinCall(String, Vec<Operand>),
-    /// Creates a closure. The first argument is the target function,
-    /// the second is the list of captured variables (environment).
+    /// Creates an ARC-managed closure. The first argument is the target
+    /// function, the second is the list of captured variables (environment).
     MakeClosure(FuncId, Vec<Operand>),
+    /// Creates the same two-word closure capsule in the current frame. The
+    /// environment remains an ARC object; only the non-escaping capsule itself
+    /// is stack-resident and is destroyed directly at scope exit.
+    MakeStackClosure(FuncId, Vec<Operand>),
     /// Reads a field from a custom struct
     FieldAccess(Operand, String),
     /// Legacy/raw struct allocation. AOT rejects this because it has no ARC header.
     AllocateStruct(TypeRef),
     /// Allocates a custom struct with one owned ARC reference.
     AllocateArcStruct(TypeRef),
+    /// Allocates a self-referential custom struct inside the current arena
+    /// region. The node still has an ARC-compatible header for graph edges, but
+    /// its storage is reclaimed in bulk when the region's last node dies.
+    AllocateArenaStruct(TypeRef, Operand),
     /// Allocates a custom struct in the current stack frame, with no ARC header
     /// and no refcount.
     ///
@@ -152,8 +179,18 @@ impl std::fmt::Display for Rvalue {
                 }
                 write!(f, ")")
             }
-            Rvalue::MakeClosure(func_id, captures) => {
-                write!(f, "make_closure(fn_{}, [", func_id.0)?;
+            Rvalue::MakeClosure(func_id, captures)
+            | Rvalue::MakeStackClosure(func_id, captures) => {
+                write!(
+                    f,
+                    "{}(fn_{}, [",
+                    if matches!(self, Rvalue::MakeStackClosure(_, _)) {
+                        "make_stack_closure"
+                    } else {
+                        "make_closure"
+                    },
+                    func_id.0
+                )?;
                 for (i, arg) in captures.iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
@@ -165,6 +202,9 @@ impl std::fmt::Display for Rvalue {
             Rvalue::FieldAccess(base, field) => write!(f, "{}.{}", base, field),
             Rvalue::AllocateStruct(ty) => write!(f, "alloc_struct_raw({:?})", ty),
             Rvalue::AllocateArcStruct(ty) => write!(f, "alloc_arc_struct({:?})", ty),
+            Rvalue::AllocateArenaStruct(ty, arena) => {
+                write!(f, "alloc_arena_struct({:?}, {})", ty, arena)
+            }
             Rvalue::AllocateStackStruct(ty) => write!(f, "alloc_stack_struct({:?})", ty),
             Rvalue::AllocateList(ty) => write!(f, "alloc_list({:?})", ty),
             Rvalue::SpawnThread(closure_op) => write!(f, "spawn_thread({})", closure_op),

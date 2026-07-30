@@ -13,12 +13,9 @@
 //!
 //! # Where this has to live
 //!
-//! The natural-looking home is `analysis/escape.rs`, which already classifies
-//! bindings `Value`/`Arc`/`Arena` and has a "Rule 4: crossing a concurrency
-//! boundary" case. It is the wrong place: that map is passed to
-//! `run_arc_insertion_pass` as `_escape_map` and **ignored**. Its only real
-//! consumer is the `--dump-escape` debug printer. Changing a classification
-//! there would change a diagnostic and nothing else.
+//! An earlier AST classification attempted to answer this question, but it
+//! never reached ARC code generation and was removed when the MIR solver became
+//! the single ownership source of truth.
 //!
 //! ARC is decided entirely from MIR `Ownership`, so the proof has to be done on
 //! MIR, which is also where it is easiest: the capture, the spawn and the later
@@ -139,7 +136,9 @@ fn reads_local(instr: &MirInstr, local: LocalId) -> bool {
             Rvalue::CallIndirect(callee, args) => {
                 in_operand(callee, local) || args.iter().any(|a| in_operand(a, local))
             }
-            Rvalue::MakeClosure(_, caps) => caps.iter().any(|c| in_operand(c, local)),
+            Rvalue::MakeClosure(_, caps) | Rvalue::MakeStackClosure(_, caps) => {
+                caps.iter().any(|c| in_operand(c, local))
+            }
             Rvalue::FieldAccess(base, _) => in_operand(base, local),
             Rvalue::SpawnThread(op) => in_operand(op, local),
             _ => false,
@@ -232,7 +231,14 @@ fn find_move_outs(function: &MirFunction) -> MoveOut {
                         MirInstr::AssignField { value: Operand::Borrowed(id), .. }
                             | MirInstr::AssignField { value: Operand::Local(id), .. }
                             if *id == retained
-                    ) || matches!(later, MirInstr::Assign(_, Rvalue::MakeClosure(_, _)));
+                    )
+                        || matches!(
+                            later,
+                            MirInstr::Assign(
+                                _,
+                                Rvalue::MakeClosure(_, _) | Rvalue::MakeStackClosure(_, _)
+                            )
+                        );
                     if !is_capture {
                         interfering_use = true;
                         break;

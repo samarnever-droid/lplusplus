@@ -18,6 +18,8 @@ pub enum TypeRef {
     Unresolved(String),
     Function, // Just a placeholder for function names
     TypeParam(String), // Generic type parameter (e.g. T, U) — erased to i64 at codegen
+    /// Explicit four-lane signed 64-bit SIMD value.
+    VectorI64x2,
 }
 
 #[derive(Debug, Clone)]
@@ -158,7 +160,7 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
-    fn verify_struct_cycles(type_table: &TypeTable) -> Result<(), String> {
+    fn verify_struct_cycles(_type_table: &TypeTable) -> Result<(), String> {
         use std::collections::HashSet;
 
         fn collect_custom_ids(ty: &TypeRef, ids: &mut Vec<StructTypeId>) {

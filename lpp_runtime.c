@@ -612,6 +612,164 @@ int64_t lpp_weak_get(int64_t raw, int64_t expected_generation) {
     return raw;
 }
 
+void lpp_arc_retain(void *ptr);
+void lpp_arc_release(void *ptr);
+
+/* ── Arena regions ────────────────────────────────────────────────────────
+ *
+ * Arena nodes deliberately keep the ordinary 24-byte ARC header. A registry
+ * associates each node header with its region, so existing C runtime helpers
+ * can retain/release an arena node without knowing its source-level type. Nodes
+ * are never individually freed: their destructors run at refcount zero, and
+ * the region releases all node storage in one bulk pass after its last node is
+ * gone. The static cycle breaker guarantees that owning graph edges are
+ * acyclic; demoted edges do not retain.
+ */
+typedef struct LppArenaRecord LppArenaRecord;
+typedef struct LppArenaRegion LppArenaRegion;
+struct LppArenaRecord {
+    LppArcHeader *header;
+    LppArenaRecord *next;
+};
+struct LppArenaRegion {
+    lpp_atomic32_t refs; /* one owner handle plus one reference per node */
+    LppArenaRecord *records;
+    LppArenaRegion *next;
+};
+static LppArenaRegion *lpp__arena_regions;
+#if defined(_MSC_VER)
+static volatile LONG lpp__arena_lock;
+static void lpp__arena_lock_acquire(void) {
+    while (InterlockedCompareExchange(&lpp__arena_lock, 1, 0) != 0) {}
+}
+static void lpp__arena_lock_release(void) {
+    InterlockedExchange(&lpp__arena_lock, 0);
+}
+#else
+static atomic_flag lpp__arena_lock = ATOMIC_FLAG_INIT;
+static void lpp__arena_lock_acquire(void) {
+    while (atomic_flag_test_and_set_explicit(&lpp__arena_lock, memory_order_acquire)) {}
+}
+static void lpp__arena_lock_release(void) {
+    atomic_flag_clear_explicit(&lpp__arena_lock, memory_order_release);
+}
+#endif
+
+static LppArenaRegion *lpp__arena_for_header(LppArcHeader *header) {
+    LppArenaRegion *found = NULL;
+    lpp__arena_lock_acquire();
+    for (LppArenaRegion *region = lpp__arena_regions; region && !found; region = region->next) {
+        for (LppArenaRecord *record = region->records; record; record = record->next) {
+            if (record->header == header) {
+                found = region;
+                break;
+            }
+        }
+    }
+    lpp__arena_lock_release();
+    return found;
+}
+
+static void lpp__arena_destroy(LppArenaRegion *region) {
+    lpp__arena_lock_acquire();
+    LppArenaRegion **link = &lpp__arena_regions;
+    while (*link && *link != region) link = &(*link)->next;
+    if (*link == region) *link = region->next;
+    LppArenaRecord *records = region->records;
+    region->records = NULL;
+    lpp__arena_lock_release();
+
+    while (records) {
+        LppArenaRecord *next = records->next;
+        /* All nodes have reached zero before the region reaches zero. Their
+         * destructors already ran; only the raw storage remains. */
+        free(records->header);
+        lpp_arc_release(records);
+        records = next;
+    }
+    free(region);
+}
+
+static void lpp__arena_node_zero(LppArenaRegion *region) {
+#if defined(_MSC_VER)
+    int32_t refs = InterlockedDecrement(&region->refs);
+#else
+    int32_t refs = atomic_fetch_sub_explicit(&region->refs, 1, memory_order_acq_rel) - 1;
+#endif
+    if (refs == 0) lpp__arena_destroy(region);
+}
+
+void *lpp_arena_begin(void) {
+    LppArenaRegion *region = (LppArenaRegion *)calloc(1, sizeof(*region));
+    if (!region) return NULL;
+#if defined(_MSC_VER)
+    region->refs = 1;
+#else
+    atomic_init(&region->refs, 1);
+#endif
+    lpp__arena_lock_acquire();
+    region->next = lpp__arena_regions;
+    lpp__arena_regions = region;
+    lpp__arena_lock_release();
+    return region;
+}
+
+void lpp_arena_release(void *raw_region) {
+    if (!raw_region) return;
+    LppArenaRegion *region = (LppArenaRegion *)raw_region;
+#if defined(_MSC_VER)
+    int32_t refs = InterlockedDecrement(&region->refs);
+#else
+    int32_t refs = atomic_fetch_sub_explicit(&region->refs, 1, memory_order_acq_rel) - 1;
+#endif
+    if (refs == 0) lpp__arena_destroy(region);
+}
+
+void *lpp_arena_alloc(int64_t size, void *raw_region, LppArcDestructor destructor) {
+    if (!raw_region || size < 0) return NULL;
+    LppArenaRegion *region = (LppArenaRegion *)raw_region;
+    void *payload = lpp_arc_alloc_with_destructor(size, destructor);
+    if (!payload) return NULL;
+    LppArenaRecord *record = (LppArenaRecord *)lpp_arc_alloc((int64_t)sizeof(*record));
+    if (!record) {
+        lpp_arc_release(payload);
+        return NULL;
+    }
+    record->header = (LppArcHeader *)payload - 1;
+    lpp__arena_lock_acquire();
+    record->next = region->records;
+    region->records = record;
+#if defined(_MSC_VER)
+    InterlockedIncrement(&region->refs);
+#else
+    atomic_fetch_add_explicit(&region->refs, 1, memory_order_relaxed);
+#endif
+    lpp__arena_lock_release();
+    return payload;
+}
+
+void lpp_arena_retain(void *payload) {
+    if (!payload) return;
+    LppArcHeader *header = (LppArcHeader *)payload - 1;
+    if (!lpp__arena_for_header(header)) return;
+    lpp_arc_retain(payload);
+}
+
+void lpp_arena_release_node(void *payload) {
+    if (!payload) return;
+    LppArcHeader *header = (LppArcHeader *)payload - 1;
+    LppArenaRegion *region = lpp__arena_for_header(header);
+    if (!region) return;
+    if (lpp__is_immortal(header)) return;
+    int32_t prev = (int32_t)LPP_ARC_DEC(&header->refcount);
+    if (prev == 1) {
+        lpp__invalidate_generation(header);
+        header->magic = 0;
+        if (header->destructor) header->destructor(payload);
+        lpp__arena_node_zero(region);
+    }
+}
+
 /* Increment the reference count. Safe to call with NULL. */
 void lpp_arc_retain(void *ptr) {
     if (!lpp__is_valid_arc_ptr(ptr)) return;
@@ -625,6 +783,7 @@ void lpp_arc_release(void *ptr) {
     if (!lpp__is_valid_arc_ptr(ptr)) return;
     LppArcHeader *hdr = (LppArcHeader *)ptr - 1;
     if (lpp__is_immortal(hdr)) return;
+    LppArenaRegion *arena = lpp__arena_for_header(hdr);
     int32_t prev = (int32_t)LPP_ARC_DEC(&hdr->refcount);
     if (prev == 1) {
         /* Refcount just hit zero. Destroy owned child references before the
@@ -633,7 +792,8 @@ void lpp_arc_release(void *ptr) {
         lpp__invalidate_generation(hdr);
         hdr->magic = 0;
         if (hdr->destructor) hdr->destructor(ptr);
-        free(hdr);
+        if (arena) lpp__arena_node_zero(arena);
+        else free(hdr);
     }
 }
 
@@ -685,10 +845,12 @@ void lpp_arc_release_local(void *ptr) {
     atomic_store_explicit(&hdr->refcount, prev - 1, memory_order_relaxed);
 #endif
     if (prev == 1) {
+        LppArenaRegion *arena = lpp__arena_for_header(hdr);
         lpp__invalidate_generation(hdr);
         hdr->magic = 0;
         if (hdr->destructor) hdr->destructor(ptr);
-        free(hdr);
+        if (arena) lpp__arena_node_zero(arena);
+        else free(hdr);
     }
 }
 
@@ -1501,3 +1663,33 @@ void lpp_json_free(void *json) {
 #include "runtime/lpp_map.c"
 #include "runtime/lpp_gui.c"
 
+
+/* Scalar reference for the explicit LLVM vector intrinsic. Cranelift calls
+ * this implementation; LLVM lowers the same builtin to a <4 x i64> loop. */
+#if defined(__GNUC__)
+typedef int64_t lpp_i64x4 __attribute__((vector_size(32)));
+__attribute__((target("avx2")))
+static int64_t lpp_vec_i64_checksum_avx2(int64_t n) {
+    int64_t total = 0;
+    int64_t i = 0;
+    const lpp_i64x4 three = {3, 3, 3, 3};
+    while (i + 4 <= n) {
+        lpp_i64x4 v = {i, i + 1, i + 2, i + 3};
+        lpp_i64x4 x = (v * three) ^ (v >> 1);
+        total += x[0] + x[1] + x[2] + x[3];
+        i += 4;
+    }
+    for (; i < n; ++i) total += (i * 3) ^ (i >> 1);
+    return total;
+}
+#endif
+int64_t lpp_vec_i64_checksum(int64_t n) {
+    if (n < 0) return 0;
+#if defined(__GNUC__)
+    return lpp_vec_i64_checksum_avx2(n);
+#else
+    int64_t total = 0;
+    for (int64_t i = 0; i < n; ++i) total += (i * 3) ^ (i >> 1);
+    return total;
+#endif
+}

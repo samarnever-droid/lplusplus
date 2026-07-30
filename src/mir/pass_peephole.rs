@@ -5,7 +5,7 @@
 //! cannot remove an ownership edge; ARC insertion still runs afterwards.
 
 use crate::ast::BinaryOperator;
-use crate::mir::ir::{LocalId, MirInstr, MirProgram, Operand, Ownership, Rvalue};
+use crate::mir::ir::{LocalId, MirInstr, MirProgram, Operand, Rvalue};
 use std::collections::HashMap;
 
 fn int_binary(op: &BinaryOperator, left: i64, right: i64) -> Option<Operand> {
@@ -98,7 +98,7 @@ pub fn run(program: &mut MirProgram) -> usize {
                 // Constants are tracked only for copy locals. This prevents a
                 // user-visible scalar simplification from ever treating an ARC
                 // pointer, borrowed field, or container as a duplicable value.
-                let copy_local = function.locals[destination.0].ownership == Ownership::Copy;
+                let copy_local = function.locals[destination.0].ownership.is_copy();
                 match rvalue {
                     Rvalue::Use(value) if copy_local && scalar_constant(&value) => {
                         constants.insert(destination, value);

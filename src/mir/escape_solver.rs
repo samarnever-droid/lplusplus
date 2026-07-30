@@ -17,12 +17,10 @@
 //!
 //! # Why MIR and not the AST
 //!
-//! `analysis::escape` asks the same question over the AST, which has 31 forms
-//! (18 `Expr` + 13 `Stmt`) and grows whenever syntax is added. Three positions
-//! in it recursed into a subexpression without classifying the value placed
-//! there -- call arguments, field stores and struct literals -- so genuinely
-//! escaping bindings were classified `Value`. That was not carelessness; 31
-//! nested forms is more surface than review keeps exhaustive.
+//! The former AST walker asked the same question over dozens of expression and
+//! statement forms. Its coverage was a review promise, not a compiler-enforced
+//! property, and it had already missed call arguments, field stores, and
+//! struct-literal fields. It has been retired from the code-generation path.
 //!
 //! In MIR a local's value can only be established by `MirInstr::Assign` or
 //! `MirInstr::AssignField` -- two forms -- and can only travel through one of
@@ -47,9 +45,11 @@
 //! over a lattice of height `h` with `E` call-graph edges and `P` parameters
 //! performs at most `O(h * (E + P))` transfer applications: a node only ever
 //! moves *up*, it can move up at most `h` times, and it is only re-queued when
-//! an input changed. Adding a fourth storage class loosens that bound, so the
-//! architecture's `Arena` class is deliberately not represented here -- it
-//! appears four times in the tree and reaches no backend.
+//! an input changed. Adding a fourth escape-storage point would loosen that
+//! bound, so `Arena` is deliberately not a fourth lattice value. Arena is an
+//! orthogonal allocation strategy selected for self-referential struct types;
+//! the reachability fact remains Frame/Owned/Shared and the arena region is
+//! retained by its arena-backed nodes.
 //!
 //! # Cost
 //!
@@ -92,6 +92,19 @@ impl Storage {
     pub fn escapes(self) -> bool {
         self != Storage::Frame
     }
+}
+
+/// Whether a MIR type carries an ownership-bearing pointer. Scalars remain
+/// `Frame` in the facts table even when passed to a call; their storage class is
+/// not meaningful and must not pollute parameter summaries or `--dump-escape`.
+fn is_managed_type(ty: &TypeRef) -> bool {
+    matches!(
+        ty,
+        TypeRef::Custom(_)
+            | TypeRef::Function
+            | TypeRef::Generic(_, _)
+            | TypeRef::Str
+    )
 }
 
 /// Per-function facts.
@@ -172,7 +185,10 @@ fn direct_callees(function: &MirFunction) -> HashSet<FuncId> {
         for instruction in &block.instrs {
             if let MirInstr::Assign(_, rvalue) = instruction {
                 match rvalue {
-                    Rvalue::CallDirect(id, _) | Rvalue::MakeClosure(id, _) | Rvalue::FuncRef(id) => {
+                    Rvalue::CallDirect(id, _)
+                    | Rvalue::MakeClosure(id, _)
+                    | Rvalue::MakeStackClosure(id, _)
+                    | Rvalue::FuncRef(id) => {
                         out.insert(*id);
                     }
                     _ => {}
@@ -264,7 +280,7 @@ pub fn struct_can_stack_allocate(type_table: &TypeTable, id: StructTypeId) -> bo
 }
 
 /// Solve the whole program.
-pub fn solve(program: &MirProgram, _type_table: &TypeTable) -> EscapeFacts {
+pub fn solve(program: &MirProgram) -> EscapeFacts {
     let ids: Vec<FuncId> = program.functions.keys().copied().collect();
     let mut edges: HashMap<FuncId, HashSet<FuncId>> = HashMap::new();
     for (id, function) in &program.functions {
@@ -325,7 +341,12 @@ fn solve_function(
     // does the source. One pass builds it; the closure below propagates.
     let mut flows: Vec<Vec<LocalId>> = vec![Vec::new(); n];
     let mut raise = |storage: &mut Vec<Storage>, id: LocalId, to: Storage| {
-        if id.0 < storage.len() {
+        let managed = function
+            .locals
+            .get(id.0)
+            .map(|local| is_managed_type(&local.ty))
+            .unwrap_or(true);
+        if managed && id.0 < storage.len() {
             storage[id.0] = storage[id.0].join(to);
         }
     };
@@ -378,9 +399,17 @@ fn solve_function(
         }
     }
 
-    // Parameters are caller-owned; never demote one to a frame slot.
+    // Managed parameters are caller-owned; never demote one to a frame slot.
+    // Scalar parameters remain Frame because there is no ownership fact to
+    // propagate for them.
     for p in &function.params {
-        if p.0 < storage.len() {
+        if p.0 < storage.len()
+            && function
+                .locals
+                .get(p.0)
+                .map(|local| is_managed_type(&local.ty))
+                .unwrap_or(true)
+        {
             storage[p.0] = storage[p.0].join(Storage::Owned);
         }
     }
@@ -413,7 +442,18 @@ fn solve_function(
     let params_escape = function
         .params
         .iter()
-        .map(|p| storage.get(p.0).copied().unwrap_or(Storage::Owned).escapes())
+        .map(|p| {
+            function
+                .locals
+                .get(p.0)
+                .map(|local| is_managed_type(&local.ty))
+                .unwrap_or(true)
+                && storage
+                    .get(p.0)
+                    .copied()
+                    .unwrap_or(Storage::Owned)
+                    .escapes()
+        })
         .collect();
 
     FnFacts {
@@ -510,6 +550,7 @@ fn escape_of_rvalue(
         // Fresh allocations: the destination starts at the bottom of the
         // lattice and is raised only by how it is subsequently used.
         Rvalue::AllocateArcStruct(_)
+        | Rvalue::AllocateArenaStruct(_, _)
         | Rvalue::AllocateStackStruct(_)
         | Rvalue::AllocateStruct(_)
         | Rvalue::AllocateList(_) => {}
@@ -557,7 +598,7 @@ fn escape_of_rvalue(
         }
 
         // A captured value outlives the enclosing statement: the capsule owns it.
-        Rvalue::MakeClosure(_, captures) => {
+        Rvalue::MakeClosure(_, captures) | Rvalue::MakeStackClosure(_, captures) => {
             for c in captures {
                 if let Some(id) = operand_local(c) {
                     raise(storage, id, Storage::Owned);
@@ -605,6 +646,17 @@ mod tests {
             3,
             "lattice must stay 3 points"
         );
+    }
+
+    #[test]
+    fn scalar_types_are_not_ownership_values() {
+        for ty in [TypeRef::Int, TypeRef::Float, TypeRef::Bool, TypeRef::Char, TypeRef::Void] {
+            assert!(!is_managed_type(&ty), "scalar {:?} must stay outside ownership facts", ty);
+        }
+        assert!(is_managed_type(&TypeRef::Str));
+        assert!(is_managed_type(&TypeRef::Function));
+        assert!(is_managed_type(&TypeRef::Custom(StructTypeId(0))));
+        assert!(is_managed_type(&TypeRef::Generic("List".to_string(), vec![TypeRef::Int])));
     }
 
     #[test]

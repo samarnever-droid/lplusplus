@@ -38,10 +38,13 @@ impl MirBuilder {
         binding_id: Option<crate::semantic::BindingId>,
     ) -> LocalId {
         let id = LocalId(self.function.locals.len());
-        // Custom structs, closure capsules, lists and strings are ARC-managed
-        // heap objects, so a local holding one is an owner.
+        // Lowering must know which values are pointer-shaped, but it must not
+        // decide their final storage class. Managed locals start in the
+        // `Managed` state; the MIR escape solver later decides Frame, Owned, or
+        // Shared and pass_escape/pass_arc turn that fact into stack or ARC
+        // operations.
         //
-        // `Str` and `List[Str]` are owned as of the string-provenance change.
+        // `Str` and `List[Str]` are managed as of the string-provenance change.
         // They used to be excluded because a `Str` local can hold a static
         // string literal, and a literal had no ARC header -- releasing one
         // decremented whatever happened to sit in front of .rodata. Literals
@@ -51,8 +54,8 @@ impl MirBuilder {
         // release on a heap string frees it. Excluding them cost an unbounded
         // leak -- one allocation per `str_concat`, forever.
         //
-        // `List[Float]` is owned for the same reason `List[Int]` is: the list
-        // object itself is ARC-allocated regardless of element type.
+        // `List[Float]` is managed for the same reason `List[Int]` is: the
+        // list object itself is ARC-allocated regardless of element type.
         let ownership = if matches!(&ty, TypeRef::Custom(_) | TypeRef::Function | TypeRef::Str)
             || matches!(
                 &ty,
@@ -64,7 +67,7 @@ impl MirBuilder {
                             TypeRef::Int | TypeRef::Custom(_) | TypeRef::Float | TypeRef::Str
                         )
             ) {
-            Ownership::Owned
+            Ownership::Managed
         } else {
             Ownership::Copy
         };

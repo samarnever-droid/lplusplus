@@ -8,7 +8,7 @@ use cranelift_codegen::settings::{self, Configurable};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_module::{Linkage, Module};
 use cranelift_object::{ObjectBuilder, ObjectModule};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use target_lexicon::Triple;
 
 /// A function body compiled off-thread, waiting to be defined in the module.
@@ -49,50 +49,6 @@ fn decode_ty(tag: u8) -> cranelift_codegen::ir::Type {
     }
 }
 
-/// Find structs whose owned custom fields form a cycle. ARC cannot reclaim a
-/// strongly connected ownership graph, so the AOT backend refuses to allocate
-/// one until L++ has explicit `Weak`/arena ownership syntax or a cycle collector.
-fn arc_cycle_structs(type_table: &TypeTable) -> HashSet<StructTypeId> {
-    fn reaches(
-        type_table: &TypeTable,
-        target: StructTypeId,
-        current: StructTypeId,
-        visited: &mut HashSet<StructTypeId>,
-    ) -> bool {
-        for (_, field_ty) in &type_table.definitions[current.0].fields {
-            let next = match field_ty {
-                TypeRef::Custom(next) => Some(*next),
-                TypeRef::Generic(name, args) if name == "List" && args.len() == 1 => {
-                    match args[0] {
-                        TypeRef::Custom(next) => Some(next),
-                        _ => None,
-                    }
-                }
-                _ => None,
-            };
-            if let Some(next) = next {
-                if next == target {
-                    return true;
-                }
-                if visited.insert(next) && reaches(type_table, target, next, visited) {
-                    return true;
-                }
-            }
-        }
-        false
-    }
-
-    let mut cycles = HashSet::new();
-    for index in 0..type_table.definitions.len() {
-        let id = StructTypeId(index);
-        let mut visited = HashSet::new();
-        if reaches(type_table, id, id, &mut visited) {
-            cycles.insert(id);
-        }
-    }
-    cycles
-}
-
 /// Validate the subset whose runtime representation is defined for AOT.  This
 /// deliberately sits at the backend boundary as defence in depth: frontend
 /// checks can evolve without accidentally making Cranelift emit a binary for
@@ -130,8 +86,6 @@ fn validate_aot_program(program: &MirProgram, type_table: &TypeTable) -> Result<
             validate_type(field_ty, &format!("field '{}.{}'", def.name, field_name))?;
         }
     }
-
-    let cyclic_structs = arc_cycle_structs(type_table);
 
     for function in program.functions.values() {
         validate_type(
@@ -181,8 +135,11 @@ fn validate_aot_program(program: &MirProgram, type_table: &TypeTable) -> Result<
                             function.name
                         ));
                     }
-                    MirInstr::Assign(_, Rvalue::MakeClosure(_, captures))
-                        if captures.len() != 1 =>
+                    MirInstr::Assign(
+                        _,
+                        Rvalue::MakeClosure(_, captures)
+                        | Rvalue::MakeStackClosure(_, captures),
+                    ) if captures.len() != 1 =>
                     {
                         return Err(format!(
                             "invalid closure environment in '{}': expected exactly one environment pointer, got {}",
@@ -250,9 +207,20 @@ impl AotCompiler {
         flag_builder
             .set("opt_level", &opt_level)
             .map_err(|e| format!("set opt_level '{}': {}", opt_level, e))?;
-
-        let isa = cranelift_codegen::isa::lookup(Triple::host())
-            .map_err(|e| format!("ISA lookup: {}", e))?
+        let mut isa_builder = cranelift_codegen::isa::lookup(Triple::host())
+            .map_err(|e| format!("ISA lookup: {}", e))?;
+        if std::env::var("LPP_CRANELIFT_SIMD").as_deref() != Ok("0")
+            && cfg!(target_arch = "x86_64")
+            && std::is_x86_feature_detected!("avx2")
+        {
+            isa_builder
+                .enable("has_avx")
+                .map_err(|e| format!("enable Cranelift AVX: {}", e))?;
+            isa_builder
+                .enable("has_avx2")
+                .map_err(|e| format!("enable Cranelift AVX2: {}", e))?;
+        }
+        let isa = isa_builder
             .finish(settings::Flags::new(flag_builder))
             .map_err(|e| format!("ISA finish: {}", e))?;
 
@@ -326,6 +294,10 @@ impl AotCompiler {
             .builtin_ids
             .get("lpp_arc_release")
             .ok_or_else(|| "Builtin 'lpp_arc_release' was not declared".to_string())?;
+        let arena_release_id = *self
+            .builtin_ids
+            .get("lpp_arena_release_node")
+            .ok_or_else(|| "Builtin 'lpp_arena_release_node' was not declared".to_string())?;
 
         for (index, definition) in type_table.definitions.iter().enumerate() {
             let struct_id = StructTypeId(index);
@@ -343,6 +315,8 @@ impl AotCompiler {
                 builder.append_block_params_for_function_params(entry);
                 let payload = builder.block_params(entry)[0];
                 let release_ref = self.module.declare_func_in_func(release_id, builder.func);
+                let arena_release_ref =
+                    self.module.declare_func_in_func(arena_release_id, builder.func);
                 let (layout, _) = struct_layout(type_table, struct_id);
 
                 for ((field_name, field_type), field_layout) in
@@ -369,7 +343,16 @@ impl AotCompiler {
                             payload,
                             field_layout.offset as i32,
                         );
-                        builder.ins().call(release_ref, &[child]);
+                        let release = match field_type {
+                            TypeRef::Custom(child_id)
+                                if type_table
+                                    .definitions
+                                    .get(child_id.0)
+                                    .map(|child| child.is_self_referential)
+                                    .unwrap_or(false) => arena_release_ref,
+                            _ => release_ref,
+                        };
+                        builder.ins().call(release, &[child]);
                     }
                 }
                 builder.ins().return_(&[]);
@@ -666,7 +649,7 @@ impl AotCompiler {
         // Skipped entirely when FFI is present: foreign code can share an
         // object without any MIR evidence, so no per-local claim is safe.
         if !has_extern {
-            let facts = crate::mir::escape_solver::solve(program, type_table);
+            let facts = crate::mir::escape_solver::solve(program);
             for (fid, function) in &program.functions {
                 let mut shared = std::collections::HashSet::new();
                 if let Some(f) = facts.functions.get(fid) {

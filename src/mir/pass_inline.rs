@@ -27,7 +27,7 @@ fn candidate(function: &MirFunction) -> Option<Candidate> {
     if function
         .locals
         .iter()
-        .any(|local| local.ownership != Ownership::Copy)
+        .any(|local| !local.ownership.is_copy())
     {
         return None;
     }

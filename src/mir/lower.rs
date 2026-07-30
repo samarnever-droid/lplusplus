@@ -55,7 +55,7 @@ pub struct MirLowerCtx<'a> {
     /// `Custom`/`Function`/`Generic`/`Str` was returned owned, and the escape
     /// analysis had no say. This is how the analysis finally participates in
     /// that decision.
-    pub escape_map: HashMap<crate::semantic::BindingId, crate::escape::StorageClass>,
+    pub current_arena: Option<LocalId>,
 }
 
 impl<'a> MirLowerCtx<'a> {
@@ -80,29 +80,8 @@ impl<'a> MirLowerCtx<'a> {
             trait_names: std::collections::HashSet::new(),
             current_vtable_locals: HashMap::new(),
             extern_symbols: HashMap::new(),
-            escape_map: HashMap::new(),
+            current_arena: None,
         }
-    }
-
-    /// Supply the storage classification computed by `analysis::escape`.
-    pub fn with_escape_map(
-        mut self,
-        map: HashMap<crate::semantic::BindingId, crate::escape::StorageClass>,
-    ) -> Self {
-        self.escape_map = map;
-        self
-    }
-
-    /// Does the escape analysis say this binding escapes?
-    ///
-    /// Only ever consulted alongside the type-shaped rule, never instead of it
-    /// -- see the comment at the return terminator for why the two are unioned.
-    fn escape_says_owned(&self, binding_id: Option<crate::semantic::BindingId>) -> bool {
-        use crate::escape::StorageClass;
-        matches!(
-            binding_id.and_then(|b| self.escape_map.get(&b)),
-            Some(StorageClass::Arc) | Some(StorageClass::Arena { .. })
-        )
     }
 
     fn get_field_type(&self, base_ty: &TypeRef, field: &str) -> TypeRef {
@@ -349,9 +328,66 @@ impl<'a> MirLowerCtx<'a> {
         })
     }
 
+    fn ensure_arena(&mut self, builder: &mut MirBuilder) -> Result<LocalId, String> {
+        if let Some(arena) = self.current_arena {
+            return Ok(arena);
+        }
+        let arena = builder.new_local(
+            TypeRef::Int,
+            false,
+            Some("__arena".to_string()),
+            None,
+        );
+        builder.push_instr(MirInstr::Assign(
+            arena,
+            Rvalue::BuiltinCall("lpp_arena_begin".to_string(), vec![]),
+        ))?;
+        self.current_arena = Some(arena);
+        Ok(arena)
+    }
+
+    fn struct_allocation(
+        &mut self,
+        builder: &mut MirBuilder,
+        ty: TypeRef,
+    ) -> Result<Rvalue, String> {
+        if let TypeRef::Custom(id) = ty {
+            if self
+                .type_table
+                .definitions
+                .get(id.0)
+                .map(|definition| definition.is_self_referential)
+                .unwrap_or(false)
+            {
+                let arena = self.ensure_arena(builder)?;
+                return Ok(Rvalue::AllocateArenaStruct(
+                    TypeRef::Custom(id),
+                    Operand::Local(arena),
+                ));
+            }
+            return Ok(Rvalue::AllocateArcStruct(TypeRef::Custom(id)));
+        }
+        Ok(Rvalue::AllocateArcStruct(ty))
+    }
+
+    fn release_arena_if_live(&self, builder: &mut MirBuilder) -> Result<(), String> {
+        if let Some(arena) = self.current_arena {
+            let discard = builder.new_local(TypeRef::Void, false, None, None);
+            builder.push_instr(MirInstr::Assign(
+                discard,
+                Rvalue::BuiltinCall(
+                    "lpp_arena_release".to_string(),
+                    vec![Operand::Local(arena)],
+                ),
+            ))?;
+        }
+        Ok(())
+    }
+
     fn lower_function(&mut self, func: &Function) -> Result<MirFunction, String> {
         // Set current type parameters for this function's generics
         let prev_type_params = std::mem::replace(&mut self.current_type_params, func.type_params.iter().map(|tp| tp.name.clone()).collect());
+        let prev_arena = self.current_arena.take();
 
         let func_id = *self.functions.get(&func.name).ok_or_else(|| {
             format!(
@@ -421,6 +457,7 @@ impl<'a> MirLowerCtx<'a> {
 
         if let Ok(current_block) = builder.current_block() {
             if current_block.0 < builder.function.blocks.len() {
+                self.release_arena_if_live(&mut builder)?;
                 builder.set_terminator(current_block, Terminator::Return(None))?;
             }
         }
@@ -463,7 +500,7 @@ impl<'a> MirLowerCtx<'a> {
         if builder.function.locals[destination.0].ownership != Ownership::Owned {
             return Ok(());
         }
-        if builder.function.locals[source.0].ownership != Ownership::Borrowed {
+        if !builder.function.locals[source.0].ownership.is_borrowed() {
             return Ok(());
         }
         if !Self::is_arc_managed(builder, source) {
@@ -474,9 +511,13 @@ impl<'a> MirLowerCtx<'a> {
 
     fn assignment_rvalue(builder: &MirBuilder, destination: LocalId, operand: Operand) -> Rvalue {
         if let Operand::Local(source) = operand {
-            if builder.function.locals[destination.0].ownership == Ownership::Owned
-                && builder.function.locals[source.0].ownership == Ownership::Owned
-            {
+            let destination_managed = builder.function.locals[destination.0]
+                .ownership
+                .is_managed();
+            let source_managed = builder.function.locals[source.0]
+                .ownership
+                .is_managed();
+            if destination_managed && source_managed {
                 return Rvalue::Move(source);
             }
             return Rvalue::Use(Operand::Local(source));
@@ -608,28 +649,18 @@ impl<'a> MirLowerCtx<'a> {
                                 | TypeRef::Generic(_, _)
                                 | TypeRef::Str
                         );
-                        let escape_says = self.escape_says_owned(decl.binding_id);
-                        // A scalar can never carry an ARC reference, so the
-                        // escape map must not be allowed to promote one: that
-                        // would emit a retain on an integer.
-                        let is_managed_shape = !matches!(
-                            &decl.ty,
-                            TypeRef::Int
-                                | TypeRef::Float
-                                | TypeRef::Bool
-                                | TypeRef::Char
-                                | TypeRef::Void
-                        );
-                        ((type_says_managed || escape_says) && is_managed_shape).then_some(*local)
+                        type_says_managed.then_some(*local)
                     }
                     _ => None,
                 };
                 let terminator = if let Some(local) = managed_return {
-                    if builder.function.locals[local.0].ownership == Ownership::Borrowed {
+                    if builder.function.locals[local.0].ownership.is_borrowed() {
                         builder.push_instr(MirInstr::Retain(local))?;
                     }
+                    self.release_arena_if_live(builder)?;
                     Terminator::ReturnOwned(Operand::Local(local))
                 } else {
+                    self.release_arena_if_live(builder)?;
                     Terminator::Return(op)
                 };
                 builder.terminate_current_block(terminator)?;
@@ -1067,8 +1098,8 @@ impl<'a> MirLowerCtx<'a> {
                 let binding_id = BindingId(ast_id);
                 if let Some(local_id) = binding_map.get(&binding_id) {
                     let local = &builder.function.locals[local_id.0];
-                    if local.ownership == Ownership::Owned {
-                        // Identifier reads borrow owned objects. A later ownership
+                    if local.ownership.is_managed() {
+                        // Identifier reads borrow managed objects. A later ownership
                         // operation decides whether to retain or move the value.
                         Ok(Operand::Borrowed(*local_id))
                     } else {
@@ -1099,7 +1130,7 @@ impl<'a> MirLowerCtx<'a> {
                             temp,
                             Rvalue::FieldAccess(Operand::Local(env_ptr), format!("cap_{}", idx)),
                         ))?;
-                        if builder.function.locals[temp.0].ownership == Ownership::Borrowed {
+                        if builder.function.locals[temp.0].ownership.is_borrowed() {
                             Ok(Operand::Borrowed(temp))
                         } else {
                             Ok(Operand::Local(temp))
@@ -1146,7 +1177,7 @@ impl<'a> MirLowerCtx<'a> {
             }
             Expr::BinaryOp { left, op, right } => {
                 // `a + b` on two Str values means concatenation. The type
-                // checker allows Add on any two matching types, so this reached
+                // checker allows Add on any two matchingng types, so this reached
                 // the backend and emitted `iadd` on two pointers: it compiled
                 // clean, then segfaulted with no diagnostic at all.
                 if *op == BinaryOperator::Add {
@@ -1454,10 +1485,11 @@ impl<'a> MirLowerCtx<'a> {
                     }
 
                     if let Some(&struct_id) = self.type_table.structs_by_name.get(name) {
-                        builder.push_instr(MirInstr::Assign(
-                            temp,
-                            Rvalue::AllocateArcStruct(TypeRef::Custom(struct_id)),
-                        ))?;
+                        let allocation = self.struct_allocation(
+                            builder,
+                            TypeRef::Custom(struct_id),
+                        )?;
+                        builder.push_instr(MirInstr::Assign(temp, allocation))?;
                         if !lowered_args.is_empty() {
                             let struct_def = &self.type_table.definitions[struct_id.0];
                             for (i, val_op) in lowered_args.into_iter().enumerate() {
@@ -1593,7 +1625,7 @@ impl<'a> MirLowerCtx<'a> {
                                 Rvalue::BuiltinCall(symbol, lowered_args),
                             ))?;
                             return Ok(
-                                if builder.function.locals[temp.0].ownership == Ownership::Borrowed
+                                if builder.function.locals[temp.0].ownership.is_borrowed()
                                 {
                                     Operand::Borrowed(temp)
                                 } else {
@@ -1634,10 +1666,8 @@ impl<'a> MirLowerCtx<'a> {
                                 if let Some(id) = self.type_table.lookup_struct(name) {
                                     let ty = TypeRef::Custom(id);
                                     let temp = builder.new_local(ty.clone(), false, None, None);
-                                    builder.push_instr(MirInstr::Assign(
-                                        temp,
-                                        Rvalue::AllocateArcStruct(ty),
-                                    ))?;
+                                    let allocation = self.struct_allocation(builder, ty)?;
+                                    builder.push_instr(MirInstr::Assign(temp, allocation))?;
                                     builder.push_instr(MirInstr::AssignField {
                                         base: temp,
                                         field: "__tag".to_string(),
@@ -1679,7 +1709,7 @@ impl<'a> MirLowerCtx<'a> {
                     temp,
                     Rvalue::FieldAccess(base_op, field.clone()),
                 ))?;
-                if builder.function.locals[temp.0].ownership == Ownership::Borrowed {
+                if builder.function.locals[temp.0].ownership.is_borrowed() {
                     Ok(Operand::Borrowed(temp))
                 } else {
                     Ok(Operand::Local(temp))
@@ -1872,6 +1902,7 @@ impl<'a> MirLowerCtx<'a> {
                 // Set closure lowering context
                 let saved_env_ptr = self.current_env_ptr;
                 let saved_captures = std::mem::take(&mut self.current_captures);
+                let saved_arena = self.current_arena.take();
 
                 self.current_env_ptr = Some(env_ptr_local);
                 self.current_captures = captures;
@@ -1892,6 +1923,7 @@ impl<'a> MirLowerCtx<'a> {
                 // Restore context
                 self.current_env_ptr = saved_env_ptr;
                 self.current_captures = saved_captures;
+                self.current_arena = saved_arena;
 
                 // Return closure fat pointer
                 let closure_local = builder.new_local(
@@ -1926,7 +1958,8 @@ impl<'a> MirLowerCtx<'a> {
                 };
                 let ty = TypeRef::Custom(struct_id);
                 let temp = builder.new_local(ty.clone(), false, None, None);
-                builder.push_instr(MirInstr::Assign(temp, Rvalue::AllocateArcStruct(ty)))?;
+                let allocation = self.struct_allocation(builder, ty)?;
+                builder.push_instr(MirInstr::Assign(temp, allocation))?;
                 builder.push_instr(MirInstr::AssignField {
                     base: temp,
                     field: "__tag".to_string(),
@@ -2126,3 +2159,4 @@ impl<'a> MirLowerCtx<'a> {
         0 // fallback
     }
 }
+

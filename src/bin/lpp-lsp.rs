@@ -200,7 +200,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 if line.contains("def ") {
                                     hover_contents = "### L++ Function\nDefines a top-level or method function frame.";
                                 } else if line.contains("struct ") {
-                                    hover_contents = "### L++ Struct\nDefines a stack/heap data structure with escape analysis optimizations.";
+                                    hover_contents = "### L++ Struct\nDefines a stack/heap data structure with MIR escape-analysis optimizations.";
                                 } else if line.contains("print_str") {
                                     hover_contents = "### `print_str(s: Str)`\nOutputs a raw string to standard output.";
                                 }

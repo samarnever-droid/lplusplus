@@ -1,8 +1,6 @@
-use crate::escape::StorageClass;
 use crate::mir::ir::*;
-use crate::semantic::BindingId;
 use crate::typecheck::TypeRef;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 fn successors(terminator: &Terminator) -> Vec<usize> {
     match terminator {
@@ -49,12 +47,13 @@ fn collect_reads(instr: &MirInstr, out: &mut HashSet<LocalId>) {
                     op(a, out);
                 }
             }
-            Rvalue::MakeClosure(_, caps) => {
+            Rvalue::MakeClosure(_, caps) | Rvalue::MakeStackClosure(_, caps) => {
                 for c in caps {
                     op(c, out);
                 }
             }
             Rvalue::FieldAccess(b, _) => op(b, out),
+            Rvalue::AllocateArenaStruct(_, arena) => op(arena, out),
             Rvalue::SpawnThread(o) => op(o, out),
             _ => {}
         },
@@ -84,19 +83,6 @@ fn collect_terminator_reads(t: &Terminator, out: &mut HashSet<LocalId>) {
     }
 }
 
-/// Transfer definite live-owned locals through one basic block.
-///
-/// The set contains locals that are known to hold an initialized ARC reference
-/// on every path reaching the current point. `Move` removes its source; an
-/// assignment creates/replaces the destination owner.
-fn transfer_live(
-    instructions: &[MirInstr],
-    live: HashSet<LocalId>,
-    cleanup_locals: &HashSet<LocalId>,
-) -> HashSet<LocalId> {
-    transfer_live_with_drops(instructions, live, cleanup_locals, None)
-}
-
 /// As `transfer_live`, but also removes the owners the rewriter will release at
 /// the end of this block.
 ///
@@ -120,7 +106,7 @@ fn transfer_live_with_drops(
                     }
                     // Closure construction transfers the owned environment into
                     // the closure capsule; the capsule destructor releases it.
-                    Rvalue::MakeClosure(_, captures) => {
+                    Rvalue::MakeClosure(_, captures) | Rvalue::MakeStackClosure(_, captures) => {
                         if let Some(Operand::Local(environment)) = captures.first() {
                             live.remove(environment);
                         }
@@ -173,10 +159,7 @@ fn block_defines(instructions: &[MirInstr], local: LocalId) -> bool {
 /// for a local that might be uninitialized on a branch. That may leave an
 /// unsupported alias case allocated, but avoids the more serious failure of
 /// dereferencing/freeing an uninitialized or moved value.
-pub fn run_arc_insertion_pass(
-    program: &mut MirProgram,
-    _escape_map: &HashMap<BindingId, StorageClass>,
-) {
+pub fn run_arc_insertion_pass(program: &mut MirProgram) {
     run_arc_insertion_pass_with_weak(program, &HashSet::new())
 }
 
@@ -189,18 +172,16 @@ pub fn run_arc_insertion_pass_with_weak(
     weak_fields: &HashSet<(crate::typecheck::StructTypeId, String)>,
 ) {
     for function in program.functions.values_mut() {
-        // All AOT custom-struct allocations use AllocateArcStruct. Therefore
-        // every owned custom local has a valid ARC header and can be cleaned at
-        // scope exit. Borrowed parameters remain caller-owned and are excluded.
+        // Managed locals may be heap-backed ARC values or frame-local values
+        // that will be rewritten by pass_escape. Keep both kinds in the
+        // liveness analysis; the backend distinguishes ARC release from direct
+        // stack-destructor cleanup. Borrowed parameters remain caller-owned and
+        // are excluded.
         let arc_locals: HashSet<LocalId> = function
             .locals
             .iter()
             .filter(|local| {
-                local.ownership == Ownership::Owned
-                    && matches!(
-                        &local.ty,
-                        TypeRef::Custom(_) | TypeRef::Function | TypeRef::Generic(_, _) | TypeRef::Str
-                    )
+                local.ownership.is_managed()
             })
             .map(|local| local.id)
             .collect();
@@ -213,8 +194,8 @@ pub fn run_arc_insertion_pass_with_weak(
             .locals
             .iter()
             .filter(|local| {
-                local.ownership == Ownership::Copy
-                    && matches!(local.ty, TypeRef::Custom(_))
+                local.ownership.is_copy()
+                    && matches!(local.ty, TypeRef::Custom(_) | TypeRef::Function)
             })
             .map(|local| local.id)
             .collect();
@@ -509,7 +490,8 @@ pub fn run_arc_insertion_pass_with_weak(
                             // The environment reference becomes owned by the
                             // ARC closure capsule and is released by its
                             // destructor, not by the creating scope.
-                            Rvalue::MakeClosure(_, captures) => match captures.first() {
+                            Rvalue::MakeClosure(_, captures)
+                            | Rvalue::MakeStackClosure(_, captures) => match captures.first() {
                                 Some(Operand::Local(environment)) => Some(*environment),
                                 _ => None,
                             },
@@ -780,7 +762,7 @@ mod tests {
         let mut functions = HashMap::new();
         functions.insert(FuncId(0), f);
         let mut p = MirProgram { functions };
-        run_arc_insertion_pass(&mut p, &HashMap::new());
+        run_arc_insertion_pass(&mut p);
         p.functions.remove(&FuncId(0)).unwrap()
     }
 

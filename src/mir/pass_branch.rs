@@ -35,7 +35,7 @@ pub fn run(program: &mut MirProgram) -> usize {
             };
             if destination != condition
                 || !comparison(&op)
-                || function.locals[destination.0].ownership != Ownership::Copy
+                || !function.locals[destination.0].ownership.is_copy()
             {
                 continue;
             }

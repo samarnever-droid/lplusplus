@@ -1,10 +1,9 @@
-//! Value-by-default: move provably frame-local structs off the heap.
+//! Value-by-default: move provably frame-local payloads off the heap.
 //!
 //! This pass used to carry its own use-scan -- a private, hand-written answer to
 //! "can this local escape?" that duplicated, in a different idiom, the question
-//! `analysis::escape` was already asking over the AST and `pass_arc` was asking
-//! again over ownership flags. Three partial answers to one question is how the
-//! double-free and the nondeterministic release order happened.
+//! `pass_arc` was asking over ownership flags. Multiple partial answers to one
+//! question are how the double-free and nondeterministic release order happened.
 //!
 //! The scan now lives in `escape_solver`, which computes one fact per local over
 //! MIR with a compiler-enforced exhaustive match. This pass is what remains:
@@ -22,8 +21,8 @@ pub struct EscapeStats {
     pub considered: usize,
 }
 
-/// Rewrite `AllocateArcStruct` to `AllocateStackStruct` for every local the
-/// solver proved cannot outlive its frame.
+/// Rewrite frame-local struct and closure allocations to stack payloads for
+/// every managed local the solver proved cannot outlive its frame.
 pub fn run(
     program: &mut MirProgram,
     facts: &EscapeFacts,
@@ -63,11 +62,15 @@ pub fn run(
                 == Storage::Frame
         };
 
-        let mut allocation_count: HashMap<LocalId, usize> = HashMap::new();
+        let mut candidate_count: HashMap<LocalId, usize> = HashMap::new();
         for block in &function.blocks {
             for instruction in &block.instrs {
-                if let MirInstr::Assign(dest, Rvalue::AllocateArcStruct(_)) = instruction {
-                    *allocation_count.entry(*dest).or_insert(0) += 1;
+                if let MirInstr::Assign(
+                    dest,
+                    Rvalue::AllocateArcStruct(_) | Rvalue::MakeClosure(_, _),
+                ) = instruction
+                {
+                    *candidate_count.entry(*dest).or_insert(0) += 1;
                 }
             }
         }
@@ -75,36 +78,42 @@ pub fn run(
         let mut promote: HashSet<LocalId> = HashSet::new();
         for block in &function.blocks {
             for instruction in &block.instrs {
-                if let MirInstr::Assign(dest, Rvalue::AllocateArcStruct(ty)) = instruction {
-                    stats.considered += 1;
-                    let stackable = match ty {
-                        TypeRef::Custom(id) => struct_can_stack_allocate(type_table, *id),
-                        _ => false,
-                    };
-                    if !stackable {
-                        continue;
-                    }
-                    // A local with multiple allocation instructions may be
-                    // initialized on different control-flow paths. Keep that
-                    // shape heap-backed: a single stack slot must not be
-                    // mistaken for several statically distinct objects. A
-                    // single allocation instruction in a loop is one reusable
-                    // frame slot and is handled by the loop cleanup analysis.
-                    if allocation_count.get(dest).copied().unwrap_or(0) != 1 {
-                        continue;
-                    }
-                    // Both halves of a construct-then-move pair must be frame
-                    // locals; the object is one lifetime.
-                    let dest_ok = frame_local(*dest);
-                    let pair_ok = moved_into
-                        .get(dest)
-                        .map(|named| frame_local(*named))
-                        .unwrap_or(true);
-                    if dest_ok && pair_ok {
-                        promote.insert(*dest);
-                        if let Some(named) = moved_into.get(dest) {
-                            promote.insert(*named);
-                        }
+                let (dest, stackable) = match instruction {
+                    MirInstr::Assign(dest, Rvalue::AllocateArcStruct(ty)) => (
+                        *dest,
+                        matches!(ty, TypeRef::Custom(id) if struct_can_stack_allocate(type_table, *id)),
+                    ),
+                    // A closure capsule is a fixed two-word object. Its
+                    // environment remains ARC-managed; only this capsule can
+                    // be frame-local when the closure value itself never
+                    // escapes.
+                    MirInstr::Assign(dest, Rvalue::MakeClosure(_, _)) => (*dest, true),
+                    _ => continue,
+                };
+                stats.considered += 1;
+                if !stackable {
+                    continue;
+                }
+                // A local with multiple allocation instructions may be
+                // initialized on different control-flow paths. Keep that
+                // shape heap-backed: a single stack slot must not be mistaken
+                // for several statically distinct objects. A single allocation
+                // instruction in a loop is one reusable frame slot and is
+                // handled by the loop cleanup analysis.
+                if candidate_count.get(&dest).copied().unwrap_or(0) != 1 {
+                    continue;
+                }
+                // Both halves of a construct-then-move pair must be frame
+                // locals; the object is one lifetime.
+                let dest_ok = frame_local(dest);
+                let pair_ok = moved_into
+                    .get(&dest)
+                    .map(|named| frame_local(*named))
+                    .unwrap_or(true);
+                if dest_ok && pair_ok {
+                    promote.insert(dest);
+                    if let Some(named) = moved_into.get(&dest) {
+                        promote.insert(*named);
                     }
                 }
             }
@@ -118,9 +127,16 @@ pub fn run(
             for instruction in &mut block.instrs {
                 if let MirInstr::Assign(dest, rvalue) = instruction {
                     if promote.contains(dest) {
-                        if let Rvalue::AllocateArcStruct(ty) = rvalue {
-                            *rvalue = Rvalue::AllocateStackStruct(ty.clone());
-                            stats.promoted += 1;
+                        match rvalue {
+                            Rvalue::AllocateArcStruct(ty) => {
+                                *rvalue = Rvalue::AllocateStackStruct(ty.clone());
+                                stats.promoted += 1;
+                            }
+                            Rvalue::MakeClosure(func, captures) => {
+                                *rvalue = Rvalue::MakeStackClosure(*func, captures.clone());
+                                stats.promoted += 1;
+                            }
+                            _ => {}
                         }
                     }
                 }

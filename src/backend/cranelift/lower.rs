@@ -274,15 +274,27 @@ impl<'a, M: Module> FunctionLower<'a, M> {
             MirInstr::Retain(local) => {
                 // A stack payload has no ARC header and must never reach this
                 // path. `pass_arc` only emits Retain for ARC-managed locals.
-                if matches!(locals[local.0].ownership, Ownership::Copy) {
+                if locals[local.0].ownership.is_copy() {
                     return Err(format!("attempted to retain stack local {:?}", local));
                 }
+                let is_arena = matches!(
+                    locals[local.0].ty,
+                    TypeRef::Custom(id)
+                        if self
+                            .type_table
+                            .definitions
+                            .get(id.0)
+                            .map(|definition| definition.is_self_referential)
+                            .unwrap_or(false)
+                );
                 let local_is_shared = self
                     .shared_locals
                     .map(|s| s.contains(local))
                     .unwrap_or(true);
                 let use_non_atomic = self.arc_non_atomic || !local_is_shared;
-                let symbol = if use_non_atomic {
+                let symbol = if is_arena {
+                    "lpp_arena_retain"
+                } else if use_non_atomic {
                     "lpp_arc_retain_local"
                 } else {
                     "lpp_arc_retain"
@@ -302,24 +314,49 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                 // runtime to inspect bytes before the slot would be a header
                 // violation. The destructor preserves the cycle-breaker's weak
                 // field skips and releases each owned child exactly once.
-                if let TypeRef::Custom(struct_id) = locals[local.0].ty {
-                    if matches!(locals[local.0].ownership, Ownership::Copy) {
-                        let drop_id = *self.drop_ids.get(&struct_id).ok_or_else(|| {
-                            format!("missing stack destructor for struct {:?}", struct_id)
-                        })?;
-                        let drop_ref = self.module.declare_func_in_func(drop_id, builder.func);
-                        let value = self.operand_to_value(builder, &Operand::Local(*local), local_vars)?;
-                        builder.ins().call(drop_ref, &[value]);
-                        return Ok(());
+                if locals[local.0].ownership.is_copy() {
+                    let value = self.operand_to_value(builder, &Operand::Local(*local), local_vars)?;
+                    match &locals[local.0].ty {
+                        TypeRef::Custom(struct_id) => {
+                            let drop_id = *self.drop_ids.get(struct_id).ok_or_else(|| {
+                                format!("missing stack destructor for struct {:?}", struct_id)
+                            })?;
+                            let drop_ref = self.module.declare_func_in_func(drop_id, builder.func);
+                            builder.ins().call(drop_ref, &[value]);
+                            return Ok(());
+                        }
+                        TypeRef::Function => {
+                            let destroy_id = *self
+                                .builtin_ids
+                                .get("lpp_closure_destroy")
+                                .ok_or_else(|| "closure destructor was not declared".to_string())?;
+                            let destroy_ref =
+                                self.module.declare_func_in_func(destroy_id, builder.func);
+                            builder.ins().call(destroy_ref, &[value]);
+                            return Ok(());
+                        }
+                        _ => {}
                     }
                 }
 
+                let is_arena = matches!(
+                    locals[local.0].ty,
+                    TypeRef::Custom(id)
+                        if self
+                            .type_table
+                            .definitions
+                            .get(id.0)
+                            .map(|definition| definition.is_self_referential)
+                            .unwrap_or(false)
+                );
                 let local_is_shared = self
                     .shared_locals
                     .map(|s| s.contains(local))
                     .unwrap_or(true);
                 let use_non_atomic = self.arc_non_atomic || !local_is_shared;
-                let symbol = if use_non_atomic {
+                let symbol = if is_arena {
+                    "lpp_arena_release_node"
+                } else if use_non_atomic {
                     "lpp_arc_release_local"
                 } else {
                     "lpp_arc_release"
@@ -334,6 +371,101 @@ impl<'a, M: Module> FunctionLower<'a, M> {
             }
         }
         Ok(())
+    }
+
+    fn vector_from_lanes(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        lanes: [Value; 2],
+    ) -> Value {
+        let value = builder.ins().splat(cl_types::I64X2, lanes[0]);
+        builder.ins().insertlane(value, lanes[1], 1u8)
+    }
+
+    fn lower_vector_builtin(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        symbol: &str,
+        args: &[Operand],
+        local_vars: &HashMap<LocalId, Variable>,
+    ) -> Result<Option<Value>, String> {
+        let scalar = |builder: &mut FunctionBuilder, op: &Operand, this: &mut Self| {
+            this.operand_to_value(builder, op, local_vars)
+        };
+        let vector = |builder: &mut FunctionBuilder, op: &Operand, this: &mut Self| {
+            this.operand_to_value(builder, op, local_vars)
+        };
+        let value = match symbol {
+            "lpp_vec_i64x2" => {
+                if args.len() != 2 {
+                    return Err("vec_i64x2 requires exactly two lanes".to_string());
+                }
+                let lanes = [
+                    scalar(builder, &args[0], self)?,
+                    scalar(builder, &args[1], self)?,
+                ];
+                Some(self.vector_from_lanes(builder, lanes))
+            }
+            "lpp_vec_i64x2_splat" => {
+                let lane = scalar(builder, args.first().ok_or_else(|| "vector splat needs one argument".to_string())?, self)?;
+                Some(self.vector_from_lanes(builder, [lane, lane]))
+            }
+            "lpp_vec_i64x2_add" | "lpp_vec_i64x2_sub" | "lpp_vec_i64x2_mul"
+            | "lpp_vec_i64x2_xor" | "lpp_vec_i64x2_shr" | "lpp_vec_i64x2_shr_var" => {
+                let left = vector(builder, args.first().ok_or_else(|| "vector operation is missing its left operand".to_string())?, self)?;
+                let right = args.get(1).ok_or_else(|| "vector operation is missing its right operand".to_string())?;
+                if symbol == "lpp_vec_i64x2_shr" {
+                    let shift = match right {
+                        Operand::Int(value) => *value,
+                        _ => return Err("vector shift amount must be a constant integer".to_string()),
+                    };
+                    let mut lanes = [builder.ins().iconst(cl_types::I64, 0); 2];
+                    for lane in 0..2u8 {
+                        let item = builder.ins().extractlane(left, lane);
+                        lanes[lane as usize] = builder.ins().sshr_imm(item, shift);
+                    }
+                    Some(self.vector_from_lanes(builder, lanes))
+                } else if symbol == "lpp_vec_i64x2_shr_var" {
+                    let right = vector(builder, right, self)?;
+                    let left0 = builder.ins().extractlane(left, 0u8);
+                    let left1 = builder.ins().extractlane(left, 1u8);
+                    let right0 = builder.ins().extractlane(right, 0u8);
+                    let right1 = builder.ins().extractlane(right, 1u8);
+                    let lanes = [
+                        builder.ins().sshr(left0, right0),
+                        builder.ins().sshr(left1, right1),
+                    ];
+                    Some(self.vector_from_lanes(builder, lanes))
+                } else {
+                    let right = vector(builder, right, self)?;
+                    Some(match symbol {
+                        "lpp_vec_i64x2_add" => builder.ins().iadd(left, right),
+                        "lpp_vec_i64x2_sub" => builder.ins().isub(left, right),
+                        "lpp_vec_i64x2_mul" => builder.ins().imul(left, right),
+                        _ => builder.ins().bxor(left, right),
+                    })
+                }
+            }
+            "lpp_vec_i64x2_extract" => {
+                let value = vector(builder, args.first().ok_or_else(|| "vector extract is missing its vector".to_string())?, self)?;
+                let lane = match args.get(1) {
+                    Some(Operand::Int(index)) if (0..2).contains(index) => *index as u8,
+                    _ => return Err("vector extract lane must be a constant integer 0..3".to_string()),
+                };
+                Some(builder.ins().extractlane(value, lane))
+            }
+            "lpp_vec_i64x2_sum" => {
+                let value = vector(builder, args.first().ok_or_else(|| "vector sum is missing its vector".to_string())?, self)?;
+                let mut result = builder.ins().extractlane(value, 0u8);
+                for lane in 1..2u8 {
+                    let item = builder.ins().extractlane(value, lane);
+                    result = builder.ins().iadd(result, item);
+                }
+                Some(result)
+            }
+            _ => None,
+        };
+        Ok(value)
     }
 
     fn lower_rvalue_inner(
@@ -499,6 +631,9 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                 })
             }
             Rvalue::BuiltinCall(symbol, args) => {
+                if let Some(value) = self.lower_vector_builtin(builder, symbol, args, local_vars)? {
+                    return Ok(value);
+                }
                 // Look up known builtins first; auto-declare unknown symbols as FFI imports
                 let cl_id = if let Some(&id) = self.builtin_ids.get(symbol) {
                     id
@@ -561,6 +696,35 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                     .copied()
                     .ok_or_else(|| "Allocator call returned no value".to_string())
             }
+            Rvalue::AllocateArenaStruct(TypeRef::Custom(struct_id), arena) => {
+                let (_, layout_size) = struct_layout(self.type_table, *struct_id);
+                let size_val = builder.ins().iconst(cl_types::I64, layout_size as i64);
+                let arena_id = *self
+                    .builtin_ids
+                    .get("lpp_arena_alloc")
+                    .ok_or_else(|| "Builtin 'lpp_arena_alloc' was not declared".to_string())?;
+                let arena_ref = self.module.declare_func_in_func(arena_id, builder.func);
+                let drop_id = *self.drop_ids.get(struct_id).ok_or_else(|| {
+                    format!("missing generated arena destructor for struct {:?}", struct_id)
+                })?;
+                let drop_ref = self.module.declare_func_in_func(drop_id, builder.func);
+                let drop_addr = builder
+                    .ins()
+                    .func_addr(self.module.target_config().pointer_type(), drop_ref);
+                let arena_value = self.operand_to_value(builder, arena, local_vars)?;
+                let call = builder
+                    .ins()
+                    .call(arena_ref, &[size_val, arena_value, drop_addr]);
+                builder
+                    .inst_results(call)
+                    .first()
+                    .copied()
+                    .ok_or_else(|| "Arena allocator call returned no value".to_string())
+            }
+            Rvalue::AllocateArenaStruct(other, _) => Err(format!(
+                "arena allocation requires a resolved custom struct type, got {:?}",
+                other
+            )),
             Rvalue::AllocateStackStruct(TypeRef::Custom(struct_id)) => {
                 // A frame-local struct: same payload layout as the heap form,
                 // so every field load/store below is unchanged. What is gone is
@@ -646,27 +810,48 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                     ))
                 }
             }
-            Rvalue::MakeClosure(mir_func_id, args) => {
-                let size_val = builder.ins().iconst(cl_types::I64, 16);
-                let builtin_id = *self
-                    .builtin_ids
-                    .get("lpp_arc_alloc_with_destructor")
-                    .ok_or_else(|| {
-                        "Builtin 'lpp_arc_alloc_with_destructor' was not declared".to_string()
+            rv @ (Rvalue::MakeClosure(mir_func_id, args)
+            | Rvalue::MakeStackClosure(mir_func_id, args)) => {
+                let stack_closure = matches!(rv, Rvalue::MakeStackClosure(_, _));
+                let pointer_type = self.module.target_config().pointer_type();
+                let closure_ptr = if stack_closure {
+                    // A frame-local closure capsule is exactly two words:
+                    // [code pointer, environment pointer]. The environment is
+                    // still ARC-owned and is released by lpp_closure_destroy.
+                    let slot = builder.create_sized_stack_slot(StackSlotData::new(
+                        StackSlotKind::ExplicitSlot,
+                        16,
+                        3,
+                    ));
+                    let addr = builder.ins().stack_addr(pointer_type, slot, 0);
+                    let zero = builder.ins().iconst(cl_types::I64, 0);
+                    builder
+                        .ins()
+                        .store(MemFlags::trusted(), zero, addr, 0);
+                    builder
+                        .ins()
+                        .store(MemFlags::trusted(), zero, addr, 8);
+                    addr
+                } else {
+                    let size_val = builder.ins().iconst(cl_types::I64, 16);
+                    let builtin_id = *self
+                        .builtin_ids
+                        .get("lpp_arc_alloc_with_destructor")
+                        .ok_or_else(|| {
+                            "Builtin 'lpp_arc_alloc_with_destructor' was not declared".to_string()
+                        })?;
+                    let alloc_func_ref =
+                        self.module.declare_func_in_func(builtin_id, builder.func);
+                    let destroy_id = *self.builtin_ids.get("lpp_closure_destroy").ok_or_else(|| {
+                        "Builtin 'lpp_closure_destroy' was not declared".to_string()
                     })?;
-                let alloc_func_ref = self.module.declare_func_in_func(builtin_id, builder.func);
-                let destroy_id = *self
-                    .builtin_ids
-                    .get("lpp_closure_destroy")
-                    .ok_or_else(|| "Builtin 'lpp_closure_destroy' was not declared".to_string())?;
-                let destroy_ref = self.module.declare_func_in_func(destroy_id, builder.func);
-                let destroy_addr = builder
-                    .ins()
-                    .func_addr(self.module.target_config().pointer_type(), destroy_ref);
-                let call = builder
-                    .ins()
-                    .call(alloc_func_ref, &[size_val, destroy_addr]);
-                let closure_ptr = builder.inst_results(call)[0];
+                    let destroy_ref = self.module.declare_func_in_func(destroy_id, builder.func);
+                    let destroy_addr = builder.ins().func_addr(pointer_type, destroy_ref);
+                    let call = builder
+                        .ins()
+                        .call(alloc_func_ref, &[size_val, destroy_addr]);
+                    builder.inst_results(call)[0]
+                };
 
                 let cl_id = *self.func_ids.get(mir_func_id).ok_or_else(|| {
                     format!(
@@ -675,9 +860,7 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                     )
                 })?;
                 let func_ref = self.module.declare_func_in_func(cl_id, builder.func);
-                let pointer_type = self.module.target_config().pointer_type();
                 let func_addr = builder.ins().func_addr(pointer_type, func_ref);
-
                 builder.ins().store(
                     cranelift_codegen::ir::MemFlags::new(),
                     func_addr,
@@ -689,7 +872,6 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                     "internal error: closure construction is missing its environment".to_string()
                 })?;
                 let env_val = self.operand_to_value(builder, env_operand, local_vars)?;
-
                 builder.ins().store(
                     cranelift_codegen::ir::MemFlags::new(),
                     env_val,
@@ -927,6 +1109,10 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                         | TypeRef::Function
                         | TypeRef::TypeParam(_)
                         | TypeRef::Void => builder.ins().iconst(cl_types::I64, 0),
+                        TypeRef::VectorI64x2 => {
+                            let zero = builder.ins().iconst(cl_types::I64, 0);
+                            builder.ins().splat(cl_types::I64X2, zero)
+                        },
                     };
                     builder.ins().return_(&[zero]);
                 }

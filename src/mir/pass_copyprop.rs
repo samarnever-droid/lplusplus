@@ -121,7 +121,9 @@ fn count_rvalue(rvalue: &Rvalue, counts: &mut [u32]) {
             count_operands(args, counts);
         }
         Rvalue::BuiltinCall(_, args) => count_operands(args, counts),
-        Rvalue::MakeClosure(_, captures) => count_operands(captures, counts),
+        Rvalue::MakeClosure(_, captures) | Rvalue::MakeStackClosure(_, captures) => {
+            count_operands(captures, counts)
+        }
         Rvalue::FieldAccess(base, _) => count_operand(base, counts),
         Rvalue::SpawnThread(closure) => count_operand(closure, counts),
         Rvalue::AllocateStruct(_)
@@ -129,6 +131,7 @@ fn count_rvalue(rvalue: &Rvalue, counts: &mut [u32]) {
         | Rvalue::AllocateStackStruct(_)
         | Rvalue::AllocateList(_)
         | Rvalue::FuncRef(_) => {}
+        Rvalue::AllocateArenaStruct(_, arena) => count_operand(arena, counts),
     }
 }
 

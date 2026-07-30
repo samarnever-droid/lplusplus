@@ -266,6 +266,101 @@ int64_t lpp_weak_get(int64_t raw, int64_t expected_generation) {
     return raw;
 }
 
+typedef struct LppArenaRecord LppArenaRecord;
+typedef struct LppArenaRegion LppArenaRegion;
+static void lpp_arc_free(LppArcHeader *header);
+void lpp_arc_retain(void *payload);
+void lpp_arc_release(void *payload);
+struct LppArenaRecord {
+    LppArcHeader *header;
+    LppArenaRecord *next;
+};
+struct LppArenaRegion {
+    int refs; /* one owner handle plus one reference per node */
+    LppArenaRecord *records;
+    LppArenaRegion *next;
+};
+static LppArenaRegion *lpp_arena_regions;
+
+static LppArenaRegion *lpp_arena_for_header(LppArcHeader *header) {
+    for (LppArenaRegion *region = lpp_arena_regions; region; region = region->next) {
+        for (LppArenaRecord *record = region->records; record; record = record->next) {
+            if (record->header == header) return region;
+        }
+    }
+    return 0;
+}
+
+static void lpp_arena_destroy(LppArenaRegion *region) {
+    LppArenaRegion **link = &lpp_arena_regions;
+    while (*link && *link != region) link = &(*link)->next;
+    if (*link == region) *link = region->next;
+    LppArenaRecord *records = region->records;
+    while (records) {
+        LppArenaRecord *next = records->next;
+        /* Node destructors already ran when their refcounts reached zero. */
+        lpp_arc_free(records->header);
+        lpp_arc_release(records);
+        records = next;
+    }
+    lpp_arc_release(region);
+}
+
+static void lpp_arena_node_zero(LppArenaRegion *region) {
+    if (--region->refs == 0) lpp_arena_destroy(region);
+}
+
+void *lpp_arena_begin(void) {
+    LppArenaRegion *region = (LppArenaRegion *)lpp_arc_alloc(sizeof(*region));
+    if (!region) return 0;
+    region->refs = 1;
+    region->records = 0;
+    region->next = lpp_arena_regions;
+    lpp_arena_regions = region;
+    return region;
+}
+
+void lpp_arena_release(void *raw_region) {
+    if (!raw_region) return;
+    LppArenaRegion *region = (LppArenaRegion *)raw_region;
+    if (--region->refs == 0) lpp_arena_destroy(region);
+}
+
+void *lpp_arena_alloc(int64_t size, void *raw_region, LppArcDestructor destructor) {
+    if (!raw_region || size < 0) return 0;
+    LppArenaRegion *region = (LppArenaRegion *)raw_region;
+    void *payload = lpp_arc_alloc_with_destructor(size, destructor);
+    if (!payload) return 0;
+    LppArenaRecord *record = (LppArenaRecord *)lpp_arc_alloc(sizeof(*record));
+    if (!record) {
+        lpp_arc_release(payload);
+        return 0;
+    }
+    record->header = (LppArcHeader *)payload - 1;
+    record->next = region->records;
+    region->records = record;
+    region->refs += 1;
+    return payload;
+}
+
+void lpp_arena_retain(void *payload) {
+    if (!payload) return;
+    LppArcHeader *header = (LppArcHeader *)payload - 1;
+    if (lpp_arena_for_header(header)) lpp_arc_retain(payload);
+}
+
+void lpp_arena_release_node(void *payload) {
+    if (!payload) return;
+    LppArcHeader *header = (LppArcHeader *)payload - 1;
+    LppArenaRegion *region = lpp_arena_for_header(header);
+    if (!region || lpp__is_immortal(header)) return;
+    if (--header->refcount == 0) {
+        (void)__atomic_add_fetch(&header->generation, 1, __ATOMIC_RELEASE);
+        if (header->destructor) header->destructor(payload);
+        lpp_arena_node_zero(region);
+    }
+}
+
 void lpp_arc_retain(void *payload) {
     if (!payload) return;
     LppArcHeader *header = (LppArcHeader *)payload - 1;
@@ -293,10 +388,12 @@ void lpp_arc_release(void *payload) {
     if (!payload) return;
     LppArcHeader *header = (LppArcHeader *)payload - 1;
     if (lpp__is_immortal(header)) return;
+    LppArenaRegion *arena = lpp_arena_for_header(header);
     if (__atomic_sub_fetch(&header->refcount, 1, __ATOMIC_ACQ_REL) == 0) {
         (void)__atomic_add_fetch(&header->generation, 1, __ATOMIC_RELEASE);
         if (header->destructor) header->destructor(payload);
-        lpp_arc_free(header);
+        if (arena) lpp_arena_node_zero(arena);
+        else lpp_arc_free(header);
     }
 }
 
@@ -319,9 +416,11 @@ void lpp_arc_release_local(void *payload) {
     LppArcHeader *header = (LppArcHeader *)payload - 1;
     if (lpp__is_immortal(header)) return;
     if (--header->refcount == 0) {
+        LppArenaRegion *arena = lpp_arena_for_header(header);
         (void)__atomic_add_fetch(&header->generation, 1, __ATOMIC_RELEASE);
         if (header->destructor) header->destructor(payload);
-        lpp_arc_free(header);
+        if (arena) lpp_arena_node_zero(arena);
+        else lpp_arc_free(header);
     }
 }
 
@@ -1322,3 +1421,33 @@ int64_t lpp_net_dial_udp(const char*h,int64_t p,int64_t t){(void)h;(void)p;(void
 int64_t lpp_net_listen_udp(int64_t p){(void)p;return 0;}
 int64_t lpp_net_set_deadline(int64_t f,int64_t r,int64_t w){return lpp_net_set_timeout(f,r>w?r:w);}
 int64_t lpp_net_set_keepalive(int64_t f,int64_t e,int64_t i,int64_t v,int64_t c){(void)f;(void)e;(void)i;(void)v;(void)c;return 1;}
+
+/* Scalar reference for the explicit LLVM vector intrinsic. Cranelift calls
+ * this implementation; LLVM lowers the same builtin to a <4 x i64> loop. */
+#if defined(__GNUC__)
+typedef int64_t lpp_i64x4 __attribute__((vector_size(32)));
+__attribute__((target("avx2")))
+static int64_t lpp_vec_i64_checksum_avx2(int64_t n) {
+    int64_t total = 0;
+    int64_t i = 0;
+    const lpp_i64x4 three = {3, 3, 3, 3};
+    while (i + 4 <= n) {
+        lpp_i64x4 v = {i, i + 1, i + 2, i + 3};
+        lpp_i64x4 x = (v * three) ^ (v >> 1);
+        total += x[0] + x[1] + x[2] + x[3];
+        i += 4;
+    }
+    for (; i < n; ++i) total += (i * 3) ^ (i >> 1);
+    return total;
+}
+#endif
+int64_t lpp_vec_i64_checksum(int64_t n) {
+    if (n < 0) return 0;
+#if defined(__GNUC__)
+    return lpp_vec_i64_checksum_avx2(n);
+#else
+    int64_t total = 0;
+    for (int64_t i = 0; i < n; ++i) total += (i * 3) ^ (i >> 1);
+    return total;
+#endif
+}

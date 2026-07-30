@@ -1,0 +1,5 @@
+# Explicit vector intrinsic test. LLVM lowers this builtin to <4 x i64>
+# arithmetic; Cranelift calls its scalar runtime reference implementation.
+
+def main() -> Void:
+    print(vec_i64_checksum(20000000))

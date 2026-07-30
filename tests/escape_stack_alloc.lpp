@@ -2,10 +2,10 @@
 # stack-allocated; every escaping shape must still be heap-allocated and ARC'd.
 #
 # The negative cases below are the ones that matter. `analysis::escape` walks
-# into call arguments, field stores and struct-literal fields WITHOUT promoting
-# the value placed there, so if this pass trusted the escape map alone, each of
-# these would be wrongly stack-allocated and would hand out a pointer into a
-# dead frame. They are here to prove the MIR use-scan catches them on its own.
+# into call arguments, field stores and struct-literal fields. If stack
+# promotion trusted only a partial classification, each of these could be
+# wrongly stack-allocated and hand out a pointer into a dead frame. They are
+# here to prove the MIR solver and cleanup pass reject the escaping uses.
 
 struct P:
     x: Int
