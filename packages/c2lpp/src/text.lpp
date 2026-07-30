@@ -1,0 +1,125 @@
+# text.lpp — bounded string helpers for the pure-L++ C declaration parser
+
+def text_eq(a: Str, b: Str) -> Bool:
+    return lpp_str_eq(a, b) == 1
+
+def text_starts(value: Str, prefix: Str) -> Bool:
+    return str_find(value, prefix) == 0
+
+def text_contains(value: Str, needle: Str) -> Bool:
+    return str_find(value, needle) >= 0
+
+def text_normalize_spaces(value: Str) -> Str:
+    mut out := str_replace(value, "\t", " ")
+    out = str_replace(out, "\r", " ")
+    out = str_replace(out, "\n", " ")
+    out = str_replace(out, "*", " * ")
+    mut rounds := 0
+    while rounds < 12:
+        out = str_replace(out, "  ", " ")
+        rounds = rounds + 1
+    return str_trim(out)
+
+def text_last_space(value: Str) -> Int:
+    mut i := str_len(value) - 1
+    while i >= 0:
+        if text_eq(char_at(value, i), " "):
+            return i
+        i = i - 1
+    return -1
+
+def text_last_char(value: Str, needle: Str) -> Int:
+    mut i := str_len(value) - 1
+    while i >= 0:
+        if text_eq(char_at(value, i), needle):
+            return i
+        i = i - 1
+    return -1
+
+def text_is_ident_char(ch: Str) -> Bool:
+    if str_len(ch) == 0:
+        return false
+    code := ord(ch)
+    if code >= 48 && code <= 57:
+        return true
+    if code >= 65 && code <= 90:
+        return true
+    if code >= 97 && code <= 122:
+        return true
+    return code == 95
+
+def text_is_identifier(value: Str) -> Bool:
+    if str_len(value) == 0:
+        return false
+    first := ord(char_at(value, 0))
+    if first >= 48 && first <= 57:
+        return false
+    mut i := 0
+    while i < str_len(value):
+        if !text_is_ident_char(char_at(value, i)):
+            return false
+        i = i + 1
+    return true
+
+def text_safe_shell_atom(value: Str) -> Bool:
+    if str_len(value) == 0:
+        return false
+    mut i := 0
+    while i < str_len(value):
+        ch := char_at(value, i)
+        code := ord(ch)
+        mut ok := text_is_ident_char(ch)
+        if code == 45 || code == 46 || code == 47 || code == 58 || code == 92:
+            ok = true
+        if !ok:
+            return false
+        i = i + 1
+    return true
+
+def text_safe_binding_name(value: Str) -> Str:
+    if text_eq(value, "self") || text_eq(value, "def") || text_eq(value, "return"):
+        return str_concat("arg_", value)
+    if text_eq(value, "type") || text_eq(value, "struct") || text_eq(value, "enum"):
+        return str_concat("arg_", value)
+    if text_eq(value, "in") || text_eq(value, "for") || text_eq(value, "while"):
+        return str_concat("arg_", value)
+    if text_eq(value, "if") || text_eq(value, "else") || text_eq(value, "match"):
+        return str_concat("arg_", value)
+    if text_eq(value, "mut") || text_eq(value, "async") || text_eq(value, "await"):
+        return str_concat("arg_", value)
+    if text_eq(value, "extern") || text_eq(value, "trait") || text_eq(value, "impl"):
+        return str_concat("arg_", value)
+    if text_eq(value, "const") || text_eq(value, "import") || text_eq(value, "from"):
+        return str_concat("arg_", value)
+    if text_eq(value, "spawn") || text_eq(value, "fn") || text_eq(value, "as"):
+        return str_concat("arg_", value)
+    if text_eq(value, "break") || text_eq(value, "continue"):
+        return str_concat("arg_", value)
+    if text_eq(value, "true") || text_eq(value, "false"):
+        return str_concat("arg_", value)
+    if text_is_identifier(value):
+        return value
+    return ""
+
+def text_strip_array_suffix(value: Str) -> Str:
+    pos := str_find(value, "[")
+    if pos >= 0:
+        return str_substr(value, 0, pos)
+    return value
+
+def text_append_line(base: Str, line: Str) -> Str:
+    return str_concat(base, str_concat(line, "\n"))
+
+def text_count(value: Str, needle: Str) -> Int:
+    if str_len(needle) == 0:
+        return 0
+    mut count := 0
+    mut cursor := 0
+    while cursor < str_len(value):
+        tail := str_substr(value, cursor, str_len(value) - cursor)
+        found := str_find(tail, needle)
+        if found < 0:
+            return count
+        count = count + 1
+        cursor = cursor + found + str_len(needle)
+    return count

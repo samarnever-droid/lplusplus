@@ -1,0 +1,12 @@
+[package]
+name = "c2lpp"
+version = "0.2.0"
+description = "Pure-L++ C header binding/package generator with an experimental scalar C-to-L++ translator"
+authors = ["L++ Project"]
+license = "MIT"
+repository = "https://github.com/samarnever-droid/lplusplus"
+
+[bin]
+entry = "src/main.lpp"
+
+[dependencies]

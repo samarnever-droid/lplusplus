@@ -21,6 +21,7 @@ implementation status is in [STATUS-2026-07-30.md](STATUS-2026-07-30.md).
 | Lists, maps, strings, buffers, files, networking | Available in the supported runtime paths |
 | LSP server and diagnostics | Available |
 | Self-hosted package tooling | Available for the tested package workflows |
+| `c2lpp` package | Phase 1 C-header/native-package generation complete; Phase 2 audited scalar translation started |
 
 ## Ownership
 

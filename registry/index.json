@@ -487,6 +487,34 @@
         "TAR long names (>100 bytes) are rejected; symlinks, sparse files and PAX metadata ignored",
         "Permissions, ownership and timestamps are not preserved"
       ]
+    },
+    "c2lpp": {
+      "name": "c2lpp",
+      "description": "Pure-L++ C header binding/package generator with an experimental scalar C-to-L++ translator",
+      "version": "0.2.0",
+      "authors": [
+        "L++ Project"
+      ],
+      "license": "MIT",
+      "repository": "https://github.com/samarnever-droid/lplusplus",
+      "path": "packages/c2lpp",
+      "source": "packages/c2lpp/src/main.lpp",
+      "dependencies": [],
+      "keywords": [
+        "c",
+        "ffi",
+        "bindings",
+        "generator",
+        "translator",
+        "sqlite",
+        "zlib"
+      ],
+      "features": [
+        "Generate L++ extern bindings from C headers",
+        "Generate native package metadata and dependency reports",
+        "SQLite and zlib real-system-header coverage",
+        "Experimental audited scalar C-to-pure-L++ translation"
+      ]
     }
   }
 }
