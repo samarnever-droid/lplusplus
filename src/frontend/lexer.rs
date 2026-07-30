@@ -18,6 +18,8 @@ pub enum Token {
     Trait,
     ImplKw,
     Extern,
+    Async,
+    Await,
 
     If,
     Else,
@@ -73,6 +75,7 @@ pub enum Token {
     RBracket,  // ]
     Comma,     // ,
     Dot,       // .
+    Ellipsis,  // ...
 
     // Significant Whitespace
     Newline,
@@ -351,7 +354,19 @@ impl<'a> Lexer<'a> {
                 '[' => tokens.push(mk_token(Token::LBracket)),
                 ']' => tokens.push(mk_token(Token::RBracket)),
                 ',' => tokens.push(mk_token(Token::Comma)),
-                '.' => tokens.push(mk_token(Token::Dot)),
+                '.' => {
+                    if self.peek_c() == Some('.') {
+                        self.next_c();
+                        if self.peek_c() == Some('.') {
+                            self.next_c();
+                            tokens.push(mk_token(Token::Ellipsis));
+                        } else {
+                            return Err(format!("[line {}:col {}] Lexer error: Expected third '.' in variadic marker", start_line, start_col));
+                        }
+                    } else {
+                        tokens.push(mk_token(Token::Dot));
+                    }
+                },
                 '\'' => {
                     let ch = match self.next_c() {
                         Some('\\') => match self.next_c() {
@@ -530,6 +545,8 @@ impl<'a> Lexer<'a> {
                         "trait" => tokens.push(mk_token(Token::Trait)),
                         "impl" => tokens.push(mk_token(Token::ImplKw)),
                         "extern" => tokens.push(mk_token(Token::Extern)),
+                        "async" => tokens.push(mk_token(Token::Async)),
+                        "await" => tokens.push(mk_token(Token::Await)),
                         "if" => tokens.push(mk_token(Token::If)),
                         "else" => tokens.push(mk_token(Token::Else)),
                         "elif" => {

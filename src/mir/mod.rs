@@ -14,6 +14,7 @@ pub mod pass_escape;
 pub mod pass_strength;
 pub mod pass_inline;
 pub mod pass_peephole;
+pub mod validate_borrows;
 
 // MIR (Mid-level Intermediate Representation) will be defined here.
 // This is the bridge between the high-level AST (after analysis) and Cranelift.

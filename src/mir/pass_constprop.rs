@@ -121,6 +121,7 @@ mod tests {
                         }],
                         start_block: BlockId(0),
                         return_type: crate::typecheck::TypeRef::Void,
+                        is_async: false,
                     },
                 );
                 f
@@ -180,6 +181,7 @@ mod tests {
                         }],
                         start_block: BlockId(0),
                         return_type: crate::typecheck::TypeRef::Void,
+                        is_async: false,
                     },
                 );
                 f

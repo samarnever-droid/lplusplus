@@ -1,0 +1,7 @@
+def view_length(view: StrSlice) -> Int:
+    return slice_len(view)
+
+def main():
+    text := "reader"
+    view := str_slice(text, 1, 4)
+    print(view_length(view))

@@ -33,6 +33,9 @@
   methods, and trait implementations.
 - `src/analysis/cyclebreak.rs` classifies one edge of each ownership cycle as
   non-owning.
+- Tuple types/expressions, destructuring, typed rest parameters, borrowed slice
+  types, `async def`, and postfix `.await` are all first-class AST/type forms;
+  they are not parser-only desugarings.
 
 ## MIR and ownership
 
@@ -51,6 +54,19 @@ removes balanced handoff retains/releases only after a liveness proof.
 Arena regions are selected for self-referential struct allocations. Arena nodes
 retain ARC-compatible headers and a region handle; cycle breaking ensures that
 owning edges remain acyclic.
+
+The new aggregate/borrow/task layer is explicit in MIR:
+
+```text
+AllocateTuple / TupleField
+AllocateList + typed rest pushes
+MakeSlice / SliceLen / SliceGet / SliceToStr
+MakeTask / Await
+```
+
+`validate_borrows` runs immediately after lowering and rejects first-tier slice
+escapes before scalar optimization or ownership insertion. Task environments
+reuse tuple layout metadata, while each backend emits a typed task thunk.
 
 ## Backends
 
@@ -79,6 +95,19 @@ Both backends support `VectorI64x2` builtins for construction, splat, arithmetic
 XOR, constant shift, lane extraction, and sum. LLVM also has a four-lane
 checksum IR path. The repository does not claim automatic vectorization of every
 arbitrary list loop.
+
+## Runtime state and views
+
+- Tuples are ARC payloads with a managed-child mask and field-offset metadata.
+- Rest arguments are ordinary typed ARC lists.
+- Slice views are stack records: base, start, length, generation, and kind.
+- Tasks are ARC records with code, environment, result, ownership flag, and
+  pending/running/complete state.
+- The executor polls on the caller thread with deterministic run-to-completion
+  policy; no hidden thread is created.
+
+The full host runtime and Linux/Windows freestanding sources expose matching
+symbols. Actual Windows execution remains a CI requirement.
 
 ## Link stage
 

@@ -98,13 +98,7 @@ impl Storage {
 /// `Frame` in the facts table even when passed to a call; their storage class is
 /// not meaningful and must not pollute parameter summaries or `--dump-escape`.
 fn is_managed_type(ty: &TypeRef) -> bool {
-    matches!(
-        ty,
-        TypeRef::Custom(_)
-            | TypeRef::Function
-            | TypeRef::Generic(_, _)
-            | TypeRef::Str
-    )
+    ty.is_managed()
 }
 
 /// Per-function facts.
@@ -188,6 +182,7 @@ fn direct_callees(function: &MirFunction) -> HashSet<FuncId> {
                     Rvalue::CallDirect(id, _)
                     | Rvalue::MakeClosure(id, _)
                     | Rvalue::MakeStackClosure(id, _)
+                    | Rvalue::MakeTask(id, _, _, _)
                     | Rvalue::FuncRef(id) => {
                         out.insert(*id);
                     }
@@ -516,7 +511,11 @@ fn escape_of_rvalue(
                         .map(|d| {
                             matches!(
                                 d.ty,
-                                TypeRef::Custom(_) | TypeRef::Generic(_, _) | TypeRef::Str
+                                TypeRef::Custom(_)
+                                    | TypeRef::Generic(_, _)
+                                    | TypeRef::Str
+                                    | TypeRef::Tuple(_)
+                                    | TypeRef::Task(_)
                             )
                         })
                         .unwrap_or(false)
@@ -537,12 +536,32 @@ fn escape_of_rvalue(
                 flows[dest.0].push(*src);
             }
         }
-        Rvalue::FieldAccess(base, _) => {
+        Rvalue::FieldAccess(base, _) | Rvalue::TupleField(base, _) => {
             // Reading a field yields a value that may itself be a pointer into
             // the base, so the result inherits the base's fate. One-directional:
             // the field's later use says nothing about the base's storage.
             flow(flows, base, dest);
         }
+
+        Rvalue::AllocateTuple(_, values) => {
+            for value in values {
+                flow(flows, value, dest);
+                if let Some(id) = operand_local(value) {
+                    raise(storage, id, Storage::Owned);
+                }
+            }
+        }
+        Rvalue::MakeTask(_, _, values, _) => {
+            for value in values {
+                if let Some(id) = operand_local(value) {
+                    raise(storage, id, Storage::Owned);
+                }
+            }
+        }
+        Rvalue::MakeSlice { base, .. } => flow(flows, base, dest),
+        Rvalue::SliceGet(view, _) => flow(flows, view, dest),
+        Rvalue::Await(task) => flow(flows, task, dest),
+        Rvalue::SliceLen(_) | Rvalue::SliceToStr(_) => {}
 
         // Scalars out; nothing escapes.
         Rvalue::BinaryOp(_, _, _) => {}

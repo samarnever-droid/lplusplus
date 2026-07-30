@@ -52,6 +52,10 @@ def main():
 | **Direct linker** | `lpp-link` produces standalone ELF / PE / Mach-O executables |
 | **Arena regions** | Recursive structs use region-backed nodes with cycle-broken ownership |
 | **Explicit vectors** | `VectorI64x2` operations in both Cranelift and LLVM |
+| **Structural tuples** | Fixed arity 2–4, structural types, destructuring, and ARC-safe managed elements |
+| **Typed variadics** | Final `...items: T` parameter receives a typed rest `List[T]`; no native C varargs |
+| **Borrowed slices** | Zero-copy `StrSlice` / `Slice[T]` stack views with bounds and escape validation |
+| **Async tasks** | `async def`, postfix `.await`, and a deterministic single-thread run-to-completion executor |
 | **LSP Language Server** | `lpp-lsp` stdio JSON-RPC server for editor Intellisense, hovers & diagnostics |
 | **Package manager** | 100% self-hosted `lpp-pm` written in pure L++ with embedded Git & HTTP engine |
 | **100+ builtins** | strings, lists, maps, files, network, JSON, buffers |
@@ -110,6 +114,37 @@ def add(a: Int, b: Int) -> Int:
 def greet(name: Str):
     print_str(str_concat("Hello, ", name))
 ```
+
+### Tuples, Variadics, Slices, and Async Tasks
+
+```lpp
+def summarize(prefix: Str, ...values: Int) -> (Int, Str):
+    mut total := 0
+    for value in values:
+        total = total + value
+    return (total, prefix)
+
+async def work() -> Str:
+    return "Bhopal"
+
+async def main():
+    city := work().await
+    (total, label) := summarize(city, 10, 20, 30)
+    view := str_slice(label, 1, 3)       # borrowed, zero-copy
+    owned := str_slice_to_str(view)      # explicit allocating escape
+    print(total)
+    print(owned)
+```
+
+Tuple arity is 2–4. A rest parameter must be final and is a safe typed list, not
+C `...`. Borrowed views cannot be returned, captured, stored in owning
+containers, reassigned through their source, or sent to a thread. Async uses a
+single-thread run-to-completion executor; blocking file/network/process calls
+without a readiness adapter are rejected from async call graphs.
+
+These four features are an experimental first tier while Windows runtime
+execution is still awaiting a real Windows CI run. They are not a claim of
+project-wide “100% feature freeze.”
 
 ### Structs
 
@@ -235,7 +270,8 @@ Source (.lpp)
     ├── Parser → AST
     ├── Semantic Analysis → Scopes, Bindings
     ├── Type Checker → Type Resolution
-    ├── MIR Lowering → Mid-level IR
+    ├── MIR Lowering → explicit tuple/slice/task/rest operations
+    ├── Borrow Validator → first-tier slice non-escape rules
     ├── MIR Escape Solver → Frame / Owned / Shared facts
     │   ├── ARC Pass (retain/release insertion)
     │   ├── Closure Lifting

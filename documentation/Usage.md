@@ -39,6 +39,42 @@ non-standard path. `LPP_LLVM_MARCH=native` enables host LLVM CPU features.
 
 There is no C-transpiler dump and no Turbo mode in the current repository.
 
+## Experimental tuple/rest/slice/task syntax
+
+```lpp
+def values(label: Str, ...items: Int) -> (Str, Int):
+    return (label, list_len(items))
+
+async def get_label() -> Str:
+    return "Indore"
+
+async def main():
+    label := get_label().await
+    (name, count) := values(label, 1, 2, 3)
+    view := str_slice(name, 0, 3)
+    print(count)
+    print(str_slice_to_str(view))
+```
+
+Rules in the current first tier:
+
+- tuple arity is 2–4 and `(expr)` remains grouping;
+- `...items: T` must be the final parameter; the body sees `List[T]`;
+- extern functions reject variadic syntax;
+- `str_slice`/`slice` are zero-copy borrowed views; `slice_len` and
+  `slice_get` are checked operations;
+- a borrowed view cannot return, be captured/stored, cross `spawn`, reach an
+  unknown retaining call, or survive source reassignment;
+- `str_slice_to_str` (also `slice_to_str`) explicitly allocates an owned `Str`;
+- `.await` is legal inside `async def`; async `main` is driven by the executor;
+- task values are single-executor confined and cannot be captured by closures in
+  this tier;
+- blocking input/file/network/process calls are rejected transitively from
+  async call graphs.
+
+The executor is deterministic, single-threaded, and run-to-completion. It does
+not claim nonblocking socket/file I/O or general coroutine suspension.
+
 ## Linkers
 
 ```sh
@@ -63,6 +99,8 @@ subset.
 ```sh
 cargo test --release -j1
 sh tests/run_aot_parity.sh
+LPP_LLVM_CC=/path/to/clang sh tests/run_llvm_smoke.sh
+LPP_LLVM_CC=/path/to/clang sh tests/run_feature_batch.sh
 sh scripts/check_safety_mission.sh
 (cd packages/lppsqlite && sh run-tests.sh)
 (cd packages/compresslpp && sh run-tests.sh)

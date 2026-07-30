@@ -332,11 +332,19 @@ impl Resolver {
         self.current_scope = func_scope;
 
         for param in &func.params {
+            // The public annotation on a typed rest parameter is its element
+            // type, while the binding visible in the body is the owned rest
+            // List[T] assembled at the call site.
+            let binding_ty = if param.variadic {
+                Type::Generic("List".to_string(), vec![param.ty.clone()])
+            } else {
+                param.ty.clone()
+            };
             self.table.add_binding(
                 self.current_scope,
                 param.name.clone(),
                 false,
-                Some(param.ty.clone()),
+                Some(binding_ty),
                 BindingKind::Param,
             );
         }
@@ -351,6 +359,25 @@ impl Resolver {
 
     fn resolve_stmt(&mut self, stmt: &mut Stmt) -> Result<(), String> {
         match stmt {
+            Stmt::Destructure {
+                names,
+                value,
+                binding_ids,
+            } => {
+                self.resolve_expr(value)?;
+                for (index, name) in names.iter().enumerate() {
+                    let id = self.table.add_binding(
+                        self.current_scope,
+                        name.clone(),
+                        false,
+                        None,
+                        BindingKind::Local,
+                    );
+                    if let Some(cell) = binding_ids.get(index) {
+                        cell.set(Some(id.0));
+                    }
+                }
+            }
             Stmt::LetInferred {
                 name,
                 is_mut,
@@ -586,6 +613,14 @@ impl Resolver {
             | Expr::StringLiteral(_)
             | Expr::CharLiteral(_)
             | Expr::BoolLiteral(_) => {}
+            Expr::Tuple(elements) => {
+                for element in elements {
+                    self.resolve_expr(element)?;
+                }
+            }
+            Expr::Await(inner) => {
+                self.resolve_expr(inner)?;
+            }
             Expr::Identifier(name, binding_id_cell) => {
                 // Ignore builtins and imported module namespaces for now
                 if !self.is_builtin_resolved(name) && !self.imports.contains(name) {
@@ -759,6 +794,7 @@ mod tests {
                         binding_id: std::cell::Cell::new(None),
                     },
                 ],
+                is_async: false,
             })],
         };
 
@@ -803,6 +839,7 @@ mod tests {
                         binding_id: std::cell::Cell::new(None),
                     },
                 ],
+                is_async: false,
             })],
         };
 
@@ -833,6 +870,7 @@ mod tests {
                         value: Expr::IntLiteral(10),
                     },
                 ],
+                is_async: false,
             })],
         };
 
@@ -866,6 +904,7 @@ mod tests {
                         value: Expr::IntLiteral(10),
                     },
                 ],
+                is_async: false,
             })],
         };
 
@@ -884,6 +923,7 @@ mod tests {
                 params: vec![],
                 return_type: Type::Void,
                 body: vec![Stmt::Break],
+                is_async: false,
             })],
         };
 

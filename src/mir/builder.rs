@@ -18,6 +18,7 @@ impl MirBuilder {
                 blocks: Vec::new(),
                 start_block: BlockId(0), // Will be updated
                 return_type,
+                is_async: false,
             },
             current_block: None,
             next_block: 0,
@@ -56,18 +57,10 @@ impl MirBuilder {
         //
         // `List[Float]` is managed for the same reason `List[Int]` is: the
         // list object itself is ARC-allocated regardless of element type.
-        let ownership = if matches!(&ty, TypeRef::Custom(_) | TypeRef::Function | TypeRef::Str)
-            || matches!(
-                &ty,
-                TypeRef::Generic(name, args)
-                    if name == "List"
-                        && args.len() == 1
-                        && matches!(
-                            &args[0],
-                            TypeRef::Int | TypeRef::Custom(_) | TypeRef::Float | TypeRef::Str
-                        )
-            ) {
+        let ownership = if ty.is_managed() {
             Ownership::Managed
+        } else if ty.is_borrowed_view() {
+            Ownership::Borrowed
         } else {
             Ownership::Copy
         };

@@ -1,0 +1,9 @@
+def nested() -> ((Int, Str), Int):
+    return ((3, "three"), 9)
+
+def main():
+    (inner, last) := nested()
+    (number, text) := inner
+    print(number)
+    print(text)
+    print(last)

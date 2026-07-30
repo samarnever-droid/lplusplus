@@ -204,6 +204,14 @@ impl Monomorphizer {
     ) {
         for stmt in stmts {
             match stmt {
+                Stmt::Destructure { names, value, .. } => {
+                    self.walk_expr(value, generic_funcs, generic_structs, trait_impls);
+                    if let Type::Tuple(elements) = self.infer_expr_type(value, generic_structs) {
+                        for (name, ty) in names.iter().zip(elements) {
+                            self.locals.insert(name.clone(), ty);
+                        }
+                    }
+                }
                 Stmt::LetInferred { name, value, .. } => {
                     self.walk_expr(value, generic_funcs, generic_structs, trait_impls);
                     let ty = self.infer_expr_type(value, generic_structs);
@@ -227,11 +235,26 @@ impl Monomorphizer {
                     self.walk_expr(condition, generic_funcs, generic_structs, trait_impls);
                     self.walk_statements(body, generic_funcs, generic_structs, trait_impls);
                 }
-                Stmt::ForRange { start, end, body, .. } => {
+                Stmt::ForRange { start, end, step, body, .. } => {
                     self.walk_expr(start, generic_funcs, generic_structs, trait_impls);
                     self.walk_expr(end, generic_funcs, generic_structs, trait_impls);
+                    if let Some(step) = step {
+                        self.walk_expr(step, generic_funcs, generic_structs, trait_impls);
+                    }
                     self.walk_statements(body, generic_funcs, generic_structs, trait_impls);
                 }
+                Stmt::ForIn { list, body, .. } => {
+                    self.walk_expr(list, generic_funcs, generic_structs, trait_impls);
+                    self.walk_statements(body, generic_funcs, generic_structs, trait_impls);
+                }
+                Stmt::Match { subject, arms } => {
+                    self.walk_expr(subject, generic_funcs, generic_structs, trait_impls);
+                    for arm in arms {
+                        self.walk_statements(&mut arm.body, generic_funcs, generic_structs, trait_impls);
+                    }
+                }
+                Stmt::Block(body) =>
+                    self.walk_statements(body, generic_funcs, generic_structs, trait_impls),
                 Stmt::Return(Some(expr)) => {
                     self.walk_expr(expr, generic_funcs, generic_structs, trait_impls);
                 }
@@ -535,6 +558,14 @@ impl Monomorphizer {
                     }
                 }
             }
+            Expr::Tuple(elements) => {
+                for element in elements {
+                    self.walk_expr(element, generic_funcs, generic_structs, trait_impls);
+                }
+            }
+            Expr::Await(inner) | Expr::Try(inner) => {
+                self.walk_expr(inner, generic_funcs, generic_structs, trait_impls);
+            }
             Expr::UnaryOp { operand, .. } => {
                 self.walk_expr(operand, generic_funcs, generic_structs, trait_impls);
             }
@@ -550,8 +581,16 @@ impl Monomorphizer {
                     self.walk_expr(item, generic_funcs, generic_structs, trait_impls);
                 }
             }
-            Expr::Try(inner) => {
-                self.walk_expr(inner, generic_funcs, generic_structs, trait_impls);
+            Expr::Closure { body, .. } => {
+                self.walk_statements(body, generic_funcs, generic_structs, trait_impls);
+            }
+            Expr::Spawn { closure } =>
+                self.walk_expr(closure, generic_funcs, generic_structs, trait_impls),
+            Expr::Match { subject, arms } => {
+                self.walk_expr(subject, generic_funcs, generic_structs, trait_impls);
+                for arm in arms {
+                    self.walk_statements(&mut arm.body, generic_funcs, generic_structs, trait_impls);
+                }
             }
             Expr::Index { base, index } => {
                 self.walk_expr(base, generic_funcs, generic_structs, trait_impls);
@@ -770,6 +809,13 @@ impl Monomorphizer {
             Expr::StringLiteral(_) => Type::String,
             Expr::CharLiteral(_) => Type::Char,
             Expr::BoolLiteral(_) => Type::Bool,
+            Expr::Tuple(elements) => Type::Tuple(
+                elements.iter().map(|element| self.infer_expr_type(element, generic_structs)).collect()
+            ),
+            Expr::Await(inner) => match self.infer_expr_type(inner, generic_structs) {
+                Type::Task(result) => *result,
+                other => other,
+            },
             Expr::Identifier(name, _) => self
                 .locals
                 .get(name)
@@ -789,7 +835,11 @@ impl Monomorphizer {
                         return Type::Custom(name.clone());
                     }
                     if let Some(f) = self.specialized_funcs.get(name) {
-                        return f.return_type.clone();
+                        return if f.is_async {
+                            Type::Task(Box::new(f.return_type.clone()))
+                        } else {
+                            f.return_type.clone()
+                        };
                     }
                 }
                 Type::Int
@@ -802,6 +852,7 @@ impl Monomorphizer {
     fn substitute_stmts(&mut self, stmts: &mut [Stmt], map: &HashMap<String, Type>) {
         for stmt in stmts {
             match stmt {
+                Stmt::Destructure { value, .. } => self.substitute_expr(value, map),
                 Stmt::LetInferred { value, .. } => {
                     self.substitute_expr(value, map);
                 }
@@ -823,11 +874,21 @@ impl Monomorphizer {
                     self.substitute_expr(condition, map);
                     self.substitute_stmts(body, map);
                 }
-                Stmt::ForRange { start, end, body, .. } => {
+                Stmt::ForRange { start, end, step, body, .. } => {
                     self.substitute_expr(start, map);
                     self.substitute_expr(end, map);
+                    if let Some(step) = step { self.substitute_expr(step, map); }
                     self.substitute_stmts(body, map);
                 }
+                Stmt::ForIn { list, body, .. } => {
+                    self.substitute_expr(list, map);
+                    self.substitute_stmts(body, map);
+                }
+                Stmt::Match { subject, arms } => {
+                    self.substitute_expr(subject, map);
+                    for arm in arms { self.substitute_stmts(&mut arm.body, map); }
+                }
+                Stmt::Block(body) => self.substitute_stmts(body, map),
                 Stmt::Return(Some(expr)) => {
                     self.substitute_expr(expr, map);
                 }
@@ -859,6 +920,12 @@ impl Monomorphizer {
                     self.substitute_expr(arg, map);
                 }
             }
+            Expr::Tuple(elements) | Expr::ListLiteral(elements) => {
+                for element in elements { self.substitute_expr(element, map); }
+            }
+            Expr::Await(inner) | Expr::Try(inner) | Expr::Spawn { closure: inner } => {
+                self.substitute_expr(inner, map);
+            }
             Expr::UnaryOp { operand, .. } => {
                 self.substitute_expr(operand, map);
             }
@@ -869,10 +936,23 @@ impl Monomorphizer {
             Expr::FieldAccess { base, .. } => {
                 self.substitute_expr(base, map);
             }
-            Expr::ListLiteral(items) => {
-                for item in items {
-                    self.substitute_expr(item, map);
+            Expr::Closure { params, return_type, body } => {
+                for param in params {
+                    if let Some(ty) = &mut param.ty { substitute_ast_type(ty, map); }
                 }
+                if let Some(ty) = return_type { substitute_ast_type(ty, map); }
+                self.substitute_stmts(body, map);
+            }
+            Expr::Match { subject, arms } => {
+                self.substitute_expr(subject, map);
+                for arm in arms { self.substitute_stmts(&mut arm.body, map); }
+            }
+            Expr::Index { base, index } => {
+                self.substitute_expr(base, map);
+                self.substitute_expr(index, map);
+            }
+            Expr::EnumVariantConstruct { args, .. } => {
+                for arg in args { self.substitute_expr(arg, map); }
             }
             _ => {}
         }
@@ -904,6 +984,23 @@ fn unify_type(
         Type::Custom(name) => {
             if tp_names.contains(name) {
                 out.entry(name.clone()).or_insert_with(|| concrete.clone());
+            }
+        }
+        Type::Tuple(elements) => {
+            if let Type::Tuple(concrete_elements) = concrete {
+                for (declared, concrete) in elements.iter().zip(concrete_elements) {
+                    unify_type(declared, concrete, tp_names, out);
+                }
+            }
+        }
+        Type::Slice(element) => {
+            if let Type::Slice(concrete) = concrete {
+                unify_type(element, concrete, tp_names, out);
+            }
+        }
+        Type::Task(result) => {
+            if let Type::Task(concrete) = concrete {
+                unify_type(result, concrete, tp_names, out);
             }
         }
         Type::Generic(_base, args) => {
@@ -978,7 +1075,12 @@ fn substitute_ast_type(ty: &mut Type, map: &HashMap<String, Type>) {
                 }
             }
         }
-        _ => {}
+        Type::Tuple(elements) => {
+            for element in elements { substitute_ast_type(element, map); }
+        }
+        Type::Slice(element) | Type::Task(element) => substitute_ast_type(element, map),
+        Type::Int | Type::Float | Type::String | Type::Bool | Type::Char
+        | Type::Void | Type::StrSlice => {}
     }
 }
 
@@ -991,6 +1093,13 @@ fn type_to_name(ty: &Type) -> String {
         Type::Bool => "Bool".to_string(),
         Type::Custom(s) => s.clone(),
         Type::Generic(g, _) => g.clone(),
+        Type::Tuple(items) => format!(
+            "Tuple{}",
+            items.iter().map(type_to_name).collect::<Vec<_>>().join("_")
+        ),
+        Type::StrSlice => "StrSlice".to_string(),
+        Type::Slice(element) => format!("Slice_{}", type_to_name(element)),
+        Type::Task(result) => format!("Task_{}", type_to_name(result)),
         Type::Void => "Void".to_string(),
     }
 }
@@ -1018,6 +1127,13 @@ fn mangle_types(map: &HashMap<String, Type>, order: &[String]) -> String {
                 Type::Bool => "Bool".to_string(),
                 Type::Custom(s) => s.clone(),
                 Type::Generic(g, _) => g.clone(),
+                Type::Tuple(items) => format!(
+                    "Tuple{}",
+                    items.iter().map(type_to_name).collect::<Vec<_>>().join("_")
+                ),
+                Type::StrSlice => "StrSlice".to_string(),
+                Type::Slice(element) => format!("Slice_{}", type_to_name(element)),
+                Type::Task(result) => format!("Task_{}", type_to_name(result)),
                 Type::Void => "Void".to_string(),
             };
             parts.push(label);
@@ -1043,9 +1159,11 @@ mod tests {
                         name: "x".to_string(),
                         ty: Type::Custom("T".to_string()),
                         default: None,
+                        variadic: false,
                     }],
                     return_type: Type::Custom("T".to_string()),
                     body: vec![Stmt::Return(Some(Expr::Identifier("x".to_string(), std::cell::Cell::new(None))))],
+                    is_async: false,
                 }),
                 TopLevel::Function(Function {
                     name: "main".to_string(),
@@ -1058,6 +1176,7 @@ mod tests {
                             args: vec![Expr::IntLiteral(42)],
                         }),
                     ],
+                    is_async: false,
                 }),
             ],
         };
@@ -1083,7 +1202,7 @@ mod tests {
                 TopLevel::Struct(StructDef {
                     name: "Box".to_string(),
                     type_params: vec![tp("T")],
-                    fields: vec![Param { name: "value".to_string(), ty: Type::Custom("T".to_string()), default: None }],
+                    fields: vec![Param { name: "value".to_string(), ty: Type::Custom("T".to_string()), default: None, variadic: false }],
                 }),
                 TopLevel::Function(Function {
                     name: "unwrap".to_string(),
@@ -1092,9 +1211,11 @@ mod tests {
                         name: "b".to_string(),
                         ty: Type::Generic("Box".to_string(), vec![Type::Custom("T".to_string())]),
                         default: None,
+                        variadic: false,
                     }],
                     return_type: Type::Custom("T".to_string()),
                     body: vec![],
+                    is_async: false,
                 }),
                 TopLevel::Function(Function {
                     name: "main".to_string(),
@@ -1116,6 +1237,7 @@ mod tests {
                             args: vec![Expr::Identifier("b".to_string(), std::cell::Cell::new(None))],
                         }),
                     ],
+                    is_async: false,
                 }),
             ],
         };
@@ -1153,9 +1275,10 @@ mod tests {
                 TopLevel::Function(Function {
                     name: "identity".to_string(),
                     type_params: vec![tp("T")],
-                    params: vec![Param { name: "x".to_string(), ty: Type::Custom("T".to_string()), default: None }],
+                    params: vec![Param { name: "x".to_string(), ty: Type::Custom("T".to_string()), default: None, variadic: false }],
                     return_type: Type::Custom("T".to_string()),
                     body: vec![],
+                    is_async: false,
                 }),
                 TopLevel::Function(Function {
                     name: "main".to_string(),
@@ -1174,6 +1297,7 @@ mod tests {
                             args: vec![Expr::Identifier("f".to_string(), std::cell::Cell::new(None))],
                         }),
                     ],
+                    is_async: false,
                 }),
             ],
         };
@@ -1196,19 +1320,21 @@ mod tests {
                 TopLevel::Function(Function {
                     name: "identity".to_string(),
                     type_params: vec![tp("T")],
-                    params: vec![Param { name: "x".to_string(), ty: Type::Custom("T".to_string()), default: None }],
+                    params: vec![Param { name: "x".to_string(), ty: Type::Custom("T".to_string()), default: None, variadic: false }],
                     return_type: Type::Custom("T".to_string()),
                     body: vec![],
+                    is_async: false,
                 }),
                 TopLevel::Function(Function {
                     name: "twice".to_string(),
                     type_params: vec![tp("T")],
-                    params: vec![Param { name: "x".to_string(), ty: Type::Custom("T".to_string()), default: None }],
+                    params: vec![Param { name: "x".to_string(), ty: Type::Custom("T".to_string()), default: None, variadic: false }],
                     return_type: Type::Custom("T".to_string()),
                     body: vec![Stmt::Return(Some(Expr::Call {
                         callee: Box::new(Expr::Identifier("identity".to_string(), std::cell::Cell::new(None))),
                         args: vec![Expr::Identifier("x".to_string(), std::cell::Cell::new(None))],
                     }))],
+                    is_async: false,
                 }),
                 TopLevel::Function(Function {
                     name: "main".to_string(),
@@ -1219,6 +1345,7 @@ mod tests {
                         callee: Box::new(Expr::Identifier("twice".to_string(), std::cell::Cell::new(None))),
                         args: vec![Expr::IntLiteral(7)],
                     })],
+                    is_async: false,
                 }),
             ],
         };
@@ -1242,9 +1369,10 @@ mod tests {
                 TopLevel::Function(Function {
                     name: "identity".to_string(),
                     type_params: vec![tp("T")],
-                    params: vec![Param { name: "x".to_string(), ty: Type::Custom("T".to_string()), default: None }],
+                    params: vec![Param { name: "x".to_string(), ty: Type::Custom("T".to_string()), default: None, variadic: false }],
                     return_type: Type::Custom("T".to_string()),
                     body: vec![],
+                    is_async: false,
                 }),
                 TopLevel::Function(Function {
                     name: "main".to_string(),
@@ -1256,6 +1384,7 @@ mod tests {
                         type_args: vec![Type::String],
                         args: vec![Expr::IntLiteral(0)],
                     })],
+                    is_async: false,
                 }),
             ],
         };
@@ -1291,9 +1420,10 @@ mod tests {
                 TopLevel::Function(Function {
                     name: "identity".to_string(),
                     type_params: vec![tp("T")],
-                    params: vec![Param { name: "x".to_string(), ty: Type::Custom("T".to_string()), default: None }],
+                    params: vec![Param { name: "x".to_string(), ty: Type::Custom("T".to_string()), default: None, variadic: false }],
                     return_type: Type::Custom("T".to_string()),
                     body: vec![],
+                    is_async: false,
                 }),
                 TopLevel::Function(Function {
                     name: "main".to_string(),
@@ -1305,6 +1435,7 @@ mod tests {
                         type_args: vec![Type::Int, Type::String],
                         args: vec![Expr::IntLiteral(0)],
                     })],
+                    is_async: false,
                 }),
             ],
         };
@@ -1324,7 +1455,7 @@ mod tests {
                 TopLevel::Struct(StructDef {
                     name: "Holder".to_string(),
                     type_params: vec![],
-                    fields: vec![Param { name: "n".to_string(), ty: Type::Int, default: None }],
+                    fields: vec![Param { name: "n".to_string(), ty: Type::Int, default: None, variadic: false }],
                 }),
                 TopLevel::Impl(ImplBlock {
                     trait_name: "Getter".to_string(),
@@ -1335,11 +1466,12 @@ mod tests {
                         name: "Holder_pick".to_string(),
                         type_params: vec![tp("T")],
                         params: vec![
-                            Param { name: "self".to_string(), ty: Type::Custom("Holder".to_string()), default: None },
-                            Param { name: "x".to_string(), ty: Type::Custom("T".to_string()), default: None },
+                            Param { name: "self".to_string(), ty: Type::Custom("Holder".to_string()), default: None, variadic: false },
+                            Param { name: "x".to_string(), ty: Type::Custom("T".to_string()), default: None, variadic: false },
                         ],
                         return_type: Type::Custom("T".to_string()),
                         body: vec![],
+                        is_async: false,
                     }],
                 }),
                 TopLevel::Function(Function {
@@ -1365,6 +1497,7 @@ mod tests {
                             args: vec![Expr::FloatLiteral(2.5)],
                         }),
                     ],
+                    is_async: false,
                 }),
             ],
         };
@@ -1402,13 +1535,14 @@ mod tests {
                     })
                 })
                 .collect(),
+            is_async: false,
         };
         let mut program = Program {
             declarations: vec![
                 TopLevel::Struct(StructDef {
                     name: "Box".to_string(),
                     type_params: vec![tp("T")],
-                    fields: vec![Param { name: "value".to_string(), ty: Type::Custom("T".to_string()), default: None }],
+                    fields: vec![Param { name: "value".to_string(), ty: Type::Custom("T".to_string()), default: None, variadic: false }],
                 }),
                 TopLevel::Impl(ImplBlock {
                     trait_name: "Show".to_string(),
@@ -1422,9 +1556,11 @@ mod tests {
                             name: "self".to_string(),
                             ty: Type::Generic("Box".to_string(), vec![Type::Custom("T".to_string())]),
                             default: None,
+                            variadic: false,
                         }],
                         return_type: Type::Int,
                         body: vec![],
+                        is_async: false,
                     }],
                 }),
                 TopLevel::Function(mk_main(vec![Expr::IntLiteral(1), Expr::StringLiteral("s".to_string())])),
@@ -1469,9 +1605,11 @@ mod tests {
                     name: "self".to_string(),
                     ty: Type::Custom("Box".to_string()),
                     default: None,
+                    variadic: false,
                 }],
                 return_type: Type::Int,
                 body: vec![Stmt::Return(Some(Expr::IntLiteral(ret)))],
+                is_async: false,
             }],
         });
         let mut program = Program {
@@ -1479,7 +1617,7 @@ mod tests {
                 TopLevel::Struct(StructDef {
                     name: "Box".to_string(),
                     type_params: vec![tp("T")],
-                    fields: vec![Param { name: "value".to_string(), ty: Type::Custom("T".to_string()), default: None }],
+                    fields: vec![Param { name: "value".to_string(), ty: Type::Custom("T".to_string()), default: None, variadic: false }],
                 }),
                 mk_impl(Type::Custom("T".to_string()), 1),
                 mk_impl(Type::Int, 99),
@@ -1492,6 +1630,7 @@ mod tests {
                         callee: Box::new(Expr::Identifier("Box".to_string(), std::cell::Cell::new(None))),
                         args: vec![Expr::IntLiteral(5)],
                     })],
+                    is_async: false,
                 }),
             ],
         };
@@ -1516,7 +1655,7 @@ mod tests {
                     name: "Display".to_string(),
                     methods: vec![TraitMethod {
                         name: "show".to_string(),
-                        params: vec![Param { name: "self".to_string(), ty: Type::Custom("Self".to_string()), default: None }],
+                        params: vec![Param { name: "self".to_string(), ty: Type::Custom("Self".to_string()), default: None, variadic: false }],
                         return_type: Type::String,
                     }],
                 }),
@@ -1527,9 +1666,11 @@ mod tests {
                         name: "x".to_string(),
                         ty: Type::Custom("T".to_string()),
                         default: None,
+                        variadic: false,
                     }],
                     return_type: Type::Void,
                     body: vec![],
+                    is_async: false,
                 }),
                 TopLevel::Function(Function {
                     name: "main".to_string(),
@@ -1542,6 +1683,7 @@ mod tests {
                             args: vec![Expr::IntLiteral(42)],
                         }),
                     ],
+                    is_async: false,
                 }),
             ],
         };

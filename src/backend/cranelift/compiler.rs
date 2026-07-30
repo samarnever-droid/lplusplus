@@ -1,5 +1,5 @@
 use super::lower::FunctionLower;
-use super::types::{struct_layout, type_to_cl};
+use super::types::{struct_layout, tuple_layout, type_to_cl};
 use crate::mir::ir::*;
 use crate::typecheck::{StructTypeId, TypeRef, TypeTable};
 use cranelift_codegen::ir::types as cl_types;
@@ -73,6 +73,14 @@ fn validate_aot_program(program: &MirProgram, type_table: &TypeTable) -> Result<
                     .join(", "),
                 where_
             )),
+            TypeRef::Tuple(elements) => {
+                if !(2..=4).contains(&elements.len()) {
+                    return Err(format!("tuple arity {} is invalid in {}", elements.len(), where_));
+                }
+                for element in elements { validate_type(element, where_)?; }
+                Ok(())
+            }
+            TypeRef::Slice(element) | TypeRef::Task(element) => validate_type(element, where_),
             TypeRef::Unresolved(name) => Err(format!(
                 "unresolved type '{}' reached the AOT backend in {}",
                 name, where_
@@ -119,7 +127,13 @@ fn validate_aot_program(program: &MirProgram, type_table: &TypeTable) -> Result<
                     MirInstr::Assign(_, Rvalue::AllocateList(element_ty))
                         if !matches!(
                             element_ty,
-                            TypeRef::Int | TypeRef::Float | TypeRef::Custom(_) | TypeRef::Str | TypeRef::Bool
+                            TypeRef::Int
+                                | TypeRef::Float
+                                | TypeRef::Custom(_)
+                                | TypeRef::Str
+                                | TypeRef::Bool
+                                | TypeRef::Tuple(_)
+                                | TypeRef::Task(_)
                         ) =>
                     {
                         return Err(format!(
@@ -162,6 +176,7 @@ pub struct AotCompiler {
     pub func_ids: HashMap<FuncId, cranelift_module::FuncId>,
     pub builtin_ids: HashMap<String, cranelift_module::FuncId>,
     pub drop_ids: HashMap<StructTypeId, cranelift_module::FuncId>,
+    pub task_thunk_ids: HashMap<FuncId, cranelift_module::FuncId>,
     /// C ABI `main` wrapper around the L++ user-level `main` function.
     pub entrypoint_id: Option<cranelift_module::FuncId>,
     /// When the whole program is proven single-threaded, ARC uses the
@@ -237,6 +252,7 @@ impl AotCompiler {
             weak_fields: std::collections::HashSet::new(),
             shared_locals: HashMap::new(),
             drop_ids: HashMap::new(),
+            task_thunk_ids: HashMap::new(),
             entrypoint_id: None,
         })
     }
@@ -330,13 +346,7 @@ impl AotCompiler {
                     if self.weak_fields.contains(&(struct_id, field_name.clone())) {
                         continue;
                     }
-                    if matches!(
-                        field_type,
-                        TypeRef::Custom(_)
-                            | TypeRef::Generic(_, _)
-                            | TypeRef::Str
-                            | TypeRef::Function
-                    ) {
+                    if field_type.is_managed() {
                         let child = builder.ins().load(
                             cl_types::I64,
                             MemFlags::new(),
@@ -399,6 +409,86 @@ impl AotCompiler {
         Ok(())
     }
 
+    pub fn declare_task_thunks(&mut self, program: &MirProgram) -> Result<(), String> {
+        let mut functions: Vec<_> = program.functions.values().filter(|f| f.is_async).collect();
+        functions.sort_by_key(|f| f.id.0);
+        for function in functions {
+            let mut signature = self.module.make_signature();
+            signature.params.push(AbiParam::new(cl_types::I64));
+            signature.returns.push(AbiParam::new(cl_types::I64));
+            let id = self.module.declare_function(
+                &format!("__lpp_task_thunk_{}", function.id.0),
+                Linkage::Local,
+                &signature,
+            ).map_err(|error| format!("declare task thunk '{}': {:?}", function.name, error))?;
+            self.task_thunk_ids.insert(function.id, id);
+        }
+        Ok(())
+    }
+
+    pub fn lower_task_thunks(&mut self, program: &MirProgram) -> Result<(), String> {
+        let mut functions: Vec<_> = program.functions.values().filter(|f| f.is_async).collect();
+        functions.sort_by_key(|f| f.id.0);
+        for function in functions {
+            let thunk_id = self.task_thunk_ids[&function.id];
+            let target_id = self.func_ids[&function.id];
+            let mut context = self.module.make_context();
+            context.func.signature.params.push(AbiParam::new(cl_types::I64));
+            context.func.signature.returns.push(AbiParam::new(cl_types::I64));
+            context.func.name = cranelift_codegen::ir::UserFuncName::user(0, thunk_id.as_u32());
+            let mut builder_context = FunctionBuilderContext::new();
+            {
+                let mut builder = FunctionBuilder::new(&mut context.func, &mut builder_context);
+                let entry = builder.create_block();
+                builder.switch_to_block(entry);
+                builder.append_block_params_for_function_params(entry);
+                let environment = builder.block_params(entry)[0];
+                let parameter_types: Vec<TypeRef> = function.params.iter()
+                    .map(|id| function.locals[id.0].ty.clone())
+                    .collect();
+                let (layout, _) = tuple_layout(&parameter_types);
+                let mut arguments = Vec::with_capacity(layout.len());
+                for field in &layout {
+                    arguments.push(builder.ins().load(
+                        field.ty,
+                        MemFlags::new(),
+                        environment,
+                        field.offset as i32,
+                    ));
+                }
+                let target = self.module.declare_func_in_func(target_id, builder.func);
+                let call = builder.ins().call(target, &arguments);
+                let raw = if function.return_type == TypeRef::Void {
+                    builder.ins().iconst(cl_types::I64, 0)
+                } else {
+                    let value = builder.inst_results(call)[0];
+                    match &function.return_type {
+                        TypeRef::Bool => builder.ins().uextend(cl_types::I64, value),
+                        TypeRef::Float => {
+                            let slot = builder.create_sized_stack_slot(
+                                cranelift_codegen::ir::StackSlotData::new(
+                                    cranelift_codegen::ir::StackSlotKind::ExplicitSlot,
+                                    8,
+                                    3,
+                                ),
+                            );
+                            let address = builder.ins().stack_addr(cl_types::I64, slot, 0);
+                            builder.ins().store(MemFlags::trusted(), value, address, 0);
+                            builder.ins().load(cl_types::I64, MemFlags::trusted(), address, 0)
+                        }
+                        _ => value,
+                    }
+                };
+                builder.ins().return_(&[raw]);
+                builder.seal_all_blocks();
+                builder.finalize();
+            }
+            self.module.define_function(thunk_id, &mut context)
+                .map_err(|error| format!("define task thunk '{}': {:?}", function.name, error))?;
+        }
+        Ok(())
+    }
+
     /// Declare a conventional `int main(void)` entry point for the system
     /// linker. The L++ source-level `main` may be `Void`, which is not itself a
     /// valid C process-entry ABI.
@@ -425,7 +515,7 @@ impl AotCompiler {
         let Some(wrapper_id) = self.entrypoint_id else {
             return Ok(());
         };
-        let (user_main_id, _) = program
+        let (user_main_id, user_main) = program
             .functions
             .iter()
             .find(|(_, function)| function.name == "main")
@@ -445,8 +535,35 @@ impl AotCompiler {
             let mut builder = FunctionBuilder::new(&mut ctx.func, &mut fn_ctx);
             let entry = builder.create_block();
             builder.switch_to_block(entry);
-            let main_ref = self.module.declare_func_in_func(main_id, builder.func);
-            builder.ins().call(main_ref, &[]);
+            if user_main.is_async {
+                let tuple_alloc = self.module.declare_func_in_func(
+                    self.builtin_ids["lpp_tuple_alloc"], builder.func
+                );
+                let size = builder.ins().iconst(cl_types::I64, 16);
+                let zero = builder.ins().iconst(cl_types::I64, 0);
+                let allocation = builder.ins().call(tuple_alloc, &[size, zero, zero]);
+                let environment = builder.inst_results(allocation)[0];
+                let thunk = self.module.declare_func_in_func(
+                    self.task_thunk_ids[user_main_id], builder.func
+                );
+                let thunk_address = builder.ins().func_addr(cl_types::I64, thunk);
+                let task_new = self.module.declare_func_in_func(
+                    self.builtin_ids["lpp_task_new"], builder.func
+                );
+                let created = builder.ins().call(task_new, &[thunk_address, environment, zero]);
+                let task = builder.inst_results(created)[0];
+                let await_id = self.module.declare_func_in_func(
+                    self.builtin_ids["lpp_task_await"], builder.func
+                );
+                builder.ins().call(await_id, &[task]);
+                let release = self.module.declare_func_in_func(
+                    self.builtin_ids["lpp_arc_release"], builder.func
+                );
+                builder.ins().call(release, &[task]);
+            } else {
+                let main_ref = self.module.declare_func_in_func(main_id, builder.func);
+                builder.ins().call(main_ref, &[]);
+            }
             let status = builder.ins().iconst(cl_types::I32, 0);
             builder.ins().return_(&[status]);
             builder.seal_all_blocks();
@@ -488,6 +605,7 @@ impl AotCompiler {
                 func_ids: &self.func_ids,
                 builtin_ids: &mut self.builtin_ids,
                 drop_ids: &self.drop_ids,
+                task_thunk_ids: &self.task_thunk_ids,
                 type_table,
                 fn_name: mir_fn.name.clone(),
                 next_str_idx: 0,
@@ -667,8 +785,10 @@ impl AotCompiler {
         c.declare_builtins()?;
         c.declare_drop_functions(type_table)?;
         c.declare_functions(program)?;
+        c.declare_task_thunks(program)?;
         c.declare_entrypoint_wrapper(program)?;
         c.lower_drop_functions(type_table)?;
+        c.lower_task_thunks(program)?;
         c.lower_functions(program, type_table)?;
         c.lower_entrypoint_wrapper(program)?;
         c.finish()

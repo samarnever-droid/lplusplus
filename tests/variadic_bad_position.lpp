@@ -1,0 +1,5 @@
+def bad(...items: Int, suffix: Int):
+    print(suffix)
+
+def main():
+    bad(1, 2)

@@ -1,0 +1,7 @@
+def log(prefix: Str, ...items: Str) -> Void:
+    print(prefix)
+    for item in items:
+        print(item)
+
+def main():
+    log("items", "one", "two", "three")

@@ -1,0 +1,9 @@
+async def value() -> Str:
+    return "twice"
+
+async def main():
+    task := value()
+    first := task.await
+    second := task.await
+    print(first)
+    print(second)

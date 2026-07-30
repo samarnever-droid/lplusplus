@@ -1,0 +1,6 @@
+async def blocked() -> Str:
+    return read_file("input.txt")
+
+async def main():
+    value := blocked().await
+    print(value)

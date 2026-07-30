@@ -181,6 +181,23 @@ void lpp_arc_release_local(void *p) { if(!p)return; LppArcHeader *h=(LppArcHeade
 void *lpp_alloc(int64_t sz){return lpp_arc_alloc(sz);}
 void lpp_free(void *p,int64_t sz){(void)sz;lpp_arc_release(p);}
 void lpp_closure_destroy(void *c){if(c)lpp_arc_release(((void**)c)[1]);}
+/* This freestanding runtime has no reusable small-block allocator, so an
+ * address is never recycled after VirtualFree during a process lifetime. The
+ * compiler also rejects source reassignment while a view is live. */
+int64_t lpp_weak_generation(void*p){return p?1:0;}
+int64_t lpp_weak_get(int64_t raw,int64_t generation){return generation==1?raw:0;}
+
+typedef struct{uint64_t managed_mask,packed_offsets;}LppTuplePrefix;
+static void lpp_tuple_destroy(void*p){LppTuplePrefix*t=(LppTuplePrefix*)p;unsigned i;for(i=0;t&&i<4;i++){if(!(t->managed_mask&((uint64_t)1<<i)))continue;uint64_t o=(t->packed_offsets>>(i*16))&0xffff;lpp_arc_release(*(void**)((char*)p+o));}}
+void*lpp_tuple_alloc(int64_t size,int64_t mask,int64_t offsets){LppTuplePrefix*t;if(size<16)ExitProcess(101);t=(LppTuplePrefix*)lpp_arc_alloc_with_destructor(size,lpp_tuple_destroy);if(!t)ExitProcess(101);t->managed_mask=(uint64_t)mask;t->packed_offsets=(uint64_t)offsets;return t;}
+typedef int64_t(*LppTaskCode)(void*);
+typedef struct{LppTaskCode code;void*environment;int64_t result;volatile long state;long result_managed;}LppTask;
+static void lpp_task_payload_destroy(void*p){LppTask*t=(LppTask*)p;if(!t)return;if(t->environment){lpp_arc_release(t->environment);t->environment=0;}if(_InterlockedExchangeAdd(&t->state,0)==2&&t->result_managed&&t->result){lpp_arc_release((void*)(intptr_t)t->result);t->result=0;}}
+void*lpp_task_new(void*code,void*environment,int64_t managed){LppTask*t;if(!code||!environment)ExitProcess(101);t=(LppTask*)lpp_arc_alloc_with_destructor(sizeof(LppTask),lpp_task_payload_destroy);if(!t)ExitProcess(101);t->code=(LppTaskCode)code;t->environment=environment;t->result_managed=managed!=0;t->state=0;return t;}
+int64_t lpp_task_poll(void*raw){LppTask*t=(LppTask*)raw;long observed;if(!t)ExitProcess(101);observed=_InterlockedExchangeAdd(&t->state,0);if(observed==2)return 1;if(_InterlockedCompareExchange(&t->state,1,0)!=0){if(_InterlockedExchangeAdd(&t->state,0)==2)return 1;ExitProcess(101);}t->result=t->code(t->environment);_InterlockedExchange(&t->state,2);return 1;}
+int64_t lpp_executor_run(void*raw){(void)lpp_task_poll(raw);return((LppTask*)raw)->result;}
+int64_t lpp_task_await(void*raw){LppTask*t=(LppTask*)raw;int64_t r=lpp_executor_run(raw);if(t->result_managed&&r)lpp_arc_retain((void*)(intptr_t)r);return r;}
+void lpp_task_destroy(void*raw){lpp_arc_release(raw);}
 
 static void lpp_list_destroy(void *p) { LppList *l=(LppList*)p; if(!l)return; if(l->arc_elements){int64_t i;for(i=0;i<l->len;i++)lpp_arc_release((void*)(intptr_t)l->data[i]);} if(l->data)VirtualFree(l->data,0,MEM_RELEASE); }
 static void *lpp_list_new_with_mode(int ae) { LppList *l=(LppList*)lpp_arc_alloc_with_destructor((int64_t)sizeof(LppList),lpp_list_destroy); if(!l)return 0; l->arc_elements=ae; return l; }
@@ -194,6 +211,14 @@ double lpp_list_get_float(void*l,int64_t idx){int64_t i=lpp_list_get(l,idx);doub
 void *lpp_list_get_arc(void*l,int64_t i){return(void*)(intptr_t)lpp_list_get(l,i);}
 int64_t lpp_list_len(void*r){return r?((LppList*)r)->len:0;}
 void lpp_list_free(void*l){lpp_arc_release(l);}
+typedef struct{void*base;int64_t start,length,generation,kind;}LppSlice;
+static void*lpp_slice_checked_base(LppSlice*v){int64_t r;if(!v||!v->base||!v->generation)ExitProcess(101);r=lpp_weak_get((int64_t)(intptr_t)v->base,v->generation);if(!r)ExitProcess(101);return(void*)(intptr_t)r;}
+void*lpp_slice_init(void*storage,void*base,int64_t start,int64_t length,int64_t kind){int64_t n;LppSlice*v;if(!storage||!base||start<0||length<0||start>0x7fffffffffffffffLL-length)ExitProcess(101);n=kind==0?(int64_t)lpp_strlen((const char*)base):lpp_list_len(base);if(start>n||length>n-start)ExitProcess(101);v=(LppSlice*)storage;v->base=base;v->start=start;v->length=length;v->generation=lpp_weak_generation(base);v->kind=kind;return v;}
+int64_t lpp_slice_len(void*raw){LppSlice*v=(LppSlice*)raw;(void)lpp_slice_checked_base(v);return v->length;}
+int64_t lpp_slice_get(void*raw,int64_t index){LppSlice*v=(LppSlice*)raw;void*b=lpp_slice_checked_base(v);if(v->kind!=1||index<0||index>=v->length)ExitProcess(101);return lpp_list_get(b,v->start+index);}
+double lpp_slice_get_float(void*raw,int64_t index){int64_t i=lpp_slice_get(raw,index);double f;lpp_memcpy((char*)&f,(const char*)&i,8);return f;}
+char*lpp_str_slice_get(void*raw,int64_t index){LppSlice*v=(LppSlice*)raw;const char*b=(const char*)lpp_slice_checked_base(v);char*r;if(v->kind!=0||index<0||index>=v->length)ExitProcess(101);r=(char*)lpp_arc_alloc(2);if(!r)ExitProcess(101);r[0]=b[v->start+index];r[1]=0;return r;}
+char*lpp_str_slice_to_str(void*raw){LppSlice*v=(LppSlice*)raw;const char*b=(const char*)lpp_slice_checked_base(v);char*r;if(v->kind!=0)ExitProcess(101);r=(char*)lpp_arc_alloc(v->length+1);if(!r)ExitProcess(101);lpp_memcpy(r,b+v->start,(int)v->length);r[v->length]=0;return r;}
 
 void lpp_thread_spawn(void*fn,void*env){HANDLE h=CreateThread(0,0,(DWORD(__stdcall*)(void*))fn,env,0,0);if(h){WaitForSingleObject(h,INFINITE);CloseHandle(h);}}
 

@@ -589,6 +589,7 @@ static void lpp__invalidate_generation(LppArcHeader *hdr) {
 int64_t lpp_weak_generation(void *ptr) {
     if (!lpp__is_valid_arc_ptr(ptr)) return 0;
     LppArcHeader *hdr = (LppArcHeader *)ptr - 1;
+    if (lpp__is_immortal(hdr)) return (int64_t)LPP_ARC_IMMORTAL;
 #if defined(_MSC_VER)
     return (int64_t)hdr->generation;
 #else
@@ -603,6 +604,9 @@ int64_t lpp_weak_get(int64_t raw, int64_t expected_generation) {
     if (!ptr || expected_generation == 0) return 0;
     if (!lpp__is_valid_arc_ptr(ptr)) return 0;
     LppArcHeader *hdr = (LppArcHeader *)ptr - 1;
+    if (lpp__is_immortal(hdr)) {
+        return expected_generation == (int64_t)LPP_ARC_IMMORTAL ? raw : 0;
+    }
 #if defined(_MSC_VER)
     int32_t now = hdr->generation;
 #else
@@ -863,6 +867,125 @@ void lpp_closure_destroy(void *closure) {
     lpp_arc_release(parts[1]);
 }
 
+/* ── Structural tuples and single-thread tasks ─────────────────────────── */
+
+typedef struct {
+    uint64_t managed_mask;
+    uint64_t packed_offsets;
+} LppTuplePrefix;
+
+static void lpp_tuple_destroy(void *payload) {
+    LppTuplePrefix *tuple = (LppTuplePrefix *)payload;
+    if (!tuple) return;
+    for (unsigned i = 0; i < 4; ++i) {
+        if ((tuple->managed_mask & (UINT64_C(1) << i)) == 0) continue;
+        uint64_t offset = (tuple->packed_offsets >> (i * 16)) & UINT64_C(0xffff);
+        void *child = *(void **)((unsigned char *)payload + offset);
+        lpp_arc_release(child);
+    }
+}
+
+void *lpp_tuple_alloc(int64_t size, int64_t managed_mask, int64_t packed_offsets) {
+    if (size < (int64_t)sizeof(LppTuplePrefix)) {
+        lpp_panic("invalid tuple allocation size: %lld", (long long)size);
+    }
+    LppTuplePrefix *tuple = (LppTuplePrefix *)lpp_arc_alloc_with_destructor(
+        size, lpp_tuple_destroy
+    );
+    if (!tuple) lpp_panic("out of memory while allocating tuple");
+    tuple->managed_mask = (uint64_t)managed_mask;
+    tuple->packed_offsets = (uint64_t)packed_offsets;
+    return tuple;
+}
+
+typedef int64_t (*LppTaskCode)(void *environment);
+typedef struct {
+    LppTaskCode code;
+    void *environment;
+    int64_t result;
+    lpp_atomic32_t state;   /* 0 pending, 1 running, 2 complete */
+    int32_t result_managed;
+} LppTask;
+
+static void lpp_task_payload_destroy(void *payload) {
+    LppTask *task = (LppTask *)payload;
+    if (!task) return;
+    if (task->environment) {
+        lpp_arc_release(task->environment);
+        task->environment = NULL;
+    }
+    if (LPP_ARC_LOAD(&task->state) == 2 && task->result_managed && task->result) {
+        lpp_arc_release((void *)(intptr_t)task->result);
+        task->result = 0;
+    }
+}
+
+void *lpp_task_new(void *code_ptr, void *environment, int64_t result_managed) {
+    if (!code_ptr || !environment) lpp_panic("task creation requires code and environment");
+    LppTask *task = (LppTask *)lpp_arc_alloc_with_destructor(
+        (int64_t)sizeof(LppTask), lpp_task_payload_destroy
+    );
+    if (!task) lpp_panic("out of memory while allocating task");
+    task->code = (LppTaskCode)code_ptr;
+    task->environment = environment; /* transferred by generated code */
+    task->result_managed = result_managed != 0;
+#if defined(_MSC_VER)
+    task->state = 0;
+#else
+    atomic_init(&task->state, 0);
+#endif
+    return task;
+}
+
+int64_t lpp_task_poll(void *raw_task) {
+    LppTask *task = (LppTask *)raw_task;
+    if (!task) lpp_panic("attempted to poll a null task");
+    if (LPP_ARC_LOAD(&task->state) == 2) return 1; /* double-poll is idempotent */
+#if defined(_MSC_VER)
+    if (InterlockedCompareExchange(&task->state, 1, 0) != 0) {
+        if (LPP_ARC_LOAD(&task->state) == 2) return 1;
+        lpp_panic("concurrent or recursive polling of the same task");
+    }
+#else
+    int32_t expected = 0;
+    if (!atomic_compare_exchange_strong_explicit(
+            &task->state, &expected, 1, memory_order_acq_rel, memory_order_acquire)) {
+        if (expected == 2) return 1;
+        lpp_panic("concurrent or recursive polling of the same task");
+    }
+#endif
+    task->result = task->code(task->environment);
+#if defined(_MSC_VER)
+    InterlockedExchange(&task->state, 2);
+#else
+    atomic_store_explicit(&task->state, 2, memory_order_release);
+#endif
+    return 1;
+}
+
+int64_t lpp_executor_run(void *raw_task) {
+    /* First-tier executor policy: deterministic run-to-completion on the
+     * calling thread. No OS thread is created and a task is polled at most
+     * once; nested awaits are driven depth-first by the running task. */
+    (void)lpp_task_poll(raw_task);
+    return ((LppTask *)raw_task)->result;
+}
+
+int64_t lpp_task_await(void *raw_task) {
+    LppTask *task = (LppTask *)raw_task;
+    int64_t result = lpp_executor_run(raw_task);
+    /* The task keeps its result so double-await is defined. Each await of a
+     * managed result creates a fresh caller-owned reference. */
+    if (task->result_managed && result) {
+        lpp_arc_retain((void *)(intptr_t)result);
+    }
+    return result;
+}
+
+void lpp_task_destroy(void *raw_task) {
+    lpp_arc_release(raw_task);
+}
+
 /* ── Allocator ───────────────────────────────────────────────────────────── */
 
 void *lpp_alloc(int64_t size) {
@@ -1029,6 +1152,96 @@ void lpp_list_free(void *list) {
     /* Compatibility entry point. In ownership-aware AOT code list lifetime is
      * automatic, so this is only a single reference release, never raw free. */
     lpp_arc_release(list);
+}
+
+/* ── Borrowed zero-copy slices ──────────────────────────────────────────── */
+typedef struct {
+    void *base;
+    int64_t start;
+    int64_t length;
+    int64_t generation;
+    int64_t kind; /* 0 = UTF-8 byte string, 1 = List[T] slots */
+} LppSlice;
+
+static void *lpp_slice_checked_base(const LppSlice *view) {
+    if (!view || !view->base || view->generation == 0) {
+        lpp_panic("use of an uninitialized slice view");
+    }
+    int64_t raw = lpp_weak_get((int64_t)(intptr_t)view->base, view->generation);
+    if (!raw) lpp_panic("borrowed slice source is no longer live");
+    return (void *)(intptr_t)raw;
+}
+
+void *lpp_slice_init(void *storage, void *base, int64_t start, int64_t length, int64_t kind) {
+    if (!storage || !base) lpp_panic("slice construction requires live storage and base");
+    if (start < 0 || length < 0 || start > INT64_MAX - length) {
+        lpp_panic("invalid slice range: start %lld, len %lld", (long long)start, (long long)length);
+    }
+    int64_t source_length = kind == 0
+        ? (int64_t)strlen((const char *)base)
+        : lpp_list_len(base);
+    if (start > source_length || length > source_length - start) {
+        lpp_panic("slice range out of bounds: start %lld, len %lld, source len %lld",
+            (long long)start, (long long)length, (long long)source_length);
+    }
+    LppSlice *view = (LppSlice *)storage;
+    view->base = base;
+    view->start = start;
+    view->length = length;
+    view->generation = lpp_weak_generation(base);
+    view->kind = kind;
+    if (view->generation == 0) lpp_panic("slice source is not an ARC-managed value");
+    return view;
+}
+
+int64_t lpp_slice_len(void *raw_view) {
+    LppSlice *view = (LppSlice *)raw_view;
+    (void)lpp_slice_checked_base(view);
+    return view->length;
+}
+
+int64_t lpp_slice_get(void *raw_view, int64_t index) {
+    LppSlice *view = (LppSlice *)raw_view;
+    void *base = lpp_slice_checked_base(view);
+    if (index < 0 || index >= view->length) {
+        lpp_panic("slice index out of bounds: index %lld, len %lld",
+            (long long)index, (long long)view->length);
+    }
+    if (view->kind != 1) lpp_panic("numeric slice_get requires Slice[T]");
+    return lpp_list_get(base, view->start + index);
+}
+
+double lpp_slice_get_float(void *raw_view, int64_t index) {
+    int64_t bits = lpp_slice_get(raw_view, index);
+    double value;
+    memcpy(&value, &bits, sizeof(value));
+    return value;
+}
+
+char *lpp_str_slice_get(void *raw_view, int64_t index) {
+    LppSlice *view = (LppSlice *)raw_view;
+    const char *base = (const char *)lpp_slice_checked_base(view);
+    if (view->kind != 0) lpp_panic("string slice_get requires StrSlice");
+    if (index < 0 || index >= view->length) {
+        lpp_panic("string slice index out of bounds: index %lld, len %lld",
+            (long long)index, (long long)view->length);
+    }
+    char *result = (char *)lpp_arc_alloc(2);
+    if (!result) lpp_panic("out of memory while reading string slice");
+    result[0] = base[view->start + index];
+    result[1] = '\0';
+    return result;
+}
+
+char *lpp_str_slice_to_str(void *raw_view) {
+    LppSlice *view = (LppSlice *)raw_view;
+    const char *base = (const char *)lpp_slice_checked_base(view);
+    if (view->kind != 0) lpp_panic("slice_to_str requires StrSlice");
+    char *result = (char *)lpp_arc_alloc(view->length + 1);
+    if (!result) lpp_panic("out of memory while copying string slice");
+    memcpy(result, base + view->start, (size_t)view->length);
+    result[view->length] = '\0';
+    return result;
 }
 
 #if !defined(LPP_NO_NETWORK)

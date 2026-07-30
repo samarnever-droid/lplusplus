@@ -1,0 +1,6 @@
+def main():
+    numbers := [10, 20, 30, 40]
+    view := slice(numbers, 1, 2)
+    print(slice_len(view))
+    print(slice_get(view, 0))
+    print(slice_get(view, 1))

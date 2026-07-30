@@ -58,7 +58,12 @@ impl Parser {
         self.skip_newlines();
         while self.peek() != Some(&Token::Eof) && self.peek().is_some() {
             if self.match_token(&Token::Def) {
-                declarations.push(TopLevel::Function(self.parse_function()?));
+                declarations.push(TopLevel::Function(self.parse_function(false)?));
+            } else if self.match_token(&Token::Async) {
+                if !self.match_token(&Token::Def) {
+                    return self.error("Expected 'def' after 'async'");
+                }
+                declarations.push(TopLevel::Function(self.parse_function(true)?));
             } else if self.match_token(&Token::Struct) {
                 declarations.push(TopLevel::Struct(self.parse_struct()?));
             } else if self.match_token(&Token::Enum) {
@@ -98,7 +103,7 @@ impl Parser {
             } else {
                 let found = self.peek().cloned();
                 return self.error(format!(
-                    "Expected 'def', 'struct', 'enum', 'trait', 'impl', 'extern', 'const', 'type', 'import', or 'from', found {:?}",
+                    "Expected 'def', 'async def', 'struct', 'enum', 'trait', 'impl', 'extern', 'const', 'type', 'import', or 'from', found {:?}",
                     found
                 ));
             }
@@ -230,7 +235,12 @@ impl Parser {
                         }
                         self.parse_type()?
                     };
-                    params.push(Param { name: param_name, ty, default: None });
+                    params.push(Param {
+                        name: param_name,
+                        ty,
+                        default: None,
+                        variadic: false,
+                    });
                     if !self.match_token(&Token::Comma) { break; }
                 }
             }
@@ -357,7 +367,7 @@ impl Parser {
             if !self.match_token(&Token::Def) {
                 return self.error("Expected 'def' in impl body");
             }
-            let mut func = self.parse_function()?;
+            let mut func = self.parse_function(false)?;
             // Mangle name: TargetType_methodName
             let mangled = format!("{}_{}", target_type, func.name);
             // Replace `self` param type with the target type. For a generic
@@ -439,6 +449,9 @@ impl Parser {
             let mut params = Vec::new();
             if self.peek() != Some(&Token::RParen) {
                 loop {
+                    if self.peek() == Some(&Token::Ellipsis) {
+                        return self.error("Extern functions cannot use variadic parameters; native C varargs are not part of the safe ABI");
+                    }
                     let param_name = match self.advance() {
                         Some(Token::Ident(n)) => n.clone(),
                         _ => return self.error("Expected parameter name"),
@@ -447,7 +460,12 @@ impl Parser {
                         return self.error("Expected ':' after parameter name");
                     }
                     let ty = self.parse_type()?;
-                    params.push(Param { name: param_name, ty, default: None });
+                    params.push(Param {
+                        name: param_name,
+                        ty,
+                        default: None,
+                        variadic: false,
+                    });
                     if !self.match_token(&Token::Comma) { break; }
                 }
             }
@@ -519,7 +537,12 @@ impl Parser {
                             return self.error("Expected ':' after variant field name");
                         }
                         let ty = self.parse_type()?;
-                        fields.push(Param { name: field_name, ty, default: None });
+                        fields.push(Param {
+                            name: field_name,
+                            ty,
+                            default: None,
+                            variadic: false,
+                        });
                         if !self.match_token(&Token::Comma) {
                             break;
                         }
@@ -586,6 +609,7 @@ impl Parser {
                 name: field_name,
                 ty,
                 default: None,
+                variadic: false,
             });
 
             self.skip_newlines();
@@ -627,7 +651,7 @@ impl Parser {
         type_params
     }
 
-    fn parse_function(&mut self) -> Result<Function, String> {
+    fn parse_function(&mut self, is_async: bool) -> Result<Function, String> {
         let name = match self.advance() {
             Some(Token::Ident(n)) => n.clone(),
             _ => return self.error("Expected function name"),
@@ -643,12 +667,14 @@ impl Parser {
         let mut params = Vec::new();
         if self.peek() != Some(&Token::RParen) {
             loop {
+                let variadic = self.match_token(&Token::Ellipsis);
                 let param_name = match self.advance() {
                     Some(Token::Ident(n)) => n.clone(),
+                    _ if variadic => return self.error("Expected rest parameter name after '...'"),
                     _ => return self.error("Expected parameter name"),
                 };
                 // `self` param has implicit type — no `:` required
-                let ty = if param_name == "self" && self.peek() != Some(&Token::Colon) {
+                let ty = if param_name == "self" && self.peek() != Some(&Token::Colon) && !variadic {
                     Type::Custom("Self".to_string())
                 } else {
                     if !self.match_token(&Token::Colon) {
@@ -656,20 +682,21 @@ impl Parser {
                     }
                     self.parse_type()?
                 };
-                // Optional default value: def foo(x: Int = 10)
                 let default = if self.match_token(&Token::Equal) {
+                    if variadic {
+                        return self.error("Variadic rest parameters cannot have default values");
+                    }
                     Some(self.parse_expr()?)
                 } else {
                     None
                 };
-                params.push(Param {
-                    name: param_name,
-                    ty,
-                    default,
-                });
+                params.push(Param { name: param_name, ty, default, variadic });
 
                 if !self.match_token(&Token::Comma) {
                     break;
+                }
+                if variadic {
+                    return self.error("Variadic rest parameter must be the final parameter");
                 }
             }
         }
@@ -714,10 +741,32 @@ impl Parser {
             params,
             return_type,
             body,
+            is_async,
         })
     }
 
     fn parse_type(&mut self) -> Result<Type, String> {
+        if self.match_token(&Token::LParen) {
+            if self.peek() == Some(&Token::RParen) {
+                return self.error("Empty tuple type '()' is not supported; use Void");
+            }
+            let mut elements = vec![self.parse_type()?];
+            if !self.match_token(&Token::Comma) {
+                return self.error("Parenthesized types are not supported; tuple types require a comma");
+            }
+            loop {
+                elements.push(self.parse_type()?);
+                if !self.match_token(&Token::Comma) { break; }
+            }
+            if !self.match_token(&Token::RParen) {
+                return self.error("Expected ')' after tuple type");
+            }
+            if !(2..=4).contains(&elements.len()) {
+                return self.error(format!("Tuple types require arity 2..=4, got {}", elements.len()));
+            }
+            return Ok(Type::Tuple(elements));
+        }
+
         let base_name = match self.advance() {
             Some(Token::Ident(n)) => n.clone(),
             _ => return self.error("Expected a type name"),
@@ -728,13 +777,19 @@ impl Parser {
             if self.peek() != Some(&Token::RBracket) {
                 loop {
                     type_args.push(self.parse_type()?);
-                    if !self.match_token(&Token::Comma) {
-                        break;
-                    }
+                    if !self.match_token(&Token::Comma) { break; }
                 }
             }
             if !self.match_token(&Token::RBracket) {
                 return self.error("Expected ']' after generic type arguments");
+            }
+            if base_name == "Slice" {
+                if type_args.len() != 1 { return self.error("Slice requires exactly one element type"); }
+                return Ok(Type::Slice(Box::new(type_args.remove(0))));
+            }
+            if base_name == "Task" {
+                if type_args.len() != 1 { return self.error("Task requires exactly one result type"); }
+                return Ok(Type::Task(Box::new(type_args.remove(0))));
             }
             return Ok(Type::Generic(base_name, type_args));
         }
@@ -746,6 +801,7 @@ impl Parser {
             "Bool" => Ok(Type::Bool),
             "Char" => Ok(Type::Char),
             "Void" => Ok(Type::Void),
+            "StrSlice" => Ok(Type::StrSlice),
             _ => Ok(Type::Custom(base_name)),
         }
     }
@@ -996,6 +1052,29 @@ impl Parser {
 
         if self.match_token(&Token::Continue) {
             return Ok(Stmt::Continue);
+        }
+
+        if self.peek() == Some(&Token::LParen) {
+            let saved = self.pos;
+            self.advance();
+            let mut names = Vec::new();
+            let mut valid = true;
+            loop {
+                match self.advance() {
+                    Some(Token::Ident(n)) => names.push(n.clone()),
+                    _ => { valid = false; break; }
+                }
+                if !self.match_token(&Token::Comma) { break; }
+            }
+            if valid && self.match_token(&Token::RParen) && self.match_token(&Token::Assign) {
+                if !(2..=4).contains(&names.len()) {
+                    return self.error(format!("Tuple destructuring requires 2..=4 names, got {}", names.len()));
+                }
+                let value = self.parse_expr()?;
+                let binding_ids = (0..names.len()).map(|_| std::cell::Cell::new(None)).collect();
+                return Ok(Stmt::Destructure { names, value, binding_ids });
+            }
+            self.pos = saved;
         }
 
         if self.match_token(&Token::Mut) {
@@ -1295,14 +1374,15 @@ impl Parser {
 
         loop {
             if self.match_token(&Token::Dot) {
+                if self.match_token(&Token::Await) {
+                    expr = Expr::Await(Box::new(expr));
+                    continue;
+                }
                 let field = match self.advance() {
                     Some(Token::Ident(n)) => n.clone(),
-                    _ => return self.error("Expected field name after '.'"),
+                    _ => return self.error("Expected field name or reserved 'await' after '.'"),
                 };
-                expr = Expr::FieldAccess {
-                    base: Box::new(expr),
-                    field,
-                };
+                expr = Expr::FieldAccess { base: Box::new(expr), field };
             } else if self.match_token(&Token::LParen) {
                 let mut args = Vec::new();
                 if self.peek() != Some(&Token::RParen) {
@@ -1457,11 +1537,27 @@ impl Parser {
             Token::BoolLit(b) => Ok(Expr::BoolLiteral(b)),
             Token::Ident(n) => Ok(Expr::Identifier(n, std::cell::Cell::new(None))),
             Token::LParen => {
-                let expr = self.parse_expr()?;
-                if !self.match_token(&Token::RParen) {
-                    return self.error("Expected ')'");
+                if self.peek() == Some(&Token::RParen) {
+                    return self.error("Empty tuple expression '()' is not supported; use a Void-returning function");
                 }
-                Ok(expr)
+                let first = self.parse_expr()?;
+                if self.match_token(&Token::Comma) {
+                    let mut elements = vec![first];
+                    loop {
+                        elements.push(self.parse_expr()?);
+                        if !self.match_token(&Token::Comma) { break; }
+                    }
+                    if !self.match_token(&Token::RParen) {
+                        return self.error("Expected ')' after tuple expression");
+                    }
+                    if !(2..=4).contains(&elements.len()) {
+                        return self.error(format!("Tuple expressions require arity 2..=4, got {}", elements.len()));
+                    }
+                    Ok(Expr::Tuple(elements))
+                } else {
+                    if !self.match_token(&Token::RParen) { return self.error("Expected ')'"); }
+                    Ok(first)
+                }
             }
             Token::LBracket => {
                 let mut elements = Vec::new();

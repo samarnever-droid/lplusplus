@@ -1,0 +1,5 @@
+def main():
+    mut text := "first"
+    view := str_slice(text, 0, 2)
+    text = "second"
+    print(str_slice_to_str(view))

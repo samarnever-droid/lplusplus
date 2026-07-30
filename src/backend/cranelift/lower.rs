@@ -1,4 +1,4 @@
-use super::types::{struct_layout, type_to_cl};
+use super::types::{struct_layout, tuple_layout, tuple_runtime_metadata, type_to_cl};
 use crate::ast::BinaryOperator;
 use crate::mir::ir::*;
 use crate::typecheck::{TypeRef, TypeTable};
@@ -18,6 +18,8 @@ pub struct FunctionLower<'a, M: Module> {
     pub builtin_ids: &'a mut HashMap<String, CLFuncId>,
     /// Generated type-specific destructors used by AllocateArcStruct.
     pub drop_ids: &'a HashMap<crate::typecheck::StructTypeId, CLFuncId>,
+    /// One `(ptr env) -> i64` trampoline per async MIR function.
+    pub task_thunk_ids: &'a HashMap<FuncId, CLFuncId>,
     pub type_table: &'a TypeTable,
     pub fn_name: String,
     pub next_str_idx: usize,
@@ -477,6 +479,154 @@ impl<'a, M: Module> FunctionLower<'a, M> {
         dest_ty: Option<&TypeRef>,
     ) -> Result<Value, String> {
         match rvalue {
+            Rvalue::AllocateTuple(types, values) => {
+                let (layout, total_size) = tuple_layout(types);
+                let (managed_mask, packed_offsets) = tuple_runtime_metadata(types);
+                let allocator = *self.builtin_ids.get("lpp_tuple_alloc")
+                    .ok_or_else(|| "Builtin 'lpp_tuple_alloc' was not declared".to_string())?;
+                let allocator_ref = self.module.declare_func_in_func(allocator, builder.func);
+                let size = builder.ins().iconst(cl_types::I64, total_size as i64);
+                let mask = builder.ins().iconst(cl_types::I64, managed_mask as i64);
+                let offsets = builder.ins().iconst(cl_types::I64, packed_offsets as i64);
+                let call = builder.ins().call(allocator_ref, &[size, mask, offsets]);
+                let tuple = builder.inst_results(call)[0];
+                for ((value, field), ty) in values.iter().zip(layout.iter()).zip(types.iter()) {
+                    let stored = self.operand_to_value(builder, value, local_vars)?;
+                    if builder.func.dfg.value_type(stored) != type_to_cl(ty) {
+                        return Err(format!("tuple field type mismatch for {:?}", ty));
+                    }
+                    builder.ins().store(MemFlags::new(), stored, tuple, field.offset as i32);
+                }
+                Ok(tuple)
+            }
+            Rvalue::TupleField(base, index) => {
+                let base_id = match base {
+                    Operand::Local(id) | Operand::Borrowed(id) => *id,
+                    _ => return Err("tuple field base must be a local".to_string()),
+                };
+                let types = match &locals[base_id.0].ty {
+                    TypeRef::Tuple(types) => types,
+                    other => return Err(format!("tuple field base has type {:?}", other)),
+                };
+                let (layout, _) = tuple_layout(types);
+                let field = layout.get(*index)
+                    .ok_or_else(|| format!("tuple field {} out of range", index))?;
+                let tuple = self.operand_to_value(builder, base, local_vars)?;
+                Ok(builder.ins().load(field.ty, MemFlags::new(), tuple, field.offset as i32))
+            }
+            Rvalue::MakeSlice { base, start, length, kind } => {
+                let slot = builder.create_sized_stack_slot(StackSlotData::new(
+                    StackSlotKind::ExplicitSlot, 40, 3,
+                ));
+                let pointer_type = self.module.target_config().pointer_type();
+                let view = builder.ins().stack_addr(pointer_type, slot, 0);
+                let base = self.operand_to_value(builder, base, local_vars)?;
+                let start = self.operand_to_value(builder, start, local_vars)?;
+                let length = self.operand_to_value(builder, length, local_vars)?;
+                let kind = builder.ins().iconst(cl_types::I64, *kind as i64);
+                let init = *self.builtin_ids.get("lpp_slice_init")
+                    .ok_or_else(|| "Builtin 'lpp_slice_init' was not declared".to_string())?;
+                let init_ref = self.module.declare_func_in_func(init, builder.func);
+                let call = builder.ins().call(init_ref, &[view, base, start, length, kind]);
+                Ok(builder.inst_results(call)[0])
+            }
+            Rvalue::SliceLen(view) => {
+                let view = self.operand_to_value(builder, view, local_vars)?;
+                let id = *self.builtin_ids.get("lpp_slice_len")
+                    .ok_or_else(|| "Builtin 'lpp_slice_len' was not declared".to_string())?;
+                let function = self.module.declare_func_in_func(id, builder.func);
+                let call = builder.ins().call(function, &[view]);
+                Ok(builder.inst_results(call)[0])
+            }
+            Rvalue::SliceGet(view, index) => {
+                let view_id = match view {
+                    Operand::Local(id) | Operand::Borrowed(id) => *id,
+                    _ => return Err("slice_get view must be a local".to_string()),
+                };
+                let result_ty = dest_ty.cloned().unwrap_or(TypeRef::Int);
+                let symbol = match (&locals[view_id.0].ty, &result_ty) {
+                    (TypeRef::StrSlice, _) => "lpp_str_slice_get",
+                    (_, TypeRef::Float) => "lpp_slice_get_float",
+                    _ => "lpp_slice_get",
+                };
+                let view = self.operand_to_value(builder, view, local_vars)?;
+                let index = self.operand_to_value(builder, index, local_vars)?;
+                let id = if let Some(id) = self.builtin_ids.get(symbol).copied() {
+                    id
+                } else {
+                    let mut signature = self.module.make_signature();
+                    signature.params.push(AbiParam::new(cl_types::I64));
+                    signature.params.push(AbiParam::new(cl_types::I64));
+                    signature.returns.push(AbiParam::new(type_to_cl(&result_ty)));
+                    let id = self.module.declare_function(symbol, Linkage::Import, &signature)
+                        .map_err(|error| format!("declare slice builtin '{}': {:?}", symbol, error))?;
+                    self.builtin_ids.insert(symbol.to_string(), id);
+                    id
+                };
+                let function = self.module.declare_func_in_func(id, builder.func);
+                let call = builder.ins().call(function, &[view, index]);
+                Ok(builder.inst_results(call)[0])
+            }
+            Rvalue::SliceToStr(view) => {
+                let view = self.operand_to_value(builder, view, local_vars)?;
+                let id = *self.builtin_ids.get("lpp_str_slice_to_str")
+                    .ok_or_else(|| "Builtin 'lpp_str_slice_to_str' was not declared".to_string())?;
+                let function = self.module.declare_func_in_func(id, builder.func);
+                let call = builder.ins().call(function, &[view]);
+                Ok(builder.inst_results(call)[0])
+            }
+            Rvalue::MakeTask(function_id, argument_types, arguments, result_type) => {
+                let (layout, total_size) = tuple_layout(argument_types);
+                let (managed_mask, packed_offsets) = tuple_runtime_metadata(argument_types);
+                let allocator = *self.builtin_ids.get("lpp_tuple_alloc")
+                    .ok_or_else(|| "Builtin 'lpp_tuple_alloc' was not declared".to_string())?;
+                let allocator_ref = self.module.declare_func_in_func(allocator, builder.func);
+                let size = builder.ins().iconst(cl_types::I64, total_size as i64);
+                let mask = builder.ins().iconst(cl_types::I64, managed_mask as i64);
+                let offsets = builder.ins().iconst(cl_types::I64, packed_offsets as i64);
+                let allocation = builder.ins().call(allocator_ref, &[size, mask, offsets]);
+                let environment = builder.inst_results(allocation)[0];
+                for ((argument, field), ty) in
+                    arguments.iter().zip(layout.iter()).zip(argument_types.iter())
+                {
+                    let value = self.operand_to_value(builder, argument, local_vars)?;
+                    if builder.func.dfg.value_type(value) != type_to_cl(ty) {
+                        return Err(format!("task argument type mismatch for {:?}", ty));
+                    }
+                    builder.ins().store(MemFlags::new(), value, environment, field.offset as i32);
+                }
+                let thunk_id = *self.task_thunk_ids.get(function_id)
+                    .ok_or_else(|| format!("missing task thunk for fn_{}", function_id.0))?;
+                let thunk_ref = self.module.declare_func_in_func(thunk_id, builder.func);
+                let thunk = builder.ins().func_addr(self.module.target_config().pointer_type(), thunk_ref);
+                let managed = builder.ins().iconst(cl_types::I64, result_type.is_managed() as i64);
+                let new_id = *self.builtin_ids.get("lpp_task_new")
+                    .ok_or_else(|| "Builtin 'lpp_task_new' was not declared".to_string())?;
+                let new_ref = self.module.declare_func_in_func(new_id, builder.func);
+                let call = builder.ins().call(new_ref, &[thunk, environment, managed]);
+                Ok(builder.inst_results(call)[0])
+            }
+            Rvalue::Await(task) => {
+                let task = self.operand_to_value(builder, task, local_vars)?;
+                let id = *self.builtin_ids.get("lpp_task_await")
+                    .ok_or_else(|| "Builtin 'lpp_task_await' was not declared".to_string())?;
+                let function = self.module.declare_func_in_func(id, builder.func);
+                let call = builder.ins().call(function, &[task]);
+                let raw = builder.inst_results(call)[0];
+                match dest_ty.cloned().unwrap_or(TypeRef::Int) {
+                    TypeRef::Bool => Ok(builder.ins().ireduce(cl_types::I8, raw)),
+                    TypeRef::Float => {
+                        let slot = builder.create_sized_stack_slot(StackSlotData::new(
+                            StackSlotKind::ExplicitSlot, 8, 3,
+                        ));
+                        let pointer_type = self.module.target_config().pointer_type();
+                        let address = builder.ins().stack_addr(pointer_type, slot, 0);
+                        builder.ins().store(MemFlags::trusted(), raw, address, 0);
+                        Ok(builder.ins().load(cl_types::F64, MemFlags::trusted(), address, 0))
+                    }
+                    _ => Ok(raw),
+                }
+            }
             Rvalue::Use(op) => self.operand_to_value(builder, op, local_vars),
             Rvalue::Move(local) => {
                 self.operand_to_value(builder, &Operand::Local(*local), local_vars)
@@ -758,11 +908,11 @@ impl<'a, M: Module> FunctionLower<'a, M> {
             )),
             Rvalue::AllocateList(element_ty) => {
                 let allocator = match element_ty {
-                    TypeRef::Int | TypeRef::Float | TypeRef::Bool => "lpp_list_new",
-                    TypeRef::Custom(_) | TypeRef::Str => "lpp_list_new_arc",
+                    TypeRef::Int | TypeRef::Float | TypeRef::Bool | TypeRef::Char => "lpp_list_new",
+                    ty if ty.is_managed() => "lpp_list_new_arc",
                     _ => {
                         return Err(format!(
-                            "AOT supports List[Int/Float/Bool/Str/Custom], got List[{:?}]",
+                            "AOT does not support List[{:?}] safely",
                             element_ty
                         ));
                     }
@@ -1108,6 +1258,10 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                         | TypeRef::Unresolved(_)
                         | TypeRef::Function
                         | TypeRef::TypeParam(_)
+                        | TypeRef::Tuple(_)
+                        | TypeRef::StrSlice
+                        | TypeRef::Slice(_)
+                        | TypeRef::Task(_)
                         | TypeRef::Void => builder.ins().iconst(cl_types::I64, 0),
                         TypeRef::VectorI64x2 => {
                             let zero = builder.ins().iconst(cl_types::I64, 0);

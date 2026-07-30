@@ -56,6 +56,8 @@ pub struct MirLowerCtx<'a> {
     /// analysis had no say. This is how the analysis finally participates in
     /// that decision.
     pub current_arena: Option<LocalId>,
+    /// Calls to these functions construct Task[T] instead of invoking the body.
+    pub async_functions: std::collections::HashSet<String>,
 }
 
 impl<'a> MirLowerCtx<'a> {
@@ -81,6 +83,7 @@ impl<'a> MirLowerCtx<'a> {
             current_vtable_locals: HashMap::new(),
             extern_symbols: HashMap::new(),
             current_arena: None,
+            async_functions: std::collections::HashSet::new(),
         }
     }
 
@@ -122,6 +125,11 @@ impl<'a> MirLowerCtx<'a> {
                 name.clone(),
                 args.iter().map(|arg| self.resolve_type(arg)).collect(),
             ),
+            Type::Tuple(elements) =>
+                TypeRef::Tuple(elements.iter().map(|ty| self.resolve_type(ty)).collect()),
+            Type::StrSlice => TypeRef::StrSlice,
+            Type::Slice(element) => TypeRef::Slice(Box::new(self.resolve_type(element))),
+            Type::Task(result) => TypeRef::Task(Box::new(self.resolve_type(result))),
         }
     }
 
@@ -137,6 +145,16 @@ impl<'a> MirLowerCtx<'a> {
             Expr::StringLiteral(_) => TypeRef::Str,
             Expr::CharLiteral(_) => TypeRef::Char,
             Expr::BoolLiteral(_) => TypeRef::Bool,
+            Expr::Tuple(elements) => TypeRef::Tuple(
+                elements
+                    .iter()
+                    .map(|element| self.expr_type_hint(element, builder, binding_map))
+                    .collect(),
+            ),
+            Expr::Await(inner) => match self.expr_type_hint(inner, builder, binding_map) {
+                TypeRef::Task(result) => *result,
+                _ => TypeRef::Void,
+            },
             Expr::Identifier(_, cell) => {
                 if let Some(ast_id) = cell.get() {
                     if let Some(local_id) = binding_map.get(&BindingId(ast_id)) {
@@ -174,10 +192,37 @@ impl<'a> MirLowerCtx<'a> {
             Expr::Call { callee, args } => {
                 if let Expr::Identifier(name, _) = &**callee {
                     if let Some(ty) = self.func_return_types.get(name) {
-                        return ty.clone();
+                        return if self.async_functions.contains(name) {
+                            TypeRef::Task(Box::new(ty.clone()))
+                        } else {
+                            ty.clone()
+                        };
                     }
                     if let Some(&struct_id) = self.type_table.structs_by_name.get(name) {
                         return TypeRef::Custom(struct_id);
+                    }
+                    match name.as_str() {
+                        "str_slice" => return TypeRef::StrSlice,
+                        "slice" => {
+                            if let Some(TypeRef::Generic(list, args)) =
+                                args.first().map(|arg| self.expr_type_hint(arg, builder, binding_map))
+                            {
+                                if list == "List" && args.len() == 1 {
+                                    return TypeRef::Slice(Box::new(args[0].clone()));
+                                }
+                            }
+                            return TypeRef::Slice(Box::new(TypeRef::Int));
+                        }
+                        "slice_len" => return TypeRef::Int,
+                        "slice_get" => {
+                            return match args.first().map(|arg| self.expr_type_hint(arg, builder, binding_map)) {
+                                Some(TypeRef::Slice(element)) => *element,
+                                Some(TypeRef::StrSlice) => TypeRef::Str,
+                                _ => TypeRef::Int,
+                            };
+                        }
+                        "slice_to_str" | "str_slice_to_str" => return TypeRef::Str,
+                        _ => {}
                     }
                     if let Some(builtin) = crate::builtins::get_builtins()
                         .iter()
@@ -308,6 +353,9 @@ impl<'a> MirLowerCtx<'a> {
             let id = FuncId(self.next_func_id);
             self.next_func_id += 1;
             self.functions.insert(f.name.clone(), id);
+            if f.is_async {
+                self.async_functions.insert(f.name.clone());
+            }
             let prev = std::mem::replace(&mut self.current_type_params, f.type_params.iter().map(|tp| tp.name.clone()).collect());
             self.func_return_types
                 .insert(f.name.clone(), self.resolve_type(&f.return_type));
@@ -397,6 +445,7 @@ impl<'a> MirLowerCtx<'a> {
         })?;
         let return_type = self.resolve_type(&func.return_type);
         let mut builder = MirBuilder::new(func_id, func.name.clone(), return_type);
+        builder.function.is_async = func.is_async;
         let mut binding_map = HashMap::new();
 
         // Track which params are trait-typed and their vtable locals
@@ -412,7 +461,12 @@ impl<'a> MirLowerCtx<'a> {
                 }
                 None
             });
-            let ty = self.resolve_type(&param.ty);
+            let element_ty = self.resolve_type(&param.ty);
+            let ty = if param.variadic {
+                TypeRef::Generic("List".to_string(), vec![element_ty])
+            } else {
+                element_ty
+            };
 
             // Check if this param's type is a trait name
             let trait_name_for_param = if let Type::Custom(ref tname) = param.ty {
@@ -465,6 +519,7 @@ impl<'a> MirLowerCtx<'a> {
         // Restore previous type parameters and vtable locals
         self.current_type_params = prev_type_params;
         self.current_vtable_locals = prev_vtable_locals;
+        self.current_arena = prev_arena;
 
         Ok(builder.finish())
     }
@@ -474,10 +529,7 @@ impl<'a> MirLowerCtx<'a> {
     /// variables lower to `Borrowed` and therefore stay usable after assignment.
     /// True when a local holds an ARC-managed reference.
     fn is_arc_managed(builder: &MirBuilder, local: LocalId) -> bool {
-        matches!(
-            &builder.function.locals[local.0].ty,
-            TypeRef::Custom(_) | TypeRef::Function | TypeRef::Generic(_, _) | TypeRef::Str
-        )
+        builder.function.locals[local.0].ty.is_managed()
     }
 
     /// Aliasing a *borrowed* value into an owned local creates a second owner,
@@ -532,6 +584,61 @@ impl<'a> MirLowerCtx<'a> {
         binding_map: &mut HashMap<BindingId, LocalId>,
     ) -> Result<(), String> {
         match stmt {
+            Stmt::Destructure {
+                names,
+                value,
+                binding_ids,
+            } => {
+                let tuple_operand = self.lower_expr(builder, value, binding_map)?;
+                let tuple_ty = match &tuple_operand {
+                    Operand::Local(id) | Operand::Borrowed(id) =>
+                        builder.function.locals[id.0].ty.clone(),
+                    _ => TypeRef::Void,
+                };
+                let elements = match tuple_ty {
+                    TypeRef::Tuple(elements) => elements,
+                    other => return Err(format!("destructuring non-tuple MIR type {:?}", other)),
+                };
+                if elements.len() != names.len() {
+                    return Err("tuple destructuring arity changed after type checking".to_string());
+                }
+                for (index, (name, ty)) in names.iter().zip(elements.into_iter()).enumerate() {
+                    let ast_id = binding_ids
+                        .get(index)
+                        .and_then(|cell| cell.get())
+                        .ok_or_else(|| format!("Missing binding id for destructured name '{}'", name))?;
+                    let binding_id = BindingId(ast_id);
+                    let field_local = builder.new_local(
+                        ty.clone(),
+                        false,
+                        Some(format!("__tuple_field_{}", index)),
+                        None,
+                    );
+                    if ty.is_managed() || ty.is_borrowed_view() {
+                        builder.set_local_ownership(field_local, Ownership::Borrowed);
+                    }
+                    builder.push_instr(MirInstr::Assign(
+                        field_local,
+                        Rvalue::TupleField(tuple_operand.clone(), index),
+                    ))?;
+
+                    let destination = builder.new_local(
+                        ty,
+                        false,
+                        Some(name.clone()),
+                        Some(binding_id),
+                    );
+                    binding_map.insert(binding_id, destination);
+                    let source = if builder.function.locals[field_local.0].ownership.is_borrowed() {
+                        Operand::Borrowed(field_local)
+                    } else {
+                        Operand::Local(field_local)
+                    };
+                    let rvalue = Self::assignment_rvalue(builder, destination, source);
+                    builder.push_instr(MirInstr::Assign(destination, rvalue.clone()))?;
+                    Self::retain_if_aliasing_borrow(builder, destination, &rvalue)?;
+                }
+            }
             Stmt::LetInferred {
                 name,
                 value,
@@ -642,13 +749,7 @@ impl<'a> MirLowerCtx<'a> {
                 let managed_return = match &op {
                     Some(Operand::Local(local)) | Some(Operand::Borrowed(local)) => {
                         let decl = &builder.function.locals[local.0];
-                        let type_says_managed = matches!(
-                            &decl.ty,
-                            TypeRef::Custom(_)
-                                | TypeRef::Function
-                                | TypeRef::Generic(_, _)
-                                | TypeRef::Str
-                        );
+                        let type_says_managed = decl.ty.is_managed();
                         type_says_managed.then_some(*local)
                     }
                     _ => None,
@@ -826,7 +927,9 @@ impl<'a> MirLowerCtx<'a> {
                 };
 
                 let list_local = builder.new_local(list_ty, false, Some("__for_list".to_string()), None);
-                builder.push_instr(MirInstr::Assign(list_local, Rvalue::Use(list_op)))?;
+                let list_rvalue = Self::assignment_rvalue(builder, list_local, list_op);
+                builder.push_instr(MirInstr::Assign(list_local, list_rvalue.clone()))?;
+                Self::retain_if_aliasing_borrow(builder, list_local, &list_rvalue)?;
 
                 let idx_local = builder.new_local(TypeRef::Int, true, Some("__for_idx".to_string()), None);
                 builder.push_instr(MirInstr::Assign(idx_local, Rvalue::Use(Operand::Int(0))))?;
@@ -1019,7 +1122,7 @@ impl<'a> MirLowerCtx<'a> {
                         let bound_local = builder.new_local(payload_ty.clone(), true, None, None);
                         if enum_struct_id.is_some() {
                             // Reading a field borrows the container's ARC edge.
-                            if matches!(payload_ty, TypeRef::Custom(_) | TypeRef::Str | TypeRef::Generic(_, _)) {
+                            if payload_ty.is_managed() {
                                 builder.set_local_ownership(bound_local, Ownership::Borrowed);
                             }
                             builder.push_instr(MirInstr::Assign(
@@ -1074,6 +1177,46 @@ impl<'a> MirLowerCtx<'a> {
             Expr::StringLiteral(value) => Ok(Operand::String(value.clone())),
             Expr::CharLiteral(ch) => Ok(Operand::Int(*ch as i64)),
             Expr::BoolLiteral(value) => Ok(Operand::Bool(*value)),
+            Expr::Tuple(elements) => {
+                let types: Vec<TypeRef> = elements
+                    .iter()
+                    .map(|element| self.expr_type_hint(element, builder, binding_map))
+                    .collect();
+                let mut values = Vec::with_capacity(elements.len());
+                for element in elements {
+                    let value = self.lower_expr(builder, element, binding_map)?;
+                    if let Operand::Borrowed(source) = value {
+                        if builder.function.locals[source.0].ty.is_managed() {
+                            // The tuple creates an owning edge from a borrow.
+                            builder.push_instr(MirInstr::Retain(source))?;
+                        }
+                        values.push(Operand::Borrowed(source));
+                    } else {
+                        values.push(value);
+                    }
+                }
+                let tuple_ty = TypeRef::Tuple(types.clone());
+                let result = builder.new_local(tuple_ty, false, None, None);
+                builder.push_instr(MirInstr::Assign(
+                    result,
+                    Rvalue::AllocateTuple(types, values),
+                ))?;
+                Ok(Operand::Local(result))
+            }
+            Expr::Await(task) => {
+                let task_operand = self.lower_expr(builder, task, binding_map)?;
+                let result_ty = match &task_operand {
+                    Operand::Local(id) | Operand::Borrowed(id) =>
+                        match &builder.function.locals[id.0].ty {
+                            TypeRef::Task(result) => (**result).clone(),
+                            other => return Err(format!("await reached MIR with non-task type {:?}", other)),
+                        },
+                    _ => return Err("await requires a task local".to_string()),
+                };
+                let result = builder.new_local(result_ty, false, None, None);
+                builder.push_instr(MirInstr::Assign(result, Rvalue::Await(task_operand)))?;
+                Ok(Operand::Local(result))
+            }
             Expr::Identifier(name, cell) => {
                 // Check constants first
                 if let Some(&val) = self.constants.get(name) {
@@ -1098,9 +1241,11 @@ impl<'a> MirLowerCtx<'a> {
                 let binding_id = BindingId(ast_id);
                 if let Some(local_id) = binding_map.get(&binding_id) {
                     let local = &builder.function.locals[local_id.0];
-                    if local.ownership.is_managed() {
-                        // Identifier reads borrow managed objects. A later ownership
-                        // operation decides whether to retain or move the value.
+                    if local.ty.is_managed() {
+                        // Identifier reads borrow managed objects, including
+                        // caller-owned parameters whose MIR ownership is
+                        // explicitly `Borrowed`. A later ownership operation
+                        // decides whether to retain or move the value.
                         Ok(Operand::Borrowed(*local_id))
                     } else {
                         Ok(Operand::Local(*local_id))
@@ -1123,7 +1268,7 @@ impl<'a> MirLowerCtx<'a> {
                         );
                         // A captured custom value is borrowed from the closure
                         // environment; the environment owns the ARC edge.
-                        if matches!(cap_ty, TypeRef::Custom(_) | TypeRef::Generic(_, _)) {
+                        if cap_ty.is_managed() {
                             builder.set_local_ownership(temp, Ownership::Borrowed);
                         }
                         builder.push_instr(MirInstr::Assign(
@@ -1256,6 +1401,79 @@ impl<'a> MirLowerCtx<'a> {
                 Ok(Operand::Local(temp))
             }
             Expr::Call { callee, args } => {
+                // Borrowed slice operations have explicit MIR forms so escape
+                // validation and both backends see the lifetime boundary.
+                if let Expr::Identifier(name, _) = &**callee {
+                    match name.as_str() {
+                        "str_slice" | "slice" => {
+                            if args.len() != 3 {
+                                return Err(format!("{} expects exactly three arguments", name));
+                            }
+                            let base = self.lower_expr(builder, &args[0], binding_map)?;
+                            let start = self.lower_expr(builder, &args[1], binding_map)?;
+                            let length = self.lower_expr(builder, &args[2], binding_map)?;
+                            let view_ty = if name == "str_slice" {
+                                TypeRef::StrSlice
+                            } else {
+                                match self.expr_type_hint(&args[0], builder, binding_map) {
+                                    TypeRef::Generic(list, elements)
+                                        if list == "List" && elements.len() == 1 =>
+                                        TypeRef::Slice(Box::new(elements[0].clone())),
+                                    _ => TypeRef::Slice(Box::new(TypeRef::Int)),
+                                }
+                            };
+                            let view = builder.new_local(view_ty, false, None, None);
+                            builder.set_local_ownership(view, Ownership::Borrowed);
+                            builder.push_instr(MirInstr::Assign(
+                                view,
+                                Rvalue::MakeSlice {
+                                    base,
+                                    start,
+                                    length,
+                                    kind: if name == "str_slice" { 0 } else { 1 },
+                                },
+                            ))?;
+                            return Ok(Operand::Borrowed(view));
+                        }
+                        "slice_len" => {
+                            let view_op = self.lower_expr(builder, &args[0], binding_map)?;
+                            let result = builder.new_local(TypeRef::Int, false, None, None);
+                            builder.push_instr(MirInstr::Assign(result, Rvalue::SliceLen(view_op)))?;
+                            return Ok(Operand::Local(result));
+                        }
+                        "slice_get" => {
+                            let view_ty = self.expr_type_hint(&args[0], builder, binding_map);
+                            let result_ty = match &view_ty {
+                                TypeRef::Slice(element) => (**element).clone(),
+                                TypeRef::StrSlice => TypeRef::Str,
+                                _ => TypeRef::Int,
+                            };
+                            let view_op = self.lower_expr(builder, &args[0], binding_map)?;
+                            let index_op = self.lower_expr(builder, &args[1], binding_map)?;
+                            let result = builder.new_local(result_ty.clone(), false, None, None);
+                            if matches!(view_ty, TypeRef::Slice(element) if element.is_managed()) {
+                                builder.set_local_ownership(result, Ownership::Borrowed);
+                            }
+                            builder.push_instr(MirInstr::Assign(
+                                result,
+                                Rvalue::SliceGet(view_op, index_op),
+                            ))?;
+                            return Ok(if builder.function.locals[result.0].ownership.is_borrowed() {
+                                Operand::Borrowed(result)
+                            } else {
+                                Operand::Local(result)
+                            });
+                        }
+                        "slice_to_str" | "str_slice_to_str" => {
+                            let view_op = self.lower_expr(builder, &args[0], binding_map)?;
+                            let result = builder.new_local(TypeRef::Str, false, None, None);
+                            builder.push_instr(MirInstr::Assign(result, Rvalue::SliceToStr(view_op)))?;
+                            return Ok(Operand::Local(result));
+                        }
+                        _ => {}
+                    }
+                }
+
                 // Fill in default parameter values if fewer args than params
                 let effective_args: Vec<&Expr>;
                 let mut default_owned: Vec<Expr> = Vec::new();
@@ -1280,8 +1498,66 @@ impl<'a> MirLowerCtx<'a> {
                 effective_args = args.iter().chain(default_owned.iter()).collect();
 
                 let mut lowered_args = Vec::new();
-                for arg in &effective_args {
-                    lowered_args.push(self.lower_expr(builder, arg, binding_map)?);
+                let variadic_spec = if let Expr::Identifier(name, _) = &**callee {
+                    self.program.declarations.iter().find_map(|decl| match decl {
+                        TopLevel::Function(function) if &function.name == name =>
+                            function.params.last().and_then(|param| {
+                                param.variadic.then(|| (
+                                    function.params.len() - 1,
+                                    self.resolve_type(&param.ty),
+                                ))
+                            }),
+                        TopLevel::Impl(block) => block.methods.iter().find(|function| &function.name == name)
+                            .and_then(|function| function.params.last().and_then(|param| {
+                                param.variadic.then(|| (
+                                    function.params.len() - 1,
+                                    self.resolve_type(&param.ty),
+                                ))
+                            })),
+                        _ => None,
+                    })
+                } else {
+                    None
+                };
+
+                if let Some((fixed_count, element_ty)) = variadic_spec {
+                    if args.len() < fixed_count {
+                        return Err(format!("variadic call requires at least {} fixed arguments", fixed_count));
+                    }
+                    for arg in args.iter().take(fixed_count) {
+                        lowered_args.push(self.lower_expr(builder, arg, binding_map)?);
+                    }
+                    let rest = builder.new_local(
+                        TypeRef::Generic("List".to_string(), vec![element_ty.clone()]),
+                        false,
+                        Some("__rest".to_string()),
+                        None,
+                    );
+                    builder.push_instr(MirInstr::Assign(
+                        rest,
+                        Rvalue::AllocateList(element_ty.clone()),
+                    ))?;
+                    let push_symbol = match &element_ty {
+                        TypeRef::Float => "lpp_list_push_float",
+                        ty if ty.is_managed() => "lpp_list_push_arc",
+                        _ => "lpp_list_push",
+                    };
+                    for arg in args.iter().skip(fixed_count) {
+                        let value = self.lower_expr(builder, arg, binding_map)?;
+                        let discard = builder.new_local(TypeRef::Void, false, None, None);
+                        builder.push_instr(MirInstr::Assign(
+                            discard,
+                            Rvalue::BuiltinCall(
+                                push_symbol.to_string(),
+                                vec![Operand::Borrowed(rest), value],
+                            ),
+                        ))?;
+                    }
+                    lowered_args.push(Operand::Local(rest));
+                } else {
+                    for arg in &effective_args {
+                        lowered_args.push(self.lower_expr(builder, arg, binding_map)?);
+                    }
                 }
 
                 let mut return_type = TypeRef::Void;
@@ -1383,13 +1659,17 @@ impl<'a> MirLowerCtx<'a> {
                     return_type = TypeRef::Int;
                 }
 
+                let is_async_call = matches!(
+                    &**callee,
+                    Expr::Identifier(name, _) if self.async_functions.contains(name)
+                );
+                if is_async_call {
+                    return_type = TypeRef::Task(Box::new(return_type));
+                }
                 let list_get_borrows_element = matches!(
                     &**callee,
                     Expr::Identifier(name, _) if name == "list_get" || name == "get"
-                ) && matches!(
-                    &return_type,
-                    TypeRef::Custom(_) | TypeRef::Str | TypeRef::Bool
-                );
+                ) && return_type.is_managed();
                 let temp = builder.new_local(return_type, false, None, None);
                 if list_get_borrows_element {
                     // List[ARC] owns the element edge; get returns only a
@@ -1477,10 +1757,40 @@ impl<'a> MirLowerCtx<'a> {
                             }
                         }
 
-                        builder.push_instr(MirInstr::Assign(
-                            temp,
-                            Rvalue::CallDirect(func_id, lowered_args),
-                        ))?;
+                        if self.async_functions.contains(name) {
+                            let result_ty = match &builder.function.locals[temp.0].ty {
+                                TypeRef::Task(result) => (**result).clone(),
+                                _ => return Err("async call lost its Task result type".to_string()),
+                            };
+                            let mut argument_types = Vec::with_capacity(lowered_args.len());
+                            for argument in &lowered_args {
+                                let ty = match argument {
+                                    Operand::Local(id) | Operand::Borrowed(id) =>
+                                        builder.function.locals[id.0].ty.clone(),
+                                    Operand::Int(_) => TypeRef::Int,
+                                    Operand::Float(_) => TypeRef::Float,
+                                    Operand::String(_) => TypeRef::Str,
+                                    Operand::Bool(_) => TypeRef::Bool,
+                                };
+                                argument_types.push(ty);
+                            }
+                            for argument in &lowered_args {
+                                if let Operand::Borrowed(id) = argument {
+                                    if builder.function.locals[id.0].ty.is_managed() {
+                                        builder.push_instr(MirInstr::Retain(*id))?;
+                                    }
+                                }
+                            }
+                            builder.push_instr(MirInstr::Assign(
+                                temp,
+                                Rvalue::MakeTask(func_id, argument_types, lowered_args, result_ty),
+                            ))?;
+                        } else {
+                            builder.push_instr(MirInstr::Assign(
+                                temp,
+                                Rvalue::CallDirect(func_id, lowered_args),
+                            ))?;
+                        }
                         return Ok(Operand::Local(temp));
                     }
 
@@ -1571,17 +1881,13 @@ impl<'a> MirLowerCtx<'a> {
                                     if name == "list_push" || name == "push" {
                                         Some(match elem_ty {
                                             TypeRef::Float => "lpp_list_push_float".to_string(),
-                                            TypeRef::Custom(_) | TypeRef::Str | TypeRef::Bool => {
-                                                "lpp_list_push_arc".to_string()
-                                            }
+                                            ty if ty.is_managed() => "lpp_list_push_arc".to_string(),
                                             _ => "lpp_list_push".to_string(),
                                         })
                                     } else {
                                         Some(match elem_ty {
                                             TypeRef::Float => "lpp_list_get_float".to_string(),
-                                            TypeRef::Custom(_) | TypeRef::Str | TypeRef::Bool => {
-                                                "lpp_list_get_arc".to_string()
-                                            }
+                                            ty if ty.is_managed() => "lpp_list_get_arc".to_string(),
                                             _ => "lpp_list_get".to_string(),
                                         })
                                     }
@@ -1696,13 +2002,7 @@ impl<'a> MirLowerCtx<'a> {
                 let temp = builder.new_local(field_ty.clone(), false, None, None);
                 // Reading a custom-struct field borrows the field's ARC edge;
                 // it does not transfer ownership out of the containing object.
-                if matches!(
-                    field_ty,
-                    TypeRef::Custom(_)
-                        | TypeRef::Generic(_, _)
-                        | TypeRef::Str
-                        | TypeRef::Function
-                ) {
+                if field_ty.is_managed() {
                     builder.set_local_ownership(temp, Ownership::Borrowed);
                 }
                 builder.push_instr(MirInstr::Assign(
@@ -1732,7 +2032,7 @@ impl<'a> MirLowerCtx<'a> {
                 ))?;
                 let push_symbol = match &elem_ty {
                     TypeRef::Float => "lpp_list_push_float",
-                    TypeRef::Custom(_) | TypeRef::Str | TypeRef::Bool => "lpp_list_push_arc",
+                    ty if ty.is_managed() => "lpp_list_push_arc",
                     _ => "lpp_list_push",
                 };
                 for item in items {
@@ -2100,7 +2400,7 @@ impl<'a> MirLowerCtx<'a> {
                     .unwrap_or(TypeRef::Int);
                 let data = builder.new_local(payload_ty.clone(), false, None, None);
                 if enum_struct_id.is_some() {
-                    if matches!(payload_ty, TypeRef::Custom(_) | TypeRef::Str | TypeRef::Generic(_, _)) {
+                    if payload_ty.is_managed() {
                         builder.set_local_ownership(data, Ownership::Borrowed);
                     }
                     builder.push_instr(MirInstr::Assign(

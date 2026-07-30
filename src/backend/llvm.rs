@@ -7,7 +7,7 @@
 use crate::ast::BinaryOperator;
 use crate::mir::ir::*;
 use crate::typecheck::{StructTypeId, TypeRef, TypeTable};
-use crate::cranelift_backend::types::struct_layout;
+use crate::cranelift_backend::types::{struct_layout, tuple_layout, tuple_runtime_metadata};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::process::Command;
@@ -21,15 +21,21 @@ fn llvm_type(ty: &TypeRef) -> &'static str {
         TypeRef::Str | TypeRef::Custom(_) | TypeRef::Generic(_, _) | TypeRef::Function => "ptr",
         TypeRef::Unresolved(_) | TypeRef::TypeParam(_) => "ptr",
         TypeRef::VectorI64x2 => "<2 x i64>",
+        TypeRef::Tuple(_) | TypeRef::StrSlice | TypeRef::Slice(_) | TypeRef::Task(_) => "ptr",
     }
 }
 
 fn is_supported_type(ty: &TypeRef) -> bool {
-    !matches!(ty, TypeRef::Unresolved(_) | TypeRef::TypeParam(_))
+    match ty {
+        TypeRef::Unresolved(_) | TypeRef::TypeParam(_) => false,
+        TypeRef::Tuple(elements) => elements.iter().all(is_supported_type),
+        TypeRef::Slice(element) | TypeRef::Task(element) => is_supported_type(element),
+        _ => true,
+    }
 }
 
 fn managed_type(ty: &TypeRef) -> bool {
-    matches!(ty, TypeRef::Custom(_) | TypeRef::Generic(_, _) | TypeRef::Str | TypeRef::Function)
+    ty.is_managed()
 }
 
 fn escape_bytes(bytes: &[u8]) -> String {
@@ -100,6 +106,17 @@ fn builtin_signature(symbol: &str) -> Option<(&'static str, &'static str)> {
         "lpp_arena_release" => ("void", "i64"),
         "lpp_arena_alloc" => ("ptr", "i64, i64, ptr"),
         "lpp_thread_spawn" => ("void", "ptr, ptr"),
+        "lpp_tuple_alloc" => ("ptr", "i64, i64, i64"),
+        "lpp_slice_init" => ("ptr", "ptr, ptr, i64, i64, i64"),
+        "lpp_slice_len" => ("i64", "ptr"),
+        "lpp_slice_get" => ("i64", "ptr, i64"),
+        "lpp_slice_get_float" => ("double", "ptr, i64"),
+        "lpp_str_slice_get" => ("ptr", "ptr, i64"),
+        "lpp_str_slice_to_str" => ("ptr", "ptr"),
+        "lpp_task_new" => ("ptr", "ptr, ptr, i64"),
+        "lpp_task_poll" => ("i64", "ptr"),
+        "lpp_task_await" | "lpp_executor_run" => ("i64", "ptr"),
+        "lpp_task_destroy" => ("void", "ptr"),
         _ => return None,
     })
 }
@@ -232,6 +249,148 @@ impl<'a> FunctionEmitter<'a> {
 
     fn rvalue(&mut self, rvalue: &Rvalue, dest_ty: &TypeRef, out: &mut String) -> Result<Option<(String, &'static str)>, String> {
         match rvalue {
+            Rvalue::AllocateTuple(types, values) => {
+                let (layout, size) = tuple_layout(types);
+                let (mask, offsets) = tuple_runtime_metadata(types);
+                self.register_builtin("lpp_tuple_alloc")?;
+                let tuple = self.temp();
+                out.push_str(&format!(
+                    "  {} = call ptr @lpp_tuple_alloc(i64 {}, i64 {}, i64 {})\n",
+                    tuple, size, mask, offsets
+                ));
+                for ((operand, field), ty) in values.iter().zip(layout.iter()).zip(types.iter()) {
+                    let (value, actual) = self.operand(operand, out)?;
+                    let expected = llvm_type(ty);
+                    let value = self.coerce(&value, actual, expected, out);
+                    let address = self.temp();
+                    out.push_str(&format!(
+                        "  {} = getelementptr i8, ptr {}, i64 {}\n",
+                        address, tuple, field.offset
+                    ));
+                    let align = if matches!(ty, TypeRef::Bool) { 1 } else { 8 };
+                    out.push_str(&format!(
+                        "  store {} {}, ptr {}, align {}\n",
+                        expected, value, address, align
+                    ));
+                }
+                Ok(Some((tuple, "ptr")))
+            }
+            Rvalue::TupleField(base, index) => {
+                let local = match base {
+                    Operand::Local(id) | Operand::Borrowed(id) => *id,
+                    _ => return Err("LLVM tuple field base is not a local".to_string()),
+                };
+                let types = match &self.function.locals[local.0].ty {
+                    TypeRef::Tuple(types) => types,
+                    other => return Err(format!("LLVM tuple field base has type {:?}", other)),
+                };
+                let (layout, _) = tuple_layout(types);
+                let field = layout.get(*index).ok_or_else(|| "LLVM tuple index out of range".to_string())?;
+                let field_ty = &types[*index];
+                let (tuple, _) = self.operand(base, out)?;
+                let address = self.temp();
+                out.push_str(&format!("  {} = getelementptr i8, ptr {}, i64 {}\n", address, tuple, field.offset));
+                let value = self.temp();
+                let align = if matches!(field_ty, TypeRef::Bool) { 1 } else { 8 };
+                out.push_str(&format!("  {} = load {}, ptr {}, align {}\n", value, llvm_type(field_ty), address, align));
+                Ok(Some((value, llvm_type(field_ty))))
+            }
+            Rvalue::MakeSlice { base, start, length, kind } => {
+                self.register_builtin("lpp_slice_init")?;
+                let storage = self.temp();
+                out.push_str(&format!("  {} = alloca [40 x i8], align 8\n", storage));
+                let (base, base_ty) = self.operand(base, out)?;
+                let base = self.coerce(&base, base_ty, "ptr", out);
+                let (start, _) = self.operand(start, out)?;
+                let (length, _) = self.operand(length, out)?;
+                let view = self.temp();
+                out.push_str(&format!(
+                    "  {} = call ptr @lpp_slice_init(ptr {}, ptr {}, i64 {}, i64 {}, i64 {})\n",
+                    view, storage, base, start, length, kind
+                ));
+                Ok(Some((view, "ptr")))
+            }
+            Rvalue::SliceLen(view) => {
+                self.register_builtin("lpp_slice_len")?;
+                let (view, _) = self.operand(view, out)?;
+                let value = self.temp();
+                out.push_str(&format!("  {} = call i64 @lpp_slice_len(ptr {})\n", value, view));
+                Ok(Some((value, "i64")))
+            }
+            Rvalue::SliceGet(view, index) => {
+                let view_id = match view {
+                    Operand::Local(id) | Operand::Borrowed(id) => *id,
+                    _ => return Err("LLVM slice view is not a local".to_string()),
+                };
+                let symbol = match (&self.function.locals[view_id.0].ty, dest_ty) {
+                    (TypeRef::StrSlice, _) => "lpp_str_slice_get",
+                    (_, TypeRef::Float) => "lpp_slice_get_float",
+                    _ => "lpp_slice_get",
+                };
+                let (ret, _) = self.register_builtin(symbol)?;
+                let (view, _) = self.operand(view, out)?;
+                let (index, _) = self.operand(index, out)?;
+                let value = self.temp();
+                out.push_str(&format!("  {} = call {} @{}(ptr {}, i64 {})\n", value, ret, symbol, view, index));
+                Ok(Some((value, ret)))
+            }
+            Rvalue::SliceToStr(view) => {
+                self.register_builtin("lpp_str_slice_to_str")?;
+                let (view, _) = self.operand(view, out)?;
+                let value = self.temp();
+                out.push_str(&format!("  {} = call ptr @lpp_str_slice_to_str(ptr {})\n", value, view));
+                Ok(Some((value, "ptr")))
+            }
+            Rvalue::MakeTask(id, argument_types, arguments, result_type) => {
+                let (layout, size) = tuple_layout(argument_types);
+                let (mask, offsets) = tuple_runtime_metadata(argument_types);
+                self.register_builtin("lpp_tuple_alloc")?;
+                self.register_builtin("lpp_task_new")?;
+                let environment = self.temp();
+                out.push_str(&format!(
+                    "  {} = call ptr @lpp_tuple_alloc(i64 {}, i64 {}, i64 {})\n",
+                    environment, size, mask, offsets
+                ));
+                for ((operand, field), ty) in arguments.iter().zip(layout.iter()).zip(argument_types.iter()) {
+                    let (value, actual) = self.operand(operand, out)?;
+                    let expected = llvm_type(ty);
+                    let value = self.coerce(&value, actual, expected, out);
+                    let address = self.temp();
+                    out.push_str(&format!("  {} = getelementptr i8, ptr {}, i64 {}\n", address, environment, field.offset));
+                    let align = if matches!(ty, TypeRef::Bool) { 1 } else { 8 };
+                    out.push_str(&format!("  store {} {}, ptr {}, align {}\n", expected, value, address, align));
+                }
+                let task = self.temp();
+                out.push_str(&format!(
+                    "  {} = call ptr @lpp_task_new(ptr @__lpp_task_thunk_{}, ptr {}, i64 {})\n",
+                    task, id.0, environment, result_type.is_managed() as i32
+                ));
+                Ok(Some((task, "ptr")))
+            }
+            Rvalue::Await(task) => {
+                self.register_builtin("lpp_task_await")?;
+                let (task, _) = self.operand(task, out)?;
+                let raw = self.temp();
+                out.push_str(&format!("  {} = call i64 @lpp_task_await(ptr {})\n", raw, task));
+                match dest_ty {
+                    TypeRef::Float => {
+                        let value = self.temp();
+                        out.push_str(&format!("  {} = bitcast i64 {} to double\n", value, raw));
+                        Ok(Some((value, "double")))
+                    }
+                    TypeRef::Bool => {
+                        let value = self.temp();
+                        out.push_str(&format!("  {} = trunc i64 {} to i8\n", value, raw));
+                        Ok(Some((value, "i8")))
+                    }
+                    ty if llvm_type(ty) == "ptr" => {
+                        let value = self.temp();
+                        out.push_str(&format!("  {} = inttoptr i64 {} to ptr\n", value, raw));
+                        Ok(Some((value, "ptr")))
+                    }
+                    _ => Ok(Some((raw, "i64"))),
+                }
+            }
             Rvalue::Use(op) => Ok(Some(self.operand(op, out)?)),
             Rvalue::Move(id) => {
                 let op = Operand::Local(*id);
@@ -516,6 +675,60 @@ fn emit_drop_functions(type_table: &TypeTable, weak_fields: &HashSet<(StructType
     out
 }
 
+fn emit_task_thunks(
+    program: &MirProgram,
+    func_names: &HashMap<FuncId, String>,
+) -> String {
+    let mut output = String::new();
+    let mut functions: Vec<_> = program.functions.values().filter(|f| f.is_async).collect();
+    functions.sort_by_key(|function| function.id.0);
+    for function in functions {
+        output.push_str(&format!(
+            "define internal i64 @__lpp_task_thunk_{}(ptr %env) {{\nentry:\n",
+            function.id.0
+        ));
+        let parameter_types: Vec<TypeRef> = function.params.iter()
+            .map(|id| function.locals[id.0].ty.clone())
+            .collect();
+        let (layout, _) = tuple_layout(&parameter_types);
+        let mut arguments = Vec::new();
+        for (index, (ty, field)) in parameter_types.iter().zip(layout.iter()).enumerate() {
+            output.push_str(&format!(
+                "  %a{}_ptr = getelementptr i8, ptr %env, i64 {}\n",
+                index, field.offset
+            ));
+            let align = if matches!(ty, TypeRef::Bool) { 1 } else { 8 };
+            output.push_str(&format!(
+                "  %a{} = load {}, ptr %a{}_ptr, align {}\n",
+                index, llvm_type(ty), index, align
+            ));
+            arguments.push(format!("{} %a{}", llvm_type(ty), index));
+        }
+        if function.return_type == TypeRef::Void {
+            output.push_str(&format!(
+                "  call void {}({})\n  ret i64 0\n}}\n",
+                func_names[&function.id], arguments.join(", ")
+            ));
+        } else {
+            output.push_str(&format!(
+                "  %result = call {} {}({})\n",
+                llvm_type(&function.return_type),
+                func_names[&function.id],
+                arguments.join(", ")
+            ));
+            match &function.return_type {
+                TypeRef::Float => output.push_str("  %raw = bitcast double %result to i64\n"),
+                TypeRef::Bool => output.push_str("  %raw = zext i8 %result to i64\n"),
+                ty if llvm_type(ty) == "ptr" =>
+                    output.push_str("  %raw = ptrtoint ptr %result to i64\n"),
+                _ => output.push_str("  %raw = add i64 %result, 0\n"),
+            }
+            output.push_str("  ret i64 %raw\n}\n");
+        }
+    }
+    output
+}
+
 fn emit_vector_checksum() -> &'static str {
     r#"define internal i64 @__lpp_vec_i64_checksum(i64 %n) {
 entry:
@@ -573,14 +786,29 @@ pub fn compile(program: &MirProgram, type_table: &TypeTable, weak_fields: &HashS
     let mut strings=Vec::new();let mut declarations:HashMap<String,(String,String)>=HashMap::new();let mut bodies=Vec::new();
     for function in ordered{let mut emitter=FunctionEmitter{function,func_names:&func_names,signatures:&signatures,type_table,strings:&mut strings,declarations:&mut declarations,next_value:0};bodies.push(emitter.emit()?);}
     let drops=emit_drop_functions(type_table,weak_fields,&mut declarations);
+    if program.functions.values().any(|function| function.name == "main" && function.is_async) {
+        declarations.insert("lpp_tuple_alloc".to_string(), ("ptr".to_string(), "i64, i64, i64".to_string()));
+        declarations.insert("lpp_task_new".to_string(), ("ptr".to_string(), "ptr, ptr, i64".to_string()));
+        declarations.insert("lpp_task_await".to_string(), ("i64".to_string(), "ptr".to_string()));
+        declarations.insert("lpp_arc_release".to_string(), ("void".to_string(), "ptr".to_string()));
+    }
     let needs_closure_wrapper = declarations.contains_key("lpp_closure_destroy");
     let mut ir=String::from("target triple = \"x86_64-pc-linux-gnu\"\n\n");let mut decls:Vec<_>=declarations.into_iter().collect();decls.sort_by(|a,b|a.0.cmp(&b.0));
     for(name,(ret,params)) in decls{ir.push_str(&format!("declare {} @{}({})\n",ret,name,params));}
     for(i,value)in strings.iter().enumerate(){let blob=literal_blob(value);ir.push_str(&format!("@.lpp_str{} = private unnamed_addr constant [{} x i8] c\"{}\", align 16\n",i,blob.len(),escape_bytes(&blob)));}
-    ir.push('\n');for body in bodies{ir.push_str(&body);ir.push('\n');}ir.push_str(&drops);ir.push_str(emit_vector_checksum());
+    ir.push('\n');for body in bodies{ir.push_str(&body);ir.push('\n');}ir.push_str(&drops);ir.push_str(&emit_task_thunks(program, &func_names));ir.push_str(emit_vector_checksum());
     if needs_closure_wrapper {
         ir.push_str("define internal void @__lpp_llvm_closure_destroy(ptr %closure) {\nentry:\n  call void @lpp_closure_destroy(ptr %closure)\n  ret void\n}\n");
     }
-    if let Some(main)=program.functions.values().find(|f|f.name=="main"){ir.push_str(&format!("define i32 @main() {{\nentry:\n  call void {}()\n  ret i32 0\n}}\n",func_names[&main.id]));}
+    if let Some(main)=program.functions.values().find(|f|f.name=="main"){
+        if main.is_async {
+            ir.push_str(&format!(
+                "define i32 @main() {{\nentry:\n  %env = call ptr @lpp_tuple_alloc(i64 16, i64 0, i64 0)\n  %task = call ptr @lpp_task_new(ptr @__lpp_task_thunk_{}, ptr %env, i64 0)\n  %ignored = call i64 @lpp_task_await(ptr %task)\n  call void @lpp_arc_release(ptr %task)\n  ret i32 0\n}}\n",
+                main.id.0
+            ));
+        } else {
+            ir.push_str(&format!("define i32 @main() {{\nentry:\n  call void {}()\n  ret i32 0\n}}\n",func_names[&main.id]));
+        }
+    }
     let stamp=format!("lpp-llvm-{}-{}",std::process::id(),std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|e|e.to_string())?.as_nanos());let ll=std::env::temp_dir().join(format!("{}.ll",stamp));let obj=std::env::temp_dir().join(format!("{}.o",stamp));fs::write(&ll,ir).map_err(|e|format!("write LLVM IR: {}",e))?;let compiler=std::env::var("LPP_LLVM_CC").unwrap_or_else(|_|"clang".to_string());let mut command=Command::new(&compiler);command.args(["-c","-x","ir","-O2"]);if let Ok(march)=std::env::var("LPP_LLVM_MARCH"){command.arg(format!("-march={}",march));}let status=command.arg(&ll).args(["-o"]).arg(&obj).status().map_err(|e|format!("invoke LLVM compiler '{}': {}",compiler,e))?;if !status.success(){return Err(format!("LLVM compiler '{}' failed; IR kept at {}",compiler,ll.display()));}let bytes=fs::read(&obj).map_err(|e|format!("read LLVM object: {}",e))?;let _=fs::remove_file(ll);let _=fs::remove_file(obj);Ok(bytes)
 }

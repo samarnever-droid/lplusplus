@@ -1,0 +1,7 @@
+async def value() -> Int:
+    return 1
+
+async def main():
+    task := value()
+    callback := fn() -> Int: task.await
+    print(0)

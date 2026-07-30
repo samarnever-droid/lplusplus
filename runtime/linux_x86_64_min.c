@@ -440,6 +440,57 @@ void lpp_closure_destroy(void *closure) {
     lpp_arc_release(parts[1]);
 }
 
+typedef struct { uint64_t managed_mask; uint64_t packed_offsets; } LppTuplePrefix;
+static void lpp_tuple_destroy(void *payload) {
+    LppTuplePrefix *tuple = (LppTuplePrefix *)payload;
+    for (unsigned i = 0; tuple && i < 4; ++i) {
+        if ((tuple->managed_mask & ((uint64_t)1 << i)) == 0) continue;
+        uint64_t offset = (tuple->packed_offsets >> (i * 16)) & 0xffffu;
+        lpp_arc_release(*(void **)((char *)payload + offset));
+    }
+}
+void *lpp_tuple_alloc(int64_t size, int64_t mask, int64_t offsets) {
+    if (size < 16) lpp_exit(101);
+    LppTuplePrefix *tuple = (LppTuplePrefix *)lpp_arc_alloc_with_destructor(size, lpp_tuple_destroy);
+    if (!tuple) lpp_exit(101);
+    tuple->managed_mask = (uint64_t)mask;
+    tuple->packed_offsets = (uint64_t)offsets;
+    return tuple;
+}
+
+typedef int64_t (*LppTaskCode)(void *);
+typedef struct {
+    LppTaskCode code; void *environment; int64_t result; int64_t state; int64_t result_managed;
+} LppTask;
+static void lpp_task_payload_destroy(void *payload) {
+    LppTask *task = (LppTask *)payload;
+    if (!task) return;
+    if (task->environment) { lpp_arc_release(task->environment); task->environment = 0; }
+    if (task->state == 2 && task->result_managed && task->result) {
+        lpp_arc_release((void *)(intptr_t)task->result); task->result = 0;
+    }
+}
+void *lpp_task_new(void *code, void *environment, int64_t managed) {
+    if (!code || !environment) lpp_exit(101);
+    LppTask *task = (LppTask *)lpp_arc_alloc_with_destructor(sizeof(LppTask), lpp_task_payload_destroy);
+    if (!task) lpp_exit(101);
+    task->code = (LppTaskCode)code; task->environment = environment; task->result_managed = managed != 0;
+    return task;
+}
+int64_t lpp_task_poll(void *raw) {
+    LppTask *task = (LppTask *)raw;
+    if (!task || task->state == 1) lpp_exit(101);
+    if (task->state == 2) return 1;
+    task->state = 1; task->result = task->code(task->environment); task->state = 2; return 1;
+}
+int64_t lpp_executor_run(void *raw) { (void)lpp_task_poll(raw); return ((LppTask *)raw)->result; }
+int64_t lpp_task_await(void *raw) {
+    LppTask *task = (LppTask *)raw; int64_t result = lpp_executor_run(raw);
+    if (task->result_managed && result) lpp_arc_retain((void *)(intptr_t)result);
+    return result;
+}
+void lpp_task_destroy(void *raw) { lpp_arc_release(raw); }
+
 /* ── Freestanding List runtime ──────────────────────────────────────────── */
 typedef struct {
     int64_t *data;
@@ -530,6 +581,62 @@ int64_t lpp_list_len(void *raw) {
 
 void lpp_list_free(void *list) {
     lpp_arc_release(list);
+}
+
+typedef struct { void *base; int64_t start, length, generation, kind; } LppSlice;
+static void *lpp_slice_checked_base(LppSlice *view) {
+    if (!view || !view->base || !view->generation) lpp_exit(101);
+    int64_t raw = lpp_weak_get((int64_t)(intptr_t)view->base, view->generation);
+    if (!raw) lpp_exit(101);
+    return (void *)(intptr_t)raw;
+}
+void *lpp_slice_init(void *storage, void *base, int64_t start, int64_t length, int64_t kind) {
+    if (!storage || !base || start < 0 || length < 0 || start > 0x7fffffffffffffffLL - length) lpp_exit(101);
+    int64_t source_length = 0;
+    if (kind == 0) { const char *p = (const char *)base; while (p[source_length]) source_length++; }
+    else source_length = lpp_list_len(base);
+    if (start > source_length || length > source_length - start) lpp_exit(101);
+    LppSlice *view = (LppSlice *)storage;
+    view->base = base; view->start = start; view->length = length;
+    view->generation = lpp_weak_generation(base); view->kind = kind;
+    if (!view->generation) lpp_exit(101);
+    return view;
+}
+int64_t lpp_slice_len(void *raw) { LppSlice *view=(LppSlice *)raw; (void)lpp_slice_checked_base(view); return view->length; }
+int64_t lpp_slice_get(void *raw, int64_t index) {
+    LppSlice *view=(LppSlice *)raw; void *base=lpp_slice_checked_base(view);
+    if (view->kind != 1 || index < 0 || index >= view->length) lpp_exit(101);
+    return lpp_list_get(base, view->start + index);
+}
+double lpp_slice_get_float(void *raw, int64_t index) {
+    int64_t bits = lpp_slice_get(raw, index);
+    double value;
+    for (int i = 0; i < 8; i++) {
+        ((char *)&value)[i] = ((char *)&bits)[i];
+    }
+    return value;
+}
+char *lpp_str_slice_get(void *raw, int64_t index) {
+    LppSlice *view = (LppSlice *)raw;
+    const char *base = (const char *)lpp_slice_checked_base(view);
+    if (view->kind != 0 || index < 0 || index >= view->length) lpp_exit(101);
+    char *result = (char *)lpp_arc_alloc(2);
+    if (!result) lpp_exit(101);
+    result[0] = base[view->start + index];
+    result[1] = 0;
+    return result;
+}
+char *lpp_str_slice_to_str(void *raw) {
+    LppSlice *view = (LppSlice *)raw;
+    const char *base = (const char *)lpp_slice_checked_base(view);
+    if (view->kind != 0) lpp_exit(101);
+    char *result = (char *)lpp_arc_alloc(view->length + 1);
+    if (!result) lpp_exit(101);
+    for (int64_t i = 0; i < view->length; i++) {
+        result[i] = base[view->start + i];
+    }
+    result[view->length] = 0;
+    return result;
 }
 
 /* ── Freestanding File I/O ─────────────────────────────────────────── */

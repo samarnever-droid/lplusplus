@@ -28,6 +28,15 @@ fn collect_reads(instr: &MirInstr, out: &mut HashSet<LocalId>) {
     }
     match instr {
         MirInstr::Assign(_, rv) => match rv {
+            Rvalue::AllocateTuple(_, values) | Rvalue::MakeTask(_, _, values, _) => {
+                for value in values { op(value, out); }
+            }
+            Rvalue::TupleField(base, _) | Rvalue::SliceLen(base)
+            | Rvalue::SliceToStr(base) | Rvalue::Await(base) => op(base, out),
+            Rvalue::MakeSlice { base, start, length, .. } => {
+                op(base, out); op(start, out); op(length, out);
+            }
+            Rvalue::SliceGet(view, index) => { op(view, out); op(index, out); }
             Rvalue::Use(o) => op(o, out),
             Rvalue::Move(id) => {
                 out.insert(*id);
@@ -109,6 +118,13 @@ fn transfer_live_with_drops(
                     Rvalue::MakeClosure(_, captures) | Rvalue::MakeStackClosure(_, captures) => {
                         if let Some(Operand::Local(environment)) = captures.first() {
                             live.remove(environment);
+                        }
+                    }
+                    Rvalue::AllocateTuple(_, values) | Rvalue::MakeTask(_, _, values, _) => {
+                        for value in values {
+                            if let Operand::Local(source) = value {
+                                live.remove(source);
+                            }
                         }
                     }
                     _ => {}
@@ -485,17 +501,28 @@ pub fn run_arc_insertion_pass_with_weak(
                         // Copy everything needed from the borrowed instruction
                         // before moving it into the rewritten block.
                         let destination = *destination;
-                        let moved_source = match rvalue {
-                            Rvalue::Move(source) => Some(*source),
+                        let transferred_sources: Vec<LocalId> = match rvalue {
+                            Rvalue::Move(source) => vec![*source],
                             // The environment reference becomes owned by the
                             // ARC closure capsule and is released by its
                             // destructor, not by the creating scope.
                             Rvalue::MakeClosure(_, captures)
-                            | Rvalue::MakeStackClosure(_, captures) => match captures.first() {
-                                Some(Operand::Local(environment)) => Some(*environment),
-                                _ => None,
-                            },
-                            _ => None,
+                            | Rvalue::MakeStackClosure(_, captures) => captures
+                                .first()
+                                .and_then(|operand| match operand {
+                                    Operand::Local(environment) => Some(vec![*environment]),
+                                    _ => None,
+                                })
+                                .unwrap_or_default(),
+                            Rvalue::AllocateTuple(_, values)
+                            | Rvalue::MakeTask(_, _, values, _) => values
+                                .iter()
+                                .filter_map(|value| match value {
+                                    Operand::Local(source) => Some(*source),
+                                    _ => None,
+                                })
+                                .collect(),
+                            _ => Vec::new(),
                         };
                         let borrowed_source = match rvalue {
                             Rvalue::Use(Operand::Borrowed(source)) => Some(*source),
@@ -560,7 +587,7 @@ pub fn run_arc_insertion_pass_with_weak(
                             rewritten.push(instruction);
                         }
 
-                        if let Some(source) = moved_source {
+                        for source in transferred_sources {
                             live.remove(&source);
                         }
                         if cleanup_locals.contains(&destination) {
@@ -578,14 +605,7 @@ pub fn run_arc_insertion_pass_with_weak(
                         base,
                         field,
                         value: Operand::Borrowed(source),
-                    } if arc_locals.contains(source)
-                        && matches!(
-                            &function.locals[source.0].ty,
-                            TypeRef::Custom(_)
-                                | TypeRef::Generic(_, _)
-                                | TypeRef::Str
-                                | TypeRef::Function
-                        ) =>
+                    } if function.locals[source.0].ty.is_managed() =>
                     {
                         let source = *source;
                         let is_weak = match &function.locals[base.0].ty {
@@ -758,6 +778,7 @@ mod tests {
             blocks,
             start_block: BlockId(0),
             return_type: TypeRef::Void,
+            is_async: false,
         };
         let mut functions = HashMap::new();
         functions.insert(FuncId(0), f);

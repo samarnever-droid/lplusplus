@@ -8,6 +8,14 @@ pub enum Type {
     Void,
     Custom(String),
     Generic(String, Vec<Type>),
+    /// Fixed structural tuple, restricted to arity 2..=4.
+    Tuple(Vec<Type>),
+    /// Borrowed string view.
+    StrSlice,
+    /// Borrowed list view.
+    Slice(Box<Type>),
+    /// Deferred result produced by an async function call.
+    Task(Box<Type>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -45,6 +53,8 @@ pub enum Expr {
     StringLiteral(String),
     CharLiteral(char),
     BoolLiteral(bool),
+    /// Fixed structural tuple expression.
+    Tuple(Vec<Expr>),
     Identifier(String, std::cell::Cell<Option<usize>>),
     /// `-x` or `!b`
     UnaryOp {
@@ -99,10 +109,18 @@ pub enum Expr {
         variant: String,
         args: Vec<Expr>,
     },
+    /// Postfix `.await`.
+    Await(Box<Expr>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Stmt {
+    /// `(a, b) := value`; each binding has its own resolver id.
+    Destructure {
+        names: Vec<String>,
+        value: Expr,
+        binding_ids: Vec<std::cell::Cell<Option<usize>>>,
+    },
     LetInferred {
         name: String,
         is_mut: bool,
@@ -159,12 +177,14 @@ pub struct Param {
     pub name: String,
     pub ty: Type,
     pub default: Option<Expr>,  // default parameter value: def foo(x: Int = 10)
+    /// Typed rest parameter (`...items: T`). Only valid in final position.
+    pub variadic: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClosureParam {
     pub name: String,
-    pub ty: Option<Type>, // Optional for type inference
+    pub ty: Option<Type>, // Optional for type inference,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -174,6 +194,8 @@ pub struct Function {
     pub params: Vec<Param>,
     pub return_type: Type,
     pub body: Vec<Stmt>,
+    /// `async def`: calls produce Task[return_type].
+    pub is_async: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]

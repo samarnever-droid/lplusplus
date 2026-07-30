@@ -518,12 +518,13 @@ fn main() {
             println!("Language Features (v4.5.0):");
             println!("  Functions, default params, closures, threads");
             println!("  Structs, enums, match with bindings");
+            println!("  Experimental: tuples, typed rest lists, borrowed slices, async/.await");
             println!("  Generics: def foo[T](x: T) -> T");
             println!("  Traits:   trait Name / impl Trait for Type (static + dynamic dispatch)");
             println!("  FFI:      extern \"C\" link \"SDL2\" (call any C library)");
             println!("  Try:      result? operator for error propagation");
             println!("  Builtins: 100+ (strings, lists, maps, files, network, JSON, GUI)");
-            println!("  Ownership: ARC + escape analysis, cycle rejection");
+            println!("  Ownership: MIR escape solver + ARC/stack/Arena + static cycle breaking");
             println!();
             println!("Environment:");
             println!("  BENCHMARK=1           Print JSON timings instead of descriptive output");
@@ -794,6 +795,10 @@ fn main() {
             return;
         }
     };
+    if let Err(error) = mir::validate_borrows::validate(&mir_program) {
+        eprintln!("{}", error);
+        return;
+    }
     // C-Speed Project: simplify only scalar/copy MIR before ARC so
     // no retain/release or ownership edge can be optimized away.
     mir::pass_peephole::run(&mut mir_program);

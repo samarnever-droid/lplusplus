@@ -1,0 +1,5 @@
+def main():
+    text := "borrow"
+    view := str_slice(text, 0, 3)
+    callback := fn() -> Int: slice_len(view)
+    print(0)

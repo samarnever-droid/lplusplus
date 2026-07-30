@@ -1,0 +1,6 @@
+def bad(text: Str) -> StrSlice:
+    view := str_slice(text, 0, 1)
+    return view
+
+def main():
+    print(0)

@@ -1,0 +1,6 @@
+def count(label: Str, ...items: Str) -> Int:
+    print(label)
+    return list_len(items)
+
+def main():
+    print(count("empty"))

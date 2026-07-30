@@ -62,6 +62,27 @@ owning subgraph is acyclic.
 This is a correctness-first Arena implementation. It is not yet a bump/chunk
 allocator benchmark claim.
 
+## Tuples, rests, borrowed views, and tasks
+
+These features are represented explicitly rather than hidden in scalar handles:
+
+- `TypeRef::Tuple`, `AllocateTuple`, and `TupleField` use a shared native layout
+  function. A tuple payload stores a managed-element mask and packed offsets so
+  the runtime releases exactly the owned child fields.
+- A typed variadic call allocates a normal `List[T]`, pushes each extra argument
+  with the existing element ownership rules, and passes that rest handle as the
+  final MIR argument. No C `...` call is emitted.
+- `StrSlice` / `Slice[T]` use `MakeSlice`, `SliceLen`, `SliceGet`, and
+  `SliceToStr`. The view itself is a 40-byte stack record and allocates no heap
+  payload. `validate_borrows` enforces the first-tier escape contract.
+- `Task[T]`, `MakeTask`, and `Await` create an ARC task plus an ARC tuple-shaped
+  environment. Each backend emits an `(env) -> i64` task thunk. The runtime task
+  state machine is pending/running/complete and executes on the caller thread.
+
+The host, Linux freestanding, and Windows freestanding sources export tuple,
+slice, and task symbols. Linux behavior is measured on host/direct paths;
+Windows source presence is not a substitute for a Windows execution run.
+
 ## Cranelift backend
 
 Cranelift is the default because its compile latency is low and it integrates
@@ -106,7 +127,14 @@ The current recorded gates are:
 - LLVM corpus: 86/86 in the validation clone;
 - lppsqlite: 118/118 differential;
 - compresslpp: all cross-verification pass;
-- ASan/UBSan and TSan targeted ownership/vector tests: clean.
+- ASan/UBSan and TSan targeted ownership/vector tests: clean;
+- four-feature parity: 17 positive programs on Cranelift/LLVM × host/direct,
+  9 rejection contracts, 5 ASan/UBSan runs, and combined TSan: pass.
+
+The four-feature tier is experimental. In particular, async functions are
+run-to-completion tasks rather than general resumable coroutines, and borrowed
+slices use a restrictive compile-time non-escape policy rather than general
+lifetime parameters.
 
 Old reports that mention C backend stubs, `EscapeAnalyzer`, rejected recursive
 structs, or unimplemented closure lifting are historical and should not be read

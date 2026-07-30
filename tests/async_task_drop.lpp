@@ -1,0 +1,7 @@
+async def unused(value: Str) -> Str:
+    return value
+
+async def main():
+    owned := str_concat("not ", "polled")
+    task := unused(owned)
+    print("dropped")

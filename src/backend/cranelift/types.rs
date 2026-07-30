@@ -16,6 +16,10 @@ pub fn type_to_cl(ty: &TypeRef) -> cranelift_codegen::ir::Type {
         TypeRef::Function => cl_types::I64, // function pointer placeholder
         TypeRef::TypeParam(_) => cl_types::I64, // generic type param — erased to i64
         TypeRef::VectorI64x2 => cl_types::I64X2,
+        TypeRef::Tuple(_)
+        | TypeRef::StrSlice
+        | TypeRef::Slice(_)
+        | TypeRef::Task(_) => cl_types::I64,
     }
 }
 
@@ -45,12 +49,48 @@ pub fn type_size_align(ty: &TypeRef) -> (usize, usize) {
         | TypeRef::Unresolved(_)
         | TypeRef::Function
         | TypeRef::TypeParam(_)
+        | TypeRef::Tuple(_)
+        | TypeRef::StrSlice
+        | TypeRef::Slice(_)
+        | TypeRef::Task(_)
         | TypeRef::Void => (8, 8),
         TypeRef::VectorI64x2 => (16, 16),
     }
 }
 
 /// Return each field's offset and machine type, plus the padded allocation size.
+/// Tuple payload layout. The first two words are runtime metadata (managed
+/// element mask and packed field offsets); fields then use the same native
+/// size/alignment rules as structs. Both Cranelift and LLVM call this function.
+pub fn tuple_layout(types: &[TypeRef]) -> (Vec<FieldLayout>, usize) {
+    let mut offset = 16usize;
+    let mut aggregate_align = 8usize;
+    let mut fields = Vec::with_capacity(types.len());
+    for ty in types {
+        let (size, align) = type_size_align(ty);
+        offset = align_up(offset, align);
+        fields.push(FieldLayout { offset, ty: type_to_cl(ty) });
+        offset += size;
+        aggregate_align = aggregate_align.max(align);
+    }
+    (fields, align_up(offset, aggregate_align))
+}
+
+/// ARC mask and four packed 16-bit offsets consumed by lpp_tuple_destroy.
+pub fn tuple_runtime_metadata(types: &[TypeRef]) -> (u64, u64) {
+    let (layout, _) = tuple_layout(types);
+    let mut mask = 0u64;
+    let mut offsets = 0u64;
+    for (index, (ty, field)) in types.iter().zip(layout.iter()).enumerate() {
+        if ty.is_managed() {
+            mask |= 1u64 << index;
+        }
+        debug_assert!(field.offset <= u16::MAX as usize);
+        offsets |= (field.offset as u64) << (index * 16);
+    }
+    (mask, offsets)
+}
+
 pub fn struct_layout(table: &TypeTable, id: StructTypeId) -> (Vec<FieldLayout>, usize) {
     let def = &table.definitions[id.0];
     let mut offset = 0usize;

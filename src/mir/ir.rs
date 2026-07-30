@@ -73,6 +73,28 @@ pub enum Operand {
 /// Rvalues are side-effect free (mostly) except for calls, but represent the right-hand side of assignments.
 #[derive(Debug, Clone)]
 pub enum Rvalue {
+    /// Allocate and initialize a fixed tuple. Owned local operands transfer
+    /// their reference into the tuple; borrowed operands are retained before
+    /// this instruction by MIR lowering.
+    AllocateTuple(Vec<TypeRef>, Vec<Operand>),
+    /// Borrow one tuple element. Ownership promotion is handled by the normal
+    /// assignment/return rules.
+    TupleField(Operand, usize),
+    /// Build a stack-resident borrowed view. kind: 0 = Str, 1 = List.
+    MakeSlice {
+        base: Operand,
+        start: Operand,
+        length: Operand,
+        kind: u8,
+    },
+    SliceLen(Operand),
+    SliceGet(Operand, Operand),
+    SliceToStr(Operand),
+    /// Create a deferred task for an async function. Argument types are carried
+    /// explicitly so both backends can build the task environment layout.
+    MakeTask(FuncId, Vec<TypeRef>, Vec<Operand>, TypeRef),
+    /// Drive a task to completion on the single-thread executor.
+    Await(Operand),
     /// Copy a scalar or read a borrowed value. ARC retains are inserted when a
     /// borrowed object becomes another owner.
     Use(Operand),
@@ -146,6 +168,26 @@ impl std::fmt::Display for Operand {
 impl std::fmt::Display for Rvalue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Rvalue::AllocateTuple(types, values) => {
+                write!(f, "alloc_tuple<{:?}>(", types)?;
+                for (i, value) in values.iter().enumerate() {
+                    if i != 0 { write!(f, ", ")?; }
+                    write!(f, "{}", value)?;
+                }
+                write!(f, ")")
+            }
+            Rvalue::TupleField(base, index) => write!(f, "{}.{}", base, index),
+            Rvalue::MakeSlice { base, start, length, kind } =>
+                write!(f, "make_slice(kind={}, {}, {}, {})", kind, base, start, length),
+            Rvalue::SliceLen(view) => write!(f, "slice_len({})", view),
+            Rvalue::SliceGet(view, index) => write!(f, "slice_get({}, {})", view, index),
+            Rvalue::SliceToStr(view) => write!(f, "slice_to_str({})", view),
+            Rvalue::MakeTask(id, _, args, _) => {
+                write!(f, "make_task(fn_{}", id.0)?;
+                for arg in args { write!(f, ", {}", arg)?; }
+                write!(f, ")")
+            }
+            Rvalue::Await(task) => write!(f, "await({})", task),
             Rvalue::Use(op) => write!(f, "{}", op),
             Rvalue::Move(local) => write!(f, "move(_{})", local.0),
             Rvalue::BinaryOp(op, l, r) => write!(f, "{} {:?} {}", l, op, r), // Note: using Debug for BinaryOp for now
@@ -337,6 +379,7 @@ pub struct MirFunction {
     pub blocks: Vec<MirBlock>,
     pub start_block: BlockId,
     pub return_type: TypeRef,
+    pub is_async: bool,
 }
 
 /// The entire MIR program.

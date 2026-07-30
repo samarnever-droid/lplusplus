@@ -113,6 +113,7 @@ mod tests {
                 }],
                 start_block: BlockId(0),
                 return_type: TypeRef::Void,
+                is_async: false,
             },
         );
         MirProgram { functions }

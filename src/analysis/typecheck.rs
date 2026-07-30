@@ -18,8 +18,35 @@ pub enum TypeRef {
     Unresolved(String),
     Function, // Just a placeholder for function names
     TypeParam(String), // Generic type parameter (e.g. T, U) — erased to i64 at codegen
-    /// Explicit four-lane signed 64-bit SIMD value.
+    /// Explicit two-lane signed 64-bit SIMD value.
     VectorI64x2,
+    /// Fixed structural tuple. Runtime representation is an ARC aggregate;
+    /// element ownership is preserved structurally.
+    Tuple(Vec<TypeRef>),
+    /// Borrowed zero-copy string view.
+    StrSlice,
+    /// Borrowed zero-copy list view.
+    Slice(Box<TypeRef>),
+    /// Deferred result produced by an async call.
+    Task(Box<TypeRef>),
+}
+
+impl TypeRef {
+    pub fn is_managed(&self) -> bool {
+        matches!(
+            self,
+            TypeRef::Str
+                | TypeRef::Custom(_)
+                | TypeRef::Generic(_, _)
+                | TypeRef::Function
+                | TypeRef::Tuple(_)
+                | TypeRef::Task(_)
+        )
+    }
+
+    pub fn is_borrowed_view(&self) -> bool {
+        matches!(self, TypeRef::StrSlice | TypeRef::Slice(_))
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -73,6 +100,14 @@ pub struct TypeChecker<'a> {
     /// (`__tag` + payload slots), so "has no fields" can no longer be used to
     /// tell an enum from a struct when resolving `Enum.Variant`.
     pub enum_names: std::collections::HashSet<String>,
+    /// Function names whose calls produce Task[T]. The stored function return
+    /// type remains T so returns inside the async body are checked normally.
+    pub async_functions: std::collections::HashSet<String>,
+    /// Typed rest element type by function name.
+    pub variadic_elements: HashMap<String, TypeRef>,
+    /// Bases currently borrowed by a slice. The first tier conservatively keeps
+    /// the borrow active to function exit and rejects reassignment.
+    pub borrowed_slice_bases: std::collections::HashSet<usize>,
 }
 
 fn type_param_names(tps: &[TypeParam]) -> Vec<String> {
@@ -95,8 +130,19 @@ fn types_compatible(expected: &TypeRef, actual: &TypeRef) -> bool {
     if (expected == &TypeRef::Int && matches!(actual, TypeRef::Generic(..))) || (actual == &TypeRef::Int && matches!(expected, TypeRef::Generic(..))) {
         return true;
     }
-    // TypeParam is compatible with any concrete type (type erasure)
-    matches!(expected, TypeRef::TypeParam(_)) || matches!(actual, TypeRef::TypeParam(_))
+    // Structural aggregates recurse so a type parameter nested in a tuple/task
+    // remains a wildcard during generic checking.
+    match (expected, actual) {
+        (TypeRef::Tuple(a), TypeRef::Tuple(b)) if a.len() == b.len() =>
+            a.iter().zip(b).all(|(x, y)| types_compatible(x, y)),
+        (TypeRef::Slice(a), TypeRef::Slice(b)) | (TypeRef::Task(a), TypeRef::Task(b)) =>
+            types_compatible(a, b),
+        (TypeRef::Generic(an, aa), TypeRef::Generic(bn, ba))
+            if an == bn && aa.len() == ba.len() =>
+            aa.iter().zip(ba).all(|(x, y)| types_compatible(x, y)),
+        _ => matches!(expected, TypeRef::TypeParam(_))
+            || matches!(actual, TypeRef::TypeParam(_)),
+    }
 }
 
 impl<'a> TypeChecker<'a> {
@@ -112,6 +158,9 @@ impl<'a> TypeChecker<'a> {
             trait_impls: HashMap::new(),
             type_param_bounds: HashMap::new(),
             enum_names: std::collections::HashSet::new(),
+            async_functions: std::collections::HashSet::new(),
+            variadic_elements: HashMap::new(),
+            borrowed_slice_bases: std::collections::HashSet::new(),
         }
     }
 
@@ -125,6 +174,41 @@ impl<'a> TypeChecker<'a> {
             }
         }
         parent // defensive fallback
+    }
+
+    fn enclosing_async_function(&self, scope: ScopeId) -> Option<&str> {
+        let mut current = Some(scope);
+        while let Some(id) = current {
+            match &self.symbol_table.scopes[id.0].kind {
+                ScopeKind::Function { name } => {
+                    return self.async_functions.contains(name).then_some(name.as_str());
+                }
+                ScopeKind::Closure { .. } => return None,
+                _ => current = self.symbol_table.scopes[id.0].parent,
+            }
+        }
+        None
+    }
+
+    fn blocking_in_async(name: &str) -> bool {
+        matches!(
+            name,
+            "input"
+                | "read_file"
+                | "write_file"
+                | "append_file"
+                | "command_exec"
+                | "command_output"
+                | "net_connect"
+                | "net_listen"
+                | "net_accept"
+                | "net_accept_timeout"
+                | "net_recv"
+                | "net_recv_udp"
+                | "http_get"
+                | "http_post"
+                | "sleep"
+        )
     }
 
     fn convert_ast_type(type_table: &TypeTable, ast_ty: &Type) -> TypeRef {
@@ -157,6 +241,19 @@ impl<'a> TypeChecker<'a> {
                 }
                 TypeRef::Generic(base_name.clone(), ref_args)
             }
+            Type::Tuple(elements) => TypeRef::Tuple(
+                elements
+                    .iter()
+                    .map(|ty| Self::convert_ast_type_with_params(type_table, ty, type_params))
+                    .collect(),
+            ),
+            Type::StrSlice => TypeRef::StrSlice,
+            Type::Slice(element) => TypeRef::Slice(Box::new(
+                Self::convert_ast_type_with_params(type_table, element, type_params),
+            )),
+            Type::Task(result) => TypeRef::Task(Box::new(
+                Self::convert_ast_type_with_params(type_table, result, type_params),
+            )),
         }
     }
 
@@ -248,10 +345,24 @@ impl<'a> TypeChecker<'a> {
                 let tp = type_param_names(&f.type_params);
                 let ret_ty = Self::convert_ast_type_with_params(&self.type_table, &f.return_type, &tp);
                 self.func_return_types.insert(f.name.clone(), ret_ty);
+                if f.is_async {
+                    if f.name == "main" && !f.params.is_empty() {
+                        return Err("Type error: async main cannot take parameters".to_string());
+                    }
+                    self.async_functions.insert(f.name.clone());
+                }
                 let param_tys: Vec<TypeRef> = f
                     .params
                     .iter()
-                    .map(|p| Self::convert_ast_type_with_params(&self.type_table, &p.ty, &tp))
+                    .map(|p| {
+                        let element = Self::convert_ast_type_with_params(&self.type_table, &p.ty, &tp);
+                        if p.variadic {
+                            self.variadic_elements.insert(f.name.clone(), element.clone());
+                            TypeRef::Generic("List".to_string(), vec![element])
+                        } else {
+                            element
+                        }
+                    })
                     .collect();
                 self.func_param_types.insert(f.name.clone(), param_tys);
                 // Record trait bounds for this function's type params
@@ -268,10 +379,21 @@ impl<'a> TypeChecker<'a> {
                     let tp = type_param_names(&method.type_params);
                     let ret_ty = Self::convert_ast_type_with_params(&self.type_table, &method.return_type, &tp);
                     self.func_return_types.insert(method.name.clone(), ret_ty);
+                    if method.is_async {
+                        self.async_functions.insert(method.name.clone());
+                    }
                     let param_tys: Vec<TypeRef> = method
                         .params
                         .iter()
-                        .map(|p| Self::convert_ast_type_with_params(&self.type_table, &p.ty, &tp))
+                        .map(|p| {
+                            let element = Self::convert_ast_type_with_params(&self.type_table, &p.ty, &tp);
+                            if p.variadic {
+                                self.variadic_elements.insert(method.name.clone(), element.clone());
+                                TypeRef::Generic("List".to_string(), vec![element])
+                            } else {
+                                element
+                            }
+                        })
                         .collect();
                     self.func_param_types.insert(method.name.clone(), param_tys);
                 }
@@ -383,6 +505,113 @@ impl<'a> TypeChecker<'a> {
             }
         }
 
+        // Async blocking safety is transitive: wrapping `read_file` in an
+        // ordinary helper does not make it nonblocking. Compute a small call
+        // graph before body inference and reject any async root that can reach
+        // a blocking builtin without an adapter.
+        fn collect_expr_calls(expr: &Expr, calls: &mut std::collections::HashSet<String>) {
+            match expr {
+                Expr::Call { callee, args } | Expr::GenericCall { callee, args, .. } => {
+                    if let Expr::Identifier(name, _) = &**callee { calls.insert(name.clone()); }
+                    collect_expr_calls(callee, calls);
+                    for arg in args { collect_expr_calls(arg, calls); }
+                }
+                Expr::Tuple(items) | Expr::ListLiteral(items) =>
+                    for item in items { collect_expr_calls(item, calls); },
+                Expr::Await(inner) | Expr::Try(inner) | Expr::UnaryOp { operand: inner, .. }
+                | Expr::Spawn { closure: inner } => collect_expr_calls(inner, calls),
+                Expr::BinaryOp { left, right, .. } => {
+                    collect_expr_calls(left, calls); collect_expr_calls(right, calls);
+                }
+                Expr::Closure { body, .. } => collect_stmt_calls(body, calls),
+                Expr::FieldAccess { base, .. } => collect_expr_calls(base, calls),
+                Expr::Match { subject, arms } => {
+                    collect_expr_calls(subject, calls);
+                    for arm in arms { collect_stmt_calls(&arm.body, calls); }
+                }
+                Expr::Index { base, index } => {
+                    collect_expr_calls(base, calls); collect_expr_calls(index, calls);
+                }
+                Expr::EnumVariantConstruct { args, .. } =>
+                    for arg in args { collect_expr_calls(arg, calls); },
+                Expr::IntLiteral(_) | Expr::FloatLiteral(_) | Expr::StringLiteral(_)
+                | Expr::CharLiteral(_) | Expr::BoolLiteral(_) | Expr::Identifier(_, _) => {}
+            }
+        }
+        fn collect_stmt_calls(stmts: &[Stmt], calls: &mut std::collections::HashSet<String>) {
+            for stmt in stmts {
+                match stmt {
+                    Stmt::Destructure { value, .. } | Stmt::LetInferred { value, .. }
+                    | Stmt::Assign { value, .. } | Stmt::Expr(value)
+                    | Stmt::Return(Some(value)) => collect_expr_calls(value, calls),
+                    Stmt::AssignField { base, value, .. } => {
+                        collect_expr_calls(base, calls); collect_expr_calls(value, calls);
+                    }
+                    Stmt::If { condition, then_block, else_block } => {
+                        collect_expr_calls(condition, calls); collect_stmt_calls(then_block, calls);
+                        if let Some(block) = else_block { collect_stmt_calls(block, calls); }
+                    }
+                    Stmt::While { condition, body } => {
+                        collect_expr_calls(condition, calls); collect_stmt_calls(body, calls);
+                    }
+                    Stmt::ForRange { start, end, step, body, .. } => {
+                        collect_expr_calls(start, calls); collect_expr_calls(end, calls);
+                        if let Some(step) = step { collect_expr_calls(step, calls); }
+                        collect_stmt_calls(body, calls);
+                    }
+                    Stmt::ForIn { list, body, .. } => {
+                        collect_expr_calls(list, calls); collect_stmt_calls(body, calls);
+                    }
+                    Stmt::Match { subject, arms } => {
+                        collect_expr_calls(subject, calls);
+                        for arm in arms { collect_stmt_calls(&arm.body, calls); }
+                    }
+                    Stmt::Block(body) => collect_stmt_calls(body, calls),
+                    Stmt::Return(None) | Stmt::Break | Stmt::Continue => {}
+                }
+            }
+        }
+        let mut call_graph: HashMap<String, std::collections::HashSet<String>> = HashMap::new();
+        for declaration in &program.declarations {
+            match declaration {
+                TopLevel::Function(function) => {
+                    let mut calls = std::collections::HashSet::new();
+                    collect_stmt_calls(&function.body, &mut calls);
+                    call_graph.insert(function.name.clone(), calls);
+                }
+                TopLevel::Impl(block) => for function in &block.methods {
+                    let mut calls = std::collections::HashSet::new();
+                    collect_stmt_calls(&function.body, &mut calls);
+                    call_graph.insert(function.name.clone(), calls);
+                },
+                _ => {}
+            }
+        }
+        let mut blocking_functions: std::collections::HashSet<String> = call_graph
+            .iter()
+            .filter(|(_, calls)| calls.iter().any(|name| Self::blocking_in_async(name)))
+            .map(|(name, _)| name.clone())
+            .collect();
+        loop {
+            let mut changed = false;
+            for (function, calls) in &call_graph {
+                if !blocking_functions.contains(function)
+                    && calls.iter().any(|callee| blocking_functions.contains(callee))
+                {
+                    blocking_functions.insert(function.clone()); changed = true;
+                }
+            }
+            if !changed { break; }
+        }
+        if let Some(function) = self.async_functions.iter()
+            .find(|name| blocking_functions.contains(*name))
+        {
+            return Err(format!(
+                "Async safety error: async function '{}' reaches a blocking call without an adapter",
+                function
+            ));
+        }
+
         // Phase 4: Local Type Inference
         // Collect all functions: top-level + impl methods
         let mut all_funcs: Vec<&Function> = Vec::new();
@@ -418,6 +647,35 @@ impl<'a> TypeChecker<'a> {
 
     fn infer_stmt(&mut self, stmt: &Stmt, current_scope: ScopeId) -> Result<(), String> {
         match stmt {
+            Stmt::Destructure {
+                names,
+                value,
+                binding_ids,
+            } => {
+                let tuple_ty = self.infer_expr(value, current_scope, None)?;
+                let elements = match tuple_ty {
+                    TypeRef::Tuple(elements) => elements,
+                    other => {
+                        return Err(format!(
+                            "Type error: tuple destructuring requires a tuple value, got {:?}",
+                            other
+                        ));
+                    }
+                };
+                if elements.len() != names.len() {
+                    return Err(format!(
+                        "Type error: destructuring has {} names but tuple has {} elements",
+                        names.len(), elements.len()
+                    ));
+                }
+                for (index, element_ty) in elements.into_iter().enumerate() {
+                    let binding_id = binding_ids
+                        .get(index)
+                        .and_then(|cell| cell.get())
+                        .ok_or_else(|| "Binding ID not set for tuple destructuring".to_string())?;
+                    self.symbol_table.bindings[binding_id].ty = Some(element_ty);
+                }
+            }
             Stmt::LetInferred {
                 name: _,
                 is_mut: _,
@@ -432,12 +690,30 @@ impl<'a> TypeChecker<'a> {
                 if binding.ty.is_none() {
                     binding.ty = Some(inferred_type);
                 }
+                if let Expr::Call { callee, args } = value {
+                    if matches!(&**callee, Expr::Identifier(name, _) if name == "str_slice" || name == "slice") {
+                        if let Some(Expr::Identifier(_, cell)) = args.first() {
+                            if let Some(source_id) = cell.get() {
+                                self.borrowed_slice_bases.insert(source_id);
+                            }
+                        }
+                    }
+                }
             }
             Stmt::Assign {
                 name,
                 value,
                 binding_id,
             } => {
+                let resolved_id = binding_id
+                    .get()
+                    .or_else(|| self.symbol_table.resolve_name(current_scope, name).map(|id| id.0));
+                if resolved_id.map(|id| self.borrowed_slice_bases.contains(&id)).unwrap_or(false) {
+                    return Err(format!(
+                        "Borrow error: cannot reassign '{}' while a borrowed slice view is live",
+                        name
+                    ));
+                }
                 let expected_ty = if let Some(b_id) = binding_id.get() {
                     self.symbol_table.bindings[b_id].ty.clone()
                 } else if let Some(b_id) = self.symbol_table.resolve_name(current_scope, name) {
@@ -619,6 +895,9 @@ impl<'a> TypeChecker<'a> {
                     curr = self.symbol_table.scopes[sid.0].parent;
                 }
                 let actual_ty = self.infer_expr(expr, current_scope, expected_ret_ty.clone())?;
+                if actual_ty.is_borrowed_view() {
+                    return Err("Borrow error: a borrowed slice cannot be returned; use str_slice_to_str/slice_to_str for an owned value".to_string());
+                }
                 if let Some(expected) = expected_ret_ty {
                     if expected == TypeRef::Void {
                         let fname = func_name.as_deref().unwrap_or("function");
@@ -678,6 +957,37 @@ impl<'a> TypeChecker<'a> {
             Expr::StringLiteral(_) => Ok(TypeRef::Str),
             Expr::CharLiteral(_) => Ok(TypeRef::Char),
             Expr::BoolLiteral(_) => Ok(TypeRef::Bool),
+            Expr::Tuple(elements) => {
+                if !(2..=4).contains(&elements.len()) {
+                    return Err(format!("Tuple expressions require arity 2..=4, got {}", elements.len()));
+                }
+                let mut types = Vec::with_capacity(elements.len());
+                let expected_elements = match expected_ty.as_ref() {
+                    Some(TypeRef::Tuple(items)) if items.len() == elements.len() => Some(items),
+                    _ => None,
+                };
+                for (index, element) in elements.iter().enumerate() {
+                    let ty = self.infer_expr(
+                        element,
+                        current_scope,
+                        expected_elements.and_then(|items| items.get(index)).cloned(),
+                    )?;
+                    if ty.is_borrowed_view() {
+                        return Err("Borrow error: a slice view cannot be stored in a tuple".to_string());
+                    }
+                    types.push(ty);
+                }
+                Ok(TypeRef::Tuple(types))
+            }
+            Expr::Await(inner) => {
+                if self.enclosing_async_function(current_scope).is_none() {
+                    return Err("Type error: '.await' is only legal inside an async function".to_string());
+                }
+                match self.infer_expr(inner, current_scope, None)? {
+                    TypeRef::Task(result) => Ok(*result),
+                    other => Err(format!("Type error: '.await' requires Task[T], got {:?}", other)),
+                }
+            }
             Expr::GenericCall { .. } => Err(
                 "internal error: unresolved generic call with explicit type arguments"
                     .to_string(),
@@ -756,8 +1066,31 @@ impl<'a> TypeChecker<'a> {
             Expr::Call { callee, args } => {
                 let mut param_tys = Vec::new();
                 if let Expr::Identifier(name, _) = &**callee {
+                    if self.enclosing_async_function(current_scope).is_some()
+                        && Self::blocking_in_async(name)
+                    {
+                        return Err(format!(
+                            "Async safety error: blocking call '{}' has no readiness/completion adapter",
+                            name
+                        ));
+                    }
                     if let Some(tys) = self.func_param_types.get(name) {
-                        param_tys = tys.clone();
+                        if let Some(rest_element) = self.variadic_elements.get(name) {
+                            let fixed = tys.len().saturating_sub(1);
+                            if args.len() < fixed {
+                                return Err(format!(
+                                    "{} expects at least {} arguments before its variadic rest, got {}",
+                                    name, fixed, args.len()
+                                ));
+                            }
+                            param_tys.extend_from_slice(&tys[..fixed]);
+                            param_tys.extend(
+                                std::iter::repeat(rest_element.clone())
+                                    .take(args.len().saturating_sub(fixed)),
+                            );
+                        } else {
+                            param_tys = tys.clone();
+                        }
                     } else if name == "list_push" && args.len() >= 2 {
                         let list_ty = self.infer_expr(&args[0], current_scope, None)?;
                         if let TypeRef::Generic(ref list_name, ref params) = list_ty {
@@ -782,6 +1115,56 @@ impl<'a> TypeChecker<'a> {
                 }
 
                 if let Expr::Identifier(name, _) = &**callee {
+                    match name.as_str() {
+                        "str_slice" => {
+                            if arg_tys.len() != 3
+                                || arg_tys[0] != TypeRef::Str
+                                || arg_tys[1] != TypeRef::Int
+                                || arg_tys[2] != TypeRef::Int
+                            {
+                                return Err("str_slice expects (Str, Int, Int)".to_string());
+                            }
+                            return Ok(TypeRef::StrSlice);
+                        }
+                        "slice" => {
+                            if arg_tys.len() != 3
+                                || arg_tys[1] != TypeRef::Int
+                                || arg_tys[2] != TypeRef::Int
+                            {
+                                return Err("slice expects (List[T], Int, Int)".to_string());
+                            }
+                            if let TypeRef::Generic(list, elements) = &arg_tys[0] {
+                                if list == "List" && elements.len() == 1 {
+                                    return Ok(TypeRef::Slice(Box::new(elements[0].clone())));
+                                }
+                            }
+                            return Err("slice first argument must be List[T]".to_string());
+                        }
+                        "slice_len" => {
+                            if arg_tys.len() != 1 || !arg_tys[0].is_borrowed_view() {
+                                return Err("slice_len expects a StrSlice or Slice[T]".to_string());
+                            }
+                            return Ok(TypeRef::Int);
+                        }
+                        "slice_get" => {
+                            if arg_tys.len() != 2 || arg_tys[1] != TypeRef::Int {
+                                return Err("slice_get expects (view, Int)".to_string());
+                            }
+                            return match &arg_tys[0] {
+                                TypeRef::Slice(element) => Ok((**element).clone()),
+                                TypeRef::StrSlice => Ok(TypeRef::Str),
+                                other => Err(format!("slice_get expects a slice view, got {:?}", other)),
+                            };
+                        }
+                        "slice_to_str" | "str_slice_to_str" => {
+                            if arg_tys.len() != 1 || arg_tys[0] != TypeRef::StrSlice {
+                                return Err(format!("{} expects StrSlice", name));
+                            }
+                            return Ok(TypeRef::Str);
+                        }
+                        _ => {}
+                    }
+
                     if let Some(builtin) = crate::builtins::get_builtins()
                         .iter()
                         .find(|b| b.name == name)
@@ -927,6 +1310,18 @@ impl<'a> TypeChecker<'a> {
                         return Ok(TypeRef::Custom(id));
                     }
                     if let Some(ty) = self.func_return_types.get(name) {
+                        if self.variadic_elements.contains_key(name) {
+                            for (index, (expected, actual)) in
+                                param_tys.iter().zip(arg_tys.iter()).enumerate()
+                            {
+                                if !types_compatible(expected, actual) {
+                                    return Err(format!(
+                                        "{} argument {} expects {:?}, got {:?}",
+                                        name, index + 1, expected, actual
+                                    ));
+                                }
+                            }
+                        }
                         // Generic type inference: if return type is TypeParam,
                         // substitute it based on the actual argument types
                         if let TypeRef::TypeParam(tp_name) = ty {
@@ -940,7 +1335,12 @@ impl<'a> TypeChecker<'a> {
                                 }
                             }
                         }
-                        return Ok(ty.clone());
+                        let result = ty.clone();
+                        return if self.async_functions.contains(name) {
+                            Ok(TypeRef::Task(Box::new(result)))
+                        } else {
+                            Ok(result)
+                        };
                     }
                     // Trait method dispatch: try StructName_method
                     if !arg_tys.is_empty() {
@@ -978,6 +1378,25 @@ impl<'a> TypeChecker<'a> {
 
                 let scope_id = closure_scope
                     .ok_or_else(|| "Type error: Closure scope resolution failed".to_string())?;
+
+                if let ScopeKind::Closure { captures } = &self.symbol_table.scopes[scope_id.0].kind {
+                    for capture in captures {
+                        if let Some(ty) = &self.symbol_table.bindings[capture.0].ty {
+                            if matches!(ty, TypeRef::Task(_)) {
+                                return Err(format!(
+                                    "Async safety error: task '{}' cannot be captured; the first executor is single-thread confined",
+                                    self.symbol_table.bindings[capture.0].name
+                                ));
+                            }
+                            if ty.is_borrowed_view() {
+                                return Err(format!(
+                                    "Borrow error: slice view '{}' cannot be captured by a closure",
+                                    self.symbol_table.bindings[capture.0].name
+                                ));
+                            }
+                        }
+                    }
+                }
 
                 for param in params {
                     if param.ty.is_none() {
@@ -1066,7 +1485,9 @@ impl<'a> TypeChecker<'a> {
                         ));
                     }
                 }
-                if !matches!(elem_ty, TypeRef::Int | TypeRef::Float | TypeRef::Custom(_) | TypeRef::Str | TypeRef::Bool) {
+                if !matches!(elem_ty, TypeRef::Int | TypeRef::Float | TypeRef::Bool | TypeRef::Char)
+                    && !elem_ty.is_managed()
+                {
                     return Err(format!(
                         "List element type {:?} is not supported safely yet",
                         elem_ty

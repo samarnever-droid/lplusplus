@@ -37,6 +37,20 @@ fn pure_nontrapping(rvalue: &Rvalue) -> bool {
 
 fn add_rvalue_uses(live: &mut HashSet<LocalId>, rvalue: &Rvalue) {
     match rvalue {
+        Rvalue::AllocateTuple(_, values) | Rvalue::MakeTask(_, _, values, _) => {
+            for value in values { add_operand_use(live, value); }
+        }
+        Rvalue::TupleField(base, _) | Rvalue::SliceLen(base)
+        | Rvalue::SliceToStr(base) | Rvalue::Await(base) => add_operand_use(live, base),
+        Rvalue::MakeSlice { base, start, length, .. } => {
+            add_operand_use(live, base);
+            add_operand_use(live, start);
+            add_operand_use(live, length);
+        }
+        Rvalue::SliceGet(view, index) => {
+            add_operand_use(live, view);
+            add_operand_use(live, index);
+        }
         Rvalue::Use(value) => add_operand_use(live, value),
         Rvalue::BinaryOp(_, left, right) => {
             add_operand_use(live, left);

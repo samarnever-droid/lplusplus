@@ -1,0 +1,6 @@
+def main():
+    text := "Bhopal"
+    view := str_slice(text, 1, 3)
+    print(slice_len(view))
+    print(slice_get(view, 0))
+    print(str_slice_to_str(view))

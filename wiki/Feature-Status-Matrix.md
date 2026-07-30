@@ -17,6 +17,12 @@ prototype reports.
 | Lists/maps | Stable in tested packages | Host/direct runtime coverage is verified |
 | Buffers/files/networking/JSON | Working | Runtime/platform coverage differs by target |
 | Arena regions | Working | Self-referential nodes; correctness-first region lifetime implementation |
+| Structural tuples | Experimental/working | Arity 2–4, structural typing, destructuring, managed child teardown; both backends/link paths |
+| Typed variadics | Experimental/working | Final typed rest becomes `List[T]`; extern/native C varargs rejected |
+| Borrowed slices | Experimental/working | Stack `StrSlice`/`Slice[T]`, zero-copy, bounds/generation checks, conservative non-escape validator |
+| Async/await | Experimental/working | Task state/environment records, postfix `.await`, single-thread run-to-completion executor |
+| Async readiness/backpressure | Planned | Blocking file/network/process/input calls are currently rejected transitively |
+| General lifetime-parameterized/mutable slices | Planned | First tier is read-only and non-escaping |
 | Explicit VectorI64x2 | Working | Both Cranelift and LLVM backends |
 | Long SIMD checksum | Working | LLVM vector IR and Cranelift/runtime AVX2 path |
 | Automatic vectorization of arbitrary loops | Planned | Not claimed; explicit vectors are available |
@@ -46,4 +52,10 @@ lpp app.lpp --dump-escape           # MIR ownership facts
 - LLVM validation corpus: 86/86 in the LLVM clone;
 - lppsqlite differential: 118/118;
 - compresslpp: all cross-verification pass;
-- targeted ASan/UBSan/TSan ownership tests: clean.
+- targeted ASan/UBSan/TSan ownership tests: clean;
+- four-feature batch: 17 positive cases on Cranelift/LLVM × host/direct,
+  9 rejection contracts, 5 ASan/UBSan cases, and combined TSan: pass.
+
+This matrix does **not** label the repository “100% Feature Freeze.” The four
+new language tiers remain experimental pending broader fuzzing and a real
+Windows runtime/backend execution gate.

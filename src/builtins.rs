@@ -19,6 +19,108 @@ pub struct Builtin {
 
 pub fn get_builtins() -> &'static [Builtin] {
     static BUILTINS: &[Builtin] = &[
+        // Borrowed slice surface syntax. Type checking and MIR lowering refine
+        // the generic element/result types; these entries make the names
+        // visible to semantic resolution and declare the runtime ABI.
+        Builtin {
+            name: "str_slice",
+            symbol: "lpp_slice_init",
+            params: &[ParamType::Any, ParamType::Any, ParamType::Any],
+            return_type: TypeRef::StrSlice,
+            cl_params: &[0, 0, 0, 0, 0],
+            cl_return: Some(0),
+        },
+        Builtin {
+            name: "slice",
+            symbol: "lpp_slice_init",
+            params: &[ParamType::Any, ParamType::Any, ParamType::Any],
+            // Refined to Slice[T] by the type checker; avoid heap allocation in
+            // this static descriptor.
+            return_type: TypeRef::Int,
+            cl_params: &[0, 0, 0, 0, 0],
+            cl_return: Some(0),
+        },
+        Builtin {
+            name: "slice_len",
+            symbol: "lpp_slice_len",
+            params: &[ParamType::Any],
+            return_type: TypeRef::Int,
+            cl_params: &[0],
+            cl_return: Some(0),
+        },
+        Builtin {
+            name: "slice_get",
+            symbol: "lpp_slice_get",
+            params: &[ParamType::Any, ParamType::Specific(TypeRef::Int)],
+            return_type: TypeRef::Int,
+            cl_params: &[0, 0],
+            cl_return: Some(0),
+        },
+        Builtin {
+            name: "slice_to_str",
+            symbol: "lpp_str_slice_to_str",
+            params: &[ParamType::Any],
+            return_type: TypeRef::Str,
+            cl_params: &[0],
+            cl_return: Some(0),
+        },
+        Builtin {
+            name: "str_slice_to_str",
+            symbol: "lpp_str_slice_to_str",
+            params: &[ParamType::Any],
+            return_type: TypeRef::Str,
+            cl_params: &[0],
+            cl_return: Some(0),
+        },
+        // Internal aggregate/task runtime ABI.
+        Builtin {
+            name: "lpp_tuple_alloc",
+            symbol: "lpp_tuple_alloc",
+            params: &[ParamType::Any, ParamType::Any, ParamType::Any],
+            return_type: TypeRef::Int,
+            cl_params: &[0, 0, 0],
+            cl_return: Some(0),
+        },
+        Builtin {
+            name: "lpp_task_new",
+            symbol: "lpp_task_new",
+            params: &[ParamType::Any, ParamType::Any, ParamType::Any],
+            return_type: TypeRef::Int,
+            cl_params: &[0, 0, 0],
+            cl_return: Some(0),
+        },
+        Builtin {
+            name: "lpp_task_poll",
+            symbol: "lpp_task_poll",
+            params: &[ParamType::Any],
+            return_type: TypeRef::Int,
+            cl_params: &[0],
+            cl_return: Some(0),
+        },
+        Builtin {
+            name: "lpp_task_await",
+            symbol: "lpp_task_await",
+            params: &[ParamType::Any],
+            return_type: TypeRef::Int,
+            cl_params: &[0],
+            cl_return: Some(0),
+        },
+        Builtin {
+            name: "lpp_executor_run",
+            symbol: "lpp_executor_run",
+            params: &[ParamType::Any],
+            return_type: TypeRef::Int,
+            cl_params: &[0],
+            cl_return: Some(0),
+        },
+        Builtin {
+            name: "lpp_task_destroy",
+            symbol: "lpp_task_destroy",
+            params: &[ParamType::Any],
+            return_type: TypeRef::Void,
+            cl_params: &[0],
+            cl_return: None,
+        },
         // Overloaded/generic frontend functions
         Builtin {
             name: "print",
