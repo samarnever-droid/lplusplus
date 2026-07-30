@@ -1,0 +1,5 @@
+def consume(...items: VectorI64x2):
+    print(list_len(items))
+
+def main():
+    consume(vec_i64x2(1, 2))

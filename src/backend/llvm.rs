@@ -8,7 +8,7 @@ use crate::ast::BinaryOperator;
 use crate::mir::ir::*;
 use crate::types::{StructTypeId, TypeRef, TypeTable};
 use crate::layout::{struct_layout, tuple_layout, tuple_runtime_metadata};
-use crate::type_facts::AbiClass;
+use crate::type_facts::{AbiClass, ListElementClass};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::process::Command;
@@ -60,6 +60,7 @@ fn literal_blob(value: &str) -> Vec<u8> {
 fn builtin_signature(symbol: &str) -> Option<(&'static str, &'static str)> {
     Some(match symbol {
         "lpp_print_int" => ("void", "i64"),
+        "lpp_print_bool" => ("void", "i8"),
         "lpp_print_float" => ("void", "double"),
         "lpp_print_str" => ("void", "ptr"),
         "lpp_str_len" => ("i64", "ptr"),
@@ -70,9 +71,15 @@ fn builtin_signature(symbol: &str) -> Option<(&'static str, &'static str)> {
         "lpp_list_new" | "lpp_list_new_arc" => ("ptr", ""),
         "lpp_list_len" => ("i64", "ptr"),
         "lpp_list_push" => ("void", "ptr, i64"),
+        "lpp_list_push_bool" => ("void", "ptr, i8"),
         "lpp_list_push_float" => ("void", "ptr, double"),
         "lpp_list_push_arc" => ("void", "ptr, ptr"),
+        "lpp_list_set" => ("void", "ptr, i64, i64"),
+        "lpp_list_set_bool" => ("void", "ptr, i64, i8"),
+        "lpp_list_set_float" => ("void", "ptr, i64, double"),
+        "lpp_list_set_arc" => ("void", "ptr, i64, ptr"),
         "lpp_list_get" => ("i64", "ptr, i64"),
+        "lpp_list_get_bool" => ("i8", "ptr, i64"),
         "lpp_list_get_float" => ("double", "ptr, i64"),
         "lpp_list_get_arc" => ("ptr", "ptr, i64"),
         "lpp_map_new" => ("ptr", ""),
@@ -105,6 +112,7 @@ fn builtin_signature(symbol: &str) -> Option<(&'static str, &'static str)> {
         "lpp_slice_init" => ("ptr", "ptr, ptr, i64, i64, i64"),
         "lpp_slice_len" => ("i64", "ptr"),
         "lpp_slice_get" => ("i64", "ptr, i64"),
+        "lpp_slice_get_bool" => ("i8", "ptr, i64"),
         "lpp_slice_get_float" => ("double", "ptr, i64"),
         "lpp_str_slice_get" => ("ptr", "ptr, i64"),
         "lpp_str_slice_to_str" => ("ptr", "ptr"),
@@ -319,6 +327,7 @@ impl<'a> FunctionEmitter<'a> {
                 };
                 let symbol = match (&self.function.locals[view_id.0].ty, dest_ty) {
                     (TypeRef::StrSlice, _) => "lpp_str_slice_get",
+                    (_, TypeRef::Bool) => "lpp_slice_get_bool",
                     (_, TypeRef::Float) => "lpp_slice_get_float",
                     _ => "lpp_slice_get",
                 };
@@ -524,7 +533,15 @@ impl<'a> FunctionEmitter<'a> {
                 Ok(Some((value, "ptr")))
             }
             Rvalue::AllocateList(element) => {
-                let symbol = if element.is_managed() { "lpp_list_new_arc" } else { "lpp_list_new" };
+                let symbol = match element.list_element_class() {
+                    ListElementClass::Scalar
+                    | ListElementClass::Bool
+                    | ListElementClass::Float => "lpp_list_new",
+                    ListElementClass::Arc => "lpp_list_new_arc",
+                    ListElementClass::Unsupported => {
+                        return Err(format!("LLVM does not support List[{:?}] safely", element));
+                    }
+                };
                 let (ret, _) = self.register_builtin(symbol)?;
                 let value = self.temp();
                 out.push_str(&format!("  {} = call {} @{}()\n", value, ret, symbol));

@@ -268,19 +268,24 @@ impl<'a> TypeChecker<'a> {
                     }
                     self.async_functions.insert(f.name.clone());
                 }
-                let param_tys: Vec<TypeRef> = f
-                    .params
-                    .iter()
-                    .map(|p| {
-                        let element = Self::convert_ast_type_with_params(&self.type_table, &p.ty, &tp);
-                        if p.variadic {
-                            self.variadic_elements.insert(f.name.clone(), element.clone());
-                            TypeRef::Generic("List".to_string(), vec![element])
-                        } else {
-                            element
+                let mut param_tys = Vec::with_capacity(f.params.len());
+                for param in &f.params {
+                    let element =
+                        Self::convert_ast_type_with_params(&self.type_table, &param.ty, &tp);
+                    if param.variadic {
+                        if !element.is_list_element_supported() {
+                            return Err(format!(
+                                "Type error: variadic parameter '{}' in '{}' cannot safely store element type {:?}",
+                                param.name, f.name, element
+                            ));
                         }
-                    })
-                    .collect();
+                        self.variadic_elements
+                            .insert(f.name.clone(), element.clone());
+                        param_tys.push(TypeRef::Generic("List".to_string(), vec![element]));
+                    } else {
+                        param_tys.push(element);
+                    }
+                }
                 self.func_param_types.insert(f.name.clone(), param_tys);
                 // Record trait bounds for this function's type params
                 let bounds: Vec<(String, String)> = f.type_params.iter()
@@ -299,19 +304,25 @@ impl<'a> TypeChecker<'a> {
                     if method.is_async {
                         self.async_functions.insert(method.name.clone());
                     }
-                    let param_tys: Vec<TypeRef> = method
-                        .params
-                        .iter()
-                        .map(|p| {
-                            let element = Self::convert_ast_type_with_params(&self.type_table, &p.ty, &tp);
-                            if p.variadic {
-                                self.variadic_elements.insert(method.name.clone(), element.clone());
-                                TypeRef::Generic("List".to_string(), vec![element])
-                            } else {
-                                element
+                    let mut param_tys = Vec::with_capacity(method.params.len());
+                    for param in &method.params {
+                        let element =
+                            Self::convert_ast_type_with_params(&self.type_table, &param.ty, &tp);
+                        if param.variadic {
+                            if !element.is_list_element_supported() {
+                                return Err(format!(
+                                    "Type error: variadic parameter '{}' in '{}' cannot safely store element type {:?}",
+                                    param.name, method.name, element
+                                ));
                             }
-                        })
-                        .collect();
+                            self.variadic_elements
+                                .insert(method.name.clone(), element.clone());
+                            param_tys
+                                .push(TypeRef::Generic("List".to_string(), vec![element]));
+                        } else {
+                            param_tys.push(element);
+                        }
+                    }
                     self.func_param_types.insert(method.name.clone(), param_tys);
                 }
             }
@@ -1008,14 +1019,26 @@ impl<'a> TypeChecker<'a> {
                         } else {
                             param_tys = tys.clone();
                         }
-                    } else if name == "list_push" && args.len() >= 2 {
+                    } else if (name == "list_push" || name == "lpp_list_push" || name == "push")
+                        && args.len() >= 2
+                    {
                         let list_ty = self.infer_expr(&args[0], current_scope, None)?;
                         if let TypeRef::Generic(ref list_name, ref params) = list_ty {
                             if list_name == "List" && !params.is_empty() {
                                 param_tys = vec![list_ty.clone(), params[0].clone()];
                             }
                         }
-                    } else if (name == "list_get" || name == "get") && args.len() >= 2 {
+                    } else if (name == "list_set" || name == "lpp_list_set")
+                        && args.len() >= 3
+                    {
+                        let list_ty = self.infer_expr(&args[0], current_scope, None)?;
+                        if let TypeRef::Generic(ref list_name, ref params) = list_ty {
+                            if list_name == "List" && !params.is_empty() {
+                                param_tys =
+                                    vec![list_ty.clone(), TypeRef::Int, params[0].clone()];
+                            }
+                        }
+                    } else if (name == "list_get" || name == "lpp_list_get" || name == "get") && args.len() >= 2 {
                         let list_ty = self.infer_expr(&args[0], current_scope, None)?;
                         if let TypeRef::Generic(ref list_name, ref params) = list_ty {
                             if list_name == "List" && !params.is_empty() {
@@ -1032,6 +1055,25 @@ impl<'a> TypeChecker<'a> {
                 }
 
                 if let Expr::Identifier(name, _) = &**callee {
+                    if matches!(
+                        name.as_str(),
+                        "list_push" | "lpp_list_push" | "push"
+                            | "list_set" | "lpp_list_set"
+                    ) {
+                        for (index, (expected, actual)) in
+                            param_tys.iter().zip(arg_tys.iter()).enumerate()
+                        {
+                            if !types_compatible(expected, actual) {
+                                return Err(format!(
+                                    "{} argument {} expects {:?}, got {:?}",
+                                    name,
+                                    index + 1,
+                                    expected,
+                                    actual
+                                ));
+                            }
+                        }
+                    }
                     match name.as_str() {
                         "str_slice" => {
                             if arg_tys.len() != 3
@@ -1145,6 +1187,12 @@ impl<'a> TypeChecker<'a> {
                                         return Err(
                                             "List requires exactly one element type".to_string()
                                         );
+                                    }
+                                    if !params[0].is_list_element_supported() {
+                                        return Err(format!(
+                                            "List element type {:?} is not supported safely yet",
+                                            params[0]
+                                        ));
                                     }
                                     return Ok(TypeRef::Generic(
                                         "List".to_string(),
@@ -1402,7 +1450,7 @@ impl<'a> TypeChecker<'a> {
                         ));
                     }
                 }
-                if !elem_ty.is_frontend_list_element() {
+                if !elem_ty.is_list_element_supported() {
                     return Err(format!(
                         "List element type {:?} is not supported safely yet",
                         elem_ty

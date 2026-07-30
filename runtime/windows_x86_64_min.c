@@ -125,6 +125,7 @@ void lpp_print_float(double v) {
     if (negative) *--cursor = '-';
     lpp_write(cursor, (DWORD)((buffer + sizeof(buffer)) - cursor));
 }
+void lpp_print_bool(int8_t value) { lpp_print_int(value ? 1 : 0); }
 void lpp_print_str(const char *t) { if(!t)return; int n=lpp_strlen(t); lpp_write(t,(DWORD)n); lpp_write("\n",1); }
 
 double fmod(double x, double y) {
@@ -300,8 +301,14 @@ void *lpp_list_new_arc(void){return lpp_list_new_with_mode(1);}
 void lpp_list_push(void *r,int64_t v){LppList*l=(LppList*)r;if(!l)return;if(l->len==l->cap){int64_t nc=l->cap==0?8:l->cap*2;if(nc<l->cap||nc>(int64_t)(0x7fffffffffffffffLL/8))return;uint64_t nb=lpp_page_round((uint64_t)nc*sizeof(int64_t));int64_t*nd=(int64_t*)VirtualAlloc(0,nb,MEM_COMMIT|MEM_RESERVE,PAGE_READWRITE);if(!nd)return;int64_t i;for(i=0;i<l->len;i++)nd[i]=l->data[i];if(l->data)VirtualFree(l->data,0,MEM_RELEASE);l->data=nd;l->cap=nc;l->data_bytes=nb;} if(l->arc_elements)lpp_arc_retain((void*)(intptr_t)v);l->data[l->len++]=v;}
 void lpp_list_push_arc(void*l,void*v){lpp_list_push(l,(int64_t)(intptr_t)v);}
 void lpp_list_push_float(void*l,double v){int64_t i;lpp_memcpy((char*)&i,(const char*)&v,8);lpp_list_push(l,i);}
+void lpp_list_push_bool(void*l,int8_t v){lpp_list_push(l,v?1:0);}
 int64_t lpp_list_get(void*r,int64_t i){LppList*l=(LppList*)r;if(!l||i<0||i>=l->len){ExitProcess(101);}return l->data[i];}
+void lpp_list_set(void*r,int64_t i,int64_t v){LppList*l=(LppList*)r;if(!l||i<0||i>=l->len)ExitProcess(101);if(l->arc_elements){lpp_arc_retain((void*)(intptr_t)v);lpp_arc_release((void*)(intptr_t)l->data[i]);}l->data[i]=v;}
+void lpp_list_set_bool(void*l,int64_t i,int8_t v){lpp_list_set(l,i,v?1:0);}
+void lpp_list_set_float(void*l,int64_t i,double v){int64_t b;lpp_memcpy((char*)&b,(const char*)&v,8);lpp_list_set(l,i,b);}
+void lpp_list_set_arc(void*l,int64_t i,void*v){lpp_list_set(l,i,(int64_t)(intptr_t)v);}
 double lpp_list_get_float(void*l,int64_t idx){int64_t i=lpp_list_get(l,idx);double f;lpp_memcpy((char*)&f,(const char*)&i,8);return f;}
+int8_t lpp_list_get_bool(void*l,int64_t i){return lpp_list_get(l,i)!=0;}
 void *lpp_list_get_arc(void*l,int64_t i){return(void*)(intptr_t)lpp_list_get(l,i);}
 int64_t lpp_list_len(void*r){return r?((LppList*)r)->len:0;}
 void lpp_list_free(void*l){lpp_arc_release(l);}
@@ -311,6 +318,7 @@ void*lpp_slice_init(void*storage,void*base,int64_t start,int64_t length,int64_t 
 int64_t lpp_slice_len(void*raw){LppSlice*v=(LppSlice*)raw;(void)lpp_slice_checked_base(v);return v->length;}
 int64_t lpp_slice_get(void*raw,int64_t index){LppSlice*v=(LppSlice*)raw;void*b=lpp_slice_checked_base(v);if(v->kind!=1||index<0||index>=v->length)ExitProcess(101);return lpp_list_get(b,v->start+index);}
 double lpp_slice_get_float(void*raw,int64_t index){int64_t i=lpp_slice_get(raw,index);double f;lpp_memcpy((char*)&f,(const char*)&i,8);return f;}
+int8_t lpp_slice_get_bool(void*raw,int64_t index){return lpp_slice_get(raw,index)!=0;}
 char*lpp_str_slice_get(void*raw,int64_t index){LppSlice*v=(LppSlice*)raw;const char*b=(const char*)lpp_slice_checked_base(v);char*r;if(v->kind!=0||index<0||index>=v->length)ExitProcess(101);r=(char*)lpp_arc_alloc(2);if(!r)ExitProcess(101);r[0]=b[v->start+index];r[1]=0;return r;}
 char*lpp_str_slice_to_str(void*raw){LppSlice*v=(LppSlice*)raw;const char*b=(const char*)lpp_slice_checked_base(v);char*r;if(v->kind!=0)ExitProcess(101);r=(char*)lpp_arc_alloc(v->length+1);if(!r)ExitProcess(101);lpp_memcpy(r,b+v->start,(int)v->length);r[v->length]=0;return r;}
 

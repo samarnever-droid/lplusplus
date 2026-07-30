@@ -126,10 +126,10 @@ fn validate_aot_program(program: &MirProgram, type_table: &TypeTable) -> Result<
                         ));
                     }
                     MirInstr::Assign(_, Rvalue::AllocateList(element_ty))
-                        if !element_ty.is_aot_list_element() =>
+                        if !element_ty.is_list_element_supported() =>
                     {
                         return Err(format!(
-                            "AOT supports List[Int/Float/Bool/Str/Custom], but '{}' allocates List[{:?}]",
+                            "AOT supports scalar or ARC-managed one-slot list elements, but '{}' allocates List[{:?}]",
                             function.name, element_ty
                         ));
                     }

@@ -47,14 +47,16 @@ lpp app.lpp --dump-escape           # MIR ownership facts
 
 ## Verification snapshot
 
-- cargo tests: 70/70;
+- cargo tests: 71/71;
 - Cranelift AOT parity: 44/44;
 - LLVM validation corpus: 86/86 in the LLVM clone;
 - lppsqlite differential: 118/118;
 - compresslpp: all cross-verification pass;
 - targeted ASan/UBSan/TSan ownership tests: clean;
 - four-feature batch: 17 positive cases on Cranelift/LLVM × host/direct,
-  9 rejection contracts, 5 ASan/UBSan cases, and combined TSan: pass.
+  9 rejection contracts, 5 ASan/UBSan cases, and combined TSan: pass;
+- canonical list policy: Bool-print/Bool-list/Bool-slice/Char/Float/nested managed/closure/self-alias cases
+  pass on both backends and linkers; unsupported vectors/views are rejected.
 
 This matrix does **not** label the repository “100% Feature Freeze.” The four
 new language tiers remain experimental pending broader fuzzing and a real

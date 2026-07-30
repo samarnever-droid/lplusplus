@@ -63,7 +63,7 @@ path for Cranelift.
 
 ## Verified gates
 
-- Cargo tests: 70/70.
+- Cargo tests: 71/71.
 - Cranelift AOT parity: 44/44.
 - LLVM corpus in the LLVM validation clone: 86/86.
 - lppsqlite differential: 118/118.
@@ -74,6 +74,8 @@ path for Cranelift.
   recorded runs.
 - Four-feature gate: 17 positive cases on both backends and both link paths,
   9 compile-time rejection contracts, 5 ASan/UBSan cases, and TSan: pass.
+- Canonical list-policy gate: eight positive scalar/managed cases on both backends
+  and both linkers, three rejection contracts, and six ASan/UBSan cases: pass.
 
 ## Not yet claimed
 

@@ -57,6 +57,14 @@ pub fn get_builtins() -> &'static [Builtin] {
             cl_return: Some(0),
         },
         Builtin {
+            name: "lpp_slice_get_bool",
+            symbol: "lpp_slice_get_bool",
+            params: &[ParamType::Any, ParamType::Specific(TypeRef::Int)],
+            return_type: TypeRef::Bool,
+            cl_params: &[0, 0],
+            cl_return: Some(1),
+        },
+        Builtin {
             name: "slice_to_str",
             symbol: "lpp_str_slice_to_str",
             params: &[ParamType::Any],
@@ -161,6 +169,14 @@ pub fn get_builtins() -> &'static [Builtin] {
             params: &[ParamType::Specific(TypeRef::Float)],
             return_type: TypeRef::Void,
             cl_params: &[3],
+            cl_return: None,
+        },
+        Builtin {
+            name: "lpp_print_bool",
+            symbol: "lpp_print_bool",
+            params: &[ParamType::Specific(TypeRef::Bool)],
+            return_type: TypeRef::Void,
+            cl_params: &[1],
             cl_return: None,
         },
         Builtin {
@@ -420,6 +436,14 @@ pub fn get_builtins() -> &'static [Builtin] {
             cl_return: None,
         },
         Builtin {
+            name: "lpp_list_push_bool",
+            symbol: "lpp_list_push_bool",
+            params: &[ParamType::Any, ParamType::Specific(TypeRef::Bool)],
+            return_type: TypeRef::Void,
+            cl_params: &[0, 1],
+            cl_return: None,
+        },
+        Builtin {
             name: "list_set",
             symbol: "lpp_list_set",
             params: &[ParamType::Any, ParamType::Specific(TypeRef::Int), ParamType::Any],
@@ -430,6 +454,38 @@ pub fn get_builtins() -> &'static [Builtin] {
         Builtin {
             name: "lpp_list_set",
             symbol: "lpp_list_set",
+            params: &[ParamType::Any, ParamType::Specific(TypeRef::Int), ParamType::Any],
+            return_type: TypeRef::Void,
+            cl_params: &[0, 0, 0],
+            cl_return: None,
+        },
+        Builtin {
+            name: "lpp_list_set_bool",
+            symbol: "lpp_list_set_bool",
+            params: &[
+                ParamType::Any,
+                ParamType::Specific(TypeRef::Int),
+                ParamType::Specific(TypeRef::Bool),
+            ],
+            return_type: TypeRef::Void,
+            cl_params: &[0, 0, 1],
+            cl_return: None,
+        },
+        Builtin {
+            name: "lpp_list_set_float",
+            symbol: "lpp_list_set_float",
+            params: &[
+                ParamType::Any,
+                ParamType::Specific(TypeRef::Int),
+                ParamType::Specific(TypeRef::Float),
+            ],
+            return_type: TypeRef::Void,
+            cl_params: &[0, 0, 3],
+            cl_return: None,
+        },
+        Builtin {
+            name: "lpp_list_set_arc",
+            symbol: "lpp_list_set_arc",
             params: &[ParamType::Any, ParamType::Specific(TypeRef::Int), ParamType::Any],
             return_type: TypeRef::Void,
             cl_params: &[0, 0, 0],
@@ -466,6 +522,14 @@ pub fn get_builtins() -> &'static [Builtin] {
             return_type: TypeRef::Float,
             cl_params: &[0, 0],
             cl_return: Some(3),
+        },
+        Builtin {
+            name: "lpp_list_get_bool",
+            symbol: "lpp_list_get_bool",
+            params: &[ParamType::Any, ParamType::Specific(TypeRef::Int)],
+            return_type: TypeRef::Bool,
+            cl_params: &[0, 0],
+            cl_return: Some(1),
         },
         Builtin {
             name: "list_len",

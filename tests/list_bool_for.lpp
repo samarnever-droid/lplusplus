@@ -1,0 +1,8 @@
+def main():
+    values := [true, false, true, true]
+    list_set(values, 0, false)
+    mut count := 0
+    for value in values:
+        if value:
+            count = count + 1
+    print(count)

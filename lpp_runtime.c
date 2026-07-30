@@ -152,6 +152,11 @@ void lpp_print_float(double value) {
     fflush(stdout);
 }
 
+void lpp_print_bool(int8_t value) {
+    printf("%d\n", value ? 1 : 0);
+    fflush(stdout);
+}
+
 void lpp_print_str(const char *ptr) {
     if (ptr) { puts(ptr); fflush(stdout); }
 }
@@ -1102,6 +1107,10 @@ void lpp_list_push_float(void *list, double value) {
     lpp_list_push(list, ival);
 }
 
+void lpp_list_push_bool(void *list, int8_t value) {
+    lpp_list_push(list, value ? 1 : 0);
+}
+
 int64_t lpp_list_get(void *list, int64_t index) {
     LppList *l = (LppList *)list;
     if (!l) {
@@ -1121,13 +1130,30 @@ void lpp_list_set(void *list, int64_t index, int64_t value) {
     if (index < 0 || index >= l->len) {
         lpp_panic("list index out of bounds on set: index %lld, len %lld", (long long)index, (long long)l->len);
     }
+    /* Retain the incoming edge before dropping the old one. This order is
+     * required for self-assignment such as set(xs, 0, get(xs, 0)), where the
+     * list may hold the last reference to that object. */
+    if (l->retain_element && value) {
+        l->retain_element(value);
+    }
     if (l->drop_element && l->data[index]) {
         l->drop_element(l->data[index]);
     }
     l->data[index] = value;
-    if (l->retain_element && value) {
-        l->retain_element(value);
-    }
+}
+
+void lpp_list_set_bool(void *list, int64_t index, int8_t value) {
+    lpp_list_set(list, index, value ? 1 : 0);
+}
+
+void lpp_list_set_float(void *list, int64_t index, double value) {
+    int64_t bits;
+    memcpy(&bits, &value, sizeof(bits));
+    lpp_list_set(list, index, bits);
+}
+
+void lpp_list_set_arc(void *list, int64_t index, void *value) {
+    lpp_list_set(list, index, (int64_t)(intptr_t)value);
 }
 
 double lpp_list_get_float(void *list, int64_t index) {
@@ -1135,6 +1161,10 @@ double lpp_list_get_float(void *list, int64_t index) {
     double fval;
     memcpy(&fval, &ival, sizeof(double));
     return fval;
+}
+
+int8_t lpp_list_get_bool(void *list, int64_t index) {
+    return lpp_list_get(list, index) != 0;
 }
 
 /* List element reads are borrowed; callers retain only when they create an
@@ -1216,6 +1246,10 @@ double lpp_slice_get_float(void *raw_view, int64_t index) {
     double value;
     memcpy(&value, &bits, sizeof(value));
     return value;
+}
+
+int8_t lpp_slice_get_bool(void *raw_view, int64_t index) {
+    return lpp_slice_get(raw_view, index) != 0;
 }
 
 char *lpp_str_slice_get(void *raw_view, int64_t index) {

@@ -1,0 +1,8 @@
+def main():
+    first := [1, 2]
+    second := [3, 4]
+    replacement := [9, 10]
+    nested := [first, second]
+    list_set(nested, 1, replacement)
+    selected := list_get(nested, 1)
+    print(list_get(selected, 0))

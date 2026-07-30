@@ -61,6 +61,15 @@ struct Node:
 This is no longer a rejection contract. It is covered by recursive-structure
 and Arena-return tests.
 
+## List element policy
+
+`TypeRef::list_element_class()` is the single frontend/MIR/backend policy:
+`Int`/`Char` use scalar slots, `Bool` uses explicit i8 ABI wrappers, `Float`
+uses bit-preserving double wrappers, and managed values use retaining ARC list
+operations. `Void`, unresolved/type-parameter values, vectors, and borrowed
+views are rejected. Typed `list_set` retains the incoming managed value before
+releasing the old edge, making self-assignment safe.
+
 ## Structural tuples and typed rests
 
 Tuple compatibility is structural and element-by-element. Arity is restricted

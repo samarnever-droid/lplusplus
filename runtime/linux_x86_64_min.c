@@ -66,6 +66,10 @@ void lpp_print_float(double v) {
     (void)lpp_sys_write(1, cursor, (long)((buffer + sizeof(buffer)) - cursor));
 }
 
+void lpp_print_bool(int8_t value) {
+    lpp_print_int(value ? 1 : 0);
+}
+
 void lpp_print_str(const char *text) {
     const char *end = text;
     char newline = '\n';
@@ -557,10 +561,38 @@ void lpp_list_push_float(void *list, double value) {
     lpp_list_push(list, ival);
 }
 
+void lpp_list_push_bool(void *list, int8_t value) {
+    lpp_list_push(list, value ? 1 : 0);
+}
+
 int64_t lpp_list_get(void *raw, int64_t index) {
     LppList *list = (LppList *)raw;
     if (!list || index < 0 || index >= list->len) { __asm__ volatile("syscall"::"a"(60),"D"(101):"rcx","r11"); for(;;); }
     return list->data[index];
+}
+
+void lpp_list_set(void *raw, int64_t index, int64_t value) {
+    LppList *list = (LppList *)raw;
+    if (!list || index < 0 || index >= list->len) lpp_exit(101);
+    if (list->arc_elements) {
+        lpp_arc_retain((void *)(intptr_t)value);
+        lpp_arc_release((void *)(intptr_t)list->data[index]);
+    }
+    list->data[index] = value;
+}
+
+void lpp_list_set_bool(void *list, int64_t index, int8_t value) {
+    lpp_list_set(list, index, value ? 1 : 0);
+}
+
+void lpp_list_set_float(void *list, int64_t index, double value) {
+    int64_t bits;
+    for (int i = 0; i < 8; ++i) ((char *)&bits)[i] = ((char *)&value)[i];
+    lpp_list_set(list, index, bits);
+}
+
+void lpp_list_set_arc(void *list, int64_t index, void *value) {
+    lpp_list_set(list, index, (int64_t)(intptr_t)value);
 }
 
 double lpp_list_get_float(void *list, int64_t index) {
@@ -568,6 +600,10 @@ double lpp_list_get_float(void *list, int64_t index) {
     double fval;
     for (int i = 0; i < 8; i++) ((char*)&fval)[i] = ((char*)&ival)[i];
     return fval;
+}
+
+int8_t lpp_list_get_bool(void *list, int64_t index) {
+    return lpp_list_get(list, index) != 0;
 }
 
 void *lpp_list_get_arc(void *list, int64_t index) {
@@ -615,6 +651,9 @@ double lpp_slice_get_float(void *raw, int64_t index) {
         ((char *)&value)[i] = ((char *)&bits)[i];
     }
     return value;
+}
+int8_t lpp_slice_get_bool(void *raw, int64_t index) {
+    return lpp_slice_get(raw, index) != 0;
 }
 char *lpp_str_slice_get(void *raw, int64_t index) {
     LppSlice *view = (LppSlice *)raw;

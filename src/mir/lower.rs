@@ -2,7 +2,7 @@ use crate::ast::*;
 use crate::mir::builder::MirBuilder;
 use crate::mir::ir::*;
 use crate::semantic::{BindingId, ScopeKind, SymbolTable};
-use crate::type_facts::ListAccessorClass;
+use crate::type_facts::ListElementClass;
 use crate::types::{TypeRef, TypeTable};
 use std::collections::HashMap;
 
@@ -10,6 +10,45 @@ use std::collections::HashMap;
 pub struct LoopTargets {
     pub break_block: BlockId,
     pub continue_block: BlockId,
+}
+
+fn list_push_symbol(element: &TypeRef) -> Result<&'static str, String> {
+    match element.list_element_class() {
+        ListElementClass::Scalar => Ok("lpp_list_push"),
+        ListElementClass::Bool => Ok("lpp_list_push_bool"),
+        ListElementClass::Float => Ok("lpp_list_push_float"),
+        ListElementClass::Arc => Ok("lpp_list_push_arc"),
+        ListElementClass::Unsupported => Err(format!(
+            "unsupported list element type {:?} reached MIR lowering",
+            element
+        )),
+    }
+}
+
+fn list_get_symbol(element: &TypeRef) -> Result<&'static str, String> {
+    match element.list_element_class() {
+        ListElementClass::Scalar => Ok("lpp_list_get"),
+        ListElementClass::Bool => Ok("lpp_list_get_bool"),
+        ListElementClass::Float => Ok("lpp_list_get_float"),
+        ListElementClass::Arc => Ok("lpp_list_get_arc"),
+        ListElementClass::Unsupported => Err(format!(
+            "unsupported list element type {:?} reached MIR lowering",
+            element
+        )),
+    }
+}
+
+fn list_set_symbol(element: &TypeRef) -> Result<&'static str, String> {
+    match element.list_element_class() {
+        ListElementClass::Scalar => Ok("lpp_list_set"),
+        ListElementClass::Bool => Ok("lpp_list_set_bool"),
+        ListElementClass::Float => Ok("lpp_list_set_float"),
+        ListElementClass::Arc => Ok("lpp_list_set_arc"),
+        ListElementClass::Unsupported => Err(format!(
+            "unsupported list element type {:?} reached MIR lowering",
+            element
+        )),
+    }
 }
 
 pub struct MirLowerCtx<'a> {
@@ -969,14 +1008,10 @@ impl<'a> MirLowerCtx<'a> {
                 });
 
                 builder.switch_to_block(body_block_id);
-                let accessor = elem_ty.list_accessor_class();
-                let get_symbol = match accessor {
-                    ListAccessorClass::Float => "lpp_list_get_float",
-                    ListAccessorClass::Arc => "lpp_list_get_arc",
-                    ListAccessorClass::Scalar => "lpp_list_get",
-                };
+                let element_class = elem_ty.list_element_class();
+                let get_symbol = list_get_symbol(&elem_ty)?;
                 let elem_temp = builder.new_local(elem_ty.clone(), false, None, None);
-                if accessor == ListAccessorClass::Arc {
+                if element_class == ListElementClass::Arc {
                     builder.set_local_ownership(elem_temp, Ownership::Borrowed);
                 }
                 builder.push_instr(MirInstr::Assign(
@@ -1539,11 +1574,7 @@ impl<'a> MirLowerCtx<'a> {
                         rest,
                         Rvalue::AllocateList(element_ty.clone()),
                     ))?;
-                    let push_symbol = match &element_ty {
-                        TypeRef::Float => "lpp_list_push_float",
-                        ty if ty.is_managed() => "lpp_list_push_arc",
-                        _ => "lpp_list_push",
-                    };
+                    let push_symbol = list_push_symbol(&element_ty)?;
                     for arg in args.iter().skip(fixed_count) {
                         let value = self.lower_expr(builder, arg, binding_map)?;
                         let discard = builder.new_local(TypeRef::Void, false, None, None);
@@ -1604,7 +1635,7 @@ impl<'a> MirLowerCtx<'a> {
                             .iter()
                             .find(|b| b.name == name)
                         {
-                            if name == "list_get" || name == "get" {
+                            if name == "list_get" || name == "lpp_list_get" || name == "get" {
                                 let list_ty = args
                                     .first()
                                     .map(|arg| self.expr_type_hint(arg, builder, binding_map))
@@ -1670,7 +1701,7 @@ impl<'a> MirLowerCtx<'a> {
                 }
                 let list_get_borrows_element = matches!(
                     &**callee,
-                    Expr::Identifier(name, _) if name == "list_get" || name == "get"
+                    Expr::Identifier(name, _) if name == "list_get" || name == "lpp_list_get" || name == "get"
                 ) && return_type.is_managed();
                 let temp = builder.new_local(return_type, false, None, None);
                 if list_get_borrows_element {
@@ -1874,25 +1905,26 @@ impl<'a> MirLowerCtx<'a> {
                                 }
                                 _ => "lpp_map_get".to_string(),
                             })
-                        } else if name == "list_push" || name == "list_get" || name == "push" || name == "get" {
+                        } else if matches!(
+                            name.as_str(),
+                            "list_push" | "lpp_list_push"
+                                | "list_get" | "lpp_list_get"
+                                | "list_set" | "lpp_list_set"
+                                | "push" | "get"
+                        ) {
                             let list_ty = args
                                 .first()
                                 .map(|arg| self.expr_type_hint(arg, builder, binding_map));
                             if let Some(TypeRef::Generic(_, ref params)) = list_ty {
                                 if let Some(elem_ty) = params.first() {
-                                    if name == "list_push" || name == "push" {
-                                        Some(match elem_ty {
-                                            TypeRef::Float => "lpp_list_push_float".to_string(),
-                                            ty if ty.is_managed() => "lpp_list_push_arc".to_string(),
-                                            _ => "lpp_list_push".to_string(),
-                                        })
-                                    } else {
-                                        Some(match elem_ty {
-                                            TypeRef::Float => "lpp_list_get_float".to_string(),
-                                            ty if ty.is_managed() => "lpp_list_get_arc".to_string(),
-                                            _ => "lpp_list_get".to_string(),
-                                        })
+                                    Some(match name.as_str() {
+                                        "list_push" | "lpp_list_push" | "push" => {
+                                            list_push_symbol(elem_ty)?
+                                        }
+                                        "list_set" | "lpp_list_set" => list_set_symbol(elem_ty)?,
+                                        _ => list_get_symbol(elem_ty)?,
                                     }
+                                    .to_string())
                                 } else {
                                     None
                                 }
@@ -1900,20 +1932,27 @@ impl<'a> MirLowerCtx<'a> {
                                 None
                             }
                         } else if name == "print" {
-                        let (is_string, is_float) = match lowered_args.first() {
-                            Some(Operand::String(_)) => (true, false),
-                            Some(Operand::Float(_)) => (false, true),
+                        let (is_string, is_float, is_bool) = match lowered_args.first() {
+                            Some(Operand::String(_)) => (true, false, false),
+                            Some(Operand::Float(_)) => (false, true, false),
+                            Some(Operand::Bool(_)) => (false, false, true),
                             Some(Operand::Local(local_id)) | Some(Operand::Borrowed(local_id)) => {
                                 let ty = &builder.function.locals[local_id.0].ty;
-                                (*ty == TypeRef::Str, *ty == TypeRef::Float)
+                                (
+                                    *ty == TypeRef::Str,
+                                    *ty == TypeRef::Float,
+                                    *ty == TypeRef::Bool,
+                                )
                             }
-                            _ => (false, false),
+                            _ => (false, false, false),
                         };
                         Some(
                             if is_string {
                                 "lpp_print_str"
                             } else if is_float {
                                 "lpp_print_float"
+                            } else if is_bool {
+                                "lpp_print_bool"
                             } else {
                                 "lpp_print_int"
                             }
@@ -2032,11 +2071,7 @@ impl<'a> MirLowerCtx<'a> {
                     temp,
                     Rvalue::AllocateList(elem_ty.clone()),
                 ))?;
-                let push_symbol = match &elem_ty {
-                    TypeRef::Float => "lpp_list_push_float",
-                    ty if ty.is_managed() => "lpp_list_push_arc",
-                    _ => "lpp_list_push",
-                };
+                let push_symbol = list_push_symbol(&elem_ty)?;
                 for item in items {
                     let item_op = self.lower_expr(builder, item, binding_map)?;
                     let discard_local = builder.new_local(TypeRef::Void, false, None, None);

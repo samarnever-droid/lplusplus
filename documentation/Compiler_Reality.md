@@ -138,7 +138,7 @@ returns a diagnostic.
 
 The current recorded gates are:
 
-- cargo tests: 70/70;
+- cargo tests: 71/71;
 - Cranelift parity: 44/44;
 - LLVM corpus: 86/86 in the validation clone;
 - lppsqlite: 118/118 differential;

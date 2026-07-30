@@ -2,6 +2,7 @@ use super::types::{abi_to_cl, type_to_cl};
 use crate::layout::{struct_layout, tuple_layout, tuple_runtime_metadata};
 use crate::ast::BinaryOperator;
 use crate::mir::ir::*;
+use crate::type_facts::ListElementClass;
 use crate::types::{TypeRef, TypeTable};
 use cranelift_codegen::entity::EntityRef;
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
@@ -547,6 +548,7 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                 let result_ty = dest_ty.cloned().unwrap_or(TypeRef::Int);
                 let symbol = match (&locals[view_id.0].ty, &result_ty) {
                     (TypeRef::StrSlice, _) => "lpp_str_slice_get",
+                    (_, TypeRef::Bool) => "lpp_slice_get_bool",
                     (_, TypeRef::Float) => "lpp_slice_get_float",
                     _ => "lpp_slice_get",
                 };
@@ -908,10 +910,12 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                 other
             )),
             Rvalue::AllocateList(element_ty) => {
-                let allocator = match element_ty {
-                    TypeRef::Int | TypeRef::Float | TypeRef::Bool | TypeRef::Char => "lpp_list_new",
-                    ty if ty.is_managed() => "lpp_list_new_arc",
-                    _ => {
+                let allocator = match element_ty.list_element_class() {
+                    ListElementClass::Scalar
+                    | ListElementClass::Bool
+                    | ListElementClass::Float => "lpp_list_new",
+                    ListElementClass::Arc => "lpp_list_new_arc",
+                    ListElementClass::Unsupported => {
                         return Err(format!(
                             "AOT does not support List[{:?}] safely",
                             element_ty

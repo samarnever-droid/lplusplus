@@ -30,12 +30,12 @@ pub enum AbiClass {
     VectorI64x2,
 }
 
-/// Existing list accessor policy. `Bool` is retained here for behavior parity
-/// with the current runtime call selection; changing it is a separate semantic
-/// bug-fix, not part of this refactor.
+/// Runtime representation and accessor family for one list element.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ListAccessorClass {
+pub enum ListElementClass {
+    Unsupported,
     Scalar,
+    Bool,
     Float,
     Arc,
 }
@@ -111,36 +111,31 @@ impl TypeRef {
         }
     }
 
-    /// Frontend list-literal element boundary, centralized without changing
-    /// the currently accepted language subset.
-    pub fn is_frontend_list_element(&self) -> bool {
-        matches!(
-            self,
-            TypeRef::Int | TypeRef::Float | TypeRef::Bool | TypeRef::Char
-        ) || self.is_managed()
-    }
-
-    /// Existing AOT allocation boundary for list element types.
-    pub fn is_aot_list_element(&self) -> bool {
-        matches!(
-            self,
-            TypeRef::Int
-                | TypeRef::Float
-                | TypeRef::Custom(_)
-                | TypeRef::Str
-                | TypeRef::Bool
-                | TypeRef::Tuple(_)
-                | TypeRef::Task(_)
-        )
-    }
-
-    /// Runtime list getter/pusher symbol family used by the current lowering.
-    pub fn list_accessor_class(&self) -> ListAccessorClass {
+    /// One canonical list policy shared by type checking, MIR, and backends.
+    /// Lists store one 64-bit slot per element; borrowed views, unresolved
+    /// types, SIMD vectors and Void cannot safely fit that ownership model.
+    pub fn list_element_class(&self) -> ListElementClass {
         match self {
-            TypeRef::Float => ListAccessorClass::Float,
-            TypeRef::Custom(_) | TypeRef::Str | TypeRef::Bool => ListAccessorClass::Arc,
-            _ => ListAccessorClass::Scalar,
+            TypeRef::Bool => ListElementClass::Bool,
+            TypeRef::Float => ListElementClass::Float,
+            TypeRef::Int | TypeRef::Char => ListElementClass::Scalar,
+            TypeRef::Str
+            | TypeRef::Custom(_)
+            | TypeRef::Generic(_, _)
+            | TypeRef::Function
+            | TypeRef::Tuple(_)
+            | TypeRef::Task(_) => ListElementClass::Arc,
+            TypeRef::Void
+            | TypeRef::Unresolved(_)
+            | TypeRef::TypeParam(_)
+            | TypeRef::VectorI64x2
+            | TypeRef::StrSlice
+            | TypeRef::Slice(_) => ListElementClass::Unsupported,
         }
+    }
+
+    pub fn is_list_element_supported(&self) -> bool {
+        self.list_element_class() != ListElementClass::Unsupported
     }
 }
 
@@ -163,6 +158,20 @@ mod tests {
             AbiClass::Pointer
         );
         assert!(TypeRef::Custom(StructTypeId(0)).is_managed());
+    }
+
+    #[test]
+    fn list_policy_is_consistent_for_frontend_and_backends() {
+        assert_eq!(TypeRef::Bool.list_element_class(), ListElementClass::Bool);
+        assert_eq!(TypeRef::Char.list_element_class(), ListElementClass::Scalar);
+        assert_eq!(TypeRef::Float.list_element_class(), ListElementClass::Float);
+        assert_eq!(TypeRef::Str.list_element_class(), ListElementClass::Arc);
+        assert_eq!(
+            TypeRef::Generic("List".to_string(), vec![TypeRef::Int]).list_element_class(),
+            ListElementClass::Arc
+        );
+        assert!(!TypeRef::StrSlice.is_list_element_supported());
+        assert!(!TypeRef::VectorI64x2.is_list_element_supported());
     }
 
     #[test]
