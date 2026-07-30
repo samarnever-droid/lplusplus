@@ -41,6 +41,7 @@ impl Monomorphizer {
     pub fn process_program(program: &mut Program) -> Result<(), String> {
         let mut mono = Monomorphizer::new();
         mono.run(program)?;
+        specialize_generic_enums(program)?;
         Ok(())
     }
 
@@ -957,6 +958,366 @@ impl Monomorphizer {
             _ => {}
         }
     }
+}
+
+/// Materialize every concrete use of a generic enum as a nominal enum with
+/// substituted payload fields. Backends require a concrete custom layout;
+/// leaving `Status[Str, Int]` as `TypeRef::Generic` erased the payload and was
+/// rejected at the AOT boundary.
+fn specialize_generic_enums(program: &mut Program) -> Result<(), String> {
+    let templates: HashMap<String, EnumDef> = program
+        .declarations
+        .iter()
+        .filter_map(|decl| match decl {
+            TopLevel::Enum(definition) if !definition.type_params.is_empty() => {
+                Some((definition.name.clone(), definition.clone()))
+            }
+            _ => None,
+        })
+        .collect();
+    if templates.is_empty() {
+        return Ok(());
+    }
+
+    fn concrete_for_enum(ty: &Type, params: &HashSet<String>) -> bool {
+        match ty {
+            Type::Custom(name) => !params.contains(name),
+            Type::Generic(_, args) | Type::Tuple(args) => {
+                args.iter().all(|arg| concrete_for_enum(arg, params))
+            }
+            Type::Slice(element) | Type::Task(element) => concrete_for_enum(element, params),
+            _ => true,
+        }
+    }
+
+    fn enum_type_label(ty: &Type) -> String {
+        match ty {
+            Type::Generic(base, args) => format!(
+                "{}__{}",
+                base,
+                args.iter().map(enum_type_label).collect::<Vec<_>>().join("_")
+            ),
+            Type::Tuple(items) => format!(
+                "Tuple__{}",
+                items.iter().map(enum_type_label).collect::<Vec<_>>().join("_")
+            ),
+            Type::Slice(element) => format!("Slice__{}", enum_type_label(element)),
+            Type::Task(result) => format!("Task__{}", enum_type_label(result)),
+            _ => type_to_name(ty),
+        }
+    }
+
+    fn rewrite_type(
+        ty: &mut Type,
+        templates: &HashMap<String, EnumDef>,
+        generated: &mut HashMap<String, EnumDef>,
+        requested: &mut HashSet<String>,
+    ) -> Result<(), String> {
+        match ty {
+            Type::Generic(_, args) | Type::Tuple(args) => {
+                for arg in args.iter_mut() {
+                    rewrite_type(arg, templates, generated, requested)?;
+                }
+            }
+            Type::Slice(element) | Type::Task(element) => {
+                rewrite_type(element, templates, generated, requested)?;
+            }
+            _ => {}
+        }
+
+        let (base, args) = match ty.clone() {
+            Type::Generic(base, args) if templates.contains_key(&base) => (base, args),
+            _ => return Ok(()),
+        };
+        let template = &templates[&base];
+        if args.len() != template.type_params.len() {
+            return Err(format!(
+                "generic enum '{}' expects {} type argument(s), got {}",
+                base,
+                template.type_params.len(),
+                args.len()
+            ));
+        }
+        let param_names: HashSet<String> =
+            template.type_params.iter().map(|param| param.name.clone()).collect();
+        if !args.iter().all(|arg| concrete_for_enum(arg, &param_names)) {
+            return Ok(());
+        }
+
+        let mangled = format!(
+            "{}__{}",
+            base,
+            args.iter().map(enum_type_label).collect::<Vec<_>>().join("_")
+        );
+        if requested.insert(mangled.clone()) {
+            let substitutions: HashMap<String, Type> = template
+                .type_params
+                .iter()
+                .zip(args.iter())
+                .map(|(param, arg)| (param.name.clone(), arg.clone()))
+                .collect();
+            let mut concrete = template.clone();
+            concrete.name = mangled.clone();
+            concrete.type_params.clear();
+            for variant in &mut concrete.variants {
+                for field in &mut variant.fields {
+                    substitute_ast_type(&mut field.ty, &substitutions);
+                    rewrite_type(&mut field.ty, templates, generated, requested)?;
+                }
+            }
+            generated.insert(mangled.clone(), concrete);
+        }
+        *ty = Type::Custom(mangled);
+        Ok(())
+    }
+
+    fn rewrite_expr(
+        expr: &mut Expr,
+        templates: &HashMap<String, EnumDef>,
+        generated: &mut HashMap<String, EnumDef>,
+        requested: &mut HashSet<String>,
+    ) -> Result<(), String> {
+        match expr {
+            Expr::GenericCall { callee, type_args, args } => {
+                rewrite_expr(callee, templates, generated, requested)?;
+                for ty in type_args {
+                    rewrite_type(ty, templates, generated, requested)?;
+                }
+                for arg in args {
+                    rewrite_expr(arg, templates, generated, requested)?;
+                }
+            }
+            Expr::Call { callee, args } => {
+                rewrite_expr(callee, templates, generated, requested)?;
+                for arg in args {
+                    rewrite_expr(arg, templates, generated, requested)?;
+                }
+            }
+            Expr::Tuple(items) | Expr::ListLiteral(items) => {
+                for item in items {
+                    rewrite_expr(item, templates, generated, requested)?;
+                }
+            }
+            Expr::Await(inner) | Expr::Try(inner) | Expr::UnaryOp { operand: inner, .. }
+            | Expr::Spawn { closure: inner } => {
+                rewrite_expr(inner, templates, generated, requested)?;
+            }
+            Expr::BinaryOp { left, right, .. } => {
+                rewrite_expr(left, templates, generated, requested)?;
+                rewrite_expr(right, templates, generated, requested)?;
+            }
+            Expr::Closure { params, return_type, body } => {
+                for param in params {
+                    if let Some(ty) = &mut param.ty {
+                        rewrite_type(ty, templates, generated, requested)?;
+                    }
+                }
+                if let Some(ty) = return_type {
+                    rewrite_type(ty, templates, generated, requested)?;
+                }
+                rewrite_stmts(body, templates, generated, requested)?;
+            }
+            Expr::FieldAccess { base, .. } => {
+                rewrite_expr(base, templates, generated, requested)?;
+            }
+            Expr::Match { subject, arms } => {
+                rewrite_expr(subject, templates, generated, requested)?;
+                for arm in arms {
+                    rewrite_stmts(&mut arm.body, templates, generated, requested)?;
+                }
+            }
+            Expr::Index { base, index } => {
+                rewrite_expr(base, templates, generated, requested)?;
+                rewrite_expr(index, templates, generated, requested)?;
+            }
+            Expr::EnumVariantConstruct { args, .. } => {
+                for arg in args {
+                    rewrite_expr(arg, templates, generated, requested)?;
+                }
+            }
+            Expr::IntLiteral(_) | Expr::FloatLiteral(_) | Expr::StringLiteral(_)
+            | Expr::CharLiteral(_) | Expr::BoolLiteral(_) | Expr::Identifier(_, _) => {}
+        }
+        Ok(())
+    }
+
+    fn rewrite_stmts(
+        statements: &mut [Stmt],
+        templates: &HashMap<String, EnumDef>,
+        generated: &mut HashMap<String, EnumDef>,
+        requested: &mut HashSet<String>,
+    ) -> Result<(), String> {
+        for statement in statements {
+            match statement {
+                Stmt::Destructure { value, .. } | Stmt::LetInferred { value, .. }
+                | Stmt::Assign { value, .. } | Stmt::Expr(value)
+                | Stmt::Return(Some(value)) => {
+                    rewrite_expr(value, templates, generated, requested)?;
+                }
+                Stmt::AssignField { base, value, .. } => {
+                    rewrite_expr(base, templates, generated, requested)?;
+                    rewrite_expr(value, templates, generated, requested)?;
+                }
+                Stmt::If { condition, then_block, else_block } => {
+                    rewrite_expr(condition, templates, generated, requested)?;
+                    rewrite_stmts(then_block, templates, generated, requested)?;
+                    if let Some(block) = else_block {
+                        rewrite_stmts(block, templates, generated, requested)?;
+                    }
+                }
+                Stmt::While { condition, body } => {
+                    rewrite_expr(condition, templates, generated, requested)?;
+                    rewrite_stmts(body, templates, generated, requested)?;
+                }
+                Stmt::ForRange { start, end, step, body, .. } => {
+                    rewrite_expr(start, templates, generated, requested)?;
+                    rewrite_expr(end, templates, generated, requested)?;
+                    if let Some(step) = step {
+                        rewrite_expr(step, templates, generated, requested)?;
+                    }
+                    rewrite_stmts(body, templates, generated, requested)?;
+                }
+                Stmt::ForIn { list, body, .. } => {
+                    rewrite_expr(list, templates, generated, requested)?;
+                    rewrite_stmts(body, templates, generated, requested)?;
+                }
+                Stmt::Match { subject, arms } => {
+                    rewrite_expr(subject, templates, generated, requested)?;
+                    for arm in arms {
+                        rewrite_stmts(&mut arm.body, templates, generated, requested)?;
+                    }
+                }
+                Stmt::Block(body) => rewrite_stmts(body, templates, generated, requested)?,
+                Stmt::Return(None) | Stmt::Break | Stmt::Continue => {}
+            }
+        }
+        Ok(())
+    }
+
+    fn rewrite_return_constructors(
+        statements: &mut [Stmt],
+        base: &str,
+        concrete: &str,
+    ) {
+        fn rewrite_expr(expr: &mut Expr, base: &str, concrete: &str) {
+            match expr {
+                Expr::EnumVariantConstruct { enum_name, .. } if enum_name == base => {
+                    *enum_name = concrete.to_string();
+                }
+                Expr::FieldAccess { base: receiver, .. } => {
+                    if let Expr::Identifier(name, _) = &mut **receiver {
+                        if name == base {
+                            *name = concrete.to_string();
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        for statement in statements {
+            match statement {
+                Stmt::Return(Some(expr)) => rewrite_expr(expr, base, concrete),
+                Stmt::If { then_block, else_block, .. } => {
+                    rewrite_return_constructors(then_block, base, concrete);
+                    if let Some(block) = else_block {
+                        rewrite_return_constructors(block, base, concrete);
+                    }
+                }
+                Stmt::While { body, .. } | Stmt::ForRange { body, .. }
+                | Stmt::ForIn { body, .. } | Stmt::Block(body) => {
+                    rewrite_return_constructors(body, base, concrete);
+                }
+                Stmt::Match { arms, .. } => {
+                    for arm in arms {
+                        rewrite_return_constructors(&mut arm.body, base, concrete);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn rewrite_function(
+        function: &mut Function,
+        templates: &HashMap<String, EnumDef>,
+        generated: &mut HashMap<String, EnumDef>,
+        requested: &mut HashSet<String>,
+    ) -> Result<(), String> {
+        for param in &mut function.params {
+            rewrite_type(&mut param.ty, templates, generated, requested)?;
+        }
+        rewrite_type(&mut function.return_type, templates, generated, requested)?;
+        rewrite_stmts(&mut function.body, templates, generated, requested)?;
+        if let Type::Custom(concrete) = &function.return_type {
+            if let Some(base) = templates
+                .keys()
+                .find(|base| concrete.starts_with(&format!("{}__", base)))
+            {
+                rewrite_return_constructors(&mut function.body, base, concrete);
+            }
+        }
+        Ok(())
+    }
+
+    let mut generated = HashMap::new();
+    let mut requested = HashSet::new();
+    for declaration in &mut program.declarations {
+        match declaration {
+            TopLevel::Function(function) => {
+                rewrite_function(function, &templates, &mut generated, &mut requested)?;
+            }
+            TopLevel::Struct(definition) => {
+                for field in &mut definition.fields {
+                    rewrite_type(&mut field.ty, &templates, &mut generated, &mut requested)?;
+                }
+            }
+            TopLevel::Enum(definition) => {
+                for variant in &mut definition.variants {
+                    for field in &mut variant.fields {
+                        rewrite_type(&mut field.ty, &templates, &mut generated, &mut requested)?;
+                    }
+                }
+            }
+            TopLevel::Trait(definition) => {
+                for method in &mut definition.methods {
+                    for param in &mut method.params {
+                        rewrite_type(&mut param.ty, &templates, &mut generated, &mut requested)?;
+                    }
+                    rewrite_type(&mut method.return_type, &templates, &mut generated, &mut requested)?;
+                }
+            }
+            TopLevel::Impl(block) => {
+                for arg in &mut block.target_args {
+                    rewrite_type(arg, &templates, &mut generated, &mut requested)?;
+                }
+                for method in &mut block.methods {
+                    rewrite_function(method, &templates, &mut generated, &mut requested)?;
+                }
+            }
+            TopLevel::Extern(block) => {
+                for function in &mut block.functions {
+                    for param in &mut function.params {
+                        rewrite_type(&mut param.ty, &templates, &mut generated, &mut requested)?;
+                    }
+                    rewrite_type(&mut function.return_type, &templates, &mut generated, &mut requested)?;
+                }
+            }
+            TopLevel::TypeAlias { target, .. } => {
+                rewrite_type(target, &templates, &mut generated, &mut requested)?;
+            }
+            TopLevel::Import(_) | TopLevel::Const { .. } => {}
+        }
+    }
+
+    program.declarations.retain(|declaration| {
+        !matches!(declaration, TopLevel::Enum(definition) if !definition.type_params.is_empty())
+    });
+    let mut concrete: Vec<_> = generated.into_values().collect();
+    concrete.sort_by(|left, right| left.name.cmp(&right.name));
+    program
+        .declarations
+        .extend(concrete.into_iter().map(TopLevel::Enum));
+    Ok(())
 }
 
 /// True when no binding is still an unresolved single-letter type parameter.

@@ -1,0 +1,19 @@
+struct User:
+    id: Int
+    name: Str
+
+def allocate_owned_structs(count: Int) -> Void:
+    mut i := 0
+    while i < count:
+        name := str_concat("user_", int_to_str(i))
+        user := User(i, name)
+        i = i + 1
+
+def main() -> Void:
+    print_str("Starting L++ Hard Memory & ARC Pressure Test...")
+    t0 := time_ms()
+    print_str("[Phase 1] Allocating 100,000 User structs with strings...")
+    allocate_owned_structs(100000)
+    print_str("[Phase 1 Complete]")
+    t1 := time_ms()
+    print_str(str_concat("MEMORY STRESS TEST PASSED cleanly in ms: ", int_to_str(t1 - t0)))

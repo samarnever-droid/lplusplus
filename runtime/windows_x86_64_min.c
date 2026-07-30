@@ -4,8 +4,11 @@
  * Dependencies: Kernel32 imports only (zero libc).  Merged by lpp-link PE.
  */
 #include <stdint.h>
+#include <stddef.h>
 #include <intrin.h>
+#ifndef LPP_FREESTANDING
 #include <string.h>
+#endif
 
 typedef void (*LppArcDestructor)(void *payload);
 typedef void *HANDLE;
@@ -13,10 +16,12 @@ typedef unsigned long DWORD;
 typedef int BOOL;
 typedef unsigned long long SIZE_T;
 
+__declspec(dllimport) void   __stdcall ExitProcess(unsigned int code);
 __declspec(dllimport) HANDLE __stdcall GetStdHandle(DWORD h);
 __declspec(dllimport) BOOL   __stdcall WriteFile(HANDLE h, const void *b, DWORD n, DWORD *w, void *o);
 __declspec(dllimport) void * __stdcall VirtualAlloc(void *a, SIZE_T s, DWORD t, DWORD p);
 __declspec(dllimport) BOOL   __stdcall VirtualFree(void *a, SIZE_T s, DWORD t);
+__declspec(dllimport) unsigned long long __stdcall GetTickCount64(void);
 __declspec(dllimport) HANDLE __stdcall CreateThread(void *s, SIZE_T z, DWORD (__stdcall *f)(void*), void *p, DWORD f2, DWORD *t);
 __declspec(dllimport) DWORD  __stdcall WaitForSingleObject(HANDLE h, DWORD ms);
 __declspec(dllimport) BOOL   __stdcall CloseHandle(HANDLE h);
@@ -83,10 +88,12 @@ static int lpp_isspace(char c) { return c==' '||c=='\t'||c=='\n'||c=='\r'; }
 #ifndef LPP_FREESTANDING
 // Use CRT versions when linking with standard runtime
 #else
+#if !defined(__clang__)
 #pragma function(memcpy)
 #pragma function(memset)
 #pragma function(strlen)
 #pragma function(fmod)
+#endif
 void *memcpy(void *d, const void *s, size_t n) { char *dd=(char*)d; const char *ss=(const char*)s; size_t i; for(i=0;i<n;i++) dd[i]=ss[i]; return d; }
 void *memset(void *d, int c, size_t n) { unsigned char *dd=(unsigned char*)d; size_t i; for(i=0;i<n;i++) dd[i]=(unsigned char)c; return d; }
 size_t strlen(const char *s) { size_t n=0; while(s&&s[n]) n++; return n; }
@@ -126,8 +133,94 @@ double fmod(double x, double y) {
     return x - (double)i * y;
 }
 
-void *lpp_arc_alloc_with_destructor(int64_t sz, LppArcDestructor dtor) { if(sz<0)return 0; uint64_t t=lpp_page_round((uint64_t)sz+sizeof(LppArcHeader)); LppArcHeader *h=(LppArcHeader*)VirtualAlloc(0,t,MEM_COMMIT|MEM_RESERVE,PAGE_READWRITE); if(!h)return 0; h->refcount=1;h->destructor=dtor;h->allocation_size=t; return h+1; }
+/* Small ARC objects dominate string-heavy loops. Reserving and committing a
+ * whole 4 KiB VirtualAlloc mapping for every temporary made 100k-iteration
+ * workloads perform hundreds of thousands of kernel calls. Use the same
+ * bounded size-class strategy as the Linux freestanding runtime. All allocator
+ * metadata is protected because the language also exposes `spawn`. */
+#define LPP_WIN_CHUNK_BYTES  (1024 * 1024)
+#define LPP_WIN_SIZE_CLASSES 8
+#define LPP_WIN_ARENA_FLAG   (1ULL << 63)
+#define LPP_WIN_SIZE_MASK    (~LPP_WIN_ARENA_FLAG)
+static void *lpp_win_free_lists[LPP_WIN_SIZE_CLASSES];
+static char *lpp_win_bump_cursor;
+static uint64_t lpp_win_bump_left;
+static volatile long lpp_win_allocator_lock;
+
+static uint64_t lpp_win_class_bytes(int cls) { return (uint64_t)32 << cls; }
+static int lpp_win_class_for(uint64_t need) {
+    int cls = 0;
+    while (cls < LPP_WIN_SIZE_CLASSES && lpp_win_class_bytes(cls) < need) cls++;
+    return cls;
+}
+static void lpp_win_allocator_acquire(void) {
+    while (_InterlockedCompareExchange(&lpp_win_allocator_lock, 1, 0) != 0) {
+        _mm_pause();
+    }
+}
+static void lpp_win_allocator_release(void) {
+    _InterlockedExchange(&lpp_win_allocator_lock, 0);
+}
+
+void *lpp_arc_alloc_with_destructor(int64_t sz, LppArcDestructor dtor) {
+    LppArcHeader *h;
+    uint64_t need;
+    int cls;
+    if (sz < 0 || (uint64_t)sz > UINT64_MAX - sizeof(LppArcHeader)) return 0;
+    need = (uint64_t)sz + sizeof(LppArcHeader);
+    cls = lpp_win_class_for(need);
+    if (cls >= LPP_WIN_SIZE_CLASSES) {
+        uint64_t total = lpp_page_round(need);
+        h = (LppArcHeader *)VirtualAlloc(0, total, MEM_COMMIT|MEM_RESERVE, PAGE_READWRITE);
+        if (!h) return 0;
+        h->allocation_size = total;
+    } else {
+        uint64_t bytes = lpp_win_class_bytes(cls);
+        lpp_win_allocator_acquire();
+        if (lpp_win_free_lists[cls]) {
+            h = (LppArcHeader *)lpp_win_free_lists[cls];
+            lpp_win_free_lists[cls] = *(void **)h;
+        } else {
+            if (lpp_win_bump_left < bytes) {
+                char *chunk = (char *)VirtualAlloc(
+                    0, LPP_WIN_CHUNK_BYTES, MEM_COMMIT|MEM_RESERVE, PAGE_READWRITE
+                );
+                if (!chunk) {
+                    lpp_win_allocator_release();
+                    return 0;
+                }
+                lpp_win_bump_cursor = chunk;
+                lpp_win_bump_left = LPP_WIN_CHUNK_BYTES;
+            }
+            h = (LppArcHeader *)lpp_win_bump_cursor;
+            lpp_win_bump_cursor += bytes;
+            lpp_win_bump_left -= bytes;
+        }
+        for (uint64_t i = 0; i < bytes; ++i) ((unsigned char *)h)[i] = 0;
+        h->allocation_size = (uint64_t)(cls + 1);
+        lpp_win_allocator_release();
+    }
+    h->refcount = 1;
+    h->destructor = dtor;
+    return h + 1;
+}
 void *lpp_arc_alloc(int64_t sz) { return lpp_arc_alloc_with_destructor(sz,0); }
+
+static int lpp_win_is_arena_header(const LppArcHeader *h) {
+    return (h->allocation_size & LPP_WIN_ARENA_FLAG) != 0;
+}
+static void lpp_arc_free(LppArcHeader *h) {
+    uint64_t tag = h->allocation_size & LPP_WIN_SIZE_MASK;
+    if (tag >= 1 && tag <= LPP_WIN_SIZE_CLASSES) {
+        int cls = (int)(tag - 1);
+        lpp_win_allocator_acquire();
+        *(void **)h = lpp_win_free_lists[cls];
+        lpp_win_free_lists[cls] = h;
+        lpp_win_allocator_release();
+    } else {
+        VirtualFree(h, 0, MEM_RELEASE);
+    }
+}
 
 typedef struct WinArenaRecord WinArenaRecord;
 typedef struct WinArenaRegion WinArenaRegion;
@@ -150,7 +243,7 @@ static void lpp_arena_destroy(WinArenaRegion *r) {
     while(*link&&*link!=r)link=&(*link)->next;
     if(*link==r)*link=r->next;
     WinArenaRecord *n=r->records;
-    while(n){WinArenaRecord *next=n->next;VirtualFree(n->header,0,MEM_RELEASE);lpp_arc_release(n);n=next;}
+    while(n){WinArenaRecord *next=n->next;lpp_arc_free(n->header);lpp_arc_release(n);n=next;}
     lpp_arc_release(r);
 }
 static void lpp_arena_node_zero(WinArenaRegion *r) { if(--r->refs==0)lpp_arena_destroy(r); }
@@ -161,10 +254,10 @@ void *lpp_arena_alloc(int64_t size, void *raw, LppArcDestructor dtor) {
     void*p=lpp_arc_alloc_with_destructor(size,dtor);if(!p)return 0;
     WinArenaRecord*n=(WinArenaRecord*)lpp_arc_alloc(sizeof(*n));
     if(!n){lpp_arc_release(p);return 0;}
-    n->header=(LppArcHeader*)p-1;n->next=r->records;r->records=n;r->refs++;return p;
+    n->header=(LppArcHeader*)p-1;n->header->allocation_size|=LPP_WIN_ARENA_FLAG;n->next=r->records;r->records=n;r->refs++;return p;
 }
-void lpp_arena_retain(void *p) { if(!p)return;LppArcHeader*h=(LppArcHeader*)p-1;if(lpp_arena_for_header(h))lpp_arc_retain(p); }
-void lpp_arena_release_node(void *p) { if(!p)return;LppArcHeader*h=(LppArcHeader*)p-1;WinArenaRegion*r=lpp_arena_for_header(h);if(!r||lpp__is_immortal(h))return;if(_InterlockedDecrement(&h->refcount)==0){if(h->destructor)h->destructor(p);lpp_arena_node_zero(r);} }
+void lpp_arena_retain(void *p) { if(!p)return;LppArcHeader*h=(LppArcHeader*)p-1;if(lpp_win_is_arena_header(h))lpp_arc_retain(p); }
+void lpp_arena_release_node(void *p) { if(!p)return;LppArcHeader*h=(LppArcHeader*)p-1;if(!lpp_win_is_arena_header(h)||lpp__is_immortal(h))return;WinArenaRegion*r=lpp_arena_for_header(h);if(!r)return;if(_InterlockedDecrement(&h->refcount)==0){if(h->destructor)h->destructor(p);lpp_arena_node_zero(r);} }
 
 /* Shared immortal empty string: runtime error paths return this instead of a
  * bare C literal, so every Str handed to generated code has a valid header. */
@@ -173,11 +266,12 @@ __declspec(align(16)) static const unsigned int lpp__empty_str_blob[8] = {
 };
 char *lpp_empty_str(void) { return (char *)(const char *)&lpp__empty_str_blob[6]; }
 void lpp_arc_retain(void *p) { if(!p)return; LppArcHeader *h=(LppArcHeader*)p-1; if(lpp__is_immortal(h))return; _InterlockedIncrement(&h->refcount); }
-void lpp_arc_release(void *p) { if(!p)return; LppArcHeader *h=(LppArcHeader*)p-1; if(lpp__is_immortal(h))return; WinArenaRegion*r=lpp_arena_for_header(h); if(_InterlockedDecrement(&h->refcount)==0){if(h->destructor)h->destructor(p);if(r)lpp_arena_node_zero(r);else VirtualFree(h,0,MEM_RELEASE);} }
+void lpp_arc_release(void *p) { if(!p)return; LppArcHeader *h=(LppArcHeader*)p-1; if(lpp__is_immortal(h))return; int arena=lpp_win_is_arena_header(h); WinArenaRegion*r=arena?lpp_arena_for_header(h):0; if(_InterlockedDecrement(&h->refcount)==0){if(h->destructor)h->destructor(p);if(r)lpp_arena_node_zero(r);else if(!arena)lpp_arc_free(h);} }
 /* Non-atomic ARC, emitted when the compiler proves the program never spawns a
- * thread. See the long comment in lpp_runtime.c. */
+ * thread. Normal objects bypass the arena registry entirely; only headers
+ * explicitly tagged by lpp_arena_alloc pay for the lookup. */
 void lpp_arc_retain_local(void *p) { if(!p)return; LppArcHeader *h=(LppArcHeader*)p-1; if(lpp__is_immortal(h))return; h->refcount += 1; }
-void lpp_arc_release_local(void *p) { if(!p)return; LppArcHeader *h=(LppArcHeader*)p-1; if(lpp__is_immortal(h))return; if(--h->refcount==0){WinArenaRegion*r=lpp_arena_for_header(h);if(h->destructor)h->destructor(p);if(r)lpp_arena_node_zero(r);else VirtualFree(h,0,MEM_RELEASE);} }
+void lpp_arc_release_local(void *p) { if(!p)return; LppArcHeader *h=(LppArcHeader*)p-1; if(lpp__is_immortal(h))return; if(--h->refcount==0){int arena=lpp_win_is_arena_header(h);WinArenaRegion*r=arena?lpp_arena_for_header(h):0;if(h->destructor)h->destructor(p);if(r)lpp_arena_node_zero(r);else if(!arena)lpp_arc_free(h);} }
 void *lpp_alloc(int64_t sz){return lpp_arc_alloc(sz);}
 void lpp_free(void *p,int64_t sz){(void)sz;lpp_arc_release(p);}
 void lpp_closure_destroy(void *c){if(c)lpp_arc_release(((void**)c)[1]);}
