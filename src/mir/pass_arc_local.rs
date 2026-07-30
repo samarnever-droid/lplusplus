@@ -94,7 +94,7 @@ pub fn is_provably_single_threaded(program: &MirProgram, has_extern: bool) -> bo
 mod tests {
     use super::*;
     use crate::mir::ir::{BlockId, FuncId, LocalId, MirBlock, MirFunction, Operand, Terminator};
-    use crate::typecheck::TypeRef;
+    use crate::types::TypeRef;
     use std::collections::HashMap;
 
     fn program_with(instrs: Vec<MirInstr>) -> MirProgram {

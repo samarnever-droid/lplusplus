@@ -37,7 +37,7 @@ pub struct Binding {
     pub name: String,
     pub declared_in: ScopeId,
     pub ast_ty: Option<Type>,
-    pub ty: Option<crate::typecheck::TypeRef>,
+    pub ty: Option<crate::types::TypeRef>,
     pub is_mut: bool,
     pub kind: BindingKind,
 }

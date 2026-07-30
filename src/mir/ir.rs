@@ -1,5 +1,5 @@
 use crate::ast::BinaryOperator;
-use crate::typecheck::TypeRef;
+use crate::types::TypeRef;
 use std::collections::HashMap;
 
 /// Unique identifier for a local variable or temporary binding within a MIR function.

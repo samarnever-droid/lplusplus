@@ -1,4 +1,4 @@
-use crate::typecheck::TypeRef;
+use crate::types::TypeRef;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParamType {

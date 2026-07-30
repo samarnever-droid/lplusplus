@@ -23,10 +23,26 @@ The relevant source files are:
 
 - `src/frontend/lexer.rs`, `parser.rs`, `ast.rs`;
 - `src/analysis/semantic.rs`, `typecheck.rs`, `cyclebreak.rs`, `monomorph.rs`;
+- `src/analysis/types.rs`, `type_facts.rs`, and `layout.rs` define the shared
+  resolved type model, ownership/ABI facts, and backend-neutral native layout;
 - `src/mir/lower.rs`, `ir.rs`, `escape_solver.rs`, and `pass_*.rs`;
 - `src/backend/cranelift/`;
 - `src/backend/llvm.rs`;
 - `src/bin/lpp-link.rs`.
+
+## Shared type and layout contract
+
+The resolved type model no longer lives inside the type-checker implementation.
+`analysis/types.rs` is consumed by semantic analysis, MIR, cycle breaking, and
+both backends. `analysis/type_facts.rs` is the canonical classification for
+managed values, borrowed views, ABI categories, nested tasks, and list element
+policies. `analysis/layout.rs` computes struct and tuple offsets once.
+
+LLVM no longer imports layout helpers from the Cranelift backend. Cranelift and
+LLVM independently map the same backend-neutral `AbiClass` and `FieldLayout` to
+their own IR types. Adding a new `TypeRef` therefore produces exhaustive-match
+compiler errors in the shared fact layer rather than requiring several partial
+type lists.
 
 ## MIR escape solver
 
@@ -122,7 +138,7 @@ returns a diagnostic.
 
 The current recorded gates are:
 
-- cargo tests: 66/66;
+- cargo tests: 70/70;
 - Cranelift parity: 44/44;
 - LLVM corpus: 86/86 in the validation clone;
 - lppsqlite: 118/118 differential;

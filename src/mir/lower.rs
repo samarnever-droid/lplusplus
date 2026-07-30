@@ -2,7 +2,8 @@ use crate::ast::*;
 use crate::mir::builder::MirBuilder;
 use crate::mir::ir::*;
 use crate::semantic::{BindingId, ScopeKind, SymbolTable};
-use crate::typecheck::{TypeRef, TypeTable};
+use crate::type_facts::ListAccessorClass;
+use crate::types::{TypeRef, TypeTable};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Copy)]
@@ -968,13 +969,14 @@ impl<'a> MirLowerCtx<'a> {
                 });
 
                 builder.switch_to_block(body_block_id);
-                let get_symbol = match &elem_ty {
-                    TypeRef::Float => "lpp_list_get_float",
-                    TypeRef::Custom(_) | TypeRef::Str | TypeRef::Bool => "lpp_list_get_arc",
-                    _ => "lpp_list_get",
+                let accessor = elem_ty.list_accessor_class();
+                let get_symbol = match accessor {
+                    ListAccessorClass::Float => "lpp_list_get_float",
+                    ListAccessorClass::Arc => "lpp_list_get_arc",
+                    ListAccessorClass::Scalar => "lpp_list_get",
                 };
                 let elem_temp = builder.new_local(elem_ty.clone(), false, None, None);
-                if matches!(elem_ty, TypeRef::Custom(_) | TypeRef::Str | TypeRef::Bool) {
+                if accessor == ListAccessorClass::Arc {
                     builder.set_local_ownership(elem_temp, Ownership::Borrowed);
                 }
                 builder.push_instr(MirInstr::Assign(

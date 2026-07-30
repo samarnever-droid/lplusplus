@@ -1,7 +1,8 @@
-use super::types::{struct_layout, tuple_layout, tuple_runtime_metadata, type_to_cl};
+use super::types::{abi_to_cl, type_to_cl};
+use crate::layout::{struct_layout, tuple_layout, tuple_runtime_metadata};
 use crate::ast::BinaryOperator;
 use crate::mir::ir::*;
-use crate::typecheck::{TypeRef, TypeTable};
+use crate::types::{TypeRef, TypeTable};
 use cranelift_codegen::entity::EntityRef;
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 use cranelift_codegen::ir::types as cl_types;
@@ -17,7 +18,7 @@ pub struct FunctionLower<'a, M: Module> {
     pub func_ids: &'a HashMap<FuncId, CLFuncId>,
     pub builtin_ids: &'a mut HashMap<String, CLFuncId>,
     /// Generated type-specific destructors used by AllocateArcStruct.
-    pub drop_ids: &'a HashMap<crate::typecheck::StructTypeId, CLFuncId>,
+    pub drop_ids: &'a HashMap<crate::types::StructTypeId, CLFuncId>,
     /// One `(ptr env) -> i64` trampoline per async MIR function.
     pub task_thunk_ids: &'a HashMap<FuncId, CLFuncId>,
     pub type_table: &'a TypeTable,
@@ -248,7 +249,7 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                     {
                         let (layout, _) = struct_layout(self.type_table, *struct_id);
                         let field_layout = layout[field_index];
-                        if builder.func.dfg.value_type(value_value) != field_layout.ty {
+                        if builder.func.dfg.value_type(value_value) != abi_to_cl(field_layout.abi) {
                             return Err(format!(
                                 "Type mismatch storing field '{}' of '{}'",
                                 field, struct_def.name
@@ -512,7 +513,7 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                 let field = layout.get(*index)
                     .ok_or_else(|| format!("tuple field {} out of range", index))?;
                 let tuple = self.operand_to_value(builder, base, local_vars)?;
-                Ok(builder.ins().load(field.ty, MemFlags::new(), tuple, field.offset as i32))
+                Ok(builder.ins().load(abi_to_cl(field.abi), MemFlags::new(), tuple, field.offset as i32))
             }
             Rvalue::MakeSlice { base, start, length, kind } => {
                 let slot = builder.create_sized_stack_slot(StackSlotData::new(
@@ -942,7 +943,7 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                         let (layout, _) = struct_layout(self.type_table, *struct_id);
                         let field_layout = layout[field_index];
                         Ok(builder.ins().load(
-                            field_layout.ty,
+                            abi_to_cl(field_layout.abi),
                             cranelift_codegen::ir::MemFlags::new(),
                             base_value,
                             field_layout.offset as i32,

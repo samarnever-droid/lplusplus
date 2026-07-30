@@ -1,112 +1,19 @@
-use crate::typecheck::{StructTypeId, TypeRef, TypeTable};
+use crate::type_facts::AbiClass;
+use crate::types::TypeRef;
 use cranelift_codegen::ir::types as cl_types;
 
-/// Maps a L++ TypeRef to a Cranelift IR type.
+pub fn abi_to_cl(abi: AbiClass) -> cranelift_codegen::ir::Type {
+    match abi {
+        AbiClass::Void | AbiClass::I64 | AbiClass::Pointer => cl_types::I64,
+        AbiClass::I8 => cl_types::I8,
+        AbiClass::F64 => cl_types::F64,
+        AbiClass::VectorI64x2 => cl_types::I64X2,
+    }
+}
+
+/// Maps the backend-neutral L++ ABI category to Cranelift IR.
 pub fn type_to_cl(ty: &TypeRef) -> cranelift_codegen::ir::Type {
-    match ty {
-        TypeRef::Int => cl_types::I64,
-        TypeRef::Float => cl_types::F64,
-        TypeRef::Bool => cl_types::I8,
-        TypeRef::Char => cl_types::I64, // 64-bit scalar char/code point
-        TypeRef::Str => cl_types::I64,  // pointer (MVP: null for now)
-        TypeRef::Void => cl_types::I64, // dummy; callers check != Void
-        TypeRef::Custom(_) => cl_types::I64, // opaque struct pointer
-        TypeRef::Generic(_, _) => cl_types::I64, // opaque container pointer
-        TypeRef::Unresolved(_) => cl_types::I64, // not yet resolved; treat as ptr
-        TypeRef::Function => cl_types::I64, // function pointer placeholder
-        TypeRef::TypeParam(_) => cl_types::I64, // generic type param — erased to i64
-        TypeRef::VectorI64x2 => cl_types::I64X2,
-        TypeRef::Tuple(_)
-        | TypeRef::StrSlice
-        | TypeRef::Slice(_)
-        | TypeRef::Task(_) => cl_types::I64,
-    }
-}
-
-/// Native layout used by the AOT backend. L++ currently targets 64-bit hosts;
-/// pointer-like values therefore occupy one 64-bit word. Keep layout decisions
-/// here so allocation and field access cannot silently disagree.
-#[derive(Debug, Clone, Copy)]
-pub struct FieldLayout {
-    pub offset: usize,
-    pub ty: cranelift_codegen::ir::Type,
-}
-
-fn align_up(value: usize, align: usize) -> usize {
-    debug_assert!(align.is_power_of_two());
-    (value + align - 1) & !(align - 1)
-}
-
-pub fn type_size_align(ty: &TypeRef) -> (usize, usize) {
-    match ty {
-        TypeRef::Bool => (1, 1),
-        TypeRef::Char
-        | TypeRef::Int
-        | TypeRef::Float
-        | TypeRef::Str
-        | TypeRef::Custom(_)
-        | TypeRef::Generic(_, _)
-        | TypeRef::Unresolved(_)
-        | TypeRef::Function
-        | TypeRef::TypeParam(_)
-        | TypeRef::Tuple(_)
-        | TypeRef::StrSlice
-        | TypeRef::Slice(_)
-        | TypeRef::Task(_)
-        | TypeRef::Void => (8, 8),
-        TypeRef::VectorI64x2 => (16, 16),
-    }
-}
-
-/// Return each field's offset and machine type, plus the padded allocation size.
-/// Tuple payload layout. The first two words are runtime metadata (managed
-/// element mask and packed field offsets); fields then use the same native
-/// size/alignment rules as structs. Both Cranelift and LLVM call this function.
-pub fn tuple_layout(types: &[TypeRef]) -> (Vec<FieldLayout>, usize) {
-    let mut offset = 16usize;
-    let mut aggregate_align = 8usize;
-    let mut fields = Vec::with_capacity(types.len());
-    for ty in types {
-        let (size, align) = type_size_align(ty);
-        offset = align_up(offset, align);
-        fields.push(FieldLayout { offset, ty: type_to_cl(ty) });
-        offset += size;
-        aggregate_align = aggregate_align.max(align);
-    }
-    (fields, align_up(offset, aggregate_align))
-}
-
-/// ARC mask and four packed 16-bit offsets consumed by lpp_tuple_destroy.
-pub fn tuple_runtime_metadata(types: &[TypeRef]) -> (u64, u64) {
-    let (layout, _) = tuple_layout(types);
-    let mut mask = 0u64;
-    let mut offsets = 0u64;
-    for (index, (ty, field)) in types.iter().zip(layout.iter()).enumerate() {
-        if ty.is_managed() {
-            mask |= 1u64 << index;
-        }
-        debug_assert!(field.offset <= u16::MAX as usize);
-        offsets |= (field.offset as u64) << (index * 16);
-    }
-    (mask, offsets)
-}
-
-pub fn struct_layout(table: &TypeTable, id: StructTypeId) -> (Vec<FieldLayout>, usize) {
-    let def = &table.definitions[id.0];
-    let mut offset = 0usize;
-    let mut struct_align = 1usize;
-    let mut fields = Vec::with_capacity(def.fields.len());
-    for (_, ty) in &def.fields {
-        let (size, align) = type_size_align(ty);
-        offset = align_up(offset, align);
-        fields.push(FieldLayout {
-            offset,
-            ty: type_to_cl(ty),
-        });
-        offset += size;
-        struct_align = struct_align.max(align);
-    }
-    (fields, align_up(offset, struct_align))
+    abi_to_cl(ty.abi_class())
 }
 
 #[cfg(test)]
@@ -114,19 +21,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn scalar_layout_matches_the_aot_abi() {
-        assert_eq!(type_size_align(&TypeRef::Bool), (1, 1));
-        assert_eq!(type_size_align(&TypeRef::Int), (8, 8));
-        assert_eq!(type_size_align(&TypeRef::Float), (8, 8));
+    fn scalar_types_map_to_the_expected_cranelift_abi() {
         assert_eq!(type_to_cl(&TypeRef::Bool), cl_types::I8);
+        assert_eq!(type_to_cl(&TypeRef::Int), cl_types::I64);
         assert_eq!(type_to_cl(&TypeRef::Float), cl_types::F64);
-    }
-
-    #[test]
-    fn alignment_rounds_up_correctly() {
-        assert_eq!(align_up(0, 8), 0);
-        assert_eq!(align_up(1, 8), 8);
-        assert_eq!(align_up(8, 8), 8);
-        assert_eq!(align_up(9, 8), 16);
+        assert_eq!(type_to_cl(&TypeRef::Str), cl_types::I64);
     }
 }

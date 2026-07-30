@@ -5,7 +5,6 @@
 //! creating function and to the explicit non-retaining slice operations.
 
 use super::ir::*;
-use crate::typecheck::TypeRef;
 
 fn local_of(operand: &Operand) -> Option<LocalId> {
     match operand {
@@ -21,20 +20,10 @@ fn is_view(function: &MirFunction, operand: &Operand) -> bool {
         .unwrap_or(false)
 }
 
-fn contains_task(ty: &TypeRef) -> bool {
-    match ty {
-        TypeRef::Task(_) => true,
-        TypeRef::Tuple(elements) | TypeRef::Generic(_, elements) =>
-            elements.iter().any(contains_task),
-        TypeRef::Slice(element) => contains_task(element),
-        _ => false,
-    }
-}
-
 fn is_task(function: &MirFunction, operand: &Operand) -> bool {
     local_of(operand)
         .and_then(|id| function.locals.get(id.0))
-        .map(|local| contains_task(&local.ty))
+        .map(|local| local.ty.contains_task())
         .unwrap_or(false)
 }
 

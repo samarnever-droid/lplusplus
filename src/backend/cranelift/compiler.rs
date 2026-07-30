@@ -1,7 +1,8 @@
 use super::lower::FunctionLower;
-use super::types::{struct_layout, tuple_layout, type_to_cl};
+use super::types::{abi_to_cl, type_to_cl};
+use crate::layout::{struct_layout, tuple_layout};
 use crate::mir::ir::*;
-use crate::typecheck::{StructTypeId, TypeRef, TypeTable};
+use crate::types::{StructTypeId, TypeRef, TypeTable};
 use cranelift_codegen::ir::types as cl_types;
 use cranelift_codegen::ir::{AbiParam, InstBuilder, MemFlags};
 use cranelift_codegen::settings::{self, Configurable};
@@ -125,16 +126,7 @@ fn validate_aot_program(program: &MirProgram, type_table: &TypeTable) -> Result<
                         ));
                     }
                     MirInstr::Assign(_, Rvalue::AllocateList(element_ty))
-                        if !matches!(
-                            element_ty,
-                            TypeRef::Int
-                                | TypeRef::Float
-                                | TypeRef::Custom(_)
-                                | TypeRef::Str
-                                | TypeRef::Bool
-                                | TypeRef::Tuple(_)
-                                | TypeRef::Task(_)
-                        ) =>
+                        if !element_ty.is_aot_list_element() =>
                     {
                         return Err(format!(
                             "AOT supports List[Int/Float/Bool/Str/Custom], but '{}' allocates List[{:?}]",
@@ -450,7 +442,7 @@ impl AotCompiler {
                 let mut arguments = Vec::with_capacity(layout.len());
                 for field in &layout {
                     arguments.push(builder.ins().load(
-                        field.ty,
+                        abi_to_cl(field.abi),
                         MemFlags::new(),
                         environment,
                         field.offset as i32,

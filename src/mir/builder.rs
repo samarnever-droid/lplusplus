@@ -1,5 +1,6 @@
 use crate::mir::ir::*;
-use crate::typecheck::TypeRef;
+use crate::type_facts::LifetimeClass;
+use crate::types::TypeRef;
 
 pub struct MirBuilder {
     pub function: MirFunction,
@@ -57,12 +58,10 @@ impl MirBuilder {
         //
         // `List[Float]` is managed for the same reason `List[Int]` is: the
         // list object itself is ARC-allocated regardless of element type.
-        let ownership = if ty.is_managed() {
-            Ownership::Managed
-        } else if ty.is_borrowed_view() {
-            Ownership::Borrowed
-        } else {
-            Ownership::Copy
+        let ownership = match ty.lifetime_class() {
+            LifetimeClass::Managed => Ownership::Managed,
+            LifetimeClass::BorrowedView => Ownership::Borrowed,
+            LifetimeClass::Copy => Ownership::Copy,
         };
         self.function.locals.push(LocalDecl {
             id,

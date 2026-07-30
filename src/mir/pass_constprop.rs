@@ -96,7 +96,7 @@ mod tests {
                         locals: (0..3)
                             .map(|i| LocalDecl {
                                 id: LocalId(i),
-                                ty: crate::typecheck::TypeRef::Int,
+                                ty: crate::types::TypeRef::Int,
                                 is_mut: false,
                                 debug_name: None,
                                 binding_id: None,
@@ -120,7 +120,7 @@ mod tests {
                             terminator: Terminator::Return(None),
                         }],
                         start_block: BlockId(0),
-                        return_type: crate::typecheck::TypeRef::Void,
+                        return_type: crate::types::TypeRef::Void,
                         is_async: false,
                     },
                 );
@@ -149,7 +149,7 @@ mod tests {
                         locals: (0..4)
                             .map(|i| LocalDecl {
                                 id: LocalId(i),
-                                ty: crate::typecheck::TypeRef::Int,
+                                ty: crate::types::TypeRef::Int,
                                 is_mut: false,
                                 debug_name: None,
                                 binding_id: None,
@@ -180,7 +180,7 @@ mod tests {
                             terminator: Terminator::Return(None),
                         }],
                         start_block: BlockId(0),
-                        return_type: crate::typecheck::TypeRef::Void,
+                        return_type: crate::types::TypeRef::Void,
                         is_async: false,
                     },
                 );

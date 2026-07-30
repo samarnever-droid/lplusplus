@@ -20,8 +20,14 @@ mod parser;
 mod pm;
 #[path = "analysis/semantic.rs"]
 mod semantic;
+#[path = "analysis/types.rs"]
+mod types;
 #[path = "analysis/typecheck.rs"]
 mod typecheck;
+#[path = "analysis/type_facts.rs"]
+mod type_facts;
+#[path = "analysis/layout.rs"]
+mod layout;
 
 use std::env;
 use std::fs;

@@ -1,90 +1,7 @@
 use crate::ast::*;
 use crate::semantic::{ScopeId, ScopeKind, SymbolTable};
+use crate::types::{StructTypeId, TypeRef, TypeTable};
 use std::collections::HashMap;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct StructTypeId(pub usize);
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TypeRef {
-    Int,
-    Float,
-    Str,
-    Char,
-    Void,
-    Bool,
-    Custom(StructTypeId),
-    Generic(String, Vec<TypeRef>),
-    Unresolved(String),
-    Function, // Just a placeholder for function names
-    TypeParam(String), // Generic type parameter (e.g. T, U) — erased to i64 at codegen
-    /// Explicit two-lane signed 64-bit SIMD value.
-    VectorI64x2,
-    /// Fixed structural tuple. Runtime representation is an ARC aggregate;
-    /// element ownership is preserved structurally.
-    Tuple(Vec<TypeRef>),
-    /// Borrowed zero-copy string view.
-    StrSlice,
-    /// Borrowed zero-copy list view.
-    Slice(Box<TypeRef>),
-    /// Deferred result produced by an async call.
-    Task(Box<TypeRef>),
-}
-
-impl TypeRef {
-    pub fn is_managed(&self) -> bool {
-        matches!(
-            self,
-            TypeRef::Str
-                | TypeRef::Custom(_)
-                | TypeRef::Generic(_, _)
-                | TypeRef::Function
-                | TypeRef::Tuple(_)
-                | TypeRef::Task(_)
-        )
-    }
-
-    pub fn is_borrowed_view(&self) -> bool {
-        matches!(self, TypeRef::StrSlice | TypeRef::Slice(_))
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct StructTypeDef {
-    pub name: String,
-    pub fields: Vec<(String, TypeRef)>,
-    pub is_self_referential: bool,
-}
-
-#[derive(Debug)]
-pub struct TypeTable {
-    pub structs_by_name: HashMap<String, StructTypeId>,
-    pub definitions: Vec<StructTypeDef>,
-}
-
-impl TypeTable {
-    pub fn new() -> Self {
-        Self {
-            structs_by_name: HashMap::new(),
-            definitions: Vec::new(),
-        }
-    }
-
-    pub fn lookup_struct(&self, name: &str) -> Option<StructTypeId> {
-        self.structs_by_name.get(name).copied()
-    }
-
-    pub fn register_struct(&mut self, name: String) -> StructTypeId {
-        let id = StructTypeId(self.definitions.len());
-        self.structs_by_name.insert(name.clone(), id);
-        self.definitions.push(StructTypeDef {
-            name,
-            fields: Vec::new(),
-            is_self_referential: false,
-        });
-        id
-    }
-}
 
 pub struct TypeChecker<'a> {
     pub type_table: TypeTable,
@@ -1485,9 +1402,7 @@ impl<'a> TypeChecker<'a> {
                         ));
                     }
                 }
-                if !matches!(elem_ty, TypeRef::Int | TypeRef::Float | TypeRef::Bool | TypeRef::Char)
-                    && !elem_ty.is_managed()
-                {
+                if !elem_ty.is_frontend_list_element() {
                     return Err(format!(
                         "List element type {:?} is not supported safely yet",
                         elem_ty

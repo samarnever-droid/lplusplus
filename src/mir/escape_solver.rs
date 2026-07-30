@@ -62,7 +62,7 @@
 //! proportional to (call sites x candidates) and destroy the linear bound.
 
 use super::ir::*;
-use crate::typecheck::{StructTypeId, TypeRef, TypeTable};
+use crate::types::{StructTypeId, TypeRef, TypeTable};
 use std::collections::{HashMap, HashSet};
 
 /// Where a value must live. Ordered: `Frame < Owned < Shared`.
@@ -94,12 +94,8 @@ impl Storage {
     }
 }
 
-/// Whether a MIR type carries an ownership-bearing pointer. Scalars remain
-/// `Frame` in the facts table even when passed to a call; their storage class is
-/// not meaningful and must not pollute parameter summaries or `--dump-escape`.
-fn is_managed_type(ty: &TypeRef) -> bool {
-    ty.is_managed()
-}
+/// Managed-pointer classification is canonical on `TypeRef`; the escape
+/// solver consumes it rather than maintaining a private type list.
 
 /// Per-function facts.
 #[derive(Debug, Clone, Default)]
@@ -339,7 +335,7 @@ fn solve_function(
         let managed = function
             .locals
             .get(id.0)
-            .map(|local| is_managed_type(&local.ty))
+            .map(|local| local.ty.is_managed())
             .unwrap_or(true);
         if managed && id.0 < storage.len() {
             storage[id.0] = storage[id.0].join(to);
@@ -402,7 +398,7 @@ fn solve_function(
             && function
                 .locals
                 .get(p.0)
-                .map(|local| is_managed_type(&local.ty))
+                .map(|local| local.ty.is_managed())
                 .unwrap_or(true)
         {
             storage[p.0] = storage[p.0].join(Storage::Owned);
@@ -441,7 +437,7 @@ fn solve_function(
             function
                 .locals
                 .get(p.0)
-                .map(|local| is_managed_type(&local.ty))
+                .map(|local| local.ty.is_managed())
                 .unwrap_or(true)
                 && storage
                     .get(p.0)
@@ -670,12 +666,12 @@ mod tests {
     #[test]
     fn scalar_types_are_not_ownership_values() {
         for ty in [TypeRef::Int, TypeRef::Float, TypeRef::Bool, TypeRef::Char, TypeRef::Void] {
-            assert!(!is_managed_type(&ty), "scalar {:?} must stay outside ownership facts", ty);
+            assert!(!ty.is_managed(), "scalar {:?} must stay outside ownership facts", ty);
         }
-        assert!(is_managed_type(&TypeRef::Str));
-        assert!(is_managed_type(&TypeRef::Function));
-        assert!(is_managed_type(&TypeRef::Custom(StructTypeId(0))));
-        assert!(is_managed_type(&TypeRef::Generic("List".to_string(), vec![TypeRef::Int])));
+        assert!(TypeRef::Str.is_managed());
+        assert!(TypeRef::Function.is_managed());
+        assert!(TypeRef::Custom(StructTypeId(0)).is_managed());
+        assert!(TypeRef::Generic("List".to_string(), vec![TypeRef::Int]).is_managed());
     }
 
     #[test]

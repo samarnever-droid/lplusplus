@@ -63,7 +63,7 @@ path for Cranelift.
 
 ## Verified gates
 
-- Cargo tests: 66/66.
+- Cargo tests: 70/70.
 - Cranelift AOT parity: 44/44.
 - LLVM corpus in the LLVM validation clone: 86/86.
 - lppsqlite differential: 118/118.

@@ -11,7 +11,7 @@
 
 use super::escape_solver::{struct_can_stack_allocate, EscapeFacts, Storage};
 use super::ir::*;
-use crate::typecheck::{TypeRef, TypeTable};
+use crate::types::{TypeRef, TypeTable};
 use std::collections::{HashMap, HashSet};
 
 /// Reported by `--dump-escape`.

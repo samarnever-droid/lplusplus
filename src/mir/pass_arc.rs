@@ -1,5 +1,5 @@
 use crate::mir::ir::*;
-use crate::typecheck::TypeRef;
+use crate::types::TypeRef;
 use std::collections::HashSet;
 
 fn successors(terminator: &Terminator) -> Vec<usize> {
@@ -185,7 +185,7 @@ pub fn run_arc_insertion_pass(program: &mut MirProgram) {
 /// the cycle the demotion exists to break.
 pub fn run_arc_insertion_pass_with_weak(
     program: &mut MirProgram,
-    weak_fields: &HashSet<(crate::typecheck::StructTypeId, String)>,
+    weak_fields: &HashSet<(crate::types::StructTypeId, String)>,
 ) {
     for function in program.functions.values_mut() {
         // Managed locals may be heap-backed ARC values or frame-local values
@@ -755,13 +755,13 @@ pub fn run_arc_insertion_pass_with_weak(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::typecheck::TypeRef;
+    use crate::types::TypeRef;
     use std::collections::HashMap;
 
     fn arc_local(i: usize) -> LocalDecl {
         LocalDecl {
             id: LocalId(i),
-            ty: TypeRef::Custom(crate::typecheck::StructTypeId(0)),
+            ty: TypeRef::Custom(crate::types::StructTypeId(0)),
             is_mut: true,
             debug_name: None,
             binding_id: None,
@@ -810,7 +810,7 @@ mod tests {
                 id: BlockId(1),
                 instrs: vec![MirInstr::Assign(
                     LocalId(0),
-                    Rvalue::AllocateArcStruct(TypeRef::Custom(crate::typecheck::StructTypeId(0))),
+                    Rvalue::AllocateArcStruct(TypeRef::Custom(crate::types::StructTypeId(0))),
                 )],
                 terminator: Terminator::If {
                     cond: Operand::Bool(true),
@@ -842,7 +842,7 @@ mod tests {
                 id: BlockId(0),
                 instrs: vec![MirInstr::Assign(
                     LocalId(0),
-                    Rvalue::AllocateArcStruct(TypeRef::Custom(crate::typecheck::StructTypeId(0))),
+                    Rvalue::AllocateArcStruct(TypeRef::Custom(crate::types::StructTypeId(0))),
                 )],
                 terminator: Terminator::Goto(BlockId(1)),
             },
@@ -866,7 +866,7 @@ mod tests {
             id: BlockId(0),
             instrs: vec![MirInstr::Assign(
                 LocalId(0),
-                Rvalue::AllocateArcStruct(TypeRef::Custom(crate::typecheck::StructTypeId(0))),
+                Rvalue::AllocateArcStruct(TypeRef::Custom(crate::types::StructTypeId(0))),
             )],
             terminator: Terminator::ReturnOwned(Operand::Local(LocalId(0))),
         }];

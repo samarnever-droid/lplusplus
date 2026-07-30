@@ -47,7 +47,7 @@ lpp app.lpp --dump-escape           # MIR ownership facts
 
 ## Verification snapshot
 
-- cargo tests: 66/66;
+- cargo tests: 70/70;
 - Cranelift AOT parity: 44/44;
 - LLVM validation corpus: 86/86 in the LLVM clone;
 - lppsqlite differential: 118/118;

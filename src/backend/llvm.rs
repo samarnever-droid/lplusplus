@@ -6,22 +6,21 @@
 
 use crate::ast::BinaryOperator;
 use crate::mir::ir::*;
-use crate::typecheck::{StructTypeId, TypeRef, TypeTable};
-use crate::cranelift_backend::types::{struct_layout, tuple_layout, tuple_runtime_metadata};
+use crate::types::{StructTypeId, TypeRef, TypeTable};
+use crate::layout::{struct_layout, tuple_layout, tuple_runtime_metadata};
+use crate::type_facts::AbiClass;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::process::Command;
 
 fn llvm_type(ty: &TypeRef) -> &'static str {
-    match ty {
-        TypeRef::Void => "void",
-        TypeRef::Float => "double",
-        TypeRef::Bool => "i8",
-        TypeRef::Int | TypeRef::Char => "i64",
-        TypeRef::Str | TypeRef::Custom(_) | TypeRef::Generic(_, _) | TypeRef::Function => "ptr",
-        TypeRef::Unresolved(_) | TypeRef::TypeParam(_) => "ptr",
-        TypeRef::VectorI64x2 => "<2 x i64>",
-        TypeRef::Tuple(_) | TypeRef::StrSlice | TypeRef::Slice(_) | TypeRef::Task(_) => "ptr",
+    match ty.abi_class() {
+        AbiClass::Void => "void",
+        AbiClass::I8 => "i8",
+        AbiClass::I64 => "i64",
+        AbiClass::F64 => "double",
+        AbiClass::Pointer => "ptr",
+        AbiClass::VectorI64x2 => "<2 x i64>",
     }
 }
 
@@ -32,10 +31,6 @@ fn is_supported_type(ty: &TypeRef) -> bool {
         TypeRef::Slice(element) | TypeRef::Task(element) => is_supported_type(element),
         _ => true,
     }
-}
-
-fn managed_type(ty: &TypeRef) -> bool {
-    ty.is_managed()
 }
 
 fn escape_bytes(bytes: &[u8]) -> String {
@@ -267,7 +262,7 @@ impl<'a> FunctionEmitter<'a> {
                         "  {} = getelementptr i8, ptr {}, i64 {}\n",
                         address, tuple, field.offset
                     ));
-                    let align = if matches!(ty, TypeRef::Bool) { 1 } else { 8 };
+                    let align = field.align;
                     out.push_str(&format!(
                         "  store {} {}, ptr {}, align {}\n",
                         expected, value, address, align
@@ -291,7 +286,7 @@ impl<'a> FunctionEmitter<'a> {
                 let address = self.temp();
                 out.push_str(&format!("  {} = getelementptr i8, ptr {}, i64 {}\n", address, tuple, field.offset));
                 let value = self.temp();
-                let align = if matches!(field_ty, TypeRef::Bool) { 1 } else { 8 };
+                let align = field.align;
                 out.push_str(&format!("  {} = load {}, ptr {}, align {}\n", value, llvm_type(field_ty), address, align));
                 Ok(Some((value, llvm_type(field_ty))))
             }
@@ -357,7 +352,7 @@ impl<'a> FunctionEmitter<'a> {
                     let value = self.coerce(&value, actual, expected, out);
                     let address = self.temp();
                     out.push_str(&format!("  {} = getelementptr i8, ptr {}, i64 {}\n", address, environment, field.offset));
-                    let align = if matches!(ty, TypeRef::Bool) { 1 } else { 8 };
+                    let align = field.align;
                     out.push_str(&format!("  store {} {}, ptr {}, align {}\n", expected, value, address, align));
                 }
                 let task = self.temp();
@@ -529,7 +524,7 @@ impl<'a> FunctionEmitter<'a> {
                 Ok(Some((value, "ptr")))
             }
             Rvalue::AllocateList(element) => {
-                let symbol = if managed_type(element) { "lpp_list_new_arc" } else { "lpp_list_new" };
+                let symbol = if element.is_managed() { "lpp_list_new_arc" } else { "lpp_list_new" };
                 let (ret, _) = self.register_builtin(symbol)?;
                 let value = self.temp();
                 out.push_str(&format!("  {} = call {} @{}()\n", value, ret, symbol));
@@ -664,7 +659,7 @@ fn emit_drop_functions(type_table: &TypeTable, weak_fields: &HashSet<(StructType
         out.push_str(&format!("define internal void @__lpp_drop_{}(ptr %payload) {{\nentry:\n",index));
         let (layout,_)=struct_layout(type_table,StructTypeId(index));
         for ((field,ty),field_layout) in definition.fields.iter().zip(layout.iter()){
-            if weak_fields.contains(&(StructTypeId(index),field.clone())) || !managed_type(ty){continue;}
+            if weak_fields.contains(&(StructTypeId(index),field.clone())) || !ty.is_managed(){continue;}
             let ptr=format!("%field{}_{}",index,field_layout.offset); out.push_str(&format!("  {} = getelementptr i8, ptr %payload, i64 {}\n",ptr,field_layout.offset));
             let value=format!("%value{}_{}",index,field_layout.offset); out.push_str(&format!("  {} = load ptr, ptr {}, align 8\n",value,ptr));
             let release=match ty{TypeRef::Custom(id) if type_table.definitions.get(id.0).map(|d|d.is_self_referential).unwrap_or(false)=>"lpp_arena_release_node",_=>"lpp_arc_release"};
@@ -697,7 +692,7 @@ fn emit_task_thunks(
                 "  %a{}_ptr = getelementptr i8, ptr %env, i64 {}\n",
                 index, field.offset
             ));
-            let align = if matches!(ty, TypeRef::Bool) { 1 } else { 8 };
+            let align = field.align;
             output.push_str(&format!(
                 "  %a{} = load {}, ptr %a{}_ptr, align {}\n",
                 index, llvm_type(ty), index, align

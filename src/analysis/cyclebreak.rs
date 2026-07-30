@@ -65,7 +65,7 @@
 //!   obligation, discharged by the generation counter in the runtime and
 //!   validated under ThreadSanitizer, not by this pass.
 
-use crate::typecheck::{StructTypeId, TypeRef, TypeTable};
+use crate::types::{StructTypeId, TypeRef, TypeTable};
 use std::collections::{HashMap, HashSet};
 
 /// How a struct field participates in ownership.

@@ -308,7 +308,7 @@ pub fn run(program: &mut MirProgram) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::typecheck::TypeRef;
+    use crate::types::TypeRef;
     use std::collections::HashMap;
 
     fn func(blocks: Vec<MirBlock>, nlocals: usize) -> MirFunction {
@@ -319,7 +319,7 @@ mod tests {
             locals: (0..nlocals)
                 .map(|i| LocalDecl {
                     id: LocalId(i),
-                    ty: TypeRef::Custom(crate::typecheck::StructTypeId(0)),
+                    ty: TypeRef::Custom(crate::types::StructTypeId(0)),
                     is_mut: true,
                     debug_name: None,
                     binding_id: None,

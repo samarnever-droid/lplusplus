@@ -28,7 +28,11 @@
   and operators.
 - `src/frontend/parser.rs` builds the AST.
 - `src/analysis/semantic.rs` assigns binding IDs and checks scopes/mutability.
-- `src/analysis/typecheck.rs` checks types and struct/enum layouts.
+- `src/analysis/typecheck.rs` checks compatibility and inference.
+- `src/analysis/types.rs` owns the resolved type model and type table.
+- `src/analysis/type_facts.rs` owns canonical lifetime, ABI, task-containment,
+  and container-element classifications.
+- `src/analysis/layout.rs` owns backend-neutral struct and tuple layout.
 - `src/analysis/monomorph.rs` specializes generic functions, structs, enums,
   methods, and trait implementations.
 - `src/analysis/cyclebreak.rs` classifies one edge of each ownership cycle as
@@ -67,6 +71,14 @@ MakeTask / Await
 `validate_borrows` runs immediately after lowering and rejects first-tier slice
 escapes before scalar optimization or ownership insertion. Task environments
 reuse tuple layout metadata, while each backend emits a typed task thunk.
+
+## Shared ABI boundary
+
+Backends do not own language layout policy. The analysis layer produces an
+`AbiClass` and aligned `FieldLayout`; Cranelift maps that to Cranelift types and
+LLVM maps it to LLVM textual types. LLVM has no dependency on the Cranelift
+module. Ownership-sensitive passes consume `TypeRef::lifetime_class()` rather
+than maintaining private lists of managed types.
 
 ## Backends
 
