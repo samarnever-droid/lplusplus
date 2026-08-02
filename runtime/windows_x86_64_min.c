@@ -571,3 +571,22 @@ int64_t lpp_net_send_udp(int64_t socket, const char *host, int64_t port, const c
 char *lpp_net_recv_udp(int64_t socket, int64_t max_bytes) { (void)socket; (void)max_bytes; return ""; }
 char *lpp_http_get(const char *url) { (void)url; return ""; }
 char *lpp_http_post(const char *url, const char *body, const char *content_type) { (void)url; (void)body; (void)content_type; return ""; }
+
+/* ── SIMD i64x2 builtins ─────────────────────────────────────────────────
+ * The Cranelift and LLVM backends lower these to native SSE2 instructions
+ * inline. The host linker still requires the symbols to be resolved when
+ * building with cl.exe/cc; these stubs satisfy that requirement.
+ * Programs that actually use VectorI64x2 will have the inlined instructions
+ * and never reach these stub bodies.
+ * --------------------------------------------------------------------- */
+typedef struct { int64_t lo; int64_t hi; } LppVecI64x2;
+LppVecI64x2 lpp_vec_i64x2(int64_t lo, int64_t hi) { LppVecI64x2 v; v.lo = lo; v.hi = hi; return v; }
+LppVecI64x2 lpp_vec_i64x2_splat(int64_t x) { LppVecI64x2 v; v.lo = x; v.hi = x; return v; }
+LppVecI64x2 lpp_vec_i64x2_add(LppVecI64x2 a, LppVecI64x2 b) { LppVecI64x2 r; r.lo = a.lo + b.lo; r.hi = a.hi + b.hi; return r; }
+LppVecI64x2 lpp_vec_i64x2_sub(LppVecI64x2 a, LppVecI64x2 b) { LppVecI64x2 r; r.lo = a.lo - b.lo; r.hi = a.hi - b.hi; return r; }
+LppVecI64x2 lpp_vec_i64x2_mul(LppVecI64x2 a, LppVecI64x2 b) { LppVecI64x2 r; r.lo = a.lo * b.lo; r.hi = a.hi * b.hi; return r; }
+LppVecI64x2 lpp_vec_i64x2_xor(LppVecI64x2 a, LppVecI64x2 b) { LppVecI64x2 r; r.lo = a.lo ^ b.lo; r.hi = a.hi ^ b.hi; return r; }
+LppVecI64x2 lpp_vec_i64x2_shr(LppVecI64x2 a, int64_t shift) { LppVecI64x2 r; r.lo = a.lo >> shift; r.hi = a.hi >> shift; return r; }
+LppVecI64x2 lpp_vec_i64x2_shr_var(LppVecI64x2 a, LppVecI64x2 b) { LppVecI64x2 r; r.lo = a.lo >> b.lo; r.hi = a.hi >> b.hi; return r; }
+int64_t     lpp_vec_i64x2_extract(LppVecI64x2 v, int64_t idx) { return idx == 0 ? v.lo : v.hi; }
+int64_t     lpp_vec_i64x2_sum(LppVecI64x2 v) { return v.lo + v.hi; }

@@ -8,6 +8,13 @@ use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LppConfig {
+    /// Which backend to use: "cranelift" or "llvm"
+    #[serde(default = "default_backend")]
+    pub backend: String,
+
+    /// Optional explicit path to LLVM compiler executable (clang / clang.exe)
+    pub llvm_path: Option<String>,
+
     /// Which linker to use: "direct" (lpp-link) or "host" (cc/cl.exe)
     pub linker: String,
 
@@ -16,6 +23,10 @@ pub struct LppConfig {
 
     /// Linker benchmark results (populated on first run)
     pub linker_benchmarks: Option<LinkerBenchmarks>,
+}
+
+fn default_backend() -> String {
+    "cranelift".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,6 +50,8 @@ pub struct LinkerBenchmarks {
 impl Default for LppConfig {
     fn default() -> Self {
         Self {
+            backend: "cranelift".to_string(),
+            llvm_path: None,
             linker: "auto".to_string(),
             system: SystemInfo::detect(),
             linker_benchmarks: None,
@@ -146,6 +159,8 @@ impl LppConfig {
         let (linker, benchmarks) = Self::recommend_linker(&system);
 
         Self {
+            backend: "cranelift".to_string(),
+            llvm_path: None,
             linker,
             system,
             linker_benchmarks: Some(benchmarks),
@@ -244,6 +259,10 @@ impl LppConfig {
         println!("L++ Configuration ({})", Self::path().display());
         println!("  OS:          {}", self.system.os);
         println!("  Arch:        {}", self.system.arch);
+        println!("  Backend:     {}", self.backend);
+        if let Some(ref path) = self.llvm_path {
+            println!("  LLVM Path:   {}", path);
+        }
         println!("  Linker:      {}", self.linker);
         println!("  lpp-link:    {}", if self.system.has_lpp_link { "found" } else { "not found" });
         println!("  Host cc:     {}", if self.system.has_cc { "found" } else { "not found" });

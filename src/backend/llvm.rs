@@ -822,5 +822,44 @@ pub fn compile(program: &MirProgram, type_table: &TypeTable, weak_fields: &HashS
             ir.push_str(&format!("define i32 @main() {{\nentry:\n  call void {}()\n  ret i32 0\n}}\n",func_names[&main.id]));
         }
     }
-    let stamp=format!("lpp-llvm-{}-{}",std::process::id(),std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|e|e.to_string())?.as_nanos());let ll=std::env::temp_dir().join(format!("{}.ll",stamp));let obj=std::env::temp_dir().join(format!("{}.o",stamp));fs::write(&ll,ir).map_err(|e|format!("write LLVM IR: {}",e))?;let compiler=std::env::var("LPP_LLVM_CC").unwrap_or_else(|_|"clang".to_string());let mut command=Command::new(&compiler);command.args(["-c","-x","ir","-O2"]);if let Ok(march)=std::env::var("LPP_LLVM_MARCH"){command.arg(format!("-march={}",march));}let status=command.arg(&ll).args(["-o"]).arg(&obj).status().map_err(|e|format!("invoke LLVM compiler '{}': {}",compiler,e))?;if !status.success(){return Err(format!("LLVM compiler '{}' failed; IR kept at {}",compiler,ll.display()));}let bytes=fs::read(&obj).map_err(|e|format!("read LLVM object: {}",e))?;let _=fs::remove_file(ll);let _=fs::remove_file(obj);Ok(bytes)
+    let stamp = format!(
+        "lpp-llvm-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| e.to_string())?
+            .as_nanos()
+    );
+    let ll = std::env::temp_dir().join(format!("{}.ll", stamp));
+    let obj = std::env::temp_dir().join(format!("{}.o", stamp));
+    fs::write(&ll, ir).map_err(|e| format!("write LLVM IR: {}", e))?;
+
+    let config_llvm_path = crate::config::LppConfig::load_or_create().llvm_path;
+    let compiler = std::env::var("LPP_LLVM_CC")
+        .ok()
+        .or(config_llvm_path)
+        .unwrap_or_else(|| "clang".to_string());
+
+    let mut command = Command::new(&compiler);
+    command.args(["-c", "-x", "ir", "-O2"]);
+    if let Ok(march) = std::env::var("LPP_LLVM_MARCH") {
+        command.arg(format!("-march={}", march));
+    }
+    let status = command
+        .arg(&ll)
+        .args(["-o"])
+        .arg(&obj)
+        .status()
+        .map_err(|e| format!("invoke LLVM compiler '{}': {}", compiler, e))?;
+    if !status.success() {
+        return Err(format!(
+            "LLVM compiler '{}' failed; IR kept at {}",
+            compiler,
+            ll.display()
+        ));
+    }
+    let bytes = fs::read(&obj).map_err(|e| format!("read LLVM object: {}", e))?;
+    let _ = fs::remove_file(ll);
+    let _ = fs::remove_file(obj);
+    Ok(bytes)
 }

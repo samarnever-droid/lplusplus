@@ -299,6 +299,14 @@ impl AotCompiler {
             if builtin.symbol.is_empty() {
                 continue;
             }
+            // VectorI64x2 builtins are lowered to inline SIMD instructions by
+            // the Cranelift backend — they never emit an actual call and must
+            // NOT be declared as external imports, because that would cause
+            // every object file (even non-SIMD programs) to carry unresolved
+            // references that break the host linker (cl.exe / cc).
+            if builtin.symbol.starts_with("lpp_vec_i64x2") {
+                continue;
+            }
             if self.builtin_ids.contains_key(builtin.symbol) {
                 continue;
             }

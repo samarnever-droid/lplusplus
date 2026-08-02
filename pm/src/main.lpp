@@ -10,7 +10,7 @@ import registry
 import add_remove
 
 def main():
-    print_str("=== Self-Hosted L++ Package Manager v4.5.0 ===")
+    header("Self-Hosted L++ Package Manager v4.5.0")
 
     mut cmd := env_get("LPP_PM_CMD")
     if str_len(cmd) == 0:
@@ -28,7 +28,9 @@ def main():
     if str_find(cmd, "build") >= 0:
         code := compile_project()
         if code == 0:
-            info("Build completed successfully.")
+            success("Build completed successfully.")
+        else:
+            error("Build failed.")
         return
 
     # ── run ────────────────────────────────────────────────────────────
@@ -42,6 +44,8 @@ def main():
                 bin_name = extract_name(raw)
             run_cmd := str_concat("./", str_concat(bin_name, ".exe"))
             command_exec(run_cmd)
+        else:
+            error("Build failed, cannot run.")
         return
 
     # ── install ────────────────────────────────────────────────────────
@@ -55,7 +59,7 @@ def main():
                     command_exec("powershell -NoProfile -ExecutionPolicy Bypass -Command \"irm https://raw.githubusercontent.com/samarnever-droid/lpp-opencode/main/scripts/install.ps1 | iex\"")
                 else:
                     command_exec("sh -c 'curl -fsSL https://raw.githubusercontent.com/samarnever-droid/lpp-opencode/main/scripts/install.sh | sh'")
-                info("Installed lpp-opencode. Run: lpp-opencode /provider")
+                success("Installed lpp-opencode. Run: lpp-opencode /provider")
                 return
         install_deps()
         return
@@ -93,12 +97,14 @@ def main():
     if str_find(cmd, "check") >= 0:
         entry := "src/main.lpp"
         if check(entry) == 0:
-            info("no src/main.lpp found")
+            warn("no src/main.lpp found")
             return
         cc_cmd := str_concat("lpp check ", entry)
         code := command_exec(cc_cmd)
         if code == 0:
-            info("check passed — project is semantically valid.")
+            success("check passed — project is semantically valid.")
+        else:
+            error("check failed — errors detected.")
         return
 
     # ── clean ──────────────────────────────────────────────────────────
@@ -110,7 +116,7 @@ def main():
         if check(".lpp_cache") == 1:
             cc := command_exec("rm -rf .lpp_cache")
         cc := command_exec("rm -f *.o *.obj *.exe output.c 2>/dev/null")
-        info("cleaned build artifacts")
+        success("cleaned build artifacts")
         return
 
     # ── test ───────────────────────────────────────────────────────────
@@ -119,16 +125,20 @@ def main():
         if check("tests") == 1:
             code := command_exec("lpp test")
             if code == 0:
-                info("all tests passed!")
+                success("all tests passed!")
+            else:
+                error("test suite failed.")
             return
         else:
             if check("test") == 1:
                 code := command_exec("lpp test")
                 if code == 0:
-                    info("all tests passed!")
+                    success("all tests passed!")
+                else:
+                    error("test suite failed.")
                 return
             else:
-                info("no tests/ directory found")
+                warn("no tests/ directory found")
         return
 
     # ── list ──────────────────────────────────────────────────────────
@@ -148,7 +158,7 @@ def main():
             lock := read("lpp.lock")
             print_str(lock)
         else:
-            info("no lockfile — run install first")
+            warn("no lockfile — run install first")
         return
 
     # ── metadata ───────────────────────────────────────────────────────
@@ -164,35 +174,32 @@ def main():
             lock := read("lpp.lock")
             print_str(lock)
         else:
-            info("no lockfile found")
+            warn("no lockfile found")
         return
 
     # ── help ───────────────────────────────────────────────────────────
-    print_str("=== L++ Package Manager v4.5.0 (Pure L++ Native) ===")
-    print_str("Usage:")
-    print_str("  lpp <file.lpp> [options]       Compile one file")
-    print_str("  lpp <command> [args]           Package/app workflow")
+    header("L++ Package Manager v4.5.0 (Pure L++ Native)")
+    print_str("\033[1;33mUsage:\033[0m")
+    print_str("  \033[36mlpp\033[0m <file.lpp> [options]       Compile one file")
+    print_str("  \033[36mlpp\033[0m <command> [args]           Package/app workflow")
     print_str("")
-    print_str("Project workflow:")
-    print_str("  new <name>                     Create a new package")
-    print_str("  init [name]                    Initialize lpp.toml here")
-    print_str("  add <pkg>                      Add dependency to lpp.toml")
-    print_str("  install                        Install dependencies from lpp.toml")
-    print_str("  update                         Refresh dependencies and lockfile")
-    print_str("  remove <pkg>                   Remove dependency")
-    print_str("  list | tree | metadata         Inspect package state")
+    print_str("\033[1;33mProject workflow:\033[0m")
+    print_str("  \033[32mnew\033[0m <name>                     Create a new package")
+    print_str("  \033[32minit\033[0m [name]                    Initialize lpp.toml here")
+    print_str("  \033[32madd\033[0m <pkg>                      Add dependency to lpp.toml")
+    print_str("  \033[32minstall\033[0m                        Install dependencies from lpp.toml")
+    print_str("  \033[32mupdate\033[0m                         Refresh dependencies and lockfile")
+    print_str("  \033[32mremove\033[0m <pkg>                   Remove dependency")
+    print_str("  \033[32mlist\033[0m | \033[32mtree\033[0m | \033[32mmetadata\033[0m         Inspect package state")
     print_str("")
-    print_str("Global app workflow:")
-    print_str("  install lpp-opencode           Install lpp-opencode globally")
-    print_str("  install opencode/openclaude    Alias for lpp-opencode")
+    print_str("\033[1;33mBuild/test workflow:\033[0m")
+    print_str("  \033[32mcheck\033[0m | \033[32mbuild\033[0m | \033[32mrun\033[0m | \033[32mtest\033[0m     Validate, build, run, test")
+    print_str("  \033[32mclean\033[0m                          Remove build artifacts")
     print_str("")
-    print_str("Build/test workflow:")
-    print_str("  check | build | run | test     Validate, build, run, test")
-    print_str("  clean                          Remove build artifacts")
+    print_str("\033[1;33mRegistry:\033[0m")
+    print_str("  \033[32msearch\033[0m <query>                 Search package registry")
     print_str("")
-    print_str("Registry:")
-    print_str("  search <query>                 Search package registry")
+    print_str("\033[1;33mConfiguration:\033[0m")
+    print_str("  \033[32mconfig set backend\033[0m <cranelift|llvm>  Set default compiler backend")
+    print_str("  \033[32mconfig set linker\033[0m <direct|host|auto> Set default linker")
     print_str("")
-    print_str("Difference:")
-    print_str("  add     = write dependency into current project's lpp.toml")
-    print_str("  install = install deps from lpp.toml, or known global app")

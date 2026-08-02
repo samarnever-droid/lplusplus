@@ -739,9 +739,17 @@ fn resolve_runtime_source() -> Option<PathBuf> {
         return Some(workspace_runtime.to_path_buf());
     }
 
-    installed_root_dir()
+    if let Some(p) = installed_root_dir()
         .map(|root| root.join("lib").join("lpp_runtime.c"))
         .filter(|path| path.exists())
+    {
+        return Some(p);
+    }
+
+    // lpp_runtime.c is not installed separately — fall back to the platform
+    // freestanding min runtime, which is always resolvable and compiles cleanly
+    // with both the host linker (cl.exe / cc) and the direct linker.
+    resolve_min_runtime_source()
 }
 
 #[allow(dead_code)]

@@ -398,18 +398,43 @@ fn main() {
 
     // Handle config command
     if args.len() > 1 && args[1] == "config" {
-        if args.len() > 2 && args[2] == "set" && args.len() > 4 && args[3] == "linker" {
+        if args.len() > 2 && args[2] == "set" && args.len() > 4 {
             let mut cfg = config::LppConfig::load_or_create();
+            let setting = &args[3];
             let val = &args[4];
-            if val == "direct" || val == "host" || val == "auto" {
-                cfg.linker = val.clone();
+            if setting == "linker" {
+                if val == "direct" || val == "host" || val == "auto" {
+                    cfg.linker = val.clone();
+                    if let Err(e) = cfg.save() {
+                        eprintln!("Failed to save config: {e}");
+                        std::process::exit(1);
+                    }
+                    println!("Linker set to: {val}");
+                } else {
+                    eprintln!("Invalid linker value: {val}. Use 'direct', 'host', or 'auto'.");
+                    std::process::exit(1);
+                }
+            } else if setting == "backend" {
+                if val == "cranelift" || val == "llvm" {
+                    cfg.backend = val.clone();
+                    if let Err(e) = cfg.save() {
+                        eprintln!("Failed to save config: {e}");
+                        std::process::exit(1);
+                    }
+                    println!("Backend set to: {val}");
+                } else {
+                    eprintln!("Invalid backend value: {val}. Use 'cranelift' or 'llvm'.");
+                    std::process::exit(1);
+                }
+            } else if setting == "llvm-path" || setting == "llvm_path" {
+                cfg.llvm_path = Some(val.clone());
                 if let Err(e) = cfg.save() {
                     eprintln!("Failed to save config: {e}");
                     std::process::exit(1);
                 }
-                println!("Linker set to: {val}");
+                println!("LLVM compiler path set to: {val}");
             } else {
-                eprintln!("Invalid linker value: {val}. Use 'direct', 'host', or 'auto'.");
+                eprintln!("Unknown config setting: {setting}. Use 'linker', 'backend', or 'llvm-path'.");
                 std::process::exit(1);
             }
         } else {
@@ -461,7 +486,8 @@ fn main() {
 
     let mut idx = 1;
     let mut cli_linker: Option<String> = None;
-    let mut backend = "cranelift".to_string();
+    let config_obj_init = config::LppConfig::load_or_create();
+    let mut backend = config_obj_init.backend.clone();
     let mut cli_target: Option<String> = None;
 
     while idx < args.len() {
