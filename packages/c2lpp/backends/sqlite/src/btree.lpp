@@ -1,0 +1,501 @@
+# btree.lpp — table B+trees (rowid-keyed) over the pager.
+#
+# Page types:
+#   0x0d table leaf     — cells: [payload varint][rowid varint][payload][overflow?]
+#   0x05 table interior — cells: [left child u32][rowid varint]
+#
+# The b-tree header is 8 bytes on leaves and 12 on interior pages (the extra
+# 4 bytes are the right-most child pointer). Cell pointers are a big-endian
+# u16 array immediately after the header; cell content grows down from the end
+# of the page. Page 1 is special: its header sits at offset 100.
+#
+# Overflow: when a payload exceeds the usable page space, SQLite keeps a
+# prefix on the page and chains the remainder through overflow pages, each of
+# which begins with a 4-byte "next page" pointer.
+
+import mem
+import varint
+import pager
+
+def PTF_LEAF() -> Int:
+    return 13
+def PTF_INTERIOR() -> Int:
+    return 5
+
+# Offset of the b-tree header within page `pno`.
+def hdr_off(pno: Int) -> Int:
+    if pno == 1:
+        return 100
+    return 0
+
+def page_base(p: Int, pno: Int) -> Int:
+    return pager.pg_offset(p, pno)
+
+def pg_flag(p: Int, pno: Int) -> Int:
+    d := pager.pg_data(p)
+    return buf_get8(d, page_base(p, pno) + hdr_off(pno))
+
+def is_leaf(p: Int, pno: Int) -> Int:
+    f := pg_flag(p, pno)
+    if f == 13:
+        return 1
+    if f == 10:
+        return 1
+    return 0
+
+def cell_count(p: Int, pno: Int) -> Int:
+    d := pager.pg_data(p)
+    return mem.be_get16(d, page_base(p, pno) + hdr_off(pno) + 3)
+
+def set_cell_count(p: Int, pno: Int, n: Int):
+    d := pager.pg_data(p)
+    mem.be_put16(d, page_base(p, pno) + hdr_off(pno) + 3, n)
+
+def content_start(p: Int, pno: Int) -> Int:
+    d := pager.pg_data(p)
+    v := mem.be_get16(d, page_base(p, pno) + hdr_off(pno) + 5)
+    if v == 0:
+        return 65536
+    return v
+
+def set_content_start(p: Int, pno: Int, v: Int):
+    d := pager.pg_data(p)
+    mut w := v
+    if w == 65536:
+        w = 0
+    mem.be_put16(d, page_base(p, pno) + hdr_off(pno) + 5, w)
+
+def hdr_len(p: Int, pno: Int) -> Int:
+    if is_leaf(p, pno) == 1:
+        return 8
+    return 12
+
+def right_child(p: Int, pno: Int) -> Int:
+    d := pager.pg_data(p)
+    return mem.be_get32(d, page_base(p, pno) + hdr_off(pno) + 8)
+
+def set_right_child(p: Int, pno: Int, c: Int):
+    d := pager.pg_data(p)
+    mem.be_put32(d, page_base(p, pno) + hdr_off(pno) + 8, c)
+
+# Start of the cell-pointer array.
+def cptr_base(p: Int, pno: Int) -> Int:
+    return page_base(p, pno) + hdr_off(pno) + hdr_len(p, pno)
+
+def cell_ptr(p: Int, pno: Int, i: Int) -> Int:
+    d := pager.pg_data(p)
+    return mem.be_get16(d, cptr_base(p, pno) + i * 2)
+
+def set_cell_ptr(p: Int, pno: Int, i: Int, v: Int):
+    d := pager.pg_data(p)
+    mem.be_put16(d, cptr_base(p, pno) + i * 2, v)
+
+# Absolute byte offset of cell i's content.
+def cell_at(p: Int, pno: Int, i: Int) -> Int:
+    return page_base(p, pno) + cell_ptr(p, pno, i)
+
+# Contiguous free space between the end of the pointer array and the content
+# area. Because every mutation re-defragments, this is also the page's *total*
+# free space, which keeps the header's freeblock/fragment fields at zero and
+# satisfies SQLite's integrity_check accounting.
+def free_space(p: Int, pno: Int) -> Int:
+    n := cell_count(p, pno)
+    ptr_end := hdr_off(pno) + hdr_len(p, pno) + n * 2
+    return content_start(p, pno) - ptr_end
+
+# Sum of the on-page bytes actually occupied by cells.
+def used_cell_bytes(p: Int, pno: Int) -> Int:
+    n := cell_count(p, pno)
+    mut t := 0
+    mut i := 0
+    while i < n:
+        t = t + cell_size(p, pno, i)
+        i = i + 1
+    return t
+
+def init_page(p: Int, pno: Int, flag: Int):
+    d := pager.pg_data(p)
+    base := page_base(p, pno)
+    ho := hdr_off(pno)
+    mut i := 0
+    ps := pager.pg_size(p)
+    # Zero the page (except the file header on page 1).
+    mut z := ho
+    while z < ps:
+        buf_set8(d, base + z, 0)
+        z = z + 1
+    buf_set8(d, base + ho, flag)
+    mem.be_put16(d, base + ho + 1, 0)
+    mem.be_put16(d, base + ho + 3, 0)
+    mut cs := ps
+    if cs == 65536:
+        cs = 0
+    mem.be_put16(d, base + ho + 5, cs)
+    buf_set8(d, base + ho + 7, 0)
+    if flag == 5:
+        mem.be_put32(d, base + ho + 8, 0)
+    pager.pg_mark_dirty(p)
+
+# ── payload sizing (X / M / K per the file-format spec) ──
+
+def max_local(p: Int) -> Int:
+    return pager.pg_usable(p) - 35
+
+def min_local(p: Int) -> Int:
+    u := pager.pg_usable(p)
+    return ((u - 12) * 32) / 255 - 23
+
+# How many payload bytes stay on the page for a leaf cell of `total` bytes.
+def local_size(p: Int, total: Int) -> Int:
+    x := max_local(p)
+    if total <= x:
+        return total
+    m := min_local(p)
+    u := pager.pg_usable(p)
+    mut k := m + ((total - m) % (u - 4))
+    if k > x:
+        k = m
+    return k
+
+# ── cell readers ──
+
+def leaf_payload_size(p: Int, pno: Int, i: Int) -> Int:
+    d := pager.pg_data(p)
+    off := cell_at(p, pno, i)
+    return varint.vi_get(d, off)
+
+def leaf_rowid(p: Int, pno: Int, i: Int) -> Int:
+    d := pager.pg_data(p)
+    off := cell_at(p, pno, i)
+    off2 := off + varint.vi_len(d, off)
+    return varint.vi_get(d, off2)
+
+def leaf_local_off(p: Int, pno: Int, i: Int) -> Int:
+    d := pager.pg_data(p)
+    off := cell_at(p, pno, i)
+    o2 := off + varint.vi_len(d, off)
+    return o2 + varint.vi_len(d, o2)
+
+def interior_child(p: Int, pno: Int, i: Int) -> Int:
+    d := pager.pg_data(p)
+    return mem.be_get32(d, cell_at(p, pno, i))
+
+def interior_key(p: Int, pno: Int, i: Int) -> Int:
+    d := pager.pg_data(p)
+    return varint.vi_get(d, cell_at(p, pno, i) + 4)
+
+# Total on-page size of cell i (used when compacting / deleting).
+def leaf_cell_size(p: Int, pno: Int, i: Int) -> Int:
+    d := pager.pg_data(p)
+    off := cell_at(p, pno, i)
+    total := varint.vi_get(d, off)
+    n1 := varint.vi_len(d, off)
+    n2 := varint.vi_len(d, off + n1)
+    loc := local_size(p, total)
+    mut sz := n1 + n2 + loc
+    if loc < total:
+        sz = sz + 4
+    return sz
+
+def interior_cell_size(p: Int, pno: Int, i: Int) -> Int:
+    d := pager.pg_data(p)
+    return 4 + varint.vi_len(d, cell_at(p, pno, i) + 4)
+
+# On-page size of cell i, for any of the four page kinds.
+#
+# Index pages (0x0a leaf / 0x02 interior) have no rowid varint: a leaf cell is
+# [payload varint][record] and an interior cell is [child u32][payload varint]
+# [record]. Treating them like table cells mis-measures every cell, which shows
+# up as "Fragmentation of N bytes reported as 0" in integrity_check.
+def cell_size(p: Int, pno: Int, i: Int) -> Int:
+    f := pg_flag(p, pno)
+    if f == 10:
+        return index_leaf_cell_size(p, pno, i)
+    if f == 2:
+        return index_interior_cell_size(p, pno, i)
+    if is_leaf(p, pno) == 1:
+        return leaf_cell_size(p, pno, i)
+    return interior_cell_size(p, pno, i)
+
+def index_leaf_cell_size(p: Int, pno: Int, i: Int) -> Int:
+    d := pager.pg_data(p)
+    off := cell_at(p, pno, i)
+    total := varint.vi_get(d, off)
+    n1 := varint.vi_len(d, off)
+    loc := local_size(p, total)
+    mut sz := n1 + loc
+    if loc < total:
+        sz = sz + 4
+    return sz
+
+def index_interior_cell_size(p: Int, pno: Int, i: Int) -> Int:
+    d := pager.pg_data(p)
+    off := cell_at(p, pno, i)
+    total := varint.vi_get(d, off + 4)
+    n1 := varint.vi_len(d, off + 4)
+    loc := local_size(p, total)
+    mut sz := 4 + n1 + loc
+    if loc < total:
+        sz = sz + 4
+    return sz
+
+# ── overflow chains ──
+
+def read_overflow(p: Int, first: Int, need: Int) -> Int:
+    out := mem.vec_new(need)
+    d := pager.pg_data(p)
+    u := pager.pg_usable(p)
+    mut pg := first
+    mut left := need
+    while left > 0:
+        if pg == 0:
+            left = 0
+        else:
+            base := pager.pg_offset(p, pg)
+            nxt := mem.be_get32(d, base)
+            mut chunk := u - 4
+            if chunk > left:
+                chunk = left
+            mem.vec_push_bytes(out, d, base + 4, chunk)
+            left = left - chunk
+            pg = nxt
+    return out
+
+def write_overflow(p: Int, src: Int, soff: Int, n: Int) -> Int:
+    if n <= 0:
+        return 0
+    u := pager.pg_usable(p)
+    chunk := u - 4
+    npages := (n + chunk - 1) / chunk
+    first := pager.pg_new_page(p)
+    mut cur := first
+    mut written := 0
+    mut k := 0
+    while k < npages:
+        d := pager.pg_data(p)
+        base := pager.pg_offset(p, cur)
+        mut take := n - written
+        if take > chunk:
+            take = chunk
+        buf_copy(d, base + 4, src, soff + written, take)
+        written = written + take
+        if written < n:
+            nxt := pager.pg_new_page(p)
+            d2 := pager.pg_data(p)
+            mem.be_put32(d2, pager.pg_offset(p, cur), nxt)
+            cur = nxt
+        else:
+            d2 := pager.pg_data(p)
+            mem.be_put32(d2, pager.pg_offset(p, cur), 0)
+        k = k + 1
+    return first
+
+# Full payload of leaf cell i, following any overflow chain.
+def leaf_payload(p: Int, pno: Int, i: Int) -> Int:
+    d := pager.pg_data(p)
+    total := leaf_payload_size(p, pno, i)
+    loc := local_size(p, total)
+    lo := leaf_local_off(p, pno, i)
+    out := mem.vec_new(total)
+    mem.vec_push_bytes(out, d, lo, loc)
+    if loc < total:
+        ovf := mem.be_get32(d, lo + loc)
+        rest := read_overflow(p, ovf, total - loc)
+        mem.vec_push_bytes(out, mem.vec_data(rest), 0, mem.vec_len(rest))
+        mem.vec_free(rest)
+    return out
+
+# ── raw cell insertion ──
+
+# Insert `nbytes` of prepared cell content at index `at`. Caller guarantees
+# the page has room (checked with free_space).
+def insert_cell_raw(p: Int, pno: Int, at: Int, src: Int, soff: Int, nbytes: Int):
+    # Keep the content area hole-free: if the bytes below content_start are
+    # not exactly the live cells, compact before carving out new space.
+    ps := pager.pg_size(p)
+    if ps - content_start(p, pno) != used_cell_bytes(p, pno):
+        defrag_page(p, pno)
+    d := pager.pg_data(p)
+    base := page_base(p, pno)
+    n := cell_count(p, pno)
+    cs := content_start(p, pno)
+    newcs := cs - nbytes
+    buf_copy(d, base + newcs, src, soff, nbytes)
+    # shift the pointer array right from `at`
+    mut i := n
+    while i > at:
+        set_cell_ptr(p, pno, i, cell_ptr(p, pno, i - 1))
+        i = i - 1
+    set_cell_ptr(p, pno, at, newcs)
+    set_cell_count(p, pno, n + 1)
+    set_content_start(p, pno, newcs)
+    pager.pg_mark_dirty(p)
+
+# Build a table-leaf cell into a vec.
+def build_leaf_cell(p: Int, rowid: Int, payload: Int, plen: Int) -> Int:
+    total := plen
+    loc := local_size(p, total)
+    c := mem.vec_new(loc + 24)
+    varint.vi_push(c, total)
+    varint.vi_push(c, rowid)
+    mem.vec_push_bytes(c, payload, 0, loc)
+    if loc < total:
+        ovf := write_overflow(p, payload, loc, total - loc)
+        mut tmp := buf_alloc(4)
+        mem.be_put32(tmp, 0, ovf)
+        mem.vec_push_bytes(c, tmp, 0, 4)
+        buf_free(tmp)
+    return c
+
+def build_interior_cell(child: Int, key: Int) -> Int:
+    c := mem.vec_new(16)
+    tmp := buf_alloc(4)
+    mem.be_put32(tmp, 0, child)
+    mem.vec_push_bytes(c, tmp, 0, 4)
+    buf_free(tmp)
+    varint.vi_push(c, key)
+    return c
+
+# Remove cell i, compacting the pointer array (content is left as dead space).
+def remove_cell(p: Int, pno: Int, i: Int):
+    n := cell_count(p, pno)
+    mut k := i
+    while k < n - 1:
+        set_cell_ptr(p, pno, k, cell_ptr(p, pno, k + 1))
+        k = k + 1
+    set_cell_count(p, pno, n - 1)
+    pager.pg_mark_dirty(p)
+    # Reclaim the removed cell's bytes immediately. Without this the page
+    # header would under-report free space and SQLite's integrity_check emits
+    # "Fragmentation of N bytes reported as 0".
+    defrag_page(p, pno)
+
+# Compact a page so all live cells sit contiguously at its end.
+def defrag_page(p: Int, pno: Int):
+    n := cell_count(p, pno)
+    ps := pager.pg_size(p)
+    if n == 0:
+        set_content_start(p, pno, ps)
+        set_frag(p, pno, 0)
+        return
+    # Copy every cell out first: cells are laid out in arbitrary physical
+    # order, so we cannot compact in place without clobbering neighbours.
+    sizes := mem.iv_new(n)
+    blobs := mem.iv_new(n)
+    d := pager.pg_data(p)
+    mut i := 0
+    while i < n:
+        sz := cell_size(p, pno, i)
+        off := cell_at(p, pno, i)
+        b := buf_alloc(sz)
+        buf_copy(b, 0, d, off, sz)
+        mem.iv_push(sizes, sz)
+        mem.iv_push(blobs, b)
+        i = i + 1
+    # Lay them back down contiguously, ending at the page end, in logical
+    # (pointer-array) order so the content area has no interior holes.
+    mut cs := ps
+    mut j := n - 1
+    while j >= 0:
+        sz := mem.iv_get(sizes, j)
+        cs = cs - sz
+        d2 := pager.pg_data(p)
+        buf_copy(d2, page_base(p, pno) + cs, mem.iv_get(blobs, j), 0, sz)
+        set_cell_ptr(p, pno, j, cs)
+        j = j - 1
+    set_content_start(p, pno, cs)
+    # All free space is now the single contiguous gap between the pointer
+    # array and the content area, so there are no freeblocks and no fragments.
+    set_first_freeblock(p, pno, 0)
+    set_frag(p, pno, 0)
+    mut k := 0
+    while k < n:
+        buf_free(mem.iv_get(blobs, k))
+        k = k + 1
+    mem.iv_free(sizes)
+    mem.iv_free(blobs)
+    pager.pg_mark_dirty(p)
+
+def set_frag(p: Int, pno: Int, v: Int):
+    d := pager.pg_data(p)
+    buf_set8(d, page_base(p, pno) + hdr_off(pno) + 7, v & 255)
+
+def set_first_freeblock(p: Int, pno: Int, v: Int):
+    d := pager.pg_data(p)
+    mem.be_put16(d, page_base(p, pno) + hdr_off(pno) + 1, v)
+
+# ── search ──
+
+# Index of the first cell whose rowid >= key, within a leaf.
+def leaf_find(p: Int, pno: Int, key: Int) -> Int:
+    n := cell_count(p, pno)
+    mut lo := 0
+    mut hi := n
+    while lo < hi:
+        mid := (lo + hi) / 2
+        r := leaf_rowid(p, pno, mid)
+        if r < key:
+            lo = mid + 1
+        else:
+            hi = mid
+    return lo
+
+# Child pointer to follow for `key` on an interior page.
+def interior_find(p: Int, pno: Int, key: Int) -> Int:
+    n := cell_count(p, pno)
+    mut lo := 0
+    mut hi := n
+    while lo < hi:
+        mid := (lo + hi) / 2
+        k := interior_key(p, pno, mid)
+        if k < key:
+            lo = mid + 1
+        else:
+            hi = mid
+    if lo >= n:
+        return right_child(p, pno)
+    return interior_child(p, pno, lo)
+
+# Descend to the leaf page that should hold `key`.
+def find_leaf(p: Int, root: Int, key: Int) -> Int:
+    mut cur := root
+    mut guard := 0
+    while guard < 1000:
+        if is_leaf(p, cur) == 1:
+            return cur
+        cur = interior_find(p, cur, key)
+        if cur == 0:
+            return root
+        guard = guard + 1
+    return cur
+
+# Left-most leaf (for full scans).
+def first_leaf(p: Int, root: Int) -> Int:
+    mut cur := root
+    mut guard := 0
+    while guard < 1000:
+        if is_leaf(p, cur) == 1:
+            return cur
+        if cell_count(p, cur) > 0:
+            cur = interior_child(p, cur, 0)
+        else:
+            cur = right_child(p, cur)
+        if cur == 0:
+            return root
+        guard = guard + 1
+    return cur
+
+def max_rowid(p: Int, root: Int) -> Int:
+    mut cur := root
+    mut guard := 0
+    while guard < 1000:
+        if is_leaf(p, cur) == 1:
+            n := cell_count(p, cur)
+            if n == 0:
+                return 0
+            return leaf_rowid(p, cur, n - 1)
+        cur = right_child(p, cur)
+        if cur == 0:
+            return 0
+        guard = guard + 1
+    return 0

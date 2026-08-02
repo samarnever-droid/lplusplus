@@ -1,0 +1,288 @@
+# pager.lpp — the SQLite database file: 100-byte header + fixed-size pages.
+#
+# The whole database image is held in one growable vec. Pages are 1-based;
+# page 1 begins with the 100-byte file header. This is a straightforward
+# read-modify-write pager: correct and simple, with no WAL and no journal.
+#
+# Pager handle (64-byte buffer):
+#   [0]  image vec handle
+#   [8]  page size
+#   [16] page count
+#   [24] path string is kept by the caller
+#   [32] dirty flag
+#   [40] reserved space per page (always 0 here)
+#   [48] text encoding (1 = UTF-8)
+#   [56] file change counter
+
+import mem
+
+def HDR_SIZE() -> Int:
+    return 100
+
+def pg_img(p: Int) -> Int:
+    return mem.bget64(p, 0)
+
+def pg_size(p: Int) -> Int:
+    return mem.bget64(p, 8)
+
+def pg_count(p: Int) -> Int:
+    return mem.bget64(p, 16)
+
+def pg_set_count(p: Int, n: Int):
+    mem.bset64(p, 16, n)
+
+def pg_dirty(p: Int) -> Int:
+    return mem.bget64(p, 32)
+
+def pg_mark_dirty(p: Int):
+    mem.bset64(p, 32, 1)
+
+def pg_enc(p: Int) -> Int:
+    return mem.bget64(p, 48)
+
+def pg_data(p: Int) -> Int:
+    return mem.vec_data(pg_img(p))
+
+# Byte offset of page number `pno` (1-based).
+def pg_offset(p: Int, pno: Int) -> Int:
+    return (pno - 1) * pg_size(p)
+
+# Usable bytes per page (page size minus the reserved region).
+def pg_usable(p: Int) -> Int:
+    return pg_size(p) - mem.bget64(p, 40)
+
+# ── header field accessors (all big-endian, offsets per the spec) ──
+
+def hdr_get16(p: Int, off: Int) -> Int:
+    return mem.be_get16(pg_data(p), off)
+
+def hdr_get32(p: Int, off: Int) -> Int:
+    return mem.be_get32(pg_data(p), off)
+
+def hdr_put32(p: Int, off: Int, v: Int):
+    mem.be_put32(pg_data(p), off, v)
+
+def hdr_put16(p: Int, off: Int, v: Int):
+    mem.be_put16(pg_data(p), off, v)
+
+def write_magic(d: Int):
+    buf_write_str(d, 0, "SQLite format 3")
+    buf_set8(d, 15, 0)
+
+def magic_ok(d: Int, n: Int) -> Int:
+    if n < 100:
+        return 0
+    s := buf_read_str(d, 0, 15)
+    if lpp_str_eq(s, "SQLite format 3") == 0:
+        return 0
+    if buf_get8(d, 15) != 0:
+        return 0
+    return 1
+
+# Create an empty database image with one (empty leaf) page.
+def pg_create(page_size: Int) -> Int:
+    p := buf_alloc(64)
+    img := mem.vec_new(page_size)
+    mem.vec_resize_zero(img, page_size)
+    mem.bset64(p, 0, img)
+    mem.bset64(p, 8, page_size)
+    mem.bset64(p, 16, 1)
+    mem.bset64(p, 32, 1)
+    mem.bset64(p, 40, 0)
+    mem.bset64(p, 48, 1)
+    mem.bset64(p, 56, 1)
+
+    d := mem.vec_data(img)
+    write_magic(d)
+    mut psz := page_size
+    if page_size == 65536:
+        psz = 1
+    mem.be_put16(d, 16, psz)
+    buf_set8(d, 18, 1)          # write version: legacy
+    buf_set8(d, 19, 1)          # read version: legacy
+    buf_set8(d, 20, 0)          # reserved bytes per page
+    buf_set8(d, 21, 64)         # max embedded payload fraction
+    buf_set8(d, 22, 32)         # min embedded payload fraction
+    buf_set8(d, 23, 32)         # leaf payload fraction
+    mem.be_put32(d, 24, 1)      # file change counter
+    mem.be_put32(d, 28, 1)      # database size in pages
+    mem.be_put32(d, 32, 0)      # first freelist trunk page
+    mem.be_put32(d, 36, 0)      # freelist page count
+    mem.be_put32(d, 40, 1)      # schema cookie
+    mem.be_put32(d, 44, 4)      # schema format number
+    mem.be_put32(d, 48, 0)      # default page cache size
+    mem.be_put32(d, 52, 0)      # largest root btree page (non-autovacuum)
+    mem.be_put32(d, 56, 1)      # text encoding: UTF-8
+    mem.be_put32(d, 60, 0)      # user version
+    mem.be_put32(d, 64, 0)      # incremental vacuum mode
+    mem.be_put32(d, 68, 0)      # application id
+    mem.be_put32(d, 92, 1)      # version-valid-for number
+    mem.be_put32(d, 96, 3046001)  # SQLite version number
+
+    # Page 1 is an empty table-leaf b-tree page whose content area starts
+    # right after the file header.
+    init_leaf(d, 100, page_size, 100)
+    return p
+
+# Initialise a b-tree page header in-place.
+#   flag 13 = table leaf, 5 = table interior, 10 = index leaf, 2 = index interior
+def init_btree_page(d: Int, hdr_off: Int, flag: Int, content_start: Int):
+    buf_set8(d, hdr_off, flag)
+    mem.be_put16(d, hdr_off + 1, 0)               # first freeblock
+    mem.be_put16(d, hdr_off + 3, 0)               # cell count
+    mut cs := content_start
+    if cs == 65536:
+        cs = 0
+    mem.be_put16(d, hdr_off + 5, cs)              # cell content area start
+    buf_set8(d, hdr_off + 7, 0)                   # fragmented free bytes
+
+def init_leaf(d: Int, hdr_off: Int, page_size: Int, hdr_start: Int):
+    init_btree_page(d, hdr_off, 13, page_size)
+
+# Take a page off the freelist, or 0 if it is empty.
+def alloc_from_freelist(p: Int) -> Int:
+    trunk := freelist_head(p)
+    if trunk == 0:
+        return 0
+    d := pg_data(p)
+    tb := pg_offset(p, trunk)
+    nleaf := mem.be_get32(d, tb + 4)
+    if nleaf > 0:
+        pno := mem.be_get32(d, tb + 8 + (nleaf - 1) * 4)
+        mem.be_put32(d, tb + 4, nleaf - 1)
+        hdr_put32(p, 36, freelist_count(p) - 1)
+        pg_mark_dirty(p)
+        return pno
+    # Trunk itself is now spare: promote its successor and reuse the trunk.
+    nxt := mem.be_get32(d, tb)
+    hdr_put32(p, 32, nxt)
+    hdr_put32(p, 36, freelist_count(p) - 1)
+    pg_mark_dirty(p)
+    return trunk
+
+# Grow the image by one page and return the new page number.
+def pg_new_page(p: Int) -> Int:
+    reuse := alloc_from_freelist(p)
+    if reuse != 0:
+        d := pg_data(p)
+        base := pg_offset(p, reuse)
+        ps := pg_size(p)
+        mut z := 0
+        while z < ps:
+            buf_set8(d, base + z, 0)
+            z = z + 1
+        pg_mark_dirty(p)
+        return reuse
+    return grow_page(p)
+
+def grow_page(p: Int) -> Int:
+    img := pg_img(p)
+    ps := pg_size(p)
+    n := pg_count(p) + 1
+    mem.vec_resize_zero(img, n * ps)
+    pg_set_count(p, n)
+    pg_mark_dirty(p)
+    hdr_put32(p, 28, n)
+    return n
+
+def pg_free(p: Int):
+    mem.vec_free(pg_img(p))
+    buf_free(p)
+
+# ── freelist ──
+# SQLite tracks unused pages in a linked list of "trunk" pages. Header offset
+# 32 holds the first trunk page number and offset 36 the total free page count.
+# A trunk page is: [u32 next trunk][u32 leaf count][u32 leaf page numbers...].
+# integrity_check reports "Page N: never used" for any page that is neither
+# reachable from a b-tree nor present on this list.
+
+def freelist_head(p: Int) -> Int:
+    return hdr_get32(p, 32)
+
+def freelist_count(p: Int) -> Int:
+    return hdr_get32(p, 36)
+
+def max_trunk_leaves(p: Int) -> Int:
+    return (pg_usable(p) - 8) / 4
+
+def free_page(p: Int, pno: Int):
+    if pno <= 1:
+        return
+    d := pg_data(p)
+    base := pg_offset(p, pno)
+    ps := pg_size(p)
+    # Wipe the page so no stale b-tree header confuses a reader.
+    mut z := 0
+    while z < ps:
+        buf_set8(d, base + z, 0)
+        z = z + 1
+    trunk := freelist_head(p)
+    if trunk == 0:
+        # This page becomes the first trunk: no next, no leaves.
+        mem.be_put32(d, base, 0)
+        mem.be_put32(d, base + 4, 0)
+        hdr_put32(p, 32, pno)
+        hdr_put32(p, 36, freelist_count(p) + 1)
+        pg_mark_dirty(p)
+        return
+    tb := pg_offset(p, trunk)
+    nleaf := mem.be_get32(d, tb + 4)
+    if nleaf < max_trunk_leaves(p):
+        mem.be_put32(d, tb + 8 + nleaf * 4, pno)
+        mem.be_put32(d, tb + 4, nleaf + 1)
+        hdr_put32(p, 36, freelist_count(p) + 1)
+        pg_mark_dirty(p)
+        return
+    # Current trunk is full: the freed page becomes a new trunk in front of it.
+    mem.be_put32(d, base, trunk)
+    mem.be_put32(d, base + 4, 0)
+    hdr_put32(p, 32, pno)
+    hdr_put32(p, 36, freelist_count(p) + 1)
+    pg_mark_dirty(p)
+
+# ── load / save ──
+
+def pg_open_buf(raw: Int, n: Int) -> Int:
+    d0 := raw
+    if magic_ok(d0, n) == 0:
+        return 0
+    mut psz := mem.be_get16(d0, 16)
+    if psz == 1:
+        psz = 65536
+    p := buf_alloc(64)
+    img := mem.vec_new(n)
+    mem.vec_push_bytes(img, raw, 0, n)
+    mem.bset64(p, 0, img)
+    mem.bset64(p, 8, psz)
+    mem.bset64(p, 16, n / psz)
+    mem.bset64(p, 32, 0)
+    mem.bset64(p, 40, buf_get8(d0, 20))
+    mem.bset64(p, 48, mem.be_get32(d0, 56))
+    mem.bset64(p, 56, mem.be_get32(d0, 24))
+
+    # Trust the header's page count when it is consistent with the file size.
+    hc := mem.be_get32(d0, 28)
+    if hc > 0:
+        if hc <= n / psz:
+            mem.bset64(p, 16, hc)
+    return p
+
+def pg_save(p: Int, path: Str) -> Int:
+    img := pg_img(p)
+    ps := pg_size(p)
+    want := pg_count(p) * ps
+    if mem.vec_len(img) < want:
+        mem.vec_resize_zero(img, want)
+    hdr_put32(p, 28, pg_count(p))
+    # Bump the change counter and keep version-valid-for in sync.
+    cc := mem.bget64(p, 56) + 1
+    mem.bset64(p, 56, cc)
+    hdr_put32(p, 24, cc)
+    hdr_put32(p, 92, cc)
+    d := mem.vec_data(img)
+    out := buf_alloc(want)
+    buf_copy(out, 0, d, 0, want)
+    r := buf_write(path, out)
+    buf_free(out)
+    mem.bset64(p, 32, 0)
+    return r

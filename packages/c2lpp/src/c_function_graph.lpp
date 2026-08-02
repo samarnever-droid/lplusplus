@@ -1,0 +1,278 @@
+# c_function_graph.lpp — allocation-bounded structural function-body graph.
+#
+# This pass validates balanced bodies and inventories control/statement nodes for
+# every function span. It does not yet parse typed expressions or resolve label
+# edges, so it is a structural CFG prerequisite rather than executable lowering.
+
+import c_translation_unit
+import c_declaration_graph
+import c_audit
+import text
+
+struct CBodyStats:
+    functions: Int
+    bodies_partitioned: Int
+    bodies_unbalanced: Int
+    statements: Int
+    labels: Int
+    case_labels: Int
+    gotos: Int
+    switches: Int
+    ifs: Int
+    for_loops: Int
+    while_loops: Int
+    do_loops: Int
+    returns: Int
+    breaks: Int
+    continues: Int
+    basic_block_candidates: Int
+
+struct CBodyShape:
+    end_offset: Int
+    statements: Int
+    labels: Int
+    case_labels: Int
+    gotos: Int
+    switches: Int
+    ifs: Int
+    for_loops: Int
+    while_loops: Int
+    do_loops: Int
+    returns: Int
+    breaks: Int
+    continues: Int
+    valid: Int
+
+struct CBodyResult:
+    graph: Str
+    report: Str
+    stats: CBodyStats
+    valid: Int
+
+
+def c_body_scan(data: Int, size: Int, start: Int, end: Int) -> CBodyShape:
+    mut offset := start
+    mut open := -1
+    while offset < end && open < 0:
+        code := c_byte(data, size, offset)
+        if code == 47 && c_byte(data, size, offset + 1) == 47:
+            offset = offset + 2
+            while offset < end && c_byte(data, size, offset) != 10 && c_byte(data, size, offset) != 13:
+                offset = offset + 1
+        elif code == 47 && c_byte(data, size, offset + 1) == 42:
+            offset = offset + 2
+            mut closed := false
+            while offset < end && !closed:
+                if c_byte(data, size, offset) == 42 && c_byte(data, size, offset + 1) == 47:
+                    offset = offset + 2
+                    closed = true
+                else:
+                    offset = offset + 1
+        elif code == 34 || code == 39:
+            quote := code
+            offset = offset + 1
+            mut escaped := false
+            mut closed := false
+            while offset < end && !closed:
+                current := c_byte(data, size, offset)
+                if escaped:
+                    escaped = false
+                    offset = offset + 1
+                elif current == 92:
+                    escaped = true
+                    offset = offset + 1
+                elif current == quote:
+                    offset = offset + 1
+                    closed = true
+                else:
+                    offset = offset + 1
+        else:
+            if code == 123:
+                open = offset
+            offset = offset + 1
+
+    mut shape := CBodyShape()
+    if open < 0:
+        return shape
+    offset = open + 1
+    mut brace_depth := 1
+    mut paren_depth := 0
+    mut ternary_depth := 0
+    mut previous_word := ""
+    while offset < end && brace_depth > 0:
+        code := c_byte(data, size, offset)
+        if c_is_space(code):
+            offset = offset + 1
+        elif code == 47 && c_byte(data, size, offset + 1) == 47:
+            offset = offset + 2
+            while offset < end && c_byte(data, size, offset) != 10 && c_byte(data, size, offset) != 13:
+                offset = offset + 1
+        elif code == 47 && c_byte(data, size, offset + 1) == 42:
+            offset = offset + 2
+            mut closed := false
+            while offset < end && !closed:
+                if c_byte(data, size, offset) == 42 && c_byte(data, size, offset + 1) == 47:
+                    offset = offset + 2
+                    closed = true
+                else:
+                    offset = offset + 1
+            if !closed:
+                return shape
+        elif code == 34 || code == 39:
+            quote := code
+            offset = offset + 1
+            mut escaped := false
+            mut closed := false
+            while offset < end && !closed:
+                current := c_byte(data, size, offset)
+                if escaped:
+                    escaped = false
+                    offset = offset + 1
+                elif current == 92:
+                    escaped = true
+                    offset = offset + 1
+                elif current == quote:
+                    offset = offset + 1
+                    closed = true
+                else:
+                    offset = offset + 1
+            if !closed:
+                return shape
+        elif c_is_ident_start(code):
+            word_start := offset
+            offset = offset + 1
+            while offset < end && c_is_ident_continue(c_byte(data, size, offset)):
+                offset = offset + 1
+            word := buf_read_str(data, word_start, offset - word_start)
+            previous_word = word
+            if text_eq(word, "goto"):
+                shape.gotos = shape.gotos + 1
+            elif text_eq(word, "switch"):
+                shape.switches = shape.switches + 1
+            elif text_eq(word, "if"):
+                shape.ifs = shape.ifs + 1
+            elif text_eq(word, "for"):
+                shape.for_loops = shape.for_loops + 1
+            elif text_eq(word, "while"):
+                shape.while_loops = shape.while_loops + 1
+            elif text_eq(word, "do"):
+                shape.do_loops = shape.do_loops + 1
+            elif text_eq(word, "return"):
+                shape.returns = shape.returns + 1
+            elif text_eq(word, "break"):
+                shape.breaks = shape.breaks + 1
+            elif text_eq(word, "continue"):
+                shape.continues = shape.continues + 1
+        elif c_is_digit(code) || (code == 46 && c_is_digit(c_byte(data, size, offset + 1))):
+            offset = offset + 1
+            while offset < end && c_is_number_continue(c_byte(data, size, offset)):
+                offset = offset + 1
+        else:
+            mut width := c_punct_width(data, size, offset)
+            if width <= 0:
+                width = 1
+            if code == 40:
+                paren_depth = paren_depth + 1
+            elif code == 41:
+                if paren_depth > 0:
+                    paren_depth = paren_depth - 1
+            elif code == 123:
+                brace_depth = brace_depth + 1
+            elif code == 125:
+                brace_depth = brace_depth - 1
+                if brace_depth == 0:
+                    shape.end_offset = offset + 1
+            elif code == 63 && paren_depth == 0:
+                ternary_depth = ternary_depth + 1
+            elif code == 59 && paren_depth == 0:
+                shape.statements = shape.statements + 1
+            elif code == 58 && paren_depth == 0:
+                if ternary_depth > 0:
+                    ternary_depth = ternary_depth - 1
+                elif text_eq(previous_word, "case") || text_eq(previous_word, "default"):
+                    shape.case_labels = shape.case_labels + 1
+                elif str_len(previous_word) > 0:
+                    shape.labels = shape.labels + 1
+            if code != 58:
+                previous_word = ""
+            offset = offset + width
+    if brace_depth == 0:
+        shape.valid = 1
+    return shape
+
+
+def c_body_graph_record(name: Str, start: Int, shape: CBodyShape) -> Str:
+    mut out := str_concat("body|", str_concat(name, "|span="))
+    out = str_concat(out, str_concat(int_to_str(start), ".."))
+    out = str_concat(out, str_concat(int_to_str(shape.end_offset), "|statements="))
+    out = str_concat(out, str_concat(int_to_str(shape.statements), "|labels="))
+    out = str_concat(out, str_concat(int_to_str(shape.labels), "|cases="))
+    out = str_concat(out, str_concat(int_to_str(shape.case_labels), "|gotos="))
+    out = str_concat(out, str_concat(int_to_str(shape.gotos), "|switches="))
+    out = str_concat(out, str_concat(int_to_str(shape.switches), "|ifs="))
+    out = str_concat(out, str_concat(int_to_str(shape.ifs), "|for="))
+    out = str_concat(out, str_concat(int_to_str(shape.for_loops), "|while="))
+    out = str_concat(out, str_concat(int_to_str(shape.while_loops), "|do="))
+    out = str_concat(out, str_concat(int_to_str(shape.do_loops), "|returns="))
+    return str_concat(out, str_concat(int_to_str(shape.returns), "\n"))
+
+
+def c_body_graph_file(path: Str) -> CBodyResult:
+    tu := c_tu_scan_file(path)
+    mut stats := CBodyStats()
+    if tu.valid == 0:
+        return CBodyResult("", "valid=0\nreason=C2-BODY-TU-INVALID\n", stats, 0)
+    data := buf_read(path)
+    size := buf_len(data)
+    lines := str_split(tu.graph, 10)
+    mut builder := CTUTextBuilder(buf_alloc(65536), 0, 65536)
+    builder = c_tu_builder_add(builder, "schema|c2lpp-function-body-shape-v1\n")
+    for record in lines:
+        if text_starts(record, "function|"):
+            name := c_decl_field(record, 1)
+            start := parse_int(c_decl_field(record, 5))
+            end := parse_int(c_decl_field(record, 6))
+            shape := c_body_scan(data, size, start, end)
+            stats.functions = stats.functions + 1
+            if shape.valid != 0:
+                stats.bodies_partitioned = stats.bodies_partitioned + 1
+            else:
+                stats.bodies_unbalanced = stats.bodies_unbalanced + 1
+            stats.statements = stats.statements + shape.statements
+            stats.labels = stats.labels + shape.labels
+            stats.case_labels = stats.case_labels + shape.case_labels
+            stats.gotos = stats.gotos + shape.gotos
+            stats.switches = stats.switches + shape.switches
+            stats.ifs = stats.ifs + shape.ifs
+            stats.for_loops = stats.for_loops + shape.for_loops
+            stats.while_loops = stats.while_loops + shape.while_loops
+            stats.do_loops = stats.do_loops + shape.do_loops
+            stats.returns = stats.returns + shape.returns
+            stats.breaks = stats.breaks + shape.breaks
+            stats.continues = stats.continues + shape.continues
+            candidates := 1 + shape.labels + shape.case_labels + shape.gotos + shape.switches + shape.ifs + shape.for_loops + shape.while_loops + shape.do_loops + shape.returns
+            stats.basic_block_candidates = stats.basic_block_candidates + candidates
+            builder = c_tu_builder_add(builder, c_body_graph_record(name, start, shape))
+    graph := c_tu_builder_finish(builder)
+    buf_free(data)
+    mut valid := 1
+    if stats.bodies_unbalanced > 0:
+        valid = 0
+    mut report := str_concat("valid=", str_concat(int_to_str(valid), "\n"))
+    report = str_concat(report, str_concat("functions=", str_concat(int_to_str(stats.functions), "\n")))
+    report = str_concat(report, str_concat("bodies_partitioned=", str_concat(int_to_str(stats.bodies_partitioned), "\n")))
+    report = str_concat(report, str_concat("bodies_unbalanced=", str_concat(int_to_str(stats.bodies_unbalanced), "\n")))
+    report = str_concat(report, str_concat("statements=", str_concat(int_to_str(stats.statements), "\n")))
+    report = str_concat(report, str_concat("labels=", str_concat(int_to_str(stats.labels), "\n")))
+    report = str_concat(report, str_concat("case_labels=", str_concat(int_to_str(stats.case_labels), "\n")))
+    report = str_concat(report, str_concat("gotos=", str_concat(int_to_str(stats.gotos), "\n")))
+    report = str_concat(report, str_concat("switches=", str_concat(int_to_str(stats.switches), "\n")))
+    report = str_concat(report, str_concat("ifs=", str_concat(int_to_str(stats.ifs), "\n")))
+    report = str_concat(report, str_concat("for_loops=", str_concat(int_to_str(stats.for_loops), "\n")))
+    report = str_concat(report, str_concat("while_loops=", str_concat(int_to_str(stats.while_loops), "\n")))
+    report = str_concat(report, str_concat("do_loops=", str_concat(int_to_str(stats.do_loops), "\n")))
+    report = str_concat(report, str_concat("returns=", str_concat(int_to_str(stats.returns), "\n")))
+    report = str_concat(report, str_concat("breaks=", str_concat(int_to_str(stats.breaks), "\n")))
+    report = str_concat(report, str_concat("continues=", str_concat(int_to_str(stats.continues), "\n")))
+    report = str_concat(report, str_concat("basic_block_candidates=", str_concat(int_to_str(stats.basic_block_candidates), "\n")))
+    return CBodyResult(graph, report, stats, valid)

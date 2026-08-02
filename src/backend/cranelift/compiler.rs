@@ -10,6 +10,7 @@ use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_module::{Linkage, Module};
 use cranelift_object::{ObjectBuilder, ObjectModule};
 use std::collections::HashMap;
+use std::str::FromStr;
 use target_lexicon::Triple;
 
 /// A function body compiled off-thread, waiting to be defined in the module.
@@ -38,6 +39,30 @@ fn codegen_threads(function_count: usize) -> usize {
         .map(|n| n.get())
         .unwrap_or(1);
     available.min(function_count).max(1)
+}
+
+/// Number of functions lowered + emitted per bounded batch.
+///
+/// This bounds the peak memory of the Cranelift backend. With batch size B the
+/// backend holds at most B MIR clones, B Cranelift IR contexts and B compiled
+/// bodies at once, so peak memory is O(B) and independent of the total number
+/// of functions. Set `LPP_CODEGEN_BATCH` to tune it; 0 or an unparsable value
+/// falls back to the default.
+///
+/// The default tries to keep per-batch memory modest (a few MB of IR + machine
+/// code per function × ~256 functions) while still amortising thread-pool
+/// startup. Larger values trade a higher memory ceiling for slightly lower
+/// overhead; smaller values make the compiler more frugal.
+fn codegen_batch_size(function_count: usize) -> usize {
+    if let Ok(value) = std::env::var("LPP_CODEGEN_BATCH") {
+        if let Ok(n) = value.trim().parse::<usize>() {
+            return n.max(1).min(function_count.max(1));
+        }
+    }
+    if function_count == 0 {
+        return 1;
+    }
+    256usize.min(function_count)
 }
 
 fn decode_ty(tag: u8) -> cranelift_codegen::ir::Type {
@@ -186,6 +211,15 @@ pub struct AotCompiler {
 
 impl AotCompiler {
     pub fn new_for_host() -> Result<Self, String> {
+        Self::new_for_target(None)
+    }
+
+    /// Construct a codegen engine for an optional target triple. When `target`
+    /// is None the host triple is used (normal build). A `--target` triple such
+    /// as `aarch64-linux-android` selects the matching Cranelift backend (e.g.
+    /// the aarch64 ISA, available when the compiler is built with the
+    /// `all-arch`/aarch64 feature).
+    pub fn new_for_target(target: Option<&str>) -> Result<Self, String> {
         let mut flag_builder = settings::builder();
         flag_builder
             .set("use_colocated_libcalls", "false")
@@ -214,10 +248,20 @@ impl AotCompiler {
         flag_builder
             .set("opt_level", &opt_level)
             .map_err(|e| format!("set opt_level '{}': {}", opt_level, e))?;
-        let mut isa_builder = cranelift_codegen::isa::lookup(Triple::host())
-            .map_err(|e| format!("ISA lookup: {}", e))?;
+        let isa_triple: Triple = match target {
+            Some(t) => Triple::from_str(t)
+                .map_err(|e| format!("invalid target triple '{}': {}", t, e))?,
+            None => Triple::host(),
+        };
+        // AVX2/AVX are x86_64-only CPU features. Gate them on the *selected*
+        // target architecture, not the host the compiler was compiled on, so a
+        // cross-target (e.g. aarch64-linux-android) does not try to enable x86
+        // features on an aarch64 ISA builder.
+        let target_is_x86_64 = isa_triple.architecture.to_string().starts_with("x86_64");
+        let mut isa_builder = cranelift_codegen::isa::lookup(isa_triple)
+            .map_err(|e| format!("ISA lookup for target '{}': {}", target.unwrap_or("host"), e))?;
         if std::env::var("LPP_CRANELIFT_SIMD").as_deref() != Ok("0")
-            && cfg!(target_arch = "x86_64")
+            && target_is_x86_64
             && std::is_x86_feature_detected!("avx2")
         {
             isa_builder
@@ -576,54 +620,84 @@ impl AotCompiler {
         // Same deterministic ordering as declare_functions.
         let mut ordered: Vec<(&FuncId, &MirFunction)> = program.functions.iter().collect();
         ordered.sort_by_key(|(id, _)| id.0);
-        let mir_fns: Vec<MirFunction> = ordered.into_iter().map(|(_, f)| f.clone()).collect();
+        // Do not clone the whole MIR up front: that would hold every function's
+        // locals+blocks in memory alongside the IR contexts, defeating the
+        // bounded-memory goal below. We keep only sorted (id, ref) pairs and
+        // clone one batch of functions at a time.
+        let refs: Vec<(&FuncId, &MirFunction)> = ordered;
 
-        // Phase 1 (serial): build Cranelift IR for every function.
+        // Bounded-batch codegen.
         //
-        // IR construction must stay serial because it mutates the module:
-        // `declare_func_in_func` interns callee references and string literals
-        // are declared as new data objects on demand.
-        let mut pending: Vec<(cranelift_module::FuncId, cranelift_codegen::Context)> =
-            Vec::with_capacity(mir_fns.len());
-        // Read before the loop: `self` is borrowed mutably inside it.
+        // The classic pipeline builds Cranelift IR for *every* function and
+        // holds all of it in a single `pending` Vec before the (parallel)
+        // regalloc/instruction-selection phase. Peak memory is therefore
+        // O(whole program): every IR context + every compiled body lives at
+        // once. That does not scale to very large programs.
+        //
+        // Instead we process functions in bounded batches: lower a batch, emit
+        // it (parallel within the batch), define the bodies into the module,
+        // then drop the batch contexts before the next batch. Peak memory
+        // becomes O(batch_size) regardless of program size. Batch size is
+        // configurable via `LPP_CODEGEN_BATCH`; the default is chosen to keep
+        // per-batch IR + machine code modest while still amortising the
+        // per-batch thread-pool spin-up.
+        let batch = codegen_batch_size(refs.len());
         let arc_non_atomic = self.arc_non_atomic;
+        // Per-local escape facts are small and are consulted for every batch,
+        // so take a cheap clone once. This avoids holding an immutable borrow
+        // of `self.shared_locals` across the `&mut self` calls that define each
+        // batch's machine code back into the module.
         let shared_by_fn = std::mem::take(&mut self.shared_locals);
-        for mir_fn in &mir_fns {
-            if mir_fn.blocks.is_empty() {
+
+        for chunk in refs.chunks(batch) {
+            // Phase 1 (serial per batch): build Cranelift IR.
+            // IR construction must stay serial because it mutates the module:
+            // `declare_func_in_func` interns callee references and string
+            // literals are declared as new data objects on demand.
+            let mut pending: Vec<(cranelift_module::FuncId, cranelift_codegen::Context)> =
+                Vec::with_capacity(chunk.len());
+            for (_, mir_fn) in chunk {
+                if mir_fn.blocks.is_empty() {
+                    continue;
+                }
+                let mut lower = FunctionLower {
+                    module: &mut self.module,
+                    func_ids: &self.func_ids,
+                    builtin_ids: &mut self.builtin_ids,
+                    drop_ids: &self.drop_ids,
+                    task_thunk_ids: &self.task_thunk_ids,
+                    type_table,
+                    fn_name: mir_fn.name.clone(),
+                    next_str_idx: 0,
+                    arc_non_atomic,
+                    shared_locals: shared_by_fn.get(&mir_fn.id),
+                };
+                let (func_id, ctx) = lower.build_function_ir(mir_fn)?;
+                pending.push((func_id, ctx));
+            }
+            if pending.is_empty() {
                 continue;
             }
-            let mut lower = FunctionLower {
-                module: &mut self.module,
-                func_ids: &self.func_ids,
-                builtin_ids: &mut self.builtin_ids,
-                drop_ids: &self.drop_ids,
-                task_thunk_ids: &self.task_thunk_ids,
-                type_table,
-                fn_name: mir_fn.name.clone(),
-                next_str_idx: 0,
-                arc_non_atomic,
-                shared_locals: shared_by_fn.get(&mir_fn.id),
-            };
-            let (func_id, ctx) = lower.build_function_ir(mir_fn)?;
-            pending.push((func_id, ctx));
-        }
 
-        // Phase 2 (parallel): optimise + emit machine code.
-        //
-        // This is the expensive half — regalloc and instruction selection — and
-        // each function is independent, so it scales across cores. Defining the
-        // results back into the module (phase 3) stays serial and is cheap.
-        let threads = codegen_threads(pending.len());
-        if threads > 1 {
-            self.define_functions_parallel(pending, threads)
-        } else {
-            for (func_id, mut ctx) in pending {
-                self.module
-                    .define_function(func_id, &mut ctx)
-                    .map_err(|e| format!("define_function: {:?}", e))?;
+            // Phase 2 (parallel within the batch): optimise + emit machine code.
+            // This is the expensive half — regalloc and instruction selection —
+            // and each function is independent, so it scales across cores.
+            // Defining the results back into the module (phase 3) stays serial
+            // and is cheap.
+            let threads = codegen_threads(pending.len());
+            if threads > 1 {
+                self.define_functions_parallel(pending, threads)?;
+            } else {
+                for (func_id, mut ctx) in pending {
+                    self.module
+                        .define_function(func_id, &mut ctx)
+                        .map_err(|e| format!("define_function: {:?}", e))?;
+                }
             }
-            Ok(())
+            // `pending` (and each batch's contexts) drops here, bounding peak
+            // memory to roughly one batch of IR + machine code.
         }
+        Ok(())
     }
 
     /// Compile function bodies on a worker pool, then define them in order.
@@ -745,8 +819,20 @@ impl AotCompiler {
         has_extern: bool,
         weak_fields: &std::collections::HashSet<(StructTypeId, String)>,
     ) -> Result<Vec<u8>, String> {
+        Self::compile_with_options_target(program, type_table, has_extern, weak_fields, None)
+    }
+
+    /// Like [`compile_with_options`] but accepts an optional target triple so a
+    /// `--target` flag can select a non-host ISA (Android/Termux aarch64, etc).
+    pub fn compile_with_options_target(
+        program: &MirProgram,
+        type_table: &TypeTable,
+        has_extern: bool,
+        weak_fields: &std::collections::HashSet<(StructTypeId, String)>,
+        target: Option<&str>,
+    ) -> Result<Vec<u8>, String> {
         validate_aot_program(program, type_table)?;
-        let mut c = Self::new_for_host()?;
+        let mut c = Self::new_for_target(target)?;
         c.weak_fields = weak_fields.clone();
         c.arc_non_atomic =
             crate::mir::pass_arc_local::is_provably_single_threaded(program, has_extern);

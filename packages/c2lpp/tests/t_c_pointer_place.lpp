@@ -1,0 +1,48 @@
+import c_memory
+import c_layout
+import c_place
+
+
+def main():
+    memory := c_memory_new(8)
+    slots := c_calloc(memory, 3, 64)
+    target := c_calloc(memory, 4, 4)
+    c_store_u32(c_ptr_add(target, 0), 11)
+    c_store_u32(c_ptr_add(target, 1), 22)
+
+    slot0 := c_pointer_place_index(slots, 0, 3)
+    slot1 := c_pointer_place_index(slots, 1, 3)
+    slot2 := c_pointer_place_index(slots, 2, 3)
+
+    initial0 := c_pointer_place_load(slot0)
+    print(c_ptr_is_null(initial0))
+    c_pointer_place_store(slot0, target)
+    loaded0 := c_pointer_place_load(slot0)
+    print(c_ptr_is_null(loaded0))
+    print(loaded0.offset)
+    print(loaded0.element_size)
+    print(c_load_i32(loaded0))
+
+    target1 := c_ptr_add(target, 1)
+    c_pointer_place_store(slot1, target1)
+    loaded1 := c_pointer_place_load(slot1)
+    print(loaded1.offset)
+    print(c_load_i32(loaded1))
+
+    c_pointer_place_copy(slot2, slot0)
+    loaded2 := c_pointer_place_load(slot2)
+    print(loaded2.offset)
+    c_pointer_place_swap(slot0, slot1)
+    swapped0 := c_pointer_place_load(slot0)
+    swapped1 := c_pointer_place_load(slot1)
+    print(swapped0.offset)
+    print(swapped1.offset)
+    c_pointer_place_assign_null(slot1)
+    null1 := c_pointer_place_load(slot1)
+    print(c_ptr_is_null(null1))
+    print(c_pointer_place_is_same(slot0, slot0))
+    print(c_pointer_place_is_same(slot0, slot2))
+
+    c_free(target)
+    c_free(slots)
+    c_memory_destroy(memory)

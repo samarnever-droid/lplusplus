@@ -1219,7 +1219,7 @@ fn runtime_cache_dir() -> PathBuf {
 /// compiler name, so editing the runtime or switching compilers invalidates it
 /// automatically. Returns `None` when compilation fails, in which case the
 /// caller falls back to passing the `.c` file directly.
-fn cached_runtime_object(runtime_src: &Path, cc: &str) -> Option<PathBuf> {
+fn cached_runtime_object(runtime_src: &Path, cc: &str, target: Option<&str>) -> Option<PathBuf> {
     if std::env::var("LPP_NO_RUNTIME_CACHE").is_ok() {
         return None;
     }
@@ -1237,6 +1237,11 @@ fn cached_runtime_object(runtime_src: &Path, cc: &str) -> Option<PathBuf> {
     meta.len().hash(&mut hasher);
     mtime.hash(&mut hasher);
     cc.hash(&mut hasher);
+    // Cross targets produce different objects, so the target must be part of
+    // the cache key (Android vs host runtimes differ).
+    if let Some(t) = target {
+        t.hash(&mut hasher);
+    }
     let key = hasher.finish();
 
     let dir = runtime_cache_dir();
@@ -1258,6 +1263,7 @@ fn cached_runtime_object(runtime_src: &Path, cc: &str) -> Option<PathBuf> {
     ));
 
     let mut cmd = std::process::Command::new(cc);
+    let is_android = target.map_or(false, |t| t.contains("android"));
     if cfg!(windows) {
         cmd.arg("/nologo")
             .arg("/c")
@@ -1270,6 +1276,19 @@ fn cached_runtime_object(runtime_src: &Path, cc: &str) -> Option<PathBuf> {
             .arg(&tmp)
             .arg("-O2")
             .arg("-pthread");
+        // Pass `-target` only when cross-compiling (clang); GNU cc rejects it.
+        let is_cross = target.map_or(false, |t| {
+            use std::str::FromStr;
+            target_lexicon::Triple::from_str(t)
+                .map(|tt| tt.architecture.to_string() != host_triple_arch())
+                .unwrap_or(false)
+        });
+        if is_cross {
+            cmd.arg("-target").arg(target.unwrap());
+        }
+        if is_android {
+            cmd.arg("-DLPP_ANDROID");
+        }
     }
     let status = cmd.stdin(std::process::Stdio::null()).status().ok()?;
     if !status.success() {
@@ -1287,9 +1306,81 @@ fn cached_runtime_object(runtime_src: &Path, cc: &str) -> Option<PathBuf> {
     Some(cached)
 }
 
+fn host_triple_arch() -> String {
+    std::env::consts::ARCH.to_string()
+}
+
 pub fn host_link_binary(obj_file: &Path, output_path: &Path, link_libs: &[String]) -> Result<(), String> {
-    let cc = if cfg!(windows) { "cl.exe" } else { "cc" };
-    let mut cmd = std::process::Command::new(cc);
+    host_link_binary_target(obj_file, output_path, link_libs, None)
+}
+
+/// Host-link an object file, optionally for a cross target.
+///
+/// `target` is a `--target` triple (e.g. `aarch64-linux-android`). When set, a
+/// `-target <triple>` flag is passed to the C compiler/linker so clang can
+/// cross-link for Android/Termux if a suitable cross toolchain is installed.
+/// On Android the `log` library is also linked.
+/// Resolve the C compiler to use for an Android cross-link.
+///
+/// Prefers the Android NDK clang when `ANDROID_NDK_HOME` / `ANDROID_NDK_ROOT` is
+/// set (searching the common NDK toolchain layout). Otherwise falls back to the
+/// host `cc` — which is the right choice on Termux, where `cc` is already an
+/// aarch64 clang. Honors `LPP_CC` / `ANDROID_CC` overrides.
+fn android_cc() -> String {
+    if let Ok(v) = std::env::var("ANDROID_CC") {
+        if !v.is_empty() {
+            return v;
+        }
+    }
+    if let Ok(v) = std::env::var("LPP_CC") {
+        if !v.is_empty() {
+            return v;
+        }
+    }
+    if let Ok(ndk) = std::env::var("ANDROID_NDK_HOME")
+        .or_else(|_| std::env::var("ANDROID_NDK_ROOT"))
+    {
+        let candidates = [
+            format!("{}/toolchains/llvm/prebuilt/linux-x86_64/bin/clang", ndk),
+            format!("{}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android-clang", ndk),
+            format!("{}/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang", ndk),
+        ];
+        for c in &candidates {
+            if std::path::Path::new(c).exists() {
+                return c.clone();
+            }
+        }
+    }
+    "cc".to_string()
+}
+
+pub fn host_link_binary_target(
+    obj_file: &Path,
+    output_path: &Path,
+    link_libs: &[String],
+    target: Option<&str>,
+) -> Result<(), String> {
+    let is_android = target.map_or(false, |t| t.contains("android"));
+    let cc = if is_android {
+        android_cc()
+    } else if cfg!(windows) {
+        "cl.exe".to_string()
+    } else {
+        "cc".to_string()
+    };
+    let mut cmd = std::process::Command::new(&cc);
+    // Pass `-target` only when cross-compiling (host arch != target arch).
+    // GNU cc rejects `-target`; clang accepts it. For a same-arch host target
+    // we skip it so plain `cc` keeps working.
+    let is_cross = target.map_or(false, |t| {
+        use std::str::FromStr;
+        target_lexicon::Triple::from_str(t)
+            .map(|tt| tt.architecture.to_string() != host_triple_arch())
+            .unwrap_or(false)
+    });
+    if is_cross {
+        cmd.arg("-target").arg(target.unwrap());
+    }
     if cfg!(windows) {
         cmd.arg("/nologo")
             .arg(obj_file);
@@ -1297,7 +1388,7 @@ pub fn host_link_binary(obj_file: &Path, output_path: &Path, link_libs: &[String
             cmd.arg(format!("{}.lib", lib));
         }
         if let Some(runtime_src_path) = resolve_runtime_source() {
-            match cached_runtime_object(&runtime_src_path, cc) {
+            match cached_runtime_object(&runtime_src_path, &cc, target) {
                 Some(obj) => cmd.arg(obj),
                 None => cmd.arg(&runtime_src_path),
             };
@@ -1312,12 +1403,15 @@ pub fn host_link_binary(obj_file: &Path, output_path: &Path, link_libs: &[String
             cmd.arg(format!("-l{}", lib));
         }
         if let Some(runtime_src_path) = resolve_runtime_source() {
-            match cached_runtime_object(&runtime_src_path, cc) {
+            match cached_runtime_object(&runtime_src_path, &cc, target) {
                 Some(obj) => cmd.arg(obj),
                 None => cmd.arg(&runtime_src_path),
             };
         }
         cmd.arg("-lm"); // runtime math references must precede the library
+        if is_android {
+            cmd.arg("-llog"); // Android logging (bionic)
+        }
     }
     let status = cmd
         .stdin(std::process::Stdio::null())

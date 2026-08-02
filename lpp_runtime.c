@@ -158,7 +158,15 @@ void lpp_print_bool(int8_t value) {
 }
 
 void lpp_print_str(const char *ptr) {
-    if (ptr) { puts(ptr); fflush(stdout); }
+    if (!ptr) return;
+#ifdef LPP_ANDROID
+    /* Android build (no console): route to logcat so output is visible. */
+    __android_log_print(ANDROID_LOG_INFO, "L++", "%s", ptr);
+#else
+    /* Host / Termux (console + full libc): normal stdout. */
+    puts(ptr);
+    fflush(stdout);
+#endif
 }
 
 /* Read one line from stdin (strips trailing newline).

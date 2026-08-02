@@ -1,0 +1,294 @@
+# mem.lpp — low-level memory primitives for lppsqlite.
+#
+# The L++ v4.3.0 compiler cannot safely store lists inside lists, cannot store
+# structs in lists, and crashes if a list created inside a function is returned
+# as an Int handle (ARC releases it at frame exit). Buffers, however, are plain
+# calloc'd memory with an 8-byte length prefix and survive being returned.
+#
+# Therefore every dynamic data structure in this engine is built on buffers.
+#
+# A "vec" is a growable byte array addressed through a stable 24-byte handle:
+#     handle[0..8)   data pointer
+#     handle[8..16)  length in bytes
+#     handle[16..24) capacity in bytes
+# Growth reallocates the data block and rewrites the pointer *inside the
+# handle*, so the handle value stays valid across calls and across growth.
+
+# ───────────────────────── 64-bit accessors ─────────────────────────
+# buf_get32le zero-extends, so composing two halves yields the exact i64.
+
+def bset64(b: Int, off: Int, v: Int):
+    buf_set32le(b, off, v & 4294967295)
+    buf_set32le(b, off + 4, (v >> 32) & 4294967295)
+
+def bget64(b: Int, off: Int) -> Int:
+    lo := buf_get32le(b, off)
+    hi := buf_get32le(b, off + 4)
+    return lo | (hi << 32)
+
+# ───────────────────────── big-endian helpers ─────────────────────────
+# The SQLite file format is big-endian everywhere.
+
+def be_put16(b: Int, off: Int, v: Int):
+    buf_set8(b, off, (v >> 8) & 255)
+    buf_set8(b, off + 1, v & 255)
+
+def be_get16(b: Int, off: Int) -> Int:
+    hi := buf_get8(b, off)
+    lo := buf_get8(b, off + 1)
+    return (hi << 8) | lo
+
+def be_put24(b: Int, off: Int, v: Int):
+    buf_set8(b, off, (v >> 16) & 255)
+    buf_set8(b, off + 1, (v >> 8) & 255)
+    buf_set8(b, off + 2, v & 255)
+
+def be_get24(b: Int, off: Int) -> Int:
+    a := buf_get8(b, off)
+    c := buf_get8(b, off + 1)
+    d := buf_get8(b, off + 2)
+    return (a << 16) | (c << 8) | d
+
+def be_put32(b: Int, off: Int, v: Int):
+    buf_set8(b, off, (v >> 24) & 255)
+    buf_set8(b, off + 1, (v >> 16) & 255)
+    buf_set8(b, off + 2, (v >> 8) & 255)
+    buf_set8(b, off + 3, v & 255)
+
+def be_get32(b: Int, off: Int) -> Int:
+    a := buf_get8(b, off)
+    c := buf_get8(b, off + 1)
+    d := buf_get8(b, off + 2)
+    e := buf_get8(b, off + 3)
+    return (a << 24) | (c << 16) | (d << 8) | e
+
+def be_put48(b: Int, off: Int, v: Int):
+    buf_set8(b, off, (v >> 40) & 255)
+    buf_set8(b, off + 1, (v >> 32) & 255)
+    buf_set8(b, off + 2, (v >> 24) & 255)
+    buf_set8(b, off + 3, (v >> 16) & 255)
+    buf_set8(b, off + 4, (v >> 8) & 255)
+    buf_set8(b, off + 5, v & 255)
+
+def be_get48(b: Int, off: Int) -> Int:
+    mut r := 0
+    mut i := 0
+    while i < 6:
+        r = (r << 8) | buf_get8(b, off + i)
+        i = i + 1
+    return r
+
+def be_put64(b: Int, off: Int, v: Int):
+    buf_set8(b, off, (v >> 56) & 255)
+    buf_set8(b, off + 1, (v >> 48) & 255)
+    buf_set8(b, off + 2, (v >> 40) & 255)
+    buf_set8(b, off + 3, (v >> 32) & 255)
+    buf_set8(b, off + 4, (v >> 24) & 255)
+    buf_set8(b, off + 5, (v >> 16) & 255)
+    buf_set8(b, off + 6, (v >> 8) & 255)
+    buf_set8(b, off + 7, v & 255)
+
+def be_get64(b: Int, off: Int) -> Int:
+    mut r := 0
+    mut i := 0
+    while i < 8:
+        r = (r << 8) | buf_get8(b, off + i)
+        i = i + 1
+    return r
+
+# Logical (unsigned) right shift. L++ `>>` is arithmetic, so negative values
+# sign-extend; varint and IEEE-754 code needs the zero-filling variant.
+def ushr(v: Int, n: Int) -> Int:
+    if n <= 0:
+        return v
+    if n >= 64:
+        return 0
+    if v >= 0:
+        return v >> n
+    return ((v >> 1) & 9223372036854775807) >> (n - 1)
+
+# Sign-extend an n-byte two's-complement value that was read as unsigned.
+def sign_extend(v: Int, nbytes: Int) -> Int:
+    bits := nbytes * 8
+    if bits >= 64:
+        return v
+    half := 1 << (bits - 1)
+    if v >= half:
+        return v - (1 << bits)
+    return v
+
+# ───────────────────────── growable byte vector ─────────────────────────
+
+def vec_new(cap0: Int) -> Int:
+    mut c := cap0
+    if c < 16:
+        c = 16
+    h := buf_alloc(24)
+    d := buf_alloc(c)
+    bset64(h, 0, d)
+    bset64(h, 8, 0)
+    bset64(h, 16, c)
+    return h
+
+def vec_data(h: Int) -> Int:
+    return bget64(h, 0)
+
+def vec_len(h: Int) -> Int:
+    return bget64(h, 8)
+
+def vec_cap(h: Int) -> Int:
+    return bget64(h, 16)
+
+def vec_set_len(h: Int, n: Int):
+    bset64(h, 8, n)
+
+def vec_free(h: Int):
+    d := vec_data(h)
+    if d != 0:
+        buf_free(d)
+    bset64(h, 0, 0)
+    buf_free(h)
+
+def vec_clear(h: Int):
+    bset64(h, 8, 0)
+
+# Ensure room for `need` more bytes beyond the current length.
+def vec_reserve(h: Int, need: Int):
+    cap := vec_cap(h)
+    ln := vec_len(h)
+    want := ln + need
+    if want <= cap:
+        return
+    mut nc := cap
+    if nc < 16:
+        nc = 16
+    while nc < want:
+        nc = nc * 2
+    nd := buf_alloc(nc)
+    od := vec_data(h)
+    if ln > 0:
+        buf_copy(nd, 0, od, 0, ln)
+    buf_free(od)
+    bset64(h, 0, nd)
+    bset64(h, 16, nc)
+
+def vec_push_u8(h: Int, v: Int):
+    vec_reserve(h, 1)
+    d := vec_data(h)
+    n := vec_len(h)
+    buf_set8(d, n, v & 255)
+    vec_set_len(h, n + 1)
+
+def vec_push_bytes(h: Int, src: Int, soff: Int, n: Int):
+    if n <= 0:
+        return
+    vec_reserve(h, n)
+    d := vec_data(h)
+    ln := vec_len(h)
+    buf_copy(d, ln, src, soff, n)
+    vec_set_len(h, ln + n)
+
+def vec_push_str(h: Int, s: Str):
+    n := str_len(s)
+    if n <= 0:
+        return
+    vec_reserve(h, n)
+    d := vec_data(h)
+    ln := vec_len(h)
+    buf_write_str(d, ln, s)
+    vec_set_len(h, ln + n)
+
+def vec_get_u8(h: Int, i: Int) -> Int:
+    return buf_get8(vec_data(h), i)
+
+def vec_set_u8(h: Int, i: Int, v: Int):
+    buf_set8(vec_data(h), i, v & 255)
+
+# Read `n` bytes at `off` back out as a Str (stops at an embedded NUL).
+def vec_str(h: Int, off: Int, n: Int) -> Str:
+    return buf_read_str(vec_data(h), off, n)
+
+# Grow the vector to exactly n bytes, zero-filling any new space.
+def vec_resize_zero(h: Int, n: Int):
+    ln := vec_len(h)
+    if n <= ln:
+        vec_set_len(h, n)
+        return
+    vec_reserve(h, n - ln)
+    d := vec_data(h)
+    mut i := ln
+    while i < n:
+        buf_set8(d, i, 0)
+        i = i + 1
+    vec_set_len(h, n)
+
+# ───────────────────────── growable i64 vector ─────────────────────────
+# Same handle layout; length and capacity are counted in *elements*.
+
+def iv_new(cap0: Int) -> Int:
+    mut c := cap0
+    if c < 8:
+        c = 8
+    h := buf_alloc(24)
+    d := buf_alloc(c * 8)
+    bset64(h, 0, d)
+    bset64(h, 8, 0)
+    bset64(h, 16, c)
+    return h
+
+def iv_data(h: Int) -> Int:
+    return bget64(h, 0)
+
+def iv_len(h: Int) -> Int:
+    return bget64(h, 8)
+
+def iv_cap(h: Int) -> Int:
+    return bget64(h, 16)
+
+def iv_free(h: Int):
+    d := iv_data(h)
+    if d != 0:
+        buf_free(d)
+    bset64(h, 0, 0)
+    buf_free(h)
+
+def iv_clear(h: Int):
+    bset64(h, 8, 0)
+
+def iv_push(h: Int, v: Int):
+    n := iv_len(h)
+    cap := iv_cap(h)
+    if n >= cap:
+        mut nc := cap * 2
+        if nc < 8:
+            nc = 8
+        nd := buf_alloc(nc * 8)
+        od := iv_data(h)
+        if n > 0:
+            buf_copy(nd, 0, od, 0, n * 8)
+        buf_free(od)
+        bset64(h, 0, nd)
+        bset64(h, 16, nc)
+    d := iv_data(h)
+    bset64(d, n * 8, v)
+    bset64(h, 8, n + 1)
+
+def iv_get(h: Int, i: Int) -> Int:
+    return bget64(iv_data(h), i * 8)
+
+def iv_set(h: Int, i: Int, v: Int):
+    bset64(iv_data(h), i * 8, v)
+
+def iv_pop(h: Int) -> Int:
+    n := iv_len(h)
+    if n <= 0:
+        return 0
+    v := iv_get(h, n - 1)
+    bset64(h, 8, n - 1)
+    return v
+
+def iv_last(h: Int) -> Int:
+    n := iv_len(h)
+    if n <= 0:
+        return 0
+    return iv_get(h, n - 1)

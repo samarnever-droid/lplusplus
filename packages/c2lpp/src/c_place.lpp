@@ -1,0 +1,414 @@
+# c_place.lpp — flattened typed lvalue/place semantics over checked C memory.
+#
+# CPlace deliberately flattens CPtr provenance fields instead of owning a nested
+# managed CPtr. This avoids ARC ambiguity for temporary subobject pointers while
+# retaining allocation identity, bounds, generation and mutability checks.
+
+import c_memory
+import c_layout
+
+struct CPlace:
+    memory: Int
+    allocation: Int
+    offset: Int
+    lower_bound: Int
+    upper_bound: Int
+    generation: Int
+    mutable_flag: Int
+    element_size: Int
+    storage_size: Int
+    signed_flag: Int
+    bit_offset: Int
+    bit_width: Int
+
+
+struct CPointerPlace:
+    memory: Int
+    allocation: Int
+    offset: Int
+    lower_bound: Int
+    upper_bound: Int
+    generation: Int
+    mutable_flag: Int
+
+struct CAbiPointerPlace:
+    memory: Int
+    allocation: Int
+    offset: Int
+    lower_bound: Int
+    upper_bound: Int
+    generation: Int
+    mutable_flag: Int
+
+
+def c_abi_pointer_place_at(base: CPtr, relative_offset: Int) -> CAbiPointerPlace:
+    c_mem_check_relative(base, relative_offset, 8, false)
+    absolute := base.offset + relative_offset
+    return CAbiPointerPlace(base.memory, base.allocation, absolute, absolute, absolute + 8, base.generation, base.mutable_flag)
+
+
+def c_abi_pointer_place_owner(place: CAbiPointerPlace) -> CPtr:
+    return CPtr(place.memory, place.allocation, place.offset, place.lower_bound, place.upper_bound, place.generation, place.mutable_flag, 8)
+
+
+def c_abi_pointer_place_store(place: CAbiPointerPlace, pointer: CPtr) -> Void:
+    c_mem_abi_pointer_store(c_abi_pointer_place_owner(place), 0, pointer)
+
+
+def c_abi_pointer_place_load(place: CAbiPointerPlace) -> CPtr:
+    return c_mem_abi_pointer_load(c_abi_pointer_place_owner(place), 0)
+
+
+def c_abi_pointer_place_assign_null(place: CAbiPointerPlace) -> Void:
+    c_abi_pointer_place_store(place, c_ptr_null())
+
+
+def c_abi_pointer_place_copy(destination: CAbiPointerPlace, source: CAbiPointerPlace) -> Void:
+    c_abi_pointer_place_store(destination, c_abi_pointer_place_load(source))
+
+
+def c_abi_pointer_place_is_same(left: CAbiPointerPlace, right: CAbiPointerPlace) -> Bool:
+    return left.memory == right.memory && left.allocation == right.allocation && left.offset == right.offset
+
+
+def c_pointer_place_at(base: CPtr, relative_offset: Int) -> CPointerPlace:
+    c_mem_check_relative(base, relative_offset, 64, false)
+    absolute := base.offset + relative_offset
+    return CPointerPlace(base.memory, base.allocation, absolute, absolute, absolute + 64, base.generation, base.mutable_flag)
+
+
+def c_pointer_place_index(base: CPtr, index: Int, count: Int) -> CPointerPlace:
+    if index < 0 || index >= count:
+        c_mem_panic("C2-POINTER-PLACE-INDEX-OUT-OF-BOUNDS")
+    offset := index * 64
+    if index != 0 && offset / 64 != index:
+        c_mem_panic("C2-POINTER-PLACE-INDEX-OVERFLOW")
+    return c_pointer_place_at(base, offset)
+
+
+def c_pointer_place_check(place: CPointerPlace, write_flag: Bool) -> Int:
+    if place.memory == 0 || place.allocation == 0:
+        c_mem_panic("C2-POINTER-PLACE-NULL-SLOT")
+    descriptor := c_mem_descriptor(place.memory, place.allocation)
+    if c_mem_descriptor_alive(descriptor) == 0:
+        c_mem_panic("C2-POINTER-PLACE-SLOT-USE-AFTER-FREE")
+    if place.generation != 1:
+        c_mem_panic("C2-POINTER-PLACE-SLOT-STALE")
+    allocation_size := c_mem_descriptor_size(descriptor)
+    if place.offset < place.lower_bound || place.upper_bound > allocation_size || 64 > place.upper_bound - place.offset:
+        c_mem_panic("C2-POINTER-PLACE-SLOT-OUT-OF-BOUNDS")
+    if write_flag && place.mutable_flag == 0:
+        c_mem_panic("C2-MEM-WRITE-READONLY")
+    return c_mem_descriptor_data(descriptor)
+
+
+def c_pointer_place_store(place: CPointerPlace, pointer: CPtr) -> Void:
+    data := c_pointer_place_check(place, true)
+    if c_ptr_is_null(pointer):
+        mut i := 0
+        while i < 64:
+            buf_set8(data, place.offset + i, 0)
+            i = i + 1
+        return
+    c_mem_check(pointer, 0, false)
+    c_mem_set64(data, place.offset, pointer.memory)
+    c_mem_set64(data, place.offset + 8, pointer.allocation)
+    c_mem_set64(data, place.offset + 16, pointer.offset)
+    c_mem_set64(data, place.offset + 24, pointer.lower_bound)
+    c_mem_set64(data, place.offset + 32, pointer.upper_bound)
+    c_mem_set64(data, place.offset + 40, pointer.generation)
+    c_mem_set64(data, place.offset + 48, pointer.mutable_flag)
+    c_mem_set64(data, place.offset + 56, pointer.element_size)
+
+
+def c_pointer_place_load(place: CPointerPlace) -> CPtr:
+    data := c_pointer_place_check(place, false)
+    memory := c_mem_get64(data, place.offset)
+    allocation := c_mem_get64(data, place.offset + 8)
+    if memory == 0 && allocation == 0:
+        return c_ptr_null()
+    pointer := CPtr(memory, allocation, c_mem_get64(data, place.offset + 16), c_mem_get64(data, place.offset + 24), c_mem_get64(data, place.offset + 32), c_mem_get64(data, place.offset + 40), c_mem_get64(data, place.offset + 48), c_mem_get64(data, place.offset + 56))
+    c_mem_check(pointer, 0, false)
+    return pointer
+
+
+def c_pointer_place_assign_null(place: CPointerPlace) -> Void:
+    null_pointer := c_ptr_null()
+    c_pointer_place_store(place, null_pointer)
+
+
+def c_pointer_place_copy(destination: CPointerPlace, source: CPointerPlace) -> Void:
+    pointer := c_pointer_place_load(source)
+    c_pointer_place_store(destination, pointer)
+
+
+def c_pointer_place_swap(left: CPointerPlace, right: CPointerPlace) -> Void:
+    left_pointer := c_pointer_place_load(left)
+    right_pointer := c_pointer_place_load(right)
+    c_pointer_place_store(left, right_pointer)
+    c_pointer_place_store(right, left_pointer)
+
+
+def c_pointer_place_is_same(left: CPointerPlace, right: CPointerPlace) -> Bool:
+    return left.memory == right.memory && left.allocation == right.allocation && left.offset == right.offset
+
+
+def c_place_validate_size(storage_size: Int) -> Void:
+    if storage_size != 1 && storage_size != 2 && storage_size != 4 && storage_size != 8:
+        c_mem_panic("C2-PLACE-SCALAR-SIZE")
+
+
+def c_place_from_parts(base: CPtr, relative_offset: Int, storage_size: Int, signed_flag: Int, bit_offset: Int, bit_width: Int) -> CPlace:
+    c_place_validate_size(storage_size)
+    if relative_offset < 0:
+        c_mem_panic("C2-PLACE-NEGATIVE-OFFSET")
+    c_mem_check_relative(base, relative_offset, storage_size, false)
+    absolute := base.offset + relative_offset
+    return CPlace(base.memory, base.allocation, absolute, absolute, absolute + storage_size, base.generation, base.mutable_flag, storage_size, storage_size, signed_flag, bit_offset, bit_width)
+
+
+def c_place_scalar(pointer: CPtr, storage_size: Int, signed_flag: Int) -> CPlace:
+    return c_place_from_parts(pointer, 0, storage_size, signed_flag, -1, -1)
+
+
+def c_place_at(base: CPtr, relative_offset: Int, storage_size: Int, signed_flag: Int) -> CPlace:
+    return c_place_from_parts(base, relative_offset, storage_size, signed_flag, -1, -1)
+
+
+def c_place_index(base: CPtr, index: Int, count: Int, element_size: Int, signed_flag: Int) -> CPlace:
+    if index < 0 || index >= count:
+        c_mem_panic("C2-PLACE-INDEX-OUT-OF-BOUNDS")
+    if element_size <= 0:
+        c_mem_panic("C2-PLACE-ELEMENT-SIZE")
+    offset := index * element_size
+    if index != 0 && offset / element_size != index:
+        c_mem_panic("C2-PLACE-INDEX-OVERFLOW")
+    return c_place_from_parts(base, offset, element_size, signed_flag, -1, -1)
+
+
+def c_place_field(base: CPtr, field: CFieldLayout) -> CPlace:
+    return c_place_from_parts(base, field.byte_offset, field.storage_size, field.signed_flag, field.bit_offset, field.bit_width)
+
+
+def c_place_nested(base: CPtr, outer: CFieldLayout, inner: CFieldLayout) -> CPlace:
+    relative := outer.byte_offset + inner.byte_offset
+    if inner.byte_offset < 0 || inner.storage_size > outer.storage_size - inner.byte_offset:
+        c_mem_panic("C2-PLACE-NESTED-FIELD-BOUNDS")
+    return c_place_from_parts(base, relative, inner.storage_size, inner.signed_flag, inner.bit_offset, inner.bit_width)
+
+
+def c_place_address(place: CPlace) -> CPtr:
+    return CPtr(place.memory, place.allocation, place.offset, place.lower_bound, place.upper_bound, place.generation, place.mutable_flag, place.element_size)
+
+
+def c_place_dereference(pointer: CPtr, storage_size: Int, signed_flag: Int) -> CPlace:
+    return c_place_from_parts(pointer, 0, storage_size, signed_flag, -1, -1)
+
+
+def c_place_check(place: CPlace, write_flag: Bool) -> Int:
+    if place.memory == 0 || place.allocation == 0:
+        c_mem_panic("C2-PLACE-NULL")
+    descriptor := c_mem_descriptor(place.memory, place.allocation)
+    if c_mem_descriptor_alive(descriptor) == 0:
+        c_mem_panic("C2-PLACE-USE-AFTER-FREE")
+    if place.generation != 1:
+        c_mem_panic("C2-PLACE-STALE-GENERATION")
+    allocation_size := c_mem_descriptor_size(descriptor)
+    if place.lower_bound < 0 || place.upper_bound < place.lower_bound || place.upper_bound > allocation_size:
+        c_mem_panic("C2-PLACE-BAD-PROVENANCE")
+    if place.offset < place.lower_bound || place.storage_size > place.upper_bound - place.offset:
+        c_mem_panic("C2-PLACE-OUT-OF-BOUNDS")
+    if write_flag && place.mutable_flag == 0:
+        c_mem_panic("C2-MEM-WRITE-READONLY")
+    data := c_mem_descriptor_data(descriptor)
+    if data == 0:
+        c_mem_panic("C2-PLACE-MISSING-DATA")
+    return data
+
+
+def c_place_load_unsigned(place: CPlace) -> Int:
+    data := c_place_check(place, false)
+    if place.storage_size == 1:
+        return buf_get8(data, place.offset)
+    if place.storage_size == 2:
+        return buf_get8(data, place.offset) | (buf_get8(data, place.offset + 1) << 8)
+    if place.storage_size == 4:
+        return buf_get32le(data, place.offset)
+    return c_mem_get64(data, place.offset)
+
+
+def c_place_store_unsigned(place: CPlace, value: Int) -> Void:
+    data := c_place_check(place, true)
+    c_mem_side_invalidate_range(CMemory(place.memory), place.allocation, place.offset, place.storage_size)
+    if place.storage_size == 1:
+        buf_set8(data, place.offset, value & 255)
+    elif place.storage_size == 2:
+        buf_set8(data, place.offset, value & 255)
+        buf_set8(data, place.offset + 1, (value >> 8) & 255)
+    elif place.storage_size == 4:
+        buf_set32le(data, place.offset, value & 4294967295)
+    else:
+        c_mem_set64(data, place.offset, value)
+
+
+def c_place_mask(width: Int) -> Int:
+    if width <= 0 || width > 32:
+        c_mem_panic("C2-PLACE-BITFIELD-WIDTH")
+    if width == 32:
+        return 4294967295
+    return (1 << width) - 1
+
+
+def c_place_load_int(place: CPlace) -> Int:
+    storage := c_place_load_unsigned(place)
+    if place.bit_width >= 0:
+        mask := c_place_mask(place.bit_width)
+        mut value := (storage >> place.bit_offset) & mask
+        if place.signed_flag != 0:
+            sign := 1 << (place.bit_width - 1)
+            if (value & sign) != 0:
+                value = value - (1 << place.bit_width)
+        return value
+    if place.signed_flag != 0:
+        if place.storage_size == 1 && storage >= 128:
+            return storage - 256
+        if place.storage_size == 2 && storage >= 32768:
+            return storage - 65536
+        if place.storage_size == 4 && storage >= 2147483648:
+            return storage - 4294967296
+    return storage
+
+
+def c_place_store_int(place: CPlace, value: Int) -> Void:
+    if place.bit_width >= 0:
+        storage := c_place_load_unsigned(place)
+        mask := c_place_mask(place.bit_width)
+        shifted := mask << place.bit_offset
+        replacement := (storage & (-1 ^ shifted)) | ((value & mask) << place.bit_offset)
+        c_place_store_unsigned(place, replacement)
+    else:
+        c_place_store_unsigned(place, value)
+
+
+def c_place_assign(place: CPlace, value: Int) -> Int:
+    c_place_store_int(place, value)
+    return value
+
+
+def c_place_add_assign(place: CPlace, value: Int) -> Int:
+    result := c_place_load_int(place) + value
+    c_place_store_int(place, result)
+    return result
+
+
+def c_place_sub_assign(place: CPlace, value: Int) -> Int:
+    result := c_place_load_int(place) - value
+    c_place_store_int(place, result)
+    return result
+
+
+def c_place_mul_assign(place: CPlace, value: Int) -> Int:
+    result := c_place_load_int(place) * value
+    c_place_store_int(place, result)
+    return result
+
+
+def c_place_div_assign(place: CPlace, value: Int) -> Int:
+    if value == 0:
+        c_mem_panic("C2-PLACE-DIVIDE-BY-ZERO")
+    result := c_place_load_int(place) / value
+    c_place_store_int(place, result)
+    return result
+
+
+def c_place_mod_assign(place: CPlace, value: Int) -> Int:
+    if value == 0:
+        c_mem_panic("C2-PLACE-MODULO-BY-ZERO")
+    result := c_place_load_int(place) % value
+    c_place_store_int(place, result)
+    return result
+
+
+def c_place_and_assign(place: CPlace, value: Int) -> Int:
+    result := c_place_load_int(place) & value
+    c_place_store_int(place, result)
+    return result
+
+
+def c_place_or_assign(place: CPlace, value: Int) -> Int:
+    result := c_place_load_int(place) | value
+    c_place_store_int(place, result)
+    return result
+
+
+def c_place_xor_assign(place: CPlace, value: Int) -> Int:
+    result := c_place_load_int(place) ^ value
+    c_place_store_int(place, result)
+    return result
+
+
+def c_place_shift_left_assign(place: CPlace, value: Int) -> Int:
+    if value < 0 || value >= 64:
+        c_mem_panic("C2-PLACE-SHIFT-RANGE")
+    result := c_place_load_int(place) << value
+    c_place_store_int(place, result)
+    return result
+
+
+def c_place_shift_right_assign(place: CPlace, value: Int) -> Int:
+    if value < 0 || value >= 64:
+        c_mem_panic("C2-PLACE-SHIFT-RANGE")
+    result := c_place_load_int(place) >> value
+    c_place_store_int(place, result)
+    return result
+
+
+def c_place_pre_increment(place: CPlace) -> Int:
+    return c_place_add_assign(place, 1)
+
+
+def c_place_post_increment(place: CPlace) -> Int:
+    old := c_place_load_int(place)
+    c_place_store_int(place, old + 1)
+    return old
+
+
+def c_place_pre_decrement(place: CPlace) -> Int:
+    return c_place_sub_assign(place, 1)
+
+
+def c_place_post_decrement(place: CPlace) -> Int:
+    old := c_place_load_int(place)
+    c_place_store_int(place, old - 1)
+    return old
+
+
+def c_place_swap(left: CPlace, right: CPlace) -> Void:
+    old_left := c_place_load_int(left)
+    old_right := c_place_load_int(right)
+    c_place_store_int(left, old_right)
+    c_place_store_int(right, old_left)
+
+
+def c_place_copy(destination: CPlace, source: CPlace) -> Void:
+    if destination.storage_size != source.storage_size:
+        c_mem_panic("C2-PLACE-COPY-SIZE")
+    if destination.bit_width >= 0 || source.bit_width >= 0:
+        c_place_store_int(destination, c_place_load_int(source))
+        return
+    destination_data := c_place_check(destination, true)
+    source_data := c_place_check(source, false)
+    if destination.memory == source.memory && destination.allocation == source.allocation && destination.offset > source.offset && destination.offset < source.offset + source.storage_size:
+        mut i := destination.storage_size
+        while i > 0:
+            i = i - 1
+            buf_set8(destination_data, destination.offset + i, buf_get8(source_data, source.offset + i))
+    else:
+        mut i := 0
+        while i < destination.storage_size:
+            buf_set8(destination_data, destination.offset + i, buf_get8(source_data, source.offset + i))
+            i = i + 1
+
+
+def c_place_is_same(left: CPlace, right: CPlace) -> Bool:
+    return left.memory == right.memory && left.allocation == right.allocation && left.offset == right.offset && left.storage_size == right.storage_size && left.bit_offset == right.bit_offset && left.bit_width == right.bit_width

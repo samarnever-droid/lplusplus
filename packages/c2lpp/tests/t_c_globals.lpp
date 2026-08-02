@@ -1,0 +1,29 @@
+import c_memory
+import c_globals
+
+def add_to_total(globals: CGlobalRegion, value: Int) -> Int:
+    total_ptr := c_globals_pointer(globals, 4, 4, 4)
+    next := c_load_i32(total_ptr) + value
+    c_store_u32(total_ptr, next)
+    counter_ptr := c_globals_pointer(globals, 8, 4, 4)
+    c_store_u32(counter_ptr, c_load_i32(counter_ptr) + 1)
+    return next
+
+
+def main():
+    globals := c_globals_new(12)
+    c_globals_begin_initialization(globals)
+    base_init := c_globals_initializer_pointer(globals, 0, 4, 4)
+    total_init := c_globals_initializer_pointer(globals, 4, 4, 4)
+    counter_init := c_globals_initializer_pointer(globals, 8, 4, 4)
+    c_store_u32(base_init, 7)
+    c_store_u32(total_init, c_load_i32(base_init) * 3)
+    print(c_load_i32(counter_init))
+    c_globals_finish_initialization(globals)
+
+    print(c_load_i32(c_globals_pointer(globals, 0, 4, 4)))
+    print(c_load_i32(c_globals_pointer(globals, 4, 4, 4)))
+    print(add_to_total(globals, 5))
+    print(add_to_total(globals, -2))
+    print(c_load_i32(c_globals_pointer(globals, 8, 4, 4)))
+    c_globals_destroy(globals)

@@ -1,0 +1,393 @@
+# c_config.lpp — strict versioned JSON project configuration.
+#
+# L++ currently has no portable argv in all supported runtime paths, so c2lpp
+# reads `c2lpp.json` from the working directory. No conversion setting is read
+# from process environment variables. The parser is pure L++, rejects unknown
+# or duplicate keys, and validates JSON value types before execution.
+
+import text
+
+const C_JSON_STRING = 1
+const C_JSON_BOOL = 2
+const C_JSON_INT = 3
+
+struct CJsonValue:
+    kind: Int
+    string_value: Str
+    int_value: Int
+    bool_value: Bool
+    next: Int
+    valid: Int
+    error: Str
+
+struct CJsonString:
+    value: Str
+    next: Int
+    valid: Int
+    error: Str
+
+struct C2Config:
+    schema: Str
+    schema_version: Int
+    mode: Str
+    input: Str
+    manifest: Str
+    name: Str
+    library: Str
+    output: Str
+    strict: Bool
+    preprocess: Bool
+    compiler: Str
+    source_version: Str
+    source_sha256: Str
+    valid: Int
+    error: Str
+    normalized: Str
+
+
+def c_config_default() -> C2Config:
+    return C2Config("", 0, "", "", "", "clib", "", "", false, true, "cc", "", "", 0, "", "")
+
+
+def c_json_skip_ws(source: Str, offset: Int) -> Int:
+    mut i := offset
+    while i < str_len(source):
+        code := ord(char_at(source, i))
+        if code == 9 || code == 10 || code == 13 || code == 32:
+            i = i + 1
+        else:
+            return i
+    return i
+
+
+def c_json_hex_value(code: Int) -> Int:
+    if code >= 48 && code <= 57:
+        return code - 48
+    if code >= 65 && code <= 70:
+        return code - 55
+    if code >= 97 && code <= 102:
+        return code - 87
+    return -1
+
+
+def c_json_parse_string(source: Str, offset: Int) -> CJsonString:
+    start := c_json_skip_ws(source, offset)
+    if start >= str_len(source) || !text_eq(char_at(source, start), "\""):
+        return CJsonString("", start, 0, "C2-CONFIG-EXPECTED-STRING")
+    mut out := ""
+    mut i := start + 1
+    while i < str_len(source):
+        ch := char_at(source, i)
+        code := ord(ch)
+        if text_eq(ch, "\""):
+            return CJsonString(out, i + 1, 1, "")
+        if code < 32:
+            return CJsonString("", i, 0, "C2-CONFIG-CONTROL-IN-STRING")
+        if text_eq(ch, "\\"):
+            if i + 1 >= str_len(source):
+                return CJsonString("", i, 0, "C2-CONFIG-BAD-ESCAPE")
+            escaped := char_at(source, i + 1)
+            if text_eq(escaped, "\"") || text_eq(escaped, "\\") || text_eq(escaped, "/"):
+                out = str_concat(out, escaped)
+                i = i + 2
+            elif text_eq(escaped, "b"):
+                out = str_concat(out, chr(8))
+                i = i + 2
+            elif text_eq(escaped, "f"):
+                out = str_concat(out, chr(12))
+                i = i + 2
+            elif text_eq(escaped, "n"):
+                out = str_concat(out, "\n")
+                i = i + 2
+            elif text_eq(escaped, "r"):
+                out = str_concat(out, "\r")
+                i = i + 2
+            elif text_eq(escaped, "t"):
+                out = str_concat(out, "\t")
+                i = i + 2
+            elif text_eq(escaped, "u"):
+                if i + 5 >= str_len(source):
+                    return CJsonString("", i, 0, "C2-CONFIG-BAD-UNICODE")
+                mut value := 0
+                mut j := 0
+                while j < 4:
+                    digit := c_json_hex_value(ord(char_at(source, i + 2 + j)))
+                    if digit < 0:
+                        return CJsonString("", i, 0, "C2-CONFIG-BAD-UNICODE")
+                    value = value * 16 + digit
+                    j = j + 1
+                # Shell-safe project paths and identifiers are ASCII. Rejecting
+                # non-ASCII escapes is safer than emitting a malformed byte.
+                if value > 127:
+                    return CJsonString("", i, 0, "C2-CONFIG-NONASCII-ESCAPE")
+                out = str_concat(out, chr(value))
+                i = i + 6
+            else:
+                return CJsonString("", i, 0, "C2-CONFIG-BAD-ESCAPE")
+        else:
+            out = str_concat(out, ch)
+            i = i + 1
+    return CJsonString("", i, 0, "C2-CONFIG-UNTERMINATED-STRING")
+
+
+def c_json_match(source: Str, offset: Int, literal: Str) -> Bool:
+    if offset + str_len(literal) > str_len(source):
+        return false
+    return text_eq(str_substr(source, offset, str_len(literal)), literal)
+
+
+def c_json_parse_value(source: Str, offset: Int) -> CJsonValue:
+    start := c_json_skip_ws(source, offset)
+    if start >= str_len(source):
+        return CJsonValue(0, "", 0, false, start, 0, "C2-CONFIG-MISSING-VALUE")
+    if text_eq(char_at(source, start), "\""):
+        parsed := c_json_parse_string(source, start)
+        return CJsonValue(C_JSON_STRING, parsed.value, 0, false, parsed.next, parsed.valid, parsed.error)
+    if c_json_match(source, start, "true"):
+        return CJsonValue(C_JSON_BOOL, "", 0, true, start + 4, 1, "")
+    if c_json_match(source, start, "false"):
+        return CJsonValue(C_JSON_BOOL, "", 0, false, start + 5, 1, "")
+    mut i := start
+    mut negative := false
+    if text_eq(char_at(source, i), "-"):
+        negative = true
+        i = i + 1
+    if i >= str_len(source):
+        return CJsonValue(0, "", 0, false, i, 0, "C2-CONFIG-BAD-INTEGER")
+    first := ord(char_at(source, i))
+    if first < 48 || first > 57:
+        return CJsonValue(0, "", 0, false, i, 0, "C2-CONFIG-UNSUPPORTED-VALUE")
+    if first == 48 && i + 1 < str_len(source):
+        next_code := ord(char_at(source, i + 1))
+        if next_code >= 48 && next_code <= 57:
+            return CJsonValue(0, "", 0, false, i, 0, "C2-CONFIG-LEADING-ZERO")
+    mut value := 0
+    while i < str_len(source):
+        code := ord(char_at(source, i))
+        if code < 48 || code > 57:
+            if text_eq(char_at(source, i), ".") || text_eq(char_at(source, i), "e") || text_eq(char_at(source, i), "E"):
+                return CJsonValue(0, "", 0, false, i, 0, "C2-CONFIG-FLOAT-NOT-ALLOWED")
+            if negative:
+                value = -value
+            return CJsonValue(C_JSON_INT, "", value, false, i, 1, "")
+        value = value * 10 + code - 48
+        i = i + 1
+    if negative:
+        value = -value
+    return CJsonValue(C_JSON_INT, "", value, false, i, 1, "")
+
+
+def c_config_seen(seen: Str, key: Str) -> Bool:
+    return text_contains(seen, str_concat("|", str_concat(key, "|")))
+
+
+def c_config_known_key(key: Str) -> Bool:
+    if text_eq(key, "schema") || text_eq(key, "schema_version") || text_eq(key, "mode"):
+        return true
+    if text_eq(key, "input") || text_eq(key, "manifest") || text_eq(key, "name"):
+        return true
+    if text_eq(key, "library") || text_eq(key, "output") || text_eq(key, "strict"):
+        return true
+    if text_eq(key, "preprocess") || text_eq(key, "compiler"):
+        return true
+    if text_eq(key, "source_version") || text_eq(key, "source_sha256"):
+        return true
+    return false
+
+
+def c_config_expected_kind(key: Str) -> Int:
+    if text_eq(key, "schema_version"):
+        return C_JSON_INT
+    if text_eq(key, "strict") || text_eq(key, "preprocess"):
+        return C_JSON_BOOL
+    return C_JSON_STRING
+
+
+def c_config_is_hex(value: Str) -> Bool:
+    if str_len(value) != 64:
+        return false
+    mut i := 0
+    while i < str_len(value):
+        if c_json_hex_value(ord(char_at(value, i))) < 0:
+            return false
+        i = i + 1
+    return true
+
+
+def c_json_quote(value: Str) -> Str:
+    mut out := "\""
+    mut i := 0
+    while i < str_len(value):
+        ch := char_at(value, i)
+        code := ord(ch)
+        if text_eq(ch, "\""):
+            out = str_concat(out, "\\\"")
+        elif text_eq(ch, "\\"):
+            out = str_concat(out, "\\\\")
+        elif code == 10:
+            out = str_concat(out, "\\n")
+        elif code == 13:
+            out = str_concat(out, "\\r")
+        elif code == 9:
+            out = str_concat(out, "\\t")
+        else:
+            out = str_concat(out, ch)
+        i = i + 1
+    return str_concat(out, "\"")
+
+
+def c_config_normalize(config: C2Config) -> Str:
+    mut out := "{\n"
+    out = str_concat(out, str_concat("  \"schema\": ", str_concat(c_json_quote(config.schema), ",\n")))
+    out = str_concat(out, str_concat("  \"schema_version\": ", str_concat(int_to_str(config.schema_version), ",\n")))
+    out = str_concat(out, str_concat("  \"mode\": ", str_concat(c_json_quote(config.mode), ",\n")))
+    out = str_concat(out, str_concat("  \"input\": ", str_concat(c_json_quote(config.input), ",\n")))
+    out = str_concat(out, str_concat("  \"manifest\": ", str_concat(c_json_quote(config.manifest), ",\n")))
+    out = str_concat(out, str_concat("  \"name\": ", str_concat(c_json_quote(config.name), ",\n")))
+    out = str_concat(out, str_concat("  \"library\": ", str_concat(c_json_quote(config.library), ",\n")))
+    out = str_concat(out, str_concat("  \"output\": ", str_concat(c_json_quote(config.output), ",\n")))
+    mut strict := "false"
+    if config.strict:
+        strict = "true"
+    mut preprocess := "false"
+    if config.preprocess:
+        preprocess = "true"
+    out = str_concat(out, str_concat("  \"strict\": ", str_concat(strict, ",\n")))
+    out = str_concat(out, str_concat("  \"preprocess\": ", str_concat(preprocess, ",\n")))
+    out = str_concat(out, str_concat("  \"compiler\": ", str_concat(c_json_quote(config.compiler), ",\n")))
+    out = str_concat(out, str_concat("  \"source_version\": ", str_concat(c_json_quote(config.source_version), ",\n")))
+    out = str_concat(out, str_concat("  \"source_sha256\": ", str_concat(c_json_quote(config.source_sha256), "\n")))
+    return str_concat(out, "}\n")
+
+
+def c_config_error(config: C2Config, error: Str) -> C2Config:
+    mut result := config
+    result.valid = 0
+    result.error = error
+    return result
+
+
+def c_config_validate(config_in: C2Config, seen: Str) -> C2Config:
+    mut config := config_in
+    if !c_config_seen(seen, "schema") || !text_eq(config.schema, "c2lpp-project"):
+        return c_config_error(config, "C2-CONFIG-SCHEMA")
+    if !c_config_seen(seen, "schema_version") || config.schema_version != 1:
+        return c_config_error(config, "C2-CONFIG-SCHEMA-VERSION")
+    if !c_config_seen(seen, "mode"):
+        return c_config_error(config, "C2-CONFIG-MODE-REQUIRED")
+    if !text_eq(config.mode, "bindings") && !text_eq(config.mode, "audit") && !text_eq(config.mode, "sqlite-backend") && !text_eq(config.mode, "graph-check") && !text_eq(config.mode, "ownership-graph") && !text_eq(config.mode, "ownership-proof") && !text_eq(config.mode, "control-graph") && !text_eq(config.mode, "call-graph") && !text_eq(config.mode, "sweep") && !text_eq(config.mode, "body-graph") && !text_eq(config.mode, "decl-graph") && !text_eq(config.mode, "tu-graph") && !text_eq(config.mode, "frontend") && !text_eq(config.mode, "native") && !text_eq(config.mode, "translate-ir") && !text_eq(config.mode, "translate"): 
+        return c_config_error(config, "C2-CONFIG-MODE")
+    if str_len(config.manifest) == 0 && str_len(config.input) == 0:
+        return c_config_error(config, "C2-CONFIG-INPUT-REQUIRED")
+    if !text_eq(config.mode, "audit") && str_len(config.input) == 0:
+        return c_config_error(config, "C2-CONFIG-INPUT-REQUIRED")
+    if str_len(config.manifest) > 0 && !text_eq(config.mode, "audit"):
+        return c_config_error(config, "C2-CONFIG-MANIFEST-MODE")
+    if !text_is_identifier(config.name):
+        return c_config_error(config, "C2-CONFIG-NAME")
+    if str_len(config.library) == 0:
+        config.library = config.name
+    if str_len(config.output) == 0:
+        config.output = str_concat("generated/", config.name)
+    if !text_safe_shell_atom(config.input) && str_len(config.input) > 0:
+        return c_config_error(config, "C2-CONFIG-INPUT-PATH")
+    if !text_safe_shell_atom(config.manifest) && str_len(config.manifest) > 0:
+        return c_config_error(config, "C2-CONFIG-MANIFEST-PATH")
+    if !text_safe_shell_atom(config.output):
+        return c_config_error(config, "C2-CONFIG-OUTPUT-PATH")
+    if !text_safe_shell_atom(config.library) || !text_safe_shell_atom(config.compiler):
+        return c_config_error(config, "C2-CONFIG-COMMAND-ATOM")
+    if str_len(config.source_sha256) > 0 && !c_config_is_hex(config.source_sha256):
+        return c_config_error(config, "C2-CONFIG-SOURCE-SHA256")
+    config.valid = 1
+    config.error = ""
+    config.normalized = c_config_normalize(config)
+    return config
+
+
+def c_config_parse(source: Str) -> C2Config:
+    mut config := c_config_default()
+    mut seen := ""
+    mut i := c_json_skip_ws(source, 0)
+    if i >= str_len(source) || !text_eq(char_at(source, i), "{"):
+        return c_config_error(config, "C2-CONFIG-EXPECTED-OBJECT")
+    i = i + 1
+    mut done := false
+    while !done:
+        i = c_json_skip_ws(source, i)
+        if i >= str_len(source):
+            return c_config_error(config, "C2-CONFIG-UNTERMINATED-OBJECT")
+        if text_eq(char_at(source, i), "}"):
+            i = i + 1
+            done = true
+        else:
+            key := c_json_parse_string(source, i)
+            if key.valid == 0:
+                return c_config_error(config, key.error)
+            if !c_config_known_key(key.value):
+                return c_config_error(config, str_concat("C2-CONFIG-UNKNOWN-KEY:", key.value))
+            if c_config_seen(seen, key.value):
+                return c_config_error(config, str_concat("C2-CONFIG-DUPLICATE-KEY:", key.value))
+            seen = str_concat(seen, str_concat("|", str_concat(key.value, "|")))
+            i = c_json_skip_ws(source, key.next)
+            if i >= str_len(source) || !text_eq(char_at(source, i), ":"):
+                return c_config_error(config, "C2-CONFIG-EXPECTED-COLON")
+            value := c_json_parse_value(source, i + 1)
+            if value.valid == 0:
+                return c_config_error(config, value.error)
+            if value.kind != c_config_expected_kind(key.value):
+                return c_config_error(config, str_concat("C2-CONFIG-TYPE:", key.value))
+            if text_eq(key.value, "schema"):
+                config.schema = value.string_value
+            elif text_eq(key.value, "schema_version"):
+                config.schema_version = value.int_value
+            elif text_eq(key.value, "mode"):
+                config.mode = value.string_value
+            elif text_eq(key.value, "input"):
+                config.input = value.string_value
+            elif text_eq(key.value, "manifest"):
+                config.manifest = value.string_value
+            elif text_eq(key.value, "name"):
+                config.name = value.string_value
+            elif text_eq(key.value, "library"):
+                config.library = value.string_value
+            elif text_eq(key.value, "output"):
+                config.output = value.string_value
+            elif text_eq(key.value, "strict"):
+                config.strict = value.bool_value
+            elif text_eq(key.value, "preprocess"):
+                config.preprocess = value.bool_value
+            elif text_eq(key.value, "compiler"):
+                config.compiler = value.string_value
+            elif text_eq(key.value, "source_version"):
+                config.source_version = value.string_value
+            elif text_eq(key.value, "source_sha256"):
+                config.source_sha256 = value.string_value
+            i = c_json_skip_ws(source, value.next)
+            if i >= str_len(source):
+                return c_config_error(config, "C2-CONFIG-UNTERMINATED-OBJECT")
+            if text_eq(char_at(source, i), ","):
+                i = i + 1
+                after_comma := c_json_skip_ws(source, i)
+                if after_comma < str_len(source) && text_eq(char_at(source, after_comma), "}"):
+                    return c_config_error(config, "C2-CONFIG-TRAILING-COMMA")
+            elif text_eq(char_at(source, i), "}"):
+                i = i + 1
+                done = true
+            else:
+                return c_config_error(config, "C2-CONFIG-EXPECTED-COMMA-OR-END")
+    i = c_json_skip_ws(source, i)
+    if i != str_len(source):
+        return c_config_error(config, "C2-CONFIG-TRAILING-DATA")
+    return c_config_validate(config, seen)
+
+
+def c_config_load(path: Str) -> C2Config:
+    if file_exists(path) == 0:
+        config := c_config_default()
+        return c_config_error(config, "C2-CONFIG-FILE-NOT-FOUND")
+    source := read_file(path)
+    if str_len(source) == 0:
+        config := c_config_default()
+        return c_config_error(config, "C2-CONFIG-FILE-EMPTY")
+    return c_config_parse(source)

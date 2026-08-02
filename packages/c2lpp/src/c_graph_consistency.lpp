@@ -1,0 +1,119 @@
+# c_graph_consistency.lpp — cross-pass invariants for structural C graphs.
+#
+# The validator reruns TU, declaration, body, call, control and ownership passes
+# over the same source and proves their shared function/declaration denominators
+# agree. It keeps structural completeness separate from semantic translation.
+
+import c_translation_unit
+import c_declaration_graph
+import c_function_graph
+import c_call_graph
+import c_control_targets
+import c_ownership_graph
+import text
+
+struct CGraphConsistency:
+    report: Str
+    valid: Int
+    error_count: Int
+
+
+def c_graph_error(report: Str, code: Str) -> Str:
+    return str_concat(report, str_concat("error=", str_concat(code, "\n")))
+
+
+def c_graph_check_file(path: Str) -> CGraphConsistency:
+    tu := c_tu_scan_file(path)
+    declarations := c_decl_resolve_file(path)
+    bodies := c_body_graph_file(path)
+    calls := c_call_graph_file(path)
+    controls := c_control_graph_file(path)
+    ownership := c_ownership_graph_file(path)
+    mut report := "schema=c2lpp-graph-consistency-v1\n"
+    mut errors := 0
+
+    if tu.valid == 0:
+        errors = errors + 1
+        report = c_graph_error(report, "C2-GRAPH-TU-INVALID")
+    if declarations.valid == 0:
+        errors = errors + 1
+        report = c_graph_error(report, "C2-GRAPH-DECL-INVALID")
+    if bodies.valid == 0:
+        errors = errors + 1
+        report = c_graph_error(report, "C2-GRAPH-BODY-INVALID")
+    if calls.valid == 0:
+        errors = errors + 1
+        report = c_graph_error(report, "C2-GRAPH-CALL-INVALID")
+    if controls.valid == 0:
+        errors = errors + 1
+        report = c_graph_error(report, "C2-GRAPH-CONTROL-INVALID")
+    if ownership.valid == 0:
+        errors = errors + 1
+        report = c_graph_error(report, "C2-GRAPH-OWNERSHIP-INVALID")
+
+    tu_functions := tu.stats.function_definitions
+    if bodies.stats.functions != tu_functions:
+        errors = errors + 1
+        report = c_graph_error(report, "C2-GRAPH-BODY-FUNCTION-DENOMINATOR")
+    if calls.stats.functions != tu_functions:
+        errors = errors + 1
+        report = c_graph_error(report, "C2-GRAPH-CALL-FUNCTION-DENOMINATOR")
+    if controls.stats.functions != tu_functions:
+        errors = errors + 1
+        report = c_graph_error(report, "C2-GRAPH-CONTROL-FUNCTION-DENOMINATOR")
+    if ownership.stats.functions != tu_functions:
+        errors = errors + 1
+        report = c_graph_error(report, "C2-GRAPH-OWNERSHIP-FUNCTION-DENOMINATOR")
+    if declarations.stats.declarations != tu.stats.external_declarations:
+        errors = errors + 1
+        report = c_graph_error(report, "C2-GRAPH-DECL-DENOMINATOR")
+
+    if tu.stats.unknown_declarations != 0:
+        errors = errors + 1
+        report = c_graph_error(report, "C2-GRAPH-UNKNOWN-DECLARATIONS")
+    if declarations.stats.base_types_unresolved != 0:
+        errors = errors + 1
+        report = c_graph_error(report, "C2-GRAPH-UNRESOLVED-BASE-TYPES")
+    if bodies.stats.bodies_unbalanced != 0:
+        errors = errors + 1
+        report = c_graph_error(report, "C2-GRAPH-UNBALANCED-BODIES")
+    if controls.stats.duplicate_labels != 0:
+        errors = errors + 1
+        report = c_graph_error(report, "C2-GRAPH-DUPLICATE-LABELS")
+    if controls.stats.unresolved_gotos != 0:
+        errors = errors + 1
+        report = c_graph_error(report, "C2-GRAPH-UNRESOLVED-GOTOS")
+
+    call_allocations := calls.stats.allocation_sites
+    owner_allocations := ownership.stats.allocation_sites
+    call_reallocations := calls.stats.reallocation_sites
+    owner_reallocations := ownership.stats.reallocation_sites
+    call_frees := calls.stats.deallocation_sites
+    owner_frees := ownership.stats.deallocation_sites
+    if call_allocations != owner_allocations:
+        errors = errors + 1
+        report = c_graph_error(report, "C2-GRAPH-ALLOCATION-SITE-MISMATCH")
+    if call_reallocations != owner_reallocations:
+        errors = errors + 1
+        report = c_graph_error(report, "C2-GRAPH-REALLOCATION-SITE-MISMATCH")
+    if call_frees != owner_frees:
+        errors = errors + 1
+        report = c_graph_error(report, "C2-GRAPH-FREE-SITE-MISMATCH")
+
+    mut valid := 0
+    if errors == 0:
+        valid = 1
+    report = str_concat(report, str_concat("valid=", str_concat(int_to_str(valid), "\n")))
+    report = str_concat(report, str_concat("error_count=", str_concat(int_to_str(errors), "\n")))
+    report = str_concat(report, str_concat("external_declarations=", str_concat(int_to_str(tu.stats.external_declarations), "\n")))
+    report = str_concat(report, str_concat("function_definitions=", str_concat(int_to_str(tu_functions), "\n")))
+    report = str_concat(report, str_concat("base_types_resolved=", str_concat(int_to_str(declarations.stats.base_types_resolved), "\n")))
+    report = str_concat(report, str_concat("body_statements=", str_concat(int_to_str(bodies.stats.statements), "\n")))
+    report = str_concat(report, str_concat("call_sites=", str_concat(int_to_str(calls.stats.call_sites), "\n")))
+    report = str_concat(report, str_concat("resolved_gotos=", str_concat(int_to_str(controls.stats.resolved_gotos), "\n")))
+    report = str_concat(report, str_concat("allocation_sites=", str_concat(int_to_str(owner_allocations), "\n")))
+    report = str_concat(report, str_concat("reallocation_sites=", str_concat(int_to_str(owner_reallocations), "\n")))
+    report = str_concat(report, str_concat("deallocation_sites=", str_concat(int_to_str(owner_frees), "\n")))
+    report = str_concat(report, str_concat("ownership_functions_requiring_path_analysis=", str_concat(int_to_str(ownership.stats.functions_requiring_path_analysis), "\n")))
+    report = str_concat(report, "semantic_translation_complete=0\n")
+    return CGraphConsistency(report, valid, errors)

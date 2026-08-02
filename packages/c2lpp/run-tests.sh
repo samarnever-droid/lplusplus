@@ -11,4 +11,4 @@ else
     LPP_BIN=$(command -v lpp) || { echo 'run-tests.sh: no L++ compiler found' >&2; exit 2; }
 fi
 
-LPP="$LPP_BIN" sh "$DIR/tests/run.sh"
+LPP="$LPP_BIN" sh "$DIR/tests/run.sh" "$@"

@@ -1,0 +1,676 @@
+# c_memory.lpp — pure-L++ checked compatibility memory for translated C.
+#
+# A C pointer is never a bare Int. It carries a memory-context identity,
+# allocation identity, byte offset, subobject bounds, generation, mutability and
+# element width. Allocation descriptors remain as small tombstones until the
+# explicit context is destroyed, allowing deterministic stale/double-free checks.
+
+struct CMemory:
+    handle: Int
+
+struct CPtr:
+    memory: Int
+    allocation: Int
+    offset: Int
+    lower_bound: Int
+    upper_bound: Int
+    generation: Int
+    mutable_flag: Int
+    element_size: Int
+
+const C_MEM_SIDE_RECORD_SIZE = 88
+const C_MEM_SIDE_INITIAL_CAPACITY = 8
+
+
+def c_mem_panic(reason: Str) -> Void:
+    print_str(str_concat("c2lpp C memory violation: ", reason))
+    exit(101)
+
+
+def c_mem_set64(buffer: Int, offset: Int, value: Int) -> Void:
+    buf_set32le(buffer, offset, value & 4294967295)
+    buf_set32le(buffer, offset + 4, (value >> 32) & 4294967295)
+
+
+def c_mem_get64(buffer: Int, offset: Int) -> Int:
+    low := buf_get32le(buffer, offset)
+    high := buf_get32le(buffer, offset + 4)
+    return low | (high << 32)
+
+
+def c_mem_context_table(memory: CMemory) -> Int:
+    if memory.handle == 0:
+        c_mem_panic("C2-MEM-CONTEXT-NULL")
+    return c_mem_get64(memory.handle, 0)
+
+
+def c_mem_context_len(memory: CMemory) -> Int:
+    if memory.handle == 0:
+        c_mem_panic("C2-MEM-CONTEXT-NULL")
+    return c_mem_get64(memory.handle, 8)
+
+
+def c_mem_context_capacity(memory: CMemory) -> Int:
+    if memory.handle == 0:
+        c_mem_panic("C2-MEM-CONTEXT-NULL")
+    return c_mem_get64(memory.handle, 16)
+
+
+def c_mem_side_table(memory: CMemory) -> Int:
+    if memory.handle == 0:
+        c_mem_panic("C2-MEM-CONTEXT-NULL")
+    return c_mem_get64(memory.handle, 24)
+
+
+def c_mem_side_len(memory: CMemory) -> Int:
+    if memory.handle == 0:
+        c_mem_panic("C2-MEM-CONTEXT-NULL")
+    return c_mem_get64(memory.handle, 32)
+
+
+def c_mem_side_capacity(memory: CMemory) -> Int:
+    if memory.handle == 0:
+        c_mem_panic("C2-MEM-CONTEXT-NULL")
+    return c_mem_get64(memory.handle, 40)
+
+
+def c_mem_zero_raw(buffer: Int, size: Int) -> Void:
+    mut i := 0
+    while i < size:
+        buf_set8(buffer, i, 0)
+        i = i + 1
+
+
+def c_memory_new(initial_capacity: Int) -> CMemory:
+    mut capacity := initial_capacity
+    if capacity < 4:
+        capacity = 4
+    table := buf_alloc(capacity * 8)
+    side_table := buf_alloc(C_MEM_SIDE_INITIAL_CAPACITY * C_MEM_SIDE_RECORD_SIZE)
+    c_mem_zero_raw(side_table, C_MEM_SIDE_INITIAL_CAPACITY * C_MEM_SIDE_RECORD_SIZE)
+    context := buf_alloc(48)
+    c_mem_set64(context, 0, table)
+    c_mem_set64(context, 8, 0)
+    c_mem_set64(context, 16, capacity)
+    c_mem_set64(context, 24, side_table)
+    c_mem_set64(context, 32, 0)
+    c_mem_set64(context, 40, C_MEM_SIDE_INITIAL_CAPACITY)
+    return CMemory(context)
+
+
+def c_mem_grow(memory: CMemory) -> Void:
+    old_table := c_mem_context_table(memory)
+    old_capacity := c_mem_context_capacity(memory)
+    mut new_capacity := old_capacity * 2
+    if new_capacity < 4:
+        new_capacity = 4
+    new_table := buf_alloc(new_capacity * 8)
+    length := c_mem_context_len(memory)
+    if length > 0:
+        buf_copy(new_table, 0, old_table, 0, length * 8)
+    buf_free(old_table)
+    c_mem_set64(memory.handle, 0, new_table)
+    c_mem_set64(memory.handle, 16, new_capacity)
+
+
+def c_mem_side_grow(memory: CMemory) -> Void:
+    old_table := c_mem_side_table(memory)
+    old_capacity := c_mem_side_capacity(memory)
+    mut new_capacity := old_capacity * 2
+    if new_capacity < C_MEM_SIDE_INITIAL_CAPACITY:
+        new_capacity = C_MEM_SIDE_INITIAL_CAPACITY
+    new_table := buf_alloc(new_capacity * C_MEM_SIDE_RECORD_SIZE)
+    c_mem_zero_raw(new_table, new_capacity * C_MEM_SIDE_RECORD_SIZE)
+    length := c_mem_side_len(memory)
+    if length > 0:
+        buf_copy(new_table, 0, old_table, 0, length * C_MEM_SIDE_RECORD_SIZE)
+    buf_free(old_table)
+    c_mem_set64(memory.handle, 24, new_table)
+    c_mem_set64(memory.handle, 40, new_capacity)
+
+
+def c_mem_side_record_offset(memory: CMemory, index: Int) -> Int:
+    if index < 0 || index >= c_mem_side_len(memory):
+        c_mem_panic("C2-MEM-SIDE-INDEX")
+    return index * C_MEM_SIDE_RECORD_SIZE
+
+
+def c_mem_side_find(memory: CMemory, owner_allocation: Int, owner_offset: Int) -> Int:
+    table := c_mem_side_table(memory)
+    length := c_mem_side_len(memory)
+    mut i := 0
+    while i < length:
+        base := i * C_MEM_SIDE_RECORD_SIZE
+        if c_mem_get64(table, base) == owner_allocation && c_mem_get64(table, base + 8) == owner_offset:
+            return i
+        i = i + 1
+    return -1
+
+
+def c_mem_side_target(memory: CMemory, index: Int) -> CPtr:
+    table := c_mem_side_table(memory)
+    base := c_mem_side_record_offset(memory, index)
+    return CPtr(c_mem_get64(table, base + 24), c_mem_get64(table, base + 32), c_mem_get64(table, base + 40), c_mem_get64(table, base + 48), c_mem_get64(table, base + 56), c_mem_get64(table, base + 64), c_mem_get64(table, base + 72), c_mem_get64(table, base + 80))
+
+
+def c_mem_side_write(memory: CMemory, owner_allocation: Int, owner_offset: Int, target: CPtr) -> Void:
+    mut index := c_mem_side_find(memory, owner_allocation, owner_offset)
+    if index < 0:
+        length := c_mem_side_len(memory)
+        if length >= c_mem_side_capacity(memory):
+            c_mem_side_grow(memory)
+        index = length
+        c_mem_set64(memory.handle, 32, length + 1)
+    table := c_mem_side_table(memory)
+    base := c_mem_side_record_offset(memory, index)
+    c_mem_set64(table, base, owner_allocation)
+    c_mem_set64(table, base + 8, owner_offset)
+    c_mem_set64(table, base + 16, 0)
+    c_mem_set64(table, base + 24, target.memory)
+    c_mem_set64(table, base + 32, target.allocation)
+    c_mem_set64(table, base + 40, target.offset)
+    c_mem_set64(table, base + 48, target.lower_bound)
+    c_mem_set64(table, base + 56, target.upper_bound)
+    c_mem_set64(table, base + 64, target.generation)
+    c_mem_set64(table, base + 72, target.mutable_flag)
+    c_mem_set64(table, base + 80, target.element_size)
+    c_mem_set64(table, base + 16, 1)
+
+
+def c_mem_side_invalidate_range(memory: CMemory, owner_allocation: Int, start: Int, count: Int) -> Void:
+    if count <= 0:
+        return
+    table := c_mem_side_table(memory)
+    length := c_mem_side_len(memory)
+    finish := start + count
+    mut i := 0
+    while i < length:
+        base := i * C_MEM_SIDE_RECORD_SIZE
+        if c_mem_get64(table, base) == owner_allocation && c_mem_get64(table, base + 16) != 0:
+            slot_offset := c_mem_get64(table, base + 8)
+            if slot_offset < finish && start < slot_offset + 8:
+                c_mem_set64(table, base + 16, 0)
+        i = i + 1
+
+
+def c_mem_side_has_range(memory: CMemory, owner_allocation: Int, start: Int, count: Int) -> Bool:
+    if count <= 0:
+        return false
+    table := c_mem_side_table(memory)
+    length := c_mem_side_len(memory)
+    finish := start + count
+    mut i := 0
+    while i < length:
+        base := i * C_MEM_SIDE_RECORD_SIZE
+        if c_mem_get64(table, base) == owner_allocation && c_mem_get64(table, base + 16) != 0:
+            slot_offset := c_mem_get64(table, base + 8)
+            if slot_offset < finish && start < slot_offset + 8:
+                return true
+        i = i + 1
+    return false
+
+
+def c_mem_side_copy_nonoverlap(destination: CPtr, source: CPtr, count: Int) -> Void:
+    memory := CMemory(destination.memory)
+    c_mem_side_invalidate_range(memory, destination.allocation, destination.offset, count)
+    source_length := c_mem_side_len(memory)
+    if source_length * 2 > c_mem_side_capacity(memory):
+        c_mem_side_grow(memory)
+    table := c_mem_side_table(memory)
+    source_finish := source.offset + count
+    mut i := 0
+    while i < source_length:
+        base := i * C_MEM_SIDE_RECORD_SIZE
+        if c_mem_get64(table, base) == source.allocation && c_mem_get64(table, base + 16) != 0:
+            slot_offset := c_mem_get64(table, base + 8)
+            if slot_offset >= source.offset && slot_offset + 8 <= source_finish:
+                relative := slot_offset - source.offset
+                destination_offset := destination.offset + relative
+                mut destination_index := c_mem_side_find(memory, destination.allocation, destination_offset)
+                if destination_index < 0:
+                    destination_index = c_mem_side_len(memory)
+                    c_mem_set64(memory.handle, 32, destination_index + 1)
+                destination_base := c_mem_side_record_offset(memory, destination_index)
+                c_mem_set64(table, destination_base, destination.allocation)
+                c_mem_set64(table, destination_base + 8, destination_offset)
+                c_mem_set64(table, destination_base + 16, 0)
+                buf_copy(table, destination_base + 24, table, base + 24, 64)
+                c_mem_set64(table, destination_base + 16, 1)
+        i = i + 1
+
+
+def c_mem_abi_pointer_store(owner: CPtr, relative_offset: Int, target: CPtr) -> Void:
+    data := c_mem_check_relative(owner, relative_offset, 8, true)
+    absolute := owner.offset + relative_offset
+    memory := CMemory(owner.memory)
+    if !c_ptr_is_null(target):
+        if target.memory != owner.memory:
+            c_mem_panic("C2-MEM-POINTER-FIELD-CROSS-CONTEXT")
+        c_mem_check(target, 0, false)
+        c_mem_set64(data, absolute, target.allocation)
+        c_mem_side_write(memory, owner.allocation, absolute, target)
+    else:
+        c_mem_set64(data, absolute, 0)
+        c_mem_side_invalidate_range(memory, owner.allocation, absolute, 8)
+
+
+def c_mem_abi_pointer_load(owner: CPtr, relative_offset: Int) -> CPtr:
+    data := c_mem_check_relative(owner, relative_offset, 8, false)
+    absolute := owner.offset + relative_offset
+    raw_value := c_mem_get64(data, absolute)
+    if raw_value == 0:
+        return c_ptr_null()
+    memory := CMemory(owner.memory)
+    index := c_mem_side_find(memory, owner.allocation, absolute)
+    if index < 0:
+        c_mem_panic("C2-MEM-POINTER-FIELD-UNTRACKED")
+    table := c_mem_side_table(memory)
+    base := c_mem_side_record_offset(memory, index)
+    if c_mem_get64(table, base + 16) == 0:
+        c_mem_panic("C2-MEM-POINTER-FIELD-INVALIDATED")
+    target := c_mem_side_target(memory, index)
+    c_mem_check(target, 0, false)
+    return target
+
+
+def c_mem_descriptor(memory_handle: Int, allocation: Int) -> Int:
+    if memory_handle == 0:
+        c_mem_panic("C2-MEM-POINTER-NO-CONTEXT")
+    memory := CMemory(memory_handle)
+    length := c_mem_context_len(memory)
+    if allocation <= 0 || allocation > length:
+        c_mem_panic("C2-MEM-UNKNOWN-ALLOCATION")
+    table := c_mem_context_table(memory)
+    descriptor := c_mem_get64(table, (allocation - 1) * 8)
+    if descriptor == 0:
+        c_mem_panic("C2-MEM-MISSING-DESCRIPTOR")
+    return descriptor
+
+
+def c_mem_descriptor_data(descriptor: Int) -> Int:
+    return c_mem_get64(descriptor, 0)
+
+
+def c_mem_descriptor_size(descriptor: Int) -> Int:
+    return c_mem_get64(descriptor, 8)
+
+
+def c_mem_descriptor_alive(descriptor: Int) -> Int:
+    return c_mem_get64(descriptor, 16)
+
+
+def c_ptr_null() -> CPtr:
+    return CPtr(0, 0, 0, 0, 0, 0, 0, 1)
+
+
+def c_ptr_is_null(pointer: CPtr) -> Bool:
+    return pointer.memory == 0 && pointer.allocation == 0
+
+
+def c_ptr_equal(left: CPtr, right: CPtr) -> Bool:
+    if c_ptr_is_null(left) && c_ptr_is_null(right):
+        return true
+    return left.memory == right.memory && left.allocation == right.allocation && left.offset == right.offset && left.generation == right.generation
+
+
+def c_mem_allocate(memory: CMemory, size: Int, zeroed: Bool) -> CPtr:
+    if memory.handle == 0:
+        c_mem_panic("C2-MEM-CONTEXT-NULL")
+    if size < 0:
+        c_mem_panic("C2-MEM-NEGATIVE-SIZE")
+    mut physical_size := size
+    if physical_size == 0:
+        physical_size = 1
+    data := buf_alloc(physical_size)
+    mut i := 0
+    mut fill := 205
+    if zeroed:
+        fill = 0
+    while i < physical_size:
+        buf_set8(data, i, fill)
+        i = i + 1
+    descriptor := buf_alloc(24)
+    c_mem_set64(descriptor, 0, data)
+    c_mem_set64(descriptor, 8, size)
+    c_mem_set64(descriptor, 16, 1)
+    length := c_mem_context_len(memory)
+    if length >= c_mem_context_capacity(memory):
+        c_mem_grow(memory)
+    table := c_mem_context_table(memory)
+    allocation := length + 1
+    c_mem_set64(table, length * 8, descriptor)
+    c_mem_set64(memory.handle, 8, allocation)
+    return CPtr(memory.handle, allocation, 0, 0, size, 1, 1, 1)
+
+
+def c_malloc(memory: CMemory, size: Int) -> CPtr:
+    return c_mem_allocate(memory, size, false)
+
+
+def c_calloc(memory: CMemory, count: Int, element_size: Int) -> CPtr:
+    if count < 0:
+        c_mem_panic("C2-MEM-CALLOC-NEGATIVE")
+    if element_size <= 0:
+        c_mem_panic("C2-MEM-CALLOC-ELEMENT-SIZE")
+    if count > 0 && element_size > 9223372036854775807 / count:
+        c_mem_panic("C2-MEM-CALLOC-OVERFLOW")
+    pointer := c_mem_allocate(memory, count * element_size, true)
+    return CPtr(pointer.memory, pointer.allocation, 0, 0, count * element_size, pointer.generation, 1, element_size)
+
+
+def c_mem_check(pointer: CPtr, width: Int, write_flag: Bool) -> Int:
+    if c_ptr_is_null(pointer):
+        c_mem_panic("C2-MEM-NULL-DEREFERENCE")
+    if width < 0:
+        c_mem_panic("C2-MEM-NEGATIVE-WIDTH")
+    descriptor := c_mem_descriptor(pointer.memory, pointer.allocation)
+    if c_mem_descriptor_alive(descriptor) == 0:
+        c_mem_panic("C2-MEM-USE-AFTER-FREE")
+    if pointer.generation != 1:
+        c_mem_panic("C2-MEM-STALE-GENERATION")
+    size := c_mem_descriptor_size(descriptor)
+    if pointer.lower_bound < 0 || pointer.upper_bound < pointer.lower_bound || pointer.upper_bound > size:
+        c_mem_panic("C2-MEM-BAD-PROVENANCE")
+    if pointer.offset < pointer.lower_bound || pointer.offset > pointer.upper_bound:
+        c_mem_panic("C2-MEM-POINTER-OUTSIDE-SUBOBJECT")
+    if width > pointer.upper_bound - pointer.offset:
+        c_mem_panic("C2-MEM-OUT-OF-BOUNDS")
+    if write_flag && pointer.mutable_flag == 0:
+        c_mem_panic("C2-MEM-WRITE-READONLY")
+    data := c_mem_descriptor_data(descriptor)
+    if data == 0:
+        c_mem_panic("C2-MEM-MISSING-DATA")
+    return data
+
+
+def c_mem_check_relative(pointer: CPtr, relative_offset: Int, width: Int, write_flag: Bool) -> Int:
+    if relative_offset < 0:
+        c_mem_panic("C2-MEM-NEGATIVE-RELATIVE-OFFSET")
+    c_mem_check(pointer, 0, write_flag)
+    if relative_offset > pointer.upper_bound - pointer.offset:
+        c_mem_panic("C2-MEM-RELATIVE-OFFSET-OOB")
+    absolute := pointer.offset + relative_offset
+    if width < 0 || width > pointer.upper_bound - absolute:
+        c_mem_panic("C2-MEM-OUT-OF-BOUNDS")
+    descriptor := c_mem_descriptor(pointer.memory, pointer.allocation)
+    return c_mem_descriptor_data(descriptor)
+
+
+def c_ptr_cast(pointer: CPtr, element_size: Int, mutable_flag: Int) -> CPtr:
+    if element_size <= 0:
+        c_mem_panic("C2-MEM-BAD-ELEMENT-SIZE")
+    return CPtr(pointer.memory, pointer.allocation, pointer.offset, pointer.lower_bound, pointer.upper_bound, pointer.generation, mutable_flag, element_size)
+
+
+def c_ptr_subobject(pointer: CPtr, relative_offset: Int, size: Int, element_size: Int) -> CPtr:
+    c_mem_check(pointer, 0, false)
+    if relative_offset < 0 || size < 0:
+        c_mem_panic("C2-MEM-BAD-SUBOBJECT")
+    start := pointer.offset + relative_offset
+    if start < pointer.lower_bound || start > pointer.upper_bound || size > pointer.upper_bound - start:
+        c_mem_panic("C2-MEM-SUBOBJECT-OUT-OF-BOUNDS")
+    if element_size <= 0:
+        c_mem_panic("C2-MEM-BAD-ELEMENT-SIZE")
+    return CPtr(pointer.memory, pointer.allocation, start, start, start + size, pointer.generation, pointer.mutable_flag, element_size)
+
+
+def c_ptr_add(pointer: CPtr, elements: Int) -> CPtr:
+    c_mem_check(pointer, 0, false)
+    if pointer.element_size <= 0:
+        c_mem_panic("C2-MEM-BAD-ELEMENT-SIZE")
+    byte_delta := elements * pointer.element_size
+    if elements != 0 && byte_delta / pointer.element_size != elements:
+        c_mem_panic("C2-MEM-POINTER-ARITHMETIC-OVERFLOW")
+    next_offset := pointer.offset + byte_delta
+    if byte_delta > 0 && next_offset < pointer.offset:
+        c_mem_panic("C2-MEM-POINTER-ARITHMETIC-OVERFLOW")
+    if byte_delta < 0 && next_offset > pointer.offset:
+        c_mem_panic("C2-MEM-POINTER-ARITHMETIC-OVERFLOW")
+    if next_offset < pointer.lower_bound || next_offset > pointer.upper_bound:
+        c_mem_panic("C2-MEM-POINTER-ARITHMETIC-OOB")
+    return CPtr(pointer.memory, pointer.allocation, next_offset, pointer.lower_bound, pointer.upper_bound, pointer.generation, pointer.mutable_flag, pointer.element_size)
+
+
+def c_ptr_difference(left: CPtr, right: CPtr) -> Int:
+    if left.memory != right.memory || left.allocation != right.allocation || left.generation != right.generation:
+        c_mem_panic("C2-MEM-POINTER-DIFFERENT-ALLOCATION")
+    if left.element_size <= 0 || left.element_size != right.element_size:
+        c_mem_panic("C2-MEM-POINTER-DIFFERENT-TYPE")
+    delta := left.offset - right.offset
+    if delta % left.element_size != 0:
+        c_mem_panic("C2-MEM-POINTER-DIFFERENCE-ALIGNMENT")
+    return delta / left.element_size
+
+
+def c_free(pointer: CPtr) -> Void:
+    if c_ptr_is_null(pointer):
+        return
+    descriptor := c_mem_descriptor(pointer.memory, pointer.allocation)
+    if c_mem_descriptor_alive(descriptor) == 0:
+        c_mem_panic("C2-MEM-DOUBLE-FREE")
+    if pointer.offset != 0 || pointer.lower_bound != 0:
+        c_mem_panic("C2-MEM-INTERIOR-FREE")
+    memory := CMemory(pointer.memory)
+    c_mem_side_invalidate_range(memory, pointer.allocation, 0, c_mem_descriptor_size(descriptor))
+    data := c_mem_descriptor_data(descriptor)
+    if data != 0:
+        buf_free(data)
+    c_mem_set64(descriptor, 0, 0)
+    c_mem_set64(descriptor, 16, 0)
+
+
+def c_realloc(memory: CMemory, pointer: CPtr, new_size: Int) -> CPtr:
+    if new_size < 0:
+        c_mem_panic("C2-MEM-REALLOC-NEGATIVE")
+    if c_ptr_is_null(pointer):
+        return c_malloc(memory, new_size)
+    if pointer.memory != memory.handle:
+        c_mem_panic("C2-MEM-REALLOC-WRONG-CONTEXT")
+    if pointer.offset != 0 || pointer.lower_bound != 0:
+        c_mem_panic("C2-MEM-REALLOC-INTERIOR")
+    descriptor := c_mem_descriptor(pointer.memory, pointer.allocation)
+    if c_mem_descriptor_alive(descriptor) == 0:
+        c_mem_panic("C2-MEM-REALLOC-FREED")
+    if new_size == 0:
+        c_free(pointer)
+        return c_ptr_null()
+    old_size := c_mem_descriptor_size(descriptor)
+    old_data := c_mem_check(pointer, 0, false)
+    raw_replacement := c_malloc(memory, new_size)
+    replacement := c_ptr_cast(raw_replacement, pointer.element_size, pointer.mutable_flag)
+    new_data := c_mem_check(replacement, 0, true)
+    mut copy_size := old_size
+    if new_size < copy_size:
+        copy_size = new_size
+    if copy_size > 0:
+        buf_copy(new_data, 0, old_data, 0, copy_size)
+        c_mem_side_copy_nonoverlap(replacement, pointer, copy_size)
+    c_free(pointer)
+    return replacement
+
+
+def c_memory_destroy(memory: CMemory) -> Void:
+    if memory.handle == 0:
+        return
+    table := c_mem_context_table(memory)
+    length := c_mem_context_len(memory)
+    mut i := 0
+    while i < length:
+        descriptor := c_mem_get64(table, i * 8)
+        if descriptor != 0:
+            if c_mem_descriptor_alive(descriptor) != 0:
+                data := c_mem_descriptor_data(descriptor)
+                if data != 0:
+                    buf_free(data)
+            buf_free(descriptor)
+        i = i + 1
+    buf_free(table)
+    side_table := c_mem_side_table(memory)
+    if side_table != 0:
+        buf_free(side_table)
+    buf_free(memory.handle)
+
+
+def c_load_u8(pointer: CPtr) -> Int:
+    data := c_mem_check(pointer, 1, false)
+    return buf_get8(data, pointer.offset)
+
+
+def c_load_i8(pointer: CPtr) -> Int:
+    value := c_load_u8(pointer)
+    if value >= 128:
+        return value - 256
+    return value
+
+
+def c_store_u8(pointer: CPtr, value: Int) -> Void:
+    data := c_mem_check(pointer, 1, true)
+    c_mem_side_invalidate_range(CMemory(pointer.memory), pointer.allocation, pointer.offset, 1)
+    buf_set8(data, pointer.offset, value & 255)
+
+
+def c_load_u16(pointer: CPtr) -> Int:
+    data := c_mem_check(pointer, 2, false)
+    return buf_get8(data, pointer.offset) | (buf_get8(data, pointer.offset + 1) << 8)
+
+
+def c_load_i16(pointer: CPtr) -> Int:
+    value := c_load_u16(pointer)
+    if value >= 32768:
+        return value - 65536
+    return value
+
+
+def c_store_u16(pointer: CPtr, value: Int) -> Void:
+    data := c_mem_check(pointer, 2, true)
+    c_mem_side_invalidate_range(CMemory(pointer.memory), pointer.allocation, pointer.offset, 2)
+    buf_set8(data, pointer.offset, value & 255)
+    buf_set8(data, pointer.offset + 1, (value >> 8) & 255)
+
+
+def c_load_u32(pointer: CPtr) -> Int:
+    data := c_mem_check(pointer, 4, false)
+    return buf_get32le(data, pointer.offset)
+
+
+def c_load_i32(pointer: CPtr) -> Int:
+    value := c_load_u32(pointer)
+    if value >= 2147483648:
+        return value - 4294967296
+    return value
+
+
+def c_store_u32(pointer: CPtr, value: Int) -> Void:
+    data := c_mem_check(pointer, 4, true)
+    c_mem_side_invalidate_range(CMemory(pointer.memory), pointer.allocation, pointer.offset, 4)
+    buf_set32le(data, pointer.offset, value & 4294967295)
+
+
+def c_load_i64(pointer: CPtr) -> Int:
+    data := c_mem_check(pointer, 8, false)
+    mut value := 0
+    mut i := 0
+    while i < 8:
+        value = value | (buf_get8(data, pointer.offset + i) << (i * 8))
+        i = i + 1
+    return value
+
+
+def c_store_i64(pointer: CPtr, value: Int) -> Void:
+    data := c_mem_check(pointer, 8, true)
+    c_mem_side_invalidate_range(CMemory(pointer.memory), pointer.allocation, pointer.offset, 8)
+    mut i := 0
+    while i < 8:
+        buf_set8(data, pointer.offset + i, (value >> (i * 8)) & 255)
+        i = i + 1
+
+
+def c_memset(pointer: CPtr, value: Int, count: Int) -> CPtr:
+    data := c_mem_check(pointer, count, true)
+    memory := CMemory(pointer.memory)
+    c_mem_side_invalidate_range(memory, pointer.allocation, pointer.offset, count)
+    mut i := 0
+    while i < count:
+        buf_set8(data, pointer.offset + i, value & 255)
+        i = i + 1
+    return pointer
+
+
+def c_memcpy(destination: CPtr, source: CPtr, count: Int) -> CPtr:
+    destination_data := c_mem_check(destination, count, true)
+    source_data := c_mem_check(source, count, false)
+    if destination.memory == source.memory && destination.allocation == source.allocation:
+        if destination.offset < source.offset + count && source.offset < destination.offset + count:
+            c_mem_panic("C2-MEM-MEMCPY-OVERLAP")
+    source_memory := CMemory(source.memory)
+    destination_memory := CMemory(destination.memory)
+    source_has_pointers := c_mem_side_has_range(source_memory, source.allocation, source.offset, count)
+    if source_has_pointers && destination.memory != source.memory:
+        c_mem_panic("C2-MEM-POINTER-FIELD-CROSS-CONTEXT-COPY")
+    buf_copy(destination_data, destination.offset, source_data, source.offset, count)
+    if source_has_pointers:
+        c_mem_side_copy_nonoverlap(destination, source, count)
+    else:
+        c_mem_side_invalidate_range(destination_memory, destination.allocation, destination.offset, count)
+    return destination
+
+
+def c_memmove(destination: CPtr, source: CPtr, count: Int) -> CPtr:
+    destination_data := c_mem_check(destination, count, true)
+    source_data := c_mem_check(source, count, false)
+    source_memory := CMemory(source.memory)
+    destination_memory := CMemory(destination.memory)
+    if c_mem_side_has_range(source_memory, source.allocation, source.offset, count) || c_mem_side_has_range(destination_memory, destination.allocation, destination.offset, count):
+        c_mem_panic("C2-MEM-POINTER-FIELD-MEMMOVE-UNSUPPORTED")
+    if destination.memory == source.memory && destination.allocation == source.allocation && destination.offset > source.offset && destination.offset < source.offset + count:
+        mut i := count
+        while i > 0:
+            i = i - 1
+            buf_set8(destination_data, destination.offset + i, buf_get8(source_data, source.offset + i))
+    else:
+        mut i := 0
+        while i < count:
+            buf_set8(destination_data, destination.offset + i, buf_get8(source_data, source.offset + i))
+            i = i + 1
+    return destination
+
+
+def c_strlen(pointer: CPtr) -> Int:
+    c_mem_check(pointer, 0, false)
+    mut i := pointer.offset
+    while i < pointer.upper_bound:
+        probe := CPtr(pointer.memory, pointer.allocation, i, pointer.lower_bound, pointer.upper_bound, pointer.generation, pointer.mutable_flag, 1)
+        if c_load_u8(probe) == 0:
+            return i - pointer.offset
+        i = i + 1
+    c_mem_panic("C2-MEM-UNTERMINATED-C-STRING")
+    return 0
+
+
+def c_string_from_lpp(memory: CMemory, value: Str) -> CPtr:
+    length := str_len(value)
+    pointer := c_calloc(memory, length + 1, 1)
+    data := c_mem_check(pointer, length + 1, true)
+    if length > 0:
+        buf_write_str(data, 0, value)
+    buf_set8(data, length, 0)
+    return pointer
+
+
+def c_string_to_lpp(pointer: CPtr) -> Str:
+    length := c_strlen(pointer)
+    data := c_mem_check(pointer, length, false)
+    return buf_read_str(data, pointer.offset, length)
+
+
+def c_strcmp(left: CPtr, right: CPtr) -> Int:
+    mut i := 0
+    while true:
+        left_byte := c_load_u8(c_ptr_add(c_ptr_cast(left, 1, left.mutable_flag), i))
+        right_byte := c_load_u8(c_ptr_add(c_ptr_cast(right, 1, right.mutable_flag), i))
+        if left_byte != right_byte:
+            return left_byte - right_byte
+        if left_byte == 0:
+            return 0
+        i = i + 1
+    return 0

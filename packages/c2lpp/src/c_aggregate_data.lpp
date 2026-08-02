@@ -1,0 +1,686 @@
+# c_aggregate_data.lpp — conservative target-ABI aggregate field catalog.
+#
+# The pass computes SysV x86-64 offsets only for declarations it can prove from
+# tokens and resolved typedef metadata. Unsupported suffixes stop that aggregate
+# at a safe prefix: already-laid-out prefix fields remain usable through an
+# incoming CPtr, but the aggregate is not assigned a complete size and therefore
+# cannot be allocated or embedded by value. Pointer fields occupy target ABI
+# bytes for offset calculation but are not loaded until a provenance side table
+# exists.
+
+import c_translation_unit
+import c_declaration_graph
+import c_normal_ir
+import c_lexer
+import text
+
+struct CAggregateTypeSpec:
+    kind: Int
+    type_name: Str
+    size: Int
+    alignment: Int
+    signed_flag: Int
+    next: CLexCursor
+    valid: Int
+    reason: Str
+
+struct CAggregateParse:
+    name: Str
+    graph: Str
+    size: Int
+    alignment: Int
+    field_count: Int
+    complete: Int
+    valid: Int
+    reason: Str
+
+struct CAggregateCatalog:
+    graph: Str
+    normalized: Str
+    aggregates_seen: Int
+    aggregates_complete: Int
+    aggregates_partial: Int
+    fields_emitted: Int
+    valid: Int
+
+struct CAggregateField:
+    aggregate_name: Str
+    field_name: Str
+    type_kind: Int
+    type_name: Str
+    pointer_depth: Int
+    array_count: Int
+    byte_offset: Int
+    storage_size: Int
+    alignment: Int
+    signed_flag: Int
+    bit_offset: Int
+    bit_width: Int
+    valid: Int
+
+
+def c_aggregate_align_up(value: Int, alignment: Int) -> Int:
+    if alignment <= 0:
+        return value
+    remainder := value % alignment
+    if remainder == 0:
+        return value
+    return value + alignment - remainder
+
+
+def c_aggregate_last_word(value: Str) -> Str:
+    words := str_split(value, 32)
+    mut out := ""
+    for word in words:
+        if str_len(word) > 0:
+            out = word
+    return out
+
+
+def c_aggregate_pipe_field(line: Str, wanted: Int) -> Str:
+    mut field_index := 0
+    mut start := 0
+    mut cursor := 0
+    while cursor <= str_len(line):
+        mut boundary := cursor == str_len(line)
+        if !boundary:
+            boundary = text_eq(char_at(line, cursor), "|")
+        if boundary:
+            if field_index == wanted:
+                return str_substr(line, start, cursor - start)
+            field_index = field_index + 1
+            start = cursor + 1
+        cursor = cursor + 1
+    return ""
+
+
+def c_aggregate_find_record(graph: Str, key: Str) -> Str:
+    position := str_find(graph, key)
+    if position < 0:
+        return ""
+    tail := str_substr(graph, position, str_len(graph) - position)
+    newline := str_find(tail, "\n")
+    if newline < 0:
+        return tail
+    return str_substr(tail, 0, newline)
+
+
+def c_aggregate_find_symbol_record(graph: Str, name: Str) -> Str:
+    direct_key := str_concat(name, "|")
+    if text_starts(graph, direct_key):
+        return c_aggregate_find_record(graph, direct_key)
+    line_key := str_concat("\n", direct_key)
+    position := str_find(graph, line_key)
+    if position < 0:
+        return ""
+    tail := str_substr(graph, position + 1, str_len(graph) - position - 1)
+    newline := str_find(tail, "\n")
+    if newline < 0:
+        return tail
+    return str_substr(tail, 0, newline)
+
+
+def c_aggregate_record_field(graph: Str, prefix: Str, name: Str, wanted: Int) -> Str:
+    key := str_concat(prefix, str_concat("|", str_concat(name, "|")))
+    line := c_aggregate_find_record(graph, key)
+    if str_len(line) == 0:
+        return ""
+    return c_aggregate_pipe_field(line, wanted)
+
+
+def c_aggregate_has(graph: Str, name: Str) -> Bool:
+    return str_len(c_aggregate_record_field(graph, "@agg", name, 1)) > 0
+
+
+def c_aggregate_is_complete(graph: Str, name: Str) -> Bool:
+    return text_eq(c_aggregate_record_field(graph, "@agg", name, 5), "1")
+
+
+def c_aggregate_size(graph: Str, name: Str) -> Int:
+    value := c_aggregate_record_field(graph, "@agg", name, 3)
+    if str_len(value) == 0:
+        return 0
+    return parse_int(value)
+
+
+def c_aggregate_alignment(graph: Str, name: Str) -> Int:
+    value := c_aggregate_record_field(graph, "@agg", name, 4)
+    if str_len(value) == 0:
+        return 0
+    return parse_int(value)
+
+
+def c_aggregate_resolve_name(types: Str, spelling: Str) -> Str:
+    words := str_split(spelling, 32)
+    mut candidate := ""
+    for word in words:
+        if str_len(word) > 0 && !text_eq(word, "const") && !text_eq(word, "volatile") && !text_eq(word, "restrict") && !text_eq(word, "struct") && !text_eq(word, "union"):
+            candidate = word
+    if str_len(candidate) == 0:
+        return ""
+    alias_line := c_aggregate_find_symbol_record(types, candidate)
+    if str_len(alias_line) > 0 && parse_int(c_aggregate_pipe_field(alias_line, 1)) == C_IR_TYPE_AGGREGATE:
+        base := c_aggregate_pipe_field(alias_line, 4)
+        if str_len(base) > 0:
+            return c_aggregate_last_word(base)
+    if c_aggregate_has(types, candidate):
+        return candidate
+    return candidate
+
+
+def c_aggregate_type_invalid(cursor: CLexCursor, reason: Str) -> CAggregateTypeSpec:
+    return CAggregateTypeSpec(C_IR_TYPE_INVALID, "", 0, 0, 0, cursor, 0, reason)
+
+
+def c_aggregate_parse_type(cursor: CLexCursor, types: Str) -> CAggregateTypeSpec:
+    mut current := cursor
+    mut saw_type := false
+    mut kind := C_IR_TYPE_INVALID
+    mut size := 0
+    mut alignment := 0
+    mut signed_flag := 1
+    mut type_name := ""
+    mut saw_char := false
+    mut saw_short := false
+    mut saw_long := 0
+    mut saw_float := false
+    mut saw_double := false
+    mut saw_bool := false
+    mut scanning := true
+    while scanning:
+        step := c_lex_next_code(current)
+        word := step.token.spelling
+        mut consumed := true
+        if text_eq(word, "const") || text_eq(word, "volatile") || text_eq(word, "restrict") || text_eq(word, "register") || text_eq(word, "static"):
+            consumed = true
+        elif text_eq(word, "unsigned"):
+            saw_type = true
+            kind = C_IR_TYPE_INT
+            signed_flag = 0
+        elif text_eq(word, "signed") || text_eq(word, "int"):
+            saw_type = true
+            kind = C_IR_TYPE_INT
+        elif text_eq(word, "char"):
+            saw_type = true
+            kind = C_IR_TYPE_INT
+            saw_char = true
+        elif text_eq(word, "short"):
+            saw_type = true
+            kind = C_IR_TYPE_INT
+            saw_short = true
+        elif text_eq(word, "long"):
+            saw_type = true
+            kind = C_IR_TYPE_INT
+            saw_long = saw_long + 1
+        elif text_eq(word, "float"):
+            saw_type = true
+            kind = C_IR_TYPE_FLOAT
+            saw_float = true
+        elif text_eq(word, "double"):
+            saw_type = true
+            kind = C_IR_TYPE_FLOAT
+            saw_double = true
+        elif text_eq(word, "_Bool") || text_eq(word, "bool"):
+            saw_type = true
+            kind = C_IR_TYPE_BOOL
+            saw_bool = true
+            signed_flag = 0
+        elif text_eq(word, "void"):
+            saw_type = true
+            kind = C_IR_TYPE_VOID
+            type_name = "void"
+        elif text_eq(word, "enum"):
+            tag := c_lex_next_code(step.next)
+            if tag.token.kind != C_TOKEN_IDENTIFIER:
+                return c_aggregate_type_invalid(tag.next, "C2-AGGREGATE-ENUM-TAG")
+            saw_type = true
+            kind = C_IR_TYPE_INT
+            size = 4
+            alignment = 4
+            type_name = tag.token.spelling
+            current = tag.next
+        elif text_eq(word, "struct") || text_eq(word, "union"):
+            tag := c_lex_next_code(step.next)
+            if tag.token.kind != C_TOKEN_IDENTIFIER:
+                return c_aggregate_type_invalid(tag.next, "C2-AGGREGATE-TAG")
+            saw_type = true
+            kind = C_IR_TYPE_AGGREGATE
+            type_name = tag.token.spelling
+            current = tag.next
+        elif step.token.kind == C_TOKEN_IDENTIFIER && c_ir_symbol_type(types, word) != C_IR_TYPE_INVALID:
+            saw_type = true
+            kind = c_ir_symbol_type(types, word)
+            type_name = word
+            if kind == C_IR_TYPE_INT || kind == C_IR_TYPE_FLOAT || kind == C_IR_TYPE_BOOL:
+                size = parse_int(c_ir_symbol_field(types, word, 2))
+                signed_flag = parse_int(c_ir_symbol_field(types, word, 3))
+                alignment = size
+                if alignment > 8:
+                    alignment = 8
+            elif kind == C_IR_TYPE_AGGREGATE:
+                resolved := c_aggregate_resolve_name(types, word)
+                type_name = resolved
+                if c_aggregate_is_complete(types, resolved):
+                    size = c_aggregate_size(types, resolved)
+                    alignment = c_aggregate_alignment(types, resolved)
+            current = step.next
+        else:
+            consumed = false
+            scanning = false
+        if consumed && !text_eq(word, "enum") && !text_eq(word, "struct") && !text_eq(word, "union") && !(step.token.kind == C_TOKEN_IDENTIFIER && c_ir_symbol_type(types, word) != C_IR_TYPE_INVALID):
+            current = step.next
+    if !saw_type:
+        return c_aggregate_type_invalid(cursor, "C2-AGGREGATE-FIELD-TYPE")
+    if kind == C_IR_TYPE_INT || kind == C_IR_TYPE_FLOAT || kind == C_IR_TYPE_BOOL:
+        if size == 0:
+            if saw_bool || saw_char:
+                size = 1
+            elif saw_short:
+                size = 2
+            elif saw_long > 0 || saw_double:
+                size = 8
+            elif saw_float:
+                size = 4
+            else:
+                size = 4
+            alignment = size
+            if alignment > 8:
+                alignment = 8
+        if str_len(type_name) == 0:
+            type_name = "scalar"
+    return CAggregateTypeSpec(kind, type_name, size, alignment, signed_flag, current, 1, "")
+
+
+def c_aggregate_field_line(aggregate_name: Str, field_name: Str, type_kind: Int, type_name: Str, pointer_depth: Int, array_count: Int, byte_offset: Int, storage_size: Int, alignment: Int, signed_flag: Int, bit_offset: Int, bit_width: Int) -> Str:
+    mut out := str_concat("@field|", str_concat(aggregate_name, "|"))
+    out = str_concat(out, str_concat(field_name, "|"))
+    out = str_concat(out, str_concat(int_to_str(type_kind), "|"))
+    out = str_concat(out, str_concat(type_name, "|"))
+    out = str_concat(out, str_concat(int_to_str(pointer_depth), "|"))
+    out = str_concat(out, str_concat(int_to_str(array_count), "|"))
+    out = str_concat(out, str_concat(int_to_str(byte_offset), "|"))
+    out = str_concat(out, str_concat(int_to_str(storage_size), "|"))
+    out = str_concat(out, str_concat(int_to_str(alignment), "|"))
+    out = str_concat(out, str_concat(int_to_str(signed_flag), "|"))
+    out = str_concat(out, str_concat(int_to_str(bit_offset), "|"))
+    return str_concat(out, str_concat(int_to_str(bit_width), "\n"))
+
+
+def c_aggregate_partial(name: Str, graph: Str, alignment: Int, fields: Int, reason: Str) -> CAggregateParse:
+    mut final_alignment := alignment
+    if final_alignment <= 0:
+        final_alignment = 1
+    return CAggregateParse(name, graph, 0, final_alignment, fields, 0, 1, reason)
+
+
+def c_aggregate_parse_record(data: Int, data_size: Int, path: Str, record: Str, types: Str) -> CAggregateParse:
+    name := c_decl_field(record, 1)
+    line := parse_int(c_decl_field(record, 3))
+    column := parse_int(c_decl_field(record, 4))
+    start := parse_int(c_decl_field(record, 5))
+    end := parse_int(c_decl_field(record, 6))
+    if str_len(name) == 0 || start < 0 || end <= start || end > data_size:
+        return CAggregateParse(name, "", 0, 1, 0, 0, 0, "C2-AGGREGATE-SPAN")
+    mut current := CLexCursor(data, data_size, path, start, line, column)
+    mut aggregate_kind := "struct"
+    mut found_open := false
+    while current.offset < end && !found_open:
+        step := c_lex_next_code(current)
+        if text_eq(step.token.spelling, "union"):
+            aggregate_kind = "union"
+        if c_lex_token_is(step, "{"):
+            found_open = true
+            current = step.next
+        else:
+            current = step.next
+    if !found_open:
+        return CAggregateParse(name, "", 0, 1, 0, 0, 0, "C2-AGGREGATE-NO-BODY")
+
+    mut graph := ""
+    mut offset := 0
+    mut union_size := 0
+    mut max_alignment := 1
+    mut field_count := 0
+    mut active_bit_size := 0
+    mut active_bit_used := 0
+    mut active_bit_offset := 0
+    mut done := false
+    while !done && current.offset < end:
+        first := c_lex_next_code(current)
+        if c_lex_token_is(first, "}"):
+            current = first.next
+            done = true
+        elif c_lex_token_is(first, ";"):
+            current = first.next
+        elif text_eq(first.token.spelling, "struct") || text_eq(first.token.spelling, "union"):
+            tag_probe := c_lex_next_code(first.next)
+            mut brace_probe := tag_probe
+            if tag_probe.token.kind == C_TOKEN_IDENTIFIER:
+                brace_probe = c_lex_next_code(tag_probe.next)
+            if c_lex_token_is(brace_probe, "{"):
+                return c_aggregate_partial(name, graph, max_alignment, field_count, "C2-AGGREGATE-INLINE-NESTED")
+            type_spec := c_aggregate_parse_type(current, types)
+            if type_spec.valid == 0:
+                return c_aggregate_partial(name, graph, max_alignment, field_count, type_spec.reason)
+            current = type_spec.next
+            # Continue through the ordinary declarator path below.
+            mut declaration_done := false
+            while !declaration_done:
+                mut pointer := 0
+                mut declaration_cursor := current
+                mut pointer_scan := true
+                while pointer_scan:
+                    star := c_lex_next_code(declaration_cursor)
+                    if c_lex_token_is(star, "*"):
+                        pointer = pointer + 1
+                        declaration_cursor = star.next
+                        mut qualifier_scan := true
+                        while qualifier_scan:
+                            qualifier := c_lex_next_code(declaration_cursor)
+                            if text_eq(qualifier.token.spelling, "const") || text_eq(qualifier.token.spelling, "volatile") || text_eq(qualifier.token.spelling, "restrict"):
+                                declaration_cursor = qualifier.next
+                            else:
+                                qualifier_scan = false
+                    else:
+                        pointer_scan = false
+                mut name_step := c_lex_next_code(declaration_cursor)
+                if name_step.token.kind != C_TOKEN_IDENTIFIER:
+                    return c_aggregate_partial(name, graph, max_alignment, field_count, "C2-AGGREGATE-DECLARATOR")
+                field_name := name_step.token.spelling
+                current = name_step.next
+                mut field_size := type_spec.size
+                mut field_alignment := type_spec.alignment
+                mut field_kind := type_spec.kind
+                mut field_type_name := type_spec.type_name
+                if pointer > 0:
+                    field_size = 8
+                    field_alignment = 8
+                elif type_spec.kind == C_IR_TYPE_VOID || type_spec.size <= 0:
+                    return c_aggregate_partial(name, graph, max_alignment, field_count, "C2-AGGREGATE-INCOMPLETE-FIELD")
+                mut array_count := 0
+                mut suffix := c_lex_next_code(current)
+                if c_lex_token_is(suffix, "["):
+                    count_step := c_lex_next_code(suffix.next)
+                    if count_step.token.kind != C_TOKEN_NUMBER:
+                        return c_aggregate_partial(name, graph, max_alignment, field_count, "C2-AGGREGATE-ARRAY-COUNT")
+                    array_count = parse_int(count_step.token.spelling)
+                    close := c_lex_next_code(count_step.next)
+                    if !c_lex_token_is(close, "]") || array_count <= 0:
+                        return c_aggregate_partial(name, graph, max_alignment, field_count, "C2-AGGREGATE-ARRAY-CLOSE")
+                    field_size = field_size * array_count
+                    current = close.next
+                    suffix = c_lex_next_code(current)
+                mut bit_width := -1
+                if c_lex_token_is(suffix, ":"):
+                    width_step := c_lex_next_code(suffix.next)
+                    if width_step.token.kind != C_TOKEN_NUMBER:
+                        return c_aggregate_partial(name, graph, max_alignment, field_count, "C2-AGGREGATE-BIT-WIDTH")
+                    bit_width = parse_int(width_step.token.spelling)
+                    if bit_width < 0 || bit_width > field_size * 8 || field_size > 4:
+                        return c_aggregate_partial(name, graph, max_alignment, field_count, "C2-AGGREGATE-BIT-RANGE")
+                    current = width_step.next
+                    suffix = c_lex_next_code(current)
+                if field_alignment > max_alignment:
+                    max_alignment = field_alignment
+                mut field_offset := 0
+                mut bit_offset := -1
+                if text_eq(aggregate_kind, "union"):
+                    field_offset = 0
+                    if field_size > union_size:
+                        union_size = field_size
+                    if bit_width >= 0:
+                        bit_offset = 0
+                elif bit_width >= 0:
+                    if bit_width == 0:
+                        offset = c_aggregate_align_up(offset, field_alignment)
+                        active_bit_size = 0
+                        active_bit_used = 0
+                    else:
+                        if active_bit_size != field_size || active_bit_used + bit_width > field_size * 8:
+                            if offset % field_alignment != 0:
+                                return c_aggregate_partial(name, graph, max_alignment, field_count, "C2-AGGREGATE-BITFIELD-PADDING-ABI")
+                            offset = c_aggregate_align_up(offset, field_alignment)
+                            active_bit_offset = offset
+                            offset = offset + field_size
+                            active_bit_size = field_size
+                            active_bit_used = 0
+                        field_offset = active_bit_offset
+                        bit_offset = active_bit_used
+                        active_bit_used = active_bit_used + bit_width
+                        if active_bit_used == field_size * 8:
+                            active_bit_size = 0
+                            active_bit_used = 0
+                else:
+                    active_bit_size = 0
+                    active_bit_used = 0
+                    offset = c_aggregate_align_up(offset, field_alignment)
+                    field_offset = offset
+                    offset = offset + field_size
+                if bit_width != 0:
+                    graph = str_concat(graph, c_aggregate_field_line(name, field_name, field_kind, field_type_name, pointer, array_count, field_offset, field_size, field_alignment, type_spec.signed_flag, bit_offset, bit_width))
+                    field_count = field_count + 1
+                if c_lex_token_is(suffix, ","):
+                    current = suffix.next
+                elif c_lex_token_is(suffix, ";"):
+                    current = suffix.next
+                    declaration_done = true
+                else:
+                    return c_aggregate_partial(name, graph, max_alignment, field_count, "C2-AGGREGATE-FIELD-SUFFIX")
+        else:
+            type_spec := c_aggregate_parse_type(current, types)
+            if type_spec.valid == 0:
+                return c_aggregate_partial(name, graph, max_alignment, field_count, type_spec.reason)
+            current = type_spec.next
+            mut declaration_done := false
+            while !declaration_done:
+                mut pointer := 0
+                mut declaration_cursor := current
+                mut pointer_scan := true
+                while pointer_scan:
+                    star := c_lex_next_code(declaration_cursor)
+                    if c_lex_token_is(star, "*"):
+                        pointer = pointer + 1
+                        declaration_cursor = star.next
+                        mut qualifier_scan := true
+                        while qualifier_scan:
+                            qualifier := c_lex_next_code(declaration_cursor)
+                            if text_eq(qualifier.token.spelling, "const") || text_eq(qualifier.token.spelling, "volatile") || text_eq(qualifier.token.spelling, "restrict"):
+                                declaration_cursor = qualifier.next
+                            else:
+                                qualifier_scan = false
+                    else:
+                        pointer_scan = false
+                mut name_step := c_lex_next_code(declaration_cursor)
+                mut function_pointer := false
+                if c_lex_token_is(name_step, "("):
+                    star := c_lex_next_code(name_step.next)
+                    fn_name := c_lex_next_code(star.next)
+                    fn_close := c_lex_next_code(fn_name.next)
+                    if !c_lex_token_is(star, "*") || fn_name.token.kind != C_TOKEN_IDENTIFIER || !c_lex_token_is(fn_close, ")"):
+                        return c_aggregate_partial(name, graph, max_alignment, field_count, "C2-AGGREGATE-FUNCTION-POINTER")
+                    function_pointer = true
+                    pointer = 1
+                    name_step = fn_name
+                    declaration_cursor = fn_close.next
+                elif name_step.token.kind == C_TOKEN_IDENTIFIER:
+                    declaration_cursor = name_step.next
+                else:
+                    return c_aggregate_partial(name, graph, max_alignment, field_count, "C2-AGGREGATE-DECLARATOR")
+                field_name := name_step.token.spelling
+                current = declaration_cursor
+                if function_pointer:
+                    fn_open := c_lex_next_code(current)
+                    if !c_lex_token_is(fn_open, "("):
+                        return c_aggregate_partial(name, graph, max_alignment, field_count, "C2-AGGREGATE-FUNCTION-SIGNATURE")
+                    mut depth := 1
+                    current = fn_open.next
+                    while depth > 0:
+                        fn_token := c_lex_next_code(current)
+                        if fn_token.token.kind == C_TOKEN_EOF:
+                            return c_aggregate_partial(name, graph, max_alignment, field_count, "C2-AGGREGATE-FUNCTION-UNTERMINATED")
+                        if c_lex_token_is(fn_token, "("):
+                            depth = depth + 1
+                        elif c_lex_token_is(fn_token, ")"):
+                            depth = depth - 1
+                        current = fn_token.next
+                mut field_size := type_spec.size
+                mut field_alignment := type_spec.alignment
+                mut field_kind := type_spec.kind
+                mut field_type_name := type_spec.type_name
+                if pointer > 0:
+                    field_size = 8
+                    field_alignment = 8
+                    if function_pointer:
+                        field_type_name = "<function-pointer>"
+                elif type_spec.kind == C_IR_TYPE_VOID || type_spec.size <= 0:
+                    return c_aggregate_partial(name, graph, max_alignment, field_count, "C2-AGGREGATE-INCOMPLETE-FIELD")
+                mut array_count := 0
+                mut suffix := c_lex_next_code(current)
+                if c_lex_token_is(suffix, "["):
+                    count_step := c_lex_next_code(suffix.next)
+                    if count_step.token.kind != C_TOKEN_NUMBER:
+                        return c_aggregate_partial(name, graph, max_alignment, field_count, "C2-AGGREGATE-ARRAY-COUNT")
+                    array_count = parse_int(count_step.token.spelling)
+                    close := c_lex_next_code(count_step.next)
+                    if !c_lex_token_is(close, "]") || array_count <= 0:
+                        return c_aggregate_partial(name, graph, max_alignment, field_count, "C2-AGGREGATE-ARRAY-CLOSE")
+                    field_size = field_size * array_count
+                    current = close.next
+                    suffix = c_lex_next_code(current)
+                mut bit_width := -1
+                if c_lex_token_is(suffix, ":"):
+                    width_step := c_lex_next_code(suffix.next)
+                    if width_step.token.kind != C_TOKEN_NUMBER:
+                        return c_aggregate_partial(name, graph, max_alignment, field_count, "C2-AGGREGATE-BIT-WIDTH")
+                    bit_width = parse_int(width_step.token.spelling)
+                    if bit_width < 0 || bit_width > field_size * 8 || field_size > 4:
+                        return c_aggregate_partial(name, graph, max_alignment, field_count, "C2-AGGREGATE-BIT-RANGE")
+                    current = width_step.next
+                    suffix = c_lex_next_code(current)
+                if field_alignment > max_alignment:
+                    max_alignment = field_alignment
+                mut field_offset := 0
+                mut bit_offset := -1
+                if text_eq(aggregate_kind, "union"):
+                    if field_size > union_size:
+                        union_size = field_size
+                    if bit_width >= 0:
+                        bit_offset = 0
+                elif bit_width >= 0:
+                    if bit_width == 0:
+                        offset = c_aggregate_align_up(offset, field_alignment)
+                        active_bit_size = 0
+                        active_bit_used = 0
+                    else:
+                        if active_bit_size != field_size || active_bit_used + bit_width > field_size * 8:
+                            if offset % field_alignment != 0:
+                                return c_aggregate_partial(name, graph, max_alignment, field_count, "C2-AGGREGATE-BITFIELD-PADDING-ABI")
+                            offset = c_aggregate_align_up(offset, field_alignment)
+                            active_bit_offset = offset
+                            offset = offset + field_size
+                            active_bit_size = field_size
+                            active_bit_used = 0
+                        field_offset = active_bit_offset
+                        bit_offset = active_bit_used
+                        active_bit_used = active_bit_used + bit_width
+                        if active_bit_used == field_size * 8:
+                            active_bit_size = 0
+                            active_bit_used = 0
+                else:
+                    active_bit_size = 0
+                    active_bit_used = 0
+                    offset = c_aggregate_align_up(offset, field_alignment)
+                    field_offset = offset
+                    offset = offset + field_size
+                if bit_width != 0:
+                    graph = str_concat(graph, c_aggregate_field_line(name, field_name, field_kind, field_type_name, pointer, array_count, field_offset, field_size, field_alignment, type_spec.signed_flag, bit_offset, bit_width))
+                    field_count = field_count + 1
+                if c_lex_token_is(suffix, ","):
+                    current = suffix.next
+                elif c_lex_token_is(suffix, ";"):
+                    current = suffix.next
+                    declaration_done = true
+                else:
+                    return c_aggregate_partial(name, graph, max_alignment, field_count, "C2-AGGREGATE-FIELD-SUFFIX")
+    if !done:
+        return c_aggregate_partial(name, graph, max_alignment, field_count, "C2-AGGREGATE-UNTERMINATED")
+    mut aggregate_size := offset
+    if text_eq(aggregate_kind, "union"):
+        aggregate_size = union_size
+    aggregate_size = c_aggregate_align_up(aggregate_size, max_alignment)
+    return CAggregateParse(name, graph, aggregate_size, max_alignment, field_count, 1, 1, "")
+
+
+def c_aggregate_header(parsed: CAggregateParse) -> Str:
+    mut out := str_concat("@agg|", str_concat(parsed.name, "|struct|"))
+    out = str_concat(out, str_concat(int_to_str(parsed.size), "|"))
+    out = str_concat(out, str_concat(int_to_str(parsed.alignment), "|"))
+    out = str_concat(out, str_concat(int_to_str(parsed.complete), "|"))
+    return str_concat(out, str_concat(parsed.reason, "\n"))
+
+
+def c_aggregate_catalog_file(path: Str, tu_graph: Str, aliases: Str, wanted: Str) -> CAggregateCatalog:
+    data := buf_read(path)
+    data_size := buf_len(data)
+    if data_size <= 0:
+        if data != 0:
+            buf_free(data)
+        return CAggregateCatalog("", "", 0, 0, 0, 0, 0)
+    records := str_split(tu_graph, 10)
+    mut parse_types := aliases
+    mut output_graph := ""
+    mut accepted_names := ""
+    mut round := 0
+    mut changed := true
+    while round < 2 && changed:
+        changed = false
+        for record in records:
+            if text_starts(record, "aggregate|") || text_starts(record, "typedef|"):
+                name := c_decl_field(record, 1)
+                if c_decl_set_has(wanted, name) && !c_decl_set_has(accepted_names, name):
+                    parsed := c_aggregate_parse_record(data, data_size, path, record, parse_types)
+                    if parsed.valid != 0 && parsed.complete != 0:
+                        parse_types = str_concat(parse_types, c_aggregate_header(parsed))
+                        parse_types = str_concat(parse_types, parsed.graph)
+                        output_graph = str_concat(output_graph, c_aggregate_header(parsed))
+                        output_graph = str_concat(output_graph, parsed.graph)
+                        accepted_names = c_decl_set_add(accepted_names, name)
+                        changed = true
+        round = round + 1
+    mut seen := 0
+    mut complete := 0
+    mut partial := 0
+    mut fields := 0
+    mut normalized := "schema|c2lpp-aggregate-field-v1\n"
+    for record in records:
+        if text_starts(record, "aggregate|") || text_starts(record, "typedef|"):
+            name := c_decl_field(record, 1)
+            if c_decl_set_has(wanted, name):
+                parsed := c_aggregate_parse_record(data, data_size, path, record, parse_types)
+                if parsed.valid != 0 || !text_eq(parsed.reason, "C2-AGGREGATE-NO-BODY"):
+                    seen = seen + 1
+                    if c_decl_set_has(accepted_names, name):
+                        complete = complete + 1
+                    elif parsed.valid != 0 && parsed.field_count > 0:
+                        parse_types = str_concat(parse_types, c_aggregate_header(parsed))
+                        parse_types = str_concat(parse_types, parsed.graph)
+                        output_graph = str_concat(output_graph, c_aggregate_header(parsed))
+                        output_graph = str_concat(output_graph, parsed.graph)
+                        partial = partial + 1
+                        normalized = text_append_line(normalized, str_concat("aggregate-partial|", str_concat(name, str_concat("|", parsed.reason))))
+    lines := str_split(output_graph, 10)
+    for line in lines:
+        if text_starts(line, "@field|"):
+            fields = fields + 1
+        elif text_starts(line, "@agg|"):
+            normalized = text_append_line(normalized, str_concat("aggregate-layout|", str_substr(line, 5, str_len(line) - 5)))
+    buf_free(data)
+    return CAggregateCatalog(output_graph, normalized, seen, complete, partial, fields, 1)
+
+
+def c_aggregate_field(types: Str, aggregate_name: Str, field_name: Str) -> CAggregateField:
+    prefix := str_concat("@field|", str_concat(aggregate_name, str_concat("|", str_concat(field_name, "|"))))
+    line := c_aggregate_find_record(types, prefix)
+    if str_len(line) > 0:
+        return CAggregateField(aggregate_name, field_name, parse_int(c_aggregate_pipe_field(line, 3)), c_aggregate_pipe_field(line, 4), parse_int(c_aggregate_pipe_field(line, 5)), parse_int(c_aggregate_pipe_field(line, 6)), parse_int(c_aggregate_pipe_field(line, 7)), parse_int(c_aggregate_pipe_field(line, 8)), parse_int(c_aggregate_pipe_field(line, 9)), parse_int(c_aggregate_pipe_field(line, 10)), parse_int(c_aggregate_pipe_field(line, 11)), parse_int(c_aggregate_pipe_field(line, 12)), 1)
+    return CAggregateField(aggregate_name, field_name, C_IR_TYPE_INVALID, "", 0, 0, 0, 0, 0, 0, -1, -1, 0)

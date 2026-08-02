@@ -1,0 +1,39 @@
+import c_memory
+import c_layout
+
+def main():
+    model := c_abi_sysv_x86_64()
+    packet_builder := c_layout_builder_new(model, C_LAYOUT_STRUCT, 8)
+    tag := c_layout_add_field(packet_builder, 4, 4, 3, 0)
+    mode := c_layout_add_field(packet_builder, 4, 4, 5, 0)
+    value := c_layout_add_field(packet_builder, 4, 4, -1, 1)
+    ready := c_layout_add_field(packet_builder, 4, 4, 1, 0)
+    count := c_layout_add_field(packet_builder, 4, 4, 7, 0)
+    layout := c_layout_finish(packet_builder)
+    print(layout.size)
+    print(layout.alignment)
+
+    memory := c_memory_new(4)
+    packet := c_calloc(memory, 1, layout.size)
+    c_layout_store_int(packet, c_layout_field(layout, tag), 5)
+    c_layout_store_int(packet, c_layout_field(layout, mode), 17)
+    c_layout_store_int(packet, c_layout_field(layout, value), -9)
+    c_layout_store_int(packet, c_layout_field(layout, ready), 1)
+    c_layout_store_int(packet, c_layout_field(layout, count), 77)
+    print(c_layout_load_int(packet, c_layout_field(layout, tag)))
+    print(c_layout_load_int(packet, c_layout_field(layout, mode)))
+    print(c_layout_load_int(packet, c_layout_field(layout, value)))
+    print(c_layout_load_int(packet, c_layout_field(layout, ready)))
+    print(c_layout_load_int(packet, c_layout_field(layout, count)))
+
+    union_builder := c_layout_builder_new(model, C_LAYOUT_UNION, 4)
+    c_layout_add_field(union_builder, 2, 2, -1, 0)
+    c_layout_add_field(union_builder, 8, 8, -1, 1)
+    union_layout := c_layout_finish(union_builder)
+    print(union_layout.size)
+    print(union_layout.alignment)
+
+    c_free(packet)
+    c_memory_destroy(memory)
+    c_layout_destroy(layout)
+    c_layout_destroy(union_layout)

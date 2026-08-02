@@ -1,0 +1,60 @@
+# c_globals.lpp — explicit zero-initialized C global/static storage region.
+#
+# L++ has no mutable module globals in every backend. Translated code therefore
+# carries one hidden region with deterministic zeroing and initialization state.
+
+import c_memory
+
+struct CGlobalRegion:
+    memory: CMemory
+    storage: CPtr
+    control: Int
+    size: Int
+
+
+def c_globals_new(size: Int) -> CGlobalRegion:
+    if size <= 0:
+        c_mem_panic("C2-GLOBALS-BAD-SIZE")
+    memory := c_memory_new(8)
+    storage := c_calloc(memory, 1, size)
+    control := buf_alloc(8)
+    c_mem_set64(control, 0, 0)
+    return CGlobalRegion(memory, storage, control, size)
+
+
+def c_globals_state(globals: CGlobalRegion) -> Int:
+    return c_mem_get64(globals.control, 0)
+
+
+def c_globals_begin_initialization(globals: CGlobalRegion) -> Void:
+    if c_globals_state(globals) != 0:
+        c_mem_panic("C2-GLOBALS-INIT-ORDER")
+    c_mem_set64(globals.control, 0, 1)
+
+
+def c_globals_finish_initialization(globals: CGlobalRegion) -> Void:
+    if c_globals_state(globals) != 1:
+        c_mem_panic("C2-GLOBALS-INIT-STATE")
+    c_mem_set64(globals.control, 0, 2)
+
+
+def c_globals_initializer_pointer(globals: CGlobalRegion, offset: Int, size: Int, element_size: Int) -> CPtr:
+    state := c_globals_state(globals)
+    if state != 1:
+        c_mem_panic("C2-GLOBALS-NOT-INITIALIZING")
+    return c_ptr_subobject(globals.storage, offset, size, element_size)
+
+
+def c_globals_pointer(globals: CGlobalRegion, offset: Int, size: Int, element_size: Int) -> CPtr:
+    if c_globals_state(globals) != 2:
+        c_mem_panic("C2-GLOBALS-NOT-INITIALIZED")
+    return c_ptr_subobject(globals.storage, offset, size, element_size)
+
+
+def c_globals_destroy(globals: CGlobalRegion) -> Void:
+    if c_globals_state(globals) == 3:
+        c_mem_panic("C2-GLOBALS-DOUBLE-DESTROY")
+    c_free(globals.storage)
+    c_memory_destroy(globals.memory)
+    c_mem_set64(globals.control, 0, 3)
+    buf_free(globals.control)

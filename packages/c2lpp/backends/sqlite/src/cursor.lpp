@@ -1,0 +1,158 @@
+# cursor.lpp — depth-first iteration over every row of a table b-tree.
+#
+# The traversal keeps an explicit stack of (page, next-child-index) pairs so
+# it works on arbitrarily deep trees without recursion.
+#
+# Cursor handle (48 bytes):
+#   [0]  pager
+#   [8]  root page
+#   [16] stack of pages (iv)
+#   [24] stack of indices (iv)
+#   [32] current leaf page
+#   [40] current cell index within that leaf
+
+import mem
+import pager
+import btree
+
+def cu_pager(c: Int) -> Int:
+    return mem.bget64(c, 0)
+
+def cu_stack(c: Int) -> Int:
+    return mem.bget64(c, 16)
+
+def cu_idx(c: Int) -> Int:
+    return mem.bget64(c, 24)
+
+def cu_leaf(c: Int) -> Int:
+    return mem.bget64(c, 32)
+
+def cu_cell(c: Int) -> Int:
+    return mem.bget64(c, 40)
+
+def cu_new(p: Int, root: Int) -> Int:
+    c := buf_alloc(48)
+    mem.bset64(c, 0, p)
+    mem.bset64(c, 8, root)
+    mem.bset64(c, 16, mem.iv_new(8))
+    mem.bset64(c, 24, mem.iv_new(8))
+    mem.bset64(c, 32, 0)
+    mem.bset64(c, 40, 0)
+    return c
+
+def cu_free(c: Int):
+    mem.iv_free(cu_stack(c))
+    mem.iv_free(cu_idx(c))
+    buf_free(c)
+
+# Walk down to the left-most leaf under `pno`, pushing the path.
+def dive(c: Int, pno: Int):
+    p := cu_pager(c)
+    st := cu_stack(c)
+    ix := cu_idx(c)
+    mut cur := pno
+    mut guard := 0
+    while guard < 1000:
+        if btree.is_leaf(p, cur) == 1:
+            mem.bset64(c, 32, cur)
+            mem.bset64(c, 40, 0)
+            return
+        mem.iv_push(st, cur)
+        mem.iv_push(ix, 0)
+        n := btree.cell_count(p, cur)
+        mut nxt := 0
+        if n > 0:
+            nxt = btree.interior_child(p, cur, 0)
+        else:
+            nxt = btree.right_child(p, cur)
+        if nxt == 0:
+            mem.bset64(c, 32, 0)
+            return
+        cur = nxt
+        guard = guard + 1
+
+def cu_first(c: Int):
+    mem.iv_clear(cu_stack(c))
+    mem.iv_clear(cu_idx(c))
+    dive(c, mem.bget64(c, 8))
+    skip_empty(c)
+
+# If the current leaf is exhausted, climb until another subtree is available.
+def skip_empty(c: Int):
+    p := cu_pager(c)
+    mut guard := 0
+    while guard < 100000:
+        leaf := cu_leaf(c)
+        if leaf == 0:
+            return
+        if cu_cell(c) < btree.cell_count(p, leaf):
+            return
+        if advance_subtree(c) == 0:
+            mem.bset64(c, 32, 0)
+            return
+        guard = guard + 1
+
+# Pop up the stack and descend into the next sibling subtree.
+def advance_subtree(c: Int) -> Int:
+    p := cu_pager(c)
+    st := cu_stack(c)
+    ix := cu_idx(c)
+    mut guard := 0
+    while guard < 1000:
+        d := mem.iv_len(st)
+        if d == 0:
+            return 0
+        node := mem.iv_get(st, d - 1)
+        i := mem.iv_get(ix, d - 1) + 1
+        mem.iv_set(ix, d - 1, i)
+        n := btree.cell_count(p, node)
+        if i < n:
+            child := btree.interior_child(p, node, i)
+            dive(c, child)
+            return 1
+        if i == n:
+            rc := btree.right_child(p, node)
+            if rc != 0:
+                dive(c, rc)
+                return 1
+        # exhausted: pop
+        mem.iv_set(st, d - 1, 0)
+        pop_iv(st)
+        pop_iv(ix)
+        guard = guard + 1
+    return 0
+
+def pop_iv(h: Int):
+    n := mem.iv_len(h)
+    if n > 0:
+        mem.bset64(h, 8, n - 1)
+
+def cu_valid(c: Int) -> Int:
+    if cu_leaf(c) == 0:
+        return 0
+    p := cu_pager(c)
+    if cu_cell(c) >= btree.cell_count(p, cu_leaf(c)):
+        return 0
+    return 1
+
+def cu_rowid(c: Int) -> Int:
+    return btree.leaf_rowid(cu_pager(c), cu_leaf(c), cu_cell(c))
+
+# Payload of the current row as a vec (caller frees).
+def cu_payload(c: Int) -> Int:
+    return btree.leaf_payload(cu_pager(c), cu_leaf(c), cu_cell(c))
+
+def cu_next(c: Int):
+    mem.bset64(c, 40, cu_cell(c) + 1)
+    skip_empty(c)
+
+# Count every row in the tree.
+def count_rows(p: Int, root: Int) -> Int:
+    c := cu_new(p, root)
+    cu_first(c)
+    mut n := 0
+    while cu_valid(c) == 1:
+        n = n + 1
+        cu_next(c)
+    cu_free(c)
+    return n

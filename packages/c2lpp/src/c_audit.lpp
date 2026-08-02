@@ -1,0 +1,527 @@
+# c_audit.lpp — fast, byte-conserving C source inventory.
+#
+# Whole amalgamations are read as checked byte buffers.  The hot path never
+# creates one-character strings and never stores the complete token stream.
+# Provenance is emitted for the first occurrence of each blocked construct.
+
+import c_token
+import text
+
+struct CAuditStats:
+    files: Int
+    bytes: Int
+    covered_bytes: Int
+    tokens: Int
+    whitespace_tokens: Int
+    comment_tokens: Int
+    identifier_tokens: Int
+    keyword_tokens: Int
+    number_tokens: Int
+    string_tokens: Int
+    character_tokens: Int
+    punctuator_tokens: Int
+    unknown_tokens: Int
+    unknown_bytes: Int
+    unterminated_comments: Int
+    unterminated_literals: Int
+    preprocessor_directives: Int
+    include_directives: Int
+    macro_includes: Int
+    goto_count: Int
+    switch_count: Int
+    case_count: Int
+    default_count: Int
+    for_count: Int
+    while_count: Int
+    do_count: Int
+    struct_count: Int
+    union_count: Int
+    enum_count: Int
+    typedef_count: Int
+    sizeof_count: Int
+    varargs_count: Int
+    setjmp_count: Int
+    longjmp_count: Int
+    atomic_count: Int
+
+struct CAuditResult:
+    stats: CAuditStats
+    report: Str
+    dependencies: Str
+    samples: Str
+    partition_ok: Int
+    audit_ok: Int
+
+def c_audit_line(output: Str, key: Str, value: Int) -> Str:
+    return text_append_line(output, str_concat(key, str_concat("=", int_to_str(value))))
+
+def c_byte(data: Int, size: Int, offset: Int) -> Int:
+    if offset < 0 || offset >= size:
+        return -1
+    return buf_get8(data, offset)
+
+def c_is_space(code: Int) -> Bool:
+    return code == 9 || code == 10 || code == 11 || code == 12 || code == 13 || code == 32
+
+def c_is_digit(code: Int) -> Bool:
+    return code >= 48 && code <= 57
+
+def c_is_alpha(code: Int) -> Bool:
+    return (code >= 65 && code <= 90) || (code >= 97 && code <= 122)
+
+def c_is_ident_start(code: Int) -> Bool:
+    return c_is_alpha(code) || code == 95 || code == 36 || code >= 128
+
+def c_is_ident_continue(code: Int) -> Bool:
+    return c_is_ident_start(code) || c_is_digit(code)
+
+def c_is_number_continue(code: Int) -> Bool:
+    return c_is_ident_continue(code) || code == 46
+
+def c_is_keyword(value: Str) -> Bool:
+    if text_eq(value, "auto") || text_eq(value, "break") || text_eq(value, "case") || text_eq(value, "char"):
+        return true
+    if text_eq(value, "const") || text_eq(value, "continue") || text_eq(value, "default") || text_eq(value, "do"):
+        return true
+    if text_eq(value, "double") || text_eq(value, "else") || text_eq(value, "enum") || text_eq(value, "extern"):
+        return true
+    if text_eq(value, "float") || text_eq(value, "for") || text_eq(value, "goto") || text_eq(value, "if"):
+        return true
+    if text_eq(value, "inline") || text_eq(value, "int") || text_eq(value, "long") || text_eq(value, "register"):
+        return true
+    if text_eq(value, "restrict") || text_eq(value, "return") || text_eq(value, "short") || text_eq(value, "signed"):
+        return true
+    if text_eq(value, "sizeof") || text_eq(value, "static") || text_eq(value, "struct") || text_eq(value, "switch"):
+        return true
+    if text_eq(value, "typedef") || text_eq(value, "union") || text_eq(value, "unsigned") || text_eq(value, "void"):
+        return true
+    if text_eq(value, "volatile") || text_eq(value, "while") || text_eq(value, "_Alignas") || text_eq(value, "_Alignof"):
+        return true
+    if text_eq(value, "_Atomic") || text_eq(value, "_Bool") || text_eq(value, "_Complex") || text_eq(value, "_Generic"):
+        return true
+    if text_eq(value, "_Imaginary") || text_eq(value, "_Noreturn") || text_eq(value, "_Static_assert") || text_eq(value, "_Thread_local"):
+        return true
+    if text_eq(value, "__asm__") || text_eq(value, "__attribute__") || text_eq(value, "__declspec"):
+        return true
+    if text_eq(value, "__extension__") || text_eq(value, "__inline__") || text_eq(value, "__restrict"):
+        return true
+    if text_eq(value, "__thread") || text_eq(value, "typeof") || text_eq(value, "__typeof__"):
+        return true
+    return false
+
+def c_single_punct(code: Int) -> Bool:
+    if code == 91 || code == 93 || code == 40 || code == 41 || code == 123 || code == 125:
+        return true
+    if code == 46 || code == 38 || code == 42 || code == 43 || code == 45 || code == 126:
+        return true
+    if code == 33 || code == 47 || code == 37 || code == 60 || code == 62 || code == 94 || code == 124:
+        return true
+    if code == 63 || code == 58 || code == 59 || code == 61 || code == 44 || code == 35 || code == 92:
+        return true
+    return false
+
+def c_punct_width(data: Int, size: Int, start: Int) -> Int:
+    a := c_byte(data, size, start)
+    b := c_byte(data, size, start + 1)
+    c := c_byte(data, size, start + 2)
+    d := c_byte(data, size, start + 3)
+    if a == 37 && b == 58 && c == 37 && d == 58:
+        return 4
+    if (a == 60 && b == 60 && c == 61) || (a == 62 && b == 62 && c == 61):
+        return 3
+    if a == 46 && b == 46 && c == 46:
+        return 3
+    if (a == 45 && b == 62) || (a == 43 && b == 43) || (a == 45 && b == 45):
+        return 2
+    if (a == 60 && b == 60) || (a == 62 && b == 62) || (a == 60 && b == 61) || (a == 62 && b == 61):
+        return 2
+    if (a == 61 && b == 61) || (a == 33 && b == 61) || (a == 38 && b == 38) || (a == 124 && b == 124):
+        return 2
+    if (a == 42 || a == 47 || a == 37 || a == 43 || a == 45 || a == 38 || a == 94 || a == 124) && b == 61:
+        return 2
+    if (a == 35 && b == 35) || (a == 60 && b == 58) || (a == 58 && b == 62):
+        return 2
+    if (a == 60 && b == 37) || (a == 37 && b == 62) || (a == 37 && b == 58):
+        return 2
+    if c_single_punct(a):
+        return 1
+    return 0
+
+def c_sample(reason: Str, path: Str, line: Int, column: Int, offset: Int) -> Str:
+    mut out := str_concat(reason, " ")
+    out = str_concat(out, str_concat(path, ":"))
+    out = str_concat(out, str_concat(int_to_str(line), ":"))
+    out = str_concat(out, str_concat(int_to_str(column), " offset="))
+    return str_concat(out, str_concat(int_to_str(offset), "\n"))
+
+def c_dependency(path: Str, kind: Str, target: Str, line: Int, column: Int) -> Str:
+    mut out := str_concat(path, "|")
+    out = str_concat(out, str_concat(kind, "|"))
+    out = str_concat(out, str_concat(target, "|"))
+    out = str_concat(out, str_concat(int_to_str(line), "|"))
+    return str_concat(out, str_concat(int_to_str(column), "\n"))
+
+def c_render_stats(stats: CAuditStats) -> Str:
+    mut out := ""
+    out = c_audit_line(out, "files", stats.files)
+    out = c_audit_line(out, "bytes", stats.bytes)
+    out = c_audit_line(out, "covered_bytes", stats.covered_bytes)
+    mut partition := 0
+    if stats.bytes == stats.covered_bytes:
+        partition = 1
+    out = c_audit_line(out, "byte_partition_ok", partition)
+    out = c_audit_line(out, "tokens", stats.tokens)
+    out = c_audit_line(out, "tokens.whitespace", stats.whitespace_tokens)
+    out = c_audit_line(out, "tokens.comment", stats.comment_tokens)
+    out = c_audit_line(out, "tokens.identifier", stats.identifier_tokens)
+    out = c_audit_line(out, "tokens.keyword", stats.keyword_tokens)
+    out = c_audit_line(out, "tokens.number", stats.number_tokens)
+    out = c_audit_line(out, "tokens.string", stats.string_tokens)
+    out = c_audit_line(out, "tokens.character", stats.character_tokens)
+    out = c_audit_line(out, "tokens.punctuator", stats.punctuator_tokens)
+    out = c_audit_line(out, "tokens.unknown", stats.unknown_tokens)
+    out = c_audit_line(out, "unknown_bytes", stats.unknown_bytes)
+    mut zero := 0
+    if stats.unknown_bytes == 0:
+        zero = 1
+    out = c_audit_line(out, "lexical_zero_unclassified", zero)
+    out = c_audit_line(out, "unterminated_comments", stats.unterminated_comments)
+    out = c_audit_line(out, "unterminated_literals", stats.unterminated_literals)
+    out = c_audit_line(out, "preprocessor_directives", stats.preprocessor_directives)
+    out = c_audit_line(out, "include_directives", stats.include_directives)
+    out = c_audit_line(out, "macro_includes", stats.macro_includes)
+    out = c_audit_line(out, "construct.goto", stats.goto_count)
+    out = c_audit_line(out, "construct.switch", stats.switch_count)
+    out = c_audit_line(out, "construct.case", stats.case_count)
+    out = c_audit_line(out, "construct.default", stats.default_count)
+    out = c_audit_line(out, "construct.for", stats.for_count)
+    out = c_audit_line(out, "construct.while", stats.while_count)
+    out = c_audit_line(out, "construct.do", stats.do_count)
+    out = c_audit_line(out, "construct.struct", stats.struct_count)
+    out = c_audit_line(out, "construct.union", stats.union_count)
+    out = c_audit_line(out, "construct.enum", stats.enum_count)
+    out = c_audit_line(out, "construct.typedef", stats.typedef_count)
+    out = c_audit_line(out, "construct.sizeof", stats.sizeof_count)
+    out = c_audit_line(out, "reason.C2-CFG-GOTO", stats.goto_count)
+    out = c_audit_line(out, "reason.C2-CFG-SWITCH", stats.switch_count)
+    out = c_audit_line(out, "reason.C2-TYPE-UNION", stats.union_count)
+    out = c_audit_line(out, "reason.C2-MEM-SIZEOF", stats.sizeof_count)
+    out = c_audit_line(out, "reason.C2-ABI-VARARGS", stats.varargs_count)
+    out = c_audit_line(out, "reason.C2-CFLOW-SETJMP", stats.setjmp_count)
+    out = c_audit_line(out, "reason.C2-CFLOW-LONGJMP", stats.longjmp_count)
+    out = c_audit_line(out, "reason.C2-CONCURRENCY-ATOMIC", stats.atomic_count)
+    out = c_audit_line(out, "reason.C2-PP-MACRO-INCLUDE", stats.macro_includes)
+    out = c_audit_line(out, "reason.C2-LEX-UNKNOWN", stats.unknown_tokens)
+    out = c_audit_line(out, "whole_translation_complete", 0)
+    return out
+
+def c_stats_add(a: CAuditStats, b: CAuditStats) -> CAuditStats:
+    mut r := CAuditStats()
+    r.files = a.files + b.files
+    r.bytes = a.bytes + b.bytes
+    r.covered_bytes = a.covered_bytes + b.covered_bytes
+    r.tokens = a.tokens + b.tokens
+    r.whitespace_tokens = a.whitespace_tokens + b.whitespace_tokens
+    r.comment_tokens = a.comment_tokens + b.comment_tokens
+    r.identifier_tokens = a.identifier_tokens + b.identifier_tokens
+    r.keyword_tokens = a.keyword_tokens + b.keyword_tokens
+    r.number_tokens = a.number_tokens + b.number_tokens
+    r.string_tokens = a.string_tokens + b.string_tokens
+    r.character_tokens = a.character_tokens + b.character_tokens
+    r.punctuator_tokens = a.punctuator_tokens + b.punctuator_tokens
+    r.unknown_tokens = a.unknown_tokens + b.unknown_tokens
+    r.unknown_bytes = a.unknown_bytes + b.unknown_bytes
+    r.unterminated_comments = a.unterminated_comments + b.unterminated_comments
+    r.unterminated_literals = a.unterminated_literals + b.unterminated_literals
+    r.preprocessor_directives = a.preprocessor_directives + b.preprocessor_directives
+    r.include_directives = a.include_directives + b.include_directives
+    r.macro_includes = a.macro_includes + b.macro_includes
+    r.goto_count = a.goto_count + b.goto_count
+    r.switch_count = a.switch_count + b.switch_count
+    r.case_count = a.case_count + b.case_count
+    r.default_count = a.default_count + b.default_count
+    r.for_count = a.for_count + b.for_count
+    r.while_count = a.while_count + b.while_count
+    r.do_count = a.do_count + b.do_count
+    r.struct_count = a.struct_count + b.struct_count
+    r.union_count = a.union_count + b.union_count
+    r.enum_count = a.enum_count + b.enum_count
+    r.typedef_count = a.typedef_count + b.typedef_count
+    r.sizeof_count = a.sizeof_count + b.sizeof_count
+    r.varargs_count = a.varargs_count + b.varargs_count
+    r.setjmp_count = a.setjmp_count + b.setjmp_count
+    r.longjmp_count = a.longjmp_count + b.longjmp_count
+    r.atomic_count = a.atomic_count + b.atomic_count
+    return r
+
+def c_audit_file(path: Str) -> CAuditResult:
+    data := buf_read(path)
+    size := buf_len(data)
+    mut stats := CAuditStats()
+    stats.files = 1
+    stats.bytes = size
+    mut dependencies := ""
+    mut samples := ""
+    mut offset := 0
+    mut line := 1
+    mut column := 1
+    mut at_line_start := true
+    mut in_directive := false
+    mut previous_backslash := false
+    mut directive_state := 0
+    mut angle_start := 0
+
+    while offset < size:
+        start := offset
+        start_line := line
+        start_column := column
+        code := c_byte(data, size, offset)
+        mut kind := C_TOKEN_UNKNOWN
+        mut closed := true
+        mut word := ""
+
+        if c_is_space(code):
+            kind = C_TOKEN_WHITESPACE
+            offset = offset + 1
+            while offset < size && c_is_space(c_byte(data, size, offset)):
+                offset = offset + 1
+        elif code == 47 && c_byte(data, size, offset + 1) == 47:
+            kind = C_TOKEN_COMMENT
+            offset = offset + 2
+            while offset < size && c_byte(data, size, offset) != 10 && c_byte(data, size, offset) != 13:
+                offset = offset + 1
+        elif code == 47 && c_byte(data, size, offset + 1) == 42:
+            kind = C_TOKEN_COMMENT
+            offset = offset + 2
+            closed = false
+            while offset < size && !closed:
+                if c_byte(data, size, offset) == 42 && c_byte(data, size, offset + 1) == 47:
+                    offset = offset + 2
+                    closed = true
+                else:
+                    offset = offset + 1
+        elif code == 34 || code == 39:
+            if code == 34:
+                kind = C_TOKEN_STRING
+            else:
+                kind = C_TOKEN_CHARACTER
+            quote := code
+            offset = offset + 1
+            mut escaped := false
+            closed = false
+            while offset < size && !closed:
+                current := c_byte(data, size, offset)
+                if escaped:
+                    escaped = false
+                    offset = offset + 1
+                elif current == 92:
+                    escaped = true
+                    offset = offset + 1
+                elif current == quote:
+                    offset = offset + 1
+                    closed = true
+                elif current == 10 || current == 13:
+                    break
+                else:
+                    offset = offset + 1
+        elif c_is_ident_start(code):
+            offset = offset + 1
+            while offset < size && c_is_ident_continue(c_byte(data, size, offset)):
+                offset = offset + 1
+            word = buf_read_str(data, start, offset - start)
+            if c_is_keyword(word):
+                kind = C_TOKEN_KEYWORD
+            else:
+                kind = C_TOKEN_IDENTIFIER
+        else:
+            mut number := c_is_digit(code)
+            if code == 46 && c_is_digit(c_byte(data, size, offset + 1)):
+                number = true
+            if number:
+                kind = C_TOKEN_NUMBER
+                offset = offset + 1
+                mut allow_sign := false
+                while offset < size:
+                    current := c_byte(data, size, offset)
+                    if c_is_number_continue(current):
+                        allow_sign = current == 101 || current == 69 || current == 112 || current == 80
+                        offset = offset + 1
+                    elif allow_sign && (current == 43 || current == 45):
+                        allow_sign = false
+                        offset = offset + 1
+                    else:
+                        break
+            else:
+                width := c_punct_width(data, size, offset)
+                if width > 0:
+                    kind = C_TOKEN_PUNCTUATOR
+                    offset = offset + width
+                else:
+                    kind = C_TOKEN_UNKNOWN
+                    offset = offset + 1
+
+        width := offset - start
+        stats.tokens = stats.tokens + 1
+        stats.covered_bytes = stats.covered_bytes + width
+        if kind == C_TOKEN_WHITESPACE:
+            stats.whitespace_tokens = stats.whitespace_tokens + 1
+        elif kind == C_TOKEN_COMMENT:
+            stats.comment_tokens = stats.comment_tokens + 1
+            if !closed:
+                stats.unterminated_comments = stats.unterminated_comments + 1
+                samples = str_concat(samples, c_sample("C2-LEX-UNTERMINATED-COMMENT", path, start_line, start_column, start))
+        elif kind == C_TOKEN_IDENTIFIER:
+            stats.identifier_tokens = stats.identifier_tokens + 1
+        elif kind == C_TOKEN_KEYWORD:
+            stats.keyword_tokens = stats.keyword_tokens + 1
+        elif kind == C_TOKEN_NUMBER:
+            stats.number_tokens = stats.number_tokens + 1
+        elif kind == C_TOKEN_STRING:
+            stats.string_tokens = stats.string_tokens + 1
+            if !closed:
+                stats.unterminated_literals = stats.unterminated_literals + 1
+                samples = str_concat(samples, c_sample("C2-LEX-UNTERMINATED-LITERAL", path, start_line, start_column, start))
+        elif kind == C_TOKEN_CHARACTER:
+            stats.character_tokens = stats.character_tokens + 1
+            if !closed:
+                stats.unterminated_literals = stats.unterminated_literals + 1
+                samples = str_concat(samples, c_sample("C2-LEX-UNTERMINATED-LITERAL", path, start_line, start_column, start))
+        elif kind == C_TOKEN_PUNCTUATOR:
+            stats.punctuator_tokens = stats.punctuator_tokens + 1
+        else:
+            stats.unknown_tokens = stats.unknown_tokens + 1
+            stats.unknown_bytes = stats.unknown_bytes + width
+            if stats.unknown_tokens == 1:
+                samples = str_concat(samples, c_sample("C2-LEX-UNKNOWN", path, start_line, start_column, start))
+
+        mut has_newline := false
+        mut p := start
+        while p < offset:
+            current := c_byte(data, size, p)
+            if current == 13:
+                has_newline = true
+                line = line + 1
+                column = 1
+                if p + 1 < offset && c_byte(data, size, p + 1) == 10:
+                    p = p + 1
+            elif current == 10:
+                has_newline = true
+                line = line + 1
+                column = 1
+            else:
+                column = column + 1
+            p = p + 1
+
+        trivia := kind == C_TOKEN_WHITESPACE || kind == C_TOKEN_COMMENT
+        if trivia:
+            if has_newline:
+                if !previous_backslash:
+                    in_directive = false
+                    directive_state = 0
+                    at_line_start = true
+                previous_backslash = false
+        else:
+            single := width == 1
+            if at_line_start && kind == C_TOKEN_PUNCTUATOR && single && code == 35:
+                stats.preprocessor_directives = stats.preprocessor_directives + 1
+                in_directive = true
+                directive_state = 1
+            elif in_directive && directive_state == 1:
+                if kind == C_TOKEN_IDENTIFIER && text_eq(word, "include"):
+                    stats.include_directives = stats.include_directives + 1
+                    directive_state = 2
+                else:
+                    directive_state = 4
+            elif in_directive && directive_state == 2:
+                if kind == C_TOKEN_STRING && closed:
+                    target := buf_read_str(data, start + 1, width - 2)
+                    dependencies = str_concat(dependencies, c_dependency(path, "quote", target, start_line, start_column))
+                    directive_state = 4
+                elif kind == C_TOKEN_PUNCTUATOR && single && code == 60:
+                    angle_start = offset
+                    directive_state = 3
+                else:
+                    if stats.macro_includes == 0:
+                        samples = str_concat(samples, c_sample("C2-PP-MACRO-INCLUDE", path, start_line, start_column, start))
+                    stats.macro_includes = stats.macro_includes + 1
+                    directive_state = 4
+            elif in_directive && directive_state == 3 && kind == C_TOKEN_PUNCTUATOR && single && code == 62:
+                target := buf_read_str(data, angle_start, start - angle_start)
+                dependencies = str_concat(dependencies, c_dependency(path, "angle", target, start_line, start_column))
+                directive_state = 4
+
+            if !in_directive:
+                if kind == C_TOKEN_KEYWORD:
+                    if text_eq(word, "goto"):
+                        if stats.goto_count == 0:
+                            samples = str_concat(samples, c_sample("C2-CFG-GOTO", path, start_line, start_column, start))
+                        stats.goto_count = stats.goto_count + 1
+                    elif text_eq(word, "switch"):
+                        if stats.switch_count == 0:
+                            samples = str_concat(samples, c_sample("C2-CFG-SWITCH", path, start_line, start_column, start))
+                        stats.switch_count = stats.switch_count + 1
+                    elif text_eq(word, "case"):
+                        stats.case_count = stats.case_count + 1
+                    elif text_eq(word, "default"):
+                        stats.default_count = stats.default_count + 1
+                    elif text_eq(word, "for"):
+                        stats.for_count = stats.for_count + 1
+                    elif text_eq(word, "while"):
+                        stats.while_count = stats.while_count + 1
+                    elif text_eq(word, "do"):
+                        stats.do_count = stats.do_count + 1
+                    elif text_eq(word, "struct"):
+                        stats.struct_count = stats.struct_count + 1
+                    elif text_eq(word, "union"):
+                        if stats.union_count == 0:
+                            samples = str_concat(samples, c_sample("C2-TYPE-UNION", path, start_line, start_column, start))
+                        stats.union_count = stats.union_count + 1
+                    elif text_eq(word, "enum"):
+                        stats.enum_count = stats.enum_count + 1
+                    elif text_eq(word, "typedef"):
+                        stats.typedef_count = stats.typedef_count + 1
+                    elif text_eq(word, "sizeof") || text_eq(word, "_Alignof"):
+                        if stats.sizeof_count == 0:
+                            samples = str_concat(samples, c_sample("C2-MEM-SIZEOF", path, start_line, start_column, start))
+                        stats.sizeof_count = stats.sizeof_count + 1
+                    elif text_eq(word, "_Atomic") || text_eq(word, "__thread") || text_eq(word, "_Thread_local"):
+                        if stats.atomic_count == 0:
+                            samples = str_concat(samples, c_sample("C2-CONCURRENCY-ATOMIC", path, start_line, start_column, start))
+                        stats.atomic_count = stats.atomic_count + 1
+                elif kind == C_TOKEN_PUNCTUATOR && width == 3 && code == 46:
+                    if stats.varargs_count == 0:
+                        samples = str_concat(samples, c_sample("C2-ABI-VARARGS", path, start_line, start_column, start))
+                    stats.varargs_count = stats.varargs_count + 1
+                elif kind == C_TOKEN_IDENTIFIER:
+                    low := str_lower(word)
+                    if text_contains(low, "setjmp") && !text_contains(low, "longjmp"):
+                        if stats.setjmp_count == 0:
+                            samples = str_concat(samples, c_sample("C2-CFLOW-SETJMP", path, start_line, start_column, start))
+                        stats.setjmp_count = stats.setjmp_count + 1
+                    if text_contains(low, "longjmp"):
+                        if stats.longjmp_count == 0:
+                            samples = str_concat(samples, c_sample("C2-CFLOW-LONGJMP", path, start_line, start_column, start))
+                        stats.longjmp_count = stats.longjmp_count + 1
+                    if text_starts(low, "atomic_") || text_starts(low, "__atomic"):
+                        if stats.atomic_count == 0:
+                            samples = str_concat(samples, c_sample("C2-CONCURRENCY-ATOMIC", path, start_line, start_column, start))
+                        stats.atomic_count = stats.atomic_count + 1
+
+            at_line_start = false
+            previous_backslash = kind == C_TOKEN_PUNCTUATOR && width == 1 && code == 92
+
+    buf_free(data)
+    mut partition_ok := 0
+    if stats.covered_bytes == stats.bytes:
+        partition_ok = 1
+    mut audit_ok := partition_ok
+    if stats.unknown_bytes > 0 || stats.unterminated_comments > 0 || stats.unterminated_literals > 0:
+        audit_ok = 0
+    mut report := "[file]\n"
+    report = text_append_line(report, str_concat("path=", path))
+    report = str_concat(report, c_render_stats(stats))
+    report = c_audit_line(report, "audit_ok", audit_ok)
+    if str_len(samples) > 0:
+        report = str_concat(report, "[samples]\n")
+        report = str_concat(report, samples)
+    return CAuditResult(stats, report, dependencies, samples, partition_ok, audit_ok)

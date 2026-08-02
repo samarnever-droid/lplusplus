@@ -289,6 +289,19 @@ Source (.lpp)
     └── Host linker or lpp-link → Executable (ELF/PE/Mach-O)
 ```
 
+### Scalability controls
+
+The Cranelift backend lowers and emits functions in **bounded batches** so its
+peak memory is independent of total program size — it scales from tiny embedded
+programs to very large codebases without holding the whole program's IR and
+machine code in memory at once. Byte output is identical regardless of batch
+size; only peak memory and wall time change.
+
+| Env var | Effect |
+| --- | --- |
+| `LPP_CODEGEN_BATCH` | Functions per codegen batch. Lower values reduce peak memory; the default is 256. |
+| `LPP_CODEGEN_THREADS` | Codegen worker threads. `1` forces the serial path (lowest overhead); the default uses available cores. |
+
 ## Benchmark Results (BPW v3)
 
 | Benchmark | L++ | Rust | Go | L++ Binary | Go Binary |
@@ -297,6 +310,26 @@ Source (.lpp)
 | RAM-Heavy (500k list) | 3ms | 2ms | 5ms | **47KB** | 2345KB |
 | File I/O (400KB) | **1ms** | 6ms | 5ms | **47KB** | 2470KB |
 | Win PE binary | — | — | — | **15.5KB** | — |
+
+## Android & Termux
+
+L++ targets Android and Termux via `--target <triple>`. Termux is a normal
+aarch64/armv7 Linux build; Android uses the same ELF format and bionic libc.
+
+```sh
+# native build on a Termux device
+cargo build --release --bin lpp --bin lpp-link
+./target/release/lpp hello.lpp && ./hello
+
+# cross-compile for Android arm64 / Termux 64-bit from a desktop
+./target/release/lpp app.lpp --target aarch64-linux-android --emit-object
+./target/release/lpp --list-targets
+```
+
+Set `ANDROID_NDK_HOME`/`ANDROID_NDK_ROOT` (or `ANDROID_CC`/`LPP_CC`) to link
+Android objects with the NDK clang; `-DLPP_ANDROID` routes runtime output to
+logcat, while Termux uses normal stdout. See
+[`documentation/ANDROID_TERMUX.md`](documentation/ANDROID_TERMUX.md).
 
 ## Project Structure
 
@@ -309,6 +342,7 @@ src/
   bin/          lpp-link (ELF/PE/Mach-O direct linker)
   config.rs     User config (~/.lpp/config.json)
   builtins.rs   91 builtin function declarations
+  target.rs     --target triple parsing + Android/Termux detection
   pm.rs         Package manager backend
   main.rs       CLI entry point
 

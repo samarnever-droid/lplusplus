@@ -490,8 +490,8 @@
     },
     "c2lpp": {
       "name": "c2lpp",
-      "description": "Pure-L++ C header binding/package generator with an experimental scalar C-to-L++ translator",
-      "version": "0.2.0",
+      "description": "Pure-L++ JSON-configured C audit/IR translator with checked pointer, layout, globals and CFG foundations",
+      "version": "0.36.0",
       "authors": [
         "L++ Project"
       ],
@@ -510,10 +510,29 @@
         "zlib"
       ],
       "features": [
+        "Strict versioned JSON project configuration",
         "Generate L++ extern bindings from C headers",
-        "Generate native package metadata and dependency reports",
-        "SQLite and zlib real-system-header coverage",
-        "Experimental audited scalar C-to-pure-L++ translation"
+        "Whole-input and multi-file dependency audit with provenance",
+        "Typed normalized-IR scalar C-to-pure-L++ translation",
+        "Strict no-binding native profiles with fail-closed pure-L++ output",
+        "Curated standalone pure-L++ SQLite backend with CRUD and integrity validation",
+        "General arbitrary-order translation-unit graph with SQLite zero-unknown partition gate",
+        "SQLite-wide base-type, body, call, control-target and ownership graphs",
+        "Cross-pass denominator and ownership-site consistency validation",
+        "Automatic typed semantic sweep emitting accepted pure-L++ SQLite functions",
+        "Referenced immutable integer-array globals lowered to checked pure-L++ accessors",
+        "Parser-integrated scalar pointer places, arithmetic, typedef casts and CPtr null semantics",
+        "Lazy conditional returns, locals and assignments with pointer short-circuit logic",
+        "C character literals and explicit compile-time sizeof lowering",
+        "Sequenced comma expression statements",
+        "Braced do/while plus unbraced typed if/else call lowering",
+        "Demand-bounded SysV aggregate member, bitfield and fixed-array place lowering",
+        "ABI-width aggregate data-pointer fields with raw provenance side tables",
+        "Pointer-depth-two places and one-dimensional array-parameter decay",
+        "Profile-v2 forward/callback typedefs, const arrays, nested aggregates, provenance and CFG",
+        "Checked C pointer/allocation/place, SysV layout, globals and CFG lowering foundations",
+        "Native equivalence and ASan/UBSan compatibility gates",
+        "SQLite and zlib real-system-header coverage"
       ]
     }
   }

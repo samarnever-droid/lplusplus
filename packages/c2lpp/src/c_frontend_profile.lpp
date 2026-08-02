@@ -1,0 +1,682 @@
+# c_frontend_profile.lpp — strict no-binding frontend profile v2.
+#
+# This profile extends the executable grammar with macro provenance, forward
+# typedefs/incomplete types, a callback typedef, nested aggregates, fixed arrays,
+# const string/integer-array globals, prototypes, a variadic declaration, general
+# pointer places used by the fixture and automatic loop/switch/goto lowering.
+# It remains a fail-closed profile, not arbitrary C or whole SQLite.
+
+import c_native_profile
+import c_lexer
+import c_layout
+import text
+
+struct CFrontendSpec:
+    macro_name: Str
+    macro_value: Int
+    node_name: Str
+    callback_name: Str
+    meta_name: Str
+    kind_field: Str
+    kind_width: Int
+    ready_field: Str
+    ready_width: Int
+    values_field: Str
+    values_count: Int
+    meta_field: Str
+    banner_name: Str
+    banner_value: Str
+    weights_name: Str
+    weight0: Int
+    weight1: Int
+    weight2: Int
+    prototype_name: Str
+    variadic_name: Str
+    function_name: Str
+    parameter_name: Str
+    nodes_name: Str
+    total_name: Str
+    loop_name: Str
+    first_name: Str
+    switch_mask: Int
+    case0: Int
+    add0: Int
+    case1: Int
+    add1: Int
+    case2: Int
+    add2: Int
+    default_subtract: Int
+    done_label: Str
+    valid: Int
+    error: Str
+    error_line: Int
+    error_column: Int
+
+
+def c_frontend_take_string(reader_in: CNativeReader) -> CNativeText:
+    if reader_in.valid == 0:
+        return CNativeText(reader_in, "")
+    step := c_lex_next_code(reader_in.cursor)
+    if step.token.kind != C_TOKEN_STRING || str_len(step.token.spelling) < 2:
+        failed := c_native_fail(reader_in, "C2-FRONTEND-EXPECTED-STRING", step.token.span.line, step.token.span.column)
+        return CNativeText(failed, "")
+    value := str_substr(step.token.spelling, 1, str_len(step.token.spelling) - 2)
+    mut reader := reader_in
+    reader.cursor = step.next
+    return CNativeText(reader, value)
+
+
+def c_frontend_parse(path: Str) -> CFrontendSpec:
+    data := buf_read(path)
+    size := buf_len(data)
+    mut spec := CFrontendSpec()
+    if size <= 0:
+        if data != 0:
+            buf_free(data)
+        spec.error = "C2-FRONTEND-EMPTY-INPUT"
+        return spec
+    mut reader := c_native_reader(c_lex_cursor(data, size, path))
+
+    # #define SCALE integer -- physical and expansion provenance retained in IR.
+    reader = c_native_expect(reader, "#")
+    reader = c_native_expect(reader, "define")
+    macro_name := c_native_take_identifier(reader)
+    reader = macro_name.reader
+    spec.macro_name = macro_name.value
+    macro_value := c_native_take_integer(reader)
+    reader = macro_value.reader
+    spec.macro_value = macro_value.value
+
+    # Forward/incomplete declaration: typedef struct Node Node;
+    reader = c_native_expect(reader, "typedef")
+    reader = c_native_expect(reader, "struct")
+    node_tag := c_native_take_identifier(reader)
+    reader = node_tag.reader
+    reader = c_native_expect(reader, node_tag.value)
+    spec.node_name = node_tag.value
+    reader = c_native_expect(reader, ";")
+
+    # Callback declaration: typedef int (*VisitFn)(Node *, int);
+    reader = c_native_expect(reader, "typedef")
+    reader = c_native_expect(reader, "int")
+    reader = c_native_expect(reader, "(")
+    reader = c_native_expect(reader, "*")
+    callback := c_native_take_identifier(reader)
+    reader = callback.reader
+    spec.callback_name = callback.value
+    reader = c_native_expect(reader, ")")
+    reader = c_native_expect(reader, "(")
+    reader = c_native_expect(reader, spec.node_name)
+    reader = c_native_expect(reader, "*")
+    reader = c_native_expect(reader, ",")
+    reader = c_native_expect(reader, "int")
+    reader = c_native_expect(reader, ")")
+    reader = c_native_expect(reader, ";")
+
+    # Nested aggregate typedef with two packed unsigned bitfields.
+    reader = c_native_expect(reader, "typedef")
+    reader = c_native_expect(reader, "struct")
+    meta_tag := c_native_take_identifier(reader)
+    reader = meta_tag.reader
+    spec.meta_name = meta_tag.value
+    reader = c_native_expect(reader, "{")
+    reader = c_native_expect(reader, "unsigned")
+    kind_name := c_native_take_identifier(reader)
+    reader = kind_name.reader
+    spec.kind_field = kind_name.value
+    reader = c_native_expect(reader, ":")
+    kind_width := c_native_take_integer(reader)
+    reader = kind_width.reader
+    spec.kind_width = kind_width.value
+    reader = c_native_expect(reader, ";")
+    reader = c_native_expect(reader, "unsigned")
+    ready_name := c_native_take_identifier(reader)
+    reader = ready_name.reader
+    spec.ready_field = ready_name.value
+    reader = c_native_expect(reader, ":")
+    ready_width := c_native_take_integer(reader)
+    reader = ready_width.reader
+    spec.ready_width = ready_width.value
+    reader = c_native_expect(reader, ";")
+    reader = c_native_expect(reader, "}")
+    reader = c_native_expect(reader, spec.meta_name)
+    reader = c_native_expect(reader, ";")
+
+    # Complete the forward Node with a fixed array and nested Meta.
+    reader = c_native_expect(reader, "struct")
+    reader = c_native_expect(reader, spec.node_name)
+    reader = c_native_expect(reader, "{")
+    reader = c_native_expect(reader, "int")
+    values_name := c_native_take_identifier(reader)
+    reader = values_name.reader
+    spec.values_field = values_name.value
+    reader = c_native_expect(reader, "[")
+    values_count := c_native_take_integer(reader)
+    reader = values_count.reader
+    spec.values_count = values_count.value
+    reader = c_native_expect(reader, "]")
+    reader = c_native_expect(reader, ";")
+    reader = c_native_expect(reader, spec.meta_name)
+    meta_field := c_native_take_identifier(reader)
+    reader = meta_field.reader
+    spec.meta_field = meta_field.value
+    reader = c_native_expect(reader, ";")
+    reader = c_native_expect(reader, "}")
+    reader = c_native_expect(reader, ";")
+
+    # const char banner[] = "front";
+    reader = c_native_expect(reader, "static")
+    reader = c_native_expect(reader, "const")
+    reader = c_native_expect(reader, "char")
+    banner_name := c_native_take_identifier(reader)
+    reader = banner_name.reader
+    spec.banner_name = banner_name.value
+    reader = c_native_expect(reader, "[")
+    reader = c_native_expect(reader, "]")
+    reader = c_native_expect(reader, "=")
+    banner_value := c_frontend_take_string(reader)
+    reader = banner_value.reader
+    spec.banner_value = banner_value.value
+    reader = c_native_expect(reader, ";")
+
+    # const int weights[3] = {a,b,c};
+    reader = c_native_expect(reader, "static")
+    reader = c_native_expect(reader, "const")
+    reader = c_native_expect(reader, "int")
+    weights_name := c_native_take_identifier(reader)
+    reader = weights_name.reader
+    spec.weights_name = weights_name.value
+    reader = c_native_expect(reader, "[")
+    reader = c_native_expect(reader, int_to_str(spec.values_count))
+    reader = c_native_expect(reader, "]")
+    reader = c_native_expect(reader, "=")
+    reader = c_native_expect(reader, "{")
+    weight0 := c_native_take_integer(reader)
+    reader = weight0.reader
+    spec.weight0 = weight0.value
+    reader = c_native_expect(reader, ",")
+    weight1 := c_native_take_integer(reader)
+    reader = weight1.reader
+    spec.weight1 = weight1.value
+    reader = c_native_expect(reader, ",")
+    weight2 := c_native_take_integer(reader)
+    reader = weight2.reader
+    spec.weight2 = weight2.value
+    reader = c_native_expect(reader, "}")
+    reader = c_native_expect(reader, ";")
+
+    # General prototype using the incomplete type.
+    reader = c_native_expect(reader, "int")
+    prototype := c_native_take_identifier(reader)
+    reader = prototype.reader
+    spec.prototype_name = prototype.value
+    reader = c_native_expect(reader, "(")
+    reader = c_native_expect(reader, spec.node_name)
+    reader = c_native_expect(reader, "*")
+    prototype_node := c_native_take_identifier(reader)
+    reader = prototype_node.reader
+    reader = c_native_expect(reader, ",")
+    reader = c_native_expect(reader, "int")
+    prototype_extra := c_native_take_identifier(reader)
+    reader = prototype_extra.reader
+    reader = c_native_expect(reader, ")")
+    reader = c_native_expect(reader, ";")
+
+    # Variadic prototype retained in graph but never emitted as a binding.
+    reader = c_native_expect(reader, "int")
+    variadic := c_native_take_identifier(reader)
+    reader = variadic.reader
+    spec.variadic_name = variadic.value
+    reader = c_native_expect(reader, "(")
+    reader = c_native_expect(reader, "const")
+    reader = c_native_expect(reader, "char")
+    reader = c_native_expect(reader, "*")
+    format_name := c_native_take_identifier(reader)
+    reader = format_name.reader
+    reader = c_native_expect(reader, ",")
+    reader = c_native_expect(reader, "...")
+    reader = c_native_expect(reader, ")")
+    reader = c_native_expect(reader, ";")
+
+    # int run_graph(int n) {
+    reader = c_native_expect(reader, "int")
+    function_name := c_native_take_identifier(reader)
+    reader = function_name.reader
+    spec.function_name = function_name.value
+    reader = c_native_expect(reader, "(")
+    reader = c_native_expect(reader, "int")
+    parameter_name := c_native_take_identifier(reader)
+    reader = parameter_name.reader
+    spec.parameter_name = parameter_name.value
+    reader = c_native_expect(reader, ")")
+    reader = c_native_expect(reader, "{")
+
+    # Node *nodes = calloc(n, sizeof(Node)); int total = 0;
+    reader = c_native_expect(reader, spec.node_name)
+    reader = c_native_expect(reader, "*")
+    nodes_name := c_native_take_identifier(reader)
+    reader = nodes_name.reader
+    spec.nodes_name = nodes_name.value
+    reader = c_native_expect(reader, "=")
+    reader = c_native_expect(reader, "calloc")
+    reader = c_native_expect(reader, "(")
+    reader = c_native_expect(reader, spec.parameter_name)
+    reader = c_native_expect(reader, ",")
+    reader = c_native_expect(reader, "sizeof")
+    reader = c_native_expect(reader, "(")
+    reader = c_native_expect(reader, spec.node_name)
+    reader = c_native_expect(reader, ")")
+    reader = c_native_expect(reader, ")")
+    reader = c_native_expect(reader, ";")
+    reader = c_native_expect(reader, "int")
+    total_name := c_native_take_identifier(reader)
+    reader = total_name.reader
+    spec.total_name = total_name.value
+    reader = c_native_expect(reader, "=")
+    reader = c_native_expect(reader, "0")
+    reader = c_native_expect(reader, ";")
+
+    # Canonical for header.
+    reader = c_native_expect(reader, "for")
+    reader = c_native_expect(reader, "(")
+    reader = c_native_expect(reader, "int")
+    loop_name := c_native_take_identifier(reader)
+    reader = loop_name.reader
+    spec.loop_name = loop_name.value
+    reader = c_native_expect(reader, "=")
+    reader = c_native_expect(reader, "0")
+    reader = c_native_expect(reader, ";")
+    reader = c_native_expect(reader, spec.loop_name)
+    reader = c_native_expect(reader, "<")
+    reader = c_native_expect(reader, spec.parameter_name)
+    reader = c_native_expect(reader, ";")
+    reader = c_native_expect(reader, spec.loop_name)
+    reader = c_native_expect(reader, "++")
+    reader = c_native_expect(reader, ")")
+    reader = c_native_expect(reader, "{")
+
+    # Three nodes[i].values[k] = weights[k] + i statements.
+    mut array_index := 0
+    while array_index < 3:
+        reader = c_native_expect(reader, spec.nodes_name)
+        reader = c_native_expect(reader, "[")
+        reader = c_native_expect(reader, spec.loop_name)
+        reader = c_native_expect(reader, "]")
+        reader = c_native_expect(reader, ".")
+        reader = c_native_expect(reader, spec.values_field)
+        reader = c_native_expect(reader, "[")
+        reader = c_native_expect(reader, int_to_str(array_index))
+        reader = c_native_expect(reader, "]")
+        reader = c_native_expect(reader, "=")
+        reader = c_native_expect(reader, spec.weights_name)
+        reader = c_native_expect(reader, "[")
+        reader = c_native_expect(reader, int_to_str(array_index))
+        reader = c_native_expect(reader, "]")
+        reader = c_native_expect(reader, "+")
+        reader = c_native_expect(reader, spec.loop_name)
+        reader = c_native_expect(reader, ";")
+        array_index = array_index + 1
+
+    # Nested member bitfields with macro expansion provenance.
+    reader = c_native_expect(reader, spec.nodes_name)
+    reader = c_native_expect(reader, "[")
+    reader = c_native_expect(reader, spec.loop_name)
+    reader = c_native_expect(reader, "]")
+    reader = c_native_expect(reader, ".")
+    reader = c_native_expect(reader, spec.meta_field)
+    reader = c_native_expect(reader, ".")
+    reader = c_native_expect(reader, spec.kind_field)
+    reader = c_native_expect(reader, "=")
+    reader = c_native_expect(reader, "(")
+    reader = c_native_expect(reader, spec.loop_name)
+    reader = c_native_expect(reader, "*")
+    reader = c_native_expect(reader, spec.macro_name)
+    reader = c_native_expect(reader, ")")
+    reader = c_native_expect(reader, "&")
+    reader = c_native_expect(reader, "7")
+    reader = c_native_expect(reader, ";")
+
+    reader = c_native_expect(reader, spec.nodes_name)
+    reader = c_native_expect(reader, "[")
+    reader = c_native_expect(reader, spec.loop_name)
+    reader = c_native_expect(reader, "]")
+    reader = c_native_expect(reader, ".")
+    reader = c_native_expect(reader, spec.meta_field)
+    reader = c_native_expect(reader, ".")
+    reader = c_native_expect(reader, spec.ready_field)
+    reader = c_native_expect(reader, "=")
+    reader = c_native_expect(reader, "1")
+    reader = c_native_expect(reader, ";")
+
+    # total += all array and nested fields.
+    reader = c_native_expect(reader, spec.total_name)
+    reader = c_native_expect(reader, "+=")
+    array_index = 0
+    while array_index < 3:
+        reader = c_native_expect(reader, spec.nodes_name)
+        reader = c_native_expect(reader, "[")
+        reader = c_native_expect(reader, spec.loop_name)
+        reader = c_native_expect(reader, "]")
+        reader = c_native_expect(reader, ".")
+        reader = c_native_expect(reader, spec.values_field)
+        reader = c_native_expect(reader, "[")
+        reader = c_native_expect(reader, int_to_str(array_index))
+        reader = c_native_expect(reader, "]")
+        if array_index < 2:
+            reader = c_native_expect(reader, "+")
+        array_index = array_index + 1
+    reader = c_native_expect(reader, "+")
+    reader = c_native_expect(reader, spec.nodes_name)
+    reader = c_native_expect(reader, "[")
+    reader = c_native_expect(reader, spec.loop_name)
+    reader = c_native_expect(reader, "]")
+    reader = c_native_expect(reader, ".")
+    reader = c_native_expect(reader, spec.meta_field)
+    reader = c_native_expect(reader, ".")
+    reader = c_native_expect(reader, spec.kind_field)
+    reader = c_native_expect(reader, "+")
+    reader = c_native_expect(reader, spec.nodes_name)
+    reader = c_native_expect(reader, "[")
+    reader = c_native_expect(reader, spec.loop_name)
+    reader = c_native_expect(reader, "]")
+    reader = c_native_expect(reader, ".")
+    reader = c_native_expect(reader, spec.meta_field)
+    reader = c_native_expect(reader, ".")
+    reader = c_native_expect(reader, spec.ready_field)
+    reader = c_native_expect(reader, ";")
+    reader = c_native_expect(reader, "}")
+
+    # Node *first=&nodes[0]; (*first).values[1]+=1; total+=first->values[1];
+    reader = c_native_expect(reader, spec.node_name)
+    reader = c_native_expect(reader, "*")
+    first_name := c_native_take_identifier(reader)
+    reader = first_name.reader
+    spec.first_name = first_name.value
+    reader = c_native_expect(reader, "=")
+    reader = c_native_expect(reader, "&")
+    reader = c_native_expect(reader, spec.nodes_name)
+    reader = c_native_expect(reader, "[")
+    reader = c_native_expect(reader, "0")
+    reader = c_native_expect(reader, "]")
+    reader = c_native_expect(reader, ";")
+    reader = c_native_expect(reader, "(")
+    reader = c_native_expect(reader, "*")
+    reader = c_native_expect(reader, spec.first_name)
+    reader = c_native_expect(reader, ")")
+    reader = c_native_expect(reader, ".")
+    reader = c_native_expect(reader, spec.values_field)
+    reader = c_native_expect(reader, "[")
+    reader = c_native_expect(reader, "1")
+    reader = c_native_expect(reader, "]")
+    reader = c_native_expect(reader, "+=")
+    reader = c_native_expect(reader, "1")
+    reader = c_native_expect(reader, ";")
+    reader = c_native_expect(reader, spec.total_name)
+    reader = c_native_expect(reader, "+=")
+    reader = c_native_expect(reader, spec.first_name)
+    reader = c_native_expect(reader, "->")
+    reader = c_native_expect(reader, spec.values_field)
+    reader = c_native_expect(reader, "[")
+    reader = c_native_expect(reader, "1")
+    reader = c_native_expect(reader, "]")
+    reader = c_native_expect(reader, ";")
+
+    # switch and goto profile matches v1 shape.
+    reader = c_native_expect(reader, "switch")
+    reader = c_native_expect(reader, "(")
+    reader = c_native_expect(reader, spec.parameter_name)
+    reader = c_native_expect(reader, "&")
+    switch_mask := c_native_take_integer(reader)
+    reader = switch_mask.reader
+    spec.switch_mask = switch_mask.value
+    reader = c_native_expect(reader, ")")
+    reader = c_native_expect(reader, "{")
+    reader = c_native_expect(reader, "case")
+    case0 := c_native_take_integer(reader)
+    reader = case0.reader
+    spec.case0 = case0.value
+    reader = c_native_expect(reader, ":")
+    reader = c_native_expect(reader, spec.total_name)
+    reader = c_native_expect(reader, "+=")
+    add0 := c_native_take_integer(reader)
+    reader = add0.reader
+    spec.add0 = add0.value
+    reader = c_native_expect(reader, ";")
+    reader = c_native_expect(reader, "break")
+    reader = c_native_expect(reader, ";")
+    reader = c_native_expect(reader, "case")
+    case1 := c_native_take_integer(reader)
+    reader = case1.reader
+    spec.case1 = case1.value
+    reader = c_native_expect(reader, ":")
+    reader = c_native_expect(reader, spec.total_name)
+    reader = c_native_expect(reader, "+=")
+    add1 := c_native_take_integer(reader)
+    reader = add1.reader
+    spec.add1 = add1.value
+    reader = c_native_expect(reader, ";")
+    reader = c_native_expect(reader, "case")
+    case2 := c_native_take_integer(reader)
+    reader = case2.reader
+    spec.case2 = case2.value
+    reader = c_native_expect(reader, ":")
+    reader = c_native_expect(reader, spec.total_name)
+    reader = c_native_expect(reader, "+=")
+    add2 := c_native_take_integer(reader)
+    reader = add2.reader
+    spec.add2 = add2.value
+    reader = c_native_expect(reader, ";")
+    reader = c_native_expect(reader, "goto")
+    goto_label := c_native_take_identifier(reader)
+    reader = goto_label.reader
+    reader = c_native_expect(reader, ";")
+    reader = c_native_expect(reader, "default")
+    reader = c_native_expect(reader, ":")
+    reader = c_native_expect(reader, spec.total_name)
+    reader = c_native_expect(reader, "-=")
+    default_value := c_native_take_integer(reader)
+    reader = default_value.reader
+    spec.default_subtract = default_value.value
+    reader = c_native_expect(reader, ";")
+    reader = c_native_expect(reader, "break")
+    reader = c_native_expect(reader, ";")
+    reader = c_native_expect(reader, "}")
+
+    done_label := c_native_take_identifier(reader)
+    reader = done_label.reader
+    spec.done_label = done_label.value
+    reader = c_native_same(reader, goto_label.value, spec.done_label, "C2-FRONTEND-UNKNOWN-GOTO-LABEL")
+    reader = c_native_expect(reader, ":")
+    reader = c_native_expect(reader, "free")
+    reader = c_native_expect(reader, "(")
+    reader = c_native_expect(reader, spec.nodes_name)
+    reader = c_native_expect(reader, ")")
+    reader = c_native_expect(reader, ";")
+    reader = c_native_expect(reader, "return")
+    reader = c_native_expect(reader, spec.total_name)
+    reader = c_native_expect(reader, "+")
+    reader = c_native_expect(reader, spec.banner_name)
+    reader = c_native_expect(reader, "[")
+    reader = c_native_expect(reader, "0")
+    reader = c_native_expect(reader, "]")
+    reader = c_native_expect(reader, ";")
+    reader = c_native_expect(reader, "}")
+
+    tail := c_lex_next_code(reader.cursor)
+    if tail.token.kind != C_TOKEN_EOF:
+        reader = c_native_fail(reader, "C2-FRONTEND-TRAILING-INPUT", tail.token.span.line, tail.token.span.column)
+
+    spec.valid = reader.valid
+    spec.error = reader.error
+    spec.error_line = reader.error_line
+    spec.error_column = reader.error_column
+    if spec.valid != 0 && (spec.values_count != 3 || spec.kind_width <= 0 || spec.ready_width <= 0 || spec.kind_width + spec.ready_width > 32):
+        spec.valid = 0
+        spec.error = "C2-FRONTEND-LAYOUT-POLICY"
+    buf_free(data)
+    return spec
+
+
+def c_frontend_line(out: Str, line: Str) -> Str:
+    return str_concat(out, str_concat(line, "\n"))
+
+
+def c_frontend_emit(spec: CFrontendSpec) -> Str:
+    banner_size := str_len(spec.banner_value) + 1
+    weights_offset := c_layout_align_up(banner_size, 4)
+    global_size := weights_offset + 12
+    mut out := "# Pure-L++ frontend profile v2 generated by c2lpp.\n"
+    out = c_frontend_line(out, "# No extern, no native link, no C implementation dependency.\n")
+    out = c_frontend_line(out, "import c_memory")
+    out = c_frontend_line(out, "import c_layout")
+    out = c_frontend_line(out, "import c_globals")
+    out = c_frontend_line(out, "import c_cfg")
+    out = c_frontend_line(out, "")
+    out = c_frontend_line(out, "struct CFrontendProgram:")
+    out = c_frontend_line(out, "    globals: CGlobalRegion")
+    out = c_frontend_line(out, "    meta_layout: CAggregateLayout")
+    out = c_frontend_line(out, "    node_layout: CAggregateLayout")
+    out = c_frontend_line(out, "    kind_field: Int")
+    out = c_frontend_line(out, "    ready_field: Int")
+    out = c_frontend_line(out, "    values_field: Int")
+    out = c_frontend_line(out, "    meta_field: Int")
+    out = c_frontend_line(out, "")
+    out = c_frontend_line(out, "def c_frontend_program_new() -> CFrontendProgram:")
+    out = c_frontend_line(out, "    model := c_abi_sysv_x86_64()")
+    out = c_frontend_line(out, "    meta_builder := c_layout_builder_new(model, C_LAYOUT_STRUCT, 4)")
+    out = c_frontend_line(out, str_concat("    kind_field := c_layout_add_field(meta_builder, 4, 4, ", str_concat(int_to_str(spec.kind_width), ", 0)")))
+    out = c_frontend_line(out, str_concat("    ready_field := c_layout_add_field(meta_builder, 4, 4, ", str_concat(int_to_str(spec.ready_width), ", 0)")))
+    out = c_frontend_line(out, "    meta_layout := c_layout_finish(meta_builder)")
+    out = c_frontend_line(out, "    node_builder := c_layout_builder_new(model, C_LAYOUT_STRUCT, 4)")
+    out = c_frontend_line(out, str_concat("    values_field := c_layout_add_field(node_builder, ", str_concat(int_to_str(spec.values_count * 4), ", 4, -1, 1)")))
+    out = c_frontend_line(out, "    meta_field := c_layout_add_field(node_builder, meta_layout.size, meta_layout.alignment, -1, 0)")
+    out = c_frontend_line(out, "    node_layout := c_layout_finish(node_builder)")
+    out = c_frontend_line(out, str_concat("    globals := c_globals_new(", str_concat(int_to_str(global_size), ")")))
+    out = c_frontend_line(out, "    c_globals_begin_initialization(globals)")
+    mut char_index := 0
+    while char_index < str_len(spec.banner_value):
+        code := ord(char_at(spec.banner_value, char_index))
+        out = c_frontend_line(out, str_concat("    c_store_u8(c_globals_initializer_pointer(globals, ", str_concat(int_to_str(char_index), str_concat(", 1, 1), ", str_concat(int_to_str(code), ")")))))
+        char_index = char_index + 1
+    out = c_frontend_line(out, str_concat("    c_store_u8(c_globals_initializer_pointer(globals, ", str_concat(int_to_str(str_len(spec.banner_value)), ", 1, 1), 0)")))
+    out = c_frontend_line(out, str_concat("    c_store_u32(c_globals_initializer_pointer(globals, ", str_concat(int_to_str(weights_offset), str_concat(", 4, 4), ", str_concat(int_to_str(spec.weight0), ")")))))
+    out = c_frontend_line(out, str_concat("    c_store_u32(c_globals_initializer_pointer(globals, ", str_concat(int_to_str(weights_offset + 4), str_concat(", 4, 4), ", str_concat(int_to_str(spec.weight1), ")")))))
+    out = c_frontend_line(out, str_concat("    c_store_u32(c_globals_initializer_pointer(globals, ", str_concat(int_to_str(weights_offset + 8), str_concat(", 4, 4), ", str_concat(int_to_str(spec.weight2), ")")))))
+    out = c_frontend_line(out, "    c_globals_finish_initialization(globals)")
+    out = c_frontend_line(out, "    return CFrontendProgram(globals, meta_layout, node_layout, kind_field, ready_field, values_field, meta_field)")
+    out = c_frontend_line(out, "")
+    out = c_frontend_line(out, "def c_frontend_program_destroy(program: CFrontendProgram) -> Void:")
+    out = c_frontend_line(out, "    c_globals_destroy(program.globals)")
+    out = c_frontend_line(out, "    c_layout_destroy(program.meta_layout)")
+    out = c_frontend_line(out, "    c_layout_destroy(program.node_layout)")
+    out = c_frontend_line(out, "")
+    out = c_frontend_line(out, "def c_frontend_value_ptr(program: CFrontendProgram, node: CPtr, index: Int) -> CPtr:")
+    out = c_frontend_line(out, "    if index < 0 || index >= 3:")
+    out = c_frontend_line(out, "        c_mem_panic(\"C2-FRONTEND-ARRAY-INDEX\")")
+    out = c_frontend_line(out, "    field := c_layout_field(program.node_layout, program.values_field)")
+    out = c_frontend_line(out, "    return c_ptr_subobject(node, field.byte_offset + index * 4, 4, 4)")
+    out = c_frontend_line(out, "")
+    out = c_frontend_line(out, "def c_frontend_meta_ptr(program: CFrontendProgram, node: CPtr) -> CPtr:")
+    out = c_frontend_line(out, "    field := c_layout_field(program.node_layout, program.meta_field)")
+    out = c_frontend_line(out, "    return c_ptr_subobject(node, field.byte_offset, program.meta_layout.size, program.meta_layout.size)")
+    out = c_frontend_line(out, "")
+    out = c_frontend_line(out, str_concat("def ", str_concat(spec.function_name, str_concat("(program: CFrontendProgram, ", str_concat(spec.parameter_name, ": Int) -> Int:")))))
+    out = c_frontend_line(out, str_concat("    if ", str_concat(spec.parameter_name, " <= 0:")))
+    out = c_frontend_line(out, "        c_mem_panic(\"C2-FRONTEND-NONPOSITIVE-COUNT\")")
+    out = c_frontend_line(out, "    memory := c_memory_new(8)")
+    out = c_frontend_line(out, str_concat("    ", str_concat(spec.nodes_name, str_concat(" := c_calloc(memory, ", str_concat(spec.parameter_name, ", program.node_layout.size)")))))
+    out = c_frontend_line(out, str_concat("    weights := c_globals_pointer(program.globals, ", str_concat(int_to_str(weights_offset), ", 12, 4)")))
+    out = c_frontend_line(out, str_concat("    mut ", str_concat(spec.total_name, " := 0")))
+    out = c_frontend_line(out, str_concat("    mut ", str_concat(spec.loop_name, " := 0")))
+    out = c_frontend_line(out, str_concat("    while ", str_concat(spec.loop_name, str_concat(" < ", str_concat(spec.parameter_name, ":")))))
+    out = c_frontend_line(out, str_concat("        node := c_ptr_add(", str_concat(spec.nodes_name, str_concat(", ", str_concat(spec.loop_name, ")")))))
+    mut value_index := 0
+    while value_index < 3:
+        out = c_frontend_line(out, str_concat("        value", str_concat(int_to_str(value_index), str_concat(" := c_load_i32(c_ptr_add(weights, ", str_concat(int_to_str(value_index), str_concat(")) + ", spec.loop_name))))))
+        out = c_frontend_line(out, str_concat("        c_store_u32(c_frontend_value_ptr(program, node, ", str_concat(int_to_str(value_index), str_concat("), value", str_concat(int_to_str(value_index), ")")))))
+        value_index = value_index + 1
+    out = c_frontend_line(out, "        meta := c_frontend_meta_ptr(program, node)")
+    out = c_frontend_line(out, str_concat("        kind := (", str_concat(spec.loop_name, str_concat(" * ", str_concat(int_to_str(spec.macro_value), ") & 7")))))
+    out = c_frontend_line(out, "        c_layout_store_int(meta, c_layout_field(program.meta_layout, program.kind_field), kind)")
+    out = c_frontend_line(out, "        c_layout_store_int(meta, c_layout_field(program.meta_layout, program.ready_field), 1)")
+    out = c_frontend_line(out, str_concat("        ", str_concat(spec.total_name, str_concat(" = ", str_concat(spec.total_name, " + value0 + value1 + value2 + kind + 1")))))
+    out = c_frontend_line(out, str_concat("        ", str_concat(spec.loop_name, str_concat(" = ", str_concat(spec.loop_name, " + 1")))))
+    out = c_frontend_line(out, str_concat("    ", str_concat(spec.first_name, str_concat(" := c_ptr_add(", str_concat(spec.nodes_name, ", 0)")))))
+    out = c_frontend_line(out, "    first_value := c_load_i32(c_frontend_value_ptr(program, first, 1)) + 1")
+    out = c_frontend_line(out, "    c_store_u32(c_frontend_value_ptr(program, first, 1), first_value)")
+    out = c_frontend_line(out, str_concat("    ", str_concat(spec.total_name, str_concat(" = ", str_concat(spec.total_name, " + first_value")))))
+    out = c_frontend_line(out, "    frame := c_cfg_new(1, 0, 32)")
+    out = c_frontend_line(out, str_concat("    c_cfg_slot_set(frame, 0, ", str_concat(spec.total_name, ")")))
+    out = c_frontend_line(out, "    while !c_cfg_done(frame):")
+    out = c_frontend_line(out, "        block := c_cfg_enter(frame)")
+    out = c_frontend_line(out, "        if block == 0:")
+    out = c_frontend_line(out, str_concat("            selector := ", str_concat(spec.parameter_name, str_concat(" & ", int_to_str(spec.switch_mask)))))
+    out = c_frontend_line(out, str_concat("            if selector == ", str_concat(int_to_str(spec.case0), ":")))
+    out = c_frontend_line(out, "                c_cfg_jump(frame, 1)")
+    out = c_frontend_line(out, str_concat("            elif selector == ", str_concat(int_to_str(spec.case1), ":")))
+    out = c_frontend_line(out, "                c_cfg_jump(frame, 2)")
+    out = c_frontend_line(out, str_concat("            elif selector == ", str_concat(int_to_str(spec.case2), ":")))
+    out = c_frontend_line(out, "                c_cfg_jump(frame, 3)")
+    out = c_frontend_line(out, "            else:")
+    out = c_frontend_line(out, "                c_cfg_jump(frame, 4)")
+    out = c_frontend_line(out, "        elif block == 1:")
+    out = c_frontend_line(out, str_concat("            c_cfg_slot_set(frame, 0, c_cfg_slot_get(frame, 0) + ", str_concat(int_to_str(spec.add0), ")")))
+    out = c_frontend_line(out, "            c_cfg_jump(frame, 5)")
+    out = c_frontend_line(out, "        elif block == 2:")
+    out = c_frontend_line(out, str_concat("            c_cfg_slot_set(frame, 0, c_cfg_slot_get(frame, 0) + ", str_concat(int_to_str(spec.add1), ")")))
+    out = c_frontend_line(out, "            c_cfg_jump(frame, 3)")
+    out = c_frontend_line(out, "        elif block == 3:")
+    out = c_frontend_line(out, str_concat("            c_cfg_slot_set(frame, 0, c_cfg_slot_get(frame, 0) + ", str_concat(int_to_str(spec.add2), ")")))
+    out = c_frontend_line(out, "            c_cfg_jump(frame, 5)")
+    out = c_frontend_line(out, "        elif block == 4:")
+    out = c_frontend_line(out, str_concat("            c_cfg_slot_set(frame, 0, c_cfg_slot_get(frame, 0) - ", str_concat(int_to_str(spec.default_subtract), ")")))
+    out = c_frontend_line(out, "            c_cfg_jump(frame, 5)")
+    out = c_frontend_line(out, "        elif block == 5:")
+    out = c_frontend_line(out, "            c_cfg_return(frame, c_cfg_slot_get(frame, 0))")
+    out = c_frontend_line(out, "        else:")
+    out = c_frontend_line(out, "            c_cfg_panic(\"C2-FRONTEND-CFG-BLOCK\")")
+    out = c_frontend_line(out, str_concat("    ", str_concat(spec.total_name, " = c_cfg_result(frame)")))
+    out = c_frontend_line(out, "    c_cfg_destroy(frame)")
+    out = c_frontend_line(out, str_concat("    c_free(", str_concat(spec.nodes_name, ")")))
+    out = c_frontend_line(out, "    c_memory_destroy(memory)")
+    out = c_frontend_line(out, str_concat("    banner := c_globals_pointer(program.globals, 0, ", str_concat(int_to_str(banner_size), ", 1)")))
+    out = c_frontend_line(out, str_concat("    return ", str_concat(spec.total_name, " + c_load_u8(banner)")))
+    return out
+
+
+def c_frontend_normalized(spec: CFrontendSpec) -> Str:
+    mut out := "schema|c2lpp-frontend-profile-v2\n"
+    out = c_frontend_line(out, str_concat("macro|", str_concat(spec.macro_name, str_concat("|", str_concat(int_to_str(spec.macro_value), "|physical-line=1")))))
+    out = c_frontend_line(out, str_concat("provenance|macro-expand|", str_concat(spec.macro_name, str_concat("->", int_to_str(spec.macro_value)))))
+    out = c_frontend_line(out, str_concat("typedef-forward|struct|", spec.node_name))
+    out = c_frontend_line(out, str_concat("typedef-callback|", str_concat(spec.callback_name, str_concat("|int|", str_concat(spec.node_name, "*,int")))))
+    out = c_frontend_line(out, str_concat("aggregate|", str_concat(spec.meta_name, "|nested-bitfields")))
+    out = c_frontend_line(out, str_concat("aggregate|", str_concat(spec.node_name, str_concat("|array[", str_concat(int_to_str(spec.values_count), str_concat("]|nested|", spec.meta_name))))))
+    out = c_frontend_line(out, str_concat("global-const-string|", str_concat(spec.banner_name, str_concat("|", spec.banner_value))))
+    mut weights := int_to_str(spec.weight0)
+    weights = str_concat(weights, str_concat(",", int_to_str(spec.weight1)))
+    weights = str_concat(weights, str_concat(",", int_to_str(spec.weight2)))
+    out = c_frontend_line(out, str_concat("global-const-array|", str_concat(spec.weights_name, str_concat("|", weights))))
+    out = c_frontend_line(out, str_concat("prototype|", str_concat(spec.prototype_name, str_concat("|int|", str_concat(spec.node_name, "*,int")))))
+    out = c_frontend_line(out, str_concat("prototype-variadic|", str_concat(spec.variadic_name, "|const-char*,...|declaration-only")))
+    out = c_frontend_line(out, "place|pointer-index-array-member")
+    out = c_frontend_line(out, "place|nested-member-bitfield")
+    out = c_frontend_line(out, "place|address-index")
+    out = c_frontend_line(out, "place|dereference-array-member")
+    out = c_frontend_line(out, "place|arrow-array-member")
+    out = c_frontend_line(out, "cfg|auto-profile|for|switch|fallthrough|goto|cleanup")
+    out = c_frontend_line(out, str_concat("callgraph|", str_concat(spec.function_name, "->calloc,free")))
+    out = c_frontend_line(out, "ownership|calloc|free|balanced|no-escape")
+    out = c_frontend_line(out, "runtime|pure-lpp|c_memory,c_layout,c_globals,c_cfg")
+    return out
+
+
+def c_translate_frontend_profile(path: Str) -> CNativeTranslation:
+    spec := c_frontend_parse(path)
+    if spec.valid == 0:
+        mut report := str_concat("engine=frontend-profile-v2\naccepted=0\nreason=", str_concat(spec.error, "\n"))
+        report = str_concat(report, str_concat("line=", str_concat(int_to_str(spec.error_line), "\n")))
+        report = str_concat(report, str_concat("column=", str_concat(int_to_str(spec.error_column), "\n")))
+        return CNativeTranslation("", "", report, 0)
+    report := "engine=frontend-profile-v2\naccepted=1\npure_lpp=1\nextern_blocks=0\nnative_links=0\nc_source_runtime_files=0\nunsupported=0\ndeclarations_complete_for_profile=1\nforward_typedefs=1\ncallback_typedefs=1\nvariadic_declarations=1\nconst_string_globals=1\nconst_array_globals=1\nnested_aggregates=1\nmacro_provenance=1\nplaces_complete_for_profile=1\ncfg_complete_for_profile=1\nallocations=1\nfrees=1\nownership_balanced=1\n"
+    return CNativeTranslation(c_frontend_emit(spec), c_frontend_normalized(spec), report, 1)

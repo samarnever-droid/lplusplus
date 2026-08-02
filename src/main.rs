@@ -24,6 +24,7 @@ mod semantic;
 mod types;
 #[path = "analysis/typecheck.rs"]
 mod typecheck;
+mod target;
 #[path = "analysis/type_facts.rs"]
 mod type_facts;
 #[path = "analysis/layout.rs"]
@@ -461,12 +462,26 @@ fn main() {
     let mut idx = 1;
     let mut cli_linker: Option<String> = None;
     let mut backend = "cranelift".to_string();
-    let mut _cli_target: Option<String> = None;
+    let mut cli_target: Option<String> = None;
 
     while idx < args.len() {
         let arg = &args[idx];
         if arg == "--version" || arg == "-v" {
             println!("L++ Compiler v4.5.0 (Pure Native AOT)");
+            return;
+        } else if arg == "--list-targets" {
+            println!("L++ supported target triples (Android / Termux / Linux):");
+            println!("  aarch64-linux-android        Android arm64 & Termux 64-bit");
+            println!("  armv7-linux-androideabi      Android arm32");
+            println!("  arm-linux-androideabi        Android arm (v7)");
+            println!("  i686-linux-android           Android x86");
+            println!("  x86_64-linux-android         Android x86_64");
+            println!("  aarch64-unknown-linux-gnu    Generic arm64 Linux");
+            println!("  x86_64-unknown-linux-gnu     Generic x86_64 Linux");
+            println!("  riscv64gc-unknown-linux-gnu  Generic riscv64 Linux");
+            println!();
+            println!("Use --target <triple> to cross-compile. The Cranelift backend");
+            println!("must be built with the matching arch feature (default: all-arch).");
             return;
         } else if arg == "--help" || arg == "-h" {
             println!("L++ (L Plus Plus) v4.5.0 — Pure Native Compiler & Toolchain");
@@ -512,6 +527,12 @@ fn main() {
             println!("Linker:");
             println!("  --linker direct  Use lpp-link (no external tools needed)");
             println!("  --linker host    Use system cc/cl.exe (required for FFI/extern)");
+            println!();
+            println!("Target:");
+            println!("  --target <triple>  Emit for a target triple instead of the host");
+            println!("                     (e.g. aarch64-linux-android, armv7-linux-androideabi,");
+            println!("                     i686-linux-android, aarch64-unknown-linux-gnu)");
+            println!("  --list-targets     List known Android/Termux target triples");
             println!();
             println!("Configuration:");
             println!("  config                         Show config (~/.lpp/config.json)");
@@ -566,7 +587,7 @@ fn main() {
             }
         } else if arg == "--target" {
             if idx + 1 < args.len() {
-                _cli_target = Some(args[idx + 1].clone());
+                cli_target = Some(args[idx + 1].clone());
                 idx += 1;
             }
         } else if !arg.starts_with('-') {
@@ -891,18 +912,42 @@ fn main() {
     mir_time = mir_start.elapsed();
 
     // L++ 2.0 Pure Native Cranelift AOT Backend
+    // Resolve the optional --target triple into a validated spec. The host is
+    // used when none is given; an Android/Termux triple selects a non-host ISA
+    // and influences runtime/cc selection.
+    let target_spec = match &cli_target {
+        Some(t) => match crate::target::TargetSpec::from_triple_str(t) {
+            Ok(spec) => spec,
+            Err(e) => {
+                eprintln!("[L++] Target Error: {}", e);
+                return;
+            }
+        },
+        None => crate::target::TargetSpec::host(),
+    };
+    if let Some(t) = &cli_target {
+        eprintln!(
+            "[L++] targeting {}",
+            target_spec
+        );
+    }
+
     let aot_start = Instant::now();
     let has_extern_decl = ast
         .declarations
         .iter()
         .any(|d| matches!(d, crate::ast::TopLevel::Extern(_)));
     let backend_result = match backend.as_str() {
-        "cranelift" => cranelift_backend::compiler::AotCompiler::compile_with_options(
-            &mir_program,
-            &type_table,
-            has_extern_decl,
-            &weak_fields,
-        ),
+        "cranelift" => {
+            let target_flag = target_spec.raw.as_deref();
+            cranelift_backend::compiler::AotCompiler::compile_with_options_target(
+                &mir_program,
+                &type_table,
+                has_extern_decl,
+                &weak_fields,
+                target_flag,
+            )
+        }
         "llvm" => llvm_backend::compile(&mir_program, &type_table, &weak_fields),
         other => Err(format!("unknown backend '{}'; expected cranelift or llvm", other)),
     };
@@ -980,7 +1025,12 @@ fn main() {
     let link_result = if use_host {
         #[cfg(windows)]
         pm::load_msvc_env();
-        pm::host_link_binary(Path::new(&obj_path), Path::new(&exe_path), &link_libs)
+        pm::host_link_binary_target(
+            Path::new(&obj_path),
+            Path::new(&exe_path),
+            &link_libs,
+            target_spec.raw.as_deref(),
+        )
     } else {
         pm::direct_link_binary(Path::new(&obj_path), Path::new(&exe_path))
     };

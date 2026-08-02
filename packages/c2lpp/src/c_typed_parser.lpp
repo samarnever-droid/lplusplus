@@ -1,0 +1,2061 @@
+# c_typed_parser.lpp — typed token parser and normalized-IR L++ emitter.
+#
+# This is deliberately an allowlisted vertical slice. A function is emitted only
+# when its complete signature, symbols, expressions, and statements are proven
+# supported. Otherwise the complete function is rejected with provenance.
+
+import c_lexer
+import c_normal_ir
+import c_aggregate_data
+import text
+
+struct CTypeParse:
+    c_type: CTypeIR
+    next: CLexCursor
+
+struct CParamsParse:
+    lpp: Str
+    symbols: Str
+    normalized: Str
+    type_list: Str
+    count: Int
+    next: CLexCursor
+    valid: Int
+    reason: Str
+
+struct CBodyParse:
+    lpp: Str
+    normalized: Str
+    symbols: Str
+    next: CLexCursor
+    valid: Int
+    has_return: Int
+    reason: Str
+    span: CSourceSpan
+
+struct CFunctionParse:
+    function: CFunctionIR
+    next: CLexCursor
+    recognized: Int
+    reason: Str
+    span: CSourceSpan
+
+struct CPointerPrefix:
+    next: CLexCursor
+    count: Int
+
+struct CFunctionSignature:
+    name: Str
+    return_type: CTypeIR
+    params: CParamsParse
+    body: CLexCursor
+    valid: Int
+    reason: Str
+    span: CSourceSpan
+
+
+def c_parse_pointer_prefix(cursor: CLexCursor) -> CPointerPrefix:
+    mut current := cursor
+    mut count := 0
+    mut scanning := true
+    while scanning:
+        step := c_lex_next_code(current)
+        if c_lex_token_is(step, "*"):
+            count = count + 1
+            current = step.next
+        else:
+            scanning = false
+    return CPointerPrefix(current, count)
+
+
+def c_typed_indent(level: Int) -> Str:
+    mut out := ""
+    mut i := 0
+    while i < level:
+        out = str_concat(out, "    ")
+        i = i + 1
+    return out
+
+
+def c_param_is_mutated(normalized: Str, name: Str) -> Bool:
+    if text_contains(normalized, str_concat("stmt|assign|", str_concat(name, "|"))):
+        return true
+    if text_contains(normalized, str_concat("stmt|postfix|", str_concat(name, "|"))):
+        return true
+    if text_contains(normalized, str_concat("for-init|assign|", str_concat(name, "|"))):
+        return true
+    return false
+
+
+def c_params_emitted_lpp(params_lpp: Str, symbols: Str, normalized: Str) -> Str:
+    lines := str_split(symbols, 10)
+    mut out := params_lpp
+    for line in lines:
+        if str_len(line) > 0:
+            fields := str_split(line, 124)
+            mut symbol_name := ""
+            mut index := 0
+            for field in fields:
+                if index == 0:
+                    symbol_name = field
+                index = index + 1
+            if str_len(symbol_name) > 0 && c_param_is_mutated(normalized, symbol_name):
+                old_prefix := str_concat(symbol_name, ":")
+                new_prefix := str_concat("c2lpp_arg_", str_concat(symbol_name, ":"))
+                out = str_replace(out, old_prefix, new_prefix)
+    return out
+
+
+def c_params_mutable_prologue(symbols: Str, normalized: Str) -> Str:
+    lines := str_split(symbols, 10)
+    mut out := ""
+    for line in lines:
+        if str_len(line) > 0:
+            fields := str_split(line, 124)
+            mut name := ""
+            mut index := 0
+            for field in fields:
+                if index == 0:
+                    name = field
+                index = index + 1
+            if str_len(name) > 0 && c_param_is_mutated(normalized, name):
+                binding_name := str_concat("c2lpp_arg_", name)
+                out = text_append_line(out, str_concat("    mut ", str_concat(name, str_concat(" := ", binding_name))))
+    return out
+
+
+def c_typed_condition(expr: CExprIR) -> Str:
+    if expr.type_kind == C_IR_TYPE_BOOL:
+        return expr.lpp
+    if expr.type_kind == C_IR_TYPE_INT:
+        return str_concat("(", str_concat(expr.lpp, " != 0)"))
+    if expr.type_kind == C_IR_TYPE_PTR:
+        return str_concat("!c_ptr_is_null(", str_concat(expr.lpp, ")"))
+    return ""
+
+
+def c_parse_empty_span(cursor: CLexCursor) -> CSourceSpan:
+    return CSourceSpan(cursor.path, cursor.offset, cursor.offset, cursor.line, cursor.column)
+
+
+def c_parse_invalid_type(cursor: CLexCursor) -> CTypeIR:
+    return CTypeIR(C_IR_TYPE_INVALID, "", "", c_parse_empty_span(cursor), 0)
+
+
+def c_parse_type_known(cursor: CLexCursor, aliases: Str) -> CTypeParse:
+    mut current := cursor
+    mut spelling := ""
+    mut saw_type := false
+    mut kind := C_IR_TYPE_INVALID
+    mut span := c_parse_empty_span(cursor)
+    mut first := true
+    mut scanning := true
+    while scanning:
+        step := c_lex_next_code(current)
+        word := step.token.spelling
+        mut consumed := true
+        if text_eq(word, "const") || text_eq(word, "volatile") || text_eq(word, "static") || text_eq(word, "extern") || text_eq(word, "inline") || text_eq(word, "register"):
+            consumed = true
+        elif text_eq(word, "signed") || text_eq(word, "unsigned") || text_eq(word, "short") || text_eq(word, "long") || text_eq(word, "int") || text_eq(word, "char"):
+            saw_type = true
+            kind = C_IR_TYPE_INT
+        elif text_eq(word, "float") || text_eq(word, "double"):
+            saw_type = true
+            kind = C_IR_TYPE_FLOAT
+        elif text_eq(word, "_Bool") || text_eq(word, "bool"):
+            saw_type = true
+            kind = C_IR_TYPE_BOOL
+        elif text_eq(word, "void"):
+            saw_type = true
+            kind = C_IR_TYPE_VOID
+        elif step.token.kind == C_TOKEN_IDENTIFIER && c_ir_symbol_type(aliases, word) != C_IR_TYPE_INVALID:
+            saw_type = true
+            kind = c_ir_symbol_type(aliases, word)
+        else:
+            consumed = false
+            scanning = false
+        if consumed:
+            if first:
+                span = step.token.span
+                first = false
+            if str_len(spelling) > 0:
+                spelling = str_concat(spelling, " ")
+            spelling = str_concat(spelling, word)
+            current = step.next
+    if !saw_type:
+        return CTypeParse(c_parse_invalid_type(cursor), cursor)
+    mut lpp := "Int"
+    if kind == C_IR_TYPE_VOID:
+        lpp = "Void"
+    elif kind == C_IR_TYPE_FLOAT:
+        lpp = "Float"
+    elif kind == C_IR_TYPE_BOOL:
+        lpp = "Bool"
+    return CTypeParse(CTypeIR(kind, spelling, lpp, span, 1), current)
+
+
+def c_parse_type(cursor: CLexCursor) -> CTypeParse:
+    return c_parse_type_known(cursor, "")
+
+
+def c_typed_scalar_size(c_type: CTypeIR, aliases: Str) -> Int:
+    spelling := c_type.c_spelling
+    if text_contains(spelling, "char") || text_contains(spelling, "_Bool") || text_contains(spelling, "bool"):
+        return 1
+    if text_contains(spelling, "short"):
+        return 2
+    if text_contains(spelling, "double") || text_contains(spelling, "long"):
+        return 8
+    if text_contains(spelling, "float") || text_contains(spelling, "int"):
+        return 4
+    words := str_split(spelling, 32)
+    for word in words:
+        if c_ir_symbol_type(aliases, word) != C_IR_TYPE_INVALID:
+            value := c_ir_symbol_field(aliases, word, 2)
+            if str_len(value) > 0:
+                return parse_int(value)
+    return 0
+
+
+def c_typed_scalar_signed(c_type: CTypeIR, aliases: Str) -> Int:
+    spelling := c_type.c_spelling
+    if text_contains(spelling, "unsigned") || text_contains(spelling, "_Bool") || text_contains(spelling, "bool"):
+        return 0
+    words := str_split(spelling, 32)
+    for word in words:
+        if c_ir_symbol_type(aliases, word) != C_IR_TYPE_INVALID:
+            value := c_ir_symbol_field(aliases, word, 3)
+            if str_len(value) > 0:
+                return parse_int(value)
+    return 1
+
+
+def c_typed_scalar_load_lpp(pointer_lpp: Str, size: Int, signed_flag: Int) -> Str:
+    mut helper := "c_load_i64"
+    if size == 1:
+        helper = "c_load_u8"
+        if signed_flag != 0:
+            helper = "c_load_i8"
+    elif size == 2:
+        helper = "c_load_u16"
+        if signed_flag != 0:
+            helper = "c_load_i16"
+    elif size == 4:
+        helper = "c_load_u32"
+        if signed_flag != 0:
+            helper = "c_load_i32"
+    return str_concat(helper, str_concat("(", str_concat(pointer_lpp, ")")))
+
+
+def c_typed_pointer_metadata(c_type: CTypeIR, pointer_depth: Int, aliases: Str) -> Str:
+    mut metadata := str_concat(int_to_str(c_type.kind), "|")
+    metadata = str_concat(metadata, str_concat(int_to_str(c_typed_scalar_size(c_type, aliases)), "|"))
+    metadata = str_concat(metadata, str_concat(int_to_str(c_typed_scalar_signed(c_type, aliases)), "|"))
+    metadata = str_concat(metadata, str_concat(int_to_str(pointer_depth), "|"))
+    return str_concat(metadata, c_type.c_spelling)
+
+
+def c_parse_params_known(cursor: CLexCursor, aliases: Str) -> CParamsParse:
+    mut current := cursor
+    mut lpp := ""
+    mut symbols := ""
+    mut normalized := ""
+    mut type_list := ""
+    mut count := 0
+    first := c_lex_next_code(current)
+    if c_lex_token_is(first, ")"):
+        return CParamsParse(lpp, symbols, normalized, type_list, count, first.next, 1, "")
+
+    while true:
+        parsed_type := c_parse_type_known(current, aliases)
+        if parsed_type.c_type.valid == 0:
+            return CParamsParse(lpp, symbols, normalized, type_list, count, current, 0, "C2-PARSE-PARAM-TYPE")
+        pointer_prefix := c_parse_pointer_prefix(parsed_type.next)
+        after_type := c_lex_next_code(pointer_prefix.next)
+        if parsed_type.c_type.kind == C_IR_TYPE_VOID && c_lex_token_is(after_type, ")") && count == 0:
+            return CParamsParse("", "", "", "", 0, after_type.next, 1, "")
+        mut param_kind := parsed_type.c_type.kind
+        mut param_lpp := parsed_type.c_type.lpp_spelling
+        if pointer_prefix.count > 0:
+            param_kind = C_IR_TYPE_PTR
+            param_lpp = "CPtr"
+        if c_lex_token_is(after_type, "["):
+            return CParamsParse(lpp, symbols, normalized, type_list, count, after_type.next, 0, "C2-TYPE-ARRAY-PARAM")
+        if param_kind == C_IR_TYPE_AGGREGATE:
+            return CParamsParse(lpp, symbols, normalized, type_list, count, after_type.next, 0, "C2-TYPE-AGGREGATE-BY-VALUE")
+        if param_kind == C_IR_TYPE_VOID || after_type.token.kind != C_TOKEN_IDENTIFIER:
+            return CParamsParse(lpp, symbols, normalized, type_list, count, parsed_type.next, 0, "C2-PARSE-PARAM-NAME")
+        name := text_safe_binding_name(after_type.token.spelling)
+        if str_len(name) == 0 || c_ir_symbol_type(symbols, name) != C_IR_TYPE_INVALID:
+            return CParamsParse(lpp, symbols, normalized, type_list, count, after_type.next, 0, "C2-TYPE-DUPLICATE-PARAM")
+        mut effective_pointer_depth := pointer_prefix.count
+        mut separator := c_lex_next_code(after_type.next)
+        if c_lex_token_is(separator, "["):
+            if effective_pointer_depth > 0:
+                return CParamsParse(lpp, symbols, normalized, type_list, count, separator.next, 0, "C2-TYPE-MULTIDIM-ARRAY-PARAM")
+            mut array_cursor := separator.next
+            mut array_close := c_lex_next_code(array_cursor)
+            if array_close.token.kind == C_TOKEN_NUMBER:
+                array_cursor = array_close.next
+                array_close = c_lex_next_code(array_cursor)
+            if !c_lex_token_is(array_close, "]"):
+                return CParamsParse(lpp, symbols, normalized, type_list, count, array_close.next, 0, "C2-PARSE-ARRAY-PARAM-CLOSE")
+            effective_pointer_depth = 1
+            param_kind = C_IR_TYPE_PTR
+            param_lpp = "CPtr"
+            separator = c_lex_next_code(array_close.next)
+        if c_lex_token_is(separator, "*"):
+            return CParamsParse(lpp, symbols, normalized, type_list, count, separator.next, 0, "C2-TYPE-POINTER-DECLARATOR")
+        if count > 0:
+            lpp = str_concat(lpp, ", ")
+            type_list = str_concat(type_list, ",")
+        lpp = str_concat(lpp, str_concat(name, str_concat(": ", param_lpp)))
+        type_list = str_concat(type_list, int_to_str(param_kind))
+        if param_kind == C_IR_TYPE_PTR:
+            metadata := c_typed_pointer_metadata(parsed_type.c_type, effective_pointer_depth, aliases)
+            symbols = c_ir_symbol_add_meta(symbols, name, param_kind, metadata)
+        else:
+            symbols = c_ir_symbol_add(symbols, name, param_kind)
+        normalized = text_append_line(normalized, str_concat("param|", str_concat(name, str_concat("|", c_ir_type_name(param_kind)))))
+        count = count + 1
+        if c_lex_token_is(separator, ")"):
+            return CParamsParse(lpp, symbols, normalized, type_list, count, separator.next, 1, "")
+        if !c_lex_token_is(separator, ","):
+            return CParamsParse(lpp, symbols, normalized, type_list, count, separator.next, 0, "C2-PARSE-PARAM-SEPARATOR")
+        current = separator.next
+    return CParamsParse(lpp, symbols, normalized, type_list, count, current, 0, "C2-PARSE-PARAM")
+
+
+def c_parse_params(cursor: CLexCursor) -> CParamsParse:
+    return c_parse_params_known(cursor, "")
+
+
+def c_expr_invalid(cursor: CLexCursor, reason: Str) -> CExprParse:
+    span := c_parse_empty_span(cursor)
+    expr := CExprIR(C_IR_EXPR_INVALID, C_IR_TYPE_INVALID, "", reason, "", "", 0, 0, 0, 0, span, 0)
+    return CExprParse(expr, cursor)
+
+
+def c_binary_precedence(op: Str) -> Int:
+    if text_eq(op, "||"):
+        return 1
+    if text_eq(op, "&&"):
+        return 2
+    if text_eq(op, "|"):
+        return 3
+    if text_eq(op, "^"):
+        return 4
+    if text_eq(op, "&"):
+        return 5
+    if text_eq(op, "==") || text_eq(op, "!="):
+        return 6
+    if text_eq(op, "<") || text_eq(op, "<=") || text_eq(op, ">") || text_eq(op, ">="):
+        return 7
+    if text_eq(op, "<<") || text_eq(op, ">>"):
+        return 8
+    if text_eq(op, "+") || text_eq(op, "-"):
+        return 9
+    if text_eq(op, "*") || text_eq(op, "/") || text_eq(op, "%"):
+        return 10
+    return -1
+
+
+def c_binary_result_type(op: Str, left: Int, right: Int) -> Int:
+    if text_eq(op, "==") || text_eq(op, "!=") || text_eq(op, "<") || text_eq(op, "<=") || text_eq(op, ">") || text_eq(op, ">="):
+        if left == right && left != C_IR_TYPE_VOID:
+            return C_IR_TYPE_BOOL
+        if (text_eq(op, "==") || text_eq(op, "!=")) && ((left == C_IR_TYPE_PTR && right == C_IR_TYPE_INT) || (left == C_IR_TYPE_INT && right == C_IR_TYPE_PTR)):
+            return C_IR_TYPE_BOOL
+        return C_IR_TYPE_INVALID
+    if text_eq(op, "&&") || text_eq(op, "||"):
+        if (left == C_IR_TYPE_BOOL || left == C_IR_TYPE_INT || left == C_IR_TYPE_PTR) && (right == C_IR_TYPE_BOOL || right == C_IR_TYPE_INT || right == C_IR_TYPE_PTR):
+            return C_IR_TYPE_BOOL
+        return C_IR_TYPE_INVALID
+    if text_eq(op, "&") || text_eq(op, "|") || text_eq(op, "^") || text_eq(op, "<<") || text_eq(op, ">>") || text_eq(op, "%"):
+        if left == C_IR_TYPE_INT && right == C_IR_TYPE_INT:
+            return C_IR_TYPE_INT
+        return C_IR_TYPE_INVALID
+    if text_eq(op, "+") && ((left == C_IR_TYPE_PTR && right == C_IR_TYPE_INT) || (left == C_IR_TYPE_INT && right == C_IR_TYPE_PTR)):
+        return C_IR_TYPE_PTR
+    if text_eq(op, "-") && left == C_IR_TYPE_PTR && right == C_IR_TYPE_INT:
+        return C_IR_TYPE_PTR
+    if text_eq(op, "-") && left == C_IR_TYPE_PTR && right == C_IR_TYPE_PTR:
+        return C_IR_TYPE_INT
+    if left == right && (left == C_IR_TYPE_INT || left == C_IR_TYPE_FLOAT):
+        return left
+    return C_IR_TYPE_INVALID
+
+
+def c_parse_expression_min(cursor: CLexCursor, symbols: Str, functions: Str, minimum: Int, aliases: Str, aggregates: Str) -> CExprParse:
+    left_parse := c_parse_unary(cursor, symbols, functions, aliases, aggregates)
+    if left_parse.expr.valid == 0:
+        return left_parse
+    mut left := left_parse.expr
+    mut current := left_parse.next
+    mut scanning := true
+    while scanning:
+        operator_step := c_lex_next_code(current)
+        # Postfix increment/decrement: `x++` / `x--`. The expression yields the
+        # old value. If the operand is a place (aggregate member, pointer
+        # deref), use the place postfix helper; if it is a plain int scalar
+        # name (param/local), emit a value-returning assignment.
+        if c_lex_token_is(operator_step, "++") || c_lex_token_is(operator_step, "--"):
+            if left.type_kind != C_IR_TYPE_INT || str_len(left.place_lpp) == 0:
+                return c_expr_invalid(operator_step.next, "C2-PLACE-POSTFIX-TYPE")
+            mut helper := "c_place_post_increment"
+            if c_lex_token_is(operator_step, "--"):
+                helper = "c_place_post_decrement"
+            post_lpp := str_concat(helper, str_concat("(", str_concat(left.place_lpp, ")")))
+            post_ir := str_concat("postfix|", str_concat(operator_step.token.spelling, str_concat("|", left.normalized)))
+            left = CExprIR(C_IR_EXPR_POSTFIX, C_IR_TYPE_INT, post_lpp, post_ir, left.place_lpp, left.address_lpp, left.element_kind, left.element_size, left.signed_flag, left.pointer_depth, left.span, 1)
+            current = operator_step.next
+            continue
+        precedence := c_binary_precedence(operator_step.token.spelling)
+        if precedence < minimum:
+            scanning = false
+        else:
+            right_parse := c_parse_expression_min(operator_step.next, symbols, functions, precedence + 1, aliases, aggregates)
+            if right_parse.expr.valid == 0:
+                return right_parse
+            result_type := c_binary_result_type(operator_step.token.spelling, left.type_kind, right_parse.expr.type_kind)
+            if result_type == C_IR_TYPE_INVALID:
+                return c_expr_invalid(operator_step.next, "C2-TYPE-BINARY")
+            op := operator_step.token.spelling
+            mut lpp := str_concat("(", str_concat(left.lpp, str_concat(" ", str_concat(op, str_concat(" ", str_concat(right_parse.expr.lpp, ")"))))))
+            mut element_kind := 0
+            mut element_size := 0
+            mut signed_flag := 0
+            mut pointer_depth := 0
+            if text_eq(op, "&&") || text_eq(op, "||"):
+                left_condition := c_typed_condition(left)
+                right_condition := c_typed_condition(right_parse.expr)
+                if str_len(left_condition) == 0 || str_len(right_condition) == 0:
+                    return c_expr_invalid(operator_step.next, "C2-TYPE-LOGICAL-CONDITION")
+                lpp = str_concat("(", str_concat(left_condition, str_concat(" ", str_concat(op, str_concat(" ", str_concat(right_condition, ")"))))))
+            elif (text_eq(op, "==") || text_eq(op, "!=")) && ((left.type_kind == C_IR_TYPE_PTR && right_parse.expr.type_kind == C_IR_TYPE_INT) || (left.type_kind == C_IR_TYPE_INT && right_parse.expr.type_kind == C_IR_TYPE_PTR)):
+                mut pointer_lpp := left.lpp
+                mut integer_lpp := right_parse.expr.lpp
+                if right_parse.expr.type_kind == C_IR_TYPE_PTR:
+                    pointer_lpp = right_parse.expr.lpp
+                    integer_lpp = left.lpp
+                if !text_eq(integer_lpp, "0"):
+                    return c_expr_invalid(operator_step.next, "C2-TYPE-POINTER-INTEGER-COMPARE")
+                lpp = str_concat("c_ptr_is_null(", str_concat(pointer_lpp, ")"))
+                if text_eq(op, "!="):
+                    lpp = str_concat("!", lpp)
+            elif left.type_kind == C_IR_TYPE_PTR && right_parse.expr.type_kind == C_IR_TYPE_PTR && (text_eq(op, "==") || text_eq(op, "!=")):
+                lpp = str_concat("c_ptr_equal(", str_concat(left.lpp, str_concat(", ", str_concat(right_parse.expr.lpp, ")"))))
+                if text_eq(op, "!="):
+                    lpp = str_concat("!", lpp)
+            elif left.type_kind == C_IR_TYPE_PTR && right_parse.expr.type_kind == C_IR_TYPE_PTR && (text_eq(op, "<") || text_eq(op, "<=") || text_eq(op, ">") || text_eq(op, ">=")):
+                if !c_ir_pointer_metadata_compatible(left, right_parse.expr) || left.element_size <= 0:
+                    return c_expr_invalid(operator_step.next, "C2-TYPE-POINTER-RELATIONAL")
+                difference := str_concat("c_ptr_difference(", str_concat(left.lpp, str_concat(", ", str_concat(right_parse.expr.lpp, ")"))))
+                lpp = str_concat("(", str_concat(difference, str_concat(" ", str_concat(op, " 0)"))))
+            elif result_type == C_IR_TYPE_PTR:
+                mut pointer := left
+                mut amount := right_parse.expr
+                if right_parse.expr.type_kind == C_IR_TYPE_PTR:
+                    pointer = right_parse.expr
+                    amount = left
+                if pointer.element_size <= 0 || pointer.pointer_depth <= 0:
+                    return c_expr_invalid(operator_step.next, "C2-TYPE-POINTER-ARITHMETIC")
+                mut amount_lpp := amount.lpp
+                if text_eq(op, "-"):
+                    amount_lpp = str_concat("(-", str_concat(amount_lpp, ")"))
+                lpp = str_concat("c_ptr_add(", str_concat(pointer.lpp, str_concat(", ", str_concat(amount_lpp, ")"))))
+                element_kind = pointer.element_kind
+                element_size = pointer.element_size
+                signed_flag = pointer.signed_flag
+                pointer_depth = pointer.pointer_depth
+            elif text_eq(op, "-") && left.type_kind == C_IR_TYPE_PTR && right_parse.expr.type_kind == C_IR_TYPE_PTR:
+                if !c_ir_pointer_metadata_compatible(left, right_parse.expr) || left.element_size <= 0:
+                    return c_expr_invalid(operator_step.next, "C2-TYPE-POINTER-DIFFERENCE")
+                lpp = str_concat("c_ptr_difference(", str_concat(left.lpp, str_concat(", ", str_concat(right_parse.expr.lpp, ")"))))
+            normalized := str_concat("binary|",  str_concat(op, str_concat("|", str_concat(left.normalized, str_concat("|", right_parse.expr.normalized)))))
+            left = CExprIR(C_IR_EXPR_BINARY, result_type, lpp, normalized, "", "", element_kind, element_size, signed_flag, pointer_depth, left.span, 1)
+            current = right_parse.next
+    return CExprParse(left, current)
+
+
+def c_parse_expression(cursor: CLexCursor, symbols: Str, functions: Str, aliases: Str, aggregates: Str) -> CExprParse:
+    return c_parse_expression_min(cursor, symbols, functions, 1, aliases, aggregates)
+
+
+def c_parse_call(name_step: CLexStep, open_step: CLexStep, symbols: Str, functions: Str, aliases: Str, aggregates: Str) -> CExprParse:
+    return_type := c_ir_function_return(functions, name_step.token.spelling)
+    arity := c_ir_function_arity(functions, name_step.token.spelling)
+    if return_type == C_IR_TYPE_INVALID || arity < 0:
+        return c_expr_invalid(name_step.next, "C2-TYPE-UNKNOWN-CALL")
+    mut current := open_step.next
+    mut args_lpp := ""
+    mut args_ir := ""
+    mut count := 0
+    first := c_lex_next_code(current)
+    if c_lex_token_is(first, ")"):
+        if arity != 0:
+            return c_expr_invalid(first.next, "C2-TYPE-CALL-ARITY")
+        lpp := str_concat(name_step.token.spelling, "()")
+        ir := str_concat("call|", str_concat(name_step.token.spelling, "|0"))
+        return CExprParse(CExprIR(C_IR_EXPR_CALL, return_type, lpp, ir, "", "", 0, 0, 0, 0, name_step.token.span, 1), first.next)
+    while true:
+        parsed := c_parse_expression(current, symbols, functions, aliases, aggregates)
+        if parsed.expr.valid == 0:
+            return parsed
+        expected := c_ir_function_param_type(functions, name_step.token.spelling, count)
+        if expected == C_IR_TYPE_INVALID || expected != parsed.expr.type_kind:
+            return c_expr_invalid(parsed.next, "C2-TYPE-CALL-ARG")
+        if count > 0:
+            args_lpp = str_concat(args_lpp, ", ")
+            args_ir = str_concat(args_ir, ",")
+        args_lpp = str_concat(args_lpp, parsed.expr.lpp)
+        args_ir = str_concat(args_ir, parsed.expr.normalized)
+        count = count + 1
+        separator := c_lex_next_code(parsed.next)
+        if c_lex_token_is(separator, ")"):
+            if count != arity:
+                return c_expr_invalid(separator.next, "C2-TYPE-CALL-ARITY")
+            lpp := str_concat(name_step.token.spelling, str_concat("(", str_concat(args_lpp, ")")))
+            ir := str_concat("call|", str_concat(name_step.token.spelling, str_concat("|", str_concat(int_to_str(count), str_concat("|", args_ir)))))
+            return CExprParse(CExprIR(C_IR_EXPR_CALL, return_type, lpp, ir, "", "", 0, 0, 0, 0, name_step.token.span, 1), separator.next)
+        if !c_lex_token_is(separator, ","):
+            return c_expr_invalid(parsed.next, "C2-PARSE-CALL-SEPARATOR")
+        current = separator.next
+    return c_expr_invalid(current, "C2-PARSE-CALL")
+
+
+def c_parse_member_pointer(name_step: CLexStep, arrow_step: CLexStep, symbols: Str, functions: Str, aliases: Str, aggregates: Str) -> CExprParse:
+    pointer_depth := parse_int(c_ir_symbol_field(symbols, name_step.token.spelling, 5))
+    element_kind := parse_int(c_ir_symbol_field(symbols, name_step.token.spelling, 2))
+    base_spelling := c_ir_symbol_field(symbols, name_step.token.spelling, 6)
+    if pointer_depth != 1 || element_kind != C_IR_TYPE_AGGREGATE:
+        return c_expr_invalid(arrow_step.next, "C2-AGGREGATE-ARROW-BASE")
+    mut aggregate_name := c_aggregate_resolve_name(aliases, base_spelling)
+    if str_len(aggregate_name) == 0:
+        return c_expr_invalid(arrow_step.next, "C2-AGGREGATE-UNKNOWN-BASE")
+    mut base_address := name_step.token.spelling
+    mut current := arrow_step.next
+    while true:
+        field_step := c_lex_next_code(current)
+        if field_step.token.kind != C_TOKEN_IDENTIFIER:
+            return c_expr_invalid(field_step.next, "C2-AGGREGATE-FIELD-NAME")
+        field := c_aggregate_field(aggregates, aggregate_name, field_step.token.spelling)
+        if field.valid == 0:
+            return c_expr_invalid(field_step.next, "C2-AGGREGATE-UNKNOWN-FIELD")
+        mut after_field := c_lex_next_code(field_step.next)
+        if field.pointer_depth > 0:
+            if field.array_count > 0 || text_eq(field.type_name, "<function-pointer>"):
+                return c_expr_invalid(field_step.next, "C2-AGGREGATE-POINTER-FIELD-KIND")
+            pointer_place := str_concat("c_abi_pointer_place_at(", str_concat(base_address, str_concat(", ", str_concat(int_to_str(field.byte_offset), ")"))))
+            loaded_pointer := str_concat("c_abi_pointer_place_load(", str_concat(pointer_place, ")"))
+            if c_lex_token_is(after_field, "->"):
+                if field.pointer_depth != 1 || field.type_kind != C_IR_TYPE_AGGREGATE:
+                    return c_expr_invalid(after_field.next, "C2-AGGREGATE-POINTER-FIELD-CHAIN")
+                base_address = loaded_pointer
+                aggregate_name = c_aggregate_resolve_name(aliases, field.type_name)
+                if str_len(aggregate_name) == 0:
+                    return c_expr_invalid(after_field.next, "C2-AGGREGATE-POINTER-FIELD-TYPE")
+                current = after_field.next
+                continue
+            elif c_lex_token_is(after_field, "."):
+                return c_expr_invalid(after_field.next, "C2-AGGREGATE-POINTER-FIELD-DOT")
+            else:
+                mut pointee_size := 0
+                if field.type_kind == C_IR_TYPE_AGGREGATE:
+                    pointee_size = c_aggregate_size(aggregates, c_aggregate_resolve_name(aliases, field.type_name))
+                elif c_ir_symbol_type(aliases, field.type_name) != C_IR_TYPE_INVALID:
+                    pointee_size = parse_int(c_ir_symbol_field(aliases, field.type_name, 2))
+                ir := str_concat("place-load|aggregate-pointer-member|", str_concat(aggregate_name, str_concat("|", field.field_name)))
+                return CExprParse(CExprIR(C_IR_EXPR_NAME, C_IR_TYPE_PTR, loaded_pointer, ir, pointer_place, "", field.type_kind, pointee_size, field.signed_flag, field.pointer_depth, field_step.token.span, 1), field_step.next)
+        elif field.array_count > 0:
+            if field.type_kind != C_IR_TYPE_INT || field.bit_width >= 0:
+                return c_expr_invalid(after_field.next, "C2-AGGREGATE-ARRAY-ELEMENT")
+            if !c_lex_token_is(after_field, "["):
+                return c_expr_invalid(after_field.next, "C2-AGGREGATE-ARRAY-ADDRESS")
+            index := c_parse_expression(after_field.next, symbols, functions, aliases, aggregates)
+            if index.expr.valid == 0:
+                return index
+            if index.expr.type_kind != C_IR_TYPE_INT:
+                return c_expr_invalid(index.next, "C2-AGGREGATE-ARRAY-INDEX-TYPE")
+            close := c_lex_next_code(index.next)
+            if !c_lex_token_is(close, "]"):
+                return c_expr_invalid(close.next, "C2-AGGREGATE-ARRAY-INDEX-CLOSE")
+            element_size := field.storage_size / field.array_count
+            array_pointer := str_concat("c_ptr_subobject(", str_concat(base_address, str_concat(", ", str_concat(int_to_str(field.byte_offset), str_concat(", ", str_concat(int_to_str(field.storage_size), str_concat(", ", str_concat(int_to_str(element_size), ")"))))))))
+            place := str_concat("c_place_index(", str_concat(array_pointer, str_concat(", ", str_concat(index.expr.lpp, str_concat(", ", str_concat(int_to_str(field.array_count), str_concat(", ", str_concat(int_to_str(element_size), str_concat(", ", str_concat(int_to_str(field.signed_flag), ")"))))))))))
+            lpp := str_concat("c_place_load_int(", str_concat(place, ")"))
+            address := str_concat("c_place_address(", str_concat(place, ")"))
+            ir := str_concat("place-load|aggregate-array|", str_concat(aggregate_name, str_concat("|", str_concat(field.field_name, str_concat("|", index.expr.normalized)))))
+            return CExprParse(CExprIR(C_IR_EXPR_NAME, C_IR_TYPE_INT, lpp, ir, place, address, C_IR_TYPE_INT, element_size, field.signed_flag, 1, field_step.token.span, 1), close.next)
+        if field.type_kind == C_IR_TYPE_AGGREGATE:
+            if field.storage_size <= 0:
+                return c_expr_invalid(field_step.next, "C2-AGGREGATE-NESTED-INCOMPLETE")
+            base_address = str_concat("c_ptr_subobject(", str_concat(base_address, str_concat(", ", str_concat(int_to_str(field.byte_offset), str_concat(", ", str_concat(int_to_str(field.storage_size), ", 1)"))))))
+            aggregate_name = field.type_name
+            if !c_lex_token_is(after_field, "."):
+                return c_expr_invalid(after_field.next, "C2-AGGREGATE-BY-VALUE-EXPR")
+            current = after_field.next
+        else:
+            if field.type_kind != C_IR_TYPE_INT:
+                return c_expr_invalid(field_step.next, "C2-AGGREGATE-SCALAR-KIND")
+            place := str_concat("c_place_from_parts(", str_concat(base_address, str_concat(", ", str_concat(int_to_str(field.byte_offset), str_concat(", ", str_concat(int_to_str(field.storage_size), str_concat(", ", str_concat(int_to_str(field.signed_flag), str_concat(", ", str_concat(int_to_str(field.bit_offset), str_concat(", ", str_concat(int_to_str(field.bit_width), ")"))))))))))))
+            lpp := str_concat("c_place_load_int(", str_concat(place, ")"))
+            address := str_concat("c_place_address(", str_concat(place, ")"))
+            ir := str_concat("place-load|aggregate-member|", str_concat(aggregate_name, str_concat("|", field.field_name)))
+            return CExprParse(CExprIR(C_IR_EXPR_NAME, C_IR_TYPE_INT, lpp, ir, place, address, C_IR_TYPE_INT, field.storage_size, field.signed_flag, 1, field_step.token.span, 1), field_step.next)
+    return c_expr_invalid(current, "C2-AGGREGATE-MEMBER")
+
+
+def c_typed_character_value(spelling: Str) -> Int:
+    length := str_len(spelling)
+    if length == 3 && text_eq(char_at(spelling, 0), "'") && text_eq(char_at(spelling, 2), "'"):
+        return ord(char_at(spelling, 1))
+    if length == 4 && text_eq(char_at(spelling, 0), "'") && text_eq(char_at(spelling, 1), "\\") && text_eq(char_at(spelling, 3), "'"):
+        escaped := char_at(spelling, 2)
+        if text_eq(escaped, "n"):
+            return 10
+        if text_eq(escaped, "r"):
+            return 13
+        if text_eq(escaped, "t"):
+            return 9
+        if text_eq(escaped, "0"):
+            return 0
+        if text_eq(escaped, "\\"):
+            return 92
+        if text_eq(escaped, "'"):
+            return 39
+        if text_eq(escaped, "\""):
+            return 34
+    return -1
+
+
+def c_parse_primary(cursor: CLexCursor, symbols: Str, functions: Str, aliases: Str, aggregates: Str) -> CExprParse:
+    step := c_lex_next_code(cursor)
+    if step.token.kind == C_TOKEN_CHARACTER:
+        character_value := c_typed_character_value(step.token.spelling)
+        if character_value < 0:
+            return c_expr_invalid(step.next, "C2-PARSE-CHARACTER-LITERAL")
+        lpp := int_to_str(character_value)
+        expr := CExprIR(C_IR_EXPR_LITERAL, C_IR_TYPE_INT, lpp, str_concat("character|", lpp), "", "", 0, 0, 0, 0, step.token.span, 1)
+        return CExprParse(expr, step.next)
+    if step.token.kind == C_TOKEN_NUMBER:
+        mut type_kind := C_IR_TYPE_INT
+        if text_contains(step.token.spelling, ".") || text_contains(step.token.spelling, "e") || text_contains(step.token.spelling, "E"):
+            type_kind = C_IR_TYPE_FLOAT
+        expr := CExprIR(C_IR_EXPR_LITERAL, type_kind, step.token.spelling, str_concat("literal|", step.token.spelling), "", "", 0, 0, 0, 0, step.token.span, 1)
+        return CExprParse(expr, step.next)
+    if step.token.kind == C_TOKEN_IDENTIFIER:
+        after := c_lex_next_code(step.next)
+        type_kind := c_ir_symbol_type(symbols, step.token.spelling)
+        if c_ir_symbol_is_alias(symbols, step.token.spelling):
+            return c_expr_invalid(step.next, "C2-TYPE-NAME-IS-TYPEDEF")
+        if type_kind == C_IR_TYPE_PTR && c_lex_token_is(after, "->"):
+            return c_parse_member_pointer(step, after, symbols, functions, aliases, aggregates)
+        if type_kind == C_IR_TYPE_CONST_ARRAY:
+            if !c_lex_token_is(after, "["):
+                return c_expr_invalid(after.next, "C2-GLOBAL-ARRAY-ADDRESS-UNSUPPORTED")
+            index := c_parse_expression(after.next, symbols, functions, aliases, aggregates)
+            if index.expr.valid == 0:
+                return index
+            if index.expr.type_kind != C_IR_TYPE_INT:
+                return c_expr_invalid(index.next, "C2-GLOBAL-ARRAY-INDEX-TYPE")
+            close := c_lex_next_code(index.next)
+            if !c_lex_token_is(close, "]"):
+                return c_expr_invalid(close.next, "C2-GLOBAL-ARRAY-INDEX-CLOSE")
+            element_kind := parse_int(c_ir_symbol_field(symbols, step.token.spelling, 2))
+            accessor := c_ir_symbol_field(symbols, step.token.spelling, 4)
+            if element_kind == C_IR_TYPE_INVALID || str_len(accessor) == 0:
+                return c_expr_invalid(close.next, "C2-GLOBAL-ARRAY-METADATA")
+            lpp := str_concat(accessor, str_concat("(", str_concat(index.expr.lpp, ")")))
+            ir := str_concat("const-array-load|", str_concat(step.token.spelling, str_concat("|", index.expr.normalized)))
+            return CExprParse(CExprIR(C_IR_EXPR_NAME, element_kind, lpp, ir, "", "", 0, 0, 0, 0, step.token.span, 1), close.next)
+        if type_kind == C_IR_TYPE_PTR && c_lex_token_is(after, "["):
+            element_kind := parse_int(c_ir_symbol_field(symbols, step.token.spelling, 2))
+            element_size := parse_int(c_ir_symbol_field(symbols, step.token.spelling, 3))
+            signed_flag := parse_int(c_ir_symbol_field(symbols, step.token.spelling, 4))
+            pointer_depth := parse_int(c_ir_symbol_field(symbols, step.token.spelling, 5))
+            index := c_parse_expression(after.next, symbols, functions, aliases, aggregates)
+            if index.expr.valid == 0:
+                return index
+            if index.expr.type_kind != C_IR_TYPE_INT:
+                return c_expr_invalid(index.next, "C2-PLACE-INDEX-TYPE")
+            close := c_lex_next_code(index.next)
+            if !c_lex_token_is(close, "]"):
+                return c_expr_invalid(close.next, "C2-PLACE-INDEX-CLOSE")
+            if pointer_depth == 2:
+                slot_base := str_concat("c_ptr_cast(", str_concat(step.token.spelling, str_concat(", 8, ", str_concat(step.token.spelling, ".mutable_flag)"))))
+                slot_address := str_concat("c_ptr_add(", str_concat(slot_base, str_concat(", ", str_concat(index.expr.lpp, ")"))))
+                pointer_place := str_concat("c_abi_pointer_place_at(", str_concat(slot_address, ", 0)"))
+                loaded_pointer := str_concat("c_abi_pointer_place_load(", str_concat(pointer_place, ")"))
+                pointer_ir := str_concat("place-load|pointer-index|", str_concat(step.token.spelling, str_concat("|", index.expr.normalized)))
+                return CExprParse(CExprIR(C_IR_EXPR_NAME, C_IR_TYPE_PTR, loaded_pointer, pointer_ir, pointer_place, "", element_kind, element_size, signed_flag, 1, step.token.span, 1), close.next)
+            if pointer_depth != 1 || element_size <= 0 || (element_kind != C_IR_TYPE_INT && element_kind != C_IR_TYPE_BOOL):
+                return c_expr_invalid(after.next, "C2-PLACE-INDEX-ELEMENT-TYPE")
+            typed_pointer := str_concat("c_ptr_cast(", str_concat(step.token.spelling, str_concat(", ", str_concat(int_to_str(element_size), str_concat(", ", str_concat(step.token.spelling, ".mutable_flag)"))))))
+            address := str_concat("c_ptr_add(", str_concat(typed_pointer, str_concat(", ", str_concat(index.expr.lpp, ")"))))
+            place := str_concat("c_place_dereference(", str_concat(address, str_concat(", ", str_concat(int_to_str(element_size), str_concat(", ", str_concat(int_to_str(signed_flag), ")"))))))
+            lpp := c_typed_scalar_load_lpp(address, element_size, signed_flag)
+            ir := str_concat("place-load|index|", str_concat(step.token.spelling, str_concat("|", index.expr.normalized)))
+            return CExprParse(CExprIR(C_IR_EXPR_NAME, element_kind, lpp, ir, place, address, element_kind, element_size, signed_flag, 1, step.token.span, 1), close.next)
+        if c_lex_token_is(after, "("):
+            return c_parse_call(step, after, symbols, functions, aliases, aggregates)
+        if type_kind == C_IR_TYPE_INVALID:
+            return c_expr_invalid(step.next, "C2-TYPE-UNKNOWN-NAME")
+        mut element_kind := 0
+        mut element_size := 0
+        mut signed_flag := 0
+        mut pointer_depth := 0
+        if type_kind == C_IR_TYPE_PTR:
+            element_kind = parse_int(c_ir_symbol_field(symbols, step.token.spelling, 2))
+            element_size = parse_int(c_ir_symbol_field(symbols, step.token.spelling, 3))
+            signed_flag = parse_int(c_ir_symbol_field(symbols, step.token.spelling, 4))
+            pointer_depth = parse_int(c_ir_symbol_field(symbols, step.token.spelling, 5))
+        expr := CExprIR(C_IR_EXPR_NAME, type_kind, step.token.spelling, str_concat("name|", step.token.spelling), "", "", element_kind, element_size, signed_flag, pointer_depth, step.token.span, 1)
+        return CExprParse(expr, step.next)
+    if c_lex_token_is(step, "("):
+        mut cast_type := c_parse_type(step.next)
+        if cast_type.c_type.valid == 0:
+            alias_step := c_lex_next_code(step.next)
+            if alias_step.token.kind == C_TOKEN_IDENTIFIER && c_ir_symbol_is_alias(aliases, alias_step.token.spelling):
+                alias_kind := c_ir_symbol_type(aliases, alias_step.token.spelling)
+                mut alias_lpp := "Int"
+                if alias_kind == C_IR_TYPE_FLOAT:
+                    alias_lpp = "Float"
+                elif alias_kind == C_IR_TYPE_BOOL:
+                    alias_lpp = "Bool"
+                elif alias_kind == C_IR_TYPE_VOID:
+                    alias_lpp = "Void"
+                alias_type := CTypeIR(alias_kind, alias_step.token.spelling, alias_lpp, alias_step.token.span, 1)
+                cast_type = CTypeParse(alias_type, alias_step.next)
+        if cast_type.c_type.valid != 0:
+            pointer_prefix := c_parse_pointer_prefix(cast_type.next)
+            cast_close := c_lex_next_code(pointer_prefix.next)
+            if c_lex_token_is(cast_close, ")"):
+                operand := c_parse_unary(cast_close.next, symbols, functions, aliases, aggregates)
+                if operand.expr.valid == 0:
+                    return operand
+                mut target_kind := cast_type.c_type.kind
+                if pointer_prefix.count > 0:
+                    target_kind = C_IR_TYPE_PTR
+                mut cast_lpp := operand.expr.lpp
+                mut compatible := target_kind == operand.expr.type_kind
+                if target_kind == C_IR_TYPE_INT && operand.expr.type_kind == C_IR_TYPE_BOOL:
+                    cast_lpp = str_concat("c2lpp_bool_to_int(", str_concat(operand.expr.lpp, ")"))
+                    compatible = true
+                elif target_kind == C_IR_TYPE_INT && operand.expr.type_kind == C_IR_TYPE_FLOAT:
+                    cast_lpp = str_concat("float_to_int(", str_concat(operand.expr.lpp, ")"))
+                    compatible = true
+                elif target_kind == C_IR_TYPE_FLOAT && operand.expr.type_kind == C_IR_TYPE_INT:
+                    cast_lpp = str_concat("int_to_float(", str_concat(operand.expr.lpp, ")"))
+                    compatible = true
+                elif target_kind == C_IR_TYPE_BOOL && operand.expr.type_kind == C_IR_TYPE_INT:
+                    cast_lpp = str_concat("(", str_concat(operand.expr.lpp, " != 0)"))
+                    compatible = true
+                elif target_kind == C_IR_TYPE_PTR && operand.expr.type_kind == C_IR_TYPE_INT && text_eq(operand.expr.lpp, "0"):
+                    cast_lpp = "c_ptr_null()"
+                    compatible = true
+                elif target_kind == C_IR_TYPE_VOID:
+                    cast_lpp = operand.expr.lpp
+                    compatible = true
+                if !compatible:
+                    return c_expr_invalid(cast_close.next, "C2-TYPE-CAST")
+                mut element_kind := 0
+                mut element_size := 0
+                mut signed_flag := 0
+                mut pointer_depth := 0
+                if target_kind == C_IR_TYPE_PTR:
+                    pointer_depth = pointer_prefix.count
+                    if pointer_depth == 1:
+                        element_kind = cast_type.c_type.kind
+                        element_size = c_typed_scalar_size(cast_type.c_type, aliases)
+                        signed_flag = c_typed_scalar_signed(cast_type.c_type, aliases)
+                        if operand.expr.type_kind == C_IR_TYPE_PTR && element_size > 0:
+                            cast_lpp = str_concat("c_ptr_cast(", str_concat(operand.expr.lpp, str_concat(", ", str_concat(int_to_str(element_size), str_concat(", ", str_concat(operand.expr.lpp, ".mutable_flag)"))))))
+                cast_ir := str_concat("cast|", str_concat(c_ir_type_name(target_kind), str_concat("|", operand.expr.normalized)))
+                return CExprParse(CExprIR(C_IR_EXPR_CAST, target_kind, cast_lpp, cast_ir, "", "", element_kind, element_size, signed_flag, pointer_depth, step.token.span, 1), operand.next)
+        inner := c_parse_expression(step.next, symbols, functions, aliases, aggregates)
+        close := c_lex_next_code(inner.next)
+        if inner.expr.valid == 0 || !c_lex_token_is(close, ")"):
+            return c_expr_invalid(step.next, "C2-PARSE-PAREN")
+        wrapped := CExprIR(inner.expr.kind, inner.expr.type_kind, str_concat("(", str_concat(inner.expr.lpp, ")")), inner.expr.normalized, inner.expr.place_lpp, inner.expr.address_lpp, inner.expr.element_kind, inner.expr.element_size, inner.expr.signed_flag, inner.expr.pointer_depth, step.token.span, 1)
+        return CExprParse(wrapped, close.next)
+    return c_expr_invalid(cursor, "C2-PARSE-PRIMARY")
+
+
+def c_parse_unary(cursor: CLexCursor, symbols: Str, functions: Str, aliases: Str, aggregates: Str) -> CExprParse:
+    step := c_lex_next_code(cursor)
+    op := step.token.spelling
+    if text_eq(op, "sizeof"):
+        after_sizeof := c_lex_next_code(step.next)
+        if c_lex_token_is(after_sizeof, "("):
+            dereference := c_lex_next_code(after_sizeof.next)
+            if c_lex_token_is(dereference, "*"):
+                pointer_name := c_lex_next_code(dereference.next)
+                pointer_close := c_lex_next_code(pointer_name.next)
+                if pointer_name.token.kind == C_TOKEN_IDENTIFIER && c_lex_token_is(pointer_close, ")") && c_ir_symbol_type(symbols, pointer_name.token.spelling) == C_IR_TYPE_PTR:
+                    mut dereference_size := parse_int(c_ir_symbol_field(symbols, pointer_name.token.spelling, 3))
+                    if parse_int(c_ir_symbol_field(symbols, pointer_name.token.spelling, 2)) == C_IR_TYPE_AGGREGATE:
+                        base_spelling := c_ir_symbol_field(symbols, pointer_name.token.spelling, 6)
+                        dereference_size = c_aggregate_size(aggregates, c_aggregate_resolve_name(aliases, base_spelling))
+                    if dereference_size <= 0:
+                        return c_expr_invalid(pointer_close.next, "C2-SIZEOF-INCOMPLETE-DEREFERENCE")
+                    dereference_lpp := int_to_str(dereference_size)
+                    dereference_ir := str_concat("sizeof-dereference|", str_concat(pointer_name.token.spelling, str_concat("|", dereference_lpp)))
+                    return CExprParse(CExprIR(C_IR_EXPR_LITERAL, C_IR_TYPE_INT, dereference_lpp, dereference_ir, "", "", 0, 0, 0, 0, step.token.span, 1), pointer_close.next)
+            parsed_type := c_parse_type_known(after_sizeof.next, aliases)
+            if parsed_type.c_type.valid != 0:
+                pointer_prefix := c_parse_pointer_prefix(parsed_type.next)
+                close_type := c_lex_next_code(pointer_prefix.next)
+                if c_lex_token_is(close_type, ")"):
+                    mut size := 0
+                    if pointer_prefix.count > 0:
+                        size = 8
+                    elif parsed_type.c_type.kind == C_IR_TYPE_AGGREGATE:
+                        aggregate_name := c_aggregate_resolve_name(aliases, parsed_type.c_type.c_spelling)
+                        size = c_aggregate_size(aggregates, aggregate_name)
+                    else:
+                        size = c_typed_scalar_size(parsed_type.c_type, aliases)
+                    if size <= 0:
+                        return c_expr_invalid(close_type.next, "C2-SIZEOF-INCOMPLETE-TYPE")
+                    lpp := int_to_str(size)
+                    ir := str_concat("sizeof-type|", str_concat(parsed_type.c_type.c_spelling, str_concat("|", lpp)))
+                    return CExprParse(CExprIR(C_IR_EXPR_LITERAL, C_IR_TYPE_INT, lpp, ir, "", "", 0, 0, 0, 0, step.token.span, 1), close_type.next)
+        operand := c_parse_unary(step.next, symbols, functions, aliases, aggregates)
+        if operand.expr.valid == 0:
+            return operand
+        mut operand_size := operand.expr.element_size
+        if operand.expr.type_kind == C_IR_TYPE_PTR:
+            operand_size = 8
+        if operand_size <= 0:
+            return c_expr_invalid(operand.next, "C2-SIZEOF-EXPRESSION-TYPE")
+        lpp := int_to_str(operand_size)
+        ir := str_concat("sizeof-expression|", str_concat(operand.expr.normalized, str_concat("|", lpp)))
+        return CExprParse(CExprIR(C_IR_EXPR_LITERAL, C_IR_TYPE_INT, lpp, ir, "", "", 0, 0, 0, 0, step.token.span, 1), operand.next)
+    if text_eq(op, "&"):
+        operand := c_parse_unary(step.next, symbols, functions, aliases, aggregates)
+        if operand.expr.valid == 0:
+            return operand
+        if str_len(operand.expr.address_lpp) == 0 || operand.expr.element_size <= 0:
+            return c_expr_invalid(step.next, "C2-PLACE-ADDRESS-OF")
+        ir := str_concat("address-of|", operand.expr.normalized)
+        expr := CExprIR(C_IR_EXPR_UNARY, C_IR_TYPE_PTR, operand.expr.address_lpp, ir, "", "", operand.expr.type_kind, operand.expr.element_size, operand.expr.signed_flag, 1, step.token.span, 1)
+        return CExprParse(expr, operand.next)
+    if text_eq(op, "*"):
+        operand := c_parse_unary(step.next, symbols, functions, aliases, aggregates)
+        if operand.expr.valid == 0:
+            return operand
+        if operand.expr.type_kind == C_IR_TYPE_PTR && operand.expr.pointer_depth == 2:
+            pointer_place := str_concat("c_abi_pointer_place_at(", str_concat(operand.expr.lpp, ", 0)"))
+            loaded_pointer := str_concat("c_abi_pointer_place_load(", str_concat(pointer_place, ")"))
+            pointer_ir := str_concat("place-load|pointer-dereference|", operand.expr.normalized)
+            return CExprParse(CExprIR(C_IR_EXPR_UNARY, C_IR_TYPE_PTR, loaded_pointer, pointer_ir, pointer_place, "", operand.expr.element_kind, operand.expr.element_size, operand.expr.signed_flag, 1, step.token.span, 1), operand.next)
+        if operand.expr.type_kind != C_IR_TYPE_PTR || operand.expr.pointer_depth != 1 || operand.expr.element_size <= 0:
+            return c_expr_invalid(step.next, "C2-PLACE-DEREFERENCE-TYPE")
+        if operand.expr.element_kind != C_IR_TYPE_INT && operand.expr.element_kind != C_IR_TYPE_BOOL:
+            return c_expr_invalid(step.next, "C2-PLACE-DEREFERENCE-ELEMENT")
+        place := str_concat("c_place_dereference(", str_concat(operand.expr.lpp, str_concat(", ", str_concat(int_to_str(operand.expr.element_size), str_concat(", ", str_concat(int_to_str(operand.expr.signed_flag), ")"))))))
+        lpp := c_typed_scalar_load_lpp(operand.expr.lpp, operand.expr.element_size, operand.expr.signed_flag)
+        ir := str_concat("place-load|dereference|", operand.expr.normalized)
+        expr := CExprIR(C_IR_EXPR_UNARY, operand.expr.element_kind, lpp, ir, place, operand.expr.lpp, operand.expr.element_kind, operand.expr.element_size, operand.expr.signed_flag, 1, step.token.span, 1)
+        return CExprParse(expr, operand.next)
+    if text_eq(op, "++") || text_eq(op, "--"):
+        operand := c_parse_unary(step.next, symbols, functions, aliases, aggregates)
+        if operand.expr.valid == 0:
+            return operand
+        if operand.expr.type_kind != C_IR_TYPE_INT || str_len(operand.expr.place_lpp) == 0:
+            return c_expr_invalid(step.next, "C2-PLACE-PREFIX-TYPE")
+        mut helper := "c_place_pre_increment"
+        if text_eq(op, "--"):
+            helper = "c_place_pre_decrement"
+        lpp := str_concat(helper, str_concat("(", str_concat(operand.expr.place_lpp, ")")))
+        ir := str_concat("place-prefix|", str_concat(op, str_concat("|", operand.expr.normalized)))
+        return CExprParse(CExprIR(C_IR_EXPR_UNARY, C_IR_TYPE_INT, lpp, ir, operand.expr.place_lpp, operand.expr.address_lpp, operand.expr.element_kind, operand.expr.element_size, operand.expr.signed_flag, operand.expr.pointer_depth, step.token.span, 1), operand.next)
+    if text_eq(op, "+") || text_eq(op, "-") || text_eq(op, "!") || text_eq(op, "~"):
+        operand := c_parse_unary(step.next, symbols, functions, aliases, aggregates)
+        if operand.expr.valid == 0:
+            return operand
+        mut result_type := operand.expr.type_kind
+        if text_eq(op, "!"):
+            if operand.expr.type_kind != C_IR_TYPE_BOOL && operand.expr.type_kind != C_IR_TYPE_INT && operand.expr.type_kind != C_IR_TYPE_PTR:
+                return c_expr_invalid(step.next, "C2-TYPE-UNARY")
+            result_type = C_IR_TYPE_BOOL
+        elif text_eq(op, "~") && operand.expr.type_kind != C_IR_TYPE_INT:
+            return c_expr_invalid(step.next, "C2-TYPE-UNARY")
+        elif (text_eq(op, "+") || text_eq(op, "-")) && operand.expr.type_kind != C_IR_TYPE_INT && operand.expr.type_kind != C_IR_TYPE_FLOAT:
+            return c_expr_invalid(step.next, "C2-TYPE-UNARY")
+        mut lpp := str_concat("(", str_concat(op, str_concat(operand.expr.lpp, ")")))
+        if text_eq(op, "~"):
+            lpp = str_concat("(-1 ^ ", str_concat(operand.expr.lpp, ")"))
+        elif text_eq(op, "+"):
+            lpp = operand.expr.lpp
+        elif text_eq(op, "-") && operand.expr.type_kind == C_IR_TYPE_FLOAT:
+            lpp = str_concat("(0.0 - ", str_concat(operand.expr.lpp, ")"))
+        elif text_eq(op, "!") && operand.expr.type_kind == C_IR_TYPE_PTR:
+            lpp = str_concat("c_ptr_is_null(", str_concat(operand.expr.lpp, ")"))
+        elif text_eq(op, "!") && operand.expr.type_kind == C_IR_TYPE_INT:
+            lpp = str_concat("(", str_concat(operand.expr.lpp, " == 0)"))
+        ir := str_concat("unary|", str_concat(op, str_concat("|", operand.expr.normalized)))
+        return CExprParse(CExprIR(C_IR_EXPR_UNARY, result_type, lpp, ir, "", "", 0, 0, 0, 0, step.token.span, 1), operand.next)
+    return c_parse_primary(cursor, symbols, functions, aliases, aggregates)
+
+
+def c_skip_block(cursor: CLexCursor) -> CLexCursor:
+    mut current := cursor
+    mut depth := 1
+    while depth > 0:
+        step := c_lex_next_code(current)
+        if step.token.kind == C_TOKEN_EOF:
+            return step.next
+        if c_lex_token_is(step, "{"):
+            depth = depth + 1
+        elif c_lex_token_is(step, "}"):
+            depth = depth - 1
+        current = step.next
+    return current
+
+
+
+struct CTernaryReturn:
+    lpp: Str
+    normalized: Str
+    next: CLexCursor
+    valid: Int
+    reason: Str
+    span: CSourceSpan
+
+struct CConditionalParts:
+    condition_lpp: Str
+    condition_ir: Str
+    true_lpp: Str
+    true_ir: Str
+    true_type: Int
+    false_lpp: Str
+    false_ir: Str
+    false_type: Int
+    next: CLexCursor
+    valid: Int
+    reason: Str
+    span: CSourceSpan
+
+
+def c_conditional_invalid(cursor: CLexCursor, reason: Str, span: CSourceSpan) -> CConditionalParts:
+    return CConditionalParts("", "", "", "", C_IR_TYPE_INVALID, "", "", C_IR_TYPE_INVALID, cursor, 0, reason, span)
+
+
+def c_parse_conditional_parts(cursor: CLexCursor, symbols: Str, functions: Str, aliases: Str, aggregates: Str) -> CConditionalParts:
+    condition := c_parse_expression(cursor, symbols, functions, aliases, aggregates)
+    if condition.expr.valid == 0:
+        return c_conditional_invalid(condition.next, condition.expr.normalized, condition.expr.span)
+    question := c_lex_next_code(condition.next)
+    if !c_lex_token_is(question, "?"):
+        return c_conditional_invalid(question.next, "C2-PARSE-TERNARY-QUESTION", question.token.span)
+    when_true := c_parse_expression(question.next, symbols, functions, aliases, aggregates)
+    if when_true.expr.valid == 0:
+        return c_conditional_invalid(when_true.next, when_true.expr.normalized, when_true.expr.span)
+    colon := c_lex_next_code(when_true.next)
+    if !c_lex_token_is(colon, ":"):
+        return c_conditional_invalid(colon.next, "C2-PARSE-TERNARY-COLON", colon.token.span)
+    when_false := c_parse_expression(colon.next, symbols, functions, aliases, aggregates)
+    if when_false.expr.valid == 0:
+        return c_conditional_invalid(when_false.next, when_false.expr.normalized, when_false.expr.span)
+    semi := c_lex_next_code(when_false.next)
+    if !c_lex_token_is(semi, ";"):
+        return c_conditional_invalid(semi.next, "C2-PARSE-TERNARY-SEMI", semi.token.span)
+    condition_lpp := c_typed_condition(condition.expr)
+    if str_len(condition_lpp) == 0:
+        return c_conditional_invalid(semi.next, "C2-TYPE-TERNARY-CONDITION", condition.expr.span)
+    return CConditionalParts(condition_lpp, condition.expr.normalized, when_true.expr.lpp, when_true.expr.normalized, when_true.expr.type_kind, when_false.expr.lpp, when_false.expr.normalized, when_false.expr.type_kind, semi.next, 1, "", question.token.span)
+
+
+def c_conditional_branch_compatible(type_kind: Int, lpp: Str, target_kind: Int) -> Bool:
+    if type_kind == target_kind:
+        return target_kind != C_IR_TYPE_VOID
+    if target_kind == C_IR_TYPE_INT && type_kind == C_IR_TYPE_BOOL:
+        return true
+    if target_kind == C_IR_TYPE_PTR && type_kind == C_IR_TYPE_INT && text_eq(lpp, "0"):
+        return true
+    return false
+
+
+def c_conditional_branch_lpp(type_kind: Int, lpp: Str, target_kind: Int) -> Str:
+    if target_kind == C_IR_TYPE_INT && type_kind == C_IR_TYPE_BOOL:
+        return str_concat("c2lpp_bool_to_int(", str_concat(lpp, ")"))
+    if target_kind == C_IR_TYPE_PTR && type_kind == C_IR_TYPE_INT && text_eq(lpp, "0"):
+        return "c_ptr_null()"
+    return lpp
+
+
+def c_return_expr_compatible(expr: CExprIR, return_type: Int) -> Bool:
+    if expr.type_kind == return_type:
+        return return_type != C_IR_TYPE_VOID
+    if return_type == C_IR_TYPE_INT && expr.type_kind == C_IR_TYPE_BOOL:
+        return true
+    if return_type == C_IR_TYPE_PTR && expr.type_kind == C_IR_TYPE_INT && text_eq(expr.lpp, "0"):
+        return true
+    return false
+
+
+def c_return_expr_lpp(expr: CExprIR, return_type: Int) -> Str:
+    if return_type == C_IR_TYPE_INT && expr.type_kind == C_IR_TYPE_BOOL:
+        return str_concat("c2lpp_bool_to_int(", str_concat(expr.lpp, ")"))
+    if return_type == C_IR_TYPE_PTR && expr.type_kind == C_IR_TYPE_INT && text_eq(expr.lpp, "0"):
+        return "c_ptr_null()"
+    return expr.lpp
+
+
+def c_parse_ternary_return(cursor: CLexCursor, symbols: Str, functions: Str, return_type: Int, aliases: Str, aggregates: Str, indent_level: Int) -> CTernaryReturn:
+    condition := c_parse_expression(cursor, symbols, functions, aliases, aggregates)
+    if condition.expr.valid == 0:
+        return CTernaryReturn("", "", condition.next, 0, condition.expr.normalized, condition.expr.span)
+    question := c_lex_next_code(condition.next)
+    if !c_lex_token_is(question, "?"):
+        return CTernaryReturn("", "", question.next, 0, "C2-PARSE-TERNARY-QUESTION", question.token.span)
+    when_true := c_parse_expression(question.next, symbols, functions, aliases, aggregates)
+    if when_true.expr.valid == 0:
+        return CTernaryReturn("", "", when_true.next, 0, when_true.expr.normalized, when_true.expr.span)
+    colon := c_lex_next_code(when_true.next)
+    if !c_lex_token_is(colon, ":"):
+        return CTernaryReturn("", "", colon.next, 0, "C2-PARSE-TERNARY-COLON", colon.token.span)
+    when_false := c_parse_expression(colon.next, symbols, functions, aliases, aggregates)
+    if when_false.expr.valid == 0:
+        return CTernaryReturn("", "", when_false.next, 0, when_false.expr.normalized, when_false.expr.span)
+    semi := c_lex_next_code(when_false.next)
+    if !c_lex_token_is(semi, ";"):
+        return CTernaryReturn("", "", semi.next, 0, "C2-PARSE-TERNARY-SEMI", semi.token.span)
+    condition_lpp := c_typed_condition(condition.expr)
+    if str_len(condition_lpp) == 0:
+        return CTernaryReturn("", "", semi.next, 0, "C2-TYPE-TERNARY-CONDITION", condition.expr.span)
+    if !c_return_expr_compatible(when_true.expr, return_type) || !c_return_expr_compatible(when_false.expr, return_type):
+        return CTernaryReturn("", "", semi.next, 0, "C2-TYPE-TERNARY-BRANCH", question.token.span)
+    indent := c_typed_indent(indent_level)
+    nested_indent := c_typed_indent(indent_level + 1)
+    mut lpp := text_append_line("", str_concat(indent, str_concat("if ", str_concat(condition_lpp, ":"))))
+    lpp = text_append_line(lpp, str_concat(nested_indent, str_concat("return ", c_return_expr_lpp(when_true.expr, return_type))))
+    lpp = text_append_line(lpp, str_concat(indent, str_concat("return ", c_return_expr_lpp(when_false.expr, return_type))))
+    mut normalized := str_concat("stmt|ternary-return|condition|", condition.expr.normalized)
+    normalized = str_concat(normalized, str_concat("|true|", when_true.expr.normalized))
+    normalized = str_concat(normalized, str_concat("|false|", when_false.expr.normalized))
+    return CTernaryReturn(lpp, normalized, semi.next, 1, "", question.token.span)
+
+
+struct CReturnBranch:
+    lpp: Str
+    normalized: Str
+    next: CLexCursor
+    valid: Int
+    reason: Str
+
+
+def c_parse_return_branch(cursor: CLexCursor, symbols: Str, functions: Str, return_type: Int, aliases: Str, aggregates: Str, indent_level: Int) -> CReturnBranch:
+    mut current := cursor
+    mut braced := false
+    mut first := c_lex_next_code(current)
+    if c_lex_token_is(first, "{"):
+        braced = true
+        current = first.next
+        first = c_lex_next_code(current)
+    if !text_eq(first.token.spelling, "return"):
+        return CReturnBranch("", "", first.next, 0, "C2-PARSE-IF-NONRETURN-BRANCH")
+    parsed := c_parse_expression(first.next, symbols, functions, aliases, aggregates)
+    if parsed.expr.valid == 0:
+        return CReturnBranch("", "", parsed.next, 0, parsed.expr.normalized)
+    after_parsed := c_lex_next_code(parsed.next)
+    if c_lex_token_is(after_parsed, "?"):
+        ternary := c_parse_ternary_return(first.next, symbols, functions, return_type, aliases, aggregates, indent_level)
+        if ternary.valid == 0:
+            return CReturnBranch("", "", ternary.next, 0, ternary.reason)
+        current = ternary.next
+        if braced:
+            ternary_close := c_lex_next_code(current)
+            if !c_lex_token_is(ternary_close, "}"):
+                return CReturnBranch("", "", ternary_close.next, 0, "C2-PARSE-IF-BRACE")
+            current = ternary_close.next
+        return CReturnBranch(ternary.lpp, ternary.normalized, current, 1, "")
+    mut compatible := parsed.expr.type_kind == return_type
+    if return_type == C_IR_TYPE_INT && parsed.expr.type_kind == C_IR_TYPE_BOOL:
+        compatible = true
+    if return_type == C_IR_TYPE_PTR && parsed.expr.type_kind == C_IR_TYPE_INT && text_eq(parsed.expr.lpp, "0"):
+        compatible = true
+    if !compatible:
+        return CReturnBranch("", "", parsed.next, 0, "C2-TYPE-IF-RETURN")
+    semi := c_lex_next_code(parsed.next)
+    if !c_lex_token_is(semi, ";"):
+        return CReturnBranch("", "", semi.next, 0, "C2-PARSE-IF-RETURN-SEMI")
+    current = semi.next
+    if braced:
+        close := c_lex_next_code(current)
+        if !c_lex_token_is(close, "}"):
+            return CReturnBranch("", "", close.next, 0, "C2-PARSE-IF-BRACE")
+        current = close.next
+    mut return_lpp := parsed.expr.lpp
+    if return_type == C_IR_TYPE_INT && parsed.expr.type_kind == C_IR_TYPE_BOOL:
+        return_lpp = str_concat("c2lpp_bool_to_int(", str_concat(parsed.expr.lpp, ")"))
+    if return_type == C_IR_TYPE_PTR && parsed.expr.type_kind == C_IR_TYPE_INT && text_eq(parsed.expr.lpp, "0"):
+        return_lpp = "c_ptr_null()"
+    return CReturnBranch(str_concat(c_typed_indent(indent_level), str_concat("return ", return_lpp)), str_concat("branch-return|", parsed.expr.normalized), current, 1, "")
+
+
+
+struct CForHeader:
+    init_lpp: Str
+    increment_lpp: Str
+    normalized: Str
+    condition: CExprIR
+    symbols: Str
+    next: CLexCursor
+    valid: Int
+    reason: Str
+    span: CSourceSpan
+
+
+def c_for_invalid(cursor: CLexCursor, reason: Str, span: CSourceSpan) -> CForHeader:
+    invalid_expr := CExprIR(C_IR_EXPR_INVALID, C_IR_TYPE_INVALID, "", "", "", "", 0, 0, 0, 0, span, 0)
+    return CForHeader("", "", "", invalid_expr, "", cursor, 0, reason, span)
+
+
+def c_parse_for_header(cursor: CLexCursor, symbols: Str, functions: Str, aliases: Str, aggregates: Str, span: CSourceSpan) -> CForHeader:
+    open := c_lex_next_code(cursor)
+    if !c_lex_token_is(open, "("):
+        return c_for_invalid(open.next, "C2-PARSE-FOR-OPEN", span)
+    mut current := open.next
+    mut loop_symbols := symbols
+    mut init_lpp := ""
+    mut normalized := ""
+    mut variable_name := ""
+    mut variable_kind := C_IR_TYPE_INVALID
+
+    parsed_type := c_parse_type_known(current, aliases)
+    if parsed_type.c_type.valid != 0:
+        if parsed_type.c_type.kind != C_IR_TYPE_INT:
+            return c_for_invalid(parsed_type.next, "C2-TYPE-FOR-VARIABLE", span)
+        name_step := c_lex_next_code(parsed_type.next)
+        if name_step.token.kind != C_TOKEN_IDENTIFIER:
+            return c_for_invalid(name_step.next, "C2-PARSE-FOR-NAME", span)
+        variable_name = text_safe_binding_name(name_step.token.spelling)
+        if str_len(variable_name) == 0 || c_ir_symbol_type(symbols, variable_name) != C_IR_TYPE_INVALID:
+            return c_for_invalid(name_step.next, "C2-TYPE-FOR-DUPLICATE", span)
+        equal := c_lex_next_code(name_step.next)
+        if !c_lex_token_is(equal, "="):
+            return c_for_invalid(equal.next, "C2-PARSE-FOR-INIT", span)
+        initializer := c_parse_expression(equal.next, symbols, functions, aliases, aggregates)
+        if initializer.expr.valid == 0 || initializer.expr.type_kind != C_IR_TYPE_INT:
+            return c_for_invalid(initializer.next, "C2-TYPE-FOR-INIT", span)
+        semi := c_lex_next_code(initializer.next)
+        if !c_lex_token_is(semi, ";"):
+            return c_for_invalid(semi.next, "C2-PARSE-FOR-FIRST-SEMI", span)
+        init_lpp = str_concat("mut ", str_concat(variable_name, str_concat(" := ", initializer.expr.lpp)))
+        normalized = str_concat("for-init|declare|", str_concat(variable_name, str_concat("|", initializer.expr.normalized)))
+        loop_symbols = c_ir_symbol_add(loop_symbols, variable_name, C_IR_TYPE_INT)
+        variable_kind = C_IR_TYPE_INT
+        current = semi.next
+    else:
+        name_step := c_lex_next_code(current)
+        if name_step.token.kind != C_TOKEN_IDENTIFIER:
+            return c_for_invalid(name_step.next, "C2-PARSE-FOR-EXISTING-NAME", span)
+        variable_name = text_safe_binding_name(name_step.token.spelling)
+        variable_kind = c_ir_symbol_type(symbols, variable_name)
+        if variable_kind != C_IR_TYPE_INT:
+            return c_for_invalid(name_step.next, "C2-TYPE-FOR-EXISTING", span)
+        equal := c_lex_next_code(name_step.next)
+        if !c_lex_token_is(equal, "="):
+            return c_for_invalid(equal.next, "C2-PARSE-FOR-EXISTING-INIT", span)
+        initializer := c_parse_expression(equal.next, symbols, functions, aliases, aggregates)
+        if initializer.expr.valid == 0 || initializer.expr.type_kind != C_IR_TYPE_INT:
+            return c_for_invalid(initializer.next, "C2-TYPE-FOR-EXISTING-INIT", span)
+        semi := c_lex_next_code(initializer.next)
+        if !c_lex_token_is(semi, ";"):
+            return c_for_invalid(semi.next, "C2-PARSE-FOR-FIRST-SEMI", span)
+        init_lpp = str_concat(variable_name, str_concat(" = ", initializer.expr.lpp))
+        normalized = str_concat("for-init|assign|", str_concat(variable_name, str_concat("|", initializer.expr.normalized)))
+        current = semi.next
+
+    condition := c_parse_expression(current, loop_symbols, functions, aliases, aggregates)
+    if condition.expr.valid == 0:
+        return c_for_invalid(condition.next, "C2-PARSE-FOR-CONDITION", span)
+    condition_lpp := c_typed_condition(condition.expr)
+    if str_len(condition_lpp) == 0:
+        return c_for_invalid(condition.next, "C2-TYPE-FOR-CONDITION", span)
+    second_semi := c_lex_next_code(condition.next)
+    if !c_lex_token_is(second_semi, ";"):
+        return c_for_invalid(second_semi.next, "C2-PARSE-FOR-SECOND-SEMI", span)
+
+    increment_name := c_lex_next_code(second_semi.next)
+    mut increment_lpp := ""
+    mut current := increment_name.next
+    if c_lex_token_is(increment_name, ")"):
+        # `for (i = 0; i < n; )` — empty increment (a no-op). Leave current at the
+        # ')' so the following close-check succeeds; we emit no increment line.
+        current = second_semi.next
+    elif increment_name.token.kind != C_TOKEN_IDENTIFIER || !text_eq(increment_name.token.spelling, variable_name):
+        return c_for_invalid(increment_name.next, "C2-PARSE-FOR-INCREMENT-NAME", span)
+    else:
+        increment_op := c_lex_next_code(increment_name.next)
+        if c_lex_token_is(increment_op, "="):
+            # `i = i + 1`, `i = i - 1`, `i = i + amount` or a plain reassignment.
+            increment_rhs := c_parse_expression(increment_op.next, loop_symbols, functions, aliases, aggregates)
+            if increment_rhs.expr.valid == 0 || increment_rhs.expr.type_kind != C_IR_TYPE_INT:
+                return c_for_invalid(increment_rhs.next, "C2-TYPE-FOR-INCREMENT", span)
+            increment_lpp = str_concat(variable_name, str_concat(" = ", increment_rhs.expr.lpp))
+            current = increment_rhs.next
+        elif c_lex_token_is(increment_op, "++"):
+            increment_lpp = str_concat(variable_name, str_concat(" = ", str_concat(variable_name, " + 1")))
+            current = increment_op.next
+        elif c_lex_token_is(increment_op, "--"):
+            increment_lpp = str_concat(variable_name, str_concat(" = ", str_concat(variable_name, " - 1")))
+            current = increment_op.next
+        elif c_lex_token_is(increment_op, "+=") || c_lex_token_is(increment_op, "-="):
+            amount := c_parse_expression(increment_op.next, loop_symbols, functions, aliases, aggregates)
+            if amount.expr.valid == 0 || amount.expr.type_kind != C_IR_TYPE_INT:
+                return c_for_invalid(amount.next, "C2-TYPE-FOR-INCREMENT", span)
+            mut arithmetic := "+"
+            if c_lex_token_is(increment_op, "-="):
+                arithmetic = "-"
+            increment_lpp = str_concat(variable_name, str_concat(" = ", str_concat(variable_name, str_concat(" ", str_concat(arithmetic, str_concat(" ", amount.expr.lpp))))))
+            current = amount.next
+        else:
+            return c_for_invalid(increment_op.next, "C2-PARSE-FOR-INCREMENT", span)
+    close := c_lex_next_code(current)
+    if !c_lex_token_is(close, ")"):
+        return c_for_invalid(close.next, "C2-PARSE-FOR-CLOSE", span)
+    normalized = str_concat(normalized, str_concat("|condition|", str_concat(condition.expr.normalized, str_concat("|increment|", increment_lpp))))
+    return CForHeader(init_lpp, increment_lpp, normalized, condition.expr, loop_symbols, close.next, 1, "", span)
+
+
+struct CExpressionStatement:
+    lpp: Str
+    normalized: Str
+    next: CLexCursor
+    valid: Int
+    reason: Str
+    span: CSourceSpan
+
+
+def c_parse_expression_statement(cursor: CLexCursor, symbols: Str, functions: Str, aliases: Str, aggregates: Str, indent_level: Int) -> CExpressionStatement:
+    mut current := cursor
+    mut lpp := ""
+    mut normalized := ""
+    indent := c_typed_indent(indent_level)
+    while true:
+        expression := c_parse_expression(current, symbols, functions, aliases, aggregates)
+        if expression.expr.valid == 0:
+            return CExpressionStatement(lpp, normalized, expression.next, 0, expression.expr.normalized, expression.expr.span)
+        lpp = text_append_line(lpp, str_concat(indent, expression.expr.lpp))
+        normalized = text_append_line(normalized, str_concat("stmt|expression|", expression.expr.normalized))
+        separator := c_lex_next_code(expression.next)
+        if c_lex_token_is(separator, ";"):
+            return CExpressionStatement(lpp, normalized, separator.next, 1, "", expression.expr.span)
+        if !c_lex_token_is(separator, ","):
+            return CExpressionStatement(lpp, normalized, separator.next, 0, "C2-PARSE-EXPR-SEPARATOR", separator.token.span)
+        current = separator.next
+    return CExpressionStatement(lpp, normalized, current, 0, "C2-PARSE-EXPR-STATEMENT", c_parse_empty_span(current))
+
+
+struct CPlaceStatement:
+    lpp: Str
+    normalized: Str
+    next: CLexCursor
+    valid: Int
+    reason: Str
+    span: CSourceSpan
+
+
+def c_place_statement_invalid(cursor: CLexCursor, reason: Str, span: CSourceSpan) -> CPlaceStatement:
+    return CPlaceStatement("", "", cursor, 0, reason, span)
+
+
+def c_parse_place_statement(cursor: CLexCursor, symbols: Str, functions: Str, aliases: Str, aggregates: Str) -> CPlaceStatement:
+    target := c_parse_expression(cursor, symbols, functions, aliases, aggregates)
+    if target.expr.valid == 0:
+        return c_place_statement_invalid(target.next, target.expr.normalized, target.expr.span)
+    if str_len(target.expr.place_lpp) == 0:
+        return c_place_statement_invalid(target.next, "C2-PLACE-NOT-ASSIGNABLE", target.expr.span)
+    operator_step := c_lex_next_code(target.next)
+    op := operator_step.token.spelling
+    if target.expr.type_kind == C_IR_TYPE_PTR:
+        if !text_eq(op, "="):
+            return c_place_statement_invalid(operator_step.next, "C2-POINTER-PLACE-ASSIGN-OPERATOR", operator_step.token.span)
+        pointer_value := c_parse_expression(operator_step.next, symbols, functions, aliases, aggregates)
+        if pointer_value.expr.valid == 0:
+            return c_place_statement_invalid(pointer_value.next, pointer_value.expr.normalized, pointer_value.expr.span)
+        mut pointer_lpp := pointer_value.expr.lpp
+        mut compatible := pointer_value.expr.type_kind == C_IR_TYPE_PTR
+        if pointer_value.expr.type_kind == C_IR_TYPE_INT && text_eq(pointer_value.expr.lpp, "0"):
+            compatible = true
+            pointer_lpp = "c_ptr_null()"
+        if !compatible:
+            return c_place_statement_invalid(pointer_value.next, "C2-POINTER-PLACE-ASSIGN-TYPE", operator_step.token.span)
+        pointer_semi := c_lex_next_code(pointer_value.next)
+        if !c_lex_token_is(pointer_semi, ";"):
+            return c_place_statement_invalid(pointer_semi.next, "C2-POINTER-PLACE-ASSIGN-SEMI", pointer_semi.token.span)
+        pointer_store := str_concat("c_abi_pointer_place_store(", str_concat(target.expr.place_lpp, str_concat(", ", str_concat(pointer_lpp, ")"))))
+        pointer_ir := str_concat("pointer-place-assign|", str_concat(target.expr.normalized, str_concat("|", pointer_value.expr.normalized)))
+        return CPlaceStatement(pointer_store, pointer_ir, pointer_semi.next, 1, "", target.expr.span)
+    if text_eq(op, "++") || text_eq(op, "--"):
+        semi := c_lex_next_code(operator_step.next)
+        if !c_lex_token_is(semi, ";") || target.expr.type_kind != C_IR_TYPE_INT:
+            return c_place_statement_invalid(semi.next, "C2-PLACE-POSTFIX", operator_step.token.span)
+        mut helper := "c_place_post_increment"
+        if text_eq(op, "--"):
+            helper = "c_place_post_decrement"
+        lpp := str_concat(helper, str_concat("(", str_concat(target.expr.place_lpp, ")")))
+        ir := str_concat("place-postfix|", str_concat(op, str_concat("|", target.expr.normalized)))
+        return CPlaceStatement(lpp, ir, semi.next, 1, "", target.expr.span)
+    if !text_eq(op, "=") && !text_eq(op, "+=") && !text_eq(op, "-=") && !text_eq(op, "*=") && !text_eq(op, "/=") && !text_eq(op, "%="):
+        return c_place_statement_invalid(operator_step.next, "C2-PLACE-ASSIGN-OPERATOR", operator_step.token.span)
+    value := c_parse_expression(operator_step.next, symbols, functions, aliases, aggregates)
+    if value.expr.valid == 0:
+        return c_place_statement_invalid(value.next, value.expr.normalized, value.expr.span)
+    if value.expr.type_kind != target.expr.type_kind:
+        return c_place_statement_invalid(value.next, "C2-PLACE-ASSIGN-TYPE", operator_step.token.span)
+    semi := c_lex_next_code(value.next)
+    if !c_lex_token_is(semi, ";"):
+        return c_place_statement_invalid(semi.next, "C2-PLACE-ASSIGN-SEMI", semi.token.span)
+    mut helper := "c_place_assign"
+    if text_eq(op, "+="):
+        helper = "c_place_add_assign"
+    elif text_eq(op, "-="):
+        helper = "c_place_sub_assign"
+    elif text_eq(op, "*="):
+        helper = "c_place_mul_assign"
+    elif text_eq(op, "/="):
+        helper = "c_place_div_assign"
+    elif text_eq(op, "%="):
+        helper = "c_place_mod_assign"
+    lpp := str_concat(helper, str_concat("(", str_concat(target.expr.place_lpp, str_concat(", ", str_concat(value.expr.lpp, ")")))))
+    ir := str_concat("place-assign|", str_concat(op, str_concat("|", str_concat(target.expr.normalized, str_concat("|", value.expr.normalized)))))
+    return CPlaceStatement(lpp, ir, semi.next, 1, "", target.expr.span)
+
+
+struct CSingleStatement:
+    lpp: Str
+    normalized: Str
+    next: CLexCursor
+    valid: Int
+    reason: Str
+    span: CSourceSpan
+
+
+def c_single_invalid(cursor: CLexCursor, reason: Str, span: CSourceSpan) -> CSingleStatement:
+    return CSingleStatement("", "", cursor, 0, reason, span)
+
+
+def c_parse_single_statement(cursor: CLexCursor, symbols: Str, functions: Str, aliases: Str, aggregates: Str, indent_level: Int) -> CSingleStatement:
+    indent := c_typed_indent(indent_level)
+    first := c_lex_next_code(cursor)
+    operator_step := c_lex_next_code(first.next)
+    # Unbraced break/continue bodies: `if (c) break;` / `if (c) continue;`.
+    if text_eq(first.token.spelling, "break") || text_eq(first.token.spelling, "continue"):
+        semi := c_lex_next_code(first.next)
+        if !c_lex_token_is(semi, ";"):
+            return c_single_invalid(semi.next, "C2-PARSE-SINGLE-CONTROL-SEMI", semi.token.span)
+        return CSingleStatement(text_append_line("", str_concat(indent, first.token.spelling)), str_concat("stmt|", first.token.spelling), semi.next, 1, "", first.token.span)
+    # Call expression statement: name( ... ) or (*name)( ... ).
+    if first.token.kind == C_TOKEN_IDENTIFIER && c_lex_token_is(operator_step, "("):
+        expr_stmt := c_parse_expression_statement(cursor, symbols, functions, aliases, aggregates, indent_level)
+        return CSingleStatement(expr_stmt.lpp, expr_stmt.normalized, expr_stmt.next, expr_stmt.valid, expr_stmt.reason, expr_stmt.span)
+    # Place target statement: name[...], name->field, *ptr, (ptr)->field, ...
+    if c_lex_token_is(first, "*") || c_lex_token_is(operator_step, "[") || c_lex_token_is(operator_step, "->"):
+        place := c_parse_place_statement(cursor, symbols, functions, aliases, aggregates)
+        if place.valid == 0:
+            return c_single_invalid(place.next, place.reason, place.span)
+        return CSingleStatement(text_append_line("", str_concat(indent, place.lpp)), str_concat("stmt|", place.normalized), place.next, 1, "", place.span)
+    if first.token.kind == C_TOKEN_IDENTIFIER:
+        name := text_safe_binding_name(first.token.spelling)
+        symbol_type := c_ir_symbol_type(symbols, name)
+        if symbol_type == C_IR_TYPE_INVALID:
+            return c_single_invalid(first.next, "C2-TYPE-ASSIGN-NAME", first.token.span)
+        op := operator_step.token.spelling
+        if text_eq(op, "++") || text_eq(op, "--"):
+            semi := c_lex_next_code(operator_step.next)
+            if !c_lex_token_is(semi, ";") || symbol_type != C_IR_TYPE_INT:
+                return c_single_invalid(semi.next, "C2-PARSE-POSTFIX", operator_step.token.span)
+            mut arithmetic := "+"
+            if text_eq(op, "--"):
+                arithmetic = "-"
+            postfix_line := str_concat(name, str_concat(" = ", str_concat(name, str_concat(" ", str_concat(arithmetic, " 1")))))
+            return CSingleStatement(text_append_line("", str_concat(indent, postfix_line)), str_concat("stmt|postfix|", str_concat(name, str_concat("|", op))), semi.next, 1, "", first.token.span)
+        if text_eq(op, "=") || text_eq(op, "+=") || text_eq(op, "-=") || text_eq(op, "*=") || text_eq(op, "/=") || text_eq(op, "%=") || text_eq(op, "<<=") || text_eq(op, ">>=") || text_eq(op, "&=") || text_eq(op, "|=") || text_eq(op, "^="):
+            parsed := c_parse_expression(operator_step.next, symbols, functions, aliases, aggregates)
+            if parsed.expr.valid == 0:
+                return c_single_invalid(parsed.next, parsed.expr.normalized, parsed.expr.span)
+            parsed_end := c_lex_next_code(parsed.next)
+            if c_lex_token_is(parsed_end, "?"):
+                conditional := c_parse_conditional_parts(operator_step.next, symbols, functions, aliases, aggregates)
+                if conditional.valid == 0:
+                    return c_single_invalid(conditional.next, conditional.reason, conditional.span)
+                if !c_conditional_branch_compatible(conditional.true_type, conditional.true_lpp, symbol_type) || !c_conditional_branch_compatible(conditional.false_type, conditional.false_lpp, symbol_type):
+                    return c_single_invalid(conditional.next, "C2-TYPE-ASSIGN-TERNARY", conditional.span)
+                true_value := c_conditional_branch_lpp(conditional.true_type, conditional.true_lpp, symbol_type)
+                false_value := c_conditional_branch_lpp(conditional.false_type, conditional.false_lpp, symbol_type)
+                mut true_assignment := str_concat(name, str_concat(" = ", true_value))
+                mut false_assignment := str_concat(name, str_concat(" = ", false_value))
+                if !text_eq(op, "="):
+                    if symbol_type != C_IR_TYPE_INT && symbol_type != C_IR_TYPE_FLOAT:
+                        return c_single_invalid(conditional.next, "C2-TYPE-COMPOUND-TERNARY", conditional.span)
+                    binary := c_compound_binary_op(op)
+                    true_assignment = str_concat(name, str_concat(" = ", str_concat(name, str_concat(" ", str_concat(binary, str_concat(" ", true_value))))))
+                    false_assignment = str_concat(name, str_concat(" = ", str_concat(name, str_concat(" ", str_concat(binary, str_concat(" ", false_value))))))
+                nested_indent := c_typed_indent(indent_level + 1)
+                mut lpp := text_append_line("", str_concat(indent, str_concat("if ", str_concat(conditional.condition_lpp, ":"))))
+                lpp = text_append_line(lpp, str_concat(nested_indent, true_assignment))
+                lpp = text_append_line(lpp, str_concat(indent, "else:"))
+                lpp = text_append_line(lpp, str_concat(nested_indent, false_assignment))
+                normalized := str_concat("stmt|assign|", str_concat(name, str_concat("|", str_concat(op, str_concat("|conditional|", str_concat(conditional.condition_ir, str_concat("|true|", str_concat(conditional.true_ir, str_concat("|false|", conditional.false_ir)))))))))
+                return CSingleStatement(lpp, normalized, conditional.next, 1, "", first.token.span)
+            if !c_conditional_branch_compatible(parsed.expr.type_kind, parsed.expr.lpp, symbol_type):
+                return c_single_invalid(parsed.next, "C2-TYPE-ASSIGN", operator_step.token.span)
+            semi := parsed_end
+            if !c_lex_token_is(semi, ";"):
+                return c_single_invalid(semi.next, "C2-PARSE-ASSIGN-SEMI", semi.token.span)
+            parsed_lpp := c_conditional_branch_lpp(parsed.expr.type_kind, parsed.expr.lpp, symbol_type)
+            mut assignment := str_concat(name, str_concat(" = ", parsed_lpp))
+            if !text_eq(op, "="):
+                binary := c_compound_binary_op(op)
+                assignment = str_concat(name, str_concat(" = ", str_concat(name, str_concat(" ", str_concat(binary, str_concat(" ", parsed_lpp))))))
+            return CSingleStatement(text_append_line("", str_concat(indent, assignment)), str_concat("stmt|assign|", str_concat(name, str_concat("|", str_concat(op, str_concat("|", parsed.expr.normalized))))), semi.next, 1, "", first.token.span)
+        return c_single_invalid(operator_step.next, "C2-PARSE-SINGLE-STATEMENT", first.token.span)
+    # Parenthesized expression: try a plain expression statement, then a place
+    # statement for parenthesized dereference/aggregate targets.
+    expr_stmt := c_parse_expression_statement(cursor, symbols, functions, aliases, aggregates, indent_level)
+    if expr_stmt.valid != 0:
+        return CSingleStatement(expr_stmt.lpp, expr_stmt.normalized, expr_stmt.next, 1, "", expr_stmt.span)
+    place := c_parse_place_statement(cursor, symbols, functions, aliases, aggregates)
+    if place.valid != 0:
+        return CSingleStatement(text_append_line("", str_concat(indent, place.lpp)), str_concat("stmt|", place.normalized), place.next, 1, "", place.span)
+    return c_single_invalid(expr_stmt.next, expr_stmt.reason, expr_stmt.span)
+
+
+def c_compound_binary_op(op: Str) -> Str:
+    # `+=` -> `+`, `<<=` -> `<<`, `>>=` -> `>>`, `&=` -> `&`, `|=` -> `|`, `^=` -> `^`
+    if text_eq(op, "<<="):
+        return "<<"
+    if text_eq(op, ">>="):
+        return ">>"
+    if text_eq(op, "&="):
+        return "&"
+    if text_eq(op, "|="):
+        return "|"
+    if text_eq(op, "^="):
+        return "^"
+    if str_len(op) > 0:
+        return str_substr(op, 0, 1)
+    return ""
+
+
+def c_body_invalid(body: Str, normalized: Str, symbols: Str, cursor: CLexCursor, reason: Str, span: CSourceSpan) -> CBodyParse:
+    return CBodyParse(body, normalized, symbols, cursor, 0, 0, reason, span)
+
+
+def c_typed_pointer_metadata_parts(base_kind: Int, base_spelling: Str, pointer_depth: Int, base_abi_size: Int, base_abi_signed: Int) -> Str:
+    mut metadata := str_concat(int_to_str(base_kind), "|")
+    metadata = str_concat(metadata, str_concat(int_to_str(base_abi_size), "|"))
+    metadata = str_concat(metadata, str_concat(int_to_str(base_abi_signed), "|"))
+    metadata = str_concat(metadata, str_concat(int_to_str(pointer_depth), "|"))
+    return str_concat(metadata, base_spelling)
+
+
+def c_parse_body_level(cursor: CLexCursor, symbols_in: Str, functions: Str, return_type: Int, aliases: Str, aggregates: Str, indent_level: Int, require_return: Bool, continue_action: Str, loop_depth: Int) -> CBodyParse:
+    mut current := cursor
+    mut symbols := symbols_in
+    mut body := ""
+    indent := c_typed_indent(indent_level)
+    mut normalized := ""
+    mut has_return := 0
+    while true:
+        step := c_lex_next_code(current)
+        if step.token.kind == C_TOKEN_EOF:
+            return c_body_invalid(body, normalized, symbols, step.next, "C2-PARSE-UNTERMINATED-FUNCTION", step.token.span)
+        if c_lex_token_is(step, "}"):
+            if require_return && return_type != C_IR_TYPE_VOID && has_return == 0:
+                return c_body_invalid(body, normalized, symbols, step.next, "C2-TYPE-MISSING-RETURN", step.token.span)
+            if require_return && return_type == C_IR_TYPE_VOID && str_len(body) == 0:
+                body = text_append_line(body, str_concat(indent, "return"))
+                normalized = text_append_line(normalized, "stmt|return|void")
+                has_return = 1
+            return CBodyParse(body, normalized, symbols, step.next, 1, has_return, "", step.token.span)
+
+        if c_lex_token_is(step, ";"):
+            normalized = text_append_line(normalized, "stmt|empty")
+            current = step.next
+        elif text_eq(step.token.spelling, "return"):
+            after := c_lex_next_code(step.next)
+            if c_lex_token_is(after, ";"):
+                if return_type != C_IR_TYPE_VOID:
+                    return c_body_invalid(body, normalized, symbols, after.next, "C2-TYPE-RETURN", step.token.span)
+                body = text_append_line(body, str_concat(indent, "return"))
+                normalized = text_append_line(normalized, "stmt|return|void")
+                has_return = 1
+                current = after.next
+            else:
+                parsed := c_parse_expression(step.next, symbols, functions, aliases, aggregates)
+                if parsed.expr.valid == 0:
+                    return c_body_invalid(body, normalized, symbols, parsed.next, parsed.expr.normalized, step.token.span)
+                after_expr := c_lex_next_code(parsed.next)
+                if c_lex_token_is(after_expr, "?"):
+                    ternary := c_parse_ternary_return(step.next, symbols, functions, return_type, aliases, aggregates, indent_level)
+                    if ternary.valid == 0:
+                        return c_body_invalid(body, normalized, symbols, ternary.next, ternary.reason, ternary.span)
+                    body = str_concat(body, ternary.lpp)
+                    normalized = text_append_line(normalized, ternary.normalized)
+                    has_return = 1
+                    current = ternary.next
+                else:
+                    semi := after_expr
+                    if !c_lex_token_is(semi, ";"):
+                        return c_body_invalid(body, normalized, symbols, parsed.next, "C2-PARSE-RETURN-SEMI", step.token.span)
+                    if !c_return_expr_compatible(parsed.expr, return_type):
+                        return c_body_invalid(body, normalized, symbols, semi.next, "C2-TYPE-RETURN", step.token.span)
+                    return_lpp := c_return_expr_lpp(parsed.expr, return_type)
+                    body = text_append_line(body, str_concat(indent, str_concat("return ", return_lpp)))
+                    normalized = text_append_line(normalized, str_concat("stmt|return|", parsed.expr.normalized))
+                    has_return = 1
+                    current = semi.next
+        elif text_eq(step.token.spelling, "break"):
+            if loop_depth <= 0:
+                return c_body_invalid(body, normalized, symbols, step.next, "C2-CONTROL-BREAK-OUTSIDE-LOOP", step.token.span)
+            semi := c_lex_next_code(step.next)
+            if !c_lex_token_is(semi, ";"):
+                return c_body_invalid(body, normalized, symbols, semi.next, "C2-PARSE-BREAK-SEMI", step.token.span)
+            body = text_append_line(body, str_concat(indent, "break"))
+            normalized = text_append_line(normalized, "stmt|break")
+            current = semi.next
+        elif text_eq(step.token.spelling, "continue"):
+            if loop_depth <= 0:
+                return c_body_invalid(body, normalized, symbols, step.next, "C2-CONTROL-CONTINUE-OUTSIDE-LOOP", step.token.span)
+            semi := c_lex_next_code(step.next)
+            if !c_lex_token_is(semi, ";"):
+                return c_body_invalid(body, normalized, symbols, semi.next, "C2-PARSE-CONTINUE-SEMI", step.token.span)
+            if str_len(continue_action) > 0:
+                body = text_append_line(body, str_concat(indent, continue_action))
+            body = text_append_line(body, str_concat(indent, "continue"))
+            normalized = text_append_line(normalized, "stmt|continue")
+            current = semi.next
+        elif text_eq(step.token.spelling, "if"):
+            open := c_lex_next_code(step.next)
+            if !c_lex_token_is(open, "("):
+                return c_body_invalid(body, normalized, symbols, open.next, "C2-PARSE-IF-OPEN", step.token.span)
+            condition := c_parse_expression(open.next, symbols, functions, aliases, aggregates)
+            if condition.expr.valid == 0:
+                return c_body_invalid(body, normalized, symbols, condition.next, condition.expr.normalized, step.token.span)
+            condition_lpp := c_typed_condition(condition.expr)
+            if str_len(condition_lpp) == 0:
+                return c_body_invalid(body, normalized, symbols, condition.next, "C2-TYPE-CONDITION", step.token.span)
+            close := c_lex_next_code(condition.next)
+            if !c_lex_token_is(close, ")"):
+                return c_body_invalid(body, normalized, symbols, close.next, "C2-PARSE-IF-CLOSE", step.token.span)
+            after_condition := c_lex_next_code(close.next)
+            body = text_append_line(body, str_concat(indent, str_concat("if ", str_concat(condition_lpp, ":"))))
+            if c_lex_token_is(after_condition, "{"):
+                then_body := c_parse_body_level(after_condition.next, symbols, functions, return_type, aliases, aggregates, indent_level + 1, false, continue_action, loop_depth)
+                if then_body.valid == 0:
+                    return c_body_invalid(body, normalized, symbols, then_body.next, then_body.reason, step.token.span)
+                body = str_concat(body, then_body.lpp)
+                normalized = text_append_line(normalized, str_concat("stmt|if-block|", condition.expr.normalized))
+                current = then_body.next
+                maybe_else := c_lex_next_code(current)
+                if text_eq(maybe_else.token.spelling, "else"):
+                    else_open := c_lex_next_code(maybe_else.next)
+                    body = text_append_line(body, str_concat(indent, "else:"))
+                    if c_lex_token_is(else_open, "{"):
+                        else_body := c_parse_body_level(else_open.next, symbols, functions, return_type, aliases, aggregates, indent_level + 1, false, continue_action, loop_depth)
+                        if else_body.valid == 0:
+                            return c_body_invalid(body, normalized, symbols, else_body.next, else_body.reason, step.token.span)
+                        body = str_concat(body, else_body.lpp)
+                        normalized = text_append_line(normalized, "stmt|else-block")
+                        current = else_body.next
+                        if then_body.has_return != 0 && else_body.has_return != 0:
+                            has_return = 1
+                    else:
+                        else_branch := c_parse_return_branch(maybe_else.next, symbols, functions, return_type, aliases, aggregates, indent_level + 1)
+                        if else_branch.valid == 0:
+                            return c_body_invalid(body, normalized, symbols, else_branch.next, else_branch.reason, step.token.span)
+                        body = text_append_line(body, else_branch.lpp)
+                        current = else_branch.next
+                        if then_body.has_return != 0:
+                            has_return = 1
+            else:
+                then_first := c_lex_next_code(close.next)
+                mut then_returns := 0
+                if text_eq(then_first.token.spelling, "return"):
+                    then_branch := c_parse_return_branch(close.next, symbols, functions, return_type, aliases, aggregates, indent_level + 1)
+                    if then_branch.valid == 0:
+                        return c_body_invalid(body, normalized, symbols, then_branch.next, then_branch.reason, step.token.span)
+                    body = text_append_line(body, then_branch.lpp)
+                    normalized = text_append_line(normalized, str_concat("stmt|if-return|", str_concat(condition.expr.normalized, str_concat("|", then_branch.normalized))))
+                    current = then_branch.next
+                    then_returns = 1
+                else:
+                    then_statement := c_parse_single_statement(close.next, symbols, functions, aliases, aggregates, indent_level + 1)
+                    if then_statement.valid == 0:
+                        return c_body_invalid(body, normalized, symbols, then_statement.next, "C2-PARSE-IF-SINGLE-STATEMENT", then_statement.span)
+                    body = str_concat(body, then_statement.lpp)
+                    normalized = text_append_line(normalized, str_concat("stmt|if-single|", condition.expr.normalized))
+                    normalized = str_concat(normalized, then_statement.normalized)
+                    current = then_statement.next
+                maybe_else := c_lex_next_code(current)
+                if text_eq(maybe_else.token.spelling, "else"):
+                    body = text_append_line(body, str_concat(indent, "else:"))
+                    else_first := c_lex_next_code(maybe_else.next)
+                    mut else_returns := 0
+                    if text_eq(else_first.token.spelling, "return"):
+                        else_branch := c_parse_return_branch(maybe_else.next, symbols, functions, return_type, aliases, aggregates, indent_level + 1)
+                        if else_branch.valid == 0:
+                            return c_body_invalid(body, normalized, symbols, else_branch.next, else_branch.reason, step.token.span)
+                        body = text_append_line(body, else_branch.lpp)
+                        normalized = text_append_line(normalized, str_concat("stmt|else-return|", else_branch.normalized))
+                        current = else_branch.next
+                        else_returns = 1
+                    else:
+                        else_statement := c_parse_single_statement(maybe_else.next, symbols, functions, aliases, aggregates, indent_level + 1)
+                        if else_statement.valid == 0:
+                            return c_body_invalid(body, normalized, symbols, else_statement.next, "C2-PARSE-ELSE-SINGLE-STATEMENT", else_statement.span)
+                        body = str_concat(body, else_statement.lpp)
+                        normalized = text_append_line(normalized, "stmt|else-single")
+                        normalized = str_concat(normalized, else_statement.normalized)
+                        current = else_statement.next
+                    if then_returns != 0 && else_returns != 0:
+                        has_return = 1
+        elif text_eq(step.token.spelling, "do"):
+            open_body := c_lex_next_code(step.next)
+            if !c_lex_token_is(open_body, "{"):
+                return c_body_invalid(body, normalized, symbols, open_body.next, "C2-PARSE-DO-BODY", step.token.span)
+            loop_body := c_parse_body_level(open_body.next, symbols, functions, return_type, aliases, aggregates, indent_level + 1, false, "", loop_depth + 1)
+            if loop_body.valid == 0:
+                return c_body_invalid(body, normalized, symbols, loop_body.next, loop_body.reason, step.token.span)
+            if text_contains(loop_body.normalized, "stmt|continue"):
+                return c_body_invalid(body, normalized, symbols, loop_body.next, "C2-CONTROL-DO-CONTINUE", step.token.span)
+            while_step := c_lex_next_code(loop_body.next)
+            if !text_eq(while_step.token.spelling, "while"):
+                return c_body_invalid(body, normalized, symbols, while_step.next, "C2-PARSE-DO-WHILE", while_step.token.span)
+            open_condition := c_lex_next_code(while_step.next)
+            if !c_lex_token_is(open_condition, "("):
+                return c_body_invalid(body, normalized, symbols, open_condition.next, "C2-PARSE-DO-OPEN", open_condition.token.span)
+            condition := c_parse_expression(open_condition.next, symbols, functions, aliases, aggregates)
+            if condition.expr.valid == 0:
+                return c_body_invalid(body, normalized, symbols, condition.next, condition.expr.normalized, step.token.span)
+            condition_lpp := c_typed_condition(condition.expr)
+            if str_len(condition_lpp) == 0:
+                return c_body_invalid(body, normalized, symbols, condition.next, "C2-TYPE-DO-CONDITION", condition.expr.span)
+            close_condition := c_lex_next_code(condition.next)
+            if !c_lex_token_is(close_condition, ")"):
+                return c_body_invalid(body, normalized, symbols, close_condition.next, "C2-PARSE-DO-CLOSE", close_condition.token.span)
+            do_semi := c_lex_next_code(close_condition.next)
+            if !c_lex_token_is(do_semi, ";"):
+                return c_body_invalid(body, normalized, symbols, do_semi.next, "C2-PARSE-DO-SEMI", do_semi.token.span)
+            nested_indent := c_typed_indent(indent_level + 1)
+            deeper_indent := c_typed_indent(indent_level + 2)
+            body = text_append_line(body, str_concat(indent, "while true:"))
+            body = str_concat(body, loop_body.lpp)
+            body = text_append_line(body, str_concat(nested_indent, str_concat("if ", str_concat(condition_lpp, ":"))))
+            body = text_append_line(body, str_concat(deeper_indent, "continue"))
+            body = text_append_line(body, str_concat(nested_indent, "break"))
+            normalized = text_append_line(normalized, str_concat("stmt|do-while|", condition.expr.normalized))
+            current = do_semi.next
+        elif text_eq(step.token.spelling, "while"):
+            open := c_lex_next_code(step.next)
+            if !c_lex_token_is(open, "("):
+                return c_body_invalid(body, normalized, symbols, open.next, "C2-PARSE-WHILE-OPEN", step.token.span)
+            condition := c_parse_expression(open.next, symbols, functions, aliases, aggregates)
+            if condition.expr.valid == 0:
+                return c_body_invalid(body, normalized, symbols, condition.next, condition.expr.normalized, step.token.span)
+            condition_lpp := c_typed_condition(condition.expr)
+            if str_len(condition_lpp) == 0:
+                return c_body_invalid(body, normalized, symbols, condition.next, "C2-TYPE-CONDITION", step.token.span)
+            close := c_lex_next_code(condition.next)
+            if !c_lex_token_is(close, ")"):
+                return c_body_invalid(body, normalized, symbols, close.next, "C2-PARSE-WHILE-CLOSE", step.token.span)
+            open_body := c_lex_next_code(close.next)
+            if !c_lex_token_is(open_body, "{"):
+                return c_body_invalid(body, normalized, symbols, open_body.next, "C2-PARSE-WHILE-BODY", step.token.span)
+            loop_body := c_parse_body_level(open_body.next, symbols, functions, return_type, aliases, aggregates, indent_level + 1, false, "", loop_depth + 1)
+            if loop_body.valid == 0:
+                return c_body_invalid(body, normalized, symbols, loop_body.next, loop_body.reason, step.token.span)
+            body = text_append_line(body, str_concat(indent, str_concat("while ", str_concat(condition_lpp, ":"))))
+            body = str_concat(body, loop_body.lpp)
+            normalized = text_append_line(normalized, str_concat("stmt|while|", condition.expr.normalized))
+            current = loop_body.next
+        elif text_eq(step.token.spelling, "for"):
+            header := c_parse_for_header(step.next, symbols, functions, aliases, aggregates, step.token.span)
+            if header.valid == 0:
+                return c_body_invalid(body, normalized, symbols, header.next, header.reason, step.token.span)
+            condition_lpp := c_typed_condition(header.condition)
+            open_body := c_lex_next_code(header.next)
+            if !c_lex_token_is(open_body, "{"):
+                return c_body_invalid(body, normalized, symbols, open_body.next, "C2-PARSE-FOR-BODY", step.token.span)
+            loop_body := c_parse_body_level(open_body.next, header.symbols, functions, return_type, aliases, aggregates, indent_level + 1, false, header.increment_lpp, loop_depth + 1)
+            if loop_body.valid == 0:
+                return c_body_invalid(body, normalized, symbols, loop_body.next, loop_body.reason, step.token.span)
+            body = text_append_line(body, str_concat(indent, header.init_lpp))
+            body = text_append_line(body, str_concat(indent, str_concat("while ", str_concat(condition_lpp, ":"))))
+            body = str_concat(body, loop_body.lpp)
+            body = text_append_line(body, str_concat(c_typed_indent(indent_level + 1), header.increment_lpp))
+            normalized = text_append_line(normalized, str_concat("stmt|for|", header.normalized))
+            current = loop_body.next
+        else:
+            parsed_type := c_parse_type_known(current, aliases)
+            if parsed_type.c_type.valid == 1:
+                if parsed_type.c_type.kind == C_IR_TYPE_VOID:
+                    return c_body_invalid(body, normalized, symbols, parsed_type.next, "C2-TYPE-VOID-LOCAL", parsed_type.c_type.span)
+                if parsed_type.c_type.kind == C_IR_TYPE_AGGREGATE:
+                    return c_body_invalid(body, normalized, symbols, parsed_type.next, "C2-TYPE-AGGREGATE-LOCAL", parsed_type.c_type.span)
+                # A local declaration may contain several declarators separated
+                # by commas: `int x = 1, y = 2;`. Each gets its own `mut` line.
+                base_kind := parsed_type.c_type.kind
+                base_spelling := parsed_type.c_type.c_spelling
+                base_abi_size := c_typed_scalar_size(parsed_type.c_type, aliases)
+                base_abi_signed := c_typed_scalar_signed(parsed_type.c_type, aliases)
+                mut decl_cursor := parsed_type.next
+                mut decl_done := false
+                while !decl_done:
+                    decl_pointer := c_parse_pointer_prefix(decl_cursor)
+                    mut local_kind := base_kind
+                    if decl_pointer.count > 0:
+                        local_kind = C_IR_TYPE_PTR
+                    name_step := c_lex_next_code(decl_pointer.next)
+                    if name_step.token.kind != C_TOKEN_IDENTIFIER:
+                        return c_body_invalid(body, normalized, symbols, name_step.next, "C2-PARSE-LOCAL-NAME", name_step.token.span)
+                    name := text_safe_binding_name(name_step.token.spelling)
+                    if str_len(name) == 0 || c_ir_symbol_type(symbols, name) != C_IR_TYPE_INVALID:
+                        return c_body_invalid(body, normalized, symbols, name_step.next, "C2-TYPE-DUPLICATE-LOCAL", name_step.token.span)
+                    after_name := c_lex_next_code(name_step.next)
+                    if c_lex_token_is(after_name, "[") || c_lex_token_is(after_name, "("):
+                        return c_body_invalid(body, normalized, symbols, after_name.next, "C2-TYPE-ARRAY-OR-FUNCTION-LOCAL", after_name.token.span)
+                    mut value := "0"
+                    mut value_ir := "zero"
+                    mut init_next := name_step.next
+                    mut consumed_semi := false
+                    mut conditional_lpp := ""
+                    if local_kind == C_IR_TYPE_FLOAT:
+                        value = "0.0"
+                    elif local_kind == C_IR_TYPE_BOOL:
+                        value = "false"
+                    elif local_kind == C_IR_TYPE_PTR:
+                        value = "c_ptr_null()"
+                    if c_lex_token_is(after_name, "="):
+                        parsed := c_parse_expression(after_name.next, symbols, functions, aliases, aggregates)
+                        if parsed.expr.valid == 0:
+                            return c_body_invalid(body, normalized, symbols, parsed.next, parsed.expr.normalized, after_name.token.span)
+                        parsed_end := c_lex_next_code(parsed.next)
+                        if c_lex_token_is(parsed_end, "?"):
+                            conditional := c_parse_conditional_parts(after_name.next, symbols, functions, aliases, aggregates)
+                            if conditional.valid == 0:
+                                return c_body_invalid(body, normalized, symbols, conditional.next, conditional.reason, conditional.span)
+                            if !c_conditional_branch_compatible(conditional.true_type, conditional.true_lpp, local_kind) || !c_conditional_branch_compatible(conditional.false_type, conditional.false_lpp, local_kind):
+                                return c_body_invalid(body, normalized, symbols, conditional.next, "C2-TYPE-LOCAL-TERNARY", conditional.span)
+                            nested_indent := c_typed_indent(indent_level + 1)
+                            conditional_lpp = text_append_line(conditional_lpp, str_concat(indent, str_concat("mut ", str_concat(name, str_concat(" := ", value)))))
+                            conditional_lpp = text_append_line(conditional_lpp, str_concat(indent, str_concat("if ", str_concat(conditional.condition_lpp, ":"))))
+                            conditional_lpp = text_append_line(conditional_lpp, str_concat(nested_indent, str_concat(name, str_concat(" = ", c_conditional_branch_lpp(conditional.true_type, conditional.true_lpp, local_kind)))))
+                            conditional_lpp = text_append_line(conditional_lpp, str_concat(indent, "else:"))
+                            conditional_lpp = text_append_line(conditional_lpp, str_concat(nested_indent, str_concat(name, str_concat(" = ", c_conditional_branch_lpp(conditional.false_type, conditional.false_lpp, local_kind)))))
+                            value_ir = str_concat("conditional|", str_concat(conditional.condition_ir, str_concat("|true|", str_concat(conditional.true_ir, str_concat("|false|", conditional.false_ir)))))
+                            init_next = conditional.next
+                            consumed_semi = true
+                        else:
+                            if !c_conditional_branch_compatible(parsed.expr.type_kind, parsed.expr.lpp, local_kind):
+                                return c_body_invalid(body, normalized, symbols, parsed.next, "C2-TYPE-LOCAL-INIT", after_name.token.span)
+                            value = c_conditional_branch_lpp(parsed.expr.type_kind, parsed.expr.lpp, local_kind)
+                            value_ir = parsed.expr.normalized
+                            init_next = parsed.next
+                    if local_kind == C_IR_TYPE_PTR:
+                        metadata := c_typed_pointer_metadata_parts(base_kind, base_spelling, decl_pointer.count, base_abi_size, base_abi_signed)
+                        symbols = c_ir_symbol_add_meta(symbols, name, local_kind, metadata)
+                    else:
+                        symbols = c_ir_symbol_add(symbols, name, local_kind)
+                    if str_len(conditional_lpp) > 0:
+                        body = str_concat(body, conditional_lpp)
+                    else:
+                        body = text_append_line(body, str_concat(indent, str_concat("mut ", str_concat(name, str_concat(" := ", value)))))
+                    normalized = text_append_line(normalized, str_concat("stmt|local|", str_concat(name, str_concat("|", str_concat(c_ir_type_name(local_kind), str_concat("|", value_ir))))))
+                    if consumed_semi:
+                        # Ternary initializer already consumed the ';'.
+                        decl_cursor = init_next
+                        decl_done = true
+                    else:
+                        sep := c_lex_next_code(init_next)
+                        if c_lex_token_is(sep, ","):
+                            decl_cursor = sep.next
+                        elif c_lex_token_is(sep, ";"):
+                            decl_cursor = sep.next
+                            decl_done = true
+                        else:
+                            return c_body_invalid(body, normalized, symbols, sep.next, "C2-PARSE-LOCAL-SEMI", sep.token.span)
+                current = decl_cursor
+            elif step.token.kind == C_TOKEN_IDENTIFIER:
+                operator_step := c_lex_next_code(step.next)
+                if c_lex_token_is(operator_step, "[") || c_lex_token_is(operator_step, "->"):
+                    place_statement := c_parse_place_statement(current, symbols, functions, aliases, aggregates)
+                    if place_statement.valid == 0:
+                        return c_body_invalid(body, normalized, symbols, place_statement.next, place_statement.reason, place_statement.span)
+                    body = text_append_line(body, str_concat(indent, place_statement.lpp))
+                    normalized = text_append_line(normalized, str_concat("stmt|", place_statement.normalized))
+                    current = place_statement.next
+                elif c_lex_token_is(operator_step, "("):
+                    expression_statement := c_parse_expression_statement(current, symbols, functions, aliases, aggregates, indent_level)
+                    if expression_statement.valid == 0:
+                        return c_body_invalid(body, normalized, symbols, expression_statement.next, expression_statement.reason, expression_statement.span)
+                    body = str_concat(body, expression_statement.lpp)
+                    normalized = str_concat(normalized, expression_statement.normalized)
+                    current = expression_statement.next
+                else:
+                    name := text_safe_binding_name(step.token.spelling)
+                    symbol_type := c_ir_symbol_type(symbols, name)
+                    if symbol_type == C_IR_TYPE_INVALID:
+                        return c_body_invalid(body, normalized, symbols, step.next, "C2-TYPE-ASSIGN-NAME", step.token.span)
+                    op := operator_step.token.spelling
+                    if text_eq(op, "++") || text_eq(op, "--"):
+                        semi := c_lex_next_code(operator_step.next)
+                        if !c_lex_token_is(semi, ";") || symbol_type != C_IR_TYPE_INT:
+                            return c_body_invalid(body, normalized, symbols, semi.next, "C2-PARSE-POSTFIX", operator_step.token.span)
+                        mut arithmetic := "+"
+                        if text_eq(op, "--"):
+                            arithmetic = "-"
+                        postfix_line := str_concat(name, str_concat(" = ", str_concat(name, str_concat(" ", str_concat(arithmetic, " 1")))))
+                        body = text_append_line(body, str_concat(indent, postfix_line))
+                        normalized = text_append_line(normalized, str_concat("stmt|postfix|", str_concat(name, str_concat("|", op))))
+                        current = semi.next
+                    elif text_eq(op, "=") || text_eq(op, "+=") || text_eq(op, "-=") || text_eq(op, "*=") || text_eq(op, "/=") || text_eq(op, "%=") || text_eq(op, "<<=") || text_eq(op, ">>=") || text_eq(op, "&=") || text_eq(op, "|=") || text_eq(op, "^="):
+                        parsed := c_parse_expression(operator_step.next, symbols, functions, aliases, aggregates)
+                        if parsed.expr.valid == 0:
+                            return c_body_invalid(body, normalized, symbols, parsed.next, parsed.expr.normalized, operator_step.token.span)
+                        parsed_end := c_lex_next_code(parsed.next)
+                        if c_lex_token_is(parsed_end, "?"):
+                            conditional := c_parse_conditional_parts(operator_step.next, symbols, functions, aliases, aggregates)
+                            if conditional.valid == 0:
+                                return c_body_invalid(body, normalized, symbols, conditional.next, conditional.reason, conditional.span)
+                            if !c_conditional_branch_compatible(conditional.true_type, conditional.true_lpp, symbol_type) || !c_conditional_branch_compatible(conditional.false_type, conditional.false_lpp, symbol_type):
+                                return c_body_invalid(body, normalized, symbols, conditional.next, "C2-TYPE-ASSIGN-TERNARY", conditional.span)
+                            true_value := c_conditional_branch_lpp(conditional.true_type, conditional.true_lpp, symbol_type)
+                            false_value := c_conditional_branch_lpp(conditional.false_type, conditional.false_lpp, symbol_type)
+                            mut true_assignment := str_concat(name, str_concat(" = ", true_value))
+                            mut false_assignment := str_concat(name, str_concat(" = ", false_value))
+                            if !text_eq(op, "="):
+                                if symbol_type != C_IR_TYPE_INT && symbol_type != C_IR_TYPE_FLOAT:
+                                    return c_body_invalid(body, normalized, symbols, conditional.next, "C2-TYPE-COMPOUND-TERNARY", conditional.span)
+                                binary := c_compound_binary_op(op)
+                                true_assignment = str_concat(name, str_concat(" = ", str_concat(name, str_concat(" ", str_concat(binary, str_concat(" ", true_value))))))
+                                false_assignment = str_concat(name, str_concat(" = ", str_concat(name, str_concat(" ", str_concat(binary, str_concat(" ", false_value))))))
+                            nested_indent := c_typed_indent(indent_level + 1)
+                            body = text_append_line(body, str_concat(indent, str_concat("if ", str_concat(conditional.condition_lpp, ":"))))
+                            body = text_append_line(body, str_concat(nested_indent, true_assignment))
+                            body = text_append_line(body, str_concat(indent, "else:"))
+                            body = text_append_line(body, str_concat(nested_indent, false_assignment))
+                            normalized = text_append_line(normalized, str_concat("stmt|assign|", str_concat(name, str_concat("|", str_concat(op, str_concat("|conditional|", str_concat(conditional.condition_ir, str_concat("|true|", str_concat(conditional.true_ir, str_concat("|false|", conditional.false_ir))))))))))
+                            current = conditional.next
+                        else:
+                            if !c_conditional_branch_compatible(parsed.expr.type_kind, parsed.expr.lpp, symbol_type):
+                                return c_body_invalid(body, normalized, symbols, parsed.next, "C2-TYPE-ASSIGN", operator_step.token.span)
+                            semi := parsed_end
+                            if !c_lex_token_is(semi, ";"):
+                                return c_body_invalid(body, normalized, symbols, semi.next, "C2-PARSE-ASSIGN-SEMI", semi.token.span)
+                            parsed_lpp := c_conditional_branch_lpp(parsed.expr.type_kind, parsed.expr.lpp, symbol_type)
+                            mut assignment := str_concat(name, str_concat(" = ", parsed_lpp))
+                            if !text_eq(op, "="):
+                                binary := c_compound_binary_op(op)
+                                assignment = str_concat(name, str_concat(" = ", str_concat(name, str_concat(" ", str_concat(binary, str_concat(" ", parsed_lpp))))))
+                            body = text_append_line(body, str_concat(indent, assignment))
+                            normalized = text_append_line(normalized, str_concat("stmt|assign|", str_concat(name, str_concat("|", str_concat(op, str_concat("|", parsed.expr.normalized))))))
+                            current = semi.next
+                    else:
+                        return c_body_invalid(body, normalized, symbols, operator_step.next, "C2-PARSE-STATEMENT", operator_step.token.span)
+            elif c_lex_token_is(step, "*"):
+                place_statement := c_parse_place_statement(current, symbols, functions, aliases, aggregates)
+                if place_statement.valid == 0:
+                    return c_body_invalid(body, normalized, symbols, place_statement.next, place_statement.reason, place_statement.span)
+                body = text_append_line(body, str_concat(indent, place_statement.lpp))
+                normalized = text_append_line(normalized, str_concat("stmt|", place_statement.normalized))
+                current = place_statement.next
+            elif c_lex_token_is(step, "("):
+                expression := c_parse_expression(current, symbols, functions, aliases, aggregates)
+                if expression.expr.valid == 0:
+                    return c_body_invalid(body, normalized, symbols, expression.next, expression.expr.normalized, step.token.span)
+                expression_end := c_lex_next_code(expression.next)
+                if str_len(expression.expr.place_lpp) > 0 && (c_lex_token_is(expression_end, "=") || c_lex_token_is(expression_end, "+=") || c_lex_token_is(expression_end, "-=") || c_lex_token_is(expression_end, "*=") || c_lex_token_is(expression_end, "/=") || c_lex_token_is(expression_end, "%=") || c_lex_token_is(expression_end, "++") || c_lex_token_is(expression_end, "--")):
+                    place_statement := c_parse_place_statement(current, symbols, functions, aliases, aggregates)
+                    if place_statement.valid == 0:
+                        return c_body_invalid(body, normalized, symbols, place_statement.next, place_statement.reason, place_statement.span)
+                    body = text_append_line(body, str_concat(indent, place_statement.lpp))
+                    normalized = text_append_line(normalized, str_concat("stmt|", place_statement.normalized))
+                    current = place_statement.next
+                else:
+                    expression_statement := c_parse_expression_statement(current, symbols, functions, aliases, aggregates, indent_level)
+                    if expression_statement.valid == 0:
+                        return c_body_invalid(body, normalized, symbols, expression_statement.next, expression_statement.reason, expression_statement.span)
+                    body = str_concat(body, expression_statement.lpp)
+                    normalized = str_concat(normalized, expression_statement.normalized)
+                    current = expression_statement.next
+            else:
+                return c_body_invalid(body, normalized, symbols, step.next, "C2-PARSE-STATEMENT", step.token.span)
+    return c_body_invalid(body, normalized, symbols, current, "C2-PARSE-BODY", c_parse_empty_span(current))
+
+
+def c_parse_body_known(cursor: CLexCursor, symbols_in: Str, functions: Str, return_type: Int, aliases: Str, aggregates: Str) -> CBodyParse:
+    return c_parse_body_level(cursor, symbols_in, functions, return_type, aliases, aggregates, 1, true, "", 0)
+
+
+def c_parse_body(cursor: CLexCursor, symbols_in: Str, functions: Str, return_type: Int) -> CBodyParse:
+    return c_parse_body_known(cursor, symbols_in, functions, return_type, "", "")
+
+
+def c_skip_decl_or_function(cursor: CLexCursor) -> CLexCursor:
+    mut current := cursor
+    while true:
+        step := c_lex_next_code(current)
+        if step.token.kind == C_TOKEN_EOF:
+            return step.next
+        if c_lex_token_is(step, ";"):
+            return step.next
+        if c_lex_token_is(step, "{"):
+            return c_skip_block(step.next)
+        current = step.next
+    return current
+
+
+def c_parse_function_signature_known(cursor: CLexCursor, aliases: Str) -> CFunctionSignature:
+    parsed_type := c_parse_type_known(cursor, aliases)
+    invalid_type := c_parse_invalid_type(cursor)
+    invalid_params := CParamsParse("", "", "", "", 0, cursor, 0, "")
+    if parsed_type.c_type.valid == 0:
+        return CFunctionSignature("", invalid_type, invalid_params, cursor, 0, "C2-SIGNATURE-RETURN-TYPE", c_parse_empty_span(cursor))
+    mut return_kind := parsed_type.c_type.kind
+    mut return_c_spelling := parsed_type.c_type.c_spelling
+    mut return_lpp_spelling := parsed_type.c_type.lpp_spelling
+    pointer_prefix := c_parse_pointer_prefix(parsed_type.next)
+    name_step := c_lex_next_code(pointer_prefix.next)
+    if pointer_prefix.count > 0:
+        return_kind = C_IR_TYPE_PTR
+        return_c_spelling = str_concat(parsed_type.c_type.c_spelling, " *")
+        return_lpp_spelling = "CPtr"
+    return_type := CTypeIR(return_kind, return_c_spelling, return_lpp_spelling, parsed_type.c_type.span, 1)
+    if return_kind == C_IR_TYPE_AGGREGATE:
+        return CFunctionSignature("", return_type, invalid_params, name_step.next, 0, "C2-TYPE-AGGREGATE-RETURN", name_step.token.span)
+    if name_step.token.kind != C_TOKEN_IDENTIFIER:
+        return CFunctionSignature("", return_type, invalid_params, name_step.next, 0, "C2-SIGNATURE-NAME", name_step.token.span)
+    open_step := c_lex_next_code(name_step.next)
+    if !c_lex_token_is(open_step, "("):
+        return CFunctionSignature(name_step.token.spelling, return_type, invalid_params, open_step.next, 0, "C2-SIGNATURE-OPEN", open_step.token.span)
+    parsed_params := c_parse_params_known(open_step.next, aliases)
+    if parsed_params.valid == 0:
+        return CFunctionSignature(name_step.token.spelling, return_type, parsed_params, parsed_params.next, 0, parsed_params.reason, name_step.token.span)
+    open_body := c_lex_next_code(parsed_params.next)
+    if !c_lex_token_is(open_body, "{"):
+        return CFunctionSignature(name_step.token.spelling, return_type, parsed_params, open_body.next, 0, "C2-SIGNATURE-BODY", open_body.token.span)
+    return CFunctionSignature(name_step.token.spelling, return_type, parsed_params, open_body.next, 1, "", name_step.token.span)
+
+
+def c_parse_function_context(cursor: CLexCursor, functions: Str, aliases: Str, aggregates: Str, global_symbols: Str) -> CFunctionParse:
+    parsed_type := c_parse_type_known(cursor, aliases)
+    empty_type := c_parse_invalid_type(cursor)
+    empty_function := CFunctionIR("", empty_type, "", "", 0, "", "", "", c_parse_empty_span(cursor), 0)
+    if parsed_type.c_type.valid == 0:
+        return CFunctionParse(empty_function, cursor, 0, "", c_parse_empty_span(cursor))
+    mut return_kind := parsed_type.c_type.kind
+    mut return_c_spelling := parsed_type.c_type.c_spelling
+    mut return_lpp_spelling := parsed_type.c_type.lpp_spelling
+    pointer_prefix := c_parse_pointer_prefix(parsed_type.next)
+    name_step := c_lex_next_code(pointer_prefix.next)
+    if pointer_prefix.count > 0:
+        return_kind = C_IR_TYPE_PTR
+        return_c_spelling = str_concat(parsed_type.c_type.c_spelling, " *")
+        return_lpp_spelling = "CPtr"
+    return_type := CTypeIR(return_kind, return_c_spelling, return_lpp_spelling, parsed_type.c_type.span, 1)
+    if return_kind == C_IR_TYPE_AGGREGATE:
+        return CFunctionParse(empty_function, name_step.next, 0, "C2-TYPE-AGGREGATE-RETURN", name_step.token.span)
+    if name_step.token.kind != C_TOKEN_IDENTIFIER:
+        return CFunctionParse(empty_function, name_step.next, 0, "", name_step.token.span)
+    open_step := c_lex_next_code(name_step.next)
+    if !c_lex_token_is(open_step, "("):
+        return CFunctionParse(empty_function, open_step.next, 0, "", open_step.token.span)
+    parsed_params := c_parse_params_known(open_step.next, aliases)
+    if parsed_params.valid == 0:
+        skipped := c_skip_decl_or_function(parsed_params.next)
+        return CFunctionParse(empty_function, skipped, 1, parsed_params.reason, name_step.token.span)
+    open_body := c_lex_next_code(parsed_params.next)
+    if !c_lex_token_is(open_body, "{"):
+        return CFunctionParse(empty_function, open_body.next, 0, "", open_body.token.span)
+    signature_functions := c_ir_function_add(functions, name_step.token.spelling, return_type.kind, parsed_params.count, parsed_params.type_list)
+    body_symbols := str_concat(parsed_params.symbols, global_symbols)
+    parsed_body := c_parse_body_known(open_body.next, body_symbols, signature_functions, return_type.kind, aliases, aggregates)
+    if parsed_body.valid == 0:
+        skipped := c_skip_block(open_body.next)
+        return CFunctionParse(empty_function, skipped, 1, parsed_body.reason, parsed_body.span)
+    name := text_safe_binding_name(name_step.token.spelling)
+    if str_len(name) == 0:
+        return CFunctionParse(empty_function, parsed_body.next, 1, "C2-NAME-UNSUPPORTED", name_step.token.span)
+    emitted_params := c_params_emitted_lpp(parsed_params.lpp, parsed_params.symbols, parsed_body.normalized)
+    mut lpp := str_concat("def ", str_concat(name, str_concat("(", str_concat(emitted_params, str_concat(") -> ", str_concat(return_type.lpp_spelling, ":\n"))))))
+    lpp = str_concat(lpp, c_params_mutable_prologue(parsed_params.symbols, parsed_body.normalized))
+    lpp = str_concat(lpp, parsed_body.lpp)
+    mut normalized := str_concat("function|", str_concat(name, str_concat("|", str_concat(c_ir_type_name(return_type.kind), "\n"))))
+    normalized = str_concat(normalized, parsed_params.normalized)
+    normalized = str_concat(normalized, parsed_body.normalized)
+    normalized = str_concat(normalized, "end-function\n")
+    function := CFunctionIR(name, return_type, parsed_params.lpp, parsed_params.type_list, parsed_params.count, parsed_params.symbols, lpp, normalized, name_step.token.span, 1)
+    return CFunctionParse(function, parsed_body.next, 1, "", name_step.token.span)
+
+
+def c_parse_function_known(cursor: CLexCursor, functions: Str, aliases: Str) -> CFunctionParse:
+    return c_parse_function_context(cursor, functions, aliases, "", "")
+
+
+def c_parse_function(cursor: CLexCursor, functions: Str) -> CFunctionParse:
+    return c_parse_function_known(cursor, functions, "")
+
+
+def c_skip_preprocessor_line(cursor: CLexCursor, line: Int) -> CLexCursor:
+    mut current := cursor
+    while true:
+        step := c_lex_next(current)
+        if step.token.kind == C_TOKEN_EOF:
+            return step.next
+        if step.token.span.line > line:
+            return current
+        current = step.next
+    return current
+
+
+def c_translate_typed_file(path: Str) -> CTypedTranslation:
+    data := buf_read(path)
+    size := buf_len(data)
+    if size <= 0:
+        if data != 0:
+            buf_free(data)
+        return CTypedTranslation("", "", 0, 0, 0, "C2-INPUT-EMPTY\n", 0)
+    mut current := c_lex_cursor(data, size, path)
+    mut lpp := "# Typed normalized-IR C translation generated by c2lpp.\n# Rejected functions are omitted, never guessed.\n\nimport c_memory\nimport c_place\n\ndef c2lpp_bool_to_int(value: Bool) -> Int:\n    if value:\n        return 1\n    return 0\n\n"
+    mut normalized := "schema|c2lpp-normal-ir-v1\n"
+    mut diagnostics := ""
+    mut functions := ""
+    mut total := 0
+    mut translated := 0
+    mut rejected := 0
+    while current.offset < current.size:
+        step := c_lex_next_code(current)
+        if step.token.kind == C_TOKEN_EOF:
+            current = step.next
+        elif c_lex_token_is(step, "#"):
+            current = c_skip_preprocessor_line(step.next, step.token.span.line)
+        else:
+            parsed := c_parse_function(current, functions)
+            if parsed.recognized == 0:
+                current = step.next
+            else:
+                total = total + 1
+                if parsed.function.valid == 1:
+                    translated = translated + 1
+                    lpp = str_concat(lpp, str_concat(parsed.function.body_lpp, "\n"))
+                    normalized = str_concat(normalized, parsed.function.normalized)
+                    functions = c_ir_function_add(functions, parsed.function.name, parsed.function.return_type.kind, parsed.function.param_count, parsed.function.param_types)
+                else:
+                    rejected = rejected + 1
+                    diagnostics = str_concat(diagnostics, c_ir_diag(parsed.reason, parsed.span, "function rejected"))
+                    lpp = text_append_line(lpp, str_concat("# c2lpp typed unsupported: ", str_concat(parsed.reason, str_concat(" at ", str_concat(int_to_str(parsed.span.line), str_concat(":", int_to_str(parsed.span.column)))))))
+                if parsed.next.offset <= current.offset:
+                    current = step.next
+                else:
+                    current = parsed.next
+    buf_free(data)
+    mut ok := 1
+    if rejected > 0 || translated == 0:
+        ok = 0
+    return CTypedTranslation(lpp, normalized, total, translated, rejected, diagnostics, ok)

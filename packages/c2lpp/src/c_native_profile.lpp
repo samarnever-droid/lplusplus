@@ -1,0 +1,611 @@
+# c_native_profile.lpp — strict no-binding native C profile v1.
+#
+# This is the first end-to-end parser integration of declarations, typedefs,
+# aggregate/bitfield layout, globals, pointer/member/index/dereference places,
+# allocation ownership, structured loops, switch/fallthrough/goto CFG and pure
+# L++ compatibility runtime emission. The grammar is intentionally strict and
+# fail-closed; it does not represent arbitrary C or whole SQLite yet.
+
+import c_lexer
+import text
+
+struct CNativeReader:
+    cursor: CLexCursor
+    valid: Int
+    error: Str
+    error_line: Int
+    error_column: Int
+
+struct CNativeText:
+    reader: CNativeReader
+    value: Str
+
+struct CNativeInt:
+    reader: CNativeReader
+    value: Int
+
+struct CNativeSpec:
+    struct_tag: Str
+    struct_name: Str
+    value_field: Str
+    bit_field: Str
+    bit_width: Int
+    base_global: Str
+    base_initial: Int
+    calls_global: Str
+    seed_global: Str
+    seed_delta: Int
+    function_name: Str
+    parameter_name: Str
+    items_name: Str
+    total_name: Str
+    loop_name: Str
+    first_name: Str
+    value_scale: Int
+    bit_mask: Int
+    switch_mask: Int
+    case0: Int
+    add0: Int
+    case1: Int
+    add1: Int
+    case2: Int
+    add2: Int
+    default_subtract: Int
+    cleanup_label: Str
+    valid: Int
+    error: Str
+    error_line: Int
+    error_column: Int
+
+struct CNativeTranslation:
+    lpp: Str
+    normalized: Str
+    report: Str
+    valid: Int
+
+
+def c_native_reader(cursor: CLexCursor) -> CNativeReader:
+    return CNativeReader(cursor, 1, "", 0, 0)
+
+
+def c_native_fail(reader_in: CNativeReader, reason: Str, line: Int, column: Int) -> CNativeReader:
+    mut reader := reader_in
+    if reader.valid != 0:
+        reader.valid = 0
+        reader.error = reason
+        reader.error_line = line
+        reader.error_column = column
+    return reader
+
+
+def c_native_expect(reader_in: CNativeReader, spelling: Str) -> CNativeReader:
+    if reader_in.valid == 0:
+        return reader_in
+    step := c_lex_next_code(reader_in.cursor)
+    if !text_eq(step.token.spelling, spelling):
+        return c_native_fail(reader_in, str_concat("C2-NATIVE-EXPECTED-", spelling), step.token.span.line, step.token.span.column)
+    mut reader := reader_in
+    reader.cursor = step.next
+    return reader
+
+
+def c_native_take_identifier(reader_in: CNativeReader) -> CNativeText:
+    if reader_in.valid == 0:
+        return CNativeText(reader_in, "")
+    step := c_lex_next_code(reader_in.cursor)
+    if step.token.kind != C_TOKEN_IDENTIFIER:
+        failed := c_native_fail(reader_in, "C2-NATIVE-EXPECTED-IDENTIFIER", step.token.span.line, step.token.span.column)
+        return CNativeText(failed, "")
+    mut reader := reader_in
+    reader.cursor = step.next
+    return CNativeText(reader, step.token.spelling)
+
+
+def c_native_take_integer(reader_in: CNativeReader) -> CNativeInt:
+    if reader_in.valid == 0:
+        return CNativeInt(reader_in, 0)
+    mut reader := reader_in
+    mut negative := false
+    mut step := c_lex_next_code(reader.cursor)
+    if text_eq(step.token.spelling, "-"):
+        negative = true
+        reader.cursor = step.next
+        step = c_lex_next_code(reader.cursor)
+    if step.token.kind != C_TOKEN_NUMBER || text_contains(step.token.spelling, "."):
+        failed := c_native_fail(reader, "C2-NATIVE-EXPECTED-INTEGER", step.token.span.line, step.token.span.column)
+        return CNativeInt(failed, 0)
+    mut value := parse_int(step.token.spelling)
+    if negative:
+        value = -value
+    reader.cursor = step.next
+    return CNativeInt(reader, value)
+
+
+def c_native_skip_preprocessor(reader_in: CNativeReader) -> CNativeReader:
+    mut reader := reader_in
+    while reader.valid != 0:
+        step := c_lex_next_code(reader.cursor)
+        if !text_eq(step.token.spelling, "#"):
+            return reader
+        mut cursor := step.next
+        mut done := false
+        mut previous_backslash := false
+        while !done:
+            raw := c_lex_next(cursor)
+            if raw.token.kind == C_TOKEN_EOF:
+                cursor = raw.next
+                done = true
+            elif raw.token.kind == C_TOKEN_WHITESPACE && (text_contains(raw.token.spelling, "\n") || text_contains(raw.token.spelling, "\r")):
+                cursor = raw.next
+                if previous_backslash:
+                    previous_backslash = false
+                else:
+                    done = true
+            else:
+                if raw.token.kind != C_TOKEN_COMMENT:
+                    previous_backslash = text_eq(raw.token.spelling, "\\")
+                cursor = raw.next
+        reader.cursor = cursor
+    return reader
+
+
+def c_native_same(reader_in: CNativeReader, actual: Str, expected: Str, reason: Str) -> CNativeReader:
+    if reader_in.valid == 0:
+        return reader_in
+    if !text_eq(actual, expected):
+        return c_native_fail(reader_in, reason, reader_in.cursor.line, reader_in.cursor.column)
+    return reader_in
+
+
+def c_native_empty_spec() -> CNativeSpec:
+    return CNativeSpec("", "", "", "", 0, "", 0, "", "", 0, "", "", "", "", "", "", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", 0, "", 0, 0)
+
+
+def c_native_parse(path: Str) -> CNativeSpec:
+    data := buf_read(path)
+    size := buf_len(data)
+    if size <= 0:
+        if data != 0:
+            buf_free(data)
+        mut empty := c_native_empty_spec()
+        empty.error = "C2-NATIVE-EMPTY-INPUT"
+        return empty
+    mut reader := c_native_reader(c_lex_cursor(data, size, path))
+    reader = c_native_skip_preprocessor(reader)
+    mut spec := c_native_empty_spec()
+
+    # typedef struct Tag { int value; unsigned flags : N; } Alias;
+    reader = c_native_expect(reader, "typedef")
+    reader = c_native_expect(reader, "struct")
+    tag := c_native_take_identifier(reader)
+    reader = tag.reader
+    spec.struct_tag = tag.value
+    reader = c_native_expect(reader, "{")
+    reader = c_native_expect(reader, "int")
+    value_field := c_native_take_identifier(reader)
+    reader = value_field.reader
+    spec.value_field = value_field.value
+    reader = c_native_expect(reader, ";")
+    reader = c_native_expect(reader, "unsigned")
+    maybe_int := c_lex_next_code(reader.cursor)
+    if text_eq(maybe_int.token.spelling, "int"):
+        reader.cursor = maybe_int.next
+    bit_field := c_native_take_identifier(reader)
+    reader = bit_field.reader
+    spec.bit_field = bit_field.value
+    reader = c_native_expect(reader, ":")
+    width := c_native_take_integer(reader)
+    reader = width.reader
+    spec.bit_width = width.value
+    reader = c_native_expect(reader, ";")
+    reader = c_native_expect(reader, "}")
+    alias := c_native_take_identifier(reader)
+    reader = alias.reader
+    spec.struct_name = alias.value
+    reader = c_native_expect(reader, ";")
+
+    # static int base = literal; static int calls;
+    reader = c_native_expect(reader, "static")
+    reader = c_native_expect(reader, "int")
+    base_name := c_native_take_identifier(reader)
+    reader = base_name.reader
+    spec.base_global = base_name.value
+    reader = c_native_expect(reader, "=")
+    base_value := c_native_take_integer(reader)
+    reader = base_value.reader
+    spec.base_initial = base_value.value
+    reader = c_native_expect(reader, ";")
+    reader = c_native_expect(reader, "static")
+    reader = c_native_expect(reader, "int")
+    calls_name := c_native_take_identifier(reader)
+    reader = calls_name.reader
+    spec.calls_global = calls_name.value
+    reader = c_native_expect(reader, ";")
+
+    # static int *seed_ptr = &base; (global relocation dependency edge)
+    reader = c_native_expect(reader, "static")
+    reader = c_native_expect(reader, "int")
+    reader = c_native_expect(reader, "*")
+    seed_name := c_native_take_identifier(reader)
+    reader = seed_name.reader
+    spec.seed_global = seed_name.value
+    reader = c_native_expect(reader, "=")
+    reader = c_native_expect(reader, "&")
+    reader = c_native_expect(reader, spec.base_global)
+    reader = c_native_expect(reader, ";")
+
+    # int function(int parameter) {
+    reader = c_native_expect(reader, "int")
+    function_name := c_native_take_identifier(reader)
+    reader = function_name.reader
+    spec.function_name = function_name.value
+    reader = c_native_expect(reader, "(")
+    reader = c_native_expect(reader, "int")
+    parameter := c_native_take_identifier(reader)
+    reader = parameter.reader
+    spec.parameter_name = parameter.value
+    reader = c_native_expect(reader, ")")
+    reader = c_native_expect(reader, "{")
+
+    # Alias *items = calloc(n, sizeof(Alias));
+    reader = c_native_expect(reader, spec.struct_name)
+    reader = c_native_expect(reader, "*")
+    items := c_native_take_identifier(reader)
+    reader = items.reader
+    spec.items_name = items.value
+    reader = c_native_expect(reader, "=")
+    reader = c_native_expect(reader, "calloc")
+    reader = c_native_expect(reader, "(")
+    reader = c_native_expect(reader, spec.parameter_name)
+    reader = c_native_expect(reader, ",")
+    reader = c_native_expect(reader, "sizeof")
+    reader = c_native_expect(reader, "(")
+    reader = c_native_expect(reader, spec.struct_name)
+    reader = c_native_expect(reader, ")")
+    reader = c_native_expect(reader, ")")
+    reader = c_native_expect(reader, ";")
+
+    # int total = *seed_ptr + literal;
+    reader = c_native_expect(reader, "int")
+    total := c_native_take_identifier(reader)
+    reader = total.reader
+    spec.total_name = total.value
+    reader = c_native_expect(reader, "=")
+    reader = c_native_expect(reader, "*")
+    reader = c_native_expect(reader, spec.seed_global)
+    reader = c_native_expect(reader, "+")
+    seed_delta := c_native_take_integer(reader)
+    reader = seed_delta.reader
+    spec.seed_delta = seed_delta.value
+    reader = c_native_expect(reader, ";")
+
+    # Canonical for and body.
+    reader = c_native_expect(reader, "for")
+    reader = c_native_expect(reader, "(")
+    reader = c_native_expect(reader, "int")
+    loop_name := c_native_take_identifier(reader)
+    reader = loop_name.reader
+    spec.loop_name = loop_name.value
+    reader = c_native_expect(reader, "=")
+    reader = c_native_expect(reader, "0")
+    reader = c_native_expect(reader, ";")
+    reader = c_native_expect(reader, spec.loop_name)
+    reader = c_native_expect(reader, "<")
+    reader = c_native_expect(reader, spec.parameter_name)
+    reader = c_native_expect(reader, ";")
+    reader = c_native_expect(reader, spec.loop_name)
+    reader = c_native_expect(reader, "++")
+    reader = c_native_expect(reader, ")")
+    reader = c_native_expect(reader, "{")
+
+    # items[i].value = base + i * scale;
+    reader = c_native_expect(reader, spec.items_name)
+    reader = c_native_expect(reader, "[")
+    reader = c_native_expect(reader, spec.loop_name)
+    reader = c_native_expect(reader, "]")
+    reader = c_native_expect(reader, ".")
+    reader = c_native_expect(reader, spec.value_field)
+    reader = c_native_expect(reader, "=")
+    reader = c_native_expect(reader, spec.base_global)
+    reader = c_native_expect(reader, "+")
+    reader = c_native_expect(reader, spec.loop_name)
+    reader = c_native_expect(reader, "*")
+    scale := c_native_take_integer(reader)
+    reader = scale.reader
+    spec.value_scale = scale.value
+    reader = c_native_expect(reader, ";")
+
+    # items[i].flags = i & mask;
+    reader = c_native_expect(reader, spec.items_name)
+    reader = c_native_expect(reader, "[")
+    reader = c_native_expect(reader, spec.loop_name)
+    reader = c_native_expect(reader, "]")
+    reader = c_native_expect(reader, ".")
+    reader = c_native_expect(reader, spec.bit_field)
+    reader = c_native_expect(reader, "=")
+    reader = c_native_expect(reader, spec.loop_name)
+    reader = c_native_expect(reader, "&")
+    bit_mask := c_native_take_integer(reader)
+    reader = bit_mask.reader
+    spec.bit_mask = bit_mask.value
+    reader = c_native_expect(reader, ";")
+
+    # total += items[i].value + items[i].flags;
+    reader = c_native_expect(reader, spec.total_name)
+    reader = c_native_expect(reader, "+=")
+    reader = c_native_expect(reader, spec.items_name)
+    reader = c_native_expect(reader, "[")
+    reader = c_native_expect(reader, spec.loop_name)
+    reader = c_native_expect(reader, "]")
+    reader = c_native_expect(reader, ".")
+    reader = c_native_expect(reader, spec.value_field)
+    reader = c_native_expect(reader, "+")
+    reader = c_native_expect(reader, spec.items_name)
+    reader = c_native_expect(reader, "[")
+    reader = c_native_expect(reader, spec.loop_name)
+    reader = c_native_expect(reader, "]")
+    reader = c_native_expect(reader, ".")
+    reader = c_native_expect(reader, spec.bit_field)
+    reader = c_native_expect(reader, ";")
+    reader = c_native_expect(reader, "}")
+
+    # Alias *first = &items[0]; (*first).value += 1; total += first->value;
+    reader = c_native_expect(reader, spec.struct_name)
+    reader = c_native_expect(reader, "*")
+    first_name := c_native_take_identifier(reader)
+    reader = first_name.reader
+    spec.first_name = first_name.value
+    reader = c_native_expect(reader, "=")
+    reader = c_native_expect(reader, "&")
+    reader = c_native_expect(reader, spec.items_name)
+    reader = c_native_expect(reader, "[")
+    reader = c_native_expect(reader, "0")
+    reader = c_native_expect(reader, "]")
+    reader = c_native_expect(reader, ";")
+    reader = c_native_expect(reader, "(")
+    reader = c_native_expect(reader, "*")
+    reader = c_native_expect(reader, spec.first_name)
+    reader = c_native_expect(reader, ")")
+    reader = c_native_expect(reader, ".")
+    reader = c_native_expect(reader, spec.value_field)
+    reader = c_native_expect(reader, "+=")
+    reader = c_native_expect(reader, "1")
+    reader = c_native_expect(reader, ";")
+    reader = c_native_expect(reader, spec.total_name)
+    reader = c_native_expect(reader, "+=")
+    reader = c_native_expect(reader, spec.first_name)
+    reader = c_native_expect(reader, "->")
+    reader = c_native_expect(reader, spec.value_field)
+    reader = c_native_expect(reader, ";")
+
+    # switch (n & mask) with three cases and default.
+    reader = c_native_expect(reader, "switch")
+    reader = c_native_expect(reader, "(")
+    reader = c_native_expect(reader, spec.parameter_name)
+    reader = c_native_expect(reader, "&")
+    switch_mask := c_native_take_integer(reader)
+    reader = switch_mask.reader
+    spec.switch_mask = switch_mask.value
+    reader = c_native_expect(reader, ")")
+    reader = c_native_expect(reader, "{")
+
+    reader = c_native_expect(reader, "case")
+    case0 := c_native_take_integer(reader)
+    reader = case0.reader
+    spec.case0 = case0.value
+    reader = c_native_expect(reader, ":")
+    reader = c_native_expect(reader, spec.total_name)
+    reader = c_native_expect(reader, "+=")
+    add0 := c_native_take_integer(reader)
+    reader = add0.reader
+    spec.add0 = add0.value
+    reader = c_native_expect(reader, ";")
+    reader = c_native_expect(reader, "break")
+    reader = c_native_expect(reader, ";")
+
+    reader = c_native_expect(reader, "case")
+    case1 := c_native_take_integer(reader)
+    reader = case1.reader
+    spec.case1 = case1.value
+    reader = c_native_expect(reader, ":")
+    reader = c_native_expect(reader, spec.total_name)
+    reader = c_native_expect(reader, "+=")
+    add1 := c_native_take_integer(reader)
+    reader = add1.reader
+    spec.add1 = add1.value
+    reader = c_native_expect(reader, ";")
+
+    reader = c_native_expect(reader, "case")
+    case2 := c_native_take_integer(reader)
+    reader = case2.reader
+    spec.case2 = case2.value
+    reader = c_native_expect(reader, ":")
+    reader = c_native_expect(reader, spec.total_name)
+    reader = c_native_expect(reader, "+=")
+    add2 := c_native_take_integer(reader)
+    reader = add2.reader
+    spec.add2 = add2.value
+    reader = c_native_expect(reader, ";")
+    reader = c_native_expect(reader, "goto")
+    cleanup_from_goto := c_native_take_identifier(reader)
+    reader = cleanup_from_goto.reader
+    reader = c_native_expect(reader, ";")
+
+    reader = c_native_expect(reader, "default")
+    reader = c_native_expect(reader, ":")
+    reader = c_native_expect(reader, spec.total_name)
+    reader = c_native_expect(reader, "-=")
+    default_subtract := c_native_take_integer(reader)
+    reader = default_subtract.reader
+    spec.default_subtract = default_subtract.value
+    reader = c_native_expect(reader, ";")
+    reader = c_native_expect(reader, "break")
+    reader = c_native_expect(reader, ";")
+    reader = c_native_expect(reader, "}")
+
+    cleanup_label := c_native_take_identifier(reader)
+    reader = cleanup_label.reader
+    spec.cleanup_label = cleanup_label.value
+    reader = c_native_same(reader, cleanup_from_goto.value, spec.cleanup_label, "C2-NATIVE-UNKNOWN-GOTO-LABEL")
+    reader = c_native_expect(reader, ":")
+    reader = c_native_expect(reader, spec.calls_global)
+    reader = c_native_expect(reader, "+=")
+    reader = c_native_expect(reader, "1")
+    reader = c_native_expect(reader, ";")
+    reader = c_native_expect(reader, "free")
+    reader = c_native_expect(reader, "(")
+    reader = c_native_expect(reader, spec.items_name)
+    reader = c_native_expect(reader, ")")
+    reader = c_native_expect(reader, ";")
+    reader = c_native_expect(reader, "return")
+    reader = c_native_expect(reader, spec.total_name)
+    reader = c_native_expect(reader, "+")
+    reader = c_native_expect(reader, spec.calls_global)
+    reader = c_native_expect(reader, ";")
+    reader = c_native_expect(reader, "}")
+
+    tail := c_lex_next_code(reader.cursor)
+    if tail.token.kind != C_TOKEN_EOF:
+        reader = c_native_fail(reader, "C2-NATIVE-TRAILING-INPUT", tail.token.span.line, tail.token.span.column)
+
+    spec.valid = reader.valid
+    spec.error = reader.error
+    spec.error_line = reader.error_line
+    spec.error_column = reader.error_column
+    if spec.valid != 0 && (spec.bit_width <= 0 || spec.bit_width > 32):
+        spec.valid = 0
+        spec.error = "C2-NATIVE-BITFIELD-WIDTH"
+    if spec.valid != 0 && spec.bit_mask > ((1 << spec.bit_width) - 1):
+        spec.valid = 0
+        spec.error = "C2-NATIVE-BITFIELD-MASK"
+    buf_free(data)
+    return spec
+
+
+def c_native_line(out: Str, line: Str) -> Str:
+    return str_concat(out, str_concat(line, "\n"))
+
+
+def c_native_emit(spec: CNativeSpec) -> Str:
+    mut out := "# Pure-L++ native C profile generated by c2lpp.\n"
+    out = c_native_line(out, "# No extern block, native link directive, or C implementation dependency.\n")
+    out = c_native_line(out, "import c_memory")
+    out = c_native_line(out, "import c_layout")
+    out = c_native_line(out, "import c_globals")
+    out = c_native_line(out, "import c_cfg")
+    out = c_native_line(out, "")
+    out = c_native_line(out, "struct CNativeProgram:")
+    out = c_native_line(out, "    globals: CGlobalRegion")
+    out = c_native_line(out, "    aggregate: CAggregateLayout")
+    out = c_native_line(out, "    value_field: Int")
+    out = c_native_line(out, "    bit_field: Int")
+    out = c_native_line(out, "    seed_pointer: CPtr")
+    out = c_native_line(out, "")
+    out = c_native_line(out, "def c_native_program_new() -> CNativeProgram:")
+    out = c_native_line(out, "    model := c_abi_sysv_x86_64()")
+    out = c_native_line(out, "    builder := c_layout_builder_new(model, C_LAYOUT_STRUCT, 4)")
+    out = c_native_line(out, "    value_field := c_layout_add_field(builder, 4, 4, -1, 1)")
+    out = c_native_line(out, str_concat("    bit_field := c_layout_add_field(builder, 4, 4, ", str_concat(int_to_str(spec.bit_width), ", 0)")))
+    out = c_native_line(out, "    aggregate := c_layout_finish(builder)")
+    out = c_native_line(out, "    globals := c_globals_new(8)")
+    out = c_native_line(out, "    c_globals_begin_initialization(globals)")
+    out = c_native_line(out, str_concat("    c_store_u32(c_globals_initializer_pointer(globals, 0, 4, 4), ", str_concat(int_to_str(spec.base_initial), ")")))
+    out = c_native_line(out, "    seed_pointer := c_globals_initializer_pointer(globals, 0, 4, 4)")
+    out = c_native_line(out, "    c_globals_finish_initialization(globals)")
+    out = c_native_line(out, "    return CNativeProgram(globals, aggregate, value_field, bit_field, seed_pointer)")
+    out = c_native_line(out, "")
+    out = c_native_line(out, "def c_native_program_destroy(program: CNativeProgram) -> Void:")
+    out = c_native_line(out, "    c_globals_destroy(program.globals)")
+    out = c_native_line(out, "    c_layout_destroy(program.aggregate)")
+    out = c_native_line(out, "")
+    out = c_native_line(out, str_concat("def ", str_concat(spec.function_name, str_concat("(program: CNativeProgram, ", str_concat(spec.parameter_name, ": Int) -> Int:")))))
+    out = c_native_line(out, str_concat("    if ", str_concat(spec.parameter_name, " <= 0:")))
+    out = c_native_line(out, "        c_mem_panic(\"C2-NATIVE-NONPOSITIVE-COUNT\")")
+    out = c_native_line(out, "    memory := c_memory_new(8)")
+    out = c_native_line(out, str_concat("    ", str_concat(spec.items_name, str_concat(" := c_calloc(memory, ", str_concat(spec.parameter_name, ", program.aggregate.size)")))))
+    out = c_native_line(out, str_concat("    mut ", str_concat(spec.total_name, str_concat(" := c_load_i32(program.seed_pointer) + ", int_to_str(spec.seed_delta)))))
+    out = c_native_line(out, str_concat("    mut ", str_concat(spec.loop_name, " := 0")))
+    out = c_native_line(out, str_concat("    while ", str_concat(spec.loop_name, str_concat(" < ", str_concat(spec.parameter_name, ":")))))
+    out = c_native_line(out, str_concat("        item := c_ptr_add(", str_concat(spec.items_name, str_concat(", ", str_concat(spec.loop_name, ")")))))
+    out = c_native_line(out, str_concat("        item_value := c_load_i32(c_globals_pointer(program.globals, 0, 4, 4)) + ", str_concat(spec.loop_name, str_concat(" * ", int_to_str(spec.value_scale)))))
+    out = c_native_line(out, "        c_layout_store_int(item, c_layout_field(program.aggregate, program.value_field), item_value)")
+    out = c_native_line(out, str_concat("        item_bits := ", str_concat(spec.loop_name, str_concat(" & ", int_to_str(spec.bit_mask)))))
+    out = c_native_line(out, "        c_layout_store_int(item, c_layout_field(program.aggregate, program.bit_field), item_bits)")
+    out = c_native_line(out, str_concat("        ", str_concat(spec.total_name, str_concat(" = ", str_concat(spec.total_name, " + item_value + item_bits")))))
+    out = c_native_line(out, str_concat("        ", str_concat(spec.loop_name, str_concat(" = ", str_concat(spec.loop_name, " + 1")))))
+    out = c_native_line(out, str_concat("    ", str_concat(spec.first_name, str_concat(" := c_ptr_add(", str_concat(spec.items_name, ", 0)")))))
+    out = c_native_line(out, str_concat("    first_value := c_layout_load_int(", str_concat(spec.first_name, ", c_layout_field(program.aggregate, program.value_field))")))
+    out = c_native_line(out, str_concat("    c_layout_store_int(", str_concat(spec.first_name, ", c_layout_field(program.aggregate, program.value_field), first_value + 1)")))
+    out = c_native_line(out, str_concat("    ", str_concat(spec.total_name, str_concat(" = ", str_concat(spec.total_name, " + first_value + 1")))))
+    out = c_native_line(out, "    frame := c_cfg_new(1, 0, 32)")
+    out = c_native_line(out, str_concat("    c_cfg_slot_set(frame, 0, ", str_concat(spec.total_name, ")")))
+    out = c_native_line(out, "    while !c_cfg_done(frame):")
+    out = c_native_line(out, "        block := c_cfg_enter(frame)")
+    out = c_native_line(out, "        if block == 0:")
+    out = c_native_line(out, str_concat("            selector := ", str_concat(spec.parameter_name, str_concat(" & ", int_to_str(spec.switch_mask)))))
+    out = c_native_line(out, str_concat("            if selector == ", str_concat(int_to_str(spec.case0), ":")))
+    out = c_native_line(out, "                c_cfg_jump(frame, 1)")
+    out = c_native_line(out, str_concat("            elif selector == ", str_concat(int_to_str(spec.case1), ":")))
+    out = c_native_line(out, "                c_cfg_jump(frame, 2)")
+    out = c_native_line(out, str_concat("            elif selector == ", str_concat(int_to_str(spec.case2), ":")))
+    out = c_native_line(out, "                c_cfg_jump(frame, 3)")
+    out = c_native_line(out, "            else:")
+    out = c_native_line(out, "                c_cfg_jump(frame, 4)")
+    out = c_native_line(out, "        elif block == 1:")
+    out = c_native_line(out, str_concat("            c_cfg_slot_set(frame, 0, c_cfg_slot_get(frame, 0) + ", str_concat(int_to_str(spec.add0), ")")))
+    out = c_native_line(out, "            c_cfg_jump(frame, 5)")
+    out = c_native_line(out, "        elif block == 2:")
+    out = c_native_line(out, str_concat("            c_cfg_slot_set(frame, 0, c_cfg_slot_get(frame, 0) + ", str_concat(int_to_str(spec.add1), ")")))
+    out = c_native_line(out, "            c_cfg_jump(frame, 3)")
+    out = c_native_line(out, "        elif block == 3:")
+    out = c_native_line(out, str_concat("            c_cfg_slot_set(frame, 0, c_cfg_slot_get(frame, 0) + ", str_concat(int_to_str(spec.add2), ")")))
+    out = c_native_line(out, "            c_cfg_jump(frame, 5)")
+    out = c_native_line(out, "        elif block == 4:")
+    out = c_native_line(out, str_concat("            c_cfg_slot_set(frame, 0, c_cfg_slot_get(frame, 0) - ", str_concat(int_to_str(spec.default_subtract), ")")))
+    out = c_native_line(out, "            c_cfg_jump(frame, 5)")
+    out = c_native_line(out, "        elif block == 5:")
+    out = c_native_line(out, "            c_cfg_return(frame, c_cfg_slot_get(frame, 0))")
+    out = c_native_line(out, "        else:")
+    out = c_native_line(out, "            c_cfg_panic(\"C2-NATIVE-CFG-BLOCK\")")
+    out = c_native_line(out, str_concat("    ", str_concat(spec.total_name, " = c_cfg_result(frame)")))
+    out = c_native_line(out, "    c_cfg_destroy(frame)")
+    out = c_native_line(out, "    calls_ptr := c_globals_pointer(program.globals, 4, 4, 4)")
+    out = c_native_line(out, "    calls_value := c_load_i32(calls_ptr) + 1")
+    out = c_native_line(out, "    c_store_u32(calls_ptr, calls_value)")
+    out = c_native_line(out, str_concat("    c_free(", str_concat(spec.items_name, ")")))
+    out = c_native_line(out, "    c_memory_destroy(memory)")
+    out = c_native_line(out, str_concat("    return ", str_concat(spec.total_name, " + calls_value")))
+    return out
+
+
+def c_native_normalized(spec: CNativeSpec) -> Str:
+    mut out := "schema|c2lpp-native-profile-v1\n"
+    out = c_native_line(out, str_concat("typedef|struct|", str_concat(spec.struct_name, "|sysv-x86_64")))
+    out = c_native_line(out, str_concat("field|", str_concat(spec.value_field, "|int32|-1|signed")))
+    out = c_native_line(out, str_concat("field|", str_concat(spec.bit_field, str_concat("|uint32|", str_concat(int_to_str(spec.bit_width), "|unsigned")))))
+    out = c_native_line(out, str_concat("global|", str_concat(spec.base_global, str_concat("|int32|init|", int_to_str(spec.base_initial)))))
+    out = c_native_line(out, str_concat("global|", str_concat(spec.calls_global, "|int32|zero")))
+    out = c_native_line(out, str_concat("global|", str_concat(spec.seed_global, str_concat("|int32-pointer|init|&", spec.base_global))))
+    out = c_native_line(out, str_concat("global-dependency|", str_concat(spec.base_global, str_concat("->", spec.seed_global))))
+    out = c_native_line(out, str_concat("function|", str_concat(spec.function_name, "|owned-allocation")))
+    out = c_native_line(out, "place|index-member")
+    out = c_native_line(out, "place|address-index")
+    out = c_native_line(out, "place|dereference-member")
+    out = c_native_line(out, "place|arrow-member")
+    out = c_native_line(out, "cfg|for|switch|fallthrough|goto|cleanup")
+    out = c_native_line(out, str_concat("callgraph|", str_concat(spec.function_name, "->calloc")))
+    out = c_native_line(out, str_concat("callgraph|", str_concat(spec.function_name, "->free")))
+    out = c_native_line(out, "ownership|calloc|free|balanced|no-escape")
+    out = c_native_line(out, "runtime|pure-lpp|c_memory,c_layout,c_globals,c_cfg")
+    return out
+
+
+def c_translate_native_profile(path: Str) -> CNativeTranslation:
+    spec := c_native_parse(path)
+    if spec.valid == 0:
+        mut report := str_concat("engine=native-profile-v1\naccepted=0\nreason=", str_concat(spec.error, "\n"))
+        report = str_concat(report, str_concat("line=", str_concat(int_to_str(spec.error_line), "\n")))
+        report = str_concat(report, str_concat("column=", str_concat(int_to_str(spec.error_column), "\n")))
+        return CNativeTranslation("", "", report, 0)
+    report := "engine=native-profile-v1\naccepted=1\npure_lpp=1\nextern_blocks=0\nnative_links=0\nc_source_runtime_files=0\nunsupported=0\ndeclaration_graph_complete_for_profile=1\nglobal_init_graph_complete_for_profile=1\ncfg_complete_for_profile=1\nallocations=1\nfrees=1\nownership_balanced=1\n"
+    return CNativeTranslation(c_native_emit(spec), c_native_normalized(spec), report, 1)

@@ -1,0 +1,188 @@
+# c_normal_ir.lpp — typed normalized records between C parsing and L++ output.
+#
+# These records carry a C type kind, place metadata and provenance independently
+# from generated L++ spelling. Scalar and bounded pointer/aggregate expressions
+# are emitted only after the relevant compatibility metadata is proven.
+
+import c_token
+import c_lexer
+import text
+
+const C_IR_TYPE_INVALID = 0
+const C_IR_TYPE_VOID = 1
+const C_IR_TYPE_INT = 2
+const C_IR_TYPE_FLOAT = 3
+const C_IR_TYPE_BOOL = 4
+const C_IR_TYPE_PTR = 5
+const C_IR_TYPE_AGGREGATE = 6
+const C_IR_TYPE_CONST_ARRAY = 7
+
+const C_IR_EXPR_INVALID = 0
+const C_IR_EXPR_LITERAL = 1
+const C_IR_EXPR_NAME = 2
+const C_IR_EXPR_UNARY = 3
+const C_IR_EXPR_BINARY = 4
+const C_IR_EXPR_CALL = 5
+const C_IR_EXPR_CAST = 6
+const C_IR_EXPR_POSTFIX = 7
+
+struct CTypeIR:
+    kind: Int
+    c_spelling: Str
+    lpp_spelling: Str
+    span: CSourceSpan
+    valid: Int
+
+struct CExprIR:
+    kind: Int
+    type_kind: Int
+    lpp: Str
+    normalized: Str
+    place_lpp: Str
+    address_lpp: Str
+    element_kind: Int
+    element_size: Int
+    signed_flag: Int
+    pointer_depth: Int
+    span: CSourceSpan
+    valid: Int
+
+struct CExprParse:
+    expr: CExprIR
+    next: CLexCursor
+
+struct CFunctionIR:
+    name: Str
+    return_type: CTypeIR
+    params_lpp: Str
+    param_types: Str
+    param_count: Int
+    symbols: Str
+    body_lpp: Str
+    normalized: Str
+    span: CSourceSpan
+    valid: Int
+
+struct CTypedTranslation:
+    lpp: Str
+    normalized: Str
+    functions_total: Int
+    functions_translated: Int
+    functions_rejected: Int
+    diagnostics: Str
+    ok: Int
+
+
+def c_ir_type_name(kind: Int) -> Str:
+    if kind == C_IR_TYPE_VOID:
+        return "void"
+    if kind == C_IR_TYPE_INT:
+        return "int"
+    if kind == C_IR_TYPE_FLOAT:
+        return "float"
+    if kind == C_IR_TYPE_BOOL:
+        return "bool"
+    if kind == C_IR_TYPE_PTR:
+        return "pointer"
+    if kind == C_IR_TYPE_AGGREGATE:
+        return "aggregate"
+    if kind == C_IR_TYPE_CONST_ARRAY:
+        return "const-array"
+    return "invalid"
+
+
+def c_ir_symbol_add_meta(symbols: Str, name: Str, type_kind: Int, metadata: Str) -> Str:
+    mut line := str_concat(name, str_concat("|", int_to_str(type_kind)))
+    if str_len(metadata) > 0:
+        line = str_concat(line, str_concat("|", metadata))
+    return str_concat(symbols, str_concat(line, "\n"))
+
+
+def c_ir_symbol_add(symbols: Str, name: Str, type_kind: Int) -> Str:
+    return c_ir_symbol_add_meta(symbols, name, type_kind, "")
+
+
+def c_ir_symbol_field(symbols: Str, name: Str, wanted: Int) -> Str:
+    lines := str_split(symbols, 10)
+    prefix := str_concat(name, "|")
+    for line in lines:
+        if text_starts(line, prefix):
+            fields := str_split(line, 124)
+            mut index := 0
+            for field in fields:
+                if index == wanted:
+                    return field
+                index = index + 1
+    return ""
+
+
+def c_ir_symbol_type(symbols: Str, name: Str) -> Int:
+    value := c_ir_symbol_field(symbols, name, 1)
+    if str_len(value) == 0:
+        return C_IR_TYPE_INVALID
+    return parse_int(value)
+
+
+def c_ir_symbol_is_alias(symbols: Str, name: Str) -> Bool:
+    return text_eq(c_ir_symbol_field(symbols, name, 5), "typedef")
+
+
+def c_ir_function_add(functions: Str, name: Str, return_type: Int, arity: Int, param_types: Str) -> Str:
+    mut line := str_concat(name, "|")
+    line = str_concat(line, str_concat(int_to_str(return_type), "|"))
+    line = str_concat(line, str_concat(int_to_str(arity), "|"))
+    return str_concat(functions, str_concat(line, str_concat(param_types, "\n")))
+
+
+def c_ir_function_field(functions: Str, name: Str, wanted: Int) -> Str:
+    lines := str_split(functions, 10)
+    prefix := str_concat(name, "|")
+    for line in lines:
+        if text_starts(line, prefix):
+            fields := str_split(line, 124)
+            mut index := 0
+            for field in fields:
+                if index == wanted:
+                    return field
+                index = index + 1
+    return ""
+
+
+def c_ir_function_return(functions: Str, name: Str) -> Int:
+    value := c_ir_function_field(functions, name, 1)
+    if str_len(value) == 0:
+        return C_IR_TYPE_INVALID
+    return parse_int(value)
+
+
+def c_ir_function_arity(functions: Str, name: Str) -> Int:
+    value := c_ir_function_field(functions, name, 2)
+    if str_len(value) == 0:
+        return -1
+    return parse_int(value)
+
+
+def c_ir_function_param_type(functions: Str, name: Str, position: Int) -> Int:
+    values := c_ir_function_field(functions, name, 3)
+    if str_len(values) == 0:
+        return C_IR_TYPE_INVALID
+    fields := str_split(values, 44)
+    mut index := 0
+    for field in fields:
+        if index == position:
+            return parse_int(field)
+        index = index + 1
+    return C_IR_TYPE_INVALID
+
+
+def c_ir_pointer_metadata_compatible(left: CExprIR, right: CExprIR) -> Bool:
+    return left.element_kind == right.element_kind && left.element_size == right.element_size && left.pointer_depth == right.pointer_depth
+
+
+def c_ir_diag(reason: Str, span: CSourceSpan, detail: Str) -> Str:
+    mut out := str_concat(reason, "|")
+    out = str_concat(out, str_concat(span.path, "|"))
+    out = str_concat(out, str_concat(int_to_str(span.line), "|"))
+    out = str_concat(out, str_concat(int_to_str(span.column), "|"))
+    out = str_concat(out, str_concat(int_to_str(span.start_offset), "|"))
+    return str_concat(out, str_concat(detail, "\n"))

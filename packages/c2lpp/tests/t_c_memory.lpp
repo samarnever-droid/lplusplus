@@ -1,0 +1,39 @@
+import c_memory
+
+def sum_i32(values: CPtr, count: Int) -> Int:
+    mut total := 0
+    mut i := 0
+    while i < count:
+        total = total + c_load_i32(c_ptr_add(values, i))
+        i = i + 1
+    return total
+
+
+def main():
+    memory := c_memory_new(4)
+    mut values := c_calloc(memory, 4, 4)
+    c_store_u32(c_ptr_add(values, 0), 3)
+    c_store_u32(c_ptr_add(values, 1), 5)
+    c_store_u32(c_ptr_add(values, 2), 7)
+    c_store_u32(c_ptr_add(values, 3), 9)
+    print(sum_i32(values, 4))
+
+    values = c_realloc(memory, values, 24)
+    c_store_u32(c_ptr_add(values, 4), 11)
+    c_store_u32(c_ptr_add(values, 5), 13)
+    print(sum_i32(values, 6))
+    print(c_ptr_difference(c_ptr_add(values, 6), values))
+
+    left := c_string_from_lpp(memory, "sqlite")
+    right := c_string_from_lpp(memory, "sqlite")
+    print(c_strlen(left))
+    print(c_strcmp(left, right))
+
+    bytes := c_ptr_cast(values, 1, 1)
+    c_memmove(c_ptr_add(bytes, 4), bytes, 20)
+    print(sum_i32(values, 6))
+
+    c_free(left)
+    c_free(right)
+    c_free(values)
+    c_memory_destroy(memory)

@@ -1,0 +1,327 @@
+# c_layout.lpp — target-explicit C aggregate/bitfield layout in raw tables.
+#
+# Layout metadata has explicit allocation/destruction. It does not use managed
+# List[Custom] records, avoiding ownership ambiguity in generated compatibility
+# metadata. Field names remain in the typed declaration graph; runtime access is
+# by stable integer field ID.
+
+import c_memory
+
+const C_LAYOUT_STRUCT = 1
+const C_LAYOUT_UNION = 2
+
+struct CAbiModel:
+    pointer_size: Int
+    pointer_alignment: Int
+    max_alignment: Int
+    little_endian: Int
+
+struct CLayoutBuilder:
+    handle: Int
+
+struct CFieldLayout:
+    byte_offset: Int
+    storage_size: Int
+    alignment: Int
+    bit_offset: Int
+    bit_width: Int
+    signed_flag: Int
+
+struct CAggregateLayout:
+    handle: Int
+    size: Int
+    alignment: Int
+    field_count: Int
+
+
+def c_abi_sysv_x86_64() -> CAbiModel:
+    return CAbiModel(8, 8, 16, 1)
+
+
+def c_layout_align_up(value: Int, alignment: Int) -> Int:
+    if alignment <= 0:
+        c_mem_panic("C2-LAYOUT-BAD-ALIGNMENT")
+    remainder := value % alignment
+    if remainder == 0:
+        return value
+    delta := alignment - remainder
+    next := value + delta
+    if next < value:
+        c_mem_panic("C2-LAYOUT-OVERFLOW")
+    return next
+
+
+def c_layout_set(builder: CLayoutBuilder, offset: Int, value: Int) -> Void:
+    c_mem_set64(builder.handle, offset, value)
+
+
+def c_layout_get(builder: CLayoutBuilder, offset: Int) -> Int:
+    return c_mem_get64(builder.handle, offset)
+
+
+def c_layout_builder_new(model: CAbiModel, kind: Int, initial_capacity: Int) -> CLayoutBuilder:
+    if kind != C_LAYOUT_STRUCT && kind != C_LAYOUT_UNION:
+        c_mem_panic("C2-LAYOUT-BAD-KIND")
+    if model.max_alignment <= 0:
+        c_mem_panic("C2-LAYOUT-BAD-ABI")
+    mut capacity := initial_capacity
+    if capacity < 4:
+        capacity = 4
+    records := buf_alloc(capacity * 48)
+    handle := buf_alloc(96)
+    builder := CLayoutBuilder(handle)
+    c_layout_set(builder, 0, records)
+    c_layout_set(builder, 8, 0)
+    c_layout_set(builder, 16, capacity)
+    c_layout_set(builder, 24, kind)
+    c_layout_set(builder, 32, 0)
+    c_layout_set(builder, 40, 1)
+    c_layout_set(builder, 48, 0)
+    c_layout_set(builder, 56, 0)
+    c_layout_set(builder, 64, 0)
+    c_layout_set(builder, 72, model.max_alignment)
+    c_layout_set(builder, 80, model.little_endian)
+    c_layout_set(builder, 88, 0)
+    return builder
+
+
+def c_layout_records(builder: CLayoutBuilder) -> Int:
+    return c_layout_get(builder, 0)
+
+
+def c_layout_count(builder: CLayoutBuilder) -> Int:
+    return c_layout_get(builder, 8)
+
+
+def c_layout_capacity(builder: CLayoutBuilder) -> Int:
+    return c_layout_get(builder, 16)
+
+
+def c_layout_effective_alignment(builder: CLayoutBuilder, requested: Int) -> Int:
+    if requested <= 0:
+        c_mem_panic("C2-LAYOUT-BAD-ALIGNMENT")
+    mut alignment := requested
+    maximum := c_layout_get(builder, 72)
+    if alignment > maximum:
+        alignment = maximum
+    return alignment
+
+
+def c_layout_grow(builder: CLayoutBuilder) -> Void:
+    old_records := c_layout_records(builder)
+    old_capacity := c_layout_capacity(builder)
+    new_capacity := old_capacity * 2
+    new_records := buf_alloc(new_capacity * 48)
+    count := c_layout_count(builder)
+    if count > 0:
+        buf_copy(new_records, 0, old_records, 0, count * 48)
+    buf_free(old_records)
+    c_layout_set(builder, 0, new_records)
+    c_layout_set(builder, 16, new_capacity)
+
+
+def c_layout_write_record(builder: CLayoutBuilder, field: CFieldLayout) -> Int:
+    if c_layout_count(builder) >= c_layout_capacity(builder):
+        c_layout_grow(builder)
+    index := c_layout_count(builder)
+    records := c_layout_records(builder)
+    base := index * 48
+    c_mem_set64(records, base, field.byte_offset)
+    c_mem_set64(records, base + 8, field.storage_size)
+    c_mem_set64(records, base + 16, field.alignment)
+    c_mem_set64(records, base + 24, field.bit_offset)
+    c_mem_set64(records, base + 32, field.bit_width)
+    c_mem_set64(records, base + 40, field.signed_flag)
+    c_layout_set(builder, 8, index + 1)
+    return index
+
+
+def c_layout_add_field(builder: CLayoutBuilder, size: Int, requested_alignment: Int, bit_width: Int, signed_flag: Int) -> Int:
+    if c_layout_get(builder, 88) != 0:
+        c_mem_panic("C2-LAYOUT-ADD-AFTER-FINISH")
+    if size <= 0:
+        c_mem_panic("C2-LAYOUT-BAD-FIELD-SIZE")
+    alignment := c_layout_effective_alignment(builder, requested_alignment)
+    aggregate_alignment := c_layout_get(builder, 40)
+    if alignment > aggregate_alignment:
+        c_layout_set(builder, 40, alignment)
+    kind := c_layout_get(builder, 24)
+
+    if kind == C_LAYOUT_UNION:
+        if bit_width > size * 8 || bit_width > 32:
+            c_mem_panic("C2-LAYOUT-BITFIELD-WIDTH")
+        current_size := c_layout_get(builder, 32)
+        if size > current_size:
+            c_layout_set(builder, 32, size)
+        mut bit_offset := -1
+        if bit_width >= 0:
+            if c_layout_get(builder, 80) == 0:
+                c_mem_panic("C2-LAYOUT-BIG-ENDIAN-BITFIELD")
+            bit_offset = 0
+        field := CFieldLayout(0, size, alignment, bit_offset, bit_width, signed_flag)
+        return c_layout_write_record(builder, field)
+
+    mut offset := c_layout_get(builder, 32)
+    if bit_width < 0:
+        c_layout_set(builder, 48, 0)
+        c_layout_set(builder, 64, 0)
+        offset = c_layout_align_up(offset, alignment)
+        field := CFieldLayout(offset, size, alignment, -1, -1, signed_flag)
+        c_layout_set(builder, 32, offset + size)
+        return c_layout_write_record(builder, field)
+
+    if bit_width == 0:
+        c_layout_set(builder, 48, 0)
+        c_layout_set(builder, 64, 0)
+        c_layout_set(builder, 32, c_layout_align_up(offset, alignment))
+        return -1
+
+    if c_layout_get(builder, 80) == 0:
+        c_mem_panic("C2-LAYOUT-BIG-ENDIAN-BITFIELD")
+    storage_bits := size * 8
+    if bit_width > storage_bits || bit_width > 32:
+        c_mem_panic("C2-LAYOUT-BITFIELD-WIDTH")
+    mut active_size := c_layout_get(builder, 48)
+    mut active_bits := c_layout_get(builder, 64)
+    mut storage_offset := c_layout_get(builder, 56)
+    if active_size != size || active_bits + bit_width > storage_bits:
+        offset = c_layout_align_up(offset, alignment)
+        storage_offset = offset
+        active_size = size
+        active_bits = 0
+        offset = offset + size
+        c_layout_set(builder, 32, offset)
+        c_layout_set(builder, 48, active_size)
+        c_layout_set(builder, 56, storage_offset)
+    field := CFieldLayout(storage_offset, size, alignment, active_bits, bit_width, signed_flag)
+    active_bits = active_bits + bit_width
+    c_layout_set(builder, 64, active_bits)
+    if active_bits == storage_bits:
+        c_layout_set(builder, 48, 0)
+        c_layout_set(builder, 64, 0)
+    return c_layout_write_record(builder, field)
+
+
+def c_layout_finish(builder: CLayoutBuilder) -> CAggregateLayout:
+    if c_layout_get(builder, 88) != 0:
+        c_mem_panic("C2-LAYOUT-DOUBLE-FINISH")
+    alignment := c_layout_get(builder, 40)
+    size := c_layout_align_up(c_layout_get(builder, 32), alignment)
+    c_layout_set(builder, 32, size)
+    c_layout_set(builder, 88, 1)
+    return CAggregateLayout(builder.handle, size, alignment, c_layout_count(builder))
+
+
+def c_layout_field(layout: CAggregateLayout, index: Int) -> CFieldLayout:
+    if index < 0 || index >= layout.field_count:
+        c_mem_panic("C2-LAYOUT-FIELD-OUT-OF-BOUNDS")
+    builder := CLayoutBuilder(layout.handle)
+    if c_layout_get(builder, 88) == 0:
+        c_mem_panic("C2-LAYOUT-NOT-FINISHED")
+    records := c_layout_records(builder)
+    base := index * 48
+    return CFieldLayout(c_mem_get64(records, base), c_mem_get64(records, base + 8), c_mem_get64(records, base + 16), c_mem_get64(records, base + 24), c_mem_get64(records, base + 32), c_mem_get64(records, base + 40))
+
+
+def c_layout_destroy(layout: CAggregateLayout) -> Void:
+    builder := CLayoutBuilder(layout.handle)
+    records := c_layout_records(builder)
+    buf_free(records)
+    buf_free(layout.handle)
+
+
+def c_layout_load_unsigned(pointer: CPtr, size: Int) -> Int:
+    if size == 1:
+        return c_load_u8(pointer)
+    if size == 2:
+        return c_load_u16(pointer)
+    if size == 4:
+        return c_load_u32(pointer)
+    if size == 8:
+        return c_load_i64(pointer)
+    c_mem_panic("C2-LAYOUT-UNSUPPORTED-SCALAR-SIZE")
+    return 0
+
+
+def c_layout_store_unsigned(pointer: CPtr, size: Int, value: Int) -> Void:
+    if size == 1:
+        c_store_u8(pointer, value)
+    elif size == 2:
+        c_store_u16(pointer, value)
+    elif size == 4:
+        c_store_u32(pointer, value)
+    elif size == 8:
+        c_store_i64(pointer, value)
+    else:
+        c_mem_panic("C2-LAYOUT-UNSUPPORTED-SCALAR-SIZE")
+
+
+def c_layout_load_unsigned_at(data: Int, offset: Int, size: Int) -> Int:
+    if size == 1:
+        return buf_get8(data, offset)
+    if size == 2:
+        return buf_get8(data, offset) | (buf_get8(data, offset + 1) << 8)
+    if size == 4:
+        return buf_get32le(data, offset)
+    if size == 8:
+        return c_mem_get64(data, offset)
+    c_mem_panic("C2-LAYOUT-UNSUPPORTED-SCALAR-SIZE")
+    return 0
+
+
+def c_layout_store_unsigned_at(data: Int, offset: Int, size: Int, value: Int) -> Void:
+    if size == 1:
+        buf_set8(data, offset, value & 255)
+    elif size == 2:
+        buf_set8(data, offset, value & 255)
+        buf_set8(data, offset + 1, (value >> 8) & 255)
+    elif size == 4:
+        buf_set32le(data, offset, value & 4294967295)
+    elif size == 8:
+        c_mem_set64(data, offset, value)
+    else:
+        c_mem_panic("C2-LAYOUT-UNSUPPORTED-SCALAR-SIZE")
+
+
+def c_layout_mask(width: Int) -> Int:
+    if width <= 0 || width > 32:
+        c_mem_panic("C2-LAYOUT-BITFIELD-WIDTH")
+    if width == 32:
+        return 4294967295
+    return (1 << width) - 1
+
+
+def c_layout_load_int(base: CPtr, field: CFieldLayout) -> Int:
+    data := c_mem_check_relative(base, field.byte_offset, field.storage_size, false)
+    absolute := base.offset + field.byte_offset
+    storage := c_layout_load_unsigned_at(data, absolute, field.storage_size)
+    if field.bit_width >= 0:
+        mask := c_layout_mask(field.bit_width)
+        mut value := (storage >> field.bit_offset) & mask
+        if field.signed_flag != 0:
+            sign := 1 << (field.bit_width - 1)
+            if (value & sign) != 0:
+                value = value - (1 << field.bit_width)
+        return value
+    if field.signed_flag != 0:
+        if field.storage_size == 1 && storage >= 128:
+            return storage - 256
+        if field.storage_size == 2 && storage >= 32768:
+            return storage - 65536
+        if field.storage_size == 4 && storage >= 2147483648:
+            return storage - 4294967296
+    return storage
+
+
+def c_layout_store_int(base: CPtr, field: CFieldLayout, value: Int) -> Void:
+    data := c_mem_check_relative(base, field.byte_offset, field.storage_size, true)
+    absolute := base.offset + field.byte_offset
+    c_mem_side_invalidate_range(CMemory(base.memory), base.allocation, absolute, field.storage_size)
+    if field.bit_width >= 0:
+        storage := c_layout_load_unsigned_at(data, absolute, field.storage_size)
+        mask := c_layout_mask(field.bit_width)
+        shifted_mask := mask << field.bit_offset
+        replacement := (storage & (-1 ^ shifted_mask)) | ((value & mask) << field.bit_offset)
+        c_layout_store_unsigned_at(data, absolute, field.storage_size, replacement)
+    else:
+        c_layout_store_unsigned_at(data, absolute, field.storage_size, value)

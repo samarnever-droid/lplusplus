@@ -1,0 +1,24 @@
+# c_token.lpp — stable token IDs and provenance for normalized C input.
+
+const C_TOKEN_EOF = 0
+const C_TOKEN_WHITESPACE = 1
+const C_TOKEN_COMMENT = 2
+const C_TOKEN_IDENTIFIER = 3
+const C_TOKEN_KEYWORD = 4
+const C_TOKEN_NUMBER = 5
+const C_TOKEN_STRING = 6
+const C_TOKEN_CHARACTER = 7
+const C_TOKEN_PUNCTUATOR = 8
+const C_TOKEN_UNKNOWN = 9
+
+struct CSourceSpan:
+    path: Str
+    start_offset: Int
+    end_offset: Int
+    line: Int
+    column: Int
+
+struct CToken:
+    kind: Int
+    span: CSourceSpan
+    spelling: Str

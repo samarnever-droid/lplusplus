@@ -14,5 +14,7 @@ LPP_BIN=$(find_lpp) || { echo 'build.sh: no L++ compiler found' >&2; exit 2; }
 rm -rf "$DIR/build"
 mkdir -p "$DIR/build"
 cp "$DIR"/src/*.lpp "$DIR/build/"
+mkdir -p "$DIR/build/backends/sqlite/src"
+cp "$DIR"/backends/sqlite/src/*.lpp "$DIR/build/backends/sqlite/src/"
 (cd "$DIR/build" && "$LPP_BIN" main.lpp --linker host >/dev/null && mv main c2lpp)
 echo "built: $DIR/build/c2lpp"

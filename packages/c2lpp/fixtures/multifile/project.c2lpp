@@ -1,0 +1,5 @@
+# c2lpp-project-v1
+source=fixtures/multifile/math.c
+source=fixtures/multifile/control.c
+header=fixtures/multifile/common.h
+external=stdint.h
