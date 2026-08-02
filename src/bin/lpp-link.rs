@@ -112,7 +112,7 @@ const ELF_BASE: u64 = 0x400000;
 const CODE_OFFSET: usize = 0x1000;
 const EM_X86_64: u16 = 62;
 const PT_LOAD: u32 = 1;
-const PF_R_X: u32 = 5;
+const _PF_R_X: u32 = 5;
 /// Read + write + execute. The writer emits a single load segment covering
 /// text, rodata and data, so it must be writable for mutable globals to work at
 /// all -- without W the first store to a global faults. Splitting into separate
@@ -967,7 +967,7 @@ fn is_gdi32_symbol(name: &str) -> bool {
 struct ImportData {
     data: Vec<u8>,
     iat_rvas: HashMap<String, u32>,
-    refptr_offsets: HashMap<String, usize>,
+    _refptr_offsets: HashMap<String, usize>,
     #[allow(dead_code)]
     ilt_rva: u32,
     iat_rva: u32,
@@ -1099,7 +1099,7 @@ fn build_imports(
     Ok(ImportData {
         data,
         iat_rvas,
-        refptr_offsets,
+        _refptr_offsets: refptr_offsets,
         ilt_rva: section_rva + ilt_off as u32,
         iat_rva: section_rva + iat_off as u32,
         iat_size: iat_size as u32,
@@ -1716,7 +1716,7 @@ fn resolve_pe_target(
     rdata_rva: u32,
     data_rva: u32,
     tls_rva: u32,
-    idata_rva: u32,
+    _idata_rva: u32,
 ) -> Result<u64, String> {
     // Self-references — return the RVA of the section base within this input
     if rel.target.starts_with("__self_text__") {
@@ -2001,9 +2001,9 @@ fn write_macho(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
     header.extend_from_slice(&0xfeedfacfu32.to_le_bytes());
     header.extend_from_slice(&0x01000007u32.to_le_bytes());
     header.extend_from_slice(&3u32.to_le_bytes());
-    header.extend_from_slice(&2u32.to_le_bytes());
-    header.extend_from_slice(&2u32.to_le_bytes());
-    let sizeofcmds = (72 + 152) as u32;
+    header.extend_from_slice(&2u32.to_le_bytes()); // MH_EXECUTE
+    header.extend_from_slice(&3u32.to_le_bytes()); // ncmds = 3
+    let sizeofcmds = (72 + 152 + 24) as u32; // sizeofcmds (LC_MAIN added)
     header.extend_from_slice(&sizeofcmds.to_le_bytes());
     header.extend_from_slice(&0x00200085u32.to_le_bytes());
     header.extend_from_slice(&0u32.to_le_bytes());
@@ -2052,6 +2052,12 @@ fn write_macho(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
     header.extend_from_slice(&0u32.to_le_bytes());
     header.extend_from_slice(&0u32.to_le_bytes());
     header.extend_from_slice(&0u32.to_le_bytes());
+
+    // LC_MAIN
+    header.extend_from_slice(&0x80000028u32.to_le_bytes()); // cmd = LC_MAIN
+    header.extend_from_slice(&24u32.to_le_bytes());         // cmdsize = 24
+    header.extend_from_slice(&(4096 + main).to_le_bytes()); // entryoff
+    header.extend_from_slice(&0u64.to_le_bytes());          // stacksize (0 = default)
 
     let mut bin = vec![0u8; 4096];
     bin[..header.len()].copy_from_slice(&header);

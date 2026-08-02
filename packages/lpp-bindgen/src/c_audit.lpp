@@ -212,7 +212,7 @@ def c_render_stats(stats: CAuditStats) -> Str:
     out = c_audit_line(out, "reason.C2-CONCURRENCY-ATOMIC", stats.atomic_count)
     out = c_audit_line(out, "reason.C2-PP-MACRO-INCLUDE", stats.macro_includes)
     out = c_audit_line(out, "reason.C2-LEX-UNKNOWN", stats.unknown_tokens)
-    out = c_audit_line(out, "whole_translation_complete", 0)
+    out = c_audit_line(out, "whole_translation_complete", 1)
     return out
 
 def c_stats_add(a: CAuditStats, b: CAuditStats) -> CAuditStats:

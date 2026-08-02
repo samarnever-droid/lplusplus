@@ -1,0 +1,6 @@
+import engine
+
+def main():
+    engine.engine_init()
+    print_str("Done!\n")
+

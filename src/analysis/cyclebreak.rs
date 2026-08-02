@@ -103,6 +103,7 @@ impl OwnershipGraph {
             .collect()
     }
 
+    #[allow(dead_code)]
     pub fn is_weak(&self, owner: StructTypeId, field: &str) -> bool {
         self.edges.iter().any(|e| {
             e.kind == EdgeKind::NonOwning && e.from == owner && e.field == field

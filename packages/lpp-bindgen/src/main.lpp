@@ -158,7 +158,8 @@ def c2lpp_emit_audit(config: C2Config, input_path: Str, audited: CProjectAudit) 
 
 
 def main():
-    config := c_config_load("c2lpp.json")
+    print_str("lpp-bindgen - C Header to L++ FFI Binder\n")
+    config := c_config_load("lpp-bindgen.json")
     if config.valid == 0:
         c2lpp_fail(config.error)
         return

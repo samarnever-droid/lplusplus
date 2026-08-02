@@ -925,7 +925,7 @@ fn main() {
         },
         None => crate::target::TargetSpec::host(),
     };
-    if let Some(t) = &cli_target {
+    if let Some(_t) = &cli_target {
         eprintln!(
             "[L++] targeting {}",
             target_spec
@@ -1016,11 +1016,13 @@ fn main() {
     }
 
     // Check if any extern blocks or explicit host libraries exist (FFI/host linking required)
+    let config_obj = config::LppConfig::load_or_create();
     let has_extern = ast.declarations.iter().any(|d| matches!(d, crate::ast::TopLevel::Extern(_)));
     let env_linker = env::var("LPP_LINKER").ok();
     let effective_linker = cli_linker.or(env_linker);
     let use_host = effective_linker.as_deref() == Some("host")
-        || (effective_linker.as_deref() != Some("direct") && (has_extern || !link_libs.is_empty()));
+        || (effective_linker.as_deref() != Some("direct") && (has_extern || !link_libs.is_empty()))
+        || (effective_linker.is_none() && !config_obj.use_direct_linker());
 
     let link_result = if use_host {
         #[cfg(windows)]

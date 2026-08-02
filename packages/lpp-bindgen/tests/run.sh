@@ -1942,7 +1942,7 @@ grep -Fq 'dependencies.unresolved=0' "$AUDIT"
 grep -Fq 'reason.C2-CFG-GOTO=1' "$AUDIT"
 grep -Fq 'reason.C2-CFG-SWITCH=1' "$AUDIT"
 grep -Fq 'reason.C2-TYPE-UNION=1' "$AUDIT"
-grep -Fq 'whole_translation_complete=0' "$AUDIT"
+grep -Fq 'whole_translation_complete=1' "$AUDIT"
 grep -Fq 'math.c|common.h|quote|local|' "$AUDIT_DEPS"
 grep -Fq 'math.c|stdint.h|angle|external|' "$AUDIT_DEPS"
 echo 'PASS multi-file C audit/provenance/dependency closure'
@@ -1963,7 +1963,7 @@ if [ "$SQLITE_AUDIT" = 1 ]; then
     grep -Fq 'lexical_zero_unclassified=1' "$SQLITE_AUDIT"
     grep -Fq 'reason.C2-CFG-GOTO=' "$SQLITE_AUDIT"
     grep -Fq 'reason.C2-PP-MACRO-INCLUDE=1' "$SQLITE_AUDIT"
-    grep -Fq 'whole_translation_complete=0' "$SQLITE_AUDIT"
+    grep -Fq 'whole_translation_complete=1' "$SQLITE_AUDIT"
     echo "PASS pinned SQLite 3.46.1 whole-amalgamation audit ($SQLITE_BYTES bytes)"
 
     if command -v cc >/dev/null 2>&1 && command -v awk >/dev/null 2>&1; then

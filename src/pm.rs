@@ -653,7 +653,7 @@ fn registry_package_entries() -> Vec<(String, RegistryEntry)> {
     entries
 }
 
-fn registry_package_names() -> Vec<String> {
+fn _registry_package_names() -> Vec<String> {
     registry_package_entries()
         .into_iter()
         .map(|(name, _)| name)

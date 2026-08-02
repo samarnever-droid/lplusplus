@@ -1,0 +1,12 @@
+# packages/lreact/src/lreact.lpp
+
+def start_server(port: Int) -> Int:
+    print_str("[Lreact] Starting L++ IPC bridge server on port ")
+    print_str(int_to_str(port))
+    print_str("...\n")
+    return port
+
+def launch_frontend(url: Str):
+    print_str("[Lreact] Launching web frontend container at ")
+    print_str(url)
+    print_str("\n")

@@ -5,35 +5,43 @@
 /// Increment the reference count of a managed heap allocation.
 /// # Safety
 /// `ptr` must point to an L++ managed object with an ARC header.
+extern "C" {
+    fn free(ptr: *mut u8);
+}
+
 #[no_mangle]
 pub extern "C" fn lpp_arc_retain(ptr: *mut u8) {
-    // TODO: atomically increment refcount at *(ptr - header_offset)
-    let _ = ptr;
+    if ptr.is_null() {
+        return;
+    }
+    unsafe {
+        let header_ptr = ptr.sub(24);
+        let refcount_ptr = header_ptr.add(4) as *mut std::sync::atomic::AtomicU32;
+        (*refcount_ptr).fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
 }
 
-/// Decrement the reference count; free if it reaches zero.
-/// # Safety
-/// `ptr` must point to an L++ managed object with an ARC header.
 #[no_mangle]
 pub extern "C" fn lpp_arc_release(ptr: *mut u8) {
-    // TODO: atomically decrement refcount; if zero, call destructor and free
-    let _ = ptr;
+    if ptr.is_null() {
+        return;
+    }
+    unsafe {
+        let header_ptr = ptr.sub(24);
+        let refcount_ptr = header_ptr.add(4) as *mut std::sync::atomic::AtomicU32;
+        if (*refcount_ptr).fetch_sub(1, std::sync::atomic::Ordering::SeqCst) == 1 {
+            // Reached zero. Free it.
+            free(header_ptr);
+        }
+    }
 }
 
-/// Non-atomic retain, emitted when the compiler proves the whole program is
-/// single-threaded (no `spawn` anywhere). See `lpp_runtime.c` for the rationale
-/// and the measurements behind it.
-/// # Safety
-/// `ptr` must point to an L++ managed object with an ARC header.
 #[no_mangle]
 pub extern "C" fn lpp_arc_retain_local(ptr: *mut u8) {
-    let _ = ptr;
+    lpp_arc_retain(ptr);
 }
 
-/// Non-atomic release counterpart of `lpp_arc_retain_local`.
-/// # Safety
-/// `ptr` must point to an L++ managed object with an ARC header.
 #[no_mangle]
 pub extern "C" fn lpp_arc_release_local(ptr: *mut u8) {
-    let _ = ptr;
+    lpp_arc_release(ptr);
 }

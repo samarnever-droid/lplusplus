@@ -608,7 +608,7 @@ impl Monomorphizer {
 
     /// Walk an expression that is only being inspected (a method receiver),
     /// so nested generic calls inside it still get specialised.
-    fn walk_expr_ro(
+    fn _walk_expr_ro(
         &mut self,
         expr: &Expr,
         generic_funcs: &HashMap<String, Function>,
@@ -1465,7 +1465,7 @@ fn type_to_name(ty: &Type) -> String {
     }
 }
 
-fn infer_simple_expr_type(expr: &Expr) -> Type {
+fn _infer_simple_expr_type(expr: &Expr) -> Type {
     match expr {
         Expr::IntLiteral(_) => Type::Int,
         Expr::FloatLiteral(_) => Type::Float,

@@ -27,11 +27,11 @@ pub struct TargetSpec {
     /// The raw triple string the user passed (None = host).
     pub raw: Option<String>,
     /// The parsed triple (None = host).
-    pub triple: Option<Triple>,
+    pub _triple: Option<Triple>,
     /// True if the OS is Android (bionic libc).
-    pub is_android: bool,
+    pub _is_android: bool,
     /// True if a Termux-style target: Linux on a mobile/arm arch with a userspace.
-    pub is_termux_like: bool,
+    pub _is_termux_like: bool,
     /// Human description for diagnostics.
     pub description: String,
 }
@@ -63,9 +63,9 @@ impl TargetSpec {
         let description = format!("{} ({})", trimmed, os_str);
         Ok(TargetSpec {
             raw: Some(trimmed.to_string()),
-            triple: Some(triple),
-            is_android,
-            is_termux_like,
+            _triple: Some(triple),
+            _is_android: is_android,
+            _is_termux_like: is_termux_like,
             description,
         })
     }
@@ -75,22 +75,22 @@ impl TargetSpec {
         let arch_str = std::env::consts::ARCH;
         TargetSpec {
             raw: None,
-            triple: None,
-            is_android: std::env::consts::OS == "android",
-            is_termux_like: std::env::consts::OS == "android"
+            _triple: None,
+            _is_android: std::env::consts::OS == "android",
+            _is_termux_like: std::env::consts::OS == "android"
                 || (std::env::consts::OS == "linux" && is_termux_arch(arch_str)),
             description: format!("host ({} {})", std::env::consts::OS, arch_str),
         }
     }
 
     /// The effective triple: the user override, or the host triple.
-    pub fn effective_triple(&self) -> Triple {
-        self.triple.clone().unwrap_or_else(Triple::host)
+    pub fn _effective_triple(&self) -> Triple {
+        self._triple.clone().unwrap_or_else(Triple::host)
     }
 
     /// Return the `cc`/`clang` `-target` string for this target when cross
     /// compiling (None if it is the host, where no flag is needed).
-    pub fn cc_target_flag(&self) -> Option<String> {
+    pub fn _cc_target_flag(&self) -> Option<String> {
         self.raw.clone()
     }
 }

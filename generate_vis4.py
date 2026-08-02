@@ -1,0 +1,467 @@
+import os
+
+html_content = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>L++ N-Dimensional Static Analysis</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+  body { 
+    margin: 0; 
+    overflow: hidden; 
+    background-color: #030305; 
+    background-image: radial-gradient(circle at 50% 50%, #0a0a12 0%, #000000 100%);
+    font-family: 'Inter', sans-serif; 
+    color: #e2e8f0; 
+    touch-action: none; 
+  }
+  canvas { 
+    position: absolute; 
+    top: 0; left: 0; 
+    z-index: 1; 
+    cursor: grab;
+  }
+  canvas:active { cursor: grabbing; }
+  
+  /* Collapsible Glass Panels */
+  .glass-panel {
+    position: absolute;
+    z-index: 10;
+    background: rgba(15, 15, 20, 0.4); /* Made significantly more transparent */
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+    padding: 15px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    pointer-events: auto;
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s;
+  }
+  
+  .glass-panel.collapsed {
+    transform: translateY(-100%);
+    opacity: 0;
+    pointer-events: none;
+  }
+  
+  #ui-container {
+    top: 15px;
+    left: 15px;
+    width: 280px; /* Made smaller */
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  
+  .controls-hint {
+    bottom: 15px;
+    left: 15px;
+    padding: 12px;
+  }
+  .controls-hint.collapsed { transform: translateX(-100%); }
+  
+  .legend {
+    bottom: 15px;
+    right: 15px;
+    padding: 12px;
+  }
+  .legend.collapsed { transform: translateX(100%); }
+  
+  /* Toggle HUD Button */
+  #toggleUI {
+    position: absolute;
+    top: 15px;
+    right: 15px;
+    z-index: 20;
+    background: rgba(15, 15, 20, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: #94a3b8;
+    padding: 8px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 600;
+    backdrop-filter: blur(4px);
+    transition: all 0.2s;
+  }
+  #toggleUI:hover { background: rgba(255, 255, 255, 0.1); color: #fff; }
+  
+  h2 { margin: 0 0 4px 0; font-size: 15px; font-weight: 800; background: linear-gradient(90deg, #fff, #94a3b8); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+  p.subtitle { margin: 0 0 10px 0; font-size: 11px; color: #94a3b8; line-height: 1.3; }
+  
+  .control-group { display: flex; flex-direction: column; gap: 6px; }
+  .control-row { display: flex; justify-content: space-between; align-items: center; font-size: 11px; font-weight: 600; }
+  
+  button.action-btn {
+    padding: 8px 16px;
+    background: linear-gradient(135deg, #f97316, #ea580c);
+    color: white;
+    border: none;
+    cursor: pointer;
+    border-radius: 6px;
+    font-weight: 600;
+    font-size: 12px;
+    transition: all 0.2s ease;
+  }
+  button.action-btn:hover { background: linear-gradient(135deg, #fb923c, #f97316); box-shadow: 0 0 10px rgba(234, 88, 12, 0.4); }
+  
+  input[type=range] { -webkit-appearance: none; width: 100%; background: transparent; }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; height: 12px; width: 12px; border-radius: 50%; background: #f97316; cursor: pointer; margin-top: -4px; box-shadow: 0 0 8px rgba(249, 115, 22, 0.5); }
+  input[type=range]::-webkit-slider-runnable-track { width: 100%; height: 3px; cursor: pointer; background: rgba(255, 255, 255, 0.1); border-radius: 2px; }
+  
+  .legend-item { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 11px; font-weight: 600; color: #cbd5e1; }
+  .legend-item:last-child { margin-bottom: 0; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; }
+  
+  .keybind { display: inline-block; background: #1e293b; padding: 2px 4px; border-radius: 3px; border: 1px solid #334155; font-family: monospace; font-size: 10px; margin-right: 4px; color: #94a3b8;}
+</style>
+</head>
+<body>
+
+<button id="toggleUI">Hide UI (Press H)</button>
+
+<div id="ui-container" class="glass-panel panel">
+  <h2>L++ Static Analyzer</h2>
+  <p class="subtitle">N-Dimensional SQLite CFG</p>
+  
+  <button id="playPause" class="action-btn">⏸ Pause</button>
+  
+  <div class="control-group" style="margin-top: 5px;">
+    <div class="control-row">
+      <span>Speed</span>
+      <span id="speedLabel" style="color: #f97316;">Fast</span>
+    </div>
+    <input type="range" id="speedSlider" min="1" max="100" value="80">
+  </div>
+</div>
+
+<div class="controls-hint glass-panel panel">
+  <div class="legend-item"><span class="keybind">Left Click</span> Rotate</div>
+  <div class="legend-item"><span class="keybind">Right Click</span> Pan</div>
+  <div class="legend-item"><span class="keybind">Scroll</span> Zoom</div>
+  <div class="legend-item"><span class="keybind">Spacebar</span> Snap to Center</div>
+</div>
+
+<div class="legend glass-panel panel">
+  <div class="legend-item"><div class="dot" style="background:#f97316; box-shadow: 0 0 8px #f97316;"></div> Path</div>
+  <div class="legend-item"><div class="dot" style="background:#ef4444;"></div> Alloc</div>
+  <div class="legend-item"><div class="dot" style="background:#22c55e;"></div> Free</div>
+  <div class="legend-item"><div class="dot" style="background:rgba(96, 165, 250, 0.6);"></div> Basic Block</div>
+</div>
+
+<canvas id="canvas"></canvas>
+
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d', { alpha: false }); 
+const playPauseBtn = document.getElementById('playPause');
+const speedSlider = document.getElementById('speedSlider');
+const speedLabel = document.getElementById('speedLabel');
+const toggleUIBtn = document.getElementById('toggleUI');
+const panels = document.querySelectorAll('.panel');
+
+let uiVisible = true;
+
+function toggleUI() {
+    uiVisible = !uiVisible;
+    panels.forEach(p => {
+        if(uiVisible) p.classList.remove('collapsed');
+        else p.classList.add('collapsed');
+    });
+    toggleUIBtn.innerText = uiVisible ? "Hide UI (Press H)" : "Show UI (Press H)";
+}
+
+toggleUIBtn.onclick = toggleUI;
+window.addEventListener('keydown', (e) => {
+    if(e.key.toLowerCase() === 'h') toggleUI();
+    if(e.key === ' ') snapToCenter(); // Snap on spacebar
+});
+
+let width, height, cx, cy;
+function resize() {
+    width = canvas.width = window.innerWidth;
+    height = canvas.height = window.innerHeight;
+    cx = width / 2;
+    cy = height / 2;
+}
+window.addEventListener('resize', resize);
+resize();
+
+// UI State
+let isPlaying = true;
+let stepIndex = 0;
+
+// Camera / Viewport State
+let rotationX = 0.4;
+let rotationY = 0.5;
+let autoRotateY = 0.002;
+let autoRotateX = 0.0005;
+let cameraZ = 1200;      
+let panX = 0;            
+let panY = 0;            
+
+// Snap to Center Animation Target
+let isSnapping = false;
+
+function snapToCenter() {
+    isSnapping = true;
+    panX = 0;
+    panY = 0;
+    cameraZ = 1200;
+    // We let the lerp handle the smooth transition in the render loop
+}
+
+// Data Structure
+const nodes = [];
+const edges = [];
+const numNodes = 1500;
+const branches = 5;
+
+function buildGraph() {
+    nodes.push({ id: 0, x: 0, y: -400, z: 0, type: 'entry' });
+    let currentLevel = [0];
+    let idCounter = 1;
+    let radius = 60;
+    let yLevel = -300;
+    
+    while (idCounter < numNodes) {
+        let nextLevel = [];
+        let r = radius;
+        for (let parentId of currentLevel) {
+            let numChildren = Math.floor(Math.random() * branches) + 1;
+            for (let i = 0; i < numChildren && idCounter < numNodes; i++) {
+                let angle = Math.random() * Math.PI * 2;
+                let nx = nodes[parentId].x + Math.cos(angle) * r;
+                let ny = yLevel + (Math.random() * 50 - 25);
+                let nz = nodes[parentId].z + Math.sin(angle) * r;
+                
+                let rand = Math.random();
+                let type = 'basic';
+                if (rand > 0.96) type = 'alloc';
+                else if (rand > 0.92) type = 'free';
+                else if (numChildren > 1 && i === 0) type = 'branch';
+
+                nodes.push({ id: idCounter, x: nx, y: ny, z: nz, type: type });
+                edges.push({ from: parentId, to: idCounter });
+                
+                if (Math.random() > 0.95 && idCounter > 10) {
+                    edges.push({ from: idCounter, to: Math.floor(Math.random() * idCounter) });
+                }
+                
+                nextLevel.push(idCounter);
+                idCounter++;
+            }
+        }
+        currentLevel = nextLevel;
+        yLevel += 70;
+        radius *= 1.1; 
+        if(currentLevel.length === 0) break; 
+    }
+}
+buildGraph();
+
+const traversal = [0];
+let curr = 0;
+for(let i = 0; i < 5000; i++) {
+    let outs = edges.filter(e => e.from === curr);
+    if (outs.length === 0) curr = 0; 
+    else curr = outs[Math.floor(Math.random() * outs.length)].to;
+    traversal.push(curr);
+}
+
+const projX = new Float32Array(numNodes);
+const projY = new Float32Array(numNodes);
+const projScale = new Float32Array(numNodes);
+
+function project() {
+    let cosY = Math.cos(rotationY), sinY = Math.sin(rotationY);
+    let cosX = Math.cos(rotationX), sinX = Math.sin(rotationX);
+    
+    for(let i=0; i<numNodes; i++) {
+        let n = nodes[i];
+        let nx = n.x * cosY - n.z * sinY;
+        let nz = n.z * cosY + n.x * sinY;
+        let ny = n.y * cosX - nz * sinX;
+        nz = nz * cosX + n.y * sinX;
+        
+        let scale = cameraZ / (cameraZ + nz);
+        
+        projX[i] = cx + panX + (nx * scale);
+        projY[i] = cy + panY + (ny * scale);
+        projScale[i] = scale;
+    }
+}
+
+// Input Handling
+let isDraggingLeft = false;
+let isDraggingRight = false;
+let lastX = 0, lastY = 0;
+
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+canvas.addEventListener('mousedown', e => { 
+    isSnapping = false; // Cancel snap if user interacts
+    if(e.button === 0) isDraggingLeft = true;
+    if(e.button === 2) isDraggingRight = true;
+    lastX = e.clientX; 
+    lastY = e.clientY; 
+});
+
+window.addEventListener('mouseup', e => { 
+    if(e.button === 0) isDraggingLeft = false;
+    if(e.button === 2) isDraggingRight = false;
+});
+
+window.addEventListener('mousemove', e => {
+    if (isDraggingLeft) {
+        rotationY += (e.clientX - lastX) * 0.005;
+        rotationX += (e.clientY - lastY) * 0.005;
+    } else if (isDraggingRight) {
+        panX += (e.clientX - lastX);
+        panY += (e.clientY - lastY);
+    }
+    if (isDraggingLeft || isDraggingRight) {
+        lastX = e.clientX; 
+        lastY = e.clientY;
+    }
+});
+
+canvas.addEventListener('wheel', e => {
+    isSnapping = false;
+    e.preventDefault();
+    const zoomSensitivity = 1.5;
+    cameraZ += e.deltaY * zoomSensitivity;
+    if (cameraZ < 200) cameraZ = 200;
+    if (cameraZ > 5000) cameraZ = 5000;
+}, { passive: false });
+
+function render() {
+    if (!isDraggingLeft && !isDraggingRight && isPlaying) {
+        rotationY += autoRotateY;
+        rotationX += autoRotateX;
+    }
+    
+    // Lerp snap animation if active
+    if (isSnapping) {
+        let diff = Math.abs(rotationY - 0.5) + Math.abs(rotationX - 0.4);
+        rotationY += (0.5 - rotationY) * 0.1;
+        rotationX += (0.4 - rotationX) * 0.1;
+        if (diff < 0.01) isSnapping = false;
+    }
+    
+    project();
+
+    ctx.fillStyle = '#050508';
+    ctx.fillRect(0, 0, width, height);
+
+    ctx.beginPath();
+    ctx.strokeStyle = 'rgba(71, 85, 105, 0.15)'; 
+    ctx.lineWidth = 0.8;
+    for(let i=0; i<edges.length; i++) {
+        let f = edges[i].from;
+        let t = edges[i].to;
+        if (projScale[f] > 0 && projScale[t] > 0) {
+            ctx.moveTo(projX[f], projY[f]);
+            ctx.lineTo(projX[t], projY[t]);
+        }
+    }
+    ctx.stroke();
+
+    ctx.globalCompositeOperation = 'screen';
+    let startIdx = Math.max(0, stepIndex - 40);
+    for(let i = startIdx; i < stepIndex; i++) {
+        let f = traversal[i];
+        let t = traversal[i+1];
+        if (projScale[f] > 0 && projScale[t] > 0) {
+            ctx.beginPath();
+            ctx.moveTo(projX[f], projY[f]);
+            ctx.lineTo(projX[t], projY[t]);
+            let progress = (i - startIdx) / 40; 
+            ctx.lineWidth = 3 * progress * ((projScale[f] + projScale[t])/2);
+            ctx.strokeStyle = `rgba(249, 115, 22, ${progress})`; 
+            ctx.stroke();
+        }
+    }
+    ctx.globalCompositeOperation = 'source-over'; 
+
+    const drawNodesByType = (typeFilter, color, sizeMultiplier) => {
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        for(let i=0; i<numNodes; i++) {
+            if (projScale[i] <= 0 || nodes[i].type !== typeFilter) continue;
+            if (projScale[i] < 0.3 && typeFilter === 'basic') continue; 
+            
+            let r = Math.max(0.5, sizeMultiplier * projScale[i]);
+            ctx.moveTo(projX[i] + r, projY[i]);
+            ctx.arc(projX[i], projY[i], r, 0, 6.28318);
+        }
+        ctx.fill();
+    };
+
+    drawNodesByType('basic', 'rgba(96, 165, 250, 0.4)', 2);
+    drawNodesByType('branch', 'rgba(96, 165, 250, 0.8)', 2.5);
+    drawNodesByType('alloc', '#ef4444', 3.5);
+    drawNodesByType('free', '#22c55e', 3.5);
+
+    let headId = traversal[stepIndex];
+    if (projScale[headId] > 0) {
+        ctx.beginPath();
+        ctx.fillStyle = '#fff';
+        let hr = 5 * projScale[headId];
+        ctx.arc(projX[headId], projY[headId], hr, 0, 6.283);
+        ctx.fill();
+        
+        ctx.beginPath();
+        ctx.strokeStyle = 'rgba(249, 115, 22, 0.8)';
+        ctx.lineWidth = 2 * projScale[headId];
+        ctx.arc(projX[headId], projY[headId], hr + 4*projScale[headId], 0, 6.283);
+        ctx.stroke();
+    }
+
+    requestAnimationFrame(render);
+}
+
+function logicTick() {
+    if (isPlaying) {
+        stepIndex = (stepIndex + 1) % traversal.length;
+    }
+    let speedVal = parseInt(speedSlider.value);
+    let delay = speedVal === 100 ? 5 : (100 - speedVal) * 5; 
+    setTimeout(logicTick, delay);
+}
+
+playPauseBtn.onclick = () => {
+    isPlaying = !isPlaying; 
+    playPauseBtn.innerText = isPlaying ? '⏸ Pause' : '▶ Resume';
+};
+
+speedSlider.oninput = () => {
+    const v = parseInt(speedSlider.value);
+    if (v > 80) speedLabel.innerText = 'Fast';
+    else if (v < 20) speedLabel.innerText = 'Slow';
+    else speedLabel.innerText = 'Normal';
+};
+
+render();
+logicTick();
+</script>
+</body>
+</html>
+"""
+
+escaped_html = html_content.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n')
+
+lpp_code = f'''# packages/lpp-analyzer/src/visualization.lpp
+# Generates an interactive N-Dimensional visualization of the analyzer's Ownership and CFG graphs.
+
+def generate_html_visualization(output_path: Str) -> Int:
+    mut html := "{escaped_html}"
+    return write_file(output_path, html)
+'''
+
+with open('packages/lpp-analyzer/src/visualization.lpp', 'w') as f:
+    f.write(lpp_code)
+
+print("Generated UI-updated visualization.lpp successfully.")

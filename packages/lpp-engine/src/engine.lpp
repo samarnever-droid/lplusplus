@@ -1,0 +1,28 @@
+# L++ 2D/3D Game Engine (Entity Component System)
+
+struct Vector3:
+    x: Float
+    y: Float
+    z: Float
+
+struct Entity:
+    id: Int
+    active: Bool
+
+struct TransformComponent:
+    entity_id: Int
+    position: Vector3
+
+def engine_init():
+    print_str("[Engine] Initializing L++ Game Engine...\n")
+
+def create_entity(id_val: Int) -> Entity:
+    mut e := Entity(id_val, true)
+    return e
+
+def create_transform(e_id: Int, px: Float, py: Float, pz: Float) -> TransformComponent:
+    mut t := TransformComponent(e_id, Vector3(px, py, pz))
+    return t
+
+def engine_update(delta_time: Float):
+    print_str("[Engine] Update tick...\n")

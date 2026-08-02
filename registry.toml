@@ -1,0 +1,32 @@
+# registry.toml
+# Simple alternative to the heavy JSON registry to aid in self-hosting L++
+
+[registry]
+name = "L++ Package Registry (TOML Edition)"
+version = "1.0"
+url = "https://github.com/samarnever-droid/lplusplus/registry"
+
+[packages.lpp-zip]
+git = "https://github.com/samarnever-droid/lplusplus.git"
+path = "packages/lpp-zip"
+version = "0.1.0"
+
+[packages.lpp-math]
+git = "https://github.com/samarnever-droid/lplusplus.git"
+path = "stdlib/math.lpp"
+version = "0.1.0"
+
+[packages.lpp-opencode]
+git = "https://github.com/samarnever-droid/lpp-opencode.git"
+path = "src/main.lpp"
+version = "0.6.0"
+
+[packages.lreact]
+git = "https://github.com/samarnever-droid/lreact.git"
+path = "src/lreact.lpp"
+version = "1.0.0"
+
+[packages.lppdb]
+git = "https://github.com/samarnever-droid/lplusplus.git"
+path = "packages/lppdb"
+version = "2.1.0"

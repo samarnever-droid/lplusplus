@@ -1,0 +1,15 @@
+{
+  "schema": "c2lpp-project",
+  "schema_version": 1,
+  "mode": "frontend",
+  "input": "fixtures/frontend_profile.c",
+  "manifest": "",
+  "name": "frontend_profile",
+  "library": "frontend_profile",
+  "output": "generated/frontend-profile",
+  "strict": true,
+  "preprocess": false,
+  "compiler": "cc",
+  "source_version": "",
+  "source_sha256": ""
+}
