@@ -114,6 +114,10 @@ void lpp_panic(const char *fmt, ...) {
     exit(101);
 }
 
+#if !defined(_WIN32)
+#include <unistd.h>
+#endif
+
 static void lpp_signal_handler(int sig) {
     const char *sig_name = "Unknown Signal";
     switch (sig) {
@@ -122,7 +126,25 @@ static void lpp_signal_handler(int sig) {
         case SIGABRT: sig_name = "Abort Signal (SIGABRT) - Process abort triggered"; break;
         case SIGILL:  sig_name = "Illegal Instruction (SIGILL) - Invalid CPU instruction execute attempt"; break;
     }
-    lpp_panic("Fatal Hardware/OS Signal Received: %s", sig_name);
+#if defined(_WIN32)
+    HANDLE hErr = GetStdHandle(STD_ERROR_HANDLE);
+    if (hErr && hErr != INVALID_HANDLE_VALUE) {
+        DWORD written = 0;
+        const char *p1 = "\n===================================================================\n💥 L++ RUNTIME PANIC (Signal)\n===================================================================\nReason: Fatal Hardware/OS Signal Received: ";
+        WriteFile(hErr, p1, (DWORD)strlen(p1), &written, NULL);
+        WriteFile(hErr, sig_name, (DWORD)strlen(sig_name), &written, NULL);
+        const char *p2 = "\n===================================================================\n\n";
+        WriteFile(hErr, p2, (DWORD)strlen(p2), &written, NULL);
+    }
+    ExitProcess(101);
+#else
+    const char *p1 = "\n===================================================================\n💥 L++ RUNTIME PANIC (Signal)\n===================================================================\nReason: Fatal Hardware/OS Signal Received: ";
+    (void)write(2, p1, strlen(p1));
+    (void)write(2, sig_name, strlen(sig_name));
+    const char *p2 = "\n===================================================================\n\n";
+    (void)write(2, p2, strlen(p2));
+    _exit(101);
+#endif
 }
 
 void lpp_init_crash_handler(void) {
@@ -223,27 +245,72 @@ int64_t lpp_parse_int(const char *str) {
 
 /* ── File I/O ─────────────────────────────────────────────────────────────── */
 
+#include <sys/stat.h>
+
+#if defined(_WIN32)
+#  define LPP_STAT_STRUCT struct _stat64
+#  define LPP_FSTAT _fstat64
+#  define LPP_FILENO _fileno
+#  define LPP_S_ISREG(m) (((m) & _S_IFREG) == _S_IFREG)
+#else
+#  define LPP_STAT_STRUCT struct stat
+#  define LPP_FSTAT fstat
+#  define LPP_FILENO fileno
+#  define LPP_S_ISREG(m) S_ISREG(m)
+#endif
+
 /* Read entire file contents. Returns heap-allocated string or NULL on error. */
 char *lpp_read_file(const char *path) {
+    if (!path) return NULL;
     FILE *f = fopen(path, "rb");
     if (!f) return NULL;
-    fseek(f, 0, SEEK_END);
-    long size = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    if (size < 0) { fclose(f); return NULL; }
-    char *buf = (char *)lpp_arc_alloc((int64_t)size + 1);
-    if (!buf) { fclose(f); return NULL; }
-    size_t wanted = (size_t)size;
-    size_t read = fread(buf, 1, wanted, f);
-    if (read != wanted && ferror(f)) {
-        lpp_arc_release(buf);
-        fclose(f);
-        return NULL;
+
+    LPP_STAT_STRUCT st;
+    int64_t size = -1;
+    int is_reg = 0;
+
+    if (LPP_FSTAT(LPP_FILENO(f), &st) == 0) {
+        if (LPP_S_ISREG(st.st_mode)) {
+            size = (int64_t)st.st_size;
+            is_reg = 1;
+        }
     }
-    /* A short read at EOF is valid; return precisely the bytes obtained. */
-    buf[read] = '\0';
-    fclose(f);
-    return buf;
+
+    if (is_reg && size >= 0) {
+        char *buf = (char *)lpp_arc_alloc(size + 1);
+        if (!buf) { fclose(f); return NULL; }
+        size_t read = fread(buf, 1, (size_t)size, f);
+        buf[read] = '\0';
+        fclose(f);
+        return buf;
+    } else {
+        size_t cap = 4096;
+        size_t len = 0;
+        char *buf = (char *)lpp_arc_alloc((int64_t)cap);
+        if (!buf) { fclose(f); return NULL; }
+
+        for (;;) {
+            if (len + 1024 >= cap) {
+                size_t new_cap = cap * 2;
+                char *new_buf = (char *)lpp_arc_alloc((int64_t)new_cap);
+                if (!new_buf) {
+                    lpp_arc_release(buf);
+                    fclose(f);
+                    return NULL;
+                }
+                memcpy(new_buf, buf, len);
+                lpp_arc_release(buf);
+                buf = new_buf;
+                cap = new_cap;
+            }
+            size_t n = fread(buf + len, 1, 1024, f);
+            if (n == 0) break;
+            len += n;
+        }
+        buf[len] = '\0';
+        fclose(f);
+        return buf;
+    }
 }
 
 /* Write data to file. Returns 0 on success, -1 on error. */
@@ -294,10 +361,16 @@ int64_t lpp_file_size(const char *path) {
     if (!path) return -1;
     FILE *f = fopen(path, "rb");
     if (!f) return -1;
-    if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return -1; }
-    long size = ftell(f);
+
+    LPP_STAT_STRUCT st;
+    int64_t size = -1;
+    if (LPP_FSTAT(LPP_FILENO(f), &st) == 0) {
+        if (LPP_S_ISREG(st.st_mode)) {
+            size = (int64_t)st.st_size;
+        }
+    }
     fclose(f);
-    return size < 0 ? -1 : (int64_t)size;
+    return size;
 }
 
 /* ── System Metrics ──────────────────────────────────────────────────────── */
@@ -322,14 +395,44 @@ int64_t lpp_sys_mem_free(void) {
     return 8192;
 }
 
+static uint64_t lpp__filetime_to_u64(const FILETIME *ft) {
+    return ((uint64_t)ft->dwHighDateTime << 32) | ft->dwLowDateTime;
+}
+
 int64_t lpp_sys_cpu_usage(void) {
-    MEMORYSTATUSEX status;
-    memset(&status, 0, sizeof(status));
-    status.dwLength = sizeof(status);
-    if (GlobalMemoryStatusEx(&status)) {
-        return (int64_t)status.dwMemoryLoad;
+    static uint64_t last_idle = 0;
+    static uint64_t last_kernel = 0;
+    static uint64_t last_user = 0;
+
+    FILETIME idle, kernel, user;
+    if (!GetSystemTimes(&idle, &kernel, &user)) return 5;
+
+    uint64_t now_idle = lpp__filetime_to_u64(&idle);
+    uint64_t now_kernel = lpp__filetime_to_u64(&kernel);
+    uint64_t now_user = lpp__filetime_to_u64(&user);
+
+    if (last_idle == 0) {
+        Sleep(15);
+        if (!GetSystemTimes(&idle, &kernel, &user)) return 5;
+        now_idle = lpp__filetime_to_u64(&idle);
+        now_kernel = lpp__filetime_to_u64(&kernel);
+        now_user = lpp__filetime_to_u64(&user);
     }
-    return 12;
+
+    uint64_t idle_diff = now_idle - last_idle;
+    uint64_t kernel_diff = now_kernel - last_kernel;
+    uint64_t user_diff = now_user - last_user;
+
+    last_idle = now_idle;
+    last_kernel = now_kernel;
+    last_user = now_user;
+
+    uint64_t total_diff = kernel_diff + user_diff;
+    if (total_diff == 0) return 0;
+    if (total_diff >= idle_diff) {
+        return (int64_t)((total_diff - idle_diff) * 100 / total_diff);
+    }
+    return 0;
 }
 
 int64_t lpp_sys_uptime(void) {
@@ -759,7 +862,7 @@ void *lpp_arena_alloc(int64_t size, void *raw_region, LppArcDestructor destructo
 #if defined(_MSC_VER)
     InterlockedIncrement(&region->refs);
 #else
-    atomic_fetch_add_explicit(&region->refs, 1, memory_order_relaxed);
+    atomic_fetch_add_explicit(&region->refs, 1, memory_order_release);
 #endif
     lpp__arena_lock_release();
     return payload;
@@ -842,11 +945,9 @@ void lpp_arc_retain_local(void *ptr) {
     LppArcHeader *hdr = (LppArcHeader *)ptr - 1;
     if (lpp__is_immortal(hdr)) return;
 #if defined(_MSC_VER)
-    hdr->refcount += 1;
+    InterlockedIncrement(&hdr->refcount);
 #else
-    atomic_store_explicit(&hdr->refcount,
-        atomic_load_explicit(&hdr->refcount, memory_order_relaxed) + 1,
-        memory_order_relaxed);
+    atomic_fetch_add_explicit(&hdr->refcount, 1, memory_order_relaxed);
 #endif
 }
 
@@ -855,11 +956,9 @@ void lpp_arc_release_local(void *ptr) {
     LppArcHeader *hdr = (LppArcHeader *)ptr - 1;
     if (lpp__is_immortal(hdr)) return;
 #if defined(_MSC_VER)
-    int32_t prev = hdr->refcount;
-    hdr->refcount = prev - 1;
+    int32_t prev = InterlockedExchangeAdd(&hdr->refcount, -1);
 #else
-    int32_t prev = atomic_load_explicit(&hdr->refcount, memory_order_relaxed);
-    atomic_store_explicit(&hdr->refcount, prev - 1, memory_order_relaxed);
+    int32_t prev = atomic_fetch_sub_explicit(&hdr->refcount, 1, memory_order_relaxed);
 #endif
     if (prev == 1) {
         LppArenaRegion *arena = lpp__arena_for_header(hdr);

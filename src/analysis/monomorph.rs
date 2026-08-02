@@ -225,14 +225,14 @@ impl Monomorphizer {
                     self.walk_expr(base, generic_funcs, generic_structs, trait_impls);
                     self.walk_expr(value, generic_funcs, generic_structs, trait_impls);
                 }
-                Stmt::If { condition, then_block, else_block } => {
+                Stmt::If { condition, then_block, else_block, .. } => {
                     self.walk_expr(condition, generic_funcs, generic_structs, trait_impls);
                     self.walk_statements(then_block, generic_funcs, generic_structs, trait_impls);
                     if let Some(eb) = else_block {
                         self.walk_statements(eb, generic_funcs, generic_structs, trait_impls);
                     }
                 }
-                Stmt::While { condition, body } => {
+                Stmt::While { condition, body, .. } => {
                     self.walk_expr(condition, generic_funcs, generic_structs, trait_impls);
                     self.walk_statements(body, generic_funcs, generic_structs, trait_impls);
                 }
@@ -864,14 +864,14 @@ impl Monomorphizer {
                     self.substitute_expr(base, map);
                     self.substitute_expr(value, map);
                 }
-                Stmt::If { condition, then_block, else_block } => {
+                Stmt::If { condition, then_block, else_block, .. } => {
                     self.substitute_expr(condition, map);
                     self.substitute_stmts(then_block, map);
                     if let Some(eb) = else_block {
                         self.substitute_stmts(eb, map);
                     }
                 }
-                Stmt::While { condition, body } => {
+                Stmt::While { condition, body, .. } => {
                     self.substitute_expr(condition, map);
                     self.substitute_stmts(body, map);
                 }
@@ -1158,14 +1158,14 @@ fn specialize_generic_enums(program: &mut Program) -> Result<(), String> {
                     rewrite_expr(base, templates, generated, requested)?;
                     rewrite_expr(value, templates, generated, requested)?;
                 }
-                Stmt::If { condition, then_block, else_block } => {
+                Stmt::If { condition, then_block, else_block, .. } => {
                     rewrite_expr(condition, templates, generated, requested)?;
                     rewrite_stmts(then_block, templates, generated, requested)?;
                     if let Some(block) = else_block {
                         rewrite_stmts(block, templates, generated, requested)?;
                     }
                 }
-                Stmt::While { condition, body } => {
+                Stmt::While { condition, body, .. } => {
                     rewrite_expr(condition, templates, generated, requested)?;
                     rewrite_stmts(body, templates, generated, requested)?;
                 }

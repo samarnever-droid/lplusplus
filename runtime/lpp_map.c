@@ -9,6 +9,8 @@
 
 extern void *lpp_arc_alloc_with_destructor(int64_t size, void (*destructor)(void *));
 extern void  lpp_arc_release(void *ptr);
+extern void  lpp_arc_retain(void *ptr);
+extern void lpp_panic(const char *fmt, ...);
 
 typedef struct LppMapEntry {
     int64_t key;
@@ -21,6 +23,7 @@ typedef struct LppMap {
     LppMapEntry *entries;
     int64_t cap;
     int64_t len;
+    int arc_values; /* 1 = values are ARC-managed pointers; retain on insert, release on overwrite/remove/destroy */
 } LppMap;
 
 static uint64_t lpp_hash_str(const char *s) {
@@ -48,27 +51,47 @@ static uint64_t lpp_hash_int(int64_t key) {
 static void lpp_map_destroy(void *payload) {
     LppMap *m = (LppMap *)payload;
     if (!m) return;
+    if (m->arc_values && m->entries) {
+        for (int64_t i = 0; i < m->cap; i++) {
+            if (m->entries[i].occupied == 1) {
+                lpp_arc_release((void *)(uintptr_t)m->entries[i].val);
+            }
+        }
+    }
     if (m->entries) free(m->entries);
     m->entries = NULL;
     m->cap = 0;
     m->len = 0;
 }
 
-void *lpp_map_new(void) {
+static void *lpp_map_new_with_mode(int arc_values) {
     LppMap *m = (LppMap *)lpp_arc_alloc_with_destructor((int64_t)sizeof(LppMap), lpp_map_destroy);
     if (!m) return NULL;
     m->cap = 16;
     m->len = 0;
+    m->arc_values = arc_values;
     m->entries = (LppMapEntry *)calloc((size_t)m->cap, sizeof(LppMapEntry));
+    if (!m->entries) lpp_panic("out of memory while allocating map");
     return m;
 }
 
-static void lpp_map_rehash(LppMap *m) {
+void *lpp_map_new(void) {
+    return lpp_map_new_with_mode(0);
+}
+
+void *lpp_map_new_arc(void) {
+    return lpp_map_new_with_mode(1);
+}
+
+static void lpp_map_rehash(LppMap *m, int64_t new_cap) {
     int64_t old_cap = m->cap;
     LppMapEntry *old_entries = m->entries;
 
-    m->cap = old_cap * 2;
+    m->cap = new_cap;
     m->entries = (LppMapEntry *)calloc((size_t)m->cap, sizeof(LppMapEntry));
+    if (!m->entries) {
+        lpp_panic("out of memory while rehashing map");
+    }
     m->len = 0;
 
     for (int64_t i = 0; i < old_cap; i++) {
@@ -93,8 +116,14 @@ static void lpp_map_rehash(LppMap *m) {
 
 static void lpp_map_put_internal(LppMap *m, int64_t key, int64_t val, int is_str) {
     if (!m) return;
-    if (m->len * 10 >= m->cap * 7) {
-        lpp_map_rehash(m);
+    int64_t occupied_slots = 0;
+    for (int64_t i = 0; i < m->cap; i++) {
+        if (m->entries[i].occupied != 0) occupied_slots++;
+    }
+    if (occupied_slots * 10 >= m->cap * 7) {
+        int64_t new_cap = (m->len * 100 < m->cap * 35) ? m->cap : m->cap * 2;
+        if (new_cap < 16) new_cap = 16;
+        lpp_map_rehash(m, new_cap);
     }
 
     uint64_t h = is_str ? lpp_hash_str((const char *)(uintptr_t)key) : lpp_hash_int(key);
@@ -107,6 +136,11 @@ static void lpp_map_put_internal(LppMap *m, int64_t key, int64_t val, int is_str
                 ? (strcmp((const char *)(uintptr_t)m->entries[idx].key, (const char *)(uintptr_t)key) == 0)
                 : (m->entries[idx].key == key);
             if (match) {
+                /* Overwrite: retain new, release old if tracking managed values */
+                if (m->arc_values) {
+                    lpp_arc_retain((void *)(uintptr_t)val);
+                    lpp_arc_release((void *)(uintptr_t)m->entries[idx].val);
+                }
                 m->entries[idx].val = val;
                 return;
             }
@@ -121,6 +155,7 @@ static void lpp_map_put_internal(LppMap *m, int64_t key, int64_t val, int is_str
         idx = first_tombstone;
     }
 
+    if (m->arc_values) lpp_arc_retain((void *)(uintptr_t)val);
     m->entries[idx].key = key;
     m->entries[idx].val = val;
     m->entries[idx].is_str_key = is_str;
@@ -227,6 +262,7 @@ void lpp_map_remove(void *map, int64_t key) {
 
     while (m->entries[idx].occupied != 0) {
         if (m->entries[idx].occupied == 1 && m->entries[idx].is_str_key == 0 && m->entries[idx].key == key) {
+            if (m->arc_values) lpp_arc_release((void *)(uintptr_t)m->entries[idx].val);
             m->entries[idx].occupied = 2;
             m->len--;
             return;
@@ -247,6 +283,7 @@ void lpp_map_remove_str(void *map, const char *key) {
     while (m->entries[idx].occupied != 0) {
         if (m->entries[idx].occupied == 1 && m->entries[idx].is_str_key == 1) {
             if (strcmp((const char *)(uintptr_t)m->entries[idx].key, key) == 0) {
+                if (m->arc_values) lpp_arc_release((void *)(uintptr_t)m->entries[idx].val);
                 m->entries[idx].occupied = 2;
                 m->len--;
                 return;

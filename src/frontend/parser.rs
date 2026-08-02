@@ -867,6 +867,8 @@ impl Parser {
                 condition,
                 then_block,
                 else_block,
+                then_scope: std::cell::Cell::new(None),
+                else_scope: std::cell::Cell::new(None),
             });
         }
 
@@ -892,7 +894,11 @@ impl Parser {
                 self.skip_newlines();
             }
             self.match_token(&Token::Dedent);
-            return Ok(Stmt::While { condition, body });
+            return Ok(Stmt::While {
+                condition,
+                body,
+                body_scope: std::cell::Cell::new(None),
+            });
         }
 
         // match subject:
@@ -1025,6 +1031,7 @@ impl Parser {
                             step,
                             body,
                             binding_id: std::cell::Cell::new(None),
+                            body_scope: std::cell::Cell::new(None),
                         });
                     }
                 }
@@ -1035,6 +1042,7 @@ impl Parser {
                 list: list_expr,
                 body,
                 binding_id: std::cell::Cell::new(None),
+                body_scope: std::cell::Cell::new(None),
             });
         }
 

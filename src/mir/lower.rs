@@ -812,6 +812,7 @@ impl<'a> MirLowerCtx<'a> {
                 condition,
                 then_block,
                 else_block,
+                ..
             } => {
                 let cond_op = self.lower_expr(builder, condition, binding_map)?;
                 let then_block_id = builder.new_block();
@@ -848,7 +849,7 @@ impl<'a> MirLowerCtx<'a> {
 
                 builder.switch_to_block(merge_block_id);
             }
-            Stmt::While { condition, body } => {
+            Stmt::While { condition, body, .. } => {
                 let cond_block_id = builder.new_block();
                 let body_block_id = builder.new_block();
                 let end_block_id = builder.new_block();
@@ -887,6 +888,7 @@ impl<'a> MirLowerCtx<'a> {
                 step,
                 body,
                 binding_id,
+                ..
             } => {
                 let start_op = self.lower_expr(builder, start, binding_map)?;
                 let end_op = self.lower_expr(builder, end, binding_map)?;
@@ -956,6 +958,7 @@ impl<'a> MirLowerCtx<'a> {
                 list,
                 body,
                 binding_id,
+                ..
             } => {
                 let list_op = self.lower_expr(builder, list, binding_map)?;
                 let list_ty = self.expr_type_hint(list, builder, binding_map);
@@ -1905,6 +1908,19 @@ impl<'a> MirLowerCtx<'a> {
                                 }
                                 _ => "lpp_map_get".to_string(),
                             })
+                        } else if (name == "map_new" || name == "lpp_map_new") && args.is_empty() {
+                            // Select arc variant when the map's value type is a managed object.
+                            // The local's inferred type tells us the Map[K,V] shape; if V is
+                            // managed (struct, str, generic collection, tuple, task) we need the
+                            // arc-tracking constructor so the runtime calls retain on insert and
+                            // release on overwrite/remove/destroy.
+                            let is_arc_val = match &builder.function.locals[temp.0].ty {
+                                TypeRef::Generic(n, params) if n == "Map" && params.len() == 2 => {
+                                    params[1].is_managed()
+                                }
+                                _ => false,
+                            };
+                            Some(if is_arc_val { "lpp_map_new_arc".to_string() } else { "lpp_map_new".to_string() })
                         } else if matches!(
                             name.as_str(),
                             "list_push" | "lpp_list_push"

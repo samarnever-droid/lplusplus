@@ -69,11 +69,11 @@ pub fn run(program: &mut MirProgram) {
 
 fn fold_int(op: BinaryOperator, a: i64, b: i64) -> Option<i64> {
     match op {
-        BinaryOperator::Add => Some(a.wrapping_add(b)),
-        BinaryOperator::Subtract => Some(a.wrapping_sub(b)),
-        BinaryOperator::Multiply => Some(a.wrapping_mul(b)),
-        BinaryOperator::Divide if b != 0 => Some(a.wrapping_div(b)),
-        BinaryOperator::Modulo if b != 0 => Some(a.wrapping_rem(b)),
+        BinaryOperator::Add => a.checked_add(b),
+        BinaryOperator::Subtract => a.checked_sub(b),
+        BinaryOperator::Multiply => a.checked_mul(b),
+        BinaryOperator::Divide if b != 0 => a.checked_div(b),
+        BinaryOperator::Modulo if b != 0 => a.checked_rem(b),
         _ => None,
     }
 }

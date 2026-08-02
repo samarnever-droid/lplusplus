@@ -10,6 +10,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <limits.h>
+
+extern void lpp_panic(const char *fmt, ...);
 
 /* ── ARC helpers (declared in lpp_runtime.c) ──────────────────────────── */
 extern void *lpp_arc_alloc(int64_t size);
@@ -89,7 +92,13 @@ char *lpp_str_replace(const char *s, const char *old, const char *new_) {
     const char *scan = s;
     while ((scan = strstr(scan, old))) { count++; scan += olen; }
 
-    size_t outlen = slen + (size_t)count * (nlen - olen) + 1;
+    int64_t delta = (int64_t)nlen - (int64_t)olen;
+    if (count > 0 && delta > 0 && (int64_t)slen > INT64_MAX - count * delta) {
+        lpp_panic("str_replace: output size overflow");
+    }
+    int64_t outlen_signed = (int64_t)slen + count * delta;
+    if (outlen_signed < 0) outlen_signed = 0;
+    size_t outlen = (size_t)outlen_signed + 1;
     char *out = (char *)lpp_arc_alloc((int64_t)outlen);
     if (!out) return lpp_empty_str();
 
@@ -145,6 +154,9 @@ char *lpp_str_repeat(const char *s, int64_t n) {
     if (!s || n <= 0) return lpp_empty_str();
     size_t slen = strlen(s);
     if (slen == 0) return lpp_empty_str();
+    if ((int64_t)slen > INT64_MAX / n) {
+        lpp_panic("str_repeat: length overflow");
+    }
     size_t total = slen * (size_t)n;
     char *out = (char *)lpp_arc_alloc((int64_t)(total + 1));
     if (!out) return lpp_empty_str();

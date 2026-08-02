@@ -143,10 +143,13 @@ pub enum Stmt {
         condition: Expr,
         then_block: Vec<Stmt>,
         else_block: Option<Vec<Stmt>>,
+        then_scope: std::cell::Cell<Option<usize>>,
+        else_scope: std::cell::Cell<Option<usize>>,
     },
     While {
         condition: Expr,
         body: Vec<Stmt>,
+        body_scope: std::cell::Cell<Option<usize>>,
     },
     ForRange {
         var_name: String,
@@ -155,12 +158,14 @@ pub enum Stmt {
         step: Option<Expr>,
         body: Vec<Stmt>,
         binding_id: std::cell::Cell<Option<usize>>,
+        body_scope: std::cell::Cell<Option<usize>>,
     },
     ForIn {
         var_name: String,
         list: Expr,
         body: Vec<Stmt>,
         binding_id: std::cell::Cell<Option<usize>>,
+        body_scope: std::cell::Cell<Option<usize>>,
     },
     Break,
     Continue,

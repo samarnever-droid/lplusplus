@@ -120,6 +120,17 @@ fn field_targets(ty: &TypeRef, out: &mut Vec<StructTypeId>) {
                 field_targets(a, out);
             }
         }
+        TypeRef::Tuple(tys) => {
+            for t in tys {
+                field_targets(t, out);
+            }
+        }
+        TypeRef::Slice(inner) => {
+            field_targets(inner, out);
+        }
+        TypeRef::Task(inner) => {
+            field_targets(inner, out);
+        }
         _ => {}
     }
 }
@@ -128,13 +139,29 @@ fn field_targets(ty: &TypeRef, out: &mut Vec<StructTypeId>) {
 ///
 /// Deterministic: nodes are visited in `StructTypeId` order and fields in
 /// declaration order, so the same program always demotes the same field.
-pub fn break_cycles(table: &TypeTable) -> OwnershipGraph {
+///
+/// `trait_impls` maps struct name to the set of trait names it implements.
+/// For each field typed `TypeRef::Unresolved(name)` where `name` is a trait
+/// (i.e., it appears as a value in `trait_impls`), a conservative edge is
+/// added from the owning struct to every struct implementing that trait.
+/// This is conservative but sound: it may demote an edge that didn't actually
+/// form a cycle at runtime (false positive = extra weak field, never unsound).
+pub fn break_cycles_with_traits(
+    table: &TypeTable,
+    trait_impls: &HashMap<String, HashSet<String>>,
+) -> OwnershipGraph {
     #[derive(Clone, Copy, PartialEq)]
     enum Colour {
         Unvisited,
         Visiting,
         Done,
     }
+
+    // Collect the set of known trait names (values of trait_impls).
+    let trait_names: HashSet<&str> = trait_impls
+        .values()
+        .flat_map(|set| set.iter().map(String::as_str))
+        .collect();
 
     let n = table.definitions.len();
     let mut colour = vec![Colour::Unvisited; n];
@@ -145,11 +172,30 @@ pub fn break_cycles(table: &TypeTable) -> OwnershipGraph {
     for (i, def) in table.definitions.iter().enumerate() {
         let mut list = Vec::new();
         for (fname, fty) in &def.fields {
+            // 1. Direct / container targets.
             let mut targets = Vec::new();
             field_targets(fty, &mut targets);
             for t in targets {
                 if t.0 < n {
                     list.push((fname.clone(), t));
+                }
+            }
+            // 2. Trait-typed fields: conservative edges to every implementor.
+            if let TypeRef::Unresolved(type_name) = fty {
+                if trait_names.contains(type_name.as_str()) {
+                    // Every struct that implements this trait is a potential
+                    // runtime target of this field.
+                    for (implementor_name, traits) in trait_impls {
+                        if traits.contains(type_name.as_str()) {
+                            if let Some(&impl_id) =
+                                table.structs_by_name.get(implementor_name)
+                            {
+                                if impl_id.0 < n {
+                                    list.push((fname.clone(), impl_id));
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -198,6 +244,13 @@ pub fn break_cycles(table: &TypeTable) -> OwnershipGraph {
     }
 
     graph
+}
+
+/// Convenience wrapper: calls [`break_cycles_with_traits`] with an empty trait map.
+/// Existing call sites that don't have trait information are unaffected.
+#[allow(dead_code)]
+pub fn break_cycles(table: &TypeTable) -> OwnershipGraph {
+    break_cycles_with_traits(table, &HashMap::new())
 }
 
 #[cfg(test)]
@@ -396,6 +449,27 @@ mod tests {
         let g = break_cycles(&t);
         assert!(g.is_weak(StructTypeId(0), "next"));
         assert!(!g.is_weak(StructTypeId(0), "absent"));
+    }
+
+    #[test]
+    fn indirect_cycle_through_tuple_is_broken() {
+        let mut t = TypeTable::new();
+        t.register_struct("A".to_string());
+        t.register_struct("B".to_string());
+
+        // S0 (A) has field `b` of type Tuple[B, Int]
+        t.definitions[0].fields = vec![
+            ("b".to_string(), TypeRef::Tuple(vec![TypeRef::Custom(StructTypeId(1)), TypeRef::Int])),
+        ];
+        // S1 (B) has field `a` of type A
+        t.definitions[1].fields = vec![
+            ("a".to_string(), TypeRef::Custom(StructTypeId(0))),
+        ];
+
+        let g = break_cycles(&t);
+        let weak = g.edges.iter().filter(|e| e.kind == EdgeKind::NonOwning).count();
+        assert_eq!(weak, 1, "exactly one edge should be demoted in cycle through tuple");
+        assert!(owning_subgraph_acyclic(&g, 2));
     }
 
     /// Used by the doc comment's totality argument; kept as a named check so

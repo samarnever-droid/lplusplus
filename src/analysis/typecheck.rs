@@ -7,7 +7,6 @@ pub struct TypeChecker<'a> {
     pub type_table: TypeTable,
     pub symbol_table: &'a mut SymbolTable,
     pub closure_scope_idx: usize,
-    pub block_scope_idx: usize, // BUG-11: tracks Block scopes for if/while bodies
     pub func_return_types: HashMap<String, TypeRef>,
     pub func_param_types: HashMap<String, Vec<TypeRef>>,
     pub trait_names: std::collections::HashSet<String>,
@@ -68,7 +67,6 @@ impl<'a> TypeChecker<'a> {
             type_table: TypeTable::new(),
             symbol_table,
             closure_scope_idx: 0,
-            block_scope_idx: 0,
             func_return_types: HashMap::new(),
             func_param_types: HashMap::new(),
             trait_names: std::collections::HashSet::new(),
@@ -81,17 +79,7 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
-    /// BUG-11: Find the next Block scope in document order and advance the index.
-    /// Falls back to `parent` if no block scope is found (defensive; shouldn't happen).
-    fn next_block_scope(&mut self, parent: ScopeId) -> ScopeId {
-        for i in self.block_scope_idx..self.symbol_table.scopes.len() {
-            if let ScopeKind::Block = self.symbol_table.scopes[i].kind {
-                self.block_scope_idx = i + 1;
-                return ScopeId(i);
-            }
-        }
-        parent // defensive fallback
-    }
+
 
     fn enclosing_async_function(&self, scope: ScopeId) -> Option<&str> {
         let mut current = Some(scope);
@@ -184,6 +172,17 @@ impl<'a> TypeChecker<'a> {
                     for arg in args {
                         collect_custom_ids(arg, ids);
                     }
+                }
+                TypeRef::Tuple(tys) => {
+                    for t in tys {
+                        collect_custom_ids(t, ids);
+                    }
+                }
+                TypeRef::Slice(inner) => {
+                    collect_custom_ids(inner, ids);
+                }
+                TypeRef::Task(inner) => {
+                    collect_custom_ids(inner, ids);
                 }
                 _ => {}
             }
@@ -475,11 +474,11 @@ impl<'a> TypeChecker<'a> {
                     Stmt::AssignField { base, value, .. } => {
                         collect_expr_calls(base, calls); collect_expr_calls(value, calls);
                     }
-                    Stmt::If { condition, then_block, else_block } => {
+                    Stmt::If { condition, then_block, else_block, .. } => {
                         collect_expr_calls(condition, calls); collect_stmt_calls(then_block, calls);
                         if let Some(block) = else_block { collect_stmt_calls(block, calls); }
                     }
-                    Stmt::While { condition, body } => {
+                    Stmt::While { condition, body, .. } => {
                         collect_expr_calls(condition, calls); collect_stmt_calls(body, calls);
                     }
                     Stmt::ForRange { start, end, step, body, .. } => {
@@ -700,32 +699,36 @@ impl<'a> TypeChecker<'a> {
                 condition,
                 then_block,
                 else_block,
+                then_scope,
+                else_scope,
             } => {
                 let cond_ty = self.infer_expr(condition, current_scope, None)?;
-                if cond_ty != TypeRef::Bool {
-                    if cond_ty != TypeRef::Int {
-                        return Err(format!(
-                            "'if' condition must be Bool or Int, found {:?}",
-                            cond_ty
-                        ));
-                    }
+                if cond_ty != TypeRef::Bool && cond_ty != TypeRef::Int {
+                    return Err(format!(
+                        "'if' condition must be Bool or Int, found {:?}",
+                        cond_ty
+                    ));
                 }
 
                 // BUG-11: use the block's own scope, not the outer function scope
-                let then_scope = self.next_block_scope(current_scope);
+                let then_scope = ScopeId(then_scope.get().unwrap());
                 for stmt in then_block {
                     self.infer_stmt(stmt, then_scope)?
                 }
 
                 if let Some(else_b) = else_block {
                     // BUG-11: use the block's own scope, not the outer function scope
-                    let else_scope = self.next_block_scope(current_scope);
+                    let else_scope = ScopeId(else_scope.get().unwrap());
                     for stmt in else_b {
                         self.infer_stmt(stmt, else_scope)?
                     }
                 }
             }
-            Stmt::While { condition, body } => {
+            Stmt::While {
+                condition,
+                body,
+                body_scope,
+            } => {
                 let cond_ty = self.infer_expr(condition, current_scope, None)?;
                 if cond_ty != TypeRef::Bool && cond_ty != TypeRef::Int {
                     return Err(format!(
@@ -735,7 +738,7 @@ impl<'a> TypeChecker<'a> {
                 }
 
                 // BUG-11: use the while body's own block scope
-                let body_scope = self.next_block_scope(current_scope);
+                let body_scope = ScopeId(body_scope.get().unwrap());
                 for stmt in body {
                     self.infer_stmt(stmt, body_scope)?;
                 }
@@ -747,6 +750,7 @@ impl<'a> TypeChecker<'a> {
                 step: _,
                 body,
                 binding_id,
+                body_scope,
             } => {
                 let start_ty = self.infer_expr(start, current_scope, None)?;
                 let end_ty = self.infer_expr(end, current_scope, None)?;
@@ -759,7 +763,7 @@ impl<'a> TypeChecker<'a> {
                 if let Some(ast_id) = binding_id.get() {
                     self.symbol_table.bindings[ast_id].ty = Some(TypeRef::Int);
                 }
-                let body_scope = self.next_block_scope(current_scope);
+                let body_scope = ScopeId(body_scope.get().unwrap());
                 for stmt in body {
                     self.infer_stmt(stmt, body_scope)?;
                 }
@@ -769,6 +773,7 @@ impl<'a> TypeChecker<'a> {
                 list,
                 body,
                 binding_id,
+                body_scope,
             } => {
                 let list_ty = self.infer_expr(list, current_scope, None)?;
                 let elem_ty = match list_ty {
@@ -781,7 +786,7 @@ impl<'a> TypeChecker<'a> {
                 if let Some(ast_id) = binding_id.get() {
                     self.symbol_table.bindings[ast_id].ty = Some(elem_ty);
                 }
-                let body_scope = self.next_block_scope(current_scope);
+                let body_scope = ScopeId(body_scope.get().unwrap());
                 for stmt in body {
                     self.infer_stmt(stmt, body_scope)?;
                 }

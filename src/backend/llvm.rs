@@ -82,7 +82,7 @@ fn builtin_signature(symbol: &str) -> Option<(&'static str, &'static str)> {
         "lpp_list_get_bool" => ("i8", "ptr, i64"),
         "lpp_list_get_float" => ("double", "ptr, i64"),
         "lpp_list_get_arc" => ("ptr", "ptr, i64"),
-        "lpp_map_new" => ("ptr", ""),
+        "lpp_map_new" | "lpp_map_new_arc" => ("ptr", ""),
         "lpp_map_put" => ("void", "ptr, i64, i64"),
         "lpp_map_put_float" => ("void", "ptr, i64, double"),
         "lpp_map_put_str" => ("void", "ptr, ptr, i64"),

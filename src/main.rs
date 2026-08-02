@@ -765,14 +765,17 @@ fn main() {
     let sem_time = sem_start.elapsed();
 
     let ty_start = Instant::now();
-    let mut type_table = {
+    let mut type_table;
+    let trait_impls_for_cycles;
+    {
         let mut type_checker = typecheck::TypeChecker::new(&mut resolver.table);
         if let Err(e) = type_checker.check_program(&ast) {
             eprint!("{}", diagnostics::render_error_string(&filename, &input, diagnostics::DiagnosticKind::Type, &e));
             return;
         }
-        type_checker.type_table
-    };
+        trait_impls_for_cycles = type_checker.trait_impls.clone();
+        type_table = type_checker.type_table;
+    }
     let ty_time = ty_start.elapsed();
 
     if check_only {
@@ -850,7 +853,7 @@ fn main() {
     // Break every ownership cycle statically before ARC insertion, so
     // the owning subgraph the pass reasons about is acyclic. See
     // analysis::cyclebreak for the proof.
-    let ownership_graph = cyclebreak::break_cycles(&type_table);
+    let ownership_graph = cyclebreak::break_cycles_with_traits(&type_table, &trait_impls_for_cycles);
     let weak_fields = ownership_graph.weak_fields();
     // Value-by-default. This is where the escape classification finally
     // reaches codegen: a struct that provably cannot outlive its frame

@@ -450,12 +450,15 @@ impl Resolver {
                 condition,
                 then_block,
                 else_block,
+                then_scope: then_scope_cell,
+                else_scope: else_scope_cell,
             } => {
                 self.resolve_expr(condition)?;
 
                 let then_scope = self
                     .table
                     .new_scope(Some(self.current_scope), ScopeKind::Block);
+                then_scope_cell.set(Some(then_scope.0));
                 let old_scope = self.current_scope;
                 self.current_scope = then_scope;
                 for s in then_block {
@@ -467,6 +470,7 @@ impl Resolver {
                     let else_scope = self
                         .table
                         .new_scope(Some(self.current_scope), ScopeKind::Block);
+                    else_scope_cell.set(Some(else_scope.0));
                     self.current_scope = else_scope;
                     for s in else_b {
                         self.resolve_stmt(s)?;
@@ -474,11 +478,16 @@ impl Resolver {
                     self.current_scope = old_scope;
                 }
             }
-            Stmt::While { condition, body } => {
+            Stmt::While {
+                condition,
+                body,
+                body_scope: body_scope_cell,
+            } => {
                 self.resolve_expr(condition)?;
                 let body_scope = self
                     .table
                     .new_scope(Some(self.current_scope), ScopeKind::Block);
+                body_scope_cell.set(Some(body_scope.0));
                 let old_scope = self.current_scope;
                 self.current_scope = body_scope;
                 self.loop_depth += 1;
@@ -495,12 +504,14 @@ impl Resolver {
                 step: _,
                 body,
                 binding_id,
+                body_scope: body_scope_cell,
             } => {
                 self.resolve_expr(start)?;
                 self.resolve_expr(end)?;
                 let body_scope = self
                     .table
                     .new_scope(Some(self.current_scope), ScopeKind::Block);
+                body_scope_cell.set(Some(body_scope.0));
                 let old_scope = self.current_scope;
                 self.current_scope = body_scope;
                 let b_id = self.table.add_binding(
@@ -523,11 +534,13 @@ impl Resolver {
                 list,
                 body,
                 binding_id,
+                body_scope: body_scope_cell,
             } => {
                 self.resolve_expr(list)?;
                 let body_scope = self
                     .table
                     .new_scope(Some(self.current_scope), ScopeKind::Block);
+                body_scope_cell.set(Some(body_scope.0));
                 let old_scope = self.current_scope;
                 self.current_scope = body_scope;
                 let b_id = self.table.add_binding(

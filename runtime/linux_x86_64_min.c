@@ -412,14 +412,14 @@ void lpp_arc_retain_local(void *payload) {
     if (!payload) return;
     LppArcHeader *header = (LppArcHeader *)payload - 1;
     if (lpp__is_immortal(header)) return;
-    header->refcount += 1;
+    __atomic_add_fetch(&header->refcount, 1, __ATOMIC_RELAXED);
 }
 
 void lpp_arc_release_local(void *payload) {
     if (!payload) return;
     LppArcHeader *header = (LppArcHeader *)payload - 1;
     if (lpp__is_immortal(header)) return;
-    if (--header->refcount == 0) {
+    if (__atomic_sub_fetch(&header->refcount, 1, __ATOMIC_RELAXED) == 0) {
         LppArenaRegion *arena = lpp_arena_for_header(header);
         (void)__atomic_add_fetch(&header->generation, 1, __ATOMIC_RELEASE);
         if (header->destructor) header->destructor(payload);
@@ -993,6 +993,7 @@ typedef struct LppMap {
     int64_t cap;
     int64_t len;
     uint64_t entries_map_size;
+    int arc_values; /* 1 = values are ARC-managed pointers */
 } LppMap;
 
 static uint64_t lpp_hash_str(const char *s) {
@@ -1032,30 +1033,48 @@ static int lpp_map_key_equal(int64_t k1, int64_t k2) {
 void lpp_map_destroy(void *payload) {
     LppMap *m = (LppMap *)payload;
     if (!m) return;
+    if (m->arc_values && m->entries) {
+        for (int64_t i = 0; i < m->cap; i++) {
+            if (m->entries[i].occupied == 1) {
+                lpp_arc_release((void *)(uintptr_t)m->entries[i].val);
+            }
+        }
+    }
     if (m->entries) lpp_sys_munmap(m->entries, m->entries_map_size);
     m->entries = 0;
     m->cap = 0;
     m->len = 0;
 }
 
-void *lpp_map_new(void) {
+static void *lpp_map_new_with_mode(int arc_values) {
     LppMap *m = (LppMap *)lpp_arc_alloc_with_destructor((int64_t)sizeof(LppMap), lpp_map_destroy);
     if (!m) return 0;
     m->cap = 16;
     m->len = 0;
+    m->arc_values = arc_values;
     m->entries_map_size = lpp_page_round((uint64_t)m->cap * sizeof(LppMapEntry));
     m->entries = (LppMapEntry *)lpp_sys_mmap(m->entries_map_size);
+    if (!m->entries) lpp_exit(101);
     return m;
 }
 
-static void lpp_map_rehash(LppMap *m) {
+void *lpp_map_new(void) {
+    return lpp_map_new_with_mode(0);
+}
+
+void *lpp_map_new_arc(void) {
+    return lpp_map_new_with_mode(1);
+}
+
+static void lpp_map_rehash(LppMap *m, int64_t new_cap) {
     int64_t old_cap = m->cap;
     LppMapEntry *old_entries = m->entries;
     uint64_t old_size = m->entries_map_size;
 
-    m->cap = old_cap * 2;
+    m->cap = new_cap;
     m->entries_map_size = lpp_page_round((uint64_t)m->cap * sizeof(LppMapEntry));
     m->entries = (LppMapEntry *)lpp_sys_mmap(m->entries_map_size);
+    if (!m->entries) lpp_exit(101);
     m->len = 0;
 
     for (int64_t i = 0; i < old_cap; i++) {
@@ -1080,8 +1099,14 @@ static void lpp_map_rehash(LppMap *m) {
 
 static void lpp_map_put_internal(LppMap *m, int64_t key, int64_t val, int is_str) {
     if (!m) return;
-    if (m->len * 10 >= m->cap * 7) {
-        lpp_map_rehash(m);
+    int64_t occupied = 0;
+    for (int64_t i = 0; i < m->cap; i++) {
+        if (m->entries[i].occupied != 0) occupied++;
+    }
+    if (occupied * 10 >= m->cap * 7) {
+        int64_t new_cap = (m->len * 100 < m->cap * 35) ? m->cap : m->cap * 2;
+        if (new_cap < 16) new_cap = 16;
+        lpp_map_rehash(m, new_cap);
     }
 
     uint64_t h = is_str ? lpp_hash_str((const char *)(uintptr_t)key) : lpp_hash_int(key);
@@ -1094,6 +1119,10 @@ static void lpp_map_put_internal(LppMap *m, int64_t key, int64_t val, int is_str
                 ? lpp_map_key_equal(m->entries[idx].key, key)
                 : (m->entries[idx].key == key);
             if (match) {
+                if (m->arc_values) {
+                    lpp_arc_retain((void *)(uintptr_t)val);
+                    lpp_arc_release((void *)(uintptr_t)m->entries[idx].val);
+                }
                 m->entries[idx].val = val;
                 return;
             }
@@ -1108,6 +1137,7 @@ static void lpp_map_put_internal(LppMap *m, int64_t key, int64_t val, int is_str
         idx = first_tombstone;
     }
 
+    if (m->arc_values) lpp_arc_retain((void *)(uintptr_t)val);
     m->entries[idx].key = key;
     m->entries[idx].val = val;
     m->entries[idx].is_str_key = is_str;
@@ -1214,6 +1244,7 @@ void lpp_map_remove(void *map, int64_t key) {
 
     while (m->entries[idx].occupied != 0) {
         if (m->entries[idx].occupied == 1 && m->entries[idx].is_str_key == 0 && m->entries[idx].key == key) {
+            if (m->arc_values) lpp_arc_release((void *)(uintptr_t)m->entries[idx].val);
             m->entries[idx].occupied = 2;
             m->len--;
             return;
@@ -1234,6 +1265,7 @@ void lpp_map_remove_str(void *map, const char *key) {
     while (m->entries[idx].occupied != 0) {
         if (m->entries[idx].occupied == 1 && m->entries[idx].is_str_key == 1) {
             if (lpp_map_key_equal(m->entries[idx].key, (int64_t)(uintptr_t)key)) {
+                if (m->arc_values) lpp_arc_release((void *)(uintptr_t)m->entries[idx].val);
                 m->entries[idx].occupied = 2;
                 m->len--;
                 return;
@@ -1312,6 +1344,10 @@ char *lpp_str_substr(const char *s, int64_t start, int64_t length) {
 char *lpp_str_repeat(const char *s, int64_t n) {
     if (!s || n <= 0) { char *e = (char *)lpp_alloc(1); e[0] = 0; return e; }
     int64_t slen = lpp_strlen(s);
+    if (slen == 0) { char *e = (char *)lpp_alloc(1); e[0] = 0; return e; }
+    if (n > 0 && slen > 0x7FFFFFFFFFFFFFFFLL / n) {
+        lpp_exit(101);
+    }
     int64_t total = slen * n;
     char *out = (char *)lpp_alloc(total + 1);
     for (int64_t i = 0; i < n; i++)
@@ -1427,7 +1463,12 @@ char *lpp_str_replace(const char *s, const char *old, const char *new_) {
         while (j < olen && s[i+j] == old[j]) j++;
         if (j == olen) { count++; i += olen - 1; }
     }
-    int64_t rlen = slen + count * (nlen - olen);
+    int64_t delta = nlen - olen;
+    if (count > 0 && delta > 0 && slen > 0x7FFFFFFFFFFFFFFFLL - count * delta) {
+        lpp_exit(101);
+    }
+    int64_t rlen = slen + count * delta;
+    if (rlen < 0) rlen = 0;
     char *out = (char *)lpp_alloc(rlen + 1);
     int64_t w = 0;
     for (int64_t i = 0; i < slen; ) {
@@ -1509,10 +1550,272 @@ int64_t lpp_str_to_int(const char *s) {
     return neg ? -val : val;
 }
 
+typedef struct LppEnvOverride {
+    const char *name;
+    const char *value;
+    struct LppEnvOverride *next;
+} LppEnvOverride;
+
+static LppEnvOverride *lpp_env_overrides = 0;
+
+int64_t lpp_env_set(const char *name, const char *value) {
+    if (!name || !*name) return -1;
+    LppEnvOverride *curr = lpp_env_overrides;
+    while (curr) {
+        if (lpp_str_eq(curr->name, name)) {
+            if (curr->value) {
+                lpp_free((void *)curr->value, 0);
+            }
+            if (value) {
+                int len = 0;
+                while (value[len]) len++;
+                char *new_val = (char *)lpp_alloc(len + 1);
+                for (int i = 0; i <= len; i++) new_val[i] = value[i];
+                curr->value = new_val;
+            } else {
+                curr->value = 0;
+            }
+            return 0;
+        }
+        curr = curr->next;
+    }
+    LppEnvOverride *node = (LppEnvOverride *)lpp_alloc(sizeof(LppEnvOverride));
+    int nlen = 0;
+    while (name[nlen]) nlen++;
+    char *new_name = (char *)lpp_alloc(nlen + 1);
+    for (int i = 0; i <= nlen; i++) new_name[i] = name[i];
+    node->name = new_name;
+    if (value) {
+        int vlen = 0;
+        while (value[vlen]) vlen++;
+        char *new_val = (char *)lpp_alloc(vlen + 1);
+        for (int i = 0; i <= vlen; i++) new_val[i] = value[i];
+        node->value = new_val;
+    } else {
+        node->value = 0;
+    }
+    node->next = lpp_env_overrides;
+    lpp_env_overrides = node;
+    return 0;
+}
+
+char *lpp_env_get(const char *name) {
+    if (!name || !*name) {
+        char *empty = (char *)lpp_alloc(1);
+        empty[0] = 0;
+        return empty;
+    }
+    LppEnvOverride *curr = lpp_env_overrides;
+    while (curr) {
+        if (lpp_str_eq(curr->name, name)) {
+            if (!curr->value) {
+                char *empty = (char *)lpp_alloc(1);
+                empty[0] = 0;
+                return empty;
+            }
+            int len = 0;
+            while (curr->value[len]) len++;
+            char *out = (char *)lpp_alloc(len + 1);
+            for (int i = 0; i <= len; i++) out[i] = curr->value[i];
+            return out;
+        }
+        curr = curr->next;
+    }
+    long fd = lpp_sys_open("/proc/self/environ", 0, 0);
+    if (fd < 0) {
+        char *empty = (char *)lpp_alloc(1);
+        empty[0] = 0;
+        return empty;
+    }
+    long cap = 32768;
+    char *buf = (char *)lpp_arc_alloc(cap);
+    if (!buf) {
+        lpp_sys_close(fd);
+        char *empty = (char *)lpp_alloc(1);
+        empty[0] = 0;
+        return empty;
+    }
+    long total = 0;
+    while (total < cap) {
+        long rd = lpp_sys_read(fd, buf + total, cap - total);
+        if (rd <= 0) break;
+        total += rd;
+    }
+    lpp_sys_close(fd);
+    long name_len = 0;
+    while (name[name_len]) name_len++;
+    long i = 0;
+    while (i < total) {
+        int match = 1;
+        for (long j = 0; j < name_len; j++) {
+            if (i + j >= total || buf[i + j] != name[j]) {
+                match = 0;
+                break;
+            }
+        }
+        if (match && i + name_len < total && buf[i + name_len] == '=') {
+            long val_start = i + name_len + 1;
+            long val_len = 0;
+            while (val_start + val_len < total && buf[val_start + val_len] != '\0') {
+                val_len++;
+            }
+            char *out = (char *)lpp_alloc(val_len + 1);
+            for (long k = 0; k < val_len; k++) {
+                out[k] = buf[val_start + k];
+            }
+            out[val_len] = 0;
+            lpp_arc_release(buf);
+            return out;
+        }
+        while (i < total && buf[i] != '\0') {
+            i++;
+        }
+        i++;
+    }
+    lpp_arc_release(buf);
+    char *empty = (char *)lpp_alloc(1);
+    empty[0] = 0;
+    return empty;
+}
+
+static long lpp_sys_fork(void) {
+    long result;
+    __asm__ volatile (
+        "syscall"
+        : "=a"(result)
+        : "a"(57)
+        : "rcx", "r11", "memory"
+    );
+    return result;
+}
+
+static long lpp_sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
+    long result;
+    __asm__ volatile (
+        "syscall"
+        : "=a"(result)
+        : "a"(59), "D"(pathname), "S"(argv), "d"(envp)
+        : "rcx", "r11", "memory"
+    );
+    return result;
+}
+
+static long lpp_sys_wait4(long pid, int *wstatus, int options, void *rusage) {
+    long result;
+    __asm__ volatile (
+        "syscall"
+        : "=a"(result)
+        : "a"(61), "D"(pid), "S"(wstatus), "d"((long)options), "r10"(rusage)
+        : "rcx", "r11", "memory"
+    );
+    return result;
+}
+
+static long lpp_sys_pipe(int pipefd[2]) {
+    long result;
+    __asm__ volatile (
+        "syscall"
+        : "=a"(result)
+        : "a"(22), "D"(pipefd)
+        : "rcx", "r11", "memory"
+    );
+    return result;
+}
+
+static long lpp_sys_dup2(int oldfd, int newfd) {
+    long result;
+    __asm__ volatile (
+        "syscall"
+        : "=a"(result)
+        : "a"(33), "D"(oldfd), "S"(newfd)
+        : "rcx", "r11", "memory"
+    );
+    return result;
+}
+
+int64_t lpp_command_exec(const char *cmdline) {
+    if (!cmdline) return -1;
+    long pid = lpp_sys_fork();
+    if (pid < 0) return -1;
+    if (pid == 0) {
+        const char *argv[] = { "/bin/sh", "-c", cmdline, 0 };
+        lpp_sys_execve("/bin/sh", (char *const *)argv, 0);
+        lpp_exit(127);
+    }
+    int status = 0;
+    long ret = lpp_sys_wait4(pid, &status, 0, 0);
+    if (ret < 0) return -1;
+    if ((status & 0x7f) == 0) {
+        return (int64_t)((status >> 8) & 0xff);
+    }
+    return -1;
+}
+
+char *lpp_command_output(const char *cmdline) {
+    if (!cmdline) {
+        char *empty = (char *)lpp_alloc(1);
+        empty[0] = 0;
+        return empty;
+    }
+    int pipefd[2];
+    if (lpp_sys_pipe(pipefd) < 0) {
+        char *empty = (char *)lpp_alloc(1);
+        empty[0] = 0;
+        return empty;
+    }
+    long pid = lpp_sys_fork();
+    if (pid < 0) {
+        lpp_sys_close(pipefd[0]);
+        lpp_sys_close(pipefd[1]);
+        char *empty = (char *)lpp_alloc(1);
+        empty[0] = 0;
+        return empty;
+    }
+    if (pid == 0) {
+        lpp_sys_dup2(pipefd[1], 1);
+        lpp_sys_dup2(pipefd[1], 2);
+        lpp_sys_close(pipefd[0]);
+        lpp_sys_close(pipefd[1]);
+        const char *argv[] = { "/bin/sh", "-c", cmdline, 0 };
+        lpp_sys_execve("/bin/sh", (char *const *)argv, 0);
+        lpp_exit(127);
+    }
+    lpp_sys_close(pipefd[1]);
+    long cap = 1024;
+    long length = 0;
+    char *buf = (char *)lpp_alloc(cap);
+    while (1) {
+        if (length + 256 >= cap) {
+            long new_cap = cap * 2;
+            char *new_buf = (char *)lpp_alloc(new_cap);
+            for (long i = 0; i < length; i++) new_buf[i] = buf[i];
+            lpp_arc_release(buf);
+            buf = new_buf;
+            cap = new_cap;
+        }
+        long rd = lpp_sys_read(pipefd[0], buf + length, 256);
+        if (rd <= 0) break;
+        length += rd;
+    }
+    buf[length] = 0;
+    lpp_sys_close(pipefd[0]);
+    int status = 0;
+    lpp_sys_wait4(pid, &status, 0, 0);
+    return buf;
+}
+
 const char *lpp_input(void) {
-    /* stub: freestanding has no stdin */
-    char *out = (char *)lpp_alloc(1);
-    out[0] = 0;
+    char buf[4096];
+    long rd = lpp_sys_read(0, buf, sizeof(buf) - 1);
+    if (rd < 0) rd = 0;
+    while (rd > 0 && (buf[rd - 1] == '\n' || buf[rd - 1] == '\r')) {
+        rd--;
+    }
+    char *out = (char *)lpp_alloc(rd + 1);
+    for (long i = 0; i < rd; i++) {
+        out[i] = buf[i];
+    }
+    out[rd] = 0;
     return out;
 }
 

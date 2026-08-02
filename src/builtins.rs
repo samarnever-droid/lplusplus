@@ -581,6 +581,22 @@ pub fn get_builtins() -> &'static [Builtin] {
             cl_return: Some(0),
         },
         Builtin {
+            name: "map_new_arc",
+            symbol: "lpp_map_new_arc",
+            params: &[],
+            return_type: TypeRef::Void,
+            cl_params: &[],
+            cl_return: Some(0),
+        },
+        Builtin {
+            name: "lpp_map_new_arc",
+            symbol: "lpp_map_new_arc",
+            params: &[],
+            return_type: TypeRef::Void,
+            cl_params: &[],
+            cl_return: Some(0),
+        },
+        Builtin {
             name: "map_put",
             symbol: "lpp_map_put",
             params: &[ParamType::Any, ParamType::Any, ParamType::Any],
