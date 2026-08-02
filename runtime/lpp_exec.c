@@ -23,6 +23,7 @@ extern void  lpp_arc_release(void *ptr);
 /* ── Windows implementation ───────────────────────────────────────────── */
 #include <windows.h>
 
+#ifndef LPP_EXEC_EXCLUDE_BUILTINS
 int64_t lpp_command_exec(const char *cmdline) {
     if (!cmdline) return -1;
     return (int64_t)system(cmdline);
@@ -71,6 +72,7 @@ char *lpp_command_output(const char *cmdline) {
     buf[len] = 0;
     return buf;
 }
+#endif
 
 char *lpp_env_get(const char *name) {
     if (!name) return lpp_empty_str();
@@ -98,6 +100,7 @@ int64_t lpp_env_set(const char *name, const char *value) {
 
 extern char **environ;
 
+#ifndef LPP_EXEC_EXCLUDE_BUILTINS
 int64_t lpp_command_exec(const char *cmdline) {
     if (!cmdline) return -1;
     pid_t pid;
@@ -150,6 +153,7 @@ char *lpp_command_output(const char *cmdline) {
     buf[len] = 0;
     return buf;
 }
+#endif
 
 char *lpp_env_get(const char *name) {
     if (!name) return lpp_empty_str();

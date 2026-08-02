@@ -1912,7 +1912,9 @@ void lpp_json_free(void *json) {
 }
 
 #include "runtime/lpp_str.c"
+#define LPP_EXEC_EXCLUDE_BUILTINS
 #include "runtime/lpp_exec.c"
+#undef LPP_EXEC_EXCLUDE_BUILTINS
 #include "runtime/lpp_dir.c"
 #include "runtime/lpp_buf.c"
 #include "runtime/lpp_map.c"
