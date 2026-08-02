@@ -139,10 +139,11 @@ static void lpp_signal_handler(int sig) {
     ExitProcess(101);
 #else
     const char *p1 = "\n===================================================================\n💥 L++ RUNTIME PANIC (Signal)\n===================================================================\nReason: Fatal Hardware/OS Signal Received: ";
-    (void)write(2, p1, strlen(p1));
-    (void)write(2, sig_name, strlen(sig_name));
+    ssize_t w1 = write(2, p1, strlen(p1));
+    ssize_t w2 = write(2, sig_name, strlen(sig_name));
     const char *p2 = "\n===================================================================\n\n";
-    (void)write(2, p2, strlen(p2));
+    ssize_t w3 = write(2, p2, strlen(p2));
+    (void)w1; (void)w2; (void)w3;
     _exit(101);
 #endif
 }
