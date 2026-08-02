@@ -420,6 +420,7 @@ char *lpp_str_lower(const char *s) { if(!s)return lpp_empty_str(); int ln=lpp_st
 char *lpp_int_to_str(int64_t val) { char buf[24]; int neg=val<0; if(neg)val=-val; int i=23; buf[i]=0; do{buf[--i]='0'+(int)(val%10);val/=10;}while(val); if(neg)buf[--i]='-'; int ln=23-i; char *out=(char*)lpp_arc_alloc(ln+1); lpp_memcpy(out,buf+i,ln+1); return out; }
 
 int64_t lpp_str_to_int(const char *s) { if(!s)return 0; int64_t val=0,neg=0; int i=0; while(s[i]==' '||s[i]=='\t')i++; if(s[i]=='-'){neg=1;i++;}else if(s[i]=='+')i++; while(s[i]>='0'&&s[i]<='9'){val=val*10+(s[i]-'0');i++;} return neg?-val:val; }
+int64_t lpp_parse_int(const char *s) { return lpp_str_to_int(s); }
 
 /* ── I/O builtins using Kernel32 (no CRT) ── */
 

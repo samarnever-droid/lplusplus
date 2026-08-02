@@ -20,6 +20,7 @@ pub struct Package {
     pub version: String,
     pub author: Option<String>,
     pub entry: Option<String>,
+    pub keywords: Vec<String>,
     pub dependencies: Vec<Dependency>,
 }
 
@@ -47,6 +48,29 @@ pub struct LockedPackage {
     pub resolved: Option<String>,
 }
 
+pub fn validate_keywords(keywords: &[String]) -> Result<Vec<String>, String> {
+    if keywords.len() > 5 {
+        return Err(format!(
+            "Package manifest error: maximum 5 keywords allowed in manifest (found {})",
+            keywords.len()
+        ));
+    }
+    let mut cleaned = Vec::new();
+    for kw in keywords {
+        let trimmed = kw.trim().to_lowercase();
+        if trimmed.len() > 32 {
+            return Err(format!(
+                "Keyword '{}' exceeds maximum length of 32 characters",
+                kw
+            ));
+        }
+        if !trimmed.is_empty() {
+            cleaned.push(trimmed);
+        }
+    }
+    Ok(cleaned)
+}
+
 pub fn parse_json_manifest(content: &str) -> Result<Package, String> {
     let val: serde_json::Value = serde_json::from_str(content)
         .map_err(|e| format!("JSON syntax error in manifest: {e}"))?;
@@ -70,6 +94,17 @@ pub fn parse_json_manifest(content: &str) -> Result<Package, String> {
         .or_else(|| val.get("entry"))
         .and_then(|v| v.as_str())
         .map(String::from);
+
+    let raw_keywords: Vec<String> = val
+        .get("keywords")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    let keywords = validate_keywords(&raw_keywords)?;
 
     let mut dependencies = Vec::new();
     if let Some(deps) = val.get("dependencies").and_then(|d| d.as_object()) {
@@ -115,6 +150,7 @@ pub fn parse_json_manifest(content: &str) -> Result<Package, String> {
         version,
         author,
         entry,
+        keywords,
         dependencies,
     })
 }
@@ -124,6 +160,7 @@ pub fn parse_toml(content: &str) -> Result<Package, String> {
     let mut version = String::new();
     let mut author = None;
     let mut entry = None;
+    let mut keywords = Vec::new();
     let mut dependencies = Vec::new();
 
     let mut current_section = "";
@@ -154,6 +191,14 @@ pub fn parse_toml(content: &str) -> Result<Package, String> {
                         author = Some(cleaned_val);
                     } else if key == "entry" {
                         entry = Some(cleaned_val);
+                    } else if key == "keywords" && val_str.starts_with('[') && val_str.ends_with(']') {
+                        let inner = &val_str[1..val_str.len() - 1];
+                        for item in inner.split(',') {
+                            let k = item.trim().trim_matches('"').trim_matches('\'').to_string();
+                            if !k.is_empty() {
+                                keywords.push(k);
+                            }
+                        }
                     }
                 }
                 "dependencies" => {
@@ -221,11 +266,14 @@ pub fn parse_toml(content: &str) -> Result<Package, String> {
         return Err("Missing package version in [package] section".to_string());
     }
 
+    let cleaned_keywords = validate_keywords(&keywords)?;
+
     Ok(Package {
         name,
         version,
         author,
         entry,
+        keywords: cleaned_keywords,
         dependencies,
     })
 }
@@ -1093,9 +1141,64 @@ fn resolve_min_runtime_object() -> Option<PathBuf> {
     let ext = if cfg!(target_os = "windows") { "obj" } else { "o" };
     let filename = format!("lpp_runtime_min.{}", ext);
 
-    // 1. Prebuilt runtime shipped with the toolchain (release tarball / install
-    //    layout). These objects are never rebuilt, so an installed toolchain
-    //    never needs a C compiler on the direct-link path.
+    // 1. Shared user cache: compiled from source once (hash-invalidated when
+    //    the runtime source changes) and reused by every directory/project.
+    if let Some(src_path) = resolve_min_runtime_source() {
+        if let Some(cache_dir) = shared_runtime_cache_dir() {
+            let cache_obj = cache_dir.join(&filename);
+            let cache_hash = cache_dir.join("runtime.hash");
+
+            // Hash-based invalidation: compare source hash with stored hash
+            let current_hash = file_content_hash(&src_path);
+            let stored_hash = fs::read_to_string(&cache_hash)
+                .ok()
+                .and_then(|s| s.trim().parse::<u64>().ok());
+
+            let needs_rebuild = match (current_hash, stored_hash) {
+                (Some(cur), Some(stored)) => cur != stored || !cache_obj.exists(),
+                _ => true, // no hash or can't read -> rebuild
+            };
+
+            if needs_rebuild {
+                let _ = fs::create_dir_all(&cache_dir);
+                #[cfg(windows)]
+                load_msvc_env();
+                let cc = if cfg!(windows) { "cl.exe" } else { "gcc" };
+                let mut cmd = std::process::Command::new(cc);
+                if cfg!(windows) {
+                    cmd.arg("/nologo")
+                        .arg("/O2")
+                        .arg("/GS-")
+                        .arg("/Gs1000000")
+                        .arg("/DLPP_FREESTANDING")
+                        .arg("/c")
+                        .arg(&src_path)
+                        .arg(format!("/Fo:{}", cache_obj.display()));
+                } else {
+                    cmd.arg("-Os")
+                        .arg("-fno-stack-protector")
+                        .arg("-DLPP_FREESTANDING")
+                        .arg("-c")
+                        .arg(&src_path)
+                        .arg("-o")
+                        .arg(&cache_obj);
+                }
+                if let Ok(st) = cmd.status() {
+                    if st.success() {
+                        if let Some(cur) = current_hash {
+                            let _ = fs::write(&cache_hash, cur.to_string());
+                        }
+                    }
+                }
+            }
+
+            if cache_obj.exists() {
+                return Some(cache_obj);
+            }
+        }
+    }
+
+    // 2. Prebuilt runtime shipped with the toolchain
     for var in &["LPP_HOME", "LPP_DIR"] {
         if let Ok(val) = std::env::var(var) {
             let lib_obj = PathBuf::from(val).join("lib").join(&filename);
@@ -1136,68 +1239,6 @@ fn resolve_min_runtime_object() -> Option<PathBuf> {
         .join(&filename);
     if legacy_obj.exists() {
         return Some(legacy_obj);
-    }
-
-    // 3. Shared user cache: compiled from source once (hash-invalidated when
-    //    the runtime source changes) and reused by every directory/project.
-    let cache_dir = shared_runtime_cache_dir()?;
-    let cache_obj = cache_dir.join(&filename);
-    let cache_hash = cache_dir.join("runtime.hash");
-
-    if let Some(src_path) = resolve_min_runtime_source() {
-        // Hash-based invalidation: compare source hash with stored hash
-        let current_hash = file_content_hash(&src_path);
-        let stored_hash = fs::read_to_string(&cache_hash)
-            .ok()
-            .and_then(|s| s.trim().parse::<u64>().ok());
-
-        let needs_rebuild = match (current_hash, stored_hash) {
-            (Some(cur), Some(stored)) => cur != stored || !cache_obj.exists(),
-            _ => true, // no hash or can't read -> rebuild
-        };
-
-        if needs_rebuild {
-            let _ = fs::create_dir_all(&cache_dir);
-            #[cfg(windows)]
-            load_msvc_env();
-            let cc = if cfg!(windows) { "cl.exe" } else { "gcc" };
-            let mut cmd = std::process::Command::new(cc);
-            if cfg!(windows) {
-                cmd.arg("/nologo")
-                    .arg("/O2")
-                    .arg("/GS-")
-                    .arg("/Gs1000000")
-                    .arg("/DLPP_FREESTANDING")
-                    .arg("/c")
-                    .arg(&src_path)
-                    .arg(format!("/Fo:{}", cache_obj.display()));
-            } else {
-                cmd.arg("-Os")
-                    .arg("-fno-stack-protector")
-                    .arg("-ffreestanding")
-                    .arg("-fno-pic")
-                    .arg("-mno-red-zone")
-                    .arg("-fno-reorder-blocks-and-partition")
-                    .arg("-DLPP_FREESTANDING")
-                    .arg("-c")
-                    .arg(&src_path)
-                    .arg("-o")
-                    .arg(&cache_obj);
-            }
-            if cmd.status().map_or(false, |s| s.success()) && cache_obj.exists() {
-                // Store the hash for next time
-                if let Some(h) = current_hash {
-                    let _ = fs::write(&cache_hash, format!("{}\n", h));
-                }
-                return Some(cache_obj);
-            }
-        } else {
-            return Some(cache_obj);
-        }
-    }
-
-    if cache_obj.exists() {
-        return Some(cache_obj);
     }
 
     None
@@ -2264,6 +2305,20 @@ mod tests {
         let pkg = parse_toml(manifest).expect("manifest should parse");
         assert_eq!(pkg.dependencies.len(), 1);
         assert_eq!(pkg.dependencies[0].version.as_deref(), Some("1.2.3"));
+    }
+
+    #[test]
+    fn parse_toml_reads_keywords() {
+        let manifest = "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nkeywords = [\"ffi\", \"bindgen\"]\n\n[dependencies]\n";
+        let pkg = parse_toml(manifest).expect("manifest should parse");
+        assert_eq!(pkg.keywords, vec!["ffi", "bindgen"]);
+    }
+
+    #[test]
+    fn parse_toml_rejects_excess_keywords() {
+        let manifest = "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nkeywords = [\"a\", \"b\", \"c\", \"d\", \"e\", \"f\"]\n\n[dependencies]\n";
+        let err = parse_toml(manifest).expect_err("manifest with 6 keywords should fail");
+        assert!(err.contains("maximum 5 keywords allowed"));
     }
 
     #[test]

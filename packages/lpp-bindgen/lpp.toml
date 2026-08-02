@@ -1,10 +1,11 @@
 [package]
-name = "c2lpp"
+name = "lpp-bindgen"
 version = "0.36.0"
-description = "Pure-L++ JSON-configured C audit/IR translator with checked pointer, layout, globals and CFG foundations"
+description = "Pure-L++ C Header FFI binder & C-to-L++ translator with safe checked pointers (CPtr), SysV/MSVC layout calculator, and CFG analysis"
 authors = ["L++ Project"]
 license = "MIT"
 repository = "https://github.com/samarnever-droid/lplusplus"
+keywords = ["ffi", "bindgen", "c-bindings", "c2lpp", "c-parser", "cptr", "abi-layout"]
 
 [bin]
 entry = "src/main.lpp"

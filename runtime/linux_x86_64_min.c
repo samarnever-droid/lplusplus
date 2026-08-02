@@ -1549,6 +1549,7 @@ int64_t lpp_str_to_int(const char *s) {
     while (s[i] >= '0' && s[i] <= '9') { val = val * 10 + (s[i] - '0'); i++; }
     return neg ? -val : val;
 }
+int64_t lpp_parse_int(const char *s) { return lpp_str_to_int(s); }
 
 typedef struct LppEnvOverride {
     const char *name;

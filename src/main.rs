@@ -266,6 +266,9 @@ fn run_self_hosted_pm(args: &[String]) {
     // Build owned env strings (avoid borrow issues)
     let mut child = std::process::Command::new(&pm_bin);
     child.env("LPP_PM_CMD", cmd);
+    if let Ok(current_exe) = env::current_exe() {
+        child.env("LPP_BIN", current_exe);
+    }
 
     // Pass sub-arguments through env vars
     match cmd {
@@ -381,6 +384,18 @@ fn run_self_hosted_pm(args: &[String]) {
 
 
 fn main() {
+    let builder = std::thread::Builder::new()
+        .name("lpp_main".to_string())
+        .stack_size(32 * 1024 * 1024);
+
+    let handle = builder.spawn(|| {
+        real_main();
+    }).expect("failed to spawn main compiler thread");
+
+    handle.join().unwrap();
+}
+
+fn real_main() {
     let mut args: Vec<String> = env::args().collect();
 
     // The CLI has two intentionally separate modes:
@@ -624,8 +639,6 @@ fn main() {
 
     if check_all {
         // Scan current directory recursively for .lpp files and type-check all
-        let mut p = 0usize;
-        let mut all_fails: Vec<String> = Vec::new();
         let mut all_files: Vec<PathBuf> = Vec::new();
         fn walk(base: &Path, files: &mut Vec<PathBuf>) {
             if let Ok(entries) = fs::read_dir(base) {
@@ -651,65 +664,173 @@ fn main() {
         all_files.sort();
         eprintln!("[L++] --checkall: checking {} file(s)...", all_files.len());
         let ta = Instant::now();
-        let mut fixed_files_count = 0usize;
-        for fpath in &all_files {
-            let input = match fs::read_to_string(fpath) {
-                Ok(c) => c, Err(e) => { all_fails.push(format!("{}:1:1: read: {}", fpath.display(), e)); continue; }
-            };
 
-            let mut err_tuple: Option<(&'static str, String)> = None;
+        enum CheckResult {
+            Passed,
+            Fixed(String), // log msg
+            Failed(String), // log msg
+        }
 
-            let mut l = lexer::Lexer::new(&input);
-            match l.tokenize() {
-                Ok(t) => {
-                    let mut par = parser::Parser::new(t);
-                    match par.parse() {
-                        Ok(mut ast) => {
-                            let base = fpath.parent().unwrap_or(Path::new("."));
-                            let mut imp = std::collections::HashSet::new();
-                            if let Err(e) = resolve_local_imports(&mut ast.declarations, &mut imp, base) {
-                                err_tuple = Some(("import", e));
-                            } else if let Err(e) = monomorph::Monomorphizer::process_program(&mut ast) {
-                                err_tuple = Some(("monomorph", e));
-                            } else {
-                                let mut res = semantic::Resolver::new();
-                                if let Err(e) = res.resolve_program(&mut ast) {
-                                    err_tuple = Some(("semantic", e));
+        let num_threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
+        let files_arc = std::sync::Arc::new(all_files);
+        let do_fix_val = do_fix;
+
+        let results: Vec<CheckResult> = if files_arc.len() <= 1 || num_threads <= 1 {
+            // Single-threaded path for tiny workloads
+            files_arc.iter().map(|fpath| {
+                let input = match fs::read_to_string(fpath) {
+                    Ok(c) => c,
+                    Err(e) => return CheckResult::Failed(format!("{}:1:1: read: {}", fpath.display(), e)),
+                };
+                let mut err_tuple: Option<(&'static str, String)> = None;
+                let mut l = lexer::Lexer::new(&input);
+                match l.tokenize() {
+                    Ok(t) => {
+                        let mut par = parser::Parser::new(t);
+                        match par.parse() {
+                            Ok(mut ast) => {
+                                let base = fpath.parent().unwrap_or(Path::new("."));
+                                let mut imp = std::collections::HashSet::new();
+                                if let Err(e) = resolve_local_imports(&mut ast.declarations, &mut imp, base) {
+                                    err_tuple = Some(("import", e));
+                                } else if let Err(e) = monomorph::Monomorphizer::process_program(&mut ast) {
+                                    err_tuple = Some(("monomorph", e));
                                 } else {
-                                    let mut tc = typecheck::TypeChecker::new(&mut res.table);
-                                    if let Err(e) = tc.check_program(&ast) {
-                                        err_tuple = Some(("type", e));
+                                    let mut res = semantic::Resolver::new();
+                                    if let Err(e) = res.resolve_program(&mut ast) {
+                                        err_tuple = Some(("semantic", e));
+                                    } else {
+                                        let mut tc = typecheck::TypeChecker::new(&mut res.table);
+                                        if let Err(e) = tc.check_program(&ast) {
+                                            err_tuple = Some(("type", e));
+                                        }
                                     }
                                 }
                             }
+                            Err(e) => { err_tuple = Some(("syntax", e)); }
                         }
-                        Err(e) => { err_tuple = Some(("syntax", e)); }
                     }
+                    Err(e) => { err_tuple = Some(("lex", e)); }
                 }
-                Err(e) => { err_tuple = Some(("lex", e)); }
+
+                if let Some((stage, raw_err)) = err_tuple {
+                    let (line, col, msg) = diagnostics::parse_line_col_message_with_source(&raw_err, &input);
+                    let auto_fix = diagnostics::try_auto_fix(&input, &raw_err);
+                    if let Some((new_src, desc)) = auto_fix {
+                        if do_fix_val {
+                            if fs::write(fpath, &new_src).is_ok() {
+                                return CheckResult::Fixed(format!("[L++] Fixed {}:{}:{}: {} [{}]", fpath.display(), line, col, stage, desc));
+                            }
+                        }
+                        CheckResult::Failed(format!("{}:{}:{}: {}: {} [suggestion: {}]", fpath.display(), line, col, stage, msg, desc))
+                    } else {
+                        CheckResult::Failed(format!("{}:{}:{}: {}: {}", fpath.display(), line, col, stage, msg))
+                    }
+                } else {
+                    CheckResult::Passed
+                }
+            }).collect()
+        } else {
+            // Parallel worker pool
+            let chunk_size = (files_arc.len() + num_threads - 1) / num_threads;
+            let mut handles = Vec::new();
+
+            for thread_idx in 0..num_threads {
+                let files = std::sync::Arc::clone(&files_arc);
+                let start = thread_idx * chunk_size;
+                if start >= files.len() {
+                    break;
+                }
+                let end = (start + chunk_size).min(files.len());
+
+                handles.push(std::thread::spawn(move || {
+                    let mut local_res = Vec::with_capacity(end - start);
+                    for fpath in &files[start..end] {
+                        let input = match fs::read_to_string(fpath) {
+                            Ok(c) => c,
+                            Err(e) => {
+                                local_res.push(CheckResult::Failed(format!("{}:1:1: read: {}", fpath.display(), e)));
+                                continue;
+                            }
+                        };
+                        let mut err_tuple: Option<(&'static str, String)> = None;
+                        let mut l = lexer::Lexer::new(&input);
+                        match l.tokenize() {
+                            Ok(t) => {
+                                let mut par = parser::Parser::new(t);
+                                match par.parse() {
+                                    Ok(mut ast) => {
+                                        let base = fpath.parent().unwrap_or(Path::new("."));
+                                        let mut imp = std::collections::HashSet::new();
+                                        if let Err(e) = resolve_local_imports(&mut ast.declarations, &mut imp, base) {
+                                            err_tuple = Some(("import", e));
+                                        } else if let Err(e) = monomorph::Monomorphizer::process_program(&mut ast) {
+                                            err_tuple = Some(("monomorph", e));
+                                        } else {
+                                            let mut res = semantic::Resolver::new();
+                                            if let Err(e) = res.resolve_program(&mut ast) {
+                                                err_tuple = Some(("semantic", e));
+                                            } else {
+                                                let mut tc = typecheck::TypeChecker::new(&mut res.table);
+                                                if let Err(e) = tc.check_program(&ast) {
+                                                    err_tuple = Some(("type", e));
+                                                }
+                                            }
+                                        }
+                                    }
+                                    Err(e) => { err_tuple = Some(("syntax", e)); }
+                                }
+                            }
+                            Err(e) => { err_tuple = Some(("lex", e)); }
+                        }
+
+                        if let Some((stage, raw_err)) = err_tuple {
+                            let (line, col, msg) = diagnostics::parse_line_col_message_with_source(&raw_err, &input);
+                            let auto_fix = diagnostics::try_auto_fix(&input, &raw_err);
+                            if let Some((new_src, desc)) = auto_fix {
+                                if do_fix_val {
+                                    if fs::write(fpath, &new_src).is_ok() {
+                                        local_res.push(CheckResult::Fixed(format!("[L++] Fixed {}:{}:{}: {} [{}]", fpath.display(), line, col, stage, desc)));
+                                        continue;
+                                    }
+                                }
+                                local_res.push(CheckResult::Failed(format!("{}:{}:{}: {}: {} [suggestion: {}]", fpath.display(), line, col, stage, msg, desc)));
+                            } else {
+                                local_res.push(CheckResult::Failed(format!("{}:{}:{}: {}: {}", fpath.display(), line, col, stage, msg)));
+                            }
+                        } else {
+                            local_res.push(CheckResult::Passed);
+                        }
+                    }
+                    local_res
+                }));
             }
 
-            if let Some((stage, raw_err)) = err_tuple {
-                let (line, col, msg) = diagnostics::parse_line_col_message_with_source(&raw_err, &input);
-                let auto_fix = diagnostics::try_auto_fix(&input, &raw_err);
-
-                if let Some((new_src, desc)) = auto_fix {
-                    if do_fix {
-                        if fs::write(fpath, &new_src).is_ok() {
-                            fixed_files_count += 1;
-                            println!("[L++] Fixed {}:{}:{}: {} [{}]", fpath.display(), line, col, stage, desc);
-                            p += 1;
-                            continue;
-                        }
-                    }
-                    all_fails.push(format!("{}:{}:{}: {}: {} [suggestion: {}]", fpath.display(), line, col, stage, msg, desc));
-                } else {
-                    all_fails.push(format!("{}:{}:{}: {}: {}", fpath.display(), line, col, stage, msg));
+            let mut all_res = Vec::with_capacity(files_arc.len());
+            for handle in handles {
+                if let Ok(res) = handle.join() {
+                    all_res.extend(res);
                 }
-            } else {
-                p += 1;
+            }
+            all_res
+        };
+
+        let mut p = 0usize;
+        let mut fixed_files_count = 0usize;
+        let mut all_fails: Vec<String> = Vec::new();
+
+        for res in results {
+            match res {
+                CheckResult::Passed => p += 1,
+                CheckResult::Fixed(msg) => {
+                    println!("{}", msg);
+                    fixed_files_count += 1;
+                    p += 1;
+                }
+                CheckResult::Failed(msg) => all_fails.push(msg),
             }
         }
+
         let el = ta.elapsed();
         if all_fails.is_empty() {
             println!("[L++] --checkall: OK — {} file(s) passed in {:.1} ms", p, el.as_secs_f64() * 1000.0);
@@ -1135,9 +1256,13 @@ fn resolve_module_filepath(module: &str, base_dir: &std::path::Path) -> Result<P
 
     // 1. Check local file in project base_dir (unless explicitly prefixed with stdlib.)
     if !is_explicit_stdlib {
-        let local_path = base_dir.join(format!("{}.lpp", module));
-        if local_path.exists() {
-            return Ok(local_path);
+        let local_exact = base_dir.join(format!("{}.lpp", module));
+        if local_exact.exists() {
+            return Ok(local_exact);
+        }
+        let local_src = base_dir.join("src").join(format!("{}.lpp", module));
+        if local_src.exists() {
+            return Ok(local_src);
         }
     }
 
@@ -1231,67 +1356,83 @@ fn resolve_module_filepath(module: &str, base_dir: &std::path::Path) -> Result<P
 fn resolve_local_imports(
     declarations: &mut Vec<ast::TopLevel>,
     imported_files: &mut std::collections::HashSet<String>,
-    base_dir: &std::path::Path,
+    root_base_dir: &std::path::Path,
 ) -> Result<(), String> {
-    let mut new_decls = Vec::new();
-    let mut imports_to_process = Vec::new();
-    let mut module_of_decl: Vec<(String, String)> = Vec::new();
+    use std::collections::VecDeque;
 
+    let mut new_decls = Vec::new();
+    let mut module_of_decl: Vec<(String, String)> = Vec::new();
+    let mut worklist: VecDeque<(String, PathBuf)> = VecDeque::new();
+
+    // Collect initial imports from entry file
     for decl in declarations.iter() {
         if let ast::TopLevel::Import(import_kind) = decl {
-            let (path, _items) = match import_kind {
-                ast::ImportKind::Module { path, .. } => (path.clone(), None),
-                ast::ImportKind::Selective { path, items } => (path.clone(), Some(items.clone())),
+            let path = match import_kind {
+                ast::ImportKind::Module { path, .. } => path.clone(),
+                ast::ImportKind::Selective { path, .. } => path.clone(),
             };
             let module = path.join("/");
             let module_name = path.last().cloned().unwrap_or_default();
-            if module_name != "json" && !imported_files.contains(&module) {
-                imports_to_process.push(module);
+            if module_name != "json" {
+                worklist.push_back((module, root_base_dir.to_path_buf()));
             }
         }
     }
 
-    for module in imports_to_process {
-        let filepath = resolve_module_filepath(&module, base_dir)?;
-        let canonical_key = filepath.canonicalize().unwrap_or_else(|_| filepath.clone()).to_string_lossy().to_string();
+    while let Some((module, base_dir)) = worklist.pop_front() {
+        let filepath = match resolve_module_filepath(&module, &base_dir) {
+            Ok(fp) => fp,
+            Err(e) => return Err(e),
+        };
 
-        if imported_files.contains(&canonical_key) || imported_files.contains(&module) {
+        let raw_canonical = filepath
+            .canonicalize()
+            .unwrap_or_else(|_| filepath.clone())
+            .to_string_lossy()
+            .to_string();
+        let canonical_key = raw_canonical.trim_start_matches(r"\\?\").to_lowercase();
+        let mod_key = module.to_lowercase();
+
+        if imported_files.contains(&canonical_key) || imported_files.contains(&mod_key) {
             continue;
         }
-        imported_files.insert(canonical_key.clone());
-        imported_files.insert(module.clone());
+        imported_files.insert(canonical_key);
+        imported_files.insert(mod_key);
 
-        let content = std::fs::read_to_string(&filepath)
-            .map_err(|e| format!("Failed to read library '{}': {}", filepath.display(), e))?;
+        let content = match std::fs::read_to_string(&filepath) {
+            Ok(c) => c,
+            Err(e) => return Err(format!("Failed to read library '{}': {}", filepath.display(), e)),
+        };
 
         let mut lex = lexer::Lexer::new(&content);
         let tokens = lex.tokenize()?;
         let mut par = parser::Parser::new(tokens);
-        let mut lib_ast = par.parse()?;
+        let lib_ast = par.parse()?;
 
-        // Recursively resolve imports of the library using its own base directory
-        let lib_base_dir = filepath.parent().unwrap_or(std::path::Path::new("."));
-        resolve_local_imports(&mut lib_ast.declarations, imported_files, lib_base_dir)?;
+        let lib_base_dir = filepath.parent().unwrap_or(Path::new(".")).to_path_buf();
 
-        // Record which module each declaration came from so that a name
-        // collision can name both sides.
         for decl in &lib_ast.declarations {
-            if let Some(name) = declaration_name(decl) {
-                module_of_decl.push((name, module.clone()));
+            if let ast::TopLevel::Import(import_kind) = decl {
+                let path = match import_kind {
+                    ast::ImportKind::Module { path, .. } => path.clone(),
+                    ast::ImportKind::Selective { path, .. } => path.clone(),
+                };
+                let sub_module = path.join("/");
+                let sub_module_name = path.last().cloned().unwrap_or_default();
+                if sub_module_name != "json" {
+                    worklist.push_back((sub_module, lib_base_dir.clone()));
+                }
+            } else {
+                if let Some(name) = declaration_name(decl) {
+                    module_of_decl.push((name, module.clone()));
+                }
+                new_decls.push(decl.clone());
             }
         }
-
-        new_decls.extend(lib_ast.declarations);
     }
 
     declarations.extend(new_decls);
-
-    // Imported modules are flattened into one global declaration list, so two
-    // modules defining the same function name would silently collapse into a
-    // single symbol: `a.shared()` and `b.shared()` would both call whichever
-    // was linked last, with no diagnostic. Detect that here and fail loudly.
     check_duplicate_declarations(declarations, &module_of_decl)?;
-
     Ok(())
 }
 

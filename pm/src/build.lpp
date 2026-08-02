@@ -15,26 +15,17 @@ def compile_project() -> Int:
         raw := read(manifest)
         bin_name = extract_name(raw)
 
-    aot := env_get("LPP_AOT")
-    if str_find(aot, "1") < 0:
-        print_str("[lpp-pm] set LPP_AOT=1 for native builds")
-        return 1
+    # Compile and link binary directly via lpp compiler
+    mut compiler := env_get("LPP_BIN")
+    if str_len(compiler) == 0:
+        compiler = "lpp"
 
-    # Compile to object
-    cc_cmd := str_concat("lpp ", entry)
+    cc_cmd := str_concat(compiler, str_concat(" ", str_concat(entry, " --linker auto")))
     code := command_exec(cc_cmd)
     if code != 0:
-        print_str("[lpp-pm] compilation failed")
+        error("compilation failed")
         return code
-
-    # Link with host compiler
-    obj := str_replace(entry, ".lpp", ".o")
-    out := str_concat(bin_name, ".exe")
-    cc := detect_cc()
-    mut link_cmd := str_concat(str_concat(str_concat(str_concat(cc, " -O2 "), obj), " lpp_runtime.c -o "), out)
-    link_cmd = str_concat(link_cmd, " -pthread")
-    result := command_exec(link_cmd)
-    return result
+    return 0
 
 def extract_name(toml_raw: Str) -> Str:
     line_start := str_find(toml_raw, "name = \"")

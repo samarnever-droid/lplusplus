@@ -436,65 +436,86 @@ impl<'a> TypeChecker<'a> {
         // ordinary helper does not make it nonblocking. Compute a small call
         // graph before body inference and reject any async root that can reach
         // a blocking builtin without an adapter.
-        fn collect_expr_calls(expr: &Expr, calls: &mut std::collections::HashSet<String>) {
-            match expr {
-                Expr::Call { callee, args } | Expr::GenericCall { callee, args, .. } => {
-                    if let Expr::Identifier(name, _) = &**callee { calls.insert(name.clone()); }
-                    collect_expr_calls(callee, calls);
-                    for arg in args { collect_expr_calls(arg, calls); }
-                }
-                Expr::Tuple(items) | Expr::ListLiteral(items) =>
-                    for item in items { collect_expr_calls(item, calls); },
-                Expr::Await(inner) | Expr::Try(inner) | Expr::UnaryOp { operand: inner, .. }
-                | Expr::Spawn { closure: inner } => collect_expr_calls(inner, calls),
-                Expr::BinaryOp { left, right, .. } => {
-                    collect_expr_calls(left, calls); collect_expr_calls(right, calls);
-                }
-                Expr::Closure { body, .. } => collect_stmt_calls(body, calls),
-                Expr::FieldAccess { base, .. } => collect_expr_calls(base, calls),
-                Expr::Match { subject, arms } => {
-                    collect_expr_calls(subject, calls);
-                    for arm in arms { collect_stmt_calls(&arm.body, calls); }
-                }
-                Expr::Index { base, index } => {
-                    collect_expr_calls(base, calls); collect_expr_calls(index, calls);
-                }
-                Expr::EnumVariantConstruct { args, .. } =>
-                    for arg in args { collect_expr_calls(arg, calls); },
-                Expr::IntLiteral(_) | Expr::FloatLiteral(_) | Expr::StringLiteral(_)
-                | Expr::CharLiteral(_) | Expr::BoolLiteral(_) | Expr::Identifier(_, _) => {}
-            }
+        enum Node<'n> {
+            Expr(&'n Expr),
+            Stmt(&'n Stmt),
         }
+
         fn collect_stmt_calls(stmts: &[Stmt], calls: &mut std::collections::HashSet<String>) {
-            for stmt in stmts {
-                match stmt {
-                    Stmt::Destructure { value, .. } | Stmt::LetInferred { value, .. }
-                    | Stmt::Assign { value, .. } | Stmt::Expr(value)
-                    | Stmt::Return(Some(value)) => collect_expr_calls(value, calls),
-                    Stmt::AssignField { base, value, .. } => {
-                        collect_expr_calls(base, calls); collect_expr_calls(value, calls);
-                    }
-                    Stmt::If { condition, then_block, else_block, .. } => {
-                        collect_expr_calls(condition, calls); collect_stmt_calls(then_block, calls);
-                        if let Some(block) = else_block { collect_stmt_calls(block, calls); }
-                    }
-                    Stmt::While { condition, body, .. } => {
-                        collect_expr_calls(condition, calls); collect_stmt_calls(body, calls);
-                    }
-                    Stmt::ForRange { start, end, step, body, .. } => {
-                        collect_expr_calls(start, calls); collect_expr_calls(end, calls);
-                        if let Some(step) = step { collect_expr_calls(step, calls); }
-                        collect_stmt_calls(body, calls);
-                    }
-                    Stmt::ForIn { list, body, .. } => {
-                        collect_expr_calls(list, calls); collect_stmt_calls(body, calls);
-                    }
-                    Stmt::Match { subject, arms } => {
-                        collect_expr_calls(subject, calls);
-                        for arm in arms { collect_stmt_calls(&arm.body, calls); }
-                    }
-                    Stmt::Block(body) => collect_stmt_calls(body, calls),
-                    Stmt::Return(None) | Stmt::Break | Stmt::Continue => {}
+            let mut stack: Vec<Node> = stmts.iter().map(Node::Stmt).collect();
+            while let Some(node) = stack.pop() {
+                match node {
+                    Node::Stmt(stmt) => match stmt {
+                        Stmt::Destructure { value, .. }
+                        | Stmt::LetInferred { value, .. }
+                        | Stmt::Assign { value, .. }
+                        | Stmt::Expr(value)
+                        | Stmt::Return(Some(value)) => stack.push(Node::Expr(value)),
+                        Stmt::AssignField { base, value, .. } => {
+                            stack.push(Node::Expr(base));
+                            stack.push(Node::Expr(value));
+                        }
+                        Stmt::If { condition, then_block, else_block, .. } => {
+                            stack.push(Node::Expr(condition));
+                            for s in then_block { stack.push(Node::Stmt(s)); }
+                            if let Some(b) = else_block { for s in b { stack.push(Node::Stmt(s)); } }
+                        }
+                        Stmt::While { condition, body, .. } => {
+                            stack.push(Node::Expr(condition));
+                            for s in body { stack.push(Node::Stmt(s)); }
+                        }
+                        Stmt::ForRange { start, end, step, body, .. } => {
+                            stack.push(Node::Expr(start));
+                            stack.push(Node::Expr(end));
+                            if let Some(step) = step { stack.push(Node::Expr(step)); }
+                            for s in body { stack.push(Node::Stmt(s)); }
+                        }
+                        Stmt::ForIn { list, body, .. } => {
+                            stack.push(Node::Expr(list));
+                            for s in body { stack.push(Node::Stmt(s)); }
+                        }
+                        Stmt::Match { subject, arms } => {
+                            stack.push(Node::Expr(subject));
+                            for arm in arms { for s in &arm.body { stack.push(Node::Stmt(s)); } }
+                        }
+                        Stmt::Block(body) => {
+                            for s in body { stack.push(Node::Stmt(s)); }
+                        }
+                        Stmt::Return(None) | Stmt::Break | Stmt::Continue => {}
+                    },
+                    Node::Expr(expr) => match expr {
+                        Expr::Call { callee, args } | Expr::GenericCall { callee, args, .. } => {
+                            if let Expr::Identifier(name, _) = &**callee { calls.insert(name.clone()); }
+                            stack.push(Node::Expr(callee));
+                            for arg in args { stack.push(Node::Expr(arg)); }
+                        }
+                        Expr::Tuple(items) | Expr::ListLiteral(items) => {
+                            for item in items { stack.push(Node::Expr(item)); }
+                        }
+                        Expr::Await(inner) | Expr::Try(inner) | Expr::UnaryOp { operand: inner, .. }
+                        | Expr::Spawn { closure: inner } => stack.push(Node::Expr(inner)),
+                        Expr::BinaryOp { left, right, .. } => {
+                            stack.push(Node::Expr(left));
+                            stack.push(Node::Expr(right));
+                        }
+                        Expr::Closure { body, .. } => {
+                            for s in body { stack.push(Node::Stmt(s)); }
+                        }
+                        Expr::FieldAccess { base, .. } => stack.push(Node::Expr(base)),
+                        Expr::Match { subject, arms } => {
+                            stack.push(Node::Expr(subject));
+                            for arm in arms { for s in &arm.body { stack.push(Node::Stmt(s)); } }
+                        }
+                        Expr::Index { base, index } => {
+                            stack.push(Node::Expr(base));
+                            stack.push(Node::Expr(index));
+                        }
+                        Expr::EnumVariantConstruct { args, .. } => {
+                            for arg in args { stack.push(Node::Expr(arg)); }
+                        }
+                        Expr::IntLiteral(_) | Expr::FloatLiteral(_) | Expr::StringLiteral(_)
+                        | Expr::CharLiteral(_) | Expr::BoolLiteral(_) | Expr::Identifier(_, _) => {}
+                    },
                 }
             }
         }
