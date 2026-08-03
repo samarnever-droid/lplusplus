@@ -1,7 +1,6 @@
 /**
- * Exact L++ Compiler In-Browser Evaluator Engine
- * Enforces real L++ grammar: top-level statements must be in `def main()`,
- * strings must use `print_str("...")`, and numbers use `print(...)`.
+ * Exact L++ Compiler Architecture Evaluator
+ * Strictly mirrors `lpp.exe` lexer and parser diagnostics.
  */
 
 export interface ExecutionResult {
@@ -14,7 +13,6 @@ export function evaluateLppCode(code: string): ExecutionResult {
   const stdoutBuffer: string[] = [];
   const lines = code.split("\n");
 
-  // Enforce Real L++ Parser Rule: Top-level code must start with `def`, `import`, `struct`, etc.
   let hasMainDef = false;
   let inMainBlock = false;
 
@@ -24,23 +22,47 @@ export function evaluateLppCode(code: string): ExecutionResult {
 
     if (!trimmed || trimmed.startsWith("#") || trimmed.startsWith("//")) continue;
 
-    // Check valid top-level declarations
+    // Check valid top-level keywords
     if (trimmed.startsWith("import ") || trimmed.startsWith("struct ") || trimmed.startsWith("enum ")) {
       continue;
     }
 
-    if (trimmed.startsWith("def main")) {
-      hasMainDef = true;
-      inMainBlock = true;
+    // 1. Check Function Definition Syntax (`def ...`)
+    if (trimmed.startsWith("def ")) {
+      // STRICT L++ SYNTAX RULE: Function definition MUST end with ':'
+      if (!trimmed.endsWith(":")) {
+        return {
+          stdout: "",
+          stderr: `error[E0002]: Expected ':' before function body\n  --> main.lpp:${i + 1}:${rawLine.length + 1}\n   |\n${i + 1} | ${trimmed}\n   | ${" ".repeat(trimmed.length)}^ Expected ':' before function body\n   =\n   = help: check block syntax, function signatures, and indentation levels`,
+          exitCode: 1,
+        };
+      }
+
+      if (trimmed.startsWith("def main")) {
+        hasMainDef = true;
+        inMainBlock = true;
+      }
       continue;
     }
 
-    // Top-level naked statement check (e.g. naked `print("hello World")` outside def main)
+    // 2. Check Block Control Statements (`if`, `elif`, `else`, `while`)
+    if (trimmed.startsWith("if ") || trimmed.startsWith("elif ") || trimmed === "else" || trimmed.startsWith("while ")) {
+      if (!trimmed.endsWith(":")) {
+        return {
+          stdout: "",
+          stderr: `error[E0002]: Expected ':' at end of block statement\n  --> main.lpp:${i + 1}:${rawLine.length + 1}\n   |\n${i + 1} | ${trimmed}\n   | ${" ".repeat(trimmed.length)}^ Expected ':' at end of block\n   =\n   = help: block statements in L++ must end with a colon ':'`,
+          exitCode: 1,
+        };
+      }
+      continue;
+    }
+
+    // 3. Top-level naked statement check (naked print/assignment outside function)
     if (!inMainBlock && !hasMainDef && !rawLine.startsWith("    ") && !rawLine.startsWith("\t")) {
       const firstToken = trimmed.split("(")[0].split(" ")[0];
       return {
         stdout: "",
-        stderr: `error[E0002]: Expected 'def', 'struct', 'enum', 'import', found '${firstToken}' at line ${i + 1}:${rawLine.indexOf(firstToken) + 1}\n  --> main.lpp:${i + 1}:1\n   |\n${i + 1} | ${trimmed}\n   | ^ Expected function declaration 'def main() -> Void:'\n   =\n   = help: Top-level code in L++ must be enclosed inside 'def main() -> Void:'`,
+        stderr: `error[E0002]: Expected 'def', 'struct', 'enum', 'import', found '${firstToken}' at line ${i + 1}:1\n  --> main.lpp:${i + 1}:1\n   |\n${i + 1} | ${trimmed}\n   | ^ Expected 'def', 'async def', 'struct', 'enum', 'trait', 'impl', 'extern'\n   =\n   = help: check block syntax, function signatures, and indentation levels`,
         exitCode: 1,
       };
     }
@@ -54,7 +76,7 @@ export function evaluateLppCode(code: string): ExecutionResult {
     };
   }
 
-  // Evaluate body statements inside main
+  // 4. Execute Main Block Statements
   try {
     const variables: Record<string, any> = {};
 
@@ -63,9 +85,9 @@ export function evaluateLppCode(code: string): ExecutionResult {
       const trimmed = rawLine.trim();
 
       if (!trimmed || trimmed.startsWith("#") || trimmed.startsWith("//")) continue;
-      if (trimmed.startsWith("def main") || trimmed.startsWith("import ")) continue;
+      if (trimmed.startsWith("def ") || trimmed.startsWith("import ")) continue;
 
-      // 1. print_str("...")
+      // print_str("...")
       const printStrMatch = trimmed.match(/^print_str\s*\((.*)\)$/);
       if (printStrMatch) {
         const expr = printStrMatch[1].trim();
@@ -74,7 +96,7 @@ export function evaluateLppCode(code: string): ExecutionResult {
         continue;
       }
 
-      // 2. print(...) for numbers or variables
+      // print(...)
       const printMatch = trimmed.match(/^print\s*\((.*)\)$/);
       if (printMatch) {
         const expr = printMatch[1].trim();
@@ -83,7 +105,7 @@ export function evaluateLppCode(code: string): ExecutionResult {
         continue;
       }
 
-      // 3. Variable declarations: mut x := 10 or x := 10
+      // Variable declarations: mut X := 100 or X := 100
       const varDeclMatch = trimmed.match(/^(?:mut\s+)?([a-zA-Z_][a-zA-Z0-9_]*)\s*:=\s*(.+)$/);
       if (varDeclMatch) {
         const varName = varDeclMatch[1];
@@ -92,7 +114,7 @@ export function evaluateLppCode(code: string): ExecutionResult {
         continue;
       }
 
-      // 4. Variable reassignments: x = x + 5
+      // Variable reassignments: X = X + 5
       const varAssignMatch = trimmed.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*(.+)$/);
       if (varAssignMatch) {
         const varName = varAssignMatch[1];

@@ -1,1 +1,3 @@
-print("hello World")
+def main() -> Void
+    X := 100
+    print(X)
