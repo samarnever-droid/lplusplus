@@ -9,7 +9,7 @@ def cmd_add(package_name: Str, git_flag: Str, branch_flag: Str, tag_flag: Str, p
         error("Usage: lpp add <package_name> [--git <url>] [--branch <b] [--tag <t>] [--path <p>] [--version <v>]")
         return
 
-    if check("lpp.toml") == 0:
+    if path_exists("lpp.toml") == 0:
         error("lpp.toml not found. Run 'lpp init' first.")
         return
 
@@ -22,16 +22,10 @@ def cmd_add(package_name: Str, git_flag: Str, branch_flag: Str, tag_flag: Str, p
 
     if str_len(git_url) == 0:
         if str_len(path) == 0:
-            resolved := resolve_registry_pkg(dep_name)
-            if str_len(resolved) > 0:
+            entry := registry_lookup(dep_name, false)
+            if str_len(entry.name) > 0:
                 info(str_concat("Resolved package from registry: ", dep_name))
-                # Parse "git|url|branch|tag"
-                g_idx := str_find(resolved, "|")
-                if g_idx >= 0:
-                    rest := str_substr(resolved, g_idx + 1, str_len(resolved) - g_idx - 1)
-                    b_idx := str_find(rest, "|")
-                    if b_idx >= 0:
-                        git_url = str_substr(rest, 0, b_idx)
+                git_url = entry.git
             else:
                 error(str_concat("Package not found in registry: ", dep_name))
                 return
@@ -42,7 +36,7 @@ def cmd_add(package_name: Str, git_flag: Str, branch_flag: Str, tag_flag: Str, p
         if slash >= 0:
             dep_name = str_substr(dep_name, slash + 1, str_len(dep_name) - slash - 1)
 
-    raw_toml := read("lpp.toml")
+    raw_toml := read_file("lpp.toml")
     mut dep_line := str_concat("\n", str_concat(dep_name, " = { "))
 
     if str_len(git_url) > 0:
@@ -62,7 +56,7 @@ def cmd_add(package_name: Str, git_flag: Str, branch_flag: Str, tag_flag: Str, p
 
     dep_line = str_concat(dep_line, " }\n")
     mut new_toml := str_concat(raw_toml, dep_line)
-    write("lpp.toml", new_toml)
+    write_file("lpp.toml", new_toml)
     info(str_concat("Added dependency '", str_concat(dep_name, "' to lpp.toml")))
 
     install_deps()
@@ -72,11 +66,11 @@ def cmd_remove(package_name: Str) -> Void:
         error("Usage: lpp remove <package_name>")
         return
 
-    if check("lpp.toml") == 0:
+    if path_exists("lpp.toml") == 0:
         error("lpp.toml not found.")
         return
 
-    raw_toml := read("lpp.toml")
+    raw_toml := read_file("lpp.toml")
     mut target_pattern := str_concat(package_name, " =")
     if str_find(raw_toml, target_pattern) < 0:
         target_pattern = str_concat(package_name, "=")
@@ -99,11 +93,11 @@ def cmd_remove(package_name: Str) -> Void:
         if str_find(line, target_pattern) < 0:
             new_lines = str_concat(new_lines, str_concat(line, "\n"))
 
-    write("lpp.toml", new_lines)
+    write_file("lpp.toml", new_lines)
     info(str_concat("Removed dependency '", str_concat(package_name, "' from lpp.toml")))
 
-    pkg_dir := joined(".lpp_packages", package_name)
-    if check(pkg_dir) == 1:
+    pkg_dir := path_join(".lpp_packages", package_name)
+    if path_exists(pkg_dir) == 1:
         dir_remove(pkg_dir)
         info(str_concat("Cleaned package directory for ", package_name))
 

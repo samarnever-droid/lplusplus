@@ -1,0 +1,271 @@
+# manifest.lpp v5 — Parse lpp.toml and lpp.lock using stdlib toml + semver
+# Uses HashMap for O(1) dep lookup, List[Dep] for ordered iteration.
+
+import utils
+import toml
+import semver
+
+# ── Dep: classified dependency source ─────────────────────────────────────────
+
+struct Dep:
+    name:    Str
+    kind:    Str    # "semver" | "tagless" | "branched" | "tagged" | "path" | "workspace"
+    url:     Str
+    branch:  Str
+    tag:     Str
+    req:     Str    # semver constraint (kind = "semver")
+    path:    Str    # local path (kind = "path")
+
+# ── Manifest ──────────────────────────────────────────────────────────────────
+
+struct Manifest:
+    name:        Str
+    version:     Str
+    description: Str
+    ws_version:  Bool   # true → version = { workspace = true }
+    deps:        List[Dep]
+    dep_map:     Int    # HashMap: dep name -> index in deps list
+
+def manifest_new() -> Manifest:
+    mut m := Manifest()
+    m.name        = ""
+    m.version     = ""
+    m.description = ""
+    m.ws_version  = false
+    m.deps        = list_new()
+    m.dep_map     = map_new()
+    return m
+
+def manifest_parse(path: Str) -> Manifest:
+    mut m := manifest_new()
+
+    if path_exists(path) == 0:
+        return m
+
+    text   := read_file(path)
+    handle := toml_load(text)
+
+    m.name        = toml_get_str(handle, "package", "name")
+    m.description = toml_get_str(handle, "package", "description")
+
+    # version = { workspace = true }  vs  version = "1.2.3"
+    raw_ver := toml_section_raw(handle, "package")
+    if str_find(raw_ver, "workspace = true") >= 0:
+        m.ws_version = true
+    else:
+        m.version = toml_get_str(handle, "package", "version")
+
+    # Parse [dependencies] section
+    dep_raw := toml_section_raw(handle, "dependencies")
+    parse_deps_into(dep_raw, m)
+
+    return m
+
+# Parse every key=value line of a [dependencies] raw section block.
+def parse_deps_into(section: Str, m: Manifest) -> Void:
+    mut pos := 0
+    end_pos := str_len(section)
+
+    while pos < end_pos:
+        mut nl := str_find(str_substr(section, pos, end_pos - pos), "\n")
+        if nl < 0:
+            nl = end_pos - pos
+        line := str_trim(str_substr(section, pos, nl))
+        pos  = pos + nl + 1
+
+        if str_len(line) == 0:
+            continue
+        if str_starts_with(line, "#"):
+            continue
+        if str_starts_with(line, "["):
+            break   # hit next TOML section
+
+        eq := str_find(line, "=")
+        if eq <= 0:
+            continue
+
+        dep_name := str_trim(str_substr(line, 0, eq))
+        val      := str_trim(str_substr(line, eq + 1, str_len(line) - eq - 1))
+
+        d := classify_dep(dep_name, val)
+        idx := list_len(m.deps)
+        list_push(m.deps, d)
+        map_put_str(m.dep_map, dep_name, int_to_str(idx))
+
+# Given dep name and its raw TOML value, return a classified Dep.
+def classify_dep(name: Str, val: Str) -> Dep:
+    mut d := Dep()
+    d.name   = name
+    d.url    = ""
+    d.branch = ""
+    d.tag    = ""
+    d.req    = ""
+    d.path   = ""
+
+    # workspace = true
+    if str_find(val, "workspace = true") >= 0:
+        d.kind = "workspace"
+        return d
+
+    # path dep
+    if str_find(val, "path") >= 0 && str_find(val, "git") < 0:
+        d.kind = "path"
+        d.path = toml_inline_field(val, "path")
+        d.url = d.path
+        return d
+
+    # git dep
+    if str_find(val, "git") >= 0:
+        d.url    = toml_inline_field(val, "git")
+        d.tag    = toml_inline_field(val, "tag")
+        d.branch = toml_inline_field(val, "branch")
+        if str_len(d.tag) > 0:
+            d.kind = "tagged"
+        else:
+            if str_len(d.branch) > 0:
+                d.kind = "branched"
+            else:
+                d.kind = "tagless"
+        return d
+
+    # Plain version string — strip quotes if present
+    mut req := val
+    if str_starts_with(req, "\""):
+        end_q := str_find(str_substr(req, 1, str_len(req) - 1), "\"")
+        if end_q >= 0:
+            req = str_substr(req, 1, end_q)
+    d.kind = "semver"
+    d.req  = req
+    return d
+
+# O(1) dep lookup by name.
+def manifest_get_dep(m: Manifest, name: Str) -> Dep:
+    if map_has_str(m.dep_map, name) == 0:
+        mut d := Dep()
+        d.name = ""
+        return d
+    idx := str_to_int(map_get_str(m.dep_map, name))
+    return list_get(m.deps, idx)
+
+# ── WorkspaceInfo ─────────────────────────────────────────────────────────────
+
+struct WorkspaceInfo:
+    has_workspace: Bool
+    version:       Str
+    resolver:      Str
+    members:       List[Str]   # relative member paths
+    shared_deps:   List[Dep]
+    shared_dep_map: Int        # HashMap: name -> index in shared_deps
+
+def workspace_parse(path: Str) -> WorkspaceInfo:
+    mut ws := WorkspaceInfo()
+    ws.has_workspace  = false
+    ws.version        = ""
+    ws.resolver       = "smart"
+    ws.members        = list_new()
+    ws.shared_deps    = list_new()
+    ws.shared_dep_map = map_new()
+
+    if path_exists(path) == 0:
+        return ws
+
+    text   := read_file(path)
+    handle := toml_load(text)
+
+    if !toml_has_section(handle, "workspace"):
+        return ws
+
+    ws.has_workspace = true
+    ws.version       = toml_get_str(handle, "workspace", "version")
+    ws.resolver      = toml_get_str(handle, "workspace", "resolver")
+    if str_len(ws.resolver) == 0:
+        ws.resolver = "smart"
+
+    # members = ["crates/core", "crates/cli"]
+    members_raw := toml_section_raw(handle, "workspace")
+    mem_start   := str_find(members_raw, "members")
+    if mem_start >= 0:
+        bracket_start := str_find(str_substr(members_raw, mem_start, str_len(members_raw) - mem_start), "[")
+        if bracket_start >= 0:
+            arr_str := str_substr(members_raw, mem_start + bracket_start, str_len(members_raw) - mem_start - bracket_start)
+            ws.members = toml_parse_str_array(arr_str)
+
+    # [workspace.dependencies]
+    ws_dep_raw := toml_section_raw(handle, "workspace.dependencies")
+    mut dummy := Manifest()
+    dummy.deps    = ws.shared_deps
+    dummy.dep_map = ws.shared_dep_map
+    dummy.name    = "workspace"
+    parse_deps_into(ws_dep_raw, dummy)
+    ws.shared_deps    = dummy.deps
+    ws.shared_dep_map = dummy.dep_map
+
+    return ws
+
+# ── LockedPkg ─────────────────────────────────────────────────────────────────
+
+struct LockedPkg:
+    name:           Str
+    kind:           Str   # "registry" | "tagless" | "branched" | "tagged" | "path" | "workspace"
+    version:        Str
+    commit:         Str
+    source:         Str
+    branch:         Str
+    tag:            Str
+    tree_sha256:    Str
+    release_sha256: Str
+
+def lockfile_encode_pkg(p: LockedPkg) -> Str:
+    mut s := "[[package]]\n"
+    s = str_concat(s, str_concat("name    = \"", str_concat(p.name, "\"\n")))
+    s = str_concat(s, str_concat("kind    = \"", str_concat(p.kind, "\"\n")))
+    if str_len(p.version) > 0:
+        s = str_concat(s, str_concat("version = \"", str_concat(p.version, "\"\n")))
+    if str_len(p.source) > 0:
+        s = str_concat(s, str_concat("source  = \"", str_concat(p.source, "\"\n")))
+    if str_len(p.branch) > 0:
+        s = str_concat(s, str_concat("branch  = \"", str_concat(p.branch, "\"\n")))
+    if str_len(p.tag) > 0:
+        s = str_concat(s, str_concat("tag     = \"", str_concat(p.tag, "\"\n")))
+    if str_len(p.commit) > 0:
+        s = str_concat(s, str_concat("commit  = \"", str_concat(p.commit, "\"\n")))
+    if str_len(p.tree_sha256) > 0:
+        s = str_concat(s, str_concat("tree_sha256    = \"", str_concat(p.tree_sha256, "\"\n")))
+    if str_len(p.release_sha256) > 0:
+        s = str_concat(s, str_concat("release_sha256 = \"", str_concat(p.release_sha256, "\"\n")))
+    s = str_concat(s, "\n")
+    return s
+
+def lockfile_write(path: Str, entries: Str) -> Void:
+    content := str_concat( "# L++ lockfile v2 — generated by lpp 5.0. Do not edit.\n", str_concat("lock_version = 2\n\n", entries))
+    write_file(path, content)
+
+# Read a specific field from an existing lockfile for a package (offline fast-path).
+def lockfile_read_field(lock_path: Str, pkg_name: Str, field: Str) -> Str:
+    if path_exists(lock_path) == 0:
+        return ""
+    text    := read_file(lock_path)
+    pattern := str_concat("name    = \"", str_concat(pkg_name, "\""))
+    idx     := str_find(text, pattern)
+    if idx < 0:
+        return ""
+    # Search within the [[package]] block (until next blank line)
+    block_rest := str_substr(text, idx, str_len(text) - idx)
+    dbl_nl     := str_find(block_rest, "\n\n")
+    mut block  := block_rest
+    if dbl_nl >= 0:
+        block = str_substr(block_rest, 0, dbl_nl)
+    # Find "field   = "..."
+    mut field_pat := str_concat(field, "    = \"")
+    mut fi := str_find(block, field_pat)
+    if fi < 0:
+        field_pat = str_concat(field, " = \"")
+        fi = str_find(block, field_pat)
+    if fi < 0:
+        return ""
+    fstart := fi + str_len(field_pat)
+    frest  := str_substr(block, fstart, str_len(block) - fstart)
+    fend   := str_find(frest, "\"")
+    if fend < 0:
+        return frest
+    return str_substr(frest, 0, fend)

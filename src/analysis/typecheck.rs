@@ -992,8 +992,8 @@ impl<'a> TypeChecker<'a> {
                 };
                 if !types_compatible(&left_ty, &right_ty) && !is_ptr_null_check {
                     return Err(format!(
-                        "Type mismatch in binary operation: {:?} and {:?}",
-                        left_ty, right_ty
+                        "Type mismatch in binary operation {:?}: {:?} and {:?}",
+                        op, left_ty, right_ty
                     ));
                 }
                 match op {
@@ -1048,10 +1048,12 @@ impl<'a> TypeChecker<'a> {
                     } else if (name == "list_push" || name == "lpp_list_push" || name == "push")
                         && args.len() >= 2
                     {
-                        let list_ty = self.infer_expr(&args[0], current_scope, None)?;
-                        if let TypeRef::Generic(ref list_name, ref params) = list_ty {
-                            if list_name == "List" && !params.is_empty() {
-                                param_tys = vec![list_ty.clone(), params[0].clone()];
+                        let elem_ty = self.infer_expr(&args[1], current_scope, None)?;
+                        let list_ty = TypeRef::Generic("List".to_string(), vec![elem_ty.clone()]);
+                        param_tys = vec![list_ty.clone(), elem_ty.clone()];
+                        if let Expr::Identifier(_, ref cell) = args[0] {
+                            if let Some(id) = cell.get() {
+                                self.symbol_table.bindings[id].ty = Some(list_ty);
                             }
                         }
                     } else if (name == "list_set" || name == "lpp_list_set")
@@ -1229,6 +1231,21 @@ impl<'a> TypeChecker<'a> {
                             return Ok(TypeRef::Generic("List".to_string(), vec![TypeRef::Int]));
                         }
 
+                        if name == "list_push" || name == "lpp_list_push" || name == "push" {
+                            if args.len() >= 2 {
+                                let elem_ty = arg_tys[1].clone();
+                                if let Expr::Identifier(_, ref cell) = args[0] {
+                                    if let Some(id) = cell.get() {
+                                        self.symbol_table.bindings[id].ty = Some(TypeRef::Generic(
+                                            "List".to_string(),
+                                            vec![elem_ty],
+                                        ));
+                                    }
+                                }
+                            }
+                            return Ok(TypeRef::Void);
+                        }
+
                         if name == "list_get" || name == "lpp_list_get" || name == "get" {
                             let list_ty = arg_tys[0].clone();
                             if let TypeRef::Generic(ref name, ref params) = list_ty {
@@ -1248,7 +1265,7 @@ impl<'a> TypeChecker<'a> {
                             return Ok(TypeRef::Generic("Map".to_string(), vec![TypeRef::Int, TypeRef::Int]));
                         }
 
-                        if name == "map_put" || name == "lpp_map_put" {
+                        if name == "map_put" || name == "lpp_map_put" || name == "map_put_str" || name == "lpp_map_put_str" {
                             if args.len() >= 3 {
                                 let key_ty = arg_tys[1].clone();
                                 let val_ty = arg_tys[2].clone();
@@ -1264,14 +1281,14 @@ impl<'a> TypeChecker<'a> {
                             return Ok(TypeRef::Void);
                         }
 
-                        if name == "map_get" || name == "lpp_map_get" {
+                        if name == "map_get" || name == "lpp_map_get" || name == "map_get_str" || name == "lpp_map_get_str" {
                             let map_ty = arg_tys[0].clone();
                             if let TypeRef::Generic(ref name, ref params) = map_ty {
                                 if name == "Map" && params.len() >= 2 {
                                     return Ok(params[1].clone());
                                 }
                             }
-                            return Ok(TypeRef::Int);
+                            return Ok(TypeRef::Str);
                         }
 
                         return Ok(builtin.return_type.clone());

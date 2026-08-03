@@ -1,0 +1,8 @@
+[package]
+name        = "lpp-toml"
+version     = "1.0.0"
+description = "TOML manifest parser for L++. Handles sections, string/int values, inline tables, string arrays, and inline comments."
+author      = "samarnever-droid"
+
+[build]
+type = "library"

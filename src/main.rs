@@ -1130,8 +1130,9 @@ fn real_main() {
         let exe_p = temp_dir.join(format!("lpp_{}_{}{}", stem, pid, exe_ext));
         (obj_p, exe_p)
     } else {
-        let obj_p = std::path::PathBuf::from(filename.replace(".lpp", &format!(".{}", ext)));
-        let exe_p = std::path::PathBuf::from(filename.replace(".lpp", exe_ext));
+        let path = std::path::Path::new(&filename);
+        let obj_p = path.with_extension(ext);
+        let exe_p = path.with_extension(exe_ext.trim_start_matches('.'));
         (obj_p, exe_p)
     };
 
@@ -1251,6 +1252,20 @@ fn real_main() {
 }
 
 fn find_stdlib_module(clean_module: &str, leaf_name: &str) -> Option<PathBuf> {
+    for var in &["LPP_HOME", "LPP_DIR"] {
+        if let Ok(val) = std::env::var(var) {
+            let home_dir = std::path::Path::new(&val);
+            let candidates = [
+                home_dir.join(format!("stdlib/{}.lpp", clean_module)),
+                home_dir.join(format!("stdlib/{}.lpp", leaf_name)),
+            ];
+            for c in candidates {
+                if c.exists() {
+                    return Some(c);
+                }
+            }
+        }
+    }
     if let Ok(exe) = std::env::current_exe() {
         let exe_dir = exe.parent().unwrap_or(std::path::Path::new("."));
         let candidates = [

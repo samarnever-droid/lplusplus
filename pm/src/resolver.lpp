@@ -1,0 +1,305 @@
+# resolver.lpp v5 — Diamond-safe dependency resolution using HashMap + List
+# Uses real HashMap for constraint accumulation and O(1) package state tracking.
+
+import utils
+import semver
+import manifest
+
+# ── Resolve graph state ───────────────────────────────────────────────────────
+
+# For each package name, we accumulate all semver constraints in a List[Str],
+# and all git URLs in a List[Str] (for URL agreement check).
+# HashMap: pkg_name -> constraint_list_handle (Int)
+
+struct ResolveState:
+    sem_reqs:  Int    # map: pkg_name -> List[Str] of constraint strings
+    git_urls:  Int    # map: pkg_name -> List[Str] of urls seen
+    git_kinds: Int    # map: pkg_name -> kind of first git dep seen
+    errors:    List[Str]
+    resolved:  Int    # map: pkg_name -> ResolvedEntry (serialized as Str)
+    sem_keys:  List[Str]
+    git_keys:  List[Str]
+
+struct ResolvedEntry:
+    name:    Str
+    kind:    Str
+    version: Str   # for semver
+    url:     Str
+    branch:  Str
+    tag:     Str
+
+def resolve_state_new() -> ResolveState:
+    mut s := ResolveState()
+    s.sem_reqs  = map_new()
+    s.git_urls  = map_new()
+    s.git_kinds = map_new()
+    s.errors    = list_new()
+    s.resolved  = map_new()
+    s.sem_keys  = list_new()
+    s.git_keys  = list_new()
+    return s
+
+# ── Phase 1: COLLECT ──────────────────────────────────────────────────────────
+
+# Add all deps from a manifest into the resolve state.
+def resolve_collect(st: ResolveState, m: Manifest, from_name: Str) -> Void:
+    for dep in m.deps:
+        is_sem := str_find(dep.kind, "semver") >= 0
+        mut is_git := false
+        if str_find(dep.kind, "tagless") >= 0:
+            is_git = true
+        if str_find(dep.kind, "branched") >= 0:
+            is_git = true
+        if str_find(dep.kind, "tagged") >= 0:
+            is_git = true
+        mut is_path := false
+        if str_find(dep.kind, "workspace") >= 0:
+            is_path = true
+        if str_find(dep.kind, "path") >= 0:
+            is_path = true
+
+        if is_sem:
+            if map_has_str(st.sem_reqs, dep.name) == 0:
+                req_list := list_new()
+                map_put_str(st.sem_reqs, dep.name, int_to_str(req_list))
+            req_list := str_to_int(map_get_str(st.sem_reqs, dep.name))
+            list_push(req_list, dep.req)
+            ensure_sem_key(st, dep.name)
+        else if is_git:
+            if map_has_str(st.git_urls, dep.name) == 0:
+                url_list := list_new()
+                map_put_str(st.git_urls, dep.name, int_to_str(url_list))
+            url_list := str_to_int(map_get_str(st.git_urls, dep.name))
+            list_push(url_list, dep.url)
+            if map_has_str(st.git_kinds, dep.name) == 0:
+                map_put_str(st.git_kinds, dep.name, dep.kind)
+            ensure_git_key(st, dep.name)
+        else if is_path:
+            # Workspace/path: always direct, no conflict possible
+            entry := str_concat(dep.name, str_concat("|", str_concat(dep.kind, str_concat("|local|", str_concat(dep.url, "||")))))
+            map_put_str(st.resolved, dep.name, entry)
+            ensure_git_key(st, dep.name)
+
+# ── Phase 2: SOLVE ────────────────────────────────────────────────────────────
+
+# Solve all collected semver requirements using a version list.
+# version_map: HashMap of pkg_name -> List[Str] of available versions (newest first)
+def resolve_solve(st: ResolveState, version_map: Int) -> Void:
+    # Solve semver packages
+    # Iterate over sem_reqs keys (we don't have map_keys yet, so we pass pkg list)
+    pkg_list := map_get_str(st.sem_reqs, "__keys__")   # populated by collect_keys
+    # Fallback: iterate via a pre-built keys list
+    # See resolve_collect_keys() below
+    keys := st_sem_keys(st)
+    for pkg_name in keys:
+        if map_has_str(st.resolved, pkg_name) == 1:
+            continue   # already resolved (path/ws)
+
+        req_list := str_to_int(map_get_str(st.sem_reqs, pkg_name))
+
+        if map_has_str(version_map, pkg_name) == 0:
+            list_push(st.errors, str_concat("error: '", str_concat(pkg_name, "' not found in registry")))
+            continue
+
+        versions := str_to_int(map_get_str(version_map, pkg_name))
+        best     := find_best_version(versions, req_list)
+        if str_len(best) == 0:
+            msg := build_conflict_msg(pkg_name, req_list)
+            list_push(st.errors, msg)
+            continue
+
+        entry := str_concat(pkg_name, str_concat("|semver|", str_concat(best, "|||")))
+        map_put_str(st.resolved, pkg_name, entry)
+
+    # Solve git packages: URL agreement check
+    git_keys := st_git_keys(st)
+    for pkg_name in git_keys:
+        if map_has_str(st.resolved, pkg_name) == 1:
+            continue
+        url_list := get_git_urls(st, pkg_name)
+        n := list_len(url_list)
+        mut first_url := ""
+        mut ok := true
+        for url in url_list:
+            if str_len(first_url) == 0:
+                first_url = url
+            else:
+                if url != first_url:
+                    list_push(st.errors, str_concat("error[PM002]: source conflict for '", str_concat(pkg_name, str_concat("': ", str_concat(first_url, str_concat(" vs ", url))))))
+                    ok = false
+                    break
+        if ok:
+            kind := map_get_str(st.git_kinds, pkg_name)
+            entry := str_concat(pkg_name, str_concat("|", str_concat(kind, str_concat("|pending|", str_concat(first_url, "||")))))
+            map_put_str(st.resolved, pkg_name, entry)
+
+# Find highest version satisfying all constraints in req_list.
+def find_best_version(versions: List[Str], req_list: List[Str]) -> Str:
+    # versions is already sorted desc (newest first) by registry.lpp
+    for ver in versions:
+        sv := semver_parse(ver)
+        mut ok := true
+        for req in req_list:
+            if !semver_matches(sv, req):
+                ok = false
+                break
+        if ok:
+            return ver
+    return ""
+
+# Build a human-readable conflict error message.
+def build_conflict_msg(pkg_name: Str, req_list: List[Str]) -> Str:
+    mut msg := str_concat("error[PM001]: no version of '", str_concat(pkg_name, "' satisfies all constraints:\n"))
+    for req in req_list:
+        msg = str_concat(msg, str_concat("  ", str_concat(req, "\n")))
+    return msg
+
+# Helpers: build key lists from maps (since map_keys isn't yet a builtin)
+# During resolve_collect we maintain a parallel "__sem_keys__" list.
+def st_sem_keys(st: ResolveState) -> List[Str]:
+    return st.sem_keys
+
+def st_git_keys(st: ResolveState) -> List[Str]:
+    return st.git_keys
+
+def ensure_sem_key(st: ResolveState, name: Str) -> Void:
+    for k in st.sem_keys:
+        if k == name:
+            return
+    list_push(st.sem_keys, name)
+
+def ensure_git_key(st: ResolveState, name: Str) -> Void:
+    for k in st.git_keys:
+        if k == name:
+            return
+    list_push(st.git_keys, name)
+
+def get_git_urls(st: ResolveState, pkg_name: Str) -> List[Str]:
+    return str_to_int(map_get_str(st.git_urls, pkg_name))
+
+# ── Resolved entries ──────────────────────────────────────────────────────────
+
+# Parse an encoded resolved entry: "name|kind|version|url|branch|tag"
+def resolved_parse(entry: Str) -> ResolvedEntry:
+    mut e := ResolvedEntry()
+    sep1 := str_find(entry, "|")
+    if sep1 < 0:
+        e.name = entry
+        return e
+    e.name   = str_substr(entry, 0, sep1)
+    rest     := str_substr(entry, sep1 + 1, str_len(entry) - sep1 - 1)
+    sep2     := str_find(rest, "|")
+    if sep2 < 0:
+        e.kind = rest
+        return e
+    e.kind   = str_substr(rest, 0, sep2)
+    rest2    := str_substr(rest, sep2 + 1, str_len(rest) - sep2 - 1)
+    sep3     := str_find(rest2, "|")
+    if sep3 < 0:
+        e.version = rest2
+        return e
+    e.version = str_substr(rest2, 0, sep3)
+    rest3     := str_substr(rest2, sep3 + 1, str_len(rest2) - sep3 - 1)
+    sep4      := str_find(rest3, "|")
+    if sep4 < 0:
+        e.url = rest3
+        return e
+    e.url     = str_substr(rest3, 0, sep4)
+    rest4     := str_substr(rest3, sep4 + 1, str_len(rest3) - sep4 - 1)
+    sep5      := str_find(rest4, "|")
+    if sep5 < 0:
+        e.branch = rest4
+        return e
+    e.branch  = str_substr(rest4, 0, sep5)
+    e.tag     = str_substr(rest4, sep5 + 1, str_len(rest4) - sep5 - 1)
+    return e
+
+# Get resolved entry by name from state (O(1) HashMap).
+def resolve_get(st: ResolveState, pkg_name: Str) -> ResolvedEntry:
+    mut e := ResolvedEntry()
+    e.name = ""
+    if map_has_str(st.resolved, pkg_name) == 0:
+        return e
+    return resolved_parse(map_get_str(st.resolved, pkg_name))
+
+def resolve_has_errors(st: ResolveState) -> Bool:
+    return list_len(st.errors) > 0
+
+def resolve_print_errors(st: ResolveState) -> Void:
+    for msg in st.errors:
+        print_str(msg)
+
+# Build a version_map from a registry JSON string.
+# Returns: HashMap of pkg_name -> List[Str] of versions (newest-first sorted).
+def registry_build_version_map(reg_json: Str) -> Int:
+    version_map := map_new()
+    # Parse the JSON object: "packages": { "name": { "versions": ["1.0.0", ...] } }
+    # Uses L++ builtin json_parse + json_get_obj + json_get_str
+    h_json := json_parse(reg_json)
+    if h_json == 0:
+        return version_map
+
+    h_pkgs := json_get_obj(h_json, "packages")
+    if h_pkgs == 0:
+        json_free(h_json)
+        return version_map
+
+    # Since we can't iterate JSON object keys yet, fall back to line-by-line
+    # scanning to extract package names and their version lists.
+    mut pos := 0
+    end_pos := str_len(reg_json)
+    mut in_packages := false
+    mut cur_pkg     := ""
+
+    while pos < end_pos:
+        mut nl := str_find(str_substr(reg_json, pos, end_pos - pos), "\n")
+        if nl < 0:
+            nl = end_pos - pos
+        line := str_trim(str_substr(reg_json, pos, nl))
+        pos  = pos + nl + 1
+
+        if str_find(line, "\"packages\"") >= 0:
+            in_packages = true
+            continue
+
+        if !in_packages:
+            continue
+
+        # Package entry line: "   \"pkg-name\": {"
+        if str_find(line, "\": {") >= 0:
+            q1 := str_find(line, "\"")
+            if q1 >= 0:
+                rest := str_substr(line, q1 + 1, str_len(line) - q1 - 1)
+                q2   := str_find(rest, "\"")
+                if q2 >= 0:
+                    cur_pkg = str_substr(rest, 0, q2)
+                    # create empty versions list
+                    if map_has_str(version_map, cur_pkg) == 0:
+                        vers := list_new()
+                        map_put_str(version_map, cur_pkg, vers)
+            continue
+
+        # Versions array line
+        if str_len(cur_pkg) > 0 && str_find(line, "\"versions\"") >= 0:
+            # Extract version strings from the array
+            arr_start := str_find(line, "[")
+            if arr_start >= 0:
+                arr_str := str_substr(line, arr_start, str_len(line) - arr_start)
+                mut apos := 0
+                aend     := str_len(arr_str)
+                vers_list := map_get_str(version_map, cur_pkg)
+                while apos < aend:
+                    q1 := str_find(str_substr(arr_str, apos, aend - apos), "\"")
+                    if q1 < 0:
+                        break
+                    abs1 := apos + q1 + 1
+                    q2   := str_find(str_substr(arr_str, abs1, aend - abs1), "\"")
+                    if q2 < 0:
+                        break
+                    ver := str_substr(arr_str, abs1, q2)
+                    if str_len(ver) > 0:
+                        list_push(vers_list, ver)
+                    apos = abs1 + q2 + 1
+
+    json_free(h_json)
+    return version_map

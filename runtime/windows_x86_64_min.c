@@ -128,6 +128,7 @@ void lpp_print_float(double v) {
 void lpp_print_bool(int8_t value) { lpp_print_int(value ? 1 : 0); }
 void lpp_print_str(const char *t) { if(!t)return; int n=lpp_strlen(t); lpp_write(t,(DWORD)n); lpp_write("\n",1); }
 
+#pragma function(fmod)
 double fmod(double x, double y) {
     if (y == 0.0) return 0.0;
     int64_t i = (int64_t)(x / y);

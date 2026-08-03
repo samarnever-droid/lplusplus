@@ -26,3 +26,11 @@ def read(path: Str) -> Str:
 
 def check(path: Str) -> Int:
     return path_exists(path)
+
+def path_cwd() -> Str:
+    mut cwd := env_get("PWD")
+    if str_len(cwd) == 0:
+        cwd = env_get("CD")
+    if str_len(cwd) == 0:
+        cwd = "."
+    return cwd

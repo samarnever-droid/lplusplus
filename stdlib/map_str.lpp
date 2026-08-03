@@ -8,7 +8,7 @@ def map_str_set(m: Int, key: Str, value: Int):
     map_put_str(m, key, value)
 
 def map_str_get(m: Int, key: Str) -> Int:
-    return map_get_str(m, key)
+    return str_to_int(map_get_str(m, key))
 
 def map_str_has(m: Int, key: Str) -> Int:
     return map_has_str(m, key)

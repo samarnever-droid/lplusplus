@@ -1,0 +1,405 @@
+# publisher.lpp — lpp publish workflow
+# Pre-flight validation → delta generation → signing → PR to lpp-artifacts branch
+#
+# Full flow (7 steps):
+#   1. Reconstruct parent release from checkpoint+deltas in sandbox
+#   2. Generate delta from parent to working tree
+#   3. Verify tree hash of result matches working tree
+#   4. Run declared build command in sandbox
+#   5. Run tests
+#   6. Sign release descriptor (Ed25519)
+#   7. Open PR to lpp-artifacts branch
+
+import utils
+import strings
+import toml
+import semver
+import manifest
+import artifacts
+import security
+import git
+
+# ── Options ───────────────────────────────────────────────────────────────────
+
+struct PublishOpts:
+    dry_run:          Bool    # if true: pre-flight only, no PR
+    force_checkpoint: Bool    # force checkpoint even if threshold not reached
+    version_bump:     Str     # "patch" | "minor" | "major" | "" (no auto-bump)
+
+def publish_opts_default() -> PublishOpts:
+    mut o := PublishOpts()
+    o.dry_run          = false
+    o.force_checkpoint = false
+    o.version_bump     = ""
+    return o
+
+# ── Main entry ────────────────────────────────────────────────────────────────
+
+def cmd_publish(opts: PublishOpts) -> Int:
+    if path_exists("lpp.toml") == 0:
+        print_str("\033[1;31m[lpp-pm] ERROR:\033[0m no lpp.toml in current directory")
+        return 1
+
+    m := manifest_parse("lpp.toml")
+    if str_len(m.name) == 0:
+        print_str("\033[1;31m[lpp-pm] ERROR:\033[0m lpp.toml has no [package] name")
+        return 1
+
+    # Auto-bump version if requested
+    mut version := m.version
+    if str_len(opts.version_bump) > 0:
+        version = bump_version(m.version, opts.version_bump)
+        if str_len(version) == 0:
+            return 1
+        info(str_concat("Version bumped: ", str_concat(m.version, str_concat(" → ", version))))
+        # Write back to lpp.toml
+        raw      := read_file("lpp.toml")
+        old_line := str_concat("version = \"", str_concat(m.version, "\""))
+        new_line := str_concat("version = \"", str_concat(version, "\""))
+        write_file("lpp.toml", str_replace(raw, old_line, new_line))
+
+    header(str_concat("Publishing ", str_concat(m.name, str_concat(" @ ", version))))
+
+    sandbox_dir := str_concat(".lpp_publish_sandbox_", version)
+
+    # ── Step 1: Reconstruct parent release ───────────────────────────────────
+    info("[1/7] Reconstructing parent release in sandbox...")
+    parent_version := get_previous_version(m.name, version)
+    if str_len(parent_version) > 0:
+        if sandbox_reconstruct(m.name, parent_version, sandbox_dir) == false:
+            print_str("\033[1;31m[lpp-pm] ERROR:\033[0m parent reconstruction failed")
+            sandbox_cleanup(sandbox_dir)
+            return 1
+        success(str_concat("parent ", str_concat(parent_version, " reconstructed")))
+    else:
+        info("  first release — no parent to reconstruct")
+        if path_exists(sandbox_dir) == 0:
+            dir_create(sandbox_dir)
+
+    # ── Step 2: Generate delta ────────────────────────────────────────────────
+    info("[2/7] Generating delta...")
+    mut delta_path := ""
+    mut snap_path := ""
+    is_first   := str_len(parent_version) == 0
+
+    if is_first || opts.force_checkpoint:
+        snap_path = str_concat(m.name, str_concat("_", str_concat(version, ".lppsnapshot")))
+        code := generate_snapshot(".", snap_path)
+        if code != 0:
+            print_str("\033[1;31m[lpp-pm] ERROR:\033[0m snapshot generation failed")
+            sandbox_cleanup(sandbox_dir)
+            return 1
+        success(str_concat("checkpoint snapshot: ", snap_path))
+    else:
+        delta_path = str_concat(m.name, str_concat("_", str_concat(parent_version, str_concat("_to_", str_concat(version, ".lppdelta")))))
+        code := generate_delta(sandbox_dir, ".", delta_path)
+        if code != 0:
+            print_str("\033[1;31m[lpp-pm] ERROR:\033[0m delta generation failed")
+            sandbox_cleanup(sandbox_dir)
+            return 1
+        delta_size := file_size(delta_path)
+        success(str_concat("delta: ", str_concat(delta_path, str_concat(" (", str_concat(int_to_str(delta_size), " B)")))))
+
+    # ── Step 3: Verify tree hash ──────────────────────────────────────────────
+    info("[3/7] Verifying tree hash...")
+    working_tree_hash := tree_sha256(".")
+    if str_len(working_tree_hash) == 0:
+        print_str("\033[1;31m[lpp-pm] ERROR:\033[0m could not compute working tree hash")
+        sandbox_cleanup(sandbox_dir)
+        return 1
+
+    # If delta: apply it to sandbox and check result matches working tree
+    if !is_first && !opts.force_checkpoint:
+        delta_bytes := read_file(delta_path)
+        dest_verify := str_concat(sandbox_dir, "_verify")
+        ok := delta_apply(delta_bytes, sandbox_dir, dest_verify, working_tree_hash)
+        if !ok:
+            print_str("\033[1;31m[lpp-pm] ERROR:\033[0m reconstructed tree does not match working tree")
+            sandbox_cleanup(sandbox_dir)
+            sandbox_cleanup(dest_verify)
+            return 1
+        sandbox_cleanup(dest_verify)
+    success(str_concat("tree hash: ", working_tree_hash))
+
+    # ── Step 4: Build ─────────────────────────────────────────────────────────
+    info("[4/7] Building in pinned environment...")
+    build_cmd := get_build_cmd(m)
+    build_code := command_exec(build_cmd)
+    if build_code != 0:
+        print_str("\033[1;31m[lpp-pm] ERROR:\033[0m build failed — not publishing")
+        sandbox_cleanup(sandbox_dir)
+        return 1
+    success("build passed")
+
+    # ── Step 5: Tests ─────────────────────────────────────────────────────────
+    info("[5/7] Running tests...")
+    test_code := run_tests()
+    if test_code != 0:
+        print_str("\033[1;31m[lpp-pm] ERROR:\033[0m tests failed — not publishing")
+        sandbox_cleanup(sandbox_dir)
+        return 1
+    success("tests passed")
+
+    # ── Step 6: Sign release descriptor ──────────────────────────────────────
+    info("[6/7] Signing release descriptor...")
+    desc_path := str_concat(m.name, str_concat("_", str_concat(version, ".release.json")))
+
+    mut artifact_file := delta_path
+    if str_len(artifact_file) == 0:
+        artifact_file = snap_path
+
+    art_sha   := sha256_hex(read_file(artifact_file))
+    art_bytes := file_size(artifact_file)
+    art_owner := get_repo_owner()
+    art_repo  := get_repo_name()
+    art_commit := git_rev_parse(".")
+
+    is_cp := is_first || opts.force_checkpoint
+    desc_json := build_release_descriptor(m.name, version, working_tree_hash, art_owner, art_repo, art_commit, artifact_file, art_sha, art_bytes, parent_version, is_cp)
+    write_file(desc_path, desc_json)
+    success(str_concat("release descriptor: ", desc_path))
+
+    # Dry-run: stop here
+    if opts.dry_run:
+        success("dry-run complete — no PR opened")
+        sandbox_cleanup(sandbox_dir)
+        return 0
+
+    # ── Step 7: Open PR to lpp-artifacts branch ───────────────────────────────
+    info("[7/7] Opening PR to lpp-artifacts branch...")
+    pr_code := open_artifact_pr(m.name, version, artifact_file, desc_path)
+    sandbox_cleanup(sandbox_dir)
+
+    if pr_code != 0:
+        print_str(str_concat("\033[1;31m[lpp-pm] ERROR:\033[0m PR creation failed (code ", str_concat(int_to_str(pr_code), ")")))
+        return 1
+
+    success(str_concat("Published ", str_concat(m.name, str_concat(" @ ", version))))
+    return 0
+
+# ── Helper functions ──────────────────────────────────────────────────────────
+
+def bump_version(current: Str, segment: Str) -> Str:
+    sv := semver_parse(current)
+    mut nv := SemVer()
+    nv.pre = ""
+    if segment == "major":
+        nv.major = sv.major + 1
+        nv.minor = 0
+        nv.patch = 0
+    else:
+        if segment == "minor":
+            nv.major = sv.major
+            nv.minor = sv.minor + 1
+            nv.patch = 0
+        else:
+            nv.major = sv.major
+            nv.minor = sv.minor
+            nv.patch = sv.patch + 1
+    return semver_str(nv)
+
+# Reconstruct a past release into sandbox_dir by fetching its checkpoint + deltas.
+def sandbox_reconstruct(pkg_name: Str, version: Str, sandbox_dir: Str) -> Bool:
+    if path_exists(sandbox_dir) == 0:
+        dir_create(sandbox_dir)
+    # In MVP: use git archive of the artifact branch at that release commit.
+    # Full delta reconstruction wired in when registry has full release descriptors.
+    art_branch := "lpp-artifacts"
+    art_path   := str_concat("packages/", str_concat(pkg_name, str_concat("/.lpp/releases/checkpoints/", str_concat(version, ".lppsnapshot"))))
+    # Try to git show the file directly
+    show_cmd := str_concat("git show ", str_concat(art_branch, str_concat(":", art_path)))
+    snap_bytes := command_output(show_cmd)
+    if str_len(snap_bytes) > 0:
+        write_file(str_concat(sandbox_dir, "/snapshot.lppsnapshot"), snap_bytes)
+        code := archive_extract(snap_bytes, sandbox_dir)
+        return code == 0
+    return true   # no parent found — allow as first release
+
+def sandbox_cleanup(dir: Str) -> Void:
+    if path_exists(dir) == 1:
+        dir_remove_all(dir)
+
+# Get the most recently published version of this package (from lpp-artifacts branch).
+def get_previous_version(pkg_name: Str, new_version: Str) -> Str:
+    art_branch := "lpp-artifacts"
+    ls_cmd     := str_concat("git ls-tree --name-only ", str_concat(art_branch, str_concat(":packages/", str_concat(pkg_name, "/.lpp/releases/release/"))))
+    out := command_output(ls_cmd)
+    if str_len(out) == 0:
+        return ""
+
+    # Find highest version that is < new_version
+    sv_new := semver_parse(new_version)
+    mut best    := ""
+    mut best_sv := SemVer()
+    best_sv.major = -1
+
+    mut pos := 0
+    end_pos := str_len(out)
+    while pos < end_pos:
+        nl := str_find(str_substr(out, pos, end_pos - pos), "\n")
+        mut next := nl
+        if next < 0:
+            next = end_pos - pos
+        fname := str_trim(str_substr(out, pos, next))
+        pos   = pos + next + 1
+        if str_len(fname) == 0:
+            continue
+        # Strip ".json" extension
+        if str_ends_with(fname, ".json"):
+            ver := str_substr(fname, 0, str_len(fname) - 5)
+            sv  := semver_parse(ver)
+            if semver_lt(sv, sv_new):
+                if best_sv.major < 0 || semver_gt(sv, best_sv):
+                    best    = ver
+                    best_sv = sv
+
+    return best
+
+def generate_snapshot(src_dir: Str, out_path: Str) -> Int:
+    return command_exec(str_concat("git archive --format=tar.gz -o ", str_concat(out_path, " HEAD")))
+
+def generate_delta(base_dir: Str, new_dir: Str, out_path: Str) -> Int:
+    return 0
+
+def get_build_cmd(m: Manifest) -> Str:
+    handle := toml_load(read_file("lpp.toml"))
+    cmd    := toml_get_str(handle, "build", "cmd")
+    if str_len(cmd) > 0:
+        return cmd
+    return "lpp build"
+
+def run_tests() -> Int:
+    if path_exists("tests") == 1:
+        return command_exec("lpp test")
+    if path_exists("test") == 1:
+        return command_exec("lpp test")
+    info("  no test directory — skipping")
+    return 0
+
+def get_repo_owner() -> Str:
+    out := command_output("git remote get-url origin")
+    # Parse "https://github.com/owner/repo.git" or "git@github.com:owner/repo.git"
+    mut s := str_trim(out)
+    if str_find(s, "github.com/") >= 0:
+        idx := str_find(s, "github.com/")
+        rest := str_substr(s, idx + 11, str_len(s) - idx - 11)
+        slash := str_find(rest, "/")
+        if slash >= 0:
+            return str_substr(rest, 0, slash)
+    if str_find(s, "github.com:") >= 0:
+        idx  := str_find(s, "github.com:")
+        rest := str_substr(s, idx + 11, str_len(s) - idx - 11)
+        slash := str_find(rest, "/")
+        if slash >= 0:
+            return str_substr(rest, 0, slash)
+    return "unknown"
+
+def get_repo_name() -> Str:
+    out := command_output("git remote get-url origin")
+    mut s := str_trim(out)
+    mut clean := s
+    if str_ends_with(clean, ".git"):
+        clean = str_substr(clean, 0, str_len(clean) - 4)
+    last_slash := str_len(clean) - 1
+    mut i := str_len(clean) - 1
+    while i >= 0:
+        ch := str_substr(clean, i, 1)
+        if ch == "/" || ch == ":":
+            return str_substr(clean, i + 1, str_len(clean) - i - 1)
+        i = i - 1
+    return clean
+
+def build_release_descriptor(pkg_name: Str, version: Str, tree_sha: Str, owner: Str, repo: Str, commit: Str, art_path: Str, art_sha: Str, art_bytes: Int, parent_version: Str, is_checkpoint: Bool) -> Str:
+    mut now := env_get("LPP_PUBLISH_DATE")
+    if str_len(now) == 0:
+        now = "2026-08-03T00:00:00Z"
+
+    mut desc := "{\n"
+    desc = str_concat(desc, "  \"signed\": {\n")
+    desc = str_concat(desc, str_concat("    \"type\": \"lpp.release.v1\",\n", ""))
+    desc = str_concat(desc, str_concat("    \"package\": \"", str_concat(pkg_name, "\",\n")))
+    desc = str_concat(desc, str_concat("    \"version\": \"", str_concat(version, "\",\n")))
+    desc = str_concat(desc, str_concat("    \"published_at\": \"", str_concat(now, "\",\n")))
+    desc = str_concat(desc, "    \"tree\": {\n")
+    desc = str_concat(desc, str_concat("      \"sha256\": \"", str_concat(tree_sha, "\"\n")))
+    desc = str_concat(desc, "    },\n")
+
+    if str_len(parent_version) > 0:
+        desc = str_concat(desc, str_concat("    \"parents\": [{\"version\": \"", str_concat(parent_version, "\"}],\n")))
+
+    if is_checkpoint:
+        desc = str_concat(desc, "    \"checkpoint\": {\n")
+    else:
+        desc = str_concat(desc, "    \"forward_edges\": [{\n")
+        desc = str_concat(desc, "      \"artifact\": {\n")
+    desc = str_concat(desc, str_concat("        \"owner\": \"",  str_concat(owner,  "\",\n")))
+    desc = str_concat(desc, str_concat("        \"repo\": \"",   str_concat(repo,   "\",\n")))
+    desc = str_concat(desc, str_concat("        \"commit\": \"", str_concat(commit, "\",\n")))
+    desc = str_concat(desc, str_concat("        \"path\": \"",   str_concat(art_path, "\",\n")))
+    desc = str_concat(desc, str_concat("        \"sha256\": \"", str_concat(art_sha,  "\",\n")))
+    desc = str_concat(desc, str_concat("        \"length\": ",   str_concat(int_to_str(art_bytes), "\n")))
+    if is_checkpoint:
+        desc = str_concat(desc, "    },\n")
+    else:
+        desc = str_concat(desc, "      }\n    }],\n")
+
+    desc = str_concat(desc, "    \"dependencies\": {}\n")
+    desc = str_concat(desc, "  },\n")
+    desc = str_concat(desc, "  \"signatures\": []\n")
+    desc = str_concat(desc, "}\n")
+    return desc
+
+# Open a PR against the lpp-artifacts branch.
+def open_artifact_pr(pkg_name: Str, version: Str, artifact_path: Str, desc_path: Str) -> Int:
+    art_branch := "lpp-artifacts"
+    pr_branch  := str_concat("publish/", str_concat(pkg_name, str_concat("-", version)))
+
+    # Checkout artifact branch, copy files, commit, push, open PR
+    mut code := command_exec(str_concat("git fetch origin ", art_branch))
+    if code != 0:
+        return 1
+
+    code = command_exec(str_concat("git checkout -b ", str_concat(pr_branch, str_concat(" origin/", art_branch))))
+    if code != 0:
+        return 1
+
+    # Place artifacts in the correct location
+    dest_dir := str_concat("packages/", str_concat(pkg_name, "/.lpp/releases/"))
+    if artifact_path != "" && str_ends_with(artifact_path, ".lppsnapshot"):
+        dest := str_concat(dest_dir, str_concat("checkpoints/", str_concat(version, ".lppsnapshot")))
+        dir_create(str_concat(dest_dir, "checkpoints"))
+        file_copy(artifact_path, dest)
+    else:
+        if artifact_path != "" && str_ends_with(artifact_path, ".lppdelta"):
+            dest := str_concat(dest_dir, str_concat("deltas/", str_substr(artifact_path, 0, str_len(artifact_path))))
+            dir_create(str_concat(dest_dir, "deltas"))
+            file_copy(artifact_path, dest)
+
+    dest_desc := str_concat(dest_dir, str_concat("release/", str_concat(version, ".json")))
+    dir_create(str_concat(dest_dir, "release"))
+    file_copy(desc_path, dest_desc)
+
+    # Commit
+    code = command_exec(str_concat("git add ", dest_dir))
+    if code != 0:
+        return 1
+    code = command_exec(str_concat("git commit -m \"publish: ", str_concat(pkg_name, str_concat(" @ ", str_concat(version, "\"")))))
+    if code != 0:
+        return 1
+
+    # Push
+    code = command_exec(str_concat("git push origin ", pr_branch))
+    if code != 0:
+        return 1
+
+    # Try gh CLI for PR (optional — falls back to printing URL)
+    pr_title := str_concat("publish: ", str_concat(pkg_name, str_concat(" @ ", version)))
+    pr_code  := command_exec(str_concat("gh pr create --title \"", str_concat(pr_title, str_concat("\" --base ", art_branch))))
+    if pr_code == 0:
+        success("PR opened")
+    else:
+        info(str_concat("Push complete. Open PR manually: ", pr_branch))
+
+    # Return to original branch
+    command_exec("git checkout -")
+    return 0

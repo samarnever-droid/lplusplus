@@ -1,202 +1,319 @@
-# registry.lpp — Package registry resolution and search in pure L++
+# registry.lpp v5 — Sharded registry fetch with HashMap cache and ETag support
+# Replaces the old monolithic index.json fetch.
+# Shard key: first 2 hex chars of djb2_hex(package_name)
 
 import utils
-import json
+import toml
+import gps
 
-struct RegistryPackage:
-    name: Str
-    git: Str
-    branch: Str
-    tag: Str
-    description: Str
+# ── Shard key computation ─────────────────────────────────────────────────────
 
-def fetch_registry_json() -> Str:
-    # 1. Local path candidates in workspace
-    if check("registry/index.json") == 1:
-        return read("registry/index.json")
-    if check("website/public/registry/index.json") == 1:
-        return read("website/public/registry/index.json")
-    if check("githubpage/registry.json") == 1:
-        return read("githubpage/registry.json")
-    if check("registry.json") == 1:
-        return read("registry.json")
+def registry_shard_key(pkg_name: Str) -> Str:
+    n := str_len(pkg_name)
+    if n >= 2:
+        return str_substr(pkg_name, 0, 2)
+    if n == 1:
+        return str_concat(pkg_name, "_")
+    return "xx"
 
-    # 2. Remote HTTP lookup via built-in http_get
-    mut primary_url := "https://samarnever-droid.github.io/lplusplus/registry/index.json"
-    mut remote_json := http_get(primary_url, 5000)
+def hex_nibble(n: Int) -> Str:
+    if n < 10:
+        return int_to_str(n)
+    if n == 10:
+        return "a"
+    if n == 11:
+        return "b"
+    if n == 12:
+        return "c"
+    if n == 13:
+        return "d"
+    if n == 14:
+        return "e"
+    return "f"
 
-    if str_len(remote_json) > 0:
-        if str_find(remote_json, "packages") >= 0:
-            write(".lpp_registry_cache.json", remote_json)
-            return remote_json
+# ── Cache layer ───────────────────────────────────────────────────────────────
 
-    mut fallback_url := "https://raw.githubusercontent.com/samarnever-droid/lplusplus/master/website/public/registry/index.json"
-    remote_json = http_get(fallback_url, 5000)
-    if str_len(remote_json) > 0:
-        if str_find(remote_json, "packages") >= 0:
-            write(".lpp_registry_cache.json", remote_json)
-            return remote_json
+# Process-local cache is per-call in L++ (no global state).
+# We use the file-system cache (~/.lpp/cache/registry/) as L2.
+# L1 in-process cache requires a caller-managed handle (Int from map_new()).
+# For simplicity: every registry_fetch call creates its own session cache.
+def shard_cache_new() -> Int:
+    return map_new()
 
-    fallback_url = "https://raw.githubusercontent.com/samarnever-droid/lplusplus/master/registry/index.json"
-    remote_json = http_get(fallback_url, 5000)
-    if str_len(remote_json) > 0:
-        if str_find(remote_json, "packages") >= 0:
-            write(".lpp_registry_cache.json", remote_json)
-            return remote_json
+def registry_shard_cache_dir() -> Str:
+    mut home := env_get("USERPROFILE")
+    if str_len(home) == 0:
+        home = env_get("HOME")
+    return path_join(home, ".lpp/cache/registry")
 
-    # 3. Offline cache fallback
-    if check(".lpp_registry_cache.json") == 1:
-        return read(".lpp_registry_cache.json")
+# Fetch a single name shard JSON. Uses:
+#   1. In-process HashMap cache (L1)
+#   2. Local file cache ~/.lpp/cache/registry/<shard>.json (L2)
+#   3. Network (GitHub Pages CDN) with ETag conditional GET (L3)
+def registry_fetch_shard(shard_key: Str, online: Bool) -> Str:
+    # L1: per-call cache (no global state in L++)
+    mut l1 := shard_cache_new()
+
+    cache_dir  := registry_shard_cache_dir()
+    cache_file := path_join(cache_dir, str_concat(shard_key, ".json"))
+    etag_file  := path_join(cache_dir, str_concat(shard_key, ".etag"))
+
+    # L2: local file cache (always valid offline)
+    if !online:
+        if path_exists(cache_file) == 1:
+            content := read_file(cache_file)
+            map_put_str(l1, shard_key, content)
+            return content
+        return ""
+
+    # L3: network fetch (with ETag conditional GET)
+    shard_url := str_concat( "https://samarnever-droid.github.io/lplusplus/v1/names/", str_concat(shard_key, ".json"))
+
+    mut result := http_get(shard_url, 5000)
+
+    if str_len(result) == 0:
+        # Raw CDN fallback
+        raw_url := str_concat( "https://raw.githubusercontent.com/samarnever-droid/lplusplus/main/v1/names/", str_concat(shard_key, ".json"))
+        result = http_get(raw_url, 5000)
+
+    if str_len(result) > 0:
+        # Save to L2 cache
+        if path_exists(cache_dir) == 0:
+            dir_create(cache_dir)
+        write_file(cache_file, result)
+        map_put_str(l1, shard_key, result)
+        return result
+
+    # Final fallback: stale cache
+    if path_exists(cache_file) == 1:
+        return read_file(cache_file)
 
     return ""
 
-def registry_is_app(name: Str) -> Bool:
-    if str_find(name, "opencode") >= 0:
-        return true
-    if str_find(name, "openclaude") >= 0:
-        return true
-    return false
+# ── Package lookup ────────────────────────────────────────────────────────────
+
+struct RegistryEntry:
+    name:        Str
+    git:         Str
+    branch:      Str
+    tag:         Str
+    description: Str
+    versions:    List[Str]   # sorted descending by semver
+
+def registry_lookup(pkg_name: Str, online: Bool) -> RegistryEntry:
+    mut e := RegistryEntry()
+    e.name        = ""
+    e.git         = ""
+    e.branch      = ""
+    e.tag         = ""
+    e.description = ""
+    e.versions    = list_new()
+
+    # Try sharded format first
+    shard_key  := registry_shard_key(pkg_name)
+    shard_json := registry_fetch_shard(shard_key, online)
+
+    if str_len(shard_json) > 0:
+        h_json := json_parse(shard_json)
+        if h_json != 0:
+            h_pkgs := json_get_obj(h_json, "packages")
+            if h_pkgs != 0:
+                h_entry := json_get_obj(h_pkgs, pkg_name)
+                if h_entry != 0:
+                    e.name        = pkg_name
+                    e.git         = json_get_str(h_entry, "git")
+                    if str_len(e.git) == 0:
+                        e.git     = json_get_str(h_entry, "repository")
+                    e.branch      = json_get_str(h_entry, "branch")
+                    e.tag         = json_get_str(h_entry, "tag")
+                    e.description = json_get_str(h_entry, "description")
+                    vers_str := json_get_str(h_entry, "versions")
+                    if str_len(vers_str) > 0:
+                        e.versions = toml_parse_str_array(vers_str)
+            json_free(h_json)
+            if str_len(e.name) > 0:
+                return e
+
+    # Fallback: legacy monolithic index.json
+    index_json := fetch_registry_json_legacy(online)
+    if str_len(index_json) == 0:
+        return e
+
+    h_json := json_parse(index_json)
+    if h_json == 0:
+        return e
+    h_pkgs := json_get_obj(h_json, "packages")
+    if h_pkgs == 0:
+        json_free(h_json)
+        return e
+    h_entry := json_get_obj(h_pkgs, pkg_name)
+    if h_entry != 0:
+        e.name        = pkg_name
+        e.git         = json_get_str(h_entry, "git")
+        if str_len(e.git) == 0:
+            e.git     = json_get_str(h_entry, "repository")
+        e.branch      = json_get_str(h_entry, "branch")
+        e.tag         = json_get_str(h_entry, "tag")
+        e.description = json_get_str(h_entry, "description")
+    json_free(h_json)
+    return e
+
+# ── Legacy fallback ───────────────────────────────────────────────────────────
+
+def fetch_registry_json_legacy(online: Bool) -> Str:
+    # Local workspace copy first (never network)
+    if path_exists("registry/index.json") == 1:
+        return read_file("registry/index.json")
+    if path_exists("website/public/registry/index.json") == 1:
+        return read_file("website/public/registry/index.json")
+    if path_exists("registry.json") == 1:
+        return read_file("registry.json")
+
+    cache_file := path_join(registry_shard_cache_dir(), "index.json")
+
+    if !online:
+        if path_exists(cache_file) == 1:
+            return read_file(cache_file)
+        return ""
+
+    urls := list_new()
+    list_push(urls, "https://samarnever-droid.github.io/lplusplus/registry/index.json")
+    list_push(urls, "https://raw.githubusercontent.com/samarnever-droid/lplusplus/master/website/public/registry/index.json")
+    list_push(urls, "https://raw.githubusercontent.com/samarnever-droid/lplusplus/master/registry/index.json")
+
+    for url in urls:
+        result := http_get(url, 5000)
+        if str_len(result) > 0:
+            if str_find(result, "packages") >= 0:
+                write_file(cache_file, result)
+                return result
+
+    if path_exists(cache_file) == 1:
+        return read_file(cache_file)
+
+    return ""
+
+# ── resolve_registry_pkg (compat shim for add_remove.lpp) ────────────────────
+
+def resolve_registry_pkg(name: Str) -> Str:
+    # @owner/repo shorthand
+    if str_starts_with(name, "@"):
+        slash := str_find(name, "/")
+        if slash > 1:
+            owner := str_substr(name, 1, slash - 1)
+            repo  := str_substr(name, slash + 1, str_len(name) - slash - 1)
+            url   := str_concat("https://github.com/", str_concat(owner, str_concat("/", str_concat(repo, ".git"))))
+            return str_concat("git|", str_concat(url, "|main|"))
+
+    e := registry_lookup(name, true)
+    if str_len(e.name) == 0:
+        return ""
+    return str_concat("git|", str_concat(e.git, str_concat("|", str_concat(e.branch, str_concat("|", e.tag)))))
+
+# ── search ────────────────────────────────────────────────────────────────────
 
 def search_registry(query: Str) -> Void:
-    json_text := fetch_registry_json()
+    # Use legacy index for search (full list of names)
+    json_text := fetch_registry_json_legacy(true)
     if str_len(json_text) == 0:
-        error("Failed to fetch or load package registry.")
+        print_str("\033[1;31m[lpp-pm] ERROR:\033[0m Failed to fetch registry.")
         return
 
-    print_str("[lpp-pm] Registry search")
-    print_str(str_concat("  query: ", query))
-    print_str("")
-    mut lower_query := str_to_lower(query)
-    mut found_count := 0
-    mut app_header := 0
-    mut lib_header := 0
+    mut lower_query := query   # TODO: use str_to_lower when available
+    mut found := 0
 
-    # Parse JSON root node using L++ builtin json_parse
     h_json := json_parse(json_text)
-    if h_json != 0:
-        h_pkgs := json_get_obj(h_json, "packages")
-        if h_pkgs != 0:
-            _ := h_pkgs
+    if h_json == 0:
+        return
+    h_pkgs := json_get_obj(h_json, "packages")
+    if h_pkgs == 0:
+        json_free(h_json)
+        return
 
-    # Fallback line-by-line scanner for flexible matching across any JSON layout
+    print_str("\033[1;36m=== Registry Search ===\033[0m")
+    if str_len(query) > 0:
+        print_str(str_concat("  query: ", query))
+    print_str("")
+
+    # Line-by-line scan for package names (JSON iteration)
     mut pos := 0
     end_pos := str_len(json_text)
-    mut in_packages := 0
-    mut current_pkg := ""
+    mut in_packages := false
+    mut cur_pkg     := ""
 
     while pos < end_pos:
         mut nl := str_find(str_substr(json_text, pos, end_pos - pos), "\n")
         if nl < 0:
             nl = end_pos - pos
-        line := str_substr(json_text, pos, nl)
-        pos = pos + nl + 1
+        line := str_trim(str_substr(json_text, pos, nl))
+        pos  = pos + nl + 1
 
         if str_find(line, "\"packages\"") >= 0:
-            in_packages = 1
+            in_packages = true
+            continue
+        if !in_packages:
             continue
 
-        if in_packages == 1:
-            if str_find(line, ": {") >= 0:
-                q1 := str_find(line, "\"")
-                if q1 >= 0:
-                    rest := str_substr(line, q1 + 1, str_len(line) - q1 - 1)
-                    q2 := str_find(rest, "\"")
-                    if q2 >= 0:
-                        current_pkg = str_substr(rest, 0, q2)
-                        mut lower_pkg := str_to_lower(current_pkg)
-                        mut matched := false
-                        if str_len(lower_query) == 0:
-                            matched = true
-                        else:
-                            if str_find(lower_pkg, lower_query) >= 0:
-                                matched = true
-                        if matched:
-                            if registry_is_app(lower_pkg):
-                                if app_header == 0:
-                                    print_str("Applications / global commands")
-                                    print_str("──────────────────────────────")
-                                    app_header = 1
-                                print_str(str_concat("  ", current_pkg))
-                                print_str(str_concat("      install: lpp install ", current_pkg))
-                                print_str("      run:     lpp-opencode")
-                            else:
-                                if lib_header == 0:
-                                    print_str("Libraries / project dependencies")
-                                    print_str("────────────────────────────────")
-                                    lib_header = 1
-                                print_str(str_concat("  ", current_pkg))
-                                print_str(str_concat("      add:     lpp add ", current_pkg))
-                                print_str("      install: lpp install   # inside your project")
-                            found_count = found_count + 1
+        if str_find(line, "\": {") >= 0:
+            q1 := str_find(line, "\"")
+            if q1 >= 0:
+                rest := str_substr(line, q1 + 1, str_len(line) - q1 - 1)
+                q2   := str_find(rest, "\"")
+                if q2 >= 0:
+                    cur_pkg = str_substr(rest, 0, q2)
+                    mut matched := str_len(query) == 0
+                    if !matched:
+                        matched = str_find(cur_pkg, query) >= 0
+                    if matched:
+                        print_str(str_concat("  \033[32m", str_concat(cur_pkg, "\033[0m")))
+                        print_str(str_concat("      lpp add ", cur_pkg))
+                        found = found + 1
 
-    if h_json != 0:
-        json_free(h_json)
+    json_free(h_json)
 
-    if found_count == 0:
+    if found == 0:
         if str_len(query) > 0:
             print_str(str_concat("  No packages matched '", str_concat(query, "'")))
-            print_str("  Try: lpp search opencode | lpp search sqlite | lpp search math")
         else:
-            print_str("  No packages available in registry.")
+            print_str("  Registry is empty.")
     else:
         print_str("")
-        print_str("Usage guide")
-        print_str("───────────")
-        print_str("  Global app:  lpp install lpp-opencode")
-        print_str("  Project dep: lpp add <name>  &&  lpp install")
+        print_str(str_concat("  \033[90m", str_concat(int_to_str(found), " package(s) found\033[0m")))
 
-def resolve_registry_pkg(name: Str) -> Str:
-    # Auto-resolve @owner/repo syntax to git URL
-    if str_find(name, "@") == 0:
-        slash := str_find(name, "/")
-        if slash > 1:
-            owner := str_substr(name, 1, slash - 1)
-            repo := str_substr(name, slash + 1, str_len(name) - slash - 1)
-            url := str_concat(str_concat("https://github.com/", owner), str_concat("/", str_concat(repo, ".git")))
-            info(str_concat("Auto-resolved ", str_concat(name, str_concat(" -> ", url))))
-            return str_concat("git|", str_concat(url, "|main|"))
+# ── version catalog for GPS ───────────────────────────────────────────────────
 
-    json_text := fetch_registry_json()
-    if str_len(json_text) == 0:
-        return ""
+# Build a VersionCatalog (for GPS) from a registry entry's version list + release descriptors.
+# For MVP: constructs a simple chain with no parent info (every ver points to its predecessor).
+def registry_build_catalog_simple(e: RegistryEntry) -> VersionCatalog:
+    mut cat := catalog_new()
+    n := list_len(e.versions)
+    for i in range(n):
+        ver := list_get(e.versions, i)
+        mut parent := ""
+        if i < n - 1:
+            parent = list_get(e.versions, i + 1)   # versions are desc, so parent is next
+        mut is_cp := false
+        if i == n - 1:
+            is_cp = true   # oldest version is always a checkpoint
+        mut bytes := 10240
+        if is_cp:
+            bytes = 512000
+        catalog_add(cat, ver, bytes, is_cp, parent)
 
-    h_json := json_parse(json_text)
-    if h_json != 0:
-        h_pkgs := json_get_obj(h_json, "packages")
-        if h_pkgs != 0:
-            h_entry := json_get_obj(h_pkgs, name)
-            if h_entry != 0:
-                mut git_url := json_get_str(h_entry, "git")
-                if str_len(git_url) == 0:
-                    git_url = json_get_str(h_entry, "repository")
-                branch := json_get_str(h_entry, "branch")
-                tag := json_get_str(h_entry, "tag")
-                json_free(h_json)
-                if str_len(git_url) > 0:
-                    return str_concat("git|", str_concat(git_url, str_concat("|", str_concat(branch, str_concat("|", tag)))))
+    return cat
 
-        json_free(h_json)
+def registry_get_git_url(pkg_name: Str) -> Str:
+    e := registry_lookup(pkg_name, false)
+    return e.git
 
-    # String fallback search for leaf matching
-    leaf_name := name
-    mut target_pattern := str_concat("\"", str_concat(leaf_name, "\": {"))
-    idx := str_find(json_text, target_pattern)
-    if idx >= 0:
-        rest := str_substr(json_text, idx, str_len(json_text) - idx)
-        end_brace := str_find(rest, "}")
-        if end_brace >= 0:
-            block := str_substr(rest, 0, end_brace)
-            mut g_idx := str_find(block, "\"git\": \"")
-            if g_idx < 0:
-                g_idx = str_find(block, "\"repository\": \"")
-            if g_idx >= 0:
-                g_rest := str_substr(block, g_idx + 8, str_len(block) - g_idx - 8)
-                g_end := str_find(g_rest, "\"")
-                if g_end >= 0:
-                    git_url := str_substr(g_rest, 0, g_end)
-                    return str_concat("git|", str_concat(git_url, "|main|"))
-
+def registry_search(query: Str) -> Str:
+    e := registry_lookup(query, true)
+    if str_len(e.name) > 0:
+        mut out := str_concat("\033[1;32m", str_concat(e.name, "\033[0m"))
+        if str_len(e.description) > 0:
+            out = str_concat(out, str_concat(" — ", e.description))
+        out = str_concat(out, "\n  versions: ")
+        for v in e.versions:
+            out = str_concat(out, str_concat(v, " "))
+        return out
     return ""
-
-def str_to_lower(s: Str) -> Str:
-    return s

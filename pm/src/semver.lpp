@@ -1,0 +1,149 @@
+# semver.lpp — SemVer parsing, comparison, and constraint matching
+# Pure L++ — stdlib candidate (lpp-semver)
+#
+# Public API:
+#   semver_parse(v: Str) -> SemVer
+#   semver_cmp(a: SemVer, b: SemVer) -> Int     # -1 / 0 / 1
+#   semver_matches(v: SemVer, req: Str) -> Bool  # "^1.2", "~1.2", "=1.2", ">=1, <2", "*"
+#   semver_str(v: SemVer) -> Str
+
+struct SemVer:
+    major: Int
+    minor: Int
+    patch: Int
+    pre:   Str    # "" = stable; "alpha.1", "beta", "rc.2"
+
+# ── parsing ───────────────────────────────────────────────────────────────────
+
+def semver_parse(v: Str) -> SemVer:
+    mut s := v
+    if str_len(s) > 0:
+        first := str_substr(s, 0, 1)
+        if first == "v":
+            s = str_substr(s, 1, str_len(s) - 1)
+
+    mut core := s
+    mut pre  := ""
+    dash := str_find(s, "-")
+    if dash >= 0:
+        core = str_substr(s, 0, dash)
+        pre  = str_substr(s, dash + 1, str_len(s) - dash - 1)
+
+    mut major := 0
+    mut minor := 0
+    mut patch := 0
+    dot1 := str_find(core, ".")
+    if dot1 >= 0:
+        major = str_to_int(str_substr(core, 0, dot1))
+        rest1 := str_substr(core, dot1 + 1, str_len(core) - dot1 - 1)
+        dot2  := str_find(rest1, ".")
+        if dot2 >= 0:
+            minor = str_to_int(str_substr(rest1, 0, dot2))
+            patch = str_to_int(str_substr(rest1, dot2 + 1, str_len(rest1) - dot2 - 1))
+        else:
+            minor = str_to_int(rest1)
+    else:
+        major = str_to_int(core)
+
+    mut result := SemVer()
+    result.major = major
+    result.minor = minor
+    result.patch = patch
+    result.pre   = pre
+    return result
+
+# ── comparison ────────────────────────────────────────────────────────────────
+
+def semver_cmp(a: SemVer, b: SemVer) -> Int:
+    if a.major != b.major:
+        if a.major < b.major:
+            return -1
+        return 1
+    if a.minor != b.minor:
+        if a.minor < b.minor:
+            return -1
+        return 1
+    if a.patch != b.patch:
+        if a.patch < b.patch:
+            return -1
+        return 1
+    # stable > pre-release
+    a_stable := str_len(a.pre) == 0
+    b_stable := str_len(b.pre) == 0
+    if a_stable && !b_stable:
+        return 1
+    if !a_stable && b_stable:
+        return -1
+    if a.pre == b.pre:
+        return 0
+    if a.pre < b.pre:
+        return -1
+    return 1
+
+def semver_eq(a: SemVer, b: SemVer)  -> Bool:
+    return semver_cmp(a, b) == 0
+def semver_lt(a: SemVer, b: SemVer)  -> Bool:
+    return semver_cmp(a, b) < 0
+def semver_lte(a: SemVer, b: SemVer) -> Bool:
+    return semver_cmp(a, b) <= 0
+def semver_gt(a: SemVer, b: SemVer)  -> Bool:
+    return semver_cmp(a, b) > 0
+def semver_gte(a: SemVer, b: SemVer) -> Bool:
+    return semver_cmp(a, b) >= 0
+
+# ── constraint matching ───────────────────────────────────────────────────────
+
+def semver_matches(v: SemVer, req: Str) -> Bool:
+    mut r := str_trim(req)
+    if r == "*" || r == "":
+        return true
+
+    # Range ">=1.0, <2.0" — split on comma first
+    comma := str_find(r, ",")
+    if comma >= 0:
+        left  := str_trim(str_substr(r, 0, comma))
+        right := str_trim(str_substr(r, comma + 1, str_len(r) - comma - 1))
+        return semver_matches(v, left) && semver_matches(v, right)
+
+    # ^major.minor.patch  →  >=base, <(major+1).0.0
+    if str_find(r, "^") == 0:
+        base := semver_parse(str_substr(r, 1, str_len(r) - 1))
+        mut upper := SemVer()
+        upper.major = base.major + 1
+        upper.minor = 0
+        upper.patch = 0
+        upper.pre   = ""
+        return semver_gte(v, base) && semver_lt(v, upper)
+
+    # ~major.minor.patch  →  >=base, <major.(minor+1).0
+    if str_find(r, "~") == 0:
+        base := semver_parse(str_substr(r, 1, str_len(r) - 1))
+        mut upper := SemVer()
+        upper.major = base.major
+        upper.minor = base.minor + 1
+        upper.patch = 0
+        upper.pre   = ""
+        return semver_gte(v, base) && semver_lt(v, upper)
+
+    # >=, <=, =, >, <
+    if str_find(r, ">=") == 0:
+        return semver_gte(v, semver_parse(str_substr(r, 2, str_len(r) - 2)))
+    if str_find(r, "<=") == 0:
+        return semver_lte(v, semver_parse(str_substr(r, 2, str_len(r) - 2)))
+    if str_find(r, "=") == 0:
+        return semver_eq(v, semver_parse(str_substr(r, 1, str_len(r) - 1)))
+    if str_find(r, ">") == 0:
+        return semver_gt(v, semver_parse(str_substr(r, 1, str_len(r) - 1)))
+    if str_find(r, "<") == 0:
+        return semver_lt(v, semver_parse(str_substr(r, 1, str_len(r) - 1)))
+
+    # Bare version string — treat as exact
+    return semver_eq(v, semver_parse(r))
+
+# ── formatting ────────────────────────────────────────────────────────────────
+
+def semver_str(v: SemVer) -> Str:
+    mut s := str_concat(int_to_str(v.major), str_concat(".", str_concat(int_to_str(v.minor), str_concat(".", int_to_str(v.patch)))))
+    if str_len(v.pre) > 0:
+        s = str_concat(s, str_concat("-", v.pre))
+    return s

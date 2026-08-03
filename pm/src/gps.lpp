@@ -1,0 +1,201 @@
+# gps.lpp v5 — Graph Path Selector using stdlib graph (HashMap + List + Dijkstra)
+# Decides HOW to fetch each resolved package. Strictly separate from resolver.
+
+import utils
+import graph
+
+# ── Route ─────────────────────────────────────────────────────────────────────
+
+struct Route:
+    pkg_name:     Str
+    kind:         Str    # "cached" | "delta_chain" | "checkpoint" | "git_clone" | "git_fast" | "path"
+    total_bytes:  Int
+    # steps: List[Str] of step descriptors
+    steps:        List[Str]
+
+def route_new(name: Str, kind: Str) -> Route:
+    mut r := Route()
+    r.pkg_name    = name
+    r.kind        = kind
+    r.total_bytes = 0
+    r.steps       = list_new()
+    return r
+
+# ── Version catalog ───────────────────────────────────────────────────────────
+# Catalog: HashMap of version -> CatalogEntry
+# CatalogEntry stored as Str: "forward_bytes|is_checkpoint|parent_version"
+
+struct VersionCatalog:
+    entries:  Int        # HashMap: version -> entry_str
+    versions: List[Str]  # List[Str] of version strings
+
+def catalog_new() -> VersionCatalog:
+    mut c := VersionCatalog()
+    c.entries  = map_new()
+    c.versions = list_new()
+    return c
+
+def catalog_add(c: VersionCatalog, ver: Str, forward_bytes: Int, is_checkpoint: Bool, parent: Str) -> Void:
+    mut cp_flag := 0
+    if is_checkpoint:
+        cp_flag = 1
+    entry := str_concat(int_to_str(forward_bytes), str_concat("|", str_concat(int_to_str(cp_flag), str_concat("|", parent))))
+    map_put_str(c.entries, ver, entry)
+    list_push(c.versions, ver)
+
+def catalog_get_bytes(c: VersionCatalog, ver: Str) -> Int:
+    if map_has_str(c.entries, ver) == 0:
+        return 999999999
+    e   := map_get_str(c.entries, ver)
+    sep := str_find(e, "|")
+    if sep < 0:
+        return 999999999
+    return str_to_int(str_substr(e, 0, sep))
+
+def catalog_get_parent(c: VersionCatalog, ver: Str) -> Str:
+    if map_has_str(c.entries, ver) == 0:
+        return ""
+    e    := map_get_str(c.entries, ver)
+    sep1 := str_find(e, "|")
+    if sep1 < 0:
+        return ""
+    rest := str_substr(e, sep1 + 1, str_len(e) - sep1 - 1)
+    sep2 := str_find(rest, "|")
+    if sep2 < 0:
+        return ""
+    return str_substr(rest, sep2 + 1, str_len(rest) - sep2 - 1)
+
+def catalog_is_checkpoint(c: VersionCatalog, ver: Str) -> Bool:
+    if map_has_str(c.entries, ver) == 0:
+        return false
+    e    := map_get_str(c.entries, ver)
+    sep1 := str_find(e, "|")
+    if sep1 < 0:
+        return false
+    rest := str_substr(e, sep1 + 1, str_len(e) - sep1 - 1)
+    sep2 := str_find(rest, "|")
+    mut flag := rest
+    if sep2 >= 0:
+        flag = str_substr(rest, 0, sep2)
+    return flag == "1"
+
+# ── GPS main logic ────────────────────────────────────────────────────────────
+
+# Build a graph from the catalog and run Dijkstra from any cached version
+# (or from the nearest checkpoint if nothing is cached) to target_version.
+def gps_plan(pkg_name: Str, target_version: Str, catalog: VersionCatalog, cached_version: Str) -> Route:
+
+    # Fast path: already have it
+    if str_len(cached_version) > 0 && cached_version == target_version:
+        return route_new(pkg_name, "cached")
+
+    # Build the weighted graph from catalog
+    g := graph_create()
+
+    # Collect all versions from catalog
+    for ver in catalog.versions:
+        graph_add_node(g, ver, ver)
+    # Add edges: parent → ver with weight = forward_bytes
+    for ver in catalog.versions:
+        parent := catalog_get_parent(catalog, ver)
+        if str_len(parent) > 0:
+            w := catalog_get_bytes(catalog, ver)
+            graph_add_edge(g, parent, ver, w)
+
+    # Add a virtual "START" node connected to:
+    # 1. cached_version with cost 0 (if we have it)
+    # 2. every checkpoint with cost = checkpoint_bytes
+    graph_add_node(g, "START", "start")
+
+    if str_len(cached_version) > 0:
+        graph_add_edge(g, "START", cached_version, 0)
+    else:
+        # No cached version — connect START to all checkpoints
+        for ver in catalog.versions:
+            if catalog_is_checkpoint(catalog, ver):
+                w := catalog_get_bytes(catalog, ver)
+                graph_add_edge(g, "START", ver, w)
+
+    # Make sure target exists as a node
+    graph_add_node(g, target_version, target_version)
+
+    # Dijkstra from START to target_version
+    dr   := graph_dijkstra(g, "START")
+    dist := graph_dist(dr, target_version)
+
+    if dist >= 999999999:
+        # No route — fall back to full checkout
+        mut r := route_new(pkg_name, "git_clone")
+        r.total_bytes = 0
+        return r
+
+    path := graph_path(dr, target_version)
+    mut n := list_len(path)
+
+    # Determine route kind
+    mut kind := "delta_chain"
+    if n > 0:
+        first := list_get(path, 0)
+        if first == "START" && n > 1:
+            second := list_get(path, 1)
+            if catalog_is_checkpoint(catalog, second):
+                kind = "checkpoint"
+
+    mut route := route_new(pkg_name, kind)
+    route.total_bytes = dist
+
+    # Build steps from path
+    for i in range(list_len(path)):
+        node := list_get(path, i)
+        if node != "START":
+            list_push(route.steps, node)
+
+    graph_free(g)
+    return route
+
+# ── Checkpoint auto-threshold check ──────────────────────────────────────────
+# Returns true if a new checkpoint should be recommended.
+def gps_needs_checkpoint(catalog: VersionCatalog, latest_ver: Str) -> Bool:
+    mut depth    := 0
+    mut cur      := latest_ver
+    mut chain_bytes := 0
+
+    # Walk the chain back to the nearest checkpoint
+    while !catalog_is_checkpoint(catalog, cur) && depth < 200:
+        parent := catalog_get_parent(catalog, cur)
+        if str_len(parent) == 0:
+            break
+        chain_bytes = chain_bytes + catalog_get_bytes(catalog, cur)
+        cur    = parent
+        depth  = depth + 1
+
+    # Chain too deep?
+    if depth >= 20:
+        return true
+
+    # Chain bytes >= 60% of a checkpoint?
+    cp_bytes := catalog_get_bytes(catalog, cur)
+    if cp_bytes > 0 && chain_bytes * 10 >= cp_bytes * 6:
+        return true
+
+    return false
+
+# ── Print route summary ───────────────────────────────────────────────────────
+
+def gps_print_route(r: Route) -> Void:
+    if r.kind == "cached":
+        print_str(str_concat("  \033[32m✓\033[0m ", str_concat(r.pkg_name, " (cache hit, 0 B)")))
+        return
+    if r.kind == "delta_chain":
+        print_str(str_concat("  \033[36m↓\033[0m ", str_concat(r.pkg_name, str_concat(" delta chain (", str_concat(int_to_str(r.total_bytes), " B)")))))
+        return
+    if r.kind == "checkpoint":
+        print_str(str_concat("  \033[34m↓\033[0m ", str_concat(r.pkg_name, str_concat(" checkpoint  (", str_concat(int_to_str(r.total_bytes), " B)")))))
+        return
+    if r.kind == "git_clone":
+        print_str(str_concat("  \033[33m↓\033[0m ", str_concat(r.pkg_name, " git clone (shallow)")))
+        return
+    if r.kind == "git_fast":
+        print_str(str_concat("  \033[32m✓\033[0m ", str_concat(r.pkg_name, " git fast-path (commit match)")))
+        return
+    print_str(str_concat("  ", str_concat(r.pkg_name, str_concat(" ", r.kind))))

@@ -1,0 +1,8 @@
+[package]
+name        = "lpp-semver"
+version     = "1.0.0"
+description = "SemVer parsing, comparison, and constraint matching for L++. Handles ^, ~, =, >=, ranges, pre-releases."
+author      = "samarnever-droid"
+
+[build]
+type = "library"

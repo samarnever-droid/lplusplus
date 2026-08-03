@@ -1,0 +1,8 @@
+[package]
+name        = "lpp-graph"
+version     = "1.0.0"
+description = "Weighted directed graph with Dijkstra shortest-path and Kahn topological sort. Pure L++. Used by lpp-pm GPS planner."
+author      = "samarnever-droid"
+
+[build]
+type = "library"

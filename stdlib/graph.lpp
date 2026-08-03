@@ -1,0 +1,174 @@
+## L++ Standard Library: Weighted Graph + Dijkstra + Topo Sort
+## Pure L++ — uses HashMap and List.
+## Registry candidate: lpp-graph
+
+struct Graph:
+    nodes:  List[Str]
+    labels: Int
+    adj:    Int
+
+def graph_create() -> Graph:
+    mut g := Graph()
+    g.nodes  = list_new()
+    g.labels = map_new()
+    g.adj    = map_new()
+    return g
+
+def graph_add_node(g: Graph, id: Str, label: Str) -> Void:
+    if map_has_str(g.labels, id) == 0:
+        list_push(g.nodes, id)
+        map_put_str(g.labels, id, label)
+    if map_has_str(g.adj, id) == 0:
+        adj := list_new()
+        map_put_str(g.adj, id, int_to_str(adj))
+
+def graph_add_edge(g: Graph, src_node: Str, to: Str, weight: Int) -> Void:
+    if map_has_str(g.adj, src_node) == 0:
+        adj := list_new()
+        map_put_str(g.adj, src_node, int_to_str(adj))
+    adj := str_to_int(map_get_str(g.adj, src_node))
+    edge := str_concat(to, str_concat("|", int_to_str(weight)))
+    list_push(adj, edge)
+
+def graph_node_count(g: Graph) -> Int:
+    return list_len(g.nodes)
+
+def graph_dijkstra(g: Graph, source: Str) -> Int:
+    nodes  := g.nodes
+    n      := list_len(nodes)
+
+    dist_map := map_new()   # node -> distance (as Str)
+    prev_map := map_new()   # node -> prev node id
+    vis_map  := map_new()   # node -> 1 if visited
+
+    # Init all to infinity, source to 0
+    for i in range(n):
+        nid := list_get(nodes, i)
+        if nid == source:
+            map_put_str(dist_map, nid, "0")
+        else:
+            map_put_str(dist_map, nid, "999999999")
+        map_put_str(prev_map, nid, "")
+
+    # O(N²) Dijkstra
+    for iter in range(n):
+        mut min_id   := ""
+        mut min_dist := 999999999
+        for i in range(n):
+            nid := list_get(nodes, i)
+            if map_has_str(vis_map, nid) == 1:
+                continue
+            d := str_to_int(map_get_str(dist_map, nid))
+            if d < min_dist:
+                min_dist = d
+                min_id   = nid
+
+        if str_len(min_id) == 0:
+            break
+        if min_dist >= 999999999:
+            break
+
+        map_put_str(vis_map, min_id, "1")
+
+        if map_has_str(g.adj, min_id) == 0:
+            continue
+        adj := str_to_int(map_get_str(g.adj, min_id))
+        for edge in adj:
+            sep := str_find(edge, "|")
+            if sep < 0:
+                continue
+            to_id  := str_substr(edge, 0, sep)
+            weight := str_to_int(str_substr(edge, sep + 1, str_len(edge) - sep - 1))
+            dv     := str_to_int(map_get_str(dist_map, to_id))
+            if min_dist + weight < dv:
+                map_put_str(dist_map, to_id, int_to_str(min_dist + weight))
+                map_put_str(prev_map, to_id, min_id)
+
+    result := map_new()
+    map_put_str(result, "__dist__", int_to_str(dist_map))
+    map_put_str(result, "__prev__", int_to_str(prev_map))
+    return result
+
+def graph_dist(dr: Int, node: Str) -> Int:
+    dist_map := str_to_int(map_get_str(dr, "__dist__"))
+    if map_has_str(dist_map, node) == 0:
+        return 999999999
+    return str_to_int(map_get_str(dist_map, node))
+
+def graph_path(dr: Int, target: Str) -> List[Str]:
+    prev_map := str_to_int(map_get_str(dr, "__prev__"))
+    path     := list_new()
+    mut cur  := target
+    mut depth := 0
+    while str_len(cur) > 0 && depth < 10000:
+        list_push(path, cur)
+        p := map_get_str(prev_map, cur)
+        if p == cur:
+            break
+        cur   = p
+        depth = depth + 1
+    n      := list_len(path)
+    rev    := list_new()
+    for i in range(n):
+        list_push(rev, list_get(path, n - 1 - i))
+    return rev
+
+def graph_topo_sort(g: Graph) -> List[Str]:
+    nodes  := g.nodes
+    n      := list_len(nodes)
+
+    in_deg := map_new()
+
+    for i in range(n):
+        nid := list_get(nodes, i)
+        if map_has_str(in_deg, nid) == 0:
+            map_put_str(in_deg, nid, "0")
+
+    for i in range(n):
+        nid := list_get(nodes, i)
+        if map_has_str(g.adj, nid) == 0:
+            continue
+        adj := str_to_int(map_get_str(g.adj, nid))
+        for edge in adj:
+            sep := str_find(edge, "|")
+            if sep < 0:
+                continue
+            to_id := str_substr(edge, 0, sep)
+            cur_d := str_to_int(map_get_str(in_deg, to_id))
+            map_put_str(in_deg, to_id, int_to_str(cur_d + 1))
+
+    queue := list_new()
+    for i in range(n):
+        nid := list_get(nodes, i)
+        if str_to_int(map_get_str(in_deg, nid)) == 0:
+            list_push(queue, nid)
+
+    result := list_new()
+    mut qi := 0
+    while qi < list_len(queue):
+        u := list_get(queue, qi)
+        qi = qi + 1
+        list_push(result, u)
+
+        if map_has_str(g.adj, u) == 0:
+            continue
+        adj := str_to_int(map_get_str(g.adj, u))
+        for edge in adj:
+            sep := str_find(edge, "|")
+            if sep < 0:
+                continue
+            to_id := str_substr(edge, 0, sep)
+            dv    := str_to_int(map_get_str(in_deg, to_id))
+            new_d := dv - 1
+            map_put_str(in_deg, to_id, int_to_str(new_d))
+            if new_d == 0:
+                list_push(queue, to_id)
+
+    return result
+
+def graph_has_cycle(g: Graph) -> Bool:
+    topo := graph_topo_sort(g)
+    return list_len(topo) < graph_node_count(g)
+
+def graph_free(g: Graph) -> Void:
+    return

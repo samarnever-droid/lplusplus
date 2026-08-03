@@ -21,10 +21,10 @@ def compile_project() -> Int:
         compiler = "lpp"
 
     cc_cmd := str_concat(compiler, str_concat(" ", str_concat(entry, " --linker auto")))
-    code := command_exec(cc_cmd)
-    if code != 0:
+    res_code := command_exec(cc_cmd)
+    if res_code != 0:
         error("compilation failed")
-        return code
+        return res_code
     return 0
 
 def extract_name(toml_raw: Str) -> Str:

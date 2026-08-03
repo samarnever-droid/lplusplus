@@ -1,0 +1,155 @@
+# workspace.lpp v5 — Monorepo workspace discovery and member management
+# Uses HashMap for O(1) member lookup by package name.
+
+import utils
+import toml
+import manifest
+
+struct Workspace:
+    root:       Str
+    info:       WorkspaceInfo
+    # abs_paths: List[Str] of absolute member paths
+    abs_paths:  List[Str]
+    # name_to_path: HashMap of package name -> abs path
+    name_map:   Int
+
+def workspace_empty() -> Workspace:
+    mut ws := Workspace()
+    ws.root      = ""
+    ws.abs_paths = list_new()
+    ws.name_map  = map_new()
+    return ws
+
+# Walk up from start_dir looking for lpp.toml with [workspace] section.
+def workspace_discover(start_dir: Str) -> Workspace:
+    mut ws := workspace_empty()
+    mut cur := start_dir
+    mut depth := 0
+
+    while depth < 20:
+        mpath := path_join(cur, "lpp.toml")
+        if path_exists(mpath) == 1:
+            text   := read_file(mpath)
+            handle := toml_load(text)
+            if toml_has_section(handle, "workspace"):
+                ws.root = cur
+                ws.info = workspace_parse(mpath)
+                # Resolve member paths to abs paths and build name map
+                for rel in ws.info.members:
+                    abs := path_join(cur, rel)
+                    if path_exists(abs) == 1:
+                        list_push(ws.abs_paths, abs)
+                        # Load member name for map
+                        mm_path := path_join(abs, "lpp.toml")
+                        if path_exists(mm_path) == 1:
+                            mm := manifest_parse(mm_path)
+                            if str_len(mm.name) > 0:
+                                map_put_str(ws.name_map, mm.name, abs)
+                return ws
+        # Walk up: find last path separator
+        mut sep := str_len(cur) - 1
+        while sep > 0:
+            ch := str_substr(cur, sep, 1)
+            if ch == "/" || ch == "\\":
+                break
+            sep = sep - 1
+        mut parent := ""
+        if sep > 0:
+            parent = str_substr(cur, 0, sep)
+        else:
+            parent = cur
+        if parent == cur:
+            break
+        cur   = parent
+        depth = depth + 1
+
+    return ws
+
+# O(1) member lookup by package name.
+def workspace_find_member(ws: Workspace, pkg_name: Str) -> Str:
+    if map_has_str(ws.name_map, pkg_name) == 1:
+        return map_get_str(ws.name_map, pkg_name)
+    return ""
+
+def workspace_has_member(ws: Workspace, pkg_name: Str) -> Bool:
+    return map_has_str(ws.name_map, pkg_name) == 1
+
+# Apply workspace.version to a member manifest using version.workspace = true
+def workspace_apply_version(m: Manifest, ws: Workspace) -> Manifest:
+    mut res := m
+    if !m.ws_version:
+        return res
+    if str_len(ws.info.version) == 0:
+        print_str(str_concat("\033[1;31m[lpp-pm] ERROR:\033[0m '", str_concat(m.name, "' uses version.workspace = true but [workspace] has no version")))
+        return res
+    res.version = ws.info.version
+    return res
+
+# Resolve a workspace dep: first from shared_deps pool, then from member packages.
+def workspace_resolve_dep(ws: Workspace, dep_name: Str) -> Dep:
+    # 1. Check shared [workspace.dependencies]
+    if list_len(ws.info.shared_deps) > 0:
+        d := manifest_get_dep_list(ws.info.shared_deps, ws.info.shared_dep_map, dep_name)
+        if str_len(d.name) > 0:
+            return d
+
+    # 2. Check member packages
+    member_path := workspace_find_member(ws, dep_name)
+    if str_len(member_path) > 0:
+        mut d := Dep()
+        d.name   = dep_name
+        d.kind   = "path"
+        d.path   = member_path
+        d.url    = ""
+        d.branch = ""
+        d.tag    = ""
+        d.req    = ""
+        return d
+
+    mut d := Dep()
+    d.name = ""
+    return d
+
+# Helper: lookup dep by name from a List+Map pair (same as manifest.lpp style).
+def manifest_get_dep_list(deps: List[Dep], dep_map: Int, name: Str) -> Dep:
+    if map_has_str(dep_map, name) == 0:
+        mut d := Dep()
+        d.name = ""
+        return d
+    idx := str_to_int(map_get_str(dep_map, name))
+    return list_get(deps, idx)
+
+# Print all workspace members.
+def workspace_list_members(ws: Workspace) -> Void:
+    if str_len(ws.root) == 0:
+        print_str("\033[1;33m[lpp-pm]\033[0m not in a workspace")
+        return
+
+    print_str(str_concat("\033[1;36m=== Workspace: ", str_concat(ws.root, " ===\033[0m")))
+    if str_len(ws.info.version) > 0:
+        print_str(str_concat("  version:  ", ws.info.version))
+    print_str(str_concat("  resolver: ", ws.info.resolver))
+    print_str(str_concat("  members (", str_concat(int_to_str(list_len(ws.abs_paths)), "):")))
+
+    for abs in ws.abs_paths:
+        mm_path := path_join(abs, "lpp.toml")
+        if path_exists(mm_path) == 1:
+            mm  := manifest_parse(mm_path)
+            mut ver := mm.version
+            if mm.ws_version:
+                ver = str_concat(ws.info.version, " \033[90m(workspace)\033[0m")
+            print_str(str_concat("    \033[32m", str_concat(mm.name, str_concat("\033[0m @ ", ver))))
+        else:
+            print_str(str_concat("    \033[33m", str_concat(abs, "\033[0m (no lpp.toml)")))
+
+def workspace_build_all(ws: Workspace) -> Void:
+    for abs in ws.abs_paths:
+        cmd_path := path_join(abs, "src/main.lpp")
+        if path_exists(cmd_path) == 1:
+            info(str_concat("Building workspace member: ", abs))
+            command_exec(str_concat("lpp ", cmd_path))
+
+def workspace_test_all(ws: Workspace) -> Void:
+    for abs in ws.abs_paths:
+        info(str_concat("Testing workspace member: ", abs))
+        command_exec(str_concat("lpp test ", abs))

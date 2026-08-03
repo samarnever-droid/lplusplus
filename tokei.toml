@@ -1,0 +1,4 @@
+[[languages]]
+name = "Lpp"
+extensions = ["lpp"]
+line_comment = ["#"]
