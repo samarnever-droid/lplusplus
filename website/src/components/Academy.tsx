@@ -1,8 +1,62 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, ReactNode } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Heart, Flame, Star, Trophy, CheckCircle, XCircle, Play, Sparkles, BookOpen, ArrowRight, Lock } from "lucide-react";
+import { Heart, Flame, Star, Trophy, CheckCircle, XCircle, Play, Sparkles, BookOpen, Lock } from "lucide-react";
 import { CURRICULUM, Stage, Lesson, LessonChallenge } from "../lib/curriculum";
 import { getUserProgress, saveUserProgress, UserProgress } from "../lib/db";
+
+/**
+ * Custom Markdown Parser for rich visual rendering of lesson theory guides
+ */
+function renderFormattedMarkdown(text: string): ReactNode {
+  const lines = text.split("\n");
+  const elements: ReactNode[] = [];
+
+  lines.forEach((line, idx) => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+
+    if (trimmed.startsWith("### ")) {
+      elements.push(
+        <h3 key={idx} className="text-base font-bold font-mono text-acid mt-5 mb-2 flex items-center gap-2">
+          <span className="h-2 w-2 rounded-full bg-acid" />
+          {trimmed.replace("### ", "")}
+        </h3>
+      );
+    } else if (trimmed.startsWith("- ")) {
+      const content = parseInlineMarkdown(trimmed.replace("- ", ""));
+      elements.push(
+        <li key={idx} className="ml-5 list-disc text-white/80 text-xs md:text-sm font-sans leading-relaxed my-1">
+          {content}
+        </li>
+      );
+    } else {
+      const content = parseInlineMarkdown(trimmed);
+      elements.push(
+        <p key={idx} className="text-white/80 text-xs md:text-sm font-sans leading-relaxed my-2">
+          {content}
+        </p>
+      );
+    }
+  });
+
+  return <div className="space-y-1">{elements}</div>;
+}
+
+/**
+ * Parses inline **bold** and `code` formatting
+ */
+function parseInlineMarkdown(text: string): ReactNode {
+  // Regex to split by bold **text** or code `text`
+  const parts = text.split(/(\*\*.*?\*\*|`.*?`)/g);
+  return parts.map((part, i) => {
+    if (part.startsWith("**") && part.endsWith("**")) {
+      return <strong key={i} className="text-white font-bold">{part.slice(2, -2)}</strong>;
+    } else if (part.startsWith("`") && part.endsWith("`")) {
+      return <code key={i} className="bg-black/60 border border-white/10 text-acid px-1.5 py-0.5 rounded font-mono text-xs">{part.slice(1, -1)}</code>;
+    }
+    return part;
+  });
+}
 
 export default function Academy() {
   const [progress, setProgress] = useState<UserProgress | null>(null);
@@ -254,8 +308,8 @@ export default function Academy() {
 
                   <p className="text-white/90 text-sm font-sans leading-relaxed">{activeLesson.theory.summary}</p>
 
-                  <div className="rounded-xl border border-white/10 bg-white/[0.02] p-5 font-sans text-sm text-white/80 space-y-3 whitespace-pre-line leading-relaxed">
-                    {activeLesson.theory.explanationMarkdown}
+                  <div className="rounded-xl border border-white/10 bg-white/[0.02] p-5">
+                    {renderFormattedMarkdown(activeLesson.theory.explanationMarkdown)}
                   </div>
 
                   {/* Code Example Card */}
@@ -283,7 +337,7 @@ export default function Academy() {
                       onClick={() => setShowTheory(false)}
                       className="flex items-center gap-2 px-6 py-3 rounded-xl bg-acid text-ink font-mono text-sm font-bold shadow-lg shadow-acid/20 hover:brightness-110 transition-all"
                     >
-                      Start Practice Practice →
+                      Start Practice →
                     </button>
                   </div>
                 </div>
