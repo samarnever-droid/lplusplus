@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Heart, Flame, Star, Trophy, CheckCircle, XCircle, Play, RefreshCw, Award, Lock, Sparkles } from "lucide-react";
+import { Heart, Flame, Star, Trophy, CheckCircle, XCircle, Play, Sparkles, BookOpen, ArrowRight, Lock } from "lucide-react";
 import { CURRICULUM, Stage, Lesson, LessonChallenge } from "../lib/curriculum";
 import { getUserProgress, saveUserProgress, UserProgress } from "../lib/db";
 
@@ -8,6 +8,7 @@ export default function Academy() {
   const [progress, setProgress] = useState<UserProgress | null>(null);
   const [activeStage, setActiveStage] = useState<Stage>(CURRICULUM[0]);
   const [activeLesson, setActiveLesson] = useState<Lesson | null>(null);
+  const [showTheory, setShowTheory] = useState(true);
   const [currentChallengeIdx, setCurrentChallengeIdx] = useState(0);
   
   // Interactive challenge states
@@ -27,6 +28,7 @@ export default function Academy() {
 
   const startLesson = (lesson: Lesson) => {
     setActiveLesson(lesson);
+    setShowTheory(true);
     setCurrentChallengeIdx(0);
     setFeedback(null);
     setSelectedOption(null);
@@ -52,10 +54,7 @@ export default function Academy() {
   };
 
   const handleCodeRun = (challenge: LessonChallenge) => {
-    const cleanUser = userCode.replace(/\s+/g, " ").trim();
-    const cleanExpected = (challenge.solutionCode || "").replace(/\s+/g, " ").trim();
-
-    if (cleanUser.includes("print") || userCode.length > 10) {
+    if (userCode.length > 10) {
       const output = challenge.expectedOutput || "Output verified!";
       setCodeOutput(output);
       setFeedback({ isCorrect: true, message: challenge.explanation });
@@ -96,21 +95,19 @@ export default function Academy() {
   const currentChallenge = activeLesson?.challenges[currentChallengeIdx];
 
   return (
-    <section id="academy" className="relative py-20 px-5 md:px-8 max-w-7xl mx-auto">
+    <section id="academy" className="relative py-12 px-5 md:px-8 max-w-7xl mx-auto">
       {/* Top Header & Duolingo Status Bar */}
-      <div className="mb-12 rounded-2xl border border-white/10 bg-ink-soft/60 backdrop-blur-xl p-6 flex flex-wrap items-center justify-between gap-6">
-        <div>
-          <div className="flex items-center gap-3">
-            <span className="text-3xl">🎓</span>
-            <div>
-              <h2 className="text-2xl font-bold font-mono tracking-tight text-white">L++ Duolingo Academy</h2>
-              <p className="text-xs font-mono text-white/50">Interactive Beginner-to-Master Systems Engineering Path</p>
-            </div>
+      <div className="mb-10 rounded-2xl border border-white/10 bg-ink-soft/60 backdrop-blur-xl p-6 flex flex-wrap items-center justify-between gap-6">
+        <div className="flex items-center gap-3">
+          <span className="text-3xl">🎓</span>
+          <div>
+            <h2 className="text-2xl font-bold font-mono tracking-tight text-white">L++ Duolingo Academy</h2>
+            <p className="text-xs font-mono text-white/50">Interactive Beginner-to-Master Systems Engineering Path</p>
           </div>
         </div>
 
         {/* Stats */}
-        <div className="flex items-center gap-6 font-mono text-sm">
+        <div className="flex items-center gap-5 font-mono text-sm">
           <div className="flex items-center gap-2 rounded-xl bg-red-500/10 border border-red-500/20 px-3.5 py-1.5 text-red-400">
             <Heart className="h-4 w-4 fill-current" />
             <span className="font-bold">{progress.hearts}/5</span>
@@ -149,11 +146,9 @@ export default function Academy() {
               >
                 <span className="text-3xl">{stage.icon}</span>
                 <div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono text-xs font-semibold px-2 py-0.5 rounded bg-white/10 text-white/80">
-                      {stage.level}
-                    </span>
-                  </div>
+                  <span className="font-mono text-xs font-semibold px-2 py-0.5 rounded bg-white/10 text-white/80">
+                    {stage.level}
+                  </span>
                   <h4 className="font-mono font-bold text-base mt-1 text-white">{stage.title}</h4>
                   <p className="text-xs text-white/50 mt-1 line-clamp-2">{stage.description}</p>
                 </div>
@@ -215,7 +210,7 @@ export default function Academy() {
                           : "bg-white/10 text-white/40 cursor-not-allowed"
                       }`}
                     >
-                      {isCompleted ? "Review" : "Start"}
+                      {isCompleted ? "Review Lesson" : "Start Lesson"}
                     </button>
                   </div>
                 </div>
@@ -225,116 +220,171 @@ export default function Academy() {
         </div>
       </div>
 
-      {/* Interactive Challenge Modal */}
+      {/* Interactive Lesson Modal (Theory Guide -> Practice Challenges) */}
       <AnimatePresence>
-        {activeLesson && currentChallenge && !isCompletedModal && (
+        {activeLesson && !isCompletedModal && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 bg-ink/90 backdrop-blur-2xl p-4 md:p-8 flex items-center justify-center"
+            className="fixed inset-0 z-50 bg-ink/95 backdrop-blur-2xl p-4 md:p-8 flex items-center justify-center overflow-y-auto"
           >
-            <div className="w-full max-w-3xl rounded-2xl border border-white/15 bg-ink-soft p-6 md:p-8 space-y-6 shadow-2xl">
-              {/* Challenge Header */}
+            <div className="w-full max-w-3xl my-auto rounded-2xl border border-white/15 bg-ink-soft p-6 md:p-8 space-y-6 shadow-2xl">
+              {/* Header */}
               <div className="flex items-center justify-between border-b border-white/10 pb-4">
                 <div>
-                  <span className="font-mono text-xs text-acid">
-                    {activeLesson.title} — Challenge {currentChallengeIdx + 1} of {activeLesson.challenges.length}
-                  </span>
-                  <h3 className="text-xl font-bold font-mono text-white mt-1">{currentChallenge.title}</h3>
+                  <span className="font-mono text-xs text-acid uppercase tracking-wider">{activeStage.title}</span>
+                  <h3 className="text-xl font-bold font-mono text-white mt-0.5">{activeLesson.title}</h3>
                 </div>
                 <button
                   onClick={() => setActiveLesson(null)}
-                  className="text-white/40 hover:text-white font-mono text-sm"
+                  className="text-white/40 hover:text-white font-mono text-sm px-3 py-1 rounded-lg border border-white/10"
                 >
                   ✕ Close
                 </button>
               </div>
 
-              {/* Challenge Prompt */}
-              <p className="text-white/90 text-sm md:text-base font-sans">{currentChallenge.prompt}</p>
-
-              {/* Quiz Challenge Type */}
-              {currentChallenge.type === "quiz" && (
-                <div className="space-y-3">
-                  {currentChallenge.options?.map((opt, oIdx) => (
-                    <button
-                      key={oIdx}
-                      onClick={() => setSelectedOption(oIdx)}
-                      className={`w-full text-left p-4 rounded-xl border font-mono text-sm transition-all ${
-                        selectedOption === oIdx
-                          ? "border-acid bg-acid/20 text-white font-bold"
-                          : "border-white/10 bg-white/5 text-white/80 hover:bg-white/10"
-                      }`}
-                    >
-                      {opt.text}
-                    </button>
-                  ))}
-                </div>
-              )}
-
-              {/* Code Challenge Type */}
-              {currentChallenge.type === "code" && (
-                <div className="space-y-4">
-                  <div className="rounded-xl border border-white/10 bg-black/60 p-4 font-mono text-xs">
-                    <textarea
-                      value={userCode}
-                      onChange={(e) => setUserCode(e.target.value)}
-                      rows={6}
-                      className="w-full bg-transparent text-acid focus:outline-none resize-none font-mono"
-                    />
+              {/* View 1: Concept & Theory Card */}
+              {showTheory ? (
+                <div className="space-y-6">
+                  <div className="flex items-center gap-3 text-acid font-mono text-sm font-bold">
+                    <BookOpen className="h-5 w-5" />
+                    <span>Concept Guide: {activeLesson.theory.title}</span>
                   </div>
-                  {codeOutput && (
-                    <div className="rounded-lg bg-white/5 p-3 border border-white/10 font-mono text-xs text-emerald-400">
-                      <span className="text-white/40 block mb-1">Output:</span>
-                      {codeOutput}
+
+                  <p className="text-white/90 text-sm font-sans leading-relaxed">{activeLesson.theory.summary}</p>
+
+                  <div className="rounded-xl border border-white/10 bg-white/[0.02] p-5 font-sans text-sm text-white/80 space-y-3 whitespace-pre-line leading-relaxed">
+                    {activeLesson.theory.explanationMarkdown}
+                  </div>
+
+                  {/* Code Example Card */}
+                  {activeLesson.theory.codeExample && (
+                    <div className="space-y-2">
+                      <span className="font-mono text-xs text-white/40 uppercase tracking-widest block">Code Example</span>
+                      <div className="rounded-xl border border-white/10 bg-black/80 p-4 font-mono text-xs text-acid">
+                        <pre>{activeLesson.theory.codeExample}</pre>
+                      </div>
                     </div>
                   )}
+
+                  {/* Key Takeaways */}
+                  <div className="rounded-xl border border-acid/20 bg-acid/5 p-4 space-y-2">
+                    <span className="font-mono text-xs text-acid font-bold uppercase tracking-wider block">Key Takeaways</span>
+                    <ul className="list-disc list-inside text-xs font-mono text-white/80 space-y-1">
+                      {activeLesson.theory.keyTakeaways.map((item, i) => (
+                        <li key={i}>{item}</li>
+                      ))}
+                    </ul>
+                  </div>
+
+                  <div className="pt-4 border-t border-white/10 flex justify-end">
+                    <button
+                      onClick={() => setShowTheory(false)}
+                      className="flex items-center gap-2 px-6 py-3 rounded-xl bg-acid text-ink font-mono text-sm font-bold shadow-lg shadow-acid/20 hover:brightness-110 transition-all"
+                    >
+                      Start Practice Practice →
+                    </button>
+                  </div>
                 </div>
+              ) : (
+                /* View 2: Interactive Practice Challenges */
+                currentChallenge && (
+                  <div className="space-y-6">
+                    <div className="flex items-center justify-between text-xs font-mono text-white/40">
+                      <span>Challenge {currentChallengeIdx + 1} of {activeLesson.challenges.length}</span>
+                      <button onClick={() => setShowTheory(true)} className="text-acid hover:underline">
+                        📖 Review Theory
+                      </button>
+                    </div>
+
+                    <h4 className="text-lg font-bold font-mono text-white">{currentChallenge.title}</h4>
+                    <p className="text-white/90 text-sm font-sans">{currentChallenge.prompt}</p>
+
+                    {/* Quiz Type */}
+                    {currentChallenge.type === "quiz" && (
+                      <div className="space-y-3">
+                        {currentChallenge.options?.map((opt, oIdx) => (
+                          <button
+                            key={oIdx}
+                            onClick={() => setSelectedOption(oIdx)}
+                            className={`w-full text-left p-4 rounded-xl border font-mono text-sm transition-all ${
+                              selectedOption === oIdx
+                                ? "border-acid bg-acid/20 text-white font-bold"
+                                : "border-white/10 bg-white/5 text-white/80 hover:bg-white/10"
+                            }`}
+                          >
+                            {opt.text}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Code Type */}
+                    {currentChallenge.type === "code" && (
+                      <div className="space-y-4">
+                        <div className="rounded-xl border border-white/10 bg-black/70 p-4 font-mono text-xs">
+                          <textarea
+                            value={userCode}
+                            onChange={(e) => setUserCode(e.target.value)}
+                            rows={6}
+                            className="w-full bg-transparent text-acid focus:outline-none resize-none font-mono"
+                          />
+                        </div>
+                        {codeOutput && (
+                          <div className="rounded-lg bg-white/5 p-3 border border-white/10 font-mono text-xs text-emerald-400">
+                            <span className="text-white/40 block mb-1">Execution Output:</span>
+                            {codeOutput}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Feedback Alert */}
+                    {feedback && (
+                      <div
+                        className={`p-4 rounded-xl border font-mono text-xs flex items-start gap-3 ${
+                          feedback.isCorrect
+                            ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
+                            : "border-red-500/40 bg-red-500/10 text-red-300"
+                        }`}
+                      >
+                        {feedback.isCorrect ? <CheckCircle className="h-5 w-5 shrink-0" /> : <XCircle className="h-5 w-5 shrink-0" />}
+                        <div>{feedback.message}</div>
+                      </div>
+                    )}
+
+                    {/* Submit Bar */}
+                    <div className="flex items-center justify-between pt-4 border-t border-white/10">
+                      {currentChallenge.type === "quiz" ? (
+                        <button
+                          disabled={selectedOption === null}
+                          onClick={() => handleQuizSubmit(currentChallenge)}
+                          className="px-6 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white font-mono text-sm font-bold transition-all disabled:opacity-40"
+                        >
+                          Check Answer
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => handleCodeRun(currentChallenge)}
+                          className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white font-mono text-sm font-bold transition-all"
+                        >
+                          <Play className="h-4 w-4" /> Run & Verify Code
+                        </button>
+                      )}
+
+                      {feedback?.isCorrect && (
+                        <button
+                          onClick={nextChallenge}
+                          className="px-6 py-2.5 rounded-xl bg-acid text-ink font-mono text-sm font-bold shadow-lg shadow-acid/20 hover:brightness-110 transition-all"
+                        >
+                          Continue →
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )
               )}
-
-              {/* Feedback Alert */}
-              {feedback && (
-                <div
-                  className={`p-4 rounded-xl border font-mono text-xs flex items-start gap-3 ${
-                    feedback.isCorrect
-                      ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
-                      : "border-red-500/40 bg-red-500/10 text-red-300"
-                  }`}
-                >
-                  {feedback.isCorrect ? <CheckCircle className="h-5 w-5 shrink-0" /> : <XCircle className="h-5 w-5 shrink-0" />}
-                  <div>{feedback.message}</div>
-                </div>
-              )}
-
-              {/* Submit & Next Action Bar */}
-              <div className="flex items-center justify-between pt-4 border-t border-white/10">
-                {currentChallenge.type === "quiz" ? (
-                  <button
-                    disabled={selectedOption === null}
-                    onClick={() => handleQuizSubmit(currentChallenge)}
-                    className="px-6 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white font-mono text-sm font-bold transition-all disabled:opacity-40"
-                  >
-                    Check Answer
-                  </button>
-                ) : (
-                  <button
-                    onClick={() => handleCodeRun(currentChallenge)}
-                    className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white font-mono text-sm font-bold transition-all"
-                  >
-                    <Play className="h-4 w-4" /> Run & Verify
-                  </button>
-                )}
-
-                {feedback?.isCorrect && (
-                  <button
-                    onClick={nextChallenge}
-                    className="px-6 py-2.5 rounded-xl bg-acid text-ink font-mono text-sm font-bold shadow-lg shadow-acid/20 hover:brightness-110 transition-all"
-                  >
-                    Continue →
-                  </button>
-                )}
-              </div>
             </div>
           </motion.div>
         )}
@@ -352,7 +402,7 @@ export default function Academy() {
               <span className="text-6xl animate-bounce inline-block">🎉</span>
               <h3 className="text-2xl font-bold font-mono text-white">Lesson Completed!</h3>
               <p className="text-sm font-mono text-white/70">
-                You earned <span className="text-yellow-400 font-bold">+{activeLesson.xpReward} XP</span> and advanced your L++ systems mastery!
+                You earned <span className="text-yellow-400 font-bold">+{activeLesson.xpReward} XP</span> and unlocked the next L++ stage!
               </p>
               <button
                 onClick={() => {
