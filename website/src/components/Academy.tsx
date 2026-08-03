@@ -1,13 +1,29 @@
-import { useEffect, useState, ReactNode } from "react";
+import { useEffect, useState, useRef, ReactNode, KeyboardEvent } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Heart, Flame, Star, Trophy, CheckCircle, XCircle, Play, Sparkles, Lightbulb, Lock, Terminal, FileCode } from "lucide-react";
 import { CURRICULUM, Stage, Lesson, LessonStep } from "../lib/curriculum";
 import { getUserProgress, saveUserProgress, UserProgress } from "../lib/db";
 import { evaluateLppCode } from "../lib/evaluator";
 
-/**
- * Markdown renderer for concept theory steps
- */
+const LPP_KEYWORDS = [
+  "def main() -> Void:",
+  "print_str(\"\")",
+  "print()",
+  "mut ",
+  "struct ",
+  "c_memory",
+  "CPtr",
+  "c_malloc()",
+  "c_free()",
+  "if ",
+  "else:",
+  "while ",
+  "Void",
+  "Int",
+  "Str",
+  "Bool"
+];
+
 function renderFormattedMarkdown(text: string): ReactNode {
   const lines = text.split("\n");
   const elements: ReactNode[] = [];
@@ -69,6 +85,11 @@ export default function Academy() {
   const [feedback, setFeedback] = useState<{ isCorrect: boolean; message: string } | null>(null);
   const [isCompletedModal, setIsCompletedModal] = useState(false);
 
+  // Auto-suggestion state
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [selectedSuggestionIdx, setSelectedSuggestionIdx] = useState(0);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
   useEffect(() => {
     getUserProgress().then(setProgress);
   }, []);
@@ -83,10 +104,114 @@ export default function Academy() {
     setFeedback(null);
     setSelectedOption(null);
     setShowHint(false);
+    setSuggestions([]);
     const firstStep = lesson.steps[0];
     setUserCode(firstStep.initialCode || "");
     setCodeOutput("");
     setIsCompletedModal(false);
+  };
+
+  /**
+   * Auto-bracket, Auto-indent, Tab & Auto-suggestion key handler
+   */
+  const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    const { selectionStart, selectionEnd, value } = textarea;
+
+    // Handle suggestion selection via Tab or Enter
+    if (suggestions.length > 0 && (e.key === "Tab" || e.key === "Enter")) {
+      e.preventDefault();
+      const selected = suggestions[selectedSuggestionIdx];
+      
+      // Get current word
+      const beforeCursor = value.slice(0, selectionStart);
+      const lastWordMatch = beforeCursor.match(/([a-zA-Z0-9_]+)$/);
+      const lastWord = lastWordMatch ? lastWordMatch[1] : "";
+      
+      const newBefore = beforeCursor.slice(0, beforeCursor.length - lastWord.length) + selected;
+      const newValue = newBefore + value.slice(selectionEnd);
+      
+      setUserCode(newValue);
+      setSuggestions([]);
+      
+      setTimeout(() => {
+        textarea.selectionStart = textarea.selectionEnd = newBefore.length;
+      }, 0);
+      return;
+    }
+
+    // Auto-indent on Enter if previous line ends with ':'
+    if (e.key === "Enter") {
+      const lineStart = value.lastIndexOf("\n", selectionStart - 1) + 1;
+      const currentLine = value.slice(lineStart, selectionStart);
+      
+      if (currentLine.trim().endsWith(":")) {
+        e.preventDefault();
+        const indentMatch = currentLine.match(/^\s*/);
+        const indent = (indentMatch ? indentMatch[0] : "") + "    ";
+        const newValue = value.slice(0, selectionStart) + "\n" + indent + value.slice(selectionEnd);
+        setUserCode(newValue);
+        setTimeout(() => {
+          textarea.selectionStart = textarea.selectionEnd = selectionStart + 1 + indent.length;
+        }, 0);
+        return;
+      }
+    }
+
+    // Tab key inserts 4 spaces
+    if (e.key === "Tab") {
+      e.preventDefault();
+      const newValue = value.slice(0, selectionStart) + "    " + value.slice(selectionEnd);
+      setUserCode(newValue);
+      setTimeout(() => {
+        textarea.selectionStart = textarea.selectionEnd = selectionStart + 4;
+      }, 0);
+      return;
+    }
+
+    // Auto-closing brackets & quotes
+    const pairs: Record<string, string> = {
+      "(": ")",
+      "\"": "\"",
+      "'": "'",
+      "[": "]",
+      "{": "}"
+    };
+
+    if (pairs[e.key]) {
+      e.preventDefault();
+      const closing = pairs[e.key];
+      const newValue = value.slice(0, selectionStart) + e.key + closing + value.slice(selectionEnd);
+      setUserCode(newValue);
+      setTimeout(() => {
+        textarea.selectionStart = textarea.selectionEnd = selectionStart + 1;
+      }, 0);
+      return;
+    }
+  };
+
+  /**
+   * Triggers L++ IntelliSense suggestions as the user types
+   */
+  const handleCodeChange = (val: string) => {
+    setUserCode(val);
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    const selectionStart = textarea.selectionStart;
+    const beforeCursor = val.slice(0, selectionStart);
+    const lastWordMatch = beforeCursor.match(/([a-zA-Z0-9_]+)$/);
+
+    if (lastWordMatch && lastWordMatch[1].length >= 2) {
+      const prefix = lastWordMatch[1].toLowerCase();
+      const matches = LPP_KEYWORDS.filter((k) => k.toLowerCase().includes(prefix));
+      setSuggestions(matches);
+      setSelectedSuggestionIdx(0);
+    } else {
+      setSuggestions([]);
+    }
   };
 
   const handleQuizSubmit = (step: LessonStep) => {
@@ -104,16 +229,12 @@ export default function Academy() {
     }
   };
 
-  /**
-   * Executes user code using the real in-browser L++ evaluator engine!
-   */
   const handleCodeRun = (step: LessonStep) => {
     const res = evaluateLppCode(userCode);
 
     if (res.exitCode === 0 && res.stdout) {
       setCodeOutput(res.stdout);
 
-      // Verify test assertions if step has expectedOutput
       if (step.expectedOutput) {
         const cleanActual = res.stdout.replace(/\s+/g, " ").trim();
         const cleanExpected = step.expectedOutput.replace(/\s+/g, " ").trim();
@@ -143,6 +264,7 @@ export default function Academy() {
       setCodeOutput("");
       setFeedback(null);
       setShowHint(false);
+      setSuggestions([]);
     } else {
       const isNew = !progress.completedLessons.includes(activeLesson.id);
       const newXp = isNew ? progress.xp + activeLesson.xpReward : progress.xp;
@@ -170,7 +292,7 @@ export default function Academy() {
           <span className="text-3xl">🎓</span>
           <div>
             <h2 className="text-2xl font-bold font-mono tracking-tight text-white">L++ Academy</h2>
-            <p className="text-xs font-mono text-white/50">freeCodeCamp & Duolingo Hybrid Systems Certification Path</p>
+            <p className="text-xs font-mono text-white/50 font-sans">freeCodeCamp & Duolingo Hybrid Systems Certification Path</p>
           </div>
         </div>
 
@@ -288,7 +410,7 @@ export default function Academy() {
         </div>
       </div>
 
-      {/* freeCodeCamp-Style Split Workspace Modal */}
+      {/* Split Workspace Modal with Auto-Suggestions & Auto-Brackets */}
       <AnimatePresence>
         {activeLesson && currentStep && !isCompletedModal && (
           <motion.div
@@ -323,7 +445,7 @@ export default function Academy() {
 
             {/* Split Screen Container */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 flex-1 overflow-hidden">
-              {/* Left Panel: Instructions & Test Assertions */}
+              {/* Left Panel: Instructions */}
               <div className="rounded-2xl border border-white/15 bg-ink-soft p-6 flex flex-col justify-between overflow-y-auto space-y-5">
                 <div className="space-y-4">
                   <div className="flex items-center justify-between border-b border-white/10 pb-3">
@@ -358,7 +480,6 @@ export default function Academy() {
                     <div className="space-y-4">
                       <p className="text-white/90 text-sm font-sans leading-relaxed">{currentStep.prompt}</p>
 
-                      {/* Test Cases Checklist */}
                       {currentStep.testCases && (
                         <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4 space-y-2">
                           <span className="font-mono text-xs text-white/50 block mb-1">Test Assertions:</span>
@@ -371,7 +492,6 @@ export default function Academy() {
                         </div>
                       )}
 
-                      {/* Hint Box */}
                       {showHint && currentStep.hints && (
                         <div className="rounded-xl border border-yellow-500/30 bg-yellow-500/10 p-4 text-yellow-300 font-mono text-xs space-y-1">
                           <span className="font-bold block">💡 Hint:</span>
@@ -381,7 +501,6 @@ export default function Academy() {
                         </div>
                       )}
 
-                      {/* Quiz Options */}
                       {currentStep.type === "quiz" && (
                         <div className="space-y-2">
                           {currentStep.options?.map((opt, oIdx) => (
@@ -416,7 +535,6 @@ export default function Academy() {
                   )}
                 </div>
 
-                {/* Action Bar */}
                 <div className="pt-4 border-t border-white/10 flex justify-between items-center">
                   {currentStep.type === "theory" && (
                     <button
@@ -449,9 +567,9 @@ export default function Academy() {
                 </div>
               </div>
 
-              {/* Right Panel: Code Editor with Prominent "▶ Run Code" Button */}
-              <div className="rounded-2xl border border-white/15 bg-black/80 flex flex-col justify-between overflow-hidden">
-                {/* Editor Top Bar with Glowing "▶ Run Code" Button */}
+              {/* Right Panel: Interactive Code Editor with IntelliSense & Auto-Brackets */}
+              <div className="rounded-2xl border border-white/15 bg-black/80 flex flex-col justify-between overflow-hidden relative">
+                {/* Top Bar */}
                 <div className="flex items-center justify-between bg-white/5 px-4 py-2.5 border-b border-white/10 font-mono text-xs text-white/60">
                   <div className="flex items-center gap-2">
                     <span className="h-3 w-3 rounded-full bg-red-500/80" />
@@ -460,7 +578,6 @@ export default function Academy() {
                     <span className="ml-2 text-white/80 font-bold">main.lpp</span>
                   </div>
 
-                  {/* PROMINENT REAL RUN CODE BUTTON */}
                   <button
                     onClick={() => handleCodeRun(currentStep)}
                     className="flex items-center gap-2 px-4 py-1.5 rounded-lg bg-acid text-ink font-mono text-xs font-bold shadow-lg shadow-acid/30 hover:brightness-110 transition-all animate-pulse"
@@ -469,14 +586,36 @@ export default function Academy() {
                   </button>
                 </div>
 
-                {/* Code Textarea */}
-                <div className="flex-1 p-4 font-mono text-xs">
+                {/* Editor Textarea */}
+                <div className="flex-1 p-4 font-mono text-xs relative">
                   <textarea
+                    ref={textareaRef}
                     value={userCode}
-                    onChange={(e) => setUserCode(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    onChange={(e) => handleCodeChange(e.target.value)}
                     className="w-full h-full bg-transparent text-acid focus:outline-none resize-none font-mono leading-relaxed"
                     placeholder="// Write your L++ code here..."
                   />
+
+                  {/* Auto-Suggestion IntelliSense Popup Menu */}
+                  {suggestions.length > 0 && (
+                    <div className="absolute bottom-6 left-6 z-50 rounded-xl border border-acid/40 bg-ink-soft/95 backdrop-blur-xl p-2 shadow-2xl space-y-1 font-mono text-xs">
+                      <span className="text-[10px] text-white/40 uppercase tracking-widest block px-2 pb-1 border-b border-white/10">
+                        L++ IntelliSense (Press Tab ↹)
+                      </span>
+                      {suggestions.slice(0, 5).map((sug, sIdx) => (
+                        <div
+                          key={sIdx}
+                          className={`px-3 py-1.5 rounded-lg cursor-pointer transition-all flex items-center justify-between gap-4 ${
+                            sIdx === selectedSuggestionIdx ? "bg-acid text-ink font-bold" : "text-white/80 hover:bg-white/10"
+                          }`}
+                        >
+                          <span>{sug}</span>
+                          <span className="text-[10px] opacity-60">Keyword</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 {/* Live Console Output Bar */}
