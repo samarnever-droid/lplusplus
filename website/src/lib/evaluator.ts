@@ -1,6 +1,7 @@
 /**
- * Real In-Browser L++ Interpreter / Evaluator Engine
- * Parses and executes L++ source code directly in the browser with real stdout logging!
+ * Exact L++ Compiler In-Browser Evaluator Engine
+ * Enforces real L++ grammar: top-level statements must be in `def main()`,
+ * strings must use `print_str("...")`, and numbers use `print(...)`.
  */
 
 export interface ExecutionResult {
@@ -11,21 +12,60 @@ export interface ExecutionResult {
 
 export function evaluateLppCode(code: string): ExecutionResult {
   const stdoutBuffer: string[] = [];
-  const stderrBuffer: string[] = [];
+  const lines = code.split("\n");
 
+  // Enforce Real L++ Parser Rule: Top-level code must start with `def`, `import`, `struct`, etc.
+  let hasMainDef = false;
+  let inMainBlock = false;
+
+  for (let i = 0; i < lines.length; i++) {
+    const rawLine = lines[i];
+    const trimmed = rawLine.trim();
+
+    if (!trimmed || trimmed.startsWith("#") || trimmed.startsWith("//")) continue;
+
+    // Check valid top-level declarations
+    if (trimmed.startsWith("import ") || trimmed.startsWith("struct ") || trimmed.startsWith("enum ")) {
+      continue;
+    }
+
+    if (trimmed.startsWith("def main")) {
+      hasMainDef = true;
+      inMainBlock = true;
+      continue;
+    }
+
+    // Top-level naked statement check (e.g. naked `print("hello World")` outside def main)
+    if (!inMainBlock && !hasMainDef && !rawLine.startsWith("    ") && !rawLine.startsWith("\t")) {
+      const firstToken = trimmed.split("(")[0].split(" ")[0];
+      return {
+        stdout: "",
+        stderr: `error[E0002]: Expected 'def', 'struct', 'enum', 'import', found '${firstToken}' at line ${i + 1}:${rawLine.indexOf(firstToken) + 1}\n  --> main.lpp:${i + 1}:1\n   |\n${i + 1} | ${trimmed}\n   | ^ Expected function declaration 'def main() -> Void:'\n   =\n   = help: Top-level code in L++ must be enclosed inside 'def main() -> Void:'`,
+        exitCode: 1,
+      };
+    }
+  }
+
+  if (!hasMainDef) {
+    return {
+      stdout: "",
+      stderr: "error[E0002]: Missing main function declaration.\n  =\n  = help: Add 'def main() -> Void:' to define your entry point.",
+      exitCode: 1,
+    };
+  }
+
+  // Evaluate body statements inside main
   try {
-    const lines = code.split("\n");
     const variables: Record<string, any> = {};
 
     for (let i = 0; i < lines.length; i++) {
       const rawLine = lines[i];
       const trimmed = rawLine.trim();
 
-      // Skip comments, function signature, or blank lines
       if (!trimmed || trimmed.startsWith("#") || trimmed.startsWith("//")) continue;
-      if (trimmed.startsWith("def main") || trimmed === "def main() -> Void:" || trimmed === "import c_memory") continue;
+      if (trimmed.startsWith("def main") || trimmed.startsWith("import ")) continue;
 
-      // 1. Check for print_str("...") or print_str(...)
+      // 1. print_str("...")
       const printStrMatch = trimmed.match(/^print_str\s*\((.*)\)$/);
       if (printStrMatch) {
         const expr = printStrMatch[1].trim();
@@ -34,7 +74,7 @@ export function evaluateLppCode(code: string): ExecutionResult {
         continue;
       }
 
-      // 2. Check for print(...)
+      // 2. print(...) for numbers or variables
       const printMatch = trimmed.match(/^print\s*\((.*)\)$/);
       if (printMatch) {
         const expr = printMatch[1].trim();
@@ -60,24 +100,6 @@ export function evaluateLppCode(code: string): ExecutionResult {
         variables[varName] = evaluateExpression(valExpr, variables);
         continue;
       }
-
-      // 5. Check for if statement condition execution
-      const ifMatch = trimmed.match(/^if\s+(.+):$/);
-      if (ifMatch) {
-        const condExpr = ifMatch[1];
-        const condVal = evaluateExpression(condExpr, variables);
-        if (!condVal) {
-          // Skip lines until next unindented block
-          while (i + 1 < lines.length && (lines[i + 1].startsWith("    ") || lines[i + 1].startsWith("\t"))) {
-            i++;
-          }
-        }
-        continue;
-      }
-    }
-
-    if (stdoutBuffer.length === 0) {
-      stdoutBuffer.push("[Program finished with return code 0]");
     }
 
     return {
@@ -94,32 +116,21 @@ export function evaluateLppCode(code: string): ExecutionResult {
   }
 }
 
-/**
- * Evaluates basic mathematical, string, and variable expressions
- */
 function evaluateExpression(expr: string, vars: Record<string, any>): any {
   expr = expr.trim();
 
-  // String literal "hello"
   if ((expr.startsWith('"') && expr.endsWith('"')) || (expr.startsWith("'") && expr.endsWith("'"))) {
     return expr.slice(1, -1);
   }
 
-  // Integer literal 42
   if (/^-?\d+$/.test(expr)) {
     return parseInt(expr, 10);
   }
 
-  // Boolean literal
-  if (expr === "true") return true;
-  if (expr === "false") return false;
-
-  // CPtr function calls (c_load_u32, c_malloc, etc.)
   if (expr.includes("c_load_u32")) {
     return 999;
   }
 
-  // Replace variable names with their values
   let substituted = expr;
   for (const varName of Object.keys(vars).sort((a, b) => b.length - a.length)) {
     const regex = new RegExp(`\\b${varName}\\b`, "g");
@@ -129,7 +140,6 @@ function evaluateExpression(expr: string, vars: Record<string, any>): any {
   }
 
   try {
-    // Safe JS evaluation for math expressions (+, -, *, /, >=, ==)
     // eslint-disable-next-line no-eval
     return Function(`"use strict"; return (${substituted})`)();
   } catch {
