@@ -61,15 +61,74 @@ function findLppBinary() {
 }
 
 /**
- * Activates the L++ extension with Language Server protocol support.
+ * Activates the L++ extension with Language Server protocol & completion support.
  * @param {vscode.ExtensionContext} context
  */
 function activate(context) {
     console.log('L++ Language Support activating (Persistent LSP Architecture)...');
 
-    const lspBin = findLppLspBinary();
+    // 1. Register VS Code Native Auto-Completion & Snippet Provider
+    const completionProvider = vscode.languages.registerCompletionItemProvider('lpp', {
+        provideCompletionItems(document, position, token, context) {
+            const items = [];
 
-    // 1. Try launching persistent native lpp-lsp server over stdio
+            // Snippet: main entry point
+            const mainSnippet = new vscode.CompletionItem('def main() -> Void:', vscode.CompletionItemKind.Snippet);
+            mainSnippet.insertText = new vscode.SnippetString('def main() -> Void:\n    ${1:print_str("Hello L++!")}\n');
+            mainSnippet.detail = 'L++ Main Entry Point Function';
+            items.push(mainSnippet);
+
+            // Snippet: generic function
+            const funcSnippet = new vscode.CompletionItem('def function', vscode.CompletionItemKind.Snippet);
+            funcSnippet.insertText = new vscode.SnippetString('def ${1:name}(${2:param}: ${3:Type}) -> ${4:Void}:\n    ${5:pass}\n');
+            funcSnippet.detail = 'L++ Function Definition';
+            items.push(funcSnippet);
+
+            // Snippet: struct
+            const structSnippet = new vscode.CompletionItem('struct definition', vscode.CompletionItemKind.Snippet);
+            structSnippet.insertText = new vscode.SnippetString('struct ${1:Name}:\n    ${2:field}: ${3:Int}\n');
+            structSnippet.detail = 'L++ Struct Definition';
+            items.push(structSnippet);
+
+            // Builtin functions
+            const builtins = [
+                { name: 'print_str', detail: 'print_str(text: Str) - Hyper-fast native string output', snippet: 'print_str("${1:text}")' },
+                { name: 'print', detail: 'print(val: Any) - Polymorphic value printer', snippet: 'print(${1:value})' },
+                { name: 'input', detail: 'input() -> Str - Read line from console input (0 args)', snippet: 'input()' },
+                { name: 'c_memory_new', detail: 'c_memory_new(size: Int) -> CMemory - Create memory arena', snippet: 'c_memory_new(${1:16})' },
+                { name: 'c_malloc', detail: 'c_malloc(mem: CMemory, bytes: Int) -> CPtr - Checked fat pointer alloc', snippet: 'c_malloc(${1:mem}, ${2:32})' },
+                { name: 'c_free', detail: 'c_free(ptr: CPtr) - Free checked fat pointer', snippet: 'c_free(${1:ptr})' },
+                { name: 'c_store_u32', detail: 'c_store_u32(ptr: CPtr, val: Int) - Store u32 integer', snippet: 'c_store_u32(${1:ptr}, ${2:val})' },
+                { name: 'c_load_u32', detail: 'c_load_u32(ptr: CPtr) -> Int - Load u32 integer', snippet: 'c_load_u32(${1:ptr})' }
+            ];
+
+            for (const b of builtins) {
+                const item = new vscode.CompletionItem(b.name, vscode.CompletionItemKind.Function);
+                item.insertText = new vscode.SnippetString(b.snippet);
+                item.detail = b.detail;
+                items.push(item);
+            }
+
+            // Keywords & Types
+            const keywords = [
+                'def', 'mut', 'struct', 'enum', 'trait', 'impl', 'import', 'from',
+                'if', 'elif', 'else', 'while', 'for', 'in', 'return', 'break', 'continue',
+                'spawn', 'async', 'await', 'extern', 'CPtr', 'CMemory', 'Void', 'Int', 'Str', 'Bool'
+            ];
+
+            for (const kw of keywords) {
+                const item = new vscode.CompletionItem(kw, vscode.CompletionItemKind.Keyword);
+                items.push(item);
+            }
+
+            return items;
+        }
+    });
+
+    context.subscriptions.push(completionProvider);
+
+    // 2. Try launching persistent native lpp-lsp server over stdio
+    const lspBin = findLppLspBinary();
     if (lspBin) {
         const serverOptions = {
             run: { command: lspBin, transport: TransportKind.stdio },
@@ -100,7 +159,7 @@ function activate(context) {
         setupFallbackProviders(context);
     }
 
-    // 2. Code Runner Integration
+    // 3. Code Runner Integration
     try {
         const codeRunnerConfig = vscode.workspace.getConfiguration('code-runner');
         const executorMap = codeRunnerConfig.get('executorMap') || {};
