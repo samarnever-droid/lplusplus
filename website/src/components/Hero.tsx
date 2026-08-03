@@ -120,18 +120,17 @@ export default function Hero() {
               className="mt-9 flex flex-wrap items-center gap-4"
             >
               <a
-                href="#install"
+                href={`${import.meta.env.BASE_URL}academy.html`}
                 className="group flex items-center gap-2.5 rounded-xl bg-acid px-6 py-3.5 font-mono text-sm font-semibold text-ink transition-all duration-300 hover:brightness-110 glow-acid"
               >
-                <Terminal className="h-4 w-4" />
-                Install the compiler
+                🎓 Start L++ Academy
               </a>
               <a
-                href="#memory"
+                href="#install"
                 className="group flex items-center gap-2.5 rounded-xl border border-white/12 bg-white/[0.03] px-6 py-3.5 font-mono text-sm text-white/80 transition-all duration-300 hover:border-acid/40 hover:text-acid"
               >
-                <Cpu className="h-4 w-4" />
-                See the memory magic
+                <Terminal className="h-4 w-4" />
+                Install compiler
               </a>
             </motion.div>
 

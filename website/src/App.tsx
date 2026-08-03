@@ -1,6 +1,5 @@
 import Nav from "./components/Nav";
 import Hero from "./components/Hero";
-import Academy from "./components/Academy";
 import Marquee from "./components/Marquee";
 import Pillars from "./components/Pillars";
 import MemoryModel from "./components/MemoryModel";
@@ -17,7 +16,6 @@ export default function App() {
       <Nav />
       <main>
         <Hero />
-        <Academy />
         <Marquee />
         <Pillars />
         <MemoryModel />
