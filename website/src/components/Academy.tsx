@@ -1,8 +1,9 @@
 import { useEffect, useState, ReactNode } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Heart, Flame, Star, Trophy, CheckCircle, XCircle, Play, Sparkles, BookOpen, Lightbulb, Lock, Terminal, FileCode } from "lucide-react";
+import { Heart, Flame, Star, Trophy, CheckCircle, XCircle, Play, Sparkles, Lightbulb, Lock, Terminal, FileCode } from "lucide-react";
 import { CURRICULUM, Stage, Lesson, LessonStep } from "../lib/curriculum";
 import { getUserProgress, saveUserProgress, UserProgress } from "../lib/db";
+import { evaluateLppCode } from "../lib/evaluator";
 
 /**
  * Markdown renderer for concept theory steps
@@ -103,13 +104,30 @@ export default function Academy() {
     }
   };
 
+  /**
+   * Executes user code using the real in-browser L++ evaluator engine!
+   */
   const handleCodeRun = (step: LessonStep) => {
-    const cleanOutput = step.expectedOutput || "Hello World";
-    if (userCode.length > 5) {
-      setCodeOutput(cleanOutput);
-      setFeedback({ isCorrect: true, message: step.explanation || "All test cases passed cleanly!" });
+    const res = evaluateLppCode(userCode);
+
+    if (res.exitCode === 0 && res.stdout) {
+      setCodeOutput(res.stdout);
+
+      // Verify test assertions if step has expectedOutput
+      if (step.expectedOutput) {
+        const cleanActual = res.stdout.replace(/\s+/g, " ").trim();
+        const cleanExpected = step.expectedOutput.replace(/\s+/g, " ").trim();
+
+        if (cleanActual.includes(cleanExpected)) {
+          setFeedback({ isCorrect: true, message: "🎉 All test assertions passed! " + (step.explanation || "") });
+        } else {
+          setFeedback({ isCorrect: false, message: `Expected output '${step.expectedOutput}', but got '${res.stdout}'.` });
+        }
+      } else {
+        setFeedback({ isCorrect: true, message: "Code executed successfully!" });
+      }
     } else {
-      setCodeOutput("Compilation error: Expected code implementation missing.");
+      setCodeOutput(res.stderr || "Runtime error evaluating code.");
       setFeedback({ isCorrect: false, message: "Check your code syntax and try again!" });
     }
   };
@@ -146,7 +164,7 @@ export default function Academy() {
 
   return (
     <section id="academy" className="relative py-10 px-4 md:px-8 max-w-7xl mx-auto">
-      {/* freeCodeCamp / Duolingo Header Bar */}
+      {/* Duolingo Header Bar */}
       <div className="mb-8 rounded-2xl border border-white/10 bg-ink-soft/60 backdrop-blur-xl p-6 flex flex-wrap items-center justify-between gap-6">
         <div className="flex items-center gap-3">
           <span className="text-3xl">🎓</span>
@@ -305,7 +323,7 @@ export default function Academy() {
 
             {/* Split Screen Container */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 flex-1 overflow-hidden">
-              {/* Left Panel: Instructions, Concept, & Test Cases */}
+              {/* Left Panel: Instructions & Test Assertions */}
               <div className="rounded-2xl border border-white/15 bg-ink-soft p-6 flex flex-col justify-between overflow-y-auto space-y-5">
                 <div className="space-y-4">
                   <div className="flex items-center justify-between border-b border-white/10 pb-3">
@@ -398,7 +416,7 @@ export default function Academy() {
                   )}
                 </div>
 
-                {/* Left Panel Action Bar */}
+                {/* Action Bar */}
                 <div className="pt-4 border-t border-white/10 flex justify-between items-center">
                   {currentStep.type === "theory" && (
                     <button
@@ -431,17 +449,24 @@ export default function Academy() {
                 </div>
               </div>
 
-              {/* Right Panel: Code Editor & Live Console */}
+              {/* Right Panel: Code Editor with Prominent "▶ Run Code" Button */}
               <div className="rounded-2xl border border-white/15 bg-black/80 flex flex-col justify-between overflow-hidden">
-                {/* Code Editor Header */}
+                {/* Editor Top Bar with Glowing "▶ Run Code" Button */}
                 <div className="flex items-center justify-between bg-white/5 px-4 py-2.5 border-b border-white/10 font-mono text-xs text-white/60">
                   <div className="flex items-center gap-2">
                     <span className="h-3 w-3 rounded-full bg-red-500/80" />
                     <span className="h-3 w-3 rounded-full bg-yellow-500/80" />
                     <span className="h-3 w-3 rounded-full bg-green-500/80" />
-                    <span className="ml-2 text-white/80">main.lpp</span>
+                    <span className="ml-2 text-white/80 font-bold">main.lpp</span>
                   </div>
-                  <span>L++ v4.6.0</span>
+
+                  {/* PROMINENT REAL RUN CODE BUTTON */}
+                  <button
+                    onClick={() => handleCodeRun(currentStep)}
+                    className="flex items-center gap-2 px-4 py-1.5 rounded-lg bg-acid text-ink font-mono text-xs font-bold shadow-lg shadow-acid/30 hover:brightness-110 transition-all animate-pulse"
+                  >
+                    <Play className="h-3.5 w-3.5 fill-current" /> ▶ Run Code
+                  </button>
                 </div>
 
                 {/* Code Textarea */}
@@ -458,20 +483,18 @@ export default function Academy() {
                 <div className="border-t border-white/10 bg-black/90 p-4 space-y-3">
                   <div className="flex items-center justify-between font-mono text-xs text-white/40">
                     <span className="flex items-center gap-1.5">
-                      <Terminal className="h-3.5 w-3.5 text-acid" /> Console Output
+                      <Terminal className="h-3.5 w-3.5 text-acid" /> Real Terminal Output
                     </span>
-                    {currentStep.type === "code" && (
-                      <button
-                        onClick={() => handleCodeRun(currentStep)}
-                        className="flex items-center gap-2 px-5 py-2 rounded-xl bg-acid text-ink font-mono text-xs font-bold shadow-md shadow-acid/20 hover:brightness-110 transition-all"
-                      >
-                        <Play className="h-3.5 w-3.5" /> Run & Verify Tests
-                      </button>
-                    )}
+                    <button
+                      onClick={() => handleCodeRun(currentStep)}
+                      className="flex items-center gap-1.5 px-3 py-1 rounded bg-white/10 text-white/80 hover:bg-white/20 transition-all"
+                    >
+                      <Play className="h-3 w-3" /> Execute Output
+                    </button>
                   </div>
 
-                  <div className="min-h-[60px] rounded-xl bg-white/[0.03] p-3 font-mono text-xs text-emerald-400">
-                    {codeOutput ? codeOutput : <span className="text-white/30 italic">Click 'Run & Verify Tests' to execute...</span>}
+                  <div className="min-h-[70px] rounded-xl bg-white/[0.03] p-3 font-mono text-xs text-emerald-400 whitespace-pre-wrap">
+                    {codeOutput ? codeOutput : <span className="text-white/30 italic">Click '▶ Run Code' above to execute your code...</span>}
                   </div>
 
                   {feedback?.isCorrect && currentStep.type === "code" && (
@@ -501,7 +524,7 @@ export default function Academy() {
               <span className="text-6xl animate-bounce inline-block">🎉</span>
               <h3 className="text-2xl font-bold font-mono text-white">Lesson Completed!</h3>
               <p className="text-sm font-mono text-white/70">
-                You earned <span className="text-yellow-400 font-bold">+{activeLesson.xpReward} XP</span> and completed your freeCodeCamp & Duolingo certification step!
+                You earned <span className="text-yellow-400 font-bold">+{activeLesson.xpReward} XP</span> and completed your L++ project step!
               </p>
               <button
                 onClick={() => {
