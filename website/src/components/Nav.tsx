@@ -4,6 +4,7 @@ import { Menu, X, ArrowUpRight } from "lucide-react";
 import { EASE } from "../lib/ui";
 
 const LINKS = [
+  { label: "Academy 🎓", href: "#academy" },
   { label: "Language", href: "#language" },
   { label: "Memory", href: "#memory" },
   { label: "Syntax", href: "#syntax" },
