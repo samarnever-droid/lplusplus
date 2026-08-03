@@ -1,8 +1,8 @@
 {
     "name": "lpp-vscode",
     "displayName": "L++ Language Support",
-    "description": "Rich support for L++, featuring syntax highlighting, compiler diagnostics, outline symbols, and escape-analysis visual hover hints.",
-    "version": "3.4.0",
+    "description": "Rich, production-grade support for L++, featuring advanced syntax highlighting, semantic token coloring, in-memory diagnostics (no binary artifacts produced on save), Code Runner integration, and escape-analysis hover hints.",
+    "version": "4.6.0",
     "publisher": "lpp-lang",
     "repository": {
         "type": "git",
@@ -39,9 +39,38 @@
                 "scopeName": "source.lpp",
                 "path": "./syntaxes/lpp.tmLanguage.json"
             }
-        ]
+        ],
+        "configuration": {
+            "type": "object",
+            "title": "L++ Configuration",
+            "properties": {
+                "lpp.compilerPath": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Custom absolute path to the L++ compiler executable (lpp / lpp.exe). If empty, auto-detects from target directory or system PATH."
+                },
+                "lpp.enableDiagnostics": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Enable in-memory background type-checking diagnostics on save without producing binary files."
+                },
+                "lpp.enableSemanticTokens": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Enable rich AST-level semantic syntax coloring for functions, types, and variables."
+                }
+            }
+        },
+        "configurationDefaults": {
+            "code-runner.executorMap": {
+                "lpp": "lpp $fileName"
+            }
+        }
     },
     "activationEvents": [
         "onLanguage:lpp"
-    ]
+    ],
+    "dependencies": {
+        "vscode-languageclient": "^10.1.0"
+    }
 }

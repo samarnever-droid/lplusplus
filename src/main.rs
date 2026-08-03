@@ -403,11 +403,15 @@ fn real_main() {
     // - source commands (`check file.lpp`, `emit file.lpp`) operate on one file.
     let mut source_check_command = false;
     let mut is_emit_cmd = false;
+    let mut source_run_command = false;
     if args.len() > 2 && args[1] == "emit" {
         is_emit_cmd = true;
         args.remove(1);
     } else if args.len() > 2 && args[1] == "check" && args[2].ends_with(".lpp") {
         source_check_command = true;
+        args.remove(1);
+    } else if args.len() > 2 && args[1] == "run" && (args[2].ends_with(".lpp") || Path::new(&args[2]).exists()) {
+        source_run_command = true;
         args.remove(1);
     }
 
@@ -610,6 +614,8 @@ fn real_main() {
             dump_mir = true;
         } else if arg == "--check" {
             check_only = true;
+        } else if arg == "--run" {
+            source_run_command = true;
         } else if arg == "--checkall" {
             check_all = true;
         } else if arg == "--fix" {
@@ -1111,15 +1117,33 @@ fn real_main() {
     let aot_time = aot_start.elapsed();
 
     let ext = if cfg!(target_os = "windows") { "obj" } else { "o" };
-    let obj_path = filename.replace(".lpp", &format!(".{}", ext));
+    let exe_ext = std::env::consts::EXE_SUFFIX;
+
+    let (obj_path, exe_path) = if source_run_command {
+        let temp_dir = env::temp_dir();
+        let stem = std::path::Path::new(&filename)
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy();
+        let pid = std::process::id();
+        let obj_p = temp_dir.join(format!("lpp_{}_{}.{}", stem, pid, ext));
+        let exe_p = temp_dir.join(format!("lpp_{}_{}{}", stem, pid, exe_ext));
+        (obj_p, exe_p)
+    } else {
+        let obj_p = std::path::PathBuf::from(filename.replace(".lpp", &format!(".{}", ext)));
+        let exe_p = std::path::PathBuf::from(filename.replace(".lpp", exe_ext));
+        (obj_p, exe_p)
+    };
+
     if let Err(e) = fs::write(&obj_path, &obj_bytes) {
-        eprintln!("Failed to write object file {}: {}", obj_path, e);
+        eprintln!("Failed to write object file {}: {}", obj_path.display(), e);
         return;
     }
 
     let total_time = total_start.elapsed();
 
     if check_only {
+        let _ = fs::remove_file(&obj_path);
         return;
     }
 
@@ -1143,15 +1167,11 @@ fn real_main() {
             && !dump_escape
             && !dump_mir
         {
-            println!("[L++] Native Cranelift object emitted at {}", obj_path);
+            println!("[L++] Native Cranelift object emitted at {}", obj_path.display());
             println!("Time: {:.1} ms", total_time.as_secs_f64() * 1000.0);
         }
         return;
     }
-
-    // Direct Native Executable Link via lpp-link
-    let exe_ext = std::env::consts::EXE_SUFFIX;
-    let exe_path = filename.replace(".lpp", exe_ext);
 
     // Collect FFI link libraries from extern blocks
     let mut link_libs: Vec<String> = Vec::new();
@@ -1178,19 +1198,32 @@ fn real_main() {
         #[cfg(windows)]
         pm::load_msvc_env();
         pm::host_link_binary_target(
-            Path::new(&obj_path),
-            Path::new(&exe_path),
+            &obj_path,
+            &exe_path,
             &link_libs,
             target_spec.raw.as_deref(),
         )
     } else {
-        pm::direct_link_binary(Path::new(&obj_path), Path::new(&exe_path))
+        pm::direct_link_binary(&obj_path, &exe_path)
     };
     if let Err(e) = link_result {
         eprintln!("[L++] Native Link Error: {}", e);
+        let _ = fs::remove_file(&obj_path);
         return;
     }
     let _ = fs::remove_file(&obj_path);
+
+    if source_run_command {
+        let status = std::process::Command::new(&exe_path).status();
+        let _ = fs::remove_file(&exe_path);
+        match status {
+            Ok(s) => std::process::exit(s.code().unwrap_or(0)),
+            Err(e) => {
+                eprintln!("[L++] Execution failed: {}", e);
+                std::process::exit(1);
+            }
+        }
+    }
 
     if env::var("BENCHMARK").is_ok() {
         println!(
@@ -1212,7 +1245,7 @@ fn real_main() {
         && !dump_mir
     {
         println!("L++ v4.2.2 (Pure Native Executable)\n");
-        println!("Compiled and linked native binary: {}", exe_path);
+        println!("Compiled and linked native binary: {}", exe_path.display());
         println!("Time: {:.1} ms", total_time.as_secs_f64() * 1000.0);
     }
 }

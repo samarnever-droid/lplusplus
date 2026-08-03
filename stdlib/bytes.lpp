@@ -1,0 +1,87 @@
+# bytes.lpp — structured binary buffer reader/writer & byte-packing utilities for L++.
+
+struct Buffer:
+    handle: Int
+    size: Int
+
+def bytes_new(size: Int) -> Buffer:
+    mut capacity := size
+    if capacity <= 0:
+        capacity = 16
+    ptr := buf_alloc(capacity)
+    return Buffer(ptr, capacity)
+
+def bytes_free(buf: Buffer) -> Void:
+    if buf.handle != 0:
+        buf_free(buf.handle)
+
+def bytes_read_u8(buf: Buffer, offset: Int) -> Int:
+    if offset < 0 || offset >= buf.size:
+        return 0
+    return buf_get8(buf.handle, offset)
+
+def bytes_write_u8(buf: Buffer, offset: Int, value: Int) -> Void:
+    if offset >= 0 && offset < buf.size:
+        buf_set8(buf.handle, offset, value & 255)
+
+def bytes_read_u16_le(buf: Buffer, offset: Int) -> Int:
+    low := bytes_read_u8(buf, offset)
+    high := bytes_read_u8(buf, offset + 1)
+    return low | (high << 8)
+
+def bytes_read_u16_be(buf: Buffer, offset: Int) -> Int:
+    high := bytes_read_u8(buf, offset)
+    low := bytes_read_u8(buf, offset + 1)
+    return (high << 8) | low
+
+def bytes_write_u16_le(buf: Buffer, offset: Int, value: Int) -> Void:
+    bytes_write_u8(buf, offset, value & 255)
+    bytes_write_u8(buf, offset + 1, (value >> 8) & 255)
+
+def bytes_write_u16_be(buf: Buffer, offset: Int, value: Int) -> Void:
+    bytes_write_u8(buf, offset, (value >> 8) & 255)
+    bytes_write_u8(buf, offset + 1, value & 255)
+
+def bytes_read_u32_le(buf: Buffer, offset: Int) -> Int:
+    if offset < 0 || offset + 4 > buf.size:
+        return 0
+    return buf_get32le(buf.handle, offset)
+
+def bytes_write_u32_le(buf: Buffer, offset: Int, value: Int) -> Void:
+    if offset >= 0 && offset + 4 <= buf.size:
+        buf_set32le(buf.handle, offset, value & 4294967295)
+
+def bytes_read_u32_be(buf: Buffer, offset: Int) -> Int:
+    b0 := bytes_read_u8(buf, offset)
+    b1 := bytes_read_u8(buf, offset + 1)
+    b2 := bytes_read_u8(buf, offset + 2)
+    b3 := bytes_read_u8(buf, offset + 3)
+    return (b0 << 24) | (b1 << 16) | (b2 << 8) | b3
+
+def bytes_write_u32_be(buf: Buffer, offset: Int, value: Int) -> Void:
+    bytes_write_u8(buf, offset, (value >> 24) & 255)
+    bytes_write_u8(buf, offset + 1, (value >> 16) & 255)
+    bytes_write_u8(buf, offset + 2, (value >> 8) & 255)
+    bytes_write_u8(buf, offset + 3, value & 255)
+
+def bytes_read_i64_le(buf: Buffer, offset: Int) -> Int:
+    low := bytes_read_u32_le(buf, offset)
+    high := bytes_read_u32_le(buf, offset + 4)
+    return low | (high << 32)
+
+def bytes_write_i64_le(buf: Buffer, offset: Int, value: Int) -> Void:
+    bytes_write_u32_le(buf, offset, value & 4294967295)
+    bytes_write_u32_le(buf, offset + 4, (value >> 32) & 4294967295)
+
+def bytes_copy(dst: Buffer, dst_offset: Int, src: Buffer, src_offset: Int, len: Int) -> Void:
+    if dst.handle != 0 && src.handle != 0 && len > 0:
+        buf_copy(dst.handle, dst_offset, src.handle, src_offset, len)
+
+def bytes_to_str(buf: Buffer, offset: Int, len: Int) -> Str:
+    if buf.handle == 0 || len <= 0:
+        return ""
+    return buf_read_str(buf.handle, offset, len)
+
+def bytes_from_str(buf: Buffer, offset: Int, value: Str) -> Void:
+    if buf.handle != 0:
+        buf_write_str(buf.handle, offset, value)

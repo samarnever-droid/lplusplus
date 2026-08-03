@@ -3,19 +3,70 @@
     "name": "L++",
     "patterns": [
         { "include": "#comments" },
+        { "include": "#constants" },
+        { "include": "#function-declarations" },
+        { "include": "#struct-declarations" },
+        { "include": "#function-calls" },
         { "include": "#keywords" },
         { "include": "#types" },
         { "include": "#builtins" },
         { "include": "#strings" },
         { "include": "#numbers" },
-        { "include": "#operators" }
+        { "include": "#operators" },
+        { "include": "#variables" }
     ],
     "repository": {
         "comments": {
             "patterns": [
                 {
+                    "name": "comment.block.documentation.lpp",
+                    "match": "##.*$"
+                },
+                {
                     "name": "comment.line.number-sign.lpp",
                     "match": "#.*$"
+                }
+            ]
+        },
+        "constants": {
+            "patterns": [
+                {
+                    "name": "constant.language.boolean.lpp",
+                    "match": "\\b(true|false)\\b"
+                },
+                {
+                    "name": "constant.language.null.lpp",
+                    "match": "\\b(null|none)\\b"
+                }
+            ]
+        },
+        "function-declarations": {
+            "patterns": [
+                {
+                    "match": "\\b(def)\\s+([a-zA-Z_]\\w*)",
+                    "captures": {
+                        "1": { "name": "keyword.control.lpp" },
+                        "2": { "name": "entity.name.function.lpp" }
+                    }
+                }
+            ]
+        },
+        "struct-declarations": {
+            "patterns": [
+                {
+                    "match": "\\b(struct)\\s+([a-zA-Z_]\\w*)",
+                    "captures": {
+                        "1": { "name": "keyword.control.lpp" },
+                        "2": { "name": "entity.name.type.struct.lpp" }
+                    }
+                }
+            ]
+        },
+        "function-calls": {
+            "patterns": [
+                {
+                    "match": "\\b([a-zA-Z_]\\w*)\\s*(?=\\()",
+                    "name": "entity.name.function.call.lpp"
                 }
             ]
         },
@@ -23,7 +74,7 @@
             "patterns": [
                 {
                     "name": "keyword.control.lpp",
-                    "match": "\\b(def|struct|fn|return|spawn|if|else|while|mut)\\b"
+                    "match": "\\b(def|struct|fn|return|spawn|if|elif|else|while|for|in|break|continue|mut|const|import|as|pub|type|enum|impl|trait|async|await|extern|match|self)\\b"
                 }
             ]
         },
@@ -31,7 +82,7 @@
             "patterns": [
                 {
                     "name": "support.type.lpp",
-                    "match": "\\b(Int|String|Bool|Void)\\b"
+                    "match": "\\b(Int|String|Str|Bool|Void|CPtr|CMemory|Buffer|List|Map|Option|Result|VectorI64x2|CSourceSpan|CToken|CLexCursor|CLexStep)\\b"
                 }
             ]
         },
@@ -39,7 +90,7 @@
             "patterns": [
                 {
                     "name": "support.function.lpp",
-                    "match": "\\b(print|print_str|input|read_file|write_file)\\b"
+                    "match": "\\b(print|print_str|input|read_file|write_file|c_malloc|c_calloc|c_realloc|c_free|c_memory_new|c_memory_destroy|c_load_u8|c_load_i8|c_store_u8|c_load_u16|c_load_i16|c_store_u16|c_load_u32|c_load_i32|c_store_u32|c_load_i64|c_store_i64|c_memset|c_memcpy|c_memmove|c_strlen|c_strcmp|c_ptr_null|c_ptr_is_null|c_ptr_equal|c_ptr_add|c_ptr_subobject|c_ptr_cast|bytes_new|bytes_free|bytes_read_u8|bytes_write_u8|bytes_read_u16_le|bytes_read_u16_be|bytes_write_u16_le|bytes_write_u16_be|bytes_read_u32_le|bytes_read_u32_be|bytes_write_u32_le|bytes_write_u32_be|bytes_read_i64_le|bytes_write_i64_le|bytes_copy|bytes_to_str|bytes_from_str|buf_alloc|buf_free|buf_copy|buf_get8|buf_set8|buf_set32le|buf_get32le|buf_read_str|buf_write_str|str_concat|str_len|str_substr|str_find|str_split|int_to_str|parse_int|command_exec|env_get|env_set|exit)\\b"
                 }
             ]
         },
@@ -72,7 +123,19 @@
         "numbers": {
             "patterns": [
                 {
-                    "name": "constant.numeric.lpp",
+                    "name": "constant.numeric.hex.lpp",
+                    "match": "\\b0x[0-9a-fA-F]+\\b"
+                },
+                {
+                    "name": "constant.numeric.binary.lpp",
+                    "match": "\\b0b[01]+\\b"
+                },
+                {
+                    "name": "constant.numeric.float.lpp",
+                    "match": "\\b[0-9]+\\.[0-9]+\\b"
+                },
+                {
+                    "name": "constant.numeric.decimal.lpp",
                     "match": "\\b[0-9]+\\b"
                 }
             ]
@@ -88,15 +151,27 @@
                     "match": "==|!=|<=|>=|<|>"
                 },
                 {
+                    "name": "keyword.operator.bitwise.lpp",
+                    "match": "<<|>>|&|\\||\\^|~"
+                },
+                {
                     "name": "keyword.operator.arithmetic.lpp",
-                    "match": "\\+|-|\\*|/"
+                    "match": "\\+|-|\\*|/|%"
                 },
                 {
                     "name": "keyword.operator.arrow.lpp",
                     "match": "->"
                 }
             ]
+        },
+        "variables": {
+            "patterns": [
+                {
+                    "name": "variable.other.readwrite.lpp",
+                    "match": "\\b[a-zA-Z_]\\w*\\b"
+                }
+            ]
         }
-    ],
+    },
     "scopeName": "source.lpp"
 }
