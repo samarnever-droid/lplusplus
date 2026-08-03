@@ -9,19 +9,15 @@ export interface LessonStep {
   id: string;
   type: StepType;
   title: string;
-  // For Theory Step
   conceptTitle?: string;
   conceptSummary?: string;
   explanationMarkdown?: string;
   codeExample?: string;
-  // For Quiz Step
   prompt?: string;
   options?: QuizOption[];
-  // For Code Step
   initialCode?: string;
   solutionCode?: string;
   expectedOutput?: string;
-  // Explanation after answer
   explanation?: string;
 }
 
@@ -88,6 +84,44 @@ No complex setup is required to start printing!`,
           },
           {
             id: "step-1-1-3",
+            type: "theory",
+            title: "Step 2: Understanding `def main() -> Void:`",
+            conceptTitle: "Deconstructing `def main() -> Void:`",
+            conceptSummary: "Why do we write `def main() -> Void:`? Let's break down every part!",
+            explanationMarkdown: `When building native compiled programs, the computer needs to know where execution begins.
+
+Here is what every part of **\`def main() -> Void:\`** means:
+
+### 1. Why \`def main()\` is required?
+The operating system needs an **entry point** function. \`def main()\` tells the CPU *"Start running my program here!"*
+
+### 2. What does \`->\` mean?
+The **\`->\`** arrow is the **Return Type Indicator**. It tells the compiler what type of result the function will give back (e.g. \`-> Int\` for numbers, \`-> Str\` for text).
+
+### 3. What does \`Void\` mean?
+**\`Void\`** means **"Nothing" / "No return value"**. Since \`main()\` just prints text and doesn't calculate a return number, its return type is \`Void\`!`,
+            codeExample: `# Function returns an Int
+def add(a: Int, b: Int) -> Int:
+    return a + b
+
+# Function returns Void (nothing)
+def main() -> Void:
+    print("Hello World")`
+          },
+          {
+            id: "step-1-1-4",
+            type: "quiz",
+            title: "Quick Check: `-> Void`",
+            prompt: "In `def main() -> Void:`, what does `Void` stand for?",
+            options: [
+              { text: "The function returns nothing (no return value)", isCorrect: true },
+              { text: "The function returns an integer", isCorrect: false },
+              { text: "It means the function is empty", isCorrect: false }
+            ],
+            explanation: "`Void` means the function performs actions but produces no return value."
+          },
+          {
+            id: "step-1-1-5",
             type: "code",
             title: "Practice: Print Your First Message",
             prompt: "Complete the code to print 'Hello World' using `print`.",
@@ -95,97 +129,17 @@ No complex setup is required to start printing!`,
             solutionCode: "def main() -> Void:\n    print(\"Hello World\")",
             expectedOutput: "Hello World",
             explanation: "`print(\"Hello World\")` outputs raw string text to the screen."
-          },
-          {
-            id: "step-1-1-4",
-            type: "theory",
-            title: "Step 2: Why `print_str` Exists",
-            conceptTitle: "Understanding `print` vs `print_str`",
-            conceptSummary: "While `print` is polymorphic, `print_str` is a hyper-optimized native string output built-in.",
-            explanationMarkdown: `Why does L++ also have **\`print_str\`** alongside \`print\`?
-
-- **\`print(value)\`**: Polymorphic printer — works for integers, booleans, floats, and strings.
-- **\`print_str("text")\`**: Direct native string output — skips type checks and writes string bytes straight to standard output with zero overhead!
-
-In high-performance applications, \`print_str\` is used for ultra-fast text emission.`,
-            codeExample: `def main() -> Void:
-    # Hyper-fast string printing
-    print_str("Zero-overhead string output!")`
-          },
-          {
-            id: "step-1-1-5",
-            type: "quiz",
-            title: "Quick Check: `print_str`",
-            prompt: "Why would an L++ developer use `print_str` instead of `print`?",
-            options: [
-              { text: "It is a direct native string output with zero type-check overhead", isCorrect: true },
-              { text: "It converts numbers into strings automatically", isCorrect: false },
-              { text: "It is required for every line of code", isCorrect: false }
-            ],
-            explanation: "`print_str` bypasses type checking for ultra-fast raw string emission!"
           }
         ]
       },
       {
         id: "lesson-1-2",
-        title: "Defining Functions with `def`",
-        description: "Learn how L++ defines reusable code blocks.",
-        xpReward: 25,
-        steps: [
-          {
-            id: "step-1-2-1",
-            type: "theory",
-            title: "Step 1: The `def` Keyword",
-            conceptTitle: "Creating Reusable Functions",
-            conceptSummary: "Just like Python uses `def greet():`, L++ uses `def` to define functions.",
-            explanationMarkdown: `Functions allow you to group code into reusable blocks.
-
-In L++, function definitions start with the **\`def\`** keyword:
-\`\`\`
-def greet():
-    print("Hello from L++!")
-\`\`\`
-
-Notice the colon **\`:\`** at the end of the \`def\` line! The code inside the function is indented with 4 spaces.`,
-            codeExample: `def greet() -> Void:
-    print("Hello from a function!")
-
-def main() -> Void:
-    greet()`
-          },
-          {
-            id: "step-1-2-2",
-            type: "quiz",
-            title: "Quick Check: Function Keyword",
-            prompt: "Which keyword defines a function in L++?",
-            options: [
-              { text: "def", isCorrect: true },
-              { text: "func", isCorrect: false },
-              { text: "function", isCorrect: false },
-              { text: "fn", isCorrect: false }
-            ],
-            explanation: "In L++, functions are defined using `def`, matching Python's clean syntax!"
-          },
-          {
-            id: "step-1-2-3",
-            type: "code",
-            title: "Practice: Write a Function",
-            prompt: "Call `print(\"L++ Rocks!\")` inside the `main` function.",
-            initialCode: "def main() -> Void:\n    print(\"L++ Rocks!\")",
-            solutionCode: "def main() -> Void:\n    print(\"L++ Rocks!\")",
-            expectedOutput: "L++ Rocks!",
-            explanation: "`def main() -> Void:` defines the main entry function."
-          }
-        ]
-      },
-      {
-        id: "lesson-1-3",
         title: "Variables (`:=` vs `mut`)",
         description: "Understand immutability and state changes.",
         xpReward: 30,
         steps: [
           {
-            id: "step-1-3-1",
+            id: "step-1-2-1",
             type: "theory",
             title: "Step 1: Immutable Bindings",
             conceptTitle: "Why Variables Don't Change by Default",
@@ -203,7 +157,7 @@ This prevents accidental state bugs and race conditions in concurrent programs!`
     print(x)`
           },
           {
-            id: "step-1-3-2",
+            id: "step-1-2-2",
             type: "quiz",
             title: "Quick Check: Immutability",
             prompt: "By default, a variable created with `count := 5` is:",
@@ -214,7 +168,7 @@ This prevents accidental state bugs and race conditions in concurrent programs!`
             explanation: "`:=` creates an immutable variable by default for software safety!"
           },
           {
-            id: "step-1-3-3",
+            id: "step-1-2-3",
             type: "theory",
             title: "Step 2: Mutable Variables with `mut`",
             conceptTitle: "Allowing Reassignments",
@@ -231,7 +185,7 @@ score = score + 5  # Allowed! score is mutable.
     print(score)`
           },
           {
-            id: "step-1-3-4",
+            id: "step-1-2-4",
             type: "code",
             title: "Practice: Create a Mutable Score",
             prompt: "Declare `mut score := 10`, add 5 to it, and print `score`.",
@@ -239,63 +193,6 @@ score = score + 5  # Allowed! score is mutable.
             solutionCode: "def main() -> Void:\n    mut score := 10\n    score = score + 5\n    print(score)",
             expectedOutput: "15",
             explanation: "`mut score := 10` allows `score = score + 5` to update the value to 15."
-          }
-        ]
-      }
-    ]
-  },
-  {
-    id: "stage-2",
-    title: "2. Safe Systems Memory & CPtr",
-    level: "Advanced",
-    icon: "🛡️",
-    description: "Master CPtr fat pointers, bounds checking, and memory safety without unsafe code.",
-    lessons: [
-      {
-        id: "lesson-2-1",
-        title: "Safe C Memory Allocation (`CPtr`)",
-        description: "Allocating checked C memory buffers with stdlib/c_memory.",
-        xpReward: 45,
-        steps: [
-          {
-            id: "step-2-1-1",
-            type: "theory",
-            title: "Step 1: C Pointers Without Crashes",
-            conceptTitle: "What is `CPtr`?",
-            conceptSummary: "L++ provides safe C pointer manipulation without `unsafe` blocks using `CPtr` fat pointers.",
-            explanationMarkdown: `In standard C, pointers often cause segfaults and memory corruption. L++ solves this with **\`CPtr\`** fat pointers in \`stdlib/c_memory.lpp\`!
-
-A **\`CPtr\`** tracks bounds and generation IDs so out-of-bounds accesses trigger clean L++ diagnostic panics instead of OS crashes!`,
-            codeExample: `import c_memory
-
-def main() -> Void:
-    mem := c_memory_new(16)
-    ptr := c_malloc(mem, 32)
-    c_store_u32(ptr, 999)
-    print(c_load_u32(ptr))
-    c_free(ptr)
-    c_memory_destroy(mem)`
-          },
-          {
-            id: "step-2-1-2",
-            type: "quiz",
-            title: "Quick Check: CPtr Safety",
-            prompt: "What happens if a CPtr attempts to read out of bounds in L++?",
-            options: [
-              { text: "It raises a safe diagnostic panic with provenance tracking", isCorrect: true },
-              { text: "OS segfault crash", isCorrect: false }
-            ],
-            explanation: "CPtr tracks allocation bounds and raises safe catchable diagnostics!"
-          },
-          {
-            id: "step-2-1-3",
-            type: "code",
-            title: "Practice: Allocate Safe C Memory",
-            prompt: "Allocate 32 bytes with `c_malloc`, store 999 with `c_store_u32`, and print it with `c_load_u32`.",
-            initialCode: "import c_memory\n\ndef main() -> Void:\n    mem := c_memory_new(16)\n    ptr := c_malloc(mem, 32)\n    c_store_u32(ptr, 999)\n    print(c_load_u32(ptr))\n    c_free(ptr)\n    c_memory_destroy(mem)",
-            solutionCode: "import c_memory\n\ndef main() -> Void:\n    mem := c_memory_new(16)\n    ptr := c_malloc(mem, 32)\n    c_store_u32(ptr, 999)\n    print(c_load_u32(ptr))\n    c_free(ptr)\n    c_memory_destroy(mem)",
-            expectedOutput: "999",
-            explanation: "`c_malloc` creates a checked fat pointer `CPtr`."
           }
         ]
       }
