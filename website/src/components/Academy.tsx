@@ -1,11 +1,11 @@
 import { useEffect, useState, ReactNode } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Heart, Flame, Star, Trophy, CheckCircle, XCircle, Play, Sparkles, BookOpen, Lock } from "lucide-react";
-import { CURRICULUM, Stage, Lesson, LessonChallenge } from "../lib/curriculum";
+import { CURRICULUM, Stage, Lesson, LessonStep } from "../lib/curriculum";
 import { getUserProgress, saveUserProgress, UserProgress } from "../lib/db";
 
 /**
- * Custom Markdown Parser for rich visual rendering of lesson theory guides
+ * Markdown renderer for concept theory steps
  */
 function renderFormattedMarkdown(text: string): ReactNode {
   const lines = text.split("\n");
@@ -17,7 +17,7 @@ function renderFormattedMarkdown(text: string): ReactNode {
 
     if (trimmed.startsWith("### ")) {
       elements.push(
-        <h3 key={idx} className="text-base font-bold font-mono text-acid mt-5 mb-2 flex items-center gap-2">
+        <h3 key={idx} className="text-base font-bold font-mono text-acid mt-4 mb-2 flex items-center gap-2">
           <span className="h-2 w-2 rounded-full bg-acid" />
           {trimmed.replace("### ", "")}
         </h3>
@@ -42,11 +42,7 @@ function renderFormattedMarkdown(text: string): ReactNode {
   return <div className="space-y-1">{elements}</div>;
 }
 
-/**
- * Parses inline **bold** and `code` formatting
- */
 function parseInlineMarkdown(text: string): ReactNode {
-  // Regex to split by bold **text** or code `text`
   const parts = text.split(/(\*\*.*?\*\*|`.*?`)/g);
   return parts.map((part, i) => {
     if (part.startsWith("**") && part.endsWith("**")) {
@@ -62,10 +58,9 @@ export default function Academy() {
   const [progress, setProgress] = useState<UserProgress | null>(null);
   const [activeStage, setActiveStage] = useState<Stage>(CURRICULUM[0]);
   const [activeLesson, setActiveLesson] = useState<Lesson | null>(null);
-  const [showTheory, setShowTheory] = useState(true);
-  const [currentChallengeIdx, setCurrentChallengeIdx] = useState(0);
+  const [currentStepIdx, setCurrentStepIdx] = useState(0);
   
-  // Interactive challenge states
+  // Challenge states
   const [selectedOption, setSelectedOption] = useState<number | null>(null);
   const [userCode, setUserCode] = useState("");
   const [codeOutput, setCodeOutput] = useState("");
@@ -82,23 +77,22 @@ export default function Academy() {
 
   const startLesson = (lesson: Lesson) => {
     setActiveLesson(lesson);
-    setShowTheory(true);
-    setCurrentChallengeIdx(0);
+    setCurrentStepIdx(0);
     setFeedback(null);
     setSelectedOption(null);
-    const firstChallenge = lesson.challenges[0];
-    setUserCode(firstChallenge.initialCode || "");
+    const firstStep = lesson.steps[0];
+    setUserCode(firstStep.initialCode || "");
     setCodeOutput("");
     setIsCompletedModal(false);
   };
 
-  const handleQuizSubmit = (challenge: LessonChallenge) => {
+  const handleQuizSubmit = (step: LessonStep) => {
     if (selectedOption === null) return;
-    const option = challenge.options![selectedOption];
+    const option = step.options![selectedOption];
     if (option.isCorrect) {
-      setFeedback({ isCorrect: true, message: challenge.explanation });
+      setFeedback({ isCorrect: true, message: step.explanation || "Correct!" });
     } else {
-      setFeedback({ isCorrect: false, message: "Not quite right! " + challenge.explanation });
+      setFeedback({ isCorrect: false, message: "Not quite right! " + (step.explanation || "") });
       if (progress.hearts > 1) {
         const updated = { ...progress, hearts: progress.hearts - 1 };
         setProgress(updated);
@@ -107,25 +101,25 @@ export default function Academy() {
     }
   };
 
-  const handleCodeRun = (challenge: LessonChallenge) => {
-    if (userCode.length > 10) {
-      const output = challenge.expectedOutput || "Output verified!";
+  const handleCodeRun = (step: LessonStep) => {
+    if (userCode.length > 5) {
+      const output = step.expectedOutput || "Output verified!";
       setCodeOutput(output);
-      setFeedback({ isCorrect: true, message: challenge.explanation });
+      setFeedback({ isCorrect: true, message: step.explanation || "Great code implementation!" });
     } else {
       setCodeOutput("Compilation error: Expected implementation not found.");
       setFeedback({ isCorrect: false, message: "Check your code syntax and try again!" });
     }
   };
 
-  const nextChallenge = () => {
+  const nextStep = () => {
     if (!activeLesson) return;
-    if (currentChallengeIdx + 1 < activeLesson.challenges.length) {
-      const nextIdx = currentChallengeIdx + 1;
-      setCurrentChallengeIdx(nextIdx);
-      const nextC = activeLesson.challenges[nextIdx];
+    if (currentStepIdx + 1 < activeLesson.steps.length) {
+      const nextIdx = currentStepIdx + 1;
+      setCurrentStepIdx(nextIdx);
+      const nextS = activeLesson.steps[nextIdx];
       setSelectedOption(null);
-      setUserCode(nextC.initialCode || "");
+      setUserCode(nextS.initialCode || "");
       setCodeOutput("");
       setFeedback(null);
     } else {
@@ -146,11 +140,11 @@ export default function Academy() {
     }
   };
 
-  const currentChallenge = activeLesson?.challenges[currentChallengeIdx];
+  const currentStep = activeLesson?.steps[currentStepIdx];
 
   return (
     <section id="academy" className="relative py-12 px-5 md:px-8 max-w-7xl mx-auto">
-      {/* Top Header & Duolingo Status Bar */}
+      {/* Duolingo Header Bar */}
       <div className="mb-10 rounded-2xl border border-white/10 bg-ink-soft/60 backdrop-blur-xl p-6 flex flex-wrap items-center justify-between gap-6">
         <div className="flex items-center gap-3">
           <span className="text-3xl">🎓</span>
@@ -181,7 +175,7 @@ export default function Academy() {
         </div>
       </div>
 
-      {/* Curriculum Stage Selector & Skill Tree */}
+      {/* Stage Skill Tree */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Left Navigation Tree */}
         <div className="space-y-4">
@@ -274,9 +268,9 @@ export default function Academy() {
         </div>
       </div>
 
-      {/* Interactive Lesson Modal (Theory Guide -> Practice Challenges) */}
+      {/* Bite-Sized Step Modal (Theory -> Question -> Code) */}
       <AnimatePresence>
-        {activeLesson && !isCompletedModal && (
+        {activeLesson && currentStep && !isCompletedModal && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -284,160 +278,172 @@ export default function Academy() {
             className="fixed inset-0 z-50 bg-ink/95 backdrop-blur-2xl p-4 md:p-8 flex items-center justify-center overflow-y-auto"
           >
             <div className="w-full max-w-3xl my-auto rounded-2xl border border-white/15 bg-ink-soft p-6 md:p-8 space-y-6 shadow-2xl">
-              {/* Header */}
-              <div className="flex items-center justify-between border-b border-white/10 pb-4">
-                <div>
-                  <span className="font-mono text-xs text-acid uppercase tracking-wider">{activeStage.title}</span>
-                  <h3 className="text-xl font-bold font-mono text-white mt-0.5">{activeLesson.title}</h3>
+              {/* Header Bar & Step Progress */}
+              <div>
+                <div className="flex items-center justify-between pb-3">
+                  <span className="font-mono text-xs text-acid uppercase tracking-wider">
+                    {activeLesson.title} — Step {currentStepIdx + 1} of {activeLesson.steps.length}
+                  </span>
+                  <button
+                    onClick={() => setActiveLesson(null)}
+                    className="text-white/40 hover:text-white font-mono text-xs px-2.5 py-1 rounded-lg border border-white/10"
+                  >
+                    ✕ Close
+                  </button>
                 </div>
-                <button
-                  onClick={() => setActiveLesson(null)}
-                  className="text-white/40 hover:text-white font-mono text-sm px-3 py-1 rounded-lg border border-white/10"
-                >
-                  ✕ Close
-                </button>
+                {/* Step Progress Bar */}
+                <div className="h-2 w-full bg-white/10 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-acid transition-all duration-300"
+                    style={{ width: `${((currentStepIdx + 1) / activeLesson.steps.length) * 100}%` }}
+                  />
+                </div>
               </div>
 
-              {/* View 1: Concept & Theory Card */}
-              {showTheory ? (
+              {/* Step Type 1: Theory Concept Card */}
+              {currentStep.type === "theory" && (
                 <div className="space-y-6">
                   <div className="flex items-center gap-3 text-acid font-mono text-sm font-bold">
                     <BookOpen className="h-5 w-5" />
-                    <span>Concept Guide: {activeLesson.theory.title}</span>
+                    <span>{currentStep.conceptTitle}</span>
                   </div>
 
-                  <p className="text-white/90 text-sm font-sans leading-relaxed">{activeLesson.theory.summary}</p>
+                  <p className="text-white/90 text-sm font-sans leading-relaxed">{currentStep.conceptSummary}</p>
 
                   <div className="rounded-xl border border-white/10 bg-white/[0.02] p-5">
-                    {renderFormattedMarkdown(activeLesson.theory.explanationMarkdown)}
+                    {renderFormattedMarkdown(currentStep.explanationMarkdown || "")}
                   </div>
 
-                  {/* Code Example Card */}
-                  {activeLesson.theory.codeExample && (
+                  {currentStep.codeExample && (
                     <div className="space-y-2">
                       <span className="font-mono text-xs text-white/40 uppercase tracking-widest block">Code Example</span>
                       <div className="rounded-xl border border-white/10 bg-black/80 p-4 font-mono text-xs text-acid">
-                        <pre>{activeLesson.theory.codeExample}</pre>
+                        <pre>{currentStep.codeExample}</pre>
                       </div>
                     </div>
                   )}
 
-                  {/* Key Takeaways */}
-                  <div className="rounded-xl border border-acid/20 bg-acid/5 p-4 space-y-2">
-                    <span className="font-mono text-xs text-acid font-bold uppercase tracking-wider block">Key Takeaways</span>
-                    <ul className="list-disc list-inside text-xs font-mono text-white/80 space-y-1">
-                      {activeLesson.theory.keyTakeaways.map((item, i) => (
-                        <li key={i}>{item}</li>
-                      ))}
-                    </ul>
-                  </div>
-
                   <div className="pt-4 border-t border-white/10 flex justify-end">
                     <button
-                      onClick={() => setShowTheory(false)}
-                      className="flex items-center gap-2 px-6 py-3 rounded-xl bg-acid text-ink font-mono text-sm font-bold shadow-lg shadow-acid/20 hover:brightness-110 transition-all"
+                      onClick={nextStep}
+                      className="px-6 py-3 rounded-xl bg-acid text-ink font-mono text-sm font-bold shadow-lg shadow-acid/20 hover:brightness-110 transition-all"
                     >
-                      Start Practice →
+                      Got It! Next Step →
                     </button>
                   </div>
                 </div>
-              ) : (
-                /* View 2: Interactive Practice Challenges */
-                currentChallenge && (
-                  <div className="space-y-6">
-                    <div className="flex items-center justify-between text-xs font-mono text-white/40">
-                      <span>Challenge {currentChallengeIdx + 1} of {activeLesson.challenges.length}</span>
-                      <button onClick={() => setShowTheory(true)} className="text-acid hover:underline">
-                        📖 Review Theory
-                      </button>
-                    </div>
+              )}
 
-                    <h4 className="text-lg font-bold font-mono text-white">{currentChallenge.title}</h4>
-                    <p className="text-white/90 text-sm font-sans">{currentChallenge.prompt}</p>
+              {/* Step Type 2: Quiz Question */}
+              {currentStep.type === "quiz" && (
+                <div className="space-y-6">
+                  <h4 className="text-lg font-bold font-mono text-white">{currentStep.title}</h4>
+                  <p className="text-white/90 text-sm font-sans">{currentStep.prompt}</p>
 
-                    {/* Quiz Type */}
-                    {currentChallenge.type === "quiz" && (
-                      <div className="space-y-3">
-                        {currentChallenge.options?.map((opt, oIdx) => (
-                          <button
-                            key={oIdx}
-                            onClick={() => setSelectedOption(oIdx)}
-                            className={`w-full text-left p-4 rounded-xl border font-mono text-sm transition-all ${
-                              selectedOption === oIdx
-                                ? "border-acid bg-acid/20 text-white font-bold"
-                                : "border-white/10 bg-white/5 text-white/80 hover:bg-white/10"
-                            }`}
-                          >
-                            {opt.text}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-
-                    {/* Code Type */}
-                    {currentChallenge.type === "code" && (
-                      <div className="space-y-4">
-                        <div className="rounded-xl border border-white/10 bg-black/70 p-4 font-mono text-xs">
-                          <textarea
-                            value={userCode}
-                            onChange={(e) => setUserCode(e.target.value)}
-                            rows={6}
-                            className="w-full bg-transparent text-acid focus:outline-none resize-none font-mono"
-                          />
-                        </div>
-                        {codeOutput && (
-                          <div className="rounded-lg bg-white/5 p-3 border border-white/10 font-mono text-xs text-emerald-400">
-                            <span className="text-white/40 block mb-1">Execution Output:</span>
-                            {codeOutput}
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Feedback Alert */}
-                    {feedback && (
-                      <div
-                        className={`p-4 rounded-xl border font-mono text-xs flex items-start gap-3 ${
-                          feedback.isCorrect
-                            ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
-                            : "border-red-500/40 bg-red-500/10 text-red-300"
+                  <div className="space-y-3">
+                    {currentStep.options?.map((opt, oIdx) => (
+                      <button
+                        key={oIdx}
+                        onClick={() => setSelectedOption(oIdx)}
+                        className={`w-full text-left p-4 rounded-xl border font-mono text-sm transition-all ${
+                          selectedOption === oIdx
+                            ? "border-acid bg-acid/20 text-white font-bold"
+                            : "border-white/10 bg-white/5 text-white/80 hover:bg-white/10"
                         }`}
                       >
-                        {feedback.isCorrect ? <CheckCircle className="h-5 w-5 shrink-0" /> : <XCircle className="h-5 w-5 shrink-0" />}
-                        <div>{feedback.message}</div>
+                        {opt.text}
+                      </button>
+                    ))}
+                  </div>
+
+                  {feedback && (
+                    <div
+                      className={`p-4 rounded-xl border font-mono text-xs flex items-start gap-3 ${
+                        feedback.isCorrect
+                          ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
+                          : "border-red-500/40 bg-red-500/10 text-red-300"
+                      }`}
+                    >
+                      {feedback.isCorrect ? <CheckCircle className="h-5 w-5 shrink-0" /> : <XCircle className="h-5 w-5 shrink-0" />}
+                      <div>{feedback.message}</div>
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-between pt-4 border-t border-white/10">
+                    <button
+                      disabled={selectedOption === null}
+                      onClick={() => handleQuizSubmit(currentStep)}
+                      className="px-6 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white font-mono text-sm font-bold transition-all disabled:opacity-40"
+                    >
+                      Check Answer
+                    </button>
+
+                    {feedback?.isCorrect && (
+                      <button
+                        onClick={nextStep}
+                        className="px-6 py-2.5 rounded-xl bg-acid text-ink font-mono text-sm font-bold shadow-lg shadow-acid/20 hover:brightness-110 transition-all"
+                      >
+                        Continue →
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Step Type 3: Interactive Code Practice */}
+              {currentStep.type === "code" && (
+                <div className="space-y-6">
+                  <h4 className="text-lg font-bold font-mono text-white">{currentStep.title}</h4>
+                  <p className="text-white/90 text-sm font-sans">{currentStep.prompt}</p>
+
+                  <div className="space-y-4">
+                    <div className="rounded-xl border border-white/10 bg-black/70 p-4 font-mono text-xs">
+                      <textarea
+                        value={userCode}
+                        onChange={(e) => setUserCode(e.target.value)}
+                        rows={6}
+                        className="w-full bg-transparent text-acid focus:outline-none resize-none font-mono"
+                      />
+                    </div>
+                    {codeOutput && (
+                      <div className="rounded-lg bg-white/5 p-3 border border-white/10 font-mono text-xs text-emerald-400">
+                        <span className="text-white/40 block mb-1">Execution Output:</span>
+                        {codeOutput}
                       </div>
                     )}
-
-                    {/* Submit Bar */}
-                    <div className="flex items-center justify-between pt-4 border-t border-white/10">
-                      {currentChallenge.type === "quiz" ? (
-                        <button
-                          disabled={selectedOption === null}
-                          onClick={() => handleQuizSubmit(currentChallenge)}
-                          className="px-6 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white font-mono text-sm font-bold transition-all disabled:opacity-40"
-                        >
-                          Check Answer
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => handleCodeRun(currentChallenge)}
-                          className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white font-mono text-sm font-bold transition-all"
-                        >
-                          <Play className="h-4 w-4" /> Run & Verify Code
-                        </button>
-                      )}
-
-                      {feedback?.isCorrect && (
-                        <button
-                          onClick={nextChallenge}
-                          className="px-6 py-2.5 rounded-xl bg-acid text-ink font-mono text-sm font-bold shadow-lg shadow-acid/20 hover:brightness-110 transition-all"
-                        >
-                          Continue →
-                        </button>
-                      )}
-                    </div>
                   </div>
-                )
+
+                  {feedback && (
+                    <div
+                      className={`p-4 rounded-xl border font-mono text-xs flex items-start gap-3 ${
+                        feedback.isCorrect
+                          ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
+                          : "border-red-500/40 bg-red-500/10 text-red-300"
+                      }`}
+                    >
+                      {feedback.isCorrect ? <CheckCircle className="h-5 w-5 shrink-0" /> : <XCircle className="h-5 w-5 shrink-0" />}
+                      <div>{feedback.message}</div>
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-between pt-4 border-t border-white/10">
+                    <button
+                      onClick={() => handleCodeRun(currentStep)}
+                      className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white font-mono text-sm font-bold transition-all"
+                    >
+                      <Play className="h-4 w-4" /> Run & Verify Code
+                    </button>
+
+                    {feedback?.isCorrect && (
+                      <button
+                        onClick={nextStep}
+                        className="px-6 py-2.5 rounded-xl bg-acid text-ink font-mono text-sm font-bold shadow-lg shadow-acid/20 hover:brightness-110 transition-all"
+                      >
+                        Continue →
+                      </button>
+                    )}
+                  </div>
+                </div>
               )}
             </div>
           </motion.div>
@@ -456,7 +462,7 @@ export default function Academy() {
               <span className="text-6xl animate-bounce inline-block">🎉</span>
               <h3 className="text-2xl font-bold font-mono text-white">Lesson Completed!</h3>
               <p className="text-sm font-mono text-white/70">
-                You earned <span className="text-yellow-400 font-bold">+{activeLesson.xpReward} XP</span> and unlocked the next L++ stage!
+                You earned <span className="text-yellow-400 font-bold">+{activeLesson.xpReward} XP</span> and unlocked the next L++ step!
               </p>
               <button
                 onClick={() => {
