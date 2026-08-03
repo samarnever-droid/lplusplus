@@ -1,6 +1,6 @@
 /**
- * Exact L++ Compiler Architecture Evaluator
- * Strictly mirrors `lpp.exe` lexer and parser diagnostics.
+ * Exact L++ Compiler Architecture & Runtime Evaluator
+ * Strictly mirrors `lpp.exe` lexer, parser, and builtin diagnostics.
  */
 
 export interface ExecutionResult {
@@ -9,7 +9,7 @@ export interface ExecutionResult {
   exitCode: number;
 }
 
-export function evaluateLppCode(code: string): ExecutionResult {
+export function evaluateLppCode(code: string, stdinInput: string = "L++ User"): ExecutionResult {
   const stdoutBuffer: string[] = [];
   const lines = code.split("\n");
 
@@ -22,14 +22,12 @@ export function evaluateLppCode(code: string): ExecutionResult {
 
     if (!trimmed || trimmed.startsWith("#") || trimmed.startsWith("//")) continue;
 
-    // Check valid top-level keywords
     if (trimmed.startsWith("import ") || trimmed.startsWith("struct ") || trimmed.startsWith("enum ")) {
       continue;
     }
 
-    // 1. Check Function Definition Syntax (`def ...`)
+    // 1. Mandatory ':' check on function signatures
     if (trimmed.startsWith("def ")) {
-      // STRICT L++ SYNTAX RULE: Function definition MUST end with ':'
       if (!trimmed.endsWith(":")) {
         return {
           stdout: "",
@@ -45,7 +43,7 @@ export function evaluateLppCode(code: string): ExecutionResult {
       continue;
     }
 
-    // 2. Check Block Control Statements (`if`, `elif`, `else`, `while`)
+    // 2. Mandatory ':' check on control statements
     if (trimmed.startsWith("if ") || trimmed.startsWith("elif ") || trimmed === "else" || trimmed.startsWith("while ")) {
       if (!trimmed.endsWith(":")) {
         return {
@@ -57,7 +55,7 @@ export function evaluateLppCode(code: string): ExecutionResult {
       continue;
     }
 
-    // 3. Top-level naked statement check (naked print/assignment outside function)
+    // 3. Top-level statement check
     if (!inMainBlock && !hasMainDef && !rawLine.startsWith("    ") && !rawLine.startsWith("\t")) {
       const firstToken = trimmed.split("(")[0].split(" ")[0];
       return {
@@ -87,39 +85,50 @@ export function evaluateLppCode(code: string): ExecutionResult {
       if (!trimmed || trimmed.startsWith("#") || trimmed.startsWith("//")) continue;
       if (trimmed.startsWith("def ") || trimmed.startsWith("import ")) continue;
 
-      // print_str("...")
+      // 4a. input(...) argument check matching lpp.exe error[E0004]
+      const inputArgMatch = trimmed.match(/input\s*\((.+)\)/);
+      if (inputArgMatch) {
+        const argsCount = inputArgMatch[1].split(",").length;
+        return {
+          stdout: "",
+          stderr: `error[E0004]: input expects 0 arguments, got ${argsCount}\n  --> main.lpp:${i + 1}:${trimmed.indexOf("input") + 1}\n   |\n${i + 1} | ${trimmed}\n   | ^ input expects 0 arguments, got ${argsCount}\n   =\n   = help: ensure parameter and return types match the expected signatures. Usage: name := input()`,
+          exitCode: 1,
+        };
+      }
+
+      // 4b. print_str("...")
       const printStrMatch = trimmed.match(/^print_str\s*\((.*)\)$/);
       if (printStrMatch) {
         const expr = printStrMatch[1].trim();
-        const val = evaluateExpression(expr, variables);
+        const val = evaluateExpression(expr, variables, stdinInput);
         stdoutBuffer.push(String(val));
         continue;
       }
 
-      // print(...)
+      // 4c. print(...)
       const printMatch = trimmed.match(/^print\s*\((.*)\)$/);
       if (printMatch) {
         const expr = printMatch[1].trim();
-        const val = evaluateExpression(expr, variables);
+        const val = evaluateExpression(expr, variables, stdinInput);
         stdoutBuffer.push(String(val));
         continue;
       }
 
-      // Variable declarations: mut X := 100 or X := 100
+      // 4d. Variable declarations: mut X := 100 or name := input()
       const varDeclMatch = trimmed.match(/^(?:mut\s+)?([a-zA-Z_][a-zA-Z0-9_]*)\s*:=\s*(.+)$/);
       if (varDeclMatch) {
         const varName = varDeclMatch[1];
         const valExpr = varDeclMatch[2];
-        variables[varName] = evaluateExpression(valExpr, variables);
+        variables[varName] = evaluateExpression(valExpr, variables, stdinInput);
         continue;
       }
 
-      // Variable reassignments: X = X + 5
+      // 4e. Variable reassignments: X = X + 5
       const varAssignMatch = trimmed.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*(.+)$/);
       if (varAssignMatch) {
         const varName = varAssignMatch[1];
         const valExpr = varAssignMatch[2];
-        variables[varName] = evaluateExpression(valExpr, variables);
+        variables[varName] = evaluateExpression(valExpr, variables, stdinInput);
         continue;
       }
     }
@@ -138,8 +147,13 @@ export function evaluateLppCode(code: string): ExecutionResult {
   }
 }
 
-function evaluateExpression(expr: string, vars: Record<string, any>): any {
+function evaluateExpression(expr: string, vars: Record<string, any>, stdinInput: string): any {
   expr = expr.trim();
+
+  // Zero-argument input() builtin returns stdin string input
+  if (expr === "input()") {
+    return stdinInput;
+  }
 
   if ((expr.startsWith('"') && expr.endsWith('"')) || (expr.startsWith("'") && expr.endsWith("'"))) {
     return expr.slice(1, -1);

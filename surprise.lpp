@@ -1,3 +1,5 @@
-def main() -> Void
+def main() -> Void:
     X := 100
     print(X)
+    name := input()
+    print_str(name)

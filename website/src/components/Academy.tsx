@@ -9,6 +9,7 @@ const LPP_KEYWORDS = [
   "def main() -> Void:",
   "print_str(\"\")",
   "print()",
+  "input()",
   "mut ",
   "struct ",
   "c_memory",
@@ -80,6 +81,7 @@ export default function Academy() {
   // Workspace states
   const [selectedOption, setSelectedOption] = useState<number | null>(null);
   const [userCode, setUserCode] = useState("");
+  const [stdinInput, setStdinInput] = useState("Commander Alice");
   const [codeOutput, setCodeOutput] = useState("");
   const [showHint, setShowHint] = useState(false);
   const [feedback, setFeedback] = useState<{ isCorrect: boolean; message: string } | null>(null);
@@ -111,21 +113,16 @@ export default function Academy() {
     setIsCompletedModal(false);
   };
 
-  /**
-   * Auto-bracket, Auto-indent, Tab & Auto-suggestion key handler
-   */
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     const textarea = textareaRef.current;
     if (!textarea) return;
 
     const { selectionStart, selectionEnd, value } = textarea;
 
-    // Handle suggestion selection via Tab or Enter
     if (suggestions.length > 0 && (e.key === "Tab" || e.key === "Enter")) {
       e.preventDefault();
       const selected = suggestions[selectedSuggestionIdx];
       
-      // Get current word
       const beforeCursor = value.slice(0, selectionStart);
       const lastWordMatch = beforeCursor.match(/([a-zA-Z0-9_]+)$/);
       const lastWord = lastWordMatch ? lastWordMatch[1] : "";
@@ -142,7 +139,6 @@ export default function Academy() {
       return;
     }
 
-    // Auto-indent on Enter if previous line ends with ':'
     if (e.key === "Enter") {
       const lineStart = value.lastIndexOf("\n", selectionStart - 1) + 1;
       const currentLine = value.slice(lineStart, selectionStart);
@@ -160,7 +156,6 @@ export default function Academy() {
       }
     }
 
-    // Tab key inserts 4 spaces
     if (e.key === "Tab") {
       e.preventDefault();
       const newValue = value.slice(0, selectionStart) + "    " + value.slice(selectionEnd);
@@ -171,7 +166,6 @@ export default function Academy() {
       return;
     }
 
-    // Auto-closing brackets & quotes
     const pairs: Record<string, string> = {
       "(": ")",
       "\"": "\"",
@@ -192,9 +186,6 @@ export default function Academy() {
     }
   };
 
-  /**
-   * Triggers L++ IntelliSense suggestions as the user types
-   */
   const handleCodeChange = (val: string) => {
     setUserCode(val);
     const textarea = textareaRef.current;
@@ -229,8 +220,11 @@ export default function Academy() {
     }
   };
 
+  /**
+   * Executes code using real L++ evaluator with interactive stdin input support
+   */
   const handleCodeRun = (step: LessonStep) => {
-    const res = evaluateLppCode(userCode);
+    const res = evaluateLppCode(userCode, stdinInput);
 
     if (res.exitCode === 0 && res.stdout) {
       setCodeOutput(res.stdout);
@@ -286,13 +280,13 @@ export default function Academy() {
 
   return (
     <section id="academy" className="relative py-10 px-4 md:px-8 max-w-7xl mx-auto">
-      {/* Duolingo Header Bar */}
+      {/* Header Bar */}
       <div className="mb-8 rounded-2xl border border-white/10 bg-ink-soft/60 backdrop-blur-xl p-6 flex flex-wrap items-center justify-between gap-6">
         <div className="flex items-center gap-3">
           <span className="text-3xl">🎓</span>
           <div>
             <h2 className="text-2xl font-bold font-mono tracking-tight text-white">L++ Academy</h2>
-            <p className="text-xs font-mono text-white/50 font-sans">freeCodeCamp & Duolingo Hybrid Systems Certification Path</p>
+            <p className="text-xs font-mono text-white/50">freeCodeCamp & Duolingo Hybrid Systems Certification Path</p>
           </div>
         </div>
 
@@ -410,7 +404,7 @@ export default function Academy() {
         </div>
       </div>
 
-      {/* Split Workspace Modal with Auto-Suggestions & Auto-Brackets */}
+      {/* Split Workspace Modal with Interactive Stdin Terminal Bar */}
       <AnimatePresence>
         {activeLesson && currentStep && !isCompletedModal && (
           <motion.div
@@ -567,9 +561,8 @@ export default function Academy() {
                 </div>
               </div>
 
-              {/* Right Panel: Interactive Code Editor with IntelliSense & Auto-Brackets */}
+              {/* Right Panel: Interactive Editor & Terminal Input Console */}
               <div className="rounded-2xl border border-white/15 bg-black/80 flex flex-col justify-between overflow-hidden relative">
-                {/* Top Bar */}
                 <div className="flex items-center justify-between bg-white/5 px-4 py-2.5 border-b border-white/10 font-mono text-xs text-white/60">
                   <div className="flex items-center gap-2">
                     <span className="h-3 w-3 rounded-full bg-red-500/80" />
@@ -586,7 +579,7 @@ export default function Academy() {
                   </button>
                 </div>
 
-                {/* Editor Textarea */}
+                {/* Textarea Editor */}
                 <div className="flex-1 p-4 font-mono text-xs relative">
                   <textarea
                     ref={textareaRef}
@@ -597,7 +590,6 @@ export default function Academy() {
                     placeholder="// Write your L++ code here..."
                   />
 
-                  {/* Auto-Suggestion IntelliSense Popup Menu */}
                   {suggestions.length > 0 && (
                     <div className="absolute bottom-6 left-6 z-50 rounded-xl border border-acid/40 bg-ink-soft/95 backdrop-blur-xl p-2 shadow-2xl space-y-1 font-mono text-xs">
                       <span className="text-[10px] text-white/40 uppercase tracking-widest block px-2 pb-1 border-b border-white/10">
@@ -611,15 +603,27 @@ export default function Academy() {
                           }`}
                         >
                           <span>{sug}</span>
-                          <span className="text-[10px] opacity-60">Keyword</span>
+                          <span className="text-[10px] opacity-60">Builtin</span>
                         </div>
                       ))}
                     </div>
                   )}
                 </div>
 
-                {/* Live Console Output Bar */}
+                {/* Stdin Interactive Console */}
                 <div className="border-t border-white/10 bg-black/90 p-4 space-y-3">
+                  {/* Interactive Terminal Stdin Input Box */}
+                  <div className="flex items-center gap-2 font-mono text-xs border border-white/10 rounded-lg bg-white/5 p-2">
+                    <span className="text-acid font-bold">stdin &gt;</span>
+                    <input
+                      type="text"
+                      value={stdinInput}
+                      onChange={(e) => setStdinInput(e.target.value)}
+                      placeholder="Type input for input() here..."
+                      className="bg-transparent text-white focus:outline-none flex-1 font-mono text-xs"
+                    />
+                  </div>
+
                   <div className="flex items-center justify-between font-mono text-xs text-white/40">
                     <span className="flex items-center gap-1.5">
                       <Terminal className="h-3.5 w-3.5 text-acid" /> Real Terminal Output
@@ -651,7 +655,7 @@ export default function Academy() {
         )}
       </AnimatePresence>
 
-      {/* Completion Celebration Modal */}
+      {/* Celebration Modal */}
       <AnimatePresence>
         {isCompletedModal && activeLesson && (
           <motion.div
