@@ -450,13 +450,14 @@ const char *lpp_input(void) {
 }
 
 int64_t lpp_write_file(const char *path, const char *data) {
+    if (!path || !data) return -1;
     HANDLE h = CreateFileA(path, GENERIC_WRITE, 0, 0, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0);
     if (h == INVALID_HANDLE_VALUE) return -1;
     DWORD written = 0;
     int ln = lpp_strlen(data);
-    WriteFile(h, data, (DWORD)ln, &written, 0);
+    BOOL ok = WriteFile(h, data, (DWORD)ln, &written, 0);
     CloseHandle(h);
-    return (int64_t)written;
+    return ok && written == (DWORD)ln ? 0 : -1;
 }
 
 char *lpp_read_file(const char *path) {
@@ -472,13 +473,14 @@ char *lpp_read_file(const char *path) {
 }
 
 int64_t lpp_append_file(const char *path, const char *data) {
+    if (!path || !data) return -1;
     HANDLE h = CreateFileA(path, FILE_APPEND_DATA, 0, 0, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0);
     if (h == INVALID_HANDLE_VALUE) return -1;
     DWORD written = 0;
     int ln = lpp_strlen(data);
-    WriteFile(h, data, (DWORD)ln, &written, 0);
+    BOOL ok = WriteFile(h, data, (DWORD)ln, &written, 0);
     CloseHandle(h);
-    return (int64_t)written;
+    return ok && written == (DWORD)ln ? 0 : -1;
 }
 
 int64_t lpp_delete_file(const char *path) { return DeleteFileA(path) ? 0 : -1; }

@@ -316,22 +316,24 @@ char *lpp_read_file(const char *path) {
 
 /* Write data to file. Returns 0 on success, -1 on error. */
 int64_t lpp_write_file(const char *path, const char *data) {
+    if (!path || !data) return -1;
     FILE *f = fopen(path, "wb");
     if (!f) return -1;
-    size_t len = data ? strlen(data) : 0;
-    fwrite(data, 1, len, f);
-    fclose(f);
-    return 0;
+    size_t len = strlen(data);
+    size_t written = fwrite(data, 1, len, f);
+    int close_status = fclose(f);
+    return written == len && close_status == 0 ? 0 : -1;
 }
 
 /* Append data to file. Returns 0 on success, -1 on error. */
 int64_t lpp_append_file(const char *path, const char *data) {
+    if (!path || !data) return -1;
     FILE *f = fopen(path, "ab");
     if (!f) return -1;
-    size_t len = data ? strlen(data) : 0;
-    fwrite(data, 1, len, f);
-    fclose(f);
-    return 0;
+    size_t len = strlen(data);
+    size_t written = fwrite(data, 1, len, f);
+    int close_status = fclose(f);
+    return written == len && close_status == 0 ? 0 : -1;
 }
 
 /* ── Math Builtins ── */

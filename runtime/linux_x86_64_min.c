@@ -760,31 +760,34 @@ char* lpp_read_file(const char *filename) {
     return buf;
 }
 
+/* File mutation follows the host runtime ABI: 0 means success, -1 means
+ * failure.  The old freestanding implementation returned 1 on success,
+ * which made the same L++ program behave differently under --linker direct. */
 int64_t lpp_write_file(const char *filename, const char *content) {
-    if (!filename || !content) return 0;
+    if (!filename || !content) return -1;
     long fd = lpp_sys_open(filename, 0101, 0644); /* O_WRONLY | O_CREAT | O_TRUNC */
-    if (fd < 0) return 0;
+    if (fd < 0) return -1;
     long clen = 0;
     while (content[clen]) clen++;
     long written = lpp_sys_write(fd, content, clen);
     lpp_sys_close(fd);
-    return written >= 0 ? 1 : 0;
+    return written == clen ? 0 : -1;
 }
 
 int64_t lpp_append_file(const char *filename, const char *content) {
-    if (!filename || !content) return 0;
+    if (!filename || !content) return -1;
     long fd = lpp_sys_open(filename, 02001, 0644); /* O_WRONLY | O_CREAT | O_APPEND */
-    if (fd < 0) return 0;
+    if (fd < 0) return -1;
     long clen = 0;
     while (content[clen]) clen++;
     long written = lpp_sys_write(fd, content, clen);
     lpp_sys_close(fd);
-    return written >= 0 ? 1 : 0;
+    return written == clen ? 0 : -1;
 }
 
 int64_t lpp_delete_file(const char *filename) {
-    if (!filename) return 0;
-    return lpp_sys_unlink(filename) == 0 ? 1 : 0;
+    if (!filename) return -1;
+    return lpp_sys_unlink(filename) == 0 ? 0 : -1;
 }
 
 int64_t lpp_file_exists(const char *filename) {

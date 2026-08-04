@@ -6,7 +6,7 @@ import install
 
 def cmd_add(package_name: Str, git_flag: Str, branch_flag: Str, tag_flag: Str, path_flag: Str, version_flag: Str) -> Void:
     if str_len(package_name) == 0:
-        error("Usage: lpp add <package_name> [--git <url>] [--branch <b] [--tag <t>] [--path <p>] [--version <v>]")
+        error("Usage: lpp add <package_name> [--git <url>] [--branch <branch>] [--tag <tag>] [--path <path>] [--version <version>]")
         return
 
     if path_exists("lpp.toml") == 0:
@@ -56,10 +56,14 @@ def cmd_add(package_name: Str, git_flag: Str, branch_flag: Str, tag_flag: Str, p
 
     dep_line = str_concat(dep_line, " }\n")
     mut new_toml := str_concat(raw_toml, dep_line)
-    write_file("lpp.toml", new_toml)
+    if write_file("lpp.toml", new_toml) != 0:
+        error("failed to update lpp.toml")
+        exit(1)
     info(str_concat("Added dependency '", str_concat(dep_name, "' to lpp.toml")))
 
-    install_deps()
+    install_code := install_deps()
+    if install_code != 0:
+        exit(install_code)
 
 def cmd_remove(package_name: Str) -> Void:
     if str_len(package_name) == 0:

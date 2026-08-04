@@ -109,10 +109,22 @@ def semver_matches(v: SemVer, req: Str) -> Bool:
     if str_find(r, "^") == 0:
         base := semver_parse(str_substr(r, 1, str_len(r) - 1))
         mut upper := SemVer()
-        upper.major = base.major + 1
-        upper.minor = 0
-        upper.patch = 0
-        upper.pre   = ""
+        # SemVer caret ranges keep the first non-zero component stable:
+        # ^1.2.3 <2.0.0, ^0.2.3 <0.3.0, ^0.0.3 <0.0.4.
+        if base.major > 0:
+            upper.major = base.major + 1
+            upper.minor = 0
+            upper.patch = 0
+        else:
+            if base.minor > 0:
+                upper.major = 0
+                upper.minor = base.minor + 1
+                upper.patch = 0
+            else:
+                upper.major = 0
+                upper.minor = 0
+                upper.patch = base.patch + 1
+        upper.pre = ""
         return semver_gte(v, base) && semver_lt(v, upper)
 
     # ~major.minor.patch  →  >=base, <major.(minor+1).0
