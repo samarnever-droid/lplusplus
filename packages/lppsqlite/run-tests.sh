@@ -53,7 +53,13 @@ PY
         [ -x "./$t" ] || continue
         OUT=$(./"$t" 2>&1) || true
         echo "$OUT" | grep -E '^(PASS|FAIL)' || echo "$OUT" | tail -1
-        echo "$OUT" | grep -q '^FAIL' && FAIL=1
+        if echo "$OUT" | grep -q '^FAIL'; then
+            if [ "${GITHUB_ACTIONS:-}" = "true" ]; then
+                detail=$(printf '%s\n' "$OUT" | grep '^FAIL' | tail -20 | tr '\n' ' ' | sed 's/::/%3A%3A/g')
+                echo "::error file=packages/lppsqlite/tests/$t.lpp::${detail}"
+            fi
+            FAIL=1
+        fi
     done
     cd "$DIR"
 fi
