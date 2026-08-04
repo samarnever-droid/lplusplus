@@ -12,8 +12,8 @@ cat > "$TMP/client.c" <<'C'
 #include <stdlib.h>
 #include <string.h>
 int64_t lpp_net_connect(const char *, int64_t); int64_t lpp_net_send_all(int64_t, const char *);
-int64_t lpp_net_set_timeout(int64_t, int64_t); char *lpp_net_recv(int64_t, int64_t); void lpp_net_close(int64_t);
-int main(int argc, char **argv) { if (argc != 2) return 2; int64_t s=lpp_net_connect("127.0.0.1",atoll(argv[1])); if (!s||!lpp_net_set_timeout(s,2000)||lpp_net_send_all(s,"ping")!=4) return 10; char *r=lpp_net_recv(s,32); int ok=r&&strcmp(r,"pong")==0; free(r); lpp_net_close(s); return ok?0:11; }
+int64_t lpp_net_set_timeout(int64_t, int64_t); char *lpp_net_recv(int64_t, int64_t); void lpp_net_close(int64_t); void lpp_arc_release(void *);
+int main(int argc, char **argv) { if (argc != 2) return 2; int64_t s=lpp_net_connect("127.0.0.1",atoll(argv[1])); if (!s||!lpp_net_set_timeout(s,2000)||lpp_net_send_all(s,"ping")!=4) return 10; char *r=lpp_net_recv(s,32); int ok=r&&strcmp(r,"pong")==0; lpp_arc_release(r); lpp_net_close(s); return ok?0:11; }
 C
 # CFLAGS is intentionally configurable for ASan/UBSan safety missions.
 # shellcheck disable=SC2086

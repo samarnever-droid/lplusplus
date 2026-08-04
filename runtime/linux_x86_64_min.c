@@ -11,6 +11,7 @@
 #include <stdint.h>
 
 void lpp_exit(int64_t code);
+int64_t lpp_str_eq(const char *a, const char *b);
 
 static long lpp_sys_write(long fd, const void *buffer, long count) {
     long result;
@@ -1703,10 +1704,11 @@ static long lpp_sys_execve(const char *pathname, char *const argv[], char *const
 
 static long lpp_sys_wait4(long pid, int *wstatus, int options, void *rusage) {
     long result;
+    register long r10 __asm__("r10") = (long)rusage;
     __asm__ volatile (
         "syscall"
         : "=a"(result)
-        : "a"(61), "D"(pid), "S"(wstatus), "d"((long)options), "r10"(rusage)
+        : "a"(61), "D"(pid), "S"(wstatus), "d"((long)options), "r"(r10)
         : "rcx", "r11", "memory"
     );
     return result;
