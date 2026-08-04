@@ -298,6 +298,11 @@ lpp clean                 # Remove target directories and build artifacts
 lpp list                  # List direct dependencies in lpp.toml
 lpp tree                  # Print lockfile dependency tree
 lpp metadata              # Output package manifest summary
+lpp version                # Show package version
+lpp version set 1.2.3     # Set a SemVer package version
+lpp version bump patch    # Bump patch/minor/major and update the manifest
+lpp workspace members     # List workspace members
+lpp workspace graph       # Show workspace dependency edges
 
 # Single File Commands
 lpp check <file.lpp>      # Type-check a single L++ source file

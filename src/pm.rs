@@ -1975,23 +1975,29 @@ fn cmd_version(args: &[String]) -> i32 {
         }
     };
 
-    if args.is_empty() || args[0] == "--show" {
+    if args.is_empty() || (args.len() == 1 && args[0] == "--show") {
         println!("{} {}", package.name, package.version);
         return 0;
     }
 
     let operation = if args[0] == "set" {
-        let Some(version) = args.get(1) else {
+        if args.len() != 2 {
             eprintln!("Usage: lpp version set <semver>");
             return 2;
-        };
-        version.clone()
+        }
+        args[1].clone()
     } else {
-        let segment = if args[0] == "bump" {
-            args.get(1).map(String::as_str).unwrap_or("patch")
-        } else if args[0] == "--bump" {
+        let segment = if args[0] == "bump" || args[0] == "--bump" {
+            if args.len() > 2 {
+                eprintln!("Usage: lpp version bump [major|minor|patch]");
+                return 2;
+            }
             args.get(1).map(String::as_str).unwrap_or("patch")
         } else {
+            if args.len() != 1 {
+                eprintln!("Usage: lpp version [set <semver>|bump [major|minor|patch]]");
+                return 2;
+            }
             args[0].as_str()
         };
         match bump_package_version(&package.version, segment) {
@@ -3277,9 +3283,14 @@ fn cmd_clean() -> i32 {
     let mut failed = false;
     for target in ["target", "output.c", "output.obj", "output.o"] {
         let path = Path::new(target);
-        let result = if path.is_dir() { fs::remove_dir_all(path) } else if path.is_file() { fs::remove_file(path) } else { Ok(()) };
-        if result.is_ok() && !path.exists() { removed += 1; }
-        if result.is_err() { failed = true; }
+        if !path.exists() {
+            continue;
+        }
+        let result = if path.is_dir() { fs::remove_dir_all(path) } else { fs::remove_file(path) };
+        match result {
+            Ok(()) => removed += 1,
+            Err(_) => failed = true,
+        }
     }
     if let Ok(entries) = fs::read_dir(".") {
         for entry in entries.flatten() {
@@ -3575,10 +3586,10 @@ fn cmd_test() -> i32 {
     let _ = fs::create_dir_all(&target_test_dir);
 
     for test_path in test_files {
-        let test_name = test_path.file_name().unwrap().to_str().unwrap();
+        let test_name = test_path.file_name().and_then(|name| name.to_str()).unwrap_or("unnamed");
         print!("  test {} ... ", test_name);
 
-        let base_name = format!("test_{}", test_name.replace(".lpp", ""));
+        let base_name = format!("test_{}", test_name.strip_suffix(".lpp").unwrap_or(test_name));
         let temp_exe = output_path_for_name(&target_test_dir, &base_name);
 
         match compile_source_to_object(&test_path) {

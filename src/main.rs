@@ -1532,6 +1532,11 @@ fn resolve_local_imports(
                 };
                 let sub_module = path.join("/");
                 let sub_module_name = path.last().cloned().unwrap_or_default();
+                // Keep transitive import declarations in the flattened
+                // program.  Dropping them made qualified calls such as
+                // `ieee754.fmt_float(...)` fail when ieee754 was imported by a
+                // library rather than by the entry file itself.
+                new_decls.push(decl.clone());
                 if sub_module_name != "json" {
                     worklist.push_back((sub_module, lib_base_dir.clone()));
                 }
