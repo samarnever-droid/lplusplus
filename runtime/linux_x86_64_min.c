@@ -738,6 +738,17 @@ static long lpp_sys_unlink(const char *path) {
     return ret;
 }
 
+static long lpp_sys_rename(const char *old_path, const char *new_path) {
+    long ret;
+    __asm__ volatile (
+        "syscall"
+        : "=a"(ret)
+        : "a"(82), "D"(old_path), "S"(new_path)
+        : "rcx", "r11", "memory"
+    );
+    return ret;
+}
+
 char* lpp_read_file(const char *filename) {
     if (!filename) return (char*)"";
     long fd = lpp_sys_open(filename, 0, 0); /* O_RDONLY */
@@ -788,6 +799,11 @@ int64_t lpp_append_file(const char *filename, const char *content) {
 int64_t lpp_delete_file(const char *filename) {
     if (!filename) return -1;
     return lpp_sys_unlink(filename) == 0 ? 0 : -1;
+}
+
+int64_t lpp_file_move(const char *source, const char *destination) {
+    if (!source || !destination) return -1;
+    return lpp_sys_rename(source, destination) == 0 ? 0 : -1;
 }
 
 int64_t lpp_file_exists(const char *filename) {

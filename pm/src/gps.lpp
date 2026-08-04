@@ -124,7 +124,9 @@ def gps_plan(pkg_name: Str, target_version: Str, catalog: VersionCatalog, cached
     dist := graph_dist(dr, target_version)
 
     if dist >= 999999999:
-        # No route — fall back to full checkout
+        # No route — fall back to full checkout, but release the temporary
+        # graph before returning.
+        graph_free(g)
         mut r := route_new(pkg_name, "git_clone")
         r.total_bytes = 0
         return r

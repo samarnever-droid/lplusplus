@@ -110,6 +110,29 @@ def workspace_resolve_dep(ws: Workspace, dep_name: Str) -> Dep:
     d.name = ""
     return d
 
+# Replace workspace = true dependencies with concrete shared/path deps before
+# resolution. Leaving the marker in the resolver made the installer try to
+# fetch an empty URL (and on Linux even invoke a PowerShell copy command).
+def workspace_materialize_manifest(m: Manifest, ws: Workspace) -> Manifest:
+    mut out := manifest_new()
+    out.name        = m.name
+    out.version     = m.version
+    out.description = m.description
+    out.ws_version  = m.ws_version
+    for dep in m.deps:
+        mut resolved := dep
+        if dep.kind == "workspace":
+            resolved = workspace_resolve_dep(ws, dep.name)
+            if str_len(resolved.name) == 0:
+                print_str(str_concat("\033[1;31m[lpp-pm] ERROR:\033[0m workspace dependency not found: ", dep.name))
+                continue
+            if resolved.kind == "path" && str_len(resolved.url) == 0:
+                resolved.url = resolved.path
+            if resolved.kind == "path" && str_len(resolved.path) == 0:
+                resolved.path = resolved.url
+        list_push(out.deps, resolved)
+    return out
+
 # Helper: lookup dep by name from a List+Map pair (same as manifest.lpp style).
 def manifest_get_dep_list(deps: List[Dep], dep_map: Int, name: Str) -> Dep:
     if map_has_str(dep_map, name) == 0:

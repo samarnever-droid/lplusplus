@@ -52,11 +52,14 @@ def cmd_publish(opts: PublishOpts) -> Int:
         if str_len(version) == 0:
             return 1
         info(str_concat("Version bumped: ", str_concat(m.version, str_concat(" → ", version))))
-        # Write back to lpp.toml
-        raw      := read_file("lpp.toml")
-        old_line := str_concat("version = \"", str_concat(m.version, "\""))
-        new_line := str_concat("version = \"", str_concat(version, "\""))
-        write_file("lpp.toml", str_replace(raw, old_line, new_line))
+        # A dry run must not mutate the working tree.
+        if !opts.dry_run:
+            raw      := read_file("lpp.toml")
+            old_line := str_concat("version = \"", str_concat(m.version, "\""))
+            new_line := str_concat("version = \"", str_concat(version, "\""))
+            if write_file("lpp.toml", str_replace(raw, old_line, new_line)) != 0:
+                print_str("\033[1;31m[lpp-pm] ERROR:\033[0m could not update package version")
+                return 1
 
     header(str_concat("Publishing ", str_concat(m.name, str_concat(" @ ", version))))
 
@@ -193,9 +196,12 @@ def bump_version(current: Str, segment: Str) -> Str:
             nv.minor = sv.minor + 1
             nv.patch = 0
         else:
-            nv.major = sv.major
-            nv.minor = sv.minor
-            nv.patch = sv.patch + 1
+            if segment == "patch":
+                nv.major = sv.major
+                nv.minor = sv.minor
+                nv.patch = sv.patch + 1
+            else:
+                return ""
     return semver_str(nv)
 
 # Reconstruct a past release into sandbox_dir by fetching its checkpoint + deltas.
@@ -256,10 +262,16 @@ def get_previous_version(pkg_name: Str, new_version: Str) -> Str:
     return best
 
 def generate_snapshot(src_dir: Str, out_path: Str) -> Int:
-    return command_exec(str_concat("git archive --format=tar.gz -o ", str_concat(out_path, " HEAD")))
+    # A git tarball is not an .lppsnapshot (the verifier cannot authenticate
+    # or extract it). Do not label it as a signed snapshot.
+    error("snapshot generation is not available in the current artifact runtime")
+    return 1
 
 def generate_delta(base_dir: Str, new_dir: Str, out_path: Str) -> Int:
-    return 0
+    # Delta generation is not implemented yet; never publish an empty delta as
+    # if it represented the new tree.
+    error("delta generation is not available; publish a checkpoint instead")
+    return 1
 
 def get_build_cmd(m: Manifest) -> Str:
     handle := toml_load(read_file("lpp.toml"))

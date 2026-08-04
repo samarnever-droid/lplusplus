@@ -162,7 +162,8 @@ def collect_workspace(st: ResolveState, ws: Workspace) -> Void:
 
         m := manifest_parse(m_path)
         m_ver := workspace_apply_version(m, ws)
-        resolve_collect(st, m_ver, m_ver.name)
+        m_ready := workspace_materialize_manifest(m_ver, ws)
+        resolve_collect(st, m_ready, m_ready.name)
 
 # ── plan_all ─────────────────────────────────────────────────────────────────
 
