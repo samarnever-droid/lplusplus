@@ -6,6 +6,7 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 MANIFEST="$ROOT/tests/aot_parity.tsv"
 COMPILER="$ROOT/target/release/lpp"
+LINKER="$ROOT/target/release/lpp-link"
 CC=${CC:-cc}
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/lpp-aot-parity.XXXXXX")
 PASS=0
@@ -28,6 +29,19 @@ if [ ! -x "$COMPILER" ]; then
     (cd "$ROOT" && cargo build --release)
 fi
 
+# Compile each runtime once.  Recompiling the large compatibility runtime for
+# every corpus entry was the dominant cost of this action.
+HOST_RUNTIME_OBJ="$TMP/lpp_runtime_host.o"
+"$CC" -std=c11 -Wall -Wextra -Wno-unused-function -Wno-unused-variable -Wno-unused-parameter \
+    -c "$ROOT/lpp_runtime.c" -o "$HOST_RUNTIME_OBJ" -pthread
+DIRECT_RUNTIME_OBJ=""
+if [ "$(uname -s)" = "Linux" ] && [ "$(uname -m)" = "x86_64" ] && [ -x "$LINKER" ]; then
+    DIRECT_RUNTIME_OBJ="$TMP/lpp_runtime_min.o"
+    "$CC" -Os -ffreestanding -fno-stack-protector -fno-pic -mno-red-zone \
+        -fno-reorder-blocks-and-partition -c "$ROOT/runtime/linux_x86_64_min.c" \
+        -o "$DIRECT_RUNTIME_OBJ"
+fi
+
 run_native_aot() {
     src=$1
     base=$2
@@ -35,15 +49,25 @@ run_native_aot() {
     obj_file="${src%.lpp}.o"
     exe="$TMP/${base}.aot.exe"
     [ -f "$obj_file" ] || { echo "AOT backend produced no object file" >&2; return 1; }
-    "$CC" -std=c11 -Wall -Wextra -Wno-unused-function -Wno-unused-variable -Wno-unused-parameter "$obj_file" "$ROOT/lpp_runtime.c" -o "$exe" -pthread -lm
+    "$CC" -std=c11 -Wall -Wextra -Wno-unused-function -Wno-unused-variable -Wno-unused-parameter "$obj_file" "$HOST_RUNTIME_OBJ" -o "$exe" -pthread -lm
     "$exe"
 }
 
 run_direct_link() {
     src=$1
     base=$2
-    "$COMPILER" "$src" >/dev/null
+    obj_file="${src%.lpp}.o"
     exe="${src%.lpp}"
+    if [ -n "$DIRECT_RUNTIME_OBJ" ]; then
+        # The AOT object is already available from run_native_aot. Link that
+        # exact object with the same freestanding runtime that `lpp` selects;
+        # this preserves the direct-link check without compiling the source a
+        # second time.
+        rm -f "$exe"
+        "$LINKER" "$obj_file" "$DIRECT_RUNTIME_OBJ" -o "$exe" >/dev/null
+    else
+        "$COMPILER" "$src" >/dev/null
+    fi
     if [ -f "${exe}.exe" ]; then
         exe="${exe}.exe"
     fi
@@ -74,11 +98,11 @@ check_rejected_aot() {
 
 # Compile independent programs concurrently.  The old serial loop spent more
 # than the CI job's 20-minute budget on the full ownership corpus even though
-# every case has an isolated source/object/executable path.  Keep the default
-# conservative (two workers) and allow slower machines to opt down to one.
+# every case has an isolated source/object/executable path. Keep the default
+# at four workers and allow slower machines to opt down to one.
 RESULT_DIR="$TMP/results"
 mkdir -p "$RESULT_DIR"
-PARITY_JOBS=${LPP_PARITY_JOBS:-2}
+PARITY_JOBS=${LPP_PARITY_JOBS:-4}
 case "$PARITY_JOBS" in
     ''|*[!0-9]*|0) PARITY_JOBS=1 ;;
 esac
