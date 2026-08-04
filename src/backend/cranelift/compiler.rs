@@ -260,9 +260,19 @@ impl AotCompiler {
         let target_is_x86_64 = isa_triple.architecture.to_string().starts_with("x86_64");
         let mut isa_builder = cranelift_codegen::isa::lookup(isa_triple)
             .map_err(|e| format!("ISA lookup for target '{}': {}", target.unwrap_or("host"), e))?;
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+fn is_avx2_detected() -> bool {
+    std::is_x86_feature_detected!("avx2")
+}
+
+#[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+fn is_avx2_detected() -> bool {
+    false
+}
+
         if std::env::var("LPP_CRANELIFT_SIMD").as_deref() != Ok("0")
             && target_is_x86_64
-            && std::is_x86_feature_detected!("avx2")
+            && is_avx2_detected()
         {
             isa_builder
                 .enable("has_avx")

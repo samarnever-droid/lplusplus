@@ -323,6 +323,15 @@ fn run_self_hosted_pm(args: &[String]) {
                 child.env("LPP_PM_ARG1", a1.as_str());
             }
         }
+        "publish" => {
+            // Forward patch/minor/major and flags as ARG1, ARG2
+            if let Some(a1) = args.get(1) {
+                child.env("LPP_PM_ARG1", a1.as_str());
+            }
+            if let Some(a2) = args.get(2) {
+                child.env("LPP_PM_ARG2", a2.as_str());
+            }
+        }
         _ => {
             if args.len() > 1 {
                 let rest: Vec<&str> = args.iter().skip(1).map(|s| s.as_str()).collect();

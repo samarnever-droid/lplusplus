@@ -1569,6 +1569,11 @@ pub fn run_command(args: &[String]) {
         "test" => cmd_test(),
         "bench" => cmd_bench(),
         "help" => print_help(),
+        "publish" => {
+            // publish is fully handled by the self-hosted PM.
+            // If we reach here the self-hosted PM was unavailable or git failed.
+            eprintln!("[L++] 'publish' requires the self-hosted PM (lpp-pm). Ensure LPP_HOME is set.");
+        }
         cmd => {
             eprintln!("[L++] Unknown package manager command: '{}'", cmd);
             print_help();
