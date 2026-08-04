@@ -3358,7 +3358,7 @@ fn cmd_outdated() -> i32 {
 fn cmd_clean() -> i32 {
     let mut removed = 0;
     let mut failed = false;
-    for target in ["target", "output.c", "output.obj", "output.o"] {
+    for target in ["target", "LppData", "dist", "output.c", "output.obj", "output.o"] {
         let path = Path::new(target);
         if !path.exists() {
             continue;

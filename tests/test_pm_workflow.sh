@@ -48,9 +48,43 @@ grep -Fq 'lock_version = 2' lpp.lock
 "$LPP" tree >/dev/null
 "$LPP" metadata >/dev/null
 "$LPP" install --offline >/dev/null
+"$LPP" test >/dev/null
 "$LPP" remove dep >/dev/null
 ! grep -Fq 'dep = {' lpp.toml
 [ ! -e .lpp_packages/dep ]
+
+# Build, run, and clean use the same status-aware PM path. Host linking keeps
+# this test independent of an installed direct-link runtime.
+LPP_HOME="$ROOT" LPP_LINKER=host "$LPP" build >/dev/null
+[ -x LppData/build/release/demo ]
+[ "$(LPP_HOME="$ROOT" LPP_LINKER=host "$LPP" run 2>/dev/null | tail -1)" = "Hello from L++ project!" ]
+"$LPP" clean >/dev/null
+[ ! -e LppData ]
+
+# Workspace members inherit the root version and are visible to both the list
+# and graph actions.
+mkdir -p workspace/a/src workspace/b/src
+cat > workspace/lpp.toml <<'EOF'
+[workspace]
+version = "4.0.0"
+members = ["a", "b"]
+EOF
+for member in a b; do
+    cat > "workspace/$member/lpp.toml" <<EOF
+[package]
+name = "$member"
+version = { workspace = true }
+entry = "src/main.lpp"
+
+[dependencies]
+EOF
+    cat > "workspace/$member/src/main.lpp" <<EOF
+def main():
+    print(0)
+EOF
+done
+(cd workspace && "$LPP" workspace members >/dev/null && "$LPP" workspace graph >/dev/null)
+[ "$(cd workspace/a && "$LPP" version)" = "a 4.0.0" ]
 
 # JSON manifests use the same versioning implementation.
 mkdir json-project
