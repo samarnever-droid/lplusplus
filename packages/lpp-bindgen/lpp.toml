@@ -5,7 +5,7 @@ description = "Pure-L++ C Header FFI binder & C-to-L++ translator with safe chec
 authors = ["L++ Project"]
 license = "MIT"
 repository = "https://github.com/samarnever-droid/lplusplus"
-keywords = ["ffi", "bindgen", "c-bindings", "c2lpp", "c-parser", "cptr", "abi-layout"]
+keywords = ["ffi", "bindgen", "c-bindings", "c2lpp", "abi-layout"]
 
 [bin]
 entry = "src/main.lpp"

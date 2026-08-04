@@ -9,7 +9,8 @@ def scaffold(name: Str) -> Void:
     src := joined(name, "src")
     dir_create(src)
     main_lpp := joined(src, "main.lpp")
-    mut content := str_concat("def main():\n    print_str(\"Hello from ", name) content = str_concat(content, "!\")\n")
+    mut content := str_concat("def main():\n    print_str(\"Hello from ", name)
+    content = str_concat(content, "!\")\n")
     write(main_lpp, content)
     toml_path := joined(name, "lpp.toml")
     mut toml_content := "[package]\nname = \""

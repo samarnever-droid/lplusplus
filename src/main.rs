@@ -242,15 +242,26 @@ fn bootstrap_self_hosted_pm() -> Result<PathBuf, String> {
     Ok(pm_bin)
 }
 
-/// Delegate a PM command to the self-hosted PM binary.
-/// ALL PM commands route here. If the self-hosted PM is unavailable or
-/// signals `__DELEGATE__`, the Rust PM takes over.
-fn run_self_hosted_pm(args: &[String]) {
+/// Run a PM command. The production-compatible Rust PM is used by default;
+/// setting LPP_SELF_HOSTED_PM=1 opts into the experimental pure-L++ delegate.
+/// If that delegate is unavailable or signals `__DELEGATE__`, the Rust PM takes over.
+fn run_self_hosted_pm(args: &[String]) -> i32 {
+    // The Rust PM is the compatibility implementation and is deliberately the
+    // default. The pure-L++ PM can be exercised with
+    // LPP_SELF_HOSTED_PM=1, but its archive/delta backend is still experimental;
+    // ordinary commands must not depend on bootstrapping a second compiler.
+    if env::var("LPP_SELF_HOSTED_PM").ok().as_deref() != Some("1") {
+        return pm::run_command(args);
+    }
+
     let cmd = args.first().map(|s| s.as_str()).unwrap_or("help");
 
-    if cmd == "create" || cmd == "dev" || cmd == "lreact" || args.iter().any(|a| a == "web" || a == "--release") {
-        pm::run_command(args);
-        return;
+    // These commands intentionally stay in the Rust implementation.  They
+    // either need to create the PM itself or launch a long-running process;
+    // delegating them through a second compiler process makes error handling
+    // and signal forwarding unreliable.
+    if cmd == "create" || cmd == "dev" || cmd == "version" || cmd == "lreact" || args.iter().any(|a| a == "web" || a == "--release") {
+        return pm::run_command(args);
     }
 
     let pm_bin = match bootstrap_self_hosted_pm() {
@@ -258,14 +269,18 @@ fn run_self_hosted_pm(args: &[String]) {
         Err(e) => {
             eprintln!("[L++] Self-hosted PM unavailable: {e}");
             eprintln!("[L++] Falling back to built-in Rust PM.");
-            pm::run_command(args);
-            return;
+            return pm::run_command(args);
         }
     };
 
     // Build owned env strings (avoid borrow issues)
     let mut child = std::process::Command::new(&pm_bin);
     child.env("LPP_PM_CMD", cmd);
+    child.env("LPP_PM_VERSION", env!("CARGO_PKG_VERSION"));
+    // Commands launched by the self-hosted PM (for example `lpp test`) must
+    // use the Rust command implementation instead of recursively bootstrapping
+    // another PM process.
+    child.env("LPP_PM_CHILD", "1");
     if let Ok(current_exe) = env::current_exe() {
         child.env("LPP_BIN", current_exe);
     }
@@ -318,10 +333,29 @@ fn run_self_hosted_pm(args: &[String]) {
                 }
             }
         }
-        "remove" | "search" | "install" => {
+        "remove" | "search" => {
             if let Some(a1) = args.get(1) {
                 child.env("LPP_PM_ARG1", a1.as_str());
             }
+        }
+        "install" => {
+            for arg in args.iter().skip(1) {
+                if arg == "--offline" {
+                    child.env("LPP_PM_OFFLINE", "1");
+                }
+                if arg == "--online" {
+                    child.env("LPP_PM_ONLINE", "1");
+                }
+            }
+        }
+        "version" => {
+            if let Some(a1) = args.get(1) { child.env("LPP_PM_ARG1", a1.as_str()); }
+            if let Some(a2) = args.get(2) { child.env("LPP_PM_ARG2", a2.as_str()); }
+            if let Some(a3) = args.get(3) { child.env("LPP_PM_ARG3", a3.as_str()); }
+        }
+        "workspace" => {
+            if let Some(a1) = args.get(1) { child.env("LPP_PM_ARG1", a1.as_str()); }
+            if let Some(a2) = args.get(2) { child.env("LPP_PM_ARG2", a2.as_str()); }
         }
         "publish" => {
             // Forward patch/minor/major and flags as ARG1, ARG2
@@ -375,17 +409,22 @@ fn run_self_hosted_pm(args: &[String]) {
 
             // Check for delegation signal
             if stdout.contains("__DELEGATE__") || stderr.contains("__DELEGATE__") {
-                pm::run_command(args);
-                return;
+                return pm::run_command(args);
             }
 
-            if !out.status.success() {
-                pm::run_command(args);
+            // A real command failure must stay a failure.  The old code ran
+            // the Rust PM again after a non-zero child exit, which duplicated
+            // side effects (clone/publish/build) and often turned a failed
+            // action into a successful process exit.
+            if out.status.success() {
+                0
+            } else {
+                out.status.code().unwrap_or(1)
             }
         }
         Err(e) => {
             eprintln!("[L++] Failed to run self-hosted PM: {e}. Falling back.");
-            pm::run_command(args);
+            pm::run_command(args)
         }
     }
 }
@@ -397,14 +436,21 @@ fn main() {
         .name("lpp_main".to_string())
         .stack_size(32 * 1024 * 1024);
 
-    let handle = builder.spawn(|| {
-        real_main();
-    }).expect("failed to spawn main compiler thread");
+    let handle = builder.spawn(real_main).expect("failed to spawn main compiler thread");
 
-    handle.join().unwrap();
+    let code = match handle.join() {
+        Ok(code) => code,
+        Err(_) => {
+            eprintln!("[L++] compiler thread panicked");
+            101
+        }
+    };
+    if code != 0 {
+        std::process::exit(code);
+    }
 }
 
-fn real_main() {
+fn real_main() -> i32 {
     let mut args: Vec<String> = env::args().collect();
 
     // The CLI has two intentionally separate modes:
@@ -469,11 +515,14 @@ fn real_main() {
             let cfg = config::LppConfig::load_or_create();
             cfg.print_summary();
         }
-        return;
+        return 0;
     }
 
     if args.len() > 1 {
         let first_arg = &args[1];
+        if env::var_os("LPP_PM_CHILD").is_some() {
+            return pm::run_command(&args[1..]);
+        }
         if first_arg == "init"
             || first_arg == "create"
             || first_arg == "lreact"
@@ -493,11 +542,13 @@ fn real_main() {
             || first_arg == "metadata"
             || first_arg == "clean"
             || first_arg == "outdated"
+            || first_arg == "version"
+            || first_arg == "publish"
+            || first_arg == "workspace"
             || first_arg == "help"
             || first_arg == "bench"
         {
-            run_self_hosted_pm(&args[1..]);
-            return;
+            return run_self_hosted_pm(&args[1..]);
         }
     }
 
@@ -521,8 +572,8 @@ fn real_main() {
     while idx < args.len() {
         let arg = &args[idx];
         if arg == "--version" || arg == "-v" {
-            println!("L++ Compiler v4.5.0 (Pure Native AOT)");
-            return;
+            println!("L++ Compiler v{} (Pure Native AOT)", env!("CARGO_PKG_VERSION"));
+            return 0;
         } else if arg == "--list-targets" {
             println!("L++ supported target triples (Android / Termux / Linux):");
             println!("  aarch64-linux-android        Android arm64 & Termux 64-bit");
@@ -536,9 +587,9 @@ fn real_main() {
             println!();
             println!("Use --target <triple> to cross-compile. The Cranelift backend");
             println!("must be built with the matching arch feature (default: all-arch).");
-            return;
+            return 0;
         } else if arg == "--help" || arg == "-h" {
-            println!("L++ (L Plus Plus) v4.5.0 — Pure Native Compiler & Toolchain");
+            println!("L++ (L Plus Plus) v{} — Pure Native Compiler & Toolchain", env!("CARGO_PKG_VERSION"));
             println!("Cranelift AOT backend, 9 MIR optimization passes, direct ELF/PE/Mach-O linker");
             println!();
             println!("Usage: lpp <file.lpp> [options]");
@@ -562,7 +613,10 @@ fn real_main() {
             println!("  list             List direct dependencies");
             println!("  tree             Print dependency tree");
             println!("  metadata         Print package metadata");
-            println!("  outdated         Show dependencies without pinned versions");
+            println!("  outdated         Show unpinned or incompatible dependencies");
+            println!("  version          Show package version");
+            println!("  version set <v>  Set package version (SemVer)");
+            println!("  version bump     Bump patch/minor/major version");
             println!("  clean            Remove build output and artifacts");
             println!("  check            Check project for errors");
             println!("  build            Build project to native binary");
@@ -596,7 +650,7 @@ fn real_main() {
             println!("  -v, --version    Show version");
             println!("  -h, --help       Show this help");
             println!();
-            println!("Language Features (v4.5.0):");
+            println!("Language Features (v{}):", env!("CARGO_PKG_VERSION"));
             println!("  Functions, default params, closures, threads");
             println!("  Structs, enums, match with bindings");
             println!("  Experimental: tuples, typed rest lists, borrowed slices, async/.await");
@@ -609,8 +663,9 @@ fn real_main() {
             println!();
             println!("Environment:");
             println!("  BENCHMARK=1           Print JSON timings instead of descriptive output");
-            println!("  LPP_AOT_OPT=speed    Set Cranelift optimization level (none|speed|speed_and_size)");
-            return;
+            println!("  LPP_AOT_OPT=speed     Set Cranelift optimization level (none|speed|speed_and_size)");
+            println!("  LPP_SELF_HOSTED_PM=1  Opt into the experimental pure-L++ package manager");
+            return 0;
         } else if arg == "--dump-ast" {
             dump_ast = true;
         } else if arg == "--dump-symbols" {
@@ -674,7 +729,7 @@ fn real_main() {
         walk(Path::new("."), &mut all_files);
         if all_files.is_empty() {
             eprintln!("[L++] No .lpp files found in project.");
-            return;
+            return 1;
         }
         all_files.sort();
         eprintln!("[L++] --checkall: checking {} file(s)...", all_files.len());
@@ -859,7 +914,7 @@ fn real_main() {
                 eprintln!("[L++] --fix: Automatically repaired {} file(s).", fixed_files_count);
             }
         }
-        return;
+        return if all_fails.is_empty() { 0 } else { 1 };
     }
 
     let filename = match filename {
@@ -867,7 +922,7 @@ fn real_main() {
         None => {
             eprintln!("[L++] Error: No input file specified.");
             eprintln!("Usage: lpp [file.lpp] [options]");
-            return;
+            return 1;
         }
     };
 
@@ -878,7 +933,7 @@ fn real_main() {
         Ok(content) => content,
         Err(e) => {
             eprintln!("Failed to read {}: {}", filename, e);
-            return;
+            return 1;
         }
     };
     let io_time = io_start.elapsed();
@@ -889,7 +944,7 @@ fn real_main() {
         Ok(tokens) => tokens,
         Err(e) => {
             eprint!("{}", diagnostics::render_error_string(&filename, &input, diagnostics::DiagnosticKind::Lexer, &e));
-            return;
+            return 1;
         }
     };
     let lex_time = lex_start.elapsed();
@@ -900,7 +955,7 @@ fn real_main() {
         Ok(ast) => ast,
         Err(e) => {
             eprint!("{}", diagnostics::render_error_string(&filename, &input, diagnostics::DiagnosticKind::Syntax, &e));
-            return;
+            return 1;
         }
     };
     let parse_time = parse_start.elapsed();
@@ -910,19 +965,19 @@ fn real_main() {
     let mut imported_files = std::collections::HashSet::new();
     if let Err(e) = resolve_local_imports(&mut ast.declarations, &mut imported_files, base_dir) {
         eprint!("{}", diagnostics::render_error_string(&filename, &input, diagnostics::DiagnosticKind::Import, &e));
-        return;
+        return 1;
     }
 
     if let Err(e) = monomorph::Monomorphizer::process_program(&mut ast) {
         eprint!("{}", diagnostics::render_error_string(&filename, &input, diagnostics::DiagnosticKind::Semantic, &e));
-        return;
+        return 1;
     }
 
     let sem_start = Instant::now();
     let mut resolver = semantic::Resolver::new();
     if let Err(e) = resolver.resolve_program(&mut ast) {
         eprint!("{}", diagnostics::render_error_string(&filename, &input, diagnostics::DiagnosticKind::Semantic, &e));
-        return;
+        return 1;
     }
     let sem_time = sem_start.elapsed();
 
@@ -933,7 +988,7 @@ fn real_main() {
         let mut type_checker = typecheck::TypeChecker::new(&mut resolver.table);
         if let Err(e) = type_checker.check_program(&ast) {
             eprint!("{}", diagnostics::render_error_string(&filename, &input, diagnostics::DiagnosticKind::Type, &e));
-            return;
+            return 1;
         }
         trait_impls_for_cycles = type_checker.trait_impls.clone();
         type_table = type_checker.type_table;
@@ -956,7 +1011,7 @@ fn real_main() {
             println!("L++ check: OK");
             println!("Time: {:.1} ms", total_time.as_secs_f64() * 1000.0);
         }
-        return;
+        return 0;
     }
 
     #[allow(unused_assignments)]
@@ -984,12 +1039,12 @@ fn real_main() {
         Ok(program) => program,
         Err(e) => {
             eprintln!("MIR lowering error: {}", e);
-            return;
+            return 1;
         }
     };
     if let Err(error) = mir::validate_borrows::validate(&mir_program) {
         eprintln!("{}", error);
-        return;
+        return 1;
     }
     // C-Speed Project: simplify only scalar/copy MIR before ARC so
     // no retain/release or ownership edge can be optimized away.
@@ -1085,7 +1140,7 @@ fn real_main() {
             Ok(spec) => spec,
             Err(e) => {
                 eprintln!("[L++] Target Error: {}", e);
-                return;
+                return 1;
             }
         },
         None => crate::target::TargetSpec::host(),
@@ -1120,7 +1175,7 @@ fn real_main() {
         Ok(bytes) => bytes,
         Err(e) => {
             eprintln!("[L++] {} backend compilation error: {}", backend, e);
-            return;
+            return 1;
         }
     };
     let aot_time = aot_start.elapsed();
@@ -1147,14 +1202,14 @@ fn real_main() {
 
     if let Err(e) = fs::write(&obj_path, &obj_bytes) {
         eprintln!("Failed to write object file {}: {}", obj_path.display(), e);
-        return;
+        return 1;
     }
 
     let total_time = total_start.elapsed();
 
     if check_only {
         let _ = fs::remove_file(&obj_path);
-        return;
+        return 0;
     }
 
     if emit_object {
@@ -1180,7 +1235,7 @@ fn real_main() {
             println!("[L++] Native Cranelift object emitted at {}", obj_path.display());
             println!("Time: {:.1} ms", total_time.as_secs_f64() * 1000.0);
         }
-        return;
+        return 0;
     }
 
     // Collect FFI link libraries from extern blocks
@@ -1219,7 +1274,7 @@ fn real_main() {
     if let Err(e) = link_result {
         eprintln!("[L++] Native Link Error: {}", e);
         let _ = fs::remove_file(&obj_path);
-        return;
+        return 1;
     }
     let _ = fs::remove_file(&obj_path);
 
@@ -1254,10 +1309,11 @@ fn real_main() {
         && !dump_escape
         && !dump_mir
     {
-        println!("L++ v4.2.2 (Pure Native Executable)\n");
+        println!("L++ v{} (Pure Native Executable)\n", env!("CARGO_PKG_VERSION"));
         println!("Compiled and linked native binary: {}", exe_path.display());
         println!("Time: {:.1} ms", total_time.as_secs_f64() * 1000.0);
     }
+    0
 }
 
 fn find_stdlib_module(clean_module: &str, leaf_name: &str) -> Option<PathBuf> {
