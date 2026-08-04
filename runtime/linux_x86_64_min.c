@@ -13,6 +13,8 @@
 void lpp_exit(int64_t code);
 int64_t lpp_str_eq(const char *a, const char *b);
 
+uint64_t strlen(const char *s) { uint64_t n = 0; while (s && s[n]) n++; return n; }
+
 static long lpp_sys_write(long fd, const void *buffer, long count) {
     long result;
     __asm__ volatile (
