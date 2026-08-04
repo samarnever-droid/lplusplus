@@ -3611,6 +3611,12 @@ fn cmd_bench() -> i32 {
 
 fn cmd_test() -> i32 {
     println!("[L++] Running tests...");
+    if (Path::new("lpp.toml").exists() || Path::new("lpp.json").exists())
+        && cmd_install(false) != 0
+    {
+        eprintln!("[L++] dependency installation failed; tests aborted");
+        return 1;
+    }
     let test_dir = if Path::new("tests").exists() {
         "tests"
     } else if Path::new("test").exists() {
