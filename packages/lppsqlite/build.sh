@@ -36,8 +36,21 @@ cd "$DIR/build"
 # next to the entry point.
 cp "$DIR"/src/*.lpp .
 
+compile_lpp() {
+    source_file=$1
+    log_file="$DIR/build/${source_file%.lpp}.compile.log"
+    if ! "$LPP_BIN" "$source_file" --linker host >"$log_file" 2>&1; then
+        cat "$log_file" >&2
+        if [ "${GITHUB_ACTIONS:-}" = "true" ]; then
+            detail=$(tail -20 "$log_file" | tr '\n' ' ' | sed 's/::/%3A%3A/g')
+            echo "::error file=packages/lppsqlite/src/$source_file::${detail}"
+        fi
+        return 1
+    fi
+}
+
 echo "compiling lppsqlite ..."
-"$LPP_BIN" main.lpp --linker host >/dev/null
+compile_lpp main.lpp || exit 1
 mv main lppsqlite
 echo "built: $DIR/build/lppsqlite"
 
@@ -47,7 +60,7 @@ if [ "$1" = "--tests" ] || [ "$1" = "-t" ]; then
              t_sql t_interop t_stress; do
         [ -f "$t.lpp" ] || continue
         echo "compiling $t ..."
-        "$LPP_BIN" "$t.lpp" --linker host >/dev/null
+        compile_lpp "$t.lpp" || exit 1
     done
     echo "tests built in $DIR/build"
 fi
