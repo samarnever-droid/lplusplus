@@ -3332,16 +3332,23 @@ fn cmd_outdated() -> i32 {
             println!("{} is not version-pinned", dep.name);
             continue;
         }
-        if let Some(locked_version) = locked.get(&dep.name) {
-            if let (Ok(current), Ok(requirement)) = (
-                semver::Version::parse(locked_version),
-                semver::VersionReq::parse(dep.version.as_deref().unwrap_or("*")),
-            ) {
-                if !requirement.matches(&current) {
-                    found = true;
-                    println!("{} {} does not satisfy {}", dep.name, current, requirement);
-                }
+        let Some(locked_version) = locked.get(&dep.name) else {
+            found = true;
+            println!("{} is not present in lpp.lock", dep.name);
+            continue;
+        };
+        let requirement = semver::VersionReq::parse(dep.version.as_deref().unwrap_or("*"));
+        let current = semver::Version::parse(locked_version);
+        match (current, requirement) {
+            (Ok(current), Ok(requirement)) if !requirement.matches(&current) => {
+                found = true;
+                println!("{} {} does not satisfy {}", dep.name, current, requirement);
             }
+            (Err(_), Ok(_)) => {
+                found = true;
+                println!("{} has no concrete SemVer in lpp.lock ({})", dep.name, locked_version);
+            }
+            _ => {}
         }
     }
     if !found { println!("[L++] No outdated direct dependencies found."); }
