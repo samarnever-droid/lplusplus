@@ -1,11 +1,10 @@
 use crate::mir::ir::*;
 
-/// MIR Transformation Pass: Closure Lowering
+/// Compatibility hook for the old standalone closure pass.
 ///
-/// This pass finds `Rvalue::Closure` or `Operand::Closure` (to be added)
-/// and extracts them into flat, top-level `MirFunction`s.
-/// It also generates the "Environment" struct to capture external variables
-/// and modifies the closure invocation to pass this environment pointer.
-pub fn run_closure_lowering_pass(_program: &mut MirProgram) {
-    // TODO: Extract closures, build env structs, update calls
-}
+/// Closures are lowered while building MIR in `mir::lower::MirLowerCtx` so
+/// capture scopes, lifted functions, and environment records are created in a
+/// single ownership-aware operation.  Running a second transformation here
+/// would duplicate lifted functions.  Keep this hook as an explicit no-op for
+/// downstream users that still call the historical pass entry point.
+pub fn run_closure_lowering_pass(_program: &mut MirProgram) {}
