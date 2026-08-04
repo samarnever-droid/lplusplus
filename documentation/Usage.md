@@ -119,6 +119,7 @@ sh tests/run_aot_parity.sh
 LPP_LLVM_CC=/path/to/clang sh tests/run_llvm_smoke.sh
 LPP_LLVM_CC=/path/to/clang sh tests/run_feature_batch.sh
 sh scripts/check_safety_mission.sh
+sh tests/test_pm_workflow.sh
 (cd packages/lppsqlite && sh run-tests.sh)
 (cd packages/compresslpp && sh run-tests.sh)
 ```
