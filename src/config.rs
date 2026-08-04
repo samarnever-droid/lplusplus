@@ -237,8 +237,22 @@ impl LppConfig {
         }
         let json = serde_json::to_string_pretty(self)
             .map_err(|e| format!("serialize config: {e}"))?;
-        std::fs::write(&path, json)
-            .map_err(|e| format!("write config: {e}"))?;
+        // Config is read by parallel compiler invocations during parity and
+        // package builds. Write a complete temporary file and rename it so a
+        // second process can never observe a truncated JSON document.
+        let temp = path.with_file_name(format!("config.json.tmp.{}", std::process::id()));
+        std::fs::write(&temp, json).map_err(|e| format!("write config: {e}"))?;
+        if let Err(rename_error) = std::fs::rename(&temp, &path) {
+            #[cfg(windows)]
+            {
+                let _ = std::fs::remove_file(&path);
+                if std::fs::rename(&temp, &path).is_ok() {
+                    return Ok(());
+                }
+            }
+            let _ = std::fs::remove_file(&temp);
+            return Err(format!("replace config: {rename_error}"));
+        }
         Ok(())
     }
 

@@ -72,27 +72,63 @@ check_rejected_aot() {
     echo "PASS $test_name"
 }
 
-while IFS='|' read -r file expected; do
-    case "$file" in ''|\#*) continue ;; esac
+# Compile independent programs concurrently.  The old serial loop spent more
+# than the CI job's 20-minute budget on the full ownership corpus even though
+# every case has an isolated source/object/executable path.  Keep the default
+# conservative (two workers) and allow slower machines to opt down to one.
+RESULT_DIR="$TMP/results"
+mkdir -p "$RESULT_DIR"
+PARITY_JOBS=${LPP_PARITY_JOBS:-2}
+case "$PARITY_JOBS" in
+    ''|*[!0-9]*|0) PARITY_JOBS=1 ;;
+esac
+
+run_case() {
+    file=$1
+    expected=$2
     src="$TMP/$file"
-    cp "$ROOT/tests/$file" "$src"
     base=${file%.lpp}
+    result="$RESULT_DIR/$base.result"
+    cp "$ROOT/tests/$file" "$src"
 
     if aot_output=$(run_native_aot "$src" "$base") && direct_output=$(run_direct_link "$src" "$base"); then
         wanted=$(printf '%b' "$expected")
         if [ "$aot_output" = "$wanted" ] && [ "$direct_output" = "$wanted" ]; then
-            echo "PASS $file"
-            PASS=$((PASS + 1))
+            printf 'PASS %s\n' "$file" > "$result"
         else
-            echo "FAIL $file: backend output mismatch" >&2
-            printf '  expected: %s\n  AOT:      %s\n  Direct:   %s\n' "$wanted" "$aot_output" "$direct_output" >&2
-            FAIL=$((FAIL + 1))
+            {
+                printf 'FAIL %s: backend output mismatch\n' "$file"
+                printf '  expected: %s\n  AOT:      %s\n  Direct:   %s\n' "$wanted" "$aot_output" "$direct_output"
+            } > "$result"
         fi
     else
-        echo "FAIL $file: compile, link, or execution failed" >&2
-        FAIL=$((FAIL + 1))
+        printf 'FAIL %s: compile, link, or execution failed\n' "$file" > "$result"
+    fi
+}
+
+pids=""
+running=0
+while IFS='|' read -r file expected; do
+    case "$file" in ''|\#*) continue ;; esac
+    run_case "$file" "$expected" &
+    pids="$pids $!"
+    running=$((running + 1))
+    if [ "$running" -ge "$PARITY_JOBS" ]; then
+        for pid in $pids; do wait "$pid" || true; done
+        pids=""
+        running=0
     fi
 done < "$MANIFEST"
+for pid in $pids; do wait "$pid" || true; done
+
+for result in "$RESULT_DIR"/*.result; do
+    cat "$result"
+    if grep -q '^PASS ' "$result"; then
+        PASS=$((PASS + 1))
+    else
+        FAIL=$((FAIL + 1))
+    fi
+done
 
 # SAFETY-CONTRACT CHANGE: the two ARC-cycle cases used to be *rejection*
 # contracts -- "AOT must refuse a strong ownership cycle". They are now positive
