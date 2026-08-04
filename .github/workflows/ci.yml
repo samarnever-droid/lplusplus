@@ -168,7 +168,10 @@ jobs:
       - name: Build the L++ compiler
         run: cargo build --release --bin lpp --bin lpp-link
       - name: Build lppsqlite engine and tests
-        run: sh packages/lppsqlite/build.sh --tests
+        run: |
+          sh packages/lppsqlite/build.sh --tests
+          test -x packages/lppsqlite/build/lppsqlite
+          echo "LPP_SQLITE=packages/lppsqlite/build/lppsqlite" >> "$GITHUB_ENV"
       - name: Unit suites (485 assertions)
         run: sh packages/lppsqlite/run-tests.sh --unit
       - name: Differential suite vs real sqlite3
@@ -178,9 +181,9 @@ jobs:
           set -e
           DB=$RUNNER_TEMP/idx.db
           rm -f "$DB"
-          sh -c "packages/lppsqlite/lppsqlite $DB \"CREATE TABLE t(id INTEGER PRIMARY KEY, name TEXT);\""
-          sh -c "packages/lppsqlite/lppsqlite $DB \"INSERT INTO t VALUES (1,'ada'),(2,'bob'),(3,'cy');\""
-          sh -c "packages/lppsqlite/lppsqlite $DB \"CREATE INDEX idx_name ON t(name);\""
+          sh -c "$LPP_SQLITE $DB \"CREATE TABLE t(id INTEGER PRIMARY KEY, name TEXT);\""
+          sh -c "$LPP_SQLITE $DB \"INSERT INTO t VALUES (1,'ada'),(2,'bob'),(3,'cy');\""
+          sh -c "$LPP_SQLITE $DB \"CREATE INDEX idx_name ON t(name);\""
           python3 - "$DB" <<'EOF'
           import sqlite3, sys
           con = sqlite3.connect(sys.argv[1])
@@ -202,9 +205,9 @@ jobs:
           set -e
           DB=$RUNNER_TEMP/ci.db
           rm -f "$DB"
-          sh -c "packages/lppsqlite/lppsqlite $DB \"CREATE TABLE users(id INTEGER PRIMARY KEY, name TEXT, score REAL);\""
-          sh -c "packages/lppsqlite/lppsqlite $DB \"INSERT INTO users VALUES (1,'Alice',91.5),(2,'Bob',82.25),(3,'Cy',70.0);\""
-          sh -c "packages/lppsqlite/lppsqlite $DB \"UPDATE users SET score = 99.5 WHERE id = 2; DELETE FROM users WHERE id = 3;\""
+          sh -c "$LPP_SQLITE $DB \"CREATE TABLE users(id INTEGER PRIMARY KEY, name TEXT, score REAL);\""
+          sh -c "$LPP_SQLITE $DB \"INSERT INTO users VALUES (1,'Alice',91.5),(2,'Bob',82.25),(3,'Cy',70.0);\""
+          sh -c "$LPP_SQLITE $DB \"UPDATE users SET score = 99.5 WHERE id = 2; DELETE FROM users WHERE id = 3;\""
           python3 - "$DB" <<'EOF'
           import sqlite3, sys
           db = sys.argv[1]
@@ -218,7 +221,7 @@ jobs:
           con.commit(); con.close()
           print("real sqlite3: integrity ok, rows verified, wrote row 4")
           EOF
-          OUT=$(sh -c "packages/lppsqlite/lppsqlite $DB \"SELECT name FROM users WHERE id = 4;\"")
+          OUT=$(sh -c "$LPP_SQLITE $DB \"SELECT name FROM users WHERE id = 4;\"")
           echo "lppsqlite read back: $OUT"
           [ "$OUT" = "Dee" ] || { echo "FAIL: expected Dee, got $OUT"; exit 1; }
           echo "PASS bidirectional SQLite compatibility"
@@ -234,7 +237,10 @@ jobs:
       - name: Build the L++ compiler
         run: cargo build --release --bin lpp --bin lpp-link
       - name: Build compresslpp and its tests
-        run: sh packages/compresslpp/build.sh --tests
+        run: |
+          sh packages/compresslpp/build.sh --tests
+          test -x packages/compresslpp/build/compresslpp
+          echo "COMPRESSLPP=packages/compresslpp/build/compresslpp" >> "$GITHUB_ENV"
       - name: Unit suites
         run: sh packages/compresslpp/run-tests.sh --unit
       - name: Cross-verify against zlib / zipfile / tarfile / gzip
@@ -246,13 +252,13 @@ jobs:
           rm -rf "$WORK" && mkdir -p "$WORK/out"
           echo "payload for the archive" > "$WORK/a.txt"
           python3 -c "open('$WORK/b.txt','w').write('compress me '*500)"
-          packages/compresslpp/compresslpp zip "$WORK/x.zip" "$WORK/a.txt" "$WORK/b.txt" -9
-          packages/compresslpp/compresslpp zip "$WORK/e.zip" "$WORK/a.txt" -p s3cret
+          $COMPRESSLPP zip "$WORK/x.zip" "$WORK/a.txt" "$WORK/b.txt" -9
+          $COMPRESSLPP zip "$WORK/e.zip" "$WORK/a.txt" -p s3cret
           unzip -t "$WORK/x.zip"
           unzip -P s3cret -t "$WORK/e.zip"
-          packages/compresslpp/compresslpp tar "$WORK/x.tar" "$WORK/a.txt" "$WORK/b.txt"
+          $COMPRESSLPP tar "$WORK/x.tar" "$WORK/a.txt" "$WORK/b.txt"
           tar -tf "$WORK/x.tar"
-          packages/compresslpp/compresslpp gzip "$WORK/b.txt" -o "$WORK/b.gz" -9
+          $COMPRESSLPP gzip "$WORK/b.txt" -o "$WORK/b.gz" -9
           python3 - "$WORK" <<'EOF'
           import gzip, os, sys, zipfile
           w = sys.argv[1]
