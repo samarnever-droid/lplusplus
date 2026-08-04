@@ -1,0 +1,508 @@
+# SamarOS — UI toolkit, written in L++.
+#
+# The kernel only hands us pixels: solid rects, alpha blends and glyph
+# blitting.  Everything that makes SamarOS look like SamarOS — anti-aliased
+# rounded rectangles, soft shadows, glass panels, the aurora wallpaper, the
+# icon set, controls — is implemented here in the language itself.
+
+# ---- palette ---------------------------------------------------------
+const C_BASE = 0x0A0C12          # desktop base
+const C_PANEL = 0x14161F         # glass panel body
+const C_WINDOW = 0x16181F        # window body
+const C_TITLEBAR = 0x111318      # window title bar
+const C_TEXT = 0xF4F4F5          # primary text
+const C_MUTED = 0xA1A1AA         # secondary text
+const C_FAINT = 0x71717A         # tertiary text
+const C_LINE = 0xFFFFFF          # hairline (blended at low alpha)
+const C_RED = 0xFF5F57
+const C_AMBER = 0xFEBC2E
+const C_GREEN = 0x28C840
+const C_EMERALD = 0x34D399
+const C_TEAL = 0x14B8A6
+const C_SKY = 0x38BDF8
+const C_BLUE = 0x3B82F6
+const C_VIOLET = 0x8B5CF6
+const C_FUCHSIA = 0xD946EF
+const C_LIME = 0xA3E635
+const C_ORANGE = 0xFB923C
+const C_ROSE = 0xF43F5E
+const C_SLATE = 0x64748B
+const C_BLACK = 0x000000
+const C_WHITE = 0xFFFFFF
+
+# ---- colour maths ----------------------------------------------------
+def rgb(r: Int, g: Int, b: Int) -> Int:
+    return (clamp(r, 0, 255) << 16) | (clamp(g, 0, 255) << 8) | clamp(b, 0, 255)
+
+def red_of(c: Int) -> Int:
+    return (c >> 16) & 255
+
+def green_of(c: Int) -> Int:
+    return (c >> 8) & 255
+
+def blue_of(c: Int) -> Int:
+    return c & 255
+
+# linear blend of two colours, t in 0..255
+def mix(a: Int, b: Int, t: Int) -> Int:
+    it := 255 - t
+    r := (red_of(a) * it + red_of(b) * t) / 255
+    g := (green_of(a) * it + green_of(b) * t) / 255
+    bl := (blue_of(a) * it + blue_of(b) * t) / 255
+    return rgb(r, g, bl)
+
+def lighten(c: Int, amount: Int) -> Int:
+    return mix(c, C_WHITE, amount)
+
+def darken(c: Int, amount: Int) -> Int:
+    return mix(c, C_BLACK, amount)
+
+# ---- geometry helpers -------------------------------------------------
+def hit(mx: Int, my: Int, x: Int, y: Int, w: Int, h: Int) -> Int:
+    if mx < x:
+        return 0
+    if my < y:
+        return 0
+    if mx >= x + w:
+        return 0
+    if my >= y + h:
+        return 0
+    return 1
+
+# ---- primitives -------------------------------------------------------
+
+# Anti-aliased rounded rectangle.  Corner coverage is computed with a
+# fixed-point distance field (1/16 px), which keeps the edges smooth
+# without any floating point in the kernel.
+def round_rect(x: Int, y: Int, w: Int, h: Int, r: Int, color: Int, alpha: Int) -> Void:
+    if w <= 0:
+        return
+    if h <= 0:
+        return
+    rr := r
+    if rr * 2 > w:
+        rr = w / 2
+    if rr * 2 > h:
+        rr = h / 2
+    if rr < 1:
+        gfx_blend_rect(x, y, w, h, color, alpha)
+        return
+
+    gfx_blend_rect(x + rr, y, w - rr - rr, h, color, alpha)
+    gfx_blend_rect(x, y + rr, rr, h - rr - rr, color, alpha)
+    gfx_blend_rect(x + w - rr, y + rr, rr, h - rr - rr, color, alpha)
+
+    edge := rr * 16
+    for cy in range(rr):
+        for cx in range(rr):
+            dx := rr - cx
+            dy := rr - cy
+            d := isqrt((dx * dx + dy * dy) * 256)
+            cov := edge - d
+            if cov > 0:
+                if cov > 16:
+                    cov = 16
+                a := (cov * alpha) / 16
+                gfx_blend(x + cx, y + cy, color, a)
+                gfx_blend(x + w - 1 - cx, y + cy, color, a)
+                gfx_blend(x + cx, y + h - 1 - cy, color, a)
+                gfx_blend(x + w - 1 - cx, y + h - 1 - cy, color, a)
+
+# One pixel anti-aliased outline of a rounded rectangle.
+def round_ring(x: Int, y: Int, w: Int, h: Int, r: Int, color: Int, alpha: Int) -> Void:
+    if w <= 2:
+        return
+    if h <= 2:
+        return
+    rr := r
+    if rr * 2 > w:
+        rr = w / 2
+    if rr * 2 > h:
+        rr = h / 2
+
+    gfx_blend_rect(x + rr, y, w - rr - rr, 1, color, alpha)
+    gfx_blend_rect(x + rr, y + h - 1, w - rr - rr, 1, color, alpha)
+    gfx_blend_rect(x, y + rr, 1, h - rr - rr, color, alpha)
+    gfx_blend_rect(x + w - 1, y + rr, 1, h - rr - rr, color, alpha)
+    if rr < 1:
+        return
+
+    edge := rr * 16
+    for cy in range(rr):
+        for cx in range(rr):
+            dx := rr - cx
+            dy := rr - cy
+            d := isqrt((dx * dx + dy * dy) * 256)
+            diff := abs(edge - d)
+            if diff < 16:
+                a := ((16 - diff) * alpha) / 16
+                gfx_blend(x + cx, y + cy, color, a)
+                gfx_blend(x + w - 1 - cx, y + cy, color, a)
+                gfx_blend(x + cx, y + h - 1 - cy, color, a)
+                gfx_blend(x + w - 1 - cx, y + h - 1 - cy, color, a)
+
+# Soft drop shadow: expanding rings with a quadratic falloff.
+def shadow(x: Int, y: Int, w: Int, h: Int, r: Int, spread: Int, strength: Int) -> Void:
+    for i in range(spread):
+        t := spread - i
+        a := (strength * t * t) / (spread * spread)
+        if a > 0:
+            round_ring(x - i, y - i + (i / 2) + 2, w + i + i, h + i + i, r + i, C_BLACK, a)
+
+def fill_circle(cx: Int, cy: Int, r: Int, color: Int, alpha: Int) -> Void:
+    edge := r * 16
+    for dy in range(0 - r, r + 1):
+        for dx in range(0 - r, r + 1):
+            d := isqrt((dx * dx + dy * dy) * 256)
+            cov := edge - d
+            if cov > 0:
+                if cov > 16:
+                    cov = 16
+                gfx_blend(cx + dx, cy + dy, color, (cov * alpha) / 16)
+
+def ring_circle(cx: Int, cy: Int, r: Int, thickness: Int, color: Int, alpha: Int) -> Void:
+    inner := (r - thickness) * 16
+    outer := r * 16
+    for dy in range(0 - r, r + 1):
+        for dx in range(0 - r, r + 1):
+            d := isqrt((dx * dx + dy * dy) * 256)
+            if d <= outer:
+                if d >= inner:
+                    cov := 16
+                    if outer - d < 16:
+                        cov = outer - d
+                    if d - inner < 16:
+                        cov = d - inner
+                    if cov > 0:
+                        gfx_blend(cx + dx, cy + dy, color, (cov * alpha) / 16)
+
+# Rounded rectangle filled with a vertical gradient (app tiles, buttons).
+def grad_round_rect(x: Int, y: Int, w: Int, h: Int, r: Int, c0: Int, c1: Int, alpha: Int) -> Void:
+    for row in range(h):
+        t := (row * 255) / h
+        c := mix(c0, c1, t)
+        inset := 0
+        if row < r:
+            dy := r - row
+            inset = r - isqrt(r * r - dy * dy)
+        if row >= h - r:
+            dy := row - (h - r) + 1
+            inset = r - isqrt(max(r * r - dy * dy, 0))
+        gfx_blend_rect(x + inset, y + row, w - inset - inset, 1, c, alpha)
+
+# ---- text helpers -----------------------------------------------------
+def text_center(x: Int, y: Int, w: Int, s: Str, color: Int, alpha: Int, font: Int) -> Void:
+    tw := text_width(s, font)
+    text_draw(x + (w - tw) / 2, y, s, color, alpha, font)
+
+def text_right(x: Int, y: Int, w: Int, s: Str, color: Int, alpha: Int, font: Int) -> Void:
+    tw := text_width(s, font)
+    text_draw(x + w - tw, y, s, color, alpha, font)
+
+# Letter-spaced text — the reference design leans on wide tracking for
+# uppercase micro labels.
+def text_tracked(x: Int, y: Int, s: Str, spacing: Int, color: Int, alpha: Int, font: Int) -> Int:
+    mut pen := x
+    n := len(s)
+    for i in range(n):
+        ch := substr(s, i, 1)
+        text_draw(pen, y, ch, color, alpha, font)
+        pen = pen + text_width(ch, font) + spacing
+    return pen - x
+
+def text_tracked_width(s: Str, spacing: Int, font: Int) -> Int:
+    n := len(s)
+    if n == 0:
+        return 0
+    return text_width(s, font) + spacing * (n - 1)
+
+def text_ellipsis(x: Int, y: Int, maxw: Int, s: Str, color: Int, alpha: Int, font: Int) -> Void:
+    if text_width(s, font) <= maxw:
+        text_draw(x, y, s, color, alpha, font)
+        return
+    mut n := len(s)
+    while n > 1:
+        cut := str_concat(substr(s, 0, n), "...")
+        if text_width(cut, font) <= maxw:
+            text_draw(x, y, cut, color, alpha, font)
+            return
+        n = n - 1
+    text_draw(x, y, "...", color, alpha, font)
+
+# ---- surfaces ---------------------------------------------------------
+
+# Frosted panel: dark translucent body plus the 1px light hairline that
+# gives the reference UI its depth.
+def glass_panel(x: Int, y: Int, w: Int, h: Int, r: Int, alpha: Int) -> Void:
+    round_rect(x, y, w, h, r, C_PANEL, alpha)
+    round_ring(x, y, w, h, r, C_LINE, 16)
+
+def card(x: Int, y: Int, w: Int, h: Int, r: Int) -> Void:
+    round_rect(x, y, w, h, r, C_WHITE, 9)
+    round_ring(x, y, w, h, r, C_LINE, 14)
+
+def divider(x: Int, y: Int, w: Int) -> Void:
+    gfx_blend_rect(x, y, w, 1, C_LINE, 16)
+
+def section_title(x: Int, y: Int, s: Str) -> Void:
+    text_tracked(x, y, s, 2, C_FAINT, 255, FONT_CAPS)
+
+def chip(x: Int, y: Int, label: Str, color: Int) -> Int:
+    w := text_width(label, FONT_CAPS) + 16
+    round_rect(x, y, w, 17, 8, color, 36)
+    text_draw(x + 8, y + 3, label, color, 255, FONT_CAPS)
+    return w
+
+def button(x: Int, y: Int, w: Int, h: Int, label: Str, accent: Int, filled: Int, hot: Int) -> Void:
+    if filled == 1:
+        c := accent
+        if hot == 1:
+            c = lighten(accent, 24)
+        round_rect(x, y, w, h, 10, c, 255)
+        text_center(x, y + (h - 15) / 2, w, label, C_WHITE, 255, FONT_BODY_SEMI)
+    else:
+        a := 18
+        if hot == 1:
+            a = 32
+        round_rect(x, y, w, h, 10, C_WHITE, a)
+        text_center(x, y + (h - 15) / 2, w, label, C_TEXT, 235, FONT_BODY)
+
+def toggle(x: Int, y: Int, on: Int, accent: Int) -> Void:
+    if on == 1:
+        round_rect(x, y, 38, 22, 11, accent, 255)
+        fill_circle(x + 27, y + 11, 8, C_WHITE, 255)
+    else:
+        round_rect(x, y, 38, 22, 11, C_WHITE, 26)
+        fill_circle(x + 11, y + 11, 8, C_WHITE, 235)
+
+def slider(x: Int, y: Int, w: Int, value: Int, accent: Int) -> Void:
+    round_rect(x, y + 4, w, 6, 3, C_WHITE, 30)
+    fill := (w * clamp(value, 0, 100)) / 100
+    round_rect(x, y + 4, fill, 6, 3, accent, 255)
+    fill_circle(x + fill, y + 7, 7, C_WHITE, 255)
+
+def progress(x: Int, y: Int, w: Int, h: Int, value: Int, color: Int) -> Void:
+    round_rect(x, y, w, h, h / 2, C_WHITE, 26)
+    fill := (w * clamp(value, 0, 100)) / 100
+    if fill > 0:
+        round_rect(x, y, fill, h, h / 2, color, 235)
+
+def meter_bar(x: Int, y: Int, w: Int, h: Int, value: Int, color: Int) -> Void:
+    round_rect(x, y, w, h, 2, C_WHITE, 22)
+    fill := (w * clamp(value, 0, 100)) / 100
+    round_rect(x, y, fill, h, 2, color, 255)
+
+# Sparkline over a list of 0..100 samples.
+def sparkline(x: Int, y: Int, w: Int, h: Int, data: List[Int], color: Int) -> Void:
+    n := list_len(data)
+    if n < 2:
+        return
+    step := (w * 16) / (n - 1)
+    mut px := x * 16
+    mut py := y + h - (list_get(data, 0) * h) / 100
+    for i in range(1, n):
+        cx := x * 16 + step * i
+        cy := y + h - (list_get(data, i) * h) / 100
+        x0 := px / 16
+        x1 := cx / 16
+        steps := max(x1 - x0, 1)
+        for s in range(steps):
+            sx := x0 + s
+            sy := py + ((cy - py) * s) / steps
+            gfx_blend(sx, sy, color, 255)
+            gfx_blend(sx, sy + 1, color, 120)
+            # soft area fill under the curve
+            fill_h := y + h - sy
+            if fill_h > 0:
+                gfx_blend_rect(sx, sy + 2, 1, fill_h, color, 26)
+        px = cx
+        py = cy
+
+# ---- icon set ---------------------------------------------------------
+# Small vector-ish glyphs drawn from primitives; `s` is the icon box size.
+
+def icon_folder(x: Int, y: Int, s: Int, color: Int, alpha: Int) -> Void:
+    round_rect(x, y + s / 5, s, s - s / 5 - 1, 3, color, alpha)
+    round_rect(x, y + s / 8, s / 2, s / 4, 2, color, alpha)
+
+def icon_terminal(x: Int, y: Int, s: Int, color: Int, alpha: Int) -> Void:
+    round_ring(x, y, s, s, 3, color, alpha)
+    a := x + s / 4
+    b := y + s / 3
+    for i in range(4):
+        gfx_blend(a + i, b + i, color, alpha)
+        gfx_blend(a + i, b + i + 1, color, alpha)
+        gfx_blend(a + i, b - i + 6, color, alpha)
+        gfx_blend(a + i, b - i + 7, color, alpha)
+    gfx_blend_rect(x + s / 2 + 1, y + s - s / 3, s / 4, 2, color, alpha)
+
+def icon_gear(x: Int, y: Int, s: Int, color: Int, alpha: Int) -> Void:
+    cx := x + s / 2
+    cy := y + s / 2
+    ring_circle(cx, cy, s / 2 - 1, 2, color, alpha)
+    fill_circle(cx, cy, s / 6, color, alpha)
+    for k in range(4):
+        ang := k * 45
+        dx := (cos_deg(ang) * (s / 2)) / 1000
+        dy := (sin_deg(ang) * (s / 2)) / 1000
+        gfx_blend_rect(cx + dx - 1, cy + dy - 1, 3, 3, color, alpha)
+        gfx_blend_rect(cx - dx - 1, cy - dy - 1, 3, 3, color, alpha)
+
+def icon_chart(x: Int, y: Int, s: Int, color: Int, alpha: Int) -> Void:
+    gfx_blend_rect(x + 1, y + s - s / 3, 3, s / 3, color, alpha)
+    gfx_blend_rect(x + s / 2 - 1, y + s / 4, 3, s - s / 4, color, alpha)
+    gfx_blend_rect(x + s - 4, y + s / 2, 3, s / 2, color, alpha)
+
+def icon_store(x: Int, y: Int, s: Int, color: Int, alpha: Int) -> Void:
+    round_rect(x, y + s / 4, s, s - s / 4, 3, color, alpha)
+    ring_circle(x + s / 2, y + s / 4, s / 4, 2, color, alpha)
+
+def icon_sparkle(x: Int, y: Int, s: Int, color: Int, alpha: Int) -> Void:
+    cx := x + s / 2
+    cy := y + s / 2
+    for i in range(s / 2):
+        w := (s / 2 - i)
+        gfx_blend_rect(cx - w / 2, cy - i, w, 1, color, alpha)
+        gfx_blend_rect(cx - w / 2, cy + i, w, 1, color, alpha)
+
+def icon_globe(x: Int, y: Int, s: Int, color: Int, alpha: Int) -> Void:
+    cx := x + s / 2
+    cy := y + s / 2
+    ring_circle(cx, cy, s / 2, 2, color, alpha)
+    gfx_blend_rect(x, cy - 1, s, 2, color, alpha)
+    ring_circle(cx, cy, s / 2, 1, color, alpha)
+    for i in range(s):
+        dy := i - s / 2
+        w := (s / 4) - abs(dy) / 3
+        if w > 0:
+            gfx_blend(cx - w, y + i, color, alpha)
+            gfx_blend(cx + w, y + i, color, alpha)
+
+def icon_cpu(x: Int, y: Int, s: Int, color: Int, alpha: Int) -> Void:
+    round_ring(x + 2, y + 2, s - 4, s - 4, 3, color, alpha)
+    round_rect(x + s / 3, y + s / 3, s / 3, s / 3, 2, color, alpha)
+    for i in range(3):
+        p := x + s / 4 + i * (s / 4)
+        gfx_blend_rect(p, y, 2, 2, color, alpha)
+        gfx_blend_rect(p, y + s - 2, 2, 2, color, alpha)
+        gfx_blend_rect(x, p - x + y, 2, 2, color, alpha)
+        gfx_blend_rect(x + s - 2, p - x + y, 2, 2, color, alpha)
+
+def icon_wifi(x: Int, y: Int, s: Int, color: Int, alpha: Int) -> Void:
+    cx := x + s / 2
+    cy := y + s - 2
+    for k in range(3):
+        r := (k + 1) * (s / 3)
+        for dx in range(0 - r, r + 1):
+            dy := 0 - isqrt(max(r * r - dx * dx, 0))
+            if dy < 0:
+                gfx_blend(cx + dx, cy + dy, color, alpha)
+    fill_circle(cx, cy - 1, 1, color, alpha)
+
+def icon_battery(x: Int, y: Int, s: Int, level: Int, color: Int, alpha: Int) -> Void:
+    w := s
+    h := s / 2
+    round_ring(x, y, w - 2, h, 2, color, alpha)
+    gfx_blend_rect(x + w - 2, y + h / 3, 2, h / 3, color, alpha)
+    fillw := ((w - 6) * clamp(level, 0, 100)) / 100
+    gfx_blend_rect(x + 2, y + 2, fillw, h - 4, color, alpha)
+
+def icon_search(x: Int, y: Int, s: Int, color: Int, alpha: Int) -> Void:
+    ring_circle(x + s / 2 - 1, y + s / 2 - 1, s / 3, 2, color, alpha)
+    for i in range(s / 4):
+        gfx_blend(x + s / 2 + s / 4 + i - 1, y + s / 2 + s / 4 + i - 1, color, alpha)
+        gfx_blend(x + s / 2 + s / 4 + i, y + s / 2 + s / 4 + i - 1, color, alpha)
+
+def icon_grid(x: Int, y: Int, s: Int, color: Int, alpha: Int) -> Void:
+    d := (s - 3) / 2
+    for row in range(2):
+        for col in range(2):
+            round_rect(x + col * (d + 3), y + row * (d + 3), d, d, 2, color, alpha)
+
+def icon_lock(x: Int, y: Int, s: Int, color: Int, alpha: Int) -> Void:
+    round_rect(x + 1, y + s / 2 - 1, s - 2, s / 2 + 1, 2, color, alpha)
+    ring_circle(x + s / 2, y + s / 2 - 1, s / 4, 2, color, alpha)
+
+def icon_power(x: Int, y: Int, s: Int, color: Int, alpha: Int) -> Void:
+    ring_circle(x + s / 2, y + s / 2, s / 2 - 1, 2, color, alpha)
+    gfx_blend_rect(x + s / 2 - 1, y, 2, s / 2, color, alpha)
+
+# The SamarOS mark: a stacked prism built from three gradient shards.
+def samar_logo(x: Int, y: Int, s: Int, accent: Int, alpha: Int) -> Void:
+    half := s / 2
+    for row in range(s):
+        spread := row
+        if row > half:
+            spread = s - row
+        w := (spread * s) / s
+        if w > 0:
+            t := (row * 255) / s
+            c := mix(accent, C_VIOLET, t)
+            gfx_blend_rect(x + half - w, y + row, w + w, 1, c, alpha)
+    for row in range(half):
+        w := (row * half) / half
+        if w > 0:
+            gfx_blend_rect(x + half - w / 2, y + row + half / 2, w, 1, lighten(accent, 60), (alpha * 55) / 100)
+
+# ---- desktop wallpaper -------------------------------------------------
+# Aurora field: a deep vertical base plus three soft radial blooms, matching
+# the reference desktop.  Computed once at boot into the cached layer.
+def draw_wallpaper(w: Int, h: Int, accent: Int) -> Void:
+    gfx_grad_rect(0, 0, w, h, C_BASE, 0x10131F, 1)
+    blob(w / 5, h / 4, (w * 55) / 100, accent, 62, w, h)
+    blob((w * 88) / 100, (h * 42) / 100, (w * 46) / 100, C_VIOLET, 46, w, h)
+    blob((w * 28) / 100, (h * 96) / 100, (w * 44) / 100, C_EMERALD, 30, w, h)
+    blob((w * 70) / 100, (h * 8) / 100, (w * 26) / 100, C_SKY, 22, w, h)
+    vignette(w, h)
+
+def blob(cx: Int, cy: Int, radius: Int, color: Int, strength: Int, w: Int, h: Int) -> Void:
+    step := 4
+    x0 := max(cx - radius, 0)
+    y0 := max(cy - radius, 0)
+    x1 := min(cx + radius, w)
+    y1 := min(cy + radius, h)
+    cols := (x1 - x0) / step
+    rows := (y1 - y0) / step
+    for gy in range(rows):
+        py := y0 + gy * step
+        dy := py + step / 2 - cy
+        for gx in range(cols):
+            px := x0 + gx * step
+            dx := px + step / 2 - cx
+            d := isqrt(dx * dx + dy * dy)
+            if d < radius:
+                t := ((radius - d) * 100) / radius
+                a := (strength * t * t) / 10000
+                if a > 0:
+                    gfx_blend_rect(px, py, step, step, color, a)
+
+def vignette(w: Int, h: Int) -> Void:
+    depth := h / 3
+    for i in range(depth):
+        a := (28 * (depth - i)) / depth
+        gfx_blend_rect(0, h - 1 - i, w, 1, C_BLACK, a / 2)
+        gfx_blend_rect(0, i, w, 1, C_BLACK, a / 3)
+
+# ---- pointer -----------------------------------------------------------
+# Classic arrow: a widening blade for the first ten rows, then a tail.
+def cursor_row_width(row: Int) -> Int:
+    if row < 11:
+        return row + 1
+    if row < 13:
+        return 11
+    if row < 17:
+        return 17 - row + 3
+    return 0
+
+def draw_cursor(mx: Int, my: Int) -> Void:
+    for row in range(17):
+        w := cursor_row_width(row)
+        if w > 0:
+            offset := 0
+            if row >= 13:
+                offset = row - 12
+            gfx_blend_rect(mx + offset, my + row, w, 1, C_WHITE, 250)
+            gfx_blend(mx + offset + w, my + row, C_BLACK, 150)
+            gfx_blend(mx + offset + w + 1, my + row, C_BLACK, 60)
+    gfx_blend_rect(mx, my, 1, 17, C_BLACK, 110)
+    gfx_blend_rect(mx, my + 17, 6, 1, C_BLACK, 110)
