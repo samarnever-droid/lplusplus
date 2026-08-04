@@ -141,14 +141,14 @@ def install_deps_opts(online: Bool, jobs: Int) -> Int:
             error(str_concat("could not fetch registry package: ", r.pkg_name))
             errors = errors + 1
 
-    # Write lockfile
-    lockfile_write(lock_path, lock_str)
-
-    # ── SUMMARY ──────────────────────────────────────────────────────────────
+    # Do not replace a known-good lockfile after a partial/failed fetch.
+    # This used to write an incomplete lockfile and only then report failure.
     if errors > 0:
         print_str(str_concat("\033[1;31m[lpp-pm] ERROR:\033[0m ", str_concat(int_to_str(errors), " package(s) failed to install")))
         return 1
 
+    # Write lockfile only after every route succeeded.
+    lockfile_write(lock_path, lock_str)
     success(str_concat(int_to_str(downloaded), str_concat(" downloaded, ", str_concat(int_to_str(cache_hits), " from cache"))))
     return 0
 
@@ -162,7 +162,8 @@ def collect_workspace(st: ResolveState, ws: Workspace) -> Void:
 
         m := manifest_parse(m_path)
         m_ver := workspace_apply_version(m, ws)
-        resolve_collect(st, m_ver, m_ver.name)
+        m_ready := workspace_materialize_manifest(m_ver, ws)
+        resolve_collect(st, m_ready, m_ready.name)
 
 # ── plan_all ─────────────────────────────────────────────────────────────────
 

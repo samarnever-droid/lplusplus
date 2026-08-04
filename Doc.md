@@ -2,7 +2,7 @@
 
 L++ is a high-performance, pure native programming language designed to combine the **readability of Python**, the **memory safety and control of Rust**, and the **build/iteration speed of Go**.
 
-L++ 2.0 features a 100% pure native compilation pipeline: an ahead-of-time (AOT) Cranelift compiler producing native object files (`.o`/`.obj`), a custom tri-format direct linker (`lpp-link` for Linux ELF, Windows PE, and macOS Mach-O), a self-hosting package manager (`lpp-pm`), and zero reliance on external C transpilation passes or system C compilers (`gcc`, `clang`, `cl.exe`).
+L++ features a pure native compilation pipeline: an ahead-of-time (AOT) Cranelift compiler producing native object files (`.o`/`.obj`), a custom tri-format direct linker (`lpp-link` for Linux ELF, Windows PE, and macOS Mach-O), and a reliable package manager. The pure-L++ `lpp-pm` implementation is available as an experimental opt-in (`LPP_SELF_HOSTED_PM=1`); the Rust PM is the production default while archive/delta support is completed.
 
 ---
 
@@ -298,6 +298,11 @@ lpp clean                 # Remove target directories and build artifacts
 lpp list                  # List direct dependencies in lpp.toml
 lpp tree                  # Print lockfile dependency tree
 lpp metadata              # Output package manifest summary
+lpp version                # Show package version
+lpp version set 1.2.3     # Set a SemVer package version
+lpp version bump patch    # Bump patch/minor/major and update the manifest
+lpp workspace members     # List workspace members
+lpp workspace graph       # Show workspace dependency edges
 
 # Single File Commands
 lpp check <file.lpp>      # Type-check a single L++ source file

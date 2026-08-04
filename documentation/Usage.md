@@ -25,6 +25,23 @@ lpp app.lpp --backend llvm --emit-object
 `clang` must be installed for the LLVM backend. Set `LPP_LLVM_CC` if it has a
 non-standard path. `LPP_LLVM_MARCH=native` enables host LLVM CPU features.
 
+## Package manager and versioning
+
+```sh
+lpp init demo
+lpp version                         # show `demo` and its SemVer
+lpp version set 1.2.3
+lpp version bump patch              # 1.2.4
+lpp add local-lib --path ../local-lib
+lpp install --offline               # never consult the network
+lpp workspace members
+lpp workspace graph
+```
+
+The Rust package manager is the reliable default. The pure-L++ implementation
+is available for experiments with `LPP_SELF_HOSTED_PM=1`; failures from either
+implementation are returned as non-zero process statuses.
+
 ## Debugging and inspection
 
 | Flag | Purpose |
@@ -102,6 +119,7 @@ sh tests/run_aot_parity.sh
 LPP_LLVM_CC=/path/to/clang sh tests/run_llvm_smoke.sh
 LPP_LLVM_CC=/path/to/clang sh tests/run_feature_batch.sh
 sh scripts/check_safety_mission.sh
+sh tests/test_pm_workflow.sh
 (cd packages/lppsqlite && sh run-tests.sh)
 (cd packages/compresslpp && sh run-tests.sh)
 ```

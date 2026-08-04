@@ -36,8 +36,21 @@ cd "$DIR/build"
 # next to the entry point.
 cp "$DIR"/src/*.lpp .
 
+compile_lpp() {
+    source_file=$1
+    log_file="$DIR/build/${source_file%.lpp}.compile.log"
+    if ! "$LPP_BIN" "$source_file" --linker host >"$log_file" 2>&1; then
+        cat "$log_file" >&2
+        if [ "${GITHUB_ACTIONS:-}" = "true" ]; then
+            detail=$(tail -20 "$log_file" | tr '\n' ' ' | sed 's/::/%3A%3A/g')
+            echo "::error file=packages/compresslpp/src/$source_file::${detail}"
+        fi
+        return 1
+    fi
+}
+
 echo "compiling compresslpp ..."
-"$LPP_BIN" main.lpp --linker host >/dev/null
+compile_lpp main.lpp || exit 1
 mv main compresslpp
 echo "built: $DIR/build/compresslpp"
 
@@ -46,7 +59,7 @@ if [ "$1" = "--tests" ] || [ "$1" = "-t" ]; then
     for t in t_inflate t_deflate t_zip t_tar t_gzip; do
         [ -f "$t.lpp" ] || continue
         echo "compiling $t ..."
-        "$LPP_BIN" "$t.lpp" --linker host >/dev/null
+        compile_lpp "$t.lpp" || exit 1
     done
     echo "tests built in $DIR/build"
 fi

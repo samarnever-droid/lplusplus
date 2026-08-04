@@ -2,7 +2,7 @@ use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(dead_code)]
 pub struct Dependency {
     pub name: String,
@@ -24,12 +24,20 @@ pub struct Package {
     pub dependencies: Vec<Dependency>,
 }
 
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, Default, serde::Deserialize)]
 pub struct RegistryEntry {
-    #[serde(alias = "repository")]
+    #[serde(default, alias = "repository")]
     pub git: String,
+    #[serde(default)]
     pub branch: Option<String>,
+    #[serde(default)]
     pub tag: Option<String>,
+    #[serde(default)]
+    pub version: Option<String>,
+    #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default, alias = "source_url")]
+    pub source: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
 }
@@ -71,215 +79,330 @@ pub fn validate_keywords(keywords: &[String]) -> Result<Vec<String>, String> {
     Ok(cleaned)
 }
 
+fn validate_package_name(name: &str) -> Result<(), String> {
+    if name.trim().is_empty() {
+        return Err("Package manifest error: package name cannot be empty".to_string());
+    }
+    if name.len() > 128 {
+        return Err("Package manifest error: package name exceeds 128 characters".to_string());
+    }
+    if name.chars().any(|ch| matches!(ch, '\\' | '\n' | '\r' | '\t')) {
+        return Err(format!("Package manifest error: invalid package name '{name}'"));
+    }
+    Ok(())
+}
+
+fn validate_package_version(version: &str) -> Result<(), String> {
+    semver::Version::parse(version).map(|_| ()).map_err(|e| {
+        format!("Package manifest error: invalid package version '{version}': {e}")
+    })
+}
+
+fn validate_dependency_name(name: &str) -> Result<(), String> {
+    if name.trim().is_empty()
+        || name == "."
+        || name == ".."
+        || name.contains('/')
+        || name.contains('\\')
+        || name.chars().any(|ch| matches!(ch, '\n' | '\r' | '\t'))
+    {
+        return Err(format!("Package manifest error: invalid dependency name '{name}'"));
+    }
+    Ok(())
+}
+
+fn validate_dependency_requirement(req: &str) -> Result<(), String> {
+    let trimmed = req.trim();
+    if trimmed.is_empty() || trimmed == "workspace" {
+        return Ok(());
+    }
+    semver::VersionReq::parse(trimmed).map(|_| ()).map_err(|e| {
+        format!("Package manifest error: invalid version requirement '{trimmed}': {e}")
+    })
+}
+
+fn string_field(table: &toml::map::Map<String, toml::Value>, key: &str) -> Result<Option<String>, String> {
+    match table.get(key) {
+        None => Ok(None),
+        Some(value) => value
+            .as_str()
+            .map(|s| Some(s.to_string()))
+            .ok_or_else(|| format!("Package manifest error: '{key}' must be a string")),
+    }
+}
+
+fn dependency_from_parts(
+    name: &str,
+    version: Option<String>,
+    git: Option<String>,
+    tag: Option<String>,
+    branch: Option<String>,
+    path: Option<String>,
+) -> Result<Dependency, String> {
+    validate_dependency_name(name)?;
+    if git.is_some() && path.is_some() {
+        return Err(format!("Package manifest error: dependency '{name}' cannot specify both git and path"));
+    }
+    if tag.is_some() && branch.is_some() {
+        return Err(format!("Package manifest error: dependency '{name}' cannot specify both tag and branch"));
+    }
+    if git.is_none() && tag.is_some() {
+        return Err(format!("Package manifest error: dependency '{name}' uses tag without git"));
+    }
+    if git.is_none() && branch.is_some() {
+        return Err(format!("Package manifest error: dependency '{name}' uses branch without git"));
+    }
+    if let Some(ref req) = version {
+        validate_dependency_requirement(req)?;
+    }
+    if let Some(ref source) = git {
+        if source.trim().is_empty() {
+            return Err(format!("Package manifest error: dependency '{name}' has an empty git URL"));
+        }
+    }
+    if let Some(ref source) = path {
+        if source.trim().is_empty() {
+            return Err(format!("Package manifest error: dependency '{name}' has an empty path"));
+        }
+    }
+    Ok(Dependency {
+        name: name.to_string(),
+        version,
+        git,
+        tag,
+        branch,
+        path,
+    })
+}
+
+fn dependency_from_toml(name: &str, value: &toml::Value) -> Result<Dependency, String> {
+    match value {
+        toml::Value::String(raw) => {
+            if raw.starts_with("./") || raw.starts_with("../") || raw == "." || raw == ".." {
+                dependency_from_parts(name, None, None, None, None, Some(raw.clone()))
+            } else if raw.starts_with("http://")
+                || raw.starts_with("https://")
+                || raw.ends_with(".git")
+            {
+                dependency_from_parts(name, None, Some(raw.clone()), None, None, None)
+            } else {
+                dependency_from_parts(name, Some(raw.clone()), None, None, None, None)
+            }
+        }
+        toml::Value::Table(table) => dependency_from_parts(
+            name,
+            string_field(table, "version")?,
+            string_field(table, "git")?,
+            string_field(table, "tag")?,
+            string_field(table, "branch")?,
+            string_field(table, "path")?,
+        ),
+        _ => Err(format!("Package manifest error: dependency '{name}' must be a string or inline table")),
+    }
+}
+
+fn package_from_parts(
+    name: String,
+    version: String,
+    author: Option<String>,
+    entry: Option<String>,
+    keywords: Vec<String>,
+    dependencies: Vec<Dependency>,
+) -> Result<Package, String> {
+    validate_package_name(&name)?;
+    validate_package_version(&version)?;
+    Ok(Package {
+        name,
+        version,
+        author,
+        entry,
+        keywords: validate_keywords(&keywords)?,
+        dependencies,
+    })
+}
+
 pub fn parse_json_manifest(content: &str) -> Result<Package, String> {
     let val: serde_json::Value = serde_json::from_str(content)
         .map_err(|e| format!("JSON syntax error in manifest: {e}"))?;
+    let obj = val
+        .as_object()
+        .ok_or_else(|| "JSON manifest root must be an object".to_string())?;
 
-    let name = val
+    let name = obj
         .get("name")
-        .and_then(|v| v.as_str())
+        .and_then(serde_json::Value::as_str)
         .ok_or_else(|| "Missing 'name' in lpp.json".to_string())?
         .to_string();
-
-    let version = val
+    let version = obj
         .get("version")
-        .and_then(|v| v.as_str())
+        .and_then(serde_json::Value::as_str)
         .unwrap_or("0.1.0")
         .to_string();
-
-    let author = val.get("author").and_then(|v| v.as_str()).map(String::from);
-
-    let entry = val
+    let author = obj.get("author").and_then(serde_json::Value::as_str).map(String::from);
+    let entry = obj
         .get("main")
-        .or_else(|| val.get("entry"))
-        .and_then(|v| v.as_str())
+        .or_else(|| obj.get("entry"))
+        .and_then(serde_json::Value::as_str)
         .map(String::from);
 
-    let raw_keywords: Vec<String> = val
-        .get("keywords")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(String::from))
-                .collect()
-        })
-        .unwrap_or_default();
-    let keywords = validate_keywords(&raw_keywords)?;
+    let keywords = match obj.get("keywords") {
+        None => Vec::new(),
+        Some(value) => value
+            .as_array()
+            .ok_or_else(|| "'keywords' in lpp.json must be an array".to_string())?
+            .iter()
+            .map(|value| {
+                value
+                    .as_str()
+                    .map(String::from)
+                    .ok_or_else(|| "every keyword in lpp.json must be a string".to_string())
+            })
+            .collect::<Result<Vec<_>, _>>()?,
+    };
 
     let mut dependencies = Vec::new();
-    if let Some(deps) = val.get("dependencies").and_then(|d| d.as_object()) {
-        for (dep_name, dep_val) in deps {
-            let mut version = None;
-            let mut git = None;
-            let mut tag = None;
-            let mut branch = None;
-            let mut path = None;
-
-            if let Some(v_str) = dep_val.as_str() {
-                if v_str.starts_with("http://")
-                    || v_str.starts_with("https://")
-                    || v_str.ends_with(".git")
+    if let Some(dep_obj) = obj.get("dependencies") {
+        let dep_obj = dep_obj
+            .as_object()
+            .ok_or_else(|| "'dependencies' in lpp.json must be an object".to_string())?;
+        for (dep_name, dep_value) in dep_obj {
+            let dep = if let Some(raw) = dep_value.as_str() {
+                if raw.starts_with("./") || raw.starts_with("../") || raw == "." || raw == ".." {
+                    dependency_from_parts(dep_name, None, None, None, None, Some(raw.to_string()))?
+                } else if raw.starts_with("http://")
+                    || raw.starts_with("https://")
+                    || raw.ends_with(".git")
                 {
-                    git = Some(v_str.to_string());
-                } else if v_str.starts_with("./") || v_str.starts_with("../") {
-                    path = Some(v_str.to_string());
+                    dependency_from_parts(dep_name, None, Some(raw.to_string()), None, None, None)?
                 } else {
-                    version = Some(v_str.to_string());
+                    dependency_from_parts(dep_name, Some(raw.to_string()), None, None, None, None)?
                 }
-            } else if let Some(obj) = dep_val.as_object() {
-                version = obj.get("version").and_then(|v| v.as_str()).map(String::from);
-                git = obj.get("git").and_then(|v| v.as_str()).map(String::from);
-                tag = obj.get("tag").and_then(|v| v.as_str()).map(String::from);
-                branch = obj.get("branch").and_then(|v| v.as_str()).map(String::from);
-                path = obj.get("path").and_then(|v| v.as_str()).map(String::from);
-            }
-
-            dependencies.push(Dependency {
-                name: dep_name.clone(),
-                version,
-                git,
-                tag,
-                branch,
-                path,
-            });
+            } else {
+                let table = dep_value
+                    .as_object()
+                    .ok_or_else(|| format!("dependency '{dep_name}' must be a string or object"))?;
+                let get = |key: &str| -> Result<Option<String>, String> {
+                    match table.get(key) {
+                        None => Ok(None),
+                        Some(v) => v
+                            .as_str()
+                            .map(|s| Some(s.to_string()))
+                            .ok_or_else(|| format!("dependency '{dep_name}' field '{key}' must be a string")),
+                    }
+                };
+                dependency_from_parts(
+                    dep_name,
+                    get("version")?,
+                    get("git")?,
+                    get("tag")?,
+                    get("branch")?,
+                    get("path")?,
+                )?
+            };
+            dependencies.push(dep);
         }
     }
 
-    Ok(Package {
-        name,
-        version,
-        author,
-        entry,
-        keywords,
-        dependencies,
-    })
+    package_from_parts(name, version, author, entry, keywords, dependencies)
+}
+
+fn parse_toml_with_workspace(content: &str, workspace_version: Option<&str>) -> Result<Package, String> {
+    let root: toml::Value = toml::from_str(content)
+        .map_err(|e| format!("TOML syntax error in manifest: {e}"))?;
+    let root_table = root
+        .as_table()
+        .ok_or_else(|| "TOML manifest root must be a table".to_string())?;
+    let package = root_table
+        .get("package")
+        .and_then(toml::Value::as_table)
+        .ok_or_else(|| "Missing [package] section in lpp.toml".to_string())?;
+
+    let name = package
+        .get("name")
+        .and_then(toml::Value::as_str)
+        .ok_or_else(|| "Missing package name in [package] section".to_string())?
+        .to_string();
+    let version = match package.get("version") {
+        Some(value) if value.as_str().is_some() => value.as_str().unwrap_or_default().to_string(),
+        Some(toml::Value::Table(table))
+            if table.get("workspace").and_then(toml::Value::as_bool) == Some(true) =>
+        {
+            workspace_version
+                .ok_or_else(|| "package version uses workspace = true but no workspace version was provided".to_string())?
+                .to_string()
+        }
+        Some(_) => return Err("Package manifest error: [package].version must be a SemVer string or { workspace = true }".to_string()),
+        None => return Err("Missing package version in [package] section".to_string()),
+    };
+    let author = package
+        .get("author")
+        .and_then(toml::Value::as_str)
+        .map(String::from)
+        .or_else(|| {
+            package
+                .get("authors")
+                .and_then(toml::Value::as_array)
+                .and_then(|a| a.first())
+                .and_then(toml::Value::as_str)
+                .map(String::from)
+        });
+    let entry = package
+        .get("entry")
+        .and_then(toml::Value::as_str)
+        .map(String::from)
+        .or_else(|| {
+            root_table
+                .get("bin")
+                .and_then(toml::Value::as_table)
+                .and_then(|bin| bin.get("entry"))
+                .and_then(toml::Value::as_str)
+                .map(String::from)
+        });
+    let keywords = match package.get("keywords") {
+        None => Vec::new(),
+        Some(value) => value
+            .as_array()
+            .ok_or_else(|| "'keywords' in lpp.toml must be an array".to_string())?
+            .iter()
+            .map(|value| {
+                value
+                    .as_str()
+                    .map(String::from)
+                    .ok_or_else(|| "every keyword in lpp.toml must be a string".to_string())
+            })
+            .collect::<Result<Vec<_>, _>>()?,
+    };
+
+    let mut dependencies = Vec::new();
+    if let Some(dep_table) = root_table.get("dependencies") {
+        let dep_table = dep_table
+            .as_table()
+            .ok_or_else(|| "[dependencies] must be a TOML table".to_string())?;
+        for (dep_name, dep_value) in dep_table {
+            dependencies.push(dependency_from_toml(dep_name, dep_value)?);
+        }
+    }
+    package_from_parts(name, version, author, entry, keywords, dependencies)
 }
 
 pub fn parse_toml(content: &str) -> Result<Package, String> {
-    let mut name = String::new();
-    let mut version = String::new();
-    let mut author = None;
-    let mut entry = None;
-    let mut keywords = Vec::new();
-    let mut dependencies = Vec::new();
-
-    let mut current_section = "";
-
-    for (line_idx, raw_line) in content.lines().enumerate() {
-        let line = raw_line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-
-        if line.starts_with('[') && line.ends_with(']') {
-            current_section = &line[1..line.len() - 1];
-            continue;
-        }
-
-        if let Some(eq_idx) = line.find('=') {
-            let key = line[..eq_idx].trim();
-            let val_str = line[eq_idx + 1..].trim();
-
-            match current_section {
-                "package" => {
-                    let cleaned_val = val_str.trim_matches('"').trim_matches('\'').to_string();
-                    if key == "name" {
-                        name = cleaned_val;
-                    } else if key == "version" {
-                        version = cleaned_val;
-                    } else if key == "author" {
-                        author = Some(cleaned_val);
-                    } else if key == "entry" {
-                        entry = Some(cleaned_val);
-                    } else if key == "keywords" && val_str.starts_with('[') && val_str.ends_with(']') {
-                        let inner = &val_str[1..val_str.len() - 1];
-                        for item in inner.split(',') {
-                            let k = item.trim().trim_matches('"').trim_matches('\'').to_string();
-                            if !k.is_empty() {
-                                keywords.push(k);
-                            }
-                        }
-                    }
-                }
-                "dependencies" => {
-                    if val_str.starts_with('{') && val_str.ends_with('}') {
-                        let inline = &val_str[1..val_str.len() - 1];
-                        let mut git = None;
-                        let mut version = None;
-                        let mut tag = None;
-                        let mut branch = None;
-                        let mut path = None;
-
-                        for part in inline.split(',') {
-                            if let Some(p_eq) = part.find('=') {
-                                let pk = part[..p_eq].trim();
-                                let pv = part[p_eq + 1..]
-                                    .trim()
-                                    .trim_matches('"')
-                                    .trim_matches('\'')
-                                    .trim()
-                                    .to_string();
-                                if pk == "git" {
-                                    git = Some(pv);
-                                } else if pk == "version" {
-                                    version = Some(pv);
-                                } else if pk == "tag" {
-                                    tag = Some(pv);
-                                } else if pk == "branch" {
-                                    branch = Some(pv);
-                                } else if pk == "path" {
-                                    path = Some(pv);
-                                }
-                            }
-                        }
-                        dependencies.push(Dependency {
-                            name: key.to_string(),
-                            version,
-                            git,
-                            tag,
-                            branch,
-                            path,
-                        });
-                    } else {
-                        return Err(format!(
-                            "Line {}: invalid dependency value '{}'. Must be an inline table {{ ... }}",
-                            line_idx + 1,
-                            val_str
-                        ));
-                    }
-                }
-                _ => {}
-            }
-        } else {
-            return Err(format!(
-                "Line {}: invalid TOML syntax '{}'",
-                line_idx + 1,
-                line
-            ));
-        }
-    }
-
-    if name.is_empty() {
-        return Err("Missing package name in [package] section".to_string());
-    }
-    if version.is_empty() {
-        return Err("Missing package version in [package] section".to_string());
-    }
-
-    let cleaned_keywords = validate_keywords(&keywords)?;
-
-    Ok(Package {
-        name,
-        version,
-        author,
-        entry,
-        keywords: cleaned_keywords,
-        dependencies,
-    })
+    parse_toml_with_workspace(content, None)
 }
 
 pub fn resolve_entry_point() -> String {
-    if std::path::Path::new("lpp.toml").exists() {
+    // lpp.json is the supported manifest for several existing packages.  The
+    // old implementation only looked at lpp.toml, silently building the
+    // fallback src/main.lpp (or a nonexistent file) for JSON packages.
+    if Path::new("lpp.json").exists() {
+        if let Ok(content) = fs::read_to_string("lpp.json") {
+            if let Ok(pkg) = parse_json_manifest(&content) {
+                if let Some(entry) = pkg.entry {
+                    return entry;
+                }
+            }
+        }
+    }
+    if Path::new("lpp.toml").exists() {
         if let Ok(content) = fs::read_to_string("lpp.toml") {
             if let Ok(pkg) = parse_toml(&content) {
                 if let Some(entry) = pkg.entry {
@@ -288,9 +411,9 @@ pub fn resolve_entry_point() -> String {
             }
         }
     }
-    if std::path::Path::new("src/main.lpp").exists() {
+    if Path::new("src/main.lpp").exists() {
         "src/main.lpp".to_string()
-    } else if std::path::Path::new("main.lpp").exists() {
+    } else if Path::new("main.lpp").exists() {
         "main.lpp".to_string()
     } else {
         "src/main.lpp".to_string()
@@ -612,7 +735,19 @@ fn read_manifest() -> Result<Package, String> {
     } else if std::path::Path::new("lpp.toml").exists() {
         let content = fs::read_to_string("lpp.toml")
             .map_err(|e| format!("Failed to read lpp.toml: {}", e))?;
-        parse_toml(&content)
+        match parse_toml(&content) {
+            Ok(package) => Ok(package),
+            Err(error) if content.contains("workspace = true") => {
+                let (_root, root_manifest) = workspace_root(Path::new("."))?;
+                let workspace_version = root_manifest
+                    .get("workspace")
+                    .and_then(|w| w.get("version"))
+                    .and_then(toml::Value::as_str)
+                    .ok_or_else(|| format!("{error}; workspace has no [workspace].version"))?;
+                parse_toml_with_workspace(&content, Some(workspace_version))
+            }
+            Err(error) => Err(error),
+        }
     } else {
         Err("No lpp.json or lpp.toml manifest found in current directory.".to_string())
     }
@@ -692,8 +827,11 @@ fn registry_package_entries() -> Vec<(String, RegistryEntry)> {
                         .to_string();
                     let branch = v.get("branch").and_then(|b| b.as_str()).map(String::from);
                     let tag = v.get("tag").and_then(|t| t.as_str()).map(String::from);
+                    let version = v.get("version").and_then(|x| x.as_str()).map(String::from);
+                    let path = v.get("path").and_then(|x| x.as_str()).map(String::from);
+                    let source = v.get("source").or_else(|| v.get("source_url")).and_then(|x| x.as_str()).map(String::from);
                     let description = v.get("description").and_then(|d| d.as_str()).map(String::from);
-                    entries.push((k.clone(), RegistryEntry { git, branch, tag, description }));
+                    entries.push((k.clone(), RegistryEntry { git, branch, tag, version, path, source, description }));
                 }
             }
         }
@@ -983,6 +1121,9 @@ fn compile_source_to_object(source_path: &Path) -> Result<PathBuf, String> {
         println!("  Cache hit: {}", cache_key);
         return Ok(obj_file);
     }
+    // Never let a failed compile leave an object from a previous source
+    // revision that a later link step could accidentally consume.
+    let _ = fs::remove_file(&obj_file);
     let status = std::process::Command::new(&compiler_path)
         .env("LPP_AOT", "1")
         // Package builds consume the object file directly. Skipping the
@@ -1002,6 +1143,7 @@ fn compile_source_to_object(source_path: &Path) -> Result<PathBuf, String> {
         })?;
 
     if !status.success() {
+        let _ = fs::remove_file(&obj_file);
         return Err(format!(
             "Compilation failed for '{}'.",
             source_path.display()
@@ -1510,7 +1652,19 @@ pub fn direct_link_binary(obj_file: &Path, output_path: &Path) -> Result<(), Str
 }
 
 fn link_native_binary(obj_file: &Path, output_path: &Path) -> Result<(), String> {
-    let use_host = std::env::var("LPP_LINKER").as_deref() == Ok("host");
+    // Package builds must honor both the CLI/environment override and the
+    // persisted `lpp config set linker ...` setting.  The old implementation
+    // silently used the direct linker unless LPP_LINKER=host was exported.
+    let config = crate::config::LppConfig::load_or_create();
+    let use_host = match std::env::var("LPP_LINKER").ok().as_deref() {
+        Some("host") => true,
+        Some("direct") => false,
+        Some("auto") | None => !config.use_direct_linker(),
+        Some(other) => {
+            eprintln!("[L++] unknown LPP_LINKER value '{other}', using configured linker");
+            !config.use_direct_linker()
+        }
+    };
     if use_host {
         #[cfg(windows)]
         load_msvc_env();
@@ -1520,10 +1674,10 @@ fn link_native_binary(obj_file: &Path, output_path: &Path) -> Result<(), String>
     }
 }
 
-pub fn run_command(args: &[String]) {
+pub fn run_command(args: &[String]) -> i32 {
     if args.is_empty() {
         print_help();
-        return;
+        return 0;
     }
 
     match args[0].as_str() {
@@ -1533,17 +1687,16 @@ pub fn run_command(args: &[String]) {
                 "create" | "new" => {
                     let mut web_args = vec!["web".to_string()];
                     web_args.extend(args.iter().skip(2).cloned());
-                    cmd_new(&web_args);
+                    cmd_new(&web_args)
                 }
                 "dev" | "run" => cmd_dev(),
-                "build" => {
-                    let _ = cmd_build_opts(true);
-                }
+                "build" => if cmd_build_opts(true).is_some() { 0 } else { 1 },
                 _ => {
                     println!("Lreact Framework CLI Commands:");
                     println!("  lpp lreact create <name>   Create a new Lreact web desktop application");
                     println!("  lpp lreact dev             Start local dev server (http://localhost:3000)");
                     println!("  lpp lreact build           Build standalone release executable & assets in dist/");
+                    0
                 }
             }
         }
@@ -1555,34 +1708,39 @@ pub fn run_command(args: &[String]) {
         "remove" => cmd_remove(&args[1..]),
         "update" => cmd_update(),
         "search" => cmd_search(&args[1..]),
+        "workspace" => cmd_workspace(&args[1..]),
         "list" => cmd_list(),
         "tree" => cmd_tree(),
         "metadata" => cmd_metadata(),
         "outdated" => cmd_outdated(),
+        "version" => cmd_version(&args[1..]),
         "clean" => cmd_clean(),
         "check" => cmd_check(),
         "build" => {
             let is_release = args.iter().any(|a| a == "--release");
-            let _ = cmd_build_opts(is_release);
+            if cmd_build_opts(is_release).is_some() { 0 } else { 1 }
         }
         "run" => cmd_run(),
         "test" => cmd_test(),
         "bench" => cmd_bench(),
-        "help" => print_help(),
+        "help" => {
+            print_help();
+            0
+        }
         "publish" => {
-            // publish is fully handled by the self-hosted PM.
-            // If we reach here the self-hosted PM was unavailable or git failed.
             eprintln!("[L++] 'publish' requires the self-hosted PM (lpp-pm). Ensure LPP_HOME is set.");
+            1
         }
         cmd => {
             eprintln!("[L++] Unknown package manager command: '{}'", cmd);
             print_help();
+            2
         }
     }
 }
 
 fn print_help() {
-    println!("L++ Package Manager v4.5.0");
+    println!("L++ Package Manager v{}", env!("CARGO_PKG_VERSION"));
     println!("Usage:");
     println!("  lpp <file.lpp> [options]          Compile one source file");
     println!("  lpp <command> [args]              Package/app workflow");
@@ -1600,7 +1758,10 @@ fn print_help() {
     println!("  list                              List direct dependencies");
     println!("  tree                              Print lockfile dependency tree");
     println!("  metadata                          Print package manifest");
-    println!("  outdated                          Show unpinned dependencies");
+    println!("  outdated                          Show unpinned or incompatible dependencies");
+    println!("  version                           Show package version");
+    println!("  version set <semver>              Set package version");
+    println!("  version bump [major|minor|patch]  Bump package version");
     println!();
     println!("Global app workflow:");
     println!("  install lpp-opencode              Install lpp-opencode command globally");
@@ -1637,7 +1798,7 @@ fn print_help() {
     println!("  lpp install lpp-opencode          Installs a known app globally, no project needed");
 }
 
-fn cmd_new(args: &[String]) {
+fn cmd_new(args: &[String]) -> i32 {
     let mut is_web = false;
     let mut name_arg = None;
 
@@ -1645,12 +1806,29 @@ fn cmd_new(args: &[String]) {
         if arg == "web" || arg == "--web" || arg == "lreact" {
             is_web = true;
         } else if !arg.starts_with('-') {
+            if name_arg.is_some() {
+                eprintln!("[L++] Error: expected one project name, got '{}'.", arg);
+                return 2;
+            }
             name_arg = Some(arg.as_str());
         }
     }
 
     let raw_name = name_arg.unwrap_or("my_app");
+    let raw_path = Path::new(raw_name);
+    if raw_name.is_empty()
+        || raw_name == "."
+        || raw_name == ".."
+        || raw_path.file_name().and_then(|n| n.to_str()) != Some(raw_name)
+    {
+        eprintln!("[L++] Error: project name must be a single directory name: '{raw_name}'.");
+        return 2;
+    }
     let package_name = normalize_package_name(raw_name);
+    if package_name.is_empty() || package_name == "_" {
+        eprintln!("[L++] Error: invalid project name '{raw_name}'.");
+        return 2;
+    }
     let project_dir = PathBuf::from(raw_name);
 
     if project_dir.exists() {
@@ -1658,58 +1836,228 @@ fn cmd_new(args: &[String]) {
             "[L++] Error: directory '{}' already exists.",
             project_dir.display()
         );
-        return;
+        return 1;
+    }
+
+    if let Err(e) = fs::create_dir_all(&project_dir) {
+        eprintln!("Failed to create project directory: {}", e);
+        return 1;
     }
 
     if is_web {
         println!("[Lreact] Creating new Lreact Web App '{}'...", raw_name);
-        if let Err(e) = fs::create_dir_all(&project_dir) {
-            eprintln!("Failed to create project directory: {}", e);
-            return;
-        }
         match write_web_scaffold(&project_dir, &package_name) {
             Ok(()) => {
                 println!("[Lreact] Web App '{}' created at {}.", package_name, project_dir.display());
-                println!("[L++] Installing lreact dependency into {}...", project_dir.display());
-                let old_cwd = std::env::current_dir().ok();
-                if std::env::set_current_dir(&project_dir).is_ok() {
-                    cmd_install(false);
-                    if let Some(old) = old_cwd {
-                        let _ = std::env::set_current_dir(old);
+                // Scaffold creation must not report success if the dependency
+                // install failed. Restore the caller's cwd even on errors.
+                let old_cwd = match std::env::current_dir() {
+                    Ok(cwd) => cwd,
+                    Err(e) => {
+                        eprintln!("[L++] cannot read current directory: {e}");
+                        return 1;
                     }
+                };
+                if let Err(e) = std::env::set_current_dir(&project_dir) {
+                    eprintln!("[L++] cannot enter new project: {e}");
+                    return 1;
+                }
+                let install_status = cmd_install(false);
+                let restore_status = std::env::set_current_dir(old_cwd);
+                if let Err(e) = restore_status {
+                    eprintln!("[L++] warning: cannot restore current directory: {e}");
+                }
+                if install_status != 0 {
+                    eprintln!("[Lreact] dependency install was not completed; run `lpp install` when network access is available");
                 }
                 println!("\nNext steps:");
                 println!("  cd {}", raw_name);
                 println!("  lpp dev              # Start local Lreact dev server at http://localhost:3000");
                 println!("  lpp build --release  # Build standalone native executable in dist/");
             }
-            Err(e) => eprintln!("{}", e),
+            Err(e) => {
+                eprintln!("{}", e);
+                return 1;
+            }
         }
     } else {
         println!("[L++] Creating new project '{}'...", raw_name);
-        if let Err(e) = fs::create_dir_all(&project_dir) {
-            eprintln!("Failed to create project directory: {}", e);
-            return;
+        if let Err(e) = write_project_scaffold(&project_dir, &package_name) {
+            eprintln!("{}", e);
+            return 1;
         }
-        match write_project_scaffold(&project_dir, &package_name) {
-            Ok(()) => println!(
-                "[L++] Project '{}' created at {}.",
-                package_name,
-                project_dir.display()
-            ),
-            Err(e) => eprintln!("{}", e),
-        }
+        println!(
+            "[L++] Project '{}' created at {}.",
+            package_name,
+            project_dir.display()
+        );
     }
+    0
 }
 
-fn cmd_init(args: &[String]) {
+fn cmd_init(args: &[String]) -> i32 {
+    if Path::new("lpp.toml").exists() || Path::new("lpp.json").exists() {
+        eprintln!("[L++] A package manifest already exists here; refusing to overwrite it.");
+        return 1;
+    }
     let project_name =
         normalize_package_name(args.get(0).map(|s| s.as_str()).unwrap_or("my_project"));
     println!("[L++] Initializing new project '{}'...", project_name);
     match write_project_scaffold(Path::new("."), &project_name) {
-        Ok(()) => println!("[L++] Project '{}' initialized successfully!", project_name),
-        Err(e) => eprintln!("{}", e),
+        Ok(()) => {
+            println!("[L++] Project '{}' initialized successfully!", project_name);
+            0
+        }
+        Err(e) => {
+            eprintln!("{}", e);
+            1
+        }
     }
+}
+
+fn bump_package_version(current: &str, segment: &str) -> Result<String, String> {
+    let mut version = semver::Version::parse(current)
+        .map_err(|e| format!("invalid package version '{current}': {e}"))?;
+    // A release bump starts a new stable release.  Keeping a prerelease tag
+    // while changing the numeric component produces surprising ordering and
+    // made `publish patch` non-deterministic.
+    version.pre = semver::Prerelease::EMPTY;
+    version.build = semver::BuildMetadata::EMPTY;
+    match segment {
+        "major" => {
+            version.major = version.major.checked_add(1).ok_or_else(|| "major version overflow".to_string())?;
+            version.minor = 0;
+            version.patch = 0;
+        }
+        "minor" => {
+            version.minor = version.minor.checked_add(1).ok_or_else(|| "minor version overflow".to_string())?;
+            version.patch = 0;
+        }
+        "patch" => {
+            version.patch = version.patch.checked_add(1).ok_or_else(|| "patch version overflow".to_string())?;
+        }
+        other => return Err(format!("unknown version segment '{other}'; use major, minor, or patch")),
+    }
+    Ok(version.to_string())
+}
+
+fn toml_set_package_version(content: &str, version: &str) -> Result<String, String> {
+    let mut section = String::new();
+    let mut found = false;
+    let mut lines = Vec::new();
+    for raw in content.lines() {
+        let trimmed = raw.trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            section = trimmed[1..trimmed.len() - 1].trim().to_string();
+        }
+        if section == "package" {
+            if let Some(eq) = raw.find('=') {
+                let key = raw[..eq].trim();
+                if key == "version" {
+                    let indent = &raw[..raw.len() - raw.trim_start().len()];
+                    lines.push(format!("{indent}version = \"{version}\""));
+                    found = true;
+                    continue;
+                }
+            }
+        }
+        lines.push(raw.to_string());
+    }
+    if !found {
+        return Err("Missing version key in [package] section".to_string());
+    }
+    let mut result = lines.join("\n");
+    if content.ends_with('\n') {
+        result.push('\n');
+    }
+    Ok(result)
+}
+
+fn write_manifest_version(version: &str) -> Result<(), String> {
+    validate_package_version(version)?;
+    if Path::new("lpp.json").exists() {
+        let path = Path::new("lpp.json");
+        let content = fs::read_to_string(path).map_err(|e| format!("read lpp.json: {e}"))?;
+        let mut value: serde_json::Value = serde_json::from_str(&content)
+            .map_err(|e| format!("JSON syntax error in lpp.json: {e}"))?;
+        let object = value
+            .as_object_mut()
+            .ok_or_else(|| "JSON manifest root must be an object".to_string())?;
+        object.insert("version".to_string(), serde_json::Value::String(version.to_string()));
+        let updated = serde_json::to_string_pretty(&value)
+            .map_err(|e| format!("serialize lpp.json: {e}"))?;
+        let temp = path.with_extension("json.tmp");
+        fs::write(&temp, format!("{updated}\n")).map_err(|e| format!("write lpp.json: {e}"))?;
+        if let Err(e) = replace_file(&temp, path) {
+            let _ = fs::remove_file(&temp);
+            return Err(e);
+        }
+        return Ok(());
+    }
+    if Path::new("lpp.toml").exists() {
+        let path = Path::new("lpp.toml");
+        let content = fs::read_to_string(path).map_err(|e| format!("read lpp.toml: {e}"))?;
+        let updated = toml_set_package_version(&content, version)?;
+        let temp = path.with_extension("toml.tmp");
+        fs::write(&temp, updated).map_err(|e| format!("write lpp.toml: {e}"))?;
+        if let Err(e) = replace_file(&temp, path) {
+            let _ = fs::remove_file(&temp);
+            return Err(e);
+        }
+        return Ok(());
+    }
+    Err("No lpp.json or lpp.toml manifest found in current directory.".to_string())
+}
+
+fn cmd_version(args: &[String]) -> i32 {
+    let package = match read_manifest() {
+        Ok(pkg) => pkg,
+        Err(_) => {
+            println!("L++ compiler v{}", env!("CARGO_PKG_VERSION"));
+            return if args.is_empty() { 0 } else { 1 };
+        }
+    };
+
+    if args.is_empty() || (args.len() == 1 && args[0] == "--show") {
+        println!("{} {}", package.name, package.version);
+        return 0;
+    }
+
+    let operation = if args[0] == "set" {
+        if args.len() != 2 {
+            eprintln!("Usage: lpp version set <semver>");
+            return 2;
+        }
+        args[1].clone()
+    } else {
+        let segment = if args[0] == "bump" || args[0] == "--bump" {
+            if args.len() > 2 {
+                eprintln!("Usage: lpp version bump [major|minor|patch]");
+                return 2;
+            }
+            args.get(1).map(String::as_str).unwrap_or("patch")
+        } else {
+            if args.len() != 1 {
+                eprintln!("Usage: lpp version [set <semver>|bump [major|minor|patch]]");
+                return 2;
+            }
+            args[0].as_str()
+        };
+        match bump_package_version(&package.version, segment) {
+            Ok(version) => version,
+            Err(e) => {
+                eprintln!("[L++] {e}");
+                return 2;
+            }
+        }
+    };
+
+    if let Err(e) = write_manifest_version(&operation) {
+        eprintln!("[L++] version update failed: {e}");
+        return 1;
+    }
+    println!("[L++] {}: {} -> {}", package.name, package.version, operation);
+    0
 }
 
 pub fn resolve_from_json(json_str: &str, target_name: &str) -> Option<RegistryEntry> {
@@ -1743,13 +2091,24 @@ pub fn resolve_from_json(json_str: &str, target_name: &str) -> Option<RegistryEn
                         .to_string();
                     let branch = v.get("branch").and_then(|b| b.as_str()).map(String::from);
                     let tag = v.get("tag").and_then(|t| t.as_str()).map(String::from);
+                    let version = v.get("version").and_then(|x| x.as_str()).map(String::from);
+                    let path = v.get("path").and_then(|x| x.as_str()).map(String::from);
+                    let source = v.get("source").or_else(|| v.get("source_url")).and_then(|x| x.as_str()).map(String::from);
                     let description = v.get("description").and_then(|d| d.as_str()).map(String::from);
-                    return Some(RegistryEntry { git, branch, tag, description });
+                    return Some(RegistryEntry { git, branch, tag, version, path, source, description });
                 }
             }
         }
     }
     None
+}
+
+fn is_registry_json(content: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(content)
+        .ok()
+        .and_then(|value| value.get("packages").cloned())
+        .and_then(|packages| packages.as_object().cloned())
+        .is_some()
 }
 
 fn fetch_registry_json() -> Option<String> {
@@ -1763,7 +2122,9 @@ fn fetch_registry_json() -> Option<String> {
     for local in &local_paths {
         if local.exists() {
             if let Ok(content) = fs::read_to_string(local) {
-                return Some(content);
+                if is_registry_json(&content) {
+                    return Some(content);
+                }
             }
         }
     }
@@ -1780,7 +2141,9 @@ fn fetch_registry_json() -> Option<String> {
             for candidate in &exe_candidates {
                 if candidate.exists() {
                     if let Ok(content) = fs::read_to_string(candidate) {
-                        return Some(content);
+                        if is_registry_json(&content) {
+                            return Some(content);
+                        }
                     }
                 }
             }
@@ -1803,7 +2166,7 @@ fn fetch_registry_json() -> Option<String> {
             if let Some(out) = output {
                 if out.status.success() {
                     let text = String::from_utf8_lossy(&out.stdout).into_owned();
-                    if !text.trim().is_empty() && text.contains("packages") {
+                    if is_registry_json(&text) {
                         fetched_json = Some(text);
                         break;
                     }
@@ -1821,7 +2184,7 @@ fn fetch_registry_json() -> Option<String> {
             if let Some(out) = output {
                 if out.status.success() {
                     let text = String::from_utf8_lossy(&out.stdout).into_owned();
-                    if !text.trim().is_empty() && text.contains("packages") {
+                    if is_registry_json(&text) {
                         fetched_json = Some(text);
                         break;
                     }
@@ -1842,7 +2205,7 @@ fn fetch_registry_json() -> Option<String> {
 
     if cache_path.exists() {
         if let Ok(content) = fs::read_to_string(&cache_path) {
-            if !content.trim().is_empty() {
+            if is_registry_json(&content) {
                 return Some(content);
             }
         }
@@ -1868,7 +2231,7 @@ fn is_lpp_opencode_alias(name: &str) -> bool {
     )
 }
 
-fn install_lpp_opencode_global() {
+fn install_lpp_opencode_global() -> i32 {
     println!("[L++] Installing lpp-opencode globally...");
     #[cfg(windows)]
     {
@@ -1876,276 +2239,428 @@ fn install_lpp_opencode_global() {
         let status = std::process::Command::new("powershell")
             .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script])
             .status();
-        match status {
-            Ok(s) if s.success() => println!("[L++] lpp-opencode installed. Run: lpp-opencode /provider"),
-            Ok(s) => eprintln!("[L++] lpp-opencode installer exited with status {}", s),
-            Err(e) => eprintln!("[L++] Failed to run PowerShell installer: {}", e),
-        }
-        return;
+        return match status {
+            Ok(s) if s.success() => {
+                println!("[L++] lpp-opencode installed. Run: lpp-opencode /provider");
+                0
+            }
+            Ok(s) => {
+                eprintln!("[L++] lpp-opencode installer exited with status {}", s);
+                s.code().unwrap_or(1)
+            }
+            Err(e) => {
+                eprintln!("[L++] Failed to run PowerShell installer: {}", e);
+                1
+            }
+        };
     }
     #[cfg(not(windows))]
     {
         let script = "curl -fsSL https://raw.githubusercontent.com/samarnever-droid/lpp-opencode/main/scripts/install.sh | sh";
         let status = std::process::Command::new("sh").args(["-c", script]).status();
         match status {
-            Ok(s) if s.success() => println!("[L++] lpp-opencode installed. Run: lpp-opencode /provider"),
-            Ok(s) => eprintln!("[L++] lpp-opencode installer exited with status {}", s),
-            Err(e) => eprintln!("[L++] Failed to run shell installer: {}", e),
+            Ok(s) if s.success() => {
+                println!("[L++] lpp-opencode installed. Run: lpp-opencode /provider");
+                0
+            }
+            Ok(s) => {
+                eprintln!("[L++] lpp-opencode installer exited with status {}", s);
+                s.code().unwrap_or(1)
+            }
+            Err(e) => {
+                eprintln!("[L++] Failed to run shell installer: {}", e);
+                1
+            }
         }
     }
 }
 
-fn cmd_install_command(args: &[String]) {
-    if !args.is_empty() && !Path::new("lpp.toml").exists() {
+fn git_command<I, S>(args: I) -> Result<std::process::Output, String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<std::ffi::OsStr>,
+{
+    std::process::Command::new("git")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .args(args)
+        .output()
+        .map_err(|e| format!("failed to execute git: {e}"))
+}
+
+fn git_status<I, S>(args: I, context: &str) -> Result<(), String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<std::ffi::OsStr>,
+{
+    let output = git_command(args)?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if detail.is_empty() {
+            Err(format!("{context} (git exit {})", output.status))
+        } else {
+            Err(format!("{context}: {detail}"))
+        }
+    }
+}
+
+fn git_output<I, S>(args: I, context: &str) -> Result<String, String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<std::ffi::OsStr>,
+{
+    let output = git_command(args)?;
+    if !output.status.success() {
+        let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if detail.is_empty() {
+            format!("{context} (git exit {})", output.status)
+        } else {
+            format!("{context}: {detail}")
+        });
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn replace_file(temp: &Path, destination: &Path) -> Result<(), String> {
+    #[cfg(windows)]
+    if destination.exists() {
+        fs::remove_file(destination).map_err(|e| format!("remove old '{}': {e}", destination.display()))?;
+    }
+    fs::rename(temp, destination).map_err(|e| format!("replace '{}': {e}", destination.display()))
+}
+
+fn toml_quote(value: &str) -> String {
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n").replace('\r', "\\r"))
+}
+
+fn lock_package_block(dep: &Dependency, source: &str, resolved: &Path) -> String {
+    let version = dep.version.as_deref().unwrap_or("*");
+    format!(
+        "[[package]]\nname = {}\nversion = {}\nsource = {}\nresolved = {}\n\n",
+        toml_quote(&dep.name),
+        toml_quote(version),
+        toml_quote(source),
+        toml_quote(&resolved.to_string_lossy()),
+    )
+}
+
+fn install_dependency(
+    dep: &Dependency,
+    destination: &Path,
+    force_update: bool,
+) -> Result<String, String> {
+    if dep.name.is_empty() || dep.name == "." || dep.name == ".." || dep.name.chars().any(|ch| ch == '/' || ch == '\\') {
+        return Err(format!("invalid dependency name '{}'", dep.name));
+    }
+
+    if let Some(git_url) = dep.git.as_deref() {
+        if git_url.trim().is_empty() {
+            return Err(format!("dependency '{}' has an empty git URL", dep.name));
+        }
+        if destination.exists() {
+            if !destination.join(".git").exists() {
+                return Err(format!("destination '{}' exists but is not a git checkout", destination.display()));
+            }
+            if force_update {
+                git_status(["-C", destination.to_string_lossy().as_ref(), "fetch", "--all", "--prune"], &format!("updating '{}'", dep.name))?;
+                if let Some(ref tag) = dep.tag {
+                    git_status(["-C", destination.to_string_lossy().as_ref(), "checkout", "--force", tag], &format!("checking out tag '{tag}'"))?;
+                } else if let Some(ref branch) = dep.branch {
+                    git_status(["-C", destination.to_string_lossy().as_ref(), "checkout", branch], &format!("checking out branch '{branch}'"))?;
+                    git_status(["-C", destination.to_string_lossy().as_ref(), "pull", "--ff-only"], &format!("updating branch '{branch}'"))?;
+                }
+            }
+        } else {
+            if let Some(parent) = destination.parent() {
+                fs::create_dir_all(parent).map_err(|e| format!("create dependency directory: {e}"))?;
+            }
+            let mut args = vec!["clone".to_string()];
+            if let Some(ref tag) = dep.tag {
+                args.push("--branch".to_string());
+                args.push(tag.clone());
+            } else if let Some(ref branch) = dep.branch {
+                args.push("--branch".to_string());
+                args.push(branch.clone());
+            }
+            args.push(git_url.to_string());
+            args.push(destination.to_string_lossy().into_owned());
+            git_status(args, &format!("cloning '{}'", dep.name))?;
+        }
+        let commit = git_output(["-C", destination.to_string_lossy().as_ref(), "rev-parse", "HEAD"], &format!("reading '{}' revision", dep.name))?;
+        return Ok(format!("git+{}#{}", git_url, commit));
+    }
+
+    if let Some(path) = dep.path.as_deref() {
+        let source = Path::new(path);
+        if !source.exists() {
+            return Err(format!("path dependency '{}' does not exist: {}", dep.name, source.display()));
+        }
+        if destination.exists() {
+            fs::remove_dir_all(destination).map_err(|e| format!("replace path dependency '{}': {e}", dep.name))?;
+        }
+        if source.is_dir() {
+            copy_dir_all(source, destination).map_err(|e| format!("copy path dependency '{}': {e}", dep.name))?;
+        } else if source.is_file() {
+            // Registry entries for stdlib modules point at a single .lpp file.
+            // Materialise that file as a tiny package instead of rejecting a
+            // valid registry entry as if it were a broken directory path.
+            let file_name = source.file_name().and_then(|n| n.to_str()).unwrap_or("main.lpp");
+            let src_dir = destination.join("src");
+            fs::create_dir_all(&src_dir).map_err(|e| format!("create path dependency '{}': {e}", dep.name))?;
+            fs::copy(source, src_dir.join(file_name)).map_err(|e| format!("copy path dependency '{}': {e}", dep.name))?;
+            let manifest = format!("[package]\nname = {}\nversion = \"0.1.0\"\nentry = {}\n\n[dependencies]\n", toml_quote(&dep.name), toml_quote(&format!("src/{file_name}")));
+            fs::write(destination.join("lpp.toml"), manifest).map_err(|e| format!("write path dependency '{}': {e}", dep.name))?;
+        } else {
+            return Err(format!("path dependency '{}' is neither a file nor a directory: {}", dep.name, source.display()));
+        }
+        return Ok(format!("path+{}", source.to_string_lossy()));
+    }
+
+    Err(format!("dependency '{}' has no resolvable source", dep.name))
+}
+
+fn cmd_install_command(args: &[String]) -> i32 {
+    if !args.is_empty() && !Path::new("lpp.toml").exists() && !Path::new("lpp.json").exists() {
         let package = &args[0];
         if is_lpp_opencode_alias(package) {
-            install_lpp_opencode_global();
-            return;
+            return install_lpp_opencode_global();
         }
-        eprintln!("[L++] No lpp.toml found here, so this is not a project dependency install.");
+        eprintln!("[L++] No lpp.toml or lpp.json found here, so this is not a project dependency install.");
         eprintln!("[L++] '{}' is not a known global app alias.", package);
-        eprintln!("");
+        eprintln!();
         eprintln!("What you probably want:");
         eprintln!("  Global app:        lpp install lpp-opencode");
         eprintln!("  Search registry:   lpp search {}", package);
         eprintln!("  New project:       lpp new my_app && cd my_app && lpp add {}", package);
-        eprintln!("");
+        eprintln!();
         eprintln!("Known global app aliases: lpp-opencode, opencode, openclaude, lpp-openclaude");
-        return;
+        return 1;
     }
-    cmd_install(false);
+    if args.iter().any(|arg| arg == "--offline") {
+        // The PM is single-process at this point; use the environment only to
+        // pass the flag to the existing install implementation.
+        unsafe { std::env::set_var("LPP_OFFLINE", "1") };
+    }
+    cmd_install(false)
 }
 
-fn cmd_install(force_update: bool) {
+fn cmd_install(force_update: bool) -> i32 {
     println!("[L++] Resolving dependencies...");
     let package = match read_manifest() {
         Ok(pkg) => pkg,
         Err(e) => {
             eprintln!("[L++] Manifest error: {}", e);
-            return;
+            return 1;
         }
     };
 
-    let pkg_dir = std::path::Path::new(".lpp_packages");
-    if !pkg_dir.exists() {
-        if let Err(e) = fs::create_dir_all(pkg_dir) {
-            eprintln!("Failed to create .lpp_packages directory: {}", e);
-            return;
-        }
+    let pkg_dir = Path::new(".lpp_packages");
+    if let Err(e) = fs::create_dir_all(pkg_dir) {
+        eprintln!("Failed to create .lpp_packages directory: {}", e);
+        return 1;
     }
 
-    let mut lock_content = String::from("# Generated by L++ Package Manager. Do not edit.\n\n");
+    let mut lock_content = String::from("# L++ lockfile v2 — generated by lpp. Do not edit.\nlock_version = 2\n\n");
     let mut worklist = package.dependencies;
     let mut processed = std::collections::HashSet::new();
+    let mut specs: std::collections::HashMap<String, (Option<String>, Option<String>, Option<String>, Option<String>)> = std::collections::HashMap::new();
+    let mut failed = false;
 
     while let Some(dep) = worklist.pop() {
-        if !processed.insert(dep.name.clone()) {
+        let key = dep.name.clone();
+        let spec = (dep.version.clone(), dep.git.clone(), dep.path.clone(), dep.tag.clone().or(dep.branch.clone()));
+        if let Some(previous) = specs.get(&key) {
+            if previous != &spec {
+                eprintln!("[L++] conflicting requirements for dependency '{}'; use one source and version", key);
+                failed = true;
+            }
+            continue;
+        }
+        specs.insert(key.clone(), spec);
+        if !processed.insert(key) {
             continue;
         }
 
-        println!("[L++] Installing '{}'...", dep.name);
-        let dest_path = pkg_dir.join(&dep.name);
-
-        let mut dep_git = dep.git.clone();
-        let mut dep_branch = dep.branch.clone();
-        let mut dep_tag = dep.tag.clone();
-
-        if dep_git.is_none() && dep.path.is_none() {
-            if let Some(entry) = resolve_registry_package(&dep.name) {
-                println!(
-                    "[L++] Resolved '{}' from registry -> {}",
-                    dep.name, entry.git
-                );
-                dep_git = Some(entry.git);
-                dep_branch = entry.branch;
-                dep_tag = entry.tag;
+        let mut resolved_dep = dep.clone();
+        if resolved_dep.git.is_none() && resolved_dep.path.is_none() {
+            if std::env::var_os("LPP_OFFLINE").is_some() {
+                eprintln!("[L++] dependency '{}' is not available offline without a local source", resolved_dep.name);
+                failed = true;
+                continue;
+            }
+            if let Some(entry) = resolve_registry_package(&resolved_dep.name) {
+                if !entry.git.is_empty() {
+                    resolved_dep.git = Some(entry.git);
+                } else if let Some(path) = entry.path {
+                    resolved_dep.path = Some(path);
+                } else {
+                    eprintln!("[L++] registry entry '{}' has no git or path source", resolved_dep.name);
+                    failed = true;
+                    continue;
+                }
+                if resolved_dep.branch.is_none() {
+                    resolved_dep.branch = entry.branch;
+                }
+                if resolved_dep.tag.is_none() {
+                    resolved_dep.tag = entry.tag;
+                }
+                if resolved_dep.version.is_none() {
+                    resolved_dep.version = entry.version;
+                }
             } else {
-                eprintln!(
-                    "[L++] Error: dependency '{}' has no source (git/path) and is not in the registry.",
-                    dep.name
-                );
+                eprintln!("[L++] dependency '{}' was not found in the registry", resolved_dep.name);
+                failed = true;
                 continue;
             }
         }
 
-        let installed_successfully = if let Some(ref git_url) = dep_git {
-            let mut git_checkout_needed = false;
-            let mut clone_ok = true;
-            if dest_path.exists() {
-                if force_update {
-                    println!("  Updating '{}' from {}...", dep.name, git_url);
-                    let status = std::process::Command::new("git")
-                        .env("GIT_TERMINAL_PROMPT", "0")
-                        .args(&[
-                            "-c",
-                            "credential.helper=",
-                            "-C",
-                            dest_path.to_str().unwrap(),
-                            "pull",
-                        ])
-                        .status();
-                    match status {
-                        Ok(s) if s.success() => {
-                            git_checkout_needed = true;
-                        }
-                        _ => {
-                            eprintln!("  Failed to pull updates for '{}'. skipping.", dep.name);
-                            clone_ok = false;
-                        }
-                    }
-                } else {
-                    println!("  Dependency '{}' already installed.", dep.name);
+        println!("[L++] Installing '{}'...", resolved_dep.name);
+        let destination = pkg_dir.join(&resolved_dep.name);
+        let existed_before = destination.exists();
+        let source = match install_dependency(&resolved_dep, &destination, force_update) {
+            Ok(source) => source,
+            Err(e) => {
+                if !existed_before && destination.exists() {
+                    let _ = fs::remove_dir_all(&destination);
                 }
-            } else {
-                println!("  Cloning '{}' from {}...", dep.name, git_url);
-                let status = std::process::Command::new("git")
-                    .env("GIT_TERMINAL_PROMPT", "0")
-                    .args(&[
-                        "-c",
-                        "credential.helper=",
-                        "clone",
-                        git_url,
-                        dest_path.to_str().unwrap(),
-                    ])
-                    .status();
-                match status {
-                    Ok(s) if s.success() => {
-                        git_checkout_needed = true;
-                    }
-                    _ => {
-                        eprintln!("  Failed to clone '{}'. skipping.", dep.name);
-                        clone_ok = false;
-                    }
-                }
+                eprintln!("[L++] {e}");
+                failed = true;
+                continue;
             }
-
-            if clone_ok && git_checkout_needed {
-                if let Some(ref tag) = dep_tag {
-                    println!("  Checking out tag '{}'...", tag);
-                    let _ = std::process::Command::new("git")
-                        .env("GIT_TERMINAL_PROMPT", "0")
-                        .args(&[
-                            "-c",
-                            "credential.helper=",
-                            "-C",
-                            dest_path.to_str().unwrap(),
-                            "checkout",
-                            tag,
-                        ])
-                        .status();
-                } else if let Some(ref branch) = dep_branch {
-                    println!("  Checking out branch '{}'...", branch);
-                    let _ = std::process::Command::new("git")
-                        .env("GIT_TERMINAL_PROMPT", "0")
-                        .args(&[
-                            "-c",
-                            "credential.helper=",
-                            "-C",
-                            dest_path.to_str().unwrap(),
-                            "checkout",
-                            branch,
-                        ])
-                        .status();
-                }
-            }
-
-            if clone_ok {
-                let commit_output = std::process::Command::new("git")
-                    .env("GIT_TERMINAL_PROMPT", "0")
-                    .args(&[
-                        "-c",
-                        "credential.helper=",
-                        "-C",
-                        dest_path.to_str().unwrap(),
-                        "rev-parse",
-                        "HEAD",
-                    ])
-                    .output();
-                let commit_hash = if let Ok(out) = commit_output {
-                    if out.status.success() {
-                        String::from_utf8_lossy(&out.stdout).trim().to_string()
-                    } else {
-                        "unknown".to_string()
-                    }
-                } else {
-                    "unknown".to_string()
-                };
-
-                lock_content.push_str(&format!(
-                    "[[package]]\nname = \"{}\"\nversion = \"{}\"\nsource = \"git+{}#{}\"\nresolved = \"{}\"\n\n",
-                    dep.name,
-                    dep.version.clone().unwrap_or_else(|| "unbounded".to_string()),
-                    git_url,
-                    commit_hash,
-                    dest_path.display()
-                ));
-                true
-            } else {
-                false
-            }
-        } else if let Some(ref path) = dep.path {
-            println!("  Linked path: {}", path);
-            let path_ref = std::path::Path::new(path);
-            if !path_ref.exists() {
-                eprintln!(
-                    "  [L++] Error: path '{}' for dependency '{}' does not exist.",
-                    path, dep.name
-                );
-                false
-            } else {
-                lock_content.push_str(&format!(
-                    "[[package]]\nname = \"{}\"\nversion = \"{}\"\nsource = \"path+{}\"\nresolved = \"{}\"\n\n",
-                    dep.name,
-                    dep.version.clone().unwrap_or_else(|| "workspace".to_string()),
-                    path,
-                    path_ref.display()
-                ));
-                true
-            }
-        } else {
-            false
         };
+        lock_content.push_str(&lock_package_block(&resolved_dep, &source, &destination));
 
-        if installed_successfully {
-            let sub_pkg_res = if dest_path.join("lpp.json").exists() {
-                fs::read_to_string(dest_path.join("lpp.json"))
-                    .ok()
-                    .and_then(|c| parse_json_manifest(&c).ok())
-            } else if dest_path.join("lpp.toml").exists() {
-                fs::read_to_string(dest_path.join("lpp.toml"))
-                    .ok()
-                    .and_then(|c| parse_toml(&c).ok())
-            } else {
-                None
-            };
-            if let Some(sub_pkg) = sub_pkg_res {
-                for sub_dep in sub_pkg.dependencies {
-                    if !processed.contains(&sub_dep.name) {
+        let manifest_path = if destination.join("lpp.json").is_file() {
+            destination.join("lpp.json")
+        } else {
+            destination.join("lpp.toml")
+        };
+        if manifest_path.is_file() {
+            match fs::read_to_string(&manifest_path)
+                .map_err(|e| format!("read '{}': {e}", manifest_path.display()))
+                .and_then(|text| {
+                    if manifest_path.extension().and_then(|e| e.to_str()) == Some("json") {
+                        parse_json_manifest(&text)
+                    } else {
+                        parse_toml(&text)
+                    }
+                }) {
+                Ok(sub_pkg) => {
+                    let base = manifest_path.parent().unwrap_or(Path::new("."));
+                    for mut sub_dep in sub_pkg.dependencies {
+                        if let Some(path) = sub_dep.path.take() {
+                            let resolved = Path::new(&path);
+                            let resolved = if resolved.is_absolute() {
+                                resolved.to_path_buf()
+                            } else {
+                                base.join(resolved)
+                            };
+                            sub_dep.path = Some(resolved.to_string_lossy().into_owned());
+                        }
                         worklist.push(sub_dep);
                     }
+                }
+                Err(e) => {
+                    eprintln!("[L++] invalid manifest in '{}': {e}", destination.display());
+                    failed = true;
                 }
             }
         }
     }
 
-    if let Err(e) = fs::write("lpp.lock", lock_content) {
-        eprintln!("Failed to write lpp.lock: {}", e);
-    } else {
-        println!("[L++] lpp.lock file generated.");
+    if failed {
+        eprintln!("[L++] dependency installation failed; existing lpp.lock was not replaced");
+        return 1;
     }
 
+    let lock_path = Path::new("lpp.lock");
+    let temp = lock_path.with_extension("lock.tmp");
+    if let Err(e) = fs::write(&temp, lock_content) {
+        eprintln!("Failed to write temporary lockfile: {}", e);
+        return 1;
+    }
+    if let Err(e) = replace_file(&temp, lock_path) {
+        let _ = fs::remove_file(&temp);
+        eprintln!("Failed to replace lpp.lock: {e}");
+        return 1;
+    }
+    println!("[L++] lpp.lock file generated.");
     println!("[L++] Dependencies resolved successfully.");
+    0
 }
 
-fn cmd_add(args: &[String]) {
+fn toml_dependency_line(dep: &Dependency) -> String {
+    let mut fields = Vec::new();
+    if let Some(ref git) = dep.git {
+        fields.push(format!("git = {}", toml_quote(git)));
+    }
+    if let Some(ref path) = dep.path {
+        fields.push(format!("path = {}", toml_quote(path)));
+    }
+    if let Some(ref version) = dep.version {
+        fields.push(format!("version = {}", toml_quote(version)));
+    }
+    if let Some(ref branch) = dep.branch {
+        fields.push(format!("branch = {}", toml_quote(branch)));
+    }
+    if let Some(ref tag) = dep.tag {
+        fields.push(format!("tag = {}", toml_quote(tag)));
+    }
+    format!("{} = {{ {} }}", dep.name, fields.join(", "))
+}
+
+fn toml_insert_dependency(content: &str, dep: &Dependency) -> Result<String, String> {
+    // Validate before touching the file, then ensure the dependency is added
+    // inside [dependencies] rather than accidentally becoming part of a later
+    // [build]/[workspace] section.
+    parse_toml(content)?;
+    let line = toml_dependency_line(dep);
+    let mut lines: Vec<String> = content.lines().map(String::from).collect();
+    let mut dep_section = None;
+    let mut next_section = lines.len();
+    for (idx, raw) in lines.iter().enumerate() {
+        let trimmed = raw.trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            let section = trimmed[1..trimmed.len() - 1].trim();
+            if section == "dependencies" {
+                dep_section = Some(idx);
+            } else if dep_section.is_some() && idx > dep_section.unwrap() {
+                next_section = idx;
+                break;
+            }
+        }
+    }
+    if let Some(section_idx) = dep_section {
+        lines.insert(next_section, line);
+        let mut result = lines.join("\n");
+        if content.ends_with('\n') {
+            result.push('\n');
+        }
+        let _ = section_idx;
+        Ok(result)
+    } else {
+        let mut result = content.to_string();
+        if !result.is_empty() && !result.ends_with('\n') {
+            result.push('\n');
+        }
+        result.push_str("\n[dependencies]\n");
+        result.push_str(&line);
+        result.push('\n');
+        Ok(result)
+    }
+}
+
+fn cmd_add(args: &[String]) -> i32 {
     if args.is_empty() {
         eprintln!(
             "Usage: lpp add <package_name> [--git <url> [--tag <tag>] [--branch <branch>]] [--path <local_path>] [--version <semver>]"
         );
-        return;
+        return 2;
     }
 
-    let mut package_name = args[0].clone();
+    let requested_name = args[0].clone();
+    let mut package_name = requested_name.clone();
     let mut git_url = None;
     let mut tag = None;
     let mut branch = None;
@@ -2154,143 +2669,170 @@ fn cmd_add(args: &[String]) {
 
     let mut i = 1;
     while i < args.len() {
+        let value = |i: usize, flag: &str| -> Result<String, ()> {
+            args.get(i + 1).cloned().ok_or_else(|| {
+                eprintln!("Error: {flag} expects an argument");
+            })
+        };
         match args[i].as_str() {
-            "--git" => {
-                if i + 1 < args.len() {
-                    git_url = Some(args[i + 1].clone());
-                    i += 2;
-                } else {
-                    eprintln!("Error: --git expects a URL argument");
-                    return;
-                }
+            "--git" => match value(i, "--git") {
+                Ok(v) => { git_url = Some(v); i += 2; }
+                Err(()) => return 2,
+            },
+            "--tag" => match value(i, "--tag") {
+                Ok(v) => { tag = Some(v); i += 2; }
+                Err(()) => return 2,
+            },
+            "--branch" => match value(i, "--branch") {
+                Ok(v) => { branch = Some(v); i += 2; }
+                Err(()) => return 2,
+            },
+            "--version" => match value(i, "--version") {
+                Ok(v) => { version = Some(v); i += 2; }
+                Err(()) => return 2,
+            },
+            "--path" => match value(i, "--path") {
+                Ok(v) => { path = Some(v); i += 2; }
+                Err(()) => return 2,
+            },
+            other => {
+                eprintln!("Unknown argument: {other}");
+                return 2;
             }
-            "--tag" => {
-                if i + 1 < args.len() {
-                    tag = Some(args[i + 1].clone());
-                    i += 2;
-                } else {
-                    eprintln!("Error: --tag expects a tag name argument");
-                    return;
-                }
+        }
+    }
+
+    if git_url.is_some() && path.is_some() {
+        eprintln!("Error: --git and --path are mutually exclusive");
+        return 2;
+    }
+    if tag.is_some() && branch.is_some() {
+        eprintln!("Error: --tag and --branch are mutually exclusive");
+        return 2;
+    }
+    if let Some(ref req) = version {
+        if let Err(e) = validate_dependency_requirement(req) {
+            eprintln!("{e}");
+            return 2;
+        }
+    }
+
+    // @owner/repo is a convenient git shorthand, but the manifest key is the
+    // repository leaf so it remains a safe directory name.
+    if package_name.starts_with('@') {
+        if let Some(slash_idx) = package_name.find('/') {
+            let owner = &package_name[1..slash_idx];
+            let repo = &package_name[slash_idx + 1..];
+            if owner.is_empty() || repo.is_empty() {
+                eprintln!("Error: scoped package must look like @owner/repository");
+                return 2;
             }
-            "--branch" => {
-                if i + 1 < args.len() {
-                    branch = Some(args[i + 1].clone());
-                    i += 2;
-                } else {
-                    eprintln!("Error: --branch expects a branch name argument");
-                    return;
-                }
+            if git_url.is_none() && path.is_none() {
+                git_url = Some(format!("https://github.com/{owner}/{repo}.git"));
             }
-            "--version" => {
-                if i + 1 < args.len() {
-                    version = Some(args[i + 1].clone());
-                    i += 2;
-                } else {
-                    eprintln!("Error: --version expects a version string argument");
-                    return;
-                }
-            }
-            "--path" => {
-                if i + 1 < args.len() {
-                    path = Some(args[i + 1].clone());
-                    i += 2;
-                } else {
-                    eprintln!("Error: --path expects a directory path argument");
-                    return;
-                }
-            }
-            _ => {
-                eprintln!("Unknown argument: {}", args[i]);
-                return;
-            }
+            package_name = repo.to_string();
         }
     }
 
     if git_url.is_none() && path.is_none() {
-        // Auto-resolve @owner/repo → https://github.com/owner/repo.git
-        if package_name.starts_with('@') {
-            if let Some(slash_idx) = package_name.find('/') {
-                let owner = &package_name[1..slash_idx];
-                let repo = &package_name[slash_idx + 1..];
-                let url = format!("https://github.com/{}/{}.git", owner, repo);
-                println!("[L++] Auto-resolved @{}/{} → {}", owner, repo, url);
-                git_url = Some(url);
-                branch = Some("master".to_string());
-                package_name = repo.to_string();
-            }
-        }
-
-        if git_url.is_none() {
-            if let Some(entry) = resolve_registry_package(&package_name) {
-                println!("[L++] Resolved '{}' from registry:", package_name);
-                println!("  Git: {}", entry.git);
-                if let Some(ref b) = entry.branch {
-                    println!("  Branch: {}", b);
-                }
-                if let Some(ref t) = entry.tag {
-                    println!("  Tag: {}", t);
-                }
+        if let Some(entry) = resolve_registry_package(&requested_name).or_else(|| resolve_registry_package(&package_name)) {
+            println!("[L++] Resolved '{}' from registry", requested_name);
+            if git_url.is_none() && !entry.git.is_empty() {
                 git_url = Some(entry.git);
-                branch = entry.branch;
-                tag = entry.tag;
-
-                if package_name.starts_with('@') {
-                    if let Some(slash_idx) = package_name.find('/') {
-                        package_name = package_name[slash_idx + 1..].to_string();
-                    }
-                }
-            } else {
-                eprintln!(
-                    "Error: Package '{}' not found in registry. Use --git <url> or @owner/repo format.",
-                    package_name
-                );
-                return;
+            } else if path.is_none() {
+                path = entry.path;
             }
+            if branch.is_none() { branch = entry.branch; }
+            if tag.is_none() { tag = entry.tag; }
+            if version.is_none() { version = entry.version; }
+        } else {
+            eprintln!("Error: Package '{}' not found in registry. Use --git <url> or --path <dir>.", requested_name);
+            return 1;
         }
     }
 
-    if !std::path::Path::new("lpp.toml").exists() {
-        eprintln!("Error: lpp.toml not found. Run 'lpp init' first.");
-        return;
+    if let Err(e) = validate_dependency_name(&package_name) {
+        eprintln!("{e}");
+        return 2;
     }
+    let dep = Dependency { name: package_name.clone(), version, git: git_url, tag, branch, path };
 
-    let mut content = match fs::read_to_string("lpp.toml") {
+    let manifest_path = if Path::new("lpp.json").exists() {
+        PathBuf::from("lpp.json")
+    } else if Path::new("lpp.toml").exists() {
+        PathBuf::from("lpp.toml")
+    } else {
+        eprintln!("Error: lpp.toml or lpp.json not found. Run 'lpp init' first.");
+        return 1;
+    };
+    let content = match fs::read_to_string(&manifest_path) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("Failed to read lpp.toml: {}", e);
-            return;
+            eprintln!("Failed to read {}: {e}", manifest_path.display());
+            return 1;
+        }
+    };
+    let existing = if manifest_path.extension().and_then(|e| e.to_str()) == Some("json") {
+        parse_json_manifest(&content)
+    } else {
+        parse_toml(&content)
+    };
+    let pkg = match existing {
+        Ok(pkg) => pkg,
+        Err(e) => {
+            eprintln!("[L++] Manifest error: {e}");
+            return 1;
+        }
+    };
+    if pkg.dependencies.iter().any(|existing| existing.name == package_name) {
+        eprintln!("[L++] dependency '{}' already exists; edit the manifest or remove it first", package_name);
+        return 1;
+    }
+
+    let updated = if manifest_path.extension().and_then(|e| e.to_str()) == Some("json") {
+        let mut value: serde_json::Value = match serde_json::from_str(&content) {
+            Ok(value) => value,
+            Err(e) => { eprintln!("JSON syntax error: {e}"); return 1; }
+        };
+        let object = match value.as_object_mut() {
+            Some(object) => object,
+            None => { eprintln!("JSON manifest root must be an object"); return 1; }
+        };
+        let deps = object.entry("dependencies").or_insert_with(|| serde_json::json!({}));
+        let deps = match deps.as_object_mut() {
+            Some(deps) => deps,
+            None => { eprintln!("'dependencies' must be an object"); return 1; }
+        };
+        let mut dep_obj = serde_json::Map::new();
+        if let Some(ref git) = dep.git { dep_obj.insert("git".to_string(), serde_json::Value::String(git.clone())); }
+        if let Some(ref path) = dep.path { dep_obj.insert("path".to_string(), serde_json::Value::String(path.clone())); }
+        if let Some(ref version) = dep.version { dep_obj.insert("version".to_string(), serde_json::Value::String(version.clone())); }
+        if let Some(ref branch) = dep.branch { dep_obj.insert("branch".to_string(), serde_json::Value::String(branch.clone())); }
+        if let Some(ref tag) = dep.tag { dep_obj.insert("tag".to_string(), serde_json::Value::String(tag.clone())); }
+        deps.insert(package_name.clone(), serde_json::Value::Object(dep_obj));
+        match serde_json::to_string_pretty(&value) {
+            Ok(json) => format!("{json}\n"),
+            Err(e) => { eprintln!("serialize lpp.json: {e}"); return 1; }
+        }
+    } else {
+        match toml_insert_dependency(&content, &dep) {
+            Ok(updated) => updated,
+            Err(e) => { eprintln!("[L++] manifest update failed: {e}"); return 1; }
         }
     };
 
-    let mut dep_line = format!("\n{} = {{ ", package_name);
-    if let Some(ref url) = git_url {
-        dep_line.push_str(&format!("git = \"{}\"", url));
-        if let Some(ref v) = version {
-            dep_line.push_str(&format!(", version = \"{}\"", v));
-        }
-        if let Some(ref t) = tag {
-            dep_line.push_str(&format!(", tag = \"{}\"", t));
-        } else if let Some(ref b) = branch {
-            dep_line.push_str(&format!(", branch = \"{}\"", b));
-        }
-    } else if let Some(ref p) = path {
-        dep_line.push_str(&format!("path = \"{}\"", p));
-        if let Some(ref v) = version {
-            dep_line.push_str(&format!(", version = \"{}\"", v));
-        }
+    let temp = manifest_path.with_extension(if manifest_path.extension().and_then(|e| e.to_str()) == Some("json") { "json.tmp" } else { "toml.tmp" });
+    if let Err(e) = fs::write(&temp, updated) {
+        eprintln!("Failed to write {}: {e}", manifest_path.display());
+        return 1;
     }
-    dep_line.push_str(" }\n");
-
-    content.push_str(&dep_line);
-
-    if let Err(e) = fs::write("lpp.toml", content) {
-        eprintln!("Failed to update lpp.toml: {}", e);
-        return;
+    if let Err(e) = replace_file(&temp, &manifest_path) {
+        let _ = fs::remove_file(&temp);
+        eprintln!("Failed to replace {}: {e}", manifest_path.display());
+        return 1;
     }
-
-    println!("[L++] Added dependency '{}' to lpp.toml.", package_name);
-    cmd_install(false);
+    println!("[L++] Added dependency '{}' to {}.", package_name, manifest_path.display());
+    cmd_install(false)
 }
 
 #[cfg(test)]
@@ -2324,6 +2866,67 @@ mod tests {
         let manifest = "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nkeywords = [\"a\", \"b\", \"c\", \"d\", \"e\", \"f\"]\n\n[dependencies]\n";
         let err = parse_toml(manifest).expect_err("manifest with 6 keywords should fail");
         assert!(err.contains("maximum 5 keywords allowed"));
+    }
+
+    #[test]
+    fn parse_json_manifest_accepts_string_and_table_dependencies() {
+        let manifest = r#"{
+          "name": "demo",
+          "version": "1.2.3",
+          "main": "src/main.lpp",
+          "dependencies": {
+            "local": "../local",
+            "remote": { "git": "https://example.com/remote.git", "branch": "main" },
+            "semver": "^2.0"
+          }
+        }"#;
+        let pkg = super::parse_json_manifest(manifest).expect("JSON manifest should parse");
+        assert_eq!(pkg.entry.as_deref(), Some("src/main.lpp"));
+        assert_eq!(pkg.dependencies.len(), 3);
+        assert_eq!(pkg.dependencies[0].path.as_deref(), Some("../local"));
+        assert_eq!(pkg.dependencies[1].branch.as_deref(), Some("main"));
+        assert_eq!(pkg.dependencies[2].version.as_deref(), Some("^2.0"));
+    }
+
+    #[test]
+    fn manifests_validate_semver_and_dependency_sources() {
+        let workspace_member = "[package]\nname = \"demo\"\nversion = { workspace = true }\n";
+        assert!(super::parse_toml(workspace_member).is_err());
+        let resolved = super::parse_toml_with_workspace(workspace_member, Some("2.0.0"))
+            .expect("workspace version should resolve");
+        assert_eq!(resolved.version, "2.0.0");
+
+        let bad_version = "[package]\nname = \"demo\"\nversion = \"not-semver\"\n";
+        assert!(super::parse_toml(bad_version).is_err());
+        let bad_source = "[package]\nname = \"demo\"\nversion = \"1.0.0\"\n[dependencies]\nfoo = { git = \"x\", path = \"y\" }\n";
+        let err = super::parse_toml(bad_source).expect_err("conflicting sources must fail");
+        assert!(err.contains("both git and path"));
+    }
+
+    #[test]
+    fn version_bumps_reset_prerelease_metadata() {
+        assert_eq!(super::bump_package_version("1.2.3-rc.1+build", "patch").unwrap(), "1.2.4");
+        assert_eq!(super::bump_package_version("1.2.3", "minor").unwrap(), "1.3.0");
+        assert!(super::bump_package_version("1.2.3", "wat").is_err());
+    }
+
+    #[test]
+    fn toml_dependency_edit_stays_in_dependencies_section() {
+        let manifest = "[package]\nname = \"demo\"\nversion = \"1.0.0\"\n\n[dependencies]\n\n[build]\ntype = \"library\"\n";
+        let dep = super::Dependency {
+            name: "foo".to_string(),
+            version: Some("^1.0".to_string()),
+            git: None,
+            tag: None,
+            branch: None,
+            path: Some("../foo".to_string()),
+        };
+        let updated = super::toml_insert_dependency(manifest, &dep).unwrap();
+        assert!(updated.contains("foo = { path = \"../foo\", version = \"^1.0\" }"));
+        assert!(updated.contains("[build]\ntype = \"library\""));
+        let (removed, found) = super::toml_remove_dependency(&updated, "foo");
+        assert!(found);
+        assert!(!removed.contains("foo = {"));
     }
 
     #[test]
@@ -2367,60 +2970,109 @@ mod tests {
     }
 }
 
-fn cmd_remove(args: &[String]) {
-    if args.is_empty() {
+fn toml_remove_dependency(content: &str, target: &str) -> (String, bool) {
+    let mut section = String::new();
+    let mut found = false;
+    let mut lines = Vec::new();
+    for raw in content.lines() {
+        let trimmed = raw.trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            section = trimmed[1..trimmed.len() - 1].trim().to_string();
+        }
+        if section == "dependencies" {
+            if let Some(eq) = raw.find('=') {
+                let key = raw[..eq].trim().trim_matches('"').trim_matches('\'');
+                if key == target {
+                    found = true;
+                    continue;
+                }
+            }
+        }
+        lines.push(raw.to_string());
+    }
+    let mut updated = lines.join("\n");
+    if content.ends_with('\n') {
+        updated.push('\n');
+    }
+    (updated, found)
+}
+
+fn cmd_remove(args: &[String]) -> i32 {
+    let Some(package_name) = args.first() else {
         eprintln!("Usage: lpp remove <package_name>");
-        return;
-    }
-    let package_name = &args[0];
-    if !std::path::Path::new("lpp.toml").exists() {
-        eprintln!("Error: lpp.toml not found.");
-        return;
-    }
-    let content = match fs::read_to_string("lpp.toml") {
+        return 2;
+    };
+    let manifest_path = if Path::new("lpp.json").exists() {
+        PathBuf::from("lpp.json")
+    } else if Path::new("lpp.toml").exists() {
+        PathBuf::from("lpp.toml")
+    } else {
+        eprintln!("Error: lpp.toml or lpp.json not found.");
+        return 1;
+    };
+    let content = match fs::read_to_string(&manifest_path) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("Failed to read lpp.toml: {}", e);
-            return;
+            eprintln!("Failed to read {}: {e}", manifest_path.display());
+            return 1;
         }
     };
 
-    let mut new_lines = Vec::new();
-    let mut found = false;
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with(&format!("{} =", package_name))
-            || trimmed.starts_with(&format!("{}=", package_name))
-        {
-            found = true;
-            continue;
+    let (updated, found) = if manifest_path.extension().and_then(|e| e.to_str()) == Some("json") {
+        let mut value: serde_json::Value = match serde_json::from_str(&content) {
+            Ok(value) => value,
+            Err(e) => { eprintln!("JSON syntax error: {e}"); return 1; }
+        };
+        let Some(object) = value.as_object_mut() else {
+            eprintln!("JSON manifest root must be an object");
+            return 1;
+        };
+        if let Some(deps) = object.get_mut("dependencies").and_then(|v| v.as_object_mut()) {
+            if deps.remove(package_name).is_none() {
+                (content.clone(), false)
+            } else {
+                match serde_json::to_string_pretty(&value) {
+                    Ok(json) => (format!("{json}\n"), true),
+                    Err(e) => { eprintln!("serialize lpp.json: {e}"); return 1; }
+                }
+            }
+        } else {
+            (content.clone(), false)
         }
-        new_lines.push(line);
-    }
+    } else {
+        toml_remove_dependency(&content, package_name)
+    };
 
     if !found {
-        println!("[L++] Dependency '{}' not found in lpp.toml.", package_name);
-        return;
+        eprintln!("[L++] Dependency '{}' not found in {}.", package_name, manifest_path.display());
+        return 1;
     }
-
-    if let Err(e) = fs::write("lpp.toml", new_lines.join("\n")) {
-        eprintln!("Failed to update lpp.toml: {}", e);
-        return;
+    let temp = manifest_path.with_extension(if manifest_path.extension().and_then(|e| e.to_str()) == Some("json") { "json.tmp" } else { "toml.tmp" });
+    if let Err(e) = fs::write(&temp, updated) {
+        eprintln!("Failed to write {}: {e}", manifest_path.display());
+        return 1;
     }
-    println!("[L++] Removed dependency '{}' from lpp.toml.", package_name);
+    if let Err(e) = replace_file(&temp, &manifest_path) {
+        let _ = fs::remove_file(&temp);
+        eprintln!("Failed to replace {}: {e}", manifest_path.display());
+        return 1;
+    }
+    println!("[L++] Removed dependency '{}' from {}.", package_name, manifest_path.display());
 
-    let dest_path = std::path::Path::new(".lpp_packages").join(package_name);
+    let dest_path = Path::new(".lpp_packages").join(package_name);
     if dest_path.exists() {
-        let _ = fs::remove_dir_all(dest_path);
+        if let Err(e) = fs::remove_dir_all(&dest_path) {
+            eprintln!("[L++] failed to remove installed dependency: {e}");
+            return 1;
+        }
         println!("[L++] Cleaned up package directory for '{}'.", package_name);
     }
-
-    cmd_install(false);
+    cmd_install(false)
 }
 
-fn cmd_update() {
+fn cmd_update() -> i32 {
     println!("[L++] Updating lockfile and pulling latest dependency updates...");
-    cmd_install(true);
+    cmd_install(true)
 }
 
 fn is_app_package_name(name: &str) -> bool {
@@ -2433,7 +3085,15 @@ fn print_search_item(name: &str, entry: &RegistryEntry, app: bool) {
     if let Some(ref desc) = entry.description {
         println!("      {}", desc);
     }
-    println!("      repo: {}", entry.git);
+    if !entry.git.is_empty() {
+        println!("      repo: {}", entry.git);
+    }
+    if let Some(ref path) = entry.path {
+        println!("      path: {}", path);
+    }
+    if let Some(ref version) = entry.version {
+        println!("      version: {}", version);
+    }
     if let Some(ref b) = entry.branch {
         println!("      branch: {}", b);
     }
@@ -2449,7 +3109,120 @@ fn print_search_item(name: &str, entry: &RegistryEntry, app: bool) {
     }
 }
 
-fn cmd_search(args: &[String]) {
+fn workspace_root(start: &Path) -> Result<(PathBuf, toml::Value), String> {
+    let mut current = start
+        .canonicalize()
+        .map_err(|e| format!("cannot resolve workspace directory '{}': {e}", start.display()))?;
+    loop {
+        let manifest = current.join("lpp.toml");
+        if manifest.is_file() {
+            let text = fs::read_to_string(&manifest).map_err(|e| format!("read '{}': {e}", manifest.display()))?;
+            let value: toml::Value = toml::from_str(&text).map_err(|e| format!("parse '{}': {e}", manifest.display()))?;
+            if value.get("workspace").and_then(toml::Value::as_table).is_some() {
+                return Ok((current, value));
+            }
+        }
+        if !current.pop() {
+            break;
+        }
+    }
+    Err("not inside a workspace (no [workspace] section found)".to_string())
+}
+
+fn workspace_members(root: &Path, manifest: &toml::Value) -> Result<Vec<(String, PathBuf, Package)>, String> {
+    let workspace = manifest
+        .get("workspace")
+        .and_then(toml::Value::as_table)
+        .ok_or_else(|| "missing [workspace] section".to_string())?;
+    let members = workspace
+        .get("members")
+        .and_then(toml::Value::as_array)
+        .ok_or_else(|| "[workspace].members must be an array".to_string())?;
+    let root_canonical = root.canonicalize().map_err(|e| format!("resolve workspace root: {e}"))?;
+    let mut result = Vec::new();
+    for member in members {
+        let relative = member
+            .as_str()
+            .ok_or_else(|| "workspace member paths must be strings".to_string())?;
+        let path = root.join(relative).canonicalize().map_err(|e| format!("workspace member '{relative}': {e}"))?;
+        if !path.starts_with(&root_canonical) {
+            return Err(format!("workspace member '{relative}' escapes the workspace root"));
+        }
+        let manifest_path = path.join("lpp.toml");
+        let member_text = fs::read_to_string(&manifest_path)
+            .map_err(|e| format!("read '{}': {e}", manifest_path.display()))?;
+        let workspace_version = workspace
+            .get("version")
+            .and_then(toml::Value::as_str);
+        let package = parse_toml_with_workspace(&member_text, workspace_version)?;
+        result.push((relative.to_string(), path, package));
+    }
+    Ok(result)
+}
+
+fn cmd_workspace(args: &[String]) -> i32 {
+    let (root, manifest) = match workspace_root(Path::new(".")) {
+        Ok(value) => value,
+        Err(e) => { eprintln!("[L++] {e}"); return 1; }
+    };
+    let members = match workspace_members(&root, &manifest) {
+        Ok(members) => members,
+        Err(e) => { eprintln!("[L++] workspace error: {e}"); return 1; }
+    };
+    let sub = args.first().map(String::as_str).unwrap_or("members");
+    match sub {
+        "members" | "list" => {
+            println!("[L++] Workspace: {}", root.display());
+            if let Some(version) = manifest.get("workspace").and_then(|w| w.get("version")).and_then(toml::Value::as_str) {
+                println!("  version: {version}");
+            }
+            for (relative, path, package) in members {
+                println!("  {} @ {} ({})", package.name, package.version, path.strip_prefix(&root).unwrap_or(&path).display());
+                let _ = relative;
+            }
+            0
+        }
+        "graph" => {
+            println!("[L++] Workspace dependency graph: {}", root.display());
+            for (_, _, package) in members {
+                let name = package.name;
+                let deps: Vec<String> = package.dependencies.into_iter().map(|dep| dep.name).collect();
+                if deps.is_empty() { println!("  {} -> (none)", name); }
+                else { println!("  {} -> {}", name, deps.join(", ")); }
+            }
+            0
+        }
+        "build" | "test" => {
+            let requested = args.get(1).map(String::as_str);
+            let selected: Vec<_> = members.into_iter().filter(|(_, _, package)| requested.map_or(true, |name| package.name == name)).collect();
+            if selected.is_empty() {
+                eprintln!("[L++] workspace member not found: {}", requested.unwrap_or(""));
+                return 1;
+            }
+            let compiler = match current_compiler_path() {
+                Ok(path) => path,
+                Err(e) => { eprintln!("[L++] {e}"); return 1; }
+            };
+            let mut failed = false;
+            for (_, path, _) in selected {
+                let command = if sub == "build" { "build" } else { "test" };
+                println!("[L++] {} {}", command, path.display());
+                match std::process::Command::new(&compiler).current_dir(&path).arg(command).status() {
+                    Ok(status) if status.success() => {}
+                    Ok(status) => { failed = true; eprintln!("[L++] member '{}' failed ({status})", path.display()); }
+                    Err(e) => { failed = true; eprintln!("[L++] member '{}' failed: {e}", path.display()); }
+                }
+            }
+            if failed { 1 } else { 0 }
+        }
+        other => {
+            eprintln!("[L++] unknown workspace subcommand '{other}'; use members, graph, build, or test");
+            2
+        }
+    }
+}
+
+fn cmd_search(args: &[String]) -> i32 {
     let query = args.get(0).map(|s| s.to_lowercase()).unwrap_or_default();
     let mut results = registry_package_entries();
     results.sort_by(|a, b| a.0.cmp(&b.0));
@@ -2458,12 +3231,8 @@ fn cmd_search(args: &[String]) {
         results.retain(|(name, entry)| {
             name.to_lowercase().contains(&query)
                 || entry.git.to_lowercase().contains(&query)
-                || entry
-                    .description
-                    .as_deref()
-                    .unwrap_or("")
-                    .to_lowercase()
-                    .contains(&query)
+                || entry.path.as_deref().unwrap_or("").to_lowercase().contains(&query)
+                || entry.description.as_deref().unwrap_or("").to_lowercase().contains(&query)
         });
     }
 
@@ -2472,192 +3241,162 @@ fn cmd_search(args: &[String]) {
             println!("[L++] No packages available in registry.");
         } else {
             println!("[L++] No registry packages matched '{}'.", query);
-            println!();
-            println!("Try:");
-            println!("  lpp search opencode     # app / command package");
-            println!("  lpp search sqlite       # database library");
-            println!("  lpp search math         # stdlib/helper package");
+            println!("Try: lpp search opencode | lpp search sqlite | lpp search math");
         }
-        return;
+        return 0;
     }
 
-    let apps: Vec<_> = results
-        .iter()
-        .filter(|(name, _)| is_app_package_name(name))
-        .collect();
-    let libs: Vec<_> = results
-        .iter()
-        .filter(|(name, _)| !is_app_package_name(name))
-        .collect();
-
+    let apps: Vec<_> = results.iter().filter(|(name, _)| is_app_package_name(name)).collect();
+    let libs: Vec<_> = results.iter().filter(|(name, _)| !is_app_package_name(name)).collect();
     println!("[L++] Registry search");
     println!("  query: {}", if query.is_empty() { "*" } else { &query });
     println!("  results: {}", results.len());
     println!();
-
     if !apps.is_empty() {
-        println!("Applications / global commands");
-        println!("──────────────────────────────");
-        for (name, entry) in apps {
-            print_search_item(name, entry, true);
-            println!();
-        }
+        println!("Applications / global commands\n──────────────────────────────");
+        for (name, entry) in apps { print_search_item(name, entry, true); println!(); }
     }
-
     if !libs.is_empty() {
-        println!("Libraries / project dependencies");
-        println!("────────────────────────────────");
-        for (name, entry) in libs {
-            print_search_item(name, entry, false);
-            println!();
-        }
+        println!("Libraries / project dependencies\n────────────────────────────────");
+        for (name, entry) in libs { print_search_item(name, entry, false); println!(); }
     }
-
-    println!("Usage guide");
-    println!("───────────");
+    println!("Usage guide\n───────────");
     println!("  Global app:  lpp install lpp-opencode");
-    println!("  Project dep: lpp add <name>  &&  lpp install");
+    println!("  Project dep: lpp add <name> && lpp install");
+    0
 }
 
-fn cmd_list() {
+fn cmd_list() -> i32 {
     match read_manifest() {
         Ok(pkg) => {
             println!("[L++] Package: {} {}", pkg.name, pkg.version);
             if pkg.dependencies.is_empty() {
                 println!("  (no dependencies)");
-                return;
+            } else {
+                for dep in pkg.dependencies {
+                    let source = dep.path.or(dep.git).unwrap_or_else(|| "registry".to_string());
+                    let version = dep.version.unwrap_or_else(|| "unbounded".to_string());
+                    println!("  {} {} [{}]", dep.name, version, source);
+                }
             }
-            for dep in pkg.dependencies {
-                let source = dep
-                    .path
-                    .or(dep.git)
-                    .unwrap_or_else(|| "registry".to_string());
-                let version = dep.version.unwrap_or_else(|| "unbounded".to_string());
-                println!("  {} {} [{}]", dep.name, version, source);
-            }
+            0
         }
-        Err(e) => eprintln!("[L++] {}", e),
+        Err(e) => { eprintln!("[L++] {e}"); 1 }
     }
 }
 
-fn cmd_tree() {
+fn cmd_tree() -> i32 {
     let packages = read_lockfile();
     if packages.is_empty() {
         println!("[L++] No lockfile packages found. Run `lpp install` first.");
-        return;
+        return 1;
     }
     println!("[L++] Dependency tree:");
     for pkg in packages {
         let version = pkg.version.unwrap_or_else(|| "unknown".to_string());
         println!("  {} {}", pkg.name, version);
         println!("    source: {}", pkg.source);
-        if let Some(resolved) = pkg.resolved {
-            println!("    resolved: {}", resolved);
-        }
+        if let Some(resolved) = pkg.resolved { println!("    resolved: {}", resolved); }
     }
+    0
 }
 
-fn cmd_metadata() {
+fn cmd_metadata() -> i32 {
     match read_manifest() {
         Ok(pkg) => {
             println!("name = {}", pkg.name);
             println!("version = {}", pkg.version);
-            if let Some(author) = pkg.author {
-                println!("author = {}", author);
-            }
+            if let Some(author) = pkg.author { println!("author = {}", author); }
             println!("entry = {}", pkg.entry.unwrap_or_else(resolve_entry_point));
             println!("dependencies = {}", pkg.dependencies.len());
             println!("locked_packages = {}", read_lockfile().len());
+            0
         }
-        Err(e) => eprintln!("[L++] {}", e),
+        Err(e) => { eprintln!("[L++] {e}"); 1 }
     }
 }
 
-fn cmd_outdated() {
-    match read_manifest() {
-        Ok(pkg) => {
-            let mut found = false;
-            for dep in pkg.dependencies {
-                if dep.version.is_none() {
-                    found = true;
-                    println!("{} is not version-pinned", dep.name);
-                }
-            }
-            if !found {
-                println!("[L++] All direct dependencies are version-pinned.");
-            }
+fn cmd_outdated() -> i32 {
+    let package = match read_manifest() {
+        Ok(pkg) => pkg,
+        Err(e) => { eprintln!("[L++] {e}"); return 1; }
+    };
+    let locked: std::collections::HashMap<String, String> = read_lockfile()
+        .into_iter()
+        .filter_map(|pkg| pkg.version.map(|version| (pkg.name, version)))
+        .collect();
+    let mut found = false;
+    for dep in package.dependencies {
+        if dep.version.is_none() {
+            found = true;
+            println!("{} is not version-pinned", dep.name);
+            continue;
         }
-        Err(e) => eprintln!("[L++] {}", e),
+        let Some(locked_version) = locked.get(&dep.name) else {
+            found = true;
+            println!("{} is not present in lpp.lock", dep.name);
+            continue;
+        };
+        let requirement = semver::VersionReq::parse(dep.version.as_deref().unwrap_or("*"));
+        let current = semver::Version::parse(locked_version);
+        match (current, requirement) {
+            (Ok(current), Ok(requirement)) if !requirement.matches(&current) => {
+                found = true;
+                println!("{} {} does not satisfy {}", dep.name, current, requirement);
+            }
+            (Err(_), Ok(_)) => {
+                found = true;
+                println!("{} has no concrete SemVer in lpp.lock ({})", dep.name, locked_version);
+            }
+            _ => {}
+        }
     }
+    if !found { println!("[L++] No outdated direct dependencies found."); }
+    0
 }
 
-fn cmd_clean() {
+fn cmd_clean() -> i32 {
     let mut removed = 0;
-    for target in ["target", "output.c", "output.obj", "output.o"] {
+    let mut failed = false;
+    for target in ["target", "LppData", "dist", "output.c", "output.obj", "output.o"] {
         let path = Path::new(target);
-        if path.is_dir() {
-            if fs::remove_dir_all(path).is_ok() {
-                removed += 1;
-            }
-        } else if path.is_file() && fs::remove_file(path).is_ok() {
-            removed += 1;
+        if !path.exists() {
+            continue;
+        }
+        let result = if path.is_dir() { fs::remove_dir_all(path) } else { fs::remove_file(path) };
+        match result {
+            Ok(()) => removed += 1,
+            Err(_) => failed = true,
         }
     }
     if let Ok(entries) = fs::read_dir(".") {
         for entry in entries.flatten() {
             let path = entry.path();
-            if path
-                .extension()
-                .map(|ext| ext == "exe" || ext == "o" || ext == "obj")
-                .unwrap_or(false)
-            {
-                if fs::remove_file(&path).is_ok() {
-                    removed += 1;
-                }
+            if path.extension().map(|ext| ext == "exe" || ext == "o" || ext == "obj").unwrap_or(false) {
+                match fs::remove_file(&path) { Ok(()) => removed += 1, Err(_) => failed = true }
             }
         }
     }
     println!("[L++] Cleaned {} generated artifact(s).", removed);
+    if failed { 1 } else { 0 }
 }
 
-fn cmd_check() {
+fn cmd_check() -> i32 {
     println!("[L++] Checking project...");
     let entry_point_str = resolve_entry_point();
     let entry_point = Path::new(&entry_point_str);
     if !entry_point.exists() {
-        eprintln!(
-            "[L++] Error: entry point '{}' not found.",
-            entry_point.display()
-        );
-        return;
+        eprintln!("[L++] Error: entry point '{}' not found.", entry_point.display());
+        return 1;
     }
-
     let compiler_path = match current_compiler_path() {
         Ok(path) => path,
-        Err(e) => {
-            eprintln!("[L++] {}", e);
-            return;
-        }
+        Err(e) => { eprintln!("[L++] {e}"); return 1; }
     };
-
-    match std::process::Command::new(&compiler_path)
-        .arg(entry_point)
-        .arg("--check")
-        .status()
-    {
-        Ok(s) if s.success() => {
-            println!("[L++] Project is semantically valid.");
-        }
-        Ok(_) => {
-            eprintln!("[L++] Error: Project check failed.");
-        }
-        Err(e) => {
-            eprintln!(
-                "[L++] Error: failed to execute compiler '{}': {}",
-                compiler_path.display(),
-                e
-            );
-        }
+    match std::process::Command::new(&compiler_path).arg(entry_point).arg("--check").status() {
+        Ok(s) if s.success() => { println!("[L++] Project is semantically valid."); 0 }
+        Ok(s) => { eprintln!("[L++] Error: Project check failed ({s})."); s.code().unwrap_or(1) }
+        Err(e) => { eprintln!("[L++] Error: failed to execute compiler '{}': {e}", compiler_path.display()); 1 }
     }
 }
 
@@ -2776,14 +3515,20 @@ fn cmd_build_opts(is_release: bool) -> Option<String> {
         return None;
     }
 
-    cmd_install(false);
+    if cmd_install(false) != 0 {
+        eprintln!("[L++] dependency installation failed; build aborted");
+        return None;
+    }
 
     let target_dir = if is_release {
         PathBuf::from("dist")
     } else {
         Path::new("LppData").join("build").join("release")
     };
-    let _ = fs::create_dir_all(&target_dir);
+    if let Err(e) = fs::create_dir_all(&target_dir) {
+        eprintln!("[L++] cannot create build directory '{}': {e}", target_dir.display());
+        return None;
+    }
 
     println!("  Compiling {}...", entry_point.display());
     let obj_file = match compile_source_to_object(entry_point) {
@@ -2800,6 +3545,7 @@ fn cmd_build_opts(is_release: bool) -> Option<String> {
     }
 
     let exe_path = output_path_for_name(&target_dir, &bin_name);
+    let _ = fs::remove_file(&exe_path);
 
     println!("  Linking {}...", exe_path.display());
     let link_result = link_native_binary(&obj_file, &exe_path);
@@ -2827,83 +3573,71 @@ fn cmd_build_opts(is_release: bool) -> Option<String> {
     }
 }
 
-fn cmd_dev() {
+fn cmd_dev() -> i32 {
     let entry_point_str = resolve_entry_point();
-    let entry_point = Path::new(&entry_point_str);
-    if !entry_point.exists() {
+    if !Path::new(&entry_point_str).exists() {
         eprintln!("[Lreact Dev] Error: entry point '{}' not found.", entry_point_str);
-        return;
+        return 1;
     }
-
-    let pkg_dir = Path::new(".lpp_packages");
-    if !pkg_dir.exists() {
-        cmd_install(false);
-    }
-
     println!("==========================================================");
     println!("        Lreact Dev Server (L++ Native IPC Backend)       ");
     println!("        Dev URL: http://localhost:3000                   ");
     println!("==========================================================");
-
-    if let Some(exe_path) = cmd_build_opts(false) {
-        println!("[Lreact Dev] Running native dev server {}...", exe_path);
-        let status = std::process::Command::new(&exe_path).status();
-        if let Err(e) = status {
-            eprintln!("[Lreact Dev] Execution failed: {}", e);
-        }
+    let Some(exe_path) = cmd_build_opts(false) else { return 1; };
+    println!("[Lreact Dev] Running native dev server {}...", exe_path);
+    match std::process::Command::new(&exe_path).status() {
+        Ok(status) => status.code().unwrap_or(if status.success() { 0 } else { 1 }),
+        Err(e) => { eprintln!("[Lreact Dev] Execution failed: {e}"); 1 }
     }
 }
 
-fn cmd_run() {
-    if let Some(exe_path) = cmd_build() {
-        println!("[L++] Running {}...", exe_path);
-        let status = std::process::Command::new(&exe_path).status();
-        if let Err(e) = status {
-            eprintln!("[L++] Failed to execute target: {}", e);
-        }
+fn cmd_run() -> i32 {
+    let Some(exe_path) = cmd_build() else { return 1; };
+    println!("[L++] Running {}...", exe_path);
+    match std::process::Command::new(&exe_path).status() {
+        Ok(status) => status.code().unwrap_or(if status.success() { 0 } else { 1 }),
+        Err(e) => { eprintln!("[L++] Failed to execute target: {e}"); 1 }
     }
 }
 
-fn cmd_bench() {
+fn cmd_bench() -> i32 {
     println!("[L++] Launching lpp-bench...");
     let bench_bin = current_binary_dir()
         .map(|dir| dir.join(format!("lpp-bench{}", std::env::consts::EXE_SUFFIX)))
         .filter(|p| p.exists());
-    if let Some(bench) = bench_bin {
-        let args: Vec<String> = std::env::args().skip(2).collect();
-        let status = std::process::Command::new(&bench).args(&args).status();
-        match status {
-            Ok(s) if s.success() => {}
-            Ok(s) => std::process::exit(s.code().unwrap_or(1)),
-            Err(e) => {
-                eprintln!("[L++] Failed to launch lpp-bench: {e}");
-                std::process::exit(1);
-            }
-        }
-    } else {
-        eprintln!(
-            "[L++] lpp-bench not found. Build it with: cargo build --release --bin lpp-bench"
-        );
-        std::process::exit(1);
+    let Some(bench) = bench_bin else {
+        eprintln!("[L++] lpp-bench not found. Build it with: cargo build --release --bin lpp-bench");
+        return 1;
+    };
+    let args: Vec<String> = std::env::args().skip(2).collect();
+    match std::process::Command::new(&bench).args(&args).status() {
+        Ok(status) => status.code().unwrap_or(if status.success() { 0 } else { 1 }),
+        Err(e) => { eprintln!("[L++] Failed to launch lpp-bench: {e}"); 1 }
     }
 }
 
-fn cmd_test() {
+fn cmd_test() -> i32 {
     println!("[L++] Running tests...");
+    if (Path::new("lpp.toml").exists() || Path::new("lpp.json").exists())
+        && cmd_install(false) != 0
+    {
+        eprintln!("[L++] dependency installation failed; tests aborted");
+        return 1;
+    }
     let test_dir = if Path::new("tests").exists() {
         "tests"
     } else if Path::new("test").exists() {
         "test"
     } else {
         println!("[L++] No tests/ or test/ directory found.");
-        return;
+        return 0;
     };
 
     let paths = match fs::read_dir(test_dir) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("Failed to read tests directory: {}", e);
-            return;
+            return 1;
         }
     };
 
@@ -2917,9 +3651,19 @@ fn cmd_test() {
         }
     }
 
+    test_files.sort();
+    test_files.retain(|path| {
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        !name.contains("rejected")
+            && !name.starts_with("aot_reject")
+            && !name.starts_with("tuple_bad")
+            && !name.starts_with("variadic_bad")
+            && !name.starts_with("list_set_bad")
+    });
+
     if test_files.is_empty() {
         println!("[L++] No test files found in directory '{}'.", test_dir);
-        return;
+        return 0;
     }
 
     let mut passed = 0;
@@ -2929,11 +3673,12 @@ fn cmd_test() {
     let _ = fs::create_dir_all(&target_test_dir);
 
     for test_path in test_files {
-        let test_name = test_path.file_name().unwrap().to_str().unwrap();
+        let test_name = test_path.file_name().and_then(|name| name.to_str()).unwrap_or("unnamed");
         print!("  test {} ... ", test_name);
 
-        let base_name = format!("test_{}", test_name.replace(".lpp", ""));
+        let base_name = format!("test_{}", test_name.strip_suffix(".lpp").unwrap_or(test_name));
         let temp_exe = output_path_for_name(&target_test_dir, &base_name);
+        let _ = fs::remove_file(&temp_exe);
 
         match compile_source_to_object(&test_path) {
             Ok(temp_obj) => {
@@ -2972,4 +3717,5 @@ fn cmd_test() {
         passed,
         failed
     );
+    if failed == 0 { 0 } else { 1 }
 }

@@ -57,7 +57,7 @@ def main():
 | **Borrowed slices** | Zero-copy `StrSlice` / `Slice[T]` stack views with bounds and escape validation |
 | **Async tasks** | `async def`, postfix `.await`, and a deterministic single-thread run-to-completion executor |
 | **LSP Language Server** | `lpp-lsp` stdio JSON-RPC server for editor Intellisense, hovers & diagnostics |
-| **Package manager** | 100% self-hosted `lpp-pm` written in pure L++ with embedded Git & HTTP engine |
+| **Package manager** | Reliable Rust PM by default; experimental self-hosted pure-L++ PM via `LPP_SELF_HOSTED_PM=1` |
 | **c2lpp package** | Pure-L++ C-header binding/package generator plus experimental scalar C-to-L++ translation |
 | **100+ builtins** | strings, lists, maps, files, network, JSON, buffers |
 | **C-competitive perf** | Matches GCC -O2 on real workloads (primes: 1.0x) |

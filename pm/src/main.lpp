@@ -19,7 +19,7 @@ import publisher
 import workspace_graph
 
 def main():
-    header("L++ Package Manager v5.0.0")
+    header(str_concat("L++ Package Manager v", env_get("LPP_PM_VERSION")))
 
     mut cmd := env_get("LPP_PM_CMD")
     if str_len(cmd) == 0:
@@ -27,9 +27,9 @@ def main():
 
     # ── new / init ─────────────────────────────────────────────────────
     mut is_new := 0
-    if str_find(cmd, "new") >= 0:
+    if cmd == "new":
         is_new = 1
-    if str_find(cmd, "init") >= 0:
+    if cmd == "init":
         is_new = 1
     if is_new == 1:
         mut name := env_get("LPP_PM_NAME")
@@ -39,36 +39,52 @@ def main():
         return
 
     # ── build ──────────────────────────────────────────────────────────
-    if str_find(cmd, "build") >= 0:
+    if cmd == "build":
         bcode := compile_project()
         if bcode == 0:
             success("Build completed successfully.")
         else:
             error("Build failed.")
+            exit(1)
         return
 
     # ── run ────────────────────────────────────────────────────────────
-    if str_find(cmd, "run") >= 0:
+    if cmd == "run":
         rcode := compile_project()
         if rcode == 0:
             info("Running target binary...")
-            run_cmd := ".\\src\\main.exe"
-            command_exec(run_cmd)
+            mut run_cmd := path_join("src", "main")
+            if path_exists(run_cmd) == 0:
+                run_cmd = str_concat(run_cmd, ".exe")
+            if path_exists(run_cmd) == 0:
+                error(str_concat("built target not found: ", run_cmd))
+                exit(1)
+            run_status := command_exec(run_cmd)
+            if run_status != 0:
+                exit(run_status)
         else:
             error("Build failed, cannot run.")
+            exit(1)
         return
 
     # ── install ────────────────────────────────────────────────────────────
-    if str_find(cmd, "install") >= 0:
+    if cmd == "install":
         mut online_flag := env_get("LPP_PM_ONLINE")
+        mut offline_flag := env_get("LPP_PM_OFFLINE")
+        mut icode := 0
         if str_len(online_flag) > 0:
-            install_deps_online()
+            icode = install_deps_online()
         else:
-            install_deps()
+            if str_len(offline_flag) > 0:
+                icode = install_deps_opts(false, 8)
+            else:
+                icode = install_deps()
+        if icode != 0:
+            exit(icode)
         return
 
     # ── add ────────────────────────────────────────────────────────────
-    if str_find(cmd, "add") >= 0:
+    if cmd == "add":
         pkg_name := env_get("LPP_PM_ARG1")
         git_arg := env_get("LPP_PM_GIT")
         branch_arg := env_get("LPP_PM_BRANCH")
@@ -79,13 +95,13 @@ def main():
         return
 
     # ── remove ─────────────────────────────────────────────────────────
-    if str_find(cmd, "remove") >= 0:
+    if cmd == "remove":
         pkg_name := env_get("LPP_PM_ARG1")
         cmd_remove(pkg_name)
         return
 
     # ── publish ────────────────────────────────────────────────────────────
-    if str_find(cmd, "publish") >= 0:
+    if cmd == "publish":
         mut opts := publish_opts_default()
         arg1 := env_get("LPP_PM_ARG1")
         arg2 := env_get("LPP_PM_ARG2")
@@ -115,21 +131,24 @@ def main():
         pcode := cmd_publish(opts)
         if pcode != 0:
             error("Publish failed.")
+            exit(pcode)
         return
 
     # ── update ─────────────────────────────────────────────────────────────
-    if str_find(cmd, "update") >= 0:
+    if cmd == "update":
         info("Fetching latest commits and updating lockfile...")
-        install_deps_online()
+        ucode := install_deps_online()
+        if ucode != 0:
+            exit(ucode)
         return
 
     # ── workspace ──────────────────────────────────────────────────────────
-    if str_find(cmd, "workspace") >= 0:
+    if cmd == "workspace":
         sub := env_get("LPP_PM_ARG1")
         ws  := workspace_discover(path_cwd())
         if str_len(ws.root) == 0:
             error("not inside a workspace — no [workspace] section found")
-            return
+            exit(1)
         if sub == "graph":
             workspace_graph(ws)
             return
@@ -159,21 +178,22 @@ def main():
         return
 
     # ── check ───────────────────────────────────────────────────────────────
-    if str_find(cmd, "check") >= 0:
+    if cmd == "check":
         entry := "src/main.lpp"
         if check(entry) == 0:
             warn("no src/main.lpp found")
-            return
+            exit(1)
         cc_cmd := str_concat("lpp check ", entry)
         ccode := command_exec(cc_cmd)
         if ccode == 0:
             success("check passed — project is semantically valid.")
         else:
             error("check failed — errors detected.")
+            exit(ccode)
         return
 
     # ── clean ──────────────────────────────────────────────────────────────
-    if str_find(cmd, "clean") >= 0:
+    if cmd == "clean":
         if check(".lpp_cache") == 1:
             command_exec("rm -rf .lpp_cache")
         command_exec("rm -f *.o *.obj *.exe output.c 2>/dev/null")
@@ -181,7 +201,7 @@ def main():
         return
 
     # ── test ───────────────────────────────────────────────────────────────
-    if str_find(cmd, "test") >= 0:
+    if cmd == "test":
         if check("tests") == 1:
             tcode1 := command_exec("lpp test")
             if tcode1 == 0:
@@ -199,10 +219,11 @@ def main():
                 return
             else:
                 warn("no tests/ directory found")
+                exit(1)
         return
 
     # ── list ──────────────────────────────────────────────────────────
-    if str_find(cmd, "list") >= 0:
+    if cmd == "list":
         m := manifest_parse("lpp.toml")
         print_str(str_concat("\033[1;36m", str_concat(m.name, str_concat(" @ ", str_concat(m.version, "\033[0m")))))
         if list_len(m.deps) == 0:
@@ -213,7 +234,7 @@ def main():
         return
 
     # ── tree ──────────────────────────────────────────────────────────
-    if str_find(cmd, "tree") >= 0:
+    if cmd == "tree":
         if check("lpp.lock") == 1:
             lock := read("lpp.lock")
             print_str(lock)
@@ -222,7 +243,7 @@ def main():
         return
 
     # ── metadata ───────────────────────────────────────────────────────────
-    if str_find(cmd, "metadata") >= 0:
+    if cmd == "metadata":
         if check("lpp.lock") == 1:
             lock := read("lpp.lock")
             print_str(lock)
@@ -231,7 +252,7 @@ def main():
         return
 
     # ── search ─────────────────────────────────────────────────────────────
-    if str_find(cmd, "search") >= 0:
+    if cmd == "search":
         query := env_get("LPP_PM_ARG1")
         if str_len(query) == 0:
             warn("Usage: lpp search <query>")
@@ -244,7 +265,7 @@ def main():
         return
 
     # ── version ─────────────────────────────────────────────────────────────
-    if str_find(cmd, "version") >= 0:
+    if cmd == "version":
         m := manifest_parse("lpp.toml")
         if str_len(m.name) > 0:
             print_str(str_concat(m.name, str_concat(" @ ", m.version)))
@@ -253,7 +274,7 @@ def main():
         return
 
     # ── config ─────────────────────────────────────────────────────────────
-    if str_find(cmd, "config") >= 0:
+    if cmd == "config":
         sub := env_get("LPP_PM_ARG1")
         key := env_get("LPP_PM_ARG2")
         val := env_get("LPP_PM_ARG3")
@@ -261,8 +282,14 @@ def main():
             info(str_concat("setting ", str_concat(key, str_concat(" = ", val))))
         return
 
+    # Unknown commands should fail rather than silently displaying help with
+    # a successful process status.
+    if cmd != "help":
+        error(str_concat("unknown package manager command: ", cmd))
+        exit(2)
+
     # ── help ───────────────────────────────────────────────────────────────
-    header("L++ Package Manager v5.0.0 (Pure L++ Native)")
+    header(str_concat("L++ Package Manager v", env_get("LPP_PM_VERSION")))
     print_str("\033[1;33mUsage:\033[0m")
     print_str("  \033[36mlpp\033[0m <file.lpp> [options]       Compile one file")
     print_str("  \033[36mlpp\033[0m <command> [args]           Package/app workflow")

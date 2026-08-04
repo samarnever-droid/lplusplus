@@ -245,8 +245,11 @@ def lockfile_read_field(lock_path: Str, pkg_name: Str, field: Str) -> Str:
     if path_exists(lock_path) == 0:
         return ""
     text    := read_file(lock_path)
-    pattern := str_concat("name    = \"", str_concat(pkg_name, "\""))
-    idx     := str_find(text, pattern)
+    mut pattern := str_concat("name    = \"", str_concat(pkg_name, "\""))
+    mut idx     := str_find(text, pattern)
+    if idx < 0:
+        pattern = str_concat("name = \"", str_concat(pkg_name, "\""))
+        idx = str_find(text, pattern)
     if idx < 0:
         return ""
     # Search within the [[package]] block (until next blank line)

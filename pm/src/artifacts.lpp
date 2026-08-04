@@ -4,27 +4,35 @@
 import utils
 import security
 
+# These formats are not part of the current runtime ABI.  They must fail
+# closed until a reviewed implementation is wired in; the old placeholders
+# returned success/identity data and could install a corrupt or unverified
+# release.
 def archive_extract(archive_bytes: Str, dest_dir: Str) -> Int:
-    return 0
+    print_str("[lpp-pm] archive extraction is not available in this runtime")
+    return -1
 
 def archive_extract_file(delta_bytes: Str, filename: Str) -> Str:
     return ""
 
 def patch_apply(src_path: Str, patch_data: Str, dest_path: Str) -> Int:
-    return 0
+    print_str("[lpp-pm] patch application is not available in this runtime")
+    return -1
 
 def vcdiff_apply(base_bytes: Str, delta_data: Str) -> Str:
     return ""
 
 def zstd_decompress(bytes: Str) -> Str:
-    return bytes
+    return ""
 
 def dir_remove_all(path: Str) -> Void:
     if path_exists(path) == 1:
         dir_remove(path)
 
 def json_parse(s: Str) -> Int:
-    return 1
+    # A non-zero fake handle was previously treated as a valid JSON document.
+    # Return zero until the complete object/array adapter is available.
+    return 0
 
 def json_free(h: Int) -> Void:
     return
@@ -39,7 +47,7 @@ def json_get_arr_obj(h: Int, idx: Int) -> Int:
     return 0
 
 def rename(old_path: Str, new_path: Str) -> Int:
-    return 0
+    return file_move(old_path, new_path)
 
 # ── Raw CDN fetch with mirror race ────────────────────────────────────────────
 
@@ -73,6 +81,9 @@ def artifact_fetch(owner: Str, repo: Str, commit: Str, path: Str, expected_sha25
 # The builtin enforces: no "..", no absolute paths, zeroed timestamps.
 
 def snapshot_extract(archive_bytes: Str, dest_dir: Str, expected_tree_sha256: Str) -> Bool:
+    if str_len(expected_tree_sha256) == 0:
+        print_str("[lpp-pm] snapshot verification requires a tree hash")
+        return false
     if path_exists(dest_dir) == 0:
         dir_create(dest_dir)
 
@@ -138,6 +149,9 @@ def delta_parse_manifest(delta_bytes: Str) -> DeltaManifest:
     return dm
 
 def delta_apply(delta_bytes: Str, source_dir: Str, dest_dir: Str, expected_to_sha256: Str) -> Bool:
+    if str_len(expected_to_sha256) == 0:
+        print_str("[lpp-pm] delta verification requires a target tree hash")
+        return false
     dm := delta_parse_manifest(delta_bytes)
     if str_len(dm.from_tree_sha256) == 0:
         print_str("\033[1;31m[lpp-pm] ERROR:\033[0m failed to parse delta manifest")
@@ -221,7 +235,10 @@ def delta_apply(delta_bytes: Str, source_dir: Str, dest_dir: Str, expected_to_sh
 # Compute a canonical SHA-256 of a directory tree:
 # sorted file paths + file content hashes, concatenated deterministically.
 def tree_sha256(dir_path: Str) -> Str:
-    return "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    # Directory hashing needs a deterministic recursive walker and sorted
+    # entries. Returning the empty-tree digest for every directory would make
+    # verification meaningless, so fail closed until that implementation lands.
+    return ""
 
 def compute_tree_hash(dir_path: Str) -> Str:
     return tree_sha256(dir_path)
@@ -249,5 +266,9 @@ def artifact_install_atomic(archive_bytes: Str, target_dir: Str, tree_sha256_exp
     # Atomic rename: staging → target
     if path_exists(target_dir) == 1:
         dir_remove_all(target_dir)
-    rename(staging, target_dir)
+    move_code := rename(staging, target_dir)
+    if move_code != 0:
+        print_str("[lpp-pm] atomic artifact rename failed")
+        dir_remove_all(staging)
+        return false
     return true

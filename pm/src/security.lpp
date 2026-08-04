@@ -5,7 +5,9 @@
 import utils
 
 def sha256_hex(data: Str) -> Str:
-    return "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    # SHA-256 is not currently exposed by the freestanding runtime. Returning
+    # the empty-tree digest for every input would make signatures meaningless.
+    return ""
 
 # ── Verification result ───────────────────────────────────────────────────────
 
@@ -31,15 +33,23 @@ def verify_fail(msg: Str) -> VerifyResult:
 def verify_file_sha256(path: Str, expected_hex: Str) -> VerifyResult:
     if path_exists(path) == 0:
         return verify_fail(str_concat("file not found: ", path))
+    if str_len(expected_hex) == 0:
+        return verify_fail("SHA-256 verification is unavailable in this runtime")
     content := read_file(path)
     actual  := sha256_hex(content)
+    if str_len(actual) == 0:
+        return verify_fail("SHA-256 verification is unavailable in this runtime")
     if actual == expected_hex:
         return verify_ok()
     return verify_fail(str_concat("SHA-256 mismatch for ", str_concat(path, str_concat("\n  expected: ", str_concat(expected_hex, str_concat("\n  actual:   ", actual))))))
 
 # Verify that an in-memory string's SHA-256 matches.
 def verify_bytes_sha256(data: Str, expected_hex: Str) -> VerifyResult:
+    if str_len(expected_hex) == 0:
+        return verify_fail("SHA-256 verification is unavailable in this runtime")
     actual := sha256_hex(data)
+    if str_len(actual) == 0:
+        return verify_fail("SHA-256 verification is unavailable in this runtime")
     if actual == expected_hex:
         return verify_ok()
     return verify_fail(str_concat("SHA-256 mismatch\n  expected: ", str_concat(expected_hex, str_concat("\n  actual:   ", actual))))
@@ -73,21 +83,25 @@ def verify_timestamp(ts_json: Str, prev_version: Int) -> VerifyResult:
         json_free(h)
         return verify_fail("timestamp: missing 'expires' field")
 
-    # Signature check — uses builtin ed25519_verify if available.
-    # MVP: validate structure only; sig check is done by native runtime.
+    # A signatures object without a cryptographic verifier is not proof of
+    # authenticity. Fail closed instead of accepting structure-only metadata.
     h_sigs := json_get_obj(h, "signatures")
     if h_sigs == 0:
         json_free(h)
         return verify_fail("timestamp: missing signatures array")
 
     json_free(h)
-    return verify_ok()
+    return verify_fail("timestamp: Ed25519 verification is unavailable in this runtime")
 
 # ── Snapshot verification ─────────────────────────────────────────────────────
 
 # Verify a snapshot JSON against an expected SHA-256 from the timestamp.
 def verify_snapshot(snap_json: Str, expected_sha256: Str) -> VerifyResult:
+    if str_len(expected_sha256) == 0:
+        return verify_fail("snapshot: SHA-256 verification is unavailable in this runtime")
     actual := sha256_hex(snap_json)
+    if str_len(actual) == 0:
+        return verify_fail("snapshot: SHA-256 verification is unavailable in this runtime")
     if actual != expected_sha256:
         return verify_fail(str_concat("snapshot SHA-256 mismatch\n  expected: ", str_concat(expected_sha256, str_concat("\n  actual:   ", actual))))
 
@@ -132,10 +146,9 @@ def verify_release_descriptor(desc_json: Str, pkg_key_hex: Str) -> VerifyResult:
         json_free(h)
         return verify_fail(str_concat("release descriptor: wrong type: ", desc_type))
 
-    # Signature check against package public key
-    # MVP: structure verified; Ed25519 sig delegated to native runtime
+    # Structure alone is not an authenticated release descriptor.
     json_free(h)
-    return verify_ok()
+    return verify_fail("release descriptor: Ed25519 verification is unavailable in this runtime")
 
 # Parse a release descriptor JSON into a ReleaseDescriptor struct.
 def parse_release_descriptor(desc_json: Str) -> ReleaseDescriptor:

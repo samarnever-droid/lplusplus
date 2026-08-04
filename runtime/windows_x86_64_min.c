@@ -40,6 +40,7 @@ __declspec(dllimport) BOOL   __stdcall FindNextFileA(HANDLE f, void *d);
 __declspec(dllimport) BOOL   __stdcall FindClose(HANDLE f);
 __declspec(dllimport) DWORD  __stdcall GetFileAttributesA(const char *p);
 __declspec(dllimport) BOOL   __stdcall DeleteFileA(const char *p);
+__declspec(dllimport) BOOL   __stdcall MoveFileA(const char *old_path, const char *new_path);
 __declspec(dllimport) void   __stdcall Sleep(DWORD ms);
 
 #define STD_OUTPUT_HANDLE ((DWORD)-11)
@@ -450,13 +451,14 @@ const char *lpp_input(void) {
 }
 
 int64_t lpp_write_file(const char *path, const char *data) {
+    if (!path || !data) return -1;
     HANDLE h = CreateFileA(path, GENERIC_WRITE, 0, 0, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0);
     if (h == INVALID_HANDLE_VALUE) return -1;
     DWORD written = 0;
     int ln = lpp_strlen(data);
-    WriteFile(h, data, (DWORD)ln, &written, 0);
+    BOOL ok = WriteFile(h, data, (DWORD)ln, &written, 0);
     CloseHandle(h);
-    return (int64_t)written;
+    return ok && written == (DWORD)ln ? 0 : -1;
 }
 
 char *lpp_read_file(const char *path) {
@@ -472,16 +474,18 @@ char *lpp_read_file(const char *path) {
 }
 
 int64_t lpp_append_file(const char *path, const char *data) {
+    if (!path || !data) return -1;
     HANDLE h = CreateFileA(path, FILE_APPEND_DATA, 0, 0, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0);
     if (h == INVALID_HANDLE_VALUE) return -1;
     DWORD written = 0;
     int ln = lpp_strlen(data);
-    WriteFile(h, data, (DWORD)ln, &written, 0);
+    BOOL ok = WriteFile(h, data, (DWORD)ln, &written, 0);
     CloseHandle(h);
-    return (int64_t)written;
+    return ok && written == (DWORD)ln ? 0 : -1;
 }
 
 int64_t lpp_delete_file(const char *path) { return DeleteFileA(path) ? 0 : -1; }
+int64_t lpp_file_move(const char *source, const char *destination) { if (!source || !destination) return -1; return MoveFileA(source, destination) ? 0 : -1; }
 int64_t lpp_file_exists(const char *path) { DWORD a = GetFileAttributesA(path); return (a != ((DWORD)-1)) ? 1 : 0; }
 int64_t lpp_file_size(const char *path) { HANDLE h = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0); if (h == INVALID_HANDLE_VALUE) return -1; DWORD sz = GetFileSize(h, 0); CloseHandle(h); return (int64_t)sz; }
 

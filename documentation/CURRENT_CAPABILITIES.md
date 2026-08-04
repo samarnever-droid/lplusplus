@@ -20,7 +20,7 @@ implementation status is in [STATUS-2026-07-30.md](STATUS-2026-07-30.md).
 | Async/await | Experimental first tier: task state records and single-thread run-to-completion executor |
 | Lists, maps, strings, buffers, files, networking | Available in the supported runtime paths |
 | LSP server and diagnostics | Available |
-| Self-hosted package tooling | Available for the tested package workflows |
+| Package tooling | Rust PM is production default; pure-L++ PM is experimental opt-in (`LPP_SELF_HOSTED_PM=1`) |
 | `c2lpp` package | Phase 1 C-header/native-package generation complete; Phase 2 audited scalar translation started |
 
 ## Ownership

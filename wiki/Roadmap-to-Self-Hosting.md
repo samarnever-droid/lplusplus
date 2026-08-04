@@ -6,7 +6,7 @@ Self-hosting means writing the L++ compiler in L++.
 
 L++ now has most compiler-writing ingredients:
 
-- ✅ **Self-Hosted Package Manager**: `lpp-pm` fully written and self-hosted in pure L++ (`pm/src/main.lpp`, `git.lpp`, `registry.lpp`, `install.lpp`, `add_remove.lpp`)
+- 🟡 **Self-Hosted Package Manager**: the pure-L++ implementation exists and is opt-in (`LPP_SELF_HOSTED_PM=1`); the Rust PM remains the compatibility default while archive/delta and cross-platform workflows are completed.
 - ✅ Functions with default parameters
 - ✅ Structs with field access and deep immutability safety checks (`a.b.c = ...`)
 - ✅ Enums with match and data-carrying variants
