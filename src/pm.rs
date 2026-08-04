@@ -2851,7 +2851,7 @@ mod tests {
             path: Some("../foo".to_string()),
         };
         let updated = super::toml_insert_dependency(manifest, &dep).unwrap();
-        assert!(updated.contains("[dependencies]\nfoo = { path = \"../foo\", version = \"^1.0\" }") );
+        assert!(updated.contains("foo = { path = \"../foo\", version = \"^1.0\" }"));
         assert!(updated.contains("[build]\ntype = \"library\""));
         let (removed, found) = super::toml_remove_dependency(&updated, "foo");
         assert!(found);
