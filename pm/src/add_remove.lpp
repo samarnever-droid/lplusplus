@@ -97,7 +97,9 @@ def cmd_remove(package_name: Str) -> Void:
         if str_find(line, target_pattern) < 0:
             new_lines = str_concat(new_lines, str_concat(line, "\n"))
 
-    write_file("lpp.toml", new_lines)
+    if write_file("lpp.toml", new_lines) != 0:
+        error("failed to update lpp.toml")
+        exit(1)
     info(str_concat("Removed dependency '", str_concat(package_name, "' from lpp.toml")))
 
     pkg_dir := path_join(".lpp_packages", package_name)
@@ -105,4 +107,6 @@ def cmd_remove(package_name: Str) -> Void:
         dir_remove(pkg_dir)
         info(str_concat("Cleaned package directory for ", package_name))
 
-    install_deps()
+    install_code := install_deps()
+    if install_code != 0:
+        exit(install_code)
