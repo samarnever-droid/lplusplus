@@ -1,0 +1,618 @@
+# SamarOS — the applications.
+#
+# Each window's content is a pure function of the OS state: it is handed a
+# rectangle and draws into it.  Clicks arrive as window-local coordinates.
+
+# ------------------------------------------------------------ dispatch
+def draw_app(os: OS, win: Win, x: Int, y: Int, w: Int, h: Int) -> Void:
+    if win.app == APP_WELCOME:
+        app_welcome(os, win, x, y, w, h)
+    elif win.app == APP_TERMINAL:
+        app_terminal(os, win, x, y, w, h)
+    elif win.app == APP_FILES:
+        app_files(os, win, x, y, w, h)
+    elif win.app == APP_SETTINGS:
+        app_settings(os, win, x, y, w, h)
+    elif win.app == APP_MONITOR:
+        app_monitor(os, win, x, y, w, h)
+    elif win.app == APP_STORE:
+        app_store(os, win, x, y, w, h)
+    else:
+        app_about(os, win, x, y, w, h)
+
+def app_click(os: OS, win: Win, lx: Int, ly: Int) -> Void:
+    if win.app == APP_WELCOME:
+        click_welcome(os, win, lx, ly)
+    elif win.app == APP_FILES:
+        click_files(os, win, lx, ly)
+    elif win.app == APP_SETTINGS:
+        click_settings(os, win, lx, ly)
+    elif win.app == APP_STORE:
+        click_store(os, win, lx, ly)
+
+# ------------------------------------------------------------- welcome
+def feature_row(x: Int, y: Int, w: Int, icon: Int, accent: Int, title: Str, body: Str) -> Void:
+    round_rect(x, y, 30, 30, 9, accent, 34)
+    if icon == 0:
+        icon_sparkle(x + 8, y + 8, 14, accent, 255)
+    elif icon == 1:
+        icon_cpu(x + 8, y + 8, 14, accent, 255)
+    elif icon == 2:
+        icon_terminal(x + 8, y + 8, 14, accent, 255)
+    else:
+        icon_chart(x + 8, y + 8, 14, accent, 255)
+    text_draw(x + 42, y + 1, title, 0xF4F4F5, 245, FONT_BODY_SEMI)
+    text_draw(x + 42, y + 17, body, 0x8B8B95, 225, FONT_SMALL)
+
+def app_welcome(os: OS, win: Win, x: Int, y: Int, w: Int, h: Int) -> Void:
+    grad_round_rect(x + 16, y + 16, w - 32, 96, 16, os.accent, 0x7C3AED, 42)
+    round_ring(x + 16, y + 16, w - 32, 96, 16, 0xFFFFFF, 22)
+    samar_logo(x + 34, y + 38, 46, os.accent, 255)
+    text_draw(x + 100, y + 40, "Welcome to SamarOS", 0xFFFFFF, 250, FONT_HEAD)
+    text_draw(x + 100, y + 68, "A desktop operating system written in L++ — kernel, compositor and apps.", 0xC7C7CE, 225, FONT_SMALL)
+    chip(x + 100, y + 88, "1.0 AURORA", os.accent)
+
+    feature_row(x + 24, y + 132, w - 48, 1, 0x34D399, "Own kernel, no libc",
+                "boot sector, protected mode, PS/2, VESA, bump heap")
+    feature_row(x + 24, y + 176, w - 48, 0, os.accent, "Written in L++",
+                "structs, lists, traits of the language on bare metal")
+    feature_row(x + 24, y + 220, w - 48, 2, 0xFB923C, "A real shell",
+                "type 'help' in Terminal — it runs inside the kernel")
+    feature_row(x + 24, y + 264, w - 48, 3, 0x38BDF8, "Live telemetry",
+                "Monitor reports heap, frame time and CPU clock")
+
+    button(x + 24, y + h - 56, 150, 34, "Open Terminal", os.accent, 1, 0)
+    button(x + 186, y + h - 56, 132, 34, "Browse Files", os.accent, 0, 0)
+    text_right(x, y + h - 46, w - 24, "made in Bhopal", 0x52525B, 220, FONT_SMALL)
+
+def click_welcome(os: OS, win: Win, lx: Int, ly: Int) -> Void:
+    h := window_client_h(win)
+    if hit(lx, ly, 24, h - 56, 150, 34) == 1:
+        open_app(os, APP_TERMINAL)
+    if hit(lx, ly, 186, h - 56, 132, 34) == 1:
+        open_app(os, APP_FILES)
+
+# ------------------------------------------------------------ terminal
+def term_prompt(os: OS) -> Str:
+    return str_concat(str_concat("samar@aurora:", os.term.cwd), "$ ")
+
+def term_print(os: OS, line: Str) -> Void:
+    list_push(os.term.lines, line)
+    if list_len(os.term.lines) > 220:
+        list_remove(os.term.lines, 0)
+
+def app_terminal(os: OS, win: Win, x: Int, y: Int, w: Int, h: Int) -> Void:
+    gfx_fill_rect(x, y, w, h, 0x0B0D13)
+    line_h := 16
+    rows := (h - 26) / line_h
+    total := list_len(os.term.lines)
+    start := max(total - rows, 0)
+    mut ty := y + 12
+    for i in range(start, total):
+        line := list_get(os.term.lines, i)
+        color := 0xC7C7CE
+        if str_starts_with(line, "samar@") == 1:
+            color = 0x71717A
+        if str_starts_with(line, "  error") == 1:
+            color = 0xF43F5E
+        if str_starts_with(line, "  ok") == 1:
+            color = 0x34D399
+        text_draw(x + 16, ty, line, color, 235, FONT_MONO)
+        ty = ty + line_h
+
+    prompt := term_prompt(os)
+    pw := text_width(prompt, FONT_MONO)
+    text_draw(x + 16, ty, prompt, os.accent, 245, FONT_MONO)
+    text_draw(x + 16 + pw, ty, os.term.input, 0xF4F4F5, 245, FONT_MONO)
+    cx := x + 16 + pw + text_width(os.term.input, FONT_MONO) + 1
+    gfx_fill_rect(cx, ty + 1, 7, 14, 0xF4F4F5)
+
+def term_key(os: OS, k: Int) -> Void:
+    if k == KEY_ENTER:
+        line := os.term.input
+        term_print(os, str_concat(term_prompt(os), line))
+        os.term.input = ""
+        term_exec(os, line)
+        return
+    if k == KEY_BACKSPACE:
+        n := len(os.term.input)
+        if n > 0:
+            os.term.input = substr(os.term.input, 0, n - 1)
+        return
+    if k >= 32:
+        if k < 127:
+            os.term.input = str_concat(os.term.input, chr(k))
+
+def term_arg(line: Str, index: Int) -> Str:
+    mut start := 0
+    mut count := 0
+    n := len(line)
+    mut i := 0
+    while i <= n:
+        at_end := 0
+        if i == n:
+            at_end = 1
+        elif char_at(line, i) == 32:
+            at_end = 1
+        if at_end == 1:
+            if i > start:
+                if count == index:
+                    return substr(line, start, i - start)
+                count = count + 1
+            start = i + 1
+        i = i + 1
+    return ""
+
+def term_exec(os: OS, line: Str) -> Void:
+    cmd := term_arg(line, 0)
+    arg := term_arg(line, 1)
+    if len(cmd) == 0:
+        return
+    if cmd == "help":
+        term_print(os, "  commands")
+        term_print(os, "    help ls cat cd pwd echo clear date uptime")
+        term_print(os, "    mem ps ver uname neofetch accent open close halt")
+        return
+    if cmd == "clear":
+        list_clear(os.term.lines)
+        return
+    if cmd == "ls":
+        term_ls(os)
+        return
+    if cmd == "cd":
+        term_cd(os, arg)
+        return
+    if cmd == "pwd":
+        term_print(os, os.term.cwd)
+        return
+    if cmd == "cat":
+        term_cat(os, arg)
+        return
+    if cmd == "echo":
+        term_print(os, substr(line, min(len(cmd) + 1, len(line)), len(line)))
+        return
+    if cmd == "date":
+        term_print(os, str_concat(str_concat(date_text(), "  "), clock_text()))
+        return
+    if cmd == "uptime":
+        secs := (time_ms() - os.boot_ms) / 1000
+        term_print(os, str_concat(str_concat("  up ", int_to_str(secs)), " seconds"))
+        return
+    if cmd == "mem":
+        term_print(os, str_concat(str_concat("  heap ", int_to_str(heap_used())), str_concat(" KiB used of ", str_concat(int_to_str(heap_total()), " KiB"))))
+        term_print(os, str_concat(str_concat("  ram  ", int_to_str(mem_total_kb() / 1024)), " MiB detected"))
+        return
+    if cmd == "ps":
+        term_print(os, "  pid  name        state")
+        term_print(os, "    1  kernel      running")
+        term_print(os, "    2  compositor  running")
+        for i in range(list_len(os.wins)):
+            wn := win_at(os, i)
+            meta := app_at(os, wn.app)
+            term_print(os, str_concat(str_concat("    ", int_to_str(3 + i)), str_concat("  ", str_concat(meta.name, "      window"))))
+        return
+    if cmd == "ver":
+        term_print(os, "  SamarOS 1.0 \"Aurora\"")
+        return
+    if cmd == "uname":
+        term_print(os, "  SamarOS aurora 1.0 i686 L++ kernel")
+        return
+    if cmd == "neofetch":
+        term_neofetch(os)
+        return
+    if cmd == "accent":
+        term_accent(os, arg)
+        return
+    if cmd == "open":
+        term_open(os, arg)
+        return
+    if cmd == "close":
+        top := top_window(os)
+        if top >= 0:
+            close_window(os, top)
+        return
+    if cmd == "halt":
+        term_print(os, "  halting cpu — press reset to reboot")
+        gfx_present()
+        cpu_halt()
+        return
+    term_print(os, str_concat(str_concat("  error: ", cmd), ": command not found"))
+
+def term_ls(os: OS) -> Void:
+    dir := dir_index(os, os.term.cwd)
+    n := list_len(os.fs)
+    mut shown := 0
+    for i in range(n):
+        node := list_get(os.fs, i)
+        if node.parent == dir:
+            if node.kind == 0:
+                term_print(os, str_concat("  ", str_concat(node.name, "/")))
+            else:
+                term_print(os, str_concat(str_concat("  ", node.name), str_concat("    ", str_concat(int_to_str(node.size), " KiB"))))
+            shown = shown + 1
+    if shown == 0:
+        term_print(os, "  (empty)")
+
+def term_cd(os: OS, arg: Str) -> Void:
+    if len(arg) == 0:
+        os.term.cwd = "/"
+        return
+    if arg == "..":
+        os.term.cwd = "/"
+        return
+    dir := dir_index(os, os.term.cwd)
+    n := list_len(os.fs)
+    for i in range(n):
+        node := list_get(os.fs, i)
+        if node.parent == dir:
+            if node.kind == 0:
+                if node.name == arg:
+                    os.term.cwd = str_concat("/", node.name)
+                    return
+    term_print(os, str_concat(str_concat("  error: no such directory: ", arg), ""))
+
+def term_cat(os: OS, arg: Str) -> Void:
+    dir := dir_index(os, os.term.cwd)
+    n := list_len(os.fs)
+    for i in range(n):
+        node := list_get(os.fs, i)
+        if node.parent == dir:
+            if node.name == arg:
+                term_print(os, str_concat("  ", node.body))
+                return
+    term_print(os, str_concat("  error: no such file: ", arg))
+
+def dir_index(os: OS, path: Str) -> Int:
+    if path == "/":
+        return 0
+    n := list_len(os.fs)
+    for i in range(n):
+        node := list_get(os.fs, i)
+        if node.kind == 0:
+            if str_concat("/", node.name) == path:
+                return i
+    return 0
+
+def term_neofetch(os: OS) -> Void:
+    term_print(os, "        /\\          SamarOS 1.0 \"Aurora\"")
+    term_print(os, "       /  \\         ----------------------")
+    term_print(os, "      / /\\ \\        kernel: L++ freestanding i686")
+    term_print(os, str_concat("     / ___  \\       cpu: ", str_concat(int_to_str(cpu_mhz()), " MHz")))
+    term_print(os, str_concat("    /_/   \\__\\      memory: ", str_concat(int_to_str(mem_total_kb() / 1024), " MiB")))
+    term_print(os, str_concat("                    display: ", str_concat(int_to_str(os.screen_w), str_concat("x", int_to_str(os.screen_h)))))
+    term_print(os, str_concat("                    heap: ", str_concat(int_to_str(heap_used()), " KiB in use")))
+    term_print(os, "                    shell: samarsh (in-kernel)")
+
+def term_accent(os: OS, arg: Str) -> Void:
+    if arg == "blue":
+        os.accent = 0x6D8CFF
+    elif arg == "violet":
+        os.accent = 0x8B5CF6
+    elif arg == "emerald":
+        os.accent = 0x34D399
+    elif arg == "amber":
+        os.accent = 0xF59E0B
+    elif arg == "rose":
+        os.accent = 0xF43F5E
+    else:
+        term_print(os, "  usage: accent blue|violet|emerald|amber|rose")
+        return
+    repaint_wallpaper(os)
+    term_print(os, str_concat("  ok: accent set to ", arg))
+
+def term_open(os: OS, arg: Str) -> Void:
+    if arg == "terminal":
+        open_app(os, APP_TERMINAL)
+    elif arg == "files":
+        open_app(os, APP_FILES)
+    elif arg == "settings":
+        open_app(os, APP_SETTINGS)
+    elif arg == "monitor":
+        open_app(os, APP_MONITOR)
+    elif arg == "store":
+        open_app(os, APP_STORE)
+    elif arg == "about":
+        open_app(os, APP_ABOUT)
+    elif arg == "welcome":
+        open_app(os, APP_WELCOME)
+    else:
+        term_print(os, "  usage: open welcome|terminal|files|settings|monitor|store|about")
+        return
+    term_print(os, str_concat("  ok: launched ", arg))
+
+def repaint_wallpaper(os: OS) -> Void:
+    draw_wallpaper(os.screen_w, os.screen_h, os.accent)
+    gfx_cache_store()
+    os.dirty = 1
+
+# --------------------------------------------------------------- files
+def app_files(os: OS, win: Win, x: Int, y: Int, w: Int, h: Int) -> Void:
+    side := 158
+    gfx_fill_rect(x, y, side, h, 0x121419)
+    gfx_blend_rect(x + side - 1, y, 1, h, 0xFFFFFF, 12)
+
+    section_title(x + 16, y + 16, "FAVOURITES")
+    places: List[Str] := list_new()
+    list_push(places, "/")
+    list_push(places, "kernel")
+    list_push(places, "docs")
+    list_push(places, "home")
+    for i in range(list_len(places)):
+        name := list_get(places, i)
+        py := y + 40 + i * 32
+        selected := 0
+        if i == 0:
+            if os.dir == 0:
+                selected = 1
+        elif dir_by_name(os, name) == os.dir:
+            selected = 1
+        if selected == 1:
+            round_rect(x + 10, py - 5, side - 20, 28, 8, os.accent, 42)
+        label := name
+        if i == 0:
+            label = "Root"
+        icon_folder(x + 20, py, 14, os.accent, 235)
+        text_draw(x + 44, py - 1, label, 0xE4E4E7, 235, FONT_BODY)
+
+    # header
+    text_draw(x + side + 20, y + 16, path_of(os, os.dir), 0xF4F4F5, 245, FONT_TITLE)
+    count := children_count(os, os.dir)
+    text_draw(x + side + 20, y + 38, str_concat(int_to_str(count), " items"), 0x71717A, 230, FONT_SMALL)
+    divider(x + side + 16, y + 62, w - side - 32)
+
+    mut row := 0
+    n := list_len(os.fs)
+    for i in range(n):
+        node := list_get(os.fs, i)
+        if node.parent == os.dir:
+            ry := y + 74 + row * 34
+            if ry + 30 < y + h:
+                mx := mouse_x() - x
+                my := mouse_y() - y
+                if hit(mx, my, side + 12, ry - y, w - side - 28, 30) == 1:
+                    round_rect(x + side + 12, ry, w - side - 28, 30, 8, 0xFFFFFF, 12)
+                if node.kind == 0:
+                    icon_folder(x + side + 24, ry + 8, 15, 0x38BDF8, 245)
+                else:
+                    round_rect(x + side + 24, ry + 7, 13, 16, 3, 0xA1A1AA, 190)
+                text_draw(x + side + 50, ry + 7, node.name, 0xE4E4E7, 240, FONT_BODY)
+                if node.kind == 1:
+                    text_right(x, ry + 8, w - 26, str_concat(int_to_str(node.size), " KiB"), 0x71717A, 230, FONT_SMALL)
+                else:
+                    text_right(x, ry + 8, w - 26, "folder", 0x71717A, 230, FONT_SMALL)
+            row = row + 1
+
+def dir_by_name(os: OS, name: Str) -> Int:
+    n := list_len(os.fs)
+    for i in range(n):
+        node := list_get(os.fs, i)
+        if node.kind == 0:
+            if node.name == name:
+                return i
+    return 0
+
+def path_of(os: OS, index: Int) -> Str:
+    if index == 0:
+        return "/"
+    node := list_get(os.fs, index)
+    return str_concat("/", node.name)
+
+def children_count(os: OS, dir: Int) -> Int:
+    mut c := 0
+    n := list_len(os.fs)
+    for i in range(n):
+        node := list_get(os.fs, i)
+        if node.parent == dir:
+            c = c + 1
+    return c
+
+def click_files(os: OS, win: Win, lx: Int, ly: Int) -> Void:
+    side := 158
+    if lx < side:
+        idx := (ly - 35) / 32
+        if idx == 0:
+            os.dir = 0
+        elif idx == 1:
+            os.dir = dir_by_name(os, "kernel")
+        elif idx == 2:
+            os.dir = dir_by_name(os, "docs")
+        elif idx == 3:
+            os.dir = dir_by_name(os, "home")
+        os.dirty = 1
+        return
+    row := (ly - 74) / 34
+    mut seen := 0
+    n := list_len(os.fs)
+    for i in range(n):
+        node := list_get(os.fs, i)
+        if node.parent == os.dir:
+            if seen == row:
+                if node.kind == 0:
+                    os.dir = i
+                    os.dirty = 1
+                else:
+                    notify(os, str_concat(node.name, str_concat(" · ", str_concat(int_to_str(node.size), " KiB"))))
+                return
+            seen = seen + 1
+
+# ------------------------------------------------------------ settings
+def accent_swatch(i: Int) -> Int:
+    if i == 0:
+        return 0x6D8CFF
+    if i == 1:
+        return 0x8B5CF6
+    if i == 2:
+        return 0x34D399
+    if i == 3:
+        return 0xF59E0B
+    if i == 4:
+        return 0xF43F5E
+    return 0x38BDF8
+
+def setting_row(x: Int, y: Int, w: Int, title: Str, sub: Str, on: Int, accent: Int) -> Void:
+    card(x, y, w, 52, 12)
+    text_draw(x + 16, y + 10, title, 0xF4F4F5, 245, FONT_BODY_SEMI)
+    text_draw(x + 16, y + 28, sub, 0x8B8B95, 225, FONT_SMALL)
+    toggle(x + w - 54, y + 15, on, accent)
+
+def app_settings(os: OS, win: Win, x: Int, y: Int, w: Int, h: Int) -> Void:
+    gfx_fill_rect(x, y, w, h, 0x16181F)
+    pad := 20
+    cw := w - pad * 2
+
+    section_title(x + pad, y + 16, "APPEARANCE")
+    card(x + pad, y + 34, cw, 74, 14)
+    text_draw(x + pad + 16, y + 46, "Accent colour", 0xF4F4F5, 245, FONT_BODY_SEMI)
+    for i in range(6):
+        c := accent_swatch(i)
+        sx := x + pad + 16 + i * 34
+        sy := y + 74
+        fill_circle(sx + 10, sy + 10, 10, c, 255)
+        if c == os.accent:
+            ring_circle(sx + 10, sy + 10, 14, 2, c, 255)
+
+    section_title(x + pad, y + 126, "NETWORK & FOCUS")
+    setting_row(x + pad, y + 144, cw, "Wi-Fi", "SamarNet 6 GHz · 780 Mbps", os.wifi, os.accent)
+    setting_row(x + pad, y + 202, cw, "Bluetooth", "2 devices paired", os.bluetooth, os.accent)
+    setting_row(x + pad, y + 260, cw, "Focus", "Silence notifications", os.focus_mode, os.accent)
+
+    section_title(x + pad, y + 326, "DISPLAY & SOUND")
+    card(x + pad, y + 344, cw, 82, 14)
+    text_draw(x + pad + 16, y + 354, "Brightness", 0xC7C7CE, 235, FONT_SMALL)
+    slider(x + pad + 16, y + 370, cw - 32, os.brightness, os.accent)
+    text_draw(x + pad + 16, y + 392, "Volume", 0xC7C7CE, 235, FONT_SMALL)
+    slider(x + pad + 16, y + 406, cw - 32, os.volume, os.accent)
+
+def click_settings(os: OS, win: Win, lx: Int, ly: Int) -> Void:
+    pad := 20
+    cw := win.w - pad * 2
+    for i in range(6):
+        sx := pad + 16 + i * 34
+        if hit(lx, ly, sx, 74, 24, 24) == 1:
+            os.accent = accent_swatch(i)
+            repaint_wallpaper(os)
+            notify(os, "Accent updated")
+            return
+    if hit(lx, ly, pad, 144, cw, 52) == 1:
+        os.wifi = 1 - os.wifi
+    elif hit(lx, ly, pad, 202, cw, 52) == 1:
+        os.bluetooth = 1 - os.bluetooth
+    elif hit(lx, ly, pad, 260, cw, 52) == 1:
+        os.focus_mode = 1 - os.focus_mode
+    elif hit(lx, ly, pad + 16, 366, cw - 32, 16) == 1:
+        os.brightness = clamp(((lx - pad - 16) * 100) / (cw - 32), 0, 100)
+    elif hit(lx, ly, pad + 16, 402, cw - 32, 16) == 1:
+        os.volume = clamp(((lx - pad - 16) * 100) / (cw - 32), 0, 100)
+    os.dirty = 1
+
+# ------------------------------------------------------------- monitor
+def stat_row(x: Int, y: Int, w: Int, label: Str, value: Str) -> Void:
+    text_draw(x, y, label, 0x8B8B95, 230, FONT_SMALL)
+    text_right(x, y, w, value, 0xE4E4E7, 240, FONT_BODY)
+
+def ring_stat(cx: Int, cy: Int, value: Int, label: Str, color: Int) -> Void:
+    ring_circle(cx, cy, 34, 6, 0xFFFFFF, 22)
+    steps := (value * 360) / 100
+    mut a := 0
+    while a < steps:
+        rad := 34
+        px := cx + (cos_deg(a - 90) * rad) / 1000
+        py := cy + (sin_deg(a - 90) * rad) / 1000
+        fill_circle(px, py, 3, color, 255)
+        a = a + 4
+    v := str_concat(int_to_str(value), "%")
+    text_center(cx - 40, cy - 10, 80, v, 0xF4F4F5, 245, FONT_TITLE)
+    text_center(cx - 50, cy + 42, 100, label, 0x8B8B95, 230, FONT_SMALL)
+
+def app_monitor(os: OS, win: Win, x: Int, y: Int, w: Int, h: Int) -> Void:
+    gfx_fill_rect(x, y, w, h, 0x16181F)
+    pad := 20
+    cw := w - pad * 2
+
+    cpu := list_get(os.cpu_hist, list_len(os.cpu_hist) - 1)
+    heap_pct := (heap_used() * 100) / max(heap_total(), 1)
+
+    card(x + pad, y + 16, cw, 132, 14)
+    ring_stat(x + pad + 78, y + 82, cpu, "CPU LOAD", os.accent)
+    ring_stat(x + pad + 218, y + 82, clamp(heap_pct, 1, 100), "KERNEL HEAP", 0x34D399)
+    stat_row(x + pad + 300, y + 40, cw - 320, "CPU", str_concat(int_to_str(cpu_mhz()), " MHz"))
+    stat_row(x + pad + 300, y + 64, cw - 320, "RAM", str_concat(int_to_str(mem_total_kb() / 1024), " MiB"))
+    stat_row(x + pad + 300, y + 88, cw - 320, "Heap", str_concat(int_to_str(heap_used()), " KiB"))
+    stat_row(x + pad + 300, y + 112, cw - 320, "Frame", str_concat(int_to_str(os.frame_ms), " ms"))
+
+    section_title(x + pad, y + 164, "CPU HISTORY")
+    card(x + pad, y + 182, cw, 96, 14)
+    sparkline(x + pad + 14, y + 196, cw - 28, 68, os.cpu_hist, os.accent)
+
+    section_title(x + pad, y + 292, "KERNEL TASKS")
+    card(x + pad, y + 310, cw, 100, 14)
+    tasks: List[Str] := list_new()
+    list_push(tasks, "compositor")
+    list_push(tasks, "ps2 input")
+    list_push(tasks, "rtc clock")
+    for i in range(list_len(tasks)):
+        ty := y + 322 + i * 28
+        text_draw(x + pad + 16, ty, list_get(tasks, i), 0xE4E4E7, 240, FONT_BODY)
+        load := 12 + i * 17 + (os.frames % 11)
+        meter_bar(x + pad + 150, ty + 5, cw - 230, 6, load, os.accent)
+        text_right(x + pad, ty, cw - 20, str_concat(int_to_str(load), "%"), 0x8B8B95, 230, FONT_SMALL)
+
+# --------------------------------------------------------------- store
+def store_item(x: Int, y: Int, w: Int, name: Str, desc: Str, tag: Str, c0: Int, c1: Int, accent: Int) -> Void:
+    card(x, y, w, 76, 14)
+    grad_round_rect(x + 14, y + 14, 46, 46, 12, c0, c1, 255)
+    icon_sparkle(x + 28, y + 28, 18, 0xFFFFFF, 235)
+    text_draw(x + 74, y + 16, name, 0xF4F4F5, 245, FONT_BODY_SEMI)
+    text_draw(x + 74, y + 34, desc, 0x8B8B95, 225, FONT_SMALL)
+    chip(x + 74, y + 52, tag, accent)
+    button(x + w - 96, y + 22, 78, 30, "Install", accent, 1, 0)
+
+def app_store(os: OS, win: Win, x: Int, y: Int, w: Int, h: Int) -> Void:
+    gfx_fill_rect(x, y, w, h, 0x16181F)
+    pad := 20
+    cw := w - pad * 2
+    text_draw(x + pad, y + 16, "Package Store", 0xF4F4F5, 245, FONT_HEAD)
+    text_draw(x + pad, y + 44, "Everything below is written in L++ and installs into the kernel image", 0x8B8B95, 225, FONT_SMALL)
+
+    store_item(x + pad, y + 72, cw, "lpp-http", "HTTP client and server runtime", "NETWORK", 0x38BDF8, 0x2563EB, os.accent)
+    store_item(x + pad, y + 158, cw, "lpp-json", "Zero copy JSON parser", "DATA", 0x34D399, 0x0D9488, os.accent)
+    store_item(x + pad, y + 244, cw, "samar-ui", "Widget kit used by this desktop", "UI", 0xD946EF, 0x7C3AED, os.accent)
+    store_item(x + pad, y + 330, cw, "lpp-pm", "The self hosted package manager", "TOOLS", 0xFB923C, 0xEA580C, os.accent)
+
+def click_store(os: OS, win: Win, lx: Int, ly: Int) -> Void:
+    pad := 20
+    cw := win.w - pad * 2
+    names: List[Str] := list_new()
+    list_push(names, "lpp-http")
+    list_push(names, "lpp-json")
+    list_push(names, "samar-ui")
+    list_push(names, "lpp-pm")
+    for i in range(4):
+        by := 72 + i * 86 + 22
+        if hit(lx, ly, pad + cw - 96, by, 78, 30) == 1:
+            notify(os, str_concat("Installing ", list_get(names, i)))
+            return
+
+# --------------------------------------------------------------- about
+def about_row(x: Int, y: Int, w: Int, label: Str, value: Str) -> Void:
+    text_draw(x, y, label, 0x8B8B95, 230, FONT_SMALL)
+    text_right(x, y - 1, w, value, 0xE4E4E7, 245, FONT_BODY)
+
+def app_about(os: OS, win: Win, x: Int, y: Int, w: Int, h: Int) -> Void:
+    gfx_fill_rect(x, y, w, h, 0x16181F)
+    pad := 22
+    cw := w - pad * 2
+
+    samar_logo(x + w / 2 - 26, y + 24, 52, os.accent, 255)
+    text_center(x, y + 86, w, "SamarOS", 0xF4F4F5, 250, FONT_HEAD)
+    text_center(x, y + 112, w, "1.0 \"Aurora\"  ·  L++ kernel", 0x8B8B95, 230, FONT_SMALL)
+
+    card(x + pad, y + 140, cw, 176, 14)
+    about_row(x + pad + 16, y + 158, cw - 32, "Kernel", "L++ freestanding, 32-bit protected mode")
+    about_row(x + pad + 16, y + 184, cw - 32, "Boot", "custom sector + stage 2, VESA LFB")
+    about_row(x + pad + 16, y + 210, cw - 32, "Display", str_concat(str_concat(int_to_str(os.screen_w), "x"), str_concat(int_to_str(os.screen_h), " · 32bpp")))
+    about_row(x + pad + 16, y + 236, cw - 32, "Memory", str_concat(int_to_str(mem_total_kb() / 1024), " MiB"))
+    about_row(x + pad + 16, y + 262, cw - 32, "CPU", str_concat(int_to_str(cpu_mhz()), " MHz"))
+    about_row(x + pad + 16, y + 288, cw - 32, "Uptime", str_concat(int_to_str((time_ms() - os.boot_ms) / 1000), " s"))
+
+    text_center(x, y + h - 44, w, "no libc · no bootloader from anyone else · no VM", 0x52525B, 225, FONT_SMALL)
