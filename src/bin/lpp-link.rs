@@ -903,6 +903,7 @@ fn is_kernel32_symbol(name: &str) -> bool {
             | "GetFileSize"
             | "SetFilePointer"
             | "DeleteFileA"
+            | "MoveFileA"
             | "GetFileAttributesA"
             | "CreateDirectoryA"
             | "RemoveDirectoryA"
