@@ -131,6 +131,7 @@ def main():
         pcode := cmd_publish(opts)
         if pcode != 0:
             error("Publish failed.")
+            exit(pcode)
         return
 
     # ── update ─────────────────────────────────────────────────────────────
@@ -147,7 +148,7 @@ def main():
         ws  := workspace_discover(path_cwd())
         if str_len(ws.root) == 0:
             error("not inside a workspace — no [workspace] section found")
-            return
+            exit(1)
         if sub == "graph":
             workspace_graph(ws)
             return
@@ -181,13 +182,14 @@ def main():
         entry := "src/main.lpp"
         if check(entry) == 0:
             warn("no src/main.lpp found")
-            return
+            exit(1)
         cc_cmd := str_concat("lpp check ", entry)
         ccode := command_exec(cc_cmd)
         if ccode == 0:
             success("check passed — project is semantically valid.")
         else:
             error("check failed — errors detected.")
+            exit(ccode)
         return
 
     # ── clean ──────────────────────────────────────────────────────────────
@@ -217,6 +219,7 @@ def main():
                 return
             else:
                 warn("no tests/ directory found")
+                exit(1)
         return
 
     # ── list ──────────────────────────────────────────────────────────
@@ -278,6 +281,12 @@ def main():
         if sub == "set":
             info(str_concat("setting ", str_concat(key, str_concat(" = ", val))))
         return
+
+    # Unknown commands should fail rather than silently displaying help with
+    # a successful process status.
+    if cmd != "help":
+        error(str_concat("unknown package manager command: ", cmd))
+        exit(2)
 
     # ── help ───────────────────────────────────────────────────────────────
     header(str_concat("L++ Package Manager v", env_get("LPP_PM_VERSION")))
