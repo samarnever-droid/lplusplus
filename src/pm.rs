@@ -306,7 +306,7 @@ pub fn parse_json_manifest(content: &str) -> Result<Package, String> {
     package_from_parts(name, version, author, entry, keywords, dependencies)
 }
 
-pub fn parse_toml(content: &str) -> Result<Package, String> {
+fn parse_toml_with_workspace(content: &str, workspace_version: Option<&str>) -> Result<Package, String> {
     let root: toml::Value = toml::from_str(content)
         .map_err(|e| format!("TOML syntax error in manifest: {e}"))?;
     let root_table = root
@@ -322,11 +322,18 @@ pub fn parse_toml(content: &str) -> Result<Package, String> {
         .and_then(toml::Value::as_str)
         .ok_or_else(|| "Missing package name in [package] section".to_string())?
         .to_string();
-    let version = package
-        .get("version")
-        .and_then(toml::Value::as_str)
-        .ok_or_else(|| "Missing package version in [package] section".to_string())?
-        .to_string();
+    let version = match package.get("version") {
+        Some(value) if value.as_str().is_some() => value.as_str().unwrap_or_default().to_string(),
+        Some(toml::Value::Table(table))
+            if table.get("workspace").and_then(toml::Value::as_bool) == Some(true) =>
+        {
+            workspace_version
+                .ok_or_else(|| "package version uses workspace = true but no workspace version was provided".to_string())?
+                .to_string()
+        }
+        Some(_) => return Err("Package manifest error: [package].version must be a SemVer string or { workspace = true }".to_string()),
+        None => return Err("Missing package version in [package] section".to_string()),
+    };
     let author = package
         .get("author")
         .and_then(toml::Value::as_str)
@@ -376,6 +383,10 @@ pub fn parse_toml(content: &str) -> Result<Package, String> {
         }
     }
     package_from_parts(name, version, author, entry, keywords, dependencies)
+}
+
+pub fn parse_toml(content: &str) -> Result<Package, String> {
+    parse_toml_with_workspace(content, None)
 }
 
 pub fn resolve_entry_point() -> String {
@@ -724,7 +735,19 @@ fn read_manifest() -> Result<Package, String> {
     } else if std::path::Path::new("lpp.toml").exists() {
         let content = fs::read_to_string("lpp.toml")
             .map_err(|e| format!("Failed to read lpp.toml: {}", e))?;
-        parse_toml(&content)
+        match parse_toml(&content) {
+            Ok(package) => Ok(package),
+            Err(error) if content.contains("workspace = true") => {
+                let (_root, root_manifest) = workspace_root(Path::new("."))?;
+                let workspace_version = root_manifest
+                    .get("workspace")
+                    .and_then(|w| w.get("version"))
+                    .and_then(toml::Value::as_str)
+                    .ok_or_else(|| format!("{error}; workspace has no [workspace].version"))?;
+                parse_toml_with_workspace(&content, Some(workspace_version))
+            }
+            Err(error) => Err(error),
+        }
     } else {
         Err("No lpp.json or lpp.toml manifest found in current directory.".to_string())
     }
@@ -1098,6 +1121,9 @@ fn compile_source_to_object(source_path: &Path) -> Result<PathBuf, String> {
         println!("  Cache hit: {}", cache_key);
         return Ok(obj_file);
     }
+    // Never let a failed compile leave an object from a previous source
+    // revision that a later link step could accidentally consume.
+    let _ = fs::remove_file(&obj_file);
     let status = std::process::Command::new(&compiler_path)
         .env("LPP_AOT", "1")
         // Package builds consume the object file directly. Skipping the
@@ -1117,6 +1143,7 @@ fn compile_source_to_object(source_path: &Path) -> Result<PathBuf, String> {
         })?;
 
     if !status.success() {
+        let _ = fs::remove_file(&obj_file);
         return Err(format!(
             "Compilation failed for '{}'.",
             source_path.display()
@@ -1625,7 +1652,19 @@ pub fn direct_link_binary(obj_file: &Path, output_path: &Path) -> Result<(), Str
 }
 
 fn link_native_binary(obj_file: &Path, output_path: &Path) -> Result<(), String> {
-    let use_host = std::env::var("LPP_LINKER").as_deref() == Ok("host");
+    // Package builds must honor both the CLI/environment override and the
+    // persisted `lpp config set linker ...` setting.  The old implementation
+    // silently used the direct linker unless LPP_LINKER=host was exported.
+    let config = crate::config::LppConfig::load_or_create();
+    let use_host = match std::env::var("LPP_LINKER").ok().as_deref() {
+        Some("host") => true,
+        Some("direct") => false,
+        Some("auto") | None => !config.use_direct_linker(),
+        Some(other) => {
+            eprintln!("[L++] unknown LPP_LINKER value '{other}', using configured linker");
+            !config.use_direct_linker()
+        }
+    };
     if use_host {
         #[cfg(windows)]
         load_msvc_env();
@@ -1857,6 +1896,10 @@ fn cmd_new(args: &[String]) -> i32 {
 }
 
 fn cmd_init(args: &[String]) -> i32 {
+    if Path::new("lpp.toml").exists() || Path::new("lpp.json").exists() {
+        eprintln!("[L++] A package manifest already exists here; refusing to overwrite it.");
+        return 1;
+    }
     let project_name =
         normalize_package_name(args.get(0).map(|s| s.as_str()).unwrap_or("my_project"));
     println!("[L++] Initializing new project '{}'...", project_name);
@@ -2060,6 +2103,14 @@ pub fn resolve_from_json(json_str: &str, target_name: &str) -> Option<RegistryEn
     None
 }
 
+fn is_registry_json(content: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(content)
+        .ok()
+        .and_then(|value| value.get("packages").cloned())
+        .and_then(|packages| packages.as_object().cloned())
+        .is_some()
+}
+
 fn fetch_registry_json() -> Option<String> {
     let local_paths = [
         PathBuf::from("registry").join("index.json"),
@@ -2071,7 +2122,9 @@ fn fetch_registry_json() -> Option<String> {
     for local in &local_paths {
         if local.exists() {
             if let Ok(content) = fs::read_to_string(local) {
-                return Some(content);
+                if is_registry_json(&content) {
+                    return Some(content);
+                }
             }
         }
     }
@@ -2088,7 +2141,9 @@ fn fetch_registry_json() -> Option<String> {
             for candidate in &exe_candidates {
                 if candidate.exists() {
                     if let Ok(content) = fs::read_to_string(candidate) {
-                        return Some(content);
+                        if is_registry_json(&content) {
+                            return Some(content);
+                        }
                     }
                 }
             }
@@ -2111,7 +2166,7 @@ fn fetch_registry_json() -> Option<String> {
             if let Some(out) = output {
                 if out.status.success() {
                     let text = String::from_utf8_lossy(&out.stdout).into_owned();
-                    if !text.trim().is_empty() && text.contains("packages") {
+                    if is_registry_json(&text) {
                         fetched_json = Some(text);
                         break;
                     }
@@ -2129,7 +2184,7 @@ fn fetch_registry_json() -> Option<String> {
             if let Some(out) = output {
                 if out.status.success() {
                     let text = String::from_utf8_lossy(&out.stdout).into_owned();
-                    if !text.trim().is_empty() && text.contains("packages") {
+                    if is_registry_json(&text) {
                         fetched_json = Some(text);
                         break;
                     }
@@ -2150,7 +2205,7 @@ fn fetch_registry_json() -> Option<String> {
 
     if cache_path.exists() {
         if let Ok(content) = fs::read_to_string(&cache_path) {
-            if !content.trim().is_empty() {
+            if is_registry_json(&content) {
                 return Some(content);
             }
         }
@@ -2462,9 +2517,13 @@ fn cmd_install(force_update: bool) -> i32 {
 
         println!("[L++] Installing '{}'...", resolved_dep.name);
         let destination = pkg_dir.join(&resolved_dep.name);
+        let existed_before = destination.exists();
         let source = match install_dependency(&resolved_dep, &destination, force_update) {
             Ok(source) => source,
             Err(e) => {
+                if !existed_before && destination.exists() {
+                    let _ = fs::remove_dir_all(&destination);
+                }
                 eprintln!("[L++] {e}");
                 failed = true;
                 continue;
@@ -2831,6 +2890,12 @@ mod tests {
 
     #[test]
     fn manifests_validate_semver_and_dependency_sources() {
+        let workspace_member = "[package]\nname = \"demo\"\nversion = { workspace = true }\n";
+        assert!(super::parse_toml(workspace_member).is_err());
+        let resolved = super::parse_toml_with_workspace(workspace_member, Some("2.0.0"))
+            .expect("workspace version should resolve");
+        assert_eq!(resolved.version, "2.0.0");
+
         let bad_version = "[package]\nname = \"demo\"\nversion = \"not-semver\"\n";
         assert!(super::parse_toml(bad_version).is_err());
         let bad_source = "[package]\nname = \"demo\"\nversion = \"1.0.0\"\n[dependencies]\nfoo = { git = \"x\", path = \"y\" }\n";
@@ -3084,7 +3149,12 @@ fn workspace_members(root: &Path, manifest: &toml::Value) -> Result<Vec<(String,
             return Err(format!("workspace member '{relative}' escapes the workspace root"));
         }
         let manifest_path = path.join("lpp.toml");
-        let package = parse_toml(&fs::read_to_string(&manifest_path).map_err(|e| format!("read '{}': {e}", manifest_path.display()))?)?;
+        let member_text = fs::read_to_string(&manifest_path)
+            .map_err(|e| format!("read '{}': {e}", manifest_path.display()))?;
+        let workspace_version = workspace
+            .get("version")
+            .and_then(toml::Value::as_str);
+        let package = parse_toml_with_workspace(&member_text, workspace_version)?;
         result.push((relative.to_string(), path, package));
     }
     Ok(result)
@@ -3448,7 +3518,10 @@ fn cmd_build_opts(is_release: bool) -> Option<String> {
     } else {
         Path::new("LppData").join("build").join("release")
     };
-    let _ = fs::create_dir_all(&target_dir);
+    if let Err(e) = fs::create_dir_all(&target_dir) {
+        eprintln!("[L++] cannot create build directory '{}': {e}", target_dir.display());
+        return None;
+    }
 
     println!("  Compiling {}...", entry_point.display());
     let obj_file = match compile_source_to_object(entry_point) {
@@ -3465,6 +3538,7 @@ fn cmd_build_opts(is_release: bool) -> Option<String> {
     }
 
     let exe_path = output_path_for_name(&target_dir, &bin_name);
+    let _ = fs::remove_file(&exe_path);
 
     println!("  Linking {}...", exe_path.display());
     let link_result = link_native_binary(&obj_file, &exe_path);
@@ -3591,6 +3665,7 @@ fn cmd_test() -> i32 {
 
         let base_name = format!("test_{}", test_name.strip_suffix(".lpp").unwrap_or(test_name));
         let temp_exe = output_path_for_name(&target_test_dir, &base_name);
+        let _ = fs::remove_file(&temp_exe);
 
         match compile_source_to_object(&test_path) {
             Ok(temp_obj) => {

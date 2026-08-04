@@ -1259,6 +1259,9 @@ fn real_main() -> i32 {
         || (effective_linker.as_deref() != Some("direct") && (has_extern || !link_libs.is_empty()))
         || (effective_linker.is_none() && !config_obj.use_direct_linker());
 
+    // A failed link must not leave an executable from an earlier build that
+    // looks successful to a subsequent action.
+    let _ = fs::remove_file(&exe_path);
     let link_result = if use_host {
         #[cfg(windows)]
         pm::load_msvc_env();
