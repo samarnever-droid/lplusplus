@@ -205,8 +205,15 @@ char *lpp_input(void) {
     return result;
 }
 
+/* `Str` values are ARC-managed: every owned string is allocated via
+ * lpp_arc_alloc (see lpp_input, lpp_net_strdup_impl, lpp_json_get_str) and
+ * reclaimed through lpp_arc_release. The old `free(ptr)` here freed 24 bytes
+ * BEFORE the payload — straight into the ARC header — so freeing any real
+ * owned string through this path corrupted the heap. lpp_arc_release validates
+ * the header first, so it is a safe no-op on NULL and on non-ARC pointers and
+ * correctly reclaims owned strings. */
 void lpp_free_str(char *ptr) {
-    free(ptr);
+    lpp_arc_release(ptr);
 }
 
 int64_t lpp_parse_int(const char *str) {
@@ -292,6 +299,11 @@ char *lpp_read_file(const char *path) {
 
         for (;;) {
             if (len + 1024 >= cap) {
+                if (cap > (size_t)INT64_MAX / 2) {   /* cap *= 2 overflow guard */
+                    lpp_arc_release(buf);
+                    fclose(f);
+                    return NULL;
+                }
                 size_t new_cap = cap * 2;
                 char *new_buf = (char *)lpp_arc_alloc((int64_t)new_cap);
                 if (!new_buf) {
@@ -1757,9 +1769,26 @@ char* lpp_http_get(const char *url, int64_t timeout_ms) {
     if (!*path) path = "/";
     int64_t fd = lpp_net_dial(host, (int64_t)port, timeout_ms);
     if (fd <= 0) return lpp_net_strdup_impl("");
-    char req[2048];
-    snprintf(req, sizeof(req), "GET %s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\nAccept: */*\r\nUser-Agent: L++/0.1.3\r\n\r\n", path, host);
+    /* Size the request to its actual contents instead of a fixed stack array:
+     * snprintf would silently truncate a long path or host, emitting a
+     * malformed request (and for POST, a Content-Length that no longer matches
+     * the body actually sent). */
+    size_t path_len = strlen(path);
+    size_t host_len = strlen(host);
+    if (path_len > (size_t)INT64_MAX || host_len > (size_t)INT64_MAX ||
+        path_len + host_len + 160 < path_len) {   /* size_t overflow guard */
+        lpp_net_close(fd);
+        return lpp_net_strdup_impl("");
+    }
+    size_t need = path_len + host_len + 160;      /* request head + NUL */
+    char *req = (char *)lpp_arc_alloc((int64_t)need);
+    if (!req) { lpp_net_close(fd); return lpp_net_strdup_impl(""); }
+    int n = snprintf(req, need,
+        "GET %s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\nAccept: */*\r\nUser-Agent: L++/0.1.3\r\n\r\n",
+        path, host);
+    if (n < 0 || (size_t)n >= need) { lpp_arc_release(req); lpp_net_close(fd); return lpp_net_strdup_impl(""); }
     lpp_net_send_all(fd, req);
+    lpp_arc_release(req);
     char *body = lpp_net_recv(fd, 65536);
     lpp_net_close(fd);
     if (!body) return lpp_net_strdup_impl("");
@@ -1784,11 +1813,25 @@ char* lpp_http_post(const char *url, const char *data, const char *content_type,
     if (!content_type) content_type = "application/x-www-form-urlencoded";
     int64_t fd = lpp_net_dial(host, (int64_t)port, timeout_ms);
     if (fd <= 0) return lpp_net_strdup_impl("");
-    char req[4096];
-    snprintf(req, sizeof(req),
+    size_t path_len = strlen(path);
+    size_t host_len = strlen(host);
+    size_t ct_len = strlen(content_type);
+    size_t data_len = strlen(data);
+    if (path_len > (size_t)INT64_MAX || host_len > (size_t)INT64_MAX ||
+        ct_len > (size_t)INT64_MAX || data_len > (size_t)INT64_MAX ||
+        path_len + host_len + ct_len + data_len + 320 < path_len) {
+        lpp_net_close(fd);
+        return lpp_net_strdup_impl("");
+    }
+    size_t need = path_len + host_len + ct_len + data_len + 320;
+    char *req = (char *)lpp_arc_alloc((int64_t)need);
+    if (!req) { lpp_net_close(fd); return lpp_net_strdup_impl(""); }
+    int n = snprintf(req, need,
         "POST %s HTTP/1.1\r\nHost: %s\r\nContent-Type: %s\r\nContent-Length: %d\r\nConnection: close\r\nAccept: */*\r\nUser-Agent: L++/0.1.3\r\n\r\n%s",
-        path, host, content_type, (int)strlen(data), data);
+        path, host, content_type, (int)data_len, data);
+    if (n < 0 || (size_t)n >= need) { lpp_arc_release(req); lpp_net_close(fd); return lpp_net_strdup_impl(""); }
     lpp_net_send_all(fd, req);
+    lpp_arc_release(req);
     char *body = lpp_net_recv(fd, 65536);
     lpp_net_close(fd);
     if (!body) return lpp_net_strdup_impl("");
@@ -1869,15 +1912,22 @@ static char *parse_json_string(const char **p) {
     return res;
 }
 
-static lpp_JsonNode *parse_json_object(const char **p);
+/* Recursion guard: parse_json_value/object recurse once per nesting level, so
+ * an attacker-supplied document with unbounded `{{{{...` nesting would smash
+ * the stack. Refuse to descend past a sane bound instead of crashing. */
+#define LPP_JSON_MAX_DEPTH 256
 
-static lpp_JsonNode *parse_json_value(const char **p) {
+static lpp_JsonNode *parse_json_object(const char **p, int depth);
+
+static lpp_JsonNode *parse_json_value(const char **p, int depth) {
+    if (depth > LPP_JSON_MAX_DEPTH) return NULL;
     skip_json_ws(p);
     if (**p == '{') {
-        return parse_json_object(p);
+        return parse_json_object(p, depth + 1);
     } else if (**p == '"') {
         char *s = parse_json_string(p);
         lpp_JsonNode *n = calloc(1, sizeof(lpp_JsonNode));
+        if (!n) { if (s) lpp_arc_release(s); return NULL; }
         n->type = 1;
         n->value.str_val = s;
         return n;
@@ -1886,6 +1936,7 @@ static lpp_JsonNode *parse_json_value(const char **p) {
         long long val = strtoll(*p, &end, 10);
         *p = end;
         lpp_JsonNode *n = calloc(1, sizeof(lpp_JsonNode));
+        if (!n) return NULL;
         n->type = 0;
         n->value.int_val = (int64_t)val;
         return n;
@@ -1893,7 +1944,7 @@ static lpp_JsonNode *parse_json_value(const char **p) {
     return NULL;
 }
 
-static lpp_JsonNode *parse_json_object(const char **p) {
+static lpp_JsonNode *parse_json_object(const char **p, int depth) {
     skip_json_ws(p);
     if (**p != '{') return NULL;
     (*p)++; // skip '{'
@@ -1907,11 +1958,11 @@ static lpp_JsonNode *parse_json_object(const char **p) {
         char *key = parse_json_string(p);
         skip_json_ws(p);
         if (**p != ':') {
-            free(key);
+            lpp_arc_release(key);   /* key is an ARC-owned string */
             break;
         }
         (*p)++; // skip ':'
-        lpp_JsonNode *val = parse_json_value(p);
+        lpp_JsonNode *val = parse_json_value(p, depth + 1);
         if (val) {
             val->key = key;
             if (!head) {
@@ -1922,7 +1973,7 @@ static lpp_JsonNode *parse_json_object(const char **p) {
                 tail = val;
             }
         } else {
-            free(key);
+            lpp_arc_release(key);   /* key is an ARC-owned string */
         }
         skip_json_ws(p);
         if (**p == ',') {
@@ -1934,6 +1985,7 @@ static lpp_JsonNode *parse_json_object(const char **p) {
     if (**p == '}') (*p)++; // skip '}'
     
     lpp_JsonNode *n = calloc(1, sizeof(lpp_JsonNode));
+    if (!n) return NULL;
     n->type = 2;
     n->value.obj_val = head;
     return n;
@@ -1942,7 +1994,7 @@ static lpp_JsonNode *parse_json_object(const char **p) {
 void *lpp_json_parse(const char *str) {
     if (!str) return NULL;
     const char *p = str;
-    return parse_json_value(&p);
+    return parse_json_value(&p, 0);
 }
 
 int64_t lpp_json_get_int(void *json, const char *key) {
@@ -1995,7 +2047,11 @@ void *lpp_json_get_obj(void *json, const char *key) {
 
 static void lpp_json_free_node(lpp_JsonNode *node) {
     if (!node) return;
-    if (node->key) free(node->key);
+    /* Keys are ARC-owned strings (allocated via lpp_arc_alloc in
+     * parse_json_string), so they must be reclaimed with lpp_arc_release —
+     * raw free() on an ARC string freed 24 bytes inside its header. The node
+     * struct itself is plain calloc, so free(node) below is correct. */
+    if (node->key) lpp_arc_release(node->key);
     if (node->type == 1) {
         if (node->value.str_val) lpp_arc_release(node->value.str_val);
     } else if (node->type == 2) {
@@ -2094,6 +2150,7 @@ int64_t lpp_command_output(int64_t cmd_ptr) {
     
     while (1) {
         if (len + 256 > cap) {
+            if (cap > (size_t)INT64_MAX / 2) break;   /* cap *= 2 overflow guard */
             cap *= 2;
             char *new_buf = (char *)lpp_arc_alloc((int64_t)cap);
             if (!new_buf) break;
