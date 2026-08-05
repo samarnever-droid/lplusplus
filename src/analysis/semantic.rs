@@ -147,6 +147,8 @@ pub struct Resolver {
     /// at its real type. Binding everything as Int used to make
     /// `match m: F(v): float_to_str(v)` fail with "expected Float, got Int".
     variant_payload_types: std::collections::HashMap<String, Type>,
+    /// Scopes from which currently-resolving spawned closures originate.
+    spawn_origins: Vec<ScopeId>,
 }
 
 impl Resolver {
@@ -160,6 +162,7 @@ impl Resolver {
             loop_depth: 0,
             trait_method_names: std::collections::HashSet::new(),
             variant_payload_types: std::collections::HashMap::new(),
+            spawn_origins: Vec::new(),
         }
     }
 
@@ -357,6 +360,36 @@ impl Resolver {
         Ok(())
     }
 
+    /// Returns whether `candidate` is `scope` itself or one of its lexical
+    /// ancestors.
+    fn scope_is_at_or_above(&self, candidate: ScopeId, scope: ScopeId) -> bool {
+        let mut current = Some(scope);
+        while let Some(id) = current {
+            if id == candidate {
+                return true;
+            }
+            current = self.table.scopes[id.0].parent;
+        }
+        false
+    }
+
+    /// A spawned closure executes concurrently with the scope that spawned it.
+    /// It may read captures, but must not write a binding owned by that scope
+    /// (or an enclosing scope). Bindings declared in the closure remain local
+    /// to that thread and are intentionally allowed to be mutable.
+    fn check_spawn_capture_mutation(&self, binding: BindingId) -> Result<(), String> {
+        let binding = &self.table.bindings[binding.0];
+        if self.spawn_origins.iter().any(|&origin| {
+            self.scope_is_at_or_above(binding.declared_in, origin)
+        }) {
+            return Err(format!(
+                "Cannot mutate captured variable '{}' inside a spawned closure: this would cause a data race.",
+                binding.name
+            ));
+        }
+        Ok(())
+    }
+
     fn resolve_stmt(&mut self, stmt: &mut Stmt) -> Result<(), String> {
         match stmt {
             Stmt::Destructure {
@@ -409,6 +442,7 @@ impl Resolver {
                             name, name
                         ));
                     }
+                    self.check_spawn_capture_mutation(id)?;
                 } else {
                     return Err(format!("Assignment to undeclared variable '{}'", name));
                 }
@@ -443,6 +477,7 @@ impl Resolver {
                                 name, name
                             ));
                         }
+                        self.check_spawn_capture_mutation(id)?;
                     }
                 }
             }
@@ -749,7 +784,10 @@ impl Resolver {
                 self.resolve_expr(base)?;
             }
             Expr::Spawn { closure } => {
-                self.resolve_expr(closure)?;
+                self.spawn_origins.push(self.current_scope);
+                let result = self.resolve_expr(closure);
+                self.spawn_origins.pop();
+                result?;
             }
             Expr::ListLiteral(elements) => {
                 for element in elements {
@@ -946,4 +984,133 @@ mod tests {
             .expect_err("should reject break outside loop");
         assert!(err.contains("outside of a loop"));
     }
+
+    fn spawned_closure(body: Vec<Stmt>) -> Stmt {
+        Stmt::Expr(Expr::Spawn {
+            closure: Box::new(Expr::Closure {
+                params: vec![],
+                return_type: None,
+                body,
+            }),
+        })
+    }
+
+    #[test]
+    fn rejects_assignment_to_capture_in_spawned_closure() {
+        let mut program = Program {
+            declarations: vec![TopLevel::Function(Function {
+                type_params: vec![],
+                name: "main".to_string(),
+                params: vec![],
+                return_type: Type::Void,
+                body: vec![
+                    Stmt::LetInferred {
+                        name: "x".to_string(),
+                        is_mut: true,
+                        value: Expr::IntLiteral(1),
+                        binding_id: std::cell::Cell::new(None),
+                    },
+                    spawned_closure(vec![Stmt::Assign {
+                        name: "x".to_string(),
+                        value: Expr::IntLiteral(2),
+                        binding_id: std::cell::Cell::new(None),
+                    }]),
+                ],
+                is_async: false,
+            })],
+        };
+
+        let err = Resolver::new().resolve_program(&mut program).unwrap_err();
+        assert!(err.contains("Cannot mutate captured variable 'x'"));
+        assert!(err.contains("data race"));
+    }
+
+    #[test]
+    fn rejects_field_assignment_to_capture_in_spawned_closure() {
+        let mut program = Program {
+            declarations: vec![TopLevel::Function(Function {
+                type_params: vec![],
+                name: "main".to_string(),
+                params: vec![],
+                return_type: Type::Void,
+                body: vec![
+                    Stmt::LetInferred {
+                        name: "box".to_string(),
+                        is_mut: true,
+                        value: Expr::IntLiteral(1),
+                        binding_id: std::cell::Cell::new(None),
+                    },
+                    spawned_closure(vec![Stmt::AssignField {
+                        base: Expr::Identifier("box".to_string(), std::cell::Cell::new(None)),
+                        field: "value".to_string(),
+                        value: Expr::IntLiteral(2),
+                    }]),
+                ],
+                is_async: false,
+            })],
+        };
+
+        let err = Resolver::new().resolve_program(&mut program).unwrap_err();
+        assert!(err.contains("Cannot mutate captured variable 'box'"));
+    }
+
+    #[test]
+    fn allows_reading_capture_in_spawned_closure() {
+        let mut program = Program {
+            declarations: vec![TopLevel::Function(Function {
+                type_params: vec![],
+                name: "main".to_string(),
+                params: vec![],
+                return_type: Type::Void,
+                body: vec![
+                    Stmt::LetInferred {
+                        name: "x".to_string(),
+                        is_mut: true,
+                        value: Expr::IntLiteral(1),
+                        binding_id: std::cell::Cell::new(None),
+                    },
+                    spawned_closure(vec![Stmt::Expr(Expr::Identifier(
+                        "x".to_string(),
+                        std::cell::Cell::new(None),
+                    ))]),
+                ],
+                is_async: false,
+            })],
+        };
+
+        Resolver::new()
+            .resolve_program(&mut program)
+            .expect("reads of a spawned capture are safe");
+    }
+
+    #[test]
+    fn allows_mutating_local_in_spawned_closure() {
+        let mut program = Program {
+            declarations: vec![TopLevel::Function(Function {
+                type_params: vec![],
+                name: "main".to_string(),
+                params: vec![],
+                return_type: Type::Void,
+                body: vec![spawned_closure(vec![
+                    Stmt::LetInferred {
+                        name: "local".to_string(),
+                        is_mut: true,
+                        value: Expr::IntLiteral(1),
+                        binding_id: std::cell::Cell::new(None),
+                    },
+                    Stmt::Assign {
+                        name: "local".to_string(),
+                        value: Expr::IntLiteral(2),
+                        binding_id: std::cell::Cell::new(None),
+                    },
+                ])],
+                is_async: false,
+            })],
+        };
+
+        Resolver::new()
+            .resolve_program(&mut program)
+            .expect("locals declared by a spawned closure may be mutable");
+    }
+
 }
