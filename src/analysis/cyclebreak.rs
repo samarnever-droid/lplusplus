@@ -253,6 +253,113 @@ pub fn break_cycles(table: &TypeTable) -> OwnershipGraph {
     break_cycles_with_traits(table, &HashMap::new())
 }
 
+/// Mark every struct that participates in an ownership cycle as
+/// `is_self_referential` so the whole cycle is arena-allocated.
+///
+/// # Why this closes a safety gap
+///
+/// The static cycle breaker demotes exactly one edge per cycle to
+/// `NonOwning`, so reading back through a demoted (weak) field must never
+/// touch freed memory. Direct self-referential structs already get this
+/// guarantee because they are arena-allocated: an arena region keeps every
+/// node in it alive until the *last* node dies, so a weak read through a
+/// still-live source node in the same region cannot dangle.
+///
+/// Mutual / indirect cycles (e.g. `Parent <-> Child`) are **not** direct
+/// self-references, so they were left as plain ARC objects and their demoted
+/// edges had no such protection. Marking every struct that sits on a cycle as
+/// self-referential extends the arena guarantee to them. This must run before
+/// MIR lowering, because the arena-vs-ARC allocation choice is made there from
+/// `is_self_referential`.
+///
+/// This is conservative: a struct that merely *could* form a cycle (fields
+/// typed with the target, even if a given runtime value is acyclic) becomes
+/// arena-allocated. Arena allocation is valid for any struct, so this only
+/// costs a little, never correctness.
+pub fn mark_cyclic_structs(table: &mut TypeTable) {
+    let n = table.definitions.len();
+    if n == 0 {
+        return;
+    }
+    // Struct-level adjacency: struct i reaches every struct named by one of
+    // its fields' types (descending into List / tuple / slice / task).
+    let mut adj: Vec<Vec<usize>> = vec![Vec::new(); n];
+    for (i, def) in table.definitions.iter().enumerate() {
+        let mut targets = Vec::new();
+        for (_, fty) in &def.fields {
+            field_targets(fty, &mut targets);
+        }
+        for t in &targets {
+            if t.0 < n {
+                adj[i].push(t.0);
+            }
+        }
+    }
+    // Tarjan SCC. A node is on a cycle iff it is in an SCC of size > 1 or has
+    // a self-loop. Depth is bounded by the number of struct types, which is
+    // small, so recursion is safe here.
+    let n = adj.len();
+    let mut indices = vec![usize::MAX; n];
+    let mut low = vec![0usize; n];
+    let mut on_stack = vec![false; n];
+    let mut stack: Vec<usize> = Vec::new();
+    let mut next = 0usize;
+    let mut cyclic: Vec<usize> = Vec::new();
+    for root in 0..n {
+        if indices[root] != usize::MAX {
+            continue;
+        }
+        // Explicit frame so we don't need a recursive closure with many
+        // `&mut` captures.
+        let mut frames = vec![(root, 0usize)];
+        indices[root] = next;
+        low[root] = next;
+        next += 1;
+        stack.push(root);
+        on_stack[root] = true;
+        while let Some((v, edge)) = frames.pop() {
+            if edge < adj[v].len() {
+                let w = adj[v][edge];
+                frames.push((v, edge + 1));
+                if indices[w] == usize::MAX {
+                    indices[w] = next;
+                    low[w] = next;
+                    next += 1;
+                    stack.push(w);
+                    on_stack[w] = true;
+                    frames.push((w, 0));
+                } else if on_stack[w] {
+                    low[v] = low[v].min(indices[w]);
+                }
+            } else {
+                // Done with v's outgoing edges: propagate lowlink to parent.
+                if let Some(&(parent, _)) = frames.last() {
+                    low[parent] = low[parent].min(low[v]);
+                }
+                if low[v] == indices[v] {
+                    // v roots an SCC; pop all its members off the stack.
+                    let mut scc: Vec<usize> = Vec::new();
+                    loop {
+                        let w = stack.pop().expect("tarjan stack underflow");
+                        on_stack[w] = false;
+                        scc.push(w);
+                        if w == v {
+                            break;
+                        }
+                    }
+                    let self_loop = scc.len() == 1 && adj[scc[0]].contains(&scc[0]);
+                    if scc.len() > 1 || self_loop {
+                        cyclic.extend(scc);
+                    }
+                }
+            }
+        }
+    }
+    for id in cyclic {
+        table.definitions[id].is_self_referential = true;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -325,6 +432,59 @@ mod tests {
         let g = break_cycles(&t);
         assert_eq!(g.edges.iter().filter(|e| e.kind == EdgeKind::NonOwning).count(), 1);
         assert!(owning_subgraph_acyclic(&g, 3));
+    }
+
+    #[test]
+    fn mutual_cycle_is_marked_self_referential() {
+        // Parent <-> Child is a two-struct cycle, not a direct self-reference.
+        let mut t = table(vec![
+            ("Child", vec![("parent", 1)]),
+            ("Parent", vec![("kid", 0)]),
+        ]);
+        mark_cyclic_structs(&mut t);
+        assert!(
+            t.definitions[0].is_self_referential,
+            "Child participates in a cycle and must be arena-allocated"
+        );
+        assert!(
+            t.definitions[1].is_self_referential,
+            "Parent participates in a cycle and must be arena-allocated"
+        );
+    }
+
+    #[test]
+    fn direct_self_reference_is_marked() {
+        let mut t = table(vec![("Node", vec![("next", 0)])]);
+        mark_cyclic_structs(&mut t);
+        assert!(t.definitions[0].is_self_referential);
+    }
+
+    #[test]
+    fn acyclic_diamond_is_not_marked() {
+        let mut t = table(vec![
+            ("A", vec![("b", 1), ("c", 2)]),
+            ("B", vec![("d", 3)]),
+            ("C", vec![("d", 3)]),
+            ("D", vec![]),
+        ]);
+        mark_cyclic_structs(&mut t);
+        for (i, def) in t.definitions.iter().enumerate() {
+            assert!(
+                !def.is_self_referential,
+                "struct {} in an acyclic diamond must not be arena-allocated",
+                def.name
+            );
+            let _ = i;
+        }
+    }
+
+    #[test]
+    fn linked_list_is_marked() {
+        // Singly-linked list: Cell -> Cell is a self-cycle (the null terminator
+        // only breaks it at runtime, the type graph is still cyclic).
+        let mut t = table(vec![("Cell", vec![("next", 0)])]);
+        mark_cyclic_structs(&mut t);
+        assert!(t.definitions[0].is_self_referential);
     }
 
     #[test]
