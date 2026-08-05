@@ -1034,6 +1034,14 @@ fn real_main() -> i32 {
     }
 
     let mir_start = Instant::now();
+    // Mark every struct that sits on an ownership cycle (mutual / indirect
+    // cycles included) as arena-allocated BEFORE MIR lowering, because the
+    // arena-vs-ARC choice is made there from `is_self_referential`. This
+    // extends the arena lifetime guarantee that direct self-referential
+    // structs already enjoy to mutual cycles (e.g. Parent<->Child), so a weak
+    // (cycle-broken) field read cannot dangle while a node in the same region
+    // is still live. See analysis::cyclebreak::mark_cyclic_structs.
+    cyclebreak::mark_cyclic_structs(&mut type_table);
     let mut mir_ctx = mir::lower::MirLowerCtx::new(&resolver.table, &mut type_table, &ast);
     let mut mir_program = match mir_ctx.lower_program(&ast) {
         Ok(program) => program,
