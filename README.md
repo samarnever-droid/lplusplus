@@ -4,7 +4,7 @@
 
 <h1 align="center">L++</h1>
 
-<p align="center"><strong>Readable like Python · Safe like Rust · Fast like Go · Native by default</strong></p>
+<p align="center"><strong>Readable like Python · Safer than Swift or a garbage collector · Fast like Go · Native by default</strong></p>
 
 <p align="center">
   <a href="#install">Install</a> ·
@@ -18,7 +18,7 @@
 
 ## What is L++?
 
-L++ is a compiled, ownership-aware programming language that combines Python's readability with Rust-inspired ownership and Go-like compilation speed. It compiles to native executables through a Cranelift-first AOT pipeline; an optional LLVM backend is available for optimized builds. There is no interpreter or VM.
+L++ is a compiled, ownership-aware programming language that combines Python's readability with memory safety that goes further than Swift or a tracing garbage collector, plus Go-like compilation speed. It compiles to native executables through a Cranelift-first AOT pipeline; an optional LLVM backend is available for optimized builds. There is no interpreter or VM.
 
 ```lpp
 struct User:
