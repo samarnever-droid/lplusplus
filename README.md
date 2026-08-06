@@ -34,6 +34,20 @@ def main():
     greet(u)
 ```
 
+### WebAssembly
+
+The same compiler also emits WebAssembly — no toolchain, linker, or runtime
+files needed, just a WASI-capable engine such as [wasmtime](https://wasmtime.dev/):
+
+```bash
+lpp hello.lpp --target wasm32-wasi   # writes hello.wasm (imports WASI fd_write)
+wasmtime hello.wasm                  # runs it
+```
+
+The wasm backend lowers the MIR straight to a binary module covering the
+scalar subset (`Int` / `Float` / `Bool`, string literals, functions, control
+flow). See [Doc.md §6.4](Doc.md) for the supported subset and roadmap.
+
 ## Key Features
 
 | Feature | Description |
@@ -49,6 +63,7 @@ def main():
 | **Default params** | `def foo(x: Int, y: Int = 10)` |
 | **Multi-file modules** | `import math`, `from utils import calc`, dotted paths |
 | **Native compilation** | Cranelift AOT by default; optional LLVM object backend |
+| **WebAssembly** | `--target wasm32-wasi` emits a runnable `.wasm` module with zero external tools |
 | **Direct linker** | `lpp-link` produces standalone ELF / PE / Mach-O executables |
 | **Arena regions** | Recursive structs use region-backed nodes with cycle-broken ownership |
 | **Explicit vectors** | `VectorI64x2` operations in both Cranelift and LLVM |

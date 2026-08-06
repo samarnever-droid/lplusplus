@@ -1,0 +1,11 @@
+# bitwise.lpp — integer bitwise/shift operators.
+
+def main():
+    a := 60
+    b := 13
+    print(a & b)
+    print(a | b)
+    print(a ^ b)
+    print(1 << 5)
+    print(1024 >> 3)
+    print(0 - 8 >> 1)

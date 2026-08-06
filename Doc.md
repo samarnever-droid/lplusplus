@@ -331,6 +331,53 @@ lpp-link macho program.o lpp_runtime_min.o -o executable
 lpp-link inspect object.o
 ```
 
+### 6.4 WebAssembly Backend (`wasm32-wasi`)
+
+The compiler ships a third backend that lowers L++ MIR **directly to a binary
+WebAssembly module** — no `wat`, no `wasm-ld`, no object files, and no C
+runtime. It is selected with a wasm target triple (or explicitly as a
+backend):
+
+```bash
+lpp hello.lpp --target wasm32-wasi   # writes hello.wasm
+lpp run hello.lpp --target wasm32-wasi   # compile and execute via wasmtime
+lpp hello.lpp --backend wasm         # same, triple implied
+wasmtime hello.wasm                  # run it standalone
+```
+
+**Module profile**
+
+* Imports exactly one WASI preview1 function, `fd_write`, which backs the
+  `print` family. The module runs on wasmtime, wasmer, wazero, Node.js WASI,
+  and browser polyfills.
+* Exports `_start` (the WASI command entry, wrapping your `main`) and the
+  linear `memory`.
+* String literals are baked into a static data segment (`[len][bytes…]`); all
+  `Str` values in the supported subset are immortal, so there is no ARC.
+
+**Supported subset (v1)**
+
+| Area | Status |
+|------|--------|
+| `Int` / `Char` arithmetic, bitwise ops, shifts | ✅ full parity with native |
+| `Float` arithmetic, `%`, `fmod`, `%f`-style printing (6 digits) | ✅ (`nan`/`inf` print as C; \>9e12 magnitudes print integral part) |
+| `Bool` logic, comparisons | ✅ prints `1`/`0` like native |
+| `Str` literals, `print_str`, `str_len`, string params/returns | ✅ |
+| Functions, recursion, default-return ABI | ✅ |
+| `if` / `elif` / `else`, `while`, early `return` | ✅ |
+| structs, enums, `List`, `Map`, tuples, closures, `match` | ❌ rejected up front |
+| async/await, `spawn`, slices, SIMD, FFI | ❌ rejected up front |
+| C-runtime builtins (`input`, files, net, JSON, …) | ❌ rejected with a list of available builtins |
+
+Every unsupported feature is refused with a precise
+`WebAssembly backend does not yet support …` diagnostic instead of silently
+mis-emitting, and the native backends are of course untouched. Accepted
+programs match the native AOT output byte for byte on stdout (this is checked
+by `tests/run_wasm_tests.sh` under `wasmtime` on Linux and macOS).
+
+The host runtime for `lpp run` is wasmtime by default; point
+`LPP_WASM_RUNTIME` at another engine (`wasmer`, `node`, …) to override it.
+
 ---
 
 ## 7. Current Technical Boundaries & Missing Features

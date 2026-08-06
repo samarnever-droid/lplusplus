@@ -1,0 +1,9 @@
+# reject_async.lpp — async/await needs the task executor; not supported
+# on wasm32.
+
+async def work() -> Int:
+    return 42
+
+async def main():
+    result := work().await
+    print(result)

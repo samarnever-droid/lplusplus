@@ -1,0 +1,15 @@
+# floats.lpp — f64 arithmetic and %f-style printing (six fractional digits,
+# matching the native lpp_print_float).
+
+def hypot3(x: Float, y: Float) -> Float:
+    return (x * x + y * y) / 2.0
+
+def main():
+    print(2.5)
+    print(355.0 / 113.0)
+    print(0.0 - 1.5)
+    print(1.0 / 3.0)
+    print(10.0 % 3.0)
+    print(fmod(10.5, 3.0))
+    print(hypot3(3.0, 4.0))
+    print(0.0)
