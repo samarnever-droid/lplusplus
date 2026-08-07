@@ -541,7 +541,7 @@ fn helper_signature(helper: Helper) -> (Vec<Val>, Vec<Val>) {
 // ── Feature validation & planning scan ───────────────────────────────────────
 
 /// Builtins the wasm backend implements natively inside the module.
-const SUPPORTED_BUILTINS: [&str; 96] = [
+const SUPPORTED_BUILTINS: &[&str] = &[
     // printing & scalar predicates
     "lpp_print_int",
     "lpp_print_bool",
@@ -5841,11 +5841,14 @@ impl<'a> WasmCompiler<'a> {
         fb.g(0).i64c(0).op(op::I64_LT_S).if_();
         fb.i64c(0).s(0);
         fb.end();
-        // Zero the subscription (userdata, type=clock, identifier, precision,
-        // flags all default to 0), then set clock_id + timeout.
+        // WASI subscription_clock layout (subscription is 48 bytes total):
+        // userdata@0, eventtype@8 (u8; 0 = clock), then the clock payload at
+        // +16: clock_id@16 (u32), timeout@24 (u64 ns), precision@32 (u64),
+        // flags@40 (u16; 0 = relative timeout). Zeroing defaults everything
+        // else, so only clock_id (1 = monotonic) and the timeout are set.
         fb.i32c(SUB_BUF as i64).i32c(0).i32c(56).memory_fill();
-        fb.i32c((SUB_BUF + 24) as i64).i32c(1).store32(0);
-        fb.i32c((SUB_BUF + 32) as i64).g(0).i64c(1_000_000).op(op::I64_MUL).store64(0);
+        fb.i32c((SUB_BUF + 16) as i64).i32c(1).store32(0);
+        fb.i32c((SUB_BUF + 24) as i64).g(0).i64c(1_000_000).op(op::I64_MUL).store64(0);
         fb.i32c(SUB_BUF as i64).i32c(EVENT_BUF as i64).i32c(1).i32c(FD_IO_OUT as i64);
         fb.call(self.import_index[&Wasi::PollOneoff]);
         fb.op(op::DROP);
