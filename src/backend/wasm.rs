@@ -6633,7 +6633,6 @@ mod tests {
     /// Force every synthesized helper body through the validator, including
     /// ones the planning scan would not pick for a small program.
     #[test]
-    #[ignore = "CI bisect probe 5: heavies"]
     fn every_helper_body_validates() {
         let main = mk_fn(
             0,
