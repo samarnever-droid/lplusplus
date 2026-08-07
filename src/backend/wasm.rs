@@ -6566,7 +6566,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "CI bisect probe 5: heavies"]
     fn output_is_deterministic() {
         let (program, tt) = rich_program();
         let first = compile(&program, &tt, &no_weak()).expect("first compile");
