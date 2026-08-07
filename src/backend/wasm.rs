@@ -6577,7 +6577,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "CI bisect probe 8"]
     fn rich_program_compiles_and_validates() {
         let (program, tt) = rich_program();
         let module = compile(&program, &tt, &no_weak()).expect("compiles");
