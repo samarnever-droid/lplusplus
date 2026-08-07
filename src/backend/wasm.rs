@@ -5776,6 +5776,11 @@ impl<'a> WasmCompiler<'a> {
         fb.g(y).call(self.helper_index[&Helper::SinPoly]);
         fb.op(op::RETURN);
         fb.end();
+        // Every quadrant path above returns, but a real wasm validator (and
+        // our mini validator) still considers the position after this
+        // if-else reachable with the frame's (void) result: leave an
+        // explicit unreachable so the function tail type-checks.
+        fb.op(op::UNREACHABLE);
         fb.end();
         (fb.extras, fb.body)
     }
@@ -6553,7 +6558,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "CI bisect probe 5: heavies"]
     fn rich_program_compiles_and_validates() {
         let (program, tt) = rich_program();
         let module = compile(&program, &tt, &no_weak()).expect("compiles");
