@@ -6553,7 +6553,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "CI bisect probe 1: heavy tests quarantined"]
     fn rich_program_compiles_and_validates() {
         let (program, tt) = rich_program();
         let module = compile(&program, &tt, &no_weak()).expect("compiles");
@@ -6566,7 +6565,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "CI bisect probe 1: heavy tests quarantined"]
     fn output_is_deterministic() {
         let (program, tt) = rich_program();
         let first = compile(&program, &tt, &no_weak()).expect("first compile");
@@ -6575,7 +6573,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "CI bisect probe 2: module builders quarantined"]
     fn async_main_module_compiles_and_validates() {
         // async def main() covered by the synthesized task-wrapper _start.
         let main = mk_fn(
@@ -6594,7 +6591,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "CI bisect probe 4"]
     fn control_flow_dispatcher_branches_validate() {
         // main with a two-block loop: bb0 (i<3? → bb1 : exit), bb1 → bb0.
         let main = mk_fn(
@@ -6636,7 +6632,6 @@ mod tests {
     /// Force every synthesized helper body through the validator, including
     /// ones the planning scan would not pick for a small program.
     #[test]
-    #[ignore = "CI bisect probe 1: heavy tests quarantined"]
     fn every_helper_body_validates() {
         let main = mk_fn(
             0,
@@ -6899,7 +6894,10 @@ mod tests {
             let payload = r.take(size)?;
             let mut s = Reader::new(payload);
             match id {
-                0 => {}                                  // custom (names)
+                0 => {
+                    // custom (names) — ignore contents but consume them
+                    s.p = s.b.len();
+                }
                 1 => {
                     for _ in 0..s.uleb()? {
                         if s.byte()? != 0x60 {
