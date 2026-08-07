@@ -3742,16 +3742,20 @@ impl<'a> WasmCompiler<'a> {
         let dash = self.intern(b"-");
         let mut fb = FB::new(4);
         let cnt = fb.scratch(Val::I32);
-        // Signed decimal, matching the native `%lld` diagnostics.
+        let nm = fb.scratch(Val::I64);
+        // Signed decimal, matching the native `%lld` diagnostics. The
+        // magnitude must be selected through a local: every structured
+        // instruction we emit has the empty block type, so an if/else that
+        // leaves a value on the stack would be invalid wasm.
         macro_rules! num {
             ($v:expr) => {{
                 fb.g($v).i64c(0).op(op::I64_LT_S).if_();
                 fb.i32c(dash as i64).i32c(1).i32c(2).call(self.helper_index[&Helper::WriteFd]);
-                fb.i64c(0).g($v).op(op::I64_SUB);
+                fb.i64c(0).g($v).op(op::I64_SUB).s(nm);
                 fb.else_();
-                fb.g($v);
+                fb.g($v).s(nm);
                 fb.end();
-                fb.call(self.helper_index[&Helper::FmtU64]).s(cnt);
+                fb.g(nm).call(self.helper_index[&Helper::FmtU64]).s(cnt);
                 fb.i32c((NUM_BUF + NUM_BUF_SIZE) as i64).g(cnt).op(op::I32_SUB);
                 fb.g(cnt).i32c(2).call(self.helper_index[&Helper::WriteFd]);
             }};
@@ -4572,6 +4576,7 @@ impl<'a> WasmCompiler<'a> {
         fb.i32c(0).g(intd).op(op::I32_SUB).s(cnt);
         zero_run!();
         fb.g(k).i32c(1).op(op::I32_ADD).s(cnt);
+        fb.g(cur);
         fb.i32c((NUM_BUF + 58) as i64);
         copy_digits_dst!();
         fb.else_();
@@ -4913,6 +4918,7 @@ impl<'a> WasmCompiler<'a> {
         let tomb = fb.scratch(Val::I64);
         let f = fb.scratch(Val::I64);
         let addr = fb.scratch(Val::I32);
+        let km = fb.scratch(Val::I32);
         // h = hash(key)
         fb.g(2).op(op::I64_EQZ).if_();
         fb.g(1).call(self.helper_index[&Helper::HashInt]).s(h);
@@ -4936,15 +4942,16 @@ impl<'a> WasmCompiler<'a> {
         fb.g(2).op(op::I64_EQZ);
         fb.op(op::I32_EQ);
         fb.if_();
-        // key match?
+        // key match? (compared through km: the void if/else must stay
+        // stack-balanced)
         fb.g(2).op(op::I64_EQZ).if_();
-        fb.g(addr).load64(0).g(1).op(op::I64_EQ);
+        fb.g(addr).load64(0).g(1).op(op::I64_EQ).s(km);
         fb.else_();
         fb.g(addr).load64(0).op(op::I32_WRAP_I64);
         fb.g(1).op(op::I32_WRAP_I64);
-        fb.call(self.helper_index[&Helper::StrEq]);
+        fb.call(self.helper_index[&Helper::StrEq]).s(km);
         fb.end();
-        fb.if_();
+        fb.g(km).if_();
         fb.g(idx).i64c(2).op(op::I64_MUL).i64c(1).op(op::I64_OR);
         fb.op(op::RETURN);
         fb.end();
@@ -4975,15 +4982,18 @@ impl<'a> WasmCompiler<'a> {
         let dash = self.intern(b"-");
         let mut fb = FB::new(6);
         let cnt = fb.scratch(Val::I32);
+        let nm = fb.scratch(Val::I64);
+        // See Panic2's note: branch arms balance through the local, never
+        // through the validation stack.
         macro_rules! num {
             ($v:expr) => {{
                 fb.g($v).i64c(0).op(op::I64_LT_S).if_();
                 fb.i32c(dash as i64).i32c(1).i32c(2).call(self.helper_index[&Helper::WriteFd]);
-                fb.i64c(0).g($v).op(op::I64_SUB);
+                fb.i64c(0).g($v).op(op::I64_SUB).s(nm);
                 fb.else_();
-                fb.g($v);
+                fb.g($v).s(nm);
                 fb.end();
-                fb.call(self.helper_index[&Helper::FmtU64]).s(cnt);
+                fb.g(nm).call(self.helper_index[&Helper::FmtU64]).s(cnt);
                 fb.i32c((NUM_BUF + NUM_BUF_SIZE) as i64).g(cnt).op(op::I32_SUB);
                 fb.g(cnt).i32c(2).call(self.helper_index[&Helper::WriteFd]);
             }};
@@ -5017,6 +5027,7 @@ impl<'a> WasmCompiler<'a> {
         let idx = fb.scratch(Val::I64);
         let addr = fb.scratch(Val::I32);
         let ea = fb.scratch(Val::I32);
+        let h64 = fb.scratch(Val::I64);
         fb.g(0).load64(0).op(op::I32_WRAP_I64).s(old);
         fb.g(0).load64(8).s(oldcap);
         fb.g(1).op(op::I32_WRAP_I64).i32c(32).op(op::I32_MUL);
@@ -5030,13 +5041,14 @@ impl<'a> WasmCompiler<'a> {
         fb.g(i).g(oldcap).op(op::I64_GE_S).br_if(1);
         fb.g(old).g(i).op(op::I32_WRAP_I64).i32c(32).op(op::I32_MUL).op(op::I32_ADD).t(ea);
         fb.load64(16).i64c(3).op(op::I64_AND).i64c(1).op(op::I64_EQ).if_();
-        // Re-hash the entry key into the new capacity.
+        // Re-hash the entry key into the new capacity (balanced through
+        // h64: the void if/else must not leave a value).
         fb.g(ea).load64(16).i64c(4).op(op::I64_AND).op(op::I64_EQZ).if_();
-        fb.g(ea).load64(0).call(self.helper_index[&Helper::HashInt]);
+        fb.g(ea).load64(0).call(self.helper_index[&Helper::HashInt]).s(h64);
         fb.else_();
-        fb.g(ea).load64(0).op(op::I32_WRAP_I64).call(self.helper_index[&Helper::HashStr]);
+        fb.g(ea).load64(0).op(op::I32_WRAP_I64).call(self.helper_index[&Helper::HashStr]).s(h64);
         fb.end();
-        fb.g(1).op(op::I64_REM_U).s(idx);
+        fb.g(h64).g(1).op(op::I64_REM_U).s(idx);
         // First non-occupied slot (no tombstones exist in a fresh table).
         fb.block();
         fb.loop_();
@@ -5370,13 +5382,13 @@ impl<'a> WasmCompiler<'a> {
         fb.i32c(inv_pre as i64).g(1).i32c(inv_mid as i64).g(2);
         fb.call(self.helper_index[&Helper::Panic2]);
         fb.end();
-        // source_len = kind == 0 ? str length : list length
+        // source_len = kind == 0 ? str length : list length (balanced
+        // through the local — the void if/else must not leave a value).
         fb.g(3).op(op::I64_EQZ).if_();
-        fb.g(0).call(self.helper_index[&Helper::StrLen]);
+        fb.g(0).call(self.helper_index[&Helper::StrLen]).s(srclen);
         fb.else_();
-        fb.g(0).call(self.helper_index[&Helper::ListLen]);
+        fb.g(0).call(self.helper_index[&Helper::ListLen]).s(srclen);
         fb.end();
-        fb.s(srclen);
         // start > source_len || length > source_len - start
         fb.g(1).g(srclen).op(op::I64_GT_S);
         fb.g(2).g(srclen).g(1).op(op::I64_SUB).op(op::I64_GT_S).op(op::I32_OR).if_();
@@ -5717,6 +5729,7 @@ impl<'a> WasmCompiler<'a> {
         let y = fb.scratch(Val::F64);
         let q = fb.scratch(Val::I32);
         let c = fb.scratch(Val::F64);
+        let t = fb.scratch(Val::F64);
         const PI: f64 = 3.141592653589793;
         const PI_2: f64 = 1.5707963267948966;
         const PI_3_2: f64 = 4.71238898038469;
@@ -5724,12 +5737,14 @@ impl<'a> WasmCompiler<'a> {
         // tan(x) = sin/cos, with the freestanding-runtime zero-guard.
         fb.g(1).i32c(2).op(op::I32_EQ).if_();
         fb.g(r).i32c(1).call(self.helper_index[&Helper::Trig]).s(c);
+        // tan = sin/cos with the zero guard; select between the arms through
+        // a local so the void-blocktype if/else stays stack-balanced.
         fb.g(c).f64c(0.0).op(op::F64_NE).if_();
-        fb.g(r).i32c(0).call(self.helper_index[&Helper::Trig]).g(c).op(op::F64_DIV);
+        fb.g(r).i32c(0).call(self.helper_index[&Helper::Trig]).g(c).op(op::F64_DIV).s(t);
         fb.else_();
-        fb.f64c(0.0);
+        fb.f64c(0.0).s(t);
         fb.end();
-        fb.op(op::RETURN);
+        fb.g(t).op(op::RETURN);
         fb.end();
         // quadrant
         fb.g(r).f64c(PI_2).op(op::F64_LT).if_();
