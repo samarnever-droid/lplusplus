@@ -6314,7 +6314,6 @@ mod tests {
     // ── Minimal module ───────────────────────────────────────────────────
 
     #[test]
-    #[ignore = "CI bisect probe 2: module builders quarantined"]
     fn minimal_valid_module_emits() {
         let main = mk_fn(
             0,
@@ -6595,6 +6594,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "CI bisect probe 4"]
     fn control_flow_dispatcher_branches_validate() {
         // main with a two-block loop: bb0 (i<3? → bb1 : exit), bb1 → bb0.
         let main = mk_fn(
