@@ -14,6 +14,14 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+# TEMP-WASM-BISECT — remove before merge
+for _shard in ("g", "h", "i"):
+    _r = subprocess.run(["cargo", "test", "--locked", f"wasm_shard_{_shard}"])
+    print(f"TEMP-WASM-BISECT shard {_shard} exit {_r.returncode}", flush=True)
+    if _r.returncode != 0:
+        sys.exit(1)
+# END TEMP-WASM-BISECT
+
 ROOT = Path(__file__).resolve().parents[2]
 HERE = Path(__file__).resolve().parent
 TARGETS = (10_000, 50_000, 100_000)

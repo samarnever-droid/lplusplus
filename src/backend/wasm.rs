@@ -6635,10 +6635,13 @@ mod tests {
         validate_module(&parsed).expect("module validates");
     }
 
+    /// Shared fixture for the per-shard helper-body validation tests: a tiny
+    /// program with one struct (for drop bodies) and one async fn (for task
+    /// thunks), with every helper planned so all signatures resolve.
+    ///
     /// Force every synthesized helper body through the validator, including
     /// ones the planning scan would not pick for a small program.
-    #[test]
-    fn every_helper_body_validates() {
+    fn wasm_shard_run(helpers: &[Helper], include_meta: bool) {
         let main = mk_fn(
             0,
             "main",
@@ -6676,34 +6679,63 @@ mod tests {
             Wasi::EnvironGet,
         ];
         compiler.plan_indices(&scan);
-        // user bodies
-        let mut functions: Vec<&MirFunction> = program.functions.values().collect();
-        functions.sort_by_key(|f| f.id.0);
-        for function in &functions {
-            let (locals, body) = compiler.lower_function(function).expect("lower");
-            validate_one_body(&compiler, compiler.fn_index[&function.id], locals, body)
-                .unwrap_or_else(|e| panic!("user fn {}: {}", function.name, e));
+        if include_meta {
+            // user bodies
+            let mut functions: Vec<&MirFunction> = program.functions.values().collect();
+            functions.sort_by_key(|f| f.id.0);
+            for function in &functions {
+                let (locals, body) = compiler.lower_function(function).expect("lower");
+                validate_one_body(&compiler, compiler.fn_index[&function.id], locals, body)
+                    .unwrap_or_else(|e| panic!("user fn {}: {}", function.name, e));
+            }
+            for i in 0..tt.definitions.len() {
+                let (locals, body) = compiler.drop_body(StructTypeId(i));
+                validate_one_body(&compiler, compiler.struct_drop_fn[&StructTypeId(i)], locals, body)
+                    .unwrap_or_else(|e| panic!("drop body {}: {}", i, e));
+            }
+            for func_id in &scan.task_fns {
+                let (locals, body) = compiler.thunk_body(*func_id).expect("thunk");
+                validate_one_body(&compiler, compiler.thunk_fn[func_id], locals, body)
+                    .unwrap_or_else(|e| panic!("thunk fn_{}: {}", func_id.0, e));
+            }
+            let (locals, body) = compiler.body_start(FuncId(0)).expect("start");
+            validate_one_body(&compiler, compiler.start_index, locals, body)
+                .unwrap_or_else(|e| panic!("_start: {}", e));
         }
-        for i in 0..tt.definitions.len() {
-            let (locals, body) = compiler.drop_body(StructTypeId(i));
-            validate_one_body(&compiler, compiler.struct_drop_fn[&StructTypeId(i)], locals, body)
-                .unwrap_or_else(|e| panic!("drop body {}: {}", i, e));
-        }
-        for func_id in &scan.task_fns {
-            let (locals, body) = compiler.thunk_body(*func_id).expect("thunk");
-            validate_one_body(&compiler, compiler.thunk_fn[func_id], locals, body)
-                .unwrap_or_else(|e| panic!("thunk fn_{}: {}", func_id.0, e));
-        }
-        for helper in compiler.helpers.clone() {
+        for helper in helpers {
             let (locals, body) = compiler
-                .helper_body(helper)
+                .helper_body(*helper)
                 .unwrap_or_else(|e| panic!("helper {:?} errors: {}", helper, e));
-            validate_one_body(&compiler, compiler.helper_index[&helper], locals, body)
+            validate_one_body(&compiler, compiler.helper_index[helper], locals, body)
                 .unwrap_or_else(|e| panic!("helper {:?}: {}", helper, e));
         }
-        let (locals, body) = compiler.body_start(FuncId(0)).expect("start");
-        validate_one_body(&compiler, compiler.start_index, locals, body)
-            .unwrap_or_else(|e| panic!("_start: {}", e));
+    }
+
+    // TEMP-WASM-BISECT: sharded so CI pass/fail can isolate one bad body even
+    // though only the failing test name-if-ignored signal comes back. Merge
+    // back into a single every_helper_body_validates once green.
+    macro_rules! wasm_shards {
+        ($(($name:ident, $lo:expr, $hi:expr, $meta:expr)),* $(,)?) => {
+            $(#[test]
+            fn $name() {
+                wasm_shard_run(&Helper::all()[$lo..$hi], $meta);
+            })*
+        };
+    }
+
+    wasm_shards! {
+        (wasm_shard_a, 0, 0, true),
+        (wasm_shard_b, 0, 8, false),
+        (wasm_shard_c, 8, 16, false),
+        (wasm_shard_d, 16, 24, false),
+        (wasm_shard_e, 24, 32, false),
+        (wasm_shard_f, 32, 40, false),
+        (wasm_shard_g, 40, 48, false),
+        (wasm_shard_h, 48, 56, false),
+        (wasm_shard_i, 56, 64, false),
+        (wasm_shard_j, 64, 72, false),
+        (wasm_shard_k, 72, 80, false),
+        (wasm_shard_l, 80, 87, false),
     }
 
     // ── A small structural WebAssembly validator (tests only) ────────────

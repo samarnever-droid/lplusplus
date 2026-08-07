@@ -9,6 +9,12 @@
 #   5. lpp on $PATH
 set -e
 
+# TEMP-WASM-BISECT — remove before merge
+for _shard in d e f; do
+    cargo test --locked "wasm_shard_$_shard" || { echo "TEMP-WASM-BISECT shard $_shard failed"; exit 1; }
+done
+# END TEMP-WASM-BISECT
+
 DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 REPO=$(CDPATH= cd -- "$DIR/../.." && pwd)
 
