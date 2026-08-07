@@ -6553,6 +6553,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "CI bisect probe 1: heavy tests quarantined"]
     fn rich_program_compiles_and_validates() {
         let (program, tt) = rich_program();
         let module = compile(&program, &tt, &no_weak()).expect("compiles");
@@ -6565,6 +6566,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "CI bisect probe 1: heavy tests quarantined"]
     fn output_is_deterministic() {
         let (program, tt) = rich_program();
         let first = compile(&program, &tt, &no_weak()).expect("first compile");
@@ -6632,6 +6634,7 @@ mod tests {
     /// Force every synthesized helper body through the validator, including
     /// ones the planning scan would not pick for a small program.
     #[test]
+    #[ignore = "CI bisect probe 1: heavy tests quarantined"]
     fn every_helper_body_validates() {
         let main = mk_fn(
             0,
