@@ -44,9 +44,13 @@ lpp hello.lpp --target wasm32-wasi   # writes hello.wasm (imports WASI fd_write)
 wasmtime hello.wasm                  # runs it
 ```
 
-The wasm backend lowers the MIR straight to a binary module covering the
-scalar subset (`Int` / `Float` / `Bool`, string literals, functions, control
-flow). See [Doc.md §6.4](Doc.md) for the supported subset and roadmap.
+The wasm backend lowers the MIR straight to a binary module — structs, enums
++ `match`, tuples, lists, maps, closures and trait objects, async tasks,
+slices, dynamic strings, and the portable builtin set all work, with the ARC
+runtime re-implemented as pure wasm helpers. Platform-specific features that
+a WASI sandbox cannot provide (threads, sockets, files, FFI, SIMD, child
+processes) are rejected up front with clear diagnostics. See
+[Doc.md §6.4](Doc.md) for the full support matrix.
 
 ## Key Features
 

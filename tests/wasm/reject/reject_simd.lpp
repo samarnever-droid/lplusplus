@@ -1,0 +1,6 @@
+# reject_simd.lpp — 128-bit SIMD vector types stay native-only for now;
+# the compiler must reject them with a clear WebAssembly diagnostic.
+
+def main() -> Void:
+    a := vec_i64x2(1, 2)
+    print(vec_i64x2_extract(a, 0))

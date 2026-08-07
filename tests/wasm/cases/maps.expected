@@ -1,0 +1,11 @@
+start test_string_keys
+created map
+put apple
+put banana
+100
+200
+2
+1
+start test_integer_keys
+999
+888

@@ -1,0 +1,28 @@
+# strings2.lpp — the full string builtin surface on wasm32: concatenation,
+# slicing, case mapping, search, comparison, join-less helpers, and split.
+
+def main():
+    s := str_concat("Hello", ", wasm")
+    print_str(s)
+    print(str_len(s))
+    print_str(str_substr(s, 0, 5))
+    print_str(str_upper("L++ wasm"))
+    print_str(str_lower("L++ WASM"))
+    print_str(str_trim("  padded  "))
+    print(str_find("hello world", "world"))
+    print(str_find("hello", "zzz"))
+    print(str_contains("hello", "ell"))
+    print(str_contains("hello", "z"))
+    print(lpp_str_eq("same", "same"))
+    print(lpp_str_eq("same", "diff"))
+    print_str(str_repeat("ab", 3))
+    print_str(str_replace("banana", "na", "NA"))
+    print_str(char_at("hello", 1))
+    print(ord("A"))
+    print_str(chr(66))
+    print(str_starts_with("wasm32-wasi", "wasm"))
+    print(str_ends_with("wasm32-wasi", "wasi"))
+    parts := str_split("a,b,c", ",")
+    print(list_len(parts))
+    for part in parts:
+        print_str(part)

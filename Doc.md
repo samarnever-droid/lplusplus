@@ -347,33 +347,62 @@ wasmtime hello.wasm                  # run it standalone
 
 **Module profile**
 
-* Imports exactly one WASI preview1 function, `fd_write`, which backs the
-  `print` family. The module runs on wasmtime, wasmer, wazero, Node.js WASI,
-  and browser polyfills.
-* Exports `_start` (the WASI command entry, wrapping your `main`) and the
+* Imports only the WASI preview1 functions the program actually uses —
+  `fd_write` (the `print` family), `fd_read` (`input()`), `proc_exit`
+  (`exit`), `clock_time_get` + `poll_oneoff` (`time_ms`, `sleep_ms`, random
+  seeding), `environ_sizes_get` + `environ_get` (`env_get`). The module runs
+  on wasmtime, wasmer, wazero, Node.js WASI, and browser polyfills.
+* Exports `_start` (the WASI command entry, wrapping your `main`; an async
+  `main` is wrapped in a task that `_start` drives to completion) and the
   linear `memory`.
-* String literals are baked into a static data segment (`[len][bytes…]`); all
-  `Str` values in the supported subset are immortal, so there is no ARC.
+* The runtime is re-implemented as pure wasm helpers, dependency-free: ARC
+  objects keep the native 24-byte header (refcount, destructor table seat,
+  magic), strings are `[len][bytes…]`, and literals live in an immortal
+  static pool. Memory comes from a 8-byte-aligned bump allocator that grows
+  the linear memory on demand; allocation is cheap and **the heap is never
+  recycled**, while refcounts and destructors still run so program-observable
+  semantics (drop order, weak-field cycle breaking) match native.
+* Structs and tuples reuse the exact native layout code
+  (`analysis/layout.rs`), so field offsets and ARC metadata are the same on
+  every backend.
 
-**Supported subset (v1)**
+**Supported feature set (v2)**
 
 | Area | Status |
 |------|--------|
 | `Int` / `Char` arithmetic, bitwise ops, shifts | ✅ full parity with native |
-| `Float` arithmetic, `%`, `fmod`, `%f`-style printing (6 digits) | ✅ (`nan`/`inf` print as C; \>9e12 magnitudes print integral part) |
+| `Float` arithmetic, `%`, `fmod`, `%f`-style printing (6 digits) | ✅ (`nan`/`inf` print as C) |
 | `Bool` logic, comparisons | ✅ prints `1`/`0` like native |
-| `Str` literals, `print_str`, `str_len`, string params/returns | ✅ |
-| Functions, recursion, default-return ABI | ✅ |
-| `if` / `elif` / `else`, `while`, early `return` | ✅ |
-| structs, enums, `List`, `Map`, tuples, closures, `match` | ❌ rejected up front |
-| async/await, `spawn`, slices, SIMD, FFI | ❌ rejected up front |
-| C-runtime builtins (`input`, files, net, JSON, …) | ❌ rejected with a list of available builtins |
+| Structs — nesting, managed fields, stack/ARC/arena allocation, generated destructors | ✅ (arena nodes are plain ARC objects under the bump heap) |
+| Enums + `match` + `?` propagation | ✅ |
+| Tuples, incl. managed elements | ✅ |
+| `List[T]` (Int/Float/Bool/Str/struct elements), literals, push/get/set/len, `for` | ✅ |
+| `Map` string and integer keys — put/get/has/remove/len | ✅ same FNV-1a / open-addressing design as native |
+| Closures, `FuncRef`, trait objects | ✅ capsule + `call_indirect` through a function table |
+| `async def` / `.await` | ✅ deterministic single-thread executor (`spawn` remains rejected) |
+| Slices over lists and strings (`slice`, `str_slice`, …) | ✅ zero-copy views |
+| String builtins (concat/substr/trim/upper/lower/find/contains/repeat/replace/split/char_at/ord/chr/…) | ✅ |
+| Conversions — `int_to_str`, `float_to_str` (`%g`), `bool_to_str`, `str_to_int` | ✅ |
+| `input()` | ✅ line-based, via `fd_read` |
+| Math — `int_pow`, `sqrt`, `lpp_floor`, `lpp_ceil`, `sin`/`cos`/`tan`, `lpp_pow`, `lpp_abs`, `lpp_min`, `lpp_max` | ✅ libm-free series implementations |
+| `time_ms`, `sleep_ms`, `random`, `random_range`, `random_seed`, `env_get`, `exit` | ✅ |
+| Filesystem (`read_file`, `dir_*`, …) | ❌ rejected (WASI preopens not wired up) |
+| OS threads (`spawn`) | ❌ rejected (no preemptive threads in WASI preview1 — use async tasks) |
+| Networking, GUI, host system metrics | ❌ rejected (no such WASI API) |
+| Process spawning (`command_exec`, …), `env_set` | ❌ rejected |
+| C FFI / `extern` | ❌ rejected |
+| 128-bit SIMD vectors | ❌ rejected (native-only for now) |
+| JSON, raw byte buffers | ❌ rejected (runtime side not yet ported) |
 
 Every unsupported feature is refused with a precise
-`WebAssembly backend does not yet support …` diagnostic instead of silently
-mis-emitting, and the native backends are of course untouched. Accepted
-programs match the native AOT output byte for byte on stdout (this is checked
-by `tests/run_wasm_tests.sh` under `wasmtime` on Linux and macOS).
+`WebAssembly backend does not support …` diagnostic naming the feature
+family, instead of silently mis-emitting — and the native backends are of
+course untouched. Accepted programs match the native AOT output byte for
+byte on stdout (checked by `tests/run_wasm_tests.sh` under `wasmtime` on
+Linux and macOS; `LPP_WASM_RUNTIME=node` runs the same corpus under Node.js
+WASI). `cargo test` additionally validates every emitted module — and every
+synthesized runtime helper body — with a structural WebAssembly validator,
+so the backend is self-checking even without a wasm engine installed.
 
 The host runtime for `lpp run` is wasmtime by default; point
 `LPP_WASM_RUNTIME` at another engine (`wasmer`, `node`, …) to override it.

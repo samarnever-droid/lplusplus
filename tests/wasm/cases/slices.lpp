@@ -1,0 +1,15 @@
+# slices.lpp — zero-copy slice views over lists and strings on wasm32.
+# A view is a heap record; the backing store outlives the view here.
+
+def main():
+    numbers := [10, 20, 30, 40]
+    view := slice(numbers, 1, 2)
+    print(slice_len(view))
+    print(slice_get(view, 0))
+    print(slice_get(view, 1))
+
+    text := "Bhopal"
+    sview := str_slice(text, 1, 3)
+    print(slice_len(sview))
+    print_str(slice_get(sview, 0))
+    print_str(str_slice_to_str(sview))

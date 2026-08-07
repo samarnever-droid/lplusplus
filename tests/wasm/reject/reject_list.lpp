@@ -1,5 +1,0 @@
-# reject_list.lpp — lists require the heap runtime; not supported on wasm32.
-
-def main():
-    values := [3, 5, 8]
-    print(list_len(values))

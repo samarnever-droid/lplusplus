@@ -1,0 +1,6 @@
+# reject_net.lpp — WASI preview1 has no socket API; the compiler must
+# reject networking builtins with a clear WebAssembly diagnostic.
+
+def main():
+    s := net_dial("127.0.0.1", 80, 1000)
+    print(s)

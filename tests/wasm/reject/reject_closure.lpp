@@ -1,7 +1,0 @@
-# reject_closure.lpp — closures need the ARC capsule runtime; not supported
-# on wasm32.
-
-def main():
-    factor := 3
-    triple := fn(x) -> x * factor
-    print(triple(10))

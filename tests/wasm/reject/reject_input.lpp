@@ -1,6 +1,0 @@
-# reject_input.lpp — the input() builtin needs stdin support which the
-# wasm backend does not provide yet; expect a clear diagnostic.
-
-def main():
-    name := input()
-    print_str(name)

@@ -1,0 +1,38 @@
+# structs.lpp — custom structs on wasm32: field stores/loads through the
+# shared native layout, struct arguments, and nested-struct ownership where
+# dropping the parent recursively drops the child (generated destructors).
+
+struct Point:
+    x: Int
+    y: Int
+
+def add(p: Point) -> Int:
+    return p.x + p.y
+
+struct Pair:
+    name: Str
+    value: Int
+
+struct Child:
+    value: Int
+
+struct Parent:
+    child: Child
+
+def main():
+    mut p := Point()
+    p.x = 6
+    p.y = 7
+    print(add(p))
+
+    mut q := Pair()
+    q.name = "answer"
+    q.value = 42
+    print_str(q.name)
+    print(q.value)
+
+    mut child := Child()
+    child.value = 9
+    mut parent := Parent()
+    parent.child = child
+    print(parent.child.value)

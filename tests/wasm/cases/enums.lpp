@@ -1,0 +1,54 @@
+# enums.lpp — enum payloads at full width on wasm32: Str/Int/Float payloads,
+# match destructuring, and the `?` early-return propagation. Mirrors the
+# native enum_payloads functional test.
+
+enum Payload:
+    Text(value: Str)
+    Big(value: Int)
+    Real(value: Float)
+    Nothing
+
+def describe(p: Payload) -> Int:
+    match p:
+        Text(v):
+            print_str(v)
+        Big(v):
+            print(v)
+        Real(v):
+            print_str(float_to_str(v))
+        Nothing:
+            print_str("nothing")
+    return 0
+
+enum Result:
+    Ok(value: Int)
+    Err(code: Int)
+
+def might_fail(x: Int) -> Result:
+    if x < 0:
+        return Result.Err(1)
+    return Result.Ok(x * 2)
+
+def process(x: Int) -> Result:
+    v := might_fail(x)?
+    return Result.Ok(v + 100)
+
+def main():
+    describe(Payload.Text("str payload survives"))
+    describe(Payload.Big(5000000000))
+    describe(Payload.Real(2.5))
+    describe(Payload.Nothing)
+
+    r := process(5)
+    match r:
+        Ok(v):
+            print(v)
+        Err(c):
+            print(c)
+
+    r2 := process(0 - 1)
+    match r2:
+        Ok(v):
+            print(v)
+        Err(c):
+            print(c)

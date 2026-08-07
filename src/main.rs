@@ -1213,7 +1213,7 @@ fn real_main() -> i32 {
             )
         }
         "llvm" => llvm_backend::compile(&mir_program, &type_table, &weak_fields),
-        "wasm" => wasm_backend::compile(&mir_program, &type_table),
+        "wasm" => wasm_backend::compile(&mir_program, &type_table, &weak_fields),
         other => Err(format!(
             "unknown backend '{}'; expected cranelift, llvm, or wasm",
             other

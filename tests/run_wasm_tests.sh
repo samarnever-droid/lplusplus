@@ -63,7 +63,13 @@ for src in "$CASES"/*.lpp; do
         say_fail "$name (bad wasm magic header)"
         continue
     fi
-    if ! run_module "$work/$name.wasm" >"$work/out.txt" 2>"$work/run.log"; then
+    # Optional canned stdin for input() cases; otherwise EOF immediately.
+    if [ -f "$CASES/$name.stdin" ]; then
+        stdin_file="$CASES/$name.stdin"
+    else
+        stdin_file=/dev/null
+    fi
+    if ! run_module "$work/$name.wasm" >"$work/out.txt" 2>"$work/run.log" <"$stdin_file"; then
         say_fail "$name (runtime error): $(tail -1 "$work/run.log")"
         continue
     fi

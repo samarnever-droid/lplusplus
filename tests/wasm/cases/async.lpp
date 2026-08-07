@@ -1,0 +1,18 @@
+# async.lpp — async functions compile to task objects polled by the
+# single-thread executor; an async main is wrapped in a task by _start.
+
+async def first() -> Str:
+    return "ready"
+
+async def second() -> Str:
+    value := first().await
+    return value
+
+async def compute() -> Int:
+    return 6 * 7
+
+async def main():
+    result := second().await
+    print_str(result)
+    n := compute().await
+    print(n)
