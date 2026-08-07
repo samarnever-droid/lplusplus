@@ -65,7 +65,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::ast::BinaryOperator;
+use crate::ast::BinaryOperator::{self, *};
 use crate::layout::{struct_layout, tuple_layout, tuple_runtime_metadata};
 use crate::mir::ir::*;
 use crate::type_facts::{AbiClass, ListElementClass};
