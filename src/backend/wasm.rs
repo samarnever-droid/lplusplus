@@ -4493,6 +4493,10 @@ impl<'a> WasmCompiler<'a> {
         fb.else_();
         fb.i32c(inf as i64).op(op::RETURN);
         fb.end();
+        // Close the ±inf guard as well: both arms above return, so the
+        // position here is formally reachable and the normal formatting path
+        // must live at function depth, not inside the guard frame.
+        fb.end();
         // Sign from the bit pattern so -0.0 prints "-0" like printf.
         fb.g(0).op(op::I64_REINTERPRET_F64).i64c(0).op(op::I64_LT_S).s(neg);
         fb.g(0).op(op::F64_ABS).s(0);

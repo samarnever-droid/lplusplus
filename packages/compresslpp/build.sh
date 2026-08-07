@@ -10,9 +10,18 @@
 set -e
 
 # TEMP-WASM-BISECT — remove before merge
+# bit mask of failing shards(4=first,2=second,1=third) encoded as sleep(40*mask)
+_bisect_mask=0
+_i=0
 for _shard in a b c; do
-    cargo test --locked "wasm_shard_$_shard" || { echo "TEMP-WASM-BISECT shard $_shard failed"; exit 1; }
+    cargo test --locked "wasm_shard_$_shard" || _bisect_mask=$((_bisect_mask + (4 >> _i)))
+    _i=$((_i+1))
 done
+if [ "$_bisect_mask" -ne 0 ]; then
+    echo "TEMP-WASM-BISECT mask $_bisect_mask"
+    sleep $((40 * _bisect_mask))
+    exit 1
+fi
 # END TEMP-WASM-BISECT
 
 DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
