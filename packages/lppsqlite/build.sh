@@ -11,8 +11,8 @@ set -e
 
 # TEMP-WASM-BISECT — remove before merge
 # probe 13: job fails iff rich_shard_user_bodies_b fails.
-if ! cargo test --locked "rich_shard_user_bodies_b"; then
-    echo "TEMP-WASM-BISECT rich_shard_user_bodies_b FAILED"
+if ! cargo test --locked "rich_shard_fn_compute"; then
+    echo "TEMP-WASM-BISECT rich_shard_fn_compute FAILED"
     exit 1
 fi
 # END TEMP-WASM-BISECT

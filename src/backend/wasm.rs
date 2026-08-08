@@ -6645,6 +6645,39 @@ mod tests {
         }
     }
 
+    // TEMP-WASM-BISECT probe 14: one test per user function of the rich
+    // fixture so neutral CI jobs can pinpoint the broken lowering.
+    fn rich_one_user_fn(id: usize) {
+        let (program, tt, weak, scan) = rich_shard_setup();
+        let mut compiler = WasmCompiler::new(&program, &tt, &weak);
+        compiler.plan_helpers(&scan);
+        compiler.plan_indices(&scan);
+        let function = &program.functions[&FuncId(id)];
+        let (locals, body) = compiler.lower_function(function).expect("lower");
+        validate_one_body(&compiler, compiler.fn_index[&function.id], locals, body)
+            .unwrap_or_else(|e| panic!("rich fn {}: {}", function.name, e));
+    }
+
+    #[test]
+    fn rich_shard_fn_helper() {
+        rich_one_user_fn(0);
+    }
+
+    #[test]
+    fn rich_shard_fn_compute() {
+        rich_one_user_fn(1);
+    }
+
+    #[test]
+    fn rich_shard_fn_addenv() {
+        rich_one_user_fn(2);
+    }
+
+    #[test]
+    fn rich_shard_fn_main() {
+        rich_one_user_fn(3);
+    }
+
     #[test]
     fn rich_shard_user_bodies_a() {
         rich_user_shard(true);

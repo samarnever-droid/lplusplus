@@ -22,8 +22,8 @@ from pathlib import Path
 
 # TEMP-WASM-BISECT — remove before merge
 # probe 13: job conclusion IS the shard verdict (red iff this shard fails).
-_r = subprocess.run(["cargo", "test", "--locked", "rich_shard_user_bodies_a"])
-print(f"TEMP-WASM-BISECT rich_shard_user_bodies_a exit {_r.returncode}", flush=True)
+_r = subprocess.run(["cargo", "test", "--locked", "rich_shard_fn_helper"])
+print(f"TEMP-WASM-BISECT rich_shard_fn_helper exit {_r.returncode}", flush=True)
 if _r.returncode != 0:
     sys.exit(1)
 # END TEMP-WASM-BISECT
