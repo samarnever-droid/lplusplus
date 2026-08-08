@@ -3212,10 +3212,16 @@ impl<'a> WasmCompiler<'a> {
                 mir_fn,
             )?;
         }
-        // Close the loop; the $bad landing pad traps, then close $bad.
+        // Close the loop and the $bad block; emit the trap at function
+        // depth. The br_table default lands at the end of $bad, so the pad
+        // still traps — but a validator treats a block's `end` as reachable
+        // (branch targets land there), so trapping only *inside* $bad would
+        // leave the function-level end reachable with an empty stack, which
+        // type-checks only for void functions. With the trap at function
+        // depth the tail is unreachable for any result arity.
+        fb.end();
         fb.end();
         fb.op(op::UNREACHABLE);
-        fb.end();
         // Function-level final end.
         fb.end();
 
