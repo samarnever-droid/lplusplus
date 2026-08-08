@@ -1497,6 +1497,11 @@ pub fn get_builtins() -> &'static [Builtin] {
             cl_params: &[0, 0],
             cl_return: Some(0),
         },
+        // str_split / lpp_str_split: the real result type is List[Str]
+        // (Doc.md), which this const table cannot spell — the declared Void
+        // is refined to List[Str] by the special case in
+        // analysis/typecheck.rs. The delimiter is an Int codepoint, matching
+        // the native ABI (runtime/lpp_str.c: lpp_str_split(s, i64 delim)).
         Builtin {
             name: "str_split",
             symbol: "lpp_str_split",

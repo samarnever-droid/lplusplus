@@ -22,7 +22,7 @@ def main():
     print_str(chr(66))
     print(str_starts_with("wasm32-wasi", "wasm"))
     print(str_ends_with("wasm32-wasi", "wasi"))
-    parts := str_split("a,b,c", ",")
+    parts := str_split("a,b,c", ord(","))
     print(list_len(parts))
     for part in parts:
         print_str(part)

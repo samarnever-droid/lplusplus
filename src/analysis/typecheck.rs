@@ -1291,6 +1291,16 @@ impl<'a> TypeChecker<'a> {
                             return Ok(TypeRef::Str);
                         }
 
+                        if name == "str_split" || name == "lpp_str_split" {
+                            // The static builtin table cannot spell List[Str]
+                            // (TypeRef::Generic is not const-constructible), so
+                            // the catalog entries declare Void; refine the real
+                            // result type here. The (s, i64 codepoint) params
+                            // already match the native ABI (runtime/lpp_str.c)
+                            // and the documented signature in Doc.md.
+                            return Ok(TypeRef::Generic("List".to_string(), vec![TypeRef::Str]));
+                        }
+
                         return Ok(builtin.return_type.clone());
                     }
 

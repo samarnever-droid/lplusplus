@@ -1188,6 +1188,15 @@ impl<'a> WasmCompiler<'a> {
         self.intern_key(&key)
     }
 
+    /// Byte address of an interned literal's *content*. `intern` returns the
+    /// payload pointer `…[u32 len][bytes]` so literals double as `Str`
+    /// values; raw `Write`/`WriteFd` calls must skip the 4-byte length
+    /// prefix, otherwise they emit the length byte instead of the content
+    /// (this once printed every trailing '\n' as 0x01 in stdout).
+    fn lit_addr(&mut self, bytes: &[u8]) -> u32 {
+        self.intern(bytes) + 4
+    }
+
     fn intern_key(&mut self, key: &str) -> u32 {
         if let Some(&addr) = self.literals.get(key) {
             return addr;
@@ -3629,8 +3638,8 @@ impl<'a> WasmCompiler<'a> {
 
     /// `PrintInt(x)`: matches the native "%lld\n".
     fn h_print_int(&mut self) -> (Vec<Val>, Vec<u8>) {
-        let dash = self.intern(b"-");
-        let nl = self.intern(b"\n");
+        let dash = self.lit_addr(b"-");
+        let nl = self.lit_addr(b"\n");
         let mut fb = FB::new(1);
         let mag = fb.scratch(Val::I64);
         fb.g(0).i64c(0).op(op::I64_LT_S).if_();
@@ -3647,8 +3656,8 @@ impl<'a> WasmCompiler<'a> {
 
     /// `PrintBool(b)`: native prints "1"/"0" plus newline.
     fn h_print_bool(&mut self) -> (Vec<Val>, Vec<u8>) {
-        let one = self.intern(b"1\n");
-        let zero = self.intern(b"0\n");
+        let one = self.lit_addr(b"1\n");
+        let zero = self.lit_addr(b"0\n");
         let mut fb = FB::new(1);
         fb.g(0).if_();
         fb.i32c(one as i64).i32c(2).call(self.helper_index[&Helper::Write]);
@@ -3661,7 +3670,7 @@ impl<'a> WasmCompiler<'a> {
 
     /// `PrintStr(s)`: bytes + "\n" (matches `puts`).
     fn h_print_str(&mut self) -> (Vec<Val>, Vec<u8>) {
-        let nl = self.intern(b"\n");
+        let nl = self.lit_addr(b"\n");
         let mut fb = FB::new(1);
         fb.g(0).i32c(4).op(op::I32_ADD);
         fb.g(0).load32(0);
@@ -3673,13 +3682,13 @@ impl<'a> WasmCompiler<'a> {
 
     /// `PrintFloat(x)`: matches the native "%f\n" (see v1 semantics).
     fn h_print_float(&mut self) -> (Vec<Val>, Vec<u8>) {
-        let dash = self.intern(b"-");
-        let dot = self.intern(b".");
-        let nl = self.intern(b"\n");
-        let nan = self.intern(b"nan\n");
-        let inf = self.intern(b"inf\n");
-        let neginf = self.intern(b"-inf\n");
-        let zeros = self.intern(b".000000\n");
+        let dash = self.lit_addr(b"-");
+        let dot = self.lit_addr(b".");
+        let nl = self.lit_addr(b"\n");
+        let nan = self.lit_addr(b"nan\n");
+        let inf = self.lit_addr(b"inf\n");
+        let neginf = self.lit_addr(b"-inf\n");
+        let zeros = self.lit_addr(b".000000\n");
         let mut fb = FB::new(1);
         let neg = fb.scratch(Val::I32);
         let n = fb.scratch(Val::I64);
@@ -3731,7 +3740,7 @@ impl<'a> WasmCompiler<'a> {
 
     /// `PanicMsg(msg)`: write msg + newline to stderr, then trap.
     fn h_panic_msg(&mut self) -> (Vec<Val>, Vec<u8>) {
-        let nl = self.intern(b"\n");
+        let nl = self.lit_addr(b"\n");
         let mut fb = FB::new(1);
         fb.g(0).i32c(4).op(op::I32_ADD).g(0).load32(0).i32c(2);
         fb.call(self.helper_index[&Helper::WriteFd]);
@@ -3744,8 +3753,8 @@ impl<'a> WasmCompiler<'a> {
     /// `Panic2(pre, a, mid, b)`: `pre` + dec(a) + `mid` + dec(b) + newline to
     /// stderr, then trap. Used for bounds diagnostics.
     fn h_panic2(&mut self) -> (Vec<Val>, Vec<u8>) {
-        let nl = self.intern(b"\n");
-        let dash = self.intern(b"-");
+        let nl = self.lit_addr(b"\n");
+        let dash = self.lit_addr(b"-");
         let mut fb = FB::new(4);
         let cnt = fb.scratch(Val::I32);
         let nm = fb.scratch(Val::I64);
@@ -4984,8 +4993,8 @@ impl<'a> WasmCompiler<'a> {
     /// `Panic3(pre, a, mid1, b, mid2, c)`: like `Panic2` but with three
     /// numeric fields (used by the slice range diagnostic).
     fn h_panic3(&mut self) -> (Vec<Val>, Vec<u8>) {
-        let nl = self.intern(b"\n");
-        let dash = self.intern(b"-");
+        let nl = self.lit_addr(b"\n");
+        let dash = self.lit_addr(b"-");
         let mut fb = FB::new(6);
         let cnt = fb.scratch(Val::I32);
         let nm = fb.scratch(Val::I64);

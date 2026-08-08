@@ -1,0 +1,145 @@
+--- a/src/backend/wasm.rs
++++ b/src/backend/wasm.rs
+@@ -1188,6 +1188,15 @@
+         self.intern_key(&key)
+     }
+ 
++    /// Byte address of an interned literal's *content*. `intern` returns the
++    /// payload pointer `…[u32 len][bytes]` so literals double as `Str`
++    /// values; raw `Write`/`WriteFd` calls must skip the 4-byte length
++    /// prefix, otherwise they emit the length byte instead of the content
++    /// (this once printed every trailing '\n' as 0x01 in stdout).
++    fn lit_addr(&mut self, bytes: &[u8]) -> u32 {
++        self.intern(bytes) + 4
++    }
++
+     fn intern_key(&mut self, key: &str) -> u32 {
+         if let Some(&addr) = self.literals.get(key) {
+             return addr;
+@@ -3629,8 +3638,8 @@
+ 
+     /// `PrintInt(x)`: matches the native "%lld\n".
+     fn h_print_int(&mut self) -> (Vec<Val>, Vec<u8>) {
+-        let dash = self.intern(b"-");
+-        let nl = self.intern(b"\n");
++        let dash = self.lit_addr(b"-");
++        let nl = self.lit_addr(b"\n");
+         let mut fb = FB::new(1);
+         let mag = fb.scratch(Val::I64);
+         fb.g(0).i64c(0).op(op::I64_LT_S).if_();
+@@ -3647,8 +3656,8 @@
+ 
+     /// `PrintBool(b)`: native prints "1"/"0" plus newline.
+     fn h_print_bool(&mut self) -> (Vec<Val>, Vec<u8>) {
+-        let one = self.intern(b"1\n");
+-        let zero = self.intern(b"0\n");
++        let one = self.lit_addr(b"1\n");
++        let zero = self.lit_addr(b"0\n");
+         let mut fb = FB::new(1);
+         fb.g(0).if_();
+         fb.i32c(one as i64).i32c(2).call(self.helper_index[&Helper::Write]);
+@@ -3661,7 +3670,7 @@
+ 
+     /// `PrintStr(s)`: bytes + "\n" (matches `puts`).
+     fn h_print_str(&mut self) -> (Vec<Val>, Vec<u8>) {
+-        let nl = self.intern(b"\n");
++        let nl = self.lit_addr(b"\n");
+         let mut fb = FB::new(1);
+         fb.g(0).i32c(4).op(op::I32_ADD);
+         fb.g(0).load32(0);
+@@ -3673,13 +3682,13 @@
+ 
+     /// `PrintFloat(x)`: matches the native "%f\n" (see v1 semantics).
+     fn h_print_float(&mut self) -> (Vec<Val>, Vec<u8>) {
+-        let dash = self.intern(b"-");
+-        let dot = self.intern(b".");
+-        let nl = self.intern(b"\n");
+-        let nan = self.intern(b"nan\n");
+-        let inf = self.intern(b"inf\n");
+-        let neginf = self.intern(b"-inf\n");
+-        let zeros = self.intern(b".000000\n");
++        let dash = self.lit_addr(b"-");
++        let dot = self.lit_addr(b".");
++        let nl = self.lit_addr(b"\n");
++        let nan = self.lit_addr(b"nan\n");
++        let inf = self.lit_addr(b"inf\n");
++        let neginf = self.lit_addr(b"-inf\n");
++        let zeros = self.lit_addr(b".000000\n");
+         let mut fb = FB::new(1);
+         let neg = fb.scratch(Val::I32);
+         let n = fb.scratch(Val::I64);
+@@ -3731,7 +3740,7 @@
+ 
+     /// `PanicMsg(msg)`: write msg + newline to stderr, then trap.
+     fn h_panic_msg(&mut self) -> (Vec<Val>, Vec<u8>) {
+-        let nl = self.intern(b"\n");
++        let nl = self.lit_addr(b"\n");
+         let mut fb = FB::new(1);
+         fb.g(0).i32c(4).op(op::I32_ADD).g(0).load32(0).i32c(2);
+         fb.call(self.helper_index[&Helper::WriteFd]);
+@@ -3744,8 +3753,8 @@
+     /// `Panic2(pre, a, mid, b)`: `pre` + dec(a) + `mid` + dec(b) + newline to
+     /// stderr, then trap. Used for bounds diagnostics.
+     fn h_panic2(&mut self) -> (Vec<Val>, Vec<u8>) {
+-        let nl = self.intern(b"\n");
+-        let dash = self.intern(b"-");
++        let nl = self.lit_addr(b"\n");
++        let dash = self.lit_addr(b"-");
+         let mut fb = FB::new(4);
+         let cnt = fb.scratch(Val::I32);
+         let nm = fb.scratch(Val::I64);
+@@ -4984,8 +4993,8 @@
+     /// `Panic3(pre, a, mid1, b, mid2, c)`: like `Panic2` but with three
+     /// numeric fields (used by the slice range diagnostic).
+     fn h_panic3(&mut self) -> (Vec<Val>, Vec<u8>) {
+-        let nl = self.intern(b"\n");
+-        let dash = self.intern(b"-");
++        let nl = self.lit_addr(b"\n");
++        let dash = self.lit_addr(b"-");
+         let mut fb = FB::new(6);
+         let cnt = fb.scratch(Val::I32);
+         let nm = fb.scratch(Val::I64);
+--- a/src/builtins.rs
++++ b/src/builtins.rs
+@@ -1497,6 +1497,11 @@
+             cl_params: &[0, 0],
+             cl_return: Some(0),
+         },
++        // str_split / lpp_str_split: the real result type is List[Str]
++        // (Doc.md), which this const table cannot spell — the declared Void
++        // is refined to List[Str] by the special case in
++        // analysis/typecheck.rs. The delimiter is an Int codepoint, matching
++        // the native ABI (runtime/lpp_str.c: lpp_str_split(s, i64 delim)).
+         Builtin {
+             name: "str_split",
+             symbol: "lpp_str_split",
+--- a/src/analysis/typecheck.rs
++++ b/src/analysis/typecheck.rs
+@@ -1291,6 +1291,16 @@
+                             return Ok(TypeRef::Str);
+                         }
+ 
++                        if name == "str_split" || name == "lpp_str_split" {
++                            // The static builtin table cannot spell List[Str]
++                            // (TypeRef::Generic is not const-constructible), so
++                            // the catalog entries declare Void; refine the real
++                            // result type here. The (s, i64 codepoint) params
++                            // already match the native ABI (runtime/lpp_str.c)
++                            // and the documented signature in Doc.md.
++                            return Ok(TypeRef::Generic("List".to_string(), vec![TypeRef::Str]));
++                        }
++
+                         return Ok(builtin.return_type.clone());
+                     }
+ 
+--- a/tests/wasm/cases/strings2.lpp
++++ b/tests/wasm/cases/strings2.lpp
+@@ -22,7 +22,7 @@
+     print_str(chr(66))
+     print(str_starts_with("wasm32-wasi", "wasm"))
+     print(str_ends_with("wasm32-wasi", "wasi"))
+-    parts := str_split("a,b,c", ",")
++    parts := str_split("a,b,c", ord(","))
+     print(list_len(parts))
+     for part in parts:
+         print_str(part)
