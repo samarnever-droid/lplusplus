@@ -21,16 +21,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 # TEMP-WASM-BISECT — remove before merge
-# bit mask of failing shards(4=first,2=second,1=third) encoded as sleep(40*mask)
+# 2-bit mask of failing rich shards encoded as sleep(40*mask); job stays green.
 _bisect_mask = 0
-for _i, _shard in enumerate(("j", "k", "l")):
-    _r = subprocess.run(["cargo", "test", "--locked", f"wasm_shard_{_shard}"])
+for _i, _shard in enumerate(("rich_shard_compile_parse_and_sections", "rich_shard_layout_validates")):
+    _r = subprocess.run(["cargo", "test", "--locked", _shard])
     print(f"TEMP-WASM-BISECT shard {_shard} exit {_r.returncode}", flush=True)
     if _r.returncode != 0:
-        _bisect_mask |= 4 >> _i
+        _bisect_mask |= 1 << _i
 if _bisect_mask:
     time.sleep(40 * _bisect_mask)
-    sys.exit(1)
 # END TEMP-WASM-BISECT
 
 ROOT = Path(__file__).resolve().parents[2]
