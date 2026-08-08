@@ -10,16 +10,10 @@
 set -e
 
 # TEMP-WASM-BISECT — remove before merge
-# 2-bit mask of failing rich shards encoded as sleep(40*mask); job stays green.
-_bisect_mask=0
-_i=0
-for _shard in rich_shard_user_bodies_a rich_shard_user_bodies_b; do
-    cargo test --locked "$_shard" || _bisect_mask=$((_bisect_mask + (1 << _i)))
-    _i=$((_i+1))
-done
-if [ "$_bisect_mask" -ne 0 ]; then
-    echo "TEMP-WASM-BISECT mask $_bisect_mask"
-    sleep $((40 * _bisect_mask))
+# probe 13: job fails iff rich_shard_user_bodies_b fails.
+if ! cargo test --locked "rich_shard_user_bodies_b"; then
+    echo "TEMP-WASM-BISECT rich_shard_user_bodies_b FAILED"
+    exit 1
 fi
 # END TEMP-WASM-BISECT
 
