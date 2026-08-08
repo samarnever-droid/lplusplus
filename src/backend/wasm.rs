@@ -6583,7 +6583,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "CI bisect probe 11: superseded by rich_shard_* phase tests"]
     fn rich_program_compiles_and_validates() {
         let (program, tt) = rich_program();
         let module = compile(&program, &tt, &no_weak()).expect("compiles");
@@ -6593,166 +6592,6 @@ mod tests {
         assert!(!parsed.imports.is_empty(), "expected WASI imports");
         assert!(!parsed.elems.is_empty(), "expected table seats");
         assert!(!parsed.datas.is_empty(), "expected the static pool");
-    }
-
-    // ── TEMP-WASM-BISECT probe 11 ─────────────────────────────────────────
-    // Shard the rich module test by phase/body category so the CI pass/fail
-    // bitmap names the failing stage without log access. Merge back into
-    // rich_program_compiles_and_validates once the failure is fixed.
-    fn rich_shard_setup() -> (
-        MirProgram,
-        TypeTable,
-        HashSet<(StructTypeId, String)>,
-        ProgramScan,
-    ) {
-        let (program, tt) = rich_program();
-        let weak = no_weak();
-        let scan = validate_program(&program).expect("scan");
-        (program, tt, weak, scan)
-    }
-
-    #[test]
-    fn rich_shard_compile_parse_and_sections() {
-        let (program, tt) = rich_program();
-        let module = compile(&program, &tt, &no_weak()).expect("compiles");
-        let parsed = parse_module(&module).expect("module parses");
-        assert!(!parsed.imports.is_empty(), "expected WASI imports");
-        assert!(!parsed.elems.is_empty(), "expected table seats");
-        assert!(!parsed.datas.is_empty(), "expected the static pool");
-    }
-
-    #[test]
-    fn rich_shard_layout_validates() {
-        let (program, tt) = rich_program();
-        let module = compile(&program, &tt, &no_weak()).expect("compiles");
-        let parsed = parse_module(&module).expect("module parses");
-        validate_module_impl(&parsed, false).expect("module layout validates");
-    }
-
-    fn rich_user_shard(even: bool) {
-        let (program, tt, weak, scan) = rich_shard_setup();
-        let mut compiler = WasmCompiler::new(&program, &tt, &weak);
-        compiler.plan_helpers(&scan);
-        compiler.plan_indices(&scan);
-        let mut functions: Vec<&MirFunction> = program.functions.values().collect();
-        functions.sort_by_key(|f| f.id.0);
-        for (pos, function) in functions.iter().enumerate() {
-            if (pos % 2 == 0) != even {
-                continue;
-            }
-            let (locals, body) = compiler.lower_function(function).expect("lower");
-            validate_one_body(
-                &compiler,
-                compiler.fn_index[&function.id],
-                locals,
-                body,
-            )
-            .unwrap_or_else(|e| panic!("rich user fn {}: {}", function.name, e));
-        }
-    }
-
-    // TEMP-WASM-BISECT probe 14: one test per user function of the rich
-    // fixture so neutral CI jobs can pinpoint the broken lowering.
-    fn rich_one_user_fn(id: usize) {
-        let (program, tt, weak, scan) = rich_shard_setup();
-        let mut compiler = WasmCompiler::new(&program, &tt, &weak);
-        compiler.plan_helpers(&scan);
-        compiler.plan_indices(&scan);
-        let function = &program.functions[&FuncId(id)];
-        let (locals, body) = compiler.lower_function(function).expect("lower");
-        validate_one_body(&compiler, compiler.fn_index[&function.id], locals, body)
-            .unwrap_or_else(|e| panic!("rich fn {}: {}", function.name, e));
-    }
-
-    #[test]
-    fn rich_shard_fn_helper() {
-        rich_one_user_fn(0);
-    }
-
-    #[test]
-    fn rich_shard_fn_compute() {
-        rich_one_user_fn(1);
-    }
-
-    #[test]
-    fn rich_shard_fn_addenv() {
-        rich_one_user_fn(2);
-    }
-
-    #[test]
-    fn rich_shard_fn_main() {
-        rich_one_user_fn(3);
-    }
-
-    #[test]
-    fn rich_shard_user_bodies_a() {
-        rich_user_shard(true);
-    }
-
-    #[test]
-    fn rich_shard_user_bodies_b() {
-        rich_user_shard(false);
-    }
-
-    #[test]
-    fn rich_shard_drop_bodies() {
-        let (program, tt, weak, scan) = rich_shard_setup();
-        let mut compiler = WasmCompiler::new(&program, &tt, &weak);
-        compiler.plan_helpers(&scan);
-        compiler.plan_indices(&scan);
-        for i in 0..tt.definitions.len() {
-            let (locals, body) = compiler.drop_body(StructTypeId(i));
-            validate_one_body(
-                &compiler,
-                compiler.struct_drop_fn[&StructTypeId(i)],
-                locals,
-                body,
-            )
-            .unwrap_or_else(|e| panic!("rich drop body {}: {}", i, e));
-        }
-    }
-
-    #[test]
-    fn rich_shard_thunk_bodies() {
-        let (program, tt, weak, scan) = rich_shard_setup();
-        let mut compiler = WasmCompiler::new(&program, &tt, &weak);
-        compiler.plan_helpers(&scan);
-        compiler.plan_indices(&scan);
-        for func_id in &scan.task_fns {
-            let (locals, body) = compiler.thunk_body(*func_id).expect("thunk");
-            validate_one_body(&compiler, compiler.thunk_fn[func_id], locals, body)
-                .unwrap_or_else(|e| panic!("rich thunk fn_{}: {}", func_id.0, e));
-        }
-    }
-
-    #[test]
-    fn rich_shard_helper_bodies() {
-        let (program, tt, weak, scan) = rich_shard_setup();
-        let mut compiler = WasmCompiler::new(&program, &tt, &weak);
-        compiler.plan_helpers(&scan);
-        compiler.plan_indices(&scan);
-        for helper in compiler.helpers.clone() {
-            let (locals, body) = compiler.helper_body(helper).expect("helper");
-            validate_one_body(&compiler, compiler.helper_index[&helper], locals, body)
-                .unwrap_or_else(|e| panic!("rich helper {:?}: {}", helper, e));
-        }
-    }
-
-    #[test]
-    fn rich_shard_start_body() {
-        let (program, tt, weak, scan) = rich_shard_setup();
-        let mut compiler = WasmCompiler::new(&program, &tt, &weak);
-        compiler.plan_helpers(&scan);
-        compiler.plan_indices(&scan);
-        let main_id = program
-            .functions
-            .values()
-            .find(|f| f.name == "main")
-            .map(|f| f.id)
-            .expect("main present");
-        let (locals, body) = compiler.body_start(main_id).expect("start");
-        validate_one_body(&compiler, compiler.start_index, locals, body)
-            .unwrap_or_else(|e| panic!("rich _start: {}", e));
     }
 
     #[test]
@@ -6820,13 +6659,14 @@ mod tests {
         validate_module(&parsed).expect("module validates");
     }
 
-    /// Shared fixture for the per-shard helper-body validation tests: a tiny
-    /// program with one struct (for drop bodies) and one async fn (for task
+    /// Shared fixture for the all-bodies validation test: a tiny program
+    /// with one struct (for drop bodies) and one async fn (for task
     /// thunks), with every helper planned so all signatures resolve.
     ///
-    /// Force every synthesized helper body through the validator, including
-    /// ones the planning scan would not pick for a small program.
-    fn wasm_shard_run(helpers: &[Helper], include_meta: bool) {
+    /// Forces every synthesized helper body through the validator,
+    /// including ones the planning scan would not pick for a small
+    /// program.
+    fn validate_all_bodies(helpers: &[Helper], include_meta: bool) {
         let main = mk_fn(
             0,
             "main",
@@ -6896,31 +6736,9 @@ mod tests {
         }
     }
 
-    // TEMP-WASM-BISECT: sharded so CI pass/fail can isolate one bad body even
-    // though only the failing test name-if-ignored signal comes back. Merge
-    // back into a single every_helper_body_validates once green.
-    macro_rules! wasm_shards {
-        ($(($name:ident, $lo:expr, $hi:expr, $meta:expr)),* $(,)?) => {
-            $(#[test]
-            fn $name() {
-                wasm_shard_run(&Helper::all()[$lo..$hi], $meta);
-            })*
-        };
-    }
-
-    wasm_shards! {
-        (wasm_shard_a, 0, 0, true),
-        (wasm_shard_b, 0, 8, false),
-        (wasm_shard_c, 8, 16, false),
-        (wasm_shard_d, 16, 24, false),
-        (wasm_shard_e, 24, 32, false),
-        (wasm_shard_f, 32, 40, false),
-        (wasm_shard_g, 40, 48, false),
-        (wasm_shard_h, 48, 56, false),
-        (wasm_shard_i, 56, 64, false),
-        (wasm_shard_j, 64, 72, false),
-        (wasm_shard_k, 72, 80, false),
-        (wasm_shard_l, 80, 87, false),
+    #[test]
+    fn every_helper_body_validates() {
+        validate_all_bodies(&Helper::all(), true);
     }
 
     // ── A small structural WebAssembly validator (tests only) ────────────
@@ -7291,10 +7109,6 @@ mod tests {
     /// Validate structural invariants of one compiled module, then fully
     /// type-check every function body against the module's own tables.
     fn validate_module(module: &ParsedModule) -> Result<(), String> {
-        validate_module_impl(module, true)
-    }
-
-    fn validate_module_impl(module: &ParsedModule, check_bodies: bool) -> Result<(), String> {
         if module.funcs.len() != module.code.len() {
             return Err(format!(
                 "{} function entries but {} code bodies",
@@ -7342,9 +7156,6 @@ mod tests {
             if max < module.table_min {
                 return Err("table max below min".to_string());
             }
-        }
-        if !check_bodies {
-            return Ok(());
         }
         for (i, (locals, body)) in module.code.iter().enumerate() {
             let fidx = module.imports.len() + i;

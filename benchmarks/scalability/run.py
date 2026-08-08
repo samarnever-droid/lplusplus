@@ -14,14 +14,6 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-# TEMP-WASM-BISECT — remove before merge
-# probe 13: job conclusion is the control verdict for rich_shard_start_body.
-_r = subprocess.run(["cargo", "test", "--locked", "rich_shard_fn_main"])
-print(f"TEMP-WASM-BISECT rich_shard_fn_main exit {_r.returncode}", flush=True)
-if _r.returncode != 0:
-    sys.exit(1)
-# END TEMP-WASM-BISECT
-
 ROOT = Path(__file__).resolve().parents[2]
 HERE = Path(__file__).resolve().parent
 TARGETS = (10_000, 50_000, 100_000)
