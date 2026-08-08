@@ -42,3 +42,5 @@ tests/test_ffi
 *.zip
 *.tar
 *.gz
+
+.sccconfig
