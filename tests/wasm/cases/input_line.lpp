@@ -1,0 +1,9 @@
+# input_line.lpp — input() reads one line from stdin (fd_read) and stops at
+# the newline; a second call at EOF returns the empty string.
+
+def main():
+    line := input()
+    print_str(line)
+    print(str_len(line))
+    again := input()
+    print(str_len(again))

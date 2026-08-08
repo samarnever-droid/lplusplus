@@ -1,0 +1,6 @@
+# reject_spawn.lpp — OS threads cannot exist on wasm32-wasi preview1;
+# the compiler must reject `spawn` with a clear WebAssembly diagnostic.
+
+def main():
+    spawn fn() -> Void:
+        print(1)

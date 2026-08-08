@@ -1,0 +1,64 @@
+name: WebAssembly Backend
+
+# The wasm backend lowers L++ MIR straight to a binary WebAssembly module
+# with no external toolchain. These jobs build the compiler, run the Rust
+# unit tests (binary encoder + diagnostics), then execute the wasm output
+# under wasmtime and compare program stdout byte for byte.
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  wasm32-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Show toolchain
+        run: |
+          rustc --version
+          cargo --version
+      - name: Install wasmtime (pinned)
+        run: |
+          WASMTIME_VERSION=26.0.0
+          curl -sSfL "https://github.com/bytecodealliance/wasmtime/releases/download/v${WASMTIME_VERSION}/wasmtime-v${WASMTIME_VERSION}-x86_64-linux.tar.xz" -o /tmp/wasmtime.tar.xz
+          mkdir -p "$HOME/.wasmtime"
+          tar -xJf /tmp/wasmtime.tar.xz -C "$HOME/.wasmtime" --strip-components=1
+          echo "$HOME/.wasmtime" >> "$GITHUB_PATH"
+          "$HOME/.wasmtime/wasmtime" --version
+      - name: Rust unit tests
+        run: cargo test --locked
+      - name: Build release compiler
+        run: cargo build --release --bin lpp
+      - name: WebAssembly backend suite
+        run: sh tests/run_wasm_tests.sh
+
+  wasm32-macos:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install wasmtime (pinned)
+        run: |
+          WASMTIME_VERSION=26.0.0
+          ARCH=$(uname -m)
+          curl -sSfL "https://github.com/bytecodealliance/wasmtime/releases/download/v${WASMTIME_VERSION}/wasmtime-v${WASMTIME_VERSION}-${ARCH}-macos.tar.xz" -o /tmp/wasmtime.tar.xz
+          mkdir -p "$HOME/.wasmtime"
+          tar -xJf /tmp/wasmtime.tar.xz -C "$HOME/.wasmtime" --strip-components=1
+          echo "$HOME/.wasmtime" >> "$GITHUB_PATH"
+          "$HOME/.wasmtime/wasmtime" --version
+      - name: Rust unit tests
+        run: cargo test --locked
+      - name: Build release compiler
+        run: cargo build --release --bin lpp
+      - name: WebAssembly backend suite
+        run: sh tests/run_wasm_tests.sh

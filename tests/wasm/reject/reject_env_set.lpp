@@ -1,0 +1,5 @@
+# reject_env_set.lpp — WASI environments are immutable; env_set must be
+# rejected with a clear WebAssembly diagnostic.
+
+def main():
+    env_set("LPP_VAR", "1")

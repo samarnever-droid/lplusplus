@@ -7,6 +7,8 @@ pub mod diagnostics;
 pub mod cranelift_backend;
 #[path = "backend/llvm.rs"]
 pub mod llvm_backend;
+#[path = "backend/wasm.rs"]
+pub mod wasm_backend;
 #[path = "analysis/cyclebreak.rs"]
 pub mod cyclebreak;
 #[path = "analysis/monomorph.rs"]

@@ -1,0 +1,17 @@
+# conversions.lpp — int/float/bool ↔ string formatting on wasm32.
+# float_to_str follows %g (6 significant digits, %e outside [-4, 6)).
+
+def main():
+    print_str(int_to_str(0 - 123))
+    print_str(int_to_str(9223372036854775807))
+    print_str(bool_to_str(true))
+    print_str(bool_to_str(false))
+    print(str_to_int("4096"))
+    print(str_to_int("-15"))
+    print_str(float_to_str(2.5))
+    print_str(float_to_str(5000000000.0))
+    print_str(float_to_str(0.0001))
+    print_str(float_to_str(1234567.0))
+    print_str(float_to_str(0.0))
+    print_str(float_to_str(100.0))
+    print_str(float_to_str(0.125))

@@ -1,0 +1,14 @@
+# closures.lpp — closures are two-word capsules (function-table seat plus an
+# ARC environment object) invoked through call_indirect on wasm32.
+
+def main():
+    x := 42
+    add := fn(y) -> Int:
+        return x + y
+    print(add(10))
+    print(add(0))
+
+    greeting := "hi"
+    speak := fn() -> Void:
+        print_str(greeting)
+    speak()

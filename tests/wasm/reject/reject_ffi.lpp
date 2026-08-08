@@ -1,0 +1,8 @@
+# reject_ffi.lpp — C FFI/extern symbols are unavailable on wasm32; the
+# compiler must reject the call with a clear WebAssembly diagnostic.
+
+extern "C":
+    def getpid() -> Int
+
+def main():
+    print(getpid())

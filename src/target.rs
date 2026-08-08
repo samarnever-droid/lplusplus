@@ -21,6 +21,20 @@ use std::str::FromStr;
 
 use target_lexicon::Triple;
 
+/// WebAssembly triples recognized by the L++ WebAssembly backend.
+///
+/// The wasm path is special: it bypasses the native object pipeline entirely
+/// (no Cranelift object, no linker) and emits a `.wasm` module with a WASI
+/// interface. Detection happens on the raw string, before target_lexicon
+/// parsing, because older target_lexicon versions do not model the `wasi`
+/// OS component.
+pub fn is_wasm_triple_str(raw: &str) -> bool {
+    matches!(
+        raw.trim(),
+        "wasm32-wasi" | "wasm32-wasip1" | "wasm32-unknown-unknown"
+    )
+}
+
 /// A validated target selected by the user, or the host.
 #[derive(Debug, Clone, Default)]
 pub struct TargetSpec {

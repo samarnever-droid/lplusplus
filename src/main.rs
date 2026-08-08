@@ -7,6 +7,8 @@ mod diagnostics;
 pub mod cranelift_backend;
 #[path = "backend/llvm.rs"]
 mod llvm_backend;
+#[path = "backend/wasm.rs"]
+mod wasm_backend;
 #[path = "analysis/cyclebreak.rs"]
 mod cyclebreak;
 #[path = "analysis/monomorph.rs"]
@@ -489,7 +491,7 @@ fn real_main() -> i32 {
                     std::process::exit(1);
                 }
             } else if setting == "backend" {
-                if val == "cranelift" || val == "llvm" {
+                if val == "cranelift" || val == "llvm" || val == "wasm" {
                     cfg.backend = val.clone();
                     if let Err(e) = cfg.save() {
                         eprintln!("Failed to save config: {e}");
@@ -497,7 +499,7 @@ fn real_main() -> i32 {
                     }
                     println!("Backend set to: {val}");
                 } else {
-                    eprintln!("Invalid backend value: {val}. Use 'cranelift' or 'llvm'.");
+                    eprintln!("Invalid backend value: {val}. Use 'cranelift', 'llvm', or 'wasm'.");
                     std::process::exit(1);
                 }
             } else if setting == "llvm-path" || setting == "llvm_path" {
@@ -585,6 +587,11 @@ fn real_main() -> i32 {
             println!("  x86_64-unknown-linux-gnu     Generic x86_64 Linux");
             println!("  riscv64gc-unknown-linux-gnu  Generic riscv64 Linux");
             println!();
+            println!("WebAssembly targets (wasm backend, no linker needed):");
+            println!("  wasm32-wasi                  WebAssembly module with WASI imports (.wasm)");
+            println!("  wasm32-wasip1                Alias profile for wasm32-wasi");
+            println!("  wasm32-unknown-unknown       Bare module (WASI imports still emitted)");
+            println!();
             println!("Use --target <triple> to cross-compile. The Cranelift backend");
             println!("must be built with the matching arch feature (default: all-arch).");
             return 0;
@@ -599,6 +606,7 @@ fn real_main() -> i32 {
             println!("  lpp <file.lpp>             Compile to native executable (direct lpp-link)");
             println!("  lpp <file.lpp> --emit-obj  Emit native object file only (.o / .obj)");
             println!("  lpp <file.lpp> --backend llvm  Use the optional LLVM object backend");
+            println!("  lpp <file.lpp> --target wasm32-wasi  Emit a WebAssembly module (.wasm)");
             println!("  lpp <file.lpp> --check     Type-check without compiling");
             println!("  lpp --checkall             Check all .lpp files in current directory");
             println!();
@@ -639,8 +647,10 @@ fn real_main() -> i32 {
             println!("Target:");
             println!("  --target <triple>  Emit for a target triple instead of the host");
             println!("                     (e.g. aarch64-linux-android, armv7-linux-androideabi,");
-            println!("                     i686-linux-android, aarch64-unknown-linux-gnu)");
-            println!("  --list-targets     List known Android/Termux target triples");
+            println!("                     i686-linux-android, aarch64-unknown-linux-gnu,");
+            println!("                     wasm32-wasi for a WebAssembly module)");
+            println!("  --backend wasm     Emit a .wasm module (implies wasm32-wasi)");
+            println!("  --list-targets     List known Android/Termux/WebAssembly target triples");
             println!();
             println!("Configuration:");
             println!("  config                         Show config (~/.lpp/config.json)");
@@ -1143,21 +1153,47 @@ fn real_main() -> i32 {
     // Resolve the optional --target triple into a validated spec. The host is
     // used when none is given; an Android/Termux triple selects a non-host ISA
     // and influences runtime/cc selection.
-    let target_spec = match &cli_target {
-        Some(t) => match crate::target::TargetSpec::from_triple_str(t) {
-            Ok(spec) => spec,
-            Err(e) => {
-                eprintln!("[L++] Target Error: {}", e);
-                return 1;
-            }
-        },
-        None => crate::target::TargetSpec::host(),
+    //
+    // WebAssembly triples take a dedicated route: they bypass the native
+    // object/link pipeline and emit a single `.wasm` module from the wasm
+    // backend, so no native target spec / linker is involved.
+    let wasm_target = match cli_target.as_deref().map(str::trim) {
+        Some(t) if crate::target::is_wasm_triple_str(t) => true,
+        Some(t) if t.starts_with("wasm32") || t.starts_with("wasm64") => {
+            eprintln!(
+                "[L++] Target Error: unsupported WebAssembly triple '{}'; expected wasm32-wasi, wasm32-wasip1, or wasm32-unknown-unknown",
+                t
+            );
+            return 1;
+        }
+        _ => false,
+    };
+    let target_spec = if wasm_target {
+        crate::target::TargetSpec::host()
+    } else {
+        match &cli_target {
+            Some(t) => match crate::target::TargetSpec::from_triple_str(t) {
+                Ok(spec) => spec,
+                Err(e) => {
+                    eprintln!("[L++] Target Error: {}", e);
+                    return 1;
+                }
+            },
+            None => crate::target::TargetSpec::host(),
+        }
     };
     if let Some(_t) = &cli_target {
         eprintln!(
             "[L++] targeting {}",
-            target_spec
+            if wasm_target {
+                format!("{} (WebAssembly backend)", cli_target.as_deref().unwrap_or_default().trim())
+            } else {
+                target_spec.to_string()
+            }
         );
+    }
+    if wasm_target {
+        backend = "wasm".to_string();
     }
 
     let aot_start = Instant::now();
@@ -1177,7 +1213,11 @@ fn real_main() -> i32 {
             )
         }
         "llvm" => llvm_backend::compile(&mir_program, &type_table, &weak_fields),
-        other => Err(format!("unknown backend '{}'; expected cranelift or llvm", other)),
+        "wasm" => wasm_backend::compile(&mir_program, &type_table, &weak_fields),
+        other => Err(format!(
+            "unknown backend '{}'; expected cranelift, llvm, or wasm",
+            other
+        )),
     };
     let obj_bytes = match backend_result {
         Ok(bytes) => bytes,
@@ -1188,7 +1228,13 @@ fn real_main() -> i32 {
     };
     let aot_time = aot_start.elapsed();
 
-    let ext = if cfg!(target_os = "windows") { "obj" } else { "o" };
+    let ext = if backend == "wasm" {
+        "wasm"
+    } else if cfg!(target_os = "windows") {
+        "obj"
+    } else {
+        "o"
+    };
     let exe_ext = std::env::consts::EXE_SUFFIX;
 
     let (obj_path, exe_path) = if source_run_command {
@@ -1217,6 +1263,40 @@ fn real_main() -> i32 {
 
     if check_only {
         let _ = fs::remove_file(&obj_path);
+        return 0;
+    }
+
+    // WebAssembly output: the module is final — there is no link step.
+    if backend == "wasm" {
+        if !dump_ast && !dump_symbols && !dump_types && !dump_escape && !dump_mir {
+            println!(
+                "[L++] WebAssembly module (wasm32-wasi) emitted at {}",
+                obj_path.display()
+            );
+            if !source_run_command {
+                println!("        run with: wasmtime {}", obj_path.display());
+            }
+            println!("Time: {:.1} ms", total_time.as_secs_f64() * 1000.0);
+        }
+        if source_run_command {
+            let runtime = env::var("LPP_WASM_RUNTIME")
+                .ok()
+                .filter(|r| !r.trim().is_empty())
+                .unwrap_or_else(|| "wasmtime".to_string());
+            let status = std::process::Command::new(&runtime).arg(&obj_path).status();
+            let _ = fs::remove_file(&obj_path);
+            match status {
+                Ok(s) => std::process::exit(s.code().unwrap_or(0)),
+                Err(_) => {
+                    eprintln!(
+                        "[L++] module compiled, but WebAssembly runtime '{}' was not found; \
+                         install wasmtime (https://wasmtime.dev/) or set LPP_WASM_RUNTIME",
+                        runtime
+                    );
+                    std::process::exit(1);
+                }
+            }
+        }
         return 0;
     }
 

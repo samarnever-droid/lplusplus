@@ -1,0 +1,37 @@
+# maps.lpp — the open-addressing hash map (string and integer keys) on the
+# wasm heap: put/get/has/remove/len with growth rehashing.
+
+def test_string_keys() -> Void:
+    print_str("start test_string_keys")
+    mut m := map_new()
+    print_str("created map")
+    map_put(m, "apple", 100)
+    print_str("put apple")
+    map_put(m, "banana", 200)
+    print_str("put banana")
+
+    if map_has(m, "apple"):
+        val1 := map_get(m, "apple")
+        print(val1)
+
+    if map_has(m, "banana"):
+        val2 := map_get(m, "banana")
+        print(val2)
+
+    print(map_len(m))
+
+    map_remove(m, "apple")
+    print(map_len(m))
+
+def test_integer_keys() -> Void:
+    print_str("start test_integer_keys")
+    mut m := map_new()
+    map_put(m, 42, 999)
+    map_put(m, 100, 888)
+
+    print(map_get(m, 42))
+    print(map_get(m, 100))
+
+def main():
+    test_string_keys()
+    test_integer_keys()
