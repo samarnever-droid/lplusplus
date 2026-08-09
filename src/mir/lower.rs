@@ -623,8 +623,8 @@ impl<'a> MirLowerCtx<'a> {
             Rvalue::Use(Operand::Local(source)) | Rvalue::Use(Operand::Borrowed(source)) => *source,
             _ => return,
         };
-        if let Some(rt) = self.closure_returns.get(&(function_id, source)).cloned() {
-            self.closure_returns.insert((function_id, destination), rt);
+        if let Some(rt) = self.closure_returns.get(&(function_id, source.0)).cloned() {
+            self.closure_returns.insert((function_id, destination.0), rt);
         }
     }
 
