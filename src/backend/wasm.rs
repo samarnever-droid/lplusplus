@@ -183,7 +183,7 @@ mod op {
     pub const I32_LOAD8_U: u8 = 0x2c;
     pub const I32_STORE: u8 = 0x36;
     pub const I64_STORE: u8 = 0x37;
-    pub const F64_STORE: u8 = 0x38;
+    pub const F64_STORE: u8 = 0x39;
     pub const I32_STORE8: u8 = 0x3a;
     pub const I32_CONST: u8 = 0x41;
     pub const I64_CONST: u8 = 0x42;
@@ -1290,8 +1290,8 @@ impl<'a> WasmCompiler<'a> {
             Helper::StrContains => &[Helper::StrFindFrom],
             Helper::StrStartsWith => &[],
             Helper::StrEndsWith => &[],
-            Helper::StrRepeat => &[Helper::StrAlloc],
-            Helper::StrReplace => &[Helper::StrAlloc, Helper::StrFindFrom],
+            Helper::StrRepeat => &[Helper::StrAlloc, Helper::PanicMsg],
+            Helper::StrReplace => &[Helper::StrAlloc, Helper::StrFindFrom, Helper::StrNew],
             Helper::StrSplit => &[
                 Helper::StrNew,
                 Helper::ListNew,
@@ -1299,9 +1299,9 @@ impl<'a> WasmCompiler<'a> {
                 Helper::Release,
             ],
             Helper::ListNew => &[Helper::ArcAlloc],
-            Helper::ListPush => &[Helper::Alloc, Helper::Retain],
-            Helper::ListSet => &[Helper::Retain, Helper::Release, Helper::Panic2],
-            Helper::ListGet => &[Helper::Panic2],
+            Helper::ListPush => &[Helper::Alloc, Helper::Retain, Helper::PanicMsg],
+            Helper::ListSet => &[Helper::Retain, Helper::Release, Helper::Panic2, Helper::PanicMsg],
+            Helper::ListGet => &[Helper::Panic2, Helper::PanicMsg],
             Helper::ListLen => &[],
             Helper::ListDestroy => &[Helper::Release],
             Helper::MapNew => &[Helper::ArcAlloc, Helper::Alloc],
@@ -1318,7 +1318,7 @@ impl<'a> WasmCompiler<'a> {
             Helper::TupleAlloc => &[Helper::ArcAlloc],
             Helper::TupleDestroy => &[Helper::Release],
             Helper::ClosureDestroy => &[Helper::Release],
-            Helper::TaskNew => &[Helper::ArcAlloc],
+            Helper::TaskNew => &[Helper::ArcAlloc, Helper::PanicMsg],
             Helper::TaskRun => &[Helper::PanicMsg],
             Helper::TaskAwait => &[Helper::TaskRun, Helper::Retain],
             Helper::TaskPoll => &[Helper::TaskRun],
@@ -7496,7 +7496,7 @@ mod tests {
                     pop_t!(TI64);
                     pop_t!(TI32);
                 }
-                0x38 => {
+                0x39 => {
                     r.uleb()?;
                     r.uleb()?;
                     pop_t!(TF64);

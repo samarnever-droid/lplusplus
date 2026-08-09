@@ -56,6 +56,13 @@ pub struct MirLowerCtx<'a> {
     pub type_table: &'a mut TypeTable,
     pub functions: HashMap<String, FuncId>,
     pub func_return_types: HashMap<String, TypeRef>,
+    /// Return types of closure *values*, keyed by `(function, local)`.
+    /// Closure locals all share `TypeRef::Function`, which carries no
+    /// signature, so calls through them would otherwise fall back to
+    /// `TypeRef::Int` and emit a `call_indirect` whose result type does
+    /// not match the lifted function (runtime "indirect call type
+    /// mismatch" for any non-Int-returning closure).
+    pub closure_returns: HashMap<(usize, usize), TypeRef>,
     pub next_func_id: usize,
 
     // Program reference for enum lookups
@@ -107,6 +114,7 @@ impl<'a> MirLowerCtx<'a> {
             type_table,
             functions: HashMap::new(),
             func_return_types: HashMap::new(),
+            closure_returns: HashMap::new(),
             next_func_id: 0,
             program,
             lifted_functions: HashMap::new(),
@@ -1027,6 +1035,14 @@ impl<'a> MirLowerCtx<'a> {
 
                 let var_binding_id = binding_id.get().map(BindingId);
                 let var_local = builder.new_local(elem_ty, false, Some(var_name.clone()), var_binding_id);
+                if element_class == ListElementClass::Arc {
+                    // The loop variable only borrows the list's element edge
+                    // (same model as `list_get` on List[ARC]); assignment or
+                    // `return` out of it retains explicitly. Marking it Owned
+                    // here released every element at each iteration's end and
+                    // the list's destructor released the dead pieces again.
+                    builder.set_local_ownership(var_local, Ownership::Borrowed);
+                }
                 if let Some(bid) = var_binding_id {
                     binding_map.insert(bid, var_local);
                 }
@@ -1597,7 +1613,7 @@ impl<'a> MirLowerCtx<'a> {
                 }
 
                 let mut return_type = TypeRef::Void;
-                if let Expr::Identifier(name, _) = &**callee {
+                if let Expr::Identifier(name, callee_cell) = &**callee {
                     if (name == "map_get" || name == "lpp_map_get") && !args.is_empty() {
                         let map_ty = self.expr_type_hint(&args[0], builder, binding_map);
                         if let TypeRef::Generic(_, ref params) = map_ty {
@@ -1674,19 +1690,37 @@ impl<'a> MirLowerCtx<'a> {
                                 "print" | "print_str" | "json_free" | "list_push" | "list_free"
                                 | "net_close" => TypeRef::Void,
                                 _ => {
-                                    // Try trait method: infer receiver type, look up StructName_method
-                                    let mut trait_ret = TypeRef::Int;
-                                    if !effective_args.is_empty() {
-                                        let recv_ty = self.expr_type_hint(&effective_args[0], builder, binding_map);
-                                        if let TypeRef::Custom(sid) = &recv_ty {
-                                            let sname = self.type_table.definitions[sid.0].name.clone();
-                                            let mangled = format!("{}_{}", sname, name);
-                                            if let Some(rt) = self.func_return_types.get(&mangled) {
-                                                trait_ret = rt.clone();
-                                            }
+                                    // Closure through a variable: the local carries
+                                    // `TypeRef::Function` with no signature, so use the
+                                    // return type recorded when that closure value was
+                                    // constructed instead of the `Int` fallback below.
+                                    let mut closure_ret: Option<TypeRef> = None;
+                                    if let Some(bid) = callee_cell.get() {
+                                        if let Some(&lid) = binding_map.get(&BindingId(bid)) {
+                                            closure_ret = self
+                                                .closure_returns
+                                                .get(&(builder.function.id.0, lid.0))
+                                                .cloned();
                                         }
                                     }
-                                    trait_ret
+                                    match closure_ret {
+                                        Some(rt) => rt,
+                                        None => {
+                                            // Try trait method: infer receiver type, look up StructName_method
+                                            let mut trait_ret = TypeRef::Int;
+                                            if !effective_args.is_empty() {
+                                                let recv_ty = self.expr_type_hint(&effective_args[0], builder, binding_map);
+                                                if let TypeRef::Custom(sid) = &recv_ty {
+                                                    let sname = self.type_table.definitions[sid.0].name.clone();
+                                                    let mangled = format!("{}_{}", sname, name);
+                                                    if let Some(rt) = self.func_return_types.get(&mangled) {
+                                                        trait_ret = rt.clone();
+                                                    }
+                                                }
+                                            }
+                                            trait_ret
+                                        }
+                                    }
                                 },
                             };
                         }
@@ -2285,6 +2319,8 @@ impl<'a> MirLowerCtx<'a> {
                     Some("__closure".to_string()),
                     None,
                 );
+                self.closure_returns
+                    .insert((builder.function.id.0, closure_local.0), return_type.clone());
                 builder.push_instr(MirInstr::Assign(
                     closure_local,
                     Rvalue::MakeClosure(closure_func_id, vec![Operand::Local(env_local)]),
