@@ -609,6 +609,25 @@ impl<'a> MirLowerCtx<'a> {
         builder.push_instr(MirInstr::Retain(destination))
     }
 
+    /// A closure value copied into another local (`speak := fn() -> Void …`
+    /// binds a fresh MIR local) keeps its recorded return type so calls
+    /// through the alias emit `call_indirect` with the matching signature
+    /// instead of the `Int` fallback.
+    fn propagate_closure_return(
+        &mut self,
+        function_id: usize,
+        destination: LocalId,
+        rvalue: &Rvalue,
+    ) {
+        let source = match rvalue {
+            Rvalue::Use(Operand::Local(source)) | Rvalue::Use(Operand::Borrowed(source)) => *source,
+            _ => return,
+        };
+        if let Some(rt) = self.closure_returns.get(&(function_id, source)).cloned() {
+            self.closure_returns.insert((function_id, destination), rt);
+        }
+    }
+
     fn assignment_rvalue(builder: &MirBuilder, destination: LocalId, operand: Operand) -> Rvalue {
         if let Operand::Local(source) = operand {
             let destination_managed = builder.function.locals[destination.0]
@@ -711,6 +730,8 @@ impl<'a> MirLowerCtx<'a> {
                 let rvalue = Self::assignment_rvalue(builder, local_id, operand);
                 builder.push_instr(MirInstr::Assign(local_id, rvalue.clone()))?;
                 Self::retain_if_aliasing_borrow(builder, local_id, &rvalue)?;
+                let fid = builder.function.id.0;
+                self.propagate_closure_return(fid, local_id, &rvalue);
             }
             Stmt::Assign {
                 value, binding_id, ..
@@ -725,6 +746,8 @@ impl<'a> MirLowerCtx<'a> {
                     let rvalue = Self::assignment_rvalue(builder, local_id, operand);
                     builder.push_instr(MirInstr::Assign(local_id, rvalue.clone()))?;
                     Self::retain_if_aliasing_borrow(builder, local_id, &rvalue)?;
+                    let fid = builder.function.id.0;
+                    self.propagate_closure_return(fid, local_id, &rvalue);
                 } else if let Some(env_ptr) = self.current_env_ptr {
                     if let Some(idx) = self
                         .current_captures
