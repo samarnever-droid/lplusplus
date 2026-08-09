@@ -51,6 +51,8 @@ for src in "$CASES"/*.lpp; do
     mkdir -p "$work"
     cp "$src" "$work/$name.lpp"
     if ! "$COMPILER" "$work/$name.lpp" --target wasm32-wasi >"$work/compile.log" 2>&1; then
+        printf '\n%s\n' "--- compiler log for $name:"
+        tail -25 "$work/compile.log" >&2
         say_fail "$name (compiler rejected input): $(tail -1 "$work/compile.log")"
         continue
     fi
@@ -70,12 +72,31 @@ for src in "$CASES"/*.lpp; do
         stdin_file=/dev/null
     fi
     if ! run_module "$work/$name.wasm" >"$work/out.txt" 2>"$work/run.log" <"$stdin_file"; then
+        # Forensics for blind CI: module structure, runtime trace, partial stdout.
+        printf '\n%s\n' "--- runtime log for $name:"
+        tail -15 "$work/run.log" >&2
+        printf '%s\n' "--- partial stdout for $name:" >&2
+        head -c 800 "$work/out.txt" >&2 || true
+        printf '\n' >&2
+        if command -v python3 >/dev/null 2>&1; then
+            printf '%s\n' "--- wasm probe for $name:" >&2
+            python3 "$ROOT/tests/wasm/wasm_probe.py" "$work/$name.wasm" >&2 || true
+            # If the runtime named a byte offset (decode errors), dump a hex
+            # window around it — that is usually the exact bug site.
+            OFF=$(grep -o 'offset [0-9][0-9]*' "$work/run.log" | head -1 | grep -o '[0-9][0-9]*' || true)
+            if [ -n "${OFF:-}" ]; then
+                printf '%s\n' "--- hex window around offset $OFF for $name:" >&2
+                python3 "$ROOT/tests/wasm/wasm_probe.py" "$work/$name.wasm" --window "$OFF" 112 >&2 || true
+            fi
+        fi
         say_fail "$name (runtime error): $(tail -1 "$work/run.log")"
         continue
     fi
     if ! diff -u "$CASES/$name.expected" "$work/out.txt" >"$work/diff.txt" 2>&1; then
         printf '\n%s\n' "--- output mismatch for $name:"
         cat "$work/diff.txt"
+        printf '%s\n' "--- raw stdout bytes (od -c) for $name:" >&2
+        od -c "$work/out.txt" | head -20 >&2 || true
         say_fail "$name"
         continue
     fi
