@@ -2246,7 +2246,7 @@ impl<'a> MirLowerCtx<'a> {
                 };
 
                 let mut closure_builder =
-                    MirBuilder::new(closure_func_id, closure_name.clone(), return_type);
+                    MirBuilder::new(closure_func_id, closure_name.clone(), return_type.clone());
                 let mut closure_binding_map = HashMap::new();
 
                 let env_ptr_local = closure_builder.new_local(
