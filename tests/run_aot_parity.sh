@@ -24,10 +24,8 @@ if ! command -v "$CC" >/dev/null 2>&1; then
     exit 2
 fi
 
-if [ ! -x "$COMPILER" ]; then
-    echo "[L++] Building release compiler..."
-    (cd "$ROOT" && cargo build --release)
-fi
+echo "[L++] Building release compiler and linker..."
+(cd "$ROOT" && cargo build --release --bin lpp --bin lpp-link)
 
 # Compile each runtime once.  Recompiling the large compatibility runtime for
 # every corpus entry was the dominant cost of this action.
