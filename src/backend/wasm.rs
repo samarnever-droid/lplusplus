@@ -2455,8 +2455,12 @@ impl<'a> WasmCompiler<'a> {
                     "internal error: closure construction is missing its environment".to_string()
                 })?;
                 fb.g(Self::scr(scr_base, SCR_I32A));
-                self.operand_val(fb, env_operand, local_index);
-                fb.op(op::I64_EXTEND_I32_U);
+                if Self::operand_class(env_operand, locals) == Val::I32 {
+                    self.operand_val(fb, env_operand, local_index);
+                    fb.op(op::I64_EXTEND_I32_U);
+                } else {
+                    self.operand_val(fb, env_operand, local_index);
+                }
                 fb.store64(8);
                 fb.g(Self::scr(scr_base, SCR_I32A));
             }

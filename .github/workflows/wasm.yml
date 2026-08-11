@@ -51,6 +51,7 @@ jobs:
         run: |
           WASMTIME_VERSION=26.0.0
           ARCH=$(uname -m)
+          if [ "$ARCH" = "arm64" ]; then ARCH="aarch64"; fi
           curl -sSfL "https://github.com/bytecodealliance/wasmtime/releases/download/v${WASMTIME_VERSION}/wasmtime-v${WASMTIME_VERSION}-${ARCH}-macos.tar.xz" -o /tmp/wasmtime.tar.xz
           mkdir -p "$HOME/.wasmtime"
           tar -xJf /tmp/wasmtime.tar.xz -C "$HOME/.wasmtime" --strip-components=1
