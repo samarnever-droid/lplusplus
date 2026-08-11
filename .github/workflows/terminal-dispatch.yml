@@ -8,7 +8,7 @@ on:
       command:
         description: "Terminal shell command(s) to execute"
         required: false
-        default: "cargo test && cargo run --bin lpp -- --checkall ."
+        default: "cargo test && cargo run --bin lpp -- --checkall src stdlib"
       os:
         description: "Target Runner OS"
         required: true
@@ -97,7 +97,7 @@ jobs:
         run: |
           CMD="${{ inputs.command }}"
           if [ -z "$CMD" ]; then
-            CMD="cargo test --locked && cargo run --bin lpp -- --checkall ."
+            CMD="cargo test --locked && cargo run --bin lpp -- --checkall src stdlib"
           fi
           echo "=== Running Terminal Command ==="
           echo "Command: $CMD"

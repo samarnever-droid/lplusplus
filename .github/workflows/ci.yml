@@ -297,7 +297,7 @@ jobs:
           @"
           @echo off
           call "%VSCMD_BAT%" >nul || exit /b 1
-          cl.exe /nologo /O2 /c lpp_runtime.c "/Fo:$work\lpp_runtime.obj" || exit /b 1
+          cl.exe /nologo /O2 /c runtime\windows_x86_64_min.c "/Fo:$work\lpp_runtime.obj" || exit /b 1
           set LPP_AOT=1
           target\release\lpp.exe "$work\arith.lpp" || exit /b 1
           target\release\lpp-link.exe inspect "$work\arith.obj" > "$work\inspect.txt" || exit /b 1

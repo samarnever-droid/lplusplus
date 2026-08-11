@@ -2500,10 +2500,18 @@ impl<'a> WasmCompiler<'a> {
         for arg in args {
             params.push(Self::operand_class(arg, locals));
         }
-        let results = if *dest_ty == TypeRef::Void {
+        let callee_ty = match callee {
+            Operand::Local(id) | Operand::Borrowed(id) => Some(&locals[id.0].ty),
+            _ => None,
+        };
+        let effective_ret_ty = match callee_ty {
+            Some(TypeRef::Fn(_, ret)) => ret.as_ref(),
+            _ => dest_ty,
+        };
+        let results = if *effective_ret_ty == TypeRef::Void {
             vec![]
         } else {
-            vec![val_of_type(dest_ty)]
+            vec![val_of_type(effective_ret_ty)]
         };
         let type_index = self.register_type(params, results);
         if is_direct_seat {
