@@ -56,18 +56,9 @@ run_native_aot() {
 run_direct_link() {
     src=$1
     base=$2
-    obj_file="${src%.lpp}.o"
     exe="${src%.lpp}"
-    if [ -n "$DIRECT_RUNTIME_OBJ" ]; then
-        # The AOT object is already available from run_native_aot. Link that
-        # exact object with the same freestanding runtime that `lpp` selects;
-        # this preserves the direct-link check without compiling the source a
-        # second time.
-        rm -f "$exe"
-        "$LINKER" "$obj_file" "$DIRECT_RUNTIME_OBJ" -o "$exe" >/dev/null
-    else
-        "$COMPILER" "$src" >/dev/null
-    fi
+    rm -f "$exe" "${exe}.exe"
+    "$COMPILER" "$src" >/dev/null
     if [ -f "${exe}.exe" ]; then
         exe="${exe}.exe"
     fi
@@ -108,8 +99,8 @@ case "$PARITY_JOBS" in
 esac
 
 run_case() {
-    file=$1
-    expected=$2
+    file=$(printf '%s' "$1" | tr -d '\r')
+    expected=$(printf '%s' "$2" | tr -d '\r')
     src="$TMP/$file"
     base=${file%.lpp}
     result="$RESULT_DIR/$base.result"

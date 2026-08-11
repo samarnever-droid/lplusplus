@@ -338,12 +338,11 @@ double fmod(double x, double y) {
 
 typedef void (*LppArcDestructor)(void *payload);
 typedef struct {
+    uint32_t magic;
     int refcount;
-    /* Bumped immediately BEFORE the payload is released; a weak handle compares
-     * against the value it captured. See lpp_weak_get. */
     int generation;
+    uint32_t map_size;
     LppArcDestructor destructor;
-    uint64_t map_size;
 } LppArcHeader;
 
 /* ── Immortal objects ─────────────────────────────────────────────────────
@@ -376,7 +375,7 @@ typedef struct {
 #define LPP_ARC_IMMORTAL 0x41524331U
 
 static inline int lpp__is_immortal(const LppArcHeader *header) {
-    return (uint32_t)header->refcount == LPP_ARC_IMMORTAL;
+    return (uint32_t)header->magic == LPP_ARC_IMMORTAL && (uint32_t)header->refcount == LPP_ARC_IMMORTAL;
 }
 
 static uint64_t lpp_page_round(uint64_t size) {
@@ -392,7 +391,7 @@ static void *lpp_sys_mmap(uint64_t size) {
     __asm__ volatile (
         "syscall"
         : "=a"(result)
-        : "a"(9), "D"((long)0), "S"((long)size), "d"((long)3),
+        : "a"(9), "D"((long)0), "S"((long)size), "d"((long)7),
           "r"(r10), "r"(r8), "r"(r9)
         : "rcx", "r11", "memory"
     );
@@ -434,9 +433,9 @@ static int lpp__generation_counter = 1;
 #define LPP_SIZE_CLASSES  8
 
 /* Class i holds blocks of 32 << i bytes: 32 .. 4096. */
-static void *lpp_free_lists[LPP_SIZE_CLASSES];
-static char *lpp_bump_cursor;
-static uint64_t lpp_bump_left;
+static void *lpp_free_lists[LPP_SIZE_CLASSES] = {0, 0, 0, 0, 0, 0, 0, 0};
+static char *lpp_bump_cursor = (char *)0;
+static uint64_t lpp_bump_left = 0;
 
 static uint64_t lpp_class_bytes(int cls) { return (uint64_t)32 << cls; }
 
@@ -456,7 +455,7 @@ void *lpp_arc_alloc_with_destructor(int64_t payload_size, LppArcDestructor destr
         uint64_t total = lpp_page_round(need);
         header = (LppArcHeader *)lpp_sys_mmap(total);
         if (!header) return 0;
-        header->map_size = total;
+        header->map_size = (uint32_t)total;
     } else {
         uint64_t bytes = lpp_class_bytes(cls);
         if (lpp_free_lists[cls]) {
@@ -480,8 +479,9 @@ void *lpp_arc_alloc_with_destructor(int64_t payload_size, LppArcDestructor destr
          * generation. */
         char *raw = (char *)header;
         for (uint64_t i = 0; i < bytes; i++) raw[i] = 0;
-        header->map_size = (uint64_t)(cls + 1);
+        header->map_size = (uint32_t)(cls + 1);
     }
+    header->magic = 0x41524331U;
     header->refcount = 1;
     /* Generations come from a monotonic global, never restarting, so a stale
      * weak handle can never match a new occupant of a reused address. */
@@ -642,6 +642,7 @@ void lpp_arc_release(void *payload) {
     LppArenaRegion *arena = lpp_arena_for_header(header);
     if (__atomic_sub_fetch(&header->refcount, 1, __ATOMIC_ACQ_REL) == 0) {
         (void)__atomic_add_fetch(&header->generation, 1, __ATOMIC_RELEASE);
+        header->magic = 0;
         if (header->destructor) header->destructor(payload);
         if (arena) lpp_arena_node_zero(arena);
         else lpp_arc_free(header);

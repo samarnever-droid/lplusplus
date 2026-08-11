@@ -312,7 +312,7 @@ pub fn write_elf(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
     let mut start = vec![
         0x31, 0xed, 0x48, 0x83, 0xe4, 0xf0, // xor ebp; and rsp,-16
         0xe8, 0, 0, 0, 0, // call main
-        0x89, 0xc7, 0xb8, 60, 0, 0, 0, 0x0f, 0x05, // exit
+        0x89, 0xc7, 0xb8, 60, 0, 0, 0, 0x0f, 0x05, 0xeb, 0xfe, // exit + jmp .
     ];
     start[7..11].copy_from_slice(&(disp as i32).to_le_bytes());
     text.extend_from_slice(&start);
@@ -321,14 +321,7 @@ pub fn write_elf(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
     for (idx, inp) in objs.iter().enumerate() {
         for rel in &inp.relocations {
             if rel.kind == RelocationKind::GotRelative {
-                let sym_offset = if rel.target == "__self_rodata__"
-                    || rel.target == "__self_text__"
-                    || rel.target == "__self_data__"
-                {
-                    (rel.addend + 4) as u64
-                } else {
-                    0u64
-                };
+                let sym_offset = (rel.addend + 4) as u64;
                 let n = got.len();
                 got.entry((rel.target.clone(), sym_offset, idx)).or_insert(n);
             }
@@ -384,7 +377,7 @@ pub fn write_elf(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
                     "'{}': unresolved GOT symbol '{target}'",
                     objs[*inp_idx].path.display()
                 )
-            })?
+            })? + sym_offset
         };
         let val = ELF_BASE + CODE_OFFSET as u64 + target_addr;
         let pos = got_off + idx * 8;
@@ -403,14 +396,7 @@ pub fn write_elf(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
             } else if rel.target == "__self_data__" {
                 (data_base as u64, false)
             } else if rel.kind == RelocationKind::GotRelative {
-                let sym_offset = if rel.target == "__self_rodata__"
-                    || rel.target == "__self_text__"
-                    || rel.target == "__self_data__"
-                {
-                    (rel.addend + 4) as u64
-                } else {
-                    0u64
-                };
+                let sym_offset = (rel.addend + 4) as u64;
                 let idx = got[&(rel.target.clone(), sym_offset, idx)];
                 (got_off as u64 + idx as u64 * 8, true)
             } else {
@@ -423,33 +409,40 @@ pub fn write_elf(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
                 })?;
                 (addr, false)
             };
-            let patch = base + rel.offset;
-            if patch + 4 > text.len() {
+            let patch = match rel.section_class {
+                SectionClass::Text => base,
+                SectionClass::Rodata => rodata_base,
+                SectionClass::Data | SectionClass::Tls => data_base,
+            } + rel.offset;
+            let patch_len = if rel.kind == RelocationKind::Absolute && rel.size == 64 { 8 } else { 4 };
+            if patch + patch_len > text.len() {
                 return Err(format!(
                     "'{}': relocation patch out of range",
                     inp.path.display()
                 ));
             }
             let addend = if is_got {
-                if rel.target == "__self_rodata__"
-                    || rel.target == "__self_text__"
-                    || rel.target == "__self_data__"
-                {
-                    -4i64
-                } else {
-                    rel.addend
-                }
+                -4i64
             } else {
                 rel.addend
             };
-            let disp = target_off as i64 + addend - patch as i64;
-            if disp < i32::MIN as i64 || disp > i32::MAX as i64 {
-                return Err(format!(
-                    "'{}': PC-relative relocation out of range",
-                    inp.path.display()
-                ));
+            if rel.kind == RelocationKind::Absolute {
+                let abs = (ELF_BASE + CODE_OFFSET as u64 + target_off).wrapping_add_signed(addend);
+                if patch_len == 8 {
+                    text[patch..patch + 8].copy_from_slice(&abs.to_le_bytes());
+                } else {
+                    text[patch..patch + 4].copy_from_slice(&(abs as u32).to_le_bytes());
+                }
+            } else {
+                let disp = target_off as i64 + addend - patch as i64;
+                if disp < i32::MIN as i64 || disp > i32::MAX as i64 {
+                    return Err(format!(
+                        "'{}': PC-relative relocation out of range",
+                        inp.path.display()
+                    ));
+                }
+                text[patch..patch + 4].copy_from_slice(&(disp as i32).to_le_bytes());
             }
-            text[patch..patch + 4].copy_from_slice(&(disp as i32).to_le_bytes());
         }
     }
 
