@@ -389,16 +389,16 @@ pub fn write_elf(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
         let rodata_base = rodata_bases[idx];
         let data_base = data_bases[idx];
         for rel in &inp.relocations {
-            let (target_off, is_got) = if rel.target == "__self_text__" {
+            let (target_off, is_got) = if rel.kind == RelocationKind::GotRelative {
+                let sym_offset = (rel.addend + 4) as u64;
+                let idx = got[&(rel.target.clone(), sym_offset, idx)];
+                (got_off as u64 + idx as u64 * 8, true)
+            } else if rel.target == "__self_text__" {
                 (base as u64, false)
             } else if rel.target == "__self_rodata__" {
                 (rodata_base as u64, false)
             } else if rel.target == "__self_data__" {
                 (data_base as u64, false)
-            } else if rel.kind == RelocationKind::GotRelative {
-                let sym_offset = (rel.addend + 4) as u64;
-                let idx = got[&(rel.target.clone(), sym_offset, idx)];
-                (got_off as u64 + idx as u64 * 8, true)
             } else {
                 let addr = *syms.get(&rel.target).ok_or_else(|| {
                     format!(

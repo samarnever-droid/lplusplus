@@ -1252,7 +1252,7 @@ fn resolve_min_runtime_source() -> Option<PathBuf> {
 
     let p = PathBuf::from(src_name);
     if p.exists() {
-        return Some(p);
+        return fs::canonicalize(&p).ok().or_else(|| Some(p));
     }
 
     if let Ok(exe_path) = std::env::current_exe() {
@@ -1260,7 +1260,7 @@ fn resolve_min_runtime_source() -> Option<PathBuf> {
             for ancestor in &[exe_dir.to_path_buf(), exe_dir.join(".."), exe_dir.join("../.."), exe_dir.join("../../..")] {
                 let candidate = ancestor.join(src_name);
                 if candidate.exists() {
-                    return Some(candidate);
+                    return fs::canonicalize(&candidate).ok().or_else(|| Some(candidate));
                 }
             }
         }
@@ -1332,10 +1332,8 @@ fn resolve_min_runtime_object() -> Option<PathBuf> {
 
             if needs_rebuild {
                 let _ = fs::create_dir_all(&cache_dir);
-                #[cfg(windows)]
-                load_msvc_env();
-                let cc = if cfg!(windows) { "cl.exe" } else { "gcc" };
-                let mut cmd = std::process::Command::new(cc);
+                let cc_name = std::env::var("CC").unwrap_or_else(|_| if cfg!(windows) { "cl.exe".to_string() } else { "cc".to_string() });
+                let mut cmd = std::process::Command::new(&cc_name);
                 if cfg!(windows) {
                     cmd.arg("/nologo")
                         .arg("/O2")
@@ -1357,16 +1355,20 @@ fn resolve_min_runtime_object() -> Option<PathBuf> {
                         .arg("-o")
                         .arg(&cache_obj);
                 }
-                if let Ok(st) = cmd.status() {
-                    if st.success() {
-                        if let Some(cur) = current_hash {
-                            let _ = fs::write(&cache_hash, cur.to_string());
-                        }
+                let compiled_ok = match cmd.status() {
+                    Ok(st) => st.success(),
+                    Err(_) => false,
+                };
+                if compiled_ok {
+                    if let Some(cur) = current_hash {
+                        let _ = fs::write(&cache_hash, cur.to_string());
                     }
+                } else {
+                    let _ = fs::remove_file(&cache_obj);
                 }
             }
 
-            if cache_obj.exists() {
+            if cache_obj.exists() && cache_obj.metadata().map(|m| m.len() > 0).unwrap_or(false) {
                 return Some(cache_obj);
             }
         }
