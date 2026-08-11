@@ -679,10 +679,10 @@ static unsigned long lpp_x11_color(LppUnixWindow *w, int64_t hex) {
 static void lpp_unix_destroy_slot(int id) {
     LppUnixWindow *w = &g_unix_windows[id];
     if (!w->display) return;
-    if (w->gc)        p_XFreeGC && p_XFreeGC(w->display, w->gc);
-    if (w->pixmap_gc) p_XFreeGC && p_XFreeGC(w->display, w->pixmap_gc);
-    if (w->pixmap)    p_XFreePixmap && p_XFreePixmap(w->display, w->pixmap);
-    if (w->window)    p_XDestroyWindow && p_XDestroyWindow(w->display, w->window);
+    if (w->gc && p_XFreeGC)        p_XFreeGC(w->display, w->gc);
+    if (w->pixmap_gc && p_XFreeGC) p_XFreeGC(w->display, w->pixmap_gc);
+    if (w->pixmap && p_XFreePixmap)    p_XFreePixmap(w->display, w->pixmap);
+    if (w->window && p_XDestroyWindow)    p_XDestroyWindow(w->display, w->window);
     if (p_XCloseDisplay) p_XCloseDisplay(w->display);
     memset(w, 0, sizeof(*w)); /* zero the slot so it's reusable (#34) */
 }

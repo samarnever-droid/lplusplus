@@ -1346,8 +1346,11 @@ fn resolve_min_runtime_object() -> Option<PathBuf> {
                         .arg(&src_path)
                         .arg(format!("/Fo:{}", cache_obj.display()));
                 } else {
-                    cmd.arg("-Os")
+                    cmd.arg("-O2")
+                        .arg("-ffreestanding")
                         .arg("-fno-stack-protector")
+                        .arg("-fno-pic")
+                        .arg("-mno-red-zone")
                         .arg("-DLPP_FREESTANDING")
                         .arg("-c")
                         .arg(&src_path)

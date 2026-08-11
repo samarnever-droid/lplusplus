@@ -8,6 +8,9 @@
  *    runtime/linux_x86_64_min.c -o lpp_runtime_min.o
  */
 
+#undef _FORTIFY_SOURCE
+#define _FORTIFY_SOURCE 0
+
 #include <stdint.h>
 #include <time.h>
 
@@ -73,6 +76,18 @@ int fprintf(FILE *stream, const char *fmt, ...) {
     return 0;
 }
 
+int fputs(const char *s, FILE *stream) {
+    long fd = (stream == stderr) ? 2 : 1;
+    (void)lpp_sys_write(fd, s, (long)strlen(s));
+    return 0;
+}
+
+int puts(const char *s) {
+    (void)lpp_sys_write(1, s, (long)strlen(s));
+    (void)lpp_sys_write(1, "\n", 1);
+    return 0;
+}
+
 int fflush(FILE *stream) { (void)stream; return 0; }
 
 typedef struct {
@@ -128,6 +143,8 @@ static void *lpp_sys_mmap(uint64_t size);
 static void lpp_sys_munmap(void *address, uint64_t size);
 void *lpp_arc_alloc(int64_t payload_size);
 void lpp_arc_release(void *payload);
+void lpp_print_str(const char *text);
+void lpp_print_int(int64_t value);
 
 static long lpp_sys_open(const char *path, int flags, int mode);
 static long lpp_sys_read(long fd, void *buf, long count);
@@ -138,6 +155,14 @@ void *dlopen(const char *path, int mode) {
     (void)mode;
     if (!path) return (void *)0;
     long fd = lpp_sys_open(path, 0, 0);
+    if (fd < 0) {
+        __asm__ volatile (
+            "syscall"
+            : "=a"(fd)
+            : "a"(257), "D"(-100L), "S"(path), "d"(0L), "r"(0L)
+            : "rcx", "r11", "memory"
+        );
+    }
     if (fd < 0) return (void *)0;
     long file_size = lpp_sys_lseek(fd, 0, 2);
     if (file_size <= 0) { lpp_sys_close(fd); return (void *)0; }
@@ -160,6 +185,13 @@ void *dlopen(const char *path, int mode) {
         return (void *)0;
     }
 
+    /* Bounds-check section headers before walking them */
+    if (eh->e_shoff == 0 || eh->e_shnum == 0 ||
+        eh->e_shoff + (uint64_t)eh->e_shnum * sizeof(LppElf64_Shdr) > (uint64_t)file_size) {
+        lpp_sys_munmap(map, map_size);
+        return (void *)0;
+    }
+
     LppElf64_Shdr *sections = (LppElf64_Shdr *)((char *)map + eh->e_shoff);
     const char *dynstr = (const char *)0;
     void *dynsym = (void *)0;
@@ -168,9 +200,12 @@ void *dlopen(const char *path, int mode) {
 
     for (uint16_t i = 0; i < eh->e_shnum; i++) {
         if (sections[i].sh_type == 11 || sections[i].sh_type == 2) {
+            /* Verify section data is within the mapped file */
+            if (sections[i].sh_offset + sections[i].sh_size > (uint64_t)file_size) continue;
             dynsym = (char *)map + sections[i].sh_offset;
             uint32_t str_link = sections[i].sh_link;
-            if (str_link < eh->e_shnum) {
+            if (str_link < eh->e_shnum &&
+                sections[str_link].sh_offset + sections[str_link].sh_size <= (uint64_t)file_size) {
                 dynstr = (const char *)map + sections[str_link].sh_offset;
             }
             sym_ent_size = sections[i].sh_entsize ? sections[i].sh_entsize : sizeof(LppElf64_Sym);
@@ -184,7 +219,8 @@ void *dlopen(const char *path, int mode) {
         return (void *)0;
     }
 
-    LppSoHandle *handle = (LppSoHandle *)lpp_arc_alloc(sizeof(LppSoHandle));
+    /* Use direct mmap for the handle — avoids arc allocator init ordering */
+    LppSoHandle *handle = (LppSoHandle *)lpp_sys_mmap(lpp_page_round(sizeof(LppSoHandle)));
     if (!handle) {
         lpp_sys_munmap(map, map_size);
         return (void *)0;
@@ -217,7 +253,7 @@ int dlclose(void *raw_handle) {
     if (handle->map_addr) {
         lpp_sys_munmap(handle->map_addr, handle->map_size);
     }
-    lpp_arc_release(handle);
+    lpp_sys_munmap(handle, lpp_page_round(sizeof(LppSoHandle)));
     return 0;
 }
 
