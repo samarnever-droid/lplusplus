@@ -56,7 +56,7 @@ run_direct_link() {
     base=$2
     exe="${src%.lpp}"
     rm -f "$exe" "${exe}.exe"
-    "$COMPILER" "$src" >/dev/null
+    "$COMPILER" "$src" --linker direct >/dev/null
     if [ -f "${exe}.exe" ]; then
         exe="${exe}.exe"
     fi
