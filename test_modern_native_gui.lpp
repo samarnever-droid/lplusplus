@@ -4,6 +4,7 @@ import gui
 def main():
     print_str("Initializing Modern Native L++ OS Window...\n")
     win := gui.create("L++ Modern Native OS Studio", 900, 600)
+    print(win)
 
     mut t := gui.dark_theme()
     mut counter := 0

@@ -507,6 +507,55 @@ int64_t lpp_sys_uptime(void) { return (int64_t)(GetTickCount64() / 1000); }
 /* ── String equality ── */
 int64_t lpp_str_eq(const char *a, const char *b) { if(a==b)return 1; if(!a||!b)return 0; while(*a&&*a==*b){a++;b++;} return *a==*b?1:0; }
 
+/* ── Native CPtr & Memory Builtins ── */
+int64_t lpp_c_malloc(int64_t size) {
+    if (size <= 0) return 0;
+    void *ptr = VirtualAlloc(NULL, (SIZE_T)size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    return (int64_t)(uintptr_t)ptr;
+}
+
+void lpp_c_free(int64_t ptr) {
+    if (ptr != 0) {
+        VirtualFree((void *)(uintptr_t)ptr, 0, MEM_RELEASE);
+    }
+}
+
+int64_t lpp_c_load_u8(int64_t ptr, int64_t offset) {
+    if (ptr == 0) return 0;
+    const uint8_t *p = (const uint8_t *)(uintptr_t)(ptr + offset);
+    return (int64_t)(*p);
+}
+
+void lpp_c_store_u8(int64_t ptr, int64_t offset, int64_t val) {
+    if (ptr == 0) return;
+    uint8_t *p = (uint8_t *)(uintptr_t)(ptr + offset);
+    *p = (uint8_t)val;
+}
+
+int64_t lpp_c_load_i32(int64_t ptr, int64_t offset) {
+    if (ptr == 0) return 0;
+    const int32_t *p = (const int32_t *)(uintptr_t)(ptr + offset);
+    return (int64_t)(*p);
+}
+
+void lpp_c_store_i32(int64_t ptr, int64_t offset, int64_t val) {
+    if (ptr == 0) return;
+    int32_t *p = (int32_t *)(uintptr_t)(ptr + offset);
+    *p = (int32_t)val;
+}
+
+int64_t lpp_c_load_i64(int64_t ptr, int64_t offset) {
+    if (ptr == 0) return 0;
+    const int64_t *p = (const int64_t *)(uintptr_t)(ptr + offset);
+    return *p;
+}
+
+void lpp_c_store_i64(int64_t ptr, int64_t offset, int64_t val) {
+    if (ptr == 0) return;
+    int64_t *p = (int64_t *)(uintptr_t)(ptr + offset);
+    *p = val;
+}
+
 /* ── Native 2D GUI & Windowing ── */
 #include "lpp_gui.c"
 

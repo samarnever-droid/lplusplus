@@ -31,6 +31,7 @@ mod target;
 mod type_facts;
 #[path = "analysis/layout.rs"]
 mod layout;
+pub mod linker;
 
 use std::env;
 use std::fs;

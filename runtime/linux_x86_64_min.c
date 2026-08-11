@@ -75,10 +75,153 @@ int fprintf(FILE *stream, const char *fmt, ...) {
 
 int fflush(FILE *stream) { (void)stream; return 0; }
 
-void *dlopen(const char *path, int mode) { (void)path; (void)mode; return 0; }
-void *dlsym(void *handle, const char *name) { (void)handle; (void)name; return 0; }
-int dlclose(void *handle) { (void)handle; return 0; }
-char *dlerror(void) { return 0; }
+typedef struct {
+    void *map_addr;
+    uint64_t map_size;
+    const char *dynstr;
+    void *dynsym;
+    uint64_t num_syms;
+    uint64_t sym_ent_size;
+} LppSoHandle;
+
+typedef struct {
+    uint32_t st_name;
+    unsigned char st_info;
+    unsigned char st_other;
+    uint16_t st_shndx;
+    uint64_t st_value;
+    uint64_t st_size;
+} LppElf64_Sym;
+
+typedef struct {
+    unsigned char e_ident[16];
+    uint16_t e_type;
+    uint16_t e_machine;
+    uint32_t e_version;
+    uint64_t e_entry;
+    uint64_t e_phoff;
+    uint64_t e_shoff;
+    uint32_t e_flags;
+    uint16_t e_ehsize;
+    uint16_t e_phentsize;
+    uint16_t e_phnum;
+    uint16_t e_shentsize;
+    uint16_t e_shnum;
+    uint16_t e_shstrndx;
+} LppElf64_Ehdr;
+
+typedef struct {
+    uint32_t sh_name;
+    uint32_t sh_type;
+    uint64_t sh_flags;
+    uint64_t sh_addr;
+    uint64_t sh_offset;
+    uint64_t sh_size;
+    uint32_t sh_link;
+    uint32_t sh_info;
+    uint64_t sh_addralign;
+    uint64_t sh_entsize;
+} LppElf64_Shdr;
+
+static uint64_t lpp_page_round(uint64_t size);
+static void *lpp_sys_mmap(uint64_t size);
+static void lpp_sys_munmap(void *address, uint64_t size);
+void *lpp_arc_alloc(int64_t payload_size);
+void lpp_arc_release(void *payload);
+
+static long lpp_sys_open(const char *path, int flags, int mode);
+static long lpp_sys_read(long fd, void *buf, long count);
+static long lpp_sys_close(long fd);
+static long lpp_sys_lseek(long fd, long offset, int whence);
+
+void *dlopen(const char *path, int mode) {
+    (void)mode;
+    if (!path) return (void *)0;
+    long fd = lpp_sys_open(path, 0, 0);
+    if (fd < 0) return (void *)0;
+    long file_size = lpp_sys_lseek(fd, 0, 2);
+    if (file_size <= 0) { lpp_sys_close(fd); return (void *)0; }
+    (void)lpp_sys_lseek(fd, 0, 0);
+
+    uint64_t map_size = lpp_page_round((uint64_t)file_size);
+    void *map = lpp_sys_mmap(map_size);
+    if (!map) { lpp_sys_close(fd); return (void *)0; }
+
+    long read_bytes = lpp_sys_read(fd, map, file_size);
+    lpp_sys_close(fd);
+    if (read_bytes < (long)sizeof(LppElf64_Ehdr)) {
+        lpp_sys_munmap(map, map_size);
+        return (void *)0;
+    }
+
+    LppElf64_Ehdr *eh = (LppElf64_Ehdr *)map;
+    if (eh->e_ident[0] != 0x7f || eh->e_ident[1] != 'E' || eh->e_ident[2] != 'L' || eh->e_ident[3] != 'F') {
+        lpp_sys_munmap(map, map_size);
+        return (void *)0;
+    }
+
+    LppElf64_Shdr *sections = (LppElf64_Shdr *)((char *)map + eh->e_shoff);
+    const char *dynstr = (const char *)0;
+    void *dynsym = (void *)0;
+    uint64_t num_syms = 0;
+    uint64_t sym_ent_size = sizeof(LppElf64_Sym);
+
+    for (uint16_t i = 0; i < eh->e_shnum; i++) {
+        if (sections[i].sh_type == 11 || sections[i].sh_type == 2) {
+            dynsym = (char *)map + sections[i].sh_offset;
+            uint32_t str_link = sections[i].sh_link;
+            if (str_link < eh->e_shnum) {
+                dynstr = (const char *)map + sections[str_link].sh_offset;
+            }
+            sym_ent_size = sections[i].sh_entsize ? sections[i].sh_entsize : sizeof(LppElf64_Sym);
+            num_syms = sections[i].sh_size / sym_ent_size;
+            if (sections[i].sh_type == 11) break;
+        }
+    }
+
+    if (!dynstr || !dynsym) {
+        lpp_sys_munmap(map, map_size);
+        return (void *)0;
+    }
+
+    LppSoHandle *handle = (LppSoHandle *)lpp_arc_alloc(sizeof(LppSoHandle));
+    if (!handle) {
+        lpp_sys_munmap(map, map_size);
+        return (void *)0;
+    }
+
+    handle->map_addr = map;
+    handle->map_size = map_size;
+    handle->dynstr = dynstr;
+    handle->dynsym = dynsym;
+    handle->num_syms = num_syms;
+    handle->sym_ent_size = sym_ent_size;
+    return (void *)handle;
+}
+
+void *dlsym(void *raw_handle, const char *name) {
+    if (!raw_handle || !name) return (void *)0;
+    LppSoHandle *handle = (LppSoHandle *)raw_handle;
+    for (uint64_t i = 0; i < handle->num_syms; i++) {
+        LppElf64_Sym *sym = (LppElf64_Sym *)((char *)handle->dynsym + i * handle->sym_ent_size);
+        if (sym->st_name && lpp_str_eq(handle->dynstr + sym->st_name, name) == 1) {
+            return (char *)handle->map_addr + sym->st_value;
+        }
+    }
+    return (void *)0;
+}
+
+int dlclose(void *raw_handle) {
+    if (!raw_handle) return 0;
+    LppSoHandle *handle = (LppSoHandle *)raw_handle;
+    if (handle->map_addr) {
+        lpp_sys_munmap(handle->map_addr, handle->map_size);
+    }
+    lpp_arc_release(handle);
+    return 0;
+}
+
+char *dlerror(void) { return (char *)0; }
 
 static long lpp_sys_write(long fd, const void *buffer, long count) {
     long result;
@@ -503,6 +646,59 @@ void *lpp_alloc(int64_t size) {
 void lpp_free(void *payload, int64_t size) {
     (void)size;
     lpp_arc_release(payload);
+}
+
+/* ── Native CPtr & Memory Builtins ── */
+int64_t lpp_c_malloc(int64_t size) {
+    if (size <= 0) return 0;
+    uint64_t total = lpp_page_round((uint64_t)size + sizeof(uint64_t));
+    uint64_t *ptr = (uint64_t *)lpp_sys_mmap(total);
+    if (!ptr) return 0;
+    ptr[0] = total;
+    return (int64_t)(uintptr_t)(ptr + 1);
+}
+
+void lpp_c_free(int64_t ptr) {
+    if (ptr != 0) {
+        uint64_t *hdr = (uint64_t *)(uintptr_t)ptr - 1;
+        lpp_sys_munmap(hdr, hdr[0]);
+    }
+}
+
+int64_t lpp_c_load_u8(int64_t ptr, int64_t offset) {
+    if (ptr == 0) return 0;
+    const uint8_t *p = (const uint8_t *)(uintptr_t)(ptr + offset);
+    return (int64_t)(*p);
+}
+
+void lpp_c_store_u8(int64_t ptr, int64_t offset, int64_t val) {
+    if (ptr == 0) return;
+    uint8_t *p = (uint8_t *)(uintptr_t)(ptr + offset);
+    *p = (uint8_t)val;
+}
+
+int64_t lpp_c_load_i32(int64_t ptr, int64_t offset) {
+    if (ptr == 0) return 0;
+    const int32_t *p = (const int32_t *)(uintptr_t)(ptr + offset);
+    return (int64_t)(*p);
+}
+
+void lpp_c_store_i32(int64_t ptr, int64_t offset, int64_t val) {
+    if (ptr == 0) return;
+    int32_t *p = (int32_t *)(uintptr_t)(ptr + offset);
+    *p = (int32_t)val;
+}
+
+int64_t lpp_c_load_i64(int64_t ptr, int64_t offset) {
+    if (ptr == 0) return 0;
+    const int64_t *p = (const int64_t *)(uintptr_t)(ptr + offset);
+    return *p;
+}
+
+void lpp_c_store_i64(int64_t ptr, int64_t offset, int64_t val) {
+    if (ptr == 0) return;
+    int64_t *p = (int64_t *)(uintptr_t)(ptr + offset);
+    *p = val;
 }
 
 /* ARC closure payload: [code pointer, owned environment pointer]. */

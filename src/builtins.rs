@@ -2764,6 +2764,18 @@ pub fn get_builtins() -> &'static [Builtin] {
         Builtin { name: "map_get_str", symbol: "lpp_map_get_str", params: &[ParamType::Any, ParamType::Specific(TypeRef::Str)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
         Builtin { name: "map_has_str", symbol: "lpp_map_has_str", params: &[ParamType::Any, ParamType::Specific(TypeRef::Str)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
         Builtin { name: "map_remove_str", symbol: "lpp_map_remove_str", params: &[ParamType::Any, ParamType::Specific(TypeRef::Str)], return_type: TypeRef::Void, cl_params: &[0, 0], cl_return: None },
+        Builtin { name: "lpp_c_malloc", symbol: "lpp_c_malloc", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0], cl_return: Some(0) },
+        Builtin { name: "lpp_c_free", symbol: "lpp_c_free", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Void, cl_params: &[0], cl_return: None },
+        Builtin { name: "lpp_c_load_u8", symbol: "lpp_c_load_u8", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
+        Builtin { name: "lpp_c_store_u8", symbol: "lpp_c_store_u8", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Void, cl_params: &[0, 0, 0], cl_return: None },
+        Builtin { name: "lpp_c_load_i32", symbol: "lpp_c_load_i32", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
+        Builtin { name: "lpp_c_store_i32", symbol: "lpp_c_store_i32", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Void, cl_params: &[0, 0, 0], cl_return: None },
+        Builtin { name: "lpp_c_load_i64", symbol: "lpp_c_load_i64", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
+        Builtin { name: "lpp_c_store_i64", symbol: "lpp_c_store_i64", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Void, cl_params: &[0, 0, 0], cl_return: None },
+        Builtin { name: "dlopen", symbol: "dlopen", params: &[ParamType::Specific(TypeRef::Str), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
+        Builtin { name: "dlsym", symbol: "dlsym", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Str)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
+        Builtin { name: "dlclose", symbol: "dlclose", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0], cl_return: Some(0) },
+        Builtin { name: "dlerror", symbol: "dlerror", params: &[], return_type: TypeRef::Str, cl_params: &[], cl_return: Some(0) },
     ];
     BUILTINS
 }
