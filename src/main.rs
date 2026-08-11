@@ -1350,7 +1350,8 @@ fn real_main() -> i32 {
     // A failed link must not leave an executable from an earlier build that
     // looks successful to a subsequent action.
     let _ = fs::remove_file(&exe_path);
-    let link_result = if use_host {
+    let forced_direct = effective_linker.as_deref() == Some("direct");
+    let mut link_result = if use_host {
         #[cfg(windows)]
         pm::load_msvc_env();
         pm::host_link_binary_target(
@@ -1362,6 +1363,23 @@ fn real_main() -> i32 {
     } else {
         pm::direct_link_binary(&obj_path, &exe_path)
     };
+    // An auto-selected direct link that hits a feature outside lpp-link's
+    // verified subset should not strand the user: fall back to the host
+    // linker.  Explicitly forced direct links still fail loudly.
+    if link_result.is_err() && !use_host && !forced_direct && config_obj.system.has_cc {
+        if let Err(e) = &link_result {
+            eprintln!("[L++] direct linker failed: {e}");
+        }
+        eprintln!("[L++] falling back to the host linker...");
+        #[cfg(windows)]
+        pm::load_msvc_env();
+        link_result = pm::host_link_binary_target(
+            &obj_path,
+            &exe_path,
+            &link_libs,
+            target_spec.raw.as_deref(),
+        );
+    }
     if let Err(e) = link_result {
         eprintln!("[L++] Native Link Error: {}", e);
         let _ = fs::remove_file(&obj_path);

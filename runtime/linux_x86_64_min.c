@@ -9,11 +9,76 @@
  */
 
 #include <stdint.h>
+#include <time.h>
 
 void lpp_exit(int64_t code);
 int64_t lpp_str_eq(const char *a, const char *b);
 
 uint64_t strlen(const char *s) { uint64_t n = 0; while (s && s[n]) n++; return n; }
+
+/* Compiler-generated calls (zig/clang lower struct init & zeroing to these)
+   even in freestanding mode, so the runtime must provide them itself. */
+void *memset(void *dest, int value, unsigned long n) {
+    unsigned char *d = (unsigned char *)dest;
+    for (unsigned long i = 0; i < n; i++) d[i] = (unsigned char)value;
+    return dest;
+}
+
+void *memcpy(void *dest, const void *src, unsigned long n) {
+    unsigned char *d = (unsigned char *)dest;
+    const unsigned char *s = (const unsigned char *)src;
+    for (unsigned long i = 0; i < n; i++) d[i] = s[i];
+    return dest;
+}
+
+void *memmove(void *dest, const void *src, unsigned long n) {
+    unsigned char *d = (unsigned char *)dest;
+    const unsigned char *s = (const unsigned char *)src;
+    if (d < s) {
+        for (unsigned long i = 0; i < n; i++) d[i] = s[i];
+    } else {
+        for (unsigned long i = n; i > 0; i--) d[i - 1] = s[i - 1];
+    }
+    return dest;
+}
+
+/* Freestanding clock_gettime via syscall 228 (x86_64). glibc headers
+   (pulled in by lpp_gui.c's stdlib.h) supply struct timespec/clockid_t. */
+int clock_gettime(clockid_t clock_id, struct timespec *tp) {
+    long result;
+    __asm__ volatile (
+        "syscall"
+        : "=a"(result)
+        : "a"(228), "D"((long)clock_id), "S"(tp)
+        : "rcx", "r11", "memory"
+    );
+    return (int)result;
+}
+
+/* Minimal freestanding libc shims for what lpp_gui.c references on Linux.
+   Diagnostic prints go out via syscall 1; dlopen/dlsym fail so the X11
+   backend reports "unavailable" and degrades gracefully. */
+#include <stdio.h>
+static long lpp_sys_write(long fd, const void *buffer, long count);
+FILE *stdin = (FILE *)0, *stdout = (FILE *)0, *stderr = (FILE *)0;
+
+int printf(const char *fmt, ...) {
+    (void)lpp_sys_write(1, fmt, (long)strlen(fmt));
+    return 0;
+}
+
+int fprintf(FILE *stream, const char *fmt, ...) {
+    long fd = (stream == stderr) ? 2 : 1;
+    (void)lpp_sys_write(fd, fmt, (long)strlen(fmt));
+    return 0;
+}
+
+int fflush(FILE *stream) { (void)stream; return 0; }
+
+void *dlopen(const char *path, int mode) { (void)path; (void)mode; return 0; }
+void *dlsym(void *handle, const char *name) { (void)handle; (void)name; return 0; }
+int dlclose(void *handle) { (void)handle; return 0; }
+char *dlerror(void) { return 0; }
 
 static long lpp_sys_write(long fd, const void *buffer, long count) {
     long result;
@@ -1924,3 +1989,7 @@ int64_t lpp_vec_i64_checksum(int64_t n) {
     return total;
 #endif
 }
+
+/* ── Native 2D GUI & Windowing ── */
+#include "lpp_gui.c"
+

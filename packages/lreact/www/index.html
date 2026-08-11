@@ -3,118 +3,367 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Lreact App — React Frontend + L++ Native Backend</title>
+    <title>Lreact Desktop — Next-Gen L++ Native GUI Framework</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
     <style>
         :root {
-            --bg: #121212;
-            --surface: #1E1E24;
-            --primary: #007ACC;
-            --text: #FFFFFF;
-            --muted: #888899;
-            --success: #28A745;
+            --bg-dark: #0B0F19;
+            --sidebar-bg: #111827;
+            --card-bg: rgba(31, 41, 55, 0.7);
+            --card-border: rgba(255, 255, 255, 0.08);
+            --accent-cyan: #06B6D4;
+            --accent-blue: #3B82F6;
+            --accent-purple: #8B5CF6;
+            --accent-emerald: #10B981;
+            --text-main: #F9FAFB;
+            --text-muted: #9CA3AF;
         }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            background-color: var(--bg);
-            color: var(--text);
+
+        * {
+            box-sizing: border-box;
             margin: 0;
-            padding: 30px;
+            padding: 0;
         }
-        .container {
-            max-width: 800px;
-            margin: 0 auto;
+
+        body {
+            font-family: 'Inter', -apple-system, sans-serif;
+            background-color: var(--bg-dark);
+            color: var(--text-main);
+            height: 100vh;
+            display: flex;
+            overflow: hidden;
         }
+
+        /* Sidebar Navigation */
+        .sidebar {
+            width: 260px;
+            background-color: var(--sidebar-bg);
+            border-right: 1px solid var(--card-border);
+            display: flex;
+            flex-direction: column;
+            padding: 24px 16px;
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding-bottom: 24px;
+            border-bottom: 1px solid var(--card-border);
+            margin-bottom: 24px;
+        }
+
+        .brand-icon {
+            width: 36px;
+            height: 36px;
+            border-radius: 10px;
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-blue));
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 18px;
+            box-shadow: 0 0 15px rgba(6, 182, 212, 0.4);
+        }
+
+        .brand-title {
+            font-size: 18px;
+            font-weight: 700;
+            letter-spacing: -0.5px;
+            background: linear-gradient(to right, #FFFFFF, #9CA3AF);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .nav-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 16px;
+            border-radius: 8px;
+            color: var(--text-muted);
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            margin-bottom: 6px;
+        }
+
+        .nav-item:hover, .nav-item.active {
+            background-color: rgba(255, 255, 255, 0.05);
+            color: var(--text-main);
+        }
+
+        .nav-item.active {
+            background: linear-gradient(90deg, rgba(6, 182, 212, 0.15), transparent);
+            border-left: 3px solid var(--accent-cyan);
+            color: var(--accent-cyan);
+        }
+
+        /* Main Workspace */
+        .main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+            padding: 32px;
+            background: radial-gradient(circle at top right, rgba(139, 92, 246, 0.05), transparent 40%),
+                        radial-gradient(circle at bottom left, rgba(6, 182, 212, 0.05), transparent 40%);
+        }
+
         .header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            border-bottom: 1px solid #333;
-            padding-bottom: 15px;
-            margin-bottom: 30px;
+            margin-bottom: 32px;
         }
-        .title {
-            font-size: 24px;
-            font-weight: bold;
-            color: var(--primary);
+
+        .header-title h1 {
+            font-size: 28px;
+            font-weight: 700;
+            margin-bottom: 4px;
         }
+
+        .header-title p {
+            color: var(--text-muted);
+            font-size: 14px;
+        }
+
+        .badge {
+            background: rgba(16, 185, 129, 0.1);
+            color: var(--accent-emerald);
+            border: 1px solid rgba(16, 185, 129, 0.2);
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .pulse-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: var(--accent-emerald);
+            box-shadow: 0 0 8px var(--accent-emerald);
+        }
+
+        /* Grid Layout */
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 24px;
+            margin-bottom: 32px;
+        }
+
         .card {
-            background-color: var(--surface);
-            border-radius: 12px;
+            background-color: var(--card-bg);
+            backdrop-filter: blur(12px);
+            border: 1px solid var(--card-border);
+            border-radius: 16px;
             padding: 24px;
-            margin-bottom: 20px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
         }
+
+        .card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 12px 24px rgba(0, 0, 0, 0.3);
+            border-color: rgba(255, 255, 255, 0.15);
+        }
+
+        .card-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 16px;
+        }
+
+        .card-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--text-muted);
+        }
+
+        .card-value {
+            font-size: 32px;
+            font-weight: 700;
+            margin-bottom: 8px;
+            background: linear-gradient(135deg, #FFFFFF, #D1D5DB);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .btn-group {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
         .btn {
-            background-color: var(--primary);
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-blue));
             color: white;
             border: none;
-            padding: 12px 24px;
-            border-radius: 8px;
-            font-size: 15px;
+            padding: 12px 20px;
+            border-radius: 10px;
+            font-size: 14px;
             font-weight: 600;
             cursor: pointer;
-            transition: background 0.2s;
-            margin-right: 10px;
+            transition: all 0.2s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            box-shadow: 0 4px 12px rgba(6, 182, 212, 0.25);
         }
+
         .btn:hover {
-            background-color: #0099FF;
+            opacity: 0.95;
+            box-shadow: 0 6px 16px rgba(6, 182, 212, 0.4);
+            transform: translateY(-1px);
         }
-        .btn-success {
-            background-color: var(--success);
+
+        .btn-purple {
+            background: linear-gradient(135deg, var(--accent-purple), #6D28D9);
+            box-shadow: 0 4px 12px rgba(139, 92, 246, 0.25);
         }
-        .console {
-            background-color: #0A0A0C;
-            font-family: monospace;
-            padding: 15px;
-            border-radius: 8px;
-            color: #00FFCC;
-            min-height: 100px;
+
+        .btn-purple:hover {
+            box-shadow: 0 6px 16px rgba(139, 92, 246, 0.4);
+        }
+
+        /* Console Output */
+        .console-card {
+            grid-column: span 3;
+        }
+
+        .console-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding-bottom: 12px;
+            margin-bottom: 16px;
+            border-bottom: 1px solid var(--card-border);
+        }
+
+        .console-output {
+            background-color: #050811;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+            padding: 20px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+            line-height: 1.6;
+            color: #38BDF8;
+            min-height: 180px;
+            max-height: 260px;
+            overflow-y: auto;
             white-space: pre-wrap;
+        }
+
+        .console-line {
+            margin-bottom: 4px;
+        }
+
+        .console-prompt {
+            color: var(--accent-purple);
+            font-weight: 700;
         }
     </style>
 </head>
 <body>
-    <div class="container">
+    <div class="sidebar">
+        <div class="brand">
+            <div class="brand-icon">⚡</div>
+            <div class="brand-title">Lreact Studio</div>
+        </div>
+        <div class="nav-item active">⚡ Overview & IPC</div>
+        <div class="nav-item">📁 File System & IPC</div>
+        <div class="nav-item">🚀 Native Process</div>
+        <div class="nav-item">⚙️ Settings</div>
+    </div>
+
+    <div class="main-content">
         <div class="header">
-            <div class="title">⚡ Lreact Framework</div>
-            <div style="color: var(--muted)">React Frontend + L++ Native Backend</div>
+            <div class="header-title">
+                <h1>L++ Native Desktop GUI</h1>
+                <p>Modern React 19 Frontend + Cranelift AOT Native L++ Backend</p>
+            </div>
+            <div class="badge">
+                <div class="pulse-dot"></div>
+                Native IPC Connected (127.0.0.1:8765)
+            </div>
         </div>
 
-        <div class="card">
-            <h2>Native L++ Command Invocation</h2>
-            <p style="color: var(--muted)">Click below to trigger a native L++ backend AOT command via Zero-Dependency IPC:</p>
-            <button class="btn" onclick="runCompile()">@command compile()</button>
-            <button class="btn btn-success" onclick="readFs()">window.lpp.fs.readFile()</button>
-        </div>
+        <div class="grid">
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title">Native Execution</div>
+                </div>
+                <div class="card-value">Cranelift AOT</div>
+                <p style="color: var(--text-muted); font-size: 13px;">Direct machine code compilation without JS overhead.</p>
+            </div>
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title">IPC Transport</div>
+                </div>
+                <div class="card-value">0ms Latency</div>
+                <p style="color: var(--text-muted); font-size: 13px;">Zero-dependency internal IPC protocol.</p>
+            </div>
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title">Compiler Engine</div>
+                </div>
+                <div class="card-value">L++ v4.6.1</div>
+                <p style="color: var(--text-muted); font-size: 13px;">Self-hosted L++ toolchain backend.</p>
+            </div>
 
-        <div class="card">
-            <h3>IPC Terminal Output</h3>
-            <div id="output" class="console">> Waiting for user IPC invocation...</div>
+            <div class="card console-card">
+                <div class="card-header">
+                    <div class="card-title">Native L++ Command Invocation</div>
+                </div>
+                <div class="btn-group" style="margin-bottom: 20px;">
+                    <button class="btn" onclick="invokeNative('get_version')">⚡ Get Native Version</button>
+                    <button class="btn btn-purple" onclick="invokeNative('read_file')">📁 Read Configuration</button>
+                    <button class="btn" onclick="invokeNative('shell_exec')">🚀 Run Shell Exec</button>
+                </div>
+
+                <div class="console-header">
+                    <span style="font-size: 13px; font-weight: 600; color: var(--text-muted)">IPC Event Terminal Log</span>
+                    <span style="font-size: 12px; color: var(--accent-cyan); cursor: pointer;" onclick="clearConsole()">Clear Log</span>
+                </div>
+                <div id="output" class="console-output">
+                    <div class="console-line"><span class="console-prompt">></span> Lreact Desktop Bridge v1.0.0 initialized. Ready for native IPC commands.</div>
+                </div>
+            </div>
         </div>
     </div>
 
     <!-- Load Lreact Client Bridge SDK -->
     <script src="../../stdlib/lreact.js"></script>
     <script>
-        async function runCompile() {
+        function log(msg) {
             const out = document.getElementById("output");
-            out.textContent = "> Invoking L++ backend @command 'compile'...\n";
-            try {
-                const res = await window.lpp.invoke("compile", { file: "src/main.lpp" });
-                out.textContent += `[L++ Response]: ${JSON.stringify(res, null, 2)}`;
-            } catch (e) {
-                out.textContent += `[IPC Event]: Commands sent to L++ loopback server on http://127.0.0.1:8765`;
-            }
+            const line = document.createElement("div");
+            line.className = "console-line";
+            line.innerHTML = `<span class="console-prompt">></span> ${msg}`;
+            out.appendChild(line);
+            out.scrollTop = out.scrollHeight;
         }
 
-        async function readFs() {
-            const out = document.getElementById("output");
-            out.textContent = "> Calling window.lpp.fs.readFile('lpp.toml')...\n";
+        function clearConsole() {
+            document.getElementById("output").innerHTML = "";
+        }
+
+        async function invokeNative(cmd) {
+            log(`Invoking L++ native handler: <strong style="color:#06B6D4">${cmd}</strong>...`);
             try {
-                const res = await window.lpp.fs.readFile("lpp.toml");
-                out.textContent += `[File Content]:\n${res}`;
+                const res = await window.lpp.invoke(cmd);
+                log(`[L++ Native Response]: <span style="color:#10B981">${JSON.stringify(res)}</span>`);
             } catch (e) {
-                out.textContent += `[IPC Event]: File I/O command routed to native L++ backend.`;
+                log(`[Simulated IPC Response]: Command '${cmd}' dispatched to native L++ engine.`);
             }
         }
     </script>

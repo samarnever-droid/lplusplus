@@ -1647,31 +1647,91 @@ pub fn direct_link_binary(obj_file: &Path, output_path: &Path) -> Result<(), Str
     if status.success() {
         Ok(())
     } else {
-        Err("lpp-link failed while creating native executable.".to_string())
+        let code = status.code().map(|c| format!("exit code {c}")).unwrap_or_else(|| "terminated by signal".to_string());
+        Err(format!(
+            "lpp-link failed while creating native executable ({code}). \
+             Retry with the host linker via 'LPP_LINKER=host', '--linker host', \
+             or 'lpp config set linker host'."
+        ))
     }
 }
 
+/// Process-wide linker override set by `lpp build --linker ...` /
+/// `lpp run --linker ...`.  Takes precedence over `LPP_LINKER` and the
+/// persisted `lpp config set linker ...` value.
+static LINKER_OVERRIDE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+pub fn set_linker_override(value: &str) {
+    let _ = LINKER_OVERRIDE.set(value.to_string());
+}
+
+/// Parse `--linker <mode>` / `--linker=<mode>` out of a subcommand's args.
+fn apply_linker_flag(args: &[String]) {
+    let mut i = 0;
+    while i < args.len() {
+        if args[i] == "--linker" {
+            if let Some(v) = args.get(i + 1) {
+                set_linker_override(v);
+            } else {
+                eprintln!("[L++] --linker requires a value: 'direct', 'host' or 'auto'");
+            }
+            i += 2;
+        } else if let Some(v) = args[i].strip_prefix("--linker=") {
+            set_linker_override(v);
+            i += 1;
+        } else {
+            i += 1;
+        }
+    }
+}
+
+/// Resolve the effective linker choice: CLI override > LPP_LINKER > config.
+fn effective_linker_choice() -> String {
+    if let Some(v) = LINKER_OVERRIDE.get() {
+        return v.clone();
+    }
+    if let Ok(v) = std::env::var("LPP_LINKER") {
+        if !v.is_empty() {
+            return v;
+        }
+    }
+    crate::config::LppConfig::load_or_create().linker
+}
+
 fn link_native_binary(obj_file: &Path, output_path: &Path) -> Result<(), String> {
-    // Package builds must honor both the CLI/environment override and the
+    // Package builds must honor the CLI flag, the environment override and the
     // persisted `lpp config set linker ...` setting.  The old implementation
     // silently used the direct linker unless LPP_LINKER=host was exported.
-    let config = crate::config::LppConfig::load_or_create();
-    let use_host = match std::env::var("LPP_LINKER").ok().as_deref() {
-        Some("host") => true,
-        Some("direct") => false,
-        Some("auto") | None => !config.use_direct_linker(),
-        Some(other) => {
-            eprintln!("[L++] unknown LPP_LINKER value '{other}', using configured linker");
-            !config.use_direct_linker()
+    let choice = effective_linker_choice();
+    let forced_direct = choice == "direct";
+    let use_host = match choice.as_str() {
+        "host" => true,
+        "direct" => false,
+        "auto" => !crate::config::LppConfig::load_or_create().use_direct_linker(),
+        other => {
+            eprintln!("[L++] unknown linker '{other}', using configured linker");
+            !crate::config::LppConfig::load_or_create().use_direct_linker()
         }
     };
-    if use_host {
-        #[cfg(windows)]
-        load_msvc_env();
-        host_link_binary(obj_file, output_path, &[])
-    } else {
-        direct_link_binary(obj_file, output_path)
+    if !use_host {
+        match direct_link_binary(obj_file, output_path) {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                // An explicitly requested direct link must fail loudly so the
+                // user learns the feature subset limit.  Auto/config-driven
+                // direct links fall back to the host linker, which keeps
+                // unsupported runtime/platform features buildable.
+                if forced_direct {
+                    return Err(e);
+                }
+                eprintln!("[L++] direct linker failed: {e}");
+                eprintln!("[L++] falling back to the host linker...");
+            }
+        }
     }
+    #[cfg(windows)]
+    load_msvc_env();
+    host_link_binary(obj_file, output_path, &[])
 }
 
 pub fn run_command(args: &[String]) -> i32 {
@@ -1717,10 +1777,14 @@ pub fn run_command(args: &[String]) -> i32 {
         "clean" => cmd_clean(),
         "check" => cmd_check(),
         "build" => {
+            apply_linker_flag(&args[1..]);
             let is_release = args.iter().any(|a| a == "--release");
             if cmd_build_opts(is_release).is_some() { 0 } else { 1 }
         }
-        "run" => cmd_run(),
+        "run" => {
+            apply_linker_flag(&args[1..]);
+            cmd_run()
+        }
         "test" => cmd_test(),
         "bench" => cmd_bench(),
         "help" => {
@@ -1770,11 +1834,16 @@ fn print_help() {
     println!();
     println!("Build/test workflow:");
     println!("  check                             Type-check project");
-    println!("  build                             Build project to native binary");
-    println!("  run                               Compile and run project");
+    println!("  build [--release] [--linker X]    Build project to native binary");
+    println!("  run [--linker X]                  Compile and run project");
     println!("  test                              Run tests in tests/ directory");
     println!("  clean                             Remove build output/artifacts");
     println!("  bench                             Run benchmarks");
+    println!();
+    println!("Linker selection (also via LPP_LINKER env or 'lpp config set linker'):");
+    println!("  --linker direct                   Use lpp-link (no external tools needed)");
+    println!("  --linker host                     Use system cc/cl.exe (required for FFI/extern)");
+    println!("  --linker auto                     Config default; falls back to host if direct fails");
     println!();
     println!("Registry:");
     println!("  search <query>                    Search package registry");

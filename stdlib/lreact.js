@@ -1,6 +1,6 @@
 /**
  * lreact.js — Lreact Client Bridge SDK for React / Vue / Svelte / Vanilla JS
- * Connects web frontends to native L++ backends over zero-dependency IPC.
+ * Connects web frontends to native L++ backends & Vulkan GPU over zero-dependency IPC.
  */
 
 (function (window) {
@@ -52,10 +52,14 @@
         };
     }
 
-    // Expose window.lpp API namespace (Tauri/Electron style)
+    // Expose window.lpp API namespace (Tauri/Electron + Vulkan GPU style)
     window.lpp = {
         invoke,
         listen,
+        vulkan: {
+            getGPUInfo: () => invoke("get_vulkan_info", {}),
+            renderFrame: () => invoke("vulkan_render_frame", {}),
+        },
         fs: {
             readFile: (path) => invoke("read_file", { path }),
             writeFile: (path, content) => invoke("write_file", { path, content }),
@@ -70,5 +74,5 @@
         }
     };
 
-    console.log("[Lreact] Bridge SDK initialized successfully.");
+    console.log("[Lreact] Bridge SDK initialized with Vulkan GPU support.");
 })(window);

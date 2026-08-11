@@ -1,0 +1,9 @@
+def main():
+    socket := net_connect("127.0.0.1", 9000)
+    net_send(socket, "ping from lpp client")
+
+    response := net_recv(socket, 1024)
+    print_str("Server replied:")
+    print_str(response)
+
+    net_close(socket)

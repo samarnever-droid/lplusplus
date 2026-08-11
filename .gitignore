@@ -44,3 +44,6 @@ tests/test_ffi
 *.gz
 
 .sccconfig
+
+/challenge_bench/zigdist/
+

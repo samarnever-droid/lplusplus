@@ -1,0 +1,136 @@
+# test_modern_native_gui.lpp — Next-Gen Modern Native OS GUI Demo
+import gui
+
+def main():
+    print_str("Initializing Modern Native L++ OS Window...\n")
+    win := gui.create("L++ Modern Native OS Studio", 900, 600)
+
+    mut t := gui.dark_theme()
+    mut counter := 0
+    mut progress := 35
+    mut active_tab := 0        # 0=Dashboard, 1=Analytics, 2=Settings
+    mut dark_mode := 1
+    mut prev_mouse := 0        # debounce: was mouse down last frame?
+
+    while gui.is_open(win) == 1:
+        dummy := gui.poll_events(win)
+        cur_mouse := gui.mouse_down(win)
+
+        # Click = pressed this frame, not last frame
+        mut clicked := 0
+        if cur_mouse == 1:
+            if prev_mouse == 0:
+                clicked = 1
+        prev_mouse = cur_mouse
+
+        # ── Clear background ──────────────────────────────────────
+        gui.clear(win, t.bg_dark)
+
+        # ── Navigation Sidebar ────────────────────────────────────
+        gui.draw_rounded_rect(win, 16, 16, 220, 568, 16, t.card_bg)
+        gui.draw_text(win, 36, 36, "L++ Studio", t.accent_primary)
+        gui.draw_text(win, 36, 60, "Native OS Interface", t.text_muted)
+
+        # Divider
+        gui.draw_rect(win, 36, 92, 180, 1, t.text_muted)
+
+        # Nav Items — highlight active tab
+        mut dash_col := t.text_muted
+        mut anal_col := t.text_muted
+        mut sett_col := t.text_muted
+        if active_tab == 0:
+            dash_col = t.text_primary
+            gui.draw_rounded_rect(win, 28, 108, 196, 32, 8, t.accent_primary)
+        if active_tab == 1:
+            anal_col = t.text_primary
+            gui.draw_rounded_rect(win, 28, 148, 196, 32, 8, t.accent_primary)
+        if active_tab == 2:
+            sett_col = t.text_primary
+            gui.draw_rounded_rect(win, 28, 188, 196, 32, 8, t.accent_primary)
+
+        gui.draw_text(win, 44, 116, "  Dashboard", dash_col)
+        gui.draw_text(win, 44, 156, "  Analytics", anal_col)
+        gui.draw_text(win, 44, 196, "  Settings", sett_col)
+
+        if clicked == 1:
+            if gui.is_hovered(win, 28, 108, 196, 32) == 1:
+                active_tab = 0
+            if gui.is_hovered(win, 28, 148, 196, 32) == 1:
+                active_tab = 1
+            if gui.is_hovered(win, 28, 188, 196, 32) == 1:
+                active_tab = 2
+
+        # Theme Toggle
+        gui.draw_rect(win, 36, 260, 180, 1, t.text_muted)
+        gui.draw_text(win, 36, 276, "Theme", t.text_muted)
+        mut theme_label := "Switch to Light"
+        if dark_mode == 0:
+            theme_label = "Switch to Dark"
+        if gui.draw_button(win, 28, 300, 196, 36, theme_label, t.accent_secondary) == 1:
+            if clicked == 1:
+                if dark_mode == 1:
+                    dark_mode = 0
+                    t = gui.light_theme()
+                else:
+                    dark_mode = 1
+                    t = gui.dark_theme()
+
+        # ── Main Content ──────────────────────────────────────────
+        if active_tab == 0:
+            # Dashboard tab
+            gui.draw_text(win, 256, 28, "Native OS Dashboard", t.text_primary)
+            gui.draw_text(win, 256, 52, "Win32 GDI / X11 Direct Hardware Acceleration", t.text_muted)
+            gui.draw_badge(win, 730, 28, "LIVE", t.accent_primary)
+
+            count_str := int_to_str(counter)
+            gui.draw_card(win, 256, 88, 200, 90, "Action Counter", count_str, t)
+
+            prog_str := str_concat(int_to_str(progress), "%")
+            gui.draw_card(win, 468, 88, 200, 90, "System Load", prog_str, t)
+
+            gui.draw_text(win, 256, 200, "CPU Execution Progress", t.text_muted)
+            gui.draw_progress_bar(win, 256, 222, 560, 12, progress, t)
+
+            if gui.draw_button(win, 256, 280, 160, 42, "+ Increment", t.accent_primary) == 1:
+                if clicked == 1:
+                    counter = counter + 1
+                    if progress < 100:
+                        progress = progress + 5
+
+            if gui.draw_button(win, 430, 280, 160, 42, "Reset All", t.accent_secondary) == 1:
+                if clicked == 1:
+                    counter = 0
+                    progress = 10
+
+        if active_tab == 1:
+            # Analytics tab
+            gui.draw_text(win, 256, 28, "Analytics & Telemetry", t.text_primary)
+            gui.draw_text(win, 256, 52, "Live GPU Sparkline Chart", t.text_muted)
+            gui.draw_sparkline(win, 256, 80, 560, 80, 20, 45, 80, 55, 90, t.accent_primary)
+
+            gui.draw_table_header(win, 256, 180, 560, "MODULE", "STATUS", "LATENCY", t)
+            gui.draw_text(win, 272, 224, "Vulkan Engine", t.text_primary)
+            gui.draw_text(win, 464, 224, "Active", t.accent_primary)
+            gui.draw_text(win, 656, 224, "0.12 ms", t.text_muted)
+
+            gui.draw_text(win, 272, 258, "GDI Compositor", t.text_primary)
+            gui.draw_text(win, 464, 258, "Active", t.accent_primary)
+            gui.draw_text(win, 656, 258, "0.34 ms", t.text_muted)
+
+            gui.draw_text(win, 272, 292, "Event Loop", t.text_primary)
+            gui.draw_text(win, 464, 292, "Running", t.accent_secondary)
+            gui.draw_text(win, 656, 292, "0.08 ms", t.text_muted)
+
+        if active_tab == 2:
+            # Settings tab
+            gui.draw_text(win, 256, 28, "Settings", t.text_primary)
+            gui.draw_text(win, 256, 52, "Application Configuration", t.text_muted)
+
+            gui.draw_card(win, 256, 88, 560, 80, "Version", "L++ v4.6.1 — Production Native GUI", t)
+            gui.draw_card(win, 256, 180, 560, 80, "Renderer", "Win32 GDI Double-Buffered Backbuffer", t)
+            gui.draw_card(win, 256, 272, 560, 80, "Platform", "Windows x86_64 / MSVC Toolchain", t)
+
+        # Present double-buffered frame to screen
+        gui.present(win)
+
+    print_str("Native Window Closed.\n")

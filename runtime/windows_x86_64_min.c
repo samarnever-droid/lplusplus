@@ -10,62 +10,27 @@
 #include <string.h>
 #endif
 
+#if defined(_WIN32)
+#if defined(_MSC_VER)
+#pragma comment(lib, "user32.lib")
+#pragma comment(lib, "gdi32.lib")
+#endif
+#include <windows.h>
+#endif
+
 typedef void (*LppArcDestructor)(void *payload);
-typedef void *HANDLE;
-typedef unsigned long DWORD;
-typedef int BOOL;
-typedef unsigned long long SIZE_T;
 
-__declspec(dllimport) void   __stdcall ExitProcess(unsigned int code);
-__declspec(dllimport) HANDLE __stdcall GetStdHandle(DWORD h);
-__declspec(dllimport) BOOL   __stdcall WriteFile(HANDLE h, const void *b, DWORD n, DWORD *w, void *o);
-__declspec(dllimport) void * __stdcall VirtualAlloc(void *a, SIZE_T s, DWORD t, DWORD p);
-__declspec(dllimport) BOOL   __stdcall VirtualFree(void *a, SIZE_T s, DWORD t);
-__declspec(dllimport) unsigned long long __stdcall GetTickCount64(void);
-__declspec(dllimport) HANDLE __stdcall CreateThread(void *s, SIZE_T z, DWORD (__stdcall *f)(void*), void *p, DWORD f2, DWORD *t);
-__declspec(dllimport) DWORD  __stdcall WaitForSingleObject(HANDLE h, DWORD ms);
-__declspec(dllimport) BOOL   __stdcall CloseHandle(HANDLE h);
-__declspec(dllimport) BOOL   __stdcall CreateProcessA(const char *a, char *c, void *s, void *t, BOOL i, DWORD f, void *e, const char *d, void *si, void *pi);
-__declspec(dllimport) BOOL   __stdcall GetExitCodeProcess(HANDLE p, DWORD *c);
-__declspec(dllimport) BOOL   __stdcall CreatePipe(HANDLE *r, HANDLE *w, void *a, DWORD s);
-__declspec(dllimport) BOOL   __stdcall ReadFile(HANDLE f, void *b, DWORD n, DWORD *rx, void *o);
-__declspec(dllimport) HANDLE __stdcall CreateFileA(const char *p, DWORD access, DWORD share, void *sec, DWORD create, DWORD flags, HANDLE template_file);
-__declspec(dllimport) DWORD  __stdcall GetFileSize(HANDLE h, DWORD *high);
-__declspec(dllimport) DWORD  __stdcall GetEnvironmentVariableA(const char *n, char *b, DWORD s);
-__declspec(dllimport) BOOL   __stdcall SetEnvironmentVariableA(const char *n, const char *v);
-__declspec(dllimport) BOOL   __stdcall CreateDirectoryA(const char *p, void *a);
-__declspec(dllimport) BOOL   __stdcall RemoveDirectoryA(const char *p);
-__declspec(dllimport) HANDLE __stdcall FindFirstFileA(const char *p, void *d);
-__declspec(dllimport) BOOL   __stdcall FindNextFileA(HANDLE f, void *d);
-__declspec(dllimport) BOOL   __stdcall FindClose(HANDLE f);
-__declspec(dllimport) DWORD  __stdcall GetFileAttributesA(const char *p);
-__declspec(dllimport) BOOL   __stdcall DeleteFileA(const char *p);
-__declspec(dllimport) BOOL   __stdcall MoveFileA(const char *old_path, const char *new_path);
-__declspec(dllimport) void   __stdcall Sleep(DWORD ms);
-
+#ifndef STD_OUTPUT_HANDLE
 #define STD_OUTPUT_HANDLE ((DWORD)-11)
-#define MEM_COMMIT  0x00001000UL
-#define MEM_RESERVE 0x00002000UL
-#define MEM_RELEASE 0x00008000UL
-#define PAGE_READWRITE 0x00000004UL
-#define INFINITE 0xFFFFFFFF
-#define INVALID_HANDLE_VALUE ((HANDLE)(intptr_t)-1)
-#define INVALID_FILE_ATTRIBUTES ((DWORD)-1)
-#define TRUE 1
-#define FALSE 0
-#define STARTF_USESTDHANDLES 0x100
+#endif
+#ifndef CREATE_NO_WINDOW
 #define CREATE_NO_WINDOW 0x08000000
+#endif
 
-/* real STARTUPINFOA = 104 bytes, PROCESS_INFORMATION = 24 bytes */
-typedef struct { char _[104]; } REAL_STARTUPINFOA;
-typedef struct { HANDLE hProcess; HANDLE hThread; DWORD dwProcessId; DWORD dwThreadId; } PROCESS_INFORMATION;
-
-/* WIN32_FIND_DATAA = ~320 bytes */
-typedef struct { DWORD a; DWORD b; DWORD c; DWORD d; DWORD e; DWORD f; DWORD g;
-    char   cFileName[260]; char cAlternateFileName[14];
-    DWORD  h; DWORD  i; DWORD  j; } WIN32_FIND_DATAA;
+typedef STARTUPINFOA REAL_STARTUPINFOA;
 
 typedef struct { long refcount; LppArcDestructor destructor; uint64_t allocation_size; } LppArcHeader;
+
 
 /* Immortal objects: a string literal carries a real ARC header emitted into
  * read-only data whose refcount is this sentinel. Retain/release detect it and
@@ -542,20 +507,9 @@ int64_t lpp_sys_uptime(void) { return (int64_t)(GetTickCount64() / 1000); }
 /* ── String equality ── */
 int64_t lpp_str_eq(const char *a, const char *b) { if(a==b)return 1; if(!a||!b)return 0; while(*a&&*a==*b){a++;b++;} return *a==*b?1:0; }
 
-/* ── GUI Stubs for Freestanding ── */
-int64_t lpp_gui_window_create(const char *t, int64_t w, int64_t h) { (void)t; (void)w; (void)h; return -1; }
-int64_t lpp_gui_window_is_open(int64_t id) { (void)id; return 0; }
-int64_t lpp_gui_window_poll_events(int64_t id) { (void)id; return 0; }
-void lpp_gui_clear(int64_t id, int64_t c) { (void)id; (void)c; }
-void lpp_gui_draw_rect(int64_t id, int64_t x, int64_t y, int64_t w, int64_t h, int64_t c) { (void)id; (void)x; (void)y; (void)w; (void)h; (void)c; }
-void lpp_gui_draw_rounded_rect(int64_t id, int64_t x, int64_t y, int64_t w, int64_t h, int64_t r, int64_t c) { (void)id; (void)x; (void)y; (void)w; (void)h; (void)r; (void)c; }
-int64_t lpp_gui_mouse_x(int64_t id) { (void)id; return 0; }
-int64_t lpp_gui_mouse_y(int64_t id) { (void)id; return 0; }
-int64_t lpp_gui_mouse_down(int64_t id) { (void)id; return 0; }
-int64_t lpp_gui_key_down(int64_t id, int64_t key_code) { (void)id; (void)key_code; return 0; }
-void lpp_gui_draw_text(int64_t id, int64_t x, int64_t y, const char *txt, int64_t c) { (void)id; (void)x; (void)y; (void)txt; (void)c; }
-void lpp_gui_present(int64_t id) { (void)id; }
-void lpp_gui_window_close(int64_t id) { (void)id; }
+/* ── Native 2D GUI & Windowing ── */
+#include "lpp_gui.c"
+
 
 /* ── JSON Stubs for Freestanding ── */
 int64_t lpp_json_parse(const char *json) { (void)json; return 0; }

@@ -461,7 +461,8 @@ fn write_elf(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
                 _ => (
                     *syms.get(&rel.target).ok_or_else(|| {
                         format!(
-                            "'{}': unresolved external relocation to '{}'",
+                            "'{}': unresolved external relocation to '{}' \
+                             (link with the host linker for full C library support)",
                             inp.path.display(),
                             rel.target
                         )
@@ -917,6 +918,8 @@ fn is_kernel32_symbol(name: &str) -> bool {
             | "GetEnvironmentVariableA"
             | "SetEnvironmentVariableA"
             | "GetModuleFileNameA"
+            | "GetModuleHandleA"
+            | "GetLastError"
             | "QueryPerformanceCounter"
             | "QueryPerformanceFrequency"
     )
@@ -941,6 +944,17 @@ fn is_user32_symbol(name: &str) -> bool {
             | "GetCursorPos"
             | "ScreenToClient"
             | "FillRect"
+            | "ShowWindow"
+            | "UpdateWindow"
+            | "SetForegroundWindow"
+            | "MessageBoxA"
+            | "LoadIconA"
+            | "SetWindowPos"
+            | "BringWindowToTop"
+            | "BeginPaint"
+            | "EndPaint"
+            | "SetProcessDPIAware"
+            | "AdjustWindowRectEx"
     )
 }
 
@@ -960,6 +974,61 @@ fn is_gdi32_symbol(name: &str) -> bool {
             | "SetBkMode"
             | "SetTextColor"
             | "BitBlt"
+            | "Ellipse"
+            | "MoveToEx"
+            | "LineTo"
+            | "GetTextExtentPoint32A"
+            | "CreateFontA"
+            | "SetStretchBltMode"
+            | "SetBrushOrgEx"
+            | "SetMapMode"
+            | "SetGraphicsMode"
+            | "SetTextCharacterExtra"
+            | "SetTextAlign"
+            | "SetLayout"
+            | "GetStockObject"
+    )
+}
+
+/// Winsock 2 API (WS2_32.dll).  Importing these by name lets a future
+/// freestanding networking runtime link directly without a host linker.
+fn is_ws2_32_symbol(name: &str) -> bool {
+    let clean = name.strip_prefix("__imp_").unwrap_or(name);
+    matches!(
+        clean,
+        "WSAStartup"
+            | "WSACleanup"
+            | "WSAGetLastError"
+            | "WSAIoctl"
+            | "WSASocketA"
+            | "WSARecv"
+            | "WSASend"
+            | "socket"
+            | "bind"
+            | "listen"
+            | "accept"
+            | "connect"
+            | "send"
+            | "recv"
+            | "sendto"
+            | "recvfrom"
+            | "closesocket"
+            | "shutdown"
+            | "select"
+            | "htons"
+            | "htonl"
+            | "ntohs"
+            | "ntohl"
+            | "getaddrinfo"
+            | "freeaddrinfo"
+            | "gethostname"
+            | "getsockname"
+            | "getpeername"
+            | "setsockopt"
+            | "getsockopt"
+            | "ioctlsocket"
+            | "inet_ntoa"
+            | "inet_addr"
     )
 }
 
@@ -985,6 +1054,7 @@ fn build_imports(
     let mut kernel_imports = Vec::new();
     let mut user32_imports = Vec::new();
     let mut gdi32_imports = Vec::new();
+    let mut ws2_32_imports = Vec::new();
     let mut crt_imports = Vec::new();
 
     for imp in raw_imports {
@@ -996,6 +1066,10 @@ fn build_imports(
         } else if is_gdi32_symbol(&clean) {
             if !gdi32_imports.contains(&clean) {
                 gdi32_imports.push(clean);
+            }
+        } else if is_ws2_32_symbol(&clean) {
+            if !ws2_32_imports.contains(&clean) {
+                ws2_32_imports.push(clean);
             }
         } else if is_crt_symbol(&clean) {
             if !crt_imports.contains(&clean) {
@@ -1012,6 +1086,7 @@ fn build_imports(
         ("KERNEL32.dll", &kernel_imports),
         ("USER32.dll", &user32_imports),
         ("GDI32.dll", &gdi32_imports),
+        ("WS2_32.dll", &ws2_32_imports),
         ("msvcrt.dll", &crt_imports),
     ];
     let active_dlls: Vec<(&str, &Vec<String>)> = dll_list
@@ -1212,7 +1287,7 @@ fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
                 if !raw_imports.contains(&n) {
                     raw_imports.push(n);
                 }
-            } else if (is_kernel32_symbol(&rel.target) || is_user32_symbol(&rel.target) || is_gdi32_symbol(&rel.target)) && !global_syms.contains_key(&rel.target) {
+            } else if (is_kernel32_symbol(&rel.target) || is_user32_symbol(&rel.target) || is_gdi32_symbol(&rel.target) || is_ws2_32_symbol(&rel.target)) && !global_syms.contains_key(&rel.target) {
                 if !raw_imports.contains(&rel.target) {
                     raw_imports.push(rel.target.clone());
                 }
@@ -1824,7 +1899,18 @@ fn resolve_pe_target(
         return Ok(text_rva as u64 + off as u64);
     }
 
-    Err(format!("unresolved external COFF symbol '{}'", rel.target))
+    // __ImageBase is a linker-defined pseudo-symbol = RVA 0 (the PE header base).
+    // The PE loader adds the actual image base (0x140000000) at load time.
+    // For REL32 relocations, we emit RVA 0 here — the displacement is then correct.
+    if rel.target == "__ImageBase" {
+        return Ok(0u64);
+    }
+
+    Err(format!(
+        "unresolved external COFF symbol '{}' — not defined by any input object and not a known DLL import. \
+         Link with the host linker (LPP_LINKER=host or --linker host) for full C library support.",
+        rel.target
+    ))
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -2109,13 +2195,44 @@ fn inspect_object(input: &Path) -> Result<(), String> {
 // ═══════════════════════════════════════════════════════════════════════════
 
 fn usage() {
+    eprintln!("lpp-link {} — L++ direct native linker", env!("CARGO_PKG_VERSION"));
+    eprintln!();
     eprintln!("Usage: lpp-link <program.o> [runtime.o ...] -o <output>");
     eprintln!("       lpp-link pe <program.obj> [runtime.obj ...] -o <output.exe>");
     eprintln!("       lpp-link macho <program.o> [runtime.o ...] -o <output>");
     eprintln!("       lpp-link inspect <object.o>");
-    eprintln!(
-        "Phases: direct Linux x86-64 ELF linker; Windows PE COFF linker; macOS Mach-O direct emitter."
-    );
+    eprintln!();
+    eprintln!("Without an explicit 'pe'/'macho' mode the output format is detected");
+    eprintln!("from the first input object (ELF / COFF / Mach-O).");
+    eprintln!("Arguments may also be passed through a response file: lpp-link @args.rsp");
+    eprintln!();
+    eprintln!("Modes: direct Linux x86-64 ELF linker; Windows PE COFF linker; macOS Mach-O direct emitter.");
+}
+
+/// Sniff the object format of the first input from its magic bytes so
+/// `lpp-link a.obj b.obj -o out.exe` works without the `pe` subcommand.
+fn sniff_format(path: &Path) -> &'static str {
+    let Ok(bytes) = fs::read(path) else {
+        return "elf"; // let the writer produce the real read error
+    };
+    if bytes.len() >= 4 {
+        if &bytes[0..4] == b"\x7fELF" {
+            return "elf";
+        }
+        let be = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+        let le = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+        const MACHO_MAGICS: [u32; 4] = [0xFEEDFACE, 0xFEEDFACF, 0xCAFEBABE, 0xCAFED00D];
+        if MACHO_MAGICS.contains(&be) || MACHO_MAGICS.contains(&le) {
+            return "macho";
+        }
+        // COFF has no fixed magic number; x86-64 objects start with
+        // machine type 0x8664.
+        let machine = u16::from_le_bytes([bytes[0], bytes[1]]);
+        if machine == 0x8664 {
+            return "pe";
+        }
+    }
+    "elf"
 }
 
 fn expand_response_files(args: Vec<String>) -> Result<Vec<String>, String> {
@@ -2159,6 +2276,17 @@ fn main() {
         }
         return;
     }
+    match args.first().map(String::as_str) {
+        Some("-h") | Some("--help") | Some("help") => {
+            usage();
+            return;
+        }
+        Some("-V") | Some("--version") | Some("version") => {
+            println!("lpp-link {}", env!("CARGO_PKG_VERSION"));
+            return;
+        }
+        _ => {}
+    }
     let pe_mode = args.first().map(String::as_str) == Some("pe");
     let macho_mode = args.first().map(String::as_str) == Some("macho");
     let offset = if pe_mode || macho_mode { 1 } else { 0 };
@@ -2192,7 +2320,12 @@ fn main() {
     } else if macho_mode {
         write_macho(&inputs, Path::new(&args[out_idx + 1]))
     } else {
-        write_elf(&inputs, Path::new(&args[out_idx + 1]))
+        // No explicit mode: pick the writer from the first input's format.
+        match inputs.first().map(|p| sniff_format(p)).unwrap_or("elf") {
+            "pe" => write_pe(&inputs, Path::new(&args[out_idx + 1])),
+            "macho" => write_macho(&inputs, Path::new(&args[out_idx + 1])),
+            _ => write_elf(&inputs, Path::new(&args[out_idx + 1])),
+        }
     };
     if let Err(e) = result {
         eprintln!("lpp-link error: {e}");

@@ -154,3 +154,22 @@ Current rules:
 - macOS ARM64 static direct output is rejected; dynamic libSystem imports are required.
 - L++ package outputs/cache are LppData/build/release and LppData/cache.
 ```
+
+## Usability increment — 2026-08-09
+
+Direct linking became a first-class, user-selectable mode:
+
+```text
+- `lpp build --linker direct|host|auto` and `lpp run --linker ...` select the
+  linker per invocation (also `--linker=<mode>`); precedence:
+  CLI flag > LPP_LINKER env > `lpp config set linker ...`.
+- When direct linking is auto-selected and fails, the build prints the reason
+  and falls back to the host linker; an explicitly forced `--linker direct`
+  still fails loudly.
+- lpp-link gained `--help`, `--version`, and input-format auto-detection
+  (ELF / COFF / Mach-O magic sniffing) when no `elf`/`pe`/`macho` subcommand
+  is given.
+- PE writer imports WS2_32.dll for Winsock symbols (WSAStartup, socket, send,
+  recv, ...), preparing direct-linked Windows networking runtimes.
+- Unresolved-symbol errors now point at the host-linker alternatives.
+```
