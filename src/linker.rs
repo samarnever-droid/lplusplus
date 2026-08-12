@@ -2512,7 +2512,7 @@ pub fn write_elf_with_options(
             Machine::Aarch64 => {
                 // PLT0: bti c; stp x16,x30,[sp,#-16]!; adrp/ldr/add/br to GOT.PLT+16
                 let p0 = plt_off_in_text;
-                // bti c (0xd503245f) — ARM64 BTI compatibility
+                // bti c (0xd503245f) — ARM64 BTI compatibility for indirect branch br x17 from PLT[i]
                 rx[p0..p0 + 4].copy_from_slice(&0xd503245fu32.to_le_bytes());
                 // stp x16, x30, [sp, #-16]!
                 rx[p0 + 4..p0 + 8].copy_from_slice(&0xa9bf7bf0u32.to_le_bytes());
@@ -2542,6 +2542,7 @@ pub fn write_elf_with_options(
                     let po = plt_off_in_text + plt0_size + i * 16;
                     let slot = va_gotplt + 24 + (i as u64) * 8;
                     let plt_va_i = va_plt + plt0_size as u64 + (i as u64) * 16;
+                    // adrp x16, page(slot)
                     let delta = self::page(slot) as i64 - self::page(plt_va_i) as i64;
                     let imm = delta >> 12;
                     let immlo = (imm as u32) & 3;
