@@ -77,9 +77,3 @@ jobs:
           EXIT=$?
           echo "Exit code: $EXIT"
           [ "$EXIT" -eq 42 ] && echo "PASS: ELF ARM64 dynamic link + execution OK" || (echo "FAIL: expected 42, got $EXIT" && exit 1)
-
-      - name: Setup Live Interactive Upterm Session
-        if: always()
-        uses: owenthereal/action-upterm@v1
-        with:
-          limit-access-to-actor: false

@@ -2139,7 +2139,7 @@ pub fn write_elf_with_options(
     let phdr_entsize = 56usize;
 
     // First compute phnum
-    let has_interp = dyn_mode;
+    let has_interp = dyn_mode && !opts.shared;
     let has_note = opts.build_id;
     let has_tls = !merged.tls.is_empty() || merged.tbss_size > 0;
     let has_dynamic = dyn_mode;
