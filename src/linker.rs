@@ -1079,6 +1079,12 @@ fn load_objects(
     }
     let mut objects = Vec::new();
     let mut archives = Vec::new();
+    let mut search_dirs = opts.search_paths.clone();
+    search_dirs.push(PathBuf::from("."));
+    search_dirs.push(PathBuf::from("/usr/lib"));
+    search_dirs.push(PathBuf::from("/usr/local/lib"));
+    search_dirs.push(PathBuf::from("/lib"));
+
     for p in inputs {
         let bytes = fs::read(p).map_err(|e| format!("read '{}': {e}", p.display()))?;
         if is_archive_bytes(&bytes) {
@@ -1087,6 +1093,46 @@ fn load_objects(
             continue;
         }
         objects.push(parse_object(&bytes, p)?);
+    }
+    for lib in &opts.libraries {
+        let path = PathBuf::from(lib);
+        if path.exists() {
+            if let Ok(bytes) = fs::read(&path) {
+                if is_archive_bytes(&bytes) {
+                    if let Ok(members) = parse_archive_members(&path) {
+                        archives.push(archive_from_members(&path, members));
+                    }
+                }
+            }
+            continue;
+        }
+        let clean = lib.strip_prefix("lib").unwrap_or(lib).strip_suffix(".a").unwrap_or(lib).strip_suffix(".dylib").unwrap_or(lib).strip_suffix(".so").unwrap_or(lib);
+        let candidates = [
+            lib.clone(),
+            format!("lib{clean}.a"),
+            format!("lib{clean}.dylib"),
+            format!("lib{clean}.so"),
+        ];
+        for dir in &search_dirs {
+            let mut found = false;
+            for cand in &candidates {
+                let cp = dir.join(cand);
+                if cp.exists() {
+                    if let Ok(bytes) = fs::read(&cp) {
+                        if is_archive_bytes(&bytes) {
+                            if let Ok(members) = parse_archive_members(&cp) {
+                                archives.push(archive_from_members(&cp, members));
+                            }
+                        }
+                    }
+                    found = true;
+                    break;
+                }
+            }
+            if found {
+                break;
+            }
+        }
     }
     if objects.is_empty() {
         // start from the first archive member that defines a plausible entry
