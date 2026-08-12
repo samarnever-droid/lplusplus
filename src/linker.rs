@@ -4706,7 +4706,7 @@ pub fn write_macho_with_options(
 
     let has_start = merged.syms.contains_key("_start") || merged.syms.contains_key("start");
     let has_main = merged.syms.contains_key("main") || merged.syms.contains_key("lpp_main");
-    if !opts.no_startup && !has_start && !has_main && opts.entry.is_none() {
+    if !opts.shared && !opts.no_startup && !has_start && !has_main && opts.entry.is_none() {
         return Err("required symbol 'main' or '_start' not found".into());
     }
 
