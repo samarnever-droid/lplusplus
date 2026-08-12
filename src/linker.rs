@@ -1502,7 +1502,15 @@ fn a64_write(buf: &mut [u8], off: usize, instr: u32) -> Result<(), String> {
 }
 
 fn a64_patch_call26(buf: &mut [u8], off: usize, s: u64, a: i64, p: u64) -> Result<(), String> {
-    let dest = s.wrapping_add_signed(a);
+    let instr = a64_read(buf, off)?;
+    let raw_imm = (instr & 0x03FF_FFFF) as i32;
+    let inline_addend = if (raw_imm & 0x0200_0000) != 0 {
+        ((raw_imm | !0x03FF_FFFF) as i64) << 2
+    } else {
+        (raw_imm as i64) << 2
+    };
+    let addend = if a != 0 { (a as i32) as i64 } else { inline_addend };
+    let dest = s.wrapping_add_signed(addend);
     let disp = dest as i64 - p as i64;
     if disp & 3 != 0 {
         return Err("aarch64 CALL26/JUMP26 is not 4-byte aligned".into());
@@ -1511,7 +1519,6 @@ fn a64_patch_call26(buf: &mut [u8], off: usize, s: u64, a: i64, p: u64) -> Resul
     if !fits_i26(imm) {
         return Err(format!("aarch64 CALL26/JUMP26 out of range ({disp})"));
     }
-    let instr = a64_read(buf, off)?;
     a64_write(buf, off, (instr & 0xFC00_0000) | ((imm as u32) & 0x03FF_FFFF))
 }
 
