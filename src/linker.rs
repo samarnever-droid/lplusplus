@@ -2548,7 +2548,7 @@ pub fn write_elf_with_options(
                     rx[po + 8..po + 12].copy_from_slice(&add.to_le_bytes());
                     rx[po + 12..po + 16].copy_from_slice(&0xd61f0220u32.to_le_bytes());
                     let gp = gotplt_off_in_data + 24 + i * 8;
-                    rw[gp..gp + 8].copy_from_slice(&plt_va_i.to_le_bytes());
+                    rw[gp..gp + 8].copy_from_slice(&va_plt.to_le_bytes());
                 }
             }
         }
