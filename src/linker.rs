@@ -2508,7 +2508,7 @@ pub fn write_elf_with_options(
                 let p0 = plt_off_in_text;
                 // stp x16, x30, [sp, #-16]!
                 rx[p0..p0 + 4].copy_from_slice(&0xa9bf7bf0u32.to_le_bytes());
-                // adrp x16, page(GOT.PLT+16)
+                // adrp x16, page(GOT.PLT+16) — load resolver from GOT.PLT[2]
                 let dest = va_gotplt + 16;
                 let p = va_plt;
                 let delta = self::page(dest) as i64 - self::page(p) as i64;
@@ -2517,17 +2517,19 @@ pub fn write_elf_with_options(
                 let immhi = ((imm as u32) >> 2) & 0x7_ffff;
                 let adrp = 0x90000010u32 | (immlo << 29) | (immhi << 5);
                 rx[p0 + 4..p0 + 8].copy_from_slice(&adrp.to_le_bytes());
-                // ldr x17, [x16, #lo12]
+                // ldr x17, [x16, #lo12(GOT.PLT[2])]  — x17 = resolver fn
                 let lo = ((dest & 0xfff) >> 3) as u32;
                 let ldr = 0xf9400211u32 | (lo << 10);
                 rx[p0 + 8..p0 + 12].copy_from_slice(&ldr.to_le_bytes());
-                // add x16, x16, #lo12
+                // add x16, x16, #lo12(GOT.PLT[2]) — x16 = &GOT.PLT[2]
+                // GLIBC resolver finds link_map via *(x16-8)=GOT.PLT[1]. Must use GOT.PLT[2] offset here.
+                // This matches lld: both ldr and add use the same lo12(dest) offset.
                 let add = 0x91000210u32 | (((dest & 0xfff) as u32) << 10);
                 rx[p0 + 12..p0 + 16].copy_from_slice(&add.to_le_bytes());
                 // br x17
                 rx[p0 + 16..p0 + 20].copy_from_slice(&0xd61f0220u32.to_le_bytes());
-                rw[gotplt_off_in_data..gotplt_off_in_data + 8]
-                    .copy_from_slice(&va_dynamic.to_le_bytes());
+                // GOT.PLT[0..2] = 0; ld.so fills [0]=link_map, [1]=module_id, [2]=resolver at startup.
+                // DO NOT pre-fill GOT.PLT[0] with va_dynamic — ld.so writes the link_map pointer here.
                 let mut plt_ordered: Vec<(String, usize)> =
                     plt_keys.iter().map(|(k, v)| (k.clone(), *v)).collect();
                 plt_ordered.sort_by_key(|(_, i)| *i);
@@ -2547,6 +2549,10 @@ pub fn write_elf_with_options(
                     let add = 0x91000210u32 | (((slot & 0xfff) as u32) << 10);
                     rx[po + 8..po + 12].copy_from_slice(&add.to_le_bytes());
                     rx[po + 12..po + 16].copy_from_slice(&0xd61f0220u32.to_le_bytes());
+                    // GOT.PLT[i] initially points to PLT0 (va_plt, NOT PLT0+4).
+                    // PLT[i] will do: ldr x17, [x16, slot_lo]; br x17 -> jumps to PLT0.
+                    // PLT0 starts with stp x16,x30,[sp,#-16]! which saves &GOT.PLT[i]
+                    // so the resolver can compute reloc_index = (x16 - DT_PLTGOT - 24) / 8.
                     let gp = gotplt_off_in_data + 24 + i * 8;
                     rw[gp..gp + 8].copy_from_slice(&va_plt.to_le_bytes());
                 }
@@ -3218,6 +3224,8 @@ pub fn write_elf_with_options(
             addralign: 16,
             entsize: plt_entsize as u64,
         });
+        // Track section indices for sh_link cross-references
+        let dynsym_shndx = shdrs.len() as u32;
         shdrs.push(Sh {
             name: name_off(shstr, b".dynsym\0"),
             typ: 11,
@@ -3225,11 +3233,12 @@ pub fn write_elf_with_options(
             addr: va_dynsym,
             off: (text_file + dynsym_off) as u64,
             size: dynsym_size as u64,
-            link: 0, // patched to dynstr index later — leave 0, still readable
+            link: dynsym_shndx + 1, // .dynstr is next
             info: 1,
             addralign: 8,
             entsize: 24,
         });
+        let dynstr_shndx = shdrs.len() as u32;
         shdrs.push(Sh {
             name: name_off(shstr, b".dynstr\0"),
             typ: 3,
@@ -3242,6 +3251,7 @@ pub fn write_elf_with_options(
             addralign: 1,
             entsize: 0,
         });
+        let _ = dynstr_shndx; // used via dynsym_shndx+1 above
         shdrs.push(Sh {
             name: name_off(shstr, b".hash\0"),
             typ: 5,
@@ -3249,7 +3259,7 @@ pub fn write_elf_with_options(
             addr: va_hash,
             off: (text_file + hash_off) as u64,
             size: hash_size as u64,
-            link: 0,
+            link: dynsym_shndx, // points to .dynsym
             info: 0,
             addralign: 8,
             entsize: 4,
@@ -3257,12 +3267,12 @@ pub fn write_elf_with_options(
         shdrs.push(Sh {
             name: name_off(shstr, b".rela.plt\0"),
             typ: 4,
-            flags: shf_a,
+            flags: shf_a | 0x40, // SHF_INFO_LINK
             addr: va_relaplt,
             off: (text_file + rela_plt_off) as u64,
             size: rela_plt_size as u64,
-            link: 0,
-            info: 0,
+            link: dynsym_shndx,  // associated symbol table = .dynsym
+            info: 0,             // sh_info = index of .plt (patched by caller if needed)
             addralign: 8,
             entsize: 24,
         });
@@ -3518,24 +3528,13 @@ pub fn write_elf_with_options(
     emit_ph(
         &mut elf,
         &mut ph,
-        0x6474E551, // PT_GNU_STACK
+        PT_GNU_STACK, // PT_GNU_STACK
         PF_R | PF_W,
         0,
         0,
         0,
         0,
         16,
-    );
-    emit_ph(
-        &mut elf,
-        &mut ph,
-        PT_GNU_STACK,
-        PF_R | PF_W,
-        0,
-        0,
-        0,
-        0,
-        0x10,
     );
     let _ = (PT_NULL, PT_GNU_EH_FRAME, PT_GNU_RELRO);
 
