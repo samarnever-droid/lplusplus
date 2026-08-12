@@ -1837,6 +1837,13 @@ fn elf_needed_for(undef: &[String], opts: &LinkOptions) -> Vec<String> {
     for s in &opts.needed {
         n.insert(s.clone());
     }
+    for lib in &opts.libraries {
+        let name = Path::new(lib)
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or(lib);
+        n.insert(name.to_string());
+    }
     for u in undef {
         if let Some(so) = libc_soname_for(u) {
             n.insert(so.to_string());

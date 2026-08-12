@@ -73,7 +73,9 @@ jobs:
 
           # Patch rpath so dynamic linker finds /tmp/libadd.so
           patchelf --set-rpath /tmp /tmp/dyn_test
-          /tmp/dyn_test || true
+          set +e
+          /tmp/dyn_test
           EXIT=$?
+          set -e
           echo "Exit code: $EXIT"
           [ "$EXIT" -eq 42 ] && echo "PASS: ELF ARM64 dynamic link + execution OK" || (echo "FAIL: expected 42, got $EXIT" && exit 1)
