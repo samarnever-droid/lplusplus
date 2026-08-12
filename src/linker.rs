@@ -4753,11 +4753,43 @@ pub fn write_macho_with_options(
         strtab.push(0);
     }
 
+    let mut dylibs: Vec<String> = vec!["/usr/lib/libSystem.B.dylib".to_string()];
+    for lib in &opts.libraries {
+        let path = if lib.starts_with('/') || lib.contains('/') {
+            lib.clone()
+        } else if lib.ends_with(".dylib") {
+            format!("/usr/lib/lib{lib}")
+        } else if lib.starts_with("framework ") || lib.starts_with("-framework ") {
+            let fw = lib.split_whitespace().last().unwrap_or(lib);
+            format!("/System/Library/Frameworks/{fw}.framework/{fw}")
+        } else {
+            format!("/usr/lib/lib{lib}.dylib")
+        };
+        if !dylibs.contains(&path) {
+            dylibs.push(path);
+        }
+    }
+    for lib in &opts.needed {
+        if !dylibs.contains(lib) {
+            dylibs.push(lib.clone());
+        }
+    }
+    for lib in opts.extra_imports.values() {
+        let path = if lib.starts_with('/') || lib.contains('/') {
+            lib.clone()
+        } else if lib.ends_with(".dylib") {
+            format!("/usr/lib/lib{lib}")
+        } else {
+            format!("/usr/lib/lib{lib}.dylib")
+        };
+        if !dylibs.contains(&path) {
+            dylibs.push(path);
+        }
+    }
+
     // dyld bind info for GOT slots
     let mut bind = Vec::new();
     if !got_keys.is_empty() {
-        bind.push(0x10 | 1); // SET_DYLIB_ORDINAL_IMM 1 (libSystem)
-        bind.push(0x50 | 1); // SET_TYPE_IMM POINTER
         let mut ordered: Vec<(String, usize)> =
             got_keys.iter().map(|(k, v)| (k.clone(), *v)).collect();
         ordered.sort_by_key(|(_, i)| *i);
@@ -4765,41 +4797,56 @@ pub fn write_macho_with_options(
             if merged.syms.contains_key(name) {
                 continue;
             }
-            bind.push(0x70 | 2); // SET_SEGMENT_AND_OFFSET_ULEB  __DATA = 2
+            let clean = name.strip_prefix('_').unwrap_or(name);
+            let target_dylib = opts
+                .extra_imports
+                .get(clean)
+                .or_else(|| opts.extra_imports.get(name));
+            let ord = if let Some(td) = target_dylib {
+                dylibs
+                    .iter()
+                    .position(|d| d.contains(td))
+                    .map(|p| p + 1)
+                    .unwrap_or(1)
+            } else {
+                1
+            };
+            bind.push(0x10 | (ord as u8 & 0x0f)); // SET_DYLIB_ORDINAL_IMM
+            bind.push(0x50 | 1); // SET_TYPE_IMM POINTER
+            bind.push(0x70 | 2); // SET_SEGMENT_AND_OFFSET_ULEB __DATA = 2
             uleb(&mut bind, (*idx as u64) * 8);
             bind.push(0x40); // SET_SYMBOL_TRAILING_FLAGS_IMM 0
             bind.push(b'_');
             bind.extend_from_slice(name.as_bytes());
             bind.push(0);
-            bind.push(0x90); // DO_BIND (also advances offset by ptr size)
+            bind.push(0x90); // DO_BIND
         }
         bind.push(0x00); // DONE
     }
     let rebase = vec![0u8]; // DONE only — no interior pointers that need rebase if we write VAs as 0 for imports
 
     // Layout constants
-    // Load commands we'll emit:
-    // PAGEZERO, TEXT (with __text), DATA (with __data/__got), LINKEDIT,
-    // SYMTAB, DYSYMTAB, LOAD_DYLINKER, UUID, BUILD_VERSION, SOURCE_VERSION,
-    // MAIN, LOAD_DYLIB, DYLD_INFO_ONLY, CODE_SIGNATURE
     let dylinker = "/usr/lib/dyld";
-    let dylib = "/usr/lib/libSystem.B.dylib";
     let dylinker_cmdsize = align_up(12 + dylinker.len() + 1, 8) as u32;
-    let dylib_cmdsize = align_up(24 + dylib.len() + 1, 8) as u32;
+    let mut total_dylib_cmdsize = 0u32;
+    for d in &dylibs {
+        total_dylib_cmdsize += align_up(24 + d.len() + 1, 8) as u32;
+    }
 
-    let ncmds: u32 = 14;
+    let is_dylib = opts.shared;
+    let ncmds: u32 = 12 + dylibs.len() as u32 + if is_dylib { 1 } else { 2 };
     let sizeofcmds: u32 = 72 // PAGEZERO
         + 72 + 80 // TEXT + one section
         + 72 + 80 // DATA + one section
         + 72      // LINKEDIT
         + 24      // SYMTAB
         + 80      // DYSYMTAB
-        + dylinker_cmdsize
+        + (if is_dylib { 0 } else { dylinker_cmdsize })
         + 24      // UUID
         + 32      // BUILD_VERSION + 1 tool
         + 16      // SOURCE_VERSION
-        + 24      // MAIN
-        + dylib_cmdsize
+        + (if is_dylib { align_up(24 + ident.len() + 1, 8) as u32 } else { 24 }) // ID_DYLIB or MAIN
+        + total_dylib_cmdsize
         + 48      // DYLD_INFO_ONLY
         + 16; // CODE_SIGNATURE
 
@@ -5062,38 +5109,42 @@ pub fn write_macho_with_options(
         }
     }
 
-    let entry_name = if let Some(e) = &opts.entry {
-        e.clone()
-    } else if merged.syms.contains_key("main") {
-        "main".into()
-    } else if merged.syms.contains_key("lpp_main") {
-        "lpp_main".into()
-    } else if merged.syms.contains_key("_start") {
-        "_start".into()
-    } else if merged.syms.contains_key("start") {
-        "start".into()
-    } else {
-        return Err("required symbol 'main' or '_start' not found".into());
-    };
-    let entry_sym = merged
-        .syms
-        .get(&entry_name)
-        .ok_or_else(|| format!("entry '{entry_name}' not defined"))?;
-    let entry_off_in_text = match entry_sym.class {
-        SectionClass::Text => entry_sym.offset as usize,
-        _ => return Err("Mach-O entry must be in __text".into()),
-    };
-    let entryoff = (text_fileoff + entry_off_in_text) as u64;
+    let entryoff = if !is_dylib {
+        let entry_name = if let Some(e) = &opts.entry {
+            e.clone()
+        } else if merged.syms.contains_key("main") {
+            "main".into()
+        } else if merged.syms.contains_key("lpp_main") {
+            "lpp_main".into()
+        } else if merged.syms.contains_key("_start") {
+            "_start".into()
+        } else if merged.syms.contains_key("start") {
+            "start".into()
+        } else {
+            return Err("required symbol 'main' or '_start' not found".into());
+        };
+        let entry_sym = merged
+            .syms
+            .get(&entry_name)
+            .ok_or_else(|| format!("entry '{entry_name}' not defined"))?;
+        let entry_off_in_text = match entry_sym.class {
+            SectionClass::Text => entry_sym.offset as usize,
+            _ => return Err("Mach-O entry must be in __text".into()),
+        };
 
-    if let Some(mp) = &opts.map_path {
-        write_map(
-            mp,
-            &merged,
-            &objects,
-            &entry_name,
-            text_sec_addr + entry_off_in_text as u64,
-        )?;
-    }
+        if let Some(mp) = &opts.map_path {
+            write_map(
+                mp,
+                &merged,
+                &objects,
+                &entry_name,
+                text_sec_addr + entry_off_in_text as u64,
+            )?;
+        }
+        (text_fileoff + entry_off_in_text) as u64
+    } else {
+        0u64
+    };
 
     // Build file without codesig first, then append codesig and patch LC.
     let linkedit_pre_sig = le.len();
@@ -5103,7 +5154,7 @@ pub fn write_macho_with_options(
     put_u32(&mut bin, 0, 0xfeed_facf);
     put_u32(&mut bin, 4, machine.macho_cputype());
     put_u32(&mut bin, 8, machine.macho_cpusubtype());
-    put_u32(&mut bin, 12, 2); // MH_EXECUTE
+    put_u32(&mut bin, 12, if is_dylib { 6 } else { 2 }); // MH_DYLIB vs MH_EXECUTE
     put_u32(&mut bin, 16, ncmds);
     put_u32(&mut bin, 20, sizeofcmds);
     // MH_NOUNDEFS|MH_DYLDLINK|MH_TWOLEVEL|MH_PIE
@@ -5264,12 +5315,25 @@ pub fn write_macho_with_options(
     put_u32(&mut bin, c + 28, nundef);
     c += 80;
 
-    // LOAD_DYLINKER
-    put_u32(&mut bin, c, 0xe);
-    put_u32(&mut bin, c + 4, dylinker_cmdsize);
-    put_u32(&mut bin, c + 8, 12);
-    bin[c + 12..c + 12 + dylinker.len()].copy_from_slice(dylinker.as_bytes());
-    c += dylinker_cmdsize as usize;
+    if is_dylib {
+        // LC_ID_DYLIB
+        let id_sz = align_up(24 + ident.len() + 1, 8) as u32;
+        put_u32(&mut bin, c, 0xd);
+        put_u32(&mut bin, c + 4, id_sz);
+        put_u32(&mut bin, c + 8, 24);
+        put_u32(&mut bin, c + 12, 1);
+        put_u32(&mut bin, c + 16, 0x0001_0000);
+        put_u32(&mut bin, c + 20, 0x0001_0000);
+        bin[c + 24..c + 24 + ident.len()].copy_from_slice(ident.as_bytes());
+        c += id_sz as usize;
+    } else {
+        // LOAD_DYLINKER
+        put_u32(&mut bin, c, 0xe);
+        put_u32(&mut bin, c + 4, dylinker_cmdsize);
+        put_u32(&mut bin, c + 8, 12);
+        bin[c + 12..c + 12 + dylinker.len()].copy_from_slice(dylinker.as_bytes());
+        c += dylinker_cmdsize as usize;
+    }
 
     // UUID — deterministic from content hash of text+data
     let mut uuid_src = Vec::new();
@@ -5301,22 +5365,27 @@ pub fn write_macho_with_options(
     put_u64(&mut bin, c + 8, 0);
     c += 16;
 
-    // MAIN
-    put_u32(&mut bin, c, 0x8000_0028);
-    put_u32(&mut bin, c + 4, 24);
-    put_u64(&mut bin, c + 8, entryoff);
-    put_u64(&mut bin, c + 16, 0);
-    c += 24;
+    // MAIN (if not dylib)
+    if !is_dylib {
+        put_u32(&mut bin, c, 0x8000_0028);
+        put_u32(&mut bin, c + 4, 24);
+        put_u64(&mut bin, c + 8, entryoff);
+        put_u64(&mut bin, c + 16, 0);
+        c += 24;
+    }
 
-    // LOAD_DYLIB libSystem
-    put_u32(&mut bin, c, 0xc);
-    put_u32(&mut bin, c + 4, dylib_cmdsize);
-    put_u32(&mut bin, c + 8, 24);
-    put_u32(&mut bin, c + 12, 2);
-    put_u32(&mut bin, c + 16, 0x0001_0000);
-    put_u32(&mut bin, c + 20, 0x0001_0000);
-    bin[c + 24..c + 24 + dylib.len()].copy_from_slice(dylib.as_bytes());
-    c += dylib_cmdsize as usize;
+    // LOAD_DYLIB entries
+    for dylib_path in &dylibs {
+        let sz = align_up(24 + dylib_path.len() + 1, 8) as u32;
+        put_u32(&mut bin, c, 0xc);
+        put_u32(&mut bin, c + 4, sz);
+        put_u32(&mut bin, c + 8, 24);
+        put_u32(&mut bin, c + 12, 2);
+        put_u32(&mut bin, c + 16, 0x0001_0000);
+        put_u32(&mut bin, c + 20, 0x0001_0000);
+        bin[c + 24..c + 24 + dylib_path.len()].copy_from_slice(dylib_path.as_bytes());
+        c += sz as usize;
+    }
 
     // DYLD_INFO_ONLY
     put_u32(&mut bin, c, 0x8000_0022);
