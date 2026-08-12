@@ -5937,16 +5937,17 @@ pub fn link_cli(args: &[String]) -> Result<(), String> {
     let mut i = 0usize;
     if matches!(args.first().map(String::as_str),
         Some("pe") | Some("elf") | Some("macho") | Some("macho-arm64") | Some("macho-x86_64")
+        | Some("elf-arm64") | Some("elf-x86_64") | Some("pe-arm64") | Some("pe-x86_64")
     ) {
         opts.format = Some(match args[0].as_str() {
-            "pe" => OutputFormat::Pe,
+            "pe" | "pe-arm64" | "pe-x86_64" => OutputFormat::Pe,
             "macho" | "macho-arm64" | "macho-x86_64" => OutputFormat::Macho,
             _ => OutputFormat::Elf,
         });
         // Subcommand aliases that pin the machine
         match args[0].as_str() {
-            "macho-arm64" => opts.machine = Some(Machine::Aarch64),
-            "macho-x86_64" => opts.machine = Some(Machine::X86_64),
+            "macho-arm64" | "elf-arm64" | "pe-arm64" => opts.machine = Some(Machine::Aarch64),
+            "macho-x86_64" | "elf-x86_64" | "pe-x86_64" => opts.machine = Some(Machine::X86_64),
             _ => {}
         }
         i = 1;
