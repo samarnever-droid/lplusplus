@@ -5746,7 +5746,11 @@ pub fn expand_response_files(args: Vec<String>) -> Result<Vec<String>, String> {
 }
 
 fn resolve_lib(name: &str, paths: &[PathBuf], fmt: Option<OutputFormat>) -> Result<PathBuf, String> {
-    let candidates = match fmt {
+    let p_name = Path::new(name);
+    if p_name.is_file() {
+        return Ok(p_name.to_path_buf());
+    }
+    let mut candidates = match fmt {
         Some(OutputFormat::Pe) => vec![
             format!("{name}.lib"),
             format!("lib{name}.lib"),
@@ -5765,7 +5769,13 @@ fn resolve_lib(name: &str, paths: &[PathBuf], fmt: Option<OutputFormat>) -> Resu
             format!("lib{name}.lib"),
         ],
     };
+    candidates.insert(0, name.to_string());
     let mut search = paths.to_vec();
+    if let Some(parent) = p_name.parent() {
+        if !parent.as_os_str().is_empty() {
+            search.push(parent.to_path_buf());
+        }
+    }
     search.push(PathBuf::from("."));
     search.push(PathBuf::from("/usr/lib"));
     search.push(PathBuf::from("/usr/local/lib"));
