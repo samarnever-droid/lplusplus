@@ -2948,14 +2948,20 @@ pub fn write_elf_with_options(
         "main".into()
     } else if merged.syms.contains_key("lpp_main") {
         "lpp_main".into()
+    } else if opts.shared {
+        "".to_string()
     } else {
         return Err("required symbol 'main' (or 'lpp_main' / '_start') not found".into());
     };
-    let entry_sym = merged
-        .syms
-        .get(&entry_name)
-        .ok_or_else(|| format!("entry symbol '{entry_name}' not defined"))?;
-    let entry_va = sec_va(entry_sym.class) + entry_sym.offset;
+    let entry_va = if entry_name.is_empty() {
+        0u64
+    } else {
+        let entry_sym = merged
+            .syms
+            .get(&entry_name)
+            .ok_or_else(|| format!("entry symbol '{entry_name}' not defined"))?;
+        sec_va(entry_sym.class) + entry_sym.offset
+    };
 
     if let Some(mp) = &opts.map_path {
         write_map(mp, &merged, &objects, &entry_name, entry_va)?;
