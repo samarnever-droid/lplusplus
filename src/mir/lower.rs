@@ -1716,7 +1716,7 @@ impl<'a> MirLowerCtx<'a> {
                                     // Closure through a variable: the local carries
                                     // `TypeRef::Function` with no signature, so use the
                                     // return type recorded when that closure value was
-                                    // constructed instead of the `Int` fallback below.
+                                    // constructed instead of the Int fallback below.
                                     let mut closure_ret: Option<TypeRef> = None;
                                     if let Some(bid) = callee_cell.get() {
                                         if let Some(&lid) = binding_map.get(&BindingId(bid)) {
@@ -1724,6 +1724,16 @@ impl<'a> MirLowerCtx<'a> {
                                                 .closure_returns
                                                 .get(&(builder.function.id.0, lid.0))
                                                 .cloned();
+                                        }
+                                    }
+                                    if closure_ret.is_none() {
+                                        if let Expr::Identifier(var_name, _) = &**callee {
+                                            if let Some(&lid) = self.symbol_table.scopes.iter().rev().find_map(|s| s.bindings.get(var_name)) {
+                                                closure_ret = self
+                                                    .closure_returns
+                                                    .get(&(builder.function.id.0, lid.0))
+                                                    .cloned();
+                                            }
                                         }
                                     }
                                     match closure_ret {

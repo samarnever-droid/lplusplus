@@ -27,7 +27,14 @@ fn put_u64(buf: &mut [u8], offset: usize, value: u64) {
     buf[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
 }
 fn align_up(value: usize, alignment: usize) -> usize {
-    (value + alignment - 1) & !(alignment - 1)
+    debug_assert!(alignment <= 1 || alignment.is_power_of_two());
+    if alignment <= 1 {
+        return value;
+    }
+    match value.checked_add(alignment - 1) {
+        Some(v) => v & !(alignment - 1),
+        None => value, // pathological size; downstream bounds checks catch OOB
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
