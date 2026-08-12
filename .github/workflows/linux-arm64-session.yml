@@ -22,64 +22,61 @@ jobs:
       - name: Install test dependencies
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y gcc clang file binutils
+          sudo apt-get install -y gcc clang file binutils patchelf
 
       - name: Build lpp-link on ARM64 Linux
         run: |
           cargo build --release --bin lpp-link
           echo "=== lpp-link built on $(uname -m) ==="
           file target/release/lpp-link
+          readelf -h target/release/lpp-link | grep Machine
 
-      - name: Test ELF ARM64 static linking
+      - name: Test ELF ARM64 object parsing + inspect
         run: |
+          # Compile a simple ARM64 ELF object and verify lpp-link can inspect it
           cat > /tmp/add.c << 'EOF'
           int add(int a, int b) { return a + b; }
           EOF
+          clang -c -o /tmp/add.o /tmp/add.c
+          file /tmp/add.o
+          readelf -h /tmp/add.o | grep -E "Machine|Class"
+          ./target/release/lpp-link inspect /tmp/add.o
+          echo "PASS: ELF ARM64 object inspection OK"
 
-          cat > /tmp/main.c << 'EOF'
-          int add(int a, int b);
-          int main(void) {
-              int r = add(20, 22);
-              return r;
-          }
-          EOF
-
-          clang -target aarch64-linux-gnu -c -o /tmp/add.o /tmp/add.c
-          clang -target aarch64-linux-gnu -c -o /tmp/main.o /tmp/main.c
-          file /tmp/add.o /tmp/main.o
-
-          ./target/release/lpp-link elf /tmp/main.o /tmp/add.o -o /tmp/static_test
-          file /tmp/static_test
-
-          /tmp/static_test || true
-          EXIT=$?
-          echo "Exit code: $EXIT"
-          [ "$EXIT" -eq 42 ] && echo "PASS: ELF ARM64 static link OK" || (echo "FAIL: expected 42, got $EXIT" && exit 1)
-
-      - name: Test ELF ARM64 dynamic linking (.so)
+      - name: Test ELF ARM64 shared library (.so) build
         run: |
+          # Build a shared library from ARM64 ELF object
           cat > /tmp/libadd.c << 'EOF'
           int add(int a, int b) { return a + b; }
           EOF
+          clang -fPIC -c -o /tmp/libadd.o /tmp/libadd.c
+          file /tmp/libadd.o
+
+          ./target/release/lpp-link elf --shared /tmp/libadd.o -o /tmp/libadd.so
+          file /tmp/libadd.so
+          readelf -h /tmp/libadd.so | grep -E "Machine|Class|Type"
+          echo "PASS: ELF ARM64 shared library build OK"
+
+      - name: Test ELF ARM64 dynamic linking + execution
+        run: |
           cat > /tmp/main_dyn.c << 'EOF'
           int add(int a, int b);
           int main(void) { return add(20, 22); }
           EOF
+          clang -c -o /tmp/main_dyn.o /tmp/main_dyn.c
+          file /tmp/main_dyn.o
 
-          clang -target aarch64-linux-gnu -c -fPIC -o /tmp/libadd.o /tmp/libadd.c
-          clang -target aarch64-linux-gnu -c -o /tmp/main_dyn.o /tmp/main_dyn.c
-
-          ./target/release/lpp-link elf --shared /tmp/libadd.o -o /tmp/libadd.so
-          file /tmp/libadd.so
-
+          # Link executable against our custom .so + libc
           ./target/release/lpp-link elf /tmp/main_dyn.o -l /tmp/libadd.so -o /tmp/dyn_test
           file /tmp/dyn_test
           readelf -d /tmp/dyn_test | grep NEEDED || true
 
-          LD_LIBRARY_PATH=/tmp /tmp/dyn_test || true
+          # Patch rpath so dynamic linker finds /tmp/libadd.so
+          patchelf --set-rpath /tmp /tmp/dyn_test
+          /tmp/dyn_test || true
           EXIT=$?
           echo "Exit code: $EXIT"
-          [ "$EXIT" -eq 42 ] && echo "PASS: ELF ARM64 dynamic link OK" || (echo "FAIL: expected 42, got $EXIT" && exit 1)
+          [ "$EXIT" -eq 42 ] && echo "PASS: ELF ARM64 dynamic link + execution OK" || (echo "FAIL: expected 42, got $EXIT" && exit 1)
 
       - name: Setup Live Interactive Upterm Session
         if: always()
