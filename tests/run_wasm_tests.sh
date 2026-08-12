@@ -22,6 +22,12 @@ trap cleanup EXIT HUP INT TERM
 say_ok()   { printf 'ok   %s\n' "$1"; PASS=$((PASS + 1)); }
 say_fail() { printf 'FAIL %s\n' "$1"; FAIL=$((FAIL + 1)); }
 
+if [ -x "$HOME/.wasmtime/wasmtime" ]; then
+    export PATH="$HOME/.wasmtime:$PATH"
+elif [ -x "/tmp/wasmtime/wasmtime" ]; then
+    export PATH="/tmp/wasmtime:$PATH"
+fi
+
 if ! command -v cargo >/dev/null 2>&1; then
     echo "cargo is required to build the compiler" >&2
     exit 2

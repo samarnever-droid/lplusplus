@@ -719,28 +719,49 @@ fn real_main() -> i32 {
     }
 
     if check_all {
-        // Scan current directory recursively for .lpp files and type-check all
+        // Scan specified paths or current directory recursively for .lpp files and type-check all
         let mut all_files: Vec<PathBuf> = Vec::new();
-        fn walk(base: &Path, files: &mut Vec<PathBuf>) {
+        let check_paths: Vec<PathBuf> = args[1..].iter().filter(|a| !a.starts_with('-')).map(PathBuf::from).collect();
+
+        fn walk(base: &Path, files: &mut Vec<PathBuf>, skip_test_dirs: bool) {
             if let Ok(entries) = fs::read_dir(base) {
                 for entry in entries.flatten() {
                     let p = entry.path();
                     if p.is_dir() {
                         let name = p.file_name().unwrap_or_default().to_string_lossy();
-                        if name.starts_with('.') || name == "target" || name == "LppData" || name == "node_modules" {
+                        if name.starts_with('.') || name == "target" || name == "LppData" || name == "node_modules"
+                            || (skip_test_dirs && (name == "tests" || name == "packages" || name == "benchmarks")) {
                             continue;
                         }
-                        walk(&p, files);
+                        walk(&p, files, skip_test_dirs);
                     } else if p.extension().map_or(false, |e| e == "lpp") {
+                        let fname = p.file_name().unwrap_or_default().to_string_lossy();
+                        if skip_test_dirs && (fname.contains("rejected") || fname.starts_with("bad_") || fname == "test.lpp") {
+                            continue;
+                        }
                         files.push(p);
                     }
                 }
             }
         }
-        walk(Path::new("."), &mut all_files);
+
+        if check_paths.is_empty() {
+            walk(Path::new("."), &mut all_files, true);
+        } else {
+            for target_path in &check_paths {
+                if target_path.is_file() {
+                    if target_path.extension().map_or(false, |e| e == "lpp") {
+                        all_files.push(target_path.clone());
+                    }
+                } else if target_path.is_dir() {
+                    walk(target_path, &mut all_files, false);
+                }
+            }
+        }
+
         if all_files.is_empty() {
             eprintln!("[L++] No .lpp files found in project.");
-            return 1;
+            return 0;
         }
         all_files.sort();
         eprintln!("[L++] --checkall: checking {} file(s)...", all_files.len());

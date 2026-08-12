@@ -1332,6 +1332,8 @@ fn resolve_min_runtime_object() -> Option<PathBuf> {
 
             if needs_rebuild {
                 let _ = fs::create_dir_all(&cache_dir);
+                let pid = std::process::id();
+                let tmp_obj = cache_dir.join(format!("{}.tmp.{}", filename, pid));
                 let cc_name = std::env::var("CC").unwrap_or_else(|_| if cfg!(windows) { "cl.exe".to_string() } else { "cc".to_string() });
                 let mut cmd = std::process::Command::new(&cc_name);
                 if cfg!(windows) {
@@ -1342,7 +1344,7 @@ fn resolve_min_runtime_object() -> Option<PathBuf> {
                         .arg("/DLPP_FREESTANDING")
                         .arg("/c")
                         .arg(&src_path)
-                        .arg(format!("/Fo:{}", cache_obj.display()));
+                        .arg(format!("/Fo:{}", tmp_obj.display()));
                 } else {
                     cmd.arg("-O2")
                         .arg("-ffreestanding")
@@ -1353,18 +1355,19 @@ fn resolve_min_runtime_object() -> Option<PathBuf> {
                         .arg("-c")
                         .arg(&src_path)
                         .arg("-o")
-                        .arg(&cache_obj);
+                        .arg(&tmp_obj);
                 }
                 let compiled_ok = match cmd.status() {
                     Ok(st) => st.success(),
                     Err(_) => false,
                 };
                 if compiled_ok {
+                    let _ = fs::rename(&tmp_obj, &cache_obj);
                     if let Some(cur) = current_hash {
                         let _ = fs::write(&cache_hash, cur.to_string());
                     }
                 } else {
-                    let _ = fs::remove_file(&cache_obj);
+                    let _ = fs::remove_file(&tmp_obj);
                 }
             }
 
