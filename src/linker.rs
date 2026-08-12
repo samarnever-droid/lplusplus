@@ -297,11 +297,11 @@ pub fn write_elf(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
         text.extend_from_slice(&inp.text);
     }
     let has_main = syms.contains_key("main");
-    let has_lpp = syms.contains_key("lpp_main");
+    let _has_lpp = syms.contains_key("lpp_main");
     let entry = if has_main {
         syms.get("main")
-    } else if has_lpp {
-        syms.get("lpp_main")
+    } else if syms.contains_key("lpp_main") || syms.contains_key("_start") || syms.contains_key("start") {
+        syms.get("lpp_main").or_else(|| syms.get("_start")).or_else(|| syms.get("start"))
     } else {
         None
     };
@@ -843,6 +843,24 @@ fn is_crt_symbol(name: &str) -> bool {
             | "dlsym"
             | "dlclose"
             | "dlerror"
+            | "memcmp"
+            | "snprintf"
+            | "vsnprintf"
+            | "vfprintf"
+            | "atoi"
+            | "atol"
+            | "strtol"
+            | "strtoul"
+            | "strtod"
+            | "qsort"
+            | "bsearch"
+            | "rand"
+            | "srand"
+            | "tolower"
+            | "toupper"
+            | "isdigit"
+            | "isalpha"
+            | "isspace"
     )
 }
 
@@ -884,6 +902,16 @@ fn is_kernel32_symbol(name: &str) -> bool {
             | "GetLastError"
             | "QueryPerformanceCounter"
             | "QueryPerformanceFrequency"
+            | "GetCommandLineA"
+            | "GetProcessHeap"
+            | "HeapAlloc"
+            | "HeapFree"
+            | "HeapReAlloc"
+            | "FormatMessageA"
+            | "GetConsoleMode"
+            | "SetConsoleMode"
+            | "FlushFileBuffers"
+            | "GetSystemTimeAsFileTime"
     )
 }
 
@@ -1534,7 +1562,7 @@ pub fn write_pe(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
         (rdata_raw_size + data_raw_size + tls_raw_size + idata_raw_size) as u32,
     );
 
-    let main_entry = ["mainCRTStartup", "main", "_main", "WinMain", "lpp_main"]
+    let main_entry = ["mainCRTStartup", "WinMainCRTStartup", "main", "_main", "WinMain", "lpp_main"]
         .iter()
         .find_map(|&name| global_syms.get(name))
         .ok_or_else(|| "required entry symbol ('mainCRTStartup', 'main', '_main', 'WinMain', or 'lpp_main') not found".to_string())?;
@@ -1966,6 +1994,9 @@ pub fn write_macho(inputs: &[PathBuf], output: &Path) -> Result<(), String> {
     }
     let main = *syms
         .get("main")
+        .or_else(|| syms.get("lpp_main"))
+        .or_else(|| syms.get("start"))
+        .or_else(|| syms.get("_start"))
         .ok_or_else(|| "required symbol 'main' or '_main' not found".to_string())?;
 
     for (idx, inp) in objs.iter().enumerate() {

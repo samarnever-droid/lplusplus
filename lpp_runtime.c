@@ -2171,3 +2171,21 @@ int64_t lpp_command_output(int64_t cmd_ptr) {
 #endif
     return (int64_t)(intptr_t)buf;
 }
+
+/* C pointer intrinsics & dlfcn compatibility layer */
+int64_t lpp_c_malloc(int64_t size) { return (int64_t)(intptr_t)malloc((size_t)size); }
+void lpp_c_free(int64_t ptr) { free((void*)(intptr_t)ptr); }
+uint8_t lpp_c_load_u8(int64_t ptr) { return *(uint8_t*)(intptr_t)ptr; }
+void lpp_c_store_u8(int64_t ptr, uint8_t val) { *(uint8_t*)(intptr_t)ptr = val; }
+int32_t lpp_c_load_i32(int64_t ptr) { return *(int32_t*)(intptr_t)ptr; }
+void lpp_c_store_i32(int64_t ptr, int32_t val) { *(int32_t*)(intptr_t)ptr = val; }
+int64_t lpp_c_load_i64(int64_t ptr) { return *(int64_t*)(intptr_t)ptr; }
+void lpp_c_store_i64(int64_t ptr, int64_t val) { *(int64_t*)(intptr_t)ptr = val; }
+
+#if defined(_WIN32)
+void *dlopen(const char *filename, int flags) { (void)flags; return (void*)LoadLibraryA(filename); }
+void *dlsym(void *handle, const char *symbol) { return (void*)GetProcAddress((HMODULE)handle, symbol); }
+int dlclose(void *handle) { return FreeLibrary((HMODULE)handle) ? 0 : -1; }
+const char *dlerror(void) { return "dlerror not implemented on Windows"; }
+#endif
+
