@@ -1917,11 +1917,11 @@ fn emit_elf_start_stub_x64(
 }
 
 fn emit_elf_start_stub_a64() -> Vec<u8> {
-    // AArch64: mov x0,#0; mov x8,#93; svc #0  (exit 0) — real branch patched later
-    // We emit a BL to main then exit via syscall 93.
-    // bl main ; mov x8,#93 ; svc #0
+    // bti c ; bl main ; mov x8,#93 ; svc #0
+    // bti c (0xd503245f) is required for ARM64 BTI hardware compatibility.
     vec![
-        0x00, 0x00, 0x00, 0x94, // bl #0 (patched)
+        0x5f, 0x24, 0x03, 0xd5, // bti c
+        0x00, 0x00, 0x00, 0x94, // bl #0 (patched at start_off + 4)
         0xa8, 0x0b, 0x80, 0xd2, // mov x8, #93
         0x01, 0x00, 0x00, 0xd4, // svc #0
     ]
@@ -2000,7 +2000,7 @@ pub fn write_elf_with_options(
             }
             Machine::Aarch64 => {
                 let mut stub = emit_elf_start_stub_a64();
-                let p = start_off as u64;
+                let p = (start_off + 4) as u64; // bl instruction is at start_off + 4 (after bti c)
                 let s = main_off;
                 let dest = s;
                 let disp = dest as i64 - p as i64;
@@ -2008,7 +2008,7 @@ pub fn write_elf_with_options(
                     return Err("aarch64 startup BL out of range".into());
                 }
                 let imm = (disp >> 2) as u32;
-                stub[0..4].copy_from_slice(&(0x9400_0000u32 | (imm & 0x03FF_FFFF)).to_le_bytes());
+                stub[4..8].copy_from_slice(&(0x9400_0000u32 | (imm & 0x03FF_FFFF)).to_le_bytes());
                 merged.text.extend_from_slice(&stub);
             }
         }
@@ -2510,32 +2510,31 @@ pub fn write_elf_with_options(
                 }
             }
             Machine::Aarch64 => {
-                // PLT0: stp x16,x30,[sp,#-16]!; adrp/ldr/add/br to GOT.PLT+16
+                // PLT0: bti c; stp x16,x30,[sp,#-16]!; adrp/ldr/add/br to GOT.PLT+16
                 let p0 = plt_off_in_text;
+                // bti c (0xd503245f) — ARM64 BTI compatibility
+                rx[p0..p0 + 4].copy_from_slice(&0xd503245fu32.to_le_bytes());
                 // stp x16, x30, [sp, #-16]!
-                rx[p0..p0 + 4].copy_from_slice(&0xa9bf7bf0u32.to_le_bytes());
+                rx[p0 + 4..p0 + 8].copy_from_slice(&0xa9bf7bf0u32.to_le_bytes());
                 // adrp x16, page(GOT.PLT+16) — load resolver from GOT.PLT[2]
                 let dest = va_gotplt + 16;
-                let p = va_plt;
+                let p = va_plt + 8; // adrp is at offset 8 (p0 + 8)
                 let delta = self::page(dest) as i64 - self::page(p) as i64;
                 let imm = delta >> 12;
                 let immlo = (imm as u32) & 3;
                 let immhi = ((imm as u32) >> 2) & 0x7_ffff;
                 let adrp = 0x90000010u32 | (immlo << 29) | (immhi << 5);
-                rx[p0 + 4..p0 + 8].copy_from_slice(&adrp.to_le_bytes());
+                rx[p0 + 8..p0 + 12].copy_from_slice(&adrp.to_le_bytes());
                 // ldr x17, [x16, #lo12(GOT.PLT[2])]  — x17 = resolver fn
                 let lo = ((dest & 0xfff) >> 3) as u32;
                 let ldr = 0xf9400211u32 | (lo << 10);
-                rx[p0 + 8..p0 + 12].copy_from_slice(&ldr.to_le_bytes());
+                rx[p0 + 12..p0 + 16].copy_from_slice(&ldr.to_le_bytes());
                 // add x16, x16, #lo12(GOT.PLT[2]) — x16 = &GOT.PLT[2]
-                // GLIBC resolver finds link_map via *(x16-8)=GOT.PLT[1]. Must use GOT.PLT[2] offset here.
-                // This matches lld: both ldr and add use the same lo12(dest) offset.
                 let add = 0x91000210u32 | (((dest & 0xfff) as u32) << 10);
-                rx[p0 + 12..p0 + 16].copy_from_slice(&add.to_le_bytes());
+                rx[p0 + 16..p0 + 20].copy_from_slice(&add.to_le_bytes());
                 // br x17
-                rx[p0 + 16..p0 + 20].copy_from_slice(&0xd61f0220u32.to_le_bytes());
+                rx[p0 + 20..p0 + 24].copy_from_slice(&0xd61f0220u32.to_le_bytes());
                 // GOT.PLT[0..2] = 0; ld.so fills [0]=link_map, [1]=module_id, [2]=resolver at startup.
-                // DO NOT pre-fill GOT.PLT[0] with va_dynamic — ld.so writes the link_map pointer here.
                 let mut plt_ordered: Vec<(String, usize)> =
                     plt_keys.iter().map(|(k, v)| (k.clone(), *v)).collect();
                 plt_ordered.sort_by_key(|(_, i)| *i);
@@ -2555,10 +2554,7 @@ pub fn write_elf_with_options(
                     let add = 0x91000210u32 | (((slot & 0xfff) as u32) << 10);
                     rx[po + 8..po + 12].copy_from_slice(&add.to_le_bytes());
                     rx[po + 12..po + 16].copy_from_slice(&0xd61f0220u32.to_le_bytes());
-                    // GOT.PLT[i] initially points to PLT0 (va_plt, NOT PLT0+4).
-                    // PLT[i] will do: ldr x17, [x16, slot_lo]; br x17 -> jumps to PLT0.
-                    // PLT0 starts with stp x16,x30,[sp,#-16]! which saves &GOT.PLT[i]
-                    // so the resolver can compute reloc_index = (x16 - DT_PLTGOT - 24) / 8.
+                    // GOT.PLT[i] initially points to PLT0 (va_plt).
                     let gp = gotplt_off_in_data + 24 + i * 8;
                     rw[gp..gp + 8].copy_from_slice(&va_plt.to_le_bytes());
                 }
