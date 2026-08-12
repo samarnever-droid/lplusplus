@@ -1,0 +1,29 @@
+name: Mac Live Upterm Session
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: write
+
+jobs:
+  mac-upterm:
+    runs-on: macos-latest
+    timeout-minutes: 360
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build L++ toolchain on macOS
+        run: |
+          cargo build --release --bin lpp --bin lpp-link
+
+      - name: Setup Live Interactive Upterm Session
+        uses: owenthereal/action-upterm@v1
+        with:
+          limit-access-to-actor: false
