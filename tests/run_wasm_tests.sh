@@ -61,7 +61,7 @@ for src in "$CASES"/*.lpp; do
         continue
     fi
     # WebAssembly magic header: \0asm 1.0
-    if ! head -c 8 "$work/$name.wasm" | od -An -tx1 | grep -q "00 61 73 6d 01 00 00 00"; then
+    if ! python3 -c "import sys; data=open(sys.argv[1],'rb').read(8); sys.exit(0 if data == b'\x00asm\x01\x00\x00\x00' else 1)" "$work/$name.wasm" 2>/dev/null; then
         say_fail "$name (bad wasm magic header)"
         continue
     fi
