@@ -52,7 +52,7 @@ jobs:
           clang -fPIC -c -o /tmp/libadd.o /tmp/libadd.c
           file /tmp/libadd.o
 
-          ./target/release/lpp-link elf --shared /tmp/libadd.o -o /tmp/libadd.so
+          ./target/release/lpp-link elf-arm64 --shared /tmp/libadd.o -o /tmp/libadd.so
           file /tmp/libadd.so
           readelf -h /tmp/libadd.so | grep -E "Machine|Class|Type"
           echo "PASS: ELF ARM64 shared library build OK"
@@ -67,7 +67,7 @@ jobs:
           file /tmp/main_dyn.o
 
           # Link executable against our custom .so + libc
-          ./target/release/lpp-link elf /tmp/main_dyn.o -l /tmp/libadd.so -o /tmp/dyn_test
+          ./target/release/lpp-link elf-arm64 /tmp/main_dyn.o -l /tmp/libadd.so -o /tmp/dyn_test
           file /tmp/dyn_test
           readelf -d /tmp/dyn_test | grep NEEDED || true
 
