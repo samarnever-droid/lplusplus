@@ -5121,7 +5121,7 @@ pub fn write_macho_with_options(
                     write_u64_at(buf, patch, s.wrapping_add_signed(rel.addend), &ctx)?;
                 }
                 (Machine::Aarch64, 2) => {
-                    a64_patch_call26(buf, patch, s, rel.addend, p)?;
+                    a64_patch_call26(buf, patch, s, 0, p)?;
                 }
                 (Machine::Aarch64, 3) => {
                     a64_patch_adr_pg_hi21(buf, patch, s, rel.addend, p)?;
