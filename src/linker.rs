@@ -1915,7 +1915,7 @@ pub fn write_elf_with_options(
 
     let mut injected_start_off: Option<usize> = None;
     let mut injected_exit_reloc: Option<usize> = None;
-    if !opts.no_startup && !has_start && has_main {
+    if !opts.shared && !opts.no_startup && !has_start && has_main {
         let main_off = merged
             .syms
             .get("main")
