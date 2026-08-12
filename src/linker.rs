@@ -1839,11 +1839,16 @@ fn elf_needed_for(undef: &[String], opts: &LinkOptions) -> Vec<String> {
         n.insert(s.clone());
     }
     for lib in &opts.libraries {
-        let name = Path::new(lib)
+        let fname = Path::new(lib)
             .file_name()
             .and_then(|s| s.to_str())
             .unwrap_or(lib);
-        n.insert(name.to_string());
+        let soname = if fname.starts_with("lib") || fname.contains(".so") {
+            fname.to_string()
+        } else {
+            format!("lib{fname}.so")
+        };
+        n.insert(soname);
     }
     for u in undef {
         if let Some(so) = libc_soname_for(u) {
@@ -3284,7 +3289,7 @@ pub fn write_elf_with_options(
             addr: va_dynamic,
             off: data_file as u64,
             size: dynamic_size as u64,
-            link: 0,
+            link: dynstr_shndx, // points to .dynstr section
             info: 0,
             addralign: 8,
             entsize: 16,
