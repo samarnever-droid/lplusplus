@@ -68,8 +68,3 @@ jobs:
           print(f"PASS: Valid Windows ARM64 PE (machine=0x{machine:04X})")
           PYEOF
 
-      - name: Setup Live Interactive Upterm Session
-        if: always()
-        uses: owenthereal/action-upterm@v1
-        with:
-          limit-access-to-actor: false
