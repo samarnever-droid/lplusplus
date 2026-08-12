@@ -1757,7 +1757,7 @@ const R_AARCH64_LDST64_ABS_LO12_NC: u32 = 286;
 const R_AARCH64_LDST128_ABS_LO12_NC: u32 = 299;
 const R_AARCH64_ADR_GOT_PAGE: u32 = 311;
 const R_AARCH64_LD64_GOT_LO12_NC: u32 = 312;
-const R_AARCH64_JUMP_SLOT: u32 = 402;
+const R_AARCH64_JUMP_SLOT: u32 = 1026;
 const R_AARCH64_ABS64_DYN: u32 = 257;
 
 fn elf_interp(machine: Machine) -> &'static str {
@@ -2627,7 +2627,7 @@ pub fn write_elf_with_options(
             put_u64(&mut rx, e, off);
             let r_type = match machine {
                 Machine::X86_64 => 7u64, // R_X86_64_JUMP_SLOT
-                Machine::Aarch64 => 402u64,
+                Machine::Aarch64 => R_AARCH64_JUMP_SLOT as u64,
             };
             let r_info = ((i as u64 + 1) << 32) | r_type;
             put_u64(&mut rx, e + 8, r_info);
