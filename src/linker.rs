@@ -1141,6 +1141,16 @@ fn load_objects(
                 break;
             }
         }
+        if !found && opts.dynamic == DynamicMode::Static {
+            return Err(format!(
+                "cannot find library '{lib}' in {}",
+                search_dirs
+                    .iter()
+                    .map(|d| d.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
     }
     if objects.is_empty() {
         // start from the first archive member that defines a plausible entry
