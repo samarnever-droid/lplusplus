@@ -4884,6 +4884,12 @@ pub fn write_macho_with_options(
     }
 
     // dyld bind info for GOT slots
+    // Segment ordinals in bind opcodes:
+    //   executable (has __PAGEZERO): 0=__PAGEZERO 1=__TEXT 2=__DATA 3=__LINKEDIT  → data_seg_ord=2
+    //   dylib      (no __PAGEZERO):  0=__TEXT      1=__DATA 2=__LINKEDIT           → data_seg_ord=1
+    let is_dylib = opts.shared;
+    let data_seg_ord: u8 = if is_dylib { 1 } else { 2 };
+
     let mut bind = Vec::new();
     if !got_keys.is_empty() {
         let mut ordered: Vec<(String, usize)> =
@@ -4898,28 +4904,44 @@ pub fn write_macho_with_options(
                 .extra_imports
                 .get(clean)
                 .or_else(|| opts.extra_imports.get(name));
-            let ord = if let Some(td) = target_dylib {
+            // dylib ordinal is 1-based; libSystem is always first
+            let raw_ord = if let Some(td) = target_dylib {
                 dylibs
                     .iter()
-                    .position(|d| d.contains(td))
+                    .position(|d| d.contains(td.as_str()))
                     .map(|p| p + 1)
                     .unwrap_or(1)
             } else {
-                1
+                1usize
             };
-            bind.push(0x10 | (ord as u8 & 0x0f)); // SET_DYLIB_ORDINAL_IMM
+            // Encode ordinal: use IMM if ≤ 15, else ULEB form
+            if raw_ord <= 15 {
+                bind.push(0x10 | (raw_ord as u8 & 0x0f)); // SET_DYLIB_ORDINAL_IMM
+            } else {
+                bind.push(0x20); // SET_DYLIB_ORDINAL_ULEB
+                uleb(&mut bind, raw_ord as u64);
+            }
             bind.push(0x50 | 1); // SET_TYPE_IMM POINTER
-            bind.push(0x70 | 2); // SET_SEGMENT_AND_OFFSET_ULEB __DATA = 2
-            uleb(&mut bind, (*idx as u64) * 8);
+            // segment + offset: offset from start of __DATA segment for this GOT slot
+            let got_slot_off = got_in_data as u64 + (*idx as u64) * 8;
+            bind.push(0x70 | data_seg_ord); // SET_SEGMENT_AND_OFFSET_ULEB
+            uleb(&mut bind, got_slot_off);
             bind.push(0x40); // SET_SYMBOL_TRAILING_FLAGS_IMM 0
+            // symbol name: stripped of leading underscore internally, needs _ prefix in bind
+            let bind_name = if name.starts_with('_') {
+                name.as_str()
+            } else {
+                // We'll prepend _ below
+                name.as_str()
+            };
             bind.push(b'_');
-            bind.extend_from_slice(name.as_bytes());
+            bind.extend_from_slice(bind_name.trim_start_matches('_').as_bytes());
             bind.push(0);
             bind.push(0x90); // DO_BIND
         }
         bind.push(0x00); // DONE
     }
-    let rebase = vec![0u8]; // DONE only — no interior pointers that need rebase if we write VAs as 0 for imports
+    let rebase = vec![0u8]; // DONE only — no interior pointers
 
     // Layout constants
     let dylinker = "/usr/lib/dyld";
@@ -4929,22 +4951,41 @@ pub fn write_macho_with_options(
         total_dylib_cmdsize += align_up(24 + d.len() + 1, 8) as u32;
     }
 
-    let is_dylib = opts.shared;
-    let ncmds: u32 = 12 + dylibs.len() as u32 + if is_dylib { 0 } else { 1 };
-    let sizeofcmds: u32 = 72 // PAGEZERO
-        + 72 + 80 // TEXT + one section
-        + 72 + 80 // DATA + one section
-        + 72      // LINKEDIT
-        + 24      // SYMTAB
-        + 80      // DYSYMTAB
-        + (if is_dylib { 0 } else { dylinker_cmdsize })
-        + 24      // UUID
-        + 32      // BUILD_VERSION + 1 tool
-        + 16      // SOURCE_VERSION
-        + (if is_dylib { align_up(24 + ident.len() + 1, 8) as u32 } else { 24 }) // ID_DYLIB or MAIN
-        + total_dylib_cmdsize
-        + 48      // DYLD_INFO_ONLY
-        + 16; // CODE_SIGNATURE
+    // ncmds: count each LC that is actually emitted
+    // Common to both: TEXT, DATA, LINKEDIT, SYMTAB, DYSYMTAB, UUID, BUILD_VERSION, SOURCE_VERSION, DYLD_INFO_ONLY, CODE_SIGNATURE = 10
+    // + N × LC_LOAD_DYLIB
+    // executable adds: PAGEZERO + LOAD_DYLINKER + MAIN = +3  → total 13 + N
+    // dylib adds: ID_DYLIB                                = +1  → total 11 + N
+    let ncmds: u32 = if is_dylib {
+        11 + dylibs.len() as u32
+    } else {
+        13 + dylibs.len() as u32
+    };
+    let sizeofcmds: u32 =
+        // Segments (always)
+        (72 + 80)  // __TEXT + __text section
+        + (72 + 80) // __DATA + __data section
+        + 72        // __LINKEDIT
+        // Segment-only for executables
+        + (if is_dylib { 0 } else { 72 }) // __PAGEZERO
+        // Symbol/bind tables (always)
+        + 24        // SYMTAB
+        + 80        // DYSYMTAB
+        + 48        // DYLD_INFO_ONLY
+        + 16        // CODE_SIGNATURE
+        // Identity (mutually exclusive)
+        + (if is_dylib {
+            align_up(24 + ident.len() + 1, 8) as u32 // LC_ID_DYLIB
+        } else {
+            dylinker_cmdsize   // LOAD_DYLINKER
+            + 24               // LC_MAIN
+        })
+        // Common metadata (always)
+        + 24        // UUID
+        + 32        // BUILD_VERSION
+        + 16        // SOURCE_VERSION
+        // Loaded dylibs (always)
+        + total_dylib_cmdsize;
 
     let header_and_cmds = 32 + sizeofcmds as usize;
     let text_fileoff = align_up(header_and_cmds, page_size);
@@ -5314,8 +5355,10 @@ pub fn write_macho_with_options(
         *c += 80;
     };
 
-    // PAGEZERO
-    emit_seg(&mut bin, &mut c, "__PAGEZERO", 0, vm_base, 0, 0, 0, 0, 0);
+    // PAGEZERO — only in executables; dylibs start at address 0 with no zero page
+    if !is_dylib {
+        emit_seg(&mut bin, &mut c, "__PAGEZERO", 0, vm_base, 0, 0, 0, 0, 0);
+    }
     // TEXT
     emit_seg(
         &mut bin,
