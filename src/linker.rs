@@ -4930,7 +4930,7 @@ pub fn write_macho_with_options(
     }
 
     let is_dylib = opts.shared;
-    let ncmds: u32 = 12 + dylibs.len() as u32 + if is_dylib { 1 } else { 2 };
+    let ncmds: u32 = 12 + dylibs.len() as u32 + if is_dylib { 0 } else { 1 };
     let sizeofcmds: u32 = 72 // PAGEZERO
         + 72 + 80 // TEXT + one section
         + 72 + 80 // DATA + one section
