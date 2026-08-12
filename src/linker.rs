@@ -406,6 +406,7 @@ impl Machine {
     fn page_size(self, format: OutputFormat) -> usize {
         match (self, format) {
             (Machine::Aarch64, OutputFormat::Macho) => 0x4000,
+            (Machine::Aarch64, OutputFormat::Elf) => 0x10000,
             _ => 0x1000,
         }
     }
