@@ -2017,10 +2017,8 @@ pub fn write_elf_with_options(
     }
     if want_dynamic {
         for u in &undef {
-            if libc_soname_for(u).is_some() || opts.needed.iter().any(|_| true) {
-                let n = plt_keys.len();
-                plt_keys.entry(u.clone()).or_insert(n);
-            }
+            let n = plt_keys.len();
+            plt_keys.entry(u.clone()).or_insert(n);
         }
     }
     if let Some(off) = injected_exit_reloc {
