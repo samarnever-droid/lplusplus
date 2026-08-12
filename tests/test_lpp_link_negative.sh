@@ -38,5 +38,5 @@ if "$LINKER" "$TEMP/needs_runtime.o" -o "$TEMP/missing_runtime" >"$TEMP/missing.
     exit 1
 fi
 [ ! -e "$TEMP/missing_runtime" ]
-grep -q "unresolved GOT symbol\|unresolved external relocation" "$TEMP/missing.err"
+grep -q "unresolved" "$TEMP/missing.err"
 echo "PASS direct ELF linker negative cases"

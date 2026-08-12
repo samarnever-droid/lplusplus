@@ -4752,6 +4752,15 @@ pub fn write_macho_with_options(
     imports.sort();
     imports.dedup();
 
+    // macOS rejects static ARM64 executables outright — the kernel requires at least
+    // libSystem to be loaded. Emit a clear policy error instead of a broken binary.
+    if !opts.shared && machine == Machine::Aarch64 && opts.libraries.is_empty() && opts.needed.is_empty() {
+        return Err(format!(
+            "lpp-link: dynamic libSystem imports are required for ARM64 Mach-O \
+ executables; pass -l System or link dynamically (macOS policy)"
+        ));
+    }
+
     if opts.dynamic == DynamicMode::Static && !imports.is_empty() {
         return Err(LinkError {
             message: "unresolved Mach-O symbols (static)".into(),
@@ -5926,12 +5935,20 @@ pub fn link_cli(args: &[String]) -> Result<(), String> {
     let mut inputs: Vec<PathBuf> = Vec::new();
     let mut output: Option<PathBuf> = None;
     let mut i = 0usize;
-    if matches!(args.first().map(String::as_str), Some("pe") | Some("elf") | Some("macho")) {
+    if matches!(args.first().map(String::as_str),
+        Some("pe") | Some("elf") | Some("macho") | Some("macho-arm64") | Some("macho-x86_64")
+    ) {
         opts.format = Some(match args[0].as_str() {
             "pe" => OutputFormat::Pe,
-            "macho" => OutputFormat::Macho,
+            "macho" | "macho-arm64" | "macho-x86_64" => OutputFormat::Macho,
             _ => OutputFormat::Elf,
         });
+        // Subcommand aliases that pin the machine
+        match args[0].as_str() {
+            "macho-arm64" => opts.machine = Some(Machine::Aarch64),
+            "macho-x86_64" => opts.machine = Some(Machine::X86_64),
+            _ => {}
+        }
         i = 1;
     }
     while i < args.len() {
