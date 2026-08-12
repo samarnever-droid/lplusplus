@@ -3349,7 +3349,7 @@ pub fn write_elf_with_options(
     elf[5] = 1;
     elf[6] = 1;
     elf[7] = 0; // ELFOSABI_SYSV
-    let etype: u16 = if pie || dyn_mode { 3 } else { 2 }; // ET_DYN / ET_EXEC
+    let etype: u16 = if pie || opts.shared || dyn_mode { 3 } else { 2 }; // ET_DYN / ET_EXEC
     put_u16(&mut elf, 16, etype);
     put_u16(&mut elf, 18, machine.elf_em());
     put_u32(&mut elf, 20, 1);
