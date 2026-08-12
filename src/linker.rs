@@ -598,6 +598,8 @@ struct ObjectImage {
     commons: Vec<CommonSym>,
     relocations: Vec<Relocation>,
     undefined: Vec<String>,
+    pdata_ranges: Vec<(usize, usize)>,
+    eh_frame_ranges: Vec<(usize, usize)>,
 }
 
 impl ObjectImage {
@@ -731,6 +733,8 @@ fn parse_object(bytes: &[u8], path: &Path) -> Result<ObjectImage, String> {
             commons: Vec::new(),
             relocations: Vec::new(),
             undefined: Vec::new(),
+            pdata_ranges: Vec::new(),
+            eh_frame_ranges: Vec::new(),
         });
     }
 
@@ -746,6 +750,8 @@ fn parse_object(bytes: &[u8], path: &Path) -> Result<ObjectImage, String> {
     let mut fini_array = Vec::new();
     let mut map: Vec<(object::SectionIndex, SectionClass, usize)> = Vec::new();
     let mut relocs = Vec::new();
+    let mut pdata_ranges = Vec::new();
+    let mut eh_frame_ranges = Vec::new();
 
     for sec in file.sections() {
         let name = sec.name().unwrap_or("");
@@ -811,6 +817,15 @@ fn parse_object(bytes: &[u8], path: &Path) -> Result<ObjectImage, String> {
         };
         buf.extend_from_slice(&bytes);
         map.push((sec.index(), class, base));
+
+        if class == SectionClass::Rodata {
+            if name == ".pdata" || name.starts_with(".pdata") {
+                pdata_ranges.push((base, bytes.len()));
+            }
+            if name == ".eh_frame" || name.starts_with(".eh_frame") || name == ".eh_frame_hdr" || name.starts_with(".eh_frame_hdr") {
+                eh_frame_ranges.push((base, bytes.len()));
+            }
+        }
 
         for (off, rel) in sec.relocations() {
             let raw_off = usize::try_from(off).map_err(|_| "relocation offset overflow")?;
@@ -927,6 +942,8 @@ fn parse_object(bytes: &[u8], path: &Path) -> Result<ObjectImage, String> {
         commons,
         relocations: relocs,
         undefined,
+        pdata_ranges,
+        eh_frame_ranges,
     })
 }
 
@@ -943,19 +960,11 @@ fn resolve_local_target(
     };
     let anonymous = clean.is_empty()
         || sym.kind() == SymbolKind::Section
-        || clean.starts_with(".text")
-        || clean.starts_with(".rdata")
-        || clean.starts_with(".rodata")
-        || clean.starts_with(".data")
-        || clean.starts_with(".bss")
-        || clean.starts_with(".tls")
-        || clean.starts_with(".xdata")
-        || clean.starts_with(".pdata")
-        || clean.starts_with(".debug")
+        || clean.starts_with('.')
         || clean.starts_with('$');
     if let SymbolSection::Section(idx) = sym.section() {
         if let Some((_, class, base)) = map.iter().find(|(i, _, _)| *i == idx) {
-            if anonymous || sym.is_local() {
+            if anonymous || sym.is_local() || clean.starts_with('.') {
                 return RelTarget::Local(*class, *base as u64 + sym.address());
             }
         }
@@ -1081,6 +1090,8 @@ fn pull_archives(
                                 })
                                 .collect(),
                             undefined: img.undefined.clone(),
+                            pdata_ranges: img.pdata_ranges.clone(),
+                            eh_frame_ranges: img.eh_frame_ranges.clone(),
                         });
                         added = true;
                     }
@@ -1260,6 +1271,8 @@ fn parse_object_clone(img: &ObjectImage, path: &Path) -> ObjectImage {
             })
             .collect(),
         undefined: img.undefined.clone(),
+        pdata_ranges: img.pdata_ranges.clone(),
+        eh_frame_ranges: img.eh_frame_ranges.clone(),
     }
 }
 
@@ -1300,6 +1313,27 @@ struct Merged {
     place: Vec<Placement>,
     syms: HashMap<String, ResolvedSym>,
     commons_off: usize,
+    pdata_ranges: Vec<(usize, usize)>,
+    eh_frame_ranges: Vec<(usize, usize)>,
+}
+
+impl Merged {
+    fn pdata_info(&self) -> Option<(usize, usize)> {
+        if self.pdata_ranges.is_empty() {
+            return None;
+        }
+        let min_start = self.pdata_ranges.iter().map(|(s, _)| *s).min()?;
+        let max_end = self.pdata_ranges.iter().map(|(s, l)| *s + *l).max()?;
+        Some((min_start, max_end - min_start))
+    }
+    fn eh_frame_info(&self) -> Option<(usize, usize)> {
+        if self.eh_frame_ranges.is_empty() {
+            return None;
+        }
+        let min_start = self.eh_frame_ranges.iter().map(|(s, _)| *s).min()?;
+        let max_end = self.eh_frame_ranges.iter().map(|(s, l)| *s + *l).max()?;
+        Some((min_start, max_end - min_start))
+    }
 }
 
 fn merge_objects(objects: &[ObjectImage], opts: &LinkOptions) -> Result<Merged, String> {
@@ -1315,6 +1349,8 @@ fn merge_objects(objects: &[ObjectImage], opts: &LinkOptions) -> Result<Merged, 
     let mut place = Vec::new();
     let mut syms: HashMap<String, ResolvedSym> = HashMap::new();
     let mut commons: HashMap<String, CommonSym> = HashMap::new();
+    let mut pdata_ranges = Vec::new();
+    let mut eh_frame_ranges = Vec::new();
 
     for (oi, obj) in objects.iter().enumerate() {
         let t = align_up(text.len(), 16);
@@ -1342,6 +1378,13 @@ fn merge_objects(objects: &[ObjectImage], opts: &LinkOptions) -> Result<Merged, 
         });
 
         tls_align = tls_align.max(obj.tls_align.max(1));
+
+        for &(start, len) in &obj.pdata_ranges {
+            pdata_ranges.push((r + start, len));
+        }
+        for &(start, len) in &obj.eh_frame_ranges {
+            eh_frame_ranges.push((r + start, len));
+        }
 
         for s in &obj.symbols {
             if s.bind == Bind::Local {
@@ -1457,6 +1500,8 @@ fn merge_objects(objects: &[ObjectImage], opts: &LinkOptions) -> Result<Merged, 
         place,
         syms,
         commons_off,
+        pdata_ranges,
+        eh_frame_ranges,
     })
 }
 
@@ -2098,6 +2143,7 @@ pub fn write_elf_with_options(
     let has_note = opts.build_id;
     let has_tls = !merged.tls.is_empty() || merged.tbss_size > 0;
     let has_dynamic = dyn_mode;
+    let has_eh_frame = merged.eh_frame_info().is_some();
     phnum = 2; // PHDR + GNU_STACK
     phnum += 3; // three LOADs (R, RX, RW)
     if has_interp {
@@ -2110,6 +2156,9 @@ pub fn write_elf_with_options(
         phnum += 1;
     }
     if has_dynamic {
+        phnum += 1;
+    }
+    if has_eh_frame {
         phnum += 1;
     }
 
@@ -3440,6 +3489,30 @@ pub fn write_elf_with_options(
             8,
         );
     }
+    if let Some((eh_off, eh_len)) = merged.eh_frame_info() {
+        emit_ph(
+            &mut elf,
+            &mut ph,
+            PT_GNU_EH_FRAME,
+            PF_R,
+            (text_file + rodata_off_in_text + eh_off) as u64,
+            va_rodata + eh_off as u64,
+            eh_len as u64,
+            eh_len as u64,
+            8,
+        );
+    }
+    emit_ph(
+        &mut elf,
+        &mut ph,
+        0x6474E551, // PT_GNU_STACK
+        PF_R | PF_W,
+        0,
+        0,
+        0,
+        0,
+        16,
+    );
     emit_ph(
         &mut elf,
         &mut ph,
@@ -4405,6 +4478,20 @@ pub fn write_pe_with_options(
         put_u32(&mut pe, dirs + 12, import.data.len() as u32);
         put_u32(&mut pe, dirs + 12 * 8, import.iat_rva);
         put_u32(&mut pe, dirs + 12 * 8 + 4, import.iat_size);
+    }
+    if let Some((pdata_off, pdata_len)) = merged.pdata_info() {
+        for &(start, len) in &merged.pdata_ranges {
+            if len >= 12 && start + len <= merged.rodata.len() {
+                let slice = &mut merged.rodata[start..start + len];
+                let mut entries: Vec<[u8; 12]> = slice.chunks_exact(12).map(|c| c.try_into().unwrap()).collect();
+                entries.sort_by_key(|e| u32::from_le_bytes(e[0..4].try_into().unwrap()));
+                for (i, entry) in entries.iter().enumerate() {
+                    slice[i * 12..(i + 1) * 12].copy_from_slice(entry);
+                }
+            }
+        }
+        put_u32(&mut pe, dirs + 3 * 8, rdata_rva + pdata_off as u32);
+        put_u32(&mut pe, dirs + 3 * 8 + 4, pdata_len as u32);
     }
     if has_reloc {
         put_u32(&mut pe, dirs + 5 * 8, reloc_rva);
