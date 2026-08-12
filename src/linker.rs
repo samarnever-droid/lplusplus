@@ -818,6 +818,9 @@ fn parse_object(bytes: &[u8], path: &Path) -> Result<ObjectImage, String> {
                     }
                 }
             }
+            if format == OutputFormat::Macho {
+                addend = (addend as i32) as i64;
+            }
             let target = resolve_local_target(raw_name, &sym, &map, format);
             relocs.push(Relocation {
                 offset: base + raw_off,
