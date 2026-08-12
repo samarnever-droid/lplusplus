@@ -712,6 +712,28 @@ fn parse_object(bytes: &[u8], path: &Path) -> Result<ObjectImage, String> {
         )
     })?;
 
+    if file.kind() == object::ObjectKind::Dynamic {
+        return Ok(ObjectImage {
+            path: path.to_path_buf(),
+            machine,
+            format,
+            text: Vec::new(),
+            rodata: Vec::new(),
+            data: Vec::new(),
+            bss_size: 0,
+            bss_align: 1,
+            tls: Vec::new(),
+            tbss_size: 0,
+            tls_align: 1,
+            init_array: Vec::new(),
+            fini_array: Vec::new(),
+            symbols: Vec::new(),
+            commons: Vec::new(),
+            relocations: Vec::new(),
+            undefined: Vec::new(),
+        });
+    }
+
     let mut text = Vec::new();
     let mut rodata = Vec::new();
     let mut data = Vec::new();
