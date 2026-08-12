@@ -67,7 +67,7 @@ jobs:
           file /tmp/main_dyn.o
 
           # Link executable against our custom .so + libc
-          ./target/release/lpp-link elf-arm64 /tmp/main_dyn.o -l /tmp/libadd.so -o /tmp/dyn_test
+          ./target/release/lpp-link elf-arm64 --dynamic /tmp/main_dyn.o -l /tmp/libadd.so -o /tmp/dyn_test
           file /tmp/dyn_test
           readelf -d /tmp/dyn_test | grep NEEDED || true
 
