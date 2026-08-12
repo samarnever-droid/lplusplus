@@ -1,0 +1,75 @@
+name: Windows ARM64 QEMU Verify
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: write
+
+jobs:
+  windows-arm64-qemu:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cross-compilation tools
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y clang llvm lld mingw-w64 file
+
+      - name: Build lpp-link on ARM64 Linux
+        run: cargo build --release --bin lpp-link
+
+      - name: Test PE/COFF Windows ARM64 object linking
+        run: |
+          # Compile ARM64 PE objects using LLVM (clang-cl style)
+          cat > /tmp/add_win.c << 'EOF'
+          __declspec(dllexport) int add(int a, int b) { return a + b; }
+          EOF
+
+          cat > /tmp/main_win.c << 'EOF'
+          int add(int a, int b);
+          int mainCRTStartup(void) { return add(20, 22); }
+          EOF
+
+          # Cross-compile to Windows ARM64 PE COFF objects
+          clang --target=aarch64-pc-windows-gnu -c -o /tmp/add_win.o /tmp/add_win.c
+          clang --target=aarch64-pc-windows-gnu -c -o /tmp/main_win.o /tmp/main_win.c
+
+          echo "=== Object types ==="
+          file /tmp/add_win.o /tmp/main_win.o
+
+          # Link with lpp-link into a PE executable
+          ./target/release/lpp-link pe /tmp/main_win.o /tmp/add_win.o -o /tmp/test.exe
+
+          echo "=== PE binary ==="
+          file /tmp/test.exe
+
+          # Verify it is a valid ARM64 PE
+          python3 - << 'PYEOF'
+          with open('/tmp/test.exe', 'rb') as f:
+              data = f.read()
+          # Check MZ signature
+          assert data[:2] == b'MZ', "Not a PE file"
+          # PE header offset at 0x3c
+          import struct
+          pe_off = struct.unpack_from('<I', data, 0x3c)[0]
+          sig = data[pe_off:pe_off+4]
+          assert sig == b'PE\x00\x00', f"Bad PE sig: {sig!r}"
+          machine = struct.unpack_from('<H', data, pe_off+4)[0]
+          assert machine == 0xAA64, f"Expected ARM64 (0xAA64), got 0x{machine:04X}"
+          print(f"PASS: Valid Windows ARM64 PE (machine=0x{machine:04X})")
+          PYEOF
+
+      - name: Setup Live Interactive Upterm Session
+        if: always()
+        uses: owenthereal/action-upterm@v1
+        with:
+          limit-access-to-actor: false

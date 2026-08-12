@@ -1,0 +1,88 @@
+name: Linux ARM64 Live Session
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: write
+
+jobs:
+  linux-arm64-verify:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 360
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install test dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y gcc clang file binutils
+
+      - name: Build lpp-link on ARM64 Linux
+        run: |
+          cargo build --release --bin lpp-link
+          echo "=== lpp-link built on $(uname -m) ==="
+          file target/release/lpp-link
+
+      - name: Test ELF ARM64 static linking
+        run: |
+          cat > /tmp/add.c << 'EOF'
+          int add(int a, int b) { return a + b; }
+          EOF
+
+          cat > /tmp/main.c << 'EOF'
+          int add(int a, int b);
+          int main(void) {
+              int r = add(20, 22);
+              return r;
+          }
+          EOF
+
+          clang -target aarch64-linux-gnu -c -o /tmp/add.o /tmp/add.c
+          clang -target aarch64-linux-gnu -c -o /tmp/main.o /tmp/main.c
+          file /tmp/add.o /tmp/main.o
+
+          ./target/release/lpp-link elf /tmp/main.o /tmp/add.o -o /tmp/static_test
+          file /tmp/static_test
+
+          /tmp/static_test || true
+          EXIT=$?
+          echo "Exit code: $EXIT"
+          [ "$EXIT" -eq 42 ] && echo "PASS: ELF ARM64 static link OK" || (echo "FAIL: expected 42, got $EXIT" && exit 1)
+
+      - name: Test ELF ARM64 dynamic linking (.so)
+        run: |
+          cat > /tmp/libadd.c << 'EOF'
+          int add(int a, int b) { return a + b; }
+          EOF
+          cat > /tmp/main_dyn.c << 'EOF'
+          int add(int a, int b);
+          int main(void) { return add(20, 22); }
+          EOF
+
+          clang -target aarch64-linux-gnu -c -fPIC -o /tmp/libadd.o /tmp/libadd.c
+          clang -target aarch64-linux-gnu -c -o /tmp/main_dyn.o /tmp/main_dyn.c
+
+          ./target/release/lpp-link elf --shared /tmp/libadd.o -o /tmp/libadd.so
+          file /tmp/libadd.so
+
+          ./target/release/lpp-link elf /tmp/main_dyn.o -l /tmp/libadd.so -o /tmp/dyn_test
+          file /tmp/dyn_test
+          readelf -d /tmp/dyn_test | grep NEEDED || true
+
+          LD_LIBRARY_PATH=/tmp /tmp/dyn_test || true
+          EXIT=$?
+          echo "Exit code: $EXIT"
+          [ "$EXIT" -eq 42 ] && echo "PASS: ELF ARM64 dynamic link OK" || (echo "FAIL: expected 42, got $EXIT" && exit 1)
+
+      - name: Setup Live Interactive Upterm Session
+        if: always()
+        uses: owenthereal/action-upterm@v1
+        with:
+          limit-access-to-actor: false
