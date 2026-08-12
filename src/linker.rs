@@ -1121,8 +1121,8 @@ fn load_objects(
             format!("lib{clean}.dylib"),
             format!("lib{clean}.so"),
         ];
+        let mut found = false;
         for dir in &search_dirs {
-            let mut found = false;
             for cand in &candidates {
                 let cp = dir.join(cand);
                 if cp.exists() {
