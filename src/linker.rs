@@ -2675,8 +2675,8 @@ pub fn write_elf_with_options(
         }
         put_dt(&mut dynb, &mut dp, 21, 0); // DT_DEBUG
         let mut flags1 = 0u64;
-        if pie {
-            flags1 |= 0x0800_0000; // DF_1_PIE
+        if opts.pie && !opts.shared {
+            flags1 |= 0x0800_0000; // DF_1_PIE (executables only, NOT shared libraries)
         }
         put_dt(&mut dynb, &mut dp, 0x6fff_fffb, flags1); // DT_FLAGS_1
         put_dt(&mut dynb, &mut dp, 0, 0); // DT_NULL
