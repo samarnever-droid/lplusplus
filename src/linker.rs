@@ -4883,6 +4883,26 @@ pub fn write_macho_with_options(
         }
     }
 
+    // Build symbol → dylib ordinal map by scanning each resolved dylib that actually exists.
+    // dylibs[0] = libSystem (ordinal 1), dylibs[1] = first user lib (ordinal 2), etc.
+    // For each symbol we need to bind, we look up which dylib exports it so the bind opcodes
+    // point to the right library.
+    let mut sym_to_dylib_ord: HashMap<String, usize> = HashMap::new();
+    for (dylib_idx, dylib_path) in dylibs.iter().enumerate() {
+        let ord = dylib_idx + 1; // dyld ordinals are 1-based
+        if let Ok(bytes) = fs::read(dylib_path) {
+            if let Ok(file) = object::File::parse(&*bytes) {
+                for sym in file.exports().unwrap_or_default() {
+                    let raw = String::from_utf8_lossy(sym.name()).into_owned();
+                    // strip leading underscore (Mach-O convention) for internal lookup
+                    let clean = raw.strip_prefix('_').unwrap_or(&raw).to_string();
+                    sym_to_dylib_ord.entry(clean).or_insert(ord);
+                    sym_to_dylib_ord.entry(raw).or_insert(ord);
+                }
+            }
+        }
+    }
+
     // dyld bind info for GOT slots
     // Segment ordinals in bind opcodes:
     //   executable (has __PAGEZERO): 0=__PAGEZERO 1=__TEXT 2=__DATA 3=__LINKEDIT  → data_seg_ord=2
@@ -4900,19 +4920,19 @@ pub fn write_macho_with_options(
                 continue;
             }
             let clean = name.strip_prefix('_').unwrap_or(name);
-            let target_dylib = opts
-                .extra_imports
-                .get(clean)
-                .or_else(|| opts.extra_imports.get(name));
-            // dylib ordinal is 1-based; libSystem is always first
-            let raw_ord = if let Some(td) = target_dylib {
-                dylibs
-                    .iter()
-                    .position(|d| d.contains(td.as_str()))
-                    .map(|p| p + 1)
-                    .unwrap_or(1)
+            // Resolution order:
+            // 1. Scanned dylib exports (sym_to_dylib_ord built above from actual .dylib files)
+            // 2. Explicit --import DLL=sym mapping (extra_imports)
+            // 3. Fall back to ordinal 1 (libSystem) — shouldn't happen in practice
+            let raw_ord = if let Some(&ord) = sym_to_dylib_ord.get(name).or_else(|| sym_to_dylib_ord.get(clean)) {
+                ord
             } else {
-                1usize
+                let target_dylib = opts.extra_imports.get(clean).or_else(|| opts.extra_imports.get(name));
+                if let Some(td) = target_dylib {
+                    dylibs.iter().position(|d| d.contains(td.as_str())).map(|p| p + 1).unwrap_or(1)
+                } else {
+                    1usize // libSystem fallback
+                }
             };
             // Encode ordinal: use IMM if ≤ 15, else ULEB form
             if raw_ord <= 15 {
