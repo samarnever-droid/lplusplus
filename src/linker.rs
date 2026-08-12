@@ -2069,7 +2069,7 @@ pub fn write_elf_with_options(
         }
     }
 
-    let dyn_mode = want_dynamic && !plt_keys.is_empty();
+    let dyn_mode = want_dynamic && (opts.shared || !plt_keys.is_empty());
 
     // PLT / GOT.PLT bytes
     let (plt_entsize, plt0_size) = match machine {
