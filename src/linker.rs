@@ -1883,10 +1883,14 @@ pub fn write_elf_with_options(
 
     let mut undef = collect_undefined(&objects, &merged);
     // entry names are not "undefined" if we will synthesize _start
-    let want_dynamic = match opts.dynamic {
-        DynamicMode::Force => true,
-        DynamicMode::Static => false,
-        DynamicMode::Auto => !undef.is_empty() && undef.iter().any(|u| libc_soname_for(u).is_some()),
+    let want_dynamic = if opts.shared {
+        true
+    } else {
+        match opts.dynamic {
+            DynamicMode::Force => true,
+            DynamicMode::Static => false,
+            DynamicMode::Auto => !undef.is_empty() && undef.iter().any(|u| libc_soname_for(u).is_some()),
+        }
     };
     if !want_dynamic {
         if opts.dynamic == DynamicMode::Static && !undef.is_empty() {
