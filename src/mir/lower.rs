@@ -620,7 +620,9 @@ impl<'a> MirLowerCtx<'a> {
         rvalue: &Rvalue,
     ) {
         let source = match rvalue {
-            Rvalue::Use(Operand::Local(source)) | Rvalue::Use(Operand::Borrowed(source)) => *source,
+            Rvalue::Use(Operand::Local(source))
+            | Rvalue::Use(Operand::Borrowed(source))
+            | Rvalue::Move(source) => *source,
             _ => return,
         };
         if let Some(rt) = self.closure_returns.get(&(function_id, source.0)).cloned() {
