@@ -1084,6 +1084,14 @@ fn load_objects(
     search_dirs.push(PathBuf::from("/usr/lib"));
     search_dirs.push(PathBuf::from("/usr/local/lib"));
     search_dirs.push(PathBuf::from("/lib"));
+    for lib in &opts.libraries {
+        let p = PathBuf::from(lib);
+        if let Some(parent) = p.parent() {
+            if !parent.as_os_str().is_empty() && !search_dirs.contains(&parent.to_path_buf()) {
+                search_dirs.push(parent.to_path_buf());
+            }
+        }
+    }
 
     for p in inputs {
         let bytes = fs::read(p).map_err(|e| format!("read '{}': {e}", p.display()))?;
