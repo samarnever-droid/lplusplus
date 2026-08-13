@@ -219,7 +219,7 @@ def search_registry(query: Str) -> Void:
         print_str("\033[1;31m[lpp-pm] ERROR:\033[0m Failed to fetch registry.")
         return
 
-    mut lower_query := query   # TODO: use str_to_lower when available
+    mut lower_query := str_lower(query)
     mut found := 0
 
     h_json := json_parse(json_text)
@@ -263,7 +263,7 @@ def search_registry(query: Str) -> Void:
                     cur_pkg = str_substr(rest, 0, q2)
                     mut matched := str_len(query) == 0
                     if !matched:
-                        matched = str_find(cur_pkg, query) >= 0
+                        matched = str_find(str_lower(cur_pkg), lower_query) >= 0
                     if matched:
                         print_str(str_concat("  \033[32m", str_concat(cur_pkg, "\033[0m")))
                         print_str(str_concat("      lpp add ", cur_pkg))
