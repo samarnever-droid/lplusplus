@@ -827,6 +827,32 @@ fn parse_object(bytes: &[u8], path: &Path) -> Result<ObjectImage, String> {
                 eh_frame_ranges.push((base, bytes.len()));
             }
         }
+    }
+
+    for sec in file.sections() {
+        let name = sec.name().unwrap_or("");
+        if let object::SectionFlags::Coff { characteristics } = sec.flags() {
+            if (characteristics & 0x00000800) != 0 || (characteristics & 0x00000200) != 0 {
+                continue;
+            }
+        }
+        let Some(class) = classify_section(name, sec.kind()) else {
+            continue;
+        };
+        let Some((_, _, base)) = map.iter().find(|(i, _, _)| *i == sec.index()) else {
+            continue;
+        };
+        let base = *base;
+
+        let buf: &[u8] = match class {
+            SectionClass::Text => &text,
+            SectionClass::Rodata => &rodata,
+            SectionClass::Data => &data,
+            SectionClass::InitArray => &init_array,
+            SectionClass::FiniArray => &fini_array,
+            SectionClass::Tls => &tls,
+            SectionClass::Bss => &[],
+        };
 
         for (off, rel) in sec.relocations() {
             let raw_off = usize::try_from(off).map_err(|_| "relocation offset overflow")?;

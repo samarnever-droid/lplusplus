@@ -456,7 +456,7 @@ fn is_avx2_detected() -> bool {
             };
             let id = self
                 .module
-                .declare_function(symbol_name, Linkage::Local, &sig)
+                .declare_function(symbol_name, Linkage::Export, &sig)
                 .map_err(|e| format!("declare '{}': {:?}", mir_fn.name, e))?;
             self.func_ids.insert(*mir_id, id);
         }
@@ -472,7 +472,7 @@ fn is_avx2_detected() -> bool {
             signature.returns.push(AbiParam::new(cl_types::I64));
             let id = self.module.declare_function(
                 &format!("__lpp_task_thunk_{}", function.id.0),
-                Linkage::Local,
+                Linkage::Export,
                 &signature,
             ).map_err(|error| format!("declare task thunk '{}': {:?}", function.name, error))?;
             self.task_thunk_ids.insert(function.id, id);

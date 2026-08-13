@@ -160,7 +160,7 @@ impl<'a, M: Module> FunctionLower<'a, M> {
 
                 let data_id = self
                     .module
-                    .declare_data(&symbol_name, Linkage::Local, false, false)
+                    .declare_data(&symbol_name, Linkage::Export, false, false)
                     .map_err(|e| format!("declare_data '{}': {:?}", symbol_name, e))?;
 
                 // A string literal is emitted with a real 24-byte ARC header in
