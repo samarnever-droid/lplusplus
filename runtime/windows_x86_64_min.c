@@ -724,3 +724,21 @@ LppVecI64x2 lpp_vec_i64x2_shr(LppVecI64x2 a, int64_t shift) { LppVecI64x2 r; r.l
 LppVecI64x2 lpp_vec_i64x2_shr_var(LppVecI64x2 a, LppVecI64x2 b) { LppVecI64x2 r; r.lo = a.lo >> b.lo; r.hi = a.hi >> b.hi; return r; }
 int64_t     lpp_vec_i64x2_extract(LppVecI64x2 v, int64_t idx) { return idx == 0 ? v.lo : v.hi; }
 int64_t     lpp_vec_i64x2_sum(LppVecI64x2 v) { return v.lo + v.hi; }
+
+int64_t lpp_net_accept_timeout(int64_t listener, int64_t timeout_ms) { (void)listener; (void)timeout_ms; return -1; }
+int64_t lpp_net_dial(const char *host, int64_t port) { (void)host; (void)port; return -1; }
+int64_t lpp_net_dial_udp(const char *host, int64_t port) { (void)host; (void)port; return -1; }
+int64_t lpp_net_listen_udp(int64_t port) { (void)port; return -1; }
+char *lpp_net_resolve(const char *host) { (void)host; return ""; }
+int64_t lpp_net_send_all(int64_t socket, const char *data, int64_t len) { (void)socket; (void)data; (void)len; return -1; }
+int64_t lpp_net_set_deadline(int64_t socket, int64_t deadline_ms) { (void)socket; (void)deadline_ms; return -1; }
+int64_t lpp_net_set_keepalive(int64_t socket, int64_t enable) { (void)socket; (void)enable; return -1; }
+int64_t lpp_net_set_timeout(int64_t socket, int64_t timeout_ms) { (void)socket; (void)timeout_ms; return -1; }
+int64_t lpp_file_copy(const char *src, const char *dst) { (void)src; (void)dst; return -1; }
+char *lpp_bool_to_str(int64_t b) { return b ? "true" : "false"; }
+char *lpp_float_to_str(double f) { return ""; }
+void lpp_free_str(char *s) { (void)s; }
+int64_t lpp_json_get_obj(int64_t handle, const char *key) { (void)handle; (void)key; return 0; }
+int64_t lpp_vec_i64_checksum(int64_t *vec, int64_t len) { (void)vec; (void)len; return 0; }
+int _fltused = 0;
+void *__ImageBase = 0;
