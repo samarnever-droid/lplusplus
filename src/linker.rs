@@ -2438,9 +2438,9 @@ pub fn write_elf_with_options(
     rw[tls_off_in_data..tls_off_in_data + merged.tls.len()].copy_from_slice(&merged.tls);
 
     // Fill GOT with symbol VAs (or TLS offsets).
-    let mut got_list: Vec<(String, usize)> = got_keys.iter().map(|(k, v)| (k.clone(), *v)).collect();
-    got_list.sort_by_key(|(_, i)| *i);
-    for (name, idx) in &got_list {
+    let mut got_list: Vec<(&String, &usize)> = got_keys.iter().collect();
+    got_list.sort_by_key(|(_, i)| **i);
+    for (name, idx) in got_list {
         let val = if let Some(rest) = name.strip_prefix("__local.") {
             // __local.{obj}.{class}.{off}
             let mut it = rest.splitn(3, '.');
@@ -2487,7 +2487,7 @@ pub fn write_elf_with_options(
         } else {
             0
         };
-        let pos = got_off_in_data + idx * 8;
+        let pos = got_off_in_data + *idx * 8;
         rw[pos..pos + 8].copy_from_slice(&val.to_le_bytes());
     }
 
@@ -5052,10 +5052,9 @@ pub fn write_macho_with_options(
 
     let mut bind = Vec::new();
     if !got_keys.is_empty() {
-        let mut ordered: Vec<(String, usize)> =
-            got_keys.iter().map(|(k, v)| (k.clone(), *v)).collect();
-        ordered.sort_by_key(|(_, i)| *i);
-        for (name, idx) in &ordered {
+        let mut ordered: Vec<(&String, &usize)> = got_keys.iter().collect();
+        ordered.sort_by_key(|(_, i)| **i);
+        for (name, idx) in ordered {
             if merged.syms.contains_key(name) {
                 continue;
             }
