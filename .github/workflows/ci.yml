@@ -322,12 +322,11 @@ jobs:
           def main():
               print(7)
           "@ | Set-Content -Path "$work\direct.lpp" -Encoding ascii
-          $rtSrc = Join-Path $PWD "runtime\windows_x86_64_min.c"
           $buildRt = Join-Path $work "build_rt.cmd"
           @"
           @echo off
           if defined VSCMD_BAT call "%VSCMD_BAT%" >nul
-          cl.exe /nologo /O2 /GS- /Gs1000000 /DLPP_FREESTANDING /c "$rtSrc" "/Fo:$work\lpp_runtime_min.obj" || exit /b 1
+          cl.exe /nologo /O2 /GS- /Gs1000000 /DLPP_FREESTANDING /c "%GITHUB_WORKSPACE%\runtime\windows_x86_64_min.c" "/Fo:$work\lpp_runtime_min.obj" || exit /b 1
           "@ | Set-Content -Path $buildRt -Encoding ascii
           cmd.exe /d /c $buildRt
           if ($LASTEXITCODE -ne 0) { throw "Failed to compile freestanding runtime" }
@@ -378,12 +377,11 @@ jobs:
           if (-not (Test-Path $obj)) { throw "Object not created" }
 
           # Build freestanding runtime
-          $rtSrc = Join-Path $PWD "runtime\windows_x86_64_min.c"
           $buildRt = "$work\build_rt.cmd"
           @"
           @echo off
           if defined VSCMD_BAT call "%VSCMD_BAT%" >nul
-          cl.exe /nologo /O2 /GS- /Gs1000000 /DLPP_FREESTANDING /c "$rtSrc" "/Fo:$work\rt.obj" || exit /b 1
+          cl.exe /nologo /O2 /GS- /Gs1000000 /DLPP_FREESTANDING /c "%GITHUB_WORKSPACE%\runtime\windows_x86_64_min.c" "/Fo:$work\rt.obj" || exit /b 1
           "@ | Set-Content -Path $buildRt -Encoding ascii
           cmd.exe /d /c $buildRt
           if ($LASTEXITCODE -ne 0) { throw "Runtime compile failed" }
