@@ -2555,8 +2555,9 @@ pub fn write_elf_with_options(
                 let lo = ((dest & 0xfff) >> 3) as u32;
                 let ldr = 0xf9400211u32 | (lo << 10);
                 rx[p0 + 12..p0 + 16].copy_from_slice(&ldr.to_le_bytes());
-                // add x16, x16, #lo12(GOT.PLT[2]) — x16 = &GOT.PLT[2]
-                let add = 0x91000210u32 | (((dest & 0xfff) as u32) << 10);
+                // add x16, x16, #lo12(GOT.PLT[1]) — x16 = &GOT.PLT[1] (GLIBC link_map slot requirement)
+                let dest_got1 = va_gotplt + 8;
+                let add = 0x91000210u32 | (((dest_got1 & 0xfff) as u32) << 10);
                 rx[p0 + 16..p0 + 20].copy_from_slice(&add.to_le_bytes());
                 // br x17
                 rx[p0 + 20..p0 + 24].copy_from_slice(&0xd61f0220u32.to_le_bytes());
