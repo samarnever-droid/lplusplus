@@ -724,3 +724,22 @@ LppVecI64x2 lpp_vec_i64x2_shr(LppVecI64x2 a, int64_t shift) { LppVecI64x2 r; r.l
 LppVecI64x2 lpp_vec_i64x2_shr_var(LppVecI64x2 a, LppVecI64x2 b) { LppVecI64x2 r; r.lo = a.lo >> b.lo; r.hi = a.hi >> b.hi; return r; }
 int64_t     lpp_vec_i64x2_extract(LppVecI64x2 v, int64_t idx) { return idx == 0 ? v.lo : v.hi; }
 int64_t     lpp_vec_i64x2_sum(LppVecI64x2 v) { return v.lo + v.hi; }
+
+/* Stubs for missing builtins required by L++ linker on Windows PE */
+int64_t lpp_file_copy(const char *source, const char *destination) { return -1; }
+char *lpp_float_to_str(double val) { return ""; }
+char *lpp_bool_to_str(int64_t val) { return val ? "true" : "false"; }
+char *lpp_free_str(void *p) { return ""; }
+void lpp_json_get_obj(void) {}
+void lpp_net_accept_timeout(void) {}
+void lpp_net_dial(void) {}
+void lpp_net_dial_udp(void) {}
+void lpp_net_listen_udp(void) {}
+void lpp_net_resolve(void) {}
+void lpp_net_send_all(void) {}
+void lpp_net_set_deadline(void) {}
+void lpp_net_set_keepalive(void) {}
+void lpp_net_set_timeout(void) {}
+void lpp_vec_i64_checksum(void) {}
+int _fltused = 1;
+int __ImageBase = 0;
