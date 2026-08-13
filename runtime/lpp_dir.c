@@ -51,13 +51,34 @@ void *lpp_dir_list(const char *path) {
     return list;
 }
 
+static int lpp_win_rmdir_recursive(const char *path) {
+    char pattern[MAX_PATH];
+    snprintf(pattern, sizeof(pattern), "%s\\*", path);
+
+    WIN32_FIND_DATAA fd;
+    HANDLE h = FindFirstFileA(pattern, &fd);
+    if (h != INVALID_HANDLE_VALUE) {
+        do {
+            if (strcmp(fd.cFileName, ".") == 0 || strcmp(fd.cFileName, "..") == 0)
+                continue;
+
+            char subpath[MAX_PATH];
+            snprintf(subpath, sizeof(subpath), "%s\\%s", path, fd.cFileName);
+
+            if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+                lpp_win_rmdir_recursive(subpath);
+            } else {
+                DeleteFileA(subpath);
+            }
+        } while (FindNextFileA(h, &fd));
+        FindClose(h);
+    }
+    return RemoveDirectoryA(path) ? 0 : -1;
+}
+
 int64_t lpp_dir_remove(const char *path) {
     if (!path) return -1;
-    /* RemoveDirectoryA only works on empty directories.
-       For a PM we need recursive removal, so shell out. */
-    char cmd[MAX_PATH + 32];
-    snprintf(cmd, sizeof(cmd), "rmdir /s /q \"%s\"", path);
-    return system(cmd) == 0 ? 0 : -1;
+    return lpp_win_rmdir_recursive(path);
 }
 
 int64_t lpp_path_exists(const char *path) {
@@ -84,10 +105,16 @@ char *lpp_path_join(const char *base, const char *child) {
 
 #else
 /* ── Unix (Linux / macOS) implementation ───────────────────────────────── */
+#define _XOPEN_SOURCE 500
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <dirent.h>
 #include <unistd.h>
+#include <ftw.h>
+
+static int lpp_nftw_remove(const char *fpath, const struct stat *sb, int typeflag, struct FTW *ftwbuf) {
+    return remove(fpath);
+}
 
 int64_t lpp_dir_create(const char *path) {
     if (!path) return -1;
@@ -117,10 +144,8 @@ void *lpp_dir_list(const char *path) {
 
 int64_t lpp_dir_remove(const char *path) {
     if (!path) return -1;
-    /* Recursive removal via system rm -rf for full directories */
-    char cmd[4096];
-    snprintf(cmd, sizeof(cmd), "rm -rf \"%s\"", path);
-    return system(cmd) == 0 ? 0 : -1;
+    /* Recursive removal via nftw */
+    return nftw(path, lpp_nftw_remove, 64, FTW_DEPTH | FTW_PHYS) == 0 ? 0 : -1;
 }
 
 int64_t lpp_path_exists(const char *path) {

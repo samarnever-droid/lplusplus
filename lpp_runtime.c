@@ -1,3 +1,5 @@
+#define _XOPEN_SOURCE 500
+
 /*
  * lpp_runtime.c  —  L++ Runtime Library (C implementation)
  *
