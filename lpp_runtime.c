@@ -2109,9 +2109,23 @@ int64_t lpp_vec_i64_checksum(int64_t n) {
 #endif
 }
 
+static int is_safe_command(const char *cmd) {
+    if (!cmd) return 0;
+    while (*cmd) {
+        switch (*cmd) {
+            case ';': case '|': case '&': case '<': case '>':
+            case '$': case '`': case '\n': case '\r': case '(': case ')':
+                return 0;
+        }
+        cmd++;
+    }
+    return 1;
+}
+
 int64_t lpp_command_exec(int64_t cmd_ptr) {
     if (!cmd_ptr) return -1;
     const char *cmd = (const char *)(intptr_t)cmd_ptr;
+    if (!is_safe_command(cmd)) return -1;
     int res = system(cmd);
     return (int64_t)res;
 }
@@ -2123,6 +2137,11 @@ int64_t lpp_command_output(int64_t cmd_ptr) {
         return (int64_t)(intptr_t)empty;
     }
     const char *cmd = (const char *)(intptr_t)cmd_ptr;
+    if (!is_safe_command(cmd)) {
+        char *empty = (char *)lpp_arc_alloc(1);
+        empty[0] = '\0';
+        return (int64_t)(intptr_t)empty;
+    }
     
 #if defined(_WIN32)
     FILE *fp = _popen(cmd, "r");
