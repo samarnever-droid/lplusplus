@@ -743,3 +743,44 @@ void lpp_net_set_timeout(void) {}
 void lpp_vec_i64_checksum(void) {}
 int _fltused = 1;
 int __ImageBase = 0;
+
+/* Stubs for missing builtins required by L++ linker on Windows PE */
+char *lpp_float_to_str(double val) { return ""; }
+int64_t lpp_file_copy(const char *source, const char *destination) { return -1; }
+char *lpp_bool_to_str(int64_t val) { return val ? "true" : "false"; }
+char *lpp_free_str(void *p) { return ""; }
+int64_t lpp_net_accept_timeout(int64_t a) { return -1; }
+int64_t lpp_net_dial(const char *a, int64_t b) { return -1; }
+int64_t lpp_net_dial_udp(const char *a, int64_t b) { return -1; }
+int64_t lpp_net_listen_udp(int64_t a) { return -1; }
+char *lpp_net_resolve(const char *a) { return ""; }
+int64_t lpp_net_send_all(int64_t a, const char *b) { return -1; }
+int64_t lpp_net_set_deadline(int64_t a, int64_t b) { return -1; }
+int64_t lpp_net_set_keepalive(int64_t a, int64_t b) { return -1; }
+int64_t lpp_net_set_timeout(int64_t a, int64_t b) { return -1; }
+int64_t lpp_vec_i64_checksum(void *a, int64_t b, int64_t c) { return 0; }
+void *lpp_json_get_obj(int64_t a, const char *b) { return 0; }
+int _fltused = 1;
+int __ImageBase = 0;
+
+/* Stubs for missing builtins required by L++ linker on Windows PE */
+void lpp_gui_clear(void) {}
+void lpp_gui_dialog_message(void) {}
+void lpp_gui_draw_circle(void) {}
+void lpp_gui_draw_line(void) {}
+void lpp_gui_draw_rect(void) {}
+void lpp_gui_draw_rounded_rect(void) {}
+void lpp_gui_draw_text(void) {}
+void lpp_gui_get_ticks_ms(void) {}
+void lpp_gui_key_down(void) {}
+void lpp_gui_measure_text_width(void) {}
+void lpp_gui_mouse_down(void) {}
+void lpp_gui_mouse_x(void) {}
+void lpp_gui_mouse_y(void) {}
+void lpp_gui_present(void) {}
+void lpp_gui_window_close(void) {}
+void lpp_gui_window_create(void) {}
+void lpp_gui_window_is_open(void) {}
+void lpp_gui_window_poll_events(void) {}
+int _fltused = 1;
+int __ImageBase = 0;
