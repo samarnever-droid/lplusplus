@@ -744,3 +744,6 @@ int64_t lpp_net_send_all(int64_t f, const char* d, int64_t l) { return -1; }
 void lpp_net_set_deadline(int64_t f, int64_t r, int64_t w) {}
 void lpp_net_set_keepalive(int64_t f, int64_t t) {}
 void lpp_net_set_timeout(int64_t f, int64_t r, int64_t w) {}
+void lpp_print_backtrace(void) {}
+void lpp_panic(const char* s, ...) { ExitProcess(1); }
+void lpp_init_crash_handler(void) {}
