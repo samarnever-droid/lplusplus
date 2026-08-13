@@ -724,3 +724,58 @@ LppVecI64x2 lpp_vec_i64x2_shr(LppVecI64x2 a, int64_t shift) { LppVecI64x2 r; r.l
 LppVecI64x2 lpp_vec_i64x2_shr_var(LppVecI64x2 a, LppVecI64x2 b) { LppVecI64x2 r; r.lo = a.lo >> b.lo; r.hi = a.hi >> b.hi; return r; }
 int64_t     lpp_vec_i64x2_extract(LppVecI64x2 v, int64_t idx) { return idx == 0 ? v.lo : v.hi; }
 int64_t     lpp_vec_i64x2_sum(LppVecI64x2 v) { return v.lo + v.hi; }
+
+char *lpp_float_to_str(double val) {
+    char *buf = (char *)lpp_alloc(64);
+    // Simple float format stub
+    int64_t i = (int64_t)val;
+    int64_t frac = (int64_t)((val - (double)i) * 1000000.0);
+    if (frac < 0) frac = -frac;
+
+    char int_buf[32];
+    int int_len = 0;
+    int64_t temp = i < 0 ? -i : i;
+    do {
+        int_buf[int_len++] = '0' + (temp % 10);
+        temp /= 10;
+    } while (temp > 0);
+    if (i < 0) int_buf[int_len++] = '-';
+
+    int buf_len = 0;
+    while (int_len > 0) {
+        buf[buf_len++] = int_buf[--int_len];
+    }
+    buf[buf_len++] = '.';
+
+    char frac_buf[32];
+    int frac_len = 0;
+    temp = frac;
+    for (int j = 0; j < 6; j++) {
+        frac_buf[frac_len++] = '0' + (temp % 10);
+        temp /= 10;
+    }
+    while (frac_len > 0) {
+        buf[buf_len++] = frac_buf[--frac_len];
+    }
+    buf[buf_len] = '\0';
+    return buf;
+}
+
+/* Stubs for unresolved COFF symbols */
+int _fltused = 1;
+void *__ImageBase = 0;
+
+char *lpp_bool_to_str(int64_t val) { return ""; }
+void lpp_free_str(char *s) {}
+void lpp_file_copy(const char *src, const char *dst) {}
+char *lpp_json_get_obj(int64_t handle, const char *key) { return ""; }
+int64_t lpp_net_accept_timeout(int64_t l, int64_t t) { return -1; }
+int64_t lpp_net_dial(const char *h, int64_t p) { return -1; }
+int64_t lpp_net_dial_udp(const char *h, int64_t p) { return -1; }
+int64_t lpp_net_listen_udp(int64_t p) { return -1; }
+int64_t lpp_net_resolve(const char *h) { return 0; }
+int64_t lpp_net_send_all(int64_t s, const char *d) { return -1; }
+void lpp_net_set_deadline(int64_t s, int64_t t) {}
+void lpp_net_set_keepalive(int64_t s, int64_t e) {}
+void lpp_net_set_timeout(int64_t s, int64_t t) {}
+int64_t lpp_vec_i64_checksum(void *p, int64_t off, int64_t len) { return 0; }
