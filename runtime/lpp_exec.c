@@ -26,7 +26,30 @@ extern void  lpp_arc_release(void *ptr);
 #ifndef LPP_EXEC_EXCLUDE_BUILTINS
 int64_t lpp_command_exec(const char *cmdline) {
     if (!cmdline) return -1;
-    return (int64_t)system(cmdline);
+
+    STARTUPINFOA si = {sizeof(si)};
+    PROCESS_INFORMATION pi = {0};
+
+    char *dup = malloc(strlen(cmdline) + 1);
+    if (dup) strcpy(dup, cmdline);
+    else return -1;
+
+    BOOL ok = CreateProcessA(NULL, dup, NULL, NULL, FALSE,
+                              0, NULL, NULL, &si, &pi);
+    free(dup);
+
+    if (!ok) {
+        return -1;
+    }
+
+    WaitForSingleObject(pi.hProcess, INFINITE);
+    DWORD exit_code = 1;
+    GetExitCodeProcess(pi.hProcess, &exit_code);
+
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+
+    return (int64_t)(int)exit_code;
 }
 
 char *lpp_command_output(const char *cmdline) {
@@ -97,16 +120,26 @@ int64_t lpp_env_set(const char *name, const char *value) {
 #include <unistd.h>
 #include <spawn.h>
 #include <signal.h>
+#include <wordexp.h>
 
 extern char **environ;
 
 #ifndef LPP_EXEC_EXCLUDE_BUILTINS
 int64_t lpp_command_exec(const char *cmdline) {
     if (!cmdline) return -1;
+    wordexp_t p;
+    if (wordexp(cmdline, &p, WRDE_NOCMD) != 0) {
+        return -1;
+    }
+    if (p.we_wordc == 0) {
+        wordfree(&p);
+        return -1;
+    }
+
     pid_t pid;
-    char *sh = "/bin/sh";
-    char *argv[] = {sh, (char *)"-c", (char *)cmdline, NULL};
-    int status = posix_spawn(&pid, sh, NULL, NULL, argv, environ);
+    int status = posix_spawnp(&pid, p.we_wordv[0], NULL, NULL, p.we_wordv, environ);
+    wordfree(&p);
+
     if (status != 0) return -1;
     waitpid(pid, &status, 0);
     return WIFEXITED(status) ? (int64_t)WEXITSTATUS(status) : -1;
@@ -114,11 +147,29 @@ int64_t lpp_command_exec(const char *cmdline) {
 
 char *lpp_command_output(const char *cmdline) {
     if (!cmdline) return lpp_empty_str();
+
+    wordexp_t p;
+    if (wordexp(cmdline, &p, WRDE_NOCMD) != 0) {
+        return lpp_empty_str();
+    }
+    if (p.we_wordc == 0) {
+        wordfree(&p);
+        return lpp_empty_str();
+    }
+
     int pipefd[2];
-    if (pipe(pipefd) < 0) return lpp_empty_str();
+    if (pipe(pipefd) < 0) {
+        wordfree(&p);
+        return lpp_empty_str();
+    }
 
     pid_t pid = fork();
-    if (pid < 0) { close(pipefd[0]); close(pipefd[1]); return lpp_empty_str(); }
+    if (pid < 0) {
+        close(pipefd[0]);
+        close(pipefd[1]);
+        wordfree(&p);
+        return lpp_empty_str();
+    }
 
     if (pid == 0) {
         /* child */
@@ -126,9 +177,11 @@ char *lpp_command_output(const char *cmdline) {
         dup2(pipefd[1], STDOUT_FILENO);
         dup2(pipefd[1], STDERR_FILENO);
         close(pipefd[1]);
-        execl("/bin/sh", "sh", "-c", cmdline, (char *)NULL);
+        execvp(p.we_wordv[0], p.we_wordv);
         _exit(127);
     }
+
+    wordfree(&p);
 
     close(pipefd[1]);
     int cap = 4096, len = 0;
