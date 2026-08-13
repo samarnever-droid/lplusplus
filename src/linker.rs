@@ -3727,7 +3727,7 @@ fn is_kernel32_symbol(name: &str) -> bool {
             | "GetStdHandle" | "WriteFile" | "ReadFile" | "VirtualAlloc" | "VirtualFree"
             | "VirtualProtect" | "CreateThread" | "WaitForSingleObject" | "WaitForMultipleObjects"
             | "CloseHandle" | "CreateFileA" | "CreateFileW" | "GetFileSize" | "SetFilePointer"
-            | "DeleteFileA" | "MoveFileA" | "GetFileAttributesA" | "CreateDirectoryA"
+            | "DeleteFileA" | "MoveFileA" | "CopyFileA" | "GetFileAttributesA" | "CreateDirectoryA"
             | "RemoveDirectoryA" | "FindFirstFileA" | "FindNextFileA" | "FindClose" | "Sleep"
             | "CreateProcessA" | "GetExitCodeProcess" | "CreatePipe" | "GetEnvironmentVariableA"
             | "SetEnvironmentVariableA" | "GetModuleFileNameA" | "GetModuleHandleA"
