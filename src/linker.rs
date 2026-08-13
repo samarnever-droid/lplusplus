@@ -2510,8 +2510,8 @@ pub fn write_elf_with_options(
                 // GOT.PLT[0] = _DYNAMIC
                 rw[gotplt_off_in_data..gotplt_off_in_data + 8]
                     .copy_from_slice(&va_dynamic.to_le_bytes());
-                let mut plt_ordered: Vec<(String, usize)> =
-                    plt_keys.iter().map(|(k, v)| (k.clone(), *v)).collect();
+                let mut plt_ordered: Vec<(&String, &usize)> =
+                    plt_keys.iter().collect();
                 plt_ordered.sort_by_key(|(_, i)| *i);
                 for (i, (_name, _)) in plt_ordered.iter().enumerate() {
                     let po = plt_off_in_text + plt0_size + i * 16;
@@ -2561,8 +2561,8 @@ pub fn write_elf_with_options(
                 // br x17
                 rx[p0 + 20..p0 + 24].copy_from_slice(&0xd61f0220u32.to_le_bytes());
                 // GOT.PLT[0..2] = 0; ld.so fills [0]=link_map, [1]=module_id, [2]=resolver at startup.
-                let mut plt_ordered: Vec<(String, usize)> =
-                    plt_keys.iter().map(|(k, v)| (k.clone(), *v)).collect();
+                let mut plt_ordered: Vec<(&String, &usize)> =
+                    plt_keys.iter().collect();
                 plt_ordered.sort_by_key(|(_, i)| *i);
                 for (i, (_name, _)) in plt_ordered.iter().enumerate() {
                     let po = plt_off_in_text + plt0_size + i * 16;
@@ -2592,11 +2592,11 @@ pub fn write_elf_with_options(
     // dynsym / dynstr / hash / rela.plt
     if dyn_mode || opts.shared {
         // dynsym[0] = NULL already zeroed
-        let mut plt_ordered: Vec<(String, usize)> =
-            plt_keys.iter().map(|(k, v)| (k.clone(), *v)).collect();
+        let mut plt_ordered: Vec<(&String, &usize)> =
+            plt_keys.iter().collect();
         plt_ordered.sort_by_key(|(_, i)| *i);
         for (i, (name, _)) in plt_ordered.iter().enumerate() {
-            let so = *dynstr_index.get(name).unwrap_or(&0);
+            let so = *dynstr_index.get(*name).unwrap_or(&0);
             let e = dynsym_off + 24 * (i + 1);
             put_u32(&mut rx, e, so); // st_name
             rx[e + 4] = 0x12; // STB_GLOBAL STT_FUNC
