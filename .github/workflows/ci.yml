@@ -326,7 +326,7 @@ jobs:
           $buildRt = Join-Path $work "build_rt.cmd"
           @"
           @echo off
-          call "%VSCMD_BAT%" >nul || exit /b 1
+          if defined VSCMD_BAT call "%VSCMD_BAT%" >nul
           cl.exe /nologo /O2 /GS- /Gs1000000 /DLPP_FREESTANDING /c runtime\windows_x86_64_min.c "/Fo:$work\lpp_runtime_min.obj" || exit /b 1
           "@ | Set-Content -Path $buildRt -Encoding ascii
           cmd.exe /d /c $buildRt
@@ -381,7 +381,7 @@ jobs:
           $buildRt = "$work\build_rt.cmd"
           @"
           @echo off
-          call "%VSCMD_BAT%" >nul || exit /b 1
+          if defined VSCMD_BAT call "%VSCMD_BAT%" >nul
           cl.exe /nologo /O2 /GS- /Gs1000000 /DLPP_FREESTANDING /c runtime\windows_x86_64_min.c "/Fo:$work\rt.obj" || exit /b 1
           "@ | Set-Content -Path $buildRt -Encoding ascii
           cmd.exe /d /c $buildRt
