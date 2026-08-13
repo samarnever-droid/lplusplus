@@ -5052,22 +5052,21 @@ pub fn write_macho_with_options(
 
     let mut bind = Vec::new();
     if !got_keys.is_empty() {
-        let mut ordered: Vec<(String, usize)> =
-            got_keys.iter().map(|(k, v)| (k.clone(), *v)).collect();
-        ordered.sort_by_key(|(_, i)| *i);
+        let mut ordered: Vec<(&String, &usize)> = got_keys.iter().collect();
+        ordered.sort_by_key(|(_, i)| **i);
         for (name, idx) in &ordered {
-            if merged.syms.contains_key(name) {
+            if merged.syms.contains_key(*name) {
                 continue;
             }
-            let clean = name.strip_prefix('_').unwrap_or(name);
+            let clean = name.strip_prefix('_').unwrap_or(*name);
             // Resolution order:
             // 1. Scanned dylib exports (sym_to_dylib_ord built above from actual .dylib files)
             // 2. Explicit --import DLL=sym mapping (extra_imports)
             // 3. Fall back to ordinal 1 (libSystem) — shouldn't happen in practice
-            let raw_ord = if let Some(&ord) = sym_to_dylib_ord.get(name).or_else(|| sym_to_dylib_ord.get(clean)) {
+            let raw_ord = if let Some(&ord) = sym_to_dylib_ord.get(*name).or_else(|| sym_to_dylib_ord.get(clean)) {
                 ord
             } else {
-                let target_dylib = opts.extra_imports.get(clean).or_else(|| opts.extra_imports.get(name));
+                let target_dylib = opts.extra_imports.get(clean).or_else(|| opts.extra_imports.get(*name));
                 if let Some(td) = target_dylib {
                     dylibs.iter().position(|d| d.contains(td.as_str())).map(|p| p + 1).unwrap_or(1)
                 } else {
@@ -5083,7 +5082,7 @@ pub fn write_macho_with_options(
             }
             bind.push(0x50 | 1); // SET_TYPE_IMM POINTER
             // segment + offset: offset from start of __DATA segment for this GOT slot
-            let got_slot_off = got_in_data as u64 + (*idx as u64) * 8;
+            let got_slot_off = got_in_data as u64 + (**idx as u64) * 8;
             bind.push(0x70 | data_seg_ord); // SET_SEGMENT_AND_OFFSET_ULEB
             uleb(&mut bind, got_slot_off);
             bind.push(0x40); // SET_SYMBOL_TRAILING_FLAGS_IMM 0
