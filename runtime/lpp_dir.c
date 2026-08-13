@@ -51,13 +51,36 @@ void *lpp_dir_list(const char *path) {
     return list;
 }
 
+static void lpp_dir_remove_recursive_win(const char *path) {
+    char pattern[MAX_PATH];
+    snprintf(pattern, sizeof(pattern), "%s\\*", path);
+    WIN32_FIND_DATAA fd;
+    HANDLE h = FindFirstFileA(pattern, &fd);
+    if (h == INVALID_HANDLE_VALUE) return;
+
+    do {
+        if (strcmp(fd.cFileName, ".") == 0 || strcmp(fd.cFileName, "..") == 0)
+            continue;
+
+        char full[MAX_PATH];
+        snprintf(full, sizeof(full), "%s\\%s", path, fd.cFileName);
+
+        if ((fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) && !(fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) {
+            lpp_dir_remove_recursive_win(full);
+            RemoveDirectoryA(full);
+        } else if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            RemoveDirectoryA(full);
+        } else {
+            DeleteFileA(full);
+        }
+    } while (FindNextFileA(h, &fd));
+    FindClose(h);
+}
+
 int64_t lpp_dir_remove(const char *path) {
     if (!path) return -1;
-    /* RemoveDirectoryA only works on empty directories.
-       For a PM we need recursive removal, so shell out. */
-    char cmd[MAX_PATH + 32];
-    snprintf(cmd, sizeof(cmd), "rmdir /s /q \"%s\"", path);
-    return system(cmd) == 0 ? 0 : -1;
+    lpp_dir_remove_recursive_win(path);
+    return RemoveDirectoryA(path) ? 0 : -1;
 }
 
 int64_t lpp_path_exists(const char *path) {
@@ -115,12 +138,35 @@ void *lpp_dir_list(const char *path) {
     return list;
 }
 
+static void lpp_dir_remove_recursive_unix(const char *path) {
+    DIR *d = opendir(path);
+    if (!d) return;
+
+    struct dirent *entry;
+    while ((entry = readdir(d)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+            continue;
+
+        char full_path[4096];
+        snprintf(full_path, sizeof(full_path), "%s/%s", path, entry->d_name);
+
+        struct stat st;
+        if (lstat(full_path, &st) == 0) {
+            if (S_ISDIR(st.st_mode)) {
+                lpp_dir_remove_recursive_unix(full_path);
+                rmdir(full_path);
+            } else {
+                unlink(full_path);
+            }
+        }
+    }
+    closedir(d);
+}
+
 int64_t lpp_dir_remove(const char *path) {
     if (!path) return -1;
-    /* Recursive removal via system rm -rf for full directories */
-    char cmd[4096];
-    snprintf(cmd, sizeof(cmd), "rm -rf \"%s\"", path);
-    return system(cmd) == 0 ? 0 : -1;
+    lpp_dir_remove_recursive_unix(path);
+    return rmdir(path) == 0 ? 0 : -1;
 }
 
 int64_t lpp_path_exists(const char *path) {
