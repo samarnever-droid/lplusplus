@@ -1556,8 +1556,7 @@ impl<'a> MirLowerCtx<'a> {
                 }
 
                 // Fill in default parameter values if fewer args than params
-                let effective_args: Vec<&Expr>;
-                let mut default_owned: Vec<Expr> = Vec::new();
+                let mut effective_args: Vec<&Expr> = args.iter().collect();
                 if let Expr::Identifier(name, _) = &**callee {
                     let func_def = self.program.declarations.iter().find_map(|d| {
                         if let TopLevel::Function(f) = d {
@@ -1566,17 +1565,15 @@ impl<'a> MirLowerCtx<'a> {
                     });
                     if let Some(f) = func_def {
                         if args.len() < f.params.len() {
-                            // Clone defaults for missing args
+                            // Use references directly instead of cloning
                             for i in args.len()..f.params.len() {
                                 if let Some(ref default_expr) = f.params[i].default {
-                                    default_owned.push(default_expr.clone());
+                                    effective_args.push(default_expr);
                                 }
                             }
                         }
                     }
                 }
-                // Build effective arg list: provided args + defaults
-                effective_args = args.iter().chain(default_owned.iter()).collect();
 
                 let mut lowered_args = Vec::new();
                 let variadic_spec = if let Expr::Identifier(name, _) = &**callee {
