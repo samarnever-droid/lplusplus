@@ -2277,14 +2277,10 @@ fn fetch_registry_json() -> Option<String> {
         PathBuf::from("registry.json"),
     ];
 
-    for local in &local_paths {
-        if local.exists() {
-            if let Ok(content) = fs::read_to_string(local) {
-                if is_registry_json(&content) {
-                    return Some(content);
-                }
-            }
-        }
+    if let Some(content) = local_paths.iter().find_map(|local| {
+        fs::read_to_string(local).ok().filter(|c| is_registry_json(c))
+    }) {
+        return Some(content);
     }
 
     if let Ok(exe) = std::env::current_exe() {
@@ -2296,14 +2292,10 @@ fn fetch_registry_json() -> Option<String> {
                 parent.join("githubpage/registry.json"),
                 parent.join("../githubpage/registry.json"),
             ];
-            for candidate in &exe_candidates {
-                if candidate.exists() {
-                    if let Ok(content) = fs::read_to_string(candidate) {
-                        if is_registry_json(&content) {
-                            return Some(content);
-                        }
-                    }
-                }
+            if let Some(content) = exe_candidates.iter().find_map(|candidate| {
+                fs::read_to_string(candidate).ok().filter(|c| is_registry_json(c))
+            }) {
+                return Some(content);
             }
         }
     }
