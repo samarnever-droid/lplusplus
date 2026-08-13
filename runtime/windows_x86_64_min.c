@@ -724,3 +724,23 @@ LppVecI64x2 lpp_vec_i64x2_shr(LppVecI64x2 a, int64_t shift) { LppVecI64x2 r; r.l
 LppVecI64x2 lpp_vec_i64x2_shr_var(LppVecI64x2 a, LppVecI64x2 b) { LppVecI64x2 r; r.lo = a.lo >> b.lo; r.hi = a.hi >> b.hi; return r; }
 int64_t     lpp_vec_i64x2_extract(LppVecI64x2 v, int64_t idx) { return idx == 0 ? v.lo : v.hi; }
 int64_t     lpp_vec_i64x2_sum(LppVecI64x2 v) { return v.lo + v.hi; }
+
+int64_t lpp_file_copy(const char *source, const char *destination) { if (!source || !destination) return -1; return CopyFileA(source, destination, FALSE) ? 0 : -1; }
+void lpp_free_str(char *s) { if(s) VirtualFree(s, 0, MEM_RELEASE); }
+int64_t lpp_vec_i64_checksum(const int64_t *data, int64_t len) { int64_t s=0; for(int64_t i=0; i<len; i++) s^=data[i]; return s; }
+
+// Dummy missing float & json & net functions to satisfy lpp-link
+void* __ImageBase = 0;
+int _fltused = 0;
+char* lpp_bool_to_str(int b) { return lpp_strdup(b ? "true" : "false"); }
+char* lpp_float_to_str(double f) { return lpp_strdup("0.0"); }
+void* lpp_json_get_obj(void* j) { return 0; }
+int64_t lpp_net_accept_timeout(int64_t l, int64_t t) { return -1; }
+int64_t lpp_net_dial(const char* a) { return -1; }
+int64_t lpp_net_dial_udp(const char* a) { return -1; }
+int64_t lpp_net_listen_udp(const char* a) { return -1; }
+int64_t lpp_net_resolve(const char* a, char* b, int c) { return -1; }
+int64_t lpp_net_send_all(int64_t f, const char* d, int64_t l) { return -1; }
+void lpp_net_set_deadline(int64_t f, int64_t r, int64_t w) {}
+void lpp_net_set_keepalive(int64_t f, int64_t t) {}
+void lpp_net_set_timeout(int64_t f, int64_t r, int64_t w) {}
