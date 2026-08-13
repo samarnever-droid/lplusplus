@@ -724,3 +724,39 @@ LppVecI64x2 lpp_vec_i64x2_shr(LppVecI64x2 a, int64_t shift) { LppVecI64x2 r; r.l
 LppVecI64x2 lpp_vec_i64x2_shr_var(LppVecI64x2 a, LppVecI64x2 b) { LppVecI64x2 r; r.lo = a.lo >> b.lo; r.hi = a.hi >> b.hi; return r; }
 int64_t     lpp_vec_i64x2_extract(LppVecI64x2 v, int64_t idx) { return idx == 0 ? v.lo : v.hi; }
 int64_t     lpp_vec_i64x2_sum(LppVecI64x2 v) { return v.lo + v.hi; }
+
+// Provide missing dummy implementations for linker on windows_x86_64_min
+int _fltused = 0;
+void *__ImageBase = 0;
+
+char *lpp_bool_to_str(int64_t val) {
+    if (val) return lpp_str_concat("true", "");
+    return lpp_str_concat("false", "");
+}
+
+int64_t lpp_file_copy(const char *src, const char *dst) {
+    return 0; // dummy
+}
+
+char *lpp_float_to_str(double val) {
+    return lpp_empty_str(); // dummy
+}
+
+void lpp_free_str(char *s) {
+    // dummy
+}
+
+int64_t lpp_json_get_obj(int64_t h, const char *key) {
+    return 0; // dummy
+}
+
+int64_t lpp_net_accept_timeout(int64_t fd, int64_t ms) { return -1; }
+int64_t lpp_net_dial(const char *addr) { return -1; }
+int64_t lpp_net_dial_udp(const char *addr) { return -1; }
+int64_t lpp_net_listen_udp(const char *addr) { return -1; }
+char *lpp_net_resolve(const char *host) { return lpp_empty_str(); }
+int64_t lpp_net_send_all(int64_t fd, const char *buf, int64_t len) { return -1; }
+int64_t lpp_net_set_deadline(int64_t fd, int64_t ms) { return -1; }
+int64_t lpp_net_set_keepalive(int64_t fd, int64_t ms) { return -1; }
+int64_t lpp_net_set_timeout(int64_t fd, int64_t ms) { return -1; }
+int64_t lpp_vec_i64_checksum(int64_t *vec) { return 0; }

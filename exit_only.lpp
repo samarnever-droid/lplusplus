@@ -1,0 +1,4 @@
+def noop() -> Int:
+    return 0
+def main():
+    noop()
