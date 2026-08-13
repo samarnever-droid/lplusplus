@@ -1612,8 +1612,8 @@ fn resolve_local_imports(
     for decl in declarations.iter() {
         if let ast::TopLevel::Import(import_kind) = decl {
             let path = match import_kind {
-                ast::ImportKind::Module { path, .. } => path.clone(),
-                ast::ImportKind::Selective { path, .. } => path.clone(),
+                ast::ImportKind::Module { path, .. } => path,
+                ast::ImportKind::Selective { path, .. } => path,
             };
             let module = path.join("/");
             let module_name = path.last().cloned().unwrap_or_default();
@@ -1658,8 +1658,8 @@ fn resolve_local_imports(
         for decl in &lib_ast.declarations {
             if let ast::TopLevel::Import(import_kind) = decl {
                 let path = match import_kind {
-                    ast::ImportKind::Module { path, .. } => path.clone(),
-                    ast::ImportKind::Selective { path, .. } => path.clone(),
+                    ast::ImportKind::Module { path, .. } => path,
+                    ast::ImportKind::Selective { path, .. } => path,
                 };
                 let sub_module = path.join("/");
                 let sub_module_name = path.last().cloned().unwrap_or_default();
