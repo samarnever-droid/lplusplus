@@ -1543,7 +1543,7 @@ fn collect_undefined(objects: &[ObjectImage], merged: &Merged) -> Vec<String> {
             }
         }
         for n in &o.undefined {
-            if !merged.syms.contains_key(n) {
+            if !merged.syms.contains_key(n) && n != "__ImageBase" && !n.starts_with("__self_") {
                 u.insert(n.clone());
             }
         }
