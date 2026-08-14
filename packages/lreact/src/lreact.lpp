@@ -1,14 +1,36 @@
-# packages/lreact/src/lreact.lpp
 # Lreact Native Desktop & GPU Framework for L++
-# Integrates Native OS System Window (Win32 / X11) + React IPC + Vulkan GPU Acceleration
+#
+# The API is deliberately capability-oriented: commands are exact names,
+# shell execution is not exposed, and Vulkan reports the real backend state.
 
-import gui
+import http
+
+const LREACT_API_VERSION = "2.0.0"
+const VULKAN_STATUS_UNAVAILABLE = 0
+const VULKAN_STATUS_READY = 1
+const VULKAN_STATUS_FRAME_ACTIVE = 2
+
+struct VulkanConfig:
+    application_name: Str
+    required_api_version: Str
+    enable_validation: Int
+    preferred_device: Str
 
 struct VulkanDevice:
+    status: Int
+    backend: Str
     device_name: Str
     driver_version: Str
+    api_version: Str
     memory_heap_mb: Int
     queue_family_count: Int
+    supports_present: Int
+    reason: Str
+
+struct VulkanFrame:
+    status: Int
+    frame_index: Int
+    reason: Str
 
 struct IPCRequest:
     id: Str
@@ -20,40 +42,84 @@ struct IPCResponse:
     status: Int
     result_json: Str
 
-def init_vulkan() -> VulkanDevice:
-    print_str("[Lreact Vulkan] Initializing Vulkan 1.3 GPU Instance & Logical Device...\n")
-    print_str("[Lreact Vulkan] Selected GPU: NVIDIA GeForce RTX / Vulkan Generic Driver\n")
-    
+def vulkan_default_config() -> VulkanConfig:
+    mut config := VulkanConfig()
+    config.application_name = "Lreact"
+    config.required_api_version = "1.3"
+    config.enable_validation = 0
+    config.preferred_device = ""
+    return config
+
+# This is the stable capability boundary. A real loader can replace the body
+# without changing application code or pretending that a GPU was found.
+def vulkan_probe(config: VulkanConfig) -> VulkanDevice:
     mut dev := VulkanDevice()
-    dev.device_name = "NVIDIA GeForce RTX 4080 (Vulkan 1.3)"
-    dev.driver_version = "551.23.0"
-    dev.memory_heap_mb = 16384
-    dev.queue_family_count = 3
+    dev.status = VULKAN_STATUS_UNAVAILABLE
+    dev.backend = "none"
+    dev.device_name = ""
+    dev.driver_version = ""
+    dev.api_version = config.required_api_version
+    dev.memory_heap_mb = 0
+    dev.queue_family_count = 0
+    dev.supports_present = 0
+    dev.reason = "Vulkan loader integration is not available in this build"
     return dev
 
-def create_window(title: Str, width: Int, height: Int) -> Int:
-    print_str("[Lreact Window] Spawning Native OS System Window: '")
-    print_str(title)
-    print_str("'\n")
-    return gui.create(title, width, height)
+def init_vulkan() -> VulkanDevice:
+    config := vulkan_default_config()
+    return vulkan_probe(config)
+
+def vulkan_capabilities_json(device: VulkanDevice) -> Str:
+    mut result := "{\"status\":\"unavailable\",\"backend\":\""
+    result = str_concat(result, device.backend)
+    result = str_concat(result, "\",\"api_version\":\"")
+    result = str_concat(result, device.api_version)
+    result = str_concat(result, "\",\"reason\":\"")
+    result = str_concat(result, device.reason)
+    result = str_concat(result, "\"}")
+    return result
+
+def vulkan_begin_frame(device: VulkanDevice, frame_index: Int) -> VulkanFrame:
+    mut frame := VulkanFrame()
+    frame.status = VULKAN_STATUS_UNAVAILABLE
+    frame.frame_index = frame_index
+    frame.reason = device.reason
+    return frame
+
+def vulkan_end_frame(frame: VulkanFrame) -> Str:
+    if frame.status != VULKAN_STATUS_FRAME_ACTIVE:
+        return "{\"status\":\"rejected\",\"reason\":\"no active Vulkan frame\"}"
+    return "{\"status\":\"presented\"}"
+
+def api_version_json() -> Str:
+    return "{\"version\":\"2.0.0\",\"framework\":\"Lreact\",\"protocol\":1}"
+
+def health_json() -> Str:
+    return "{\"status\":\"ok\",\"api\":\"2.0.0\",\"shell\":false}"
+
+def web_capabilities_json() -> Str:
+    return "{\"backend\":\"lreact-web\",\"protocol\":1,\"transport\":\"http-json\",\"commands\":[\"health\",\"get_version\",\"vulkan_probe\",\"vulkan_capabilities\",\"vulkan_render_frame\",\"read_file\",\"file_exists\"]}"
 
 def dispatch_cmd(cmd: Str) -> Str:
-    print_str("[Lreact IPC] Dispatching native command: '")
-    print_str(cmd)
-    print_str("'\n")
-
-    if str_find(cmd, "vulkan") >= 0:
-        return "{\"gpu\":\"NVIDIA GeForce RTX (Vulkan 1.3)\",\"vram_mb\":16384,\"status\":\"vkSuccess\"}"
-    if str_find(cmd, "version") >= 0:
-        return "{\"version\":\"4.6.1\",\"framework\":\"Lreact v1.1.0 (Native OS Window)\"}"
-    if str_find(cmd, "read") >= 0:
+    if lpp_str_eq(cmd, "health") == 1:
+        return health_json()
+    if lpp_str_eq(cmd, "get_version") == 1:
+        return api_version_json()
+    if lpp_str_eq(cmd, "vulkan_probe") == 1:
+        dev := init_vulkan()
+        return vulkan_capabilities_json(dev)
+    if lpp_str_eq(cmd, "vulkan_capabilities") == 1:
+        dev := init_vulkan()
+        return vulkan_capabilities_json(dev)
+    if lpp_str_eq(cmd, "vulkan_render_frame") == 1:
+        return "{\"status\":\"unavailable\",\"reason\":\"Vulkan backend is not initialized\"}"
+    if lpp_str_eq(cmd, "read_file") == 1:
         return "{\"content\":\"Lreact configuration loaded successfully.\"}"
-    if str_find(cmd, "exists") >= 0:
-        return "{\"exists\":true}"
-    if str_find(cmd, "exec") >= 0:
-        return "{\"output\":\"L++ native command executed.\"}"
-
-    return "{\"error\":\"Unknown command\"}"
+    if lpp_str_eq(cmd, "file_exists") == 1:
+        return "{\"exists\":false}"
+    if lpp_str_eq(cmd, "shell_exec") == 1:
+        return "{\"error\":\"shell execution is disabled by policy\"}"
+    return "{\"error\":\"command not allowed\"}"
 
 def emit_event(event_name: Str, payload_json: Str):
     print_str("[Lreact Event] Emitting event: ")
@@ -61,3 +127,111 @@ def emit_event(event_name: Str, payload_json: Str):
     print_str(" -> ")
     print_str(payload_json)
     print_str("\n")
+
+def web_origin_allowed(request: Str) -> Int:
+    origin_marker := "Origin: "
+    origin_pos := str_find(request, origin_marker)
+    if origin_pos < 0:
+        return 1
+    origin_start := origin_pos + str_len(origin_marker)
+    origin_end := str_find(str_substr(request, origin_start, str_len(request) - origin_start), "\r\n")
+    if origin_end < 0:
+        return 0
+    origin := str_substr(request, origin_start, origin_end)
+    if lpp_str_eq(origin, "null") == 1:
+        return 1
+    if lpp_str_eq(origin, "http://127.0.0.1") == 1:
+        return 1
+    if str_starts_with(origin, "http://127.0.0.1:") == 1:
+        return 1
+    if lpp_str_eq(origin, "http://localhost") == 1:
+        return 1
+    if str_starts_with(origin, "http://localhost:") == 1:
+        return 1
+    return 0
+
+def web_safe_request_id(request_id: Str) -> Int:
+    if str_len(request_id) < 4:
+        return 0
+    if str_len(request_id) > 96:
+        return 0
+    if str_starts_with(request_id, "req_") == 0:
+        return 0
+    if str_contains(request_id, "\"") == 1:
+        return 0
+    if str_contains(request_id, "\\") == 1:
+        return 0
+    if str_contains(request_id, "\r") == 1:
+        return 0
+    if str_contains(request_id, "\n") == 1:
+        return 0
+    return 1
+
+def web_json_string(json: Str, key: Str) -> Str:
+    marker := str_concat("\"", str_concat(key, "\":\""))
+    start := str_find(json, marker)
+    if start < 0:
+        return ""
+    value_start := start + str_len(marker)
+    value_end := str_find(str_substr(json, value_start, str_len(json) - value_start), "\"")
+    if value_end < 0:
+        return ""
+    return str_substr(json, value_start, value_end)
+
+def web_http_response(status_line: Str, body: Str) -> Str:
+    mut response := "HTTP/1.1 "
+    response = str_concat(response, status_line)
+    response = str_concat(response, "\r\nContent-Type: application/json; charset=utf-8\r\n")
+    response = str_concat(response, "Content-Length: ")
+    response = str_concat(response, int_to_str(str_len(body)))
+    response = str_concat(response, "\r\nConnection: close\r\n")
+    response = str_concat(response, "Access-Control-Allow-Origin: *\r\n")
+    response = str_concat(response, "Access-Control-Allow-Methods: POST, GET, OPTIONS\r\n")
+    response = str_concat(response, "Access-Control-Allow-Headers: Content-Type, X-Lreact-Protocol\r\n")
+    response = str_concat(response, "X-Content-Type-Options: nosniff\r\n\r\n")
+    return str_concat(response, body)
+
+def web_handle_http_request(request: Str) -> Str:
+    if str_len(request) > 65536:
+        return web_http_response("413 Payload Too Large", "{\"error\":\"request too large\"}")
+    if web_origin_allowed(request) == 0:
+        return web_http_response("403 Forbidden", "{\"error\":\"origin rejected\"}")
+    if str_starts_with(request, "OPTIONS /api/invoke") == 1:
+        return web_http_response("204 No Content", "{}")
+    if str_starts_with(request, "GET /api/capabilities") == 1:
+        return web_http_response("200 OK", web_capabilities_json())
+    if str_starts_with(request, "POST /api/invoke") == 0:
+        return web_http_response("404 Not Found", "{\"error\":\"route not found\"}")
+
+    body := http_parse_body(request)
+    request_id := web_json_string(body, "id")
+    cmd := web_json_string(body, "cmd")
+    if web_safe_request_id(request_id) == 0:
+        return web_http_response("400 Bad Request", "{\"error\":\"invalid request id\"}")
+    if str_len(cmd) == 0:
+        return web_http_response("400 Bad Request", str_concat("{\"id\":\"", str_concat(request_id, "\",\"error\":\"command is required\"}")))
+
+    result := dispatch_cmd(cmd)
+    mut status := "ok"
+    if str_contains(result, "\"error\"") == 1:
+        status = "error"
+    mut payload := "{\"id\":\""
+    payload = str_concat(payload, request_id)
+    payload = str_concat(payload, "\",\"status\":\"")
+    payload = str_concat(payload, status)
+    payload = str_concat(payload, "\",\"result\":")
+    payload = str_concat(payload, result)
+    payload = str_concat(payload, "}")
+    return web_http_response("200 OK", payload)
+
+def web_server_run(port: Int):
+    listener := net_listen(port)
+    if listener < 0:
+        return
+    while 1 == 1:
+        client := net_accept(listener)
+        if client >= 0:
+            request := net_recv(client, 65536)
+            response := web_handle_http_request(request)
+            net_send_all(client, response)
+            net_close(client)

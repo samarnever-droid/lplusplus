@@ -5,17 +5,21 @@ import gui
 
 def main():
     print_str("===============================================================\n")
-    print_str("⚡ Lreact Studio v2.0 — Production Native GUI Engine (100 Features) ⚡\n")
+    print_str("Lreact Studio v2.0 - Secure Native GUI Engine\n")
     print_str("===============================================================\n")
 
-    # 1. Initialize Vulkan 1.3 GPU Instance
+    # 1. Probe Vulkan through the capability API. The current build reports
+    # unavailable rather than claiming a fake GPU.
     gpu := lreact.init_vulkan()
-    print_str("[Lreact GPU] Device Ready: ")
-    print_str(gpu.device_name)
+    print_str("[Lreact GPU] Backend: ")
+    print_str(gpu.backend)
+    print_str(" (status=")
+    print_str(int_to_str(gpu.status))
+    print_str(")\n")
     print_str("\n\n")
 
     # 2. Spawn Native System OS Window
-    win := lreact.create_window("Lreact Studio v2.0 — Production Native L++ OS Window", 880, 620)
+    win := gui.create("Lreact Studio v2.0 - Secure Native L++ OS Window", 1280, 760)
     mut t := gui.dark_theme()
 
     mut counter := 0
@@ -25,12 +29,17 @@ def main():
     mut slider_val := 65
     mut dark_mode := 1
     mut show_modal_dialog := 0
+    mut active_nav := 0
+    mut mouse_was_down := 0
 
     print_str("[Lreact] Running native event loop on OS window...\n")
 
     # 3. Native Render & Event Loop
     while gui.is_open(win) == 1:
         dummy := gui.poll_events(win)
+        viewport_width := gui.width(win)
+        viewport_height := gui.height(win)
+        mouse_down_now := gui.mouse_down(win)
 
         # Clear background (Theme-aware)
         gui.clear(win, t.bg_dark)
@@ -40,14 +49,34 @@ def main():
         gui.draw_text(win, 40, 45, "Lreact Studio v2.0", t.accent_primary)
         gui.draw_text(win, 40, 70, "100 Production Features", t.text_muted)
 
-        gui.draw_text(win, 40, 130, "⚡ Overview & Telemetry", t.text_primary)
-        gui.draw_text(win, 40, 170, "📊 Analytics & Sparklines", t.text_muted)
-        gui.draw_text(win, 40, 210, "🚀 Vulkan Pipeline", t.text_muted)
-        gui.draw_text(win, 40, 250, "⚙️ Controls & Themes", t.text_muted)
+        mut nav_active_0 := 0
+        if active_nav == 0:
+            nav_active_0 = 1
+        if gui.draw_nav_item(win, 28, 112, 204, 36, "Overview & Telemetry", nav_active_0, mouse_was_down, t) == 1:
+            active_nav = 0
+
+        mut nav_active_1 := 0
+        if active_nav == 1:
+            nav_active_1 = 1
+        if gui.draw_nav_item(win, 28, 154, 204, 36, "Analytics & Sparklines", nav_active_1, mouse_was_down, t) == 1:
+            active_nav = 1
+
+        mut nav_active_2 := 0
+        if active_nav == 2:
+            nav_active_2 = 1
+        if gui.draw_nav_item(win, 28, 196, 204, 36, "Vulkan Capability API", nav_active_2, mouse_was_down, t) == 1:
+            active_nav = 2
+
+        mut nav_active_3 := 0
+        if active_nav == 3:
+            nav_active_3 = 1
+        if gui.draw_nav_item(win, 28, 238, 204, 36, "Controls & Themes", nav_active_3, mouse_was_down, t) == 1:
+            active_nav = 3
 
         # Theme Switcher Widget
         gui.draw_text(win, 40, 320, "Theme Mode", t.text_muted)
-        if gui.draw_button(win, 40, 350, 180, 36, "Toggle Light/Dark", t.accent_secondary) == 1:
+        dummy_theme_button := gui.draw_button(win, 40, 350, 180, 36, "Toggle Light/Dark", t.accent_secondary)
+        if gui.clicked(win, 40, 350, 180, 36, mouse_was_down) == 1:
             if dark_mode == 1:
                 dark_mode = 0
                 t = gui.light_theme()
@@ -57,7 +86,7 @@ def main():
 
         # 2. Header Section
         gui.draw_text(win, 260, 35, "Native L++ Desktop Workspace", t.text_primary)
-        gui.draw_text(win, 260, 60, "Win32 GDI / X11 + Vulkan 1.3 Hardware Acceleration", t.text_muted)
+        gui.draw_text(win, 260, 60, "Win32 GDI / X11 + explicit Vulkan capability state", t.text_muted)
         gui.draw_badge(win, 690, 35, "0ms Latency", t.accent_primary)
 
         # 3. Metric Cards
@@ -78,8 +107,19 @@ def main():
         slider_val = gui.draw_slider(win, 260, 285, 280, slider_val, 0, 100, t)
 
         # 5. Interactive Native Controls (Toggle Switch & Checkbox)
-        switch_active = gui.draw_switch(win, 560, 280, switch_active, t)
-        checkbox_checked = gui.draw_checkbox(win, 630, 282, checkbox_checked, "Auto Sync", t)
+        dummy_switch := gui.draw_switch(win, 560, 280, switch_active, t)
+        if gui.clicked(win, 560, 280, 56, 28, mouse_was_down) == 1:
+            if switch_active == 1:
+                switch_active = 0
+            else:
+                switch_active = 1
+
+        dummy_checkbox := gui.draw_checkbox(win, 630, 282, checkbox_checked, "Auto Sync", t)
+        if gui.clicked(win, 630, 282, 110, 24, mouse_was_down) == 1:
+            if checkbox_checked == 1:
+                checkbox_checked = 0
+            else:
+                checkbox_checked = 1
 
         # 6. Real-time Telemetry Sparkline Charts
         gui.draw_text(win, 260, 325, "Live GPU Telemetry Sparkline", t.text_muted)
@@ -87,34 +127,61 @@ def main():
 
         # 7. Data Grid Table Header
         gui.draw_table_header(win, 260, 420, 580, "MODULE", "STATUS", "LATENCY", t)
-        gui.draw_text(win, 276, 465, "Vulkan Engine", t.text_primary)
-        gui.draw_text(win, 470, 465, "Active", t.accent_primary)
+        gui.draw_text(win, 276, 465, "Vulkan Capability API", t.text_primary)
+        gui.draw_text(win, 470, 465, "Probed", t.accent_primary)
         gui.draw_text(win, 660, 465, "0.12 ms", t.text_muted)
 
         # 8. Interactive Native Action Buttons
-        if gui.draw_button(win, 260, 520, 160, 44, "+ Increment", t.accent_primary) == 1:
+        dummy_increment_button := gui.draw_button(win, 260, 520, 160, 44, "+ Increment", t.accent_primary)
+        if gui.clicked(win, 260, 520, 160, 44, mouse_was_down) == 1:
             counter = counter + 1
             if progress < 100:
                 progress = progress + 5
 
-        if gui.draw_button(win, 440, 520, 160, 44, "Reset Metrics", t.accent_secondary) == 1:
+        dummy_reset_button := gui.draw_button(win, 440, 520, 160, 44, "Reset Metrics", t.accent_secondary)
+        if gui.clicked(win, 440, 520, 160, 44, mouse_was_down) == 1:
             counter = 0
             progress = 10
 
-        if gui.draw_button(win, 620, 520, 160, 44, "Show Modal", t.card_bg) == 1:
+        dummy_modal_button := gui.draw_button(win, 620, 520, 160, 44, "Show Modal", t.card_bg)
+        if gui.clicked(win, 620, 520, 160, 44, mouse_was_down) == 1:
             show_modal_dialog = 1
 
         # 9. Toast Notification & Modal Overlays
-        gui.draw_toast(win, 560, 540, "Native Event", "L++ Native IPC Active", t)
+        gui.draw_toast(win, 560, 200, "Native Event", "L++ Native IPC Active", t)
 
         if show_modal_dialog == 1:
-            show_modal_dialog = gui.draw_modal(win, 280, 180, 400, 220, "Lreact Studio Confirmation", "100 Production Grade Features Active in L++ Native GUI.", t)
+            show_modal_dialog = gui.draw_modal(win, 280, 180, 400, 220, "Lreact Studio Confirmation", "Secure IPC and explicit Vulkan capability state are active.", t)
 
         # Tooltip on Hover
         if gui.is_hovered(win, 260, 520, 160, 44) == 1:
             gui.draw_tooltip(win, "Increments native counter", t)
 
+        # A responsive inspector fills wide windows instead of leaving a blank
+        # canvas when the user resizes or maximizes the native window.
+        if viewport_width > 1000:
+            inspector_x := viewport_width - 340
+            gui.draw_rounded_rect(win, inspector_x, 20, 320, 560, 16, t.card_bg)
+            gui.draw_text(win, inspector_x + 24, 48, "Lreact Runtime", t.accent_primary)
+            gui.draw_text(win, inspector_x + 24, 82, "Secure IPC", t.text_primary)
+            gui.draw_text(win, inspector_x + 220, 82, "ON", t.accent_primary)
+            gui.draw_text(win, inspector_x + 24, 125, "Vulkan backend", t.text_muted)
+            gui.draw_text(win, inspector_x + 24, 150, gpu.backend, t.text_primary)
+            gui.draw_text(win, inspector_x + 24, 195, "Window viewport", t.text_muted)
+            viewport_label := str_concat(int_to_str(viewport_width), str_concat(" x ", int_to_str(viewport_height)))
+            gui.draw_text(win, inspector_x + 24, 220, viewport_label, t.text_primary)
+            gui.draw_text(win, inspector_x + 24, 265, "API version", t.text_muted)
+            gui.draw_text(win, inspector_x + 24, 290, "Lreact 2.0 / protocol 1", t.text_primary)
+            gui.draw_text(win, inspector_x + 24, 335, "Frame policy", t.text_muted)
+            gui.draw_text(win, inspector_x + 24, 360, "Explicit capability state", t.text_primary)
+            gui.draw_text(win, inspector_x + 24, 505, "Resize-safe layout", t.accent_primary)
+
+        if viewport_height > 650:
+            footer_label := str_concat("Viewport: ", str_concat(int_to_str(viewport_width), str_concat(" x ", int_to_str(viewport_height))))
+            gui.draw_text(win, 260, viewport_height - 28, footer_label, t.text_muted)
+
         # Present double-buffered frame to native screen
         gui.present(win)
+        mouse_was_down = mouse_down_now
 
     print_str("Native Lreact OS Window Closed.\n")

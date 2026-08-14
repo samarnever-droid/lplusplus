@@ -1209,6 +1209,41 @@ fn find_vcvars64() -> Option<PathBuf> {
     None
 }
 
+#[cfg(windows)]
+fn find_msvc_cl() -> Option<PathBuf> {
+    let vcvars = find_vcvars64()?;
+    let vc_root = vcvars.parent()?.parent()?.parent()?;
+    let tools_root = vc_root.join("Tools").join("MSVC");
+    let mut versions: Vec<PathBuf> = fs::read_dir(tools_root)
+        .ok()?
+        .flatten()
+        .map(|entry| entry.path())
+        .collect();
+    versions.sort_by(|a, b| b.cmp(a));
+    for version in versions {
+        let candidate = version
+            .join("bin")
+            .join("Hostx64")
+            .join("x64")
+            .join("cl.exe");
+        if candidate.exists() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+fn normalize_runtime_path(path: PathBuf) -> PathBuf {
+    #[cfg(windows)]
+    {
+        let text = path.to_string_lossy();
+        if let Some(stripped) = text.strip_prefix("\\\\?\\") {
+            return PathBuf::from(stripped);
+        }
+    }
+    path
+}
+
 #[allow(dead_code)]
 /// Compute a simple hash of a file's contents for cache invalidation.
 /// Uses Rust's built-in DefaultHasher (SipHash) — not cryptographic, but
@@ -1250,9 +1285,15 @@ fn resolve_min_runtime_source() -> Option<PathBuf> {
         "runtime/linux_x86_64_min.c"
     };
 
-    let p = PathBuf::from(src_name);
+    let p = std::env::current_dir()
+        .ok()
+        .map(|dir| dir.join(src_name))
+        .unwrap_or_else(|| PathBuf::from(src_name));
     if p.exists() {
-        return fs::canonicalize(&p).ok().or_else(|| Some(p));
+        return fs::canonicalize(&p)
+            .ok()
+            .map(normalize_runtime_path)
+            .or_else(|| Some(p));
     }
 
     if let Ok(exe_path) = std::env::current_exe() {
@@ -1260,7 +1301,10 @@ fn resolve_min_runtime_source() -> Option<PathBuf> {
             for ancestor in &[exe_dir.to_path_buf(), exe_dir.join(".."), exe_dir.join("../.."), exe_dir.join("../../..")] {
                 let candidate = ancestor.join(src_name);
                 if candidate.exists() {
-                    return fs::canonicalize(&candidate).ok().or_else(|| Some(candidate));
+                    return fs::canonicalize(&candidate)
+                        .ok()
+                        .map(normalize_runtime_path)
+                        .or_else(|| Some(candidate));
                 }
             }
         }
@@ -1334,7 +1378,17 @@ fn resolve_min_runtime_object() -> Option<PathBuf> {
                 let _ = fs::create_dir_all(&cache_dir);
                 let pid = std::process::id();
                 let tmp_obj = cache_dir.join(format!("{}.tmp.{}", filename, pid));
+                #[cfg(windows)]
+                load_msvc_env();
                 let cc_name = std::env::var("CC").unwrap_or_else(|_| if cfg!(windows) { "cl.exe".to_string() } else { "cc".to_string() });
+                #[cfg(windows)]
+                let cc_name = if cc_name.eq_ignore_ascii_case("cl.exe") {
+                    find_msvc_cl()
+                        .map(|path| path.to_string_lossy().into_owned())
+                        .unwrap_or(cc_name)
+                } else {
+                    cc_name
+                };
                 let mut cmd = std::process::Command::new(&cc_name);
                 if cfg!(windows) {
                     cmd.arg("/nologo")
@@ -1357,9 +1411,32 @@ fn resolve_min_runtime_object() -> Option<PathBuf> {
                         .arg("-o")
                         .arg(&tmp_obj);
                 }
-                let compiled_ok = match cmd.status() {
-                    Ok(st) => st.success(),
-                    Err(_) => false,
+                eprintln!(
+                    "[L++] Runtime compiler: {} | source: {} | output: {}",
+                    cc_name,
+                    src_path.display(),
+                    tmp_obj.display()
+                );
+                let compile_result = cmd
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::piped())
+                    .output();
+                let compiled_ok = match compile_result {
+                    Ok(output) if output.status.success() => true,
+                    Ok(output) => {
+                        eprintln!(
+                            "[L++] Runtime compile failed ({}): {}{}",
+                            output.status,
+                            String::from_utf8_lossy(&output.stdout),
+                            String::from_utf8_lossy(&output.stderr)
+                        );
+                        false
+                    }
+                    Err(error) => {
+                        eprintln!("[L++] Failed to start runtime compiler '{}': {}", cc_name, error);
+                        false
+                    }
                 };
                 if compiled_ok {
                     let _ = fs::rename(&tmp_obj, &cache_obj);
@@ -1368,6 +1445,11 @@ fn resolve_min_runtime_object() -> Option<PathBuf> {
                     }
                 } else {
                     let _ = fs::remove_file(&tmp_obj);
+                    // Never silently link a stale runtime after the source
+                    // changed. Returning None lets the caller report the
+                    // real compiler/linker failure instead of producing an
+                    // executable with missing or obsolete symbols.
+                    return None;
                 }
             }
 

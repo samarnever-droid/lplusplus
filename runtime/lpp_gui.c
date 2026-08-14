@@ -313,6 +313,16 @@ int64_t lpp_gui_window_is_open(int64_t win_id) {
     return g_windows[win_id].is_open ? 1 : 0;
 }
 
+int64_t lpp_gui_window_width(int64_t win_id) {
+    if (win_id < 0 || win_id >= MAX_WINDOWS || !g_windows[win_id].hwnd) return 0;
+    return g_windows[win_id].width;
+}
+
+int64_t lpp_gui_window_height(int64_t win_id) {
+    if (win_id < 0 || win_id >= MAX_WINDOWS || !g_windows[win_id].hwnd) return 0;
+    return g_windows[win_id].height;
+}
+
 int64_t lpp_gui_window_poll_events(int64_t win_id) {
     if (win_id < 0 || win_id >= MAX_WINDOWS) return 0;
     MSG msg;
@@ -791,6 +801,16 @@ int64_t lpp_gui_window_create(const char *title, int64_t width, int64_t height) 
 int64_t lpp_gui_window_is_open(int64_t win_id) {
     if (win_id < 0 || win_id >= MAX_UNIX_WINDOWS) return 0;
     return g_unix_windows[win_id].is_open ? 1 : 0;
+}
+
+int64_t lpp_gui_window_width(int64_t win_id) {
+    if (win_id < 0 || win_id >= MAX_UNIX_WINDOWS || !g_unix_windows[win_id].display) return 0;
+    return g_unix_windows[win_id].width;
+}
+
+int64_t lpp_gui_window_height(int64_t win_id) {
+    if (win_id < 0 || win_id >= MAX_UNIX_WINDOWS || !g_unix_windows[win_id].display) return 0;
+    return g_unix_windows[win_id].height;
 }
 
 int64_t lpp_gui_window_poll_events(int64_t win_id) {

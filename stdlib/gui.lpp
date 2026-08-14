@@ -35,6 +35,12 @@ def create(title: Str, width: Int, height: Int) -> Int:
 def is_open(win_id: Int) -> Int:
     return gui_window_is_open(win_id)
 
+def width(win_id: Int) -> Int:
+    return gui_window_width(win_id)
+
+def height(win_id: Int) -> Int:
+    return gui_window_height(win_id)
+
 def poll_events(win_id: Int) -> Int:
     return gui_window_poll_events(win_id)
 
@@ -95,6 +101,27 @@ def is_hovered(win_id: Int, x: Int, y: Int, w: Int, h: Int) -> Int:
                     return 1
     return 0
 
+def clicked(win_id: Int, x: Int, y: Int, w: Int, h: Int, previous_down: Int) -> Int:
+    # Edge-triggered input: one click produces one action, even when the
+    # operating system reports the mouse button as held for several frames.
+    if is_hovered(win_id, x, y, w, h) == 1:
+        if mouse_down(win_id) == 1:
+            if previous_down == 0:
+                return 1
+    return 0
+
+def draw_nav_item(win_id: Int, x: Int, y: Int, w: Int, h: Int, label: Str, active: Int, previous_down: Int, t: Theme) -> Int:
+    hover := is_hovered(win_id, x, y, w, h)
+    if active == 1:
+        draw_rounded_rect(win_id, x, y, w, h, 8, t.card_bg)
+    elif hover == 1:
+        draw_rounded_rect(win_id, x, y, w, h, 8, t.accent_secondary)
+    mut color := t.text_muted
+    if active == 1:
+        color = t.text_primary
+    draw_text(win_id, x + 12, y + 10, label, color)
+    return clicked(win_id, x, y, w, h, previous_down)
+
 def draw_card(win_id: Int, x: Int, y: Int, w: Int, h: Int, title: Str, value: Str, t: Theme) -> Void:
     draw_rounded_rect(win_id, x, y, w, h, 14, t.card_bg)
     draw_text(win_id, x + 20, y + 20, title, t.text_muted)
@@ -143,16 +170,16 @@ def draw_progress_bar(win_id: Int, x: Int, y: Int, w: Int, h: Int, percentage: I
         draw_rounded_rect(win_id, x, y, fill_w, h, 6, t.accent_secondary)
 
 def draw_switch(win_id: Int, x: Int, y: Int, active: Int, t: Theme) -> Int:
-    hover := is_hovered(win_id, x, y, 48, 24)
+    hover := is_hovered(win_id, x, y, 56, 28)
     mut bg := t.card_bg
     if active == 1:
         bg = t.accent_primary
 
-    draw_rounded_rect(win_id, x, y, 48, 24, 12, bg)
-    mut thumb_x := x + 3
+    draw_rounded_rect(win_id, x, y, 56, 28, 14, bg)
+    mut thumb_x := x + 4
     if active == 1:
-        thumb_x = x + 27
-    draw_circle(win_id, thumb_x + 9, y + 12, 9, 16777215)
+        thumb_x = x + 28
+    draw_circle(win_id, thumb_x + 10, y + 14, 10, 16777215)
 
     # Signal hover+down; caller is responsible for debouncing and toggling
     if hover == 1:

@@ -1225,7 +1225,9 @@ int64_t lpp_net_listen(int64_t port) {
     struct lpp_sockaddr_in addr = {0};
     addr.sin_family = 2;
     addr.sin_port = lpp_htons((uint16_t)port);
-    addr.sin_addr = 0; /* INADDR_ANY */
+    /* Bind Web backends to loopback; callers must explicitly add a
+       separately-reviewed network listener if LAN exposure is desired. */
+    addr.sin_addr = 0x0100007f; /* 127.0.0.1 */
     if (lpp_sys_bind(sock, &addr, sizeof(addr)) < 0) {
         lpp_sys_close(sock);
         return -1;

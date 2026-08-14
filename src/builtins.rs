@@ -2525,6 +2525,22 @@ pub fn get_builtins() -> &'static [Builtin] {
             cl_return: Some(0),
         },
         Builtin {
+            name: "gui_window_width",
+            symbol: "lpp_gui_window_width",
+            params: &[ParamType::Specific(TypeRef::Int)],
+            return_type: TypeRef::Int,
+            cl_params: &[0],
+            cl_return: Some(0),
+        },
+        Builtin {
+            name: "gui_window_height",
+            symbol: "lpp_gui_window_height",
+            params: &[ParamType::Specific(TypeRef::Int)],
+            return_type: TypeRef::Int,
+            cl_params: &[0],
+            cl_return: Some(0),
+        },
+        Builtin {
             name: "gui_window_poll_events",
             symbol: "lpp_gui_window_poll_events",
             params: &[ParamType::Specific(TypeRef::Int)],
