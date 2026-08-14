@@ -338,7 +338,7 @@ jobs:
           # Step 3: link with lpp-link PE direct linker
           & target\release\lpp-link.exe pe "$work\direct.obj" "$work\lpp_runtime_min.obj" -o "$work\direct.exe" 2>&1
           if ($LASTEXITCODE -ne 0) { throw "lpp-link PE link failed (exit $LASTEXITCODE)" }
-          # Step 3b: minimal exit-only test (no runtime needed)
+          # Step 3b: minimal exit-only test with the freestanding runtime
           @"
           def noop() -> Int:
               return 0
@@ -346,8 +346,16 @@ jobs:
               noop()
           "@ | Set-Content -Path "$work\exit_only.lpp" -Encoding ascii
           & target\release\lpp.exe "$work\exit_only.lpp"
-          & target\release\lpp-link.exe pe "$work\exit_only.obj" -o "$work\exit_only.exe" 2>&1
+          if ($LASTEXITCODE -ne 0) { throw "exit-only L++ compile failed (exit $LASTEXITCODE)" }
+          if (-not (Test-Path "$work\exit_only.obj")) { throw "exit_only.obj not created" }
+          # Cranelift COFF objects declare the complete runtime ABI even when
+          # this tiny program uses only a user function, so the runtime object
+          # is required for a valid PE link.
+          & target\release\lpp-link.exe pe "$work\exit_only.obj" "$work\lpp_runtime_min.obj" -o "$work\exit_only.exe" 2>&1
+          if ($LASTEXITCODE -ne 0) { throw "exit-only PE link failed (exit $LASTEXITCODE)" }
+          if (-not (Test-Path "$work\exit_only.exe")) { throw "exit_only.exe not created" }
           & "$work\exit_only.exe"
+          if ($LASTEXITCODE -ne 0) { throw "exit-only executable failed (exit $LASTEXITCODE)" }
           Write-Host "exit_only result: $LASTEXITCODE"
           # Step 4: test full version
           $actual = (& "$work\direct.exe" 2>&1 | ForEach-Object { $_.Trim() }) -join "`n"

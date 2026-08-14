@@ -242,6 +242,9 @@ present; they never create an extern binding.
   generation, mutability and element size; it is never a bare integer address.
 - Allocation descriptors become tombstones on free and remain diagnosable until
   explicit context destruction.
+- Destroyed contexts retain a 56-byte tombstone header so copied `CMemory` and
+  `CPtr` values report `C2-MEM-CONTEXT-DESTROYED` instead of reading freed
+  metadata.
 - ABI-width pointer fields keep eight-byte object storage and use a raw context
   side table for complete provenance; side metadata is explicitly destroyed.
 - Struct/union layout selects an explicit target ABI and uses integer field IDs

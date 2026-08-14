@@ -588,6 +588,26 @@ int64_t lpp_file_copy(const char *source, const char *destination) {
     (void)source; (void)destination; return -1;
 }
 
+/* The compiler emits the complete builtin ABI even when a program does not
+ * use dynamic loading.  These POSIX compatibility entry points keep the
+ * freestanding Windows image self-contained; Windows programs should use
+ * LoadLibraryA/GetProcAddress through the native builtins instead. */
+void *dlopen(const char *path, int mode) {
+    (void)path; (void)mode; return 0;
+}
+
+void *dlsym(void *handle, const char *name) {
+    (void)handle; (void)name; return 0;
+}
+
+int dlclose(void *handle) {
+    (void)handle; return 0;
+}
+
+char *dlerror(void) {
+    return 0;
+}
+
 char *lpp_float_to_str(double val) {
     /* Minimal float to string implementation for freestanding */
     char buf[64];

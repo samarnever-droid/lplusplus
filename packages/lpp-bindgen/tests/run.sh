@@ -1701,7 +1701,8 @@ def main():
     p := c_ptr_cast(c_malloc(m, 4), 1, 0)
     c_store_u8(p, 1)
 EOF
-for case_name in oob uaf double_free interior_free readonly; do
+cp tests/t_context_destroyed.lpp generated/c-memory/t_context_destroyed.lpp
+for case_name in oob uaf double_free interior_free readonly context_destroyed; do
     (cd generated/c-memory && "$LPP" "t_$case_name.lpp" --linker direct >/dev/null)
     if generated/c-memory/t_$case_name > generated/c-memory/$case_name.out 2>&1; then
         echo "C memory safety case unexpectedly succeeded: $case_name" >&2
@@ -1713,6 +1714,7 @@ grep -Fq 'C2-MEM-USE-AFTER-FREE' generated/c-memory/uaf.out
 grep -Fq 'C2-MEM-DOUBLE-FREE' generated/c-memory/double_free.out
 grep -Fq 'C2-MEM-INTERIOR-FREE' generated/c-memory/interior_free.out
 grep -Fq 'C2-MEM-WRITE-READONLY' generated/c-memory/readonly.out
+grep -Fq 'C2-MEM-CONTEXT-DESTROYED' generated/c-memory/context_destroyed.out
 echo 'PASS pure-L++ C pointer/allocation model + native equivalence/safety traps'
 
 # Typed place/lvalue foundation over CPtr and target layout metadata.

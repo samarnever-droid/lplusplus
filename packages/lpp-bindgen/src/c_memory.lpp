@@ -4,6 +4,8 @@
 # allocation identity, byte offset, subobject bounds, generation, mutability and
 # element width. Allocation descriptors remain as small tombstones until the
 # explicit context is destroyed, allowing deterministic stale/double-free checks.
+# The context header itself remains as a tiny destroyed tombstone so copied
+# CMemory/CPtr values fail deterministically instead of touching freed metadata.
 
 struct CMemory:
     handle: Int
@@ -20,6 +22,10 @@ struct CPtr:
 
 const C_MEM_SIDE_RECORD_SIZE = 88
 const C_MEM_SIDE_INITIAL_CAPACITY = 8
+const C_MEM_CONTEXT_STATE_OFFSET = 48
+const C_MEM_CONTEXT_BYTES = 56
+const C_MEM_CONTEXT_ALIVE = 1
+const C_MEM_CONTEXT_DESTROYED = 0
 
 
 def c_mem_panic(reason: Str) -> Void:
@@ -41,36 +47,48 @@ def c_mem_get64(buffer: Int, offset: Int) -> Int:
 def c_mem_context_table(memory: CMemory) -> Int:
     if memory.handle == 0:
         c_mem_panic("C2-MEM-CONTEXT-NULL")
+    if c_mem_get64(memory.handle, C_MEM_CONTEXT_STATE_OFFSET) != C_MEM_CONTEXT_ALIVE:
+        c_mem_panic("C2-MEM-CONTEXT-DESTROYED")
     return c_mem_get64(memory.handle, 0)
 
 
 def c_mem_context_len(memory: CMemory) -> Int:
     if memory.handle == 0:
         c_mem_panic("C2-MEM-CONTEXT-NULL")
+    if c_mem_get64(memory.handle, C_MEM_CONTEXT_STATE_OFFSET) != C_MEM_CONTEXT_ALIVE:
+        c_mem_panic("C2-MEM-CONTEXT-DESTROYED")
     return c_mem_get64(memory.handle, 8)
 
 
 def c_mem_context_capacity(memory: CMemory) -> Int:
     if memory.handle == 0:
         c_mem_panic("C2-MEM-CONTEXT-NULL")
+    if c_mem_get64(memory.handle, C_MEM_CONTEXT_STATE_OFFSET) != C_MEM_CONTEXT_ALIVE:
+        c_mem_panic("C2-MEM-CONTEXT-DESTROYED")
     return c_mem_get64(memory.handle, 16)
 
 
 def c_mem_side_table(memory: CMemory) -> Int:
     if memory.handle == 0:
         c_mem_panic("C2-MEM-CONTEXT-NULL")
+    if c_mem_get64(memory.handle, C_MEM_CONTEXT_STATE_OFFSET) != C_MEM_CONTEXT_ALIVE:
+        c_mem_panic("C2-MEM-CONTEXT-DESTROYED")
     return c_mem_get64(memory.handle, 24)
 
 
 def c_mem_side_len(memory: CMemory) -> Int:
     if memory.handle == 0:
         c_mem_panic("C2-MEM-CONTEXT-NULL")
+    if c_mem_get64(memory.handle, C_MEM_CONTEXT_STATE_OFFSET) != C_MEM_CONTEXT_ALIVE:
+        c_mem_panic("C2-MEM-CONTEXT-DESTROYED")
     return c_mem_get64(memory.handle, 32)
 
 
 def c_mem_side_capacity(memory: CMemory) -> Int:
     if memory.handle == 0:
         c_mem_panic("C2-MEM-CONTEXT-NULL")
+    if c_mem_get64(memory.handle, C_MEM_CONTEXT_STATE_OFFSET) != C_MEM_CONTEXT_ALIVE:
+        c_mem_panic("C2-MEM-CONTEXT-DESTROYED")
     return c_mem_get64(memory.handle, 40)
 
 
@@ -88,13 +106,14 @@ def c_memory_new(initial_capacity: Int) -> CMemory:
     table := buf_alloc(capacity * 8)
     side_table := buf_alloc(C_MEM_SIDE_INITIAL_CAPACITY * C_MEM_SIDE_RECORD_SIZE)
     c_mem_zero_raw(side_table, C_MEM_SIDE_INITIAL_CAPACITY * C_MEM_SIDE_RECORD_SIZE)
-    context := buf_alloc(48)
+    context := buf_alloc(C_MEM_CONTEXT_BYTES)
     c_mem_set64(context, 0, table)
     c_mem_set64(context, 8, 0)
     c_mem_set64(context, 16, capacity)
     c_mem_set64(context, 24, side_table)
     c_mem_set64(context, 32, 0)
     c_mem_set64(context, 40, C_MEM_SIDE_INITIAL_CAPACITY)
+    c_mem_set64(context, C_MEM_CONTEXT_STATE_OFFSET, C_MEM_CONTEXT_ALIVE)
     return CMemory(context)
 
 
@@ -492,6 +511,8 @@ def c_realloc(memory: CMemory, pointer: CPtr, new_size: Int) -> CPtr:
 def c_memory_destroy(memory: CMemory) -> Void:
     if memory.handle == 0:
         return
+    if c_mem_get64(memory.handle, C_MEM_CONTEXT_STATE_OFFSET) != C_MEM_CONTEXT_ALIVE:
+        c_mem_panic("C2-MEM-CONTEXT-DOUBLE-DESTROY")
     table := c_mem_context_table(memory)
     length := c_mem_context_len(memory)
     mut i := 0
@@ -508,7 +529,17 @@ def c_memory_destroy(memory: CMemory) -> Void:
     side_table := c_mem_side_table(memory)
     if side_table != 0:
         buf_free(side_table)
-    buf_free(memory.handle)
+    # Keep a small context tombstone alive. CMemory and CPtr are value types, so
+    # callers may retain copies after this function returns; freeing the context
+    # itself would make those stale handles dereference freed metadata before a
+    # safety check can report the misuse deterministically.
+    c_mem_set64(memory.handle, 0, 0)
+    c_mem_set64(memory.handle, 8, 0)
+    c_mem_set64(memory.handle, 16, 0)
+    c_mem_set64(memory.handle, 24, 0)
+    c_mem_set64(memory.handle, 32, 0)
+    c_mem_set64(memory.handle, 40, 0)
+    c_mem_set64(memory.handle, C_MEM_CONTEXT_STATE_OFFSET, C_MEM_CONTEXT_DESTROYED)
 
 
 def c_load_u8(pointer: CPtr) -> Int:
