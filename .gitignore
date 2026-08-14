@@ -47,26 +47,3 @@ tests/test_ffi
 
 /challenge_bench/zigdist/
 
-AGENTS.md
-CLAUDE.md
-libtest_math.so
-screenshot-1786467578052.png
-test_cptr_intrinsics.lpp
-test_linux_direct_elf
-test_linux_direct_elf.lpp
-test_shared_lib.c
-test_size.c
-test_so_binding
-Windows PowerShell.txt
-.claude/skills/gitnexus/gitnexus-cli/SKILL.md
-.claude/skills/gitnexus/gitnexus-debugging/SKILL.md
-.claude/skills/gitnexus/gitnexus-exploring/SKILL.md
-.claude/skills/gitnexus/gitnexus-guide/SKILL.md
-.claude/skills/gitnexus/gitnexus-impact-analysis/SKILL.md
-.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md
-.postman/resources.yaml
-postman/globals/workspace.globals.yaml
-tests/arc_borrowed_field_return
-tests/arc_direct_alias
-tests/arc_local_refcount
-tests/wasm/cases/closures.wasm
