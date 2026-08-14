@@ -1543,7 +1543,7 @@ fn collect_undefined(objects: &[ObjectImage], merged: &Merged) -> Vec<String> {
             }
         }
         for n in &o.undefined {
-            if !merged.syms.contains_key(n) {
+            if !merged.syms.contains_key(n) && n != "__ImageBase" && !n.starts_with("__self_") {
                 u.insert(n.clone());
             }
         }
@@ -4924,7 +4924,7 @@ pub fn write_macho_with_options(
     };
     let mut stub_index: BTreeMap<String, usize> = BTreeMap::new();
     for n in got_keys.keys() {
-        if !merged.syms.contains_key(n) {
+        if !merged.syms.contains_key(n) && n != "__ImageBase" && !n.starts_with("__self_") {
             let i = stub_index.len();
             stub_index.entry(n.clone()).or_insert(i);
         }
