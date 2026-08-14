@@ -3716,6 +3716,11 @@ fn is_crt_symbol(name: &str) -> bool {
             | "_endthreadex" | "__iob_func" | "__acrt_iob_func" | "_fdopen" | "_fileno"
             | "rewind" | "fgets" | "fputs" | "ungetc" | "setvbuf" | "perror" | "strerror"
             | "memchr" | "strdup" | "_strdup" | "strncpy_s" | "strcpy_s"
+            | "_fltused" | "lpp_bool_to_str" | "lpp_file_copy" | "lpp_float_to_str"
+            | "lpp_free_str" | "lpp_json_get_obj" | "lpp_net_accept_timeout"
+            | "lpp_net_dial" | "lpp_net_dial_udp" | "lpp_net_listen_udp"
+            | "lpp_net_resolve" | "lpp_net_send_all" | "lpp_net_set_deadline"
+            | "lpp_net_set_keepalive" | "lpp_net_set_timeout" | "lpp_vec_i64_checksum"
     )
 }
 

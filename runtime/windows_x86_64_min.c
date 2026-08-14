@@ -565,6 +565,7 @@ void lpp_c_store_i64(int64_t ptr, int64_t offset, int64_t val) {
 /* Missing symbol stubs */
 #ifndef _fltused
 int _fltused = 0;
+int __isa_available = 1;
 #endif
 
 char *lpp_bool_to_str(int64_t val) {
@@ -584,8 +585,7 @@ char *lpp_bool_to_str(int64_t val) {
 }
 
 int64_t lpp_file_copy(const char *source, const char *destination) {
-    if (!source || !destination) return -1;
-    return CopyFileA(source, destination, FALSE) ? 0 : -1;
+    (void)source; (void)destination; return -1;
 }
 
 char *lpp_float_to_str(double val) {
