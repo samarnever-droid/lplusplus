@@ -1795,68 +1795,13 @@ fn elf_interp(machine: Machine) -> &'static str {
 }
 
 fn libc_soname_for(sym: &str) -> Option<&'static str> {
-    if is_libm_symbol(sym) {
-        return Some("libm.so.6");
-    }
-    if is_libdl_symbol(sym) {
-        return Some("libdl.so.2");
-    }
-    if is_libpthread_symbol(sym) {
+    if sym.starts_with("pthread_") {
         return Some("libpthread.so.0");
     }
-    if is_libc_symbol(sym) {
-        return Some("libc.so.6");
+    if let Some(&soname) = elf_imports().get(sym) {
+        return Some(soname);
     }
     None
-}
-
-fn is_libm_symbol(n: &str) -> bool {
-    matches!(
-        n,
-        "sin" | "cos" | "tan" | "asin" | "acos" | "atan" | "atan2"
-            | "sinh" | "cosh" | "tanh" | "exp" | "exp2" | "log" | "log2" | "log10"
-            | "pow" | "sqrt" | "ceil" | "floor" | "fmod" | "fabs" | "hypot"
-            | "round" | "trunc" | "nearbyint" | "sincos" | "ldexp" | "frexp"
-            | "sinf" | "cosf" | "tanf" | "expf" | "logf" | "powf" | "sqrtf"
-    )
-}
-fn is_libdl_symbol(n: &str) -> bool {
-    matches!(n, "dlopen" | "dlsym" | "dlclose" | "dlerror" | "dladdr")
-}
-fn is_libpthread_symbol(n: &str) -> bool {
-    n.starts_with("pthread_") || matches!(n, "sem_init" | "sem_wait" | "sem_post" | "sem_destroy")
-}
-fn is_libc_symbol(n: &str) -> bool {
-    matches!(
-        n,
-        "malloc" | "free" | "realloc" | "calloc" | "aligned_alloc" | "posix_memalign"
-            | "printf" | "fprintf" | "sprintf" | "snprintf" | "vsnprintf" | "vfprintf"
-            | "puts" | "putchar" | "getchar" | "scanf" | "sscanf"
-            | "memset" | "memcpy" | "memmove" | "memcmp" | "strlen" | "strcmp"
-            | "strncmp" | "strcpy" | "strncpy" | "strcat" | "strchr" | "strstr"
-            | "strdup" | "strtol" | "strtoul" | "strtod" | "atoi" | "atol" | "atoll"
-            | "exit" | "abort" | "_exit" | "atexit"
-            | "fopen" | "fclose" | "fread" | "fwrite" | "fflush" | "fseek" | "ftell"
-            | "rewind" | "feof" | "ferror" | "fgets" | "fputs"
-            | "getenv" | "setenv" | "unsetenv" | "system" | "time" | "clock"
-            | "qsort" | "bsearch" | "rand" | "srand" | "abs" | "labs" | "llabs"
-            | "tolower" | "toupper" | "isdigit" | "isalpha" | "isspace" | "isalnum"
-            | "mmap" | "munmap" | "mprotect" | "brk" | "sbrk"
-            | "read" | "write" | "open" | "close" | "lseek" | "stat" | "fstat"
-            | "unlink" | "rename" | "getcwd" | "chdir" | "mkdir" | "rmdir"
-            | "getpid" | "getuid" | "getgid" | "fork" | "execve" | "waitpid"
-            | "signal" | "sigaction" | "kill" | "raise"
-            | "socket" | "bind" | "listen" | "accept" | "connect" | "send" | "recv"
-            | "sendto" | "recvfrom" | "closesocket" | "htons" | "htonl" | "ntohs" | "ntohl"
-            | "getaddrinfo" | "freeaddrinfo" | "setsockopt" | "getsockopt"
-            | "poll" | "select" | "gettimeofday" | "nanosleep" | "usleep"
-            | "stdin" | "stdout" | "stderr" | "__libc_start_main" | "__errno_location"
-            | "memchr" | "strerror" | "perror" | "setvbuf" | "ungetc"
-            | "opendir" | "readdir" | "closedir"
-            | "clock_gettime" | "localtime" | "gmtime" | "strftime"
-            | "lpp_c_malloc" | "lpp_c_free" | "lpp_c_load_u8" | "lpp_c_store_u8"
-            | "lpp_c_load_i32" | "lpp_c_store_i32" | "lpp_c_load_i64" | "lpp_c_store_i64"
-    )
 }
 
 fn elf_needed_for(undef: &[String], opts: &LinkOptions) -> Vec<String> {
@@ -3654,209 +3599,49 @@ fn pe_align(v: usize, a: usize) -> usize {
     align_up(v, a)
 }
 
+use std::sync::OnceLock;
+
+static PE_IMPORTS: OnceLock<HashMap<&'static str, &'static str>> = OnceLock::new();
+static ELF_IMPORTS: OnceLock<HashMap<&'static str, &'static str>> = OnceLock::new();
+
+fn pe_imports() -> &'static HashMap<&'static str, &'static str> {
+    PE_IMPORTS.get_or_init(|| {
+        let mut m = HashMap::new();
+        for line in include_str!("policy_windows_imports.csv").lines() {
+            let mut parts = line.split(',');
+            if let (Some(sym), Some(dll)) = (parts.next(), parts.next()) {
+                m.insert(sym.trim(), dll.trim());
+            }
+        }
+        m
+    })
+}
+
+fn elf_imports() -> &'static HashMap<&'static str, &'static str> {
+    ELF_IMPORTS.get_or_init(|| {
+        let mut m = HashMap::new();
+        for line in include_str!("policy_elf_imports.csv").lines() {
+            let mut parts = line.split(',');
+            if let (Some(sym), Some(dll)) = (parts.next(), parts.next()) {
+                m.insert(sym.trim(), dll.trim());
+            }
+        }
+        m
+    })
+}
+
 fn classify_dll(name: &str, extra: &HashMap<String, String>) -> Option<String> {
     let clean = name.strip_prefix("__imp_").unwrap_or(name);
     if let Some(d) = extra.get(clean).or_else(|| extra.get(name)) {
         return Some(d.clone());
     }
-    if is_user32_symbol(clean) {
-        return Some("USER32.dll".into());
+    if let Some(&dll) = pe_imports().get(clean) {
+        return Some(dll.to_string());
     }
-    if is_gdi32_symbol(clean) {
-        return Some("GDI32.dll".into());
-    }
-    if is_ws2_32_symbol(clean) {
-        return Some("WS2_32.dll".into());
-    }
-    if is_advapi32_symbol(clean) {
-        return Some("ADVAPI32.dll".into());
-    }
-    if is_shell32_symbol(clean) {
-        return Some("SHELL32.dll".into());
-    }
-    if is_ole32_symbol(clean) {
-        return Some("OLE32.dll".into());
-    }
-    if is_oleaut32_symbol(clean) {
-        return Some("OLEAUT32.dll".into());
-    }
-    if is_ntdll_symbol(clean) {
-        return Some("ntdll.dll".into());
-    }
-    if is_bcrypt_symbol(clean) {
-        return Some("BCRYPT.dll".into());
-    }
-    if is_crt_symbol(clean) {
-        return Some("msvcrt.dll".into());
-    }
-    if is_kernel32_symbol(clean) {
+    if clean.starts_with("K32") {
         return Some("KERNEL32.dll".into());
     }
     None
-}
-
-fn is_crt_symbol(name: &str) -> bool {
-    let clean = name.strip_prefix("__imp_").unwrap_or(name);
-    matches!(
-        clean,
-        "malloc" | "free" | "realloc" | "calloc" | "printf" | "puts" | "memset" | "memcpy"
-            | "memmove" | "memcmp" | "strlen" | "strcmp" | "strncmp" | "strcpy" | "strncpy"
-            | "strcat" | "strchr" | "strstr" | "sprintf" | "snprintf" | "sscanf" | "exit"
-            | "abort" | "sin" | "cos" | "tan" | "pow" | "sqrt" | "ceil" | "floor" | "fmod"
-            | "fabs" | "abs" | "labs" | "llabs" | "getpid" | "_getpid" | "atan2" | "log"
-            | "exp" | "getchar" | "putchar" | "fopen" | "fclose" | "fread" | "fwrite"
-            | "fflush" | "fprintf" | "fseek" | "ftell" | "getenv" | "system" | "time"
-            | "clock" | "_errno" | "__getmainargs" | "__set_app_type" | "_acmdln"
-            | "_initterm" | "_initterm_e" | "_configthreadlocale" | "lpp_c_malloc"
-            | "lpp_c_free" | "lpp_c_load_u8" | "lpp_c_store_u8" | "lpp_c_load_i32"
-            | "lpp_c_store_i32" | "lpp_c_load_i64" | "lpp_c_store_i64" | "dlopen"
-            | "dlsym" | "dlclose" | "dlerror" | "vsnprintf" | "vfprintf" | "atoi" | "atol"
-            | "strtol" | "strtoul" | "strtod" | "qsort" | "bsearch" | "rand" | "srand"
-            | "tolower" | "toupper" | "isdigit" | "isalpha" | "isspace" | "_beginthreadex"
-            | "_endthreadex" | "__iob_func" | "__acrt_iob_func" | "_fdopen" | "_fileno"
-            | "rewind" | "fgets" | "fputs" | "ungetc" | "setvbuf" | "perror" | "strerror"
-            | "memchr" | "strdup" | "_strdup" | "strncpy_s" | "strcpy_s"
-    )
-}
-
-fn is_kernel32_symbol(name: &str) -> bool {
-    let clean = name.strip_prefix("__imp_").unwrap_or(name);
-    matches!(
-        clean,
-        "ExitProcess" | "GetTickCount64" | "LoadLibraryA" | "LoadLibraryW" | "GetProcAddress"
-            | "GetStdHandle" | "WriteFile" | "ReadFile" | "VirtualAlloc" | "VirtualFree"
-            | "VirtualProtect" | "CreateThread" | "WaitForSingleObject" | "WaitForMultipleObjects"
-            | "CloseHandle" | "CreateFileA" | "CreateFileW" | "GetFileSize" | "SetFilePointer"
-            | "DeleteFileA" | "MoveFileA" | "GetFileAttributesA" | "CreateDirectoryA"
-            | "RemoveDirectoryA" | "FindFirstFileA" | "FindNextFileA" | "FindClose" | "Sleep"
-            | "CreateProcessA" | "GetExitCodeProcess" | "CreatePipe" | "GetEnvironmentVariableA"
-            | "SetEnvironmentVariableA" | "GetModuleFileNameA" | "GetModuleHandleA"
-            | "GetModuleHandleW" | "GetLastError" | "SetLastError" | "QueryPerformanceCounter"
-            | "QueryPerformanceFrequency" | "GetCommandLineA" | "GetCommandLineW"
-            | "GetProcessHeap" | "HeapAlloc" | "HeapFree" | "HeapReAlloc" | "FormatMessageA"
-            | "GetConsoleMode" | "SetConsoleMode" | "FlushFileBuffers" | "GetSystemTimeAsFileTime"
-            | "InitializeCriticalSection" | "EnterCriticalSection" | "LeaveCriticalSection"
-            | "DeleteCriticalSection" | "TlsAlloc" | "TlsGetValue" | "TlsSetValue" | "TlsFree"
-            | "GetCurrentThreadId" | "GetCurrentProcessId" | "GetCurrentProcess"
-            | "TerminateProcess" | "IsDebuggerPresent" | "SetUnhandledExceptionFilter"
-            | "AddVectoredExceptionHandler" | "RaiseException" | "RtlCaptureContext"
-            | "RtlLookupFunctionEntry" | "RtlVirtualUnwind" | "MultiByteToWideChar"
-            | "WideCharToMultiByte" | "GetACP" | "GetConsoleOutputCP" | "WriteConsoleA"
-            | "ReadConsoleA" | "GetFileType" | "SetHandleInformation" | "DuplicateHandle"
-            | "CreateEventA" | "SetEvent" | "ResetEvent" | "CreateMutexA" | "ReleaseMutex"
-            | "GetSystemInfo" | "GetNativeSystemInfo" | "GlobalMemoryStatusEx"
-            | "GetDiskFreeSpaceExA" | "OutputDebugStringA" | "DebugBreak"
-            | "InitializeSListHead" | "EncodePointer" | "DecodePointer"
-            | "GetStartupInfoW" | "GetStartupInfoA" | "SetDefaultDllDirectories"
-    ) || clean.starts_with("K32")
-}
-
-fn is_user32_symbol(name: &str) -> bool {
-    let clean = name.strip_prefix("__imp_").unwrap_or(name);
-    matches!(
-        clean,
-        "CreateWindowExA" | "CreateWindowExW" | "DestroyWindow" | "DefWindowProcA"
-            | "DefWindowProcW" | "PostQuitMessage" | "RegisterClassA" | "RegisterClassExA"
-            | "RegisterClassW" | "GetDC" | "ReleaseDC" | "LoadCursorA" | "LoadCursorW"
-            | "PeekMessageA" | "PeekMessageW" | "GetMessageA" | "TranslateMessage"
-            | "DispatchMessageA" | "DispatchMessageW" | "GetAsyncKeyState" | "GetKeyState"
-            | "GetCursorPos" | "ScreenToClient" | "ClientToScreen" | "FillRect" | "ShowWindow"
-            | "UpdateWindow" | "SetForegroundWindow" | "MessageBoxA" | "MessageBoxW"
-            | "LoadIconA" | "SetWindowPos" | "BringWindowToTop" | "BeginPaint" | "EndPaint"
-            | "SetProcessDPIAware" | "AdjustWindowRectEx" | "GetClientRect" | "GetWindowRect"
-            | "InvalidateRect" | "SetWindowTextA" | "GetWindowTextA" | "ShowCursor"
-            | "SetCursor" | "LoadImageA" | "SendMessageA" | "PostMessageA" | "KillTimer"
-            | "SetTimer" | "GetSystemMetrics" | "MonitorFromWindow" | "GetMonitorInfoA"
-            | "EnumDisplaySettingsA" | "ChangeDisplaySettingsA" | "ReleaseCapture"
-            | "SetCapture" | "TrackMouseEvent"
-    )
-}
-
-fn is_gdi32_symbol(name: &str) -> bool {
-    let clean = name.strip_prefix("__imp_").unwrap_or(name);
-    matches!(
-        clean,
-        "CreateCompatibleDC" | "CreateCompatibleBitmap" | "SelectObject" | "DeleteDC"
-            | "DeleteObject" | "CreateSolidBrush" | "CreatePen" | "RoundRect" | "TextOutA"
-            | "SetBkMode" | "SetTextColor" | "BitBlt" | "StretchBlt" | "Ellipse" | "MoveToEx"
-            | "LineTo" | "GetTextExtentPoint32A" | "CreateFontA" | "SetStretchBltMode"
-            | "SetBrushOrgEx" | "SetMapMode" | "SetGraphicsMode" | "SetTextCharacterExtra"
-            | "SetTextAlign" | "SetLayout" | "GetStockObject" | "Rectangle" | "Polygon"
-            | "Polyline" | "CreateDIBSection" | "GetDIBits" | "SetDIBits" | "ChoosePixelFormat"
-            | "SetPixelFormat" | "SwapBuffers" | "DescribePixelFormat"
-    )
-}
-
-fn is_ws2_32_symbol(name: &str) -> bool {
-    let clean = name.strip_prefix("__imp_").unwrap_or(name);
-    matches!(
-        clean,
-        "WSAStartup" | "WSACleanup" | "WSAGetLastError" | "WSAIoctl" | "WSASocketA"
-            | "WSARecv" | "WSASend" | "socket" | "bind" | "listen" | "accept" | "connect"
-            | "send" | "recv" | "sendto" | "recvfrom" | "closesocket" | "shutdown" | "select"
-            | "htons" | "htonl" | "ntohs" | "ntohl" | "getaddrinfo" | "freeaddrinfo"
-            | "gethostname" | "getsockname" | "getpeername" | "setsockopt" | "getsockopt"
-            | "ioctlsocket" | "inet_ntoa" | "inet_addr" | "WSAPoll" | "WSADuplicateSocketA"
-    )
-}
-
-fn is_advapi32_symbol(name: &str) -> bool {
-    let clean = name.strip_prefix("__imp_").unwrap_or(name);
-    matches!(
-        clean,
-        "RegOpenKeyExA" | "RegCloseKey" | "RegQueryValueExA" | "RegSetValueExA"
-            | "RegCreateKeyExA" | "RegDeleteKeyA" | "RegEnumKeyExA" | "CryptAcquireContextA"
-            | "CryptReleaseContext" | "CryptGenRandom" | "GetUserNameA" | "OpenProcessToken"
-            | "GetTokenInformation" | "ConvertSidToStringSidA" | "SystemFunction036"
-    )
-}
-
-fn is_shell32_symbol(name: &str) -> bool {
-    let clean = name.strip_prefix("__imp_").unwrap_or(name);
-    matches!(
-        clean,
-        "SHGetFolderPathA" | "SHGetKnownFolderPath" | "ShellExecuteA" | "DragQueryFileA"
-            | "DragFinish" | "CommandLineToArgvW" | "SHGetFileInfoA"
-    )
-}
-
-fn is_ole32_symbol(name: &str) -> bool {
-    let clean = name.strip_prefix("__imp_").unwrap_or(name);
-    matches!(
-        clean,
-        "CoInitializeEx" | "CoUninitialize" | "CoCreateInstance" | "CoTaskMemFree"
-            | "CoTaskMemAlloc" | "OleInitialize" | "OleUninitialize" | "CLSIDFromString"
-            | "StringFromGUID2" | "CoInitializeSecurity"
-    )
-}
-
-fn is_oleaut32_symbol(name: &str) -> bool {
-    let clean = name.strip_prefix("__imp_").unwrap_or(name);
-    matches!(
-        clean,
-        "SysAllocString" | "SysFreeString" | "SysStringLen" | "VariantInit" | "VariantClear"
-            | "VariantChangeType" | "SafeArrayCreate" | "SafeArrayDestroy"
-    )
-}
-
-fn is_ntdll_symbol(name: &str) -> bool {
-    let clean = name.strip_prefix("__imp_").unwrap_or(name);
-    matches!(
-        clean,
-        "RtlGetVersion" | "NtQueryInformationProcess" | "NtDelayExecution" | "RtlNtStatusToDosError"
-            | "NtQuerySystemInformation" | "RtlAddFunctionTable" | "RtlDeleteFunctionTable"
-    )
-}
-
-fn is_bcrypt_symbol(name: &str) -> bool {
-    let clean = name.strip_prefix("__imp_").unwrap_or(name);
-    matches!(
-        clean,
-        "BCryptOpenAlgorithmProvider" | "BCryptCloseAlgorithmProvider" | "BCryptGenRandom"
-            | "BCryptCreateHash" | "BCryptHashData" | "BCryptFinishHash" | "BCryptDestroyHash"
-            | "BCryptGenerateSymmetricKey" | "BCryptEncrypt" | "BCryptDecrypt"
-            | "BCryptDestroyKey"
-    )
 }
 
 struct ImportData {
