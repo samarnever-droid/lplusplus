@@ -629,6 +629,27 @@ void lpp_free_str(char *ptr) {
     lpp_arc_release(ptr);
 }
 
+/* ── JSON Stubs for Freestanding ── */
+int64_t lpp_json_parse(const char *json) { (void)json; return 0; }
+char *lpp_json_get_str(int64_t handle, const char *key) { (void)handle; (void)key; return ""; }
+int64_t lpp_json_get_int(int64_t handle, const char *key) { (void)handle; (void)key; return 0; }
+double lpp_json_get_float(int64_t handle, const char *key) { (void)handle; (void)key; return 0.0; }
+char *lpp_json_stringify(int64_t handle) { (void)handle; return "{}"; }
+void lpp_json_free(int64_t handle) { (void)handle; }
+int64_t lpp_net_listen(int64_t port) { (void)port; return -1; }
+int64_t lpp_net_accept(int64_t listener) { (void)listener; return -1; }
+int64_t lpp_net_connect(const char *host, int64_t port) { (void)host; (void)port; return -1; }
+int64_t lpp_net_send(int64_t socket, const char *data) { (void)socket; (void)data; return -1; }
+char *lpp_net_recv(int64_t socket, int64_t max_bytes) { (void)socket; (void)max_bytes; return ""; }
+void lpp_net_close(int64_t socket) { (void)socket; }
+int64_t lpp_net_set_nonblocking(int64_t handle, int64_t enable) { (void)handle; (void)enable; return 1; }
+int64_t lpp_net_poll(int64_t handle, int64_t timeout_ms) { (void)handle; (void)timeout_ms; return 1; }
+int64_t lpp_net_bind_udp(int64_t port) { (void)port; return -1; }
+int64_t lpp_net_send_udp(int64_t socket, const char *host, int64_t port, const char *data) { (void)socket; (void)host; (void)port; (void)data; return -1; }
+char *lpp_net_recv_udp(int64_t socket, int64_t max_bytes) { (void)socket; (void)max_bytes; return ""; }
+char *lpp_http_get(const char *url) { (void)url; return ""; }
+char *lpp_http_post(const char *url, const char *body, const char *content_type) { (void)url; (void)body; (void)content_type; return ""; }
+
 void *lpp_json_get_obj(void *json, const char *key) {
     (void)json; (void)key; return NULL;
 }
@@ -684,27 +705,6 @@ int64_t lpp_vec_i64_checksum(int64_t n) {
     for (int64_t i = 0; i < n; ++i) total += (i * 3) ^ (i >> 1);
     return total;
 }
-
-/* ── JSON Stubs for Freestanding ── */
-int64_t lpp_json_parse(const char *json) { (void)json; return 0; }
-char *lpp_json_get_str(int64_t handle, const char *key) { (void)handle; (void)key; return ""; }
-int64_t lpp_json_get_int(int64_t handle, const char *key) { (void)handle; (void)key; return 0; }
-double lpp_json_get_float(int64_t handle, const char *key) { (void)handle; (void)key; return 0.0; }
-char *lpp_json_stringify(int64_t handle) { (void)handle; return "{}"; }
-void lpp_json_free(int64_t handle) { (void)handle; }
-int64_t lpp_net_listen(int64_t port) { (void)port; return -1; }
-int64_t lpp_net_accept(int64_t listener) { (void)listener; return -1; }
-int64_t lpp_net_connect(const char *host, int64_t port) { (void)host; (void)port; return -1; }
-int64_t lpp_net_send(int64_t socket, const char *data) { (void)socket; (void)data; return -1; }
-char *lpp_net_recv(int64_t socket, int64_t max_bytes) { (void)socket; (void)max_bytes; return ""; }
-void lpp_net_close(int64_t socket) { (void)socket; }
-int64_t lpp_net_set_nonblocking(int64_t handle, int64_t enable) { (void)handle; (void)enable; return 1; }
-int64_t lpp_net_poll(int64_t handle, int64_t timeout_ms) { (void)handle; (void)timeout_ms; return 1; }
-int64_t lpp_net_bind_udp(int64_t port) { (void)port; return -1; }
-int64_t lpp_net_send_udp(int64_t socket, const char *host, int64_t port, const char *data) { (void)socket; (void)host; (void)port; (void)data; return -1; }
-char *lpp_net_recv_udp(int64_t socket, int64_t max_bytes) { (void)socket; (void)max_bytes; return ""; }
-char *lpp_http_get(const char *url) { (void)url; return ""; }
-char *lpp_http_post(const char *url, const char *body, const char *content_type) { (void)url; (void)body; (void)content_type; return ""; }
 
 /* ── SIMD i64x2 builtins ─────────────────────────────────────────────────
  * The Cranelift and LLVM backends lower these to native SSE2 instructions
