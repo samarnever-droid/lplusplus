@@ -17,8 +17,24 @@ pub struct Builtin {
     pub cl_return: Option<u8>,
 }
 
+use std::sync::OnceLock;
+
 pub fn get_builtins() -> &'static [Builtin] {
-    static BUILTINS: &[Builtin] = &[
+    static BUILTINS: OnceLock<Vec<Builtin>> = OnceLock::new();
+    BUILTINS.get_or_init(|| {
+        let mut v = Vec::new();
+        v.extend_from_slice(get_builtins_part_0());
+        v.extend_from_slice(get_builtins_part_1());
+        v.extend_from_slice(get_builtins_part_2());
+        v.extend_from_slice(get_builtins_part_3());
+        v.extend_from_slice(get_builtins_part_4());
+        v.extend_from_slice(get_builtins_part_5());
+        v
+    }).as_slice()
+}
+
+fn get_builtins_part_0() -> &'static [Builtin] {
+    &[
         // Borrowed slice surface syntax. Type checking and MIR lowering refine
         // the generic element/result types; these entries make the names
         // visible to semantic resolution and declare the runtime ABI.
@@ -451,6 +467,11 @@ pub fn get_builtins() -> &'static [Builtin] {
             cl_params: &[0, 0, 0],
             cl_return: None,
         },
+    ]
+}
+
+fn get_builtins_part_1() -> &'static [Builtin] {
+    &[
         Builtin {
             name: "lpp_list_set",
             symbol: "lpp_list_set",
@@ -899,6 +920,11 @@ pub fn get_builtins() -> &'static [Builtin] {
             cl_params: &[0, 0],
             cl_return: Some(0),
         },
+    ]
+}
+
+fn get_builtins_part_2() -> &'static [Builtin] {
+    &[
         Builtin {
             name: "lpp_net_send_all",
             symbol: "lpp_net_send_all",
@@ -1419,6 +1445,11 @@ pub fn get_builtins() -> &'static [Builtin] {
             cl_params: &[0, 0],
             cl_return: Some(0),
         },
+    ]
+}
+
+fn get_builtins_part_3() -> &'static [Builtin] {
+    &[
         Builtin {
             name: "lpp_file_copy",
             symbol: "lpp_file_copy",
@@ -1892,6 +1923,11 @@ pub fn get_builtins() -> &'static [Builtin] {
             cl_params: &[0],
             cl_return: Some(0),
         },
+    ]
+}
+
+fn get_builtins_part_4() -> &'static [Builtin] {
+    &[
         Builtin {
             name: "lpp_buf_alloc",
             symbol: "lpp_buf_alloc",
@@ -2431,6 +2467,11 @@ pub fn get_builtins() -> &'static [Builtin] {
             cl_params: &[0, 0, 0],
             cl_return: Some(0),
         },
+    ]
+}
+
+fn get_builtins_part_5() -> &'static [Builtin] {
+    &[
         Builtin {
             name: "lpp_str_replace",
             symbol: "lpp_str_replace",
@@ -2792,6 +2833,5 @@ pub fn get_builtins() -> &'static [Builtin] {
         Builtin { name: "dlsym", symbol: "dlsym", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Str)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
         Builtin { name: "dlclose", symbol: "dlclose", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0], cl_return: Some(0) },
         Builtin { name: "dlerror", symbol: "dlerror", params: &[], return_type: TypeRef::Str, cl_params: &[], cl_return: Some(0) },
-    ];
-    BUILTINS
+    ]
 }
