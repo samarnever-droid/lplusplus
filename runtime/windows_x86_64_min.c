@@ -565,6 +565,7 @@ void lpp_c_store_i64(int64_t ptr, int64_t offset, int64_t val) {
 /* Missing symbol stubs */
 #ifndef _fltused
 int _fltused = 0;
+int __isa_available = 1;
 #endif
 
 char *lpp_bool_to_str(int64_t val) {
