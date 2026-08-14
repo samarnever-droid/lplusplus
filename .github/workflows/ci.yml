@@ -346,7 +346,7 @@ jobs:
               noop()
           "@ | Set-Content -Path "$work\exit_only.lpp" -Encoding ascii
           & target\release\lpp.exe "$work\exit_only.lpp"
-          & target\release\lpp-link.exe pe "$work\exit_only.obj" -o "$work\exit_only.exe" 2>&1
+          & target\release\lpp-link.exe pe "$work\exit_only.obj" "$work\lpp_runtime_min.obj" -o "$work\exit_only.exe" 2>&1
           & "$work\exit_only.exe"
           Write-Host "exit_only result: $LASTEXITCODE"
           # Step 4: test full version
