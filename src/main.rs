@@ -137,41 +137,27 @@ fn resolve_pm_cache_dir() -> PathBuf {
     env::temp_dir().join(".lpp_cache")
 }
 
-/// Bootstrap the self-hosted L++ PM: compile pm/src/main.lpp → cached binary.
-/// Returns the path to the cached PM binary, or an error string.
-fn bootstrap_self_hosted_pm() -> Result<PathBuf, String> {
-    let lpp_bin = env::current_exe()
-        .map_err(|e| format!("cannot locate lpp binary: {e}"))?;
-
-    let pm_main = resolve_pm_source()
-        .ok_or_else(|| "cannot locate pm/src/main.lpp".to_string())?;
-
-    let cache_dir = resolve_pm_cache_dir();
-    let _ = fs::create_dir_all(&cache_dir);
-
-    let pm_bin = cache_dir.join(format!("lpp-pm{}", env::consts::EXE_SUFFIX));
-
-    // Check if already built and up-to-date
+fn is_pm_up_to_date(pm_bin: &Path, pm_main: &Path) -> bool {
     if pm_bin.exists() && pm_main.exists() {
-        let bin_meta = fs::metadata(&pm_bin).ok();
-        let src_meta = fs::metadata(&pm_main).ok();
+        let bin_meta = fs::metadata(pm_bin).ok();
+        let src_meta = fs::metadata(pm_main).ok();
         if let (Some(b), Some(s)) = (bin_meta, src_meta) {
             if let (Ok(bt), Ok(st)) = (b.modified(), s.modified()) {
                 if bt >= st {
-                    return Ok(pm_bin);
+                    return true;
                 }
             }
         }
     }
+    false
+}
 
-    eprintln!("[L++] Bootstrapping self-hosted PM...");
-
-    // Compile pm/src/main.lpp → pm_obj
-    let status = std::process::Command::new(&lpp_bin)
+fn compile_self_hosted_pm(lpp_bin: &Path, pm_main: &Path) -> Result<PathBuf, String> {
+    let status = std::process::Command::new(lpp_bin)
         .env("LPP_AOT", "1")
         .env("LPP_AOT_ONLY", "1")
         .env("BENCHMARK", "1")
-        .arg(&pm_main)
+        .arg(pm_main)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::inherit())
@@ -188,6 +174,10 @@ fn bootstrap_self_hosted_pm() -> Result<PathBuf, String> {
         return Err(format!("{} not generated", pm_obj.display()));
     }
 
+    Ok(pm_obj)
+}
+
+fn link_self_hosted_pm(lpp_bin: &Path, pm_main: &Path, pm_obj: &Path, pm_bin: &Path) -> Result<(), String> {
     let mut link_ok = false;
 
     let lpp_link_bin = lpp_bin
@@ -196,7 +186,7 @@ fn bootstrap_self_hosted_pm() -> Result<PathBuf, String> {
         .unwrap_or_else(|| PathBuf::from(format!("lpp-link{}", env::consts::EXE_SUFFIX)));
 
     if lpp_link_bin.exists() {
-        if let Some(runtime_src) = resolve_runtime_source_for_bootstrap(&pm_main) {
+        if let Some(runtime_src) = resolve_runtime_source_for_bootstrap(pm_main) {
             let runtime_min_name = if cfg!(target_os = "windows") { "lpp_runtime_min.obj" } else { "lpp_runtime_min.o" };
             let lib_dir = runtime_src.parent().unwrap_or_else(|| Path::new("."));
             let runtime_min_obj = lib_dir.join(runtime_min_name);
@@ -208,10 +198,10 @@ fn bootstrap_self_hosted_pm() -> Result<PathBuf, String> {
                     link_cmd.arg("macho");
                 }
                 link_cmd
-                    .arg(&pm_obj)
+                    .arg(pm_obj)
                     .arg(&runtime_min_obj)
                     .arg("-o")
-                    .arg(&pm_bin);
+                    .arg(pm_bin);
 
                 if let Ok(st) = link_cmd
                     .stdin(std::process::Stdio::null())
@@ -231,16 +221,42 @@ fn bootstrap_self_hosted_pm() -> Result<PathBuf, String> {
         #[cfg(windows)]
         pm::load_msvc_env();
 
-        if pm::host_link_binary(&pm_obj, &pm_bin, &[]).is_ok() {
+        if pm::host_link_binary(pm_obj, pm_bin, &[]).is_ok() {
             link_ok = true;
         }
     }
 
-    let _ = fs::remove_file(&pm_obj);
+    let _ = fs::remove_file(pm_obj);
 
     if !link_ok {
         return Err("linking self-hosted PM failed".to_string());
     }
+
+    Ok(())
+}
+
+/// Bootstrap the self-hosted L++ PM: compile pm/src/main.lpp → cached binary.
+/// Returns the path to the cached PM binary, or an error string.
+fn bootstrap_self_hosted_pm() -> Result<PathBuf, String> {
+    let lpp_bin = env::current_exe()
+        .map_err(|e| format!("cannot locate lpp binary: {e}"))?;
+
+    let pm_main = resolve_pm_source()
+        .ok_or_else(|| "cannot locate pm/src/main.lpp".to_string())?;
+
+    let cache_dir = resolve_pm_cache_dir();
+    let _ = fs::create_dir_all(&cache_dir);
+
+    let pm_bin = cache_dir.join(format!("lpp-pm{}", env::consts::EXE_SUFFIX));
+
+    if is_pm_up_to_date(&pm_bin, &pm_main) {
+        return Ok(pm_bin);
+    }
+
+    eprintln!("[L++] Bootstrapping self-hosted PM...");
+
+    let pm_obj = compile_self_hosted_pm(&lpp_bin, &pm_main)?;
+    link_self_hosted_pm(&lpp_bin, &pm_main, &pm_obj, &pm_bin)?;
 
     Ok(pm_bin)
 }
