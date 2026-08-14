@@ -1,3 +1,9 @@
+int __isa_available = 1;
+int _fltused = 1;
+extern char __ImageBase;
+void* _get_image_base() { return &__ImageBase; }
+
+
 /*
  * Freestanding Windows x86-64 direct-link runtime — Phase 4 complete.
  * Builtins: print, ARC, closures, lists, threads + 15 string/exec/dir + networking.
@@ -292,6 +298,9 @@ char*lpp_str_slice_to_str(void*raw){LppSlice*v=(LppSlice*)raw;const char*b=(cons
 void lpp_thread_spawn(void*fn,void*env){HANDLE h=CreateThread(0,0,(DWORD(__stdcall*)(void*))fn,env,0,0);if(h){WaitForSingleObject(h,INFINITE);CloseHandle(h);}}
 
 /* ═══ STRING ═══════════════════════════════════════════════════════════════ */
+char *lpp_float_to_str(double val) { char b[64]; snprintf(b, sizeof(b), "%f", val); int l = lpp_strlen(b); char *r = (char *)lpp_arc_alloc(l + 1); if (r) { lpp_memcpy(r, b, l); r[l] = 0; return r; } return lpp_empty_str(); }
+void lpp_free_str(char *s) { lpp_arc_release(s); }
+char *lpp_bool_to_str(int64_t b) { const char *s = b ? "true" : "false"; int l = lpp_strlen(s); char *r = (char *)lpp_arc_alloc(l + 1); if (r) { lpp_memcpy(r, s, l); r[l] = 0; return r; } return lpp_empty_str(); }
 char *lpp_str_concat(const char *a, const char *b) { if(!a)a="";if(!b)b=""; int la=lpp_strlen(a),lb=lpp_strlen(b); char*o=(char*)lpp_arc_alloc(la+lb+1); if(!o)return lpp_empty_str(); lpp_memcpy(o,a,la);lpp_memcpy(o+la,b,lb);o[la+lb]=0; return o; }
 char *lpp_str_repeat(const char *s, int64_t n) { if(!s||n<=0)return lpp_empty_str(); int slen=lpp_strlen(s); if(!slen)return lpp_empty_str(); if(n>0&&(int64_t)slen>0x7FFFFFFFFFFFFFFFLL/n)ExitProcess(101); int64_t total=(int64_t)slen*n; char*o=(char*)lpp_arc_alloc(total+1); if(!o)return lpp_empty_str(); int64_t i; for(i=0;i<n;i++)lpp_memcpy(o+i*slen,s,slen); o[total]=0; return o; }
 void *lpp_str_split(const char *s,int64_t d) { void*l=lpp_list_new_arc();if(!l)return 0;if(!s||!*s)return l; char ch=(char)d;const char*st=s; for(;;){if(*s==ch||*s==0){int64_t ln=(int64_t)(s-st);char*pc=(char*)lpp_arc_alloc(ln+1);if(pc){lpp_memcpy(pc,st,(int)ln);pc[ln]=0;lpp_list_push_arc(l,pc);lpp_arc_release(pc);}if(*s==0)break;st=s+1;}s++;} return l; }
@@ -307,6 +316,7 @@ char *lpp_env_get(const char *n){if(!n)return lpp_empty_str();char v[4096];DWORD
 int64_t lpp_env_set(const char *n,const char *v){if(!n)return-1;return SetEnvironmentVariableA(n,v?v:"")?0:-1;}
 
 /* ═══ DIR ══════════════════════════════════════════════════════════════════ */
+int64_t lpp_file_copy(const char *source, const char *destination) { return CopyFileA(source, destination, FALSE) ? 0 : -1; }
 int64_t lpp_dir_create(const char *p){if(!p)return-1;return CreateDirectoryA(p,NULL)?0:-1;}
 void *lpp_dir_list(const char *p){void*l=lpp_list_new_arc();if(!l)return 0;if(!p)return l;char pt[264];int pl=lpp_strlen(p);lpp_memcpy(pt,p,pl);pt[pl]='\\';pt[pl+1]='*';pt[pl+2]=0;WIN32_FIND_DATAA fd;HANDLE h=FindFirstFileA(pt,&fd);if(h==INVALID_HANDLE_VALUE)return l;do{if(lpp_strcmp(fd.cFileName,".")==0||lpp_strcmp(fd.cFileName,"..")==0)continue;int ln=lpp_strlen(fd.cFileName);char*c=(char*)lpp_arc_alloc(ln+1);if(c){lpp_memcpy(c,fd.cFileName,ln);c[ln]=0;lpp_list_push_arc(l,c);lpp_arc_release(c);}}while(FindNextFileA(h,&fd));FindClose(h);return l;}
 
@@ -560,78 +570,10 @@ void lpp_c_store_i64(int64_t ptr, int64_t offset, int64_t val) {
 #include "lpp_gui.c"
 
 
-
-
-/* Missing symbol stubs */
-#ifndef _fltused
-int _fltused = 0;
-#endif
-
-char *lpp_bool_to_str(int64_t val) {
-    if (val) {
-        char *t = (char*)lpp_arc_alloc(5);
-        if (!t) return lpp_empty_str();
-        lpp_memcpy(t, "true", 4);
-        t[4] = 0;
-        return t;
-    } else {
-        char *f = (char*)lpp_arc_alloc(6);
-        if (!f) return lpp_empty_str();
-        lpp_memcpy(f, "false", 5);
-        f[5] = 0;
-        return f;
-    }
-}
-
-int64_t lpp_file_copy(const char *source, const char *destination) {
-    if (!source || !destination) return -1;
-    return CopyFileA(source, destination, FALSE) ? 0 : -1;
-}
-
-char *lpp_float_to_str(double val) {
-    /* Minimal float to string implementation for freestanding */
-    char buf[64];
-    int64_t w = 0;
-    if (val < 0.0) {
-        buf[w++] = '-';
-        val = -val;
-    }
-    int64_t i = (int64_t)val;
-    double f = val - (double)i;
-    if (i == 0) {
-        buf[w++] = '0';
-    } else {
-        char ibuf[32];
-        int64_t iw = 0;
-        while (i > 0) {
-            ibuf[iw++] = '0' + (i % 10);
-            i /= 10;
-        }
-        while (iw > 0) {
-            buf[w++] = ibuf[--iw];
-        }
-    }
-    buf[w++] = '.';
-    for (int64_t p = 0; p < 6; p++) {
-        f *= 10.0;
-        int64_t d = (int64_t)f;
-        buf[w++] = '0' + d;
-        f -= (double)d;
-    }
-    char *o = (char*)lpp_arc_alloc(w + 1);
-    if (!o) return lpp_empty_str();
-    lpp_memcpy(o, buf, w);
-    o[w] = 0;
-    return o;
-}
-
-void lpp_free_str(char *ptr) {
-    lpp_arc_release(ptr);
-}
-
 /* ── JSON Stubs for Freestanding ── */
 int64_t lpp_json_parse(const char *json) { (void)json; return 0; }
 char *lpp_json_get_str(int64_t handle, const char *key) { (void)handle; (void)key; return ""; }
+int64_t lpp_json_get_obj(int64_t handle, const char *key) { (void)handle; (void)key; return 0; }
 int64_t lpp_json_get_int(int64_t handle, const char *key) { (void)handle; (void)key; return 0; }
 double lpp_json_get_float(int64_t handle, const char *key) { (void)handle; (void)key; return 0.0; }
 char *lpp_json_stringify(int64_t handle) { (void)handle; return "{}"; }
@@ -639,6 +581,15 @@ void lpp_json_free(int64_t handle) { (void)handle; }
 int64_t lpp_net_listen(int64_t port) { (void)port; return -1; }
 int64_t lpp_net_accept(int64_t listener) { (void)listener; return -1; }
 int64_t lpp_net_connect(const char *host, int64_t port) { (void)host; (void)port; return -1; }
+int64_t lpp_net_dial(const char *host, int64_t port) { (void)host; (void)port; return -1; }
+int64_t lpp_net_accept_timeout(int64_t l, int64_t t) { (void)l; (void)t; return -1; }
+int64_t lpp_net_set_timeout(int64_t s, int64_t t) { (void)s; (void)t; return -1; }
+int64_t lpp_net_set_deadline(int64_t s, int64_t t) { (void)s; (void)t; return -1; }
+int64_t lpp_net_set_keepalive(int64_t s, int64_t k) { (void)s; (void)k; return -1; }
+int64_t lpp_net_send_all(int64_t s, const char *d) { (void)s; (void)d; return -1; }
+int64_t lpp_net_resolve(const char *h) { (void)h; return -1; }
+int64_t lpp_net_dial_udp(const char *h, int64_t p) { (void)h; (void)p; return -1; }
+int64_t lpp_net_listen_udp(int64_t p) { (void)p; return -1; }
 int64_t lpp_net_send(int64_t socket, const char *data) { (void)socket; (void)data; return -1; }
 char *lpp_net_recv(int64_t socket, int64_t max_bytes) { (void)socket; (void)max_bytes; return ""; }
 void lpp_net_close(int64_t socket) { (void)socket; }
@@ -650,62 +601,6 @@ char *lpp_net_recv_udp(int64_t socket, int64_t max_bytes) { (void)socket; (void)
 char *lpp_http_get(const char *url) { (void)url; return ""; }
 char *lpp_http_post(const char *url, const char *body, const char *content_type) { (void)url; (void)body; (void)content_type; return ""; }
 
-void *lpp_json_get_obj(void *json, const char *key) {
-    (void)json; (void)key; return NULL;
-}
-
-int64_t lpp_net_accept_timeout(int64_t listener, int64_t timeout_ms) {
-    (void)timeout_ms; return lpp_net_accept(listener);
-}
-
-int64_t lpp_net_dial(const char *host, int64_t port, int64_t timeout_ms) {
-    (void)timeout_ms; return lpp_net_connect(host, port);
-}
-
-int64_t lpp_net_dial_udp(const char *host, int64_t port, int64_t timeout_ms) {
-    (void)host; (void)port; (void)timeout_ms; return -1;
-}
-
-int64_t lpp_net_listen_udp(int64_t port) {
-    (void)port; return -1;
-}
-
-char *lpp_net_resolve(const char *host) {
-    (void)host; return lpp_empty_str();
-}
-
-int64_t lpp_net_send_all(int64_t handle, const char *data) {
-    if (handle < 0 || !data) return -1;
-    long total = 0;
-    long len = 0;
-    while (data[len]) len++;
-    while (total < len) {
-        int64_t sent = lpp_net_send(handle, data + total);
-        if (sent <= 0) return -1;
-        total += sent;
-    }
-    return 0;
-}
-
-int64_t lpp_net_set_deadline(int64_t fd, int64_t read_ms, int64_t write_ms) {
-    (void)fd; (void)read_ms; (void)write_ms; return -1;
-}
-
-int64_t lpp_net_set_keepalive(int64_t fd, int64_t enable, int64_t idle_s, int64_t interval, int64_t count) {
-    (void)fd; (void)enable; (void)idle_s; (void)interval; (void)count; return -1;
-}
-
-int64_t lpp_net_set_timeout(int64_t handle, int64_t milliseconds) {
-    (void)handle; (void)milliseconds; return 0;
-}
-
-int64_t lpp_vec_i64_checksum(int64_t n) {
-    if (n < 0) return 0;
-    int64_t total = 0;
-    for (int64_t i = 0; i < n; ++i) total += (i * 3) ^ (i >> 1);
-    return total;
-}
-
 /* ── SIMD i64x2 builtins ─────────────────────────────────────────────────
  * The Cranelift and LLVM backends lower these to native SSE2 instructions
  * inline. The host linker still requires the symbols to be resolved when
@@ -715,6 +610,7 @@ int64_t lpp_vec_i64_checksum(int64_t n) {
  * --------------------------------------------------------------------- */
 typedef struct { int64_t lo; int64_t hi; } LppVecI64x2;
 LppVecI64x2 lpp_vec_i64x2(int64_t lo, int64_t hi) { LppVecI64x2 v; v.lo = lo; v.hi = hi; return v; }
+int64_t lpp_vec_i64_checksum(void *v) { (void)v; return 0; }
 LppVecI64x2 lpp_vec_i64x2_splat(int64_t x) { LppVecI64x2 v; v.lo = x; v.hi = x; return v; }
 LppVecI64x2 lpp_vec_i64x2_add(LppVecI64x2 a, LppVecI64x2 b) { LppVecI64x2 r; r.lo = a.lo + b.lo; r.hi = a.hi + b.hi; return r; }
 LppVecI64x2 lpp_vec_i64x2_sub(LppVecI64x2 a, LppVecI64x2 b) { LppVecI64x2 r; r.lo = a.lo - b.lo; r.hi = a.hi - b.hi; return r; }

@@ -4035,7 +4035,6 @@ pub fn write_pe_with_options(
             !merged.syms.contains_key(u)
                 && !raw_imports.iter().any(|i| i == u || u == &format!("__imp_{i}"))
                 && !u.starts_with(".refptr.")
-                && u != "__ImageBase"
         })
         .collect();
     if !leftover.is_empty() && opts.dynamic == DynamicMode::Static {

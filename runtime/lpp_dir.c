@@ -113,6 +113,9 @@ char *lpp_path_join(const char *base, const char *child) {
 #include <ftw.h>
 
 static int lpp_nftw_remove(const char *fpath, const struct stat *sb, int typeflag, struct FTW *ftwbuf) {
+    (void)sb;
+    (void)typeflag;
+    (void)ftwbuf;
     return remove(fpath);
 }
 
