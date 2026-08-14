@@ -693,52 +693,33 @@ fn bind_of(sym: &object::Symbol<'_, '_>) -> Bind {
     }
 }
 
-fn parse_object(bytes: &[u8], path: &Path) -> Result<ObjectImage, String> {
-    let file =
-        object::File::parse(bytes).map_err(|e| format!("parse '{}': {e}", path.display()))?;
-    let format = match file.format() {
-        BinaryFormat::Elf => OutputFormat::Elf,
-        BinaryFormat::Coff | BinaryFormat::Pe => OutputFormat::Pe,
-        BinaryFormat::MachO => OutputFormat::Macho,
-        other => {
-            return Err(format!(
-                "'{}': unsupported object format {other:?}",
-                path.display()
-            ))
-        }
-    };
-    let machine = Machine::from_object(file.architecture()).ok_or_else(|| {
-        format!(
-            "'{}': unsupported architecture {:?}",
-            path.display(),
-            file.architecture()
-        )
-    })?;
+struct ParsedSections {
+    text: Vec<u8>,
+    rodata: Vec<u8>,
+    data: Vec<u8>,
+    bss_size: usize,
+    bss_align: usize,
+    tls: Vec<u8>,
+    tbss_size: usize,
+    tls_align: usize,
+    init_array: Vec<u8>,
+    fini_array: Vec<u8>,
+    map: Vec<(object::SectionIndex, SectionClass, usize)>,
+    pdata_ranges: Vec<(usize, usize)>,
+    eh_frame_ranges: Vec<(usize, usize)>,
+}
 
-    if file.kind() == object::ObjectKind::Dynamic {
-        return Ok(ObjectImage {
-            path: path.to_path_buf(),
-            machine,
-            format,
-            text: Vec::new(),
-            rodata: Vec::new(),
-            data: Vec::new(),
-            bss_size: 0,
-            bss_align: 1,
-            tls: Vec::new(),
-            tbss_size: 0,
-            tls_align: 1,
-            init_array: Vec::new(),
-            fini_array: Vec::new(),
-            symbols: Vec::new(),
-            commons: Vec::new(),
-            relocations: Vec::new(),
-            undefined: Vec::new(),
-            pdata_ranges: Vec::new(),
-            eh_frame_ranges: Vec::new(),
-        });
-    }
+struct ParsedSymbols {
+    symbols: Vec<Defined>,
+    commons: Vec<CommonSym>,
+    undefined: Vec<String>,
+}
 
+fn parse_object_sections<'a>(
+    file: &object::File<'a, &'a [u8]>,
+    path: &Path,
+    format: OutputFormat,
+) -> Result<ParsedSections, String> {
     let mut text = Vec::new();
     let mut rodata = Vec::new();
     let mut data = Vec::new();
@@ -750,7 +731,6 @@ fn parse_object(bytes: &[u8], path: &Path) -> Result<ObjectImage, String> {
     let mut init_array = Vec::new();
     let mut fini_array = Vec::new();
     let mut map: Vec<(object::SectionIndex, SectionClass, usize)> = Vec::new();
-    let mut relocs = Vec::new();
     let mut pdata_ranges = Vec::new();
     let mut eh_frame_ranges = Vec::new();
 
@@ -829,9 +809,35 @@ fn parse_object(bytes: &[u8], path: &Path) -> Result<ObjectImage, String> {
         }
     }
 
+    Ok(ParsedSections {
+        text,
+        rodata,
+        data,
+        bss_size,
+        bss_align,
+        tls,
+        tbss_size,
+        tls_align,
+        init_array,
+        fini_array,
+        map,
+        pdata_ranges,
+        eh_frame_ranges,
+    })
+}
+
+fn parse_object_relocations<'a>(
+    file: &object::File<'a, &'a [u8]>,
+    path: &Path,
+    format: OutputFormat,
+    sections: &ParsedSections,
+) -> Result<Vec<Relocation>, String> {
+    let mut relocs = Vec::new();
+
     for sec in file.sections() {
         let name = sec.name().unwrap_or("");
         if let object::SectionFlags::Coff { characteristics } = sec.flags() {
+            // IMAGE_SCN_LNK_INFO | IMAGE_SCN_LNK_REMOVE
             if (characteristics & 0x00000800) != 0 || (characteristics & 0x00000200) != 0 {
                 continue;
             }
@@ -839,18 +845,18 @@ fn parse_object(bytes: &[u8], path: &Path) -> Result<ObjectImage, String> {
         let Some(class) = classify_section(name, sec.kind()) else {
             continue;
         };
-        let Some((_, _, base)) = map.iter().find(|(i, _, _)| *i == sec.index()) else {
+        let Some((_, _, base)) = sections.map.iter().find(|(i, _, _)| *i == sec.index()) else {
             continue;
         };
         let base = *base;
 
         let buf: &[u8] = match class {
-            SectionClass::Text => &text,
-            SectionClass::Rodata => &rodata,
-            SectionClass::Data => &data,
-            SectionClass::InitArray => &init_array,
-            SectionClass::FiniArray => &fini_array,
-            SectionClass::Tls => &tls,
+            SectionClass::Text => &sections.text,
+            SectionClass::Rodata => &sections.rodata,
+            SectionClass::Data => &sections.data,
+            SectionClass::InitArray => &sections.init_array,
+            SectionClass::FiniArray => &sections.fini_array,
+            SectionClass::Tls => &sections.tls,
             SectionClass::Bss => &[],
         };
 
@@ -885,7 +891,7 @@ fn parse_object(bytes: &[u8], path: &Path) -> Result<ObjectImage, String> {
             if format == OutputFormat::Macho {
                 addend = (addend as i32) as i64;
             }
-            let target = resolve_local_target(raw_name, &sym, &map, format);
+            let target = resolve_local_target(raw_name, &sym, &sections.map, format);
             relocs.push(Relocation {
                 offset: base + raw_off,
                 target,
@@ -898,6 +904,14 @@ fn parse_object(bytes: &[u8], path: &Path) -> Result<ObjectImage, String> {
         }
     }
 
+    Ok(relocs)
+}
+
+fn parse_object_symbols<'a>(
+    file: &object::File<'a, &'a [u8]>,
+    format: OutputFormat,
+    map: &[(object::SectionIndex, SectionClass, usize)],
+) -> ParsedSymbols {
     let mut symbols = Vec::new();
     let mut commons = Vec::new();
     let mut undefined = Vec::new();
@@ -951,26 +965,83 @@ fn parse_object(bytes: &[u8], path: &Path) -> Result<ObjectImage, String> {
         }
     }
 
+    ParsedSymbols {
+        symbols,
+        commons,
+        undefined,
+    }
+}
+
+fn parse_object(bytes: &[u8], path: &Path) -> Result<ObjectImage, String> {
+    let file =
+        object::File::parse(bytes).map_err(|e| format!("parse '{}': {e}", path.display()))?;
+    let format = match file.format() {
+        BinaryFormat::Elf => OutputFormat::Elf,
+        BinaryFormat::Coff | BinaryFormat::Pe => OutputFormat::Pe,
+        BinaryFormat::MachO => OutputFormat::Macho,
+        other => {
+            return Err(format!(
+                "'{}': unsupported object format {other:?}",
+                path.display()
+            ))
+        }
+    };
+    let machine = Machine::from_object(file.architecture()).ok_or_else(|| {
+        format!(
+            "'{}': unsupported architecture {:?}",
+            path.display(),
+            file.architecture()
+        )
+    })?;
+
+    if file.kind() == object::ObjectKind::Dynamic {
+        return Ok(ObjectImage {
+            path: path.to_path_buf(),
+            machine,
+            format,
+            text: Vec::new(),
+            rodata: Vec::new(),
+            data: Vec::new(),
+            bss_size: 0,
+            bss_align: 1,
+            tls: Vec::new(),
+            tbss_size: 0,
+            tls_align: 1,
+            init_array: Vec::new(),
+            fini_array: Vec::new(),
+            symbols: Vec::new(),
+            commons: Vec::new(),
+            relocations: Vec::new(),
+            undefined: Vec::new(),
+            pdata_ranges: Vec::new(),
+            eh_frame_ranges: Vec::new(),
+        });
+    }
+
+    let sections = parse_object_sections(&file, path, format)?;
+    let relocations = parse_object_relocations(&file, path, format, &sections)?;
+    let symbols = parse_object_symbols(&file, format, &sections.map);
+
     Ok(ObjectImage {
         path: path.to_path_buf(),
         machine,
         format,
-        text,
-        rodata,
-        data,
-        bss_size,
-        bss_align,
-        tls,
-        tbss_size,
-        tls_align,
-        init_array,
-        fini_array,
-        symbols,
-        commons,
-        relocations: relocs,
-        undefined,
-        pdata_ranges,
-        eh_frame_ranges,
+        text: sections.text,
+        rodata: sections.rodata,
+        data: sections.data,
+        bss_size: sections.bss_size,
+        bss_align: sections.bss_align,
+        tls: sections.tls,
+        tbss_size: sections.tbss_size,
+        tls_align: sections.tls_align,
+        init_array: sections.init_array,
+        fini_array: sections.fini_array,
+        symbols: symbols.symbols,
+        commons: symbols.commons,
+        relocations,
+        undefined: symbols.undefined,
+        pdata_ranges: sections.pdata_ranges,
+        eh_frame_ranges: sections.eh_frame_ranges,
     })
 }
 
