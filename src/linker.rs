@@ -4041,6 +4041,8 @@ pub fn write_pe_with_options(
                 && !raw_imports.iter().any(|i| i == u || u == &format!("__imp_{i}"))
                 && !u.starts_with(".refptr.")
                 && u != "__ImageBase"
+                && u != "_fltused"
+                && !u.starts_with("lpp_")
         })
         .collect();
     if !leftover.is_empty() && opts.dynamic == DynamicMode::Static {
