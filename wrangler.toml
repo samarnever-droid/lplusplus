@@ -1,7 +1,7 @@
 # Cloudflare configuration for lplusplus.bond
 # Website: https://lplusplus.bond
 # Registry API: https://registry.lplusplus.bond
-# Artifacts: R2 bucket lplusplus-packages
+# Backend: Supabase (same pattern as Cloud Foundation Hub)
 
 name = "lplusplus"
 compatibility_date = "2024-01-01"
@@ -21,17 +21,17 @@ route = "registry.lplusplus.bond/*"
 zone_id = ""  # Set your Cloudflare zone ID here
 env_name = "production"
 
-# ── R2 Bucket: Package artifacts ──────────────────────────────────────────────
-[[r2_buckets]]
-binding = "REGISTRY_BUCKET"
-bucket_name = "lplusplus-packages"
-preview_bucket_name = "lplusplus-packages-preview"
-
-# ── Environment variables ─────────────────────────────────────────────────────
+# ── Supabase Bindings (via D1 or direct HTTP) ───────────────────────────────
+# The registry uses Supabase for:
+#   - api_keys table (scoped API keys with rate limits)
+#   - packages table (package metadata stored as JSONB)
+#   - request_logs table (audit + usage analytics)
 [vars]
 DOMAIN = "lplusplus.bond"
 REGISTRY_URL = "https://registry.lplusplus.bond"
-API_VERSION = "v2"
+API_VERSION = "v1"
+SUPABASE_URL = "https://yarqrdhcmxhagxbbjrgu.supabase.co"
+# SUPABASE_SERVICE_ROLE_KEY must be set in Cloudflare env vars
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 [[routes]]

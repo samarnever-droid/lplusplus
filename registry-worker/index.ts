@@ -1,20 +1,30 @@
 /**
  * L++ Package Registry API — Cloudflare Worker
  * Hosted at registry.lplusplus.bond
+ * 
+ * Architecture: Same pattern as Cloud Foundation Hub
+ * - Supabase backend (yarqrdhcmxhagxbbjrgu)
+ * - Scoped API keys with rate limiting
+ * - JSONB package metadata
+ * - Request logging for analytics
  *
  * Endpoints:
- *   GET  /index.json        — Full registry manifest
- *   GET  /names/:shard      — Package name shard (for lpp-pm)
- *   POST /publish           — Publish a package to R2
- *   GET  /search?q=query    — Search packages
- *   GET  /packages/:name    — Get package metadata
+ *   GET  /index.json        — Full registry manifest (public)
+ *   GET  /names/:shard      — Package name shard (public)
+ *   GET  /search?q=query    — Search packages (public)
+ *   GET  /packages/:name    — Get package metadata (public)
+ *   POST /publish           — Publish a package (requires api:write scope)
+ *   GET  /health            — Health check (public)
  */
 
 interface Env {
-  REGISTRY_BUCKET: R2Bucket;
+  SUPABASE_URL: string;
+  SUPABASE_SERVICE_ROLE_KEY: string;
   DOMAIN: string;
   REGISTRY_URL: string;
 }
+
+// ── Types ─────────────────────────────────────────────────────────────────────
 
 interface RegistryPackage {
   name: string;
@@ -43,8 +53,7 @@ type RegistryManifest = {
   packages: Record<string, RegistryPackage>;
 };
 
-// ── Registry data — in production, this is loaded from R2 ────────────────────
-const INDEX_KEY = "registry/index.json";
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 function notFound(message: string): Response {
   return new Response(JSON.stringify({ error: { code: "not_found", message } }), {
@@ -56,6 +65,20 @@ function notFound(message: string): Response {
 function badRequest(message: string): Response {
   return new Response(JSON.stringify({ error: { code: "invalid_input", message } }), {
     status: 400,
+    headers: corsHeaders(),
+  });
+}
+
+function unauthorized(message: string): Response {
+  return new Response(JSON.stringify({ error: { code: "missing_api_key", message } }), {
+    status: 401,
+    headers: corsHeaders(),
+  });
+}
+
+function forbidden(message: string): Response {
+  return new Response(JSON.stringify({ error: { code: "insufficient_scope", message } }), {
+    status: 403,
     headers: corsHeaders(),
   });
 }
@@ -76,31 +99,82 @@ function corsHeaders(): Record<string, string> {
   };
 }
 
-async function getRegistryIndex(env: Env): Promise<string | null> {
-  // Try R2 first
-  const object = await env.REGISTRY_BUCKET.get(INDEX_KEY);
-  if (object) {
-    return await object.text();
+async function fetchSupabase(
+  env: Env,
+  method: string,
+  path: string,
+  body?: unknown,
+  apiKey?: string | null,
+): Promise<Response> {
+  const url = `${env.SUPABASE_URL}/rest/v1${path}`;
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "apikey": env.SUPABASE_SERVICE_ROLE_KEY,
+    "Authorization": `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+  };
+  
+  if (apiKey) {
+    headers["Authorization"] = `Bearer ${apiKey}`;
   }
-  // Fallback: generate from embedded data
+
+  const init: RequestInit = {
+    method,
+    headers,
+  };
+
+  if (body && (method === "POST" || method === "PATCH")) {
+    init.body = JSON.stringify(body);
+  }
+
+  try {
+    const res = await fetch(url, init);
+    const data = await res.json().catch(() => null);
+    return new Response(JSON.stringify(data), {
+      status: res.status,
+      headers: corsHeaders(),
+    });
+  } catch (e) {
+    return serverError(String(e));
+  }
+}
+
+async function getRegistryManifest(env: Env): Promise<RegistryManifest | null> {
+  const res = await fetchSupabase(env, "GET", "/rpc/get_registry_manifest");
+  if (res.ok) {
+    const data = await res.json().catch(() => null);
+    if (data) return data;
+  }
   return null;
 }
 
-async function putRegistryIndex(env: Env, content: string): Promise<void> {
-  await env.REGISTRY_BUCKET.put(INDEX_KEY, content, {
-    httpMetadata: { contentType: "application/json" },
-  });
-}
+// ── Handlers ──────────────────────────────────────────────────────────────────
 
 async function handleGETIndex(env: Env): Promise<Response> {
   try {
-    const content = await getRegistryIndex(env);
-    if (content) {
-      return new Response(content, {
-        headers: { ...corsHeaders(), "Cache-Control": "public, max-age=60" },
-      });
+    // Try RPC first, fallback to direct table query
+    let manifest = await getRegistryManifest(env);
+    
+    if (!manifest) {
+      const res = await fetchSupabase(env, "GET", "/packages?select=*&order=created_at.desc");
+      if (!res.ok) return notFound("Registry not available");
+      
+      const packages = await res.json().catch(() => []);
+      manifest = {
+        registry: {
+          name: "L++ Package Registry",
+          version: "1.0.0",
+          url: env.REGISTRY_URL,
+          description: "Official L++ package registry — powered by Supabase + Cloudflare",
+        },
+        packages: Object.fromEntries(
+          packages.map((p: any) => [p.name, p.metadata as RegistryPackage])
+        ),
+      };
     }
-    return notFound("Registry index not found");
+
+    return new Response(JSON.stringify(manifest), {
+      headers: { ...corsHeaders(), "Cache-Control": "public, max-age=60" },
+    });
   } catch (e) {
     return serverError(String(e));
   }
@@ -108,33 +182,43 @@ async function handleGETIndex(env: Env): Promise<Response> {
 
 async function handleGETShard(env: Env, shard: string): Promise<Response> {
   try {
-    const key = `registry/names/${shard}.json`;
-    const object = await env.REGISTRY_BUCKET.get(key);
-    if (object) {
-      return new Response(await object.text(), {
-        headers: { ...corsHeaders(), "Cache-Control": "public, max-age=300" },
-      });
-    }
-    return notFound(`Shard ${shard} not found`);
+    const res = await fetchSupabase(env, "GET", `/packages?name.ilike=${shard}%&select=name,version`);
+    if (!res.ok) return notFound(`Shard ${shard} not found`);
+    
+    const packages = await res.json().catch(() => []);
+    return new Response(JSON.stringify(packages), {
+      headers: { ...corsHeaders(), "Cache-Control": "public, max-age=300" },
+    });
   } catch (e) {
     return serverError(String(e));
   }
 }
 
 async function handlePOSTPublish(env: Env, request: Request): Promise<Response> {
-  // Parse multipart form or JSON body
-  const contentType = request.headers.get("content-type") || "";
-  let pkg: RegistryPackage;
+  // Extract API key
+  const authHeader = request.headers.get("authorization") || request.headers.get("x-api-key");
+  if (!authHeader) return unauthorized("Send your key in the x-api-key or Authorization header.");
+  
+  const apiKey = authHeader.replace("Bearer ", "");
+  
+  // Verify key has api:write scope
+  const keyCheck = await fetchSupabase(env, "GET", `/api_keys?id.eq=${apiKey}&select=scopes`);
+  if (!keyCheck.ok) return unauthorized("Invalid API key.");
+  
+  const keyData = await keyCheck.json().catch(() => null);
+  if (!keyData || !Array.isArray(keyData) || keyData.length === 0) {
+    return unauthorized("API key not found.");
+  }
+  
+  const scopes = keyData[0]?.scopes as string[] || [];
+  if (!scopes.includes("api:write")) {
+    return forbidden("API key missing 'api:write' scope.");
+  }
 
+  // Parse package metadata
+  let pkg: RegistryPackage;
   try {
-    if (contentType.includes("multipart/form-data")) {
-      const formData = await request.formData();
-      const manifest = formData.get("manifest");
-      if (!manifest) return badRequest("Missing manifest field");
-      pkg = JSON.parse(String(manifest)) as RegistryPackage;
-    } else {
-      pkg = (await request.json()) as RegistryPackage;
-    }
+    pkg = await request.json() as RegistryPackage;
   } catch {
     return badRequest("Invalid JSON in request body");
   }
@@ -143,36 +227,19 @@ async function handlePOSTPublish(env: Env, request: Request): Promise<Response> 
     return badRequest("Package name is required");
   }
 
-  // Store package metadata in R2
-  const pkgKey = `packages/${pkg.name}/manifest.json`;
-  const versionKey = `packages/${pkg.name}/versions/${pkg.version || "latest"}.json`;
-
   try {
-    await env.REGISTRY_BUCKET.put(pkgKey, JSON.stringify(pkg, null, 2), {
-      httpMetadata: { contentType: "application/json" },
-    });
-    await env.REGISTRY_BUCKET.put(versionKey, JSON.stringify(pkg, null, 2), {
-      httpMetadata: { contentType: "application/json" },
-    });
+    // Upsert package metadata
+    const insertData = {
+      name: pkg.name,
+      version: pkg.version || "0.0.0",
+      metadata: pkg,
+      published_by: apiKey,
+    };
 
-    // Update index
-    let manifest: RegistryManifest;
-    const existing = await getRegistryIndex(env);
-    if (existing) {
-      manifest = JSON.parse(existing) as RegistryManifest;
-    } else {
-      manifest = {
-        registry: {
-          name: "L++ Package Registry",
-          version: "2.0",
-          url: env.REGISTRY_URL,
-          description: "Official L++ package registry — hosted on Cloudflare R2 + Pages",
-        },
-        packages: {},
-      };
+    const res = await fetchSupabase(env, "POST", "/packages", insertData);
+    if (!res.ok) {
+      return serverError("Failed to publish package");
     }
-    manifest.packages[pkg.name] = pkg;
-    await putRegistryIndex(env, JSON.stringify(manifest, null, 2));
 
     return new Response(JSON.stringify({
       success: true,
@@ -190,20 +257,15 @@ async function handlePOSTPublish(env: Env, request: Request): Promise<Response> 
 
 async function handleGETSearch(env: Env, query: string): Promise<Response> {
   try {
-    const content = await getRegistryIndex(env);
-    if (!content) return notFound("Registry not available");
-
-    const manifest: RegistryManifest = JSON.parse(content);
-    const q = query.toLowerCase();
-    const results = Object.entries(manifest.packages)
-      .filter(([name, pkg]) =>
-        name.toLowerCase().includes(q) ||
-        (pkg.description && pkg.description.toLowerCase().includes(q)) ||
-        (pkg.keywords && pkg.keywords.some(k => k.toLowerCase().includes(q)))
-      )
-      .map(([name, pkg]) => ({ name, ...pkg }));
-
-    return new Response(JSON.stringify({ results, count: results.length }), {
+    const res = await fetchSupabase(
+      env,
+      "GET",
+      `/packages?metadata->>description=ilike.*${query}*&select=name,metadata&limit=20`
+    );
+    if (!res.ok) return notFound("Registry not available");
+    
+    const packages = await res.json().catch(() => []);
+    return new Response(JSON.stringify({ results: packages, count: packages.length }), {
       headers: { ...corsHeaders(), "Cache-Control": "public, max-age=60" },
     });
   } catch (e) {
@@ -213,26 +275,31 @@ async function handleGETSearch(env: Env, query: string): Promise<Response> {
 
 async function handleGETPackage(env: Env, name: string): Promise<Response> {
   try {
-    const content = await getRegistryIndex(env);
-    if (content) {
-      const manifest: RegistryManifest = JSON.parse(content);
-      const pkg = manifest.packages[name];
-      if (pkg) {
-        return new Response(JSON.stringify(pkg), {
-          headers: corsHeaders(),
-        });
-      }
-    }
-    // Fallback: try R2 directly
-    const object = await env.REGISTRY_BUCKET.get(`packages/${name}/manifest.json`);
-    if (object) {
-      return new Response(await object.text(), { headers: corsHeaders() });
-    }
-    return notFound(`Package '${name}' not found`);
+    const res = await fetchSupabase(env, "GET", `/packages?name=eq.${name}&select=metadata`);
+    if (!res.ok) return notFound(`Package '${name}' not found`);
+    
+    const data = await res.json().catch(() => null);
+    if (!data || data.length === 0) return notFound(`Package '${name}' not found`);
+    
+    return new Response(JSON.stringify(data[0]?.metadata), {
+      headers: corsHeaders(),
+    });
   } catch (e) {
     return serverError(String(e));
   }
 }
+
+async function handleGETHealth(env: Env): Promise<Response> {
+  return new Response(JSON.stringify({
+    status: "healthy",
+    registry: env.REGISTRY_URL,
+    version: "1.0.0",
+  }), {
+    headers: { ...corsHeaders(), "Cache-Control": "no-store" },
+  });
+}
+
+// ── Main fetch handler ────────────────────────────────────────────────────────
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -247,6 +314,10 @@ export default {
     // ── Routes ──────────────────────────────────────────────────────────────
     if (path === "/index.json" || path === "/") {
       return handleGETIndex(env);
+    }
+
+    if (path === "/health") {
+      return handleGETHealth(env);
     }
 
     if (path.startsWith("/names/")) {
