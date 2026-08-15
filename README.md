@@ -87,10 +87,10 @@ processes) are rejected up front with clear diagnostics. See
 
 ```bash
 # Linux / macOS
-curl -fsSL https://raw.githubusercontent.com/samarnever-droid/lplusplus/master/install.sh | sh
+curl -fsSL https://registry.lplusplus.bond/install.sh | sh
 
 # Windows (PowerShell)
-irm https://raw.githubusercontent.com/samarnever-droid/lplusplus/master/install.ps1 | iex
+irm https://registry.lplusplus.bond/install.ps1 | iex
 
 # From source
 git clone https://github.com/samarnever-droid/lplusplus.git

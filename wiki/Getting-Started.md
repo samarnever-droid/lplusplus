@@ -7,7 +7,7 @@ This page walks through installing L++, compiling a first program, creating a pa
 Linux/macOS:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/samarnever-droid/lplusplus/master/install.sh | sh
+curl -fsSL https://registry.lplusplus.bond/install.sh | sh
 export PATH="$HOME/.lpp/bin:$PATH"
 lpp --version
 ```
@@ -15,7 +15,7 @@ lpp --version
 Windows PowerShell:
 
 ```powershell
-irm https://raw.githubusercontent.com/samarnever-droid/lplusplus/master/install.ps1 | iex
+irm https://registry.lplusplus.bond/install.ps1 | iex
 lpp --version
 ```
 

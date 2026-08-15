@@ -61,7 +61,7 @@ lpp run
 The JSON registry is hosted through GitHub Pages:
 
 ```text
-https://samarnever-droid.github.io/lplusplus/registry/index.json
+https://registry.lplusplus.bond
 ```
 
 Packages currently include:

@@ -2,13 +2,13 @@
   "registry": {
     "name": "L++ Package Registry",
     "version": "1.0",
-    "url": "https://samarnever-droid.github.io/lplusplus/registry",
-    "description": "Official L++ package registry \u2014 Git-based, JSON-indexed"
+    "url": "https://registry.lplusplus.bond",
+    "description": "Official L++ package registry — Git-based, JSON-indexed"
   },
   "packages": {
     "lpp-zip": {
       "name": "lpp-zip",
-      "description": "ZIP archive create/read library \u2014 pure L++ using buf_* primitives",
+      "description": "ZIP archive create/read library — pure L++ using buf_* primitives",
       "version": "0.1.0",
       "authors": [
         "0x4171341"
@@ -30,23 +30,23 @@
         "Read ZIP archives and extract entries",
         "CRC32 verification",
         "STORE method (no compression)",
-        "Pure L++ \u2014 no C code, no linker changes"
+        "Pure L++ — no C code, no linker changes"
       ],
       "api": {
-        "zip_create": "() -> Int \u2014 create new archive handle",
-        "zip_add_file": "(archive: Int, filename: Str, content: Str) \u2014 add file to archive",
-        "zip_save": "(archive: Int, path: Str) \u2014 write ZIP to disk",
-        "zip_free": "(archive: Int) \u2014 release archive memory",
-        "zip_open": "(path: Str) -> Int \u2014 open ZIP file for reading",
-        "zip_entry_count": "(handle: Int) -> Int \u2014 number of entries",
-        "zip_entry_name": "(handle: Int, index: Int) -> Str \u2014 get entry filename",
-        "zip_entry_data": "(handle: Int, index: Int) -> Str \u2014 get entry content",
-        "zip_close": "(handle: Int) \u2014 close ZIP handle"
+        "zip_create": "() -> Int — create new archive handle",
+        "zip_add_file": "(archive: Int, filename: Str, content: Str) — add file to archive",
+        "zip_save": "(archive: Int, path: Str) — write ZIP to disk",
+        "zip_free": "(archive: Int) — release archive memory",
+        "zip_open": "(path: Str) -> Int — open ZIP file for reading",
+        "zip_entry_count": "(handle: Int) -> Int — number of entries",
+        "zip_entry_name": "(handle: Int, index: Int) -> Str — get entry filename",
+        "zip_entry_data": "(handle: Int, index: Int) -> Str — get entry content",
+        "zip_close": "(handle: Int) — close ZIP handle"
       }
     },
     "lpp-math": {
       "name": "lpp-math",
-      "description": "Math utilities \u2014 abs, min, max, pow, gcd, lcm, fib, factorial",
+      "description": "Math utilities — abs, min, max, pow, gcd, lcm, fib, factorial",
       "version": "0.1.0",
       "authors": [
         "0x4171341"
@@ -62,7 +62,7 @@
     },
     "lpp-strings": {
       "name": "lpp-strings",
-      "description": "String utilities \u2014 repeat, contains, starts_with, reverse, pad",
+      "description": "String utilities — repeat, contains, starts_with, reverse, pad",
       "version": "0.1.0",
       "authors": [
         "0x4171341"
@@ -79,7 +79,7 @@
     },
     "lpp-collections": {
       "name": "lpp-collections",
-      "description": "Collection utilities \u2014 list_sum, list_max, list_min, list_reverse",
+      "description": "Collection utilities — list_sum, list_max, list_min, list_reverse",
       "version": "0.1.0",
       "authors": [
         "0x4171341"
@@ -96,7 +96,7 @@
     },
     "lpp-algo": {
       "name": "lpp-algo",
-      "description": "Algorithm library \u2014 bubble_sort, binary_search, list_range, list_fill",
+      "description": "Algorithm library — bubble_sort, binary_search, list_range, list_fill",
       "version": "0.1.0",
       "authors": [
         "0x4171341"
@@ -115,7 +115,7 @@
     "lpp-opencode": {
       "name": "lpp-opencode",
       "version": "0.6.0",
-      "description": "OpenCode/OpenClaude port foundation in L++ \u2014 installable lpp-opencode command, Claude router, TUI, sessions, commands, tools, and agent scaffold",
+      "description": "OpenCode/OpenClaude port foundation in L++ — installable lpp-opencode command, Claude router, TUI, sessions, commands, tools, and agent scaffold",
       "authors": [
         "0x4171341"
       ],
@@ -183,7 +183,7 @@
     "lpp-openclaude": {
       "name": "lpp-openclaude",
       "version": "0.6.0",
-      "description": "OpenClaude alias for lpp-opencode \u2014 Claude-oriented OpenCode port foundation in L++",
+      "description": "OpenClaude alias for lpp-opencode — Claude-oriented OpenCode port foundation in L++",
       "authors": [
         "0x4171341"
       ],
@@ -297,7 +297,7 @@
     "lpp-lreact": {
       "name": "lpp-lreact",
       "version": "1.0.0",
-      "description": "Alias for lreact \u2014 Tauri-like GUI framework for L++",
+      "description": "Alias for lreact — Tauri-like GUI framework for L++",
       "authors": [
         "samarnever-droid"
       ],
@@ -364,7 +364,7 @@
     "lppsqlite": {
       "name": "lppsqlite",
       "version": "1.2.0",
-      "description": "SQLite-file-format-compatible database engine in pure L++ \u2014 real .db files, B+trees, secondary indexes, overflow pages, freelist, correlated subqueries, real transactions and advisory locking.",
+      "description": "SQLite-file-format-compatible database engine in pure L++ — real .db files, B+trees, secondary indexes, overflow pages, freelist, correlated subqueries, real transactions and advisory locking.",
       "authors": [
         "arena-audit"
       ],
@@ -409,20 +409,20 @@
         "485 in-engine assertions plus 118 differential cases compared against real sqlite3"
       ],
       "api": {
-        "exec.open_db": "(path: Str) -> Int \u2014 open or create a database file",
-        "exec.open_memory": "() -> Int \u2014 transient in-memory database",
-        "exec.exec": "(db: Int, sql: Str) -> Int \u2014 run one statement, returns a rowset",
-        "exec.exec_script": "(db: Int, sql: Str) -> Int \u2014 run several ';'-separated statements",
-        "exec.close_db": "(db: Int) \u2014 flush to disk and release",
-        "rowset.rs_nrows": "(r: Int) -> Int \u2014 row count",
-        "rowset.rs_ncols": "(r: Int) -> Int \u2014 column count",
-        "rowset.rs_name": "(r: Int, i: Int) -> Str \u2014 column name",
-        "rowset.rs_cell": "(r: Int, row: Int, col: Int) -> Int \u2014 value handle",
-        "rowset.rs_err": "(r: Int) -> Int \u2014 1 on error",
-        "rowset.rs_errmsg": "(r: Int) -> Str \u2014 error text",
-        "rowset.rs_changes": "(r: Int) -> Int \u2014 rows modified by INSERT/UPDATE/DELETE",
-        "value.v_display": "(v: Int) -> Str \u2014 render a value for output",
-        "value.v_typename": "(v: Int) -> Str \u2014 null|integer|real|text|blob"
+        "exec.open_db": "(path: Str) -> Int — open or create a database file",
+        "exec.open_memory": "() -> Int — transient in-memory database",
+        "exec.exec": "(db: Int, sql: Str) -> Int — run one statement, returns a rowset",
+        "exec.exec_script": "(db: Int, sql: Str) -> Int — run several ';'-separated statements",
+        "exec.close_db": "(db: Int) — flush to disk and release",
+        "rowset.rs_nrows": "(r: Int) -> Int — row count",
+        "rowset.rs_ncols": "(r: Int) -> Int — column count",
+        "rowset.rs_name": "(r: Int, i: Int) -> Str — column name",
+        "rowset.rs_cell": "(r: Int, row: Int, col: Int) -> Int — value handle",
+        "rowset.rs_err": "(r: Int) -> Int — 1 on error",
+        "rowset.rs_errmsg": "(r: Int) -> Str — error text",
+        "rowset.rs_changes": "(r: Int) -> Int — rows modified by INSERT/UPDATE/DELETE",
+        "value.v_display": "(v: Int) -> Str — render a value for output",
+        "value.v_typename": "(v: Int) -> Str — null|integer|real|text|blob"
       },
       "limitations": [
         "Indexes are consulted only for equality on the leading column; ranges, ORDER BY and LIKE still scan",
@@ -437,7 +437,7 @@
     "compresslpp": {
       "name": "compresslpp",
       "version": "1.0.0",
-      "description": "Archive and compression library in pure L++ \u2014 real DEFLATE (RFC 1951), ZIP with ZipCrypto passwords, USTAR tar and gzip, verified against zlib/zipfile/tarfile.",
+      "description": "Archive and compression library in pure L++ — real DEFLATE (RFC 1951), ZIP with ZipCrypto passwords, USTAR tar and gzip, verified against zlib/zipfile/tarfile.",
       "authors": [
         "arena-audit"
       ],
@@ -467,21 +467,21 @@
         "50 in-engine checks plus 32 cross-verifications against python and the unzip/tar CLIs"
       ],
       "api": {
-        "deflate.deflate": "(data: Int, n: Int, level: Int) -> Int \u2014 compress to a byte vector",
-        "inflate.inflate": "(ptr: Int, size: Int) -> Int \u2014 decompress, 0 on malformed input",
-        "zip.zw_new": "() -> Int \u2014 new archive writer",
-        "zip.zw_add_file": "(z, name, path, level, password) -> Int \u2014 add a file",
-        "zip.zw_save": "(z, path) -> Int \u2014 write the archive",
-        "zip.zr_open": "(path: Str) -> Int \u2014 open an archive, 0 if unreadable",
-        "zip.zr_extract": "(r, i, password) -> Int \u2014 extract entry, 0 on bad password/CRC",
-        "tar.tw_new": "() -> Int \u2014 new tar writer",
-        "tar.tr_open": "(path: Str) -> Int \u2014 open a tar",
-        "gzip.gz_compress": "(data, n, level) -> Int \u2014 gzip member",
-        "gzip.gz_decompress": "(ptr, size) -> Int \u2014 0 on bad header or CRC"
+        "deflate.deflate": "(data: Int, n: Int, level: Int) -> Int — compress to a byte vector",
+        "inflate.inflate": "(ptr: Int, size: Int) -> Int — decompress, 0 on malformed input",
+        "zip.zw_new": "() -> Int — new archive writer",
+        "zip.zw_add_file": "(z, name, path, level, password) -> Int — add a file",
+        "zip.zw_save": "(z, path) -> Int — write the archive",
+        "zip.zr_open": "(path: Str) -> Int — open an archive, 0 if unreadable",
+        "zip.zr_extract": "(r, i, password) -> Int — extract entry, 0 on bad password/CRC",
+        "tar.tw_new": "() -> Int — new tar writer",
+        "tar.tr_open": "(path: Str) -> Int — open a tar",
+        "gzip.gz_compress": "(data, n, level) -> Int — gzip member",
+        "gzip.gz_decompress": "(ptr, size) -> Int — 0 on bad header or CRC"
       },
       "limitations": [
         "Encoder emits fixed-Huffman blocks only; output is a few percent larger than zlib",
-        "ZipCrypto is cryptographically weak \u2014 interoperability only, not real confidentiality",
+        "ZipCrypto is cryptographically weak — interoperability only, not real confidentiality",
         "No AES/AE-x encryption, no ZIP64, no bzip2/LZMA/XZ/Zstandard",
         "Everything is processed in memory; not suitable for files larger than RAM",
         "TAR long names (>100 bytes) are rejected; symlinks, sparse files and PAX metadata ignored",

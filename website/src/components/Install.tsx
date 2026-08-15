@@ -7,9 +7,9 @@ const TABS = [
   {
     id: "windows",
     label: "Windows (PowerShell)",
-    copy: "irm https://samarnever-droid.github.io/lplusplus/install.ps1 | iex",
+    copy: "irm https://registry.lplusplus.bond/install.ps1 | iex",
     lines: [
-      { p: "PS>", t: "irm https://samarnever-droid.github.io/lplusplus/install.ps1 | iex", c: "text-white" },
+      { p: "PS>", t: "irm https://registry.lplusplus.bond/install.ps1 | iex", c: "text-white" },
       { p: "", t: "  downloading lpp.exe ................... ok", c: "text-white/45" },
       { p: "", t: "  downloading lpp_runtime.c ............. ok", c: "text-white/45" },
       { p: "", t: "  precompiling lpp_runtime.obj .......... ok", c: "text-white/45" },
@@ -22,9 +22,9 @@ const TABS = [
   {
     id: "unix",
     label: "macOS / Linux",
-    copy: "curl -sSfL https://samarnever-droid.github.io/lplusplus/install.sh | sh",
+    copy: "curl -sSfL https://registry.lplusplus.bond/install.sh | sh",
     lines: [
-      { p: "$", t: "curl -sSfL https://samarnever-droid.github.io/lplusplus/install.sh | sh", c: "text-white" },
+      { p: "$", t: "curl -sSfL https://registry.lplusplus.bond/install.sh | sh", c: "text-white" },
       { p: "", t: "  downloading lpp_runtime.c ............. ok", c: "text-white/45" },
       { p: "", t: "  compiling lpp from source ............. ok", c: "text-white/45" },
       { p: "", t: "  precompiling lpp_runtime.o ............ ok", c: "text-white/45" },

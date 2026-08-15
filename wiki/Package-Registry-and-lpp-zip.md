@@ -3,7 +3,7 @@
 The official package registry is a GitHub Pages-hosted JSON index:
 
 ```text
-https://samarnever-droid.github.io/lplusplus/registry/index.json
+https://registry.lplusplus.bond
 ```
 
 The registry is Git-based and simple by design. A package entry points to source files in the repository or to raw URLs.
