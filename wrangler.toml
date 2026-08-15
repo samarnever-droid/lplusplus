@@ -6,3 +6,5 @@ pages_build_output_dir = "website/dist"
 [vars]
 DOMAIN = "lplusplus.bond"
 REGISTRY_URL = "https://registry.lplusplus.bond"
+SUPABASE_URL = "https://yarqrdhcmxhagxbbjrgu.supabase.co"
+SUPABASE_PUBLISHABLE_KEY = "sb_publishable_j-3maSzjTD0jeojuYFCMvw_MGAYApAN"
