@@ -524,7 +524,11 @@ fn real_main() -> i32 {
 
     if args.len() > 1 {
         let first_arg = &args[1];
-        if env::var_os("LPP_PM_CHILD").is_some() {
+        if env::var_os("LPP_PM_CHILD").is_some()
+            || first_arg == "doctor"
+            || first_arg == "info"
+            || first_arg == "cache"
+        {
             return pm::run_command(&args[1..]);
         }
         if first_arg == "init"

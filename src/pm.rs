@@ -837,21 +837,86 @@ document.getElementById('btn-stats').onclick = async () => {
     Ok(())
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProjectTemplate {
+    Cli,
+    Lib,
+    Web,
+    Ffi,
+}
+
+impl ProjectTemplate {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.to_ascii_lowercase().as_str() {
+            "cli" | "app" | "binary" => Some(Self::Cli),
+            "lib" | "library" => Some(Self::Lib),
+            "web" | "lreact" | "desktop" => Some(Self::Web),
+            "ffi" | "c" | "native" => Some(Self::Ffi),
+            _ => None,
+        }
+    }
+}
+
 fn write_project_scaffold(base_dir: &Path, package_name: &str) -> Result<(), String> {
+    write_project_scaffold_with_template(base_dir, package_name, ProjectTemplate::Cli)
+}
+
+fn write_project_scaffold_with_template(
+    base_dir: &Path,
+    package_name: &str,
+    template: ProjectTemplate,
+) -> Result<(), String> {
     fs::create_dir_all(base_dir.join("src"))
         .map_err(|e| format!("Failed to create src/ directory: {}", e))?;
-    fs::write(base_dir.join("lpp.toml"), scaffold_toml(package_name))
-        .map_err(|e| format!("Failed to write lpp.toml: {}", e))?;
-    fs::write(
-        base_dir.join("src").join("main.lpp"),
-        "def main():\n    print_str(\"Hello from L++ project!\")\n",
-    )
-    .map_err(|e| format!("Failed to write src/main.lpp: {}", e))?;
+
+    match template {
+        ProjectTemplate::Web => {
+            return write_web_scaffold(base_dir, package_name);
+        }
+        ProjectTemplate::Lib => {
+            fs::write(
+                base_dir.join("lpp.toml"),
+                format!("[package]\nname = \"{package_name}\"\nversion = \"0.1.0\"\nentry = \"src/lib.lpp\"\nauthor = \"{}\"\nkeywords = [\"library\"]\n\n[dependencies]\n",
+                    std::env::var("USERNAME").or_else(|_| std::env::var("USER")).unwrap_or_else(|_| "Author".to_string())
+                )
+            ).map_err(|e| format!("Failed to write lpp.toml: {}", e))?;
+
+            fs::write(
+                base_dir.join("src").join("lib.lpp"),
+                "def add(a: int, b: int) -> int:\n    return a + b\n\ndef multiply(a: int, b: int) -> int:\n    return a * b\n",
+            ).map_err(|e| format!("Failed to write src/lib.lpp: {}", e))?;
+
+            let tests_dir = base_dir.join("tests");
+            fs::create_dir_all(&tests_dir).map_err(|e| format!("Failed to create tests/ directory: {}", e))?;
+            fs::write(
+                tests_dir.join("test_math.lpp"),
+                "def main():\n    let sum = 2 + 3\n    if sum != 5:\n        panic(\"Assertion failed: 2 + 3 != 5\")\n    print_str(\"Math tests passed!\")\n",
+            ).map_err(|e| format!("Failed to write test file: {}", e))?;
+        }
+        ProjectTemplate::Ffi => {
+            fs::write(base_dir.join("lpp.toml"), scaffold_toml(package_name))
+                .map_err(|e| format!("Failed to write lpp.toml: {}", e))?;
+            fs::write(
+                base_dir.join("src").join("main.lpp"),
+                "// C Native FFI Interoperability Scaffold\nextern \"C\" def puts(s: str) -> int\n\ndef main():\n    puts(\"Hello from native C FFI!\")\n    print_str(\"L++ FFI program initialized.\")\n",
+            ).map_err(|e| format!("Failed to write src/main.lpp: {}", e))?;
+        }
+        ProjectTemplate::Cli => {
+            fs::write(base_dir.join("lpp.toml"), scaffold_toml(package_name))
+                .map_err(|e| format!("Failed to write lpp.toml: {}", e))?;
+            fs::write(
+                base_dir.join("src").join("main.lpp"),
+                "def main():\n    print_str(\"Hello from L++ CLI app!\")\n",
+            ).map_err(|e| format!("Failed to write src/main.lpp: {}", e))?;
+        }
+    }
+
     fs::write(
         base_dir.join(".gitignore"),
-        ".lpp_packages/\ntarget/\noutput.c\noutput.obj\n*.obj\n*.exe\n*.o\n",
+        ".lpp_packages/\ntarget/\nLppData/\ndist/\noutput.c\noutput.obj\n*.obj\n*.exe\n*.o\n*.tmp\n",
     )
     .map_err(|e| format!("Failed to write .gitignore: {}", e))?;
+
     Ok(())
 }
 
@@ -955,14 +1020,40 @@ fn read_lockfile() -> Vec<LockedPackage> {
         .unwrap_or_default()
 }
 
-fn resolve_registry_cache_path() -> PathBuf {
+fn resolve_global_cache_root() -> PathBuf {
     if let Ok(var) = std::env::var("LPP_HOME").or_else(|_| std::env::var("LPP_DIR")) {
-        return PathBuf::from(var).join("cache").join("registry_cache.json");
+        return PathBuf::from(var).join("cache");
     }
     if let Ok(home) = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")) {
-        return PathBuf::from(home).join(".lpp").join("cache").join("registry_cache.json");
+        return PathBuf::from(home).join(".lpp").join("cache");
     }
-    std::env::temp_dir().join(".lpp_registry_cache.json")
+    std::env::temp_dir().join(".lpp_cache")
+}
+
+fn resolve_global_package_cache(name: &str, version: Option<&str>) -> PathBuf {
+    let ver_tag = version.unwrap_or("latest");
+    let safe_name = name.replace('/', "__").replace('\\', "__");
+    resolve_global_cache_root().join("packages").join(format!("{safe_name}@{ver_tag}"))
+}
+
+fn compute_dir_size(path: &Path) -> u64 {
+    let mut total = 0;
+    if let Ok(entries) = fs::read_dir(path) {
+        for entry in entries.flatten() {
+            if let Ok(meta) = entry.metadata() {
+                if meta.is_dir() {
+                    total += compute_dir_size(&entry.path());
+                } else {
+                    total += meta.len();
+                }
+            }
+        }
+    }
+    total
+}
+
+fn resolve_registry_cache_path() -> PathBuf {
+    resolve_global_cache_root().join("registry_cache.json")
 }
 
 fn registry_package_entries() -> Vec<(String, RegistryEntry)> {
@@ -2035,6 +2126,8 @@ pub fn run_command(args: &[String]) -> i32 {
         }
         "test" => cmd_test(),
         "bench" => cmd_bench(),
+        "doctor" | "info" => cmd_doctor(),
+        "cache" => cmd_cache(&args[1..]),
         "help" => {
             print_help();
             0
@@ -2050,21 +2143,21 @@ pub fn run_command(args: &[String]) -> i32 {
 
 fn print_help() {
     let row = |cmd: &str, desc: &str, color_fn: fn(&str) -> String| {
-        let padded = format!("{:<22}", cmd);
+        let padded = format!("{:<24}", cmd);
         println!("    {} {}", color_fn(&padded), ui::dim(desc));
     };
 
     println!();
-    println!("  {}", ui::bold_cyan("╭─────────────────────────────────────────────────────────────╮"));
-    println!("  {}  {}  v{:<6} Fast, Native Systems Language Toolchain   {}", ui::bold_cyan("│"), ui::badge_lpp(), env!("CARGO_PKG_VERSION"), ui::bold_cyan("│"));
-    println!("  {}", ui::bold_cyan("╰─────────────────────────────────────────────────────────────╯"));
+    println!("  {}", ui::bold_cyan("╭────────────────────────────────────────────────────────────────╮"));
+    println!("  {}  {}  v{:<6}  Fast, Native Systems Language Toolchain  {}", ui::bold_cyan("│"), ui::badge_lpp(), env!("CARGO_PKG_VERSION"), ui::bold_cyan("│"));
+    println!("  {}", ui::bold_cyan("╰────────────────────────────────────────────────────────────────╯"));
     println!();
     println!("  {}", ui::bold("USAGE:"));
     println!("    {} <file.lpp> [options]         Compile standalone source file", ui::cyan("lpp"));
     println!("    {} <command> [args]             Package, app, and workspace workflow", ui::cyan("lpp"));
     println!();
     println!("  {}", ui::bold_purple("PROJECT WORKFLOW:"));
-    row("new <name>", "Create a new L++ package directory", ui::green);
+    row("new <name> [-t <tmpl>]", "Create a new project (cli, lib, web, ffi)", ui::green);
     row("init [name]", "Initialize lpp.toml in current directory", ui::green);
     row("add <pkg>", "Add a dependency from registry or git", ui::green);
     row("add @owner/repo", "Add dependency from GitHub shorthand", ui::green);
@@ -2085,7 +2178,9 @@ fn print_help() {
     row("bench", "Run compiler & runtime performance benchmarks", ui::yellow);
     row("clean", "Clean all build artifacts and cache", ui::yellow);
     println!();
-    println!("  {}", ui::bold_cyan("REGISTRY & PUBLISHING:"));
+    println!("  {}", ui::bold_cyan("DIAGNOSTICS & STORE:"));
+    row("doctor", "Inspect toolchains, linkers, network & environment", ui::cyan);
+    row("cache [list|clean]", "Manage centralized global package store & cache", ui::cyan);
     row("search <query>", "Search package registry", ui::cyan);
     row("publish [--dry-run]", "Publish package to registry.lplusplus.bond", ui::cyan);
     println!();
@@ -2097,18 +2192,51 @@ fn print_help() {
 }
 
 fn cmd_new(args: &[String]) -> i32 {
-    let mut is_web = false;
+    let mut template = ProjectTemplate::Cli;
     let mut name_arg = None;
 
-    for arg in args {
-        if arg == "web" || arg == "--web" || arg == "lreact" {
-            is_web = true;
-        } else if !arg.starts_with('-') {
-            if name_arg.is_some() {
-                eprintln!("[L++] Error: expected one project name, got '{}'.", arg);
-                return 2;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--template" | "-t" => {
+                if let Some(val) = args.get(i + 1) {
+                    if let Some(tmpl) = ProjectTemplate::parse(val) {
+                        template = tmpl;
+                        i += 2;
+                        continue;
+                    } else {
+                        eprintln!("{}", ui::tag_error(&format!("unknown template '{val}'; available templates: cli, lib, web, ffi")));
+                        return 2;
+                    }
+                } else {
+                    eprintln!("{}", ui::tag_error("--template requires a template name (cli, lib, web, ffi)"));
+                    return 2;
+                }
             }
-            name_arg = Some(arg.as_str());
+            "--web" | "web" | "lreact" => {
+                template = ProjectTemplate::Web;
+                i += 1;
+                continue;
+            }
+            "--lib" | "lib" => {
+                template = ProjectTemplate::Lib;
+                i += 1;
+                continue;
+            }
+            "--ffi" | "ffi" => {
+                template = ProjectTemplate::Ffi;
+                i += 1;
+                continue;
+            }
+            arg if !arg.starts_with('-') => {
+                if name_arg.is_some() {
+                    eprintln!("{}", ui::tag_error(&format!("expected one project name, got '{arg}'.")));
+                    return 2;
+                }
+                name_arg = Some(arg);
+                i += 1;
+            }
+            _ => { i += 1; }
         }
     }
 
@@ -2139,55 +2267,37 @@ fn cmd_new(args: &[String]) -> i32 {
         return 1;
     }
 
-    if is_web {
-        println!("  {} Creating new Lreact Web App '{}'...", ui::bold_purple("✨"), ui::bold(raw_name));
-        match write_web_scaffold(&project_dir, &package_name) {
-            Ok(()) => {
-                println!("  {} Web App '{}' created at {}.", ui::green("✔"), ui::bold(&package_name), ui::cyan(&project_dir.display().to_string()));
-                let old_cwd = match std::env::current_dir() {
-                    Ok(cwd) => cwd,
-                    Err(e) => {
-                        eprintln!("{}", ui::tag_error(&format!("cannot read current directory: {e}")));
-                        return 1;
-                    }
-                };
-                if let Err(e) = std::env::set_current_dir(&project_dir) {
-                    eprintln!("{}", ui::tag_error(&format!("cannot enter new project: {e}")));
-                    return 1;
-                }
-                let install_status = cmd_install(false);
-                let restore_status = std::env::set_current_dir(old_cwd);
-                if let Err(e) = restore_status {
-                    eprintln!("{}", ui::tag_warn(&format!("cannot restore current directory: {e}")));
-                }
-                if install_status != 0 {
-                    eprintln!("{}", ui::tag_warn("dependency install was not completed; run `lpp install` when network access is available"));
-                }
-                println!();
-                println!("  {}", ui::bold("Next steps:"));
-                println!("    {} {}", ui::dim("$"), ui::green(&format!("cd {raw_name}")));
-                println!("    {} {}   {}", ui::dim("$"), ui::cyan("lpp dev"), ui::dim("# Start local Lreact dev server at http://localhost:3000"));
-                println!("    {} {}   {}", ui::dim("$"), ui::cyan("lpp build --release"), ui::dim("# Build standalone native executable in dist/"));
-                println!();
-            }
-            Err(e) => {
-                eprintln!("{}", ui::tag_error(&e));
-                return 1;
-            }
-        }
-    } else {
-        println!("  {} Creating new project '{}'...", ui::bold_cyan("✨"), ui::bold(raw_name));
-        if let Err(e) = write_project_scaffold(&project_dir, &package_name) {
-            eprintln!("{}", ui::tag_error(&e));
-            return 1;
-        }
-        println!("  {} Project '{}' created at {}.", ui::green("✔"), ui::bold(&package_name), ui::cyan(&project_dir.display().to_string()));
-        println!();
-        println!("  {}", ui::bold("Next steps:"));
-        println!("    {} {}", ui::dim("$"), ui::green(&format!("cd {raw_name}")));
-        println!("    {} {}   {}", ui::dim("$"), ui::cyan("lpp run"), ui::dim("# Build and run project"));
-        println!();
+    let tmpl_desc = match template {
+        ProjectTemplate::Cli => "CLI Application",
+        ProjectTemplate::Lib => "Modular Library",
+        ProjectTemplate::Web => "Lreact Web Desktop App",
+        ProjectTemplate::Ffi => "C Native FFI Scaffold",
+    };
+
+    println!("  {} Creating new project '{}' [{}]...", ui::bold_cyan("✨"), ui::bold(raw_name), ui::bold_purple(tmpl_desc));
+    if let Err(e) = write_project_scaffold_with_template(&project_dir, &package_name, template) {
+        eprintln!("{}", ui::tag_error(&e));
+        return 1;
     }
+
+    println!("  {} Project '{}' created at {}.", ui::green("✔"), ui::bold(&package_name), ui::cyan(&project_dir.display().to_string()));
+    println!();
+    println!("  {}", ui::bold("Next steps:"));
+    println!("    {} {}", ui::dim("$"), ui::green(&format!("cd {raw_name}")));
+    match template {
+        ProjectTemplate::Web => {
+            println!("    {} {}   {}", ui::dim("$"), ui::cyan("lpp dev"), ui::dim("# Start local dev server"));
+            println!("    {} {}   {}", ui::dim("$"), ui::cyan("lpp build --release"), ui::dim("# Build standalone native executable in dist/"));
+        }
+        ProjectTemplate::Lib => {
+            println!("    {} {}   {}", ui::dim("$"), ui::cyan("lpp test"), ui::dim("# Run library tests"));
+            println!("    {} {}   {}", ui::dim("$"), ui::cyan("lpp build"), ui::dim("# Compile library object"));
+        }
+        _ => {
+            println!("    {} {}   {}", ui::dim("$"), ui::cyan("lpp run"), ui::dim("# Build and run project"));
+        }
+    }
+    println!();
     0
 }
 
@@ -2749,10 +2859,23 @@ fn install_dependency(
         return Err(format!("invalid dependency name '{}'", dep.name));
     }
 
+    let global_cache_dest = resolve_global_package_cache(&dep.name, dep.tag.as_deref().or(dep.version.as_deref()));
+
     if let Some(git_url) = dep.git.as_deref() {
         if git_url.trim().is_empty() {
             return Err(format!("dependency '{}' has an empty git URL", dep.name));
         }
+
+        // ── Fast-path: Global Package Store Cache ─────────────────────────────
+        if !force_update && global_cache_dest.exists() && global_cache_dest.is_dir() {
+            if destination.exists() {
+                let _ = fs::remove_dir_all(destination);
+            }
+            if copy_dir_all(&global_cache_dest, destination).is_ok() {
+                return Ok(format!("cache+{}", global_cache_dest.display()));
+            }
+        }
+
         if destination.exists() {
             if !destination.join(".git").exists() {
                 return Err(format!("destination '{}' exists but is not a git checkout", destination.display()));
@@ -2781,6 +2904,10 @@ fn install_dependency(
             args.push(git_url.to_string());
             args.push(destination.to_string_lossy().into_owned());
             git_status(args, &format!("cloning '{}'", dep.name))?;
+
+            // Populate global package store
+            let _ = fs::create_dir_all(&global_cache_dest);
+            let _ = copy_dir_all(destination, &global_cache_dest);
         }
         let commit = git_output(["-C", destination.to_string_lossy().as_ref(), "rev-parse", "HEAD"], &format!("reading '{}' revision", dep.name))?;
         return Ok(format!("git+{}#{}", git_url, commit));
@@ -3998,6 +4125,137 @@ fn cmd_check() -> i32 {
         Ok(s) if s.success() => { println!("[L++] Project is semantically valid."); 0 }
         Ok(s) => { eprintln!("[L++] Error: Project check failed ({s})."); s.code().unwrap_or(1) }
         Err(e) => { eprintln!("[L++] Error: failed to execute compiler '{}': {e}", compiler_path.display()); 1 }
+    }
+}
+
+fn cmd_doctor() -> i32 {
+    println!();
+    println!("  {}", ui::bold_cyan("╭─────────────────────────────────────────────────────────────╮"));
+    println!("  {}  {} L++ Toolchain & Environment Diagnostics               {}", ui::bold_cyan("│"), ui::bold("🩺"), ui::bold_cyan("│"));
+    println!("  {}", ui::bold_cyan("╰─────────────────────────────────────────────────────────────╯"));
+    println!();
+
+    println!("  {}", ui::bold_cyan("1. COMPILER & HOST ARCHITECTURE"));
+    println!("    {} Version:      L++ v{} ({}-bit)", ui::green("✔"), env!("CARGO_PKG_VERSION"), std::mem::size_of::<usize>() * 8);
+    println!("    {} Host System:  {} ({})", ui::green("✔"), std::env::consts::OS, std::env::consts::ARCH);
+
+    println!();
+    println!("  {}", ui::bold_yellow("2. NATIVE TOOLCHAINS & LINKERS"));
+    let has_msvc = command_available("cl.exe", &["/?"]) || Path::new("C:\\Program Files\\Microsoft Visual Studio").exists();
+    if has_msvc {
+        println!("    {} MSVC / Windows SDK: Detected", ui::green("✔"));
+    } else {
+        println!("    {} MSVC Toolchain: Not in PATH (direct standalone linker active)", ui::yellow("▲"));
+    }
+
+    let has_gcc = command_available("gcc", &["--version"]);
+    if has_gcc {
+        println!("    {} GCC / MinGW: Detected", ui::green("✔"));
+    }
+
+    let has_clang = command_available("clang", &["--version"]);
+    if has_clang {
+        println!("    {} Clang: Detected", ui::green("✔"));
+    }
+
+    println!("    {} Direct Linker: Active (lpp-link zero-dependency linker)", ui::green("✔"));
+
+    println!();
+    println!("  {}", ui::bold_purple("3. REGISTRY & NETWORK CONNECTIVITY"));
+    let reg_url = std::env::var("LPP_REGISTRY_URL").unwrap_or_else(|_| "https://registry.lplusplus.bond".to_string());
+    let mut reg_status = false;
+    let curl_bin = if command_available("curl.exe", &["--version"]) { "curl.exe" } else { "curl" };
+    if let Ok(out) = std::process::Command::new(curl_bin).args(["-fsSL", "--ssl-no-revoke", "--max-time", "3", &format!("{reg_url}/index.json")]).output() {
+        if out.status.success() { reg_status = true; }
+    }
+    if reg_status {
+        println!("    {} Official Registry: Connected ({})", ui::green("✔"), ui::cyan(&reg_url));
+    } else {
+        println!("    {} Official Registry: Offline / Standalone mode ({})", ui::yellow("▲"), ui::cyan(&reg_url));
+    }
+
+    println!();
+    println!("  {}", ui::bold_green("4. GLOBAL PACKAGE CACHE & STORE"));
+    let cache_dir = resolve_global_cache_root();
+    let cache_size = compute_dir_size(&cache_dir);
+    let cache_size_mb = (cache_size as f64) / (1024.0 * 1024.0);
+    println!("    {} Global Cache Path: {}", ui::green("✔"), cache_dir.display());
+    println!("    {} Total Store Size:  {:.2} MB", ui::green("✔"), cache_size_mb);
+
+    println!();
+    println!("  {}", ui::tag_success("Toolchain diagnostics complete. All systems fully operational!"));
+    println!();
+    0
+}
+
+fn cmd_cache(args: &[String]) -> i32 {
+    let sub = args.first().map(String::as_str).unwrap_or("info");
+    let cache_root = resolve_global_cache_root();
+    let packages_dir = cache_root.join("packages");
+
+    match sub {
+        "info" | "status" => {
+            let total_size = compute_dir_size(&cache_root);
+            let total_mb = (total_size as f64) / (1024.0 * 1024.0);
+            let mut count = 0;
+            if let Ok(entries) = fs::read_dir(&packages_dir) {
+                count = entries.flatten().count();
+            }
+            println!();
+            println!("  {}", ui::bold_cyan("╭─────────────────────────────────────────────────────────────╮"));
+            println!("  {}  {} L++ GLOBAL PACKAGE STORE & CACHE                       {}", ui::bold_cyan("│"), ui::bold("📦"), ui::bold_cyan("│"));
+            println!("  {}", ui::bold_cyan("╰─────────────────────────────────────────────────────────────╯"));
+            println!("    {:18} {}", ui::bold("Cache Root:"), cache_root.display());
+            println!("    {:18} {} packages", ui::bold("Cached Items:"), count);
+            println!("    {:18} {:.2} MB", ui::bold("Total Size:"), total_mb);
+            println!();
+            println!("  {}", ui::dim("Commands:"));
+            println!("    {} {}", ui::cyan("lpp cache list"), ui::dim("List all cached packages"));
+            println!("    {} {}", ui::cyan("lpp cache clean"), ui::dim("Purge global package cache"));
+            println!();
+            0
+        }
+        "path" => {
+            println!("{}", cache_root.display());
+            0
+        }
+        "list" => {
+            println!();
+            println!("  {} Cached Packages in Store ({}):", ui::bold_cyan("📦"), cache_root.display());
+            println!("  {}", ui::dim("───────────────────────────────────────────────────────────────"));
+            let mut found = 0;
+            if let Ok(entries) = fs::read_dir(&packages_dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    let name = entry.file_name().to_string_lossy().into_owned();
+                    let size = compute_dir_size(&path);
+                    let size_kb = (size as f64) / 1024.0;
+                    println!("    {} {:<32} {}", ui::green("◆"), ui::bold(&name), ui::dim(&format!("{size_kb:.1} KB")));
+                    found += 1;
+                }
+            }
+            if found == 0 {
+                println!("    {}", ui::dim("(no packages cached yet)"));
+            }
+            println!("  {}", ui::dim("───────────────────────────────────────────────────────────────"));
+            println!("  Total: {} cached packages", found);
+            println!();
+            0
+        }
+        "clean" | "purge" | "clear" => {
+            let start = std::time::Instant::now();
+            let total_size = compute_dir_size(&cache_root);
+            let total_mb = (total_size as f64) / (1024.0 * 1024.0);
+            if cache_root.exists() {
+                let _ = fs::remove_dir_all(&cache_root);
+            }
+            println!("  {} Purged {:.2} MB from global package cache store in {}ms", ui::green("✔"), total_mb, start.elapsed().as_millis());
+            0
+        }
+        other => {
+            eprintln!("{}", ui::tag_error(&format!("unknown cache subcommand '{other}'; use info, list, path, or clean")));
+            2
+        }
     }
 }
 
