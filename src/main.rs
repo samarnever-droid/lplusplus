@@ -454,6 +454,7 @@ fn main() {
 }
 
 fn real_main() -> i32 {
+    pm::ui::init();
     let mut args: Vec<String> = env::args().collect();
 
     // The CLI has two intentionally separate modes:
