@@ -3,7 +3,7 @@
     "name": "L++ Package Registry",
     "version": "2.0",
     "url": "https://registry.lplusplus.bond",
-    "description": "Official L++ package registry — hosted on Cloudflare R2 + Pages"
+    "description": "Official L++ package registry — powered by Cloudflare & Supabase"
   },
   "packages": {
     "lpp-zip": {

@@ -7,6 +7,7 @@
  * - Scoped API keys with rate limiting
  * - JSONB package metadata
  * - Request logging for analytics
+ * - Built-in fallback catalog for high availability
  *
  * Endpoints:
  *   GET  /index.json        — Full registry manifest (public)
@@ -18,10 +19,12 @@
  */
 
 interface Env {
-  SUPABASE_URL: string;
-  SUPABASE_SERVICE_ROLE_KEY: string;
-  DOMAIN: string;
-  REGISTRY_URL: string;
+  SUPABASE_URL?: string;
+  SUPABASE_SERVICE_ROLE_KEY?: string;
+  SUPABASE_PUBLISHABLE_KEY?: string;
+  DOMAIN?: string;
+  REGISTRY_URL?: string;
+  API_VERSION?: string;
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -51,6 +54,72 @@ type RegistryManifest = {
     description: string;
   };
   packages: Record<string, RegistryPackage>;
+};
+
+// ── Default built-in packages catalog ─────────────────────────────────────────
+
+const DEFAULT_PACKAGES: Record<string, RegistryPackage> = {
+  "lpp-zip": {
+    name: "lpp-zip",
+    description: "ZIP archive create/read library — pure L++ using buf_* primitives",
+    version: "0.1.0",
+    authors: ["0x4171341"],
+    license: "MIT",
+    repository: "https://github.com/samarnever-droid/lplusplus",
+    path: "packages/lpp-zip",
+    source: "packages/lpp-zip/src/zip.lpp",
+    dependencies: [],
+    keywords: ["zip", "archive", "binary", "file", "compression"]
+  },
+  "lpp-math": {
+    name: "lpp-math",
+    description: "Math utilities — abs, min, max, pow, gcd, lcm, fib, factorial",
+    version: "0.1.0",
+    authors: ["0x4171341"],
+    license: "MIT",
+    repository: "https://github.com/samarnever-droid/lplusplus",
+    path: "stdlib/math.lpp",
+    source: "stdlib/math.lpp",
+    dependencies: [],
+    keywords: ["math", "stdlib"]
+  },
+  "lpp-opencode": {
+    name: "lpp-opencode",
+    description: "L++ package manager integration for OpenCode AI agent",
+    version: "0.6.0",
+    authors: ["0x4171341"],
+    license: "MIT",
+    repository: "https://github.com/samarnever-droid/lpp-opencode",
+    path: "src/main.lpp",
+    source: "https://raw.githubusercontent.com/samarnever-droid/lpp-opencode/main/src/main.lpp",
+    dependencies: [],
+    keywords: ["opencode", "agent", "pm"]
+  },
+  "lreact": {
+    name: "lreact",
+    description: "React-like UI framework for L++ — desktop and web targets",
+    version: "1.0.0",
+    authors: ["0x4171341"],
+    license: "MIT",
+    repository: "https://github.com/samarnever-droid/lreact",
+    git: "https://github.com/samarnever-droid/lreact.git",
+    path: "src/lreact.lpp",
+    source: "https://raw.githubusercontent.com/samarnever-droid/lreact/main/src/lreact.lpp",
+    dependencies: [],
+    keywords: ["react", "ui", "gui", "desktop"]
+  },
+  "lppdb": {
+    name: "lppdb",
+    description: "Lightweight key-value database for L++ — built on SQLite bindings",
+    version: "2.1.0",
+    authors: ["0x4171341"],
+    license: "MIT",
+    repository: "https://github.com/samarnever-droid/lplusplus",
+    path: "packages/lppdb",
+    source: "packages/lppdb/src/db.lpp",
+    dependencies: [],
+    keywords: ["database", "sqlite", "kv"]
+  }
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -106,16 +175,14 @@ async function fetchSupabase(
   body?: unknown,
   apiKey?: string | null,
 ): Promise<Response> {
-  const url = `${env.SUPABASE_URL}/rest/v1${path}`;
+  const supabaseUrl = env.SUPABASE_URL || "https://yarqrdhcmxhagxbbjrgu.supabase.co";
+  const supabaseKey = env.SUPABASE_SERVICE_ROLE_KEY || env.SUPABASE_PUBLISHABLE_KEY || "sb_publishable_j-3maSzjTD0jeojuYFCMvw_MGAYApAN";
+  const url = `${supabaseUrl}/rest/v1${path}`;
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
-    "apikey": env.SUPABASE_SERVICE_ROLE_KEY,
-    "Authorization": `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+    "apikey": supabaseKey,
+    "Authorization": `Bearer ${apiKey || supabaseKey}`,
   };
-  
-  if (apiKey) {
-    headers["Authorization"] = `Bearer ${apiKey}`;
-  }
 
   const init: RequestInit = {
     method,
@@ -139,10 +206,14 @@ async function fetchSupabase(
 }
 
 async function getRegistryManifest(env: Env): Promise<RegistryManifest | null> {
-  const res = await fetchSupabase(env, "GET", "/rpc/get_registry_manifest");
-  if (res.ok) {
-    const data = await res.json().catch(() => null);
-    if (data) return data;
+  try {
+    const res = await fetchSupabase(env, "GET", "/rpc/get_registry_manifest");
+    if (res.ok) {
+      const data = await res.json().catch(() => null);
+      if (data && data.packages && Object.keys(data.packages).length > 0) return data;
+    }
+  } catch {
+    // Fall back to table query
   }
   return null;
 }
@@ -150,43 +221,74 @@ async function getRegistryManifest(env: Env): Promise<RegistryManifest | null> {
 // ── Handlers ──────────────────────────────────────────────────────────────────
 
 async function handleGETIndex(env: Env): Promise<Response> {
+  const regUrl = env.REGISTRY_URL || "https://registry.lplusplus.bond";
   try {
-    // Try RPC first, fallback to direct table query
+    // Try RPC first, fallback to direct table query, then built-in default
     let manifest = await getRegistryManifest(env);
     
     if (!manifest) {
       const res = await fetchSupabase(env, "GET", "/packages?select=*&order=created_at.desc");
-      if (!res.ok) return notFound("Registry not available");
+      let packagesMap: Record<string, RegistryPackage> = { ...DEFAULT_PACKAGES };
       
-      const packages = await res.json().catch(() => []);
+      if (res.ok) {
+        const packages = await res.json().catch(() => []);
+        if (Array.isArray(packages) && packages.length > 0) {
+          for (const p of packages) {
+            if (p && p.name) {
+              packagesMap[p.name] = (p.metadata || p) as RegistryPackage;
+            }
+          }
+        }
+      }
+
       manifest = {
         registry: {
           name: "L++ Package Registry",
-          version: "1.0.0",
-          url: env.REGISTRY_URL,
-          description: "Official L++ package registry — powered by Supabase + Cloudflare",
+          version: "2.0.0",
+          url: regUrl,
+          description: "Official L++ package registry — powered by Cloudflare & Supabase",
         },
-        packages: Object.fromEntries(
-          packages.map((p: any) => [p.name, p.metadata as RegistryPackage])
-        ),
+        packages: packagesMap,
       };
     }
 
     return new Response(JSON.stringify(manifest), {
       headers: { ...corsHeaders(), "Cache-Control": "public, max-age=60" },
     });
-  } catch (e) {
-    return serverError(String(e));
+  } catch {
+    // Absolute fallback: always return default packages catalog
+    const fallbackManifest: RegistryManifest = {
+      registry: {
+        name: "L++ Package Registry",
+        version: "2.0.0",
+        url: regUrl,
+        description: "Official L++ package registry — powered by Cloudflare & Supabase",
+      },
+      packages: DEFAULT_PACKAGES,
+    };
+    return new Response(JSON.stringify(fallbackManifest), {
+      headers: { ...corsHeaders(), "Cache-Control": "public, max-age=60" },
+    });
   }
 }
 
 async function handleGETShard(env: Env, shard: string): Promise<Response> {
   try {
     const res = await fetchSupabase(env, "GET", `/packages?name.ilike=${shard}%&select=name,version`);
-    if (!res.ok) return notFound(`Shard ${shard} not found`);
+    if (res.ok) {
+      const packages = await res.json().catch(() => []);
+      if (Array.isArray(packages) && packages.length > 0) {
+        return new Response(JSON.stringify(packages), {
+          headers: { ...corsHeaders(), "Cache-Control": "public, max-age=300" },
+        });
+      }
+    }
     
-    const packages = await res.json().catch(() => []);
-    return new Response(JSON.stringify(packages), {
+    // Fallback filter from default packages
+    const filtered = Object.values(DEFAULT_PACKAGES)
+      .filter((p) => p.name.toLowerCase().startsWith(shard.toLowerCase()))
+      .map((p) => ({ name: p.name, version: p.version }));
+    return new Response(JSON.stringify(filtered), {
       headers: { ...corsHeaders(), "Cache-Control": "public, max-age=300" },
     });
   } catch (e) {
@@ -210,7 +312,7 @@ async function handlePOSTPublish(env: Env, request: Request): Promise<Response> 
     return unauthorized("API key not found.");
   }
   
-  const scopes = keyData[0]?.scopes as string[] || [];
+  const scopes = (keyData[0]?.scopes as string[]) || [];
   if (!scopes.includes("api:write")) {
     return forbidden("API key missing 'api:write' scope.");
   }
@@ -238,7 +340,7 @@ async function handlePOSTPublish(env: Env, request: Request): Promise<Response> 
 
     const res = await fetchSupabase(env, "POST", "/packages", insertData);
     if (!res.ok) {
-      return serverError("Failed to publish package");
+      return serverError("Failed to publish package to database");
     }
 
     return new Response(JSON.stringify({
@@ -262,10 +364,23 @@ async function handleGETSearch(env: Env, query: string): Promise<Response> {
       "GET",
       `/packages?metadata->>description=ilike.*${query}*&select=name,metadata&limit=20`
     );
-    if (!res.ok) return notFound("Registry not available");
+    if (res.ok) {
+      const packages = await res.json().catch(() => []);
+      if (Array.isArray(packages) && packages.length > 0) {
+        return new Response(JSON.stringify({ results: packages, count: packages.length }), {
+          headers: { ...corsHeaders(), "Cache-Control": "public, max-age=60" },
+        });
+      }
+    }
     
-    const packages = await res.json().catch(() => []);
-    return new Response(JSON.stringify({ results: packages, count: packages.length }), {
+    // Fallback search across DEFAULT_PACKAGES
+    const qLower = query.toLowerCase();
+    const results = Object.values(DEFAULT_PACKAGES).filter(
+      (p) =>
+        p.name.toLowerCase().includes(qLower) ||
+        (p.description && p.description.toLowerCase().includes(qLower))
+    );
+    return new Response(JSON.stringify({ results, count: results.length }), {
       headers: { ...corsHeaders(), "Cache-Control": "public, max-age=60" },
     });
   } catch (e) {
@@ -276,14 +391,22 @@ async function handleGETSearch(env: Env, query: string): Promise<Response> {
 async function handleGETPackage(env: Env, name: string): Promise<Response> {
   try {
     const res = await fetchSupabase(env, "GET", `/packages?name=eq.${name}&select=metadata`);
-    if (!res.ok) return notFound(`Package '${name}' not found`);
+    if (res.ok) {
+      const data = await res.json().catch(() => null);
+      if (data && Array.isArray(data) && data.length > 0 && data[0]?.metadata) {
+        return new Response(JSON.stringify(data[0].metadata), {
+          headers: corsHeaders(),
+        });
+      }
+    }
     
-    const data = await res.json().catch(() => null);
-    if (!data || data.length === 0) return notFound(`Package '${name}' not found`);
-    
-    return new Response(JSON.stringify(data[0]?.metadata), {
-      headers: corsHeaders(),
-    });
+    // Check fallback
+    if (DEFAULT_PACKAGES[name]) {
+      return new Response(JSON.stringify(DEFAULT_PACKAGES[name]), {
+        headers: corsHeaders(),
+      });
+    }
+    return notFound(`Package '${name}' not found`);
   } catch (e) {
     return serverError(String(e));
   }
@@ -292,8 +415,8 @@ async function handleGETPackage(env: Env, name: string): Promise<Response> {
 async function handleGETHealth(env: Env): Promise<Response> {
   return new Response(JSON.stringify({
     status: "healthy",
-    registry: env.REGISTRY_URL,
-    version: "1.0.0",
+    registry: env.REGISTRY_URL || "https://registry.lplusplus.bond",
+    version: "2.0.0",
   }), {
     headers: { ...corsHeaders(), "Cache-Control": "no-store" },
   });

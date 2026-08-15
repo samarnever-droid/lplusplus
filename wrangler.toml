@@ -1,44 +1,8 @@
-# Cloudflare configuration for lplusplus.bond
-# Website: https://lplusplus.bond
-# Registry API: https://registry.lplusplus.bond
-# Backend: Supabase (same pattern as Cloud Foundation Hub)
-
+# Cloudflare Pages configuration for L++ Website (lplusplus.bond)
 name = "lplusplus"
 compatibility_date = "2024-01-01"
-main = "registry-worker/index.ts"
+pages_build_output_dir = "website/dist"
 
-# ── Pages: Website (lplusplus.bond) ───────────────────────────────────────────
-[[pages]]
-build_command = "npm run build"
-output_dir = "website/dist"
-base_directory = "website"
-
-# ── Workers: Registry API (registry.lplusplus.bond) ──────────────────────────
-[[workers]]
-name = "lplusplus-registry"
-main = "registry-worker/index.ts"
-route = "registry.lplusplus.bond/*"
-zone_id = ""  # Set your Cloudflare zone ID here
-env_name = "production"
-
-# ── Supabase Bindings (via D1 or direct HTTP) ───────────────────────────────
-# The registry uses Supabase for:
-#   - api_keys table (scoped API keys with rate limits)
-#   - packages table (package metadata stored as JSONB)
-#   - request_logs table (audit + usage analytics)
 [vars]
 DOMAIN = "lplusplus.bond"
 REGISTRY_URL = "https://registry.lplusplus.bond"
-API_VERSION = "v1"
-SUPABASE_URL = "https://yarqrdhcmxhagxbbjrgu.supabase.co"
-# SUPABASE_SERVICE_ROLE_KEY must be set in Cloudflare env vars
-
-# ── Routes ────────────────────────────────────────────────────────────────────
-[[routes]]
-pattern = "registry.lplusplus.bond/*"
-zone_name = "lplusplus.bond"
-
-# ── Build ─────────────────────────────────────────────────────────────────────
-[build]
-command = "wrangler pages functions build --out-dir dist"
-watch_dir = "registry-worker"

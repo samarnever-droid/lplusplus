@@ -1,0 +1,10 @@
+# Cloudflare Worker configuration for L++ Package Registry API (registry.lplusplus.bond)
+name = "lplusplus-registry"
+main = "index.ts"
+compatibility_date = "2024-01-01"
+
+[vars]
+DOMAIN = "lplusplus.bond"
+REGISTRY_URL = "https://registry.lplusplus.bond"
+SUPABASE_URL = "https://yarqrdhcmxhagxbbjrgu.supabase.co"
+API_VERSION = "v1"

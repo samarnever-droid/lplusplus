@@ -196,4 +196,28 @@ def get_repo_owner() -> Str:
     mut s := str_trim(out)
     if str_find(s, "github.com/") >= 0:
         idx := str_find(s, "github.com/")
-        rest := str_substr(s, idx + 11, str_len(s) - idx
+        rest := str_substr(s, idx + 11, str_len(s) - idx - 11)
+        slash := str_find(rest, "/")
+        if slash >= 0:
+            return str_substr(rest, 0, slash)
+    if str_find(s, "github.com:") >= 0:
+        idx := str_find(s, "github.com:")
+        rest := str_substr(s, idx + 11, str_len(s) - idx - 11)
+        slash := str_find(rest, "/")
+        if slash >= 0:
+            return str_substr(rest, 0, slash)
+    return "unknown"
+
+def get_repo_name() -> Str:
+    out := command_output("git remote get-url origin")
+    mut s := str_trim(out)
+    mut clean := s
+    if str_ends_with(clean, ".git"):
+        clean = str_substr(clean, 0, str_len(clean) - 4)
+    mut i := str_len(clean) - 1
+    while i >= 0:
+        ch := str_substr(clean, i, 1)
+        if ch == "/" || ch == ":":
+            return str_substr(clean, i + 1, str_len(clean) - i - 1)
+        i = i - 1
+    return clean
