@@ -9,6 +9,7 @@
 <p align="center">
   <a href="#install">Install</a> ·
   <a href="#quick-start">Quick Start</a> ·
+  <a href="https://lplusplus.bond">Website</a> ·
   <a href="Doc.md">Language Guide</a> ·
   <a href="wiki/">Wiki</a> ·
   <a href="benchmarks/king20/stable/v1/latest.md">Benchmarks</a>
@@ -398,8 +399,9 @@ MIT
 
 ## Links
 
+- [Website](https://lplusplus.bond)
 - [Language Guide](Doc.md)
-- [Package Registry](https://samarnever-droid.github.io/lplusplus/registry/index.json)
+- [Package Registry](https://registry.lplusplus.bond)
 - [Benchmarks](benchmarks/king20/stable/v1/latest.md)
 - [Native Linker Roadmap](documentation/Native_Linker_Roadmap.md)
 - [Safety Mission](documentation/Safety_Mission.md)

@@ -2390,34 +2390,65 @@ fn fetch_registry_json() -> Option<String> {
         }
     }
 
-    let registry_urls = [
-        "https://samarnever-droid.github.io/lplusplus/registry/index.json",
-        "https://raw.githubusercontent.com/samarnever-droid/lplusplus/master/website/public/registry/index.json",
-        "https://raw.githubusercontent.com/samarnever-droid/lplusplus/master/registry/index.json",
-    ];
-    let mut fetched_json: Option<String> = None;
+    // Resolve the canonical registry URL: LPP_REGISTRY_URL env var takes
+    // precedence, falling back to the official lplusplus.bond registry.
+    let primary_url = std::env::var("LPP_REGISTRY_URL")
+        .unwrap_or_else(|_| "https://registry.lplusplus.bond/index.json".to_string());
 
-    // Primary: High-speed Supabase Edge CDN query
-    let supabase_url = "https://yarqrdhcmxhagxbbjrgu.supabase.co/rest/v1/packages";
-    let sb_key = "sb_publishable_j-3maSzjTD0jeojuYFCMvw_MGAYApAN";
-    let curl_bin = if command_available("curl.exe", &["--version"]) { "curl.exe" } else { "curl" };
-    if command_available(curl_bin, &["--version"]) {
-        let output = std::process::Command::new(curl_bin)
-            .args(["-fsSL", "--max-time", "3", "-H", &format!("apikey: {sb_key}"), "-H", &format!("Authorization: Bearer {sb_key}"), supabase_url])
-            .output()
-            .ok();
-        if let Some(out) = output {
-            if out.status.success() {
-                let text = String::from_utf8_lossy(&out.stdout).into_owned();
-                if is_registry_json(&text) {
-                    fetched_json = Some(text);
+    // Retry up to 3 times with exponential backoff for transient network errors
+    let mut fetched_json: Option<String> = None;
+    let max_retries = 3;
+
+    // ── Primary: LPP_REGISTRY_URL (or official .bond registry) ────────────────
+    for attempt in 1..=max_retries {
+        if command_available("curl", &["--version"]) {
+            let output = std::process::Command::new("curl")
+                .args(["-fsSL", "--max-time", "8", &primary_url])
+                .output()
+                .ok();
+            if let Some(out) = output {
+                if out.status.success() {
+                    let text = String::from_utf8_lossy(&out.stdout).into_owned();
+                    if is_registry_json(&text) {
+                        fetched_json = Some(text);
+                        break;
+                    }
+                }
+            }
+        }
+        #[cfg(windows)]
+        {
+            if attempt < max_retries {
+                std::thread::sleep(std::time::Duration::from_millis(500 * attempt as u64));
+            }
+            let cmd_arg = format!(
+                "Invoke-RestMethod -Uri '{}' -TimeoutSec 8 | ConvertTo-Json -Depth 5",
+                primary_url
+            );
+            let output = std::process::Command::new("powershell")
+                .args(["-Command", &cmd_arg])
+                .output()
+                .ok();
+            if let Some(out) = output {
+                if out.status.success() {
+                    let text = String::from_utf8_lossy(&out.stdout).into_owned();
+                    if is_registry_json(&text) {
+                        fetched_json = Some(text);
+                        break;
+                    }
                 }
             }
         }
     }
 
+    // ── Fallback: legacy GitHub-hosted URLs (deprecated) ──────────────────────
     if fetched_json.is_none() {
-        for url in &registry_urls {
+        let legacy_urls = [
+            "https://samarnever-droid.github.io/lplusplus/registry/index.json",
+            "https://raw.githubusercontent.com/samarnever-droid/lplusplus/master/website/public/registry/index.json",
+            "https://raw.githubusercontent.com/samarnever-droid/lplusplus/master/registry/index.json",
+        ];
+        for url in &legacy_urls {
             if command_available("curl", &["--version"]) {
                 let output = std::process::Command::new("curl")
                     .args(["-fsSL", "--max-time", "5", url])
@@ -2427,24 +2458,7 @@ fn fetch_registry_json() -> Option<String> {
                     if out.status.success() {
                         let text = String::from_utf8_lossy(&out.stdout).into_owned();
                         if is_registry_json(&text) {
-                            fetched_json = Some(text);
-                            break;
-                        }
-                    }
-                }
-            }
-
-            #[cfg(windows)]
-            {
-                let cmd_arg = format!("Invoke-RestMethod -Uri '{}' -TimeoutSec 5 | ConvertTo-Json -Depth 5", url);
-                let output = std::process::Command::new("powershell")
-                    .args(["-Command", &cmd_arg])
-                    .output()
-                    .ok();
-                if let Some(out) = output {
-                    if out.status.success() {
-                        let text = String::from_utf8_lossy(&out.stdout).into_owned();
-                        if is_registry_json(&text) {
+                            eprintln!("[L++] Using legacy registry URL: {url} (consider setting LPP_REGISTRY_URL)");
                             fetched_json = Some(text);
                             break;
                         }

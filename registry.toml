@@ -1,10 +1,10 @@
 # registry.toml
-# Simple alternative to the heavy JSON registry to aid in self-hosting L++
+# Official L++ Package Registry — lplusplus.bond
 
 [registry]
-name = "L++ Package Registry (TOML Edition)"
-version = "1.0"
-url = "https://github.com/samarnever-droid/lplusplus/registry"
+name = "L++ Package Registry"
+version = "2.0"
+url = "https://registry.lplusplus.bond"
 
 [packages.lpp-zip]
 git = "https://github.com/samarnever-droid/lplusplus.git"

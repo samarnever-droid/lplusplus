@@ -1,0 +1,44 @@
+# Cloudflare configuration for lplusplus.bond
+# Website: https://lplusplus.bond
+# Registry API: https://registry.lplusplus.bond
+# Artifacts: R2 bucket lplusplus-packages
+
+name = "lplusplus"
+compatibility_date = "2024-01-01"
+main = "registry-worker/index.ts"
+
+# ── Pages: Website (lplusplus.bond) ───────────────────────────────────────────
+[[pages]]
+build_command = "npm run build"
+output_dir = "website/dist"
+base_directory = "website"
+
+# ── Workers: Registry API (registry.lplusplus.bond) ──────────────────────────
+[[workers]]
+name = "lplusplus-registry"
+main = "registry-worker/index.ts"
+route = "registry.lplusplus.bond/*"
+zone_id = ""  # Set your Cloudflare zone ID here
+env_name = "production"
+
+# ── R2 Bucket: Package artifacts ──────────────────────────────────────────────
+[[r2_buckets]]
+binding = "REGISTRY_BUCKET"
+bucket_name = "lplusplus-packages"
+preview_bucket_name = "lplusplus-packages-preview"
+
+# ── Environment variables ─────────────────────────────────────────────────────
+[vars]
+DOMAIN = "lplusplus.bond"
+REGISTRY_URL = "https://registry.lplusplus.bond"
+API_VERSION = "v2"
+
+# ── Routes ────────────────────────────────────────────────────────────────────
+[[routes]]
+pattern = "registry.lplusplus.bond/*"
+zone_name = "lplusplus.bond"
+
+# ── Build ─────────────────────────────────────────────────────────────────────
+[build]
+command = "wrangler pages functions build --out-dir dist"
+watch_dir = "registry-worker"
