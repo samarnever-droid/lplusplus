@@ -80,15 +80,21 @@ pub fn validate_keywords(keywords: &[String]) -> Result<Vec<String>, String> {
     Ok(cleaned)
 }
 
-fn validate_package_name(name: &str) -> Result<(), String> {
-    if name.trim().is_empty() {
+pub fn validate_package_name(name: &str) -> Result<(), String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
         return Err("Package manifest error: package name cannot be empty".to_string());
     }
-    if name.len() > 128 {
+    if trimmed.len() > 128 {
         return Err("Package manifest error: package name exceeds 128 characters".to_string());
     }
-    if name.chars().any(|ch| matches!(ch, '\\' | '\n' | '\r' | '\t')) {
-        return Err(format!("Package manifest error: invalid package name '{name}'"));
+    if trimmed.contains("..") || trimmed.contains('\\') || trimmed.starts_with('/') || trimmed.contains('\0') {
+        return Err(format!("Package manifest error: invalid package name '{trimmed}' (contains illegal path traversal characters)"));
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    let reserved = ["con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8", "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9"];
+    if reserved.contains(&lower.as_str()) {
+        return Err(format!("Package manifest error: invalid package name '{trimmed}' (reserved system device name)"));
     }
     Ok(())
 }
@@ -419,6 +425,17 @@ pub fn resolve_entry_point() -> String {
     } else {
         "src/main.lpp".to_string()
     }
+}
+
+
+fn sanitize_output_for_secrets(s: &str, secrets: &[&str]) -> String {
+    let mut clean = s.to_string();
+    for secret in secrets {
+        if !secret.is_empty() && secret.len() > 4 {
+            clean = clean.replace(secret, "[REDACTED]");
+        }
+    }
+    clean
 }
 
 fn normalize_package_name(name: &str) -> String {
@@ -2688,40 +2705,43 @@ fn install_dependency(
             }
         }
         if !source.exists() {
-            // Fallback: fetch remote file from central raw URL if it's a known repository path
-            let raw_url = format!("https://raw.githubusercontent.com/samarnever-droid/lplusplus/master/{}", path.replace('\\', "/"));
-            let mut fetched_bytes: Option<Vec<u8>> = None;
-            for bin in &["curl.exe", "curl", "C:\\Windows\\System32\\curl.exe"] {
-                if let Ok(out) = std::process::Command::new(bin)
-                    .args(["-fsSL", "--ssl-no-revoke", "--max-time", "10", &raw_url])
-                    .output()
-                {
-                    if out.status.success() && !out.stdout.is_empty() {
-                        fetched_bytes = Some(out.stdout);
-                        break;
+            let clean_path = path.replace('\\', "/").trim_start_matches('/').to_string();
+            if !clean_path.contains("..") && clean_path.chars().all(|c| c.is_ascii_alphanumeric() || c == '/' || c == '.' || c == '-' || c == '_') {
+                // Fallback: fetch remote file from central raw URL if it's a known repository path
+                let raw_url = format!("https://raw.githubusercontent.com/samarnever-droid/lplusplus/master/{}", clean_path);
+                let mut fetched_bytes: Option<Vec<u8>> = None;
+                for bin in &["curl.exe", "curl", "C:\\Windows\\System32\\curl.exe"] {
+                    if let Ok(out) = std::process::Command::new(bin)
+                        .args(["-fsSL", "--ssl-no-revoke", "--max-time", "10", &raw_url])
+                        .output()
+                    {
+                        if out.status.success() && !out.stdout.is_empty() {
+                            fetched_bytes = Some(out.stdout);
+                            break;
+                        }
                     }
                 }
-            }
-            #[cfg(windows)]
-            if fetched_bytes.is_none() {
-                let ps_cmd = format!("[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; (New-Object Net.WebClient).DownloadData('{}')", raw_url);
-                if let Ok(out) = std::process::Command::new("powershell")
-                    .args(["-NoProfile", "-Command", &ps_cmd])
-                    .output()
-                {
-                    if out.status.success() && !out.stdout.is_empty() {
-                        fetched_bytes = Some(out.stdout);
+                #[cfg(windows)]
+                if fetched_bytes.is_none() {
+                    let ps_cmd = format!("[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; (New-Object Net.WebClient).DownloadData('{}')", raw_url);
+                    if let Ok(out) = std::process::Command::new("powershell")
+                        .args(["-NoProfile", "-Command", &ps_cmd])
+                        .output()
+                    {
+                        if out.status.success() && !out.stdout.is_empty() {
+                            fetched_bytes = Some(out.stdout);
+                        }
                     }
                 }
-            }
-            if let Some(bytes) = fetched_bytes {
-                let file_name = Path::new(path).file_name().and_then(|n| n.to_str()).unwrap_or("main.lpp");
-                let src_dir = destination.join("src");
-                fs::create_dir_all(&src_dir).map_err(|e| format!("create path dependency '{}': {e}", dep.name))?;
-                fs::write(src_dir.join(file_name), &bytes).map_err(|e| format!("write path dependency '{}': {e}", dep.name))?;
-                let manifest = format!("[package]\nname = {}\nversion = \"0.1.0\"\nentry = {}\n\n[dependencies]\n", toml_quote(&dep.name), toml_quote(&format!("src/{file_name}")));
-                fs::write(destination.join("lpp.toml"), manifest).map_err(|e| format!("write path dependency '{}': {e}", dep.name))?;
-                return Ok(format!("remote+{}", raw_url));
+                if let Some(bytes) = fetched_bytes {
+                    let file_name = Path::new(&clean_path).file_name().and_then(|n| n.to_str()).unwrap_or("main.lpp");
+                    let src_dir = destination.join("src");
+                    fs::create_dir_all(&src_dir).map_err(|e| format!("create path dependency '{}': {e}", dep.name))?;
+                    fs::write(src_dir.join(file_name), &bytes).map_err(|e| format!("write path dependency '{}': {e}", dep.name))?;
+                    let manifest = format!("[package]\nname = {}\nversion = \"0.1.0\"\nentry = {}\n\n[dependencies]\n", toml_quote(&dep.name), toml_quote(&format!("src/{file_name}")));
+                    fs::write(destination.join("lpp.toml"), manifest).map_err(|e| format!("write path dependency '{}': {e}", dep.name))?;
+                    return Ok(format!("remote+{}", raw_url));
+                }
             }
         }
         if !source.exists() {
@@ -4132,6 +4152,11 @@ fn cmd_publish(args: &[String]) -> i32 {
         }
     };
 
+    if let Err(e) = validate_package_name(&manifest.name) {
+        eprintln!("[L++] Publish error: {e}");
+        return 1;
+    }
+
     let dry_run = args.iter().any(|a| a == "--dry-run");
     println!("[L++] Publishing '{}' v{}...", manifest.name, manifest.version);
     println!("[1/3] Validating package manifest...");
@@ -4195,12 +4220,15 @@ fn cmd_publish(args: &[String]) -> i32 {
             0
         }
         Ok(out) => {
-            let err = String::from_utf8_lossy(&out.stderr);
-            eprintln!("[L++] Publish failed: {err}");
+            let raw_err = String::from_utf8_lossy(&out.stderr);
+            let sanitized_err = sanitize_output_for_secrets(&raw_err, &[&api_key]);
+            eprintln!("[L++] Publish failed: {sanitized_err}");
             1
         }
         Err(e) => {
-            eprintln!("[L++] Publish execution error: {e}");
+            let raw_err = e.to_string();
+            let sanitized_err = sanitize_output_for_secrets(&raw_err, &[&api_key]);
+            eprintln!("[L++] Publish execution error: {sanitized_err}");
             1
         }
     }

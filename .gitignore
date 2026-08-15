@@ -70,3 +70,17 @@ tests/arc_borrowed_field_return
 tests/arc_direct_alias
 tests/arc_local_refcount
 tests/wasm/cases/closures.wasm
+
+# Security & Leak Protection
+.env
+.env.*
+*.secret
+*.key
+*.pem
+*.token
+*.log
+*.tmp
+*.lock.tmp
+.lpp_cache/
+.lpp_packages/
+.wrangler/
