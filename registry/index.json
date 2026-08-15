@@ -112,163 +112,39 @@
         "stdlib"
       ]
     },
-    "lpp-opencode": {
-      "name": "lpp-opencode",
-      "version": "0.6.0",
-      "description": "OpenCode/OpenClaude port foundation in L++ — installable lpp-opencode command, Claude router, TUI, sessions, commands, tools, and agent scaffold",
+    "sqlite": {
+      "name": "sqlite",
+      "version": "1.2.0",
+      "description": "SQLite-compatible embedded database engine in pure L++: real .db files with secondary indexes, correlated subqueries, transactions, and SQL query executor.",
       "authors": [
-        "0x4171341"
+        "samarnever-droid"
       ],
       "license": "MIT",
-      "repository": "https://github.com/samarnever-droid/lpp-opencode",
-      "source_url": "https://raw.githubusercontent.com/samarnever-droid/lpp-opencode/main/src/main.lpp",
-      "path": "src/main.lpp",
+      "repository": "https://github.com/samarnever-droid/lplusplus",
+      "path": "packages/sqlite",
+      "source": "packages/sqlite/src/sqlite.lpp",
       "dependencies": [
-        "lpp-tui"
+        "lppsqlite"
       ],
       "keywords": [
-        "opencode",
-        "coding-agent",
-        "tui",
-        "terminal",
-        "ai",
-        "llm"
+        "sqlite",
+        "database",
+        "sql",
+        "storage",
+        "btree",
+        "embedded"
       ],
       "features": [
-        "Large terminal logo and command-hint screen",
-        "Interactive OpenCode-style prompt loop when run without arguments",
-        "Launcher compiles silently and runs the produced executable",
-        "Windows direct runtime compatible after L++ v3.3.1 CreateFileA import fix",
-        "Direct-link-safe default command entrypoint for Windows (file tools disabled until host tool mode)",
-        "Immediate current-session PowerShell PATH fix for lpp-opencode command",
-        "Installable lpp-opencode command on Linux, macOS, and Windows",
-        "Unix shell launcher and Windows PowerShell/CMD launchers",
-        "Windows PowerShell installer and runner",
-        "Windows CI check and AOT object generation",
-        "Claude/Anthropic provider router",
-        "Anthropic Messages API payload builder",
-        "OpenCode-style terminal coding agent scaffold",
-        "Slash commands: /help, /provider, /model, /payload, /read, /save, /exit",
-        "Transcript save/append helpers",
-        "ANSI TUI renderer with line screen buffer"
+        "High-level L++ SQLite API: sqlite.open(), sqlite.query(), sqlite.execute(), sqlite.close()",
+        "Real SQLite on-disk format: 100-byte header, page-aligned B+trees, varints, record serial types",
+        "Files pass the real sqlite3's PRAGMA integrity_check (verified in CI)",
+        "Reads AND writes databases created by real SQLite, including REAL/BLOB/NULL and overflow rows",
+        "SELECT with WHERE, GROUP BY, HAVING, ORDER BY, LIMIT/OFFSET, DISTINCT",
+        "INNER/LEFT/CROSS joins, table aliases, qualified columns",
+        "Correlated subqueries and aggregates (COUNT/SUM/AVG/MIN/MAX)",
+        "Real transactions with atomic COMMIT and full ROLLBACK undo",
+        "Secondary index support with fast B-tree seeks"
       ]
-    },
-    "lpp-tui": {
-      "name": "lpp-tui",
-      "version": "0.2.0",
-      "description": "Reusable ANSI terminal UI helpers extracted from the L++ OpenCode port",
-      "authors": [
-        "0x4171341"
-      ],
-      "license": "MIT",
-      "repository": "https://github.com/samarnever-droid/lpp-opencode",
-      "source_url": "https://raw.githubusercontent.com/samarnever-droid/lpp-opencode/main/src/tui/ansi.lpp",
-      "path": "src/tui",
-      "dependencies": [],
-      "keywords": [
-        "tui",
-        "ansi",
-        "terminal",
-        "opencode",
-        "ui"
-      ],
-      "features": [
-        "ANSI colors and cursor helpers",
-        "Screen clearing and alternate screen helpers",
-        "Simple frame/prompt/assistant rendering",
-        "Line-buffer screen renderer",
-        "Minimal key classifier for future raw input loop"
-      ]
-    },
-    "lpp-openclaude": {
-      "name": "lpp-openclaude",
-      "version": "0.6.0",
-      "description": "OpenClaude alias for lpp-opencode — Claude-oriented OpenCode port foundation in L++",
-      "authors": [
-        "0x4171341"
-      ],
-      "license": "MIT",
-      "repository": "https://github.com/samarnever-droid/lpp-opencode",
-      "source_url": "https://raw.githubusercontent.com/samarnever-droid/lpp-opencode/main/src/main.lpp",
-      "path": "src/main.lpp",
-      "dependencies": [
-        "lpp-tui"
-      ],
-      "keywords": [
-        "opencode",
-        "coding-agent",
-        "tui",
-        "terminal",
-        "ai",
-        "llm",
-        "openclaude",
-        "claude",
-        "anthropic"
-      ],
-      "features": [
-        "Large terminal logo and command-hint screen",
-        "Interactive OpenCode-style prompt loop when run without arguments",
-        "Launcher compiles silently and runs the produced executable",
-        "Windows direct runtime compatible after L++ v3.3.1 CreateFileA import fix",
-        "Direct-link-safe default command entrypoint for Windows (file tools disabled until host tool mode)",
-        "Immediate current-session PowerShell PATH fix for lpp-opencode command",
-        "Installable lpp-opencode command on Linux, macOS, and Windows",
-        "Unix shell launcher and Windows PowerShell/CMD launchers",
-        "Windows PowerShell installer and runner",
-        "Windows CI check and AOT object generation",
-        "Claude/Anthropic provider router",
-        "Anthropic Messages API payload builder",
-        "OpenCode-style terminal coding agent scaffold",
-        "Slash commands: /help, /provider, /model, /payload, /read, /save, /exit",
-        "Transcript save/append helpers",
-        "ANSI TUI renderer with line screen buffer"
-      ],
-      "provides": "lpp-opencode"
-    },
-    "openclaude": {
-      "name": "openclaude",
-      "version": "0.6.0",
-      "description": "OpenClaude short alias for lpp-opencode",
-      "authors": [
-        "0x4171341"
-      ],
-      "license": "MIT",
-      "repository": "https://github.com/samarnever-droid/lpp-opencode",
-      "source_url": "https://raw.githubusercontent.com/samarnever-droid/lpp-opencode/main/src/main.lpp",
-      "path": "src/main.lpp",
-      "dependencies": [
-        "lpp-tui"
-      ],
-      "keywords": [
-        "opencode",
-        "coding-agent",
-        "tui",
-        "terminal",
-        "ai",
-        "llm",
-        "openclaude",
-        "claude",
-        "anthropic"
-      ],
-      "features": [
-        "Large terminal logo and command-hint screen",
-        "Interactive OpenCode-style prompt loop when run without arguments",
-        "Launcher compiles silently and runs the produced executable",
-        "Windows direct runtime compatible after L++ v3.3.1 CreateFileA import fix",
-        "Direct-link-safe default command entrypoint for Windows (file tools disabled until host tool mode)",
-        "Immediate current-session PowerShell PATH fix for lpp-opencode command",
-        "Installable lpp-opencode command on Linux, macOS, and Windows",
-        "Unix shell launcher and Windows PowerShell/CMD launchers",
-        "Windows PowerShell installer and runner",
-        "Windows CI check and AOT object generation",
-        "Claude/Anthropic provider router",
-        "Anthropic Messages API payload builder",
-        "OpenCode-style terminal coding agent scaffold",
-        "Slash commands: /help, /provider, /model, /payload, /read, /save, /exit",
-        "Transcript save/append helpers",
-        "ANSI TUI renderer with line screen buffer"
-      ],
-      "provides": "lpp-opencode"
     },
     "lreact": {
       "name": "lreact",

@@ -1,0 +1,75 @@
+# sqlite.lpp — High-level SQLite API for L++ applications
+# Built upon the full pure-L++ SQLite engine (lppsqlite)
+
+import exec
+import rowset
+import value
+import strbuf
+
+# ── Database Connection ────────────────────────────────────────────────────────
+
+def open(path: Str) -> Int:
+    return exec.open_db(path)
+
+def open_memory() -> Int:
+    return exec.open_memory()
+
+def close(db: Int):
+    exec.close_db(db)
+
+# ── Statement Execution ────────────────────────────────────────────────────────
+
+def query(db: Int, sql: Str) -> Int:
+    return exec.exec(db, sql)
+
+def execute(db: Int, sql: Str) -> Int:
+    return exec.exec_script(db, sql)
+
+def changes(db: Int) -> Int:
+    return exec.db_changes(db)
+
+def last_insert_rowid(db: Int) -> Int:
+    return exec.db_last_id(db)
+
+# ── Transactions ───────────────────────────────────────────────────────────────
+
+def begin(db: Int):
+    exec.begin_txn(db)
+
+def commit(db: Int):
+    exec.commit_txn(db)
+
+def rollback(db: Int):
+    exec.rollback_txn(db)
+
+# ── Result / Rowset Helpers ────────────────────────────────────────────────────
+
+def row_count(r: Int) -> Int:
+    return rowset.rs_nrows(r)
+
+def column_count(r: Int) -> Int:
+    return rowset.rs_ncols(r)
+
+def column_name(r: Int, col: Int) -> Str:
+    return rowset.rs_name(r, col)
+
+def get_int(r: Int, row: Int, col: Int) -> Int:
+    return rowset.rs_get_int(r, row, col)
+
+def get_str(r: Int, row: Int, col: Int) -> Str:
+    return rowset.rs_get_str(r, row, col)
+
+def get_float(r: Int, row: Int, col: Int) -> Float:
+    return rowset.rs_get_float(r, row, col)
+
+def is_null(r: Int, row: Int, col: Int) -> Int:
+    return rowset.rs_is_null(r, row, col)
+
+def is_error(r: Int) -> Int:
+    return rowset.rs_err(r)
+
+def error_message(r: Int) -> Str:
+    return rowset.rs_errmsg(r)
+
+def free(r: Int):
+    rowset.rs_free(r)

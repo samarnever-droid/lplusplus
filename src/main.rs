@@ -1540,11 +1540,15 @@ fn resolve_module_filepath(module: &str, base_dir: &std::path::Path) -> Result<P
             }
         }
 
-        // Check root and subfolder (e.g. .lpp_packages/sqlite/packages/sqlite)
+        // Check root and subfolder (e.g. .lpp_packages/sqlite/packages/sqlite, .lpp_packages/sqlite/packages/lppsqlite)
         let search_dirs = [
             pkg_dir.clone(),
             pkg_dir.join("packages").join(pkg_name),
             pkg_dir.join(pkg_name),
+            pkg_dir.join("packages").join("lppsqlite"),
+            pkg_dir.join("packages").join("lppdb"),
+            pkg_dir.join("packages").join("compresslpp"),
+            pkg_dir.join("packages").join("lreact"),
         ];
 
         for s_dir in &search_dirs {
@@ -1566,7 +1570,7 @@ fn resolve_module_filepath(module: &str, base_dir: &std::path::Path) -> Result<P
 
             if let Some(pkg) = parsed_pkg {
                 if let Some(entry) = pkg.entry {
-                    let custom_entry = s_dir.join(entry);
+                    let custom_entry = s_dir.join(&entry);
                     if custom_entry.exists() {
                         return Ok(custom_entry);
                     }
@@ -1576,9 +1580,12 @@ fn resolve_module_filepath(module: &str, base_dir: &std::path::Path) -> Result<P
             let candidates = [
                 s_dir.join(format!("{}.lpp", pkg_name)),
                 s_dir.join("src").join(format!("{}.lpp", pkg_name)),
+                s_dir.join("src").join("exec.lpp"),
+                s_dir.join("src").join("sqlite.lpp"),
                 s_dir.join("src").join("main.lpp"),
                 s_dir.join("main.lpp"),
-                s_dir.join("src").join("sqlite.lpp"),
+                s_dir.join("src").join("db.lpp"),
+                s_dir.join("src").join("lreact.lpp"),
             ];
             for c in &candidates {
                 if c.exists() {
@@ -1588,7 +1595,31 @@ fn resolve_module_filepath(module: &str, base_dir: &std::path::Path) -> Result<P
         }
     }
 
-    // 4. Fallback check stdlib if not checked earlier
+    // 4. Check installed dependencies' internal src and package dirs in .lpp_packages/*
+    if let Ok(entries) = std::fs::read_dir(".lpp_packages") {
+        for entry in entries.flatten() {
+            let dep_path = entry.path();
+            if dep_path.is_dir() {
+                let candidate_dirs = [
+                    dep_path.join("src"),
+                    dep_path.join("packages").join(clean_module).join("src"),
+                    dep_path.join("packages").join("lppsqlite").join("src"),
+                    dep_path.join("packages").join("sqlite").join("src"),
+                    dep_path.join("packages").join("lppdb").join("src"),
+                    dep_path.join("packages").join("compresslpp").join("src"),
+                    dep_path.join("packages").join("lreact").join("src"),
+                ];
+                for c_dir in &candidate_dirs {
+                    let target = c_dir.join(format!("{}.lpp", leaf_name));
+                    if target.exists() {
+                        return Ok(target);
+                    }
+                }
+            }
+        }
+    }
+
+    // 5. Fallback check stdlib if not checked earlier
     if let Some(stdlib_file) = find_stdlib_module(clean_module, leaf_name) {
         return Ok(stdlib_file);
     }

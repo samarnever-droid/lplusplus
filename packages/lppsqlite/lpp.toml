@@ -1,0 +1,9 @@
+[package]
+name = "lppsqlite"
+version = "1.2.0"
+entry = "src/exec.lpp"
+author = "samarnever-droid"
+description = "SQLite-file-format-compatible database engine in pure L++ — real .db files, B+trees, secondary indexes, overflow pages, freelist, correlated subqueries, real transactions and advisory locking."
+keywords = ["sqlite", "database", "sql", "btree", "storage"]
+
+[dependencies]

@@ -1,0 +1,9 @@
+{
+  "name": "sqlite",
+  "version": "1.2.0",
+  "description": "SQLite-compatible embedded database engine in pure L++ — real .db files, B+trees, secondary indexes, and SQL executor.",
+  "main": "src/sqlite.lpp",
+  "dependencies": {
+    "lppsqlite": "packages/lppsqlite"
+  }
+}

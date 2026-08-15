@@ -1,0 +1,10 @@
+[package]
+name = "sqlite"
+version = "1.2.0"
+entry = "src/sqlite.lpp"
+author = "samarnever-droid"
+description = "SQLite-compatible embedded database engine in pure L++ — real .db files, B+trees, secondary indexes, and SQL executor."
+keywords = ["sqlite", "database", "sql", "btree", "storage"]
+
+[dependencies]
+lppsqlite = { path = "../lppsqlite" }

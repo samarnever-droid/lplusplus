@@ -6,6 +6,21 @@ name = "L++ Package Registry"
 version = "2.0"
 url = "https://registry.lplusplus.bond"
 
+[packages.sqlite]
+git = "https://github.com/samarnever-droid/lplusplus.git"
+path = "packages/sqlite"
+version = "1.2.0"
+
+[packages.lppsqlite]
+git = "https://github.com/samarnever-droid/lplusplus.git"
+path = "packages/lppsqlite"
+version = "1.2.0"
+
+[packages.lreact]
+git = "https://github.com/samarnever-droid/lreact.git"
+path = "src/lreact.lpp"
+version = "1.0.0"
+
 [packages.lpp-zip]
 git = "https://github.com/samarnever-droid/lplusplus.git"
 path = "packages/lpp-zip"
@@ -15,16 +30,6 @@ version = "0.1.0"
 git = "https://github.com/samarnever-droid/lplusplus.git"
 path = "stdlib/math.lpp"
 version = "0.1.0"
-
-[packages.lpp-opencode]
-git = "https://github.com/samarnever-droid/lpp-opencode.git"
-path = "src/main.lpp"
-version = "0.6.0"
-
-[packages.lreact]
-git = "https://github.com/samarnever-droid/lreact.git"
-path = "src/lreact.lpp"
-version = "1.0.0"
 
 [packages.lppdb]
 git = "https://github.com/samarnever-droid/lplusplus.git"

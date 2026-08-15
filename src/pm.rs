@@ -2729,56 +2729,6 @@ pub fn resolve_registry_package(name: &str) -> Option<RegistryEntry> {
     None
 }
 
-fn is_lpp_opencode_alias(name: &str) -> bool {
-    matches!(
-        name.to_ascii_lowercase().as_str(),
-        "lpp-opencode" | "opencode" | "openclaude" | "lpp-openclaude"
-    )
-}
-
-fn install_lpp_opencode_global() -> i32 {
-    println!("[L++] Installing lpp-opencode globally...");
-    #[cfg(windows)]
-    {
-        let script = "irm https://raw.githubusercontent.com/samarnever-droid/lpp-opencode/main/scripts/install.ps1 | iex";
-        let status = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script])
-            .status();
-        return match status {
-            Ok(s) if s.success() => {
-                println!("[L++] lpp-opencode installed. Run: lpp-opencode /provider");
-                0
-            }
-            Ok(s) => {
-                eprintln!("[L++] lpp-opencode installer exited with status {}", s);
-                s.code().unwrap_or(1)
-            }
-            Err(e) => {
-                eprintln!("[L++] Failed to run PowerShell installer: {}", e);
-                1
-            }
-        };
-    }
-    #[cfg(not(windows))]
-    {
-        let script = "curl -fsSL https://raw.githubusercontent.com/samarnever-droid/lpp-opencode/main/scripts/install.sh | sh";
-        let status = std::process::Command::new("sh").args(["-c", script]).status();
-        match status {
-            Ok(s) if s.success() => {
-                println!("[L++] lpp-opencode installed. Run: lpp-opencode /provider");
-                0
-            }
-            Ok(s) => {
-                eprintln!("[L++] lpp-opencode installer exited with status {}", s);
-                s.code().unwrap_or(1)
-            }
-            Err(e) => {
-                eprintln!("[L++] Failed to run shell installer: {}", e);
-                1
-            }
-        }
-    }
-}
 
 fn git_command<I, S>(args: I) -> Result<std::process::Output, String>
 where
@@ -2993,23 +2943,17 @@ fn install_dependency(
 fn cmd_install_command(args: &[String]) -> i32 {
     if !args.is_empty() && !Path::new("lpp.toml").exists() && !Path::new("lpp.json").exists() {
         let package = &args[0];
-        if is_lpp_opencode_alias(package) {
-            return install_lpp_opencode_global();
-        }
-        eprintln!("[L++] No lpp.toml or lpp.json found here, so this is not a project dependency install.");
-        eprintln!("[L++] '{}' is not a known global app alias.", package);
+        eprintln!("{}", ui::tag_error("No lpp.toml or lpp.json manifest found in current directory."));
         eprintln!();
-        eprintln!("What you probably want:");
-        eprintln!("  Global app:        lpp install lpp-opencode");
-        eprintln!("  Search registry:   lpp search {}", package);
-        eprintln!("  New project:       lpp new my_app && cd my_app && lpp add {}", package);
-        eprintln!();
-        eprintln!("Known global app aliases: lpp-opencode, opencode, openclaude, lpp-openclaude");
+        println!("  {}", ui::bold("To add this package to a project:"));
+        println!("    {} {}", ui::dim("$"), ui::cyan(&format!("lpp new my_app && cd my_app && lpp add {package} && lpp install")));
+        println!();
+        println!("  {}", ui::bold("To explore registry packages:"));
+        println!("    {} {}", ui::dim("$"), ui::cyan("lpp search"));
+        println!();
         return 1;
     }
     if args.iter().any(|arg| arg == "--offline") {
-        // The PM is single-process at this point; use the environment only to
-        // pass the flag to the existing install implementation.
         unsafe { std::env::set_var("LPP_OFFLINE", "1") };
     }
     cmd_install(false)
@@ -3767,7 +3711,7 @@ fn cmd_update() -> i32 {
 
 fn is_app_package_name(name: &str) -> bool {
     let n = name.to_ascii_lowercase();
-    n == "lpp-opencode" || n == "opencode" || n == "openclaude" || n == "lpp-openclaude"
+    n.ends_with("-cli") || n.ends_with("-app") || n == "lreact"
 }
 
 fn print_search_item(name: &str, entry: &RegistryEntry, app: bool) {
@@ -3787,12 +3731,7 @@ fn print_search_item(name: &str, entry: &RegistryEntry, app: bool) {
     if let Some(ref path) = entry.path {
         println!("    {} {}", ui::dim("Source Path:"), path);
     }
-    if app {
-        println!("    {} {}", ui::dim("Install:"), ui::bold_green(&format!("lpp install {name}")));
-        println!("    {} {}", ui::dim("Execute:"), ui::green("lpp-opencode"));
-    } else {
-        println!("    {} {}", ui::dim("Add to Project:"), ui::bold_green(&format!("lpp add {name}")));
-    }
+    println!("    {} {}", ui::dim("Add to Project:"), ui::bold_green(&format!("lpp add {name}")));
 }
 
 fn workspace_root(start: &Path) -> Result<(PathBuf, toml::Value), String> {
@@ -3928,7 +3867,7 @@ fn cmd_search(args: &[String]) -> i32 {
             println!("  {}", ui::tag_info("No packages available in registry."));
         } else {
             println!("  {}", ui::tag_warn(&format!("No registry packages matched '{query}'.", )));
-            println!("  Try: {} | {} | {}", ui::cyan("lpp search opencode"), ui::cyan("lpp search lreact"), ui::cyan("lpp search math"));
+            println!("  Try: {} | {} | {} | {}", ui::cyan("lpp search sqlite"), ui::cyan("lpp search lppsqlite"), ui::cyan("lpp search lreact"), ui::cyan("lpp search math"));
         }
         return 0;
     }
@@ -3941,7 +3880,7 @@ fn cmd_search(args: &[String]) -> i32 {
     println!("  {}", ui::bold_cyan("╰─────────────────────────────────────────────────────────────╯"));
     println!();
     if !apps.is_empty() {
-        println!("  {}", ui::bold_purple("APPLICATIONS & GLOBAL COMMANDS:"));
+        println!("  {}", ui::bold_purple("APPLICATIONS & PLATFORMS:"));
         println!("  {}", ui::dim("───────────────────────────────────────────────────────────────"));
         for (name, entry) in apps { print_search_item(name, entry, true); println!(); }
     }
@@ -3951,8 +3890,8 @@ fn cmd_search(args: &[String]) -> i32 {
         for (name, entry) in libs { print_search_item(name, entry, false); println!(); }
     }
     println!("  {}", ui::dim("Quick Start:"));
-    println!("    Global app:  {}", ui::green("lpp install lpp-opencode"));
-    println!("    Project dep: {}", ui::green("lpp add <name> && lpp install"));
+    println!("    Add package:   {}", ui::green("lpp add <name> && lpp install"));
+    println!("    New project:   {}", ui::green("lpp new my_app"));
     println!();
     0
 }
