@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "cloudflare": {
+      "serverUrl": "https://mcp.cloudflare.com/mcp"
+    },
+    "cloudflare-docs": {
+      "serverUrl": "https://docs.mcp.cloudflare.com/mcp"
+    },
+    "cloudflare-bindings": {
+      "serverUrl": "https://bindings.mcp.cloudflare.com/mcp"
+    },
+    "cloudflare-builds": {
+      "serverUrl": "https://builds.mcp.cloudflare.com/mcp"
+    },
+    "cloudflare-observability": {
+      "serverUrl": "https://observability.mcp.cloudflare.com/mcp"
+    }
+  }
+}
