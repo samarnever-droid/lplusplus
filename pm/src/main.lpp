@@ -112,13 +112,6 @@ def main():
             want_dry = 1
         if want_dry == 1:
             opts.dry_run = true
-        mut want_cp := 0
-        if arg1 == "--force-checkpoint":
-            want_cp = 1
-        if arg2 == "--force-checkpoint":
-            want_cp = 1
-        if want_cp == 1:
-            opts.force_checkpoint = true
         mut is_bump := 0
         if arg1 == "patch":
             is_bump = 1
@@ -127,7 +120,9 @@ def main():
         if arg1 == "major":
             is_bump = 1
         if is_bump == 1:
-            opts.version_bump = arg1
+            opts.bump = arg1
+        if str_starts_with(arg1, "--version="):
+            opts.force_version = str_substr(arg1, 10, str_len(arg1) - 10)
         pcode := cmd_publish(opts)
         if pcode != 0:
             error("Publish failed.")

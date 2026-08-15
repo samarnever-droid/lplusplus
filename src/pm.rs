@@ -1912,10 +1912,7 @@ pub fn run_command(args: &[String]) -> i32 {
             print_help();
             0
         }
-        "publish" => {
-            eprintln!("[L++] 'publish' requires the self-hosted PM (lpp-pm). Ensure LPP_HOME is set.");
-            1
-        }
+        "publish" => cmd_publish(&args[1..]),
         cmd => {
             eprintln!("[L++] Unknown package manager command: '{}'", cmd);
             print_help();
@@ -2410,8 +2407,14 @@ fn fetch_registry_json() -> Option<String> {
 
     for attempt in 1..=max_retries {
         if command_available(curl_bin, &["--version"]) {
+            let mut args = vec!["-fsSL", "--max-time", "8"];
+            #[cfg(windows)]
+            {
+                args.push("--ssl-no-revoke");
+            }
+            args.push(&primary_url);
             let output = std::process::Command::new(curl_bin)
-                .args(["-fsSL", "--max-time", "8", &primary_url])
+                .args(&args)
                 .output()
                 .ok();
             if let Some(out) = output {
@@ -2675,7 +2678,52 @@ fn install_dependency(
     }
 
     if let Some(path) = dep.path.as_deref() {
-        let source = Path::new(path);
+        let mut source = PathBuf::from(path);
+        if !source.exists() {
+            if let Ok(lpp_home) = std::env::var("LPP_HOME") {
+                let alt = Path::new(&lpp_home).join(path);
+                if alt.exists() {
+                    source = alt;
+                }
+            }
+        }
+        if !source.exists() {
+            // Fallback: fetch remote file from central raw URL if it's a known repository path
+            let raw_url = format!("https://raw.githubusercontent.com/samarnever-droid/lplusplus/master/{}", path.replace('\\', "/"));
+            let mut fetched_bytes: Option<Vec<u8>> = None;
+            for bin in &["curl.exe", "curl", "C:\\Windows\\System32\\curl.exe"] {
+                if let Ok(out) = std::process::Command::new(bin)
+                    .args(["-fsSL", "--ssl-no-revoke", "--max-time", "10", &raw_url])
+                    .output()
+                {
+                    if out.status.success() && !out.stdout.is_empty() {
+                        fetched_bytes = Some(out.stdout);
+                        break;
+                    }
+                }
+            }
+            #[cfg(windows)]
+            if fetched_bytes.is_none() {
+                let ps_cmd = format!("[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; (New-Object Net.WebClient).DownloadData('{}')", raw_url);
+                if let Ok(out) = std::process::Command::new("powershell")
+                    .args(["-NoProfile", "-Command", &ps_cmd])
+                    .output()
+                {
+                    if out.status.success() && !out.stdout.is_empty() {
+                        fetched_bytes = Some(out.stdout);
+                    }
+                }
+            }
+            if let Some(bytes) = fetched_bytes {
+                let file_name = Path::new(path).file_name().and_then(|n| n.to_str()).unwrap_or("main.lpp");
+                let src_dir = destination.join("src");
+                fs::create_dir_all(&src_dir).map_err(|e| format!("create path dependency '{}': {e}", dep.name))?;
+                fs::write(src_dir.join(file_name), &bytes).map_err(|e| format!("write path dependency '{}': {e}", dep.name))?;
+                let manifest = format!("[package]\nname = {}\nversion = \"0.1.0\"\nentry = {}\n\n[dependencies]\n", toml_quote(&dep.name), toml_quote(&format!("src/{file_name}")));
+                fs::write(destination.join("lpp.toml"), manifest).map_err(|e| format!("write path dependency '{}': {e}", dep.name))?;
+                return Ok(format!("remote+{}", raw_url));
+            }
+        }
         if !source.exists() {
             return Err(format!("path dependency '{}' does not exist: {}", dep.name, source.display()));
         }
@@ -2683,7 +2731,7 @@ fn install_dependency(
             fs::remove_dir_all(destination).map_err(|e| format!("replace path dependency '{}': {e}", dep.name))?;
         }
         if source.is_dir() {
-            copy_dir_all(source, destination).map_err(|e| format!("copy path dependency '{}': {e}", dep.name))?;
+            copy_dir_all(&source, destination).map_err(|e| format!("copy path dependency '{}': {e}", dep.name))?;
         } else if source.is_file() {
             // Registry entries for stdlib modules point at a single .lpp file.
             // Materialise that file as a tiny package instead of rejecting a
@@ -2691,7 +2739,7 @@ fn install_dependency(
             let file_name = source.file_name().and_then(|n| n.to_str()).unwrap_or("main.lpp");
             let src_dir = destination.join("src");
             fs::create_dir_all(&src_dir).map_err(|e| format!("create path dependency '{}': {e}", dep.name))?;
-            fs::copy(source, src_dir.join(file_name)).map_err(|e| format!("copy path dependency '{}': {e}", dep.name))?;
+            fs::copy(&source, src_dir.join(file_name)).map_err(|e| format!("copy path dependency '{}': {e}", dep.name))?;
             let manifest = format!("[package]\nname = {}\nversion = \"0.1.0\"\nentry = {}\n\n[dependencies]\n", toml_quote(&dep.name), toml_quote(&format!("src/{file_name}")));
             fs::write(destination.join("lpp.toml"), manifest).map_err(|e| format!("write path dependency '{}': {e}", dep.name))?;
         } else {
@@ -4073,4 +4121,87 @@ fn cmd_test() -> i32 {
         failed
     );
     if failed == 0 { 0 } else { 1 }
+}
+
+fn cmd_publish(args: &[String]) -> i32 {
+    let manifest = match read_manifest() {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("[L++] Publish error: {e}");
+            return 1;
+        }
+    };
+
+    let dry_run = args.iter().any(|a| a == "--dry-run");
+    println!("[L++] Publishing '{}' v{}...", manifest.name, manifest.version);
+    println!("[1/3] Validating package manifest...");
+    println!("  name: {}", manifest.name);
+    println!("  version: {}", manifest.version);
+    if let Some(ref author) = manifest.author {
+        println!("  author: {}", author);
+    }
+
+    println!("[2/3] Verifying package build...");
+    if cmd_build_opts(false).is_none() {
+        eprintln!("[L++] Publish error: package failed to build");
+        return 1;
+    }
+
+    println!("[3/3] Preparing registry upload...");
+    let registry_url = std::env::var("LPP_REGISTRY_URL")
+        .unwrap_or_else(|_| "https://registry.lplusplus.bond".to_string());
+
+    if dry_run {
+        println!("[L++] [DRY-RUN] Pre-flight check successful!");
+        println!("  Target registry: {}/publish", registry_url);
+        println!("  Git tag to create: v{}", manifest.version);
+        println!("  Status: Ready to publish");
+        return 0;
+    }
+
+    let api_key = std::env::var("LPP_API_KEY")
+        .or_else(|_| std::env::var("SUPABASE_SERVICE_ROLE_KEY"))
+        .unwrap_or_default();
+
+    if api_key.is_empty() {
+        eprintln!("[L++] Publish error: LPP_API_KEY or SUPABASE_SERVICE_ROLE_KEY required to upload.");
+        eprintln!("  Set LPP_API_KEY or run with --dry-run.");
+        return 1;
+    }
+
+    // Build payload JSON
+    let pkg_json = format!(
+        r#"{{"name":"{}","version":"{}","published_by":"cli"}}"#,
+        manifest.name,
+        manifest.version
+    );
+
+    let curl_bin = if command_available("curl.exe", &["--version"]) { "curl.exe" } else { "curl" };
+    let publish_url = format!("{}/publish", registry_url);
+    let mut cmd = std::process::Command::new(curl_bin);
+    cmd.args([
+        "-fsSL",
+        "--ssl-no-revoke",
+        "-X", "POST",
+        "-H", "Content-Type: application/json",
+        "-H", &format!("Authorization: Bearer {}", api_key),
+        "-d", &pkg_json,
+        &publish_url,
+    ]);
+
+    match cmd.output() {
+        Ok(out) if out.status.success() => {
+            println!("[L++] Published successfully to {}!", publish_url);
+            0
+        }
+        Ok(out) => {
+            let err = String::from_utf8_lossy(&out.stderr);
+            eprintln!("[L++] Publish failed: {err}");
+            1
+        }
+        Err(e) => {
+            eprintln!("[L++] Publish execution error: {e}");
+            1
+        }
+    }
 }

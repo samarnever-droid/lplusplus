@@ -104,7 +104,7 @@ def install_deps_opts(online: Bool, jobs: Int) -> Int:
             info(str_concat("  ", str_concat(r.pkg_name, " (path)")))
             dest_path_dep := path_join(pkg_dir, r.pkg_name)
             if path_exists(dest_path_dep) == 1:
-                dir_remove_all(dest_path_dep)
+                dir_remove(dest_path_dep)
             cmd_copy := str_concat("powershell -Command Copy-Item -Path ", str_concat(r.dep.url, str_concat(" -Destination ", str_concat(dest_path_dep, " -Recurse -Force"))))
             command_exec(cmd_copy)
             lock_str = str_concat(lock_str, lockfile_encode_pkg(p))

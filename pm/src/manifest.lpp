@@ -22,6 +22,7 @@ struct Manifest:
     name:        Str
     version:     Str
     description: Str
+    entry:       Str
     ws_version:  Bool   # true → version = { workspace = true }
     deps:        List[Dep]
     dep_map:     Int    # HashMap: dep name -> index in deps list
@@ -31,6 +32,7 @@ def manifest_new() -> Manifest:
     m.name        = ""
     m.version     = ""
     m.description = ""
+    m.entry       = "src/main.lpp"
     m.ws_version  = false
     m.deps        = list_new()
     m.dep_map     = map_new()
@@ -47,6 +49,9 @@ def manifest_parse(path: Str) -> Manifest:
 
     m.name        = toml_get_str(handle, "package", "name")
     m.description = toml_get_str(handle, "package", "description")
+    entry_val    := toml_get_str(handle, "package", "entry")
+    if str_len(entry_val) > 0:
+        m.entry = entry_val
 
     # version = { workspace = true }  vs  version = "1.2.3"
     raw_ver := toml_section_raw(handle, "package")

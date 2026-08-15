@@ -263,7 +263,7 @@ fn run_self_hosted_pm(args: &[String]) -> i32 {
     // either need to create the PM itself or launch a long-running process;
     // delegating them through a second compiler process makes error handling
     // and signal forwarding unreliable.
-    if cmd == "create" || cmd == "dev" || cmd == "version" || cmd == "lreact" || args.iter().any(|a| a == "web" || a == "--release") {
+    if cmd == "create" || cmd == "dev" || cmd == "version" || cmd == "lreact" || cmd == "publish" || args.iter().any(|a| a == "web" || a == "--release") {
         return pm::run_command(args);
     }
 

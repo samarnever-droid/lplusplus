@@ -30,6 +30,14 @@ def publish_opts_default() -> PublishOpts:
     o.bump          = ""
     return o
 
+def http_post_json(url: Str, body_json: Str) -> Str:
+    tmp_path := ".lpp_publish_payload.json"
+    write_file(tmp_path, body_json)
+    cmd := str_concat("curl -fsSL -X POST -H \"Content-Type: application/json\" -d @", str_concat(tmp_path, str_concat(" ", url)))
+    out := command_output(cmd)
+    command_exec(str_concat("powershell -Command Remove-Item -Path ", str_concat(tmp_path, " -Force -ErrorAction SilentlyContinue")))
+    return out
+
 # ── Main entry ────────────────────────────────────────────────────────────────
 
 def cmd_publish(opts: PublishOpts) -> Int:
@@ -80,18 +88,18 @@ def cmd_publish(opts: PublishOpts) -> Int:
 
     # ── Step 3: Upload to registry ──────────────────────────────────────────
     info("[3/4] Uploading to registry...")
-    registry_url := env_get("LPP_REGISTRY_URL")
+    mut registry_url := env_get("LPP_REGISTRY_URL")
     if str_len(registry_url) == 0:
         registry_url = "https://registry.lplusplus.bond"
 
     mut pkg_json := "{\n"
-    pkg_json = str_concat(pkg_json, "  \"name\": \"", str_concat(m.name, "\",\n")))
-    pkg_json = str_concat(pkg_json, "  \"version\": \"", str_concat(version, "\",\n")))
+    pkg_json = str_concat(pkg_json, str_concat("  \"name\": \"", str_concat(m.name, "\",\n")))
+    pkg_json = str_concat(pkg_json, str_concat("  \"version\": \"", str_concat(version, "\",\n")))
     if str_len(m.description) > 0:
-        pkg_json = str_concat(pkg_json, "  \"description\": \"", str_concat(m.description, "\",\n")))
-    pkg_json = str_concat(pkg_json, "  \"repository\": \"", str_concat(get_repo_url(), "\",\n")))
-    pkg_json = str_concat(pkg_json, "  \"path\": \"", str_concat(get_pkg_path(), "\",\n")))
-    pkg_json = str_concat(pkg_json, "  \"source\": \"", str_concat(get_source_url(m), "\",\n")))
+        pkg_json = str_concat(pkg_json, str_concat("  \"description\": \"", str_concat(m.description, "\",\n")))
+    pkg_json = str_concat(pkg_json, str_concat("  \"repository\": \"", str_concat(get_repo_url(), "\",\n")))
+    pkg_json = str_concat(pkg_json, str_concat("  \"path\": \"", str_concat(get_pkg_path(), "\",\n")))
+    pkg_json = str_concat(pkg_json, str_concat("  \"source\": \"", str_concat(get_source_url(m), "\",\n")))
     pkg_json = str_concat(pkg_json, "  \"keywords\": [],\n")
     pkg_json = str_concat(pkg_json, "  \"dependencies\": [],\n")
     pkg_json = str_concat(pkg_json, "  \"features\": []\n")
@@ -99,10 +107,11 @@ def cmd_publish(opts: PublishOpts) -> Int:
 
     if !opts.dry_run:
         upload_result := http_post_json(str_concat(registry_url, "/publish"), pkg_json)
-        if str_len(upload_result) == 0 {
-            print_str("\033[1;31m[lpp-pm] ERROR:\033[0m failed to publish to registry at ", registry_url)
+        if str_len(upload_result) == 0:
+            print_str("\033[1;31m[lpp-pm] ERROR:\033[0m failed to publish to registry at ")
+            print_str(registry_url)
+            print_str("\n")
             return 1
-        }
         success(str_concat("published to ", str_concat(registry_url, "/publish")))
     else:
         success(str_concat("dry-run: would publish to ", str_concat(registry_url, "/publish")))
@@ -114,20 +123,19 @@ def cmd_publish(opts: PublishOpts) -> Int:
         tag_name := str_concat("v", version)
         commit_code := command_exec("git add lpp.toml")
         if commit_code != 0:
-            print_str("\033[1;31m[lpp-pm] WARNING:\033[0m could not commit version bump")
+            print_str("\033[1;31m[lpp-pm] WARNING:\033[0m could not commit version bump\n")
         else:
             commit_msg := str_concat("chore: bump version to ", version)
             code := command_exec(str_concat("git commit -m \"", str_concat(commit_msg, "\"")))
             if code == 0:
                 tag_code := command_exec(str_concat("git tag ", tag_name))
-                push_code := command_exec(str_concat("git push origin master --tags"))
+                push_code := command_exec("git push origin master --tags")
                 if push_code == 0:
                     success(str_concat("tagged and pushed: ", tag_name))
                 else:
-                    print_str("\033[1;31m[lpp-pm] WARNING:\033[0m failed to push tags")
+                    print_str("\033[1;31m[lpp-pm] WARNING:\033[0m failed to push tags\n")
             else:
-                print_str("\033[1;31m[lpp-pm] WARNING:\033[0m failed to commit version bump")
-    }
+                print_str("\033[1;31m[lpp-pm] WARNING:\033[0m failed to commit version bump\n")
 
     success(str_concat("Published ", str_concat(m.name, str_concat(" @ ", version))))
     return 0
@@ -174,14 +182,13 @@ def run_tests() -> Int:
 def get_repo_url() -> Str:
     out := command_output("git remote get-url origin")
     # Normalize to HTTPS
-    if str_starts_with(out, "git@github.com:") {
+    if str_starts_with(out, "git@github.com:"):
         rest := str_substr(out, 13, str_len(out) - 13)
         return str_concat("https://github.com/", str_substr(rest, 0, str_len(rest) - 4))
-    }
     return str_trim(out)
 
 def get_pkg_path() -> Str:
-    out := command_output("git remote get-url origin")
+    mut out := command_output("git remote get-url origin")
     if str_ends_with(out, ".git"):
         out = str_substr(out, 0, str_len(out) - 4)
     return out
