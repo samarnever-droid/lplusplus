@@ -2400,9 +2400,17 @@ fn fetch_registry_json() -> Option<String> {
     let max_retries = 3;
 
     // ── Primary: LPP_REGISTRY_URL (or official .bond registry) ────────────────
+    let curl_bin = if command_available("curl.exe", &["--version"]) {
+        "curl.exe"
+    } else if command_available("curl", &["--version"]) {
+        "curl"
+    } else {
+        "curl"
+    };
+
     for attempt in 1..=max_retries {
-        if command_available("curl", &["--version"]) {
-            let output = std::process::Command::new("curl")
+        if command_available(curl_bin, &["--version"]) {
+            let output = std::process::Command::new(curl_bin)
                 .args(["-fsSL", "--max-time", "8", &primary_url])
                 .output()
                 .ok();

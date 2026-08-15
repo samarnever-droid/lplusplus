@@ -67,14 +67,17 @@ def registry_fetch_shard(shard_key: Str, online: Bool) -> Str:
         return ""
 
     # L3: network fetch (with ETag conditional GET)
-    shard_url := str_concat( "https://samarnever-droid.github.io/lplusplus/v1/names/", str_concat(shard_key, ".json"))
+    mut base_url := env_get("LPP_REGISTRY_URL")
+    if str_len(base_url) == 0:
+        base_url = "https://registry.lplusplus.bond"
+    shard_url := str_concat(base_url, str_concat("/names/", shard_key))
 
     mut result := http_get(shard_url, 5000)
 
     if str_len(result) == 0:
-        # Raw CDN fallback
-        raw_url := str_concat( "https://raw.githubusercontent.com/samarnever-droid/lplusplus/main/v1/names/", str_concat(shard_key, ".json"))
-        result = http_get(raw_url, 5000)
+        # Fallback to direct package query
+        pkg_url := str_concat(base_url, str_concat("/packages/", shard_key))
+        result = http_get(pkg_url, 5000)
 
     if str_len(result) > 0:
         # Save to L2 cache
@@ -176,8 +179,12 @@ def fetch_registry_json_legacy(online: Bool) -> Str:
             return read_file(cache_file)
         return ""
 
+    mut base_url := env_get("LPP_REGISTRY_URL")
+    if str_len(base_url) == 0:
+        base_url = "https://registry.lplusplus.bond"
+
     urls := list_new()
-    list_push(urls, "https://samarnever-droid.github.io/lplusplus/registry/index.json")
+    list_push(urls, str_concat(base_url, "/index.json"))
     list_push(urls, "https://raw.githubusercontent.com/samarnever-droid/lplusplus/master/website/public/registry/index.json")
     list_push(urls, "https://raw.githubusercontent.com/samarnever-droid/lplusplus/master/registry/index.json")
 
