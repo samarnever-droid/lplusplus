@@ -453,6 +453,107 @@ fn main() {
     }
 }
 
+fn handle_setup_llvm() -> i32 {
+    println!("[L++] 📦 L++ Toolchain: Installing Portable LLVM / Clang...");
+    let home = env::var("USERPROFILE")
+        .or_else(|_| env::var("HOME"))
+        .unwrap_or_else(|_| ".".to_string());
+    let tools_dir = PathBuf::from(&home).join(".lpp").join("tools");
+    let llvm_dir = tools_dir.join("llvm");
+    let _ = fs::create_dir_all(&tools_dir);
+
+    let os = env::consts::OS;
+    let arch = env::consts::ARCH;
+
+    println!("[L++] Detected platform: {}-{}", os, arch);
+
+    let (url, clang_rel) = match (os, arch) {
+        ("windows", "x86_64") => (
+            "https://github.com/mstorsjo/llvm-mingw/releases/download/20240917/llvm-mingw-20240917-ucrt-x86_64.zip",
+            "bin/clang.exe",
+        ),
+        ("linux", "x86_64") => (
+            "https://github.com/mstorsjo/llvm-mingw/releases/download/20240917/llvm-mingw-20240917-ucrt-ubuntu-20.04-x86_64.tar.xz",
+            "bin/clang",
+        ),
+        ("macos", "aarch64") | ("macos", "x86_64") => (
+            "https://github.com/mstorsjo/llvm-mingw/releases/download/20240917/llvm-mingw-20240917-ucrt-macos-universal.tar.xz",
+            "bin/clang",
+        ),
+        _ => {
+            eprintln!("[L++] Pre-built portable LLVM is not available for {}-{}.", os, arch);
+            eprintln!("[L++] Please install clang using your system package manager and run: lpp config set llvm-path <path_to_clang>");
+            return 1;
+        }
+    };
+
+    println!("[L++] [1/3] 📥 Downloading portable LLVM toolchain...");
+    let archive_path = tools_dir.join(if url.ends_with(".zip") { "llvm.zip" } else { "llvm.tar.xz" });
+    
+    let curl_cmd = if cfg!(windows) { "curl.exe" } else { "curl" };
+    let status = std::process::Command::new(curl_cmd)
+        .args(["-L", url, "-o", archive_path.to_string_lossy().as_ref()])
+        .status();
+
+    if status.map_or(true, |s| !s.success()) {
+        eprintln!("[L++] Failed to download LLVM archive from {}", url);
+        return 1;
+    }
+
+    println!("[L++] [2/3] 📂 Extracting toolchain to {}...", llvm_dir.display());
+    let temp_extract = tools_dir.join("temp_llvm");
+    let _ = fs::remove_dir_all(&temp_extract);
+    let _ = fs::create_dir_all(&temp_extract);
+
+    if url.ends_with(".zip") {
+        #[cfg(windows)]
+        {
+            let extract_script = format!(
+                "Expand-Archive -Path '{}' -DestinationPath '{}' -Force",
+                archive_path.display(),
+                temp_extract.display()
+            );
+            let _ = std::process::Command::new("powershell")
+                .args(["-NoProfile", "-Command", &extract_script])
+                .status();
+        }
+    } else {
+        let _ = std::process::Command::new("tar")
+            .args(["-xf", archive_path.to_string_lossy().as_ref(), "-C", temp_extract.to_string_lossy().as_ref()])
+            .status();
+    }
+
+    let _ = fs::remove_file(&archive_path);
+
+    if let Ok(entries) = fs::read_dir(&temp_extract) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                let _ = fs::remove_dir_all(&llvm_dir);
+                let _ = fs::rename(&p, &llvm_dir);
+                break;
+            }
+        }
+    }
+    let _ = fs::remove_dir_all(&temp_extract);
+
+    let clang_path = llvm_dir.join(clang_rel);
+    if !clang_path.exists() {
+        eprintln!("[L++] Error: clang binary not found at {}", clang_path.display());
+        return 1;
+    }
+
+    println!("[L++] [3/3] ⚙️  Configuring L++ toolchain settings...");
+    let mut cfg = config::LppConfig::load_or_create();
+    cfg.llvm_path = Some(clang_path.to_string_lossy().into_owned());
+    let _ = cfg.save();
+
+    println!("[L++] \x1b[1;32m✓ LLVM / Clang toolchain installed and configured successfully!\x1b[0m");
+    println!("[L++] LLVM Path: {}", clang_path.display());
+    println!("[L++] Compile with LLVM using: \x1b[1;36mlpp <file>.lpp --llvm\x1b[0m or \x1b[1;36mlpp build --llvm\x1b[0m");
+    0
+}
+
 fn real_main() -> i32 {
     let mut args: Vec<String> = env::args().collect();
 
@@ -471,6 +572,16 @@ fn real_main() -> i32 {
     } else if args.len() > 2 && args[1] == "run" && (args[2].ends_with(".lpp") || Path::new(&args[2]).exists()) {
         source_run_command = true;
         args.remove(1);
+    }
+
+    // Handle setup / toolchain commands (e.g. lpp setup llvm, lpp toolchain install llvm)
+    if args.len() > 1 {
+        if (args[1] == "setup" || args[1] == "toolchain") && args.get(2).map(|s| s == "llvm").unwrap_or(false)
+            || (args[1] == "llvm" && args.get(2).map(|s| s == "install" || s == "setup").unwrap_or(false))
+            || (args[1] == "toolchain" && args.get(2).map(|s| s == "install").unwrap_or(false) && args.get(3).map(|s| s == "llvm").unwrap_or(false))
+        {
+            return handle_setup_llvm();
+        }
     }
 
     // Handle config command
@@ -621,6 +732,7 @@ fn real_main() -> i32 {
             println!("  login [token]    Authenticate with 256-bit token from https://lplusplus.bond/account");
             println!("  publish          Publish package to the official L++ registry");
             println!("  upgrade [--check]  Self-update L++ compiler toolchain to latest release");
+            println!("  setup llvm       Download and auto-configure portable LLVM / Clang toolchain");
             println!();
             println!("Package Manager:");
             println!("  new <name>       Create a new L++ package");
