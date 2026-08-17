@@ -2119,11 +2119,79 @@ impl<'a> WasmCompiler<'a> {
                     });
                 }
             }
-            And | Or | BitAnd | BitOr | BitXor | Shl | Shr => {
+            Shl => {
+                let class = Self::operand_class(left, locals);
+                if class == Val::F64 {
+                    return Err("WebAssembly backend: bitwise/shift operator Shl on Float is not supported".to_string());
+                }
+                match class {
+                    Val::I64 => {
+                        fb.i64c(0);
+                        self.operand_val(fb, left, local_index);
+                        self.operand_val(fb, right, local_index);
+                        fb.op(op::I64_SHL);
+                        self.operand_val(fb, right, local_index);
+                        fb.i64c(64);
+                        fb.op(op::I64_GE_U);
+                        fb.op(op::SELECT);
+                    }
+                    Val::I32 => {
+                        fb.i32c(0);
+                        self.operand_val(fb, left, local_index);
+                        self.operand_val(fb, right, local_index);
+                        fb.op(op::I32_SHL);
+                        self.operand_val(fb, right, local_index);
+                        fb.i32c(32);
+                        fb.op(op::I32_GE_U);
+                        fb.op(op::SELECT);
+                    }
+                    _ => unreachable!(),
+                }
+            }
+            Shr => {
+                let class = Self::operand_class(left, locals);
+                if class == Val::F64 {
+                    return Err("WebAssembly backend: bitwise/shift operator Shr on Float is not supported".to_string());
+                }
+                match class {
+                    Val::I64 => {
+                        fb.i64c(0);
+                        self.operand_val(fb, left, local_index);
+                        fb.i64c(63);
+                        self.operand_val(fb, right, local_index);
+                        self.operand_val(fb, right, local_index);
+                        fb.i64c(64);
+                        fb.op(op::I64_GE_S);
+                        fb.op(op::SELECT);
+                        fb.op(op::I64_SHR_S);
+                        self.operand_val(fb, right, local_index);
+                        fb.i64c(0);
+                        fb.op(op::I64_LT_S);
+                        fb.op(op::SELECT);
+                    }
+                    Val::I32 => {
+                        fb.i32c(0);
+                        self.operand_val(fb, left, local_index);
+                        fb.i32c(31);
+                        self.operand_val(fb, right, local_index);
+                        self.operand_val(fb, right, local_index);
+                        fb.i32c(32);
+                        fb.op(op::I32_GE_S);
+                        fb.op(op::SELECT);
+                        fb.op(op::I32_SHR_S);
+                        self.operand_val(fb, right, local_index);
+                        fb.i32c(0);
+                        fb.op(op::I32_LT_S);
+                        fb.op(op::SELECT);
+                    }
+                    _ => unreachable!(),
+                }
+            }
+            And | Or | BitAnd | BitOr | BitXor => {
                 let class = Self::operand_class(left, locals);
                 if class == Val::F64 {
                     return Err(format!(
-                        "WebAssembly backend: bitwise/shift operator {:?} on Float is not supported",
+                        "WebAssembly backend: bitwise operator {:?} on Float is not supported",
                         operator
                     ));
                 }
@@ -2133,13 +2201,9 @@ impl<'a> WasmCompiler<'a> {
                     (Val::I64, And) | (Val::I64, BitAnd) => op::I64_AND,
                     (Val::I64, Or) | (Val::I64, BitOr) => op::I64_OR,
                     (Val::I64, BitXor) => op::I64_XOR,
-                    (Val::I64, Shl) => op::I64_SHL,
-                    (Val::I64, Shr) => op::I64_SHR_S,
                     (Val::I32, And) | (Val::I32, BitAnd) => op::I32_AND,
                     (Val::I32, Or) | (Val::I32, BitOr) => op::I32_OR,
                     (Val::I32, BitXor) => op::I32_XOR,
-                    (Val::I32, Shl) => op::I32_SHL,
-                    (Val::I32, Shr) => op::I32_SHR_S,
                     _ => unreachable!(),
                 });
             }
@@ -6374,6 +6438,36 @@ mod tests {
             &[0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]
         );
         assert!(module.windows(6).any(|w| w == b"_start"));
+        let parsed = parse_module(&module).expect("module parses");
+        validate_module(&parsed).expect("module validates");
+    }
+
+    #[test]
+    fn wasm_shifts_compile_and_validate() {
+        let mut instrs = Vec::new();
+        let mut tys = Vec::new();
+        macro_rules! a {
+            ($ty:expr, $rv:expr) => {{
+                let id = LocalId(tys.len());
+                tys.push($ty);
+                instrs.push(MirInstr::Assign(id, $rv));
+                id
+            }};
+        }
+        a!(TypeRef::Int, Rvalue::BinaryOp(BinaryOperator::Shl, Operand::Int(1), Operand::Int(64)));
+        a!(TypeRef::Int, Rvalue::BinaryOp(BinaryOperator::Shr, Operand::Int(1), Operand::Int(64)));
+        a!(TypeRef::Int, Rvalue::BinaryOp(BinaryOperator::Shl, Operand::Int(1), Operand::Int(-1)));
+        a!(TypeRef::Int, Rvalue::BinaryOp(BinaryOperator::Shr, Operand::Int(1), Operand::Int(-1)));
+        let main = mk_fn(
+            0,
+            "main",
+            &tys,
+            0,
+            vec![bb(0, instrs, Terminator::Return(None))],
+            TypeRef::Void,
+            false,
+        );
+        let module = compile(&program_with(vec![main]), &TypeTable::new(), &no_weak()).expect("compiles");
         let parsed = parse_module(&module).expect("module parses");
         validate_module(&parsed).expect("module validates");
     }

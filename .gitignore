@@ -70,3 +70,6 @@ tests/arc_borrowed_field_return
 tests/arc_direct_alias
 tests/arc_local_refcount
 tests/wasm/cases/closures.wasm
+.env
+*.env
+webview2_sdk/

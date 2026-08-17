@@ -367,8 +367,10 @@ impl<'a> TypeChecker<'a> {
                 }
 
                 let def = &mut self.type_table.definitions[id.0];
-                def.fields = resolved_fields;
+                def.fields = resolved_fields.clone();
                 def.is_self_referential = is_self_referential;
+                let param_tys: Vec<TypeRef> = resolved_fields.into_iter().map(|(_, ty)| ty).collect();
+                self.func_param_types.insert(s.name.clone(), param_tys);
             }
         }
 
@@ -630,7 +632,8 @@ impl<'a> TypeChecker<'a> {
                 value,
                 binding_id,
             } => {
-                let inferred_type = self.infer_expr(value, current_scope, None)?;
+                let expected_ty = binding_id.get().and_then(|bid| self.symbol_table.bindings[bid].ty.clone());
+                let inferred_type = self.infer_expr(value, current_scope, expected_ty)?;
                 let b_id = binding_id
                     .get()
                     .ok_or_else(|| "Binding ID not set".to_string())?;
@@ -995,6 +998,27 @@ impl<'a> TypeChecker<'a> {
                         "Type mismatch in binary operation {:?}: {:?} and {:?}",
                         op, left_ty, right_ty
                     ));
+                }
+                if matches!(op, crate::ast::BinaryOperator::Divide | crate::ast::BinaryOperator::Modulo) {
+                    match &**right {
+                        Expr::IntLiteral(0) => {
+                            return Err(format!("Cannot {:?} by zero", op));
+                        }
+                        Expr::FloatLiteral(f) if *f == 0.0 => {
+                            return Err(format!("Cannot {:?} by zero", op));
+                        }
+                        _ => {}
+                    }
+                }
+                if matches!(op, crate::ast::BinaryOperator::Shl | crate::ast::BinaryOperator::Shr) {
+                    if let Expr::IntLiteral(val) = &**right {
+                        if *val < 0 || *val >= 64 {
+                            return Err(format!(
+                                "Shift amount {} is out of valid range [0, 63]",
+                                val
+                            ));
+                        }
+                    }
                 }
                 match op {
                     crate::ast::BinaryOperator::Add
@@ -1490,13 +1514,19 @@ impl<'a> TypeChecker<'a> {
                 Ok(TypeRef::Void)
             }
             Expr::ListLiteral(elements) => {
-                let mut elem_ty = TypeRef::Int; // Default if empty
+                let expected_elem_ty = match expected_ty.as_ref() {
+                    Some(TypeRef::Generic(name, params)) if name == "List" && params.len() == 1 => {
+                        Some(params[0].clone())
+                    }
+                    _ => None,
+                };
+                let mut elem_ty = expected_elem_ty.clone().unwrap_or(TypeRef::Int);
                 if !elements.is_empty() {
-                    elem_ty = self.infer_expr(&elements[0], current_scope, None)?;
+                    elem_ty = self.infer_expr(&elements[0], current_scope, expected_elem_ty.clone())?;
                 }
                 for element in elements.iter().skip(1) {
-                    let actual_ty = self.infer_expr(element, current_scope, None)?;
-                    if actual_ty != elem_ty {
+                    let actual_ty = self.infer_expr(element, current_scope, expected_elem_ty.clone())?;
+                    if !types_compatible(&elem_ty, &actual_ty) {
                         return Err(format!(
                             "list literal has mixed element types: expected {:?}, got {:?}",
                             elem_ty, actual_ty
@@ -1767,5 +1797,78 @@ def main():
         type_checker
             .check_program(&ast)
             .expect("char literal program should typecheck");
+    }
+
+    #[test]
+    fn rejects_divide_by_zero_constant() {
+        let source = r#"
+def main():
+    x := 1 / 0
+"#;
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.tokenize().expect("source should lex");
+        let mut parser = Parser::new(tokens);
+        let mut ast = parser.parse().expect("source should parse");
+        let mut resolver = Resolver::new();
+        resolver.resolve_program(&mut ast).expect("program should resolve");
+        let mut type_checker = TypeChecker::new(&mut resolver.table);
+        let err = type_checker.check_program(&ast).expect_err("should reject 1/0");
+        assert!(err.contains("Cannot Divide by zero"));
+    }
+
+    #[test]
+    fn rejects_out_of_range_shift_constant() {
+        let source = r#"
+def main():
+    x := 1 << 64
+"#;
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.tokenize().expect("source should lex");
+        let mut parser = Parser::new(tokens);
+        let mut ast = parser.parse().expect("source should parse");
+        let mut resolver = Resolver::new();
+        resolver.resolve_program(&mut ast).expect("program should resolve");
+        let mut type_checker = TypeChecker::new(&mut resolver.table);
+        let err = type_checker.check_program(&ast).expect_err("should reject 1<<64");
+        assert!(err.contains("Shift amount 64 is out of valid range [0, 63]"));
+    }
+
+    #[test]
+    fn infers_empty_list_in_struct_constructor() {
+        let source = r#"
+struct Node:
+    id: Int
+    children: List[Node]
+
+def main():
+    n := Node(1, [])
+"#;
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.tokenize().expect("source should lex");
+        let mut parser = Parser::new(tokens);
+        let mut ast = parser.parse().expect("source should parse");
+        let mut resolver = Resolver::new();
+        resolver.resolve_program(&mut ast).expect("program should resolve");
+        let mut type_checker = TypeChecker::new(&mut resolver.table);
+        type_checker.check_program(&ast).expect("Node(1, []) should typecheck");
+    }
+
+    #[test]
+    fn infers_empty_list_in_function_call() {
+        let source = r#"
+def take_strings(items: List[Str]) -> Int:
+    return 0
+
+def main():
+    take_strings([])
+"#;
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.tokenize().expect("source should lex");
+        let mut parser = Parser::new(tokens);
+        let mut ast = parser.parse().expect("source should parse");
+        let mut resolver = Resolver::new();
+        resolver.resolve_program(&mut ast).expect("program should resolve");
+        let mut type_checker = TypeChecker::new(&mut resolver.table);
+        type_checker.check_program(&ast).expect("take_strings([]) should typecheck");
     }
 }

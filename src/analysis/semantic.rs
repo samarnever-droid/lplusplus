@@ -418,6 +418,19 @@ impl Resolver {
                 binding_id,
             } => {
                 self.resolve_expr(value)?; // Resolve value before shadowing occurs!
+                if self.loop_depth > 0 {
+                    if let Some(outer_id) = self.table.resolve_name_immutable(self.current_scope, name) {
+                        let outer_binding = &self.table.bindings[outer_id.0];
+                        if outer_binding.declared_in != self.current_scope
+                            && (outer_binding.kind == BindingKind::Local || outer_binding.kind == BindingKind::Param)
+                        {
+                            eprintln!(
+                                "warning: variable '{}' in ':=' shadows an outer variable within a loop; did you mean '{} = ...' to assign to the outer variable?",
+                                name, name
+                            );
+                        }
+                    }
+                }
                 let id = self.table.add_binding(
                     self.current_scope,
                     name.clone(),
@@ -1113,4 +1126,40 @@ mod tests {
             .expect("locals declared by a spawned closure may be mutable");
     }
 
+    #[test]
+    fn resolves_loop_shadowing_syntax() {
+        let mut program = Program {
+            declarations: vec![TopLevel::Function(Function {
+                type_params: vec![],
+                name: "main".to_string(),
+                params: vec![],
+                return_type: Type::Void,
+                body: vec![
+                    Stmt::LetInferred {
+                        name: "i".to_string(),
+                        is_mut: true,
+                        value: Expr::IntLiteral(0),
+                        binding_id: std::cell::Cell::new(None),
+                    },
+                    Stmt::While {
+                        condition: Expr::BoolLiteral(true),
+                        body: vec![
+                            Stmt::LetInferred {
+                                name: "i".to_string(),
+                                is_mut: false,
+                                value: Expr::IntLiteral(1),
+                                binding_id: std::cell::Cell::new(None),
+                            },
+                        ],
+                        body_scope: std::cell::Cell::new(None),
+                    },
+                ],
+                is_async: false,
+            })],
+        };
+
+        Resolver::new()
+            .resolve_program(&mut program)
+            .expect("loop shadowing resolves successfully");
+    }
 }

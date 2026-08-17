@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { Menu, X, ArrowUpRight } from "lucide-react";
+import { Menu, X, ArrowUpRight, Package, Key, User } from "lucide-react";
+import { SignedIn, SignedOut, SignInButton, UserButton } from "@clerk/clerk-react";
 import { EASE } from "../lib/ui";
 
 const LINKS = [
   { label: "Academy 🎓", href: `${import.meta.env.BASE_URL}academy.html` },
+  { label: "Packages 📦", href: `${import.meta.env.BASE_URL}packages.html` },
   { label: "Language", href: "#language" },
   { label: "Memory", href: "#memory" },
   { label: "Syntax", href: "#syntax" },
@@ -13,7 +15,12 @@ const LINKS = [
   { label: "Roadmap", href: "#roadmap" },
 ];
 
-export default function Nav() {
+interface NavProps {
+  onOpenRegistry?: () => void;
+  onOpenAuth?: () => void;
+}
+
+export default function Nav({ onOpenRegistry, onOpenAuth }: NavProps) {
   const [scrolled, setScrolled] = useState(false);
   const [open, setOpen] = useState(false);
 
@@ -49,7 +56,7 @@ export default function Nav() {
           </span>
         </a>
 
-        <div className="hidden items-center gap-7 lg:flex">
+        <div className="hidden items-center gap-6 lg:flex">
           {LINKS.map((l) => (
             <a
               key={l.href}
@@ -61,7 +68,36 @@ export default function Nav() {
           ))}
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2.5">
+          {/* Clerk Authenticated State */}
+          <SignedIn>
+            <a
+              href="/account.html"
+              className="flex items-center gap-1.5 rounded-lg border border-acid/40 bg-acid/10 px-3 py-1.5 font-mono text-[12px] text-acid transition-all hover:bg-acid/20"
+            >
+              <Key className="h-3.5 w-3.5" />
+              Developer Account
+            </a>
+            <UserButton
+              afterSignOutUrl="/"
+              appearance={{
+                elements: {
+                  avatarBox: "h-8 w-8 rounded-lg border border-acid/40",
+                },
+              }}
+            />
+          </SignedIn>
+
+          {/* Clerk Signed Out State */}
+          <SignedOut>
+            <SignInButton mode="modal">
+              <button className="flex items-center gap-1.5 rounded-lg border border-white/15 bg-white/5 px-3.5 py-1.5 font-mono text-[12px] text-white/90 transition-all hover:border-acid/40 hover:text-acid">
+                <Key className="h-3.5 w-3.5 text-acid" />
+                Sign In
+              </button>
+            </SignInButton>
+          </SignedOut>
+
           <a
             href="#install"
             className="group hidden items-center gap-1.5 rounded-lg bg-acid px-4 py-2 font-mono text-[12px] font-semibold text-ink transition-all hover:brightness-110 sm:flex"
@@ -91,6 +127,22 @@ export default function Nav() {
               {l.label}
             </a>
           ))}
+          <a
+            href="/packages.html"
+            onClick={() => setOpen(false)}
+            className="flex w-full items-center gap-2 py-2.5 font-mono text-sm uppercase tracking-[0.14em] text-acid hover:brightness-125"
+          >
+            <Package className="h-4 w-4" />
+            Browse Packages
+          </a>
+          <a
+            href="/account.html"
+            onClick={() => setOpen(false)}
+            className="flex w-full items-center gap-2 py-2.5 font-mono text-sm uppercase tracking-[0.14em] text-white/90 hover:text-acid"
+          >
+            <Key className="h-4 w-4 text-acid" />
+            Developer Portal & Tokens
+          </a>
           <a
             href="#install"
             onClick={() => setOpen(false)}

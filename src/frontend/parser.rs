@@ -110,6 +110,10 @@ impl Parser {
             self.skip_newlines();
         }
 
+        if declarations.is_empty() {
+            return self.error("Source file is empty (no declarations found)");
+        }
+
         Ok(Program { declarations })
     }
 
@@ -1584,5 +1588,29 @@ impl Parser {
             }
             other => self.error(format!("Unexpected token in expression: {:?}", other)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lexer::Lexer;
+
+    #[test]
+    fn rejects_empty_file() {
+        let mut lexer = Lexer::new("");
+        let tokens = lexer.tokenize().expect("lexing empty string should succeed");
+        let mut parser = Parser::new(tokens);
+        let err = parser.parse().expect_err("parser should reject empty file");
+        assert!(err.contains("Source file is empty"));
+    }
+
+    #[test]
+    fn parses_valid_function() {
+        let mut lexer = Lexer::new("def main():\n    x := 1\n");
+        let tokens = lexer.tokenize().expect("lexing should succeed");
+        let mut parser = Parser::new(tokens);
+        let prog = parser.parse().expect("parser should parse valid function");
+        assert_eq!(prog.declarations.len(), 1);
     }
 }

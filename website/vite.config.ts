@@ -8,7 +8,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 export default defineConfig({
-  base: "/lplusplus/",
+  base: "/",
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {
@@ -20,6 +20,8 @@ export default defineConfig({
       input: {
         main: path.resolve(__dirname, "index.html"),
         academy: path.resolve(__dirname, "academy.html"),
+        packages: path.resolve(__dirname, "packages.html"),
+        account: path.resolve(__dirname, "account.html"),
       },
     },
   },

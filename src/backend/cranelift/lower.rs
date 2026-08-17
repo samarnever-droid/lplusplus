@@ -673,6 +673,9 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                         if is_float {
                             builder.ins().fdiv(left, right)
                         } else {
+                            builder
+                                .ins()
+                                .trapz(right, cranelift_codegen::ir::TrapCode::unwrap_user(1));
                             builder.ins().sdiv(left, right)
                         }
                     }
@@ -686,6 +689,9 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                             let results = builder.inst_results(call);
                             results[0]
                         } else {
+                            builder
+                                .ins()
+                                .trapz(right, cranelift_codegen::ir::TrapCode::unwrap_user(1));
                             builder.ins().srem(left, right)
                         }
                     }
@@ -751,10 +757,19 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                         builder.ins().bxor(left, right)
                     }
                     BinaryOperator::Shl => {
-                        builder.ins().ishl(left, right)
+                        let zero = builder.ins().iconst(cl_types::I64, 0);
+                        let in_bounds = builder.ins().icmp_imm(IntCC::UnsignedLessThan, right, 64);
+                        let shifted = builder.ins().ishl(left, right);
+                        builder.ins().select(in_bounds, shifted, zero)
                     }
                     BinaryOperator::Shr => {
-                        builder.ins().sshr(left, right)
+                        let zero = builder.ins().iconst(cl_types::I64, 0);
+                        let max_shift = builder.ins().iconst(cl_types::I64, 63);
+                        let not_negative = builder.ins().icmp_imm(IntCC::SignedGreaterThanOrEqual, right, 0);
+                        let lt_64 = builder.ins().icmp_imm(IntCC::SignedLessThan, right, 64);
+                        let clamped_shift = builder.ins().select(lt_64, right, max_shift);
+                        let shifted = builder.ins().sshr(left, clamped_shift);
+                        builder.ins().select(not_negative, shifted, zero)
                     }
                 };
                 // Cranelift 0.113 represents integer/float comparisons as I8,

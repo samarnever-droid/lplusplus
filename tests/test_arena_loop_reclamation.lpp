@@ -1,0 +1,23 @@
+# Test loop-scoped arena reclamation
+# In a loop creating cyclic structs, the iteration arena must be reclaimed
+# every iteration rather than growing unbounded until function exit.
+
+struct CycleNode:
+    id: Int
+    next: CycleNode
+
+def test_loop_cycles(count: Int) -> Int:
+    mut i := 0
+    mut sum := 0
+    while i < count:
+        mut a := CycleNode(i, 0)
+        mut b := CycleNode(i * 2, 0)
+        a.next = b
+        b.next = a
+        sum = sum + a.next.id
+        i = i + 1
+    return sum
+
+def main():
+    res := test_loop_cycles(10000)
+    print(res)

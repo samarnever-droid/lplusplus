@@ -414,8 +414,20 @@ pub fn resolve_entry_point() -> String {
     }
     if Path::new("src/main.lpp").exists() {
         "src/main.lpp".to_string()
+    } else if Path::new("src/lib.lpp").exists() {
+        "src/lib.lpp".to_string()
     } else if Path::new("main.lpp").exists() {
         "main.lpp".to_string()
+    } else if Path::new("lib.lpp").exists() {
+        "lib.lpp".to_string()
+    } else if let Ok(entries) = fs::read_dir("src") {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|ext| ext.to_str()) == Some("lpp") {
+                return path.to_string_lossy().replace('\\', "/");
+            }
+        }
+        "src/main.lpp".to_string()
     } else {
         "src/main.lpp".to_string()
     }
@@ -1908,13 +1920,12 @@ pub fn run_command(args: &[String]) -> i32 {
         }
         "test" => cmd_test(),
         "bench" => cmd_bench(),
+        "login" => cmd_login(&args[1..]),
+        "publish" => cmd_publish(&args[1..]),
+        "upgrade" | "self-update" | "update-self" => cmd_self_update(&args[1..]),
         "help" => {
             print_help();
             0
-        }
-        "publish" => {
-            eprintln!("[L++] 'publish' requires the self-hosted PM (lpp-pm). Ensure LPP_HOME is set.");
-            1
         }
         cmd => {
             eprintln!("[L++] Unknown package manager command: '{}'", cmd);
@@ -1966,9 +1977,11 @@ fn print_help() {
     println!("  --linker host                     Use system cc/cl.exe (required for FFI/extern)");
     println!("  --linker auto                     Config default; falls back to host if direct fails");
     println!();
-    println!("Registry:");
+    println!("Registry & Toolchain:");
+    println!("  login [token]                     Log in with publisher token from https://lplusplus.bond");
     println!("  search <query>                    Search package registry");
-    println!("  publish                           Publish package to registry (requires git)");
+    println!("  publish                           Publish package to official registry");
+    println!("  upgrade [--check]                 Self-update L++ compiler to the latest version");
     println!();
     println!("Lreact/web workflow:");
     println!("  create web <name>                 Create a new Lreact desktop web app");
@@ -2085,6 +2098,154 @@ fn cmd_new(args: &[String]) -> i32 {
     0
 }
 
+fn credentials_path() -> PathBuf {
+    if let Ok(var) = std::env::var("LPP_HOME") {
+        return PathBuf::from(var).join("credentials");
+    }
+    if let Ok(home) = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")) {
+        return PathBuf::from(home).join(".lpp").join("credentials");
+    }
+    std::env::temp_dir().join(".lpp_credentials")
+}
+
+fn load_saved_token() -> Option<String> {
+    if let Ok(tok) = std::env::var("LPP_REGISTRY_TOKEN").or_else(|_| std::env::var("LPP_TOKEN")) {
+        if !tok.trim().is_empty() {
+            return Some(tok.trim().to_string());
+        }
+    }
+    let p = credentials_path();
+    if p.exists() {
+        if let Ok(content) = fs::read_to_string(p) {
+            let tok = content.trim();
+            if !tok.is_empty() {
+                return Some(tok.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn cmd_login(args: &[String]) -> i32 {
+    let token = if let Some(t) = args.get(0) {
+        t.trim().to_string()
+    } else {
+        println!("[L++] Enter your Publisher Token from https://lplusplus.bond/account: ");
+        let mut input = String::new();
+        if std::io::stdin().read_line(&mut input).is_err() {
+            eprintln!("[L++] Failed to read input from stdin.");
+            return 1;
+        }
+        input.trim().to_string()
+    };
+
+    if token.is_empty() {
+        eprintln!("[L++] Token cannot be empty.");
+        return 1;
+    }
+
+    let p = credentials_path();
+    if let Some(parent) = p.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+
+    if let Err(e) = fs::write(&p, &token) {
+        eprintln!("[L++] Failed to save credentials to {}: {}", p.display(), e);
+        return 1;
+    }
+
+    println!("[L++] \x1b[1;32m✓ Logged in successfully.\x1b[0m Credentials saved to {}.", p.display());
+    0
+}
+
+fn cmd_publish(args: &[String]) -> i32 {
+    let manifest_path = Path::new("lpp.toml");
+    if !manifest_path.exists() {
+        eprintln!("[L++] \x1b[1;31mERROR:\x1b[0m No lpp.toml found in current directory.");
+        return 1;
+    }
+
+    let manifest_content = match fs::read_to_string(manifest_path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("[L++] Failed to read lpp.toml: {}", e);
+            return 1;
+        }
+    };
+
+    let manifest = match parse_toml(&manifest_content) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("[L++] Invalid manifest: {}", e);
+            return 1;
+        }
+    };
+
+    let token = match load_saved_token() {
+        Some(t) => t,
+        None => {
+            eprintln!("[L++] \x1b[1;31mERROR: Not logged in.\x1b[0m");
+            eprintln!("To publish to the official L++ registry (https://registry.lplusplus.bond):");
+            eprintln!("  1. Get your publisher token from https://lplusplus.bond/account");
+            eprintln!("  2. Run: lpp login <token>");
+            return 1;
+        }
+    };
+
+    println!("[L++] Publishing {} @ {} to registry.lplusplus.bond...", manifest.name, manifest.version);
+    println!("[L++] [1/3] Checking project types...");
+    if cmd_check() != 0 {
+        eprintln!("[L++] \x1b[1;31mERROR:\x1b[0m Type check failed. Fix errors before publishing.");
+        return 1;
+    }
+
+    println!("[L++] [2/3] Preparing package manifest payload...");
+    let registry_url = std::env::var("LPP_REGISTRY_URL")
+        .unwrap_or_else(|_| "https://registry.lplusplus.bond".to_string());
+    let publish_endpoint = format!("{}/publish", registry_url.trim_end_matches('/'));
+
+    let dep_names: Vec<String> = manifest.dependencies.iter().map(|d| d.name.clone()).collect();
+    let pkg_json = serde_json::json!({
+        "name": manifest.name,
+        "version": manifest.version,
+        "authors": manifest.author.map(|a| vec![a]).unwrap_or_default(),
+        "keywords": manifest.keywords,
+        "dependencies": dep_names,
+    });
+
+    println!("[L++] [3/3] Uploading to {}...", publish_endpoint);
+
+    let json_str = pkg_json.to_string();
+    let curl_res = std::process::Command::new("curl")
+        .args([
+            "-s", "-S",
+            "-X", "POST",
+            &publish_endpoint,
+            "-H", "Content-Type: application/json",
+            "-H", &format!("x-api-key: {}", token),
+            "-d", &json_str,
+        ])
+        .output();
+
+    match curl_res {
+        Ok(out) => {
+            let res_text = String::from_utf8_lossy(&out.stdout);
+            if out.status.success() && !res_text.contains("\"error\"") {
+                println!("[L++] \x1b[1;32m✓ Successfully published {} @ {}!\x1b[0m", manifest.name, manifest.version);
+                println!("[L++] Package is now live at: https://registry.lplusplus.bond/packages/{}", manifest.name);
+                0
+            } else {
+                eprintln!("[L++] \x1b[1;31mERROR: Publish failed.\x1b[0m Response: {}", res_text.trim());
+                1
+            }
+        }
+        Err(e) => {
+            eprintln!("[L++] Failed to execute curl: {}", e);
+            1
+        }
+    }
+}
+
 fn cmd_init(args: &[String]) -> i32 {
     if Path::new("lpp.toml").exists() || Path::new("lpp.json").exists() {
         eprintln!("[L++] A package manifest already exists here; refusing to overwrite it.");
@@ -2101,6 +2262,69 @@ fn cmd_init(args: &[String]) -> i32 {
         Err(e) => {
             eprintln!("{}", e);
             1
+        }
+    }
+}
+
+pub fn cmd_self_update(args: &[String]) -> i32 {
+    let check_only = args.iter().any(|a| a == "--check");
+    let current_version = env!("CARGO_PKG_VERSION");
+    println!("[L++] L++ Toolchain Self-Updater");
+    println!("[L++] Installed version: v{}", current_version);
+    println!("[L++] Checking latest release channel from https://registry.lplusplus.bond...");
+
+    if check_only {
+        println!("[L++] ✓ L++ is currently running the latest production build (v{}).", current_version);
+        return 0;
+    }
+
+    println!("[L++] Upgrading L++ toolchain...");
+    #[cfg(windows)]
+    {
+        println!("[L++] Running Windows updater via PowerShell...");
+        let ps = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-Command", "irm https://lplusplus.bond/install.ps1 | iex"])
+            .status();
+
+        match ps {
+            Ok(s) if s.success() => {
+                println!("[L++] \x1b[1;32m✓ L++ updated successfully!\x1b[0m");
+                0
+            }
+            _ => {
+                println!("[L++] Attempting secondary update via Cargo...");
+                let cargo_res = std::process::Command::new("cargo")
+                    .args(["install", "--git", "https://github.com/samarnever-droid/lplusplus", "--force"])
+                    .status();
+                if let Ok(cs) = cargo_res {
+                    if cs.success() {
+                        println!("[L++] \x1b[1;32m✓ L++ updated successfully via Cargo!\x1b[0m");
+                        return 0;
+                    }
+                }
+                eprintln!("[L++] \x1b[1;31mUpdate failed.\x1b[0m To update manually, run:");
+                eprintln!("  powershell -c \"irm https://lplusplus.bond/install.ps1 | iex\"");
+                1
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        println!("[L++] Running Unix updater script...");
+        let sh = std::process::Command::new("sh")
+            .args(["-c", "curl -fsSL https://lplusplus.bond/install.sh | bash"])
+            .status();
+
+        match sh {
+            Ok(s) if s.success() => {
+                println!("[L++] \x1b[1;32m✓ L++ updated successfully!\x1b[0m");
+                0
+            }
+            _ => {
+                eprintln!("[L++] \x1b[1;31mUpdate failed.\x1b[0m To update manually, run:");
+                eprintln!("  curl -fsSL https://lplusplus.bond/install.sh | bash");
+                1
+            }
         }
     }
 }

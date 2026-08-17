@@ -376,7 +376,12 @@ impl<'a> Lexer<'a> {
                             Some('0') => '\0',
                             Some('\'') => '\'',
                             Some('\\') => '\\',
-                            Some(c) => c,
+                            Some(c) => {
+                                return Err(format!(
+                                    "[line {}:col {}] Lexer error: Unknown escape sequence '\\{}'",
+                                    start_line, start_col, c
+                                ));
+                            }
                             None => return Err(format!("[line {}:col {}] Unterminated char escape", start_line, start_col)),
                         },
                         Some(c) => c,
@@ -433,11 +438,14 @@ impl<'a> Lexer<'a> {
                                     'n' => s.push('\n'),
                                     'r' => s.push('\r'),
                                     't' => s.push('\t'),
+                                    '0' => s.push('\0'),
                                     '"' => s.push('"'),
                                     '\\' => s.push('\\'),
                                     other => {
-                                        s.push('\\');
-                                        s.push(other);
+                                        return Err(format!(
+                                            "[line {}:col {}] Lexer error: Unknown escape sequence '\\{}'",
+                                            self.line, self.col, other
+                                        ));
                                     }
                                 }
                             } else {
@@ -588,10 +596,19 @@ impl<'a> Lexer<'a> {
                                         if let Some(esc) = self.next_c() {
                                             match esc {
                                                 'n' => current.push('\n'),
+                                                'r' => current.push('\r'),
                                                 't' => current.push('\t'),
+                                                '0' => current.push('\0'),
                                                 '"' => current.push('"'),
                                                 '\\' => current.push('\\'),
-                                                _ => { current.push('\\'); current.push(esc); }
+                                                '{' => current.push('{'),
+                                                '}' => current.push('}'),
+                                                other => {
+                                                    return Err(format!(
+                                                        "[line {}:col {}] Lexer error: Unknown escape sequence '\\{}'",
+                                                        self.line, self.col, other
+                                                    ));
+                                                }
                                             }
                                         }
                                     } else {
@@ -674,5 +691,16 @@ mod tests {
             raw_tokens,
             vec![Token::Break, Token::Continue, Token::Eof]
         );
+    }
+
+    #[test]
+    fn rejects_unknown_escape_sequences() {
+        let mut lexer = Lexer::new("\"hello \\q world\"");
+        let err = lexer.tokenize().expect_err("should reject \\q escape");
+        assert!(err.contains("Unknown escape sequence '\\q'"));
+
+        let mut char_lexer = Lexer::new("'\\q'");
+        let char_err = char_lexer.tokenize().expect_err("should reject \\q char escape");
+        assert!(char_err.contains("Unknown escape sequence '\\q'"));
     }
 }

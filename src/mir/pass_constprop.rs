@@ -74,6 +74,11 @@ fn fold_int(op: BinaryOperator, a: i64, b: i64) -> Option<i64> {
         BinaryOperator::Multiply => a.checked_mul(b),
         BinaryOperator::Divide if b != 0 => a.checked_div(b),
         BinaryOperator::Modulo if b != 0 => a.checked_rem(b),
+        BinaryOperator::BitAnd => Some(a & b),
+        BinaryOperator::BitOr => Some(a | b),
+        BinaryOperator::BitXor => Some(a ^ b),
+        BinaryOperator::Shl if (0..64).contains(&b) => a.checked_shl(b as u32),
+        BinaryOperator::Shr if (0..64).contains(&b) => a.checked_shr(b as u32),
         _ => None,
     }
 }

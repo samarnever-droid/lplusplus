@@ -10,6 +10,7 @@ use std::collections::HashMap;
 pub struct LoopTargets {
     pub break_block: BlockId,
     pub continue_block: BlockId,
+    pub loop_arena: Option<LocalId>,
 }
 
 fn list_push_symbol(element: &TypeRef) -> Result<&'static str, String> {
@@ -102,7 +103,7 @@ pub struct MirLowerCtx<'a> {
     /// `Custom`/`Function`/`Generic`/`Str` was returned owned, and the escape
     /// analysis had no say. This is how the analysis finally participates in
     /// that decision.
-    pub current_arena: Option<LocalId>,
+    pub arena_stack: Vec<LocalId>,
     /// Calls to these functions construct Task[T] instead of invoking the body.
     pub async_functions: std::collections::HashSet<String>,
 }
@@ -130,7 +131,7 @@ impl<'a> MirLowerCtx<'a> {
             trait_names: std::collections::HashSet::new(),
             current_vtable_locals: HashMap::new(),
             extern_symbols: HashMap::new(),
-            current_arena: None,
+            arena_stack: Vec::new(),
             async_functions: std::collections::HashSet::new(),
         }
     }
@@ -425,7 +426,7 @@ impl<'a> MirLowerCtx<'a> {
     }
 
     fn ensure_arena(&mut self, builder: &mut MirBuilder) -> Result<LocalId, String> {
-        if let Some(arena) = self.current_arena {
+        if let Some(&arena) = self.arena_stack.last() {
             return Ok(arena);
         }
         let arena = builder.new_local(
@@ -438,7 +439,7 @@ impl<'a> MirLowerCtx<'a> {
             arena,
             Rvalue::BuiltinCall("lpp_arena_begin".to_string(), vec![]),
         ))?;
-        self.current_arena = Some(arena);
+        self.arena_stack.push(arena);
         Ok(arena)
     }
 
@@ -467,13 +468,13 @@ impl<'a> MirLowerCtx<'a> {
     }
 
     fn release_arena_if_live(&self, builder: &mut MirBuilder) -> Result<(), String> {
-        if let Some(arena) = self.current_arena {
+        for arena in self.arena_stack.iter().rev() {
             let discard = builder.new_local(TypeRef::Void, false, None, None);
             builder.push_instr(MirInstr::Assign(
                 discard,
                 Rvalue::BuiltinCall(
                     "lpp_arena_release".to_string(),
-                    vec![Operand::Local(arena)],
+                    vec![Operand::Local(*arena)],
                 ),
             ))?;
         }
@@ -483,7 +484,7 @@ impl<'a> MirLowerCtx<'a> {
     fn lower_function(&mut self, func: &Function) -> Result<MirFunction, String> {
         // Set current type parameters for this function's generics
         let prev_type_params = std::mem::replace(&mut self.current_type_params, func.type_params.iter().map(|tp| tp.name.clone()).collect());
-        let prev_arena = self.current_arena.take();
+        let prev_arena_stack = std::mem::take(&mut self.arena_stack);
 
         let func_id = *self.functions.get(&func.name).ok_or_else(|| {
             format!(
@@ -567,7 +568,7 @@ impl<'a> MirLowerCtx<'a> {
         // Restore previous type parameters and vtable locals
         self.current_type_params = prev_type_params;
         self.current_vtable_locals = prev_vtable_locals;
-        self.current_arena = prev_arena;
+        self.arena_stack = prev_arena_stack;
 
         Ok(builder.finish())
     }
@@ -897,20 +898,42 @@ impl<'a> MirLowerCtx<'a> {
                     else_block: end_block_id,
                 })?;
 
+                builder.switch_to_block(body_block_id);
+                let iter_arena = builder.new_local(
+                    TypeRef::Int,
+                    false,
+                    Some("__loop_arena".to_string()),
+                    None,
+                );
+                builder.push_instr(MirInstr::Assign(
+                    iter_arena,
+                    Rvalue::BuiltinCall("lpp_arena_begin".to_string(), vec![]),
+                ))?;
+                self.arena_stack.push(iter_arena);
+
                 self.loop_stack.push(LoopTargets {
                     break_block: end_block_id,
                     continue_block: cond_block_id,
+                    loop_arena: Some(iter_arena),
                 });
 
-                builder.switch_to_block(body_block_id);
                 for stmt in body {
                     self.lower_stmt(builder, stmt, binding_map)?;
                 }
                 if builder.current_block().is_ok() {
+                    let discard = builder.new_local(TypeRef::Void, false, None, None);
+                    builder.push_instr(MirInstr::Assign(
+                        discard,
+                        Rvalue::BuiltinCall(
+                            "lpp_arena_release".to_string(),
+                            vec![Operand::Local(iter_arena)],
+                        ),
+                    ))?;
                     builder.terminate_current_block(Terminator::Goto(cond_block_id))?;
                 }
 
                 self.loop_stack.pop();
+                self.arena_stack.pop();
 
                 builder.switch_to_block(end_block_id);
             }
@@ -952,18 +975,42 @@ impl<'a> MirLowerCtx<'a> {
                     else_block: end_block_id,
                 })?;
 
+                builder.switch_to_block(body_block_id);
+                let iter_arena = builder.new_local(
+                    TypeRef::Int,
+                    false,
+                    Some("__loop_arena".to_string()),
+                    None,
+                );
+                builder.push_instr(MirInstr::Assign(
+                    iter_arena,
+                    Rvalue::BuiltinCall("lpp_arena_begin".to_string(), vec![]),
+                ))?;
+                self.arena_stack.push(iter_arena);
+
                 self.loop_stack.push(LoopTargets {
                     break_block: end_block_id,
                     continue_block: step_block_id,
+                    loop_arena: Some(iter_arena),
                 });
 
-                builder.switch_to_block(body_block_id);
                 for stmt in body {
                     self.lower_stmt(builder, stmt, binding_map)?;
                 }
                 if builder.current_block().is_ok() {
+                    let discard = builder.new_local(TypeRef::Void, false, None, None);
+                    builder.push_instr(MirInstr::Assign(
+                        discard,
+                        Rvalue::BuiltinCall(
+                            "lpp_arena_release".to_string(),
+                            vec![Operand::Local(iter_arena)],
+                        ),
+                    ))?;
                     builder.terminate_current_block(Terminator::Goto(step_block_id))?;
                 }
+
+                self.loop_stack.pop();
+                self.arena_stack.pop();
 
                 builder.switch_to_block(step_block_id);
                 let step_val = if let Some(step_expr) = step {
@@ -983,7 +1030,6 @@ impl<'a> MirLowerCtx<'a> {
                 builder.push_instr(MirInstr::Assign(var_local, Rvalue::Use(Operand::Local(add_temp))))?;
                 builder.terminate_current_block(Terminator::Goto(cond_block_id))?;
 
-                self.loop_stack.pop();
                 builder.switch_to_block(end_block_id);
             }
             Stmt::ForIn {
@@ -1038,12 +1084,25 @@ impl<'a> MirLowerCtx<'a> {
                     else_block: end_block_id,
                 })?;
 
+                builder.switch_to_block(body_block_id);
+                let iter_arena = builder.new_local(
+                    TypeRef::Int,
+                    false,
+                    Some("__loop_arena".to_string()),
+                    None,
+                );
+                builder.push_instr(MirInstr::Assign(
+                    iter_arena,
+                    Rvalue::BuiltinCall("lpp_arena_begin".to_string(), vec![]),
+                ))?;
+                self.arena_stack.push(iter_arena);
+
                 self.loop_stack.push(LoopTargets {
                     break_block: end_block_id,
                     continue_block: step_block_id,
+                    loop_arena: Some(iter_arena),
                 });
 
-                builder.switch_to_block(body_block_id);
                 let element_class = elem_ty.list_element_class();
                 let get_symbol = list_get_symbol(&elem_ty)?;
                 let elem_temp = builder.new_local(elem_ty.clone(), false, None, None);
@@ -1059,60 +1118,91 @@ impl<'a> MirLowerCtx<'a> {
                 ))?;
 
                 let var_binding_id = binding_id.get().map(BindingId);
-                let var_local = builder.new_local(elem_ty, false, Some(var_name.clone()), var_binding_id);
+                let loop_var_local = builder.new_local(
+                    elem_ty.clone(),
+                    false,
+                    Some(var_name.clone()),
+                    var_binding_id,
+                );
                 if element_class == ListElementClass::Arc {
-                    // The loop variable only borrows the list's element edge
-                    // (same model as `list_get` on List[ARC]); assignment or
-                    // `return` out of it retains explicitly. Marking it Owned
-                    // here released every element at each iteration's end and
-                    // the list's destructor released the dead pieces again.
-                    builder.set_local_ownership(var_local, Ownership::Borrowed);
+                    builder.set_local_ownership(loop_var_local, Ownership::Borrowed);
                 }
                 if let Some(bid) = var_binding_id {
-                    binding_map.insert(bid, var_local);
+                    binding_map.insert(bid, loop_var_local);
                 }
-                builder.push_instr(MirInstr::Assign(var_local, Rvalue::Use(Operand::Local(elem_temp))))?;
+                let elem_op = Operand::Local(elem_temp);
+                let assign_rvalue = Self::assignment_rvalue(builder, loop_var_local, elem_op);
+                builder.push_instr(MirInstr::Assign(loop_var_local, assign_rvalue.clone()))?;
+                Self::retain_if_aliasing_borrow(builder, loop_var_local, &assign_rvalue)?;
 
                 for stmt in body {
                     self.lower_stmt(builder, stmt, binding_map)?;
                 }
                 if builder.current_block().is_ok() {
+                    let discard = builder.new_local(TypeRef::Void, false, None, None);
+                    builder.push_instr(MirInstr::Assign(
+                        discard,
+                        Rvalue::BuiltinCall(
+                            "lpp_arena_release".to_string(),
+                            vec![Operand::Local(iter_arena)],
+                        ),
+                    ))?;
                     builder.terminate_current_block(Terminator::Goto(step_block_id))?;
                 }
 
+                self.loop_stack.pop();
+                self.arena_stack.pop();
+
                 builder.switch_to_block(step_block_id);
-                let add_temp = builder.new_local(TypeRef::Int, false, None, None);
+                let one_temp = builder.new_local(TypeRef::Int, false, None, None);
                 builder.push_instr(MirInstr::Assign(
-                    add_temp,
+                    one_temp,
                     Rvalue::BinaryOp(
                         BinaryOperator::Add,
                         Operand::Local(idx_local),
                         Operand::Int(1),
                     ),
                 ))?;
-                builder.push_instr(MirInstr::Assign(idx_local, Rvalue::Use(Operand::Local(add_temp))))?;
+                builder.push_instr(MirInstr::Assign(idx_local, Rvalue::Use(Operand::Local(one_temp))))?;
                 builder.terminate_current_block(Terminator::Goto(cond_block_id))?;
 
-                self.loop_stack.pop();
                 builder.switch_to_block(end_block_id);
             }
             Stmt::Break => {
-                let target = self
+                let loop_targets = *self
                     .loop_stack
                     .last()
-                    .ok_or_else(|| "break statement outside of loop".to_string())?
-                    .break_block;
-                builder.terminate_current_block(Terminator::Goto(target))?;
+                    .ok_or_else(|| "break statement outside of loop".to_string())?;
+                if let Some(arena) = loop_targets.loop_arena {
+                    let discard = builder.new_local(TypeRef::Void, false, None, None);
+                    builder.push_instr(MirInstr::Assign(
+                        discard,
+                        Rvalue::BuiltinCall(
+                            "lpp_arena_release".to_string(),
+                            vec![Operand::Local(arena)],
+                        ),
+                    ))?;
+                }
+                builder.terminate_current_block(Terminator::Goto(loop_targets.break_block))?;
                 let dead_block = builder.new_block();
                 builder.switch_to_block(dead_block);
             }
             Stmt::Continue => {
-                let target = self
+                let loop_targets = *self
                     .loop_stack
                     .last()
-                    .ok_or_else(|| "continue statement outside of loop".to_string())?
-                    .continue_block;
-                builder.terminate_current_block(Terminator::Goto(target))?;
+                    .ok_or_else(|| "continue statement outside of loop".to_string())?;
+                if let Some(arena) = loop_targets.loop_arena {
+                    let discard = builder.new_local(TypeRef::Void, false, None, None);
+                    builder.push_instr(MirInstr::Assign(
+                        discard,
+                        Rvalue::BuiltinCall(
+                            "lpp_arena_release".to_string(),
+                            vec![Operand::Local(arena)],
+                        ),
+                    ))?;
+                }
+                builder.terminate_current_block(Terminator::Goto(loop_targets.continue_block))?;
                 let dead_block = builder.new_block();
                 builder.switch_to_block(dead_block);
             }
@@ -2195,22 +2285,6 @@ impl<'a> MirLowerCtx<'a> {
                     _ => Vec::new(),
                 };
 
-                // Mutable captures need a defined shared-cell / move ownership model.
-                // Copying them into an environment makes `x = ...` inside the closure
-                // silently diverge from the outer variable, which is not memory-safe or
-                // unsurprising language semantics. Reject this case until that model is
-                // implemented rather than compiling an incorrect program.
-                if let Some(capture) = captures
-                    .iter()
-                    .find(|id| self.symbol_table.bindings[id.0].is_mut)
-                {
-                    let binding = &self.symbol_table.bindings[capture.0];
-                    return Err(format!(
-                        "mutable capture '{}' is not supported safely yet",
-                        binding.name
-                    ));
-                }
-
                 // Register environment struct
                 let env_struct_name = format!("__lpp_closure_env_{}", closure_scope.0);
                 let env_struct_id = self.type_table.register_struct(env_struct_name);
@@ -2321,7 +2395,7 @@ impl<'a> MirLowerCtx<'a> {
                 // Set closure lowering context
                 let saved_env_ptr = self.current_env_ptr;
                 let saved_captures = std::mem::take(&mut self.current_captures);
-                let saved_arena = self.current_arena.take();
+                let saved_arena_stack = std::mem::take(&mut self.arena_stack);
 
                 self.current_env_ptr = Some(env_ptr_local);
                 self.current_captures = captures;
@@ -2332,6 +2406,7 @@ impl<'a> MirLowerCtx<'a> {
 
                 if let Ok(current_block) = closure_builder.current_block() {
                     if current_block.0 < closure_builder.function.blocks.len() {
+                        self.release_arena_if_live(&mut closure_builder)?;
                         closure_builder.set_terminator(current_block, Terminator::Return(None))?;
                     }
                 }
@@ -2342,7 +2417,7 @@ impl<'a> MirLowerCtx<'a> {
                 // Restore context
                 self.current_env_ptr = saved_env_ptr;
                 self.current_captures = saved_captures;
-                self.current_arena = saved_arena;
+                self.arena_stack = saved_arena_stack;
 
                 // Return closure fat pointer
                 let closure_local = builder.new_local(
