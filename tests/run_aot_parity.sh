@@ -152,7 +152,7 @@ done
 # 50 000 genuine runtime cycles; what changed is that trees, linked lists and
 # parent pointers are now expressible.
 for rejected_case in \
-    "aot_reject_mut_closure:not supported safely yet"
+    "aot_reject_mut_closure:Cannot mutate captured variable"
 do
     test_name=${rejected_case%%:*}
     expected_diagnostic=${rejected_case#*:}

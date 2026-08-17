@@ -32,7 +32,7 @@ jobs:
       - name: Build website
         working-directory: website
         run: |
-          npm ci
+          npm ci --legacy-peer-deps || npm install --legacy-peer-deps
           npm run build
       - name: Publish to gh-pages
         uses: peaceiris/actions-gh-pages@v4

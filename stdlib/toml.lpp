@@ -46,7 +46,7 @@ def toml_load(text: Str) -> Int:
             # Strip inline comment
             val := toml_strip_comment(raw_val)
 
-            flat_key := str_concat(cur_section, str_concat("\x00", key))
+            flat_key := str_concat(cur_section, str_concat("\0", key))
 
             # Determine if string or integer
             if str_starts_with(val, "\""):
@@ -86,7 +86,7 @@ def toml_strip_comment(raw: Str) -> Str:
 # Retrieve a string value from section + key.
 def toml_get_str(handle: Int, section: Str, key: Str) -> Str:
     str_map  := map_get_str(handle, "__str__")
-    flat_key := str_concat(section, str_concat("\x00", key))
+    flat_key := str_concat(section, str_concat("\0", key))
     if map_has_str(str_map, flat_key) == 1:
         return map_get_str(str_map, flat_key)
     return ""
@@ -94,7 +94,7 @@ def toml_get_str(handle: Int, section: Str, key: Str) -> Str:
 # Retrieve an integer value from section + key.
 def toml_get_int(handle: Int, section: Str, key: Str) -> Int:
     str_map  := map_get_str(handle, "__str__")
-    flat_key := str_concat(section, str_concat("\x00", key))
+    flat_key := str_concat(section, str_concat("\0", key))
     if map_has_str(str_map, flat_key) == 1:
         raw := map_get_str(str_map, flat_key)
         return str_to_int(raw)

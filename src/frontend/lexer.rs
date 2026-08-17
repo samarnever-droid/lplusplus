@@ -376,6 +376,14 @@ impl<'a> Lexer<'a> {
                             Some('0') => '\0',
                             Some('\'') => '\'',
                             Some('\\') => '\\',
+                            Some('x') => {
+                                let h1 = self.next_c().ok_or_else(|| format!("[line {}:col {}] Unterminated hex escape", start_line, start_col))?;
+                                let h2 = self.next_c().ok_or_else(|| format!("[line {}:col {}] Unterminated hex escape", start_line, start_col))?;
+                                let hex_str = format!("{}{}", h1, h2);
+                                let val = u8::from_str_radix(&hex_str, 16)
+                                    .map_err(|_| format!("[line {}:col {}] Invalid hex escape '\\x{}'", start_line, start_col, hex_str))?;
+                                val as char
+                            }
                             Some(c) => {
                                 return Err(format!(
                                     "[line {}:col {}] Lexer error: Unknown escape sequence '\\{}'",
@@ -441,6 +449,14 @@ impl<'a> Lexer<'a> {
                                     '0' => s.push('\0'),
                                     '"' => s.push('"'),
                                     '\\' => s.push('\\'),
+                                    'x' => {
+                                        let h1 = self.next_c().ok_or_else(|| format!("[line {}:col {}] Unterminated hex escape in string", self.line, self.col))?;
+                                        let h2 = self.next_c().ok_or_else(|| format!("[line {}:col {}] Unterminated hex escape in string", self.line, self.col))?;
+                                        let hex_str = format!("{}{}", h1, h2);
+                                        let val = u8::from_str_radix(&hex_str, 16)
+                                            .map_err(|_| format!("[line {}:col {}] Invalid hex escape '\\x{}' in string", self.line, self.col, hex_str))?;
+                                        s.push(val as char);
+                                    }
                                     other => {
                                         return Err(format!(
                                             "[line {}:col {}] Lexer error: Unknown escape sequence '\\{}'",
