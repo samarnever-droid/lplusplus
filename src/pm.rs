@@ -2169,9 +2169,12 @@ fn cmd_login(args: &[String]) -> i32 {
 }
 
 fn cmd_publish(args: &[String]) -> i32 {
+    let is_dry_run = args.iter().any(|a| a == "--dry-run" || a == "-n");
+
     let manifest_path = Path::new("lpp.toml");
     if !manifest_path.exists() {
         eprintln!("[L++] \x1b[1;31mERROR:\x1b[0m No lpp.toml found in current directory.");
+        eprintln!("[L++] Hint: Run 'lpp new <name>' or create an lpp.toml to start a package.");
         return 1;
     }
 
@@ -2186,46 +2189,88 @@ fn cmd_publish(args: &[String]) -> i32 {
     let manifest = match parse_toml(&manifest_content) {
         Ok(m) => m,
         Err(e) => {
-            eprintln!("[L++] Invalid manifest: {}", e);
+            eprintln!("[L++] Invalid manifest in lpp.toml: {}", e);
             return 1;
         }
     };
 
-    let token = match load_saved_token() {
-        Some(t) => t,
-        None => {
-            eprintln!("[L++] \x1b[1;31mERROR: Not logged in.\x1b[0m");
-            eprintln!("To publish to the official L++ registry (https://registry.lplusplus.bond):");
-            eprintln!("  1. Get your publisher token from https://lplusplus.bond/account");
-            eprintln!("  2. Run: lpp login <token>");
-            return 1;
+    // Check entrypoint source file
+    let entry_str = manifest.entry.as_deref().unwrap_or("src/main.lpp");
+    let entry_file = Path::new(entry_str);
+    if !entry_file.exists() && !Path::new("src/lib.lpp").exists() {
+        eprintln!(
+            "[L++] \x1b[1;31mERROR:\x1b[0m Package entrypoint '{}' not found.",
+            entry_str
+        );
+        eprintln!("[L++] Hint: Ensure '{}' exists before publishing.", entry_str);
+        return 1;
+    }
+
+    let token = if is_dry_run {
+        "dry_run_token".to_string()
+    } else {
+        match load_saved_token() {
+            Some(t) => t,
+            None => {
+                eprintln!("[L++] \x1b[1;31mERROR: Not logged in.\x1b[0m");
+                eprintln!("To publish to the official L++ registry (https://registry.lplusplus.bond):");
+                eprintln!("  1. Get your publisher token from https://lplusplus.bond/account.html");
+                eprintln!("  2. Run: lpp login <token>");
+                return 1;
+            }
         }
     };
 
-    println!("[L++] Publishing {} @ {} to registry.lplusplus.bond...", manifest.name, manifest.version);
-    println!("[L++] [1/3] Checking project types...");
+    println!("[L++] 📦 Packaging \x1b[1;36m{}\x1b[0m @ \x1b[1;33mv{}\x1b[0m...", manifest.name, manifest.version);
+    println!("[L++] [1/3] 🔍 Type-checking project with native AOT engine...");
     if cmd_check() != 0 {
         eprintln!("[L++] \x1b[1;31mERROR:\x1b[0m Type check failed. Fix errors before publishing.");
         return 1;
     }
 
-    println!("[L++] [2/3] Preparing package manifest payload...");
+    println!("[L++] [2/3] 📄 Preparing package manifest payload...");
     let registry_url = std::env::var("LPP_REGISTRY_URL")
         .unwrap_or_else(|_| "https://registry.lplusplus.bond".to_string());
     let publish_endpoint = format!("{}/publish", registry_url.trim_end_matches('/'));
 
     let dep_names: Vec<String> = manifest.dependencies.iter().map(|d| d.name.clone()).collect();
+    let authors = if let Some(a) = manifest.author {
+        vec![a]
+    } else {
+        // Infer from git config if available
+        let git_author = std::process::Command::new("git")
+            .args(["config", "user.name"])
+            .output()
+            .ok()
+            .and_then(|out| {
+                if out.status.success() {
+                    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                    if !s.is_empty() { Some(s) } else { None }
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_else(|| "community".to_string());
+        vec![git_author]
+    };
+
     let pkg_json = serde_json::json!({
         "name": manifest.name,
         "version": manifest.version,
         "description": manifest.description.unwrap_or_default(),
         "license": manifest.license.unwrap_or_else(|| "MIT".to_string()),
-        "authors": manifest.author.map(|a| vec![a]).unwrap_or_default(),
+        "authors": authors,
         "keywords": manifest.keywords,
         "dependencies": dep_names,
     });
 
-    println!("[L++] [3/3] Uploading to {}...", publish_endpoint);
+    if is_dry_run {
+        println!("[L++] \x1b[1;32m✓ Dry-run validation successful!\x1b[0m");
+        println!("[L++] Payload preview:\n{}", serde_json::to_string_pretty(&pkg_json).unwrap_or_default());
+        return 0;
+    }
+
+    println!("[L++] [3/3] 🚀 Uploading to {}...", publish_endpoint);
 
     let json_str = pkg_json.to_string();
     let curl_cmd = if cfg!(windows) { "curl.exe" } else { "curl" };
@@ -2246,7 +2291,8 @@ fn cmd_publish(args: &[String]) -> i32 {
             let res_text = String::from_utf8_lossy(&out.stdout);
             if out.status.success() && !res_text.contains("\"error\"") {
                 println!("[L++] \x1b[1;32m✓ Successfully published {} @ {}!\x1b[0m", manifest.name, manifest.version);
-                println!("[L++] Package is now live at: https://registry.lplusplus.bond/packages/{}", manifest.name);
+                println!("[L++] 🌐 Package is now live at: https://registry.lplusplus.bond/packages/{}", manifest.name);
+                println!("[L++] 💻 Install with: \x1b[1;36mlpp add {}\x1b[0m", manifest.name);
                 0
             } else {
                 eprintln!("[L++] \x1b[1;31mERROR: Publish failed.\x1b[0m Response: {}", res_text.trim());
@@ -2590,6 +2636,25 @@ fn is_registry_json(content: &str) -> bool {
 }
 
 fn fetch_registry_json() -> Option<String> {
+    let cache_path = resolve_registry_cache_path();
+
+    // ── Aggressive Cache Fast-Path (10-minute TTL or Offline Mode) ───────────
+    let is_offline = std::env::var("LPP_OFFLINE").map(|v| v == "1" || v == "true").unwrap_or(false);
+    if cache_path.exists() {
+        if let Ok(metadata) = fs::metadata(&cache_path) {
+            if let Ok(modified) = metadata.modified() {
+                let elapsed = modified.elapsed().unwrap_or(std::time::Duration::from_secs(9999));
+                if is_offline || elapsed < std::time::Duration::from_secs(600) {
+                    if let Ok(content) = fs::read_to_string(&cache_path) {
+                        if is_registry_json(&content) {
+                            return Some(content);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     let local_paths = [
         PathBuf::from("registry").join("index.json"),
         PathBuf::from("website").join("public").join("registry").join("index.json"),
