@@ -575,6 +575,7 @@ fn real_main() -> i32 {
     let config_obj_init = config::LppConfig::load_or_create();
     let mut backend = config_obj_init.backend.clone();
     let mut cli_target: Option<String> = None;
+    let mut custom_output: Option<String> = None;
 
     while idx < args.len() {
         let arg = &args[idx];
@@ -721,6 +722,11 @@ fn real_main() -> i32 {
         } else if arg == "--target" {
             if idx + 1 < args.len() {
                 cli_target = Some(args[idx + 1].clone());
+                idx += 1;
+            }
+        } else if arg == "-o" || arg == "--output" {
+            if idx + 1 < args.len() {
+                custom_output = Some(args[idx + 1].clone());
                 idx += 1;
             }
         } else if !arg.starts_with('-') {
@@ -1270,7 +1276,11 @@ fn real_main() -> i32 {
     };
     let exe_ext = std::env::consts::EXE_SUFFIX;
 
-    let (obj_path, exe_path) = if source_run_command {
+    let (obj_path, exe_path) = if let Some(ref out) = custom_output {
+        let exe_p = PathBuf::from(out);
+        let obj_p = exe_p.with_extension(ext);
+        (obj_p, exe_p)
+    } else if source_run_command {
         let temp_dir = env::temp_dir();
         let stem = std::path::Path::new(&filename)
             .file_stem()

@@ -822,6 +822,9 @@ pub fn compile(program: &MirProgram, type_table: &TypeTable, weak_fields: &HashS
             ir.push_str(&format!("define i32 @main() {{\nentry:\n  call void {}()\n  ret i32 0\n}}\n",func_names[&main.id]));
         }
     }
+    if cfg!(target_os = "windows") {
+        ir.push_str("define void @__main() {\nentry:\n  ret void\n}\n");
+    }
     let stamp = format!(
         "lpp-llvm-{}-{}",
         std::process::id(),
@@ -841,7 +844,7 @@ pub fn compile(program: &MirProgram, type_table: &TypeTable, weak_fields: &HashS
         .unwrap_or_else(|| "clang".to_string());
 
     let mut command = Command::new(&compiler);
-    command.args(["-c", "-x", "ir", "-O2"]);
+    command.args(["-c", "-x", "ir", "-O2", "-ffreestanding"]);
     if let Ok(march) = std::env::var("LPP_LLVM_MARCH") {
         command.arg(format!("-march={}", march));
     }
