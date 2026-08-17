@@ -1,0 +1,1 @@
+import{a as e}from"./Footer-6HQyFWZJ.js";var t=e(`terminal`,[[`path`,{d:`M12 19h8`,key:`baeox8`}],[`path`,{d:`m4 17 6-6-6-6`,key:`1yngyt`}]]),n=e(`x`,[[`path`,{d:`M18 6 6 18`,key:`1bl5f8`}],[`path`,{d:`m6 6 12 12`,key:`d8bk6v`}]]);export{t as n,n as t};
