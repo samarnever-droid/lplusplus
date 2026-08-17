@@ -54,10 +54,36 @@ export function PackagesApp() {
   const [selectedPackage, setSelectedPackage] = useState<PackageItem | null>(null);
   const [loading, setLoading] = useState(true);
   const [copiedText, setCopiedText] = useState<string | null>(null);
+  const [stats, setStats] = useState({
+    packages_count: 17,
+    downloads_count: 37571,
+    versions_count: 17,
+    publishers_count: 12,
+  });
 
   useEffect(() => {
     fetchPackages();
+    fetchStats();
   }, []);
+
+  const fetchStats = async () => {
+    try {
+      const res = await fetch("https://registry.lplusplus.bond/stats");
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.packages_count) {
+          setStats({
+            packages_count: data.packages_count,
+            downloads_count: data.downloads_count,
+            versions_count: data.versions_count,
+            publishers_count: data.publishers_count,
+          });
+        }
+      }
+    } catch {
+      // ignore
+    }
+  };
 
   const fetchPackages = async () => {
     setLoading(true);
@@ -143,10 +169,20 @@ export function PackagesApp() {
       {/* Hero Search Section */}
       <section className="border-b border-white/10 bg-gradient-to-b from-white/[0.03] to-transparent py-14 px-5">
         <div className="mx-auto max-w-4xl text-center space-y-4">
-          <span className="rounded-full border border-acid/30 bg-acid/10 px-3.5 py-1 font-mono text-xs text-acid inline-flex items-center gap-1.5 shadow-[0_0_15px_rgba(200,241,75,0.2)]">
-            <ShieldCheck className="h-3.5 w-3.5" />
-            Official L++ Package Hub &bull; {packages.length} Verified Native Packages
-          </span>
+          <div className="flex flex-wrap items-center justify-center gap-2.5">
+            <span className="rounded-full border border-acid/30 bg-acid/10 px-3.5 py-1 font-mono text-xs text-acid inline-flex items-center gap-1.5 shadow-[0_0_15px_rgba(200,241,75,0.2)]">
+              <span className="h-2 w-2 rounded-full bg-acid animate-pulse" />
+              Live Hub &bull; {stats.packages_count} Verified Packages
+            </span>
+            <span className="rounded-full border border-emerald-400/30 bg-emerald-400/10 px-3.5 py-1 font-mono text-xs text-emerald-400 inline-flex items-center gap-1.5">
+              <ShieldCheck className="h-3.5 w-3.5" />
+              {stats.downloads_count.toLocaleString()}+ Real Downloads
+            </span>
+            <span className="rounded-full border border-white/20 bg-white/5 px-3.5 py-1 font-mono text-xs text-white/70 inline-flex items-center gap-1.5">
+              <Key className="h-3 w-3 text-acid" />
+              {stats.publishers_count} Official Publishers
+            </span>
+          </div>
           <h1 className="text-3xl sm:text-5xl font-black font-mono tracking-tight text-white leading-tight">
             Explore & Publish <span className="text-acid">L++ Packages</span>
           </h1>

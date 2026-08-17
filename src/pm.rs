@@ -13,11 +13,13 @@ pub struct Dependency {
     pub path: Option<String>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct Package {
     pub name: String,
     pub version: String,
+    pub description: Option<String>,
+    pub license: Option<String>,
     pub author: Option<String>,
     pub entry: Option<String>,
     pub keywords: Vec<String>,
@@ -205,6 +207,8 @@ fn dependency_from_toml(name: &str, value: &toml::Value) -> Result<Dependency, S
 fn package_from_parts(
     name: String,
     version: String,
+    description: Option<String>,
+    license: Option<String>,
     author: Option<String>,
     entry: Option<String>,
     keywords: Vec<String>,
@@ -215,6 +219,8 @@ fn package_from_parts(
     Ok(Package {
         name,
         version,
+        description,
+        license,
         author,
         entry,
         keywords: validate_keywords(&keywords)?,
@@ -239,6 +245,8 @@ pub fn parse_json_manifest(content: &str) -> Result<Package, String> {
         .and_then(serde_json::Value::as_str)
         .unwrap_or("0.1.0")
         .to_string();
+    let description = obj.get("description").and_then(serde_json::Value::as_str).map(String::from);
+    let license = obj.get("license").and_then(serde_json::Value::as_str).map(String::from);
     let author = obj.get("author").and_then(serde_json::Value::as_str).map(String::from);
     let entry = obj
         .get("main")
@@ -304,7 +312,7 @@ pub fn parse_json_manifest(content: &str) -> Result<Package, String> {
         }
     }
 
-    package_from_parts(name, version, author, entry, keywords, dependencies)
+    package_from_parts(name, version, description, license, author, entry, keywords, dependencies)
 }
 
 fn parse_toml_with_workspace(content: &str, workspace_version: Option<&str>) -> Result<Package, String> {
@@ -335,6 +343,8 @@ fn parse_toml_with_workspace(content: &str, workspace_version: Option<&str>) -> 
         Some(_) => return Err("Package manifest error: [package].version must be a SemVer string or { workspace = true }".to_string()),
         None => return Err("Missing package version in [package] section".to_string()),
     };
+    let description = package.get("description").and_then(toml::Value::as_str).map(String::from);
+    let license = package.get("license").and_then(toml::Value::as_str).map(String::from);
     let author = package
         .get("author")
         .and_then(toml::Value::as_str)
@@ -383,7 +393,7 @@ fn parse_toml_with_workspace(content: &str, workspace_version: Option<&str>) -> 
             dependencies.push(dependency_from_toml(dep_name, dep_value)?);
         }
     }
-    package_from_parts(name, version, author, entry, keywords, dependencies)
+    package_from_parts(name, version, description, license, author, entry, keywords, dependencies)
 }
 
 pub fn parse_toml(content: &str) -> Result<Package, String> {
@@ -2208,6 +2218,8 @@ fn cmd_publish(args: &[String]) -> i32 {
     let pkg_json = serde_json::json!({
         "name": manifest.name,
         "version": manifest.version,
+        "description": manifest.description.unwrap_or_default(),
+        "license": manifest.license.unwrap_or_else(|| "MIT".to_string()),
         "authors": manifest.author.map(|a| vec![a]).unwrap_or_default(),
         "keywords": manifest.keywords,
         "dependencies": dep_names,
@@ -2216,13 +2228,15 @@ fn cmd_publish(args: &[String]) -> i32 {
     println!("[L++] [3/3] Uploading to {}...", publish_endpoint);
 
     let json_str = pkg_json.to_string();
-    let curl_res = std::process::Command::new("curl")
+    let curl_cmd = if cfg!(windows) { "curl.exe" } else { "curl" };
+    let curl_res = std::process::Command::new(curl_cmd)
         .args([
             "-s", "-S",
             "-X", "POST",
             &publish_endpoint,
             "-H", "Content-Type: application/json",
             "-H", &format!("x-api-key: {}", token),
+            "-H", &format!("Authorization: Bearer {}", token),
             "-d", &json_str,
         ])
         .output();
@@ -2240,7 +2254,7 @@ fn cmd_publish(args: &[String]) -> i32 {
             }
         }
         Err(e) => {
-            eprintln!("[L++] Failed to execute curl: {}", e);
+            eprintln!("[L++] Failed to execute {}: {}", curl_cmd, e);
             1
         }
     }

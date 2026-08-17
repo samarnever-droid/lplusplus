@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Package, Terminal, ArrowUpRight, Check, Copy, Sparkles, Box, ShieldCheck, Database, Layers } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Package, Terminal, ArrowUpRight, Check, Copy, Sparkles, Box, ShieldCheck, Database, Layers, Activity } from "lucide-react";
 import { SectionHead, Reveal } from "../lib/ui";
 
 const HIGHLIGHT_PACKAGES = [
@@ -10,6 +10,14 @@ const HIGHLIGHT_PACKAGES = [
     downloads: 4890,
     category: "Desktop & UI",
     color: "text-acid border-acid/30 bg-acid/10",
+  },
+  {
+    name: "lpp-bindgen",
+    version: "0.36.0",
+    desc: "Automated C/C++ FFI header bindings generator & C-to-L++ translator with checked pointers (CPtr).",
+    downloads: 1470,
+    category: "Dev Tools",
+    color: "text-amber-400 border-amber-400/30 bg-amber-400/10",
   },
   {
     name: "lpp-graph",
@@ -49,28 +57,40 @@ const HIGHLIGHT_PACKAGES = [
     desc: "Lossless compression library: LZ4, Zstandard, and DEFLATE with streaming ZIP archive support.",
     downloads: 1730,
     category: "Compression",
-    color: "text-rose-400 border-rose-400/30 bg-rose-400/10",
+    color: "text-sky-400 border-sky-400/30 bg-sky-400/10",
   },
   {
     name: "lpp-json",
     version: "1.0.0",
-    desc: "SIMD zero-allocation JSON parser with native struct deserialization.",
+    desc: "Zero-allocation SIMD-accelerated JSON parser and serializer with native L++ structs.",
     downloads: 3560,
     category: "Data Structures",
-    color: "text-sky-400 border-sky-400/30 bg-sky-400/10",
-  },
-  {
-    name: "lpp-sha256",
-    version: "1.0.0",
-    desc: "Cryptographic SHA-256 hash and HMAC verification engine written in pure L++.",
-    downloads: 2450,
-    category: "Security",
-    color: "text-acid border-acid/30 bg-acid/10",
+    color: "text-purple-400 border-purple-400/30 bg-purple-400/10",
   },
 ];
 
-export default function PackagesShowcase() {
+export function PackagesShowcase() {
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [stats, setStats] = useState({
+    packages_count: 17,
+    downloads_count: 37571,
+    publishers_count: 12,
+  });
+
+  useEffect(() => {
+    fetch("https://registry.lplusplus.bond/stats")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data && data.packages_count) {
+          setStats({
+            packages_count: data.packages_count,
+            downloads_count: data.downloads_count,
+            publishers_count: data.publishers_count,
+          });
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   const copy = (text: string, id: string) => {
     navigator.clipboard.writeText(text);
@@ -79,29 +99,38 @@ export default function PackagesShowcase() {
   };
 
   return (
-    <section id="packages" className="relative border-t border-white/[0.06] py-24 md:py-32 bg-[#07090d]">
-      <div className="pointer-events-none absolute -right-32 top-1/4 h-[500px] w-[500px] rounded-full bg-acid/[0.04] blur-[150px]" />
-      
-      <div className="relative mx-auto max-w-7xl px-5 md:px-8 space-y-12">
+    <section id="packages" className="border-t border-white/10 bg-[#07090d] py-24 px-5">
+      <div className="mx-auto max-w-7xl space-y-12">
+        {/* Section Header */}
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
-          <SectionHead
-            index="05"
-            kicker="Official Package Registry"
-            title={
-              <>
-                Native Libraries, <span className="text-acid">Ready to Install.</span>
-              </>
-            }
-            desc="Explore 16 officially verified packages published to registry.lplusplus.bond with 256-bit cryptographically signed tokens and zero backend URL exposure."
-          />
+          <div className="space-y-4">
+            <div className="flex items-center gap-2">
+              <span className="rounded-full border border-acid/40 bg-acid/10 px-3 py-1 font-mono text-xs text-acid inline-flex items-center gap-1.5 shadow-[0_0_12px_rgba(200,241,75,0.2)]">
+                <span className="h-2 w-2 rounded-full bg-acid animate-pulse" />
+                Live Registry &bull; {stats.packages_count} Native Packages
+              </span>
+              <span className="rounded-full border border-emerald-400/40 bg-emerald-400/10 px-3 py-1 font-mono text-xs text-emerald-400 inline-flex items-center gap-1.5">
+                <Activity className="h-3 w-3" />
+                {stats.downloads_count.toLocaleString()}+ Real Downloads
+              </span>
+            </div>
 
-          <div className="shrink-0">
+            <h2 className="text-3xl sm:text-4xl font-black font-mono tracking-tight text-white">
+              Official Package <span className="text-acid">Ecosystem</span>
+            </h2>
+
+            <p className="text-sm text-white/60 font-mono max-w-xl">
+              Type-safe, zero-overhead libraries published directly by the L++ core team and developer community.
+            </p>
+          </div>
+
+          <div>
             <a
               href="/packages.html"
-              className="inline-flex items-center gap-2 rounded-xl bg-acid px-6 py-3 font-mono text-xs font-bold text-ink hover:brightness-110 shadow-[0_0_20px_rgba(200,241,75,0.3)]"
+              className="inline-flex items-center gap-2 rounded-xl bg-acid px-6 py-3 font-mono text-xs font-bold text-ink hover:brightness-110 shadow-[0_0_20px_rgba(200,241,75,0.3)] transition-all"
             >
               <Package className="h-4 w-4" />
-              Explore All 16 Packages
+              Explore All {stats.packages_count} Packages
               <ArrowUpRight className="h-4 w-4" />
             </a>
           </div>
@@ -161,3 +190,6 @@ export default function PackagesShowcase() {
     </section>
   );
 }
+
+export default PackagesShowcase;
+
