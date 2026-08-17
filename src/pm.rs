@@ -2625,32 +2625,31 @@ fn fetch_registry_json() -> Option<String> {
 
     // ── Primary: LPP_REGISTRY_URL (or official .bond registry) ────────────────
     for attempt in 1..=max_retries {
-        if command_available("curl", &["--version"]) {
-            let output = std::process::Command::new("curl")
-                .args(["-fsSL", "--max-time", "8", &primary_url])
-                .output()
-                .ok();
-            if let Some(out) = output {
-                if out.status.success() {
-                    let text = String::from_utf8_lossy(&out.stdout).into_owned();
-                    if is_registry_json(&text) {
-                        fetched_json = Some(text);
-                        break;
-                    }
+        let curl_cmd = if cfg!(windows) { "curl.exe" } else { "curl" };
+        let output = std::process::Command::new(curl_cmd)
+            .args(["-fsSL", "--max-time", "8", &primary_url])
+            .output()
+            .ok();
+        if let Some(out) = output {
+            if out.status.success() {
+                let text = String::from_utf8_lossy(&out.stdout).into_owned();
+                if is_registry_json(&text) {
+                    fetched_json = Some(text);
+                    break;
                 }
             }
         }
         #[cfg(windows)]
         {
             if attempt < max_retries {
-                std::thread::sleep(std::time::Duration::from_millis(500 * attempt as u64));
+                std::thread::sleep(std::time::Duration::from_millis(400 * attempt as u64));
             }
             let cmd_arg = format!(
-                "Invoke-RestMethod -Uri '{}' -TimeoutSec 8 | ConvertTo-Json -Depth 5",
+                "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; (Invoke-WebRequest -Uri '{}' -UseBasicParsing -TimeoutSec 8).Content",
                 primary_url
             );
             let output = std::process::Command::new("powershell")
-                .args(["-Command", &cmd_arg])
+                .args(["-NoProfile", "-Command", &cmd_arg])
                 .output()
                 .ok();
             if let Some(out) = output {
@@ -2672,20 +2671,19 @@ fn fetch_registry_json() -> Option<String> {
             "https://raw.githubusercontent.com/samarnever-droid/lplusplus/master/website/public/registry/index.json",
             "https://raw.githubusercontent.com/samarnever-droid/lplusplus/master/registry/index.json",
         ];
+        let curl_cmd = if cfg!(windows) { "curl.exe" } else { "curl" };
         for url in &legacy_urls {
-            if command_available("curl", &["--version"]) {
-                let output = std::process::Command::new("curl")
-                    .args(["-fsSL", "--max-time", "5", url])
-                    .output()
-                    .ok();
-                if let Some(out) = output {
-                    if out.status.success() {
-                        let text = String::from_utf8_lossy(&out.stdout).into_owned();
-                        if is_registry_json(&text) {
-                            eprintln!("[L++] Using legacy registry URL: {url} (consider setting LPP_REGISTRY_URL)");
-                            fetched_json = Some(text);
-                            break;
-                        }
+            let output = std::process::Command::new(curl_cmd)
+                .args(["-fsSL", "--max-time", "5", url])
+                .output()
+                .ok();
+            if let Some(out) = output {
+                if out.status.success() {
+                    let text = String::from_utf8_lossy(&out.stdout).into_owned();
+                    if is_registry_json(&text) {
+                        eprintln!("[L++] Using legacy registry URL: {url} (consider setting LPP_REGISTRY_URL)");
+                        fetched_json = Some(text);
+                        break;
                     }
                 }
             }
@@ -2710,6 +2708,12 @@ fn fetch_registry_json() -> Option<String> {
         }
     }
 
+    // Fallback: embedded official registry catalog
+    const EMBEDDED_REGISTRY: &str = include_str!("../registry/index.json");
+    if is_registry_json(EMBEDDED_REGISTRY) {
+        return Some(EMBEDDED_REGISTRY.to_string());
+    }
+
     None
 }
 
@@ -2720,7 +2724,8 @@ pub fn resolve_registry_package(name: &str) -> Option<RegistryEntry> {
             return Some(entry);
         }
     }
-    None
+    const EMBEDDED_REGISTRY: &str = include_str!("../registry/index.json");
+    resolve_from_json(EMBEDDED_REGISTRY, name)
 }
 
 fn is_lpp_opencode_alias(name: &str) -> bool {

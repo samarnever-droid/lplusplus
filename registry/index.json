@@ -534,6 +534,82 @@
         "Native equivalence and ASan/UBSan compatibility gates",
         "SQLite and zlib real-system-header coverage"
       ]
+    },
+    "lpp-bindgen": {
+      "name": "lpp-bindgen",
+      "description": "Automated C and C++ FFI header bindings generator & C-to-L++ translator with safe checked pointers (CPtr)",
+      "version": "0.36.0",
+      "authors": [
+        "samarnever-droid",
+        "L++ Project"
+      ],
+      "license": "MIT",
+      "repository": "https://github.com/samarnever-droid/lplusplus",
+      "path": "packages/lpp-bindgen",
+      "source": "packages/lpp-bindgen/src/main.lpp",
+      "dependencies": [],
+      "keywords": [
+        "ffi",
+        "c",
+        "bindgen",
+        "bindings",
+        "translator"
+      ]
+    },
+    "lpp-analyzer": {
+      "name": "lpp-analyzer",
+      "description": "Static code analysis, AST validation, and escape analysis linter for L++.",
+      "version": "1.4.0",
+      "authors": [
+        "samarnever-droid"
+      ],
+      "license": "MIT",
+      "repository": "https://github.com/samarnever-droid/lplusplus",
+      "path": "packages/lpp-analyzer",
+      "source": "packages/lpp-analyzer/src/main.lpp",
+      "dependencies": [],
+      "keywords": [
+        "analysis",
+        "ast",
+        "linter",
+        "compiler"
+      ]
+    },
+    "lpp-engine": {
+      "name": "lpp-engine",
+      "description": "High-throughput asynchronous event loop and task runner for L++ services.",
+      "version": "2.0.0",
+      "authors": [
+        "samarnever-droid"
+      ],
+      "license": "Apache-2.0",
+      "repository": "https://github.com/samarnever-droid/lplusplus",
+      "path": "packages/lpp-engine",
+      "source": "packages/lpp-engine/src/main.lpp",
+      "dependencies": [],
+      "keywords": [
+        "async",
+        "runtime",
+        "event-loop"
+      ]
+    },
+    "lppstore": {
+      "name": "lppstore",
+      "description": "Persistent B-tree key-value store with atomic transactions.",
+      "version": "0.6.0",
+      "authors": [
+        "samarnever-droid"
+      ],
+      "license": "MIT",
+      "repository": "https://github.com/samarnever-droid/lplusplus",
+      "path": "packages/lppstore",
+      "source": "packages/lppstore/src/main.lpp",
+      "dependencies": [],
+      "keywords": [
+        "kv",
+        "btree",
+        "database"
+      ]
     }
   }
 }
