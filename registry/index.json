@@ -1,71 +1,615 @@
 {
   "registry": {
     "name": "L++ Package Registry",
-    "version": "2.0",
-    "url": "https://registry.lplusplus.bond",
-    "description": "Official L++ package registry — hosted on Cloudflare R2 + Pages"
+    "version": "1.0",
+    "url": "https://samarnever-droid.github.io/lplusplus/registry",
+    "description": "Official L++ package registry \u2014 Git-based, JSON-indexed"
   },
   "packages": {
     "lpp-zip": {
       "name": "lpp-zip",
-      "description": "ZIP archive create/read library — pure L++ using buf_* primitives",
+      "description": "ZIP archive create/read library \u2014 pure L++ using buf_* primitives",
       "version": "0.1.0",
-      "authors": ["0x4171341"],
+      "authors": [
+        "0x4171341"
+      ],
       "license": "MIT",
       "repository": "https://github.com/samarnever-droid/lplusplus",
       "path": "packages/lpp-zip",
       "source": "packages/lpp-zip/src/zip.lpp",
       "dependencies": [],
-      "keywords": ["zip", "archive", "binary", "file", "compression"]
+      "keywords": [
+        "zip",
+        "archive",
+        "binary",
+        "file",
+        "compression"
+      ],
+      "features": [
+        "Create ZIP archives with multiple files",
+        "Read ZIP archives and extract entries",
+        "CRC32 verification",
+        "STORE method (no compression)",
+        "Pure L++ \u2014 no C code, no linker changes"
+      ],
+      "api": {
+        "zip_create": "() -> Int \u2014 create new archive handle",
+        "zip_add_file": "(archive: Int, filename: Str, content: Str) \u2014 add file to archive",
+        "zip_save": "(archive: Int, path: Str) \u2014 write ZIP to disk",
+        "zip_free": "(archive: Int) \u2014 release archive memory",
+        "zip_open": "(path: Str) -> Int \u2014 open ZIP file for reading",
+        "zip_entry_count": "(handle: Int) -> Int \u2014 number of entries",
+        "zip_entry_name": "(handle: Int, index: Int) -> Str \u2014 get entry filename",
+        "zip_entry_data": "(handle: Int, index: Int) -> Str \u2014 get entry content",
+        "zip_close": "(handle: Int) \u2014 close ZIP handle"
+      }
     },
     "lpp-math": {
       "name": "lpp-math",
-      "description": "Math utilities — abs, min, max, pow, gcd, lcm, fib, factorial",
+      "description": "Math utilities \u2014 abs, min, max, pow, gcd, lcm, fib, factorial",
       "version": "0.1.0",
-      "authors": ["0x4171341"],
+      "authors": [
+        "0x4171341"
+      ],
       "license": "MIT",
-      "repository": "https://github.com/samarnever-droid/lplusplus",
       "path": "stdlib/math.lpp",
       "source": "stdlib/math.lpp",
       "dependencies": [],
-      "keywords": ["math", "stdlib"]
+      "keywords": [
+        "math",
+        "stdlib"
+      ]
+    },
+    "lpp-strings": {
+      "name": "lpp-strings",
+      "description": "String utilities \u2014 repeat, contains, starts_with, reverse, pad",
+      "version": "0.1.0",
+      "authors": [
+        "0x4171341"
+      ],
+      "license": "MIT",
+      "path": "stdlib/strings.lpp",
+      "source": "stdlib/strings.lpp",
+      "dependencies": [],
+      "keywords": [
+        "string",
+        "text",
+        "stdlib"
+      ]
+    },
+    "lpp-collections": {
+      "name": "lpp-collections",
+      "description": "Collection utilities \u2014 list_sum, list_max, list_min, list_reverse",
+      "version": "0.1.0",
+      "authors": [
+        "0x4171341"
+      ],
+      "license": "MIT",
+      "path": "stdlib/collections.lpp",
+      "source": "stdlib/collections.lpp",
+      "dependencies": [],
+      "keywords": [
+        "list",
+        "collections",
+        "stdlib"
+      ]
+    },
+    "lpp-algo": {
+      "name": "lpp-algo",
+      "description": "Algorithm library \u2014 bubble_sort, binary_search, list_range, list_fill",
+      "version": "0.1.0",
+      "authors": [
+        "0x4171341"
+      ],
+      "license": "MIT",
+      "path": "stdlib/algo.lpp",
+      "source": "stdlib/algo.lpp",
+      "dependencies": [],
+      "keywords": [
+        "algorithm",
+        "sort",
+        "search",
+        "stdlib"
+      ]
     },
     "lpp-opencode": {
       "name": "lpp-opencode",
-      "description": "L++ package manager integration for OpenCode AI agent",
       "version": "0.6.0",
-      "authors": ["0x4171341"],
+      "description": "OpenCode/OpenClaude port foundation in L++ \u2014 installable lpp-opencode command, Claude router, TUI, sessions, commands, tools, and agent scaffold",
+      "authors": [
+        "0x4171341"
+      ],
       "license": "MIT",
       "repository": "https://github.com/samarnever-droid/lpp-opencode",
+      "source_url": "https://raw.githubusercontent.com/samarnever-droid/lpp-opencode/main/src/main.lpp",
       "path": "src/main.lpp",
-      "source": "https://raw.githubusercontent.com/samarnever-droid/lpp-opencode/main/src/main.lpp",
+      "dependencies": [
+        "lpp-tui"
+      ],
+      "keywords": [
+        "opencode",
+        "coding-agent",
+        "tui",
+        "terminal",
+        "ai",
+        "llm"
+      ],
+      "features": [
+        "Large terminal logo and command-hint screen",
+        "Interactive OpenCode-style prompt loop when run without arguments",
+        "Launcher compiles silently and runs the produced executable",
+        "Windows direct runtime compatible after L++ v3.3.1 CreateFileA import fix",
+        "Direct-link-safe default command entrypoint for Windows (file tools disabled until host tool mode)",
+        "Immediate current-session PowerShell PATH fix for lpp-opencode command",
+        "Installable lpp-opencode command on Linux, macOS, and Windows",
+        "Unix shell launcher and Windows PowerShell/CMD launchers",
+        "Windows PowerShell installer and runner",
+        "Windows CI check and AOT object generation",
+        "Claude/Anthropic provider router",
+        "Anthropic Messages API payload builder",
+        "OpenCode-style terminal coding agent scaffold",
+        "Slash commands: /help, /provider, /model, /payload, /read, /save, /exit",
+        "Transcript save/append helpers",
+        "ANSI TUI renderer with line screen buffer"
+      ]
+    },
+    "lpp-tui": {
+      "name": "lpp-tui",
+      "version": "0.2.0",
+      "description": "Reusable ANSI terminal UI helpers extracted from the L++ OpenCode port",
+      "authors": [
+        "0x4171341"
+      ],
+      "license": "MIT",
+      "repository": "https://github.com/samarnever-droid/lpp-opencode",
+      "source_url": "https://raw.githubusercontent.com/samarnever-droid/lpp-opencode/main/src/tui/ansi.lpp",
+      "path": "src/tui",
       "dependencies": [],
-      "keywords": ["opencode", "agent", "pm"]
+      "keywords": [
+        "tui",
+        "ansi",
+        "terminal",
+        "opencode",
+        "ui"
+      ],
+      "features": [
+        "ANSI colors and cursor helpers",
+        "Screen clearing and alternate screen helpers",
+        "Simple frame/prompt/assistant rendering",
+        "Line-buffer screen renderer",
+        "Minimal key classifier for future raw input loop"
+      ]
+    },
+    "lpp-openclaude": {
+      "name": "lpp-openclaude",
+      "version": "0.6.0",
+      "description": "OpenClaude alias for lpp-opencode \u2014 Claude-oriented OpenCode port foundation in L++",
+      "authors": [
+        "0x4171341"
+      ],
+      "license": "MIT",
+      "repository": "https://github.com/samarnever-droid/lpp-opencode",
+      "source_url": "https://raw.githubusercontent.com/samarnever-droid/lpp-opencode/main/src/main.lpp",
+      "path": "src/main.lpp",
+      "dependencies": [
+        "lpp-tui"
+      ],
+      "keywords": [
+        "opencode",
+        "coding-agent",
+        "tui",
+        "terminal",
+        "ai",
+        "llm",
+        "openclaude",
+        "claude",
+        "anthropic"
+      ],
+      "features": [
+        "Large terminal logo and command-hint screen",
+        "Interactive OpenCode-style prompt loop when run without arguments",
+        "Launcher compiles silently and runs the produced executable",
+        "Windows direct runtime compatible after L++ v3.3.1 CreateFileA import fix",
+        "Direct-link-safe default command entrypoint for Windows (file tools disabled until host tool mode)",
+        "Immediate current-session PowerShell PATH fix for lpp-opencode command",
+        "Installable lpp-opencode command on Linux, macOS, and Windows",
+        "Unix shell launcher and Windows PowerShell/CMD launchers",
+        "Windows PowerShell installer and runner",
+        "Windows CI check and AOT object generation",
+        "Claude/Anthropic provider router",
+        "Anthropic Messages API payload builder",
+        "OpenCode-style terminal coding agent scaffold",
+        "Slash commands: /help, /provider, /model, /payload, /read, /save, /exit",
+        "Transcript save/append helpers",
+        "ANSI TUI renderer with line screen buffer"
+      ],
+      "provides": "lpp-opencode"
+    },
+    "openclaude": {
+      "name": "openclaude",
+      "version": "0.6.0",
+      "description": "OpenClaude short alias for lpp-opencode",
+      "authors": [
+        "0x4171341"
+      ],
+      "license": "MIT",
+      "repository": "https://github.com/samarnever-droid/lpp-opencode",
+      "source_url": "https://raw.githubusercontent.com/samarnever-droid/lpp-opencode/main/src/main.lpp",
+      "path": "src/main.lpp",
+      "dependencies": [
+        "lpp-tui"
+      ],
+      "keywords": [
+        "opencode",
+        "coding-agent",
+        "tui",
+        "terminal",
+        "ai",
+        "llm",
+        "openclaude",
+        "claude",
+        "anthropic"
+      ],
+      "features": [
+        "Large terminal logo and command-hint screen",
+        "Interactive OpenCode-style prompt loop when run without arguments",
+        "Launcher compiles silently and runs the produced executable",
+        "Windows direct runtime compatible after L++ v3.3.1 CreateFileA import fix",
+        "Direct-link-safe default command entrypoint for Windows (file tools disabled until host tool mode)",
+        "Immediate current-session PowerShell PATH fix for lpp-opencode command",
+        "Installable lpp-opencode command on Linux, macOS, and Windows",
+        "Unix shell launcher and Windows PowerShell/CMD launchers",
+        "Windows PowerShell installer and runner",
+        "Windows CI check and AOT object generation",
+        "Claude/Anthropic provider router",
+        "Anthropic Messages API payload builder",
+        "OpenCode-style terminal coding agent scaffold",
+        "Slash commands: /help, /provider, /model, /payload, /read, /save, /exit",
+        "Transcript save/append helpers",
+        "ANSI TUI renderer with line screen buffer"
+      ],
+      "provides": "lpp-opencode"
     },
     "lreact": {
       "name": "lreact",
-      "description": "React-like UI framework for L++ — desktop and web targets",
       "version": "1.0.0",
-      "authors": ["0x4171341"],
+      "description": "Tauri-like GUI framework for L++ using React/HTML frontend + native L++ HTTP IPC backend",
+      "authors": [
+        "samarnever-droid"
+      ],
       "license": "MIT",
       "repository": "https://github.com/samarnever-droid/lreact",
       "git": "https://github.com/samarnever-droid/lreact.git",
+      "branch": "main",
+      "source_url": "https://raw.githubusercontent.com/samarnever-droid/lreact/main/src/lreact.lpp",
       "path": "src/lreact.lpp",
-      "source": "https://raw.githubusercontent.com/samarnever-droid/lreact/main/src/lreact.lpp",
       "dependencies": [],
-      "keywords": ["react", "ui", "gui", "desktop"]
+      "keywords": [
+        "lreact",
+        "react",
+        "tauri",
+        "gui",
+        "desktop",
+        "ipc",
+        "frontend"
+      ]
+    },
+    "lpp-lreact": {
+      "name": "lpp-lreact",
+      "version": "1.0.0",
+      "description": "Alias for lreact \u2014 Tauri-like GUI framework for L++",
+      "authors": [
+        "samarnever-droid"
+      ],
+      "license": "MIT",
+      "repository": "https://github.com/samarnever-droid/lreact",
+      "git": "https://github.com/samarnever-droid/lreact.git",
+      "branch": "main",
+      "source_url": "https://raw.githubusercontent.com/samarnever-droid/lreact/main/src/lreact.lpp",
+      "path": "src/lreact.lpp",
+      "dependencies": [],
+      "keywords": [
+        "lreact",
+        "react",
+        "tauri",
+        "gui"
+      ]
     },
     "lppdb": {
       "name": "lppdb",
-      "description": "Lightweight key-value database for L++ — built on SQLite bindings",
-      "version": "2.1.0",
-      "authors": ["0x4171341"],
+      "version": "1.0.0",
+      "description": "A real embedded SQL database engine in pure L++: binary page storage, typed cells, real parser/executor, disk persistence. Replaces the former non-functional sqlite stub.",
+      "authors": [
+        "arena-audit"
+      ],
       "license": "MIT",
       "repository": "https://github.com/samarnever-droid/lplusplus",
-      "path": "packages/lppdb",
-      "source": "packages/lppdb/src/db.lpp",
+      "path": "packages/lppdb/src/lppdb.lpp",
+      "source": "packages/lppdb/src/lppdb.lpp",
       "dependencies": [],
-      "keywords": ["database", "sqlite", "kv"]
+      "keywords": [
+        "database",
+        "sql",
+        "storage",
+        "db",
+        "embedded",
+        "binary"
+      ],
+      "features": [
+        "Real binary page-oriented storage persisted to disk (buf_read/buf_write)",
+        "Typed cells: INTEGER (8-byte LE), TEXT (length-prefixed), NULL",
+        "Real SQL tokenizer/parser/executor - results computed from stored data",
+        "CREATE TABLE, INSERT (multi-row, explicit columns), SELECT (*, columns)",
+        "Aggregates COUNT(*)/SUM/MIN/MAX computed over matching rows",
+        "WHERE (=,!=,<>,<,<=,>,>=, AND), ORDER BY ASC/DESC, LIMIT",
+        "UPDATE ... SET ... WHERE, DELETE FROM ... WHERE, DROP TABLE",
+        "Persistence verified across close/reopen",
+        "Works with --linker host and zero-dependency --linker direct",
+        "Pure L++ over buf_* builtins - no C code, no linker changes"
+      ],
+      "api": {
+        "db_open": "(path: Str) -> Int - open or create a database file",
+        "db_exec": "(handle: Int, sql: Str) -> Str - run a statement, returns JSON",
+        "db_save": "(handle: Int, path: Str) - flush to disk",
+        "db_close": "(handle: Int) - release memory"
+      },
+      "limitations": [
+        "Single-table queries only (no JOIN/subquery/CTE)",
+        "No FTS, views, triggers, indexes, or transactions",
+        "No REAL/floating-point type (stored as TEXT)",
+        "Linear row scan (no B-tree); not for very large tables",
+        "Own binary format - NOT SQLite file-format compatible"
+      ]
+    },
+    "lppsqlite": {
+      "name": "lppsqlite",
+      "version": "1.2.0",
+      "description": "SQLite-file-format-compatible database engine in pure L++ \u2014 real .db files, B+trees, secondary indexes, overflow pages, freelist, correlated subqueries, real transactions and advisory locking.",
+      "authors": [
+        "arena-audit"
+      ],
+      "license": "MIT",
+      "repository": "https://github.com/samarnever-droid/lplusplus",
+      "path": "packages/lppsqlite",
+      "source": "packages/lppsqlite/src/exec.lpp",
+      "dependencies": [],
+      "keywords": [
+        "sqlite",
+        "database",
+        "sql",
+        "btree",
+        "storage",
+        "embedded",
+        "file-format",
+        "compatible"
+      ],
+      "features": [
+        "Real SQLite on-disk format: 100-byte header, page-aligned B+trees, varints, record serial types",
+        "Files pass the real sqlite3's PRAGMA integrity_check (verified in CI)",
+        "Reads AND writes databases created by real SQLite, including REAL/BLOB/NULL and overflow rows",
+        "Overflow page chains for payloads larger than one page",
+        "Freelist with trunk/leaf pages and page reuse; empty-leaf pruning on delete",
+        "SELECT with WHERE, GROUP BY, HAVING, ORDER BY, LIMIT/OFFSET, DISTINCT",
+        "INNER/LEFT/CROSS joins, table aliases, qualified columns",
+        "UNION, UNION ALL, EXCEPT, INTERSECT",
+        "Subqueries: scalar (SELECT ...), IN (SELECT ...), EXISTS / NOT EXISTS",
+        "Aggregates COUNT/SUM/TOTAL/AVG/MIN/MAX/GROUP_CONCAT with DISTINCT",
+        "~30 scalar functions (substr, replace, instr, printf, hex, round, typeof, iif, ...)",
+        "SQLite type affinity, three-valued logic, and SQLite's NULL<num<text<blob ordering",
+        "INTEGER PRIMARY KEY rowid aliasing; rowid/_rowid_/oid",
+        "CLI shell with list/CSV/JSON output and .tables/.schema/.dump dot-commands",
+        "Correlated subqueries: inner SELECT resolves columns from the outer row",
+        "Real transactions: BEGIN/COMMIT/ROLLBACK, where ROLLBACK genuinely undoes DML and DDL",
+        "Advisory cross-process file locking so concurrent writers cannot corrupt the database",
+        "Rowid fast path: WHERE id = ? seeks the B-tree instead of scanning (~11x on 20k rows)",
+        "Secondary indexes: CREATE INDEX / DROP INDEX build real SQLite index b-trees (0x0a leaves, 0x02 interior root)",
+        "Real sqlite3 reads those indexes and its planner reports SEARCH ... USING COVERING INDEX",
+        "Indexes created by real SQLite are used for lookups here, and stay valid after this engine writes",
+        "Index-driven equality lookups on the leading column; indexes rebuilt after INSERT/UPDATE/DELETE",
+        "485 in-engine assertions plus 118 differential cases compared against real sqlite3"
+      ],
+      "api": {
+        "exec.open_db": "(path: Str) -> Int \u2014 open or create a database file",
+        "exec.open_memory": "() -> Int \u2014 transient in-memory database",
+        "exec.exec": "(db: Int, sql: Str) -> Int \u2014 run one statement, returns a rowset",
+        "exec.exec_script": "(db: Int, sql: Str) -> Int \u2014 run several ';'-separated statements",
+        "exec.close_db": "(db: Int) \u2014 flush to disk and release",
+        "rowset.rs_nrows": "(r: Int) -> Int \u2014 row count",
+        "rowset.rs_ncols": "(r: Int) -> Int \u2014 column count",
+        "rowset.rs_name": "(r: Int, i: Int) -> Str \u2014 column name",
+        "rowset.rs_cell": "(r: Int, row: Int, col: Int) -> Int \u2014 value handle",
+        "rowset.rs_err": "(r: Int) -> Int \u2014 1 on error",
+        "rowset.rs_errmsg": "(r: Int) -> Str \u2014 error text",
+        "rowset.rs_changes": "(r: Int) -> Int \u2014 rows modified by INSERT/UPDATE/DELETE",
+        "value.v_display": "(v: Int) -> Str \u2014 render a value for output",
+        "value.v_typename": "(v: Int) -> Str \u2014 null|integer|real|text|blob"
+      },
+      "limitations": [
+        "Indexes are consulted only for equality on the leading column; ranges, ORDER BY and LIKE still scan",
+        "UNIQUE indexes are parsed but uniqueness is not enforced",
+        "Index maintenance rebuilds the index after each writing statement (O(rows)); bulk-load before CREATE INDEX",
+        "ROLLBACK is in-memory (shadow copy), so it is not crash-safe; no journal or WAL",
+        "The advisory lock is exclusive, so concurrent readers serialise too",
+        "No views, triggers, window functions, date/time functions, or ALTER TABLE",
+        "WITH/ALTER/SAVEPOINT/ATTACH/VACUUM/NATURAL JOIN are rejected with a clear error"
+      ]
+    },
+    "compresslpp": {
+      "name": "compresslpp",
+      "version": "1.0.0",
+      "description": "Archive and compression library in pure L++ \u2014 real DEFLATE (RFC 1951), ZIP with ZipCrypto passwords, USTAR tar and gzip, verified against zlib/zipfile/tarfile.",
+      "authors": [
+        "arena-audit"
+      ],
+      "license": "MIT",
+      "repository": "https://github.com/samarnever-droid/lplusplus",
+      "path": "packages/compresslpp",
+      "source": "packages/compresslpp/src/zip.lpp",
+      "dependencies": [],
+      "keywords": [
+        "zip",
+        "tar",
+        "gzip",
+        "deflate",
+        "compression",
+        "archive",
+        "password",
+        "zipcrypto"
+      ],
+      "features": [
+        "Real DEFLATE (RFC 1951): stored, fixed and dynamic Huffman decoding; LZ77 hash-chain encoder",
+        "zlib inflates every stream we write, and we reproduce zlib's output byte-for-byte",
+        "ZIP read/write with STORE and DEFLATE, nested paths and CRC-32 verification",
+        "Password-protected ZIP (ZipCrypto): interoperates with `zip -P` and zipfile.setpassword()",
+        "USTAR tar read/write, validated by python tarfile and GNU tar",
+        "gzip (RFC 1952) read/write, validated by python gzip",
+        "Command-line tool: zip, unzip, list, tar, untar, gzip, gunzip",
+        "50 in-engine checks plus 32 cross-verifications against python and the unzip/tar CLIs"
+      ],
+      "api": {
+        "deflate.deflate": "(data: Int, n: Int, level: Int) -> Int \u2014 compress to a byte vector",
+        "inflate.inflate": "(ptr: Int, size: Int) -> Int \u2014 decompress, 0 on malformed input",
+        "zip.zw_new": "() -> Int \u2014 new archive writer",
+        "zip.zw_add_file": "(z, name, path, level, password) -> Int \u2014 add a file",
+        "zip.zw_save": "(z, path) -> Int \u2014 write the archive",
+        "zip.zr_open": "(path: Str) -> Int \u2014 open an archive, 0 if unreadable",
+        "zip.zr_extract": "(r, i, password) -> Int \u2014 extract entry, 0 on bad password/CRC",
+        "tar.tw_new": "() -> Int \u2014 new tar writer",
+        "tar.tr_open": "(path: Str) -> Int \u2014 open a tar",
+        "gzip.gz_compress": "(data, n, level) -> Int \u2014 gzip member",
+        "gzip.gz_decompress": "(ptr, size) -> Int \u2014 0 on bad header or CRC"
+      },
+      "limitations": [
+        "Encoder emits fixed-Huffman blocks only; output is a few percent larger than zlib",
+        "ZipCrypto is cryptographically weak \u2014 interoperability only, not real confidentiality",
+        "No AES/AE-x encryption, no ZIP64, no bzip2/LZMA/XZ/Zstandard",
+        "Everything is processed in memory; not suitable for files larger than RAM",
+        "TAR long names (>100 bytes) are rejected; symlinks, sparse files and PAX metadata ignored",
+        "Permissions, ownership and timestamps are not preserved"
+      ]
+    },
+    "c2lpp": {
+      "name": "c2lpp",
+      "description": "Pure-L++ JSON-configured C audit/IR translator with checked pointer, layout, globals and CFG foundations",
+      "version": "0.36.0",
+      "authors": [
+        "L++ Project"
+      ],
+      "license": "MIT",
+      "repository": "https://github.com/samarnever-droid/lplusplus",
+      "path": "packages/c2lpp",
+      "source": "packages/c2lpp/src/main.lpp",
+      "dependencies": [],
+      "keywords": [
+        "c",
+        "ffi",
+        "bindings",
+        "generator",
+        "translator",
+        "sqlite",
+        "zlib"
+      ],
+      "features": [
+        "Strict versioned JSON project configuration",
+        "Generate L++ extern bindings from C headers",
+        "Whole-input and multi-file dependency audit with provenance",
+        "Typed normalized-IR scalar C-to-pure-L++ translation",
+        "Strict no-binding native profiles with fail-closed pure-L++ output",
+        "Curated standalone pure-L++ SQLite backend with CRUD and integrity validation",
+        "General arbitrary-order translation-unit graph with SQLite zero-unknown partition gate",
+        "SQLite-wide base-type, body, call, control-target and ownership graphs",
+        "Cross-pass denominator and ownership-site consistency validation",
+        "Automatic typed semantic sweep emitting accepted pure-L++ SQLite functions",
+        "Referenced immutable integer-array globals lowered to checked pure-L++ accessors",
+        "Parser-integrated scalar pointer places, arithmetic, typedef casts and CPtr null semantics",
+        "Lazy conditional returns, locals and assignments with pointer short-circuit logic",
+        "C character literals and explicit compile-time sizeof lowering",
+        "Sequenced comma expression statements",
+        "Braced do/while plus unbraced typed if/else call lowering",
+        "Demand-bounded SysV aggregate member, bitfield and fixed-array place lowering",
+        "ABI-width aggregate data-pointer fields with raw provenance side tables",
+        "Pointer-depth-two places and one-dimensional array-parameter decay",
+        "Profile-v2 forward/callback typedefs, const arrays, nested aggregates, provenance and CFG",
+        "Checked C pointer/allocation/place, SysV layout, globals and CFG lowering foundations",
+        "Native equivalence and ASan/UBSan compatibility gates",
+        "SQLite and zlib real-system-header coverage"
+      ]
+    },
+    "lpp-bindgen": {
+      "name": "lpp-bindgen",
+      "description": "Automated C and C++ FFI header bindings generator & C-to-L++ translator with safe checked pointers (CPtr)",
+      "version": "0.36.0",
+      "authors": [
+        "samarnever-droid",
+        "L++ Project"
+      ],
+      "license": "MIT",
+      "repository": "https://github.com/samarnever-droid/lplusplus",
+      "path": "packages/lpp-bindgen",
+      "source": "packages/lpp-bindgen/src/main.lpp",
+      "dependencies": [],
+      "keywords": [
+        "ffi",
+        "c",
+        "bindgen",
+        "bindings",
+        "translator"
+      ]
+    },
+    "lpp-analyzer": {
+      "name": "lpp-analyzer",
+      "description": "Static code analysis, AST validation, and escape analysis linter for L++.",
+      "version": "1.4.0",
+      "authors": [
+        "samarnever-droid"
+      ],
+      "license": "MIT",
+      "repository": "https://github.com/samarnever-droid/lplusplus",
+      "path": "packages/lpp-analyzer",
+      "source": "packages/lpp-analyzer/src/main.lpp",
+      "dependencies": [],
+      "keywords": [
+        "analysis",
+        "ast",
+        "linter",
+        "compiler"
+      ]
+    },
+    "lpp-engine": {
+      "name": "lpp-engine",
+      "description": "High-throughput asynchronous event loop and task runner for L++ services.",
+      "version": "2.0.0",
+      "authors": [
+        "samarnever-droid"
+      ],
+      "license": "Apache-2.0",
+      "repository": "https://github.com/samarnever-droid/lplusplus",
+      "path": "packages/lpp-engine",
+      "source": "packages/lpp-engine/src/main.lpp",
+      "dependencies": [],
+      "keywords": [
+        "async",
+        "runtime",
+        "event-loop"
+      ]
+    },
+    "lppstore": {
+      "name": "lppstore",
+      "description": "Persistent B-tree key-value store with atomic transactions.",
+      "version": "0.6.0",
+      "authors": [
+        "samarnever-droid"
+      ],
+      "license": "MIT",
+      "repository": "https://github.com/samarnever-droid/lplusplus",
+      "path": "packages/lppstore",
+      "source": "packages/lppstore/src/main.lpp",
+      "dependencies": [],
+      "keywords": [
+        "kv",
+        "btree",
+        "database"
+      ]
     }
   }
 }
