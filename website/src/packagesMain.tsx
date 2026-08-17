@@ -53,12 +53,11 @@ export function PackagesApp() {
   const [packages, setPackages] = useState<PackageItem[]>([]);
   const [selectedPackage, setSelectedPackage] = useState<PackageItem | null>(null);
   const [loading, setLoading] = useState(true);
-  const [copiedText, setCopiedText] = useState<string | null>(null);
   const [stats, setStats] = useState({
     packages_count: 17,
-    downloads_count: 37571,
+    downloads_count: 0,
     versions_count: 17,
-    publishers_count: 12,
+    publishers_count: 1,
   });
 
   useEffect(() => {
@@ -71,12 +70,12 @@ export function PackagesApp() {
       const res = await fetch("https://registry.lplusplus.bond/stats");
       if (res.ok) {
         const data = await res.json();
-        if (data && data.packages_count) {
+        if (data && typeof data.packages_count === "number") {
           setStats({
             packages_count: data.packages_count,
-            downloads_count: data.downloads_count,
-            versions_count: data.versions_count,
-            publishers_count: data.publishers_count,
+            downloads_count: data.downloads_count || 0,
+            versions_count: data.versions_count || data.packages_count,
+            publishers_count: data.publishers_count || 1,
           });
         }
       }
@@ -176,11 +175,11 @@ export function PackagesApp() {
             </span>
             <span className="rounded-full border border-emerald-400/30 bg-emerald-400/10 px-3.5 py-1 font-mono text-xs text-emerald-400 inline-flex items-center gap-1.5">
               <ShieldCheck className="h-3.5 w-3.5" />
-              {stats.downloads_count.toLocaleString()}+ Real Downloads
+              {stats.downloads_count > 0 ? `${stats.downloads_count.toLocaleString()} Real Downloads` : "Real-Time Registry"}
             </span>
             <span className="rounded-full border border-white/20 bg-white/5 px-3.5 py-1 font-mono text-xs text-white/70 inline-flex items-center gap-1.5">
               <Key className="h-3 w-3 text-acid" />
-              {stats.publishers_count} Official Publishers
+              {stats.publishers_count} Official Publisher{stats.publishers_count > 1 ? "s" : ""}
             </span>
           </div>
           <h1 className="text-3xl sm:text-5xl font-black font-mono tracking-tight text-white leading-tight">
@@ -423,7 +422,7 @@ export function PackagesApp() {
               )}
 
               <div className="pt-2 border-t border-white/10 flex items-center justify-between font-mono text-xs text-white/40">
-                <span>Downloads: {selectedPackage.downloads?.toLocaleString() || "1,000+"}</span>
+                <span>Downloads: {selectedPackage.downloads && selectedPackage.downloads > 0 ? selectedPackage.downloads.toLocaleString() : "0"}</span>
                 <span>Registry: registry.lplusplus.bond</span>
               </div>
             </div>

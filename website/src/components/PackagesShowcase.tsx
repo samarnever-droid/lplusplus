@@ -7,7 +7,7 @@ const HIGHLIGHT_PACKAGES = [
     name: "lreact",
     version: "1.2.0",
     desc: "Declarative reactive UI framework and desktop web app runtime with native L++ IPC bridge.",
-    downloads: 4890,
+    downloads: 0,
     category: "Desktop & UI",
     color: "text-acid border-acid/30 bg-acid/10",
   },
@@ -15,7 +15,7 @@ const HIGHLIGHT_PACKAGES = [
     name: "lpp-bindgen",
     version: "0.36.0",
     desc: "Automated C/C++ FFI header bindings generator & C-to-L++ translator with checked pointers (CPtr).",
-    downloads: 1470,
+    downloads: 0,
     category: "Dev Tools",
     color: "text-amber-400 border-amber-400/30 bg-amber-400/10",
   },
@@ -23,7 +23,7 @@ const HIGHLIGHT_PACKAGES = [
     name: "lpp-graph",
     version: "1.0.0",
     desc: "Weighted directed graph algorithms: Dijkstra shortest-path, Kahn topological sort, and DAG traversal.",
-    downloads: 1420,
+    downloads: 0,
     category: "Algorithms",
     color: "text-emerald-400 border-emerald-400/30 bg-emerald-400/10",
   },
@@ -31,7 +31,7 @@ const HIGHLIGHT_PACKAGES = [
     name: "lppsqlite",
     version: "1.0.0",
     desc: "Embedded SQLite-compatible database with connection pooling and type-safe prepared queries.",
-    downloads: 4120,
+    downloads: 0,
     category: "Database",
     color: "text-cyan-400 border-cyan-400/30 bg-cyan-400/10",
   },
@@ -39,7 +39,7 @@ const HIGHLIGHT_PACKAGES = [
     name: "lppdb",
     version: "1.0.0",
     desc: "ACID embedded document database with JSON query indexing and binary page persistence.",
-    downloads: 2310,
+    downloads: 0,
     category: "Database",
     color: "text-amber-400 border-amber-400/30 bg-amber-400/10",
   },
@@ -47,7 +47,7 @@ const HIGHLIGHT_PACKAGES = [
     name: "lpp-git",
     version: "0.8.0",
     desc: "Pure L++ Git object store parser, commit DAG walker, and tree resolver.",
-    downloads: 2100,
+    downloads: 0,
     category: "Dev Tools",
     color: "text-lav border-lav/30 bg-lav/10",
   },
@@ -55,7 +55,7 @@ const HIGHLIGHT_PACKAGES = [
     name: "compresslpp",
     version: "1.0.0",
     desc: "Lossless compression library: LZ4, Zstandard, and DEFLATE with streaming ZIP archive support.",
-    downloads: 1730,
+    downloads: 0,
     category: "Compression",
     color: "text-sky-400 border-sky-400/30 bg-sky-400/10",
   },
@@ -63,7 +63,7 @@ const HIGHLIGHT_PACKAGES = [
     name: "lpp-json",
     version: "1.0.0",
     desc: "Zero-allocation SIMD-accelerated JSON parser and serializer with native L++ structs.",
-    downloads: 3560,
+    downloads: 0,
     category: "Data Structures",
     color: "text-purple-400 border-purple-400/30 bg-purple-400/10",
   },
@@ -73,19 +73,19 @@ export function PackagesShowcase() {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [stats, setStats] = useState({
     packages_count: 17,
-    downloads_count: 37571,
-    publishers_count: 12,
+    downloads_count: 0,
+    publishers_count: 1,
   });
 
   useEffect(() => {
     fetch("https://registry.lplusplus.bond/stats")
       .then((res) => res.json())
       .then((data) => {
-        if (data && data.packages_count) {
+        if (data && typeof data.packages_count === "number") {
           setStats({
             packages_count: data.packages_count,
-            downloads_count: data.downloads_count,
-            publishers_count: data.publishers_count,
+            downloads_count: data.downloads_count || 0,
+            publishers_count: data.publishers_count || 1,
           });
         }
       })
@@ -111,7 +111,7 @@ export function PackagesShowcase() {
               </span>
               <span className="rounded-full border border-emerald-400/40 bg-emerald-400/10 px-3 py-1 font-mono text-xs text-emerald-400 inline-flex items-center gap-1.5">
                 <Activity className="h-3 w-3" />
-                {stats.downloads_count.toLocaleString()}+ Real Downloads
+                {stats.downloads_count > 0 ? `${stats.downloads_count.toLocaleString()} Real Downloads` : "Real-Time Registry"}
               </span>
             </div>
 
@@ -164,7 +164,7 @@ export function PackagesShowcase() {
 
               <div className="space-y-3 pt-2 border-t border-white/10">
                 <div className="flex items-center justify-between text-[11px] font-mono text-white/40">
-                  <span>{pkg.downloads.toLocaleString()} downloads</span>
+                  <span>{pkg.downloads > 0 ? `${pkg.downloads.toLocaleString()} downloads` : "Verified Release"}</span>
                   <span className="text-emerald-400 flex items-center gap-1">
                     <ShieldCheck className="h-3 w-3" />
                     Verified
