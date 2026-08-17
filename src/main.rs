@@ -610,10 +610,16 @@ fn real_main() -> i32 {
             println!("Compilation:");
             println!("  lpp <file.lpp>             Compile to native executable (direct lpp-link)");
             println!("  lpp <file.lpp> --emit-obj  Emit native object file only (.o / .obj)");
-            println!("  lpp <file.lpp> --backend llvm  Use the optional LLVM object backend");
-            println!("  lpp <file.lpp> --target wasm32-wasi  Emit a WebAssembly module (.wasm)");
+            println!("  lpp <file.lpp> --llvm      Compile with LLVM object backend (shorthand for --backend llvm)");
+            println!("  lpp <file.lpp> --backend <be>  Backend: cranelift (default), llvm, or wasm");
+            println!("  lpp <file.lpp> --target <triple>  Emit for target triple (e.g. wasm32-wasi, aarch64-linux-gnu)");
             println!("  lpp <file.lpp> --check     Type-check without compiling");
             println!("  lpp --checkall             Check all .lpp files in current directory");
+            println!();
+            println!("Registry & Toolchain:");
+            println!("  login [token]    Authenticate with 256-bit token from https://lplusplus.bond/account");
+            println!("  publish          Publish package to the official L++ registry");
+            println!("  upgrade [--check]  Self-update L++ compiler toolchain to latest release");
             println!();
             println!("Package Manager:");
             println!("  new <name>       Create a new L++ package");
@@ -636,7 +642,6 @@ fn real_main() -> i32 {
             println!("  run              Compile and run project");
             println!("  test             Run tests in tests/ directory");
             println!("  bench            Run benchmarks");
-            println!("  publish          Publish package to registry");
             println!();
             println!("Debug & Inspection:");
             println!("  --dump-ast       Dump Abstract Syntax Tree");
@@ -701,6 +706,8 @@ fn real_main() -> i32 {
             do_fix = true;
         } else if arg == "--emit-object" || arg == "--aot" {
             emit_object = true;
+        } else if arg == "--llvm" {
+            backend = "llvm".to_string();
         } else if arg == "--backend" {
             if idx + 1 < args.len() {
                 backend = args[idx + 1].clone();
