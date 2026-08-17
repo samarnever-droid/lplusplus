@@ -16,7 +16,7 @@ if grep -RIni --exclude='Safety_Mission.md' --exclude='check_safety_mission.sh' 
   exit 1
 fi
 # Existing negative AOT contracts are required safety regressions.
-grep -Fq 'not supported safely yet' "$ROOT/tests/run_aot_parity.sh"
+grep -Fq 'Cannot mutate captured variable' "$ROOT/tests/run_aot_parity.sh"
 # SAFETY-CONTRACT CHANGE: the two ARC-cycle rejection contracts were replaced
 # by positive ones. Cycles are broken statically rather than refused, so the
 # guard now checks that the breaker, its acyclicity proof and the programs that
