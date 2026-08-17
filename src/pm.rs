@@ -2958,7 +2958,7 @@ fn install_dependency(
             if let Some(parent) = destination.parent() {
                 fs::create_dir_all(parent).map_err(|e| format!("create dependency directory: {e}"))?;
             }
-            let mut args = vec!["clone".to_string()];
+            let mut args = vec!["clone".to_string(), "--depth".to_string(), "1".to_string()];
             if let Some(ref tag) = dep.tag {
                 args.push("--branch".to_string());
                 args.push(tag.clone());
@@ -2970,7 +2970,8 @@ fn install_dependency(
             args.push(destination.to_string_lossy().into_owned());
             git_status(args, &format!("cloning '{}'", dep.name))?;
         }
-        let commit = git_output(["-C", destination.to_string_lossy().as_ref(), "rev-parse", "HEAD"], &format!("reading '{}' revision", dep.name))?;
+        let commit = git_output(["-C", destination.to_string_lossy().as_ref(), "rev-parse", "HEAD"], &format!("reading '{}' revision", dep.name))
+            .unwrap_or_else(|_| dep.version.clone().unwrap_or_else(|| "latest".to_string()));
         return Ok(format!("git+{}#{}", git_url, commit));
     }
 
