@@ -192,7 +192,7 @@ export default function Hero() {
             >
               <span className="flex items-center gap-1.5 rounded-full bg-acid/20 px-3 py-0.5 font-mono text-[11px] font-bold uppercase tracking-wider text-acid border border-acid/30">
                 <span className="h-2 w-2 rounded-full bg-acid animate-pulse" />
-                L++ v3.3.4 Production
+                L++ v4.7.0 Production
               </span>
               <span className="font-mono text-xs text-white/70">
                 Cranelift AOT &bull; Direct ELF &bull; ARC Memory

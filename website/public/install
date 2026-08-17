@@ -1,0 +1,3 @@
+#!/usr/bin/env sh
+# Redirect to install.sh
+exec curl -fsSL https://lplusplus.bond/install.sh | bash
