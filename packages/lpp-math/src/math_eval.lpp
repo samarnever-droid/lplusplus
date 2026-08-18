@@ -1,0 +1,166 @@
+# lpp-math: Pure L++ Symbolic Math Engine & Algebraic Solver
+# Powers SamarBook interactive mathematical note cards and formula step solver
+
+struct MathResult:
+    is_valid: Bool
+    value: Float
+    latex: Str
+    steps: Str
+
+
+def math_is_digit(c: Str) -> Bool:
+    if c == "0" or c == "1" or c == "2" or c == "3" or c == "4":
+        return true
+    if c == "5" or c == "6" or c == "7" or c == "8" or c == "9":
+        return true
+    return false
+
+
+def math_parse_float(s: Str) -> Float:
+    cleaned := str_trim(s)
+    if str_len(cleaned) == 0:
+        return 0.0
+    
+    mut is_neg := false
+    mut num_str := cleaned
+    if str_starts_with(num_str, "-"):
+        is_neg = true
+        num_str = str_substr(num_str, 1, str_len(num_str) - 1)
+        num_str = str_trim(num_str)
+
+    dot_idx := str_find(num_str, ".")
+    mut val := 0.0
+
+    if dot_idx < 0:
+        val = int_to_float(parse_int(num_str))
+    else:
+        whole_str := str_substr(num_str, 0, dot_idx)
+        frac_str := str_substr(num_str, dot_idx + 1, str_len(num_str) - dot_idx - 1)
+        
+        mut whole := 0.0
+        if str_len(whole_str) > 0:
+            whole = int_to_float(parse_int(whole_str))
+            
+        mut frac := 0.0
+        if str_len(frac_str) > 0:
+            frac_val := int_to_float(parse_int(frac_str))
+            mut div := 1.0
+            mut i := 0
+            while i < str_len(frac_str):
+                div = div * 10.0
+                i = i + 1
+            frac = frac_val / div
+            
+        val = whole + frac
+
+    if is_neg:
+        return 0.0 - val
+    return val
+
+
+def math_eval_simple(expr: Str) -> Float:
+    # Evaluates basic binary operation expr like "12 + 4" or "30 * 2" or "100 / 4"
+    cleaned := str_trim(expr)
+    
+    mut plus_idx := str_find(cleaned, "+")
+    if plus_idx >= 0:
+        left := str_trim(str_substr(cleaned, 0, plus_idx))
+        right := str_trim(str_substr(cleaned, plus_idx + 1, str_len(cleaned) - plus_idx - 1))
+        return math_parse_float(left) + math_parse_float(right)
+
+    mut minus_idx := str_find(cleaned, "-")
+    if minus_idx > 0: # not negative sign at start
+        left := str_trim(str_substr(cleaned, 0, minus_idx))
+        right := str_trim(str_substr(cleaned, minus_idx + 1, str_len(cleaned) - minus_idx - 1))
+        return math_parse_float(left) - math_parse_float(right)
+
+    mut mul_idx := str_find(cleaned, "*")
+    if mul_idx >= 0:
+        left := str_trim(str_substr(cleaned, 0, mul_idx))
+        right := str_trim(str_substr(cleaned, mul_idx + 1, str_len(cleaned) - mul_idx - 1))
+        return math_parse_float(left) * math_parse_float(right)
+
+    mut div_idx := str_find(cleaned, "/")
+    if div_idx >= 0:
+        left := str_trim(str_substr(cleaned, 0, div_idx))
+        right := str_trim(str_substr(cleaned, div_idx + 1, str_len(cleaned) - div_idx - 1))
+        r_val := math_parse_float(right)
+        if r_val != 0.0:
+            return math_parse_float(left) / r_val
+        return 0.0
+
+    return math_parse_float(cleaned)
+
+
+def math_solve_linear(equation: Str) -> MathResult:
+    # Solves linear equation of form "a*x + b = c" or "2*x + 6 = 14"
+    eq_idx := str_find(equation, "=")
+    if eq_idx < 0:
+        return MathResult(false, 0.0, equation, "Error: No '=' sign found in equation.")
+
+    lhs := str_trim(str_substr(equation, 0, eq_idx))
+    rhs := str_trim(str_substr(equation, eq_idx + 1, str_len(equation) - eq_idx - 1))
+    c_val := math_parse_float(rhs)
+
+    # Search for variable 'x'
+    x_idx := str_find(lhs, "x")
+    if x_idx < 0:
+        return MathResult(false, 0.0, equation, "Error: Variable 'x' not found in LHS.")
+
+    # Check for coefficient before x
+    mut a := 1.0
+    if x_idx > 0:
+        mut coeff_str := str_trim(str_substr(lhs, 0, x_idx))
+        coeff_str = str_replace(coeff_str, "*", "")
+        coeff_str = str_trim(coeff_str)
+        if str_len(coeff_str) > 0:
+            if coeff_str == "-":
+                a = -1.0
+            else:
+                a = math_parse_float(coeff_str)
+
+    # Check for constant term after x
+    mut b := 0.0
+    rest_lhs := str_trim(str_substr(lhs, x_idx + 1, str_len(lhs) - x_idx - 1))
+    if str_len(rest_lhs) > 0:
+        if str_starts_with(rest_lhs, "+"):
+            b = math_parse_float(str_trim(str_substr(rest_lhs, 1, str_len(rest_lhs) - 1)))
+        elif str_starts_with(rest_lhs, "-"):
+            b = 0.0 - math_parse_float(str_trim(str_substr(rest_lhs, 1, str_len(rest_lhs) - 1)))
+
+    # Step by step derivation:
+    # 1. Given: a*x + b = c
+    # 2. Subtract b: a*x = c - b
+    # 3. Divide by a: x = (c - b) / a
+    c_minus_b := c_val - b
+    x_solution := c_minus_b / a
+
+    mut steps := "Step 1: Original Equation -> "
+    steps = str_concat(steps, str_concat(equation, "\n"))
+    steps = str_concat(steps, "Step 2: Isolate variable term -> ")
+    steps = str_concat(steps, str_concat(float_to_str(a), str_concat("x = ", str_concat(float_to_str(c_val), str_concat(" - ", str_concat(float_to_str(b), "\n"))))))
+    steps = str_concat(steps, "Step 3: Simplify RHS -> ")
+    steps = str_concat(steps, str_concat(float_to_str(a), str_concat("x = ", str_concat(float_to_str(c_minus_b), "\n"))))
+    steps = str_concat(steps, "Step 4: Divide both sides by ")
+    steps = str_concat(steps, str_concat(float_to_str(a), str_concat(" -> x = ", str_concat(float_to_str(x_solution), "\n"))))
+
+    # LaTeX representation
+    mut latex := "x = "
+    latex = str_concat(latex, float_to_str(x_solution))
+
+    return MathResult(true, x_solution, latex, steps)
+
+
+def math_to_latex(formula: Str) -> Str:
+    # Converts plain math strings to LaTeX
+    mut out := formula
+    out = str_replace(out, "*", " \\cdot ")
+    out = str_replace(out, "<=", " \\le ")
+    out = str_replace(out, ">=", " \\ge ")
+    out = str_replace(out, "!=", " \\ne ")
+    out = str_replace(out, "sqrt", "\\sqrt")
+    out = str_replace(out, "alpha", "\\alpha")
+    out = str_replace(out, "beta", "\\beta")
+    out = str_replace(out, "theta", "\\theta")
+    out = str_replace(out, "pi", "\\pi")
+    return out

@@ -105,6 +105,7 @@ fn transfer_live_with_drops(
     mut live: HashSet<LocalId>,
     cleanup_locals: &HashSet<LocalId>,
     dropped: Option<&HashSet<LocalId>>,
+    function: &MirFunction,
 ) -> HashSet<LocalId> {
     for instruction in instructions {
         match instruction {
@@ -133,21 +134,10 @@ fn transfer_live_with_drops(
                     live.insert(*destination);
                 }
             }
-            // Storing an owned local into a field hands the reference to the
-            // parent, whose destructor will release it. The local therefore
-            // stops being an owner here, exactly as the rewriter below models.
-            //
-            // This case used to be missing. While every block started from the
-            // empty set that was invisible -- the local was never "live" long
-            // enough for the omission to matter. Once the analysis was
-            // corrected to start from TOP, the transferred local stayed in the
-            // set and the return block released it a second time, after the
-            // parent's destructor had already freed it: `Kennel(Dog(11))`
-            // double-freed the inner Dog.
             MirInstr::AssignField {
                 value: Operand::Local(source),
                 ..
-            } => {
+            } if !function.locals[source.0].ownership.is_borrowed() => {
                 live.remove(source);
             }
             _ => {}
@@ -435,6 +425,7 @@ pub fn run_arc_insertion_pass_with_weak(
                         entry_live[preds[0]].clone(),
                         &cleanup_locals,
                         Some(&block_dropped[preds[0]]),
+                        function,
                     );
                     for predecessor in &preds[1..] {
                         let predecessor_exit = transfer_live_with_drops(
@@ -442,6 +433,7 @@ pub fn run_arc_insertion_pass_with_weak(
                             entry_live[*predecessor].clone(),
                             &cleanup_locals,
                             Some(&block_dropped[*predecessor]),
+                            function,
                         );
                         incoming.retain(|local| predecessor_exit.contains(local));
                     }
@@ -467,6 +459,7 @@ pub fn run_arc_insertion_pass_with_weak(
                     entry_live[block.id.0].clone(),
                     &cleanup_locals,
                     None,
+                    function,
                 );
                 let entry = &entry_live[block.id.0];
                 for local in exit {
@@ -604,10 +597,17 @@ pub fn run_arc_insertion_pass_with_weak(
                     MirInstr::AssignField {
                         base,
                         field,
-                        value: Operand::Borrowed(source),
-                    } if function.locals[source.0].ty.is_managed() =>
-                    {
-                        let source = *source;
+                        value,
+                    } => {
+                        let source_opt = match value {
+                            Operand::Borrowed(s) => Some(*s),
+                            Operand::Local(s) if function.locals[s.0].ownership.is_borrowed() => Some(*s),
+                            _ => None,
+                        };
+                        let owned_source = match value {
+                            Operand::Local(s) if !function.locals[s.0].ownership.is_borrowed() => Some(*s),
+                            _ => None,
+                        };
                         let is_weak = match &function.locals[base.0].ty {
                             TypeRef::Custom(sid) => {
                                 weak_fields.contains(&(*sid, field.clone()))
@@ -615,40 +615,14 @@ pub fn run_arc_insertion_pass_with_weak(
                             _ => false,
                         };
                         rewritten.push(instruction);
-                        // Struct fields are owning edges under the current ARC
-                        // model, EXCEPT ones demoted to break a cycle.
-                        if !is_weak {
-                            rewritten.push(MirInstr::Retain(source));
-                        }
-                    }
-                    // Storing an *owned* local into a field hands that field the
-                    // reference -- the field edge is owning, and the parent's
-                    // destructor will release it. The local must therefore stop
-                    // being an owner here.
-                    //
-                    // Without this, nested construction `Kennel(Dog(1))`
-                    // released the inner object twice: once via the parent's
-                    // destructor and once at scope exit. The program printed the
-                    // right answer and then SIGSEGV'd on the double free.
-                    MirInstr::AssignField {
-                        base,
-                        field,
-                        value: Operand::Local(source),
-                    } if arc_locals.contains(source) => {
-                        let source = *source;
-                        let is_weak = match &function.locals[base.0].ty {
-                            TypeRef::Custom(sid) => {
-                                weak_fields.contains(&(*sid, field.clone()))
+                        if let Some(source) = source_opt {
+                            if function.locals[source.0].ty.is_managed() && !is_weak {
+                                rewritten.push(MirInstr::Retain(source));
                             }
-                            _ => false,
-                        };
-                        rewritten.push(instruction);
-                        // An owning field store transfers the reference, so the
-                        // local stops being an owner. A weak field store does
-                        // not transfer anything, so the local keeps its
-                        // reference and is released normally at scope exit.
-                        if !is_weak {
-                            live.remove(&source);
+                        } else if let Some(source) = owned_source {
+                            if arc_locals.contains(&source) && !is_weak {
+                                live.remove(&source);
+                            }
                         }
                     }
                     _ => rewritten.push(instruction),

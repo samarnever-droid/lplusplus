@@ -97,6 +97,26 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                 })?;
                 builder.def_var(variable, param_vals[index]);
             }
+            let cl_i64_zero = builder.ins().iconst(cl_types::I64, 0);
+            let cl_i8_zero = builder.ins().iconst(cl_types::I8, 0);
+            let cl_f64_zero = builder.ins().f64const(0.0);
+            let cl_i64x2_zero = builder.ins().splat(cl_types::I64X2, cl_i64_zero);
+            for local in &mir_fn.locals {
+                if !mir_fn.params.contains(&local.id) && local.ty != TypeRef::Void {
+                    let variable = *local_vars.get(&local.id).unwrap();
+                    let cl_ty = type_to_cl(&local.ty);
+                    let zero_val = if cl_ty == cl_types::F64 {
+                        cl_f64_zero
+                    } else if cl_ty == cl_types::I8 {
+                        cl_i8_zero
+                    } else if cl_ty == cl_types::I64X2 {
+                        cl_i64x2_zero
+                    } else {
+                        cl_i64_zero
+                    };
+                    builder.def_var(variable, zero_val);
+                }
+            }
 
             for (index, block) in mir_fn.blocks.iter().enumerate() {
                 let cl_block = *cl_blocks.get(&block.id).ok_or_else(|| {

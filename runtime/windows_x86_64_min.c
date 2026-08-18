@@ -45,15 +45,16 @@ typedef struct { int64_t *data; int64_t len; int64_t cap; uint64_t data_bytes; i
 
 static uint64_t lpp_page_round(uint64_t s) { return (s+4095)&~4095ULL; }
 static int lpp_strlen(const char *s) { int n=0; while(s&&s[n])n++; return n; }
-static void lpp_memcpy(char *d, const char *s, int n) { int i; for(i=0;i<n;i++) d[i]=s[i]; }
+static void lpp_memcpy(char *d, const char *s, int n) { if(d&&s&&n>0) __movsb((unsigned char*)d,(const unsigned char*)s,(size_t)n); }
 static int lpp_strcmp(const char *a, const char *b) { while(*a&&*a==*b){a++;b++;} return *a-*b; }
 static void lpp_strcpy(char *d, const char *s) { while((*d++=*s++)); }
+static void lpp_memset(void *d, int v, size_t n) { if(d && n > 0) __stosb((unsigned char*)d, (unsigned char)v, n); }
+
 static char* lpp_strdup(const char *s) { if(!s)return 0; int n=lpp_strlen(s); char *d=(char*)VirtualAlloc(0,lpp_page_round(n+1),MEM_COMMIT|MEM_RESERVE,PAGE_READWRITE); if(d){lpp_memcpy(d,s,n);d[n]=0;} return d; }
 static char* lpp_strstr(const char *h, const char *n) { int nl=lpp_strlen(n); if(!nl)return(char*)h; while(*h){int i=0;while(i<nl&&h[i]==n[i])i++;if(i==nl)return(char*)h;h++;} return 0; }
 static int lpp_isspace(char c) { return c==' '||c=='\t'||c=='\n'||c=='\r'; }
 
-/* MSVC intrinsic stubs — MSVC emits calls to memcpy/memset even when
-   we use our own lpp_memcpy. These thin wrappers prevent linker errors. */
+/* MSVC intrinsic stubs */
 #ifndef LPP_FREESTANDING
 // Use CRT versions when linking with standard runtime
 #else
@@ -63,10 +64,12 @@ static int lpp_isspace(char c) { return c==' '||c=='\t'||c=='\n'||c=='\r'; }
 #pragma function(strlen)
 #pragma function(fmod)
 #endif
-void *memcpy(void *d, const void *s, size_t n) { char *dd=(char*)d; const char *ss=(const char*)s; size_t i; for(i=0;i<n;i++) dd[i]=ss[i]; return d; }
-void *memset(void *d, int c, size_t n) { unsigned char *dd=(unsigned char*)d; size_t i; for(i=0;i<n;i++) dd[i]=(unsigned char)c; return d; }
+void *memcpy(void *d, const void *s, size_t n) { if(d&&s&&n>0) __movsb((unsigned char*)d,(const unsigned char*)s,n); return d; }
+void *memset(void *d, int c, size_t n) { if(d&&n>0) __stosb((unsigned char*)d,(unsigned char)c,n); return d; }
 size_t strlen(const char *s) { size_t n=0; while(s&&s[n]) n++; return n; }
 void __chkstk(void) {}
+void ___chkstk_ms(void) {}
+void __chkstk_ms(void) {}
 #endif
 
 static void lpp_write(const char *b, DWORD n) { DWORD w=0; WriteFile(GetStdHandle(STD_OUTPUT_HANDLE),b,n,&w,0); }
@@ -134,43 +137,12 @@ static void lpp_win_allocator_release(void) {
 }
 
 void *lpp_arc_alloc_with_destructor(int64_t sz, LppArcDestructor dtor) {
-    LppArcHeader *h;
-    uint64_t need;
-    int cls;
     if (sz < 0 || (uint64_t)sz > UINT64_MAX - sizeof(LppArcHeader)) return 0;
-    need = (uint64_t)sz + sizeof(LppArcHeader);
-    cls = lpp_win_class_for(need);
-    if (cls >= LPP_WIN_SIZE_CLASSES) {
-        uint64_t total = lpp_page_round(need);
-        h = (LppArcHeader *)VirtualAlloc(0, total, MEM_COMMIT|MEM_RESERVE, PAGE_READWRITE);
-        if (!h) return 0;
-        h->allocation_size = total;
-    } else {
-        uint64_t bytes = lpp_win_class_bytes(cls);
-        lpp_win_allocator_acquire();
-        if (lpp_win_free_lists[cls]) {
-            h = (LppArcHeader *)lpp_win_free_lists[cls];
-            lpp_win_free_lists[cls] = *(void **)h;
-        } else {
-            if (lpp_win_bump_left < bytes) {
-                char *chunk = (char *)VirtualAlloc(
-                    0, LPP_WIN_CHUNK_BYTES, MEM_COMMIT|MEM_RESERVE, PAGE_READWRITE
-                );
-                if (!chunk) {
-                    lpp_win_allocator_release();
-                    return 0;
-                }
-                lpp_win_bump_cursor = chunk;
-                lpp_win_bump_left = LPP_WIN_CHUNK_BYTES;
-            }
-            h = (LppArcHeader *)lpp_win_bump_cursor;
-            lpp_win_bump_cursor += bytes;
-            lpp_win_bump_left -= bytes;
-        }
-        for (uint64_t i = 0; i < bytes; ++i) ((unsigned char *)h)[i] = 0;
-        h->allocation_size = (uint64_t)(cls + 1);
-        lpp_win_allocator_release();
-    }
+    uint64_t need = (uint64_t)sz + sizeof(LppArcHeader);
+    HANDLE hHeap = GetProcessHeap();
+    LppArcHeader *h = (LppArcHeader *)HeapAlloc(hHeap, HEAP_ZERO_MEMORY, need);
+    if (!h) return 0;
+    h->allocation_size = need;
     h->refcount = 1;
     h->destructor = dtor;
     return h + 1;
@@ -181,16 +153,9 @@ static int lpp_win_is_arena_header(const LppArcHeader *h) {
     return (h->allocation_size & LPP_WIN_ARENA_FLAG) != 0;
 }
 static void lpp_arc_free(LppArcHeader *h) {
-    uint64_t tag = h->allocation_size & LPP_WIN_SIZE_MASK;
-    if (tag >= 1 && tag <= LPP_WIN_SIZE_CLASSES) {
-        int cls = (int)(tag - 1);
-        lpp_win_allocator_acquire();
-        *(void **)h = lpp_win_free_lists[cls];
-        lpp_win_free_lists[cls] = h;
-        lpp_win_allocator_release();
-    } else {
-        VirtualFree(h, 0, MEM_RELEASE);
-    }
+    if (!h) return;
+    HANDLE hHeap = GetProcessHeap();
+    HeapFree(hHeap, 0, h);
 }
 
 typedef struct WinArenaRecord WinArenaRecord;
@@ -295,7 +260,18 @@ char*lpp_str_slice_to_str(void*raw){LppSlice*v=(LppSlice*)raw;const char*b=(cons
 void lpp_thread_spawn(void*fn,void*env){HANDLE h=CreateThread(0,0,(DWORD(__stdcall*)(void*))fn,env,0,0);if(h){WaitForSingleObject(h,INFINITE);CloseHandle(h);}}
 
 /* ═══ STRING ═══════════════════════════════════════════════════════════════ */
-char *lpp_str_concat(const char *a, const char *b) { if(!a)a="";if(!b)b=""; int la=lpp_strlen(a),lb=lpp_strlen(b); char*o=(char*)lpp_arc_alloc(la+lb+1); if(!o)return lpp_empty_str(); lpp_memcpy(o,a,la);lpp_memcpy(o+la,b,lb);o[la+lb]=0; return o; }
+char *lpp_str_concat(const char *a, const char *b) {
+    if(!a) a="";
+    if(!b) b="";
+    int la = lpp_strlen(a);
+    int lb = lpp_strlen(b);
+    char *o = (char*)lpp_arc_alloc(la + lb + 1);
+    if(!o) return lpp_empty_str();
+    lpp_memcpy(o, a, la);
+    lpp_memcpy(o + la, b, lb);
+    o[la + lb] = 0;
+    return o;
+}
 char *lpp_str_repeat(const char *s, int64_t n) { if(!s||n<=0)return lpp_empty_str(); int slen=lpp_strlen(s); if(!slen)return lpp_empty_str(); if(n>0&&(int64_t)slen>0x7FFFFFFFFFFFFFFFLL/n)ExitProcess(101); int64_t total=(int64_t)slen*n; char*o=(char*)lpp_arc_alloc(total+1); if(!o)return lpp_empty_str(); int64_t i; for(i=0;i<n;i++)lpp_memcpy(o+i*slen,s,slen); o[total]=0; return o; }
 void *lpp_str_split(const char *s,int64_t d) { void*l=lpp_list_new_arc();if(!l)return 0;if(!s||!*s)return l; char ch=(char)d;const char*st=s; for(;;){if(*s==ch||*s==0){int64_t ln=(int64_t)(s-st);char*pc=(char*)lpp_arc_alloc(ln+1);if(pc){lpp_memcpy(pc,st,(int)ln);pc[ln]=0;lpp_list_push_arc(l,pc);lpp_arc_release(pc);}if(*s==0)break;st=s+1;}s++;} return l; }
 int64_t lpp_str_find(const char *h,const char *n){if(!h||!n)return-1;const char*f=lpp_strstr(h,n); return f?(int64_t)(f-h):-1;}
@@ -559,8 +535,9 @@ void lpp_c_store_i64(int64_t ptr, int64_t offset, int64_t val) {
     *p = val;
 }
 
-/* ── Native 2D GUI & Windowing ── */
+/* ── Native 2D GUI & Windowing & Embedded WebView Engine ── */
 #include "lpp_gui.c"
+#include "lpp_webview.c"
 
 
 

@@ -12,7 +12,6 @@
 
 use std::env;
 use std::fs;
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Instant;
@@ -225,7 +224,7 @@ fn detect_c_compiler() -> Option<String> {
                 return Some(cc.to_string());
             }
         }
-        return None;
+        None
     }
     #[cfg(not(target_os = "windows"))]
     {
@@ -234,8 +233,8 @@ fn detect_c_compiler() -> Option<String> {
                 return Some(cc.to_string());
             }
         }
+        None
     }
-    None
 }
 
 /// Locate vcvars64.bat at standard MSVC install paths (Windows only).

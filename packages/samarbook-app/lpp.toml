@@ -1,0 +1,20 @@
+[package]
+name = "samarbook-app"
+version = "1.0.0"
+authors = ["Samar"]
+license = "MIT"
+description = "SamarBook: Next-Generation Spatial Knowledge Workstation & Infinite Canvas rewritten in pure L++"
+keywords = ["samarbook", "cosmos", "canvas", "spatial", "knowledge", "desktop", "lreact"]
+
+[dependencies]
+simple-pdf = { path = "../simple-pdf" }
+simple-markdown = { path = "../simple-markdown" }
+lpp-zip = { path = "../lpp-zip" }
+lpp-graph = { path = "../lpp-graph" }
+lpp-math = { path = "../lpp-math" }
+lpp-zundo = { path = "../lpp-zundo" }
+lreact-canvas = { path = "../lreact-canvas" }
+lreact-markdown = { path = "../lreact-markdown" }
+lreact-math = { path = "../lreact-math" }
+lreact-pdf = { path = "../lreact-pdf" }
+lreact-store = { path = "../lreact-store" }

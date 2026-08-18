@@ -1,0 +1,10 @@
+[package]
+name = "lreact-canvas"
+version = "0.1.0"
+authors = ["Samar"]
+license = "MIT"
+description = "Pure L++ 60fps Infinite 2D Spatial Canvas Component with Smooth Bezier Link Routing and Pan/Zoom Viewports"
+keywords = ["lreact", "canvas", "infinite", "spatial", "graph", "cosmos"]
+
+[dependencies]
+lpp-graph = { path = "../lpp-graph" }

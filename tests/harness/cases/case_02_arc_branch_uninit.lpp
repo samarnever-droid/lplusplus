@@ -1,0 +1,26 @@
+def conditional_str(flag: Int, tag: Str) -> Str:
+    mut out := "default"
+    if flag == 1:
+        s1 := str_concat("branch_one_", tag)
+        out = s1
+    elif flag == 2:
+        s2 := str_concat("branch_two_", tag)
+        out = s2
+    elif flag == 3:
+        s3 := str_concat("branch_three_", tag)
+        out = s3
+    else:
+        out = str_concat("branch_fallback_", tag)
+    return out
+
+def main():
+    r1 := conditional_str(1, "A")
+    r2 := conditional_str(2, "B")
+    r3 := conditional_str(3, "C")
+    r4 := conditional_str(4, "D")
+    
+    print_str(r1)
+    print_str(r2)
+    print_str(r3)
+    print_str(r4)
+    print_str("PASS_BRANCH_UNINIT")

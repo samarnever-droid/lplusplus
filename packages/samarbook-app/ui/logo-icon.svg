@@ -1,0 +1,187 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg
+  width="1024"
+  height="1024"
+  viewBox="0 0 1024 1024"
+  xmlns="http://www.w3.org/2000/svg">
+
+  <defs>
+    <linearGradient
+      id="bookGradient"
+      x1="260"
+      y1="380"
+      x2="770"
+      y2="760"
+      gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1685FF"/>
+      <stop offset="0.48" stop-color="#2452F5"/>
+      <stop offset="1" stop-color="#9B2CFF"/>
+    </linearGradient>
+
+    <linearGradient
+      id="bluePage"
+      x1="390"
+      y1="230"
+      x2="650"
+      y2="420"
+      gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2387FF"/>
+      <stop offset="1" stop-color="#6788F5"/>
+    </linearGradient>
+
+    <linearGradient
+      id="purplePage"
+      x1="430"
+      y1="270"
+      x2="730"
+      y2="430"
+      gradientUnits="userSpaceOnUse">
+      <stop stop-color="#756CF5"/>
+      <stop offset="1" stop-color="#B88BFF"/>
+    </linearGradient>
+
+    <filter
+      id="shadow"
+      x="-30%"
+      y="-30%"
+      width="160%"
+      height="160%">
+      <feDropShadow
+        dx="0"
+        dy="16"
+        stdDeviation="24"
+        flood-color="#5660C8"
+        flood-opacity="0.16"/>
+    </filter>
+  </defs>
+
+  <!-- White app plate -->
+  <rect
+    x="48"
+    y="48"
+    width="928"
+    height="928"
+    rx="230"
+    fill="#FFFFFF"
+    stroke="#E7E9F0"
+    stroke-width="2"
+    filter="url(#shadow)"/>
+
+  <!-- Rear blue page -->
+  <path
+    d="
+      M350 318
+      Q350 284 384 273
+      L632 196
+      Q666 186 666 220
+      L666 410
+      L350 440
+      Z"
+    fill="url(#bluePage)"/>
+
+  <!-- Rear purple page -->
+  <path
+    d="
+      M350 350
+      Q350 316 384 310
+      L685 240
+      Q720 232 720 268
+      L720 445
+      L350 466
+      Z"
+    fill="url(#purplePage)"/>
+
+  <!-- White inner plate -->
+  <path
+    d="
+      M386 317
+      Q386 288 416 288
+      H635
+      Q666 288 666 320
+      V354
+
+      L555 416
+      Q512 441 512 485
+
+      Q512 441 469 416
+      L386 367
+
+      Z"
+    fill="#FFFFFF"/>
+
+  <!-- Open book -->
+  <path
+    d="
+      M248 315
+      Q248 285 274 301
+
+      L469 416
+      Q512 441 512 485
+
+      Q512 441 555 416
+      L750 301
+
+      Q776 285 776 315
+      L776 614
+
+      Q776 641 753 655
+      L547 774
+
+      Q512 794 477 774
+      L271 655
+
+      Q248 641 248 614
+
+      Z"
+    fill="url(#bookGradient)"/>
+
+  <!-- Center fold -->
+  <path
+    d="M512 485 V773"
+    stroke="#4338CA"
+    stroke-width="4"
+    stroke-opacity="0.42"/>
+
+  <!-- Pen cap -->
+  <path
+    d="
+      M471 491
+      Q471 451 512 451
+      Q553 451 553 491
+      V548
+      H471
+      Z"
+    fill="#FFFFFF"/>
+
+  <!-- Pen nib -->
+  <path
+    d="
+      M471 561
+      H553
+
+      Q553 628 571 670
+
+      L531 739
+      Q512 772 493 739
+
+      L453 670
+      Q471 628 471 561
+
+      Z"
+    fill="#FFFFFF"/>
+
+  <!-- Nib hole -->
+  <circle
+    cx="512"
+    cy="649"
+    r="15"
+    fill="#253ED5"/>
+
+  <!-- Nib slit -->
+  <path
+    d="M512 664 V738"
+    stroke="#253ED5"
+    stroke-width="6"
+    stroke-linecap="round"/>
+
+</svg>

@@ -1,0 +1,6 @@
+[package]
+name = "simple-pdf"
+version = "0.1.0"
+edition = "2026"
+description = "Pure L++ high-performance vector PDF document generator"
+license = "MIT"

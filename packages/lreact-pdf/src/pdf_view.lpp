@@ -1,0 +1,39 @@
+# lreact-pdf: PDF Viewer & Canvas Export Component for SamarBook & LReact
+
+def render_pdf_card(node_id: Int, pdf_title: Str, page_count: Int, file_path: Str) -> Str:
+    mut html := "<div class=\"samar-card theme-sapphire pdf-card\" data-node-id=\""
+    html = str_concat(html, str_concat(int_to_str(node_id), "\">\n"))
+    
+    # Header
+    html = str_concat(html, "  <div class=\"samar-card-header\">\n")
+    html = str_concat(html, "    <div class=\"samar-card-title\">📄 ")
+    html = str_concat(html, str_concat(pdf_title, "</div>\n"))
+    html = str_concat(html, "    <div class=\"samar-badge badge-pdf\">")
+    html = str_concat(html, str_concat(int_to_str(page_count), " Pages</div>\n"))
+    html = str_concat(html, "  </div>\n")
+    
+    # Body Viewer Preview
+    html = str_concat(html, "  <div class=\"samar-card-body pdf-body\">\n")
+    html = str_concat(html, "    <div class=\"pdf-preview-box\">\n")
+    html = str_concat(html, "      <div class=\"pdf-meta-path\">Source: ")
+    html = str_concat(html, str_concat(file_path, "</div>\n"))
+    html = str_concat(html, "      <div class=\"pdf-page-view\">[ Rendered Vector Page 1 ]</div>\n")
+    html = str_concat(html, "    </div>\n")
+    html = str_concat(html, "  </div>\n")
+    
+    # Controls toolbar
+    html = str_concat(html, "  <div class=\"pdf-controls\">\n")
+    html = str_concat(html, "    <button class=\"btn-sm\" onclick=\"pdfPrev(")
+    html = str_concat(html, str_concat(int_to_str(node_id), ")\">◀ Prev</button>\n"))
+    html = str_concat(html, "    <span class=\"pdf-page-num\">1 / ")
+    html = str_concat(html, str_concat(int_to_str(page_count), "</span>\n"))
+    html = str_concat(html, "    <button class=\"btn-sm\" onclick=\"pdfNext(")
+    html = str_concat(html, str_concat(int_to_str(node_id), ")\">Next ▶</button>\n"))
+    html = str_concat(html, "  </div>\n")
+    
+    # Connection Ports
+    html = str_concat(html, "  <div class=\"samar-port samar-port-left\" data-port=\"in\"></div>\n")
+    html = str_concat(html, "  <div class=\"samar-port samar-port-right\" data-port=\"out\"></div>\n")
+    html = str_concat(html, "</div>\n")
+    
+    return html

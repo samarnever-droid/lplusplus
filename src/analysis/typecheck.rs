@@ -24,6 +24,8 @@ pub struct TypeChecker<'a> {
     /// Bases currently borrowed by a slice. The first tier conservatively keeps
     /// the borrow active to function exit and rejects reassignment.
     pub borrowed_slice_bases: std::collections::HashSet<usize>,
+    /// User-declared type aliases (e.g. type Name = Str).
+    pub type_aliases: HashMap<String, TypeRef>,
 }
 
 fn type_param_names(tps: &[TypeParam]) -> Vec<String> {
@@ -76,6 +78,7 @@ impl<'a> TypeChecker<'a> {
             async_functions: std::collections::HashSet::new(),
             variadic_elements: HashMap::new(),
             borrowed_slice_bases: std::collections::HashSet::new(),
+            type_aliases: HashMap::new(),
         }
     }
 
@@ -117,10 +120,19 @@ impl<'a> TypeChecker<'a> {
     }
 
     fn convert_ast_type(type_table: &TypeTable, ast_ty: &Type) -> TypeRef {
-        Self::convert_ast_type_with_params(type_table, ast_ty, &[])
+        Self::convert_ast_type_with_params_and_aliases(type_table, ast_ty, &[], &HashMap::new())
     }
 
     fn convert_ast_type_with_params(type_table: &TypeTable, ast_ty: &Type, type_params: &[String]) -> TypeRef {
+        Self::convert_ast_type_with_params_and_aliases(type_table, ast_ty, type_params, &HashMap::new())
+    }
+
+    fn convert_ast_type_with_params_and_aliases(
+        type_table: &TypeTable,
+        ast_ty: &Type,
+        type_params: &[String],
+        type_aliases: &HashMap<String, TypeRef>,
+    ) -> TypeRef {
         match ast_ty {
             Type::Int => TypeRef::Int,
             Type::Float => TypeRef::Float,
@@ -133,6 +145,9 @@ impl<'a> TypeChecker<'a> {
                 if type_params.iter().any(|tp| tp == name) {
                     return TypeRef::TypeParam(name.clone());
                 }
+                if let Some(aliased) = type_aliases.get(name) {
+                    return aliased.clone();
+                }
                 if let Some(&id) = type_table.structs_by_name.get(name) {
                     TypeRef::Custom(id)
                 } else {
@@ -142,22 +157,22 @@ impl<'a> TypeChecker<'a> {
             Type::Generic(base_name, args) => {
                 let mut ref_args = Vec::new();
                 for arg in args {
-                    ref_args.push(Self::convert_ast_type_with_params(type_table, arg, type_params));
+                    ref_args.push(Self::convert_ast_type_with_params_and_aliases(type_table, arg, type_params, type_aliases));
                 }
                 TypeRef::Generic(base_name.clone(), ref_args)
             }
             Type::Tuple(elements) => TypeRef::Tuple(
                 elements
                     .iter()
-                    .map(|ty| Self::convert_ast_type_with_params(type_table, ty, type_params))
+                    .map(|ty| Self::convert_ast_type_with_params_and_aliases(type_table, ty, type_params, type_aliases))
                     .collect(),
             ),
             Type::StrSlice => TypeRef::StrSlice,
             Type::Slice(element) => TypeRef::Slice(Box::new(
-                Self::convert_ast_type_with_params(type_table, element, type_params),
+                Self::convert_ast_type_with_params_and_aliases(type_table, element, type_params, type_aliases),
             )),
             Type::Task(result) => TypeRef::Task(Box::new(
-                Self::convert_ast_type_with_params(type_table, result, type_params),
+                Self::convert_ast_type_with_params_and_aliases(type_table, result, type_params, type_aliases),
             )),
         }
     }
@@ -230,6 +245,19 @@ impl<'a> TypeChecker<'a> {
     }
 
     pub fn check_program(&mut self, program: &Program) -> Result<(), String> {
+        // Phase 0.1: Collect type aliases
+        for decl in &program.declarations {
+            if let TopLevel::TypeAlias { name, target } = decl {
+                let ty = Self::convert_ast_type_with_params_and_aliases(
+                    &self.type_table,
+                    target,
+                    &[],
+                    &self.type_aliases,
+                );
+                self.type_aliases.insert(name.clone(), ty);
+            }
+        }
+
         // Phase 0.5: Collect trait names and impl mappings
         for decl in &program.declarations {
             if let TopLevel::Trait(t) = decl {
@@ -259,7 +287,7 @@ impl<'a> TypeChecker<'a> {
         for decl in &program.declarations {
             if let TopLevel::Function(f) = decl {
                 let tp = type_param_names(&f.type_params);
-                let ret_ty = Self::convert_ast_type_with_params(&self.type_table, &f.return_type, &tp);
+                let ret_ty = Self::convert_ast_type_with_params_and_aliases(&self.type_table, &f.return_type, &tp, &self.type_aliases);
                 self.func_return_types.insert(f.name.clone(), ret_ty);
                 if f.is_async {
                     if f.name == "main" && !f.params.is_empty() {
@@ -270,7 +298,7 @@ impl<'a> TypeChecker<'a> {
                 let mut param_tys = Vec::with_capacity(f.params.len());
                 for param in &f.params {
                     let element =
-                        Self::convert_ast_type_with_params(&self.type_table, &param.ty, &tp);
+                        Self::convert_ast_type_with_params_and_aliases(&self.type_table, &param.ty, &tp, &self.type_aliases);
                     if param.variadic {
                         if !element.is_list_element_supported() {
                             return Err(format!(
@@ -298,7 +326,7 @@ impl<'a> TypeChecker<'a> {
             if let TopLevel::Impl(impl_block) = decl {
                 for method in &impl_block.methods {
                     let tp = type_param_names(&method.type_params);
-                    let ret_ty = Self::convert_ast_type_with_params(&self.type_table, &method.return_type, &tp);
+                    let ret_ty = Self::convert_ast_type_with_params_and_aliases(&self.type_table, &method.return_type, &tp, &self.type_aliases);
                     self.func_return_types.insert(method.name.clone(), ret_ty);
                     if method.is_async {
                         self.async_functions.insert(method.name.clone());
@@ -306,7 +334,7 @@ impl<'a> TypeChecker<'a> {
                     let mut param_tys = Vec::with_capacity(method.params.len());
                     for param in &method.params {
                         let element =
-                            Self::convert_ast_type_with_params(&self.type_table, &param.ty, &tp);
+                            Self::convert_ast_type_with_params_and_aliases(&self.type_table, &param.ty, &tp, &self.type_aliases);
                         if param.variadic {
                             if !element.is_list_element_supported() {
                                 return Err(format!(
@@ -328,12 +356,12 @@ impl<'a> TypeChecker<'a> {
             // Register extern function types
             if let TopLevel::Extern(ext) = decl {
                 for ef in &ext.functions {
-                    let ret_ty = Self::convert_ast_type(&self.type_table, &ef.return_type);
+                    let ret_ty = Self::convert_ast_type_with_params_and_aliases(&self.type_table, &ef.return_type, &[], &self.type_aliases);
                     self.func_return_types.insert(ef.name.clone(), ret_ty);
                     let param_tys: Vec<TypeRef> = ef
                         .params
                         .iter()
-                        .map(|p| Self::convert_ast_type(&self.type_table, &p.ty))
+                        .map(|p| Self::convert_ast_type_with_params_and_aliases(&self.type_table, &p.ty, &[], &self.type_aliases))
                         .collect();
                     self.func_param_types.insert(ef.name.clone(), param_tys);
                 }
@@ -353,7 +381,7 @@ impl<'a> TypeChecker<'a> {
                 let mut is_self_referential = false;
 
                 for field in &s.fields {
-                    let field_ty = Self::convert_ast_type_with_params(&self.type_table, &field.ty, &type_param_names(&s.type_params));
+                    let field_ty = Self::convert_ast_type_with_params_and_aliases(&self.type_table, &field.ty, &type_param_names(&s.type_params), &self.type_aliases);
 
                     if let TypeRef::Custom(ref_id) = field_ty {
                         if ref_id == id {
@@ -430,7 +458,7 @@ impl<'a> TypeChecker<'a> {
         // Phase 3: Update all bindings in the symbol table with resolved TypeRefs
         for binding in &mut self.symbol_table.bindings {
             if let Some(ast_ty) = &binding.ast_ty {
-                binding.ty = Some(Self::convert_ast_type_with_params(&self.type_table, ast_ty, &all_type_params));
+                binding.ty = Some(Self::convert_ast_type_with_params_and_aliases(&self.type_table, ast_ty, &all_type_params, &self.type_aliases));
             }
         }
 

@@ -1,8 +1,7 @@
 [package]
-name        = "lpp-graph"
-version     = "1.0.0"
-description = "Weighted directed graph with Dijkstra shortest-path and Kahn topological sort. Pure L++. Used by lpp-pm GPS planner."
-author      = "samarnever-droid"
-
-[build]
-type = "library"
+name = "lpp-graph"
+version = "0.1.0"
+authors = ["Samar"]
+license = "MIT"
+description = "Pure L++ Spatial Graph Topology, QuadTree Spatial Indexing, Bezier Geometry, and Canvas Layout Engine"
+keywords = ["graph", "spatial", "canvas", "quadtree", "geometry", "cosmos"]

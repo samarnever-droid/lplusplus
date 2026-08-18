@@ -1,7 +1,7 @@
 # text.lpp — bounded string helpers for the pure-L++ C declaration parser
 
 def text_eq(a: Str, b: Str) -> Bool:
-    return lpp_str_eq(a, b) == 1
+    return a == b
 
 def text_starts(value: Str, prefix: Str) -> Bool:
     return str_find(value, prefix) == 0

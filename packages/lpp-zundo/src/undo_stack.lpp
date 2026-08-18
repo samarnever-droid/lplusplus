@@ -1,0 +1,33 @@
+# lpp-zundo: High Performance Infinite Undo/Redo Timeline Stack for L++
+# Powers SamarBook workspace state time-travel and WAL action journal
+
+struct UndoAction:
+    action_id: Int
+    action_type: Str # "NODE_MOVE", "NODE_EDIT", "NODE_DELETE", "EDGE_ADD"
+    target_id: Int
+    prev_state: Str  # JSON snapshot before action
+    next_state: Str  # JSON snapshot after action
+
+
+def action_new(id: Int, action_type: Str, target_id: Int, prev_state: Str, next_state: Str) -> UndoAction:
+    return UndoAction(id, action_type, target_id, prev_state, next_state)
+
+
+def action_to_wal_line(act: UndoAction) -> Str:
+    # WAL format: ID|TYPE|TARGET_ID|PREV_JSON|NEXT_JSON
+    mut line := int_to_str(act.action_id)
+    line = str_concat(line, "|")
+    line = str_concat(line, act.action_type)
+    line = str_concat(line, "|")
+    line = str_concat(line, int_to_str(act.target_id))
+    line = str_concat(line, "|")
+    line = str_concat(line, act.prev_state)
+    line = str_concat(line, "|")
+    line = str_concat(line, act.next_state)
+    line = str_concat(line, "\n")
+    return line
+
+
+def action_invert(act: UndoAction) -> UndoAction:
+    # Swaps prev_state and next_state for rollback execution
+    return UndoAction(act.action_id, act.action_type, act.target_id, act.next_state, act.prev_state)

@@ -46,14 +46,16 @@ struct C2Config:
 
 
 def c_config_default() -> C2Config:
-    return C2Config("", 0, "", "", "", "clib", "", "", false, true, "cc", "", "", 0, "", "")
+    cfg := C2Config("", 0, "", "", "", "clib", "", "", false, true, "cc", "", "", 0, "", "")
+    return cfg
 
 
 def c_json_skip_ws(source: Str, offset: Int) -> Int:
     mut i := offset
-    while i < str_len(source):
-        code := ord(char_at(source, i))
-        if code == 9 || code == 10 || code == 13 || code == 32:
+    ln := str_len(source)
+    while i < ln:
+        ch := char_at(source, i)
+        if text_eq(ch, " ") || text_eq(ch, "\t") || text_eq(ch, "\n") || text_eq(ch, "\r"):
             i = i + 1
         else:
             return i
@@ -72,11 +74,18 @@ def c_json_hex_value(code: Int) -> Int:
 
 def c_json_parse_string(source: Str, offset: Int) -> CJsonString:
     start := c_json_skip_ws(source, offset)
-    if start >= str_len(source) || !text_eq(char_at(source, start), "\""):
+    ln := str_len(source)
+    if start >= ln || !text_eq(char_at(source, start), "\""):
         return CJsonString("", start, 0, "C2-CONFIG-EXPECTED-STRING")
+    mut end_pos := start + 1
+    while end_pos < ln && !text_eq(char_at(source, end_pos), "\"") && !text_eq(char_at(source, end_pos), "\\"):
+        end_pos = end_pos + 1
+    if end_pos < ln && text_eq(char_at(source, end_pos), "\""):
+        str_val := str_substr(source, start + 1, end_pos - start - 1)
+        return CJsonString(str_val, end_pos + 1, 1, "")
     mut out := ""
     mut i := start + 1
-    while i < str_len(source):
+    while i < ln:
         ch := char_at(source, i)
         code := ord(ch)
         if text_eq(ch, "\""):
@@ -84,7 +93,7 @@ def c_json_parse_string(source: Str, offset: Int) -> CJsonString:
         if code < 32:
             return CJsonString("", i, 0, "C2-CONFIG-CONTROL-IN-STRING")
         if text_eq(ch, "\\"):
-            if i + 1 >= str_len(source):
+            if i + 1 >= ln:
                 return CJsonString("", i, 0, "C2-CONFIG-BAD-ESCAPE")
             escaped := char_at(source, i + 1)
             if text_eq(escaped, "\"") || text_eq(escaped, "\\") || text_eq(escaped, "/"):
@@ -106,7 +115,7 @@ def c_json_parse_string(source: Str, offset: Int) -> CJsonString:
                 out = str_concat(out, "\t")
                 i = i + 2
             elif text_eq(escaped, "u"):
-                if i + 5 >= str_len(source):
+                if i + 5 >= ln:
                     return CJsonString("", i, 0, "C2-CONFIG-BAD-UNICODE")
                 mut value := 0
                 mut j := 0
@@ -116,8 +125,6 @@ def c_json_parse_string(source: Str, offset: Int) -> CJsonString:
                         return CJsonString("", i, 0, "C2-CONFIG-BAD-UNICODE")
                     value = value * 16 + digit
                     j = j + 1
-                # Shell-safe project paths and identifiers are ASCII. Rejecting
-                # non-ASCII escapes is safer than emitting a malformed byte.
                 if value > 127:
                     return CJsonString("", i, 0, "C2-CONFIG-NONASCII-ESCAPE")
                 out = str_concat(out, chr(value))
@@ -322,8 +329,6 @@ def c_config_parse(source: Str) -> C2Config:
             done = true
         else:
             key := c_json_parse_string(source, i)
-            if key.valid == 0:
-                return c_config_error(config, key.error)
             if !c_config_known_key(key.value):
                 return c_config_error(config, str_concat("C2-CONFIG-UNKNOWN-KEY:", key.value))
             if c_config_seen(seen, key.value):

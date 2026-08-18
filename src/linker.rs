@@ -559,6 +559,7 @@ struct Relocation {
 }
 
 #[derive(Clone)]
+#[allow(dead_code)]
 struct Defined {
     name: String,
     bind: Bind,
@@ -1785,6 +1786,7 @@ const R_AARCH64_LDST128_ABS_LO12_NC: u32 = 299;
 const R_AARCH64_ADR_GOT_PAGE: u32 = 311;
 const R_AARCH64_LD64_GOT_LO12_NC: u32 = 312;
 const R_AARCH64_JUMP_SLOT: u32 = 1026;
+#[allow(dead_code)]
 const R_AARCH64_ABS64_DYN: u32 = 257;
 
 fn elf_interp(machine: Machine) -> &'static str {
@@ -2001,7 +2003,6 @@ pub fn write_elf_with_options(
     let has_start = merged.syms.contains_key("_start") || merged.syms.contains_key("start");
     let has_main = merged.syms.contains_key("main") || merged.syms.contains_key("lpp_main");
 
-    let mut injected_start_off: Option<usize> = None;
     let mut injected_exit_reloc: Option<usize> = None;
     if !opts.shared && !opts.no_startup && !has_start && has_main {
         let main_off = merged
@@ -2049,8 +2050,6 @@ pub fn write_elf_with_options(
                 object: usize::MAX,
             },
         );
-        injected_start_off = Some(start_off);
-        let _ = injected_start_off;
     }
 
     // ── GOT / PLT for remaining undefined + GOT-relative relocs ─────────
@@ -2171,9 +2170,6 @@ pub fn write_elf_with_options(
     // ── file / VA layout ────────────────────────────────────────────────
     // Program headers we will emit:
     //   PHDR, [INTERP], [NOTE], LOAD_R (headers), LOAD_RX, LOAD_RW, [TLS], [DYNAMIC], GNU_STACK
-    let mut phnum: u16 = 1 + 1 + 1 + 1; // PHDR + LOAD_R + LOAD_RX + LOAD_RW + GNU_STACK... wait
-    // recount precisely below after we know optionals.
-
     let ehdr_size = 64usize;
     let phdr_entsize = 56usize;
 
@@ -2183,7 +2179,7 @@ pub fn write_elf_with_options(
     let has_tls = !merged.tls.is_empty() || merged.tbss_size > 0;
     let has_dynamic = dyn_mode;
     let has_eh_frame = merged.eh_frame_info().is_some();
-    phnum = 2; // PHDR + GNU_STACK
+    let mut phnum = 2; // PHDR + GNU_STACK
     phnum += 3; // three LOADs (R, RX, RW)
     if has_interp {
         phnum += 1;
@@ -2269,7 +2265,7 @@ pub fn write_elf_with_options(
 
     let mut dynstr = vec![0u8]; // index 0 = empty
     let mut dynstr_index: HashMap<String, u32> = HashMap::new();
-    let mut put_dynstr = |s: &str, dynstr: &mut Vec<u8>, dynstr_index: &mut HashMap<String, u32>| -> u32 {
+    let put_dynstr = |s: &str, dynstr: &mut Vec<u8>, dynstr_index: &mut HashMap<String, u32>| -> u32 {
         if let Some(&i) = dynstr_index.get(s) {
             return i;
         }
@@ -2679,7 +2675,7 @@ pub fn write_elf_with_options(
         // .dynamic
         let mut dynb = vec![0u8; dynamic_size];
         let mut dp = 0;
-        let mut put_dt = |dynb: &mut [u8], dp: &mut usize, tag: i64, val: u64| {
+        let put_dt = |dynb: &mut [u8], dp: &mut usize, tag: i64, val: u64| {
             put_u64(dynb, *dp, tag as u64);
             put_u64(dynb, *dp + 8, val);
             *dp += 16;
@@ -2864,7 +2860,7 @@ pub fn write_elf_with_options(
                     let n = name_opt.unwrap_or("");
                     write_u64_at(buf, patch, (lookup_size(n) as i64 + a) as u64, &ctx)?;
                 }
-                (Machine::Aarch64, R_AARCH64_ABS64) | (Machine::Aarch64, R_AARCH64_ABS64_DYN) => {
+                (Machine::Aarch64, R_AARCH64_ABS64) => {
                     write_u64_at(buf, patch, s.wrapping_add_signed(a), &ctx)?;
                 }
                 (Machine::Aarch64, R_AARCH64_ABS32) => {
@@ -3418,15 +3414,15 @@ pub fn write_elf_with_options(
 
     // Phdrs
     let mut ph = phoff;
-    let mut emit_ph = |elf: &mut [u8],
-                       ph: &mut usize,
-                       typ: u32,
-                       flags: u32,
-                       off: u64,
-                       vaddr: u64,
-                       filesz: u64,
-                       memsz: u64,
-                       align: u64| {
+    let emit_ph = |elf: &mut [u8],
+                   ph: &mut usize,
+                   typ: u32,
+                   flags: u32,
+                   off: u64,
+                   vaddr: u64,
+                   filesz: u64,
+                   memsz: u64,
+                   align: u64| {
         put_u32(elf, *ph, typ);
         put_u32(elf, *ph + 4, flags);
         put_u64(elf, *ph + 8, off);
@@ -3748,6 +3744,7 @@ fn is_kernel32_symbol(name: &str) -> bool {
             | "GetDiskFreeSpaceExA" | "OutputDebugStringA" | "DebugBreak"
             | "InitializeSListHead" | "EncodePointer" | "DecodePointer"
             | "GetStartupInfoW" | "GetStartupInfoA" | "SetDefaultDllDirectories"
+            | "GetTempPathA" | "GetFullPathNameA"
     ) || clean.starts_with("K32")
 }
 
@@ -3768,7 +3765,7 @@ fn is_user32_symbol(name: &str) -> bool {
             | "SetCursor" | "LoadImageA" | "SendMessageA" | "PostMessageA" | "KillTimer"
             | "SetTimer" | "GetSystemMetrics" | "MonitorFromWindow" | "GetMonitorInfoA"
             | "EnumDisplaySettingsA" | "ChangeDisplaySettingsA" | "ReleaseCapture"
-            | "SetCapture" | "TrackMouseEvent"
+            | "SetCapture" | "TrackMouseEvent" | "wsprintfA" | "wsprintfW" | "MsgWaitForMultipleObjects"
     )
 }
 
@@ -4094,13 +4091,14 @@ pub fn write_pe_with_options(
     let total_text = merged.text.len() + thunks_len;
     let rdata_rva = pe_align(text_rva as usize + total_text, PE_SECT_ALIGN) as u32;
     let data_rva = pe_align(rdata_rva as usize + merged.rodata.len(), PE_SECT_ALIGN) as u32;
-    let tls_rva = pe_align(data_rva as usize + merged.data.len(), PE_SECT_ALIGN) as u32;
+    let data_virt = merged.data.len() + merged.bss_size;
+    let tls_rva = pe_align(data_rva as usize + data_virt, PE_SECT_ALIGN) as u32;
     let tls_virt = merged.tls.len() + merged.tbss_size;
     let idata_rva = pe_align(
         if has_tls {
             tls_rva as usize + tls_virt
         } else {
-            data_rva as usize + merged.data.len()
+            data_rva as usize + data_virt
         },
         PE_SECT_ALIGN,
     ) as u32;
@@ -4872,7 +4870,7 @@ pub fn write_macho_with_options(
     let page_size = opts
         .page_size
         .unwrap_or(machine.page_size(OutputFormat::Macho));
-    let page_u = page_size as u64;
+    let _page_u = page_size as u64;
 
     let undef = collect_undefined(&objects, &merged);
     let mut imports: Vec<String> = undef
@@ -5383,19 +5381,6 @@ pub fn write_macho_with_options(
                         + (*got_keys.get(n).unwrap_or(&0) as u64) * 8;
                     write_u64_at(buf, patch, g, &ctx)?;
                 }
-                (_, 0) => {
-                    match rel.kind {
-                        RelocationKind::Absolute if rel.size == 64 => {
-                            write_u64_at(buf, patch, s.wrapping_add_signed(rel.addend), &ctx)?;
-                        }
-                        RelocationKind::Relative | RelocationKind::PltRelative => {
-                            write_i32_at(buf, patch, s as i64 + rel.addend - p as i64, &ctx)?;
-                        }
-                        _ => {
-                            write_i32_at(buf, patch, s as i64 + rel.addend - p as i64, &ctx)?;
-                        }
-                    }
-                }
                 _ => {
                     return Err(format!(
                         "'{ctx}': unsupported Mach-O reloc type {} ({machine:?})",
@@ -5459,16 +5444,16 @@ pub fn write_macho_with_options(
     put_u32(&mut bin, 28, 0);
 
     let mut c = 32usize;
-    let mut emit_seg = |bin: &mut [u8],
-                        c: &mut usize,
-                        name: &str,
-                        vmaddr: u64,
-                        vmsize: u64,
-                        fileoff: u64,
-                        filesize: u64,
-                        maxprot: u32,
-                        initprot: u32,
-                        nsects: u32| {
+    let emit_seg = |bin: &mut [u8],
+                    c: &mut usize,
+                    name: &str,
+                    vmaddr: u64,
+                    vmsize: u64,
+                    fileoff: u64,
+                    filesize: u64,
+                    maxprot: u32,
+                    initprot: u32,
+                    nsects: u32| {
         put_u32(bin, *c, 0x19); // LC_SEGMENT_64
         put_u32(bin, *c + 4, 72 + nsects * 80);
         let mut nm = [0u8; 16];
@@ -5485,15 +5470,15 @@ pub fn write_macho_with_options(
         put_u32(bin, *c + 68, 0);
         *c += 72;
     };
-    let mut emit_sect = |bin: &mut [u8],
-                         c: &mut usize,
-                         sect: &str,
-                         seg: &str,
-                         addr: u64,
-                         size: u64,
-                         off: u32,
-                         align_p2: u32,
-                         flags: u32| {
+    let emit_sect = |bin: &mut [u8],
+                     c: &mut usize,
+                     sect: &str,
+                     seg: &str,
+                     addr: u64,
+                     size: u64,
+                     off: u32,
+                     align_p2: u32,
+                     flags: u32| {
         let mut sn = [0u8; 16];
         let mut gn = [0u8; 16];
         let sb = sect.as_bytes();

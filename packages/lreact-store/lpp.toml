@@ -1,0 +1,12 @@
+[package]
+name = "lreact-store"
+version = "0.1.0"
+authors = ["Samar"]
+license = "MIT"
+description = "Pure L++ Reactive Workspace Store and Project File Persistence (.sbook) Manager"
+keywords = ["lreact", "store", "state", "workspace", "sbook", "cosmos"]
+
+[dependencies]
+lpp-zip = { path = "../lpp-zip" }
+lpp-graph = { path = "../lpp-graph" }
+lpp-zundo = { path = "../lpp-zundo" }

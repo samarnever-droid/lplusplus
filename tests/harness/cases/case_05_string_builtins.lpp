@@ -1,0 +1,16 @@
+def main():
+    s := "  The Quick Brown Fox Jumps Over The Lazy Dog  "
+    trimmed := str_trim(s)
+    print_str(trimmed)
+    
+    replaced := str_replace(trimmed, "Quick Brown", "Cosmic Spatial")
+    print_str(replaced)
+    
+    pos := str_find(replaced, "Cosmic")
+    print_str("Pos of Cosmic:\n")
+    print(pos)
+    
+    sub := str_substr(replaced, 0, 6)
+    print_str("Substr 0..6:\n")
+    print_str(sub)
+    print_str("\nPASS_STRING_BUILTINS\n")

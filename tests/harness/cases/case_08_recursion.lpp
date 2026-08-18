@@ -1,0 +1,24 @@
+def fib(n: Int) -> Int:
+    if n <= 1:
+        return n
+    return fib(n - 1) + fib(n - 2)
+
+def fact(n: Int) -> Int:
+    if n <= 1:
+        return 1
+    return n * fact(n - 1)
+
+def main():
+    f10 := fib(10)
+    print_str("Fib(10):\n")
+    print(f10)
+    
+    fac6 := fact(6)
+    print_str("Fact(6):\n")
+    print(fac6)
+    
+    if f10 == 55:
+        if fac6 == 720:
+            print_str("PASS_RECURSION\n")
+            return
+    print_str("FAIL_RECURSION\n")

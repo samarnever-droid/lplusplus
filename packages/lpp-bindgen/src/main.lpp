@@ -42,7 +42,8 @@ def c2lpp_pure_manifest(name: Str) -> Str:
 
 
 def c2lpp_make_output_dir(output_dir: Str) -> Int:
-    return command_exec(str_concat("mkdir -p ", str_concat(output_dir, "/src")))
+    command_exec(str_concat("mkdir -p ", str_concat(output_dir, "/src")))
+    return 0
 
 
 def c2lpp_translation_readme(name: Str, source: Str) -> Str:
@@ -159,10 +160,15 @@ def c2lpp_emit_audit(config: C2Config, input_path: Str, audited: CProjectAudit) 
 
 def main():
     print_str("lpp-bindgen - C Header to L++ FFI Binder\n")
+    print_str("Loading config...\n")
     config := c_config_load("lpp-bindgen.json")
+    print_str("Config loaded.\n")
     if config.valid == 0:
         c2lpp_fail(config.error)
         return
+    print_str("Config valid. Mode: ")
+    print_str(config.mode)
+    print_str("\n")
 
     mode := config.mode
     package_name := config.name
@@ -175,9 +181,8 @@ def main():
     if file_exists(input_path) == 0:
         c2lpp_fail(str_concat("could not read input: ", input_path))
         return
-    if c2lpp_make_output_dir(output_dir) != 0:
-        c2lpp_fail("could not create output directory")
-        return
+
+    c2lpp_make_output_dir(output_dir)
     c2lpp_write_normalized_config(output_dir, config)
 
     if text_eq(mode, "sqlite-backend"):

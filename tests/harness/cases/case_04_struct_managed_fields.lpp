@@ -1,0 +1,29 @@
+struct CanvasNode:
+    id: Int
+    title: Str
+    content: Str
+    x: Int
+    y: Int
+
+def create_node(id: Int, title: Str, content: Str, x: Int, y: Int) -> CanvasNode:
+    return CanvasNode(id, title, content, x, y)
+
+def move_node(node: CanvasNode, dx: Int, dy: Int) -> CanvasNode:
+    return CanvasNode(node.id, node.title, node.content, node.x + dx, node.y + dy)
+
+def rename_node(node: CanvasNode, new_title: Str) -> CanvasNode:
+    return CanvasNode(node.id, new_title, node.content, node.x, node.y)
+
+def main():
+    mut n1 := create_node(101, "Architecture Plan", "Details on spatial canvas layout", 100, 200)
+    n1 = move_node(n1, 50, 75)
+    n1 = rename_node(n1, "Architecture Plan v2")
+    
+    print_str(n1.title)
+    print_str("\n")
+    print_str(n1.content)
+    print_str("\nPosition X:\n")
+    print(n1.x)
+    print_str("Position Y:\n")
+    print(n1.y)
+    print_str("PASS_STRUCT_MANAGED\n")

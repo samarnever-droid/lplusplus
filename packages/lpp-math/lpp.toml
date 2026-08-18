@@ -1,0 +1,7 @@
+[package]
+name = "lpp-math"
+version = "0.1.0"
+authors = ["Samar"]
+license = "MIT"
+description = "Pure L++ Symbolic Math Engine, Algebraic Step Solver, and LaTeX Formula Formatter"
+keywords = ["math", "algebra", "solver", "latex", "symbolic", "cosmos"]

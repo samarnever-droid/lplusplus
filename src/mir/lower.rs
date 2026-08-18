@@ -106,10 +106,35 @@ pub struct MirLowerCtx<'a> {
     pub arena_stack: Vec<LocalId>,
     /// Calls to these functions construct Task[T] instead of invoking the body.
     pub async_functions: std::collections::HashSet<String>,
+    pub type_aliases: HashMap<String, TypeRef>,
 }
 
 impl<'a> MirLowerCtx<'a> {
     pub fn new(symbol_table: &'a SymbolTable, type_table: &'a mut TypeTable, program: &'a crate::ast::Program) -> Self {
+        let mut type_aliases: HashMap<String, TypeRef> = HashMap::new();
+        for decl in &program.declarations {
+            if let TopLevel::TypeAlias { name, target } = decl {
+                let ty = match target {
+                    Type::Int => TypeRef::Int,
+                    Type::Float => TypeRef::Float,
+                    Type::String => TypeRef::Str,
+                    Type::Bool => TypeRef::Bool,
+                    Type::Char => TypeRef::Char,
+                    Type::Void => TypeRef::Void,
+                    Type::Custom(tname) => {
+                        if let Some(aliased) = type_aliases.get(tname) {
+                            aliased.clone()
+                        } else if let Some(&id) = type_table.structs_by_name.get(tname) {
+                            TypeRef::Custom(id)
+                        } else {
+                            TypeRef::Unresolved(tname.clone())
+                        }
+                    }
+                    _ => TypeRef::Int,
+                };
+                type_aliases.insert(name.clone(), ty);
+            }
+        }
         Self {
             symbol_table,
             type_table,
@@ -133,6 +158,7 @@ impl<'a> MirLowerCtx<'a> {
             extern_symbols: HashMap::new(),
             arena_stack: Vec::new(),
             async_functions: std::collections::HashSet::new(),
+            type_aliases,
         }
     }
 
@@ -162,6 +188,9 @@ impl<'a> MirLowerCtx<'a> {
                 // Trait names resolve to Int (trait objects are opaque i64 pointers)
                 if self.trait_names.contains(name) {
                     return TypeRef::Int;
+                }
+                if let Some(aliased) = self.type_aliases.get(name) {
+                    return aliased.clone();
                 }
                 self.type_table
                     .structs_by_name
@@ -1468,15 +1497,27 @@ impl<'a> MirLowerCtx<'a> {
                 let val = self.lower_expr(builder, operand, binding_map)?;
                 match op {
                     UnaryOperator::Negate => {
-                        // -x = 0 - x
-                        let zero = builder.new_local(TypeRef::Int, false, None, None);
-                        builder.push_instr(MirInstr::Assign(zero, Rvalue::Use(Operand::Int(0))))?;
-                        let result = builder.new_local(TypeRef::Int, false, None, None);
-                        builder.push_instr(MirInstr::Assign(
-                            result,
-                            Rvalue::BinaryOp(BinaryOperator::Subtract, Operand::Local(zero), val),
-                        ))?;
-                        Ok(Operand::Local(result))
+                        let operand_ty = self.expr_type_hint(operand, builder, binding_map);
+                        if operand_ty == TypeRef::Float {
+                            let zero = builder.new_local(TypeRef::Float, false, None, None);
+                            builder.push_instr(MirInstr::Assign(zero, Rvalue::Use(Operand::Float(0.0))))?;
+                            let result = builder.new_local(TypeRef::Float, false, None, None);
+                            builder.push_instr(MirInstr::Assign(
+                                result,
+                                Rvalue::BinaryOp(BinaryOperator::Subtract, Operand::Local(zero), val),
+                            ))?;
+                            Ok(Operand::Local(result))
+                        } else {
+                            // -x = 0 - x
+                            let zero = builder.new_local(TypeRef::Int, false, None, None);
+                            builder.push_instr(MirInstr::Assign(zero, Rvalue::Use(Operand::Int(0))))?;
+                            let result = builder.new_local(TypeRef::Int, false, None, None);
+                            builder.push_instr(MirInstr::Assign(
+                                result,
+                                Rvalue::BinaryOp(BinaryOperator::Subtract, Operand::Local(zero), val),
+                            ))?;
+                            Ok(Operand::Local(result))
+                        }
                     }
                     UnaryOperator::Not => {
                         // !b = b == false
@@ -1508,6 +1549,26 @@ impl<'a> MirLowerCtx<'a> {
                             args: vec![(**left).clone(), (**right).clone()],
                         };
                         return self.lower_expr(builder, &desugared, binding_map);
+                    }
+                }
+                if *op == BinaryOperator::Eq || *op == BinaryOperator::NotEq {
+                    let lt = self.expr_type_hint(left, builder, binding_map);
+                    let rt = self.expr_type_hint(right, builder, binding_map);
+                    if lt == TypeRef::Str && rt == TypeRef::Str {
+                        let left_op = self.lower_expr(builder, left, binding_map)?;
+                        let right_op = self.lower_expr(builder, right, binding_map)?;
+                        let eq_call = builder.new_local(TypeRef::Int, false, None, None);
+                        builder.push_instr(MirInstr::Assign(
+                            eq_call,
+                            Rvalue::BuiltinCall("lpp_str_eq".to_string(), vec![left_op, right_op]),
+                        ))?;
+                        let result = builder.new_local(TypeRef::Bool, false, None, None);
+                        let cmp_val = if *op == BinaryOperator::Eq { 1 } else { 0 };
+                        builder.push_instr(MirInstr::Assign(
+                            result,
+                            Rvalue::BinaryOp(BinaryOperator::Eq, Operand::Local(eq_call), Operand::Int(cmp_val)),
+                        ))?;
+                        return Ok(Operand::Local(result));
                     }
                 }
                 // Short-circuit && and ||

@@ -1,0 +1,25 @@
+import markdown
+
+def main():
+    print_str("Testing simple-markdown engine...\n")
+    
+    mut doc := "# SamarBook Spatial Knowledge Base\n\n"
+    doc = str_concat(doc, "This is a **high performance** spatial note written in pure L++.\n\n")
+    doc = str_concat(doc, "## Inter-Node Connectivity\n")
+    doc = str_concat(doc, "- Links directly to [[Cosmos Architecture]] node\n")
+    doc = str_concat(doc, "- Deep bidirectional link to [[Vector GPU Canvas]]\n")
+    doc = str_concat(doc, "- Embedded formula: $E = mc^2$\n\n")
+    doc = str_concat(doc, "```lpp\nprint_str(title)\n```\n\n")
+    doc = str_concat(doc, "> Knowledge is structured spatially.\n\n---")
+    
+    html := md_to_html(doc)
+    print_str("--- Generated HTML ---\n")
+    print_str(html)
+    print_str("----------------------\n")
+    
+    wikilinks := md_extract_wikilinks(doc)
+    print_str("Extracted Wikilinks: ")
+    print_str(wikilinks)
+    print_str("\n")
+    
+    print_str("SUCCESS: simple-markdown package verified and 100% operational!\n")

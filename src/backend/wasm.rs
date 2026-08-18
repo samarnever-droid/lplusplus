@@ -65,7 +65,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::ast::BinaryOperator::{self, *};
+use crate::ast::BinaryOperator;
 use crate::layout::{struct_layout, tuple_layout, tuple_runtime_metadata};
 use crate::mir::ir::*;
 use crate::type_facts::{AbiClass, ListElementClass};
@@ -157,6 +157,7 @@ fn val_of_type(ty: &TypeRef) -> Val {
 
 // ── Opcode mnemonics ─────────────────────────────────────────────────────────
 
+#[allow(dead_code)]
 mod op {
     pub const UNREACHABLE: u8 = 0x00;
     pub const BLOCK: u8 = 0x02;
@@ -294,7 +295,9 @@ const POOL_START: u32 = SUB_BUF + 64; // 4280
 /// `p-24` = refcount, `p-16` = destructor wasm-table index (0 = none),
 /// `p-8` = magic cookie.
 const ARC_HEADER_SIZE: i32 = 24;
+#[allow(dead_code)]
 const ARC_RC_OFF: i32 = -24;
+#[allow(dead_code)]
 const ARC_DROP_OFF: i32 = -16;
 /// Immortal sentinel for static literals: retain/release is a no-op.
 const ARC_IMMORTAL: i64 = i64::MIN;
@@ -1848,10 +1851,15 @@ impl<'a> WasmCompiler<'a> {
 // ── MIR function lowering ────────────────────────────────────────────────────
 
 /// Per-user-function scratch local slots (after the MIR locals).
+#[allow(dead_code)]
 const SCR_I32A: usize = 0;
+#[allow(dead_code)]
 const SCR_I32B: usize = 1;
+#[allow(dead_code)]
 const SCR_I64: usize = 2;
+#[allow(dead_code)]
 const SCR_F64: usize = 3;
+#[allow(dead_code)]
 const SCR_COUNT: usize = 4;
 
 impl<'a> WasmCompiler<'a> {
@@ -2615,7 +2623,7 @@ impl<'a> WasmCompiler<'a> {
         dest_ty: &TypeRef,
     ) -> Result<(), String> {
         let locals = &mir_fn.locals;
-        let mut arg_vals = |this: &mut Self, fb: &mut FB, n: usize| {
+        let arg_vals = |this: &mut Self, fb: &mut FB, n: usize| {
             for arg in args.iter().take(n) {
                 this.operand_val(fb, arg, local_index);
             }

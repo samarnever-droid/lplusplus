@@ -31,6 +31,11 @@
 #include <time.h>
 #include <math.h>
 #include <sys/types.h>
+#if defined(_WIN32)
+#  include <direct.h>
+#else
+#  include <sys/stat.h>
+#endif
 
 /* Forward declarations: the string builtins below hand their results to
  * generated L++ code as owned `Str` values, so they must allocate through ARC
@@ -326,15 +331,43 @@ char *lpp_read_file(const char *path) {
     }
 }
 
+static void make_parent_dirs(const char *path) {
+    if (!path) return;
+    char temp[1024];
+    strncpy(temp, path, sizeof(temp) - 1);
+    temp[sizeof(temp) - 1] = '\0';
+    for (char *p = temp + 1; *p; p++) {
+        if (*p == '/' || *p == '\\') {
+            char orig = *p;
+            *p = '\0';
+#if defined(_WIN32)
+            _mkdir(temp);
+#else
+            mkdir(temp, 0755);
+#endif
+            *p = orig;
+        }
+    }
+}
+
 /* Write data to file. Returns 0 on success, -1 on error. */
 int64_t lpp_write_file(const char *path, const char *data) {
     if (!path || !data) return -1;
+    make_parent_dirs(path);
     FILE *f = fopen(path, "wb");
     if (!f) return -1;
     size_t len = strlen(data);
     size_t written = fwrite(data, 1, len, f);
     int close_status = fclose(f);
     return written == len && close_status == 0 ? 0 : -1;
+}
+
+void lpp_exit(int64_t code) {
+#if defined(_WIN32)
+    ExitProcess((UINT)code);
+#else
+    exit((int)code);
+#endif
 }
 
 /* Append data to file. Returns 0 on success, -1 on error. */
@@ -2077,6 +2110,7 @@ void lpp_json_free(void *json) {
 #include "runtime/lpp_buf.c"
 #include "runtime/lpp_map.c"
 #include "runtime/lpp_gui.c"
+#include "runtime/lpp_webview.c"
 
 
 /* Scalar reference for the explicit LLVM vector intrinsic. Cranelift calls

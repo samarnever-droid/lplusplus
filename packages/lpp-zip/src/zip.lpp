@@ -233,3 +233,36 @@ def zip_entry_data(handle: Int, index: Int) -> Str:
 
 def zip_close(handle: Int):
     buf_free(handle)
+
+def zip_pack_file(output_zip: Str, input_path: Str) -> Int:
+    content := read_file(input_path)
+    arc := zip_create()
+    zip_add_file(arc, input_path, content)
+    zip_save(arc, output_zip)
+    zip_free(arc)
+    return 0
+
+def zip_extract(archive_path: Str, out_dir: Str) -> Int:
+    h := zip_open(archive_path)
+    count := zip_entry_count(h)
+    mut i := 0
+    while i < count:
+        name := zip_entry_name(h, i)
+        data := zip_entry_data(h, i)
+        out_file := str_concat(out_dir, str_concat("/", name))
+        write_file(out_file, data)
+        i = i + 1
+    zip_close(h)
+    return 0
+
+def zip_list(archive_path: Str) -> Int:
+    h := zip_open(archive_path)
+    count := zip_entry_count(h)
+    mut i := 0
+    while i < count:
+        name := zip_entry_name(h, i)
+        print_str(name)
+        i = i + 1
+    zip_close(h)
+    return count
+

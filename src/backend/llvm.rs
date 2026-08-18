@@ -120,6 +120,80 @@ fn builtin_signature(symbol: &str) -> Option<(&'static str, &'static str)> {
         "lpp_task_poll" => ("i64", "ptr"),
         "lpp_task_await" | "lpp_executor_run" => ("i64", "ptr"),
         "lpp_task_destroy" => ("void", "ptr"),
+        "lpp_exit" | "exit" => ("void", "i64"),
+        "lpp_ord" | "ord" => ("i64", "ptr"),
+        "lpp_chr" | "chr" => ("ptr", "i64"),
+        "lpp_char_at" | "char_at" => ("ptr", "ptr, i64"),
+        "lpp_str_find" | "str_find" => ("i64", "ptr, ptr"),
+        "lpp_str_split" | "str_split" => ("ptr", "ptr, i64"),
+        "lpp_str_replace" | "str_replace" => ("ptr", "ptr, ptr, ptr"),
+        "lpp_read_file" | "read_file" => ("ptr", "ptr"),
+        "lpp_write_file" | "write_file" => ("i64", "ptr, ptr"),
+        "lpp_append_file" | "append_file" => ("i64", "ptr, ptr"),
+        "lpp_delete_file" | "delete_file" => ("i64", "ptr"),
+        "lpp_file_exists" | "file_exists" => ("i64", "ptr"),
+        "lpp_file_size" | "file_size" => ("i64", "ptr"),
+        "lpp_file_copy" | "file_copy" => ("i64", "ptr, ptr"),
+        "lpp_command_exec" | "command_exec" => ("i64", "ptr"),
+        "lpp_command_output" | "command_output" => ("ptr", "ptr"),
+        "lpp_parse_int" | "parse_int" | "lpp_str_to_int" => ("i64", "ptr"),
+        "lpp_parse_float" | "parse_float" | "lpp_str_to_float" => ("double", "ptr"),
+        "lpp_clock_ms" | "clock_ms" => ("i64", ""),
+        "lpp_time_now_unix" | "time_now_unix" => ("i64", ""),
+        "lpp_sqrt" | "sqrt" => ("double", "double"),
+        "lpp_sin" | "sin" => ("double", "double"),
+        "lpp_cos" | "cos" => ("double", "double"),
+        "lpp_tan" | "tan" => ("double", "double"),
+        "lpp_env_get" | "env_get" => ("ptr", "ptr"),
+        "lpp_env_set" | "env_set" => ("void", "ptr, ptr"),
+        "lpp_random_range" | "random_range" => ("i64", "i64, i64"),
+        "lpp_time_ms" | "time_ms" => ("i64", ""),
+        "lpp_int_to_float" | "int_to_float" => ("double", "i64"),
+        "lpp_float_to_int" | "float_to_int" => ("i64", "double"),
+        "lpp_str_contains" | "str_contains" => ("i64", "ptr, ptr"),
+        "lpp_str_starts_with" | "str_starts_with" => ("i64", "ptr, ptr"),
+        "lpp_str_ends_with" | "str_ends_with" => ("i64", "ptr, ptr"),
+        "lpp_gui_window_create" | "gui_window_create" => ("i64", "ptr, i64, i64"),
+        "lpp_gui_window_is_open" | "gui_window_is_open" => ("i64", "i64"),
+        "lpp_gui_window_width" | "gui_window_width" => ("i64", "i64"),
+        "lpp_gui_window_height" | "gui_window_height" => ("i64", "i64"),
+        "lpp_gui_window_poll_events" | "gui_window_poll_events" => ("i64", "i64"),
+        "lpp_gui_clear" | "gui_clear" => ("void", "i64, i64"),
+        "lpp_gui_draw_rect" | "gui_draw_rect" => ("void", "i64, i64, i64, i64, i64, i64"),
+        "lpp_gui_draw_rounded_rect" | "gui_draw_rounded_rect" => ("void", "i64, i64, i64, i64, i64, i64, i64"),
+        "lpp_gui_draw_circle" | "gui_draw_circle" => ("void", "i64, i64, i64, i64, i64"),
+        "lpp_gui_draw_line" | "gui_draw_line" => ("void", "i64, i64, i64, i64, i64, i64, i64"),
+        "lpp_gui_draw_text" | "gui_draw_text" => ("void", "i64, i64, i64, ptr, i64"),
+        "lpp_gui_present" | "gui_present" => ("void", "i64"),
+        "lpp_gui_mouse_x" | "gui_mouse_x" => ("i64", "i64"),
+        "lpp_gui_mouse_y" | "gui_mouse_y" => ("i64", "i64"),
+        "lpp_gui_mouse_down" | "gui_mouse_down" => ("i64", "i64"),
+        "lpp_gui_key_down" | "gui_key_down" => ("i64", "i64, i64"),
+        "lpp_gui_measure_text_width" | "gui_measure_text_width" => ("i64", "i64, ptr"),
+        "lpp_gui_dialog_message" | "gui_dialog_message" => ("i64", "ptr, ptr"),
+        "lpp_gui_get_ticks_ms" | "gui_get_ticks_ms" => ("i64", ""),
+        "lpp_gui_window_close" | "gui_window_close" => ("void", "i64"),
+        "lpp_webview_window_create" | "webview_window_create" => ("i64", "ptr, i64, i64, i64"),
+        "lpp_webview_set_html" | "webview_set_html" => ("void", "i64, ptr"),
+        "lpp_webview_navigate" | "webview_navigate" => ("void", "i64, ptr"),
+        "lpp_webview_run" | "webview_run" => ("void", "i64"),
+        "lpp_webview_terminate" | "webview_terminate" => ("void", "i64"),
+        "lpp_webview_destroy" | "webview_destroy" => ("void", "i64"),
+        "lpp_buf_alloc" | "buf_alloc" => ("ptr", "i64"),
+        "lpp_buf_free" | "buf_free" => ("void", "ptr"),
+        "lpp_buf_len" | "buf_len" => ("i64", "ptr"),
+        "lpp_buf_get8" | "buf_get8" => ("i64", "ptr, i64"),
+        "lpp_buf_set8" | "buf_set8" => ("void", "ptr, i64, i64"),
+        "lpp_buf_set32le" | "buf_set32le" => ("void", "ptr, i64, i64"),
+        "lpp_buf_get32le" | "buf_get32le" => ("i64", "ptr, i64"),
+        "lpp_buf_set16le" | "buf_set16le" => ("void", "ptr, i64, i64"),
+        "lpp_buf_get16le" | "buf_get16le" => ("i64", "ptr, i64"),
+        "lpp_buf_read" | "buf_read" => ("ptr", "ptr"),
+        "lpp_buf_write" | "buf_write" => ("i64", "ptr, ptr"),
+        "lpp_buf_crc32" | "buf_crc32" => ("i64", "ptr, i64, i64"),
+        "lpp_buf_copy" | "buf_copy" => ("i64", "ptr, i64, ptr, i64, i64"),
+        "lpp_buf_write_str" | "buf_write_str" => ("i64", "ptr, i64, ptr"),
+        "lpp_buf_read_str" | "buf_read_str" => ("ptr", "ptr, i64, i64"),
         _ => return None,
     })
 }
@@ -152,6 +226,9 @@ impl<'a> FunctionEmitter<'a> {
     fn operand(&mut self, operand: &Operand, out: &mut String) -> Result<(String, &'static str), String> {
         match operand {
             Operand::Local(id) | Operand::Borrowed(id) => {
+                if self.function.locals[id.0].ty == TypeRef::Void {
+                    return Ok(("0".to_string(), "void"));
+                }
                 let ty = llvm_type(&self.function.locals[id.0].ty);
                 let value = self.temp();
                 out.push_str(&format!("  {} = load {}, ptr {}, align 8\n", value, ty, Self::local_ptr(*id)));
@@ -182,6 +259,13 @@ impl<'a> FunctionEmitter<'a> {
 
     fn coerce(&mut self, value: &str, actual: &str, expected: &str, out: &mut String) -> String {
         if actual == expected { return value.to_string(); }
+        if actual == "void" {
+            return match expected {
+                "ptr" => "null".to_string(),
+                "double" => "0.0".to_string(),
+                _ => "0".to_string(),
+            };
+        }
         let result = self.temp();
         match (actual, expected) {
             ("i64", "ptr") => out.push_str(&format!("  {} = inttoptr i64 {} to ptr\n", result, value)),
@@ -401,9 +485,15 @@ impl<'a> FunctionEmitter<'a> {
                 Ok(Some(self.operand(&op, out)?))
             }
             Rvalue::BinaryOp(op, left, right) => {
-                let (left, _) = self.operand(left, out)?;
-                let (right, _) = self.operand(right, out)?;
-                Ok(Some(self.binary(op, &left, &right, llvm_type(dest_ty), out)))
+                let (left, lty) = self.operand(left, out)?;
+                let (right, rty) = self.operand(right, out)?;
+                let cmp_ty = if matches!(op, BinaryOperator::Eq | BinaryOperator::NotEq | BinaryOperator::Less | BinaryOperator::Greater | BinaryOperator::LessEq | BinaryOperator::GreaterEq) {
+                    lty
+                } else {
+                    llvm_type(dest_ty)
+                };
+                let right = self.coerce(&right, rty, cmp_ty, out);
+                Ok(Some(self.binary(op, &left, &right, cmp_ty, out)))
             }
             Rvalue::CallDirect(id, args) => {
                 let target = self.signatures.get(id).ok_or_else(|| format!("unknown LLVM callee {:?}", id))?.clone();
@@ -483,9 +573,19 @@ impl<'a> FunctionEmitter<'a> {
                     out.push_str(&format!("  {} = call i64 @__lpp_vec_i64_checksum(i64 {})\n", value, n));
                     return Ok(Some((value, "i64")));
                 }
-                let (ret, _) = self.register_builtin(symbol)?;
+                let (ret, params) = self.register_builtin(symbol)?;
+                let param_types: Vec<&str> = if params.is_empty() {
+                    Vec::new()
+                } else {
+                    params.split(',').map(|s| s.trim()).collect()
+                };
                 let mut values = Vec::new();
-                for arg in args { let (value, ty) = self.operand(arg, out)?; values.push(format!("{} {}", ty, value)); }
+                for (index, arg) in args.iter().enumerate() {
+                    let (value, ty) = self.operand(arg, out)?;
+                    let expected = param_types.get(index).copied().unwrap_or(ty);
+                    let coerced = self.coerce(&value, ty, expected, out);
+                    values.push(format!("{} {}", expected, coerced));
+                }
                 if ret == "void" {
                     out.push_str(&format!("  call void @{}({})\n", symbol, values.join(", ")));
                     Ok(None)
@@ -606,7 +706,15 @@ impl<'a> FunctionEmitter<'a> {
         body.push_str(&format!("define internal {} {}(", return_type, self.func_names[&self.function.id]));
         let args: Vec<String> = self.function.params.iter().enumerate().map(|(i,p)| format!("{} %arg{}",llvm_type(&self.function.locals[p.0].ty),i)).collect();
         body.push_str(&args.join(", ")); body.push_str(") {\nentry:\n");
-        for local in &self.function.locals { if local.ty != TypeRef::Void { body.push_str(&format!("  {} = alloca {}, align 8\n",Self::local_ptr(local.id),llvm_type(&local.ty))); } }
+        for local in &self.function.locals {
+            if local.ty != TypeRef::Void {
+                let ptr = Self::local_ptr(local.id);
+                let ty_str = llvm_type(&local.ty);
+                body.push_str(&format!("  {} = alloca {}, align 8\n", ptr, ty_str));
+                let zero_val = if local.ty == TypeRef::Float { "0.0" } else if ty_str == "ptr" { "null" } else { "0" };
+                body.push_str(&format!("  store {} {}, ptr {}, align 8\n", ty_str, zero_val, ptr));
+            }
+        }
         for (i,param) in self.function.params.iter().enumerate() { if self.function.locals[param.0].ty != TypeRef::Void { body.push_str(&format!("  store {} %arg{}, ptr {}, align 8\n",llvm_type(&self.function.locals[param.0].ty),i,Self::local_ptr(*param))); } }
         let first=self.function.blocks.first().ok_or_else(|| "LLVM function has no blocks".to_string())?;
         body.push_str(&format!("  br label %bb{}\n",first.id.0));
@@ -653,7 +761,7 @@ impl<'a> FunctionEmitter<'a> {
             match &block.terminator {
                 Terminator::Goto(target)=>body.push_str(&format!("  br label %bb{}\n",target.0)),
                 Terminator::If{cond,then_block,else_block}=>{let (value,ty)=self.operand(cond,&mut body)?;let test=self.temp();if ty=="ptr"{body.push_str(&format!("  {} = icmp ne ptr {}, null\n",test,value));}else{body.push_str(&format!("  {} = icmp ne {} {}, 0\n",test,ty,value));}body.push_str(&format!("  br i1 {}, label %bb{}, label %bb{}\n",test,then_block.0,else_block.0));}
-                Terminator::IfCmp{op,left,right,then_block,else_block}=>{let (left,ty)=self.operand(left,&mut body)?;let (right,_)=self.operand(right,&mut body)?;let test=self.compare(op,&left,&right,ty,&mut body);body.push_str(&format!("  br i1 {}, label %bb{}, label %bb{}\n",test,then_block.0,else_block.0));}
+                Terminator::IfCmp{op,left,right,then_block,else_block}=>{let (left,ty)=self.operand(left,&mut body)?;let (right,rty)=self.operand(right,&mut body)?;let right=self.coerce(&right,rty,ty,&mut body);let test=self.compare(op,&left,&right,ty,&mut body);body.push_str(&format!("  br i1 {}, label %bb{}, label %bb{}\n",test,then_block.0,else_block.0));}
                 Terminator::Return(Some(op))|Terminator::ReturnOwned(op)=>{let (value,ty)=self.operand(op,&mut body)?;body.push_str(&format!("  ret {} {}\n",ty,value));}
                 Terminator::Return(None)=>{
                     if return_type=="void"{body.push_str("  ret void\n");}

@@ -1,0 +1,31 @@
+# lreact-markdown: Rich Markdown Note Card Component for SamarBook & LReact
+# Transforms markdown text with wikilinks, math, and code blocks into an interactive UI card
+
+def render_markdown_card(node_id: Int, title: Str, markdown_body: Str, theme_class: Str) -> Str:
+    mut html := "<div class=\"samar-card "
+    html = str_concat(html, str_concat(theme_class, "\" data-node-id=\""))
+    html = str_concat(html, str_concat(int_to_str(node_id), "\">\n"))
+    
+    # Header bar with title and controls
+    html = str_concat(html, "  <div class=\"samar-card-header\">\n")
+    html = str_concat(html, "    <div class=\"samar-card-title\">")
+    html = str_concat(html, str_concat(title, "</div>\n"))
+    html = str_concat(html, "    <div class=\"samar-card-actions\">\n")
+    html = str_concat(html, "      <button class=\"btn-icon btn-edit\" onclick=\"editNode(")
+    html = str_concat(html, str_concat(int_to_str(node_id), ")\" title=\"Edit Card\">✎</button>\n"))
+    html = str_concat(html, "      <button class=\"btn-icon btn-del\" onclick=\"deleteNode(")
+    html = str_concat(html, str_concat(int_to_str(node_id), ")\" title=\"Delete Card\">×</button>\n"))
+    html = str_concat(html, "    </div>\n")
+    html = str_concat(html, "  </div>\n")
+    
+    # Body content container
+    html = str_concat(html, "  <div class=\"samar-card-body\">\n")
+    html = str_concat(html, markdown_body)
+    html = str_concat(html, "\n  </div>\n")
+    
+    # Footer with port connection handle
+    html = str_concat(html, "  <div class=\"samar-port samar-port-left\" data-port=\"in\"></div>\n")
+    html = str_concat(html, "  <div class=\"samar-port samar-port-right\" data-port=\"out\"></div>\n")
+    html = str_concat(html, "</div>\n")
+    
+    return html

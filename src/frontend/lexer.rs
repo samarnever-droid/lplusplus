@@ -585,6 +585,9 @@ impl<'a> Lexer<'a> {
                         "continue" => tokens.push(mk_token(Token::Continue)),
                         "true" => tokens.push(mk_token(Token::BoolLit(true))),
                         "false" => tokens.push(mk_token(Token::BoolLit(false))),
+                        "and" => tokens.push(mk_token(Token::And)),
+                        "or" => tokens.push(mk_token(Token::Or)),
+                        "not" => tokens.push(mk_token(Token::Not)),
                         _ => {
                             // Check for f"..." string interpolation
                             if ident == "f" && self.peek_c() == Some('"') {

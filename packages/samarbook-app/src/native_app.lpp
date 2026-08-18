@@ -1,0 +1,404 @@
+# SamarBook: Pure Native Desktop Spatial Knowledge Application & Workstation
+# 100% Pure Native GUI — No Browser, No Webview, No Electron
+# Full Cosmos Canvas recreation: Homepage, Sidebar, Infinite Canvas, Notebooks & Tools
+
+struct NotebookItem:
+    id: Int
+    name: Str
+    note_count: Int
+    color_bg: Int
+    color_fg: Int
+    updated_str: Str
+
+struct CanvasNode:
+    id: Int
+    title: Str
+    content: Str
+    x: Int
+    y: Int
+    width: Int
+    height: Int
+    node_type: Str # "NOTE", "MATH", "PDF"
+    color_bg: Int
+    color_border: Int
+
+def draw_bezier_segment(win: Int, x1: Int, y1: Int, x2: Int, y2: Int, thick: Int, color: Int):
+    mut dx := x2 - x1
+    if dx < 0:
+        dx = 0 - dx
+    mut curve := dx / 2
+    if curve < 40:
+        curve = 40
+
+    cp1_x := x1 + curve
+    cp1_y := y1
+    cp2_x := x2 - curve
+    cp2_y := y2
+
+    mut prev_x := x1
+    mut prev_y := y1
+    mut t := 1
+    while t <= 12:
+        cur_x := x1 + (x2 - x1) * t / 12
+        mut cur_y := y1 + (y2 - y1) * t / 12
+        if t < 6:
+            cur_y = y1 + (cp1_y - y1) * t / 6
+        else:
+            cur_y = cp2_y + (y2 - cp2_y) * (t - 6) / 6
+
+        gui_draw_line(win, prev_x, prev_y, cur_x, cur_y, thick, color)
+        prev_x = cur_x
+        prev_y = cur_y
+        t = t + 1
+
+
+def draw_tab_button(win: Int, name: Str, ty: Int, active_tab: Str, mx: Int, my: Int):
+    mut is_active := 0
+    if name == active_tab:
+        is_active = 1
+
+    mut btn_bg := 0x0c111d
+    mut text_col := 0x94a3b8
+    if is_active == 1:
+        btn_bg = 0x1e293b
+        text_col = 0x38bdf8
+    elif mx >= 16 and mx <= 204 and my >= ty and my <= ty + 36:
+        btn_bg = 0x141d2d
+        text_col = 0xf0f4fc
+
+    gui_draw_rounded_rect(win, 16, ty, 188, 36, 8, btn_bg)
+    if is_active == 1:
+        gui_draw_rounded_rect(win, 16, ty + 6, 4, 24, 2, 0x38bdf8)
+
+    gui_draw_text(win, 36, ty + 10, name, text_col)
+
+
+def render_sidebar(win: Int, active_tab: Str, mx: Int, my: Int):
+    # Sidebar Background
+    gui_draw_rect(win, 0, 0, 220, 768, 0x0c111d)
+    gui_draw_line(win, 220, 0, 220, 768, 1, 0x1e293b)
+
+    # App Brand Header
+    gui_draw_circle(win, 32, 36, 12, 0x38bdf8)
+    gui_draw_text(win, 54, 28, "SamarBook", 0xf0f4fc)
+    gui_draw_text(win, 138, 30, "L++ Native", 0x38bdf8)
+
+    # Navigation Tabs
+    draw_tab_button(win, "Home", 80, active_tab, mx, my)
+    draw_tab_button(win, "Canvas", 124, active_tab, mx, my)
+    draw_tab_button(win, "Notebooks", 168, active_tab, mx, my)
+    draw_tab_button(win, "Assets", 212, active_tab, mx, my)
+    draw_tab_button(win, "Settings", 256, active_tab, mx, my)
+
+    # Bottom Profile / Workspace Status
+    gui_draw_rounded_rect(win, 16, 696, 188, 54, 8, 0x141c2c)
+    gui_draw_circle(win, 38, 723, 14, 0x6366f1)
+    gui_draw_text(win, 34, 715, "S", 0xffffff)
+    gui_draw_text(win, 62, 712, "Samar Workspace", 0xf0f4fc)
+    gui_draw_text(win, 62, 728, "Local .sbook • 60 FPS", 0x64748b)
+
+
+def render_homepage(win: Int, mx: Int, my: Int):
+    # Main content area (220 to 1280, 0 to 768)
+    gui_draw_rect(win, 221, 0, 1059, 768, 0x090d16)
+
+    # 1. Header & Greeting
+    gui_draw_text(win, 260, 40, "Good day, Samar 👋", 0xf0f4fc)
+    gui_draw_text(win, 260, 68, "Welcome to your native spatial knowledge workstation & canvas", 0x8ba2c7)
+
+    # 2. Quick Actions
+    # "+ New Notebook" Button
+    gui_draw_rounded_rect(win, 260, 104, 160, 42, 10, 0x38bdf8)
+    gui_draw_text(win, 280, 116, "+ New Notebook", 0x000000)
+
+    # "+ Open Canvas" Button
+    gui_draw_rounded_rect(win, 436, 104, 150, 42, 10, 0x1e293b)
+    gui_draw_text(win, 456, 116, "⚡ Open Canvas", 0xf0f4fc)
+
+    # "+ Import .sbook" Button
+    gui_draw_rounded_rect(win, 602, 104, 150, 42, 10, 0x1e293b)
+    gui_draw_text(win, 622, 116, "📂 Open .sbook", 0xf0f4fc)
+
+    # 3. Section: "Your Notebooks"
+    gui_draw_text(win, 260, 175, "Notebooks", 0xf0f4fc)
+    gui_draw_text(win, 345, 177, "(4 active collections)", 0x64748b)
+
+    # Notebook Cards Grid (2x2)
+    # NB 1: Cosmos Architecture
+    gui_draw_rounded_rect(win, 260, 205, 330, 130, 12, 0x131d2e)
+    gui_draw_rounded_rect(win, 260, 205, 330, 8, 4, 0x6366f1) # top accent bar
+    gui_draw_text(win, 280, 225, "🌌 Cosmos Architecture", 0xf0f4fc)
+    gui_draw_text(win, 280, 252, "Spatial graph nodes & AST parser design", 0x8ba2c7)
+    gui_draw_rounded_rect(win, 280, 290, 70, 22, 6, 0x1e293b)
+    gui_draw_text(win, 292, 294, "8 Notes", 0x38bdf8)
+    gui_draw_text(win, 480, 294, "Edited today", 0x64748b)
+
+    # NB 2: Mathematical Derivations
+    gui_draw_rounded_rect(win, 610, 205, 330, 130, 12, 0x131d2e)
+    gui_draw_rounded_rect(win, 610, 205, 330, 8, 4, 0x10b981)
+    gui_draw_text(win, 630, 225, "📐 Symbolic Mathematics", 0xf0f4fc)
+    gui_draw_text(win, 630, 252, "Linear equations, calculus & LaTeX AST", 0x8ba2c7)
+    gui_draw_rounded_rect(win, 630, 290, 70, 22, 6, 0x1e293b)
+    gui_draw_text(win, 642, 294, "5 Notes", 0x10b981)
+    gui_draw_text(win, 830, 294, "Edited 2h ago", 0x64748b)
+
+    # NB 3: Vector Graphics & PDF Engine
+    gui_draw_rounded_rect(win, 260, 355, 330, 130, 12, 0x131d2e)
+    gui_draw_rounded_rect(win, 260, 355, 330, 8, 4, 0xec4899)
+    gui_draw_text(win, 280, 375, "📄 Vector PDF Exporter", 0xf0f4fc)
+    gui_draw_text(win, 280, 402, "Pure PDF 1.7 rendering & page layout", 0x8ba2c7)
+    gui_draw_rounded_rect(win, 280, 440, 70, 22, 6, 0x1e293b)
+    gui_draw_text(win, 292, 444, "3 Notes", 0xec4899)
+    gui_draw_text(win, 480, 444, "Edited yesterday", 0x64748b)
+
+    # NB 4: Workspace Storage & WAL
+    gui_draw_rounded_rect(win, 610, 355, 330, 130, 12, 0x131d2e)
+    gui_draw_rounded_rect(win, 610, 355, 330, 8, 4, 0xf59e0b)
+    gui_draw_text(win, 630, 375, "💾 State Timeline (Zundo)", 0xf0f4fc)
+    gui_draw_text(win, 630, 402, "WAL journal, undo/redo & serialization", 0x8ba2c7)
+    gui_draw_rounded_rect(win, 630, 440, 70, 22, 6, 0x1e293b)
+    gui_draw_text(win, 642, 444, "4 Notes", 0xf59e0b)
+    gui_draw_text(win, 830, 444, "Edited 3d ago", 0x64748b)
+
+    # 4. Right Side Panel: "Recent Notes & Quick Jump"
+    gui_draw_rounded_rect(win, 965, 104, 290, 620, 14, 0x101725)
+    gui_draw_text(win, 985, 126, "📌 Pinned & Recent", 0xf0f4fc)
+
+    gui_draw_rounded_rect(win, 985, 160, 250, 60, 8, 0x182235)
+    gui_draw_text(win, 1000, 172, "Quantum Graph Model", 0x38bdf8)
+    gui_draw_text(win, 1000, 192, "Cosmos Architecture • 2m ago", 0x64748b)
+
+    gui_draw_rounded_rect(win, 985, 232, 250, 60, 8, 0x182235)
+    gui_draw_text(win, 1000, 244, "Step Solver Derivations", 0x10b981)
+    gui_draw_text(win, 1000, 264, "Symbolic Mathematics • 1h ago", 0x64748b)
+
+    gui_draw_rounded_rect(win, 985, 304, 250, 60, 8, 0x182235)
+    gui_draw_text(win, 1000, 316, "PDF 1.7 Stream Compression", 0xec4899)
+    gui_draw_text(win, 1000, 336, "Vector PDF Exporter • 1d ago", 0x64748b)
+
+    # Storage Statistics at bottom right
+    gui_draw_rounded_rect(win, 985, 580, 250, 120, 10, 0x162032)
+    gui_draw_text(win, 1000, 596, "📊 Workspace Stats", 0xf0f4fc)
+    gui_draw_text(win, 1000, 622, "Total Notes: 20", 0x8ba2c7)
+    gui_draw_text(win, 1000, 642, "Storage: 42.8 KB (Pure L++)", 0x8ba2c7)
+    gui_draw_text(win, 1000, 662, "Engine: Hardware GDI 60 FPS", 0x38bdf8)
+
+
+def render_canvas_card(win: Int, card: CanvasNode, is_selected: Bool):
+    # Drop shadow
+    gui_draw_rounded_rect(win, card.x + 4, card.y + 4, card.width, card.height, 12, 0x05070d)
+    
+    mut border_col := card.color_border
+    if is_selected:
+        border_col = 0x38bdf8
+    
+    gui_draw_rounded_rect(win, card.x, card.y, card.width, card.height, 12, border_col)
+    gui_draw_rounded_rect(win, card.x + 2, card.y + 2, card.width - 4, card.height - 4, 10, card.color_bg)
+
+    # Header bar
+    gui_draw_rounded_rect(win, card.x + 2, card.y + 2, card.width - 4, 32, 8, 0x1a2538)
+    gui_draw_text(win, card.x + 14, card.y + 8, card.title, 0xf0f4fc)
+
+    # Type Badge
+    if card.node_type == "MATH":
+        gui_draw_rounded_rect(win, card.x + card.width - 70, card.y + 6, 60, 20, 6, 0x10b981)
+        gui_draw_text(win, card.x + card.width - 64, card.y + 8, "L++ Math", 0x000000)
+    elif card.node_type == "PDF":
+        gui_draw_rounded_rect(win, card.x + card.width - 60, card.y + 6, 50, 20, 6, 0x6366f1)
+        gui_draw_text(win, card.x + card.width - 52, card.y + 8, "PDF 1.7", 0xffffff)
+    else:
+        gui_draw_rounded_rect(win, card.x + card.width - 60, card.y + 6, 50, 20, 6, 0x38bdf8)
+        gui_draw_text(win, card.x + card.width - 54, card.y + 8, "Note", 0x000000)
+
+    # Card Body Text
+    gui_draw_text(win, card.x + 14, card.y + 44, card.content, 0x94a3b8)
+
+    # Port Dots
+    gui_draw_circle(win, card.x, card.y + (card.height / 2), 6, 0x38bdf8)
+    gui_draw_circle(win, card.x + card.width, card.y + (card.height / 2), 6, 0x38bdf8)
+
+
+def main():
+    print_str("Starting Pure Native SamarBook Desktop Spatial Knowledge Workstation...")
+
+    # Create 1280x768 Native Windows Window
+    win := gui_window_create("SamarBook — Pure Native L++ Spatial Knowledge Network", 1280, 768)
+    if win < 0:
+        print_str("Error: Failed to create native desktop window.")
+        return
+
+    print_str("Desktop window created successfully. Running continuous 60fps event loop...")
+
+    # Active State
+    mut active_tab := "Home"
+    mut selected_card := 1
+    mut is_dragging := false
+    mut drag_offset_x := 0
+    mut drag_offset_y := 0
+
+    # Knowledge Graph Cards
+    mut c1 := CanvasNode(1, "Cosmos Architecture", "Pure native L++ engine.\nSpatial graph topology & zero webview.", 300, 160, 320, 160, "NOTE", 0x0f172a, 0x334155)
+    mut c2 := CanvasNode(2, "Symbolic Linear Solver", "Equation: 3x + 12 = 36\nStep 1: 3x = 24\nStep 2: x = 8", 740, 220, 320, 180, "MATH", 0x064e3b, 0x059669)
+    mut c3 := CanvasNode(3, "PDF Vector Document", "File: cosmos_whitepaper.pdf\nVector rendering: Valid 1.7\nPages: 12 vector sheets", 420, 440, 320, 160, "PDF", 0x1e1b4b, 0x4338ca)
+
+    # Check if running in automated test harness mode
+    mut max_frames := 0
+    test_mode := env_get("LPP_TEST_MODE")
+    if test_mode == "1":
+        max_frames = 5
+
+    mut current_frame := 0
+    mut is_running := 1
+    while is_running == 1:
+        # 1. Poll Native OS Events
+        is_open := gui_window_poll_events(win)
+        if is_open == 0:
+            is_running = 0
+            break
+
+        if max_frames > 0:
+            current_frame = current_frame + 1
+            if current_frame >= max_frames:
+                is_running = 0
+
+        mx := gui_mouse_x(win)
+        my := gui_mouse_y(win)
+        m_down := gui_mouse_down(win)
+
+        # 2. Sidebar Tab Navigation Hit-Testing
+        if m_down == 1:
+            if mx >= 16 and mx <= 204:
+                if my >= 80 and my <= 116:
+                    active_tab = "Home"
+                elif my >= 124 and my <= 160:
+                    active_tab = "Canvas"
+                elif my >= 168 and my <= 204:
+                    active_tab = "Notebooks"
+                elif my >= 212 and my <= 248:
+                    active_tab = "Assets"
+                elif my >= 256 and my <= 292:
+                    active_tab = "Settings"
+
+            # Homepage Quick Action Buttons
+            if active_tab == "Home":
+                if mx >= 436 and mx <= 586 and my >= 104 and my <= 146:
+                    active_tab = "Canvas"
+                elif mx >= 260 and mx <= 590 and my >= 205 and my <= 335:
+                    active_tab = "Canvas" # Click notebook to open canvas
+
+            # Canvas Drag-and-Drop Hit-Testing
+            if active_tab == "Canvas":
+                if not is_dragging:
+                    if mx >= c1.x and mx <= c1.x + c1.width and my >= c1.y and my <= c1.y + c1.height:
+                        selected_card = 1
+                        is_dragging = true
+                        drag_offset_x = mx - c1.x
+                        drag_offset_y = my - c1.y
+                    elif mx >= c2.x and mx <= c2.x + c2.width and my >= c2.y and my <= c2.y + c2.height:
+                        selected_card = 2
+                        is_dragging = true
+                        drag_offset_x = mx - c2.x
+                        drag_offset_y = my - c2.y
+                    elif mx >= c3.x and mx <= c3.x + c3.width and my >= c3.y and my <= c3.y + c3.height:
+                        selected_card = 3
+                        is_dragging = true
+                        drag_offset_x = mx - c3.x
+                        drag_offset_y = my - c3.y
+                else:
+                    if selected_card == 1:
+                        c1.x = mx - drag_offset_x
+                        c1.y = my - drag_offset_y
+                    elif selected_card == 2:
+                        c2.x = mx - drag_offset_x
+                        c2.y = my - drag_offset_y
+                    elif selected_card == 3:
+                        c3.x = mx - drag_offset_x
+                        c3.y = my - drag_offset_y
+        else:
+            is_dragging = false
+
+        # 3. Render Active View
+        if active_tab == "Home":
+            render_homepage(win, mx, my)
+        elif active_tab == "Canvas":
+            # Clear Canvas Area
+            gui_draw_rect(win, 221, 0, 1059, 768, 0x090d16)
+
+            # Draw Dot Matrix Grid
+            mut gx := 240
+            while gx < 1280:
+                mut gy := 20
+                while gy < 768:
+                    gui_draw_circle(win, gx, gy, 1, 0x1e293b)
+                    gy = gy + 32
+                gx = gx + 32
+
+            # Draw Real-Time Cubic Bezier Links
+            # Card 1 -> Card 2
+            p1_x := c1.x + c1.width
+            p1_y := c1.y + (c1.height / 2)
+            p2_x := c2.x
+            p2_y := c2.y + (c2.height / 2)
+            draw_bezier_segment(win, p1_x, p1_y, p2_x, p2_y, 3, 0x38bdf8)
+
+            # Card 1 -> Card 3
+            p3_x := c3.x
+            p3_y := c3.y + (c3.height / 2)
+            draw_bezier_segment(win, p1_x, p1_y, p3_x, p3_y, 3, 0x10b981)
+
+            # Draw Cards
+            render_canvas_card(win, c1, selected_card == 1)
+            render_canvas_card(win, c2, selected_card == 2)
+            render_canvas_card(win, c3, selected_card == 3)
+
+            # Top Floating Canvas Toolbar
+            gui_draw_rounded_rect(win, 320, 16, 760, 48, 24, 0x1e293b)
+            gui_draw_rounded_rect(win, 322, 18, 756, 44, 22, 0x0f172a)
+
+            gui_draw_text(win, 340, 30, "✨ Canvas", 0x38bdf8)
+
+            gui_draw_rounded_rect(win, 430, 24, 75, 32, 16, 0x38bdf8)
+            gui_draw_text(win, 445, 31, "+ Note", 0x000000)
+
+            gui_draw_rounded_rect(win, 515, 24, 75, 32, 16, 0x1e293b)
+            gui_draw_text(win, 530, 31, "+ Math", 0xf0f4fc)
+
+            gui_draw_rounded_rect(win, 600, 24, 70, 32, 16, 0x1e293b)
+            gui_draw_text(win, 615, 31, "+ PDF", 0xf0f4fc)
+
+            gui_draw_rounded_rect(win, 680, 24, 85, 32, 16, 0x1e293b)
+            gui_draw_text(win, 690, 31, "⚡ Arrange", 0xf0f4fc)
+
+            gui_draw_rounded_rect(win, 775, 24, 100, 32, 16, 0x1e293b)
+            gui_draw_text(win, 785, 31, "📄 Export PDF", 0xf0f4fc)
+
+            gui_draw_rounded_rect(win, 885, 24, 105, 32, 16, 0x10b981)
+            gui_draw_text(win, 895, 31, "💾 Save .sbook", 0x000000)
+
+            # Canvas Bottom Status Bar
+            gui_draw_rect(win, 221, 740, 1059, 28, 0x0b101b)
+            gui_draw_text(win, 240, 746, "60 FPS Native Window  |  Cards: 3  |  Links: 2  |  Drag cards with mouse", 0x64748b)
+
+        elif active_tab == "Notebooks":
+            gui_draw_rect(win, 221, 0, 1059, 768, 0x090d16)
+            gui_draw_text(win, 260, 40, "Notebooks Collections", 0xf0f4fc)
+            gui_draw_text(win, 260, 70, "Manage all your spatial notebooks and divider sections", 0x8ba2c7)
+
+        elif active_tab == "Assets":
+            gui_draw_rect(win, 221, 0, 1059, 768, 0x090d16)
+            gui_draw_text(win, 260, 40, "Asset Library & Files", 0xf0f4fc)
+            gui_draw_text(win, 260, 70, "Embedded images, PDF documents, and math formulas", 0x8ba2c7)
+
+        elif active_tab == "Settings":
+            gui_draw_rect(win, 221, 0, 1059, 768, 0x090d16)
+            gui_draw_text(win, 260, 40, "Settings & Preferences", 0xf0f4fc)
+            gui_draw_text(win, 260, 70, "Theme: Midnight Dark  |  Engine: Pure L++ AOT Direct GPU/GDI", 0x8ba2c7)
+
+        # 4. Render Left Sidebar Navigation
+        render_sidebar(win, active_tab, mx, my)
+
+        # 5. Present Backbuffer to Screen
+        gui_present(win)
+
+    gui_window_close(win)
+    print_str("SamarBook session closed cleanly.")

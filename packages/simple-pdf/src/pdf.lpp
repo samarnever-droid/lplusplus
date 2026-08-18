@@ -1,0 +1,155 @@
+# simple-pdf: Pure L++ Vector PDF Document Generator
+# Implements PDF 1.7 standard object generation with vector paths, text, and xref tables.
+
+struct PdfDoc:
+    page_count: Int
+    width: Int
+    height: Int
+    stream: Str
+    object_count: Int
+
+
+def pdf_new(width: Int, height: Int) -> PdfDoc:
+    mut w := width
+    mut h := height
+    if w <= 0:
+        w = 612 # Standard US Letter 8.5"
+    if h <= 0:
+        h = 792 # Standard US Letter 11"
+    return PdfDoc(0, w, h, "", 3)
+
+
+def pdf_add_page(doc: PdfDoc) -> PdfDoc:
+    return PdfDoc(doc.page_count + 1, doc.width, doc.height, doc.stream, doc.object_count)
+
+
+def pdf_color_str(r: Int, g: Int, b: Int) -> Str:
+    mut rs := "0"
+    if r >= 100:
+        rs = "1.0"
+    elif r > 0:
+        if r < 10:
+            rs = str_concat("0.0", int_to_str(r))
+        else:
+            rs = str_concat("0.", int_to_str(r))
+
+    mut gs := "0"
+    if g >= 100:
+        gs = "1.0"
+    elif g > 0:
+        if g < 10:
+            gs = str_concat("0.0", int_to_str(g))
+        else:
+            gs = str_concat("0.", int_to_str(g))
+
+    mut bs := "0"
+    if b >= 100:
+        bs = "1.0"
+    elif b > 0:
+        if b < 10:
+            bs = str_concat("0.0", int_to_str(b))
+        else:
+            bs = str_concat("0.", int_to_str(b))
+
+    return str_concat(rs, str_concat(" ", str_concat(gs, str_concat(" ", bs))))
+
+
+def pdf_draw_text(doc: PdfDoc, text: Str, x: Int, y: Int, font_size: Int, r: Int, g: Int, b: Int) -> PdfDoc:
+    color := pdf_color_str(r, g, b)
+    c1 := str_concat("BT\n/F1 ", str_concat(int_to_str(font_size), " Tf\n"))
+    c2 := str_concat(color, " rg\n")
+    c3 := str_concat(int_to_str(x), str_concat(" ", str_concat(int_to_str(y), " Td\n(")))
+    c4 := str_concat(text, ") Tj\nET\n")
+    cmd := str_concat(c1, str_concat(c2, str_concat(c3, c4)))
+    new_stream := str_concat(doc.stream, cmd)
+    return PdfDoc(doc.page_count, doc.width, doc.height, new_stream, doc.object_count)
+
+
+def pdf_draw_line(doc: PdfDoc, x1: Int, y1: Int, x2: Int, y2: Int, stroke_width: Int, r: Int, g: Int, b: Int) -> PdfDoc:
+    color := pdf_color_str(r, g, b)
+    mut cmd := str_concat(int_to_str(stroke_width), " w\n")
+    cmd = str_concat(cmd, str_concat(color, " RG\n"))
+    cmd = str_concat(cmd, str_concat(int_to_str(x1), str_concat(" ", str_concat(int_to_str(y1), " m\n"))))
+    cmd = str_concat(cmd, str_concat(int_to_str(x2), str_concat(" ", str_concat(int_to_str(y2), " l\nS\n"))))
+    new_stream := str_concat(doc.stream, cmd)
+    return PdfDoc(doc.page_count, doc.width, doc.height, new_stream, doc.object_count)
+
+
+def pdf_draw_rect(doc: PdfDoc, x: Int, y: Int, w: Int, h: Int, fill_r: Int, fill_g: Int, fill_b: Int, stroke_r: Int, stroke_g: Int, stroke_b: Int, stroke_width: Int) -> PdfDoc:
+    fill_c := pdf_color_str(fill_r, fill_g, fill_b)
+    stroke_c := pdf_color_str(stroke_r, stroke_g, stroke_b)
+    mut cmd := str_concat(int_to_str(stroke_width), " w\n")
+    cmd = str_concat(cmd, str_concat(fill_c, " rg\n"))
+    cmd = str_concat(cmd, str_concat(stroke_c, " RG\n"))
+    cmd = str_concat(cmd, str_concat(int_to_str(x), str_concat(" ", str_concat(int_to_str(y), str_concat(" ", str_concat(int_to_str(w), str_concat(" ", str_concat(int_to_str(h), " re\nB\n"))))))))
+    new_stream := str_concat(doc.stream, cmd)
+    return PdfDoc(doc.page_count, doc.width, doc.height, new_stream, doc.object_count)
+
+
+def pdf_draw_bezier(doc: PdfDoc, x1: Int, y1: Int, cx1: Int, cy1: Int, cx2: Int, cy2: Int, x2: Int, y2: Int, stroke_width: Int, r: Int, g: Int, b: Int) -> PdfDoc:
+    color := pdf_color_str(r, g, b)
+    mut cmd := str_concat(int_to_str(stroke_width), " w\n")
+    cmd = str_concat(cmd, str_concat(color, " RG\n"))
+    cmd = str_concat(cmd, str_concat(int_to_str(x1), str_concat(" ", str_concat(int_to_str(y1), " m\n"))))
+    cmd = str_concat(cmd, str_concat(int_to_str(cx1), str_concat(" ", str_concat(int_to_str(cy1), " "))))
+    cmd = str_concat(cmd, str_concat(int_to_str(cx2), str_concat(" ", str_concat(int_to_str(cy2), " "))))
+    cmd = str_concat(cmd, str_concat(int_to_str(x2), str_concat(" ", str_concat(int_to_str(y2), " c\nS\n"))))
+    new_stream := str_concat(doc.stream, cmd)
+    return PdfDoc(doc.page_count, doc.width, doc.height, new_stream, doc.object_count)
+
+
+def pdf_format_offset(offset: Int) -> Str:
+    mut s := int_to_str(offset)
+    while str_len(s) < 10:
+        s = str_concat("0", s)
+    return s
+
+
+def pdf_render(doc: PdfDoc) -> Str:
+    mut pdf := "%PDF-1.7\n%L++PDF\n"
+    
+    # Object 1: Catalog
+    off1 := str_len(pdf)
+    pdf = str_concat(pdf, "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n")
+    
+    # Object 2: Pages
+    off2 := str_len(pdf)
+    pdf = str_concat(pdf, "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n")
+    
+    # Object 4: Font
+    off4 := str_len(pdf)
+    pdf = str_concat(pdf, "4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n")
+    
+    # Object 5: Contents Stream
+    stream_len := str_len(doc.stream)
+    off5 := str_len(pdf)
+    pdf = str_concat(pdf, "5 0 obj\n<< /Length ")
+    pdf = str_concat(pdf, str_concat(int_to_str(stream_len), " >>\nstream\n"))
+    pdf = str_concat(pdf, doc.stream)
+    pdf = str_concat(pdf, "\nendstream\nendobj\n")
+    
+    # Object 3: Page
+    off3 := str_len(pdf)
+    pdf = str_concat(pdf, "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ")
+    pdf = str_concat(pdf, str_concat(int_to_str(doc.width), str_concat(" ", str_concat(int_to_str(doc.height), "]\n"))))
+    pdf = str_concat(pdf, "/Contents 5 0 R\n/Resources << /Font << /F1 4 0 R >> >> >>\nendobj\n")
+    
+    # Xref Table
+    xref_offset := str_len(pdf)
+    pdf = str_concat(pdf, "xref\n0 6\n")
+    pdf = str_concat(pdf, "0000000000 65535 f \n")
+    pdf = str_concat(pdf, str_concat(pdf_format_offset(off1), " 00000 n \n"))
+    pdf = str_concat(pdf, str_concat(pdf_format_offset(off2), " 00000 n \n"))
+    pdf = str_concat(pdf, str_concat(pdf_format_offset(off3), " 00000 n \n"))
+    pdf = str_concat(pdf, str_concat(pdf_format_offset(off4), " 00000 n \n"))
+    pdf = str_concat(pdf, str_concat(pdf_format_offset(off5), " 00000 n \n"))
+    
+    # Trailer
+    pdf = str_concat(pdf, "trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n")
+    pdf = str_concat(pdf, str_concat(int_to_str(xref_offset), "\n%%EOF\n"))
+    return pdf
+
+
+def pdf_save(doc: PdfDoc, path: Str) -> Int:
+    content := pdf_render(doc)
+    return write_file(path, content)

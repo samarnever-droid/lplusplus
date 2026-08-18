@@ -1,0 +1,10 @@
+def main():
+    b1 := true
+    b2 := false
+    print(b1)
+    print(b2)
+    if b1:
+        if not b2:
+            print_str("PASS_BOOLEAN_LOGIC\n")
+            return
+    print_str("FAIL_BOOLEAN_LOGIC\n")

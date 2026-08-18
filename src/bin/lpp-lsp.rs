@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -9,7 +9,7 @@ use lpp::lexer::Lexer;
 use lpp::parser::Parser;
 use lpp::semantic::Resolver;
 use lpp::typecheck::TypeChecker;
-use lpp::ast::{Program, TopLevel, Function, StructDef, EnumDef};
+use lpp::ast::{Program, TopLevel};
 
 #[derive(Debug, Serialize, Deserialize)]
 struct JsonRpcRequest {
@@ -77,6 +77,7 @@ fn send_lsp_notification<W: Write>(writer: &mut W, method: &str, params: Value) 
     writer.flush()
 }
 
+#[allow(dead_code)]
 fn uri_to_path(uri: &str) -> Option<PathBuf> {
     if let Some(stripped) = uri.strip_prefix("file:///") {
         #[cfg(windows)]
