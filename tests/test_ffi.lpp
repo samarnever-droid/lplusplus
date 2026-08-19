@@ -2,15 +2,15 @@
 
 extern "C":
     def abs(x: Int) -> Int
-    def _getpid() -> Int
+    def getpid() -> Int
 
 def main():
     # Call C stdlib abs()
     n := abs(-42)
     print(n)
 
-    # Call _getpid()
-    pid := _getpid()
+    # Call getpid()
+    pid := getpid()
     print(pid)
 
     print("ffi works!")

@@ -10,6 +10,7 @@
 //!   lpp-bench [--linkers direct,mold,c] [--suite king20] [--json] [--disk] [--mem]
 //!   lpp-bench --self-test          (run 15 built-in integration tests)
 
+use std::io::Read;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
