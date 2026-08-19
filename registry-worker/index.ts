@@ -384,12 +384,23 @@ const CACHE_TTL_MS = 60 * 1000; // 1 minute cache
 /* Helper Functions                                                   */
 /* ------------------------------------------------------------------ */
 
+function securityHeaders(): Record<string, string> {
+  return {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+    "Strict-Transport-Security": "max-age=31536000; includeSubDomains; preload",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+  };
+}
+
 function corsHeaders(): HeadersInit {
   return {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Authorization, x-api-key, x-clerk-token, sentry-trace",
     "Access-Control-Max-Age": "86400",
+    ...securityHeaders(),
   };
 }
 
@@ -399,6 +410,7 @@ function jsonResponse(data: unknown, status = 200, extraHeaders: HeadersInit = {
     headers: {
       "Content-Type": "application/json; charset=utf-8",
       ...corsHeaders(),
+      ...securityHeaders(),
       ...extraHeaders,
     },
   });
