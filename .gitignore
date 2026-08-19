@@ -47,7 +47,6 @@ tests/test_ffi
 
 /challenge_bench/zigdist/
 
-AGENTS.md
 CLAUDE.md
 libtest_math.so
 screenshot-1786467578052.png
