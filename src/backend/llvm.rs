@@ -711,7 +711,7 @@ impl<'a> FunctionEmitter<'a> {
                 let ptr = Self::local_ptr(local.id);
                 let ty_str = llvm_type(&local.ty);
                 body.push_str(&format!("  {} = alloca {}, align 8\n", ptr, ty_str));
-                let zero_val = if local.ty == TypeRef::Float { "0.0" } else if ty_str == "ptr" { "null" } else { "0" };
+                let zero_val = if local.ty == TypeRef::Float { "0.0" } else if ty_str == "ptr" { "null" } else if ty_str == "<2 x i64>" { "zeroinitializer" } else { "0" };
                 body.push_str(&format!("  store {} {}, ptr {}, align 8\n", ty_str, zero_val, ptr));
             }
         }

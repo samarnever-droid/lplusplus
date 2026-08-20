@@ -11,6 +11,7 @@
 //!   lpp-bench --self-test          (run 15 built-in integration tests)
 
 use std::env;
+use std::io::Read;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
