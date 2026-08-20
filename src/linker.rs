@@ -3722,7 +3722,7 @@ fn is_kernel32_symbol(name: &str) -> bool {
         "ExitProcess" | "GetTickCount64" | "LoadLibraryA" | "LoadLibraryW" | "FreeLibrary" | "GetProcAddress"
             | "GetStdHandle" | "WriteFile" | "ReadFile" | "VirtualAlloc" | "VirtualFree"
             | "VirtualProtect" | "CreateThread" | "WaitForSingleObject" | "WaitForMultipleObjects"
-            | "CloseHandle" | "CreateFileA" | "CreateFileW" | "GetFileSize" | "SetFilePointer"
+            | "CloseHandle" | "CreateFileA" | "CreateFileW" | "GetFileSize" | "GetFileSizeEx" | "SetFilePointer" | "SetFilePointerEx" | "SetEndOfFile"
             | "DeleteFileA" | "MoveFileA" | "GetFileAttributesA" | "CreateDirectoryA"
             | "RemoveDirectoryA" | "FindFirstFileA" | "FindNextFileA" | "FindClose" | "Sleep"
             | "CreateProcessA" | "GetExitCodeProcess" | "CreatePipe" | "GetEnvironmentVariableA"
