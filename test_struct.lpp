@@ -1,7 +1,0 @@
-struct Point:
-    x: Int
-    y: Int
-
-def main():
-    mut p := Point()
-    p.x = 1

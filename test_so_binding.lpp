@@ -1,5 +1,0 @@
-# Ultra minimal: just print a string and exit
-
-def main() -> Int:
-    print("hello from direct ELF!")
-    return 0

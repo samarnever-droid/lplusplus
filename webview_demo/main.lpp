@@ -1,0 +1,26 @@
+# L++ Embedded Native Desktop Application
+# Uses direct Windows Edge WebView2 COM Controller with zero CRT dependencies
+
+def main():
+    print_str("==================================================================")
+    print_str("          L++ NATIVE DESKTOP WEBVIEW DEMO APPLICATION             ")
+    print_str("==================================================================")
+    print_str("[L++] Initializing Native Win32 Window with Microsoft Edge WebView2...")
+
+    # 1. Create native in-process embedded WebView window (1320x840)
+    wv := webview_window_create("L++ Desktop App — Native Edge WebView2", 1320, 840, 0)
+    if wv < 0:
+        print_str("[L++] Error: Failed to initialize native WebView2 window.")
+        return
+
+    # 2. Navigate to the interactive UI
+    print_str("[L++] Loading webview_demo/index.html...")
+    webview_navigate(wv, "webview_demo/index.html")
+
+    # 3. Enter native OS event loop (blocks until user closes the window)
+    print_str("[L++] Window opened successfully! Entering Windows event loop...")
+    webview_run(wv)
+
+    # 4. Cleanup resources on exit
+    webview_destroy(wv)
+    print_str("[L++] Application closed cleanly.")

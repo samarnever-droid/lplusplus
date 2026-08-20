@@ -1,4 +1,0 @@
-def main():
-    mut is_opencode := false
-    if is_opencode:
-        print_str("yes")
