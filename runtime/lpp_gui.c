@@ -1137,8 +1137,6 @@ void lpp_gui_window_close(int64_t win_id) {
 static int64_t g_active_raylib_win = 0;
 static int64_t g_target_fps = 60;
 static uint8_t g_prev_key_state[256] = {0};
-static uint8_t g_mouse_btn[3] = {0};
-static uint8_t g_prev_mouse_btn[3] = {0};
 
 static int lpp_raylib_key_to_vk(int64_t key) {
     if (key >= 'A' && key <= 'Z') return (int)key;
@@ -1337,6 +1335,7 @@ const char *rl_GetClipboardText(void) {
 }
 
 void rl_TakeScreenshot(const char *filename) {
+    (void)filename;
     #if defined(_WIN32)
     if (g_active_raylib_win < 0 || g_active_raylib_win >= MAX_WINDOWS) return;
     LppWin32Window *w = &g_windows[g_active_raylib_win];
