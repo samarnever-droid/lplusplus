@@ -12,6 +12,8 @@
 
 use std::env;
 use std::fs;
+#[allow(unused_imports)]
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Instant;

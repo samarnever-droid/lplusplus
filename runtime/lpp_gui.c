@@ -20,17 +20,14 @@
 #include <string.h>
 #include <stdint.h>
 
-/* ═══════════════════════════════════════════════════════════════════════════
- *  Win32 backend
- * ═══════════════════════════════════════════════════════════════════════════ */
-#if defined(_WIN32)
-#if defined(_MSC_VER)
-#pragma comment(lib, "user32.lib")
-#pragma comment(lib, "gdi32.lib")
+#if !defined(_WIN32)
+#  ifndef _GNU_SOURCE
+#    define _GNU_SOURCE
+#  endif
+#  include <unistd.h>
 #endif
-#include <windows.h>
 
-/* Cached keyboard & mouse state updated in Win32 message loop */
+/* Cached keyboard & mouse state updated in message loops (cross-platform) */
 static uint8_t g_key_state[256] = {0};
 static int64_t g_char_queue[64];
 static int g_char_q_head = 0;
@@ -40,6 +37,16 @@ static uint8_t g_mouse_btn_down[3] = {0};
 static uint8_t g_mouse_btn_pressed[3] = {0};
 static uint8_t g_mouse_btn_released[3] = {0};
 static double g_mouse_wheel_delta = 0.0;
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ *  Win32 backend
+ * ═══════════════════════════════════════════════════════════════════════════ */
+#if defined(_WIN32)
+#if defined(_MSC_VER)
+#pragma comment(lib, "user32.lib")
+#pragma comment(lib, "gdi32.lib")
+#endif
+#include <windows.h>
 
 typedef struct {
     HWND    hwnd;

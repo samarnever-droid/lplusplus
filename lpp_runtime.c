@@ -16,8 +16,12 @@
 #    define _DARWIN_C_SOURCE
 #  endif
 #endif
-#if !defined(_WIN32) && !defined(_POSIX_C_SOURCE)
-#  define _POSIX_C_SOURCE 200112L
+#if !defined(_WIN32)
+#  ifndef _GNU_SOURCE
+#    define _GNU_SOURCE
+#  endif
+#  undef _POSIX_C_SOURCE
+#  define _POSIX_C_SOURCE 200809L
 #endif
 
 #include <stdio.h>
@@ -35,6 +39,8 @@
 #  include <direct.h>
 #else
 #  include <sys/stat.h>
+#  include <fcntl.h>
+#  include <unistd.h>
 #endif
 
 /* Forward declarations: the string builtins below hand their results to
