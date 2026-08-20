@@ -916,6 +916,13 @@ int64_t lpp_list_len(void *raw) {
     return list ? list->len : 0;
 }
 
+int64_t lpp_list_pop(void *raw) {
+    LppList *list = (LppList *)raw;
+    if (!list || list->len <= 0) lpp_exit(101);
+    list->len--;
+    return list->data[list->len];
+}
+
 void lpp_list_free(void *list) {
     lpp_arc_release(list);
 }
@@ -2165,8 +2172,9 @@ int64_t lpp_time_ms(void) { uint64_t buf[2]; __asm__ volatile("syscall":"=a"(buf
 void lpp_sleep_ms(int64_t ms) { uint64_t buf[2]; buf[0]=(uint64_t)(ms/1000); buf[1]=(uint64_t)((ms%1000)*1000000); __asm__ volatile("syscall"::"a"(35),"D"(buf),"S"(0):"rcx","r11","memory"); }
 void lpp_exit(int64_t code) { __asm__ volatile("syscall"::"a"(60),"D"(code):"rcx","r11"); for(;;); }
 
-/* ── String equality ── */
+/* ── String equality & comparison ── */
 int64_t lpp_str_eq(const char *a, const char *b) { if(a==b)return 1; if(!a||!b)return 0; while(*a&&*a==*b){a++;b++;} return *a==*b?1:0; }
+int64_t lpp_str_cmp(const char *a, const char *b) { if(a==b)return 0; if(!a)return -1; if(!b)return 1; while(*a&&*a==*b){a++;b++;} return (int64_t)((unsigned char)*a - (unsigned char)*b); }
 
 /* ── Buffers ── */
 int64_t lpp_buf_alloc(int64_t size) { if(size<=0)size=64; int64_t t=size+8; void*m=lpp_sys_mmap(lpp_page_round((uint64_t)t)); if(!m)return 0; *(int64_t*)m=size; return(int64_t)(uintptr_t)((char*)m+8); }

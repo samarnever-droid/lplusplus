@@ -246,6 +246,7 @@ double lpp_list_get_float(void*l,int64_t idx){int64_t i=lpp_list_get(l,idx);doub
 int8_t lpp_list_get_bool(void*l,int64_t i){return lpp_list_get(l,i)!=0;}
 void *lpp_list_get_arc(void*l,int64_t i){return(void*)(intptr_t)lpp_list_get(l,i);}
 int64_t lpp_list_len(void*r){return r?((LppList*)r)->len:0;}
+int64_t lpp_list_pop(void*r){LppList*l=(LppList*)r;if(!l||l->len<=0)ExitProcess(101);l->len--;return l->data[l->len];}
 void lpp_list_free(void*l){lpp_arc_release(l);}
 typedef struct{void*base;int64_t start,length,generation,kind;}LppSlice;
 static void*lpp_slice_checked_base(LppSlice*v){int64_t r;if(!v||!v->base||!v->generation)ExitProcess(101);r=lpp_weak_get((int64_t)(intptr_t)v->base,v->generation);if(!r)ExitProcess(101);return(void*)(intptr_t)r;}
@@ -570,8 +571,9 @@ int64_t lpp_sys_mem_free(void) { return 8192; }
 int64_t lpp_sys_cpu_usage(void) { return 5; }
 int64_t lpp_sys_uptime(void) { return (int64_t)(GetTickCount64() / 1000); }
 
-/* ── String equality ── */
+/* ── String equality & comparison ── */
 int64_t lpp_str_eq(const char *a, const char *b) { if(a==b)return 1; if(!a||!b)return 0; while(*a&&*a==*b){a++;b++;} return *a==*b?1:0; }
+int64_t lpp_str_cmp(const char *a, const char *b) { if(a==b)return 0; if(!a)return -1; if(!b)return 1; while(*a&&*a==*b){a++;b++;} return (int64_t)((unsigned char)*a - (unsigned char)*b); }
 
 /* ── Native CPtr & Memory Builtins ── */
 int64_t lpp_c_malloc(int64_t size) {
