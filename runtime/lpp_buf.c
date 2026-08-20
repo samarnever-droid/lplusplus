@@ -83,6 +83,91 @@ int64_t lpp_buf_get16le(void *ptr, int64_t offset) {
     return (int64_t)((uint16_t)base[0] | ((uint16_t)base[1] << 8));
 }
 
+void lpp_buf_set16be(void *ptr, int64_t offset, int64_t value) {
+    if (!ptr) return;
+    int64_t size = *(int64_t *)ptr;
+    if (offset < 0 || offset + 2 > size) return;
+    uint8_t *base = ((uint8_t *)ptr) + 8 + offset;
+    uint16_t v = (uint16_t)value;
+    base[0] = (uint8_t)(v >> 8);
+    base[1] = (uint8_t)(v);
+}
+
+int64_t lpp_buf_get16be(void *ptr, int64_t offset) {
+    if (!ptr) return 0;
+    int64_t size = *(int64_t *)ptr;
+    if (offset < 0 || offset + 2 > size) return 0;
+    uint8_t *base = ((uint8_t *)ptr) + 8 + offset;
+    return (int64_t)(((uint16_t)base[0] << 8) | (uint16_t)base[1]);
+}
+
+void lpp_buf_set32be(void *ptr, int64_t offset, int64_t value) {
+    if (!ptr) return;
+    int64_t size = *(int64_t *)ptr;
+    if (offset < 0 || offset + 4 > size) return;
+    uint8_t *base = ((uint8_t *)ptr) + 8 + offset;
+    uint32_t v = (uint32_t)value;
+    base[0] = (uint8_t)(v >> 24);
+    base[1] = (uint8_t)(v >> 16);
+    base[2] = (uint8_t)(v >> 8);
+    base[3] = (uint8_t)(v);
+}
+
+int64_t lpp_buf_get32be(void *ptr, int64_t offset) {
+    if (!ptr) return 0;
+    int64_t size = *(int64_t *)ptr;
+    if (offset < 0 || offset + 4 > size) return 0;
+    uint8_t *base = ((uint8_t *)ptr) + 8 + offset;
+    return (int64_t)(((uint32_t)base[0] << 24) | ((uint32_t)base[1] << 16) |
+                     ((uint32_t)base[2] << 8) | (uint32_t)base[3]);
+}
+
+void lpp_buf_set64le(void *ptr, int64_t offset, int64_t value) {
+    if (!ptr) return;
+    int64_t size = *(int64_t *)ptr;
+    if (offset < 0 || offset + 8 > size) return;
+    uint8_t *base = ((uint8_t *)ptr) + 8 + offset;
+    uint64_t v = (uint64_t)value;
+    for (int i = 0; i < 8; i++) {
+        base[i] = (uint8_t)((v >> (i * 8)) & 0xFF);
+    }
+}
+
+int64_t lpp_buf_get64le(void *ptr, int64_t offset) {
+    if (!ptr) return 0;
+    int64_t size = *(int64_t *)ptr;
+    if (offset < 0 || offset + 8 > size) return 0;
+    uint8_t *base = ((uint8_t *)ptr) + 8 + offset;
+    uint64_t r = 0;
+    for (int i = 0; i < 8; i++) {
+        r |= ((uint64_t)base[i]) << (i * 8);
+    }
+    return (int64_t)r;
+}
+
+void lpp_buf_set64be(void *ptr, int64_t offset, int64_t value) {
+    if (!ptr) return;
+    int64_t size = *(int64_t *)ptr;
+    if (offset < 0 || offset + 8 > size) return;
+    uint8_t *base = ((uint8_t *)ptr) + 8 + offset;
+    uint64_t v = (uint64_t)value;
+    for (int i = 0; i < 8; i++) {
+        base[7 - i] = (uint8_t)((v >> (i * 8)) & 0xFF);
+    }
+}
+
+int64_t lpp_buf_get64be(void *ptr, int64_t offset) {
+    if (!ptr) return 0;
+    int64_t size = *(int64_t *)ptr;
+    if (offset < 0 || offset + 8 > size) return 0;
+    uint8_t *base = ((uint8_t *)ptr) + 8 + offset;
+    uint64_t r = 0;
+    for (int i = 0; i < 8; i++) {
+        r |= ((uint64_t)base[7 - i]) << (i * 8);
+    }
+    return (int64_t)r;
+}
+
 /* ── Buffer copy / append ────────────────────────────────────────────────── */
 
 void lpp_buf_copy(void *dst, int64_t dst_off, void *src, int64_t src_off, int64_t len) {

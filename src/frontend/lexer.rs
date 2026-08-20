@@ -108,17 +108,20 @@ pub struct Lexer<'a> {
     indent_stack: Vec<usize>,
     pending_tokens: VecDeque<SpannedToken>,
     at_line_start: bool,
+    paren_depth: usize,
 }
 
 impl<'a> Lexer<'a> {
     pub fn new(input: &'a str) -> Self {
+        let clean_input = input.strip_prefix('\u{FEFF}').unwrap_or(input);
         Self {
-            chars: input.chars().peekable(),
+            chars: clean_input.chars().peekable(),
             line: 1,
             col: 1,
             indent_stack: vec![0],
             pending_tokens: VecDeque::new(),
             at_line_start: true,
+            paren_depth: 0,
         }
     }
 
@@ -170,32 +173,34 @@ impl<'a> Lexer<'a> {
                     }
                 }
 
-                if let Some(c) = self.peek_c() {
-                    if c != '\n' && c != '\r' {
-                        let current_indent = *self.indent_stack.last().unwrap_or(&0);
-                        if spaces > current_indent {
-                            self.indent_stack.push(spaces);
-                            tokens.push(SpannedToken {
-                                token: Token::Indent,
-                                line: tok_line,
-                                col: tok_col,
-                            });
-                        } else if spaces < current_indent {
-                            while let Some(&top) = self.indent_stack.last() {
-                                if top > spaces {
-                                    self.indent_stack.pop();
-                                    tokens.push(SpannedToken {
-                                        token: Token::Dedent,
-                                        line: tok_line,
-                                        col: tok_col,
-                                    });
-                                } else if top == spaces {
-                                    break;
-                                } else {
-                                    return Err(format!(
-                                        "[line {}:col {}] Lexer error: Inconsistent indentation level.",
-                                        self.line, self.col
-                                    ));
+                if self.paren_depth == 0 {
+                    if let Some(c) = self.peek_c() {
+                        if c != '\n' && c != '\r' {
+                            let current_indent = *self.indent_stack.last().unwrap_or(&0);
+                            if spaces > current_indent {
+                                self.indent_stack.push(spaces);
+                                tokens.push(SpannedToken {
+                                    token: Token::Indent,
+                                    line: tok_line,
+                                    col: tok_col,
+                                });
+                            } else if spaces < current_indent {
+                                while let Some(&top) = self.indent_stack.last() {
+                                    if top > spaces {
+                                        self.indent_stack.pop();
+                                        tokens.push(SpannedToken {
+                                            token: Token::Dedent,
+                                            line: tok_line,
+                                            col: tok_col,
+                                        });
+                                    } else if top == spaces {
+                                        break;
+                                    } else {
+                                        return Err(format!(
+                                            "[line {}:col {}] Lexer error: Inconsistent indentation level.",
+                                            self.line, self.col
+                                        ));
+                                    }
                                 }
                             }
                         }
@@ -234,8 +239,10 @@ impl<'a> Lexer<'a> {
             match c {
                 ' ' | '\r' => continue,
                 '\n' => {
-                    tokens.push(mk_token(Token::Newline));
-                    self.at_line_start = true;
+                    if self.paren_depth == 0 {
+                        tokens.push(mk_token(Token::Newline));
+                        self.at_line_start = true;
+                    }
                 }
                 ':' => {
                     if self.peek_c() == Some('=') {
@@ -349,10 +356,22 @@ impl<'a> Lexer<'a> {
                         self.next_c();
                     }
                 }
-                '(' => tokens.push(mk_token(Token::LParen)),
-                ')' => tokens.push(mk_token(Token::RParen)),
-                '[' => tokens.push(mk_token(Token::LBracket)),
-                ']' => tokens.push(mk_token(Token::RBracket)),
+                '(' => {
+                    self.paren_depth += 1;
+                    tokens.push(mk_token(Token::LParen));
+                }
+                ')' => {
+                    if self.paren_depth > 0 { self.paren_depth -= 1; }
+                    tokens.push(mk_token(Token::RParen));
+                }
+                '[' => {
+                    self.paren_depth += 1;
+                    tokens.push(mk_token(Token::LBracket));
+                }
+                ']' => {
+                    if self.paren_depth > 0 { self.paren_depth -= 1; }
+                    tokens.push(mk_token(Token::RBracket));
+                }
                 ',' => tokens.push(mk_token(Token::Comma)),
                 '.' => {
                     if self.peek_c() == Some('.') {
@@ -516,10 +535,20 @@ impl<'a> Lexer<'a> {
                         if next_c.is_ascii_digit() {
                             num.push(next_c);
                             self.next_c();
-                        } else if next_c == '.' {
-                            is_float = true;
-                            num.push(next_c);
-                            self.next_c();
+                        } else if next_c == '.' && !is_float {
+                            let mut clone_iter = self.chars.clone();
+                            clone_iter.next();
+                            if let Some(&after_dot) = clone_iter.peek() {
+                                if after_dot.is_ascii_digit() {
+                                    is_float = true;
+                                    num.push(next_c);
+                                    self.next_c();
+                                } else {
+                                    break;
+                                }
+                            } else {
+                                break;
+                            }
                         } else if next_c == '_' {
                             self.next_c(); // skip underscores in numbers (1_000_000)
                         } else {

@@ -1094,12 +1094,20 @@ impl Parser {
                 Some(Token::Ident(n)) => n.clone(),
                 _ => return self.error("Expected identifier after 'mut'"),
             };
-            if !self.match_token(&Token::Assign) {
-                return self.error("Expected ':=' after mutable identifier");
+            let mut explicit_ty = None;
+            if self.match_token(&Token::Colon) {
+                let ty = self.parse_type()?;
+                explicit_ty = Some(ty);
+                if !self.match_token(&Token::Equal) && !self.match_token(&Token::Assign) {
+                    return self.error("Expected '=' or ':=' after type annotation");
+                }
+            } else if !self.match_token(&Token::Assign) {
+                return self.error("Expected ':=' or ': Type =' after mutable identifier");
             }
             let value = self.parse_expr()?;
             return Ok(Stmt::LetInferred {
                 name,
+                ty: explicit_ty,
                 is_mut: true,
                 value,
                 binding_id: std::cell::Cell::new(None),
@@ -1114,10 +1122,28 @@ impl Parser {
                 let value = self.parse_expr()?;
                 return Ok(Stmt::LetInferred {
                     name: name.clone(),
+                    ty: None,
                     is_mut: false,
                     value,
                     binding_id: std::cell::Cell::new(None),
                 });
+            } else if next == Some(&Token::Colon) {
+                let saved = self.pos;
+                self.advance(); // name
+                self.advance(); // :
+                if let Ok(ty) = self.parse_type() {
+                    if self.match_token(&Token::Equal) || self.match_token(&Token::Assign) {
+                        let value = self.parse_expr()?;
+                        return Ok(Stmt::LetInferred {
+                            name: name.clone(),
+                            ty: Some(ty),
+                            is_mut: false,
+                            value,
+                            binding_id: std::cell::Cell::new(None),
+                        });
+                    }
+                }
+                self.pos = saved;
             }
         }
 
@@ -1135,19 +1161,45 @@ impl Parser {
         if let Some(op) = aug_op {
             self.advance(); // consume +=, -=, etc.
             let rhs = self.parse_expr()?;
-            if let Expr::Identifier(name, _) = &expr {
-                let value = Expr::BinaryOp {
-                    left: Box::new(expr.clone()),
-                    op,
-                    right: Box::new(rhs),
-                };
-                return Ok(Stmt::Assign {
-                    name: name.clone(),
-                    value,
-                    binding_id: std::cell::Cell::new(None),
-                });
+            match &expr {
+                Expr::Identifier(name, _) => {
+                    let value = Expr::BinaryOp {
+                        left: Box::new(expr.clone()),
+                        op,
+                        right: Box::new(rhs),
+                    };
+                    return Ok(Stmt::Assign {
+                        name: name.clone(),
+                        value,
+                        binding_id: std::cell::Cell::new(None),
+                    });
+                }
+                Expr::FieldAccess { base, field } => {
+                    let value = Expr::BinaryOp {
+                        left: Box::new(expr.clone()),
+                        op,
+                        right: Box::new(rhs),
+                    };
+                    return Ok(Stmt::AssignField {
+                        base: *base.clone(),
+                        field: field.clone(),
+                        value,
+                    });
+                }
+                Expr::Index { base, index } => {
+                    let value = Expr::BinaryOp {
+                        left: Box::new(expr.clone()),
+                        op,
+                        right: Box::new(rhs),
+                    };
+                    return Ok(Stmt::AssignIndex {
+                        base: *base.clone(),
+                        index: *index.clone(),
+                        value,
+                    });
+                }
+                _ => return self.error("Augmented assignment target must be a variable, field, or index"),
             }
-            return self.error("Augmented assignment target must be a variable");
         }
 
         if self.match_token(&Token::Equal) {
@@ -1164,6 +1216,13 @@ impl Parser {
                     return Ok(Stmt::AssignField {
                         base: *base,
                         field,
+                        value,
+                    });
+                }
+                Expr::Index { base, index } => {
+                    return Ok(Stmt::AssignIndex {
+                        base: *base,
+                        index: *index,
                         value,
                     });
                 }

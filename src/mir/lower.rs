@@ -199,10 +199,14 @@ impl<'a> MirLowerCtx<'a> {
                     .map(TypeRef::Custom)
                     .unwrap_or_else(|| TypeRef::Unresolved(name.clone()))
             }
-            Type::Generic(name, args) => TypeRef::Generic(
-                name.clone(),
-                args.iter().map(|arg| self.resolve_type(arg)).collect(),
-            ),
+            Type::Generic(name, args) => {
+                let resolved_args: Vec<_> = args.iter().map(|arg| self.resolve_type(arg)).collect();
+                if name == "Tuple" {
+                    TypeRef::Tuple(resolved_args)
+                } else {
+                    TypeRef::Generic(name.clone(), resolved_args)
+                }
+            }
             Type::Tuple(elements) =>
                 TypeRef::Tuple(elements.iter().map(|ty| self.resolve_type(ty)).collect()),
             Type::StrSlice => TypeRef::StrSlice,
@@ -233,10 +237,22 @@ impl<'a> MirLowerCtx<'a> {
                 TypeRef::Task(result) => *result,
                 _ => TypeRef::Void,
             },
-            Expr::Identifier(_, cell) => {
+            Expr::Identifier(name, cell) => {
                 if let Some(ast_id) = cell.get() {
                     if let Some(local_id) = binding_map.get(&BindingId(ast_id)) {
                         return builder.function.locals[local_id.0].ty.clone();
+                    }
+                }
+                if let Some(&lid) = self.symbol_table.scopes.iter().rev().find_map(|s| s.bindings.get(name)) {
+                    if let Some(&mir_lid) = binding_map.get(&BindingId(lid.0)) {
+                        return builder.function.locals[mir_lid.0].ty.clone();
+                    }
+                }
+                for local in &builder.function.locals {
+                    if let Some(ref dname) = local.debug_name {
+                        if dname == name {
+                            return local.ty.clone();
+                        }
                     }
                 }
                 TypeRef::Int
@@ -360,17 +376,36 @@ impl<'a> MirLowerCtx<'a> {
                 if let Some(id) = self.type_table.lookup_struct(enum_name) {
                     TypeRef::Custom(id)
                 } else {
-                    TypeRef::Int // fallback
+                    TypeRef::Int
                 }
             }
             Expr::Match { .. } => TypeRef::Int,
-            // Monomorphization rewrites every GenericCall into a plain Call,
-            // so reaching here means the pass did not run.
             Expr::GenericCall { .. } => TypeRef::Int,
             Expr::Try(_) => TypeRef::Int,
-            Expr::Index { base, .. } => {
+            Expr::Index { base, index } => {
                 let base_ty = self.expr_type_hint(base, builder, binding_map);
-                if base_ty == TypeRef::Str { TypeRef::Str } else { TypeRef::Int }
+                if base_ty == TypeRef::Str {
+                    TypeRef::Str
+                } else if let TypeRef::Generic(n, params) = &base_ty {
+                    if (n == "List" || n == "Slice") && !params.is_empty() {
+                        params[0].clone()
+                    } else {
+                        TypeRef::Int
+                    }
+                } else if let TypeRef::Tuple(elems) = &base_ty {
+                    if let Expr::IntLiteral(idx) = index.as_ref() {
+                        let i = *idx as usize;
+                        if i < elems.len() {
+                            elems[i].clone()
+                        } else {
+                            TypeRef::Int
+                        }
+                    } else {
+                        elems.first().cloned().unwrap_or(TypeRef::Int)
+                    }
+                } else {
+                    TypeRef::Int
+                }
             }
         }
     }
@@ -627,7 +662,7 @@ impl<'a> MirLowerCtx<'a> {
             Rvalue::Use(Operand::Local(source)) | Rvalue::Use(Operand::Borrowed(source)) => *source,
             _ => return Ok(()),
         };
-        if builder.function.locals[destination.0].ownership != Ownership::Owned {
+        if !builder.function.locals[destination.0].ownership.is_managed() {
             return Ok(());
         }
         if !builder.function.locals[source.0].ownership.is_borrowed() {
@@ -721,9 +756,15 @@ impl<'a> MirLowerCtx<'a> {
                         Rvalue::TupleField(tuple_operand.clone(), index),
                     ))?;
 
+                    let is_mut = self
+                        .symbol_table
+                        .bindings
+                        .get(ast_id)
+                        .map(|b| b.is_mut)
+                        .unwrap_or(false);
                     let destination = builder.new_local(
                         ty,
-                        false,
+                        is_mut,
                         Some(name.clone()),
                         Some(binding_id),
                     );
@@ -755,10 +796,45 @@ impl<'a> MirLowerCtx<'a> {
                     .and_then(|binding| binding.ty.clone())
                     .ok_or_else(|| format!("Missing inferred type for binding '{}'", name))?;
 
-                let local_id = builder.new_local(ty, true, Some(name.clone()), Some(binding_id));
+                let local_id = builder.new_local(ty.clone(), true, Some(name.clone()), Some(binding_id));
                 binding_map.insert(binding_id, local_id);
 
-                let operand = self.lower_expr(builder, value, binding_map)?;
+                let operand = if let Expr::ListLiteral(items) = value {
+                    let elem_ty = if let TypeRef::Generic(name, params) = &ty {
+                        if name == "List" && !params.is_empty() {
+                            params[0].clone()
+                        } else {
+                            items.first().map(|item| self.expr_type_hint(item, builder, binding_map)).unwrap_or(TypeRef::Int)
+                        }
+                    } else {
+                        items.first().map(|item| self.expr_type_hint(item, builder, binding_map)).unwrap_or(TypeRef::Int)
+                    };
+                    let temp = builder.new_local(
+                        TypeRef::Generic("List".to_string(), vec![elem_ty.clone()]),
+                        false,
+                        None,
+                        None,
+                    );
+                    builder.push_instr(MirInstr::Assign(
+                        temp,
+                        Rvalue::AllocateList(elem_ty.clone()),
+                    ))?;
+                    let push_symbol = list_push_symbol(&elem_ty)?;
+                    for item in items {
+                        let item_op = self.lower_expr(builder, item, binding_map)?;
+                        let discard_local = builder.new_local(TypeRef::Void, false, None, None);
+                        builder.push_instr(MirInstr::Assign(
+                            discard_local,
+                            Rvalue::BuiltinCall(
+                                push_symbol.to_string(),
+                                vec![Operand::Local(temp), item_op],
+                            ),
+                        ))?;
+                    }
+                    Operand::Local(temp)
+                } else {
+                    self.lower_expr(builder, value, binding_map)?
+                };
                 let rvalue = Self::assignment_rvalue(builder, local_id, operand);
                 builder.push_instr(MirInstr::Assign(local_id, rvalue.clone()))?;
                 Self::retain_if_aliasing_borrow(builder, local_id, &rvalue)?;
@@ -772,7 +848,43 @@ impl<'a> MirLowerCtx<'a> {
                     .get()
                     .ok_or_else(|| "Missing binding id while lowering assignment".to_string())?;
                 let binding_id = BindingId(ast_id);
-                let operand = self.lower_expr(builder, value, binding_map)?;
+                let operand = if let (Some(&local_id), Expr::ListLiteral(items)) = (binding_map.get(&binding_id), value) {
+                    let dest_ty = &builder.function.locals[local_id.0].ty;
+                    let elem_ty = if let TypeRef::Generic(name, params) = dest_ty {
+                        if name == "List" && !params.is_empty() {
+                            params[0].clone()
+                        } else {
+                            items.first().map(|item| self.expr_type_hint(item, builder, binding_map)).unwrap_or(TypeRef::Int)
+                        }
+                    } else {
+                        items.first().map(|item| self.expr_type_hint(item, builder, binding_map)).unwrap_or(TypeRef::Int)
+                    };
+                    let temp = builder.new_local(
+                        TypeRef::Generic("List".to_string(), vec![elem_ty.clone()]),
+                        false,
+                        None,
+                        None,
+                    );
+                    builder.push_instr(MirInstr::Assign(
+                        temp,
+                        Rvalue::AllocateList(elem_ty.clone()),
+                    ))?;
+                    let push_symbol = list_push_symbol(&elem_ty)?;
+                    for item in items {
+                        let item_op = self.lower_expr(builder, item, binding_map)?;
+                        let discard_local = builder.new_local(TypeRef::Void, false, None, None);
+                        builder.push_instr(MirInstr::Assign(
+                            discard_local,
+                            Rvalue::BuiltinCall(
+                                push_symbol.to_string(),
+                                vec![Operand::Local(temp), item_op],
+                            ),
+                        ))?;
+                    }
+                    Operand::Local(temp)
+                } else {
+                    self.lower_expr(builder, value, binding_map)?
+                };
                 if let Some(local_id) = binding_map.get(&binding_id) {
                     let local_id = *local_id;
                     let rvalue = Self::assignment_rvalue(builder, local_id, operand);
@@ -813,6 +925,13 @@ impl<'a> MirLowerCtx<'a> {
                 } else {
                     return Err("Field assignment base is not a local variable".to_string());
                 }
+            }
+            Stmt::AssignIndex { base, index, value } => {
+                let desugared = Expr::Call {
+                    callee: Box::new(Expr::Identifier("list_set".to_string(), std::cell::Cell::new(None))),
+                    args: vec![base.clone(), index.clone(), value.clone()],
+                };
+                self.lower_expr(builder, &desugared, binding_map)?;
             }
             Stmt::Expr(expr) => {
                 self.lower_expr(builder, expr, binding_map)?;
@@ -1551,22 +1670,29 @@ impl<'a> MirLowerCtx<'a> {
                         return self.lower_expr(builder, &desugared, binding_map);
                     }
                 }
-                if *op == BinaryOperator::Eq || *op == BinaryOperator::NotEq {
+                if matches!(
+                    *op,
+                    BinaryOperator::Eq
+                        | BinaryOperator::NotEq
+                        | BinaryOperator::Less
+                        | BinaryOperator::LessEq
+                        | BinaryOperator::Greater
+                        | BinaryOperator::GreaterEq
+                ) {
                     let lt = self.expr_type_hint(left, builder, binding_map);
                     let rt = self.expr_type_hint(right, builder, binding_map);
                     if lt == TypeRef::Str && rt == TypeRef::Str {
                         let left_op = self.lower_expr(builder, left, binding_map)?;
                         let right_op = self.lower_expr(builder, right, binding_map)?;
-                        let eq_call = builder.new_local(TypeRef::Int, false, None, None);
+                        let cmp_call = builder.new_local(TypeRef::Int, false, None, None);
                         builder.push_instr(MirInstr::Assign(
-                            eq_call,
-                            Rvalue::BuiltinCall("lpp_str_eq".to_string(), vec![left_op, right_op]),
+                            cmp_call,
+                            Rvalue::BuiltinCall("lpp_str_cmp".to_string(), vec![left_op, right_op]),
                         ))?;
                         let result = builder.new_local(TypeRef::Bool, false, None, None);
-                        let cmp_val = if *op == BinaryOperator::Eq { 1 } else { 0 };
                         builder.push_instr(MirInstr::Assign(
                             result,
-                            Rvalue::BinaryOp(BinaryOperator::Eq, Operand::Local(eq_call), Operand::Int(cmp_val)),
+                            Rvalue::BinaryOp(op.clone(), Operand::Local(cmp_call), Operand::Int(0)),
                         ))?;
                         return Ok(Operand::Local(result));
                     }
@@ -1827,7 +1953,9 @@ impl<'a> MirLowerCtx<'a> {
                             .iter()
                             .find(|b| b.name == name)
                         {
-                            if name == "list_get" || name == "lpp_list_get" || name == "get" {
+                            if name == "dir_list" || name == "lpp_dir_list" || name == "str_split" || name == "lpp_str_split" {
+                                return_type = TypeRef::Generic("List".to_string(), vec![TypeRef::Str]);
+                            } else if name == "list_get" || name == "lpp_list_get" || name == "get" {
                                 let list_ty = args
                                     .first()
                                     .map(|arg| self.expr_type_hint(arg, builder, binding_map))
@@ -2688,6 +2816,24 @@ impl<'a> MirLowerCtx<'a> {
                         args: vec![*base.clone(), *index.clone(), Expr::IntLiteral(1)],
                     };
                     self.lower_expr(builder, &desugared, binding_map)
+                } else if let TypeRef::Tuple(elems) = &base_ty {
+                    let tuple_op = self.lower_expr(builder, base, binding_map)?;
+                    let idx = if let Expr::IntLiteral(i) = index.as_ref() {
+                        *i as usize
+                    } else {
+                        0
+                    };
+                    let field_ty = if idx < elems.len() {
+                        elems[idx].clone()
+                    } else {
+                        TypeRef::Int
+                    };
+                    let result = builder.new_local(field_ty, false, None, None);
+                    builder.push_instr(MirInstr::Assign(
+                        result,
+                        Rvalue::TupleField(tuple_op, idx),
+                    ))?;
+                    Ok(Operand::Local(result))
                 } else {
                     // list_get(base, index)
                     let desugared = Expr::Call {

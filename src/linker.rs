@@ -3719,7 +3719,7 @@ fn is_kernel32_symbol(name: &str) -> bool {
     let clean = name.strip_prefix("__imp_").unwrap_or(name);
     matches!(
         clean,
-        "ExitProcess" | "GetTickCount64" | "LoadLibraryA" | "LoadLibraryW" | "GetProcAddress"
+        "ExitProcess" | "GetTickCount64" | "LoadLibraryA" | "LoadLibraryW" | "FreeLibrary" | "GetProcAddress"
             | "GetStdHandle" | "WriteFile" | "ReadFile" | "VirtualAlloc" | "VirtualFree"
             | "VirtualProtect" | "CreateThread" | "WaitForSingleObject" | "WaitForMultipleObjects"
             | "CloseHandle" | "CreateFileA" | "CreateFileW" | "GetFileSize" | "SetFilePointer"
@@ -3744,7 +3744,8 @@ fn is_kernel32_symbol(name: &str) -> bool {
             | "GetDiskFreeSpaceExA" | "OutputDebugStringA" | "DebugBreak"
             | "InitializeSListHead" | "EncodePointer" | "DecodePointer"
             | "GetStartupInfoW" | "GetStartupInfoA" | "SetDefaultDllDirectories"
-            | "GetTempPathA" | "GetFullPathNameA"
+            | "GetTempPathA" | "GetFullPathNameA" | "GetEnvironmentVariableW"
+            | "CreateDirectoryW"
     ) || clean.starts_with("K32")
 }
 
@@ -3754,18 +3755,18 @@ fn is_user32_symbol(name: &str) -> bool {
         clean,
         "CreateWindowExA" | "CreateWindowExW" | "DestroyWindow" | "DefWindowProcA"
             | "DefWindowProcW" | "PostQuitMessage" | "RegisterClassA" | "RegisterClassExA"
-            | "RegisterClassW" | "GetDC" | "ReleaseDC" | "LoadCursorA" | "LoadCursorW"
-            | "PeekMessageA" | "PeekMessageW" | "GetMessageA" | "TranslateMessage"
+            | "RegisterClassW" | "RegisterClassExW" | "GetDC" | "ReleaseDC" | "LoadCursorA" | "LoadCursorW"
+            | "PeekMessageA" | "PeekMessageW" | "GetMessageA" | "GetMessageW" | "TranslateMessage"
             | "DispatchMessageA" | "DispatchMessageW" | "GetAsyncKeyState" | "GetKeyState"
             | "GetCursorPos" | "ScreenToClient" | "ClientToScreen" | "FillRect" | "ShowWindow"
             | "UpdateWindow" | "SetForegroundWindow" | "MessageBoxA" | "MessageBoxW"
-            | "LoadIconA" | "SetWindowPos" | "BringWindowToTop" | "BeginPaint" | "EndPaint"
+            | "LoadIconA" | "LoadIconW" | "SetWindowPos" | "BringWindowToTop" | "BeginPaint" | "EndPaint"
             | "SetProcessDPIAware" | "AdjustWindowRectEx" | "GetClientRect" | "GetWindowRect"
             | "InvalidateRect" | "SetWindowTextA" | "GetWindowTextA" | "ShowCursor"
             | "SetCursor" | "LoadImageA" | "SendMessageA" | "PostMessageA" | "KillTimer"
             | "SetTimer" | "GetSystemMetrics" | "MonitorFromWindow" | "GetMonitorInfoA"
             | "EnumDisplaySettingsA" | "ChangeDisplaySettingsA" | "ReleaseCapture"
-            | "SetCapture" | "TrackMouseEvent" | "wsprintfA" | "wsprintfW" | "MsgWaitForMultipleObjects"
+            | "SetCapture" | "TrackMouseEvent" | "wsprintfA" | "wsprintfW" | "wvsprintfA" | "wvsprintfW" | "MsgWaitForMultipleObjects"
     )
 }
 

@@ -272,6 +272,7 @@ int64_t lpp_str_to_int(const char *s) {
 }
 
 int64_t lpp_str_eq(const char *a, const char *b) { if(a==b)return 1; if(!a||!b)return 0; while(*a&&*a==*b){a++;b++;} return *a==*b?1:0; }
+int64_t lpp_str_cmp(const char *a, const char *b) { if(a==b)return 0; if(!a)return -1; if(!b)return 1; return (int64_t)strcmp(a, b); }
 
 /* ── Math builtins (host runtime) ── */
 #include <math.h>

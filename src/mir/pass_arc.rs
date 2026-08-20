@@ -620,8 +620,8 @@ pub fn run_arc_insertion_pass_with_weak(
                                 rewritten.push(MirInstr::Retain(source));
                             }
                         } else if let Some(source) = owned_source {
-                            if arc_locals.contains(&source) && !is_weak {
-                                live.remove(&source);
+                            if function.locals[source.0].ty.is_managed() && !is_weak {
+                                rewritten.push(MirInstr::Retain(source));
                             }
                         }
                     }

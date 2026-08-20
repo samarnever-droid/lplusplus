@@ -399,10 +399,15 @@ impl Resolver {
             } => {
                 self.resolve_expr(value)?;
                 for (index, name) in names.iter().enumerate() {
+                    let is_mut = if let Some(existing_id) = self.table.resolve_name_immutable(self.current_scope, name) {
+                        self.table.bindings[existing_id.0].is_mut
+                    } else {
+                        false
+                    };
                     let id = self.table.add_binding(
                         self.current_scope,
                         name.clone(),
-                        false,
+                        is_mut,
                         None,
                         BindingKind::Local,
                     );
@@ -413,6 +418,7 @@ impl Resolver {
             }
             Stmt::LetInferred {
                 name,
+                ty,
                 is_mut,
                 value,
                 binding_id,
@@ -435,7 +441,7 @@ impl Resolver {
                     self.current_scope,
                     name.clone(),
                     *is_mut,
-                    None, // Type inference comes next
+                    ty.clone(),
                     BindingKind::Local,
                 );
                 binding_id.set(Some(id.0));
@@ -484,9 +490,47 @@ impl Resolver {
                 if let Some(name) = root_name {
                     if let Some(id) = self.table.resolve_name(self.current_scope, name) {
                         let binding = &self.table.bindings[id.0];
-                        if !binding.is_mut {
+                        if !binding.is_mut && binding.kind != BindingKind::Param {
                             return Err(format!(
                                 "Cannot mutate field of immutable variable '{}'. Declare it with 'mut {} := ...' to allow field mutation.",
+                                name, name
+                            ));
+                        }
+                        self.check_spawn_capture_mutation(id)?;
+                    }
+                }
+            }
+            Stmt::AssignIndex {
+                base,
+                index,
+                value,
+            } => {
+                self.resolve_expr(base)?;
+                self.resolve_expr(index)?;
+                self.resolve_expr(value)?;
+                let mut curr: &Expr = base;
+                let mut root_name = None;
+                loop {
+                    match curr {
+                        Expr::Identifier(name, ..) => {
+                            root_name = Some(name.as_str());
+                            break;
+                        }
+                        Expr::FieldAccess { base: sub_base, .. } => {
+                            curr = sub_base;
+                        }
+                        Expr::Index { base: sub_base, .. } => {
+                            curr = sub_base;
+                        }
+                        _ => break,
+                    }
+                }
+                if let Some(name) = root_name {
+                    if let Some(id) = self.table.resolve_name(self.current_scope, name) {
+                        let binding = &self.table.bindings[id.0];
+                        if !binding.is_mut && binding.kind != BindingKind::Param {
+                            return Err(format!(
+                                "Cannot mutate index of immutable variable '{}'. Declare it with 'mut {} := ...' to allow index mutation.",
                                 name, name
                             ));
                         }
@@ -847,12 +891,14 @@ mod tests {
                 body: vec![
                     Stmt::LetInferred {
                         name: "x".to_string(),
+                        ty: None,
                         is_mut: false,
                         value: Expr::IntLiteral(1),
                         binding_id: std::cell::Cell::new(None),
                     },
                     Stmt::LetInferred {
                         name: "x".to_string(),
+                        ty: None,
                         is_mut: false,
                         value: Expr::IntLiteral(2),
                         binding_id: std::cell::Cell::new(None),
@@ -893,6 +939,7 @@ mod tests {
                 body: vec![
                     Stmt::LetInferred {
                         name: "x".to_string(),
+                        ty: None,
                         is_mut: false,
                         value: Expr::IntLiteral(1),
                         binding_id: std::cell::Cell::new(None),
@@ -924,6 +971,7 @@ mod tests {
                 body: vec![
                     Stmt::LetInferred {
                         name: "box".to_string(),
+                        ty: None,
                         is_mut: false,
                         value: Expr::IntLiteral(1),
                         binding_id: std::cell::Cell::new(None),
@@ -955,6 +1003,7 @@ mod tests {
                 body: vec![
                     Stmt::LetInferred {
                         name: "player".to_string(),
+                        ty: None,
                         is_mut: false,
                         value: Expr::IntLiteral(1),
                         binding_id: std::cell::Cell::new(None),
@@ -1019,6 +1068,7 @@ mod tests {
                 body: vec![
                     Stmt::LetInferred {
                         name: "x".to_string(),
+                        ty: None,
                         is_mut: true,
                         value: Expr::IntLiteral(1),
                         binding_id: std::cell::Cell::new(None),
@@ -1049,6 +1099,7 @@ mod tests {
                 body: vec![
                     Stmt::LetInferred {
                         name: "box".to_string(),
+                        ty: None,
                         is_mut: true,
                         value: Expr::IntLiteral(1),
                         binding_id: std::cell::Cell::new(None),
@@ -1078,6 +1129,7 @@ mod tests {
                 body: vec![
                     Stmt::LetInferred {
                         name: "x".to_string(),
+                        ty: None,
                         is_mut: true,
                         value: Expr::IntLiteral(1),
                         binding_id: std::cell::Cell::new(None),
@@ -1107,6 +1159,7 @@ mod tests {
                 body: vec![spawned_closure(vec![
                     Stmt::LetInferred {
                         name: "local".to_string(),
+                        ty: None,
                         is_mut: true,
                         value: Expr::IntLiteral(1),
                         binding_id: std::cell::Cell::new(None),
@@ -1137,6 +1190,7 @@ mod tests {
                 body: vec![
                     Stmt::LetInferred {
                         name: "i".to_string(),
+                        ty: None,
                         is_mut: true,
                         value: Expr::IntLiteral(0),
                         binding_id: std::cell::Cell::new(None),
@@ -1146,6 +1200,7 @@ mod tests {
                         body: vec![
                             Stmt::LetInferred {
                                 name: "i".to_string(),
+                                ty: None,
                                 is_mut: false,
                                 value: Expr::IntLiteral(1),
                                 binding_id: std::cell::Cell::new(None),

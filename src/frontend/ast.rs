@@ -123,6 +123,7 @@ pub enum Stmt {
     },
     LetInferred {
         name: String,
+        ty: Option<Type>,
         is_mut: bool,
         value: Expr,
         binding_id: std::cell::Cell<Option<usize>>,
@@ -135,6 +136,11 @@ pub enum Stmt {
     AssignField {
         base: Expr,
         field: String,
+        value: Expr,
+    },
+    AssignIndex {
+        base: Expr,
+        index: Expr,
         value: Expr,
     },
     Expr(Expr),

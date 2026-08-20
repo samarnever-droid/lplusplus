@@ -13,7 +13,7 @@ This project is indexed by GitNexus as **lplusplus** (21104 symbols, 74797 relat
 
 ---
 
-# L++ (LPlusPlus) v4.8.0 — Complete AI Architecture & Language Specification
+# L++ (LPlusPlus) v4.9.0 — Complete AI Architecture & Language Specification
 
 > **For any AI Assistant / Agent**: This document is the single, authoritative, complete specification of the **L++ programming language**. When generating, debugging, or analyzing L++ code, **strictly follow the syntax, semantics, standard library, and architecture detailed below.**
 

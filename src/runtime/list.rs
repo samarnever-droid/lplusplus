@@ -27,6 +27,15 @@ pub unsafe extern "C" fn lpp_list_get(list: *mut u8, index: i64) -> i64 {
     v[index as usize]
 }
 
+/// Set the element at `index` in the list.
+/// # Safety
+/// `list` must have been returned by `lpp_list_new` and `index` must be in bounds.
+#[no_mangle]
+pub unsafe extern "C" fn lpp_list_set(list: *mut u8, index: i64, value: i64) {
+    let v = &mut *(list as *mut Vec<i64>);
+    v[index as usize] = value;
+}
+
 /// Returns the current length of the list.
 /// # Safety
 /// `list` must have been returned by `lpp_list_new`.

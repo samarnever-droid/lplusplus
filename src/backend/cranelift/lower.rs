@@ -655,8 +655,21 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                 self.operand_to_value(builder, &Operand::Local(*local), local_vars)
             }
             Rvalue::BinaryOp(op, left, right) => {
-                let left = self.operand_to_value(builder, left, local_vars)?;
-                let right = self.operand_to_value(builder, right, local_vars)?;
+                let mut left = self.operand_to_value(builder, left, local_vars)?;
+                let mut right = self.operand_to_value(builder, right, local_vars)?;
+                let left_ty = builder.func.dfg.value_type(left);
+                let right_ty = builder.func.dfg.value_type(right);
+                if left_ty != right_ty {
+                    if left_ty == cl_types::I8 && right_ty == cl_types::I64 {
+                        left = builder.ins().uextend(cl_types::I64, left);
+                    } else if left_ty == cl_types::I64 && right_ty == cl_types::I8 {
+                        right = builder.ins().uextend(cl_types::I64, right);
+                    } else if left_ty == cl_types::I32 && right_ty == cl_types::I64 {
+                        left = builder.ins().sextend(cl_types::I64, left);
+                    } else if left_ty == cl_types::I64 && right_ty == cl_types::I32 {
+                        right = builder.ins().sextend(cl_types::I64, right);
+                    }
+                }
                 let is_float = builder.func.dfg.value_type(left) == cl_types::F64;
                 let is_comparison = matches!(
                     op,
@@ -1229,8 +1242,21 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                 then_block,
                 else_block,
             } => {
-                let left = self.operand_to_value(builder, left, local_vars)?;
-                let right = self.operand_to_value(builder, right, local_vars)?;
+                let mut left = self.operand_to_value(builder, left, local_vars)?;
+                let mut right = self.operand_to_value(builder, right, local_vars)?;
+                let left_ty = builder.func.dfg.value_type(left);
+                let right_ty = builder.func.dfg.value_type(right);
+                if left_ty != right_ty {
+                    if left_ty == cl_types::I8 && right_ty == cl_types::I64 {
+                        left = builder.ins().uextend(cl_types::I64, left);
+                    } else if left_ty == cl_types::I64 && right_ty == cl_types::I8 {
+                        right = builder.ins().uextend(cl_types::I64, right);
+                    } else if left_ty == cl_types::I32 && right_ty == cl_types::I64 {
+                        left = builder.ins().sextend(cl_types::I64, left);
+                    } else if left_ty == cl_types::I64 && right_ty == cl_types::I32 {
+                        right = builder.ins().sextend(cl_types::I64, right);
+                    }
+                }
                 let is_float = builder.func.dfg.value_type(left) == cl_types::F64;
 
                 let comparison = if is_float {

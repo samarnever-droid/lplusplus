@@ -1,4 +1,4 @@
-# L++ (LPlusPlus) v4.8.0 Workspace Instructions
+# L++ (LPlusPlus) v4.9.0 Workspace Instructions
 
 See [AGENTS.md](file:///c:/Users/khati/lpp/AGENTS.md) for the complete language manual, standard library builtins, and package manager instructions.
 

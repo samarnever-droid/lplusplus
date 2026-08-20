@@ -159,7 +159,11 @@ impl<'a> TypeChecker<'a> {
                 for arg in args {
                     ref_args.push(Self::convert_ast_type_with_params_and_aliases(type_table, arg, type_params, type_aliases));
                 }
-                TypeRef::Generic(base_name.clone(), ref_args)
+                if base_name == "Tuple" {
+                    TypeRef::Tuple(ref_args)
+                } else {
+                    TypeRef::Generic(base_name.clone(), ref_args)
+                }
             }
             Type::Tuple(elements) => TypeRef::Tuple(
                 elements
@@ -485,6 +489,11 @@ impl<'a> TypeChecker<'a> {
                             stack.push(Node::Expr(base));
                             stack.push(Node::Expr(value));
                         }
+                        Stmt::AssignIndex { base, index, value } => {
+                            stack.push(Node::Expr(base));
+                            stack.push(Node::Expr(index));
+                            stack.push(Node::Expr(value));
+                        }
                         Stmt::If { condition, then_block, else_block, .. } => {
                             stack.push(Node::Expr(condition));
                             for s in then_block { stack.push(Node::Stmt(s)); }
@@ -656,6 +665,7 @@ impl<'a> TypeChecker<'a> {
             }
             Stmt::LetInferred {
                 name: _,
+                ty: _,
                 is_mut: _,
                 value,
                 binding_id,
@@ -745,6 +755,28 @@ impl<'a> TypeChecker<'a> {
                         "Cannot access field '{}' on non-struct type {:?}",
                         field, base_ty
                     ));
+                }
+            }
+            Stmt::AssignIndex { base, index, value } => {
+                let base_ty = self.infer_expr(base, current_scope, None)?;
+                let index_ty = self.infer_expr(index, current_scope, Some(TypeRef::Int))?;
+                if index_ty != TypeRef::Int {
+                    return Err(format!("List index must be Int, got {:?}", index_ty));
+                }
+                let mut expected_elem_ty = None;
+                if let TypeRef::Generic(ref name, ref params) = base_ty {
+                    if name == "List" && !params.is_empty() {
+                        expected_elem_ty = Some(params[0].clone());
+                    }
+                }
+                let val_ty = self.infer_expr(value, current_scope, expected_elem_ty.clone())?;
+                if let Some(elem_ty) = expected_elem_ty {
+                    if !types_compatible(&elem_ty, &val_ty) {
+                        return Err(format!(
+                            "Type mismatch in list index assignment: expected {:?}, got {:?}",
+                            elem_ty, val_ty
+                        ));
+                    }
                 }
             }
             Stmt::If {
@@ -1308,6 +1340,10 @@ impl<'a> TypeChecker<'a> {
                             return Ok(TypeRef::Int);
                         }
 
+                        if name == "list_set" || name == "lpp_list_set" || name == "set" {
+                            return Ok(TypeRef::Void);
+                        }
+
                         if name == "map_new" || name == "lpp_map_new" {
                             if let Some(TypeRef::Generic(map_name, params)) = expected_ty {
                                 if map_name == "Map" && params.len() == 2 {
@@ -1343,13 +1379,11 @@ impl<'a> TypeChecker<'a> {
                             return Ok(TypeRef::Str);
                         }
 
-                        if name == "str_split" || name == "lpp_str_split" {
+                        if name == "dir_list" || name == "lpp_dir_list" || name == "str_split" || name == "lpp_str_split" {
                             // The static builtin table cannot spell List[Str]
                             // (TypeRef::Generic is not const-constructible), so
                             // the catalog entries declare Void; refine the real
-                            // result type here. The (s, i64 codepoint) params
-                            // already match the native ABI (runtime/lpp_str.c)
-                            // and the documented signature in Doc.md.
+                            // result type here.
                             return Ok(TypeRef::Generic("List".to_string(), vec![TypeRef::Str]));
                         }
 
@@ -1597,7 +1631,25 @@ impl<'a> TypeChecker<'a> {
                 self.infer_expr(index, current_scope, None)?;
                 match base_ty {
                     TypeRef::Str => Ok(TypeRef::Str), // str[i] → single char as Str
-                    TypeRef::Generic(ref name, _) if name == "List" => Ok(TypeRef::Int),
+                    TypeRef::Generic(ref name, ref args) if name == "List" => {
+                        if let Some(elem) = args.first() {
+                            Ok(elem.clone())
+                        } else {
+                            Ok(TypeRef::Int)
+                        }
+                    }
+                    TypeRef::Tuple(ref elems) => {
+                        if let Expr::IntLiteral(idx) = index.as_ref() {
+                            let i = *idx as usize;
+                            if i < elems.len() {
+                                Ok(elems[i].clone())
+                            } else {
+                                Ok(TypeRef::Int)
+                            }
+                        } else {
+                            Ok(elems.first().cloned().unwrap_or(TypeRef::Int))
+                        }
+                    }
                     _ => Ok(TypeRef::Int), // fallback
                 }
             }
@@ -1640,6 +1692,47 @@ def main():
         type_checker
             .check_program(&ast)
             .expect("networking builtins should typecheck");
+    }
+
+    #[test]
+    fn positional_durable_file_and_buffer_64_builtins_typecheck() {
+        let source = r#"
+def main():
+    buf := buf_alloc(4096)
+    buf_set64le(buf, 0, 1000000000000)
+    buf_set64be(buf, 8, 2000000000000)
+    buf_set32be(buf, 16, 50000)
+    buf_set16be(buf, 20, 1200)
+    v1 := buf_get64le(buf, 0)
+    v2 := buf_get64be(buf, 8)
+    v3 := buf_get32be(buf, 16)
+    v4 := buf_get16be(buf, 20)
+    
+    fd := file_open("test.db", 0)
+    written := file_pwrite(fd, buf, 0, 0, 4096)
+    read_bytes := file_pread(fd, buf, 0, 0, 4096)
+    s1 := file_fsync(fd)
+    s2 := file_fdatasync(fd)
+    sz := file_size(fd)
+    tr := file_ftruncate(fd, 8192)
+    file_close(fd)
+    buf_free(buf)
+"#;
+
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.tokenize().expect("source should lex");
+        let mut parser = Parser::new(tokens);
+        let mut ast = parser.parse().expect("source should parse");
+
+        let mut resolver = Resolver::new();
+        resolver
+            .resolve_program(&mut ast)
+            .expect("file/buf program should resolve");
+
+        let mut type_checker = TypeChecker::new(&mut resolver.table);
+        type_checker
+            .check_program(&ast)
+            .expect("file and buffer 64 builtins should typecheck");
     }
 
     #[test]

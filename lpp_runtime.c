@@ -1253,6 +1253,11 @@ void lpp_list_push(void *list, int64_t value) {
 
 /* Store one ARC object reference in List[T]. */
 void lpp_list_push_arc(void *list, void *value) {
+    LppList *l = (LppList *)list;
+    if (l && !l->retain_element) {
+        l->retain_element = lpp_list_arc_retain_element;
+        l->drop_element = lpp_list_arc_drop_element;
+    }
     lpp_list_push(list, (int64_t)(intptr_t)value);
 }
 
@@ -1331,6 +1336,15 @@ void *lpp_list_get_arc(void *list, int64_t index) {
 int64_t lpp_list_len(void *list) {
     LppList *l = (LppList *)list;
     return l ? l->len : 0;
+}
+
+int64_t lpp_list_pop(void *list) {
+    LppList *l = (LppList *)list;
+    if (!l || l->len <= 0) {
+        lpp_panic("list pop attempted on empty or null list");
+    }
+    l->len--;
+    return l->data[l->len];
 }
 
 void lpp_list_free(void *list) {
@@ -2222,4 +2236,121 @@ void *dlsym(void *handle, const char *symbol) { return (void*)GetProcAddress((HM
 int dlclose(void *handle) { return FreeLibrary((HMODULE)handle) ? 0 : -1; }
 const char *dlerror(void) { return "dlerror not implemented on Windows"; }
 #endif
+
+/* ── Positional Durable File I/O (P0.4) ── */
+int64_t lpp_file_open(const char *path, int64_t flags) {
+    if (!path) return -1;
+#if defined(_WIN32)
+    DWORD access = GENERIC_READ | GENERIC_WRITE;
+    DWORD creation = OPEN_ALWAYS;
+    DWORD attr = FILE_ATTRIBUTE_NORMAL;
+    if (flags & 1) attr |= FILE_FLAG_NO_BUFFERING | FILE_FLAG_WRITE_THROUGH;
+    HANDLE h = CreateFileA(path, access, FILE_SHARE_READ | FILE_SHARE_WRITE, 0, creation, attr, 0);
+    if (h == INVALID_HANDLE_VALUE) return -1;
+    return (int64_t)(intptr_t)h;
+#else
+    int f = O_RDWR | O_CREAT;
+    if (flags & 1) f |= O_SYNC;
+    int fd = open(path, f, 0644);
+    return (int64_t)fd;
+#endif
+}
+
+void lpp_file_close(int64_t fd) {
+    if (fd <= 0) return;
+#if defined(_WIN32)
+    CloseHandle((HANDLE)(intptr_t)fd);
+#else
+    close((int)fd);
+#endif
+}
+
+int64_t lpp_file_pread(int64_t fd, void *buf, int64_t buf_off, int64_t file_off, int64_t len) {
+    if (fd <= 0 || !buf || len <= 0 || file_off < 0 || buf_off < 0) return -1;
+    int64_t buf_size = *(int64_t*)((char*)buf - 8);
+    if (buf_off + len > buf_size) return -1;
+#if defined(_WIN32)
+    HANDLE h = (HANDLE)(intptr_t)fd;
+    OVERLAPPED ov;
+    memset(&ov, 0, sizeof(ov));
+    ov.Offset = (DWORD)(file_off & 0xFFFFFFFF);
+    ov.OffsetHigh = (DWORD)((file_off >> 32) & 0xFFFFFFFF);
+    DWORD bytes_read = 0;
+    if (!ReadFile(h, (char*)buf + buf_off, (DWORD)len, &bytes_read, &ov)) {
+        DWORD err = GetLastError();
+        if (err == ERROR_HANDLE_EOF) return (int64_t)bytes_read;
+        return -1;
+    }
+    return (int64_t)bytes_read;
+#else
+    ssize_t res = pread((int)fd, (char*)buf + buf_off, (size_t)len, (off_t)file_off);
+    return (int64_t)res;
+#endif
+}
+
+int64_t lpp_file_pwrite(int64_t fd, void *buf, int64_t buf_off, int64_t file_off, int64_t len) {
+    if (fd <= 0 || !buf || len <= 0 || file_off < 0 || buf_off < 0) return -1;
+    int64_t buf_size = *(int64_t*)((char*)buf - 8);
+    if (buf_off + len > buf_size) return -1;
+#if defined(_WIN32)
+    HANDLE h = (HANDLE)(intptr_t)fd;
+    OVERLAPPED ov;
+    memset(&ov, 0, sizeof(ov));
+    ov.Offset = (DWORD)(file_off & 0xFFFFFFFF);
+    ov.OffsetHigh = (DWORD)((file_off >> 32) & 0xFFFFFFFF);
+    DWORD written = 0;
+    if (!WriteFile(h, (char*)buf + buf_off, (DWORD)len, &written, &ov)) {
+        return -1;
+    }
+    return (int64_t)written;
+#else
+    ssize_t res = pwrite((int)fd, (char*)buf + buf_off, (size_t)len, (off_t)file_off);
+    return (int64_t)res;
+#endif
+}
+
+int64_t lpp_file_fsync(int64_t fd) {
+    if (fd <= 0) return -1;
+#if defined(_WIN32)
+    if (!FlushFileBuffers((HANDLE)(intptr_t)fd)) return -1;
+    return 0;
+#else
+    return fsync((int)fd);
+#endif
+}
+
+int64_t lpp_file_fdatasync(int64_t fd) {
+    return lpp_file_fsync(fd);
+}
+
+int64_t lpp_file_ftruncate(int64_t fd, int64_t size) {
+    if (fd <= 0 || size < 0) return -1;
+#if defined(_WIN32)
+    HANDLE h = (HANDLE)(intptr_t)fd;
+    LARGE_INTEGER li;
+    li.QuadPart = size;
+    if (!SetFilePointerEx(h, li, 0, FILE_BEGIN)) return -1;
+    if (!SetEndOfFile(h)) return -1;
+    return 0;
+#else
+    return ftruncate((int)fd, (off_t)size);
+#endif
+}
+
+int64_t lpp_fd_size(int64_t fd) {
+    if (fd <= 0) return -1;
+#if defined(_WIN32)
+    HANDLE h = (HANDLE)(intptr_t)fd;
+    LARGE_INTEGER li;
+    if (!GetFileSizeEx(h, &li)) return -1;
+    return (int64_t)li.QuadPart;
+#else
+    struct stat st;
+    if (fstat((int)fd, &st) != 0) return -1;
+    return (int64_t)st.st_size;
+#endif
+}
+
+
+
 

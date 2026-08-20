@@ -1158,6 +1158,11 @@ fn specialize_generic_enums(program: &mut Program) -> Result<(), String> {
                     rewrite_expr(base, templates, generated, requested)?;
                     rewrite_expr(value, templates, generated, requested)?;
                 }
+                Stmt::AssignIndex { base, index, value } => {
+                    rewrite_expr(base, templates, generated, requested)?;
+                    rewrite_expr(index, templates, generated, requested)?;
+                    rewrite_expr(value, templates, generated, requested)?;
+                }
                 Stmt::If { condition, then_block, else_block, .. } => {
                     rewrite_expr(condition, templates, generated, requested)?;
                     rewrite_stmts(then_block, templates, generated, requested)?;
@@ -1586,6 +1591,7 @@ mod tests {
                     body: vec![
                         Stmt::LetInferred {
                             name: "b".to_string(),
+                            ty: None,
                             value: Expr::Call {
                                 callee: Box::new(Expr::Identifier("Box".to_string(), std::cell::Cell::new(None))),
                                 args: vec![Expr::IntLiteral(42)],
@@ -1649,6 +1655,7 @@ mod tests {
                     body: vec![
                         Stmt::LetInferred {
                             name: "f".to_string(),
+                            ty: None,
                             value: Expr::FloatLiteral(1.5),
                             binding_id: std::cell::Cell::new(None),
                             is_mut: false,
@@ -1843,6 +1850,7 @@ mod tests {
                     body: vec![
                         Stmt::LetInferred {
                             name: "h".to_string(),
+                            ty: None,
                             value: Expr::Call {
                                 callee: Box::new(Expr::Identifier("Holder".to_string(), std::cell::Cell::new(None))),
                                 args: vec![Expr::IntLiteral(1)],

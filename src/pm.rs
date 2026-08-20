@@ -1389,7 +1389,16 @@ fn resolve_min_runtime_object() -> Option<PathBuf> {
             let cache_hash = cache_dir.join("runtime.hash");
 
             // Hash-based invalidation: compare source hash with stored hash
-            let current_hash = file_content_hash(&src_path);
+            let mut combined = file_content_hash(&src_path).unwrap_or(0);
+            if let Some(parent) = src_path.parent() {
+                let wv_path = parent.join("lpp_webview.c");
+                if wv_path.exists() {
+                    if let Some(h) = file_content_hash(&wv_path) {
+                        combined ^= h.rotate_left(17);
+                    }
+                }
+            }
+            let current_hash = Some(combined);
             let stored_hash = fs::read_to_string(&cache_hash)
                 .ok()
                 .and_then(|s| s.trim().parse::<u64>().ok());
@@ -1405,18 +1414,23 @@ fn resolve_min_runtime_object() -> Option<PathBuf> {
                 let tmp_obj = cache_dir.join(format!("{}.tmp.{}", filename, pid));
                 #[cfg(windows)]
                 load_msvc_env();
-                let config_clang = crate::config::LppConfig::load_or_create().llvm_path;
-                let cc_name = std::env::var("CC")
-                    .ok()
-                    .or(config_clang)
-                    .unwrap_or_else(|| if cfg!(windows) { "cl.exe".to_string() } else { "cc".to_string() });
                 #[cfg(windows)]
-                let cc_name = if cc_name.eq_ignore_ascii_case("cl.exe") {
-                    find_msvc_cl()
-                        .map(|path| path.to_string_lossy().into_owned())
-                        .unwrap_or(cc_name)
-                } else {
-                    cc_name
+                let cc_name = find_msvc_cl()
+                    .map(|path| path.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| {
+                        let config_clang = crate::config::LppConfig::load_or_create().llvm_path;
+                        std::env::var("CC")
+                            .ok()
+                            .or(config_clang)
+                            .unwrap_or_else(|| "cl.exe".to_string())
+                    });
+                #[cfg(not(windows))]
+                let cc_name = {
+                    let config_clang = crate::config::LppConfig::load_or_create().llvm_path;
+                    std::env::var("CC")
+                        .ok()
+                        .or(config_clang)
+                        .unwrap_or_else(|| "cc".to_string())
                 };
                 let mut cmd = std::process::Command::new(&cc_name);
                 let is_msvc = cc_name.ends_with("cl.exe") || cc_name.eq_ignore_ascii_case("cl");

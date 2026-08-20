@@ -1641,6 +1641,20 @@ fn resolve_module_filepath(module: &str, base_dir: &std::path::Path) -> Result<P
         if local_src.exists() {
             return Ok(local_src);
         }
+        if let Some(parent) = base_dir.parent() {
+            let parent_src = parent.join("src").join(format!("{}.lpp", module));
+            if parent_src.exists() {
+                return Ok(parent_src);
+            }
+            let parent_exact = parent.join(format!("{}.lpp", module));
+            if parent_exact.exists() {
+                return Ok(parent_exact);
+            }
+        }
+        let cwd_src = std::path::Path::new("src").join(format!("{}.lpp", module));
+        if cwd_src.exists() {
+            return Ok(cwd_src);
+        }
     }
 
     // 2. Standard Library protection: stdlib modules take precedence over third-party packages
