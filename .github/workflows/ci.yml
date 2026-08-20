@@ -17,6 +17,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - name: Show toolchain
         run: |
           rustc --version
@@ -50,6 +51,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - name: Install mold linker
         run: sudo apt-get update -qq && sudo apt-get install -y -qq mold 2>/dev/null || true
       - name: Run King 20 Stable v1
@@ -145,6 +147,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - name: Install mold linker
         run: sudo apt-get update -qq && sudo apt-get install -y -qq mold 2>/dev/null || true
       - name: Run 10k / 50k / 100k phase scaling suite
@@ -163,6 +166,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - name: Show sqlite3 version
         run: python3 -c "import sqlite3; print('sqlite3', sqlite3.sqlite_version)"
       - name: Build the L++ compiler
@@ -229,6 +233,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - name: Install zip/unzip
         run: sudo apt-get update -qq && sudo apt-get install -y -qq zip unzip 2>/dev/null || true
       - name: Build the L++ compiler
@@ -274,6 +279,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - name: Locate and load MSVC tools
         shell: pwsh
         run: |
@@ -450,6 +456,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - name: Build and test macOS toolchain
         run: |
           cargo test --locked

@@ -3,6 +3,10 @@ name = "lpp"
 version = "4.9.0"
 edition = "2024"
 
+[lib]
+name = "lpp"
+path = "src/lib.rs"
+
 [[bin]]
 name = "lpp"
 path = "src/main.rs"
