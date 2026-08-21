@@ -1776,6 +1776,8 @@ pub fn host_link_binary_target(
                 Some(obj) => cmd.arg(obj),
                 None => cmd.arg(&runtime_src_path),
             };
+        } else if let Some(runtime_obj) = resolve_min_runtime_object() {
+            cmd.arg(runtime_obj);
         }
         cmd.arg("-lm"); // runtime math references must precede the library
         if is_android {
