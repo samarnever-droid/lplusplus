@@ -4047,6 +4047,7 @@ fn is_kernel32_symbol(name: &str) -> bool {
             | "GetSystemTimeAsFileTime"
             | "InitializeCriticalSection"
             | "EnterCriticalSection"
+            | "TryEnterCriticalSection"
             | "LeaveCriticalSection"
             | "DeleteCriticalSection"
             | "TlsAlloc"
