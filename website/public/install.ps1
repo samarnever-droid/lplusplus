@@ -1,101 +1,112 @@
 <#
 .SYNOPSIS
-    L++ Compiler & Toolchain Global Installer for Windows
-    Hosted on Cloudflare Edge CDN: https://lplusplus.bond/install.ps1
-    Usage:
-        irm https://lplusplus.bond/install.ps1 | iex
+Installs a prebuilt L++ release on Windows. Use `$env:LPP_FROM_SOURCE=1` to build from a local source checkout.
 #>
 
 $ErrorActionPreference = "Stop"
+$ProjectDir = $PSScriptRoot
 $InstallDir = if ($env:LPP_INSTALL_DIR) { $env:LPP_INSTALL_DIR } else { Join-Path $HOME ".lpp" }
 $BinDir = Join-Path $InstallDir "bin"
 $LibDir = Join-Path $InstallDir "lib"
-$Version = if ($env:LPP_VERSION) { $env:LPP_VERSION } else { "v4.7.0" }
+$Version = if ($env:LPP_VERSION) { $env:LPP_VERSION } else { "latest" }
 if (($Version -ne "latest") -and (-not $Version.StartsWith("v"))) { $Version = "v$Version" }
-
-$ReleaseUrl = "https://github.com/samarnever-droid/lplusplus/releases/download/$Version/lpp-windows-x86_64.zip"
-$LatestUrl = "https://github.com/samarnever-droid/lplusplus/releases/latest/download/lpp-windows-x86_64.zip"
-
-Write-Host "========================================================" -ForegroundColor Green
-Write-Host "       L++ Compiler & Toolchain Global Installer        " -ForegroundColor Green
-Write-Host "========================================================" -ForegroundColor Green
+if ($Version -eq "latest") {
+    $ReleaseUrl = "https://github.com/samarnever-droid/lplusplus/releases/latest/download/lpp-windows-x86_64.zip"
+} else {
+    $ReleaseUrl = "https://github.com/samarnever-droid/lplusplus/releases/download/$Version/lpp-windows-x86_64.zip"
+}
 
 New-Item -ItemType Directory -Force $BinDir, $LibDir | Out-Null
 
-function Try-DownloadRelease {
-    $temp = Join-Path $env:TEMP "lpp-install-$([guid]::NewGuid())"
+function Install-Release {
+    $temp = Join-Path $env:TEMP "lpp-release-$([guid]::NewGuid())"
     New-Item -ItemType Directory -Force $temp | Out-Null
     try {
-        Write-Host "[1/3] Downloading L++ prebuilt release asset ($Version)..." -ForegroundColor Yellow
-        $downloaded = $false
-        try {
-            Invoke-WebRequest -Uri $ReleaseUrl -OutFile "$temp\lpp.zip" -UseBasicParsing
-            $downloaded = $true
-        } catch {
-            try {
-                Invoke-WebRequest -Uri $LatestUrl -OutFile "$temp\lpp.zip" -UseBasicParsing
-                $downloaded = $true
-            } catch {}
-        }
-        if (-not $downloaded) { return $false }
-
+        Write-Host "[1/3] Downloading L++ $Version release asset..." -ForegroundColor Yellow
+        Invoke-WebRequest -Uri $ReleaseUrl -OutFile "$temp\lpp.zip" -UseBasicParsing
         Expand-Archive -Path "$temp\lpp.zip" -DestinationPath $temp -Force
         $root = Join-Path $temp "lpp-windows-x86_64"
-        if (-not (Test-Path "$root\bin\lpp.exe")) {
-            if (Test-Path "$temp\bin\lpp.exe") {
-                $root = $temp
-            } else {
-                return $false
-            }
-        }
-        Write-Host "[2/3] Installing binary components to $BinDir..." -ForegroundColor Yellow
+        if (-not (Test-Path "$root\bin\lpp.exe")) { throw "Release archive is missing lpp.exe" }
+        Write-Host "[2/3] Installing compiler, linker, and runtime objects..." -ForegroundColor Yellow
         Copy-Item "$root\bin\lpp.exe" "$BinDir\lpp.exe" -Force
-        if (Test-Path "$root\bin\lpp-link.exe") { Copy-Item "$root\bin\lpp-link.exe" "$BinDir\lpp-link.exe" -Force }
-        if (Test-Path "$root\lib") { Copy-Item "$root\lib\*" $LibDir -Recurse -Force -ErrorAction SilentlyContinue }
-        if (Test-Path "$root\pm") { Copy-Item "$root\pm" "$InstallDir\pm" -Recurse -Force -ErrorAction SilentlyContinue }
+        Copy-Item "$root\bin\lpp-link.exe" "$BinDir\lpp-link.exe" -Force
+        Copy-Item "$root\lib\*" $LibDir -Force
+        if (Test-Path "$root\pm") { Remove-Item "$InstallDir\pm" -Recurse -Force -ErrorAction SilentlyContinue; Copy-Item "$root\pm" "$InstallDir\pm" -Recurse -Force }
+        if (Test-Path "$root\registry") { Remove-Item "$InstallDir\registry" -Recurse -Force -ErrorAction SilentlyContinue; Copy-Item "$root\registry" "$InstallDir\registry" -Recurse -Force }
         return $true
     } catch {
+        Write-Warning "Release installation failed: $($_.Exception.Message)"
         return $false
     } finally {
         Remove-Item $temp -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
 
-function Try-CargoInstall {
+function Install-Source {
     if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
-        Write-Error "Cargo is required when prebuilt binaries are unavailable. Install Rust from https://rustup.rs"
-        exit 1
+        throw "Cargo is required for source installation. Install Rust or use a published release asset."
     }
-    Write-Host "[1/3] Compiling L++ toolchain from official repository via Cargo..." -ForegroundColor Yellow
-    cargo install --git https://github.com/samarnever-droid/lplusplus --root $InstallDir --force --bin lpp --bin lpp-link
-    if ($LASTEXITCODE -ne 0) { throw "Cargo installation failed." }
+    Write-Host "[1/3] Building L++ compiler and linker from source..." -ForegroundColor Yellow
+    cargo build --release --bin lpp --bin lpp-link
+    if ($LASTEXITCODE -ne 0) { throw "Cargo build failed." }
+    Write-Host "[2/3] Packaging compiler and runtime objects..." -ForegroundColor Yellow
+    Copy-Item "$ProjectDir\target\release\lpp.exe" "$BinDir\lpp.exe" -Force
+    Copy-Item "$ProjectDir\target\release\lpp-link.exe" "$BinDir\lpp-link.exe" -Force
+    Copy-Item "$ProjectDir\lpp_runtime.c" "$LibDir\lpp_runtime.c" -Force
+    if (Test-Path "$ProjectDir\pm") { Remove-Item "$InstallDir\pm" -Recurse -Force -ErrorAction SilentlyContinue; Copy-Item "$ProjectDir\pm" "$InstallDir\pm" -Recurse -Force }
+    if (Test-Path "$ProjectDir\registry") { Remove-Item "$InstallDir\registry" -Recurse -Force -ErrorAction SilentlyContinue; Copy-Item "$ProjectDir\registry" "$InstallDir\registry" -Recurse -Force }
+    Copy-Item "$ProjectDir\runtime" "$LibDir\runtime" -Recurse -Force
+    $compiled = $false
+    $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+    if (Test-Path $vswhere) {
+        $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+        if ($vs) {
+            cmd.exe /d /c "call `"$vs\VC\Auxiliary\Build\vcvars64.bat`" >nul && cl.exe /nologo /O2 /c `"$ProjectDir\lpp_runtime.c`" /Fo:`"$LibDir\lpp_runtime.obj`""
+            cmd.exe /d /c "call `"$vs\VC\Auxiliary\Build\vcvars64.bat`" >nul && cl.exe /nologo /O2 /GS- /Gs1000000 /DLPP_FREESTANDING /c `"$ProjectDir\runtime\windows_x86_64_min.c`" /Fo:`"$LibDir\lpp_runtime_min.obj`""
+            $compiled = $true
+        }
+    }
+    if (-not $compiled) {
+        if (Get-Command gcc -ErrorAction SilentlyContinue) {
+            gcc -O2 -c "$ProjectDir\lpp_runtime.c" -o "$LibDir\lpp_runtime.obj"
+            gcc -O2 -fno-stack-protector -DLPP_FREESTANDING -c "$ProjectDir\runtime\windows_x86_64_min.c" -o "$LibDir\lpp_runtime_min.obj"
+        } elseif (Get-Command clang -ErrorAction SilentlyContinue) {
+            clang -O2 -c "$ProjectDir\lpp_runtime.c" -o "$LibDir\lpp_runtime.obj"
+            clang -O2 -fno-stack-protector -DLPP_FREESTANDING -c "$ProjectDir\runtime\windows_x86_64_min.c" -o "$LibDir\lpp_runtime_min.obj"
+        }
+    }
 }
 
-if (Try-DownloadRelease) {
-    Write-Host "[3/3] Prebuilt release installation complete." -ForegroundColor Green
-} else {
-    Write-Host "Prebuilt binary package currently building, compiling from official source..." -ForegroundColor Yellow
-    Try-CargoInstall
-    Write-Host "[3/3] Source installation complete." -ForegroundColor Green
+if ($env:LPP_FROM_SOURCE -eq "1") {
+    Install-Source
+} elseif (-not (Install-Release)) {
+    Write-Warning "Falling back to local source installation."
+    Install-Source
 }
 
-# Update User Environment PATH in Registry
-try {
-    $registryKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey("Environment", $true)
-    $currentPath = $registryKey.GetValue("Path", "", [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
-    if ($currentPath -split ";" -notcontains $BinDir) {
-        $registryKey.SetValue("Path", ($currentPath + ";" + $BinDir) -replace ";+", ";", [Microsoft.Win32.RegistryValueKind]::String)
-    }
-    $registryKey.Close()
-} catch {}
+$registryKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey("Environment", $true)
+$currentPath = $registryKey.GetValue("Path", "", [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+if ($currentPath -split ";" -notcontains $BinDir) {
+    $registryKey.SetValue("Path", ($currentPath + ";" + $BinDir) -replace ";+", ";", [Microsoft.Win32.RegistryValueKind]::String)
+}
+$registryKey.Close()
 
-# Update current process PATH
+# Make lpp available in this PowerShell immediately too.
 if (($env:Path -split ";") -notcontains $BinDir) {
     $env:Path = "$BinDir;$env:Path"
 }
 
-Write-Host ""
-Write-Host "✓ L++ Toolchain installed successfully to: $BinDir\lpp.exe" -ForegroundColor Green
-Write-Host "To verify your install, run:" -ForegroundColor White
-Write-Host "  lpp --help" -ForegroundColor Cyan
-Write-Host "  lpp upgrade --check" -ForegroundColor Cyan
+$InstalledVersion = "unable to execute $BinDir\lpp.exe"
+try {
+    if (Test-Path "$BinDir\lpp.exe") {
+        $InstalledVersion = (& "$BinDir\lpp.exe" -v 2>$null) -join " "
+    }
+} catch {}
+
+Write-Host "[3/3] Installed commands: lpp, lpp-link" -ForegroundColor Green
+Write-Host "Requested release: $Version" -ForegroundColor Green
+Write-Host "Release asset: lpp-windows-x86_64.zip" -ForegroundColor Green
+Write-Host "Download URL: $ReleaseUrl" -ForegroundColor Green
+Write-Host "Installed version: $InstalledVersion" -ForegroundColor Green
+Write-Host "Install path: $InstallDir" -ForegroundColor Green
+Write-Host "You can run now: lpp -v" -ForegroundColor Green

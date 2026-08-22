@@ -6,6 +6,8 @@ on:
     paths:
       - "website/**"
       - "assets/**"
+      - "install.ps1"
+      - "install.sh"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
 
@@ -29,6 +31,14 @@ jobs:
           node-version: 20
           cache: npm
           cache-dependency-path: website/package-lock.json
+      - name: Sync root installers into site
+        # The hosted installers at lplusplus.bond/install.ps1 and /install.sh
+        # are served from website/public. Canonical sources live at the repo
+        # root, so refresh them here on every deploy to prevent version drift
+        # (the site previously served a stale copy pinned to v4.7.0).
+        run: |
+          cp install.ps1 website/public/install.ps1
+          cp install.sh website/public/install.sh
       - name: Build website
         working-directory: website
         run: |
