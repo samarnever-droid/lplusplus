@@ -99,6 +99,7 @@ void lpp_print_float(double v) {
 }
 void lpp_print_bool(int8_t value) { lpp_print_int(value ? 1 : 0); }
 void lpp_print_str(const char *t) { if(!t)return; int n=lpp_strlen(t); lpp_write(t,(DWORD)n); lpp_write("\n",1); }
+void lpp_write_str(const char *t) { if(!t)return; int n=lpp_strlen(t); if(n>0) lpp_write(t,(DWORD)n); }
 
 #pragma function(fmod)
 double fmod(double x, double y) {
@@ -248,6 +249,29 @@ void *lpp_list_get_arc(void*l,int64_t i){return(void*)(intptr_t)lpp_list_get(l,i
 int64_t lpp_list_len(void*r){return r?((LppList*)r)->len:0;}
 int64_t lpp_list_pop(void*r){LppList*l=(LppList*)r;if(!l||l->len<=0)ExitProcess(101);l->len--;return l->data[l->len];}
 void lpp_list_free(void*l){lpp_arc_release(l);}
+void lpp_list_insert(void*r,int64_t idx,int64_t v){LppList*l=(LppList*)r;if(!l||idx<0||idx>l->len)ExitProcess(101);lpp_list_push(l,0);for(int64_t i=l->len-1;i>idx;i--)l->data[i]=l->data[i-1];l->data[idx]=v;if(l->arc_elements)lpp_arc_retain((void*)(intptr_t)v);}
+int64_t lpp_list_remove(void*r,int64_t idx){LppList*l=(LppList*)r;if(!l||idx<0||idx>=l->len)ExitProcess(101);int64_t val=l->data[idx];for(int64_t i=idx;i<l->len-1;i++)l->data[i]=l->data[i+1];l->len--;return val;}
+void lpp_list_reserve(void*r,int64_t cap){(void)r;(void)cap;}
+int64_t lpp_list_capacity(void*r){return r?((LppList*)r)->cap:0;}
+void lpp_list_clear(void*r){LppList*l=(LppList*)r;if(!l)return;if(l->arc_elements){for(int64_t i=0;i<l->len;i++)lpp_arc_release((void*)(intptr_t)l->data[i]);}l->len=0;}
+void lpp_list_truncate(void*r,int64_t n){LppList*l=(LppList*)r;if(!l||n>=l->len||n<0)return;if(l->arc_elements){for(int64_t i=n;i<l->len;i++)lpp_arc_release((void*)(intptr_t)l->data[i]);}l->len=n;}
+void lpp_list_swap(void*r,int64_t i,int64_t j){LppList*l=(LppList*)r;if(!l||i<0||i>=l->len||j<0||j>=l->len)ExitProcess(101);int64_t t=l->data[i];l->data[i]=l->data[j];l->data[j]=t;}
+void lpp_list_reverse(void*r){LppList*l=(LppList*)r;if(!l||l->len<=1)return;int64_t i=0,j=l->len-1;while(i<j){int64_t t=l->data[i];l->data[i]=l->data[j];l->data[j]=t;i++;j--;}}
+void lpp_list_sort(void*r){LppList*l=(LppList*)r;if(!l||l->len<2)return;for(int64_t i=1;i<l->len;i++){int64_t k=l->data[i];int64_t j=i-1;while(j>=0&&l->data[j]>k){l->data[j+1]=l->data[j];j--;}l->data[j+1]=k;}}
+void lpp_list_sort_desc(void*r){LppList*l=(LppList*)r;if(!l||l->len<2)return;for(int64_t i=1;i<l->len;i++){int64_t k=l->data[i];int64_t j=i-1;while(j>=0&&l->data[j]<k){l->data[j+1]=l->data[j];j--;}l->data[j+1]=k;}}
+void lpp_list_sort_u(void*r){LppList*l=(LppList*)r;if(!l||l->len<2)return;for(int64_t i=1;i<l->len;i++){int64_t k=l->data[i];int64_t j=i-1;while(j>=0&&(uint64_t)l->data[j]>(uint64_t)k){l->data[j+1]=l->data[j];j--;}l->data[j+1]=k;}}
+int64_t lpp_list_index_of(void*r,int64_t v){LppList*l=(LppList*)r;if(!l)return -1;for(int64_t i=0;i<l->len;i++){if(l->data[i]==v)return i;}return -1;}
+int64_t lpp_list_binary_search(void*r,int64_t v){LppList*l=(LppList*)r;if(!l)return -1;int64_t lo=0,hi=l->len-1;while(lo<=hi){int64_t mid=lo+(hi-lo)/2;if(l->data[mid]==v)return mid;if(l->data[mid]<v)lo=mid+1;else hi=mid-1;}return -(lo+1);}
+void lpp_list_extend(void*d,void*s){LppList*dst=(LppList*)d;LppList*src=(LppList*)s;if(!dst||!src)return;for(int64_t i=0;i<src->len;i++)lpp_list_push(dst,src->data[i]);}
+void lpp_prefetch(int64_t addr){(void)addr;}
+void lpp_prefetch_write(int64_t addr){(void)addr;}
+typedef struct{int64_t v[2];}LppVec128;
+LppVec128 lpp_vec_i64x2_and(LppVec128 a,LppVec128 b){LppVec128 r;r.v[0]=a.v[0]&b.v[0];r.v[1]=a.v[1]&b.v[1];return r;}
+LppVec128 lpp_vec_i64x2_or(LppVec128 a,LppVec128 b){LppVec128 r;r.v[0]=a.v[0]|b.v[0];r.v[1]=a.v[1]|b.v[1];return r;}
+LppVec128 lpp_vec_i64x2_not(LppVec128 a){LppVec128 r;r.v[0]=~a.v[0];r.v[1]=~a.v[1];return r;}
+LppVec128 lpp_vec_u8x16_splat(int64_t byte_val){uint8_t b=(uint8_t)byte_val;uint64_t half=0;for(int i=0;i<8;i++)half|=((uint64_t)b<<(i*8));LppVec128 r;r.v[0]=(int64_t)half;r.v[1]=(int64_t)half;return r;}
+LppVec128 lpp_vec_u8x16_eq(LppVec128 a,LppVec128 b){uint8_t*pa=(uint8_t*)&a;uint8_t*pb=(uint8_t*)&b;LppVec128 r;uint8_t*pr=(uint8_t*)&r;for(int i=0;i<16;i++)pr[i]=(pa[i]==pb[i])?0xFF:0x00;return r;}
+int64_t lpp_vec_u8x16_movemask(LppVec128 a){uint8_t*pa=(uint8_t*)&a;int64_t m=0;for(int i=0;i<16;i++){if(pa[i]&0x80)m|=(1<<i);}return m;}
 typedef struct{void*base;int64_t start,length,generation,kind;}LppSlice;
 static void*lpp_slice_checked_base(LppSlice*v){int64_t r;if(!v||!v->base||!v->generation)ExitProcess(101);r=lpp_weak_get((int64_t)(intptr_t)v->base,v->generation);if(!r)ExitProcess(101);return(void*)(intptr_t)r;}
 void*lpp_slice_init(void*storage,void*base,int64_t start,int64_t length,int64_t kind){int64_t n;LppSlice*v;if(!storage||!base||start<0||length<0||start>0x7fffffffffffffffLL-length)ExitProcess(101);n=kind==0?(int64_t)lpp_strlen((const char*)base):lpp_list_len(base);if(start>n||length>n-start)ExitProcess(101);v=(LppSlice*)storage;v->base=base;v->start=start;v->length=length;v->generation=lpp_weak_generation(base);v->kind=kind;return v;}
@@ -257,8 +281,6 @@ double lpp_slice_get_float(void*raw,int64_t index){int64_t i=lpp_slice_get(raw,i
 int8_t lpp_slice_get_bool(void*raw,int64_t index){return lpp_slice_get(raw,index)!=0;}
 char*lpp_str_slice_get(void*raw,int64_t index){LppSlice*v=(LppSlice*)raw;const char*b=(const char*)lpp_slice_checked_base(v);char*r;if(v->kind!=0||index<0||index>=v->length)ExitProcess(101);r=(char*)lpp_arc_alloc(2);if(!r)ExitProcess(101);r[0]=b[v->start+index];r[1]=0;return r;}
 char*lpp_str_slice_to_str(void*raw){LppSlice*v=(LppSlice*)raw;const char*b=(const char*)lpp_slice_checked_base(v);char*r;if(v->kind!=0)ExitProcess(101);r=(char*)lpp_arc_alloc(v->length+1);if(!r)ExitProcess(101);lpp_memcpy(r,b+v->start,(int)v->length);r[v->length]=0;return r;}
-
-void lpp_thread_spawn(void*fn,void*env){HANDLE h=CreateThread(0,0,(DWORD(__stdcall*)(void*))fn,env,0,0);if(h){WaitForSingleObject(h,INFINITE);CloseHandle(h);}}
 
 /* ═══ STRING ═══════════════════════════════════════════════════════════════ */
 char *lpp_str_concat(const char *a, const char *b) {
@@ -341,7 +363,11 @@ void lpp_map_remove_str(void *map, const char *key) { LppMap *m = (LppMap *)map;
 void lpp_map_put_float(void *map, int64_t key, double val) { int64_t ival; lpp_memcpy((char*)&ival, (const char*)&val, 8); lpp_map_put(map, key, ival); }
 double lpp_map_get_float(void *map, int64_t key) { int64_t ival = lpp_map_get(map, key); double fval; lpp_memcpy((char*)&fval, (const char*)&ival, 8); return fval; }
 void lpp_map_put_str_float(void *map, const char *key, double val) { int64_t ival; lpp_memcpy((char*)&ival, (const char*)&val, 8); lpp_map_put_str(map, key, ival); }
-double lpp_map_get_str_float(void *map, const char *key) { int64_t ival = lpp_map_get_str(map, key); double fval; lpp_memcpy((char*)&fval, (const char*)&ival, 8); return fval; }
+void *lpp_map_keys(void *map) { LppMap *m = (LppMap *)map; if (!m || m->len == 0) return lpp_list_new(); int has_str = 0; for (int64_t i = 0; i < m->cap; i++) { if (m->entries[i].occupied == 1 && m->entries[i].is_str_key) { has_str = 1; break; } } void *lst = has_str ? lpp_list_new_arc() : lpp_list_new(); for (int64_t i = 0; i < m->cap; i++) { if (m->entries[i].occupied == 1) { if (m->entries[i].is_str_key) { const char *s = (const char *)(uintptr_t)m->entries[i].key; int len = lpp_strlen(s); char *cp = (char *)lpp_arc_alloc(len + 1); if (cp) { lpp_memcpy(cp, s, len); cp[len] = 0; } lpp_list_push_arc(lst, cp); } else { lpp_list_push(lst, m->entries[i].key); } } } return lst; }
+void *lpp_map_values(void *map) { LppMap *m = (LppMap *)map; if (!m || m->len == 0) return lpp_list_new(); void *lst = m->arc_values ? lpp_list_new_arc() : lpp_list_new(); for (int64_t i = 0; i < m->cap; i++) { if (m->entries[i].occupied == 1) { if (m->arc_values) { lpp_list_push_arc(lst, (void *)(uintptr_t)m->entries[i].val); } else { lpp_list_push(lst, m->entries[i].val); } } } return lst; }
+void lpp_map_clear(void *map) { LppMap *m = (LppMap *)map; if (!m || !m->entries) return; if (m->arc_values) { for (int64_t i = 0; i < m->cap; i++) { if (m->entries[i].occupied == 1) lpp_arc_release((void *)(uintptr_t)m->entries[i].val); } } lpp_memset((void*)m->entries, 0, sizeof(LppMapEntry) * (size_t)m->cap); m->len = 0; }
+int64_t lpp_map_capacity(void *map) { LppMap *m = (LppMap *)map; return m ? m->cap : 0; }
+
 
 
 /* ── Additional string builtins (only those NOT already defined above) ── */
@@ -637,7 +663,10 @@ int _fltused = 0;
 int __isa_available = 1;
 #endif
 
-char *lpp_bool_to_str(int64_t val) {
+/* `val` MUST stay int8_t — see the note in lpp_str.c. builtins.rs declares this
+ * parameter with the I8 tag, so only the low byte of the argument register is
+ * defined; reading int64_t let garbage upper bits turn `false` into "true". */
+char *lpp_bool_to_str(int8_t val) {
     if (val) {
         char *t = (char*)lpp_arc_alloc(5);
         if (!t) return lpp_empty_str();
@@ -902,3 +931,67 @@ LppVecI64x2 lpp_vec_i64x2_shr(LppVecI64x2 a, int64_t shift) { LppVecI64x2 r; r.l
 LppVecI64x2 lpp_vec_i64x2_shr_var(LppVecI64x2 a, LppVecI64x2 b) { LppVecI64x2 r; r.lo = a.lo >> b.lo; r.hi = a.hi >> b.hi; return r; }
 int64_t     lpp_vec_i64x2_extract(LppVecI64x2 v, int64_t idx) { return idx == 0 ? v.lo : v.hi; }
 int64_t     lpp_vec_i64x2_sum(LppVecI64x2 v) { return v.lo + v.hi; }
+
+/* ── Atomics & Concurrency (F3 & F4) ── */
+int64_t lpp_atomic_alloc(int64_t v) { int64_t *p=(int64_t*)lpp_arc_alloc(8); if(!p)ExitProcess(101); *p=v; return (int64_t)(uintptr_t)p; }
+int64_t lpp_atomic_new(int64_t v) { return lpp_atomic_alloc(v); }
+void lpp_atomic_free(int64_t p) { if(p) lpp_arc_release((void*)(uintptr_t)p); }
+int64_t lpp_atomic_load(int64_t p) { return _InterlockedOr64((volatile LONG64 *)(uintptr_t)p, 0); }
+int64_t lpp_atomic_load_acq(int64_t p) { return _InterlockedOr64((volatile LONG64 *)(uintptr_t)p, 0); }
+int64_t lpp_atomic_load_relaxed(int64_t p) { return *(volatile int64_t *)(uintptr_t)p; }
+void lpp_atomic_store(int64_t p, int64_t v) { _InterlockedExchange64((volatile LONG64 *)(uintptr_t)p, (LONG64)v); }
+void lpp_atomic_store_rel(int64_t p, int64_t v) { _InterlockedExchange64((volatile LONG64 *)(uintptr_t)p, (LONG64)v); }
+void lpp_atomic_store_relaxed(int64_t p, int64_t v) { *(volatile int64_t *)(uintptr_t)p = v; }
+int64_t lpp_atomic_add(int64_t p, int64_t v) { return (int64_t)_InterlockedExchangeAdd64((volatile LONG64 *)(uintptr_t)p, (LONG64)v); }
+int64_t lpp_atomic_sub(int64_t p, int64_t v) { return (int64_t)_InterlockedExchangeAdd64((volatile LONG64 *)(uintptr_t)p, -(LONG64)v); }
+int64_t lpp_atomic_and(int64_t p, int64_t v) { return (int64_t)_InterlockedAnd64((volatile LONG64 *)(uintptr_t)p, (LONG64)v); }
+int64_t lpp_atomic_or(int64_t p, int64_t v) { return (int64_t)_InterlockedOr64((volatile LONG64 *)(uintptr_t)p, (LONG64)v); }
+int64_t lpp_atomic_xor(int64_t p, int64_t v) { return (int64_t)_InterlockedXor64((volatile LONG64 *)(uintptr_t)p, (LONG64)v); }
+int64_t lpp_atomic_swap(int64_t p, int64_t v) { return (int64_t)_InterlockedExchange64((volatile LONG64 *)(uintptr_t)p, (LONG64)v); }
+int64_t lpp_atomic_cas(int64_t p, int64_t e, int64_t d) { return (int64_t)_InterlockedCompareExchange64((volatile LONG64 *)(uintptr_t)p, (LONG64)d, (LONG64)e); }
+int64_t lpp_atomic_cas_weak(int64_t p, int64_t e, int64_t d) { return (int64_t)_InterlockedCompareExchange64((volatile LONG64 *)(uintptr_t)p, (LONG64)d, (LONG64)e); }
+int64_t lpp_atomic_load32(int64_t p) { return (int64_t)_InterlockedOr((volatile LONG *)(uintptr_t)p, 0); }
+void lpp_atomic_store32(int64_t p, int64_t v) { _InterlockedExchange((volatile LONG *)(uintptr_t)p, (LONG)v); }
+int64_t lpp_atomic_add32(int64_t p, int64_t v) { return (int64_t)_InterlockedExchangeAdd((volatile LONG *)(uintptr_t)p, (LONG)v); }
+int64_t lpp_atomic_cas32(int64_t p, int64_t e, int64_t d) { return (int64_t)_InterlockedCompareExchange((volatile LONG *)(uintptr_t)p, (LONG)d, (LONG)e); }
+void lpp_atomic_fence(void) { MemoryBarrier(); }
+void lpp_atomic_fence_acq(void) { MemoryBarrier(); }
+void lpp_atomic_fence_rel(void) { MemoryBarrier(); }
+void lpp_cpu_pause(void) { YieldProcessor(); }
+
+int64_t lpp_mutex_new(void) { CRITICAL_SECTION *cs=(CRITICAL_SECTION*)lpp_arc_alloc(sizeof(CRITICAL_SECTION)); if(!cs)ExitProcess(101); InitializeCriticalSection(cs); return (int64_t)(uintptr_t)cs; }
+void lpp_mutex_lock(int64_t h) { if(h) EnterCriticalSection((CRITICAL_SECTION*)(uintptr_t)h); }
+int64_t lpp_mutex_trylock(int64_t h) { if(!h)return 0; return TryEnterCriticalSection((CRITICAL_SECTION*)(uintptr_t)h)?1:0; }
+void lpp_mutex_unlock(int64_t h) { if(h) LeaveCriticalSection((CRITICAL_SECTION*)(uintptr_t)h); }
+void lpp_mutex_free(int64_t h) { if(h) { DeleteCriticalSection((CRITICAL_SECTION*)(uintptr_t)h); lpp_arc_release((void*)(uintptr_t)h); } }
+
+int64_t lpp_rwlock_new(void) { SRWLOCK *rw=(SRWLOCK*)lpp_arc_alloc(sizeof(SRWLOCK)); if(!rw)ExitProcess(101); InitializeSRWLock(rw); return (int64_t)(uintptr_t)rw; }
+void lpp_rwlock_rdlock(int64_t h) { if(h) AcquireSRWLockShared((SRWLOCK*)(uintptr_t)h); }
+void lpp_rwlock_wrlock(int64_t h) { if(h) AcquireSRWLockExclusive((SRWLOCK*)(uintptr_t)h); }
+void lpp_rwlock_rdunlock(int64_t h) { if(h) ReleaseSRWLockShared((SRWLOCK*)(uintptr_t)h); }
+void lpp_rwlock_wrunlock(int64_t h) { if(h) ReleaseSRWLockExclusive((SRWLOCK*)(uintptr_t)h); }
+void lpp_rwlock_free(int64_t h) { if(h) lpp_arc_release((void*)(uintptr_t)h); }
+
+int64_t lpp_cpu_count(void) { SYSTEM_INFO si; GetSystemInfo(&si); return (int64_t)si.dwNumberOfProcessors; }
+typedef struct LppMinTrampoline { int64_t fn; int64_t arg; } LppMinTrampoline;
+static DWORD WINAPI lpp_min_thread_stub(LPVOID p) { LppMinTrampoline *t=(LppMinTrampoline*)p; int64_t f=t->fn, a=t->arg; lpp_arc_release(t); typedef int64_t(*LppFn)(int64_t); return (DWORD)((LppFn)(uintptr_t)f)(a); }
+int64_t lpp_thread_spawn(int64_t fn, int64_t arg) { LppMinTrampoline *t=(LppMinTrampoline*)lpp_arc_alloc(sizeof(LppMinTrampoline)); if(!t)ExitProcess(101); t->fn=fn; t->arg=arg; HANDLE h=CreateThread(NULL,0,lpp_min_thread_stub,t,0,NULL); if(!h){lpp_arc_release(t);ExitProcess(101);} return (int64_t)(uintptr_t)h; }
+int64_t lpp_thread_join(int64_t h) { if(!h)return 0; HANDLE ht=(HANDLE)(uintptr_t)h; WaitForSingleObject(ht,INFINITE); DWORD ec=0; GetExitCodeThread(ht,&ec); CloseHandle(ht); return (int64_t)ec; }
+int64_t lpp_thread_pin(int64_t core) { if(core<0||core>=64)return 0; return SetThreadAffinityMask(GetCurrentThread(),(DWORD_PTR)(1ULL<<core))!=0?1:0; }
+int64_t lpp_thread_id(void) { return (int64_t)GetCurrentThreadId(); }
+
+/* ── RNG and Clock (F14) ── */
+typedef struct LppMinRng { uint64_t s; } LppMinRng;
+int64_t lpp_rng_new(int64_t s) { LppMinRng*r=(LppMinRng*)lpp_arc_alloc(sizeof(LppMinRng)); if(!r)ExitProcess(101); r->s=s==0?0x853c49e6748fea9bULL:(uint64_t)s; return (int64_t)(uintptr_t)r; }
+int64_t lpp_rng_next(int64_t h) { LppMinRng*r=(LppMinRng*)(uintptr_t)h; if(!r)return 0; uint64_t z=(r->s+=0x9e3779b97f4a7c15ULL); z=(z^(z>>30))*0xbf58476d1ce4e5b9ULL; z=(z^(z>>27))*0x94d049bb133111ebULL; return (int64_t)(z^(z>>31)); }
+int64_t lpp_rng_range(int64_t h,int64_t mi,int64_t ma) { if(mi>=ma)return mi; uint64_t d=(uint64_t)(ma-mi+1); return mi+(int64_t)((uint64_t)lpp_rng_next(h)%d); }
+double lpp_rng_float(int64_t h) { return (double)((uint64_t)lpp_rng_next(h)>>11)*(1.0/9007199254740992.0); }
+void lpp_rng_free(int64_t h) { if(h) lpp_arc_release((void*)(uintptr_t)h); }
+
+typedef struct LppMinClock { int v; int64_t t; } LppMinClock;
+int64_t lpp_clock_new(int64_t i) { LppMinClock*c=(LppMinClock*)lpp_arc_alloc(sizeof(LppMinClock)); if(!c)ExitProcess(101); c->v=(i!=0); c->t=i; return (int64_t)(uintptr_t)c; }
+int64_t lpp_clock_now(int64_t h) { LppMinClock*c=(LppMinClock*)(uintptr_t)h; if(!c)return 0; if(c->v)return c->t; FILETIME ft; GetSystemTimeAsFileTime(&ft); ULARGE_INTEGER u; u.LowPart=ft.dwLowDateTime; u.HighPart=ft.dwHighDateTime; return (int64_t)((u.QuadPart-116444736000000000ULL)/10000ULL); }
+void lpp_clock_advance(int64_t h,int64_t d) { LppMinClock*c=(LppMinClock*)(uintptr_t)h; if(c&&c->v) c->t+=d; }
+void lpp_clock_free(int64_t h) { if(h) lpp_arc_release((void*)(uintptr_t)h); }
+
+

@@ -6,6 +6,12 @@ pub enum Type {
     Bool,
     Char,
     Void,
+    U8,
+    U16,
+    U32,
+    I8,
+    I16,
+    I32,
     Custom(String),
     Generic(String, Vec<Type>),
     /// Fixed structural tuple, restricted to arity 2..=4.
@@ -214,6 +220,8 @@ pub struct StructDef {
     pub name: String,
     pub type_params: Vec<TypeParam>,  // generic type parameters: struct Pair[T, U]:
     pub fields: Vec<Param>,
+    pub repr_exact: bool,
+    pub align: Option<usize>,
 }
 
 /// Enum variant: `Ok(value: Int)` or `None` (no data)

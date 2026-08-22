@@ -320,6 +320,75 @@ double lpp_map_get_str_float(void *map, const char *key) {
     return fval;
 }
 
+void *lpp_map_keys(void *map) {
+    LppMap *m = (LppMap *)map;
+    if (!m || m->len == 0) {
+        return lpp_list_new();
+    }
+    int has_str_key = 0;
+    for (int64_t i = 0; i < m->cap; i++) {
+        if (m->entries[i].occupied == 1 && m->entries[i].is_str_key) {
+            has_str_key = 1;
+            break;
+        }
+    }
+    void *lst = has_str_key ? lpp_list_new_arc() : lpp_list_new();
+    for (int64_t i = 0; i < m->cap; i++) {
+        if (m->entries[i].occupied == 1) {
+            if (m->entries[i].is_str_key) {
+                const char *s = (const char *)(uintptr_t)m->entries[i].key;
+                int64_t len = s ? (int64_t)strlen(s) : 0;
+                char *copy = (char *)lpp_arc_alloc(len + 1);
+                if (copy) {
+                    if (s) memcpy(copy, s, (size_t)len);
+                    copy[len] = 0;
+                }
+                lpp_list_push_arc(lst, copy);
+            } else {
+                lpp_list_push(lst, m->entries[i].key);
+            }
+        }
+    }
+    return lst;
+}
+
+void *lpp_map_values(void *map) {
+    LppMap *m = (LppMap *)map;
+    if (!m || m->len == 0) {
+        return lpp_list_new();
+    }
+    void *lst = m->arc_values ? lpp_list_new_arc() : lpp_list_new();
+    for (int64_t i = 0; i < m->cap; i++) {
+        if (m->entries[i].occupied == 1) {
+            if (m->arc_values) {
+                lpp_list_push_arc(lst, (void *)(uintptr_t)m->entries[i].val);
+            } else {
+                lpp_list_push(lst, m->entries[i].val);
+            }
+        }
+    }
+    return lst;
+}
+
+void lpp_map_clear(void *map) {
+    LppMap *m = (LppMap *)map;
+    if (!m || !m->entries) return;
+    if (m->arc_values) {
+        for (int64_t i = 0; i < m->cap; i++) {
+            if (m->entries[i].occupied == 1) {
+                lpp_arc_release((void *)(uintptr_t)m->entries[i].val);
+            }
+        }
+    }
+    memset(m->entries, 0, sizeof(LppMapEntry) * (size_t)m->cap);
+    m->len = 0;
+}
+
+int64_t lpp_map_capacity(void *map) {
+    LppMap *m = (LppMap *)map;
+    return m ? m->cap : 0;
+}
+
 #define lpp_map_get(m, k) lpp_map_get((m), (int64_t)(uintptr_t)(k))
 #define lpp_map_has(m, k) lpp_map_has((m), (int64_t)(uintptr_t)(k))
 #define lpp_map_remove(m, k) lpp_map_remove((m), (int64_t)(uintptr_t)(k))

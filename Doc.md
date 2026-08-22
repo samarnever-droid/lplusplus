@@ -128,6 +128,26 @@ def create_point() -> Point:
     return p
 ```
 
+#### 3.2.1 In-Place By-Reference Mutation (Preferred Idiom)
+When a struct is passed to a function, it is passed by reference. Mutating fields on the parameter (`param.field = new_val`) updates the caller's struct in place with **zero allocations**:
+
+```lpp
+struct Counter:
+    count: Int
+    active: Bool
+
+def bump(c: Counter):
+    c.count = c.count + 1   # Directly mutates the caller's struct instance
+
+def main():
+    mut ctr := Counter(0, true)
+    bump(ctr)
+    # ctr.count is now 1
+```
+
+> [!NOTE]
+> **Performance Note (F9):** In-place mutation is the standard, zero-cost idiom for hot loops, database buffer pages, WAL records, and state machines. Avoid functional state-threading (`Tuple[State, Bool]`) except where a point-in-time snapshot or rollback clone is explicitly required.
+
 ### 3.3 Closures
 Closures are created using the `fn` keyword with automatic parameter and return type inference.
 

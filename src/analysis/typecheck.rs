@@ -37,11 +37,14 @@ fn types_compatible(expected: &TypeRef, actual: &TypeRef) -> bool {
     if expected == actual {
         return true;
     }
-    // Allow coercion between Char/Bool/Custom(enum) and Int, and Char/Int/Float/Bool to Str
-    if matches!((expected, actual), (TypeRef::Char, TypeRef::Int) | (TypeRef::Int, TypeRef::Char) | (TypeRef::Bool, TypeRef::Int) | (TypeRef::Int, TypeRef::Bool) | (TypeRef::Custom(_), TypeRef::Int) | (TypeRef::Int, TypeRef::Custom(_))) {
+    // Allow coercion between integer/scalar types (U8, U16, U32, I8, I16, I32, Char, Bool, Custom(enum)) and Int, and Char/Int/Float/Bool to Str
+    fn is_integral(t: &TypeRef) -> bool {
+        matches!(t, TypeRef::Int | TypeRef::Char | TypeRef::Bool | TypeRef::U8 | TypeRef::U16 | TypeRef::U32 | TypeRef::I8 | TypeRef::I16 | TypeRef::I32 | TypeRef::Custom(_))
+    }
+    if is_integral(expected) && is_integral(actual) {
         return true;
     }
-    if expected == &TypeRef::Str && matches!(actual, TypeRef::Int | TypeRef::Float | TypeRef::Bool | TypeRef::Char) {
+    if expected == &TypeRef::Str && (is_integral(actual) || actual == &TypeRef::Float) {
         return true;
     }
     // Allow collection/map handles (represented as 64-bit handle IDs) to coerce with Int
@@ -140,6 +143,12 @@ impl<'a> TypeChecker<'a> {
             Type::Bool => TypeRef::Bool,
             Type::Char => TypeRef::Char,
             Type::Void => TypeRef::Void,
+            Type::U8 => TypeRef::U8,
+            Type::U16 => TypeRef::U16,
+            Type::U32 => TypeRef::U32,
+            Type::I8 => TypeRef::I8,
+            Type::I16 => TypeRef::I16,
+            Type::I32 => TypeRef::I32,
             Type::Custom(name) => {
                 // Check if this is a type parameter first
                 if type_params.iter().any(|tp| tp == name) {
@@ -401,6 +410,8 @@ impl<'a> TypeChecker<'a> {
                 let def = &mut self.type_table.definitions[id.0];
                 def.fields = resolved_fields.clone();
                 def.is_self_referential = is_self_referential;
+                def.repr_exact = s.repr_exact;
+                def.align = s.align;
                 let param_tys: Vec<TypeRef> = resolved_fields.into_iter().map(|(_, ty)| ty).collect();
                 self.func_param_types.insert(s.name.clone(), param_tys);
             }
@@ -1379,6 +1390,26 @@ impl<'a> TypeChecker<'a> {
                             return Ok(TypeRef::Str);
                         }
 
+                        if name == "map_keys" || name == "lpp_map_keys" {
+                            let map_ty = arg_tys[0].clone();
+                            if let TypeRef::Generic(ref name, ref params) = map_ty {
+                                if name == "Map" && !params.is_empty() {
+                                    return Ok(TypeRef::Generic("List".to_string(), vec![params[0].clone()]));
+                                }
+                            }
+                            return Ok(TypeRef::Generic("List".to_string(), vec![TypeRef::Int]));
+                        }
+
+                        if name == "map_values" || name == "lpp_map_values" {
+                            let map_ty = arg_tys[0].clone();
+                            if let TypeRef::Generic(ref name, ref params) = map_ty {
+                                if name == "Map" && params.len() >= 2 {
+                                    return Ok(TypeRef::Generic("List".to_string(), vec![params[1].clone()]));
+                                }
+                            }
+                            return Ok(TypeRef::Generic("List".to_string(), vec![TypeRef::Int]));
+                        }
+
                         if name == "dir_list" || name == "lpp_dir_list" || name == "str_split" || name == "lpp_str_split" {
                             // The static builtin table cannot spell List[Str]
                             // (TypeRef::Generic is not const-constructible), so
@@ -1630,8 +1661,9 @@ impl<'a> TypeChecker<'a> {
                 let base_ty = self.infer_expr(base, current_scope, None)?;
                 self.infer_expr(index, current_scope, None)?;
                 match base_ty {
-                    TypeRef::Str => Ok(TypeRef::Str), // str[i] → single char as Str
-                    TypeRef::Generic(ref name, ref args) if name == "List" => {
+                    TypeRef::Str | TypeRef::StrSlice => Ok(TypeRef::Str), // str[i] / str_slice[i] → single char as Str
+                    TypeRef::Slice(ref elem) => Ok((**elem).clone()),
+                    TypeRef::Generic(ref name, ref args) if name == "List" || name == "Slice" => {
                         if let Some(elem) = args.first() {
                             Ok(elem.clone())
                         } else {

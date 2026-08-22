@@ -1,0 +1,71 @@
+﻿def test_clock_and_rng() -> Bool:
+    mut passed := 0
+    total := 8
+
+    # 1. Deterministic RNG with seed
+    mut r1 := rng_new(42)
+    v1 := rng_next(r1)
+    v2 := rng_next(r1)
+
+    mut r2 := rng_new(42)
+    u1 := rng_next(r2)
+    u2 := rng_next(r2)
+
+    if v1 == u1 and v2 == u2:
+        passed = passed + 1
+
+    # 2. Distinct seeds
+    mut r3 := rng_new(99)
+    w1 := rng_next(r3)
+    if w1 != v1:
+        passed = passed + 1
+
+    # 3. rng_range bounds
+    mut in_bounds := true
+    mut i := 0
+    while i < 20:
+        val := rng_range(r1, 10, 50)
+        if val < 10 or val > 50:
+            in_bounds = false
+        i = i + 1
+    if in_bounds:
+        passed = passed + 1
+
+    # 4. rng_float bounds
+    flt := rng_float(r1)
+    if flt >= 0.0 and flt < 1.0:
+        passed = passed + 1
+
+    # 5. Virtual Clock initial value
+    mut c_virt := clock_new(1000000)
+    if clock_now(c_virt) == 1000000:
+        passed = passed + 1
+
+    # 6. Virtual Clock advance
+    clock_advance(c_virt, 5000)
+    if clock_now(c_virt) == 1005000:
+        passed = passed + 1
+
+    # 7. Multiple Clock advances
+    clock_advance(c_virt, 250)
+    if clock_now(c_virt) == 1005250:
+        passed = passed + 1
+
+    # 8. Real OS Clock
+    mut c_real := clock_new(0)
+    now_ms := clock_now(c_real)
+    if now_ms > 1000000000:
+        passed = passed + 1
+
+    rng_free(r1)
+    rng_free(r2)
+    rng_free(r3)
+    clock_free(c_virt)
+    clock_free(c_real)
+
+    print_str("ASSERTIONS: " + int_to_str(passed) + "/" + int_to_str(total))
+    return passed == total
+
+def main():
+    if test_clock_and_rng():
+        print_str("SUCCESS: ALL CLOCK AND RNG TESTS PASSED")

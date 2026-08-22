@@ -1,0 +1,183 @@
+﻿# Exhaustive stress test for L++ Enum payloads, match dispatch, and ? propagation.
+# Verifies: B2 (Str payload + concat), B3 (? propagation), B7 (qualified & out-of-order match).
+
+enum DataVariant:
+    Scalar(val: Int)
+    Message(text: Str)
+    Ratio(num: Float)
+    Items(list: List[Int])
+    Empty
+
+enum Result:
+    Ok(value: Int)
+    Err(msg: Str)
+
+def classify(d: DataVariant) -> Str:
+    match d:
+        Empty:
+            return "empty"
+        DataVariant.Items(l):
+            return "list_len=" + int_to_str(len(l))
+        Ratio(r):
+            return "float=" + float_to_str(r)
+        Message(m):
+            return "msg:" + m + " (len=" + int_to_str(len(m)) + ")"
+        Scalar(v):
+            return "int=" + int_to_str(v)
+        _:
+            return "unknown"
+
+def divide_even(x: Int, d: Int) -> Result:
+    if d == 0:
+        return Result.Err("division by zero")
+    if x % d != 0:
+        return Result.Err("remainder exists for " + int_to_str(x) + "/" + int_to_str(d))
+    return Result.Ok(x / d)
+
+def compute_pipeline(x: Int) -> Result:
+    a := divide_even(x, 2)?
+    b := divide_even(a, 3)?
+    c := divide_even(b, 5)?
+    return Result.Ok(c + 100)
+
+def main():
+    mut passed := 0
+    total := 12
+
+    # 1. Message payload with string concatenation in match arm
+    d1 := DataVariant.Message("meridian_cache")
+    s1 := classify(d1)
+    if s1 == "msg:meridian_cache (len=14)":
+        passed = passed + 1
+    else:
+        print_str("FAIL test 1: got " + s1 + "\n")
+
+    # 2. Ratio payload with float
+    d2 := DataVariant.Ratio(3.14159)
+    s2 := classify(d2)
+    if str_find(s2, "3.14") >= 0:
+        passed = passed + 1
+    else:
+        print_str("FAIL test 2: got " + s2 + "\n")
+
+    # 3. Scalar payload with int
+    d3 := DataVariant.Scalar(9876543210)
+    s3 := classify(d3)
+    if s3 == "int=9876543210":
+        passed = passed + 1
+    else:
+        print_str("FAIL test 3: got " + s3 + "\n")
+
+    # 4. Items payload with List
+    mut lst := list_new()
+    list_push(lst, 10)
+    list_push(lst, 20)
+    list_push(lst, 30)
+    d4 := DataVariant.Items(lst)
+    s4 := classify(d4)
+    if s4 == "list_len=3":
+        passed = passed + 1
+    else:
+        print_str("FAIL test 4: got " + s4 + "\n")
+
+    # 5. Empty unit variant
+    d5 := DataVariant.Empty
+    s5 := classify(d5)
+    if s5 == "empty":
+        passed = passed + 1
+    else:
+        print_str("FAIL test 5: got " + s5 + "\n")
+
+    # 6. Out-of-order and qualified pattern matching
+    r_ok := Result.Ok(42)
+    mut ok_matched := false
+    match r_ok:
+        Result.Err(e):
+            print_str("FAIL: matched Err on Ok\n")
+        Result.Ok(val):
+            if val == 42:
+                ok_matched = true
+    if ok_matched:
+        passed = passed + 1
+
+    # 7. Wildcard matching
+    mut wildcard_hit := false
+    match d1:
+        Scalar(v):
+            print_str("FAIL\n")
+        _:
+            wildcard_hit = true
+    if wildcard_hit:
+        passed = passed + 1
+
+    # 8. Try operator success chain (300 / 2 / 3 / 5 = 10 -> + 100 = 110)
+    r_pipe_ok := compute_pipeline(300)
+    mut pipe_ok_val := 0
+    match r_pipe_ok:
+        Ok(v):
+            pipe_ok_val = v
+        Err(e):
+            print_str("FAIL: pipeline error " + e + "\n")
+    if pipe_ok_val == 110:
+        passed = passed + 1
+
+    # 9. Try operator error propagation at step 1 (odd number)
+    r_pipe_err1 := compute_pipeline(299)
+    mut err1_msg := ""
+    match r_pipe_err1:
+        Ok(v):
+            print_str("FAIL: expected err1\n")
+        Err(e):
+            err1_msg = e
+    if str_find(err1_msg, "remainder") >= 0:
+        passed = passed + 1
+
+    # 10. Try operator error propagation at step 2 (not divisible by 3)
+    r_pipe_err2 := compute_pipeline(200) # 200 / 2 = 100, 100 % 3 != 0
+    mut err2_msg := ""
+    match r_pipe_err2:
+        Ok(v):
+            print_str("FAIL: expected err2\n")
+        Err(e):
+            err2_msg = e
+    if str_find(err2_msg, "100/3") >= 0:
+        passed = passed + 1
+
+    # 11. Try operator error propagation at step 3 (not divisible by 5)
+    r_pipe_err3 := compute_pipeline(42) # 42 / 2 = 21, 21 / 3 = 7, 7 % 5 != 0
+    mut err3_msg := ""
+    match r_pipe_err3:
+        Ok(v):
+            print_str("FAIL: expected err3\n")
+        Err(e):
+            err3_msg = e
+    if str_find(err3_msg, "7/5") >= 0:
+        passed = passed + 1
+
+    # 12. Sustained 1,000-iteration loop stress checking ARC integrity
+    mut loop_i := 0
+    mut loop_ok := true
+    while loop_i < 1000:
+        res := compute_pipeline(300)
+        match res:
+            Ok(v):
+                if v != 110:
+                    loop_ok = false
+            Err(e):
+                loop_ok = false
+        
+        msg_var := DataVariant.Message("iter_" + int_to_str(loop_i))
+        match msg_var:
+            Message(txt):
+                if len(txt) < 5:
+                    loop_ok = false
+            _:
+                loop_ok = false
+        loop_i = loop_i + 1
+
+    if loop_ok:
+        passed = passed + 1
+
+    print_str("ASSERTIONS: " + int_to_str(passed) + "/" + int_to_str(total) + "\n")
+    if passed == total:
+        print_str("SUCCESS: ALL ENUM & TRY OPERATOR TESTS PASSED\n")

@@ -76,6 +76,7 @@ pub enum Token {
     Comma,     // ,
     Dot,       // .
     Ellipsis,  // ...
+    At,        // @
 
     // Significant Whitespace
     Newline,
@@ -373,6 +374,7 @@ impl<'a> Lexer<'a> {
                     tokens.push(mk_token(Token::RBracket));
                 }
                 ',' => tokens.push(mk_token(Token::Comma)),
+                '@' => tokens.push(mk_token(Token::At)),
                 '.' => {
                     if self.peek_c() == Some('.') {
                         self.next_c();

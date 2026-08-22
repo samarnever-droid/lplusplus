@@ -1446,7 +1446,8 @@ fn substitute_ast_type(ty: &mut Type, map: &HashMap<String, Type>) {
         }
         Type::Slice(element) | Type::Task(element) => substitute_ast_type(element, map),
         Type::Int | Type::Float | Type::String | Type::Bool | Type::Char
-        | Type::Void | Type::StrSlice => {}
+        | Type::Void | Type::StrSlice | Type::U8 | Type::U16 | Type::U32
+        | Type::I8 | Type::I16 | Type::I32 => {}
     }
 }
 
@@ -1457,6 +1458,12 @@ fn type_to_name(ty: &Type) -> String {
         Type::String => "Str".to_string(),
         Type::Char => "Char".to_string(),
         Type::Bool => "Bool".to_string(),
+        Type::U8 => "u8".to_string(),
+        Type::U16 => "u16".to_string(),
+        Type::U32 => "u32".to_string(),
+        Type::I8 => "i8".to_string(),
+        Type::I16 => "i16".to_string(),
+        Type::I32 => "i32".to_string(),
         Type::Custom(s) => s.clone(),
         Type::Generic(g, _) => g.clone(),
         Type::Tuple(items) => format!(
@@ -1491,6 +1498,12 @@ fn mangle_types(map: &HashMap<String, Type>, order: &[String]) -> String {
                 Type::String => "Str".to_string(),
                 Type::Char => "Char".to_string(),
                 Type::Bool => "Bool".to_string(),
+                Type::U8 => "u8".to_string(),
+                Type::U16 => "u16".to_string(),
+                Type::U32 => "u32".to_string(),
+                Type::I8 => "i8".to_string(),
+                Type::I16 => "i16".to_string(),
+                Type::I32 => "i32".to_string(),
                 Type::Custom(s) => s.clone(),
                 Type::Generic(g, _) => g.clone(),
                 Type::Tuple(items) => format!(
@@ -1569,6 +1582,8 @@ mod tests {
                     name: "Box".to_string(),
                     type_params: vec![tp("T")],
                     fields: vec![Param { name: "value".to_string(), ty: Type::Custom("T".to_string()), default: None, variadic: false }],
+                    repr_exact: false,
+                    align: None,
                 }),
                 TopLevel::Function(Function {
                     name: "unwrap".to_string(),
@@ -1824,6 +1839,8 @@ mod tests {
                     name: "Holder".to_string(),
                     type_params: vec![],
                     fields: vec![Param { name: "n".to_string(), ty: Type::Int, default: None, variadic: false }],
+                    repr_exact: false,
+                    align: None,
                 }),
                 TopLevel::Impl(ImplBlock {
                     trait_name: "Getter".to_string(),
@@ -1912,6 +1929,8 @@ mod tests {
                     name: "Box".to_string(),
                     type_params: vec![tp("T")],
                     fields: vec![Param { name: "value".to_string(), ty: Type::Custom("T".to_string()), default: None, variadic: false }],
+                    repr_exact: false,
+                    align: None,
                 }),
                 TopLevel::Impl(ImplBlock {
                     trait_name: "Show".to_string(),
@@ -1987,6 +2006,8 @@ mod tests {
                     name: "Box".to_string(),
                     type_params: vec![tp("T")],
                     fields: vec![Param { name: "value".to_string(), ty: Type::Custom("T".to_string()), default: None, variadic: false }],
+                    repr_exact: false,
+                    align: None,
                 }),
                 mk_impl(Type::Custom("T".to_string()), 1),
                 mk_impl(Type::Int, 99),

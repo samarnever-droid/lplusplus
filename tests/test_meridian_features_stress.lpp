@@ -1,0 +1,76 @@
+﻿@repr(exact)
+struct VersionPacked:
+    tag: u8
+    flag: u8
+    epoch: u16
+    tx_low: u32
+    tx_high: Int
+
+def test_packed_struct() -> Bool:
+    mut v := VersionPacked(254, 1, 4096, 100000, 9876543210)
+    passed := v.tag == 254 and v.flag == 1 and v.epoch == 4096 and v.tx_low == 100000 and v.tx_high == 9876543210
+    v.tag = 42
+    v.epoch = 8192
+    if v.tag == 42 and v.epoch == 8192 and passed:
+        return true
+    return false
+
+def test_simd_tag_probe() -> Bool:
+    # 16-byte vector splat
+    target_tag := 110
+    probe_vec := vec_u8x16_splat(target_tag)
+
+    # Let's create an entry with 16 tags: tag 110 at byte 2 and byte 9
+    # In little-endian bytes:
+    # low 8 bytes: byte 0..7
+    # high 8 bytes: byte 8..15
+    # low lane: byte 2 = 110 -> 110 << 16 = 0x0000006E0000
+    # high lane: byte 9 - 8 = byte 1 -> 110 << 8 = 0x0000000000006E00
+    tags := vec_i64x2(7208960, 28160) # 0x6E0000, 0x6E00
+
+    matches := vec_u8x16_eq(tags, probe_vec)
+    mask := vec_u8x16_movemask(matches)
+
+    # Byte 2 matched (bit 2 = 4) and Byte 9 matched (bit 9 = 512) => mask = 516
+    if mask == 516:
+        return true
+    return false
+
+def test_simd_bitwise_ops() -> Bool:
+    a := vec_i64x2(15, 240)
+    b := vec_i64x2(7, 128)
+
+    c_and := vec_i64x2_and(a, b)
+    c_or := vec_i64x2_or(a, b)
+
+    e0 := vec_i64x2_extract(c_and, 0)
+    e1 := vec_i64x2_extract(c_and, 1)
+    o0 := vec_i64x2_extract(c_or, 0)
+    o1 := vec_i64x2_extract(c_or, 1)
+
+    if e0 == 7 and e1 == 128 and o0 == 15 and o1 == 240:
+        return true
+    return false
+
+def test_prefetch_call() -> Bool:
+    addr := 12345678
+    prefetch(addr)
+    prefetch_write(addr)
+    return true
+
+def main():
+    mut passed := 0
+    total := 4
+
+    if test_packed_struct():
+        passed = passed + 1
+    if test_simd_tag_probe():
+        passed = passed + 1
+    if test_simd_bitwise_ops():
+        passed = passed + 1
+    if test_prefetch_call():
+        passed = passed + 1
+
+    print_str("ASSERTIONS: " + int_to_str(passed) + "/" + int_to_str(total))
+    if passed == total:
+        print_str("SUCCESS: ALL MERIDIAN HARDENING TESTS PASSED")

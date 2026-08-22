@@ -6,6 +6,8 @@ pub fn abi_to_cl(abi: AbiClass) -> cranelift_codegen::ir::Type {
     match abi {
         AbiClass::Void | AbiClass::I64 | AbiClass::Pointer => cl_types::I64,
         AbiClass::I8 => cl_types::I8,
+        AbiClass::I16 => cl_types::I16,
+        AbiClass::I32 => cl_types::I32,
         AbiClass::F64 => cl_types::F64,
         AbiClass::VectorI64x2 => cl_types::I64X2,
     }

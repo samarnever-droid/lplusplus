@@ -24,6 +24,8 @@ pub enum LifetimeClass {
 pub enum AbiClass {
     Void,
     I8,
+    I16,
+    I32,
     I64,
     F64,
     Pointer,
@@ -56,6 +58,12 @@ impl TypeRef {
             | TypeRef::Char
             | TypeRef::Void
             | TypeRef::Bool
+            | TypeRef::U8
+            | TypeRef::U16
+            | TypeRef::U32
+            | TypeRef::I8
+            | TypeRef::I16
+            | TypeRef::I32
             | TypeRef::Unresolved(_)
             | TypeRef::TypeParam(_)
             | TypeRef::VectorI64x2 => LifetimeClass::Copy,
@@ -73,7 +81,9 @@ impl TypeRef {
     pub fn abi_class(&self) -> AbiClass {
         match self {
             TypeRef::Void => AbiClass::Void,
-            TypeRef::Bool => AbiClass::I8,
+            TypeRef::Bool | TypeRef::U8 | TypeRef::I8 => AbiClass::I8,
+            TypeRef::U16 | TypeRef::I16 => AbiClass::I16,
+            TypeRef::U32 | TypeRef::I32 => AbiClass::I32,
             TypeRef::Float => AbiClass::F64,
             TypeRef::Int | TypeRef::Char => AbiClass::I64,
             TypeRef::VectorI64x2 => AbiClass::VectorI64x2,
@@ -94,6 +104,8 @@ impl TypeRef {
     pub fn native_size_align(&self) -> (usize, usize) {
         match self.abi_class() {
             AbiClass::I8 => (1, 1),
+            AbiClass::I16 => (2, 2),
+            AbiClass::I32 => (4, 4),
             AbiClass::VectorI64x2 => (16, 16),
             AbiClass::Void | AbiClass::I64 | AbiClass::F64 | AbiClass::Pointer => (8, 8),
         }
@@ -116,9 +128,9 @@ impl TypeRef {
     /// types, SIMD vectors and Void cannot safely fit that ownership model.
     pub fn list_element_class(&self) -> ListElementClass {
         match self {
-            TypeRef::Bool => ListElementClass::Bool,
+            TypeRef::Bool | TypeRef::U8 | TypeRef::I8 => ListElementClass::Bool,
             TypeRef::Float => ListElementClass::Float,
-            TypeRef::Int | TypeRef::Char => ListElementClass::Scalar,
+            TypeRef::Int | TypeRef::Char | TypeRef::U16 | TypeRef::I16 | TypeRef::U32 | TypeRef::I32 => ListElementClass::Scalar,
             TypeRef::Str
             | TypeRef::Custom(_)
             | TypeRef::Generic(_, _)

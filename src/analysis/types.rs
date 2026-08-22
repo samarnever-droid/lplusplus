@@ -17,6 +17,12 @@ pub enum TypeRef {
     Char,
     Void,
     Bool,
+    U8,
+    U16,
+    U32,
+    I8,
+    I16,
+    I32,
     Custom(StructTypeId),
     Generic(String, Vec<TypeRef>),
     Unresolved(String),
@@ -34,6 +40,8 @@ pub struct StructTypeDef {
     pub name: String,
     pub fields: Vec<(String, TypeRef)>,
     pub is_self_referential: bool,
+    pub repr_exact: bool,
+    pub align: Option<usize>,
 }
 
 #[derive(Debug)]
@@ -61,6 +69,8 @@ impl TypeTable {
             name,
             fields: Vec::new(),
             is_self_referential: false,
+            repr_exact: false,
+            align: None,
         });
         id
     }

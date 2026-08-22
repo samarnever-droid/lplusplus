@@ -256,8 +256,12 @@ char *lpp_float_to_str(double val) {
     return out;
 }
 
-/* ── bool_to_str: convert bool to string ── */
-char *lpp_bool_to_str(int64_t val) {
+/* ── bool_to_str: convert bool to string ──
+ * `val` MUST stay int8_t: builtins.rs declares this parameter with the I8 tag
+ * (L++ `Bool` lowers to i8), so the caller only defines the low byte of the
+ * argument register. Reading it as int64_t here made the upper 56 bits of
+ * garbage decide the branch, so `false` printed as "true". */
+char *lpp_bool_to_str(int8_t val) {
     const char *str = val ? "true" : "false";
     char *out = (char *)lpp_arc_alloc((int64_t)(strlen(str)) + 1);
     if (!out) return lpp_empty_str();

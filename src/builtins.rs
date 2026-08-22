@@ -156,6 +156,22 @@ pub fn get_builtins() -> &'static [Builtin] {
             cl_return: None,
         },
         Builtin {
+            name: "write_str",
+            symbol: "lpp_write_str",
+            params: &[ParamType::Specific(TypeRef::Str)],
+            return_type: TypeRef::Void,
+            cl_params: &[0],
+            cl_return: None,
+        },
+        Builtin {
+            name: "lpp_write_str",
+            symbol: "lpp_write_str",
+            params: &[ParamType::Specific(TypeRef::Str)],
+            return_type: TypeRef::Void,
+            cl_params: &[0],
+            cl_return: None,
+        },
+        Builtin {
             name: "print_int",
             symbol: "lpp_print_int",
             params: &[ParamType::Specific(TypeRef::Int)],
@@ -1869,6 +1885,62 @@ pub fn get_builtins() -> &'static [Builtin] {
             cl_return: Some(0),
         },
         Builtin {
+            name: "vec_i64x2_and",
+            symbol: "lpp_vec_i64x2_and",
+            params: &[ParamType::Specific(TypeRef::VectorI64x2), ParamType::Specific(TypeRef::VectorI64x2)],
+            return_type: TypeRef::VectorI64x2,
+            cl_params: &[0, 0],
+            cl_return: Some(0),
+        },
+        Builtin {
+            name: "vec_i64x2_or",
+            symbol: "lpp_vec_i64x2_or",
+            params: &[ParamType::Specific(TypeRef::VectorI64x2), ParamType::Specific(TypeRef::VectorI64x2)],
+            return_type: TypeRef::VectorI64x2,
+            cl_params: &[0, 0],
+            cl_return: Some(0),
+        },
+        Builtin {
+            name: "vec_i64x2_not",
+            symbol: "lpp_vec_i64x2_not",
+            params: &[ParamType::Specific(TypeRef::VectorI64x2)],
+            return_type: TypeRef::VectorI64x2,
+            cl_params: &[0],
+            cl_return: Some(0),
+        },
+        Builtin {
+            name: "vec_u8x16_eq",
+            symbol: "lpp_vec_u8x16_eq",
+            params: &[ParamType::Specific(TypeRef::VectorI64x2), ParamType::Specific(TypeRef::VectorI64x2)],
+            return_type: TypeRef::VectorI64x2,
+            cl_params: &[0, 0],
+            cl_return: Some(0),
+        },
+        Builtin {
+            name: "vec_u8x16_movemask",
+            symbol: "lpp_vec_u8x16_movemask",
+            params: &[ParamType::Specific(TypeRef::VectorI64x2)],
+            return_type: TypeRef::Int,
+            cl_params: &[0],
+            cl_return: Some(0),
+        },
+        Builtin {
+            name: "vec_movemask8",
+            symbol: "lpp_vec_u8x16_movemask",
+            params: &[ParamType::Specific(TypeRef::VectorI64x2)],
+            return_type: TypeRef::Int,
+            cl_params: &[0],
+            cl_return: Some(0),
+        },
+        Builtin {
+            name: "vec_u8x16_splat",
+            symbol: "lpp_vec_u8x16_splat",
+            params: &[ParamType::Specific(TypeRef::Int)],
+            return_type: TypeRef::VectorI64x2,
+            cl_params: &[0],
+            cl_return: Some(0),
+        },
+        Builtin {
             name: "vec_i64x2_shr",
             symbol: "lpp_vec_i64x2_shr",
             params: &[ParamType::Specific(TypeRef::VectorI64x2), ParamType::Specific(TypeRef::Int)],
@@ -3263,6 +3335,174 @@ pub fn get_builtins() -> &'static [Builtin] {
         Builtin { name: "dlsym", symbol: "dlsym", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Str)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
         Builtin { name: "dlclose", symbol: "dlclose", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0], cl_return: Some(0) },
         Builtin { name: "dlerror", symbol: "dlerror", params: &[], return_type: TypeRef::Str, cl_params: &[], cl_return: Some(0) },
+
+        // ── Unterminated output (F16) ──────────────────────────────────────
+        // `print*` always appends a newline, so building a line from parts used
+        // to require concatenating the whole thing into one temporary first.
+        // These write exactly what they are given.
+        Builtin { name: "write_str", symbol: "lpp_write_str", params: &[ParamType::Specific(TypeRef::Str)], return_type: TypeRef::Void, cl_params: &[0], cl_return: None },
+        Builtin { name: "lpp_write_str", symbol: "lpp_write_str", params: &[ParamType::Specific(TypeRef::Str)], return_type: TypeRef::Void, cl_params: &[0], cl_return: None },
+        Builtin { name: "write_int", symbol: "lpp_write_int", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Void, cl_params: &[0], cl_return: None },
+        Builtin { name: "lpp_write_int", symbol: "lpp_write_int", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Void, cl_params: &[0], cl_return: None },
+        Builtin { name: "write_uint", symbol: "lpp_write_uint", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Void, cl_params: &[0], cl_return: None },
+        Builtin { name: "write_float", symbol: "lpp_write_float", params: &[ParamType::Specific(TypeRef::Float)], return_type: TypeRef::Void, cl_params: &[3], cl_return: None },
+        Builtin { name: "write_bool", symbol: "lpp_write_bool", params: &[ParamType::Specific(TypeRef::Bool)], return_type: TypeRef::Void, cl_params: &[1], cl_return: None },
+        Builtin { name: "write_char", symbol: "lpp_write_char", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Void, cl_params: &[0], cl_return: None },
+        Builtin { name: "write_nl", symbol: "lpp_write_nl", params: &[], return_type: TypeRef::Void, cl_params: &[], cl_return: None },
+        Builtin { name: "ewrite_str", symbol: "lpp_ewrite_str", params: &[ParamType::Specific(TypeRef::Str)], return_type: TypeRef::Void, cl_params: &[0], cl_return: None },
+        Builtin { name: "eprint_str", symbol: "lpp_eprint_str", params: &[ParamType::Specific(TypeRef::Str)], return_type: TypeRef::Void, cl_params: &[0], cl_return: None },
+        // F12: give programs an explicit barrier as well as the automatic ones.
+        Builtin { name: "flush", symbol: "lpp_flush", params: &[], return_type: TypeRef::Void, cl_params: &[], cl_return: None },
+        Builtin { name: "lpp_flush", symbol: "lpp_flush", params: &[], return_type: TypeRef::Void, cl_params: &[], cl_return: None },
+
+        // ── Unsigned semantics (F2) ────────────────────────────────────────
+        // `Int` is i64 and `>>` is arithmetic, so u32/u64 values that already
+        // enter the language (e.g. `buf_get32le` → 4294967295) could not be
+        // shifted, divided or compared correctly. These reinterpret both
+        // operands as u64 for the duration of the operation.
+        Builtin { name: "shr_u", symbol: "lpp_shr_u", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
+        Builtin { name: "shl_u", symbol: "lpp_shl_u", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
+        Builtin { name: "div_u", symbol: "lpp_div_u", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
+        Builtin { name: "rem_u", symbol: "lpp_rem_u", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
+        Builtin { name: "lt_u", symbol: "lpp_lt_u", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
+        Builtin { name: "le_u", symbol: "lpp_le_u", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
+        Builtin { name: "gt_u", symbol: "lpp_gt_u", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
+        Builtin { name: "ge_u", symbol: "lpp_ge_u", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
+        Builtin { name: "min_u", symbol: "lpp_min_u", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
+        Builtin { name: "max_u", symbol: "lpp_max_u", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
+        Builtin { name: "u64_to_str", symbol: "lpp_u64_to_str", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Str, cl_params: &[0], cl_return: Some(0) },
+        Builtin { name: "u64_to_hex", symbol: "lpp_u64_to_hex", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Str, cl_params: &[0], cl_return: Some(0) },
+        Builtin { name: "str_to_u64", symbol: "lpp_str_to_u64", params: &[ParamType::Specific(TypeRef::Str)], return_type: TypeRef::Int, cl_params: &[0], cl_return: Some(0) },
+        // Bit twiddling that CRC32C, checksums and hash-bucket selection want.
+        Builtin { name: "rotl64", symbol: "lpp_rotl64", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
+        Builtin { name: "rotr64", symbol: "lpp_rotr64", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
+        Builtin { name: "rotl32", symbol: "lpp_rotl32", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
+        Builtin { name: "rotr32", symbol: "lpp_rotr32", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
+        Builtin { name: "clz64", symbol: "lpp_clz64", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0], cl_return: Some(0) },
+        Builtin { name: "ctz64", symbol: "lpp_ctz64", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0], cl_return: Some(0) },
+        Builtin { name: "popcount64", symbol: "lpp_popcount64", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0], cl_return: Some(0) },
+        Builtin { name: "bswap16", symbol: "lpp_bswap16", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0], cl_return: Some(0) },
+        Builtin { name: "bswap32", symbol: "lpp_bswap32", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0], cl_return: Some(0) },
+        Builtin { name: "bswap64", symbol: "lpp_bswap64", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0], cl_return: Some(0) },
+
+        // ── Fixed-width truncation and checked arithmetic (F1) ─────────────
+        // The named `u8..u64`/`i8..i64` types are a type-system change; these
+        // give the *semantics* now, with the truncation made explicit at the
+        // call site instead of implied by a declaration.
+        Builtin { name: "trunc_u8", symbol: "lpp_trunc_u8", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0], cl_return: Some(0) },
+        Builtin { name: "trunc_u16", symbol: "lpp_trunc_u16", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0], cl_return: Some(0) },
+        Builtin { name: "trunc_u32", symbol: "lpp_trunc_u32", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0], cl_return: Some(0) },
+        Builtin { name: "trunc_i8", symbol: "lpp_trunc_i8", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0], cl_return: Some(0) },
+        Builtin { name: "trunc_i16", symbol: "lpp_trunc_i16", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0], cl_return: Some(0) },
+        Builtin { name: "trunc_i32", symbol: "lpp_trunc_i32", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0], cl_return: Some(0) },
+        // `*_checked` panics on overflow; `*_wrap` documents the current
+        // silent-wrap behaviour so a deliberate wrap reads as deliberate.
+        Builtin { name: "add_checked", symbol: "lpp_add_checked", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
+        Builtin { name: "sub_checked", symbol: "lpp_sub_checked", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
+        Builtin { name: "mul_checked", symbol: "lpp_mul_checked", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
+        Builtin { name: "add_wrap", symbol: "lpp_add_wrap", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
+        Builtin { name: "sub_wrap", symbol: "lpp_sub_wrap", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
+        Builtin { name: "mul_wrap", symbol: "lpp_mul_wrap", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
+        // Non-trapping form for callers that want to branch instead of die.
+        Builtin { name: "add_overflows", symbol: "lpp_add_overflows", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
+        Builtin { name: "mul_overflows", symbol: "lpp_mul_overflows", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
+
+        // ── Atomics with memory ordering (F3) ──────────────────────────────
+        // Cells are 8-byte-aligned raw addresses from `atomic_new`, so they can
+        // live inside a buffer-pool descriptor or an LSN allocator without the
+        // ARC machinery being involved. Ordering is in the name: `_acq`, `_rel`,
+        // bare = seq_cst.
+        Builtin { name: "atomic_new", symbol: "lpp_atomic_new", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0], cl_return: Some(0) },
+        Builtin { name: "atomic_free", symbol: "lpp_atomic_free", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Void, cl_params: &[0], cl_return: None },
+        Builtin { name: "atomic_load", symbol: "lpp_atomic_load", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0], cl_return: Some(0) },
+        Builtin { name: "atomic_load_acq", symbol: "lpp_atomic_load_acq", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0], cl_return: Some(0) },
+        Builtin { name: "atomic_load_relaxed", symbol: "lpp_atomic_load_relaxed", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0], cl_return: Some(0) },
+        Builtin { name: "atomic_store", symbol: "lpp_atomic_store", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Void, cl_params: &[0, 0], cl_return: None },
+        Builtin { name: "atomic_store_rel", symbol: "lpp_atomic_store_rel", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Void, cl_params: &[0, 0], cl_return: None },
+        Builtin { name: "atomic_store_relaxed", symbol: "lpp_atomic_store_relaxed", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Void, cl_params: &[0, 0], cl_return: None },
+        Builtin { name: "atomic_add", symbol: "lpp_atomic_add", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
+        Builtin { name: "atomic_sub", symbol: "lpp_atomic_sub", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
+        Builtin { name: "atomic_and", symbol: "lpp_atomic_and", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
+        Builtin { name: "atomic_or", symbol: "lpp_atomic_or", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
+        Builtin { name: "atomic_xor", symbol: "lpp_atomic_xor", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
+        Builtin { name: "atomic_swap", symbol: "lpp_atomic_swap", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
+        Builtin { name: "atomic_cas", symbol: "lpp_atomic_cas", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0, 0], cl_return: Some(0) },
+        Builtin { name: "atomic_cas_weak", symbol: "lpp_atomic_cas_weak", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0, 0], cl_return: Some(0) },
+        Builtin { name: "atomic_load32", symbol: "lpp_atomic_load32", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0], cl_return: Some(0) },
+        Builtin { name: "atomic_store32", symbol: "lpp_atomic_store32", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Void, cl_params: &[0, 0], cl_return: None },
+        Builtin { name: "atomic_add32", symbol: "lpp_atomic_add32", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
+        Builtin { name: "atomic_cas32", symbol: "lpp_atomic_cas32", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0, 0], cl_return: Some(0) },
+        Builtin { name: "atomic_fence", symbol: "lpp_atomic_fence", params: &[], return_type: TypeRef::Void, cl_params: &[], cl_return: None },
+        Builtin { name: "atomic_fence_acq", symbol: "lpp_atomic_fence_acq", params: &[], return_type: TypeRef::Void, cl_params: &[], cl_return: None },
+        Builtin { name: "atomic_fence_rel", symbol: "lpp_atomic_fence_rel", params: &[], return_type: TypeRef::Void, cl_params: &[], cl_return: None },
+        Builtin { name: "cpu_pause", symbol: "lpp_cpu_pause", params: &[], return_type: TypeRef::Void, cl_params: &[], cl_return: None },
+
+        // ── Locks and OS threads (F4) ──────────────────────────────────────
+        // Handles are raw addresses like the atomics, so a lock can be embedded
+        // in a struct as an `Int` field.
+        Builtin { name: "mutex_new", symbol: "lpp_mutex_new", params: &[], return_type: TypeRef::Int, cl_params: &[], cl_return: Some(0) },
+        Builtin { name: "mutex_lock", symbol: "lpp_mutex_lock", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Void, cl_params: &[0], cl_return: None },
+        Builtin { name: "mutex_trylock", symbol: "lpp_mutex_trylock", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0], cl_return: Some(0) },
+        Builtin { name: "mutex_unlock", symbol: "lpp_mutex_unlock", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Void, cl_params: &[0], cl_return: None },
+        Builtin { name: "mutex_free", symbol: "lpp_mutex_free", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Void, cl_params: &[0], cl_return: None },
+        Builtin { name: "rwlock_new", symbol: "lpp_rwlock_new", params: &[], return_type: TypeRef::Int, cl_params: &[], cl_return: Some(0) },
+        Builtin { name: "rwlock_rdlock", symbol: "lpp_rwlock_rdlock", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Void, cl_params: &[0], cl_return: None },
+        Builtin { name: "rwlock_wrlock", symbol: "lpp_rwlock_wrlock", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Void, cl_params: &[0], cl_return: None },
+        Builtin { name: "rwlock_rdunlock", symbol: "lpp_rwlock_rdunlock", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Void, cl_params: &[0], cl_return: None },
+        Builtin { name: "rwlock_wrunlock", symbol: "lpp_rwlock_wrunlock", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Void, cl_params: &[0], cl_return: None },
+        Builtin { name: "rwlock_free", symbol: "lpp_rwlock_free", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Void, cl_params: &[0], cl_return: None },
+        Builtin { name: "cpu_count", symbol: "lpp_cpu_count", params: &[], return_type: TypeRef::Int, cl_params: &[], cl_return: Some(0) },
+        Builtin { name: "thread_spawn", symbol: "lpp_thread_spawn", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
+        Builtin { name: "thread_join", symbol: "lpp_thread_join", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0], cl_return: Some(0) },
+        Builtin { name: "thread_pin", symbol: "lpp_thread_pin", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0], cl_return: Some(0) },
+        Builtin { name: "thread_id", symbol: "lpp_thread_id", params: &[], return_type: TypeRef::Int, cl_params: &[], cl_return: Some(0) },
+
+        // ── List capacity, ordering and edits (F13) ────────────────────────
+        // Return types on the element-yielding calls are refined against the
+        // receiver's `List[T]` in typecheck.rs / mir/lower.rs, exactly like
+        // `list_get`.
+        Builtin { name: "list_insert", symbol: "lpp_list_insert", params: &[ParamType::Any, ParamType::Specific(TypeRef::Int), ParamType::Any], return_type: TypeRef::Void, cl_params: &[0, 0, 0], cl_return: None },
+        Builtin { name: "list_remove", symbol: "lpp_list_remove", params: &[ParamType::Any, ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
+        Builtin { name: "list_reserve", symbol: "lpp_list_reserve", params: &[ParamType::Any, ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Void, cl_params: &[0, 0], cl_return: None },
+        Builtin { name: "list_capacity", symbol: "lpp_list_capacity", params: &[ParamType::Any], return_type: TypeRef::Int, cl_params: &[0], cl_return: Some(0) },
+        Builtin { name: "list_clear", symbol: "lpp_list_clear", params: &[ParamType::Any], return_type: TypeRef::Void, cl_params: &[0], cl_return: None },
+        Builtin { name: "list_truncate", symbol: "lpp_list_truncate", params: &[ParamType::Any, ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Void, cl_params: &[0, 0], cl_return: None },
+        Builtin { name: "list_swap", symbol: "lpp_list_swap", params: &[ParamType::Any, ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Void, cl_params: &[0, 0, 0], cl_return: None },
+        Builtin { name: "list_reverse", symbol: "lpp_list_reverse", params: &[ParamType::Any], return_type: TypeRef::Void, cl_params: &[0], cl_return: None },
+        Builtin { name: "list_sort", symbol: "lpp_list_sort", params: &[ParamType::Any], return_type: TypeRef::Void, cl_params: &[0], cl_return: None },
+        Builtin { name: "list_sort_desc", symbol: "lpp_list_sort_desc", params: &[ParamType::Any], return_type: TypeRef::Void, cl_params: &[0], cl_return: None },
+        Builtin { name: "list_sort_u", symbol: "lpp_list_sort_u", params: &[ParamType::Any], return_type: TypeRef::Void, cl_params: &[0], cl_return: None },
+        Builtin { name: "list_index_of", symbol: "lpp_list_index_of", params: &[ParamType::Any, ParamType::Any], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
+        Builtin { name: "list_binary_search", symbol: "lpp_list_binary_search", params: &[ParamType::Any, ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0], cl_return: Some(0) },
+        Builtin { name: "list_extend", symbol: "lpp_list_extend", params: &[ParamType::Any, ParamType::Any], return_type: TypeRef::Void, cl_params: &[0, 0], cl_return: None },
+
+        // ── Map iteration (F5) ─────────────────────────────────────────────
+        // A hash map you cannot enumerate cannot back a catalog scan, a
+        // `GROUP BY` or a hash join. Return types are refined to `List[K]` /
+        // `List[V]` from the receiver's `Map[K, V]`.
+        Builtin { name: "map_keys", symbol: "lpp_map_keys", params: &[ParamType::Any], return_type: TypeRef::Void, cl_params: &[0], cl_return: Some(0) },
+        Builtin { name: "map_values", symbol: "lpp_map_values", params: &[ParamType::Any], return_type: TypeRef::Void, cl_params: &[0], cl_return: Some(0) },
+        Builtin { name: "map_clear", symbol: "lpp_map_clear", params: &[ParamType::Any], return_type: TypeRef::Void, cl_params: &[0], cl_return: None },
+        Builtin { name: "map_capacity", symbol: "lpp_map_capacity", params: &[ParamType::Any], return_type: TypeRef::Int, cl_params: &[0], cl_return: Some(0) },
+
+        // ── Injectable clock and RNG (F14) ─────────────────────────────────
+        // `time_ms`/`random` are process-global, so a deterministic simulator
+        // could only be deterministic by convention. These are per-instance
+        // handles: `clock_new(0)` follows the OS clock, `clock_new(t)` starts a
+        // virtual clock at `t` that only moves when `clock_advance` says so.
+        Builtin { name: "rng_new", symbol: "lpp_rng_new", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0], cl_return: Some(0) },
+        Builtin { name: "rng_next", symbol: "lpp_rng_next", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0], cl_return: Some(0) },
+        Builtin { name: "rng_range", symbol: "lpp_rng_range", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0, 0, 0], cl_return: Some(0) },
+        Builtin { name: "rng_float", symbol: "lpp_rng_float", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Float, cl_params: &[0], cl_return: Some(3) },
+        Builtin { name: "rng_free", symbol: "lpp_rng_free", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Void, cl_params: &[0], cl_return: None },
+        Builtin { name: "clock_new", symbol: "lpp_clock_new", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0], cl_return: Some(0) },
+        Builtin { name: "clock_now", symbol: "lpp_clock_now", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Int, cl_params: &[0], cl_return: Some(0) },
+        Builtin { name: "clock_advance", symbol: "lpp_clock_advance", params: &[ParamType::Specific(TypeRef::Int), ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Void, cl_params: &[0, 0], cl_return: None },
+        Builtin { name: "clock_free", symbol: "lpp_clock_free", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Void, cl_params: &[0], cl_return: None },
+        // ── Memory Prefetching ─────────────────────────────────────────────
+        Builtin { name: "prefetch", symbol: "lpp_prefetch", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Void, cl_params: &[0], cl_return: None },
+        Builtin { name: "prefetch_read", symbol: "lpp_prefetch", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Void, cl_params: &[0], cl_return: None },
+        Builtin { name: "prefetch_write", symbol: "lpp_prefetch_write", params: &[ParamType::Specific(TypeRef::Int)], return_type: TypeRef::Void, cl_params: &[0], cl_return: None },
     ];
     BUILTINS
 }

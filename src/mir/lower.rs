@@ -180,6 +180,12 @@ impl<'a> MirLowerCtx<'a> {
             Type::Bool => TypeRef::Bool,
             Type::Char => TypeRef::Char,
             Type::Void => TypeRef::Void,
+            Type::U8 => TypeRef::U8,
+            Type::U16 => TypeRef::U16,
+            Type::U32 => TypeRef::U32,
+            Type::I8 => TypeRef::I8,
+            Type::I16 => TypeRef::I16,
+            Type::I32 => TypeRef::I32,
             Type::Custom(name) => {
                 // Check if it's a type parameter first
                 if self.current_type_params.iter().any(|tp| tp == name) {
@@ -238,6 +244,9 @@ impl<'a> MirLowerCtx<'a> {
                 _ => TypeRef::Void,
             },
             Expr::Identifier(name, cell) => {
+                if let Some(&local_id) = self.match_bindings.get(name) {
+                    return builder.function.locals[local_id.0].ty.clone();
+                }
                 if let Some(ast_id) = cell.get() {
                     if let Some(local_id) = binding_map.get(&BindingId(ast_id)) {
                         return builder.function.locals[local_id.0].ty.clone();
@@ -284,6 +293,25 @@ impl<'a> MirLowerCtx<'a> {
                 ],
             ),
             Expr::Call { callee, args } => {
+                if let Expr::FieldAccess { base, field } = &**callee {
+                    let base_ty = self.expr_type_hint(base, builder, binding_map);
+                    if let TypeRef::Custom(struct_id) = base_ty {
+                        if let Some((sname, _)) = self.type_table.structs_by_name.iter().find(|&(_, id)| *id == struct_id) {
+                            let mangled = format!("{}_{}", sname, field);
+                            if let Some(ty) = self.func_return_types.get(&mangled) {
+                                return ty.clone();
+                            }
+                        }
+                    }
+                    if let Some(ty) = self.func_return_types.get(field) {
+                        return ty.clone();
+                    }
+                    for (fname, rty) in &self.func_return_types {
+                        if fname.ends_with(&format!("_{}", field)) {
+                            return rty.clone();
+                        }
+                    }
+                }
                 if let Expr::Identifier(name, _) = &**callee {
                     if let Some(ty) = self.func_return_types.get(name) {
                         return if self.async_functions.contains(name) {
@@ -291,6 +319,11 @@ impl<'a> MirLowerCtx<'a> {
                         } else {
                             ty.clone()
                         };
+                    }
+                    for (fname, rty) in &self.func_return_types {
+                        if fname.ends_with(&format!("_{}", name)) {
+                            return rty.clone();
+                        }
                     }
                     if let Some(&struct_id) = self.type_table.structs_by_name.get(name) {
                         return TypeRef::Custom(struct_id);
@@ -1374,6 +1407,7 @@ impl<'a> MirLowerCtx<'a> {
                     TypeRef::Custom(id) => Some(id),
                     _ => None,
                 };
+                let enum_name_opt = enum_struct_id.map(|sid| self.type_table.definitions[sid.0].name.clone());
 
                 let tag_val = builder.new_local(TypeRef::Int, false, None, None);
                 if enum_struct_id.is_some() {
@@ -1409,26 +1443,46 @@ impl<'a> MirLowerCtx<'a> {
                         end_block
                     };
 
-                    // Compare tag
-                    let expected_tag = builder.new_local(TypeRef::Int, false, None, None);
-                    builder.push_instr(MirInstr::Assign(expected_tag, Rvalue::Use(Operand::Int(i as i64))))?;
-                    let cmp_local = builder.new_local(TypeRef::Bool, false, None, None);
-                    builder.push_instr(MirInstr::Assign(
-                        cmp_local,
-                        Rvalue::BinaryOp(BinaryOperator::Eq, Operand::Local(tag_val), Operand::Local(expected_tag)),
-                    ))?;
-                    builder.terminate_current_block(Terminator::If {
-                        cond: Operand::Local(cmp_local),
-                        then_block: arm_block,
-                        else_block: next_block,
-                    })?;
+                    let is_wildcard = arm.variant == "_";
+                    let variant_simple_name = arm.variant.rsplit('.').next().unwrap_or(&arm.variant);
+                    let variant_tag = if is_wildcard {
+                        0
+                    } else if let Some(ref enum_name) = enum_name_opt {
+                        self.get_enum_variant_tag(enum_name, variant_simple_name)
+                    } else {
+                        self.program.declarations.iter().find_map(|d| {
+                            if let TopLevel::Enum(e) = d {
+                                e.variants.iter().position(|v| v.name == variant_simple_name)
+                            } else {
+                                None
+                            }
+                        }).unwrap_or(i)
+                    };
+
+                    if is_wildcard {
+                        builder.terminate_current_block(Terminator::Goto(arm_block))?;
+                    } else {
+                        // Compare tag against variant's real declared tag
+                        let expected_tag = builder.new_local(TypeRef::Int, false, None, None);
+                        builder.push_instr(MirInstr::Assign(expected_tag, Rvalue::Use(Operand::Int(variant_tag as i64))))?;
+                        let cmp_local = builder.new_local(TypeRef::Bool, false, None, None);
+                        builder.push_instr(MirInstr::Assign(
+                            cmp_local,
+                            Rvalue::BinaryOp(BinaryOperator::Eq, Operand::Local(tag_val), Operand::Local(expected_tag)),
+                        ))?;
+                        builder.terminate_current_block(Terminator::If {
+                            cond: Operand::Local(cmp_local),
+                            then_block: arm_block,
+                            else_block: next_block,
+                        })?;
+                    }
 
                     // Arm body — bind this variant's payload slot, at its real
                     // type, so a Str stays a Str instead of a truncated int.
                     builder.switch_to_block(arm_block);
                     if !arm.bindings.is_empty() {
                         let binding_name = &arm.bindings[0];
-                        let field = format!("__v{}", i);
+                        let field = format!("__v{}", variant_tag);
                         let payload_ty = enum_struct_id
                             .and_then(|sid| {
                                 self.type_table.definitions[sid.0]
@@ -1438,7 +1492,7 @@ impl<'a> MirLowerCtx<'a> {
                                     .map(|(_, t)| t.clone())
                             })
                             .unwrap_or(TypeRef::Int);
-                        let bound_local = builder.new_local(payload_ty.clone(), true, None, None);
+                        let bound_local = builder.new_local(payload_ty.clone(), true, Some(binding_name.clone()), None);
                         if enum_struct_id.is_some() {
                             // Reading a field borrows the container's ARC edge.
                             if payload_ty.is_managed() {
@@ -1543,6 +1597,10 @@ impl<'a> MirLowerCtx<'a> {
                 }
                 // Check match arm bindings
                 if let Some(&local_id) = self.match_bindings.get(name) {
+                    let local = &builder.function.locals[local_id.0];
+                    if local.ty.is_managed() {
+                        return Ok(Operand::Borrowed(local_id));
+                    }
                     return Ok(Operand::Local(local_id));
                 }
                 let ast_id = match cell.get() {
@@ -1828,6 +1886,25 @@ impl<'a> MirLowerCtx<'a> {
                             builder.push_instr(MirInstr::Assign(result, Rvalue::SliceToStr(view_op)))?;
                             return Ok(Operand::Local(result));
                         }
+                        "len" => {
+                            let arg_ty = self.expr_type_hint(&args[0], builder, binding_map);
+                            let arg_op = self.lower_expr(builder, &args[0], binding_map)?;
+                            let result = builder.new_local(TypeRef::Int, false, None, None);
+                            if arg_ty.is_borrowed_view() {
+                                builder.push_instr(MirInstr::Assign(result, Rvalue::SliceLen(arg_op)))?;
+                                return Ok(Operand::Local(result));
+                            }
+                            let sym = if arg_ty == TypeRef::Str {
+                                "lpp_str_len"
+                            } else {
+                                "lpp_list_len"
+                            };
+                            builder.push_instr(MirInstr::Assign(
+                                result,
+                                Rvalue::BuiltinCall(sym.to_string(), vec![arg_op]),
+                            ))?;
+                            return Ok(Operand::Local(result));
+                        }
                         _ => {}
                     }
                 }
@@ -1955,6 +2032,34 @@ impl<'a> MirLowerCtx<'a> {
                         {
                             if name == "dir_list" || name == "lpp_dir_list" || name == "str_split" || name == "lpp_str_split" {
                                 return_type = TypeRef::Generic("List".to_string(), vec![TypeRef::Str]);
+                            } else if name == "map_keys" || name == "lpp_map_keys" {
+                                let map_ty = args
+                                    .first()
+                                    .map(|arg| self.expr_type_hint(arg, builder, binding_map))
+                                    .unwrap_or(TypeRef::Int);
+                                if let TypeRef::Generic(ref gname, ref params) = map_ty {
+                                    if gname == "Map" {
+                                        if let Some(key_ty) = params.first() {
+                                            return_type = TypeRef::Generic("List".to_string(), vec![key_ty.clone()]);
+                                        }
+                                    }
+                                }
+                                if return_type == TypeRef::Void {
+                                    return_type = TypeRef::Generic("List".to_string(), vec![TypeRef::Int]);
+                                }
+                            } else if name == "map_values" || name == "lpp_map_values" {
+                                let map_ty = args
+                                    .first()
+                                    .map(|arg| self.expr_type_hint(arg, builder, binding_map))
+                                    .unwrap_or(TypeRef::Int);
+                                if let TypeRef::Generic(ref gname, ref params) = map_ty {
+                                    if gname == "Map" && params.len() >= 2 {
+                                        return_type = TypeRef::Generic("List".to_string(), vec![params[1].clone()]);
+                                    }
+                                }
+                                if return_type == TypeRef::Void {
+                                    return_type = TypeRef::Generic("List".to_string(), vec![TypeRef::Int]);
+                                }
                             } else if name == "list_get" || name == "lpp_list_get" || name == "get" {
                                 let list_ty = args
                                     .first()
@@ -1988,7 +2093,7 @@ impl<'a> MirLowerCtx<'a> {
                                 | "delete_file" | "append_file" | "file_size" | "file_exists"
                                 | "env_set" => TypeRef::Int,
                                 "list_new" => TypeRef::Generic("List".to_string(), vec![TypeRef::Int]),
-                                "print" | "print_str" | "json_free" | "list_push" | "list_free"
+                                "print" | "print_str" | "write_str" | "lpp_write_str" | "json_free" | "list_push" | "list_free"
                                 | "net_close" => TypeRef::Void,
                                 _ => {
                                     // Closure through a variable: the local carries
@@ -2665,16 +2770,20 @@ impl<'a> MirLowerCtx<'a> {
                 // The tag lives in a field now, so compare against that rather
                 // than against the object handle itself.
                 let subject_val = self.lower_expr(builder, subject, binding_map)?;
-                let subject_is_enum = matches!(
-                    match &subject_val {
-                        Operand::Local(id) | Operand::Borrowed(id) =>
-                            builder.function.locals[id.0].ty.clone(),
-                        _ => TypeRef::Int,
-                    },
-                    TypeRef::Custom(_)
-                );
+                let subject_ty = match &subject_val {
+                    Operand::Local(id) | Operand::Borrowed(id) => {
+                        builder.function.locals[id.0].ty.clone()
+                    }
+                    _ => TypeRef::Int,
+                };
+                let enum_struct_id = match subject_ty {
+                    TypeRef::Custom(id) => Some(id),
+                    _ => None,
+                };
+                let enum_name_opt = enum_struct_id.map(|sid| self.type_table.definitions[sid.0].name.clone());
+
                 let subject_tag = builder.new_local(TypeRef::Int, false, None, None);
-                if subject_is_enum {
+                if enum_struct_id.is_some() {
                     builder.push_instr(MirInstr::Assign(
                         subject_tag,
                         Rvalue::FieldAccess(subject_val.clone(), "__tag".to_string()),
@@ -2691,21 +2800,70 @@ impl<'a> MirLowerCtx<'a> {
                 for (i, arm) in arms.iter().enumerate() {
                     let arm_block = builder.new_block();
                     let next_block = if i + 1 < arms.len() { builder.new_block() } else { end_block };
-                    let tag_local = builder.new_local(TypeRef::Int, false, None, None);
-                    builder.push_instr(MirInstr::Assign(tag_local, Rvalue::Use(Operand::Int(i as i64))))?;
-                    let cmp_local = builder.new_local(TypeRef::Bool, false, None, None);
-                    builder.push_instr(MirInstr::Assign(
-                        cmp_local,
-                        Rvalue::BinaryOp(BinaryOperator::Eq, Operand::Local(subject_tag), Operand::Local(tag_local)),
-                    ))?;
-                    builder.terminate_current_block(Terminator::If {
-                        cond: Operand::Local(cmp_local),
-                        then_block: arm_block,
-                        else_block: next_block,
-                    })?;
+
+                    let is_wildcard = arm.variant == "_";
+                    let variant_simple_name = arm.variant.rsplit('.').next().unwrap_or(&arm.variant);
+                    let variant_tag = if is_wildcard {
+                        0
+                    } else if let Some(ref enum_name) = enum_name_opt {
+                        self.get_enum_variant_tag(enum_name, variant_simple_name)
+                    } else {
+                        self.program.declarations.iter().find_map(|d| {
+                            if let TopLevel::Enum(e) = d {
+                                e.variants.iter().position(|v| v.name == variant_simple_name)
+                            } else {
+                                None
+                            }
+                        }).unwrap_or(i)
+                    };
+
+                    if is_wildcard {
+                        builder.terminate_current_block(Terminator::Goto(arm_block))?;
+                    } else {
+                        let tag_local = builder.new_local(TypeRef::Int, false, None, None);
+                        builder.push_instr(MirInstr::Assign(tag_local, Rvalue::Use(Operand::Int(variant_tag as i64))))?;
+                        let cmp_local = builder.new_local(TypeRef::Bool, false, None, None);
+                        builder.push_instr(MirInstr::Assign(
+                            cmp_local,
+                            Rvalue::BinaryOp(BinaryOperator::Eq, Operand::Local(subject_tag), Operand::Local(tag_local)),
+                        ))?;
+                        builder.terminate_current_block(Terminator::If {
+                            cond: Operand::Local(cmp_local),
+                            then_block: arm_block,
+                            else_block: next_block,
+                        })?;
+                    }
+
                     builder.switch_to_block(arm_block);
+                    if !arm.bindings.is_empty() {
+                        let binding_name = &arm.bindings[0];
+                        let field = format!("__v{}", variant_tag);
+                        let payload_ty = enum_struct_id
+                            .and_then(|sid| {
+                                self.type_table.definitions[sid.0]
+                                    .fields
+                                    .iter()
+                                    .find(|(n, _)| *n == field)
+                                    .map(|(_, t)| t.clone())
+                            })
+                            .unwrap_or(TypeRef::Int);
+                        let bound_local = builder.new_local(payload_ty.clone(), true, Some(binding_name.clone()), None);
+                        if enum_struct_id.is_some() {
+                            if payload_ty.is_managed() {
+                                builder.set_local_ownership(bound_local, Ownership::Borrowed);
+                            }
+                            builder.push_instr(MirInstr::Assign(
+                                bound_local,
+                                Rvalue::FieldAccess(subject_val.clone(), field),
+                            ))?;
+                        }
+                        self.match_bindings.insert(binding_name.clone(), bound_local);
+                    }
                     for stmt in &arm.body {
                         self.lower_stmt(builder, stmt, binding_map)?;
+                    }
+                    if !arm.bindings.is_empty() {
+                        self.match_bindings.remove(&arm.bindings[0]);
                     }
                     builder.terminate_current_block(Terminator::Goto(end_block))?;
                     if i + 1 < arms.len() {
@@ -2834,6 +2992,13 @@ impl<'a> MirLowerCtx<'a> {
                         Rvalue::TupleField(tuple_op, idx),
                     ))?;
                     Ok(Operand::Local(result))
+                } else if base_ty.is_borrowed_view() {
+                    // slice_get(base, index)
+                    let desugared = Expr::Call {
+                        callee: Box::new(Expr::Identifier("slice_get".to_string(), std::cell::Cell::new(None))),
+                        args: vec![*base.clone(), *index.clone()],
+                    };
+                    self.lower_expr(builder, &desugared, binding_map)
                 } else {
                     // list_get(base, index)
                     let desugared = Expr::Call {

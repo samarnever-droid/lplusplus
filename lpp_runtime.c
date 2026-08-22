@@ -73,6 +73,44 @@ typedef USHORT (WINAPI *lpp_CaptureStackBackTrace_fn)(ULONG, ULONG, PVOID*, PULO
 
 static int g_lpp_crash_handler_installed = 0;
 
+static void lpp_flush_all(void) {
+    fflush(stdout);
+    fflush(stderr);
+}
+
+#if defined(_WIN32)
+typedef struct _LPP_SYMBOL_INFO {
+    ULONG SizeOfStruct;
+    ULONG TypeIndex;
+    ULONG64 Reserved[2];
+    ULONG Index;
+    ULONG Size;
+    ULONG64 ModBase;
+    ULONG Flags;
+    ULONG64 Value;
+    ULONG64 Address;
+    ULONG Register;
+    ULONG Scope;
+    ULONG Tag;
+    ULONG NameLen;
+    ULONG MaxNameLen;
+    CHAR Name[1];
+} LPP_SYMBOL_INFO;
+
+typedef struct _LPP_IMAGEHLP_LINE64 {
+    DWORD SizeOfStruct;
+    PVOID Key;
+    DWORD LineNumber;
+    PCHAR FileName;
+    DWORD64 Address;
+} LPP_IMAGEHLP_LINE64;
+
+typedef BOOL (WINAPI *lpp_SymInitialize_fn)(HANDLE, PCSTR, BOOL);
+typedef BOOL (WINAPI *lpp_SymFromAddr_fn)(HANDLE, DWORD64, PDWORD64, LPP_SYMBOL_INFO*);
+typedef BOOL (WINAPI *lpp_SymGetLineFromAddr64_fn)(HANDLE, DWORD64, PDWORD, LPP_IMAGEHLP_LINE64*);
+typedef BOOL (WINAPI *lpp_SymCleanup_fn)(HANDLE);
+#endif
+
 void lpp_print_backtrace(void) {
     fprintf(stderr, "\nStack Backtrace:\n");
 #if defined(_WIN32)
@@ -82,8 +120,44 @@ void lpp_print_backtrace(void) {
         lpp_CaptureStackBackTrace_fn pCapture = (lpp_CaptureStackBackTrace_fn)(void*)GetProcAddress(hKernel32, "RtlCaptureStackBackTrace");
         if (pCapture) {
             USHORT frames = pCapture(0, 32, stack, NULL);
+            HMODULE hDbgHelp = LoadLibraryA("dbghelp.dll");
+            lpp_SymInitialize_fn pSymInit = hDbgHelp ? (lpp_SymInitialize_fn)(void*)GetProcAddress(hDbgHelp, "SymInitialize") : NULL;
+            lpp_SymFromAddr_fn pSymFromAddr = hDbgHelp ? (lpp_SymFromAddr_fn)(void*)GetProcAddress(hDbgHelp, "SymFromAddr") : NULL;
+            lpp_SymGetLineFromAddr64_fn pSymGetLine = hDbgHelp ? (lpp_SymGetLineFromAddr64_fn)(void*)GetProcAddress(hDbgHelp, "SymGetLineFromAddr64") : NULL;
+            lpp_SymCleanup_fn pSymCleanup = hDbgHelp ? (lpp_SymCleanup_fn)(void*)GetProcAddress(hDbgHelp, "SymCleanup") : NULL;
+
+            HANDLE hProcess = GetCurrentProcess();
+            BOOL symInitialized = FALSE;
+            if (pSymInit) {
+                symInitialized = pSymInit(hProcess, NULL, TRUE);
+            }
+
+            char symbolBuffer[sizeof(LPP_SYMBOL_INFO) + 256];
+            memset(symbolBuffer, 0, sizeof(symbolBuffer));
+            LPP_SYMBOL_INFO *pSymbol = (LPP_SYMBOL_INFO*)symbolBuffer;
+            pSymbol->SizeOfStruct = sizeof(LPP_SYMBOL_INFO);
+            pSymbol->MaxNameLen = 255;
+
+            LPP_IMAGEHLP_LINE64 lineInfo;
+            memset(&lineInfo, 0, sizeof(lineInfo));
+            lineInfo.SizeOfStruct = sizeof(LPP_IMAGEHLP_LINE64);
+
             for (USHORT i = 0; i < frames; i++) {
-                fprintf(stderr, "  [%2u] 0x%p\n", (unsigned int)i, stack[i]);
+                DWORD64 addr = (DWORD64)(uintptr_t)stack[i];
+                DWORD64 displacement = 0;
+                DWORD lineDisplacement = 0;
+                if (symInitialized && pSymFromAddr && pSymFromAddr(hProcess, addr, &displacement, pSymbol)) {
+                    if (pSymGetLine && pSymGetLine(hProcess, addr, &lineDisplacement, &lineInfo) && lineInfo.FileName) {
+                        fprintf(stderr, "  [%2u] 0x%p: %s (%s:%lu)\n", (unsigned int)i, stack[i], pSymbol->Name, lineInfo.FileName, (unsigned long)lineInfo.LineNumber);
+                    } else {
+                        fprintf(stderr, "  [%2u] 0x%p: %s\n", (unsigned int)i, stack[i], pSymbol->Name);
+                    }
+                } else {
+                    fprintf(stderr, "  [%2u] 0x%p\n", (unsigned int)i, stack[i]);
+                }
+            }
+            if (symInitialized && pSymCleanup) {
+                pSymCleanup(hProcess);
             }
             return;
         }
@@ -109,6 +183,7 @@ void lpp_print_backtrace(void) {
 }
 
 void lpp_panic(const char *fmt, ...) {
+    fflush(stdout);
     fprintf(stderr, "\n===================================================================\n");
     fprintf(stderr, "💥 L++ RUNTIME PANIC\n");
     fprintf(stderr, "===================================================================\n");
@@ -122,6 +197,7 @@ void lpp_panic(const char *fmt, ...) {
     lpp_print_backtrace();
     fprintf(stderr, "===================================================================\n\n");
     fflush(stderr);
+    fflush(stdout);
     exit(101);
 }
 
@@ -137,6 +213,8 @@ static void lpp_signal_handler(int sig) {
         case SIGABRT: sig_name = "Abort Signal (SIGABRT) - Process abort triggered"; break;
         case SIGILL:  sig_name = "Illegal Instruction (SIGILL) - Invalid CPU instruction execute attempt"; break;
     }
+    fflush(stdout);
+    fflush(stderr);
 #if defined(_WIN32)
     HANDLE hErr = GetStdHandle(STD_ERROR_HANDLE);
     if (hErr && hErr != INVALID_HANDLE_VALUE) {
@@ -162,13 +240,20 @@ static void lpp_signal_handler(int sig) {
 void lpp_init_crash_handler(void) {
     if (g_lpp_crash_handler_installed) return;
     g_lpp_crash_handler_installed = 1;
+#if defined(_WIN32)
+    SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
+#endif
+    atexit(lpp_flush_all);
     signal(SIGSEGV, lpp_signal_handler);
     signal(SIGFPE,  lpp_signal_handler);
     signal(SIGABRT, lpp_signal_handler);
     signal(SIGILL,  lpp_signal_handler);
 }
 
-#if defined(__GNUC__) || defined(__clang__)
+#if defined(_MSC_VER)
+#pragma section(".CRT$XCU", read)
+__declspec(allocate(".CRT$XCU")) static void (*p_lpp_init_crash_handler)(void) = lpp_init_crash_handler;
+#elif defined(__GNUC__) || defined(__clang__)
 __attribute__((constructor)) static void lpp_auto_init_crash_handler(void) {
     lpp_init_crash_handler();
 }
@@ -197,8 +282,19 @@ void lpp_print_str(const char *ptr) {
     /* Android build (no console): route to logcat so output is visible. */
     __android_log_print(ANDROID_LOG_INFO, "L++", "%s", ptr);
 #else
-    /* Host / Termux (console + full libc): normal stdout. */
+    /* Host / Termux (console + full libc): normal stdout with trailing newline. */
     puts(ptr);
+    fflush(stdout);
+#endif
+}
+
+void lpp_write_str(const char *ptr) {
+    if (!ptr) return;
+#ifdef LPP_ANDROID
+    __android_log_print(ANDROID_LOG_INFO, "L++", "%s", ptr);
+#else
+    /* Writes raw string without appending newline. */
+    fputs(ptr, stdout);
     fflush(stdout);
 #endif
 }
@@ -593,7 +689,7 @@ int64_t lpp_file_move(const char *source, const char *destination) {
    typedef volatile LONG lpp_atomic32_t;
 #  define LPP_ARC_LOAD(p)         ((int32_t)InterlockedAdd((p), 0))
 #  define LPP_ARC_INC(p)          InterlockedIncrement((p))
-#  define LPP_ARC_DEC(p)          InterlockedDecrement((p))
+#  define LPP_ARC_DEC(p)          InterlockedExchangeAdd((p), -1)
 #else
 #  include <stdatomic.h>
    typedef _Atomic(int32_t) lpp_atomic32_t;
@@ -1359,6 +1455,213 @@ void lpp_list_free(void *list) {
     lpp_arc_release(list);
 }
 
+void lpp_list_insert(void *list, int64_t index, int64_t value) {
+    LppList *l = (LppList *)list;
+    if (!l) lpp_panic("list insert attempted on null pointer");
+    if (index < 0 || index > l->len) lpp_panic("list insert index %lld out of bounds (len %lld)", (long long)index, (long long)l->len);
+    if (l->len == l->cap) {
+        int64_t new_cap = l->cap == 0 ? 8 : l->cap * 2;
+        int64_t *new_data = (int64_t *)realloc(l->data, (size_t)new_cap * sizeof(int64_t));
+        if (!new_data) lpp_panic("out of memory while inserting into list");
+        l->data = new_data;
+        l->cap = new_cap;
+    }
+    if (index < l->len) {
+        memmove(&l->data[index + 1], &l->data[index], (size_t)(l->len - index) * sizeof(int64_t));
+    }
+    if (l->retain_element) l->retain_element(value);
+    l->data[index] = value;
+    l->len++;
+}
+
+int64_t lpp_list_remove(void *list, int64_t index) {
+    LppList *l = (LppList *)list;
+    if (!l) lpp_panic("list remove attempted on null pointer");
+    if (index < 0 || index >= l->len) lpp_panic("list remove index %lld out of bounds (len %lld)", (long long)index, (long long)l->len);
+    int64_t val = l->data[index];
+    if (index < l->len - 1) {
+        memmove(&l->data[index], &l->data[index + 1], (size_t)(l->len - index - 1) * sizeof(int64_t));
+    }
+    l->len--;
+    return val;
+}
+
+void lpp_list_reserve(void *list, int64_t capacity) {
+    LppList *l = (LppList *)list;
+    if (!l || capacity <= l->cap) return;
+    int64_t *new_data = (int64_t *)realloc(l->data, (size_t)capacity * sizeof(int64_t));
+    if (!new_data) lpp_panic("out of memory in list_reserve");
+    l->data = new_data;
+    l->cap = capacity;
+}
+
+int64_t lpp_list_capacity(void *list) {
+    LppList *l = (LppList *)list;
+    return l ? l->cap : 0;
+}
+
+void lpp_list_clear(void *list) {
+    LppList *l = (LppList *)list;
+    if (!l) return;
+    if (l->drop_element) {
+        for (int64_t i = 0; i < l->len; i++) {
+            l->drop_element(l->data[i]);
+        }
+    }
+    l->len = 0;
+}
+
+void lpp_list_truncate(void *list, int64_t new_len) {
+    LppList *l = (LppList *)list;
+    if (!l || new_len >= l->len || new_len < 0) return;
+    if (l->drop_element) {
+        for (int64_t i = new_len; i < l->len; i++) {
+            l->drop_element(l->data[i]);
+        }
+    }
+    l->len = new_len;
+}
+
+void lpp_list_swap(void *list, int64_t i, int64_t j) {
+    LppList *l = (LppList *)list;
+    if (!l) lpp_panic("list swap on null pointer");
+    if (i < 0 || i >= l->len || j < 0 || j >= l->len) lpp_panic("list swap indices out of bounds");
+    int64_t tmp = l->data[i];
+    l->data[i] = l->data[j];
+    l->data[j] = tmp;
+}
+
+void lpp_list_reverse(void *list) {
+    LppList *l = (LppList *)list;
+    if (!l || l->len <= 1) return;
+    int64_t i = 0, j = l->len - 1;
+    while (i < j) {
+        int64_t tmp = l->data[i];
+        l->data[i] = l->data[j];
+        l->data[j] = tmp;
+        i++;
+        j--;
+    }
+}
+
+/* Introsort-lite: median-of-three quicksort with an insertion-sort cutoff and a
+ * depth limit that falls back to heapsort. */
+static int lpp_i64_lt(int64_t a, int64_t b) { return a < b; }
+static int lpp_i64_gt(int64_t a, int64_t b) { return a > b; }
+static int lpp_u64_lt(int64_t a, int64_t b) { return (uint64_t)a < (uint64_t)b; }
+
+typedef int (*LppCmpFn)(int64_t, int64_t);
+
+static void lpp_insertion_sort(int64_t *v, int64_t n, LppCmpFn before) {
+    for (int64_t i = 1; i < n; ++i) {
+        int64_t key = v[i];
+        int64_t j = i - 1;
+        while (j >= 0 && before(key, v[j])) { v[j + 1] = v[j]; --j; }
+        v[j + 1] = key;
+    }
+}
+
+static void lpp_sift_down(int64_t *v, int64_t start, int64_t n, LppCmpFn before) {
+    int64_t root = start;
+    for (;;) {
+        int64_t child = 2 * root + 1;
+        if (child >= n) break;
+        if (child + 1 < n && before(v[child], v[child + 1])) child++;
+        if (!before(v[root], v[child])) break;
+        int64_t t = v[root]; v[root] = v[child]; v[child] = t;
+        root = child;
+    }
+}
+
+static void lpp_heap_sort(int64_t *v, int64_t n, LppCmpFn before) {
+    for (int64_t i = n / 2 - 1; i >= 0; --i) lpp_sift_down(v, i, n, before);
+    for (int64_t end = n - 1; end > 0; --end) {
+        int64_t t = v[0]; v[0] = v[end]; v[end] = t;
+        lpp_sift_down(v, 0, end, before);
+    }
+}
+
+static void lpp_quick_sort(int64_t *v, int64_t n, int64_t depth, LppCmpFn before) {
+    while (n > 16) {
+        if (depth == 0) { lpp_heap_sort(v, n, before); return; }
+        depth--;
+
+        int64_t mid = n / 2, last = n - 1;
+        if (before(v[mid], v[0]))    { int64_t t=v[mid]; v[mid]=v[0]; v[0]=t; }
+        if (before(v[last], v[0]))   { int64_t t=v[last]; v[last]=v[0]; v[0]=t; }
+        if (before(v[last], v[mid])) { int64_t t=v[last]; v[last]=v[mid]; v[mid]=t; }
+        int64_t t0=v[mid]; v[mid]=v[0]; v[0]=t0;
+        int64_t pivot = v[0];
+
+        int64_t i = 0, j = n;
+        for (;;) {
+            do { ++i; } while (i < n  && before(v[i], pivot));
+            do { --j; } while (j > 0   && before(pivot, v[j]));
+            if (i >= j) break;
+            int64_t t=v[i]; v[i]=v[j]; v[j]=t;
+        }
+        int64_t t1=v[0]; v[0]=v[j]; v[j]=t1;
+
+        if (j < n - j - 1) {
+            lpp_quick_sort(v, j, depth, before);
+            v += j + 1; n -= j + 1;
+        } else {
+            lpp_quick_sort(v + j + 1, n - j - 1, depth, before);
+            n = j;
+        }
+    }
+    lpp_insertion_sort(v, n, before);
+}
+
+static void lpp_list_sort_with(void *list, LppCmpFn before) {
+    LppList *l = (LppList *)list;
+    if (!l || l->len < 2) return;
+    int64_t depth = 0;
+    for (int64_t m = l->len; m > 1; m >>= 1) depth += 2;
+    lpp_quick_sort(l->data, l->len, depth, before);
+}
+
+void lpp_list_sort(void *list)      { lpp_list_sort_with(list, lpp_i64_lt); }
+void lpp_list_sort_desc(void *list) { lpp_list_sort_with(list, lpp_i64_gt); }
+void lpp_list_sort_u(void *list)    { lpp_list_sort_with(list, lpp_u64_lt); }
+
+int64_t lpp_list_index_of(void *list, int64_t value) {
+    LppList *l = (LppList *)list;
+    if (!l) return -1;
+    for (int64_t i = 0; i < l->len; ++i) {
+        if (l->data[i] == value) return i;
+    }
+    return -1;
+}
+
+int64_t lpp_list_binary_search(void *list, int64_t value) {
+    LppList *l = (LppList *)list;
+    if (!l) return -1;
+    int64_t lo = 0, hi = l->len - 1;
+    while (lo <= hi) {
+        int64_t mid = lo + (hi - lo) / 2;
+        int64_t probe = l->data[mid];
+        if (probe == value) return mid;
+        if (probe < value) lo = mid + 1; else hi = mid - 1;
+    }
+    return -(lo + 1);
+}
+
+void lpp_list_extend(void *dst, void *src) {
+    LppList *d = (LppList *)dst;
+    LppList *s = (LppList *)src;
+    if (!d) lpp_panic("list extend attempted on null destination");
+    if (!s || s->len == 0) return;
+    int64_t add = s->len;
+    lpp_list_reserve(d, d->len + add);
+    for (int64_t i = 0; i < add; ++i) {
+        int64_t v = s->data[i];
+        if (d->retain_element) d->retain_element(v);
+        d->data[d->len + i] = v;
+    }
+    d->len += add;
+}
+
 /* ── Borrowed zero-copy slices ──────────────────────────────────────────── */
 typedef struct {
     void *base;
@@ -1895,38 +2198,7 @@ char* lpp_http_post(const char *url, const char *data, const char *content_type,
 
 #endif /* !LPP_NO_NETWORK */
 
-/* ── Thread (minimal) ────────────────────────────────────────────────────── */
-
-#if defined(_WIN32)
-#include <windows.h>
-typedef struct { void (*fn)(void*); void *env; } ThreadArg;
-static DWORD WINAPI thread_trampoline(LPVOID arg) {
-    ThreadArg *a = (ThreadArg *)arg;
-    a->fn(a->env);
-    free(a);
-    return 0;
-}
-void lpp_thread_spawn(void (*fn)(void*), void *env) {
-    ThreadArg *a = (ThreadArg *)malloc(sizeof(ThreadArg));
-    a->fn = fn; a->env = env;
-    CreateThread(NULL, 0, thread_trampoline, a, 0, NULL);
-}
-#else
-#include <pthread.h>
-typedef struct { void (*fn)(void*); void *env; } ThreadArg;
-static void *thread_trampoline(void *arg) {
-    ThreadArg *a = (ThreadArg *)arg;
-    a->fn(a->env);
-    free(a);
-    return NULL;
-}
-void lpp_thread_spawn(void (*fn)(void*), void *env) {
-    ThreadArg *a = (ThreadArg *)malloc(sizeof(ThreadArg));
-    a->fn = fn; a->env = env;
-    pthread_t t; pthread_create(&t, NULL, thread_trampoline, a);
-    pthread_detach(t);
-}
-#endif
+/* Thread and synchronization primitives are implemented in runtime/lpp_concur.c */
 
 /* ── JSON Parser and Accessors (Builtin Standard Library) ────────────────── */
 
@@ -2131,6 +2403,10 @@ void lpp_json_free(void *json) {
 #include "runtime/lpp_map.c"
 #include "runtime/lpp_gui.c"
 #include "runtime/lpp_webview.c"
+#include "runtime/lpp_int.c"
+#include "runtime/lpp_atomic.c"
+#include "runtime/lpp_concur.c"
+#include "runtime/lpp_clock_rng.c"
 
 
 /* Scalar reference for the explicit LLVM vector intrinsic. Cranelift calls
@@ -2160,6 +2436,96 @@ int64_t lpp_vec_i64_checksum(int64_t n) {
     int64_t total = 0;
     for (int64_t i = 0; i < n; ++i) total += (i * 3) ^ (i >> 1);
     return total;
+#endif
+}
+
+#if defined(_MSC_VER) || defined(__x86_64__) || defined(_M_X64)
+#include <emmintrin.h>
+#include <xmmintrin.h>
+#endif
+
+void lpp_prefetch(int64_t addr) {
+#if defined(_MSC_VER) || defined(__x86_64__) || defined(_M_X64)
+    if (addr) _mm_prefetch((const char *)(intptr_t)addr, _MM_HINT_T0);
+#elif defined(__GNUC__)
+    if (addr) __builtin_prefetch((const void *)(intptr_t)addr, 0, 3);
+#endif
+}
+
+void lpp_prefetch_write(int64_t addr) {
+#if defined(_MSC_VER) || defined(__x86_64__) || defined(_M_X64)
+    if (addr) _mm_prefetch((const char *)(intptr_t)addr, _MM_HINT_T0);
+#elif defined(__GNUC__)
+    if (addr) __builtin_prefetch((const void *)(intptr_t)addr, 1, 3);
+#endif
+}
+
+typedef struct {
+    int64_t v[2];
+} LppVec128;
+
+LppVec128 lpp_vec_i64x2_and(LppVec128 a, LppVec128 b) {
+    LppVec128 r;
+    r.v[0] = a.v[0] & b.v[0];
+    r.v[1] = a.v[1] & b.v[1];
+    return r;
+}
+
+LppVec128 lpp_vec_i64x2_or(LppVec128 a, LppVec128 b) {
+    LppVec128 r;
+    r.v[0] = a.v[0] | b.v[0];
+    r.v[1] = a.v[1] | b.v[1];
+    return r;
+}
+
+LppVec128 lpp_vec_i64x2_not(LppVec128 a) {
+    LppVec128 r;
+    r.v[0] = ~a.v[0];
+    r.v[1] = ~a.v[1];
+    return r;
+}
+
+LppVec128 lpp_vec_u8x16_splat(int64_t byte_val) {
+    uint8_t b = (uint8_t)byte_val;
+    uint64_t half = 0;
+    for (int i = 0; i < 8; i++) half |= ((uint64_t)b << (i * 8));
+    LppVec128 r;
+    r.v[0] = (int64_t)half;
+    r.v[1] = (int64_t)half;
+    return r;
+}
+
+LppVec128 lpp_vec_u8x16_eq(LppVec128 a, LppVec128 b) {
+#if defined(_MSC_VER) || defined(__x86_64__) || defined(_M_X64)
+    __m128i va = _mm_loadu_si128((const __m128i *)&a);
+    __m128i vb = _mm_loadu_si128((const __m128i *)&b);
+    __m128i eq = _mm_cmpeq_epi8(va, vb);
+    LppVec128 r;
+    _mm_storeu_si128((__m128i *)&r, eq);
+    return r;
+#else
+    uint8_t *pa = (uint8_t *)&a;
+    uint8_t *pb = (uint8_t *)&b;
+    LppVec128 r;
+    uint8_t *pr = (uint8_t *)&r;
+    for (int i = 0; i < 16; i++) {
+        pr[i] = (pa[i] == pb[i]) ? 0xFF : 0x00;
+    }
+    return r;
+#endif
+}
+
+int64_t lpp_vec_u8x16_movemask(LppVec128 a) {
+#if defined(_MSC_VER) || defined(__x86_64__) || defined(_M_X64)
+    __m128i va = _mm_loadu_si128((const __m128i *)&a);
+    return (int64_t)_mm_movemask_epi8(va);
+#else
+    uint8_t *pa = (uint8_t *)&a;
+    int64_t mask = 0;
+    for (int i = 0; i < 16; i++) {
+        if (pa[i] & 0x80) mask |= (1 << i);
+    }
+    return mask;
 #endif
 }
 

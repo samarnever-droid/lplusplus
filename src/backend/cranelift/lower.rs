@@ -2,7 +2,7 @@ use super::types::{abi_to_cl, type_to_cl};
 use crate::layout::{struct_layout, tuple_layout, tuple_runtime_metadata};
 use crate::ast::BinaryOperator;
 use crate::mir::ir::*;
-use crate::type_facts::ListElementClass;
+use crate::type_facts::{AbiClass, ListElementClass};
 use crate::types::{TypeRef, TypeTable};
 use cranelift_codegen::entity::EntityRef;
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
@@ -99,6 +99,8 @@ impl<'a, M: Module> FunctionLower<'a, M> {
             }
             let cl_i64_zero = builder.ins().iconst(cl_types::I64, 0);
             let cl_i8_zero = builder.ins().iconst(cl_types::I8, 0);
+            let cl_i16_zero = builder.ins().iconst(cl_types::I16, 0);
+            let cl_i32_zero = builder.ins().iconst(cl_types::I32, 0);
             let cl_f64_zero = builder.ins().f64const(0.0);
             let cl_i64x2_zero = builder.ins().splat(cl_types::I64X2, cl_i64_zero);
             for local in &mir_fn.locals {
@@ -109,6 +111,10 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                         cl_f64_zero
                     } else if cl_ty == cl_types::I8 {
                         cl_i8_zero
+                    } else if cl_ty == cl_types::I16 {
+                        cl_i16_zero
+                    } else if cl_ty == cl_types::I32 {
+                        cl_i32_zero
                     } else if cl_ty == cl_types::I64X2 {
                         cl_i64x2_zero
                     } else {
@@ -254,7 +260,18 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                         dest
                     )
                 })?;
-                builder.def_var(variable, value);
+                let var_ty = type_to_cl(&locals[dest.0].ty);
+                let val_ty = builder.func.dfg.value_type(value);
+                let coerced_value = if val_ty != var_ty && val_ty.is_int() && var_ty.is_int() {
+                    if val_ty.bits() > var_ty.bits() {
+                        builder.ins().ireduce(var_ty, value)
+                    } else {
+                        builder.ins().uextend(var_ty, value)
+                    }
+                } else {
+                    value
+                };
+                builder.def_var(variable, coerced_value);
             }
             MirInstr::AssignField { base, field, value } => {
                 let base_variable = *local_vars.get(base).ok_or_else(|| {
@@ -270,15 +287,20 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                     {
                         let (layout, _) = struct_layout(self.type_table, *struct_id);
                         let field_layout = layout[field_index];
-                        if builder.func.dfg.value_type(value_value) != abi_to_cl(field_layout.abi) {
-                            return Err(format!(
-                                "Type mismatch storing field '{}' of '{}'",
-                                field, struct_def.name
-                            ));
-                        }
+                        let val_ty = builder.func.dfg.value_type(value_value);
+                        let target_ty = abi_to_cl(field_layout.abi);
+                        let coerced_val = if val_ty != target_ty {
+                            if val_ty.bits() > target_ty.bits() {
+                                builder.ins().ireduce(target_ty, value_value)
+                            } else {
+                                builder.ins().uextend(target_ty, value_value)
+                            }
+                        } else {
+                            value_value
+                        };
                         builder.ins().store(
                             cranelift_codegen::ir::MemFlags::new(),
-                            value_value,
+                            coerced_val,
                             base_value,
                             field_layout.offset as i32,
                         );
@@ -434,8 +456,13 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                 let lane = scalar(builder, args.first().ok_or_else(|| "vector splat needs one argument".to_string())?, self)?;
                 Some(self.vector_from_lanes(builder, [lane, lane]))
             }
+            "lpp_vec_i64x2_not" => {
+                let val = vector(builder, args.first().ok_or_else(|| "vector not needs an operand".to_string())?, self)?;
+                Some(builder.ins().bnot(val))
+            }
             "lpp_vec_i64x2_add" | "lpp_vec_i64x2_sub" | "lpp_vec_i64x2_mul"
-            | "lpp_vec_i64x2_xor" | "lpp_vec_i64x2_shr" | "lpp_vec_i64x2_shr_var" => {
+            | "lpp_vec_i64x2_xor" | "lpp_vec_i64x2_and" | "lpp_vec_i64x2_or"
+            | "lpp_vec_i64x2_shr" | "lpp_vec_i64x2_shr_var" => {
                 let left = vector(builder, args.first().ok_or_else(|| "vector operation is missing its left operand".to_string())?, self)?;
                 let right = args.get(1).ok_or_else(|| "vector operation is missing its right operand".to_string())?;
                 if symbol == "lpp_vec_i64x2_shr" {
@@ -466,9 +493,38 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                         "lpp_vec_i64x2_add" => builder.ins().iadd(left, right),
                         "lpp_vec_i64x2_sub" => builder.ins().isub(left, right),
                         "lpp_vec_i64x2_mul" => builder.ins().imul(left, right),
+                        "lpp_vec_i64x2_and" => builder.ins().band(left, right),
+                        "lpp_vec_i64x2_or" => builder.ins().bor(left, right),
                         _ => builder.ins().bxor(left, right),
                     })
                 }
+            }
+            "lpp_vec_u8x16_splat" => {
+                let byte_val = scalar(builder, args.first().ok_or_else(|| "u8x16 splat needs an argument".to_string())?, self)?;
+                let byte_val = builder.ins().ireduce(cl_types::I8, byte_val);
+                let byte_vec = builder.ins().splat(cl_types::I8X16, byte_val);
+                Some(builder.ins().bitcast(cl_types::I64X2, cranelift_codegen::ir::MemFlags::new(), byte_vec))
+            }
+            "lpp_vec_u8x16_eq" => {
+                let left = vector(builder, args.first().ok_or_else(|| "u8x16 eq needs left operand".to_string())?, self)?;
+                let right = vector(builder, args.get(1).ok_or_else(|| "u8x16 eq needs right operand".to_string())?, self)?;
+                let left_u8 = builder.ins().bitcast(cl_types::I8X16, cranelift_codegen::ir::MemFlags::new(), left);
+                let right_u8 = builder.ins().bitcast(cl_types::I8X16, cranelift_codegen::ir::MemFlags::new(), right);
+                let cmp = builder.ins().icmp(IntCC::Equal, left_u8, right_u8);
+                Some(builder.ins().bitcast(cl_types::I64X2, cranelift_codegen::ir::MemFlags::new(), cmp))
+            }
+            "lpp_vec_u8x16_movemask" => {
+                let val = vector(builder, args.first().ok_or_else(|| "movemask needs vector".to_string())?, self)?;
+                let val_u8 = builder.ins().bitcast(cl_types::I8X16, cranelift_codegen::ir::MemFlags::new(), val);
+                let mut mask = builder.ins().iconst(cl_types::I64, 0);
+                for lane in 0..16u8 {
+                    let b = builder.ins().extractlane(val_u8, lane);
+                    let bit = builder.ins().ushr_imm(b, 7);
+                    let bit64 = builder.ins().uextend(cl_types::I64, bit);
+                    let shifted = builder.ins().ishl_imm(bit64, lane as i64);
+                    mask = builder.ins().bor(mask, shifted);
+                }
+                Some(mask)
             }
             "lpp_vec_i64x2_extract" => {
                 let value = vector(builder, args.first().ok_or_else(|| "vector extract is missing its vector".to_string())?, self)?;
@@ -858,10 +914,11 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                     id
                 };
                 let func_ref = self.module.declare_func_in_func(cl_id, builder.func);
-                let arg_values: Vec<Value> = args
+                let mut arg_values: Vec<Value> = args
                     .iter()
                     .map(|arg| self.operand_to_value(builder, arg, local_vars))
                     .collect::<Result<_, _>>()?;
+                coerce_args_to_signature(builder, func_ref, &mut arg_values);
                 let call = builder.ins().call(func_ref, &arg_values);
                 let results = builder.inst_results(call);
                 Ok(if results.is_empty() {
@@ -994,12 +1051,18 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                     {
                         let (layout, _) = struct_layout(self.type_table, *struct_id);
                         let field_layout = layout[field_index];
-                        Ok(builder.ins().load(
+                        let loaded = builder.ins().load(
                             abi_to_cl(field_layout.abi),
                             cranelift_codegen::ir::MemFlags::new(),
                             base_value,
                             field_layout.offset as i32,
-                        ))
+                        );
+                        let val = if matches!(field_layout.abi, AbiClass::I8 | AbiClass::I16 | AbiClass::I32) {
+                            builder.ins().uextend(cl_types::I64, loaded)
+                        } else {
+                            loaded
+                        };
+                        Ok(val)
                     } else {
                         Err(format!(
                             "Field '{}' not found while lowering struct '{}'",
@@ -1315,7 +1378,9 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                     // `f64` function cannot return an I64 zero and a Bool is I8.
                     let zero = match return_type {
                         TypeRef::Float => builder.ins().f64const(0.0),
-                        TypeRef::Bool => builder.ins().iconst(cl_types::I8, 0),
+                        TypeRef::Bool | TypeRef::U8 | TypeRef::I8 => builder.ins().iconst(cl_types::I8, 0),
+                        TypeRef::U16 | TypeRef::I16 => builder.ins().iconst(cl_types::I16, 0),
+                        TypeRef::U32 | TypeRef::I32 => builder.ins().iconst(cl_types::I32, 0),
                         TypeRef::Int
                         | TypeRef::Char
                         | TypeRef::Str
@@ -1344,5 +1409,44 @@ impl<'a, M: Module> FunctionLower<'a, M> {
             }
         }
         Ok(())
+    }
+}
+
+/// Widen or narrow each argument to the width the callee's signature declares.
+///
+/// The runtime's C prototypes and the L++ type table do not always agree on
+/// integer width. Several predicates are declared `-> Bool` in `builtins.rs`
+/// (which lowers to `i8`) while their C definition returns `int64_t`, and the
+/// reverse also occurs. Passing such a value straight into a genuinely
+/// `i8`-typed parameter — `bool_to_str(map_has(m, k))` is the canonical case —
+/// used to fail Cranelift verification with
+/// `arg 0 has type i64, expected i8` rather than compiling.
+///
+/// Narrowing to `i8` goes through a nonzero test instead of `ireduce` so that a
+/// truthy value whose low byte happens to be zero (e.g. `256`) stays `true`.
+/// That matches how `if` already treats integers throughout the language.
+fn coerce_args_to_signature(
+    builder: &mut FunctionBuilder,
+    func_ref: cranelift_codegen::ir::FuncRef,
+    args: &mut [Value],
+) {
+    let sig_ref = builder.func.dfg.ext_funcs[func_ref].signature;
+    let want: Vec<cranelift_codegen::ir::Type> = builder.func.dfg.signatures[sig_ref]
+        .params
+        .iter()
+        .map(|p| p.value_type)
+        .collect();
+    for (arg, &want) in args.iter_mut().zip(want.iter()) {
+        let have = builder.func.dfg.value_type(*arg);
+        if have == want || !have.is_int() || !want.is_int() {
+            continue;
+        }
+        *arg = if want == cl_types::I8 {
+            builder.ins().icmp_imm(IntCC::NotEqual, *arg, 0)
+        } else if have.bits() > want.bits() {
+            builder.ins().ireduce(want, *arg)
+        } else {
+            builder.ins().uextend(want, *arg)
+        };
     }
 }

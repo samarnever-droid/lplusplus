@@ -1,0 +1,40 @@
+﻿def test_simd() -> Bool:
+    mut passed := 0
+    total := 6
+
+    # 1. vec_i64x2 and extraction
+    v1 := vec_i64x2(10, 20)
+    if vec_i64x2_extract(v1, 0) == 10 and vec_i64x2_extract(v1, 1) == 20:
+        passed = passed + 1
+
+    # 2. vec_i64x2_splat
+    v2 := vec_i64x2_splat(50)
+    if vec_i64x2_extract(v2, 0) == 50 and vec_i64x2_extract(v2, 1) == 50:
+        passed = passed + 1
+
+    # 3. vec_i64x2_add
+    v_add := vec_i64x2_add(v1, v2) # [60, 70]
+    if vec_i64x2_extract(v_add, 0) == 60 and vec_i64x2_extract(v_add, 1) == 70:
+        passed = passed + 1
+
+    # 4. vec_i64x2_sub
+    v_sub := vec_i64x2_sub(v2, v1) # [40, 30]
+    if vec_i64x2_extract(v_sub, 0) == 40 and vec_i64x2_extract(v_sub, 1) == 30:
+        passed = passed + 1
+
+    # 5. vec_i64x2_xor
+    v_xor := vec_i64x2_xor(v1, v1) # [0, 0]
+    if vec_i64x2_extract(v_xor, 0) == 0 and vec_i64x2_extract(v_xor, 1) == 0:
+        passed = passed + 1
+
+    # 6. vec_i64x2_sum
+    sum := vec_i64x2_sum(v1) # 10 + 20 = 30
+    if sum == 30:
+        passed = passed + 1
+
+    print_str("ASSERTIONS: " + int_to_str(passed) + "/" + int_to_str(total))
+    return passed == total
+
+def main():
+    if test_simd():
+        print_str("SUCCESS: ALL SIMD INTRINSICS TESTS PASSED")

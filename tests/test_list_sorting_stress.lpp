@@ -1,0 +1,47 @@
+﻿def test_sorting_and_search() -> Bool:
+    mut passed := 0
+    total := 6
+
+    # 1. list_sort (ascending)
+    mut xs := [42, 10, 88, 3, 25, 99, 1]
+    list_sort(xs)
+    if xs[0] == 1 and xs[1] == 3 and xs[2] == 10 and xs[3] == 25 and xs[4] == 42 and xs[5] == 88 and xs[6] == 99:
+        passed = passed + 1
+
+    # 2. list_sort_desc (descending)
+    list_sort_desc(xs)
+    if xs[0] == 99 and xs[1] == 88 and xs[2] == 42 and xs[3] == 25 and xs[4] == 10 and xs[5] == 3 and xs[6] == 1:
+        passed = passed + 1
+
+    # 3. list_sort_u (unsigned order)
+    mut us := [-1, 10, 0, -100, 50]
+    list_sort_u(us)
+    # In unsigned order: 0 < 10 < 50 < -100 < -1 (since -1 is 0xFFFFFFFFFFFFFFFF)
+    if us[0] == 0 and us[1] == 10 and us[2] == 50 and us[4] == -1:
+        passed = passed + 1
+
+    # 4. list_binary_search on sorted array
+    list_sort(xs) # [1, 3, 10, 25, 42, 88, 99]
+    idx_42 := list_binary_search(xs, 42)
+    idx_missing := list_binary_search(xs, 50)
+    # 42 is at index 4; 50 is absent, insertion point index is 5, so binary search returns -(5 + 1) = -6
+    if idx_42 == 4 and idx_missing == -6:
+        passed = passed + 1
+
+    # 5. list_index_of
+    if list_index_of(xs, 88) == 5 and list_index_of(xs, 999) == -1:
+        passed = passed + 1
+
+    # 6. list_extend
+    mut a := [1, 2, 3]
+    b := [4, 5, 6]
+    list_extend(a, b)
+    if len(a) == 6 and a[0] == 1 and a[3] == 4 and a[5] == 6:
+        passed = passed + 1
+
+    print_str("ASSERTIONS: " + int_to_str(passed) + "/" + int_to_str(total))
+    return passed == total
+
+def main():
+    if test_sorting_and_search():
+        print_str("SUCCESS: ALL LIST SORTING & SEARCH TESTS PASSED")

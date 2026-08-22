@@ -1,0 +1,58 @@
+﻿@repr(exact)
+struct ExactPoint:
+    x: Int
+    y: Int
+    active: Bool
+
+@align(64)
+struct CacheAlignedBucket:
+    tag: Int
+    key: Int
+    value: Int
+
+@repr(exact)
+@align(64)
+struct ExactAlignedPage:
+    page_id: Int
+    lsn: Int
+    is_dirty: Bool
+
+def test_struct_layout() -> Bool:
+    mut passed := 0
+    total := 6
+
+    # 1. ExactPoint fields reading and mutating
+    mut pt := ExactPoint(10, 20, true)
+    if pt.x == 10 and pt.y == 20 and pt.active == true:
+        passed = passed + 1
+
+    pt.x = 100
+    pt.active = false
+    if pt.x == 100 and pt.active == false:
+        passed = passed + 1
+
+    # 2. CacheAlignedBucket
+    mut b := CacheAlignedBucket(1, 42, 999)
+    if b.tag == 1 and b.key == 42 and b.value == 999:
+        passed = passed + 1
+
+    b.value = 1000
+    if b.value == 1000:
+        passed = passed + 1
+
+    # 3. ExactAlignedPage
+    mut pg := ExactAlignedPage(101, 5555, true)
+    if pg.page_id == 101 and pg.lsn == 5555 and pg.is_dirty == true:
+        passed = passed + 1
+
+    pg.lsn = 6000
+    pg.is_dirty = false
+    if pg.lsn == 6000 and pg.is_dirty == false:
+        passed = passed + 1
+
+    print_str("ASSERTIONS: " + int_to_str(passed) + "/" + int_to_str(total))
+    return passed == total
+
+def main():
+    if test_struct_layout():
+        print_str("SUCCESS: ALL STRUCT LAYOUT AND ALIGN TESTS PASSED")

@@ -1565,6 +1565,51 @@ fn runtime_cache_dir() -> PathBuf {
 
 /// Compile `lpp_runtime.c` once and reuse the object file on later builds.
 ///
+/// Fold the contents of every quoted `#include` reachable from `src` into
+/// `hasher`, so a cache key built over `src` alone still changes when one of
+/// the files it textually inlines is edited.
+///
+/// `lpp_runtime.c` is an amalgamation: it `#include`s the whole `runtime/` tree
+/// (`runtime/lpp_str.c`, `runtime/lpp_map.c`, …). Keying only on the
+/// amalgamation's own size and mtime meant a fix in an included file was never
+/// rebuilt — the stale object was linked and the source edit looked like a
+/// no-op. Angle-bracket includes are skipped: those are system headers, and
+/// their compiler is already part of the key.
+fn hash_local_includes(src: &Path, hasher: &mut impl Hasher) {
+    fn walk(path: &Path, hasher: &mut impl Hasher, seen: &mut std::collections::BTreeSet<PathBuf>) {
+        let canonical = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        if !seen.insert(canonical) {
+            return;
+        }
+        let Ok(text) = fs::read_to_string(path) else {
+            return;
+        };
+        let base = path.parent().unwrap_or(Path::new("."));
+        // Collect first so the hash order is the file's own include order,
+        // which is stable across machines.
+        for line in text.lines() {
+            let line = line.trim_start();
+            let Some(rest) = line.strip_prefix("#include") else {
+                continue;
+            };
+            let Some(open) = rest.find('"') else { continue };
+            let Some(close) = rest[open + 1..].find('"') else {
+                continue;
+            };
+            let rel = &rest[open + 1..open + 1 + close];
+            let target = base.join(rel);
+            if let Ok(data) = fs::read(&target) {
+                rel.hash(hasher);
+                data.hash(hasher);
+                walk(&target, hasher, seen);
+            }
+        }
+    }
+
+    let mut seen = std::collections::BTreeSet::new();
+    walk(src, hasher, &mut seen);
+}
+
 /// The host linker used to hand `lpp_runtime.c` to `cc` on *every* link, so a
 /// ~40 KLOC C translation unit (it `#include`s the whole `runtime/` tree) was
 /// recompiled for each build. That dominated link time: ~180 ms of a ~200 ms
@@ -1574,6 +1619,11 @@ fn runtime_cache_dir() -> PathBuf {
 /// compiler name, so editing the runtime or switching compilers invalidates it
 /// automatically. Returns `None` when compilation fails, in which case the
 /// caller falls back to passing the `.c` file directly.
+///
+/// The key also folds in every `#include "..."` the amalgamation pulls in
+/// (`hash_local_includes`). Without that, editing `runtime/lpp_str.c` left
+/// `lpp_runtime.c`'s own size and mtime untouched, so the stale cached object
+/// kept being linked and the edit appeared to have no effect at all.
 fn cached_runtime_object(runtime_src: &Path, cc: &str, target: Option<&str>) -> Option<PathBuf> {
     if std::env::var("LPP_NO_RUNTIME_CACHE").is_ok() {
         return None;
@@ -1592,6 +1642,7 @@ fn cached_runtime_object(runtime_src: &Path, cc: &str, target: Option<&str>) -> 
     meta.len().hash(&mut hasher);
     mtime.hash(&mut hasher);
     cc.hash(&mut hasher);
+    hash_local_includes(runtime_src, &mut hasher);
     // Cross targets produce different objects, so the target must be part of
     // the cache key (Android vs host runtimes differ).
     if let Some(t) = target {
@@ -1766,6 +1817,8 @@ pub fn host_link_binary_target(
             cmd.arg("shell32.lib");
         }
         cmd.arg(format!("/Fe:{}", output_path.display()));
+        cmd.arg("/link");
+        cmd.arg("/DEBUG");
     } else {
         cmd.arg(obj_file).arg("-o").arg(output_path);
         for lib in link_libs {
@@ -1778,6 +1831,7 @@ pub fn host_link_binary_target(
             };
         }
         cmd.arg("-lm"); // runtime math references must precede the library
+        cmd.arg("-rdynamic"); // export symbols for backtrace
         if is_android {
             cmd.arg("-llog"); // Android logging (bionic)
         }
@@ -2368,13 +2422,40 @@ pub fn cmd_self_update(args: &[String]) -> i32 {
     let current_version = env!("CARGO_PKG_VERSION");
     println!("[L++] L++ Toolchain Self-Updater");
     println!("[L++] Installed version: v{}", current_version);
-    println!("[L++] Checking latest release channel from https://registry.lplusplus.bond...");
 
     if check_only {
-        println!("[L++] ✓ L++ is currently running the latest production build (v{}).", current_version);
-        return 0;
-    }
-
+        // Actually query the latest published release instead of assuming the
+        // installed build is current. A stale "you are latest" answer here is
+        // what kept users on old versions without noticing.
+        match fetch_latest_release_tag() {
+            Ok(latest_tag) => {
+                let latest_version = latest_tag.trim_start_matches('v').to_string();
+                println!("[L++] Latest release channel: v{} (github.com/samarnever-droid/lplusplus/releases/latest)", latest_version);
+                let cur = semver::Version::parse(current_version);
+                let lat = semver::Version::parse(&latest_version);
+                match (cur, lat) {
+                    (Ok(c), Ok(l)) => {
+                        if l > c {
+                            println!("[L++] ⬆ Update available: v{} -> v{}. Run `lpp upgrade` to install it.", c, l);
+                            1
+                        } else {
+                            println!("[L++] ✓ L++ is currently running the latest production build (v{}).", current_version);
+                            0
+                        }
+                    }
+                    _ => {
+                        println!("[L++] ? Could not compare versions (installed v{}, latest tag '{}').", current_version, latest_tag);
+                        1
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("[L++] ✗ Failed to query latest release: {}", e);
+                eprintln!("[L++] Check manually at https://github.com/samarnever-droid/lplusplus/releases/latest");
+                1
+            }
+        }
+    } else {
     println!("[L++] Upgrading L++ toolchain...");
     #[cfg(windows)]
     {
@@ -2424,6 +2505,61 @@ pub fn cmd_self_update(args: &[String]) -> i32 {
             }
         }
     }
+    }
+}
+
+/// Fetch the latest published release tag (e.g. "v1.0.1") using curl, mirroring
+/// how the rest of the PM shells out for network access. Prefers the
+/// `releases/latest` HTTP redirect (only touches github.com, which is far more
+/// reachable than api.github.com behind restrictive networks) and falls back to
+/// the releases API. Returns an error string when no channel answers.
+fn fetch_latest_release_tag() -> Result<String, String> {
+    let curl_bin = if cfg!(windows) { "curl.exe" } else { "curl" };
+
+    // Method 1: follow-free HEAD request; GitHub answers 302 with
+    // Location: https://github.com/<owner>/<repo>/releases/tag/vX.Y.Z
+    if let Ok(out) = std::process::Command::new(curl_bin)
+        .args(["-sSI", "--max-time", "15", "https://github.com/samarnever-droid/lplusplus/releases/latest"])
+        .output()
+    {
+        if out.status.success() {
+            let headers = String::from_utf8_lossy(&out.stdout).to_string();
+            for line in headers.lines() {
+                let lower = line.to_ascii_lowercase();
+                if lower.starts_with("location:") {
+                    let loc = line[9..].trim();
+                    if let Some(pos) = loc.rfind("/tag/") {
+                        let tag = &loc[pos + 5..];
+                        if !tag.is_empty() {
+                            return Ok(tag.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Method 2: the releases API (requires api.github.com reachability).
+    let output = std::process::Command::new(curl_bin)
+        .args(["-fsSL", "--max-time", "15", "-H", "User-Agent: lpp-updater", "https://api.github.com/repos/samarnever-droid/lplusplus/releases/latest"])
+        .output()
+        .map_err(|e| format!("failed to run {}: {}", curl_bin, e))?;
+    if !output.status.success() {
+        return Err(format!("{} exited with status {}", curl_bin, output.status));
+    }
+    let body = String::from_utf8_lossy(&output.stdout).to_string();
+    // Minimal parse of `"tag_name":"vX.Y.Z"` without pulling in a JSON tree.
+    let key = "\"tag_name\"";
+    let key_pos = body.find(key).ok_or_else(|| "release payload had no tag_name field".to_string())?;
+    let rest = &body[key_pos + key.len()..];
+    let start = rest.find('"').ok_or_else(|| "malformed tag_name field".to_string())?;
+    let after = &rest[start + 1..];
+    let end = after.find('"').ok_or_else(|| "malformed tag_name field".to_string())?;
+    let tag = &after[..end];
+    if tag.is_empty() {
+        return Err("latest release tag is empty".to_string());
+    }
+    Ok(tag.to_string())
 }
 
 fn bump_package_version(current: &str, segment: &str) -> Result<String, String> {
@@ -4127,7 +4263,7 @@ pub fn load_msvc_env() {
     if vcvars.exists() {
         println!("  Loading MSVC environment via: {}", vcvars.display());
         let temp_dir = std::env::temp_dir();
-        let bat_path = temp_dir.join("lpp_vcvars.bat");
+        let bat_path = temp_dir.join(format!("lpp_vcvars_{}.bat", std::process::id()));
         let bat_content = format!(
             "@echo off\ncall \"{}\" > nul\nset\n",
             vcvars.to_str().unwrap()

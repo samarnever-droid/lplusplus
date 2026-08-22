@@ -1,0 +1,11 @@
+﻿def test_simd_tag_probe() -> Bool:
+    target_tag := 110
+    probe_vec := vec_u8x16_splat(target_tag)
+    tags := vec_i64x2(7208960, 28160)
+    matches := vec_u8x16_eq(tags, probe_vec)
+    mask := vec_u8x16_movemask(matches)
+    return mask == 516
+
+def main():
+    if test_simd_tag_probe():
+        print_str("TAG PROBE SUCCESS")

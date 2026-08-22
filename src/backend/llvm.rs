@@ -17,6 +17,8 @@ fn llvm_type(ty: &TypeRef) -> &'static str {
     match ty.abi_class() {
         AbiClass::Void => "void",
         AbiClass::I8 => "i8",
+        AbiClass::I16 => "i16",
+        AbiClass::I32 => "i32",
         AbiClass::I64 => "i64",
         AbiClass::F64 => "double",
         AbiClass::Pointer => "ptr",
@@ -192,8 +194,72 @@ fn builtin_signature(symbol: &str) -> Option<(&'static str, &'static str)> {
         "lpp_buf_write" | "buf_write" => ("i64", "ptr, ptr"),
         "lpp_buf_crc32" | "buf_crc32" => ("i64", "ptr, i64, i64"),
         "lpp_buf_copy" | "buf_copy" => ("i64", "ptr, i64, ptr, i64, i64"),
-        "lpp_buf_write_str" | "buf_write_str" => ("i64", "ptr, i64, ptr"),
-        "lpp_buf_read_str" | "buf_read_str" => ("ptr", "ptr, i64, i64"),
+        "lpp_str_cmp" => ("i64", "ptr, ptr"),
+        "lpp_str_repeat" => ("ptr", "ptr, i64"),
+        "lpp_buf_get64le" | "buf_get64le" | "lpp_buf_get64be" | "buf_get64be" => ("i64", "ptr, i64"),
+        "lpp_buf_set64le" | "buf_set64le" | "lpp_buf_set64be" | "buf_set64be" => ("void", "ptr, i64, i64"),
+        "lpp_buf_get32be" | "buf_get32be" => ("i64", "ptr, i64"),
+        "lpp_buf_set32be" | "buf_set32be" => ("void", "ptr, i64, i64"),
+        "lpp_buf_get16be" | "buf_get16be" => ("i64", "ptr, i64"),
+        "lpp_buf_set16be" | "buf_set16be" => ("void", "ptr, i64, i64"),
+        "lpp_file_open" | "file_open" => ("i64", "ptr, i64, i64"),
+        "lpp_file_close" | "file_close" => ("void", "i64"),
+        "lpp_file_pread" | "file_pread" => ("i64", "i64, ptr, i64, i64"),
+        "lpp_file_pwrite" | "file_pwrite" => ("i64", "i64, ptr, i64, i64"),
+        "lpp_file_fdatasync" | "file_fdatasync" | "lpp_file_fsync" | "file_fsync" => ("i64", "i64"),
+        "lpp_file_ftruncate" | "file_ftruncate" => ("i64", "i64, i64"),
+        "lpp_file_move" | "file_move" => ("i64", "ptr, ptr"),
+        "lpp_dir_create" | "dir_create" | "lpp_dir_remove" | "dir_remove" => ("i64", "ptr"),
+        "lpp_dir_list" | "dir_list" => ("ptr", "ptr"),
+        "lpp_path_exists" | "path_exists" => ("i64", "ptr"),
+        "lpp_path_join" | "path_join" => ("ptr", "ptr, ptr"),
+        "lpp_net_dial" | "net_dial" => ("i64", "ptr, i64"),
+        "lpp_net_listen" | "net_listen" => ("i64", "ptr, i64"),
+        "lpp_net_accept" | "net_accept" => ("i64", "i64"),
+        "lpp_net_accept_timeout" | "net_accept_timeout" => ("i64", "i64, i64"),
+        "lpp_net_recv" | "net_recv" => ("i64", "i64, ptr, i64"),
+        "lpp_net_send" | "net_send" | "lpp_net_send_all" | "net_send_all" => ("i64", "i64, ptr, i64"),
+        "lpp_net_close" | "net_close" => ("void", "i64"),
+        "lpp_net_set_timeout" | "net_set_timeout" => ("void", "i64, i64"),
+        "lpp_net_set_nonblocking" | "net_set_nonblocking" => ("void", "i64, i64"),
+        "lpp_net_set_deadline" | "net_set_deadline" => ("void", "i64, i64"),
+        "lpp_net_set_keepalive" | "net_set_keepalive" => ("void", "i64, i64"),
+        "lpp_net_resolve" | "net_resolve" => ("ptr", "ptr"),
+        "lpp_net_poll" | "net_poll" => ("i64", "ptr, i64, i64"),
+        "lpp_net_listen_udp" | "net_listen_udp" => ("i64", "ptr, i64"),
+        "lpp_net_dial_udp" | "net_dial_udp" => ("i64", "ptr, i64"),
+        "lpp_net_recv_udp" | "net_recv_udp" => ("i64", "i64, ptr, i64, ptr"),
+        "lpp_sleep_ms" | "sleep_ms" => ("void", "i64"),
+        "lpp_sys_cpu_usage" | "sys_cpu_usage" | "lpp_sys_uptime" | "sys_uptime" => ("double", ""),
+        "lpp_sys_mem_free" | "sys_mem_free" | "lpp_sys_mem_total" | "sys_mem_total" => ("i64", ""),
+        "lpp_json_parse" | "json_parse" => ("ptr", "ptr"),
+        "lpp_json_get_str" | "json_get_str" => ("ptr", "ptr, ptr"),
+        "lpp_json_get_int" | "json_get_int" => ("i64", "ptr, ptr"),
+        "lpp_json_get_obj" | "json_get_obj" => ("ptr", "ptr, ptr"),
+        "lpp_json_free" | "json_free" => ("void", "ptr"),
+        "lpp_http_get" | "http_get" => ("ptr", "ptr"),
+        "lpp_http_post" | "http_post" => ("ptr", "ptr, ptr"),
+        "lpp_alloc" | "alloc" | "lpp_c_malloc" | "c_malloc" => ("ptr", "i64"),
+        "lpp_free" | "free" | "lpp_c_free" | "c_free" => ("void", "ptr"),
+        "lpp_c_load_u8" => ("i64", "ptr, i64"),
+        "lpp_c_store_u8" => ("void", "ptr, i64, i64"),
+        "lpp_c_load_i32" => ("i64", "ptr, i64"),
+        "lpp_c_store_i32" => ("void", "ptr, i64, i64"),
+        "lpp_c_load_i64" => ("i64", "ptr, i64"),
+        "lpp_c_store_i64" => ("void", "ptr, i64, i64"),
+        "lpp_int_pow" | "int_pow" => ("i64", "i64, i64"),
+        "lpp_pow" | "pow" => ("double", "double, double"),
+        "lpp_abs" | "abs" => ("i64", "i64"),
+        "lpp_min" | "min" | "lpp_max" | "max" => ("i64", "i64, i64"),
+        "lpp_floor" | "floor" | "lpp_ceil" | "ceil" => ("double", "double"),
+        "lpp_input" | "input" => ("ptr", ""),
+        "lpp_random" | "random" => ("double", ""),
+        "lpp_random_seed" | "random_seed" => ("void", "i64"),
+        "lpp_list_free" => ("void", "ptr"),
+        "lpp_list_pop" => ("i64", "ptr"),
+        "lpp_list_pop_arc" => ("ptr", "ptr"),
+        "lpp_list_pop_bool" => ("i8", "ptr"),
+        "lpp_list_pop_float" => ("double", "ptr"),
         _ => return None,
     })
 }
@@ -202,6 +268,7 @@ fn builtin_signature(symbol: &str) -> Option<(&'static str, &'static str)> {
 struct FunctionSig {
     name: String,
     ret: &'static str,
+    params: Vec<&'static str>,
 }
 
 struct FunctionEmitter<'a> {
@@ -498,7 +565,12 @@ impl<'a> FunctionEmitter<'a> {
             Rvalue::CallDirect(id, args) => {
                 let target = self.signatures.get(id).ok_or_else(|| format!("unknown LLVM callee {:?}", id))?.clone();
                 let mut values = Vec::new();
-                for arg in args { let (value, ty) = self.operand(arg, out)?; values.push(format!("{} {}", ty, value)); }
+                for (index, arg) in args.iter().enumerate() {
+                    let (value, ty) = self.operand(arg, out)?;
+                    let expected = target.params.get(index).copied().unwrap_or(ty);
+                    let coerced = self.coerce(&value, ty, expected, out);
+                    values.push(format!("{} {}", expected, coerced));
+                }
                 if target.ret == "void" {
                     out.push_str(&format!("  call void {}({})\n", target.name, values.join(", ")));
                     Ok(None)
@@ -629,7 +701,10 @@ impl<'a> FunctionEmitter<'a> {
             Rvalue::AllocateStackStruct(TypeRef::Custom(sid)) => {
                 let (_, size) = struct_layout(self.type_table, *sid);
                 let value = self.temp();
-                out.push_str(&format!("  {} = alloca [{} x i8], align 8\n", value, size.max(1)));
+                let sz = size.max(1);
+                out.push_str(&format!("  {} = alloca [{} x i8], align 8\n", value, sz));
+                out.push_str(&format!("  call void @llvm.memset.p0.i64(ptr {}, i8 0, i64 {}, i1 false)\n", value, sz));
+                self.declarations.insert("llvm.memset.p0.i64".to_string(), ("void".to_string(), "ptr, i8, i64, i1".to_string()));
                 Ok(Some((value, "ptr")))
             }
             Rvalue::AllocateList(element) => {
@@ -902,10 +977,21 @@ pub fn compile(program: &MirProgram, type_table: &TypeTable, weak_fields: &HashS
         if !is_supported_type(&function.return_type)||function.locals.iter().any(|local|!is_supported_type(&local.ty)){return Err(format!("LLVM backend cannot lower unsupported type in '{}'",function.name));}
     }
     let mut func_names=HashMap::new();let mut signatures=HashMap::new();let mut ordered:Vec<&MirFunction>=program.functions.values().collect();ordered.sort_by_key(|f|f.id.0);
-    for function in &ordered{let name=format!("@lpp_fn_{}",function.id.0);func_names.insert(function.id,name.clone());signatures.insert(function.id,FunctionSig{name,ret:llvm_type(&function.return_type)});}
+    for function in &ordered {
+        let name = format!("@lpp_fn_{}", function.id.0);
+        let params: Vec<&'static str> = function.params.iter()
+            .map(|p| llvm_type(&function.locals[p.0].ty))
+            .collect();
+        func_names.insert(function.id, name.clone());
+        signatures.insert(function.id, FunctionSig {
+            name,
+            ret: llvm_type(&function.return_type),
+            params,
+        });
+    }
     let mut strings=Vec::new();let mut declarations:HashMap<String,(String,String)>=HashMap::new();let mut bodies=Vec::new();
     for function in ordered{let mut emitter=FunctionEmitter{function,func_names:&func_names,signatures:&signatures,type_table,strings:&mut strings,declarations:&mut declarations,next_value:0};bodies.push(emitter.emit()?);}
-    let drops=emit_drop_functions(type_table,weak_fields,&mut declarations);
+    let drops = emit_drop_functions(type_table, weak_fields, &mut declarations);
     if program.functions.values().any(|function| function.name == "main" && function.is_async) {
         declarations.insert("lpp_tuple_alloc".to_string(), ("ptr".to_string(), "i64, i64, i64".to_string()));
         declarations.insert("lpp_task_new".to_string(), ("ptr".to_string(), "ptr, ptr, i64".to_string()));
@@ -913,7 +999,16 @@ pub fn compile(program: &MirProgram, type_table: &TypeTable, weak_fields: &HashS
         declarations.insert("lpp_arc_release".to_string(), ("void".to_string(), "ptr".to_string()));
     }
     let needs_closure_wrapper = declarations.contains_key("lpp_closure_destroy");
-    let mut ir=String::from("target triple = \"x86_64-pc-linux-gnu\"\n\n");let mut decls:Vec<_>=declarations.into_iter().collect();decls.sort_by(|a,b|a.0.cmp(&b.0));
+    let target_triple = if cfg!(target_os = "windows") {
+        "x86_64-pc-windows-msvc"
+    } else if cfg!(target_os = "macos") {
+        "x86_64-apple-darwin"
+    } else {
+        "x86_64-pc-linux-gnu"
+    };
+    let mut ir = format!("target triple = \"{}\"\n\n", target_triple);
+    let mut decls: Vec<_> = declarations.into_iter().collect();
+    decls.sort_by(|a, b| a.0.cmp(&b.0));
     for(name,(ret,params)) in decls{ir.push_str(&format!("declare {} @{}({})\n",ret,name,params));}
     for(i,value)in strings.iter().enumerate(){let blob=literal_blob(value);ir.push_str(&format!("@.lpp_str{} = private unnamed_addr constant [{} x i8] c\"{}\", align 16\n",i,blob.len(),escape_bytes(&blob)));}
     ir.push('\n');for body in bodies{ir.push_str(&body);ir.push('\n');}ir.push_str(&drops);ir.push_str(&emit_task_thunks(program, &func_names));ir.push_str(emit_vector_checksum());
@@ -946,9 +1041,25 @@ pub fn compile(program: &MirProgram, type_table: &TypeTable, weak_fields: &HashS
     fs::write(&ll, ir).map_err(|e| format!("write LLVM IR: {}", e))?;
 
     let config_llvm_path = crate::config::LppConfig::load_or_create().llvm_path;
+    let default_tool_path = std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .map(|p| {
+            let win = format!("{}\\.lpp\\tools\\llvm\\bin\\clang.exe", p);
+            let unix = format!("{}/.lpp/tools/llvm/bin/clang", p);
+            if std::path::Path::new(&win).exists() {
+                win
+            } else if std::path::Path::new(&unix).exists() {
+                unix
+            } else {
+                String::new()
+            }
+        })
+        .ok()
+        .filter(|p| !p.is_empty());
     let compiler = std::env::var("LPP_LLVM_CC")
         .ok()
         .or(config_llvm_path)
+        .or(default_tool_path)
         .unwrap_or_else(|| "clang".to_string());
 
     let mut command = Command::new(&compiler);
@@ -970,7 +1081,12 @@ pub fn compile(program: &MirProgram, type_table: &TypeTable, weak_fields: &HashS
         ));
     }
     let bytes = fs::read(&obj).map_err(|e| format!("read LLVM object: {}", e))?;
-    let _ = fs::remove_file(ll);
+    if let Ok(dump_path) = std::env::var("LPP_DUMP_IR") {
+        let _ = fs::copy(&ll, dump_path);
+    }
+    if std::env::var("LPP_KEEP_IR").is_err() {
+        let _ = fs::remove_file(ll);
+    }
     let _ = fs::remove_file(obj);
     Ok(bytes)
 }

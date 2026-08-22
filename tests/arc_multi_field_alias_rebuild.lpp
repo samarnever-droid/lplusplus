@@ -1,0 +1,47 @@
+# ARC regression: functional "state threading" rebuild of a struct that
+# re-aliases MORE THAN ONE List field of its own argument.
+#
+# `rebuild(m)` returns `Mgr(m.a, nb, m.c)` — fields `a` and `c` are aliased
+# from the incoming struct while `b` is freshly built by reading `m.b` in a
+# loop. Assigning the result back over `m` releases the old `Mgr`, which must
+# NOT free the list bodies still owned by the new `Mgr`.
+#
+# Observed before fix: `m.a` is emptied (use-after-free) and the program dies
+# with "list index out of bounds: index 0, len 0", or segfaults outright.
+# Requires BOTH >=2 aliased fields AND the read-loop over an aliased field;
+# either alone is handled correctly.
+#
+# The struct MUST be built by a constructor helper (`mgr_new()`) rather than
+# inline at the use site; inlining the literal makes the bug disappear, which
+# points at the return-slot / escape handling of the freshly allocated fields.
+#
+# This is the exact pattern SamarDB's ConstraintManager uses.
+# Expected output:
+# 7
+
+struct Mgr:
+    a: List[Int]
+    b: List[Int]
+    c: List[Int]
+
+def mgr_new() -> Mgr:
+    return Mgr(list_new(), list_new(), list_new())
+
+def add_b(m: Mgr, v: Int) -> Mgr:
+    mut nb := list_new()
+    mut i := 0
+    n := len(m.b)
+    while i < n:
+        list_push(nb, m.b[i])
+        i = i + 1
+    list_push(nb, v)
+    return Mgr(m.a, nb, m.c)
+
+def main():
+    mut m := mgr_new()
+    list_push(m.a, 7)
+    mut k := 0
+    while k < 40:
+        m = add_b(m, k)
+        k = k + 1
+    print(list_get(m.a, 0))

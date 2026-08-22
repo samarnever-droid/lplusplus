@@ -147,7 +147,7 @@ impl Val {
 ///   home. Void *signatures* simply have no results/params.
 fn val_of_type(ty: &TypeRef) -> Val {
     match ty.abi_class() {
-        AbiClass::I8 | AbiClass::Pointer => Val::I32,
+        AbiClass::I8 | AbiClass::I16 | AbiClass::I32 | AbiClass::Pointer => Val::I32,
         AbiClass::Void | AbiClass::I64 => Val::I64,
         AbiClass::F64 => Val::F64,
         // VectorI64x2 never reaches here: the up-front validation rejects it.
@@ -182,10 +182,12 @@ mod op {
     pub const I64_LOAD: u8 = 0x29;
     pub const F64_LOAD: u8 = 0x2b;
     pub const I32_LOAD8_U: u8 = 0x2c;
+    pub const I32_LOAD16_U: u8 = 0x2e;
     pub const I32_STORE: u8 = 0x36;
     pub const I64_STORE: u8 = 0x37;
     pub const F64_STORE: u8 = 0x39;
     pub const I32_STORE8: u8 = 0x3a;
+    pub const I32_STORE16: u8 = 0x3b;
     pub const I32_CONST: u8 = 0x41;
     pub const I64_CONST: u8 = 0x42;
     pub const F64_CONST: u8 = 0x44;
@@ -1027,6 +1029,20 @@ impl FB {
     fn store8(&mut self, offset: u32) -> &mut Self {
         self.body.push(op::I32_STORE8);
         self.body.extend_from_slice(&[0]);
+        uleb(&mut self.body, offset as u64);
+        self
+    }
+
+    fn load16(&mut self, offset: u32) -> &mut Self {
+        self.body.push(op::I32_LOAD16_U);
+        self.body.extend_from_slice(&[1]);
+        uleb(&mut self.body, offset as u64);
+        self
+    }
+
+    fn store16(&mut self, offset: u32) -> &mut Self {
+        self.body.push(op::I32_STORE16);
+        self.body.extend_from_slice(&[1]);
         uleb(&mut self.body, offset as u64);
         self
     }
@@ -1980,6 +1996,12 @@ impl<'a> WasmCompiler<'a> {
             AbiClass::I8 => {
                 fb.store8(offset);
             }
+            AbiClass::I16 => {
+                fb.store16(offset);
+            }
+            AbiClass::I32 => {
+                fb.store32(offset);
+            }
             AbiClass::F64 => {
                 fb.storef64(offset);
             }
@@ -2001,6 +2023,12 @@ impl<'a> WasmCompiler<'a> {
         match abi {
             AbiClass::I8 => {
                 fb.load8(offset);
+            }
+            AbiClass::I16 => {
+                fb.load16(offset);
+            }
+            AbiClass::I32 => {
+                fb.load32(offset);
             }
             AbiClass::F64 => {
                 fb.loadf64(offset);

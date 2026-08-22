@@ -71,6 +71,7 @@ fn decode_ty(tag: u8) -> cranelift_codegen::ir::Type {
         1 => cl_types::I8,
         2 => cl_types::I32,
         3 => cl_types::F64,
+        4 => cl_types::I64X2,
         _ => cl_types::I64,
     }
 }
@@ -303,8 +304,55 @@ fn is_avx2_detected() -> bool {
         })
     }
 
-    /// Declare all L++ runtime symbols as external imports.
-    pub fn declare_builtins(&mut self) -> Result<(), String> {
+    /// Declare referenced L++ runtime symbols as external imports.
+    pub fn declare_builtins(&mut self, program: &MirProgram) -> Result<(), String> {
+        let mut used_symbols = std::collections::HashSet::new();
+        // Core runtime builtins that codegen unconditionally references
+        for sym in &[
+            "lpp_arc_alloc_with_destructor",
+            "lpp_arc_alloc",
+            "lpp_arc_release",
+            "lpp_arena_release_node",
+            "lpp_closure_destroy",
+            "lpp_tuple_alloc",
+            "lpp_task_new",
+            "lpp_task_await",
+            "lpp_panic",
+            "fmod",
+            "lpp_str_slice_to_str",
+            "lpp_slice_init",
+            "lpp_slice_len",
+            "lpp_thread_spawn",
+            "lpp_arc_retain_local",
+            "lpp_arc_release_local",
+            "lpp_arc_retain",
+            "lpp_list_new",
+            "lpp_list_new_arc",
+            "lpp_list_push",
+            "lpp_list_push_arc",
+            "lpp_list_push_float",
+            "lpp_list_push_bool",
+            "lpp_list_get",
+            "lpp_list_get_float",
+            "lpp_list_get_bool",
+            "lpp_list_get_arc",
+            "lpp_list_set",
+            "lpp_list_set_float",
+            "lpp_list_set_bool",
+            "lpp_list_set_arc",
+            "lpp_list_len",
+        ] {
+            used_symbols.insert(sym.to_string());
+        }
+        for function in program.functions.values() {
+            for block in &function.blocks {
+                for instr in &block.instrs {
+                    if let MirInstr::Assign(_, Rvalue::BuiltinCall(sym, _)) = instr {
+                        used_symbols.insert(sym.clone());
+                    }
+                }
+            }
+        }
         for builtin in crate::builtins::get_builtins() {
             if builtin.symbol.is_empty() {
                 continue;
@@ -314,7 +362,10 @@ fn is_avx2_detected() -> bool {
             // NOT be declared as external imports, because that would cause
             // every object file (even non-SIMD programs) to carry unresolved
             // references that break the host linker (cl.exe / cc).
-            if builtin.symbol.starts_with("lpp_vec_i64x2") {
+            if builtin.symbol.starts_with("lpp_vec_i64x2") || builtin.symbol.starts_with("lpp_vec_u8x16") {
+                continue;
+            }
+            if !used_symbols.contains(builtin.symbol) {
                 continue;
             }
             if self.builtin_ids.contains_key(builtin.symbol) {
@@ -878,7 +929,7 @@ fn is_avx2_detected() -> bool {
                 c.shared_locals.insert(*fid, shared);
             }
         }
-        c.declare_builtins()?;
+        c.declare_builtins(program)?;
         c.declare_drop_functions(type_table)?;
         c.declare_functions(program)?;
         c.declare_task_thunks(program)?;

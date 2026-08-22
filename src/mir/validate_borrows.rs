@@ -140,13 +140,19 @@ pub fn validate(program: &MirProgram) -> Result<(), String> {
                             function.name
                         ));
                     }
-                    MirInstr::Assign(_, Rvalue::BuiltinCall(_, args))
+                    MirInstr::Assign(_, Rvalue::BuiltinCall(sym, args))
                         if args.iter().any(|value| is_view(function, value)) =>
                     {
-                        return Err(format!(
-                            "Borrow error in '{}': a slice view may only be consumed by explicit slice operations or a known non-retaining reader",
-                            function.name
-                        ));
+                        if sym != "lpp_str_slice_to_str"
+                            && sym != "lpp_slice_len"
+                            && sym != "lpp_slice_get"
+                            && sym != "lpp_str_slice_get"
+                        {
+                            return Err(format!(
+                                "Borrow error in '{}': a slice view may only be consumed by explicit slice operations or a known non-retaining reader",
+                                function.name
+                            ));
+                        }
                     }
                     _ => {}
                 }

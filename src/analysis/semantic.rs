@@ -228,8 +228,10 @@ impl Resolver {
                 TopLevel::TypeAlias { .. } => {
                     // Type aliases are resolved at parse/typecheck level
                 }
-                TopLevel::Trait(_) => {
-                    // Trait definitions are metadata only; no bindings needed
+                TopLevel::Trait(trait_def) => {
+                    for method in &trait_def.methods {
+                        self.trait_method_names.insert(method.name.clone());
+                    }
                 }
                 TopLevel::Impl(impl_block) => {
                     // Register each impl method as a top-level function
@@ -241,8 +243,8 @@ impl Resolver {
                             Some(Type::Custom("Function".into())),
                             BindingKind::FunctionName,
                         );
-                        // Track the short method name (without StructName_ prefix)
-                        // so semantic analysis can allow UFCS calls
+                        // Track the method name so semantic analysis allows UFCS / method calls
+                        self.trait_method_names.insert(method.name.clone());
                         if let Some(short) = method.name.split('_').last() {
                             self.trait_method_names.insert(short.to_string());
                         }

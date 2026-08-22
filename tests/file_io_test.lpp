@@ -1,11 +1,11 @@
 # file_io_test.lpp — Verify new File I/O features
 # Expected output:
 # exists before: 0
-# write success: 0
+# 0
 # exists after write: 1
-# append success: 0
-# contents: Hello World!
-# delete success: 0
+# 0
+# Hello World!
+# 0
 # exists after delete: 0
 
 def main():

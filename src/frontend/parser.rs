@@ -57,6 +57,43 @@ impl Parser {
 
         self.skip_newlines();
         while self.peek() != Some(&Token::Eof) && self.peek().is_some() {
+            let mut repr_exact = false;
+            let mut align = None;
+            while self.match_token(&Token::At) {
+                let attr_name = match self.advance() {
+                    Some(Token::Ident(n)) => n.clone(),
+                    _ => return self.error("Expected attribute name after '@'"),
+                };
+                if attr_name == "repr" {
+                    if !self.match_token(&Token::LParen) {
+                        return self.error("Expected '(' after '@repr'");
+                    }
+                    let repr_type = match self.advance() {
+                        Some(Token::Ident(n)) => n.clone(),
+                        _ => return self.error("Expected repr mode like 'exact' or 'packed'"),
+                    };
+                    if repr_type == "exact" || repr_type == "packed" {
+                        repr_exact = true;
+                    }
+                    if !self.match_token(&Token::RParen) {
+                        return self.error("Expected ')' after repr argument");
+                    }
+                } else if attr_name == "align" {
+                    if !self.match_token(&Token::LParen) {
+                        return self.error("Expected '(' after '@align'");
+                    }
+                    let align_val = match self.advance() {
+                        Some(Token::Int(n)) => *n as usize,
+                        _ => return self.error("Expected integer alignment after '@align('"),
+                    };
+                    align = Some(align_val);
+                    if !self.match_token(&Token::RParen) {
+                        return self.error("Expected ')' after align argument");
+                    }
+                }
+                self.skip_newlines();
+            }
+
             if self.match_token(&Token::Def) {
                 declarations.push(TopLevel::Function(self.parse_function(false)?));
             } else if self.match_token(&Token::Async) {
@@ -65,7 +102,7 @@ impl Parser {
                 }
                 declarations.push(TopLevel::Function(self.parse_function(true)?));
             } else if self.match_token(&Token::Struct) {
-                declarations.push(TopLevel::Struct(self.parse_struct()?));
+                declarations.push(TopLevel::Struct(self.parse_struct(repr_exact, align)?));
             } else if self.match_token(&Token::Enum) {
                 declarations.push(TopLevel::Enum(self.parse_enum()?));
             } else if self.match_token(&Token::Const) {
@@ -569,7 +606,7 @@ impl Parser {
         Ok(EnumDef { name, type_params, variants })
     }
 
-    fn parse_struct(&mut self) -> Result<StructDef, String> {
+    fn parse_struct(&mut self, repr_exact: bool, align: Option<usize>) -> Result<StructDef, String> {
         let name = match self.advance() {
             Some(Token::Ident(n)) => n.clone(),
             _ => return self.error("Expected struct name"),
@@ -620,7 +657,7 @@ impl Parser {
         }
         self.match_token(&Token::Dedent);
 
-        Ok(StructDef { name, type_params, fields })
+        Ok(StructDef { name, type_params, fields, repr_exact, align })
     }
 
     /// Parse optional type parameters: `[T, U]` or `[T: Display, U: Hash]`
@@ -806,6 +843,12 @@ impl Parser {
             "Char" => Ok(Type::Char),
             "Void" => Ok(Type::Void),
             "StrSlice" => Ok(Type::StrSlice),
+            "u8" | "U8" => Ok(Type::U8),
+            "u16" | "U16" => Ok(Type::U16),
+            "u32" | "U32" => Ok(Type::U32),
+            "i8" | "I8" => Ok(Type::I8),
+            "i16" | "I16" => Ok(Type::I16),
+            "i32" | "I32" => Ok(Type::I32),
             _ => Ok(Type::Custom(base_name)),
         }
     }
@@ -928,11 +971,20 @@ impl Parser {
                     break;
                 }
 
-                // Parse variant name
-                let variant = match self.advance() {
+                // Parse variant name (supports bare name like `Ok`, qualified like `Result.Ok`, or wildcard `_`)
+                let mut variant = match self.advance() {
                     Some(Token::Ident(n)) => n.clone(),
                     _ => return self.error("Expected variant name in match arm"),
                 };
+                if self.match_token(&Token::Dot) {
+                    match self.advance() {
+                        Some(Token::Ident(n)) => {
+                            variant.push('.');
+                            variant.push_str(&n);
+                        }
+                        _ => return self.error("Expected variant name after '.' in match arm"),
+                    }
+                }
 
                 // Optional bindings: Ok(value) or Ok(v, msg)
                 let mut bindings = Vec::new();
@@ -1489,6 +1541,52 @@ impl Parser {
             } else if self.match_token(&Token::Question) {
                 // Postfix ? operator: try/unwrap Result
                 expr = Expr::Try(Box::new(expr));
+            } else if self.tokens.get(self.pos).map(|st| &st.token) == Some(&Token::Colon)
+                && self.tokens.get(self.pos + 1).map(|st| &st.token) == Some(&Token::Colon)
+                && matches!(
+                    self.tokens.get(self.pos + 2).map(|st| &st.token),
+                    Some(Token::Less) | Some(Token::LBracket)
+                )
+            {
+                self.advance(); // consume first ':'
+                self.advance(); // consume second ':'
+                let is_angle = self.match_token(&Token::Less);
+                if !is_angle {
+                    self.advance(); // consume '['
+                }
+                let mut type_args = Vec::new();
+                let close_token = if is_angle { Token::Greater } else { Token::RBracket };
+                if self.peek() != Some(&close_token) {
+                    loop {
+                        type_args.push(self.parse_type()?);
+                        if !self.match_token(&Token::Comma) {
+                            break;
+                        }
+                    }
+                }
+                if !self.match_token(&close_token) {
+                    return self.error(if is_angle { "Expected '>' after generic type arguments" } else { "Expected ']' after generic type arguments" });
+                }
+                if !self.match_token(&Token::LParen) {
+                    return self.error("Expected '(' after generic type arguments");
+                }
+                let mut args = Vec::new();
+                if self.peek() != Some(&Token::RParen) {
+                    loop {
+                        args.push(self.parse_expr()?);
+                        if !self.match_token(&Token::Comma) {
+                            break;
+                        }
+                    }
+                }
+                if !self.match_token(&Token::RParen) {
+                    return self.error("Expected ')' after arguments");
+                }
+                expr = Expr::GenericCall {
+                    callee: Box::new(expr),
+                    type_args,
+                    args,
+                };
             } else if self.peek() == Some(&Token::LBracket)
                 && self.turbofish_ahead()
             {

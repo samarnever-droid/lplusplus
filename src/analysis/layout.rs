@@ -67,7 +67,30 @@ pub fn tuple_runtime_metadata(types: &[TypeRef]) -> (u64, u64) {
 }
 
 pub fn struct_layout(table: &TypeTable, id: StructTypeId) -> (Vec<FieldLayout>, usize) {
-    fields_layout(table.definitions[id.0].fields.iter().map(|(_, ty)| ty), 0)
+    let def = &table.definitions[id.0];
+    if def.repr_exact {
+        let mut offset = 0;
+        let mut fields = Vec::new();
+        for (_, ty) in &def.fields {
+            let (size, _) = type_size_align(ty);
+            fields.push(FieldLayout {
+                offset,
+                size,
+                align: 1,
+                abi: ty.abi_class(),
+            });
+            offset += size;
+        }
+        let total_align = def.align.unwrap_or(1);
+        (fields, align_up(offset, total_align))
+    } else {
+        let (fields, size) = fields_layout(def.fields.iter().map(|(_, ty)| ty), 0);
+        if let Some(align) = def.align {
+            (fields, align_up(size, align))
+        } else {
+            (fields, size)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -95,5 +118,24 @@ mod tests {
         let (mask, offsets) = tuple_runtime_metadata(&[TypeRef::Int, TypeRef::Str]);
         assert_eq!(mask, 0b10);
         assert_eq!((offsets >> 16) & 0xffff, 24);
+    }
+
+    #[test]
+    fn struct_layout_exact_and_align() {
+        let mut table = TypeTable::new();
+        let id = table.register_struct("Bucket".to_string());
+        table.definitions[id.0].fields = vec![
+            ("tag".to_string(), TypeRef::Int),
+            ("key".to_string(), TypeRef::Int),
+            ("flag".to_string(), TypeRef::Bool),
+        ];
+        table.definitions[id.0].repr_exact = true;
+        table.definitions[id.0].align = Some(64);
+
+        let (fields, total_size) = struct_layout(&table, id);
+        assert_eq!(fields[0].offset, 0);
+        assert_eq!(fields[1].offset, 8);
+        assert_eq!(fields[2].offset, 16);
+        assert_eq!(total_size, 64);
     }
 }
