@@ -115,7 +115,9 @@ void lpp_cpu_pause(void) {
 
 #else
 #include <stdatomic.h>
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
 #include <immintrin.h>
+#endif
 
 extern void lpp_panic(const char *fmt, ...);
 

@@ -182,7 +182,7 @@ def drop_snapshot(d: Int):
 def commit_txn(d: Int):
     drop_snapshot(d)
     mem.bset64(d, 24, 1)          # autocommit on
-    flush(d)
+    db_flush(d)
 
 def rollback_txn(d: Int):
     snap := mem.bget64(d, 32)
@@ -200,16 +200,16 @@ def rollback_txn(d: Int):
     mem.bset64(d, 24, 1)
     # The catalogue may have changed (CREATE/DROP), so rebuild it.
     reload_schema(d)
-    flush(d)
+    db_flush(d)
 
 # Write through to disk unless a transaction is open, in which case the file is
 # left untouched until COMMIT.
 def autoflush(d: Int) -> Int:
     if in_transaction(d) == 1:
         return 0
-    return flush(d)
+    return db_flush(d)
 
-def flush(d: Int) -> Int:
+def db_flush(d: Int) -> Int:
     p := db_path(d)
     if str_len(p) == 0:
         return 0
@@ -227,7 +227,7 @@ def db_busy(d: Int) -> Int:
     return 0
 
 def close_db(d: Int):
-    flush(d)
+    db_flush(d)
     if db_locked(d) == 1:
         release_lock(db_path(d))
     schema.sc_free(db_schema(d))

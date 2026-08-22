@@ -489,7 +489,7 @@ fn handle_setup_llvm() -> i32 {
 
     println!("[L++] [1/3] 📥 Downloading portable LLVM toolchain...");
     let archive_path = tools_dir.join(if url.ends_with(".zip") { "llvm.zip" } else { "llvm.tar.xz" });
-    
+
     let curl_cmd = if cfg!(windows) { "curl.exe" } else { "curl" };
     let status = std::process::Command::new(curl_cmd)
         .args(["-L", url, "-o", archive_path.to_string_lossy().as_ref()])

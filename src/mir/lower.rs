@@ -3027,4 +3027,3 @@ impl<'a> MirLowerCtx<'a> {
         0 // fallback
     }
 }
-
