@@ -69,9 +69,9 @@ pub fn is_provably_single_threaded(program: &MirProgram, has_extern: bool) -> bo
             for instr in &block.instrs {
                 let rvalue = match instr {
                     MirInstr::Assign(_, rvalue) => rvalue,
-                    MirInstr::AssignField { .. }
-                    | MirInstr::Retain(_)
-                    | MirInstr::Release(_) => continue,
+                    MirInstr::AssignField { .. } | MirInstr::Retain(_) | MirInstr::Release(_) => {
+                        continue;
+                    }
                 };
                 match rvalue {
                     Rvalue::SpawnThread(_) => return false,

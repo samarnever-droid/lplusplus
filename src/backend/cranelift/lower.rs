@@ -1,15 +1,13 @@
 use super::types::{abi_to_cl, type_to_cl};
-use crate::layout::{struct_layout, tuple_layout, tuple_runtime_metadata};
 use crate::ast::BinaryOperator;
+use crate::layout::{struct_layout, tuple_layout, tuple_runtime_metadata};
 use crate::mir::ir::*;
 use crate::type_facts::{AbiClass, ListElementClass};
 use crate::types::{TypeRef, TypeTable};
 use cranelift_codegen::entity::EntityRef;
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 use cranelift_codegen::ir::types as cl_types;
-use cranelift_codegen::ir::{
-    AbiParam, InstBuilder, MemFlags, StackSlotData, StackSlotKind, Value,
-};
+use cranelift_codegen::ir::{AbiParam, InstBuilder, MemFlags, StackSlotData, StackSlotKind, Value};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use cranelift_module::{DataDescription, FuncId as CLFuncId, Linkage, Module};
 use std::collections::HashMap;
@@ -361,7 +359,8 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                 // violation. The destructor preserves the cycle-breaker's weak
                 // field skips and releases each owned child exactly once.
                 if locals[local.0].ownership.is_copy() {
-                    let value = self.operand_to_value(builder, &Operand::Local(*local), local_vars)?;
+                    let value =
+                        self.operand_to_value(builder, &Operand::Local(*local), local_vars)?;
                     match &locals[local.0].ty {
                         TypeRef::Custom(struct_id) => {
                             let drop_id = *self.drop_ids.get(struct_id).ok_or_else(|| {
@@ -419,11 +418,7 @@ impl<'a, M: Module> FunctionLower<'a, M> {
         Ok(())
     }
 
-    fn vector_from_lanes(
-        &mut self,
-        builder: &mut FunctionBuilder,
-        lanes: [Value; 2],
-    ) -> Value {
+    fn vector_from_lanes(&mut self, builder: &mut FunctionBuilder, lanes: [Value; 2]) -> Value {
         let value = builder.ins().splat(cl_types::I64X2, lanes[0]);
         builder.ins().insertlane(value, lanes[1], 1u8)
     }
@@ -453,22 +448,49 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                 Some(self.vector_from_lanes(builder, lanes))
             }
             "lpp_vec_i64x2_splat" => {
-                let lane = scalar(builder, args.first().ok_or_else(|| "vector splat needs one argument".to_string())?, self)?;
+                let lane = scalar(
+                    builder,
+                    args.first()
+                        .ok_or_else(|| "vector splat needs one argument".to_string())?,
+                    self,
+                )?;
                 Some(self.vector_from_lanes(builder, [lane, lane]))
             }
             "lpp_vec_i64x2_not" => {
-                let val = vector(builder, args.first().ok_or_else(|| "vector not needs an operand".to_string())?, self)?;
+                let val = vector(
+                    builder,
+                    args.first()
+                        .ok_or_else(|| "vector not needs an operand".to_string())?,
+                    self,
+                )?;
                 Some(builder.ins().bnot(val))
             }
-            "lpp_vec_i64x2_add" | "lpp_vec_i64x2_sub" | "lpp_vec_i64x2_mul"
-            | "lpp_vec_i64x2_xor" | "lpp_vec_i64x2_and" | "lpp_vec_i64x2_or"
-            | "lpp_vec_i64x2_shr" | "lpp_vec_i64x2_shr_var" => {
-                let left = vector(builder, args.first().ok_or_else(|| "vector operation is missing its left operand".to_string())?, self)?;
-                let right = args.get(1).ok_or_else(|| "vector operation is missing its right operand".to_string())?;
+            "lpp_vec_i64x2_add"
+            | "lpp_vec_i64x2_sub"
+            | "lpp_vec_i64x2_mul"
+            | "lpp_vec_i64x2_xor"
+            | "lpp_vec_i64x2_and"
+            | "lpp_vec_i64x2_or"
+            | "lpp_vec_i64x2_shr"
+            | "lpp_vec_i64x2_shr_var" => {
+                let left = vector(
+                    builder,
+                    args.first().ok_or_else(|| {
+                        "vector operation is missing its left operand".to_string()
+                    })?,
+                    self,
+                )?;
+                let right = args
+                    .get(1)
+                    .ok_or_else(|| "vector operation is missing its right operand".to_string())?;
                 if symbol == "lpp_vec_i64x2_shr" {
                     let shift = match right {
                         Operand::Int(value) => *value,
-                        _ => return Err("vector shift amount must be a constant integer".to_string()),
+                        _ => {
+                            return Err(
+                                "vector shift amount must be a constant integer".to_string()
+                            );
+                        }
                     };
                     let mut lanes = [builder.ins().iconst(cl_types::I64, 0); 2];
                     for lane in 0..2u8 {
@@ -500,22 +522,62 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                 }
             }
             "lpp_vec_u8x16_splat" => {
-                let byte_val = scalar(builder, args.first().ok_or_else(|| "u8x16 splat needs an argument".to_string())?, self)?;
+                let byte_val = scalar(
+                    builder,
+                    args.first()
+                        .ok_or_else(|| "u8x16 splat needs an argument".to_string())?,
+                    self,
+                )?;
                 let byte_val = builder.ins().ireduce(cl_types::I8, byte_val);
                 let byte_vec = builder.ins().splat(cl_types::I8X16, byte_val);
-                Some(builder.ins().bitcast(cl_types::I64X2, cranelift_codegen::ir::MemFlags::new(), byte_vec))
+                Some(builder.ins().bitcast(
+                    cl_types::I64X2,
+                    cranelift_codegen::ir::MemFlags::new(),
+                    byte_vec,
+                ))
             }
             "lpp_vec_u8x16_eq" => {
-                let left = vector(builder, args.first().ok_or_else(|| "u8x16 eq needs left operand".to_string())?, self)?;
-                let right = vector(builder, args.get(1).ok_or_else(|| "u8x16 eq needs right operand".to_string())?, self)?;
-                let left_u8 = builder.ins().bitcast(cl_types::I8X16, cranelift_codegen::ir::MemFlags::new(), left);
-                let right_u8 = builder.ins().bitcast(cl_types::I8X16, cranelift_codegen::ir::MemFlags::new(), right);
+                let left = vector(
+                    builder,
+                    args.first()
+                        .ok_or_else(|| "u8x16 eq needs left operand".to_string())?,
+                    self,
+                )?;
+                let right = vector(
+                    builder,
+                    args.get(1)
+                        .ok_or_else(|| "u8x16 eq needs right operand".to_string())?,
+                    self,
+                )?;
+                let left_u8 = builder.ins().bitcast(
+                    cl_types::I8X16,
+                    cranelift_codegen::ir::MemFlags::new(),
+                    left,
+                );
+                let right_u8 = builder.ins().bitcast(
+                    cl_types::I8X16,
+                    cranelift_codegen::ir::MemFlags::new(),
+                    right,
+                );
                 let cmp = builder.ins().icmp(IntCC::Equal, left_u8, right_u8);
-                Some(builder.ins().bitcast(cl_types::I64X2, cranelift_codegen::ir::MemFlags::new(), cmp))
+                Some(builder.ins().bitcast(
+                    cl_types::I64X2,
+                    cranelift_codegen::ir::MemFlags::new(),
+                    cmp,
+                ))
             }
             "lpp_vec_u8x16_movemask" => {
-                let val = vector(builder, args.first().ok_or_else(|| "movemask needs vector".to_string())?, self)?;
-                let val_u8 = builder.ins().bitcast(cl_types::I8X16, cranelift_codegen::ir::MemFlags::new(), val);
+                let val = vector(
+                    builder,
+                    args.first()
+                        .ok_or_else(|| "movemask needs vector".to_string())?,
+                    self,
+                )?;
+                let val_u8 = builder.ins().bitcast(
+                    cl_types::I8X16,
+                    cranelift_codegen::ir::MemFlags::new(),
+                    val,
+                );
                 let mut mask = builder.ins().iconst(cl_types::I64, 0);
                 for lane in 0..16u8 {
                     let b = builder.ins().extractlane(val_u8, lane);
@@ -527,15 +589,29 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                 Some(mask)
             }
             "lpp_vec_i64x2_extract" => {
-                let value = vector(builder, args.first().ok_or_else(|| "vector extract is missing its vector".to_string())?, self)?;
+                let value = vector(
+                    builder,
+                    args.first()
+                        .ok_or_else(|| "vector extract is missing its vector".to_string())?,
+                    self,
+                )?;
                 let lane = match args.get(1) {
                     Some(Operand::Int(index)) if (0..2).contains(index) => *index as u8,
-                    _ => return Err("vector extract lane must be a constant integer 0..3".to_string()),
+                    _ => {
+                        return Err(
+                            "vector extract lane must be a constant integer 0..3".to_string()
+                        );
+                    }
                 };
                 Some(builder.ins().extractlane(value, lane))
             }
             "lpp_vec_i64x2_sum" => {
-                let value = vector(builder, args.first().ok_or_else(|| "vector sum is missing its vector".to_string())?, self)?;
+                let value = vector(
+                    builder,
+                    args.first()
+                        .ok_or_else(|| "vector sum is missing its vector".to_string())?,
+                    self,
+                )?;
                 let mut result = builder.ins().extractlane(value, 0u8);
                 for lane in 1..2u8 {
                     let item = builder.ins().extractlane(value, lane);
@@ -560,7 +636,9 @@ impl<'a, M: Module> FunctionLower<'a, M> {
             Rvalue::AllocateTuple(types, values) => {
                 let (layout, total_size) = tuple_layout(types);
                 let (managed_mask, packed_offsets) = tuple_runtime_metadata(types);
-                let allocator = *self.builtin_ids.get("lpp_tuple_alloc")
+                let allocator = *self
+                    .builtin_ids
+                    .get("lpp_tuple_alloc")
                     .ok_or_else(|| "Builtin 'lpp_tuple_alloc' was not declared".to_string())?;
                 let allocator_ref = self.module.declare_func_in_func(allocator, builder.func);
                 let size = builder.ins().iconst(cl_types::I64, total_size as i64);
@@ -573,7 +651,9 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                     if builder.func.dfg.value_type(stored) != type_to_cl(ty) {
                         return Err(format!("tuple field type mismatch for {:?}", ty));
                     }
-                    builder.ins().store(MemFlags::new(), stored, tuple, field.offset as i32);
+                    builder
+                        .ins()
+                        .store(MemFlags::new(), stored, tuple, field.offset as i32);
                 }
                 Ok(tuple)
             }
@@ -587,14 +667,27 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                     other => return Err(format!("tuple field base has type {:?}", other)),
                 };
                 let (layout, _) = tuple_layout(types);
-                let field = layout.get(*index)
+                let field = layout
+                    .get(*index)
                     .ok_or_else(|| format!("tuple field {} out of range", index))?;
                 let tuple = self.operand_to_value(builder, base, local_vars)?;
-                Ok(builder.ins().load(abi_to_cl(field.abi), MemFlags::new(), tuple, field.offset as i32))
+                Ok(builder.ins().load(
+                    abi_to_cl(field.abi),
+                    MemFlags::new(),
+                    tuple,
+                    field.offset as i32,
+                ))
             }
-            Rvalue::MakeSlice { base, start, length, kind } => {
+            Rvalue::MakeSlice {
+                base,
+                start,
+                length,
+                kind,
+            } => {
                 let slot = builder.create_sized_stack_slot(StackSlotData::new(
-                    StackSlotKind::ExplicitSlot, 40, 3,
+                    StackSlotKind::ExplicitSlot,
+                    40,
+                    3,
                 ));
                 let pointer_type = self.module.target_config().pointer_type();
                 let view = builder.ins().stack_addr(pointer_type, slot, 0);
@@ -602,15 +695,21 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                 let start = self.operand_to_value(builder, start, local_vars)?;
                 let length = self.operand_to_value(builder, length, local_vars)?;
                 let kind = builder.ins().iconst(cl_types::I64, *kind as i64);
-                let init = *self.builtin_ids.get("lpp_slice_init")
+                let init = *self
+                    .builtin_ids
+                    .get("lpp_slice_init")
                     .ok_or_else(|| "Builtin 'lpp_slice_init' was not declared".to_string())?;
                 let init_ref = self.module.declare_func_in_func(init, builder.func);
-                let call = builder.ins().call(init_ref, &[view, base, start, length, kind]);
+                let call = builder
+                    .ins()
+                    .call(init_ref, &[view, base, start, length, kind]);
                 Ok(builder.inst_results(call)[0])
             }
             Rvalue::SliceLen(view) => {
                 let view = self.operand_to_value(builder, view, local_vars)?;
-                let id = *self.builtin_ids.get("lpp_slice_len")
+                let id = *self
+                    .builtin_ids
+                    .get("lpp_slice_len")
                     .ok_or_else(|| "Builtin 'lpp_slice_len' was not declared".to_string())?;
                 let function = self.module.declare_func_in_func(id, builder.func);
                 let call = builder.ins().call(function, &[view]);
@@ -636,9 +735,15 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                     let mut signature = self.module.make_signature();
                     signature.params.push(AbiParam::new(cl_types::I64));
                     signature.params.push(AbiParam::new(cl_types::I64));
-                    signature.returns.push(AbiParam::new(type_to_cl(&result_ty)));
-                    let id = self.module.declare_function(symbol, Linkage::Import, &signature)
-                        .map_err(|error| format!("declare slice builtin '{}': {:?}", symbol, error))?;
+                    signature
+                        .returns
+                        .push(AbiParam::new(type_to_cl(&result_ty)));
+                    let id = self
+                        .module
+                        .declare_function(symbol, Linkage::Import, &signature)
+                        .map_err(|error| {
+                            format!("declare slice builtin '{}': {:?}", symbol, error)
+                        })?;
                     self.builtin_ids.insert(symbol.to_string(), id);
                     id
                 };
@@ -648,7 +753,9 @@ impl<'a, M: Module> FunctionLower<'a, M> {
             }
             Rvalue::SliceToStr(view) => {
                 let view = self.operand_to_value(builder, view, local_vars)?;
-                let id = *self.builtin_ids.get("lpp_str_slice_to_str")
+                let id = *self
+                    .builtin_ids
+                    .get("lpp_str_slice_to_str")
                     .ok_or_else(|| "Builtin 'lpp_str_slice_to_str' was not declared".to_string())?;
                 let function = self.module.declare_func_in_func(id, builder.func);
                 let call = builder.ins().call(function, &[view]);
@@ -657,7 +764,9 @@ impl<'a, M: Module> FunctionLower<'a, M> {
             Rvalue::MakeTask(function_id, argument_types, arguments, result_type) => {
                 let (layout, total_size) = tuple_layout(argument_types);
                 let (managed_mask, packed_offsets) = tuple_runtime_metadata(argument_types);
-                let allocator = *self.builtin_ids.get("lpp_tuple_alloc")
+                let allocator = *self
+                    .builtin_ids
+                    .get("lpp_tuple_alloc")
                     .ok_or_else(|| "Builtin 'lpp_tuple_alloc' was not declared".to_string())?;
                 let allocator_ref = self.module.declare_func_in_func(allocator, builder.func);
                 let size = builder.ins().iconst(cl_types::I64, total_size as i64);
@@ -665,21 +774,33 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                 let offsets = builder.ins().iconst(cl_types::I64, packed_offsets as i64);
                 let allocation = builder.ins().call(allocator_ref, &[size, mask, offsets]);
                 let environment = builder.inst_results(allocation)[0];
-                for ((argument, field), ty) in
-                    arguments.iter().zip(layout.iter()).zip(argument_types.iter())
+                for ((argument, field), ty) in arguments
+                    .iter()
+                    .zip(layout.iter())
+                    .zip(argument_types.iter())
                 {
                     let value = self.operand_to_value(builder, argument, local_vars)?;
                     if builder.func.dfg.value_type(value) != type_to_cl(ty) {
                         return Err(format!("task argument type mismatch for {:?}", ty));
                     }
-                    builder.ins().store(MemFlags::new(), value, environment, field.offset as i32);
+                    builder
+                        .ins()
+                        .store(MemFlags::new(), value, environment, field.offset as i32);
                 }
-                let thunk_id = *self.task_thunk_ids.get(function_id)
+                let thunk_id = *self
+                    .task_thunk_ids
+                    .get(function_id)
                     .ok_or_else(|| format!("missing task thunk for fn_{}", function_id.0))?;
                 let thunk_ref = self.module.declare_func_in_func(thunk_id, builder.func);
-                let thunk = builder.ins().func_addr(self.module.target_config().pointer_type(), thunk_ref);
-                let managed = builder.ins().iconst(cl_types::I64, result_type.is_managed() as i64);
-                let new_id = *self.builtin_ids.get("lpp_task_new")
+                let thunk = builder
+                    .ins()
+                    .func_addr(self.module.target_config().pointer_type(), thunk_ref);
+                let managed = builder
+                    .ins()
+                    .iconst(cl_types::I64, result_type.is_managed() as i64);
+                let new_id = *self
+                    .builtin_ids
+                    .get("lpp_task_new")
                     .ok_or_else(|| "Builtin 'lpp_task_new' was not declared".to_string())?;
                 let new_ref = self.module.declare_func_in_func(new_id, builder.func);
                 let call = builder.ins().call(new_ref, &[thunk, environment, managed]);
@@ -687,7 +808,9 @@ impl<'a, M: Module> FunctionLower<'a, M> {
             }
             Rvalue::Await(task) => {
                 let task = self.operand_to_value(builder, task, local_vars)?;
-                let id = *self.builtin_ids.get("lpp_task_await")
+                let id = *self
+                    .builtin_ids
+                    .get("lpp_task_await")
                     .ok_or_else(|| "Builtin 'lpp_task_await' was not declared".to_string())?;
                 let function = self.module.declare_func_in_func(id, builder.func);
                 let call = builder.ins().call(function, &[task]);
@@ -696,12 +819,16 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                     TypeRef::Bool => Ok(builder.ins().ireduce(cl_types::I8, raw)),
                     TypeRef::Float => {
                         let slot = builder.create_sized_stack_slot(StackSlotData::new(
-                            StackSlotKind::ExplicitSlot, 8, 3,
+                            StackSlotKind::ExplicitSlot,
+                            8,
+                            3,
                         ));
                         let pointer_type = self.module.target_config().pointer_type();
                         let address = builder.ins().stack_addr(pointer_type, slot, 0);
                         builder.ins().store(MemFlags::trusted(), raw, address, 0);
-                        Ok(builder.ins().load(cl_types::F64, MemFlags::trusted(), address, 0))
+                        Ok(builder
+                            .ins()
+                            .load(cl_types::F64, MemFlags::trusted(), address, 0))
                     }
                     _ => Ok(raw),
                 }
@@ -830,21 +957,11 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                                 .icmp(IntCC::SignedGreaterThanOrEqual, left, right)
                         }
                     }
-                    BinaryOperator::And => {
-                        builder.ins().band(left, right)
-                    }
-                    BinaryOperator::Or => {
-                        builder.ins().bor(left, right)
-                    }
-                    BinaryOperator::BitAnd => {
-                        builder.ins().band(left, right)
-                    }
-                    BinaryOperator::BitOr => {
-                        builder.ins().bor(left, right)
-                    }
-                    BinaryOperator::BitXor => {
-                        builder.ins().bxor(left, right)
-                    }
+                    BinaryOperator::And => builder.ins().band(left, right),
+                    BinaryOperator::Or => builder.ins().bor(left, right),
+                    BinaryOperator::BitAnd => builder.ins().band(left, right),
+                    BinaryOperator::BitOr => builder.ins().bor(left, right),
+                    BinaryOperator::BitXor => builder.ins().bxor(left, right),
                     BinaryOperator::Shl => {
                         let zero = builder.ins().iconst(cl_types::I64, 0);
                         let in_bounds = builder.ins().icmp_imm(IntCC::UnsignedLessThan, right, 64);
@@ -854,7 +971,10 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                     BinaryOperator::Shr => {
                         let zero = builder.ins().iconst(cl_types::I64, 0);
                         let max_shift = builder.ins().iconst(cl_types::I64, 63);
-                        let not_negative = builder.ins().icmp_imm(IntCC::SignedGreaterThanOrEqual, right, 0);
+                        let not_negative =
+                            builder
+                                .ins()
+                                .icmp_imm(IntCC::SignedGreaterThanOrEqual, right, 0);
                         let lt_64 = builder.ins().icmp_imm(IntCC::SignedLessThan, right, 64);
                         let clamped_shift = builder.ins().select(lt_64, right, max_shift);
                         let shifted = builder.ins().sshr(left, clamped_shift);
@@ -907,7 +1027,8 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                     if dest_ty.map_or(true, |t| *t != TypeRef::Void) {
                         sig.returns.push(AbiParam::new(ret_cl));
                     }
-                    let id = self.module
+                    let id = self
+                        .module
                         .declare_function(symbol, Linkage::Import, &sig)
                         .map_err(|e| format!("declare FFI '{}': {:?}", symbol, e))?;
                     self.builtin_ids.insert(symbol.clone(), id);
@@ -963,7 +1084,10 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                     .ok_or_else(|| "Builtin 'lpp_arena_alloc' was not declared".to_string())?;
                 let arena_ref = self.module.declare_func_in_func(arena_id, builder.func);
                 let drop_id = *self.drop_ids.get(struct_id).ok_or_else(|| {
-                    format!("missing generated arena destructor for struct {:?}", struct_id)
+                    format!(
+                        "missing generated arena destructor for struct {:?}",
+                        struct_id
+                    )
                 })?;
                 let drop_ref = self.module.declare_func_in_func(drop_id, builder.func);
                 let drop_addr = builder
@@ -1003,9 +1127,7 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                 let zero = builder.ins().iconst(cl_types::I64, 0);
                 let mut offset = 0i32;
                 while (offset as u32) < slot_size {
-                    builder
-                        .ins()
-                        .store(MemFlags::trusted(), zero, addr, offset);
+                    builder.ins().store(MemFlags::trusted(), zero, addr, offset);
                     offset += 8;
                 }
                 Ok(addr)
@@ -1016,9 +1138,9 @@ impl<'a, M: Module> FunctionLower<'a, M> {
             )),
             Rvalue::AllocateList(element_ty) => {
                 let allocator = match element_ty.list_element_class() {
-                    ListElementClass::Scalar
-                    | ListElementClass::Bool
-                    | ListElementClass::Float => "lpp_list_new",
+                    ListElementClass::Scalar | ListElementClass::Bool | ListElementClass::Float => {
+                        "lpp_list_new"
+                    }
                     ListElementClass::Arc => "lpp_list_new_arc",
                     ListElementClass::Unsupported => {
                         return Err(format!(
@@ -1057,7 +1179,10 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                             base_value,
                             field_layout.offset as i32,
                         );
-                        let val = if matches!(field_layout.abi, AbiClass::I8 | AbiClass::I16 | AbiClass::I32) {
+                        let val = if matches!(
+                            field_layout.abi,
+                            AbiClass::I8 | AbiClass::I16 | AbiClass::I32
+                        ) {
                             builder.ins().uextend(cl_types::I64, loaded)
                         } else {
                             loaded
@@ -1091,12 +1216,8 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                     ));
                     let addr = builder.ins().stack_addr(pointer_type, slot, 0);
                     let zero = builder.ins().iconst(cl_types::I64, 0);
-                    builder
-                        .ins()
-                        .store(MemFlags::trusted(), zero, addr, 0);
-                    builder
-                        .ins()
-                        .store(MemFlags::trusted(), zero, addr, 8);
+                    builder.ins().store(MemFlags::trusted(), zero, addr, 0);
+                    builder.ins().store(MemFlags::trusted(), zero, addr, 8);
                     addr
                 } else {
                     let size_val = builder.ins().iconst(cl_types::I64, 16);
@@ -1106,11 +1227,11 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                         .ok_or_else(|| {
                             "Builtin 'lpp_arc_alloc_with_destructor' was not declared".to_string()
                         })?;
-                    let alloc_func_ref =
-                        self.module.declare_func_in_func(builtin_id, builder.func);
-                    let destroy_id = *self.builtin_ids.get("lpp_closure_destroy").ok_or_else(|| {
-                        "Builtin 'lpp_closure_destroy' was not declared".to_string()
-                    })?;
+                    let alloc_func_ref = self.module.declare_func_in_func(builtin_id, builder.func);
+                    let destroy_id =
+                        *self.builtin_ids.get("lpp_closure_destroy").ok_or_else(|| {
+                            "Builtin 'lpp_closure_destroy' was not declared".to_string()
+                        })?;
                     let destroy_ref = self.module.declare_func_in_func(destroy_id, builder.func);
                     let destroy_addr = builder.ins().func_addr(pointer_type, destroy_ref);
                     let call = builder
@@ -1171,12 +1292,14 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                     let fp = builder.ins().load(
                         pointer_type,
                         cranelift_codegen::ir::MemFlags::new(),
-                        callee_val, 0,
+                        callee_val,
+                        0,
                     );
                     let ep = builder.ins().load(
                         pointer_type,
                         cranelift_codegen::ir::MemFlags::new(),
-                        callee_val, 8,
+                        callee_val,
+                        8,
                     );
                     (fp, Some(ep))
                 };
@@ -1378,7 +1501,9 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                     // `f64` function cannot return an I64 zero and a Bool is I8.
                     let zero = match return_type {
                         TypeRef::Float => builder.ins().f64const(0.0),
-                        TypeRef::Bool | TypeRef::U8 | TypeRef::I8 => builder.ins().iconst(cl_types::I8, 0),
+                        TypeRef::Bool | TypeRef::U8 | TypeRef::I8 => {
+                            builder.ins().iconst(cl_types::I8, 0)
+                        }
                         TypeRef::U16 | TypeRef::I16 => builder.ins().iconst(cl_types::I16, 0),
                         TypeRef::U32 | TypeRef::I32 => builder.ins().iconst(cl_types::I32, 0),
                         TypeRef::Int
@@ -1397,7 +1522,7 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                         TypeRef::VectorI64x2 => {
                             let zero = builder.ins().iconst(cl_types::I64, 0);
                             builder.ins().splat(cl_types::I64X2, zero)
-                        },
+                        }
                     };
                     builder.ins().return_(&[zero]);
                 }

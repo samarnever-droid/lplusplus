@@ -342,15 +342,12 @@ impl Wasi {
 
     fn signature(self) -> (Vec<Val>, Vec<Val>) {
         match self {
-            Wasi::FdWrite | Wasi::FdRead | Wasi::PollOneoff => (
-                vec![Val::I32, Val::I32, Val::I32, Val::I32],
-                vec![Val::I32],
-            ),
+            Wasi::FdWrite | Wasi::FdRead | Wasi::PollOneoff => {
+                (vec![Val::I32, Val::I32, Val::I32, Val::I32], vec![Val::I32])
+            }
             Wasi::ProcExit => (vec![Val::I32], vec![]),
             Wasi::ClockTimeGet => (vec![Val::I32, Val::I64, Val::I32], vec![Val::I32]),
-            Wasi::EnvironSizesGet | Wasi::EnvironGet => {
-                (vec![Val::I32, Val::I32], vec![Val::I32])
-            }
+            Wasi::EnvironSizesGet | Wasi::EnvironGet => (vec![Val::I32, Val::I32], vec![Val::I32]),
         }
     }
 }
@@ -519,9 +516,7 @@ fn helper_signature(helper: Helper) -> (Vec<Val>, Vec<Val>) {
         Helper::MapRemove => (vec![I32, I64, I64], vec![]),
         Helper::MapDestroy => (vec![I32], vec![]),
         Helper::TupleAlloc => (vec![I32, I64, I64], vec![I32]),
-        Helper::TupleDestroy | Helper::ClosureDestroy | Helper::TaskDestroy => {
-            (vec![I32], vec![])
-        }
+        Helper::TupleDestroy | Helper::ClosureDestroy | Helper::TaskDestroy => (vec![I32], vec![]),
         Helper::TaskNew => (vec![I64, I32, I64], vec![I32]),
         Helper::TaskRun => (vec![I32], vec![I64]),
         Helper::TaskAwait | Helper::TaskPoll => (vec![I32], vec![I64]),
@@ -1228,7 +1223,8 @@ impl<'a> WasmCompiler<'a> {
         self.pool.extend_from_slice(&ARC_IMMORTAL.to_le_bytes()); // refcount
         self.pool.extend_from_slice(&0i64.to_le_bytes()); // no destructor
         self.pool.extend_from_slice(&0x4C505057u64.to_le_bytes()); // "LPPW" magic
-        self.pool.extend_from_slice(&(key.len() as u32).to_le_bytes());
+        self.pool
+            .extend_from_slice(&(key.len() as u32).to_le_bytes());
         self.pool.extend_from_slice(key.as_bytes());
         let payload = base + ARC_HEADER_SIZE as u32;
         self.literals.insert(key.to_string(), payload);
@@ -1319,7 +1315,12 @@ impl<'a> WasmCompiler<'a> {
             ],
             Helper::ListNew => &[Helper::ArcAlloc],
             Helper::ListPush => &[Helper::Alloc, Helper::Retain, Helper::PanicMsg],
-            Helper::ListSet => &[Helper::Retain, Helper::Release, Helper::Panic2, Helper::PanicMsg],
+            Helper::ListSet => &[
+                Helper::Retain,
+                Helper::Release,
+                Helper::Panic2,
+                Helper::PanicMsg,
+            ],
             Helper::ListGet => &[Helper::Panic2, Helper::PanicMsg],
             Helper::ListLen => &[],
             Helper::ListDestroy => &[Helper::Release],
@@ -1329,7 +1330,12 @@ impl<'a> WasmCompiler<'a> {
             Helper::HashInt => &[],
             Helper::MapProbe => &[Helper::HashStr, Helper::HashInt, Helper::StrEq],
             Helper::MapRehash => &[Helper::Alloc, Helper::HashStr, Helper::HashInt],
-            Helper::MapPut => &[Helper::MapProbe, Helper::MapRehash, Helper::Retain, Helper::Release],
+            Helper::MapPut => &[
+                Helper::MapProbe,
+                Helper::MapRehash,
+                Helper::Retain,
+                Helper::Release,
+            ],
             Helper::MapGet => &[Helper::MapProbe],
             Helper::MapHas => &[Helper::MapProbe],
             Helper::MapRemove => &[Helper::MapProbe, Helper::Release],
@@ -1420,9 +1426,7 @@ impl<'a> WasmCompiler<'a> {
                             | Rvalue::SliceLen(_)
                             | Rvalue::SliceGet(..)
                             | Rvalue::SliceToStr(_) => want_slices = true,
-                            Rvalue::AllocateTuple(..) | Rvalue::MakeTask(..) => {
-                                want_tuples = true
-                            }
+                            Rvalue::AllocateTuple(..) | Rvalue::MakeTask(..) => want_tuples = true,
                             _ => {}
                         }
                     }
@@ -1787,7 +1791,8 @@ impl<'a> WasmCompiler<'a> {
             self.register_type(thunk_sig.0.clone(), thunk_sig.1.clone());
             self.all_sigs.push(thunk_sig.clone());
             self.thunk_fn.insert(*func_id, idx);
-            self.names.push((idx, format!("__lpp_task_thunk_{}", func_id.0)));
+            self.names
+                .push((idx, format!("__lpp_task_thunk_{}", func_id.0)));
         }
 
         // Helpers.
@@ -1884,15 +1889,16 @@ impl<'a> WasmCompiler<'a> {
     /// still encodes (nothing can branch to them, but the binary must be
     /// well formed).
     fn block_layout(mir_fn: &MirFunction) -> Vec<BlockId> {
-        let by_id: HashMap<BlockId, &MirBlock> =
-            mir_fn.blocks.iter().map(|b| (b.id, b)).collect();
+        let by_id: HashMap<BlockId, &MirBlock> = mir_fn.blocks.iter().map(|b| (b.id, b)).collect();
         let mut order: Vec<BlockId> = Vec::with_capacity(mir_fn.blocks.len());
         let mut visited: HashSet<BlockId> = HashSet::with_capacity(mir_fn.blocks.len());
         if let Some(first) = mir_fn.blocks.first() {
             // Iterative post-order (blocks may number in the thousands).
             let mut stack: Vec<(BlockId, bool)> = vec![(first.id, false)];
             while let Some((id, expanded)) = stack.pop() {
-                let Some(block) = by_id.get(&id) else { continue };
+                let Some(block) = by_id.get(&id) else {
+                    continue;
+                };
                 if expanded {
                     order.push(id);
                     continue;
@@ -2158,7 +2164,10 @@ impl<'a> WasmCompiler<'a> {
             Shl => {
                 let class = Self::operand_class(left, locals);
                 if class == Val::F64 {
-                    return Err("WebAssembly backend: bitwise/shift operator Shl on Float is not supported".to_string());
+                    return Err(
+                        "WebAssembly backend: bitwise/shift operator Shl on Float is not supported"
+                            .to_string(),
+                    );
                 }
                 match class {
                     Val::I64 => {
@@ -2187,7 +2196,10 @@ impl<'a> WasmCompiler<'a> {
             Shr => {
                 let class = Self::operand_class(left, locals);
                 if class == Val::F64 {
-                    return Err("WebAssembly backend: bitwise/shift operator Shr on Float is not supported".to_string());
+                    return Err(
+                        "WebAssembly backend: bitwise/shift operator Shr on Float is not supported"
+                            .to_string(),
+                    );
                 }
                 match class {
                     Val::I64 => {
@@ -2317,9 +2329,7 @@ impl<'a> WasmCompiler<'a> {
         let scr_base = locals.len();
         match rvalue {
             Rvalue::Use(operand) => self.operand_val(fb, operand, local_index),
-            Rvalue::Move(local) => {
-                self.operand_val(fb, &Operand::Local(*local), local_index)
-            }
+            Rvalue::Move(local) => self.operand_val(fb, &Operand::Local(*local), local_index),
             Rvalue::BinaryOp(operator, left, right) => {
                 self.emit_binary(fb, operator, left, right, local_index, locals)?
             }
@@ -2353,9 +2363,7 @@ impl<'a> WasmCompiler<'a> {
                 fb.i64c(packed_offsets as i64);
                 fb.call(self.helper_index[&Helper::TupleAlloc]);
                 fb.s(Self::scr(scr_base, SCR_I32A));
-                for ((value, field), ty) in
-                    values.iter().zip(layout.iter()).zip(types.iter())
-                {
+                for ((value, field), ty) in values.iter().zip(layout.iter()).zip(types.iter()) {
                     fb.g(Self::scr(scr_base, SCR_I32A));
                     self.operand_val(fb, value, local_index);
                     self.store_abi(fb, field.abi, field.offset as u32);
@@ -2434,9 +2442,7 @@ impl<'a> WasmCompiler<'a> {
                     .task_order
                     .iter()
                     .position(|id| id == function_id)
-                    .ok_or_else(|| {
-                        format!("missing task thunk for fn_{}", function_id.0)
-                    })?;
+                    .ok_or_else(|| format!("missing task thunk for fn_{}", function_id.0))?;
                 let seat = self.table.thunks_start + thunk_pos as u32;
                 fb.i64c(seat as i64);
                 fb.g(Self::scr(scr_base, SCR_I32A));
@@ -2458,10 +2464,8 @@ impl<'a> WasmCompiler<'a> {
                     ));
                 };
                 let struct_def = &self.type_table.definitions[struct_id.0];
-                let Some(field_index) = struct_def
-                    .fields
-                    .iter()
-                    .position(|(name, _)| name == field)
+                let Some(field_index) =
+                    struct_def.fields.iter().position(|(name, _)| name == field)
                 else {
                     return Err(format!(
                         "Field '{}' not found while lowering struct '{}'",
@@ -2519,9 +2523,9 @@ impl<'a> WasmCompiler<'a> {
             }
             Rvalue::AllocateList(element_ty) => {
                 let is_arc = match element_ty.list_element_class() {
-                    ListElementClass::Scalar
-                    | ListElementClass::Bool
-                    | ListElementClass::Float => 0,
+                    ListElementClass::Scalar | ListElementClass::Bool | ListElementClass::Float => {
+                        0
+                    }
                     ListElementClass::Arc => 1,
                     ListElementClass::Unsupported => {
                         return Err(format!(
@@ -2565,9 +2569,7 @@ impl<'a> WasmCompiler<'a> {
                 fb.g(Self::scr(scr_base, SCR_I32A));
             }
             Rvalue::SpawnThread(_) => {
-                return Err(
-                    "WebAssembly backend does not support OS threads ('spawn')".to_string(),
-                );
+                return Err("WebAssembly backend does not support OS threads ('spawn')".to_string());
             }
             Rvalue::BuiltinCall(symbol, args) => {
                 self.emit_builtin(fb, symbol, args, local_index, mir_fn, &dest_ty)?;
@@ -2604,7 +2606,9 @@ impl<'a> WasmCompiler<'a> {
         for arg in args {
             params.push(Self::operand_class(arg, locals));
         }
-        let results = if *dest_ty == TypeRef::Void || matches!(dest_ty, TypeRef::Tuple(elems) if elems.is_empty()) {
+        let results = if *dest_ty == TypeRef::Void
+            || matches!(dest_ty, TypeRef::Tuple(elems) if elems.is_empty())
+        {
             vec![]
         } else {
             vec![val_of_type(dest_ty)]
@@ -2886,7 +2890,11 @@ impl<'a> WasmCompiler<'a> {
                 self.convert_to_slot(fb, Self::operand_class(&args[1], locals));
                 self.operand_val(fb, &args[2], local_index);
                 fb.op(op::I64_REINTERPRET_F64);
-                fb.i64c(if symbol == "lpp_map_put_str_float" { 1 } else { 0 });
+                fb.i64c(if symbol == "lpp_map_put_str_float" {
+                    1
+                } else {
+                    0
+                });
                 fb.call(self.helper_index[&Helper::MapPut]);
                 fb.i64c(0);
             }
@@ -2905,7 +2913,11 @@ impl<'a> WasmCompiler<'a> {
                 arg_vals(self, fb, 1);
                 self.operand_val(fb, &args[1], local_index);
                 self.convert_to_slot(fb, Self::operand_class(&args[1], locals));
-                fb.i64c(if symbol == "lpp_map_get_str_float" { 1 } else { 0 });
+                fb.i64c(if symbol == "lpp_map_get_str_float" {
+                    1
+                } else {
+                    0
+                });
                 fb.call(self.helper_index[&Helper::MapGet]);
                 fb.op(op::F64_REINTERPRET_I64);
             }
@@ -3009,14 +3021,7 @@ impl<'a> WasmCompiler<'a> {
     /// `nest` counts extra structured constructs the branch sits inside
     /// (e.g. 1 when emitted inside an `if` arm) — each one shifts every
     /// label depth by one, because the enclosing `if` is itself a label.
-    fn emit_branch(
-        fb: &mut FB,
-        from: usize,
-        target: usize,
-        total: usize,
-        disp: u32,
-        nest: usize,
-    ) {
+    fn emit_branch(fb: &mut FB, from: usize, target: usize, total: usize, disp: u32, nest: usize) {
         if target > from {
             fb.br((target - from - 1 + nest) as u32);
         } else {
@@ -3121,10 +3126,8 @@ impl<'a> WasmCompiler<'a> {
                     ));
                 };
                 let struct_def = &self.type_table.definitions[struct_id.0];
-                let Some(field_index) = struct_def
-                    .fields
-                    .iter()
-                    .position(|(name, _)| name == field)
+                let Some(field_index) =
+                    struct_def.fields.iter().position(|(name, _)| name == field)
                 else {
                     return Err(format!(
                         "Field '{}' not found while lowering struct '{}'",
@@ -3352,13 +3355,9 @@ impl<'a> WasmCompiler<'a> {
         let definition = &self.type_table.definitions[struct_id.0];
         let (layout, _) = struct_layout(self.type_table, struct_id);
         let mut fb = FB::new(1);
-        for ((field_name, field_type), field_layout) in
-            definition.fields.iter().zip(layout.iter())
+        for ((field_name, field_type), field_layout) in definition.fields.iter().zip(layout.iter())
         {
-            if self
-                .weak_fields
-                .contains(&(struct_id, field_name.clone()))
-            {
+            if self.weak_fields.contains(&(struct_id, field_name.clone())) {
                 continue;
             }
             if field_type.is_managed() {
@@ -3564,7 +3563,12 @@ impl<'a> WasmCompiler<'a> {
         let new = fb.scratch(Val::I32);
         let need = fb.scratch(Val::I32);
         // size = (size + 7) & -8
-        fb.g(0).i32c(7).op(op::I32_ADD).i32c(-8).op(op::I32_AND).s(0);
+        fb.g(0)
+            .i32c(7)
+            .op(op::I32_ADD)
+            .i32c(-8)
+            .op(op::I32_AND)
+            .s(0);
         // h = heap; new = h + size
         fb.gget(GLOBAL_HEAP).s(h);
         fb.g(h).g(0).op(op::I32_ADD).s(new);
@@ -3579,7 +3583,12 @@ impl<'a> WasmCompiler<'a> {
         fb.i32c(16).op(op::I32_SHR_U);
         fb.memory_size().op(op::I32_SUB).s(need);
         // grow max(need, 32) pages
-        fb.g(need).i32c(32).g(need).i32c(32).op(op::I32_GT_U).op(op::SELECT);
+        fb.g(need)
+            .i32c(32)
+            .g(need)
+            .i32c(32)
+            .op(op::I32_GT_U)
+            .op(op::SELECT);
         fb.memory_grow();
         fb.i32c(-1).op(op::I32_EQ);
         fb.if_().op(op::UNREACHABLE).end();
@@ -3702,7 +3711,10 @@ impl<'a> WasmCompiler<'a> {
     /// `Write(ptr, len)` = stdout.
     fn h_write(&mut self) -> (Vec<Val>, Vec<u8>) {
         let mut fb = FB::new(2);
-        fb.g(0).g(1).i32c(1).call(self.helper_index[&Helper::WriteFd]);
+        fb.g(0)
+            .g(1)
+            .i32c(1)
+            .call(self.helper_index[&Helper::WriteFd]);
         fb.end();
         (fb.extras, fb.body)
     }
@@ -3715,7 +3727,12 @@ impl<'a> WasmCompiler<'a> {
         fb.i32c(NUM_BUF_SIZE as i64).s(pos);
         fb.block();
         fb.loop_();
-        fb.g(pos).i32c(1).op(op::I32_SUB).t(pos).i32c(NUM_BUF as i64).op(op::I32_ADD);
+        fb.g(pos)
+            .i32c(1)
+            .op(op::I32_SUB)
+            .t(pos)
+            .i32c(NUM_BUF as i64)
+            .op(op::I32_ADD);
         fb.g(0).i64c(10).op(op::I64_REM_U).op(op::I32_WRAP_I64);
         fb.i32c(48).op(op::I32_ADD).store8(0);
         fb.g(0).i64c(10).op(op::I64_DIV_U).s(0);
@@ -3733,7 +3750,9 @@ impl<'a> WasmCompiler<'a> {
         let mut fb = FB::new(1);
         let cnt = fb.scratch(Val::I32);
         fb.g(0).call(self.helper_index[&Helper::FmtU64]).s(cnt);
-        fb.i32c((NUM_BUF + NUM_BUF_SIZE) as i64).g(cnt).op(op::I32_SUB);
+        fb.i32c((NUM_BUF + NUM_BUF_SIZE) as i64)
+            .g(cnt)
+            .op(op::I32_SUB);
         fb.g(cnt);
         fb.call(self.helper_index[&Helper::Write]);
         fb.end();
@@ -3747,13 +3766,17 @@ impl<'a> WasmCompiler<'a> {
         let mut fb = FB::new(1);
         let mag = fb.scratch(Val::I64);
         fb.g(0).i64c(0).op(op::I64_LT_S).if_();
-        fb.i32c(dash as i64).i32c(1).call(self.helper_index[&Helper::Write]);
+        fb.i32c(dash as i64)
+            .i32c(1)
+            .call(self.helper_index[&Helper::Write]);
         fb.i64c(0).g(0).op(op::I64_SUB).s(mag);
         fb.else_();
         fb.g(0).s(mag);
         fb.end();
         fb.g(mag).call(self.helper_index[&Helper::WriteU64]);
-        fb.i32c(nl as i64).i32c(1).call(self.helper_index[&Helper::Write]);
+        fb.i32c(nl as i64)
+            .i32c(1)
+            .call(self.helper_index[&Helper::Write]);
         fb.end();
         (fb.extras, fb.body)
     }
@@ -3764,9 +3787,13 @@ impl<'a> WasmCompiler<'a> {
         let zero = self.lit_addr(b"0\n");
         let mut fb = FB::new(1);
         fb.g(0).if_();
-        fb.i32c(one as i64).i32c(2).call(self.helper_index[&Helper::Write]);
+        fb.i32c(one as i64)
+            .i32c(2)
+            .call(self.helper_index[&Helper::Write]);
         fb.else_();
-        fb.i32c(zero as i64).i32c(2).call(self.helper_index[&Helper::Write]);
+        fb.i32c(zero as i64)
+            .i32c(2)
+            .call(self.helper_index[&Helper::Write]);
         fb.end();
         fb.end();
         (fb.extras, fb.body)
@@ -3779,7 +3806,9 @@ impl<'a> WasmCompiler<'a> {
         fb.g(0).i32c(4).op(op::I32_ADD);
         fb.g(0).load32(0);
         fb.call(self.helper_index[&Helper::Write]);
-        fb.i32c(nl as i64).i32c(1).call(self.helper_index[&Helper::Write]);
+        fb.i32c(nl as i64)
+            .i32c(1)
+            .call(self.helper_index[&Helper::Write]);
         fb.end();
         (fb.extras, fb.body)
     }
@@ -3799,44 +3828,74 @@ impl<'a> WasmCompiler<'a> {
         let pos = fb.scratch(Val::I32);
         // NaN?
         fb.g(0).g(0).op(op::F64_NE).if_();
-        fb.i32c(nan as i64).i32c(4).call(self.helper_index[&Helper::Write]);
+        fb.i32c(nan as i64)
+            .i32c(4)
+            .call(self.helper_index[&Helper::Write]);
         fb.op(op::RETURN).end();
         // ±inf?
-        fb.g(0).f64c(0.0).op(op::F64_MUL).f64c(0.0).op(op::F64_NE).if_();
+        fb.g(0)
+            .f64c(0.0)
+            .op(op::F64_MUL)
+            .f64c(0.0)
+            .op(op::F64_NE)
+            .if_();
         fb.g(0).f64c(0.0).op(op::F64_LT).if_();
-        fb.i32c(neginf as i64).i32c(5).call(self.helper_index[&Helper::Write]);
+        fb.i32c(neginf as i64)
+            .i32c(5)
+            .call(self.helper_index[&Helper::Write]);
         fb.else_();
-        fb.i32c(inf as i64).i32c(4).call(self.helper_index[&Helper::Write]);
+        fb.i32c(inf as i64)
+            .i32c(4)
+            .call(self.helper_index[&Helper::Write]);
         fb.end();
         fb.op(op::RETURN).end();
         // sign
         fb.g(0).f64c(0.0).op(op::F64_LT).s(neg);
         fb.g(0).op(op::F64_ABS).s(0);
         fb.g(neg).if_();
-        fb.i32c(dash as i64).i32c(1).call(self.helper_index[&Helper::Write]);
+        fb.i32c(dash as i64)
+            .i32c(1)
+            .call(self.helper_index[&Helper::Write]);
         fb.end();
         // fixed 6-digit fraction for |x| < 9e12
         fb.g(0).f64c(9.0e12).op(op::F64_LT).if_();
-        fb.g(0).f64c(1_000_000.0).op(op::F64_MUL).f64c(0.5).op(op::F64_ADD);
+        fb.g(0)
+            .f64c(1_000_000.0)
+            .op(op::F64_MUL)
+            .f64c(0.5)
+            .op(op::F64_ADD);
         fb.op(op::I64_TRUNC_F64_U).s(n);
         fb.g(n).i64c(1_000_000).op(op::I64_DIV_U);
         fb.call(self.helper_index[&Helper::WriteU64]);
-        fb.i32c(dot as i64).i32c(1).call(self.helper_index[&Helper::Write]);
+        fb.i32c(dot as i64)
+            .i32c(1)
+            .call(self.helper_index[&Helper::Write]);
         fb.g(n).i64c(1_000_000).op(op::I64_REM_U).s(n);
         fb.i32c(6).s(pos);
         fb.loop_();
-        fb.g(pos).i32c(1).op(op::I32_SUB).t(pos).i32c(NUM_BUF as i64).op(op::I32_ADD);
+        fb.g(pos)
+            .i32c(1)
+            .op(op::I32_SUB)
+            .t(pos)
+            .i32c(NUM_BUF as i64)
+            .op(op::I32_ADD);
         fb.g(n).i64c(10).op(op::I64_REM_U).op(op::I32_WRAP_I64);
         fb.i32c(48).op(op::I32_ADD).store8(0);
         fb.g(n).i64c(10).op(op::I64_DIV_U).s(n);
         fb.g(pos).br_if(0);
         fb.end();
-        fb.i32c(NUM_BUF as i64).i32c(6).call(self.helper_index[&Helper::Write]);
-        fb.i32c(nl as i64).i32c(1).call(self.helper_index[&Helper::Write]);
+        fb.i32c(NUM_BUF as i64)
+            .i32c(6)
+            .call(self.helper_index[&Helper::Write]);
+        fb.i32c(nl as i64)
+            .i32c(1)
+            .call(self.helper_index[&Helper::Write]);
         fb.else_();
         fb.g(0).op(op::I64_TRUNC_F64_U);
         fb.call(self.helper_index[&Helper::WriteU64]);
-        fb.i32c(zeros as i64).i32c(8).call(self.helper_index[&Helper::Write]);
+        fb.i32c(zeros as i64)
+            .i32c(8)
+            .call(self.helper_index[&Helper::Write]);
         fb.end();
         fb.end();
         (fb.extras, fb.body)
@@ -3848,7 +3907,10 @@ impl<'a> WasmCompiler<'a> {
         let mut fb = FB::new(1);
         fb.g(0).i32c(4).op(op::I32_ADD).g(0).load32(0).i32c(2);
         fb.call(self.helper_index[&Helper::WriteFd]);
-        fb.i32c(nl as i64).i32c(1).i32c(2).call(self.helper_index[&Helper::WriteFd]);
+        fb.i32c(nl as i64)
+            .i32c(1)
+            .i32c(2)
+            .call(self.helper_index[&Helper::WriteFd]);
         fb.op(op::UNREACHABLE);
         fb.end();
         (fb.extras, fb.body)
@@ -3869,13 +3931,18 @@ impl<'a> WasmCompiler<'a> {
         macro_rules! num {
             ($v:expr) => {{
                 fb.g($v).i64c(0).op(op::I64_LT_S).if_();
-                fb.i32c(dash as i64).i32c(1).i32c(2).call(self.helper_index[&Helper::WriteFd]);
+                fb.i32c(dash as i64)
+                    .i32c(1)
+                    .i32c(2)
+                    .call(self.helper_index[&Helper::WriteFd]);
                 fb.i64c(0).g($v).op(op::I64_SUB).s(nm);
                 fb.else_();
                 fb.g($v).s(nm);
                 fb.end();
                 fb.g(nm).call(self.helper_index[&Helper::FmtU64]).s(cnt);
-                fb.i32c((NUM_BUF + NUM_BUF_SIZE) as i64).g(cnt).op(op::I32_SUB);
+                fb.i32c((NUM_BUF + NUM_BUF_SIZE) as i64)
+                    .g(cnt)
+                    .op(op::I32_SUB);
                 fb.g(cnt).i32c(2).call(self.helper_index[&Helper::WriteFd]);
             }};
         }
@@ -3889,7 +3956,10 @@ impl<'a> WasmCompiler<'a> {
         num!(1);
         lit!(2);
         num!(3);
-        fb.i32c(nl as i64).i32c(1).i32c(2).call(self.helper_index[&Helper::WriteFd]);
+        fb.i32c(nl as i64)
+            .i32c(1)
+            .i32c(2)
+            .call(self.helper_index[&Helper::WriteFd]);
         fb.op(op::UNREACHABLE);
         fb.end();
         (fb.extras, fb.body)
@@ -3913,8 +3983,15 @@ impl<'a> WasmCompiler<'a> {
         fb.i32c(0).s(pos);
         fb.block();
         fb.loop_();
-        fb.g(pos).i32c((INPUT_BUF_SIZE - 1) as i64).op(op::I32_GE_U).br_if(1);
-        fb.i32c(IOVEC_BUF as i64).i32c(INPUT_BUF as i64).g(pos).op(op::I32_ADD).store32(0);
+        fb.g(pos)
+            .i32c((INPUT_BUF_SIZE - 1) as i64)
+            .op(op::I32_GE_U)
+            .br_if(1);
+        fb.i32c(IOVEC_BUF as i64)
+            .i32c(INPUT_BUF as i64)
+            .g(pos)
+            .op(op::I32_ADD)
+            .store32(0);
         fb.i32c(IOVEC_LEN as i64).i32c(1).store32(0);
         fb.i32c(0).i32c(0).i32c(1).i32c(FD_IO_OUT as i64);
         fb.call(self.import_index[&Wasi::FdRead]);
@@ -3946,13 +4023,24 @@ impl<'a> WasmCompiler<'a> {
         fb.g(j).g(0).load32(0).op(op::I32_GE_U).if_();
         // j >= name length: only '=' continues a match.
         fb.g(c).i32c(61).op(op::I32_EQ).if_();
-        fb.g(1).g(0).load32(0).op(op::I32_ADD).i32c(1).op(op::I32_ADD);
+        fb.g(1)
+            .g(0)
+            .load32(0)
+            .op(op::I32_ADD)
+            .i32c(1)
+            .op(op::I32_ADD);
         fb.op(op::RETURN);
         fb.end();
         fb.i32c(0).op(op::RETURN);
         fb.end();
         // c must equal name[j]
-        fb.g(c).g(0).i32c(4).op(op::I32_ADD).g(j).op(op::I32_ADD).load8(0);
+        fb.g(c)
+            .g(0)
+            .i32c(4)
+            .op(op::I32_ADD)
+            .g(j)
+            .op(op::I32_ADD)
+            .load8(0);
         fb.op(op::I32_NE).if_().i32c(0).op(op::RETURN).end();
         fb.g(j).i32c(1).op(op::I32_ADD).s(j);
         fb.br(0);
@@ -3983,10 +4071,16 @@ impl<'a> WasmCompiler<'a> {
         fb.g(count).op(op::I32_EQZ).if_();
         fb.i32c(self.empty_string_addr() as i64).op(op::RETURN);
         fb.end();
-        fb.g(count).i32c(4).op(op::I32_MUL).call(self.helper_index[&Helper::Alloc]).s(pbuf);
+        fb.g(count)
+            .i32c(4)
+            .op(op::I32_MUL)
+            .call(self.helper_index[&Helper::Alloc])
+            .s(pbuf);
         fb.i32c((CLOCK_BUF + 4) as i64).load32(0);
         fb.call(self.helper_index[&Helper::Alloc]).s(sbuf);
-        fb.g(pbuf).g(sbuf).call(self.import_index[&Wasi::EnvironGet]);
+        fb.g(pbuf)
+            .g(sbuf)
+            .call(self.import_index[&Wasi::EnvironGet]);
         fb.if_();
         fb.i32c(self.empty_string_addr() as i64).op(op::RETURN);
         fb.end();
@@ -3994,14 +4088,25 @@ impl<'a> WasmCompiler<'a> {
         fb.block();
         fb.loop_();
         fb.g(i).g(count).op(op::I32_GE_U).br_if(1);
-        fb.g(pbuf).g(i).i32c(4).op(op::I32_MUL).op(op::I32_ADD).load32(0).s(e);
+        fb.g(pbuf)
+            .g(i)
+            .i32c(4)
+            .op(op::I32_MUL)
+            .op(op::I32_ADD)
+            .load32(0)
+            .s(e);
         fb.g(0).g(e).call(self.helper_index[&Helper::EnvMatch]).s(v);
         fb.g(v).if_();
         // value length (NUL scan)
         fb.i32c(0).s(vlen);
         fb.block();
         fb.loop_();
-        fb.g(v).g(vlen).op(op::I32_ADD).load8(0).op(op::I32_EQZ).br_if(1);
+        fb.g(v)
+            .g(vlen)
+            .op(op::I32_ADD)
+            .load8(0)
+            .op(op::I32_EQZ)
+            .br_if(1);
         fb.g(vlen).i32c(1).op(op::I32_ADD).s(vlen);
         fb.br(0);
         fb.end();
@@ -4036,12 +4141,34 @@ impl<'a> WasmCompiler<'a> {
         let i = fb.scratch(Val::I32);
         fb.g(0).load32(0).s(la);
         fb.g(1).load32(0).s(lb);
-        fb.g(la).g(lb).op(op::I32_NE).if_().i32c(0).op(op::RETURN).end();
+        fb.g(la)
+            .g(lb)
+            .op(op::I32_NE)
+            .if_()
+            .i32c(0)
+            .op(op::RETURN)
+            .end();
         fb.i32c(0).s(i);
         fb.loop_();
-        fb.g(i).g(la).op(op::I32_GE_U).if_().i32c(1).op(op::RETURN).end();
-        fb.g(0).i32c(4).op(op::I32_ADD).g(i).op(op::I32_ADD).load8(0);
-        fb.g(1).i32c(4).op(op::I32_ADD).g(i).op(op::I32_ADD).load8(0);
+        fb.g(i)
+            .g(la)
+            .op(op::I32_GE_U)
+            .if_()
+            .i32c(1)
+            .op(op::RETURN)
+            .end();
+        fb.g(0)
+            .i32c(4)
+            .op(op::I32_ADD)
+            .g(i)
+            .op(op::I32_ADD)
+            .load8(0);
+        fb.g(1)
+            .i32c(4)
+            .op(op::I32_ADD)
+            .g(i)
+            .op(op::I32_ADD)
+            .load8(0);
         fb.op(op::I32_NE).if_().i32c(0).op(op::RETURN).end();
         fb.g(i).i32c(1).op(op::I32_ADD).s(i);
         fb.br(0);
@@ -4059,8 +4186,19 @@ impl<'a> WasmCompiler<'a> {
         let out = fb.scratch(Val::I32);
         fb.g(0).load32(0).s(la);
         fb.g(1).load32(0).s(lb);
-        fb.g(la).g(lb).op(op::I32_ADD).call(self.helper_index[&Helper::StrAlloc]).s(out);
-        fb.g(out).i32c(4).op(op::I32_ADD).g(0).i32c(4).op(op::I32_ADD).g(la).memory_copy();
+        fb.g(la)
+            .g(lb)
+            .op(op::I32_ADD)
+            .call(self.helper_index[&Helper::StrAlloc])
+            .s(out);
+        fb.g(out)
+            .i32c(4)
+            .op(op::I32_ADD)
+            .g(0)
+            .i32c(4)
+            .op(op::I32_ADD)
+            .g(la)
+            .memory_copy();
         fb.g(out).i32c(4).op(op::I32_ADD).g(la).op(op::I32_ADD);
         fb.g(1).i32c(4).op(op::I32_ADD).g(lb).memory_copy();
         fb.g(out);
@@ -4088,9 +4226,17 @@ impl<'a> WasmCompiler<'a> {
         fb.else_();
         fb.g(2).s(copy);
         fb.end();
-        fb.g(copy).op(op::I32_WRAP_I64).call(self.helper_index[&Helper::StrAlloc]).s(out);
+        fb.g(copy)
+            .op(op::I32_WRAP_I64)
+            .call(self.helper_index[&Helper::StrAlloc])
+            .s(out);
         fb.g(out).i32c(4).op(op::I32_ADD);
-        fb.g(0).i32c(4).op(op::I32_ADD).g(1).op(op::I32_WRAP_I64).op(op::I32_ADD);
+        fb.g(0)
+            .i32c(4)
+            .op(op::I32_ADD)
+            .g(1)
+            .op(op::I32_WRAP_I64)
+            .op(op::I32_ADD);
         fb.g(copy).op(op::I32_WRAP_I64);
         fb.memory_copy();
         fb.g(out);
@@ -4120,7 +4266,12 @@ impl<'a> WasmCompiler<'a> {
         fb.block();
         fb.loop_();
         fb.g(lo).g(0).load32(0).op(op::I32_GE_U).br_if(1);
-        fb.g(0).i32c(4).op(op::I32_ADD).g(lo).op(op::I32_ADD).load8(0);
+        fb.g(0)
+            .i32c(4)
+            .op(op::I32_ADD)
+            .g(lo)
+            .op(op::I32_ADD)
+            .load8(0);
         is_ws!();
         fb.op(op::I32_EQZ).br_if(1);
         fb.g(lo).i32c(1).op(op::I32_ADD).s(lo);
@@ -4132,7 +4283,14 @@ impl<'a> WasmCompiler<'a> {
         fb.block();
         fb.loop_();
         fb.g(hi).g(lo).op(op::I32_LE_S).br_if(1);
-        fb.g(0).i32c(4).op(op::I32_ADD).g(hi).op(op::I32_ADD).i32c(1).op(op::I32_SUB).load8(0);
+        fb.g(0)
+            .i32c(4)
+            .op(op::I32_ADD)
+            .g(hi)
+            .op(op::I32_ADD)
+            .i32c(1)
+            .op(op::I32_SUB)
+            .load8(0);
         is_ws!();
         fb.op(op::I32_EQZ).br_if(1);
         fb.g(hi).i32c(1).op(op::I32_SUB).s(hi);
@@ -4140,7 +4298,11 @@ impl<'a> WasmCompiler<'a> {
         fb.end();
         fb.end();
         // out = s[lo..hi]
-        fb.g(hi).g(lo).op(op::I32_SUB).call(self.helper_index[&Helper::StrAlloc]).s(out);
+        fb.g(hi)
+            .g(lo)
+            .op(op::I32_SUB)
+            .call(self.helper_index[&Helper::StrAlloc])
+            .s(out);
         fb.g(out).i32c(4).op(op::I32_ADD);
         fb.g(0).i32c(4).op(op::I32_ADD).g(lo).op(op::I32_ADD);
         fb.g(hi).g(lo).op(op::I32_SUB);
@@ -4164,14 +4326,26 @@ impl<'a> WasmCompiler<'a> {
         fb.block();
         fb.loop_();
         fb.g(i).g(len).op(op::I32_GE_U).br_if(1);
-        fb.g(0).i32c(4).op(op::I32_ADD).g(i).op(op::I32_ADD).load8(0).t(c);
+        fb.g(0)
+            .i32c(4)
+            .op(op::I32_ADD)
+            .g(i)
+            .op(op::I32_ADD)
+            .load8(0)
+            .t(c);
         fb.i32c(lo_b).op(op::I32_GE_S);
         fb.g(c).i32c(hi_b).op(op::I32_LE_S);
         fb.op(op::I32_AND);
         fb.if_();
         fb.g(c).i32c(delta).op(op::I32_ADD).s(c);
         fb.end();
-        fb.g(out).i32c(4).op(op::I32_ADD).g(i).op(op::I32_ADD).g(c).store8(0);
+        fb.g(out)
+            .i32c(4)
+            .op(op::I32_ADD)
+            .g(i)
+            .op(op::I32_ADD)
+            .g(c)
+            .store8(0);
         fb.g(i).i32c(1).op(op::I32_ADD).s(i);
         fb.br(0);
         fb.end();
@@ -4195,12 +4369,18 @@ impl<'a> WasmCompiler<'a> {
         fb.g(0).s(mag);
         fb.end();
         fb.g(mag).call(self.helper_index[&Helper::FmtU64]).s(cnt);
-        fb.g(cnt).g(neg).op(op::I32_ADD).call(self.helper_index[&Helper::StrAlloc]).s(out);
+        fb.g(cnt)
+            .g(neg)
+            .op(op::I32_ADD)
+            .call(self.helper_index[&Helper::StrAlloc])
+            .s(out);
         fb.g(neg).if_();
         fb.g(out).i32c(4).op(op::I32_ADD).i32c(45).store8(0);
         fb.end();
         fb.g(out).i32c(4).op(op::I32_ADD).g(neg).op(op::I32_ADD);
-        fb.i32c((NUM_BUF + NUM_BUF_SIZE) as i64).g(cnt).op(op::I32_SUB);
+        fb.i32c((NUM_BUF + NUM_BUF_SIZE) as i64)
+            .g(cnt)
+            .op(op::I32_SUB);
         fb.g(cnt).memory_copy();
         fb.g(out);
         fb.end();
@@ -4229,7 +4409,13 @@ impl<'a> WasmCompiler<'a> {
         fb.block();
         fb.loop_();
         fb.g(i).g(0).load32(0).op(op::I32_GE_U).br_if(1);
-        fb.g(0).i32c(4).op(op::I32_ADD).g(i).op(op::I32_ADD).load8(0).t(c);
+        fb.g(0)
+            .i32c(4)
+            .op(op::I32_ADD)
+            .g(i)
+            .op(op::I32_ADD)
+            .load8(0)
+            .t(c);
         fb.i32c(32).op(op::I32_EQ);
         fb.g(c).i32c(9).op(op::I32_GE_S);
         fb.g(c).i32c(13).op(op::I32_LE_S);
@@ -4241,7 +4427,13 @@ impl<'a> WasmCompiler<'a> {
         fb.end();
         // sign
         fb.i32c(0).s(neg);
-        fb.g(0).i32c(4).op(op::I32_ADD).g(i).op(op::I32_ADD).load8(0).t(c);
+        fb.g(0)
+            .i32c(4)
+            .op(op::I32_ADD)
+            .g(i)
+            .op(op::I32_ADD)
+            .load8(0)
+            .t(c);
         fb.i32c(45).op(op::I32_EQ).if_();
         fb.i32c(1).s(neg);
         fb.g(i).i32c(1).op(op::I32_ADD).s(i);
@@ -4255,7 +4447,13 @@ impl<'a> WasmCompiler<'a> {
         fb.block();
         fb.loop_();
         fb.g(i).g(0).load32(0).op(op::I32_GE_U).br_if(1);
-        fb.g(0).i32c(4).op(op::I32_ADD).g(i).op(op::I32_ADD).load8(0).t(c);
+        fb.g(0)
+            .i32c(4)
+            .op(op::I32_ADD)
+            .g(i)
+            .op(op::I32_ADD)
+            .load8(0)
+            .t(c);
         fb.i32c(48).op(op::I32_LT_S);
         fb.g(c).i32c(57).op(op::I32_GT_S);
         fb.op(op::I32_OR).br_if(1);
@@ -4266,7 +4464,12 @@ impl<'a> WasmCompiler<'a> {
         fb.br(0);
         fb.end();
         fb.end();
-        fb.i64c(0).g(acc).op(op::I64_SUB).g(acc).g(neg).op(op::SELECT);
+        fb.i64c(0)
+            .g(acc)
+            .op(op::I64_SUB)
+            .g(acc)
+            .g(neg)
+            .op(op::SELECT);
         fb.end();
         (fb.extras, fb.body)
     }
@@ -4277,13 +4480,24 @@ impl<'a> WasmCompiler<'a> {
         let mut fb = FB::new(2);
         let out = fb.scratch(Val::I32);
         fb.g(1).i64c(0).op(op::I64_LT_S);
-        fb.g(1).g(0).load32(0).op(op::I64_EXTEND_I32_U).op(op::I64_GE_S);
+        fb.g(1)
+            .g(0)
+            .load32(0)
+            .op(op::I64_EXTEND_I32_U)
+            .op(op::I64_GE_S);
         fb.op(op::I32_OR).if_();
-        fb.i32c(msg as i64).call(self.helper_index[&Helper::PanicMsg]);
+        fb.i32c(msg as i64)
+            .call(self.helper_index[&Helper::PanicMsg]);
         fb.end();
         fb.i32c(1).call(self.helper_index[&Helper::StrAlloc]).s(out);
         fb.g(out).i32c(4).op(op::I32_ADD);
-        fb.g(0).i32c(4).op(op::I32_ADD).g(1).op(op::I32_WRAP_I64).op(op::I32_ADD).load8(0);
+        fb.g(0)
+            .i32c(4)
+            .op(op::I32_ADD)
+            .g(1)
+            .op(op::I32_WRAP_I64)
+            .op(op::I32_ADD)
+            .load8(0);
         fb.store8(0);
         fb.g(out);
         fb.end();
@@ -4293,8 +4507,18 @@ impl<'a> WasmCompiler<'a> {
     /// `Ord(s) -> i64`: first byte, 0 for "".
     fn h_ord(&mut self) -> (Vec<Val>, Vec<u8>) {
         let mut fb = FB::new(1);
-        fb.g(0).load32(0).op(op::I32_EQZ).if_().i64c(0).op(op::RETURN).end();
-        fb.g(0).i32c(4).op(op::I32_ADD).load8(0).op(op::I64_EXTEND_I32_U);
+        fb.g(0)
+            .load32(0)
+            .op(op::I32_EQZ)
+            .if_()
+            .i64c(0)
+            .op(op::RETURN)
+            .end();
+        fb.g(0)
+            .i32c(4)
+            .op(op::I32_ADD)
+            .load8(0)
+            .op(op::I64_EXTEND_I32_U);
         fb.end();
         (fb.extras, fb.body)
     }
@@ -4329,15 +4553,32 @@ impl<'a> WasmCompiler<'a> {
         fb.g(2).s(i);
         fb.block(); // $notfound (depth 1 from outer loop)
         fb.loop_(); // outer (depth 0)
-        fb.g(i).g(ln).op(op::I32_ADD).g(lh).op(op::I32_GT_S).br_if(1);
+        fb.g(i)
+            .g(ln)
+            .op(op::I32_ADD)
+            .g(lh)
+            .op(op::I32_GT_S)
+            .br_if(1);
         fb.i32c(0).s(j);
         fb.block(); // $next (from inner loop: depth 1)
         fb.loop_(); // inner (depth 0)
         fb.g(j).g(ln).op(op::I32_GE_U).if_();
         fb.g(i).op(op::RETURN); // full needle matched
         fb.end();
-        fb.g(0).i32c(4).op(op::I32_ADD).g(i).op(op::I32_ADD).g(j).op(op::I32_ADD).load8(0);
-        fb.g(1).i32c(4).op(op::I32_ADD).g(j).op(op::I32_ADD).load8(0);
+        fb.g(0)
+            .i32c(4)
+            .op(op::I32_ADD)
+            .g(i)
+            .op(op::I32_ADD)
+            .g(j)
+            .op(op::I32_ADD)
+            .load8(0);
+        fb.g(1)
+            .i32c(4)
+            .op(op::I32_ADD)
+            .g(j)
+            .op(op::I32_ADD)
+            .load8(0);
         fb.op(op::I32_NE).br_if(1); // mismatch → $next
         fb.g(j).i32c(1).op(op::I32_ADD).s(j);
         fb.br(0);
@@ -4355,7 +4596,10 @@ impl<'a> WasmCompiler<'a> {
     /// `StrFind(h, n) -> i64`.
     fn h_str_find(&mut self) -> (Vec<Val>, Vec<u8>) {
         let mut fb = FB::new(2);
-        fb.g(0).g(1).i32c(0).call(self.helper_index[&Helper::StrFindFrom]);
+        fb.g(0)
+            .g(1)
+            .i32c(0)
+            .call(self.helper_index[&Helper::StrFindFrom]);
         fb.op(op::I64_EXTEND_I32_S);
         fb.end();
         (fb.extras, fb.body)
@@ -4364,7 +4608,10 @@ impl<'a> WasmCompiler<'a> {
     /// `StrContains(h, n) -> i32`.
     fn h_str_contains(&mut self) -> (Vec<Val>, Vec<u8>) {
         let mut fb = FB::new(2);
-        fb.g(0).g(1).i32c(0).call(self.helper_index[&Helper::StrFindFrom]);
+        fb.g(0)
+            .g(1)
+            .i32c(0)
+            .call(self.helper_index[&Helper::StrFindFrom]);
         fb.i32c(-1).op(op::I32_NE);
         fb.end();
         (fb.extras, fb.body)
@@ -4378,12 +4625,34 @@ impl<'a> WasmCompiler<'a> {
         let i = fb.scratch(Val::I32);
         fb.g(0).load32(0).s(ls);
         fb.g(1).load32(0).s(lp);
-        fb.g(lp).g(ls).op(op::I32_GT_S).if_().i32c(0).op(op::RETURN).end();
+        fb.g(lp)
+            .g(ls)
+            .op(op::I32_GT_S)
+            .if_()
+            .i32c(0)
+            .op(op::RETURN)
+            .end();
         fb.i32c(0).s(i);
         fb.loop_();
-        fb.g(i).g(lp).op(op::I32_GE_U).if_().i32c(1).op(op::RETURN).end();
-        fb.g(0).i32c(4).op(op::I32_ADD).g(i).op(op::I32_ADD).load8(0);
-        fb.g(1).i32c(4).op(op::I32_ADD).g(i).op(op::I32_ADD).load8(0);
+        fb.g(i)
+            .g(lp)
+            .op(op::I32_GE_U)
+            .if_()
+            .i32c(1)
+            .op(op::RETURN)
+            .end();
+        fb.g(0)
+            .i32c(4)
+            .op(op::I32_ADD)
+            .g(i)
+            .op(op::I32_ADD)
+            .load8(0);
+        fb.g(1)
+            .i32c(4)
+            .op(op::I32_ADD)
+            .g(i)
+            .op(op::I32_ADD)
+            .load8(0);
         fb.op(op::I32_NE).if_().i32c(0).op(op::RETURN).end();
         fb.g(i).i32c(1).op(op::I32_ADD).s(i);
         fb.br(0);
@@ -4402,13 +4671,37 @@ impl<'a> WasmCompiler<'a> {
         let i = fb.scratch(Val::I32);
         fb.g(0).load32(0).s(ls);
         fb.g(1).load32(0).s(lx);
-        fb.g(lx).g(ls).op(op::I32_GT_S).if_().i32c(0).op(op::RETURN).end();
+        fb.g(lx)
+            .g(ls)
+            .op(op::I32_GT_S)
+            .if_()
+            .i32c(0)
+            .op(op::RETURN)
+            .end();
         fb.g(ls).g(lx).op(op::I32_SUB).s(off);
         fb.i32c(0).s(i);
         fb.loop_();
-        fb.g(i).g(lx).op(op::I32_GE_U).if_().i32c(1).op(op::RETURN).end();
-        fb.g(0).i32c(4).op(op::I32_ADD).g(off).op(op::I32_ADD).g(i).op(op::I32_ADD).load8(0);
-        fb.g(1).i32c(4).op(op::I32_ADD).g(i).op(op::I32_ADD).load8(0);
+        fb.g(i)
+            .g(lx)
+            .op(op::I32_GE_U)
+            .if_()
+            .i32c(1)
+            .op(op::RETURN)
+            .end();
+        fb.g(0)
+            .i32c(4)
+            .op(op::I32_ADD)
+            .g(off)
+            .op(op::I32_ADD)
+            .g(i)
+            .op(op::I32_ADD)
+            .load8(0);
+        fb.g(1)
+            .i32c(4)
+            .op(op::I32_ADD)
+            .g(i)
+            .op(op::I32_ADD)
+            .load8(0);
         fb.op(op::I32_NE).if_().i32c(0).op(op::RETURN).end();
         fb.g(i).i32c(1).op(op::I32_ADD).s(i);
         fb.br(0);
@@ -4433,17 +4726,29 @@ impl<'a> WasmCompiler<'a> {
         fb.g(slen).op(op::I32_EQZ).if_();
         fb.i32c(self.empty_string_addr() as i64).op(op::RETURN);
         fb.end();
-        fb.g(slen).op(op::I64_EXTEND_I32_U).g(1).op(op::I64_MUL).s(total);
+        fb.g(slen)
+            .op(op::I64_EXTEND_I32_U)
+            .g(1)
+            .op(op::I64_MUL)
+            .s(total);
         fb.g(total).i64c(0x7fff_fff0).op(op::I64_GT_S).if_();
-        fb.i32c(msg as i64).call(self.helper_index[&Helper::PanicMsg]);
+        fb.i32c(msg as i64)
+            .call(self.helper_index[&Helper::PanicMsg]);
         fb.end();
-        fb.g(total).op(op::I32_WRAP_I64).call(self.helper_index[&Helper::StrAlloc]).s(out);
+        fb.g(total)
+            .op(op::I32_WRAP_I64)
+            .call(self.helper_index[&Helper::StrAlloc])
+            .s(out);
         fb.i64c(0).s(i);
         fb.block();
         fb.loop_();
         fb.g(i).g(1).op(op::I64_GE_S).br_if(1);
         fb.g(out).i32c(4).op(op::I32_ADD);
-        fb.g(i).op(op::I32_WRAP_I64).g(slen).op(op::I32_MUL).op(op::I32_ADD);
+        fb.g(i)
+            .op(op::I32_WRAP_I64)
+            .g(slen)
+            .op(op::I32_MUL)
+            .op(op::I32_ADD);
         fb.g(0).i32c(4).op(op::I32_ADD).g(slen).memory_copy();
         fb.g(i).i64c(1).op(op::I64_ADD).s(i);
         fb.br(0);
@@ -4471,7 +4776,11 @@ impl<'a> WasmCompiler<'a> {
         fb.g(2).load32(0).s(nlen);
         // empty needle → plain copy (native contract)
         fb.g(olen).op(op::I32_EQZ).if_();
-        fb.g(0).i32c(4).op(op::I32_ADD).g(slen).call(self.helper_index[&Helper::StrNew]);
+        fb.g(0)
+            .i32c(4)
+            .op(op::I32_ADD)
+            .g(slen)
+            .call(self.helper_index[&Helper::StrNew]);
         fb.op(op::RETURN);
         fb.end();
         // pass 1: count occurrences
@@ -4479,7 +4788,11 @@ impl<'a> WasmCompiler<'a> {
         fb.i32c(0).s(pos);
         fb.block();
         fb.loop_();
-        fb.g(0).g(1).g(pos).call(self.helper_index[&Helper::StrFindFrom]).s(found);
+        fb.g(0)
+            .g(1)
+            .g(pos)
+            .call(self.helper_index[&Helper::StrFindFrom])
+            .s(found);
         fb.g(found).i32c(-1).op(op::I32_EQ).br_if(1);
         fb.g(count).i32c(1).op(op::I32_ADD).s(count);
         fb.g(found).g(olen).op(op::I32_ADD).s(pos);
@@ -4487,14 +4800,24 @@ impl<'a> WasmCompiler<'a> {
         fb.end();
         fb.end();
         // outlen = slen + count * (nlen - olen)
-        fb.g(slen).g(count).g(nlen).g(olen).op(op::I32_SUB).op(op::I32_MUL).op(op::I32_ADD);
+        fb.g(slen)
+            .g(count)
+            .g(nlen)
+            .g(olen)
+            .op(op::I32_SUB)
+            .op(op::I32_MUL)
+            .op(op::I32_ADD);
         fb.call(self.helper_index[&Helper::StrAlloc]).s(out);
         // pass 2: splice
         fb.i32c(0).s(src);
         fb.i32c(0).s(dst);
         fb.block();
         fb.loop_();
-        fb.g(0).g(1).g(src).call(self.helper_index[&Helper::StrFindFrom]).s(found);
+        fb.g(0)
+            .g(1)
+            .g(src)
+            .call(self.helper_index[&Helper::StrFindFrom])
+            .s(found);
         fb.g(found).i32c(-1).op(op::I32_EQ).br_if(1);
         // prefix
         fb.g(out).i32c(4).op(op::I32_ADD).g(dst).op(op::I32_ADD);
@@ -4546,7 +4869,12 @@ impl<'a> WasmCompiler<'a> {
         fb.block();
         fb.loop_();
         fb.g(i).g(len).op(op::I32_GE_U).br_if(1);
-        fb.g(0).i32c(4).op(op::I32_ADD).g(i).op(op::I32_ADD).load8(0);
+        fb.g(0)
+            .i32c(4)
+            .op(op::I32_ADD)
+            .g(i)
+            .op(op::I32_ADD)
+            .load8(0);
         fb.g(1).op(op::I32_WRAP_I64).op(op::I32_EQ).if_();
         push_piece!(i);
         fb.g(i).i32c(1).op(op::I32_ADD).s(start);
@@ -4610,7 +4938,12 @@ impl<'a> WasmCompiler<'a> {
         // NaN / ±inf first (native prints words, no digits).
         fb.g(0).g(0).op(op::F64_NE).if_();
         fb.i32c(nan as i64).op(op::RETURN).end();
-        fb.g(0).f64c(0.0).op(op::F64_MUL).f64c(0.0).op(op::F64_NE).if_();
+        fb.g(0)
+            .f64c(0.0)
+            .op(op::F64_MUL)
+            .f64c(0.0)
+            .op(op::F64_NE)
+            .if_();
         fb.g(0).f64c(0.0).op(op::F64_LT).if_();
         fb.i32c(ninf as i64).op(op::RETURN);
         fb.else_();
@@ -4621,7 +4954,11 @@ impl<'a> WasmCompiler<'a> {
         // must live at function depth, not inside the guard frame.
         fb.end();
         // Sign from the bit pattern so -0.0 prints "-0" like printf.
-        fb.g(0).op(op::I64_REINTERPRET_F64).i64c(0).op(op::I64_LT_S).s(neg);
+        fb.g(0)
+            .op(op::I64_REINTERPRET_F64)
+            .i64c(0)
+            .op(op::I64_LT_S)
+            .s(neg);
         fb.g(0).op(op::F64_ABS).s(0);
         // Zero: "0" (with sign).
         fb.g(0).f64c(0.0).op(op::F64_EQ).if_();
@@ -4654,14 +4991,20 @@ impl<'a> WasmCompiler<'a> {
         fb.end();
         fb.end();
         // Six rounded digits: n = u64(x * 1e5 + 0.5), carry hop to n=100000.
-        fb.g(0).f64c(100_000.0).op(op::F64_MUL).f64c(0.5).op(op::F64_ADD);
+        fb.g(0)
+            .f64c(100_000.0)
+            .op(op::F64_MUL)
+            .f64c(0.5)
+            .op(op::F64_ADD);
         fb.op(op::I64_TRUNC_F64_U).s(n);
         fb.g(n).i64c(1_000_000).op(op::I64_GE_U).if_();
         fb.g(n).i64c(10).op(op::I64_DIV_U).s(n);
         fb.g(e).i32c(1).op(op::I32_ADD).s(e);
         fb.end();
         // Digit bytes land at NUM_BUF + 58..NUM_BUF + 64 (exactly 6).
-        fb.g(n).call(self.helper_index[&Helper::FmtU64]).op(op::DROP);
+        fb.g(n)
+            .call(self.helper_index[&Helper::FmtU64])
+            .op(op::DROP);
         // k = index of the last nonzero digit (0-based).
         fb.i32c(5).s(k);
         fb.block();
@@ -4716,7 +5059,12 @@ impl<'a> WasmCompiler<'a> {
         fb.g(k).g(intd).op(op::I32_GE_S).if_();
         fb.g(cur).i32c(46).store8(0);
         fb.g(cur).i32c(1).op(op::I32_ADD).s(cur);
-        fb.g(k).g(intd).op(op::I32_SUB).i32c(1).op(op::I32_ADD).s(cnt);
+        fb.g(k)
+            .g(intd)
+            .op(op::I32_SUB)
+            .i32c(1)
+            .op(op::I32_ADD)
+            .s(cnt);
         fb.g(cur);
         fb.i32c((NUM_BUF + 58) as i64).g(intd).op(op::I32_ADD);
         copy_digits_dst!();
@@ -4751,15 +5099,27 @@ impl<'a> WasmCompiler<'a> {
         fb.g(ae).i64c(100).op(op::I64_GE_U).if_();
         fb.g(ae).call(self.helper_index[&Helper::FmtU64]).s(cnt);
         fb.g(cur);
-        fb.i32c((NUM_BUF + NUM_BUF_SIZE) as i64).g(cnt).op(op::I32_SUB);
+        fb.i32c((NUM_BUF + NUM_BUF_SIZE) as i64)
+            .g(cnt)
+            .op(op::I32_SUB);
         copy_digits_dst!();
         fb.else_();
         fb.g(cur);
-        fb.g(ae).i64c(10).op(op::I64_DIV_U).op(op::I32_WRAP_I64).i32c(48).op(op::I32_ADD);
+        fb.g(ae)
+            .i64c(10)
+            .op(op::I64_DIV_U)
+            .op(op::I32_WRAP_I64)
+            .i32c(48)
+            .op(op::I32_ADD);
         fb.store8(0);
         fb.g(cur).i32c(1).op(op::I32_ADD).s(cur);
         fb.g(cur);
-        fb.g(ae).i64c(10).op(op::I64_REM_U).op(op::I32_WRAP_I64).i32c(48).op(op::I32_ADD);
+        fb.g(ae)
+            .i64c(10)
+            .op(op::I64_REM_U)
+            .op(op::I32_WRAP_I64)
+            .i32c(48)
+            .op(op::I32_ADD);
         fb.store8(0);
         fb.g(cur).i32c(1).op(op::I32_ADD).s(cur);
         fb.end();
@@ -4769,7 +5129,6 @@ impl<'a> WasmCompiler<'a> {
         (fb.extras, fb.body)
     }
 
-
     // ── Lists ────────────────────────────────────────────────────────────
     // Payload: [data i64][len i64][cap i64][is_arc i64].
 
@@ -4778,7 +5137,10 @@ impl<'a> WasmCompiler<'a> {
         let seat = self.table.list_destroy;
         let mut fb = FB::new(1);
         let l = fb.scratch(Val::I32);
-        fb.i32c(32).i32c(seat as i64).call(self.helper_index[&Helper::ArcAlloc]).s(l);
+        fb.i32c(32)
+            .i32c(seat as i64)
+            .call(self.helper_index[&Helper::ArcAlloc])
+            .s(l);
         fb.g(l).i64c(0).store64(0);
         fb.g(l).i64c(0).store64(8);
         fb.g(l).i64c(0).store64(16);
@@ -4808,22 +5170,35 @@ impl<'a> WasmCompiler<'a> {
         let newdata = fb.scratch(Val::I32);
         let newcap = fb.scratch(Val::I64);
         fb.g(0).op(op::I32_EQZ).if_();
-        fb.i32c(null_msg as i64).call(self.helper_index[&Helper::PanicMsg]);
+        fb.i32c(null_msg as i64)
+            .call(self.helper_index[&Helper::PanicMsg]);
         fb.end();
         fb.g(0).load64(8).s(len);
         fb.g(0).load64(16).s(cap);
         fb.g(0).load64(0).op(op::I32_WRAP_I64).s(data);
         fb.g(len).g(cap).op(op::I64_EQ).if_();
         // newcap = cap == 0 ? 8 : cap * 2
-        fb.i64c(8).g(cap).i64c(2).op(op::I64_MUL).g(cap).op(op::I64_EQZ).op(op::SELECT);
+        fb.i64c(8)
+            .g(cap)
+            .i64c(2)
+            .op(op::I64_MUL)
+            .g(cap)
+            .op(op::I64_EQZ)
+            .op(op::SELECT);
         fb.s(newcap);
         fb.g(newcap).i64c(0x1000_0000).op(op::I64_GT_S).if_();
-        fb.i32c(cap_msg as i64).call(self.helper_index[&Helper::PanicMsg]);
+        fb.i32c(cap_msg as i64)
+            .call(self.helper_index[&Helper::PanicMsg]);
         fb.end();
         // newdata = Alloc(newcap * 8); copy oldcap * 8 bytes
         fb.g(newcap).i64c(8).op(op::I64_MUL).op(op::I32_WRAP_I64);
         fb.call(self.helper_index[&Helper::Alloc]).s(newdata);
-        fb.g(newdata).g(data).g(cap).i64c(8).op(op::I64_MUL).op(op::I32_WRAP_I64);
+        fb.g(newdata)
+            .g(data)
+            .g(cap)
+            .i64c(8)
+            .op(op::I64_MUL)
+            .op(op::I32_WRAP_I64);
         fb.memory_copy();
         fb.g(0).g(newdata).op(op::I64_EXTEND_I32_U).store64(0);
         fb.g(0).g(newcap).store64(16);
@@ -4831,10 +5206,17 @@ impl<'a> WasmCompiler<'a> {
         fb.end();
         // retain element for ARC lists
         fb.g(0).load64(24).op(op::I32_WRAP_I64).if_();
-        fb.g(1).op(op::I32_WRAP_I64).call(self.helper_index[&Helper::Retain]);
+        fb.g(1)
+            .op(op::I32_WRAP_I64)
+            .call(self.helper_index[&Helper::Retain]);
         fb.end();
         // data[len] = v; len += 1
-        fb.g(data).g(len).op(op::I32_WRAP_I64).i32c(8).op(op::I32_MUL).op(op::I32_ADD);
+        fb.g(data)
+            .g(len)
+            .op(op::I32_WRAP_I64)
+            .i32c(8)
+            .op(op::I32_MUL)
+            .op(op::I32_ADD);
         fb.g(1).store64(0);
         fb.g(0).g(len).i64c(1).op(op::I64_ADD).store64(8);
         fb.end();
@@ -4848,7 +5230,8 @@ impl<'a> WasmCompiler<'a> {
         let mid = self.intern(b", len ");
         let mut fb = FB::new(2);
         fb.g(0).op(op::I32_EQZ).if_();
-        fb.i32c(null_msg as i64).call(self.helper_index[&Helper::PanicMsg]);
+        fb.i32c(null_msg as i64)
+            .call(self.helper_index[&Helper::PanicMsg]);
         fb.end();
         fb.g(1).i64c(0).op(op::I64_LT_S);
         fb.g(1).g(0).load64(8).op(op::I64_GE_S);
@@ -4857,7 +5240,11 @@ impl<'a> WasmCompiler<'a> {
         fb.call(self.helper_index[&Helper::Panic2]);
         fb.end();
         fb.g(0).load64(0).op(op::I32_WRAP_I64);
-        fb.g(1).op(op::I32_WRAP_I64).i32c(8).op(op::I32_MUL).op(op::I32_ADD);
+        fb.g(1)
+            .op(op::I32_WRAP_I64)
+            .i32c(8)
+            .op(op::I32_MUL)
+            .op(op::I32_ADD);
         fb.load64(0);
         fb.end();
         (fb.extras, fb.body)
@@ -4871,7 +5258,8 @@ impl<'a> WasmCompiler<'a> {
         let mut fb = FB::new(3);
         let slot = fb.scratch(Val::I32);
         fb.g(0).op(op::I32_EQZ).if_();
-        fb.i32c(null_msg as i64).call(self.helper_index[&Helper::PanicMsg]);
+        fb.i32c(null_msg as i64)
+            .call(self.helper_index[&Helper::PanicMsg]);
         fb.end();
         fb.g(1).i64c(0).op(op::I64_LT_S);
         fb.g(1).g(0).load64(8).op(op::I64_GE_S);
@@ -4880,11 +5268,20 @@ impl<'a> WasmCompiler<'a> {
         fb.call(self.helper_index[&Helper::Panic2]);
         fb.end();
         fb.g(0).load64(0).op(op::I32_WRAP_I64);
-        fb.g(1).op(op::I32_WRAP_I64).i32c(8).op(op::I32_MUL).op(op::I32_ADD);
+        fb.g(1)
+            .op(op::I32_WRAP_I64)
+            .i32c(8)
+            .op(op::I32_MUL)
+            .op(op::I32_ADD);
         fb.s(slot);
         fb.g(0).load64(24).op(op::I32_WRAP_I64).if_();
-        fb.g(2).op(op::I32_WRAP_I64).call(self.helper_index[&Helper::Retain]);
-        fb.g(slot).load64(0).op(op::I32_WRAP_I64).call(self.helper_index[&Helper::Release]);
+        fb.g(2)
+            .op(op::I32_WRAP_I64)
+            .call(self.helper_index[&Helper::Retain]);
+        fb.g(slot)
+            .load64(0)
+            .op(op::I32_WRAP_I64)
+            .call(self.helper_index[&Helper::Release]);
         fb.end();
         fb.g(slot).g(2).store64(0);
         fb.end();
@@ -4897,15 +5294,30 @@ impl<'a> WasmCompiler<'a> {
         let data = fb.scratch(Val::I32);
         let len = fb.scratch(Val::I64);
         let i = fb.scratch(Val::I32);
-        fb.g(0).load64(24).op(op::I64_EQZ).if_().op(op::RETURN).end();
+        fb.g(0)
+            .load64(24)
+            .op(op::I64_EQZ)
+            .if_()
+            .op(op::RETURN)
+            .end();
         fb.g(0).load64(0).op(op::I32_WRAP_I64).s(data);
         fb.g(0).load64(8).s(len);
         fb.i32c(0).s(i);
         fb.block();
         fb.loop_();
-        fb.g(i).op(op::I64_EXTEND_I32_U).g(len).op(op::I64_GE_S).br_if(1);
-        fb.g(data).g(i).i32c(8).op(op::I32_MUL).op(op::I32_ADD).load64(0);
-        fb.op(op::I32_WRAP_I64).call(self.helper_index[&Helper::Release]);
+        fb.g(i)
+            .op(op::I64_EXTEND_I32_U)
+            .g(len)
+            .op(op::I64_GE_S)
+            .br_if(1);
+        fb.g(data)
+            .g(i)
+            .i32c(8)
+            .op(op::I32_MUL)
+            .op(op::I32_ADD)
+            .load64(0);
+        fb.op(op::I32_WRAP_I64)
+            .call(self.helper_index[&Helper::Release]);
         fb.g(i).i32c(1).op(op::I32_ADD).s(i);
         fb.br(0);
         fb.end();
@@ -4923,8 +5335,13 @@ impl<'a> WasmCompiler<'a> {
         let seat = self.table.map_destroy;
         let mut fb = FB::new(1);
         let m = fb.scratch(Val::I32);
-        fb.i32c(32).i32c(seat as i64).call(self.helper_index[&Helper::ArcAlloc]).s(m);
-        fb.g(m).i32c(16 * 32).call(self.helper_index[&Helper::Alloc]);
+        fb.i32c(32)
+            .i32c(seat as i64)
+            .call(self.helper_index[&Helper::ArcAlloc])
+            .s(m);
+        fb.g(m)
+            .i32c(16 * 32)
+            .call(self.helper_index[&Helper::Alloc]);
         fb.op(op::I64_EXTEND_I32_U).store64(0);
         fb.g(m).i64c(16).store64(8);
         fb.g(m).i64c(0).store64(16);
@@ -4954,7 +5371,12 @@ impl<'a> WasmCompiler<'a> {
         fb.loop_();
         fb.g(i).g(0).load32(0).op(op::I32_GE_U).br_if(1);
         fb.g(h);
-        fb.g(0).i32c(4).op(op::I32_ADD).g(i).op(op::I32_ADD).load8(0);
+        fb.g(0)
+            .i32c(4)
+            .op(op::I32_ADD)
+            .g(i)
+            .op(op::I32_ADD)
+            .load8(0);
         fb.op(op::I64_EXTEND_I32_U).op(op::I64_XOR);
         fb.i64c(1099511628211).op(op::I64_MUL).s(h);
         fb.g(i).i32c(1).op(op::I32_ADD).s(i);
@@ -4970,14 +5392,10 @@ impl<'a> WasmCompiler<'a> {
     fn h_hash_int(&mut self) -> (Vec<Val>, Vec<u8>) {
         let mut fb = FB::new(1);
         macro_rules! shl {
-            ($n:expr) => {{
-                fb.i64c($n).op(op::I64_SHL)
-            }};
+            ($n:expr) => {{ fb.i64c($n).op(op::I64_SHL) }};
         }
         macro_rules! shru {
-            ($n:expr) => {{
-                fb.i64c($n).op(op::I64_SHR_U)
-            }};
+            ($n:expr) => {{ fb.i64c($n).op(op::I64_SHR_U) }};
         }
         // k = (~k) + (k << 21)
         fb.g(0).i64c(-1).op(op::I64_XOR);
@@ -5042,7 +5460,10 @@ impl<'a> WasmCompiler<'a> {
         fb.g(2).op(op::I64_EQZ).if_();
         fb.g(1).call(self.helper_index[&Helper::HashInt]).s(h);
         fb.else_();
-        fb.g(1).op(op::I32_WRAP_I64).call(self.helper_index[&Helper::HashStr]).s(h);
+        fb.g(1)
+            .op(op::I32_WRAP_I64)
+            .call(self.helper_index[&Helper::HashStr])
+            .s(h);
         fb.end();
         fb.g(0).load64(8).s(cap);
         fb.g(h).g(cap).op(op::I64_REM_U).t(idx).s(start);
@@ -5051,10 +5472,21 @@ impl<'a> WasmCompiler<'a> {
         fb.loop_();
         // addr = entries + idx*32; f = flags
         fb.g(0).load64(0).op(op::I32_WRAP_I64);
-        fb.g(idx).op(op::I32_WRAP_I64).i32c(32).op(op::I32_MUL).op(op::I32_ADD).t(addr);
+        fb.g(idx)
+            .op(op::I32_WRAP_I64)
+            .i32c(32)
+            .op(op::I32_MUL)
+            .op(op::I32_ADD)
+            .t(addr);
         fb.load64(16).s(f);
         // occupied == 0 → stop
-        fb.g(f).i64c(3).op(op::I64_AND).op(op::I64_EQZ).if_().br(2).end();
+        fb.g(f)
+            .i64c(3)
+            .op(op::I64_AND)
+            .op(op::I64_EQZ)
+            .if_()
+            .br(2)
+            .end();
         fb.g(f).i64c(3).op(op::I64_AND).i64c(1).op(op::I64_EQ).if_();
         // key-kind must match: (f & 4 == 0) == (is_str == 0)
         fb.g(f).i64c(4).op(op::I64_AND).op(op::I64_EQZ);
@@ -5082,13 +5514,23 @@ impl<'a> WasmCompiler<'a> {
         fb.end();
         fb.end();
         // idx = (idx + 1) % cap; wrapped fully → stop
-        fb.g(idx).i64c(1).op(op::I64_ADD).g(cap).op(op::I64_REM_U).s(idx);
+        fb.g(idx)
+            .i64c(1)
+            .op(op::I64_ADD)
+            .g(cap)
+            .op(op::I64_REM_U)
+            .s(idx);
         fb.g(idx).g(start).op(op::I64_EQ).if_().br(2).end();
         fb.br(0);
         fb.end();
         fb.end();
         // insertion point: tombstone else the empty slot
-        fb.g(tomb).g(idx).g(tomb).i64c(-1).op(op::I64_NE).op(op::SELECT);
+        fb.g(tomb)
+            .g(idx)
+            .g(tomb)
+            .i64c(-1)
+            .op(op::I64_NE)
+            .op(op::SELECT);
         fb.i64c(2).op(op::I64_MUL);
         fb.end();
         (fb.extras, fb.body)
@@ -5107,13 +5549,18 @@ impl<'a> WasmCompiler<'a> {
         macro_rules! num {
             ($v:expr) => {{
                 fb.g($v).i64c(0).op(op::I64_LT_S).if_();
-                fb.i32c(dash as i64).i32c(1).i32c(2).call(self.helper_index[&Helper::WriteFd]);
+                fb.i32c(dash as i64)
+                    .i32c(1)
+                    .i32c(2)
+                    .call(self.helper_index[&Helper::WriteFd]);
                 fb.i64c(0).g($v).op(op::I64_SUB).s(nm);
                 fb.else_();
                 fb.g($v).s(nm);
                 fb.end();
                 fb.g(nm).call(self.helper_index[&Helper::FmtU64]).s(cnt);
-                fb.i32c((NUM_BUF + NUM_BUF_SIZE) as i64).g(cnt).op(op::I32_SUB);
+                fb.i32c((NUM_BUF + NUM_BUF_SIZE) as i64)
+                    .g(cnt)
+                    .op(op::I32_SUB);
                 fb.g(cnt).i32c(2).call(self.helper_index[&Helper::WriteFd]);
             }};
         }
@@ -5129,7 +5576,10 @@ impl<'a> WasmCompiler<'a> {
         num!(3);
         lit!(4);
         num!(5);
-        fb.i32c(nl as i64).i32c(1).i32c(2).call(self.helper_index[&Helper::WriteFd]);
+        fb.i32c(nl as i64)
+            .i32c(1)
+            .i32c(2)
+            .call(self.helper_index[&Helper::WriteFd]);
         fb.op(op::UNREACHABLE);
         fb.end();
         (fb.extras, fb.body)
@@ -5158,29 +5608,75 @@ impl<'a> WasmCompiler<'a> {
         fb.block();
         fb.loop_();
         fb.g(i).g(oldcap).op(op::I64_GE_S).br_if(1);
-        fb.g(old).g(i).op(op::I32_WRAP_I64).i32c(32).op(op::I32_MUL).op(op::I32_ADD).t(ea);
-        fb.load64(16).i64c(3).op(op::I64_AND).i64c(1).op(op::I64_EQ).if_();
+        fb.g(old)
+            .g(i)
+            .op(op::I32_WRAP_I64)
+            .i32c(32)
+            .op(op::I32_MUL)
+            .op(op::I32_ADD)
+            .t(ea);
+        fb.load64(16)
+            .i64c(3)
+            .op(op::I64_AND)
+            .i64c(1)
+            .op(op::I64_EQ)
+            .if_();
         // Re-hash the entry key into the new capacity (balanced through
         // h64: the void if/else must not leave a value).
-        fb.g(ea).load64(16).i64c(4).op(op::I64_AND).op(op::I64_EQZ).if_();
-        fb.g(ea).load64(0).call(self.helper_index[&Helper::HashInt]).s(h64);
+        fb.g(ea)
+            .load64(16)
+            .i64c(4)
+            .op(op::I64_AND)
+            .op(op::I64_EQZ)
+            .if_();
+        fb.g(ea)
+            .load64(0)
+            .call(self.helper_index[&Helper::HashInt])
+            .s(h64);
         fb.else_();
-        fb.g(ea).load64(0).op(op::I32_WRAP_I64).call(self.helper_index[&Helper::HashStr]).s(h64);
+        fb.g(ea)
+            .load64(0)
+            .op(op::I32_WRAP_I64)
+            .call(self.helper_index[&Helper::HashStr])
+            .s(h64);
         fb.end();
         fb.g(h64).g(1).op(op::I64_REM_U).s(idx);
         // First non-occupied slot (no tombstones exist in a fresh table).
         fb.block();
         fb.loop_();
-        fb.g(ne).g(idx).op(op::I32_WRAP_I64).i32c(32).op(op::I32_MUL).op(op::I32_ADD).t(addr);
-        fb.load64(16).i64c(3).op(op::I64_AND).i64c(1).op(op::I64_NE).br_if(1);
-        fb.g(idx).i64c(1).op(op::I64_ADD).g(1).op(op::I64_REM_U).s(idx);
+        fb.g(ne)
+            .g(idx)
+            .op(op::I32_WRAP_I64)
+            .i32c(32)
+            .op(op::I32_MUL)
+            .op(op::I32_ADD)
+            .t(addr);
+        fb.load64(16)
+            .i64c(3)
+            .op(op::I64_AND)
+            .i64c(1)
+            .op(op::I64_NE)
+            .br_if(1);
+        fb.g(idx)
+            .i64c(1)
+            .op(op::I64_ADD)
+            .g(1)
+            .op(op::I64_REM_U)
+            .s(idx);
         fb.br(0);
         fb.end();
         fb.end();
         // Move key/val/flags (flags keeps the is_str bit, occupied = 1).
         fb.g(addr).g(ea).load64(0).store64(0);
         fb.g(addr).g(ea).load64(8).store64(8);
-        fb.g(addr).i64c(1).g(ea).load64(16).i64c(4).op(op::I64_AND).op(op::I64_OR).store64(16);
+        fb.g(addr)
+            .i64c(1)
+            .g(ea)
+            .load64(16)
+            .i64c(4)
+            .op(op::I64_AND)
+            .op(op::I64_OR)
+            .store64(16);
         fb.g(0).g(0).load64(16).i64c(1).op(op::I64_ADD).store64(16);
         fb.end();
         fb.g(i).i64c(1).op(op::I64_ADD).s(i);
@@ -5208,7 +5704,11 @@ impl<'a> WasmCompiler<'a> {
         fb.loop_();
         fb.g(i).g(0).load64(8).op(op::I64_GE_S).br_if(1);
         fb.g(0).load64(0).op(op::I32_WRAP_I64);
-        fb.g(i).op(op::I32_WRAP_I64).i32c(32).op(op::I32_MUL).op(op::I32_ADD);
+        fb.g(i)
+            .op(op::I32_WRAP_I64)
+            .i32c(32)
+            .op(op::I32_MUL)
+            .op(op::I32_ADD);
         fb.load64(16).op(op::I64_EQZ).op(op::I32_EQZ);
         fb.op(op::I64_EXTEND_I32_U).g(occ).op(op::I64_ADD).s(occ);
         fb.g(i).i64c(1).op(op::I64_ADD).s(i);
@@ -5231,29 +5731,60 @@ impl<'a> WasmCompiler<'a> {
         fb.g(0).g(ncap).call(self.helper_index[&Helper::MapRehash]);
         fb.end();
         // probe returns slot*2+found
-        fb.g(0).g(1).g(3).call(self.helper_index[&Helper::MapProbe]).s(probe);
-        fb.g(probe).i64c(1).op(op::I64_AND).op(op::I32_WRAP_I64).if_();
+        fb.g(0)
+            .g(1)
+            .g(3)
+            .call(self.helper_index[&Helper::MapProbe])
+            .s(probe);
+        fb.g(probe)
+            .i64c(1)
+            .op(op::I64_AND)
+            .op(op::I32_WRAP_I64)
+            .if_();
         // Overwrite: retain the new edge before dropping the old one.
         fb.g(0).load64(0).op(op::I32_WRAP_I64);
-        fb.g(probe).i64c(1).op(op::I64_SHR_U).op(op::I32_WRAP_I64).i32c(32).op(op::I32_MUL);
+        fb.g(probe)
+            .i64c(1)
+            .op(op::I64_SHR_U)
+            .op(op::I32_WRAP_I64)
+            .i32c(32)
+            .op(op::I32_MUL);
         fb.op(op::I32_ADD).s(addr);
         fb.g(0).load64(24).op(op::I32_WRAP_I64).if_();
-        fb.g(2).op(op::I32_WRAP_I64).call(self.helper_index[&Helper::Retain]);
-        fb.g(addr).load64(8).op(op::I32_WRAP_I64).call(self.helper_index[&Helper::Release]);
+        fb.g(2)
+            .op(op::I32_WRAP_I64)
+            .call(self.helper_index[&Helper::Retain]);
+        fb.g(addr)
+            .load64(8)
+            .op(op::I32_WRAP_I64)
+            .call(self.helper_index[&Helper::Release]);
         fb.end();
         fb.g(addr).g(2).store64(8);
         fb.op(op::RETURN);
         fb.end();
         // Insert at the probed slot.
         fb.g(0).load64(0).op(op::I32_WRAP_I64);
-        fb.g(probe).i64c(1).op(op::I64_SHR_U).op(op::I32_WRAP_I64).i32c(32).op(op::I32_MUL);
+        fb.g(probe)
+            .i64c(1)
+            .op(op::I64_SHR_U)
+            .op(op::I32_WRAP_I64)
+            .i32c(32)
+            .op(op::I32_MUL);
         fb.op(op::I32_ADD).s(addr);
         fb.g(0).load64(24).op(op::I32_WRAP_I64).if_();
-        fb.g(2).op(op::I32_WRAP_I64).call(self.helper_index[&Helper::Retain]);
+        fb.g(2)
+            .op(op::I32_WRAP_I64)
+            .call(self.helper_index[&Helper::Retain]);
         fb.end();
         fb.g(addr).g(1).store64(0);
         fb.g(addr).g(2).store64(8);
-        fb.g(addr).i64c(1).g(3).i64c(4).op(op::I64_MUL).op(op::I64_OR).store64(16);
+        fb.g(addr)
+            .i64c(1)
+            .g(3)
+            .i64c(4)
+            .op(op::I64_MUL)
+            .op(op::I64_OR)
+            .store64(16);
         fb.g(0).g(0).load64(16).i64c(1).op(op::I64_ADD).store64(16);
         fb.end();
         (fb.extras, fb.body)
@@ -5264,11 +5795,30 @@ impl<'a> WasmCompiler<'a> {
         let mut fb = FB::new(3);
         let probe = fb.scratch(Val::I64);
         fb.g(0).op(op::I32_EQZ).if_().i64c(0).op(op::RETURN).end();
-        fb.g(0).load64(16).op(op::I64_EQZ).if_().i64c(0).op(op::RETURN).end();
-        fb.g(0).g(1).g(2).call(self.helper_index[&Helper::MapProbe]).s(probe);
-        fb.g(probe).i64c(1).op(op::I64_AND).op(op::I32_WRAP_I64).if_();
+        fb.g(0)
+            .load64(16)
+            .op(op::I64_EQZ)
+            .if_()
+            .i64c(0)
+            .op(op::RETURN)
+            .end();
+        fb.g(0)
+            .g(1)
+            .g(2)
+            .call(self.helper_index[&Helper::MapProbe])
+            .s(probe);
+        fb.g(probe)
+            .i64c(1)
+            .op(op::I64_AND)
+            .op(op::I32_WRAP_I64)
+            .if_();
         fb.g(0).load64(0).op(op::I32_WRAP_I64);
-        fb.g(probe).i64c(1).op(op::I64_SHR_U).op(op::I32_WRAP_I64).i32c(32).op(op::I32_MUL);
+        fb.g(probe)
+            .i64c(1)
+            .op(op::I64_SHR_U)
+            .op(op::I32_WRAP_I64)
+            .i32c(32)
+            .op(op::I32_MUL);
         fb.op(op::I32_ADD).load64(8);
         fb.op(op::RETURN);
         fb.end();
@@ -5281,7 +5831,13 @@ impl<'a> WasmCompiler<'a> {
     fn h_map_has(&mut self) -> (Vec<Val>, Vec<u8>) {
         let mut fb = FB::new(3);
         fb.g(0).op(op::I32_EQZ).if_().i64c(0).op(op::RETURN).end();
-        fb.g(0).load64(16).op(op::I64_EQZ).if_().i64c(0).op(op::RETURN).end();
+        fb.g(0)
+            .load64(16)
+            .op(op::I64_EQZ)
+            .if_()
+            .i64c(0)
+            .op(op::RETURN)
+            .end();
         fb.g(0).g(1).g(2).call(self.helper_index[&Helper::MapProbe]);
         fb.i64c(1).op(op::I64_AND);
         fb.end();
@@ -5294,14 +5850,35 @@ impl<'a> WasmCompiler<'a> {
         let probe = fb.scratch(Val::I64);
         let addr = fb.scratch(Val::I32);
         fb.g(0).op(op::I32_EQZ).if_().op(op::RETURN).end();
-        fb.g(0).load64(16).op(op::I64_EQZ).if_().op(op::RETURN).end();
-        fb.g(0).g(1).g(2).call(self.helper_index[&Helper::MapProbe]).s(probe);
-        fb.g(probe).i64c(1).op(op::I64_AND).op(op::I32_WRAP_I64).if_();
+        fb.g(0)
+            .load64(16)
+            .op(op::I64_EQZ)
+            .if_()
+            .op(op::RETURN)
+            .end();
+        fb.g(0)
+            .g(1)
+            .g(2)
+            .call(self.helper_index[&Helper::MapProbe])
+            .s(probe);
+        fb.g(probe)
+            .i64c(1)
+            .op(op::I64_AND)
+            .op(op::I32_WRAP_I64)
+            .if_();
         fb.g(0).load64(0).op(op::I32_WRAP_I64);
-        fb.g(probe).i64c(1).op(op::I64_SHR_U).op(op::I32_WRAP_I64).i32c(32).op(op::I32_MUL);
+        fb.g(probe)
+            .i64c(1)
+            .op(op::I64_SHR_U)
+            .op(op::I32_WRAP_I64)
+            .i32c(32)
+            .op(op::I32_MUL);
         fb.op(op::I32_ADD).s(addr);
         fb.g(0).load64(24).op(op::I32_WRAP_I64).if_();
-        fb.g(addr).load64(8).op(op::I32_WRAP_I64).call(self.helper_index[&Helper::Release]);
+        fb.g(addr)
+            .load64(8)
+            .op(op::I32_WRAP_I64)
+            .call(self.helper_index[&Helper::Release]);
         fb.end();
         fb.g(addr).i64c(2).store64(16);
         fb.g(0).g(0).load64(16).i64c(1).op(op::I64_SUB).store64(16);
@@ -5315,15 +5892,33 @@ impl<'a> WasmCompiler<'a> {
         let mut fb = FB::new(1);
         let i = fb.scratch(Val::I64);
         let addr = fb.scratch(Val::I32);
-        fb.g(0).load64(24).op(op::I64_EQZ).if_().op(op::RETURN).end();
+        fb.g(0)
+            .load64(24)
+            .op(op::I64_EQZ)
+            .if_()
+            .op(op::RETURN)
+            .end();
         fb.i64c(0).s(i);
         fb.block();
         fb.loop_();
         fb.g(i).g(0).load64(8).op(op::I64_GE_S).br_if(1);
         fb.g(0).load64(0).op(op::I32_WRAP_I64);
-        fb.g(i).op(op::I32_WRAP_I64).i32c(32).op(op::I32_MUL).op(op::I32_ADD).t(addr);
-        fb.load64(16).i64c(3).op(op::I64_AND).i64c(1).op(op::I64_EQ).if_();
-        fb.g(addr).load64(8).op(op::I32_WRAP_I64).call(self.helper_index[&Helper::Release]);
+        fb.g(i)
+            .op(op::I32_WRAP_I64)
+            .i32c(32)
+            .op(op::I32_MUL)
+            .op(op::I32_ADD)
+            .t(addr);
+        fb.load64(16)
+            .i64c(3)
+            .op(op::I64_AND)
+            .i64c(1)
+            .op(op::I64_EQ)
+            .if_();
+        fb.g(addr)
+            .load64(8)
+            .op(op::I32_WRAP_I64)
+            .call(self.helper_index[&Helper::Release]);
         fb.end();
         fb.g(i).i64c(1).op(op::I64_ADD).s(i);
         fb.br(0);
@@ -5341,7 +5936,10 @@ impl<'a> WasmCompiler<'a> {
         let seat = self.table.tuple_destroy;
         let mut fb = FB::new(3);
         let p = fb.scratch(Val::I32);
-        fb.g(0).i32c(seat as i64).call(self.helper_index[&Helper::ArcAlloc]).s(p);
+        fb.g(0)
+            .i32c(seat as i64)
+            .call(self.helper_index[&Helper::ArcAlloc])
+            .s(p);
         fb.g(p).g(1).store64(0);
         fb.g(p).g(2).store64(8);
         fb.g(p);
@@ -5362,12 +5960,21 @@ impl<'a> WasmCompiler<'a> {
         fb.block();
         fb.loop_();
         fb.g(i).i32c(4).op(op::I32_GE_S).br_if(1);
-        fb.g(mask).g(i).op(op::I64_EXTEND_I32_U).op(op::I64_SHR_U).i64c(1).op(op::I64_AND).op(op::I32_WRAP_I64).if_();
+        fb.g(mask)
+            .g(i)
+            .op(op::I64_EXTEND_I32_U)
+            .op(op::I64_SHR_U)
+            .i64c(1)
+            .op(op::I64_AND)
+            .op(op::I32_WRAP_I64)
+            .if_();
         fb.g(offsets);
         fb.g(i).i32c(16).op(op::I32_MUL).op(op::I64_EXTEND_I32_U);
         fb.op(op::I64_SHR_U).i64c(0xffff).op(op::I64_AND).s(off);
         fb.g(0).g(off).op(op::I32_WRAP_I64).op(op::I32_ADD);
-        fb.load64(0).op(op::I32_WRAP_I64).call(self.helper_index[&Helper::Release]);
+        fb.load64(0)
+            .op(op::I32_WRAP_I64)
+            .call(self.helper_index[&Helper::Release]);
         fb.end();
         fb.g(i).i32c(1).op(op::I32_ADD).s(i);
         fb.br(0);
@@ -5380,7 +5987,10 @@ impl<'a> WasmCompiler<'a> {
     /// `ClosureDestroy(p)`: release the captured environment word.
     fn h_closure_destroy(&mut self) -> (Vec<Val>, Vec<u8>) {
         let mut fb = FB::new(1);
-        fb.g(0).load64(8).op(op::I32_WRAP_I64).call(self.helper_index[&Helper::Release]);
+        fb.g(0)
+            .load64(8)
+            .op(op::I32_WRAP_I64)
+            .call(self.helper_index[&Helper::Release]);
         fb.end();
         (fb.extras, fb.body)
     }
@@ -5394,9 +6004,13 @@ impl<'a> WasmCompiler<'a> {
         let t = fb.scratch(Val::I32);
         fb.g(0).op(op::I64_EQZ);
         fb.g(1).op(op::I32_EQZ).op(op::I32_OR).if_();
-        fb.i32c(msg as i64).call(self.helper_index[&Helper::PanicMsg]);
+        fb.i32c(msg as i64)
+            .call(self.helper_index[&Helper::PanicMsg]);
         fb.end();
-        fb.i32c(40).i32c(seat as i64).call(self.helper_index[&Helper::ArcAlloc]).s(t);
+        fb.i32c(40)
+            .i32c(seat as i64)
+            .call(self.helper_index[&Helper::ArcAlloc])
+            .s(t);
         fb.g(t).g(0).store64(0);
         fb.g(t).g(1).op(op::I64_EXTEND_I32_U).store64(8);
         fb.g(t).i64c(0).store64(16);
@@ -5416,13 +6030,15 @@ impl<'a> WasmCompiler<'a> {
         let mut fb = FB::new(1);
         let res = fb.scratch(Val::I64);
         fb.g(0).op(op::I32_EQZ).if_();
-        fb.i32c(msg_null as i64).call(self.helper_index[&Helper::PanicMsg]);
+        fb.i32c(msg_null as i64)
+            .call(self.helper_index[&Helper::PanicMsg]);
         fb.end();
         fb.g(0).load64(24).i64c(2).op(op::I64_EQ).if_();
         fb.g(0).load64(16).op(op::RETURN);
         fb.end();
         fb.g(0).load64(24).op(op::I64_EQZ).if_().else_();
-        fb.i32c(msg_rec as i64).call(self.helper_index[&Helper::PanicMsg]);
+        fb.i32c(msg_rec as i64)
+            .call(self.helper_index[&Helper::PanicMsg]);
         fb.end();
         fb.g(0).i64c(1).store64(24);
         fb.g(0).load64(8).op(op::I32_WRAP_I64);
@@ -5453,7 +6069,9 @@ impl<'a> WasmCompiler<'a> {
         let res = fb.scratch(Val::I64);
         fb.g(0).call(self.helper_index[&Helper::TaskRun]).s(res);
         fb.g(0).load64(32).op(op::I32_WRAP_I64).if_();
-        fb.g(res).op(op::I32_WRAP_I64).call(self.helper_index[&Helper::Retain]);
+        fb.g(res)
+            .op(op::I32_WRAP_I64)
+            .call(self.helper_index[&Helper::Retain]);
         fb.end();
         fb.g(res);
         fb.end();
@@ -5464,10 +6082,16 @@ impl<'a> WasmCompiler<'a> {
     /// result (the ARC destructor table entry for tasks).
     fn h_task_destroy(&mut self) -> (Vec<Val>, Vec<u8>) {
         let mut fb = FB::new(1);
-        fb.g(0).load64(8).op(op::I32_WRAP_I64).call(self.helper_index[&Helper::Release]);
+        fb.g(0)
+            .load64(8)
+            .op(op::I32_WRAP_I64)
+            .call(self.helper_index[&Helper::Release]);
         fb.g(0).load64(24).i64c(2).op(op::I64_EQ).if_();
         fb.g(0).load64(32).op(op::I32_WRAP_I64).if_();
-        fb.g(0).load64(16).op(op::I32_WRAP_I64).call(self.helper_index[&Helper::Release]);
+        fb.g(0)
+            .load64(16)
+            .op(op::I32_WRAP_I64)
+            .call(self.helper_index[&Helper::Release]);
         fb.end();
         fb.end();
         fb.end();
@@ -5492,12 +6116,19 @@ impl<'a> WasmCompiler<'a> {
         let srclen = fb.scratch(Val::I64);
         let v = fb.scratch(Val::I32);
         fb.g(0).op(op::I32_EQZ).if_();
-        fb.i32c(msg_base as i64).call(self.helper_index[&Helper::PanicMsg]);
+        fb.i32c(msg_base as i64)
+            .call(self.helper_index[&Helper::PanicMsg]);
         fb.end();
         // start < 0 || length < 0 || start > i64::MAX - length
         fb.g(1).i64c(0).op(op::I64_LT_S);
         fb.g(2).i64c(0).op(op::I64_LT_S).op(op::I32_OR);
-        fb.g(1).i64c(i64::MAX).g(2).op(op::I64_SUB).op(op::I64_GT_S).op(op::I32_OR).if_();
+        fb.g(1)
+            .i64c(i64::MAX)
+            .g(2)
+            .op(op::I64_SUB)
+            .op(op::I64_GT_S)
+            .op(op::I32_OR)
+            .if_();
         fb.i32c(inv_pre as i64).g(1).i32c(inv_mid as i64).g(2);
         fb.call(self.helper_index[&Helper::Panic2]);
         fb.end();
@@ -5510,8 +6141,19 @@ impl<'a> WasmCompiler<'a> {
         fb.end();
         // start > source_len || length > source_len - start
         fb.g(1).g(srclen).op(op::I64_GT_S);
-        fb.g(2).g(srclen).g(1).op(op::I64_SUB).op(op::I64_GT_S).op(op::I32_OR).if_();
-        fb.i32c(oob_pre as i64).g(1).i32c(oob_mid1 as i64).g(2).i32c(oob_mid2 as i64).g(srclen);
+        fb.g(2)
+            .g(srclen)
+            .g(1)
+            .op(op::I64_SUB)
+            .op(op::I64_GT_S)
+            .op(op::I32_OR)
+            .if_();
+        fb.i32c(oob_pre as i64)
+            .g(1)
+            .i32c(oob_mid1 as i64)
+            .g(2)
+            .i32c(oob_mid2 as i64)
+            .g(srclen);
         fb.call(self.helper_index[&Helper::Panic3]);
         fb.end();
         fb.i32c(32).call(self.helper_index[&Helper::Alloc]).s(v);
@@ -5529,10 +6171,12 @@ impl<'a> WasmCompiler<'a> {
         let msg = self.intern(b"use of an uninitialized slice view");
         let mut fb = FB::new(1);
         fb.g(0).op(op::I32_EQZ).if_();
-        fb.i32c(msg as i64).call(self.helper_index[&Helper::PanicMsg]);
+        fb.i32c(msg as i64)
+            .call(self.helper_index[&Helper::PanicMsg]);
         fb.end();
         fb.g(0).load64(0).op(op::I32_WRAP_I64).op(op::I32_EQZ).if_();
-        fb.i32c(msg as i64).call(self.helper_index[&Helper::PanicMsg]);
+        fb.i32c(msg as i64)
+            .call(self.helper_index[&Helper::PanicMsg]);
         fb.end();
         fb.g(0).load64(16);
         fb.end();
@@ -5547,18 +6191,26 @@ impl<'a> WasmCompiler<'a> {
         let mid = self.intern(b", len ");
         let mut fb = FB::new(2);
         fb.g(0).op(op::I32_EQZ).if_();
-        fb.i32c(msg_view as i64).call(self.helper_index[&Helper::PanicMsg]);
+        fb.i32c(msg_view as i64)
+            .call(self.helper_index[&Helper::PanicMsg]);
         fb.end();
         fb.g(0).load64(0).op(op::I32_WRAP_I64).op(op::I32_EQZ).if_();
-        fb.i32c(msg_view as i64).call(self.helper_index[&Helper::PanicMsg]);
+        fb.i32c(msg_view as i64)
+            .call(self.helper_index[&Helper::PanicMsg]);
         fb.end();
         fb.g(1).i64c(0).op(op::I64_LT_S);
-        fb.g(1).g(0).load64(16).op(op::I64_GE_S).op(op::I32_OR).if_();
+        fb.g(1)
+            .g(0)
+            .load64(16)
+            .op(op::I64_GE_S)
+            .op(op::I32_OR)
+            .if_();
         fb.i32c(pre as i64).g(1).i32c(mid as i64).g(0).load64(16);
         fb.call(self.helper_index[&Helper::Panic2]);
         fb.end();
         fb.g(0).load64(24).i64c(1).op(op::I64_NE).if_();
-        fb.i32c(msg_kind as i64).call(self.helper_index[&Helper::PanicMsg]);
+        fb.i32c(msg_kind as i64)
+            .call(self.helper_index[&Helper::PanicMsg]);
         fb.end();
         fb.g(0).load64(0).op(op::I32_WRAP_I64);
         fb.g(0).load64(8).g(1).op(op::I64_ADD);
@@ -5577,23 +6229,40 @@ impl<'a> WasmCompiler<'a> {
         let mut fb = FB::new(2);
         let out = fb.scratch(Val::I32);
         fb.g(0).op(op::I32_EQZ).if_();
-        fb.i32c(msg_view as i64).call(self.helper_index[&Helper::PanicMsg]);
+        fb.i32c(msg_view as i64)
+            .call(self.helper_index[&Helper::PanicMsg]);
         fb.end();
         fb.g(0).load64(0).op(op::I32_WRAP_I64).op(op::I32_EQZ).if_();
-        fb.i32c(msg_view as i64).call(self.helper_index[&Helper::PanicMsg]);
+        fb.i32c(msg_view as i64)
+            .call(self.helper_index[&Helper::PanicMsg]);
         fb.end();
         fb.g(0).load64(24).op(op::I64_EQZ).if_().else_();
-        fb.i32c(msg_kind as i64).call(self.helper_index[&Helper::PanicMsg]);
+        fb.i32c(msg_kind as i64)
+            .call(self.helper_index[&Helper::PanicMsg]);
         fb.end();
         fb.g(1).i64c(0).op(op::I64_LT_S);
-        fb.g(1).g(0).load64(16).op(op::I64_GE_S).op(op::I32_OR).if_();
+        fb.g(1)
+            .g(0)
+            .load64(16)
+            .op(op::I64_GE_S)
+            .op(op::I32_OR)
+            .if_();
         fb.i32c(pre as i64).g(1).i32c(mid as i64).g(0).load64(16);
         fb.call(self.helper_index[&Helper::Panic2]);
         fb.end();
         fb.i32c(1).call(self.helper_index[&Helper::StrAlloc]).s(out);
         fb.g(out).i32c(4).op(op::I32_ADD);
-        fb.g(0).load64(0).op(op::I32_WRAP_I64).i32c(4).op(op::I32_ADD);
-        fb.g(0).load64(8).g(1).op(op::I64_ADD).op(op::I32_WRAP_I64).op(op::I32_ADD);
+        fb.g(0)
+            .load64(0)
+            .op(op::I32_WRAP_I64)
+            .i32c(4)
+            .op(op::I32_ADD);
+        fb.g(0)
+            .load64(8)
+            .g(1)
+            .op(op::I64_ADD)
+            .op(op::I32_WRAP_I64)
+            .op(op::I32_ADD);
         fb.load8(0);
         fb.store8(0);
         fb.g(out);
@@ -5607,15 +6276,22 @@ impl<'a> WasmCompiler<'a> {
         let msg_kind = self.intern(b"slice_to_str requires StrSlice");
         let mut fb = FB::new(1);
         fb.g(0).op(op::I32_EQZ).if_();
-        fb.i32c(msg_view as i64).call(self.helper_index[&Helper::PanicMsg]);
+        fb.i32c(msg_view as i64)
+            .call(self.helper_index[&Helper::PanicMsg]);
         fb.end();
         fb.g(0).load64(0).op(op::I32_WRAP_I64).op(op::I32_EQZ).if_();
-        fb.i32c(msg_view as i64).call(self.helper_index[&Helper::PanicMsg]);
+        fb.i32c(msg_view as i64)
+            .call(self.helper_index[&Helper::PanicMsg]);
         fb.end();
         fb.g(0).load64(24).op(op::I64_EQZ).if_().else_();
-        fb.i32c(msg_kind as i64).call(self.helper_index[&Helper::PanicMsg]);
+        fb.i32c(msg_kind as i64)
+            .call(self.helper_index[&Helper::PanicMsg]);
         fb.end();
-        fb.g(0).load64(0).op(op::I32_WRAP_I64).i32c(4).op(op::I32_ADD);
+        fb.g(0)
+            .load64(0)
+            .op(op::I32_WRAP_I64)
+            .i32c(4)
+            .op(op::I32_ADD);
         fb.g(0).load64(8).op(op::I32_WRAP_I64).op(op::I32_ADD);
         fb.g(0).load64(16).op(op::I32_WRAP_I64);
         fb.call(self.helper_index[&Helper::StrNew]);
@@ -5659,9 +6335,18 @@ impl<'a> WasmCompiler<'a> {
         let sum = fb.scratch(Val::F64);
         let i = fb.scratch(Val::I32);
         fb.g(0).op(op::I64_REINTERPRET_F64).s(bits);
-        fb.g(bits).i64c(52).op(op::I64_SHR_U).i64c(2047).op(op::I64_AND).i64c(1023).op(op::I64_SUB).s(e);
+        fb.g(bits)
+            .i64c(52)
+            .op(op::I64_SHR_U)
+            .i64c(2047)
+            .op(op::I64_AND)
+            .i64c(1023)
+            .op(op::I64_SUB)
+            .s(e);
         // m = mantissa re-biased into [1, 2)
-        fb.g(bits).i64c(0x800f_ffff_ffff_ffffu64 as i64).op(op::I64_AND);
+        fb.g(bits)
+            .i64c(0x800f_ffff_ffff_ffffu64 as i64)
+            .op(op::I64_AND);
         fb.i64c(1023).i64c(52).op(op::I64_SHL).op(op::I64_OR);
         fb.op(op::F64_REINTERPRET_I64).s(m);
         // t = (m-1)/(m+1); ln(m) = 2 * sum(t^k / k, k odd)
@@ -5675,14 +6360,25 @@ impl<'a> WasmCompiler<'a> {
         fb.loop_();
         fb.g(i).i32c(25).op(op::I32_GE_S).br_if(1);
         fb.g(term).g(t2).op(op::F64_MUL).s(term);
-        fb.g(sum).g(term).g(i).op(op::F64_CONVERT_I32_S).op(op::F64_DIV).op(op::F64_ADD).s(sum);
+        fb.g(sum)
+            .g(term)
+            .g(i)
+            .op(op::F64_CONVERT_I32_S)
+            .op(op::F64_DIV)
+            .op(op::F64_ADD)
+            .s(sum);
         fb.g(i).i32c(2).op(op::I32_ADD).s(i);
         fb.br(0);
         fb.end();
         fb.end();
         // e + 2*sum/ln2
         fb.g(e).op(op::F64_CONVERT_I64_S);
-        fb.g(sum).f64c(2.0).op(op::F64_MUL).f64c(0.6931471805599453).op(op::F64_DIV).op(op::F64_ADD);
+        fb.g(sum)
+            .f64c(2.0)
+            .op(op::F64_MUL)
+            .f64c(0.6931471805599453)
+            .op(op::F64_DIV)
+            .op(op::F64_ADD);
         fb.end();
         (fb.extras, fb.body)
     }
@@ -5698,7 +6394,9 @@ impl<'a> WasmCompiler<'a> {
         let sum = fb.scratch(Val::F64);
         let i = fb.scratch(Val::I32);
         fb.g(0).f64c(1024.0).op(op::F64_GE).if_();
-        fb.i64c(0x7ff0_0000_0000_0000).op(op::F64_REINTERPRET_I64).op(op::RETURN);
+        fb.i64c(0x7ff0_0000_0000_0000)
+            .op(op::F64_REINTERPRET_I64)
+            .op(op::RETURN);
         fb.end();
         fb.g(0).f64c(-1075.0).op(op::F64_LT).if_();
         fb.f64c(0.0).op(op::RETURN);
@@ -5720,7 +6418,13 @@ impl<'a> WasmCompiler<'a> {
         fb.block();
         fb.loop_();
         fb.g(i).i32c(15).op(op::I32_GE_S).br_if(1);
-        fb.g(term).g(u).op(op::F64_MUL).g(i).op(op::F64_CONVERT_I32_S).op(op::F64_DIV).s(term);
+        fb.g(term)
+            .g(u)
+            .op(op::F64_MUL)
+            .g(i)
+            .op(op::F64_CONVERT_I32_S)
+            .op(op::F64_DIV)
+            .s(term);
         fb.g(sum).g(term).op(op::F64_ADD).s(sum);
         fb.g(i).i32c(1).op(op::I32_ADD).s(i);
         fb.br(0);
@@ -5728,7 +6432,12 @@ impl<'a> WasmCompiler<'a> {
         fb.end();
         // * 2^n via exponent bits
         fb.g(sum);
-        fb.g(n).i64c(1023).op(op::I64_ADD).i64c(52).op(op::I64_SHL).op(op::F64_REINTERPRET_I64);
+        fb.g(n)
+            .i64c(1023)
+            .op(op::I64_ADD)
+            .i64c(52)
+            .op(op::I64_SHL)
+            .op(op::F64_REINTERPRET_I64);
         fb.op(op::F64_MUL);
         fb.end();
         (fb.extras, fb.body)
@@ -5747,7 +6456,9 @@ impl<'a> WasmCompiler<'a> {
         fb.end();
         fb.g(0).f64c(0.0).op(op::F64_EQ).if_();
         fb.g(1).f64c(0.0).op(op::F64_LT).if_();
-        fb.i64c(0x7ff0_0000_0000_0000).op(op::F64_REINTERPRET_I64).op(op::RETURN);
+        fb.i64c(0x7ff0_0000_0000_0000)
+            .op(op::F64_REINTERPRET_I64)
+            .op(op::RETURN);
         fb.end();
         fb.f64c(0.0).op(op::RETURN);
         fb.end();
@@ -5757,15 +6468,22 @@ impl<'a> WasmCompiler<'a> {
         fb.f64c(f64::NAN).op(op::RETURN);
         fb.end();
         fb.g(1).op(op::I64_TRUNC_F64_S).s(ny);
-        fb.g(0).op(op::F64_NEG).call(self.helper_index[&Helper::Log2]);
-        fb.g(1).op(op::F64_MUL).call(self.helper_index[&Helper::Exp2]).s(r);
+        fb.g(0)
+            .op(op::F64_NEG)
+            .call(self.helper_index[&Helper::Log2]);
+        fb.g(1)
+            .op(op::F64_MUL)
+            .call(self.helper_index[&Helper::Exp2])
+            .s(r);
         fb.g(ny).i64c(1).op(op::I64_AND).op(op::I32_WRAP_I64).if_();
         fb.g(r).op(op::F64_NEG).s(r);
         fb.end();
         fb.g(r).op(op::RETURN);
         fb.end();
         fb.g(0).call(self.helper_index[&Helper::Log2]);
-        fb.g(1).op(op::F64_MUL).call(self.helper_index[&Helper::Exp2]);
+        fb.g(1)
+            .op(op::F64_MUL)
+            .call(self.helper_index[&Helper::Exp2]);
         fb.end();
         (fb.extras, fb.body)
     }
@@ -5774,7 +6492,10 @@ impl<'a> WasmCompiler<'a> {
     fn h_reduce_2pi(&mut self) -> (Vec<Val>, Vec<u8>) {
         let mut fb = FB::new(1);
         fb.g(0);
-        fb.g(0).f64c(6.283185307179586).op(op::F64_DIV).op(op::F64_FLOOR);
+        fb.g(0)
+            .f64c(6.283185307179586)
+            .op(op::F64_DIV)
+            .op(op::F64_FLOOR);
         fb.f64c(6.283185307179586).op(op::F64_MUL);
         fb.op(op::F64_SUB);
         fb.end();
@@ -5798,7 +6519,12 @@ impl<'a> WasmCompiler<'a> {
         // t *= -yy / ((2k) * (2k+1))
         fb.g(t).g(yy).op(op::F64_MUL).op(op::F64_NEG);
         fb.g(k).i32c(2).op(op::I32_MUL).op(op::F64_CONVERT_I32_S);
-        fb.g(k).i32c(2).op(op::I32_MUL).i32c(1).op(op::I32_ADD).op(op::F64_CONVERT_I32_S);
+        fb.g(k)
+            .i32c(2)
+            .op(op::I32_MUL)
+            .i32c(1)
+            .op(op::I32_ADD)
+            .op(op::F64_CONVERT_I32_S);
         fb.op(op::F64_MUL).op(op::F64_DIV).s(t);
         fb.g(s).g(t).op(op::F64_ADD).s(s);
         fb.g(k).i32c(1).op(op::I32_ADD).s(k);
@@ -5826,7 +6552,12 @@ impl<'a> WasmCompiler<'a> {
         fb.g(k).i32c(10).op(op::I32_GE_S).br_if(1);
         // t *= -yy / ((2k-1) * (2k))
         fb.g(t).g(yy).op(op::F64_MUL).op(op::F64_NEG);
-        fb.g(k).i32c(2).op(op::I32_MUL).i32c(1).op(op::I32_SUB).op(op::F64_CONVERT_I32_S);
+        fb.g(k)
+            .i32c(2)
+            .op(op::I32_MUL)
+            .i32c(1)
+            .op(op::I32_SUB)
+            .op(op::F64_CONVERT_I32_S);
         fb.g(k).i32c(2).op(op::I32_MUL).op(op::F64_CONVERT_I32_S);
         fb.op(op::F64_MUL).op(op::F64_DIV).s(t);
         fb.g(s).g(t).op(op::F64_ADD).s(s);
@@ -5859,7 +6590,12 @@ impl<'a> WasmCompiler<'a> {
         // tan = sin/cos with the zero guard; select between the arms through
         // a local so the void-blocktype if/else stays stack-balanced.
         fb.g(c).f64c(0.0).op(op::F64_NE).if_();
-        fb.g(r).i32c(0).call(self.helper_index[&Helper::Trig]).g(c).op(op::F64_DIV).s(t);
+        fb.g(r)
+            .i32c(0)
+            .call(self.helper_index[&Helper::Trig])
+            .g(c)
+            .op(op::F64_DIV)
+            .s(t);
         fb.else_();
         fb.f64c(0.0).s(t);
         fb.end();
@@ -5962,7 +6698,11 @@ impl<'a> WasmCompiler<'a> {
         fb.g(0).op(op::RETURN);
         fb.end();
         fb.g(0).call(self.helper_index[&Helper::Random]);
-        fb.g(1).g(0).op(op::I64_SUB).op(op::I64_REM_U).op(op::I64_ADD);
+        fb.g(1)
+            .g(0)
+            .op(op::I64_SUB)
+            .op(op::I64_REM_U)
+            .op(op::I64_ADD);
         fb.end();
         (fb.extras, fb.body)
     }
@@ -5973,7 +6713,10 @@ impl<'a> WasmCompiler<'a> {
         fb.i32c(1).i64c(0).i32c(CLOCK_BUF as i64);
         fb.call(self.import_index[&Wasi::ClockTimeGet]);
         fb.op(op::DROP);
-        fb.i32c(CLOCK_BUF as i64).load64(0).i64c(1_000_000).op(op::I64_DIV_U);
+        fb.i32c(CLOCK_BUF as i64)
+            .load64(0)
+            .i64c(1_000_000)
+            .op(op::I64_DIV_U);
         fb.end();
         (fb.extras, fb.body)
     }
@@ -5991,8 +6734,15 @@ impl<'a> WasmCompiler<'a> {
         // else, so only clock_id (1 = monotonic) and the timeout are set.
         fb.i32c(SUB_BUF as i64).i32c(0).i32c(56).memory_fill();
         fb.i32c((SUB_BUF + 16) as i64).i32c(1).store32(0);
-        fb.i32c((SUB_BUF + 24) as i64).g(0).i64c(1_000_000).op(op::I64_MUL).store64(0);
-        fb.i32c(SUB_BUF as i64).i32c(EVENT_BUF as i64).i32c(1).i32c(FD_IO_OUT as i64);
+        fb.i32c((SUB_BUF + 24) as i64)
+            .g(0)
+            .i64c(1_000_000)
+            .op(op::I64_MUL)
+            .store64(0);
+        fb.i32c(SUB_BUF as i64)
+            .i32c(EVENT_BUF as i64)
+            .i32c(1)
+            .i32c(FD_IO_OUT as i64);
         fb.call(self.import_index[&Wasi::PollOneoff]);
         fb.op(op::DROP);
         fb.end();
@@ -6445,8 +7195,8 @@ mod tests {
             TypeRef::Void,
             false,
         );
-        let error = compile(&program_with(vec![helper]), &TypeTable::new(), &no_weak())
-            .unwrap_err();
+        let error =
+            compile(&program_with(vec![helper]), &TypeTable::new(), &no_weak()).unwrap_err();
         assert!(
             error.contains("requires a 'main' function"),
             "unexpected error: {}",
@@ -6467,8 +7217,8 @@ mod tests {
             TypeRef::Void,
             false,
         );
-        let module = compile(&program_with(vec![main]), &TypeTable::new(), &no_weak())
-            .expect("compiles");
+        let module =
+            compile(&program_with(vec![main]), &TypeTable::new(), &no_weak()).expect("compiles");
         assert_eq!(
             &module[..8],
             &[0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]
@@ -6490,10 +7240,22 @@ mod tests {
                 id
             }};
         }
-        a!(TypeRef::Int, Rvalue::BinaryOp(BinaryOperator::Shl, Operand::Int(1), Operand::Int(64)));
-        a!(TypeRef::Int, Rvalue::BinaryOp(BinaryOperator::Shr, Operand::Int(1), Operand::Int(64)));
-        a!(TypeRef::Int, Rvalue::BinaryOp(BinaryOperator::Shl, Operand::Int(1), Operand::Int(-1)));
-        a!(TypeRef::Int, Rvalue::BinaryOp(BinaryOperator::Shr, Operand::Int(1), Operand::Int(-1)));
+        a!(
+            TypeRef::Int,
+            Rvalue::BinaryOp(BinaryOperator::Shl, Operand::Int(1), Operand::Int(64))
+        );
+        a!(
+            TypeRef::Int,
+            Rvalue::BinaryOp(BinaryOperator::Shr, Operand::Int(1), Operand::Int(64))
+        );
+        a!(
+            TypeRef::Int,
+            Rvalue::BinaryOp(BinaryOperator::Shl, Operand::Int(1), Operand::Int(-1))
+        );
+        a!(
+            TypeRef::Int,
+            Rvalue::BinaryOp(BinaryOperator::Shr, Operand::Int(1), Operand::Int(-1))
+        );
         let main = mk_fn(
             0,
             "main",
@@ -6503,7 +7265,8 @@ mod tests {
             TypeRef::Void,
             false,
         );
-        let module = compile(&program_with(vec![main]), &TypeTable::new(), &no_weak()).expect("compiles");
+        let module =
+            compile(&program_with(vec![main]), &TypeTable::new(), &no_weak()).expect("compiles");
         let parsed = parse_module(&module).expect("module parses");
         validate_module(&parsed).expect("module validates");
     }
@@ -6572,7 +7335,12 @@ mod tests {
         let addenv = mk_fn(
             2,
             "addenv",
-            &[TypeRef::Tuple(vec![TypeRef::Int]), TypeRef::Int, TypeRef::Int, TypeRef::Int],
+            &[
+                TypeRef::Tuple(vec![TypeRef::Int]),
+                TypeRef::Int,
+                TypeRef::Int,
+                TypeRef::Int,
+            ],
             2,
             vec![bb(
                 0,
@@ -6609,109 +7377,519 @@ mod tests {
         }
 
         // scalars, prints, basic strings
-        a!(TypeRef::Int, Rvalue::BuiltinCall("lpp_print_int".to_string(), vec![Operand::Int(42)]));
-        a!(TypeRef::Int, Rvalue::BuiltinCall("lpp_print_bool".to_string(), vec![Operand::Bool(true)]));
-        a!(TypeRef::Int, Rvalue::BuiltinCall("lpp_print_float".to_string(), vec![Operand::Float(2.5)]));
-        a!(TypeRef::Int, Rvalue::BuiltinCall("lpp_print_str".to_string(), vec![Operand::String("hello".to_string())]));
-        a!(TypeRef::Str, Rvalue::BuiltinCall("lpp_str_concat".to_string(), vec![Operand::String("a".to_string()), Operand::String("b".to_string())]));
-        a!(TypeRef::Str, Rvalue::BuiltinCall("lpp_str_substr".to_string(), vec![Operand::String("abcdef".to_string()), Operand::Int(1), Operand::Int(3)]));
-        a!(TypeRef::Str, Rvalue::BuiltinCall("lpp_str_trim".to_string(), vec![Operand::String(" x ".to_string())]));
-        a!(TypeRef::Str, Rvalue::BuiltinCall("lpp_str_upper".to_string(), vec![Operand::String("up".to_string())]));
-        a!(TypeRef::Str, Rvalue::BuiltinCall("lpp_str_lower".to_string(), vec![Operand::String("DOWN".to_string())]));
-        a!(TypeRef::Str, Rvalue::BuiltinCall("lpp_int_to_str".to_string(), vec![Operand::Int(42)]));
-        a!(TypeRef::Str, Rvalue::BuiltinCall("lpp_float_to_str".to_string(), vec![Operand::Float(2.5)]));
-        a!(TypeRef::Str, Rvalue::BuiltinCall("lpp_bool_to_str".to_string(), vec![Operand::Bool(false)]));
-        a!(TypeRef::Int, Rvalue::BuiltinCall("lpp_str_to_int".to_string(), vec![Operand::String("42".to_string())]));
-        a!(TypeRef::Str, Rvalue::BuiltinCall("lpp_char_at".to_string(), vec![Operand::String("abc".to_string()), Operand::Int(1)]));
-        a!(TypeRef::Int, Rvalue::BuiltinCall("lpp_ord".to_string(), vec![Operand::String("A".to_string())]));
-        a!(TypeRef::Str, Rvalue::BuiltinCall("lpp_chr".to_string(), vec![Operand::Int(65)]));
-        a!(TypeRef::Int, Rvalue::BuiltinCall("lpp_str_len".to_string(), vec![Operand::String("len".to_string())]));
-        a!(TypeRef::Bool, Rvalue::BuiltinCall("lpp_str_eq".to_string(), vec![Operand::String("q".to_string()), Operand::String("q".to_string())]));
-        a!(TypeRef::Int, Rvalue::BuiltinCall("lpp_str_find".to_string(), vec![Operand::String("haystack".to_string()), Operand::String("st".to_string())]));
-        a!(TypeRef::Bool, Rvalue::BuiltinCall("lpp_str_contains".to_string(), vec![Operand::String("hay".to_string()), Operand::String("ay".to_string())]));
-        a!(TypeRef::Bool, Rvalue::BuiltinCall("lpp_str_starts_with".to_string(), vec![Operand::String("hay".to_string()), Operand::String("ha".to_string())]));
-        a!(TypeRef::Bool, Rvalue::BuiltinCall("lpp_str_ends_with".to_string(), vec![Operand::String("hay".to_string()), Operand::String("ay".to_string())]));
-        a!(TypeRef::Str, Rvalue::BuiltinCall("lpp_str_repeat".to_string(), vec![Operand::String("ab".to_string()), Operand::Int(2)]));
-        a!(TypeRef::Str, Rvalue::BuiltinCall("lpp_str_replace".to_string(), vec![Operand::String("banana".to_string()), Operand::String("na".to_string()), Operand::String("NA".to_string())]));
-        a!(list_str.clone(), Rvalue::BuiltinCall("lpp_str_split".to_string(), vec![Operand::String("a,b".to_string()), Operand::Int(44)]));
+        a!(
+            TypeRef::Int,
+            Rvalue::BuiltinCall("lpp_print_int".to_string(), vec![Operand::Int(42)])
+        );
+        a!(
+            TypeRef::Int,
+            Rvalue::BuiltinCall("lpp_print_bool".to_string(), vec![Operand::Bool(true)])
+        );
+        a!(
+            TypeRef::Int,
+            Rvalue::BuiltinCall("lpp_print_float".to_string(), vec![Operand::Float(2.5)])
+        );
+        a!(
+            TypeRef::Int,
+            Rvalue::BuiltinCall(
+                "lpp_print_str".to_string(),
+                vec![Operand::String("hello".to_string())]
+            )
+        );
+        a!(
+            TypeRef::Str,
+            Rvalue::BuiltinCall(
+                "lpp_str_concat".to_string(),
+                vec![
+                    Operand::String("a".to_string()),
+                    Operand::String("b".to_string())
+                ]
+            )
+        );
+        a!(
+            TypeRef::Str,
+            Rvalue::BuiltinCall(
+                "lpp_str_substr".to_string(),
+                vec![
+                    Operand::String("abcdef".to_string()),
+                    Operand::Int(1),
+                    Operand::Int(3)
+                ]
+            )
+        );
+        a!(
+            TypeRef::Str,
+            Rvalue::BuiltinCall(
+                "lpp_str_trim".to_string(),
+                vec![Operand::String(" x ".to_string())]
+            )
+        );
+        a!(
+            TypeRef::Str,
+            Rvalue::BuiltinCall(
+                "lpp_str_upper".to_string(),
+                vec![Operand::String("up".to_string())]
+            )
+        );
+        a!(
+            TypeRef::Str,
+            Rvalue::BuiltinCall(
+                "lpp_str_lower".to_string(),
+                vec![Operand::String("DOWN".to_string())]
+            )
+        );
+        a!(
+            TypeRef::Str,
+            Rvalue::BuiltinCall("lpp_int_to_str".to_string(), vec![Operand::Int(42)])
+        );
+        a!(
+            TypeRef::Str,
+            Rvalue::BuiltinCall("lpp_float_to_str".to_string(), vec![Operand::Float(2.5)])
+        );
+        a!(
+            TypeRef::Str,
+            Rvalue::BuiltinCall("lpp_bool_to_str".to_string(), vec![Operand::Bool(false)])
+        );
+        a!(
+            TypeRef::Int,
+            Rvalue::BuiltinCall(
+                "lpp_str_to_int".to_string(),
+                vec![Operand::String("42".to_string())]
+            )
+        );
+        a!(
+            TypeRef::Str,
+            Rvalue::BuiltinCall(
+                "lpp_char_at".to_string(),
+                vec![Operand::String("abc".to_string()), Operand::Int(1)]
+            )
+        );
+        a!(
+            TypeRef::Int,
+            Rvalue::BuiltinCall(
+                "lpp_ord".to_string(),
+                vec![Operand::String("A".to_string())]
+            )
+        );
+        a!(
+            TypeRef::Str,
+            Rvalue::BuiltinCall("lpp_chr".to_string(), vec![Operand::Int(65)])
+        );
+        a!(
+            TypeRef::Int,
+            Rvalue::BuiltinCall(
+                "lpp_str_len".to_string(),
+                vec![Operand::String("len".to_string())]
+            )
+        );
+        a!(
+            TypeRef::Bool,
+            Rvalue::BuiltinCall(
+                "lpp_str_eq".to_string(),
+                vec![
+                    Operand::String("q".to_string()),
+                    Operand::String("q".to_string())
+                ]
+            )
+        );
+        a!(
+            TypeRef::Int,
+            Rvalue::BuiltinCall(
+                "lpp_str_find".to_string(),
+                vec![
+                    Operand::String("haystack".to_string()),
+                    Operand::String("st".to_string())
+                ]
+            )
+        );
+        a!(
+            TypeRef::Bool,
+            Rvalue::BuiltinCall(
+                "lpp_str_contains".to_string(),
+                vec![
+                    Operand::String("hay".to_string()),
+                    Operand::String("ay".to_string())
+                ]
+            )
+        );
+        a!(
+            TypeRef::Bool,
+            Rvalue::BuiltinCall(
+                "lpp_str_starts_with".to_string(),
+                vec![
+                    Operand::String("hay".to_string()),
+                    Operand::String("ha".to_string())
+                ]
+            )
+        );
+        a!(
+            TypeRef::Bool,
+            Rvalue::BuiltinCall(
+                "lpp_str_ends_with".to_string(),
+                vec![
+                    Operand::String("hay".to_string()),
+                    Operand::String("ay".to_string())
+                ]
+            )
+        );
+        a!(
+            TypeRef::Str,
+            Rvalue::BuiltinCall(
+                "lpp_str_repeat".to_string(),
+                vec![Operand::String("ab".to_string()), Operand::Int(2)]
+            )
+        );
+        a!(
+            TypeRef::Str,
+            Rvalue::BuiltinCall(
+                "lpp_str_replace".to_string(),
+                vec![
+                    Operand::String("banana".to_string()),
+                    Operand::String("na".to_string()),
+                    Operand::String("NA".to_string())
+                ]
+            )
+        );
+        a!(
+            list_str.clone(),
+            Rvalue::BuiltinCall(
+                "lpp_str_split".to_string(),
+                vec![Operand::String("a,b".to_string()), Operand::Int(44)]
+            )
+        );
 
         // math
-        a!(TypeRef::Int, Rvalue::BuiltinCall("lpp_abs".to_string(), vec![Operand::Int(-3)]));
-        a!(TypeRef::Int, Rvalue::BuiltinCall("lpp_min".to_string(), vec![Operand::Int(1), Operand::Int(2)]));
-        a!(TypeRef::Int, Rvalue::BuiltinCall("lpp_max".to_string(), vec![Operand::Int(1), Operand::Int(2)]));
-        a!(TypeRef::Int, Rvalue::BuiltinCall("lpp_int_pow".to_string(), vec![Operand::Int(2), Operand::Int(10)]));
-        a!(TypeRef::Float, Rvalue::BuiltinCall("lpp_pow".to_string(), vec![Operand::Float(2.0), Operand::Float(10.0)]));
-        a!(TypeRef::Float, Rvalue::BuiltinCall("lpp_floor".to_string(), vec![Operand::Float(2.7)]));
-        a!(TypeRef::Float, Rvalue::BuiltinCall("lpp_ceil".to_string(), vec![Operand::Float(2.1)]));
-        a!(TypeRef::Float, Rvalue::BuiltinCall("lpp_sqrt".to_string(), vec![Operand::Float(4.0)]));
-        a!(TypeRef::Float, Rvalue::BuiltinCall("lpp_sin".to_string(), vec![Operand::Float(1.0)]));
-        a!(TypeRef::Float, Rvalue::BuiltinCall("lpp_cos".to_string(), vec![Operand::Float(1.0)]));
-        a!(TypeRef::Float, Rvalue::BuiltinCall("lpp_tan".to_string(), vec![Operand::Float(1.0)]));
-        a!(TypeRef::Float, Rvalue::BuiltinCall("fmod".to_string(), vec![Operand::Float(7.5), Operand::Float(2.0)]));
-        a!(TypeRef::Float, Rvalue::BuiltinCall("lpp_int_to_float".to_string(), vec![Operand::Int(3)]));
-        a!(TypeRef::Int, Rvalue::BuiltinCall("lpp_float_to_int".to_string(), vec![Operand::Float(3.9)]));
+        a!(
+            TypeRef::Int,
+            Rvalue::BuiltinCall("lpp_abs".to_string(), vec![Operand::Int(-3)])
+        );
+        a!(
+            TypeRef::Int,
+            Rvalue::BuiltinCall(
+                "lpp_min".to_string(),
+                vec![Operand::Int(1), Operand::Int(2)]
+            )
+        );
+        a!(
+            TypeRef::Int,
+            Rvalue::BuiltinCall(
+                "lpp_max".to_string(),
+                vec![Operand::Int(1), Operand::Int(2)]
+            )
+        );
+        a!(
+            TypeRef::Int,
+            Rvalue::BuiltinCall(
+                "lpp_int_pow".to_string(),
+                vec![Operand::Int(2), Operand::Int(10)]
+            )
+        );
+        a!(
+            TypeRef::Float,
+            Rvalue::BuiltinCall(
+                "lpp_pow".to_string(),
+                vec![Operand::Float(2.0), Operand::Float(10.0)]
+            )
+        );
+        a!(
+            TypeRef::Float,
+            Rvalue::BuiltinCall("lpp_floor".to_string(), vec![Operand::Float(2.7)])
+        );
+        a!(
+            TypeRef::Float,
+            Rvalue::BuiltinCall("lpp_ceil".to_string(), vec![Operand::Float(2.1)])
+        );
+        a!(
+            TypeRef::Float,
+            Rvalue::BuiltinCall("lpp_sqrt".to_string(), vec![Operand::Float(4.0)])
+        );
+        a!(
+            TypeRef::Float,
+            Rvalue::BuiltinCall("lpp_sin".to_string(), vec![Operand::Float(1.0)])
+        );
+        a!(
+            TypeRef::Float,
+            Rvalue::BuiltinCall("lpp_cos".to_string(), vec![Operand::Float(1.0)])
+        );
+        a!(
+            TypeRef::Float,
+            Rvalue::BuiltinCall("lpp_tan".to_string(), vec![Operand::Float(1.0)])
+        );
+        a!(
+            TypeRef::Float,
+            Rvalue::BuiltinCall(
+                "fmod".to_string(),
+                vec![Operand::Float(7.5), Operand::Float(2.0)]
+            )
+        );
+        a!(
+            TypeRef::Float,
+            Rvalue::BuiltinCall("lpp_int_to_float".to_string(), vec![Operand::Int(3)])
+        );
+        a!(
+            TypeRef::Int,
+            Rvalue::BuiltinCall("lpp_float_to_int".to_string(), vec![Operand::Float(3.9)])
+        );
         let arg41 = a!(TypeRef::Int, Rvalue::Use(Operand::Int(41)));
 
         // calls and closures
-        a!(TypeRef::Int, Rvalue::CallDirect(FuncId(0), vec![Operand::Local(arg41)]));
-        let envt = a!(TypeRef::Tuple(vec![TypeRef::Int]), Rvalue::AllocateTuple(vec![TypeRef::Int], vec![Operand::Int(3)]));
-        let clos = a!(TypeRef::Function, Rvalue::MakeClosure(FuncId(2), vec![Operand::Local(envt)]));
-        a!(TypeRef::Int, Rvalue::CallIndirect(Operand::Local(clos), vec![Operand::Int(5)]));
+        a!(
+            TypeRef::Int,
+            Rvalue::CallDirect(FuncId(0), vec![Operand::Local(arg41)])
+        );
+        let envt = a!(
+            TypeRef::Tuple(vec![TypeRef::Int]),
+            Rvalue::AllocateTuple(vec![TypeRef::Int], vec![Operand::Int(3)])
+        );
+        let clos = a!(
+            TypeRef::Function,
+            Rvalue::MakeClosure(FuncId(2), vec![Operand::Local(envt)])
+        );
+        a!(
+            TypeRef::Int,
+            Rvalue::CallIndirect(Operand::Local(clos), vec![Operand::Int(5)])
+        );
         let fref = a!(TypeRef::Int, Rvalue::FuncRef(FuncId(0)));
-        a!(TypeRef::Int, Rvalue::CallIndirect(Operand::Local(fref), vec![Operand::Int(21)]));
+        a!(
+            TypeRef::Int,
+            Rvalue::CallIndirect(Operand::Local(fref), vec![Operand::Int(21)])
+        );
 
         // async task
-        let task = a!(task_int.clone(), Rvalue::MakeTask(FuncId(1), vec![TypeRef::Int], vec![Operand::Local(arg41)], TypeRef::Int));
+        let task = a!(
+            task_int.clone(),
+            Rvalue::MakeTask(
+                FuncId(1),
+                vec![TypeRef::Int],
+                vec![Operand::Local(arg41)],
+                TypeRef::Int
+            )
+        );
         a!(TypeRef::Int, Rvalue::Await(Operand::Local(task)));
 
         // struct: heap + field mutation + arena variant
-        let st = a!(TypeRef::Custom(node), Rvalue::AllocateArcStruct(TypeRef::Custom(node)));
-        instrs.push(MirInstr::AssignField { base: st, field: "value".to_string(), value: Operand::Int(7) });
-        instrs.push(MirInstr::AssignField { base: st, field: "name".to_string(), value: Operand::String("n".to_string()) });
-        a!(TypeRef::Int, Rvalue::FieldAccess(Operand::Local(st), "value".to_string()));
-        let tok = a!(TypeRef::Int, Rvalue::BuiltinCall("lpp_arena_begin".to_string(), vec![]));
-        a!(TypeRef::Custom(node), Rvalue::AllocateArenaStruct(TypeRef::Custom(node), Operand::Local(tok)));
-        a!(TypeRef::Int, Rvalue::BuiltinCall("lpp_arena_release".to_string(), vec![Operand::Local(tok)]));
+        let st = a!(
+            TypeRef::Custom(node),
+            Rvalue::AllocateArcStruct(TypeRef::Custom(node))
+        );
+        instrs.push(MirInstr::AssignField {
+            base: st,
+            field: "value".to_string(),
+            value: Operand::Int(7),
+        });
+        instrs.push(MirInstr::AssignField {
+            base: st,
+            field: "name".to_string(),
+            value: Operand::String("n".to_string()),
+        });
+        a!(
+            TypeRef::Int,
+            Rvalue::FieldAccess(Operand::Local(st), "value".to_string())
+        );
+        let tok = a!(
+            TypeRef::Int,
+            Rvalue::BuiltinCall("lpp_arena_begin".to_string(), vec![])
+        );
+        a!(
+            TypeRef::Custom(node),
+            Rvalue::AllocateArenaStruct(TypeRef::Custom(node), Operand::Local(tok))
+        );
+        a!(
+            TypeRef::Int,
+            Rvalue::BuiltinCall("lpp_arena_release".to_string(), vec![Operand::Local(tok)])
+        );
         instrs.push(MirInstr::Release(st));
 
         // list + slice views
         let li = a!(list_int.clone(), Rvalue::AllocateList(TypeRef::Int));
-        a!(TypeRef::Int, Rvalue::BuiltinCall("lpp_list_push".to_string(), vec![Operand::Local(li), Operand::Int(7)]));
-        a!(TypeRef::Int, Rvalue::BuiltinCall("lpp_list_push_bool".to_string(), vec![Operand::Local(li), Operand::Bool(true)]));
-        a!(TypeRef::Int, Rvalue::BuiltinCall("lpp_list_push_float".to_string(), vec![Operand::Local(li), Operand::Float(1.5)]));
-        a!(TypeRef::Int, Rvalue::BuiltinCall("lpp_list_get".to_string(), vec![Operand::Local(li), Operand::Int(0)]));
-        a!(TypeRef::Float, Rvalue::BuiltinCall("lpp_list_get_float".to_string(), vec![Operand::Local(li), Operand::Int(2)]));
-        a!(TypeRef::Int, Rvalue::BuiltinCall("lpp_list_set".to_string(), vec![Operand::Local(li), Operand::Int(0), Operand::Int(9)]));
-        a!(TypeRef::Int, Rvalue::BuiltinCall("lpp_list_len".to_string(), vec![Operand::Local(li)]));
-        let svl = a!(TypeRef::Slice(Box::new(TypeRef::Int)), Rvalue::MakeSlice { base: Operand::Local(li), start: Operand::Int(0), length: Operand::Int(1), kind: 1 });
+        a!(
+            TypeRef::Int,
+            Rvalue::BuiltinCall(
+                "lpp_list_push".to_string(),
+                vec![Operand::Local(li), Operand::Int(7)]
+            )
+        );
+        a!(
+            TypeRef::Int,
+            Rvalue::BuiltinCall(
+                "lpp_list_push_bool".to_string(),
+                vec![Operand::Local(li), Operand::Bool(true)]
+            )
+        );
+        a!(
+            TypeRef::Int,
+            Rvalue::BuiltinCall(
+                "lpp_list_push_float".to_string(),
+                vec![Operand::Local(li), Operand::Float(1.5)]
+            )
+        );
+        a!(
+            TypeRef::Int,
+            Rvalue::BuiltinCall(
+                "lpp_list_get".to_string(),
+                vec![Operand::Local(li), Operand::Int(0)]
+            )
+        );
+        a!(
+            TypeRef::Float,
+            Rvalue::BuiltinCall(
+                "lpp_list_get_float".to_string(),
+                vec![Operand::Local(li), Operand::Int(2)]
+            )
+        );
+        a!(
+            TypeRef::Int,
+            Rvalue::BuiltinCall(
+                "lpp_list_set".to_string(),
+                vec![Operand::Local(li), Operand::Int(0), Operand::Int(9)]
+            )
+        );
+        a!(
+            TypeRef::Int,
+            Rvalue::BuiltinCall("lpp_list_len".to_string(), vec![Operand::Local(li)])
+        );
+        let svl = a!(
+            TypeRef::Slice(Box::new(TypeRef::Int)),
+            Rvalue::MakeSlice {
+                base: Operand::Local(li),
+                start: Operand::Int(0),
+                length: Operand::Int(1),
+                kind: 1
+            }
+        );
         a!(TypeRef::Int, Rvalue::SliceLen(Operand::Local(svl)));
-        a!(TypeRef::Int, Rvalue::SliceGet(Operand::Local(svl), Operand::Int(0)));
-        let sbase = a!(TypeRef::Str, Rvalue::BuiltinCall("lpp_str_concat".to_string(), vec![Operand::String("xy".to_string()), Operand::String("z".to_string())]));
-        let svs = a!(TypeRef::StrSlice, Rvalue::MakeSlice { base: Operand::Local(sbase), start: Operand::Int(1), length: Operand::Int(1), kind: 0 });
-        a!(TypeRef::Str, Rvalue::SliceGet(Operand::Local(svs), Operand::Int(0)));
+        a!(
+            TypeRef::Int,
+            Rvalue::SliceGet(Operand::Local(svl), Operand::Int(0))
+        );
+        let sbase = a!(
+            TypeRef::Str,
+            Rvalue::BuiltinCall(
+                "lpp_str_concat".to_string(),
+                vec![
+                    Operand::String("xy".to_string()),
+                    Operand::String("z".to_string())
+                ]
+            )
+        );
+        let svs = a!(
+            TypeRef::StrSlice,
+            Rvalue::MakeSlice {
+                base: Operand::Local(sbase),
+                start: Operand::Int(1),
+                length: Operand::Int(1),
+                kind: 0
+            }
+        );
+        a!(
+            TypeRef::Str,
+            Rvalue::SliceGet(Operand::Local(svs), Operand::Int(0))
+        );
         a!(TypeRef::Str, Rvalue::SliceToStr(Operand::Local(svs)));
 
         // map
-        let mp = a!(map_int.clone(), Rvalue::BuiltinCall("lpp_map_new".to_string(), vec![]));
-        a!(TypeRef::Int, Rvalue::BuiltinCall("lpp_map_put".to_string(), vec![Operand::Local(mp), Operand::Int(1), Operand::Int(2)]));
-        a!(TypeRef::Int, Rvalue::BuiltinCall("lpp_map_put_str".to_string(), vec![Operand::Local(mp), Operand::String("k".to_string()), Operand::Int(3)]));
-        a!(TypeRef::Int, Rvalue::BuiltinCall("lpp_map_get".to_string(), vec![Operand::Local(mp), Operand::Int(1)]));
-        a!(TypeRef::Int, Rvalue::BuiltinCall("lpp_map_get_str".to_string(), vec![Operand::Local(mp), Operand::String("k".to_string())]));
-        a!(TypeRef::Bool, Rvalue::BuiltinCall("lpp_map_has".to_string(), vec![Operand::Local(mp), Operand::Int(1)]));
-        a!(TypeRef::Int, Rvalue::BuiltinCall("lpp_map_remove".to_string(), vec![Operand::Local(mp), Operand::Int(1)]));
-        a!(TypeRef::Int, Rvalue::BuiltinCall("lpp_map_len".to_string(), vec![Operand::Local(mp)]));
+        let mp = a!(
+            map_int.clone(),
+            Rvalue::BuiltinCall("lpp_map_new".to_string(), vec![])
+        );
+        a!(
+            TypeRef::Int,
+            Rvalue::BuiltinCall(
+                "lpp_map_put".to_string(),
+                vec![Operand::Local(mp), Operand::Int(1), Operand::Int(2)]
+            )
+        );
+        a!(
+            TypeRef::Int,
+            Rvalue::BuiltinCall(
+                "lpp_map_put_str".to_string(),
+                vec![
+                    Operand::Local(mp),
+                    Operand::String("k".to_string()),
+                    Operand::Int(3)
+                ]
+            )
+        );
+        a!(
+            TypeRef::Int,
+            Rvalue::BuiltinCall(
+                "lpp_map_get".to_string(),
+                vec![Operand::Local(mp), Operand::Int(1)]
+            )
+        );
+        a!(
+            TypeRef::Int,
+            Rvalue::BuiltinCall(
+                "lpp_map_get_str".to_string(),
+                vec![Operand::Local(mp), Operand::String("k".to_string())]
+            )
+        );
+        a!(
+            TypeRef::Bool,
+            Rvalue::BuiltinCall(
+                "lpp_map_has".to_string(),
+                vec![Operand::Local(mp), Operand::Int(1)]
+            )
+        );
+        a!(
+            TypeRef::Int,
+            Rvalue::BuiltinCall(
+                "lpp_map_remove".to_string(),
+                vec![Operand::Local(mp), Operand::Int(1)]
+            )
+        );
+        a!(
+            TypeRef::Int,
+            Rvalue::BuiltinCall("lpp_map_len".to_string(), vec![Operand::Local(mp)])
+        );
 
         // random / time / process
-        a!(TypeRef::Int, Rvalue::BuiltinCall("lpp_random_seed".to_string(), vec![Operand::Int(1)]));
-        a!(TypeRef::Int, Rvalue::BuiltinCall("lpp_random".to_string(), vec![]));
-        a!(TypeRef::Int, Rvalue::BuiltinCall("lpp_random_range".to_string(), vec![Operand::Int(1), Operand::Int(10)]));
-        a!(TypeRef::Int, Rvalue::BuiltinCall("lpp_time_ms".to_string(), vec![]));
-        a!(TypeRef::Int, Rvalue::BuiltinCall("lpp_sleep_ms".to_string(), vec![Operand::Int(1)]));
-        a!(TypeRef::Str, Rvalue::BuiltinCall("lpp_input".to_string(), vec![]));
-        a!(TypeRef::Str, Rvalue::BuiltinCall("lpp_env_get".to_string(), vec![Operand::String("PATH".to_string())]));
-        a!(TypeRef::Int, Rvalue::BuiltinCall("lpp_alloc".to_string(), vec![Operand::Int(40)]));
-        a!(TypeRef::Int, Rvalue::BuiltinCall("lpp_free".to_string(), vec![Operand::Int(0)]));
-        a!(TypeRef::Int, Rvalue::BuiltinCall("lpp_exit".to_string(), vec![Operand::Int(0)]));
+        a!(
+            TypeRef::Int,
+            Rvalue::BuiltinCall("lpp_random_seed".to_string(), vec![Operand::Int(1)])
+        );
+        a!(
+            TypeRef::Int,
+            Rvalue::BuiltinCall("lpp_random".to_string(), vec![])
+        );
+        a!(
+            TypeRef::Int,
+            Rvalue::BuiltinCall(
+                "lpp_random_range".to_string(),
+                vec![Operand::Int(1), Operand::Int(10)]
+            )
+        );
+        a!(
+            TypeRef::Int,
+            Rvalue::BuiltinCall("lpp_time_ms".to_string(), vec![])
+        );
+        a!(
+            TypeRef::Int,
+            Rvalue::BuiltinCall("lpp_sleep_ms".to_string(), vec![Operand::Int(1)])
+        );
+        a!(
+            TypeRef::Str,
+            Rvalue::BuiltinCall("lpp_input".to_string(), vec![])
+        );
+        a!(
+            TypeRef::Str,
+            Rvalue::BuiltinCall(
+                "lpp_env_get".to_string(),
+                vec![Operand::String("PATH".to_string())]
+            )
+        );
+        a!(
+            TypeRef::Int,
+            Rvalue::BuiltinCall("lpp_alloc".to_string(), vec![Operand::Int(40)])
+        );
+        a!(
+            TypeRef::Int,
+            Rvalue::BuiltinCall("lpp_free".to_string(), vec![Operand::Int(0)])
+        );
+        a!(
+            TypeRef::Int,
+            Rvalue::BuiltinCall("lpp_exit".to_string(), vec![Operand::Int(0)])
+        );
 
         let main = mk_fn(
             3,
@@ -6757,8 +7935,8 @@ mod tests {
             TypeRef::Void,
             true,
         );
-        let module = compile(&program_with(vec![main]), &TypeTable::new(), &no_weak())
-            .expect("compiles");
+        let module =
+            compile(&program_with(vec![main]), &TypeTable::new(), &no_weak()).expect("compiles");
         let parsed = parse_module(&module).expect("module parses");
         validate_module(&parsed).expect("module validates");
     }
@@ -6796,8 +7974,8 @@ mod tests {
             TypeRef::Void,
             false,
         );
-        let module = compile(&program_with(vec![main]), &TypeTable::new(), &no_weak())
-            .expect("compiles");
+        let module =
+            compile(&program_with(vec![main]), &TypeTable::new(), &no_weak()).expect("compiles");
         let parsed = parse_module(&module).expect("module parses");
         validate_module(&parsed).expect("module validates");
     }
@@ -6858,8 +8036,13 @@ mod tests {
             }
             for i in 0..tt.definitions.len() {
                 let (locals, body) = compiler.drop_body(StructTypeId(i));
-                validate_one_body(&compiler, compiler.struct_drop_fn[&StructTypeId(i)], locals, body)
-                    .unwrap_or_else(|e| panic!("drop body {}: {}", i, e));
+                validate_one_body(
+                    &compiler,
+                    compiler.struct_drop_fn[&StructTypeId(i)],
+                    locals,
+                    body,
+                )
+                .unwrap_or_else(|e| panic!("drop body {}: {}", i, e));
             }
             for func_id in &scan.task_fns {
                 let (locals, body) = compiler.thunk_body(*func_id).expect("thunk");
@@ -7057,7 +8240,7 @@ mod tests {
         memory_min: u64,
         globals: Vec<(u8, bool)>, // (value type, mutable)
         exports: Vec<(String, u8, u32)>,
-        elems: Vec<(u64, Vec<u32>)>, // (table idx, funcidx list)
+        elems: Vec<(u64, Vec<u32>)>,   // (table idx, funcidx list)
         code: Vec<(Vec<u8>, Vec<u8>)>, // (declared local type bytes, body)
         datas: Vec<(u64, Vec<u8>)>,    // (offset, bytes)
     }
@@ -7197,7 +8380,9 @@ mod tests {
                                 local_tys.push(ty);
                             }
                         }
-                        module.code.push((local_tys, cr.take(cr.b.len() - cr.p)?.to_vec()));
+                        module
+                            .code
+                            .push((local_tys, cr.take(cr.b.len() - cr.p)?.to_vec()));
                     }
                 }
                 11 => {
@@ -7338,7 +8523,14 @@ mod tests {
             .collect();
         let globals = vec![(TI32, true), (TI64, true)];
         let local_bytes: Vec<u8> = declared.iter().map(|v| v.byte()).collect();
-        validate_body(&sigs, &types, &globals, func_index as usize, &local_bytes, &body)
+        validate_body(
+            &sigs,
+            &types,
+            &globals,
+            func_index as usize,
+            &local_bytes,
+            &body,
+        )
     }
 
     /// Type-check one function body. Every structured instruction the
@@ -7352,9 +8544,7 @@ mod tests {
         declared: &[u8],
         body: &[u8],
     ) -> Result<(), String> {
-        let (params, results) = sigs
-            .get(func_index)
-            .ok_or("function index out of range")?;
+        let (params, results) = sigs.get(func_index).ok_or("function index out of range")?;
         let mut locals: Vec<u8> = params.clone();
         locals.extend_from_slice(declared);
         let mut r = Reader::new(body);
@@ -7433,7 +8623,7 @@ mod tests {
         loop {
             let op = r.byte().map_err(|_| underflow!())?;
             match op {
-                0x00 => mark_unreachable!(),                   // unreachable
+                0x00 => mark_unreachable!(), // unreachable
                 0x02 | 0x03 | 0x04 => {
                     // block / loop / if (only the empty block type is emitted)
                     if op == 0x04 {

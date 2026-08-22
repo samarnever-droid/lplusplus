@@ -109,11 +109,19 @@ fn count_operands(operands: &[Operand], counts: &mut [u32]) {
 
 fn count_rvalue(rvalue: &Rvalue, counts: &mut [u32]) {
     match rvalue {
-        Rvalue::AllocateTuple(_, values) | Rvalue::MakeTask(_, _, values, _) =>
-            count_operands(values, counts),
-        Rvalue::TupleField(base, _) | Rvalue::SliceLen(base)
-        | Rvalue::SliceToStr(base) | Rvalue::Await(base) => count_operand(base, counts),
-        Rvalue::MakeSlice { base, start, length, .. } => {
+        Rvalue::AllocateTuple(_, values) | Rvalue::MakeTask(_, _, values, _) => {
+            count_operands(values, counts)
+        }
+        Rvalue::TupleField(base, _)
+        | Rvalue::SliceLen(base)
+        | Rvalue::SliceToStr(base)
+        | Rvalue::Await(base) => count_operand(base, counts),
+        Rvalue::MakeSlice {
+            base,
+            start,
+            length,
+            ..
+        } => {
             count_operand(base, counts);
             count_operand(start, counts);
             count_operand(length, counts);

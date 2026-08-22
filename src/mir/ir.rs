@@ -42,7 +42,6 @@ impl Ownership {
     }
 }
 
-
 /// A declared local variable or temporary.
 #[derive(Debug, Clone)]
 pub struct LocalDecl {
@@ -171,20 +170,32 @@ impl std::fmt::Display for Rvalue {
             Rvalue::AllocateTuple(types, values) => {
                 write!(f, "alloc_tuple<{:?}>(", types)?;
                 for (i, value) in values.iter().enumerate() {
-                    if i != 0 { write!(f, ", ")?; }
+                    if i != 0 {
+                        write!(f, ", ")?;
+                    }
                     write!(f, "{}", value)?;
                 }
                 write!(f, ")")
             }
             Rvalue::TupleField(base, index) => write!(f, "{}.{}", base, index),
-            Rvalue::MakeSlice { base, start, length, kind } =>
-                write!(f, "make_slice(kind={}, {}, {}, {})", kind, base, start, length),
+            Rvalue::MakeSlice {
+                base,
+                start,
+                length,
+                kind,
+            } => write!(
+                f,
+                "make_slice(kind={}, {}, {}, {})",
+                kind, base, start, length
+            ),
             Rvalue::SliceLen(view) => write!(f, "slice_len({})", view),
             Rvalue::SliceGet(view, index) => write!(f, "slice_get({}, {})", view, index),
             Rvalue::SliceToStr(view) => write!(f, "slice_to_str({})", view),
             Rvalue::MakeTask(id, _, args, _) => {
                 write!(f, "make_task(fn_{}", id.0)?;
-                for arg in args { write!(f, ", {}", arg)?; }
+                for arg in args {
+                    write!(f, ", {}", arg)?;
+                }
                 write!(f, ")")
             }
             Rvalue::Await(task) => write!(f, "await({})", task),

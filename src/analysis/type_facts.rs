@@ -130,7 +130,12 @@ impl TypeRef {
         match self {
             TypeRef::Bool | TypeRef::U8 | TypeRef::I8 => ListElementClass::Bool,
             TypeRef::Float => ListElementClass::Float,
-            TypeRef::Int | TypeRef::Char | TypeRef::U16 | TypeRef::I16 | TypeRef::U32 | TypeRef::I32 => ListElementClass::Scalar,
+            TypeRef::Int
+            | TypeRef::Char
+            | TypeRef::U16
+            | TypeRef::I16
+            | TypeRef::U32
+            | TypeRef::I32 => ListElementClass::Scalar,
             TypeRef::Str
             | TypeRef::Custom(_)
             | TypeRef::Generic(_, _)

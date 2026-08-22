@@ -107,7 +107,8 @@ fn write_i8_at(buf: &mut [u8], off: usize, v: i64, ctx: &str) -> Result<(), Stri
     if !fits_i8(v) {
         return Err(format!("{ctx}: 8-bit relocation overflow ({v})"));
     }
-    *buf.get_mut(off).ok_or_else(|| format!("{ctx}: patch OOB"))? = v as u8;
+    *buf.get_mut(off)
+        .ok_or_else(|| format!("{ctx}: patch OOB"))? = v as u8;
     Ok(())
 }
 fn write_i16_at(buf: &mut [u8], off: usize, v: i64, ctx: &str) -> Result<(), String> {
@@ -504,11 +505,7 @@ impl fmt::Display for LinkError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.message)?;
         if !self.unresolved.is_empty() {
-            write!(
-                f,
-                "\nunresolved symbols ({}):",
-                self.unresolved.len()
-            )?;
+            write!(f, "\nunresolved symbols ({}):", self.unresolved.len())?;
             for s in &self.unresolved {
                 write!(f, "\n  {s}")?;
             }
@@ -631,9 +628,7 @@ fn classify_section(name: &str, kind: object::SectionKind) -> Option<SectionClas
     if name == ".fini_array" || name.starts_with(".fini_array.") || name == ".dtors" {
         return Some(SectionClass::FiniArray);
     }
-    if name.starts_with(".text")
-        || name.starts_with("__text")
-        || kind == object::SectionKind::Text
+    if name.starts_with(".text") || name.starts_with("__text") || kind == object::SectionKind::Text
     {
         return Some(SectionClass::Text);
     }
@@ -658,15 +653,11 @@ fn classify_section(name: &str, kind: object::SectionKind) -> Option<SectionClas
     {
         return Some(SectionClass::Tls);
     }
-    if name == ".bss"
-        || name.starts_with(".bss.")
-        || kind == object::SectionKind::UninitializedData
+    if name == ".bss" || name.starts_with(".bss.") || kind == object::SectionKind::UninitializedData
     {
         return Some(SectionClass::Bss);
     }
-    if name.starts_with(".data")
-        || name.starts_with("__data")
-        || kind == object::SectionKind::Data
+    if name.starts_with(".data") || name.starts_with("__data") || kind == object::SectionKind::Data
     {
         return Some(SectionClass::Data);
     }
@@ -705,7 +696,7 @@ fn parse_object(bytes: &[u8], path: &Path) -> Result<ObjectImage, String> {
             return Err(format!(
                 "'{}': unsupported object format {other:?}",
                 path.display()
-            ))
+            ));
         }
     };
     let machine = Machine::from_object(file.architecture()).ok_or_else(|| {
@@ -776,7 +767,14 @@ fn parse_object(bytes: &[u8], path: &Path) -> Result<ObjectImage, String> {
             || name.starts_with(".tbss.");
 
         let (buf, fill): (&mut Vec<u8>, u8) = match class {
-            SectionClass::Text => (&mut text, if format == OutputFormat::Pe { 0xCC } else { 0x90 }),
+            SectionClass::Text => (
+                &mut text,
+                if format == OutputFormat::Pe {
+                    0xCC
+                } else {
+                    0x90
+                },
+            ),
             SectionClass::Rodata => (&mut rodata, 0),
             SectionClass::Data => (&mut data, 0),
             SectionClass::InitArray => (&mut init_array, 0),
@@ -824,7 +822,11 @@ fn parse_object(bytes: &[u8], path: &Path) -> Result<ObjectImage, String> {
             if name == ".pdata" || name.starts_with(".pdata") {
                 pdata_ranges.push((base, bytes.len()));
             }
-            if name == ".eh_frame" || name.starts_with(".eh_frame") || name == ".eh_frame_hdr" || name.starts_with(".eh_frame_hdr") {
+            if name == ".eh_frame"
+                || name.starts_with(".eh_frame")
+                || name == ".eh_frame_hdr"
+                || name.starts_with(".eh_frame_hdr")
+            {
                 eh_frame_ranges.push((base, bytes.len()));
             }
         }
@@ -1015,8 +1017,8 @@ struct Archive<T> {
 
 fn parse_archive_members(path: &Path) -> Result<Vec<(String, ObjectImage)>, String> {
     let bytes = fs::read(path).map_err(|e| format!("read '{}': {e}", path.display()))?;
-    let archive =
-        ArchiveFile::parse(&*bytes).map_err(|e| format!("parse archive '{}': {e}", path.display()))?;
+    let archive = ArchiveFile::parse(&*bytes)
+        .map_err(|e| format!("parse archive '{}': {e}", path.display()))?;
     let mut out = Vec::new();
     for member in archive.members() {
         let member = member.map_err(|e| format!("archive member in '{}': {e}", path.display()))?;
@@ -1178,7 +1180,15 @@ fn load_objects(
             }
             continue;
         }
-        let clean = lib.strip_prefix("lib").unwrap_or(lib).strip_suffix(".a").unwrap_or(lib).strip_suffix(".dylib").unwrap_or(lib).strip_suffix(".so").unwrap_or(lib);
+        let clean = lib
+            .strip_prefix("lib")
+            .unwrap_or(lib)
+            .strip_suffix(".a")
+            .unwrap_or(lib)
+            .strip_suffix(".dylib")
+            .unwrap_or(lib)
+            .strip_suffix(".so")
+            .unwrap_or(lib);
         let candidates = [
             lib.clone(),
             format!("lib{clean}.a"),
@@ -1218,7 +1228,14 @@ fn load_objects(
     }
     if objects.is_empty() {
         // start from the first archive member that defines a plausible entry
-        let entries = ["main", "lpp_main", "_start", "start", "mainCRTStartup", "WinMain"];
+        let entries = [
+            "main",
+            "lpp_main",
+            "_start",
+            "start",
+            "mainCRTStartup",
+            "WinMain",
+        ];
         let mut seeded = false;
         for ar in archives.iter_mut() {
             for e in entries {
@@ -1552,7 +1569,13 @@ fn collect_undefined(objects: &[ObjectImage], merged: &Merged) -> Vec<String> {
     u.into_iter().collect()
 }
 
-fn write_map(path: &Path, merged: &Merged, objects: &[ObjectImage], entry: &str, entry_va: u64) -> Result<(), String> {
+fn write_map(
+    path: &Path,
+    merged: &Merged,
+    objects: &[ObjectImage],
+    entry: &str,
+    entry_va: u64,
+) -> Result<(), String> {
     let mut s = String::new();
     s.push_str("# lpp-link map\n");
     s.push_str(&format!("# entry {entry} = 0x{entry_va:x}\n"));
@@ -1604,7 +1627,11 @@ fn a64_patch_call26(buf: &mut [u8], off: usize, s: u64, a: i64, p: u64) -> Resul
     } else {
         (raw_imm as i64) << 2
     };
-    let addend = if a != 0 { (a as i32) as i64 } else { inline_addend };
+    let addend = if a != 0 {
+        (a as i32) as i64
+    } else {
+        inline_addend
+    };
     let dest = s.wrapping_add_signed(addend);
     let disp = dest as i64 - p as i64;
     if disp & 3 != 0 {
@@ -1614,7 +1641,11 @@ fn a64_patch_call26(buf: &mut [u8], off: usize, s: u64, a: i64, p: u64) -> Resul
     if !fits_i26(imm) {
         return Err(format!("aarch64 CALL26/JUMP26 out of range ({disp})"));
     }
-    a64_write(buf, off, (instr & 0xFC00_0000) | ((imm as u32) & 0x03FF_FFFF))
+    a64_write(
+        buf,
+        off,
+        (instr & 0xFC00_0000) | ((imm as u32) & 0x03FF_FFFF),
+    )
 }
 
 fn a64_patch_adr_pg_hi21(buf: &mut [u8], off: usize, s: u64, a: i64, p: u64) -> Result<(), String> {
@@ -1641,7 +1672,13 @@ fn a64_patch_add_lo12(buf: &mut [u8], off: usize, s: u64, a: i64) -> Result<(), 
     a64_write(buf, off, (instr & 0xFFC0_03FF) | (imm12 << 10))
 }
 
-fn a64_patch_ldst_lo12(buf: &mut [u8], off: usize, s: u64, a: i64, shift: u32) -> Result<(), String> {
+fn a64_patch_ldst_lo12(
+    buf: &mut [u8],
+    off: usize,
+    s: u64,
+    a: i64,
+    shift: u32,
+) -> Result<(), String> {
     let dest = s.wrapping_add_signed(a);
     let imm12 = ((dest >> shift) & 0xfff) as u32;
     let instr = a64_read(buf, off)?;
@@ -1684,7 +1721,14 @@ fn a64_patch_tstbr14(buf: &mut [u8], off: usize, s: u64, a: i64, p: u64) -> Resu
     )
 }
 
-fn a64_patch_movw(buf: &mut [u8], off: usize, s: u64, a: i64, shift: u32, check: bool) -> Result<(), String> {
+fn a64_patch_movw(
+    buf: &mut [u8],
+    off: usize,
+    s: u64,
+    a: i64,
+    shift: u32,
+    check: bool,
+) -> Result<(), String> {
     let dest = s.wrapping_add_signed(a);
     let imm16 = ((dest >> shift) & 0xffff) as u32;
     if check {
@@ -1815,11 +1859,41 @@ fn libc_soname_for(sym: &str) -> Option<&'static str> {
 fn is_libm_symbol(n: &str) -> bool {
     matches!(
         n,
-        "sin" | "cos" | "tan" | "asin" | "acos" | "atan" | "atan2"
-            | "sinh" | "cosh" | "tanh" | "exp" | "exp2" | "log" | "log2" | "log10"
-            | "pow" | "sqrt" | "ceil" | "floor" | "fmod" | "fabs" | "hypot"
-            | "round" | "trunc" | "nearbyint" | "sincos" | "ldexp" | "frexp"
-            | "sinf" | "cosf" | "tanf" | "expf" | "logf" | "powf" | "sqrtf"
+        "sin"
+            | "cos"
+            | "tan"
+            | "asin"
+            | "acos"
+            | "atan"
+            | "atan2"
+            | "sinh"
+            | "cosh"
+            | "tanh"
+            | "exp"
+            | "exp2"
+            | "log"
+            | "log2"
+            | "log10"
+            | "pow"
+            | "sqrt"
+            | "ceil"
+            | "floor"
+            | "fmod"
+            | "fabs"
+            | "hypot"
+            | "round"
+            | "trunc"
+            | "nearbyint"
+            | "sincos"
+            | "ldexp"
+            | "frexp"
+            | "sinf"
+            | "cosf"
+            | "tanf"
+            | "expf"
+            | "logf"
+            | "powf"
+            | "sqrtf"
     )
 }
 fn is_libdl_symbol(n: &str) -> bool {
@@ -1831,33 +1905,153 @@ fn is_libpthread_symbol(n: &str) -> bool {
 fn is_libc_symbol(n: &str) -> bool {
     matches!(
         n,
-        "malloc" | "free" | "realloc" | "calloc" | "aligned_alloc" | "posix_memalign"
-            | "printf" | "fprintf" | "sprintf" | "snprintf" | "vsnprintf" | "vfprintf"
-            | "puts" | "putchar" | "getchar" | "scanf" | "sscanf"
-            | "memset" | "memcpy" | "memmove" | "memcmp" | "strlen" | "strcmp"
-            | "strncmp" | "strcpy" | "strncpy" | "strcat" | "strchr" | "strstr"
-            | "strdup" | "strtol" | "strtoul" | "strtod" | "atoi" | "atol" | "atoll"
-            | "exit" | "abort" | "_exit" | "atexit"
-            | "fopen" | "fclose" | "fread" | "fwrite" | "fflush" | "fseek" | "ftell"
-            | "rewind" | "feof" | "ferror" | "fgets" | "fputs"
-            | "getenv" | "setenv" | "unsetenv" | "system" | "time" | "clock"
-            | "qsort" | "bsearch" | "rand" | "srand" | "abs" | "labs" | "llabs"
-            | "tolower" | "toupper" | "isdigit" | "isalpha" | "isspace" | "isalnum"
-            | "mmap" | "munmap" | "mprotect" | "brk" | "sbrk"
-            | "read" | "write" | "open" | "close" | "lseek" | "stat" | "fstat"
-            | "unlink" | "rename" | "getcwd" | "chdir" | "mkdir" | "rmdir"
-            | "getpid" | "getuid" | "getgid" | "fork" | "execve" | "waitpid"
-            | "signal" | "sigaction" | "kill" | "raise"
-            | "socket" | "bind" | "listen" | "accept" | "connect" | "send" | "recv"
-            | "sendto" | "recvfrom" | "closesocket" | "htons" | "htonl" | "ntohs" | "ntohl"
-            | "getaddrinfo" | "freeaddrinfo" | "setsockopt" | "getsockopt"
-            | "poll" | "select" | "gettimeofday" | "nanosleep" | "usleep"
-            | "stdin" | "stdout" | "stderr" | "__libc_start_main" | "__errno_location"
-            | "memchr" | "strerror" | "perror" | "setvbuf" | "ungetc"
-            | "opendir" | "readdir" | "closedir"
-            | "clock_gettime" | "localtime" | "gmtime" | "strftime"
-            | "lpp_c_malloc" | "lpp_c_free" | "lpp_c_load_u8" | "lpp_c_store_u8"
-            | "lpp_c_load_i32" | "lpp_c_store_i32" | "lpp_c_load_i64" | "lpp_c_store_i64"
+        "malloc"
+            | "free"
+            | "realloc"
+            | "calloc"
+            | "aligned_alloc"
+            | "posix_memalign"
+            | "printf"
+            | "fprintf"
+            | "sprintf"
+            | "snprintf"
+            | "vsnprintf"
+            | "vfprintf"
+            | "puts"
+            | "putchar"
+            | "getchar"
+            | "scanf"
+            | "sscanf"
+            | "memset"
+            | "memcpy"
+            | "memmove"
+            | "memcmp"
+            | "strlen"
+            | "strcmp"
+            | "strncmp"
+            | "strcpy"
+            | "strncpy"
+            | "strcat"
+            | "strchr"
+            | "strstr"
+            | "strdup"
+            | "strtol"
+            | "strtoul"
+            | "strtod"
+            | "atoi"
+            | "atol"
+            | "atoll"
+            | "exit"
+            | "abort"
+            | "_exit"
+            | "atexit"
+            | "fopen"
+            | "fclose"
+            | "fread"
+            | "fwrite"
+            | "fflush"
+            | "fseek"
+            | "ftell"
+            | "rewind"
+            | "feof"
+            | "ferror"
+            | "fgets"
+            | "fputs"
+            | "getenv"
+            | "setenv"
+            | "unsetenv"
+            | "system"
+            | "time"
+            | "clock"
+            | "qsort"
+            | "bsearch"
+            | "rand"
+            | "srand"
+            | "abs"
+            | "labs"
+            | "llabs"
+            | "tolower"
+            | "toupper"
+            | "isdigit"
+            | "isalpha"
+            | "isspace"
+            | "isalnum"
+            | "mmap"
+            | "munmap"
+            | "mprotect"
+            | "brk"
+            | "sbrk"
+            | "read"
+            | "write"
+            | "open"
+            | "close"
+            | "lseek"
+            | "stat"
+            | "fstat"
+            | "unlink"
+            | "rename"
+            | "getcwd"
+            | "chdir"
+            | "mkdir"
+            | "rmdir"
+            | "getpid"
+            | "getuid"
+            | "getgid"
+            | "fork"
+            | "execve"
+            | "waitpid"
+            | "signal"
+            | "sigaction"
+            | "kill"
+            | "raise"
+            | "socket"
+            | "bind"
+            | "listen"
+            | "accept"
+            | "connect"
+            | "send"
+            | "recv"
+            | "sendto"
+            | "recvfrom"
+            | "closesocket"
+            | "htons"
+            | "htonl"
+            | "ntohs"
+            | "ntohl"
+            | "getaddrinfo"
+            | "freeaddrinfo"
+            | "setsockopt"
+            | "getsockopt"
+            | "poll"
+            | "select"
+            | "gettimeofday"
+            | "nanosleep"
+            | "usleep"
+            | "stdin"
+            | "stdout"
+            | "stderr"
+            | "__libc_start_main"
+            | "__errno_location"
+            | "memchr"
+            | "strerror"
+            | "perror"
+            | "setvbuf"
+            | "ungetc"
+            | "opendir"
+            | "readdir"
+            | "closedir"
+            | "clock_gettime"
+            | "localtime"
+            | "gmtime"
+            | "strftime"
+            | "lpp_c_malloc"
+            | "lpp_c_free"
+            | "lpp_c_load_u8"
+            | "lpp_c_store_u8"
+            | "lpp_c_load_i32"
+            | "lpp_c_store_i32"
+            | "lpp_c_load_i64"
+            | "lpp_c_store_i64"
     )
 }
 
@@ -1975,7 +2169,9 @@ pub fn write_elf_with_options(
         match opts.dynamic {
             DynamicMode::Force => true,
             DynamicMode::Static => false,
-            DynamicMode::Auto => !undef.is_empty() && undef.iter().any(|u| libc_soname_for(u).is_some()),
+            DynamicMode::Auto => {
+                !undef.is_empty() && undef.iter().any(|u| libc_soname_for(u).is_some())
+            }
         }
     };
     if !want_dynamic {
@@ -2265,16 +2461,17 @@ pub fn write_elf_with_options(
 
     let mut dynstr = vec![0u8]; // index 0 = empty
     let mut dynstr_index: HashMap<String, u32> = HashMap::new();
-    let put_dynstr = |s: &str, dynstr: &mut Vec<u8>, dynstr_index: &mut HashMap<String, u32>| -> u32 {
-        if let Some(&i) = dynstr_index.get(s) {
-            return i;
-        }
-        let i = dynstr.len() as u32;
-        dynstr.extend_from_slice(s.as_bytes());
-        dynstr.push(0);
-        dynstr_index.insert(s.to_string(), i);
-        i
-    };
+    let put_dynstr =
+        |s: &str, dynstr: &mut Vec<u8>, dynstr_index: &mut HashMap<String, u32>| -> u32 {
+            if let Some(&i) = dynstr_index.get(s) {
+                return i;
+            }
+            let i = dynstr.len() as u32;
+            dynstr.extend_from_slice(s.as_bytes());
+            dynstr.push(0);
+            dynstr_index.insert(s.to_string(), i);
+            i
+        };
     let mut needed_str_off = Vec::new();
     let mut soname_str_off: Option<u32> = None;
     if dyn_mode || opts.shared {
@@ -2337,9 +2534,7 @@ pub fn write_elf_with_options(
     // DEBUG, FLAGS_1, NULL = 15 entries, plus one DT_NEEDED per library.
     const ELF_DYNAMIC_FIXED_ENTRIES: usize = 15;
     let dynamic_ents = if dyn_mode || opts.shared {
-        dyn_needed.len()
-            + ELF_DYNAMIC_FIXED_ENTRIES
-            + if soname_str_off.is_some() { 1 } else { 0 }
+        dyn_needed.len() + ELF_DYNAMIC_FIXED_ENTRIES + if soname_str_off.is_some() { 1 } else { 0 }
     } else {
         0
     };
@@ -2350,7 +2545,10 @@ pub fn write_elf_with_options(
     let got_off_in_data = align_up(gotplt_off_in_data + gotplt_size, 8);
     let got_size = got_entries * 8;
     let data_off_in_data = align_up(got_off_in_data + got_size, 16);
-    let tls_off_in_data = align_up(data_off_in_data + merged.data.len(), merged.tls_align.max(1));
+    let tls_off_in_data = align_up(
+        data_off_in_data + merged.data.len(),
+        merged.tls_align.max(1),
+    );
     let data_filesz = tls_off_in_data + merged.tls.len();
     let data_memsz = data_filesz + merged.tbss_size + merged.bss_size;
 
@@ -2415,9 +2613,7 @@ pub fn write_elf_with_options(
         }
     };
 
-    let lookup_size = |n: &str| -> u64 {
-        merged.syms.get(n).map(|s| s.size).unwrap_or(0)
-    };
+    let lookup_size = |n: &str| -> u64 { merged.syms.get(n).map(|s| s.size).unwrap_or(0) };
 
     // ── materialise RX / RW buffers ─────────────────────────────────────
     let mut rx = vec![0u8; rx_size];
@@ -2434,7 +2630,8 @@ pub fn write_elf_with_options(
     rw[tls_off_in_data..tls_off_in_data + merged.tls.len()].copy_from_slice(&merged.tls);
 
     // Fill GOT with symbol VAs (or TLS offsets).
-    let mut got_list: Vec<(String, usize)> = got_keys.iter().map(|(k, v)| (k.clone(), *v)).collect();
+    let mut got_list: Vec<(String, usize)> =
+        got_keys.iter().map(|(k, v)| (k.clone(), *v)).collect();
     got_list.sort_by_key(|(_, i)| *i);
     for (name, idx) in &got_list {
         let val = if let Some(rest) = name.strip_prefix("__local.") {
@@ -2722,11 +2919,7 @@ pub fn write_elf_with_options(
     for (oi, obj) in objects.iter().enumerate() {
         for rel in &obj.relocations {
             let (buf, buf_va, local_base) = match rel.section_class {
-                SectionClass::Text => (
-                    &mut rx[..],
-                    va_text,
-                    merged.place[oi].text,
-                ),
+                SectionClass::Text => (&mut rx[..], va_text, merged.place[oi].text),
                 SectionClass::Rodata => (
                     &mut rx[rodata_off_in_text..],
                     va_rodata,
@@ -2742,21 +2935,10 @@ pub fn write_elf_with_options(
                     va_fini,
                     merged.place[oi].fini_array,
                 ),
-                SectionClass::Data => (
-                    &mut rw[data_off_in_data..],
-                    va_data,
-                    merged.place[oi].data,
-                ),
-                SectionClass::Tls => (
-                    &mut rw[tls_off_in_data..],
-                    va_tls,
-                    merged.place[oi].tls,
-                ),
+                SectionClass::Data => (&mut rw[data_off_in_data..], va_data, merged.place[oi].data),
+                SectionClass::Tls => (&mut rw[tls_off_in_data..], va_tls, merged.place[oi].tls),
                 SectionClass::Bss => {
-                    return Err(format!(
-                        "'{}': relocation against BSS",
-                        obj.path.display()
-                    ));
+                    return Err(format!("'{}': relocation against BSS", obj.path.display()));
                 }
             };
             let patch = local_base + rel.offset;
@@ -2776,9 +2958,8 @@ pub fn write_elf_with_options(
                     .map(|i| va_got + (*i as u64) * 8)
                     .ok_or_else(|| format!("'{ctx}': no GOT slot for {n}"))
             };
-            let got_va_target = |t: &RelTarget| -> Result<u64, String> {
-                got_va_of(&got_key(oi, t))
-            };
+            let got_va_target =
+                |t: &RelTarget| -> Result<u64, String> { got_va_of(&got_key(oi, t)) };
 
             match (machine, rel.raw_type) {
                 (Machine::X86_64, R_X86_64_64) => {
@@ -2824,7 +3005,12 @@ pub fn write_elf_with_options(
                     write_i32_at(buf, patch, va_got as i64 + a - p as i64, &ctx)?;
                 }
                 (Machine::X86_64, R_X86_64_GOTOFF64) => {
-                    write_u64_at(buf, patch, s.wrapping_add_signed(a).wrapping_sub(va_got), &ctx)?;
+                    write_u64_at(
+                        buf,
+                        patch,
+                        s.wrapping_add_signed(a).wrapping_sub(va_got),
+                        &ctx,
+                    )?;
                 }
                 (Machine::X86_64, R_X86_64_TPOFF32) => {
                     let off = match &rel.target {
@@ -2834,9 +3020,7 @@ pub fn write_elf_with_options(
                             .filter(|s| s.class == SectionClass::Tls)
                             .map(|s| s.offset)
                             .ok_or_else(|| format!("'{ctx}': TPOFF of non-TLS '{n}'"))?,
-                        RelTarget::Local(SectionClass::Tls, o) => {
-                            merged.place[oi].tls as u64 + *o
-                        }
+                        RelTarget::Local(SectionClass::Tls, o) => merged.place[oi].tls as u64 + *o,
                         _ => return Err(format!("'{ctx}': TPOFF of non-TLS")),
                     };
                     write_i32_at(buf, patch, x64_tpoff(off, tls_memsz) + a, &ctx)?;
@@ -3200,10 +3384,7 @@ pub fn write_elf_with_options(
     let shstr_off = shoff;
     let symtab_off = align_up(shstr_off + shstr.len(), 8);
     let strtab_off = align_up(symtab_off + if opts.strip { 0 } else { symtab.len() }, 8);
-    let shdr_table_off = align_up(
-        strtab_off + if opts.strip { 0 } else { strtab.len() },
-        8,
-    );
+    let shdr_table_off = align_up(strtab_off + if opts.strip { 0 } else { strtab.len() }, 8);
 
     // We need shstrndx and will push remaining headers then write.
     // Reserve slots for .shstrtab .symtab .strtab at the end after we know indices.
@@ -3296,8 +3477,8 @@ pub fn write_elf_with_options(
             addr: va_relaplt,
             off: (text_file + rela_plt_off) as u64,
             size: rela_plt_size as u64,
-            link: dynsym_shndx,  // associated symbol table = .dynsym
-            info: 0,             // sh_info = index of .plt (patched by caller if needed)
+            link: dynsym_shndx, // associated symbol table = .dynsym
+            info: 0,            // sh_info = index of .plt (patched by caller if needed)
             addralign: 8,
             entsize: 24,
         });
@@ -3695,23 +3876,113 @@ fn is_crt_symbol(name: &str) -> bool {
     let clean = name.strip_prefix("__imp_").unwrap_or(name);
     matches!(
         clean,
-        "malloc" | "free" | "realloc" | "calloc" | "printf" | "puts" | "memset" | "memcpy"
-            | "memmove" | "memcmp" | "strlen" | "strcmp" | "strncmp" | "strcpy" | "strncpy"
-            | "strcat" | "strchr" | "strstr" | "sprintf" | "snprintf" | "sscanf" | "exit"
-            | "abort" | "sin" | "cos" | "tan" | "pow" | "sqrt" | "ceil" | "floor" | "fmod"
-            | "fabs" | "abs" | "labs" | "llabs" | "getpid" | "_getpid" | "atan2" | "log"
-            | "exp" | "getchar" | "putchar" | "fopen" | "fclose" | "fread" | "fwrite"
-            | "fflush" | "fprintf" | "fseek" | "ftell" | "getenv" | "system" | "time"
-            | "clock" | "_errno" | "__getmainargs" | "__set_app_type" | "_acmdln"
-            | "_initterm" | "_initterm_e" | "_configthreadlocale" | "lpp_c_malloc"
-            | "lpp_c_free" | "lpp_c_load_u8" | "lpp_c_store_u8" | "lpp_c_load_i32"
-            | "lpp_c_store_i32" | "lpp_c_load_i64" | "lpp_c_store_i64" | "dlopen"
-            | "dlsym" | "dlclose" | "dlerror" | "vsnprintf" | "vfprintf" | "atoi" | "atol"
-            | "strtol" | "strtoul" | "strtod" | "qsort" | "bsearch" | "rand" | "srand"
-            | "tolower" | "toupper" | "isdigit" | "isalpha" | "isspace" | "_beginthreadex"
-            | "_endthreadex" | "__iob_func" | "__acrt_iob_func" | "_fdopen" | "_fileno"
-            | "rewind" | "fgets" | "fputs" | "ungetc" | "setvbuf" | "perror" | "strerror"
-            | "memchr" | "strdup" | "_strdup" | "strncpy_s" | "strcpy_s"
+        "malloc"
+            | "free"
+            | "realloc"
+            | "calloc"
+            | "printf"
+            | "puts"
+            | "memset"
+            | "memcpy"
+            | "memmove"
+            | "memcmp"
+            | "strlen"
+            | "strcmp"
+            | "strncmp"
+            | "strcpy"
+            | "strncpy"
+            | "strcat"
+            | "strchr"
+            | "strstr"
+            | "sprintf"
+            | "snprintf"
+            | "sscanf"
+            | "exit"
+            | "abort"
+            | "sin"
+            | "cos"
+            | "tan"
+            | "pow"
+            | "sqrt"
+            | "ceil"
+            | "floor"
+            | "fmod"
+            | "fabs"
+            | "abs"
+            | "labs"
+            | "llabs"
+            | "getpid"
+            | "_getpid"
+            | "atan2"
+            | "log"
+            | "exp"
+            | "getchar"
+            | "putchar"
+            | "fopen"
+            | "fclose"
+            | "fread"
+            | "fwrite"
+            | "fflush"
+            | "fprintf"
+            | "fseek"
+            | "ftell"
+            | "getenv"
+            | "system"
+            | "time"
+            | "clock"
+            | "_errno"
+            | "__getmainargs"
+            | "__set_app_type"
+            | "_acmdln"
+            | "_initterm"
+            | "_initterm_e"
+            | "_configthreadlocale"
+            | "lpp_c_malloc"
+            | "lpp_c_free"
+            | "lpp_c_load_u8"
+            | "lpp_c_store_u8"
+            | "lpp_c_load_i32"
+            | "lpp_c_store_i32"
+            | "lpp_c_load_i64"
+            | "lpp_c_store_i64"
+            | "dlopen"
+            | "dlsym"
+            | "dlclose"
+            | "dlerror"
+            | "vsnprintf"
+            | "vfprintf"
+            | "atoi"
+            | "atol"
+            | "strtol"
+            | "strtoul"
+            | "strtod"
+            | "qsort"
+            | "bsearch"
+            | "rand"
+            | "srand"
+            | "tolower"
+            | "toupper"
+            | "isdigit"
+            | "isalpha"
+            | "isspace"
+            | "_beginthreadex"
+            | "_endthreadex"
+            | "__iob_func"
+            | "__acrt_iob_func"
+            | "_fdopen"
+            | "_fileno"
+            | "rewind"
+            | "fgets"
+            | "fputs"
+            | "ungetc"
+            | "setvbuf"
+            | "perror"
+            | "strerror"
+            | "memchr"
+            | "strdup"
+            | "_strdup"
+            | "strncpy_s"
+            | "strcpy_s"
     )
 }
 
@@ -3719,32 +3990,109 @@ fn is_kernel32_symbol(name: &str) -> bool {
     let clean = name.strip_prefix("__imp_").unwrap_or(name);
     matches!(
         clean,
-        "ExitProcess" | "GetTickCount64" | "LoadLibraryA" | "LoadLibraryW" | "FreeLibrary" | "GetProcAddress"
-            | "GetStdHandle" | "WriteFile" | "ReadFile" | "VirtualAlloc" | "VirtualFree"
-            | "VirtualProtect" | "CreateThread" | "WaitForSingleObject" | "WaitForMultipleObjects"
-            | "CloseHandle" | "CreateFileA" | "CreateFileW" | "GetFileSize" | "GetFileSizeEx" | "SetFilePointer" | "SetFilePointerEx" | "SetEndOfFile"
-            | "DeleteFileA" | "MoveFileA" | "GetFileAttributesA" | "CreateDirectoryA"
-            | "RemoveDirectoryA" | "FindFirstFileA" | "FindNextFileA" | "FindClose" | "Sleep"
-            | "CreateProcessA" | "GetExitCodeProcess" | "CreatePipe" | "GetEnvironmentVariableA"
-            | "SetEnvironmentVariableA" | "GetModuleFileNameA" | "GetModuleHandleA"
-            | "GetModuleHandleW" | "GetLastError" | "SetLastError" | "QueryPerformanceCounter"
-            | "QueryPerformanceFrequency" | "GetCommandLineA" | "GetCommandLineW"
-            | "GetProcessHeap" | "HeapAlloc" | "HeapFree" | "HeapReAlloc" | "FormatMessageA"
-            | "GetConsoleMode" | "SetConsoleMode" | "FlushFileBuffers" | "GetSystemTimeAsFileTime"
-            | "InitializeCriticalSection" | "EnterCriticalSection" | "LeaveCriticalSection"
-            | "DeleteCriticalSection" | "TlsAlloc" | "TlsGetValue" | "TlsSetValue" | "TlsFree"
-            | "GetCurrentThreadId" | "GetCurrentProcessId" | "GetCurrentProcess"
-            | "TerminateProcess" | "IsDebuggerPresent" | "SetUnhandledExceptionFilter"
-            | "AddVectoredExceptionHandler" | "RaiseException" | "RtlCaptureContext"
-            | "RtlLookupFunctionEntry" | "RtlVirtualUnwind" | "MultiByteToWideChar"
-            | "WideCharToMultiByte" | "GetACP" | "GetConsoleOutputCP" | "WriteConsoleA"
-            | "ReadConsoleA" | "GetFileType" | "SetHandleInformation" | "DuplicateHandle"
-            | "CreateEventA" | "SetEvent" | "ResetEvent" | "CreateMutexA" | "ReleaseMutex"
-            | "GetSystemInfo" | "GetNativeSystemInfo" | "GlobalMemoryStatusEx"
-            | "GetDiskFreeSpaceExA" | "OutputDebugStringA" | "DebugBreak"
-            | "InitializeSListHead" | "EncodePointer" | "DecodePointer"
-            | "GetStartupInfoW" | "GetStartupInfoA" | "SetDefaultDllDirectories"
-            | "GetTempPathA" | "GetFullPathNameA" | "GetEnvironmentVariableW"
+        "ExitProcess"
+            | "GetTickCount64"
+            | "LoadLibraryA"
+            | "LoadLibraryW"
+            | "FreeLibrary"
+            | "GetProcAddress"
+            | "GetStdHandle"
+            | "WriteFile"
+            | "ReadFile"
+            | "VirtualAlloc"
+            | "VirtualFree"
+            | "VirtualProtect"
+            | "CreateThread"
+            | "WaitForSingleObject"
+            | "WaitForMultipleObjects"
+            | "CloseHandle"
+            | "CreateFileA"
+            | "CreateFileW"
+            | "GetFileSize"
+            | "GetFileSizeEx"
+            | "SetFilePointer"
+            | "SetFilePointerEx"
+            | "SetEndOfFile"
+            | "DeleteFileA"
+            | "MoveFileA"
+            | "GetFileAttributesA"
+            | "CreateDirectoryA"
+            | "RemoveDirectoryA"
+            | "FindFirstFileA"
+            | "FindNextFileA"
+            | "FindClose"
+            | "Sleep"
+            | "CreateProcessA"
+            | "GetExitCodeProcess"
+            | "CreatePipe"
+            | "GetEnvironmentVariableA"
+            | "SetEnvironmentVariableA"
+            | "GetModuleFileNameA"
+            | "GetModuleHandleA"
+            | "GetModuleHandleW"
+            | "GetLastError"
+            | "SetLastError"
+            | "QueryPerformanceCounter"
+            | "QueryPerformanceFrequency"
+            | "GetCommandLineA"
+            | "GetCommandLineW"
+            | "GetProcessHeap"
+            | "HeapAlloc"
+            | "HeapFree"
+            | "HeapReAlloc"
+            | "FormatMessageA"
+            | "GetConsoleMode"
+            | "SetConsoleMode"
+            | "FlushFileBuffers"
+            | "GetSystemTimeAsFileTime"
+            | "InitializeCriticalSection"
+            | "EnterCriticalSection"
+            | "LeaveCriticalSection"
+            | "DeleteCriticalSection"
+            | "TlsAlloc"
+            | "TlsGetValue"
+            | "TlsSetValue"
+            | "TlsFree"
+            | "GetCurrentThreadId"
+            | "GetCurrentProcessId"
+            | "GetCurrentProcess"
+            | "TerminateProcess"
+            | "IsDebuggerPresent"
+            | "SetUnhandledExceptionFilter"
+            | "AddVectoredExceptionHandler"
+            | "RaiseException"
+            | "RtlCaptureContext"
+            | "RtlLookupFunctionEntry"
+            | "RtlVirtualUnwind"
+            | "MultiByteToWideChar"
+            | "WideCharToMultiByte"
+            | "GetACP"
+            | "GetConsoleOutputCP"
+            | "WriteConsoleA"
+            | "ReadConsoleA"
+            | "GetFileType"
+            | "SetHandleInformation"
+            | "DuplicateHandle"
+            | "CreateEventA"
+            | "SetEvent"
+            | "ResetEvent"
+            | "CreateMutexA"
+            | "ReleaseMutex"
+            | "GetSystemInfo"
+            | "GetNativeSystemInfo"
+            | "GlobalMemoryStatusEx"
+            | "GetDiskFreeSpaceExA"
+            | "OutputDebugStringA"
+            | "DebugBreak"
+            | "InitializeSListHead"
+            | "EncodePointer"
+            | "DecodePointer"
+            | "GetStartupInfoW"
+            | "GetStartupInfoA"
+            | "SetDefaultDllDirectories"
+            | "GetTempPathA"
+            | "GetFullPathNameA"
+            | "GetEnvironmentVariableW"
             | "CreateDirectoryW"
     ) || clean.starts_with("K32")
 }
@@ -3753,20 +4101,71 @@ fn is_user32_symbol(name: &str) -> bool {
     let clean = name.strip_prefix("__imp_").unwrap_or(name);
     matches!(
         clean,
-        "CreateWindowExA" | "CreateWindowExW" | "DestroyWindow" | "DefWindowProcA"
-            | "DefWindowProcW" | "PostQuitMessage" | "RegisterClassA" | "RegisterClassExA"
-            | "RegisterClassW" | "RegisterClassExW" | "GetDC" | "ReleaseDC" | "LoadCursorA" | "LoadCursorW"
-            | "PeekMessageA" | "PeekMessageW" | "GetMessageA" | "GetMessageW" | "TranslateMessage"
-            | "DispatchMessageA" | "DispatchMessageW" | "GetAsyncKeyState" | "GetKeyState"
-            | "GetCursorPos" | "ScreenToClient" | "ClientToScreen" | "FillRect" | "ShowWindow"
-            | "UpdateWindow" | "SetForegroundWindow" | "MessageBoxA" | "MessageBoxW"
-            | "LoadIconA" | "LoadIconW" | "SetWindowPos" | "BringWindowToTop" | "BeginPaint" | "EndPaint"
-            | "SetProcessDPIAware" | "AdjustWindowRectEx" | "GetClientRect" | "GetWindowRect"
-            | "InvalidateRect" | "SetWindowTextA" | "GetWindowTextA" | "ShowCursor"
-            | "SetCursor" | "LoadImageA" | "SendMessageA" | "PostMessageA" | "KillTimer"
-            | "SetTimer" | "GetSystemMetrics" | "MonitorFromWindow" | "GetMonitorInfoA"
-            | "EnumDisplaySettingsA" | "ChangeDisplaySettingsA" | "ReleaseCapture"
-            | "SetCapture" | "TrackMouseEvent" | "wsprintfA" | "wsprintfW" | "wvsprintfA" | "wvsprintfW" | "MsgWaitForMultipleObjects"
+        "CreateWindowExA"
+            | "CreateWindowExW"
+            | "DestroyWindow"
+            | "DefWindowProcA"
+            | "DefWindowProcW"
+            | "PostQuitMessage"
+            | "RegisterClassA"
+            | "RegisterClassExA"
+            | "RegisterClassW"
+            | "RegisterClassExW"
+            | "GetDC"
+            | "ReleaseDC"
+            | "LoadCursorA"
+            | "LoadCursorW"
+            | "PeekMessageA"
+            | "PeekMessageW"
+            | "GetMessageA"
+            | "GetMessageW"
+            | "TranslateMessage"
+            | "DispatchMessageA"
+            | "DispatchMessageW"
+            | "GetAsyncKeyState"
+            | "GetKeyState"
+            | "GetCursorPos"
+            | "ScreenToClient"
+            | "ClientToScreen"
+            | "FillRect"
+            | "ShowWindow"
+            | "UpdateWindow"
+            | "SetForegroundWindow"
+            | "MessageBoxA"
+            | "MessageBoxW"
+            | "LoadIconA"
+            | "LoadIconW"
+            | "SetWindowPos"
+            | "BringWindowToTop"
+            | "BeginPaint"
+            | "EndPaint"
+            | "SetProcessDPIAware"
+            | "AdjustWindowRectEx"
+            | "GetClientRect"
+            | "GetWindowRect"
+            | "InvalidateRect"
+            | "SetWindowTextA"
+            | "GetWindowTextA"
+            | "ShowCursor"
+            | "SetCursor"
+            | "LoadImageA"
+            | "SendMessageA"
+            | "PostMessageA"
+            | "KillTimer"
+            | "SetTimer"
+            | "GetSystemMetrics"
+            | "MonitorFromWindow"
+            | "GetMonitorInfoA"
+            | "EnumDisplaySettingsA"
+            | "ChangeDisplaySettingsA"
+            | "ReleaseCapture"
+            | "SetCapture"
+            | "TrackMouseEvent"
+            | "wsprintfA"
+            | "wsprintfW"
+            | "wvsprintfA"
+            | "wvsprintfW"
+            | "MsgWaitForMultipleObjects"
     )
 }
 
@@ -3774,14 +4173,42 @@ fn is_gdi32_symbol(name: &str) -> bool {
     let clean = name.strip_prefix("__imp_").unwrap_or(name);
     matches!(
         clean,
-        "CreateCompatibleDC" | "CreateCompatibleBitmap" | "SelectObject" | "DeleteDC"
-            | "DeleteObject" | "CreateSolidBrush" | "CreatePen" | "RoundRect" | "TextOutA"
-            | "SetBkMode" | "SetTextColor" | "BitBlt" | "StretchBlt" | "Ellipse" | "MoveToEx"
-            | "LineTo" | "GetTextExtentPoint32A" | "CreateFontA" | "SetStretchBltMode"
-            | "SetBrushOrgEx" | "SetMapMode" | "SetGraphicsMode" | "SetTextCharacterExtra"
-            | "SetTextAlign" | "SetLayout" | "GetStockObject" | "Rectangle" | "Polygon"
-            | "Polyline" | "CreateDIBSection" | "GetDIBits" | "SetDIBits" | "ChoosePixelFormat"
-            | "SetPixelFormat" | "SwapBuffers" | "DescribePixelFormat"
+        "CreateCompatibleDC"
+            | "CreateCompatibleBitmap"
+            | "SelectObject"
+            | "DeleteDC"
+            | "DeleteObject"
+            | "CreateSolidBrush"
+            | "CreatePen"
+            | "RoundRect"
+            | "TextOutA"
+            | "SetBkMode"
+            | "SetTextColor"
+            | "BitBlt"
+            | "StretchBlt"
+            | "Ellipse"
+            | "MoveToEx"
+            | "LineTo"
+            | "GetTextExtentPoint32A"
+            | "CreateFontA"
+            | "SetStretchBltMode"
+            | "SetBrushOrgEx"
+            | "SetMapMode"
+            | "SetGraphicsMode"
+            | "SetTextCharacterExtra"
+            | "SetTextAlign"
+            | "SetLayout"
+            | "GetStockObject"
+            | "Rectangle"
+            | "Polygon"
+            | "Polyline"
+            | "CreateDIBSection"
+            | "GetDIBits"
+            | "SetDIBits"
+            | "ChoosePixelFormat"
+            | "SetPixelFormat"
+            | "SwapBuffers"
+            | "DescribePixelFormat"
     )
 }
 
@@ -3789,12 +4216,41 @@ fn is_ws2_32_symbol(name: &str) -> bool {
     let clean = name.strip_prefix("__imp_").unwrap_or(name);
     matches!(
         clean,
-        "WSAStartup" | "WSACleanup" | "WSAGetLastError" | "WSAIoctl" | "WSASocketA"
-            | "WSARecv" | "WSASend" | "socket" | "bind" | "listen" | "accept" | "connect"
-            | "send" | "recv" | "sendto" | "recvfrom" | "closesocket" | "shutdown" | "select"
-            | "htons" | "htonl" | "ntohs" | "ntohl" | "getaddrinfo" | "freeaddrinfo"
-            | "gethostname" | "getsockname" | "getpeername" | "setsockopt" | "getsockopt"
-            | "ioctlsocket" | "inet_ntoa" | "inet_addr" | "WSAPoll" | "WSADuplicateSocketA"
+        "WSAStartup"
+            | "WSACleanup"
+            | "WSAGetLastError"
+            | "WSAIoctl"
+            | "WSASocketA"
+            | "WSARecv"
+            | "WSASend"
+            | "socket"
+            | "bind"
+            | "listen"
+            | "accept"
+            | "connect"
+            | "send"
+            | "recv"
+            | "sendto"
+            | "recvfrom"
+            | "closesocket"
+            | "shutdown"
+            | "select"
+            | "htons"
+            | "htonl"
+            | "ntohs"
+            | "ntohl"
+            | "getaddrinfo"
+            | "freeaddrinfo"
+            | "gethostname"
+            | "getsockname"
+            | "getpeername"
+            | "setsockopt"
+            | "getsockopt"
+            | "ioctlsocket"
+            | "inet_ntoa"
+            | "inet_addr"
+            | "WSAPoll"
+            | "WSADuplicateSocketA"
     )
 }
 
@@ -3802,10 +4258,21 @@ fn is_advapi32_symbol(name: &str) -> bool {
     let clean = name.strip_prefix("__imp_").unwrap_or(name);
     matches!(
         clean,
-        "RegOpenKeyExA" | "RegCloseKey" | "RegQueryValueExA" | "RegSetValueExA"
-            | "RegCreateKeyExA" | "RegDeleteKeyA" | "RegEnumKeyExA" | "CryptAcquireContextA"
-            | "CryptReleaseContext" | "CryptGenRandom" | "GetUserNameA" | "OpenProcessToken"
-            | "GetTokenInformation" | "ConvertSidToStringSidA" | "SystemFunction036"
+        "RegOpenKeyExA"
+            | "RegCloseKey"
+            | "RegQueryValueExA"
+            | "RegSetValueExA"
+            | "RegCreateKeyExA"
+            | "RegDeleteKeyA"
+            | "RegEnumKeyExA"
+            | "CryptAcquireContextA"
+            | "CryptReleaseContext"
+            | "CryptGenRandom"
+            | "GetUserNameA"
+            | "OpenProcessToken"
+            | "GetTokenInformation"
+            | "ConvertSidToStringSidA"
+            | "SystemFunction036"
     )
 }
 
@@ -3813,8 +4280,13 @@ fn is_shell32_symbol(name: &str) -> bool {
     let clean = name.strip_prefix("__imp_").unwrap_or(name);
     matches!(
         clean,
-        "SHGetFolderPathA" | "SHGetKnownFolderPath" | "ShellExecuteA" | "DragQueryFileA"
-            | "DragFinish" | "CommandLineToArgvW" | "SHGetFileInfoA"
+        "SHGetFolderPathA"
+            | "SHGetKnownFolderPath"
+            | "ShellExecuteA"
+            | "DragQueryFileA"
+            | "DragFinish"
+            | "CommandLineToArgvW"
+            | "SHGetFileInfoA"
     )
 }
 
@@ -3822,9 +4294,16 @@ fn is_ole32_symbol(name: &str) -> bool {
     let clean = name.strip_prefix("__imp_").unwrap_or(name);
     matches!(
         clean,
-        "CoInitializeEx" | "CoUninitialize" | "CoCreateInstance" | "CoTaskMemFree"
-            | "CoTaskMemAlloc" | "OleInitialize" | "OleUninitialize" | "CLSIDFromString"
-            | "StringFromGUID2" | "CoInitializeSecurity"
+        "CoInitializeEx"
+            | "CoUninitialize"
+            | "CoCreateInstance"
+            | "CoTaskMemFree"
+            | "CoTaskMemAlloc"
+            | "OleInitialize"
+            | "OleUninitialize"
+            | "CLSIDFromString"
+            | "StringFromGUID2"
+            | "CoInitializeSecurity"
     )
 }
 
@@ -3832,8 +4311,14 @@ fn is_oleaut32_symbol(name: &str) -> bool {
     let clean = name.strip_prefix("__imp_").unwrap_or(name);
     matches!(
         clean,
-        "SysAllocString" | "SysFreeString" | "SysStringLen" | "VariantInit" | "VariantClear"
-            | "VariantChangeType" | "SafeArrayCreate" | "SafeArrayDestroy"
+        "SysAllocString"
+            | "SysFreeString"
+            | "SysStringLen"
+            | "VariantInit"
+            | "VariantClear"
+            | "VariantChangeType"
+            | "SafeArrayCreate"
+            | "SafeArrayDestroy"
     )
 }
 
@@ -3841,8 +4326,13 @@ fn is_ntdll_symbol(name: &str) -> bool {
     let clean = name.strip_prefix("__imp_").unwrap_or(name);
     matches!(
         clean,
-        "RtlGetVersion" | "NtQueryInformationProcess" | "NtDelayExecution" | "RtlNtStatusToDosError"
-            | "NtQuerySystemInformation" | "RtlAddFunctionTable" | "RtlDeleteFunctionTable"
+        "RtlGetVersion"
+            | "NtQueryInformationProcess"
+            | "NtDelayExecution"
+            | "RtlNtStatusToDosError"
+            | "NtQuerySystemInformation"
+            | "RtlAddFunctionTable"
+            | "RtlDeleteFunctionTable"
     )
 }
 
@@ -3850,9 +4340,16 @@ fn is_bcrypt_symbol(name: &str) -> bool {
     let clean = name.strip_prefix("__imp_").unwrap_or(name);
     matches!(
         clean,
-        "BCryptOpenAlgorithmProvider" | "BCryptCloseAlgorithmProvider" | "BCryptGenRandom"
-            | "BCryptCreateHash" | "BCryptHashData" | "BCryptFinishHash" | "BCryptDestroyHash"
-            | "BCryptGenerateSymmetricKey" | "BCryptEncrypt" | "BCryptDecrypt"
+        "BCryptOpenAlgorithmProvider"
+            | "BCryptCloseAlgorithmProvider"
+            | "BCryptGenRandom"
+            | "BCryptCreateHash"
+            | "BCryptHashData"
+            | "BCryptFinishHash"
+            | "BCryptDestroyHash"
+            | "BCryptGenerateSymmetricKey"
+            | "BCryptEncrypt"
+            | "BCryptDecrypt"
             | "BCryptDestroyKey"
     )
 }
@@ -3884,7 +4381,11 @@ fn build_imports(
         }
     }
     let dll_count = by_dll.len();
-    let desc_size = if dll_count == 0 { 0 } else { (dll_count + 1) * 20 };
+    let desc_size = if dll_count == 0 {
+        0
+    } else {
+        (dll_count + 1) * 20
+    };
     let mut total_entries = 0;
     for funcs in by_dll.values() {
         total_entries += funcs.len() + 1;
@@ -4031,7 +4532,9 @@ pub fn write_pe_with_options(
         .into_iter()
         .filter(|u| {
             !merged.syms.contains_key(u)
-                && !raw_imports.iter().any(|i| i == u || u == &format!("__imp_{i}"))
+                && !raw_imports
+                    .iter()
+                    .any(|i| i == u || u == &format!("__imp_{i}"))
                 && !u.starts_with(".refptr.")
                 && u != "__ImageBase"
         })
@@ -4062,7 +4565,8 @@ pub fn write_pe_with_options(
         return Err(LinkError {
             message: "unresolved COFF symbols".into(),
             unresolved: unknown_leftover,
-        }.into());
+        }
+        .into());
     }
 
     let refptr_data_off = merged.data.len();
@@ -4291,13 +4795,7 @@ pub fn write_pe_with_options(
                     // shift inferred from instruction size field — default 3 (64-bit)
                     let instr = a64_read(patch_buf, patch)?;
                     let size = (instr >> 30) & 3;
-                    a64_patch_ldst_lo12(
-                        patch_buf,
-                        patch,
-                        image_base + target,
-                        rel.addend,
-                        size,
-                    )?;
+                    a64_patch_ldst_lo12(patch_buf, patch, image_base + target, rel.addend, size)?;
                 }
                 (Machine::Aarch64, ARM64_BRANCH19) => {
                     let p = image_base + patch_rva_addr as u64;
@@ -4524,7 +5022,10 @@ pub fn write_pe_with_options(
         for &(start, len) in &merged.pdata_ranges {
             if len >= 12 && start + len <= merged.rodata.len() {
                 let slice = &mut merged.rodata[start..start + len];
-                let mut entries: Vec<[u8; 12]> = slice.chunks_exact(12).map(|c| c.try_into().unwrap()).collect();
+                let mut entries: Vec<[u8; 12]> = slice
+                    .chunks_exact(12)
+                    .map(|c| c.try_into().unwrap())
+                    .collect();
                 entries.sort_by_key(|e| u32::from_le_bytes(e[0..4].try_into().unwrap()));
                 for (i, entry) in entries.iter().enumerate() {
                     slice[i * 12..(i + 1) * 12].copy_from_slice(entry);
@@ -4884,7 +5385,11 @@ pub fn write_macho_with_options(
 
     // macOS rejects static ARM64 executables outright — the kernel requires at least
     // libSystem to be loaded. Emit a clear policy error instead of a broken binary.
-    if !opts.shared && machine == Machine::Aarch64 && opts.libraries.is_empty() && opts.needed.is_empty() {
+    if !opts.shared
+        && machine == Machine::Aarch64
+        && opts.libraries.is_empty()
+        && opts.needed.is_empty()
+    {
         return Err(format!(
             "lpp-link: dynamic libSystem imports are required for ARM64 Mach-O \
  executables; pass -l System or link dynamically (macOS policy)"
@@ -5063,12 +5568,22 @@ pub fn write_macho_with_options(
             // 1. Scanned dylib exports (sym_to_dylib_ord built above from actual .dylib files)
             // 2. Explicit --import DLL=sym mapping (extra_imports)
             // 3. Fall back to ordinal 1 (libSystem) — shouldn't happen in practice
-            let raw_ord = if let Some(&ord) = sym_to_dylib_ord.get(name).or_else(|| sym_to_dylib_ord.get(clean)) {
+            let raw_ord = if let Some(&ord) = sym_to_dylib_ord
+                .get(name)
+                .or_else(|| sym_to_dylib_ord.get(clean))
+            {
                 ord
             } else {
-                let target_dylib = opts.extra_imports.get(clean).or_else(|| opts.extra_imports.get(name));
+                let target_dylib = opts
+                    .extra_imports
+                    .get(clean)
+                    .or_else(|| opts.extra_imports.get(name));
                 if let Some(td) = target_dylib {
-                    dylibs.iter().position(|d| d.contains(td.as_str())).map(|p| p + 1).unwrap_or(1)
+                    dylibs
+                        .iter()
+                        .position(|d| d.contains(td.as_str()))
+                        .map(|p| p + 1)
+                        .unwrap_or(1)
                 } else {
                     1usize // libSystem fallback
                 }
@@ -5205,7 +5720,10 @@ pub fn write_macho_with_options(
             n.push(0);
             n
         };
-        if let Some(p) = strtab.windows(needle.len()).position(|w| w == needle.as_slice()) {
+        if let Some(p) = strtab
+            .windows(needle.len())
+            .position(|w| w == needle.as_slice())
+        {
             strx = p as u32;
         }
         let va = match sy.class {
@@ -5572,17 +6090,9 @@ pub fn write_macho_with_options(
     // SYMTAB
     put_u32(&mut bin, c, 0x2);
     put_u32(&mut bin, c + 4, 24);
-    put_u32(
-        &mut bin,
-        c + 8,
-        (linkedit_fileoff + symoff_in_le) as u32,
-    );
+    put_u32(&mut bin, c + 8, (linkedit_fileoff + symoff_in_le) as u32);
     put_u32(&mut bin, c + 12, nlists.len() as u32);
-    put_u32(
-        &mut bin,
-        c + 16,
-        (linkedit_fileoff + stroff_in_le) as u32,
-    );
+    put_u32(&mut bin, c + 16, (linkedit_fileoff + stroff_in_le) as u32);
     put_u32(&mut bin, c + 20, strtab.len() as u32);
     c += 24;
 
@@ -5966,7 +6476,11 @@ pub fn expand_response_files(args: Vec<String>) -> Result<Vec<String>, String> {
     Ok(expanded)
 }
 
-fn resolve_lib(name: &str, paths: &[PathBuf], fmt: Option<OutputFormat>) -> Result<PathBuf, String> {
+fn resolve_lib(
+    name: &str,
+    paths: &[PathBuf],
+    fmt: Option<OutputFormat>,
+) -> Result<PathBuf, String> {
     let p_name = Path::new(name);
     if p_name.is_file() {
         return Ok(p_name.to_path_buf());
@@ -6023,8 +6537,13 @@ fn resolve_lib(name: &str, paths: &[PathBuf], fmt: Option<OutputFormat>) -> Resu
 }
 
 fn parse_hex_u64(s: &str) -> Result<u64, String> {
-    let t = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")).unwrap_or(s);
-    u64::from_str_radix(t, 16).or_else(|_| s.parse::<u64>()).map_err(|_| format!("invalid integer '{s}'"))
+    let t = s
+        .strip_prefix("0x")
+        .or_else(|| s.strip_prefix("0X"))
+        .unwrap_or(s);
+    u64::from_str_radix(t, 16)
+        .or_else(|_| s.parse::<u64>())
+        .map_err(|_| format!("invalid integer '{s}'"))
 }
 
 pub fn link_cli(args: &[String]) -> Result<(), String> {
@@ -6052,9 +6571,17 @@ pub fn link_cli(args: &[String]) -> Result<(), String> {
     let mut inputs: Vec<PathBuf> = Vec::new();
     let mut output: Option<PathBuf> = None;
     let mut i = 0usize;
-    if matches!(args.first().map(String::as_str),
-        Some("pe") | Some("elf") | Some("macho") | Some("macho-arm64") | Some("macho-x86_64")
-        | Some("elf-arm64") | Some("elf-x86_64") | Some("pe-arm64") | Some("pe-x86_64")
+    if matches!(
+        args.first().map(String::as_str),
+        Some("pe")
+            | Some("elf")
+            | Some("macho")
+            | Some("macho-arm64")
+            | Some("macho-x86_64")
+            | Some("elf-arm64")
+            | Some("elf-x86_64")
+            | Some("pe-arm64")
+            | Some("pe-x86_64")
     ) {
         opts.format = Some(match args[0].as_str() {
             "pe" | "pe-arm64" | "pe-x86_64" => OutputFormat::Pe,
@@ -6074,9 +6601,7 @@ pub fn link_cli(args: &[String]) -> Result<(), String> {
         match a {
             "-o" => {
                 i += 1;
-                output = Some(PathBuf::from(
-                    args.get(i).ok_or("missing argument for -o")?,
-                ));
+                output = Some(PathBuf::from(args.get(i).ok_or("missing argument for -o")?));
             }
             "-e" | "--entry" => {
                 i += 1;
@@ -6212,7 +6737,10 @@ pub fn link_cli(args: &[String]) -> Result<(), String> {
     for path in &inputs {
         if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
             let ext_lower = ext.to_lowercase();
-            if matches!(ext_lower.as_str(), "c" | "cpp" | "cc" | "cxx" | "lpp" | "rs") {
+            if matches!(
+                ext_lower.as_str(),
+                "c" | "cpp" | "cc" | "cxx" | "lpp" | "rs"
+            ) {
                 return Err(format!(
                     "Input file '{}' is a source file. lpp-link requires compiled objects (.o / .obj) or archives (.a / .lib).",
                     path.display()
