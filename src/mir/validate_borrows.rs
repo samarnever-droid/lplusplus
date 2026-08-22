@@ -113,27 +113,18 @@ pub fn validate(program: &MirProgram) -> Result<(), String> {
                         if args.iter().any(|value| is_view(function, value)) =>
                     {
                         let target = program.functions.get(callee).ok_or_else(|| {
-                            format!(
-                                "Borrow error in '{}': unknown direct slice reader",
-                                function.name
-                            )
+                            format!("Borrow error in '{}': unknown direct slice reader", function.name)
                         })?;
                         for (index, argument) in args.iter().enumerate() {
-                            if !is_view(function, argument) {
-                                continue;
-                            }
-                            let accepts_view = target
-                                .params
-                                .get(index)
+                            if !is_view(function, argument) { continue; }
+                            let accepts_view = target.params.get(index)
                                 .and_then(|id| target.locals.get(id.0))
                                 .map(|local| local.ty.is_borrowed_view())
                                 .unwrap_or(false);
                             if !accepts_view {
                                 return Err(format!(
                                     "Borrow error in '{}': slice argument {} is passed to retaining function '{}'",
-                                    function.name,
-                                    index + 1,
-                                    target.name
+                                    function.name, index + 1, target.name
                                 ));
                             }
                         }

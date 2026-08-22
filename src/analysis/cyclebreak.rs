@@ -105,9 +105,9 @@ impl OwnershipGraph {
 
     #[allow(dead_code)]
     pub fn is_weak(&self, owner: StructTypeId, field: &str) -> bool {
-        self.edges
-            .iter()
-            .any(|e| e.kind == EdgeKind::NonOwning && e.from == owner && e.field == field)
+        self.edges.iter().any(|e| {
+            e.kind == EdgeKind::NonOwning && e.from == owner && e.field == field
+        })
     }
 }
 
@@ -187,7 +187,9 @@ pub fn break_cycles_with_traits(
                     // runtime target of this field.
                     for (implementor_name, traits) in trait_impls {
                         if traits.contains(type_name.as_str()) {
-                            if let Some(&impl_id) = table.structs_by_name.get(implementor_name) {
+                            if let Some(&impl_id) =
+                                table.structs_by_name.get(implementor_name)
+                            {
                                 if impl_id.0 < n {
                                     list.push((fname.clone(), impl_id));
                                 }
@@ -415,11 +417,7 @@ mod tests {
     fn two_struct_cycle_is_broken() {
         let t = table(vec![("A", vec![("b", 1)]), ("B", vec![("a", 0)])]);
         let g = break_cycles(&t);
-        let weak = g
-            .edges
-            .iter()
-            .filter(|e| e.kind == EdgeKind::NonOwning)
-            .count();
+        let weak = g.edges.iter().filter(|e| e.kind == EdgeKind::NonOwning).count();
         assert_eq!(weak, 1, "exactly one edge should be demoted");
         assert!(owning_subgraph_acyclic(&g, 2));
     }
@@ -432,13 +430,7 @@ mod tests {
             ("C", vec![("a", 0)]),
         ]);
         let g = break_cycles(&t);
-        assert_eq!(
-            g.edges
-                .iter()
-                .filter(|e| e.kind == EdgeKind::NonOwning)
-                .count(),
-            1
-        );
+        assert_eq!(g.edges.iter().filter(|e| e.kind == EdgeKind::NonOwning).count(), 1);
         assert!(owning_subgraph_acyclic(&g, 3));
     }
 
@@ -506,10 +498,7 @@ mod tests {
         ]);
         let g = break_cycles(&t);
         assert_eq!(
-            g.edges
-                .iter()
-                .filter(|e| e.kind == EdgeKind::NonOwning)
-                .count(),
+            g.edges.iter().filter(|e| e.kind == EdgeKind::NonOwning).count(),
             0,
             "a DAG must keep every edge owning"
         );
@@ -526,13 +515,7 @@ mod tests {
             ("D", vec![]),
         ]);
         let g = break_cycles(&t);
-        assert_eq!(
-            g.edges
-                .iter()
-                .filter(|e| e.kind == EdgeKind::NonOwning)
-                .count(),
-            1
-        );
+        assert_eq!(g.edges.iter().filter(|e| e.kind == EdgeKind::NonOwning).count(), 1);
         assert!(owning_subgraph_acyclic(&g, 4));
     }
 
@@ -569,11 +552,7 @@ mod tests {
             })
             .sum();
         let g = break_cycles(&t);
-        assert_eq!(
-            g.edges.len(),
-            expected,
-            "every edge must be classified once"
-        );
+        assert_eq!(g.edges.len(), expected, "every edge must be classified once");
         assert!(owning_subgraph_acyclic(&g, 3));
     }
 
@@ -615,13 +594,12 @@ mod tests {
                 "case {} produced a cyclic owning subgraph (seed path)",
                 case
             );
-            let total: usize = t.definitions.iter().map(|d| d.fields.len()).sum();
-            assert_eq!(
-                g.edges.len(),
-                total,
-                "case {}: classification not total",
-                case
-            );
+            let total: usize = t
+                .definitions
+                .iter()
+                .map(|d| d.fields.len())
+                .sum();
+            assert_eq!(g.edges.len(), total, "case {}: classification not total", case);
         }
     }
 
@@ -640,23 +618,17 @@ mod tests {
         t.register_struct("B".to_string());
 
         // S0 (A) has field `b` of type Tuple[B, Int]
-        t.definitions[0].fields = vec![(
-            "b".to_string(),
-            TypeRef::Tuple(vec![TypeRef::Custom(StructTypeId(1)), TypeRef::Int]),
-        )];
+        t.definitions[0].fields = vec![
+            ("b".to_string(), TypeRef::Tuple(vec![TypeRef::Custom(StructTypeId(1)), TypeRef::Int])),
+        ];
         // S1 (B) has field `a` of type A
-        t.definitions[1].fields = vec![("a".to_string(), TypeRef::Custom(StructTypeId(0)))];
+        t.definitions[1].fields = vec![
+            ("a".to_string(), TypeRef::Custom(StructTypeId(0))),
+        ];
 
         let g = break_cycles(&t);
-        let weak = g
-            .edges
-            .iter()
-            .filter(|e| e.kind == EdgeKind::NonOwning)
-            .count();
-        assert_eq!(
-            weak, 1,
-            "exactly one edge should be demoted in cycle through tuple"
-        );
+        let weak = g.edges.iter().filter(|e| e.kind == EdgeKind::NonOwning).count();
+        assert_eq!(weak, 1, "exactly one edge should be demoted in cycle through tuple");
         assert!(owning_subgraph_acyclic(&g, 2));
     }
 

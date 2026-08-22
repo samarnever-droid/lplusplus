@@ -102,15 +102,9 @@ fn validate_aot_program(program: &MirProgram, type_table: &TypeTable) -> Result<
             )),
             TypeRef::Tuple(elements) => {
                 if !(2..=4).contains(&elements.len()) {
-                    return Err(format!(
-                        "tuple arity {} is invalid in {}",
-                        elements.len(),
-                        where_
-                    ));
+                    return Err(format!("tuple arity {} is invalid in {}", elements.len(), where_));
                 }
-                for element in elements {
-                    validate_type(element, where_)?;
-                }
+                for element in elements { validate_type(element, where_)?; }
                 Ok(())
             }
             TypeRef::Slice(element) | TypeRef::Task(element) => validate_type(element, where_),
@@ -175,8 +169,10 @@ fn validate_aot_program(program: &MirProgram, type_table: &TypeTable) -> Result<
                     }
                     MirInstr::Assign(
                         _,
-                        Rvalue::MakeClosure(_, captures) | Rvalue::MakeStackClosure(_, captures),
-                    ) if captures.len() != 1 => {
+                        Rvalue::MakeClosure(_, captures)
+                        | Rvalue::MakeStackClosure(_, captures),
+                    ) if captures.len() != 1 =>
+                    {
                         return Err(format!(
                             "invalid closure environment in '{}': expected exactly one environment pointer, got {}",
                             function.name,
@@ -254,9 +250,8 @@ impl AotCompiler {
             .set("opt_level", &opt_level)
             .map_err(|e| format!("set opt_level '{}': {}", opt_level, e))?;
         let isa_triple: Triple = match target {
-            Some(t) => {
-                Triple::from_str(t).map_err(|e| format!("invalid target triple '{}': {}", t, e))?
-            }
+            Some(t) => Triple::from_str(t)
+                .map_err(|e| format!("invalid target triple '{}': {}", t, e))?,
             None => Triple::host(),
         };
         // AVX2/AVX are x86_64-only CPU features. Gate them on the *selected*
@@ -264,22 +259,17 @@ impl AotCompiler {
         // cross-target (e.g. aarch64-linux-android) does not try to enable x86
         // features on an aarch64 ISA builder.
         let target_is_x86_64 = isa_triple.architecture.to_string().starts_with("x86_64");
-        let mut isa_builder = cranelift_codegen::isa::lookup(isa_triple).map_err(|e| {
-            format!(
-                "ISA lookup for target '{}': {}",
-                target.unwrap_or("host"),
-                e
-            )
-        })?;
-        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-        fn is_avx2_detected() -> bool {
-            std::is_x86_feature_detected!("avx2")
-        }
+        let mut isa_builder = cranelift_codegen::isa::lookup(isa_triple)
+            .map_err(|e| format!("ISA lookup for target '{}': {}", target.unwrap_or("host"), e))?;
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+fn is_avx2_detected() -> bool {
+    std::is_x86_feature_detected!("avx2")
+}
 
-        #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
-        fn is_avx2_detected() -> bool {
-            false
-        }
+#[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+fn is_avx2_detected() -> bool {
+    false
+}
 
         if std::env::var("LPP_CRANELIFT_SIMD").as_deref() != Ok("0")
             && target_is_x86_64
@@ -373,9 +363,7 @@ impl AotCompiler {
             // NOT be declared as external imports, because that would cause
             // every object file (even non-SIMD programs) to carry unresolved
             // references that break the host linker (cl.exe / cc).
-            if builtin.symbol.starts_with("lpp_vec_i64x2")
-                || builtin.symbol.starts_with("lpp_vec_u8x16")
-            {
+            if builtin.symbol.starts_with("lpp_vec_i64x2") || builtin.symbol.starts_with("lpp_vec_u8x16") {
                 continue;
             }
             if !used_symbols.contains(builtin.symbol) {
@@ -449,9 +437,8 @@ impl AotCompiler {
                 builder.append_block_params_for_function_params(entry);
                 let payload = builder.block_params(entry)[0];
                 let release_ref = self.module.declare_func_in_func(release_id, builder.func);
-                let arena_release_ref = self
-                    .module
-                    .declare_func_in_func(arena_release_id, builder.func);
+                let arena_release_ref =
+                    self.module.declare_func_in_func(arena_release_id, builder.func);
                 let (layout, _) = struct_layout(type_table, struct_id);
 
                 for ((field_name, field_type), field_layout) in
@@ -478,10 +465,7 @@ impl AotCompiler {
                                     .definitions
                                     .get(child_id.0)
                                     .map(|child| child.is_self_referential)
-                                    .unwrap_or(false) =>
-                            {
-                                arena_release_ref
-                            }
+                                    .unwrap_or(false) => arena_release_ref,
                             _ => release_ref,
                         };
                         builder.ins().call(release, &[child]);
@@ -538,14 +522,11 @@ impl AotCompiler {
             let mut signature = self.module.make_signature();
             signature.params.push(AbiParam::new(cl_types::I64));
             signature.returns.push(AbiParam::new(cl_types::I64));
-            let id = self
-                .module
-                .declare_function(
-                    &format!("__lpp_task_thunk_{}", function.id.0),
-                    Linkage::Export,
-                    &signature,
-                )
-                .map_err(|error| format!("declare task thunk '{}': {:?}", function.name, error))?;
+            let id = self.module.declare_function(
+                &format!("__lpp_task_thunk_{}", function.id.0),
+                Linkage::Export,
+                &signature,
+            ).map_err(|error| format!("declare task thunk '{}': {:?}", function.name, error))?;
             self.task_thunk_ids.insert(function.id, id);
         }
         Ok(())
@@ -558,16 +539,8 @@ impl AotCompiler {
             let thunk_id = self.task_thunk_ids[&function.id];
             let target_id = self.func_ids[&function.id];
             let mut context = self.module.make_context();
-            context
-                .func
-                .signature
-                .params
-                .push(AbiParam::new(cl_types::I64));
-            context
-                .func
-                .signature
-                .returns
-                .push(AbiParam::new(cl_types::I64));
+            context.func.signature.params.push(AbiParam::new(cl_types::I64));
+            context.func.signature.returns.push(AbiParam::new(cl_types::I64));
             context.func.name = cranelift_codegen::ir::UserFuncName::user(0, thunk_id.as_u32());
             let mut builder_context = FunctionBuilderContext::new();
             {
@@ -576,9 +549,7 @@ impl AotCompiler {
                 builder.switch_to_block(entry);
                 builder.append_block_params_for_function_params(entry);
                 let environment = builder.block_params(entry)[0];
-                let parameter_types: Vec<TypeRef> = function
-                    .params
-                    .iter()
+                let parameter_types: Vec<TypeRef> = function.params.iter()
                     .map(|id| function.locals[id.0].ty.clone())
                     .collect();
                 let (layout, _) = tuple_layout(&parameter_types);
@@ -609,9 +580,7 @@ impl AotCompiler {
                             );
                             let address = builder.ins().stack_addr(cl_types::I64, slot, 0);
                             builder.ins().store(MemFlags::trusted(), value, address, 0);
-                            builder
-                                .ins()
-                                .load(cl_types::I64, MemFlags::trusted(), address, 0)
+                            builder.ins().load(cl_types::I64, MemFlags::trusted(), address, 0)
                         }
                         _ => value,
                     }
@@ -620,8 +589,7 @@ impl AotCompiler {
                 builder.seal_all_blocks();
                 builder.finalize();
             }
-            self.module
-                .define_function(thunk_id, &mut context)
+            self.module.define_function(thunk_id, &mut context)
                 .map_err(|error| format!("define task thunk '{}': {:?}", function.name, error))?;
         }
         Ok(())
@@ -674,31 +642,29 @@ impl AotCompiler {
             let entry = builder.create_block();
             builder.switch_to_block(entry);
             if user_main.is_async {
-                let tuple_alloc = self
-                    .module
-                    .declare_func_in_func(self.builtin_ids["lpp_tuple_alloc"], builder.func);
+                let tuple_alloc = self.module.declare_func_in_func(
+                    self.builtin_ids["lpp_tuple_alloc"], builder.func
+                );
                 let size = builder.ins().iconst(cl_types::I64, 16);
                 let zero = builder.ins().iconst(cl_types::I64, 0);
                 let allocation = builder.ins().call(tuple_alloc, &[size, zero, zero]);
                 let environment = builder.inst_results(allocation)[0];
-                let thunk = self
-                    .module
-                    .declare_func_in_func(self.task_thunk_ids[user_main_id], builder.func);
+                let thunk = self.module.declare_func_in_func(
+                    self.task_thunk_ids[user_main_id], builder.func
+                );
                 let thunk_address = builder.ins().func_addr(cl_types::I64, thunk);
-                let task_new = self
-                    .module
-                    .declare_func_in_func(self.builtin_ids["lpp_task_new"], builder.func);
-                let created = builder
-                    .ins()
-                    .call(task_new, &[thunk_address, environment, zero]);
+                let task_new = self.module.declare_func_in_func(
+                    self.builtin_ids["lpp_task_new"], builder.func
+                );
+                let created = builder.ins().call(task_new, &[thunk_address, environment, zero]);
                 let task = builder.inst_results(created)[0];
-                let await_id = self
-                    .module
-                    .declare_func_in_func(self.builtin_ids["lpp_task_await"], builder.func);
+                let await_id = self.module.declare_func_in_func(
+                    self.builtin_ids["lpp_task_await"], builder.func
+                );
                 builder.ins().call(await_id, &[task]);
-                let release = self
-                    .module
-                    .declare_func_in_func(self.builtin_ids["lpp_arc_release"], builder.func);
+                let release = self.module.declare_func_in_func(
+                    self.builtin_ids["lpp_arc_release"], builder.func
+                );
                 builder.ins().call(release, &[task]);
             } else {
                 let main_ref = self.module.declare_func_in_func(main_id, builder.func);
@@ -820,10 +786,7 @@ impl AotCompiler {
         let total = pending.len();
         let next = AtomicUsize::new(0);
         let inputs: Vec<Mutex<Option<(cranelift_module::FuncId, cranelift_codegen::Context)>>> =
-            pending
-                .into_iter()
-                .map(|item| Mutex::new(Some(item)))
-                .collect();
+            pending.into_iter().map(|item| Mutex::new(Some(item))).collect();
         let inputs = Arc::new(inputs);
         let results: Vec<Mutex<Option<CompiledFunction>>> =
             (0..total).map(|_| Mutex::new(None)).collect();
@@ -882,10 +845,7 @@ impl AotCompiler {
             }
         });
 
-        if let Some(message) = failure
-            .into_inner()
-            .map_err(|_| "codegen thread panicked")?
-        {
+        if let Some(message) = failure.into_inner().map_err(|_| "codegen thread panicked")? {
             return Err(message);
         }
 
@@ -918,12 +878,7 @@ impl AotCompiler {
 
     /// Full pipeline: builtins → declare → lower → emit.
     pub fn compile(program: &MirProgram, type_table: &TypeTable) -> Result<Vec<u8>, String> {
-        Self::compile_with_options(
-            program,
-            type_table,
-            false,
-            &std::collections::HashSet::new(),
-        )
+        Self::compile_with_options(program, type_table, false, &std::collections::HashSet::new())
     }
 
     /// `has_extern` reports whether the source declared any FFI block. Foreign

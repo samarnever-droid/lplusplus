@@ -46,8 +46,17 @@ pub struct Diagnostic<'a> {
 impl<'a> Diagnostic<'a> {
     pub fn render(&self) -> String {
         let mut out = String::new();
-        let _ = writeln!(out, "error[{}]: {}", self.kind.code(), self.message);
-        let _ = writeln!(out, "  --> {}:{}:{}", self.filename, self.line, self.column);
+        let _ = writeln!(
+            out,
+            "error[{}]: {}",
+            self.kind.code(),
+            self.message
+        );
+        let _ = writeln!(
+            out,
+            "  --> {}:{}:{}",
+            self.filename, self.line, self.column
+        );
 
         let lines: Vec<&str> = self.source.lines().collect();
         let line_num_str = self.line.to_string();
@@ -72,7 +81,11 @@ impl<'a> Diagnostic<'a> {
                 }
             }
 
-            let _ = writeln!(out, "   {} | {}^ {}", pad, caret_line, self.message);
+            let _ = writeln!(
+                out,
+                "   {} | {}^ {}",
+                pad, caret_line, self.message
+            );
         } else {
             let _ = writeln!(out, "   {} | ^ {}", pad, self.message);
         }
@@ -88,12 +101,7 @@ impl<'a> Diagnostic<'a> {
 
 /// Helper function to parse error strings formatted like `[line 14:col 5] Message`
 /// and render them using `Diagnostic`.
-pub fn render_error_string(
-    filename: &str,
-    source: &str,
-    kind: DiagnosticKind,
-    raw_err: &str,
-) -> String {
+pub fn render_error_string(filename: &str, source: &str, kind: DiagnosticKind, raw_err: &str) -> String {
     let (line, col, msg) = parse_line_col_message_with_source(raw_err, source);
 
     let help = derive_help_message(raw_err, &kind);
@@ -235,12 +243,8 @@ fn derive_help_message(raw_err: &str, kind: &DiagnosticKind) -> Option<String> {
         return Some("verify module imports or symbol declarations".to_string());
     }
     match kind {
-        DiagnosticKind::Lexer => {
-            Some("ensure indentation uses spaces, not tabs, and string quotes match".to_string())
-        }
-        DiagnosticKind::Type => {
-            Some("ensure parameter and return types match the expected signatures".to_string())
-        }
+        DiagnosticKind::Lexer => Some("ensure indentation uses spaces, not tabs, and string quotes match".to_string()),
+        DiagnosticKind::Type => Some("ensure parameter and return types match the expected signatures".to_string()),
         _ => None,
     }
 }

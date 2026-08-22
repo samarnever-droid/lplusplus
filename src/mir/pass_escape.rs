@@ -9,7 +9,7 @@
 //! MIR with a compiler-enforced exhaustive match. This pass is what remains:
 //! read the fact, rewrite the allocation.
 
-use super::escape_solver::{EscapeFacts, Storage, struct_can_stack_allocate};
+use super::escape_solver::{struct_can_stack_allocate, EscapeFacts, Storage};
 use super::ir::*;
 use crate::types::{TypeRef, TypeTable};
 use std::collections::{HashMap, HashSet};
@@ -23,7 +23,11 @@ pub struct EscapeStats {
 
 /// Rewrite frame-local struct and closure allocations to stack payloads for
 /// every managed local the solver proved cannot outlive its frame.
-pub fn run(program: &mut MirProgram, facts: &EscapeFacts, type_table: &TypeTable) -> EscapeStats {
+pub fn run(
+    program: &mut MirProgram,
+    facts: &EscapeFacts,
+    type_table: &TypeTable,
+) -> EscapeStats {
     let mut stats = EscapeStats::default();
 
     for (fid, function) in program.functions.iter_mut() {
@@ -50,7 +54,12 @@ pub fn run(program: &mut MirProgram, facts: &EscapeFacts, type_table: &TypeTable
         moved_into.retain(|src, _| move_count.get(src).copied().unwrap_or(0) == 1);
 
         let frame_local = |id: LocalId| {
-            fn_facts.locals.get(id.0).copied().unwrap_or(Storage::Owned) == Storage::Frame
+            fn_facts
+                .locals
+                .get(id.0)
+                .copied()
+                .unwrap_or(Storage::Owned)
+                == Storage::Frame
         };
 
         let mut candidate_count: HashMap<LocalId, usize> = HashMap::new();

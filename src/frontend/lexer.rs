@@ -69,14 +69,14 @@ pub enum Token {
     Not,       // !
     /// f"hello {name}" — interpolated string (stores parts + expressions)
     FStringLit(Vec<FStringPart>),
-    LParen,   // (
-    RParen,   // )
-    LBracket, // [
-    RBracket, // ]
-    Comma,    // ,
-    Dot,      // .
-    Ellipsis, // ...
-    At,       // @
+    LParen,    // (
+    RParen,    // )
+    LBracket,  // [
+    RBracket,  // ]
+    Comma,     // ,
+    Dot,       // .
+    Ellipsis,  // ...
+    At,        // @
 
     // Significant Whitespace
     Newline,
@@ -303,20 +303,12 @@ impl<'a> Lexer<'a> {
                     }
                 }
                 '+' => {
-                    if self.peek_c() == Some('=') {
-                        self.next_c();
-                        tokens.push(mk_token(Token::PlusEq));
-                    } else {
-                        tokens.push(mk_token(Token::Plus));
-                    }
+                    if self.peek_c() == Some('=') { self.next_c(); tokens.push(mk_token(Token::PlusEq)); }
+                    else { tokens.push(mk_token(Token::Plus)); }
                 }
                 '*' => {
-                    if self.peek_c() == Some('=') {
-                        self.next_c();
-                        tokens.push(mk_token(Token::StarEq));
-                    } else {
-                        tokens.push(mk_token(Token::Star));
-                    }
+                    if self.peek_c() == Some('=') { self.next_c(); tokens.push(mk_token(Token::StarEq)); }
+                    else { tokens.push(mk_token(Token::Star)); }
                 }
                 '/' => {
                     if self.peek_c() == Some('/') {
@@ -336,12 +328,8 @@ impl<'a> Lexer<'a> {
                     }
                 }
                 '%' => {
-                    if self.peek_c() == Some('=') {
-                        self.next_c();
-                        tokens.push(mk_token(Token::PercentEq));
-                    } else {
-                        tokens.push(mk_token(Token::Percent));
-                    }
+                    if self.peek_c() == Some('=') { self.next_c(); tokens.push(mk_token(Token::PercentEq)); }
+                    else { tokens.push(mk_token(Token::Percent)); }
                 }
                 '?' => tokens.push(mk_token(Token::Question)),
                 '&' => {
@@ -374,9 +362,7 @@ impl<'a> Lexer<'a> {
                     tokens.push(mk_token(Token::LParen));
                 }
                 ')' => {
-                    if self.paren_depth > 0 {
-                        self.paren_depth -= 1;
-                    }
+                    if self.paren_depth > 0 { self.paren_depth -= 1; }
                     tokens.push(mk_token(Token::RParen));
                 }
                 '[' => {
@@ -384,9 +370,7 @@ impl<'a> Lexer<'a> {
                     tokens.push(mk_token(Token::LBracket));
                 }
                 ']' => {
-                    if self.paren_depth > 0 {
-                        self.paren_depth -= 1;
-                    }
+                    if self.paren_depth > 0 { self.paren_depth -= 1; }
                     tokens.push(mk_token(Token::RBracket));
                 }
                 ',' => tokens.push(mk_token(Token::Comma)),
@@ -398,15 +382,12 @@ impl<'a> Lexer<'a> {
                             self.next_c();
                             tokens.push(mk_token(Token::Ellipsis));
                         } else {
-                            return Err(format!(
-                                "[line {}:col {}] Lexer error: Expected third '.' in variadic marker",
-                                start_line, start_col
-                            ));
+                            return Err(format!("[line {}:col {}] Lexer error: Expected third '.' in variadic marker", start_line, start_col));
                         }
                     } else {
                         tokens.push(mk_token(Token::Dot));
                     }
-                }
+                },
                 '\'' => {
                     let ch = match self.next_c() {
                         Some('\\') => match self.next_c() {
@@ -417,25 +398,11 @@ impl<'a> Lexer<'a> {
                             Some('\'') => '\'',
                             Some('\\') => '\\',
                             Some('x') => {
-                                let h1 = self.next_c().ok_or_else(|| {
-                                    format!(
-                                        "[line {}:col {}] Unterminated hex escape",
-                                        start_line, start_col
-                                    )
-                                })?;
-                                let h2 = self.next_c().ok_or_else(|| {
-                                    format!(
-                                        "[line {}:col {}] Unterminated hex escape",
-                                        start_line, start_col
-                                    )
-                                })?;
+                                let h1 = self.next_c().ok_or_else(|| format!("[line {}:col {}] Unterminated hex escape", start_line, start_col))?;
+                                let h2 = self.next_c().ok_or_else(|| format!("[line {}:col {}] Unterminated hex escape", start_line, start_col))?;
                                 let hex_str = format!("{}{}", h1, h2);
-                                let val = u8::from_str_radix(&hex_str, 16).map_err(|_| {
-                                    format!(
-                                        "[line {}:col {}] Invalid hex escape '\\x{}'",
-                                        start_line, start_col, hex_str
-                                    )
-                                })?;
+                                let val = u8::from_str_radix(&hex_str, 16)
+                                    .map_err(|_| format!("[line {}:col {}] Invalid hex escape '\\x{}'", start_line, start_col, hex_str))?;
                                 val as char
                             }
                             Some(c) => {
@@ -444,26 +411,13 @@ impl<'a> Lexer<'a> {
                                     start_line, start_col, c
                                 ));
                             }
-                            None => {
-                                return Err(format!(
-                                    "[line {}:col {}] Unterminated char escape",
-                                    start_line, start_col
-                                ));
-                            }
+                            None => return Err(format!("[line {}:col {}] Unterminated char escape", start_line, start_col)),
                         },
                         Some(c) => c,
-                        None => {
-                            return Err(format!(
-                                "[line {}:col {}] Unterminated char literal",
-                                start_line, start_col
-                            ));
-                        }
+                        None => return Err(format!("[line {}:col {}] Unterminated char literal", start_line, start_col)),
                     };
                     if self.next_c() != Some('\'') {
-                        return Err(format!(
-                            "[line {}:col {}] Unclosed char literal",
-                            start_line, start_col
-                        ));
+                        return Err(format!("[line {}:col {}] Unclosed char literal", start_line, start_col));
                     }
                     tokens.push(mk_token(Token::CharLit(ch)));
                 }
@@ -484,18 +438,14 @@ impl<'a> Lexer<'a> {
                                             terminated = true;
                                             break;
                                         }
-                                        s.push('"');
-                                        s.push('"');
+                                        s.push('"'); s.push('"');
                                     }
                                     Some(ch) => s.push(ch),
                                     None => break,
                                 }
                             }
                             if !terminated {
-                                return Err(format!(
-                                    "[line {}:col {}] Lexer error: Unterminated triple-quote string",
-                                    start_line, start_col
-                                ));
+                                return Err(format!("[line {}:col {}] Lexer error: Unterminated triple-quote string", start_line, start_col));
                             }
                             tokens.push(mk_token(Token::StringLit(s)));
                             continue;
@@ -560,19 +510,11 @@ impl<'a> Lexer<'a> {
                             self.next_c(); // consume x
                             let mut hex = String::new();
                             while let Some(hc) = self.peek_c() {
-                                if hc.is_ascii_hexdigit() {
-                                    hex.push(hc);
-                                    self.next_c();
-                                } else {
-                                    break;
-                                }
+                                if hc.is_ascii_hexdigit() { hex.push(hc); self.next_c(); }
+                                else { break; }
                             }
-                            let value = i64::from_str_radix(&hex, 16).map_err(|_| {
-                                format!(
-                                    "[line {}:col {}] Lexer error: Invalid hex literal '0x{}'",
-                                    start_line, start_col, hex
-                                )
-                            })?;
+                            let value = i64::from_str_radix(&hex, 16).map_err(|_|
+                                format!("[line {}:col {}] Lexer error: Invalid hex literal '0x{}'", start_line, start_col, hex))?;
                             tokens.push(mk_token(Token::Int(value)));
                             continue;
                         }
@@ -580,19 +522,11 @@ impl<'a> Lexer<'a> {
                             self.next_c(); // consume b
                             let mut bin = String::new();
                             while let Some(bc) = self.peek_c() {
-                                if bc == '0' || bc == '1' {
-                                    bin.push(bc);
-                                    self.next_c();
-                                } else {
-                                    break;
-                                }
+                                if bc == '0' || bc == '1' { bin.push(bc); self.next_c(); }
+                                else { break; }
                             }
-                            let value = i64::from_str_radix(&bin, 2).map_err(|_| {
-                                format!(
-                                    "[line {}:col {}] Lexer error: Invalid binary literal '0b{}'",
-                                    start_line, start_col, bin
-                                )
-                            })?;
+                            let value = i64::from_str_radix(&bin, 2).map_err(|_|
+                                format!("[line {}:col {}] Lexer error: Invalid binary literal '0b{}'", start_line, start_col, bin))?;
                             tokens.push(mk_token(Token::Int(value)));
                             continue;
                         }
@@ -704,9 +638,7 @@ impl<'a> Lexer<'a> {
                                         }
                                         let mut expr_str = String::new();
                                         while let Some(ec) = self.next_c() {
-                                            if ec == '}' {
-                                                break;
-                                            }
+                                            if ec == '}' { break; }
                                             expr_str.push(ec);
                                         }
                                         parts.push(FStringPart::Expr(expr_str));
@@ -788,16 +720,13 @@ mod tests {
     #[test]
     fn lexes_char_literals() {
         let mut lexer = Lexer::new("'a' '\\n' '\\t'");
-        let tokens = lexer.tokenize().expect("lexer should parse char literals");
+        let tokens = lexer
+            .tokenize()
+            .expect("lexer should parse char literals");
         let raw_tokens: Vec<Token> = tokens.into_iter().map(|st| st.token).collect();
         assert_eq!(
             raw_tokens,
-            vec![
-                Token::CharLit('a'),
-                Token::CharLit('\n'),
-                Token::CharLit('\t'),
-                Token::Eof
-            ]
+            vec![Token::CharLit('a'), Token::CharLit('\n'), Token::CharLit('\t'), Token::Eof]
         );
     }
 
@@ -808,7 +737,10 @@ mod tests {
             .tokenize()
             .expect("lexer should parse break and continue keywords");
         let raw_tokens: Vec<Token> = tokens.into_iter().map(|st| st.token).collect();
-        assert_eq!(raw_tokens, vec![Token::Break, Token::Continue, Token::Eof]);
+        assert_eq!(
+            raw_tokens,
+            vec![Token::Break, Token::Continue, Token::Eof]
+        );
     }
 
     #[test]
@@ -818,9 +750,7 @@ mod tests {
         assert!(err.contains("Unknown escape sequence '\\q'"));
 
         let mut char_lexer = Lexer::new("'\\q'");
-        let char_err = char_lexer
-            .tokenize()
-            .expect_err("should reject \\q char escape");
+        let char_err = char_lexer.tokenize().expect_err("should reject \\q char escape");
         assert!(char_err.contains("Unknown escape sequence '\\q'"));
     }
 }

@@ -72,7 +72,8 @@ impl TargetSpec {
         let os_str = triple.operating_system.to_string();
         let arch_str = triple.architecture.to_string();
         let is_android = os_str.contains("android");
-        let is_termux_like = is_android || (os_str.contains("linux") && is_termux_arch(&arch_str));
+        let is_termux_like =
+            is_android || (os_str.contains("linux") && is_termux_arch(&arch_str));
         let description = format!("{} ({})", trimmed, os_str);
         Ok(TargetSpec {
             raw: Some(trimmed.to_string()),

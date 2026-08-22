@@ -264,12 +264,8 @@ impl Resolver {
                 }
                 TopLevel::Import(import_kind) => {
                     let module = match import_kind {
-                        crate::ast::ImportKind::Module { path, .. } => {
-                            path.last().cloned().unwrap_or_default()
-                        }
-                        crate::ast::ImportKind::Selective { path, .. } => {
-                            path.last().cloned().unwrap_or_default()
-                        }
+                        crate::ast::ImportKind::Module { path, .. } => path.last().cloned().unwrap_or_default(),
+                        crate::ast::ImportKind::Selective { path, .. } => path.last().cloned().unwrap_or_default(),
                     };
                     self.imports.push(module.clone());
                     if module == "json" {
@@ -385,11 +381,9 @@ impl Resolver {
     /// to that thread and are intentionally allowed to be mutable.
     fn check_spawn_capture_mutation(&self, binding: BindingId) -> Result<(), String> {
         let binding = &self.table.bindings[binding.0];
-        if self
-            .spawn_origins
-            .iter()
-            .any(|&origin| self.scope_is_at_or_above(binding.declared_in, origin))
-        {
+        if self.spawn_origins.iter().any(|&origin| {
+            self.scope_is_at_or_above(binding.declared_in, origin)
+        }) {
             return Err(format!(
                 "Cannot mutate captured variable '{}' inside a spawned closure: this would cause a data race.",
                 binding.name
@@ -407,9 +401,7 @@ impl Resolver {
             } => {
                 self.resolve_expr(value)?;
                 for (index, name) in names.iter().enumerate() {
-                    let is_mut = if let Some(existing_id) =
-                        self.table.resolve_name_immutable(self.current_scope, name)
-                    {
+                    let is_mut = if let Some(existing_id) = self.table.resolve_name_immutable(self.current_scope, name) {
                         self.table.bindings[existing_id.0].is_mut
                     } else {
                         false
@@ -435,13 +427,10 @@ impl Resolver {
             } => {
                 self.resolve_expr(value)?; // Resolve value before shadowing occurs!
                 if self.loop_depth > 0 {
-                    if let Some(outer_id) =
-                        self.table.resolve_name_immutable(self.current_scope, name)
-                    {
+                    if let Some(outer_id) = self.table.resolve_name_immutable(self.current_scope, name) {
                         let outer_binding = &self.table.bindings[outer_id.0];
                         if outer_binding.declared_in != self.current_scope
-                            && (outer_binding.kind == BindingKind::Local
-                                || outer_binding.kind == BindingKind::Param)
+                            && (outer_binding.kind == BindingKind::Local || outer_binding.kind == BindingKind::Param)
                         {
                             eprintln!(
                                 "warning: variable '{}' in ':=' shadows an outer variable within a loop; did you mean '{} = ...' to assign to the outer variable?",
@@ -513,7 +502,11 @@ impl Resolver {
                     }
                 }
             }
-            Stmt::AssignIndex { base, index, value } => {
+            Stmt::AssignIndex {
+                base,
+                index,
+                value,
+            } => {
                 self.resolve_expr(base)?;
                 self.resolve_expr(index)?;
                 self.resolve_expr(value)?;
@@ -777,46 +770,21 @@ impl Resolver {
                         if self.imports.contains(module_name) {
                             is_module_call = true;
                             let mangled = format!("{}_{}", module_name, field);
-                            if self
-                                .table
-                                .resolve_name_immutable(self.current_scope, &mangled)
-                                .is_some()
+                            if self.table.resolve_name_immutable(self.current_scope, &mangled).is_some()
                                 || self.is_builtin_resolved(&mangled)
                             {
-                                rewritten =
-                                    Some(Expr::Identifier(mangled, std::cell::Cell::new(None)));
-                            } else if self
-                                .table
-                                .resolve_name_immutable(self.current_scope, field)
-                                .is_some()
+                                rewritten = Some(Expr::Identifier(mangled, std::cell::Cell::new(None)));
+                            } else if self.table.resolve_name_immutable(self.current_scope, field).is_some()
                                 || self.is_builtin_resolved(field)
                             {
-                                rewritten = Some(Expr::Identifier(
-                                    field.clone(),
-                                    std::cell::Cell::new(None),
-                                ));
+                                rewritten = Some(Expr::Identifier(field.clone(), std::cell::Cell::new(None)));
                             } else {
-                                rewritten =
-                                    Some(Expr::Identifier(mangled, std::cell::Cell::new(None)));
+                                rewritten = Some(Expr::Identifier(mangled, std::cell::Cell::new(None)));
                             }
                         } else {
                             // Loophole Fix: Check if user wrote unimported module syntax like gui.key_down() or net.listen()
                             let mangled = format!("{}_{}", module_name, field);
-                            if self.is_builtin_resolved(&mangled)
-                                || matches!(
-                                    module_name.as_str(),
-                                    "gui"
-                                        | "math"
-                                        | "net"
-                                        | "json"
-                                        | "http"
-                                        | "io"
-                                        | "physics"
-                                        | "ecs"
-                                        | "ui"
-                                        | "lreact"
-                                )
-                            {
+                            if self.is_builtin_resolved(&mangled) || matches!(module_name.as_str(), "gui" | "math" | "net" | "json" | "http" | "io" | "physics" | "ecs" | "ui" | "lreact") {
                                 return Err(format!(
                                     "Import Error: Module '{}' is used but not imported. Add 'import {}' at the top of your file.",
                                     module_name, module_name
@@ -826,8 +794,7 @@ impl Resolver {
                     }
 
                     if !is_module_call {
-                        rewritten =
-                            Some(Expr::Identifier(field.clone(), std::cell::Cell::new(None)));
+                        rewritten = Some(Expr::Identifier(field.clone(), std::cell::Cell::new(None)));
                         prepend_base = true;
                     }
                 }
@@ -920,8 +887,7 @@ mod tests {
     fn same_scope_shadowing_creates_distinct_bindings() {
         let mut program = Program {
             declarations: vec![TopLevel::Function(Function {
-                type_params: vec![],
-                name: "main".to_string(),
+                type_params: vec![], name: "main".to_string(),
                 params: vec![],
                 return_type: Type::Void,
                 body: vec![
@@ -969,8 +935,7 @@ mod tests {
     fn rejects_reassigning_immutable_variable() {
         let mut program = Program {
             declarations: vec![TopLevel::Function(Function {
-                type_params: vec![],
-                name: "main".to_string(),
+                type_params: vec![], name: "main".to_string(),
                 params: vec![],
                 return_type: Type::Void,
                 body: vec![
@@ -1002,8 +967,7 @@ mod tests {
     fn rejects_field_mutation_on_immutable_variable() {
         let mut program = Program {
             declarations: vec![TopLevel::Function(Function {
-                type_params: vec![],
-                name: "main".to_string(),
+                type_params: vec![], name: "main".to_string(),
                 params: vec![],
                 return_type: Type::Void,
                 body: vec![
@@ -1035,8 +999,7 @@ mod tests {
     fn rejects_nested_field_mutation_on_immutable_variable() {
         let mut program = Program {
             declarations: vec![TopLevel::Function(Function {
-                type_params: vec![],
-                name: "main".to_string(),
+                type_params: vec![], name: "main".to_string(),
                 params: vec![],
                 return_type: Type::Void,
                 body: vec![
@@ -1049,10 +1012,7 @@ mod tests {
                     },
                     Stmt::AssignField {
                         base: Expr::FieldAccess {
-                            base: Box::new(Expr::Identifier(
-                                "player".to_string(),
-                                std::cell::Cell::new(None),
-                            )),
+                            base: Box::new(Expr::Identifier("player".to_string(), std::cell::Cell::new(None))),
                             field: "pos".to_string(),
                         },
                         field: "x".to_string(),
@@ -1074,8 +1034,7 @@ mod tests {
     fn rejects_break_outside_loop() {
         let mut program = Program {
             declarations: vec![TopLevel::Function(Function {
-                type_params: vec![],
-                name: "main".to_string(),
+                type_params: vec![], name: "main".to_string(),
                 params: vec![],
                 return_type: Type::Void,
                 body: vec![Stmt::Break],
@@ -1240,13 +1199,15 @@ mod tests {
                     },
                     Stmt::While {
                         condition: Expr::BoolLiteral(true),
-                        body: vec![Stmt::LetInferred {
-                            name: "i".to_string(),
-                            ty: None,
-                            is_mut: false,
-                            value: Expr::IntLiteral(1),
-                            binding_id: std::cell::Cell::new(None),
-                        }],
+                        body: vec![
+                            Stmt::LetInferred {
+                                name: "i".to_string(),
+                                ty: None,
+                                is_mut: false,
+                                value: Expr::IntLiteral(1),
+                                binding_id: std::cell::Cell::new(None),
+                            },
+                        ],
                         body_scope: std::cell::Cell::new(None),
                     },
                 ],

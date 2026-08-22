@@ -1,15 +1,15 @@
-use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 
-use lpp::ast::{Program, TopLevel};
 use lpp::diagnostics;
 use lpp::lexer::Lexer;
 use lpp::parser::Parser;
 use lpp::semantic::Resolver;
 use lpp::typecheck::TypeChecker;
+use lpp::ast::{Program, TopLevel};
 
 #[derive(Debug, Serialize, Deserialize)]
 struct JsonRpcRequest {
@@ -149,56 +149,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             "exit" => break,
             "textDocument/didOpen" => {
-                if let Some(uri) = req
-                    .params
-                    .get("textDocument")
-                    .and_then(|t| t.get("uri"))
-                    .and_then(|u| u.as_str())
-                {
-                    if let Some(text) = req
-                        .params
-                        .get("textDocument")
-                        .and_then(|t| t.get("text"))
-                        .and_then(|s| s.as_str())
-                    {
+                if let Some(uri) = req.params.get("textDocument").and_then(|t| t.get("uri")).and_then(|u| u.as_str()) {
+                    if let Some(text) = req.params.get("textDocument").and_then(|t| t.get("text")).and_then(|s| s.as_str()) {
                         documents.insert(uri.to_string(), text.to_string());
                         process_and_publish_diagnostics(&mut writer, uri, text, &mut ast_cache)?;
                     }
                 }
             }
             "textDocument/didChange" => {
-                if let Some(uri) = req
-                    .params
-                    .get("textDocument")
-                    .and_then(|t| t.get("uri"))
-                    .and_then(|u| u.as_str())
-                {
-                    if let Some(changes) =
-                        req.params.get("contentChanges").and_then(|c| c.as_array())
-                    {
-                        if let Some(last_change) = changes
-                            .last()
-                            .and_then(|c| c.get("text"))
-                            .and_then(|s| s.as_str())
-                        {
+                if let Some(uri) = req.params.get("textDocument").and_then(|t| t.get("uri")).and_then(|u| u.as_str()) {
+                    if let Some(changes) = req.params.get("contentChanges").and_then(|c| c.as_array()) {
+                        if let Some(last_change) = changes.last().and_then(|c| c.get("text")).and_then(|s| s.as_str()) {
                             documents.insert(uri.to_string(), last_change.to_string());
-                            process_and_publish_diagnostics(
-                                &mut writer,
-                                uri,
-                                last_change,
-                                &mut ast_cache,
-                            )?;
+                            process_and_publish_diagnostics(&mut writer, uri, last_change, &mut ast_cache)?;
                         }
                     }
                 }
             }
             "textDocument/didSave" => {
-                if let Some(uri) = req
-                    .params
-                    .get("textDocument")
-                    .and_then(|t| t.get("uri"))
-                    .and_then(|u| u.as_str())
-                {
+                if let Some(uri) = req.params.get("textDocument").and_then(|t| t.get("uri")).and_then(|u| u.as_str()) {
                     if let Some(text) = documents.get(uri) {
                         process_and_publish_diagnostics(&mut writer, uri, text, &mut ast_cache)?;
                     }
@@ -222,12 +191,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     json!({ "label": "Buffer", "kind": 21, "detail": "Binary Byte Buffer" }),
                 ];
 
-                if let Some(uri) = req
-                    .params
-                    .get("textDocument")
-                    .and_then(|t| t.get("uri"))
-                    .and_then(|u| u.as_str())
-                {
+                if let Some(uri) = req.params.get("textDocument").and_then(|t| t.get("uri")).and_then(|u| u.as_str()) {
                     if let Some(ast) = ast_cache.get(uri) {
                         for decl in &ast.declarations {
                             match decl {
@@ -268,12 +232,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             "textDocument/documentSymbol" => {
                 let mut symbols = Vec::new();
-                if let Some(uri) = req
-                    .params
-                    .get("textDocument")
-                    .and_then(|t| t.get("uri"))
-                    .and_then(|u| u.as_str())
-                {
+                if let Some(uri) = req.params.get("textDocument").and_then(|t| t.get("uri")).and_then(|u| u.as_str()) {
                     if let Some(ast) = ast_cache.get(uri) {
                         for (idx, decl) in ast.declarations.iter().enumerate() {
                             match decl {
@@ -335,16 +294,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             "textDocument/hover" => {
                 let mut hover_val = "### L++ Language Symbol\nSelect or inspect symbols in L++.";
-                if let Some(uri) = req
-                    .params
-                    .get("textDocument")
-                    .and_then(|t| t.get("uri"))
-                    .and_then(|u| u.as_str())
-                {
+                if let Some(uri) = req.params.get("textDocument").and_then(|t| t.get("uri")).and_then(|u| u.as_str()) {
                     if let Some(doc_text) = documents.get(uri) {
                         if let Some(pos) = req.params.get("position") {
-                            let line_idx =
-                                pos.get("line").and_then(|l| l.as_u64()).unwrap_or(0) as usize;
+                            let line_idx = pos.get("line").and_then(|l| l.as_u64()).unwrap_or(0) as usize;
                             if let Some(line) = doc_text.lines().nth(line_idx) {
                                 if line.contains("def ") {
                                     hover_val = "### L++ Function Declaration\nDefines a type-checked function frame.";
@@ -377,29 +330,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             "textDocument/definition" => {
                 let mut locations = Vec::new();
-                if let Some(uri) = req
-                    .params
-                    .get("textDocument")
-                    .and_then(|t| t.get("uri"))
-                    .and_then(|u| u.as_str())
-                {
+                if let Some(uri) = req.params.get("textDocument").and_then(|t| t.get("uri")).and_then(|u| u.as_str()) {
                     if let Some(doc_text) = documents.get(uri) {
                         if let Some(pos) = req.params.get("position") {
-                            let line_idx =
-                                pos.get("line").and_then(|l| l.as_u64()).unwrap_or(0) as usize;
+                            let line_idx = pos.get("line").and_then(|l| l.as_u64()).unwrap_or(0) as usize;
                             if let Some(line) = doc_text.lines().nth(line_idx) {
                                 // Extract word under position
-                                let char_idx =
-                                    pos.get("character").and_then(|c| c.as_u64()).unwrap_or(0)
-                                        as usize;
+                                let char_idx = pos.get("character").and_then(|c| c.as_u64()).unwrap_or(0) as usize;
                                 let word = extract_word_at_col(line, char_idx);
                                 if !word.is_empty() {
                                     // Search current document first
                                     for (i, l) in doc_text.lines().enumerate() {
-                                        if l.contains(&format!("def {}", word))
-                                            || l.contains(&format!("struct {}", word))
-                                            || l.contains(&format!("enum {}", word))
-                                        {
+                                        if l.contains(&format!("def {}", word)) || l.contains(&format!("struct {}", word)) || l.contains(&format!("enum {}", word)) {
                                             locations.push(json!({
                                                 "uri": uri,
                                                 "range": {
@@ -426,12 +368,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             "textDocument/formatting" => {
                 let mut edits = Vec::new();
-                if let Some(uri) = req
-                    .params
-                    .get("textDocument")
-                    .and_then(|t| t.get("uri"))
-                    .and_then(|u| u.as_str())
-                {
+                if let Some(uri) = req.params.get("textDocument").and_then(|t| t.get("uri")).and_then(|u| u.as_str()) {
                     if let Some(text) = documents.get(uri) {
                         let formatted = format_lpp_code(text);
                         let line_count = text.lines().count();
@@ -474,7 +411,11 @@ fn extract_word_at_col(line: &str, col: usize) -> &str {
     while end < bytes.len() && is_ident(bytes[end]) {
         end += 1;
     }
-    if start < end { &line[start..end] } else { "" }
+    if start < end {
+        &line[start..end]
+    } else {
+        ""
+    }
 }
 
 fn format_lpp_code(text: &str) -> String {
@@ -489,11 +430,7 @@ fn format_lpp_code(text: &str) -> String {
         }
 
         if trimmed.starts_with("else") || trimmed.starts_with("elif") {
-            let current_indent = if indent_level > 0 {
-                indent_level - 1
-            } else {
-                0
-            };
+            let current_indent = if indent_level > 0 { indent_level - 1 } else { 0 };
             result.push_str(&" ".repeat(current_indent * 4));
         } else {
             result.push_str(&" ".repeat(indent_level * 4));
@@ -504,10 +441,7 @@ fn format_lpp_code(text: &str) -> String {
 
         if trimmed.ends_with(':') {
             indent_level += 1;
-        } else if trimmed.starts_with("return")
-            || trimmed.starts_with("break")
-            || trimmed.starts_with("continue")
-        {
+        } else if trimmed.starts_with("return") || trimmed.starts_with("break") || trimmed.starts_with("continue") {
             if indent_level > 0 {
                 indent_level -= 1;
             }
@@ -533,8 +467,7 @@ fn process_and_publish_diagnostics<W: Write>(
                 Ok(mut ast) => {
                     let mut resolver = Resolver::new();
                     if let Err(e) = resolver.resolve_program(&mut ast) {
-                        let (line, col, msg) =
-                            diagnostics::parse_line_col_message_with_source(&e, text);
+                        let (line, col, msg) = diagnostics::parse_line_col_message_with_source(&e, text);
                         lsp_diagnostics.push(json!({
                             "range": {
                                 "start": { "line": if line > 0 { line - 1 } else { 0 }, "character": col },
@@ -548,8 +481,7 @@ fn process_and_publish_diagnostics<W: Write>(
                     } else {
                         let mut type_checker = TypeChecker::new(&mut resolver.table);
                         if let Err(e) = type_checker.check_program(&ast) {
-                            let (line, col, msg) =
-                                diagnostics::parse_line_col_message_with_source(&e, text);
+                            let (line, col, msg) = diagnostics::parse_line_col_message_with_source(&e, text);
                             lsp_diagnostics.push(json!({
                                 "range": {
                                     "start": { "line": if line > 0 { line - 1 } else { 0 }, "character": col },
@@ -565,8 +497,7 @@ fn process_and_publish_diagnostics<W: Write>(
                     ast_cache.insert(uri.to_string(), ast);
                 }
                 Err(e) => {
-                    let (line, col, msg) =
-                        diagnostics::parse_line_col_message_with_source(&e, text);
+                    let (line, col, msg) = diagnostics::parse_line_col_message_with_source(&e, text);
                     lsp_diagnostics.push(json!({
                         "range": {
                             "start": { "line": if line > 0 { line - 1 } else { 0 }, "character": col },

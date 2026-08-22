@@ -103,20 +103,10 @@ impl Monomorphizer {
                 for p in &func.params {
                     self.locals.insert(p.name.clone(), p.ty.clone());
                 }
-                self.walk_statements(
-                    &mut func.body,
-                    &generic_funcs,
-                    &generic_structs,
-                    &trait_impls,
-                );
+                self.walk_statements(&mut func.body, &generic_funcs, &generic_structs, &trait_impls);
             } else if let TopLevel::Impl(impl_block) = decl {
                 for method in &mut impl_block.methods {
-                    self.walk_statements(
-                        &mut method.body,
-                        &generic_funcs,
-                        &generic_structs,
-                        &trait_impls,
-                    );
+                    self.walk_statements(&mut method.body, &generic_funcs, &generic_structs, &trait_impls);
                 }
             }
         }
@@ -140,10 +130,7 @@ impl Monomorphizer {
                         self.locals.insert(p.name.clone(), p.ty.clone());
                     }
                     self.walk_statements(
-                        &mut f.body,
-                        &generic_funcs,
-                        &generic_structs,
-                        &trait_impls,
+                        &mut f.body, &generic_funcs, &generic_structs, &trait_impls,
                     );
                     self.locals = saved;
                     self.specialized_funcs.insert(key, f);
@@ -238,31 +225,18 @@ impl Monomorphizer {
                     self.walk_expr(base, generic_funcs, generic_structs, trait_impls);
                     self.walk_expr(value, generic_funcs, generic_structs, trait_impls);
                 }
-                Stmt::If {
-                    condition,
-                    then_block,
-                    else_block,
-                    ..
-                } => {
+                Stmt::If { condition, then_block, else_block, .. } => {
                     self.walk_expr(condition, generic_funcs, generic_structs, trait_impls);
                     self.walk_statements(then_block, generic_funcs, generic_structs, trait_impls);
                     if let Some(eb) = else_block {
                         self.walk_statements(eb, generic_funcs, generic_structs, trait_impls);
                     }
                 }
-                Stmt::While {
-                    condition, body, ..
-                } => {
+                Stmt::While { condition, body, .. } => {
                     self.walk_expr(condition, generic_funcs, generic_structs, trait_impls);
                     self.walk_statements(body, generic_funcs, generic_structs, trait_impls);
                 }
-                Stmt::ForRange {
-                    start,
-                    end,
-                    step,
-                    body,
-                    ..
-                } => {
+                Stmt::ForRange { start, end, step, body, .. } => {
                     self.walk_expr(start, generic_funcs, generic_structs, trait_impls);
                     self.walk_expr(end, generic_funcs, generic_structs, trait_impls);
                     if let Some(step) = step {
@@ -277,17 +251,11 @@ impl Monomorphizer {
                 Stmt::Match { subject, arms } => {
                     self.walk_expr(subject, generic_funcs, generic_structs, trait_impls);
                     for arm in arms {
-                        self.walk_statements(
-                            &mut arm.body,
-                            generic_funcs,
-                            generic_structs,
-                            trait_impls,
-                        );
+                        self.walk_statements(&mut arm.body, generic_funcs, generic_structs, trait_impls);
                     }
                 }
-                Stmt::Block(body) => {
-                    self.walk_statements(body, generic_funcs, generic_structs, trait_impls)
-                }
+                Stmt::Block(body) =>
+                    self.walk_statements(body, generic_funcs, generic_structs, trait_impls),
                 Stmt::Return(Some(expr)) => {
                     self.walk_expr(expr, generic_funcs, generic_structs, trait_impls);
                 }
@@ -311,11 +279,7 @@ impl Monomorphizer {
             // the written type arguments instead of being inferred, then the
             // node collapses to an ordinary call on the specialised name so no
             // later stage has to know about it.
-            Expr::GenericCall {
-                callee,
-                type_args,
-                args,
-            } => {
+            Expr::GenericCall { callee, type_args, args } => {
                 for arg in args.iter_mut() {
                     self.walk_expr(arg, generic_funcs, generic_structs, trait_impls);
                 }
@@ -428,31 +392,23 @@ impl Monomorphizer {
                             if !subst_map.is_empty() && bindings_are_concrete(&subst_map) {
                                 let order: Vec<String> =
                                     tmpl.type_params.iter().map(|tp| tp.name.clone()).collect();
-                                let mangled = format!(
-                                    "{}__{}",
-                                    mangled_tmpl,
-                                    mangle_types(&subst_map, &order)
-                                );
+                                let mangled =
+                                    format!("{}__{}", mangled_tmpl, mangle_types(&subst_map, &order));
                                 if !self.instantiated_keys.contains(&mangled) {
                                     self.instantiated_keys.insert(mangled.clone());
                                     let mut sp = tmpl.clone();
                                     sp.name = mangled.clone();
                                     sp.type_params.clear();
-                                    let mut pending: Vec<(String, HashMap<String, Type>)> =
-                                        Vec::new();
+                                    let mut pending: Vec<(String, HashMap<String, Type>)> = Vec::new();
                                     for p in &mut sp.params {
                                         substitute_ast_type(&mut p.ty, &subst_map);
                                         concretize_generic_struct(
-                                            &mut p.ty,
-                                            generic_structs,
-                                            &mut pending,
+                                            &mut p.ty, generic_structs, &mut pending,
                                         );
                                     }
                                     substitute_ast_type(&mut sp.return_type, &subst_map);
                                     concretize_generic_struct(
-                                        &mut sp.return_type,
-                                        generic_structs,
-                                        &mut pending,
+                                        &mut sp.return_type, generic_structs, &mut pending,
                                     );
                                     for (sn, sm) in pending {
                                         self.instantiate_struct(&sn, &sm, generic_structs);
@@ -519,10 +475,8 @@ impl Monomorphizer {
                                 }
                             }
 
-                            let tp_names: Vec<String> =
-                                tmpl.type_params.iter().map(|tp| tp.name.clone()).collect();
-                            let mangled_name =
-                                format!("{}__{}", name, mangle_types(&subst_map, &tp_names));
+                            let tp_names: Vec<String> = tmpl.type_params.iter().map(|tp| tp.name.clone()).collect();
+                            let mangled_name = format!("{}__{}",  name, mangle_types(&subst_map, &tp_names));
                             let key = mangled_name.clone();
 
                             if !self.instantiated_keys.contains(&key) {
@@ -542,16 +496,12 @@ impl Monomorphizer {
                                 for p in &mut specialized.params {
                                     substitute_ast_type(&mut p.ty, &subst_map);
                                     concretize_generic_struct(
-                                        &mut p.ty,
-                                        generic_structs,
-                                        &mut pending,
+                                        &mut p.ty, generic_structs, &mut pending,
                                     );
                                 }
                                 substitute_ast_type(&mut specialized.return_type, &subst_map);
                                 concretize_generic_struct(
-                                    &mut specialized.return_type,
-                                    generic_structs,
-                                    &mut pending,
+                                    &mut specialized.return_type, generic_structs, &mut pending,
                                 );
                                 for (sname, smap) in pending {
                                     self.instantiate_struct(&sname, &smap, generic_structs);
@@ -563,10 +513,7 @@ impl Monomorphizer {
                                 self.specialized_funcs.insert(key, specialized);
                             }
 
-                            *callee = Box::new(Expr::Identifier(
-                                mangled_name,
-                                std::cell::Cell::new(None),
-                            ));
+                            *callee = Box::new(Expr::Identifier(mangled_name, std::cell::Cell::new(None)));
                         }
                     } else if let Some(tmpl) = generic_structs.get(name) {
                         // Struct constructor call: e.g. Box(42)
@@ -583,10 +530,8 @@ impl Monomorphizer {
                         // Refuse to specialise on a binding that is itself a
                         // type parameter (produces nonsense like `Box__T`).
                         if !subst_map.is_empty() && bindings_are_concrete(&subst_map) {
-                            let tp_names: Vec<String> =
-                                tmpl.type_params.iter().map(|tp| tp.name.clone()).collect();
-                            let mangled_name =
-                                format!("{}__{}", name, mangle_types(&subst_map, &tp_names));
+                            let tp_names: Vec<String> = tmpl.type_params.iter().map(|tp| tp.name.clone()).collect();
+                            let mangled_name = format!("{}__{}",  name, mangle_types(&subst_map, &tp_names));
                             let key = mangled_name.clone();
 
                             if !self.instantiated_keys.contains(&key) {
@@ -609,10 +554,7 @@ impl Monomorphizer {
                                 self.specialized_structs.insert(key, specialized);
                             }
 
-                            *callee = Box::new(Expr::Identifier(
-                                mangled_name,
-                                std::cell::Cell::new(None),
-                            ));
+                            *callee = Box::new(Expr::Identifier(mangled_name, std::cell::Cell::new(None)));
                         }
                     }
                 }
@@ -643,18 +585,12 @@ impl Monomorphizer {
             Expr::Closure { body, .. } => {
                 self.walk_statements(body, generic_funcs, generic_structs, trait_impls);
             }
-            Expr::Spawn { closure } => {
-                self.walk_expr(closure, generic_funcs, generic_structs, trait_impls)
-            }
+            Expr::Spawn { closure } =>
+                self.walk_expr(closure, generic_funcs, generic_structs, trait_impls),
             Expr::Match { subject, arms } => {
                 self.walk_expr(subject, generic_funcs, generic_structs, trait_impls);
                 for arm in arms {
-                    self.walk_statements(
-                        &mut arm.body,
-                        generic_funcs,
-                        generic_structs,
-                        trait_impls,
-                    );
+                    self.walk_statements(&mut arm.body, generic_funcs, generic_structs, trait_impls);
                 }
             }
             Expr::Index { base, index } => {
@@ -875,16 +811,17 @@ impl Monomorphizer {
             Expr::CharLiteral(_) => Type::Char,
             Expr::BoolLiteral(_) => Type::Bool,
             Expr::Tuple(elements) => Type::Tuple(
-                elements
-                    .iter()
-                    .map(|element| self.infer_expr_type(element, generic_structs))
-                    .collect(),
+                elements.iter().map(|element| self.infer_expr_type(element, generic_structs)).collect()
             ),
             Expr::Await(inner) => match self.infer_expr_type(inner, generic_structs) {
                 Type::Task(result) => *result,
                 other => other,
             },
-            Expr::Identifier(name, _) => self.locals.get(name).cloned().unwrap_or(Type::Int),
+            Expr::Identifier(name, _) => self
+                .locals
+                .get(name)
+                .cloned()
+                .unwrap_or(Type::Int),
             Expr::Call { callee, .. } => {
                 if let Expr::Identifier(ref name, _) = **callee {
                     // A rewritten constructor call (`Box__Int(...)`) names the
@@ -927,36 +864,21 @@ impl Monomorphizer {
                     self.substitute_expr(base, map);
                     self.substitute_expr(value, map);
                 }
-                Stmt::If {
-                    condition,
-                    then_block,
-                    else_block,
-                    ..
-                } => {
+                Stmt::If { condition, then_block, else_block, .. } => {
                     self.substitute_expr(condition, map);
                     self.substitute_stmts(then_block, map);
                     if let Some(eb) = else_block {
                         self.substitute_stmts(eb, map);
                     }
                 }
-                Stmt::While {
-                    condition, body, ..
-                } => {
+                Stmt::While { condition, body, .. } => {
                     self.substitute_expr(condition, map);
                     self.substitute_stmts(body, map);
                 }
-                Stmt::ForRange {
-                    start,
-                    end,
-                    step,
-                    body,
-                    ..
-                } => {
+                Stmt::ForRange { start, end, step, body, .. } => {
                     self.substitute_expr(start, map);
                     self.substitute_expr(end, map);
-                    if let Some(step) = step {
-                        self.substitute_expr(step, map);
-                    }
+                    if let Some(step) = step { self.substitute_expr(step, map); }
                     self.substitute_stmts(body, map);
                 }
                 Stmt::ForIn { list, body, .. } => {
@@ -965,9 +887,7 @@ impl Monomorphizer {
                 }
                 Stmt::Match { subject, arms } => {
                     self.substitute_expr(subject, map);
-                    for arm in arms {
-                        self.substitute_stmts(&mut arm.body, map);
-                    }
+                    for arm in arms { self.substitute_stmts(&mut arm.body, map); }
                 }
                 Stmt::Block(body) => self.substitute_stmts(body, map),
                 Stmt::Return(Some(expr)) => {
@@ -989,11 +909,7 @@ impl Monomorphizer {
                     self.substitute_expr(arg, map);
                 }
             }
-            Expr::GenericCall {
-                callee,
-                type_args,
-                args,
-            } => {
+            Expr::GenericCall { callee, type_args, args } => {
                 self.substitute_expr(callee, map);
                 // `def outer[T](x: T): return identity[T](x)` — the explicit
                 // argument is itself a type parameter and must be replaced by
@@ -1006,9 +922,7 @@ impl Monomorphizer {
                 }
             }
             Expr::Tuple(elements) | Expr::ListLiteral(elements) => {
-                for element in elements {
-                    self.substitute_expr(element, map);
-                }
+                for element in elements { self.substitute_expr(element, map); }
             }
             Expr::Await(inner) | Expr::Try(inner) | Expr::Spawn { closure: inner } => {
                 self.substitute_expr(inner, map);
@@ -1023,35 +937,23 @@ impl Monomorphizer {
             Expr::FieldAccess { base, .. } => {
                 self.substitute_expr(base, map);
             }
-            Expr::Closure {
-                params,
-                return_type,
-                body,
-            } => {
+            Expr::Closure { params, return_type, body } => {
                 for param in params {
-                    if let Some(ty) = &mut param.ty {
-                        substitute_ast_type(ty, map);
-                    }
+                    if let Some(ty) = &mut param.ty { substitute_ast_type(ty, map); }
                 }
-                if let Some(ty) = return_type {
-                    substitute_ast_type(ty, map);
-                }
+                if let Some(ty) = return_type { substitute_ast_type(ty, map); }
                 self.substitute_stmts(body, map);
             }
             Expr::Match { subject, arms } => {
                 self.substitute_expr(subject, map);
-                for arm in arms {
-                    self.substitute_stmts(&mut arm.body, map);
-                }
+                for arm in arms { self.substitute_stmts(&mut arm.body, map); }
             }
             Expr::Index { base, index } => {
                 self.substitute_expr(base, map);
                 self.substitute_expr(index, map);
             }
             Expr::EnumVariantConstruct { args, .. } => {
-                for arg in args {
-                    self.substitute_expr(arg, map);
-                }
+                for arg in args { self.substitute_expr(arg, map); }
             }
             _ => {}
         }
@@ -1093,18 +995,11 @@ fn specialize_generic_enums(program: &mut Program) -> Result<(), String> {
             Type::Generic(base, args) => format!(
                 "{}__{}",
                 base,
-                args.iter()
-                    .map(enum_type_label)
-                    .collect::<Vec<_>>()
-                    .join("_")
+                args.iter().map(enum_type_label).collect::<Vec<_>>().join("_")
             ),
             Type::Tuple(items) => format!(
                 "Tuple__{}",
-                items
-                    .iter()
-                    .map(enum_type_label)
-                    .collect::<Vec<_>>()
-                    .join("_")
+                items.iter().map(enum_type_label).collect::<Vec<_>>().join("_")
             ),
             Type::Slice(element) => format!("Slice__{}", enum_type_label(element)),
             Type::Task(result) => format!("Task__{}", enum_type_label(result)),
@@ -1143,11 +1038,8 @@ fn specialize_generic_enums(program: &mut Program) -> Result<(), String> {
                 args.len()
             ));
         }
-        let param_names: HashSet<String> = template
-            .type_params
-            .iter()
-            .map(|param| param.name.clone())
-            .collect();
+        let param_names: HashSet<String> =
+            template.type_params.iter().map(|param| param.name.clone()).collect();
         if !args.iter().all(|arg| concrete_for_enum(arg, &param_names)) {
             return Ok(());
         }
@@ -1155,10 +1047,7 @@ fn specialize_generic_enums(program: &mut Program) -> Result<(), String> {
         let mangled = format!(
             "{}__{}",
             base,
-            args.iter()
-                .map(enum_type_label)
-                .collect::<Vec<_>>()
-                .join("_")
+            args.iter().map(enum_type_label).collect::<Vec<_>>().join("_")
         );
         if requested.insert(mangled.clone()) {
             let substitutions: HashMap<String, Type> = template
@@ -1189,11 +1078,7 @@ fn specialize_generic_enums(program: &mut Program) -> Result<(), String> {
         requested: &mut HashSet<String>,
     ) -> Result<(), String> {
         match expr {
-            Expr::GenericCall {
-                callee,
-                type_args,
-                args,
-            } => {
+            Expr::GenericCall { callee, type_args, args } => {
                 rewrite_expr(callee, templates, generated, requested)?;
                 for ty in type_args {
                     rewrite_type(ty, templates, generated, requested)?;
@@ -1213,9 +1098,7 @@ fn specialize_generic_enums(program: &mut Program) -> Result<(), String> {
                     rewrite_expr(item, templates, generated, requested)?;
                 }
             }
-            Expr::Await(inner)
-            | Expr::Try(inner)
-            | Expr::UnaryOp { operand: inner, .. }
+            Expr::Await(inner) | Expr::Try(inner) | Expr::UnaryOp { operand: inner, .. }
             | Expr::Spawn { closure: inner } => {
                 rewrite_expr(inner, templates, generated, requested)?;
             }
@@ -1223,11 +1106,7 @@ fn specialize_generic_enums(program: &mut Program) -> Result<(), String> {
                 rewrite_expr(left, templates, generated, requested)?;
                 rewrite_expr(right, templates, generated, requested)?;
             }
-            Expr::Closure {
-                params,
-                return_type,
-                body,
-            } => {
+            Expr::Closure { params, return_type, body } => {
                 for param in params {
                     if let Some(ty) = &mut param.ty {
                         rewrite_type(ty, templates, generated, requested)?;
@@ -1256,12 +1135,8 @@ fn specialize_generic_enums(program: &mut Program) -> Result<(), String> {
                     rewrite_expr(arg, templates, generated, requested)?;
                 }
             }
-            Expr::IntLiteral(_)
-            | Expr::FloatLiteral(_)
-            | Expr::StringLiteral(_)
-            | Expr::CharLiteral(_)
-            | Expr::BoolLiteral(_)
-            | Expr::Identifier(_, _) => {}
+            Expr::IntLiteral(_) | Expr::FloatLiteral(_) | Expr::StringLiteral(_)
+            | Expr::CharLiteral(_) | Expr::BoolLiteral(_) | Expr::Identifier(_, _) => {}
         }
         Ok(())
     }
@@ -1274,10 +1149,8 @@ fn specialize_generic_enums(program: &mut Program) -> Result<(), String> {
     ) -> Result<(), String> {
         for statement in statements {
             match statement {
-                Stmt::Destructure { value, .. }
-                | Stmt::LetInferred { value, .. }
-                | Stmt::Assign { value, .. }
-                | Stmt::Expr(value)
+                Stmt::Destructure { value, .. } | Stmt::LetInferred { value, .. }
+                | Stmt::Assign { value, .. } | Stmt::Expr(value)
                 | Stmt::Return(Some(value)) => {
                     rewrite_expr(value, templates, generated, requested)?;
                 }
@@ -1290,31 +1163,18 @@ fn specialize_generic_enums(program: &mut Program) -> Result<(), String> {
                     rewrite_expr(index, templates, generated, requested)?;
                     rewrite_expr(value, templates, generated, requested)?;
                 }
-                Stmt::If {
-                    condition,
-                    then_block,
-                    else_block,
-                    ..
-                } => {
+                Stmt::If { condition, then_block, else_block, .. } => {
                     rewrite_expr(condition, templates, generated, requested)?;
                     rewrite_stmts(then_block, templates, generated, requested)?;
                     if let Some(block) = else_block {
                         rewrite_stmts(block, templates, generated, requested)?;
                     }
                 }
-                Stmt::While {
-                    condition, body, ..
-                } => {
+                Stmt::While { condition, body, .. } => {
                     rewrite_expr(condition, templates, generated, requested)?;
                     rewrite_stmts(body, templates, generated, requested)?;
                 }
-                Stmt::ForRange {
-                    start,
-                    end,
-                    step,
-                    body,
-                    ..
-                } => {
+                Stmt::ForRange { start, end, step, body, .. } => {
                     rewrite_expr(start, templates, generated, requested)?;
                     rewrite_expr(end, templates, generated, requested)?;
                     if let Some(step) = step {
@@ -1339,7 +1199,11 @@ fn specialize_generic_enums(program: &mut Program) -> Result<(), String> {
         Ok(())
     }
 
-    fn rewrite_return_constructors(statements: &mut [Stmt], base: &str, concrete: &str) {
+    fn rewrite_return_constructors(
+        statements: &mut [Stmt],
+        base: &str,
+        concrete: &str,
+    ) {
         fn rewrite_expr(expr: &mut Expr, base: &str, concrete: &str) {
             match expr {
                 Expr::EnumVariantConstruct { enum_name, .. } if enum_name == base => {
@@ -1358,20 +1222,14 @@ fn specialize_generic_enums(program: &mut Program) -> Result<(), String> {
         for statement in statements {
             match statement {
                 Stmt::Return(Some(expr)) => rewrite_expr(expr, base, concrete),
-                Stmt::If {
-                    then_block,
-                    else_block,
-                    ..
-                } => {
+                Stmt::If { then_block, else_block, .. } => {
                     rewrite_return_constructors(then_block, base, concrete);
                     if let Some(block) = else_block {
                         rewrite_return_constructors(block, base, concrete);
                     }
                 }
-                Stmt::While { body, .. }
-                | Stmt::ForRange { body, .. }
-                | Stmt::ForIn { body, .. }
-                | Stmt::Block(body) => {
+                Stmt::While { body, .. } | Stmt::ForRange { body, .. }
+                | Stmt::ForIn { body, .. } | Stmt::Block(body) => {
                     rewrite_return_constructors(body, base, concrete);
                 }
                 Stmt::Match { arms, .. } => {
@@ -1430,12 +1288,7 @@ fn specialize_generic_enums(program: &mut Program) -> Result<(), String> {
                     for param in &mut method.params {
                         rewrite_type(&mut param.ty, &templates, &mut generated, &mut requested)?;
                     }
-                    rewrite_type(
-                        &mut method.return_type,
-                        &templates,
-                        &mut generated,
-                        &mut requested,
-                    )?;
+                    rewrite_type(&mut method.return_type, &templates, &mut generated, &mut requested)?;
                 }
             }
             TopLevel::Impl(block) => {
@@ -1451,12 +1304,7 @@ fn specialize_generic_enums(program: &mut Program) -> Result<(), String> {
                     for param in &mut function.params {
                         rewrite_type(&mut param.ty, &templates, &mut generated, &mut requested)?;
                     }
-                    rewrite_type(
-                        &mut function.return_type,
-                        &templates,
-                        &mut generated,
-                        &mut requested,
-                    )?;
+                    rewrite_type(&mut function.return_type, &templates, &mut generated, &mut requested)?;
                 }
             }
             TopLevel::TypeAlias { target, .. } => {
@@ -1562,10 +1410,7 @@ fn concretize_generic_struct(
     if let Type::Generic(base, args) = ty.clone() {
         if let Some(tmpl) = generic_structs.get(&base) {
             // Only rewrite once every argument is concrete.
-            if args
-                .iter()
-                .all(|a| !matches!(a, Type::Custom(n) if n.len() == 1))
-            {
+            if args.iter().all(|a| !matches!(a, Type::Custom(n) if n.len() == 1)) {
                 let mut map = HashMap::new();
                 for (tp, arg) in tmpl.type_params.iter().zip(args.iter()) {
                     map.insert(tp.name.clone(), arg.clone());
@@ -1597,24 +1442,12 @@ fn substitute_ast_type(ty: &mut Type, map: &HashMap<String, Type>) {
             }
         }
         Type::Tuple(elements) => {
-            for element in elements {
-                substitute_ast_type(element, map);
-            }
+            for element in elements { substitute_ast_type(element, map); }
         }
         Type::Slice(element) | Type::Task(element) => substitute_ast_type(element, map),
-        Type::Int
-        | Type::Float
-        | Type::String
-        | Type::Bool
-        | Type::Char
-        | Type::Void
-        | Type::StrSlice
-        | Type::U8
-        | Type::U16
-        | Type::U32
-        | Type::I8
-        | Type::I16
-        | Type::I32 => {}
+        Type::Int | Type::Float | Type::String | Type::Bool | Type::Char
+        | Type::Void | Type::StrSlice | Type::U8 | Type::U16 | Type::U32
+        | Type::I8 | Type::I16 | Type::I32 => {}
     }
 }
 
@@ -1708,10 +1541,7 @@ mod tests {
                         variadic: false,
                     }],
                     return_type: Type::Custom("T".to_string()),
-                    body: vec![Stmt::Return(Some(Expr::Identifier(
-                        "x".to_string(),
-                        std::cell::Cell::new(None),
-                    )))],
+                    body: vec![Stmt::Return(Some(Expr::Identifier("x".to_string(), std::cell::Cell::new(None))))],
                     is_async: false,
                 }),
                 TopLevel::Function(Function {
@@ -1719,13 +1549,12 @@ mod tests {
                     type_params: vec![],
                     params: vec![],
                     return_type: Type::Void,
-                    body: vec![Stmt::Expr(Expr::Call {
-                        callee: Box::new(Expr::Identifier(
-                            "identity".to_string(),
-                            std::cell::Cell::new(None),
-                        )),
-                        args: vec![Expr::IntLiteral(42)],
-                    })],
+                    body: vec![
+                        Stmt::Expr(Expr::Call {
+                            callee: Box::new(Expr::Identifier("identity".to_string(), std::cell::Cell::new(None))),
+                            args: vec![Expr::IntLiteral(42)],
+                        }),
+                    ],
                     is_async: false,
                 }),
             ],
@@ -1736,40 +1565,23 @@ mod tests {
         let func_names: Vec<String> = program
             .declarations
             .iter()
-            .filter_map(|d| {
-                if let TopLevel::Function(f) = d {
-                    Some(f.name.clone())
-                } else {
-                    None
-                }
-            })
+            .filter_map(|d| if let TopLevel::Function(f) = d { Some(f.name.clone()) } else { None })
             .collect();
 
-        assert!(
-            func_names.contains(&"identity__Int".to_string()),
-            "should create specialized identity__Int function"
-        );
+        assert!(func_names.contains(&"identity__Int".to_string()), "should create specialized identity__Int function");
     }
 
     #[test]
     fn unifies_generic_struct_parameter() {
         // `Box[T]` as a parameter type must bind T and be rewritten to the
         // specialised struct; matching only bare `Custom("T")` missed this.
-        let tp = |n: &str| TypeParam {
-            name: n.to_string(),
-            bound: None,
-        };
+        let tp = |n: &str| TypeParam { name: n.to_string(), bound: None };
         let mut program = Program {
             declarations: vec![
                 TopLevel::Struct(StructDef {
                     name: "Box".to_string(),
                     type_params: vec![tp("T")],
-                    fields: vec![Param {
-                        name: "value".to_string(),
-                        ty: Type::Custom("T".to_string()),
-                        default: None,
-                        variadic: false,
-                    }],
+                    fields: vec![Param { name: "value".to_string(), ty: Type::Custom("T".to_string()), default: None, variadic: false }],
                     repr_exact: false,
                     align: None,
                 }),
@@ -1796,24 +1608,15 @@ mod tests {
                             name: "b".to_string(),
                             ty: None,
                             value: Expr::Call {
-                                callee: Box::new(Expr::Identifier(
-                                    "Box".to_string(),
-                                    std::cell::Cell::new(None),
-                                )),
+                                callee: Box::new(Expr::Identifier("Box".to_string(), std::cell::Cell::new(None))),
                                 args: vec![Expr::IntLiteral(42)],
                             },
                             binding_id: std::cell::Cell::new(None),
                             is_mut: false,
                         },
                         Stmt::Expr(Expr::Call {
-                            callee: Box::new(Expr::Identifier(
-                                "unwrap".to_string(),
-                                std::cell::Cell::new(None),
-                            )),
-                            args: vec![Expr::Identifier(
-                                "b".to_string(),
-                                std::cell::Cell::new(None),
-                            )],
+                            callee: Box::new(Expr::Identifier("unwrap".to_string(), std::cell::Cell::new(None))),
+                            args: vec![Expr::Identifier("b".to_string(), std::cell::Cell::new(None))],
                         }),
                     ],
                     is_async: false,
@@ -1823,79 +1626,38 @@ mod tests {
 
         Monomorphizer::process_program(&mut program).expect("should monomorphize");
 
-        let fns: Vec<String> = program
-            .declarations
-            .iter()
-            .filter_map(|d| {
-                if let TopLevel::Function(f) = d {
-                    Some(f.name.clone())
-                } else {
-                    None
-                }
-            })
+        let fns: Vec<String> = program.declarations.iter()
+            .filter_map(|d| if let TopLevel::Function(f) = d { Some(f.name.clone()) } else { None })
             .collect();
-        let structs: Vec<String> = program
-            .declarations
-            .iter()
-            .filter_map(|d| {
-                if let TopLevel::Struct(s) = d {
-                    Some(s.name.clone())
-                } else {
-                    None
-                }
-            })
+        let structs: Vec<String> = program.declarations.iter()
+            .filter_map(|d| if let TopLevel::Struct(s) = d { Some(s.name.clone()) } else { None })
             .collect();
 
         assert!(fns.contains(&"unwrap__Int".to_string()), "fns = {:?}", fns);
-        assert!(
-            structs.contains(&"Box__Int".to_string()),
-            "structs = {:?}",
-            structs
-        );
+        assert!(structs.contains(&"Box__Int".to_string()), "structs = {:?}", structs);
         // Templates must be gone: their bodies still mention the unbound `T`.
-        assert!(
-            !fns.contains(&"unwrap".to_string()),
-            "generic template not pruned"
-        );
-        assert!(
-            !structs.contains(&"Box".to_string()),
-            "generic struct not pruned"
-        );
+        assert!(!fns.contains(&"unwrap".to_string()), "generic template not pruned");
+        assert!(!structs.contains(&"Box".to_string()), "generic struct not pruned");
 
         // The specialised parameter must be the nominal struct, not Generic.
-        let unwrap_int = program
-            .declarations
-            .iter()
-            .find_map(|d| match d {
-                TopLevel::Function(f) if f.name == "unwrap__Int" => Some(f),
-                _ => None,
-            })
-            .unwrap();
-        assert_eq!(
-            unwrap_int.params[0].ty,
-            Type::Custom("Box__Int".to_string())
-        );
+        let unwrap_int = program.declarations.iter().find_map(|d| match d {
+            TopLevel::Function(f) if f.name == "unwrap__Int" => Some(f),
+            _ => None,
+        }).unwrap();
+        assert_eq!(unwrap_int.params[0].ty, Type::Custom("Box__Int".to_string()));
     }
 
     #[test]
     fn infers_from_local_variable_type() {
         // `f := 1.5; identity(f)` must specialise on Float. Previously the
         // argument was not a literal so inference fell back to Int.
-        let tp = |n: &str| TypeParam {
-            name: n.to_string(),
-            bound: None,
-        };
+        let tp = |n: &str| TypeParam { name: n.to_string(), bound: None };
         let mut program = Program {
             declarations: vec![
                 TopLevel::Function(Function {
                     name: "identity".to_string(),
                     type_params: vec![tp("T")],
-                    params: vec![Param {
-                        name: "x".to_string(),
-                        ty: Type::Custom("T".to_string()),
-                        default: None,
-                        variadic: false,
-                    }],
+                    params: vec![Param { name: "x".to_string(), ty: Type::Custom("T".to_string()), default: None, variadic: false }],
                     return_type: Type::Custom("T".to_string()),
                     body: vec![],
                     is_async: false,
@@ -1914,14 +1676,8 @@ mod tests {
                             is_mut: false,
                         },
                         Stmt::Expr(Expr::Call {
-                            callee: Box::new(Expr::Identifier(
-                                "identity".to_string(),
-                                std::cell::Cell::new(None),
-                            )),
-                            args: vec![Expr::Identifier(
-                                "f".to_string(),
-                                std::cell::Cell::new(None),
-                            )],
+                            callee: Box::new(Expr::Identifier("identity".to_string(), std::cell::Cell::new(None))),
+                            args: vec![Expr::Identifier("f".to_string(), std::cell::Cell::new(None))],
                         }),
                     ],
                     is_async: false,
@@ -1930,48 +1686,24 @@ mod tests {
         };
 
         Monomorphizer::process_program(&mut program).expect("should monomorphize");
-        let fns: Vec<String> = program
-            .declarations
-            .iter()
-            .filter_map(|d| {
-                if let TopLevel::Function(f) = d {
-                    Some(f.name.clone())
-                } else {
-                    None
-                }
-            })
+        let fns: Vec<String> = program.declarations.iter()
+            .filter_map(|d| if let TopLevel::Function(f) = d { Some(f.name.clone()) } else { None })
             .collect();
-        assert!(
-            fns.contains(&"identity__Float".to_string()),
-            "fns = {:?}",
-            fns
-        );
-        assert!(
-            !fns.contains(&"identity__Int".to_string()),
-            "wrong specialisation: {:?}",
-            fns
-        );
+        assert!(fns.contains(&"identity__Float".to_string()), "fns = {:?}", fns);
+        assert!(!fns.contains(&"identity__Int".to_string()), "wrong specialisation: {:?}", fns);
     }
 
     #[test]
     fn specializes_nested_generic_calls() {
         // A specialised body may itself call a generic function; that call has
         // to be resolved too, or it names a template that gets pruned.
-        let tp = |n: &str| TypeParam {
-            name: n.to_string(),
-            bound: None,
-        };
+        let tp = |n: &str| TypeParam { name: n.to_string(), bound: None };
         let mut program = Program {
             declarations: vec![
                 TopLevel::Function(Function {
                     name: "identity".to_string(),
                     type_params: vec![tp("T")],
-                    params: vec![Param {
-                        name: "x".to_string(),
-                        ty: Type::Custom("T".to_string()),
-                        default: None,
-                        variadic: false,
-                    }],
+                    params: vec![Param { name: "x".to_string(), ty: Type::Custom("T".to_string()), default: None, variadic: false }],
                     return_type: Type::Custom("T".to_string()),
                     body: vec![],
                     is_async: false,
@@ -1979,22 +1711,11 @@ mod tests {
                 TopLevel::Function(Function {
                     name: "twice".to_string(),
                     type_params: vec![tp("T")],
-                    params: vec![Param {
-                        name: "x".to_string(),
-                        ty: Type::Custom("T".to_string()),
-                        default: None,
-                        variadic: false,
-                    }],
+                    params: vec![Param { name: "x".to_string(), ty: Type::Custom("T".to_string()), default: None, variadic: false }],
                     return_type: Type::Custom("T".to_string()),
                     body: vec![Stmt::Return(Some(Expr::Call {
-                        callee: Box::new(Expr::Identifier(
-                            "identity".to_string(),
-                            std::cell::Cell::new(None),
-                        )),
-                        args: vec![Expr::Identifier(
-                            "x".to_string(),
-                            std::cell::Cell::new(None),
-                        )],
+                        callee: Box::new(Expr::Identifier("identity".to_string(), std::cell::Cell::new(None))),
+                        args: vec![Expr::Identifier("x".to_string(), std::cell::Cell::new(None))],
                     }))],
                     is_async: false,
                 }),
@@ -2004,10 +1725,7 @@ mod tests {
                     params: vec![],
                     return_type: Type::Void,
                     body: vec![Stmt::Expr(Expr::Call {
-                        callee: Box::new(Expr::Identifier(
-                            "twice".to_string(),
-                            std::cell::Cell::new(None),
-                        )),
+                        callee: Box::new(Expr::Identifier("twice".to_string(), std::cell::Cell::new(None))),
                         args: vec![Expr::IntLiteral(7)],
                     })],
                     is_async: false,
@@ -2016,44 +1734,25 @@ mod tests {
         };
 
         Monomorphizer::process_program(&mut program).expect("should monomorphize");
-        let fns: Vec<String> = program
-            .declarations
-            .iter()
-            .filter_map(|d| {
-                if let TopLevel::Function(f) = d {
-                    Some(f.name.clone())
-                } else {
-                    None
-                }
-            })
+        let fns: Vec<String> = program.declarations.iter()
+            .filter_map(|d| if let TopLevel::Function(f) = d { Some(f.name.clone()) } else { None })
             .collect();
         assert!(fns.contains(&"twice__Int".to_string()), "fns = {:?}", fns);
-        assert!(
-            fns.contains(&"identity__Int".to_string()),
-            "nested generic call was not specialised: {:?}",
-            fns
-        );
+        assert!(fns.contains(&"identity__Int".to_string()),
+            "nested generic call was not specialised: {:?}", fns);
     }
 
     #[test]
     fn turbofish_uses_explicit_type_arguments() {
         // `identity[Str](x)` must specialise on Str even though the argument
         // expression alone would infer Int.
-        let tp = |n: &str| TypeParam {
-            name: n.to_string(),
-            bound: None,
-        };
+        let tp = |n: &str| TypeParam { name: n.to_string(), bound: None };
         let mut program = Program {
             declarations: vec![
                 TopLevel::Function(Function {
                     name: "identity".to_string(),
                     type_params: vec![tp("T")],
-                    params: vec![Param {
-                        name: "x".to_string(),
-                        ty: Type::Custom("T".to_string()),
-                        default: None,
-                        variadic: false,
-                    }],
+                    params: vec![Param { name: "x".to_string(), ty: Type::Custom("T".to_string()), default: None, variadic: false }],
                     return_type: Type::Custom("T".to_string()),
                     body: vec![],
                     is_async: false,
@@ -2064,10 +1763,7 @@ mod tests {
                     params: vec![],
                     return_type: Type::Void,
                     body: vec![Stmt::Expr(Expr::GenericCall {
-                        callee: Box::new(Expr::Identifier(
-                            "identity".to_string(),
-                            std::cell::Cell::new(None),
-                        )),
+                        callee: Box::new(Expr::Identifier("identity".to_string(), std::cell::Cell::new(None))),
                         type_args: vec![Type::String],
                         args: vec![Expr::IntLiteral(0)],
                     })],
@@ -2077,38 +1773,19 @@ mod tests {
         };
 
         Monomorphizer::process_program(&mut program).expect("should monomorphize");
-        let fns: Vec<String> = program
-            .declarations
-            .iter()
-            .filter_map(|d| {
-                if let TopLevel::Function(f) = d {
-                    Some(f.name.clone())
-                } else {
-                    None
-                }
-            })
+        let fns: Vec<String> = program.declarations.iter()
+            .filter_map(|d| if let TopLevel::Function(f) = d { Some(f.name.clone()) } else { None })
             .collect();
-        assert!(
-            fns.contains(&"identity__Str".to_string()),
-            "fns = {:?}",
-            fns
-        );
-        assert!(
-            !fns.contains(&"identity__Int".to_string()),
-            "explicit type argument was ignored: {:?}",
-            fns
-        );
+        assert!(fns.contains(&"identity__Str".to_string()), "fns = {:?}", fns);
+        assert!(!fns.contains(&"identity__Int".to_string()),
+            "explicit type argument was ignored: {:?}", fns);
 
         // The node must be rewritten to a plain call; later stages reject
         // GenericCall outright.
-        let main = program
-            .declarations
-            .iter()
-            .find_map(|d| match d {
-                TopLevel::Function(f) if f.name == "main" => Some(f),
-                _ => None,
-            })
-            .unwrap();
+        let main = program.declarations.iter().find_map(|d| match d {
+            TopLevel::Function(f) if f.name == "main" => Some(f),
+            _ => None,
+        }).unwrap();
         match &main.body[0] {
             Stmt::Expr(Expr::Call { callee, .. }) => match &**callee {
                 Expr::Identifier(n, _) => assert_eq!(n, "identity__Str"),
@@ -2120,21 +1797,13 @@ mod tests {
 
     #[test]
     fn turbofish_arity_mismatch_is_reported() {
-        let tp = |n: &str| TypeParam {
-            name: n.to_string(),
-            bound: None,
-        };
+        let tp = |n: &str| TypeParam { name: n.to_string(), bound: None };
         let mut program = Program {
             declarations: vec![
                 TopLevel::Function(Function {
                     name: "identity".to_string(),
                     type_params: vec![tp("T")],
-                    params: vec![Param {
-                        name: "x".to_string(),
-                        ty: Type::Custom("T".to_string()),
-                        default: None,
-                        variadic: false,
-                    }],
+                    params: vec![Param { name: "x".to_string(), ty: Type::Custom("T".to_string()), default: None, variadic: false }],
                     return_type: Type::Custom("T".to_string()),
                     body: vec![],
                     is_async: false,
@@ -2145,10 +1814,7 @@ mod tests {
                     params: vec![],
                     return_type: Type::Void,
                     body: vec![Stmt::Expr(Expr::GenericCall {
-                        callee: Box::new(Expr::Identifier(
-                            "identity".to_string(),
-                            std::cell::Cell::new(None),
-                        )),
+                        callee: Box::new(Expr::Identifier("identity".to_string(), std::cell::Cell::new(None))),
                         type_args: vec![Type::Int, Type::String],
                         args: vec![Expr::IntLiteral(0)],
                     })],
@@ -2158,11 +1824,7 @@ mod tests {
         };
         let err = Monomorphizer::process_program(&mut program)
             .expect_err("wrong type-argument count must be reported");
-        assert!(
-            err.contains("1 type argument"),
-            "unhelpful message: {}",
-            err
-        );
+        assert!(err.contains("1 type argument"), "unhelpful message: {}", err);
     }
 
     #[test]
@@ -2170,21 +1832,13 @@ mod tests {
         // The parser mangles impl methods to `Target_method`. A generic one
         // must still be specialised, or it reaches the backend generic and
         // Cranelift fails its verifier instead of producing a diagnostic.
-        let tp = |n: &str| TypeParam {
-            name: n.to_string(),
-            bound: None,
-        };
+        let tp = |n: &str| TypeParam { name: n.to_string(), bound: None };
         let mut program = Program {
             declarations: vec![
                 TopLevel::Struct(StructDef {
                     name: "Holder".to_string(),
                     type_params: vec![],
-                    fields: vec![Param {
-                        name: "n".to_string(),
-                        ty: Type::Int,
-                        default: None,
-                        variadic: false,
-                    }],
+                    fields: vec![Param { name: "n".to_string(), ty: Type::Int, default: None, variadic: false }],
                     repr_exact: false,
                     align: None,
                 }),
@@ -2197,18 +1851,8 @@ mod tests {
                         name: "Holder_pick".to_string(),
                         type_params: vec![tp("T")],
                         params: vec![
-                            Param {
-                                name: "self".to_string(),
-                                ty: Type::Custom("Holder".to_string()),
-                                default: None,
-                                variadic: false,
-                            },
-                            Param {
-                                name: "x".to_string(),
-                                ty: Type::Custom("T".to_string()),
-                                default: None,
-                                variadic: false,
-                            },
+                            Param { name: "self".to_string(), ty: Type::Custom("Holder".to_string()), default: None, variadic: false },
+                            Param { name: "x".to_string(), ty: Type::Custom("T".to_string()), default: None, variadic: false },
                         ],
                         return_type: Type::Custom("T".to_string()),
                         body: vec![],
@@ -2225,10 +1869,7 @@ mod tests {
                             name: "h".to_string(),
                             ty: None,
                             value: Expr::Call {
-                                callee: Box::new(Expr::Identifier(
-                                    "Holder".to_string(),
-                                    std::cell::Cell::new(None),
-                                )),
+                                callee: Box::new(Expr::Identifier("Holder".to_string(), std::cell::Cell::new(None))),
                                 args: vec![Expr::IntLiteral(1)],
                             },
                             binding_id: std::cell::Cell::new(None),
@@ -2236,10 +1877,7 @@ mod tests {
                         },
                         Stmt::Expr(Expr::Call {
                             callee: Box::new(Expr::FieldAccess {
-                                base: Box::new(Expr::Identifier(
-                                    "h".to_string(),
-                                    std::cell::Cell::new(None),
-                                )),
+                                base: Box::new(Expr::Identifier("h".to_string(), std::cell::Cell::new(None))),
                                 field: "pick".to_string(),
                             }),
                             args: vec![Expr::FloatLiteral(2.5)],
@@ -2251,22 +1889,11 @@ mod tests {
         };
 
         Monomorphizer::process_program(&mut program).expect("should monomorphize");
-        let fns: Vec<String> = program
-            .declarations
-            .iter()
-            .filter_map(|d| {
-                if let TopLevel::Function(f) = d {
-                    Some(f.name.clone())
-                } else {
-                    None
-                }
-            })
+        let fns: Vec<String> = program.declarations.iter()
+            .filter_map(|d| if let TopLevel::Function(f) = d { Some(f.name.clone()) } else { None })
             .collect();
-        assert!(
-            fns.contains(&"Holder_pick__Float".to_string()),
-            "generic method not specialised: {:?}",
-            fns
-        );
+        assert!(fns.contains(&"Holder_pick__Float".to_string()),
+            "generic method not specialised: {:?}", fns);
         // The template must be gone from the impl block.
         let leftover = program.declarations.iter().any(|d| match d {
             TopLevel::Impl(ib) => ib.methods.iter().any(|m| !m.type_params.is_empty()),
@@ -2279,10 +1906,7 @@ mod tests {
     fn specializes_generic_trait_impl_per_instantiation() {
         // impl[T] Show for Box[T] must produce one impl per Box instantiation,
         // named so the existing `{struct}_{method}` MIR lookup finds it.
-        let tp = |n: &str| TypeParam {
-            name: n.to_string(),
-            bound: None,
-        };
+        let tp = |n: &str| TypeParam { name: n.to_string(), bound: None };
         let mk_main = |args: Vec<Expr>| Function {
             name: "main".to_string(),
             type_params: vec![],
@@ -2292,10 +1916,7 @@ mod tests {
                 .into_iter()
                 .map(|a| {
                     Stmt::Expr(Expr::Call {
-                        callee: Box::new(Expr::Identifier(
-                            "Box".to_string(),
-                            std::cell::Cell::new(None),
-                        )),
+                        callee: Box::new(Expr::Identifier("Box".to_string(), std::cell::Cell::new(None))),
                         args: vec![a],
                     })
                 })
@@ -2307,12 +1928,7 @@ mod tests {
                 TopLevel::Struct(StructDef {
                     name: "Box".to_string(),
                     type_params: vec![tp("T")],
-                    fields: vec![Param {
-                        name: "value".to_string(),
-                        ty: Type::Custom("T".to_string()),
-                        default: None,
-                        variadic: false,
-                    }],
+                    fields: vec![Param { name: "value".to_string(), ty: Type::Custom("T".to_string()), default: None, variadic: false }],
                     repr_exact: false,
                     align: None,
                 }),
@@ -2326,10 +1942,7 @@ mod tests {
                         type_params: vec![tp("T")],
                         params: vec![Param {
                             name: "self".to_string(),
-                            ty: Type::Generic(
-                                "Box".to_string(),
-                                vec![Type::Custom("T".to_string())],
-                            ),
+                            ty: Type::Generic("Box".to_string(), vec![Type::Custom("T".to_string())]),
                             default: None,
                             variadic: false,
                         }],
@@ -2338,10 +1951,7 @@ mod tests {
                         is_async: false,
                     }],
                 }),
-                TopLevel::Function(mk_main(vec![
-                    Expr::IntLiteral(1),
-                    Expr::StringLiteral("s".to_string()),
-                ])),
+                TopLevel::Function(mk_main(vec![Expr::IntLiteral(1), Expr::StringLiteral("s".to_string())])),
             ],
         };
 
@@ -2350,83 +1960,52 @@ mod tests {
             .declarations
             .iter()
             .filter_map(|d| match d {
-                TopLevel::Impl(ib) => Some((
-                    ib.target_type.clone(),
-                    ib.methods.iter().map(|m| m.name.clone()).collect(),
-                )),
+                TopLevel::Impl(ib) => {
+                    Some((ib.target_type.clone(), ib.methods.iter().map(|m| m.name.clone()).collect()))
+                }
                 _ => None,
             })
             .collect();
         let targets: Vec<&String> = impls.iter().map(|(t, _)| t).collect();
-        assert!(
-            targets.iter().any(|t| *t == "Box__Int"),
-            "impls = {:?}",
-            impls
-        );
-        assert!(
-            targets.iter().any(|t| *t == "Box__Str"),
-            "impls = {:?}",
-            impls
-        );
+        assert!(targets.iter().any(|t| *t == "Box__Int"), "impls = {:?}", impls);
+        assert!(targets.iter().any(|t| *t == "Box__Str"), "impls = {:?}", impls);
         // The generic template must be pruned; its `self` mentions an unbound T.
-        assert!(
-            !targets.iter().any(|t| *t == "Box"),
-            "template not pruned: {:?}",
-            impls
-        );
+        assert!(!targets.iter().any(|t| *t == "Box"), "template not pruned: {:?}", impls);
         // Methods must be renamed onto the specialised target.
         let all: Vec<String> = impls.iter().flat_map(|(_, m)| m.clone()).collect();
-        assert!(
-            all.contains(&"Box__Int_show".to_string()),
-            "methods = {:?}",
-            all
-        );
-        assert!(
-            all.contains(&"Box__Str_show".to_string()),
-            "methods = {:?}",
-            all
-        );
+        assert!(all.contains(&"Box__Int_show".to_string()), "methods = {:?}", all);
+        assert!(all.contains(&"Box__Str_show".to_string()), "methods = {:?}", all);
     }
 
     #[test]
     fn concrete_impl_beats_generic_one() {
         // Most-specific-wins: impl[T] Show for Box[Int] outranks Box[T].
-        let tp = |n: &str| TypeParam {
-            name: n.to_string(),
-            bound: None,
-        };
-        let mk_impl = |arg: Type, ret: i64| {
-            TopLevel::Impl(ImplBlock {
-                trait_name: "Show".to_string(),
-                target_type: "Box".to_string(),
+        let tp = |n: &str| TypeParam { name: n.to_string(), bound: None };
+        let mk_impl = |arg: Type, ret: i64| TopLevel::Impl(ImplBlock {
+            trait_name: "Show".to_string(),
+            target_type: "Box".to_string(),
+            type_params: vec![tp("T")],
+            target_args: vec![arg],
+            methods: vec![Function {
+                name: "Box_show".to_string(),
                 type_params: vec![tp("T")],
-                target_args: vec![arg],
-                methods: vec![Function {
-                    name: "Box_show".to_string(),
-                    type_params: vec![tp("T")],
-                    params: vec![Param {
-                        name: "self".to_string(),
-                        ty: Type::Custom("Box".to_string()),
-                        default: None,
-                        variadic: false,
-                    }],
-                    return_type: Type::Int,
-                    body: vec![Stmt::Return(Some(Expr::IntLiteral(ret)))],
-                    is_async: false,
+                params: vec![Param {
+                    name: "self".to_string(),
+                    ty: Type::Custom("Box".to_string()),
+                    default: None,
+                    variadic: false,
                 }],
-            })
-        };
+                return_type: Type::Int,
+                body: vec![Stmt::Return(Some(Expr::IntLiteral(ret)))],
+                is_async: false,
+            }],
+        });
         let mut program = Program {
             declarations: vec![
                 TopLevel::Struct(StructDef {
                     name: "Box".to_string(),
                     type_params: vec![tp("T")],
-                    fields: vec![Param {
-                        name: "value".to_string(),
-                        ty: Type::Custom("T".to_string()),
-                        default: None,
-                        variadic: false,
-                    }],
+                    fields: vec![Param { name: "value".to_string(), ty: Type::Custom("T".to_string()), default: None, variadic: false }],
                     repr_exact: false,
                     align: None,
                 }),
@@ -2438,10 +2017,7 @@ mod tests {
                     params: vec![],
                     return_type: Type::Void,
                     body: vec![Stmt::Expr(Expr::Call {
-                        callee: Box::new(Expr::Identifier(
-                            "Box".to_string(),
-                            std::cell::Cell::new(None),
-                        )),
+                        callee: Box::new(Expr::Identifier("Box".to_string(), std::cell::Cell::new(None))),
                         args: vec![Expr::IntLiteral(5)],
                     })],
                     is_async: false,
@@ -2450,16 +2026,10 @@ mod tests {
         };
 
         Monomorphizer::process_program(&mut program).expect("should monomorphize");
-        let body = program
-            .declarations
-            .iter()
-            .find_map(|d| match d {
-                TopLevel::Impl(ib) if ib.target_type == "Box__Int" => {
-                    Some(ib.methods[0].body.clone())
-                }
-                _ => None,
-            })
-            .expect("Box__Int impl must exist");
+        let body = program.declarations.iter().find_map(|d| match d {
+            TopLevel::Impl(ib) if ib.target_type == "Box__Int" => Some(ib.methods[0].body.clone()),
+            _ => None,
+        }).expect("Box__Int impl must exist");
         assert_eq!(
             body,
             vec![Stmt::Return(Some(Expr::IntLiteral(99)))],
@@ -2475,21 +2045,13 @@ mod tests {
                     name: "Display".to_string(),
                     methods: vec![TraitMethod {
                         name: "show".to_string(),
-                        params: vec![Param {
-                            name: "self".to_string(),
-                            ty: Type::Custom("Self".to_string()),
-                            default: None,
-                            variadic: false,
-                        }],
+                        params: vec![Param { name: "self".to_string(), ty: Type::Custom("Self".to_string()), default: None, variadic: false }],
                         return_type: Type::String,
                     }],
                 }),
                 TopLevel::Function(Function {
                     name: "print_it".to_string(),
-                    type_params: vec![TypeParam {
-                        name: "T".to_string(),
-                        bound: Some("Display".to_string()),
-                    }],
+                    type_params: vec![TypeParam { name: "T".to_string(), bound: Some("Display".to_string()) }],
                     params: vec![Param {
                         name: "x".to_string(),
                         ty: Type::Custom("T".to_string()),
@@ -2505,13 +2067,12 @@ mod tests {
                     type_params: vec![],
                     params: vec![],
                     return_type: Type::Void,
-                    body: vec![Stmt::Expr(Expr::Call {
-                        callee: Box::new(Expr::Identifier(
-                            "print_it".to_string(),
-                            std::cell::Cell::new(None),
-                        )),
-                        args: vec![Expr::IntLiteral(42)],
-                    })],
+                    body: vec![
+                        Stmt::Expr(Expr::Call {
+                            callee: Box::new(Expr::Identifier("print_it".to_string(), std::cell::Cell::new(None))),
+                            args: vec![Expr::IntLiteral(42)],
+                        }),
+                    ],
                     is_async: false,
                 }),
             ],
@@ -2523,32 +2084,16 @@ mod tests {
         let result = Monomorphizer::process_program(&mut program);
         assert!(result.is_err(), "unsatisfied trait bound must be reported");
         let msg = result.unwrap_err();
-        assert!(
-            msg.contains("Display"),
-            "error should name the trait: {}",
-            msg
-        );
-        assert!(
-            msg.contains("Int"),
-            "error should name the offending type: {}",
-            msg
-        );
+        assert!(msg.contains("Display"), "error should name the trait: {}", msg);
+        assert!(msg.contains("Int"), "error should name the offending type: {}", msg);
 
         let func_names: Vec<String> = program
             .declarations
             .iter()
-            .filter_map(|d| {
-                if let TopLevel::Function(f) = d {
-                    Some(f.name.clone())
-                } else {
-                    None
-                }
-            })
+            .filter_map(|d| if let TopLevel::Function(f) = d { Some(f.name.clone()) } else { None })
             .collect();
 
-        assert!(
-            !func_names.contains(&"print_it__Int".to_string()),
-            "should NOT create print_it__Int because Int does not impl Display"
-        );
+        assert!(!func_names.contains(&"print_it__Int".to_string()),
+            "should NOT create print_it__Int because Int does not impl Display");
     }
 }

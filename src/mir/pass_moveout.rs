@@ -78,16 +78,8 @@ struct MoveOut {
 fn successors_of(terminator: &Terminator) -> Vec<usize> {
     match terminator {
         Terminator::Goto(target) => vec![target.0],
-        Terminator::If {
-            then_block,
-            else_block,
-            ..
-        }
-        | Terminator::IfCmp {
-            then_block,
-            else_block,
-            ..
-        } => vec![then_block.0, else_block.0],
+        Terminator::If { then_block, else_block, .. }
+        | Terminator::IfCmp { then_block, else_block, .. } => vec![then_block.0, else_block.0],
         Terminator::Return(_) | Terminator::ReturnOwned(_) | Terminator::Unreachable => Vec::new(),
     }
 }
@@ -154,7 +146,9 @@ fn reads_local(instr: &MirInstr, local: LocalId) -> bool {
     }
     match instr {
         MirInstr::Assign(_, rv) => in_rvalue(rv, local),
-        MirInstr::AssignField { base, value, .. } => *base == local || in_operand(value, local),
+        MirInstr::AssignField { base, value, .. } => {
+            *base == local || in_operand(value, local)
+        }
         // Retain/Release are bookkeeping, not a use of the value.
         MirInstr::Retain(_) | MirInstr::Release(_) => false,
     }
@@ -163,8 +157,7 @@ fn reads_local(instr: &MirInstr, local: LocalId) -> bool {
 /// Does a block terminator read `local`? `IfCmp` compares two operands and
 /// `Return`/`ReturnOwned` can hand one back, so all are real uses.
 fn terminator_reads(t: &Terminator, local: LocalId) -> bool {
-    let is =
-        |op: &Operand| matches!(op, Operand::Local(id) | Operand::Borrowed(id) if *id == local);
+    let is = |op: &Operand| matches!(op, Operand::Local(id) | Operand::Borrowed(id) if *id == local);
     match t {
         Terminator::If { cond, .. } => is(cond),
         Terminator::IfCmp { left, right, .. } => is(left) || is(right),
@@ -238,13 +231,14 @@ fn find_move_outs(function: &MirFunction) -> MoveOut {
                         MirInstr::AssignField { value: Operand::Borrowed(id), .. }
                             | MirInstr::AssignField { value: Operand::Local(id), .. }
                             if *id == retained
-                    ) || matches!(
-                        later,
-                        MirInstr::Assign(
-                            _,
-                            Rvalue::MakeClosure(_, _) | Rvalue::MakeStackClosure(_, _)
-                        )
-                    );
+                    )
+                        || matches!(
+                            later,
+                            MirInstr::Assign(
+                                _,
+                                Rvalue::MakeClosure(_, _) | Rvalue::MakeStackClosure(_, _)
+                            )
+                        );
                     if !is_capture {
                         interfering_use = true;
                         break;
@@ -347,19 +341,12 @@ mod tests {
                 value: Operand::Borrowed(LocalId(0)),
             },
             MirInstr::Retain(LocalId(0)),
-            MirInstr::Assign(
-                LocalId(2),
-                Rvalue::MakeClosure(FuncId(1), vec![Operand::Local(LocalId(1))]),
-            ),
+            MirInstr::Assign(LocalId(2), Rvalue::MakeClosure(FuncId(1), vec![Operand::Local(LocalId(1))])),
             MirInstr::Assign(LocalId(3), Rvalue::SpawnThread(Operand::Local(LocalId(2)))),
         ];
         instrs.extend(extra_after_spawn);
         instrs.push(MirInstr::Release(LocalId(0)));
-        MirBlock {
-            id: BlockId(0),
-            instrs,
-            terminator: Terminator::Return(None),
-        }
+        MirBlock { id: BlockId(0), instrs, terminator: Terminator::Return(None) }
     }
 
     fn run_one(f: MirFunction) -> MirFunction {
@@ -373,11 +360,7 @@ mod tests {
     #[test]
     fn handoff_elides_retain_and_release() {
         let f = run_one(func(vec![spawn_block(vec![])], 4));
-        let retains = f.blocks[0]
-            .instrs
-            .iter()
-            .filter(|i| matches!(i, MirInstr::Retain(_)))
-            .count();
+        let retains = f.blocks[0].instrs.iter().filter(|i| matches!(i, MirInstr::Retain(_))).count();
         let releases = f.blocks[0]
             .instrs
             .iter()
@@ -395,11 +378,7 @@ mod tests {
             Rvalue::FieldAccess(Operand::Borrowed(LocalId(0)), "id".to_string()),
         )];
         let f = run_one(func(vec![spawn_block(use_after)], 4));
-        let retains = f.blocks[0]
-            .instrs
-            .iter()
-            .filter(|i| matches!(i, MirInstr::Retain(_)))
-            .count();
+        let retains = f.blocks[0].instrs.iter().filter(|i| matches!(i, MirInstr::Retain(_))).count();
         assert_eq!(retains, 1, "shared value must keep its retain");
     }
 
@@ -410,11 +389,7 @@ mod tests {
         let mut b0 = spawn_block(vec![]);
         b0.terminator = Terminator::Goto(BlockId(0));
         let f = run_one(func(vec![b0], 4));
-        let retains = f.blocks[0]
-            .instrs
-            .iter()
-            .filter(|i| matches!(i, MirInstr::Retain(_)))
-            .count();
+        let retains = f.blocks[0].instrs.iter().filter(|i| matches!(i, MirInstr::Retain(_))).count();
         assert_eq!(retains, 1, "a spawn inside a cycle must not be optimised");
     }
 
@@ -431,11 +406,7 @@ mod tests {
             terminator: Terminator::Return(None),
         };
         let f = run_one(func(vec![b0, b1], 4));
-        let retains = f.blocks[0]
-            .instrs
-            .iter()
-            .filter(|i| matches!(i, MirInstr::Retain(_)))
-            .count();
+        let retains = f.blocks[0].instrs.iter().filter(|i| matches!(i, MirInstr::Retain(_))).count();
         assert_eq!(retains, 1, "a use in a reachable successor is still a use");
     }
 
@@ -447,11 +418,7 @@ mod tests {
             terminator: Terminator::Return(None),
         };
         let f = run_one(func(vec![b0], 4));
-        let retains = f.blocks[0]
-            .instrs
-            .iter()
-            .filter(|i| matches!(i, MirInstr::Retain(_)))
-            .count();
+        let retains = f.blocks[0].instrs.iter().filter(|i| matches!(i, MirInstr::Retain(_))).count();
         assert_eq!(retains, 1, "ordinary retains must not be removed");
     }
 }

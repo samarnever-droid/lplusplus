@@ -39,19 +39,7 @@ fn types_compatible(expected: &TypeRef, actual: &TypeRef) -> bool {
     }
     // Allow coercion between integer/scalar types (U8, U16, U32, I8, I16, I32, Char, Bool, Custom(enum)) and Int, and Char/Int/Float/Bool to Str
     fn is_integral(t: &TypeRef) -> bool {
-        matches!(
-            t,
-            TypeRef::Int
-                | TypeRef::Char
-                | TypeRef::Bool
-                | TypeRef::U8
-                | TypeRef::U16
-                | TypeRef::U32
-                | TypeRef::I8
-                | TypeRef::I16
-                | TypeRef::I32
-                | TypeRef::Custom(_)
-        )
+        matches!(t, TypeRef::Int | TypeRef::Char | TypeRef::Bool | TypeRef::U8 | TypeRef::U16 | TypeRef::U32 | TypeRef::I8 | TypeRef::I16 | TypeRef::I32 | TypeRef::Custom(_))
     }
     if is_integral(expected) && is_integral(actual) {
         return true;
@@ -60,26 +48,21 @@ fn types_compatible(expected: &TypeRef, actual: &TypeRef) -> bool {
         return true;
     }
     // Allow collection/map handles (represented as 64-bit handle IDs) to coerce with Int
-    if (expected == &TypeRef::Int && matches!(actual, TypeRef::Generic(..)))
-        || (actual == &TypeRef::Int && matches!(expected, TypeRef::Generic(..)))
-    {
+    if (expected == &TypeRef::Int && matches!(actual, TypeRef::Generic(..))) || (actual == &TypeRef::Int && matches!(expected, TypeRef::Generic(..))) {
         return true;
     }
     // Structural aggregates recurse so a type parameter nested in a tuple/task
     // remains a wildcard during generic checking.
     match (expected, actual) {
-        (TypeRef::Tuple(a), TypeRef::Tuple(b)) if a.len() == b.len() => {
-            a.iter().zip(b).all(|(x, y)| types_compatible(x, y))
-        }
-        (TypeRef::Slice(a), TypeRef::Slice(b)) | (TypeRef::Task(a), TypeRef::Task(b)) => {
-            types_compatible(a, b)
-        }
+        (TypeRef::Tuple(a), TypeRef::Tuple(b)) if a.len() == b.len() =>
+            a.iter().zip(b).all(|(x, y)| types_compatible(x, y)),
+        (TypeRef::Slice(a), TypeRef::Slice(b)) | (TypeRef::Task(a), TypeRef::Task(b)) =>
+            types_compatible(a, b),
         (TypeRef::Generic(an, aa), TypeRef::Generic(bn, ba))
             if an == bn && aa.len() == ba.len() =>
-        {
-            aa.iter().zip(ba).all(|(x, y)| types_compatible(x, y))
-        }
-        _ => matches!(expected, TypeRef::TypeParam(_)) || matches!(actual, TypeRef::TypeParam(_)),
+            aa.iter().zip(ba).all(|(x, y)| types_compatible(x, y)),
+        _ => matches!(expected, TypeRef::TypeParam(_))
+            || matches!(actual, TypeRef::TypeParam(_)),
     }
 }
 
@@ -101,6 +84,8 @@ impl<'a> TypeChecker<'a> {
             type_aliases: HashMap::new(),
         }
     }
+
+
 
     fn enclosing_async_function(&self, scope: ScopeId) -> Option<&str> {
         let mut current = Some(scope);
@@ -141,17 +126,8 @@ impl<'a> TypeChecker<'a> {
         Self::convert_ast_type_with_params_and_aliases(type_table, ast_ty, &[], &HashMap::new())
     }
 
-    fn convert_ast_type_with_params(
-        type_table: &TypeTable,
-        ast_ty: &Type,
-        type_params: &[String],
-    ) -> TypeRef {
-        Self::convert_ast_type_with_params_and_aliases(
-            type_table,
-            ast_ty,
-            type_params,
-            &HashMap::new(),
-        )
+    fn convert_ast_type_with_params(type_table: &TypeTable, ast_ty: &Type, type_params: &[String]) -> TypeRef {
+        Self::convert_ast_type_with_params_and_aliases(type_table, ast_ty, type_params, &HashMap::new())
     }
 
     fn convert_ast_type_with_params_and_aliases(
@@ -190,12 +166,7 @@ impl<'a> TypeChecker<'a> {
             Type::Generic(base_name, args) => {
                 let mut ref_args = Vec::new();
                 for arg in args {
-                    ref_args.push(Self::convert_ast_type_with_params_and_aliases(
-                        type_table,
-                        arg,
-                        type_params,
-                        type_aliases,
-                    ));
+                    ref_args.push(Self::convert_ast_type_with_params_and_aliases(type_table, arg, type_params, type_aliases));
                 }
                 if base_name == "Tuple" {
                     TypeRef::Tuple(ref_args)
@@ -206,33 +177,16 @@ impl<'a> TypeChecker<'a> {
             Type::Tuple(elements) => TypeRef::Tuple(
                 elements
                     .iter()
-                    .map(|ty| {
-                        Self::convert_ast_type_with_params_and_aliases(
-                            type_table,
-                            ty,
-                            type_params,
-                            type_aliases,
-                        )
-                    })
+                    .map(|ty| Self::convert_ast_type_with_params_and_aliases(type_table, ty, type_params, type_aliases))
                     .collect(),
             ),
             Type::StrSlice => TypeRef::StrSlice,
-            Type::Slice(element) => {
-                TypeRef::Slice(Box::new(Self::convert_ast_type_with_params_and_aliases(
-                    type_table,
-                    element,
-                    type_params,
-                    type_aliases,
-                )))
-            }
-            Type::Task(result) => {
-                TypeRef::Task(Box::new(Self::convert_ast_type_with_params_and_aliases(
-                    type_table,
-                    result,
-                    type_params,
-                    type_aliases,
-                )))
-            }
+            Type::Slice(element) => TypeRef::Slice(Box::new(
+                Self::convert_ast_type_with_params_and_aliases(type_table, element, type_params, type_aliases),
+            )),
+            Type::Task(result) => TypeRef::Task(Box::new(
+                Self::convert_ast_type_with_params_and_aliases(type_table, result, type_params, type_aliases),
+            )),
         }
     }
 
@@ -346,12 +300,7 @@ impl<'a> TypeChecker<'a> {
         for decl in &program.declarations {
             if let TopLevel::Function(f) = decl {
                 let tp = type_param_names(&f.type_params);
-                let ret_ty = Self::convert_ast_type_with_params_and_aliases(
-                    &self.type_table,
-                    &f.return_type,
-                    &tp,
-                    &self.type_aliases,
-                );
+                let ret_ty = Self::convert_ast_type_with_params_and_aliases(&self.type_table, &f.return_type, &tp, &self.type_aliases);
                 self.func_return_types.insert(f.name.clone(), ret_ty);
                 if f.is_async {
                     if f.name == "main" && !f.params.is_empty() {
@@ -361,12 +310,8 @@ impl<'a> TypeChecker<'a> {
                 }
                 let mut param_tys = Vec::with_capacity(f.params.len());
                 for param in &f.params {
-                    let element = Self::convert_ast_type_with_params_and_aliases(
-                        &self.type_table,
-                        &param.ty,
-                        &tp,
-                        &self.type_aliases,
-                    );
+                    let element =
+                        Self::convert_ast_type_with_params_and_aliases(&self.type_table, &param.ty, &tp, &self.type_aliases);
                     if param.variadic {
                         if !element.is_list_element_supported() {
                             return Err(format!(
@@ -383,9 +328,7 @@ impl<'a> TypeChecker<'a> {
                 }
                 self.func_param_types.insert(f.name.clone(), param_tys);
                 // Record trait bounds for this function's type params
-                let bounds: Vec<(String, String)> = f
-                    .type_params
-                    .iter()
+                let bounds: Vec<(String, String)> = f.type_params.iter()
                     .filter_map(|tp| tp.bound.as_ref().map(|b| (tp.name.clone(), b.clone())))
                     .collect();
                 if !bounds.is_empty() {
@@ -396,24 +339,15 @@ impl<'a> TypeChecker<'a> {
             if let TopLevel::Impl(impl_block) = decl {
                 for method in &impl_block.methods {
                     let tp = type_param_names(&method.type_params);
-                    let ret_ty = Self::convert_ast_type_with_params_and_aliases(
-                        &self.type_table,
-                        &method.return_type,
-                        &tp,
-                        &self.type_aliases,
-                    );
+                    let ret_ty = Self::convert_ast_type_with_params_and_aliases(&self.type_table, &method.return_type, &tp, &self.type_aliases);
                     self.func_return_types.insert(method.name.clone(), ret_ty);
                     if method.is_async {
                         self.async_functions.insert(method.name.clone());
                     }
                     let mut param_tys = Vec::with_capacity(method.params.len());
                     for param in &method.params {
-                        let element = Self::convert_ast_type_with_params_and_aliases(
-                            &self.type_table,
-                            &param.ty,
-                            &tp,
-                            &self.type_aliases,
-                        );
+                        let element =
+                            Self::convert_ast_type_with_params_and_aliases(&self.type_table, &param.ty, &tp, &self.type_aliases);
                         if param.variadic {
                             if !element.is_list_element_supported() {
                                 return Err(format!(
@@ -423,7 +357,8 @@ impl<'a> TypeChecker<'a> {
                             }
                             self.variadic_elements
                                 .insert(method.name.clone(), element.clone());
-                            param_tys.push(TypeRef::Generic("List".to_string(), vec![element]));
+                            param_tys
+                                .push(TypeRef::Generic("List".to_string(), vec![element]));
                         } else {
                             param_tys.push(element);
                         }
@@ -434,24 +369,12 @@ impl<'a> TypeChecker<'a> {
             // Register extern function types
             if let TopLevel::Extern(ext) = decl {
                 for ef in &ext.functions {
-                    let ret_ty = Self::convert_ast_type_with_params_and_aliases(
-                        &self.type_table,
-                        &ef.return_type,
-                        &[],
-                        &self.type_aliases,
-                    );
+                    let ret_ty = Self::convert_ast_type_with_params_and_aliases(&self.type_table, &ef.return_type, &[], &self.type_aliases);
                     self.func_return_types.insert(ef.name.clone(), ret_ty);
                     let param_tys: Vec<TypeRef> = ef
                         .params
                         .iter()
-                        .map(|p| {
-                            Self::convert_ast_type_with_params_and_aliases(
-                                &self.type_table,
-                                &p.ty,
-                                &[],
-                                &self.type_aliases,
-                            )
-                        })
+                        .map(|p| Self::convert_ast_type_with_params_and_aliases(&self.type_table, &p.ty, &[], &self.type_aliases))
                         .collect();
                     self.func_param_types.insert(ef.name.clone(), param_tys);
                 }
@@ -471,12 +394,7 @@ impl<'a> TypeChecker<'a> {
                 let mut is_self_referential = false;
 
                 for field in &s.fields {
-                    let field_ty = Self::convert_ast_type_with_params_and_aliases(
-                        &self.type_table,
-                        &field.ty,
-                        &type_param_names(&s.type_params),
-                        &self.type_aliases,
-                    );
+                    let field_ty = Self::convert_ast_type_with_params_and_aliases(&self.type_table, &field.ty, &type_param_names(&s.type_params), &self.type_aliases);
 
                     if let TypeRef::Custom(ref_id) = field_ty {
                         if ref_id == id {
@@ -494,8 +412,7 @@ impl<'a> TypeChecker<'a> {
                 def.is_self_referential = is_self_referential;
                 def.repr_exact = s.repr_exact;
                 def.align = s.align;
-                let param_tys: Vec<TypeRef> =
-                    resolved_fields.into_iter().map(|(_, ty)| ty).collect();
+                let param_tys: Vec<TypeRef> = resolved_fields.into_iter().map(|(_, ty)| ty).collect();
                 self.func_param_types.insert(s.name.clone(), param_tys);
             }
         }
@@ -524,11 +441,7 @@ impl<'a> TypeChecker<'a> {
                 for (i, variant) in e.variants.iter().enumerate() {
                     if let Some(p) = variant.fields.first() {
                         let ty = Self::convert_ast_type_with_params(&self.type_table, &p.ty, &tp);
-                        let ty = if matches!(ty, TypeRef::Unresolved(_)) {
-                            TypeRef::Int
-                        } else {
-                            ty
-                        };
+                        let ty = if matches!(ty, TypeRef::Unresolved(_)) { TypeRef::Int } else { ty };
                         fields.push((format!("__v{}", i), ty));
                     }
                 }
@@ -560,12 +473,7 @@ impl<'a> TypeChecker<'a> {
         // Phase 3: Update all bindings in the symbol table with resolved TypeRefs
         for binding in &mut self.symbol_table.bindings {
             if let Some(ast_ty) = &binding.ast_ty {
-                binding.ty = Some(Self::convert_ast_type_with_params_and_aliases(
-                    &self.type_table,
-                    ast_ty,
-                    &all_type_params,
-                    &self.type_aliases,
-                ));
+                binding.ty = Some(Self::convert_ast_type_with_params_and_aliases(&self.type_table, ast_ty, &all_type_params, &self.type_aliases));
             }
         }
 
@@ -597,119 +505,66 @@ impl<'a> TypeChecker<'a> {
                             stack.push(Node::Expr(index));
                             stack.push(Node::Expr(value));
                         }
-                        Stmt::If {
-                            condition,
-                            then_block,
-                            else_block,
-                            ..
-                        } => {
+                        Stmt::If { condition, then_block, else_block, .. } => {
                             stack.push(Node::Expr(condition));
-                            for s in then_block {
-                                stack.push(Node::Stmt(s));
-                            }
-                            if let Some(b) = else_block {
-                                for s in b {
-                                    stack.push(Node::Stmt(s));
-                                }
-                            }
+                            for s in then_block { stack.push(Node::Stmt(s)); }
+                            if let Some(b) = else_block { for s in b { stack.push(Node::Stmt(s)); } }
                         }
-                        Stmt::While {
-                            condition, body, ..
-                        } => {
+                        Stmt::While { condition, body, .. } => {
                             stack.push(Node::Expr(condition));
-                            for s in body {
-                                stack.push(Node::Stmt(s));
-                            }
+                            for s in body { stack.push(Node::Stmt(s)); }
                         }
-                        Stmt::ForRange {
-                            start,
-                            end,
-                            step,
-                            body,
-                            ..
-                        } => {
+                        Stmt::ForRange { start, end, step, body, .. } => {
                             stack.push(Node::Expr(start));
                             stack.push(Node::Expr(end));
-                            if let Some(step) = step {
-                                stack.push(Node::Expr(step));
-                            }
-                            for s in body {
-                                stack.push(Node::Stmt(s));
-                            }
+                            if let Some(step) = step { stack.push(Node::Expr(step)); }
+                            for s in body { stack.push(Node::Stmt(s)); }
                         }
                         Stmt::ForIn { list, body, .. } => {
                             stack.push(Node::Expr(list));
-                            for s in body {
-                                stack.push(Node::Stmt(s));
-                            }
+                            for s in body { stack.push(Node::Stmt(s)); }
                         }
                         Stmt::Match { subject, arms } => {
                             stack.push(Node::Expr(subject));
-                            for arm in arms {
-                                for s in &arm.body {
-                                    stack.push(Node::Stmt(s));
-                                }
-                            }
+                            for arm in arms { for s in &arm.body { stack.push(Node::Stmt(s)); } }
                         }
                         Stmt::Block(body) => {
-                            for s in body {
-                                stack.push(Node::Stmt(s));
-                            }
+                            for s in body { stack.push(Node::Stmt(s)); }
                         }
                         Stmt::Return(None) | Stmt::Break | Stmt::Continue => {}
                     },
                     Node::Expr(expr) => match expr {
                         Expr::Call { callee, args } | Expr::GenericCall { callee, args, .. } => {
-                            if let Expr::Identifier(name, _) = &**callee {
-                                calls.insert(name.clone());
-                            }
+                            if let Expr::Identifier(name, _) = &**callee { calls.insert(name.clone()); }
                             stack.push(Node::Expr(callee));
-                            for arg in args {
-                                stack.push(Node::Expr(arg));
-                            }
+                            for arg in args { stack.push(Node::Expr(arg)); }
                         }
                         Expr::Tuple(items) | Expr::ListLiteral(items) => {
-                            for item in items {
-                                stack.push(Node::Expr(item));
-                            }
+                            for item in items { stack.push(Node::Expr(item)); }
                         }
-                        Expr::Await(inner)
-                        | Expr::Try(inner)
-                        | Expr::UnaryOp { operand: inner, .. }
+                        Expr::Await(inner) | Expr::Try(inner) | Expr::UnaryOp { operand: inner, .. }
                         | Expr::Spawn { closure: inner } => stack.push(Node::Expr(inner)),
                         Expr::BinaryOp { left, right, .. } => {
                             stack.push(Node::Expr(left));
                             stack.push(Node::Expr(right));
                         }
                         Expr::Closure { body, .. } => {
-                            for s in body {
-                                stack.push(Node::Stmt(s));
-                            }
+                            for s in body { stack.push(Node::Stmt(s)); }
                         }
                         Expr::FieldAccess { base, .. } => stack.push(Node::Expr(base)),
                         Expr::Match { subject, arms } => {
                             stack.push(Node::Expr(subject));
-                            for arm in arms {
-                                for s in &arm.body {
-                                    stack.push(Node::Stmt(s));
-                                }
-                            }
+                            for arm in arms { for s in &arm.body { stack.push(Node::Stmt(s)); } }
                         }
                         Expr::Index { base, index } => {
                             stack.push(Node::Expr(base));
                             stack.push(Node::Expr(index));
                         }
                         Expr::EnumVariantConstruct { args, .. } => {
-                            for arg in args {
-                                stack.push(Node::Expr(arg));
-                            }
+                            for arg in args { stack.push(Node::Expr(arg)); }
                         }
-                        Expr::IntLiteral(_)
-                        | Expr::FloatLiteral(_)
-                        | Expr::StringLiteral(_)
-                        | Expr::CharLiteral(_)
-                        | Expr::BoolLiteral(_)
-                        | Expr::Identifier(_, _) => {}
+                        Expr::IntLiteral(_) | Expr::FloatLiteral(_) | Expr::StringLiteral(_)
+                        | Expr::CharLiteral(_) | Expr::BoolLiteral(_) | Expr::Identifier(_, _) => {}
                     },
                 }
             }
@@ -722,13 +577,11 @@ impl<'a> TypeChecker<'a> {
                     collect_stmt_calls(&function.body, &mut calls);
                     call_graph.insert(function.name.clone(), calls);
                 }
-                TopLevel::Impl(block) => {
-                    for function in &block.methods {
-                        let mut calls = std::collections::HashSet::new();
-                        collect_stmt_calls(&function.body, &mut calls);
-                        call_graph.insert(function.name.clone(), calls);
-                    }
-                }
+                TopLevel::Impl(block) => for function in &block.methods {
+                    let mut calls = std::collections::HashSet::new();
+                    collect_stmt_calls(&function.body, &mut calls);
+                    call_graph.insert(function.name.clone(), calls);
+                },
                 _ => {}
             }
         }
@@ -741,21 +594,14 @@ impl<'a> TypeChecker<'a> {
             let mut changed = false;
             for (function, calls) in &call_graph {
                 if !blocking_functions.contains(function)
-                    && calls
-                        .iter()
-                        .any(|callee| blocking_functions.contains(callee))
+                    && calls.iter().any(|callee| blocking_functions.contains(callee))
                 {
-                    blocking_functions.insert(function.clone());
-                    changed = true;
+                    blocking_functions.insert(function.clone()); changed = true;
                 }
             }
-            if !changed {
-                break;
-            }
+            if !changed { break; }
         }
-        if let Some(function) = self
-            .async_functions
-            .iter()
+        if let Some(function) = self.async_functions.iter()
             .find(|name| blocking_functions.contains(*name))
         {
             return Err(format!(
@@ -817,8 +663,7 @@ impl<'a> TypeChecker<'a> {
                 if elements.len() != names.len() {
                     return Err(format!(
                         "Type error: destructuring has {} names but tuple has {} elements",
-                        names.len(),
-                        elements.len()
+                        names.len(), elements.len()
                     ));
                 }
                 for (index, element_ty) in elements.into_iter().enumerate() {
@@ -836,9 +681,7 @@ impl<'a> TypeChecker<'a> {
                 value,
                 binding_id,
             } => {
-                let expected_ty = binding_id
-                    .get()
-                    .and_then(|bid| self.symbol_table.bindings[bid].ty.clone());
+                let expected_ty = binding_id.get().and_then(|bid| self.symbol_table.bindings[bid].ty.clone());
                 let inferred_type = self.infer_expr(value, current_scope, expected_ty)?;
                 let b_id = binding_id
                     .get()
@@ -848,8 +691,7 @@ impl<'a> TypeChecker<'a> {
                     binding.ty = Some(inferred_type);
                 }
                 if let Expr::Call { callee, args } = value {
-                    if matches!(&**callee, Expr::Identifier(name, _) if name == "str_slice" || name == "slice")
-                    {
+                    if matches!(&**callee, Expr::Identifier(name, _) if name == "str_slice" || name == "slice") {
                         if let Some(Expr::Identifier(_, cell)) = args.first() {
                             if let Some(source_id) = cell.get() {
                                 self.borrowed_slice_bases.insert(source_id);
@@ -863,15 +705,10 @@ impl<'a> TypeChecker<'a> {
                 value,
                 binding_id,
             } => {
-                let resolved_id = binding_id.get().or_else(|| {
-                    self.symbol_table
-                        .resolve_name(current_scope, name)
-                        .map(|id| id.0)
-                });
-                if resolved_id
-                    .map(|id| self.borrowed_slice_bases.contains(&id))
-                    .unwrap_or(false)
-                {
+                let resolved_id = binding_id
+                    .get()
+                    .or_else(|| self.symbol_table.resolve_name(current_scope, name).map(|id| id.0));
+                if resolved_id.map(|id| self.borrowed_slice_bases.contains(&id)).unwrap_or(false) {
                     return Err(format!(
                         "Borrow error: cannot reassign '{}' while a borrowed slice view is live",
                         name
@@ -1035,9 +872,7 @@ impl<'a> TypeChecker<'a> {
             } => {
                 let list_ty = self.infer_expr(list, current_scope, None)?;
                 let elem_ty = match list_ty {
-                    TypeRef::Generic(ref name, ref params)
-                        if name == "List" && !params.is_empty() =>
-                    {
+                    TypeRef::Generic(ref name, ref params) if name == "List" && !params.is_empty() => {
                         params[0].clone()
                     }
                     TypeRef::Str => TypeRef::Str,
@@ -1094,10 +929,7 @@ impl<'a> TypeChecker<'a> {
                 if let Some(expected) = expected_ret_ty {
                     if expected == TypeRef::Void {
                         let fname = func_name.as_deref().unwrap_or("function");
-                        return Err(format!(
-                            "Type error: Void function '{}' cannot return a value",
-                            fname
-                        ));
+                        return Err(format!("Type error: Void function '{}' cannot return a value", fname));
                     }
                     if !types_compatible(&expected, &actual_ty) {
                         let fname = func_name.as_deref().unwrap_or("function");
@@ -1155,10 +987,7 @@ impl<'a> TypeChecker<'a> {
             Expr::BoolLiteral(_) => Ok(TypeRef::Bool),
             Expr::Tuple(elements) => {
                 if !(2..=4).contains(&elements.len()) {
-                    return Err(format!(
-                        "Tuple expressions require arity 2..=4, got {}",
-                        elements.len()
-                    ));
+                    return Err(format!("Tuple expressions require arity 2..=4, got {}", elements.len()));
                 }
                 let mut types = Vec::with_capacity(elements.len());
                 let expected_elements = match expected_ty.as_ref() {
@@ -1169,14 +998,10 @@ impl<'a> TypeChecker<'a> {
                     let ty = self.infer_expr(
                         element,
                         current_scope,
-                        expected_elements
-                            .and_then(|items| items.get(index))
-                            .cloned(),
+                        expected_elements.and_then(|items| items.get(index)).cloned(),
                     )?;
                     if ty.is_borrowed_view() {
-                        return Err(
-                            "Borrow error: a slice view cannot be stored in a tuple".to_string()
-                        );
+                        return Err("Borrow error: a slice view cannot be stored in a tuple".to_string());
                     }
                     types.push(ty);
                 }
@@ -1184,20 +1009,16 @@ impl<'a> TypeChecker<'a> {
             }
             Expr::Await(inner) => {
                 if self.enclosing_async_function(current_scope).is_none() {
-                    return Err(
-                        "Type error: '.await' is only legal inside an async function".to_string(),
-                    );
+                    return Err("Type error: '.await' is only legal inside an async function".to_string());
                 }
                 match self.infer_expr(inner, current_scope, None)? {
                     TypeRef::Task(result) => Ok(*result),
-                    other => Err(format!(
-                        "Type error: '.await' requires Task[T], got {:?}",
-                        other
-                    )),
+                    other => Err(format!("Type error: '.await' requires Task[T], got {:?}", other)),
                 }
             }
             Expr::GenericCall { .. } => Err(
-                "internal error: unresolved generic call with explicit type arguments".to_string(),
+                "internal error: unresolved generic call with explicit type arguments"
+                    .to_string(),
             ),
             Expr::Identifier(name, binding_id_cell) => {
                 if let Some(id) = binding_id_cell.get() {
@@ -1227,7 +1048,7 @@ impl<'a> TypeChecker<'a> {
             Expr::UnaryOp { op, operand } => {
                 let ty = self.infer_expr(operand, current_scope, None)?;
                 match op {
-                    UnaryOperator::Negate => Ok(ty),         // -Int→Int, -Float→Float
+                    UnaryOperator::Negate => Ok(ty), // -Int→Int, -Float→Float
                     UnaryOperator::Not => Ok(TypeRef::Bool), // !Bool→Bool
                 }
             }
@@ -1249,10 +1070,7 @@ impl<'a> TypeChecker<'a> {
                         op, left_ty, right_ty
                     ));
                 }
-                if matches!(
-                    op,
-                    crate::ast::BinaryOperator::Divide | crate::ast::BinaryOperator::Modulo
-                ) {
+                if matches!(op, crate::ast::BinaryOperator::Divide | crate::ast::BinaryOperator::Modulo) {
                     match &**right {
                         Expr::IntLiteral(0) => {
                             return Err(format!("Cannot {:?} by zero", op));
@@ -1263,10 +1081,7 @@ impl<'a> TypeChecker<'a> {
                         _ => {}
                     }
                 }
-                if matches!(
-                    op,
-                    crate::ast::BinaryOperator::Shl | crate::ast::BinaryOperator::Shr
-                ) {
+                if matches!(op, crate::ast::BinaryOperator::Shl | crate::ast::BinaryOperator::Shr) {
                     if let Expr::IntLiteral(val) = &**right {
                         if *val < 0 || *val >= 64 {
                             return Err(format!(
@@ -1314,9 +1129,7 @@ impl<'a> TypeChecker<'a> {
                             if args.len() < fixed {
                                 return Err(format!(
                                     "{} expects at least {} arguments before its variadic rest, got {}",
-                                    name,
-                                    fixed,
-                                    args.len()
+                                    name, fixed, args.len()
                                 ));
                             }
                             param_tys.extend_from_slice(&tys[..fixed]);
@@ -1338,16 +1151,17 @@ impl<'a> TypeChecker<'a> {
                                 self.symbol_table.bindings[id].ty = Some(list_ty);
                             }
                         }
-                    } else if (name == "list_set" || name == "lpp_list_set") && args.len() >= 3 {
+                    } else if (name == "list_set" || name == "lpp_list_set")
+                        && args.len() >= 3
+                    {
                         let list_ty = self.infer_expr(&args[0], current_scope, None)?;
                         if let TypeRef::Generic(ref list_name, ref params) = list_ty {
                             if list_name == "List" && !params.is_empty() {
-                                param_tys = vec![list_ty.clone(), TypeRef::Int, params[0].clone()];
+                                param_tys =
+                                    vec![list_ty.clone(), TypeRef::Int, params[0].clone()];
                             }
                         }
-                    } else if (name == "list_get" || name == "lpp_list_get" || name == "get")
-                        && args.len() >= 2
-                    {
+                    } else if (name == "list_get" || name == "lpp_list_get" || name == "get") && args.len() >= 2 {
                         let list_ty = self.infer_expr(&args[0], current_scope, None)?;
                         if let TypeRef::Generic(ref list_name, ref params) = list_ty {
                             if list_name == "List" && !params.is_empty() {
@@ -1366,7 +1180,8 @@ impl<'a> TypeChecker<'a> {
                 if let Expr::Identifier(name, _) = &**callee {
                     if matches!(
                         name.as_str(),
-                        "list_push" | "lpp_list_push" | "push" | "list_set" | "lpp_list_set"
+                        "list_push" | "lpp_list_push" | "push"
+                            | "list_set" | "lpp_list_set"
                     ) {
                         for (index, (expected, actual)) in
                             param_tys.iter().zip(arg_tys.iter()).enumerate()
@@ -1420,9 +1235,7 @@ impl<'a> TypeChecker<'a> {
                             return match &arg_tys[0] {
                                 TypeRef::Slice(element) => Ok((**element).clone()),
                                 TypeRef::StrSlice => Ok(TypeRef::Str),
-                                other => {
-                                    Err(format!("slice_get expects a slice view, got {:?}", other))
-                                }
+                                other => Err(format!("slice_get expects a slice view, got {:?}", other)),
                             };
                         }
                         "slice_to_str" | "str_slice_to_str" => {
@@ -1548,17 +1361,10 @@ impl<'a> TypeChecker<'a> {
                                     return Ok(TypeRef::Generic("Map".to_string(), params));
                                 }
                             }
-                            return Ok(TypeRef::Generic(
-                                "Map".to_string(),
-                                vec![TypeRef::Int, TypeRef::Int],
-                            ));
+                            return Ok(TypeRef::Generic("Map".to_string(), vec![TypeRef::Int, TypeRef::Int]));
                         }
 
-                        if name == "map_put"
-                            || name == "lpp_map_put"
-                            || name == "map_put_str"
-                            || name == "lpp_map_put_str"
-                        {
+                        if name == "map_put" || name == "lpp_map_put" || name == "map_put_str" || name == "lpp_map_put_str" {
                             if args.len() >= 3 {
                                 let key_ty = arg_tys[1].clone();
                                 let val_ty = arg_tys[2].clone();
@@ -1574,11 +1380,7 @@ impl<'a> TypeChecker<'a> {
                             return Ok(TypeRef::Void);
                         }
 
-                        if name == "map_get"
-                            || name == "lpp_map_get"
-                            || name == "map_get_str"
-                            || name == "lpp_map_get_str"
-                        {
+                        if name == "map_get" || name == "lpp_map_get" || name == "map_get_str" || name == "lpp_map_get_str" {
                             let map_ty = arg_tys[0].clone();
                             if let TypeRef::Generic(ref name, ref params) = map_ty {
                                 if name == "Map" && params.len() >= 2 {
@@ -1592,10 +1394,7 @@ impl<'a> TypeChecker<'a> {
                             let map_ty = arg_tys[0].clone();
                             if let TypeRef::Generic(ref name, ref params) = map_ty {
                                 if name == "Map" && !params.is_empty() {
-                                    return Ok(TypeRef::Generic(
-                                        "List".to_string(),
-                                        vec![params[0].clone()],
-                                    ));
+                                    return Ok(TypeRef::Generic("List".to_string(), vec![params[0].clone()]));
                                 }
                             }
                             return Ok(TypeRef::Generic("List".to_string(), vec![TypeRef::Int]));
@@ -1605,20 +1404,13 @@ impl<'a> TypeChecker<'a> {
                             let map_ty = arg_tys[0].clone();
                             if let TypeRef::Generic(ref name, ref params) = map_ty {
                                 if name == "Map" && params.len() >= 2 {
-                                    return Ok(TypeRef::Generic(
-                                        "List".to_string(),
-                                        vec![params[1].clone()],
-                                    ));
+                                    return Ok(TypeRef::Generic("List".to_string(), vec![params[1].clone()]));
                                 }
                             }
                             return Ok(TypeRef::Generic("List".to_string(), vec![TypeRef::Int]));
                         }
 
-                        if name == "dir_list"
-                            || name == "lpp_dir_list"
-                            || name == "str_split"
-                            || name == "lpp_str_split"
-                        {
+                        if name == "dir_list" || name == "lpp_dir_list" || name == "str_split" || name == "lpp_str_split" {
                             // The static builtin table cannot spell List[Str]
                             // (TypeRef::Generic is not const-constructible), so
                             // the catalog entries declare Void; refine the real
@@ -1660,10 +1452,7 @@ impl<'a> TypeChecker<'a> {
                                 if !types_compatible(expected, actual) {
                                     return Err(format!(
                                         "{} argument {} expects {:?}, got {:?}",
-                                        name,
-                                        index + 1,
-                                        expected,
-                                        actual
+                                        name, index + 1, expected, actual
                                     ));
                                 }
                             }
@@ -1725,8 +1514,7 @@ impl<'a> TypeChecker<'a> {
                 let scope_id = closure_scope
                     .ok_or_else(|| "Type error: Closure scope resolution failed".to_string())?;
 
-                if let ScopeKind::Closure { captures } = &self.symbol_table.scopes[scope_id.0].kind
-                {
+                if let ScopeKind::Closure { captures } = &self.symbol_table.scopes[scope_id.0].kind {
                     for capture in captures {
                         if let Some(ty) = &self.symbol_table.bindings[capture.0].ty {
                             if matches!(ty, TypeRef::Task(_)) {
@@ -1827,12 +1615,10 @@ impl<'a> TypeChecker<'a> {
                 };
                 let mut elem_ty = expected_elem_ty.clone().unwrap_or(TypeRef::Int);
                 if !elements.is_empty() {
-                    elem_ty =
-                        self.infer_expr(&elements[0], current_scope, expected_elem_ty.clone())?;
+                    elem_ty = self.infer_expr(&elements[0], current_scope, expected_elem_ty.clone())?;
                 }
                 for element in elements.iter().skip(1) {
-                    let actual_ty =
-                        self.infer_expr(element, current_scope, expected_elem_ty.clone())?;
+                    let actual_ty = self.infer_expr(element, current_scope, expected_elem_ty.clone())?;
                     if !types_compatible(&elem_ty, &actual_ty) {
                         return Err(format!(
                             "list literal has mixed element types: expected {:?}, got {:?}",
@@ -2177,13 +1963,9 @@ def main():
         let mut parser = Parser::new(tokens);
         let mut ast = parser.parse().expect("source should parse");
         let mut resolver = Resolver::new();
-        resolver
-            .resolve_program(&mut ast)
-            .expect("program should resolve");
+        resolver.resolve_program(&mut ast).expect("program should resolve");
         let mut type_checker = TypeChecker::new(&mut resolver.table);
-        let err = type_checker
-            .check_program(&ast)
-            .expect_err("should reject 1/0");
+        let err = type_checker.check_program(&ast).expect_err("should reject 1/0");
         assert!(err.contains("Cannot Divide by zero"));
     }
 
@@ -2198,13 +1980,9 @@ def main():
         let mut parser = Parser::new(tokens);
         let mut ast = parser.parse().expect("source should parse");
         let mut resolver = Resolver::new();
-        resolver
-            .resolve_program(&mut ast)
-            .expect("program should resolve");
+        resolver.resolve_program(&mut ast).expect("program should resolve");
         let mut type_checker = TypeChecker::new(&mut resolver.table);
-        let err = type_checker
-            .check_program(&ast)
-            .expect_err("should reject 1<<64");
+        let err = type_checker.check_program(&ast).expect_err("should reject 1<<64");
         assert!(err.contains("Shift amount 64 is out of valid range [0, 63]"));
     }
 
@@ -2223,13 +2001,9 @@ def main():
         let mut parser = Parser::new(tokens);
         let mut ast = parser.parse().expect("source should parse");
         let mut resolver = Resolver::new();
-        resolver
-            .resolve_program(&mut ast)
-            .expect("program should resolve");
+        resolver.resolve_program(&mut ast).expect("program should resolve");
         let mut type_checker = TypeChecker::new(&mut resolver.table);
-        type_checker
-            .check_program(&ast)
-            .expect("Node(1, []) should typecheck");
+        type_checker.check_program(&ast).expect("Node(1, []) should typecheck");
     }
 
     #[test]
@@ -2246,12 +2020,8 @@ def main():
         let mut parser = Parser::new(tokens);
         let mut ast = parser.parse().expect("source should parse");
         let mut resolver = Resolver::new();
-        resolver
-            .resolve_program(&mut ast)
-            .expect("program should resolve");
+        resolver.resolve_program(&mut ast).expect("program should resolve");
         let mut type_checker = TypeChecker::new(&mut resolver.table);
-        type_checker
-            .check_program(&ast)
-            .expect("take_strings([]) should typecheck");
+        type_checker.check_program(&ast).expect("take_strings([]) should typecheck");
     }
 }
