@@ -2394,6 +2394,12 @@ void lpp_json_free(void *json) {
     lpp_json_free_node((lpp_JsonNode *)json);
 }
 
+#if (defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)) && !defined(__aarch64__) && !defined(_M_ARM64) && !defined(__arm64__)
+#define LPP_HAS_X86_SSE2 1
+#include <emmintrin.h>
+#include <xmmintrin.h>
+#endif
+
 #include "runtime/lpp_str.c"
 #define LPP_EXEC_EXCLUDE_BUILTINS
 #include "runtime/lpp_exec.c"
@@ -2439,23 +2445,18 @@ int64_t lpp_vec_i64_checksum(int64_t n) {
 #endif
 }
 
-#if defined(_MSC_VER) || defined(__x86_64__) || defined(_M_X64)
-#include <emmintrin.h>
-#include <xmmintrin.h>
-#endif
-
 void lpp_prefetch(int64_t addr) {
-#if defined(_MSC_VER) || defined(__x86_64__) || defined(_M_X64)
+#if defined(LPP_HAS_X86_SSE2)
     if (addr) _mm_prefetch((const char *)(intptr_t)addr, _MM_HINT_T0);
-#elif defined(__GNUC__)
+#elif defined(__GNUC__) || defined(__clang__)
     if (addr) __builtin_prefetch((const void *)(intptr_t)addr, 0, 3);
 #endif
 }
 
 void lpp_prefetch_write(int64_t addr) {
-#if defined(_MSC_VER) || defined(__x86_64__) || defined(_M_X64)
+#if defined(LPP_HAS_X86_SSE2)
     if (addr) _mm_prefetch((const char *)(intptr_t)addr, _MM_HINT_T0);
-#elif defined(__GNUC__)
+#elif defined(__GNUC__) || defined(__clang__)
     if (addr) __builtin_prefetch((const void *)(intptr_t)addr, 1, 3);
 #endif
 }
@@ -2496,7 +2497,7 @@ LppVec128 lpp_vec_u8x16_splat(int64_t byte_val) {
 }
 
 LppVec128 lpp_vec_u8x16_eq(LppVec128 a, LppVec128 b) {
-#if defined(_MSC_VER) || defined(__x86_64__) || defined(_M_X64)
+#if defined(LPP_HAS_X86_SSE2)
     __m128i va = _mm_loadu_si128((const __m128i *)&a);
     __m128i vb = _mm_loadu_si128((const __m128i *)&b);
     __m128i eq = _mm_cmpeq_epi8(va, vb);
@@ -2516,7 +2517,7 @@ LppVec128 lpp_vec_u8x16_eq(LppVec128 a, LppVec128 b) {
 }
 
 int64_t lpp_vec_u8x16_movemask(LppVec128 a) {
-#if defined(_MSC_VER) || defined(__x86_64__) || defined(_M_X64)
+#if defined(LPP_HAS_X86_SSE2)
     __m128i va = _mm_loadu_si128((const __m128i *)&a);
     return (int64_t)_mm_movemask_epi8(va);
 #else

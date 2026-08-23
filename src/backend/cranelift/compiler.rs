@@ -312,6 +312,8 @@ fn is_avx2_detected() -> bool {
             "lpp_arc_alloc_with_destructor",
             "lpp_arc_alloc",
             "lpp_arc_release",
+            "lpp_arena_alloc",
+            "lpp_arena_retain",
             "lpp_arena_release_node",
             "lpp_closure_destroy",
             "lpp_tuple_alloc",

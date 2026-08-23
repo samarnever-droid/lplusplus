@@ -1247,10 +1247,11 @@ impl<'a> TypeChecker<'a> {
                         _ => {}
                     }
 
-                    if let Some(builtin) = crate::builtins::get_builtins()
-                        .iter()
-                        .find(|b| b.name == name)
-                    {
+                    if !self.func_return_types.contains_key(name) {
+                        if let Some(builtin) = crate::builtins::get_builtins()
+                            .iter()
+                            .find(|b| b.name == name)
+                        {
                         if builtin.params.len() != args.len()
                             && !builtin
                                 .params
@@ -1419,6 +1420,7 @@ impl<'a> TypeChecker<'a> {
                         }
 
                         return Ok(builtin.return_type.clone());
+                        }
                     }
 
                     if let Some(&id) = self.type_table.structs_by_name.get(name) {
