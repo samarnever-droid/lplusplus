@@ -503,19 +503,22 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                 let byte_val = scalar(builder, args.first().ok_or_else(|| "u8x16 splat needs an argument".to_string())?, self)?;
                 let byte_val = builder.ins().ireduce(cl_types::I8, byte_val);
                 let byte_vec = builder.ins().splat(cl_types::I8X16, byte_val);
-                Some(builder.ins().bitcast(cl_types::I64X2, cranelift_codegen::ir::MemFlags::new(), byte_vec))
+                let flags = cranelift_codegen::ir::MemFlags::new().with_endianness(cranelift_codegen::ir::Endianness::Little);
+                Some(builder.ins().bitcast(cl_types::I64X2, flags, byte_vec))
             }
             "lpp_vec_u8x16_eq" => {
                 let left = vector(builder, args.first().ok_or_else(|| "u8x16 eq needs left operand".to_string())?, self)?;
                 let right = vector(builder, args.get(1).ok_or_else(|| "u8x16 eq needs right operand".to_string())?, self)?;
-                let left_u8 = builder.ins().bitcast(cl_types::I8X16, cranelift_codegen::ir::MemFlags::new(), left);
-                let right_u8 = builder.ins().bitcast(cl_types::I8X16, cranelift_codegen::ir::MemFlags::new(), right);
+                let flags = cranelift_codegen::ir::MemFlags::new().with_endianness(cranelift_codegen::ir::Endianness::Little);
+                let left_u8 = builder.ins().bitcast(cl_types::I8X16, flags, left);
+                let right_u8 = builder.ins().bitcast(cl_types::I8X16, flags, right);
                 let cmp = builder.ins().icmp(IntCC::Equal, left_u8, right_u8);
-                Some(builder.ins().bitcast(cl_types::I64X2, cranelift_codegen::ir::MemFlags::new(), cmp))
+                Some(builder.ins().bitcast(cl_types::I64X2, flags, cmp))
             }
             "lpp_vec_u8x16_movemask" => {
                 let val = vector(builder, args.first().ok_or_else(|| "movemask needs vector".to_string())?, self)?;
-                let val_u8 = builder.ins().bitcast(cl_types::I8X16, cranelift_codegen::ir::MemFlags::new(), val);
+                let flags = cranelift_codegen::ir::MemFlags::new().with_endianness(cranelift_codegen::ir::Endianness::Little);
+                let val_u8 = builder.ins().bitcast(cl_types::I8X16, flags, val);
                 let mut mask = builder.ins().iconst(cl_types::I64, 0);
                 for lane in 0..16u8 {
                     let b = builder.ins().extractlane(val_u8, lane);
@@ -716,14 +719,23 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                 let left_ty = builder.func.dfg.value_type(left);
                 let right_ty = builder.func.dfg.value_type(right);
                 if left_ty != right_ty {
-                    if left_ty == cl_types::I8 && right_ty == cl_types::I64 {
-                        left = builder.ins().uextend(cl_types::I64, left);
-                    } else if left_ty == cl_types::I64 && right_ty == cl_types::I8 {
-                        right = builder.ins().uextend(cl_types::I64, right);
-                    } else if left_ty == cl_types::I32 && right_ty == cl_types::I64 {
-                        left = builder.ins().sextend(cl_types::I64, left);
-                    } else if left_ty == cl_types::I64 && right_ty == cl_types::I32 {
-                        right = builder.ins().sextend(cl_types::I64, right);
+                    if left_ty.is_int() && right_ty.is_int() {
+                        let max_bits = left_ty.bits().max(right_ty.bits());
+                        let target_ty = if max_bits <= 8 {
+                            cl_types::I8
+                        } else if max_bits <= 16 {
+                            cl_types::I16
+                        } else if max_bits <= 32 {
+                            cl_types::I32
+                        } else {
+                            cl_types::I64
+                        };
+                        if left_ty != target_ty {
+                            left = builder.ins().uextend(target_ty, left);
+                        }
+                        if right_ty != target_ty {
+                            right = builder.ins().uextend(target_ty, right);
+                        }
                     }
                 }
                 let is_float = builder.func.dfg.value_type(left) == cl_types::F64;
@@ -1310,14 +1322,23 @@ impl<'a, M: Module> FunctionLower<'a, M> {
                 let left_ty = builder.func.dfg.value_type(left);
                 let right_ty = builder.func.dfg.value_type(right);
                 if left_ty != right_ty {
-                    if left_ty == cl_types::I8 && right_ty == cl_types::I64 {
-                        left = builder.ins().uextend(cl_types::I64, left);
-                    } else if left_ty == cl_types::I64 && right_ty == cl_types::I8 {
-                        right = builder.ins().uextend(cl_types::I64, right);
-                    } else if left_ty == cl_types::I32 && right_ty == cl_types::I64 {
-                        left = builder.ins().sextend(cl_types::I64, left);
-                    } else if left_ty == cl_types::I64 && right_ty == cl_types::I32 {
-                        right = builder.ins().sextend(cl_types::I64, right);
+                    if left_ty.is_int() && right_ty.is_int() {
+                        let max_bits = left_ty.bits().max(right_ty.bits());
+                        let target_ty = if max_bits <= 8 {
+                            cl_types::I8
+                        } else if max_bits <= 16 {
+                            cl_types::I16
+                        } else if max_bits <= 32 {
+                            cl_types::I32
+                        } else {
+                            cl_types::I64
+                        };
+                        if left_ty != target_ty {
+                            left = builder.ins().uextend(target_ty, left);
+                        }
+                        if right_ty != target_ty {
+                            right = builder.ins().uextend(target_ty, right);
+                        }
                     }
                 }
                 let is_float = builder.func.dfg.value_type(left) == cl_types::F64;
