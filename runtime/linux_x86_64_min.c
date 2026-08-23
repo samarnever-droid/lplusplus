@@ -1309,6 +1309,56 @@ int64_t lpp_net_set_timeout(int64_t fd, int64_t ms) {
     return 1;
 }
 
+struct lpp_pollfd {
+    int fd;
+    short events;
+    short revents;
+};
+
+static long lpp_sys_poll(struct lpp_pollfd *fds, unsigned long nfds, int timeout) {
+    long ret;
+    __asm__ volatile (
+        "syscall"
+        : "=a"(ret)
+        : "a"(7), "D"(fds), "S"(nfds), "d"((long)timeout)
+        : "rcx", "r11", "memory"
+    );
+    return ret;
+}
+
+int64_t lpp_net_poll(int64_t handle, int64_t timeout_ms) {
+    if (handle < 0) return -1;
+    struct lpp_pollfd pfd;
+    pfd.fd = (int)handle;
+    pfd.events = 0x0001; /* POLLIN */
+    pfd.revents = 0;
+    long ret = lpp_sys_poll(&pfd, 1, (int)timeout_ms);
+    return (ret > 0 && (pfd.revents & 0x0001)) ? 1 : 0;
+}
+
+static long lpp_sys_fcntl(long fd, unsigned int cmd, unsigned long arg) {
+    long ret;
+    __asm__ volatile (
+        "syscall"
+        : "=a"(ret)
+        : "a"(72), "D"(fd), "S"((long)cmd), "d"(arg)
+        : "rcx", "r11", "memory"
+    );
+    return ret;
+}
+
+int64_t lpp_net_set_nonblocking(int64_t handle, int64_t enable) {
+    if (handle < 0) return -1;
+    long flags = lpp_sys_fcntl(handle, 3, 0); /* F_GETFL */
+    if (flags < 0) flags = 0;
+    if (enable) {
+        flags |= 04000; /* O_NONBLOCK */
+    } else {
+        flags &= ~04000;
+    }
+    return lpp_sys_fcntl(handle, 4, (unsigned long)flags) >= 0 ? 1 : -1; /* F_SETFL */
+}
+
 /* ── Freestanding Map Runtime ───────────────────────────────────────────── */
 typedef struct LppMapEntry {
     int64_t key;
@@ -2186,6 +2236,14 @@ void lpp_buf_set16le(void*p,int64_t o,int64_t v) { if(!p)return; char*d=(char*)p
 int64_t lpp_buf_get16le(void*p,int64_t o) { if(!p)return 0; unsigned char*d=(unsigned char*)((char*)p+o); return(int64_t)d[0]|((int64_t)d[1]<<8); }
 void lpp_buf_set32le(void*p,int64_t o,int64_t v) { if(!p)return; char*d=(char*)p+o; d[0]=(char)(v&0xFF); d[1]=(char)((v>>8)&0xFF); d[2]=(char)((v>>16)&0xFF); d[3]=(char)((v>>24)&0xFF); }
 int64_t lpp_buf_get32le(void*p,int64_t o) { if(!p)return 0; unsigned char*d=(unsigned char*)((char*)p+o); return(int64_t)d[0]|((int64_t)d[1]<<8)|((int64_t)d[2]<<16)|((int64_t)d[3]<<24); }
+void lpp_buf_set64le(void*p,int64_t o,int64_t v) { if(!p)return; char*d=(char*)p+o; d[0]=(char)(v&0xFF); d[1]=(char)((v>>8)&0xFF); d[2]=(char)((v>>16)&0xFF); d[3]=(char)((v>>24)&0xFF); d[4]=(char)((v>>32)&0xFF); d[5]=(char)((v>>40)&0xFF); d[6]=(char)((v>>48)&0xFF); d[7]=(char)((v>>56)&0xFF); }
+int64_t lpp_buf_get64le(void*p,int64_t o) { if(!p)return 0; unsigned char*d=(unsigned char*)((char*)p+o); return(int64_t)d[0]|((int64_t)d[1]<<8)|((int64_t)d[2]<<16)|((int64_t)d[3]<<24)|((int64_t)d[4]<<32)|((int64_t)d[5]<<40)|((int64_t)d[6]<<48)|((int64_t)d[7]<<56); }
+void lpp_buf_set16be(void*p,int64_t o,int64_t v) { if(!p)return; char*d=(char*)p+o; d[0]=(char)((v>>8)&0xFF); d[1]=(char)(v&0xFF); }
+int64_t lpp_buf_get16be(void*p,int64_t o) { if(!p)return 0; unsigned char*d=(unsigned char*)((char*)p+o); return((int64_t)d[0]<<8)|(int64_t)d[1]; }
+void lpp_buf_set32be(void*p,int64_t o,int64_t v) { if(!p)return; char*d=(char*)p+o; d[0]=(char)((v>>24)&0xFF); d[1]=(char)((v>>16)&0xFF); d[2]=(char)((v>>8)&0xFF); d[3]=(char)(v&0xFF); }
+int64_t lpp_buf_get32be(void*p,int64_t o) { if(!p)return 0; unsigned char*d=(unsigned char*)((char*)p+o); return((int64_t)d[0]<<24)|((int64_t)d[1]<<16)|((int64_t)d[2]<<8)|(int64_t)d[3]; }
+void lpp_buf_set64be(void*p,int64_t o,int64_t v) { if(!p)return; char*d=(char*)p+o; d[0]=(char)((v>>56)&0xFF); d[1]=(char)((v>>48)&0xFF); d[2]=(char)((v>>40)&0xFF); d[3]=(char)((v>>32)&0xFF); d[4]=(char)((v>>24)&0xFF); d[5]=(char)((v>>16)&0xFF); d[6]=(char)((v>>8)&0xFF); d[7]=(char)(v&0xFF); }
+int64_t lpp_buf_get64be(void*p,int64_t o) { if(!p)return 0; unsigned char*d=(unsigned char*)((char*)p+o); return((int64_t)d[0]<<56)|((int64_t)d[1]<<48)|((int64_t)d[2]<<40)|((int64_t)d[3]<<32)|((int64_t)d[4]<<24)|((int64_t)d[5]<<16)|((int64_t)d[6]<<8)|(int64_t)d[7]; }
 void lpp_buf_copy(void*dst,int64_t do2,void*src,int64_t so,int64_t len) { if(!dst||!src||len<=0)return; char*d=(char*)dst+do2; char*s=(char*)src+so; for(int64_t i=0;i<len;i++)d[i]=s[i]; }
 char*lpp_buf_read_str(void*p,int64_t o,int64_t len) { if(!p||len<=0){char*e=(char*)lpp_alloc(1);e[0]=0;return e;} char*out=(char*)lpp_alloc(len+1); char*s=(char*)p+o; for(int64_t i=0;i<len;i++)out[i]=s[i]; out[len]=0; return out; }
 
