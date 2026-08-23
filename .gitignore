@@ -3,6 +3,7 @@
 *.o
 *.obj
 *.pdb
+*.ilk
 output.c
 /benchmarks/c_*
 /benchmarks/rust_*
