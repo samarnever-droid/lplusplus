@@ -45,6 +45,7 @@ jobs:
             -fno-reorder-blocks-and-partition \
             -c runtime/linux_x86_64_min.c -o package/lpp-linux-x86_64/lib/lpp_runtime_min.o
           cp lpp_runtime.c package/lpp-linux-x86_64/lib/
+          cp -r runtime package/lpp-linux-x86_64/lib/
           tar -C package -czf lpp-linux-x86_64.tar.gz lpp-linux-x86_64
       - uses: actions/upload-artifact@v4
         with:
@@ -69,14 +70,13 @@ jobs:
           cargo build --release --locked --bin lpp --bin lpp-link
           $root = Join-Path $env:RUNNER_TEMP "lpp-windows-x86_64"
           New-Item -ItemType Directory -Force "$root\bin", "$root\lib" | Out-Null
-          Copy-Item pm "$root\pm" -Recurse -Force
-          Copy-Item registry "$root\registry" -Recurse -Force
+          Copy-Item -Recurse pm "$root\pm"
+          Copy-Item -Recurse registry "$root\registry"
           Copy-Item target\release\lpp.exe "$root\bin\lpp.exe"
           Copy-Item target\release\lpp-link.exe "$root\bin\lpp-link.exe"
-          $cmd = Join-Path $env:RUNNER_TEMP "package-runtime.cmd"
+          $cmd = Join-Path $env:RUNNER_TEMP "build_runtime.bat"
           @"
-          @echo off
-          call "%VSCMD_BAT%" >nul || exit /b 1
+          call "$env:VSCMD_BAT" || exit /b 1
           cl.exe /nologo /O2 /c lpp_runtime.c "/Fo:$root\lib\lpp_runtime.obj" || exit /b 1
           cl.exe /nologo /O2 /GS- /Gs1000000 /DLPP_FREESTANDING /c runtime\windows_x86_64_min.c "/Fo:$root\lib\lpp_runtime_min.obj" || exit /b 1
           exit /b 0
@@ -84,6 +84,7 @@ jobs:
           cmd.exe /d /c $cmd
           if ($LASTEXITCODE -ne 0) { throw "Runtime object packaging failed" }
           Copy-Item lpp_runtime.c "$root\lib\lpp_runtime.c"
+          Copy-Item -Recurse runtime "$root\lib\runtime"
           Compress-Archive -Path $root -DestinationPath lpp-windows-x86_64.zip -Force
       - uses: actions/upload-artifact@v4
         with:
@@ -105,6 +106,7 @@ jobs:
           cp target/release/lpp-link package/lpp-macos-arm64/bin/
           clang -O2 -fPIC -c lpp_runtime.c -o package/lpp-macos-arm64/lib/lpp_runtime.o
           cp lpp_runtime.c package/lpp-macos-arm64/lib/
+          cp -r runtime package/lpp-macos-arm64/lib/
           tar -C package -czf lpp-macos-arm64.tar.gz lpp-macos-arm64
       - uses: actions/upload-artifact@v4
         with:
