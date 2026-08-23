@@ -1,4 +1,4 @@
-﻿#ifndef LPP_ATOMIC_C
+#ifndef LPP_ATOMIC_C
 #define LPP_ATOMIC_C
 
 #include <stdint.h>
@@ -115,7 +115,9 @@ void lpp_cpu_pause(void) {
 
 #else
 #include <stdatomic.h>
+#if (defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)) && !defined(__aarch64__) && !defined(_M_ARM64) && !defined(__arm64__)
 #include <immintrin.h>
+#endif
 
 extern void lpp_panic(const char *fmt, ...);
 
@@ -225,8 +227,10 @@ void lpp_atomic_fence_rel(void) {
 }
 
 void lpp_cpu_pause(void) {
-#if defined(__x86_64__) || defined(_M_X64)
+#if (defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)) && !defined(__aarch64__) && !defined(_M_ARM64) && !defined(__arm64__)
     __builtin_ia32_pause();
+#elif defined(__aarch64__) || defined(__arm64__) || defined(_M_ARM64)
+    __asm__ __volatile__("yield");
 #endif
 }
 
