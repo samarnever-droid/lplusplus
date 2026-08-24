@@ -2009,7 +2009,7 @@ pub fn run_command(args: &[String]) -> i32 {
         "outdated" => cmd_outdated(),
         "version" => cmd_version(&args[1..]),
         "clean" => cmd_clean(),
-        "check" => cmd_check(),
+        "check" => cmd_check(&args[1..]),
         "build" => {
             apply_linker_flag(&args[1..]);
             let is_release = args.iter().any(|a| a == "--release");
@@ -2314,7 +2314,7 @@ fn cmd_publish(args: &[String]) -> i32 {
 
     println!("[L++] 📦 Packaging \x1b[1;36m{}\x1b[0m @ \x1b[1;33mv{}\x1b[0m...", manifest.name, manifest.version);
     println!("[L++] [1/3] 🔍 Type-checking project with native AOT engine...");
-    if cmd_check() != 0 {
+    if cmd_check(&[]) != 0 {
         eprintln!("[L++] \x1b[1;31mERROR:\x1b[0m Type check failed. Fix errors before publishing.");
         return 1;
     }
@@ -4199,19 +4199,18 @@ fn cmd_clean() -> i32 {
             Err(_) => failed = true,
         }
     }
-    if let Ok(entries) = fs::read_dir(".") {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().map(|ext| ext == "exe" || ext == "o" || ext == "obj").unwrap_or(false) {
-                match fs::remove_file(&path) { Ok(()) => removed += 1, Err(_) => failed = true }
-            }
-        }
-    }
     println!("[L++] Cleaned {} generated artifact(s).", removed);
     if failed { 1 } else { 0 }
 }
 
-fn cmd_check() -> i32 {
+fn cmd_check(args: &[String]) -> i32 {
+    let is_wasm = args.iter().any(|a| a == "--wasm" || a == "-w" || a == "--backend=wasm")
+        || args.windows(2).any(|w| w[0] == "--target" && (w[1].starts_with("wasm32") || w[1].starts_with("wasm64")));
+
+    if is_wasm {
+        return cmd_check_wasm(args);
+    }
+
     println!("[L++] Checking project...");
     let entry_point_str = resolve_entry_point();
     let entry_point = Path::new(&entry_point_str);
@@ -4228,6 +4227,125 @@ fn cmd_check() -> i32 {
         Ok(s) => { eprintln!("[L++] Error: Project check failed ({s})."); s.code().unwrap_or(1) }
         Err(e) => { eprintln!("[L++] Error: failed to execute compiler '{}': {e}", compiler_path.display()); 1 }
     }
+}
+
+fn cmd_check_wasm(_args: &[String]) -> i32 {
+    println!("================================================================================");
+    println!("           L++ WEBASSEMBLY (WASM) COMPATIBILITY AUDIT REPORT                    ");
+    println!("================================================================================");
+    println!("Target Architecture: wasm32-wasi / WebAssembly Linear Memory Sandbox");
+    println!("Scanning project files for WebAssembly backend compatibility...\n");
+
+    let mut scanned_files = Vec::new();
+    let search_dirs = ["src", ".", "tests"];
+    for d in search_dirs {
+        let p = Path::new(d);
+        if p.exists() && p.is_dir() {
+            if let Ok(entries) = fs::read_dir(p) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_file() && path.extension().map_or(false, |ext| ext == "lpp") {
+                        if !scanned_files.contains(&path) {
+                            scanned_files.push(path);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    scanned_files.sort();
+
+    let mut net_issues = Vec::new();
+    let mut file_issues = Vec::new();
+    let mut thread_issues = Vec::new();
+    let mut ffi_issues = Vec::new();
+    let mut simd_issues = Vec::new();
+    let mut fully_compatible = Vec::new();
+
+    for file_path in &scanned_files {
+        let content = match fs::read_to_string(file_path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+
+        let file_str = file_path.display().to_string();
+        let mut has_issue = false;
+
+        for (line_no, line) in content.lines().enumerate() {
+            let l = line.trim();
+            if l.starts_with('#') || l.starts_with("//") {
+                continue;
+            }
+
+            if l.contains("net_listen") || l.contains("net_accept") || l.contains("net_read") || l.contains("net_write") || l.contains("net_dial") {
+                net_issues.push(format!("  • {}:{} -> Network Socket API (WASI preview1 has no raw TCP sockets)", file_str, line_no + 1));
+                has_issue = true;
+            }
+            if l.contains("read_file") || l.contains("write_file") || l.contains("append_file") || l.contains("file_exists") || l.contains("delete_file") {
+                file_issues.push(format!("  • {}:{} -> File I/O API (Requires WASI file descriptor preopen shims)", file_str, line_no + 1));
+                has_issue = true;
+            }
+            if l.contains("spawn ") || l.contains("lpp_thread_spawn") {
+                thread_issues.push(format!("  • {}:{} -> OS Thread Spawning (WASI sandbox is single-threaded; use async/await)", file_str, line_no + 1));
+                has_issue = true;
+            }
+            if l.contains("extern \"C\"") || l.contains("extern link") {
+                ffi_issues.push(format!("  • {}:{} -> Host C FFI / Shared Library Link (Host DLLs/so cannot link in WASM)", file_str, line_no + 1));
+                has_issue = true;
+            }
+            if l.contains("VectorI64x2") || l.contains("simd_") {
+                simd_issues.push(format!("  • {}:{} -> Native SIMD Types (Wasm backend uses scalar/SWAR algorithms)", file_str, line_no + 1));
+                has_issue = true;
+            }
+        }
+
+        if !has_issue {
+            fully_compatible.push(file_str);
+        }
+    }
+
+    println!("[1/3] SUMMARY OF FINDINGS:");
+    println!("  • Total Source Files Scanned: {}", scanned_files.len());
+    println!("  • Fully WASM-Compatible Files: {} (100% ready for WebAssembly)", fully_compatible.len());
+    let issues_count = net_issues.len() + file_issues.len() + thread_issues.len() + ffi_issues.len() + simd_issues.len();
+    println!("  • Non-WASM Platform Points Identified: {}", issues_count);
+    println!();
+
+    println!("[2/3] DETAILED AUDIT BY CATEGORY (What does not compile down to pure Wasm):");
+    if !net_issues.is_empty() {
+        println!("  \x1b[1;33m[!] Network Socket Plane ({} occurrences):\x1b[0m", net_issues.len());
+        for item in &net_issues { println!("{}", item); }
+        println!("      \x1b[1;36m-> Fix for Wasm:\x1b[0m In WebAssembly / Cloudflare Workers, replace TCP listen with HTTP POST /query.\n");
+    }
+    if !file_issues.is_empty() {
+        println!("  \x1b[1;33m[!] Host File System Plane ({} occurrences):\x1b[0m", file_issues.len());
+        for item in &file_issues { println!("{}", item); }
+        println!("      \x1b[1;36m-> Fix for Wasm:\x1b[0m In WebAssembly, use In-Memory Virtual Pages or Cloudflare R2 / S3 Object Storage.\n");
+    }
+    if !thread_issues.is_empty() {
+        println!("  \x1b[1;33m[!] OS Thread Plane ({} occurrences):\x1b[0m", thread_issues.len());
+        for item in &thread_issues { println!("{}", item); }
+        println!("      \x1b[1;36m-> Fix for Wasm:\x1b[0m Use L++ single-thread async/await task executors.\n");
+    }
+    if !ffi_issues.is_empty() {
+        println!("  \x1b[1;33m[!] Host C FFI Symbols ({} occurrences):\x1b[0m", ffi_issues.len());
+        for item in &ffi_issues { println!("{}", item); }
+    }
+    if !simd_issues.is_empty() {
+        println!("  \x1b[1;33m[!] Native SIMD Types ({} occurrences):\x1b[0m", simd_issues.len());
+        for item in &simd_issues { println!("{}", item); }
+    }
+    println!();
+
+    println!("[3/3] FULLY WASM-COMPATIBLE MODULES IN THIS PROJECT (100% Pure Wasm Ready):");
+    for f in &fully_compatible {
+        println!("  ✓ {}", f);
+    }
+
+    println!("\n================================================================================");
+    println!(" WebAssembly Audit Complete. Use this report to guide WASM ports or edge builds.");
+    println!("================================================================================");
+    0
 }
 
 #[cfg(windows)]

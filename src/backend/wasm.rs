@@ -195,6 +195,7 @@ mod op {
     pub const I32_EQ: u8 = 0x46;
     pub const I32_NE: u8 = 0x47;
     pub const I32_LT_S: u8 = 0x48;
+    pub const I32_LT_U: u8 = 0x49;
     pub const I32_GT_S: u8 = 0x4a;
     pub const I32_GT_U: u8 = 0x4b;
     pub const I32_LE_S: u8 = 0x4c;
@@ -388,6 +389,7 @@ enum Helper {
     // Strings.
     StrLen,
     StrEq,
+    StrCmp,
     StrConcat,
     StrSubstr,
     StrTrim,
@@ -456,6 +458,26 @@ enum Helper {
     RandomRange,
     TimeMs,
     SleepMs,
+    // Buffers.
+    BufAlloc,
+    BufFree,
+    BufLen,
+    BufGet8,
+    BufSet8,
+    BufGet16Le,
+    BufSet16Le,
+    BufGet32Le,
+    BufSet32Le,
+    BufGet64Le,
+    BufSet64Le,
+    BufGet16Be,
+    BufSet16Be,
+    BufGet32Be,
+    BufSet32Be,
+    BufGet64Be,
+    BufSet64Be,
+    BufCopy,
+    BufCrc32,
 }
 
 fn helper_signature(helper: Helper) -> (Vec<Val>, Vec<Val>) {
@@ -484,6 +506,7 @@ fn helper_signature(helper: Helper) -> (Vec<Val>, Vec<Val>) {
         Helper::EnvGet => (vec![I32], vec![I32]),
         Helper::StrLen => (vec![I32], vec![I64]),
         Helper::StrEq => (vec![I32, I32], vec![I32]),
+        Helper::StrCmp => (vec![I32, I32], vec![I64]),
         Helper::StrConcat => (vec![I32, I32], vec![I32]),
         Helper::StrSubstr => (vec![I32, I64, I64], vec![I32]),
         Helper::StrTrim | Helper::StrUpper | Helper::StrLower => (vec![I32], vec![I32]),
@@ -540,6 +563,19 @@ fn helper_signature(helper: Helper) -> (Vec<Val>, Vec<Val>) {
         Helper::RandomRange => (vec![I64, I64], vec![I64]),
         Helper::TimeMs => (vec![], vec![I64]),
         Helper::SleepMs => (vec![I64], vec![]),
+        Helper::BufAlloc => (vec![I64], vec![I64]),
+        Helper::BufFree => (vec![I64], vec![]),
+        Helper::BufLen => (vec![I64], vec![I64]),
+        Helper::BufGet8 => (vec![I64, I64], vec![I64]),
+        Helper::BufSet8 => (vec![I64, I64, I64], vec![]),
+        Helper::BufGet16Le | Helper::BufGet16Be => (vec![I64, I64], vec![I64]),
+        Helper::BufSet16Le | Helper::BufSet16Be => (vec![I64, I64, I64], vec![]),
+        Helper::BufGet32Le | Helper::BufGet32Be => (vec![I64, I64], vec![I64]),
+        Helper::BufSet32Le | Helper::BufSet32Be => (vec![I64, I64, I64], vec![]),
+        Helper::BufGet64Le | Helper::BufGet64Be => (vec![I64, I64], vec![I64]),
+        Helper::BufSet64Le | Helper::BufSet64Be => (vec![I64, I64, I64], vec![]),
+        Helper::BufCopy => (vec![I64, I64, I64, I64, I64], vec![]),
+        Helper::BufCrc32 => (vec![I64, I64, I64], vec![I64]),
     }
 }
 
@@ -554,6 +590,8 @@ const SUPPORTED_BUILTINS: &[&str] = &[
     "lpp_print_str",
     "lpp_str_len",
     "lpp_str_eq",
+    "lpp_str_cmp",
+    "str_cmp",
     "fmod",
     // dynamic strings
     "lpp_str_concat",
@@ -599,6 +637,45 @@ const SUPPORTED_BUILTINS: &[&str] = &[
     "lpp_random_range",
     "lpp_time_ms",
     "lpp_sleep_ms",
+    // byte buffers
+    "lpp_buf_alloc",
+    "lpp_buf_free",
+    "lpp_buf_len",
+    "lpp_buf_get8",
+    "lpp_buf_set8",
+    "lpp_buf_get16le",
+    "lpp_buf_set16le",
+    "lpp_buf_get32le",
+    "lpp_buf_set32le",
+    "lpp_buf_get64le",
+    "lpp_buf_set64le",
+    "lpp_buf_get16be",
+    "lpp_buf_set16be",
+    "lpp_buf_get32be",
+    "lpp_buf_set32be",
+    "lpp_buf_get64be",
+    "lpp_buf_set64be",
+    "lpp_buf_copy",
+    "lpp_buf_crc32",
+    "buf_crc32",
+    "buf_alloc",
+    "buf_free",
+    "buf_len",
+    "buf_get8",
+    "buf_set8",
+    "buf_get16le",
+    "buf_set16le",
+    "buf_get32le",
+    "buf_set32le",
+    "buf_get64le",
+    "buf_set64le",
+    "buf_get16be",
+    "buf_set16be",
+    "buf_get32be",
+    "buf_set32be",
+    "buf_get64be",
+    "buf_set64be",
+    "buf_copy",
     // lists
     "lpp_list_new",
     "lpp_list_new_arc",
@@ -676,9 +753,6 @@ fn unsupported_builtin_family(symbol: &str) -> Option<&'static str> {
     }
     if short.starts_with("json_") {
         return Some("the JSON runtime library (not yet ported to the wasm backend)");
-    }
-    if short.starts_with("buf_") {
-        return Some("raw byte buffers (not yet ported to the wasm backend)");
     }
     if short == "read_file"
         || short == "write_file"
@@ -1291,7 +1365,7 @@ impl<'a> WasmCompiler<'a> {
             Helper::EnvGet => &[Helper::StrNew, Helper::Alloc, Helper::EnvMatch],
             Helper::EnvMatch => &[],
             Helper::StrLen => &[],
-            Helper::StrEq => &[],
+            Helper::StrEq | Helper::StrCmp => &[],
             Helper::StrConcat => &[Helper::StrAlloc],
             Helper::StrSubstr => &[Helper::StrAlloc],
             Helper::StrTrim => &[Helper::StrAlloc],
@@ -1367,6 +1441,25 @@ impl<'a> WasmCompiler<'a> {
             Helper::RandomRange => &[Helper::Random],
             Helper::TimeMs => &[],
             Helper::SleepMs => &[],
+            Helper::BufAlloc => &[Helper::Alloc],
+            Helper::BufFree
+            | Helper::BufLen
+            | Helper::BufGet8
+            | Helper::BufSet8
+            | Helper::BufGet16Le
+            | Helper::BufSet16Le
+            | Helper::BufGet32Le
+            | Helper::BufSet32Le
+            | Helper::BufGet64Le
+            | Helper::BufSet64Le
+            | Helper::BufGet16Be
+            | Helper::BufSet16Be
+            | Helper::BufGet32Be
+            | Helper::BufSet32Be
+            | Helper::BufGet64Be
+            | Helper::BufSet64Be
+            | Helper::BufCopy
+            | Helper::BufCrc32 => &[],
         }
     }
 
@@ -1450,6 +1543,28 @@ impl<'a> WasmCompiler<'a> {
         if uses.contains_key("lpp_str_eq") {
             need(Helper::StrEq);
         }
+        if any(&["lpp_str_cmp", "str_cmp"]) {
+            need(Helper::StrCmp);
+        }
+        if any(&["lpp_buf_alloc", "buf_alloc"]) { need(Helper::BufAlloc); }
+        if any(&["lpp_buf_free", "buf_free"]) { need(Helper::BufFree); }
+        if any(&["lpp_buf_len", "buf_len"]) { need(Helper::BufLen); }
+        if any(&["lpp_buf_get8", "buf_get8"]) { need(Helper::BufGet8); }
+        if any(&["lpp_buf_set8", "buf_set8"]) { need(Helper::BufSet8); }
+        if any(&["lpp_buf_get16le", "buf_get16le"]) { need(Helper::BufGet16Le); }
+        if any(&["lpp_buf_set16le", "buf_set16le"]) { need(Helper::BufSet16Le); }
+        if any(&["lpp_buf_get32le", "buf_get32le"]) { need(Helper::BufGet32Le); }
+        if any(&["lpp_buf_set32le", "buf_set32le"]) { need(Helper::BufSet32Le); }
+        if any(&["lpp_buf_get64le", "buf_get64le"]) { need(Helper::BufGet64Le); }
+        if any(&["lpp_buf_set64le", "buf_set64le"]) { need(Helper::BufSet64Le); }
+        if any(&["lpp_buf_get16be", "buf_get16be"]) { need(Helper::BufGet16Be); }
+        if any(&["lpp_buf_set16be", "buf_set16be"]) { need(Helper::BufSet16Be); }
+        if any(&["lpp_buf_get32be", "buf_get32be"]) { need(Helper::BufGet32Be); }
+        if any(&["lpp_buf_set32be", "buf_set32be"]) { need(Helper::BufSet32Be); }
+        if any(&["lpp_buf_get64be", "buf_get64be"]) { need(Helper::BufGet64Be); }
+        if any(&["lpp_buf_set64be", "buf_set64be"]) { need(Helper::BufSet64Be); }
+        if any(&["lpp_buf_copy", "buf_copy"]) { need(Helper::BufCopy); }
+        if any(&["lpp_buf_crc32", "buf_crc32"]) { need(Helper::BufCrc32); }
         if uses.contains_key("lpp_str_concat") {
             need(Helper::StrConcat);
         }
@@ -2680,6 +2795,7 @@ impl<'a> WasmCompiler<'a> {
                 value_call!(Helper::StrEq, 2);
                 self.coerce_builtin_result(fb, Val::I32, dest_ty);
             }
+            "lpp_str_cmp" | "str_cmp" => value_call!(Helper::StrCmp, 2),
             "fmod" => {
                 if args.len() != 2 {
                     return Err("fmod expects exactly two arguments".to_string());
@@ -2800,6 +2916,26 @@ impl<'a> WasmCompiler<'a> {
             "lpp_random_range" => value_call!(Helper::RandomRange, 2),
             "lpp_time_ms" => value_call!(Helper::TimeMs, 0),
             "lpp_sleep_ms" => void_call!(Helper::SleepMs, 1),
+            // ── Byte Buffers ──
+            "lpp_buf_alloc" | "buf_alloc" => value_call!(Helper::BufAlloc, 1),
+            "lpp_buf_free" | "buf_free" => void_call!(Helper::BufFree, 1),
+            "lpp_buf_len" | "buf_len" => value_call!(Helper::BufLen, 1),
+            "lpp_buf_get8" | "buf_get8" => value_call!(Helper::BufGet8, 2),
+            "lpp_buf_set8" | "buf_set8" => void_call!(Helper::BufSet8, 3),
+            "lpp_buf_get16le" | "buf_get16le" => value_call!(Helper::BufGet16Le, 2),
+            "lpp_buf_set16le" | "buf_set16le" => void_call!(Helper::BufSet16Le, 3),
+            "lpp_buf_get32le" | "buf_get32le" => value_call!(Helper::BufGet32Le, 2),
+            "lpp_buf_set32le" | "buf_set32le" => void_call!(Helper::BufSet32Le, 3),
+            "lpp_buf_get64le" | "buf_get64le" => value_call!(Helper::BufGet64Le, 2),
+            "lpp_buf_set64le" | "buf_set64le" => void_call!(Helper::BufSet64Le, 3),
+            "lpp_buf_get16be" | "buf_get16be" => value_call!(Helper::BufGet16Be, 2),
+            "lpp_buf_set16be" | "buf_set16be" => void_call!(Helper::BufSet16Be, 3),
+            "lpp_buf_get32be" | "buf_get32be" => value_call!(Helper::BufGet32Be, 2),
+            "lpp_buf_set32be" | "buf_set32be" => void_call!(Helper::BufSet32Be, 3),
+            "lpp_buf_get64be" | "buf_get64be" => value_call!(Helper::BufGet64Be, 2),
+            "lpp_buf_set64be" | "buf_set64be" => void_call!(Helper::BufSet64Be, 3),
+            "lpp_buf_copy" | "buf_copy" => void_call!(Helper::BufCopy, 5),
+            "lpp_buf_crc32" | "buf_crc32" => value_call!(Helper::BufCrc32, 3),
             // ── Lists ──
             "lpp_list_new" | "lpp_list_new_arc" => {
                 // The symbol alone is not enough for non-MIR emission; the
@@ -3484,6 +3620,7 @@ impl<'a> WasmCompiler<'a> {
             Helper::EnvGet => self.h_env_get(),
             Helper::StrLen => self.h_str_len(),
             Helper::StrEq => self.h_str_eq(),
+            Helper::StrCmp => self.h_str_cmp(),
             Helper::StrConcat => self.h_str_concat(),
             Helper::StrSubstr => self.h_str_substr(),
             Helper::StrTrim => self.h_str_trim(),
@@ -3547,6 +3684,25 @@ impl<'a> WasmCompiler<'a> {
             Helper::RandomRange => self.h_random_range(),
             Helper::TimeMs => self.h_time_ms(),
             Helper::SleepMs => self.h_sleep_ms(),
+            Helper::BufAlloc => self.h_buf_alloc(),
+            Helper::BufFree => self.h_buf_free(),
+            Helper::BufLen => self.h_buf_len(),
+            Helper::BufGet8 => self.h_buf_get8(),
+            Helper::BufSet8 => self.h_buf_set8(),
+            Helper::BufGet16Le => self.h_buf_get16(false),
+            Helper::BufSet16Le => self.h_buf_set16(false),
+            Helper::BufGet32Le => self.h_buf_get32(false),
+            Helper::BufSet32Le => self.h_buf_set32(false),
+            Helper::BufGet64Le => self.h_buf_get64(false),
+            Helper::BufSet64Le => self.h_buf_set64(false),
+            Helper::BufGet16Be => self.h_buf_get16(true),
+            Helper::BufSet16Be => self.h_buf_set16(true),
+            Helper::BufGet32Be => self.h_buf_get32(true),
+            Helper::BufSet32Be => self.h_buf_set32(true),
+            Helper::BufGet64Be => self.h_buf_get64(true),
+            Helper::BufSet64Be => self.h_buf_set64(true),
+            Helper::BufCopy => self.h_buf_copy(),
+            Helper::BufCrc32 => self.h_buf_crc32(),
         })
     }
 
@@ -4052,6 +4208,46 @@ impl<'a> WasmCompiler<'a> {
     }
 
     /// `StrConcat(a, b) -> str`.
+
+    /// `StrCmp(a, b) -> i64`: 3-way lexicographical comparison (<0, 0, >0).
+    fn h_str_cmp(&mut self) -> (Vec<Val>, Vec<u8>) {
+        let mut fb = FB::new(2);
+        let la = fb.scratch(Val::I32);
+        let lb = fb.scratch(Val::I32);
+        let min_len = fb.scratch(Val::I32);
+        let i = fb.scratch(Val::I32);
+        let ba = fb.scratch(Val::I32);
+        let bb = fb.scratch(Val::I32);
+
+        fb.g(0).load32(0).s(la);
+        fb.g(1).load32(0).s(lb);
+        // min_len = la < lb ? la : lb
+        fb.g(la).g(lb).op(op::I32_LT_U).if_();
+        fb.g(la).s(min_len);
+        fb.else_();
+        fb.g(lb).s(min_len);
+        fb.end();
+
+        fb.i32c(0).s(i);
+        fb.block();
+        fb.loop_();
+        fb.g(i).g(min_len).op(op::I32_GE_U).br_if(1);
+        fb.g(0).i32c(4).op(op::I32_ADD).g(i).op(op::I32_ADD).load8(0).s(ba);
+        fb.g(1).i32c(4).op(op::I32_ADD).g(i).op(op::I32_ADD).load8(0).s(bb);
+        fb.g(ba).g(bb).op(op::I32_NE).if_();
+        fb.g(ba).g(bb).op(op::I32_SUB).op(op::I64_EXTEND_I32_S).op(op::RETURN);
+        fb.end();
+        fb.g(i).i32c(1).op(op::I32_ADD).s(i);
+        fb.br(0);
+        fb.end();
+        fb.end();
+
+        // return (la - lb) as i64
+        fb.g(la).g(lb).op(op::I32_SUB).op(op::I64_EXTEND_I32_S);
+        fb.end();
+        (fb.extras, fb.body)
+    }
+
     fn h_str_concat(&mut self) -> (Vec<Val>, Vec<u8>) {
         let mut fb = FB::new(2);
         let la = fb.scratch(Val::I32);
@@ -5998,6 +6194,235 @@ impl<'a> WasmCompiler<'a> {
         fb.end();
         (fb.extras, fb.body)
     }
+
+    fn h_buf_alloc(&mut self) -> (Vec<Val>, Vec<u8>) {
+        let mut fb = FB::new(1); // arg 0: size (i64)
+        let p = fb.scratch(Val::I32);
+        // size_i32 = wrap_i64(arg0) + 8
+        fb.g(0).op(op::I32_WRAP_I64).i32c(8).op(op::I32_ADD);
+        fb.call(self.helper_index[&Helper::Alloc]);
+        fb.s(p);
+        // store length (i64) at offset 0
+        fb.g(p).g(0).store64(0);
+        // return p as i64 (handle/pointer)
+        fb.g(p).op(op::I64_EXTEND_I32_U);
+        fb.end();
+        (fb.extras, fb.body)
+    }
+
+    fn h_buf_free(&mut self) -> (Vec<Val>, Vec<u8>) {
+        let mut fb = FB::new(1);
+        fb.end();
+        (fb.extras, fb.body)
+    }
+
+    fn h_buf_len(&mut self) -> (Vec<Val>, Vec<u8>) {
+        let mut fb = FB::new(1); // arg 0: ptr (i64)
+        fb.g(0).op(op::I32_WRAP_I64).load64(0);
+        fb.end();
+        (fb.extras, fb.body)
+    }
+
+    fn h_buf_get8(&mut self) -> (Vec<Val>, Vec<u8>) {
+        let mut fb = FB::new(2); // arg 0: ptr, arg 1: offset
+        fb.g(0).op(op::I32_WRAP_I64).i32c(8).op(op::I32_ADD).g(1).op(op::I32_WRAP_I64).op(op::I32_ADD);
+        fb.load8(0).op(op::I64_EXTEND_I32_U);
+        fb.end();
+        (fb.extras, fb.body)
+    }
+
+    fn h_buf_set8(&mut self) -> (Vec<Val>, Vec<u8>) {
+        let mut fb = FB::new(3); // arg 0: ptr, arg 1: offset, arg 2: val
+        fb.g(0).op(op::I32_WRAP_I64).i32c(8).op(op::I32_ADD).g(1).op(op::I32_WRAP_I64).op(op::I32_ADD);
+        fb.g(2).op(op::I32_WRAP_I64);
+        fb.store8(0);
+        fb.end();
+        (fb.extras, fb.body)
+    }
+
+    fn h_buf_get16(&mut self, be: bool) -> (Vec<Val>, Vec<u8>) {
+        let mut fb = FB::new(2);
+        let val = fb.scratch(Val::I32);
+        fb.g(0).op(op::I32_WRAP_I64).i32c(8).op(op::I32_ADD).g(1).op(op::I32_WRAP_I64).op(op::I32_ADD);
+        fb.load16(0);
+        if be {
+            fb.s(val);
+            // byte swap 16: ((val >> 8) & 0xff) | ((val & 0xff) << 8)
+            fb.g(val).i32c(8).op(op::I32_SHR_U).i32c(0xff).op(op::I32_AND);
+            fb.g(val).i32c(0xff).op(op::I32_AND).i32c(8).op(op::I32_SHL);
+            fb.op(op::I32_OR);
+        }
+        fb.op(op::I64_EXTEND_I32_U);
+        fb.end();
+        (fb.extras, fb.body)
+    }
+
+    fn h_buf_set16(&mut self, be: bool) -> (Vec<Val>, Vec<u8>) {
+        let mut fb = FB::new(3);
+        let val = fb.scratch(Val::I32);
+        fb.g(0).op(op::I32_WRAP_I64).i32c(8).op(op::I32_ADD).g(1).op(op::I32_WRAP_I64).op(op::I32_ADD);
+        fb.g(2).op(op::I32_WRAP_I64);
+        if be {
+            fb.s(val);
+            fb.g(val).i32c(8).op(op::I32_SHR_U).i32c(0xff).op(op::I32_AND);
+            fb.g(val).i32c(0xff).op(op::I32_AND).i32c(8).op(op::I32_SHL);
+            fb.op(op::I32_OR);
+        }
+        fb.store16(0);
+        fb.end();
+        (fb.extras, fb.body)
+    }
+
+    fn h_buf_get32(&mut self, be: bool) -> (Vec<Val>, Vec<u8>) {
+        let mut fb = FB::new(2);
+        let val = fb.scratch(Val::I32);
+        fb.g(0).op(op::I32_WRAP_I64).i32c(8).op(op::I32_ADD).g(1).op(op::I32_WRAP_I64).op(op::I32_ADD);
+        fb.load32(0);
+        if be {
+            fb.s(val);
+            // byte swap 32:
+            // ((val >> 24) & 0xff) | ((val >> 8) & 0xff00) | ((val << 8) & 0xff0000) | ((val << 24) & 0xff000000)
+            fb.g(val).i32c(24).op(op::I32_SHR_U).i32c(0x000000ff).op(op::I32_AND);
+            fb.g(val).i32c(8).op(op::I32_SHR_U).i32c(0x0000ff00).op(op::I32_AND);
+            fb.op(op::I32_OR);
+            fb.g(val).i32c(8).op(op::I32_SHL).i32c(0x00ff0000).op(op::I32_AND);
+            fb.op(op::I32_OR);
+            fb.g(val).i32c(24).op(op::I32_SHL);
+            fb.op(op::I32_OR);
+        }
+        fb.op(op::I64_EXTEND_I32_U);
+        fb.end();
+        (fb.extras, fb.body)
+    }
+
+    fn h_buf_set32(&mut self, be: bool) -> (Vec<Val>, Vec<u8>) {
+        let mut fb = FB::new(3);
+        let val = fb.scratch(Val::I32);
+        fb.g(0).op(op::I32_WRAP_I64).i32c(8).op(op::I32_ADD).g(1).op(op::I32_WRAP_I64).op(op::I32_ADD);
+        fb.g(2).op(op::I32_WRAP_I64);
+        if be {
+            fb.s(val);
+            fb.g(val).i32c(24).op(op::I32_SHR_U).i32c(0x000000ff).op(op::I32_AND);
+            fb.g(val).i32c(8).op(op::I32_SHR_U).i32c(0x0000ff00).op(op::I32_AND);
+            fb.op(op::I32_OR);
+            fb.g(val).i32c(8).op(op::I32_SHL).i32c(0x00ff0000).op(op::I32_AND);
+            fb.op(op::I32_OR);
+            fb.g(val).i32c(24).op(op::I32_SHL);
+            fb.op(op::I32_OR);
+        }
+        fb.store32(0);
+        fb.end();
+        (fb.extras, fb.body)
+    }
+
+    fn h_buf_get64(&mut self, be: bool) -> (Vec<Val>, Vec<u8>) {
+        let mut fb = FB::new(2);
+        let val = fb.scratch(Val::I64);
+        fb.g(0).op(op::I32_WRAP_I64).i32c(8).op(op::I32_ADD).g(1).op(op::I32_WRAP_I64).op(op::I32_ADD);
+        fb.load64(0);
+        if be {
+            fb.s(val);
+            // byte swap 64
+            fb.g(val).i64c(56).op(op::I64_SHR_U).i64c(0x00000000_000000ff).op(op::I64_AND);
+            fb.g(val).i64c(40).op(op::I64_SHR_U).i64c(0x00000000_0000ff00).op(op::I64_AND).op(op::I64_OR);
+            fb.g(val).i64c(24).op(op::I64_SHR_U).i64c(0x00000000_00ff0000).op(op::I64_AND).op(op::I64_OR);
+            fb.g(val).i64c(8).op(op::I64_SHR_U).i64c(0x00000000_ff000000).op(op::I64_AND).op(op::I64_OR);
+            fb.g(val).i64c(8).op(op::I64_SHL).i64c(0x000000ff_00000000).op(op::I64_AND).op(op::I64_OR);
+            fb.g(val).i64c(24).op(op::I64_SHL).i64c(0x0000ff00_00000000).op(op::I64_AND).op(op::I64_OR);
+            fb.g(val).i64c(40).op(op::I64_SHL).i64c(0x00ff0000_00000000).op(op::I64_AND).op(op::I64_OR);
+            fb.g(val).i64c(56).op(op::I64_SHL).op(op::I64_OR);
+        }
+        fb.end();
+        (fb.extras, fb.body)
+    }
+
+    fn h_buf_set64(&mut self, be: bool) -> (Vec<Val>, Vec<u8>) {
+        let mut fb = FB::new(3);
+        let val = fb.scratch(Val::I64);
+        fb.g(0).op(op::I32_WRAP_I64).i32c(8).op(op::I32_ADD).g(1).op(op::I32_WRAP_I64).op(op::I32_ADD);
+        fb.g(2);
+        if be {
+            fb.s(val);
+            fb.g(val).i64c(56).op(op::I64_SHR_U).i64c(0x00000000_000000ff).op(op::I64_AND);
+            fb.g(val).i64c(40).op(op::I64_SHR_U).i64c(0x00000000_0000ff00).op(op::I64_AND).op(op::I64_OR);
+            fb.g(val).i64c(24).op(op::I64_SHR_U).i64c(0x00000000_00ff0000).op(op::I64_AND).op(op::I64_OR);
+            fb.g(val).i64c(8).op(op::I64_SHR_U).i64c(0x00000000_ff000000).op(op::I64_AND).op(op::I64_OR);
+            fb.g(val).i64c(8).op(op::I64_SHL).i64c(0x000000ff_00000000).op(op::I64_AND).op(op::I64_OR);
+            fb.g(val).i64c(24).op(op::I64_SHL).i64c(0x0000ff00_00000000).op(op::I64_AND).op(op::I64_OR);
+            fb.g(val).i64c(40).op(op::I64_SHL).i64c(0x00ff0000_00000000).op(op::I64_AND).op(op::I64_OR);
+            fb.g(val).i64c(56).op(op::I64_SHL).op(op::I64_OR);
+        }
+        fb.store64(0);
+        fb.end();
+        (fb.extras, fb.body)
+    }
+
+
+    fn h_buf_crc32(&mut self) -> (Vec<Val>, Vec<u8>) {
+        let mut fb = FB::new(3); // ptr (i64), off (i64), len (i64)
+        let crc = fb.scratch(Val::I32);
+        let i = fb.scratch(Val::I32);
+        let end = fb.scratch(Val::I32);
+        let b = fb.scratch(Val::I32);
+        let bit = fb.scratch(Val::I32);
+        let base_addr = fb.scratch(Val::I32);
+
+        // base_addr = wrap(ptr) + 8 + wrap(off)
+        fb.g(0).op(op::I32_WRAP_I64).i32c(8).op(op::I32_ADD).g(1).op(op::I32_WRAP_I64).op(op::I32_ADD).s(base_addr);
+        // crc = 0xFFFFFFFF
+        fb.i32c(-1).s(crc);
+        // i = 0, end = wrap(len)
+        fb.i32c(0).s(i);
+        fb.g(2).op(op::I32_WRAP_I64).s(end);
+
+        // outer loop: while i < end
+        fb.block();
+        fb.loop_();
+        fb.g(i).g(end).op(op::I32_GE_U).br_if(1);
+
+        // b = load8(base_addr + i)
+        fb.g(base_addr).g(i).op(op::I32_ADD).load8(0).s(b);
+        // crc ^= b
+        fb.g(crc).g(b).op(op::I32_XOR).s(crc);
+
+        // bit loop: for bit = 0..8
+        fb.i32c(0).s(bit);
+        fb.block();
+        fb.loop_();
+        fb.g(bit).i32c(8).op(op::I32_GE_U).br_if(1);
+
+        // if (crc & 1) != 0 { crc = (crc >> 1) ^ 0xEDB88320 } else { crc = crc >> 1 }
+        fb.g(crc).i32c(1).op(op::I32_AND).if_();
+        fb.g(crc).i32c(1).op(op::I32_SHR_U).i32c(0xedb88320u32 as i32 as i64).op(op::I32_XOR).s(crc);
+        fb.else_();
+        fb.g(crc).i32c(1).op(op::I32_SHR_U).s(crc);
+        fb.end();
+
+        fb.g(bit).i32c(1).op(op::I32_ADD).s(bit);
+        fb.br(0);
+        fb.end();
+        fb.end();
+
+        fb.g(i).i32c(1).op(op::I32_ADD).s(i);
+        fb.br(0);
+        fb.end();
+        fb.end();
+
+        // return (crc ^ 0xFFFFFFFF) as i64
+        fb.g(crc).i32c(-1).op(op::I32_XOR).op(op::I64_EXTEND_I32_U);
+        fb.end();
+        (fb.extras, fb.body)
+    }
+
+    fn h_buf_copy(&mut self) -> (Vec<Val>, Vec<u8>) {
+        let mut fb = FB::new(5); // dst, dst_off, src, src_off, len
+        fb.g(0).op(op::I32_WRAP_I64).i32c(8).op(op::I32_ADD).g(1).op(op::I32_WRAP_I64).op(op::I32_ADD);
+        fb.g(2).op(op::I32_WRAP_I64).i32c(8).op(op::I32_ADD).g(3).op(op::I32_WRAP_I64).op(op::I32_ADD);
+        fb.g(4).op(op::I32_WRAP_I64);
+        fb.memory_copy();
+        fb.end();
+        (fb.extras, fb.body)
+    }
 }
 
 // ── Module assembly ──────────────────────────────────────────────────────────
@@ -6914,6 +7339,7 @@ mod tests {
                 Helper::EnvGet,
                 Helper::StrLen,
                 Helper::StrEq,
+                Helper::StrCmp,
                 Helper::StrConcat,
                 Helper::StrSubstr,
                 Helper::StrTrim,
@@ -6977,6 +7403,25 @@ mod tests {
                 Helper::RandomRange,
                 Helper::TimeMs,
                 Helper::SleepMs,
+                Helper::BufAlloc,
+                Helper::BufFree,
+                Helper::BufLen,
+                Helper::BufGet8,
+                Helper::BufSet8,
+                Helper::BufGet16Le,
+                Helper::BufSet16Le,
+                Helper::BufGet32Le,
+                Helper::BufSet32Le,
+                Helper::BufGet64Le,
+                Helper::BufSet64Le,
+                Helper::BufGet16Be,
+                Helper::BufSet16Be,
+                Helper::BufGet32Be,
+                Helper::BufSet32Be,
+                Helper::BufGet64Be,
+                Helper::BufSet64Be,
+                Helper::BufCopy,
+                Helper::BufCrc32,
             ]
         }
     }
@@ -7600,7 +8045,7 @@ mod tests {
                     }
                     pop_t!(g.0);
                 }
-                0x28 | 0x2c | 0x2d => {
+                0x28 | 0x2c | 0x2d | 0x2e | 0x2f => {
                     r.uleb()?;
                     r.uleb()?;
                     pop_t!(TI32);
