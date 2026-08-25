@@ -563,13 +563,13 @@ fn real_main() -> i32 {
     let mut source_check_command = false;
     let mut is_emit_cmd = false;
     let mut source_run_command = false;
-    if args.len() > 2 && args[1] == "emit" {
+    if args.len() > 2 && args[1] == "emit" && (args[2].ends_with(".lpp") && !Path::new(&args[2]).is_dir() || Path::new(&args[2]).is_file()) {
         is_emit_cmd = true;
         args.remove(1);
-    } else if args.len() > 2 && args[1] == "check" && args[2].ends_with(".lpp") {
+    } else if args.len() > 2 && args[1] == "check" && (args[2].ends_with(".lpp") && !Path::new(&args[2]).is_dir() || Path::new(&args[2]).is_file()) {
         source_check_command = true;
         args.remove(1);
-    } else if args.len() > 2 && args[1] == "run" && (args[2].ends_with(".lpp") || Path::new(&args[2]).exists()) {
+    } else if args.len() > 2 && args[1] == "run" && (args[2].ends_with(".lpp") && !Path::new(&args[2]).is_dir() || Path::new(&args[2]).is_file()) {
         source_run_command = true;
         args.remove(1);
     }
@@ -645,9 +645,10 @@ fn real_main() -> i32 {
             || first_arg == "add"
             || first_arg == "remove"
             || first_arg == "update"
-            || first_arg == "check"
+            || (first_arg == "check" && !source_check_command)
             || first_arg == "build"
-            || first_arg == "run"
+            || (first_arg == "run" && !source_run_command)
+            || (first_arg == "emit" && !is_emit_cmd)
             || first_arg == "test"
             || first_arg == "new"
             || first_arg == "search"
@@ -878,7 +879,7 @@ fn real_main() -> i32 {
             walk(Path::new("."), &mut all_files, true);
         } else {
             for target_path in &check_paths {
-                if target_path.is_file() {
+                if target_path.is_file() || (target_path.exists() && !target_path.is_dir() && target_path.extension().map_or(false, |e| e == "lpp")) {
                     if target_path.extension().map_or(false, |e| e == "lpp") {
                         all_files.push(target_path.clone());
                     }
