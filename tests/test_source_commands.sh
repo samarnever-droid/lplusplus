@@ -29,3 +29,61 @@ EOF
 "$LPP" emit "$TEMP/example.lpp" --aot >/dev/null
 [ -e "$TEMP/example.o" ]
 echo "PASS source command split"
+
+mkdir -p "$TEMP/project"
+cat > "$TEMP/project/lpp.toml" <<'INNEREOF'
+[package]
+name = "test_pkg"
+version = "0.1.0"
+entry = "src/main.lpp"
+INNEREOF
+
+mkdir -p "$TEMP/project/src"
+cat > "$TEMP/project/src/main.lpp" <<'INNEREOF'
+def main():
+    print(42)
+INNEREOF
+
+(cd "$TEMP/project" && "$LPP" run >/dev/null)
+[ -e "$TEMP/project/LppData/build/release/output" ] || [ -e "$TEMP/project/LppData/build/release/test_pkg" ] || [ -e "$TEMP/project/LppData/build/release/output.exe" ] || [ -e "$TEMP/project/LppData/build/release/test_pkg.exe" ]
+echo "PASS package run command"
+
+mkdir -p "$TEMP/project2"
+cat > "$TEMP/project2/lpp.toml" <<'INNEREOF'
+[package]
+name = "test_pkg2"
+version = "0.1.0"
+entry = "src/main.lpp"
+INNEREOF
+
+mkdir -p "$TEMP/project2/src"
+cat > "$TEMP/project2/src/main.lpp" <<'INNEREOF'
+def main():
+    print(42)
+INNEREOF
+
+(cd "$TEMP/project2" && "$LPP" check >/dev/null)
+echo "PASS package check command"
+
+mkdir -p "$TEMP/test.lpp"
+cat > "$TEMP/test.lpp/lpp.toml" <<'INNEREOF'
+[package]
+name = "test_pkg_dot_lpp"
+version = "0.1.0"
+entry = "src/main.lpp"
+INNEREOF
+
+mkdir -p "$TEMP/test.lpp/src"
+cat > "$TEMP/test.lpp/src/main.lpp" <<'INNEREOF'
+def main():
+    print(123)
+INNEREOF
+
+(cd "$TEMP/test.lpp" && "$LPP" run >/dev/null)
+echo "PASS package run with .lpp folder name"
+
+(cd "$TEMP/test.lpp" && "$LPP" check >/dev/null)
+echo "PASS package check with .lpp folder name"
+
+(cd "$TEMP/test.lpp" && "$LPP" build >/dev/null)
+echo "PASS package build with .lpp folder name"
