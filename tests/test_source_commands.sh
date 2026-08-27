@@ -20,6 +20,10 @@ def main():
     print(7)
 EOF
 
+(cd "$TEMP" && "$LPP" new my_pkg) >/dev/null
+! "$LPP" check "$TEMP/my_pkg" >/dev/null 2>&1
+! "$LPP" run "$TEMP/my_pkg" >/dev/null 2>&1
+
 "$LPP" check "$TEMP/example.lpp" >/dev/null
 [ ! -e "$TEMP/example.o" ]
 
