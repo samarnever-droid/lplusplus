@@ -26,8 +26,8 @@ pub enum Type {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum UnaryOperator {
-    Negate,   // -x
-    Not,      // !x
+    Negate, // -x
+    Not,    // !x
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -43,13 +43,13 @@ pub enum BinaryOperator {
     Greater,
     LessEq,
     GreaterEq,
-    And,       // &&
-    Or,        // ||
-    BitAnd,    // &
-    BitOr,     // |
-    BitXor,    // ^
-    Shl,       // <<
-    Shr,       // >>
+    And,    // &&
+    Or,     // ||
+    BitAnd, // &
+    BitOr,  // |
+    BitXor, // ^
+    Shl,    // <<
+    Shr,    // >>
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -193,7 +193,7 @@ pub enum Stmt {
 pub struct Param {
     pub name: String,
     pub ty: Type,
-    pub default: Option<Expr>,  // default parameter value: def foo(x: Int = 10)
+    pub default: Option<Expr>, // default parameter value: def foo(x: Int = 10)
     /// Typed rest parameter (`...items: T`). Only valid in final position.
     pub variadic: bool,
 }
@@ -207,7 +207,7 @@ pub struct ClosureParam {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Function {
     pub name: String,
-    pub type_params: Vec<TypeParam>,  // generic type parameters: fn foo[T, U](...)
+    pub type_params: Vec<TypeParam>, // generic type parameters: fn foo[T, U](...)
     pub params: Vec<Param>,
     pub return_type: Type,
     pub body: Vec<Stmt>,
@@ -218,7 +218,7 @@ pub struct Function {
 #[derive(Debug, Clone, PartialEq)]
 pub struct StructDef {
     pub name: String,
-    pub type_params: Vec<TypeParam>,  // generic type parameters: struct Pair[T, U]:
+    pub type_params: Vec<TypeParam>, // generic type parameters: struct Pair[T, U]:
     pub fields: Vec<Param>,
     pub repr_exact: bool,
     pub align: Option<usize>,
@@ -235,15 +235,15 @@ pub struct EnumVariant {
 #[derive(Debug, Clone, PartialEq)]
 pub struct EnumDef {
     pub name: String,
-    pub type_params: Vec<TypeParam>,  // generic type parameters
+    pub type_params: Vec<TypeParam>, // generic type parameters
     pub variants: Vec<EnumVariant>,
 }
 
 /// A single arm in a match expression
 #[derive(Debug, Clone, PartialEq)]
 pub struct MatchArm {
-    pub variant: String,                    // "Ok", "Err", "None"
-    pub bindings: Vec<String>,              // ["value"], ["msg"], []
+    pub variant: String,       // "Ok", "Err", "None"
+    pub bindings: Vec<String>, // ["value"], ["msg"], []
     pub body: Vec<Stmt>,
 }
 
@@ -256,8 +256,8 @@ pub enum ImportKind {
     },
     /// `from math import sqrt, PI` — imports specific items into scope
     Selective {
-        path: Vec<String>,   // ["math"] or ["utils", "math"]
-        items: Vec<String>,  // ["sqrt", "PI"]
+        path: Vec<String>,  // ["math"] or ["utils", "math"]
+        items: Vec<String>, // ["sqrt", "PI"]
     },
 }
 
@@ -265,7 +265,7 @@ pub enum ImportKind {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TraitMethod {
     pub name: String,
-    pub params: Vec<Param>,        // includes `self` as first param
+    pub params: Vec<Param>, // includes `self` as first param
     pub return_type: Type,
 }
 
@@ -312,15 +312,15 @@ pub struct ExternFunc {
     pub name: String,
     pub params: Vec<Param>,
     pub return_type: Type,
-    pub symbol: String,        // C symbol name (usually same as name)
+    pub symbol: String, // C symbol name (usually same as name)
 }
 
 /// An extern block: `extern "C": def SDL_Init(flags: Int) -> Int`
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExternBlock {
-    pub abi: String,           // "C" for now
+    pub abi: String, // "C" for now
     pub functions: Vec<ExternFunc>,
-    pub link_lib: Option<String>,  // optional: link "SDL2"
+    pub link_lib: Option<String>, // optional: link "SDL2"
 }
 
 #[derive(Debug, Clone, PartialEq)]

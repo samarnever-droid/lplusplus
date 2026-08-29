@@ -82,11 +82,7 @@ impl Storage {
     /// input, which is exactly the property the fixpoint's termination argument
     /// relies on.
     pub fn join(self, other: Storage) -> Storage {
-        if self >= other {
-            self
-        } else {
-            other
-        }
+        if self >= other { self } else { other }
     }
 
     pub fn escapes(self) -> bool {
@@ -192,10 +188,7 @@ fn direct_callees(function: &MirFunction) -> HashSet<FuncId> {
 
 /// Tarjan SCC over the call graph, returning components in reverse topological
 /// order (callees before callers), so a non-recursive function is solved once.
-fn scc_reverse_topo(
-    ids: &[FuncId],
-    edges: &HashMap<FuncId, HashSet<FuncId>>,
-) -> Vec<Vec<FuncId>> {
+fn scc_reverse_topo(ids: &[FuncId], edges: &HashMap<FuncId, HashSet<FuncId>>) -> Vec<Vec<FuncId>> {
     struct St {
         index: HashMap<FuncId, u32>,
         low: HashMap<FuncId, u32>,
@@ -321,10 +314,7 @@ pub fn solve(program: &MirProgram) -> EscapeFacts {
 }
 
 /// Intraprocedural solve for one function, given current callee summaries.
-fn solve_function(
-    function: &MirFunction,
-    summaries: &HashMap<FuncId, Vec<bool>>,
-) -> FnFacts {
+fn solve_function(function: &MirFunction, summaries: &HashMap<FuncId, Vec<bool>>) -> FnFacts {
     let n = function.locals.len();
     let mut storage = vec![Storage::Frame; n];
 
@@ -628,8 +618,6 @@ fn escape_of_rvalue(
             }
         }
     }
-
-
 }
 
 #[cfg(test)]
@@ -665,8 +653,18 @@ mod tests {
 
     #[test]
     fn scalar_types_are_not_ownership_values() {
-        for ty in [TypeRef::Int, TypeRef::Float, TypeRef::Bool, TypeRef::Char, TypeRef::Void] {
-            assert!(!ty.is_managed(), "scalar {:?} must stay outside ownership facts", ty);
+        for ty in [
+            TypeRef::Int,
+            TypeRef::Float,
+            TypeRef::Bool,
+            TypeRef::Char,
+            TypeRef::Void,
+        ] {
+            assert!(
+                !ty.is_managed(),
+                "scalar {:?} must stay outside ownership facts",
+                ty
+            );
         }
         assert!(TypeRef::Str.is_managed());
         assert!(TypeRef::Function.is_managed());

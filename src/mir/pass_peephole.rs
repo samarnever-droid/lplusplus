@@ -24,8 +24,12 @@ fn int_binary(op: &BinaryOperator, left: i64, right: i64) -> Option<Operand> {
         BinaryOperator::BitAnd => Operand::Int(left & right),
         BinaryOperator::BitOr => Operand::Int(left | right),
         BinaryOperator::BitXor => Operand::Int(left ^ right),
-        BinaryOperator::Shl if (0..64).contains(&right) => Operand::Int(left.checked_shl(right as u32)?),
-        BinaryOperator::Shr if (0..64).contains(&right) => Operand::Int(left.checked_shr(right as u32)?),
+        BinaryOperator::Shl if (0..64).contains(&right) => {
+            Operand::Int(left.checked_shl(right as u32)?)
+        }
+        BinaryOperator::Shr if (0..64).contains(&right) => {
+            Operand::Int(left.checked_shr(right as u32)?)
+        }
         _ => return None,
     };
     Some(value)
