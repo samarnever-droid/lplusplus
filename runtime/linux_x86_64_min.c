@@ -2295,9 +2295,11 @@ int64_t lpp_vec_i64_checksum(int64_t n) {
 #include "lpp_gui.c"
 
 void *lpp_str_split(const char *s,int64_t d) { void*l=lpp_list_new_arc();if(!l)return 0;if(!s||!*s)return l; char ch=(char)d;const char*st=s; for(;;){if(*s==ch||*s==0){int64_t ln=(int64_t)(s-st);char*pc=(char*)lpp_arc_alloc(ln+1);if(pc){memcpy(pc,st,(int)ln);pc[ln]=0;lpp_list_push_arc(l,pc);lpp_arc_release(pc);}if(*s==0)break;st=s+1;}s++;} return l; }
+/* Stub for lpp_webview if not included */
 int64_t lpp_webview_window_create(const char *title, int64_t width, int64_t height, int64_t debug) {
     return 0; // Stub for minimal runtime
 }
 int64_t lpp_webview_navigate(int64_t w, const char *url) {
     return 0; // Stub for minimal runtime
 }
+void lpp_webview_destroy(int64_t w) {}
