@@ -652,6 +652,7 @@ void lpp_c_store_i64(int64_t ptr, int64_t offset, int64_t val) {
 
 /* ── Native 2D GUI & Windowing & Embedded WebView Engine ── */
 #include "lpp_gui.c"
+#define LPP_WEBVIEW_C_INCLUDED
 #include "lpp_webview.c"
 
 
@@ -995,3 +996,10 @@ void lpp_clock_advance(int64_t h,int64_t d) { LppMinClock*c=(LppMinClock*)(uintp
 void lpp_clock_free(int64_t h) { if(h) lpp_arc_release((void*)(uintptr_t)h); }
 
 
+
+/* Stub for lpp_webview if not included */
+#ifndef LPP_WEBVIEW_C_INCLUDED
+int64_t lpp_webview_window_create(const char *title, int64_t width, int64_t height, int64_t debug) { return 0; }
+int64_t lpp_webview_navigate(int64_t w, const char *url) { return 0; }
+void lpp_webview_destroy(int64_t w) {}
+#endif

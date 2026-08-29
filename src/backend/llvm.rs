@@ -111,6 +111,8 @@ fn builtin_signature(symbol: &str) -> Option<(&'static str, &'static str)> {
         "lpp_arena_alloc" => ("ptr", "i64, i64, ptr"),
         "lpp_thread_spawn" => ("void", "ptr, ptr"),
         "lpp_tuple_alloc" => ("ptr", "i64, i64, i64"),
+        "lpp_buf_write_str" | "buf_write_str" => ("i64", "ptr, i64, ptr"),
+        "lpp_buf_read_str" | "buf_read_str" => ("ptr", "ptr, i64, i64"),
         "lpp_slice_init" => ("ptr", "ptr, ptr, i64, i64, i64"),
         "lpp_slice_len" => ("i64", "ptr"),
         "lpp_slice_get" => ("i64", "ptr, i64"),
