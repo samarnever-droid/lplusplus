@@ -995,3 +995,9 @@ void lpp_clock_advance(int64_t h,int64_t d) { LppMinClock*c=(LppMinClock*)(uintp
 void lpp_clock_free(int64_t h) { if(h) lpp_arc_release((void*)(uintptr_t)h); }
 
 
+int64_t lpp_webview_window_create(const char *title, int64_t width, int64_t height, int64_t debug) {
+    return 0; // Stub for minimal runtime
+}
+int64_t lpp_webview_navigate(int64_t w, const char *url) {
+    return 0; // Stub for minimal runtime
+}
