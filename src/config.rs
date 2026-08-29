@@ -232,11 +232,10 @@ impl LppConfig {
     pub fn save(&self) -> Result<(), String> {
         let path = Self::path();
         if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir)
-                .map_err(|e| format!("create config dir: {e}"))?;
+            std::fs::create_dir_all(dir).map_err(|e| format!("create config dir: {e}"))?;
         }
-        let json = serde_json::to_string_pretty(self)
-            .map_err(|e| format!("serialize config: {e}"))?;
+        let json =
+            serde_json::to_string_pretty(self).map_err(|e| format!("serialize config: {e}"))?;
         // Config is read by parallel compiler invocations during parity and
         // package builds. Write a complete temporary file and rename it so a
         // second process can never observe a truncated JSON document.
@@ -278,8 +277,22 @@ impl LppConfig {
             println!("  LLVM Path:   {}", path);
         }
         println!("  Linker:      {}", self.linker);
-        println!("  lpp-link:    {}", if self.system.has_lpp_link { "found" } else { "not found" });
-        println!("  Host cc:     {}", if self.system.has_cc { "found" } else { "not found" });
+        println!(
+            "  lpp-link:    {}",
+            if self.system.has_lpp_link {
+                "found"
+            } else {
+                "not found"
+            }
+        );
+        println!(
+            "  Host cc:     {}",
+            if self.system.has_cc {
+                "found"
+            } else {
+                "not found"
+            }
+        );
         if let Some(ref bench) = self.linker_benchmarks {
             println!("  Direct:      {}", bench.direct_label);
             println!("  Host:        {}", bench.host_label);

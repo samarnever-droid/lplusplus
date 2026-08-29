@@ -2,36 +2,36 @@
 mod ast;
 mod builtins;
 mod config;
-mod diagnostics;
 #[path = "backend/cranelift/mod.rs"]
 pub mod cranelift_backend;
-#[path = "backend/llvm.rs"]
-mod llvm_backend;
-#[path = "backend/wasm.rs"]
-mod wasm_backend;
 #[path = "analysis/cyclebreak.rs"]
 mod cyclebreak;
-#[path = "analysis/monomorph.rs"]
-mod monomorph;
+mod diagnostics;
+#[path = "analysis/layout.rs"]
+mod layout;
 #[path = "frontend/lexer.rs"]
 mod lexer;
+pub mod linker;
+#[path = "backend/llvm.rs"]
+mod llvm_backend;
 #[path = "mir/mod.rs"]
 pub mod mir;
+#[path = "analysis/monomorph.rs"]
+mod monomorph;
 #[path = "frontend/parser.rs"]
 mod parser;
 mod pm;
 #[path = "analysis/semantic.rs"]
 mod semantic;
-#[path = "analysis/types.rs"]
-mod types;
-#[path = "analysis/typecheck.rs"]
-mod typecheck;
 mod target;
 #[path = "analysis/type_facts.rs"]
 mod type_facts;
-#[path = "analysis/layout.rs"]
-mod layout;
-pub mod linker;
+#[path = "analysis/typecheck.rs"]
+mod typecheck;
+#[path = "analysis/types.rs"]
+mod types;
+#[path = "backend/wasm.rs"]
+mod wasm_backend;
 
 use std::env;
 use std::fs;
@@ -80,7 +80,11 @@ fn resolve_pm_source() -> Option<PathBuf> {
 }
 
 fn resolve_runtime_source_for_bootstrap(pm_main: &Path) -> Option<PathBuf> {
-    if let Some(root) = pm_main.parent().and_then(|p| p.parent()).and_then(|p| p.parent()) {
+    if let Some(root) = pm_main
+        .parent()
+        .and_then(|p| p.parent())
+        .and_then(|p| p.parent())
+    {
         let rt = root.join("lpp_runtime.c");
         if rt.exists() {
             return Some(rt);
@@ -140,11 +144,9 @@ fn resolve_pm_cache_dir() -> PathBuf {
 /// Bootstrap the self-hosted L++ PM: compile pm/src/main.lpp → cached binary.
 /// Returns the path to the cached PM binary, or an error string.
 fn bootstrap_self_hosted_pm() -> Result<PathBuf, String> {
-    let lpp_bin = env::current_exe()
-        .map_err(|e| format!("cannot locate lpp binary: {e}"))?;
+    let lpp_bin = env::current_exe().map_err(|e| format!("cannot locate lpp binary: {e}"))?;
 
-    let pm_main = resolve_pm_source()
-        .ok_or_else(|| "cannot locate pm/src/main.lpp".to_string())?;
+    let pm_main = resolve_pm_source().ok_or_else(|| "cannot locate pm/src/main.lpp".to_string())?;
 
     let cache_dir = resolve_pm_cache_dir();
     let _ = fs::create_dir_all(&cache_dir);
@@ -182,7 +184,11 @@ fn bootstrap_self_hosted_pm() -> Result<PathBuf, String> {
         return Err("self-hosted PM compilation failed".to_string());
     }
 
-    let obj_ext = if cfg!(target_os = "windows") { "obj" } else { "o" };
+    let obj_ext = if cfg!(target_os = "windows") {
+        "obj"
+    } else {
+        "o"
+    };
     let pm_obj = pm_main.with_extension(obj_ext);
     if !pm_obj.exists() {
         return Err(format!("{} not generated", pm_obj.display()));
@@ -197,7 +203,11 @@ fn bootstrap_self_hosted_pm() -> Result<PathBuf, String> {
 
     if lpp_link_bin.exists() {
         if let Some(runtime_src) = resolve_runtime_source_for_bootstrap(&pm_main) {
-            let runtime_min_name = if cfg!(target_os = "windows") { "lpp_runtime_min.obj" } else { "lpp_runtime_min.o" };
+            let runtime_min_name = if cfg!(target_os = "windows") {
+                "lpp_runtime_min.obj"
+            } else {
+                "lpp_runtime_min.o"
+            };
             let lib_dir = runtime_src.parent().unwrap_or_else(|| Path::new("."));
             let runtime_min_obj = lib_dir.join(runtime_min_name);
             if runtime_min_obj.exists() {
@@ -263,7 +273,12 @@ fn run_self_hosted_pm(args: &[String]) -> i32 {
     // either need to create the PM itself or launch a long-running process;
     // delegating them through a second compiler process makes error handling
     // and signal forwarding unreliable.
-    if cmd == "create" || cmd == "dev" || cmd == "version" || cmd == "lreact" || args.iter().any(|a| a == "web" || a == "--release") {
+    if cmd == "create"
+        || cmd == "dev"
+        || cmd == "version"
+        || cmd == "lreact"
+        || args.iter().any(|a| a == "web" || a == "--release")
+    {
         return pm::run_command(args);
     }
 
@@ -352,13 +367,23 @@ fn run_self_hosted_pm(args: &[String]) -> i32 {
             }
         }
         "version" => {
-            if let Some(a1) = args.get(1) { child.env("LPP_PM_ARG1", a1.as_str()); }
-            if let Some(a2) = args.get(2) { child.env("LPP_PM_ARG2", a2.as_str()); }
-            if let Some(a3) = args.get(3) { child.env("LPP_PM_ARG3", a3.as_str()); }
+            if let Some(a1) = args.get(1) {
+                child.env("LPP_PM_ARG1", a1.as_str());
+            }
+            if let Some(a2) = args.get(2) {
+                child.env("LPP_PM_ARG2", a2.as_str());
+            }
+            if let Some(a3) = args.get(3) {
+                child.env("LPP_PM_ARG3", a3.as_str());
+            }
         }
         "workspace" => {
-            if let Some(a1) = args.get(1) { child.env("LPP_PM_ARG1", a1.as_str()); }
-            if let Some(a2) = args.get(2) { child.env("LPP_PM_ARG2", a2.as_str()); }
+            if let Some(a1) = args.get(1) {
+                child.env("LPP_PM_ARG1", a1.as_str());
+            }
+            if let Some(a2) = args.get(2) {
+                child.env("LPP_PM_ARG2", a2.as_str());
+            }
         }
         "publish" => {
             // Forward patch/minor/major and flags as ARG1, ARG2
@@ -432,14 +457,14 @@ fn run_self_hosted_pm(args: &[String]) -> i32 {
     }
 }
 
-
-
 fn main() {
     let builder = std::thread::Builder::new()
         .name("lpp_main".to_string())
         .stack_size(32 * 1024 * 1024);
 
-    let handle = builder.spawn(real_main).expect("failed to spawn main compiler thread");
+    let handle = builder
+        .spawn(real_main)
+        .expect("failed to spawn main compiler thread");
 
     let code = match handle.join() {
         Ok(code) => code,
@@ -481,15 +506,24 @@ fn handle_setup_llvm() -> i32 {
             "bin/clang",
         ),
         _ => {
-            eprintln!("[L++] Pre-built portable LLVM is not available for {}-{}.", os, arch);
-            eprintln!("[L++] Please install clang using your system package manager and run: lpp config set llvm-path <path_to_clang>");
+            eprintln!(
+                "[L++] Pre-built portable LLVM is not available for {}-{}.",
+                os, arch
+            );
+            eprintln!(
+                "[L++] Please install clang using your system package manager and run: lpp config set llvm-path <path_to_clang>"
+            );
             return 1;
         }
     };
 
     println!("[L++] [1/3] 📥 Downloading portable LLVM toolchain...");
-    let archive_path = tools_dir.join(if url.ends_with(".zip") { "llvm.zip" } else { "llvm.tar.xz" });
-    
+    let archive_path = tools_dir.join(if url.ends_with(".zip") {
+        "llvm.zip"
+    } else {
+        "llvm.tar.xz"
+    });
+
     let curl_cmd = if cfg!(windows) { "curl.exe" } else { "curl" };
     let status = std::process::Command::new(curl_cmd)
         .args(["-L", url, "-o", archive_path.to_string_lossy().as_ref()])
@@ -500,7 +534,10 @@ fn handle_setup_llvm() -> i32 {
         return 1;
     }
 
-    println!("[L++] [2/3] 📂 Extracting toolchain to {}...", llvm_dir.display());
+    println!(
+        "[L++] [2/3] 📂 Extracting toolchain to {}...",
+        llvm_dir.display()
+    );
     let temp_extract = tools_dir.join("temp_llvm");
     let _ = fs::remove_dir_all(&temp_extract);
     let _ = fs::create_dir_all(&temp_extract);
@@ -519,7 +556,12 @@ fn handle_setup_llvm() -> i32 {
         }
     } else {
         let _ = std::process::Command::new("tar")
-            .args(["-xf", archive_path.to_string_lossy().as_ref(), "-C", temp_extract.to_string_lossy().as_ref()])
+            .args([
+                "-xf",
+                archive_path.to_string_lossy().as_ref(),
+                "-C",
+                temp_extract.to_string_lossy().as_ref(),
+            ])
             .status();
     }
 
@@ -539,7 +581,10 @@ fn handle_setup_llvm() -> i32 {
 
     let clang_path = llvm_dir.join(clang_rel);
     if !clang_path.exists() {
-        eprintln!("[L++] Error: clang binary not found at {}", clang_path.display());
+        eprintln!(
+            "[L++] Error: clang binary not found at {}",
+            clang_path.display()
+        );
         return 1;
     }
 
@@ -548,9 +593,13 @@ fn handle_setup_llvm() -> i32 {
     cfg.llvm_path = Some(clang_path.to_string_lossy().into_owned());
     let _ = cfg.save();
 
-    println!("[L++] \x1b[1;32m✓ LLVM / Clang toolchain installed and configured successfully!\x1b[0m");
+    println!(
+        "[L++] \x1b[1;32m✓ LLVM / Clang toolchain installed and configured successfully!\x1b[0m"
+    );
     println!("[L++] LLVM Path: {}", clang_path.display());
-    println!("[L++] Compile with LLVM using: \x1b[1;36mlpp <file>.lpp --llvm\x1b[0m or \x1b[1;36mlpp build --llvm\x1b[0m");
+    println!(
+        "[L++] Compile with LLVM using: \x1b[1;36mlpp <file>.lpp --llvm\x1b[0m or \x1b[1;36mlpp build --llvm\x1b[0m"
+    );
     0
 }
 
@@ -569,16 +618,26 @@ fn real_main() -> i32 {
     } else if args.len() > 2 && args[1] == "check" && args[2].ends_with(".lpp") {
         source_check_command = true;
         args.remove(1);
-    } else if args.len() > 2 && args[1] == "run" && (args[2].ends_with(".lpp") || Path::new(&args[2]).exists()) {
+    } else if args.len() > 2
+        && args[1] == "run"
+        && (args[2].ends_with(".lpp") || Path::new(&args[2]).exists())
+    {
         source_run_command = true;
         args.remove(1);
     }
 
     // Handle setup / toolchain commands (e.g. lpp setup llvm, lpp toolchain install llvm)
     if args.len() > 1 {
-        if (args[1] == "setup" || args[1] == "toolchain") && args.get(2).map(|s| s == "llvm").unwrap_or(false)
-            || (args[1] == "llvm" && args.get(2).map(|s| s == "install" || s == "setup").unwrap_or(false))
-            || (args[1] == "toolchain" && args.get(2).map(|s| s == "install").unwrap_or(false) && args.get(3).map(|s| s == "llvm").unwrap_or(false))
+        if (args[1] == "setup" || args[1] == "toolchain")
+            && args.get(2).map(|s| s == "llvm").unwrap_or(false)
+            || (args[1] == "llvm"
+                && args
+                    .get(2)
+                    .map(|s| s == "install" || s == "setup")
+                    .unwrap_or(false))
+            || (args[1] == "toolchain"
+                && args.get(2).map(|s| s == "install").unwrap_or(false)
+                && args.get(3).map(|s| s == "llvm").unwrap_or(false))
         {
             return handle_setup_llvm();
         }
@@ -622,7 +681,9 @@ fn real_main() -> i32 {
                 }
                 println!("LLVM compiler path set to: {val}");
             } else {
-                eprintln!("Unknown config setting: {setting}. Use 'linker', 'backend', or 'llvm-path'.");
+                eprintln!(
+                    "Unknown config setting: {setting}. Use 'linker', 'backend', or 'llvm-path'."
+                );
                 std::process::exit(1);
             }
         } else {
@@ -679,7 +740,8 @@ fn real_main() -> i32 {
     let mut check_only = source_check_command;
     let mut check_all = false;
     let mut do_fix = false;
-    let mut emit_object = is_emit_cmd || env::var("LPP_AOT").is_ok() || env::var("LPP_AOT_ONLY").is_ok();
+    let mut emit_object =
+        is_emit_cmd || env::var("LPP_AOT").is_ok() || env::var("LPP_AOT_ONLY").is_ok();
 
     let mut idx = 1;
     let mut cli_linker: Option<String> = None;
@@ -691,7 +753,10 @@ fn real_main() -> i32 {
     while idx < args.len() {
         let arg = &args[idx];
         if arg == "--version" || arg == "-v" {
-            println!("L++ Compiler v{} (Pure Native AOT)", env!("CARGO_PKG_VERSION"));
+            println!(
+                "L++ Compiler v{} (Pure Native AOT)",
+                env!("CARGO_PKG_VERSION")
+            );
             return 0;
         } else if arg == "--list-targets" {
             println!("L++ supported target triples (Android / Termux / Linux):");
@@ -713,8 +778,13 @@ fn real_main() -> i32 {
             println!("must be built with the matching arch feature (default: all-arch).");
             return 0;
         } else if arg == "--help" || arg == "-h" {
-            println!("L++ (L Plus Plus) v{} — Pure Native Compiler & Toolchain", env!("CARGO_PKG_VERSION"));
-            println!("Cranelift AOT backend, 9 MIR optimization passes, direct ELF/PE/Mach-O linker");
+            println!(
+                "L++ (L Plus Plus) v{} — Pure Native Compiler & Toolchain",
+                env!("CARGO_PKG_VERSION")
+            );
+            println!(
+                "Cranelift AOT backend, 9 MIR optimization passes, direct ELF/PE/Mach-O linker"
+            );
             println!();
             println!("Usage: lpp <file.lpp> [options]");
             println!("       lpp <command> [args]");
@@ -722,17 +792,27 @@ fn real_main() -> i32 {
             println!("Compilation:");
             println!("  lpp <file.lpp>             Compile to native executable (direct lpp-link)");
             println!("  lpp <file.lpp> --emit-obj  Emit native object file only (.o / .obj)");
-            println!("  lpp <file.lpp> --llvm      Compile with LLVM object backend (shorthand for --backend llvm)");
-            println!("  lpp <file.lpp> --backend <be>  Backend: cranelift (default), llvm, or wasm");
-            println!("  lpp <file.lpp> --target <triple>  Emit for target triple (e.g. wasm32-wasi, aarch64-linux-gnu)");
+            println!(
+                "  lpp <file.lpp> --llvm      Compile with LLVM object backend (shorthand for --backend llvm)"
+            );
+            println!(
+                "  lpp <file.lpp> --backend <be>  Backend: cranelift (default), llvm, or wasm"
+            );
+            println!(
+                "  lpp <file.lpp> --target <triple>  Emit for target triple (e.g. wasm32-wasi, aarch64-linux-gnu)"
+            );
             println!("  lpp <file.lpp> --check     Type-check without compiling");
             println!("  lpp --checkall             Check all .lpp files in current directory");
             println!();
             println!("Registry & Toolchain:");
-            println!("  login [token]    Authenticate with 256-bit token from https://lplusplus.bond/account");
+            println!(
+                "  login [token]    Authenticate with 256-bit token from https://lplusplus.bond/account"
+            );
             println!("  publish          Publish package to the official L++ registry");
             println!("  upgrade [--check]  Self-update L++ compiler toolchain to latest release");
-            println!("  setup llvm       Download and auto-configure portable LLVM / Clang toolchain");
+            println!(
+                "  setup llvm       Download and auto-configure portable LLVM / Clang toolchain"
+            );
             println!();
             println!("Package Manager:");
             println!("  new <name>       Create a new L++ package");
@@ -796,7 +876,9 @@ fn real_main() -> i32 {
             println!();
             println!("Environment:");
             println!("  BENCHMARK=1           Print JSON timings instead of descriptive output");
-            println!("  LPP_AOT_OPT=speed     Set Cranelift optimization level (none|speed|speed_and_size)");
+            println!(
+                "  LPP_AOT_OPT=speed     Set Cranelift optimization level (none|speed|speed_and_size)"
+            );
             println!("  LPP_SELF_HOSTED_PM=1  Opt into the experimental pure-L++ package manager");
             return 0;
         } else if arg == "--dump-ast" {
@@ -850,7 +932,11 @@ fn real_main() -> i32 {
     if check_all {
         // Scan specified paths or current directory recursively for .lpp files and type-check all
         let mut all_files: Vec<PathBuf> = Vec::new();
-        let check_paths: Vec<PathBuf> = args[1..].iter().filter(|a| !a.starts_with('-')).map(PathBuf::from).collect();
+        let check_paths: Vec<PathBuf> = args[1..]
+            .iter()
+            .filter(|a| !a.starts_with('-'))
+            .map(PathBuf::from)
+            .collect();
 
         fn walk(base: &Path, files: &mut Vec<PathBuf>, skip_test_dirs: bool) {
             if let Ok(entries) = fs::read_dir(base) {
@@ -858,14 +944,23 @@ fn real_main() -> i32 {
                     let p = entry.path();
                     if p.is_dir() {
                         let name = p.file_name().unwrap_or_default().to_string_lossy();
-                        if name.starts_with('.') || name == "target" || name == "LppData" || name == "node_modules"
-                            || (skip_test_dirs && (name == "tests" || name == "packages" || name == "benchmarks")) {
+                        if name.starts_with('.')
+                            || name == "target"
+                            || name == "LppData"
+                            || name == "node_modules"
+                            || (skip_test_dirs
+                                && (name == "tests" || name == "packages" || name == "benchmarks"))
+                        {
                             continue;
                         }
                         walk(&p, files, skip_test_dirs);
                     } else if p.extension().map_or(false, |e| e == "lpp") {
                         let fname = p.file_name().unwrap_or_default().to_string_lossy();
-                        if skip_test_dirs && (fname.contains("rejected") || fname.starts_with("bad_") || fname == "test.lpp") {
+                        if skip_test_dirs
+                            && (fname.contains("rejected")
+                                || fname.starts_with("bad_")
+                                || fname == "test.lpp")
+                        {
                             continue;
                         }
                         files.push(p);
@@ -898,69 +993,112 @@ fn real_main() -> i32 {
 
         enum CheckResult {
             Passed,
-            Fixed(String), // log msg
+            Fixed(String),  // log msg
             Failed(String), // log msg
         }
 
-        let num_threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
+        let num_threads = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4);
         let files_arc = std::sync::Arc::new(all_files);
         let do_fix_val = do_fix;
 
         let results: Vec<CheckResult> = if files_arc.len() <= 1 || num_threads <= 1 {
             // Single-threaded path for tiny workloads
-            files_arc.iter().map(|fpath| {
-                let input = match fs::read_to_string(fpath) {
-                    Ok(c) => c,
-                    Err(e) => return CheckResult::Failed(format!("{}:1:1: read: {}", fpath.display(), e)),
-                };
-                let mut err_tuple: Option<(&'static str, String)> = None;
-                let mut l = lexer::Lexer::new(&input);
-                match l.tokenize() {
-                    Ok(t) => {
-                        let mut par = parser::Parser::new(t);
-                        match par.parse() {
-                            Ok(mut ast) => {
-                                let base = fpath.parent().unwrap_or(Path::new("."));
-                                let mut imp = std::collections::HashSet::new();
-                                if let Err(e) = resolve_local_imports(&mut ast.declarations, &mut imp, base) {
-                                    err_tuple = Some(("import", e));
-                                } else if let Err(e) = monomorph::Monomorphizer::process_program(&mut ast) {
-                                    err_tuple = Some(("monomorph", e));
-                                } else {
-                                    let mut res = semantic::Resolver::new();
-                                    if let Err(e) = res.resolve_program(&mut ast) {
-                                        err_tuple = Some(("semantic", e));
+            files_arc
+                .iter()
+                .map(|fpath| {
+                    let input = match fs::read_to_string(fpath) {
+                        Ok(c) => c,
+                        Err(e) => {
+                            return CheckResult::Failed(format!(
+                                "{}:1:1: read: {}",
+                                fpath.display(),
+                                e
+                            ));
+                        }
+                    };
+                    let mut err_tuple: Option<(&'static str, String)> = None;
+                    let mut l = lexer::Lexer::new(&input);
+                    match l.tokenize() {
+                        Ok(t) => {
+                            let mut par = parser::Parser::new(t);
+                            match par.parse() {
+                                Ok(mut ast) => {
+                                    let base = fpath.parent().unwrap_or(Path::new("."));
+                                    let mut imp = std::collections::HashSet::new();
+                                    if let Err(e) =
+                                        resolve_local_imports(&mut ast.declarations, &mut imp, base)
+                                    {
+                                        err_tuple = Some(("import", e));
+                                    } else if let Err(e) =
+                                        monomorph::Monomorphizer::process_program(&mut ast)
+                                    {
+                                        err_tuple = Some(("monomorph", e));
                                     } else {
-                                        let mut tc = typecheck::TypeChecker::new(&mut res.table);
-                                        if let Err(e) = tc.check_program(&ast) {
-                                            err_tuple = Some(("type", e));
+                                        let mut res = semantic::Resolver::new();
+                                        if let Err(e) = res.resolve_program(&mut ast) {
+                                            err_tuple = Some(("semantic", e));
+                                        } else {
+                                            let mut tc =
+                                                typecheck::TypeChecker::new(&mut res.table);
+                                            if let Err(e) = tc.check_program(&ast) {
+                                                err_tuple = Some(("type", e));
+                                            }
                                         }
                                     }
                                 }
+                                Err(e) => {
+                                    err_tuple = Some(("syntax", e));
+                                }
                             }
-                            Err(e) => { err_tuple = Some(("syntax", e)); }
+                        }
+                        Err(e) => {
+                            err_tuple = Some(("lex", e));
                         }
                     }
-                    Err(e) => { err_tuple = Some(("lex", e)); }
-                }
 
-                if let Some((stage, raw_err)) = err_tuple {
-                    let (line, col, msg) = diagnostics::parse_line_col_message_with_source(&raw_err, &input);
-                    let auto_fix = diagnostics::try_auto_fix(&input, &raw_err);
-                    if let Some((new_src, desc)) = auto_fix {
-                        if do_fix_val {
-                            if fs::write(fpath, &new_src).is_ok() {
-                                return CheckResult::Fixed(format!("[L++] Fixed {}:{}:{}: {} [{}]", fpath.display(), line, col, stage, desc));
+                    if let Some((stage, raw_err)) = err_tuple {
+                        let (line, col, msg) =
+                            diagnostics::parse_line_col_message_with_source(&raw_err, &input);
+                        let auto_fix = diagnostics::try_auto_fix(&input, &raw_err);
+                        if let Some((new_src, desc)) = auto_fix {
+                            if do_fix_val {
+                                if fs::write(fpath, &new_src).is_ok() {
+                                    return CheckResult::Fixed(format!(
+                                        "[L++] Fixed {}:{}:{}: {} [{}]",
+                                        fpath.display(),
+                                        line,
+                                        col,
+                                        stage,
+                                        desc
+                                    ));
+                                }
                             }
+                            CheckResult::Failed(format!(
+                                "{}:{}:{}: {}: {} [suggestion: {}]",
+                                fpath.display(),
+                                line,
+                                col,
+                                stage,
+                                msg,
+                                desc
+                            ))
+                        } else {
+                            CheckResult::Failed(format!(
+                                "{}:{}:{}: {}: {}",
+                                fpath.display(),
+                                line,
+                                col,
+                                stage,
+                                msg
+                            ))
                         }
-                        CheckResult::Failed(format!("{}:{}:{}: {}: {} [suggestion: {}]", fpath.display(), line, col, stage, msg, desc))
                     } else {
-                        CheckResult::Failed(format!("{}:{}:{}: {}: {}", fpath.display(), line, col, stage, msg))
+                        CheckResult::Passed
                     }
-                } else {
-                    CheckResult::Passed
-                }
-            }).collect()
+                })
+                .collect()
         } else {
             // Parallel worker pool
             let chunk_size = (files_arc.len() + num_threads - 1) / num_threads;
@@ -980,7 +1118,11 @@ fn real_main() -> i32 {
                         let input = match fs::read_to_string(fpath) {
                             Ok(c) => c,
                             Err(e) => {
-                                local_res.push(CheckResult::Failed(format!("{}:1:1: read: {}", fpath.display(), e)));
+                                local_res.push(CheckResult::Failed(format!(
+                                    "{}:1:1: read: {}",
+                                    fpath.display(),
+                                    e
+                                )));
                                 continue;
                             }
                         };
@@ -993,41 +1135,75 @@ fn real_main() -> i32 {
                                     Ok(mut ast) => {
                                         let base = fpath.parent().unwrap_or(Path::new("."));
                                         let mut imp = std::collections::HashSet::new();
-                                        if let Err(e) = resolve_local_imports(&mut ast.declarations, &mut imp, base) {
+                                        if let Err(e) = resolve_local_imports(
+                                            &mut ast.declarations,
+                                            &mut imp,
+                                            base,
+                                        ) {
                                             err_tuple = Some(("import", e));
-                                        } else if let Err(e) = monomorph::Monomorphizer::process_program(&mut ast) {
+                                        } else if let Err(e) =
+                                            monomorph::Monomorphizer::process_program(&mut ast)
+                                        {
                                             err_tuple = Some(("monomorph", e));
                                         } else {
                                             let mut res = semantic::Resolver::new();
                                             if let Err(e) = res.resolve_program(&mut ast) {
                                                 err_tuple = Some(("semantic", e));
                                             } else {
-                                                let mut tc = typecheck::TypeChecker::new(&mut res.table);
+                                                let mut tc =
+                                                    typecheck::TypeChecker::new(&mut res.table);
                                                 if let Err(e) = tc.check_program(&ast) {
                                                     err_tuple = Some(("type", e));
                                                 }
                                             }
                                         }
                                     }
-                                    Err(e) => { err_tuple = Some(("syntax", e)); }
+                                    Err(e) => {
+                                        err_tuple = Some(("syntax", e));
+                                    }
                                 }
                             }
-                            Err(e) => { err_tuple = Some(("lex", e)); }
+                            Err(e) => {
+                                err_tuple = Some(("lex", e));
+                            }
                         }
 
                         if let Some((stage, raw_err)) = err_tuple {
-                            let (line, col, msg) = diagnostics::parse_line_col_message_with_source(&raw_err, &input);
+                            let (line, col, msg) =
+                                diagnostics::parse_line_col_message_with_source(&raw_err, &input);
                             let auto_fix = diagnostics::try_auto_fix(&input, &raw_err);
                             if let Some((new_src, desc)) = auto_fix {
                                 if do_fix_val {
                                     if fs::write(fpath, &new_src).is_ok() {
-                                        local_res.push(CheckResult::Fixed(format!("[L++] Fixed {}:{}:{}: {} [{}]", fpath.display(), line, col, stage, desc)));
+                                        local_res.push(CheckResult::Fixed(format!(
+                                            "[L++] Fixed {}:{}:{}: {} [{}]",
+                                            fpath.display(),
+                                            line,
+                                            col,
+                                            stage,
+                                            desc
+                                        )));
                                         continue;
                                     }
                                 }
-                                local_res.push(CheckResult::Failed(format!("{}:{}:{}: {}: {} [suggestion: {}]", fpath.display(), line, col, stage, msg, desc)));
+                                local_res.push(CheckResult::Failed(format!(
+                                    "{}:{}:{}: {}: {} [suggestion: {}]",
+                                    fpath.display(),
+                                    line,
+                                    col,
+                                    stage,
+                                    msg,
+                                    desc
+                                )));
                             } else {
-                                local_res.push(CheckResult::Failed(format!("{}:{}:{}: {}: {}", fpath.display(), line, col, stage, msg)));
+                                local_res.push(CheckResult::Failed(format!(
+                                    "{}:{}:{}: {}: {}",
+                                    fpath.display(),
+                                    line,
+                                    col,
+                                    stage,
+                                    msg
+                                )));
                             }
                         } else {
                             local_res.push(CheckResult::Passed);
@@ -1064,15 +1240,31 @@ fn real_main() -> i32 {
 
         let el = ta.elapsed();
         if all_fails.is_empty() {
-            println!("[L++] --checkall: OK — {} file(s) passed in {:.1} ms", p, el.as_secs_f64() * 1000.0);
+            println!(
+                "[L++] --checkall: OK — {} file(s) passed in {:.1} ms",
+                p,
+                el.as_secs_f64() * 1000.0
+            );
             if do_fix && fixed_files_count > 0 {
-                println!("[L++] --fix: Automatically repaired {} file(s).", fixed_files_count);
+                println!(
+                    "[L++] --fix: Automatically repaired {} file(s).",
+                    fixed_files_count
+                );
             }
         } else {
-            eprintln!("[L++] --checkall: {} passed, {} FAILED:", p, all_fails.len());
-            for f in &all_fails { eprintln!("  {}", f); }
+            eprintln!(
+                "[L++] --checkall: {} passed, {} FAILED:",
+                p,
+                all_fails.len()
+            );
+            for f in &all_fails {
+                eprintln!("  {}", f);
+            }
             if do_fix && fixed_files_count > 0 {
-                eprintln!("[L++] --fix: Automatically repaired {} file(s).", fixed_files_count);
+                eprintln!(
+                    "[L++] --fix: Automatically repaired {} file(s).",
+                    fixed_files_count
+                );
             }
         }
         return if all_fails.is_empty() { 0 } else { 1 };
@@ -1104,7 +1296,15 @@ fn real_main() -> i32 {
     let tokens = match lexer.tokenize() {
         Ok(tokens) => tokens,
         Err(e) => {
-            eprint!("{}", diagnostics::render_error_string(&filename, &input, diagnostics::DiagnosticKind::Lexer, &e));
+            eprint!(
+                "{}",
+                diagnostics::render_error_string(
+                    &filename,
+                    &input,
+                    diagnostics::DiagnosticKind::Lexer,
+                    &e
+                )
+            );
             return 1;
         }
     };
@@ -1115,7 +1315,15 @@ fn real_main() -> i32 {
     let mut ast = match parser.parse() {
         Ok(ast) => ast,
         Err(e) => {
-            eprint!("{}", diagnostics::render_error_string(&filename, &input, diagnostics::DiagnosticKind::Syntax, &e));
+            eprint!(
+                "{}",
+                diagnostics::render_error_string(
+                    &filename,
+                    &input,
+                    diagnostics::DiagnosticKind::Syntax,
+                    &e
+                )
+            );
             return 1;
         }
     };
@@ -1125,19 +1333,43 @@ fn real_main() -> i32 {
     let base_dir = file_path.parent().unwrap_or(std::path::Path::new("."));
     let mut imported_files = std::collections::HashSet::new();
     if let Err(e) = resolve_local_imports(&mut ast.declarations, &mut imported_files, base_dir) {
-        eprint!("{}", diagnostics::render_error_string(&filename, &input, diagnostics::DiagnosticKind::Import, &e));
+        eprint!(
+            "{}",
+            diagnostics::render_error_string(
+                &filename,
+                &input,
+                diagnostics::DiagnosticKind::Import,
+                &e
+            )
+        );
         return 1;
     }
 
     if let Err(e) = monomorph::Monomorphizer::process_program(&mut ast) {
-        eprint!("{}", diagnostics::render_error_string(&filename, &input, diagnostics::DiagnosticKind::Semantic, &e));
+        eprint!(
+            "{}",
+            diagnostics::render_error_string(
+                &filename,
+                &input,
+                diagnostics::DiagnosticKind::Semantic,
+                &e
+            )
+        );
         return 1;
     }
 
     let sem_start = Instant::now();
     let mut resolver = semantic::Resolver::new();
     if let Err(e) = resolver.resolve_program(&mut ast) {
-        eprint!("{}", diagnostics::render_error_string(&filename, &input, diagnostics::DiagnosticKind::Semantic, &e));
+        eprint!(
+            "{}",
+            diagnostics::render_error_string(
+                &filename,
+                &input,
+                diagnostics::DiagnosticKind::Semantic,
+                &e
+            )
+        );
         return 1;
     }
     let sem_time = sem_start.elapsed();
@@ -1148,7 +1380,15 @@ fn real_main() -> i32 {
     {
         let mut type_checker = typecheck::TypeChecker::new(&mut resolver.table);
         if let Err(e) = type_checker.check_program(&ast) {
-            eprint!("{}", diagnostics::render_error_string(&filename, &input, diagnostics::DiagnosticKind::Type, &e));
+            eprint!(
+                "{}",
+                diagnostics::render_error_string(
+                    &filename,
+                    &input,
+                    diagnostics::DiagnosticKind::Type,
+                    &e
+                )
+            );
             return 1;
         }
         trait_impls_for_cycles = type_checker.trait_impls.clone();
@@ -1239,7 +1479,8 @@ fn real_main() -> i32 {
     // Break every ownership cycle statically before ARC insertion, so
     // the owning subgraph the pass reasons about is acyclic. See
     // analysis::cyclebreak for the proof.
-    let ownership_graph = cyclebreak::break_cycles_with_traits(&type_table, &trait_impls_for_cycles);
+    let ownership_graph =
+        cyclebreak::break_cycles_with_traits(&type_table, &trait_impls_for_cycles);
     let weak_fields = ownership_graph.weak_fields();
     // Value-by-default. This is where the escape classification finally
     // reaches codegen: a struct that provably cannot outlive its frame
@@ -1271,10 +1512,7 @@ fn real_main() -> i32 {
                         .get(local.id.0)
                         .copied()
                         .unwrap_or(mir::escape_solver::Storage::Owned);
-                    println!(
-                        "    _{} ({}) : {:?}",
-                        local.id.0, name, storage
-                    );
+                    println!("    _{} ({}) : {:?}", local.id.0, name, storage);
                 }
             }
         }
@@ -1337,7 +1575,10 @@ fn real_main() -> i32 {
         eprintln!(
             "[L++] targeting {}",
             if wasm_target {
-                format!("{} (WebAssembly backend)", cli_target.as_deref().unwrap_or_default().trim())
+                format!(
+                    "{} (WebAssembly backend)",
+                    cli_target.as_deref().unwrap_or_default().trim()
+                )
             } else {
                 target_spec.to_string()
             }
@@ -1469,13 +1710,11 @@ fn real_main() -> i32 {
                 aot_time.as_secs_f64(),
                 total_time.as_secs_f64()
             );
-        } else if !dump_ast
-            && !dump_symbols
-            && !dump_types
-            && !dump_escape
-            && !dump_mir
-        {
-            println!("[L++] Native Cranelift object emitted at {}", obj_path.display());
+        } else if !dump_ast && !dump_symbols && !dump_types && !dump_escape && !dump_mir {
+            println!(
+                "[L++] Native Cranelift object emitted at {}",
+                obj_path.display()
+            );
             println!("Time: {:.1} ms", total_time.as_secs_f64() * 1000.0);
         }
         return 0;
@@ -1495,7 +1734,10 @@ fn real_main() -> i32 {
 
     // Check if any extern blocks or explicit host libraries exist (FFI/host linking required)
     let config_obj = config::LppConfig::load_or_create();
-    let has_extern = ast.declarations.iter().any(|d| matches!(d, crate::ast::TopLevel::Extern(_)));
+    let has_extern = ast
+        .declarations
+        .iter()
+        .any(|d| matches!(d, crate::ast::TopLevel::Extern(_)));
     let env_linker = env::var("LPP_LINKER").ok();
     let effective_linker = cli_linker.or(env_linker);
     let use_host = effective_linker.as_deref() == Some("host")
@@ -1509,12 +1751,7 @@ fn real_main() -> i32 {
     let mut link_result = if use_host {
         #[cfg(windows)]
         pm::load_msvc_env();
-        pm::host_link_binary_target(
-            &obj_path,
-            &exe_path,
-            &link_libs,
-            target_spec.raw.as_deref(),
-        )
+        pm::host_link_binary_target(&obj_path, &exe_path, &link_libs, target_spec.raw.as_deref())
     } else {
         pm::direct_link_binary(&obj_path, &exe_path)
     };
@@ -1567,13 +1804,11 @@ fn real_main() -> i32 {
             aot_time.as_secs_f64(),
             total_time.as_secs_f64()
         );
-    } else if !dump_ast
-        && !dump_symbols
-        && !dump_types
-        && !dump_escape
-        && !dump_mir
-    {
-        println!("L++ v{} (Pure Native Executable)\n", env!("CARGO_PKG_VERSION"));
+    } else if !dump_ast && !dump_symbols && !dump_types && !dump_escape && !dump_mir {
+        println!(
+            "L++ v{} (Pure Native Executable)\n",
+            env!("CARGO_PKG_VERSION")
+        );
         println!("Compiled and linked native binary: {}", exe_path.display());
         println!("Time: {:.1} ms", total_time.as_secs_f64() * 1000.0);
     }
@@ -1625,10 +1860,32 @@ fn resolve_module_filepath(module: &str, base_dir: &std::path::Path) -> Result<P
     // Core shipped standard library modules
     let is_known_stdlib = matches!(
         leaf_name,
-        "math" | "strings" | "collections" | "gui" | "convert" | "assert" | "result"
-        | "algo" | "sort" | "testing" | "env" | "args" | "path" | "http" | "hash"
-        | "uuid" | "io" | "csv" | "base64" | "list_util" | "map_str" | "color" | "config"
-        | "log" | "time_util" | "regex_lite"
+        "math"
+            | "strings"
+            | "collections"
+            | "gui"
+            | "convert"
+            | "assert"
+            | "result"
+            | "algo"
+            | "sort"
+            | "testing"
+            | "env"
+            | "args"
+            | "path"
+            | "http"
+            | "hash"
+            | "uuid"
+            | "io"
+            | "csv"
+            | "base64"
+            | "list_util"
+            | "map_str"
+            | "color"
+            | "config"
+            | "log"
+            | "time_util"
+            | "regex_lite"
     );
 
     // 1. Check local file in project base_dir (unless explicitly prefixed with stdlib.)
@@ -1690,7 +1947,9 @@ fn resolve_module_filepath(module: &str, base_dir: &std::path::Path) -> Result<P
         ];
 
         for s_dir in &search_dirs {
-            if !s_dir.exists() { continue; }
+            if !s_dir.exists() {
+                continue;
+            }
 
             let manifest_path_json = s_dir.join("lpp.json");
             let manifest_path_toml = s_dir.join("lpp.toml");
@@ -1740,7 +1999,8 @@ fn resolve_module_filepath(module: &str, base_dir: &std::path::Path) -> Result<P
         module,
         base_dir.join(format!("{}.lpp", module)).display(),
         leaf_name,
-        leaf_name, leaf_name
+        leaf_name,
+        leaf_name
     ))
 }
 
@@ -1792,7 +2052,13 @@ fn resolve_local_imports(
 
         let content = match std::fs::read_to_string(&filepath) {
             Ok(c) => c,
-            Err(e) => return Err(format!("Failed to read library '{}': {}", filepath.display(), e)),
+            Err(e) => {
+                return Err(format!(
+                    "Failed to read library '{}': {}",
+                    filepath.display(),
+                    e
+                ));
+            }
         };
 
         let mut lex = lexer::Lexer::new(&content);
@@ -1889,6 +2155,9 @@ mod tests {
         let res = resolve_module_filepath("math", base_dir);
         assert!(res.is_ok(), "math module should resolve");
         let path = res.unwrap();
-        assert!(path.to_string_lossy().contains("stdlib"), "stdlib/math.lpp should take precedence");
+        assert!(
+            path.to_string_lossy().contains("stdlib"),
+            "stdlib/math.lpp should take precedence"
+        );
     }
 }

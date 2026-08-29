@@ -114,7 +114,9 @@ impl Parser {
                     return self.error("Expected '=' after constant name");
                 }
                 let value = self.parse_expr()?;
-                if self.peek() == Some(&Token::Newline) { self.advance(); }
+                if self.peek() == Some(&Token::Newline) {
+                    self.advance();
+                }
                 declarations.push(TopLevel::Const { name, value });
             } else if self.match_token(&Token::TypeKw) {
                 let name = match self.advance() {
@@ -125,7 +127,9 @@ impl Parser {
                     return self.error("Expected '=' after type name");
                 }
                 let target = self.parse_type()?;
-                if self.peek() == Some(&Token::Newline) { self.advance(); }
+                if self.peek() == Some(&Token::Newline) {
+                    self.advance();
+                }
                 declarations.push(TopLevel::TypeAlias { name, target });
             } else if self.match_token(&Token::Trait) {
                 declarations.push(TopLevel::Trait(self.parse_trait()?));
@@ -248,7 +252,9 @@ impl Parser {
         let mut methods = Vec::new();
         while self.peek() != Some(&Token::Dedent) && self.peek().is_some() {
             self.skip_newlines();
-            if self.peek() == Some(&Token::Dedent) { break; }
+            if self.peek() == Some(&Token::Dedent) {
+                break;
+            }
 
             if !self.match_token(&Token::Def) {
                 return self.error("Expected 'def' in trait body");
@@ -282,7 +288,9 @@ impl Parser {
                         default: None,
                         variadic: false,
                     });
-                    if !self.match_token(&Token::Comma) { break; }
+                    if !self.match_token(&Token::Comma) {
+                        break;
+                    }
                 }
             }
             if !self.match_token(&Token::RParen) {
@@ -292,7 +300,11 @@ impl Parser {
             if self.match_token(&Token::Arrow) {
                 return_type = self.parse_type()?;
             }
-            methods.push(TraitMethod { name: method_name, params, return_type });
+            methods.push(TraitMethod {
+                name: method_name,
+                params,
+                return_type,
+            });
             self.skip_newlines();
         }
         self.match_token(&Token::Dedent);
@@ -365,7 +377,9 @@ impl Parser {
             let unbound: Vec<String> = target_args
                 .iter()
                 .filter_map(|t| match t {
-                    Type::Custom(n) if n.len() == 1 && n.chars().all(|c| c.is_ascii_uppercase()) => {
+                    Type::Custom(n)
+                        if n.len() == 1 && n.chars().all(|c| c.is_ascii_uppercase()) =>
+                    {
                         Some(n.clone())
                     }
                     _ => None,
@@ -403,7 +417,9 @@ impl Parser {
         let mut methods = Vec::new();
         while self.peek() != Some(&Token::Dedent) && self.peek().is_some() {
             self.skip_newlines();
-            if self.peek() == Some(&Token::Dedent) { break; }
+            if self.peek() == Some(&Token::Dedent) {
+                break;
+            }
 
             if !self.match_token(&Token::Def) {
                 return self.error("Expected 'def' in impl body");
@@ -439,7 +455,13 @@ impl Parser {
         }
         self.match_token(&Token::Dedent);
 
-        Ok(ImplBlock { trait_name, target_type, type_params, target_args, methods })
+        Ok(ImplBlock {
+            trait_name,
+            target_type,
+            type_params,
+            target_args,
+            methods,
+        })
     }
 
     /// Parse `extern "C": def func(args) -> Type` or `extern "C" link "SDL2": ...`
@@ -458,8 +480,12 @@ impl Parser {
                     Some(Token::StringLit(s)) => Some(s.clone()),
                     _ => return self.error("Expected library name string after 'link'"),
                 }
-            } else { None }
-        } else { None };
+            } else {
+                None
+            }
+        } else {
+            None
+        };
 
         if !self.match_token(&Token::Colon) {
             return self.error("Expected ':' after extern declaration");
@@ -475,7 +501,9 @@ impl Parser {
         let mut functions = Vec::new();
         while self.peek() != Some(&Token::Dedent) && self.peek().is_some() {
             self.skip_newlines();
-            if self.peek() == Some(&Token::Dedent) { break; }
+            if self.peek() == Some(&Token::Dedent) {
+                break;
+            }
 
             if !self.match_token(&Token::Def) {
                 return self.error("Expected 'def' in extern body");
@@ -507,7 +535,9 @@ impl Parser {
                         default: None,
                         variadic: false,
                     });
-                    if !self.match_token(&Token::Comma) { break; }
+                    if !self.match_token(&Token::Comma) {
+                        break;
+                    }
                 }
             }
             if !self.match_token(&Token::RParen) {
@@ -527,7 +557,11 @@ impl Parser {
         }
         self.match_token(&Token::Dedent);
 
-        Ok(ExternBlock { abi, functions, link_lib })
+        Ok(ExternBlock {
+            abi,
+            functions,
+            link_lib,
+        })
     }
 
     fn parse_enum(&mut self) -> Result<EnumDef, String> {
@@ -594,7 +628,10 @@ impl Parser {
                 }
             }
 
-            variants.push(EnumVariant { name: variant_name, fields });
+            variants.push(EnumVariant {
+                name: variant_name,
+                fields,
+            });
             self.skip_newlines();
         }
         self.match_token(&Token::Dedent);
@@ -603,10 +640,18 @@ impl Parser {
             return self.error("Enum must have at least one variant");
         }
 
-        Ok(EnumDef { name, type_params, variants })
+        Ok(EnumDef {
+            name,
+            type_params,
+            variants,
+        })
     }
 
-    fn parse_struct(&mut self, repr_exact: bool, align: Option<usize>) -> Result<StructDef, String> {
+    fn parse_struct(
+        &mut self,
+        repr_exact: bool,
+        align: Option<usize>,
+    ) -> Result<StructDef, String> {
         let name = match self.advance() {
             Some(Token::Ident(n)) => n.clone(),
             _ => return self.error("Expected struct name"),
@@ -657,7 +702,13 @@ impl Parser {
         }
         self.match_token(&Token::Dedent);
 
-        Ok(StructDef { name, type_params, fields, repr_exact, align })
+        Ok(StructDef {
+            name,
+            type_params,
+            fields,
+            repr_exact,
+            align,
+        })
     }
 
     /// Parse optional type parameters: `[T, U]` or `[T: Display, U: Hash]`
@@ -715,7 +766,8 @@ impl Parser {
                     _ => return self.error("Expected parameter name"),
                 };
                 // `self` param has implicit type — no `:` required
-                let ty = if param_name == "self" && self.peek() != Some(&Token::Colon) && !variadic {
+                let ty = if param_name == "self" && self.peek() != Some(&Token::Colon) && !variadic
+                {
                     Type::Custom("Self".to_string())
                 } else {
                     if !self.match_token(&Token::Colon) {
@@ -731,7 +783,12 @@ impl Parser {
                 } else {
                     None
                 };
-                params.push(Param { name: param_name, ty, default, variadic });
+                params.push(Param {
+                    name: param_name,
+                    ty,
+                    default,
+                    variadic,
+                });
 
                 if !self.match_token(&Token::Comma) {
                     break;
@@ -793,17 +850,23 @@ impl Parser {
             }
             let mut elements = vec![self.parse_type()?];
             if !self.match_token(&Token::Comma) {
-                return self.error("Parenthesized types are not supported; tuple types require a comma");
+                return self
+                    .error("Parenthesized types are not supported; tuple types require a comma");
             }
             loop {
                 elements.push(self.parse_type()?);
-                if !self.match_token(&Token::Comma) { break; }
+                if !self.match_token(&Token::Comma) {
+                    break;
+                }
             }
             if !self.match_token(&Token::RParen) {
                 return self.error("Expected ')' after tuple type");
             }
             if !(2..=4).contains(&elements.len()) {
-                return self.error(format!("Tuple types require arity 2..=4, got {}", elements.len()));
+                return self.error(format!(
+                    "Tuple types require arity 2..=4, got {}",
+                    elements.len()
+                ));
             }
             return Ok(Type::Tuple(elements));
         }
@@ -818,18 +881,24 @@ impl Parser {
             if self.peek() != Some(&Token::RBracket) {
                 loop {
                     type_args.push(self.parse_type()?);
-                    if !self.match_token(&Token::Comma) { break; }
+                    if !self.match_token(&Token::Comma) {
+                        break;
+                    }
                 }
             }
             if !self.match_token(&Token::RBracket) {
                 return self.error("Expected ']' after generic type arguments");
             }
             if base_name == "Slice" {
-                if type_args.len() != 1 { return self.error("Slice requires exactly one element type"); }
+                if type_args.len() != 1 {
+                    return self.error("Slice requires exactly one element type");
+                }
                 return Ok(Type::Slice(Box::new(type_args.remove(0))));
             }
             if base_name == "Task" {
-                if type_args.len() != 1 { return self.error("Task requires exactly one result type"); }
+                if type_args.len() != 1 {
+                    return self.error("Task requires exactly one result type");
+                }
                 return Ok(Type::Task(Box::new(type_args.remove(0))));
             }
             return Ok(Type::Generic(base_name, type_args));
@@ -1027,7 +1096,11 @@ impl Parser {
                 }
                 self.match_token(&Token::Dedent);
 
-                arms.push(MatchArm { variant, bindings, body });
+                arms.push(MatchArm {
+                    variant,
+                    bindings,
+                    body,
+                });
                 self.skip_newlines();
             }
             self.match_token(&Token::Dedent);
@@ -1126,17 +1199,31 @@ impl Parser {
             loop {
                 match self.advance() {
                     Some(Token::Ident(n)) => names.push(n.clone()),
-                    _ => { valid = false; break; }
+                    _ => {
+                        valid = false;
+                        break;
+                    }
                 }
-                if !self.match_token(&Token::Comma) { break; }
+                if !self.match_token(&Token::Comma) {
+                    break;
+                }
             }
             if valid && self.match_token(&Token::RParen) && self.match_token(&Token::Assign) {
                 if !(2..=4).contains(&names.len()) {
-                    return self.error(format!("Tuple destructuring requires 2..=4 names, got {}", names.len()));
+                    return self.error(format!(
+                        "Tuple destructuring requires 2..=4 names, got {}",
+                        names.len()
+                    ));
                 }
                 let value = self.parse_expr()?;
-                let binding_ids = (0..names.len()).map(|_| std::cell::Cell::new(None)).collect();
-                return Ok(Stmt::Destructure { names, value, binding_ids });
+                let binding_ids = (0..names.len())
+                    .map(|_| std::cell::Cell::new(None))
+                    .collect();
+                return Ok(Stmt::Destructure {
+                    names,
+                    value,
+                    binding_ids,
+                });
             }
             self.pos = saved;
         }
@@ -1250,7 +1337,10 @@ impl Parser {
                         value,
                     });
                 }
-                _ => return self.error("Augmented assignment target must be a variable, field, or index"),
+                _ => {
+                    return self
+                        .error("Augmented assignment target must be a variable, field, or index");
+                }
             }
         }
 
@@ -1475,7 +1565,10 @@ impl Parser {
                     i += 1;
                 }
                 Some(Token::LBracket) | Some(Token::RBracket)
-                    if matches!(self.tokens.get(i).map(|st| &st.token), Some(Token::LBracket)) =>
+                    if matches!(
+                        self.tokens.get(i).map(|st| &st.token),
+                        Some(Token::LBracket)
+                    ) =>
                 {
                     // Nested generic argument such as `f[Box[Int]](x)`.
                     i += 1;
@@ -1505,7 +1598,10 @@ impl Parser {
                     Some(Token::Ident(n)) => n.clone(),
                     _ => return self.error("Expected field name or reserved 'await' after '.'"),
                 };
-                expr = Expr::FieldAccess { base: Box::new(expr), field };
+                expr = Expr::FieldAccess {
+                    base: Box::new(expr),
+                    field,
+                };
             } else if self.match_token(&Token::LParen) {
                 let mut args = Vec::new();
                 if self.peek() != Some(&Token::RParen) {
@@ -1555,7 +1651,11 @@ impl Parser {
                     self.advance(); // consume '['
                 }
                 let mut type_args = Vec::new();
-                let close_token = if is_angle { Token::Greater } else { Token::RBracket };
+                let close_token = if is_angle {
+                    Token::Greater
+                } else {
+                    Token::RBracket
+                };
                 if self.peek() != Some(&close_token) {
                     loop {
                         type_args.push(self.parse_type()?);
@@ -1565,7 +1665,11 @@ impl Parser {
                     }
                 }
                 if !self.match_token(&close_token) {
-                    return self.error(if is_angle { "Expected '>' after generic type arguments" } else { "Expected ']' after generic type arguments" });
+                    return self.error(if is_angle {
+                        "Expected '>' after generic type arguments"
+                    } else {
+                        "Expected ']' after generic type arguments"
+                    });
                 }
                 if !self.match_token(&Token::LParen) {
                     return self.error("Expected '(' after generic type arguments");
@@ -1587,9 +1691,7 @@ impl Parser {
                     type_args,
                     args,
                 };
-            } else if self.peek() == Some(&Token::LBracket)
-                && self.turbofish_ahead()
-            {
+            } else if self.peek() == Some(&Token::LBracket) && self.turbofish_ahead() {
                 // Turbofish: `identity[Int](x)`. Explicit type arguments are
                 // recorded so monomorphization can specialise without having to
                 // infer from the argument (and so `f[Str]("x")` is checked
@@ -1688,7 +1790,9 @@ impl Parser {
                         FStringPart::Expr(expr_str) => {
                             // Re-lex and parse the expression
                             let mut inner_lex = crate::lexer::Lexer::new(&expr_str);
-                            let inner_tokens = inner_lex.tokenize().map_err(|e| format!("f-string expr: {}", e))?;
+                            let inner_tokens = inner_lex
+                                .tokenize()
+                                .map_err(|e| format!("f-string expr: {}", e))?;
                             let mut inner_parser = Parser::new(inner_tokens);
                             inner_parser.parse_expr()?
                         }
@@ -1696,7 +1800,10 @@ impl Parser {
                     result = Some(match result {
                         None => part_expr,
                         Some(acc) => Expr::Call {
-                            callee: Box::new(Expr::Identifier("str_concat".to_string(), std::cell::Cell::new(None))),
+                            callee: Box::new(Expr::Identifier(
+                                "str_concat".to_string(),
+                                std::cell::Cell::new(None),
+                            )),
                             args: vec![acc, part_expr],
                         },
                     });
@@ -1714,17 +1821,24 @@ impl Parser {
                     let mut elements = vec![first];
                     loop {
                         elements.push(self.parse_expr()?);
-                        if !self.match_token(&Token::Comma) { break; }
+                        if !self.match_token(&Token::Comma) {
+                            break;
+                        }
                     }
                     if !self.match_token(&Token::RParen) {
                         return self.error("Expected ')' after tuple expression");
                     }
                     if !(2..=4).contains(&elements.len()) {
-                        return self.error(format!("Tuple expressions require arity 2..=4, got {}", elements.len()));
+                        return self.error(format!(
+                            "Tuple expressions require arity 2..=4, got {}",
+                            elements.len()
+                        ));
                     }
                     Ok(Expr::Tuple(elements))
                 } else {
-                    if !self.match_token(&Token::RParen) { return self.error("Expected ')'"); }
+                    if !self.match_token(&Token::RParen) {
+                        return self.error("Expected ')'");
+                    }
                     Ok(first)
                 }
             }
@@ -1756,7 +1870,9 @@ mod tests {
     #[test]
     fn rejects_empty_file() {
         let mut lexer = Lexer::new("");
-        let tokens = lexer.tokenize().expect("lexing empty string should succeed");
+        let tokens = lexer
+            .tokenize()
+            .expect("lexing empty string should succeed");
         let mut parser = Parser::new(tokens);
         let err = parser.parse().expect_err("parser should reject empty file");
         assert!(err.contains("Source file is empty"));

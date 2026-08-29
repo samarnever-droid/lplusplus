@@ -1,4 +1,4 @@
-﻿// Runtime Symbol Parity Gate — ensures all required builtins exist across all runtimes
+// Runtime Symbol Parity Gate — ensures all required builtins exist across all runtimes
 use std::fs;
 use std::path::Path;
 
@@ -7,7 +7,10 @@ fn load_complete_runtime(root: &Path, filename: &str) -> String {
     let mut expanded = String::new();
     for line in content.lines() {
         if line.trim_start().starts_with("#include \"runtime/") {
-            let rel = line.trim().trim_start_matches("#include \"").trim_end_matches('"');
+            let rel = line
+                .trim()
+                .trim_start_matches("#include \"")
+                .trim_end_matches('"');
             if let Ok(sub) = fs::read_to_string(root.join(rel)) {
                 expanded.push_str(&sub);
                 expanded.push('\n');
@@ -68,10 +71,16 @@ fn test_freestanding_runtime_symbol_parity() {
             missing.push(format!("standard runtime (lpp_runtime.c) missing {}", sym));
         }
         if !win_min.contains(sym) {
-            missing.push(format!("windows freestanding runtime (windows_x86_64_min.c) missing {}", sym));
+            missing.push(format!(
+                "windows freestanding runtime (windows_x86_64_min.c) missing {}",
+                sym
+            ));
         }
         if !linux_min.contains(sym) {
-            missing.push(format!("linux freestanding runtime (linux_x86_64_min.c) missing {}", sym));
+            missing.push(format!(
+                "linux freestanding runtime (linux_x86_64_min.c) missing {}",
+                sym
+            ));
         }
     }
 

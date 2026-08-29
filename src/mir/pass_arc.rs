@@ -29,14 +29,28 @@ fn collect_reads(instr: &MirInstr, out: &mut HashSet<LocalId>) {
     match instr {
         MirInstr::Assign(_, rv) => match rv {
             Rvalue::AllocateTuple(_, values) | Rvalue::MakeTask(_, _, values, _) => {
-                for value in values { op(value, out); }
+                for value in values {
+                    op(value, out);
+                }
             }
-            Rvalue::TupleField(base, _) | Rvalue::SliceLen(base)
-            | Rvalue::SliceToStr(base) | Rvalue::Await(base) => op(base, out),
-            Rvalue::MakeSlice { base, start, length, .. } => {
-                op(base, out); op(start, out); op(length, out);
+            Rvalue::TupleField(base, _)
+            | Rvalue::SliceLen(base)
+            | Rvalue::SliceToStr(base)
+            | Rvalue::Await(base) => op(base, out),
+            Rvalue::MakeSlice {
+                base,
+                start,
+                length,
+                ..
+            } => {
+                op(base, out);
+                op(start, out);
+                op(length, out);
             }
-            Rvalue::SliceGet(view, index) => { op(view, out); op(index, out); }
+            Rvalue::SliceGet(view, index) => {
+                op(view, out);
+                op(index, out);
+            }
             Rvalue::Use(o) => op(o, out),
             Rvalue::Move(id) => {
                 out.insert(*id);
@@ -186,9 +200,7 @@ pub fn run_arc_insertion_pass_with_weak(
         let arc_locals: HashSet<LocalId> = function
             .locals
             .iter()
-            .filter(|local| {
-                local.ownership.is_managed()
-            })
+            .filter(|local| local.ownership.is_managed())
             .map(|local| local.id)
             .collect();
         // `pass_escape` changes promoted custom locals to `Copy`. They still
@@ -205,10 +217,7 @@ pub fn run_arc_insertion_pass_with_weak(
             })
             .map(|local| local.id)
             .collect();
-        let cleanup_locals: HashSet<LocalId> = arc_locals
-            .union(&stack_locals)
-            .copied()
-            .collect();
+        let cleanup_locals: HashSet<LocalId> = arc_locals.union(&stack_locals).copied().collect();
 
         if cleanup_locals.is_empty() {
             continue;
@@ -570,10 +579,8 @@ pub fn run_arc_insertion_pass_with_weak(
                                 binding_id: None,
                                 debug_name: None,
                             });
-                            rewritten.push(MirInstr::Assign(
-                                saved,
-                                Rvalue::Use(Operand::Borrowed(old)),
-                            ));
+                            rewritten
+                                .push(MirInstr::Assign(saved, Rvalue::Use(Operand::Borrowed(old))));
                             rewritten.push(instruction);
                             rewritten.push(MirInstr::Release(saved));
                         } else {
@@ -594,24 +601,22 @@ pub fn run_arc_insertion_pass_with_weak(
                             }
                         }
                     }
-                    MirInstr::AssignField {
-                        base,
-                        field,
-                        value,
-                    } => {
+                    MirInstr::AssignField { base, field, value } => {
                         let source_opt = match value {
                             Operand::Borrowed(s) => Some(*s),
-                            Operand::Local(s) if function.locals[s.0].ownership.is_borrowed() => Some(*s),
+                            Operand::Local(s) if function.locals[s.0].ownership.is_borrowed() => {
+                                Some(*s)
+                            }
                             _ => None,
                         };
                         let owned_source = match value {
-                            Operand::Local(s) if !function.locals[s.0].ownership.is_borrowed() => Some(*s),
+                            Operand::Local(s) if !function.locals[s.0].ownership.is_borrowed() => {
+                                Some(*s)
+                            }
                             _ => None,
                         };
                         let is_weak = match &function.locals[base.0].ty {
-                            TypeRef::Custom(sid) => {
-                                weak_fields.contains(&(*sid, field.clone()))
-                            }
+                            TypeRef::Custom(sid) => weak_fields.contains(&(*sid, field.clone())),
                             _ => false,
                         };
                         rewritten.push(instruction);
@@ -804,7 +809,10 @@ mod tests {
             .iter()
             .filter(|i| matches!(i, MirInstr::Release(LocalId(0))))
             .count();
-        assert!(in_body >= 1, "loop-body allocation must be released in the body");
+        assert!(
+            in_body >= 1,
+            "loop-body allocation must be released in the body"
+        );
     }
 
     #[test]
