@@ -254,7 +254,7 @@ fn run_self_hosted_pm(args: &[String]) -> i32 {
     // LPP_SELF_HOSTED_PM=1, but its archive/delta backend is still experimental;
     // ordinary commands must not depend on bootstrapping a second compiler.
     if env::var("LPP_SELF_HOSTED_PM").ok().as_deref() != Some("1") {
-        return pm::run_command(args);
+        return pm::run_command(args, None);
     }
 
     let cmd = args.first().map(|s| s.as_str()).unwrap_or("help");
@@ -264,7 +264,7 @@ fn run_self_hosted_pm(args: &[String]) -> i32 {
     // delegating them through a second compiler process makes error handling
     // and signal forwarding unreliable.
     if cmd == "create" || cmd == "dev" || cmd == "version" || cmd == "lreact" || args.iter().any(|a| a == "web" || a == "--release") {
-        return pm::run_command(args);
+        return pm::run_command(args, None);
     }
 
     let pm_bin = match bootstrap_self_hosted_pm() {
@@ -272,7 +272,7 @@ fn run_self_hosted_pm(args: &[String]) -> i32 {
         Err(e) => {
             eprintln!("[L++] Self-hosted PM unavailable: {e}");
             eprintln!("[L++] Falling back to built-in Rust PM.");
-            return pm::run_command(args);
+            return pm::run_command(args, None);
         }
     };
 
@@ -412,7 +412,7 @@ fn run_self_hosted_pm(args: &[String]) -> i32 {
 
             // Check for delegation signal
             if stdout.contains("__DELEGATE__") || stderr.contains("__DELEGATE__") {
-                return pm::run_command(args);
+                return pm::run_command(args, None);
             }
 
             // A real command failure must stay a failure.  The old code ran
@@ -427,7 +427,7 @@ fn run_self_hosted_pm(args: &[String]) -> i32 {
         }
         Err(e) => {
             eprintln!("[L++] Failed to run self-hosted PM: {e}. Falling back.");
-            pm::run_command(args)
+            pm::run_command(args, None)
         }
     }
 }
@@ -563,13 +563,13 @@ fn real_main() -> i32 {
     let mut source_check_command = false;
     let mut is_emit_cmd = false;
     let mut source_run_command = false;
-    if args.len() > 2 && args[1] == "emit" {
+    if args.len() > 2 && args[1] == "emit" && (args[2].ends_with(".lpp") || Path::new(&args[2]).is_file()) {
         is_emit_cmd = true;
         args.remove(1);
-    } else if args.len() > 2 && args[1] == "check" && args[2].ends_with(".lpp") {
+    } else if args.len() > 2 && args[1] == "check" && (args[2].ends_with(".lpp") || Path::new(&args[2]).is_file()) {
         source_check_command = true;
         args.remove(1);
-    } else if args.len() > 2 && args[1] == "run" && (args[2].ends_with(".lpp") || Path::new(&args[2]).exists()) {
+    } else if args.len() > 2 && args[1] == "run" && (args[2].ends_with(".lpp") || Path::new(&args[2]).is_file()) {
         source_run_command = true;
         args.remove(1);
     }
@@ -635,7 +635,7 @@ fn real_main() -> i32 {
     if args.len() > 1 {
         let first_arg = &args[1];
         if env::var_os("LPP_PM_CHILD").is_some() {
-            return pm::run_command(&args[1..]);
+            return pm::run_command(&args[1..], None);
         }
         if first_arg == "init"
             || first_arg == "create"
@@ -666,6 +666,9 @@ fn real_main() -> i32 {
             || first_arg == "help"
             || first_arg == "bench"
         {
+            if (first_arg == "check" || first_arg == "run" || first_arg == "build") && args.len() > 2 && !args[2].starts_with("-") && !args[2].ends_with(".lpp") && !Path::new(&args[2]).is_file() {
+                 return pm::run_command(&args[1..], Some(&args[2]));
+            }
             return run_self_hosted_pm(&args[1..]);
         }
     }
