@@ -1968,7 +1968,13 @@ fn link_native_binary(obj_file: &Path, output_path: &Path) -> Result<(), String>
     host_link_binary(obj_file, output_path, &[])
 }
 
-pub fn run_command(args: &[String]) -> i32 {
+pub fn run_command(args: &[String], target_dir: Option<&str>) -> i32 {
+    if let Some(dir) = target_dir {
+        if let Err(e) = std::env::set_current_dir(dir) {
+            eprintln!("[L++] Error: failed to enter directory '{}': {}", dir, e);
+            return 1;
+        }
+    }
     if args.is_empty() {
         print_help();
         return 0;
