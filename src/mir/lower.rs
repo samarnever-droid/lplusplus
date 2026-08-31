@@ -107,34 +107,54 @@ pub struct MirLowerCtx<'a> {
     /// Calls to these functions construct Task[T] instead of invoking the body.
     pub async_functions: std::collections::HashSet<String>,
     pub type_aliases: HashMap<String, TypeRef>,
+    pub func_decls: HashMap<String, &'a Function>,
+    pub enum_decls: HashMap<String, &'a EnumDef>,
 }
 
 impl<'a> MirLowerCtx<'a> {
     pub fn new(symbol_table: &'a SymbolTable, type_table: &'a mut TypeTable, program: &'a crate::ast::Program) -> Self {
         let mut type_aliases: HashMap<String, TypeRef> = HashMap::new();
+        let mut func_decls: HashMap<String, &'a Function> = HashMap::new();
+        let mut enum_decls: HashMap<String, &'a EnumDef> = HashMap::new();
+
         for decl in &program.declarations {
-            if let TopLevel::TypeAlias { name, target } = decl {
-                let ty = match target {
-                    Type::Int => TypeRef::Int,
-                    Type::Float => TypeRef::Float,
-                    Type::String => TypeRef::Str,
-                    Type::Bool => TypeRef::Bool,
-                    Type::Char => TypeRef::Char,
-                    Type::Void => TypeRef::Void,
-                    Type::Custom(tname) => {
-                        if let Some(aliased) = type_aliases.get(tname) {
-                            aliased.clone()
-                        } else if let Some(&id) = type_table.structs_by_name.get(tname) {
-                            TypeRef::Custom(id)
-                        } else {
-                            TypeRef::Unresolved(tname.clone())
+            match decl {
+                TopLevel::TypeAlias { name, target } => {
+                    let ty = match target {
+                        Type::Int => TypeRef::Int,
+                        Type::Float => TypeRef::Float,
+                        Type::String => TypeRef::Str,
+                        Type::Bool => TypeRef::Bool,
+                        Type::Char => TypeRef::Char,
+                        Type::Void => TypeRef::Void,
+                        Type::Custom(tname) => {
+                            if let Some(aliased) = type_aliases.get(tname) {
+                                aliased.clone()
+                            } else if let Some(&id) = type_table.structs_by_name.get(tname) {
+                                TypeRef::Custom(id)
+                            } else {
+                                TypeRef::Unresolved(tname.clone())
+                            }
                         }
+                        _ => TypeRef::Int,
+                    };
+                    type_aliases.insert(name.clone(), ty);
+                }
+                TopLevel::Function(f) => {
+                    func_decls.insert(f.name.clone(), f);
+                }
+                TopLevel::Impl(ib) => {
+                    for m in &ib.methods {
+                        func_decls.insert(m.name.clone(), m);
                     }
-                    _ => TypeRef::Int,
-                };
-                type_aliases.insert(name.clone(), ty);
+                }
+                TopLevel::Enum(e) => {
+                    enum_decls.insert(e.name.clone(), e);
+                }
+                _ => {}
             }
         }
+
         Self {
             symbol_table,
             type_table,
@@ -159,6 +179,8 @@ impl<'a> MirLowerCtx<'a> {
             arena_stack: Vec::new(),
             async_functions: std::collections::HashSet::new(),
             type_aliases,
+            func_decls,
+            enum_decls,
         }
     }
 
@@ -271,12 +293,8 @@ impl<'a> MirLowerCtx<'a> {
                 if let Expr::Identifier(name, _) = base.as_ref() {
                     if let Some(id) = self.type_table.lookup_struct(name) {
                         // Check if it's an enum
-                        for decl in &self.program.declarations {
-                            if let crate::ast::TopLevel::Enum(e) = decl {
-                                if e.name == *name {
-                                    return TypeRef::Custom(id);
-                                }
-                            }
+                        if self.enum_decls.contains_key(name) {
+                            return TypeRef::Custom(id);
                         }
                     }
                 }
@@ -1450,12 +1468,8 @@ impl<'a> MirLowerCtx<'a> {
                     } else if let Some(ref enum_name) = enum_name_opt {
                         self.get_enum_variant_tag(enum_name, variant_simple_name)
                     } else {
-                        self.program.declarations.iter().find_map(|d| {
-                            if let TopLevel::Enum(e) = d {
-                                e.variants.iter().position(|v| v.name == variant_simple_name)
-                            } else {
-                                None
-                            }
+                        self.enum_decls.values().find_map(|e| {
+                            e.variants.iter().position(|v| v.name == variant_simple_name)
                         }).unwrap_or(i)
                     };
 
@@ -1912,12 +1926,7 @@ impl<'a> MirLowerCtx<'a> {
                 // Fill in default parameter values if fewer args than params
                 let mut effective_args: Vec<&Expr> = args.iter().collect();
                 if let Expr::Identifier(name, _) = &**callee {
-                    let func_def = self.program.declarations.iter().find_map(|d| {
-                        if let TopLevel::Function(f) = d {
-                            if &f.name == name { Some(f) } else { None }
-                        } else { None }
-                    });
-                    if let Some(f) = func_def {
+                    if let Some(f) = self.func_decls.get(name) {
                         if args.len() < f.params.len() {
                             // Take references to defaults for missing args
                             for i in args.len()..f.params.len() {
@@ -1931,22 +1940,13 @@ impl<'a> MirLowerCtx<'a> {
 
                 let mut lowered_args = Vec::new();
                 let variadic_spec = if let Expr::Identifier(name, _) = &**callee {
-                    self.program.declarations.iter().find_map(|decl| match decl {
-                        TopLevel::Function(function) if &function.name == name =>
-                            function.params.last().and_then(|param| {
-                                param.variadic.then(|| (
-                                    function.params.len() - 1,
-                                    self.resolve_type(&param.ty),
-                                ))
-                            }),
-                        TopLevel::Impl(block) => block.methods.iter().find(|function| &function.name == name)
-                            .and_then(|function| function.params.last().and_then(|param| {
-                                param.variadic.then(|| (
-                                    function.params.len() - 1,
-                                    self.resolve_type(&param.ty),
-                                ))
-                            })),
-                        _ => None,
+                    self.func_decls.get(name).and_then(|function| {
+                        function.params.last().and_then(|param| {
+                            param.variadic.then(|| (
+                                function.params.len() - 1,
+                                self.resolve_type(&param.ty),
+                            ))
+                        })
                     })
                 } else {
                     None
@@ -2005,23 +2005,18 @@ impl<'a> MirLowerCtx<'a> {
                             // infer from the argument types
                             if let TypeRef::TypeParam(ref tp_name) = return_type {
                                 // Find the function AST to get param type info
-                                for decl in &self.program.declarations {
-                                    if let TopLevel::Function(f) = decl {
-                                        if &f.name == name {
-                                            let prev = std::mem::replace(&mut self.current_type_params, f.type_params.iter().map(|tp| tp.name.clone()).collect());
-                                            for (i, param) in f.params.iter().enumerate() {
-                                                let param_resolved = self.resolve_type(&param.ty);
-                                                if let TypeRef::TypeParam(ref pn) = param_resolved {
-                                                    if pn == tp_name && i < args.len() {
-                                                        return_type = self.expr_type_hint(&args[i], builder, binding_map);
-                                                        break;
-                                                    }
-                                                }
+                                if let Some(f) = self.func_decls.get(name) {
+                                    let prev = std::mem::replace(&mut self.current_type_params, f.type_params.iter().map(|tp| tp.name.clone()).collect());
+                                    for (i, param) in f.params.iter().enumerate() {
+                                        let param_resolved = self.resolve_type(&param.ty);
+                                        if let TypeRef::TypeParam(ref pn) = param_resolved {
+                                            if pn == tp_name && i < args.len() {
+                                                return_type = self.expr_type_hint(&args[i], builder, binding_map);
+                                                break;
                                             }
-                                            self.current_type_params = prev;
-                                            break;
                                         }
                                     }
+                                    self.current_type_params = prev;
                                 }
                             }
                         } else if let Some(&struct_id) = self.type_table.structs_by_name.get(name) {
@@ -2206,13 +2201,7 @@ impl<'a> MirLowerCtx<'a> {
                     if let Some(func_id) = resolved_func_id {
                         // Dynamic dispatch: if the callee has trait-typed params,
                         // append function pointer args for each trait method
-                        let callee_func = self.program.declarations.iter().find_map(|d| {
-                            match d {
-                                TopLevel::Function(f) if &f.name == name => Some(f),
-                                TopLevel::Impl(ib) => ib.methods.iter().find(|m| &m.name == name),
-                                _ => None,
-                            }
-                        });
+                        let callee_func = self.func_decls.get(name).copied();
                         if let Some(cf) = callee_func {
                             for (pi, param) in cf.params.iter().enumerate() {
                                 if let Type::Custom(ref tname) = param.ty {
@@ -2470,32 +2459,28 @@ impl<'a> MirLowerCtx<'a> {
             Expr::FieldAccess { base, field } => {
                 // Check if this is an enum variant access (e.g., Color.Red)
                 if let Expr::Identifier(name, _) = base.as_ref() {
-                    for decl in &self.program.declarations {
-                        if let crate::ast::TopLevel::Enum(e) = decl {
-                            if e.name == *name {
-                                // Unit enum variant (`Color.Red`) — same heap
-                                // layout as a data variant, just no payload.
-                                let tag = e.variants.iter().position(|v| v.name == *field).unwrap_or(0);
-                                if let Some(id) = self.type_table.lookup_struct(name) {
-                                    let ty = TypeRef::Custom(id);
-                                    let temp = builder.new_local(ty.clone(), false, None, None);
-                                    let allocation = self.struct_allocation(builder, ty)?;
-                                    builder.push_instr(MirInstr::Assign(temp, allocation))?;
-                                    builder.push_instr(MirInstr::AssignField {
-                                        base: temp,
-                                        field: "__tag".to_string(),
-                                        value: Operand::Int(tag as i64),
-                                    })?;
-                                    return Ok(Operand::Local(temp));
-                                }
-                                let temp = builder.new_local(TypeRef::Int, false, None, None);
-                                builder.push_instr(MirInstr::Assign(
-                                    temp,
-                                    Rvalue::Use(Operand::Int((tag as i64) << 32)),
-                                ))?;
-                                return Ok(Operand::Local(temp));
-                            }
+                    if let Some(e) = self.enum_decls.get(name) {
+                        // Unit enum variant (`Color.Red`) — same heap
+                        // layout as a data variant, just no payload.
+                        let tag = e.variants.iter().position(|v| v.name == *field).unwrap_or(0);
+                        if let Some(id) = self.type_table.lookup_struct(name) {
+                            let ty = TypeRef::Custom(id);
+                            let temp = builder.new_local(ty.clone(), false, None, None);
+                            let allocation = self.struct_allocation(builder, ty)?;
+                            builder.push_instr(MirInstr::Assign(temp, allocation))?;
+                            builder.push_instr(MirInstr::AssignField {
+                                base: temp,
+                                field: "__tag".to_string(),
+                                value: Operand::Int(tag as i64),
+                            })?;
+                            return Ok(Operand::Local(temp));
                         }
+                        let temp = builder.new_local(TypeRef::Int, false, None, None);
+                        builder.push_instr(MirInstr::Assign(
+                            temp,
+                            Rvalue::Use(Operand::Int((tag as i64) << 32)),
+                        ))?;
+                        return Ok(Operand::Local(temp));
                     }
                 }
                 let base_op = self.lower_expr(builder, base, binding_map)?;
@@ -3013,14 +2998,10 @@ impl<'a> MirLowerCtx<'a> {
 
     fn get_enum_variant_tag(&self, enum_name: &str, variant: &str) -> usize {
         // Search through the program's enum definitions for the variant index
-        for decl in &self.program.declarations {
-            if let crate::ast::TopLevel::Enum(e) = decl {
-                if e.name == enum_name {
-                    for (i, v) in e.variants.iter().enumerate() {
-                        if v.name == variant {
-                            return i;
-                        }
-                    }
+        if let Some(e) = self.enum_decls.get(enum_name) {
+            for (i, v) in e.variants.iter().enumerate() {
+                if v.name == variant {
+                    return i;
                 }
             }
         }
