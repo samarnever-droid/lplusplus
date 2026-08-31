@@ -55,6 +55,8 @@ fn list_set_symbol(element: &TypeRef) -> Result<&'static str, String> {
 pub struct MirLowerCtx<'a> {
     pub symbol_table: &'a SymbolTable,
     pub type_table: &'a mut TypeTable,
+    pub function_defs: HashMap<String, &'a Function>,
+    pub enum_defs: HashMap<String, &'a EnumDef>,
     pub functions: HashMap<String, FuncId>,
     pub func_return_types: HashMap<String, TypeRef>,
     /// Return types of closure *values*, keyed by `(function, local)`.
@@ -138,6 +140,8 @@ impl<'a> MirLowerCtx<'a> {
         Self {
             symbol_table,
             type_table,
+            function_defs: HashMap::new(),
+            enum_defs: HashMap::new(),
             functions: HashMap::new(),
             func_return_types: HashMap::new(),
             closure_returns: HashMap::new(),
@@ -443,10 +447,27 @@ impl<'a> MirLowerCtx<'a> {
         }
     }
 
-    pub fn lower_program(&mut self, program: &Program) -> Result<MirProgram, String> {
+    pub fn lower_program(&mut self, program: &'a Program) -> Result<MirProgram, String> {
         let mut mir_functions = HashMap::new();
 
         // Register trait definitions and impl blocks for dynamic dispatch
+for decl in &program.declarations {
+            match decl {
+                TopLevel::Function(f) => {
+                    self.function_defs.insert(f.name.clone(), f);
+                }
+                TopLevel::Impl(ib) => {
+                    for method in &ib.methods {
+                        self.function_defs.insert(method.name.clone(), method);
+                    }
+                }
+                TopLevel::Enum(e) => {
+                    self.enum_defs.insert(e.name.clone(), e);
+                }
+                _ => {}
+            }
+        }
+
         for decl in &program.declarations {
             if let TopLevel::Trait(t) = decl {
                 let method_names: Vec<String> = t.methods.iter().map(|m| m.name.clone()).collect();
@@ -599,13 +620,8 @@ impl<'a> MirLowerCtx<'a> {
         let mut vtable_locals: HashMap<String, (String, HashMap<String, LocalId>)> = HashMap::new();
 
         for param in &func.params {
-            let binding_id = self.symbol_table.scopes.iter().find_map(|scope| {
-                if let ScopeKind::Function { name } = &scope.kind {
-                    if name == &func.name {
-                        return scope.bindings.get(&param.name).copied();
-                    }
-                }
-                None
+            let binding_id = self.symbol_table.function_scopes.get(&func.name).and_then(|scope_id| {
+                self.symbol_table.scopes[scope_id.0].bindings.get(&param.name).copied()
             });
             let element_ty = self.resolve_type(&param.ty);
             let ty = if param.variadic {
@@ -1450,12 +1466,8 @@ impl<'a> MirLowerCtx<'a> {
                     } else if let Some(ref enum_name) = enum_name_opt {
                         self.get_enum_variant_tag(enum_name, variant_simple_name)
                     } else {
-                        self.program.declarations.iter().find_map(|d| {
-                            if let TopLevel::Enum(e) = d {
-                                e.variants.iter().position(|v| v.name == variant_simple_name)
-                            } else {
-                                None
-                            }
+                        self.enum_defs.values().find_map(|e| {
+                            e.variants.iter().position(|v| v.name == variant_simple_name)
                         }).unwrap_or(i)
                     };
 
@@ -1912,11 +1924,7 @@ impl<'a> MirLowerCtx<'a> {
                 // Fill in default parameter values if fewer args than params
                 let mut effective_args: Vec<&Expr> = args.iter().collect();
                 if let Expr::Identifier(name, _) = &**callee {
-                    let func_def = self.program.declarations.iter().find_map(|d| {
-                        if let TopLevel::Function(f) = d {
-                            if &f.name == name { Some(f) } else { None }
-                        } else { None }
-                    });
+                    let func_def = self.function_defs.get(name).copied();
                     if let Some(f) = func_def {
                         if args.len() < f.params.len() {
                             // Take references to defaults for missing args
@@ -1931,22 +1939,13 @@ impl<'a> MirLowerCtx<'a> {
 
                 let mut lowered_args = Vec::new();
                 let variadic_spec = if let Expr::Identifier(name, _) = &**callee {
-                    self.program.declarations.iter().find_map(|decl| match decl {
-                        TopLevel::Function(function) if &function.name == name =>
-                            function.params.last().and_then(|param| {
-                                param.variadic.then(|| (
-                                    function.params.len() - 1,
-                                    self.resolve_type(&param.ty),
-                                ))
-                            }),
-                        TopLevel::Impl(block) => block.methods.iter().find(|function| &function.name == name)
-                            .and_then(|function| function.params.last().and_then(|param| {
-                                param.variadic.then(|| (
-                                    function.params.len() - 1,
-                                    self.resolve_type(&param.ty),
-                                ))
-                            })),
-                        _ => None,
+                    self.function_defs.get(name).and_then(|function| {
+                        function.params.last().and_then(|param| {
+                            param.variadic.then(|| (
+                                function.params.len() - 1,
+                                self.resolve_type(&param.ty),
+                            ))
+                        })
                     })
                 } else {
                     None
@@ -2206,13 +2205,7 @@ impl<'a> MirLowerCtx<'a> {
                     if let Some(func_id) = resolved_func_id {
                         // Dynamic dispatch: if the callee has trait-typed params,
                         // append function pointer args for each trait method
-                        let callee_func = self.program.declarations.iter().find_map(|d| {
-                            match d {
-                                TopLevel::Function(f) if &f.name == name => Some(f),
-                                TopLevel::Impl(ib) => ib.methods.iter().find(|m| &m.name == name),
-                                _ => None,
-                            }
-                        });
+                        let callee_func = self.function_defs.get(name).copied();
                         if let Some(cf) = callee_func {
                             for (pi, param) in cf.params.iter().enumerate() {
                                 if let Type::Custom(ref tname) = param.ty {
@@ -2808,12 +2801,8 @@ impl<'a> MirLowerCtx<'a> {
                     } else if let Some(ref enum_name) = enum_name_opt {
                         self.get_enum_variant_tag(enum_name, variant_simple_name)
                     } else {
-                        self.program.declarations.iter().find_map(|d| {
-                            if let TopLevel::Enum(e) = d {
-                                e.variants.iter().position(|v| v.name == variant_simple_name)
-                            } else {
-                                None
-                            }
+                        self.enum_defs.values().find_map(|e| {
+                            e.variants.iter().position(|v| v.name == variant_simple_name)
                         }).unwrap_or(i)
                     };
 
