@@ -585,21 +585,34 @@ impl<'a> TypeChecker<'a> {
                 _ => {}
             }
         }
-        let mut blocking_functions: std::collections::HashSet<String> = call_graph
-            .iter()
-            .filter(|(_, calls)| calls.iter().any(|name| Self::blocking_in_async(name)))
-            .map(|(name, _)| name.clone())
-            .collect();
-        loop {
-            let mut changed = false;
-            for (function, calls) in &call_graph {
-                if !blocking_functions.contains(function)
-                    && calls.iter().any(|callee| blocking_functions.contains(callee))
-                {
-                    blocking_functions.insert(function.clone()); changed = true;
+        let mut reverse_call_graph: HashMap<String, Vec<String>> = HashMap::new();
+        for (caller, callees) in &call_graph {
+            for callee in callees {
+                reverse_call_graph
+                    .entry(callee.clone())
+                    .or_default()
+                    .push(caller.clone());
+            }
+        }
+        let mut blocking_functions: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut worklist: Vec<String> = Vec::new();
+
+        for (function, calls) in &call_graph {
+            if calls.iter().any(|name| Self::blocking_in_async(name)) {
+                if blocking_functions.insert(function.clone()) {
+                    worklist.push(function.clone());
                 }
             }
-            if !changed { break; }
+        }
+
+        while let Some(curr) = worklist.pop() {
+            if let Some(callers) = reverse_call_graph.get(&curr) {
+                for caller in callers {
+                    if blocking_functions.insert(caller.clone()) {
+                        worklist.push(caller.clone());
+                    }
+                }
+            }
         }
         if let Some(function) = self.async_functions.iter()
             .find(|name| blocking_functions.contains(*name))
