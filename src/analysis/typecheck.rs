@@ -624,15 +624,7 @@ impl<'a> TypeChecker<'a> {
             }
         }
         for func in &all_funcs {
-            let mut func_scope_id = None;
-            for scope in &self.symbol_table.scopes {
-                if let ScopeKind::Function { name } = &scope.kind {
-                    if name == &func.name {
-                        func_scope_id = Some(scope.id);
-                        break;
-                    }
-                }
-            }
+            let func_scope_id = self.symbol_table.function_scopes.get(&func.name).copied();
             if let Some(scope_id) = func_scope_id {
                 for stmt in &func.body {
                     self.infer_stmt(stmt, scope_id)?;

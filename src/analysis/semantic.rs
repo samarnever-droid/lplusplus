@@ -46,6 +46,7 @@ pub struct Binding {
 pub struct SymbolTable {
     pub scopes: Vec<Scope>,
     pub bindings: Vec<Binding>,
+    pub function_scopes: HashMap<String, ScopeId>,
 }
 
 impl SymbolTable {
@@ -53,11 +54,15 @@ impl SymbolTable {
         Self {
             scopes: Vec::new(),
             bindings: Vec::new(),
+            function_scopes: HashMap::new(),
         }
     }
 
     fn new_scope(&mut self, parent: Option<ScopeId>, kind: ScopeKind) -> ScopeId {
-        let id = ScopeId(self.scopes.len());
+let id = ScopeId(self.scopes.len());
+        if let ScopeKind::Function { ref name } = kind {
+            self.function_scopes.insert(name.clone(), id);
+        }
         self.scopes.push(Scope {
             id,
             parent,
