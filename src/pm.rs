@@ -1968,6 +1968,20 @@ fn link_native_binary(obj_file: &Path, output_path: &Path) -> Result<(), String>
     host_link_binary(obj_file, output_path, &[])
 }
 
+fn navigate_to_target_dir(args: &[String]) {
+    for arg in args {
+        if !arg.starts_with('-') {
+            let p = std::path::Path::new(arg);
+            if p.is_dir() {
+                if let Err(e) = std::env::set_current_dir(p) {
+                    eprintln!("[L++] warning: failed to enter directory '{}': {e}", p.display());
+                }
+                break;
+            }
+        }
+    }
+}
+
 pub fn run_command(args: &[String]) -> i32 {
     if args.is_empty() {
         print_help();
@@ -2009,18 +2023,29 @@ pub fn run_command(args: &[String]) -> i32 {
         "outdated" => cmd_outdated(),
         "version" => cmd_version(&args[1..]),
         "clean" => cmd_clean(),
-        "check" => cmd_check(&args[1..]),
+        "check" => {
+            navigate_to_target_dir(&args[1..]);
+            cmd_check(&args[1..])
+        }
         "build" => {
+            navigate_to_target_dir(&args[1..]);
             apply_linker_flag(&args[1..]);
             let is_release = args.iter().any(|a| a == "--release");
             if cmd_build_opts(is_release).is_some() { 0 } else { 1 }
         }
         "run" => {
+            navigate_to_target_dir(&args[1..]);
             apply_linker_flag(&args[1..]);
             cmd_run()
         }
-        "test" => cmd_test(),
-        "bench" => cmd_bench(),
+        "test" => {
+            navigate_to_target_dir(&args[1..]);
+            cmd_test()
+        }
+        "bench" => {
+            navigate_to_target_dir(&args[1..]);
+            cmd_bench()
+        }
         "login" => cmd_login(&args[1..]),
         "publish" => cmd_publish(&args[1..]),
         "upgrade" | "self-update" | "update-self" => cmd_self_update(&args[1..]),
