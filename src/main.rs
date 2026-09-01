@@ -569,7 +569,7 @@ fn real_main() -> i32 {
     } else if args.len() > 2 && args[1] == "check" && args[2].ends_with(".lpp") {
         source_check_command = true;
         args.remove(1);
-    } else if args.len() > 2 && args[1] == "run" && (args[2].ends_with(".lpp") || Path::new(&args[2]).exists()) {
+    } else if args.len() > 2 && args[1] == "run" && (args[2].ends_with(".lpp") || Path::new(&args[2]).is_file()) {
         source_run_command = true;
         args.remove(1);
     }
@@ -633,6 +633,21 @@ fn real_main() -> i32 {
     }
 
     if args.len() > 1 {
+        // Handle target directory positional arguments for PM commands.
+        // If a valid PM command that operates on a project is given a directory path,
+        // navigate to it and remove the argument so the PM operates locally.
+        if (args[1] == "run" || args[1] == "build" || args[1] == "check" || args[1] == "test")
+            && args.len() > 2
+            && !args[2].starts_with('-')
+            && Path::new(&args[2]).is_dir()
+        {
+            if let Err(e) = env::set_current_dir(&args[2]) {
+                eprintln!("[L++] Failed to navigate to target directory '{}': {e}", args[2]);
+                return 1;
+            }
+            args.remove(2);
+        }
+
         let first_arg = &args[1];
         if env::var_os("LPP_PM_CHILD").is_some() {
             return pm::run_command(&args[1..]);
