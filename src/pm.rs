@@ -2009,15 +2009,72 @@ pub fn run_command(args: &[String]) -> i32 {
         "outdated" => cmd_outdated(),
         "version" => cmd_version(&args[1..]),
         "clean" => cmd_clean(),
-        "check" => cmd_check(&args[1..]),
+        "check" => {
+            let mut target_dir = None;
+            for arg in &args[1..] {
+                if arg != "check" && !arg.starts_with('-') {
+                    target_dir = Some(arg);
+                    break;
+                }
+            }
+            let restore_dir = std::env::current_dir().ok();
+            if let Some(dir) = target_dir {
+                if let Err(e) = std::env::set_current_dir(dir) {
+                    eprintln!("[L++] Failed to enter directory '{}': {e}", dir);
+                    return 1;
+                }
+            }
+            let res = cmd_check(&args[1..]);
+            if let Some(d) = restore_dir {
+                let _ = std::env::set_current_dir(d);
+            }
+            res
+        }
         "build" => {
+            let mut is_release = false;
+            let mut target_dir = None;
+            for arg in &args[1..] {
+                if arg == "--release" {
+                    is_release = true;
+                } else if arg != "build" && target_dir.is_none() && !arg.starts_with('-') {
+                    target_dir = Some(arg);
+                }
+            }
+            let restore_dir = std::env::current_dir().ok();
+            if let Some(dir) = target_dir {
+                if let Err(e) = std::env::set_current_dir(dir) {
+                    eprintln!("[L++] Failed to enter directory '{}': {e}", dir);
+                    return 1;
+                }
+            }
             apply_linker_flag(&args[1..]);
-            let is_release = args.iter().any(|a| a == "--release");
-            if cmd_build_opts(is_release).is_some() { 0 } else { 1 }
+            let res = if cmd_build_opts(is_release).is_some() { 0 } else { 1 };
+            if let Some(d) = restore_dir {
+                let _ = std::env::set_current_dir(d);
+            }
+            res
         }
         "run" => {
+            let mut target_dir = None;
+            for arg in &args[1..] {
+                if arg != "run" && !arg.starts_with('-') {
+                    target_dir = Some(arg);
+                    break;
+                }
+            }
+            let restore_dir = std::env::current_dir().ok();
+            if let Some(dir) = target_dir {
+                if let Err(e) = std::env::set_current_dir(dir) {
+                    eprintln!("[L++] Failed to enter directory '{}': {e}", dir);
+                    return 1;
+                }
+            }
             apply_linker_flag(&args[1..]);
-            cmd_run()
+            let res = cmd_run();
+            if let Some(d) = restore_dir {
+                let _ = std::env::set_current_dir(d);
+            }
+            res
         }
         "test" => cmd_test(),
         "bench" => cmd_bench(),
