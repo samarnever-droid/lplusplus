@@ -563,13 +563,13 @@ fn real_main() -> i32 {
     let mut source_check_command = false;
     let mut is_emit_cmd = false;
     let mut source_run_command = false;
-    if args.len() > 2 && args[1] == "emit" {
+    if args.len() > 2 && args[1] == "emit" && Path::new(&args[2]).is_file() {
         is_emit_cmd = true;
         args.remove(1);
-    } else if args.len() > 2 && args[1] == "check" && args[2].ends_with(".lpp") {
+    } else if args.len() > 2 && args[1] == "check" && Path::new(&args[2]).is_file() && args[2].ends_with(".lpp") {
         source_check_command = true;
         args.remove(1);
-    } else if args.len() > 2 && args[1] == "run" && (args[2].ends_with(".lpp") || Path::new(&args[2]).exists()) {
+    } else if args.len() > 2 && args[1] == "run" && Path::new(&args[2]).is_file() {
         source_run_command = true;
         args.remove(1);
     }
