@@ -423,6 +423,7 @@ pub fn resolve_entry_point() -> String {
             }
         }
     }
+
     if Path::new("src/main.lpp").exists() {
         "src/main.lpp".to_string()
     } else if Path::new("src/lib.lpp").exists() {
@@ -1972,6 +1973,14 @@ pub fn run_command(args: &[String]) -> i32 {
     if args.is_empty() {
         print_help();
         return 0;
+    }
+
+    let cur_dir = std::env::current_dir().unwrap_or_default();
+
+    if args.len() > 1 && (args[0] == "check" || args[0] == "build" || args[0] == "run" || args[0] == "test") {
+        if cur_dir.join(&args[1]).is_dir() {
+            let _ = std::env::set_current_dir(cur_dir.join(&args[1]));
+        }
     }
 
     match args[0].as_str() {
