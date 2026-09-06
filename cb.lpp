@@ -1,0 +1,2 @@
+def shared() -> Int:
+    return 222

@@ -1,0 +1,7 @@
+# ca.lpp
+def shared() -> Int:
+    return 111
+
+# cb.lpp
+def shared() -> Int:
+    return 222

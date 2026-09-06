@@ -1,0 +1,5 @@
+import ca
+import cb
+def main():
+    print_int(ca.shared())
+    print_int(cb.shared())

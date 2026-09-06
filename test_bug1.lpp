@@ -1,0 +1,8 @@
+def g() -> Int:
+    return 42
+
+def main():
+    first := g()
+    mut cur := first     # cur aliases first
+    cur = 99
+    print_int(first)         # returns 0, should return 42
