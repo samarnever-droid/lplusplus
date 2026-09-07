@@ -1973,6 +1973,16 @@ pub fn run_command(args: &[String]) -> i32 {
         print_help();
         return 0;
     }
+    if args.len() > 1 && !args[1].starts_with('-') {
+        let path = std::path::Path::new(&args[1]);
+        if path.is_dir() {
+            if let Err(e) = std::env::set_current_dir(path) {
+                eprintln!("[L++] PM error: failed to cd to {}: {}", path.display(), e);
+                return 1;
+            }
+        }
+    }
+
 
     match args[0].as_str() {
         "lreact" => {
