@@ -563,15 +563,24 @@ fn real_main() -> i32 {
     let mut source_check_command = false;
     let mut is_emit_cmd = false;
     let mut source_run_command = false;
-    if args.len() > 2 && args[1] == "emit" {
-        is_emit_cmd = true;
-        args.remove(1);
-    } else if args.len() > 2 && args[1] == "check" && args[2].ends_with(".lpp") {
-        source_check_command = true;
-        args.remove(1);
-    } else if args.len() > 2 && args[1] == "run" && (args[2].ends_with(".lpp") || Path::new(&args[2]).exists()) {
-        source_run_command = true;
-        args.remove(1);
+    if args.len() > 2 && args[1] == "emit" && (args[2].ends_with(".lpp") || std::path::Path::new(&args[2]).is_file()) {
+        if std::path::Path::new(&args[2]).is_dir() {
+        } else {
+            is_emit_cmd = true;
+            args.remove(1);
+        }
+    } else if args.len() > 2 && args[1] == "check" && (args[2].ends_with(".lpp") || std::path::Path::new(&args[2]).is_file()) {
+        if std::path::Path::new(&args[2]).is_dir() {
+        } else {
+            source_check_command = true;
+            args.remove(1);
+        }
+    } else if args.len() > 2 && args[1] == "run" && (args[2].ends_with(".lpp") || std::path::Path::new(&args[2]).is_file()) {
+        if std::path::Path::new(&args[2]).is_dir() {
+        } else {
+            source_run_command = true;
+            args.remove(1);
+        }
     }
 
     // Handle setup / toolchain commands (e.g. lpp setup llvm, lpp toolchain install llvm)

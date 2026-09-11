@@ -2009,7 +2009,21 @@ pub fn run_command(args: &[String]) -> i32 {
         "outdated" => cmd_outdated(),
         "version" => cmd_version(&args[1..]),
         "clean" => cmd_clean(),
-        "check" => cmd_check(&args[1..]),
+        "check" => {
+            if let Some(target) = args.get(1) {
+                if !target.starts_with("--") && Path::new(target).is_dir() {
+                    let old_dir = std::env::current_dir().unwrap();
+                    std::env::set_current_dir(target).unwrap();
+                    let res = cmd_check(&args[2..]);
+                    std::env::set_current_dir(old_dir).unwrap();
+                    res
+                } else {
+                    cmd_check(&args[1..])
+                }
+            } else {
+                cmd_check(&args[1..])
+            }
+        }
         "build" => {
             apply_linker_flag(&args[1..]);
             let is_release = args.iter().any(|a| a == "--release");
@@ -2017,7 +2031,19 @@ pub fn run_command(args: &[String]) -> i32 {
         }
         "run" => {
             apply_linker_flag(&args[1..]);
-            cmd_run()
+            if let Some(target) = args.get(1) {
+                if !target.starts_with("--") && Path::new(target).is_dir() {
+                    let old_dir = std::env::current_dir().unwrap();
+                    std::env::set_current_dir(target).unwrap();
+                    let res = cmd_run();
+                    std::env::set_current_dir(old_dir).unwrap();
+                    res
+                } else {
+                    cmd_run()
+                }
+            } else {
+                cmd_run()
+            }
         }
         "test" => cmd_test(),
         "bench" => cmd_bench(),
