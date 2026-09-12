@@ -29,3 +29,21 @@ EOF
 "$LPP" emit "$TEMP/example.lpp" --aot >/dev/null
 [ -e "$TEMP/example.o" ]
 echo "PASS source command split"
+
+# A package directory must not be mistaken for a single source file.
+mkdir -p "$TEMP/pkg_test/src"
+cat > "$TEMP/pkg_test/lpp.toml" <<'EOF2'
+[package]
+name = "pkg_test"
+version = "0.1.0"
+entry = "src/main.lpp"
+EOF2
+cat > "$TEMP/pkg_test/src/main.lpp" <<'EOF2'
+def main():
+    print(42)
+EOF2
+
+LPP_HOME="$ROOT" LPP_LINKER=host "$LPP" run "$TEMP/pkg_test" > "$TEMP/run.out"
+grep -q 42 "$TEMP/run.out"
+
+echo "PASS directory vs source command split"

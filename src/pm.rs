@@ -1969,18 +1969,34 @@ fn link_native_binary(obj_file: &Path, output_path: &Path) -> Result<(), String>
 }
 
 pub fn run_command(args: &[String]) -> i32 {
+
     if args.is_empty() {
         print_help();
         return 0;
     }
 
-    match args[0].as_str() {
+    let actual_cmd = args[0].as_str();
+    let mut actual_args: &[String] = &args[1..];
+    let mut _orig_dir = None;
+
+    if !actual_args.is_empty() && std::path::Path::new(&actual_args[0]).is_dir() && matches!(actual_cmd, "run" | "check" | "build" | "test" | "bench" | "clean") {
+        if let Ok(old) = std::env::current_dir() {
+            _orig_dir = Some(old);
+            if let Err(_e) = std::env::set_current_dir(&actual_args[0]) {
+                eprintln!("Failed to enter directory: {}", actual_args[0]);
+                return 1;
+            }
+        }
+        actual_args = &actual_args[1..];
+    }
+
+    let res = match actual_cmd {
         "lreact" => {
-            let sub = args.get(1).map(|s| s.as_str()).unwrap_or("help");
+            let sub = actual_args.get(0).map(|s| s.as_str()).unwrap_or("help");
             match sub {
                 "create" | "new" => {
                     let mut web_args = vec!["web".to_string()];
-                    web_args.extend(args.iter().skip(2).cloned());
+                    web_args.extend(actual_args.iter().skip(1).cloned());
                     cmd_new(&web_args)
                 }
                 "dev" | "run" => cmd_dev(),
@@ -1994,36 +2010,36 @@ pub fn run_command(args: &[String]) -> i32 {
                 }
             }
         }
-        "new" | "create" => cmd_new(&args[1..]),
+        "new" | "create" => cmd_new(actual_args),
         "dev" => cmd_dev(),
-        "init" => cmd_init(&args[1..]),
-        "install" => cmd_install_command(&args[1..]),
-        "add" => cmd_add(&args[1..]),
-        "remove" => cmd_remove(&args[1..]),
+        "init" => cmd_init(actual_args),
+        "install" => cmd_install_command(actual_args),
+        "add" => cmd_add(actual_args),
+        "remove" => cmd_remove(actual_args),
         "update" => cmd_update(),
-        "search" => cmd_search(&args[1..]),
-        "workspace" => cmd_workspace(&args[1..]),
+        "search" => cmd_search(actual_args),
+        "workspace" => cmd_workspace(actual_args),
         "list" => cmd_list(),
         "tree" => cmd_tree(),
         "metadata" => cmd_metadata(),
         "outdated" => cmd_outdated(),
-        "version" => cmd_version(&args[1..]),
+        "version" => cmd_version(actual_args),
         "clean" => cmd_clean(),
-        "check" => cmd_check(&args[1..]),
+        "check" => cmd_check(actual_args),
         "build" => {
-            apply_linker_flag(&args[1..]);
-            let is_release = args.iter().any(|a| a == "--release");
+            apply_linker_flag(actual_args);
+            let is_release = actual_args.iter().any(|a| a == "--release");
             if cmd_build_opts(is_release).is_some() { 0 } else { 1 }
         }
         "run" => {
-            apply_linker_flag(&args[1..]);
+            apply_linker_flag(actual_args);
             cmd_run()
         }
         "test" => cmd_test(),
         "bench" => cmd_bench(),
-        "login" => cmd_login(&args[1..]),
-        "publish" => cmd_publish(&args[1..]),
-        "upgrade" | "self-update" | "update-self" => cmd_self_update(&args[1..]),
+        "login" => cmd_login(actual_args),
+        "publish" => cmd_publish(actual_args),
+        "upgrade" | "self-update" | "update-self" => cmd_self_update(actual_args),
         "help" => {
             print_help();
             0
@@ -2033,7 +2049,12 @@ pub fn run_command(args: &[String]) -> i32 {
             print_help();
             2
         }
+    };
+
+    if let Some(old) = _orig_dir {
+        let _ = std::env::set_current_dir(old);
     }
+    res
 }
 
 fn print_help() {
