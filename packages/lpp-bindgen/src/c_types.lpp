@@ -1,0 +1,106 @@
+# c_types.lpp — conservative C ABI to L++ type policy
+
+import text
+
+def c_clean_type(raw: Str) -> Str:
+    mut value := text_normalize_spaces(raw)
+    value = str_replace(value, "SQLITE_API ", "")
+    value = str_replace(value, "SQLITE_EXTERN ", "")
+    value = str_replace(value, "SQLITE_DEPRECATED ", "")
+    value = str_replace(value, "ZEXTERN ", "")
+    value = str_replace(value, "ZEXPORT ", "")
+    value = str_replace(value, "ZEXPORTVA ", "")
+    value = str_replace(value, "extern ", "")
+    value = str_replace(value, "register ", "")
+    value = str_replace(value, "volatile ", "")
+    return text_normalize_spaces(value)
+
+def c_type_to_lpp(raw: Str, is_return: Bool) -> Str:
+    cleaned := c_clean_type(raw)
+    low := str_lower(cleaned)
+
+    if text_contains(low, "(*") || text_contains(low, "callback"):
+        return "Int"
+
+    if text_contains(low, "*") || text_contains(low, "["):
+        if text_contains(low, "* *"):
+            return "Int"
+        if text_contains(low, "char"):
+            if text_contains(low, "const") || is_return:
+                return "Str"
+        return "Int"
+
+    if text_eq(low, "void"):
+        if is_return:
+            return "Void"
+        return ""
+
+    if text_contains(low, "double") || text_contains(low, "float"):
+        return "Float"
+
+    if text_contains(low, "bool") || text_contains(low, "_bool"):
+        return "Bool"
+
+    if text_contains(low, "int") || text_contains(low, "long"):
+        return "Int"
+    if text_contains(low, "short") || text_contains(low, "size_t"):
+        return "Int"
+    if text_eq(low, "char") || text_eq(low, "signed char") || text_eq(low, "unsigned char"):
+        return "Int"
+    if text_eq(low, "signed") || text_eq(low, "unsigned"):
+        return "Int"
+    if text_contains(low, "ssize_t") || text_contains(low, "ptrdiff_t"):
+        return "Int"
+    if text_contains(low, "enum "):
+        return "Int"
+
+    # Common callback/handle typedefs in SQLite and zlib. Unknown by-value
+    # structs remain unsupported instead of being silently ABI-erased.
+    if text_contains(low, "destructor_type") || text_contains(low, "_callback"):
+        return "Int"
+    if text_contains(low, "alloc_func") || text_contains(low, "free_func"):
+        return "Int"
+    if text_contains(low, "in_func") || text_contains(low, "out_func"):
+        return "Int"
+    if text_contains(low, "streamp") || text_contains(low, "gzfile"):
+        return "Int"
+    if text_contains(low, "voidp") || text_contains(low, "headerp"):
+        return "Int"
+    if text_contains(low, "z_off") || text_contains(low, "z_size"):
+        return "Int"
+    if text_eq(low, "sqlite3_int64") || text_eq(low, "sqlite3_uint64"):
+        return "Int"
+    if text_eq(low, "u32") || text_eq(low, "u64") || text_eq(low, "byte"):
+        return "Int"
+
+    return "__UNSUPPORTED__"
+
+def c_numeric_literal(raw: Str) -> Str:
+    mut value := text_normalize_spaces(raw)
+    value = str_replace(value, "(", "")
+    value = str_replace(value, ")", "")
+    value = str_replace(value, "ULL", "")
+    value = str_replace(value, "LL", "")
+    value = str_replace(value, "UL", "")
+    value = str_replace(value, "U", "")
+    value = str_replace(value, "L", "")
+    value = str_trim(value)
+    if str_len(value) == 0:
+        return ""
+    mut i := 0
+    while i < str_len(value):
+        ch := char_at(value, i)
+        code := ord(ch)
+        mut ok := false
+        if code >= 48 && code <= 57:
+            ok = true
+        if code >= 65 && code <= 70:
+            ok = true
+        if code >= 97 && code <= 102:
+            ok = true
+        if text_eq(ch, "x") || text_eq(ch, "X") || text_eq(ch, "-"):
+            ok = true
+        if !ok:
+            return ""
+        i = i + 1
+    return value

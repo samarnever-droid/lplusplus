@@ -1,0 +1,16 @@
+[package]
+name = "lpp-linker"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "L++ direct linker (ELF / PE / Mach-O) — Phase 6A of the rewrite."
+
+[dependencies]
+object = "0.36"
+
+[dev-dependencies]
+# The `write` feature lets the cross-format gate synthesize COFF / Mach-O input
+# objects in-process (no external toolchain), so the PE and Mach-O link paths
+# can be exercised and validated on any host.
+object = { version = "0.36", features = ["read", "write"] }

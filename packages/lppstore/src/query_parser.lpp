@@ -1,0 +1,40 @@
+# query_parser.lpp - Query Parser & Command Execution Processor
+
+import json
+import kv_engine
+
+def parse_and_execute_query(wal_path: Str, current_tx: Int, query_str: Str) -> Str:
+    # Handle GET key
+    if str_find(query_str, "GET ") == 0:
+        key := str_substr(query_str, 4, str_len(query_str) - 4)
+        val := kv_engine.db_get(key)
+        return str_concat("{\"status\":\"ok\",\"key\":\"", str_concat(key, str_concat("\",\"value\":\"", str_concat(val, "\"}"))))
+
+    # Handle SET key=value
+    if str_find(query_str, "SET ") == 0:
+        eq_idx := str_find(query_str, "=")
+        if eq_idx > 4:
+            key := str_substr(query_str, 4, eq_idx - 4)
+            val := str_substr(query_str, eq_idx + 1, str_len(query_str) - eq_idx - 1)
+            kv_engine.db_set(wal_path, current_tx, key, val)
+            return str_concat("{\"status\":\"ok\",\"written\":\"", str_concat(key, "\"}"))
+
+    # Handle JSON API commands
+    if str_contains(query_str, "\"op\":\"SET\""):
+        h_json := json_parse(query_str)
+        if h_json > 0:
+            k := json_get_str(h_json, "key")
+            v := json_get_str(h_json, "val")
+            json_free(h_json)
+            kv_engine.db_set(wal_path, current_tx, k, v)
+            return "{\"status\":\"ok\",\"op\":\"SET\"}"
+
+    if str_contains(query_str, "\"op\":\"GET\""):
+        h_json := json_parse(query_str)
+        if h_json > 0:
+            k := json_get_str(h_json, "key")
+            json_free(h_json)
+            v := kv_engine.db_get(k)
+            return str_concat("{\"status\":\"ok\",\"key\":\"", str_concat(k, str_concat("\",\"value\":\"", str_concat(v, "\"}"))))
+
+    return "{\"status\":\"error\",\"message\":\"Unknown query syntax\"}"

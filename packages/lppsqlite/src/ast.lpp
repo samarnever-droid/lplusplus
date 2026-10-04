@@ -1,0 +1,180 @@
+# ast.lpp — expression trees in a flat node arena.
+#
+# The compiler cannot store structs in lists, so the AST is a struct-of-arrays
+# arena. Every node is an index; children are indices. This is also cache
+# friendly and trivially freed in one shot.
+#
+# Arena handle:
+#   [0]  kinds (iv)
+#   [8]  a     (iv)   child/operand 0, or an int payload
+#   [16] b     (iv)   child/operand 1
+#   [24] c     (iv)   child/operand 2
+#   [32] texts (sv)   identifier / literal text
+#   [40] ints  (iv)   integer literal value
+#   [48] lists (iv)   index into `argv` for variadic children
+#   [56] argv  (iv)   flattened argument lists: [count, n0, n1, ...]
+
+import mem
+import strbuf
+
+# ── node kinds ──
+def N_NULL() -> Int:
+    return 0
+def N_INT() -> Int:
+    return 1
+def N_REAL() -> Int:
+    return 2
+def N_STR() -> Int:
+    return 3
+def N_BLOB() -> Int:
+    return 4
+def N_COL() -> Int:
+    return 5      # a=table-qualifier index in texts (-1 none), text=column
+def N_STAR() -> Int:
+    return 6
+def N_BINOP() -> Int:
+    return 7      # a=lhs b=rhs text=op
+def N_UNOP() -> Int:
+    return 8      # a=operand text=op
+def N_FUNC() -> Int:
+    return 9      # text=name lists=argv slot, b=distinct flag
+def N_PARAM() -> Int:
+    return 10
+def N_CASE() -> Int:
+    return 11     # a=base(-1) lists=when/then pairs b=else
+def N_CAST() -> Int:
+    return 12     # a=expr text=type
+def N_INLIST() -> Int:
+    return 13     # a=expr lists=values b=negate
+def N_BETWEEN() -> Int:
+    return 14     # a=expr b=lo c=hi, ints=negate
+def N_LIKE() -> Int:
+    return 15     # a=lhs b=rhs c=escape ints=negate
+def N_ISNULL() -> Int:
+    return 16     # a=expr ints=negate
+def N_EXISTS() -> Int:
+    return 17     # a=subselect id
+def N_SUBQUERY() -> Int:
+    return 18     # a=select id
+def N_COLLATE() -> Int:
+    return 19
+
+def ar_kinds(t: Int) -> Int:
+    return mem.bget64(t, 0)
+
+def ar_a(t: Int) -> Int:
+    return mem.bget64(t, 8)
+
+def ar_b(t: Int) -> Int:
+    return mem.bget64(t, 16)
+
+def ar_c(t: Int) -> Int:
+    return mem.bget64(t, 24)
+
+def ar_texts(t: Int) -> Int:
+    return mem.bget64(t, 32)
+
+def ar_ints(t: Int) -> Int:
+    return mem.bget64(t, 40)
+
+def ar_lists(t: Int) -> Int:
+    return mem.bget64(t, 48)
+
+def ar_argv(t: Int) -> Int:
+    return mem.bget64(t, 56)
+
+def ar_new() -> Int:
+    t := buf_alloc(64)
+    mem.bset64(t, 0, mem.iv_new(16))
+    mem.bset64(t, 8, mem.iv_new(16))
+    mem.bset64(t, 16, mem.iv_new(16))
+    mem.bset64(t, 24, mem.iv_new(16))
+    mem.bset64(t, 32, strbuf.sv_new())
+    mem.bset64(t, 40, mem.iv_new(16))
+    mem.bset64(t, 48, mem.iv_new(16))
+    mem.bset64(t, 56, mem.iv_new(16))
+    return t
+
+def ar_free(t: Int):
+    mem.iv_free(ar_kinds(t))
+    mem.iv_free(ar_a(t))
+    mem.iv_free(ar_b(t))
+    mem.iv_free(ar_c(t))
+    strbuf.sv_free(ar_texts(t))
+    mem.iv_free(ar_ints(t))
+    mem.iv_free(ar_lists(t))
+    mem.iv_free(ar_argv(t))
+    buf_free(t)
+
+def ar_count(t: Int) -> Int:
+    return mem.iv_len(ar_kinds(t))
+
+# Create a node; returns its index.
+def nd(t: Int, kind: Int, a: Int, b: Int, c: Int, text: Str, ival: Int, listv: Int) -> Int:
+    i := mem.iv_len(ar_kinds(t))
+    mem.iv_push(ar_kinds(t), kind)
+    mem.iv_push(ar_a(t), a)
+    mem.iv_push(ar_b(t), b)
+    mem.iv_push(ar_c(t), c)
+    strbuf.sv_push(ar_texts(t), text)
+    mem.iv_push(ar_ints(t), ival)
+    mem.iv_push(ar_lists(t), listv)
+    return i
+
+def kind(t: Int, i: Int) -> Int:
+    return mem.iv_get(ar_kinds(t), i)
+
+def a_of(t: Int, i: Int) -> Int:
+    return mem.iv_get(ar_a(t), i)
+
+def b_of(t: Int, i: Int) -> Int:
+    return mem.iv_get(ar_b(t), i)
+
+def c_of(t: Int, i: Int) -> Int:
+    return mem.iv_get(ar_c(t), i)
+
+def text_of(t: Int, i: Int) -> Str:
+    return strbuf.sv_get(ar_texts(t), i)
+
+def int_of(t: Int, i: Int) -> Int:
+    return mem.iv_get(ar_ints(t), i)
+
+def list_of(t: Int, i: Int) -> Int:
+    return mem.iv_get(ar_lists(t), i)
+
+def set_a(t: Int, i: Int, v: Int):
+    mem.iv_set(ar_a(t), i, v)
+
+def set_b(t: Int, i: Int, v: Int):
+    mem.iv_set(ar_b(t), i, v)
+
+def set_c(t: Int, i: Int, v: Int):
+    mem.iv_set(ar_c(t), i, v)
+
+def set_int(t: Int, i: Int, v: Int):
+    mem.iv_set(ar_ints(t), i, v)
+
+def set_list(t: Int, i: Int, v: Int):
+    mem.iv_set(ar_lists(t), i, v)
+
+# ── argument lists ──
+# Stored in `argv` as [count, e0, e1, ...]; a node keeps the head index.
+
+def av_begin(t: Int) -> Int:
+    av := ar_argv(t)
+    slot := mem.iv_len(av)
+    mem.iv_push(av, 0)
+    return slot
+
+def av_add(t: Int, slot: Int, node: Int):
+    av := ar_argv(t)
+    mem.iv_push(av, node)
+    mem.iv_set(av, slot, mem.iv_get(av, slot) + 1)
+
+def av_count(t: Int, slot: Int) -> Int:
+    if slot < 0:
+        return 0
+    return mem.iv_get(ar_argv(t), slot)
+
+def av_get(t: Int, slot: Int, i: Int) -> Int:
+    return mem.iv_get(ar_argv(t), slot + 1 + i)

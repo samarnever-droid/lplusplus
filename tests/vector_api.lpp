@@ -1,0 +1,10 @@
+def main() -> Void:
+    a := vec_i64x2(1, 2)
+    b := vec_i64x2_splat(10)
+    c := vec_i64x2_add(a, b)
+    d := vec_i64x2_mul(c, vec_i64x2_splat(2))
+    e := vec_i64x2_xor(d, vec_i64x2(1, 1))
+    f := vec_i64x2_shr(e, 1)
+    print(vec_i64x2_extract(f, 0))
+    print(vec_i64x2_extract(f, 1))
+    print(vec_i64x2_sum(f))

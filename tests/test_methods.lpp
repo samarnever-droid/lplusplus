@@ -1,0 +1,20 @@
+struct Point:
+    x: Int
+    y: Int
+
+def magnitude_squared(p: Point) -> Int:
+    return p.x * p.x + p.y * p.y
+
+def describe(p: Point):
+    print(p.x)
+    print(p.y)
+
+def main():
+    p := Point(3, 4)
+
+    # Method syntax: p.magnitude_squared() → magnitude_squared(p)
+    m := p.magnitude_squared()
+    print(m)
+
+    # Method syntax: p.describe() → describe(p)
+    p.describe()

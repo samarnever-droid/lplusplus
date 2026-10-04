@@ -1,0 +1,17 @@
+# tuples.lpp — fixed tuples with scalar and managed (Str) elements, returned
+# by value and destructured; the managed-element mask drives field release.
+
+def pair() -> (Int, Bool):
+    return (42, true)
+
+def meta() -> (Str, Int):
+    return ("levels", 3)
+
+def main():
+    (number, flag) := pair()
+    print(number)
+    if flag:
+        print(1)
+    (label, count) := meta()
+    print_str(label)
+    print(count)

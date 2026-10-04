@@ -1,0 +1,18 @@
+[package]
+name = "lpp-net-runtime"
+version = "0.1.0"
+edition = "2024"
+description = "Native Rust socket runtime for L++"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[lib]
+name = "lpp_net_runtime"
+crate-type = ["staticlib"]
+
+[features]
+default = []
+# Reserved for the future reactor implementation. The initial ABI deliberately
+# depends only on the Rust standard library, so it can be audited and linked
+# without cURL or a hidden subprocess dependency.
+reactor = []

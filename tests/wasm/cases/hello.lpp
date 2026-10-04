@@ -1,0 +1,7 @@
+# hello.lpp — WebAssembly hello world
+# Exercises: print_str with literals and Str locals.
+
+def main():
+    print_str("Hello, WebAssembly!")
+    greeting := "L++ running on wasm32-wasi"
+    print_str(greeting)

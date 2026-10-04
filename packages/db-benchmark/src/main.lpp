@@ -1,0 +1,28 @@
+# main.lpp - Unified Parallel Benchmark Suite for LppStore Database Engine
+
+import bench_write
+import bench_read
+
+def main():
+    print_str("==========================================================================")
+    print_str("        LppStore High-Performance Parallel Benchmark Suite                ")
+    print_str("        Compiled with L++ AOT Compiler (No GC, Zero Pauses)               ")
+    print_str("==========================================================================")
+
+    records := 50000
+
+    # 1. Measure High-Speed Write Throughput (Disk & Indexing)
+    write_ops := bench_write.benchmark_batch_writes(records)
+
+    # 2. Measure Concurrent Read Throughput (Index & Query Cache)
+    read_ops := bench_read.benchmark_batch_reads(records)
+
+    # 3. Overall Performance Summary
+    total_ops := write_ops + read_ops
+    print_str("==========================================================================")
+    print_str("                    COMBINED BENCHMARK SUMMARY                            ")
+    print_str("==========================================================================")
+    print_str(str_concat("  Peak Write Performance : ", str_concat(int_to_str(write_ops), " OPS")))
+    print_str(str_concat("  Peak Read Performance  : ", str_concat(int_to_str(read_ops), " OPS")))
+    print_str(str_concat("  Combined System Capacity: ", str_concat(int_to_str(total_ops), " Total OPS")))
+    print_str("==========================================================================")

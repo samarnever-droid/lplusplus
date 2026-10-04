@@ -1,0 +1,198 @@
+############################################################
+# L++ Ultimate Language Stress Test
+# Tests:
+#  - Functions
+#  - Recursion
+#  - Structs
+#  - Lists
+#  - Shadowing
+#  - Mutable variables
+#  - Arithmetic
+#  - While loops
+#  - If / Else
+#  - Closures
+#  - Captures
+#  - Nested scopes
+#  - String literals
+#  - Escape Analysis
+#  - ARC
+#  - Return values
+############################################################
+
+struct Node:
+    value: Int
+    next: Node
+
+struct Pair:
+    first: Int
+    second: Int
+
+def factorial(n: Int) -> Int:
+    if n <= 1:
+        return 1
+    return n * factorial(n - 1)
+
+def fibonacci(n: Int) -> Int:
+    if n <= 1:
+        return n
+    return fibonacci(n - 1) + fibonacci(n - 2)
+
+def add(a: Int, b: Int) -> Int:
+    return a + b
+
+def accumulate(limit: Int) -> Int:
+    mut i := 0
+    mut sum := 0
+
+    while i < limit:
+        sum = sum + i
+        i = i + 1
+
+    return sum
+
+def closure_demo(base: Int) -> Int:
+
+    multiplier := 5
+
+    callback := fn(x):
+        return x * multiplier + base
+
+    return callback(10)
+
+def shadow_demo() -> Int:
+
+    value := 10
+
+    if value == 10:
+
+        value := 20
+
+        if value == 20:
+
+            value := 30
+
+            print(value)
+
+    return value
+
+def struct_demo() -> Int:
+
+    node := Node()
+
+    node.value = 100
+
+    return node.value
+
+def list_demo() -> Int:
+
+    numbers := [1,2,3,4,5]
+
+    return 5
+
+def recursion_demo() -> Int:
+
+    return fibonacci(12)
+
+def main():
+
+    print_str("========== L++ Stress Test ==========")
+
+    x := add(10,20)
+    print(x)
+
+    y := accumulate(1000)
+    print(y)
+
+    print(factorial(10))
+
+    print(recursion_demo())
+
+    print(shadow_demo())
+
+    print(struct_demo())
+
+    print(list_demo())
+
+    print(closure_demo(100))
+
+    ####################################################
+    # Nested loops
+    ####################################################
+
+    mut i := 0
+
+    while i < 20:
+
+        mut j := 0
+
+        while j < 20:
+
+            if (i + j) > 30:
+                print(i + j)
+
+            j = j + 1
+
+        i = i + 1
+
+    ####################################################
+    # Shadowing stress
+    ####################################################
+
+    data := 1
+    data := data + 1
+    data := data + 2
+    data := data + 3
+    data := data + 4
+
+    print(data)
+
+    ####################################################
+    # Closure captures
+    ####################################################
+
+    offset := 50
+
+    f := fn(v):
+        return v + offset
+
+    print(f(20))
+
+    ####################################################
+    # Escape Analysis
+    ####################################################
+
+    pair := Pair()
+    pair.first = 123
+    pair.second = 456
+
+    print(pair.first)
+    print(pair.second)
+
+    ####################################################
+    # Heavy arithmetic
+    ####################################################
+
+    mut total := 0
+    mut k := 0
+
+    while k < 10000:
+        total = total + k * 2 - k / 2
+        k = k + 1
+
+    print(total)
+
+    ####################################################
+    # String literals
+    ####################################################
+
+    print_str("Compiler")
+    print_str("Parser")
+    print_str("Semantic")
+    print_str("Typechecker")
+    print_str("Escape Analysis")
+    print_str("MIR")
+    print_str("ARC")
+    print_str("Cranelift")
+    print_str("Backend")
+
+    print_str("========== PASS ==========")

@@ -1,0 +1,17 @@
+[package]
+name = "lpp-driver"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[dependencies]
+lpp-common = { path = "../lpp-common" }
+lpp-hir = { path = "../lpp-hir" }
+lpp-types = { path = "../lpp-types" }
+lpp-mir = { path = "../lpp-mir" }
+lpp-codegen-api = { path = "../lpp-codegen-api" }
+lpp-codegen-cranelift = { path = "../lpp-codegen-cranelift" }
+lpp-codegen-wasm = { path = "../lpp-codegen-wasm" }
+lpp-codegen-llvm = { path = "../lpp-codegen-llvm" }
+lpp-linker = { path = "../lpp-linker" }

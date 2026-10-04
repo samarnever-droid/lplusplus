@@ -1,0 +1,61 @@
+{
+  "generated_utc": "2026-07-20T17:00:05.284935+00:00",
+  "system": {
+    "platform": "Windows-11-10.0.26200-SP0",
+    "cpu": "unknown",
+    "logical_cpus": 8,
+    "memory_mib": null,
+    "rustc": "rustc 1.95.0 (59807616e 2026-04-14)",
+    "cc": "unavailable"
+  },
+  "rows": [
+    {
+      "loc": 10000,
+      "link_ms": 467.69830000084767,
+      "object_bytes": 1706,
+      "executable_bytes": 141312,
+      "io": 48.9763,
+      "lex": 5.6314,
+      "parse": 9.8461,
+      "semantic": 1.8175999999999999,
+      "typecheck": 0.8782,
+      "escape": 0.4628,
+      "mir": 10.990400000000001,
+      "aot": 6.6392999999999995,
+      "c_codegen": 0,
+      "total": 85.3172
+    },
+    {
+      "loc": 50000,
+      "link_ms": 426.1893000002601,
+      "object_bytes": 1706,
+      "executable_bytes": 141312,
+      "io": 41.743500000000004,
+      "lex": 65.0709,
+      "parse": 52.36409999999999,
+      "semantic": 6.8139,
+      "typecheck": 4.3975,
+      "escape": 3.1384999999999996,
+      "mir": 39.5917,
+      "aot": 16.2638,
+      "c_codegen": 0,
+      "total": 229.4347
+    },
+    {
+      "loc": 100000,
+      "link_ms": 406.25249999902735,
+      "object_bytes": 1706,
+      "executable_bytes": 141312,
+      "io": 120.2727,
+      "lex": 76.5763,
+      "parse": 89.3446,
+      "semantic": 19.6014,
+      "typecheck": 8.425500000000001,
+      "escape": 5.1391,
+      "mir": 75.70540000000001,
+      "aot": 30.1098,
+      "c_codegen": 0,
+      "total": 425.2498
+    }
+  ]
+}

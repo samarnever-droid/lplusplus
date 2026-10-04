@@ -1,0 +1,7 @@
+def user() -> (Int, Str):
+    return (7, "Khati")
+
+def main():
+    (id, name) := user()
+    print(id)
+    print(name)

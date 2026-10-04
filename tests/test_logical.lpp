@@ -1,0 +1,32 @@
+def main():
+    a := true
+    b := false
+
+    # && operator
+    if a && a:
+        print(1)
+    else:
+        print(0)
+
+    if a && b:
+        print(1)
+    else:
+        print(0)
+
+    # || operator
+    if a || b:
+        print(1)
+    else:
+        print(0)
+
+    if b || b:
+        print(1)
+    else:
+        print(0)
+
+    # Combined
+    x := 5
+    if x > 0 && x < 10:
+        print(1)
+    else:
+        print(0)

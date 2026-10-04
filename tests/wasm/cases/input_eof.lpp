@@ -1,0 +1,4 @@
+# input_eof.lpp — input() with stdin already at EOF must return "".
+
+def main():
+    print(str_len(input()))

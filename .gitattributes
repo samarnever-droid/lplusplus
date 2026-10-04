@@ -1,0 +1,31 @@
+# Normalize text files consistently across platforms. One legacy C file remains
+# CRLF until its dedicated mechanical-normalization change.
+* text=auto
+*.rs text eol=lf
+*.sh text eol=lf
+*.py text eol=lf
+*.toml text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.md text eol=lf
+runtime/linux_x86_64_min.c -text whitespace=cr-at-eol
+
+# Generated benchmark reports should not affect GitHub language statistics.
+benchmarks/Benchmarks.md linguist-generated=true
+benchmarks/results.md linguist-generated=true
+benchmarks/comparison/latest.json linguist-generated=true
+benchmarks/comparison/latest.md linguist-generated=true
+benchmarks/king20/**/latest.json linguist-generated=true
+benchmarks/king20/**/latest.md linguist-generated=true
+benchmarks/scalability/generated/** linguist-generated=true
+benchmarks/scalability/latest.json linguist-generated=true
+benchmarks/scalability/latest.md linguist-generated=true
+
+# Generated ABI outputs are checked for drift against abi/builtins.toml.
+abi/generated/** linguist-generated=true
+runtime/include/lpp_abi.h linguist-generated=true
+docs/reference/BUILTINS_GENERATED.md linguist-generated=true
+
+# Generated compiler outputs are documentation/test artifacts, not language source.
+benchmarks/**/*.o linguist-generated=true
+benchmarks/**/*.exe linguist-generated=true

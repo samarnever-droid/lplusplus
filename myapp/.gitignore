@@ -1,0 +1,5 @@
+.lpp_packages/
+target/
+*.o
+*.obj
+*.exe

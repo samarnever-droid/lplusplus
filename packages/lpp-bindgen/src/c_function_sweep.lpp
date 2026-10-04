@@ -1,0 +1,553 @@
+# c_function_sweep.lpp — automatic semantic sweep over simple function bodies.
+#
+# The pass uses the general TU/body graph to select bounded, control-free
+# candidates, then applies the typed normalized-IR parser. Only completely
+# accepted functions are emitted; every other function is counted/reported.
+
+import c_translation_unit
+import c_declaration_graph
+import c_function_graph
+import c_global_data
+import c_aggregate_data
+import c_typed_parser
+import text
+
+struct CFunctionSweep:
+    lpp: Str
+    normalized: Str
+    report: Str
+    total_functions: Int
+    eligible_functions: Int
+    translated_functions: Int
+    rejected_functions: Int
+    valid: Int
+
+
+def c_sweep_value(field: Str) -> Str:
+    equal := str_find(field, "=")
+    if equal < 0:
+        return field
+    return str_substr(field, equal + 1, str_len(field) - equal - 1)
+
+
+struct CSweepScalarAbi:
+    size: Int
+    signed_flag: Int
+    valid: Int
+
+
+def c_sweep_typedef_abi(data: Int, size: Int, path: Str, shape_record: Str, name: Str) -> CSweepScalarAbi:
+    span_field := c_sweep_value(c_decl_field(shape_record, 9))
+    dots := str_find(span_field, "..")
+    if dots < 0:
+        return CSweepScalarAbi(0, 0, 0)
+    start := parse_int(str_substr(span_field, 0, dots))
+    end := parse_int(str_substr(span_field, dots + 2, str_len(span_field) - dots - 2))
+    if start < 0 || end <= start || end > size:
+        return CSweepScalarAbi(0, 0, 0)
+    mut cursor := CLexCursor(data, size, path, start, 1, 1)
+    mut saw_char := false
+    mut saw_short := false
+    mut saw_long := 0
+    mut saw_float := false
+    mut saw_double := false
+    mut saw_bool := false
+    mut saw_int128 := false
+    mut signed_flag := 1
+    mut finished := false
+    while cursor.offset < end && !finished:
+        step := c_lex_next_code(cursor)
+        spelling := step.token.spelling
+        if step.token.kind == C_TOKEN_EOF || step.token.span.start_offset >= end || text_eq(spelling, name):
+            finished = true
+        else:
+            if text_eq(spelling, "unsigned"):
+                signed_flag = 0
+            elif text_eq(spelling, "char"):
+                saw_char = true
+            elif text_eq(spelling, "short"):
+                saw_short = true
+            elif text_eq(spelling, "long"):
+                saw_long = saw_long + 1
+            elif text_eq(spelling, "float"):
+                saw_float = true
+            elif text_eq(spelling, "double"):
+                saw_double = true
+            elif text_eq(spelling, "_Bool") || text_eq(spelling, "bool"):
+                saw_bool = true
+                signed_flag = 0
+            elif text_eq(spelling, "__int128"):
+                saw_int128 = true
+            cursor = step.next
+    if saw_bool || saw_char:
+        return CSweepScalarAbi(1, signed_flag, 1)
+    if saw_short:
+        return CSweepScalarAbi(2, signed_flag, 1)
+    if saw_int128 || (saw_double && saw_long > 0):
+        return CSweepScalarAbi(16, signed_flag, 1)
+    if saw_long > 0 || saw_double:
+        return CSweepScalarAbi(8, signed_flag, 1)
+    if saw_float:
+        return CSweepScalarAbi(4, signed_flag, 1)
+    return CSweepScalarAbi(4, signed_flag, 1)
+
+
+def c_sweep_typedef_outer_pointers(data: Int, size: Int, path: Str, shape_record: Str) -> Int:
+    span_field := c_sweep_value(c_decl_field(shape_record, 9))
+    dots := str_find(span_field, "..")
+    if dots < 0:
+        return -1
+    start := parse_int(str_substr(span_field, 0, dots))
+    end := parse_int(str_substr(span_field, dots + 2, str_len(span_field) - dots - 2))
+    if start < 0 || end <= start || end > size:
+        return -1
+    mut cursor := CLexCursor(data, size, path, start, 1, 1)
+    mut brace_depth := 0
+    mut pointers := 0
+    while cursor.offset < end:
+        step := c_lex_next_code(cursor)
+        if step.token.kind == C_TOKEN_EOF || step.token.span.start_offset >= end:
+            return pointers
+        if c_lex_token_is(step, "{"):
+            brace_depth = brace_depth + 1
+        elif c_lex_token_is(step, "}"):
+            brace_depth = brace_depth - 1
+        elif c_lex_token_is(step, "*") && brace_depth == 0:
+            pointers = pointers + 1
+        cursor = step.next
+    return pointers
+
+
+def c_sweep_aliases(path: Str) -> Str:
+    declarations := c_decl_resolve_file(path)
+    if declarations.valid == 0:
+        return ""
+    data := buf_read(path)
+    size := buf_len(data)
+    lines := str_split(declarations.graph, 10)
+    mut aliases := ""
+    mut round := 0
+    while round < 16:
+        for record in lines:
+            if text_starts(record, "shape|typedef|"):
+                name := c_decl_field(record, 2)
+                base := c_sweep_value(c_decl_field(record, 3))
+                class_name := c_sweep_value(c_decl_field(record, 4))
+                pointers := c_sweep_typedef_outer_pointers(data, size, path, record)
+                if pointers == 0 && c_ir_symbol_type(aliases, name) == C_IR_TYPE_INVALID:
+                    mut kind := C_IR_TYPE_INVALID
+                    mut scalar_size := 0
+                    mut signed_flag := 0
+                    if text_eq(class_name, "primitive") || text_eq(class_name, "abi-typedef"):
+                        kind = C_IR_TYPE_INT
+                        if text_eq(base, "float") || text_eq(base, "double"):
+                            kind = C_IR_TYPE_FLOAT
+                        elif text_eq(base, "_Bool"):
+                            kind = C_IR_TYPE_BOOL
+                        abi := c_sweep_typedef_abi(data, size, path, record, name)
+                        if abi.valid != 0:
+                            scalar_size = abi.size
+                            signed_flag = abi.signed_flag
+                    elif text_eq(class_name, "aggregate"):
+                        kind = C_IR_TYPE_AGGREGATE
+                    elif text_eq(class_name, "typedef"):
+                        kind = c_ir_symbol_type(aliases, base)
+                        if kind != C_IR_TYPE_INVALID:
+                            scalar_size = parse_int(c_ir_symbol_field(aliases, base, 2))
+                            signed_flag = parse_int(c_ir_symbol_field(aliases, base, 3))
+                    if kind != C_IR_TYPE_INVALID:
+                        mut metadata := str_concat(int_to_str(scalar_size), "|")
+                        metadata = str_concat(metadata, str_concat(int_to_str(signed_flag), "|"))
+                        metadata = str_concat(metadata, str_concat(base, "|typedef"))
+                        aliases = c_ir_symbol_add_meta(aliases, name, kind, metadata)
+        round = round + 1
+    buf_free(data)
+    return aliases
+
+
+def c_sweep_pointer_functions(path: Str) -> Str:
+    declarations := c_decl_resolve_file(path)
+    if declarations.valid == 0:
+        return ""
+    lines := str_split(declarations.graph, 10)
+    mut values := ""
+    for record in lines:
+        if text_starts(record, "shape|function|"):
+            name := c_decl_field(record, 2)
+            pointers := parse_int(c_sweep_value(c_decl_field(record, 5)))
+            if pointers > 0:
+                values = c_decl_set_add(values, name)
+    return values
+
+
+def c_sweep_pointer_returns(path: Str, tu_graph: Str) -> Str:
+    data := buf_read(path)
+    size := buf_len(data)
+    lines := str_split(tu_graph, 10)
+    mut values := ""
+    for record in lines:
+        if text_starts(record, "function|"):
+            name := c_decl_field(record, 1)
+            start := parse_int(c_decl_field(record, 5))
+            end := parse_int(c_decl_field(record, 6))
+            mut header_size := end - start
+            if header_size > 1024:
+                header_size = 1024
+            if start >= 0 && header_size > 0 && start + header_size <= size:
+                header := buf_read_str(data, start, header_size)
+                mut compact := str_replace(header, " ", "")
+                compact = str_replace(compact, "\n", "")
+                compact = str_replace(compact, "\t", "")
+                if text_contains(compact, str_concat("*", str_concat(name, "("))):
+                    values = c_decl_set_add(values, name)
+    buf_free(data)
+    return values
+
+
+def c_sweep_is_candidate(shape: CBodyShape, name: Str, pointer_functions: Str, pointer_returns: Str) -> Bool:
+    if shape.valid == 0:
+        return false
+    if shape.ifs > 4 || shape.for_loops > 1 || shape.while_loops > 1 || shape.do_loops > 0:
+        return false
+    if shape.gotos > 0 || shape.switches > 0 || shape.labels > 0 || shape.case_labels > 0:
+        return false
+    if shape.statements > 7:
+        return false
+    # Pointer-bearing candidates now receive a larger bounded window because the
+    # typed place parser can prove scalar dereference/index operations. The cap
+    # still bounds translation memory on multi-megabyte units; larger bodies are
+    # delegated to the future CFG worklist rather than parsed speculatively.
+    if c_decl_set_has(pointer_functions, name) && shape.statements > 5:
+        return false
+    if c_decl_set_has(pointer_returns, name) && shape.statements > 5:
+        return false
+    return true
+
+
+def c_sweep_record_has_body(data: Int, size: Int, path: Str, record: Str) -> Bool:
+    line := parse_int(c_decl_field(record, 3))
+    column := parse_int(c_decl_field(record, 4))
+    start := parse_int(c_decl_field(record, 5))
+    end := parse_int(c_decl_field(record, 6))
+    if start < 0 || end <= start || end > size:
+        return false
+    mut cursor := CLexCursor(data, size, path, start, line, column)
+    while cursor.offset < end:
+        step := c_lex_next_code(cursor)
+        if step.token.kind == C_TOKEN_EOF || step.token.span.start_offset >= end:
+            return false
+        if c_lex_token_is(step, "{"):
+            return true
+        cursor = step.next
+    return false
+
+
+def c_sweep_collect_aggregate_types(symbols: Str, aliases: Str, defined: Str, wanted_in: Str) -> Str:
+    mut wanted := wanted_in
+    lines := str_split(symbols, 10)
+    for line in lines:
+        if str_len(line) > 0:
+            name := c_decl_field(line, 0)
+            if c_ir_symbol_type(symbols, name) == C_IR_TYPE_PTR && parse_int(c_ir_symbol_field(symbols, name, 2)) == C_IR_TYPE_AGGREGATE:
+                spelling := c_ir_symbol_field(symbols, name, 6)
+                aggregate_name := c_aggregate_resolve_name(aliases, spelling)
+                if c_decl_set_has(defined, aggregate_name):
+                    wanted = c_decl_set_add(wanted, aggregate_name)
+    return wanted
+
+
+# Scan the aggregate field graph (`@field|Agg|field|kind|typeName|pointerDepth|...`)
+# and add nested aggregate pointer-field types (pointer depth > 0, kind aggregate)
+# to the wanted set, so chains like `b->p->a` resolve. `kind` 8 is the aggregate
+# type kind; nested fields appear once the containing aggregate is catalogued.
+def c_sweep_collect_nested_aggregate_fields(catalog_normalized: Str, aliases: Str, defined: Str, wanted_in: Str) -> Str:
+    mut wanted := wanted_in
+    lines := str_split(catalog_normalized, 10)
+    for line in lines:
+        if text_starts(line, "@field|"):
+            type_kind := parse_int(c_decl_field(line, 3))
+            type_name := c_decl_field(line, 4)
+            pointer_depth := parse_int(c_decl_field(line, 5))
+            # Budget-cap the transitive closure so a deeply nested aggregate type
+            # (common in large C like SQLite) cannot balloon the catalog graph,
+            # which is copied into every eligible body parse.
+            if text_count(wanted, "|") / 2 >= 18:
+                break
+            if type_kind == C_IR_TYPE_AGGREGATE && pointer_depth > 0 && str_len(type_name) > 0:
+                aggregate_name := c_aggregate_resolve_name(aliases, type_name)
+                if c_decl_set_has(defined, aggregate_name):
+                    wanted = c_decl_set_add(wanted, aggregate_name)
+    return wanted
+
+
+def c_sweep_collect_sizeof_types(data: Int, size: Int, path: Str, start: Int, line: Int, column: Int, end: Int, aliases: Str, defined: Str, wanted_in: Str, budget: Int) -> Str:
+    mut wanted := wanted_in
+    mut cursor := CLexCursor(data, size, path, start, line, column)
+    while cursor.offset < end && text_count(wanted, "|") / 2 < budget:
+        step := c_lex_next_code(cursor)
+        if step.token.kind == C_TOKEN_EOF || step.token.span.start_offset >= end:
+            return wanted
+        if text_eq(step.token.spelling, "sizeof"):
+            open := c_lex_next_code(step.next)
+            if c_lex_token_is(open, "("):
+                type_step := c_lex_next_code(open.next)
+                if type_step.token.kind == C_TOKEN_IDENTIFIER && c_ir_symbol_type(aliases, type_step.token.spelling) == C_IR_TYPE_AGGREGATE:
+                    aggregate_name := c_aggregate_resolve_name(aliases, type_step.token.spelling)
+                    if c_decl_set_has(defined, aggregate_name):
+                        wanted = c_decl_set_add(wanted, aggregate_name)
+        cursor = step.next
+    return wanted
+
+
+def c_sweep_collect_accepted_arrays(normalized: Str, array_symbols: Str, wanted_in: Str) -> Str:
+    mut wanted := wanted_in
+    lines := str_split(array_symbols, 10)
+    for line in lines:
+        if str_len(line) > 0:
+            name := c_decl_field(line, 0)
+            needle := str_concat("const-array-load|", str_concat(name, "|"))
+            if text_contains(normalized, needle):
+                wanted = c_decl_set_add(wanted, name)
+    return wanted
+
+
+def c_sweep_collect_global_references(data: Int, size: Int, path: Str, start: Int, line: Int, column: Int, end: Int, global_names: Str, wanted_in: Str) -> Str:
+    mut wanted := wanted_in
+    mut cursor := CLexCursor(data, size, path, start, line, column)
+    while cursor.offset < end:
+        step := c_lex_next_code(cursor)
+        if step.token.kind == C_TOKEN_EOF || step.token.span.start_offset >= end:
+            return wanted
+        if step.token.kind == C_TOKEN_IDENTIFIER && c_decl_set_has(global_names, step.token.spelling):
+            wanted = c_decl_set_add(wanted, step.token.spelling)
+        cursor = step.next
+    return wanted
+
+
+def c_sweep_file(path: Str) -> CFunctionSweep:
+    tu := c_tu_scan_file(path)
+    if tu.valid == 0:
+        return CFunctionSweep("", "", "valid=0\nreason=C2-SWEEP-TU\n", 0, 0, 0, 0, 0)
+    data := buf_read(path)
+    size := buf_len(data)
+    lines := str_split(tu.graph, 10)
+    mut lpp_builder := CTUTextBuilder(buf_alloc(65536), 0, 65536)
+    lpp_builder = c_tu_builder_add(lpp_builder, "# Automatically accepted pure-L++ scalar/pointer-signature functions.\n# No extern/native link fallback.\n\nimport c_memory\nimport c_place\n\ndef c2lpp_bool_to_int(value: Bool) -> Int:\n    if value:\n        return 1\n    return 0\n\n")
+    mut ir_builder := CTUTextBuilder(buf_alloc(65536), 0, 65536)
+    ir_builder = c_tu_builder_add(ir_builder, "schema|c2lpp-function-sweep-v1\n")
+    mut rejection_builder := CTUTextBuilder(buf_alloc(65536), 0, 65536)
+    mut total := 0
+    mut eligible := 0
+    mut translated := 0
+    mut rejected := 0
+    mut functions := ""
+    mut accepted_set := ""
+    mut accepted_registry := ""
+    aliases := c_sweep_aliases(path)
+    pointer_functions := c_sweep_pointer_functions(path)
+    pointer_returns := c_sweep_pointer_returns(path, tu.graph)
+    mut registered_signatures := 0
+    mut aggregate_wanted := ""
+    mut aggregate_budget_exhausted := 0
+    mut global_names := ""
+    mut global_wanted := ""
+    mut accepted_array_wanted := ""
+    mut aggregate_defined := ""
+    for declaration_record in lines:
+        if text_starts(declaration_record, "global|"):
+            global_names = c_decl_set_add(global_names, c_decl_field(declaration_record, 1))
+        elif text_starts(declaration_record, "aggregate|"):
+            aggregate_defined = c_decl_set_add(aggregate_defined, c_decl_field(declaration_record, 1))
+        elif text_starts(declaration_record, "typedef|") && c_sweep_record_has_body(data, size, path, declaration_record):
+            aggregate_defined = c_decl_set_add(aggregate_defined, c_decl_field(declaration_record, 1))
+
+    # Signatures need only typedef metadata. Collect aggregate pointee families
+    # before building field layouts so whole-unit work remains demand-bounded.
+    #
+    # Every function definition registers its signature (return type + parameter
+    # types), regardless of whether its own body is small enough to translate.
+    # Otherwise a tiny wrapper that calls a large, non-candidate body fails with
+    # C2-TYPE-UNKNOWN-CALL even though only the caller would be emitted. Parsing
+    # a signature is just the function header and is cheap; aggregate/global
+    # collection stays gated on candidate shape to keep whole-unit work bounded.
+    for signature_record in lines:
+        if text_starts(signature_record, "function|"):
+            signature_name := c_decl_field(signature_record, 1)
+            signature_line := parse_int(c_decl_field(signature_record, 3))
+            signature_column := parse_int(c_decl_field(signature_record, 4))
+            signature_start := parse_int(c_decl_field(signature_record, 5))
+            signature_end := parse_int(c_decl_field(signature_record, 6))
+            signature_shape := c_body_scan(data, size, signature_start, signature_end)
+            if signature_shape.valid != 0 && signature_start >= 0 && signature_end > signature_start:
+                signature_cursor := CLexCursor(data, size, path, signature_start, signature_line, signature_column)
+                signature := c_parse_function_signature_known(signature_cursor, aliases)
+                if signature.valid != 0:
+                    functions = c_ir_function_add(functions, signature.name, signature.return_type.kind, signature.params.count, signature.params.type_list)
+                    registered_signatures = registered_signatures + 1
+            # Aggregate pointee families and global references are only worth            # Aggregate pointee families and global references are only worth
+            # collecting for bodies we may actually emit (candidate shape).
+            if c_sweep_is_candidate(signature_shape, signature_name, pointer_functions, pointer_returns):
+                signature_cursor := CLexCursor(data, size, path, signature_start, signature_line, signature_column)
+                signature := c_parse_function_signature_known(signature_cursor, aliases)
+                if signature.valid != 0:
+                    # Collect aggregate pointee families for every candidate
+                    # signature, not just single-statement bodies. Bodies with
+                    # if/else plus aggregate members are common and the catalog
+                    # is shared, so the statement-count gate only hid them.
+                    if text_count(aggregate_wanted, "|") < 18:
+                        aggregate_wanted = c_sweep_collect_aggregate_types(signature.params.symbols, aliases, aggregate_defined, aggregate_wanted)
+                    else:
+                        aggregate_budget_exhausted = 1
+                    global_wanted = c_sweep_collect_global_references(data, size, path, signature_start, signature_line, signature_column, signature_end, global_names, global_wanted)
+
+    # Parameter-driven layouts retain priority. One additional compact demand
+    # slot is available for sizeof-only aggregate types.
+    for sizeof_record in lines:
+        if text_count(aggregate_wanted, "|") < 20 && text_starts(sizeof_record, "function|"):
+            sizeof_name := c_decl_field(sizeof_record, 1)
+            sizeof_line := parse_int(c_decl_field(sizeof_record, 3))
+            sizeof_column := parse_int(c_decl_field(sizeof_record, 4))
+            sizeof_start := parse_int(c_decl_field(sizeof_record, 5))
+            sizeof_end := parse_int(c_decl_field(sizeof_record, 6))
+            sizeof_shape := c_body_scan(data, size, sizeof_start, sizeof_end)
+            if c_sweep_is_candidate(sizeof_shape, sizeof_name, pointer_functions, pointer_returns) && sizeof_shape.statements <= 1:
+                aggregate_wanted = c_sweep_collect_sizeof_types(data, size, path, sizeof_start, sizeof_line, sizeof_column, sizeof_end, aliases, aggregate_defined, aggregate_wanted, 10)
+
+    mut aggregate_catalog := c_aggregate_catalog_file(path, tu.graph, aliases, aggregate_wanted)
+    # Transitively collect nested aggregate pointer-field types from the catalog
+    # (e.g. `Box.p` of type `Pair *`), so `b->p->a` can resolve, then rebuild the
+    # catalog with the enlarged wanted set. Bounded: stops once a full pass adds
+    # nothing new.
+    nested_wanted := c_sweep_collect_nested_aggregate_fields(aggregate_catalog.graph, aliases, aggregate_defined, aggregate_wanted)
+    if !text_eq(nested_wanted, aggregate_wanted):
+        aggregate_wanted = nested_wanted
+        aggregate_catalog = c_aggregate_catalog_file(path, tu.graph, aliases, aggregate_wanted)
+    global_metadata := c_global_catalog_file(path, tu.graph, aliases, global_wanted, false)
+    ir_builder = c_tu_builder_add(ir_builder, global_metadata.normalized)
+    ir_builder = c_tu_builder_add(ir_builder, aggregate_catalog.normalized)
+
+    for record in lines:
+        if text_starts(record, "function|"):
+            total = total + 1
+            name := c_decl_field(record, 1)
+            line := parse_int(c_decl_field(record, 3))
+            column := parse_int(c_decl_field(record, 4))
+            start := parse_int(c_decl_field(record, 5))
+            end := parse_int(c_decl_field(record, 6))
+            shape := c_body_scan(data, size, start, end)
+            candidate := c_sweep_is_candidate(shape, name, pointer_functions, pointer_returns)
+            if candidate:
+                eligible = eligible + 1
+                cursor := CLexCursor(data, size, path, start, line, column)
+                parsed := c_parse_function_context(cursor, functions, aliases, aggregate_catalog.graph, global_metadata.symbols)
+                if parsed.recognized != 0 && parsed.function.valid != 0:
+                    translated = translated + 1
+                    # Provisional source/IR are intentionally not retained. The
+                    # closure pass reparses only surviving functions, bounding
+                    # memory when many wrappers provisionally type-check.
+                    accepted_set = c_decl_set_add(accepted_set, parsed.function.name)
+                    accepted_array_wanted = c_sweep_collect_accepted_arrays(parsed.function.normalized, global_metadata.symbols, accepted_array_wanted)
+                    accepted_registry = c_ir_function_add(accepted_registry, parsed.function.name, parsed.function.return_type.kind, parsed.function.param_count, parsed.function.param_types)
+                else:
+                    rejected = rejected + 1
+                    mut reason := parsed.reason
+                    if str_len(reason) == 0:
+                        reason = "C2-SWEEP-NOT-TYPED-FUNCTION"
+                    rejection_builder = c_tu_builder_add(rejection_builder, str_concat("reject|", str_concat(name, str_concat("|", str_concat(reason, "\n")))))
+            else:
+                rejected = rejected + 1
+                rejection_builder = c_tu_builder_add(rejection_builder, str_concat("reject|", str_concat(name, "|C2-SWEEP-CONTROL-OR-SIZE\n")))
+    # Emit only immutable arrays that survived typed body acceptance. This keeps
+    # large parser tables out of the generated module and bounds whole-unit memory.
+    global_catalog := c_global_catalog_file(path, tu.graph, aliases, accepted_array_wanted, true)
+
+    # Re-emit against only provisionally accepted signatures. This closure pass
+    # removes wrappers whose call target did not survive body translation.
+    discarded_lpp := c_tu_builder_finish(lpp_builder)
+    discarded_ir := c_tu_builder_finish(ir_builder)
+    lpp_builder = CTUTextBuilder(buf_alloc(65536), 0, 65536)
+    lpp_builder = c_tu_builder_add(lpp_builder, "# Automatically accepted pure-L++ scalar/pointer-signature functions.\n# No extern/native link fallback.\n\nimport c_memory\nimport c_place\n\ndef c2lpp_bool_to_int(value: Bool) -> Int:\n    if value:\n        return 1\n    return 0\n\n")
+    lpp_builder = c_tu_builder_add(lpp_builder, global_catalog.lpp)
+    ir_builder = CTUTextBuilder(buf_alloc(65536), 0, 65536)
+    ir_builder = c_tu_builder_add(ir_builder, "schema|c2lpp-function-sweep-v1\n")
+    ir_builder = c_tu_builder_add(ir_builder, global_catalog.normalized)
+    ir_builder = c_tu_builder_add(ir_builder, aggregate_catalog.normalized)
+    # Call-closure fixpoint. A function is only emitted once every callee it
+    # references is also emitted; otherwise the generated module would contain a
+    # dangling call to a function whose body was dropped. We iterate to a
+    # fixpoint: each round re-parses the still-unemitted accepted functions
+    # against the *currently emitted* registry, and emits the ones that now
+    # resolve. This lets chains of translated helpers (A calls B, B calls C) all
+    # come out together while correctly dropping any function whose callee never
+    # survives. Rounds are bounded so a failing body cannot loop forever.
+    translated = 0
+    # The fixpoint starts with nothing emitted and grows each round.
+    mut emitted_registry := ""
+    mut emitted_set := ""
+    mut closure_round := 0
+    while closure_round < 6:
+        closure_round = closure_round + 1
+        mut added_this_round := false
+        mut next_registry := emitted_registry
+        mut next_set := emitted_set
+        for closure_record in lines:
+            if text_starts(closure_record, "function|"):
+                closure_name := c_decl_field(closure_record, 1)
+                if c_decl_set_has(accepted_set, closure_name) && !c_decl_set_has(emitted_set, closure_name):
+                    closure_line := parse_int(c_decl_field(closure_record, 3))
+                    closure_column := parse_int(c_decl_field(closure_record, 4))
+                    closure_start := parse_int(c_decl_field(closure_record, 5))
+                    closure_end := parse_int(c_decl_field(closure_record, 6))
+                    closure_cursor := CLexCursor(data, size, path, closure_start, closure_line, closure_column)
+                    # Resolve calls against signatures emitted so far. A callee
+                    # not yet emitted fails this round and is retried next round.
+                    closure_parsed := c_parse_function_context(closure_cursor, emitted_registry, aliases, aggregate_catalog.graph, global_catalog.symbols)
+                    if closure_parsed.recognized != 0 && closure_parsed.function.valid != 0:
+                        translated = translated + 1
+                        lpp_builder = c_tu_builder_add(lpp_builder, closure_parsed.function.body_lpp)
+                        lpp_builder = c_tu_builder_add(lpp_builder, "\n")
+                        ir_builder = c_tu_builder_add(ir_builder, closure_parsed.function.normalized)
+                        next_registry = c_ir_function_add(next_registry, closure_name, closure_parsed.function.return_type.kind, closure_parsed.function.param_count, closure_parsed.function.param_types)
+                        next_set = c_decl_set_add(next_set, closure_name)
+                        added_this_round = true
+                # else: already emitted or not accepted; skip.
+        emitted_registry = next_registry
+        emitted_set = next_set
+        if !added_this_round:
+            break
+    # Any accepted function that never reached the fixpoint is rejected with a
+    # call-closure reason (its body dropped, so emitting it would dangle).
+    for closure_record in lines:
+        if text_starts(closure_record, "function|"):
+            closure_name := c_decl_field(closure_record, 1)
+            if c_decl_set_has(accepted_set, closure_name) && !c_decl_set_has(emitted_set, closure_name):
+                rejected = rejected + 1
+                rejection_builder = c_tu_builder_add(rejection_builder, str_concat("reject|", str_concat(closure_name, "|C2-SWEEP-CALL-CLOSURE\n")))
+    lpp := c_tu_builder_finish(lpp_builder)
+    normalized := c_tu_builder_finish(ir_builder)
+    rejections := c_tu_builder_finish(rejection_builder)
+    buf_free(data)
+    mut report := "valid=1\n"
+    report = str_concat(report, str_concat("scalar_typedef_aliases=", str_concat(int_to_str(text_count(aliases, "\n")), "\n")))
+    report = str_concat(report, str_concat("const_arrays_seen=", str_concat(int_to_str(global_catalog.arrays_seen), "\n")))
+    report = str_concat(report, str_concat("const_arrays_emitted=", str_concat(int_to_str(global_catalog.arrays_emitted), "\n")))
+    report = str_concat(report, str_concat("const_arrays_rejected=", str_concat(int_to_str(global_catalog.arrays_rejected), "\n")))
+    report = str_concat(report, "aggregate_type_budget=10\n")
+    report = str_concat(report, str_concat("aggregate_types_selected=", str_concat(int_to_str(text_count(aggregate_wanted, "|") / 2), "\n")))
+    report = str_concat(report, str_concat("aggregate_budget_exhausted=", str_concat(int_to_str(aggregate_budget_exhausted), "\n")))
+    report = str_concat(report, str_concat("aggregates_seen=", str_concat(int_to_str(aggregate_catalog.aggregates_seen), "\n")))
+    report = str_concat(report, str_concat("aggregates_complete=", str_concat(int_to_str(aggregate_catalog.aggregates_complete), "\n")))
+    report = str_concat(report, str_concat("aggregates_partial=", str_concat(int_to_str(aggregate_catalog.aggregates_partial), "\n")))
+    report = str_concat(report, str_concat("aggregate_fields_emitted=", str_concat(int_to_str(aggregate_catalog.fields_emitted), "\n")))
+    report = str_concat(report, str_concat("registered_signatures=", str_concat(int_to_str(registered_signatures), "\n")))
+    report = str_concat(report, str_concat("total_functions=", str_concat(int_to_str(total), "\n")))
+    report = str_concat(report, str_concat("eligible_functions=", str_concat(int_to_str(eligible), "\n")))
+    report = str_concat(report, str_concat("translated_functions=", str_concat(int_to_str(translated), "\n")))
+    report = str_concat(report, str_concat("rejected_functions=", str_concat(int_to_str(rejected), "\n")))
+    mut percent_x100 := 0
+    if total > 0:
+        percent_x100 = (translated * 10000) / total
+    report = str_concat(report, str_concat("translation_percent_x100=", str_concat(int_to_str(percent_x100), "\n")))
+    report = str_concat(report, global_catalog.diagnostics)
+    report = str_concat(report, rejections)
+    return CFunctionSweep(lpp, normalized, report, total, eligible, translated, rejected, 1)

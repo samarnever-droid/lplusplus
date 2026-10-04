@@ -1,0 +1,57 @@
+# Test new string operations
+
+def main():
+    s := "Hello, World!"
+
+    # char_at
+    c := char_at(s, 0)
+    print(c)
+
+    c2 := char_at(s, 7)
+    print(c2)
+
+    # ord / chr
+    code := ord("A")
+    print(code)
+
+    ch := chr(65)
+    print(ch)
+
+    # str_find
+    idx := str_find(s, "World")
+    print(idx)
+
+    # str_contains
+    has := str_contains(s, "World")
+    print(has)
+
+    # str_starts_with / str_ends_with
+    sw := str_starts_with(s, "Hello")
+    print(sw)
+
+    ew := str_ends_with(s, "!")
+    print(ew)
+
+    # str_upper / str_lower
+    up := str_upper("hello")
+    print(up)
+
+    lo := str_lower("HELLO")
+    print(lo)
+
+    # str_trim
+    trimmed := str_trim("  hello  ")
+    print(trimmed)
+
+    # int_to_str / str_to_int
+    ns := int_to_str(42)
+    print(ns)
+
+    n := str_to_int("123")
+    print(n)
+
+    # str_replace
+    replaced := str_replace("foo bar foo", "foo", "baz")
+    print(replaced)
+
+    print("string ops work!")

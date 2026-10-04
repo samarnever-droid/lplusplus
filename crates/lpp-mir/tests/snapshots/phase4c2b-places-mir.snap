@@ -1,0 +1,97 @@
+mir-v6
+counts functions=1 aggregates=1 fields=1 variants=0 blocks=5 switch_targets=0 locals=22 places=8 projections=7 instructions=25 strings=0 list_entries=65
+strings
+aggregates
+  MirAggregateId(0) MirAggregate { source: HirItemId(0), definition: DefId(0), instance: None, arguments: TypeListId(0), ty: TypeId(16), kind: Struct, fields: ListRange(0..1), variants: ListRange(0..0), origin: OriginId(0) }
+    fields [MirFieldId(0)]
+    variants []
+fields
+  MirFieldId(0) MirField { aggregate: MirAggregateId(0), variant: None, source: FieldId(0), ty: TypeId(17), origin: OriginId(3) }
+variants
+locals
+  MirLocalId(0) MirLocal { ty: TypeId(20), source: None, kind: Temporary, mutable: false, origin: OriginId(9) }
+  MirLocalId(1) MirLocal { ty: TypeId(20), source: Some(LocalId(0)), kind: User, mutable: false, origin: OriginId(10) }
+  MirLocalId(2) MirLocal { ty: TypeId(4), source: Some(LocalId(1)), kind: User, mutable: false, origin: OriginId(13) }
+  MirLocalId(3) MirLocal { ty: TypeId(4), source: Some(LocalId(2)), kind: User, mutable: false, origin: OriginId(14) }
+  MirLocalId(4) MirLocal { ty: TypeId(17), source: None, kind: Temporary, mutable: false, origin: OriginId(19) }
+  MirLocalId(5) MirLocal { ty: TypeId(16), source: None, kind: Temporary, mutable: false, origin: OriginId(20) }
+  MirLocalId(6) MirLocal { ty: TypeId(16), source: Some(LocalId(3)), kind: User, mutable: true, origin: OriginId(21) }
+  MirLocalId(7) MirLocal { ty: TypeId(4), source: None, kind: Temporary, mutable: false, origin: OriginId(26) }
+  MirLocalId(8) MirLocal { ty: TypeId(17), source: None, kind: Temporary, mutable: true, origin: OriginId(24) }
+  MirLocalId(9) MirLocal { ty: TypeId(4), source: None, kind: Temporary, mutable: false, origin: OriginId(22) }
+  MirLocalId(10) MirLocal { ty: TypeId(4), source: None, kind: Temporary, mutable: false, origin: OriginId(29) }
+  MirLocalId(11) MirLocal { ty: TypeId(4), source: None, kind: Temporary, mutable: false, origin: OriginId(22) }
+  MirLocalId(12) MirLocal { ty: TypeId(4), source: Some(LocalId(4)), kind: User, mutable: true, origin: OriginId(33) }
+  MirLocalId(13) MirLocal { ty: TypeId(17), source: None, kind: Temporary, mutable: false, origin: OriginId(36) }
+  MirLocalId(14) MirLocal { ty: TypeId(17), source: None, kind: Temporary, mutable: false, origin: OriginId(34) }
+  MirLocalId(15) MirLocal { ty: TypeId(4), source: None, kind: Temporary, mutable: false, origin: OriginId(34) }
+  MirLocalId(16) MirLocal { ty: TypeId(4), source: None, kind: Temporary, mutable: false, origin: OriginId(34) }
+  MirLocalId(17) MirLocal { ty: TypeId(3), source: None, kind: Temporary, mutable: false, origin: OriginId(34) }
+  MirLocalId(18) MirLocal { ty: TypeId(4), source: Some(LocalId(5)), kind: User, mutable: false, origin: OriginId(38) }
+  MirLocalId(19) MirLocal { ty: TypeId(4), source: None, kind: Temporary, mutable: false, origin: OriginId(39) }
+  MirLocalId(20) MirLocal { ty: TypeId(4), source: None, kind: Temporary, mutable: false, origin: OriginId(39) }
+  MirLocalId(21) MirLocal { ty: TypeId(4), source: None, kind: Temporary, mutable: false, origin: OriginId(34) }
+places
+  MirPlaceId(0) MirPlace { root: MirLocalId(1), projections: ListRange(0..1), ty: TypeId(4), origin: OriginId(11) }
+    projections [TupleField(0)]
+  MirPlaceId(1) MirPlace { root: MirLocalId(1), projections: ListRange(1..2), ty: TypeId(4), origin: OriginId(11) }
+    projections [TupleField(1)]
+  MirPlaceId(2) MirPlace { root: MirLocalId(6), projections: ListRange(2..3), ty: TypeId(17), origin: OriginId(24) }
+    projections [Field(MirFieldId(0))]
+  MirPlaceId(3) MirPlace { root: MirLocalId(8), projections: ListRange(3..4), ty: TypeId(4), origin: OriginId(26) }
+    projections [ListIndex(Copy(MirLocalId(7)))]
+  MirPlaceId(4) MirPlace { root: MirLocalId(1), projections: ListRange(4..5), ty: TypeId(4), origin: OriginId(29) }
+    projections [TupleField(0)]
+  MirPlaceId(5) MirPlace { root: MirLocalId(6), projections: ListRange(5..6), ty: TypeId(17), origin: OriginId(36) }
+    projections [Field(MirFieldId(0))]
+  MirPlaceId(6) MirPlace { root: MirLocalId(14), projections: ListRange(6..7), ty: TypeId(4), origin: OriginId(34) }
+    projections [ListIndex(Copy(MirLocalId(15)))]
+  MirPlaceId(7) MirPlace { root: MirLocalId(12), projections: ListRange(7..7), ty: TypeId(4), origin: OriginId(40) }
+    projections []
+instructions
+  InstructionId(0) Instruction { kind: Assign { target: MirLocalId(0), value: Tuple(ListRange(0..2)) }, origin: OriginId(9) }
+  InstructionId(1) Instruction { kind: Assign { target: MirLocalId(1), value: Use(Copy(MirLocalId(0))) }, origin: OriginId(6) }
+  InstructionId(2) Instruction { kind: Assign { target: MirLocalId(2), value: Load(MirPlaceId(0)) }, origin: OriginId(11) }
+  InstructionId(3) Instruction { kind: Assign { target: MirLocalId(3), value: Load(MirPlaceId(1)) }, origin: OriginId(11) }
+  InstructionId(4) Instruction { kind: Assign { target: MirLocalId(4), value: List(ListRange(2..4)) }, origin: OriginId(19) }
+  InstructionId(5) Instruction { kind: Assign { target: MirLocalId(5), value: ConstructStruct { aggregate: MirAggregateId(0), fields: ListRange(4..5) } }, origin: OriginId(20) }
+  InstructionId(6) Instruction { kind: Assign { target: MirLocalId(6), value: Use(Copy(MirLocalId(5))) }, origin: OriginId(15) }
+  InstructionId(7) Instruction { kind: Assign { target: MirLocalId(7), value: Use(Constant(Integer(0))) }, origin: OriginId(26) }
+  InstructionId(8) Instruction { kind: Assign { target: MirLocalId(8), value: Load(MirPlaceId(2)) }, origin: OriginId(24) }
+  InstructionId(9) Instruction { kind: Assign { target: MirLocalId(9), value: Load(MirPlaceId(3)) }, origin: OriginId(22) }
+  InstructionId(10) Instruction { kind: Assign { target: MirLocalId(10), value: Load(MirPlaceId(4)) }, origin: OriginId(29) }
+  InstructionId(11) Instruction { kind: Assign { target: MirLocalId(11), value: Binary { left: Copy(MirLocalId(9)), operator: Add, right: Copy(MirLocalId(10)) } }, origin: OriginId(22) }
+  InstructionId(12) Instruction { kind: Store { place: MirPlaceId(3), value: Copy(MirLocalId(11)) }, origin: OriginId(22) }
+  InstructionId(13) Instruction { kind: Assign { target: MirLocalId(12), value: Use(Constant(Integer(0))) }, origin: OriginId(31) }
+  InstructionId(14) Instruction { kind: Assign { target: MirLocalId(13), value: Load(MirPlaceId(5)) }, origin: OriginId(36) }
+  InstructionId(15) Instruction { kind: Assign { target: MirLocalId(14), value: Use(Copy(MirLocalId(13))) }, origin: OriginId(34) }
+  InstructionId(16) Instruction { kind: Assign { target: MirLocalId(15), value: Use(Constant(Integer(0))) }, origin: OriginId(34) }
+  InstructionId(17) Instruction { kind: Assign { target: MirLocalId(16), value: ListLen(Copy(MirLocalId(14))) }, origin: OriginId(34) }
+  InstructionId(18) Instruction { kind: Assign { target: MirLocalId(17), value: Binary { left: Copy(MirLocalId(15)), operator: Less, right: Copy(MirLocalId(16)) } }, origin: OriginId(34) }
+  InstructionId(19) Instruction { kind: Assign { target: MirLocalId(18), value: Load(MirPlaceId(6)) }, origin: OriginId(34) }
+  InstructionId(20) Instruction { kind: Assign { target: MirLocalId(19), value: Load(MirPlaceId(7)) }, origin: OriginId(39) }
+  InstructionId(21) Instruction { kind: Assign { target: MirLocalId(20), value: Binary { left: Copy(MirLocalId(19)), operator: Add, right: Copy(MirLocalId(18)) } }, origin: OriginId(39) }
+  InstructionId(22) Instruction { kind: Store { place: MirPlaceId(7), value: Copy(MirLocalId(20)) }, origin: OriginId(39) }
+  InstructionId(23) Instruction { kind: Assign { target: MirLocalId(21), value: Binary { left: Copy(MirLocalId(15)), operator: Add, right: Constant(Integer(1)) } }, origin: OriginId(34) }
+  InstructionId(24) Instruction { kind: Assign { target: MirLocalId(15), value: Use(Copy(MirLocalId(21))) }, origin: OriginId(34) }
+blocks
+  BasicBlockId(0) BasicBlock { instructions: ListRange(0..17), terminator: Goto(BasicBlockId(1)), origin: OriginId(4) }
+    instruction_ids [InstructionId(0), InstructionId(1), InstructionId(2), InstructionId(3), InstructionId(4), InstructionId(5), InstructionId(6), InstructionId(7), InstructionId(8), InstructionId(9), InstructionId(10), InstructionId(11), InstructionId(12), InstructionId(13), InstructionId(14), InstructionId(15), InstructionId(16)]
+  BasicBlockId(1) BasicBlock { instructions: ListRange(17..19), terminator: Branch { condition: Copy(MirLocalId(17)), then_block: BasicBlockId(2), else_block: BasicBlockId(4) }, origin: OriginId(34) }
+    instruction_ids [InstructionId(17), InstructionId(18)]
+  BasicBlockId(2) BasicBlock { instructions: ListRange(19..23), terminator: Goto(BasicBlockId(3)), origin: OriginId(37) }
+    instruction_ids [InstructionId(19), InstructionId(20), InstructionId(21), InstructionId(22)]
+  BasicBlockId(3) BasicBlock { instructions: ListRange(23..25), terminator: Goto(BasicBlockId(1)), origin: OriginId(34) }
+    instruction_ids [InstructionId(23), InstructionId(24)]
+  BasicBlockId(4) BasicBlock { instructions: ListRange(25..25), terminator: Return(Some(Copy(MirLocalId(12)))), origin: OriginId(34) }
+    instruction_ids []
+functions
+  MirFunctionId(0) MirFunction { source: HirItemId(1), instance: None, instance_arguments: TypeListId(0), definition: Some(DefId(1)), name: Some(Symbol(1)), kind: Function, captures: ListRange(0..0), ty: TypeId(19), return_type: TypeId(4), parameters: ListRange(0..0), locals: ListRange(0..22), blocks: ListRange(0..5), entry: BasicBlockId(0), origin: OriginId(4) }
+    instance_arguments TypeListId(0)
+    parameters [] captures [] kind=Function
+    locals [MirLocalId(0), MirLocalId(1), MirLocalId(2), MirLocalId(3), MirLocalId(4), MirLocalId(5), MirLocalId(6), MirLocalId(7), MirLocalId(8), MirLocalId(9), MirLocalId(10), MirLocalId(11), MirLocalId(12), MirLocalId(13), MirLocalId(14), MirLocalId(15), MirLocalId(16), MirLocalId(17), MirLocalId(18), MirLocalId(19), MirLocalId(20), MirLocalId(21)]
+    blocks [BasicBlockId(0), BasicBlockId(1), BasicBlockId(2), BasicBlockId(3), BasicBlockId(4)]
+operand_lists
+  ListRange(0..2) [Constant(Integer(1)), Constant(Integer(2))]
+  ListRange(2..4) [Copy(MirLocalId(2)), Copy(MirLocalId(3))]
+  ListRange(4..5) [Copy(MirLocalId(4))]

@@ -1,0 +1,199 @@
+# publisher.lpp — lpp publish workflow v2 (R2 + Cloudflare)
+# Pre-flight validation -> build -> tests -> upload to registry.lplusplus.bond -> git tag
+#
+# Full flow:
+#   1. Validate lpp.toml manifest
+#   2. Auto-bump version if requested
+#   3. Build in pinned environment
+#   4. Run tests
+#   5. Upload artifact + metadata to registry API
+#   6. Create Git tag and push
+
+import utils
+import strings
+import toml
+import semver
+import manifest
+import git
+
+# ── Options ───────────────────────────────────────────────────────────────────
+
+struct PublishOpts:
+    dry_run:       Bool    # if true: pre-flight only, no upload
+    force_version: Str    # exact version to publish (bypass auto-bump)
+    bump:          Str     # "patch" | "minor" | "major" | "" (no auto-bump)
+
+def publish_opts_default() -> PublishOpts:
+    mut o := PublishOpts()
+    o.dry_run       = false
+    o.force_version = ""
+    o.bump          = ""
+    return o
+
+# ── Main entry ────────────────────────────────────────────────────────────────
+
+def cmd_publish(opts: PublishOpts) -> Int:
+    if path_exists("lpp.toml") == 0:
+        print_str("\033[1;31m[lpp-pm] ERROR:\033[0m no lpp.toml in current directory")
+        return 1
+
+    m := manifest_parse("lpp.toml")
+    if str_len(m.name) == 0:
+        print_str("\033[1;31m[lpp-pm] ERROR:\033[0m lpp.toml has no [package] name")
+        return 1
+
+    # Resolve version
+    mut version := m.version
+    if str_len(opts.force_version) > 0:
+        version = opts.force_version
+    else if str_len(opts.bump) > 0:
+        version = bump_version(m.version, opts.bump)
+        if str_len(version) == 0:
+            return 1
+        info(str_concat("Version bumped: ", str_concat(m.version, str_concat(" -> ", version))))
+        if !opts.dry_run:
+            raw      := read_file("lpp.toml")
+            old_line := str_concat("version = \"", str_concat(m.version, "\""))
+            new_line := str_concat("version = \"", str_concat(version, "\""))
+            if write_file("lpp.toml", str_replace(raw, old_line, new_line)) != 0:
+                print_str("\033[1;31m[lpp-pm] ERROR:\033[0m could not update package version")
+                return 1
+
+    header(str_concat("Publishing ", str_concat(m.name, str_concat(" @ ", version))))
+
+    # ── Step 1: Build ───────────────────────────────────────────────────────
+    info("[1/4] Building...")
+    build_cmd := get_build_cmd(m)
+    build_code := command_exec(build_cmd)
+    if build_code != 0:
+        print_str("\033[1;31m[lpp-pm] ERROR:\033[0m build failed -- not publishing")
+        return 1
+    success("build passed")
+
+    # ── Step 2: Tests ───────────────────────────────────────────────────────
+    info("[2/4] Running tests...")
+    test_code := run_tests()
+    if test_code != 0:
+        print_str("\033[1;31m[lpp-pm] ERROR:\033[0m tests failed -- not publishing")
+        return 1
+    success("tests passed")
+
+    # ── Step 3: Upload to registry ──────────────────────────────────────────
+    info("[3/4] Uploading to registry...")
+    registry_url := env_get("LPP_REGISTRY_URL")
+    if str_len(registry_url) == 0:
+        registry_url = "https://registry.lplusplus.bond"
+
+    mut pkg_json := "{\n"
+    pkg_json = str_concat(pkg_json, "  \"name\": \"", str_concat(m.name, "\",\n")))
+    pkg_json = str_concat(pkg_json, "  \"version\": \"", str_concat(version, "\",\n")))
+    if str_len(m.description) > 0:
+        pkg_json = str_concat(pkg_json, "  \"description\": \"", str_concat(m.description, "\",\n")))
+    pkg_json = str_concat(pkg_json, "  \"repository\": \"", str_concat(get_repo_url(), "\",\n")))
+    pkg_json = str_concat(pkg_json, "  \"path\": \"", str_concat(get_pkg_path(), "\",\n")))
+    pkg_json = str_concat(pkg_json, "  \"source\": \"", str_concat(get_source_url(m), "\",\n")))
+    pkg_json = str_concat(pkg_json, "  \"keywords\": [],\n")
+    pkg_json = str_concat(pkg_json, "  \"dependencies\": [],\n")
+    pkg_json = str_concat(pkg_json, "  \"features\": []\n")
+    pkg_json = str_concat(pkg_json, "}\n")
+
+    if !opts.dry_run:
+        upload_result := http_post_json(str_concat(registry_url, "/publish"), pkg_json)
+        if str_len(upload_result) == 0 {
+            print_str("\033[1;31m[lpp-pm] ERROR:\033[0m failed to publish to registry at ", registry_url)
+            return 1
+        }
+        success(str_concat("published to ", str_concat(registry_url, "/publish")))
+    else:
+        success(str_concat("dry-run: would publish to ", str_concat(registry_url, "/publish")))
+        info(str_concat("  Would create tag: v", version))
+
+    # ── Step 4: Commit & tag ────────────────────────────────────────────────
+    if !opts.dry_run && str_len(opts.bump) > 0:
+        info("[4/4] Creating git tag...")
+        tag_name := str_concat("v", version)
+        commit_code := command_exec("git add lpp.toml")
+        if commit_code != 0:
+            print_str("\033[1;31m[lpp-pm] WARNING:\033[0m could not commit version bump")
+        else:
+            commit_msg := str_concat("chore: bump version to ", version)
+            code := command_exec(str_concat("git commit -m \"", str_concat(commit_msg, "\"")))
+            if code == 0:
+                tag_code := command_exec(str_concat("git tag ", tag_name))
+                push_code := command_exec(str_concat("git push origin master --tags"))
+                if push_code == 0:
+                    success(str_concat("tagged and pushed: ", tag_name))
+                else:
+                    print_str("\033[1;31m[lpp-pm] WARNING:\033[0m failed to push tags")
+            else:
+                print_str("\033[1;31m[lpp-pm] WARNING:\033[0m failed to commit version bump")
+    }
+
+    success(str_concat("Published ", str_concat(m.name, str_concat(" @ ", version))))
+    return 0
+
+# ── Helper functions ──────────────────────────────────────────────────────────
+
+def bump_version(current: Str, segment: Str) -> Str:
+    sv := semver_parse(current)
+    mut nv := SemVer()
+    nv.pre = ""
+    if segment == "major":
+        nv.major = sv.major + 1
+        nv.minor = 0
+        nv.patch = 0
+    else:
+        if segment == "minor":
+            nv.major = sv.major
+            nv.minor = sv.minor + 1
+            nv.patch = 0
+        else:
+            if segment == "patch":
+                nv.major = sv.major
+                nv.minor = sv.minor
+                nv.patch = sv.patch + 1
+            else:
+                return ""
+    return semver_str(nv)
+
+def get_build_cmd(m: Manifest) -> Str:
+    handle := toml_load(read_file("lpp.toml"))
+    cmd    := toml_get_str(handle, "build", "cmd")
+    if str_len(cmd) > 0:
+        return cmd
+    return "lpp build"
+
+def run_tests() -> Int:
+    if path_exists("tests") == 1:
+        return command_exec("lpp test")
+    if path_exists("test") == 1:
+        return command_exec("lpp test")
+    info("  no test directory -- skipping")
+    return 0
+
+def get_repo_url() -> Str:
+    out := command_output("git remote get-url origin")
+    # Normalize to HTTPS
+    if str_starts_with(out, "git@github.com:") {
+        rest := str_substr(out, 13, str_len(out) - 13)
+        return str_concat("https://github.com/", str_substr(rest, 0, str_len(rest) - 4))
+    }
+    return str_trim(out)
+
+def get_pkg_path() -> Str:
+    out := command_output("git remote get-url origin")
+    if str_ends_with(out, ".git"):
+        out = str_substr(out, 0, str_len(out) - 4)
+    return out
+
+def get_source_url(m: Manifest) -> Str:
+    if str_len(m.entry) > 0:
+        return str_concat("https://raw.githubusercontent.com/", str_concat(get_repo_owner(), str_concat("/", str_concat(get_repo_name(), str_concat("/main/", m.entry)))))
+    return str_concat("https://raw.githubusercontent.com/", str_concat(get_repo_owner(), str_concat("/", str_concat(get_repo_name(), "/main/src/main.lpp"))))
+
+def get_repo_owner() -> Str:
+    out := command_output("git remote get-url origin")
+    mut s := str_trim(out)
+    if str_find(s, "github.com/") >= 0:
+        idx := str_find(s, "github.com/")
+        rest := str_substr(s, idx + 11, str_len(s) - idx

@@ -1,0 +1,46 @@
+## L++ Standard Library: Algorithms
+## Pure L++ — no C runtime, no linker changes.
+
+def bubble_sort(lst: List[Int]):
+    n := list_len(lst)
+    mut i := 0
+    while i < n:
+        mut j := 0
+        while j < n - i - 1:
+            if list_get(lst, j) > list_get(lst, j + 1):
+                a := list_get(lst, j)
+                b := list_get(lst, j + 1)
+                list_set(lst, j, b)
+                list_set(lst, j + 1, a)
+            j = j + 1
+        i = i + 1
+
+def binary_search(lst: List[Int], target: Int) -> Int:
+    mut lo := 0
+    mut hi := list_len(lst) - 1
+    while lo <= hi:
+        mid := (lo + hi) / 2
+        val := list_get(lst, mid)
+        if val == target:
+            return mid
+        if val < target:
+            lo = mid + 1
+        else:
+            hi = mid - 1
+    return 0 - 1
+
+def list_fill(n: Int, value: Int) -> List[Int]:
+    result := list_new()
+    mut i := 0
+    while i < n:
+        list_push(result, value)
+        i = i + 1
+    return result
+
+def list_range(start: Int, end: Int) -> List[Int]:
+    result := list_new()
+    mut i := start
+    while i < end:
+        list_push(result, i)
+        i = i + 1
+    return result

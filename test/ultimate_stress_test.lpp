@@ -1,0 +1,108 @@
+import json
+import math_helper
+
+struct Node:
+    key: Int
+    left: Node
+    right: Node
+
+def insert_node(root: Node, key: Int) -> Node:
+    if root == 0:
+        mut n := Node()
+        n.key = key
+        return n
+    if key < root.key:
+        root.left = insert_node(root.left, key)
+    else:
+        root.right = insert_node(root.right, key)
+    return root
+
+def verify_bst(root: Node, list: List[Int]) -> Void:
+    if root != 0:
+        verify_bst(root.left, list)
+        list_push(list, root.key)
+        verify_bst(root.right, list)
+
+def main():
+    print_str("=====================================")
+    print_str("    L++ ULTIMATE STRESS TEST")
+    print_str("=====================================")
+    
+    # 1. JSON Testing
+    print_str("[1] Testing JSON Parser Builtins...")
+    json_str := "{\"users\": 3, \"admin\": {\"name\": \"Root Admin\", \"level\": 10}, \"info\": {\"active\": 1}}"
+    j := json.parse(json_str)
+    
+    users := json.get_int(j, "users")
+    print_str("JSON users count:")
+    print(users)
+    
+    admin := json.get_obj(j, "admin")
+    admin_name := json.get_str(admin, "name")
+    admin_level := json.get_int(admin, "level")
+    print_str("Admin name:")
+    print_str(admin_name)
+    print_str("Admin level:")
+    print(admin_level)
+    
+    json.free(j)
+    
+    # 2. List Builtins Testing
+    print_str("[2] Testing Dynamic Lists Builtins...")
+    mut l := list_new()
+    
+    # Push 100 values
+    mut i := 1
+    while i <= 100:
+        list_push(l, i)
+        i = i + 1
+        
+    print_str("List length (Expected: 100):")
+    print(list_len(l))
+    
+    # Compute sum using list_get
+    mut list_sum := 0
+    mut idx := 0
+    while idx < list_len(l):
+        list_sum = list_sum + list_get(l, idx)
+        idx = idx + 1
+    print_str("List sum (Expected: 5050):")
+    print(list_sum)
+    
+    list_free(l)
+    
+    # 3. Custom Local Library Imports Testing
+    print_str("[3] Testing Custom Library Import...")
+    collatz_sum := compute_collatz_sum(27)
+    print_str("Collatz sum for 27:")
+    print(collatz_sum)
+    
+    # 4. Deep BST Node Traversals with List Verification
+    print_str("[4] Testing BST Nodes + Dynamic Lists...")
+    mut root := Node()
+    root = 0
+    
+    # Insert nodes
+    root = insert_node(root, 50)
+    root = insert_node(root, 30)
+    root = insert_node(root, 70)
+    root = insert_node(root, 20)
+    root = insert_node(root, 40)
+    root = insert_node(root, 60)
+    root = insert_node(root, 80)
+    
+    # In-order traversal verification
+    mut bst_list := list_new()
+    verify_bst(root, bst_list)
+    
+    print_str("BST In-Order Traversal:")
+    mut bst_idx := 0
+    while bst_idx < list_len(bst_list):
+        print(list_get(bst_list, bst_idx))
+        bst_idx = bst_idx + 1
+        
+    list_free(bst_list)
+    
+    print_str("=====================================")
+    print_str("    ULTIMATE STRESS TEST SUCCESS")
+    print_str("=====================================")

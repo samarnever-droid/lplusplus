@@ -1,0 +1,53 @@
+# stdlib/path.lpp — File path manipulation (pure L++)
+
+def path_join(a: Str, b: Str) -> Str:
+    if str_len(a) == 0:
+        return b
+    if str_len(b) == 0:
+        return a
+    last := char_at(a, str_len(a) - 1)
+    if last == "/" || last == "\\":
+        return str_concat(a, b)
+    return str_concat(a, str_concat("/", b))
+
+def path_basename(p: Str) -> Str:
+    # "dir/file.txt" → "file.txt"
+    mut last_sep := -1
+    for i in range(str_len(p)):
+        c := char_at(p, i)
+        if c == "/" || c == "\\":
+            last_sep = i
+    if last_sep == -1:
+        return p
+    return str_substr(p, last_sep + 1, str_len(p) - last_sep - 1)
+
+def path_dir(p: Str) -> Str:
+    # "dir/file.txt" → "dir"
+    mut last_sep := -1
+    for i in range(str_len(p)):
+        c := char_at(p, i)
+        if c == "/" || c == "\\":
+            last_sep = i
+    if last_sep == -1:
+        return "."
+    if last_sep == 0:
+        return "/"
+    return str_substr(p, 0, last_sep)
+
+def path_ext(p: Str) -> Str:
+    # "file.txt" → ".txt"
+    mut last_dot := -1
+    for i in range(str_len(p)):
+        if char_at(p, i) == ".":
+            last_dot = i
+    if last_dot == -1:
+        return ""
+    return str_substr(p, last_dot, str_len(p) - last_dot)
+
+def path_stem(p: Str) -> Str:
+    # "dir/file.txt" → "file"
+    base := path_basename(p)
+    ext := path_ext(base)
+    if str_len(ext) == 0:
+        return base
+    return str_substr(base, 0, str_len(base) - str_len(ext))

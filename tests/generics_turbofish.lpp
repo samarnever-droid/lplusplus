@@ -1,0 +1,49 @@
+# Explicit type arguments (turbofish) and generic methods in impl blocks.
+#
+# Before: `identity[Int](42)` parsed but never resolved, so the call named a
+# template that monomorphization had already pruned -> "Undeclared identifier".
+# A generic method reached the backend still generic, which crashed Cranelift
+# with "arg 1 has type f64, expected i64" rather than producing a diagnostic.
+#
+# Indexing must keep working: `xs[1]` and `s[2]` are NOT turbofish, and the
+# parser only treats `name[...](` as type arguments.
+
+struct Box[T]:
+    value: T
+
+struct Holder:
+    n: Int
+
+trait Getter:
+    def pick(self, x: Int) -> Int
+
+impl Getter for Holder:
+    def pick[T](self, x: T) -> T:
+        return x
+
+def identity[T](x: T) -> T:
+    return x
+
+def pair_first[A, B](a: A, b: B) -> A:
+    return a
+
+def main():
+    print(identity[Int](42))
+    print_str(identity[Str]("turbofished"))
+    print_str(float_to_str(identity[Float](1.25)))
+    print(pair_first[Int, Str](7, "ignored"))
+
+    b := Box[Int](99)
+    print(b.value)
+
+    # Same generic method at three different types.
+    h := Holder(1)
+    print(h.pick(7))
+    print_str(h.pick("method generic"))
+    print_str(float_to_str(h.pick(0.5)))
+
+    # Subscripting still parses as subscripting.
+    s := "abcdef"
+    print_str(s[2])
+    xs := [10, 20, 30]
+    print(xs[1])

@@ -1,0 +1,36 @@
+# utils.lpp — shared utilities for the L++ package manager with ANSI color output
+
+def info(msg: Str) -> Void:
+    print_str(str_concat("\033[1;34m[lpp-pm]\033[0m ", msg))
+
+def success(msg: Str) -> Void:
+    print_str(str_concat("\033[1;32m[lpp-pm]\033[0m \033[32m", str_concat(msg, "\033[0m")))
+
+def warn(msg: Str) -> Void:
+    print_str(str_concat("\033[1;33m[lpp-pm]\033[0m \033[33m", str_concat(msg, "\033[0m")))
+
+def error(msg: Str) -> Void:
+    print_str(str_concat("\033[1;31m[lpp-pm] ERROR:\033[0m \033[31m", str_concat(msg, "\033[0m")))
+
+def header(msg: Str) -> Void:
+    print_str(str_concat("\033[1;36m=== ", str_concat(msg, " ===\033[0m")))
+
+def joined(base: Str, child: Str) -> Str:
+    return path_join(base, child)
+
+def write(path: Str, data: Str) -> Int:
+    return write_file(path, data)
+
+def read(path: Str) -> Str:
+    return read_file(path)
+
+def check(path: Str) -> Int:
+    return path_exists(path)
+
+def path_cwd() -> Str:
+    mut cwd := env_get("PWD")
+    if str_len(cwd) == 0:
+        cwd = env_get("CD")
+    if str_len(cwd) == 0:
+        cwd = "."
+    return cwd

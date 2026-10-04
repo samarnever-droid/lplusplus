@@ -1,0 +1,21 @@
+# Regression: List[Float] temporaries must be released.
+#
+# `new_local` granted Ownership::Owned only to List[Int] and List[Custom], so
+# List[Float] was Copy and `pass_arc` never tracked it -- one leaked allocation
+# per iteration, unbounded in the loop count. Verified with AddressSanitizer at
+# 1000 / 5000 / 20000 iterations: zero leaks at every size after the fix.
+#
+# List[Str] is deliberately absent. Its elements are pushed with
+# lpp_list_push_arc, so the list destructor releases string literals that have
+# no ARC header -- a fault that already exists on unmodified upstream and is
+# out of scope here (see the note in builder.rs).
+
+def main():
+    mut n := 0
+    mut i := 0
+    while i < 500:
+        floats := [1.5, 2.5]
+        ints := [1, 2]
+        n = n + list_len(floats) + list_len(ints)
+        i = i + 1
+    print(n)

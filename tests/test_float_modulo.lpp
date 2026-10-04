@@ -1,0 +1,5 @@
+def main():
+    a := 10.5
+    b := 3.0
+    rem := a % b
+    lpp_print_float(rem) # 10.5 % 3.0 = 1.5

@@ -1,0 +1,13 @@
+# ARC List[T] regression: list owns a retained custom element; get returns a
+# borrow which is retained only when assigned to another owner.
+# Expected output:
+# 1
+
+struct Box:
+    value: Int
+
+def main():
+    item := Box()
+    items := [item]
+    alias := list_get(items, 0)
+    print(1)

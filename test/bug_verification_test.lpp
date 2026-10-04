@@ -1,0 +1,27 @@
+struct StringBox:
+    items: List[String]
+
+def main():
+    print_str("--- Bug Verification Test ---")
+    
+    # 1. Verify BUG-01: print formatting with strings vs integers
+    s := "Hello String Print"
+    num := 12345
+    print_str("Printing string via print:")
+    print(s)
+    print_str("Printing integer via print:")
+    print(num)
+    
+    # 2. Verify BUG-02 & BUG-14: list_new() contextual type inference & list_get() generic return type
+    mut box := StringBox()
+    box.items = list_new() # Should infer list_new() as List[String] from the struct field
+    
+    list_push(box.items, "Verify List String")
+    
+    val := list_get(box.items, 0) # list_get should return String because box.items is List[String]
+    print_str("Retrieved value from box.items:")
+    print_str(val) # Must print "Verify List String"
+    
+    list_free(box.items)
+    
+    print_str("--- Bug Verification Success ---")

@@ -1,0 +1,41 @@
+# Non-atomic ARC must be *semantically identical* to the atomic version.
+#
+# When a program never spawns a thread the compiler emits lpp_arc_retain_local /
+# lpp_arc_release_local, which drop the `lock` prefix. Only the ordering
+# guarantee is removed — the counting, the destructor contract and the free
+# point must behave exactly as before. A miscount here surfaces as a double
+# free, a use-after-free, or a leak.
+#
+# Scope note: this sticks to struct aliasing inside a single function and to
+# loop-allocated objects. Several *other* ARC-on-struct shapes (returning a
+# struct from a function, nested struct construction, a struct passed as a
+# parameter and aliased) segfault at exit under the freestanding runtime on
+# unmodified upstream as well — see FIXES.md. Those are pre-existing and out of
+# scope, so this test avoids them in order to stay a signal about ARC atomicity
+# rather than a duplicate report of a known backend fault.
+
+struct Inner:
+    n: Int
+
+def sum_loop(count: Int) -> Int:
+    mut total := 0
+    mut k := 0
+    while k < count:
+        node := Inner(k)
+        alias := node
+        total = total + alias.n
+        k = k + 1
+    return total
+
+def main():
+    # One object, three live handles: two retains, three releases at scope end.
+    a := Inner(5)
+    b := a
+    c := b
+    print(a.n)
+    print(b.n)
+    print(c.n)
+
+    # 100 short-lived objects, each aliased once. An off-by-one in the free
+    # point compounds fastest here.
+    print(sum_loop(100))

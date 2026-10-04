@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">L++ logo</title>
+  <desc id="desc">A four-pillar prism surrounding the L++ mark.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#101a35"/>
+      <stop offset="1" stop-color="#172a52"/>
+    </linearGradient>
+    <linearGradient id="prism" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#69d8ff"/>
+      <stop offset=".48" stop-color="#8b7bff"/>
+      <stop offset="1" stop-color="#57f0b4"/>
+    </linearGradient>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="8" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <rect width="512" height="512" rx="104" fill="url(#bg)"/>
+  <path d="M256 67 406 154v174L256 415 106 328V154Z" fill="none" stroke="#35527f" stroke-width="12"/>
+  <path d="M256 67v348M106 154l300 174M406 154 106 328" fill="none" stroke="#35527f" stroke-width="8" opacity=".65"/>
+  <path d="M256 103 374 171v136L256 375 138 307V171Z" fill="#0d1630" stroke="url(#prism)" stroke-width="12" filter="url(#glow)"/>
+  <path d="M256 103v272M138 171l236 136M374 171 138 307" fill="none" stroke="url(#prism)" stroke-width="7" opacity=".85"/>
+  <path d="M190 203v108h58" fill="none" stroke="#f7fbff" stroke-linecap="round" stroke-linejoin="round" stroke-width="24"/>
+  <path d="M286 226h52M312 200v52M350 226h40M370 206v40" fill="none" stroke="#f7fbff" stroke-linecap="round" stroke-width="16"/>
+  <circle cx="256" cy="103" r="10" fill="#69d8ff"/>
+  <circle cx="138" cy="307" r="10" fill="#8b7bff"/>
+  <circle cx="374" cy="307" r="10" fill="#57f0b4"/>
+</svg>

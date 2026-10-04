@@ -1,0 +1,270 @@
+# c_lexer.lpp — streaming provenance-preserving C/DSL token cursor for L++ standard library.
+#
+# Provides streaming tokenization over checked byte buffers.
+
+const C_TOKEN_EOF = 0
+const C_TOKEN_WHITESPACE = 1
+const C_TOKEN_COMMENT = 2
+const C_TOKEN_IDENTIFIER = 3
+const C_TOKEN_KEYWORD = 4
+const C_TOKEN_NUMBER = 5
+const C_TOKEN_STRING = 6
+const C_TOKEN_CHARACTER = 7
+const C_TOKEN_PUNCTUATOR = 8
+const C_TOKEN_UNKNOWN = 9
+
+struct CSourceSpan:
+    path: Str
+    start_offset: Int
+    end_offset: Int
+    line: Int
+    column: Int
+
+struct CToken:
+    kind: Int
+    span: CSourceSpan
+    spelling: Str
+
+struct CLexCursor:
+    data: Int
+    size: Int
+    path: Str
+    offset: Int
+    line: Int
+    column: Int
+
+struct CLexStep:
+    token: CToken
+    next: CLexCursor
+
+
+def c_byte(data: Int, size: Int, offset: Int) -> Int:
+    if offset < 0 || offset >= size:
+        return -1
+    return buf_get8(data, offset)
+
+
+def c_is_space(code: Int) -> Bool:
+    return code == 9 || code == 10 || code == 11 || code == 12 || code == 13 || code == 32
+
+
+def c_is_digit(code: Int) -> Bool:
+    return code >= 48 && code <= 57
+
+
+def c_is_alpha(code: Int) -> Bool:
+    return (code >= 65 && code <= 90) || (code >= 97 && code <= 122)
+
+
+def c_is_ident_start(code: Int) -> Bool:
+    return c_is_alpha(code) || code == 95 || code == 36 || code >= 128
+
+
+def c_is_ident_continue(code: Int) -> Bool:
+    return c_is_ident_start(code) || c_is_digit(code)
+
+
+def c_is_number_continue(code: Int) -> Bool:
+    return c_is_ident_continue(code) || code == 46
+
+
+def c_is_keyword(value: Str) -> Bool:
+    if value == "auto" || value == "break" || value == "case" || value == "char":
+        return true
+    if value == "const" || value == "continue" || value == "default" || value == "do":
+        return true
+    if value == "double" || value == "else" || value == "enum" || value == "extern":
+        return true
+    if value == "float" || value == "for" || value == "goto" || value == "if":
+        return true
+    if value == "inline" || value == "int" || value == "long" || value == "register":
+        return true
+    if value == "restrict" || value == "return" || value == "short" || value == "signed":
+        return true
+    if value == "sizeof" || value == "static" || value == "struct" || value == "switch":
+        return true
+    if value == "typedef" || value == "union" || value == "unsigned" || value == "void":
+        return true
+    if value == "volatile" || value == "while" || value == "_Alignas" || value == "_Alignof":
+        return true
+    if value == "_Atomic" || value == "_Bool" || value == "_Complex" || value == "_Generic":
+        return true
+    if value == "_Imaginary" || value == "_Noreturn" || value == "_Static_assert" || value == "_Thread_local":
+        return true
+    if value == "__asm__" || value == "__attribute__" || value == "__declspec":
+        return true
+    if value == "__extension__" || value == "__inline__" || value == "__restrict":
+        return true
+    if value == "__thread" || value == "typeof" || value == "__typeof__":
+        return true
+    return false
+
+
+def c_punct_width(data: Int, size: Int, offset: Int) -> Int:
+    first := c_byte(data, size, offset)
+    second := c_byte(data, size, offset + 1)
+    third := c_byte(data, size, offset + 2)
+    if first == 46 && second == 46 && third == 46:
+        return 3
+    if (first == 60 && second == 60 && third == 61) || (first == 62 && second == 62 && third == 61):
+        return 3
+    if second > 0:
+        if (first == 45 && second == 62) || (first == 43 && second == 43) || (first == 45 && second == 45):
+            return 2
+        if (first == 38 && second == 38) || (first == 124 && second == 124) || (first == 61 && second == 61):
+            return 2
+        if (first == 33 && second == 61) || (first == 60 && second == 61) || (first == 62 && second == 61):
+            return 2
+        if (first == 43 && second == 61) || (first == 45 && second == 61) || (first == 42 && second == 61):
+            return 2
+        if (first == 47 && second == 61) || (first == 37 && second == 61) || (first == 38 && second == 61):
+            return 2
+        if (first == 94 && second == 61) || (first == 124 && second == 61) || (first == 60 && second == 60):
+            return 2
+        if (first == 62 && second == 62) || (first == 35 && second == 35):
+            return 2
+    if first == 91 || first == 93 || first == 40 || first == 41 || first == 123 || first == 125:
+        return 1
+    if first == 46 || first == 38 || first == 42 || first == 43 || first == 45 || first == 126:
+        return 1
+    if first == 33 || first == 47 || first == 37 || first == 60 || first == 62 || first == 94 || first == 124:
+        return 1
+    if first == 63 || first == 58 || first == 59 || first == 61 || first == 44 || first == 35 || first == 92:
+        return 1
+    return 0
+
+
+def c_lex_cursor(data: Int, size: Int, path: Str) -> CLexCursor:
+    return CLexCursor(data, size, path, 0, 1, 1)
+
+
+def c_lex_advance(cursor: CLexCursor, end: Int) -> CLexCursor:
+    mut line := cursor.line
+    mut column := cursor.column
+    mut i := cursor.offset
+    while i < end:
+        code := c_byte(cursor.data, cursor.size, i)
+        if code == 13:
+            line = line + 1
+            column = 1
+            if i + 1 < end && c_byte(cursor.data, cursor.size, i + 1) == 10:
+                i = i + 1
+        elif code == 10:
+            line = line + 1
+            column = 1
+        else:
+            column = column + 1
+        i = i + 1
+    return CLexCursor(cursor.data, cursor.size, cursor.path, end, line, column)
+
+
+def c_lex_step(cursor: CLexCursor, end: Int, kind: Int) -> CLexStep:
+    mut spelling := ""
+    if end > cursor.offset:
+        spelling = buf_read_str(cursor.data, cursor.offset, end - cursor.offset)
+    span := CSourceSpan(cursor.path, cursor.offset, end, cursor.line, cursor.column)
+    token := CToken(kind, span, spelling)
+    return CLexStep(token, c_lex_advance(cursor, end))
+
+
+def c_lex_next(cursor: CLexCursor) -> CLexStep:
+    if cursor.offset >= cursor.size:
+        span := CSourceSpan(cursor.path, cursor.offset, cursor.offset, cursor.line, cursor.column)
+        token := CToken(C_TOKEN_EOF, span, "")
+        return CLexStep(token, cursor)
+
+    start := cursor.offset
+    code := c_byte(cursor.data, cursor.size, start)
+    if c_is_space(code):
+        mut end := start + 1
+        while end < cursor.size && c_is_space(c_byte(cursor.data, cursor.size, end)):
+            end = end + 1
+        return c_lex_step(cursor, end, C_TOKEN_WHITESPACE)
+
+    if code == 47 && c_byte(cursor.data, cursor.size, start + 1) == 47:
+        mut end := start + 2
+        while end < cursor.size && c_byte(cursor.data, cursor.size, end) != 10 && c_byte(cursor.data, cursor.size, end) != 13:
+            end = end + 1
+        return c_lex_step(cursor, end, C_TOKEN_COMMENT)
+
+    if code == 47 && c_byte(cursor.data, cursor.size, start + 1) == 42:
+        mut end := start + 2
+        mut closed := false
+        while end < cursor.size && !closed:
+            if c_byte(cursor.data, cursor.size, end) == 42 && c_byte(cursor.data, cursor.size, end + 1) == 47:
+                end = end + 2
+                closed = true
+            else:
+                end = end + 1
+        return c_lex_step(cursor, end, C_TOKEN_COMMENT)
+
+    if code == 34 || code == 39:
+        mut end := start + 1
+        mut escaped := false
+        mut closed := false
+        while end < cursor.size && !closed:
+            current := c_byte(cursor.data, cursor.size, end)
+            if escaped:
+                escaped = false
+                end = end + 1
+            elif current == 92:
+                escaped = true
+                end = end + 1
+            elif current == code:
+                end = end + 1
+                closed = true
+            elif current == 10 || current == 13:
+                closed = true
+            else:
+                end = end + 1
+        mut kind := C_TOKEN_STRING
+        if code == 39:
+            kind = C_TOKEN_CHARACTER
+        return c_lex_step(cursor, end, kind)
+
+    if c_is_ident_start(code):
+        mut end := start + 1
+        while end < cursor.size && c_is_ident_continue(c_byte(cursor.data, cursor.size, end)):
+            end = end + 1
+        spelling := buf_read_str(cursor.data, start, end - start)
+        mut kind := C_TOKEN_IDENTIFIER
+        if c_is_keyword(spelling):
+            kind = C_TOKEN_KEYWORD
+        return c_lex_step(cursor, end, kind)
+
+    mut is_number := c_is_digit(code)
+    if code == 46 && c_is_digit(c_byte(cursor.data, cursor.size, start + 1)):
+        is_number = true
+    if is_number:
+        mut end := start + 1
+        mut allow_sign := false
+        while end < cursor.size:
+            current := c_byte(cursor.data, cursor.size, end)
+            if c_is_number_continue(current):
+                allow_sign = current == 101 || current == 69 || current == 112 || current == 80
+                end = end + 1
+            elif allow_sign && (current == 43 || current == 45):
+                allow_sign = false
+                end = end + 1
+            else:
+                return c_lex_step(cursor, end, C_TOKEN_NUMBER)
+        return c_lex_step(cursor, end, C_TOKEN_NUMBER)
+
+    width := c_punct_width(cursor.data, cursor.size, start)
+    if width > 0:
+        return c_lex_step(cursor, start + width, C_TOKEN_PUNCTUATOR)
+    return c_lex_step(cursor, start + 1, C_TOKEN_UNKNOWN)
+
+
+def c_lex_next_code(cursor: CLexCursor) -> CLexStep:
+    mut current := cursor
+    while true:
+        step := c_lex_next(current)
+        if step.token.kind != C_TOKEN_WHITESPACE && step.token.kind != C_TOKEN_COMMENT:
+            return step
+        current = step.next
+    return c_lex_next(current)
+
+
+def c_lex_token_is(step: CLexStep, spelling: Str) -> Bool:
+    return step.token.spelling == spelling

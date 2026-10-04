@@ -1,0 +1,259 @@
+# header_parser.lpp — conservative C header declaration parser
+
+import text
+import c_types
+
+def c_strip_comments_line(line: Str, in_block: Bool) -> (Str, Bool):
+    mut output := ""
+    mut cursor := 0
+    mut blocked := in_block
+    while cursor < str_len(line):
+        tail := str_substr(line, cursor, str_len(line) - cursor)
+        if blocked:
+            end := str_find(tail, "*/")
+            if end < 0:
+                return (output, true)
+            cursor = cursor + end + 2
+            blocked = false
+        else:
+            line_comment := str_find(tail, "//")
+            block_comment := str_find(tail, "/*")
+            if line_comment >= 0 && (block_comment < 0 || line_comment < block_comment):
+                output = str_concat(output, str_substr(tail, 0, line_comment))
+                return (output, false)
+            if block_comment >= 0:
+                output = str_concat(output, str_substr(tail, 0, block_comment))
+                cursor = cursor + block_comment + 2
+                blocked = true
+            else:
+                output = str_concat(output, tail)
+                cursor = str_len(line)
+    return (output, blocked)
+
+def c_emit_defines(raw_header: Str) -> Str:
+    lines := str_split(raw_header, 10)
+    mut output := ""
+    mut in_block := false
+    for source_line in lines:
+        (line_without_comments, next_block) := c_strip_comments_line(source_line, in_block)
+        in_block = next_block
+        line := text_normalize_spaces(line_without_comments)
+        if text_starts(line, "#define "):
+            rest := str_trim(str_substr(line, 8, str_len(line) - 8))
+            split := str_find(rest, " ")
+            if split > 0:
+                name := str_substr(rest, 0, split)
+                value_raw := str_substr(rest, split + 1, str_len(rest) - split - 1)
+                value := c_numeric_literal(value_raw)
+                if text_is_identifier(name) && str_find(name, "(") < 0 && str_len(value) > 0:
+                    output = text_append_line(output, str_concat("const ", str_concat(name, str_concat(" = ", value))))
+    return output
+
+def c_param_name_from_callback(segment: Str, index: Int) -> Str:
+    mut marker := str_find(segment, "(*")
+    mut skip := 2
+    if marker < 0:
+        marker = str_find(segment, "( *")
+        skip = 3
+    if marker >= 0:
+        rest := str_substr(segment, marker + skip, str_len(segment) - marker - skip)
+        end := str_find(rest, ")")
+        if end > 0:
+            name := text_safe_binding_name(str_trim(str_substr(rest, 0, end)))
+            if str_len(name) > 0:
+                return name
+    return str_concat("arg", int_to_str(index))
+
+def c_emit_param(raw: Str, index: Int) -> Str:
+    segment := text_normalize_spaces(raw)
+    if str_len(segment) == 0:
+        return "__SKIP__"
+    if text_eq(str_lower(segment), "void"):
+        return ""
+    if text_contains(segment, "..."):
+        return "__SKIP__"
+
+    if text_contains(segment, "(*") || text_contains(segment, "( *"):
+        callback_name := c_param_name_from_callback(segment, index)
+        return str_concat(callback_name, ": Int")
+
+    normalized := text_normalize_spaces(segment)
+    split := text_last_space(normalized)
+    mut name := ""
+    mut c_type := normalized
+    if split > 0:
+        name = str_trim(str_substr(normalized, split + 1, str_len(normalized) - split - 1))
+        name = text_strip_array_suffix(name)
+        c_type = str_trim(str_substr(normalized, 0, split))
+    else:
+        name = str_concat("arg", int_to_str(index))
+
+    mut safe_name := text_safe_binding_name(name)
+    if str_len(safe_name) == 0:
+        safe_name = str_concat("arg", int_to_str(index))
+        c_type = normalized
+
+    mapped := c_type_to_lpp(c_type, false)
+    if text_eq(mapped, "__UNSUPPORTED__") || str_len(mapped) == 0:
+        return "__SKIP__"
+    return str_concat(safe_name, str_concat(": ", mapped))
+
+def c_emit_params(raw: Str) -> Str:
+    args := str_trim(raw)
+    if str_len(args) == 0 || text_eq(str_lower(args), "void"):
+        return ""
+    mut output := ""
+    mut start := 0
+    mut depth := 0
+    mut index := 0
+    mut i := 0
+    while i <= str_len(args):
+        mut boundary := i == str_len(args)
+        if !boundary:
+            ch := char_at(args, i)
+            if text_eq(ch, "("):
+                depth = depth + 1
+            elif text_eq(ch, ")"):
+                depth = depth - 1
+            elif text_eq(ch, ",") && depth == 0:
+                boundary = true
+        if boundary:
+            part := str_substr(args, start, i - start)
+            emitted := c_emit_param(part, index)
+            if text_eq(emitted, "__SKIP__"):
+                return "__SKIP__"
+            if str_len(emitted) > 0:
+                if str_len(output) > 0:
+                    output = str_concat(output, ", ")
+                output = str_concat(output, emitted)
+            index = index + 1
+            start = i + 1
+        i = i + 1
+    return output
+
+def c_matching_paren(value: Str, open: Int) -> Int:
+    mut depth := 0
+    mut i := open
+    while i < str_len(value):
+        ch := char_at(value, i)
+        if text_eq(ch, "("):
+            depth = depth + 1
+        elif text_eq(ch, ")"):
+            depth = depth - 1
+            if depth == 0:
+                return i
+        i = i + 1
+    return -1
+
+def c_emit_prototype(raw: Str) -> Str:
+    statement := text_normalize_spaces(raw)
+    if str_len(statement) == 0:
+        return ""
+    if text_starts(str_lower(statement), "typedef "):
+        return ""
+    if text_starts(str_lower(statement), "static "):
+        return ""
+    if text_contains(statement, "{") || text_contains(statement, "}"):
+        return ""
+    if text_contains(statement, "..."):
+        return str_concat("    # c2lpp skipped variadic declaration: ", statement)
+
+    open := str_find(statement, "(")
+    close := c_matching_paren(statement, open)
+    if open <= 0 || close <= open:
+        return ""
+
+    prefix := text_normalize_spaces(str_substr(statement, 0, open))
+    split := text_last_space(prefix)
+    if split <= 0:
+        return ""
+    function_name := text_safe_binding_name(str_substr(prefix, split + 1, str_len(prefix) - split - 1))
+    if str_len(function_name) == 0:
+        return ""
+    return_c_type := str_substr(prefix, 0, split)
+    return_type := c_type_to_lpp(return_c_type, true)
+    if text_eq(return_type, "__UNSUPPORTED__") || str_len(return_type) == 0:
+        return str_concat("    # c2lpp skipped unsupported return ABI: ", statement)
+
+    params_raw := str_substr(statement, open + 1, close - open - 1)
+    params := c_emit_params(params_raw)
+    if text_eq(params, "__SKIP__"):
+        return str_concat("    # c2lpp skipped unsupported parameter ABI: ", statement)
+
+    return str_concat("    def ", str_concat(function_name, str_concat("(", str_concat(params, str_concat(") -> ", return_type)))))
+
+def c_brace_delta(line: Str) -> Int:
+    mut delta := 0
+    mut i := 0
+    while i < str_len(line):
+        ch := char_at(line, i)
+        if text_eq(ch, "{"):
+            delta = delta + 1
+        elif text_eq(ch, "}"):
+            delta = delta - 1
+        i = i + 1
+    return delta
+
+def c_emit_declarations(header: Str) -> Str:
+    lines := str_split(header, 10)
+    mut output := ""
+    mut pending := ""
+    mut in_block_comment := false
+    mut brace_depth := 0
+
+    for source_line in lines:
+        (line_without_comments, next_block) := c_strip_comments_line(source_line, in_block_comment)
+        in_block_comment = next_block
+        line := str_trim(line_without_comments)
+        if str_len(line) > 0 && !text_starts(line, "#"):
+            delta := c_brace_delta(line)
+            if brace_depth > 0 || delta != 0:
+                brace_depth = brace_depth + delta
+                pending = ""
+            else:
+                if str_len(pending) > 0:
+                    pending = str_concat(pending, " ")
+                pending = str_concat(pending, line)
+                if text_contains(line, ";"):
+                    emitted := c_emit_prototype(pending)
+                    if str_len(emitted) > 0:
+                        output = text_append_line(output, emitted)
+                    pending = ""
+    return output
+
+def c_filter_preprocessed(preprocessed: Str, header_path: Str) -> Str:
+    lines := str_split(preprocessed, 10)
+    marker := str_concat("\"", str_concat(header_path, "\""))
+    mut active := false
+    mut output := ""
+    for source_line in lines:
+        line := str_trim(source_line)
+        if text_starts(line, "# "):
+            active = text_contains(line, marker)
+        elif active:
+            output = text_append_line(output, source_line)
+    return output
+
+def c_emit_dependencies(raw_header: Str) -> Str:
+    lines := str_split(raw_header, 10)
+    mut output := ""
+    for source_line in lines:
+        line := str_trim(source_line)
+        if text_starts(line, "#include "):
+            output = text_append_line(output, str_trim(str_substr(line, 9, str_len(line) - 9)))
+    return output
+
+def c_generate_bindings(raw_header: Str, declaration_header: Str, library: Str) -> Str:
+    constants := c_emit_defines(raw_header)
+    declarations := c_emit_declarations(declaration_header)
+    mut output := "# Generated by c2lpp. Review all skipped ABI diagnostics.\n"
+    output = str_concat(output, "# C pointers and callbacks are represented as Int in tier 1.\n\n")
+    if str_len(constants) > 0:
+        output = str_concat(output, constants)
+        output = str_concat(output, "\n")
+    output = str_concat(output, str_concat("extern \"C\" link \"", str_concat(library, "\":\n")))
+    if str_len(declarations) == 0:
+        output = str_concat(output, "    # c2lpp found no supported function declarations\n")
+    else:
+        output = str_concat(output, declarations)
+    return output

@@ -1,0 +1,8 @@
+import visualization
+
+def main():
+    print_str("[lpp-analyzer] Generating interactive graph visualization...\n")
+    if visualization.generate_html_visualization("index.html") == 0:
+        print_str("[lpp-analyzer] Successfully generated index.html!\n")
+    else:
+        print_str("[lpp-analyzer] Failed to generate index.html\n")

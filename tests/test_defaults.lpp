@@ -1,0 +1,38 @@
+# Test default parameter values
+
+def add(a: Int, b: Int = 10) -> Int:
+    return a + b
+
+def power(base: Int, exp: Int = 2) -> Int:
+    mut result := 1
+    for i in range(exp):
+        result = result * base
+    return result
+
+def triple(x: Int, factor: Int = 3) -> Int:
+    return x * factor
+
+def main():
+    # With default
+    x := add(5)
+    print(x)
+
+    # With explicit override
+    y := add(5, 20)
+    print(y)
+
+    # Power defaults
+    p := power(3)
+    print(p)
+
+    q := power(2, 10)
+    print(q)
+
+    # Triple
+    t := triple(7)
+    print(t)
+
+    t2 := triple(7, 5)
+    print(t2)
+
+    print("defaults work!")

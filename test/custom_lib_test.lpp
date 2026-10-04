@@ -1,0 +1,12 @@
+import my_lib
+
+def main():
+    print_str("--- Custom Library Test ---")
+    
+    # Instantiate User struct from custom library
+    mut user := make_user(99, "Khati Developer")
+    
+    # Print profile using library function
+    print_user(user)
+    
+    print_str("--- Custom Library Success ---")

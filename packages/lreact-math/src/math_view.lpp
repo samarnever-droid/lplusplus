@@ -1,0 +1,27 @@
+# lreact-math: Interactive Math Card Component for SamarBook & LReact
+
+def render_math_card(node_id: Int, equation: Str, solution_steps: Str, latex: Str) -> Str:
+    mut html := "<div class=\"samar-card theme-emerald math-card\" data-node-id=\""
+    html = str_concat(html, str_concat(int_to_str(node_id), "\">\n"))
+    
+    # Card Header
+    html = str_concat(html, "  <div class=\"samar-card-header\">\n")
+    html = str_concat(html, "    <div class=\"samar-card-title\">Math Solver: ")
+    html = str_concat(html, str_concat(equation, "</div>\n"))
+    html = str_concat(html, "    <div class=\"samar-badge badge-math\">Solved</div>\n")
+    html = str_concat(html, "  </div>\n")
+    
+    # Formula & LaTeX View
+    html = str_concat(html, "  <div class=\"samar-card-body\">\n")
+    html = str_concat(html, "    <div class=\"math-latex-preview\">$$")
+    html = str_concat(html, str_concat(latex, "$$</div>\n"))
+    html = str_concat(html, "    <pre class=\"math-steps\"><code>")
+    html = str_concat(html, str_concat(solution_steps, "</code></pre>\n"))
+    html = str_concat(html, "  </div>\n")
+    
+    # Connection Ports
+    html = str_concat(html, "  <div class=\"samar-port samar-port-left\" data-port=\"in\"></div>\n")
+    html = str_concat(html, "  <div class=\"samar-port samar-port-right\" data-port=\"out\"></div>\n")
+    html = str_concat(html, "</div>\n")
+    
+    return html

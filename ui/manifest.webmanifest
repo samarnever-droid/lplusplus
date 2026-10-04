@@ -1,0 +1,11 @@
+{
+  "name": "SamarBook",
+  "short_name": "SamarBook",
+  "description": "Local-first knowledge canvas with wikilinks, blocks and a graph.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "icons": [{ "src": "/logo-icon.svg", "sizes": "any", "type": "image/svg+xml" }]
+}

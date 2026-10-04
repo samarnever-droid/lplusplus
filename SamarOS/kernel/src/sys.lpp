@@ -1,0 +1,94 @@
+# SamarOS — kernel hardware interface
+#
+# Every machine facility the L++ kernel is allowed to touch is declared here
+# as a C ABI import.  The implementations live in kernel/arch (framebuffer,
+# PS/2 controller, PIT, CMOS) and kernel/runtime (the freestanding L++
+# runtime).  Nothing else in the kernel talks to hardware directly.
+
+extern "C":
+    # ---- display -----------------------------------------------------
+    def fb_width() -> Int
+    def fb_height() -> Int
+    def gfx_clear(color: Int) -> Void
+    def gfx_pixel(x: Int, y: Int, color: Int) -> Void
+    def gfx_get(x: Int, y: Int) -> Int
+    def gfx_blend(x: Int, y: Int, color: Int, alpha: Int) -> Void
+    def gfx_fill_rect(x: Int, y: Int, w: Int, h: Int, color: Int) -> Void
+    def gfx_blend_rect(x: Int, y: Int, w: Int, h: Int, color: Int, alpha: Int) -> Void
+    def gfx_grad_rect(x: Int, y: Int, w: Int, h: Int, c0: Int, c1: Int, vertical: Int) -> Void
+    def gfx_clip(x: Int, y: Int, w: Int, h: Int) -> Void
+    def gfx_clip_reset() -> Void
+    def gfx_clip_x() -> Int
+    def gfx_clip_y() -> Int
+    def gfx_clip_w() -> Int
+    def gfx_clip_h() -> Int
+    def gfx_cache_store() -> Void
+    def gfx_cache_restore() -> Void
+    def gfx_cache_restore_rect(x: Int, y: Int, w: Int, h: Int) -> Void
+    def gfx_present() -> Void
+    def gfx_present_rect(x: Int, y: Int, w: Int, h: Int) -> Void
+    def gfx_save_under(x: Int, y: Int, w: Int, h: Int) -> Void
+    def gfx_restore_under() -> Void
+
+    # ---- text --------------------------------------------------------
+    def text_draw(x: Int, y: Int, s: Str, color: Int, alpha: Int, font: Int) -> Int
+    def text_width(s: Str, font: Int) -> Int
+    def text_height(font: Int) -> Int
+    def text_ascent(font: Int) -> Int
+
+    # ---- input -------------------------------------------------------
+    def input_poll() -> Void
+    def key_pop() -> Int
+    def key_ctrl() -> Int
+    def key_shift() -> Int
+    def mouse_x() -> Int
+    def mouse_y() -> Int
+    def mouse_buttons() -> Int
+    def mouse_wheel() -> Int
+
+    # ---- clocks ------------------------------------------------------
+    def time_ms() -> Int
+    def rtc_hour() -> Int
+    def rtc_min() -> Int
+    def rtc_sec() -> Int
+    def rtc_day() -> Int
+    def rtc_month() -> Int
+    def rtc_year() -> Int
+    def rtc_weekday() -> Int
+
+    # ---- machine -----------------------------------------------------
+    def mem_total_kb() -> Int
+    def heap_used() -> Int
+    def heap_total() -> Int
+    def cpu_mhz() -> Int
+    def boot_drive() -> Int
+    def cpu_halt() -> Void
+    def debug_out(s: Str) -> Void
+
+# ---- font faces baked into the kernel image --------------------------
+const FONT_SMALL = 0
+const FONT_BODY = 1
+const FONT_BODY_SEMI = 2
+const FONT_TITLE = 3
+const FONT_DISPLAY = 4
+const FONT_MONO = 5
+const FONT_CAPS = 6
+const FONT_HEAD = 7
+
+# ---- keyboard codes ---------------------------------------------------
+const KEY_BACKSPACE = 8
+const KEY_TAB = 9
+const KEY_ENTER = 13
+const KEY_ESC = 27
+const KEY_LEFT = 257
+const KEY_RIGHT = 258
+const KEY_UP = 259
+const KEY_DOWN = 260
+const KEY_DELETE = 261
+const KEY_HOME = 262
+const KEY_END = 263
+const KEY_SUPER = 264
+const KEY_F1 = 273
+const KEY_F2 = 274
+const KEY_F3 = 275
+const KEY_F4 = 276

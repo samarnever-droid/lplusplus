@@ -1,0 +1,156 @@
+# c_lexer.lpp — streaming provenance-preserving C token cursor.
+#
+# Unlike the old line translator, parser consumers see actual tokens. The input
+# stays in one checked buffer and only significant token spellings are copied.
+
+import c_token
+import c_audit
+import text
+
+struct CLexCursor:
+    data: Int
+    size: Int
+    path: Str
+    offset: Int
+    line: Int
+    column: Int
+
+struct CLexStep:
+    token: CToken
+    next: CLexCursor
+
+
+def c_lex_cursor(data: Int, size: Int, path: Str) -> CLexCursor:
+    return CLexCursor(data, size, path, 0, 1, 1)
+
+
+def c_lex_advance(cursor: CLexCursor, end: Int) -> CLexCursor:
+    mut line := cursor.line
+    mut column := cursor.column
+    mut i := cursor.offset
+    while i < end:
+        code := c_byte(cursor.data, cursor.size, i)
+        if code == 13:
+            line = line + 1
+            column = 1
+            if i + 1 < end && c_byte(cursor.data, cursor.size, i + 1) == 10:
+                i = i + 1
+        elif code == 10:
+            line = line + 1
+            column = 1
+        else:
+            column = column + 1
+        i = i + 1
+    return CLexCursor(cursor.data, cursor.size, cursor.path, end, line, column)
+
+
+def c_lex_step(cursor: CLexCursor, end: Int, kind: Int) -> CLexStep:
+    mut spelling := ""
+    if end > cursor.offset:
+        spelling = buf_read_str(cursor.data, cursor.offset, end - cursor.offset)
+    span := CSourceSpan(cursor.path, cursor.offset, end, cursor.line, cursor.column)
+    token := CToken(kind, span, spelling)
+    return CLexStep(token, c_lex_advance(cursor, end))
+
+
+def c_lex_next(cursor: CLexCursor) -> CLexStep:
+    if cursor.offset >= cursor.size:
+        span := CSourceSpan(cursor.path, cursor.offset, cursor.offset, cursor.line, cursor.column)
+        token := CToken(C_TOKEN_EOF, span, "")
+        return CLexStep(token, cursor)
+
+    start := cursor.offset
+    code := c_byte(cursor.data, cursor.size, start)
+    if c_is_space(code):
+        mut end := start + 1
+        while end < cursor.size && c_is_space(c_byte(cursor.data, cursor.size, end)):
+            end = end + 1
+        return c_lex_step(cursor, end, C_TOKEN_WHITESPACE)
+
+    if code == 47 && c_byte(cursor.data, cursor.size, start + 1) == 47:
+        mut end := start + 2
+        while end < cursor.size && c_byte(cursor.data, cursor.size, end) != 10 && c_byte(cursor.data, cursor.size, end) != 13:
+            end = end + 1
+        return c_lex_step(cursor, end, C_TOKEN_COMMENT)
+
+    if code == 47 && c_byte(cursor.data, cursor.size, start + 1) == 42:
+        mut end := start + 2
+        mut closed := false
+        while end < cursor.size && !closed:
+            if c_byte(cursor.data, cursor.size, end) == 42 && c_byte(cursor.data, cursor.size, end + 1) == 47:
+                end = end + 2
+                closed = true
+            else:
+                end = end + 1
+        return c_lex_step(cursor, end, C_TOKEN_COMMENT)
+
+    if code == 34 || code == 39:
+        mut end := start + 1
+        mut escaped := false
+        mut closed := false
+        while end < cursor.size && !closed:
+            current := c_byte(cursor.data, cursor.size, end)
+            if escaped:
+                escaped = false
+                end = end + 1
+            elif current == 92:
+                escaped = true
+                end = end + 1
+            elif current == code:
+                end = end + 1
+                closed = true
+            elif current == 10 || current == 13:
+                closed = true
+            else:
+                end = end + 1
+        mut kind := C_TOKEN_STRING
+        if code == 39:
+            kind = C_TOKEN_CHARACTER
+        return c_lex_step(cursor, end, kind)
+
+    if c_is_ident_start(code):
+        mut end := start + 1
+        while end < cursor.size && c_is_ident_continue(c_byte(cursor.data, cursor.size, end)):
+            end = end + 1
+        spelling := buf_read_str(cursor.data, start, end - start)
+        mut kind := C_TOKEN_IDENTIFIER
+        if c_is_keyword(spelling):
+            kind = C_TOKEN_KEYWORD
+        return c_lex_step(cursor, end, kind)
+
+    mut is_number := c_is_digit(code)
+    if code == 46 && c_is_digit(c_byte(cursor.data, cursor.size, start + 1)):
+        is_number = true
+    if is_number:
+        mut end := start + 1
+        mut allow_sign := false
+        while end < cursor.size:
+            current := c_byte(cursor.data, cursor.size, end)
+            if c_is_number_continue(current):
+                allow_sign = current == 101 || current == 69 || current == 112 || current == 80
+                end = end + 1
+            elif allow_sign && (current == 43 || current == 45):
+                allow_sign = false
+                end = end + 1
+            else:
+                return c_lex_step(cursor, end, C_TOKEN_NUMBER)
+        return c_lex_step(cursor, end, C_TOKEN_NUMBER)
+
+    width := c_punct_width(cursor.data, cursor.size, start)
+    if width > 0:
+        return c_lex_step(cursor, start + width, C_TOKEN_PUNCTUATOR)
+    return c_lex_step(cursor, start + 1, C_TOKEN_UNKNOWN)
+
+
+def c_lex_next_code(cursor: CLexCursor) -> CLexStep:
+    mut current := cursor
+    while true:
+        step := c_lex_next(current)
+        if step.token.kind != C_TOKEN_WHITESPACE && step.token.kind != C_TOKEN_COMMENT:
+            return step
+        current = step.next
+    return c_lex_next(current)
+
+
+def c_lex_token_is(step: CLexStep, spelling: Str) -> Bool:
+    return text_eq(step.token.spelling, spelling)

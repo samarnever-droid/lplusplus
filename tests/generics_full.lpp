@@ -1,0 +1,35 @@
+struct Box[T]:
+    value: T
+
+struct Pair[A, B]:
+    first: A
+    second: B
+
+def identity[T](x: T) -> T:
+    return x
+
+def unwrap[T](b: Box[T]) -> T:
+    return b.value
+
+def wrap[T](v: T) -> Box[T]:
+    return Box(v)
+
+def twice[T](x: T) -> T:
+    return identity(identity(x))
+
+def first_of[A, B](p: Pair[A, B]) -> A:
+    return p.first
+
+def main():
+    print(identity(42))
+    print_str(identity("hello"))
+    f := 2.5
+    print_str(float_to_str(identity(f)))
+    b := Box(7)
+    print(unwrap(b))
+    w := wrap("wrapped")
+    print_str(w.value)
+    print(twice(9))
+    p := Pair(3, "three")
+    print(first_of(p))
+    print_str(p.second)

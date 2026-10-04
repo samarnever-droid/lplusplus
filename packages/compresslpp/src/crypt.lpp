@@ -1,0 +1,135 @@
+# crypt.lpp — ZipCrypto (traditional PKWARE) encryption.
+#
+# This is the password scheme every ZIP tool understands: `zip -e`, WinZip,
+# Info-ZIP, and Python's `ZipFile.setpassword()` for reading. It is a stream
+# cipher driven by three 32-bit keys updated with CRC-32.
+#
+# SECURITY: ZipCrypto is cryptographically weak — it is vulnerable to a
+# well-known plaintext attack and should not be relied on to protect valuable
+# data. It is implemented here because it is what "password-protected ZIP"
+# means for interoperability. Use AES-encrypted archives (WinZip AE-x, not
+# implemented here) or an external tool if you need real confidentiality.
+#
+# Key state handle: [0]=key0 [8]=key1 [16]=key2
+
+import bits
+
+def MASK32() -> Int:
+    return 4294967295
+
+# CRC-32 update of one byte, matching the polynomial ZIP uses. The runtime's
+# buf_crc32 works on whole buffers, so the per-byte step is done here via a
+# lazily built table.
+def crc_table_build() -> Int:
+    t := bits.iv_new(256)
+    mut n := 0
+    while n < 256:
+        mut c := n
+        mut k := 0
+        while k < 8:
+            if (c & 1) == 1:
+                c = 3988292384 ^ (bits.ushr(c, 1) & 2147483647)
+            else:
+                c = bits.ushr(c, 1) & 2147483647
+            c = c & MASK32()
+            k = k + 1
+        bits.iv_push(t, c)
+        n = n + 1
+    return t
+
+def crc32_byte(table: Int, crc: Int, b: Int) -> Int:
+    idx := (crc ^ b) & 255
+    return (bits.iv_get(table, idx) ^ (bits.ushr(crc, 8) & 16777215)) & MASK32()
+
+# ── key schedule ──
+
+def keys_new(table: Int, password: Str) -> Int:
+    k := buf_alloc(24)
+    bits.bset64(k, 0, 305419896)
+    bits.bset64(k, 8, 591751049)
+    bits.bset64(k, 16, 878082192)
+    n := str_len(password)
+    mut i := 0
+    while i < n:
+        update_keys(table, k, ord(str_substr(password, i, 1)))
+        i = i + 1
+    return k
+
+def keys_free(k: Int):
+    buf_free(k)
+
+def update_keys(table: Int, k: Int, b: Int):
+    k0 := bits.bget64(k, 0)
+    k1 := bits.bget64(k, 8)
+    k2 := bits.bget64(k, 16)
+    nk0 := crc32_byte(table, k0, b)
+    mut nk1 := (k1 + (nk0 & 255)) & MASK32()
+    nk1 = (nk1 * 134775813 + 1) & MASK32()
+    nk2 := crc32_byte(table, k2, (bits.ushr(nk1, 24)) & 255)
+    bits.bset64(k, 0, nk0)
+    bits.bset64(k, 8, nk1)
+    bits.bset64(k, 16, nk2)
+
+# The next keystream byte.
+def decrypt_byte(k: Int) -> Int:
+    k2 := bits.bget64(k, 16)
+    temp := (k2 | 2) & 65535
+    return (bits.ushr(temp * (temp ^ 1), 8)) & 255
+
+def encrypt_byte(table: Int, k: Int, plain: Int) -> Int:
+    c := (plain ^ decrypt_byte(k)) & 255
+    update_keys(table, k, plain)
+    return c
+
+def decrypt_one(table: Int, k: Int, cipher: Int) -> Int:
+    p := (cipher ^ decrypt_byte(k)) & 255
+    update_keys(table, k, p)
+    return p
+
+# ── buffer helpers ──
+
+# Encrypt `n` bytes, prefixed by the 12-byte random header ZIP requires.
+# `check` is the byte a reader compares to validate the password: the high byte
+# of the CRC-32 (or of the DOS time when a data descriptor is used).
+def encrypt_buffer(password: Str, src: Int, off: Int, n: Int, check: Int) -> Int:
+    table := crc_table_build()
+    k := keys_new(table, password)
+    out := bits.vec_new(n + 16)
+    mut i := 0
+    while i < 11:
+        r := random_range(0, 255)
+        bits.vec_push(out, encrypt_byte(table, k, r & 255))
+        i = i + 1
+    bits.vec_push(out, encrypt_byte(table, k, check & 255))
+    mut j := 0
+    while j < n:
+        bits.vec_push(out, encrypt_byte(table, k, buf_get8(src, off + j)))
+        j = j + 1
+    keys_free(k)
+    bits.iv_free(table)
+    return out
+
+# Decrypt `n` bytes (including the 12-byte header). Returns a vec of plaintext,
+# or 0 when the password check byte does not match.
+def decrypt_buffer(password: Str, src: Int, off: Int, n: Int, check: Int) -> Int:
+    if n < 12:
+        return 0
+    table := crc_table_build()
+    k := keys_new(table, password)
+    mut last := 0
+    mut i := 0
+    while i < 12:
+        last = decrypt_one(table, k, buf_get8(src, off + i))
+        i = i + 1
+    if last != (check & 255):
+        keys_free(k)
+        bits.iv_free(table)
+        return 0
+    out := bits.vec_new(n - 12 + 1)
+    mut j := 12
+    while j < n:
+        bits.vec_push(out, decrypt_one(table, k, buf_get8(src, off + j)))
+        j = j + 1
+    keys_free(k)
+    bits.iv_free(table)
+    return out

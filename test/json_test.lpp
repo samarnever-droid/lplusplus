@@ -1,0 +1,23 @@
+import json
+
+def main():
+    print_str("--- JSON Parser Library Test ---")
+    
+    raw := "{\"val\": 42, \"name\": \"L++ Lang\", \"nested\": {\"status\": 200}}"
+    j := json.parse(raw)
+    
+    val := json.get_int(j, "val")
+    name := json.get_str(j, "name")
+    
+    print_str("val:")
+    print(val)
+    print_str("name:")
+    print_str(name)
+    
+    nested := json.get_obj(j, "nested")
+    status := json.get_int(nested, "status")
+    print_str("status:")
+    print(status)
+    
+    json.free(j)
+    print_str("--- Test Success ---")

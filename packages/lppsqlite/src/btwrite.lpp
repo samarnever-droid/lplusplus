@@ -1,0 +1,388 @@
+# btwrite.lpp — insertion, splitting and deletion for table b-trees.
+#
+# Splitting strategy: when a leaf cannot fit a new cell, the leaf's cells
+# (plus the new one) are redistributed across two pages and a separator cell
+# is pushed into the parent. If the root splits, a fresh interior root is
+# created and the old root's contents are moved to a new page, so the table's
+# root page number never changes (which matters: sqlite_schema records it).
+#
+# Parents are tracked with an explicit path stack rather than parent pointers,
+# because SQLite pages do not store them.
+
+import mem
+import varint
+import pager
+import btree
+
+# Path stack: iv of page numbers from root down to the leaf.
+def descend(p: Int, root: Int, key: Int) -> Int:
+    path := mem.iv_new(8)
+    mut cur := root
+    mut guard := 0
+    while guard < 1000:
+        mem.iv_push(path, cur)
+        if btree.is_leaf(p, cur) == 1:
+            return path
+        nxt := btree.interior_find(p, cur, key)
+        if nxt == 0:
+            return path
+        cur = nxt
+        guard = guard + 1
+    return path
+
+# Copy cell `i` of page `src` into a standalone buffer; returns (buf, size)
+# via a 16-byte pair handle.
+def grab_cell(p: Int, src: Int, i: Int) -> Int:
+    sz := btree.cell_size(p, src, i)
+    off := btree.cell_at(p, src, i)
+    b := buf_alloc(sz)
+    buf_copy(b, 0, pager.pg_data(p), off, sz)
+    h := buf_alloc(16)
+    mem.bset64(h, 0, b)
+    mem.bset64(h, 8, sz)
+    return h
+
+def pair_buf(h: Int) -> Int:
+    return mem.bget64(h, 0)
+
+def pair_size(h: Int) -> Int:
+    return mem.bget64(h, 8)
+
+def pair_free(h: Int):
+    buf_free(mem.bget64(h, 0))
+    buf_free(h)
+
+# Rowid key of a standalone leaf cell blob.
+def blob_leaf_rowid(b: Int) -> Int:
+    n1 := varint.vi_len(b, 0)
+    return varint.vi_get(b, n1)
+
+def blob_interior_key(b: Int) -> Int:
+    return varint.vi_get(b, 4)
+
+def blob_interior_child(b: Int) -> Int:
+    return mem.be_get32(b, 0)
+
+# Usable space for cells on a page (excludes header and pointer array slot).
+def page_capacity(p: Int, pno: Int) -> Int:
+    return pager.pg_usable(p) - btree.hdr_off(pno) - btree.hdr_len(p, pno)
+
+# Insert a prepared cell blob into `pno` at index `at`, defragmenting first
+# if the contiguous free area is too small. Returns 1 on success, 0 if the
+# page genuinely cannot hold it.
+def try_insert(p: Int, pno: Int, at: Int, cb: Int, csz: Int) -> Int:
+    need := csz + 2
+    if btree.free_space(p, pno) < need:
+        btree.defrag_page(p, pno)
+        if btree.free_space(p, pno) < need:
+            return 0
+    btree.insert_cell_raw(p, pno, at, cb, 0, csz)
+    return 1
+
+# Collect every cell of a page into parallel ivs of (buf, size).
+def take_all_cells(p: Int, pno: Int, bufs: Int, sizes: Int):
+    n := btree.cell_count(p, pno)
+    mut i := 0
+    while i < n:
+        sz := btree.cell_size(p, pno, i)
+        off := btree.cell_at(p, pno, i)
+        b := buf_alloc(sz)
+        buf_copy(b, 0, pager.pg_data(p), off, sz)
+        mem.iv_push(bufs, b)
+        mem.iv_push(sizes, sz)
+        i = i + 1
+
+def free_cell_list(bufs: Int):
+    n := mem.iv_len(bufs)
+    mut i := 0
+    while i < n:
+        buf_free(mem.iv_get(bufs, i))
+        i = i + 1
+
+# Lay a list of cells onto a freshly initialised page.
+def fill_page(p: Int, pno: Int, bufs: Int, sizes: Int, lo: Int, hi: Int):
+    mut i := lo
+    mut at := 0
+    while i < hi:
+        btree.insert_cell_raw(p, pno, at, mem.iv_get(bufs, i), 0, mem.iv_get(sizes, i))
+        at = at + 1
+        i = i + 1
+
+# Insert a cell into an interior page, splitting upward if needed.
+def insert_into_parent(p: Int, path: Int, level: Int, cb: Int, csz: Int, root: Int):
+    if level < 0:
+        return
+    par := mem.iv_get(path, level)
+    key := blob_interior_key(cb)
+    at := interior_insert_pos(p, par, key)
+    if try_insert(p, par, at, cb, csz) == 1:
+        return
+    split_interior(p, path, level, cb, csz, at, root)
+
+def interior_insert_pos(p: Int, pno: Int, key: Int) -> Int:
+    n := btree.cell_count(p, pno)
+    mut lo := 0
+    mut hi := n
+    while lo < hi:
+        mid := (lo + hi) / 2
+        if btree.interior_key(p, pno, mid) < key:
+            lo = mid + 1
+        else:
+            hi = mid
+    return lo
+
+def split_interior(p: Int, path: Int, level: Int, newcb: Int, newsz: Int, at: Int, root: Int):
+    pno := mem.iv_get(path, level)
+    bufs := mem.iv_new(16)
+    sizes := mem.iv_new(16)
+    take_all_cells(p, pno, bufs, sizes)
+    # splice the new cell in at `at`
+    nb := mem.iv_new(16)
+    ns := mem.iv_new(16)
+    total := mem.iv_len(bufs)
+    mut i := 0
+    while i < total:
+        if i == at:
+            mem.iv_push(nb, newcb)
+            mem.iv_push(ns, newsz)
+        mem.iv_push(nb, mem.iv_get(bufs, i))
+        mem.iv_push(ns, mem.iv_get(sizes, i))
+        i = i + 1
+    if at >= total:
+        mem.iv_push(nb, newcb)
+        mem.iv_push(ns, newsz)
+    cnt := mem.iv_len(nb)
+    oldright := btree.right_child(p, pno)
+
+    # The middle cell becomes the separator and is promoted; its child
+    # becomes the left page's right-most pointer.
+    mid := cnt / 2
+    sepb := mem.iv_get(nb, mid)
+    sepkey := blob_interior_key(sepb)
+    sepchild := blob_interior_child(sepb)
+
+    mut isroot := 0
+    if pno == root:
+        isroot = 1
+
+    if isroot == 1:
+        # Move the whole node to a new page, then rebuild the root above it.
+        left := pager.pg_new_page(p)
+        right := pager.pg_new_page(p)
+        btree.init_page(p, left, 5)
+        btree.init_page(p, right, 5)
+        fill_page(p, left, nb, ns, 0, mid)
+        btree.set_right_child(p, left, sepchild)
+        fill_page(p, right, nb, ns, mid + 1, cnt)
+        btree.set_right_child(p, right, oldright)
+        btree.init_page(p, root, 5)
+        c := btree.build_interior_cell(left, sepkey)
+        btree.insert_cell_raw(p, root, 0, mem.vec_data(c), 0, mem.vec_len(c))
+        mem.vec_free(c)
+        btree.set_right_child(p, root, right)
+    else:
+        right := pager.pg_new_page(p)
+        btree.init_page(p, right, 5)
+        fill_page(p, right, nb, ns, mid + 1, cnt)
+        btree.set_right_child(p, right, oldright)
+        btree.init_page(p, pno, 5)
+        fill_page(p, pno, nb, ns, 0, mid)
+        btree.set_right_child(p, pno, sepchild)
+        upc := btree.build_interior_cell(pno, sepkey)
+        # The parent's pointer to `pno` must now point at `right`.
+        repoint_parent(p, path, level - 1, pno, right)
+        insert_into_parent(p, path, level - 1, mem.vec_data(upc), mem.vec_len(upc), root)
+        mem.vec_free(upc)
+
+    free_cell_list(bufs)
+    mem.iv_free(bufs)
+    mem.iv_free(sizes)
+    mem.iv_free(nb)
+    mem.iv_free(ns)
+
+# After splitting `oldchild` into (oldchild, newright), the parent entry that
+# used to point at oldchild must point at newright, because newright now holds
+# the larger keys.
+def repoint_parent(p: Int, path: Int, level: Int, oldchild: Int, newright: Int):
+    if level < 0:
+        return
+    par := mem.iv_get(path, level)
+    n := btree.cell_count(p, par)
+    mut i := 0
+    while i < n:
+        if btree.interior_child(p, par, i) == oldchild:
+            d := pager.pg_data(p)
+            mem.be_put32(d, btree.cell_at(p, par, i), newright)
+            return
+        i = i + 1
+    if btree.right_child(p, par) == oldchild:
+        btree.set_right_child(p, par, newright)
+
+# ── public: insert a row ──
+
+def insert(p: Int, root: Int, rowid: Int, payload: Int, plen: Int):
+    path := descend(p, root, rowid)
+    lv := mem.iv_len(path) - 1
+    leaf := mem.iv_get(path, lv)
+    cell := btree.build_leaf_cell(p, rowid, payload, plen)
+    cb := mem.vec_data(cell)
+    csz := mem.vec_len(cell)
+    at := btree.leaf_find(p, leaf, rowid)
+
+    if try_insert(p, leaf, at, cb, csz) == 1:
+        mem.vec_free(cell)
+        mem.iv_free(path)
+        return
+
+    # Leaf is full: gather, splice, split.
+    bufs := mem.iv_new(16)
+    sizes := mem.iv_new(16)
+    take_all_cells(p, leaf, bufs, sizes)
+    nb := mem.iv_new(16)
+    ns := mem.iv_new(16)
+    total := mem.iv_len(bufs)
+    mut i := 0
+    while i < total:
+        if i == at:
+            mem.iv_push(nb, cb)
+            mem.iv_push(ns, csz)
+        mem.iv_push(nb, mem.iv_get(bufs, i))
+        mem.iv_push(ns, mem.iv_get(sizes, i))
+        i = i + 1
+    if at >= total:
+        mem.iv_push(nb, cb)
+        mem.iv_push(ns, csz)
+    cnt := mem.iv_len(nb)
+
+    # Split point: keep pages roughly half full by bytes.
+    cap := page_capacity(p, leaf)
+    mut acc := 0
+    mut mid := 0
+    mut k := 0
+    while k < cnt:
+        acc = acc + mem.iv_get(ns, k) + 2
+        if acc * 2 <= cap:
+            mid = k + 1
+        k = k + 1
+    if mid <= 0:
+        mid = 1
+    if mid >= cnt:
+        mid = cnt - 1
+
+    if leaf == root:
+        left := pager.pg_new_page(p)
+        right := pager.pg_new_page(p)
+        btree.init_page(p, left, 13)
+        btree.init_page(p, right, 13)
+        fill_page(p, left, nb, ns, 0, mid)
+        fill_page(p, right, nb, ns, mid, cnt)
+        btree.init_page(p, root, 5)
+        sepkey := blob_leaf_rowid(mem.iv_get(nb, mid - 1))
+        c := btree.build_interior_cell(left, sepkey)
+        btree.insert_cell_raw(p, root, 0, mem.vec_data(c), 0, mem.vec_len(c))
+        mem.vec_free(c)
+        btree.set_right_child(p, root, right)
+    else:
+        right := pager.pg_new_page(p)
+        btree.init_page(p, right, 13)
+        fill_page(p, right, nb, ns, mid, cnt)
+        btree.init_page(p, leaf, 13)
+        fill_page(p, leaf, nb, ns, 0, mid)
+        sepkey := blob_leaf_rowid(mem.iv_get(nb, mid - 1))
+        repoint_parent(p, path, lv - 1, leaf, right)
+        upc := btree.build_interior_cell(leaf, sepkey)
+        insert_into_parent(p, path, lv - 1, mem.vec_data(upc), mem.vec_len(upc), root)
+        mem.vec_free(upc)
+
+    free_cell_list(bufs)
+    mem.iv_free(bufs)
+    mem.iv_free(sizes)
+    mem.iv_free(nb)
+    mem.iv_free(ns)
+    mem.vec_free(cell)
+    mem.iv_free(path)
+
+# ── delete a row by rowid ──
+#
+# Removing the cell is only half the job: if the leaf becomes empty it must be
+# unlinked from its parent. SQLite's integrity_check rejects a b-tree that
+# contains an empty leaf page, so leaving them behind produces a file that our
+# own reader accepts but the real sqlite3 reports as "database disk image is
+# malformed". Pages that fall out of the tree are not added to a freelist
+# (they simply become unreferenced), which SQLite tolerates.
+
+def delete(p: Int, root: Int, rowid: Int) -> Int:
+    path := descend(p, root, rowid)
+    lv := mem.iv_len(path) - 1
+    leaf := mem.iv_get(path, lv)
+    n := btree.cell_count(p, leaf)
+    mut hit := 0
+    mut i := 0
+    while i < n:
+        if btree.leaf_rowid(p, leaf, i) == rowid:
+            btree.remove_cell(p, leaf, i)
+            hit = 1
+            i = n
+        else:
+            i = i + 1
+    if hit == 1:
+        if btree.cell_count(p, leaf) == 0:
+            prune(p, path, lv, root)
+    mem.iv_free(path)
+    return hit
+
+# Detach the now-empty page at path[level] from its parent, collapsing empty
+# ancestors as well. The root is never removed; if it ends up empty it is
+# re-initialised as an empty leaf, which is a valid one-page table.
+def prune(p: Int, path: Int, level: Int, root: Int):
+    mut lv := level
+    mut go := 1
+    while go == 1:
+        if lv <= 0:
+            go = 0
+        else:
+            child := mem.iv_get(path, lv)
+            par := mem.iv_get(path, lv - 1)
+            detach_child(p, par, child)
+            pager.free_page(p, child)
+            if btree.cell_count(p, par) == 0:
+                if btree.right_child(p, par) == 0:
+                    lv = lv - 1
+                else:
+                    go = 0
+            else:
+                go = 0
+    if btree.cell_count(p, root) == 0:
+        if btree.is_leaf(p, root) == 0:
+            rc := btree.right_child(p, root)
+            if rc == 0:
+                btree.init_page(p, root, 13)
+
+# Remove the interior entry pointing at `child`. If `child` was the right-most
+# pointer, the last separator cell is promoted to become the new right pointer
+# so the parent keeps covering the same key range.
+def detach_child(p: Int, par: Int, child: Int):
+    n := btree.cell_count(p, par)
+    mut i := 0
+    while i < n:
+        if btree.interior_child(p, par, i) == child:
+            btree.remove_cell(p, par, i)
+            return
+        i = i + 1
+    if btree.right_child(p, par) == child:
+        if n > 0:
+            last := btree.interior_child(p, par, n - 1)
+            btree.remove_cell(p, par, n - 1)
+            btree.set_right_child(p, par, last)
+        else:
+            btree.set_right_child(p, par, 0)
+
+def find_row(p: Int, root: Int, rowid: Int) -> Int:
+    leaf := btree.find_leaf(p, root, rowid)
+    n := btree.cell_count(p, leaf)
+    mut i := 0
+    while i < n:
+        if btree.leaf_rowid(p, leaf, i) == rowid:
+            return btree.leaf_payload(p, leaf, i)
+        i = i + 1
+    return 0

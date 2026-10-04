@@ -1,0 +1,299 @@
+/* ── Binary buffer library (runtime/lpp_buf.c) ─────────────────────────────
+ * Layout: [8-byte int64_t size][raw data bytes...]
+ * A buffer pointer points to the start of the header.
+ */
+
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+
+extern void *lpp_arc_alloc(int64_t size);
+extern char *lpp_empty_str(void);
+
+/* ── Core buffer ops ─────────────────────────────────────────────────────── */
+
+int64_t lpp_buf_alloc(int64_t size) {
+    if (size < 0) return 0;
+    uint8_t *buf = (uint8_t *)calloc(1, (size_t)(8 + size));
+    if (!buf) return 0;
+    *(int64_t *)buf = size;
+    return (int64_t)(uintptr_t)buf;
+}
+
+void lpp_buf_free(void *ptr) {
+    free(ptr);
+}
+
+int64_t lpp_buf_len(void *ptr) {
+    if (!ptr) return 0;
+    return *(int64_t *)ptr;
+}
+
+int64_t lpp_buf_get8(void *ptr, int64_t offset) {
+    if (!ptr) return 0;
+    int64_t size = *(int64_t *)ptr;
+    if (offset < 0 || offset >= size) return 0;
+    return ((uint8_t *)ptr)[8 + offset];
+}
+
+void lpp_buf_set8(void *ptr, int64_t offset, int64_t value) {
+    if (!ptr) return;
+    int64_t size = *(int64_t *)ptr;
+    if (offset < 0 || offset >= size) return;
+    ((uint8_t *)ptr)[8 + offset] = (uint8_t)(value & 0xFF);
+}
+
+void lpp_buf_set32le(void *ptr, int64_t offset, int64_t value) {
+    if (!ptr) return;
+    int64_t size = *(int64_t *)ptr;
+    if (offset < 0 || offset + 4 > size) return;
+    uint8_t *base = ((uint8_t *)ptr) + 8 + offset;
+    uint32_t v = (uint32_t)value;
+    base[0] = (uint8_t)(v);
+    base[1] = (uint8_t)(v >> 8);
+    base[2] = (uint8_t)(v >> 16);
+    base[3] = (uint8_t)(v >> 24);
+}
+
+int64_t lpp_buf_get32le(void *ptr, int64_t offset) {
+    if (!ptr) return 0;
+    int64_t size = *(int64_t *)ptr;
+    if (offset < 0 || offset + 4 > size) return 0;
+    uint8_t *base = ((uint8_t *)ptr) + 8 + offset;
+    return (int64_t)((uint32_t)base[0] | ((uint32_t)base[1] << 8) |
+                     ((uint32_t)base[2] << 16) | ((uint32_t)base[3] << 24));
+}
+
+void lpp_buf_set16le(void *ptr, int64_t offset, int64_t value) {
+    if (!ptr) return;
+    int64_t size = *(int64_t *)ptr;
+    if (offset < 0 || offset + 2 > size) return;
+    uint8_t *base = ((uint8_t *)ptr) + 8 + offset;
+    uint16_t v = (uint16_t)value;
+    base[0] = (uint8_t)(v);
+    base[1] = (uint8_t)(v >> 8);
+}
+
+int64_t lpp_buf_get16le(void *ptr, int64_t offset) {
+    if (!ptr) return 0;
+    int64_t size = *(int64_t *)ptr;
+    if (offset < 0 || offset + 2 > size) return 0;
+    uint8_t *base = ((uint8_t *)ptr) + 8 + offset;
+    return (int64_t)((uint16_t)base[0] | ((uint16_t)base[1] << 8));
+}
+
+void lpp_buf_set16be(void *ptr, int64_t offset, int64_t value) {
+    if (!ptr) return;
+    int64_t size = *(int64_t *)ptr;
+    if (offset < 0 || offset + 2 > size) return;
+    uint8_t *base = ((uint8_t *)ptr) + 8 + offset;
+    uint16_t v = (uint16_t)value;
+    base[0] = (uint8_t)(v >> 8);
+    base[1] = (uint8_t)(v);
+}
+
+int64_t lpp_buf_get16be(void *ptr, int64_t offset) {
+    if (!ptr) return 0;
+    int64_t size = *(int64_t *)ptr;
+    if (offset < 0 || offset + 2 > size) return 0;
+    uint8_t *base = ((uint8_t *)ptr) + 8 + offset;
+    return (int64_t)(((uint16_t)base[0] << 8) | (uint16_t)base[1]);
+}
+
+void lpp_buf_set32be(void *ptr, int64_t offset, int64_t value) {
+    if (!ptr) return;
+    int64_t size = *(int64_t *)ptr;
+    if (offset < 0 || offset + 4 > size) return;
+    uint8_t *base = ((uint8_t *)ptr) + 8 + offset;
+    uint32_t v = (uint32_t)value;
+    base[0] = (uint8_t)(v >> 24);
+    base[1] = (uint8_t)(v >> 16);
+    base[2] = (uint8_t)(v >> 8);
+    base[3] = (uint8_t)(v);
+}
+
+int64_t lpp_buf_get32be(void *ptr, int64_t offset) {
+    if (!ptr) return 0;
+    int64_t size = *(int64_t *)ptr;
+    if (offset < 0 || offset + 4 > size) return 0;
+    uint8_t *base = ((uint8_t *)ptr) + 8 + offset;
+    return (int64_t)(((uint32_t)base[0] << 24) | ((uint32_t)base[1] << 16) |
+                     ((uint32_t)base[2] << 8) | (uint32_t)base[3]);
+}
+
+void lpp_buf_set64le(void *ptr, int64_t offset, int64_t value) {
+    if (!ptr) return;
+    int64_t size = *(int64_t *)ptr;
+    if (offset < 0 || offset + 8 > size) return;
+    uint8_t *base = ((uint8_t *)ptr) + 8 + offset;
+    uint64_t v = (uint64_t)value;
+    for (int i = 0; i < 8; i++) {
+        base[i] = (uint8_t)((v >> (i * 8)) & 0xFF);
+    }
+}
+
+int64_t lpp_buf_get64le(void *ptr, int64_t offset) {
+    if (!ptr) return 0;
+    int64_t size = *(int64_t *)ptr;
+    if (offset < 0 || offset + 8 > size) return 0;
+    uint8_t *base = ((uint8_t *)ptr) + 8 + offset;
+    uint64_t r = 0;
+    for (int i = 0; i < 8; i++) {
+        r |= ((uint64_t)base[i]) << (i * 8);
+    }
+    return (int64_t)r;
+}
+
+void lpp_buf_set64be(void *ptr, int64_t offset, int64_t value) {
+    if (!ptr) return;
+    int64_t size = *(int64_t *)ptr;
+    if (offset < 0 || offset + 8 > size) return;
+    uint8_t *base = ((uint8_t *)ptr) + 8 + offset;
+    uint64_t v = (uint64_t)value;
+    for (int i = 0; i < 8; i++) {
+        base[7 - i] = (uint8_t)((v >> (i * 8)) & 0xFF);
+    }
+}
+
+int64_t lpp_buf_get64be(void *ptr, int64_t offset) {
+    if (!ptr) return 0;
+    int64_t size = *(int64_t *)ptr;
+    if (offset < 0 || offset + 8 > size) return 0;
+    uint8_t *base = ((uint8_t *)ptr) + 8 + offset;
+    uint64_t r = 0;
+    for (int i = 0; i < 8; i++) {
+        r |= ((uint64_t)base[7 - i]) << (i * 8);
+    }
+    return (int64_t)r;
+}
+
+/* ── Buffer copy / append ────────────────────────────────────────────────── */
+
+void lpp_buf_copy(void *dst, int64_t dst_off, void *src, int64_t src_off, int64_t len) {
+    if (!dst || !src) return;
+    int64_t dst_size = *(int64_t *)dst;
+    int64_t src_size = *(int64_t *)src;
+    if (dst_off < 0 || dst_off + len > dst_size) return;
+    if (src_off < 0 || src_off + len > src_size) return;
+    memcpy(((uint8_t *)dst) + 8 + dst_off, ((uint8_t *)src) + 8 + src_off, (size_t)len);
+}
+
+/* ── File I/O ────────────────────────────────────────────────────────────── */
+
+int64_t lpp_buf_read(const char *path) {
+    if (!path) return 0;
+    FILE *f = fopen(path, "rb");
+    if (!f) return 0;
+    fseek(f, 0, SEEK_END);
+    long sz = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    if (sz < 0) { fclose(f); return 0; }
+    void *buf = (void *)(uintptr_t)lpp_buf_alloc((int64_t)sz);
+    if (!buf) { fclose(f); return 0; }
+    size_t read = fread(((uint8_t *)buf) + 8, 1, (size_t)sz, f);
+    fclose(f);
+    if (read != (size_t)sz) {
+        lpp_buf_free(buf);
+        return 0;
+    }
+    return (int64_t)(uintptr_t)buf;
+}
+
+int64_t lpp_buf_write(const char *path, void *ptr) {
+    if (!path || !ptr) return -1;
+    int64_t size = *(int64_t *)ptr;
+    FILE *f = fopen(path, "wb");
+    if (!f) return -1;
+    size_t written = fwrite(((uint8_t *)ptr) + 8, 1, (size_t)size, f);
+    fclose(f);
+    return (written == (size_t)size) ? 0 : -1;
+}
+
+/* ── CRC32 (IEEE 802.3 polynomial) ───────────────────────────────────────── */
+
+static uint32_t crc32_table[256];
+static int crc32_table_ready = 0;
+
+static void crc32_init_table(void) {
+    if (crc32_table_ready) return;
+    for (uint32_t i = 0; i < 256; i++) {
+        uint32_t crc = i;
+        for (int j = 0; j < 8; j++) {
+            crc = (crc >> 1) ^ ((crc & 1) ? 0xEDB88320UL : 0);
+        }
+        crc32_table[i] = crc;
+    }
+    crc32_table_ready = 1;
+}
+
+int64_t lpp_buf_crc32(void *ptr, int64_t off, int64_t len) {
+    if (!ptr) return 0;
+    int64_t size = *(int64_t *)ptr;
+    if (off < 0 || len < 0 || off + len > size) return 0;
+    crc32_init_table();
+    uint32_t crc = 0xFFFFFFFFUL;
+    uint8_t *data = ((uint8_t *)ptr) + 8 + off;
+    for (int64_t i = 0; i < len; i++) {
+        crc = crc32_table[(crc ^ data[i]) & 0xFF] ^ (crc >> 8);
+    }
+    return (int64_t)(crc ^ 0xFFFFFFFFUL);
+}
+
+/* ── strlen for L++ strings ─────────────────────────────────────────────── */
+
+int64_t lpp_str_len(const char *s) {
+    if (!s) return 0;
+    return (int64_t)strlen(s);
+}
+
+/* ── String from buffer (for debug/tooling) ──────────────────────────────── */
+
+char *lpp_buf_to_str(void *ptr, int64_t off, int64_t len) {
+    /* The result is an owned `Str` in generated code, so it must come from ARC
+     * and carry a header -- a malloc'd buffer here would be released through
+     * lpp_arc_release and read 24 bytes in front of a malloc block. */
+    if (!ptr) return lpp_empty_str();
+    int64_t size = *(int64_t *)ptr;
+    if (off < 0 || len < 0 || off + len > size) return lpp_empty_str();
+    char *s = (char *)lpp_arc_alloc((int64_t)len + 1);
+    if (!s) return lpp_empty_str();
+    memcpy(s, ((uint8_t *)ptr) + 8 + off, (size_t)len);
+    s[len] = 0;
+    return s;
+}
+
+/* Write a C string's bytes (without null terminator) into buffer at offset.
+   Returns bytes written, or -1 on bounds error. */
+int64_t lpp_buf_write_str(void *ptr, int64_t offset, const char *str) {
+    if (!ptr || !str) return -1;
+    int64_t size = *(int64_t *)ptr;
+    int64_t len = (int64_t)strlen(str);
+    if (offset < 0 || offset + len > size) return -1;
+    memcpy(((uint8_t *)ptr) + 8 + offset, str, (size_t)len);
+    // Update the stored size to reflect the bytes actually written
+    int64_t new_end = offset + len;
+    if (new_end > size) { *(int64_t *)ptr = new_end; }
+    return len;
+}
+
+/* Read len bytes from buffer as a newly allocated null-terminated string. */
+char *lpp_buf_read_str(void *ptr, int64_t offset, int64_t len) {
+    return lpp_buf_to_str(ptr, offset, len);
+}
+
+/* ── Macro wrappers casting integer buffer pointers to void* for C callers ─ */
+#define lpp_buf_free(p) lpp_buf_free((void*)(uintptr_t)(p))
+#define lpp_buf_len(p) lpp_buf_len((void*)(uintptr_t)(p))
+#define lpp_buf_get8(p, o) lpp_buf_get8((void*)(uintptr_t)(p), (o))
+#define lpp_buf_set8(p, o, v) lpp_buf_set8((void*)(uintptr_t)(p), (o), (v))
+#define lpp_buf_set32le(p, o, v) lpp_buf_set32le((void*)(uintptr_t)(p), (o), (v))
+#define lpp_buf_get32le(p, o) lpp_buf_get32le((void*)(uintptr_t)(p), (o))
+#define lpp_buf_set16le(p, o, v) lpp_buf_set16le((void*)(uintptr_t)(p), (o), (v))
+#define lpp_buf_get16le(p, o) lpp_buf_get16le((void*)(uintptr_t)(p), (o))
+#define lpp_buf_copy(d, do, s, so, l) lpp_buf_copy((void*)(uintptr_t)(d), (do), (void*)(uintptr_t)(s), (so), (l))
+#define lpp_buf_write(f, p) lpp_buf_write((f), (void*)(uintptr_t)(p))
+#define lpp_buf_crc32(p, o, l) lpp_buf_crc32((void*)(uintptr_t)(p), (o), (l))
+#define lpp_buf_write_str(p, o, s) lpp_buf_write_str((void*)(uintptr_t)(p), (o), (s))
+#define lpp_buf_read_str(p, o, l) lpp_buf_read_str((void*)(uintptr_t)(p), (o), (l))
+

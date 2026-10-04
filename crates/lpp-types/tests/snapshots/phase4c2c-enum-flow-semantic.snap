@@ -1,0 +1,278 @@
+hir-v1
+counts modules=1 definitions=3 symbols=12 origins=48 scopes=4 locals=5 type_refs=9 type_parameters=2 fields=2 variants=2 expressions=16 statements=7 bodies=4 match_arms=2 items=3
+symbols
+  Symbol(0) "Result"
+  Symbol(1) "propagate"
+  Symbol(2) "main"
+  Symbol(3) "T"
+  Symbol(4) "E"
+  Symbol(5) "Ok"
+  Symbol(6) "value"
+  Symbol(7) "Err"
+  Symbol(8) "error"
+  Symbol(9) "Int"
+  Symbol(10) "payload"
+  Symbol(11) "result"
+definitions
+  DefId(0) Definition { module: ModuleId(0), name: Symbol(0), kind: Enum, public: false, span: Span { file: FileId(0), start: 0, end: 53 } }
+  DefId(1) Definition { module: ModuleId(0), name: Symbol(1), kind: Function, public: false, span: Span { file: FileId(0), start: 54, end: 165 } }
+  DefId(2) Definition { module: ModuleId(0), name: Symbol(2), kind: Function, public: false, span: Span { file: FileId(0), start: 166, end: 344 } }
+module_scopes
+  module ModuleId(0)
+    definition Symbol(0) -> DefId(0)
+    definition Symbol(1) -> DefId(1)
+    definition Symbol(2) -> DefId(2)
+modules
+  0000 HirModule { module: ModuleId(0), items: IdRange(0..3) }
+origins
+  OriginId(0) Origin { span: Span { file: FileId(0), start: 0, end: 53 }, parent: None, kind: Source }
+  OriginId(1) Origin { span: Span { file: FileId(0), start: 12, end: 13 }, parent: None, kind: Source }
+  OriginId(2) Origin { span: Span { file: FileId(0), start: 15, end: 16 }, parent: None, kind: Source }
+  OriginId(3) Origin { span: Span { file: FileId(0), start: 23, end: 35 }, parent: None, kind: Source }
+  OriginId(4) Origin { span: Span { file: FileId(0), start: 33, end: 34 }, parent: None, kind: Source }
+  OriginId(5) Origin { span: Span { file: FileId(0), start: 26, end: 34 }, parent: None, kind: Source }
+  OriginId(6) Origin { span: Span { file: FileId(0), start: 40, end: 53 }, parent: None, kind: Source }
+  OriginId(7) Origin { span: Span { file: FileId(0), start: 51, end: 52 }, parent: None, kind: Source }
+  OriginId(8) Origin { span: Span { file: FileId(0), start: 44, end: 52 }, parent: None, kind: Source }
+  OriginId(9) Origin { span: Span { file: FileId(0), start: 54, end: 165 }, parent: None, kind: Source }
+  OriginId(10) Origin { span: Span { file: FileId(0), start: 82, end: 85 }, parent: None, kind: Source }
+  OriginId(11) Origin { span: Span { file: FileId(0), start: 87, end: 90 }, parent: None, kind: Source }
+  OriginId(12) Origin { span: Span { file: FileId(0), start: 75, end: 91 }, parent: None, kind: Source }
+  OriginId(13) Origin { span: Span { file: FileId(0), start: 68, end: 91 }, parent: None, kind: Source }
+  OriginId(14) Origin { span: Span { file: FileId(0), start: 103, end: 106 }, parent: None, kind: Source }
+  OriginId(15) Origin { span: Span { file: FileId(0), start: 108, end: 111 }, parent: None, kind: Source }
+  OriginId(16) Origin { span: Span { file: FileId(0), start: 96, end: 112 }, parent: None, kind: Source }
+  OriginId(17) Origin { span: Span { file: FileId(0), start: 118, end: 135 }, parent: None, kind: Source }
+  OriginId(18) Origin { span: Span { file: FileId(0), start: 129, end: 134 }, parent: None, kind: Source }
+  OriginId(19) Origin { span: Span { file: FileId(0), start: 129, end: 135 }, parent: None, kind: Source }
+  OriginId(20) Origin { span: Span { file: FileId(0), start: 118, end: 125 }, parent: None, kind: Source }
+  OriginId(21) Origin { span: Span { file: FileId(0), start: 140, end: 165 }, parent: None, kind: Source }
+  OriginId(22) Origin { span: Span { file: FileId(0), start: 147, end: 153 }, parent: None, kind: Source }
+  OriginId(23) Origin { span: Span { file: FileId(0), start: 147, end: 156 }, parent: None, kind: Source }
+  OriginId(24) Origin { span: Span { file: FileId(0), start: 157, end: 164 }, parent: None, kind: Source }
+  OriginId(25) Origin { span: Span { file: FileId(0), start: 147, end: 165 }, parent: None, kind: Source }
+  OriginId(26) Origin { span: Span { file: FileId(0), start: 166, end: 344 }, parent: None, kind: Source }
+  OriginId(27) Origin { span: Span { file: FileId(0), start: 180, end: 183 }, parent: None, kind: Source }
+  OriginId(28) Origin { span: Span { file: FileId(0), start: 189, end: 224 }, parent: None, kind: Source }
+  OriginId(29) Origin { span: Span { file: FileId(0), start: 199, end: 208 }, parent: None, kind: Source }
+  OriginId(30) Origin { span: Span { file: FileId(0), start: 209, end: 215 }, parent: None, kind: Source }
+  OriginId(31) Origin { span: Span { file: FileId(0), start: 209, end: 219 }, parent: None, kind: Source }
+  OriginId(32) Origin { span: Span { file: FileId(0), start: 220, end: 222 }, parent: None, kind: Source }
+  OriginId(33) Origin { span: Span { file: FileId(0), start: 209, end: 223 }, parent: None, kind: Source }
+  OriginId(34) Origin { span: Span { file: FileId(0), start: 199, end: 224 }, parent: None, kind: Source }
+  OriginId(35) Origin { span: Span { file: FileId(0), start: 189, end: 195 }, parent: None, kind: Source }
+  OriginId(36) Origin { span: Span { file: FileId(0), start: 229, end: 331 }, parent: None, kind: Source }
+  OriginId(37) Origin { span: Span { file: FileId(0), start: 235, end: 241 }, parent: None, kind: Source }
+  OriginId(38) Origin { span: Span { file: FileId(0), start: 251, end: 286 }, parent: None, kind: Source }
+  OriginId(39) Origin { span: Span { file: FileId(0), start: 254, end: 259 }, parent: None, kind: Source }
+  OriginId(40) Origin { span: Span { file: FileId(0), start: 274, end: 286 }, parent: None, kind: Source }
+  OriginId(41) Origin { span: Span { file: FileId(0), start: 281, end: 286 }, parent: None, kind: Source }
+  OriginId(42) Origin { span: Span { file: FileId(0), start: 295, end: 331 }, parent: None, kind: Source }
+  OriginId(43) Origin { span: Span { file: FileId(0), start: 299, end: 304 }, parent: None, kind: Source }
+  OriginId(44) Origin { span: Span { file: FileId(0), start: 319, end: 331 }, parent: None, kind: Source }
+  OriginId(45) Origin { span: Span { file: FileId(0), start: 326, end: 331 }, parent: None, kind: Source }
+  OriginId(46) Origin { span: Span { file: FileId(0), start: 336, end: 344 }, parent: None, kind: Source }
+  OriginId(47) Origin { span: Span { file: FileId(0), start: 343, end: 344 }, parent: None, kind: Source }
+scopes
+  ScopeId(0) Scope { parent: None, bindings: IdRange(1..3), origin: OriginId(9) }
+  ScopeId(1) Scope { parent: None, bindings: IdRange(9..10), origin: OriginId(26) }
+  ScopeId(2) Scope { parent: Some(ScopeId(1)), bindings: IdRange(5..6), origin: OriginId(38) }
+  ScopeId(3) Scope { parent: Some(ScopeId(1)), bindings: IdRange(7..8), origin: OriginId(42) }
+locals
+  LocalId(0) Local { name: Symbol(6), mutable: false, kind: Parameter, type_ref: Some(TypeRefId(4)), default: None, scope: ScopeId(0), origin: OriginId(13) }
+  LocalId(1) Local { name: Symbol(10), mutable: false, kind: Binding, type_ref: None, default: None, scope: ScopeId(0), origin: OriginId(20) }
+  LocalId(2) Local { name: Symbol(11), mutable: false, kind: Binding, type_ref: None, default: None, scope: ScopeId(1), origin: OriginId(35) }
+  LocalId(3) Local { name: Symbol(6), mutable: false, kind: Pattern, type_ref: None, default: None, scope: ScopeId(2), origin: OriginId(39) }
+  LocalId(4) Local { name: Symbol(8), mutable: false, kind: Pattern, type_ref: None, default: None, scope: ScopeId(3), origin: OriginId(43) }
+type_refs
+  TypeRefId(0) TypeRef { kind: Named(Symbol(3)), origin: OriginId(4) }
+  TypeRefId(1) TypeRef { kind: Named(Symbol(4)), origin: OriginId(7) }
+  TypeRefId(2) TypeRef { kind: Named(Symbol(9)), origin: OriginId(10) }
+  TypeRefId(3) TypeRef { kind: Named(Symbol(9)), origin: OriginId(11) }
+  TypeRefId(4) TypeRef { kind: Applied { base: Symbol(0), arguments: IdRange(0..2) }, origin: OriginId(12) }
+  TypeRefId(5) TypeRef { kind: Named(Symbol(9)), origin: OriginId(14) }
+  TypeRefId(6) TypeRef { kind: Named(Symbol(9)), origin: OriginId(15) }
+  TypeRefId(7) TypeRef { kind: Applied { base: Symbol(0), arguments: IdRange(2..4) }, origin: OriginId(16) }
+  TypeRefId(8) TypeRef { kind: Named(Symbol(9)), origin: OriginId(27) }
+type_parameters
+  TypeParamId(0) TypeParameter { name: Symbol(3), bound: None, origin: OriginId(1) }
+  TypeParamId(1) TypeParameter { name: Symbol(4), bound: None, origin: OriginId(2) }
+fields
+  FieldId(0) Field { name: Symbol(6), type_ref: TypeRefId(0), default: None, origin: OriginId(5) }
+  FieldId(1) Field { name: Symbol(8), type_ref: TypeRefId(1), default: None, origin: OriginId(8) }
+variants
+  VariantId(0) Variant { name: Symbol(5), fields: IdRange(0..1), origin: OriginId(3) }
+  VariantId(1) Variant { name: Symbol(7), fields: IdRange(1..2), origin: OriginId(6) }
+expressions
+  ExprId(0) Expression { kind: Name { symbol: Symbol(6), binding: Local(LocalId(0)) }, origin: OriginId(18) }
+  ExprId(1) Expression { kind: Try(ExprId(0)), origin: OriginId(19) }
+  ExprId(2) Expression { kind: Name { symbol: Symbol(0), binding: Item(Definition(DefId(0))) }, origin: OriginId(22) }
+  ExprId(3) Expression { kind: Field { base: ExprId(2), name: Symbol(5) }, origin: OriginId(23) }
+  ExprId(4) Expression { kind: Name { symbol: Symbol(10), binding: Local(LocalId(1)) }, origin: OriginId(24) }
+  ExprId(5) Expression { kind: Call { callee: ExprId(3), arguments: IdRange(0..1) }, origin: OriginId(25) }
+  ExprId(6) Expression { kind: Name { symbol: Symbol(1), binding: Item(Definition(DefId(1))) }, origin: OriginId(29) }
+  ExprId(7) Expression { kind: Name { symbol: Symbol(0), binding: Item(Definition(DefId(0))) }, origin: OriginId(30) }
+  ExprId(8) Expression { kind: Field { base: ExprId(7), name: Symbol(7) }, origin: OriginId(31) }
+  ExprId(9) Expression { kind: Literal(Integer(42)), origin: OriginId(32) }
+  ExprId(10) Expression { kind: Call { callee: ExprId(8), arguments: IdRange(1..2) }, origin: OriginId(33) }
+  ExprId(11) Expression { kind: Call { callee: ExprId(6), arguments: IdRange(2..3) }, origin: OriginId(34) }
+  ExprId(12) Expression { kind: Name { symbol: Symbol(11), binding: Local(LocalId(2)) }, origin: OriginId(37) }
+  ExprId(13) Expression { kind: Name { symbol: Symbol(6), binding: Local(LocalId(3)) }, origin: OriginId(41) }
+  ExprId(14) Expression { kind: Name { symbol: Symbol(8), binding: Local(LocalId(4)) }, origin: OriginId(45) }
+  ExprId(15) Expression { kind: Literal(Integer(0)), origin: OriginId(47) }
+statements
+  StmtId(0) Statement { kind: Let { bindings: IdRange(0..1), value: ExprId(1) }, origin: OriginId(17) }
+  StmtId(1) Statement { kind: Return(Some(ExprId(5))), origin: OriginId(21) }
+  StmtId(2) Statement { kind: Let { bindings: IdRange(4..5), value: ExprId(11) }, origin: OriginId(28) }
+  StmtId(3) Statement { kind: Return(Some(ExprId(13))), origin: OriginId(40) }
+  StmtId(4) Statement { kind: Return(Some(ExprId(14))), origin: OriginId(44) }
+  StmtId(5) Statement { kind: Match { subject: ExprId(12), arms: IdRange(0..2) }, origin: OriginId(36) }
+  StmtId(6) Statement { kind: Return(Some(ExprId(15))), origin: OriginId(46) }
+bodies
+  BodyId(0) Body { scope: ScopeId(0), statements: IdRange(0..2), origin: OriginId(9) }
+  BodyId(1) Body { scope: ScopeId(2), statements: IdRange(2..3), origin: OriginId(38) }
+  BodyId(2) Body { scope: ScopeId(3), statements: IdRange(3..4), origin: OriginId(42) }
+  BodyId(3) Body { scope: ScopeId(1), statements: IdRange(4..7), origin: OriginId(26) }
+match_arms
+  MatchArmId(0) MatchArm { path: IdRange(0..1), bindings: IdRange(6..7), body: BodyId(1), wildcard: false, origin: OriginId(38) }
+  MatchArmId(1) MatchArm { path: IdRange(1..2), bindings: IdRange(8..9), body: BodyId(2), wildcard: false, origin: OriginId(42) }
+items
+  HirItemId(0) HirItem { module: ModuleId(0), definition: Some(DefId(0)), name: Some(Symbol(0)), public: false, attributes: IdRange(0..0), kind: Enum(Enum { type_parameters: IdRange(0..2), variants: IdRange(0..2) }), origin: OriginId(0) }
+  HirItemId(1) HirItem { module: ModuleId(0), definition: Some(DefId(1)), name: Some(Symbol(1)), public: false, attributes: IdRange(0..0), kind: Function(Function { type_parameters: IdRange(0..0), parameters: IdRange(3..4), return_type: Some(TypeRefId(7)), body: Some(BodyId(0)), is_async: false, variadic: false }), origin: OriginId(9) }
+  HirItemId(2) HirItem { module: ModuleId(0), definition: Some(DefId(2)), name: Some(Symbol(2)), public: false, attributes: IdRange(0..0), kind: Function(Function { type_parameters: IdRange(0..0), parameters: IdRange(10..10), return_type: Some(TypeRefId(8)), body: Some(BodyId(3)), is_async: false, variadic: false }), origin: OriginId(26) }
+lists
+  symbols [Symbol(5), Symbol(7)]
+  type_refs [TypeRefId(2), TypeRefId(3), TypeRefId(5), TypeRefId(6)]
+  type_parameters [TypeParamId(0), TypeParamId(1)]
+  locals [LocalId(1), LocalId(0), LocalId(1), LocalId(0), LocalId(2), LocalId(3), LocalId(3), LocalId(4), LocalId(4), LocalId(2)]
+  expressions [ExprId(4), ExprId(9), ExprId(10)]
+  statements [StmtId(0), StmtId(1), StmtId(3), StmtId(4), StmtId(2), StmtId(5), StmtId(6)]
+  fields [FieldId(0), FieldId(1)]
+  variants [VariantId(0), VariantId(1)]
+  items [HirItemId(0), HirItemId(1), HirItemId(2)]
+  match_arms [MatchArmId(0), MatchArmId(1)]
+semantic-v4
+metrics SemanticMetrics { hir_nodes: 104, interned_types: 45, interned_type_lists: 13, type_list_entries: 18, inference_variables: 11, aggregate_facts: 4, place_facts: 0, enum_flow_facts: 4, builtin_facts: 0, trait_rules: 0, generic_instances: 1, minimum_payload_bytes: 4964 }
+types
+  TypeId(0) Error
+  TypeId(1) Never
+  TypeId(2) Primitive(Void)
+  TypeId(3) Primitive(Bool)
+  TypeId(4) Primitive(Int)
+  TypeId(5) Primitive(Float)
+  TypeId(6) Primitive(String)
+  TypeId(7) Primitive(Char)
+  TypeId(8) Primitive(U8)
+  TypeId(9) Primitive(U16)
+  TypeId(10) Primitive(U32)
+  TypeId(11) Primitive(I8)
+  TypeId(12) Primitive(I16)
+  TypeId(13) Primitive(I32)
+  TypeId(14) Primitive(StrSlice)
+  TypeId(15) Primitive(VectorI64x2)
+  TypeId(16) GenericParameter(TypeParamId(0))
+  TypeId(17) GenericParameter(TypeParamId(1))
+  TypeId(18) Nominal { definition: DefId(0), arguments: TypeListId(1) }
+  TypeId(19) Nominal { definition: DefId(0), arguments: TypeListId(2) }
+  TypeId(20) Function { parameters: TypeListId(3), result: TypeId(19) }
+  TypeId(21) Function { parameters: TypeListId(0), result: TypeId(4) }
+  TypeId(22) InferenceVariable(InferVarId(0))
+  TypeId(23) InferenceVariable(InferVarId(1))
+  TypeId(24) InferenceVariable(InferVarId(2))
+  TypeId(25) Nominal { definition: DefId(0), arguments: TypeListId(4) }
+  TypeId(26) Function { parameters: TypeListId(5), result: TypeId(25) }
+  TypeId(27) InferenceVariable(InferVarId(3))
+  TypeId(28) Function { parameters: TypeListId(6), result: TypeId(27) }
+  TypeId(29) Nominal { definition: DefId(0), arguments: TypeListId(8) }
+  TypeId(30) Function { parameters: TypeListId(7), result: TypeId(29) }
+  TypeId(31) InferenceVariable(InferVarId(4))
+  TypeId(32) InferenceVariable(InferVarId(5))
+  TypeId(33) Nominal { definition: DefId(0), arguments: TypeListId(9) }
+  TypeId(34) Function { parameters: TypeListId(10), result: TypeId(33) }
+  TypeId(35) InferenceVariable(InferVarId(6))
+  TypeId(36) Function { parameters: TypeListId(7), result: TypeId(35) }
+  TypeId(37) Nominal { definition: DefId(0), arguments: TypeListId(11) }
+  TypeId(38) Function { parameters: TypeListId(7), result: TypeId(37) }
+  TypeId(39) InferenceVariable(InferVarId(7))
+  TypeId(40) Function { parameters: TypeListId(12), result: TypeId(39) }
+  TypeId(41) InferenceVariable(InferVarId(8))
+  TypeId(42) InferenceVariable(InferVarId(9))
+  TypeId(43) InferenceVariable(InferVarId(10))
+  TypeId(44) Function { parameters: TypeListId(7), result: TypeId(19) }
+type_lists
+  TypeListId(0) []
+  TypeListId(1) [TypeId(16), TypeId(17)]
+  TypeListId(2) [TypeId(4), TypeId(4)]
+  TypeListId(3) [TypeId(19)]
+  TypeListId(4) [TypeId(23), TypeId(24)]
+  TypeListId(5) [TypeId(23)]
+  TypeListId(6) [TypeId(22)]
+  TypeListId(7) [TypeId(4)]
+  TypeListId(8) [TypeId(4), TypeId(24)]
+  TypeListId(9) [TypeId(31), TypeId(32)]
+  TypeListId(10) [TypeId(32)]
+  TypeListId(11) [TypeId(31), TypeId(4)]
+  TypeListId(12) [TypeId(35)]
+inference
+  InferVarId(0) InferenceVariable { parent: InferVarId(0), type_id: TypeId(22), level: InferenceLevel(1), origin: Some(OriginId(20)), binding: Some(TypeId(4)), rank: 0 }
+  InferVarId(1) InferenceVariable { parent: InferVarId(1), type_id: TypeId(23), level: InferenceLevel(1), origin: Some(OriginId(22)), binding: Some(TypeId(4)), rank: 0 }
+  InferVarId(2) InferenceVariable { parent: InferVarId(2), type_id: TypeId(24), level: InferenceLevel(1), origin: Some(OriginId(22)), binding: Some(TypeId(4)), rank: 0 }
+  InferVarId(3) InferenceVariable { parent: InferVarId(3), type_id: TypeId(27), level: InferenceLevel(1), origin: Some(OriginId(25)), binding: Some(TypeId(25)), rank: 0 }
+  InferVarId(4) InferenceVariable { parent: InferVarId(4), type_id: TypeId(31), level: InferenceLevel(1), origin: Some(OriginId(30)), binding: Some(TypeId(4)), rank: 0 }
+  InferVarId(5) InferenceVariable { parent: InferVarId(5), type_id: TypeId(32), level: InferenceLevel(1), origin: Some(OriginId(30)), binding: Some(TypeId(4)), rank: 0 }
+  InferVarId(6) InferenceVariable { parent: InferVarId(6), type_id: TypeId(35), level: InferenceLevel(1), origin: Some(OriginId(33)), binding: Some(TypeId(33)), rank: 0 }
+  InferVarId(7) InferenceVariable { parent: InferVarId(7), type_id: TypeId(39), level: InferenceLevel(1), origin: Some(OriginId(34)), binding: Some(TypeId(19)), rank: 0 }
+  InferVarId(8) InferenceVariable { parent: InferVarId(8), type_id: TypeId(41), level: InferenceLevel(1), origin: Some(OriginId(35)), binding: Some(TypeId(19)), rank: 0 }
+  InferVarId(9) InferenceVariable { parent: InferVarId(9), type_id: TypeId(42), level: InferenceLevel(1), origin: Some(OriginId(39)), binding: Some(TypeId(4)), rank: 0 }
+  InferVarId(10) InferenceVariable { parent: InferVarId(10), type_id: TypeId(43), level: InferenceLevel(1), origin: Some(OriginId(43)), binding: Some(TypeId(4)), rank: 0 }
+assignments
+  expression ExprId(0) Some(TypeId(19))
+  expression ExprId(1) Some(TypeId(4))
+  expression ExprId(2) Some(TypeId(19))
+  expression ExprId(3) Some(TypeId(44))
+  expression ExprId(4) Some(TypeId(4))
+  expression ExprId(5) Some(TypeId(19))
+  expression ExprId(6) Some(TypeId(20))
+  expression ExprId(7) Some(TypeId(19))
+  expression ExprId(8) Some(TypeId(44))
+  expression ExprId(9) Some(TypeId(4))
+  expression ExprId(10) Some(TypeId(19))
+  expression ExprId(11) Some(TypeId(19))
+  expression ExprId(12) Some(TypeId(19))
+  expression ExprId(13) Some(TypeId(4))
+  expression ExprId(14) Some(TypeId(4))
+  expression ExprId(15) Some(TypeId(4))
+  local LocalId(0) Some(TypeId(19))
+  local LocalId(1) Some(TypeId(4))
+  local LocalId(2) Some(TypeId(19))
+  local LocalId(3) Some(TypeId(4))
+  local LocalId(4) Some(TypeId(4))
+  type_ref TypeRefId(0) Some(TypeId(16))
+  type_ref TypeRefId(1) Some(TypeId(17))
+  type_ref TypeRefId(2) Some(TypeId(4))
+  type_ref TypeRefId(3) Some(TypeId(4))
+  type_ref TypeRefId(4) Some(TypeId(19))
+  type_ref TypeRefId(5) Some(TypeId(4))
+  type_ref TypeRefId(6) Some(TypeId(4))
+  type_ref TypeRefId(7) Some(TypeId(19))
+  type_ref TypeRefId(8) Some(TypeId(4))
+  item HirItemId(0) Some(TypeId(18))
+  item HirItemId(1) Some(TypeId(20))
+  item HirItemId(2) Some(TypeId(21))
+aggregate_facts
+  ExprId(3) VariantConstructor { item: HirItemId(0), variant: VariantId(0) }
+  ExprId(5) Constructor(EnumVariant { item: HirItemId(0), variant: VariantId(0) })
+  ExprId(8) VariantConstructor { item: HirItemId(0), variant: VariantId(1) }
+  ExprId(10) Constructor(EnumVariant { item: HirItemId(0), variant: VariantId(1) })
+place_facts
+enum_flow_facts
+  match StmtId(5) EnumMatchFact { item: HirItemId(0), subject_type: TypeId(19), arms: IdRange(0..2), covered_variants: 2, total_variants: 2, wildcard: None }
+  arm MatchArmId(0) Variant { item: HirItemId(0), variant: VariantId(0), fields: IdRange(0..1), bindings: IdRange(6..7), reachable: true }
+  arm MatchArmId(1) Variant { item: HirItemId(0), variant: VariantId(1), fields: IdRange(1..2), bindings: IdRange(8..9), reachable: true }
+  try ExprId(1) EnumTryFact { item: HirItemId(0), carrier_type: TypeId(19), success: VariantId(0), success_field: FieldId(0), success_type: TypeId(4), variants: IdRange(0..2), return_item: HirItemId(0), return_type: TypeId(19), direct_residual: true }
+builtin_facts
+trait_rules
+trait_diagnostics []
+instances
+  InstanceRecord { id: InstanceId(0), key: InstanceKey { item: HirItemId(0), arguments: TypeListId(2) }, requested_by: None, origin: Some(OriginId(22)), kind: Required, depth: 0, round: 0, complete: true }
+instance_diagnostics []

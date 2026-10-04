@@ -1,0 +1,15 @@
+# Test dynamic cycle creation at runtime
+struct Node:
+    id: Int
+    next: Node
+
+def make_dynamic_cycle() -> Int:
+    mut a := Node(100, 0)
+    mut b := Node(200, 0)
+    a.next = b
+    b.next = a
+    return a.next.next.id
+
+def main():
+    res := make_dynamic_cycle()
+    print(res)

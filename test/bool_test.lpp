@@ -1,0 +1,12 @@
+def main():
+    mut b := true
+    if b:
+        print_str("b is true!")
+    else:
+        print_str("b is false!")
+        
+    mut c := false
+    if c:
+        print_str("c is true!")
+    else:
+        print_str("c is false!")

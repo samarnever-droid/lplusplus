@@ -1,0 +1,41 @@
+# Self-contained TCP round trip: no external peer, no threads.
+#
+# The connect completes into the listener's backlog, so the later accept
+# returns immediately and the whole exchange runs on one thread.
+
+def main():
+    listener := net_listen(18099)
+    print_str("listener:")
+    print(listener >= 0)
+
+    ip := net_resolve("localhost")
+    print_str(ip)
+
+    client := net_connect("127.0.0.1", 18099)
+    print_str("client:")
+    print(client >= 0)
+
+    server := net_accept(listener)
+    print_str("server:")
+    print(server >= 0)
+
+    sent := net_send_all(client, "ping")
+    print_str("sent:")
+    print(sent)
+
+    request := net_recv(server, 64)
+    print_str("server received:")
+    print_str(request)
+
+    echoed := net_send_all(server, str_concat("echo:", request))
+    print_str("echoed:")
+    print(echoed)
+
+    reply := net_recv(client, 64)
+    print_str("client received:")
+    print_str(reply)
+
+    net_close(server)
+    net_close(client)
+    net_close(listener)
+    print_str("done")

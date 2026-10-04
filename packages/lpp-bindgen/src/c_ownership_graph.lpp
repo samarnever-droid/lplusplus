@@ -1,0 +1,128 @@
+# c_ownership_graph.lpp — allocation/free site summary over the call graph.
+#
+# This is deliberately site-based, not path-sensitive ownership proof. It marks
+# functions that allocate, reallocate and free, detects obvious site imbalance,
+# and preserves functions requiring later CFG/path analysis.
+
+import c_call_graph
+import c_translation_unit
+import c_declaration_graph
+import text
+
+struct COwnershipStats:
+    functions: Int
+    functions_with_allocation: Int
+    functions_with_reallocation: Int
+    functions_with_deallocation: Int
+    functions_site_balanced: Int
+    functions_alloc_only: Int
+    functions_free_only: Int
+    functions_requiring_path_analysis: Int
+    allocation_sites: Int
+    reallocation_sites: Int
+    deallocation_sites: Int
+
+struct COwnershipResult:
+    graph: Str
+    report: Str
+    stats: COwnershipStats
+    valid: Int
+
+struct COwnerFlush:
+    builder: CTUTextBuilder
+    stats: COwnershipStats
+
+
+def c_owner_summary(function_name: Str, allocations: Int, reallocations: Int, frees: Int) -> Str:
+    mut classification := "none"
+    if allocations > 0 && frees > 0:
+        classification = "site-balanced-needs-path-proof"
+    elif allocations > 0:
+        classification = "alloc-only"
+    elif frees > 0:
+        classification = "free-only"
+    elif reallocations > 0:
+        classification = "realloc-only"
+    mut out := str_concat("ownership|", str_concat(function_name, "|alloc="))
+    out = str_concat(out, str_concat(int_to_str(allocations), "|realloc="))
+    out = str_concat(out, str_concat(int_to_str(reallocations), "|free="))
+    out = str_concat(out, str_concat(int_to_str(frees), "|"))
+    return str_concat(out, str_concat(classification, "\n"))
+
+
+def c_owner_flush(builder_in: CTUTextBuilder, stats_in: COwnershipStats, function_name: Str, allocations: Int, reallocations: Int, frees: Int) -> COwnerFlush:
+    mut builder := builder_in
+    mut stats := stats_in
+    if str_len(function_name) == 0:
+        return COwnerFlush(builder, stats)
+    stats.functions = stats.functions + 1
+    stats.allocation_sites = stats.allocation_sites + allocations
+    stats.reallocation_sites = stats.reallocation_sites + reallocations
+    stats.deallocation_sites = stats.deallocation_sites + frees
+    if allocations > 0:
+        stats.functions_with_allocation = stats.functions_with_allocation + 1
+    if reallocations > 0:
+        stats.functions_with_reallocation = stats.functions_with_reallocation + 1
+    if frees > 0:
+        stats.functions_with_deallocation = stats.functions_with_deallocation + 1
+    if allocations > 0 && frees > 0:
+        stats.functions_site_balanced = stats.functions_site_balanced + 1
+        stats.functions_requiring_path_analysis = stats.functions_requiring_path_analysis + 1
+    elif allocations > 0:
+        stats.functions_alloc_only = stats.functions_alloc_only + 1
+        stats.functions_requiring_path_analysis = stats.functions_requiring_path_analysis + 1
+    elif frees > 0:
+        stats.functions_free_only = stats.functions_free_only + 1
+        stats.functions_requiring_path_analysis = stats.functions_requiring_path_analysis + 1
+    elif reallocations > 0:
+        stats.functions_requiring_path_analysis = stats.functions_requiring_path_analysis + 1
+    builder = c_tu_builder_add(builder, c_owner_summary(function_name, allocations, reallocations, frees))
+    return COwnerFlush(builder, stats)
+
+
+def c_ownership_graph_file(path: Str) -> COwnershipResult:
+    calls := c_call_graph_file(path)
+    mut stats := COwnershipStats()
+    if calls.valid == 0:
+        return COwnershipResult("", "valid=0\nreason=C2-OWNERSHIP-CALL-GRAPH\n", stats, 0)
+    lines := str_split(calls.graph, 10)
+    mut builder := CTUTextBuilder(buf_alloc(65536), 0, 65536)
+    builder = c_tu_builder_add(builder, "schema|c2lpp-ownership-sites-v1\n")
+    mut current_function := ""
+    mut allocations := 0
+    mut reallocations := 0
+    mut frees := 0
+    for record in lines:
+        if text_starts(record, "caller|"):
+            flushed := c_owner_flush(builder, stats, current_function, allocations, reallocations, frees)
+            builder = flushed.builder
+            stats = flushed.stats
+            current_function = c_decl_field(record, 1)
+            allocations = 0
+            reallocations = 0
+            frees = 0
+        elif text_starts(record, "call|"):
+            callee := c_decl_field(record, 2)
+            if c_call_is_reallocator(callee):
+                reallocations = reallocations + 1
+            elif c_call_is_allocator(callee):
+                allocations = allocations + 1
+            elif c_call_is_deallocator(callee):
+                frees = frees + 1
+    final_flush := c_owner_flush(builder, stats, current_function, allocations, reallocations, frees)
+    builder = final_flush.builder
+    stats = final_flush.stats
+    graph := c_tu_builder_finish(builder)
+    mut report := "valid=1\n"
+    report = str_concat(report, str_concat("functions=", str_concat(int_to_str(stats.functions), "\n")))
+    report = str_concat(report, str_concat("functions_with_allocation=", str_concat(int_to_str(stats.functions_with_allocation), "\n")))
+    report = str_concat(report, str_concat("functions_with_reallocation=", str_concat(int_to_str(stats.functions_with_reallocation), "\n")))
+    report = str_concat(report, str_concat("functions_with_deallocation=", str_concat(int_to_str(stats.functions_with_deallocation), "\n")))
+    report = str_concat(report, str_concat("functions_site_balanced=", str_concat(int_to_str(stats.functions_site_balanced), "\n")))
+    report = str_concat(report, str_concat("functions_alloc_only=", str_concat(int_to_str(stats.functions_alloc_only), "\n")))
+    report = str_concat(report, str_concat("functions_free_only=", str_concat(int_to_str(stats.functions_free_only), "\n")))
+    report = str_concat(report, str_concat("functions_requiring_path_analysis=", str_concat(int_to_str(stats.functions_requiring_path_analysis), "\n")))
+    report = str_concat(report, str_concat("allocation_sites=", str_concat(int_to_str(stats.allocation_sites), "\n")))
+    report = str_concat(report, str_concat("reallocation_sites=", str_concat(int_to_str(stats.reallocation_sites), "\n")))
+    report = str_concat(report, str_concat("deallocation_sites=", str_concat(int_to_str(stats.deallocation_sites), "\n")))
+    return COwnershipResult(graph, report, stats, 1)

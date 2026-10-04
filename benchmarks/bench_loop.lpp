@@ -1,0 +1,14 @@
+# bench_loop.lpp — Inner-loop integer accumulator benchmark
+# Measures loop/branch throughput with 10 million iterations.
+
+def count(n: Int) -> Int:
+    mut i := 0
+    mut acc := 0
+    while i < n:
+        acc = acc + i
+        i = i + 1
+    return acc
+
+def main():
+    result := count(10000000)
+    print(result)

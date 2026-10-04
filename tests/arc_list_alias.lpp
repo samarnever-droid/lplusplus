@@ -1,0 +1,8 @@
+# Ownership audit: List[Int] aliases are ARC owners, not raw shared pointers.
+# Expected output:
+# 7
+
+def main():
+    original := [7]
+    alias := original
+    print(list_get(alias, 0))

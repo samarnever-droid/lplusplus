@@ -1,0 +1,236 @@
+# c_declaration_graph.lpp — semantic type-shape pass over TU records.
+#
+# This resolves base type families and declarator shape facts for every top-level
+# record without parsing function bodies. It is a prerequisite for a complete C
+# type graph, not a claim that parameter lists, attributes, layouts or bodies are
+# semantically complete.
+
+import c_translation_unit
+import c_lexer
+import c_audit
+import text
+
+struct CDeclStats:
+    declarations: Int
+    base_types_resolved: Int
+    base_types_unresolved: Int
+    primitive_base_types: Int
+    typedef_base_types: Int
+    aggregate_base_types: Int
+    abi_typedef_base_types: Int
+    pointer_declarations: Int
+    array_declarations: Int
+    function_records: Int
+    function_pointer_records: Int
+    variadic_records: Int
+    typeof_records: Int
+
+struct CDeclResult:
+    graph: Str
+    report: Str
+    tu_report: Str
+    stats: CDeclStats
+    valid: Int
+
+
+def c_decl_field(record: Str, wanted: Int) -> Str:
+    fields := str_split(record, 124)
+    mut index := 0
+    for field in fields:
+        if index == wanted:
+            return field
+        index = index + 1
+    return ""
+
+
+def c_decl_set_add(values: Str, value: Str) -> Str:
+    if str_len(value) == 0 || text_eq(value, "<anonymous>"):
+        return values
+    needle := str_concat("|", str_concat(value, "|"))
+    if text_contains(values, needle):
+        return values
+    return str_concat(values, needle)
+
+
+def c_decl_set_has(values: Str, value: Str) -> Bool:
+    return text_contains(values, str_concat("|", str_concat(value, "|")))
+
+
+def c_decl_is_primitive(value: Str) -> Bool:
+    if text_eq(value, "void") || text_eq(value, "char") || text_eq(value, "short"):
+        return true
+    if text_eq(value, "int") || text_eq(value, "long") || text_eq(value, "float"):
+        return true
+    if text_eq(value, "double") || text_eq(value, "signed") || text_eq(value, "unsigned"):
+        return true
+    if text_eq(value, "_Bool") || text_eq(value, "_Complex") || text_eq(value, "_Imaginary"):
+        return true
+    if text_eq(value, "__int128") || text_eq(value, "__builtin_va_list"):
+        return true
+    return false
+
+
+def c_decl_is_abi_typedef(value: Str) -> Bool:
+    if text_eq(value, "pid_t") || text_eq(value, "size_t") || text_eq(value, "ssize_t"):
+        return true
+    if text_eq(value, "off_t") || text_eq(value, "mode_t") || text_eq(value, "time_t"):
+        return true
+    if text_eq(value, "uid_t") || text_eq(value, "gid_t") || text_eq(value, "ino_t"):
+        return true
+    if text_eq(value, "dev_t") || text_eq(value, "socklen_t") || text_eq(value, "va_list"):
+        return true
+    return false
+
+
+def c_decl_shape_record(kind: Str, name: Str, base: Str, base_class: Str, pointer_depth: Int, array_rank: Int, function_pointer: Int, variadic: Int, start: Int, end: Int) -> Str:
+    mut out := str_concat("shape|", str_concat(kind, "|"))
+    out = str_concat(out, str_concat(name, "|base="))
+    out = str_concat(out, str_concat(base, "|class="))
+    out = str_concat(out, str_concat(base_class, "|pointers="))
+    out = str_concat(out, str_concat(int_to_str(pointer_depth), "|arrays="))
+    out = str_concat(out, str_concat(int_to_str(array_rank), "|function_pointer="))
+    out = str_concat(out, str_concat(int_to_str(function_pointer), "|variadic="))
+    out = str_concat(out, str_concat(int_to_str(variadic), "|span="))
+    out = str_concat(out, str_concat(int_to_str(start), ".."))
+    return str_concat(out, str_concat(int_to_str(end), "\n"))
+
+
+def c_decl_resolve_file(path: Str) -> CDeclResult:
+    tu := c_tu_scan_file(path)
+    mut stats := CDeclStats()
+    if tu.valid == 0:
+        return CDeclResult("", "valid=0\nreason=C2-DECL-TU-INVALID\n", tu.report, stats, 0)
+    lines := str_split(tu.graph, 10)
+    mut typedefs := ""
+    mut aggregates := ""
+    for record in lines:
+        if text_starts(record, "typedef|"):
+            typedefs = c_decl_set_add(typedefs, c_decl_field(record, 1))
+        elif text_starts(record, "aggregate|"):
+            aggregates = c_decl_set_add(aggregates, c_decl_field(record, 1))
+
+    data := buf_read(path)
+    size := buf_len(data)
+    mut builder := CTUTextBuilder(buf_alloc(65536), 0, 65536)
+    builder = c_tu_builder_add(builder, "schema|c2lpp-declaration-shape-v1\n")
+
+    for record in lines:
+        if str_len(record) > 0 && !text_starts(record, "schema|"):
+            kind := c_decl_field(record, 0)
+            name := c_decl_field(record, 1)
+            line := parse_int(c_decl_field(record, 3))
+            column := parse_int(c_decl_field(record, 4))
+            start := parse_int(c_decl_field(record, 5))
+            end := parse_int(c_decl_field(record, 6))
+            flags := c_decl_field(record, 7)
+            mut cursor := CLexCursor(data, size, path, start, line, column)
+            mut base := ""
+            mut base_class := "unresolved"
+            mut pointer_depth := 0
+            mut array_rank := 0
+            mut function_pointer := 0
+            mut variadic := 0
+            mut expect_tag := false
+            mut aggregate_keyword := ""
+            mut saw_anonymous_aggregate := false
+            mut done := false
+            while cursor.offset < end && !done:
+                step := c_lex_next_code(cursor)
+                spelling := step.token.spelling
+                if step.token.kind == C_TOKEN_EOF || step.token.span.start_offset >= end:
+                    done = true
+                elif text_eq(spelling, "{") && text_eq(kind, "function"):
+                    done = true
+                else:
+                    if text_eq(spelling, "{") && expect_tag:
+                        # An anonymous aggregate (`struct { ... }`) has no tag;
+                        # the following identifier is a field name, not a tag, so
+                        # stop expecting a tag rather than misreading a field as
+                        # the struct name.
+                        expect_tag = false
+                        saw_anonymous_aggregate = true
+                    elif expect_tag && step.token.kind == C_TOKEN_IDENTIFIER:
+                        base = str_concat(aggregate_keyword, str_concat(" ", spelling))
+                        base_class = "aggregate"
+                        expect_tag = false
+                    elif text_eq(spelling, "struct") || text_eq(spelling, "union") || text_eq(spelling, "enum"):
+                        aggregate_keyword = spelling
+                        expect_tag = true
+                    elif c_decl_is_primitive(spelling):
+                        if str_len(base) == 0:
+                            base = spelling
+                            base_class = "primitive"
+                    elif step.token.kind == C_TOKEN_IDENTIFIER && c_decl_set_has(typedefs, spelling):
+                        if str_len(base) == 0:
+                            base = spelling
+                            base_class = "typedef"
+                    elif step.token.kind == C_TOKEN_IDENTIFIER && c_decl_is_abi_typedef(spelling):
+                        if str_len(base) == 0:
+                            base = spelling
+                            base_class = "abi-typedef"
+                    elif text_eq(spelling, "typeof") || text_eq(spelling, "__typeof__"):
+                        if str_len(base) == 0:
+                            base = spelling
+                            base_class = "typeof"
+                        stats.typeof_records = stats.typeof_records + 1
+                    if text_eq(spelling, "*"):
+                        pointer_depth = pointer_depth + 1
+                    elif text_eq(spelling, "["):
+                        array_rank = array_rank + 1
+                    elif text_eq(spelling, "..."):
+                        variadic = 1
+                    cursor = step.next
+            if text_contains(flags, "function-pointer"):
+                function_pointer = 1
+            if text_contains(flags, "variadic"):
+                variadic = 1
+            # A typedef of an anonymous aggregate (`typedef struct {...} Name;`)
+            # names the aggregate itself: its base is the typedef name.
+            if saw_anonymous_aggregate && text_eq(kind, "typedef") && str_len(name) > 0:
+                base = name
+                base_class = "aggregate"
+                pointer_depth = 0
+                array_rank = 0
+            stats.declarations = stats.declarations + 1
+            if str_len(base) > 0:
+                stats.base_types_resolved = stats.base_types_resolved + 1
+                if text_eq(base_class, "primitive"):
+                    stats.primitive_base_types = stats.primitive_base_types + 1
+                elif text_eq(base_class, "typedef"):
+                    stats.typedef_base_types = stats.typedef_base_types + 1
+                elif text_eq(base_class, "aggregate"):
+                    stats.aggregate_base_types = stats.aggregate_base_types + 1
+                elif text_eq(base_class, "abi-typedef"):
+                    stats.abi_typedef_base_types = stats.abi_typedef_base_types + 1
+            else:
+                stats.base_types_unresolved = stats.base_types_unresolved + 1
+            if pointer_depth > 0:
+                stats.pointer_declarations = stats.pointer_declarations + 1
+            if array_rank > 0:
+                stats.array_declarations = stats.array_declarations + 1
+            if text_eq(kind, "prototype") || text_eq(kind, "function"):
+                stats.function_records = stats.function_records + 1
+            if function_pointer != 0:
+                stats.function_pointer_records = stats.function_pointer_records + 1
+            if variadic != 0:
+                stats.variadic_records = stats.variadic_records + 1
+            shape := c_decl_shape_record(kind, name, base, base_class, pointer_depth, array_rank, function_pointer, variadic, start, end)
+            builder = c_tu_builder_add(builder, shape)
+    graph := c_tu_builder_finish(builder)
+    buf_free(data)
+
+    mut report := "valid=1\n"
+    report = str_concat(report, str_concat("declarations=", str_concat(int_to_str(stats.declarations), "\n")))
+    report = str_concat(report, str_concat("base_types_resolved=", str_concat(int_to_str(stats.base_types_resolved), "\n")))
+    report = str_concat(report, str_concat("base_types_unresolved=", str_concat(int_to_str(stats.base_types_unresolved), "\n")))
+    report = str_concat(report, str_concat("primitive_base_types=", str_concat(int_to_str(stats.primitive_base_types), "\n")))
+    report = str_concat(report, str_concat("typedef_base_types=", str_concat(int_to_str(stats.typedef_base_types), "\n")))
+    report = str_concat(report, str_concat("aggregate_base_types=", str_concat(int_to_str(stats.aggregate_base_types), "\n")))
+    report = str_concat(report, str_concat("abi_typedef_base_types=", str_concat(int_to_str(stats.abi_typedef_base_types), "\n")))
+    report = str_concat(report, str_concat("pointer_declarations=", str_concat(int_to_str(stats.pointer_declarations), "\n")))
+    report = str_concat(report, str_concat("array_declarations=", str_concat(int_to_str(stats.array_declarations), "\n")))
+    report = str_concat(report, str_concat("function_records=", str_concat(int_to_str(stats.function_records), "\n")))
+    report = str_concat(report, str_concat("function_pointer_records=", str_concat(int_to_str(stats.function_pointer_records), "\n")))
+    report = str_concat(report, str_concat("variadic_records=", str_concat(int_to_str(stats.variadic_records), "\n")))
+    report = str_concat(report, str_concat("typeof_records=", str_concat(int_to_str(stats.typeof_records), "\n")))
+    return CDeclResult(graph, report, tu.report, stats, 1)

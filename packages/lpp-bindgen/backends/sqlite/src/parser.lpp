@@ -1,0 +1,1350 @@
+# parser.lpp — recursive-descent SQL parser producing statements + AST nodes.
+#
+# Parser state handle:
+#   [0]  tokens
+#   [8]  position
+#   [16] arena
+#   [24] error message (sv, index 0 if any)
+#   [32] error flag
+#   [40] statement store
+#
+# Statement store (flat, one statement per parse):
+#   kind, target table, column list, value lists, expressions, clauses...
+# Held in a `stmt` handle described in stmt.lpp-style comments below.
+
+import mem
+import strbuf
+import lexer
+import ast
+
+# ── statement kinds ──
+def S_SELECT() -> Int:
+    return 1
+def S_INSERT() -> Int:
+    return 2
+def S_UPDATE() -> Int:
+    return 3
+def S_DELETE() -> Int:
+    return 4
+def S_CREATE_TABLE() -> Int:
+    return 5
+def S_DROP_TABLE() -> Int:
+    return 6
+def S_BEGIN() -> Int:
+    return 7
+def S_COMMIT() -> Int:
+    return 8
+def S_ROLLBACK() -> Int:
+    return 9
+def S_PRAGMA() -> Int:
+    return 10
+def S_CREATE_INDEX() -> Int:
+    return 11
+def S_DROP_INDEX() -> Int:
+    return 12
+def S_CREATE_VIEW() -> Int:
+    return 13
+def S_DROP_VIEW() -> Int:
+    return 14
+
+# ── statement handle layout (128 bytes) ──
+#  [0]  kind
+#  [8]  table name (sv idx 0)
+#  [16] arena
+#  [24] result columns (iv of node ids)
+#  [32] result aliases (sv)
+#  [40] from tables (sv)
+#  [48] from aliases (sv)
+#  [56] join types (iv)    0=cross/comma 1=inner 2=left
+#  [64] join conditions (iv of node ids)
+#  [72] where node
+#  [80] group by (iv), having node in [88]
+#  [88] having node
+#  [96] order by (iv of nodes), directions in [104]
+#  [104] order dirs (iv)
+#  [112] limit node, offset node packed: limit in [112], offset in [120]
+#  [120] offset node
+# Extra fields live in a side table because 128 bytes runs out:
+#  ext[0] insert columns (sv)
+#  ext[1] insert value rows (iv of argv slots)
+#  ext[2] update set columns (sv)
+#  ext[3] update set exprs (iv)
+#  ext[4] create sql text
+#  ext[5] distinct flag
+#  ext[6] select-from-subquery
+#  ext[7] pragma arg
+#  ext[8] compound op / next select
+#  ext[9] insert-from-select
+#  ext[10] or-conflict
+#  ext[11] index columns
+
+def st_new(arena: Int) -> Int:
+    s := buf_alloc(136)
+    mut i := 0
+    while i < 136:
+        buf_set8(s, i, 0)
+        i = i + 1
+    mem.bset64(s, 16, arena)
+    mem.bset64(s, 24, mem.iv_new(4))
+    mem.bset64(s, 32, strbuf.sv_new())
+    mem.bset64(s, 40, strbuf.sv_new())
+    mem.bset64(s, 48, strbuf.sv_new())
+    mem.bset64(s, 56, mem.iv_new(4))
+    mem.bset64(s, 64, mem.iv_new(4))
+    mem.bset64(s, 72, 0 - 1)
+    mem.bset64(s, 80, mem.iv_new(4))
+    mem.bset64(s, 88, 0 - 1)
+    mem.bset64(s, 96, mem.iv_new(4))
+    mem.bset64(s, 104, mem.iv_new(4))
+    mem.bset64(s, 112, 0 - 1)
+    mem.bset64(s, 120, 0 - 1)
+    mem.bset64(s, 128, ext_new())
+    return s
+
+def ext_new() -> Int:
+    e := buf_alloc(128)
+    mut i := 0
+    while i < 128:
+        buf_set8(e, i, 0)
+        i = i + 1
+    mem.bset64(e, 0, strbuf.sv_new())     # insert cols
+    mem.bset64(e, 8, mem.iv_new(4))       # value rows (argv slots)
+    mem.bset64(e, 16, strbuf.sv_new())    # set cols
+    mem.bset64(e, 24, mem.iv_new(4))      # set exprs
+    mem.bset64(e, 32, strbuf.sv_new())    # create sql / pragma name
+    mem.bset64(e, 40, 0)                  # distinct
+    mem.bset64(e, 48, 0)                  # subselect stmt
+    mem.bset64(e, 56, strbuf.sv_new())    # pragma arg
+    mem.bset64(e, 64, 0)                  # compound next
+    mem.bset64(e, 72, 0)                  # compound op
+    mem.bset64(e, 80, 0)                  # insert select
+    mem.bset64(e, 88, 0)                  # or-conflict
+    mem.bset64(e, 96, strbuf.sv_new())    # index cols
+    mem.bset64(e, 104, 0)                 # if-not-exists / if-exists
+    mem.bset64(e, 112, 0)                 # unique index
+    return e
+
+def st_ext(s: Int) -> Int:
+    return mem.bget64(s, 128)
+
+def st_kind(s: Int) -> Int:
+    return mem.bget64(s, 0)
+
+def st_set_kind(s: Int, k: Int):
+    mem.bset64(s, 0, k)
+
+def st_arena(s: Int) -> Int:
+    return mem.bget64(s, 16)
+
+def st_results(s: Int) -> Int:
+    return mem.bget64(s, 24)
+
+def st_aliases(s: Int) -> Int:
+    return mem.bget64(s, 32)
+
+def st_from(s: Int) -> Int:
+    return mem.bget64(s, 40)
+
+def st_from_alias(s: Int) -> Int:
+    return mem.bget64(s, 48)
+
+def st_join_types(s: Int) -> Int:
+    return mem.bget64(s, 56)
+
+def st_join_conds(s: Int) -> Int:
+    return mem.bget64(s, 64)
+
+def st_where(s: Int) -> Int:
+    return mem.bget64(s, 72)
+
+def st_set_where(s: Int, n: Int):
+    mem.bset64(s, 72, n)
+
+def st_group(s: Int) -> Int:
+    return mem.bget64(s, 80)
+
+def st_having(s: Int) -> Int:
+    return mem.bget64(s, 88)
+
+def st_order(s: Int) -> Int:
+    return mem.bget64(s, 96)
+
+def st_order_dirs(s: Int) -> Int:
+    return mem.bget64(s, 104)
+
+def st_limit(s: Int) -> Int:
+    return mem.bget64(s, 112)
+
+def st_offset(s: Int) -> Int:
+    return mem.bget64(s, 120)
+
+def st_ins_cols(s: Int) -> Int:
+    return mem.bget64(st_ext(s), 0)
+
+def st_val_rows(s: Int) -> Int:
+    return mem.bget64(st_ext(s), 8)
+
+def st_set_cols(s: Int) -> Int:
+    return mem.bget64(st_ext(s), 16)
+
+def st_set_exprs(s: Int) -> Int:
+    return mem.bget64(st_ext(s), 24)
+
+def st_textv(s: Int) -> Int:
+    return mem.bget64(st_ext(s), 32)
+
+def st_distinct(s: Int) -> Int:
+    return mem.bget64(st_ext(s), 40)
+
+def st_subsel(s: Int) -> Int:
+    return mem.bget64(st_ext(s), 48)
+
+def st_pragma_arg(s: Int) -> Int:
+    return mem.bget64(st_ext(s), 56)
+
+def st_compound(s: Int) -> Int:
+    return mem.bget64(st_ext(s), 64)
+
+def st_compound_op(s: Int) -> Int:
+    return mem.bget64(st_ext(s), 72)
+
+def st_ins_select(s: Int) -> Int:
+    return mem.bget64(st_ext(s), 80)
+
+def st_ifexists(s: Int) -> Int:
+    return mem.bget64(st_ext(s), 104)
+
+def st_table(s: Int) -> Str:
+    tv := st_textv(s)
+    if strbuf.sv_len(tv) == 0:
+        return ""
+    return strbuf.sv_get(tv, 0)
+
+def st_free(s: Int):
+    mem.iv_free(st_results(s))
+    strbuf.sv_free(st_aliases(s))
+    strbuf.sv_free(st_from(s))
+    strbuf.sv_free(st_from_alias(s))
+    mem.iv_free(st_join_types(s))
+    mem.iv_free(st_join_conds(s))
+    mem.iv_free(st_group(s))
+    mem.iv_free(st_order(s))
+    mem.iv_free(st_order_dirs(s))
+    e := st_ext(s)
+    strbuf.sv_free(mem.bget64(e, 0))
+    mem.iv_free(mem.bget64(e, 8))
+    strbuf.sv_free(mem.bget64(e, 16))
+    mem.iv_free(mem.bget64(e, 24))
+    strbuf.sv_free(mem.bget64(e, 32))
+    strbuf.sv_free(mem.bget64(e, 56))
+    strbuf.sv_free(mem.bget64(e, 96))
+    sub := mem.bget64(e, 48)
+    if sub != 0:
+        st_free(sub)
+    cmp := mem.bget64(e, 64)
+    if cmp != 0:
+        st_free(cmp)
+    isel := mem.bget64(e, 80)
+    if isel != 0:
+        st_free(isel)
+    buf_free(e)
+    buf_free(s)
+
+# ── parser state ──
+
+def ps_new(sql: Str) -> Int:
+    p := buf_alloc(56)
+    mem.bset64(p, 0, lexer.tokenize(sql))
+    mem.bset64(p, 8, 0)
+    mem.bset64(p, 16, ast.ar_new())
+    mem.bset64(p, 24, strbuf.sv_new())
+    mem.bset64(p, 32, 0)
+    mem.bset64(p, 40, 0)
+    return p
+
+def ps_toks(p: Int) -> Int:
+    return mem.bget64(p, 0)
+
+def ps_pos(p: Int) -> Int:
+    return mem.bget64(p, 8)
+
+def ps_set_pos(p: Int, v: Int):
+    mem.bset64(p, 8, v)
+
+def ps_arena(p: Int) -> Int:
+    return mem.bget64(p, 16)
+
+def ps_errs(p: Int) -> Int:
+    return mem.bget64(p, 24)
+
+def ps_failed(p: Int) -> Int:
+    return mem.bget64(p, 32)
+
+def ps_error(p: Int, msg: Str):
+    if mem.bget64(p, 32) == 0:
+        mem.bset64(p, 32, 1)
+        strbuf.sv_push(ps_errs(p), msg)
+
+def ps_errmsg(p: Int) -> Str:
+    if strbuf.sv_len(ps_errs(p)) == 0:
+        return ""
+    return strbuf.sv_get(ps_errs(p), 0)
+
+def ps_free(p: Int):
+    lexer.lx_free(ps_toks(p))
+    strbuf.sv_free(ps_errs(p))
+    buf_free(p)
+
+def cur_kind(p: Int) -> Int:
+    return lexer.lx_kind(ps_toks(p), ps_pos(p))
+
+def cur_text(p: Int) -> Str:
+    return lexer.lx_text(ps_toks(p), ps_pos(p))
+
+def cur_ival(p: Int) -> Int:
+    return lexer.lx_ival(ps_toks(p), ps_pos(p))
+
+def peek_text(p: Int, off: Int) -> Str:
+    return lexer.lx_text(ps_toks(p), ps_pos(p) + off)
+
+def peek_kind(p: Int, off: Int) -> Int:
+    return lexer.lx_kind(ps_toks(p), ps_pos(p) + off)
+
+def advance(p: Int):
+    ps_set_pos(p, ps_pos(p) + 1)
+
+def at_eof(p: Int) -> Int:
+    if cur_kind(p) == lexer.TK_EOF():
+        return 1
+    return 0
+
+def is_kw(p: Int, w: Str) -> Int:
+    if cur_kind(p) != lexer.TK_KW():
+        return 0
+    if lpp_str_eq(cur_text(p), w) == 1:
+        return 1
+    return 0
+
+def is_punct(p: Int, w: Str) -> Int:
+    if cur_kind(p) != lexer.TK_PUNCT():
+        return 0
+    if lpp_str_eq(cur_text(p), w) == 1:
+        return 1
+    return 0
+
+def accept_kw(p: Int, w: Str) -> Int:
+    if is_kw(p, w) == 1:
+        advance(p)
+        return 1
+    return 0
+
+def accept_punct(p: Int, w: Str) -> Int:
+    if is_punct(p, w) == 1:
+        advance(p)
+        return 1
+    return 0
+
+def expect_punct(p: Int, w: Str) -> Int:
+    if accept_punct(p, w) == 1:
+        return 1
+    ps_error(p, str_concat("near \"", str_concat(cur_text(p), str_concat("\": expected ", w))))
+    return 0
+
+def expect_kw(p: Int, w: Str) -> Int:
+    if accept_kw(p, w) == 1:
+        return 1
+    ps_error(p, str_concat("near \"", str_concat(cur_text(p), str_concat("\": expected ", w))))
+    return 0
+
+# An identifier, or a keyword being used as a name.
+def take_name(p: Int) -> Str:
+    k := cur_kind(p)
+    if k == lexer.TK_ID():
+        r := cur_text(p)
+        advance(p)
+        return r
+    if k == lexer.TK_KW():
+        r := cur_text(p)
+        advance(p)
+        return r
+    if k == lexer.TK_STR():
+        r := cur_text(p)
+        advance(p)
+        return r
+    ps_error(p, str_concat("near \"", str_concat(cur_text(p), "\": expected name")))
+    return ""
+
+# ════════════════════ expressions ════════════════════
+# Precedence (loosest first): OR, AND, NOT, comparison, BETWEEN/IN/LIKE,
+# bitwise, additive, multiplicative, concat, unary, postfix.
+
+def parse_expr(p: Int) -> Int:
+    return parse_or(p)
+
+def parse_or(p: Int) -> Int:
+    mut l := parse_and(p)
+    mut go := 1
+    while go == 1:
+        if is_kw(p, "OR") == 1:
+            advance(p)
+            r := parse_and(p)
+            l = ast.nd(ps_arena(p), ast.N_BINOP(), l, r, 0 - 1, "OR", 0, 0 - 1)
+        else:
+            go = 0
+    return l
+
+def parse_and(p: Int) -> Int:
+    mut l := parse_not(p)
+    mut go := 1
+    while go == 1:
+        if is_kw(p, "AND") == 1:
+            advance(p)
+            r := parse_not(p)
+            l = ast.nd(ps_arena(p), ast.N_BINOP(), l, r, 0 - 1, "AND", 0, 0 - 1)
+        else:
+            go = 0
+    return l
+
+def parse_not(p: Int) -> Int:
+    if is_kw(p, "NOT") == 1:
+        advance(p)
+        e := parse_not(p)
+        return ast.nd(ps_arena(p), ast.N_UNOP(), e, 0 - 1, 0 - 1, "NOT", 0, 0 - 1)
+    return parse_compare(p)
+
+def parse_compare(p: Int) -> Int:
+    mut l := parse_range(p)
+    mut go := 1
+    while go == 1:
+        if cur_kind(p) == lexer.TK_PUNCT():
+            op := cur_text(p)
+            if is_cmp_op(op) == 1:
+                advance(p)
+                r := parse_range(p)
+                l = ast.nd(ps_arena(p), ast.N_BINOP(), l, r, 0 - 1, op, 0, 0 - 1)
+            else:
+                go = 0
+        elif is_kw(p, "IS") == 1:
+            advance(p)
+            mut neg := 0
+            if accept_kw(p, "NOT") == 1:
+                neg = 1
+            if is_kw(p, "NULL") == 1:
+                advance(p)
+                l = ast.nd(ps_arena(p), ast.N_ISNULL(), l, 0 - 1, 0 - 1, "", neg, 0 - 1)
+            else:
+                r := parse_range(p)
+                mut o := "IS"
+                if neg == 1:
+                    o = "IS NOT"
+                l = ast.nd(ps_arena(p), ast.N_BINOP(), l, r, 0 - 1, o, 0, 0 - 1)
+        else:
+            go = 0
+    return l
+
+def is_cmp_op(op: Str) -> Int:
+    if lpp_str_eq(op, "=") == 1:
+        return 1
+    if lpp_str_eq(op, "==") == 1:
+        return 1
+    if lpp_str_eq(op, "<") == 1:
+        return 1
+    if lpp_str_eq(op, ">") == 1:
+        return 1
+    if lpp_str_eq(op, "<=") == 1:
+        return 1
+    if lpp_str_eq(op, ">=") == 1:
+        return 1
+    if lpp_str_eq(op, "!=") == 1:
+        return 1
+    if lpp_str_eq(op, "<>") == 1:
+        return 1
+    return 0
+
+# BETWEEN / IN / LIKE / GLOB and their NOT forms.
+def parse_range(p: Int) -> Int:
+    mut l := parse_bitor(p)
+    mut go := 1
+    while go == 1:
+        mut neg := 0
+        mut save := ps_pos(p)
+        if is_kw(p, "NOT") == 1:
+            advance(p)
+            neg = 1
+        if is_kw(p, "BETWEEN") == 1:
+            advance(p)
+            lo := parse_bitor(p)
+            expect_kw(p, "AND")
+            hi := parse_bitor(p)
+            l = ast.nd(ps_arena(p), ast.N_BETWEEN(), l, lo, hi, "", neg, 0 - 1)
+        elif is_kw(p, "IN") == 1:
+            advance(p)
+            l = parse_in_tail(p, l, neg)
+        elif is_kw(p, "LIKE") == 1:
+            advance(p)
+            r := parse_bitor(p)
+            mut esc := 0 - 1
+            if is_kw(p, "ESCAPE") == 1:
+                advance(p)
+                esc = parse_bitor(p)
+            l = ast.nd(ps_arena(p), ast.N_LIKE(), l, r, esc, "LIKE", neg, 0 - 1)
+        elif is_kw(p, "GLOB") == 1:
+            advance(p)
+            r := parse_bitor(p)
+            l = ast.nd(ps_arena(p), ast.N_LIKE(), l, r, 0 - 1, "GLOB", neg, 0 - 1)
+        else:
+            if neg == 1:
+                ps_set_pos(p, save)
+            go = 0
+    return l
+
+def parse_in_tail(p: Int, lhs: Int, neg: Int) -> Int:
+    slot := ast.av_begin(ps_arena(p))
+    if expect_punct(p, "(") == 0:
+        return lhs
+    if is_punct(p, ")") == 1:
+        advance(p)
+        return ast.nd(ps_arena(p), ast.N_INLIST(), lhs, 0 - 1, 0 - 1, "", neg, slot)
+    # subquery form
+    if is_kw(p, "SELECT") == 1:
+        sub := parse_select(p)
+        expect_punct(p, ")")
+        n := ast.nd(ps_arena(p), ast.N_INLIST(), lhs, 0 - 1, 0 - 1, "SUB", neg, slot)
+        ast.set_c(ps_arena(p), n, sub)
+        return n
+    mut go := 1
+    while go == 1:
+        e := parse_expr(p)
+        ast.av_add(ps_arena(p), slot, e)
+        if accept_punct(p, ",") == 0:
+            go = 0
+    expect_punct(p, ")")
+    return ast.nd(ps_arena(p), ast.N_INLIST(), lhs, 0 - 1, 0 - 1, "", neg, slot)
+
+def parse_bitor(p: Int) -> Int:
+    mut l := parse_bitand(p)
+    mut go := 1
+    while go == 1:
+        if is_punct(p, "|") == 1:
+            advance(p)
+            r := parse_bitand(p)
+            l = ast.nd(ps_arena(p), ast.N_BINOP(), l, r, 0 - 1, "|", 0, 0 - 1)
+        else:
+            go = 0
+    return l
+
+def parse_bitand(p: Int) -> Int:
+    mut l := parse_shift(p)
+    mut go := 1
+    while go == 1:
+        if is_punct(p, "&") == 1:
+            advance(p)
+            r := parse_shift(p)
+            l = ast.nd(ps_arena(p), ast.N_BINOP(), l, r, 0 - 1, "&", 0, 0 - 1)
+        else:
+            go = 0
+    return l
+
+def parse_shift(p: Int) -> Int:
+    mut l := parse_add(p)
+    mut go := 1
+    while go == 1:
+        if is_punct(p, "<<") == 1:
+            advance(p)
+            r := parse_add(p)
+            l = ast.nd(ps_arena(p), ast.N_BINOP(), l, r, 0 - 1, "<<", 0, 0 - 1)
+        elif is_punct(p, ">>") == 1:
+            advance(p)
+            r := parse_add(p)
+            l = ast.nd(ps_arena(p), ast.N_BINOP(), l, r, 0 - 1, ">>", 0, 0 - 1)
+        else:
+            go = 0
+    return l
+
+def parse_add(p: Int) -> Int:
+    mut l := parse_mul(p)
+    mut go := 1
+    while go == 1:
+        if is_punct(p, "+") == 1:
+            advance(p)
+            r := parse_mul(p)
+            l = ast.nd(ps_arena(p), ast.N_BINOP(), l, r, 0 - 1, "+", 0, 0 - 1)
+        elif is_punct(p, "-") == 1:
+            advance(p)
+            r := parse_mul(p)
+            l = ast.nd(ps_arena(p), ast.N_BINOP(), l, r, 0 - 1, "-", 0, 0 - 1)
+        else:
+            go = 0
+    return l
+
+def parse_mul(p: Int) -> Int:
+    mut l := parse_concat(p)
+    mut go := 1
+    while go == 1:
+        if is_punct(p, "*") == 1:
+            advance(p)
+            r := parse_concat(p)
+            l = ast.nd(ps_arena(p), ast.N_BINOP(), l, r, 0 - 1, "*", 0, 0 - 1)
+        elif is_punct(p, "/") == 1:
+            advance(p)
+            r := parse_concat(p)
+            l = ast.nd(ps_arena(p), ast.N_BINOP(), l, r, 0 - 1, "/", 0, 0 - 1)
+        elif is_punct(p, "%") == 1:
+            advance(p)
+            r := parse_concat(p)
+            l = ast.nd(ps_arena(p), ast.N_BINOP(), l, r, 0 - 1, "%", 0, 0 - 1)
+        else:
+            go = 0
+    return l
+
+def parse_concat(p: Int) -> Int:
+    mut l := parse_unary(p)
+    mut go := 1
+    while go == 1:
+        if is_punct(p, "||") == 1:
+            advance(p)
+            r := parse_unary(p)
+            l = ast.nd(ps_arena(p), ast.N_BINOP(), l, r, 0 - 1, "||", 0, 0 - 1)
+        else:
+            go = 0
+    return l
+
+def parse_unary(p: Int) -> Int:
+    if is_punct(p, "-") == 1:
+        advance(p)
+        e := parse_unary(p)
+        return ast.nd(ps_arena(p), ast.N_UNOP(), e, 0 - 1, 0 - 1, "-", 0, 0 - 1)
+    if is_punct(p, "+") == 1:
+        advance(p)
+        return parse_unary(p)
+    if is_punct(p, "~") == 1:
+        advance(p)
+        e := parse_unary(p)
+        return ast.nd(ps_arena(p), ast.N_UNOP(), e, 0 - 1, 0 - 1, "~", 0, 0 - 1)
+    if is_kw(p, "NOT") == 1:
+        advance(p)
+        e := parse_unary(p)
+        return ast.nd(ps_arena(p), ast.N_UNOP(), e, 0 - 1, 0 - 1, "NOT", 0, 0 - 1)
+    return parse_postfix(p)
+
+def parse_postfix(p: Int) -> Int:
+    mut e := parse_primary(p)
+    mut go := 1
+    while go == 1:
+        if is_kw(p, "ISNULL") == 1:
+            advance(p)
+            e = ast.nd(ps_arena(p), ast.N_ISNULL(), e, 0 - 1, 0 - 1, "", 0, 0 - 1)
+        elif is_kw(p, "NOTNULL") == 1:
+            advance(p)
+            e = ast.nd(ps_arena(p), ast.N_ISNULL(), e, 0 - 1, 0 - 1, "", 1, 0 - 1)
+        elif is_kw(p, "COLLATE") == 1:
+            advance(p)
+            nm := take_name(p)
+            e = ast.nd(ps_arena(p), ast.N_COLLATE(), e, 0 - 1, 0 - 1, nm, 0, 0 - 1)
+        else:
+            go = 0
+    return e
+
+def parse_primary(p: Int) -> Int:
+    ar := ps_arena(p)
+    k := cur_kind(p)
+
+    if k == lexer.TK_INT():
+        v := cur_ival(p)
+        advance(p)
+        return ast.nd(ar, ast.N_INT(), 0, 0, 0, "", v, 0 - 1)
+
+    if k == lexer.TK_FLOAT():
+        t := cur_text(p)
+        advance(p)
+        return ast.nd(ar, ast.N_REAL(), 0, 0, 0, t, 0, 0 - 1)
+
+    if k == lexer.TK_STR():
+        t := cur_text(p)
+        advance(p)
+        return ast.nd(ar, ast.N_STR(), 0, 0, 0, t, 0, 0 - 1)
+
+    if k == lexer.TK_BLOB():
+        t := cur_text(p)
+        advance(p)
+        return ast.nd(ar, ast.N_BLOB(), 0, 0, 0, t, 0, 0 - 1)
+
+    if k == lexer.TK_VAR():
+        idx := cur_ival(p)
+        t := cur_text(p)
+        advance(p)
+        return ast.nd(ar, ast.N_PARAM(), 0, 0, 0, t, idx, 0 - 1)
+
+    if is_kw(p, "NULL") == 1:
+        advance(p)
+        return ast.nd(ar, ast.N_NULL(), 0, 0, 0, "", 0, 0 - 1)
+
+    if is_kw(p, "CASE") == 1:
+        return parse_case(p)
+
+    if is_kw(p, "CAST") == 1:
+        advance(p)
+        expect_punct(p, "(")
+        e := parse_expr(p)
+        expect_kw(p, "AS")
+        ty := parse_typename(p)
+        expect_punct(p, ")")
+        return ast.nd(ar, ast.N_CAST(), e, 0 - 1, 0 - 1, ty, 0, 0 - 1)
+
+    if is_kw(p, "EXISTS") == 1:
+        advance(p)
+        expect_punct(p, "(")
+        sub := parse_select(p)
+        expect_punct(p, ")")
+        n := ast.nd(ar, ast.N_EXISTS(), 0 - 1, 0 - 1, 0 - 1, "", 0, 0 - 1)
+        ast.set_a(ar, n, sub)
+        return n
+
+    if is_punct(p, "(") == 1:
+        advance(p)
+        if is_kw(p, "SELECT") == 1:
+            sub := parse_select(p)
+            expect_punct(p, ")")
+            n := ast.nd(ar, ast.N_SUBQUERY(), 0 - 1, 0 - 1, 0 - 1, "", 0, 0 - 1)
+            ast.set_a(ar, n, sub)
+            return n
+        e := parse_expr(p)
+        expect_punct(p, ")")
+        return e
+
+    if is_punct(p, "*") == 1:
+        advance(p)
+        return ast.nd(ar, ast.N_STAR(), 0, 0, 0, "", 0, 0 - 1)
+
+    if k == lexer.TK_ID():
+        name := cur_text(p)
+        advance(p)
+        # function call
+        if is_punct(p, "(") == 1:
+            return parse_func(p, name)
+        # qualified column  tbl.col  or  tbl.*
+        if is_punct(p, ".") == 1:
+            advance(p)
+            if is_punct(p, "*") == 1:
+                advance(p)
+                return ast.nd(ar, ast.N_STAR(), 0, 0, 0, name, 0, 0 - 1)
+            col := take_name(p)
+            n := ast.nd(ar, ast.N_COL(), 0, 0, 0, col, 0, 0 - 1)
+            ast.set_b(ar, n, qual_slot(p, name))
+            return n
+        return ast.nd(ar, ast.N_COL(), 0, 0, 0, name, 0, 0 - 1)
+
+    # A few keywords double as functions/values.
+    if k == lexer.TK_KW():
+        w := cur_text(p)
+        if lpp_str_eq(w, "REPLACE") == 1:
+            advance(p)
+            if is_punct(p, "(") == 1:
+                return parse_func(p, "replace")
+            return ast.nd(ar, ast.N_COL(), 0, 0, 0, w, 0, 0 - 1)
+        if lpp_str_eq(w, "LIKE") == 1:
+            advance(p)
+            if is_punct(p, "(") == 1:
+                return parse_func(p, "like")
+        # Clause-introducing keywords can never start an expression; treating
+        # them as column names would silently accept "SELECT FROM t".
+        if starts_clause(w) == 1:
+            ps_error(p, str_concat("near \"", str_concat(w, "\": syntax error")))
+            return ast.nd(ar, ast.N_NULL(), 0, 0, 0, "", 0, 0 - 1)
+        # otherwise treat as a bare column name
+        advance(p)
+        return ast.nd(ar, ast.N_COL(), 0, 0, 0, w, 0, 0 - 1)
+
+    ps_error(p, str_concat("near \"", str_concat(cur_text(p), "\": syntax error")))
+    advance(p)
+    return ast.nd(ar, ast.N_NULL(), 0, 0, 0, "", 0, 0 - 1)
+
+# Keywords that introduce a clause and therefore cannot begin an expression.
+def starts_clause(w: Str) -> Int:
+    if lpp_str_eq(w, "FROM") == 1:
+        return 1
+    if lpp_str_eq(w, "WHERE") == 1:
+        return 1
+    if lpp_str_eq(w, "GROUP") == 1:
+        return 1
+    if lpp_str_eq(w, "HAVING") == 1:
+        return 1
+    if lpp_str_eq(w, "ORDER") == 1:
+        return 1
+    if lpp_str_eq(w, "LIMIT") == 1:
+        return 1
+    if lpp_str_eq(w, "OFFSET") == 1:
+        return 1
+    if lpp_str_eq(w, "VALUES") == 1:
+        return 1
+    if lpp_str_eq(w, "SET") == 1:
+        return 1
+    if lpp_str_eq(w, "INTO") == 1:
+        return 1
+    if lpp_str_eq(w, "JOIN") == 1:
+        return 1
+    if lpp_str_eq(w, "ON") == 1:
+        return 1
+    if lpp_str_eq(w, "UNION") == 1:
+        return 1
+    if lpp_str_eq(w, "EXCEPT") == 1:
+        return 1
+    if lpp_str_eq(w, "INTERSECT") == 1:
+        return 1
+    if lpp_str_eq(w, "AS") == 1:
+        return 1
+    return 0
+
+# Table qualifiers are interned in the arena's text vector.
+def qual_slot(p: Int, name: Str) -> Int:
+    ar := ps_arena(p)
+    n := ast.nd(ar, ast.N_STR(), 0, 0, 0, name, 0, 0 - 1)
+    return n
+
+def parse_typename(p: Int) -> Str:
+    sb := strbuf.sb_new()
+    mut go := 1
+    mut first := 1
+    while go == 1:
+        k := cur_kind(p)
+        if k == lexer.TK_ID():
+            if first == 0:
+                strbuf.sb_add_ch(sb, 32)
+            strbuf.sb_add(sb, cur_text(p))
+            first = 0
+            advance(p)
+        elif k == lexer.TK_KW():
+            if first == 0:
+                strbuf.sb_add_ch(sb, 32)
+            strbuf.sb_add(sb, cur_text(p))
+            first = 0
+            advance(p)
+        else:
+            go = 0
+    if is_punct(p, "(") == 1:
+        advance(p)
+        mut d := 1
+        while d > 0:
+            if is_punct(p, "(") == 1:
+                d = d + 1
+            elif is_punct(p, ")") == 1:
+                d = d - 1
+            elif at_eof(p) == 1:
+                d = 0
+            advance(p)
+    r := strbuf.sb_str(sb)
+    strbuf.sb_free(sb)
+    return r
+
+def parse_func(p: Int, name: Str) -> Int:
+    ar := ps_arena(p)
+    expect_punct(p, "(")
+    slot := ast.av_begin(ar)
+    mut distinct := 0
+    if is_kw(p, "DISTINCT") == 1:
+        advance(p)
+        distinct = 1
+    if is_punct(p, ")") == 1:
+        advance(p)
+        return ast.nd(ar, ast.N_FUNC(), 0 - 1, distinct, 0 - 1, name, 0, slot)
+    if is_punct(p, "*") == 1:
+        advance(p)
+        star := ast.nd(ar, ast.N_STAR(), 0, 0, 0, "", 0, 0 - 1)
+        ast.av_add(ar, slot, star)
+        expect_punct(p, ")")
+        return ast.nd(ar, ast.N_FUNC(), 0 - 1, distinct, 0 - 1, name, 0, slot)
+    mut go := 1
+    while go == 1:
+        e := parse_expr(p)
+        ast.av_add(ar, slot, e)
+        if accept_punct(p, ",") == 0:
+            go = 0
+    expect_punct(p, ")")
+    return ast.nd(ar, ast.N_FUNC(), 0 - 1, distinct, 0 - 1, name, 0, slot)
+
+def parse_case(p: Int) -> Int:
+    ar := ps_arena(p)
+    expect_kw(p, "CASE")
+    mut base := 0 - 1
+    if is_kw(p, "WHEN") == 0:
+        base = parse_expr(p)
+    slot := ast.av_begin(ar)
+    mut go := 1
+    while go == 1:
+        if is_kw(p, "WHEN") == 1:
+            advance(p)
+            c := parse_expr(p)
+            expect_kw(p, "THEN")
+            r := parse_expr(p)
+            ast.av_add(ar, slot, c)
+            ast.av_add(ar, slot, r)
+        else:
+            go = 0
+    mut els := 0 - 1
+    if is_kw(p, "ELSE") == 1:
+        advance(p)
+        els = parse_expr(p)
+    expect_kw(p, "END")
+    return ast.nd(ar, ast.N_CASE(), base, els, 0 - 1, "", 0, slot)
+
+# ════════════════════ statements ════════════════════
+
+def parse_statement(p: Int) -> Int:
+    if is_kw(p, "SELECT") == 1:
+        return parse_select(p)
+    if is_kw(p, "INSERT") == 1:
+        return parse_insert(p)
+    if is_kw(p, "REPLACE") == 1:
+        return parse_insert(p)
+    if is_kw(p, "UPDATE") == 1:
+        return parse_update(p)
+    if is_kw(p, "DELETE") == 1:
+        return parse_delete(p)
+    if is_kw(p, "CREATE") == 1:
+        return parse_create(p)
+    if is_kw(p, "DROP") == 1:
+        return parse_drop(p)
+    if is_kw(p, "BEGIN") == 1:
+        advance(p)
+        accept_kw(p, "TRANSACTION")
+        accept_kw(p, "DEFERRED")
+        accept_kw(p, "IMMEDIATE")
+        accept_kw(p, "EXCLUSIVE")
+        s := st_new(ps_arena(p))
+        st_set_kind(s, S_BEGIN())
+        return s
+    if is_kw(p, "COMMIT") == 1:
+        advance(p)
+        accept_kw(p, "TRANSACTION")
+        s := st_new(ps_arena(p))
+        st_set_kind(s, S_COMMIT())
+        return s
+    if is_kw(p, "END") == 1:
+        advance(p)
+        accept_kw(p, "TRANSACTION")
+        s := st_new(ps_arena(p))
+        st_set_kind(s, S_COMMIT())
+        return s
+    if is_kw(p, "ROLLBACK") == 1:
+        advance(p)
+        accept_kw(p, "TRANSACTION")
+        s := st_new(ps_arena(p))
+        st_set_kind(s, S_ROLLBACK())
+        return s
+    if is_kw(p, "PRAGMA") == 1:
+        return parse_pragma(p)
+    # Recognised SQL that this engine does not implement: report it clearly
+    # rather than silently mis-parsing (see README "Not implemented").
+    w := strbuf.to_upper(cur_text(p))
+    if lpp_str_eq(w, "WITH") == 1:
+        ps_error(p, "common table expressions (WITH) are not supported")
+        return st_new(ps_arena(p))
+    if lpp_str_eq(w, "ALTER") == 1:
+        ps_error(p, "ALTER TABLE is not supported")
+        return st_new(ps_arena(p))
+    if lpp_str_eq(w, "SAVEPOINT") == 1:
+        ps_error(p, "SAVEPOINT is not supported")
+        return st_new(ps_arena(p))
+    if lpp_str_eq(w, "RELEASE") == 1:
+        ps_error(p, "RELEASE is not supported")
+        return st_new(ps_arena(p))
+    if lpp_str_eq(w, "ATTACH") == 1:
+        ps_error(p, "ATTACH is not supported")
+        return st_new(ps_arena(p))
+    if lpp_str_eq(w, "VACUUM") == 1:
+        ps_error(p, "VACUUM is not supported")
+        return st_new(ps_arena(p))
+    if lpp_str_eq(w, "ANALYZE") == 1:
+        ps_error(p, "ANALYZE is not supported")
+        return st_new(ps_arena(p))
+    ps_error(p, str_concat("near \"", str_concat(cur_text(p), "\": syntax error")))
+    s := st_new(ps_arena(p))
+    return s
+
+def parse_pragma(p: Int) -> Int:
+    advance(p)
+    s := st_new(ps_arena(p))
+    st_set_kind(s, S_PRAGMA())
+    nm := take_name(p)
+    strbuf.sv_push(st_textv(s), nm)
+    if is_punct(p, "(") == 1:
+        advance(p)
+        strbuf.sv_push(st_pragma_arg(s), cur_text(p))
+        advance(p)
+        expect_punct(p, ")")
+    elif is_punct(p, "=") == 1:
+        advance(p)
+        strbuf.sv_push(st_pragma_arg(s), cur_text(p))
+        advance(p)
+    return s
+
+def parse_select(p: Int) -> Int:
+    ar := ps_arena(p)
+    s := st_new(ar)
+    st_set_kind(s, S_SELECT())
+    expect_kw(p, "SELECT")
+    if is_kw(p, "DISTINCT") == 1:
+        advance(p)
+        mem.bset64(st_ext(s), 40, 1)
+    elif is_kw(p, "ALL") == 1:
+        advance(p)
+
+    # result columns
+    mut go := 1
+    while go == 1:
+        e := parse_expr(p)
+        mem.iv_push(st_results(s), e)
+        mut alias := ""
+        if is_kw(p, "AS") == 1:
+            advance(p)
+            alias = take_name(p)
+        elif cur_kind(p) == lexer.TK_ID():
+            alias = cur_text(p)
+            advance(p)
+        strbuf.sv_push(st_aliases(s), alias)
+        if accept_punct(p, ",") == 0:
+            go = 0
+
+    # FROM
+    if is_kw(p, "FROM") == 1:
+        advance(p)
+        parse_from(p, s)
+
+    if is_kw(p, "WHERE") == 1:
+        advance(p)
+        st_set_where(s, parse_expr(p))
+
+    if is_kw(p, "GROUP") == 1:
+        advance(p)
+        expect_kw(p, "BY")
+        mut g2 := 1
+        while g2 == 1:
+            mem.iv_push(st_group(s), parse_expr(p))
+            if accept_punct(p, ",") == 0:
+                g2 = 0
+        if is_kw(p, "HAVING") == 1:
+            advance(p)
+            mem.bset64(s, 88, parse_expr(p))
+
+    if is_kw(p, "ORDER") == 1:
+        advance(p)
+        expect_kw(p, "BY")
+        mut g3 := 1
+        while g3 == 1:
+            mem.iv_push(st_order(s), parse_expr(p))
+            mut dir := 0
+            if is_kw(p, "ASC") == 1:
+                advance(p)
+            elif is_kw(p, "DESC") == 1:
+                advance(p)
+                dir = 1
+            mem.iv_push(st_order_dirs(s), dir)
+            if accept_punct(p, ",") == 0:
+                g3 = 0
+
+    if is_kw(p, "LIMIT") == 1:
+        advance(p)
+        mem.bset64(s, 112, parse_expr(p))
+        if is_kw(p, "OFFSET") == 1:
+            advance(p)
+            mem.bset64(s, 120, parse_expr(p))
+        elif is_punct(p, ",") == 1:
+            # LIMIT offset, count
+            advance(p)
+            mem.bset64(s, 120, mem.bget64(s, 112))
+            mem.bset64(s, 112, parse_expr(p))
+
+    # compound selects
+    mut op := 0
+    if is_kw(p, "UNION") == 1:
+        advance(p)
+        if is_kw(p, "ALL") == 1:
+            advance(p)
+            op = 2
+        else:
+            op = 1
+    elif is_kw(p, "EXCEPT") == 1:
+        advance(p)
+        op = 3
+    elif is_kw(p, "INTERSECT") == 1:
+        advance(p)
+        op = 4
+    if op != 0:
+        nxt := parse_select(p)
+        mem.bset64(st_ext(s), 64, nxt)
+        mem.bset64(st_ext(s), 72, op)
+
+    return s
+
+def parse_from(p: Int, s: Int):
+    parse_from_item(p, s)
+    mut go := 1
+    while go == 1:
+        mut jt := 0 - 1
+        if is_punct(p, ",") == 1:
+            advance(p)
+            jt = 0
+        elif is_kw(p, "CROSS") == 1:
+            advance(p)
+            accept_kw(p, "JOIN")
+            jt = 0
+        elif is_kw(p, "INNER") == 1:
+            advance(p)
+            expect_kw(p, "JOIN")
+            jt = 1
+        elif is_kw(p, "LEFT") == 1:
+            advance(p)
+            accept_kw(p, "OUTER")
+            expect_kw(p, "JOIN")
+            jt = 2
+        elif is_kw(p, "NATURAL") == 1:
+            advance(p)
+            ps_error(p, "NATURAL JOIN is not supported")
+            go = 0
+        elif is_kw(p, "JOIN") == 1:
+            advance(p)
+            jt = 1
+        else:
+            go = 0
+        if jt >= 0:
+            parse_from_item(p, s)
+            mem.iv_set(st_join_types(s), mem.iv_len(st_join_types(s)) - 1, jt)
+            if is_kw(p, "ON") == 1:
+                advance(p)
+                cond := parse_expr(p)
+                mem.iv_set(st_join_conds(s), mem.iv_len(st_join_conds(s)) - 1, cond)
+            elif is_kw(p, "USING") == 1:
+                advance(p)
+                expect_punct(p, "(")
+                # USING (a,b) is desugared by the executor into equality tests
+                mut g2 := 1
+                while g2 == 1:
+                    nm := take_name(p)
+                    strbuf.sv_push(st_pragma_arg(s), nm)
+                    if accept_punct(p, ",") == 0:
+                        g2 = 0
+                expect_punct(p, ")")
+
+def parse_from_item(p: Int, s: Int):
+    nm := take_name(p)
+    strbuf.sv_push(st_from(s), nm)
+    mut alias := ""
+    if is_kw(p, "AS") == 1:
+        advance(p)
+        alias = take_name(p)
+    elif cur_kind(p) == lexer.TK_ID():
+        alias = cur_text(p)
+        advance(p)
+    strbuf.sv_push(st_from_alias(s), alias)
+    mem.iv_push(st_join_types(s), 0)
+    mem.iv_push(st_join_conds(s), 0 - 1)
+
+def parse_insert(p: Int) -> Int:
+    ar := ps_arena(p)
+    s := st_new(ar)
+    st_set_kind(s, S_INSERT())
+    mut isreplace := 0
+    if is_kw(p, "REPLACE") == 1:
+        advance(p)
+        isreplace = 1
+        mem.bset64(st_ext(s), 88, 5)
+    else:
+        expect_kw(p, "INSERT")
+        if is_kw(p, "OR") == 1:
+            advance(p)
+            w := cur_text(p)
+            advance(p)
+            mem.bset64(st_ext(s), 88, conflict_code(w))
+    expect_kw(p, "INTO")
+    strbuf.sv_push(st_textv(s), take_name(p))
+
+    if is_punct(p, "(") == 1:
+        advance(p)
+        mut go := 1
+        while go == 1:
+            strbuf.sv_push(st_ins_cols(s), take_name(p))
+            if accept_punct(p, ",") == 0:
+                go = 0
+        expect_punct(p, ")")
+
+    if is_kw(p, "VALUES") == 1:
+        advance(p)
+        mut g2 := 1
+        while g2 == 1:
+            expect_punct(p, "(")
+            slot := ast.av_begin(ar)
+            mut g3 := 1
+            while g3 == 1:
+                e := parse_expr(p)
+                ast.av_add(ar, slot, e)
+                if accept_punct(p, ",") == 0:
+                    g3 = 0
+            expect_punct(p, ")")
+            mem.iv_push(st_val_rows(s), slot)
+            if accept_punct(p, ",") == 0:
+                g2 = 0
+    elif is_kw(p, "SELECT") == 1:
+        sel := parse_select(p)
+        mem.bset64(st_ext(s), 80, sel)
+    elif is_kw(p, "DEFAULT") == 1:
+        advance(p)
+        accept_kw(p, "VALUES")
+    return s
+
+def conflict_code(w: Str) -> Int:
+    if strbuf.eq_ci(w, "ROLLBACK") == 1:
+        return 1
+    if strbuf.eq_ci(w, "ABORT") == 1:
+        return 2
+    if strbuf.eq_ci(w, "FAIL") == 1:
+        return 3
+    if strbuf.eq_ci(w, "IGNORE") == 1:
+        return 4
+    if strbuf.eq_ci(w, "REPLACE") == 1:
+        return 5
+    return 0
+
+def parse_update(p: Int) -> Int:
+    ar := ps_arena(p)
+    s := st_new(ar)
+    st_set_kind(s, S_UPDATE())
+    expect_kw(p, "UPDATE")
+    if is_kw(p, "OR") == 1:
+        advance(p)
+        w := cur_text(p)
+        advance(p)
+        mem.bset64(st_ext(s), 88, conflict_code(w))
+    strbuf.sv_push(st_textv(s), take_name(p))
+    expect_kw(p, "SET")
+    mut go := 1
+    while go == 1:
+        col := take_name(p)
+        strbuf.sv_push(st_set_cols(s), col)
+        expect_punct(p, "=")
+        e := parse_expr(p)
+        mem.iv_push(st_set_exprs(s), e)
+        if accept_punct(p, ",") == 0:
+            go = 0
+    if is_kw(p, "WHERE") == 1:
+        advance(p)
+        st_set_where(s, parse_expr(p))
+    return s
+
+def parse_delete(p: Int) -> Int:
+    s := st_new(ps_arena(p))
+    st_set_kind(s, S_DELETE())
+    expect_kw(p, "DELETE")
+    expect_kw(p, "FROM")
+    strbuf.sv_push(st_textv(s), take_name(p))
+    if is_kw(p, "WHERE") == 1:
+        advance(p)
+        st_set_where(s, parse_expr(p))
+    return s
+
+def parse_create(p: Int) -> Int:
+    expect_kw(p, "CREATE")
+    mut unique := 0
+    if is_kw(p, "UNIQUE") == 1:
+        advance(p)
+        unique = 1
+    if is_kw(p, "TEMP") == 1:
+        advance(p)
+    if is_kw(p, "TEMPORARY") == 1:
+        advance(p)
+    if is_kw(p, "INDEX") == 1:
+        return parse_create_index(p, unique)
+    if is_kw(p, "VIEW") == 1:
+        return parse_create_view(p)
+    return parse_create_table(p)
+
+def parse_create_table(p: Int) -> Int:
+    s := st_new(ps_arena(p))
+    st_set_kind(s, S_CREATE_TABLE())
+    expect_kw(p, "TABLE")
+    if is_kw(p, "IF") == 1:
+        advance(p)
+        expect_kw(p, "NOT")
+        expect_kw(p, "EXISTS")
+        mem.bset64(st_ext(s), 104, 1)
+    strbuf.sv_push(st_textv(s), take_name(p))
+    # The full CREATE text is reconstructed by the executor from the source
+    # SQL; here we only need to consume the definition.
+    if is_punct(p, "(") == 1:
+        mut d := 0
+        mut go := 1
+        while go == 1:
+            if at_eof(p) == 1:
+                go = 0
+            elif is_punct(p, "(") == 1:
+                d = d + 1
+                advance(p)
+            elif is_punct(p, ")") == 1:
+                d = d - 1
+                advance(p)
+                if d == 0:
+                    go = 0
+            else:
+                advance(p)
+    accept_kw(p, "WITHOUT")
+    accept_kw(p, "ROWID")
+    return s
+
+def parse_create_index(p: Int, unique: Int) -> Int:
+    s := st_new(ps_arena(p))
+    st_set_kind(s, S_CREATE_INDEX())
+    expect_kw(p, "INDEX")
+    if is_kw(p, "IF") == 1:
+        advance(p)
+        expect_kw(p, "NOT")
+        expect_kw(p, "EXISTS")
+        mem.bset64(st_ext(s), 104, 1)
+    strbuf.sv_push(st_textv(s), take_name(p))
+    expect_kw(p, "ON")
+    strbuf.sv_push(st_from(s), take_name(p))
+    mem.bset64(st_ext(s), 112, unique)
+    if is_punct(p, "(") == 1:
+        advance(p)
+        mut go := 1
+        while go == 1:
+            strbuf.sv_push(mem.bget64(st_ext(s), 96), take_name(p))
+            accept_kw(p, "ASC")
+            accept_kw(p, "DESC")
+            if accept_punct(p, ",") == 0:
+                go = 0
+        expect_punct(p, ")")
+    return s
+
+def parse_create_view(p: Int) -> Int:
+    s := st_new(ps_arena(p))
+    st_set_kind(s, S_CREATE_VIEW())
+    expect_kw(p, "VIEW")
+    if is_kw(p, "IF") == 1:
+        advance(p)
+        expect_kw(p, "NOT")
+        expect_kw(p, "EXISTS")
+        mem.bset64(st_ext(s), 104, 1)
+    strbuf.sv_push(st_textv(s), take_name(p))
+    expect_kw(p, "AS")
+    sel := parse_select(p)
+    mem.bset64(st_ext(s), 48, sel)
+    return s
+
+def parse_drop(p: Int) -> Int:
+    expect_kw(p, "DROP")
+    s := st_new(ps_arena(p))
+    mut kindv := S_DROP_TABLE()
+    if is_kw(p, "INDEX") == 1:
+        kindv = S_DROP_INDEX()
+        advance(p)
+    elif is_kw(p, "VIEW") == 1:
+        kindv = S_DROP_VIEW()
+        advance(p)
+    else:
+        expect_kw(p, "TABLE")
+    st_set_kind(s, kindv)
+    if is_kw(p, "IF") == 1:
+        advance(p)
+        expect_kw(p, "EXISTS")
+        mem.bset64(st_ext(s), 104, 1)
+    strbuf.sv_push(st_textv(s), take_name(p))
+    return s

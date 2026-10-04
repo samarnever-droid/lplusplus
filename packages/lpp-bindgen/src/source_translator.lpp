@@ -1,0 +1,358 @@
+# source_translator.lpp — Phase 2 experimental, safe scalar C subset
+
+import text
+import c_types
+import header_parser
+
+def source_indent(level: Int) -> Str:
+    mut output := ""
+    mut i := 0
+    while i < level:
+        output = str_concat(output, "    ")
+        i = i + 1
+    return output
+
+def source_without_semicolon(line: Str) -> Str:
+    value := str_trim(line)
+    if str_len(value) > 0 && text_eq(char_at(value, str_len(value) - 1), ";"):
+        return str_trim(str_substr(value, 0, str_len(value) - 1))
+    return value
+
+def source_translate_expr(raw: Str) -> Str:
+    mut expr := str_trim(raw)
+    expr = str_replace(expr, "NULL", "0")
+    expr = str_replace(expr, "TRUE", "true")
+    expr = str_replace(expr, "FALSE", "false")
+    expr = str_replace(expr, "->", ".")
+    return expr
+
+def source_has_unsupported_expr(raw: Str) -> Bool:
+    if text_contains(raw, "sizeof") || text_contains(raw, "?"):
+        return true
+    if text_contains(raw, "goto ") || text_contains(raw, "switch"):
+        return true
+    if text_starts(str_trim(raw), "case "):
+        return true
+    if text_ends_with(str_trim(raw), ":"):
+        return true
+    return false
+
+def source_emit_signature(raw: Str) -> Str:
+    line := text_normalize_spaces(str_replace(raw, "{", ""))
+    open := str_find(line, "(")
+    close := c_matching_paren(line, open)
+    if open <= 0 || close <= open:
+        return "__SKIP__"
+    prefix := text_normalize_spaces(str_substr(line, 0, open))
+    split := text_last_space(prefix)
+    if split <= 0:
+        return "__SKIP__"
+    name := text_safe_binding_name(str_substr(prefix, split + 1, str_len(prefix) - split - 1))
+    if str_len(name) == 0:
+        return "__SKIP__"
+    return_c_type := str_substr(prefix, 0, split)
+    params_raw := str_substr(line, open + 1, close - open - 1)
+    if text_contains(return_c_type, "*") || text_contains(params_raw, "*") || text_contains(params_raw, "["):
+        return "__SKIP__"
+    result := c_type_to_lpp(return_c_type, true)
+    if text_eq(result, "__UNSUPPORTED__"):
+        return "__SKIP__"
+    params := c_emit_params(params_raw)
+    if text_eq(params, "__SKIP__"):
+        return "__SKIP__"
+    return str_concat("def ", str_concat(name, str_concat("(", str_concat(params, str_concat(") -> ", str_concat(result, ":"))))))
+
+def source_is_decimal(value: Str) -> Bool:
+    if str_len(value) == 0:
+        return false
+    mut i := 0
+    while i < str_len(value):
+        code := ord(char_at(value, i))
+        if code < 48 || code > 57:
+            return false
+        i = i + 1
+    return true
+
+def source_repeat_value(value: Str, count: Int) -> Str:
+    mut output := ""
+    mut i := 0
+    while i < count:
+        if i > 0:
+            output = str_concat(output, ", ")
+        output = str_concat(output, value)
+        i = i + 1
+    return output
+
+def source_emit_array_local(raw: Str) -> Str:
+    line := source_without_semicolon(raw)
+    open := str_find(line, "[")
+    close := str_find(line, "]")
+    if open <= 0 || close <= open:
+        return "__SKIP__"
+    before := text_normalize_spaces(str_substr(line, 0, open))
+    split := text_last_space(before)
+    if split <= 0:
+        return "__SKIP__"
+    c_type := str_substr(before, 0, split)
+    name := text_safe_binding_name(str_substr(before, split + 1, str_len(before) - split - 1))
+    size_text := str_trim(str_substr(line, open + 1, close - open - 1))
+    mapped := c_type_to_lpp(c_type, false)
+    if str_len(name) == 0 || !source_is_decimal(size_text):
+        return "__SKIP__"
+    if text_eq(mapped, "__UNSUPPORTED__") || text_eq(mapped, "Str") || text_eq(mapped, "Int") == false && text_eq(mapped, "Float") == false && text_eq(mapped, "Bool") == false:
+        return "__SKIP__"
+    size := parse_int(size_text)
+    if size <= 0 || size > 256:
+        return "__SKIP__"
+
+    rest := str_trim(str_substr(line, close + 1, str_len(line) - close - 1))
+    mut elements := ""
+    if str_len(rest) > 0:
+        equal := str_find(rest, "=")
+        if equal < 0:
+            return "__SKIP__"
+        initializer := str_trim(str_substr(rest, equal + 1, str_len(rest) - equal - 1))
+        if !text_starts(initializer, "{") || !text_ends_with(initializer, "}"):
+            return "__SKIP__"
+        elements = str_trim(str_substr(initializer, 1, str_len(initializer) - 2))
+        if text_count(elements, ",") + 1 != size:
+            return "__SKIP__"
+    else:
+        mut zero := "0"
+        if text_eq(mapped, "Float"):
+            zero = "0.0"
+        elif text_eq(mapped, "Bool"):
+            zero = "false"
+        elements = source_repeat_value(zero, size)
+    return str_concat(name, str_concat(" := [", str_concat(elements, "]")))
+
+def source_emit_array_assignment(raw: Str) -> Str:
+    line := source_without_semicolon(raw)
+    open := str_find(line, "[")
+    close := str_find(line, "]")
+    equal := str_find(line, "=")
+    if open <= 0 || close <= open || equal <= close:
+        return "__SKIP__"
+    name := text_safe_binding_name(str_trim(str_substr(line, 0, open)))
+    if str_len(name) == 0:
+        return "__SKIP__"
+    index := source_translate_expr(str_substr(line, open + 1, close - open - 1))
+    value := source_translate_expr(str_substr(line, equal + 1, str_len(line) - equal - 1))
+    if source_has_unsupported_expr(index) || source_has_unsupported_expr(value):
+        return "__SKIP__"
+    return str_concat("list_set(", str_concat(name, str_concat(", ", str_concat(index, str_concat(", ", str_concat(value, ")"))))))
+
+def source_emit_local(raw: Str) -> Str:
+    line := source_without_semicolon(raw)
+    if text_contains(line, "["):
+        return source_emit_array_local(line)
+    equal := str_find(line, "=")
+    mut left := line
+    mut value := ""
+    if equal >= 0:
+        left = str_trim(str_substr(line, 0, equal))
+        value = source_translate_expr(str_substr(line, equal + 1, str_len(line) - equal - 1))
+    normalized := text_normalize_spaces(left)
+    split := text_last_space(normalized)
+    if split <= 0:
+        return "__SKIP__"
+    name := text_safe_binding_name(text_strip_array_suffix(str_substr(normalized, split + 1, str_len(normalized) - split - 1)))
+    c_type := str_substr(normalized, 0, split)
+    mapped := c_type_to_lpp(c_type, false)
+    if str_len(name) == 0 || text_eq(mapped, "__UNSUPPORTED__") || str_len(mapped) == 0:
+        return "__SKIP__"
+    if str_len(value) == 0:
+        if text_eq(mapped, "Float"):
+            value = "0.0"
+        elif text_eq(mapped, "Bool"):
+            value = "false"
+        elif text_eq(mapped, "Str"):
+            value = "\"\""
+        else:
+            value = "0"
+    return str_concat("mut ", str_concat(name, str_concat(" := ", value)))
+
+def source_is_local_declaration(line: Str) -> Bool:
+    low := str_lower(str_trim(line))
+    if text_starts(low, "int ") || text_starts(low, "long ") || text_starts(low, "short "):
+        return true
+    if text_starts(low, "unsigned ") || text_starts(low, "signed "):
+        return true
+    if text_starts(low, "float ") || text_starts(low, "double "):
+        return true
+    if text_starts(low, "bool ") || text_starts(low, "_bool ") || text_starts(low, "char "):
+        return true
+    return false
+
+def source_emit_for(line: Str) -> Str:
+    open := str_find(line, "(")
+    close := c_matching_paren(line, open)
+    if open < 0 || close <= open:
+        return "__SKIP__"
+    clauses := str_substr(line, open + 1, close - open - 1)
+    first := str_find(clauses, ";")
+    if first < 0:
+        return "__SKIP__"
+    tail := str_substr(clauses, first + 1, str_len(clauses) - first - 1)
+    second_relative := str_find(tail, ";")
+    if second_relative < 0:
+        return "__SKIP__"
+    second := first + 1 + second_relative
+    initializer := text_normalize_spaces(str_substr(clauses, 0, first))
+    condition := text_normalize_spaces(str_substr(clauses, first + 1, second - first - 1))
+    increment := text_normalize_spaces(str_substr(clauses, second + 1, str_len(clauses) - second - 1))
+
+    equal := str_find(initializer, "=")
+    if equal <= 0:
+        return "__SKIP__"
+    init_left := text_normalize_spaces(str_substr(initializer, 0, equal))
+    init_split := text_last_space(init_left)
+    mut variable := init_left
+    if init_split >= 0:
+        variable = str_trim(str_substr(init_left, init_split + 1, str_len(init_left) - init_split - 1))
+    variable = text_safe_binding_name(variable)
+    if str_len(variable) == 0:
+        return "__SKIP__"
+    start := source_translate_expr(str_substr(initializer, equal + 1, str_len(initializer) - equal - 1))
+
+    less := str_find(condition, "<")
+    if less <= 0:
+        return "__SKIP__"
+    mut inclusive := false
+    mut right_start := less + 1
+    if less + 1 < str_len(condition) && text_eq(char_at(condition, less + 1), "="):
+        inclusive = true
+        right_start = less + 2
+    cond_var := str_trim(str_substr(condition, 0, less))
+    if !text_eq(cond_var, variable):
+        return "__SKIP__"
+    mut end := source_translate_expr(str_substr(condition, right_start, str_len(condition) - right_start))
+    if inclusive:
+        end = str_concat("(", str_concat(end, ") + 1"))
+
+    compact_increment := str_replace(increment, " ", "")
+    mut step := "1"
+    expected_post := str_concat(variable, "++")
+    expected_pre := str_concat("++", variable)
+    if !text_eq(compact_increment, expected_post) && !text_eq(compact_increment, expected_pre):
+        plus_equal := str_concat(variable, "+=")
+        if text_starts(compact_increment, plus_equal):
+            step = str_substr(compact_increment, str_len(plus_equal), str_len(compact_increment) - str_len(plus_equal))
+            if !source_is_decimal(step) || text_eq(step, "0"):
+                return "__SKIP__"
+        else:
+            return "__SKIP__"
+
+    mut range_args := str_concat(start, str_concat(", ", end))
+    if !text_eq(step, "1"):
+        range_args = str_concat(range_args, str_concat(", ", step))
+    return str_concat("for ", str_concat(variable, str_concat(" in range(", str_concat(range_args, "):"))))
+
+def source_emit_condition(line: Str, keyword: Str) -> Str:
+    open := str_find(line, "(")
+    close := c_matching_paren(line, open)
+    if open < 0 || close <= open:
+        return "__SKIP__"
+    condition := source_translate_expr(str_substr(line, open + 1, close - open - 1))
+    if source_has_unsupported_expr(condition):
+        return "__SKIP__"
+    return str_concat(keyword, str_concat(" ", str_concat(condition, ":")))
+
+def source_emit_statement(raw: Str) -> Str:
+    line := source_without_semicolon(raw)
+    if str_len(line) == 0:
+        return ""
+    if source_is_local_declaration(line) && text_contains(line, "["):
+        return source_emit_array_local(line)
+    array_open := str_find(line, "[")
+    assignment := str_find(line, "=")
+    if array_open >= 0 && assignment > array_open:
+        return source_emit_array_assignment(line)
+    if source_has_unsupported_expr(line):
+        return "__SKIP__"
+    if text_starts(line, "return"):
+        rest := str_trim(str_substr(line, 6, str_len(line) - 6))
+        if str_len(rest) == 0:
+            return "return"
+        return str_concat("return ", source_translate_expr(rest))
+    if source_is_local_declaration(line):
+        return source_emit_local(line)
+    if text_ends_with(line, "++"):
+        name := str_trim(str_substr(line, 0, str_len(line) - 2))
+        return str_concat(name, str_concat(" = ", str_concat(name, " + 1")))
+    if text_ends_with(line, "--"):
+        name := str_trim(str_substr(line, 0, str_len(line) - 2))
+        return str_concat(name, str_concat(" = ", str_concat(name, " - 1")))
+    return source_translate_expr(line)
+
+def text_ends_with(value: Str, suffix: Str) -> Bool:
+    if str_len(suffix) > str_len(value):
+        return false
+    start := str_len(value) - str_len(suffix)
+    return text_eq(str_substr(value, start, str_len(suffix)), suffix)
+
+def c_translate_source(raw_source: Str) -> Str:
+    lines := str_split(raw_source, 10)
+    mut output := "# Experimental C-to-L++ translation generated by c2lpp Phase 2.\n"
+    output = str_concat(output, "# Only the audited scalar subset is translated; unsupported lines remain comments.\n\n")
+    mut indent := 0
+    mut in_function := false
+    mut in_block_comment := false
+
+    for source_line in lines:
+        (without_comments, next_block) := c_strip_comments_line(source_line, in_block_comment)
+        in_block_comment = next_block
+        line := str_trim(without_comments)
+        if str_len(line) > 0 && !text_starts(line, "#"):
+            if !in_function:
+                if text_contains(line, "(") && text_contains(line, "{") && !text_contains(line, ";"):
+                    signature := source_emit_signature(line)
+                    if text_eq(signature, "__SKIP__"):
+                        output = text_append_line(output, str_concat("# c2lpp phase2 unsupported function: ", line))
+                    else:
+                        output = text_append_line(output, signature)
+                        in_function = true
+                        indent = 1
+            else:
+                if text_starts(line, "} else") || text_starts(line, "else"):
+                    if indent > 1:
+                        indent = indent - 1
+                    output = text_append_line(output, str_concat(source_indent(indent), "else:"))
+                    indent = indent + 1
+                elif text_starts(line, "}"):
+                    if indent > 0:
+                        indent = indent - 1
+                    if indent == 0:
+                        in_function = false
+                        output = text_append_line(output, "")
+                elif text_starts(line, "for") && text_contains(line, "{"):
+                    emitted := source_emit_for(line)
+                    if text_eq(emitted, "__SKIP__"):
+                        output = text_append_line(output, str_concat(source_indent(indent), str_concat("# c2lpp phase2 unsupported: ", line)))
+                    else:
+                        output = text_append_line(output, str_concat(source_indent(indent), emitted))
+                        indent = indent + 1
+                elif text_starts(line, "if") && text_contains(line, "{"):
+                    emitted := source_emit_condition(line, "if")
+                    if text_eq(emitted, "__SKIP__"):
+                        output = text_append_line(output, str_concat(source_indent(indent), str_concat("# c2lpp phase2 unsupported: ", line)))
+                    else:
+                        output = text_append_line(output, str_concat(source_indent(indent), emitted))
+                        indent = indent + 1
+                elif text_starts(line, "while") && text_contains(line, "{"):
+                    emitted := source_emit_condition(line, "while")
+                    if text_eq(emitted, "__SKIP__"):
+                        output = text_append_line(output, str_concat(source_indent(indent), str_concat("# c2lpp phase2 unsupported: ", line)))
+                    else:
+                        output = text_append_line(output, str_concat(source_indent(indent), emitted))
+                        indent = indent + 1
+                elif text_ends_with(line, "{"):
+                    output = text_append_line(output, str_concat(source_indent(indent), str_concat("# c2lpp phase2 unsupported block: ", line)))
+                    indent = indent + 1
+                else:
+                    emitted := source_emit_statement(line)
+                    if text_eq(emitted, "__SKIP__"):
+                        output = text_append_line(output, str_concat(source_indent(indent), str_concat("# c2lpp phase2 unsupported: ", line)))
+                    elif str_len(emitted) > 0:
+                        output = text_append_line(output, str_concat(source_indent(indent), emitted))
+    return output

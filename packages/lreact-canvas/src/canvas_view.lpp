@@ -1,0 +1,39 @@
+# lreact-canvas: Pure L++ Infinite Spatial Canvas Component
+# Renders 60fps infinite spatial board with transform matrix, SVG Bezier edges, and card nodes
+
+def render_canvas_shell(viewport_x: Int, viewport_y: Int, zoom_percent: Int, svg_edges: Str, nodes_html: Str) -> Str:
+    mut html := "<div id=\"samar-canvas-container\" class=\"samar-canvas-container\">\n"
+    
+    # Grid Background Dot Matrix
+    html = str_concat(html, "  <div class=\"samar-grid-layer\"></div>\n")
+    
+    # World Pan & Zoom Transform Layer
+    html = str_concat(html, "  <div id=\"samar-world\" class=\"samar-world\" style=\"transform: translate(")
+    html = str_concat(html, str_concat(int_to_str(viewport_x), "px, "))
+    html = str_concat(html, str_concat(int_to_str(viewport_y), "px) scale("))
+    html = str_concat(html, str_concat(int_to_str(zoom_percent), "%);\">\n"))
+    
+    # SVG Edge Layer
+    html = str_concat(html, "    <svg id=\"samar-svg-links\" class=\"samar-svg-layer\">\n")
+    html = str_concat(html, svg_edges)
+    html = str_concat(html, "    </svg>\n")
+    
+    # Nodes Layer
+    html = str_concat(html, "    <div id=\"samar-nodes-layer\" class=\"samar-nodes-layer\">\n")
+    html = str_concat(html, nodes_html)
+    html = str_concat(html, "    </div>\n")
+    
+    html = str_concat(html, "  </div>\n")
+    html = str_concat(html, "</div>\n")
+    
+    return html
+
+
+def render_svg_edge(edge_id: Int, svg_path_d: Str, is_active: Bool) -> Str:
+    mut svg := "      <path id=\"edge-"
+    svg = str_concat(svg, str_concat(int_to_str(edge_id), "\" class=\"samar-edge-path"))
+    if is_active:
+        svg = str_concat(svg, " edge-active")
+    svg = str_concat(svg, "\" d=\"")
+    svg = str_concat(svg, str_concat(svg_path_d, "\" />\n"))
+    return svg

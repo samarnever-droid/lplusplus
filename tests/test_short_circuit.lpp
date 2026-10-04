@@ -1,0 +1,20 @@
+def returns_true() -> Bool:
+    print_str("eval-true")
+    return true
+
+def returns_false() -> Bool:
+    print_str("eval-false")
+    return false
+
+def main():
+    # && short-circuit: if left is false, right is NOT evaluated
+    if returns_false() && returns_true():
+        print(1)
+    else:
+        print(0)
+
+    # || short-circuit: if left is true, right is NOT evaluated
+    if returns_true() || returns_false():
+        print(1)
+    else:
+        print(0)

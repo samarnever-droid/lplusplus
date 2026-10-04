@@ -1,0 +1,15 @@
+{
+  "schema": "c2lpp-project",
+  "schema_version": 1,
+  "mode": "bindings",
+  "input": "dummy.h",
+  "manifest": "",
+  "name": "test",
+  "library": "test",
+  "output": "generated",
+  "strict": false,
+  "preprocess": false,
+  "compiler": "cc",
+  "source_version": "",
+  "source_sha256": ""
+}

@@ -1,0 +1,14 @@
+# arith.lpp — integer arithmetic on wasm32
+# Expected output matches the native AOT test of the same name.
+
+def main():
+    a := 10
+    b := 5
+    print(a + b)
+    print(a - b)
+    print(a * b)
+    print(a / b)
+    print(a % 3)
+    print(0 - 42)
+    print(9223372036854775807)
+    print(0 - 9223372036854775807 - 1)

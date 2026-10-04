@@ -1,0 +1,265 @@
+# strbuf.lpp — O(1)-amortised string building and string helpers.
+#
+# Repeated str_concat is O(n^2) and allocates constantly, which matters when
+# building result sets. A strbuf is a mem.vec of bytes turned into a Str once
+# at the end.
+
+import mem
+
+def sb_new() -> Int:
+    return mem.vec_new(64)
+
+def sb_add(sb: Int, s: Str):
+    mem.vec_push_str(sb, s)
+
+def sb_add_ch(sb: Int, c: Int):
+    mem.vec_push_u8(sb, c)
+
+def sb_add_int(sb: Int, n: Int):
+    mem.vec_push_str(sb, int_to_str(n))
+
+def sb_add_bytes(sb: Int, src: Int, off: Int, n: Int):
+    mem.vec_push_bytes(sb, src, off, n)
+
+def sb_len(sb: Int) -> Int:
+    return mem.vec_len(sb)
+
+def sb_str(sb: Int) -> Str:
+    n := mem.vec_len(sb)
+    if n == 0:
+        return ""
+    return buf_read_str(mem.vec_data(sb), 0, n)
+
+def sb_free(sb: Int):
+    mem.vec_free(sb)
+
+# ── character classification ──
+
+def ch_at(s: Str, i: Int) -> Int:
+    return ord(str_substr(s, i, 1))
+
+def is_space_c(c: Int) -> Int:
+    if c == 32:
+        return 1
+    if c == 9:
+        return 1
+    if c == 10:
+        return 1
+    if c == 13:
+        return 1
+    if c == 12:
+        return 1
+    return 0
+
+def is_digit_c(c: Int) -> Int:
+    if c < 48:
+        return 0
+    if c > 57:
+        return 0
+    return 1
+
+def is_alpha_c(c: Int) -> Int:
+    if c >= 65:
+        if c <= 90:
+            return 1
+    if c >= 97:
+        if c <= 122:
+            return 1
+    if c == 95:
+        return 1
+    return 0
+
+def is_alnum_c(c: Int) -> Int:
+    if is_alpha_c(c) == 1:
+        return 1
+    return is_digit_c(c)
+
+def is_hex_c(c: Int) -> Int:
+    if is_digit_c(c) == 1:
+        return 1
+    if c >= 65:
+        if c <= 70:
+            return 1
+    if c >= 97:
+        if c <= 102:
+            return 1
+    return 0
+
+def hex_val(c: Int) -> Int:
+    if c <= 57:
+        return c - 48
+    if c <= 70:
+        return c - 55
+    return c - 87
+
+def lower_c(c: Int) -> Int:
+    if c >= 65:
+        if c <= 90:
+            return c + 32
+    return c
+
+def upper_c(c: Int) -> Int:
+    if c >= 97:
+        if c <= 122:
+            return c - 32
+    return c
+
+# ASCII case-insensitive equality.
+def eq_ci(a: Str, b: Str) -> Int:
+    la := str_len(a)
+    if la != str_len(b):
+        return 0
+    mut i := 0
+    while i < la:
+        if lower_c(ch_at(a, i)) != lower_c(ch_at(b, i)):
+            return 0
+        i = i + 1
+    return 1
+
+def to_lower(s: Str) -> Str:
+    n := str_len(s)
+    sb := sb_new()
+    mut i := 0
+    while i < n:
+        sb_add_ch(sb, lower_c(ch_at(s, i)))
+        i = i + 1
+    r := sb_str(sb)
+    sb_free(sb)
+    return r
+
+def to_upper(s: Str) -> Str:
+    n := str_len(s)
+    sb := sb_new()
+    mut i := 0
+    while i < n:
+        sb_add_ch(sb, upper_c(ch_at(s, i)))
+        i = i + 1
+    r := sb_str(sb)
+    sb_free(sb)
+    return r
+
+# Quote an identifier or string literal SQLite-style, doubling the quote char.
+def quote_with(s: Str, q: Int) -> Str:
+    n := str_len(s)
+    sb := sb_new()
+    sb_add_ch(sb, q)
+    mut i := 0
+    while i < n:
+        c := ch_at(s, i)
+        if c == q:
+            sb_add_ch(sb, q)
+        sb_add_ch(sb, c)
+        i = i + 1
+    sb_add_ch(sb, q)
+    r := sb_str(sb)
+    sb_free(sb)
+    return r
+
+def sql_quote(s: Str) -> Str:
+    return quote_with(s, 39)
+
+def ident_quote(s: Str) -> Str:
+    return quote_with(s, 34)
+
+# JSON string escaping (used by the CLI's .mode json).
+def json_escape(s: Str) -> Str:
+    n := str_len(s)
+    sb := sb_new()
+    sb_add_ch(sb, 34)
+    mut i := 0
+    while i < n:
+        c := ch_at(s, i)
+        if c == 34:
+            sb_add_ch(sb, 92)
+            sb_add_ch(sb, 34)
+        elif c == 92:
+            sb_add_ch(sb, 92)
+            sb_add_ch(sb, 92)
+        elif c == 10:
+            sb_add_ch(sb, 92)
+            sb_add_ch(sb, 110)
+        elif c == 13:
+            sb_add_ch(sb, 92)
+            sb_add_ch(sb, 114)
+        elif c == 9:
+            sb_add_ch(sb, 92)
+            sb_add_ch(sb, 116)
+        elif c < 32:
+            sb_add(sb, "\\u00")
+            sb_add_ch(sb, hexch(c / 16))
+            sb_add_ch(sb, hexch(c % 16))
+        else:
+            sb_add_ch(sb, c)
+        i = i + 1
+    sb_add_ch(sb, 34)
+    r := sb_str(sb)
+    sb_free(sb)
+    return r
+
+def hexch(v: Int) -> Int:
+    if v < 10:
+        return 48 + v
+    return 87 + v
+
+# ── a growable vector of Str, stored as offsets into one backing buffer ──
+# Avoids the compiler's broken list-of-string handling.
+
+def sv_new() -> Int:
+    h := buf_alloc(24)
+    mem.bset64(h, 0, mem.vec_new(64))    # bytes
+    mem.bset64(h, 8, mem.iv_new(8))      # offsets
+    mem.bset64(h, 16, mem.iv_new(8))     # lengths
+    return h
+
+def sv_bytes(h: Int) -> Int:
+    return mem.bget64(h, 0)
+
+def sv_offs(h: Int) -> Int:
+    return mem.bget64(h, 8)
+
+def sv_lens(h: Int) -> Int:
+    return mem.bget64(h, 16)
+
+def sv_len(h: Int) -> Int:
+    return mem.iv_len(mem.bget64(h, 8))
+
+def sv_push(h: Int, s: Str):
+    b := sv_bytes(h)
+    off := mem.vec_len(b)
+    mem.vec_push_str(b, s)
+    mem.iv_push(sv_offs(h), off)
+    mem.iv_push(sv_lens(h), str_len(s))
+
+def sv_push_bytes(h: Int, src: Int, soff: Int, n: Int):
+    b := sv_bytes(h)
+    off := mem.vec_len(b)
+    mem.vec_push_bytes(b, src, soff, n)
+    mem.iv_push(sv_offs(h), off)
+    mem.iv_push(sv_lens(h), n)
+
+def sv_get(h: Int, i: Int) -> Str:
+    ln := mem.iv_get(sv_lens(h), i)
+    if ln == 0:
+        return ""
+    return buf_read_str(mem.vec_data(sv_bytes(h)), mem.iv_get(sv_offs(h), i), ln)
+
+def sv_get_len(h: Int, i: Int) -> Int:
+    return mem.iv_get(sv_lens(h), i)
+
+def sv_get_off(h: Int, i: Int) -> Int:
+    return mem.iv_get(sv_offs(h), i)
+
+def sv_find_ci(h: Int, s: Str) -> Int:
+    n := sv_len(h)
+    mut i := 0
+    while i < n:
+        if eq_ci(sv_get(h, i), s) == 1:
+            return i
+        i = i + 1
+    return 0 - 1
+
+def sv_free(h: Int):
+    mem.vec_free(sv_bytes(h))
+    mem.iv_free(sv_offs(h))
+    mem.iv_free(sv_lens(h))
+    buf_free(h)

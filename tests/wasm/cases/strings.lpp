@@ -1,0 +1,12 @@
+# strings.lpp — Str literals as first-class values, str_len, Str params.
+
+def shout(s: Str):
+    print_str(s)
+
+def main():
+    word := "WebAssembly"
+    shout(word)
+    print(str_len(word))
+    print(str_len("L++"))
+    empty := ""
+    print(str_len(empty))

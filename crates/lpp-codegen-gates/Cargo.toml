@@ -1,0 +1,23 @@
+[package]
+name = "lpp-codegen-gates"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+
+# The Phase 5F cross-backend safety-exit crate. The lib is intentionally
+# empty; the gate lives in `tests/phase5f_gate.rs` and depends on all three
+# backends so it can drive them on the shared scalar corpus. `lpp-hir` stays
+# a dev-dep (the one-way dependency rule: no codegen *lib* imports HIR).
+
+[dependencies]
+lpp-codegen-api = { path = "../lpp-codegen-api" }
+lpp-codegen-cranelift = { path = "../lpp-codegen-cranelift" }
+lpp-codegen-wasm = { path = "../lpp-codegen-wasm" }
+lpp-codegen-llvm = { path = "../lpp-codegen-llvm" }
+lpp-mir = { path = "../lpp-mir" }
+lpp-types = { path = "../lpp-types" }
+
+[dev-dependencies]
+lpp-hir = { path = "../lpp-hir" }
+lpp-ownership = { path = "../lpp-ownership" }

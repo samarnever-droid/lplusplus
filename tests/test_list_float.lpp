@@ -1,0 +1,17 @@
+def test_list_float_ops() -> Void:
+    mut values := [1.5, 2.5, 3.5]
+    list_push(values, 4.5)
+    
+    val0 := list_get(values, 0)
+    lpp_print_float(val0) # expect 1.5
+
+    val3 := list_get(values, 3)
+    lpp_print_float(val3) # expect 4.5
+
+    mut sum := 0.0
+    for item in values:
+        sum = sum + item
+    lpp_print_float(sum) # expect 12.0
+
+def main():
+    test_list_float_ops()

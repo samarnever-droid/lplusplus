@@ -1,0 +1,197 @@
+# c_project.lpp — deterministic multi-file C project and include graph audit.
+# Manifest v1: source=path, header=path, external=name.
+
+import c_audit
+import text
+
+struct CDependencyResolution:
+    records: Str
+    edges: Int
+    local: Int
+    external: Int
+    unresolved: Int
+    ambiguous: Int
+
+struct CProjectAudit:
+    stats: CAuditStats
+    report: Str
+    dependencies: Str
+    source_files: Int
+    header_files: Int
+    missing_files: Int
+    dependency_edges: Int
+    local_dependencies: Int
+    external_dependencies: Int
+    unresolved_dependencies: Int
+    ambiguous_dependencies: Int
+    dependency_closure_ok: Int
+    audit_ok: Int
+
+def c_project_value(line: Str) -> Str:
+    equal := str_find(line, "=")
+    if equal < 0:
+        return str_trim(line)
+    return str_trim(str_substr(line, equal + 1, str_len(line) - equal - 1))
+
+def c_project_path(raw: Str) -> Str:
+    line := str_trim(raw)
+    if str_len(line) == 0 || text_starts(line, "#") || text_starts(line, "external="):
+        return ""
+    if text_starts(line, "source=") || text_starts(line, "header="):
+        return c_project_value(line)
+    if text_contains(line, "="):
+        return ""
+    return line
+
+def c_project_basename(path: Str) -> Str:
+    mut cut := text_last_char(path, "/")
+    backslash := text_last_char(path, "\\")
+    if backslash > cut:
+        cut = backslash
+    if cut < 0:
+        return path
+    return str_substr(path, cut + 1, str_len(path) - cut - 1)
+
+def c_project_match_count(manifest: Str, target: Str) -> Int:
+    lines := str_split(manifest, 10)
+    mut exact := 0
+    mut base := 0
+    for raw in lines:
+        path := c_project_path(raw)
+        if str_len(path) > 0:
+            if text_eq(path, target):
+                exact = exact + 1
+            elif text_eq(c_project_basename(path), c_project_basename(target)):
+                base = base + 1
+    if exact > 0:
+        return exact
+    return base
+
+def c_project_is_external(manifest: Str, target: Str) -> Bool:
+    lines := str_split(manifest, 10)
+    for raw in lines:
+        line := str_trim(raw)
+        if text_starts(line, "external="):
+            value := c_project_value(line)
+            if text_eq(value, target) || text_eq(c_project_basename(value), c_project_basename(target)):
+                return true
+    return false
+
+def c_dependency_field(record: Str, wanted: Int) -> Str:
+    fields := str_split(record, 124)
+    mut index := 0
+    for field in fields:
+        if index == wanted:
+            return field
+        index = index + 1
+    return ""
+
+def c_resolve_dependencies(manifest: Str, raw_dependencies: Str) -> CDependencyResolution:
+    lines := str_split(raw_dependencies, 10)
+    mut output := ""
+    mut edges := 0
+    mut local := 0
+    mut external := 0
+    mut unresolved := 0
+    mut ambiguous := 0
+    for record in lines:
+        if str_len(str_trim(record)) > 0:
+            source := c_dependency_field(record, 0)
+            include_kind := c_dependency_field(record, 1)
+            target := c_dependency_field(record, 2)
+            line := c_dependency_field(record, 3)
+            column := c_dependency_field(record, 4)
+            matches := c_project_match_count(manifest, target)
+            mut resolution := "unresolved"
+            if matches == 1:
+                resolution = "local"
+                local = local + 1
+            elif matches > 1:
+                resolution = "ambiguous"
+                ambiguous = ambiguous + 1
+            elif text_eq(include_kind, "angle") || c_project_is_external(manifest, target):
+                resolution = "external"
+                external = external + 1
+            else:
+                unresolved = unresolved + 1
+            edges = edges + 1
+            mut out := str_concat(source, "|")
+            out = str_concat(out, str_concat(target, "|"))
+            out = str_concat(out, str_concat(include_kind, "|"))
+            out = str_concat(out, str_concat(resolution, "|"))
+            out = str_concat(out, str_concat(line, "|"))
+            output = str_concat(output, str_concat(out, str_concat(column, "\n")))
+    return CDependencyResolution(output, edges, local, external, unresolved, ambiguous)
+
+def c_project_summary(project: CProjectAudit) -> Str:
+    mut out := "schema=c2lpp-audit-v1\n"
+    out = str_concat(out, "classification_scope=lexical-and-construct-inventory\n")
+    out = str_concat(out, c_render_stats(project.stats))
+    out = c_audit_line(out, "project.source_files", project.source_files)
+    out = c_audit_line(out, "project.header_files", project.header_files)
+    out = c_audit_line(out, "project.missing_files", project.missing_files)
+    out = c_audit_line(out, "dependencies.total", project.dependency_edges)
+    out = c_audit_line(out, "dependencies.local", project.local_dependencies)
+    out = c_audit_line(out, "dependencies.external", project.external_dependencies)
+    out = c_audit_line(out, "dependencies.unresolved", project.unresolved_dependencies)
+    out = c_audit_line(out, "dependencies.ambiguous", project.ambiguous_dependencies)
+    out = c_audit_line(out, "dependency_closure_ok", project.dependency_closure_ok)
+    out = c_audit_line(out, "audit_ok", project.audit_ok)
+    return out
+
+def c_audit_project(manifest_path: Str, manifest: Str) -> CProjectAudit:
+    lines := str_split(manifest, 10)
+    mut total := CAuditStats()
+    mut file_reports := ""
+    mut raw_dependencies := ""
+    mut sources := 0
+    mut headers := 0
+    mut missing := 0
+    mut lexical_ok := 1
+    for raw in lines:
+        path := c_project_path(raw)
+        if str_len(path) > 0:
+            if text_starts(str_trim(raw), "header="):
+                headers = headers + 1
+            else:
+                sources = sources + 1
+            if file_exists(path) == 0:
+                missing = missing + 1
+                lexical_ok = 0
+                file_reports = str_concat(file_reports, str_concat("[missing-file]\npath=", str_concat(path, "\n")))
+            else:
+                audited := c_audit_file(path)
+                total = c_stats_add(total, audited.stats)
+                file_reports = str_concat(file_reports, audited.report)
+                raw_dependencies = str_concat(raw_dependencies, audited.dependencies)
+                if audited.audit_ok == 0:
+                    lexical_ok = 0
+    resolved := c_resolve_dependencies(manifest, raw_dependencies)
+    mut closure_ok := 1
+    if resolved.unresolved > 0 || resolved.ambiguous > 0 || total.macro_includes > 0:
+        closure_ok = 0
+    mut ok := lexical_ok
+    if missing > 0 || closure_ok == 0:
+        ok = 0
+    mut project := CProjectAudit(total, "", resolved.records, sources, headers, missing, resolved.edges, resolved.local, resolved.external, resolved.unresolved, resolved.ambiguous, closure_ok, ok)
+    mut report := c_project_summary(project)
+    report = text_append_line(report, str_concat("manifest=", manifest_path))
+    if str_len(resolved.records) > 0:
+        report = str_concat(report, str_concat("[dependencies]\n", resolved.records))
+    project.report = str_concat(report, file_reports)
+    return project
+
+def c_audit_single_project(path: Str) -> CProjectAudit:
+    audited := c_audit_file(path)
+    manifest := str_concat("source=", str_concat(path, "\n"))
+    resolved := c_resolve_dependencies(manifest, audited.dependencies)
+    mut closure_ok := 1
+    if resolved.unresolved > 0 || resolved.ambiguous > 0 || audited.stats.macro_includes > 0:
+        closure_ok = 0
+    mut project := CProjectAudit(audited.stats, "", resolved.records, 1, 0, 0, resolved.edges, resolved.local, resolved.external, resolved.unresolved, resolved.ambiguous, closure_ok, audited.audit_ok)
+    mut report := c_project_summary(project)
+    report = text_append_line(report, str_concat("source=", path))
+    if str_len(resolved.records) > 0:
+        report = str_concat(report, str_concat("[dependencies]\n", resolved.records))
+    project.report = str_concat(report, audited.report)
+    return project

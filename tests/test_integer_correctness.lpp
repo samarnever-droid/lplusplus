@@ -1,0 +1,83 @@
+﻿def test_all_int_ops() -> Bool:
+    mut passed := 0
+    total := 14
+    all_ones := -1
+
+    # 1. shr_u
+    s := shr_u(all_ones, 1)
+    if s == 9223372036854775807:
+        passed = passed + 1
+
+    # 2. lt_u / gt_u
+    if lt_u(1, all_ones) == 1 and gt_u(all_ones, 1) == 1:
+        passed = passed + 1
+
+    # 3. le_u / ge_u / min_u / max_u
+    if le_u(all_ones, all_ones) == 1 and ge_u(all_ones, 1) == 1:
+        if min_u(1, all_ones) == 1 and max_u(1, all_ones) == all_ones:
+            passed = passed + 1
+
+    # 4. div_u / rem_u
+    d := div_u(-2, 2)
+    r := rem_u(-1, 10)
+    if d == 9223372036854775807 and r == 5:
+        passed = passed + 1
+
+    # 5. popcount64
+    if popcount64(all_ones) == 64 and popcount64(7) == 3 and popcount64(0) == 0:
+        passed = passed + 1
+
+    # 6. clz64 / ctz64
+    if clz64(1) == 63 and clz64(all_ones) == 0 and ctz64(8) == 3 and ctz64(all_ones) == 0:
+        passed = passed + 1
+
+    # 7. bswap16 / bswap32
+    if bswap16(0x1234) == 0x3412 and bswap32(0x12345678) == 0x78563412:
+        passed = passed + 1
+
+    # 8. bswap64
+    b64 := bswap64(0x123456789ABCDE00)
+    if bswap64(b64) == 0x123456789ABCDE00:
+        passed = passed + 1
+
+    # 9. rotl32 / rotr32
+    if rotl32(1, 31) == 2147483648 and rotr32(1, 1) == 2147483648:
+        passed = passed + 1
+
+    # 10. rotl64 / rotr64
+    if rotl64(1, 1) == 2 and rotr64(2, 1) == 1:
+        passed = passed + 1
+
+    # 11. truncations u8/u16/u32/i8/i16/i32
+    if trunc_u8(258) == 2 and trunc_u16(65538) == 2 and trunc_i8(255) == -1:
+        if trunc_i16(65535) == -1 and trunc_u32(4294967296) == 0:
+            passed = passed + 1
+
+    # 12. add_wrap / sub_wrap / mul_wrap
+    max_i64 := 9223372036854775807
+    min_i64 := -9223372036854775807 - 1
+    wrapped := add_wrap(max_i64, 1)
+    if wrapped == min_i64:
+        passed = passed + 1
+
+    # 13. checked arithmetic
+    add_ok := add_checked(100, 200)
+    sub_ok := sub_checked(500, 100)
+    mul_ok := mul_checked(50, 20)
+    if add_ok == 300 and sub_ok == 400 and mul_ok == 1000:
+        passed = passed + 1
+
+    # 14. u64_to_str / u64_to_hex / str_to_u64
+    hex_s := u64_to_hex(255)
+    dec_s := u64_to_str(all_ones)
+    parsed_s := str_to_u64("18446744073709551615")
+    if hex_s == "ff" and dec_s == "18446744073709551615" and parsed_s == all_ones:
+        passed = passed + 1
+
+    print_str("ASSERTIONS: " + int_to_str(passed) + "/" + int_to_str(total))
+    return passed == total
+
+def main():
+    ok := test_all_int_ops()
+    if ok:
+        print_str("SUCCESS: ALL INTEGER CORRECTNESS & BITWISE TESTS PASSED")

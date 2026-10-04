@@ -1,0 +1,6 @@
+# reject_file.lpp — WASI preopens are not wired up in the wasm backend;
+# the compiler must reject file-system access with a clear diagnostic.
+
+def main():
+    data := read_file("/etc/hostname")
+    print_str(data)

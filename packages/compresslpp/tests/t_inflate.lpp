@@ -1,0 +1,42 @@
+
+import bits
+import inflate
+
+def load(path: Str) -> Int:
+    return buf_read(path)
+
+def check(label: Str, gotv: Int, wantpath: Str):
+    if gotv == 0:
+        print_str(str_concat("FAIL  ", str_concat(label, "  (inflate returned error)")))
+        return
+    want := buf_read(wantpath)
+    wn := buf_len(want)
+    gn := bits.vec_len(gotv)
+    if gn != wn:
+        print_str(str_concat("FAIL  ", str_concat(label, str_concat("  len got=", str_concat(int_to_str(gn), str_concat(" want=", int_to_str(wn)))))))
+        return
+    gd := bits.vec_data(gotv)
+    mut i := 0
+    while i < wn:
+        if buf_get8(gd, i) != buf_get8(want, i):
+            print_str(str_concat("FAIL  ", str_concat(label, str_concat("  byte ", int_to_str(i)))))
+            return
+        i = i + 1
+    print_str(str_concat("PASS  ", str_concat(label, str_concat("  (", str_concat(int_to_str(wn), " bytes)")))))
+
+def run(label: Str, comp: Str, raw: Str):
+    c := buf_read(comp)
+    v := inflate.inflate(c, buf_len(c))
+    check(label, v, raw)
+    if v != 0:
+        bits.vec_free(v)
+    buf_free(c)
+
+def main():
+    run("stored block", "c_stored.bin", "r_stored.bin")
+    run("fixed huffman", "c_fixed.bin", "r_fixed.bin")
+    run("dynamic huffman", "c_dynamic.bin", "r_dynamic.bin")
+    run("repetitive (long matches)", "c_repeat.bin", "r_repeat.bin")
+    run("binary data", "c_binary.bin", "r_binary.bin")
+    run("empty", "c_empty.bin", "r_empty.bin")
+    run("large text", "c_large.bin", "r_large.bin")

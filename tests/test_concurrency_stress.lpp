@@ -1,0 +1,92 @@
+﻿def test_atomics_and_concurrency() -> Bool:
+    mut passed := 0
+    total := 14
+
+    # 1. 64-bit Atomic Alloc & Load/Store
+    mut a := atomic_new(100)
+    if atomic_load(a) == 100:
+        passed = passed + 1
+
+    atomic_store(a, 200)
+    if atomic_load(a) == 200:
+        passed = passed + 1
+
+    # 2. Atomic Add & Sub
+    old_val := atomic_add(a, 50) # returns 200, becomes 250
+    if old_val == 200 and atomic_load(a) == 250:
+        passed = passed + 1
+
+    old_sub := atomic_sub(a, 25) # returns 250, becomes 225
+    if old_sub == 250 and atomic_load(a) == 225:
+        passed = passed + 1
+
+    # 3. Bitwise Atomics
+    atomic_store(a, 0x0F)
+    atomic_and(a, 0x07) # 0x07
+    if atomic_load(a) == 0x07:
+        passed = passed + 1
+
+    atomic_or(a, 0x10) # 0x17
+    if atomic_load(a) == 0x17:
+        passed = passed + 1
+
+    atomic_xor(a, 0x07) # 0x10
+    if atomic_load(a) == 0x10:
+        passed = passed + 1
+
+    # 4. Atomic CAS (Compare-And-Swap)
+    prev := atomic_cas(a, 0x10, 999) # expected 0x10 -> matches -> succeeds, returns old 0x10
+    if prev == 0x10 and atomic_load(a) == 999:
+        passed = passed + 1
+
+    failed_cas := atomic_cas(a, 0x10, 555) # expected 0x10 -> fails (current is 999), returns 999
+    if failed_cas == 999 and atomic_load(a) == 999:
+        passed = passed + 1
+
+    # 5. 32-bit Atomics
+    mut a32 := atomic_new(50)
+    atomic_store32(a32, 100)
+    if atomic_load32(a32) == 100:
+        passed = passed + 1
+
+    atomic_add32(a32, 25) # 125
+    if atomic_load32(a32) == 125:
+        passed = passed + 1
+
+    # 6. Mutex
+    mut m := mutex_new()
+    mutex_lock(m)
+    mutex_unlock(m)
+    if mutex_trylock(m) == 1:
+        mutex_unlock(m)
+        passed = passed + 1
+    mutex_free(m)
+
+    # 7. RWLock
+    mut rw := rwlock_new()
+    rwlock_rdlock(rw)
+    rwlock_rdunlock(rw)
+    rwlock_wrlock(rw)
+    rwlock_wrunlock(rw)
+    passed = passed + 1
+    rwlock_free(rw)
+
+    # 8. Thread Environment & Fences
+    atomic_fence()
+    atomic_fence_acq()
+    atomic_fence_rel()
+    cpu_pause()
+    cpus := cpu_count()
+    tid := thread_id()
+    if cpus >= 1 and tid != 0:
+        passed = passed + 1
+
+    atomic_free(a)
+    atomic_free(a32)
+
+    print_str("ASSERTIONS: " + int_to_str(passed) + "/" + int_to_str(total))
+    return passed == total
+
+def main():
+    if test_atomics_and_concurrency():
+        print_str("SUCCESS: ALL ATOMICS AND CONCURRENCY TESTS PASSED")

@@ -1,0 +1,7 @@
+{
+  "name": "lpp-engine",
+  "version": "1.0.0",
+  "description": "Pure L++ 2D/3D Game Engine (Entity Component System, Physics, Input, 3D Wireframe & 2D Renderer)",
+  "main": "src/engine.lpp",
+  "dependencies": {}
+}

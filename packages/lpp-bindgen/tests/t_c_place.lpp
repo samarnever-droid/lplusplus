@@ -1,0 +1,65 @@
+import c_memory
+import c_layout
+import c_place
+
+
+def main():
+    model := c_abi_sysv_x86_64()
+    inner_builder := c_layout_builder_new(model, C_LAYOUT_STRUCT, 4)
+    flags_id := c_layout_add_field(inner_builder, 4, 4, 3, 0)
+    score_id := c_layout_add_field(inner_builder, 4, 4, -1, 1)
+    inner_layout := c_layout_finish(inner_builder)
+
+    record_builder := c_layout_builder_new(model, C_LAYOUT_STRUCT, 4)
+    values_id := c_layout_add_field(record_builder, 16, 4, -1, 1)
+    inner_id := c_layout_add_field(record_builder, inner_layout.size, inner_layout.alignment, -1, 0)
+    record_layout := c_layout_finish(record_builder)
+
+    memory := c_memory_new(8)
+    record := c_calloc(memory, 1, record_layout.size)
+    values_field := c_layout_field(record_layout, values_id)
+    values_pointer := c_ptr_subobject(record, values_field.byte_offset, 16, 4)
+    value0 := c_place_index(values_pointer, 0, 4, 4, 1)
+    value1 := c_place_index(values_pointer, 1, 4, 4, 1)
+    value2 := c_place_index(values_pointer, 2, 4, 4, 1)
+
+    print(c_place_load_int(value0))
+    print(c_place_assign(value0, 10))
+    print(c_place_add_assign(value0, 5))
+    print(c_place_post_increment(value0))
+    print(c_place_load_int(value0))
+    print(c_place_pre_decrement(value0))
+    print(c_place_mul_assign(value0, 2))
+    print(c_place_div_assign(value0, 3))
+    print(c_place_mod_assign(value0, 6))
+    print(c_place_or_assign(value0, 8))
+    print(c_place_and_assign(value0, 10))
+    print(c_place_xor_assign(value0, 3))
+    print(c_place_shift_left_assign(value0, 1))
+    print(c_place_shift_right_assign(value0, 1))
+
+    inner_field := c_layout_field(record_layout, inner_id)
+    flags_place := c_place_nested(record, inner_field, c_layout_field(inner_layout, flags_id))
+    score_place := c_place_nested(record, inner_field, c_layout_field(inner_layout, score_id))
+    print(c_place_assign(flags_place, 5))
+    c_place_add_assign(flags_place, 5)
+    print(c_place_load_int(flags_place))
+    print(c_place_assign(score_place, -7))
+
+    dereferenced := c_place_dereference(c_place_address(value0), 4, 1)
+    print(c_place_load_int(dereferenced))
+    print(c_place_is_same(value0, dereferenced))
+
+    c_place_assign(value1, 41)
+    c_place_copy(value2, value1)
+    print(c_place_load_int(value2))
+    c_place_swap(value0, value1)
+    print(c_place_load_int(value0))
+    print(c_place_load_int(value1))
+    print(c_place_post_decrement(value1))
+    print(c_place_load_int(value1))
+
+    c_free(record)
+    c_memory_destroy(memory)
+    c_layout_destroy(record_layout)
+    c_layout_destroy(inner_layout)

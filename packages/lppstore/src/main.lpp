@@ -1,0 +1,16 @@
+# main.lpp - LppStore Enterprise Database Engine Entrypoint
+
+import kv_engine
+import http_server
+
+def main():
+    print_str("==========================================================")
+    print_str("        LppStore Distributed Database Engine v1.0.0      ")
+    print_str("        Built 100% in Pure Compiled L++ (No GC, No BC)   ")
+    print_str("==========================================================")
+
+    wal_file := "lppstore.log"
+    kv_engine.init_engine(wal_file)
+
+    port := 9090
+    http_server.start_db_server(port, wal_file)

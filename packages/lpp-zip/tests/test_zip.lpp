@@ -1,0 +1,29 @@
+import zip
+
+def main():
+    # Create a ZIP archive
+    archive := zip_create()
+    zip_add_file(archive, "hello.txt", "Hello from L++!")
+    zip_add_file(archive, "nums.txt", "1 2 3 4 5")
+    zip_add_file(archive, "readme.md", "# L++ ZIP test")
+    zip_save(archive, "/tmp/test_out.zip")
+    zip_free(archive)
+    print_str("ZIP created")
+
+    # Read it back
+    handle := zip_open("/tmp/test_out.zip")
+    count := zip_entry_count(handle)
+    print(count)
+
+    # Verify first entry
+    name0 := zip_entry_name(handle, 0)
+    data0 := zip_entry_data(handle, 0)
+    print(str_len(name0))
+    print(str_len(data0))
+
+    # Verify second entry
+    name1 := zip_entry_name(handle, 1)
+    print(str_len(name1))
+
+    zip_close(handle)
+    print_str("ZIP verified")

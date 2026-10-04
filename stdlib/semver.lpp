@@ -1,0 +1,174 @@
+## L++ Standard Library: SemVer — Semantic Versioning
+## Pure L++ — no C runtime needed.
+## Registry candidate: lpp-semver
+
+struct SemVer:
+    major: Int
+    minor: Int
+    patch: Int
+    pre:   Str    # "" = stable release
+
+# ── parsing ───────────────────────────────────────────────────────────────────
+
+def semver_parse(v: Str) -> SemVer:
+    mut s := v
+    # Strip leading "v"
+    if str_len(s) > 0:
+        if str_substr(s, 0, 1) == "v":
+            s = str_substr(s, 1, str_len(s) - 1)
+
+    # Split off pre-release at "-"
+    mut core := s
+    mut pre  := ""
+    dash := str_find(s, "-")
+    if dash >= 0:
+        core = str_substr(s, 0, dash)
+        pre  = str_substr(s, dash + 1, str_len(s) - dash - 1)
+
+    mut major := 0
+    mut minor := 0
+    mut patch := 0
+
+    dot1 := str_find(core, ".")
+    if dot1 >= 0:
+        major = str_to_int(str_substr(core, 0, dot1))
+        rest1 := str_substr(core, dot1 + 1, str_len(core) - dot1 - 1)
+        dot2  := str_find(rest1, ".")
+        if dot2 >= 0:
+            minor = str_to_int(str_substr(rest1, 0, dot2))
+            patch = str_to_int(str_substr(rest1, dot2 + 1, str_len(rest1) - dot2 - 1))
+        else:
+            minor = str_to_int(rest1)
+    else:
+        major = str_to_int(core)
+
+    mut result := SemVer()
+    result.major = major
+    result.minor = minor
+    result.patch = patch
+    result.pre   = pre
+    return result
+
+# ── comparison ────────────────────────────────────────────────────────────────
+
+def semver_cmp(a: SemVer, b: SemVer) -> Int:
+    if a.major != b.major:
+        if a.major < b.major:
+            return -1
+        return 1
+    if a.minor != b.minor:
+        if a.minor < b.minor:
+            return -1
+        return 1
+    if a.patch != b.patch:
+        if a.patch < b.patch:
+            return -1
+        return 1
+    # stable > any pre-release
+    a_stab := str_len(a.pre) == 0
+    b_stab := str_len(b.pre) == 0
+    if a_stab && !b_stab:
+        return 1
+    if !a_stab && b_stab:
+        return -1
+    if a.pre == b.pre:
+        return 0
+    if a.pre < b.pre:
+        return -1
+    return 1
+
+def semver_eq(a: SemVer, b: SemVer)  -> Bool:
+    return semver_cmp(a, b) == 0
+def semver_lt(a: SemVer, b: SemVer)  -> Bool:
+    return semver_cmp(a, b) < 0
+def semver_lte(a: SemVer, b: SemVer) -> Bool:
+    return semver_cmp(a, b) <= 0
+def semver_gt(a: SemVer, b: SemVer)  -> Bool:
+    return semver_cmp(a, b) > 0
+def semver_gte(a: SemVer, b: SemVer) -> Bool:
+    return semver_cmp(a, b) >= 0
+
+# ── constraint matching ───────────────────────────────────────────────────────
+
+# Matches v against:  "^1.2.3" | "~1.2.3" | ">=1.0, <2.0" | "=1.2.3"
+#                     ">1.0"   | "<2.0"   | "*" | bare "1.2.3"
+def semver_matches(v: SemVer, req: Str) -> Bool:
+    mut r := str_trim(req)
+    if r == "*" || r == "":
+        return true
+
+    # Range: ">=1.0, <2.0" — split on comma
+    comma := str_find(r, ",")
+    if comma >= 0:
+        left  := str_trim(str_substr(r, 0, comma))
+        right := str_trim(str_substr(r, comma + 1, str_len(r) - comma - 1))
+        return semver_matches(v, left) && semver_matches(v, right)
+
+    # Caret ^1.2.3 → >=1.2.3, <(major+1).0.0
+    if str_starts_with(r, "^"):
+        base := semver_parse(str_substr(r, 1, str_len(r) - 1))
+        mut upper := SemVer()
+        upper.major = base.major + 1
+        upper.minor = 0
+        upper.patch = 0
+        upper.pre   = ""
+        return semver_gte(v, base) && semver_lt(v, upper)
+
+    # Tilde ~1.2.3 → >=1.2.3, <1.(minor+1).0
+    if str_starts_with(r, "~"):
+        base := semver_parse(str_substr(r, 1, str_len(r) - 1))
+        mut upper := SemVer()
+        upper.major = base.major
+        upper.minor = base.minor + 1
+        upper.patch = 0
+        upper.pre   = ""
+        return semver_gte(v, base) && semver_lt(v, upper)
+
+    # >=, <=, =, >, <
+    if str_starts_with(r, ">="):
+        return semver_gte(v, semver_parse(str_substr(r, 2, str_len(r) - 2)))
+    if str_starts_with(r, "<="):
+        return semver_lte(v, semver_parse(str_substr(r, 2, str_len(r) - 2)))
+    if str_starts_with(r, "="):
+        return semver_eq(v, semver_parse(str_substr(r, 1, str_len(r) - 1)))
+    if str_starts_with(r, ">"):
+        return semver_gt(v, semver_parse(str_substr(r, 1, str_len(r) - 1)))
+    if str_starts_with(r, "<"):
+        return semver_lt(v, semver_parse(str_substr(r, 1, str_len(r) - 1)))
+
+    # Bare version — exact match
+    return semver_eq(v, semver_parse(r))
+
+# ── formatting ────────────────────────────────────────────────────────────────
+
+def semver_str(v: SemVer) -> Str:
+    mut s := str_concat(int_to_str(v.major), str_concat(".", str_concat(int_to_str(v.minor), str_concat(".", int_to_str(v.patch)))))
+    if str_len(v.pre) > 0:
+        s = str_concat(s, str_concat("-", v.pre))
+    return s
+
+# Sort a List[Str] of version strings descending (newest first).
+# Uses bubble sort — small lists only.
+def semver_sort_desc(versions: List[Str]) -> List[Str]:
+    n      := list_len(versions)
+    mut result := list_new()
+    for i in range(n):
+        list_push(result, list_get(versions, i))
+    for i in range(n):
+        for j in range(0, n - i - 1):
+            a := semver_parse(list_get(result, j))
+            b := semver_parse(list_get(result, j + 1))
+            if semver_lt(a, b):
+                tmp := list_get(result, j)
+                list_set(result, j, list_get(result, j + 1))
+                list_set(result, j + 1, tmp)
+    return result
+
+# Find the highest version in a list satisfying a constraint string.
+# Returns "" if nothing satisfies.
+def semver_best_match(versions: List[Str], req: Str) -> Str:
+    sorted := semver_sort_desc(versions)
+    for ver in sorted:
+        if semver_matches(semver_parse(ver), req):
+            return ver
+    return ""

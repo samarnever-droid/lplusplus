@@ -1,0 +1,516 @@
+name: L++ CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ownership-and-parity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable 2026-09-01
+        with:
+          toolchain: 1.98.0
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - name: Show toolchain
+        run: |
+          rustc --version
+          cargo --version
+          cc --version
+      - name: Verify frozen v1.2 compatibility fixtures
+        run: python3 scripts/check_compatibility_freeze.py
+      - name: Validate Phase 0 baseline metadata
+        run: |
+          python3 -m json.tool tests/source_baseline.json >/dev/null
+          python3 -m py_compile scripts/check_source_baseline.py scripts/check_compatibility_freeze.py scripts/materialize_v1_oracle.py scripts/package_release.py
+          python3 tests/test_package_release.py
+      - name: Install mold linker
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq mold 2>/dev/null || echo "mold not available, continuing without it"
+      - name: Rust formatting
+        run: cargo fmt --all -- --check
+      - name: Clippy correctness and suspicious groups
+        run: cargo clippy --workspace --all-targets --locked -- -A warnings -D clippy::correctness -D clippy::suspicious
+      - name: Rewrite crates are warning-clean
+        run: cargo clippy --locked -p lpp-common -p lpp-driver -p lpp-frontend -p lpp-hir -p lpp-types -p lpp-mir -p lpp-passes -p lpp-runtime-abi --all-targets -- -D warnings
+      - name: Rust workspace tests
+        run: cargo test --workspace --locked
+      - name: Strict runtime C compilation
+        run: cc -std=c11 -Wall -Wextra -Werror -c lpp_runtime.c -o /tmp/lpp_runtime.o -pthread
+      - name: C / Cranelift AOT parity suite
+        run: sh tests/run_aot_parity.sh
+      - name: Packaged runtime object linking
+        run: sh tests/test_packaged_runtime.sh
+      - name: Direct ELF linker MVP
+        run: sh tests/test_lpp_link_elf.sh
+      - name: Android / Termux target-triple support
+        run: sh tests/run_target_tests.sh
+      - name: Direct ELF linker negative cases
+        run: sh tests/test_lpp_link_negative.sh
+      - name: Installed direct-link build
+        run: sh tests/test_direct_installed_build.sh
+      - name: Source command split
+        run: sh tests/test_source_commands.sh
+
+  all-arch-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable 2026-09-01
+        with:
+          toolchain: 1.98.0
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - name: Check all Cranelift target backends
+        run: cargo check --locked --features all-arch
+
+  king20-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable 2026-09-01
+        with:
+          toolchain: 1.98.0
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - name: Install mold linker
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq mold 2>/dev/null || true
+      - name: Run King 20 Stable v1
+        run: python3 benchmarks/king20/run.py --suite stable
+      - name: Run King 20 Experimental
+        run: python3 benchmarks/king20/run.py --suite experimental
+      - name: Run King 20 direct ELF
+        run: python3 benchmarks/king20/run_direct_elf.py
+      - name: "Source baseline: reject unclassified .lpp failures"
+        run: |
+          cargo build --release --locked --bin lpp
+          python3 scripts/check_source_baseline.py target/release/lpp
+      - name: Multi-file import project (Linux ELF)
+        run: |
+          cargo build --release --locked --bin lpp --bin lpp-link 2>/dev/null
+          WORK=$(mktemp -d)
+          cp tests/modules/*.lpp "$WORK/"
+          mkdir -p "$WORK/utils"
+          cp tests/modules/utils/*.lpp "$WORK/utils/"
+
+          # Compile full project (use cc to link with libc for the standard runtime)
+          LPP_AOT=1 target/release/lpp "$WORK/test_full_project.lpp"
+          cc -O2 -fPIC -c lpp_runtime.c -o "$WORK/rt.o"
+          cc "$WORK/test_full_project.o" "$WORK/rt.o" -o "$WORK/test_full_project" -lm -lpthread
+          
+          OUT=$("$WORK/test_full_project")
+          EXPECTED=$(printf '30\n30\n49\n42\n30\n27\nhello from greet module\ngoodbye from greet module')
+          # abs_val(42)=42
+          if [ "$OUT" = "$EXPECTED" ]; then
+            echo "PASS test_full_project (Linux ELF)"
+          else
+            echo "FAIL! Expected: $EXPECTED"
+            echo "Got: $OUT"
+            exit 1
+          fi
+
+          # Test from X import Y
+          LPP_AOT=1 target/release/lpp "$WORK/test_from_import.lpp"
+          cc "$WORK/test_from_import.o" "$WORK/rt.o" -o "$WORK/test_from_import" -lm -lpthread
+          OUT2=$("$WORK/test_from_import")
+          EXPECTED2=$(printf '300\n121\n50')
+          if [ "$OUT2" = "$EXPECTED2" ]; then
+            echo "PASS test_from_import (Linux ELF)"
+          else
+            echo "FAIL! Expected: $EXPECTED2"
+            echo "Got: $OUT2"
+            exit 1
+          fi
+          echo "ALL MODULE TESTS PASSED (Linux)"
+
+          # --- Test 3: stdlib (pure L++) ---
+          echo "=== Test 3: stdlib math ==="
+          cp -r stdlib "$WORK/stdlib"
+          LPP_AOT=1 target/release/lpp "$WORK/test_stdlib_full.lpp"
+          cc "$WORK/test_stdlib_full.o" "$WORK/rt.o" -o "$WORK/test_stdlib_full" -lm -lpthread
+          OUT3=$("$WORK/test_stdlib_full")
+          EXPECTED3=$(printf '42\n3\n7\n256\n55\n120\n4\n1')
+          if [ "$OUT3" = "$EXPECTED3" ]; then
+            echo "PASS test_stdlib_full (Linux)"
+          else
+            echo "FAIL! Expected: $EXPECTED3"
+            echo "Got: $OUT3"
+            exit 1
+          fi
+
+          # --- Test 4: lpp-zip package (pure L++ ZIP library) ---
+          echo "=== Test 4: lpp-zip library ==="
+          cp packages/lpp-zip/src/zip.lpp "$WORK/"
+          cp packages/lpp-zip/tests/test_zip.lpp "$WORK/"
+          LPP_AOT=1 target/release/lpp "$WORK/test_zip.lpp"
+          cc "$WORK/test_zip.o" "$WORK/rt.o" -o "$WORK/test_zip" -lm -lpthread
+          ZIP_OUT=$("$WORK/test_zip")
+          echo "ZIP output: $ZIP_OUT"
+          echo "$ZIP_OUT" | grep -q "ZIP created" && echo "$ZIP_OUT" | grep -q "ZIP verified" && \
+            echo "PASS lpp-zip (Linux)" || { echo "FAIL lpp-zip"; exit 1; }
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: king20-results
+          path: |
+            benchmarks/king20/stable/v1/latest.json
+            benchmarks/king20/stable/v1/latest.md
+            benchmarks/king20/experimental/latest.json
+            benchmarks/king20/experimental/latest.md
+            benchmarks/king20/direct_elf_latest.json
+            benchmarks/king20/direct_elf_latest.md
+
+  scalability-phase-analysis:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable 2026-09-01
+        with:
+          toolchain: 1.98.0
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - name: Install mold linker
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq mold 2>/dev/null || true
+      - name: Run 10k / 50k / 100k phase scaling suite
+        run: python3 benchmarks/scalability/run.py
+      - name: Upload scalability result
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: scalability-results
+          path: |
+            benchmarks/scalability/latest.json
+            benchmarks/scalability/latest.md
+
+  lppsqlite-sqlite-compat:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable 2026-09-01
+        with:
+          toolchain: 1.98.0
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - name: Show sqlite3 version
+        run: python3 -c "import sqlite3; print('sqlite3', sqlite3.sqlite_version)"
+      - name: Build the L++ compiler
+        run: cargo build --release --locked --bin lpp --bin lpp-link
+      - name: Build lppsqlite engine and tests
+        run: sh packages/lppsqlite/build.sh --tests
+      - name: Unit suites (485 assertions)
+        run: sh packages/lppsqlite/run-tests.sh --unit
+      - name: Differential suite vs real sqlite3
+        run: sh packages/lppsqlite/run-tests.sh --diff
+      - name: Secondary index proof - real sqlite3 must use our index
+        run: |
+          set -e
+          DB=$RUNNER_TEMP/idx.db
+          rm -f "$DB"
+          sh -c "packages/lppsqlite/lppsqlite $DB \"CREATE TABLE t(id INTEGER PRIMARY KEY, name TEXT);\""
+          sh -c "packages/lppsqlite/lppsqlite $DB \"INSERT INTO t VALUES (1,'ada'),(2,'bob'),(3,'cy');\""
+          sh -c "packages/lppsqlite/lppsqlite $DB \"CREATE INDEX idx_name ON t(name);\""
+          python3 - "$DB" <<'EOF'
+          import sqlite3, sys
+          con = sqlite3.connect(sys.argv[1])
+          integrity = con.execute("PRAGMA integrity_check").fetchone()[0]
+          assert integrity == "ok", f"integrity_check failed: {integrity}"
+          kinds = con.execute("SELECT type,name FROM sqlite_master ORDER BY type").fetchall()
+          assert ("index", "idx_name") in kinds, kinds
+          plan = " ".join(str(r) for r in con.execute(
+              "EXPLAIN QUERY PLAN SELECT id FROM t WHERE name='cy'").fetchall())
+          assert "idx_name" in plan, f"real sqlite3 did not use the index: {plan}"
+          assert con.execute("SELECT id FROM t WHERE name='cy'").fetchone()[0] == 3
+          con.close()
+          print("real sqlite3: index valid and used ->", plan)
+          EOF
+          echo "PASS secondary index compatibility"
+
+      - name: Round-trip proof - real sqlite3 must accept our file
+        run: |
+          set -e
+          DB=$RUNNER_TEMP/ci.db
+          rm -f "$DB"
+          sh -c "packages/lppsqlite/lppsqlite $DB \"CREATE TABLE users(id INTEGER PRIMARY KEY, name TEXT, score REAL);\""
+          sh -c "packages/lppsqlite/lppsqlite $DB \"INSERT INTO users VALUES (1,'Alice',91.5),(2,'Bob',82.25),(3,'Cy',70.0);\""
+          sh -c "packages/lppsqlite/lppsqlite $DB \"UPDATE users SET score = 99.5 WHERE id = 2; DELETE FROM users WHERE id = 3;\""
+          python3 - "$DB" <<'EOF'
+          import sqlite3, sys
+          db = sys.argv[1]
+          con = sqlite3.connect(db)
+          integrity = con.execute("PRAGMA integrity_check").fetchone()[0]
+          assert integrity == "ok", f"integrity_check failed: {integrity}"
+          rows = con.execute("SELECT id, name, score FROM users ORDER BY id").fetchall()
+          assert rows == [(1, "Alice", 91.5), (2, "Bob", 99.5)], rows
+          # real sqlite3 writes into the file the L++ engine created
+          con.execute("INSERT INTO users VALUES (4,'Dee',60.5)")
+          con.commit(); con.close()
+          print("real sqlite3: integrity ok, rows verified, wrote row 4")
+          EOF
+          OUT=$(sh -c "packages/lppsqlite/lppsqlite $DB \"SELECT name FROM users WHERE id = 4;\"")
+          echo "lppsqlite read back: $OUT"
+          [ "$OUT" = "Dee" ] || { echo "FAIL: expected Dee, got $OUT"; exit 1; }
+          echo "PASS bidirectional SQLite compatibility"
+
+  compresslpp-codec-compat:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable 2026-09-01
+        with:
+          toolchain: 1.98.0
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - name: Install zip/unzip
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq zip unzip 2>/dev/null || true
+      - name: Build the L++ compiler
+        run: cargo build --release --locked --bin lpp --bin lpp-link
+      - name: Build compresslpp and its tests
+        run: sh packages/compresslpp/build.sh --tests
+      - name: Unit suites
+        run: sh packages/compresslpp/run-tests.sh --unit
+      - name: Cross-verify against zlib / zipfile / tarfile / gzip
+        run: sh packages/compresslpp/run-tests.sh --diff
+      - name: End-to-end proof - real tools must accept our archives
+        run: |
+          set -e
+          WORK=$RUNNER_TEMP/clpp
+          rm -rf "$WORK" && mkdir -p "$WORK/out"
+          echo "payload for the archive" > "$WORK/a.txt"
+          python3 -c "open('$WORK/b.txt','w').write('compress me '*500)"
+          packages/compresslpp/compresslpp zip "$WORK/x.zip" "$WORK/a.txt" "$WORK/b.txt" -9
+          packages/compresslpp/compresslpp zip "$WORK/e.zip" "$WORK/a.txt" -p s3cret
+          unzip -t "$WORK/x.zip"
+          unzip -P s3cret -t "$WORK/e.zip"
+          packages/compresslpp/compresslpp tar "$WORK/x.tar" "$WORK/a.txt" "$WORK/b.txt"
+          tar -tf "$WORK/x.tar"
+          packages/compresslpp/compresslpp gzip "$WORK/b.txt" -o "$WORK/b.gz" -9
+          python3 - "$WORK" <<'EOF'
+          import gzip, os, sys, zipfile
+          w = sys.argv[1]
+          with zipfile.ZipFile(os.path.join(w, 'x.zip')) as z:
+              assert z.testzip() is None
+              assert z.read('b.txt').startswith(b'compress me')
+          with zipfile.ZipFile(os.path.join(w, 'e.zip')) as z:
+              z.setpassword(b's3cret')
+              assert z.read('a.txt') == b'payload for the archive\n'
+          raw = open(os.path.join(w, 'b.txt'), 'rb').read()
+          assert gzip.decompress(open(os.path.join(w, 'b.gz'), 'rb').read()) == raw
+          print('python: zip, encrypted zip and gzip all verified')
+          EOF
+          echo "PASS compresslpp interoperability"
+
+  windows-coff-fallback:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable 2026-09-01
+        with:
+          toolchain: 1.98.0
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - name: Locate and load MSVC tools
+        shell: pwsh
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vs) { throw "Visual Studio C++ tools were not found" }
+          "VSCMD_BAT=$vs\VC\Auxiliary\Build\vcvars64.bat" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - name: Build and unit-test Windows toolchain
+        shell: pwsh
+        run: |
+          rustc --version
+          cargo test --locked
+          cargo build --release --locked --bin lpp --bin lpp-link
+      - name: Compile runtime object and link Cranelift COFF output
+        shell: pwsh
+        run: |
+          $work = Join-Path $env:RUNNER_TEMP "lpp-windows-coff"
+          New-Item -ItemType Directory -Force $work | Out-Null
+          Copy-Item tests\arith.lpp "$work\arith.lpp"
+          $cmd = Join-Path $work "build.cmd"
+          @"
+          @echo off
+          call "%VSCMD_BAT%" >nul || exit /b 1
+          cl.exe /nologo /O2 /c lpp_runtime.c "/Fo:$work\lpp_runtime.obj" || exit /b 1
+          set LPP_AOT=1
+          target\release\lpp.exe "$work\arith.lpp" || exit /b 1
+          target\release\lpp-link.exe inspect "$work\arith.obj" > "$work\inspect.txt" || exit /b 1
+          cl.exe /nologo "$work\arith.obj" "$work\lpp_runtime.obj" ws2_32.lib user32.lib "/Fe:$work\arith.exe" || exit /b 1
+          "$work\arith.exe" > "$work\output.txt" || exit /b 1
+          exit /b 0
+          "@ | Set-Content -Path $cmd -Encoding ascii
+          cmd.exe /d /c $cmd
+          if ($LASTEXITCODE -ne 0) { throw "MSVC COFF fallback build failed" }
+          $inspect = Get-Content "$work\inspect.txt" -Raw
+          if ($inspect -notmatch "format: Coff") { throw "Expected COFF inspection output" }
+          if ($inspect -notmatch "architecture: X86_64") { throw "Expected x86-64 COFF object" }
+          if ($inspect -notmatch "relocation-kinds:") { throw "Expected COFF relocation classification" }
+          $actual = (Get-Content "$work\output.txt" | ForEach-Object { $_.Trim() }) -join "`n"
+          if ($actual -ne "15`n5`n50`n2") { throw "Unexpected Windows AOT output: $actual" }
+      - name: Direct PE Kernel32 runtime MVP
+        shell: pwsh
+        run: |
+          $work = Join-Path $env:RUNNER_TEMP "lpp-windows-pe"
+          New-Item -ItemType Directory -Force $work | Out-Null
+          @"
+          def main():
+              print(7)
+          "@ | Set-Content -Path "$work\direct.lpp" -Encoding ascii
+          $buildRt = Join-Path $work "build_rt.cmd"
+          @"
+          @echo off
+          if defined VSCMD_BAT call "%VSCMD_BAT%" >nul
+          cl.exe /nologo /O2 /GS- /Gs1000000 /DLPP_FREESTANDING /c "%GITHUB_WORKSPACE%\runtime\windows_x86_64_min.c" "/Fo:$work\lpp_runtime_min.obj" || exit /b 1
+          "@ | Set-Content -Path $buildRt -Encoding ascii
+          cmd.exe /d /c $buildRt
+          if ($LASTEXITCODE -ne 0) { throw "Failed to compile freestanding runtime" }
+          # Step 2: compile L++ source to COFF object
+          $env:LPP_AOT = "1"
+          & target\release\lpp.exe "$work\direct.lpp"
+          if ($LASTEXITCODE -ne 0) { throw "L++ AOT compile failed" }
+          if (-not (Test-Path "$work\direct.obj")) { throw "direct.obj not created" }
+          # Step 3: link with lpp-link PE direct linker
+          & target\release\lpp-link.exe pe "$work\direct.obj" "$work\lpp_runtime_min.obj" -o "$work\direct.exe" 2>&1
+          if ($LASTEXITCODE -ne 0) { throw "lpp-link PE link failed (exit $LASTEXITCODE)" }
+          # Step 3b: minimal exit-only test with the freestanding runtime
+          @"
+          def noop() -> Int:
+              return 0
+          def main():
+              noop()
+          "@ | Set-Content -Path "$work\exit_only.lpp" -Encoding ascii
+          & target\release\lpp.exe "$work\exit_only.lpp"
+          if ($LASTEXITCODE -ne 0) { throw "exit-only L++ compile failed (exit $LASTEXITCODE)" }
+          if (-not (Test-Path "$work\exit_only.obj")) { throw "exit_only.obj not created" }
+          # Cranelift COFF objects declare the complete runtime ABI even when
+          # this tiny program uses only a user function, so the runtime object
+          # is required for a valid PE link.
+          & target\release\lpp-link.exe pe "$work\exit_only.obj" "$work\lpp_runtime_min.obj" -o "$work\exit_only.exe" 2>&1
+          if ($LASTEXITCODE -ne 0) { throw "exit-only PE link failed (exit $LASTEXITCODE)" }
+          if (-not (Test-Path "$work\exit_only.exe")) { throw "exit_only.exe not created" }
+          & "$work\exit_only.exe"
+          if ($LASTEXITCODE -ne 0) { throw "exit-only executable failed (exit $LASTEXITCODE)" }
+          Write-Host "exit_only result: $LASTEXITCODE"
+          # Step 4: test full version
+          $actual = (& "$work\direct.exe" 2>&1 | ForEach-Object { $_.Trim() }) -join "`n"
+          if ($LASTEXITCODE -ne 0 -or $actual -ne "7") { throw "Unexpected direct PE output: '$actual' (exit $LASTEXITCODE)" }
+          Write-Host "PASS Direct PE: output=$actual"
+      - name: King20 direct PE gate
+        shell: pwsh
+        run: .\tests\test_direct_pe_king20.ps1
+
+      - name: Multi-file import project (Windows PE)
+        shell: pwsh
+        run: |
+          $work = Join-Path $env:RUNNER_TEMP "lpp-modules-test"
+          New-Item -ItemType Directory -Force $work | Out-Null
+
+          # Copy module test files
+          Copy-Item tests\modules\*.lpp $work\
+          New-Item -ItemType Directory -Force "$work\utils" | Out-Null
+          Copy-Item tests\modules\utils\*.lpp "$work\utils\"
+
+          # --- Test 1: full project with import math + import greet + import utils.helpers ---
+          Write-Host "=== Test 1: import math + greet + utils.helpers ==="
+          $env:LPP_AOT = "1"
+          & target\release\lpp.exe "$work\test_full_project.lpp"
+          if ($LASTEXITCODE -ne 0) { throw "Compile test_full_project.lpp failed" }
+          $obj = "$work\test_full_project.obj"
+          if (-not (Test-Path $obj)) { throw "Object not created" }
+
+          # Build freestanding runtime
+          $buildRt = "$work\build_rt.cmd"
+          @"
+          @echo off
+          if defined VSCMD_BAT call "%VSCMD_BAT%" >nul
+          cl.exe /nologo /O2 /GS- /Gs1000000 /DLPP_FREESTANDING /c "%GITHUB_WORKSPACE%\runtime\windows_x86_64_min.c" "/Fo:$work\rt.obj" || exit /b 1
+          "@ | Set-Content -Path $buildRt -Encoding ascii
+          cmd.exe /d /c $buildRt
+          if ($LASTEXITCODE -ne 0) { throw "Runtime compile failed" }
+
+          # Link with lpp-link PE
+          & target\release\lpp-link.exe pe "$obj" "$work\rt.obj" -o "$work\test_full_project.exe" 2>&1
+          if ($LASTEXITCODE -ne 0) { throw "lpp-link PE failed" }
+
+          # Run and check output
+          $out = (& "$work\test_full_project.exe" 2>&1) -join "`n"
+          Write-Host "Output:`n$out"
+          $expected = "30`n30`n49`n42`n30`n27`nhello from greet module`ngoodbye from greet module"
+          # Note: abs_val(42)=42 since L++ doesn't support unary minus literals
+          if ($out.Trim() -ne $expected.Trim()) {
+            throw "MISMATCH! Expected:`n$expected`nGot:`n$out"
+          }
+          Write-Host "PASS test_full_project"
+
+          # --- Test 2: from X import Y ---
+          Write-Host "`n=== Test 2: from math import add, square + from utils.helpers import double ==="
+          & target\release\lpp.exe "$work\test_from_import.lpp"
+          if ($LASTEXITCODE -ne 0) { throw "Compile test_from_import.lpp failed" }
+          & target\release\lpp-link.exe pe "$work\test_from_import.obj" "$work\rt.obj" -o "$work\test_from_import.exe" 2>&1
+          if ($LASTEXITCODE -ne 0) { throw "lpp-link PE failed for from_import" }
+          $out2 = (& "$work\test_from_import.exe" 2>&1) -join "`n"
+          Write-Host "Output:`n$out2"
+          $expected2 = "300`n121`n50"
+          if ($out2.Trim() -ne $expected2.Trim()) {
+            throw "MISMATCH! Expected:`n$expected2`nGot:`n$out2"
+          }
+          Write-Host "PASS test_from_import"
+
+          # --- Test 3: stdlib (pure L++) on Windows PE ---
+          Write-Host "`n=== Test 3: stdlib math (Windows PE) ==="
+          Copy-Item -Recurse -Force stdlib "$work\stdlib"
+          Copy-Item tests\modules\test_stdlib_full.lpp "$work\"
+          $env:LPP_AOT = "1"
+          & target\release\lpp.exe "$work\test_stdlib_full.lpp"
+          if ($LASTEXITCODE -ne 0) { throw "stdlib compile failed" }
+          & target\release\lpp-link.exe pe "$work\test_stdlib_full.obj" "$work\rt.obj" -o "$work\test_stdlib_full.exe" 2>&1
+          if ($LASTEXITCODE -ne 0) { throw "lpp-link PE stdlib failed" }
+          $out3 = (& "$work\test_stdlib_full.exe" 2>&1) -join "`n"
+          Write-Host "Output:`n$out3"
+          $expected3 = "42`n3`n7`n256`n55`n120`n4`n1"
+          if ($out3.Trim() -ne $expected3.Trim()) {
+            throw "MISMATCH! Expected:`n$expected3`nGot:`n$out3"
+          }
+          Write-Host "PASS test_stdlib_full (Windows PE)"
+
+          # Test 4: lpp-zip skipped on Windows PE (freestanding runtime lacks buf_* builtins)
+          Write-Host "SKIP lpp-zip (Windows PE) — buf_* not in freestanding runtime yet"
+
+          Write-Host "`n=== ALL MODULE + STDLIB TESTS PASSED ==="
+
+  macos-host-link:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable 2026-09-01
+        with:
+          toolchain: 1.98.0
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - name: Build and test macOS toolchain
+        run: |
+          cargo test --locked
+          cargo build --release --locked --bin lpp --bin lpp-link
+      - name: Compile runtime and run Cranelift Mach-O fallback
+        run: |
+          clang -O2 -fPIC -c lpp_runtime.c -o /tmp/lpp_runtime.o
+          cp tests/arith.lpp /tmp/arith.lpp
+          LPP_AOT=1 target/release/lpp /tmp/arith.lpp
+          clang /tmp/arith.o /tmp/lpp_runtime.o -o /tmp/arith
+          test "$(/tmp/arith)" = $'15\n5\n50\n2'

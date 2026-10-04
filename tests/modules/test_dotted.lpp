@@ -1,0 +1,5 @@
+import utils.helpers
+
+def main():
+    result := double(21)
+    print(result)

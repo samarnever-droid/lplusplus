@@ -1,0 +1,53 @@
+# stdlib/list_util.lpp — List utility functions
+
+def list_contains_int(lst: Int, value: Int) -> Int:
+    for i in range(list_len(lst)):
+        if list_get(lst, i) == value:
+            return 1
+    return 0
+
+def list_index_of(lst: Int, value: Int) -> Int:
+    for i in range(list_len(lst)):
+        if list_get(lst, i) == value:
+            return i
+    return -1
+
+def list_sum(lst: Int) -> Int:
+    mut total := 0
+    for i in range(list_len(lst)):
+        total += list_get(lst, i)
+    return total
+
+def list_max(lst: Int) -> Int:
+    if list_len(lst) == 0:
+        return 0
+    mut m := list_get(lst, 0)
+    for i in range(1, list_len(lst)):
+        v := list_get(lst, i)
+        if v > m:
+            m = v
+    return m
+
+def list_min(lst: Int) -> Int:
+    if list_len(lst) == 0:
+        return 0
+    mut m := list_get(lst, 0)
+    for i in range(1, list_len(lst)):
+        v := list_get(lst, i)
+        if v < m:
+            m = v
+    return m
+
+def list_reverse_int(lst: Int) -> Int:
+    result := list_new()
+    mut i := list_len(lst) - 1
+    while i >= 0:
+        list_push(result, list_get(lst, i))
+        i -= 1
+    return result
+
+def list_range(start: Int, end: Int) -> Int:
+    result := list_new()
+    for i in range(start, end):
+        list_push(result, i)
+    return result

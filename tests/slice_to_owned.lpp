@@ -1,0 +1,5 @@
+def main():
+    text := "zero-copy"
+    view := str_slice(text, 5, 4)
+    owned := slice_to_str(view)
+    print(owned)

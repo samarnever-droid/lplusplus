@@ -1,0 +1,99 @@
+[workspace]
+members = [
+    ".",
+    "crates/keel",
+    "crates/lpp-pm",
+    "crates/lpp-common",
+    "crates/lpp-driver",
+    "crates/lpp-frontend",
+    "crates/lpp-hir",
+    "crates/lpp-types",
+    "crates/lpp-mir",
+    "crates/lpp-ownership",
+    "crates/lpp-passes",
+    "crates/lpp-runtime-abi",
+    "crates/lpp-codegen-api",
+    "crates/lpp-codegen-cranelift",
+    "crates/lpp-codegen-wasm",
+    "crates/lpp-codegen-llvm",
+    "crates/lpp-codegen-gates",
+    "crates/lpp-linker",
+    "crates/lpp-runtime",
+    "runtime/lpp-net",
+]
+default-members = [
+    ".",
+    "crates/lpp-pm",
+    "crates/lpp-common",
+    "crates/lpp-driver",
+    "crates/lpp-frontend",
+    "crates/lpp-hir",
+    "crates/lpp-types",
+    "crates/lpp-mir",
+    "crates/lpp-ownership",
+    "crates/lpp-passes",
+    "crates/lpp-runtime-abi",
+    "crates/lpp-codegen-api",
+    "crates/lpp-codegen-cranelift",
+    "crates/lpp-codegen-wasm",
+    "crates/lpp-codegen-llvm",
+    "crates/lpp-codegen-gates",
+    "crates/lpp-linker",
+    "crates/lpp-runtime",
+    "crates/lpp-runtime",
+    "runtime/lpp-net",
+]
+resolver = "2"
+
+[package]
+name = "lpp"
+version = "1.2.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "lpp"
+path = "src/lib.rs"
+
+[[bin]]
+name = "lpp"
+path = "src/main.rs"
+
+[[bin]]
+name = "lpp-link"
+path = "src/bin/lpp-link.rs"
+
+[[bin]]
+name = "lpp-bench"
+path = "src/bin/lpp-bench.rs"
+
+[[bin]]
+name = "lpp-lsp"
+path = "src/bin/lpp-lsp.rs"
+
+[features]
+# Native development builds compile only Cranelift's host ISA. Official release
+# binaries and the dedicated CI job enable `all-arch` to preserve cross-target
+# compatibility without forcing every constrained developer build to do so.
+default = []
+all-arch = ["cranelift-codegen/all-arch"]
+
+[dependencies]
+lpp-common = { path = "crates/lpp-common" }
+lpp-driver = { path = "crates/lpp-driver" }
+lpp-linker = { path = "crates/lpp-linker" }
+cranelift-codegen = "0.113"
+cranelift-frontend = "0.113"
+cranelift-module = "0.113"
+cranelift-object = "0.113"
+target-lexicon = "0.12"
+object = "0.36"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+semver = { version = "1", features = ["serde"] }
+toml = "0.8"
+
+[dev-dependencies]
+lpp-hir = { path = "crates/lpp-hir" }
+lpp-mir = { path = "crates/lpp-mir" }
+lpp-types = { path = "crates/lpp-types" }

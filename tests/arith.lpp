@@ -1,0 +1,14 @@
+# arith.lpp — Basic arithmetic correctness
+# Expected output:
+# 15
+# 5
+# 50
+# 2
+
+def main():
+    a := 10
+    b := 5
+    print(a + b)
+    print(a - b)
+    print(a * b)
+    print(a / b)

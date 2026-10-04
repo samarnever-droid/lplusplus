@@ -1,0 +1,7 @@
+[package]
+name = "simple-markdown"
+version = "0.1.0"
+authors = ["Samar"]
+license = "MIT"
+description = "Pure L++ Native High-Performance Markdown Tokenizer and Parser with Spatial Knowledge & Wikilink extensions"
+keywords = ["markdown", "parser", "ast", "wikilinks", "cosmos"]

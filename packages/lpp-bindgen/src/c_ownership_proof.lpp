@@ -1,0 +1,713 @@
+# c_ownership_proof.lpp — path-sensitive ownership proof over function bodies.
+#
+# The site-based ownership graph (c_ownership_graph) only counts allocation,
+# reallocation and deallocation calls per function. This module goes further:
+# it walks each function body and proves, on the plain-local-variable-identity
+# subset, whether every allocation is freed on every path (balanced), escapes to
+# the caller (returned), or leaks / is double-freed.
+#
+# Sound but conservative:
+#   * tracks `v = alloc(...)`, `v = realloc(v, ...)`, `type *v = alloc(...)`,
+#     `free(v)`, `return v`, and overwrites of an owned handle;
+#   * goto / switch / case / labels / divergent branches are `unproven`;
+#   * loops must be ownership-neutral across one iteration to be proven.
+#
+# Classification: proved-balanced, proved-escape, proved-leak,
+# proved-double-free, or unproven.
+#
+# Implementation note: the walker is deliberately structured so that no hot-path
+# function returns a user struct by value. All walker state lives in a mutable
+# byte buffer (owned-set string, freed-set string, flags word, allocation count)
+# referenced by an integer handle, and each walk function returns an integer
+# (the next source offset) plus writes its verdict into the buffer. This avoids
+# a L++/Cranelift backend codegen bug where many mutually-recursive functions
+# returning a struct by value in one compilation unit fail AOT codegen with a
+# spurious "mismatched argument count" verifier error.
+
+import c_call_graph
+import c_translation_unit
+import c_declaration_graph
+import c_lexer
+import text
+
+const C_PROOF_LEAK = 1
+const C_PROOF_ESCAPE = 2
+const C_PROOF_DOUBLE_FREE = 4
+const C_PROOF_DIVERGENT = 8
+const C_PROOF_COMPLEX = 16
+
+# State buffer layout (byte offsets):
+#   0..256    owned-set string ("O|name|name2|")
+#   256..512  freed-set string ("F|name|...")
+#   512       flags (u32le)
+#   520       alloc_count (u32le)
+#   528       verdict output slot (0 none, 1 leak, 2 escape, 4 doublefree,
+#                                 8 divergent, 16 complex)
+
+const C_ST_OWNED = 0
+const C_ST_FREED = 256
+const C_ST_FLAGS = 512
+const C_ST_ALLOC = 520
+
+struct COwnerProofStats:
+    functions: Int
+    with_sites: Int
+    proved_balanced: Int
+    proved_escape: Int
+    proved_leak: Int
+    proved_double_free: Int
+    unproven: Int
+
+struct COwnerProofResult:
+    graph: Str
+    report: Str
+    stats: COwnerProofStats
+    valid: Int
+
+
+# --- state buffer access -----------------------------------------------------
+
+def c_proof_owned_read(st: Int) -> Str:
+    return buf_read_str(st, C_ST_OWNED, 256)
+
+
+def c_proof_freed_read(st: Int) -> Str:
+    return buf_read_str(st, C_ST_FREED, 256)
+
+
+def c_proof_owned_has(st: Int, name: Str) -> Bool:
+    return text_contains(c_proof_owned_read(st), str_concat("O|", str_concat(name, "|")))
+
+
+def c_proof_freed_has(st: Int, name: Str) -> Bool:
+    return text_contains(c_proof_freed_read(st), str_concat("F|", str_concat(name, "|")))
+
+
+def c_proof_clear_owned(st: Int) -> Void:
+    mut i := 0
+    while i < 256:
+        buf_set8(st, C_ST_OWNED + i, 0)
+        i = i + 1
+
+def c_proof_owned_add(st: Int, name: Str) -> Void:
+    cur := c_proof_owned_read(st)
+    needle := str_concat("O|", str_concat(name, "|"))
+    if str_len(name) == 0 || text_contains(cur, needle):
+        return
+    c_proof_clear_owned(st)
+    buf_write_str(st, C_ST_OWNED, str_concat(cur, needle))
+
+
+def c_proof_owned_drop(st: Int, name: Str) -> Void:
+    needle := str_concat("O|", str_concat(name, "|"))
+    c_proof_clear_owned(st)
+    buf_write_str(st, C_ST_OWNED, str_replace(c_proof_owned_read(st), needle, ""))
+
+
+def c_proof_clear_freed(st: Int) -> Void:
+    mut i := 0
+    while i < 256:
+        buf_set8(st, C_ST_FREED + i, 0)
+        i = i + 1
+
+def c_proof_freed_add(st: Int, name: Str) -> Void:
+    cur := c_proof_freed_read(st)
+    needle := str_concat("F|", str_concat(name, "|"))
+    if str_len(name) == 0 || text_contains(cur, needle):
+        return
+    c_proof_clear_freed(st)
+    buf_write_str(st, C_ST_FREED, str_concat(cur, needle))
+
+
+def c_proof_any_owned(st: Int) -> Bool:
+    return text_contains(c_proof_owned_read(st), "O|")
+
+
+def c_proof_flags(st: Int) -> Int:
+    return buf_get32le(st, C_ST_FLAGS)
+
+
+def c_proof_set_flag(st: Int, bit: Int) -> Void:
+    buf_set32le(st, C_ST_FLAGS, c_proof_flags(st) | bit)
+
+
+def c_proof_alloc_count(st: Int) -> Int:
+    return buf_get32le(st, C_ST_ALLOC)
+
+
+def c_proof_bump_alloc(st: Int) -> Void:
+    buf_set32le(st, C_ST_ALLOC, c_proof_alloc_count(st) + 1)
+
+
+def c_proof_clone_state(src: Int, dst: Int) -> Void:
+    buf_write_str(dst, C_ST_OWNED, c_proof_owned_read(src))
+    buf_write_str(dst, C_ST_FREED, c_proof_freed_read(src))
+    buf_set32le(dst, C_ST_FLAGS, c_proof_flags(src))
+    buf_set32le(dst, C_ST_ALLOC, c_proof_alloc_count(src))
+
+
+# --- token helpers -----------------------------------------------------------
+
+def c_proof_is_type_keyword(word: Str) -> Bool:
+    if text_eq(word, "int") || text_eq(word, "char") || text_eq(word, "short"):
+        return true
+    if text_eq(word, "long") || text_eq(word, "float") || text_eq(word, "double"):
+        return true
+    if text_eq(word, "unsigned") || text_eq(word, "signed") || text_eq(word, "void"):
+        return true
+    if text_eq(word, "struct") || text_eq(word, "union") || text_eq(word, "_Bool"):
+        return true
+    if text_eq(word, "const") || text_eq(word, "static") || text_eq(word, "volatile") || text_eq(word, "extern") || text_eq(word, "register"):
+        return true
+    if text_eq(word, "typedef") || text_eq(word, "inline"):
+        return true
+    return false
+
+
+def c_proof_skip_paren(open_step: CLexStep) -> CLexCursor:
+    mut current := c_lex_next_code(open_step.next)
+    mut depth := 1
+    mut guard := 0
+    while depth > 0:
+        guard = guard + 1
+        if guard > 100000:
+            return current.next
+        if c_lex_token_is(current, "("):
+            depth = depth + 1
+        elif c_lex_token_is(current, ")"):
+            depth = depth - 1
+            if depth == 0:
+                return current.next
+        if current.token.kind == C_TOKEN_EOF:
+            return current.next
+        current = c_lex_next_code(current.next)
+    return current.next
+
+
+def c_proof_skip_to_semi(cursor: CLexCursor) -> CLexCursor:
+    mut current := cursor
+    mut depth := 0
+    mut guard := 0
+    mut scanning := true
+    while scanning:
+        guard = guard + 1
+        if guard > 100000:
+            return current
+        step := c_lex_next_code(current)
+        if step.token.kind == C_TOKEN_EOF:
+            return step.next
+        if c_lex_token_is(step, "(") || c_lex_token_is(step, "[") || c_lex_token_is(step, "{"):
+            depth = depth + 1
+        elif c_lex_token_is(step, ")") || c_lex_token_is(step, "]") || c_lex_token_is(step, "}"):
+            depth = depth - 1
+        elif c_lex_token_is(step, ";") && depth == 0:
+            return step.next
+        current = step.next
+    return current
+
+
+def c_proof_is_allocator(name: Str) -> Bool:
+    return c_call_is_allocator(name)
+
+
+def c_proof_is_reallocator(name: Str) -> Bool:
+    return c_call_is_reallocator(name)
+
+
+def c_proof_is_deallocator(name: Str) -> Bool:
+    return c_call_is_deallocator(name)
+
+
+# --- statement analysis (mutates state, returns next offset) -----------------
+
+def c_proof_analyze_return(ret_step: CLexStep, st: Int) -> Int:
+    after := c_lex_next_code(ret_step.next)
+    end := c_proof_skip_to_semi(after.next)
+    if after.token.kind == C_TOKEN_IDENTIFIER:
+        nxt := c_lex_next_code(after.next)
+        if c_lex_token_is(nxt, ";"):
+            name := after.token.spelling
+            if c_proof_owned_has(st, name):
+                c_proof_owned_drop(st, name)
+                c_proof_set_flag(st, C_PROOF_ESCAPE)
+            elif c_proof_freed_has(st, name):
+                c_proof_set_flag(st, C_PROOF_DOUBLE_FREE)
+        elif c_lex_token_is(nxt, "(") && (c_proof_is_allocator(after.token.spelling) || c_proof_is_reallocator(after.token.spelling)):
+            c_proof_set_flag(st, C_PROOF_ESCAPE)
+    if c_proof_any_owned(st):
+        c_proof_set_flag(st, C_PROOF_LEAK)
+    return end.offset
+
+
+def c_proof_analyze_expr(cur: CLexCursor, st: Int) -> Int:
+    first := c_lex_next_code(cur)
+    if first.token.kind == C_TOKEN_IDENTIFIER:
+        callee := first.token.spelling
+        after := c_lex_next_code(first.next)
+        if c_lex_token_is(after, "("):
+            arg_step := c_lex_next_code(after.next)
+            mut arg_name := ""
+            if arg_step.token.kind == C_TOKEN_IDENTIFIER:
+                after_arg := c_lex_next_code(arg_step.next)
+                if c_lex_token_is(after_arg, ")"):
+                    arg_name = arg_step.token.spelling
+            end := c_proof_skip_to_semi(c_proof_skip_paren(after))
+            if c_proof_is_deallocator(callee) && str_len(arg_name) > 0:
+                if c_proof_owned_has(st, arg_name):
+                    if c_proof_freed_has(st, arg_name):
+                        c_proof_set_flag(st, C_PROOF_DOUBLE_FREE)
+                    c_proof_owned_drop(st, arg_name)
+                    c_proof_freed_add(st, arg_name)
+                elif c_proof_freed_has(st, arg_name):
+                    c_proof_set_flag(st, C_PROOF_DOUBLE_FREE)
+            elif c_proof_is_allocator(callee):
+                c_proof_set_flag(st, C_PROOF_LEAK)
+            return end.offset
+    end := c_proof_skip_to_semi(cur)
+    return end.offset
+
+
+def c_proof_is_declaration_start(cur: CLexCursor) -> Bool:
+    first := c_lex_next_code(cur)
+    if c_proof_is_type_keyword(first.token.spelling):
+        return true
+    if first.token.kind == C_TOKEN_IDENTIFIER:
+        second := c_lex_next_code(first.next)
+        if second.token.kind == C_TOKEN_IDENTIFIER:
+            return true
+    return false
+
+
+def c_proof_analyze_declaration(cur: CLexCursor, st: Int) -> Int:
+    mut current := cur
+    mut last_ident := ""
+    mut decl_name := ""
+    mut saw_assign := false
+    mut assign_rhs := cur
+    mut depth := 0
+    mut guard := 0
+    mut scanning := true
+    while scanning:
+        guard = guard + 1
+        if guard > 100000:
+            return current.offset
+        step := c_lex_next_code(current)
+        if step.token.kind == C_TOKEN_EOF:
+            scanning = false
+        elif c_lex_token_is(step, "(") || c_lex_token_is(step, "[") || c_lex_token_is(step, "{"):
+            depth = depth + 1
+            current = step.next
+        elif c_lex_token_is(step, ")") || c_lex_token_is(step, "]") || c_lex_token_is(step, "}"):
+            depth = depth - 1
+            current = step.next
+        elif c_lex_token_is(step, "=") && depth == 0:
+            decl_name = last_ident
+            saw_assign = true
+            assign_rhs = step.next
+            scanning = false
+        elif c_lex_token_is(step, ";") && depth == 0:
+            if !saw_assign:
+                decl_name = last_ident
+            scanning = false
+        else:
+            if step.token.kind == C_TOKEN_IDENTIFIER:
+                last_ident = step.token.spelling
+            current = step.next
+    if saw_assign && str_len(decl_name) > 0:
+
+        rhs := c_lex_next_code(assign_rhs)
+        if rhs.token.kind == C_TOKEN_IDENTIFIER:
+            callee := rhs.token.spelling
+            after_callee := c_lex_next_code(rhs.next)
+            if c_lex_token_is(after_callee, "(") && (c_proof_is_allocator(callee) || c_proof_is_reallocator(callee)):
+                c_proof_owned_drop(st, decl_name)
+                c_proof_owned_add(st, decl_name)
+                if c_proof_is_reallocator(callee):
+                    first_arg := c_lex_next_code(rhs.next)
+                    if first_arg.token.kind == C_TOKEN_IDENTIFIER && c_proof_owned_has(st, first_arg.token.spelling):
+                        c_proof_owned_drop(st, first_arg.token.spelling)
+                else:
+                    c_proof_bump_alloc(st)
+                return c_proof_skip_to_semi(c_proof_skip_paren(after_callee)).offset
+            else:
+                return c_proof_skip_to_semi(rhs.next).offset
+        else:
+            return c_proof_skip_to_semi(assign_rhs).offset
+    return current.offset
+
+
+def c_proof_analyze_assign(cur: CLexCursor, st: Int) -> Int:
+    mut current := cur
+    mut depth := 0
+    mut lhs := ""
+    mut found_assign := false
+    mut assign_rhs := cur
+    mut scanning := true
+    while scanning:
+        step := c_lex_next_code(current)
+        if step.token.kind == C_TOKEN_EOF:
+            scanning = false
+        elif c_lex_token_is(step, "(") || c_lex_token_is(step, "[") || c_lex_token_is(step, "{"):
+            depth = depth + 1
+            current = step.next
+        elif c_lex_token_is(step, ")") || c_lex_token_is(step, "]") || c_lex_token_is(step, "}"):
+            depth = depth - 1
+            current = step.next
+        elif c_lex_token_is(step, "=") && depth == 0:
+            assign_rhs = step.next
+            found_assign = true
+            scanning = false
+        elif c_lex_token_is(step, ";") && depth == 0:
+            if !found_assign:
+                return c_proof_analyze_expr(cur, st)
+            scanning = false
+        else:
+            if depth == 0 && step.token.kind == C_TOKEN_IDENTIFIER:
+                lhs = step.token.spelling
+            current = step.next
+    if !found_assign || str_len(lhs) == 0:
+        return c_proof_skip_to_semi(assign_rhs).offset
+    rhs := c_lex_next_code(assign_rhs)
+    if rhs.token.kind == C_TOKEN_IDENTIFIER:
+        callee := rhs.token.spelling
+        after_callee := c_lex_next_code(rhs.next)
+        if c_lex_token_is(after_callee, "(") && (c_proof_is_allocator(callee) || c_proof_is_reallocator(callee)):
+            c_proof_owned_drop(st, lhs)
+            c_proof_owned_add(st, lhs)
+            if c_proof_is_reallocator(callee):
+                first_arg := c_lex_next_code(rhs.next)
+                if first_arg.token.kind == C_TOKEN_IDENTIFIER && c_proof_owned_has(st, first_arg.token.spelling):
+                    c_proof_owned_drop(st, first_arg.token.spelling)
+            else:
+                c_proof_bump_alloc(st)
+            return c_proof_skip_to_semi(c_proof_skip_paren(after_callee)).offset
+    if c_proof_owned_has(st, lhs):
+        c_proof_set_flag(st, C_PROOF_LEAK)
+        c_proof_owned_drop(st, lhs)
+    return c_proof_skip_to_semi(assign_rhs).offset
+
+
+# --- control flow (all return Int next offset, mutate st) --------------------
+
+def c_proof_walk_stmt(cur: CLexCursor, st: Int) -> Int:
+    first := c_lex_next_code(cur)
+    if c_lex_token_is(first, ";"):
+        return first.next.offset
+    if c_lex_token_is(first, "{"):
+        return c_proof_walk_block(first.next, st)
+    if text_eq(first.token.spelling, "return"):
+        return c_proof_analyze_return(first, st)
+    if text_eq(first.token.spelling, "break") || text_eq(first.token.spelling, "continue"):
+        return c_proof_skip_to_semi(first.next).offset
+    if text_eq(first.token.spelling, "goto") || text_eq(first.token.spelling, "switch") || text_eq(first.token.spelling, "case"):
+        c_proof_set_flag(st, C_PROOF_COMPLEX)
+        return c_proof_skip_to_semi(first.next).offset
+    if text_eq(first.token.spelling, "if"):
+        return c_proof_walk_if(first, st)
+    if text_eq(first.token.spelling, "while"):
+        return c_proof_walk_while(first, st)
+    if text_eq(first.token.spelling, "for"):
+        return c_proof_walk_for(first, st)
+    if text_eq(first.token.spelling, "do"):
+        return c_proof_walk_do(first, st)
+    if c_proof_is_declaration_start(cur):
+        return c_proof_analyze_declaration(cur, st)
+    if first.token.kind == C_TOKEN_IDENTIFIER:
+        after := c_lex_next_code(first.next)
+        if c_lex_token_is(after, ":"):
+            c_proof_set_flag(st, C_PROOF_COMPLEX)
+            return after.next.offset
+        if !c_lex_token_is(after, "(") && !c_lex_token_is(after, "[") && !c_lex_token_is(after, "->"):
+            return c_proof_analyze_assign(cur, st)
+    return c_proof_analyze_expr(cur, st)
+
+
+def c_proof_walk_block(cur: CLexCursor, st: Int) -> Int:
+    mut current := cur
+    mut steps := 0
+    mut scanning := true
+    while scanning:
+        step := c_lex_next_code(current)
+        steps = steps + 1
+        if steps > 1000000:
+            return current.offset
+
+        if step.token.kind == C_TOKEN_EOF:
+            return step.next.offset
+        if c_lex_token_is(step, "}"):
+            return step.next.offset
+
+        next_offset := c_proof_walk_stmt(current, st)
+        if next_offset <= current.offset:
+            current = step.next
+        else:
+            current = c_lex_advance(current, next_offset)
+    return current.offset
+
+
+def c_proof_merge_if(then_st: Int, else_st: Int, out_st: Int) -> Void:
+    # Merge two branch states. Divergence if owned sets differ.
+    t_owned := c_proof_owned_read(then_st)
+    e_owned := c_proof_owned_read(else_st)
+    c_proof_clear_owned(out_st)
+    c_proof_clear_freed(out_st)
+    buf_write_str(out_st, C_ST_OWNED, t_owned)
+    buf_write_str(out_st, C_ST_FREED, c_proof_freed_read(then_st))
+    mut out_flags := c_proof_flags(then_st) | c_proof_flags(else_st)
+    if !text_eq(t_owned, e_owned):
+        out_flags = out_flags | C_PROOF_DIVERGENT
+    buf_set32le(out_st, C_ST_FLAGS, out_flags)
+    buf_set32le(out_st, C_ST_ALLOC, c_proof_alloc_count(then_st) + c_proof_alloc_count(else_st))
+
+
+def c_proof_walk_if(first: CLexStep, st: Int) -> Int:
+    open := c_lex_next_code(first.next)
+    cond_end := c_proof_skip_paren(open)
+    then_st := buf_alloc(544)
+    else_st := buf_alloc(544)
+    c_proof_clone_state(st, then_st)
+    then_offset := c_proof_walk_stmt(cond_end, then_st)
+    after_then := c_lex_advance(cond_end, then_offset)
+    else_token := c_lex_next_code(after_then)
+    mut result_offset := then_offset
+    if text_eq(else_token.token.spelling, "else"):
+        c_proof_clone_state(st, else_st)
+        result_offset = c_proof_walk_stmt(else_token.next, else_st)
+    else:
+        c_proof_clone_state(st, else_st)
+    c_proof_merge_if(then_st, else_st, st)
+    buf_free(then_st)
+    buf_free(else_st)
+    return result_offset
+
+
+def c_proof_walk_while(first: CLexStep, st: Int) -> Int:
+    open := c_lex_next_code(first.next)
+    cond_end := c_proof_skip_paren(open)
+    body_st := buf_alloc(544)
+    c_proof_clone_state(st, body_st)
+    result_offset := c_proof_walk_stmt(cond_end, body_st)
+    # loop must be ownership-neutral
+    if !text_eq(c_proof_owned_read(st), c_proof_owned_read(body_st)):
+        c_proof_set_flag(st, C_PROOF_DIVERGENT)
+    body_flags := c_proof_flags(body_st)
+    if (body_flags & (C_PROOF_LEAK | C_PROOF_ESCAPE | C_PROOF_DOUBLE_FREE)) != 0:
+        c_proof_set_flag(st, C_PROOF_DIVERGENT)
+    c_proof_set_flag(st, c_proof_flags(body_st))
+    buf_set32le(st, C_ST_ALLOC, c_proof_alloc_count(st) + c_proof_alloc_count(body_st))
+    buf_free(body_st)
+    return result_offset
+
+
+def c_proof_walk_for(first: CLexStep, st: Int) -> Int:
+    open := c_lex_next_code(first.next)
+    mut semi1 := open.next
+    mut scanning := true
+    while scanning:
+        step := c_lex_next_code(semi1)
+        if c_lex_token_is(step, ";"):
+            semi1 = step.next
+            scanning = false
+        else:
+            semi1 = step.next
+    mut semi2 := semi1
+    scanning = true
+    while scanning:
+        step := c_lex_next_code(semi2)
+        if c_lex_token_is(step, ";"):
+            semi2 = step.next
+            scanning = false
+        else:
+            semi2 = step.next
+    # Skip the increment expression to the closing ')'
+    mut close := c_lex_next_code(semi2)
+    mut for_guard := 0
+    while !c_lex_token_is(close, ")") && for_guard < 100000:
+        for_guard = for_guard + 1
+        if close.token.kind == C_TOKEN_EOF:
+            break
+        close = c_lex_next_code(close.next)
+    body_st := buf_alloc(544)
+    c_proof_clone_state(st, body_st)
+    result_offset := c_proof_walk_stmt(close.next, body_st)
+    if !text_eq(c_proof_owned_read(st), c_proof_owned_read(body_st)):
+        c_proof_set_flag(st, C_PROOF_DIVERGENT)
+    body_flags := c_proof_flags(body_st)
+    if (body_flags & (C_PROOF_LEAK | C_PROOF_ESCAPE | C_PROOF_DOUBLE_FREE)) != 0:
+        c_proof_set_flag(st, C_PROOF_DIVERGENT)
+    c_proof_set_flag(st, c_proof_flags(body_st))
+    buf_set32le(st, C_ST_ALLOC, c_proof_alloc_count(st) + c_proof_alloc_count(body_st))
+    buf_free(body_st)
+    return result_offset
+
+
+def c_proof_walk_do(first: CLexStep, st: Int) -> Int:
+    body_start := c_lex_next_code(first.next)
+    body_st := buf_alloc(544)
+    c_proof_clone_state(st, body_st)
+    result_offset := c_proof_walk_stmt(body_start, body_st)
+    if !text_eq(c_proof_owned_read(st), c_proof_owned_read(body_st)):
+        c_proof_set_flag(st, C_PROOF_DIVERGENT)
+    body_flags := c_proof_flags(body_st)
+    if (body_flags & (C_PROOF_LEAK | C_PROOF_ESCAPE | C_PROOF_DOUBLE_FREE)) != 0:
+        c_proof_set_flag(st, C_PROOF_DIVERGENT)
+    c_proof_set_flag(st, c_proof_flags(body_st))
+    buf_set32le(st, C_ST_ALLOC, c_proof_alloc_count(st) + c_proof_alloc_count(body_st))
+    buf_free(body_st)
+    return result_offset
+
+
+def c_proof_locate_body(cursor: CLexCursor) -> CLexCursor:
+    mut current := cursor
+    mut seen_open := false
+    mut depth := 0
+    mut scanning := true
+    while scanning:
+        step := c_lex_next_code(current)
+        if step.token.kind == C_TOKEN_EOF:
+            return step.next
+        if c_lex_token_is(step, "("):
+            if !seen_open:
+                seen_open = true
+            depth = depth + 1
+        elif c_lex_token_is(step, ")"):
+            depth = depth - 1
+        elif c_lex_token_is(step, "{") && depth == 0:
+            return step.next
+        current = step.next
+    return current
+
+
+def c_proof_classify(st: Int) -> Str:
+    flags := c_proof_flags(st)
+    if (flags & (C_PROOF_COMPLEX | C_PROOF_DIVERGENT)) != 0:
+        return "unproven"
+    if (flags & C_PROOF_DOUBLE_FREE) != 0:
+        return "proved-double-free"
+    if (flags & C_PROOF_LEAK) != 0:
+        return "proved-leak"
+    if (flags & C_PROOF_ESCAPE) != 0:
+        return "proved-escape"
+    if !c_proof_any_owned(st) && c_proof_alloc_count(st) > 0:
+        return "proved-balanced"
+    return "unproven"
+
+
+def c_proof_graph_line(name: Str, classification: Str, detail: Str) -> Str:
+    mut out := str_concat("proof|", str_concat(name, str_concat("|", classification)))
+    if str_len(detail) > 0:
+        out = str_concat(out, str_concat("|", detail))
+    return str_concat(out, "\n")
+
+
+def c_proof_bump_one(line: Str, name: Str, field: Int) -> Str:
+    if !text_starts(line, str_concat(name, "|")):
+        return line
+    count := parse_int(c_decl_field(line, field)) + 1
+    mut rebuilt := ""
+    mut index := 0
+    for piece in str_split(line, 124):
+        if index == field:
+            rebuilt = str_concat(rebuilt, int_to_str(count))
+        else:
+            rebuilt = str_concat(rebuilt, piece)
+        if index < 5:
+            rebuilt = str_concat(rebuilt, "|")
+        index = index + 1
+    return rebuilt
+
+
+def c_proof_bump_site(site_map: Str, name: Str, field: Int) -> Str:
+    mut out := ""
+    lines := str_split(site_map, 10)
+    for ln in lines:
+        if str_len(ln) == 0:
+            continue
+        mut rebuilt := ""
+        if text_starts(ln, str_concat(name, "|")):
+            rebuilt = c_proof_bump_one(ln, name, field)
+        else:
+            rebuilt = ln
+        out = str_concat(out, str_concat(rebuilt, "\n"))
+    return out
+
+
+def c_ownership_proof_file(path: Str) -> COwnerProofResult:
+    calls := c_call_graph_file(path)
+    tu := c_tu_scan_file(path)
+    mut stats := COwnerProofStats()
+    if calls.valid == 0 || tu.valid == 0:
+        return COwnerProofResult("", "valid=0\nreason=C2-PROOF-PRECURSOR\n", stats, 0)
+    data := buf_read(path)
+    size := buf_len(data)
+    tlines := str_split(tu.graph, 10)
+    mut site_map := ""
+    for record in tlines:
+        if text_starts(record, "function|"):
+            name := c_decl_field(record, 1)
+            start := parse_int(c_decl_field(record, 5))
+            end := parse_int(c_decl_field(record, 6))
+            mut fn_sites := str_concat(name, "|")
+            fn_sites = str_concat(fn_sites, str_concat(int_to_str(start), "|"))
+            fn_sites = str_concat(fn_sites, str_concat(int_to_str(end), "|0|0|0\n"))
+            site_map = str_concat(site_map, fn_sites)
+    clines := str_split(calls.graph, 10)
+    mut current_fn := ""
+    for record in clines:
+        if text_starts(record, "caller|"):
+            current_fn = c_decl_field(record, 1)
+        elif text_starts(record, "call|") && str_len(current_fn) > 0:
+            callee := c_decl_field(record, 2)
+            if c_call_is_reallocator(callee):
+                site_map = c_proof_bump_site(site_map, current_fn, 4)
+            elif c_call_is_allocator(callee):
+                site_map = c_proof_bump_site(site_map, current_fn, 3)
+            elif c_call_is_deallocator(callee):
+                site_map = c_proof_bump_site(site_map, current_fn, 5)
+    mut builder := CTUTextBuilder(buf_alloc(65536), 0, 65536)
+    builder = c_tu_builder_add(builder, "schema|c2lpp-ownership-proof-v1\n")
+    sm_lines := str_split(site_map, 10)
+    for sline in sm_lines:
+        if str_len(sline) == 0:
+            continue
+        name := c_decl_field(sline, 0)
+        start := parse_int(c_decl_field(sline, 1))
+        end := parse_int(c_decl_field(sline, 2))
+        alloc := parse_int(c_decl_field(sline, 3))
+        realloc := parse_int(c_decl_field(sline, 4))
+        free := parse_int(c_decl_field(sline, 5))
+        stats.functions = stats.functions + 1
+        if alloc == 0 && realloc == 0 && free == 0:
+            continue
+        stats.with_sites = stats.with_sites + 1
+        mut classification := "unproven"
+        mut detail := str_concat("alloc=", str_concat(int_to_str(alloc), str_concat("|realloc=", str_concat(int_to_str(realloc), str_concat("|free=", int_to_str(free))))))
+        if start >= 0 && end > start && end <= size:
+            base_cursor := c_lex_cursor(data, size, path)
+            body_cursor := c_proof_locate_body(c_lex_advance(base_cursor, start))
+            st := buf_alloc(544)
+            c_proof_walk_block(body_cursor, st)
+            classification = c_proof_classify(st)
+            buf_free(st)
+        builder = c_tu_builder_add(builder, c_proof_graph_line(name, classification, detail))
+        if text_eq(classification, "proved-balanced"):
+            stats.proved_balanced = stats.proved_balanced + 1
+        elif text_eq(classification, "proved-escape"):
+            stats.proved_escape = stats.proved_escape + 1
+        elif text_eq(classification, "proved-leak"):
+            stats.proved_leak = stats.proved_leak + 1
+        elif text_eq(classification, "proved-double-free"):
+            stats.proved_double_free = stats.proved_double_free + 1
+        else:
+            stats.unproven = stats.unproven + 1
+    graph := c_tu_builder_finish(builder)
+    buf_free(data)
+    mut report := "valid=1\n"
+    report = str_concat(report, str_concat("functions=", str_concat(int_to_str(stats.functions), "\n")))
+    report = str_concat(report, str_concat("with_sites=", str_concat(int_to_str(stats.with_sites), "\n")))
+    report = str_concat(report, str_concat("proved_balanced=", str_concat(int_to_str(stats.proved_balanced), "\n")))
+    report = str_concat(report, str_concat("proved_escape=", str_concat(int_to_str(stats.proved_escape), "\n")))
+    report = str_concat(report, str_concat("proved_leak=", str_concat(int_to_str(stats.proved_leak), "\n")))
+    report = str_concat(report, str_concat("proved_double_free=", str_concat(int_to_str(stats.proved_double_free), "\n")))
+    report = str_concat(report, str_concat("unproven=", str_concat(int_to_str(stats.unproven), "\n")))
+    return COwnerProofResult(graph, report, stats, 1)

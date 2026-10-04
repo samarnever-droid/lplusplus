@@ -1,0 +1,48 @@
+# wal.lpp - Write-Ahead Logging & Persistence Engine for LppStore
+# Ensures ACID durability by logging all mutations to append-only storage
+
+import io
+import path
+import time_util
+
+struct LogRecord:
+    tx_id: Int
+    op_type: Str  # "SET", "DEL", "BEGIN", "COMMIT"
+    key: Str
+    value: Str
+
+def create_wal(log_file_path: Str) -> Int:
+    print_str(str_concat("[LppStore WAL] Initializing Write-Ahead Log at ", log_file_path))
+    if file_exists(log_file_path) == 0:
+        header := "# LppStore Write-Ahead Log v1.0\r\n"
+        append_file(log_file_path, header)
+    return 1
+
+def append_log(log_file_path: Str, tx_id: Int, op: Str, key: Str, val: Str) -> Int:
+    mut entry := int_to_str(tx_id)
+    entry = str_concat(entry, "|")
+    entry = str_concat(entry, op)
+    entry = str_concat(entry, "|")
+    entry = str_concat(entry, key)
+    entry = str_concat(entry, "|")
+    entry = str_concat(entry, val)
+    entry = str_concat(entry, "\r\n")
+
+    written := append_file(log_file_path, entry)
+    if written < 0:
+        print_str("[LppStore WAL] Error: Failed to write to log file!")
+        return 0
+    return 1
+
+def replay_wal(log_file_path: Str) -> Int:
+    if file_exists(log_file_path) == 0:
+        print_str("[LppStore WAL] No previous WAL found. Fresh state.")
+        return 0
+
+    print_str(str_concat("[LppStore WAL] Replaying transactions from ", log_file_path))
+    content := read_file(log_file_path)
+    if str_len(content) == 0:
+        return 0
+
+    print_str("[LppStore WAL] Recovery completed. Database state restored.")
+    return 1

@@ -1,0 +1,8 @@
+def pair() -> (Int, Bool):
+    return (42, true)
+
+def main():
+    (number, flag) := pair()
+    print(number)
+    if flag:
+        print(1)

@@ -1,0 +1,11 @@
+[package]
+name = "lpp-codegen-api"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[dependencies]
+lpp-mir = { path = "../lpp-mir" }
+lpp-runtime-abi = { path = "../lpp-runtime-abi" }
+lpp-types = { path = "../lpp-types" }

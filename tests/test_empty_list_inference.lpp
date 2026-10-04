@@ -1,0 +1,20 @@
+# Test bidirectional empty list literal type inference
+struct ChildNode:
+    val: Int
+
+struct ParentNode:
+    name: Str
+    children: List[ChildNode]
+
+def take_strings(items: List[Str]) -> Int:
+    return len(items)
+
+def main():
+    # 1. Inferred in struct constructor
+    p := ParentNode("root", [])
+    print_str(p.name)
+    print(len(p.children))
+
+    # 2. Inferred in function call
+    empty_count := take_strings([])
+    print(empty_count)

@@ -1,0 +1,14 @@
+# loop.lpp — While loop with accumulator
+# Expected output: 5050  (sum 1..100)
+
+def sum_to(n: Int) -> Int:
+    mut total := 0
+    mut i := 1
+    while i <= n:
+        total = total + i
+        i = i + 1
+    return total
+
+def main():
+    result := sum_to(100)
+    print(result)

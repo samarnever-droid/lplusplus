@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lreact Desktop — Next-Gen L++ Native GUI Framework</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-dark: #0B0F19;
+            --sidebar-bg: #111827;
+            --card-bg: rgba(31, 41, 55, 0.7);
+            --card-border: rgba(255, 255, 255, 0.08);
+            --accent-cyan: #06B6D4;
+            --accent-blue: #3B82F6;
+            --accent-purple: #8B5CF6;
+            --accent-emerald: #10B981;
+            --text-main: #F9FAFB;
+            --text-muted: #9CA3AF;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, sans-serif;
+            background-color: var(--bg-dark);
+            color: var(--text-main);
+            height: 100vh;
+            display: flex;
+            overflow: hidden;
+        }
+
+        /* Sidebar Navigation */
+        .sidebar {
+            width: 260px;
+            background-color: var(--sidebar-bg);
+            border-right: 1px solid var(--card-border);
+            display: flex;
+            flex-direction: column;
+            padding: 24px 16px;
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding-bottom: 24px;
+            border-bottom: 1px solid var(--card-border);
+            margin-bottom: 24px;
+        }
+
+        .brand-icon {
+            width: 36px;
+            height: 36px;
+            border-radius: 10px;
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-blue));
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 0 15px rgba(6, 182, 212, 0.4);
+        }
+
+        .brand-icon svg,
+        .nav-icon,
+        .btn-icon {
+            width: 18px;
+            height: 18px;
+            fill: none;
+            stroke: currentColor;
+            stroke-width: 2;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+            flex: 0 0 auto;
+        }
+
+        .brand-icon svg {
+            width: 20px;
+            height: 20px;
+            color: white;
+        }
+
+        .brand-title {
+            font-size: 18px;
+            font-weight: 700;
+            letter-spacing: -0.5px;
+            background: linear-gradient(to right, #FFFFFF, #9CA3AF);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .nav-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 16px;
+            border-radius: 8px;
+            color: var(--text-muted);
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            margin-bottom: 6px;
+            border: 0;
+            width: 100%;
+            background: transparent;
+            text-align: left;
+        }
+
+        button.nav-item {
+            font-family: inherit;
+        }
+
+        .nav-item:hover, .nav-item.active {
+            background-color: rgba(255, 255, 255, 0.05);
+            color: var(--text-main);
+        }
+
+        .nav-item.active {
+            background: linear-gradient(90deg, rgba(6, 182, 212, 0.15), transparent);
+            border-left: 3px solid var(--accent-cyan);
+            color: var(--accent-cyan);
+        }
+
+        /* Main Workspace */
+        .main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+            padding: 32px;
+            background: radial-gradient(circle at top right, rgba(139, 92, 246, 0.05), transparent 40%),
+                        radial-gradient(circle at bottom left, rgba(6, 182, 212, 0.05), transparent 40%);
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 32px;
+        }
+
+        .header-title h1 {
+            font-size: 28px;
+            font-weight: 700;
+            margin-bottom: 4px;
+        }
+
+        .header-title p {
+            color: var(--text-muted);
+            font-size: 14px;
+        }
+
+        .badge {
+            background: rgba(16, 185, 129, 0.1);
+            color: var(--accent-emerald);
+            border: 1px solid rgba(16, 185, 129, 0.2);
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .pulse-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: var(--accent-emerald);
+            box-shadow: 0 0 8px var(--accent-emerald);
+        }
+
+        /* Grid Layout */
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 24px;
+            margin-bottom: 32px;
+        }
+
+        .card {
+            background-color: var(--card-bg);
+            backdrop-filter: blur(12px);
+            border: 1px solid var(--card-border);
+            border-radius: 16px;
+            padding: 24px;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 12px 24px rgba(0, 0, 0, 0.3);
+            border-color: rgba(255, 255, 255, 0.15);
+        }
+
+        .card-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 16px;
+        }
+
+        .card-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--text-muted);
+        }
+
+        .card-value {
+            font-size: 32px;
+            font-weight: 700;
+            margin-bottom: 8px;
+            background: linear-gradient(135deg, #FFFFFF, #D1D5DB);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .btn-group {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-blue));
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 10px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            box-shadow: 0 4px 12px rgba(6, 182, 212, 0.25);
+        }
+
+        .btn:hover {
+            opacity: 0.95;
+            box-shadow: 0 6px 16px rgba(6, 182, 212, 0.4);
+            transform: translateY(-1px);
+        }
+
+        .btn-purple {
+            background: linear-gradient(135deg, var(--accent-purple), #6D28D9);
+            box-shadow: 0 4px 12px rgba(139, 92, 246, 0.25);
+        }
+
+        .btn-purple:hover {
+            box-shadow: 0 6px 16px rgba(139, 92, 246, 0.4);
+        }
+
+        .btn-icon {
+            width: 16px;
+            height: 16px;
+        }
+
+        /* Console Output */
+        .console-card {
+            grid-column: span 3;
+        }
+
+        .console-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding-bottom: 12px;
+            margin-bottom: 16px;
+            border-bottom: 1px solid var(--card-border);
+        }
+
+        .console-output {
+            background-color: #050811;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+            padding: 20px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+            line-height: 1.6;
+            color: #38BDF8;
+            min-height: 180px;
+            max-height: 260px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+        }
+
+        .console-line {
+            margin-bottom: 4px;
+        }
+
+        .console-prompt {
+            color: var(--accent-purple);
+            font-weight: 700;
+        }
+    </style>
+</head>
+<body>
+    <div class="sidebar">
+        <div class="brand">
+            <div class="brand-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8Z"></path></svg>
+            </div>
+            <div class="brand-title">Lreact Studio</div>
+        </div>
+        <button class="nav-item active" type="button" data-section="overview">
+            <svg class="nav-icon" aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect></svg>
+            <span>Overview &amp; IPC</span>
+        </button>
+        <button class="nav-item" type="button" data-section="files">
+            <svg class="nav-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"></path><path d="M3 9h18"></path></svg>
+            <span>File System &amp; IPC</span>
+        </button>
+        <button class="nav-item" type="button" data-section="process">
+            <svg class="nav-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M4.5 16.5c-1.5 1.26-2 4-2 4s2.74-.5 4-2c1.42-1.2 1.42-2.8.2-4.02"></path><path d="m12 15-3-3a22 22 0 0 1 2-4.5C13.5 4 17 2 21 3c1 4-1 7.5-4.5 10A22 22 0 0 1 12 15Z"></path><path d="M9 12H4l-1 3 6 1"></path><path d="m12 15 1 6 3-1v-5"></path><circle cx="16" cy="8" r="1"></circle></svg>
+            <span>Native Process</span>
+        </button>
+        <button class="nav-item" type="button" data-section="settings">
+            <svg class="nav-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"></path><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-1.7 1.7-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V20h-2.4v-.2a1.7 1.7 0 0 0-1.03-1.56 1.7 1.7 0 0 0-1.88.34l-.06.06-1.7-1.7.06-.06A1.7 1.7 0 0 0 8.46 15a1.7 1.7 0 0 0-1.56-1.03H6v-2.4h.9A1.7 1.7 0 0 0 8.46 10a1.7 1.7 0 0 0-.34-1.88l-.06-.06 1.7-1.7.06.06a1.7 1.7 0 0 0 1.88.34A1.7 1.7 0 0 0 12.73 5.2V5h2.4v.2a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.88-.34l.06-.06 1.7 1.7-.06.06A1.7 1.7 0 0 0 19.4 10c.2.62.8 1.03 1.46 1.03h.9v2.4h-.9A1.7 1.7 0 0 0 19.4 15Z"></path></svg>
+            <span>Settings</span>
+        </button>
+    </div>
+
+    <div class="main-content">
+        <div class="header">
+            <div class="header-title">
+                <h1>L++ Native Desktop GUI</h1>
+                <p>Modern React 19 Frontend + Cranelift AOT Native L++ Backend</p>
+            </div>
+            <div class="badge">
+                <div class="pulse-dot"></div>
+                Native IPC Connected (127.0.0.1:8765)
+            </div>
+        </div>
+
+        <div class="grid">
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title">Native Execution</div>
+                </div>
+                <div class="card-value">Cranelift AOT</div>
+                <p style="color: var(--text-muted); font-size: 13px;">Direct machine code compilation without JS overhead.</p>
+            </div>
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title">IPC Transport</div>
+                </div>
+                <div class="card-value">0ms Latency</div>
+                <p style="color: var(--text-muted); font-size: 13px;">Zero-dependency internal IPC protocol.</p>
+            </div>
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title">Compiler Engine</div>
+                </div>
+                <div class="card-value">L++ v4.6.1</div>
+                <p style="color: var(--text-muted); font-size: 13px;">Self-hosted L++ toolchain backend.</p>
+            </div>
+
+            <div class="card console-card">
+                <div class="card-header">
+                    <div class="card-title">Native L++ Command Invocation</div>
+                </div>
+                <div class="btn-group" style="margin-bottom: 20px;">
+                    <button class="btn" onclick="invokeNative('get_version')"><svg class="btn-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8Z"></path></svg> Get Native Version</button>
+                    <button class="btn btn-purple" onclick="invokeNative('vulkan_probe')"><svg class="btn-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="m4.5 16.5-2 5 5-2L18 9a4.24 4.24 0 0 0-6-6Z"></path><path d="m14.5 5.5 4 4"></path><path d="m12 2 1.5 1.5"></path></svg> Probe Vulkan</button>
+                    <button class="btn" onclick="invokeNative('health')"><svg class="btn-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 8-8 9-4.5-1-8-4-8-9V5l8-3 8 3Z"></path><path d="m9 12 2 2 4-4"></path></svg> IPC Health</button>
+                </div>
+
+                <div class="console-header">
+                    <span style="font-size: 13px; font-weight: 600; color: var(--text-muted)">IPC Event Terminal Log</span>
+                    <span style="font-size: 12px; color: var(--accent-cyan); cursor: pointer;" onclick="clearConsole()">Clear Log</span>
+                </div>
+                <div id="output" class="console-output">
+                    <div class="console-line"><span class="console-prompt">></span> Lreact Desktop Bridge v1.0.0 initialized. Ready for native IPC commands.</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Load Lreact Client Bridge SDK -->
+    <script src="../../stdlib/lreact.js"></script>
+    <script>
+        const webBackend = window.lpp.web;
+
+        function log(msg) {
+            const out = document.getElementById("output");
+            const line = document.createElement("div");
+            line.className = "console-line";
+            const prompt = document.createElement("span");
+            prompt.className = "console-prompt";
+            prompt.textContent = ">";
+            const text = document.createElement("span");
+            text.textContent = ` ${String(msg)}`;
+            line.append(prompt, text);
+            out.appendChild(line);
+            out.scrollTop = out.scrollHeight;
+        }
+
+        function clearConsole() {
+            const output = document.getElementById("output");
+            while (output.firstChild) output.removeChild(output.firstChild);
+        }
+
+        async function invokeNative(cmd) {
+            log(`Invoking L++ native handler: ${cmd}...`);
+            try {
+                const res = await webBackend.invoke(cmd);
+                log(`[L++ Native Response]: ${JSON.stringify(res)}`);
+            } catch (e) {
+                log(`[IPC rejected]: ${e.message}`);
+            }
+        }
+
+        document.querySelectorAll(".nav-item").forEach((item) => {
+            item.addEventListener("click", () => {
+                document.querySelectorAll(".nav-item").forEach((nav) => nav.classList.remove("active"));
+                item.classList.add("active");
+            });
+        });
+    </script>
+</body>
+</html>

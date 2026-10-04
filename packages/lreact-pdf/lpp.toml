@@ -1,0 +1,10 @@
+[package]
+name = "lreact-pdf"
+version = "0.1.0"
+authors = ["Samar"]
+license = "MIT"
+description = "Pure L++ React Component for PDF Document Viewing, Page Flipping, and Vector Canvas Export"
+keywords = ["lreact", "pdf", "viewer", "vector", "export", "cosmos"]
+
+[dependencies]
+simple-pdf = { path = "../simple-pdf" }

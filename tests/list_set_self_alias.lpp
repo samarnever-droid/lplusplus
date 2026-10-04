@@ -1,0 +1,4 @@
+def main():
+    words := ["same"]
+    list_set(words, 0, list_get(words, 0))
+    print(list_get(words, 0))

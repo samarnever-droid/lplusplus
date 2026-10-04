@@ -1,0 +1,173 @@
+{
+  "schema": 1,
+  "description": "Explicit L++ source-validation baseline. known-debt and custom-dialect entries must be removed when fixed; compile-fail entries are required negative tests.",
+  "project_validators": [
+    {
+      "name": "SamarOS combined-source dialect",
+      "command": [
+        "python3",
+        "SamarOS/tools/lppc.py",
+        "{output}",
+        "SamarOS/kernel/src/sys.lpp",
+        "SamarOS/kernel/src/ui.lpp",
+        "SamarOS/kernel/src/apps.lpp",
+        "SamarOS/kernel/src/samaros.lpp"
+      ]
+    }
+  ],
+  "scopes": [
+    {
+      "name": "repository",
+      "path": null,
+      "expected_failures": [
+        {
+          "status": "custom-dialect",
+          "path": "SamarOS/kernel/src/apps.lpp",
+          "contains": "semantic: Undeclared identifier 'APP_WELCOME'"
+        },
+        {
+          "status": "custom-dialect",
+          "path": "SamarOS/kernel/src/samaros.lpp",
+          "contains": "semantic: Undeclared identifier 'clamp'"
+        },
+        {
+          "status": "custom-dialect",
+          "path": "SamarOS/kernel/src/ui.lpp",
+          "contains": "semantic: Undeclared identifier 'clamp'"
+        },
+        {
+          "status": "known-debt",
+          "path": "pm/src/add_remove.lpp",
+          "contains": "semantic: Undeclared identifier 'dir_remove_all'"
+        },
+        {
+          "status": "known-debt",
+          "path": "pm/src/install.lpp",
+          "contains": "semantic: Undeclared identifier 'dir_remove_all'"
+        },
+        {
+          "status": "known-debt",
+          "path": "pm/src/main.lpp",
+          "contains": "import: Unexpected character: {"
+        },
+        {
+          "status": "known-debt",
+          "path": "pm/src/publisher.lpp",
+          "contains": "lex: Unexpected character: {"
+        },
+        {
+          "status": "known-debt",
+          "path": "test/Samar.lpp",
+          "contains": "semantic: Cannot mutate field of immutable variable 'n'"
+        },
+        {
+          "status": "known-debt",
+          "path": "test/mega_stress_test.lpp",
+          "contains": "semantic: Cannot mutate field of immutable variable 'wrapper'"
+        },
+        {
+          "status": "known-debt",
+          "path": "test/stress_test.lpp",
+          "contains": "semantic: Cannot mutate field of immutable variable 'p1'"
+        }
+      ]
+    },
+    {
+      "name": "official-packages",
+      "path": "packages",
+      "expected_failures": [
+        {
+          "status": "known-debt",
+          "path": "packages/lpp-analyzer/src/ownership_graph.lpp",
+          "contains": "import: Imported module 'c_call_graph' not found"
+        },
+        {
+          "status": "known-debt",
+          "path": "packages/lpp-analyzer/src/ownership_proof.lpp",
+          "contains": "import: Imported module 'c_call_graph' not found"
+        },
+        {
+          "status": "known-debt",
+          "path": "packages/lpp-semver/src/semver.lpp",
+          "contains": "syntax: Unexpected token in expression: Colon"
+        },
+        {
+          "status": "known-debt",
+          "path": "packages/lpp-toml/src/toml.lpp",
+          "contains": "syntax: Expected newline after ':'"
+        }
+      ]
+    },
+    {
+      "name": "compiler-negative-tests",
+      "path": "tests",
+      "expected_failures": [
+        {
+          "status": "compile-fail",
+          "path": "tests/aot_reject_mut_closure.lpp",
+          "contains": "Cannot mutate captured variable 'x'"
+        },
+        {
+          "status": "compile-fail",
+          "path": "tests/async_blocking_rejected.lpp",
+          "contains": "reaches a blocking call without an adapter"
+        },
+        {
+          "status": "compile-fail",
+          "path": "tests/async_task_capture_rejected.lpp",
+          "contains": "Async safety error: task 'task' cannot be captured"
+        },
+        {
+          "status": "compile-fail",
+          "path": "tests/list_set_bad_type.lpp",
+          "contains": "list_set argument 3 expects Int, got Str"
+        },
+        {
+          "status": "compile-fail",
+          "path": "tests/list_vector_rejected.lpp",
+          "contains": "List element type VectorI64x2 is not supported safely yet"
+        },
+        {
+          "status": "compile-fail",
+          "path": "tests/slice_capture_rejected.lpp",
+          "contains": "slice view 'view' cannot be captured by a closure"
+        },
+        {
+          "status": "compile-fail",
+          "path": "tests/slice_return_rejected.lpp",
+          "contains": "a borrowed slice cannot be returned"
+        },
+        {
+          "status": "compile-fail",
+          "path": "tests/slice_source_reassign_rejected.lpp",
+          "contains": "cannot reassign 'text' while a borrowed slice view is live"
+        },
+        {
+          "status": "compile-fail",
+          "path": "tests/slice_spawn_rejected.lpp",
+          "contains": "slice view 'view' cannot be captured by a closure"
+        },
+        {
+          "status": "compile-fail",
+          "path": "tests/tuple_bad_arity.lpp",
+          "contains": "Tuple expressions require arity 2..=4, got 5"
+        },
+        {
+          "status": "compile-fail",
+          "path": "tests/variadic_bad_position.lpp",
+          "contains": "Variadic rest parameter must be the final parameter"
+        },
+        {
+          "status": "compile-fail",
+          "path": "tests/variadic_bad_type.lpp",
+          "contains": "numbers argument 2 expects Int, got Str"
+        },
+        {
+          "status": "compile-fail",
+          "path": "tests/variadic_vector_rejected.lpp",
+          "contains": "variadic parameter 'items' in 'consume' cannot safely store element type"
+        }
+      ]
+    }
+  ]
+}

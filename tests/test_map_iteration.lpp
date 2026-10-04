@@ -1,0 +1,73 @@
+﻿def test_map_features() -> Bool:
+    mut passed := 0
+    total := 8
+
+    # 1. Integer map keys & values
+    mut m := map_new()
+    map_put(m, 10, 100)
+    map_put(m, 20, 200)
+    map_put(m, 30, 300)
+    
+    if map_len(m) == 3:
+        passed = passed + 1
+
+    # 2. map_keys on int map
+    keys := map_keys(m)
+    if len(keys) == 3:
+        mut sum_k := 0
+        for k in keys:
+            sum_k = sum_k + k
+        if sum_k == 60:
+            passed = passed + 1
+
+    # 3. map_values on int map
+    vals := map_values(m)
+    if len(vals) == 3:
+        mut sum_v := 0
+        for v in vals:
+            sum_v = sum_v + v
+        if sum_v == 600:
+            passed = passed + 1
+
+    # 4. map_capacity
+    cap := map_capacity(m)
+    if cap >= 16:
+        passed = passed + 1
+
+    # 5. map_clear
+    map_clear(m)
+    if map_len(m) == 0 and len(map_keys(m)) == 0:
+        passed = passed + 1
+
+    # 6. String map keys & values
+    mut sm := map_new()
+    map_put_str(sm, "user_id", 1001)
+    map_put_str(sm, "role_id", 42)
+    if map_len(sm) == 2:
+        passed = passed + 1
+
+    # 7. map_keys on string map
+    skeys := map_keys(sm)
+    if len(skeys) == 2:
+        mut found_user := false
+        mut found_role := false
+        for sk in skeys:
+            if sk == "user_id":
+                found_user = true
+            if sk == "role_id":
+                found_role = true
+        if found_user and found_role:
+            passed = passed + 1
+
+    # 8. map_clear on string map
+    map_clear(sm)
+    if map_len(sm) == 0:
+        passed = passed + 1
+
+    print_str("ASSERTIONS: " + int_to_str(passed) + "/" + int_to_str(total))
+    return passed == total
+
+def main():
+    ok := test_map_features()
+    if ok:
+        print_str("SUCCESS: ALL MAP ITERATION TESTS PASSED")

@@ -1,0 +1,16 @@
+{
+  "name": "lplusplus-registry-worker",
+  "version": "1.0.0",
+  "private": true,
+  "description": "L++ Package Registry API \u2014 read-only git mirror Worker",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261004.1",
+    "typescript": "^7.0.2",
+    "wrangler": "^4.147.0"
+  }
+}

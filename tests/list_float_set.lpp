@@ -1,0 +1,4 @@
+def main():
+    values := [1.25, 3.5]
+    list_set(values, 1, 2.5)
+    print(list_get(values, 1))

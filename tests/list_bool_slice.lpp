@@ -1,0 +1,7 @@
+def main():
+    values := [false, true, false]
+    view := slice(values, 1, 2)
+    if slice_get(view, 0):
+        print(1)
+    else:
+        print(0)

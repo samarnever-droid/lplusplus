@@ -1,0 +1,7 @@
+{
+  "name": "lppstore",
+  "version": "1.0.0",
+  "description": "Production-Grade High-Performance Database Engine in Pure L++ (WAL, B-Tree, HTTP REST, Query Engine)",
+  "main": "src/main.lpp",
+  "dependencies": {}
+}

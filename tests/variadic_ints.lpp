@@ -1,0 +1,8 @@
+def total(base: Int, ...items: Int) -> Int:
+    mut result := base
+    for item in items:
+        result = result + item
+    return result
+
+def main():
+    print(total(10, 1, 2, 3, 4))

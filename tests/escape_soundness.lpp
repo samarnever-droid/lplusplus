@@ -1,0 +1,44 @@
+# Escape-analysis soundness: the three positions that used to recurse without
+# classifying the value placed there.
+#
+# Before this change `analysis::escape` walked into call arguments, field stores
+# and struct-literal fields but never promoted the value, so a binding that
+# genuinely escaped through one of them stayed classified `Value`. Anything that
+# read "not promoted" as "safe to keep in the frame" would have handed out a
+# pointer into a dead frame.
+#
+# `--dump-escape` on this file shows each of `arg_escapes`, `field_escapes` and
+# `ctor_escapes` classified `Arc`. They are all consumed in ways that outlive
+# the frame they are created in.
+
+struct Box:
+    v: Int
+
+struct Pair:
+    a: Box
+    b: Int
+
+def keep(b: Box) -> Int:
+    return b.v
+
+def main() -> Void:
+    # 1. Passed as a call argument. The callee could store it; this analysis
+    #    cannot see the callee's body, so the argument must be treated as
+    #    escaping.
+    arg_escapes := Box(1)
+    print(keep(arg_escapes))
+
+    # 2. Stored into another object's field. The parent outlives the child.
+    field_escapes := Box(2)
+    mut holder := Pair(Box(0), 0)
+    holder.a = field_escapes
+    print(holder.a.v)
+
+    # 3. Placed in a struct literal, which is a call in this AST, so it takes
+    #    the same path as case 1.
+    ctor_escapes := Box(3)
+    nested := Pair(ctor_escapes, 9)
+    print(nested.a.v)
+    print(nested.b)
+
+    print_str("soundness-ok")

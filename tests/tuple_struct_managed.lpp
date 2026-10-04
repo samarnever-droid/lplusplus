@@ -1,0 +1,12 @@
+struct Holder:
+    pair: (Int, Str)
+
+def wrap(pair: (Int, Str)) -> Holder:
+    return Holder(pair)
+
+def main():
+    pair := (5, "owned")
+    holder := wrap(pair)
+    (number, text) := holder.pair
+    print(number)
+    print(text)

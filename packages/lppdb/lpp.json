@@ -1,0 +1,7 @@
+{
+  "name": "lppdb",
+  "version": "1.0.0",
+  "description": "A real embedded SQL database engine in pure L++: binary page storage, typed cells, real parser/executor, disk persistence.",
+  "main": "src/lppdb.lpp",
+  "dependencies": {}
+}

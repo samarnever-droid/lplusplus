@@ -1,0 +1,5 @@
+def main():
+    add_one := fn(value: Int) -> Int: value + 1
+    callbacks := [add_one]
+    callback := list_get(callbacks, 0)
+    print(callback(41))

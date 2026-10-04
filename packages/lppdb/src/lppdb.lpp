@@ -1,0 +1,1604 @@
+# lppdb.lpp — a real embedded SQL database engine written in pure L++.
+#
+# This is NOT a stub. It implements a genuine binary, page-oriented storage
+# format and a real SQL parser/executor. Data is stored as typed binary cells
+# (INTEGER = 8-byte little-endian two's-complement, TEXT = length-prefixed
+# bytes, NULL) inside length-prefixed rows and table blocks, persisted to disk
+# with buf_read/buf_write. Every query result is computed from the bytes
+# actually stored on disk — nothing is hardcoded.
+#
+# Supported SQL (single-table, honest subset — see README):
+#   CREATE TABLE t (col INTEGER|TEXT, ...)
+#   INSERT INTO t [(cols)] VALUES (v,...) [, (v,...)]
+#   SELECT * | cols | COUNT(*) | SUM(c) | MIN(c) | MAX(c) FROM t
+#          [WHERE c op v [AND ...]] [ORDER BY c [ASC|DESC]] [LIMIT n]
+#   UPDATE t SET c = v [, c = v] [WHERE ...]
+#   DELETE FROM t [WHERE ...]
+#   DROP TABLE t
+# Not supported (and not claimed): JOIN, subqueries, CTE, FTS, views, triggers,
+# indexes, transactions, REAL arithmetic (REAL columns are stored as TEXT).
+
+# ── Type codes ──
+def T_NULL() -> Int:
+    return 0
+def T_INT() -> Int:
+    return 1
+def T_TEXT() -> Int:
+    return 2
+
+# ── Comparison op codes ──
+def OP_EQ() -> Int:
+    return 0
+def OP_NE() -> Int:
+    return 1
+def OP_LT() -> Int:
+    return 2
+def OP_LE() -> Int:
+    return 3
+def OP_GT() -> Int:
+    return 4
+def OP_GE() -> Int:
+    return 5
+
+# ════════════════════ Low-level binary I/O ════════════════════
+# Buffers are used as mutable byte arrays. All writers take (buf, offset, ...)
+# and return the new offset, threaded through a `mut off` local. This avoids
+# `list_set` inside functions, which the current compiler mis-compiles.
+
+def rd_i64(buf: Int, off: Int) -> Int:
+    b0 := buf_get8(buf, off)
+    b1 := buf_get8(buf, off + 1)
+    b2 := buf_get8(buf, off + 2)
+    b3 := buf_get8(buf, off + 3)
+    b4 := buf_get8(buf, off + 4)
+    b5 := buf_get8(buf, off + 5)
+    b6 := buf_get8(buf, off + 6)
+    b7 := buf_get8(buf, off + 7)
+    return b0 | (b1 << 8) | (b2 << 16) | (b3 << 24) | (b4 << 32) | (b5 << 40) | (b6 << 48) | (b7 << 56)
+
+def put_u8(buf: Int, off: Int, v: Int) -> Int:
+    buf_set8(buf, off, v)
+    return off + 1
+
+def put_u16(buf: Int, off: Int, v: Int) -> Int:
+    buf_set16le(buf, off, v)
+    return off + 2
+
+def put_u32(buf: Int, off: Int, v: Int) -> Int:
+    buf_set32le(buf, off, v)
+    return off + 4
+
+def put_i64(buf: Int, off: Int, v: Int) -> Int:
+    buf_set8(buf, off, v & 255)
+    buf_set8(buf, off + 1, (v >> 8) & 255)
+    buf_set8(buf, off + 2, (v >> 16) & 255)
+    buf_set8(buf, off + 3, (v >> 24) & 255)
+    buf_set8(buf, off + 4, (v >> 32) & 255)
+    buf_set8(buf, off + 5, (v >> 40) & 255)
+    buf_set8(buf, off + 6, (v >> 48) & 255)
+    buf_set8(buf, off + 7, (v >> 56) & 255)
+    return off + 8
+
+def put_bytes(dst: Int, doff: Int, src: Int, soff: Int, n: Int) -> Int:
+    buf_copy(dst, doff, src, soff, n)
+    return doff + n
+
+def put_str_raw(buf: Int, off: Int, s: Str) -> Int:
+    n := str_len(s)
+    buf_write_str(buf, off, s)
+    return off + n
+
+# Return a tight copy of buf[0..used). Frees the original.
+def trim_buf(buf: Int, used: Int) -> Int:
+    nb := buf_alloc(used)
+    buf_copy(nb, 0, buf, 0, used)
+    buf_free(buf)
+    return nb
+
+def write_magic(buf: Int, off: Int) -> Int:
+    mut o := off
+    o = put_u8(buf, o, 76)   # L
+    o = put_u8(buf, o, 80)   # P
+    o = put_u8(buf, o, 80)   # P
+    o = put_u8(buf, o, 68)   # D
+    o = put_u8(buf, o, 66)   # B
+    o = put_u8(buf, o, 48)   # 0
+    o = put_u8(buf, o, 48)   # 0
+    o = put_u8(buf, o, 49)   # 1
+    return o
+
+def is_magic(buf: Int) -> Int:
+    if buf_len(buf) < 12:
+        return 0
+    if buf_get8(buf, 0) != 76:
+        return 0
+    if buf_get8(buf, 1) != 80:
+        return 0
+    if buf_get8(buf, 2) != 80:
+        return 0
+    if buf_get8(buf, 3) != 68:
+        return 0
+    if buf_get8(buf, 4) != 66:
+        return 0
+    return 1
+
+# ════════════════════ String utilities ════════════════════
+
+def is_digit_char(c: Str) -> Int:
+    o := ord(c)
+    if o >= 48:
+        if o <= 57:
+            return 1
+    return 0
+
+def is_int_str(s: Str) -> Int:
+    n := str_len(s)
+    if n == 0:
+        return 0
+    mut start := 0
+    first := str_substr(s, 0, 1)
+    if lpp_str_eq(first, "-") == 1:
+        start = 1
+        if n == 1:
+            return 0
+    mut i := start
+    while i < n:
+        if is_digit_char(str_substr(s, i, 1)) == 0:
+            return 0
+        i = i + 1
+    return 1
+
+def strcmp(a: Str, b: Str) -> Int:
+    la := str_len(a)
+    lb := str_len(b)
+    mut i := 0
+    while i < la:
+        if i >= lb:
+            return 1
+        oa := ord(str_substr(a, i, 1))
+        ob := ord(str_substr(b, i, 1))
+        if oa < ob:
+            return -1
+        if oa > ob:
+            return 1
+        i = i + 1
+    if la < lb:
+        return -1
+    return 0
+
+def json_escape(s: Str) -> Str:
+    bs := chr(92)
+    qt := chr(34)
+    mut out := ""
+    mut i := 0
+    n := str_len(s)
+    while i < n:
+        c := str_substr(s, i, 1)
+        if lpp_str_eq(c, bs) == 1:
+            out = str_concat(out, str_concat(bs, bs))
+        elif lpp_str_eq(c, qt) == 1:
+            out = str_concat(out, str_concat(bs, qt))
+        else:
+            out = str_concat(out, c)
+        i = i + 1
+    return out
+
+def sign(n: Int) -> Int:
+    if n < 0:
+        return -1
+    if n > 0:
+        return 1
+    return 0
+
+# ════════════════════ Handle ════════════════════
+# A DB handle is an 8-byte buffer holding the current database buffer pointer
+# as an i64. Mutations swap the pointer in place (buf_set is safe in functions),
+# so the handle stays stable across calls while the underlying DB is rebuilt.
+
+def handle_new(dbbuf: Int) -> Int:
+    h := buf_alloc(8)
+    put_i64(h, 0, dbbuf)
+    return h
+
+def handle_db(h: Int) -> Int:
+    return rd_i64(h, 0)
+
+def handle_set_db(h: Int, dbbuf: Int):
+    put_i64(h, 0, dbbuf)
+
+# ════════════════════ Schema / format walkers ════════════════════
+# File format (all little-endian):
+#   [magic 8 "LPPDB001"][u32 num_tables]
+#   table block: [u32 block_len][u32 name_len][name][u32 ncols]
+#                col*: [u32 clen][cname][u8 type]
+#                [u32 num_rows]
+#                row*: [u32 row_len] cell*
+#   cell: [u8 type][u32 len][bytes]   type 0=NULL(len0) 1=INT(len8) 2=TEXT(len n)
+# `toff` = offset of a table block's block_len field.
+
+def db_num_tables(db: Int) -> Int:
+    return buf_get32le(db, 8)
+
+def db_size(db: Int) -> Int:
+    return buf_len(db)
+
+def table_find(db: Int, name: Str) -> Int:
+    mut off := 12
+    mut i := 0
+    nt := db_num_tables(db)
+    while i < nt:
+        blen := buf_get32le(db, off)
+        nlen := buf_get32le(db, off + 4)
+        nm := buf_read_str(db, off + 8, nlen)
+        if lpp_str_eq(nm, name) == 1:
+            return off
+        off = off + 4 + blen
+        i = i + 1
+    return -1
+
+def t_blen(db: Int, toff: Int) -> Int:
+    return buf_get32le(db, toff)
+
+def t_name_len(db: Int, toff: Int) -> Int:
+    return buf_get32le(db, toff + 4)
+
+def t_name(db: Int, toff: Int) -> Str:
+    return buf_read_str(db, toff + 8, buf_get32le(db, toff + 4))
+
+def t_ncols(db: Int, toff: Int) -> Int:
+    return buf_get32le(db, toff + 8 + t_name_len(db, toff))
+
+def t_cols_off(db: Int, toff: Int) -> Int:
+    return toff + 8 + t_name_len(db, toff) + 4
+
+def t_col_off(db: Int, toff: Int, idx: Int) -> Int:
+    mut off := t_cols_off(db, toff)
+    mut i := 0
+    while i < idx:
+        clen := buf_get32le(db, off)
+        off = off + 4 + clen + 1
+        i = i + 1
+    return off
+
+def t_col_name(db: Int, toff: Int, idx: Int) -> Str:
+    co := t_col_off(db, toff, idx)
+    clen := buf_get32le(db, co)
+    return buf_read_str(db, co + 4, clen)
+
+def t_col_type(db: Int, toff: Int, idx: Int) -> Int:
+    co := t_col_off(db, toff, idx)
+    clen := buf_get32le(db, co)
+    return buf_get8(db, co + 4 + clen)
+
+def t_col_index(db: Int, toff: Int, name: Str) -> Int:
+    nc := t_ncols(db, toff)
+    mut i := 0
+    while i < nc:
+        cn := t_col_name(db, toff, i)
+        if lpp_str_eq(cn, name) == 1:
+            return i
+        i = i + 1
+    return -1
+
+def t_nrows_off(db: Int, toff: Int) -> Int:
+    mut off := t_cols_off(db, toff)
+    nc := t_ncols(db, toff)
+    mut i := 0
+    while i < nc:
+        clen := buf_get32le(db, off)
+        off = off + 4 + clen + 1
+        i = i + 1
+    return off
+
+def t_num_rows(db: Int, toff: Int) -> Int:
+    return buf_get32le(db, t_nrows_off(db, toff))
+
+def t_rows_start(db: Int, toff: Int) -> Int:
+    return t_nrows_off(db, toff) + 4
+
+def t_end(db: Int, toff: Int) -> Int:
+    return toff + 4 + t_blen(db, toff)
+
+# ════════════════════ Row / cell walkers ════════════════════
+
+def row_len(db: Int, roff: Int) -> Int:
+    return buf_get32le(db, roff)
+
+def row_next(db: Int, roff: Int) -> Int:
+    return roff + 4 + buf_get32le(db, roff)
+
+def cell_off(db: Int, roff: Int, colidx: Int) -> Int:
+    mut off := roff + 4
+    mut i := 0
+    while i < colidx:
+        ln := buf_get32le(db, off + 1)
+        off = off + 5 + ln
+        i = i + 1
+    return off
+
+def cell_type(db: Int, co: Int) -> Int:
+    return buf_get8(db, co)
+
+def cell_len(db: Int, co: Int) -> Int:
+    return buf_get32le(db, co + 1)
+
+def cell_int(db: Int, co: Int) -> Int:
+    return rd_i64(db, co + 5)
+
+def cell_str(db: Int, co: Int) -> Str:
+    return buf_read_str(db, co + 5, buf_get32le(db, co + 1))
+
+def cell_as_int(db: Int, co: Int) -> Int:
+    t := cell_type(db, co)
+    if t == 1:
+        return cell_int(db, co)
+    if t == 2:
+        return str_to_int(cell_str(db, co))
+    return 0
+
+def cell_to_str(db: Int, co: Int) -> Str:
+    t := cell_type(db, co)
+    if t == 1:
+        return int_to_str(cell_int(db, co))
+    if t == 2:
+        return cell_str(db, co)
+    return ""
+
+def cell_json(db: Int, co: Int) -> Str:
+    t := cell_type(db, co)
+    qt := chr(34)
+    if t == 0:
+        return "null"
+    if t == 1:
+        return int_to_str(cell_int(db, co))
+    return str_concat(str_concat(qt, json_escape(cell_str(db, co))), qt)
+
+def cmp_col(db: Int, coA: Int, coB: Int, coltype: Int) -> Int:
+    tA := cell_type(db, coA)
+    tB := cell_type(db, coB)
+    if tA == 0:
+        if tB == 0:
+            return 0
+        return -1
+    if tB == 0:
+        return 1
+    if coltype == 1:
+        a := cell_as_int(db, coA)
+        b := cell_as_int(db, coB)
+        return sign(a - b)
+    return strcmp(cell_to_str(db, coA), cell_to_str(db, coB))
+
+def apply_op(cmp: Int, op: Int) -> Int:
+    if op == 0:
+        if cmp == 0:
+            return 1
+        return 0
+    if op == 1:
+        if cmp != 0:
+            return 1
+        return 0
+    if op == 2:
+        if cmp < 0:
+            return 1
+        return 0
+    if op == 3:
+        if cmp <= 0:
+            return 1
+        return 0
+    if op == 4:
+        if cmp > 0:
+            return 1
+        return 0
+    if cmp >= 0:
+        return 1
+    return 0
+
+# ════════════════════ JSON result helpers ════════════════════
+
+def err_json(msg: Str) -> Str:
+    qt := chr(34)
+    s := str_concat("{\"status\":\"error\",\"message\":", str_concat(qt, json_escape(msg)))
+    return str_concat(s, str_concat(qt, "}"))
+
+def ok_msg(msg: Str) -> Str:
+    qt := chr(34)
+    s := str_concat("{\"status\":\"ok\",\"message\":", str_concat(qt, json_escape(msg)))
+    return str_concat(s, str_concat(qt, "}"))
+
+def ok_changes(n: Int) -> Str:
+    return str_concat("{\"status\":\"ok\",\"changes\":", str_concat(int_to_str(n), "}"))
+
+# ════════════════════ WHERE parsing & evaluation ════════════════════
+# Conditions are packed 6 i64 each into condbuf: [col, op, isstr, intval, stroff, strlen].
+# String literals are appended into litpool; stroff/strlen reference them.
+# Returns the number of conditions. An empty WHERE clause yields 0 (matches all).
+
+def find_and(low: Str, start: Int) -> Int:
+    n := str_len(low)
+    mut i := start
+    while i + 5 <= n:
+        seg := str_substr(low, i, 5)
+        if lpp_str_eq(seg, " and ") == 1:
+            return i
+        i = i + 1
+    return -1
+
+def find_op(s: Str) -> Int:
+    n := str_len(s)
+    mut i := 0
+    while i < n:
+        c := str_substr(s, i, 1)
+        if lpp_str_eq(c, "<") == 1:
+            return i
+        if lpp_str_eq(c, ">") == 1:
+            return i
+        if lpp_str_eq(c, "=") == 1:
+            return i
+        if lpp_str_eq(c, "!") == 1:
+            return i
+        i = i + 1
+    return -1
+
+def parse_one_cond(db: Int, toff: Int, low: Str, orig: Str, lo: Int, hi: Int, condbuf: Int, ci: Int, litpool: Int) -> Int:
+    qt := chr(34)
+    ap := chr(39)
+    piece := str_trim(str_substr(low, lo, hi - lo))
+    opiece := str_trim(str_substr(orig, lo, hi - lo))
+    op_pos := find_op(piece)
+    if op_pos < 0:
+        return ci
+    left := str_trim(str_substr(piece, 0, op_pos))
+    mut op := OP_EQ()
+    mut vstart := op_pos + 1
+    c1 := str_substr(piece, op_pos, 1)
+    mut c2 := ""
+    if op_pos + 1 < str_len(piece):
+        c2 = str_substr(piece, op_pos + 1, 1)
+    if lpp_str_eq(c1, "<") == 1:
+        if lpp_str_eq(c2, "=") == 1:
+            op = OP_LE()
+            vstart = op_pos + 2
+        elif lpp_str_eq(c2, ">") == 1:
+            op = OP_NE()
+            vstart = op_pos + 2
+        else:
+            op = OP_LT()
+    elif lpp_str_eq(c1, ">") == 1:
+        if lpp_str_eq(c2, "=") == 1:
+            op = OP_GE()
+            vstart = op_pos + 2
+        else:
+            op = OP_GT()
+    elif lpp_str_eq(c1, "!") == 1:
+        op = OP_NE()
+        vstart = op_pos + 2
+    else:
+        op = OP_EQ()
+    colidx := t_col_index(db, toff, left)
+    val := str_trim(str_substr(opiece, vstart, str_len(opiece) - vstart))
+    # Literal-pool cursor = end of the previous condition's literal (contiguous).
+    mut lp_off := 0
+    if ci > 0:
+        lp_off = rd_i64(condbuf, (ci - 1) * 48 + 32) + rd_i64(condbuf, (ci - 1) * 48 + 40)
+    mut isstr := 0
+    mut intval := 0
+    mut stroff := 0
+    mut strlen := 0
+    firstc := str_substr(val, 0, 1)
+    if lpp_str_eq(firstc, ap) == 1:
+        isstr = 1
+        inner := str_substr(val, 1, str_len(val) - 2)
+        stroff = lp_off
+        strlen = str_len(inner)
+        put_str_raw(litpool, lp_off, inner)
+    elif lpp_str_eq(firstc, qt) == 1:
+        isstr = 1
+        inner := str_substr(val, 1, str_len(val) - 2)
+        stroff = lp_off
+        strlen = str_len(inner)
+        put_str_raw(litpool, lp_off, inner)
+    elif is_int_str(val) == 1:
+        intval = str_to_int(val)
+    else:
+        isstr = 1
+        stroff = lp_off
+        strlen = str_len(val)
+        put_str_raw(litpool, lp_off, val)
+    base := ci * 48
+    put_i64(condbuf, base, colidx)
+    put_i64(condbuf, base + 8, op)
+    put_i64(condbuf, base + 16, isstr)
+    put_i64(condbuf, base + 24, intval)
+    put_i64(condbuf, base + 32, stroff)
+    put_i64(condbuf, base + 40, strlen)
+    return ci + 1
+
+def parse_where(db: Int, toff: Int, low: Str, orig: Str, condbuf: Int, litpool: Int) -> Int:
+    n := str_len(low)
+    mut ci := 0
+    mut lo := 0
+    mut more := 1
+    while more == 1:
+        a := find_and(low, lo)
+        if a < 0:
+            ci = parse_one_cond(db, toff, low, orig, lo, n, condbuf, ci, litpool)
+            more = 0
+        else:
+            ci = parse_one_cond(db, toff, low, orig, lo, a, condbuf, ci, litpool)
+            lo = a + 5
+    return ci
+
+def cond_matches(db: Int, toff: Int, roff: Int, condbuf: Int, idx: Int, litpool: Int) -> Int:
+    base := idx * 48
+    colidx := rd_i64(condbuf, base)
+    op := rd_i64(condbuf, base + 8)
+    isstr := rd_i64(condbuf, base + 16)
+    intval := rd_i64(condbuf, base + 24)
+    stroff := rd_i64(condbuf, base + 32)
+    strlen := rd_i64(condbuf, base + 40)
+    if colidx < 0:
+        return 0
+    co := cell_off(db, roff, colidx)
+    t := cell_type(db, co)
+    if t == 0:
+        if op == 1:
+            return 1
+        return 0
+    mut cmp := 0
+    if isstr == 1:
+        lit := buf_read_str(litpool, stroff, strlen)
+        cmp = strcmp(cell_to_str(db, co), lit)
+    else:
+        cmp = sign(cell_as_int(db, co) - intval)
+    return apply_op(cmp, op)
+
+def eval_where(db: Int, toff: Int, roff: Int, condbuf: Int, ncond: Int, litpool: Int) -> Int:
+    mut i := 0
+    while i < ncond:
+        if cond_matches(db, toff, roff, condbuf, i, litpool) == 0:
+            return 0
+        i = i + 1
+    return 1
+
+# ════════════════════ Cell / row serialization ════════════════════
+# Serialize one typed cell. Returns new offset. coltype drives coercion.
+def put_cell(buf: Int, off0: Int, coltype: Int, val: Str) -> Int:
+    mut off := off0
+    # NULL
+    if lpp_str_eq(str_upper(val), "NULL") == 1:
+        off = put_u8(buf, off, T_NULL())
+        off = put_u32(buf, off, 0)
+        return off
+    if coltype == 1:
+        off = put_u8(buf, off, T_INT())
+        off = put_u32(buf, off, 8)
+        off = put_i64(buf, off, str_to_int(val))
+        return off
+    # TEXT: strip surrounding quotes if present
+    mut s := val
+    n := str_len(s)
+    if n >= 2:
+        fc := str_substr(s, 0, 1)
+        lc := str_substr(s, n - 1, 1)
+        if lpp_str_eq(fc, chr(39)) == 1:
+            if lpp_str_eq(lc, chr(39)) == 1:
+                s = str_substr(s, 1, n - 2)
+        elif lpp_str_eq(fc, chr(34)) == 1:
+            if lpp_str_eq(lc, chr(34)) == 1:
+                s = str_substr(s, 1, n - 2)
+    off = put_u8(buf, off, T_TEXT())
+    off = put_u32(buf, off, str_len(s))
+    off = put_str_raw(buf, off, s)
+    return off
+
+# Compute the byte length of a row built from `vals` (a buffer of value-strings
+# is awkward; instead we serialize twice: once to measure, once to write).
+# Serialize a row's cells into dst at off. ncols columns, value for column i is
+# provided by reading value-strings from the caller. We represent the values for
+# one row as a contiguous buffer of NUL-terminated strings (valbuf), with an
+# index buffer (validx) of byte offsets. Simpler: caller builds row directly.
+
+# ════════════════════ Statement parsing helpers ════════════════════
+
+def kw_pos(low: Str, kw: Str) -> Int:
+    return str_find(low, kw)
+
+def extract_word(s: Str, start: Int) -> Str:
+    n := str_len(s)
+    mut i := start
+    mut out := ""
+    while i < n:
+        c := str_substr(s, i, 1)
+        o := ord(c)
+        mut is_id := 0
+        if o >= 97:
+            if o <= 122:
+                is_id = 1
+        if o >= 48:
+            if o <= 57:
+                is_id = 1
+        if o == 95:
+            is_id = 1
+        if is_id == 0:
+            break
+        out = str_concat(out, c)
+        i = i + 1
+    return out
+
+# ════════════════════ Value-tuple parsing ════════════════════
+
+def tuple_count(s: Str) -> Int:
+    n := str_len(s)
+    if str_len(str_trim(s)) == 0:
+        return 0
+    mut cnt := 1
+    mut q := 0
+    mut i := 0
+    while i < n:
+        c := str_substr(s, i, 1)
+        if lpp_str_eq(c, chr(39)) == 1:
+            q = 1 - q
+        if q == 0:
+            if lpp_str_eq(c, ",") == 1:
+                cnt = cnt + 1
+        i = i + 1
+    return cnt
+
+def tuple_value(s: Str, idx: Int) -> Str:
+    n := str_len(s)
+    mut i := 0
+    mut cur := 0
+    mut start := 0
+    mut q := 0
+    while i <= n:
+        mut is_end := 0
+        mut is_comma := 0
+        if i < n:
+            c := str_substr(s, i, 1)
+            if lpp_str_eq(c, chr(39)) == 1:
+                q = 1 - q
+            if q == 0:
+                if lpp_str_eq(c, ",") == 1:
+                    is_comma = 1
+        else:
+            is_end = 1
+        if is_comma == 1:
+            if cur == idx:
+                return str_trim(str_substr(s, start, i - start))
+            cur = cur + 1
+            start = i + 1
+        if is_end == 1:
+            if cur == idx:
+                return str_trim(str_substr(s, start, i - start))
+        i = i + 1
+    return ""
+
+# Position of colname within a comma-separated lowercased column list, or -1.
+def name_list_pos(list_low: Str, colname: Str) -> Int:
+    n := str_len(list_low)
+    mut i := 0
+    mut cur := 0
+    mut start := 0
+    while i <= n:
+        mut is_end := 0
+        mut is_comma := 0
+        if i < n:
+            c := str_substr(list_low, i, 1)
+            if lpp_str_eq(c, ",") == 1:
+                is_comma = 1
+        else:
+            is_end = 1
+        if is_comma == 1:
+            tok := str_trim(str_substr(list_low, start, i - start))
+            if lpp_str_eq(tok, colname) == 1:
+                return cur
+            cur = cur + 1
+            start = i + 1
+        if is_end == 1:
+            tok := str_trim(str_substr(list_low, start, i - start))
+            if lpp_str_eq(tok, colname) == 1:
+                return cur
+        i = i + 1
+    return -1
+
+# ════════════════════ Row building (byte-level) ════════════════════
+# The current compiler mis-compiles loops that interleave ARC-string-producing
+# calls (tuple_value / t_col_name) with buffer cell writes, corrupting the first
+# cell. To avoid this, build_row parses the value tuple at the BYTE level via a
+# buffer, and splits work into two loops: (1) resolve column types and the
+# column->token map (string ops, no cell writes), then (2) serialize cells using
+# only buffer/integer ops (no ARC strings).
+
+def put_null_cell(dst: Int, off0: Int) -> Int:
+    mut off := off0
+    off = put_u8(dst, off, 0)
+    off = put_u32(dst, off, 0)
+    return off
+
+def scan_tokens(tb: Int, tlen: Int, tok_s: Int, tok_l: Int) -> Int:
+    mut i := 0
+    mut cur_start := 0
+    mut cur := 0
+    mut q := 0
+    while i <= tlen:
+        mut is_end := 0
+        mut is_comma := 0
+        if i < tlen:
+            c := buf_get8(tb, i)
+            if c == 39:
+                q = 1 - q
+            if q == 0:
+                if c == 44:
+                    is_comma = 1
+        else:
+            is_end = 1
+        if is_comma == 1:
+            put_i64(tok_s, cur * 8, cur_start)
+            put_i64(tok_l, cur * 8, i - cur_start)
+            cur = cur + 1
+            cur_start = i + 1
+        if is_end == 1:
+            put_i64(tok_s, cur * 8, cur_start)
+            put_i64(tok_l, cur * 8, i - cur_start)
+            cur = cur + 1
+        i = i + 1
+    return cur
+
+def parse_int_bytes(tb: Int, a: Int, b: Int) -> Int:
+    mut i := a
+    mut neg := 0
+    if i < b:
+        if buf_get8(tb, i) == 45:
+            neg = 1
+            i = i + 1
+    mut v := 0
+    while i < b:
+        d := buf_get8(tb, i) - 48
+        if d >= 0:
+            if d <= 9:
+                v = v * 10 + d
+        i = i + 1
+    if neg == 1:
+        v = 0 - v
+    return v
+
+def is_null_bytes(tb: Int, a: Int, len: Int) -> Int:
+    if len != 4:
+        return 0
+    c0 := buf_get8(tb, a)
+    c1 := buf_get8(tb, a + 1)
+    c2 := buf_get8(tb, a + 2)
+    c3 := buf_get8(tb, a + 3)
+    mut ok := 1
+    if c0 != 110:
+        if c0 != 78:
+            ok = 0
+    if c1 != 117:
+        if c1 != 85:
+            ok = 0
+    if c2 != 108:
+        if c2 != 76:
+            ok = 0
+    if c3 != 108:
+        if c3 != 76:
+            ok = 0
+    return ok
+
+def write_cell_from_tb(dst: Int, off0: Int, tb: Int, ts: Int, tl: Int, coltype: Int) -> Int:
+    mut off := off0
+    mut a := ts
+    mut b := ts + tl
+    while a < b:
+        if buf_get8(tb, a) == 32:
+            a = a + 1
+        else:
+            break
+    while b > a:
+        if buf_get8(tb, b - 1) == 32:
+            b = b - 1
+        else:
+            break
+    seg_len := b - a
+    if is_null_bytes(tb, a, seg_len) == 1:
+        off = put_u8(dst, off, 0)
+        off = put_u32(dst, off, 0)
+        return off
+    if coltype == 1:
+        off = put_u8(dst, off, 1)
+        off = put_u32(dst, off, 8)
+        off = put_i64(dst, off, parse_int_bytes(tb, a, b))
+        return off
+    mut sa := a
+    mut sb := b
+    if seg_len >= 2:
+        fc := buf_get8(tb, a)
+        lc := buf_get8(tb, b - 1)
+        if fc == 39:
+            if lc == 39:
+                sa = a + 1
+                sb = b - 1
+        if fc == 34:
+            if lc == 34:
+                sa = a + 1
+                sb = b - 1
+    slen := sb - sa
+    off = put_u8(dst, off, 2)
+    off = put_u32(dst, off, slen)
+    off = put_bytes(dst, off, tb, sa, slen)
+    return off
+
+# Build one row into dst at off, in schema column order. `exp_low` is the
+# lowercased explicit-column list ("" if none); `tup_orig` is the value tuple
+# contents. Returns the new offset.
+#
+# NOTE: cells are first serialized into a temp buffer, then copied to dst with
+# `mut off` declared immediately adjacent to the writes. Declaring `mut off`
+# far above its use (with buf_alloc calls in between) triggers a compiler
+# register-clobber bug that corrupts the row_len field.
+def build_row(db: Int, toff: Int, exp_low: Str, tup_orig: Str, dst: Int, off0: Int) -> Int:
+    nc := t_ncols(db, toff)
+    has_exp := str_len(exp_low)
+    tlen := str_len(tup_orig)
+    tb := buf_alloc(tlen + 1)
+    buf_write_str(tb, 0, tup_orig)
+    tok_s := buf_alloc((nc + 2) * 8)
+    tok_l := buf_alloc((nc + 2) * 8)
+    ntok := scan_tokens(tb, tlen, tok_s, tok_l)
+    ct_buf := buf_alloc((nc + 1) * 8)
+    map_buf := buf_alloc((nc + 1) * 8)
+    mut j := 0
+    while j < nc:
+        put_i64(ct_buf, j * 8, t_col_type(db, toff, j))
+        mut tidx := -1
+        if has_exp == 0:
+            tidx = j
+        else:
+            tidx = name_list_pos(exp_low, t_col_name(db, toff, j))
+        put_i64(map_buf, j * 8, tidx)
+        j = j + 1
+    # Serialize cells into a temp buffer (its own offset starts at 0).
+    tmp := buf_alloc(tlen + nc * 16 + 64)
+    mut toff2 := 0
+    mut j2 := 0
+    while j2 < nc:
+        coltype := rd_i64(ct_buf, j2 * 8)
+        tidx := rd_i64(map_buf, j2 * 8)
+        if tidx >= 0:
+            if tidx < ntok:
+                ts := rd_i64(tok_s, tidx * 8)
+                tl := rd_i64(tok_l, tidx * 8)
+                toff2 = write_cell_from_tb(tmp, toff2, tb, ts, tl, coltype)
+            else:
+                toff2 = put_null_cell(tmp, toff2)
+        else:
+            toff2 = put_null_cell(tmp, toff2)
+        j2 = j2 + 1
+    cell_bytes := toff2
+    # Emit [row_len][cells] into dst; keep `mut off` adjacent to its uses.
+    mut off := off0
+    off = put_u32(dst, off, cell_bytes)
+    off = put_bytes(dst, off, tmp, 0, cell_bytes)
+    buf_free(tmp)
+    buf_free(tb)
+    buf_free(tok_s)
+    buf_free(tok_l)
+    buf_free(ct_buf)
+    buf_free(map_buf)
+    return off
+
+# ════════════════════ Rebuild helpers ════════════════════
+
+def copy_all_tables(db: Int, dst: Int, doff0: Int) -> Int:
+    mut doff := doff0
+    mut off := 12
+    mut i := 0
+    nt := db_num_tables(db)
+    while i < nt:
+        blen := buf_get32le(db, off)
+        doff = put_bytes(dst, doff, db, off, 4 + blen)
+        off = off + 4 + blen
+        i = i + 1
+    return doff
+
+# ════════════════════ CREATE TABLE ════════════════════
+
+def exec_create(h: Int, sql: Str, low: Str) -> Str:
+    db := handle_db(h)
+    p := kw_pos(low, "table")
+    rest := str_trim(str_substr(low, p + 5, str_len(low) - p - 5))
+    name := extract_word(rest, 0)
+    if str_len(name) == 0:
+        return err_json("CREATE TABLE: missing table name")
+    if table_find(db, name) >= 0:
+        return err_json(str_concat("table already exists: ", name))
+    mut lp := str_find(low, "(")
+    mut rp := str_find(low, ")")
+    if lp < 0:
+        return err_json("CREATE TABLE: missing (")
+    if rp < 0:
+        rp = str_len(low)
+    cols_str := str_substr(low, lp + 1, rp - lp - 1)
+    # First pass: count columns and size the table block.
+    tb := buf_alloc(4096)
+    mut off := 0
+    off = put_u32(tb, off, str_len(name))
+    off = put_str_raw(tb, off, name)
+    # parse columns, writing as we go; count them
+    mut ncols := 0
+    n := str_len(cols_str)
+    mut i := 0
+    mut start := 0
+    # We need ncols before writing it, so buffer column bytes separately.
+    cb := buf_alloc(4096)
+    mut coff := 0
+    while i <= n:
+        mut is_end := 0
+        mut is_comma := 0
+        if i < n:
+            c := str_substr(cols_str, i, 1)
+            if lpp_str_eq(c, ",") == 1:
+                is_comma = 1
+        else:
+            is_end = 1
+        if is_comma == 1:
+            coff = write_col_def(cb, coff, str_trim(str_substr(cols_str, start, i - start)))
+            ncols = ncols + 1
+            start = i + 1
+        if is_end == 1:
+            piece := str_trim(str_substr(cols_str, start, i - start))
+            if str_len(piece) > 0:
+                coff = write_col_def(cb, coff, piece)
+                ncols = ncols + 1
+        i = i + 1
+    # Now assemble the table block: name, ncols, cols, num_rows=0
+    off = put_u32(tb, off, ncols)
+    off = put_bytes(tb, off, cb, 0, coff)
+    off = put_u32(tb, off, 0)
+    block_len := off
+    # Rebuild DB
+    old_size := db_size(db)
+    mut nw := buf_alloc(old_size + block_len + 64)
+    mut wo := 0
+    wo = write_magic(nw, wo)
+    wo = put_u32(nw, wo, db_num_tables(db) + 1)
+    wo = copy_all_tables(db, nw, wo)
+    wo = put_u32(nw, wo, block_len)
+    wo = put_bytes(nw, wo, tb, 0, block_len)
+    nw = trim_buf(nw, wo)
+    old := handle_db(h)
+    handle_set_db(h, nw)
+    buf_free(old)
+    return ok_msg(str_concat("created table ", name))
+
+def write_col_def(cb: Int, coff0: Int, cdef: Str) -> Int:
+    mut coff := coff0
+    cname := extract_word(cdef, 0)
+    rest := str_trim(str_substr(cdef, str_len(cname), str_len(cdef) - str_len(cname)))
+    tword := extract_word(rest, 0)
+    mut ctype := T_TEXT()
+    if str_find(str_lower(tword), "int") >= 0:
+        ctype = T_INT()
+    coff = put_u32(cb, coff, str_len(cname))
+    coff = put_str_raw(cb, coff, cname)
+    coff = put_u8(cb, coff, ctype)
+    return coff
+
+# ════════════════════ INSERT ════════════════════
+
+def exec_insert(h: Int, sql: Str, low: Str) -> Str:
+    db := handle_db(h)
+    p := kw_pos(low, "into")
+    rest := str_trim(str_substr(low, p + 4, str_len(low) - p - 4))
+    name := extract_word(rest, 0)
+    toff := table_find(db, name)
+    if toff < 0:
+        return err_json(str_concat("no such table: ", name))
+    after := str_trim(str_substr(rest, str_len(name), str_len(rest) - str_len(name)))
+    # Optional explicit column list in ORIGINAL case-insensitive positions.
+    mut exp_low := ""
+    mut values_kw := str_find(low, "values")
+    firstc := str_substr(after, 0, 1)
+    if lpp_str_eq(firstc, "(") == 1:
+        cp := str_find(after, ")")
+        exp_low = str_trim(str_substr(after, 1, cp - 1))
+    if values_kw < 0:
+        return err_json("INSERT: missing VALUES")
+    vsec := str_trim(str_substr(sql, values_kw + 6, str_len(sql) - values_kw - 6))
+    vlow := str_trim(str_substr(low, values_kw + 6, str_len(low) - values_kw - 6))
+    # Build all new rows into nr buf.
+    mut nr := buf_alloc(4096)
+    mut roff := 0
+    mut added := 0
+    mut i := 0
+    vn := str_len(vlow)
+    while i < vn:
+        c := str_substr(vlow, i, 1)
+        if lpp_str_eq(c, "(") == 1:
+            mut depth := 1
+            mut j := i + 1
+            mut q := 0
+            while j < vn:
+                cj := str_substr(vlow, j, 1)
+                if lpp_str_eq(cj, chr(39)) == 1:
+                    q = 1 - q
+                if q == 0:
+                    if lpp_str_eq(cj, "(") == 1:
+                        depth = depth + 1
+                    if lpp_str_eq(cj, ")") == 1:
+                        depth = depth - 1
+                        if depth == 0:
+                            break
+                j = j + 1
+            tup_orig := str_substr(vsec, i + 1, j - i - 1)
+            if nr >= 0:
+                grow := (roff + 4096)
+                if grow > buf_len(nr):
+                    nb := buf_alloc(grow * 2)
+                    buf_copy(nb, 0, nr, 0, roff)
+                    buf_free(nr)
+                    nr = nb
+            roff = build_row(db, toff, exp_low, tup_orig, nr, roff)
+            added = added + 1
+            i = j + 1
+        else:
+            i = i + 1
+    if added == 0:
+        return err_json("INSERT: no value tuples")
+    # Rebuild DB: rewrite target table with num_rows += added.
+    old_size := db_size(db)
+    mut nw := buf_alloc(old_size + roff + 64)
+    mut wo := 0
+    wo = write_magic(nw, wo)
+    wo = put_u32(nw, wo, db_num_tables(db))
+    mut off := 12
+    mut ti := 0
+    nt := db_num_tables(db)
+    while ti < nt:
+        blen := buf_get32le(db, off)
+        if off == toff:
+            nrows_off := t_nrows_off(db, toff)
+            hdr_len := nrows_off - (toff + 4)
+            old_rows := t_num_rows(db, toff)
+            rows_start := t_rows_start(db, toff)
+            rows_bytes := t_end(db, toff) - rows_start
+            new_block_len := hdr_len + 4 + rows_bytes + roff
+            wo = put_u32(nw, wo, new_block_len)
+            wo = put_bytes(nw, wo, db, toff + 4, hdr_len)
+            wo = put_u32(nw, wo, old_rows + added)
+            wo = put_bytes(nw, wo, db, rows_start, rows_bytes)
+            wo = put_bytes(nw, wo, nr, 0, roff)
+        else:
+            wo = put_bytes(nw, wo, db, off, 4 + blen)
+        off = off + 4 + blen
+        ti = ti + 1
+    nw = trim_buf(nw, wo)
+    old := handle_db(h)
+    handle_set_db(h, nw)
+    buf_free(old)
+    return ok_changes(added)
+
+# ════════════════════ UPDATE ════════════════════
+
+def exec_update(h: Int, sql: Str, low: Str) -> Str:
+    db := handle_db(h)
+    p := kw_pos(low, "update")
+    rest := str_trim(str_substr(low, p + 6, str_len(low) - p - 6))
+    name := extract_word(rest, 0)
+    toff := table_find(db, name)
+    if toff < 0:
+        return err_json(str_concat("no such table: ", name))
+    set_kw := str_find(low, " set ")
+    if set_kw < 0:
+        return err_json("UPDATE: missing SET")
+    where_kw := str_find(low, " where ")
+    mut set_end := str_len(low)
+    if where_kw >= 0:
+        set_end = where_kw
+    set_sec_low := str_trim(str_substr(low, set_kw + 5, set_end - set_kw - 5))
+    set_sec_orig := str_trim(str_substr(sql, set_kw + 5, set_end - set_kw - 5))
+    # Parse SET assignments into parallel buffers (max 32).
+    aset_col := buf_alloc(32 * 8)
+    aset_isstr := buf_alloc(32 * 8)
+    aset_int := buf_alloc(32 * 8)
+    aset_slen := buf_alloc(32 * 8)
+    aset_lit := buf_alloc(1024)
+    mut nset := 0
+    mut lp := 0
+    sn := str_len(set_sec_low)
+    mut i := 0
+    mut start := 0
+    while i <= sn:
+        mut is_end := 0
+        mut is_comma := 0
+        if i < sn:
+            c := str_substr(set_sec_low, i, 1)
+            if lpp_str_eq(c, ",") == 1:
+                is_comma = 1
+        else:
+            is_end = 1
+        if is_comma == 1:
+            lp = write_set_assign(db, toff, set_sec_low, set_sec_orig, start, i, aset_col, aset_isstr, aset_int, aset_slen, aset_lit, lp, nset)
+            nset = nset + 1
+            start = i + 1
+        if is_end == 1:
+            lp = write_set_assign(db, toff, set_sec_low, set_sec_orig, start, i, aset_col, aset_isstr, aset_int, aset_slen, aset_lit, lp, nset)
+            nset = nset + 1
+        i = i + 1
+    # WHERE conditions
+    condbuf := buf_alloc(64 * 48)
+    litpool := buf_alloc(1024)
+    mut ncond := 0
+    if where_kw >= 0:
+        wlow := str_trim(str_substr(low, where_kw + 7, str_len(low) - where_kw - 7))
+        worig := str_trim(str_substr(sql, where_kw + 7, str_len(sql) - where_kw - 7))
+        ncond = parse_where(db, toff, wlow, worig, condbuf, litpool)
+    # Rebuild target table rows.
+    old_size := db_size(db)
+    mut nb := buf_alloc(old_size + 4096)
+    mut wo := 0
+    wo = write_magic(nb, wo)
+    wo = put_u32(nb, wo, db_num_tables(db))
+    mut off := 12
+    mut ti := 0
+    nt := db_num_tables(db)
+    mut changes := 0
+    while ti < nt:
+        blen := buf_get32le(db, off)
+        if off == toff:
+            nrows_off := t_nrows_off(db, toff)
+            hdr_len := nrows_off - (toff + 4)
+            nrc := t_num_rows(db, toff)
+            rows_start := t_rows_start(db, toff)
+            rows_end := t_end(db, toff)
+            # build rows into rb
+            rb := buf_alloc((rows_end - rows_start) + 4096)
+            mut rbo := 0
+            mut ro := rows_start
+            mut k := 0
+            while k < nrc:
+                if eval_where(db, toff, ro, condbuf, ncond, litpool) == 1:
+                    rbo = rebuild_row_updated(db, toff, ro, aset_col, aset_isstr, aset_int, aset_slen, aset_lit, nset, rb, rbo)
+                    changes = changes + 1
+                else:
+                    rl := 4 + row_len(db, ro)
+                    rbo = put_bytes(rb, rbo, db, ro, rl)
+                ro = row_next(db, ro)
+                k = k + 1
+            new_block_len := hdr_len + 4 + rbo
+            wo = put_u32(nb, wo, new_block_len)
+            wo = put_bytes(nb, wo, db, toff + 4, hdr_len)
+            wo = put_u32(nb, wo, nrc)
+            wo = put_bytes(nb, wo, rb, 0, rbo)
+        else:
+            wo = put_bytes(nb, wo, db, off, 4 + blen)
+        off = off + 4 + blen
+        ti = ti + 1
+    nb = trim_buf(nb, wo)
+    old := handle_db(h)
+    handle_set_db(h, nb)
+    buf_free(old)
+    return ok_changes(changes)
+
+def write_set_assign(db: Int, toff: Int, set_low: Str, set_orig: Str, lo: Int, hi: Int, aset_col: Int, aset_isstr: Int, aset_int: Int, aset_slen: Int, aset_lit: Int, lp0: Int, idx: Int) -> Int:
+    mut lp := lp0
+    qt := chr(34)
+    ap := chr(39)
+    piece_low := str_trim(str_substr(set_low, lo, hi - lo))
+    piece_orig := str_trim(str_substr(set_orig, lo, hi - lo))
+    ep := str_find(piece_low, "=")
+    if ep < 0:
+        return lp
+    col := str_trim(str_substr(piece_low, 0, ep))
+    val := str_trim(str_substr(piece_orig, ep + 1, str_len(piece_orig) - ep - 1))
+    colidx := t_col_index(db, toff, col)
+    put_i64(aset_col, idx * 8, colidx)
+    firstc := str_substr(val, 0, 1)
+    if lpp_str_eq(firstc, ap) == 1:
+        put_i64(aset_isstr, idx * 8, 1)
+        inner := str_substr(val, 1, str_len(val) - 2)
+        put_i64(aset_int, idx * 8, lp)
+        put_i64(aset_slen, idx * 8, str_len(inner))
+        put_str_raw(aset_lit, lp, inner)
+        lp = lp + str_len(inner)
+    elif lpp_str_eq(firstc, qt) == 1:
+        put_i64(aset_isstr, idx * 8, 1)
+        inner := str_substr(val, 1, str_len(val) - 2)
+        put_i64(aset_int, idx * 8, lp)
+        put_i64(aset_slen, idx * 8, str_len(inner))
+        put_str_raw(aset_lit, lp, inner)
+        lp = lp + str_len(inner)
+    elif is_int_str(val) == 1:
+        put_i64(aset_isstr, idx * 8, 0)
+        put_i64(aset_int, idx * 8, str_to_int(val))
+        put_i64(aset_slen, idx * 8, 0)
+    else:
+        put_i64(aset_isstr, idx * 8, 1)
+        put_i64(aset_int, idx * 8, lp)
+        put_i64(aset_slen, idx * 8, str_len(val))
+        put_str_raw(aset_lit, lp, val)
+        lp = lp + str_len(val)
+    return lp
+
+def rebuild_row_updated(db: Int, toff: Int, roff: Int, aset_col: Int, aset_isstr: Int, aset_int: Int, aset_slen: Int, aset_lit: Int, nset: Int, dst: Int, off0: Int) -> Int:
+    nc := t_ncols(db, toff)
+    # Serialize updated cells into a temp buffer (avoid far `mut off` bug).
+    tmp := buf_alloc(row_len(db, roff) + 512)
+    mut toff2 := 0
+    mut j := 0
+    while j < nc:
+        coltype := t_col_type(db, toff, j)
+        co := cell_off(db, roff, j)
+        # Is column j being updated?
+        mut found := -1
+        mut s := 0
+        while s < nset:
+            if rd_i64(aset_col, s * 8) == j:
+                found = s
+                break
+            s = s + 1
+        if found >= 0:
+            isstr := rd_i64(aset_isstr, found * 8)
+            if isstr == 1:
+                soff := rd_i64(aset_int, found * 8)
+                slen := rd_i64(aset_slen, found * 8)
+                lit := buf_read_str(aset_lit, soff, slen)
+                toff2 = put_cell(tmp, toff2, coltype, str_concat(str_concat(chr(39), lit), chr(39)))
+            else:
+                iv := rd_i64(aset_int, found * 8)
+                toff2 = put_cell(tmp, toff2, coltype, int_to_str(iv))
+        else:
+            toff2 = copy_cell(tmp, toff2, db, co)
+        j = j + 1
+    cell_bytes := toff2
+    mut off := off0
+    off = put_u32(dst, off, cell_bytes)
+    off = put_bytes(dst, off, tmp, 0, cell_bytes)
+    buf_free(tmp)
+    return off
+
+def copy_cell(dst: Int, off0: Int, db: Int, co: Int) -> Int:
+    mut off := off0
+    t := cell_type(db, co)
+    ln := cell_len(db, co)
+    off = put_u8(dst, off, t)
+    off = put_u32(dst, off, ln)
+    if ln > 0:
+        off = put_bytes(dst, off, db, co + 5, ln)
+    return off
+
+# ════════════════════ DELETE ════════════════════
+
+def exec_delete(h: Int, sql: Str, low: Str) -> Str:
+    db := handle_db(h)
+    p := kw_pos(low, "from")
+    rest := str_trim(str_substr(low, p + 4, str_len(low) - p - 4))
+    name := extract_word(rest, 0)
+    toff := table_find(db, name)
+    if toff < 0:
+        return err_json(str_concat("no such table: ", name))
+    where_kw := str_find(low, " where ")
+    condbuf := buf_alloc(64 * 48)
+    litpool := buf_alloc(1024)
+    mut ncond := 0
+    if where_kw >= 0:
+        wlow := str_trim(str_substr(low, where_kw + 7, str_len(low) - where_kw - 7))
+        worig := str_trim(str_substr(sql, where_kw + 7, str_len(sql) - where_kw - 7))
+        ncond = parse_where(db, toff, wlow, worig, condbuf, litpool)
+    old_size := db_size(db)
+    mut nb := buf_alloc(old_size + 64)
+    mut wo := 0
+    wo = write_magic(nb, wo)
+    wo = put_u32(nb, wo, db_num_tables(db))
+    mut off := 12
+    mut ti := 0
+    nt := db_num_tables(db)
+    mut deleted := 0
+    while ti < nt:
+        blen := buf_get32le(db, off)
+        if off == toff:
+            nrows_off := t_nrows_off(db, toff)
+            hdr_len := nrows_off - (toff + 4)
+            nrc := t_num_rows(db, toff)
+            rows_start := t_rows_start(db, toff)
+            rows_end := t_end(db, toff)
+            rb := buf_alloc((rows_end - rows_start) + 8)
+            mut rbo := 0
+            mut ro := rows_start
+            mut k := 0
+            mut survivors := 0
+            while k < nrc:
+                if eval_where(db, toff, ro, condbuf, ncond, litpool) == 1:
+                    deleted = deleted + 1
+                else:
+                    rl := 4 + row_len(db, ro)
+                    rbo = put_bytes(rb, rbo, db, ro, rl)
+                    survivors = survivors + 1
+                ro = row_next(db, ro)
+                k = k + 1
+            new_block_len := hdr_len + 4 + rbo
+            wo = put_u32(nb, wo, new_block_len)
+            wo = put_bytes(nb, wo, db, toff + 4, hdr_len)
+            wo = put_u32(nb, wo, survivors)
+            wo = put_bytes(nb, wo, rb, 0, rbo)
+        else:
+            wo = put_bytes(nb, wo, db, off, 4 + blen)
+        off = off + 4 + blen
+        ti = ti + 1
+    nb = trim_buf(nb, wo)
+    old := handle_db(h)
+    handle_set_db(h, nb)
+    buf_free(old)
+    return ok_changes(deleted)
+
+# ════════════════════ DROP TABLE ════════════════════
+
+def exec_drop(h: Int, sql: Str, low: Str) -> Str:
+    db := handle_db(h)
+    p := kw_pos(low, "table")
+    rest := str_trim(str_substr(low, p + 5, str_len(low) - p - 5))
+    name := extract_word(rest, 0)
+    toff := table_find(db, name)
+    if toff < 0:
+        return err_json(str_concat("no such table: ", name))
+    old_size := db_size(db)
+    mut nb := buf_alloc(old_size + 8)
+    mut wo := 0
+    wo = write_magic(nb, wo)
+    wo = put_u32(nb, wo, db_num_tables(db) - 1)
+    mut off := 12
+    mut ti := 0
+    nt := db_num_tables(db)
+    while ti < nt:
+        blen := buf_get32le(db, off)
+        if off != toff:
+            wo = put_bytes(nb, wo, db, off, 4 + blen)
+        off = off + 4 + blen
+        ti = ti + 1
+    nb = trim_buf(nb, wo)
+    old := handle_db(h)
+    handle_set_db(h, nb)
+    buf_free(old)
+    return ok_msg(str_concat("dropped table ", name))
+
+# ════════════════════ SELECT ════════════════════
+
+def cmp_rows(db: Int, toff: Int, rowA: Int, rowB: Int, col: Int, coltype: Int) -> Int:
+    coA := cell_off(db, rowA, col)
+    coB := cell_off(db, rowB, col)
+    return cmp_col(db, coA, coB, coltype)
+
+def sort_rows(db: Int, toff: Int, obuf: Int, n: Int, col: Int, coltype: Int, desc: Int):
+    mut i := 1
+    while i < n:
+        key := rd_i64(obuf, i * 8)
+        mut j := i - 1
+        while j >= 0:
+            cur := rd_i64(obuf, j * 8)
+            mut c := cmp_rows(db, toff, cur, key, col, coltype)
+            if desc == 1:
+                c = 0 - c
+            if c <= 0:
+                break
+            put_i64(obuf, (j + 1) * 8, cur)
+            j = j - 1
+        put_i64(obuf, (j + 1) * 8, key)
+        i = i + 1
+
+def select_columns(low: Str, sql: Str, from_pos: Int) -> Str:
+    return str_trim(str_substr(sql, 6, from_pos - 6))
+
+def exec_select(h: Int, sql: Str, low: Str) -> Str:
+    db := handle_db(h)
+    qt := chr(34)
+    from_pos := str_find(low, " from ")
+    if from_pos < 0:
+        return err_json("SELECT: missing FROM")
+    sel_orig := str_trim(str_substr(sql, 6, from_pos - 6))
+    sel_low := str_trim(str_substr(low, 6, from_pos - 6))
+    after := str_trim(str_substr(low, from_pos + 6, str_len(low) - from_pos - 6))
+    name := extract_word(after, 0)
+    toff := table_find(db, name)
+    if toff < 0:
+        return err_json(str_concat("no such table: ", name))
+    rest := str_trim(str_substr(after, str_len(name), str_len(after) - str_len(name)))
+    where_kw := str_find(rest, "where ")
+    order_kw := str_find(rest, "order by ")
+    limit_kw := str_find(rest, "limit ")
+    condbuf := buf_alloc(64 * 48)
+    litpool := buf_alloc(1024)
+    mut ncond := 0
+    mut where_end := str_len(rest)
+    if order_kw >= 0:
+        where_end = order_kw
+    if limit_kw >= 0:
+        if limit_kw < where_end:
+            where_end = limit_kw
+    if where_kw >= 0:
+        wlow := str_trim(str_substr(rest, where_kw + 6, where_end - where_kw - 6))
+        wstart := from_pos + 6 + (str_len(after) - str_len(rest)) + where_kw + 6
+        worig := str_trim(str_substr(sql, wstart, where_end - where_kw - 6))
+        ncond = parse_where(db, toff, wlow, worig, condbuf, litpool)
+    nrc := t_num_rows(db, toff)
+    rows_start := t_rows_start(db, toff)
+    # Collect matching row offsets into obuf.
+    obuf := buf_alloc((nrc + 1) * 8)
+    mut m := 0
+    mut ro := rows_start
+    mut k := 0
+    while k < nrc:
+        if eval_where(db, toff, ro, condbuf, ncond, litpool) == 1:
+            put_i64(obuf, m * 8, ro)
+            m = m + 1
+        ro = row_next(db, ro)
+        k = k + 1
+    # Aggregate?
+    if str_find(sel_low, "count(") >= 0:
+        return str_concat("{\"status\":\"ok\",\"columns\":[\"count\"],\"rows\":[[", str_concat(int_to_str(m), "]]}"))
+    mut agg := 0
+    mut aggcol := -1
+    mut aggname := ""
+    if str_find(sel_low, "sum(") >= 0:
+        agg = 1
+        aggname = "sum"
+    elif str_find(sel_low, "min(") >= 0:
+        agg = 2
+        aggname = "min"
+    elif str_find(sel_low, "max(") >= 0:
+        agg = 3
+        aggname = "max"
+    if agg > 0:
+        ap := str_find(sel_low, "(")
+        ap2 := str_find(sel_low, ")")
+        ac := str_trim(str_substr(sel_low, ap + 1, ap2 - ap - 1))
+        aggcol = t_col_index(db, toff, ac)
+        mut acc := 0
+        mut have := 0
+        mut mi := 0
+        while mi < m:
+            rr := rd_i64(obuf, mi * 8)
+            co := cell_off(db, rr, aggcol)
+            v := cell_as_int(db, co)
+            if have == 0:
+                acc = v
+                have = 1
+            elif agg == 1:
+                acc = acc + v
+            elif agg == 2:
+                if v < acc:
+                    acc = v
+            else:
+                if v > acc:
+                    acc = v
+            mi = mi + 1
+        return str_concat(str_concat(str_concat("{\"status\":\"ok\",\"columns\":[", str_concat(qt, aggname)), str_concat(str_concat(qt, "],\"rows\":[["), int_to_str(acc))), "]]}")
+    # ORDER BY
+    if order_kw >= 0:
+        mut ob_end := str_len(rest)
+        if limit_kw >= 0:
+            ob_end = limit_kw
+        ob_sec := str_trim(str_substr(rest, order_kw + 9, ob_end - order_kw - 9))
+        mut desc := 0
+        if str_find(ob_sec, "desc") >= 0:
+            desc = 1
+        oc := extract_word(ob_sec, 0)
+        ocol := t_col_index(db, toff, oc)
+        if ocol >= 0:
+            octype := t_col_type(db, toff, ocol)
+            sort_rows(db, toff, obuf, m, ocol, octype, desc)
+    # LIMIT
+    mut lim := m
+    if limit_kw >= 0:
+        lsec := str_trim(str_substr(rest, limit_kw + 6, str_len(rest) - limit_kw - 6))
+        lw := extract_word(lsec, 0)
+        if is_int_str(lw) == 1:
+            lv := str_to_int(lw)
+            if lv < lim:
+                lim = lv
+    # Determine selected columns.
+    nc := t_ncols(db, toff)
+    is_star := lpp_str_eq(sel_low, "*")
+    selcols := buf_alloc((nc + 1) * 8)
+    mut nsel := 0
+    if is_star == 1:
+        mut j := 0
+        while j < nc:
+            put_i64(selcols, nsel * 8, j)
+            nsel = nsel + 1
+            j = j + 1
+    else:
+        cn := str_len(sel_low)
+        mut i := 0
+        mut start := 0
+        while i <= cn:
+            mut is_end := 0
+            mut is_comma := 0
+            if i < cn:
+                c := str_substr(sel_low, i, 1)
+                if lpp_str_eq(c, ",") == 1:
+                    is_comma = 1
+            else:
+                is_end = 1
+            if is_comma == 1:
+                tok := str_trim(str_substr(sel_low, start, i - start))
+                put_i64(selcols, nsel * 8, t_col_index(db, toff, tok))
+                nsel = nsel + 1
+                start = i + 1
+            if is_end == 1:
+                tok := str_trim(str_substr(sel_low, start, i - start))
+                if str_len(tok) > 0:
+                    put_i64(selcols, nsel * 8, t_col_index(db, toff, tok))
+                    nsel = nsel + 1
+            i = i + 1
+    # Build columns JSON array.
+    mut cols_json := "["
+    mut ci := 0
+    while ci < nsel:
+        cidx := rd_i64(selcols, ci * 8)
+        cname := t_col_name(db, toff, cidx)
+        cols_json = str_concat(cols_json, str_concat(str_concat(qt, cname), qt))
+        if ci < nsel - 1:
+            cols_json = str_concat(cols_json, ",")
+        ci = ci + 1
+    cols_json = str_concat(cols_json, "]")
+    # Build rows JSON.
+    mut rows_json := "["
+    mut ri := 0
+    while ri < lim:
+        rr := rd_i64(obuf, ri * 8)
+        rows_json = str_concat(rows_json, "[")
+        mut cj := 0
+        while cj < nsel:
+            cidx := rd_i64(selcols, cj * 8)
+            co := cell_off(db, rr, cidx)
+            rows_json = str_concat(rows_json, cell_json(db, co))
+            if cj < nsel - 1:
+                rows_json = str_concat(rows_json, ",")
+            cj = cj + 1
+        rows_json = str_concat(rows_json, "]")
+        if ri < lim - 1:
+            rows_json = str_concat(rows_json, ",")
+        ri = ri + 1
+    rows_json = str_concat(rows_json, "]")
+    return str_concat(str_concat("{\"status\":\"ok\",\"columns\":", cols_json), str_concat(",\"rows\":", str_concat(rows_json, "}")))
+
+# ════════════════════ Public API ════════════════════
+
+def db_open(path: Str) -> Int:
+    mut dbbuf := 0
+    if file_exists(path) == 1:
+        dbbuf = buf_read(path)
+        if is_magic(dbbuf) == 0:
+            buf_free(dbbuf)
+            dbbuf = 0
+    if dbbuf == 0:
+        dbbuf = buf_alloc(12)
+        mut off := 0
+        off = write_magic(dbbuf, off)
+        off = put_u32(dbbuf, off, 0)
+    return handle_new(dbbuf)
+
+def db_save(h: Int, path: Str) -> Int:
+    db := handle_db(h)
+    return buf_write(path, db)
+
+def db_close(h: Int):
+    db := handle_db(h)
+    buf_free(db)
+    buf_free(h)
+
+def db_exec(h: Int, sql: Str) -> Str:
+    trimmed := str_trim(sql)
+    low := str_lower(trimmed)
+    if str_starts_with(low, "create") == 1:
+        return exec_create(h, trimmed, low)
+    if str_starts_with(low, "insert") == 1:
+        return exec_insert(h, trimmed, low)
+    if str_starts_with(low, "select") == 1:
+        return exec_select(h, trimmed, low)
+    if str_starts_with(low, "update") == 1:
+        return exec_update(h, trimmed, low)
+    if str_starts_with(low, "delete") == 1:
+        return exec_delete(h, trimmed, low)
+    if str_starts_with(low, "drop") == 1:
+        return exec_drop(h, trimmed, low)
+    return err_json(str_concat("unsupported SQL: ", trimmed))

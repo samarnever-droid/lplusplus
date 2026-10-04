@@ -1,0 +1,359 @@
+# ieee754.lpp — IEEE-754 binary64 <-> raw 64-bit pattern, in pure L++.
+#
+# SQLite stores REAL values as serial type 7: an 8-byte big-endian IEEE-754
+# double. L++ exposes no bit-cast between Float and Int, so the conversion is
+# reconstructed from arithmetic: normalise the magnitude into [1,2), then
+# recover the 52-bit fraction exactly with a single multiply by 2^52 (exact,
+# because the subtraction a-1.0 is exact by Sterbenz's lemma).
+#
+# Also provides decimal formatting/parsing, since the runtime's float_to_str
+# only emits "%g" (6 significant digits), which is far too lossy for a database.
+
+import mem
+
+def QNAN_BITS() -> Int:
+    return 9221120237041090560
+
+def PINF_BITS() -> Int:
+    return 9218868437227405312
+
+def NINF_BITS() -> Int:
+    return 0 - 4503599627370496
+
+def fabs_f(x: Float) -> Float:
+    if x < 0.0:
+        return 0.0 - x
+    return x
+
+def is_nan(x: Float) -> Int:
+    if x != x:
+        return 1
+    return 0
+
+# 2^k for k in [-1074, 1023], built by repeated scaling.
+def two_pow(k: Int) -> Float:
+    mut r := 1.0
+    mut i := 0
+    if k >= 0:
+        while i < k:
+            r = r * 2.0
+            i = i + 1
+        return r
+    n := 0 - k
+    while i < n:
+        r = r / 2.0
+        i = i + 1
+    return r
+
+def is_inf(x: Float) -> Int:
+    if is_nan(x) == 1:
+        return 0
+    if x == 0.0:
+        return 0
+    if x * 0.5 == x:
+        return 1
+    return 0
+
+# ── double -> 64-bit pattern ──
+def f2bits(d: Float) -> Int:
+    if is_nan(d) == 1:
+        return QNAN_BITS()
+    if d == 0.0:
+        return 0
+    mut sign := 0
+    mut a := d
+    if d < 0.0:
+        sign = 1
+        a = 0.0 - d
+    if is_inf(a) == 1:
+        if sign == 1:
+            return NINF_BITS()
+        return PINF_BITS()
+
+    mut e := 0
+    while a >= 2.0:
+        a = a / 2.0
+        e = e + 1
+    while a < 1.0:
+        a = a * 2.0
+        e = e - 1
+
+    if e < 0 - 1022:
+        # Subnormal: value = mantissa * 2^-1074. Scale in chunks so no
+        # intermediate overflows.
+        mut m := d
+        if sign == 1:
+            m = 0.0 - d
+        m = m * two_pow(512)
+        m = m * two_pow(512)
+        m = m * two_pow(50)
+        frac := float_to_int(m)
+        return (sign << 63) | frac
+
+    biased := e + 1023
+    frac2 := float_to_int((a - 1.0) * 4503599627370496.0)
+    return (sign << 63) | (biased << 52) | frac2
+
+# ── 64-bit pattern -> double ──
+def bits2f(bits: Int) -> Float:
+    expo := (mem.ushr(bits, 52)) & 2047
+    frac := bits & 4503599627370495
+    mut neg := 0
+    if bits < 0:
+        neg = 1
+
+    if expo == 2047:
+        # Inf / NaN. L++ has no NaN literal, so synthesise them.
+        if frac != 0:
+            z := 0.0
+            return z / z
+        big := two_pow(1023)
+        r := big * 2.0
+        if neg == 1:
+            return 0.0 - r
+        return r
+
+    mut v := 0.0
+    if expo == 0:
+        if frac == 0:
+            return 0.0
+        v = int_to_float(frac)
+        v = v * two_pow(0 - 512)
+        v = v * two_pow(0 - 512)
+        v = v * two_pow(0 - 50)
+    else:
+        m := 1.0 + int_to_float(frac) / 4503599627370496.0
+        v = m * two_pow(expo - 1023)
+
+    if neg == 1:
+        return 0.0 - v
+    return v
+
+# ── decimal formatting (SQLite-style %!.15g) ──
+
+def digit_char(d: Int) -> Str:
+    return chr(48 + d)
+
+def fmt_float(d: Float) -> Str:
+    if is_nan(d) == 1:
+        return "NULL"
+    if d == 0.0:
+        return "0.0"
+    mut out := ""
+    mut a := d
+    if d < 0.0:
+        out = "-"
+        a = 0.0 - d
+    if is_inf(a) == 1:
+        return str_concat(out, "Inf")
+
+    # Decimal exponent such that a / 10^dec is in [1,10).
+    mut dec := 0
+    while a >= 10.0:
+        a = a / 10.0
+        dec = dec + 1
+    while a < 1.0:
+        a = a * 10.0
+        dec = dec - 1
+
+    # 15 significant digits, then round the 16th.
+    mut digs := ""
+    mut i := 0
+    while i < 15:
+        mut di := float_to_int(a)
+        if di > 9:
+            di = 9
+        if di < 0:
+            di = 0
+        digs = str_concat(digs, digit_char(di))
+        a = (a - int_to_float(di)) * 10.0
+        i = i + 1
+    mut roundup := 0
+    if a >= 5.0:
+        roundup = 1
+
+    # Propagate the rounding carry through the digit string.
+    if roundup == 1:
+        mut carr := 1
+        mut nd := ""
+        mut k := 14
+        mut tmp := digs
+        # Build reversed then flip.
+        mut revd := ""
+        while k >= 0:
+            cch := ord(str_substr(tmp, k, 1)) - 48
+            mut nc := cch + carr
+            if nc >= 10:
+                nc = nc - 10
+                carr = 1
+            else:
+                carr = 0
+            revd = str_concat(revd, digit_char(nc))
+            k = k - 1
+        # reverse revd back
+        mut j := str_len(revd) - 1
+        while j >= 0:
+            nd = str_concat(nd, str_substr(revd, j, 1))
+            j = j - 1
+        digs = nd
+        if carr == 1:
+            digs = str_concat("1", str_substr(digs, 0, 14))
+            dec = dec + 1
+
+    # Trim trailing zeros (keep at least one digit).
+    mut last := str_len(digs) - 1
+    while last > 0:
+        if lpp_str_eq(str_substr(digs, last, 1), "0") == 1:
+            last = last - 1
+        else:
+            last = 0 - 1
+    mut ndig := 15
+    mut p := 14
+    mut stop := 0
+    while stop == 0:
+        if p > 0:
+            if lpp_str_eq(str_substr(digs, p, 1), "0") == 1:
+                p = p - 1
+            else:
+                stop = 1
+        else:
+            stop = 1
+    ndig = p + 1
+    digs = str_substr(digs, 0, ndig)
+
+    if dec < 0 - 4:
+        return str_concat(out, exp_form(digs, ndig, dec))
+    if dec >= 15:
+        return str_concat(out, exp_form(digs, ndig, dec))
+
+    if dec >= 0:
+        if ndig > dec + 1:
+            ip := str_substr(digs, 0, dec + 1)
+            fp := str_substr(digs, dec + 1, ndig - dec - 1)
+            return str_concat(out, str_concat(ip, str_concat(".", fp)))
+        mut s := digs
+        mut z := ndig
+        while z <= dec:
+            s = str_concat(s, "0")
+            z = z + 1
+        return str_concat(out, str_concat(s, ".0"))
+
+    mut lead := "0."
+    mut q := dec + 1
+    while q < 0:
+        lead = str_concat(lead, "0")
+        q = q + 1
+    return str_concat(out, str_concat(lead, digs))
+
+def exp_form(digs: Str, ndig: Int, dec: Int) -> Str:
+    mut s := str_substr(digs, 0, 1)
+    if ndig > 1:
+        s = str_concat(s, str_concat(".", str_substr(digs, 1, ndig - 1)))
+    else:
+        s = str_concat(s, ".0")
+    s = str_concat(s, "e")
+    if dec < 0:
+        s = str_concat(s, "-")
+    else:
+        s = str_concat(s, "+")
+    mut ex := dec
+    if ex < 0:
+        ex = 0 - ex
+    if ex < 10:
+        s = str_concat(s, "0")
+    return str_concat(s, int_to_str(ex))
+
+# ── decimal parsing ──
+
+def is_dig(s: Str, i: Int) -> Int:
+    o := ord(str_substr(s, i, 1))
+    if o < 48:
+        return 0
+    if o > 57:
+        return 0
+    return 1
+
+def parse_float(s: Str) -> Float:
+    n := str_len(s)
+    mut i := 0
+    mut sign := 1.0
+    if i < n:
+        c := str_substr(s, i, 1)
+        if lpp_str_eq(c, "-") == 1:
+            sign = 0.0 - 1.0
+            i = i + 1
+        elif lpp_str_eq(c, "+") == 1:
+            i = i + 1
+
+    # integer part
+    mut intp := 0.0
+    mut go := 1
+    while go == 1:
+        if i >= n:
+            go = 0
+        elif is_dig(s, i) == 0:
+            go = 0
+        else:
+            intp = intp * 10.0 + int_to_float(ord(str_substr(s, i, 1)) - 48)
+            i = i + 1
+
+    # fraction
+    mut frac := 0.0
+    mut scale := 1.0
+    if i < n:
+        if lpp_str_eq(str_substr(s, i, 1), ".") == 1:
+            i = i + 1
+            mut g2 := 1
+            while g2 == 1:
+                if i >= n:
+                    g2 = 0
+                elif is_dig(s, i) == 0:
+                    g2 = 0
+                else:
+                    frac = frac * 10.0 + int_to_float(ord(str_substr(s, i, 1)) - 48)
+                    scale = scale * 10.0
+                    i = i + 1
+
+    mut v := intp
+    if scale > 1.0:
+        v = v + frac / scale
+
+    # exponent
+    if i < n:
+        c2 := str_substr(s, i, 1)
+        mut ise := 0
+        if lpp_str_eq(c2, "e") == 1:
+            ise = 1
+        if lpp_str_eq(c2, "E") == 1:
+            ise = 1
+        if ise == 1:
+            i = i + 1
+            mut esign := 1
+            if i < n:
+                c3 := str_substr(s, i, 1)
+                if lpp_str_eq(c3, "-") == 1:
+                    esign = 0 - 1
+                    i = i + 1
+                elif lpp_str_eq(c3, "+") == 1:
+                    i = i + 1
+            mut ev := 0
+            mut g3 := 1
+            while g3 == 1:
+                if i >= n:
+                    g3 = 0
+                elif is_dig(s, i) == 0:
+                    g3 = 0
+                else:
+                    ev = ev * 10 + (ord(str_substr(s, i, 1)) - 48)
+                    i = i + 1
+            mut k := 0
+            if esign > 0:
+                while k < ev:
+                    v = v * 10.0
+                    k = k + 1
+            else:
+                while k < ev:
+                    v = v / 10.0
+                    k = k + 1
+
+    return sign * v

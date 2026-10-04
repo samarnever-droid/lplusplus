@@ -1,0 +1,125 @@
+# t_stress.lpp — scale + edge-case suite.
+# Builds a multi-thousand-row database, forcing many b-tree splits and
+# overflow chains, then verifies the results and leaves the file on disk for
+# the differential harness to re-check with the real sqlite3 library.
+
+import mem
+import strbuf
+import value
+import rowset
+import exec
+import tap
+
+def dump(r: Int) -> Str:
+    if rowset.rs_err(r) == 1:
+        return str_concat("ERROR: ", rowset.rs_errmsg(r))
+    sb := strbuf.sb_new()
+    n := rowset.rs_nrows(r)
+    nc := rowset.rs_ncols(r)
+    mut i := 0
+    while i < n:
+        if i > 0:
+            strbuf.sb_add_ch(sb, 59)
+        mut j := 0
+        while j < nc:
+            if j > 0:
+                strbuf.sb_add_ch(sb, 124)
+            strbuf.sb_add(sb, value.v_display(rowset.rs_cell(r, i, j)))
+            j = j + 1
+        i = i + 1
+    s := strbuf.sb_str(sb)
+    strbuf.sb_free(sb)
+    return s
+
+def q(T: Int, d: Int, label: Str, sql: Str, want: Str):
+    r := exec.exec(d, sql)
+    tap.eq_s(T, label, dump(r), want)
+    rowset.rs_free(r)
+
+def run(d: Int, sql: Str):
+    r := exec.exec(d, sql)
+    if rowset.rs_err(r) == 1:
+        print_str(str_concat("  setup error: ", rowset.rs_errmsg(r)))
+    rowset.rs_free(r)
+
+def main():
+    T := tap.t_new()
+    delete_file("stress.db")
+    d := exec.open_db("stress.db")
+
+    N := 3000
+    run(d, "CREATE TABLE big (id INTEGER PRIMARY KEY, label TEXT, n INTEGER, r REAL)")
+    t0 := time_ms()
+    mut i := 1
+    while i <= N:
+        sb := strbuf.sb_new()
+        strbuf.sb_add(sb, "INSERT INTO big VALUES (")
+        strbuf.sb_add(sb, int_to_str(i))
+        strbuf.sb_add(sb, ", 'item-")
+        strbuf.sb_add(sb, int_to_str(i))
+        strbuf.sb_add(sb, "', ")
+        strbuf.sb_add(sb, int_to_str((i * 37) % 1000))
+        strbuf.sb_add(sb, ", ")
+        strbuf.sb_add(sb, int_to_str(i))
+        strbuf.sb_add(sb, ".5)")
+        run(d, strbuf.sb_str(sb))
+        strbuf.sb_free(sb)
+        i = i + 1
+    el := time_ms() - t0
+    print_str(str_concat("  inserted 3000 rows in ", str_concat(int_to_str(el), " ms")))
+
+    q(T, d, "stress count", "SELECT COUNT(*) FROM big", "3000")
+    q(T, d, "stress first", "SELECT label FROM big WHERE id = 1", "item-1")
+    q(T, d, "stress last", "SELECT label FROM big WHERE id = 3000", "item-3000")
+    q(T, d, "stress mid", "SELECT label FROM big WHERE id = 1500", "item-1500")
+    q(T, d, "stress sum", "SELECT SUM(id) FROM big", "4501500")
+    q(T, d, "stress max", "SELECT MAX(id) FROM big", "3000")
+    q(T, d, "stress min n", "SELECT MIN(n) FROM big", "0")
+    q(T, d, "stress order limit", "SELECT id FROM big ORDER BY id DESC LIMIT 3", "3000;2999;2998")
+    q(T, d, "stress filter count", "SELECT COUNT(*) FROM big WHERE n = 0", "3")
+    q(T, d, "stress real", "SELECT r FROM big WHERE id = 2", "2.5")
+
+    # deletes across many pages
+    r1 := exec.exec(d, "DELETE FROM big WHERE id > 2000")
+    tap.eq_i(T, "stress delete 1000", rowset.rs_changes(r1), 1000)
+    rowset.rs_free(r1)
+    q(T, d, "stress after delete", "SELECT COUNT(*) FROM big", "2000")
+    q(T, d, "stress max after delete", "SELECT MAX(id) FROM big", "2000")
+
+    # updates across many pages
+    r2 := exec.exec(d, "UPDATE big SET n = n + 1 WHERE id <= 500")
+    tap.eq_i(T, "stress update 500", rowset.rs_changes(r2), 500)
+    rowset.rs_free(r2)
+    q(T, d, "stress update applied", "SELECT n FROM big WHERE id = 1", "38")
+
+    # long text forcing overflow pages
+    run(d, "CREATE TABLE docs (id INTEGER PRIMARY KEY, body TEXT)")
+    mut big := ""
+    mut k := 0
+    while k < 300:
+        big = str_concat(big, "0123456789ABCDEFGHIJKLMNOPQRSTUV")
+        k = k + 1
+    run(d, str_concat("INSERT INTO docs VALUES (1, '", str_concat(big, "')")))
+    q(T, d, "overflow len", "SELECT length(body) FROM docs WHERE id = 1", "9600")
+    q(T, d, "overflow head", "SELECT substr(body, 1, 10) FROM docs WHERE id = 1", "0123456789")
+    q(T, d, "overflow tail", "SELECT substr(body, 9591, 10) FROM docs WHERE id = 1", "MNOPQRSTUV")
+
+    # edge cases
+    run(d, "CREATE TABLE edge (id INTEGER PRIMARY KEY, t TEXT, n INTEGER, r REAL)")
+    run(d, "INSERT INTO edge VALUES (1, '', 0, 0.0)")
+    run(d, "INSERT INTO edge VALUES (2, 'it''s', -9223372036854775807, -1.5)")
+    run(d, "INSERT INTO edge VALUES (3, NULL, NULL, NULL)")
+    run(d, "INSERT INTO edge VALUES (4, 'Ünïcødé ✓', 9223372036854775807, 1e10)")
+    q(T, d, "edge empty str", "SELECT length(t) FROM edge WHERE id = 1", "0")
+    q(T, d, "edge quote", "SELECT t FROM edge WHERE id = 2", "it's")
+    q(T, d, "edge min int", "SELECT n FROM edge WHERE id = 2", "-9223372036854775807")
+    q(T, d, "edge max int", "SELECT n FROM edge WHERE id = 4", "9223372036854775807")
+    q(T, d, "edge nulls", "SELECT COUNT(*) FROM edge WHERE t IS NULL", "1")
+    q(T, d, "edge unicode", "SELECT t FROM edge WHERE id = 4", "Ünïcødé ✓")
+    q(T, d, "edge neg real", "SELECT r FROM edge WHERE id = 2", "-1.5")
+    q(T, d, "edge null arith", "SELECT n + 1 FROM edge WHERE id = 3", "NULL")
+    q(T, d, "edge null compare", "SELECT COUNT(*) FROM edge WHERE n > 0", "1")
+    q(T, d, "edge order nulls first", "SELECT id FROM edge ORDER BY n LIMIT 2", "3;2")
+
+    exec.close_db(d)
+    tap.t_report(T, "stress")

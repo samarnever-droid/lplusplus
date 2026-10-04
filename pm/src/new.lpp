@@ -1,0 +1,24 @@
+# new.lpp — scaffold new L++ projects
+
+import utils
+
+def scaffold(name: Str) -> Void:
+    msg := str_concat("scaffolding ", name)
+    print_str(msg)
+    dir_create(name)
+    src := joined(name, "src")
+    dir_create(src)
+    main_lpp := joined(src, "main.lpp")
+    mut content := str_concat("def main():\n    print_str(\"Hello from ", name)
+    content = str_concat(content, "!\")\n")
+    write(main_lpp, content)
+    toml_path := joined(name, "lpp.toml")
+    mut toml_content := "[package]\nname = \""
+    toml_content = str_concat(toml_content, name)
+    toml_content = str_concat(toml_content, "\"\nversion = \"0.1.0\"\n")
+    toml_content = str_concat(toml_content, "author = \"L++\"\nentry = \"src/main.lpp\"\n\n[dependencies]\n")
+    write(toml_path, toml_content)
+    gitignore := joined(name, ".gitignore")
+    write(gitignore, ".lpp_packages/\ntarget/\n*.o\n*.obj\n*.exe\n")
+    done := str_concat("created project ", name)
+    print_str(done)

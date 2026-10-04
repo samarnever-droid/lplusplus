@@ -1,0 +1,14 @@
+def main():
+    x := 42
+    neg := -x
+    print(neg)
+
+    flag := true
+    flipped := !flag
+    if flipped:
+        print(1)
+    else:
+        print(0)
+
+    y := -10
+    print(y)

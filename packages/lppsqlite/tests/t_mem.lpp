@@ -1,0 +1,88 @@
+import mem
+import tap
+
+def main():
+    T := tap.t_new()
+    b := buf_alloc(64)
+
+    mem.bset64(b, 0, 1234567890123)
+    tap.eq_i(T, "bset64/bget64", mem.bget64(b, 0), 1234567890123)
+    mem.bset64(b, 8, 0 - 2)
+    tap.eq_i(T, "bset64 neg", mem.bget64(b, 8), 0 - 2)
+
+    mem.be_put16(b, 16, 65534)
+    tap.eq_i(T, "be16", mem.be_get16(b, 16), 65534)
+    tap.eq_i(T, "be16 order hi", buf_get8(b, 16), 255)
+    tap.eq_i(T, "be16 order lo", buf_get8(b, 17), 254)
+
+    mem.be_put24(b, 20, 16777214)
+    tap.eq_i(T, "be24", mem.be_get24(b, 20), 16777214)
+
+    mem.be_put32(b, 24, 4294967294)
+    tap.eq_i(T, "be32", mem.be_get32(b, 24), 4294967294)
+    tap.eq_i(T, "be32 order", buf_get8(b, 24), 255)
+
+    mem.be_put48(b, 28, 281474976710654)
+    tap.eq_i(T, "be48", mem.be_get48(b, 28), 281474976710654)
+
+    mem.be_put64(b, 36, 0 - 5)
+    tap.eq_i(T, "be64 neg", mem.be_get64(b, 36), 0 - 5)
+    mem.be_put64(b, 44, 9007199254740993)
+    tap.eq_i(T, "be64 big", mem.be_get64(b, 44), 9007199254740993)
+
+    tap.eq_i(T, "sx 1byte 255", mem.sign_extend(255, 1), 0 - 1)
+    tap.eq_i(T, "sx 1byte 127", mem.sign_extend(127, 1), 127)
+    tap.eq_i(T, "sx 2byte", mem.sign_extend(65535, 2), 0 - 1)
+    tap.eq_i(T, "sx 3byte", mem.sign_extend(8388608, 3), 0 - 8388608)
+    tap.eq_i(T, "sx 8byte", mem.sign_extend(0 - 1, 8), 0 - 1)
+
+    # ---- vec ----
+    v := mem.vec_new(4)
+    tap.eq_i(T, "vec empty", mem.vec_len(v), 0)
+    mut i := 0
+    while i < 300:
+        mem.vec_push_u8(v, i & 255)
+        i = i + 1
+    tap.eq_i(T, "vec len 300", mem.vec_len(v), 300)
+    tap.eq_i(T, "vec[0]", mem.vec_get_u8(v, 0), 0)
+    tap.eq_i(T, "vec[255]", mem.vec_get_u8(v, 255), 255)
+    tap.eq_i(T, "vec[299]", mem.vec_get_u8(v, 299), 43)
+
+    mem.vec_push_str(v, "hello")
+    tap.eq_i(T, "vec after str", mem.vec_len(v), 305)
+    tap.eq_s(T, "vec str back", mem.vec_str(v, 300, 5), "hello")
+
+    src := buf_alloc(8)
+    buf_set8(src, 0, 9)
+    buf_set8(src, 1, 8)
+    mem.vec_push_bytes(v, src, 0, 2)
+    tap.eq_i(T, "vec push bytes", mem.vec_get_u8(v, 306), 8)
+
+    mem.vec_set_u8(v, 0, 77)
+    tap.eq_i(T, "vec set", mem.vec_get_u8(v, 0), 77)
+
+    mem.vec_resize_zero(v, 400)
+    tap.eq_i(T, "vec resize len", mem.vec_len(v), 400)
+    tap.eq_i(T, "vec resize zero", mem.vec_get_u8(v, 399), 0)
+
+    mem.vec_clear(v)
+    tap.eq_i(T, "vec clear", mem.vec_len(v), 0)
+    mem.vec_free(v)
+
+    # ---- iv ----
+    iv := mem.iv_new(2)
+    mut k := 0
+    while k < 500:
+        mem.iv_push(iv, k * 1000000)
+        k = k + 1
+    tap.eq_i(T, "iv len", mem.iv_len(iv), 500)
+    tap.eq_i(T, "iv[0]", mem.iv_get(iv, 0), 0)
+    tap.eq_i(T, "iv[499]", mem.iv_get(iv, 499), 499000000)
+    mem.iv_set(iv, 10, 0 - 42)
+    tap.eq_i(T, "iv set neg", mem.iv_get(iv, 10), 0 - 42)
+    tap.eq_i(T, "iv last", mem.iv_last(iv), 499000000)
+    tap.eq_i(T, "iv pop", mem.iv_pop(iv), 499000000)
+    tap.eq_i(T, "iv len after pop", mem.iv_len(iv), 499)
+    mem.iv_free(iv)
+
+    tap.t_report(T, "mem")

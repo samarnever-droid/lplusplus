@@ -1,0 +1,14 @@
+# Ownership-contract regression: borrowed parameter becomes an owned return.
+# Expected output:
+# 1
+
+struct Box:
+    value: Int
+
+def identity(value: Box) -> Box:
+    return value
+
+def main():
+    original := Box()
+    returned := identity(original)
+    print(1)

@@ -1,0 +1,36 @@
+# Long scalar loop with independent accumulators.
+# This is intentionally expressed without lists or calls so LLVM can attempt
+# loop-vectorization/SLP and Cranelift gets the same MIR workload.
+
+def vector_work(n: Int) -> Int:
+    mut i := 1
+    mut a0 := 17
+    mut a1 := 23
+    mut a2 := 31
+    mut a3 := 47
+    mut a4 := 59
+    mut a5 := 71
+    mut a6 := 83
+    mut a7 := 97
+    mut a8 := 101
+    mut a9 := 113
+    mut a10 := 127
+    mut a11 := 139
+    while i < n:
+        a0 = a0 + ((i * 3) ^ (i >> 1))
+        a1 = a1 + ((i * 5) ^ (i >> 2))
+        a2 = a2 + ((i * 7) ^ (i >> 3))
+        a3 = a3 + ((i * 11) ^ (i >> 4))
+        a4 = a4 + ((i * 13) ^ (i >> 5))
+        a5 = a5 + ((i * 17) ^ (i >> 6))
+        a6 = a6 + ((i * 19) ^ (i >> 7))
+        a7 = a7 + ((i * 23) ^ (i >> 8))
+        a8 = a8 + ((i * 29) ^ (i >> 9))
+        a9 = a9 + ((i * 31) ^ (i >> 10))
+        a10 = a10 + ((i * 37) ^ (i >> 11))
+        a11 = a11 + ((i * 41) ^ (i >> 12))
+        i = i + 1
+    return a0 + a1 + a2 + a3 + a4 + a5 + a6 + a7 + a8 + a9 + a10 + a11
+
+def main() -> Void:
+    print(vector_work(20000000))

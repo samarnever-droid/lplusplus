@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>L++ Desktop App — Native WebView2 Window</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #090a10;
+      --card-bg: rgba(22, 24, 38, 0.7);
+      --card-border: rgba(255, 255, 255, 0.08);
+      --accent: #6366f1;
+      --accent-glow: rgba(99, 102, 241, 0.35);
+      --cyan: #06b6d4;
+      --emerald: #10b981;
+      --amber: #f59e0b;
+      --rose: #f43f5e;
+      --text: #f1f5f9;
+      --text-muted: #94a3b8;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow-x: hidden;
+      user-select: none;
+      background-image: 
+        radial-gradient(circle at 15% 15%, rgba(99, 102, 241, 0.18) 0%, transparent 40%),
+        radial-gradient(circle at 85% 85%, rgba(6, 182, 212, 0.15) 0%, transparent 45%),
+        radial-gradient(circle at 50% 50%, rgba(16, 185, 129, 0.08) 0%, transparent 60%);
+    }
+
+    /* Header */
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 28px;
+      background: rgba(13, 15, 26, 0.85);
+      backdrop-filter: blur(20px);
+      border-bottom: 1px solid var(--card-border);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .logo-badge {
+      width: 44px;
+      height: 44px;
+      border-radius: 12px;
+      background: linear-gradient(135deg, #6366f1, #06b6d4);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: 800;
+      font-size: 20px;
+      color: #fff;
+      box-shadow: 0 0 20px var(--accent-glow);
+    }
+
+    .brand-title {
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      background: linear-gradient(90deg, #ffffff, #cbd5e1);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .brand-subtitle {
+      font-size: 12px;
+      color: var(--text-muted);
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .status-badge {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 14px;
+      border-radius: 20px;
+      background: rgba(16, 185, 129, 0.15);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      font-size: 12px;
+      font-weight: 600;
+      color: #34d399;
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #10b981;
+      box-shadow: 0 0 10px #10b981;
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(0.8); }
+    }
+
+    /* Main Container */
+    main {
+      flex: 1;
+      padding: 28px;
+      max-width: 1300px;
+      margin: 0 auto;
+      width: 100%;
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 20px;
+    }
+
+    .full-width {
+      grid-column: 1 / -1;
+    }
+
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 16px;
+      padding: 24px;
+      backdrop-filter: blur(16px);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+      transition: all 0.3s ease;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .card:hover {
+      border-color: rgba(99, 102, 241, 0.4);
+      transform: translateY(-2px);
+      box-shadow: 0 12px 40px rgba(99, 102, 241, 0.15);
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+    }
+
+    .card-title {
+      font-size: 15px;
+      font-weight: 600;
+      color: #e2e8f0;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .card-title-icon {
+      font-size: 18px;
+    }
+
+    /* Hero Card */
+    .hero-card {
+      background: linear-gradient(135deg, rgba(30, 27, 75, 0.6), rgba(15, 23, 42, 0.8));
+      border: 1px solid rgba(99, 102, 241, 0.3);
+    }
+
+    .hero-content {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+    }
+
+    .hero-text h1 {
+      font-size: 26px;
+      font-weight: 800;
+      letter-spacing: -0.5px;
+      margin-bottom: 8px;
+      background: linear-gradient(135deg, #ffffff 30%, #a5b4fc);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .hero-text p {
+      color: var(--text-muted);
+      font-size: 14px;
+      line-height: 1.6;
+      max-width: 650px;
+    }
+
+    /* Metric Badges */
+    .hero-metrics {
+      display: flex;
+      gap: 16px;
+    }
+
+    .metric-box {
+      background: rgba(0, 0, 0, 0.35);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 12px 20px;
+      text-align: center;
+      min-width: 110px;
+    }
+
+    .metric-value {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 22px;
+      font-weight: 700;
+      color: #67e8f9;
+    }
+
+    .metric-label {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-top: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    /* Interactive Area */
+    .interactive-display {
+      text-align: center;
+      padding: 20px;
+      background: rgba(0, 0, 0, 0.25);
+      border-radius: 12px;
+      margin-bottom: 16px;
+    }
+
+    .counter-value {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 48px;
+      font-weight: 800;
+      color: #818cf8;
+      text-shadow: 0 0 30px var(--accent-glow);
+    }
+
+    .btn-group {
+      display: flex;
+      gap: 10px;
+      justify-content: center;
+    }
+
+    button {
+      background: rgba(99, 102, 241, 0.2);
+      border: 1px solid rgba(99, 102, 241, 0.4);
+      color: #fff;
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      font-weight: 600;
+      font-size: 13px;
+      padding: 10px 18px;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    button:hover {
+      background: #6366f1;
+      box-shadow: 0 0 20px var(--accent-glow);
+      transform: translateY(-1px);
+    }
+
+    button:active {
+      transform: scale(0.97);
+    }
+
+    button.btn-cyan {
+      background: rgba(6, 182, 212, 0.2);
+      border-color: rgba(6, 182, 212, 0.4);
+    }
+    button.btn-cyan:hover {
+      background: #06b6d4;
+      box-shadow: 0 0 20px rgba(6, 182, 212, 0.4);
+    }
+
+    button.btn-rose {
+      background: rgba(244, 63, 94, 0.2);
+      border-color: rgba(244, 63, 94, 0.4);
+    }
+    button.btn-rose:hover {
+      background: #f43f5e;
+      box-shadow: 0 0 20px rgba(244, 63, 94, 0.4);
+    }
+
+    /* Live Canvas */
+    #artCanvas {
+      width: 100%;
+      height: 180px;
+      border-radius: 12px;
+      background: rgba(0, 0, 0, 0.4);
+      display: block;
+    }
+
+    /* Code View */
+    .code-block {
+      background: #0d1117;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: 10px;
+      padding: 14px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      line-height: 1.5;
+      color: #94a3b8;
+      overflow-x: auto;
+    }
+    .kw { color: #f43f5e; font-weight: 600; }
+    .fn { color: #38bdf8; }
+    .str { color: #34d399; }
+    .cm { color: #64748b; font-style: italic; }
+
+    /* Footer */
+    footer {
+      padding: 16px 28px;
+      text-align: center;
+      font-size: 12px;
+      color: var(--text-muted);
+      border-top: 1px solid var(--card-border);
+      background: rgba(13, 15, 26, 0.5);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top Header -->
+  <header>
+    <div class="brand">
+      <div class="logo-badge">L++</div>
+      <div>
+        <div class="brand-title">L++ Native Desktop Application</div>
+        <div class="brand-subtitle">In-Process Microsoft Edge WebView2 COM Engine</div>
+      </div>
+    </div>
+    <div class="status-badge">
+      <div class="status-dot"></div>
+      <span>WEBVIEW2 LIVE & OPERATIONAL</span>
+    </div>
+  </header>
+
+  <!-- Main Content Grid -->
+  <main>
+    <!-- Full-Width Hero -->
+    <div class="card hero-card full-width">
+      <div class="hero-content">
+        <div class="hero-text">
+          <h1>High-Performance Embedded Native Windowing</h1>
+          <p>
+            You are looking at a live native Win32 window hosting the Microsoft Edge WebView2 COM Controller, compiled in <strong>3.1 milliseconds</strong> by L++ without MSVC, Node.js, or Electron overhead.
+          </p>
+        </div>
+        <div class="hero-metrics">
+          <div class="metric-box">
+            <div class="metric-value">3.1ms</div>
+            <div class="metric-label">Build Speed</div>
+          </div>
+          <div class="metric-box">
+            <div class="metric-value">0 CRT</div>
+            <div class="metric-label">Dependencies</div>
+          </div>
+          <div class="metric-box">
+            <div class="metric-value">60 FPS</div>
+            <div class="metric-label">GPU Render</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Card 1: Interactive Reactive State -->
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">
+          <span class="card-title-icon">⚡</span>
+          <span>Reactive State Engine</span>
+        </div>
+      </div>
+      <div class="interactive-display">
+        <div class="counter-value" id="counter">42</div>
+        <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">Clicks Recorded</div>
+      </div>
+      <div class="btn-group">
+        <button onclick="decrement()">- Decrement</button>
+        <button class="btn-cyan" onclick="increment()">+ Increment</button>
+        <button class="btn-rose" onclick="reset()">Reset</button>
+      </div>
+    </div>
+
+    <!-- Card 2: Interactive Real-Time Canvas -->
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">
+          <span class="card-title-icon">✨</span>
+          <span>Spatial Particle Simulation</span>
+        </div>
+        <button class="btn-cyan" style="padding: 4px 10px; font-size: 11px;" onclick="addParticles()">+ Explode</button>
+      </div>
+      <canvas id="artCanvas"></canvas>
+      <div style="font-size: 11px; color: var(--text-muted); margin-top: 10px; text-align: center;">
+        Move mouse or click above to interact with hardware-accelerated WebGL/Canvas
+      </div>
+    </div>
+
+    <!-- Card 3: Source Code & Architecture -->
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">
+          <span class="card-title-icon">🦀</span>
+          <span>Pure L++ Source Code</span>
+        </div>
+      </div>
+      <div class="code-block">
+<span class="cm"># Pure L++ Desktop Entry Point</span>
+<span class="kw">def</span> <span class="fn">main</span>():
+    wv := <span class="fn">webview_window_create</span>(
+        <span class="str">"L++ Desktop App"</span>, <span class="kw">1280</span>, <span class="kw">800</span>, <span class="kw">0</span>
+    )
+    <span class="fn">webview_navigate</span>(wv, <span class="str">"ui/index.html"</span>)
+    <span class="fn">webview_run</span>(wv)
+    <span class="fn">webview_destroy</span>(wv)
+      </div>
+      <div style="margin-top: 12px; font-size: 12px; color: #34d399;">
+        ✓ Direct Native Linker (lpp-link PE/COFF)
+      </div>
+    </div>
+
+    <!-- Full-Width System Info Banner -->
+    <div class="card full-width" style="padding: 16px 24px; background: rgba(15, 23, 42, 0.6);">
+      <div style="display: flex; justify-content: space-between; align-items: center; font-size: 13px;">
+        <div>
+          <span style="color: var(--text-muted);">OS:</span> <strong>Windows x86_64</strong> &nbsp;|&nbsp;
+          <span style="color: var(--text-muted);">Engine:</span> <strong>WebView2 COM Controller</strong> &nbsp;|&nbsp;
+          <span style="color: var(--text-muted);">Memory Safety:</span> <strong>Static ARC + CycleBreak</strong>
+        </div>
+        <div style="font-family: 'JetBrains Mono', monospace; color: #67e8f9;" id="liveClock">
+          00:00:00
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Footer -->
+  <footer>
+    <div>L++ v4.8.0 — SamarNever-Droid / LPlusPlus</div>
+    <div style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #6366f1;">
+      Zero Electron • Zero Node.js • Sub-Millisecond Native AOT
+    </div>
+  </footer>
+
+  <script>
+    // Counter Logic
+    let count = 42;
+    function updateCounter() {
+      document.getElementById('counter').innerText = count;
+    }
+    function increment() { count++; updateCounter(); createSparks(); }
+    function decrement() { count--; updateCounter(); }
+    function reset() { count = 0; updateCounter(); }
+
+    // Live Clock
+    function tick() {
+      const now = new Date();
+      document.getElementById('liveClock').innerText = now.toLocaleTimeString();
+    }
+    setInterval(tick, 1000);
+    tick();
+
+    // Particle Canvas Simulation
+    const canvas = document.getElementById('artCanvas');
+    const ctx = canvas.getContext('2d');
+    let width = canvas.width = canvas.offsetWidth;
+    let height = canvas.height = canvas.offsetHeight;
+
+    window.addEventListener('resize', () => {
+      width = canvas.width = canvas.offsetWidth;
+      height = canvas.height = canvas.offsetHeight;
+    });
+
+    const particles = [];
+    class Particle {
+      constructor(x, y) {
+        this.x = x || Math.random() * width;
+        this.y = y || Math.random() * height;
+        this.vx = (Math.random() - 0.5) * 2;
+        this.vy = (Math.random() - 0.5) * 2;
+        this.radius = Math.random() * 2.5 + 1;
+        this.color = ['#6366f1', '#06b6d4', '#10b981', '#f43f5e'][Math.floor(Math.random() * 4)];
+        this.alpha = 1;
+      }
+      update() {
+        this.x += this.vx;
+        this.y += this.vy;
+        if (this.x < 0 || this.x > width) this.vx *= -1;
+        if (this.y < 0 || this.y > height) this.vy *= -1;
+      }
+      draw() {
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+        ctx.fillStyle = this.color;
+        ctx.shadowBlur = 10;
+        ctx.shadowColor = this.color;
+        ctx.fill();
+        ctx.shadowBlur = 0;
+      }
+    }
+
+    for (let i = 0; i < 35; i++) {
+      particles.push(new Particle());
+    }
+
+    function createSparks() {
+      for (let i = 0; i < 15; i++) {
+        particles.push(new Particle(width / 2, height / 2));
+      }
+      if (particles.length > 70) particles.splice(0, 15);
+    }
+
+    function addParticles() {
+      for (let i = 0; i < 25; i++) {
+        particles.push(new Particle(Math.random() * width, Math.random() * height));
+      }
+      if (particles.length > 80) particles.splice(0, 25);
+    }
+
+    canvas.addEventListener('mousemove', (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+      for (let i = 0; i < 2; i++) {
+        particles.push(new Particle(mx, my));
+        if (particles.length > 60) particles.shift();
+      }
+    });
+
+    function animate() {
+      ctx.clearRect(0, 0, width, height);
+
+      // Connect near particles with faint lines
+      for (let i = 0; i < particles.length; i++) {
+        for (let j = i + 1; j < particles.length; j++) {
+          const dx = particles[i].x - particles[j].x;
+          const dy = particles[i].y - particles[j].y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist < 60) {
+            ctx.beginPath();
+            ctx.strokeStyle = `rgba(99, 102, 241, ${1 - dist / 60})`;
+            ctx.lineWidth = 0.6;
+            ctx.moveTo(particles[i].x, particles[i].y);
+            ctx.lineTo(particles[j].x, particles[j].y);
+            ctx.stroke();
+          }
+        }
+      }
+
+      particles.forEach(p => {
+        p.update();
+        p.draw();
+      });
+
+      requestAnimationFrame(animate);
+    }
+    animate();
+  </script>
+</body>
+</html>

@@ -1,0 +1,67 @@
+# String provenance: literals vs heap strings under ARC.
+#
+# `Str` locals used to be excluded from ownership entirely, because a literal
+# lives in .rodata with no ARC header and releasing one corrupted whatever sat
+# in front of it. The cost of that exclusion was an unbounded leak: one
+# allocation per `str_concat`, forever, and a `List[Str]` that faulted at
+# teardown.
+#
+# Literals now carry a real 24-byte ARC header whose refcount is an immortal
+# sentinel, so `release` on a literal is a checked no-op while `release` on a
+# heap string frees it. This test exercises both kinds through the paths that
+# actually broke.
+
+def echo(s: Str) -> Str:
+    return s
+
+# Returning a freshly allocated string. This must be `return_owned`; when it was
+# a plain `return`, the ARC pass released the value before handing it back and
+# the caller read freed memory.
+def head(s: Str) -> Str:
+    return str_substr(s, 0, 3)
+
+# A temporary string created inside a loop, with an early return out of nested
+# ifs. The end-of-block release and the return-block release used to both fire
+# for the same local -- a double free.
+def find(n: Int) -> Int:
+    mut i := 0
+    while i < n:
+        if lpp_str_eq(str_concat("k", int_to_str(i)), "k2") == 1:
+            if lpp_str_eq(str_concat("k", int_to_str(i)), "k2") == 1:
+                return i
+        i = i + 1
+    return 0 - 1
+
+def main() -> Void:
+    # A literal, aliased and passed around: must never be freed.
+    a := "literal"
+    b := a
+    print_str(echo(b))
+    print_str(a)
+
+    # Heap strings, allocated and dropped in a loop: must not accumulate.
+    mut i := 0
+    while i < 200:
+        t := str_concat("heap", "-value")
+        i = i + 1
+
+    # A string that both reads and reassigns itself. Releasing the old value
+    # before the call frees the buffer the call is about to read; the result was
+    # a truncated string rather than a crash.
+    mut acc := ""
+    mut j := 0
+    while j < 3:
+        acc = str_concat(acc, "ab")
+        j = j + 1
+    print_str(acc)
+
+    print_str(head("abcdef"))
+    print(find(5))
+
+    # Mixed literal and heap elements in one List[Str]: the list destructor
+    # releases every element, so the literal must survive it.
+    mut k := 0
+    while k < 100:
+        xs := ["lit", str_concat("he", "ap"), "lit2"]
+        k = k + 1
+    print_str("provenance-ok")

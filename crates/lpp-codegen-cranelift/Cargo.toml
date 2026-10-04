@@ -1,0 +1,21 @@
+[package]
+name = "lpp-codegen-cranelift"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[dependencies]
+cranelift-codegen = "0.113"
+cranelift-frontend = "0.113"
+cranelift-module = "0.113"
+cranelift-object = "0.113"
+lpp-codegen-api = { path = "../lpp-codegen-api" }
+lpp-mir = { path = "../lpp-mir" }
+lpp-runtime-abi = { path = "../lpp-runtime-abi" }
+lpp-types = { path = "../lpp-types" }
+target-lexicon = "0.12"
+
+[dev-dependencies]
+lpp-hir = { path = "../lpp-hir" }
+lpp-ownership = { path = "../lpp-ownership" }

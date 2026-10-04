@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SamarOS 1.0 “Aurora” — an operating system written in L++</title>
+    <meta
+      name="description"
+      content="SamarOS is a from-scratch x86 operating system: own boot sector, own 32-bit kernel, compositor and applications written in L++."
+    />
+    <link rel="stylesheet" href="/style.css" />
+    <script type="importmap">
+      { "imports": { "v86": "/vendor/v86.mjs" } }
+    </script>
+  </head>
+  <body>
+    <div class="aurora">
+      <span class="blob b1"></span>
+      <span class="blob b2"></span>
+      <span class="blob b3"></span>
+    </div>
+
+    <header class="bar">
+      <div class="brand">
+        <svg viewBox="0 0 24 24" class="mark" aria-hidden="true">
+          <defs>
+            <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stop-color="#6d8cff" />
+              <stop offset="100%" stop-color="#8b5cf6" />
+            </linearGradient>
+          </defs>
+          <path d="M12 2 L21 12 L12 22 L3 12 Z" fill="url(#g)" />
+          <path d="M12 7 L16.5 12 L12 17 L7.5 12 Z" fill="#fff" opacity=".55" />
+        </svg>
+        <div class="brand-text">
+          <strong>SamarOS</strong>
+          <span>1.0 “Aurora”</span>
+        </div>
+      </div>
+
+      <div class="chips">
+        <span class="chip"><i class="dot"></i> L++ kernel</span>
+        <span class="chip">1024 × 768 · 32bpp</span>
+        <span class="chip" id="imgsize">disk —</span>
+      </div>
+
+      <div class="actions">
+        <button id="restart" class="btn">Restart</button>
+        <button id="fullscreen" class="btn accent">Fullscreen</button>
+      </div>
+    </header>
+
+    <main>
+      <div class="stage">
+        <div class="bezel">
+          <div id="screen_container" class="screen">
+            <div style="white-space: pre; font: 14px monospace; display: none"></div>
+            <canvas id="vga"></canvas>
+          </div>
+
+          <div class="overlay" id="overlay">
+            <div class="overlay-card">
+              <div class="spinner"></div>
+              <h2 id="ov-title">Booting SamarOS…</h2>
+              <p id="ov-body">
+                Loading the boot sector, switching to protected mode and handing the
+                machine to the L++ kernel.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <p class="hint">
+          Move the mouse over the screen to drive the pointer · click the dock to open apps ·
+          type <code>help</code> in Terminal · <code>Esc</code> closes the launcher
+        </p>
+      </div>
+
+      <aside class="side">
+        <section class="card">
+          <h3>What you are looking at</h3>
+          <p>
+            A real x86 operating system running on an emulated PC. Nothing here is a web
+            page: the pixels are produced by a 32-bit kernel that was written in
+            <strong>L++</strong> and compiled to a flat binary sitting on the disk image
+            below.
+          </p>
+        </section>
+
+        <section class="card">
+          <h3>Boot chain</h3>
+          <ol class="chain">
+            <li><span>1</span> BIOS loads our 512-byte boot sector</li>
+            <li><span>2</span> Stage 2 loads the kernel, sets a VESA mode, enters protected mode</li>
+            <li><span>3</span> <code>kmain</code> brings up heap, PS/2, PIT, RTC</li>
+            <li><span>4</span> <code>samar_main</code> — the L++ shell — takes over</li>
+          </ol>
+        </section>
+
+        <section class="card">
+          <h3>Written in L++</h3>
+          <ul class="facts">
+            <li><b id="lpp-lines">—</b> lines of L++ in the kernel</li>
+            <li><b>7</b> applications, all in-kernel</li>
+            <li><b>0</b> lines of libc</li>
+          </ul>
+        </section>
+      </aside>
+    </main>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

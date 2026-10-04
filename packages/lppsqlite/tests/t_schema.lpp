@@ -1,0 +1,113 @@
+import mem
+import value
+import record
+import pager
+import btree
+import btwrite
+import cursor
+import strbuf
+import lexer
+import schema
+import tap
+
+def main():
+    T := tap.t_new()
+
+    # affinity rules
+    tap.eq_i(T, "aff INTEGER", schema.affinity_of("INTEGER"), schema.AFF_INTEGER())
+    tap.eq_i(T, "aff INT", schema.affinity_of("INT"), schema.AFF_INTEGER())
+    tap.eq_i(T, "aff BIGINT", schema.affinity_of("BIGINT"), schema.AFF_INTEGER())
+    tap.eq_i(T, "aff VARCHAR", schema.affinity_of("VARCHAR(20)"), schema.AFF_TEXT())
+    tap.eq_i(T, "aff TEXT", schema.affinity_of("TEXT"), schema.AFF_TEXT())
+    tap.eq_i(T, "aff BLOB", schema.affinity_of("BLOB"), schema.AFF_BLOB())
+    tap.eq_i(T, "aff empty", schema.affinity_of(""), schema.AFF_BLOB())
+    tap.eq_i(T, "aff REAL", schema.affinity_of("REAL"), schema.AFF_REAL())
+    tap.eq_i(T, "aff DOUBLE", schema.affinity_of("DOUBLE"), schema.AFF_REAL())
+    tap.eq_i(T, "aff FLOAT", schema.affinity_of("FLOAT"), schema.AFF_REAL())
+    tap.eq_i(T, "aff NUMERIC", schema.affinity_of("NUMERIC"), schema.AFF_NUMERIC())
+    tap.eq_i(T, "aff DATE", schema.affinity_of("DATE"), schema.AFF_NUMERIC())
+
+    # CREATE TABLE column parsing
+    cols := strbuf.sv_new()
+    types := strbuf.sv_new()
+    ipk := schema.parse_create_cols("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)", cols, types)
+    tap.eq_i(T, "cols n", strbuf.sv_len(cols), 3)
+    tap.eq_s(T, "col0", strbuf.sv_get(cols, 0), "id")
+    tap.eq_s(T, "col1", strbuf.sv_get(cols, 1), "name")
+    tap.eq_s(T, "col2", strbuf.sv_get(cols, 2), "age")
+    tap.eq_s(T, "type0", strbuf.sv_get(types, 0), "INTEGER")
+    tap.eq_s(T, "type1", strbuf.sv_get(types, 1), "TEXT")
+    tap.eq_i(T, "ipk idx", ipk, 0)
+    strbuf.sv_free(cols)
+    strbuf.sv_free(types)
+
+    c2 := strbuf.sv_new()
+    t2 := strbuf.sv_new()
+    ipk2 := schema.parse_create_cols("CREATE TABLE t (a VARCHAR(20) NOT NULL, b DECIMAL(10,2) DEFAULT 0, c TEXT)", c2, t2)
+    tap.eq_i(T, "cols2 n", strbuf.sv_len(c2), 3)
+    tap.eq_s(T, "c2 0", strbuf.sv_get(c2, 0), "a")
+    tap.eq_s(T, "c2 1", strbuf.sv_get(c2, 1), "b")
+    tap.eq_s(T, "c2 2", strbuf.sv_get(c2, 2), "c")
+    tap.eq_i(T, "ipk2 none", ipk2, 0 - 1)
+    strbuf.sv_free(c2)
+    strbuf.sv_free(t2)
+
+    c3 := strbuf.sv_new()
+    t3 := strbuf.sv_new()
+    schema.parse_create_cols("CREATE TABLE t (x INT, y INT, PRIMARY KEY (x, y))", c3, t3)
+    tap.eq_i(T, "table constraint skipped", strbuf.sv_len(c3), 2)
+    strbuf.sv_free(c3)
+    strbuf.sv_free(t3)
+
+    # affinity application
+    v1 := schema.apply_affinity(value.v_from_str("42"), schema.AFF_INTEGER())
+    tap.eq_i(T, "apply int aff type", value.v_type(v1), value.TINT())
+    tap.eq_i(T, "apply int aff val", value.v_int(v1), 42)
+    v2 := schema.apply_affinity(value.v_from_int(42), schema.AFF_TEXT())
+    tap.eq_i(T, "apply text aff type", value.v_type(v2), value.TTEXT())
+    tap.eq_s(T, "apply text aff val", value.v_bytes_str(v2), "42")
+    v3 := schema.apply_affinity(value.v_from_str("hello"), schema.AFF_INTEGER())
+    tap.eq_i(T, "apply int aff nonnum stays text", value.v_type(v3), value.TTEXT())
+    v4 := schema.apply_affinity(value.v_from_int(3), schema.AFF_REAL())
+    tap.eq_i(T, "apply real aff", value.v_type(v4), value.TREAL())
+
+    # Build a real database file with a schema entry + rows
+    delete_file("sc_test.db")
+    p := pager.pg_create(4096)
+    root := pager.pg_new_page(p)
+    btree.init_page(p, root, 13)
+    sql := "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)"
+    schema.write_entry(p, "table", "users", "users", root, sql)
+
+    mut i := 1
+    while i <= 20:
+        vv := value.vv_new()
+        value.vv_push(vv, value.v_null())
+        value.vv_push(vv, value.v_from_str(str_concat("user", int_to_str(i))))
+        value.vv_push(vv, value.v_from_int(20 + i))
+        rec := record.encode(vv)
+        btwrite.insert(p, root, i, mem.vec_data(rec), mem.vec_len(rec))
+        mem.vec_free(rec)
+        value.vv_free_all(vv)
+        i = i + 1
+
+    pager.pg_save(p, "sc_test.db")
+    tap.eq_i(T, "db file exists", file_exists("sc_test.db"), 1)
+
+    # Reload the schema from the written file
+    raw := buf_read("sc_test.db")
+    p2 := pager.pg_open_buf(raw, buf_len(raw))
+    tap.okb(T, "reopened", p2 != 0)
+    s := schema.load(p2)
+    tap.eq_i(T, "schema count", schema.sc_count(s), 1)
+    tap.eq_s(T, "schema name", schema.sc_name(s, 0), "users")
+    tap.eq_i(T, "schema root", schema.sc_root(s, 0), root)
+    tap.eq_s(T, "schema sql", schema.sc_sql(s, 0), sql)
+    tap.eq_i(T, "schema ncols", schema.sc_ncols(s, 0), 3)
+    tap.eq_i(T, "schema ipk", schema.sc_ipk(s, 0), 0)
+    tap.eq_i(T, "col index name", schema.sc_col_index(s, 0, "name"), 1)
+    tap.eq_i(T, "col index AGE ci", schema.sc_col_index(s, 0, "AGE"), 2)
+    tap.eq_i(T, "rows survived", cursor.count_rows(p2, schema.sc_root(s, 0)), 20)
+    schema.sc_free(s)
+
+    tap.t_report(T, "schema")

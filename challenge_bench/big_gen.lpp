@@ -1,0 +1,9023 @@
+def func0(x: Int) -> Int:
+    return x + 0
+
+def func1(x: Int) -> Int:
+    return x + 1
+
+def func2(x: Int) -> Int:
+    return x + 2
+
+def func3(x: Int) -> Int:
+    return x + 3
+
+def func4(x: Int) -> Int:
+    return x + 4
+
+def func5(x: Int) -> Int:
+    return x + 5
+
+def func6(x: Int) -> Int:
+    return x + 6
+
+def func7(x: Int) -> Int:
+    return x + 7
+
+def func8(x: Int) -> Int:
+    return x + 8
+
+def func9(x: Int) -> Int:
+    return x + 9
+
+def func10(x: Int) -> Int:
+    return x + 10
+
+def func11(x: Int) -> Int:
+    return x + 11
+
+def func12(x: Int) -> Int:
+    return x + 12
+
+def func13(x: Int) -> Int:
+    return x + 13
+
+def func14(x: Int) -> Int:
+    return x + 14
+
+def func15(x: Int) -> Int:
+    return x + 15
+
+def func16(x: Int) -> Int:
+    return x + 16
+
+def func17(x: Int) -> Int:
+    return x + 17
+
+def func18(x: Int) -> Int:
+    return x + 18
+
+def func19(x: Int) -> Int:
+    return x + 19
+
+def func20(x: Int) -> Int:
+    return x + 20
+
+def func21(x: Int) -> Int:
+    return x + 21
+
+def func22(x: Int) -> Int:
+    return x + 22
+
+def func23(x: Int) -> Int:
+    return x + 23
+
+def func24(x: Int) -> Int:
+    return x + 24
+
+def func25(x: Int) -> Int:
+    return x + 25
+
+def func26(x: Int) -> Int:
+    return x + 26
+
+def func27(x: Int) -> Int:
+    return x + 27
+
+def func28(x: Int) -> Int:
+    return x + 28
+
+def func29(x: Int) -> Int:
+    return x + 29
+
+def func30(x: Int) -> Int:
+    return x + 30
+
+def func31(x: Int) -> Int:
+    return x + 31
+
+def func32(x: Int) -> Int:
+    return x + 32
+
+def func33(x: Int) -> Int:
+    return x + 33
+
+def func34(x: Int) -> Int:
+    return x + 34
+
+def func35(x: Int) -> Int:
+    return x + 35
+
+def func36(x: Int) -> Int:
+    return x + 36
+
+def func37(x: Int) -> Int:
+    return x + 37
+
+def func38(x: Int) -> Int:
+    return x + 38
+
+def func39(x: Int) -> Int:
+    return x + 39
+
+def func40(x: Int) -> Int:
+    return x + 40
+
+def func41(x: Int) -> Int:
+    return x + 41
+
+def func42(x: Int) -> Int:
+    return x + 42
+
+def func43(x: Int) -> Int:
+    return x + 43
+
+def func44(x: Int) -> Int:
+    return x + 44
+
+def func45(x: Int) -> Int:
+    return x + 45
+
+def func46(x: Int) -> Int:
+    return x + 46
+
+def func47(x: Int) -> Int:
+    return x + 47
+
+def func48(x: Int) -> Int:
+    return x + 48
+
+def func49(x: Int) -> Int:
+    return x + 49
+
+def func50(x: Int) -> Int:
+    return x + 50
+
+def func51(x: Int) -> Int:
+    return x + 51
+
+def func52(x: Int) -> Int:
+    return x + 52
+
+def func53(x: Int) -> Int:
+    return x + 53
+
+def func54(x: Int) -> Int:
+    return x + 54
+
+def func55(x: Int) -> Int:
+    return x + 55
+
+def func56(x: Int) -> Int:
+    return x + 56
+
+def func57(x: Int) -> Int:
+    return x + 57
+
+def func58(x: Int) -> Int:
+    return x + 58
+
+def func59(x: Int) -> Int:
+    return x + 59
+
+def func60(x: Int) -> Int:
+    return x + 60
+
+def func61(x: Int) -> Int:
+    return x + 61
+
+def func62(x: Int) -> Int:
+    return x + 62
+
+def func63(x: Int) -> Int:
+    return x + 63
+
+def func64(x: Int) -> Int:
+    return x + 64
+
+def func65(x: Int) -> Int:
+    return x + 65
+
+def func66(x: Int) -> Int:
+    return x + 66
+
+def func67(x: Int) -> Int:
+    return x + 67
+
+def func68(x: Int) -> Int:
+    return x + 68
+
+def func69(x: Int) -> Int:
+    return x + 69
+
+def func70(x: Int) -> Int:
+    return x + 70
+
+def func71(x: Int) -> Int:
+    return x + 71
+
+def func72(x: Int) -> Int:
+    return x + 72
+
+def func73(x: Int) -> Int:
+    return x + 73
+
+def func74(x: Int) -> Int:
+    return x + 74
+
+def func75(x: Int) -> Int:
+    return x + 75
+
+def func76(x: Int) -> Int:
+    return x + 76
+
+def func77(x: Int) -> Int:
+    return x + 77
+
+def func78(x: Int) -> Int:
+    return x + 78
+
+def func79(x: Int) -> Int:
+    return x + 79
+
+def func80(x: Int) -> Int:
+    return x + 80
+
+def func81(x: Int) -> Int:
+    return x + 81
+
+def func82(x: Int) -> Int:
+    return x + 82
+
+def func83(x: Int) -> Int:
+    return x + 83
+
+def func84(x: Int) -> Int:
+    return x + 84
+
+def func85(x: Int) -> Int:
+    return x + 85
+
+def func86(x: Int) -> Int:
+    return x + 86
+
+def func87(x: Int) -> Int:
+    return x + 87
+
+def func88(x: Int) -> Int:
+    return x + 88
+
+def func89(x: Int) -> Int:
+    return x + 89
+
+def func90(x: Int) -> Int:
+    return x + 90
+
+def func91(x: Int) -> Int:
+    return x + 91
+
+def func92(x: Int) -> Int:
+    return x + 92
+
+def func93(x: Int) -> Int:
+    return x + 93
+
+def func94(x: Int) -> Int:
+    return x + 94
+
+def func95(x: Int) -> Int:
+    return x + 95
+
+def func96(x: Int) -> Int:
+    return x + 96
+
+def func97(x: Int) -> Int:
+    return x + 97
+
+def func98(x: Int) -> Int:
+    return x + 98
+
+def func99(x: Int) -> Int:
+    return x + 99
+
+def func100(x: Int) -> Int:
+    return x + 100
+
+def func101(x: Int) -> Int:
+    return x + 101
+
+def func102(x: Int) -> Int:
+    return x + 102
+
+def func103(x: Int) -> Int:
+    return x + 103
+
+def func104(x: Int) -> Int:
+    return x + 104
+
+def func105(x: Int) -> Int:
+    return x + 105
+
+def func106(x: Int) -> Int:
+    return x + 106
+
+def func107(x: Int) -> Int:
+    return x + 107
+
+def func108(x: Int) -> Int:
+    return x + 108
+
+def func109(x: Int) -> Int:
+    return x + 109
+
+def func110(x: Int) -> Int:
+    return x + 110
+
+def func111(x: Int) -> Int:
+    return x + 111
+
+def func112(x: Int) -> Int:
+    return x + 112
+
+def func113(x: Int) -> Int:
+    return x + 113
+
+def func114(x: Int) -> Int:
+    return x + 114
+
+def func115(x: Int) -> Int:
+    return x + 115
+
+def func116(x: Int) -> Int:
+    return x + 116
+
+def func117(x: Int) -> Int:
+    return x + 117
+
+def func118(x: Int) -> Int:
+    return x + 118
+
+def func119(x: Int) -> Int:
+    return x + 119
+
+def func120(x: Int) -> Int:
+    return x + 120
+
+def func121(x: Int) -> Int:
+    return x + 121
+
+def func122(x: Int) -> Int:
+    return x + 122
+
+def func123(x: Int) -> Int:
+    return x + 123
+
+def func124(x: Int) -> Int:
+    return x + 124
+
+def func125(x: Int) -> Int:
+    return x + 125
+
+def func126(x: Int) -> Int:
+    return x + 126
+
+def func127(x: Int) -> Int:
+    return x + 127
+
+def func128(x: Int) -> Int:
+    return x + 128
+
+def func129(x: Int) -> Int:
+    return x + 129
+
+def func130(x: Int) -> Int:
+    return x + 130
+
+def func131(x: Int) -> Int:
+    return x + 131
+
+def func132(x: Int) -> Int:
+    return x + 132
+
+def func133(x: Int) -> Int:
+    return x + 133
+
+def func134(x: Int) -> Int:
+    return x + 134
+
+def func135(x: Int) -> Int:
+    return x + 135
+
+def func136(x: Int) -> Int:
+    return x + 136
+
+def func137(x: Int) -> Int:
+    return x + 137
+
+def func138(x: Int) -> Int:
+    return x + 138
+
+def func139(x: Int) -> Int:
+    return x + 139
+
+def func140(x: Int) -> Int:
+    return x + 140
+
+def func141(x: Int) -> Int:
+    return x + 141
+
+def func142(x: Int) -> Int:
+    return x + 142
+
+def func143(x: Int) -> Int:
+    return x + 143
+
+def func144(x: Int) -> Int:
+    return x + 144
+
+def func145(x: Int) -> Int:
+    return x + 145
+
+def func146(x: Int) -> Int:
+    return x + 146
+
+def func147(x: Int) -> Int:
+    return x + 147
+
+def func148(x: Int) -> Int:
+    return x + 148
+
+def func149(x: Int) -> Int:
+    return x + 149
+
+def func150(x: Int) -> Int:
+    return x + 150
+
+def func151(x: Int) -> Int:
+    return x + 151
+
+def func152(x: Int) -> Int:
+    return x + 152
+
+def func153(x: Int) -> Int:
+    return x + 153
+
+def func154(x: Int) -> Int:
+    return x + 154
+
+def func155(x: Int) -> Int:
+    return x + 155
+
+def func156(x: Int) -> Int:
+    return x + 156
+
+def func157(x: Int) -> Int:
+    return x + 157
+
+def func158(x: Int) -> Int:
+    return x + 158
+
+def func159(x: Int) -> Int:
+    return x + 159
+
+def func160(x: Int) -> Int:
+    return x + 160
+
+def func161(x: Int) -> Int:
+    return x + 161
+
+def func162(x: Int) -> Int:
+    return x + 162
+
+def func163(x: Int) -> Int:
+    return x + 163
+
+def func164(x: Int) -> Int:
+    return x + 164
+
+def func165(x: Int) -> Int:
+    return x + 165
+
+def func166(x: Int) -> Int:
+    return x + 166
+
+def func167(x: Int) -> Int:
+    return x + 167
+
+def func168(x: Int) -> Int:
+    return x + 168
+
+def func169(x: Int) -> Int:
+    return x + 169
+
+def func170(x: Int) -> Int:
+    return x + 170
+
+def func171(x: Int) -> Int:
+    return x + 171
+
+def func172(x: Int) -> Int:
+    return x + 172
+
+def func173(x: Int) -> Int:
+    return x + 173
+
+def func174(x: Int) -> Int:
+    return x + 174
+
+def func175(x: Int) -> Int:
+    return x + 175
+
+def func176(x: Int) -> Int:
+    return x + 176
+
+def func177(x: Int) -> Int:
+    return x + 177
+
+def func178(x: Int) -> Int:
+    return x + 178
+
+def func179(x: Int) -> Int:
+    return x + 179
+
+def func180(x: Int) -> Int:
+    return x + 180
+
+def func181(x: Int) -> Int:
+    return x + 181
+
+def func182(x: Int) -> Int:
+    return x + 182
+
+def func183(x: Int) -> Int:
+    return x + 183
+
+def func184(x: Int) -> Int:
+    return x + 184
+
+def func185(x: Int) -> Int:
+    return x + 185
+
+def func186(x: Int) -> Int:
+    return x + 186
+
+def func187(x: Int) -> Int:
+    return x + 187
+
+def func188(x: Int) -> Int:
+    return x + 188
+
+def func189(x: Int) -> Int:
+    return x + 189
+
+def func190(x: Int) -> Int:
+    return x + 190
+
+def func191(x: Int) -> Int:
+    return x + 191
+
+def func192(x: Int) -> Int:
+    return x + 192
+
+def func193(x: Int) -> Int:
+    return x + 193
+
+def func194(x: Int) -> Int:
+    return x + 194
+
+def func195(x: Int) -> Int:
+    return x + 195
+
+def func196(x: Int) -> Int:
+    return x + 196
+
+def func197(x: Int) -> Int:
+    return x + 197
+
+def func198(x: Int) -> Int:
+    return x + 198
+
+def func199(x: Int) -> Int:
+    return x + 199
+
+def func200(x: Int) -> Int:
+    return x + 200
+
+def func201(x: Int) -> Int:
+    return x + 201
+
+def func202(x: Int) -> Int:
+    return x + 202
+
+def func203(x: Int) -> Int:
+    return x + 203
+
+def func204(x: Int) -> Int:
+    return x + 204
+
+def func205(x: Int) -> Int:
+    return x + 205
+
+def func206(x: Int) -> Int:
+    return x + 206
+
+def func207(x: Int) -> Int:
+    return x + 207
+
+def func208(x: Int) -> Int:
+    return x + 208
+
+def func209(x: Int) -> Int:
+    return x + 209
+
+def func210(x: Int) -> Int:
+    return x + 210
+
+def func211(x: Int) -> Int:
+    return x + 211
+
+def func212(x: Int) -> Int:
+    return x + 212
+
+def func213(x: Int) -> Int:
+    return x + 213
+
+def func214(x: Int) -> Int:
+    return x + 214
+
+def func215(x: Int) -> Int:
+    return x + 215
+
+def func216(x: Int) -> Int:
+    return x + 216
+
+def func217(x: Int) -> Int:
+    return x + 217
+
+def func218(x: Int) -> Int:
+    return x + 218
+
+def func219(x: Int) -> Int:
+    return x + 219
+
+def func220(x: Int) -> Int:
+    return x + 220
+
+def func221(x: Int) -> Int:
+    return x + 221
+
+def func222(x: Int) -> Int:
+    return x + 222
+
+def func223(x: Int) -> Int:
+    return x + 223
+
+def func224(x: Int) -> Int:
+    return x + 224
+
+def func225(x: Int) -> Int:
+    return x + 225
+
+def func226(x: Int) -> Int:
+    return x + 226
+
+def func227(x: Int) -> Int:
+    return x + 227
+
+def func228(x: Int) -> Int:
+    return x + 228
+
+def func229(x: Int) -> Int:
+    return x + 229
+
+def func230(x: Int) -> Int:
+    return x + 230
+
+def func231(x: Int) -> Int:
+    return x + 231
+
+def func232(x: Int) -> Int:
+    return x + 232
+
+def func233(x: Int) -> Int:
+    return x + 233
+
+def func234(x: Int) -> Int:
+    return x + 234
+
+def func235(x: Int) -> Int:
+    return x + 235
+
+def func236(x: Int) -> Int:
+    return x + 236
+
+def func237(x: Int) -> Int:
+    return x + 237
+
+def func238(x: Int) -> Int:
+    return x + 238
+
+def func239(x: Int) -> Int:
+    return x + 239
+
+def func240(x: Int) -> Int:
+    return x + 240
+
+def func241(x: Int) -> Int:
+    return x + 241
+
+def func242(x: Int) -> Int:
+    return x + 242
+
+def func243(x: Int) -> Int:
+    return x + 243
+
+def func244(x: Int) -> Int:
+    return x + 244
+
+def func245(x: Int) -> Int:
+    return x + 245
+
+def func246(x: Int) -> Int:
+    return x + 246
+
+def func247(x: Int) -> Int:
+    return x + 247
+
+def func248(x: Int) -> Int:
+    return x + 248
+
+def func249(x: Int) -> Int:
+    return x + 249
+
+def func250(x: Int) -> Int:
+    return x + 250
+
+def func251(x: Int) -> Int:
+    return x + 251
+
+def func252(x: Int) -> Int:
+    return x + 252
+
+def func253(x: Int) -> Int:
+    return x + 253
+
+def func254(x: Int) -> Int:
+    return x + 254
+
+def func255(x: Int) -> Int:
+    return x + 255
+
+def func256(x: Int) -> Int:
+    return x + 256
+
+def func257(x: Int) -> Int:
+    return x + 257
+
+def func258(x: Int) -> Int:
+    return x + 258
+
+def func259(x: Int) -> Int:
+    return x + 259
+
+def func260(x: Int) -> Int:
+    return x + 260
+
+def func261(x: Int) -> Int:
+    return x + 261
+
+def func262(x: Int) -> Int:
+    return x + 262
+
+def func263(x: Int) -> Int:
+    return x + 263
+
+def func264(x: Int) -> Int:
+    return x + 264
+
+def func265(x: Int) -> Int:
+    return x + 265
+
+def func266(x: Int) -> Int:
+    return x + 266
+
+def func267(x: Int) -> Int:
+    return x + 267
+
+def func268(x: Int) -> Int:
+    return x + 268
+
+def func269(x: Int) -> Int:
+    return x + 269
+
+def func270(x: Int) -> Int:
+    return x + 270
+
+def func271(x: Int) -> Int:
+    return x + 271
+
+def func272(x: Int) -> Int:
+    return x + 272
+
+def func273(x: Int) -> Int:
+    return x + 273
+
+def func274(x: Int) -> Int:
+    return x + 274
+
+def func275(x: Int) -> Int:
+    return x + 275
+
+def func276(x: Int) -> Int:
+    return x + 276
+
+def func277(x: Int) -> Int:
+    return x + 277
+
+def func278(x: Int) -> Int:
+    return x + 278
+
+def func279(x: Int) -> Int:
+    return x + 279
+
+def func280(x: Int) -> Int:
+    return x + 280
+
+def func281(x: Int) -> Int:
+    return x + 281
+
+def func282(x: Int) -> Int:
+    return x + 282
+
+def func283(x: Int) -> Int:
+    return x + 283
+
+def func284(x: Int) -> Int:
+    return x + 284
+
+def func285(x: Int) -> Int:
+    return x + 285
+
+def func286(x: Int) -> Int:
+    return x + 286
+
+def func287(x: Int) -> Int:
+    return x + 287
+
+def func288(x: Int) -> Int:
+    return x + 288
+
+def func289(x: Int) -> Int:
+    return x + 289
+
+def func290(x: Int) -> Int:
+    return x + 290
+
+def func291(x: Int) -> Int:
+    return x + 291
+
+def func292(x: Int) -> Int:
+    return x + 292
+
+def func293(x: Int) -> Int:
+    return x + 293
+
+def func294(x: Int) -> Int:
+    return x + 294
+
+def func295(x: Int) -> Int:
+    return x + 295
+
+def func296(x: Int) -> Int:
+    return x + 296
+
+def func297(x: Int) -> Int:
+    return x + 297
+
+def func298(x: Int) -> Int:
+    return x + 298
+
+def func299(x: Int) -> Int:
+    return x + 299
+
+def func300(x: Int) -> Int:
+    return x + 300
+
+def func301(x: Int) -> Int:
+    return x + 301
+
+def func302(x: Int) -> Int:
+    return x + 302
+
+def func303(x: Int) -> Int:
+    return x + 303
+
+def func304(x: Int) -> Int:
+    return x + 304
+
+def func305(x: Int) -> Int:
+    return x + 305
+
+def func306(x: Int) -> Int:
+    return x + 306
+
+def func307(x: Int) -> Int:
+    return x + 307
+
+def func308(x: Int) -> Int:
+    return x + 308
+
+def func309(x: Int) -> Int:
+    return x + 309
+
+def func310(x: Int) -> Int:
+    return x + 310
+
+def func311(x: Int) -> Int:
+    return x + 311
+
+def func312(x: Int) -> Int:
+    return x + 312
+
+def func313(x: Int) -> Int:
+    return x + 313
+
+def func314(x: Int) -> Int:
+    return x + 314
+
+def func315(x: Int) -> Int:
+    return x + 315
+
+def func316(x: Int) -> Int:
+    return x + 316
+
+def func317(x: Int) -> Int:
+    return x + 317
+
+def func318(x: Int) -> Int:
+    return x + 318
+
+def func319(x: Int) -> Int:
+    return x + 319
+
+def func320(x: Int) -> Int:
+    return x + 320
+
+def func321(x: Int) -> Int:
+    return x + 321
+
+def func322(x: Int) -> Int:
+    return x + 322
+
+def func323(x: Int) -> Int:
+    return x + 323
+
+def func324(x: Int) -> Int:
+    return x + 324
+
+def func325(x: Int) -> Int:
+    return x + 325
+
+def func326(x: Int) -> Int:
+    return x + 326
+
+def func327(x: Int) -> Int:
+    return x + 327
+
+def func328(x: Int) -> Int:
+    return x + 328
+
+def func329(x: Int) -> Int:
+    return x + 329
+
+def func330(x: Int) -> Int:
+    return x + 330
+
+def func331(x: Int) -> Int:
+    return x + 331
+
+def func332(x: Int) -> Int:
+    return x + 332
+
+def func333(x: Int) -> Int:
+    return x + 333
+
+def func334(x: Int) -> Int:
+    return x + 334
+
+def func335(x: Int) -> Int:
+    return x + 335
+
+def func336(x: Int) -> Int:
+    return x + 336
+
+def func337(x: Int) -> Int:
+    return x + 337
+
+def func338(x: Int) -> Int:
+    return x + 338
+
+def func339(x: Int) -> Int:
+    return x + 339
+
+def func340(x: Int) -> Int:
+    return x + 340
+
+def func341(x: Int) -> Int:
+    return x + 341
+
+def func342(x: Int) -> Int:
+    return x + 342
+
+def func343(x: Int) -> Int:
+    return x + 343
+
+def func344(x: Int) -> Int:
+    return x + 344
+
+def func345(x: Int) -> Int:
+    return x + 345
+
+def func346(x: Int) -> Int:
+    return x + 346
+
+def func347(x: Int) -> Int:
+    return x + 347
+
+def func348(x: Int) -> Int:
+    return x + 348
+
+def func349(x: Int) -> Int:
+    return x + 349
+
+def func350(x: Int) -> Int:
+    return x + 350
+
+def func351(x: Int) -> Int:
+    return x + 351
+
+def func352(x: Int) -> Int:
+    return x + 352
+
+def func353(x: Int) -> Int:
+    return x + 353
+
+def func354(x: Int) -> Int:
+    return x + 354
+
+def func355(x: Int) -> Int:
+    return x + 355
+
+def func356(x: Int) -> Int:
+    return x + 356
+
+def func357(x: Int) -> Int:
+    return x + 357
+
+def func358(x: Int) -> Int:
+    return x + 358
+
+def func359(x: Int) -> Int:
+    return x + 359
+
+def func360(x: Int) -> Int:
+    return x + 360
+
+def func361(x: Int) -> Int:
+    return x + 361
+
+def func362(x: Int) -> Int:
+    return x + 362
+
+def func363(x: Int) -> Int:
+    return x + 363
+
+def func364(x: Int) -> Int:
+    return x + 364
+
+def func365(x: Int) -> Int:
+    return x + 365
+
+def func366(x: Int) -> Int:
+    return x + 366
+
+def func367(x: Int) -> Int:
+    return x + 367
+
+def func368(x: Int) -> Int:
+    return x + 368
+
+def func369(x: Int) -> Int:
+    return x + 369
+
+def func370(x: Int) -> Int:
+    return x + 370
+
+def func371(x: Int) -> Int:
+    return x + 371
+
+def func372(x: Int) -> Int:
+    return x + 372
+
+def func373(x: Int) -> Int:
+    return x + 373
+
+def func374(x: Int) -> Int:
+    return x + 374
+
+def func375(x: Int) -> Int:
+    return x + 375
+
+def func376(x: Int) -> Int:
+    return x + 376
+
+def func377(x: Int) -> Int:
+    return x + 377
+
+def func378(x: Int) -> Int:
+    return x + 378
+
+def func379(x: Int) -> Int:
+    return x + 379
+
+def func380(x: Int) -> Int:
+    return x + 380
+
+def func381(x: Int) -> Int:
+    return x + 381
+
+def func382(x: Int) -> Int:
+    return x + 382
+
+def func383(x: Int) -> Int:
+    return x + 383
+
+def func384(x: Int) -> Int:
+    return x + 384
+
+def func385(x: Int) -> Int:
+    return x + 385
+
+def func386(x: Int) -> Int:
+    return x + 386
+
+def func387(x: Int) -> Int:
+    return x + 387
+
+def func388(x: Int) -> Int:
+    return x + 388
+
+def func389(x: Int) -> Int:
+    return x + 389
+
+def func390(x: Int) -> Int:
+    return x + 390
+
+def func391(x: Int) -> Int:
+    return x + 391
+
+def func392(x: Int) -> Int:
+    return x + 392
+
+def func393(x: Int) -> Int:
+    return x + 393
+
+def func394(x: Int) -> Int:
+    return x + 394
+
+def func395(x: Int) -> Int:
+    return x + 395
+
+def func396(x: Int) -> Int:
+    return x + 396
+
+def func397(x: Int) -> Int:
+    return x + 397
+
+def func398(x: Int) -> Int:
+    return x + 398
+
+def func399(x: Int) -> Int:
+    return x + 399
+
+def func400(x: Int) -> Int:
+    return x + 400
+
+def func401(x: Int) -> Int:
+    return x + 401
+
+def func402(x: Int) -> Int:
+    return x + 402
+
+def func403(x: Int) -> Int:
+    return x + 403
+
+def func404(x: Int) -> Int:
+    return x + 404
+
+def func405(x: Int) -> Int:
+    return x + 405
+
+def func406(x: Int) -> Int:
+    return x + 406
+
+def func407(x: Int) -> Int:
+    return x + 407
+
+def func408(x: Int) -> Int:
+    return x + 408
+
+def func409(x: Int) -> Int:
+    return x + 409
+
+def func410(x: Int) -> Int:
+    return x + 410
+
+def func411(x: Int) -> Int:
+    return x + 411
+
+def func412(x: Int) -> Int:
+    return x + 412
+
+def func413(x: Int) -> Int:
+    return x + 413
+
+def func414(x: Int) -> Int:
+    return x + 414
+
+def func415(x: Int) -> Int:
+    return x + 415
+
+def func416(x: Int) -> Int:
+    return x + 416
+
+def func417(x: Int) -> Int:
+    return x + 417
+
+def func418(x: Int) -> Int:
+    return x + 418
+
+def func419(x: Int) -> Int:
+    return x + 419
+
+def func420(x: Int) -> Int:
+    return x + 420
+
+def func421(x: Int) -> Int:
+    return x + 421
+
+def func422(x: Int) -> Int:
+    return x + 422
+
+def func423(x: Int) -> Int:
+    return x + 423
+
+def func424(x: Int) -> Int:
+    return x + 424
+
+def func425(x: Int) -> Int:
+    return x + 425
+
+def func426(x: Int) -> Int:
+    return x + 426
+
+def func427(x: Int) -> Int:
+    return x + 427
+
+def func428(x: Int) -> Int:
+    return x + 428
+
+def func429(x: Int) -> Int:
+    return x + 429
+
+def func430(x: Int) -> Int:
+    return x + 430
+
+def func431(x: Int) -> Int:
+    return x + 431
+
+def func432(x: Int) -> Int:
+    return x + 432
+
+def func433(x: Int) -> Int:
+    return x + 433
+
+def func434(x: Int) -> Int:
+    return x + 434
+
+def func435(x: Int) -> Int:
+    return x + 435
+
+def func436(x: Int) -> Int:
+    return x + 436
+
+def func437(x: Int) -> Int:
+    return x + 437
+
+def func438(x: Int) -> Int:
+    return x + 438
+
+def func439(x: Int) -> Int:
+    return x + 439
+
+def func440(x: Int) -> Int:
+    return x + 440
+
+def func441(x: Int) -> Int:
+    return x + 441
+
+def func442(x: Int) -> Int:
+    return x + 442
+
+def func443(x: Int) -> Int:
+    return x + 443
+
+def func444(x: Int) -> Int:
+    return x + 444
+
+def func445(x: Int) -> Int:
+    return x + 445
+
+def func446(x: Int) -> Int:
+    return x + 446
+
+def func447(x: Int) -> Int:
+    return x + 447
+
+def func448(x: Int) -> Int:
+    return x + 448
+
+def func449(x: Int) -> Int:
+    return x + 449
+
+def func450(x: Int) -> Int:
+    return x + 450
+
+def func451(x: Int) -> Int:
+    return x + 451
+
+def func452(x: Int) -> Int:
+    return x + 452
+
+def func453(x: Int) -> Int:
+    return x + 453
+
+def func454(x: Int) -> Int:
+    return x + 454
+
+def func455(x: Int) -> Int:
+    return x + 455
+
+def func456(x: Int) -> Int:
+    return x + 456
+
+def func457(x: Int) -> Int:
+    return x + 457
+
+def func458(x: Int) -> Int:
+    return x + 458
+
+def func459(x: Int) -> Int:
+    return x + 459
+
+def func460(x: Int) -> Int:
+    return x + 460
+
+def func461(x: Int) -> Int:
+    return x + 461
+
+def func462(x: Int) -> Int:
+    return x + 462
+
+def func463(x: Int) -> Int:
+    return x + 463
+
+def func464(x: Int) -> Int:
+    return x + 464
+
+def func465(x: Int) -> Int:
+    return x + 465
+
+def func466(x: Int) -> Int:
+    return x + 466
+
+def func467(x: Int) -> Int:
+    return x + 467
+
+def func468(x: Int) -> Int:
+    return x + 468
+
+def func469(x: Int) -> Int:
+    return x + 469
+
+def func470(x: Int) -> Int:
+    return x + 470
+
+def func471(x: Int) -> Int:
+    return x + 471
+
+def func472(x: Int) -> Int:
+    return x + 472
+
+def func473(x: Int) -> Int:
+    return x + 473
+
+def func474(x: Int) -> Int:
+    return x + 474
+
+def func475(x: Int) -> Int:
+    return x + 475
+
+def func476(x: Int) -> Int:
+    return x + 476
+
+def func477(x: Int) -> Int:
+    return x + 477
+
+def func478(x: Int) -> Int:
+    return x + 478
+
+def func479(x: Int) -> Int:
+    return x + 479
+
+def func480(x: Int) -> Int:
+    return x + 480
+
+def func481(x: Int) -> Int:
+    return x + 481
+
+def func482(x: Int) -> Int:
+    return x + 482
+
+def func483(x: Int) -> Int:
+    return x + 483
+
+def func484(x: Int) -> Int:
+    return x + 484
+
+def func485(x: Int) -> Int:
+    return x + 485
+
+def func486(x: Int) -> Int:
+    return x + 486
+
+def func487(x: Int) -> Int:
+    return x + 487
+
+def func488(x: Int) -> Int:
+    return x + 488
+
+def func489(x: Int) -> Int:
+    return x + 489
+
+def func490(x: Int) -> Int:
+    return x + 490
+
+def func491(x: Int) -> Int:
+    return x + 491
+
+def func492(x: Int) -> Int:
+    return x + 492
+
+def func493(x: Int) -> Int:
+    return x + 493
+
+def func494(x: Int) -> Int:
+    return x + 494
+
+def func495(x: Int) -> Int:
+    return x + 495
+
+def func496(x: Int) -> Int:
+    return x + 496
+
+def func497(x: Int) -> Int:
+    return x + 497
+
+def func498(x: Int) -> Int:
+    return x + 498
+
+def func499(x: Int) -> Int:
+    return x + 499
+
+def func500(x: Int) -> Int:
+    return x + 500
+
+def func501(x: Int) -> Int:
+    return x + 501
+
+def func502(x: Int) -> Int:
+    return x + 502
+
+def func503(x: Int) -> Int:
+    return x + 503
+
+def func504(x: Int) -> Int:
+    return x + 504
+
+def func505(x: Int) -> Int:
+    return x + 505
+
+def func506(x: Int) -> Int:
+    return x + 506
+
+def func507(x: Int) -> Int:
+    return x + 507
+
+def func508(x: Int) -> Int:
+    return x + 508
+
+def func509(x: Int) -> Int:
+    return x + 509
+
+def func510(x: Int) -> Int:
+    return x + 510
+
+def func511(x: Int) -> Int:
+    return x + 511
+
+def func512(x: Int) -> Int:
+    return x + 512
+
+def func513(x: Int) -> Int:
+    return x + 513
+
+def func514(x: Int) -> Int:
+    return x + 514
+
+def func515(x: Int) -> Int:
+    return x + 515
+
+def func516(x: Int) -> Int:
+    return x + 516
+
+def func517(x: Int) -> Int:
+    return x + 517
+
+def func518(x: Int) -> Int:
+    return x + 518
+
+def func519(x: Int) -> Int:
+    return x + 519
+
+def func520(x: Int) -> Int:
+    return x + 520
+
+def func521(x: Int) -> Int:
+    return x + 521
+
+def func522(x: Int) -> Int:
+    return x + 522
+
+def func523(x: Int) -> Int:
+    return x + 523
+
+def func524(x: Int) -> Int:
+    return x + 524
+
+def func525(x: Int) -> Int:
+    return x + 525
+
+def func526(x: Int) -> Int:
+    return x + 526
+
+def func527(x: Int) -> Int:
+    return x + 527
+
+def func528(x: Int) -> Int:
+    return x + 528
+
+def func529(x: Int) -> Int:
+    return x + 529
+
+def func530(x: Int) -> Int:
+    return x + 530
+
+def func531(x: Int) -> Int:
+    return x + 531
+
+def func532(x: Int) -> Int:
+    return x + 532
+
+def func533(x: Int) -> Int:
+    return x + 533
+
+def func534(x: Int) -> Int:
+    return x + 534
+
+def func535(x: Int) -> Int:
+    return x + 535
+
+def func536(x: Int) -> Int:
+    return x + 536
+
+def func537(x: Int) -> Int:
+    return x + 537
+
+def func538(x: Int) -> Int:
+    return x + 538
+
+def func539(x: Int) -> Int:
+    return x + 539
+
+def func540(x: Int) -> Int:
+    return x + 540
+
+def func541(x: Int) -> Int:
+    return x + 541
+
+def func542(x: Int) -> Int:
+    return x + 542
+
+def func543(x: Int) -> Int:
+    return x + 543
+
+def func544(x: Int) -> Int:
+    return x + 544
+
+def func545(x: Int) -> Int:
+    return x + 545
+
+def func546(x: Int) -> Int:
+    return x + 546
+
+def func547(x: Int) -> Int:
+    return x + 547
+
+def func548(x: Int) -> Int:
+    return x + 548
+
+def func549(x: Int) -> Int:
+    return x + 549
+
+def func550(x: Int) -> Int:
+    return x + 550
+
+def func551(x: Int) -> Int:
+    return x + 551
+
+def func552(x: Int) -> Int:
+    return x + 552
+
+def func553(x: Int) -> Int:
+    return x + 553
+
+def func554(x: Int) -> Int:
+    return x + 554
+
+def func555(x: Int) -> Int:
+    return x + 555
+
+def func556(x: Int) -> Int:
+    return x + 556
+
+def func557(x: Int) -> Int:
+    return x + 557
+
+def func558(x: Int) -> Int:
+    return x + 558
+
+def func559(x: Int) -> Int:
+    return x + 559
+
+def func560(x: Int) -> Int:
+    return x + 560
+
+def func561(x: Int) -> Int:
+    return x + 561
+
+def func562(x: Int) -> Int:
+    return x + 562
+
+def func563(x: Int) -> Int:
+    return x + 563
+
+def func564(x: Int) -> Int:
+    return x + 564
+
+def func565(x: Int) -> Int:
+    return x + 565
+
+def func566(x: Int) -> Int:
+    return x + 566
+
+def func567(x: Int) -> Int:
+    return x + 567
+
+def func568(x: Int) -> Int:
+    return x + 568
+
+def func569(x: Int) -> Int:
+    return x + 569
+
+def func570(x: Int) -> Int:
+    return x + 570
+
+def func571(x: Int) -> Int:
+    return x + 571
+
+def func572(x: Int) -> Int:
+    return x + 572
+
+def func573(x: Int) -> Int:
+    return x + 573
+
+def func574(x: Int) -> Int:
+    return x + 574
+
+def func575(x: Int) -> Int:
+    return x + 575
+
+def func576(x: Int) -> Int:
+    return x + 576
+
+def func577(x: Int) -> Int:
+    return x + 577
+
+def func578(x: Int) -> Int:
+    return x + 578
+
+def func579(x: Int) -> Int:
+    return x + 579
+
+def func580(x: Int) -> Int:
+    return x + 580
+
+def func581(x: Int) -> Int:
+    return x + 581
+
+def func582(x: Int) -> Int:
+    return x + 582
+
+def func583(x: Int) -> Int:
+    return x + 583
+
+def func584(x: Int) -> Int:
+    return x + 584
+
+def func585(x: Int) -> Int:
+    return x + 585
+
+def func586(x: Int) -> Int:
+    return x + 586
+
+def func587(x: Int) -> Int:
+    return x + 587
+
+def func588(x: Int) -> Int:
+    return x + 588
+
+def func589(x: Int) -> Int:
+    return x + 589
+
+def func590(x: Int) -> Int:
+    return x + 590
+
+def func591(x: Int) -> Int:
+    return x + 591
+
+def func592(x: Int) -> Int:
+    return x + 592
+
+def func593(x: Int) -> Int:
+    return x + 593
+
+def func594(x: Int) -> Int:
+    return x + 594
+
+def func595(x: Int) -> Int:
+    return x + 595
+
+def func596(x: Int) -> Int:
+    return x + 596
+
+def func597(x: Int) -> Int:
+    return x + 597
+
+def func598(x: Int) -> Int:
+    return x + 598
+
+def func599(x: Int) -> Int:
+    return x + 599
+
+def func600(x: Int) -> Int:
+    return x + 600
+
+def func601(x: Int) -> Int:
+    return x + 601
+
+def func602(x: Int) -> Int:
+    return x + 602
+
+def func603(x: Int) -> Int:
+    return x + 603
+
+def func604(x: Int) -> Int:
+    return x + 604
+
+def func605(x: Int) -> Int:
+    return x + 605
+
+def func606(x: Int) -> Int:
+    return x + 606
+
+def func607(x: Int) -> Int:
+    return x + 607
+
+def func608(x: Int) -> Int:
+    return x + 608
+
+def func609(x: Int) -> Int:
+    return x + 609
+
+def func610(x: Int) -> Int:
+    return x + 610
+
+def func611(x: Int) -> Int:
+    return x + 611
+
+def func612(x: Int) -> Int:
+    return x + 612
+
+def func613(x: Int) -> Int:
+    return x + 613
+
+def func614(x: Int) -> Int:
+    return x + 614
+
+def func615(x: Int) -> Int:
+    return x + 615
+
+def func616(x: Int) -> Int:
+    return x + 616
+
+def func617(x: Int) -> Int:
+    return x + 617
+
+def func618(x: Int) -> Int:
+    return x + 618
+
+def func619(x: Int) -> Int:
+    return x + 619
+
+def func620(x: Int) -> Int:
+    return x + 620
+
+def func621(x: Int) -> Int:
+    return x + 621
+
+def func622(x: Int) -> Int:
+    return x + 622
+
+def func623(x: Int) -> Int:
+    return x + 623
+
+def func624(x: Int) -> Int:
+    return x + 624
+
+def func625(x: Int) -> Int:
+    return x + 625
+
+def func626(x: Int) -> Int:
+    return x + 626
+
+def func627(x: Int) -> Int:
+    return x + 627
+
+def func628(x: Int) -> Int:
+    return x + 628
+
+def func629(x: Int) -> Int:
+    return x + 629
+
+def func630(x: Int) -> Int:
+    return x + 630
+
+def func631(x: Int) -> Int:
+    return x + 631
+
+def func632(x: Int) -> Int:
+    return x + 632
+
+def func633(x: Int) -> Int:
+    return x + 633
+
+def func634(x: Int) -> Int:
+    return x + 634
+
+def func635(x: Int) -> Int:
+    return x + 635
+
+def func636(x: Int) -> Int:
+    return x + 636
+
+def func637(x: Int) -> Int:
+    return x + 637
+
+def func638(x: Int) -> Int:
+    return x + 638
+
+def func639(x: Int) -> Int:
+    return x + 639
+
+def func640(x: Int) -> Int:
+    return x + 640
+
+def func641(x: Int) -> Int:
+    return x + 641
+
+def func642(x: Int) -> Int:
+    return x + 642
+
+def func643(x: Int) -> Int:
+    return x + 643
+
+def func644(x: Int) -> Int:
+    return x + 644
+
+def func645(x: Int) -> Int:
+    return x + 645
+
+def func646(x: Int) -> Int:
+    return x + 646
+
+def func647(x: Int) -> Int:
+    return x + 647
+
+def func648(x: Int) -> Int:
+    return x + 648
+
+def func649(x: Int) -> Int:
+    return x + 649
+
+def func650(x: Int) -> Int:
+    return x + 650
+
+def func651(x: Int) -> Int:
+    return x + 651
+
+def func652(x: Int) -> Int:
+    return x + 652
+
+def func653(x: Int) -> Int:
+    return x + 653
+
+def func654(x: Int) -> Int:
+    return x + 654
+
+def func655(x: Int) -> Int:
+    return x + 655
+
+def func656(x: Int) -> Int:
+    return x + 656
+
+def func657(x: Int) -> Int:
+    return x + 657
+
+def func658(x: Int) -> Int:
+    return x + 658
+
+def func659(x: Int) -> Int:
+    return x + 659
+
+def func660(x: Int) -> Int:
+    return x + 660
+
+def func661(x: Int) -> Int:
+    return x + 661
+
+def func662(x: Int) -> Int:
+    return x + 662
+
+def func663(x: Int) -> Int:
+    return x + 663
+
+def func664(x: Int) -> Int:
+    return x + 664
+
+def func665(x: Int) -> Int:
+    return x + 665
+
+def func666(x: Int) -> Int:
+    return x + 666
+
+def func667(x: Int) -> Int:
+    return x + 667
+
+def func668(x: Int) -> Int:
+    return x + 668
+
+def func669(x: Int) -> Int:
+    return x + 669
+
+def func670(x: Int) -> Int:
+    return x + 670
+
+def func671(x: Int) -> Int:
+    return x + 671
+
+def func672(x: Int) -> Int:
+    return x + 672
+
+def func673(x: Int) -> Int:
+    return x + 673
+
+def func674(x: Int) -> Int:
+    return x + 674
+
+def func675(x: Int) -> Int:
+    return x + 675
+
+def func676(x: Int) -> Int:
+    return x + 676
+
+def func677(x: Int) -> Int:
+    return x + 677
+
+def func678(x: Int) -> Int:
+    return x + 678
+
+def func679(x: Int) -> Int:
+    return x + 679
+
+def func680(x: Int) -> Int:
+    return x + 680
+
+def func681(x: Int) -> Int:
+    return x + 681
+
+def func682(x: Int) -> Int:
+    return x + 682
+
+def func683(x: Int) -> Int:
+    return x + 683
+
+def func684(x: Int) -> Int:
+    return x + 684
+
+def func685(x: Int) -> Int:
+    return x + 685
+
+def func686(x: Int) -> Int:
+    return x + 686
+
+def func687(x: Int) -> Int:
+    return x + 687
+
+def func688(x: Int) -> Int:
+    return x + 688
+
+def func689(x: Int) -> Int:
+    return x + 689
+
+def func690(x: Int) -> Int:
+    return x + 690
+
+def func691(x: Int) -> Int:
+    return x + 691
+
+def func692(x: Int) -> Int:
+    return x + 692
+
+def func693(x: Int) -> Int:
+    return x + 693
+
+def func694(x: Int) -> Int:
+    return x + 694
+
+def func695(x: Int) -> Int:
+    return x + 695
+
+def func696(x: Int) -> Int:
+    return x + 696
+
+def func697(x: Int) -> Int:
+    return x + 697
+
+def func698(x: Int) -> Int:
+    return x + 698
+
+def func699(x: Int) -> Int:
+    return x + 699
+
+def func700(x: Int) -> Int:
+    return x + 700
+
+def func701(x: Int) -> Int:
+    return x + 701
+
+def func702(x: Int) -> Int:
+    return x + 702
+
+def func703(x: Int) -> Int:
+    return x + 703
+
+def func704(x: Int) -> Int:
+    return x + 704
+
+def func705(x: Int) -> Int:
+    return x + 705
+
+def func706(x: Int) -> Int:
+    return x + 706
+
+def func707(x: Int) -> Int:
+    return x + 707
+
+def func708(x: Int) -> Int:
+    return x + 708
+
+def func709(x: Int) -> Int:
+    return x + 709
+
+def func710(x: Int) -> Int:
+    return x + 710
+
+def func711(x: Int) -> Int:
+    return x + 711
+
+def func712(x: Int) -> Int:
+    return x + 712
+
+def func713(x: Int) -> Int:
+    return x + 713
+
+def func714(x: Int) -> Int:
+    return x + 714
+
+def func715(x: Int) -> Int:
+    return x + 715
+
+def func716(x: Int) -> Int:
+    return x + 716
+
+def func717(x: Int) -> Int:
+    return x + 717
+
+def func718(x: Int) -> Int:
+    return x + 718
+
+def func719(x: Int) -> Int:
+    return x + 719
+
+def func720(x: Int) -> Int:
+    return x + 720
+
+def func721(x: Int) -> Int:
+    return x + 721
+
+def func722(x: Int) -> Int:
+    return x + 722
+
+def func723(x: Int) -> Int:
+    return x + 723
+
+def func724(x: Int) -> Int:
+    return x + 724
+
+def func725(x: Int) -> Int:
+    return x + 725
+
+def func726(x: Int) -> Int:
+    return x + 726
+
+def func727(x: Int) -> Int:
+    return x + 727
+
+def func728(x: Int) -> Int:
+    return x + 728
+
+def func729(x: Int) -> Int:
+    return x + 729
+
+def func730(x: Int) -> Int:
+    return x + 730
+
+def func731(x: Int) -> Int:
+    return x + 731
+
+def func732(x: Int) -> Int:
+    return x + 732
+
+def func733(x: Int) -> Int:
+    return x + 733
+
+def func734(x: Int) -> Int:
+    return x + 734
+
+def func735(x: Int) -> Int:
+    return x + 735
+
+def func736(x: Int) -> Int:
+    return x + 736
+
+def func737(x: Int) -> Int:
+    return x + 737
+
+def func738(x: Int) -> Int:
+    return x + 738
+
+def func739(x: Int) -> Int:
+    return x + 739
+
+def func740(x: Int) -> Int:
+    return x + 740
+
+def func741(x: Int) -> Int:
+    return x + 741
+
+def func742(x: Int) -> Int:
+    return x + 742
+
+def func743(x: Int) -> Int:
+    return x + 743
+
+def func744(x: Int) -> Int:
+    return x + 744
+
+def func745(x: Int) -> Int:
+    return x + 745
+
+def func746(x: Int) -> Int:
+    return x + 746
+
+def func747(x: Int) -> Int:
+    return x + 747
+
+def func748(x: Int) -> Int:
+    return x + 748
+
+def func749(x: Int) -> Int:
+    return x + 749
+
+def func750(x: Int) -> Int:
+    return x + 750
+
+def func751(x: Int) -> Int:
+    return x + 751
+
+def func752(x: Int) -> Int:
+    return x + 752
+
+def func753(x: Int) -> Int:
+    return x + 753
+
+def func754(x: Int) -> Int:
+    return x + 754
+
+def func755(x: Int) -> Int:
+    return x + 755
+
+def func756(x: Int) -> Int:
+    return x + 756
+
+def func757(x: Int) -> Int:
+    return x + 757
+
+def func758(x: Int) -> Int:
+    return x + 758
+
+def func759(x: Int) -> Int:
+    return x + 759
+
+def func760(x: Int) -> Int:
+    return x + 760
+
+def func761(x: Int) -> Int:
+    return x + 761
+
+def func762(x: Int) -> Int:
+    return x + 762
+
+def func763(x: Int) -> Int:
+    return x + 763
+
+def func764(x: Int) -> Int:
+    return x + 764
+
+def func765(x: Int) -> Int:
+    return x + 765
+
+def func766(x: Int) -> Int:
+    return x + 766
+
+def func767(x: Int) -> Int:
+    return x + 767
+
+def func768(x: Int) -> Int:
+    return x + 768
+
+def func769(x: Int) -> Int:
+    return x + 769
+
+def func770(x: Int) -> Int:
+    return x + 770
+
+def func771(x: Int) -> Int:
+    return x + 771
+
+def func772(x: Int) -> Int:
+    return x + 772
+
+def func773(x: Int) -> Int:
+    return x + 773
+
+def func774(x: Int) -> Int:
+    return x + 774
+
+def func775(x: Int) -> Int:
+    return x + 775
+
+def func776(x: Int) -> Int:
+    return x + 776
+
+def func777(x: Int) -> Int:
+    return x + 777
+
+def func778(x: Int) -> Int:
+    return x + 778
+
+def func779(x: Int) -> Int:
+    return x + 779
+
+def func780(x: Int) -> Int:
+    return x + 780
+
+def func781(x: Int) -> Int:
+    return x + 781
+
+def func782(x: Int) -> Int:
+    return x + 782
+
+def func783(x: Int) -> Int:
+    return x + 783
+
+def func784(x: Int) -> Int:
+    return x + 784
+
+def func785(x: Int) -> Int:
+    return x + 785
+
+def func786(x: Int) -> Int:
+    return x + 786
+
+def func787(x: Int) -> Int:
+    return x + 787
+
+def func788(x: Int) -> Int:
+    return x + 788
+
+def func789(x: Int) -> Int:
+    return x + 789
+
+def func790(x: Int) -> Int:
+    return x + 790
+
+def func791(x: Int) -> Int:
+    return x + 791
+
+def func792(x: Int) -> Int:
+    return x + 792
+
+def func793(x: Int) -> Int:
+    return x + 793
+
+def func794(x: Int) -> Int:
+    return x + 794
+
+def func795(x: Int) -> Int:
+    return x + 795
+
+def func796(x: Int) -> Int:
+    return x + 796
+
+def func797(x: Int) -> Int:
+    return x + 797
+
+def func798(x: Int) -> Int:
+    return x + 798
+
+def func799(x: Int) -> Int:
+    return x + 799
+
+def func800(x: Int) -> Int:
+    return x + 800
+
+def func801(x: Int) -> Int:
+    return x + 801
+
+def func802(x: Int) -> Int:
+    return x + 802
+
+def func803(x: Int) -> Int:
+    return x + 803
+
+def func804(x: Int) -> Int:
+    return x + 804
+
+def func805(x: Int) -> Int:
+    return x + 805
+
+def func806(x: Int) -> Int:
+    return x + 806
+
+def func807(x: Int) -> Int:
+    return x + 807
+
+def func808(x: Int) -> Int:
+    return x + 808
+
+def func809(x: Int) -> Int:
+    return x + 809
+
+def func810(x: Int) -> Int:
+    return x + 810
+
+def func811(x: Int) -> Int:
+    return x + 811
+
+def func812(x: Int) -> Int:
+    return x + 812
+
+def func813(x: Int) -> Int:
+    return x + 813
+
+def func814(x: Int) -> Int:
+    return x + 814
+
+def func815(x: Int) -> Int:
+    return x + 815
+
+def func816(x: Int) -> Int:
+    return x + 816
+
+def func817(x: Int) -> Int:
+    return x + 817
+
+def func818(x: Int) -> Int:
+    return x + 818
+
+def func819(x: Int) -> Int:
+    return x + 819
+
+def func820(x: Int) -> Int:
+    return x + 820
+
+def func821(x: Int) -> Int:
+    return x + 821
+
+def func822(x: Int) -> Int:
+    return x + 822
+
+def func823(x: Int) -> Int:
+    return x + 823
+
+def func824(x: Int) -> Int:
+    return x + 824
+
+def func825(x: Int) -> Int:
+    return x + 825
+
+def func826(x: Int) -> Int:
+    return x + 826
+
+def func827(x: Int) -> Int:
+    return x + 827
+
+def func828(x: Int) -> Int:
+    return x + 828
+
+def func829(x: Int) -> Int:
+    return x + 829
+
+def func830(x: Int) -> Int:
+    return x + 830
+
+def func831(x: Int) -> Int:
+    return x + 831
+
+def func832(x: Int) -> Int:
+    return x + 832
+
+def func833(x: Int) -> Int:
+    return x + 833
+
+def func834(x: Int) -> Int:
+    return x + 834
+
+def func835(x: Int) -> Int:
+    return x + 835
+
+def func836(x: Int) -> Int:
+    return x + 836
+
+def func837(x: Int) -> Int:
+    return x + 837
+
+def func838(x: Int) -> Int:
+    return x + 838
+
+def func839(x: Int) -> Int:
+    return x + 839
+
+def func840(x: Int) -> Int:
+    return x + 840
+
+def func841(x: Int) -> Int:
+    return x + 841
+
+def func842(x: Int) -> Int:
+    return x + 842
+
+def func843(x: Int) -> Int:
+    return x + 843
+
+def func844(x: Int) -> Int:
+    return x + 844
+
+def func845(x: Int) -> Int:
+    return x + 845
+
+def func846(x: Int) -> Int:
+    return x + 846
+
+def func847(x: Int) -> Int:
+    return x + 847
+
+def func848(x: Int) -> Int:
+    return x + 848
+
+def func849(x: Int) -> Int:
+    return x + 849
+
+def func850(x: Int) -> Int:
+    return x + 850
+
+def func851(x: Int) -> Int:
+    return x + 851
+
+def func852(x: Int) -> Int:
+    return x + 852
+
+def func853(x: Int) -> Int:
+    return x + 853
+
+def func854(x: Int) -> Int:
+    return x + 854
+
+def func855(x: Int) -> Int:
+    return x + 855
+
+def func856(x: Int) -> Int:
+    return x + 856
+
+def func857(x: Int) -> Int:
+    return x + 857
+
+def func858(x: Int) -> Int:
+    return x + 858
+
+def func859(x: Int) -> Int:
+    return x + 859
+
+def func860(x: Int) -> Int:
+    return x + 860
+
+def func861(x: Int) -> Int:
+    return x + 861
+
+def func862(x: Int) -> Int:
+    return x + 862
+
+def func863(x: Int) -> Int:
+    return x + 863
+
+def func864(x: Int) -> Int:
+    return x + 864
+
+def func865(x: Int) -> Int:
+    return x + 865
+
+def func866(x: Int) -> Int:
+    return x + 866
+
+def func867(x: Int) -> Int:
+    return x + 867
+
+def func868(x: Int) -> Int:
+    return x + 868
+
+def func869(x: Int) -> Int:
+    return x + 869
+
+def func870(x: Int) -> Int:
+    return x + 870
+
+def func871(x: Int) -> Int:
+    return x + 871
+
+def func872(x: Int) -> Int:
+    return x + 872
+
+def func873(x: Int) -> Int:
+    return x + 873
+
+def func874(x: Int) -> Int:
+    return x + 874
+
+def func875(x: Int) -> Int:
+    return x + 875
+
+def func876(x: Int) -> Int:
+    return x + 876
+
+def func877(x: Int) -> Int:
+    return x + 877
+
+def func878(x: Int) -> Int:
+    return x + 878
+
+def func879(x: Int) -> Int:
+    return x + 879
+
+def func880(x: Int) -> Int:
+    return x + 880
+
+def func881(x: Int) -> Int:
+    return x + 881
+
+def func882(x: Int) -> Int:
+    return x + 882
+
+def func883(x: Int) -> Int:
+    return x + 883
+
+def func884(x: Int) -> Int:
+    return x + 884
+
+def func885(x: Int) -> Int:
+    return x + 885
+
+def func886(x: Int) -> Int:
+    return x + 886
+
+def func887(x: Int) -> Int:
+    return x + 887
+
+def func888(x: Int) -> Int:
+    return x + 888
+
+def func889(x: Int) -> Int:
+    return x + 889
+
+def func890(x: Int) -> Int:
+    return x + 890
+
+def func891(x: Int) -> Int:
+    return x + 891
+
+def func892(x: Int) -> Int:
+    return x + 892
+
+def func893(x: Int) -> Int:
+    return x + 893
+
+def func894(x: Int) -> Int:
+    return x + 894
+
+def func895(x: Int) -> Int:
+    return x + 895
+
+def func896(x: Int) -> Int:
+    return x + 896
+
+def func897(x: Int) -> Int:
+    return x + 897
+
+def func898(x: Int) -> Int:
+    return x + 898
+
+def func899(x: Int) -> Int:
+    return x + 899
+
+def func900(x: Int) -> Int:
+    return x + 900
+
+def func901(x: Int) -> Int:
+    return x + 901
+
+def func902(x: Int) -> Int:
+    return x + 902
+
+def func903(x: Int) -> Int:
+    return x + 903
+
+def func904(x: Int) -> Int:
+    return x + 904
+
+def func905(x: Int) -> Int:
+    return x + 905
+
+def func906(x: Int) -> Int:
+    return x + 906
+
+def func907(x: Int) -> Int:
+    return x + 907
+
+def func908(x: Int) -> Int:
+    return x + 908
+
+def func909(x: Int) -> Int:
+    return x + 909
+
+def func910(x: Int) -> Int:
+    return x + 910
+
+def func911(x: Int) -> Int:
+    return x + 911
+
+def func912(x: Int) -> Int:
+    return x + 912
+
+def func913(x: Int) -> Int:
+    return x + 913
+
+def func914(x: Int) -> Int:
+    return x + 914
+
+def func915(x: Int) -> Int:
+    return x + 915
+
+def func916(x: Int) -> Int:
+    return x + 916
+
+def func917(x: Int) -> Int:
+    return x + 917
+
+def func918(x: Int) -> Int:
+    return x + 918
+
+def func919(x: Int) -> Int:
+    return x + 919
+
+def func920(x: Int) -> Int:
+    return x + 920
+
+def func921(x: Int) -> Int:
+    return x + 921
+
+def func922(x: Int) -> Int:
+    return x + 922
+
+def func923(x: Int) -> Int:
+    return x + 923
+
+def func924(x: Int) -> Int:
+    return x + 924
+
+def func925(x: Int) -> Int:
+    return x + 925
+
+def func926(x: Int) -> Int:
+    return x + 926
+
+def func927(x: Int) -> Int:
+    return x + 927
+
+def func928(x: Int) -> Int:
+    return x + 928
+
+def func929(x: Int) -> Int:
+    return x + 929
+
+def func930(x: Int) -> Int:
+    return x + 930
+
+def func931(x: Int) -> Int:
+    return x + 931
+
+def func932(x: Int) -> Int:
+    return x + 932
+
+def func933(x: Int) -> Int:
+    return x + 933
+
+def func934(x: Int) -> Int:
+    return x + 934
+
+def func935(x: Int) -> Int:
+    return x + 935
+
+def func936(x: Int) -> Int:
+    return x + 936
+
+def func937(x: Int) -> Int:
+    return x + 937
+
+def func938(x: Int) -> Int:
+    return x + 938
+
+def func939(x: Int) -> Int:
+    return x + 939
+
+def func940(x: Int) -> Int:
+    return x + 940
+
+def func941(x: Int) -> Int:
+    return x + 941
+
+def func942(x: Int) -> Int:
+    return x + 942
+
+def func943(x: Int) -> Int:
+    return x + 943
+
+def func944(x: Int) -> Int:
+    return x + 944
+
+def func945(x: Int) -> Int:
+    return x + 945
+
+def func946(x: Int) -> Int:
+    return x + 946
+
+def func947(x: Int) -> Int:
+    return x + 947
+
+def func948(x: Int) -> Int:
+    return x + 948
+
+def func949(x: Int) -> Int:
+    return x + 949
+
+def func950(x: Int) -> Int:
+    return x + 950
+
+def func951(x: Int) -> Int:
+    return x + 951
+
+def func952(x: Int) -> Int:
+    return x + 952
+
+def func953(x: Int) -> Int:
+    return x + 953
+
+def func954(x: Int) -> Int:
+    return x + 954
+
+def func955(x: Int) -> Int:
+    return x + 955
+
+def func956(x: Int) -> Int:
+    return x + 956
+
+def func957(x: Int) -> Int:
+    return x + 957
+
+def func958(x: Int) -> Int:
+    return x + 958
+
+def func959(x: Int) -> Int:
+    return x + 959
+
+def func960(x: Int) -> Int:
+    return x + 960
+
+def func961(x: Int) -> Int:
+    return x + 961
+
+def func962(x: Int) -> Int:
+    return x + 962
+
+def func963(x: Int) -> Int:
+    return x + 963
+
+def func964(x: Int) -> Int:
+    return x + 964
+
+def func965(x: Int) -> Int:
+    return x + 965
+
+def func966(x: Int) -> Int:
+    return x + 966
+
+def func967(x: Int) -> Int:
+    return x + 967
+
+def func968(x: Int) -> Int:
+    return x + 968
+
+def func969(x: Int) -> Int:
+    return x + 969
+
+def func970(x: Int) -> Int:
+    return x + 970
+
+def func971(x: Int) -> Int:
+    return x + 971
+
+def func972(x: Int) -> Int:
+    return x + 972
+
+def func973(x: Int) -> Int:
+    return x + 973
+
+def func974(x: Int) -> Int:
+    return x + 974
+
+def func975(x: Int) -> Int:
+    return x + 975
+
+def func976(x: Int) -> Int:
+    return x + 976
+
+def func977(x: Int) -> Int:
+    return x + 977
+
+def func978(x: Int) -> Int:
+    return x + 978
+
+def func979(x: Int) -> Int:
+    return x + 979
+
+def func980(x: Int) -> Int:
+    return x + 980
+
+def func981(x: Int) -> Int:
+    return x + 981
+
+def func982(x: Int) -> Int:
+    return x + 982
+
+def func983(x: Int) -> Int:
+    return x + 983
+
+def func984(x: Int) -> Int:
+    return x + 984
+
+def func985(x: Int) -> Int:
+    return x + 985
+
+def func986(x: Int) -> Int:
+    return x + 986
+
+def func987(x: Int) -> Int:
+    return x + 987
+
+def func988(x: Int) -> Int:
+    return x + 988
+
+def func989(x: Int) -> Int:
+    return x + 989
+
+def func990(x: Int) -> Int:
+    return x + 990
+
+def func991(x: Int) -> Int:
+    return x + 991
+
+def func992(x: Int) -> Int:
+    return x + 992
+
+def func993(x: Int) -> Int:
+    return x + 993
+
+def func994(x: Int) -> Int:
+    return x + 994
+
+def func995(x: Int) -> Int:
+    return x + 995
+
+def func996(x: Int) -> Int:
+    return x + 996
+
+def func997(x: Int) -> Int:
+    return x + 997
+
+def func998(x: Int) -> Int:
+    return x + 998
+
+def func999(x: Int) -> Int:
+    return x + 999
+
+def func1000(x: Int) -> Int:
+    return x + 1000
+
+def func1001(x: Int) -> Int:
+    return x + 1001
+
+def func1002(x: Int) -> Int:
+    return x + 1002
+
+def func1003(x: Int) -> Int:
+    return x + 1003
+
+def func1004(x: Int) -> Int:
+    return x + 1004
+
+def func1005(x: Int) -> Int:
+    return x + 1005
+
+def func1006(x: Int) -> Int:
+    return x + 1006
+
+def func1007(x: Int) -> Int:
+    return x + 1007
+
+def func1008(x: Int) -> Int:
+    return x + 1008
+
+def func1009(x: Int) -> Int:
+    return x + 1009
+
+def func1010(x: Int) -> Int:
+    return x + 1010
+
+def func1011(x: Int) -> Int:
+    return x + 1011
+
+def func1012(x: Int) -> Int:
+    return x + 1012
+
+def func1013(x: Int) -> Int:
+    return x + 1013
+
+def func1014(x: Int) -> Int:
+    return x + 1014
+
+def func1015(x: Int) -> Int:
+    return x + 1015
+
+def func1016(x: Int) -> Int:
+    return x + 1016
+
+def func1017(x: Int) -> Int:
+    return x + 1017
+
+def func1018(x: Int) -> Int:
+    return x + 1018
+
+def func1019(x: Int) -> Int:
+    return x + 1019
+
+def func1020(x: Int) -> Int:
+    return x + 1020
+
+def func1021(x: Int) -> Int:
+    return x + 1021
+
+def func1022(x: Int) -> Int:
+    return x + 1022
+
+def func1023(x: Int) -> Int:
+    return x + 1023
+
+def func1024(x: Int) -> Int:
+    return x + 1024
+
+def func1025(x: Int) -> Int:
+    return x + 1025
+
+def func1026(x: Int) -> Int:
+    return x + 1026
+
+def func1027(x: Int) -> Int:
+    return x + 1027
+
+def func1028(x: Int) -> Int:
+    return x + 1028
+
+def func1029(x: Int) -> Int:
+    return x + 1029
+
+def func1030(x: Int) -> Int:
+    return x + 1030
+
+def func1031(x: Int) -> Int:
+    return x + 1031
+
+def func1032(x: Int) -> Int:
+    return x + 1032
+
+def func1033(x: Int) -> Int:
+    return x + 1033
+
+def func1034(x: Int) -> Int:
+    return x + 1034
+
+def func1035(x: Int) -> Int:
+    return x + 1035
+
+def func1036(x: Int) -> Int:
+    return x + 1036
+
+def func1037(x: Int) -> Int:
+    return x + 1037
+
+def func1038(x: Int) -> Int:
+    return x + 1038
+
+def func1039(x: Int) -> Int:
+    return x + 1039
+
+def func1040(x: Int) -> Int:
+    return x + 1040
+
+def func1041(x: Int) -> Int:
+    return x + 1041
+
+def func1042(x: Int) -> Int:
+    return x + 1042
+
+def func1043(x: Int) -> Int:
+    return x + 1043
+
+def func1044(x: Int) -> Int:
+    return x + 1044
+
+def func1045(x: Int) -> Int:
+    return x + 1045
+
+def func1046(x: Int) -> Int:
+    return x + 1046
+
+def func1047(x: Int) -> Int:
+    return x + 1047
+
+def func1048(x: Int) -> Int:
+    return x + 1048
+
+def func1049(x: Int) -> Int:
+    return x + 1049
+
+def func1050(x: Int) -> Int:
+    return x + 1050
+
+def func1051(x: Int) -> Int:
+    return x + 1051
+
+def func1052(x: Int) -> Int:
+    return x + 1052
+
+def func1053(x: Int) -> Int:
+    return x + 1053
+
+def func1054(x: Int) -> Int:
+    return x + 1054
+
+def func1055(x: Int) -> Int:
+    return x + 1055
+
+def func1056(x: Int) -> Int:
+    return x + 1056
+
+def func1057(x: Int) -> Int:
+    return x + 1057
+
+def func1058(x: Int) -> Int:
+    return x + 1058
+
+def func1059(x: Int) -> Int:
+    return x + 1059
+
+def func1060(x: Int) -> Int:
+    return x + 1060
+
+def func1061(x: Int) -> Int:
+    return x + 1061
+
+def func1062(x: Int) -> Int:
+    return x + 1062
+
+def func1063(x: Int) -> Int:
+    return x + 1063
+
+def func1064(x: Int) -> Int:
+    return x + 1064
+
+def func1065(x: Int) -> Int:
+    return x + 1065
+
+def func1066(x: Int) -> Int:
+    return x + 1066
+
+def func1067(x: Int) -> Int:
+    return x + 1067
+
+def func1068(x: Int) -> Int:
+    return x + 1068
+
+def func1069(x: Int) -> Int:
+    return x + 1069
+
+def func1070(x: Int) -> Int:
+    return x + 1070
+
+def func1071(x: Int) -> Int:
+    return x + 1071
+
+def func1072(x: Int) -> Int:
+    return x + 1072
+
+def func1073(x: Int) -> Int:
+    return x + 1073
+
+def func1074(x: Int) -> Int:
+    return x + 1074
+
+def func1075(x: Int) -> Int:
+    return x + 1075
+
+def func1076(x: Int) -> Int:
+    return x + 1076
+
+def func1077(x: Int) -> Int:
+    return x + 1077
+
+def func1078(x: Int) -> Int:
+    return x + 1078
+
+def func1079(x: Int) -> Int:
+    return x + 1079
+
+def func1080(x: Int) -> Int:
+    return x + 1080
+
+def func1081(x: Int) -> Int:
+    return x + 1081
+
+def func1082(x: Int) -> Int:
+    return x + 1082
+
+def func1083(x: Int) -> Int:
+    return x + 1083
+
+def func1084(x: Int) -> Int:
+    return x + 1084
+
+def func1085(x: Int) -> Int:
+    return x + 1085
+
+def func1086(x: Int) -> Int:
+    return x + 1086
+
+def func1087(x: Int) -> Int:
+    return x + 1087
+
+def func1088(x: Int) -> Int:
+    return x + 1088
+
+def func1089(x: Int) -> Int:
+    return x + 1089
+
+def func1090(x: Int) -> Int:
+    return x + 1090
+
+def func1091(x: Int) -> Int:
+    return x + 1091
+
+def func1092(x: Int) -> Int:
+    return x + 1092
+
+def func1093(x: Int) -> Int:
+    return x + 1093
+
+def func1094(x: Int) -> Int:
+    return x + 1094
+
+def func1095(x: Int) -> Int:
+    return x + 1095
+
+def func1096(x: Int) -> Int:
+    return x + 1096
+
+def func1097(x: Int) -> Int:
+    return x + 1097
+
+def func1098(x: Int) -> Int:
+    return x + 1098
+
+def func1099(x: Int) -> Int:
+    return x + 1099
+
+def func1100(x: Int) -> Int:
+    return x + 1100
+
+def func1101(x: Int) -> Int:
+    return x + 1101
+
+def func1102(x: Int) -> Int:
+    return x + 1102
+
+def func1103(x: Int) -> Int:
+    return x + 1103
+
+def func1104(x: Int) -> Int:
+    return x + 1104
+
+def func1105(x: Int) -> Int:
+    return x + 1105
+
+def func1106(x: Int) -> Int:
+    return x + 1106
+
+def func1107(x: Int) -> Int:
+    return x + 1107
+
+def func1108(x: Int) -> Int:
+    return x + 1108
+
+def func1109(x: Int) -> Int:
+    return x + 1109
+
+def func1110(x: Int) -> Int:
+    return x + 1110
+
+def func1111(x: Int) -> Int:
+    return x + 1111
+
+def func1112(x: Int) -> Int:
+    return x + 1112
+
+def func1113(x: Int) -> Int:
+    return x + 1113
+
+def func1114(x: Int) -> Int:
+    return x + 1114
+
+def func1115(x: Int) -> Int:
+    return x + 1115
+
+def func1116(x: Int) -> Int:
+    return x + 1116
+
+def func1117(x: Int) -> Int:
+    return x + 1117
+
+def func1118(x: Int) -> Int:
+    return x + 1118
+
+def func1119(x: Int) -> Int:
+    return x + 1119
+
+def func1120(x: Int) -> Int:
+    return x + 1120
+
+def func1121(x: Int) -> Int:
+    return x + 1121
+
+def func1122(x: Int) -> Int:
+    return x + 1122
+
+def func1123(x: Int) -> Int:
+    return x + 1123
+
+def func1124(x: Int) -> Int:
+    return x + 1124
+
+def func1125(x: Int) -> Int:
+    return x + 1125
+
+def func1126(x: Int) -> Int:
+    return x + 1126
+
+def func1127(x: Int) -> Int:
+    return x + 1127
+
+def func1128(x: Int) -> Int:
+    return x + 1128
+
+def func1129(x: Int) -> Int:
+    return x + 1129
+
+def func1130(x: Int) -> Int:
+    return x + 1130
+
+def func1131(x: Int) -> Int:
+    return x + 1131
+
+def func1132(x: Int) -> Int:
+    return x + 1132
+
+def func1133(x: Int) -> Int:
+    return x + 1133
+
+def func1134(x: Int) -> Int:
+    return x + 1134
+
+def func1135(x: Int) -> Int:
+    return x + 1135
+
+def func1136(x: Int) -> Int:
+    return x + 1136
+
+def func1137(x: Int) -> Int:
+    return x + 1137
+
+def func1138(x: Int) -> Int:
+    return x + 1138
+
+def func1139(x: Int) -> Int:
+    return x + 1139
+
+def func1140(x: Int) -> Int:
+    return x + 1140
+
+def func1141(x: Int) -> Int:
+    return x + 1141
+
+def func1142(x: Int) -> Int:
+    return x + 1142
+
+def func1143(x: Int) -> Int:
+    return x + 1143
+
+def func1144(x: Int) -> Int:
+    return x + 1144
+
+def func1145(x: Int) -> Int:
+    return x + 1145
+
+def func1146(x: Int) -> Int:
+    return x + 1146
+
+def func1147(x: Int) -> Int:
+    return x + 1147
+
+def func1148(x: Int) -> Int:
+    return x + 1148
+
+def func1149(x: Int) -> Int:
+    return x + 1149
+
+def func1150(x: Int) -> Int:
+    return x + 1150
+
+def func1151(x: Int) -> Int:
+    return x + 1151
+
+def func1152(x: Int) -> Int:
+    return x + 1152
+
+def func1153(x: Int) -> Int:
+    return x + 1153
+
+def func1154(x: Int) -> Int:
+    return x + 1154
+
+def func1155(x: Int) -> Int:
+    return x + 1155
+
+def func1156(x: Int) -> Int:
+    return x + 1156
+
+def func1157(x: Int) -> Int:
+    return x + 1157
+
+def func1158(x: Int) -> Int:
+    return x + 1158
+
+def func1159(x: Int) -> Int:
+    return x + 1159
+
+def func1160(x: Int) -> Int:
+    return x + 1160
+
+def func1161(x: Int) -> Int:
+    return x + 1161
+
+def func1162(x: Int) -> Int:
+    return x + 1162
+
+def func1163(x: Int) -> Int:
+    return x + 1163
+
+def func1164(x: Int) -> Int:
+    return x + 1164
+
+def func1165(x: Int) -> Int:
+    return x + 1165
+
+def func1166(x: Int) -> Int:
+    return x + 1166
+
+def func1167(x: Int) -> Int:
+    return x + 1167
+
+def func1168(x: Int) -> Int:
+    return x + 1168
+
+def func1169(x: Int) -> Int:
+    return x + 1169
+
+def func1170(x: Int) -> Int:
+    return x + 1170
+
+def func1171(x: Int) -> Int:
+    return x + 1171
+
+def func1172(x: Int) -> Int:
+    return x + 1172
+
+def func1173(x: Int) -> Int:
+    return x + 1173
+
+def func1174(x: Int) -> Int:
+    return x + 1174
+
+def func1175(x: Int) -> Int:
+    return x + 1175
+
+def func1176(x: Int) -> Int:
+    return x + 1176
+
+def func1177(x: Int) -> Int:
+    return x + 1177
+
+def func1178(x: Int) -> Int:
+    return x + 1178
+
+def func1179(x: Int) -> Int:
+    return x + 1179
+
+def func1180(x: Int) -> Int:
+    return x + 1180
+
+def func1181(x: Int) -> Int:
+    return x + 1181
+
+def func1182(x: Int) -> Int:
+    return x + 1182
+
+def func1183(x: Int) -> Int:
+    return x + 1183
+
+def func1184(x: Int) -> Int:
+    return x + 1184
+
+def func1185(x: Int) -> Int:
+    return x + 1185
+
+def func1186(x: Int) -> Int:
+    return x + 1186
+
+def func1187(x: Int) -> Int:
+    return x + 1187
+
+def func1188(x: Int) -> Int:
+    return x + 1188
+
+def func1189(x: Int) -> Int:
+    return x + 1189
+
+def func1190(x: Int) -> Int:
+    return x + 1190
+
+def func1191(x: Int) -> Int:
+    return x + 1191
+
+def func1192(x: Int) -> Int:
+    return x + 1192
+
+def func1193(x: Int) -> Int:
+    return x + 1193
+
+def func1194(x: Int) -> Int:
+    return x + 1194
+
+def func1195(x: Int) -> Int:
+    return x + 1195
+
+def func1196(x: Int) -> Int:
+    return x + 1196
+
+def func1197(x: Int) -> Int:
+    return x + 1197
+
+def func1198(x: Int) -> Int:
+    return x + 1198
+
+def func1199(x: Int) -> Int:
+    return x + 1199
+
+def func1200(x: Int) -> Int:
+    return x + 1200
+
+def func1201(x: Int) -> Int:
+    return x + 1201
+
+def func1202(x: Int) -> Int:
+    return x + 1202
+
+def func1203(x: Int) -> Int:
+    return x + 1203
+
+def func1204(x: Int) -> Int:
+    return x + 1204
+
+def func1205(x: Int) -> Int:
+    return x + 1205
+
+def func1206(x: Int) -> Int:
+    return x + 1206
+
+def func1207(x: Int) -> Int:
+    return x + 1207
+
+def func1208(x: Int) -> Int:
+    return x + 1208
+
+def func1209(x: Int) -> Int:
+    return x + 1209
+
+def func1210(x: Int) -> Int:
+    return x + 1210
+
+def func1211(x: Int) -> Int:
+    return x + 1211
+
+def func1212(x: Int) -> Int:
+    return x + 1212
+
+def func1213(x: Int) -> Int:
+    return x + 1213
+
+def func1214(x: Int) -> Int:
+    return x + 1214
+
+def func1215(x: Int) -> Int:
+    return x + 1215
+
+def func1216(x: Int) -> Int:
+    return x + 1216
+
+def func1217(x: Int) -> Int:
+    return x + 1217
+
+def func1218(x: Int) -> Int:
+    return x + 1218
+
+def func1219(x: Int) -> Int:
+    return x + 1219
+
+def func1220(x: Int) -> Int:
+    return x + 1220
+
+def func1221(x: Int) -> Int:
+    return x + 1221
+
+def func1222(x: Int) -> Int:
+    return x + 1222
+
+def func1223(x: Int) -> Int:
+    return x + 1223
+
+def func1224(x: Int) -> Int:
+    return x + 1224
+
+def func1225(x: Int) -> Int:
+    return x + 1225
+
+def func1226(x: Int) -> Int:
+    return x + 1226
+
+def func1227(x: Int) -> Int:
+    return x + 1227
+
+def func1228(x: Int) -> Int:
+    return x + 1228
+
+def func1229(x: Int) -> Int:
+    return x + 1229
+
+def func1230(x: Int) -> Int:
+    return x + 1230
+
+def func1231(x: Int) -> Int:
+    return x + 1231
+
+def func1232(x: Int) -> Int:
+    return x + 1232
+
+def func1233(x: Int) -> Int:
+    return x + 1233
+
+def func1234(x: Int) -> Int:
+    return x + 1234
+
+def func1235(x: Int) -> Int:
+    return x + 1235
+
+def func1236(x: Int) -> Int:
+    return x + 1236
+
+def func1237(x: Int) -> Int:
+    return x + 1237
+
+def func1238(x: Int) -> Int:
+    return x + 1238
+
+def func1239(x: Int) -> Int:
+    return x + 1239
+
+def func1240(x: Int) -> Int:
+    return x + 1240
+
+def func1241(x: Int) -> Int:
+    return x + 1241
+
+def func1242(x: Int) -> Int:
+    return x + 1242
+
+def func1243(x: Int) -> Int:
+    return x + 1243
+
+def func1244(x: Int) -> Int:
+    return x + 1244
+
+def func1245(x: Int) -> Int:
+    return x + 1245
+
+def func1246(x: Int) -> Int:
+    return x + 1246
+
+def func1247(x: Int) -> Int:
+    return x + 1247
+
+def func1248(x: Int) -> Int:
+    return x + 1248
+
+def func1249(x: Int) -> Int:
+    return x + 1249
+
+def func1250(x: Int) -> Int:
+    return x + 1250
+
+def func1251(x: Int) -> Int:
+    return x + 1251
+
+def func1252(x: Int) -> Int:
+    return x + 1252
+
+def func1253(x: Int) -> Int:
+    return x + 1253
+
+def func1254(x: Int) -> Int:
+    return x + 1254
+
+def func1255(x: Int) -> Int:
+    return x + 1255
+
+def func1256(x: Int) -> Int:
+    return x + 1256
+
+def func1257(x: Int) -> Int:
+    return x + 1257
+
+def func1258(x: Int) -> Int:
+    return x + 1258
+
+def func1259(x: Int) -> Int:
+    return x + 1259
+
+def func1260(x: Int) -> Int:
+    return x + 1260
+
+def func1261(x: Int) -> Int:
+    return x + 1261
+
+def func1262(x: Int) -> Int:
+    return x + 1262
+
+def func1263(x: Int) -> Int:
+    return x + 1263
+
+def func1264(x: Int) -> Int:
+    return x + 1264
+
+def func1265(x: Int) -> Int:
+    return x + 1265
+
+def func1266(x: Int) -> Int:
+    return x + 1266
+
+def func1267(x: Int) -> Int:
+    return x + 1267
+
+def func1268(x: Int) -> Int:
+    return x + 1268
+
+def func1269(x: Int) -> Int:
+    return x + 1269
+
+def func1270(x: Int) -> Int:
+    return x + 1270
+
+def func1271(x: Int) -> Int:
+    return x + 1271
+
+def func1272(x: Int) -> Int:
+    return x + 1272
+
+def func1273(x: Int) -> Int:
+    return x + 1273
+
+def func1274(x: Int) -> Int:
+    return x + 1274
+
+def func1275(x: Int) -> Int:
+    return x + 1275
+
+def func1276(x: Int) -> Int:
+    return x + 1276
+
+def func1277(x: Int) -> Int:
+    return x + 1277
+
+def func1278(x: Int) -> Int:
+    return x + 1278
+
+def func1279(x: Int) -> Int:
+    return x + 1279
+
+def func1280(x: Int) -> Int:
+    return x + 1280
+
+def func1281(x: Int) -> Int:
+    return x + 1281
+
+def func1282(x: Int) -> Int:
+    return x + 1282
+
+def func1283(x: Int) -> Int:
+    return x + 1283
+
+def func1284(x: Int) -> Int:
+    return x + 1284
+
+def func1285(x: Int) -> Int:
+    return x + 1285
+
+def func1286(x: Int) -> Int:
+    return x + 1286
+
+def func1287(x: Int) -> Int:
+    return x + 1287
+
+def func1288(x: Int) -> Int:
+    return x + 1288
+
+def func1289(x: Int) -> Int:
+    return x + 1289
+
+def func1290(x: Int) -> Int:
+    return x + 1290
+
+def func1291(x: Int) -> Int:
+    return x + 1291
+
+def func1292(x: Int) -> Int:
+    return x + 1292
+
+def func1293(x: Int) -> Int:
+    return x + 1293
+
+def func1294(x: Int) -> Int:
+    return x + 1294
+
+def func1295(x: Int) -> Int:
+    return x + 1295
+
+def func1296(x: Int) -> Int:
+    return x + 1296
+
+def func1297(x: Int) -> Int:
+    return x + 1297
+
+def func1298(x: Int) -> Int:
+    return x + 1298
+
+def func1299(x: Int) -> Int:
+    return x + 1299
+
+def func1300(x: Int) -> Int:
+    return x + 1300
+
+def func1301(x: Int) -> Int:
+    return x + 1301
+
+def func1302(x: Int) -> Int:
+    return x + 1302
+
+def func1303(x: Int) -> Int:
+    return x + 1303
+
+def func1304(x: Int) -> Int:
+    return x + 1304
+
+def func1305(x: Int) -> Int:
+    return x + 1305
+
+def func1306(x: Int) -> Int:
+    return x + 1306
+
+def func1307(x: Int) -> Int:
+    return x + 1307
+
+def func1308(x: Int) -> Int:
+    return x + 1308
+
+def func1309(x: Int) -> Int:
+    return x + 1309
+
+def func1310(x: Int) -> Int:
+    return x + 1310
+
+def func1311(x: Int) -> Int:
+    return x + 1311
+
+def func1312(x: Int) -> Int:
+    return x + 1312
+
+def func1313(x: Int) -> Int:
+    return x + 1313
+
+def func1314(x: Int) -> Int:
+    return x + 1314
+
+def func1315(x: Int) -> Int:
+    return x + 1315
+
+def func1316(x: Int) -> Int:
+    return x + 1316
+
+def func1317(x: Int) -> Int:
+    return x + 1317
+
+def func1318(x: Int) -> Int:
+    return x + 1318
+
+def func1319(x: Int) -> Int:
+    return x + 1319
+
+def func1320(x: Int) -> Int:
+    return x + 1320
+
+def func1321(x: Int) -> Int:
+    return x + 1321
+
+def func1322(x: Int) -> Int:
+    return x + 1322
+
+def func1323(x: Int) -> Int:
+    return x + 1323
+
+def func1324(x: Int) -> Int:
+    return x + 1324
+
+def func1325(x: Int) -> Int:
+    return x + 1325
+
+def func1326(x: Int) -> Int:
+    return x + 1326
+
+def func1327(x: Int) -> Int:
+    return x + 1327
+
+def func1328(x: Int) -> Int:
+    return x + 1328
+
+def func1329(x: Int) -> Int:
+    return x + 1329
+
+def func1330(x: Int) -> Int:
+    return x + 1330
+
+def func1331(x: Int) -> Int:
+    return x + 1331
+
+def func1332(x: Int) -> Int:
+    return x + 1332
+
+def func1333(x: Int) -> Int:
+    return x + 1333
+
+def func1334(x: Int) -> Int:
+    return x + 1334
+
+def func1335(x: Int) -> Int:
+    return x + 1335
+
+def func1336(x: Int) -> Int:
+    return x + 1336
+
+def func1337(x: Int) -> Int:
+    return x + 1337
+
+def func1338(x: Int) -> Int:
+    return x + 1338
+
+def func1339(x: Int) -> Int:
+    return x + 1339
+
+def func1340(x: Int) -> Int:
+    return x + 1340
+
+def func1341(x: Int) -> Int:
+    return x + 1341
+
+def func1342(x: Int) -> Int:
+    return x + 1342
+
+def func1343(x: Int) -> Int:
+    return x + 1343
+
+def func1344(x: Int) -> Int:
+    return x + 1344
+
+def func1345(x: Int) -> Int:
+    return x + 1345
+
+def func1346(x: Int) -> Int:
+    return x + 1346
+
+def func1347(x: Int) -> Int:
+    return x + 1347
+
+def func1348(x: Int) -> Int:
+    return x + 1348
+
+def func1349(x: Int) -> Int:
+    return x + 1349
+
+def func1350(x: Int) -> Int:
+    return x + 1350
+
+def func1351(x: Int) -> Int:
+    return x + 1351
+
+def func1352(x: Int) -> Int:
+    return x + 1352
+
+def func1353(x: Int) -> Int:
+    return x + 1353
+
+def func1354(x: Int) -> Int:
+    return x + 1354
+
+def func1355(x: Int) -> Int:
+    return x + 1355
+
+def func1356(x: Int) -> Int:
+    return x + 1356
+
+def func1357(x: Int) -> Int:
+    return x + 1357
+
+def func1358(x: Int) -> Int:
+    return x + 1358
+
+def func1359(x: Int) -> Int:
+    return x + 1359
+
+def func1360(x: Int) -> Int:
+    return x + 1360
+
+def func1361(x: Int) -> Int:
+    return x + 1361
+
+def func1362(x: Int) -> Int:
+    return x + 1362
+
+def func1363(x: Int) -> Int:
+    return x + 1363
+
+def func1364(x: Int) -> Int:
+    return x + 1364
+
+def func1365(x: Int) -> Int:
+    return x + 1365
+
+def func1366(x: Int) -> Int:
+    return x + 1366
+
+def func1367(x: Int) -> Int:
+    return x + 1367
+
+def func1368(x: Int) -> Int:
+    return x + 1368
+
+def func1369(x: Int) -> Int:
+    return x + 1369
+
+def func1370(x: Int) -> Int:
+    return x + 1370
+
+def func1371(x: Int) -> Int:
+    return x + 1371
+
+def func1372(x: Int) -> Int:
+    return x + 1372
+
+def func1373(x: Int) -> Int:
+    return x + 1373
+
+def func1374(x: Int) -> Int:
+    return x + 1374
+
+def func1375(x: Int) -> Int:
+    return x + 1375
+
+def func1376(x: Int) -> Int:
+    return x + 1376
+
+def func1377(x: Int) -> Int:
+    return x + 1377
+
+def func1378(x: Int) -> Int:
+    return x + 1378
+
+def func1379(x: Int) -> Int:
+    return x + 1379
+
+def func1380(x: Int) -> Int:
+    return x + 1380
+
+def func1381(x: Int) -> Int:
+    return x + 1381
+
+def func1382(x: Int) -> Int:
+    return x + 1382
+
+def func1383(x: Int) -> Int:
+    return x + 1383
+
+def func1384(x: Int) -> Int:
+    return x + 1384
+
+def func1385(x: Int) -> Int:
+    return x + 1385
+
+def func1386(x: Int) -> Int:
+    return x + 1386
+
+def func1387(x: Int) -> Int:
+    return x + 1387
+
+def func1388(x: Int) -> Int:
+    return x + 1388
+
+def func1389(x: Int) -> Int:
+    return x + 1389
+
+def func1390(x: Int) -> Int:
+    return x + 1390
+
+def func1391(x: Int) -> Int:
+    return x + 1391
+
+def func1392(x: Int) -> Int:
+    return x + 1392
+
+def func1393(x: Int) -> Int:
+    return x + 1393
+
+def func1394(x: Int) -> Int:
+    return x + 1394
+
+def func1395(x: Int) -> Int:
+    return x + 1395
+
+def func1396(x: Int) -> Int:
+    return x + 1396
+
+def func1397(x: Int) -> Int:
+    return x + 1397
+
+def func1398(x: Int) -> Int:
+    return x + 1398
+
+def func1399(x: Int) -> Int:
+    return x + 1399
+
+def func1400(x: Int) -> Int:
+    return x + 1400
+
+def func1401(x: Int) -> Int:
+    return x + 1401
+
+def func1402(x: Int) -> Int:
+    return x + 1402
+
+def func1403(x: Int) -> Int:
+    return x + 1403
+
+def func1404(x: Int) -> Int:
+    return x + 1404
+
+def func1405(x: Int) -> Int:
+    return x + 1405
+
+def func1406(x: Int) -> Int:
+    return x + 1406
+
+def func1407(x: Int) -> Int:
+    return x + 1407
+
+def func1408(x: Int) -> Int:
+    return x + 1408
+
+def func1409(x: Int) -> Int:
+    return x + 1409
+
+def func1410(x: Int) -> Int:
+    return x + 1410
+
+def func1411(x: Int) -> Int:
+    return x + 1411
+
+def func1412(x: Int) -> Int:
+    return x + 1412
+
+def func1413(x: Int) -> Int:
+    return x + 1413
+
+def func1414(x: Int) -> Int:
+    return x + 1414
+
+def func1415(x: Int) -> Int:
+    return x + 1415
+
+def func1416(x: Int) -> Int:
+    return x + 1416
+
+def func1417(x: Int) -> Int:
+    return x + 1417
+
+def func1418(x: Int) -> Int:
+    return x + 1418
+
+def func1419(x: Int) -> Int:
+    return x + 1419
+
+def func1420(x: Int) -> Int:
+    return x + 1420
+
+def func1421(x: Int) -> Int:
+    return x + 1421
+
+def func1422(x: Int) -> Int:
+    return x + 1422
+
+def func1423(x: Int) -> Int:
+    return x + 1423
+
+def func1424(x: Int) -> Int:
+    return x + 1424
+
+def func1425(x: Int) -> Int:
+    return x + 1425
+
+def func1426(x: Int) -> Int:
+    return x + 1426
+
+def func1427(x: Int) -> Int:
+    return x + 1427
+
+def func1428(x: Int) -> Int:
+    return x + 1428
+
+def func1429(x: Int) -> Int:
+    return x + 1429
+
+def func1430(x: Int) -> Int:
+    return x + 1430
+
+def func1431(x: Int) -> Int:
+    return x + 1431
+
+def func1432(x: Int) -> Int:
+    return x + 1432
+
+def func1433(x: Int) -> Int:
+    return x + 1433
+
+def func1434(x: Int) -> Int:
+    return x + 1434
+
+def func1435(x: Int) -> Int:
+    return x + 1435
+
+def func1436(x: Int) -> Int:
+    return x + 1436
+
+def func1437(x: Int) -> Int:
+    return x + 1437
+
+def func1438(x: Int) -> Int:
+    return x + 1438
+
+def func1439(x: Int) -> Int:
+    return x + 1439
+
+def func1440(x: Int) -> Int:
+    return x + 1440
+
+def func1441(x: Int) -> Int:
+    return x + 1441
+
+def func1442(x: Int) -> Int:
+    return x + 1442
+
+def func1443(x: Int) -> Int:
+    return x + 1443
+
+def func1444(x: Int) -> Int:
+    return x + 1444
+
+def func1445(x: Int) -> Int:
+    return x + 1445
+
+def func1446(x: Int) -> Int:
+    return x + 1446
+
+def func1447(x: Int) -> Int:
+    return x + 1447
+
+def func1448(x: Int) -> Int:
+    return x + 1448
+
+def func1449(x: Int) -> Int:
+    return x + 1449
+
+def func1450(x: Int) -> Int:
+    return x + 1450
+
+def func1451(x: Int) -> Int:
+    return x + 1451
+
+def func1452(x: Int) -> Int:
+    return x + 1452
+
+def func1453(x: Int) -> Int:
+    return x + 1453
+
+def func1454(x: Int) -> Int:
+    return x + 1454
+
+def func1455(x: Int) -> Int:
+    return x + 1455
+
+def func1456(x: Int) -> Int:
+    return x + 1456
+
+def func1457(x: Int) -> Int:
+    return x + 1457
+
+def func1458(x: Int) -> Int:
+    return x + 1458
+
+def func1459(x: Int) -> Int:
+    return x + 1459
+
+def func1460(x: Int) -> Int:
+    return x + 1460
+
+def func1461(x: Int) -> Int:
+    return x + 1461
+
+def func1462(x: Int) -> Int:
+    return x + 1462
+
+def func1463(x: Int) -> Int:
+    return x + 1463
+
+def func1464(x: Int) -> Int:
+    return x + 1464
+
+def func1465(x: Int) -> Int:
+    return x + 1465
+
+def func1466(x: Int) -> Int:
+    return x + 1466
+
+def func1467(x: Int) -> Int:
+    return x + 1467
+
+def func1468(x: Int) -> Int:
+    return x + 1468
+
+def func1469(x: Int) -> Int:
+    return x + 1469
+
+def func1470(x: Int) -> Int:
+    return x + 1470
+
+def func1471(x: Int) -> Int:
+    return x + 1471
+
+def func1472(x: Int) -> Int:
+    return x + 1472
+
+def func1473(x: Int) -> Int:
+    return x + 1473
+
+def func1474(x: Int) -> Int:
+    return x + 1474
+
+def func1475(x: Int) -> Int:
+    return x + 1475
+
+def func1476(x: Int) -> Int:
+    return x + 1476
+
+def func1477(x: Int) -> Int:
+    return x + 1477
+
+def func1478(x: Int) -> Int:
+    return x + 1478
+
+def func1479(x: Int) -> Int:
+    return x + 1479
+
+def func1480(x: Int) -> Int:
+    return x + 1480
+
+def func1481(x: Int) -> Int:
+    return x + 1481
+
+def func1482(x: Int) -> Int:
+    return x + 1482
+
+def func1483(x: Int) -> Int:
+    return x + 1483
+
+def func1484(x: Int) -> Int:
+    return x + 1484
+
+def func1485(x: Int) -> Int:
+    return x + 1485
+
+def func1486(x: Int) -> Int:
+    return x + 1486
+
+def func1487(x: Int) -> Int:
+    return x + 1487
+
+def func1488(x: Int) -> Int:
+    return x + 1488
+
+def func1489(x: Int) -> Int:
+    return x + 1489
+
+def func1490(x: Int) -> Int:
+    return x + 1490
+
+def func1491(x: Int) -> Int:
+    return x + 1491
+
+def func1492(x: Int) -> Int:
+    return x + 1492
+
+def func1493(x: Int) -> Int:
+    return x + 1493
+
+def func1494(x: Int) -> Int:
+    return x + 1494
+
+def func1495(x: Int) -> Int:
+    return x + 1495
+
+def func1496(x: Int) -> Int:
+    return x + 1496
+
+def func1497(x: Int) -> Int:
+    return x + 1497
+
+def func1498(x: Int) -> Int:
+    return x + 1498
+
+def func1499(x: Int) -> Int:
+    return x + 1499
+
+def func1500(x: Int) -> Int:
+    return x + 1500
+
+def func1501(x: Int) -> Int:
+    return x + 1501
+
+def func1502(x: Int) -> Int:
+    return x + 1502
+
+def func1503(x: Int) -> Int:
+    return x + 1503
+
+def func1504(x: Int) -> Int:
+    return x + 1504
+
+def func1505(x: Int) -> Int:
+    return x + 1505
+
+def func1506(x: Int) -> Int:
+    return x + 1506
+
+def func1507(x: Int) -> Int:
+    return x + 1507
+
+def func1508(x: Int) -> Int:
+    return x + 1508
+
+def func1509(x: Int) -> Int:
+    return x + 1509
+
+def func1510(x: Int) -> Int:
+    return x + 1510
+
+def func1511(x: Int) -> Int:
+    return x + 1511
+
+def func1512(x: Int) -> Int:
+    return x + 1512
+
+def func1513(x: Int) -> Int:
+    return x + 1513
+
+def func1514(x: Int) -> Int:
+    return x + 1514
+
+def func1515(x: Int) -> Int:
+    return x + 1515
+
+def func1516(x: Int) -> Int:
+    return x + 1516
+
+def func1517(x: Int) -> Int:
+    return x + 1517
+
+def func1518(x: Int) -> Int:
+    return x + 1518
+
+def func1519(x: Int) -> Int:
+    return x + 1519
+
+def func1520(x: Int) -> Int:
+    return x + 1520
+
+def func1521(x: Int) -> Int:
+    return x + 1521
+
+def func1522(x: Int) -> Int:
+    return x + 1522
+
+def func1523(x: Int) -> Int:
+    return x + 1523
+
+def func1524(x: Int) -> Int:
+    return x + 1524
+
+def func1525(x: Int) -> Int:
+    return x + 1525
+
+def func1526(x: Int) -> Int:
+    return x + 1526
+
+def func1527(x: Int) -> Int:
+    return x + 1527
+
+def func1528(x: Int) -> Int:
+    return x + 1528
+
+def func1529(x: Int) -> Int:
+    return x + 1529
+
+def func1530(x: Int) -> Int:
+    return x + 1530
+
+def func1531(x: Int) -> Int:
+    return x + 1531
+
+def func1532(x: Int) -> Int:
+    return x + 1532
+
+def func1533(x: Int) -> Int:
+    return x + 1533
+
+def func1534(x: Int) -> Int:
+    return x + 1534
+
+def func1535(x: Int) -> Int:
+    return x + 1535
+
+def func1536(x: Int) -> Int:
+    return x + 1536
+
+def func1537(x: Int) -> Int:
+    return x + 1537
+
+def func1538(x: Int) -> Int:
+    return x + 1538
+
+def func1539(x: Int) -> Int:
+    return x + 1539
+
+def func1540(x: Int) -> Int:
+    return x + 1540
+
+def func1541(x: Int) -> Int:
+    return x + 1541
+
+def func1542(x: Int) -> Int:
+    return x + 1542
+
+def func1543(x: Int) -> Int:
+    return x + 1543
+
+def func1544(x: Int) -> Int:
+    return x + 1544
+
+def func1545(x: Int) -> Int:
+    return x + 1545
+
+def func1546(x: Int) -> Int:
+    return x + 1546
+
+def func1547(x: Int) -> Int:
+    return x + 1547
+
+def func1548(x: Int) -> Int:
+    return x + 1548
+
+def func1549(x: Int) -> Int:
+    return x + 1549
+
+def func1550(x: Int) -> Int:
+    return x + 1550
+
+def func1551(x: Int) -> Int:
+    return x + 1551
+
+def func1552(x: Int) -> Int:
+    return x + 1552
+
+def func1553(x: Int) -> Int:
+    return x + 1553
+
+def func1554(x: Int) -> Int:
+    return x + 1554
+
+def func1555(x: Int) -> Int:
+    return x + 1555
+
+def func1556(x: Int) -> Int:
+    return x + 1556
+
+def func1557(x: Int) -> Int:
+    return x + 1557
+
+def func1558(x: Int) -> Int:
+    return x + 1558
+
+def func1559(x: Int) -> Int:
+    return x + 1559
+
+def func1560(x: Int) -> Int:
+    return x + 1560
+
+def func1561(x: Int) -> Int:
+    return x + 1561
+
+def func1562(x: Int) -> Int:
+    return x + 1562
+
+def func1563(x: Int) -> Int:
+    return x + 1563
+
+def func1564(x: Int) -> Int:
+    return x + 1564
+
+def func1565(x: Int) -> Int:
+    return x + 1565
+
+def func1566(x: Int) -> Int:
+    return x + 1566
+
+def func1567(x: Int) -> Int:
+    return x + 1567
+
+def func1568(x: Int) -> Int:
+    return x + 1568
+
+def func1569(x: Int) -> Int:
+    return x + 1569
+
+def func1570(x: Int) -> Int:
+    return x + 1570
+
+def func1571(x: Int) -> Int:
+    return x + 1571
+
+def func1572(x: Int) -> Int:
+    return x + 1572
+
+def func1573(x: Int) -> Int:
+    return x + 1573
+
+def func1574(x: Int) -> Int:
+    return x + 1574
+
+def func1575(x: Int) -> Int:
+    return x + 1575
+
+def func1576(x: Int) -> Int:
+    return x + 1576
+
+def func1577(x: Int) -> Int:
+    return x + 1577
+
+def func1578(x: Int) -> Int:
+    return x + 1578
+
+def func1579(x: Int) -> Int:
+    return x + 1579
+
+def func1580(x: Int) -> Int:
+    return x + 1580
+
+def func1581(x: Int) -> Int:
+    return x + 1581
+
+def func1582(x: Int) -> Int:
+    return x + 1582
+
+def func1583(x: Int) -> Int:
+    return x + 1583
+
+def func1584(x: Int) -> Int:
+    return x + 1584
+
+def func1585(x: Int) -> Int:
+    return x + 1585
+
+def func1586(x: Int) -> Int:
+    return x + 1586
+
+def func1587(x: Int) -> Int:
+    return x + 1587
+
+def func1588(x: Int) -> Int:
+    return x + 1588
+
+def func1589(x: Int) -> Int:
+    return x + 1589
+
+def func1590(x: Int) -> Int:
+    return x + 1590
+
+def func1591(x: Int) -> Int:
+    return x + 1591
+
+def func1592(x: Int) -> Int:
+    return x + 1592
+
+def func1593(x: Int) -> Int:
+    return x + 1593
+
+def func1594(x: Int) -> Int:
+    return x + 1594
+
+def func1595(x: Int) -> Int:
+    return x + 1595
+
+def func1596(x: Int) -> Int:
+    return x + 1596
+
+def func1597(x: Int) -> Int:
+    return x + 1597
+
+def func1598(x: Int) -> Int:
+    return x + 1598
+
+def func1599(x: Int) -> Int:
+    return x + 1599
+
+def func1600(x: Int) -> Int:
+    return x + 1600
+
+def func1601(x: Int) -> Int:
+    return x + 1601
+
+def func1602(x: Int) -> Int:
+    return x + 1602
+
+def func1603(x: Int) -> Int:
+    return x + 1603
+
+def func1604(x: Int) -> Int:
+    return x + 1604
+
+def func1605(x: Int) -> Int:
+    return x + 1605
+
+def func1606(x: Int) -> Int:
+    return x + 1606
+
+def func1607(x: Int) -> Int:
+    return x + 1607
+
+def func1608(x: Int) -> Int:
+    return x + 1608
+
+def func1609(x: Int) -> Int:
+    return x + 1609
+
+def func1610(x: Int) -> Int:
+    return x + 1610
+
+def func1611(x: Int) -> Int:
+    return x + 1611
+
+def func1612(x: Int) -> Int:
+    return x + 1612
+
+def func1613(x: Int) -> Int:
+    return x + 1613
+
+def func1614(x: Int) -> Int:
+    return x + 1614
+
+def func1615(x: Int) -> Int:
+    return x + 1615
+
+def func1616(x: Int) -> Int:
+    return x + 1616
+
+def func1617(x: Int) -> Int:
+    return x + 1617
+
+def func1618(x: Int) -> Int:
+    return x + 1618
+
+def func1619(x: Int) -> Int:
+    return x + 1619
+
+def func1620(x: Int) -> Int:
+    return x + 1620
+
+def func1621(x: Int) -> Int:
+    return x + 1621
+
+def func1622(x: Int) -> Int:
+    return x + 1622
+
+def func1623(x: Int) -> Int:
+    return x + 1623
+
+def func1624(x: Int) -> Int:
+    return x + 1624
+
+def func1625(x: Int) -> Int:
+    return x + 1625
+
+def func1626(x: Int) -> Int:
+    return x + 1626
+
+def func1627(x: Int) -> Int:
+    return x + 1627
+
+def func1628(x: Int) -> Int:
+    return x + 1628
+
+def func1629(x: Int) -> Int:
+    return x + 1629
+
+def func1630(x: Int) -> Int:
+    return x + 1630
+
+def func1631(x: Int) -> Int:
+    return x + 1631
+
+def func1632(x: Int) -> Int:
+    return x + 1632
+
+def func1633(x: Int) -> Int:
+    return x + 1633
+
+def func1634(x: Int) -> Int:
+    return x + 1634
+
+def func1635(x: Int) -> Int:
+    return x + 1635
+
+def func1636(x: Int) -> Int:
+    return x + 1636
+
+def func1637(x: Int) -> Int:
+    return x + 1637
+
+def func1638(x: Int) -> Int:
+    return x + 1638
+
+def func1639(x: Int) -> Int:
+    return x + 1639
+
+def func1640(x: Int) -> Int:
+    return x + 1640
+
+def func1641(x: Int) -> Int:
+    return x + 1641
+
+def func1642(x: Int) -> Int:
+    return x + 1642
+
+def func1643(x: Int) -> Int:
+    return x + 1643
+
+def func1644(x: Int) -> Int:
+    return x + 1644
+
+def func1645(x: Int) -> Int:
+    return x + 1645
+
+def func1646(x: Int) -> Int:
+    return x + 1646
+
+def func1647(x: Int) -> Int:
+    return x + 1647
+
+def func1648(x: Int) -> Int:
+    return x + 1648
+
+def func1649(x: Int) -> Int:
+    return x + 1649
+
+def func1650(x: Int) -> Int:
+    return x + 1650
+
+def func1651(x: Int) -> Int:
+    return x + 1651
+
+def func1652(x: Int) -> Int:
+    return x + 1652
+
+def func1653(x: Int) -> Int:
+    return x + 1653
+
+def func1654(x: Int) -> Int:
+    return x + 1654
+
+def func1655(x: Int) -> Int:
+    return x + 1655
+
+def func1656(x: Int) -> Int:
+    return x + 1656
+
+def func1657(x: Int) -> Int:
+    return x + 1657
+
+def func1658(x: Int) -> Int:
+    return x + 1658
+
+def func1659(x: Int) -> Int:
+    return x + 1659
+
+def func1660(x: Int) -> Int:
+    return x + 1660
+
+def func1661(x: Int) -> Int:
+    return x + 1661
+
+def func1662(x: Int) -> Int:
+    return x + 1662
+
+def func1663(x: Int) -> Int:
+    return x + 1663
+
+def func1664(x: Int) -> Int:
+    return x + 1664
+
+def func1665(x: Int) -> Int:
+    return x + 1665
+
+def func1666(x: Int) -> Int:
+    return x + 1666
+
+def func1667(x: Int) -> Int:
+    return x + 1667
+
+def func1668(x: Int) -> Int:
+    return x + 1668
+
+def func1669(x: Int) -> Int:
+    return x + 1669
+
+def func1670(x: Int) -> Int:
+    return x + 1670
+
+def func1671(x: Int) -> Int:
+    return x + 1671
+
+def func1672(x: Int) -> Int:
+    return x + 1672
+
+def func1673(x: Int) -> Int:
+    return x + 1673
+
+def func1674(x: Int) -> Int:
+    return x + 1674
+
+def func1675(x: Int) -> Int:
+    return x + 1675
+
+def func1676(x: Int) -> Int:
+    return x + 1676
+
+def func1677(x: Int) -> Int:
+    return x + 1677
+
+def func1678(x: Int) -> Int:
+    return x + 1678
+
+def func1679(x: Int) -> Int:
+    return x + 1679
+
+def func1680(x: Int) -> Int:
+    return x + 1680
+
+def func1681(x: Int) -> Int:
+    return x + 1681
+
+def func1682(x: Int) -> Int:
+    return x + 1682
+
+def func1683(x: Int) -> Int:
+    return x + 1683
+
+def func1684(x: Int) -> Int:
+    return x + 1684
+
+def func1685(x: Int) -> Int:
+    return x + 1685
+
+def func1686(x: Int) -> Int:
+    return x + 1686
+
+def func1687(x: Int) -> Int:
+    return x + 1687
+
+def func1688(x: Int) -> Int:
+    return x + 1688
+
+def func1689(x: Int) -> Int:
+    return x + 1689
+
+def func1690(x: Int) -> Int:
+    return x + 1690
+
+def func1691(x: Int) -> Int:
+    return x + 1691
+
+def func1692(x: Int) -> Int:
+    return x + 1692
+
+def func1693(x: Int) -> Int:
+    return x + 1693
+
+def func1694(x: Int) -> Int:
+    return x + 1694
+
+def func1695(x: Int) -> Int:
+    return x + 1695
+
+def func1696(x: Int) -> Int:
+    return x + 1696
+
+def func1697(x: Int) -> Int:
+    return x + 1697
+
+def func1698(x: Int) -> Int:
+    return x + 1698
+
+def func1699(x: Int) -> Int:
+    return x + 1699
+
+def func1700(x: Int) -> Int:
+    return x + 1700
+
+def func1701(x: Int) -> Int:
+    return x + 1701
+
+def func1702(x: Int) -> Int:
+    return x + 1702
+
+def func1703(x: Int) -> Int:
+    return x + 1703
+
+def func1704(x: Int) -> Int:
+    return x + 1704
+
+def func1705(x: Int) -> Int:
+    return x + 1705
+
+def func1706(x: Int) -> Int:
+    return x + 1706
+
+def func1707(x: Int) -> Int:
+    return x + 1707
+
+def func1708(x: Int) -> Int:
+    return x + 1708
+
+def func1709(x: Int) -> Int:
+    return x + 1709
+
+def func1710(x: Int) -> Int:
+    return x + 1710
+
+def func1711(x: Int) -> Int:
+    return x + 1711
+
+def func1712(x: Int) -> Int:
+    return x + 1712
+
+def func1713(x: Int) -> Int:
+    return x + 1713
+
+def func1714(x: Int) -> Int:
+    return x + 1714
+
+def func1715(x: Int) -> Int:
+    return x + 1715
+
+def func1716(x: Int) -> Int:
+    return x + 1716
+
+def func1717(x: Int) -> Int:
+    return x + 1717
+
+def func1718(x: Int) -> Int:
+    return x + 1718
+
+def func1719(x: Int) -> Int:
+    return x + 1719
+
+def func1720(x: Int) -> Int:
+    return x + 1720
+
+def func1721(x: Int) -> Int:
+    return x + 1721
+
+def func1722(x: Int) -> Int:
+    return x + 1722
+
+def func1723(x: Int) -> Int:
+    return x + 1723
+
+def func1724(x: Int) -> Int:
+    return x + 1724
+
+def func1725(x: Int) -> Int:
+    return x + 1725
+
+def func1726(x: Int) -> Int:
+    return x + 1726
+
+def func1727(x: Int) -> Int:
+    return x + 1727
+
+def func1728(x: Int) -> Int:
+    return x + 1728
+
+def func1729(x: Int) -> Int:
+    return x + 1729
+
+def func1730(x: Int) -> Int:
+    return x + 1730
+
+def func1731(x: Int) -> Int:
+    return x + 1731
+
+def func1732(x: Int) -> Int:
+    return x + 1732
+
+def func1733(x: Int) -> Int:
+    return x + 1733
+
+def func1734(x: Int) -> Int:
+    return x + 1734
+
+def func1735(x: Int) -> Int:
+    return x + 1735
+
+def func1736(x: Int) -> Int:
+    return x + 1736
+
+def func1737(x: Int) -> Int:
+    return x + 1737
+
+def func1738(x: Int) -> Int:
+    return x + 1738
+
+def func1739(x: Int) -> Int:
+    return x + 1739
+
+def func1740(x: Int) -> Int:
+    return x + 1740
+
+def func1741(x: Int) -> Int:
+    return x + 1741
+
+def func1742(x: Int) -> Int:
+    return x + 1742
+
+def func1743(x: Int) -> Int:
+    return x + 1743
+
+def func1744(x: Int) -> Int:
+    return x + 1744
+
+def func1745(x: Int) -> Int:
+    return x + 1745
+
+def func1746(x: Int) -> Int:
+    return x + 1746
+
+def func1747(x: Int) -> Int:
+    return x + 1747
+
+def func1748(x: Int) -> Int:
+    return x + 1748
+
+def func1749(x: Int) -> Int:
+    return x + 1749
+
+def func1750(x: Int) -> Int:
+    return x + 1750
+
+def func1751(x: Int) -> Int:
+    return x + 1751
+
+def func1752(x: Int) -> Int:
+    return x + 1752
+
+def func1753(x: Int) -> Int:
+    return x + 1753
+
+def func1754(x: Int) -> Int:
+    return x + 1754
+
+def func1755(x: Int) -> Int:
+    return x + 1755
+
+def func1756(x: Int) -> Int:
+    return x + 1756
+
+def func1757(x: Int) -> Int:
+    return x + 1757
+
+def func1758(x: Int) -> Int:
+    return x + 1758
+
+def func1759(x: Int) -> Int:
+    return x + 1759
+
+def func1760(x: Int) -> Int:
+    return x + 1760
+
+def func1761(x: Int) -> Int:
+    return x + 1761
+
+def func1762(x: Int) -> Int:
+    return x + 1762
+
+def func1763(x: Int) -> Int:
+    return x + 1763
+
+def func1764(x: Int) -> Int:
+    return x + 1764
+
+def func1765(x: Int) -> Int:
+    return x + 1765
+
+def func1766(x: Int) -> Int:
+    return x + 1766
+
+def func1767(x: Int) -> Int:
+    return x + 1767
+
+def func1768(x: Int) -> Int:
+    return x + 1768
+
+def func1769(x: Int) -> Int:
+    return x + 1769
+
+def func1770(x: Int) -> Int:
+    return x + 1770
+
+def func1771(x: Int) -> Int:
+    return x + 1771
+
+def func1772(x: Int) -> Int:
+    return x + 1772
+
+def func1773(x: Int) -> Int:
+    return x + 1773
+
+def func1774(x: Int) -> Int:
+    return x + 1774
+
+def func1775(x: Int) -> Int:
+    return x + 1775
+
+def func1776(x: Int) -> Int:
+    return x + 1776
+
+def func1777(x: Int) -> Int:
+    return x + 1777
+
+def func1778(x: Int) -> Int:
+    return x + 1778
+
+def func1779(x: Int) -> Int:
+    return x + 1779
+
+def func1780(x: Int) -> Int:
+    return x + 1780
+
+def func1781(x: Int) -> Int:
+    return x + 1781
+
+def func1782(x: Int) -> Int:
+    return x + 1782
+
+def func1783(x: Int) -> Int:
+    return x + 1783
+
+def func1784(x: Int) -> Int:
+    return x + 1784
+
+def func1785(x: Int) -> Int:
+    return x + 1785
+
+def func1786(x: Int) -> Int:
+    return x + 1786
+
+def func1787(x: Int) -> Int:
+    return x + 1787
+
+def func1788(x: Int) -> Int:
+    return x + 1788
+
+def func1789(x: Int) -> Int:
+    return x + 1789
+
+def func1790(x: Int) -> Int:
+    return x + 1790
+
+def func1791(x: Int) -> Int:
+    return x + 1791
+
+def func1792(x: Int) -> Int:
+    return x + 1792
+
+def func1793(x: Int) -> Int:
+    return x + 1793
+
+def func1794(x: Int) -> Int:
+    return x + 1794
+
+def func1795(x: Int) -> Int:
+    return x + 1795
+
+def func1796(x: Int) -> Int:
+    return x + 1796
+
+def func1797(x: Int) -> Int:
+    return x + 1797
+
+def func1798(x: Int) -> Int:
+    return x + 1798
+
+def func1799(x: Int) -> Int:
+    return x + 1799
+
+def func1800(x: Int) -> Int:
+    return x + 1800
+
+def func1801(x: Int) -> Int:
+    return x + 1801
+
+def func1802(x: Int) -> Int:
+    return x + 1802
+
+def func1803(x: Int) -> Int:
+    return x + 1803
+
+def func1804(x: Int) -> Int:
+    return x + 1804
+
+def func1805(x: Int) -> Int:
+    return x + 1805
+
+def func1806(x: Int) -> Int:
+    return x + 1806
+
+def func1807(x: Int) -> Int:
+    return x + 1807
+
+def func1808(x: Int) -> Int:
+    return x + 1808
+
+def func1809(x: Int) -> Int:
+    return x + 1809
+
+def func1810(x: Int) -> Int:
+    return x + 1810
+
+def func1811(x: Int) -> Int:
+    return x + 1811
+
+def func1812(x: Int) -> Int:
+    return x + 1812
+
+def func1813(x: Int) -> Int:
+    return x + 1813
+
+def func1814(x: Int) -> Int:
+    return x + 1814
+
+def func1815(x: Int) -> Int:
+    return x + 1815
+
+def func1816(x: Int) -> Int:
+    return x + 1816
+
+def func1817(x: Int) -> Int:
+    return x + 1817
+
+def func1818(x: Int) -> Int:
+    return x + 1818
+
+def func1819(x: Int) -> Int:
+    return x + 1819
+
+def func1820(x: Int) -> Int:
+    return x + 1820
+
+def func1821(x: Int) -> Int:
+    return x + 1821
+
+def func1822(x: Int) -> Int:
+    return x + 1822
+
+def func1823(x: Int) -> Int:
+    return x + 1823
+
+def func1824(x: Int) -> Int:
+    return x + 1824
+
+def func1825(x: Int) -> Int:
+    return x + 1825
+
+def func1826(x: Int) -> Int:
+    return x + 1826
+
+def func1827(x: Int) -> Int:
+    return x + 1827
+
+def func1828(x: Int) -> Int:
+    return x + 1828
+
+def func1829(x: Int) -> Int:
+    return x + 1829
+
+def func1830(x: Int) -> Int:
+    return x + 1830
+
+def func1831(x: Int) -> Int:
+    return x + 1831
+
+def func1832(x: Int) -> Int:
+    return x + 1832
+
+def func1833(x: Int) -> Int:
+    return x + 1833
+
+def func1834(x: Int) -> Int:
+    return x + 1834
+
+def func1835(x: Int) -> Int:
+    return x + 1835
+
+def func1836(x: Int) -> Int:
+    return x + 1836
+
+def func1837(x: Int) -> Int:
+    return x + 1837
+
+def func1838(x: Int) -> Int:
+    return x + 1838
+
+def func1839(x: Int) -> Int:
+    return x + 1839
+
+def func1840(x: Int) -> Int:
+    return x + 1840
+
+def func1841(x: Int) -> Int:
+    return x + 1841
+
+def func1842(x: Int) -> Int:
+    return x + 1842
+
+def func1843(x: Int) -> Int:
+    return x + 1843
+
+def func1844(x: Int) -> Int:
+    return x + 1844
+
+def func1845(x: Int) -> Int:
+    return x + 1845
+
+def func1846(x: Int) -> Int:
+    return x + 1846
+
+def func1847(x: Int) -> Int:
+    return x + 1847
+
+def func1848(x: Int) -> Int:
+    return x + 1848
+
+def func1849(x: Int) -> Int:
+    return x + 1849
+
+def func1850(x: Int) -> Int:
+    return x + 1850
+
+def func1851(x: Int) -> Int:
+    return x + 1851
+
+def func1852(x: Int) -> Int:
+    return x + 1852
+
+def func1853(x: Int) -> Int:
+    return x + 1853
+
+def func1854(x: Int) -> Int:
+    return x + 1854
+
+def func1855(x: Int) -> Int:
+    return x + 1855
+
+def func1856(x: Int) -> Int:
+    return x + 1856
+
+def func1857(x: Int) -> Int:
+    return x + 1857
+
+def func1858(x: Int) -> Int:
+    return x + 1858
+
+def func1859(x: Int) -> Int:
+    return x + 1859
+
+def func1860(x: Int) -> Int:
+    return x + 1860
+
+def func1861(x: Int) -> Int:
+    return x + 1861
+
+def func1862(x: Int) -> Int:
+    return x + 1862
+
+def func1863(x: Int) -> Int:
+    return x + 1863
+
+def func1864(x: Int) -> Int:
+    return x + 1864
+
+def func1865(x: Int) -> Int:
+    return x + 1865
+
+def func1866(x: Int) -> Int:
+    return x + 1866
+
+def func1867(x: Int) -> Int:
+    return x + 1867
+
+def func1868(x: Int) -> Int:
+    return x + 1868
+
+def func1869(x: Int) -> Int:
+    return x + 1869
+
+def func1870(x: Int) -> Int:
+    return x + 1870
+
+def func1871(x: Int) -> Int:
+    return x + 1871
+
+def func1872(x: Int) -> Int:
+    return x + 1872
+
+def func1873(x: Int) -> Int:
+    return x + 1873
+
+def func1874(x: Int) -> Int:
+    return x + 1874
+
+def func1875(x: Int) -> Int:
+    return x + 1875
+
+def func1876(x: Int) -> Int:
+    return x + 1876
+
+def func1877(x: Int) -> Int:
+    return x + 1877
+
+def func1878(x: Int) -> Int:
+    return x + 1878
+
+def func1879(x: Int) -> Int:
+    return x + 1879
+
+def func1880(x: Int) -> Int:
+    return x + 1880
+
+def func1881(x: Int) -> Int:
+    return x + 1881
+
+def func1882(x: Int) -> Int:
+    return x + 1882
+
+def func1883(x: Int) -> Int:
+    return x + 1883
+
+def func1884(x: Int) -> Int:
+    return x + 1884
+
+def func1885(x: Int) -> Int:
+    return x + 1885
+
+def func1886(x: Int) -> Int:
+    return x + 1886
+
+def func1887(x: Int) -> Int:
+    return x + 1887
+
+def func1888(x: Int) -> Int:
+    return x + 1888
+
+def func1889(x: Int) -> Int:
+    return x + 1889
+
+def func1890(x: Int) -> Int:
+    return x + 1890
+
+def func1891(x: Int) -> Int:
+    return x + 1891
+
+def func1892(x: Int) -> Int:
+    return x + 1892
+
+def func1893(x: Int) -> Int:
+    return x + 1893
+
+def func1894(x: Int) -> Int:
+    return x + 1894
+
+def func1895(x: Int) -> Int:
+    return x + 1895
+
+def func1896(x: Int) -> Int:
+    return x + 1896
+
+def func1897(x: Int) -> Int:
+    return x + 1897
+
+def func1898(x: Int) -> Int:
+    return x + 1898
+
+def func1899(x: Int) -> Int:
+    return x + 1899
+
+def func1900(x: Int) -> Int:
+    return x + 1900
+
+def func1901(x: Int) -> Int:
+    return x + 1901
+
+def func1902(x: Int) -> Int:
+    return x + 1902
+
+def func1903(x: Int) -> Int:
+    return x + 1903
+
+def func1904(x: Int) -> Int:
+    return x + 1904
+
+def func1905(x: Int) -> Int:
+    return x + 1905
+
+def func1906(x: Int) -> Int:
+    return x + 1906
+
+def func1907(x: Int) -> Int:
+    return x + 1907
+
+def func1908(x: Int) -> Int:
+    return x + 1908
+
+def func1909(x: Int) -> Int:
+    return x + 1909
+
+def func1910(x: Int) -> Int:
+    return x + 1910
+
+def func1911(x: Int) -> Int:
+    return x + 1911
+
+def func1912(x: Int) -> Int:
+    return x + 1912
+
+def func1913(x: Int) -> Int:
+    return x + 1913
+
+def func1914(x: Int) -> Int:
+    return x + 1914
+
+def func1915(x: Int) -> Int:
+    return x + 1915
+
+def func1916(x: Int) -> Int:
+    return x + 1916
+
+def func1917(x: Int) -> Int:
+    return x + 1917
+
+def func1918(x: Int) -> Int:
+    return x + 1918
+
+def func1919(x: Int) -> Int:
+    return x + 1919
+
+def func1920(x: Int) -> Int:
+    return x + 1920
+
+def func1921(x: Int) -> Int:
+    return x + 1921
+
+def func1922(x: Int) -> Int:
+    return x + 1922
+
+def func1923(x: Int) -> Int:
+    return x + 1923
+
+def func1924(x: Int) -> Int:
+    return x + 1924
+
+def func1925(x: Int) -> Int:
+    return x + 1925
+
+def func1926(x: Int) -> Int:
+    return x + 1926
+
+def func1927(x: Int) -> Int:
+    return x + 1927
+
+def func1928(x: Int) -> Int:
+    return x + 1928
+
+def func1929(x: Int) -> Int:
+    return x + 1929
+
+def func1930(x: Int) -> Int:
+    return x + 1930
+
+def func1931(x: Int) -> Int:
+    return x + 1931
+
+def func1932(x: Int) -> Int:
+    return x + 1932
+
+def func1933(x: Int) -> Int:
+    return x + 1933
+
+def func1934(x: Int) -> Int:
+    return x + 1934
+
+def func1935(x: Int) -> Int:
+    return x + 1935
+
+def func1936(x: Int) -> Int:
+    return x + 1936
+
+def func1937(x: Int) -> Int:
+    return x + 1937
+
+def func1938(x: Int) -> Int:
+    return x + 1938
+
+def func1939(x: Int) -> Int:
+    return x + 1939
+
+def func1940(x: Int) -> Int:
+    return x + 1940
+
+def func1941(x: Int) -> Int:
+    return x + 1941
+
+def func1942(x: Int) -> Int:
+    return x + 1942
+
+def func1943(x: Int) -> Int:
+    return x + 1943
+
+def func1944(x: Int) -> Int:
+    return x + 1944
+
+def func1945(x: Int) -> Int:
+    return x + 1945
+
+def func1946(x: Int) -> Int:
+    return x + 1946
+
+def func1947(x: Int) -> Int:
+    return x + 1947
+
+def func1948(x: Int) -> Int:
+    return x + 1948
+
+def func1949(x: Int) -> Int:
+    return x + 1949
+
+def func1950(x: Int) -> Int:
+    return x + 1950
+
+def func1951(x: Int) -> Int:
+    return x + 1951
+
+def func1952(x: Int) -> Int:
+    return x + 1952
+
+def func1953(x: Int) -> Int:
+    return x + 1953
+
+def func1954(x: Int) -> Int:
+    return x + 1954
+
+def func1955(x: Int) -> Int:
+    return x + 1955
+
+def func1956(x: Int) -> Int:
+    return x + 1956
+
+def func1957(x: Int) -> Int:
+    return x + 1957
+
+def func1958(x: Int) -> Int:
+    return x + 1958
+
+def func1959(x: Int) -> Int:
+    return x + 1959
+
+def func1960(x: Int) -> Int:
+    return x + 1960
+
+def func1961(x: Int) -> Int:
+    return x + 1961
+
+def func1962(x: Int) -> Int:
+    return x + 1962
+
+def func1963(x: Int) -> Int:
+    return x + 1963
+
+def func1964(x: Int) -> Int:
+    return x + 1964
+
+def func1965(x: Int) -> Int:
+    return x + 1965
+
+def func1966(x: Int) -> Int:
+    return x + 1966
+
+def func1967(x: Int) -> Int:
+    return x + 1967
+
+def func1968(x: Int) -> Int:
+    return x + 1968
+
+def func1969(x: Int) -> Int:
+    return x + 1969
+
+def func1970(x: Int) -> Int:
+    return x + 1970
+
+def func1971(x: Int) -> Int:
+    return x + 1971
+
+def func1972(x: Int) -> Int:
+    return x + 1972
+
+def func1973(x: Int) -> Int:
+    return x + 1973
+
+def func1974(x: Int) -> Int:
+    return x + 1974
+
+def func1975(x: Int) -> Int:
+    return x + 1975
+
+def func1976(x: Int) -> Int:
+    return x + 1976
+
+def func1977(x: Int) -> Int:
+    return x + 1977
+
+def func1978(x: Int) -> Int:
+    return x + 1978
+
+def func1979(x: Int) -> Int:
+    return x + 1979
+
+def func1980(x: Int) -> Int:
+    return x + 1980
+
+def func1981(x: Int) -> Int:
+    return x + 1981
+
+def func1982(x: Int) -> Int:
+    return x + 1982
+
+def func1983(x: Int) -> Int:
+    return x + 1983
+
+def func1984(x: Int) -> Int:
+    return x + 1984
+
+def func1985(x: Int) -> Int:
+    return x + 1985
+
+def func1986(x: Int) -> Int:
+    return x + 1986
+
+def func1987(x: Int) -> Int:
+    return x + 1987
+
+def func1988(x: Int) -> Int:
+    return x + 1988
+
+def func1989(x: Int) -> Int:
+    return x + 1989
+
+def func1990(x: Int) -> Int:
+    return x + 1990
+
+def func1991(x: Int) -> Int:
+    return x + 1991
+
+def func1992(x: Int) -> Int:
+    return x + 1992
+
+def func1993(x: Int) -> Int:
+    return x + 1993
+
+def func1994(x: Int) -> Int:
+    return x + 1994
+
+def func1995(x: Int) -> Int:
+    return x + 1995
+
+def func1996(x: Int) -> Int:
+    return x + 1996
+
+def func1997(x: Int) -> Int:
+    return x + 1997
+
+def func1998(x: Int) -> Int:
+    return x + 1998
+
+def func1999(x: Int) -> Int:
+    return x + 1999
+
+def func2000(x: Int) -> Int:
+    return x + 2000
+
+def func2001(x: Int) -> Int:
+    return x + 2001
+
+def func2002(x: Int) -> Int:
+    return x + 2002
+
+def func2003(x: Int) -> Int:
+    return x + 2003
+
+def func2004(x: Int) -> Int:
+    return x + 2004
+
+def func2005(x: Int) -> Int:
+    return x + 2005
+
+def func2006(x: Int) -> Int:
+    return x + 2006
+
+def func2007(x: Int) -> Int:
+    return x + 2007
+
+def func2008(x: Int) -> Int:
+    return x + 2008
+
+def func2009(x: Int) -> Int:
+    return x + 2009
+
+def func2010(x: Int) -> Int:
+    return x + 2010
+
+def func2011(x: Int) -> Int:
+    return x + 2011
+
+def func2012(x: Int) -> Int:
+    return x + 2012
+
+def func2013(x: Int) -> Int:
+    return x + 2013
+
+def func2014(x: Int) -> Int:
+    return x + 2014
+
+def func2015(x: Int) -> Int:
+    return x + 2015
+
+def func2016(x: Int) -> Int:
+    return x + 2016
+
+def func2017(x: Int) -> Int:
+    return x + 2017
+
+def func2018(x: Int) -> Int:
+    return x + 2018
+
+def func2019(x: Int) -> Int:
+    return x + 2019
+
+def func2020(x: Int) -> Int:
+    return x + 2020
+
+def func2021(x: Int) -> Int:
+    return x + 2021
+
+def func2022(x: Int) -> Int:
+    return x + 2022
+
+def func2023(x: Int) -> Int:
+    return x + 2023
+
+def func2024(x: Int) -> Int:
+    return x + 2024
+
+def func2025(x: Int) -> Int:
+    return x + 2025
+
+def func2026(x: Int) -> Int:
+    return x + 2026
+
+def func2027(x: Int) -> Int:
+    return x + 2027
+
+def func2028(x: Int) -> Int:
+    return x + 2028
+
+def func2029(x: Int) -> Int:
+    return x + 2029
+
+def func2030(x: Int) -> Int:
+    return x + 2030
+
+def func2031(x: Int) -> Int:
+    return x + 2031
+
+def func2032(x: Int) -> Int:
+    return x + 2032
+
+def func2033(x: Int) -> Int:
+    return x + 2033
+
+def func2034(x: Int) -> Int:
+    return x + 2034
+
+def func2035(x: Int) -> Int:
+    return x + 2035
+
+def func2036(x: Int) -> Int:
+    return x + 2036
+
+def func2037(x: Int) -> Int:
+    return x + 2037
+
+def func2038(x: Int) -> Int:
+    return x + 2038
+
+def func2039(x: Int) -> Int:
+    return x + 2039
+
+def func2040(x: Int) -> Int:
+    return x + 2040
+
+def func2041(x: Int) -> Int:
+    return x + 2041
+
+def func2042(x: Int) -> Int:
+    return x + 2042
+
+def func2043(x: Int) -> Int:
+    return x + 2043
+
+def func2044(x: Int) -> Int:
+    return x + 2044
+
+def func2045(x: Int) -> Int:
+    return x + 2045
+
+def func2046(x: Int) -> Int:
+    return x + 2046
+
+def func2047(x: Int) -> Int:
+    return x + 2047
+
+def func2048(x: Int) -> Int:
+    return x + 2048
+
+def func2049(x: Int) -> Int:
+    return x + 2049
+
+def func2050(x: Int) -> Int:
+    return x + 2050
+
+def func2051(x: Int) -> Int:
+    return x + 2051
+
+def func2052(x: Int) -> Int:
+    return x + 2052
+
+def func2053(x: Int) -> Int:
+    return x + 2053
+
+def func2054(x: Int) -> Int:
+    return x + 2054
+
+def func2055(x: Int) -> Int:
+    return x + 2055
+
+def func2056(x: Int) -> Int:
+    return x + 2056
+
+def func2057(x: Int) -> Int:
+    return x + 2057
+
+def func2058(x: Int) -> Int:
+    return x + 2058
+
+def func2059(x: Int) -> Int:
+    return x + 2059
+
+def func2060(x: Int) -> Int:
+    return x + 2060
+
+def func2061(x: Int) -> Int:
+    return x + 2061
+
+def func2062(x: Int) -> Int:
+    return x + 2062
+
+def func2063(x: Int) -> Int:
+    return x + 2063
+
+def func2064(x: Int) -> Int:
+    return x + 2064
+
+def func2065(x: Int) -> Int:
+    return x + 2065
+
+def func2066(x: Int) -> Int:
+    return x + 2066
+
+def func2067(x: Int) -> Int:
+    return x + 2067
+
+def func2068(x: Int) -> Int:
+    return x + 2068
+
+def func2069(x: Int) -> Int:
+    return x + 2069
+
+def func2070(x: Int) -> Int:
+    return x + 2070
+
+def func2071(x: Int) -> Int:
+    return x + 2071
+
+def func2072(x: Int) -> Int:
+    return x + 2072
+
+def func2073(x: Int) -> Int:
+    return x + 2073
+
+def func2074(x: Int) -> Int:
+    return x + 2074
+
+def func2075(x: Int) -> Int:
+    return x + 2075
+
+def func2076(x: Int) -> Int:
+    return x + 2076
+
+def func2077(x: Int) -> Int:
+    return x + 2077
+
+def func2078(x: Int) -> Int:
+    return x + 2078
+
+def func2079(x: Int) -> Int:
+    return x + 2079
+
+def func2080(x: Int) -> Int:
+    return x + 2080
+
+def func2081(x: Int) -> Int:
+    return x + 2081
+
+def func2082(x: Int) -> Int:
+    return x + 2082
+
+def func2083(x: Int) -> Int:
+    return x + 2083
+
+def func2084(x: Int) -> Int:
+    return x + 2084
+
+def func2085(x: Int) -> Int:
+    return x + 2085
+
+def func2086(x: Int) -> Int:
+    return x + 2086
+
+def func2087(x: Int) -> Int:
+    return x + 2087
+
+def func2088(x: Int) -> Int:
+    return x + 2088
+
+def func2089(x: Int) -> Int:
+    return x + 2089
+
+def func2090(x: Int) -> Int:
+    return x + 2090
+
+def func2091(x: Int) -> Int:
+    return x + 2091
+
+def func2092(x: Int) -> Int:
+    return x + 2092
+
+def func2093(x: Int) -> Int:
+    return x + 2093
+
+def func2094(x: Int) -> Int:
+    return x + 2094
+
+def func2095(x: Int) -> Int:
+    return x + 2095
+
+def func2096(x: Int) -> Int:
+    return x + 2096
+
+def func2097(x: Int) -> Int:
+    return x + 2097
+
+def func2098(x: Int) -> Int:
+    return x + 2098
+
+def func2099(x: Int) -> Int:
+    return x + 2099
+
+def func2100(x: Int) -> Int:
+    return x + 2100
+
+def func2101(x: Int) -> Int:
+    return x + 2101
+
+def func2102(x: Int) -> Int:
+    return x + 2102
+
+def func2103(x: Int) -> Int:
+    return x + 2103
+
+def func2104(x: Int) -> Int:
+    return x + 2104
+
+def func2105(x: Int) -> Int:
+    return x + 2105
+
+def func2106(x: Int) -> Int:
+    return x + 2106
+
+def func2107(x: Int) -> Int:
+    return x + 2107
+
+def func2108(x: Int) -> Int:
+    return x + 2108
+
+def func2109(x: Int) -> Int:
+    return x + 2109
+
+def func2110(x: Int) -> Int:
+    return x + 2110
+
+def func2111(x: Int) -> Int:
+    return x + 2111
+
+def func2112(x: Int) -> Int:
+    return x + 2112
+
+def func2113(x: Int) -> Int:
+    return x + 2113
+
+def func2114(x: Int) -> Int:
+    return x + 2114
+
+def func2115(x: Int) -> Int:
+    return x + 2115
+
+def func2116(x: Int) -> Int:
+    return x + 2116
+
+def func2117(x: Int) -> Int:
+    return x + 2117
+
+def func2118(x: Int) -> Int:
+    return x + 2118
+
+def func2119(x: Int) -> Int:
+    return x + 2119
+
+def func2120(x: Int) -> Int:
+    return x + 2120
+
+def func2121(x: Int) -> Int:
+    return x + 2121
+
+def func2122(x: Int) -> Int:
+    return x + 2122
+
+def func2123(x: Int) -> Int:
+    return x + 2123
+
+def func2124(x: Int) -> Int:
+    return x + 2124
+
+def func2125(x: Int) -> Int:
+    return x + 2125
+
+def func2126(x: Int) -> Int:
+    return x + 2126
+
+def func2127(x: Int) -> Int:
+    return x + 2127
+
+def func2128(x: Int) -> Int:
+    return x + 2128
+
+def func2129(x: Int) -> Int:
+    return x + 2129
+
+def func2130(x: Int) -> Int:
+    return x + 2130
+
+def func2131(x: Int) -> Int:
+    return x + 2131
+
+def func2132(x: Int) -> Int:
+    return x + 2132
+
+def func2133(x: Int) -> Int:
+    return x + 2133
+
+def func2134(x: Int) -> Int:
+    return x + 2134
+
+def func2135(x: Int) -> Int:
+    return x + 2135
+
+def func2136(x: Int) -> Int:
+    return x + 2136
+
+def func2137(x: Int) -> Int:
+    return x + 2137
+
+def func2138(x: Int) -> Int:
+    return x + 2138
+
+def func2139(x: Int) -> Int:
+    return x + 2139
+
+def func2140(x: Int) -> Int:
+    return x + 2140
+
+def func2141(x: Int) -> Int:
+    return x + 2141
+
+def func2142(x: Int) -> Int:
+    return x + 2142
+
+def func2143(x: Int) -> Int:
+    return x + 2143
+
+def func2144(x: Int) -> Int:
+    return x + 2144
+
+def func2145(x: Int) -> Int:
+    return x + 2145
+
+def func2146(x: Int) -> Int:
+    return x + 2146
+
+def func2147(x: Int) -> Int:
+    return x + 2147
+
+def func2148(x: Int) -> Int:
+    return x + 2148
+
+def func2149(x: Int) -> Int:
+    return x + 2149
+
+def func2150(x: Int) -> Int:
+    return x + 2150
+
+def func2151(x: Int) -> Int:
+    return x + 2151
+
+def func2152(x: Int) -> Int:
+    return x + 2152
+
+def func2153(x: Int) -> Int:
+    return x + 2153
+
+def func2154(x: Int) -> Int:
+    return x + 2154
+
+def func2155(x: Int) -> Int:
+    return x + 2155
+
+def func2156(x: Int) -> Int:
+    return x + 2156
+
+def func2157(x: Int) -> Int:
+    return x + 2157
+
+def func2158(x: Int) -> Int:
+    return x + 2158
+
+def func2159(x: Int) -> Int:
+    return x + 2159
+
+def func2160(x: Int) -> Int:
+    return x + 2160
+
+def func2161(x: Int) -> Int:
+    return x + 2161
+
+def func2162(x: Int) -> Int:
+    return x + 2162
+
+def func2163(x: Int) -> Int:
+    return x + 2163
+
+def func2164(x: Int) -> Int:
+    return x + 2164
+
+def func2165(x: Int) -> Int:
+    return x + 2165
+
+def func2166(x: Int) -> Int:
+    return x + 2166
+
+def func2167(x: Int) -> Int:
+    return x + 2167
+
+def func2168(x: Int) -> Int:
+    return x + 2168
+
+def func2169(x: Int) -> Int:
+    return x + 2169
+
+def func2170(x: Int) -> Int:
+    return x + 2170
+
+def func2171(x: Int) -> Int:
+    return x + 2171
+
+def func2172(x: Int) -> Int:
+    return x + 2172
+
+def func2173(x: Int) -> Int:
+    return x + 2173
+
+def func2174(x: Int) -> Int:
+    return x + 2174
+
+def func2175(x: Int) -> Int:
+    return x + 2175
+
+def func2176(x: Int) -> Int:
+    return x + 2176
+
+def func2177(x: Int) -> Int:
+    return x + 2177
+
+def func2178(x: Int) -> Int:
+    return x + 2178
+
+def func2179(x: Int) -> Int:
+    return x + 2179
+
+def func2180(x: Int) -> Int:
+    return x + 2180
+
+def func2181(x: Int) -> Int:
+    return x + 2181
+
+def func2182(x: Int) -> Int:
+    return x + 2182
+
+def func2183(x: Int) -> Int:
+    return x + 2183
+
+def func2184(x: Int) -> Int:
+    return x + 2184
+
+def func2185(x: Int) -> Int:
+    return x + 2185
+
+def func2186(x: Int) -> Int:
+    return x + 2186
+
+def func2187(x: Int) -> Int:
+    return x + 2187
+
+def func2188(x: Int) -> Int:
+    return x + 2188
+
+def func2189(x: Int) -> Int:
+    return x + 2189
+
+def func2190(x: Int) -> Int:
+    return x + 2190
+
+def func2191(x: Int) -> Int:
+    return x + 2191
+
+def func2192(x: Int) -> Int:
+    return x + 2192
+
+def func2193(x: Int) -> Int:
+    return x + 2193
+
+def func2194(x: Int) -> Int:
+    return x + 2194
+
+def func2195(x: Int) -> Int:
+    return x + 2195
+
+def func2196(x: Int) -> Int:
+    return x + 2196
+
+def func2197(x: Int) -> Int:
+    return x + 2197
+
+def func2198(x: Int) -> Int:
+    return x + 2198
+
+def func2199(x: Int) -> Int:
+    return x + 2199
+
+def func2200(x: Int) -> Int:
+    return x + 2200
+
+def func2201(x: Int) -> Int:
+    return x + 2201
+
+def func2202(x: Int) -> Int:
+    return x + 2202
+
+def func2203(x: Int) -> Int:
+    return x + 2203
+
+def func2204(x: Int) -> Int:
+    return x + 2204
+
+def func2205(x: Int) -> Int:
+    return x + 2205
+
+def func2206(x: Int) -> Int:
+    return x + 2206
+
+def func2207(x: Int) -> Int:
+    return x + 2207
+
+def func2208(x: Int) -> Int:
+    return x + 2208
+
+def func2209(x: Int) -> Int:
+    return x + 2209
+
+def func2210(x: Int) -> Int:
+    return x + 2210
+
+def func2211(x: Int) -> Int:
+    return x + 2211
+
+def func2212(x: Int) -> Int:
+    return x + 2212
+
+def func2213(x: Int) -> Int:
+    return x + 2213
+
+def func2214(x: Int) -> Int:
+    return x + 2214
+
+def func2215(x: Int) -> Int:
+    return x + 2215
+
+def func2216(x: Int) -> Int:
+    return x + 2216
+
+def func2217(x: Int) -> Int:
+    return x + 2217
+
+def func2218(x: Int) -> Int:
+    return x + 2218
+
+def func2219(x: Int) -> Int:
+    return x + 2219
+
+def func2220(x: Int) -> Int:
+    return x + 2220
+
+def func2221(x: Int) -> Int:
+    return x + 2221
+
+def func2222(x: Int) -> Int:
+    return x + 2222
+
+def func2223(x: Int) -> Int:
+    return x + 2223
+
+def func2224(x: Int) -> Int:
+    return x + 2224
+
+def func2225(x: Int) -> Int:
+    return x + 2225
+
+def func2226(x: Int) -> Int:
+    return x + 2226
+
+def func2227(x: Int) -> Int:
+    return x + 2227
+
+def func2228(x: Int) -> Int:
+    return x + 2228
+
+def func2229(x: Int) -> Int:
+    return x + 2229
+
+def func2230(x: Int) -> Int:
+    return x + 2230
+
+def func2231(x: Int) -> Int:
+    return x + 2231
+
+def func2232(x: Int) -> Int:
+    return x + 2232
+
+def func2233(x: Int) -> Int:
+    return x + 2233
+
+def func2234(x: Int) -> Int:
+    return x + 2234
+
+def func2235(x: Int) -> Int:
+    return x + 2235
+
+def func2236(x: Int) -> Int:
+    return x + 2236
+
+def func2237(x: Int) -> Int:
+    return x + 2237
+
+def func2238(x: Int) -> Int:
+    return x + 2238
+
+def func2239(x: Int) -> Int:
+    return x + 2239
+
+def func2240(x: Int) -> Int:
+    return x + 2240
+
+def func2241(x: Int) -> Int:
+    return x + 2241
+
+def func2242(x: Int) -> Int:
+    return x + 2242
+
+def func2243(x: Int) -> Int:
+    return x + 2243
+
+def func2244(x: Int) -> Int:
+    return x + 2244
+
+def func2245(x: Int) -> Int:
+    return x + 2245
+
+def func2246(x: Int) -> Int:
+    return x + 2246
+
+def func2247(x: Int) -> Int:
+    return x + 2247
+
+def func2248(x: Int) -> Int:
+    return x + 2248
+
+def func2249(x: Int) -> Int:
+    return x + 2249
+
+def func2250(x: Int) -> Int:
+    return x + 2250
+
+def func2251(x: Int) -> Int:
+    return x + 2251
+
+def func2252(x: Int) -> Int:
+    return x + 2252
+
+def func2253(x: Int) -> Int:
+    return x + 2253
+
+def func2254(x: Int) -> Int:
+    return x + 2254
+
+def func2255(x: Int) -> Int:
+    return x + 2255
+
+def func2256(x: Int) -> Int:
+    return x + 2256
+
+def func2257(x: Int) -> Int:
+    return x + 2257
+
+def func2258(x: Int) -> Int:
+    return x + 2258
+
+def func2259(x: Int) -> Int:
+    return x + 2259
+
+def func2260(x: Int) -> Int:
+    return x + 2260
+
+def func2261(x: Int) -> Int:
+    return x + 2261
+
+def func2262(x: Int) -> Int:
+    return x + 2262
+
+def func2263(x: Int) -> Int:
+    return x + 2263
+
+def func2264(x: Int) -> Int:
+    return x + 2264
+
+def func2265(x: Int) -> Int:
+    return x + 2265
+
+def func2266(x: Int) -> Int:
+    return x + 2266
+
+def func2267(x: Int) -> Int:
+    return x + 2267
+
+def func2268(x: Int) -> Int:
+    return x + 2268
+
+def func2269(x: Int) -> Int:
+    return x + 2269
+
+def func2270(x: Int) -> Int:
+    return x + 2270
+
+def func2271(x: Int) -> Int:
+    return x + 2271
+
+def func2272(x: Int) -> Int:
+    return x + 2272
+
+def func2273(x: Int) -> Int:
+    return x + 2273
+
+def func2274(x: Int) -> Int:
+    return x + 2274
+
+def func2275(x: Int) -> Int:
+    return x + 2275
+
+def func2276(x: Int) -> Int:
+    return x + 2276
+
+def func2277(x: Int) -> Int:
+    return x + 2277
+
+def func2278(x: Int) -> Int:
+    return x + 2278
+
+def func2279(x: Int) -> Int:
+    return x + 2279
+
+def func2280(x: Int) -> Int:
+    return x + 2280
+
+def func2281(x: Int) -> Int:
+    return x + 2281
+
+def func2282(x: Int) -> Int:
+    return x + 2282
+
+def func2283(x: Int) -> Int:
+    return x + 2283
+
+def func2284(x: Int) -> Int:
+    return x + 2284
+
+def func2285(x: Int) -> Int:
+    return x + 2285
+
+def func2286(x: Int) -> Int:
+    return x + 2286
+
+def func2287(x: Int) -> Int:
+    return x + 2287
+
+def func2288(x: Int) -> Int:
+    return x + 2288
+
+def func2289(x: Int) -> Int:
+    return x + 2289
+
+def func2290(x: Int) -> Int:
+    return x + 2290
+
+def func2291(x: Int) -> Int:
+    return x + 2291
+
+def func2292(x: Int) -> Int:
+    return x + 2292
+
+def func2293(x: Int) -> Int:
+    return x + 2293
+
+def func2294(x: Int) -> Int:
+    return x + 2294
+
+def func2295(x: Int) -> Int:
+    return x + 2295
+
+def func2296(x: Int) -> Int:
+    return x + 2296
+
+def func2297(x: Int) -> Int:
+    return x + 2297
+
+def func2298(x: Int) -> Int:
+    return x + 2298
+
+def func2299(x: Int) -> Int:
+    return x + 2299
+
+def func2300(x: Int) -> Int:
+    return x + 2300
+
+def func2301(x: Int) -> Int:
+    return x + 2301
+
+def func2302(x: Int) -> Int:
+    return x + 2302
+
+def func2303(x: Int) -> Int:
+    return x + 2303
+
+def func2304(x: Int) -> Int:
+    return x + 2304
+
+def func2305(x: Int) -> Int:
+    return x + 2305
+
+def func2306(x: Int) -> Int:
+    return x + 2306
+
+def func2307(x: Int) -> Int:
+    return x + 2307
+
+def func2308(x: Int) -> Int:
+    return x + 2308
+
+def func2309(x: Int) -> Int:
+    return x + 2309
+
+def func2310(x: Int) -> Int:
+    return x + 2310
+
+def func2311(x: Int) -> Int:
+    return x + 2311
+
+def func2312(x: Int) -> Int:
+    return x + 2312
+
+def func2313(x: Int) -> Int:
+    return x + 2313
+
+def func2314(x: Int) -> Int:
+    return x + 2314
+
+def func2315(x: Int) -> Int:
+    return x + 2315
+
+def func2316(x: Int) -> Int:
+    return x + 2316
+
+def func2317(x: Int) -> Int:
+    return x + 2317
+
+def func2318(x: Int) -> Int:
+    return x + 2318
+
+def func2319(x: Int) -> Int:
+    return x + 2319
+
+def func2320(x: Int) -> Int:
+    return x + 2320
+
+def func2321(x: Int) -> Int:
+    return x + 2321
+
+def func2322(x: Int) -> Int:
+    return x + 2322
+
+def func2323(x: Int) -> Int:
+    return x + 2323
+
+def func2324(x: Int) -> Int:
+    return x + 2324
+
+def func2325(x: Int) -> Int:
+    return x + 2325
+
+def func2326(x: Int) -> Int:
+    return x + 2326
+
+def func2327(x: Int) -> Int:
+    return x + 2327
+
+def func2328(x: Int) -> Int:
+    return x + 2328
+
+def func2329(x: Int) -> Int:
+    return x + 2329
+
+def func2330(x: Int) -> Int:
+    return x + 2330
+
+def func2331(x: Int) -> Int:
+    return x + 2331
+
+def func2332(x: Int) -> Int:
+    return x + 2332
+
+def func2333(x: Int) -> Int:
+    return x + 2333
+
+def func2334(x: Int) -> Int:
+    return x + 2334
+
+def func2335(x: Int) -> Int:
+    return x + 2335
+
+def func2336(x: Int) -> Int:
+    return x + 2336
+
+def func2337(x: Int) -> Int:
+    return x + 2337
+
+def func2338(x: Int) -> Int:
+    return x + 2338
+
+def func2339(x: Int) -> Int:
+    return x + 2339
+
+def func2340(x: Int) -> Int:
+    return x + 2340
+
+def func2341(x: Int) -> Int:
+    return x + 2341
+
+def func2342(x: Int) -> Int:
+    return x + 2342
+
+def func2343(x: Int) -> Int:
+    return x + 2343
+
+def func2344(x: Int) -> Int:
+    return x + 2344
+
+def func2345(x: Int) -> Int:
+    return x + 2345
+
+def func2346(x: Int) -> Int:
+    return x + 2346
+
+def func2347(x: Int) -> Int:
+    return x + 2347
+
+def func2348(x: Int) -> Int:
+    return x + 2348
+
+def func2349(x: Int) -> Int:
+    return x + 2349
+
+def func2350(x: Int) -> Int:
+    return x + 2350
+
+def func2351(x: Int) -> Int:
+    return x + 2351
+
+def func2352(x: Int) -> Int:
+    return x + 2352
+
+def func2353(x: Int) -> Int:
+    return x + 2353
+
+def func2354(x: Int) -> Int:
+    return x + 2354
+
+def func2355(x: Int) -> Int:
+    return x + 2355
+
+def func2356(x: Int) -> Int:
+    return x + 2356
+
+def func2357(x: Int) -> Int:
+    return x + 2357
+
+def func2358(x: Int) -> Int:
+    return x + 2358
+
+def func2359(x: Int) -> Int:
+    return x + 2359
+
+def func2360(x: Int) -> Int:
+    return x + 2360
+
+def func2361(x: Int) -> Int:
+    return x + 2361
+
+def func2362(x: Int) -> Int:
+    return x + 2362
+
+def func2363(x: Int) -> Int:
+    return x + 2363
+
+def func2364(x: Int) -> Int:
+    return x + 2364
+
+def func2365(x: Int) -> Int:
+    return x + 2365
+
+def func2366(x: Int) -> Int:
+    return x + 2366
+
+def func2367(x: Int) -> Int:
+    return x + 2367
+
+def func2368(x: Int) -> Int:
+    return x + 2368
+
+def func2369(x: Int) -> Int:
+    return x + 2369
+
+def func2370(x: Int) -> Int:
+    return x + 2370
+
+def func2371(x: Int) -> Int:
+    return x + 2371
+
+def func2372(x: Int) -> Int:
+    return x + 2372
+
+def func2373(x: Int) -> Int:
+    return x + 2373
+
+def func2374(x: Int) -> Int:
+    return x + 2374
+
+def func2375(x: Int) -> Int:
+    return x + 2375
+
+def func2376(x: Int) -> Int:
+    return x + 2376
+
+def func2377(x: Int) -> Int:
+    return x + 2377
+
+def func2378(x: Int) -> Int:
+    return x + 2378
+
+def func2379(x: Int) -> Int:
+    return x + 2379
+
+def func2380(x: Int) -> Int:
+    return x + 2380
+
+def func2381(x: Int) -> Int:
+    return x + 2381
+
+def func2382(x: Int) -> Int:
+    return x + 2382
+
+def func2383(x: Int) -> Int:
+    return x + 2383
+
+def func2384(x: Int) -> Int:
+    return x + 2384
+
+def func2385(x: Int) -> Int:
+    return x + 2385
+
+def func2386(x: Int) -> Int:
+    return x + 2386
+
+def func2387(x: Int) -> Int:
+    return x + 2387
+
+def func2388(x: Int) -> Int:
+    return x + 2388
+
+def func2389(x: Int) -> Int:
+    return x + 2389
+
+def func2390(x: Int) -> Int:
+    return x + 2390
+
+def func2391(x: Int) -> Int:
+    return x + 2391
+
+def func2392(x: Int) -> Int:
+    return x + 2392
+
+def func2393(x: Int) -> Int:
+    return x + 2393
+
+def func2394(x: Int) -> Int:
+    return x + 2394
+
+def func2395(x: Int) -> Int:
+    return x + 2395
+
+def func2396(x: Int) -> Int:
+    return x + 2396
+
+def func2397(x: Int) -> Int:
+    return x + 2397
+
+def func2398(x: Int) -> Int:
+    return x + 2398
+
+def func2399(x: Int) -> Int:
+    return x + 2399
+
+def func2400(x: Int) -> Int:
+    return x + 2400
+
+def func2401(x: Int) -> Int:
+    return x + 2401
+
+def func2402(x: Int) -> Int:
+    return x + 2402
+
+def func2403(x: Int) -> Int:
+    return x + 2403
+
+def func2404(x: Int) -> Int:
+    return x + 2404
+
+def func2405(x: Int) -> Int:
+    return x + 2405
+
+def func2406(x: Int) -> Int:
+    return x + 2406
+
+def func2407(x: Int) -> Int:
+    return x + 2407
+
+def func2408(x: Int) -> Int:
+    return x + 2408
+
+def func2409(x: Int) -> Int:
+    return x + 2409
+
+def func2410(x: Int) -> Int:
+    return x + 2410
+
+def func2411(x: Int) -> Int:
+    return x + 2411
+
+def func2412(x: Int) -> Int:
+    return x + 2412
+
+def func2413(x: Int) -> Int:
+    return x + 2413
+
+def func2414(x: Int) -> Int:
+    return x + 2414
+
+def func2415(x: Int) -> Int:
+    return x + 2415
+
+def func2416(x: Int) -> Int:
+    return x + 2416
+
+def func2417(x: Int) -> Int:
+    return x + 2417
+
+def func2418(x: Int) -> Int:
+    return x + 2418
+
+def func2419(x: Int) -> Int:
+    return x + 2419
+
+def func2420(x: Int) -> Int:
+    return x + 2420
+
+def func2421(x: Int) -> Int:
+    return x + 2421
+
+def func2422(x: Int) -> Int:
+    return x + 2422
+
+def func2423(x: Int) -> Int:
+    return x + 2423
+
+def func2424(x: Int) -> Int:
+    return x + 2424
+
+def func2425(x: Int) -> Int:
+    return x + 2425
+
+def func2426(x: Int) -> Int:
+    return x + 2426
+
+def func2427(x: Int) -> Int:
+    return x + 2427
+
+def func2428(x: Int) -> Int:
+    return x + 2428
+
+def func2429(x: Int) -> Int:
+    return x + 2429
+
+def func2430(x: Int) -> Int:
+    return x + 2430
+
+def func2431(x: Int) -> Int:
+    return x + 2431
+
+def func2432(x: Int) -> Int:
+    return x + 2432
+
+def func2433(x: Int) -> Int:
+    return x + 2433
+
+def func2434(x: Int) -> Int:
+    return x + 2434
+
+def func2435(x: Int) -> Int:
+    return x + 2435
+
+def func2436(x: Int) -> Int:
+    return x + 2436
+
+def func2437(x: Int) -> Int:
+    return x + 2437
+
+def func2438(x: Int) -> Int:
+    return x + 2438
+
+def func2439(x: Int) -> Int:
+    return x + 2439
+
+def func2440(x: Int) -> Int:
+    return x + 2440
+
+def func2441(x: Int) -> Int:
+    return x + 2441
+
+def func2442(x: Int) -> Int:
+    return x + 2442
+
+def func2443(x: Int) -> Int:
+    return x + 2443
+
+def func2444(x: Int) -> Int:
+    return x + 2444
+
+def func2445(x: Int) -> Int:
+    return x + 2445
+
+def func2446(x: Int) -> Int:
+    return x + 2446
+
+def func2447(x: Int) -> Int:
+    return x + 2447
+
+def func2448(x: Int) -> Int:
+    return x + 2448
+
+def func2449(x: Int) -> Int:
+    return x + 2449
+
+def func2450(x: Int) -> Int:
+    return x + 2450
+
+def func2451(x: Int) -> Int:
+    return x + 2451
+
+def func2452(x: Int) -> Int:
+    return x + 2452
+
+def func2453(x: Int) -> Int:
+    return x + 2453
+
+def func2454(x: Int) -> Int:
+    return x + 2454
+
+def func2455(x: Int) -> Int:
+    return x + 2455
+
+def func2456(x: Int) -> Int:
+    return x + 2456
+
+def func2457(x: Int) -> Int:
+    return x + 2457
+
+def func2458(x: Int) -> Int:
+    return x + 2458
+
+def func2459(x: Int) -> Int:
+    return x + 2459
+
+def func2460(x: Int) -> Int:
+    return x + 2460
+
+def func2461(x: Int) -> Int:
+    return x + 2461
+
+def func2462(x: Int) -> Int:
+    return x + 2462
+
+def func2463(x: Int) -> Int:
+    return x + 2463
+
+def func2464(x: Int) -> Int:
+    return x + 2464
+
+def func2465(x: Int) -> Int:
+    return x + 2465
+
+def func2466(x: Int) -> Int:
+    return x + 2466
+
+def func2467(x: Int) -> Int:
+    return x + 2467
+
+def func2468(x: Int) -> Int:
+    return x + 2468
+
+def func2469(x: Int) -> Int:
+    return x + 2469
+
+def func2470(x: Int) -> Int:
+    return x + 2470
+
+def func2471(x: Int) -> Int:
+    return x + 2471
+
+def func2472(x: Int) -> Int:
+    return x + 2472
+
+def func2473(x: Int) -> Int:
+    return x + 2473
+
+def func2474(x: Int) -> Int:
+    return x + 2474
+
+def func2475(x: Int) -> Int:
+    return x + 2475
+
+def func2476(x: Int) -> Int:
+    return x + 2476
+
+def func2477(x: Int) -> Int:
+    return x + 2477
+
+def func2478(x: Int) -> Int:
+    return x + 2478
+
+def func2479(x: Int) -> Int:
+    return x + 2479
+
+def func2480(x: Int) -> Int:
+    return x + 2480
+
+def func2481(x: Int) -> Int:
+    return x + 2481
+
+def func2482(x: Int) -> Int:
+    return x + 2482
+
+def func2483(x: Int) -> Int:
+    return x + 2483
+
+def func2484(x: Int) -> Int:
+    return x + 2484
+
+def func2485(x: Int) -> Int:
+    return x + 2485
+
+def func2486(x: Int) -> Int:
+    return x + 2486
+
+def func2487(x: Int) -> Int:
+    return x + 2487
+
+def func2488(x: Int) -> Int:
+    return x + 2488
+
+def func2489(x: Int) -> Int:
+    return x + 2489
+
+def func2490(x: Int) -> Int:
+    return x + 2490
+
+def func2491(x: Int) -> Int:
+    return x + 2491
+
+def func2492(x: Int) -> Int:
+    return x + 2492
+
+def func2493(x: Int) -> Int:
+    return x + 2493
+
+def func2494(x: Int) -> Int:
+    return x + 2494
+
+def func2495(x: Int) -> Int:
+    return x + 2495
+
+def func2496(x: Int) -> Int:
+    return x + 2496
+
+def func2497(x: Int) -> Int:
+    return x + 2497
+
+def func2498(x: Int) -> Int:
+    return x + 2498
+
+def func2499(x: Int) -> Int:
+    return x + 2499
+
+def func2500(x: Int) -> Int:
+    return x + 2500
+
+def func2501(x: Int) -> Int:
+    return x + 2501
+
+def func2502(x: Int) -> Int:
+    return x + 2502
+
+def func2503(x: Int) -> Int:
+    return x + 2503
+
+def func2504(x: Int) -> Int:
+    return x + 2504
+
+def func2505(x: Int) -> Int:
+    return x + 2505
+
+def func2506(x: Int) -> Int:
+    return x + 2506
+
+def func2507(x: Int) -> Int:
+    return x + 2507
+
+def func2508(x: Int) -> Int:
+    return x + 2508
+
+def func2509(x: Int) -> Int:
+    return x + 2509
+
+def func2510(x: Int) -> Int:
+    return x + 2510
+
+def func2511(x: Int) -> Int:
+    return x + 2511
+
+def func2512(x: Int) -> Int:
+    return x + 2512
+
+def func2513(x: Int) -> Int:
+    return x + 2513
+
+def func2514(x: Int) -> Int:
+    return x + 2514
+
+def func2515(x: Int) -> Int:
+    return x + 2515
+
+def func2516(x: Int) -> Int:
+    return x + 2516
+
+def func2517(x: Int) -> Int:
+    return x + 2517
+
+def func2518(x: Int) -> Int:
+    return x + 2518
+
+def func2519(x: Int) -> Int:
+    return x + 2519
+
+def func2520(x: Int) -> Int:
+    return x + 2520
+
+def func2521(x: Int) -> Int:
+    return x + 2521
+
+def func2522(x: Int) -> Int:
+    return x + 2522
+
+def func2523(x: Int) -> Int:
+    return x + 2523
+
+def func2524(x: Int) -> Int:
+    return x + 2524
+
+def func2525(x: Int) -> Int:
+    return x + 2525
+
+def func2526(x: Int) -> Int:
+    return x + 2526
+
+def func2527(x: Int) -> Int:
+    return x + 2527
+
+def func2528(x: Int) -> Int:
+    return x + 2528
+
+def func2529(x: Int) -> Int:
+    return x + 2529
+
+def func2530(x: Int) -> Int:
+    return x + 2530
+
+def func2531(x: Int) -> Int:
+    return x + 2531
+
+def func2532(x: Int) -> Int:
+    return x + 2532
+
+def func2533(x: Int) -> Int:
+    return x + 2533
+
+def func2534(x: Int) -> Int:
+    return x + 2534
+
+def func2535(x: Int) -> Int:
+    return x + 2535
+
+def func2536(x: Int) -> Int:
+    return x + 2536
+
+def func2537(x: Int) -> Int:
+    return x + 2537
+
+def func2538(x: Int) -> Int:
+    return x + 2538
+
+def func2539(x: Int) -> Int:
+    return x + 2539
+
+def func2540(x: Int) -> Int:
+    return x + 2540
+
+def func2541(x: Int) -> Int:
+    return x + 2541
+
+def func2542(x: Int) -> Int:
+    return x + 2542
+
+def func2543(x: Int) -> Int:
+    return x + 2543
+
+def func2544(x: Int) -> Int:
+    return x + 2544
+
+def func2545(x: Int) -> Int:
+    return x + 2545
+
+def func2546(x: Int) -> Int:
+    return x + 2546
+
+def func2547(x: Int) -> Int:
+    return x + 2547
+
+def func2548(x: Int) -> Int:
+    return x + 2548
+
+def func2549(x: Int) -> Int:
+    return x + 2549
+
+def func2550(x: Int) -> Int:
+    return x + 2550
+
+def func2551(x: Int) -> Int:
+    return x + 2551
+
+def func2552(x: Int) -> Int:
+    return x + 2552
+
+def func2553(x: Int) -> Int:
+    return x + 2553
+
+def func2554(x: Int) -> Int:
+    return x + 2554
+
+def func2555(x: Int) -> Int:
+    return x + 2555
+
+def func2556(x: Int) -> Int:
+    return x + 2556
+
+def func2557(x: Int) -> Int:
+    return x + 2557
+
+def func2558(x: Int) -> Int:
+    return x + 2558
+
+def func2559(x: Int) -> Int:
+    return x + 2559
+
+def func2560(x: Int) -> Int:
+    return x + 2560
+
+def func2561(x: Int) -> Int:
+    return x + 2561
+
+def func2562(x: Int) -> Int:
+    return x + 2562
+
+def func2563(x: Int) -> Int:
+    return x + 2563
+
+def func2564(x: Int) -> Int:
+    return x + 2564
+
+def func2565(x: Int) -> Int:
+    return x + 2565
+
+def func2566(x: Int) -> Int:
+    return x + 2566
+
+def func2567(x: Int) -> Int:
+    return x + 2567
+
+def func2568(x: Int) -> Int:
+    return x + 2568
+
+def func2569(x: Int) -> Int:
+    return x + 2569
+
+def func2570(x: Int) -> Int:
+    return x + 2570
+
+def func2571(x: Int) -> Int:
+    return x + 2571
+
+def func2572(x: Int) -> Int:
+    return x + 2572
+
+def func2573(x: Int) -> Int:
+    return x + 2573
+
+def func2574(x: Int) -> Int:
+    return x + 2574
+
+def func2575(x: Int) -> Int:
+    return x + 2575
+
+def func2576(x: Int) -> Int:
+    return x + 2576
+
+def func2577(x: Int) -> Int:
+    return x + 2577
+
+def func2578(x: Int) -> Int:
+    return x + 2578
+
+def func2579(x: Int) -> Int:
+    return x + 2579
+
+def func2580(x: Int) -> Int:
+    return x + 2580
+
+def func2581(x: Int) -> Int:
+    return x + 2581
+
+def func2582(x: Int) -> Int:
+    return x + 2582
+
+def func2583(x: Int) -> Int:
+    return x + 2583
+
+def func2584(x: Int) -> Int:
+    return x + 2584
+
+def func2585(x: Int) -> Int:
+    return x + 2585
+
+def func2586(x: Int) -> Int:
+    return x + 2586
+
+def func2587(x: Int) -> Int:
+    return x + 2587
+
+def func2588(x: Int) -> Int:
+    return x + 2588
+
+def func2589(x: Int) -> Int:
+    return x + 2589
+
+def func2590(x: Int) -> Int:
+    return x + 2590
+
+def func2591(x: Int) -> Int:
+    return x + 2591
+
+def func2592(x: Int) -> Int:
+    return x + 2592
+
+def func2593(x: Int) -> Int:
+    return x + 2593
+
+def func2594(x: Int) -> Int:
+    return x + 2594
+
+def func2595(x: Int) -> Int:
+    return x + 2595
+
+def func2596(x: Int) -> Int:
+    return x + 2596
+
+def func2597(x: Int) -> Int:
+    return x + 2597
+
+def func2598(x: Int) -> Int:
+    return x + 2598
+
+def func2599(x: Int) -> Int:
+    return x + 2599
+
+def func2600(x: Int) -> Int:
+    return x + 2600
+
+def func2601(x: Int) -> Int:
+    return x + 2601
+
+def func2602(x: Int) -> Int:
+    return x + 2602
+
+def func2603(x: Int) -> Int:
+    return x + 2603
+
+def func2604(x: Int) -> Int:
+    return x + 2604
+
+def func2605(x: Int) -> Int:
+    return x + 2605
+
+def func2606(x: Int) -> Int:
+    return x + 2606
+
+def func2607(x: Int) -> Int:
+    return x + 2607
+
+def func2608(x: Int) -> Int:
+    return x + 2608
+
+def func2609(x: Int) -> Int:
+    return x + 2609
+
+def func2610(x: Int) -> Int:
+    return x + 2610
+
+def func2611(x: Int) -> Int:
+    return x + 2611
+
+def func2612(x: Int) -> Int:
+    return x + 2612
+
+def func2613(x: Int) -> Int:
+    return x + 2613
+
+def func2614(x: Int) -> Int:
+    return x + 2614
+
+def func2615(x: Int) -> Int:
+    return x + 2615
+
+def func2616(x: Int) -> Int:
+    return x + 2616
+
+def func2617(x: Int) -> Int:
+    return x + 2617
+
+def func2618(x: Int) -> Int:
+    return x + 2618
+
+def func2619(x: Int) -> Int:
+    return x + 2619
+
+def func2620(x: Int) -> Int:
+    return x + 2620
+
+def func2621(x: Int) -> Int:
+    return x + 2621
+
+def func2622(x: Int) -> Int:
+    return x + 2622
+
+def func2623(x: Int) -> Int:
+    return x + 2623
+
+def func2624(x: Int) -> Int:
+    return x + 2624
+
+def func2625(x: Int) -> Int:
+    return x + 2625
+
+def func2626(x: Int) -> Int:
+    return x + 2626
+
+def func2627(x: Int) -> Int:
+    return x + 2627
+
+def func2628(x: Int) -> Int:
+    return x + 2628
+
+def func2629(x: Int) -> Int:
+    return x + 2629
+
+def func2630(x: Int) -> Int:
+    return x + 2630
+
+def func2631(x: Int) -> Int:
+    return x + 2631
+
+def func2632(x: Int) -> Int:
+    return x + 2632
+
+def func2633(x: Int) -> Int:
+    return x + 2633
+
+def func2634(x: Int) -> Int:
+    return x + 2634
+
+def func2635(x: Int) -> Int:
+    return x + 2635
+
+def func2636(x: Int) -> Int:
+    return x + 2636
+
+def func2637(x: Int) -> Int:
+    return x + 2637
+
+def func2638(x: Int) -> Int:
+    return x + 2638
+
+def func2639(x: Int) -> Int:
+    return x + 2639
+
+def func2640(x: Int) -> Int:
+    return x + 2640
+
+def func2641(x: Int) -> Int:
+    return x + 2641
+
+def func2642(x: Int) -> Int:
+    return x + 2642
+
+def func2643(x: Int) -> Int:
+    return x + 2643
+
+def func2644(x: Int) -> Int:
+    return x + 2644
+
+def func2645(x: Int) -> Int:
+    return x + 2645
+
+def func2646(x: Int) -> Int:
+    return x + 2646
+
+def func2647(x: Int) -> Int:
+    return x + 2647
+
+def func2648(x: Int) -> Int:
+    return x + 2648
+
+def func2649(x: Int) -> Int:
+    return x + 2649
+
+def func2650(x: Int) -> Int:
+    return x + 2650
+
+def func2651(x: Int) -> Int:
+    return x + 2651
+
+def func2652(x: Int) -> Int:
+    return x + 2652
+
+def func2653(x: Int) -> Int:
+    return x + 2653
+
+def func2654(x: Int) -> Int:
+    return x + 2654
+
+def func2655(x: Int) -> Int:
+    return x + 2655
+
+def func2656(x: Int) -> Int:
+    return x + 2656
+
+def func2657(x: Int) -> Int:
+    return x + 2657
+
+def func2658(x: Int) -> Int:
+    return x + 2658
+
+def func2659(x: Int) -> Int:
+    return x + 2659
+
+def func2660(x: Int) -> Int:
+    return x + 2660
+
+def func2661(x: Int) -> Int:
+    return x + 2661
+
+def func2662(x: Int) -> Int:
+    return x + 2662
+
+def func2663(x: Int) -> Int:
+    return x + 2663
+
+def func2664(x: Int) -> Int:
+    return x + 2664
+
+def func2665(x: Int) -> Int:
+    return x + 2665
+
+def func2666(x: Int) -> Int:
+    return x + 2666
+
+def func2667(x: Int) -> Int:
+    return x + 2667
+
+def func2668(x: Int) -> Int:
+    return x + 2668
+
+def func2669(x: Int) -> Int:
+    return x + 2669
+
+def func2670(x: Int) -> Int:
+    return x + 2670
+
+def func2671(x: Int) -> Int:
+    return x + 2671
+
+def func2672(x: Int) -> Int:
+    return x + 2672
+
+def func2673(x: Int) -> Int:
+    return x + 2673
+
+def func2674(x: Int) -> Int:
+    return x + 2674
+
+def func2675(x: Int) -> Int:
+    return x + 2675
+
+def func2676(x: Int) -> Int:
+    return x + 2676
+
+def func2677(x: Int) -> Int:
+    return x + 2677
+
+def func2678(x: Int) -> Int:
+    return x + 2678
+
+def func2679(x: Int) -> Int:
+    return x + 2679
+
+def func2680(x: Int) -> Int:
+    return x + 2680
+
+def func2681(x: Int) -> Int:
+    return x + 2681
+
+def func2682(x: Int) -> Int:
+    return x + 2682
+
+def func2683(x: Int) -> Int:
+    return x + 2683
+
+def func2684(x: Int) -> Int:
+    return x + 2684
+
+def func2685(x: Int) -> Int:
+    return x + 2685
+
+def func2686(x: Int) -> Int:
+    return x + 2686
+
+def func2687(x: Int) -> Int:
+    return x + 2687
+
+def func2688(x: Int) -> Int:
+    return x + 2688
+
+def func2689(x: Int) -> Int:
+    return x + 2689
+
+def func2690(x: Int) -> Int:
+    return x + 2690
+
+def func2691(x: Int) -> Int:
+    return x + 2691
+
+def func2692(x: Int) -> Int:
+    return x + 2692
+
+def func2693(x: Int) -> Int:
+    return x + 2693
+
+def func2694(x: Int) -> Int:
+    return x + 2694
+
+def func2695(x: Int) -> Int:
+    return x + 2695
+
+def func2696(x: Int) -> Int:
+    return x + 2696
+
+def func2697(x: Int) -> Int:
+    return x + 2697
+
+def func2698(x: Int) -> Int:
+    return x + 2698
+
+def func2699(x: Int) -> Int:
+    return x + 2699
+
+def func2700(x: Int) -> Int:
+    return x + 2700
+
+def func2701(x: Int) -> Int:
+    return x + 2701
+
+def func2702(x: Int) -> Int:
+    return x + 2702
+
+def func2703(x: Int) -> Int:
+    return x + 2703
+
+def func2704(x: Int) -> Int:
+    return x + 2704
+
+def func2705(x: Int) -> Int:
+    return x + 2705
+
+def func2706(x: Int) -> Int:
+    return x + 2706
+
+def func2707(x: Int) -> Int:
+    return x + 2707
+
+def func2708(x: Int) -> Int:
+    return x + 2708
+
+def func2709(x: Int) -> Int:
+    return x + 2709
+
+def func2710(x: Int) -> Int:
+    return x + 2710
+
+def func2711(x: Int) -> Int:
+    return x + 2711
+
+def func2712(x: Int) -> Int:
+    return x + 2712
+
+def func2713(x: Int) -> Int:
+    return x + 2713
+
+def func2714(x: Int) -> Int:
+    return x + 2714
+
+def func2715(x: Int) -> Int:
+    return x + 2715
+
+def func2716(x: Int) -> Int:
+    return x + 2716
+
+def func2717(x: Int) -> Int:
+    return x + 2717
+
+def func2718(x: Int) -> Int:
+    return x + 2718
+
+def func2719(x: Int) -> Int:
+    return x + 2719
+
+def func2720(x: Int) -> Int:
+    return x + 2720
+
+def func2721(x: Int) -> Int:
+    return x + 2721
+
+def func2722(x: Int) -> Int:
+    return x + 2722
+
+def func2723(x: Int) -> Int:
+    return x + 2723
+
+def func2724(x: Int) -> Int:
+    return x + 2724
+
+def func2725(x: Int) -> Int:
+    return x + 2725
+
+def func2726(x: Int) -> Int:
+    return x + 2726
+
+def func2727(x: Int) -> Int:
+    return x + 2727
+
+def func2728(x: Int) -> Int:
+    return x + 2728
+
+def func2729(x: Int) -> Int:
+    return x + 2729
+
+def func2730(x: Int) -> Int:
+    return x + 2730
+
+def func2731(x: Int) -> Int:
+    return x + 2731
+
+def func2732(x: Int) -> Int:
+    return x + 2732
+
+def func2733(x: Int) -> Int:
+    return x + 2733
+
+def func2734(x: Int) -> Int:
+    return x + 2734
+
+def func2735(x: Int) -> Int:
+    return x + 2735
+
+def func2736(x: Int) -> Int:
+    return x + 2736
+
+def func2737(x: Int) -> Int:
+    return x + 2737
+
+def func2738(x: Int) -> Int:
+    return x + 2738
+
+def func2739(x: Int) -> Int:
+    return x + 2739
+
+def func2740(x: Int) -> Int:
+    return x + 2740
+
+def func2741(x: Int) -> Int:
+    return x + 2741
+
+def func2742(x: Int) -> Int:
+    return x + 2742
+
+def func2743(x: Int) -> Int:
+    return x + 2743
+
+def func2744(x: Int) -> Int:
+    return x + 2744
+
+def func2745(x: Int) -> Int:
+    return x + 2745
+
+def func2746(x: Int) -> Int:
+    return x + 2746
+
+def func2747(x: Int) -> Int:
+    return x + 2747
+
+def func2748(x: Int) -> Int:
+    return x + 2748
+
+def func2749(x: Int) -> Int:
+    return x + 2749
+
+def func2750(x: Int) -> Int:
+    return x + 2750
+
+def func2751(x: Int) -> Int:
+    return x + 2751
+
+def func2752(x: Int) -> Int:
+    return x + 2752
+
+def func2753(x: Int) -> Int:
+    return x + 2753
+
+def func2754(x: Int) -> Int:
+    return x + 2754
+
+def func2755(x: Int) -> Int:
+    return x + 2755
+
+def func2756(x: Int) -> Int:
+    return x + 2756
+
+def func2757(x: Int) -> Int:
+    return x + 2757
+
+def func2758(x: Int) -> Int:
+    return x + 2758
+
+def func2759(x: Int) -> Int:
+    return x + 2759
+
+def func2760(x: Int) -> Int:
+    return x + 2760
+
+def func2761(x: Int) -> Int:
+    return x + 2761
+
+def func2762(x: Int) -> Int:
+    return x + 2762
+
+def func2763(x: Int) -> Int:
+    return x + 2763
+
+def func2764(x: Int) -> Int:
+    return x + 2764
+
+def func2765(x: Int) -> Int:
+    return x + 2765
+
+def func2766(x: Int) -> Int:
+    return x + 2766
+
+def func2767(x: Int) -> Int:
+    return x + 2767
+
+def func2768(x: Int) -> Int:
+    return x + 2768
+
+def func2769(x: Int) -> Int:
+    return x + 2769
+
+def func2770(x: Int) -> Int:
+    return x + 2770
+
+def func2771(x: Int) -> Int:
+    return x + 2771
+
+def func2772(x: Int) -> Int:
+    return x + 2772
+
+def func2773(x: Int) -> Int:
+    return x + 2773
+
+def func2774(x: Int) -> Int:
+    return x + 2774
+
+def func2775(x: Int) -> Int:
+    return x + 2775
+
+def func2776(x: Int) -> Int:
+    return x + 2776
+
+def func2777(x: Int) -> Int:
+    return x + 2777
+
+def func2778(x: Int) -> Int:
+    return x + 2778
+
+def func2779(x: Int) -> Int:
+    return x + 2779
+
+def func2780(x: Int) -> Int:
+    return x + 2780
+
+def func2781(x: Int) -> Int:
+    return x + 2781
+
+def func2782(x: Int) -> Int:
+    return x + 2782
+
+def func2783(x: Int) -> Int:
+    return x + 2783
+
+def func2784(x: Int) -> Int:
+    return x + 2784
+
+def func2785(x: Int) -> Int:
+    return x + 2785
+
+def func2786(x: Int) -> Int:
+    return x + 2786
+
+def func2787(x: Int) -> Int:
+    return x + 2787
+
+def func2788(x: Int) -> Int:
+    return x + 2788
+
+def func2789(x: Int) -> Int:
+    return x + 2789
+
+def func2790(x: Int) -> Int:
+    return x + 2790
+
+def func2791(x: Int) -> Int:
+    return x + 2791
+
+def func2792(x: Int) -> Int:
+    return x + 2792
+
+def func2793(x: Int) -> Int:
+    return x + 2793
+
+def func2794(x: Int) -> Int:
+    return x + 2794
+
+def func2795(x: Int) -> Int:
+    return x + 2795
+
+def func2796(x: Int) -> Int:
+    return x + 2796
+
+def func2797(x: Int) -> Int:
+    return x + 2797
+
+def func2798(x: Int) -> Int:
+    return x + 2798
+
+def func2799(x: Int) -> Int:
+    return x + 2799
+
+def func2800(x: Int) -> Int:
+    return x + 2800
+
+def func2801(x: Int) -> Int:
+    return x + 2801
+
+def func2802(x: Int) -> Int:
+    return x + 2802
+
+def func2803(x: Int) -> Int:
+    return x + 2803
+
+def func2804(x: Int) -> Int:
+    return x + 2804
+
+def func2805(x: Int) -> Int:
+    return x + 2805
+
+def func2806(x: Int) -> Int:
+    return x + 2806
+
+def func2807(x: Int) -> Int:
+    return x + 2807
+
+def func2808(x: Int) -> Int:
+    return x + 2808
+
+def func2809(x: Int) -> Int:
+    return x + 2809
+
+def func2810(x: Int) -> Int:
+    return x + 2810
+
+def func2811(x: Int) -> Int:
+    return x + 2811
+
+def func2812(x: Int) -> Int:
+    return x + 2812
+
+def func2813(x: Int) -> Int:
+    return x + 2813
+
+def func2814(x: Int) -> Int:
+    return x + 2814
+
+def func2815(x: Int) -> Int:
+    return x + 2815
+
+def func2816(x: Int) -> Int:
+    return x + 2816
+
+def func2817(x: Int) -> Int:
+    return x + 2817
+
+def func2818(x: Int) -> Int:
+    return x + 2818
+
+def func2819(x: Int) -> Int:
+    return x + 2819
+
+def func2820(x: Int) -> Int:
+    return x + 2820
+
+def func2821(x: Int) -> Int:
+    return x + 2821
+
+def func2822(x: Int) -> Int:
+    return x + 2822
+
+def func2823(x: Int) -> Int:
+    return x + 2823
+
+def func2824(x: Int) -> Int:
+    return x + 2824
+
+def func2825(x: Int) -> Int:
+    return x + 2825
+
+def func2826(x: Int) -> Int:
+    return x + 2826
+
+def func2827(x: Int) -> Int:
+    return x + 2827
+
+def func2828(x: Int) -> Int:
+    return x + 2828
+
+def func2829(x: Int) -> Int:
+    return x + 2829
+
+def func2830(x: Int) -> Int:
+    return x + 2830
+
+def func2831(x: Int) -> Int:
+    return x + 2831
+
+def func2832(x: Int) -> Int:
+    return x + 2832
+
+def func2833(x: Int) -> Int:
+    return x + 2833
+
+def func2834(x: Int) -> Int:
+    return x + 2834
+
+def func2835(x: Int) -> Int:
+    return x + 2835
+
+def func2836(x: Int) -> Int:
+    return x + 2836
+
+def func2837(x: Int) -> Int:
+    return x + 2837
+
+def func2838(x: Int) -> Int:
+    return x + 2838
+
+def func2839(x: Int) -> Int:
+    return x + 2839
+
+def func2840(x: Int) -> Int:
+    return x + 2840
+
+def func2841(x: Int) -> Int:
+    return x + 2841
+
+def func2842(x: Int) -> Int:
+    return x + 2842
+
+def func2843(x: Int) -> Int:
+    return x + 2843
+
+def func2844(x: Int) -> Int:
+    return x + 2844
+
+def func2845(x: Int) -> Int:
+    return x + 2845
+
+def func2846(x: Int) -> Int:
+    return x + 2846
+
+def func2847(x: Int) -> Int:
+    return x + 2847
+
+def func2848(x: Int) -> Int:
+    return x + 2848
+
+def func2849(x: Int) -> Int:
+    return x + 2849
+
+def func2850(x: Int) -> Int:
+    return x + 2850
+
+def func2851(x: Int) -> Int:
+    return x + 2851
+
+def func2852(x: Int) -> Int:
+    return x + 2852
+
+def func2853(x: Int) -> Int:
+    return x + 2853
+
+def func2854(x: Int) -> Int:
+    return x + 2854
+
+def func2855(x: Int) -> Int:
+    return x + 2855
+
+def func2856(x: Int) -> Int:
+    return x + 2856
+
+def func2857(x: Int) -> Int:
+    return x + 2857
+
+def func2858(x: Int) -> Int:
+    return x + 2858
+
+def func2859(x: Int) -> Int:
+    return x + 2859
+
+def func2860(x: Int) -> Int:
+    return x + 2860
+
+def func2861(x: Int) -> Int:
+    return x + 2861
+
+def func2862(x: Int) -> Int:
+    return x + 2862
+
+def func2863(x: Int) -> Int:
+    return x + 2863
+
+def func2864(x: Int) -> Int:
+    return x + 2864
+
+def func2865(x: Int) -> Int:
+    return x + 2865
+
+def func2866(x: Int) -> Int:
+    return x + 2866
+
+def func2867(x: Int) -> Int:
+    return x + 2867
+
+def func2868(x: Int) -> Int:
+    return x + 2868
+
+def func2869(x: Int) -> Int:
+    return x + 2869
+
+def func2870(x: Int) -> Int:
+    return x + 2870
+
+def func2871(x: Int) -> Int:
+    return x + 2871
+
+def func2872(x: Int) -> Int:
+    return x + 2872
+
+def func2873(x: Int) -> Int:
+    return x + 2873
+
+def func2874(x: Int) -> Int:
+    return x + 2874
+
+def func2875(x: Int) -> Int:
+    return x + 2875
+
+def func2876(x: Int) -> Int:
+    return x + 2876
+
+def func2877(x: Int) -> Int:
+    return x + 2877
+
+def func2878(x: Int) -> Int:
+    return x + 2878
+
+def func2879(x: Int) -> Int:
+    return x + 2879
+
+def func2880(x: Int) -> Int:
+    return x + 2880
+
+def func2881(x: Int) -> Int:
+    return x + 2881
+
+def func2882(x: Int) -> Int:
+    return x + 2882
+
+def func2883(x: Int) -> Int:
+    return x + 2883
+
+def func2884(x: Int) -> Int:
+    return x + 2884
+
+def func2885(x: Int) -> Int:
+    return x + 2885
+
+def func2886(x: Int) -> Int:
+    return x + 2886
+
+def func2887(x: Int) -> Int:
+    return x + 2887
+
+def func2888(x: Int) -> Int:
+    return x + 2888
+
+def func2889(x: Int) -> Int:
+    return x + 2889
+
+def func2890(x: Int) -> Int:
+    return x + 2890
+
+def func2891(x: Int) -> Int:
+    return x + 2891
+
+def func2892(x: Int) -> Int:
+    return x + 2892
+
+def func2893(x: Int) -> Int:
+    return x + 2893
+
+def func2894(x: Int) -> Int:
+    return x + 2894
+
+def func2895(x: Int) -> Int:
+    return x + 2895
+
+def func2896(x: Int) -> Int:
+    return x + 2896
+
+def func2897(x: Int) -> Int:
+    return x + 2897
+
+def func2898(x: Int) -> Int:
+    return x + 2898
+
+def func2899(x: Int) -> Int:
+    return x + 2899
+
+def func2900(x: Int) -> Int:
+    return x + 2900
+
+def func2901(x: Int) -> Int:
+    return x + 2901
+
+def func2902(x: Int) -> Int:
+    return x + 2902
+
+def func2903(x: Int) -> Int:
+    return x + 2903
+
+def func2904(x: Int) -> Int:
+    return x + 2904
+
+def func2905(x: Int) -> Int:
+    return x + 2905
+
+def func2906(x: Int) -> Int:
+    return x + 2906
+
+def func2907(x: Int) -> Int:
+    return x + 2907
+
+def func2908(x: Int) -> Int:
+    return x + 2908
+
+def func2909(x: Int) -> Int:
+    return x + 2909
+
+def func2910(x: Int) -> Int:
+    return x + 2910
+
+def func2911(x: Int) -> Int:
+    return x + 2911
+
+def func2912(x: Int) -> Int:
+    return x + 2912
+
+def func2913(x: Int) -> Int:
+    return x + 2913
+
+def func2914(x: Int) -> Int:
+    return x + 2914
+
+def func2915(x: Int) -> Int:
+    return x + 2915
+
+def func2916(x: Int) -> Int:
+    return x + 2916
+
+def func2917(x: Int) -> Int:
+    return x + 2917
+
+def func2918(x: Int) -> Int:
+    return x + 2918
+
+def func2919(x: Int) -> Int:
+    return x + 2919
+
+def func2920(x: Int) -> Int:
+    return x + 2920
+
+def func2921(x: Int) -> Int:
+    return x + 2921
+
+def func2922(x: Int) -> Int:
+    return x + 2922
+
+def func2923(x: Int) -> Int:
+    return x + 2923
+
+def func2924(x: Int) -> Int:
+    return x + 2924
+
+def func2925(x: Int) -> Int:
+    return x + 2925
+
+def func2926(x: Int) -> Int:
+    return x + 2926
+
+def func2927(x: Int) -> Int:
+    return x + 2927
+
+def func2928(x: Int) -> Int:
+    return x + 2928
+
+def func2929(x: Int) -> Int:
+    return x + 2929
+
+def func2930(x: Int) -> Int:
+    return x + 2930
+
+def func2931(x: Int) -> Int:
+    return x + 2931
+
+def func2932(x: Int) -> Int:
+    return x + 2932
+
+def func2933(x: Int) -> Int:
+    return x + 2933
+
+def func2934(x: Int) -> Int:
+    return x + 2934
+
+def func2935(x: Int) -> Int:
+    return x + 2935
+
+def func2936(x: Int) -> Int:
+    return x + 2936
+
+def func2937(x: Int) -> Int:
+    return x + 2937
+
+def func2938(x: Int) -> Int:
+    return x + 2938
+
+def func2939(x: Int) -> Int:
+    return x + 2939
+
+def func2940(x: Int) -> Int:
+    return x + 2940
+
+def func2941(x: Int) -> Int:
+    return x + 2941
+
+def func2942(x: Int) -> Int:
+    return x + 2942
+
+def func2943(x: Int) -> Int:
+    return x + 2943
+
+def func2944(x: Int) -> Int:
+    return x + 2944
+
+def func2945(x: Int) -> Int:
+    return x + 2945
+
+def func2946(x: Int) -> Int:
+    return x + 2946
+
+def func2947(x: Int) -> Int:
+    return x + 2947
+
+def func2948(x: Int) -> Int:
+    return x + 2948
+
+def func2949(x: Int) -> Int:
+    return x + 2949
+
+def func2950(x: Int) -> Int:
+    return x + 2950
+
+def func2951(x: Int) -> Int:
+    return x + 2951
+
+def func2952(x: Int) -> Int:
+    return x + 2952
+
+def func2953(x: Int) -> Int:
+    return x + 2953
+
+def func2954(x: Int) -> Int:
+    return x + 2954
+
+def func2955(x: Int) -> Int:
+    return x + 2955
+
+def func2956(x: Int) -> Int:
+    return x + 2956
+
+def func2957(x: Int) -> Int:
+    return x + 2957
+
+def func2958(x: Int) -> Int:
+    return x + 2958
+
+def func2959(x: Int) -> Int:
+    return x + 2959
+
+def func2960(x: Int) -> Int:
+    return x + 2960
+
+def func2961(x: Int) -> Int:
+    return x + 2961
+
+def func2962(x: Int) -> Int:
+    return x + 2962
+
+def func2963(x: Int) -> Int:
+    return x + 2963
+
+def func2964(x: Int) -> Int:
+    return x + 2964
+
+def func2965(x: Int) -> Int:
+    return x + 2965
+
+def func2966(x: Int) -> Int:
+    return x + 2966
+
+def func2967(x: Int) -> Int:
+    return x + 2967
+
+def func2968(x: Int) -> Int:
+    return x + 2968
+
+def func2969(x: Int) -> Int:
+    return x + 2969
+
+def func2970(x: Int) -> Int:
+    return x + 2970
+
+def func2971(x: Int) -> Int:
+    return x + 2971
+
+def func2972(x: Int) -> Int:
+    return x + 2972
+
+def func2973(x: Int) -> Int:
+    return x + 2973
+
+def func2974(x: Int) -> Int:
+    return x + 2974
+
+def func2975(x: Int) -> Int:
+    return x + 2975
+
+def func2976(x: Int) -> Int:
+    return x + 2976
+
+def func2977(x: Int) -> Int:
+    return x + 2977
+
+def func2978(x: Int) -> Int:
+    return x + 2978
+
+def func2979(x: Int) -> Int:
+    return x + 2979
+
+def func2980(x: Int) -> Int:
+    return x + 2980
+
+def func2981(x: Int) -> Int:
+    return x + 2981
+
+def func2982(x: Int) -> Int:
+    return x + 2982
+
+def func2983(x: Int) -> Int:
+    return x + 2983
+
+def func2984(x: Int) -> Int:
+    return x + 2984
+
+def func2985(x: Int) -> Int:
+    return x + 2985
+
+def func2986(x: Int) -> Int:
+    return x + 2986
+
+def func2987(x: Int) -> Int:
+    return x + 2987
+
+def func2988(x: Int) -> Int:
+    return x + 2988
+
+def func2989(x: Int) -> Int:
+    return x + 2989
+
+def func2990(x: Int) -> Int:
+    return x + 2990
+
+def func2991(x: Int) -> Int:
+    return x + 2991
+
+def func2992(x: Int) -> Int:
+    return x + 2992
+
+def func2993(x: Int) -> Int:
+    return x + 2993
+
+def func2994(x: Int) -> Int:
+    return x + 2994
+
+def func2995(x: Int) -> Int:
+    return x + 2995
+
+def func2996(x: Int) -> Int:
+    return x + 2996
+
+def func2997(x: Int) -> Int:
+    return x + 2997
+
+def func2998(x: Int) -> Int:
+    return x + 2998
+
+def func2999(x: Int) -> Int:
+    return x + 2999
+
+def main():
+    mut total := 0
+    total = total + func0(total)
+    total = total + func1(total)
+    total = total + func2(total)
+    total = total + func3(total)
+    total = total + func4(total)
+    total = total + func5(total)
+    total = total + func6(total)
+    total = total + func7(total)
+    total = total + func8(total)
+    total = total + func9(total)
+    total = total + func10(total)
+    total = total + func11(total)
+    total = total + func12(total)
+    total = total + func13(total)
+    total = total + func14(total)
+    total = total + func15(total)
+    total = total + func16(total)
+    total = total + func17(total)
+    total = total + func18(total)
+    total = total + func19(total)
+    print(total)

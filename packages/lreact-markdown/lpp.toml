@@ -1,0 +1,10 @@
+[package]
+name = "lreact-markdown"
+version = "0.1.0"
+authors = ["Samar"]
+license = "MIT"
+description = "Pure L++ React Component for Markdown Note Cards with Wikilinks, Math, and Code Highlighting"
+keywords = ["lreact", "markdown", "component", "wikilinks", "ui", "cosmos"]
+
+[dependencies]
+simple-markdown = { path = "../simple-markdown" }

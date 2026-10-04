@@ -1,0 +1,18 @@
+enum Status[T, E]:
+    Success(data: T)
+    Failure(error: E)
+
+def success(message: Str) -> Status[Str, Int]:
+    return Status.Success(message)
+
+def test_enum_match(res: Status[Str, Int]) -> Str:
+    match res:
+        Success(msg):
+            return str_concat("OK: ", msg)
+        Failure(code):
+            return str_concat("ERR: ", int_to_str(code))
+    return "unreachable"
+
+def main():
+    result := success("generic enum")
+    print(test_enum_match(result))

@@ -1,0 +1,7 @@
+import c_memory
+
+def main():
+    memory := c_memory_new(4)
+    pointer := c_malloc(memory, 4)
+    c_memory_destroy(memory)
+    print(c_load_u8(pointer))

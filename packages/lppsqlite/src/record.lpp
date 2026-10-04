@@ -1,0 +1,230 @@
+# record.lpp — SQLite's record format (the payload of every table row).
+#
+# Layout:  [varint header_size][serial types...][value bodies...]
+# header_size counts itself.
+#
+# Serial types:
+#   0        NULL                    (0 bytes)
+#   1..6     big-endian int of 1,2,3,4,6,8 bytes
+#   7        IEEE-754 big-endian double (8 bytes)
+#   8        integer literal 0       (0 bytes)   [schema format >= 4]
+#   9        integer literal 1       (0 bytes)   [schema format >= 4]
+#   N>=12 even  BLOB, length (N-12)/2
+#   N>=13 odd   TEXT, length (N-13)/2
+
+import mem
+import varint
+import value
+
+# Serial type code for a value.
+def serial_of(v: Int) -> Int:
+    t := value.v_type(v)
+    if t == value.TNULL():
+        return 0
+    if t == value.TREAL():
+        return 7
+    if t == value.TINT():
+        n := value.v_int(v)
+        if n == 0:
+            return 8
+        if n == 1:
+            return 9
+        if n >= 0 - 128:
+            if n <= 127:
+                return 1
+        if n >= 0 - 32768:
+            if n <= 32767:
+                return 2
+        if n >= 0 - 8388608:
+            if n <= 8388607:
+                return 3
+        if n >= 0 - 2147483648:
+            if n <= 2147483647:
+                return 4
+        if n >= 0 - 140737488355328:
+            if n <= 140737488355327:
+                return 5
+        return 6
+    if t == value.TTEXT():
+        return value.v_len(v) * 2 + 13
+    return value.v_len(v) * 2 + 12
+
+# Body size in bytes for a serial type code.
+def serial_size(st: Int) -> Int:
+    if st == 0:
+        return 0
+    if st == 1:
+        return 1
+    if st == 2:
+        return 2
+    if st == 3:
+        return 3
+    if st == 4:
+        return 4
+    if st == 5:
+        return 6
+    if st == 6:
+        return 8
+    if st == 7:
+        return 8
+    if st == 8:
+        return 0
+    if st == 9:
+        return 0
+    if st == 10:
+        return 0
+    if st == 11:
+        return 0
+    if (st & 1) == 0:
+        return (st - 12) / 2
+    return (st - 13) / 2
+
+# Write the body of `v` (already known to have serial type `st`).
+def put_body(b: Int, off: Int, v: Int, st: Int) -> Int:
+    if st == 0:
+        return 0
+    if st == 8:
+        return 0
+    if st == 9:
+        return 0
+    if st == 1:
+        buf_set8(b, off, value.v_int(v) & 255)
+        return 1
+    if st == 2:
+        mem.be_put16(b, off, value.v_int(v) & 65535)
+        return 2
+    if st == 3:
+        mem.be_put24(b, off, value.v_int(v) & 16777215)
+        return 3
+    if st == 4:
+        mem.be_put32(b, off, value.v_int(v) & 4294967295)
+        return 4
+    if st == 5:
+        mem.be_put48(b, off, value.v_int(v))
+        return 6
+    if st == 6:
+        mem.be_put64(b, off, value.v_int(v))
+        return 8
+    if st == 7:
+        mem.be_put64(b, off, value.v_bits(v))
+        return 8
+    n := serial_size(st)
+    if n > 0:
+        buf_copy(b, off, value.v_ptr(v), 0, n)
+    return n
+
+# Decode one value from a serial type + body bytes.
+def read_body(b: Int, off: Int, st: Int) -> Int:
+    if st == 0:
+        return value.v_null()
+    if st == 8:
+        return value.v_from_int(0)
+    if st == 9:
+        return value.v_from_int(1)
+    if st == 1:
+        return value.v_from_int(mem.sign_extend(buf_get8(b, off), 1))
+    if st == 2:
+        return value.v_from_int(mem.sign_extend(mem.be_get16(b, off), 2))
+    if st == 3:
+        return value.v_from_int(mem.sign_extend(mem.be_get24(b, off), 3))
+    if st == 4:
+        return value.v_from_int(mem.sign_extend(mem.be_get32(b, off), 4))
+    if st == 5:
+        return value.v_from_int(mem.sign_extend(mem.be_get48(b, off), 6))
+    if st == 6:
+        return value.v_from_int(mem.be_get64(b, off))
+    if st == 7:
+        return value.v_from_bits(mem.be_get64(b, off))
+    if st == 10:
+        return value.v_null()
+    if st == 11:
+        return value.v_null()
+    n := serial_size(st)
+    if (st & 1) == 0:
+        return value.v_from_bytes(value.TBLOB(), b, off, n)
+    return value.v_from_bytes(value.TTEXT(), b, off, n)
+
+# Encode a vector of values into a freshly allocated record buffer.
+# Returns a vec handle (mem.vec_*); caller frees with mem.vec_free.
+def encode(vv: Int) -> Int:
+    n := value.vv_len(vv)
+    sts := mem.iv_new(8)
+    mut hdr_body := 0
+    mut body := 0
+    mut i := 0
+    while i < n:
+        st := serial_of(value.vv_get(vv, i))
+        mem.iv_push(sts, st)
+        hdr_body = hdr_body + varint.vi_size_of(st)
+        body = body + serial_size(st)
+        i = i + 1
+
+    # header_size includes its own varint, so solve for the fixed point.
+    mut hsz := varint.vi_size_of(hdr_body + 1) + hdr_body
+    mut again := 1
+    while again == 1:
+        cand := varint.vi_size_of(hsz) + hdr_body
+        if cand == hsz:
+            again = 0
+        else:
+            hsz = cand
+
+    out := mem.vec_new(hsz + body)
+    mem.vec_resize_zero(out, hsz + body)
+    d := mem.vec_data(out)
+    mut off := varint.vi_put(d, 0, hsz)
+    mut j := 0
+    while j < n:
+        off = off + varint.vi_put(d, off, mem.iv_get(sts, j))
+        j = j + 1
+    mut boff := hsz
+    mut k := 0
+    while k < n:
+        boff = boff + put_body(d, boff, value.vv_get(vv, k), mem.iv_get(sts, k))
+        k = k + 1
+    mem.iv_free(sts)
+    return out
+
+# Decode a record into a new value vector.
+def decode(b: Int, off: Int, size: Int) -> Int:
+    vv := value.vv_new()
+    if size <= 0:
+        return vv
+    hsz := varint.vi_get(b, off)
+    mut hpos := off + varint.vi_len(b, off)
+    hend := off + hsz
+    mut bpos := off + hsz
+    while hpos < hend:
+        st := varint.vi_get(b, hpos)
+        hpos = hpos + varint.vi_len(b, hpos)
+        value.vv_push(vv, read_body(b, bpos, st))
+        bpos = bpos + serial_size(st)
+    return vv
+
+# Number of columns in a record without materialising the values.
+def column_count(b: Int, off: Int) -> Int:
+    hsz := varint.vi_get(b, off)
+    mut hpos := off + varint.vi_len(b, off)
+    hend := off + hsz
+    mut n := 0
+    while hpos < hend:
+        hpos = hpos + varint.vi_len(b, hpos)
+        n = n + 1
+    return n
+
+# Decode only column `idx` (avoids materialising the whole row).
+def decode_one(b: Int, off: Int, idx: Int) -> Int:
+    hsz := varint.vi_get(b, off)
+    mut hpos := off + varint.vi_len(b, off)
+    hend := off + hsz
+    mut bpos := off + hsz
+    mut i := 0
+    while hpos < hend:
+        st := varint.vi_get(b, hpos)
+        hpos = hpos + varint.vi_len(b, hpos)
+        sz := serial_size(st)
+        if i == idx:
+            return read_body(b, bpos, st)
+        bpos = bpos + sz
+        i = i + 1
+    return value.v_null()

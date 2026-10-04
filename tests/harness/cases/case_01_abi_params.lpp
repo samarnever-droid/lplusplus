@@ -1,0 +1,15 @@
+def calc8(a: Int, b: Int, c: Int, d: Int, e: Int, f: Int, g: Int, h: Int) -> Int:
+    return a * 1 + b * 2 + c * 3 + d * 4 + e * 5 + f * 6 + g * 7 + h * 8
+
+def format_info(prefix: Str, a: Int, b: Int, c: Int, d: Int, e: Int, f: Int, g: Int, h: Int) -> Str:
+    sum := calc8(a, b, c, d, e, f, g, h)
+    return str_concat(prefix, str_concat(": ", int_to_str(sum)))
+
+def main():
+    res := calc8(1, 2, 3, 4, 5, 6, 7, 8)
+    print_str("Sum 1..8 weighted:\n")
+    print(res)
+    
+    msg := format_info("Result Weighted", 1, 2, 3, 4, 5, 6, 7, 8)
+    print_str(msg)
+    print_str("\nPASS_ABI_PARAMS\n")

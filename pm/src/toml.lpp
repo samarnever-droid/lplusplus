@@ -1,0 +1,176 @@
+# toml.lpp — Minimal TOML parser in pure L++
+# Stdlib candidate (lpp-toml)
+#
+# Handles:
+#   [section] headers
+#   key = "string value"
+#   key = 123  (integer)
+#   key = { inline = "table" }
+#   # comments
+#
+# Public API:
+#   toml_load(text: Str) -> TomlDoc
+#   toml_get_str(doc: TomlDoc, section: Str, key: Str) -> Str
+#   toml_get_int(doc: TomlDoc, section: Str, key: Str) -> Int
+#   toml_has_section(doc: TomlDoc, section: Str) -> Bool
+#   toml_section_raw(doc: TomlDoc, section: Str) -> Str
+
+# Internal: each entry is stored as "§SECTION§KEY§VALUE\n"
+# The TomlDoc is just a Str acting as a flat key-value store.
+# Sections encoded with "§" (U+00A7) as separator unlikely to appear in real values.
+
+struct TomlDoc:
+    raw:  Str    # original TOML text (for section_raw lookups)
+    flat: Str    # encoded entries: "§section§key§value\n" repeated
+
+def toml_load(text: Str) -> TomlDoc:
+    mut doc := TomlDoc()
+    doc.raw  = text
+    doc.flat = ""
+
+    mut pos         := 0
+    end_pos         := str_len(text)
+    mut cur_section := ""
+
+    while pos < end_pos:
+        mut nl := str_find(str_substr(text, pos, end_pos - pos), "\n")
+        if nl < 0:
+            nl = end_pos - pos
+        line := str_trim(str_substr(text, pos, nl))
+        pos = pos + nl + 1
+
+        # Skip blank lines and comments
+        if str_len(line) == 0:
+            continue
+        if str_find(line, "#") == 0:
+            continue
+
+        # Section header [name]
+        if str_find(line, "[") == 0:
+            rb := str_find(line, "]")
+            if rb > 0:
+                cur_section = str_trim(str_substr(line, 1, rb - 1))
+            continue
+
+        # Key = value
+        eq := str_find(line, "=")
+        if eq > 0:
+            key := str_trim(str_substr(line, 0, eq))
+            raw_val := str_trim(str_substr(line, eq + 1, str_len(line) - eq - 1))
+
+            # Strip inline comment  (value part before unquoted #)
+            val := toml_strip_comment(raw_val)
+
+            entry := str_concat("§", str_concat(cur_section, str_concat("§", str_concat(key, str_concat("§", str_concat(val, "\n"))))))
+            doc.flat = str_concat(doc.flat, entry)
+
+    return doc
+
+# Strip trailing # comment from a raw value string.
+# Naive: only strips if # is preceded by whitespace and we're outside quotes.
+def toml_strip_comment(raw: Str) -> Str:
+    mut in_quote := false
+    mut i        := 0
+    end          := str_len(raw)
+    while i < end:
+        ch := str_substr(raw, i, 1)
+        if ch == "\"":
+            in_quote = !in_quote
+        if !in_quote && ch == "#":
+            return str_trim(str_substr(raw, 0, i))
+        i = i + 1
+    return raw
+
+# Pull the raw string value from flat store.
+def toml_lookup(doc: TomlDoc, section: Str, key: Str) -> Str:
+    pattern := str_concat("§", str_concat(section, str_concat("§", str_concat(key, "§"))))
+    idx := str_find(doc.flat, pattern)
+    if idx < 0:
+        return ""
+    start := idx + str_len(pattern)
+    rest  := str_substr(doc.flat, start, str_len(doc.flat) - start)
+    nl    := str_find(rest, "\n")
+    if nl < 0:
+        return rest
+    return str_substr(rest, 0, nl)
+
+def toml_get_str(doc: TomlDoc, section: Str, key: Str) -> Str:
+    raw := toml_lookup(doc, section, key)
+    if str_len(raw) == 0:
+        return ""
+    # Unquote "value" or { inline } table — return inner string
+    if str_find(raw, "\"") == 0:
+        end := str_find(str_substr(raw, 1, str_len(raw) - 1), "\"")
+        if end >= 0:
+            return str_substr(raw, 1, end)
+    return raw
+
+def toml_get_int(doc: TomlDoc, section: Str, key: Str) -> Int:
+    raw := toml_get_str(doc, section, key)
+    if str_len(raw) == 0:
+        return 0
+    return str_to_int(raw)
+
+def toml_has_section(doc: TomlDoc, section: Str) -> Bool:
+    pattern := str_concat("§", str_concat(section, "§"))
+    return str_find(doc.flat, pattern) >= 0
+
+# Return the raw TOML text between [section] and the next [section] or EOF.
+def toml_section_raw(doc: TomlDoc, section: Str) -> Str:
+    header := str_concat("[", str_concat(section, "]"))
+    start  := str_find(doc.raw, header)
+    if start < 0:
+        return ""
+    after := start + str_len(header)
+    rest  := str_substr(doc.raw, after, str_len(doc.raw) - after)
+    # Find next section header
+    next  := str_find(rest, "\n[")
+    if next >= 0:
+        return str_substr(rest, 0, next)
+    return rest
+
+# Return value from a flat inline-table string like
+# { git = "url", branch = "main" }
+def toml_inline_field(inline: Str, field: Str) -> Str:
+    pat1 := str_concat(field, " = \"")
+    pat2 := str_concat(field, "=\"")
+    mut idx := str_find(inline, pat1)
+    mut pat := pat1
+    if idx < 0:
+        idx = str_find(inline, pat2)
+        pat = pat2
+    if idx < 0:
+        return ""
+    start := idx + str_len(pat)
+    rest  := str_substr(inline, start, str_len(inline) - start)
+    end   := str_find(rest, "\"")
+    if end < 0:
+        return rest
+    return str_substr(rest, 0, end)
+
+# Parse a TOML inline string array like ["a/b", "c/d"] -> List[Str]
+def toml_parse_str_array(raw: Str) -> List[Str]:
+    pos := str_find(raw, "[")
+    if pos < 0:
+        return list_new()
+    mut result := list_new()
+    mut cur  := pos + 1
+    mut end_b := str_find(raw, "]")
+    if end_b < 0:
+        end_b = str_len(raw)
+    content  := str_substr(raw, cur, end_b - cur)
+    mut cpos := 0
+    cend     := str_len(content)
+    while cpos < cend:
+        q1 := str_find(str_substr(content, cpos, cend - cpos), "\"")
+        if q1 < 0:
+            break
+        abs1 := cpos + q1 + 1
+        q2   := str_find(str_substr(content, abs1, cend - abs1), "\"")
+        if q2 < 0:
+            break
+        list_push(result, str_substr(content, abs1, q2))
+        cpos = abs1 + q2 + 1
+    if list_len(result) == 0:
+        return list_new()
+    return result

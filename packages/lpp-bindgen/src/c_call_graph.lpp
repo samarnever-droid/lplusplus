@@ -1,0 +1,296 @@
+# c_call_graph.lpp — allocation-bounded direct/indirect call and ownership graph.
+#
+# The pass scans exact function spans from c_translation_unit. It resolves direct
+# calls against definitions/prototypes, records unresolved and indirect call
+# sites, and classifies standard/SQLite-style allocation and deallocation sites.
+# It does not infer interprocedural ownership transfer yet.
+
+import c_translation_unit
+import c_declaration_graph
+import c_audit
+import text
+
+struct CCallStats:
+    functions: Int
+    call_sites: Int
+    direct_defined_calls: Int
+    direct_declared_calls: Int
+    unresolved_calls: Int
+    indirect_calls: Int
+    allocation_sites: Int
+    reallocation_sites: Int
+    deallocation_sites: Int
+    callback_like_sites: Int
+
+struct CCallScan:
+    builder: CTUTextBuilder
+    stats: CCallStats
+
+struct CCallResult:
+    graph: Str
+    report: Str
+    stats: CCallStats
+    valid: Int
+
+
+def c_call_is_control_word(value: Str) -> Bool:
+    if text_eq(value, "if") || text_eq(value, "for") || text_eq(value, "while"):
+        return true
+    if text_eq(value, "switch") || text_eq(value, "sizeof") || text_eq(value, "_Alignof"):
+        return true
+    if text_eq(value, "return") || text_eq(value, "case") || text_eq(value, "do"):
+        return true
+    return false
+
+
+def c_call_contains_ci(value: Str, needle: Str) -> Bool:
+    return text_contains(str_lower(value), str_lower(needle))
+
+
+def c_call_is_allocator(value: Str) -> Bool:
+    if text_eq(value, "malloc") || text_eq(value, "calloc"):
+        return true
+    if text_eq(value, "aligned_alloc") || text_eq(value, "strdup") || text_eq(value, "strndup"):
+        return true
+    if c_call_contains_ci(value, "malloc") && !c_call_contains_ci(value, "size"):
+        return true
+    if c_call_contains_ci(value, "alloc") && !c_call_contains_ci(value, "realloc") && !c_call_contains_ci(value, "dealloc"):
+        return true
+    return false
+
+
+def c_call_is_reallocator(value: Str) -> Bool:
+    return text_eq(value, "realloc") || c_call_contains_ci(value, "realloc")
+
+
+def c_call_is_deallocator(value: Str) -> Bool:
+    if text_eq(value, "free") || text_eq(value, "cfree"):
+        return true
+    if c_call_contains_ci(value, "free"):
+        return true
+    if c_call_contains_ci(value, "dealloc"):
+        return true
+    return false
+
+
+def c_call_resolution(name: Str, definitions: Str, prototypes: Str, member_call: Bool) -> Str:
+    if member_call:
+        return "indirect-member"
+    if c_decl_set_has(definitions, name):
+        return "defined"
+    if c_decl_set_has(prototypes, name):
+        return "declared"
+    if c_call_is_allocator(name):
+        return "allocator"
+    if c_call_is_reallocator(name):
+        return "reallocator"
+    if c_call_is_deallocator(name):
+        return "deallocator"
+    return "indirect-or-unresolved"
+
+
+def c_call_graph_line(caller: Str, callee: Str, resolution: Str, offset: Int) -> Str:
+    mut out := str_concat("call|", str_concat(caller, "|"))
+    out = str_concat(out, str_concat(callee, "|"))
+    out = str_concat(out, str_concat(resolution, "|offset="))
+    return str_concat(out, str_concat(int_to_str(offset), "\n"))
+
+
+def c_call_skip_literal(data: Int, size: Int, offset_in: Int, end: Int) -> Int:
+    mut offset := offset_in
+    quote := c_byte(data, size, offset)
+    offset = offset + 1
+    mut escaped := false
+    mut closed := false
+    while offset < end && !closed:
+        current := c_byte(data, size, offset)
+        if escaped:
+            escaped = false
+            offset = offset + 1
+        elif current == 92:
+            escaped = true
+            offset = offset + 1
+        elif current == quote:
+            offset = offset + 1
+            closed = true
+        else:
+            offset = offset + 1
+    return offset
+
+
+def c_call_skip_comment(data: Int, size: Int, offset_in: Int, end: Int) -> Int:
+    mut offset := offset_in
+    if c_byte(data, size, offset) == 47 && c_byte(data, size, offset + 1) == 47:
+        offset = offset + 2
+        while offset < end && c_byte(data, size, offset) != 10 && c_byte(data, size, offset) != 13:
+            offset = offset + 1
+        return offset
+    if c_byte(data, size, offset) == 47 && c_byte(data, size, offset + 1) == 42:
+        offset = offset + 2
+        mut closed := false
+        while offset < end && !closed:
+            if c_byte(data, size, offset) == 42 && c_byte(data, size, offset + 1) == 47:
+                offset = offset + 2
+                closed = true
+            else:
+                offset = offset + 1
+    return offset
+
+
+def c_call_next_code(data: Int, size: Int, offset_in: Int, end: Int) -> Int:
+    mut offset := offset_in
+    mut scanning := true
+    while scanning && offset < end:
+        code := c_byte(data, size, offset)
+        if c_is_space(code):
+            offset = offset + 1
+        elif code == 47 && (c_byte(data, size, offset + 1) == 47 || c_byte(data, size, offset + 1) == 42):
+            offset = c_call_skip_comment(data, size, offset, end)
+        else:
+            scanning = false
+    return offset
+
+
+def c_call_scan_function(data: Int, size: Int, caller: Str, start: Int, end: Int, definitions: Str, prototypes: Str, builder_in: CTUTextBuilder, stats_in: CCallStats) -> CCallScan:
+    mut builder := builder_in
+    mut stats := stats_in
+    mut offset := start
+    mut body_open := -1
+
+    # Locate the first body brace while respecting comments and literals.
+    while offset < end && body_open < 0:
+        code := c_byte(data, size, offset)
+        if code == 34 || code == 39:
+            offset = c_call_skip_literal(data, size, offset, end)
+        elif code == 47 && (c_byte(data, size, offset + 1) == 47 || c_byte(data, size, offset + 1) == 42):
+            offset = c_call_skip_comment(data, size, offset, end)
+        else:
+            if code == 123:
+                body_open = offset
+            offset = offset + 1
+    if body_open < 0:
+        return CCallScan(builder, stats)
+
+    offset = body_open + 1
+    mut brace_depth := 1
+    mut previous_punct := ""
+    while offset < end && brace_depth > 0:
+        code := c_byte(data, size, offset)
+        if c_is_space(code):
+            offset = offset + 1
+        elif code == 34 || code == 39:
+            offset = c_call_skip_literal(data, size, offset, end)
+            previous_punct = "literal"
+        elif code == 47 && (c_byte(data, size, offset + 1) == 47 || c_byte(data, size, offset + 1) == 42):
+            offset = c_call_skip_comment(data, size, offset, end)
+        elif c_is_ident_start(code):
+            name_start := offset
+            offset = offset + 1
+            while offset < end && c_is_ident_continue(c_byte(data, size, offset)):
+                offset = offset + 1
+            name := buf_read_str(data, name_start, offset - name_start)
+            call_open := c_call_next_code(data, size, offset, end)
+            if call_open < end && c_byte(data, size, call_open) == 40 && !c_call_is_control_word(name):
+                member_call := text_eq(previous_punct, ".") || text_eq(previous_punct, "->")
+                resolution := c_call_resolution(name, definitions, prototypes, member_call)
+                stats.call_sites = stats.call_sites + 1
+                if c_call_is_reallocator(name):
+                    stats.reallocation_sites = stats.reallocation_sites + 1
+                elif c_call_is_allocator(name):
+                    stats.allocation_sites = stats.allocation_sites + 1
+                elif c_call_is_deallocator(name):
+                    stats.deallocation_sites = stats.deallocation_sites + 1
+                if text_eq(resolution, "defined"):
+                    stats.direct_defined_calls = stats.direct_defined_calls + 1
+                elif text_eq(resolution, "declared"):
+                    stats.direct_declared_calls = stats.direct_declared_calls + 1
+                elif text_eq(resolution, "indirect-member"):
+                    stats.indirect_calls = stats.indirect_calls + 1
+                    stats.callback_like_sites = stats.callback_like_sites + 1
+                elif text_eq(resolution, "allocator") || text_eq(resolution, "reallocator") || text_eq(resolution, "deallocator"):
+                    previous_punct = "call"
+                else:
+                    stats.unresolved_calls = stats.unresolved_calls + 1
+                    stats.indirect_calls = stats.indirect_calls + 1
+                builder = c_tu_builder_add(builder, c_call_graph_line(caller, name, resolution, name_start))
+            previous_punct = "identifier"
+        else:
+            mut width := c_punct_width(data, size, offset)
+            if width <= 0:
+                width = 1
+            spelling := buf_read_str(data, offset, width)
+            if code == 123:
+                brace_depth = brace_depth + 1
+            elif code == 125:
+                brace_depth = brace_depth - 1
+            previous_punct = spelling
+            offset = offset + width
+    return CCallScan(builder, stats)
+
+
+def c_call_graph_count_for(graph: Str, caller: Str) -> Int:
+    lines := str_split(graph, 10)
+    prefix := str_concat("call|", str_concat(caller, "|"))
+    mut count := 0
+    for record in lines:
+        if text_starts(record, prefix):
+            count = count + 1
+    return count
+
+
+def c_call_graph_has_edge(graph: Str, caller: Str, callee: Str) -> Bool:
+    needle := str_concat("call|", str_concat(caller, str_concat("|", str_concat(callee, "|"))))
+    return text_contains(graph, needle)
+
+
+def c_call_graph_count_resolution(graph: Str, resolution: Str) -> Int:
+    lines := str_split(graph, 10)
+    needle := str_concat("|", str_concat(resolution, "|"))
+    mut count := 0
+    for record in lines:
+        if text_starts(record, "call|") && text_contains(record, needle):
+            count = count + 1
+    return count
+
+
+def c_call_graph_file(path: Str) -> CCallResult:
+    tu := c_tu_scan_file(path)
+    mut stats := CCallStats()
+    if tu.valid == 0:
+        return CCallResult("", "valid=0\nreason=C2-CALL-TU\n", stats, 0)
+    lines := str_split(tu.graph, 10)
+    mut definitions := ""
+    mut prototypes := ""
+    for record in lines:
+        if text_starts(record, "function|"):
+            definitions = c_decl_set_add(definitions, c_decl_field(record, 1))
+        elif text_starts(record, "prototype|"):
+            prototypes = c_decl_set_add(prototypes, c_decl_field(record, 1))
+    data := buf_read(path)
+    size := buf_len(data)
+    mut builder := CTUTextBuilder(buf_alloc(65536), 0, 65536)
+    builder = c_tu_builder_add(builder, "schema|c2lpp-call-graph-v1\n")
+    for record in lines:
+        if text_starts(record, "function|"):
+            caller := c_decl_field(record, 1)
+            start := parse_int(c_decl_field(record, 5))
+            end := parse_int(c_decl_field(record, 6))
+            stats.functions = stats.functions + 1
+            builder = c_tu_builder_add(builder, str_concat("caller|", str_concat(caller, "\n")))
+            scanned := c_call_scan_function(data, size, caller, start, end, definitions, prototypes, builder, stats)
+            builder = scanned.builder
+            stats = scanned.stats
+    graph := c_tu_builder_finish(builder)
+    buf_free(data)
+    mut report := "valid=1\n"
+    report = str_concat(report, str_concat("functions=", str_concat(int_to_str(stats.functions), "\n")))
+    report = str_concat(report, str_concat("call_sites=", str_concat(int_to_str(stats.call_sites), "\n")))
+    report = str_concat(report, str_concat("direct_defined_calls=", str_concat(int_to_str(stats.direct_defined_calls), "\n")))
+    report = str_concat(report, str_concat("direct_declared_calls=", str_concat(int_to_str(stats.direct_declared_calls), "\n")))
+    report = str_concat(report, str_concat("unresolved_calls=", str_concat(int_to_str(stats.unresolved_calls), "\n")))
+    report = str_concat(report, str_concat("indirect_calls=", str_concat(int_to_str(stats.indirect_calls), "\n")))
+    report = str_concat(report, str_concat("callback_like_sites=", str_concat(int_to_str(stats.callback_like_sites), "\n")))
+    report = str_concat(report, str_concat("allocation_sites=", str_concat(int_to_str(stats.allocation_sites), "\n")))
+    report = str_concat(report, str_concat("reallocation_sites=", str_concat(int_to_str(stats.reallocation_sites), "\n")))
+    report = str_concat(report, str_concat("deallocation_sites=", str_concat(int_to_str(stats.deallocation_sites), "\n")))
+    return CCallResult(graph, report, stats, 1)

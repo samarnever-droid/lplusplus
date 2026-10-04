@@ -1,0 +1,10 @@
+async def first() -> Str:
+    return "ready"
+
+async def second() -> Str:
+    value := first().await
+    return value
+
+async def main():
+    result := second().await
+    print(result)

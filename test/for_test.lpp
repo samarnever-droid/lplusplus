@@ -1,0 +1,13 @@
+def main():
+    print_str("--- For Loop Syntactic Sugar Test ---")
+    
+    mut l := list_new()
+    list_push(l, 10)
+    list_push(l, 20)
+    list_push(l, 30)
+    
+    for x in l:
+        print(x)
+        
+    list_free(l)
+    print_str("--- Success ---")

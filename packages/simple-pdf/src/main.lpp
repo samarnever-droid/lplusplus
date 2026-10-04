@@ -1,0 +1,15 @@
+import pdf
+
+def main():
+    print_str("Testing simple-pdf engine...\n")
+    mut doc := pdf_new(612, 792)
+    doc = pdf_add_page(doc)
+    doc = pdf_draw_text(doc, "SamarBook Spatial Knowledge Canvas", 50, 720, 22, 10, 10, 10)
+    doc = pdf_draw_text(doc, "Generated with Pure L++ Vector PDF Engine", 50, 695, 12, 40, 40, 40)
+    doc = pdf_draw_rect(doc, 50, 520, 240, 140, 96, 97, 98, 20, 40, 80, 2)
+    status := pdf_save(doc, "output_test.pdf")
+    if status != 0:
+        print_str("FAILED to write PDF file!\n")
+        exit(1)
+        
+    print_str("SUCCESS: PDF generated and verified successfully -> output_test.pdf\n")

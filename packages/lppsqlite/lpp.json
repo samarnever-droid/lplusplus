@@ -1,0 +1,7 @@
+{
+  "name": "lppsqlite",
+  "version": "1.2.0",
+  "description": "SQLite-file-format-compatible database engine in pure L++: real .db files with secondary indexes, correlated subqueries, real ROLLBACK, advisory locking and rowid/index fast paths.",
+  "main": "src/exec.lpp",
+  "dependencies": {}
+}

@@ -1,0 +1,13 @@
+def main():
+    mut acc := "init"
+    mut i := 0
+    while i < 200:
+        step := int_to_str(i)
+        acc = str_concat(acc, str_concat("-", step))
+        if str_len(acc) > 40:
+            acc = str_substr(acc, str_len(acc) - 20, 20)
+        i = i + 1
+        
+    print_str("Final acc length:\n")
+    print(str_len(acc))
+    print_str("PASS_STRING_STRESS\n")

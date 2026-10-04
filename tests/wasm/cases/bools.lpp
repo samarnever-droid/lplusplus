@@ -1,0 +1,18 @@
+# bools.lpp — Bool values, logic ops, comparisons as values, bool params.
+
+def both(a: Bool, b: Bool) -> Bool:
+    return a && b
+
+def main():
+    print(true)
+    print(false)
+    print(both(true, false))
+    t := 5 > 3
+    print(t)
+    if t && !false:
+        print(1)
+    else:
+        print(0)
+    x := 7
+    print(x > 0 && x < 10)
+    print(x == 7 || x == 8)

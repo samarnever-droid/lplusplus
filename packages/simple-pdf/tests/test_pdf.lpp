@@ -1,0 +1,33 @@
+import pdf
+
+def main():
+    print_str("Testing simple-pdf engine...\n")
+    
+    mut doc := pdf_new(612, 792)
+    doc = pdf_add_page(doc)
+    
+    # Title & Header
+    doc = pdf_draw_text(doc, "SamarBook Spatial Knowledge Canvas", 50, 720, 22, 0.1, 0.1, 0.1)
+    doc = pdf_draw_text(doc, "Generated with Pure L++ Vector PDF Engine", 50, 695, 12, 0.4, 0.4, 0.4)
+    
+    # Card 1: Vector Rectangle with fill & border
+    doc = pdf_draw_rect(doc, 50, 520, 240, 140, 0.96, 0.97, 0.98, 0.2, 0.4, 0.8, 2)
+    doc = pdf_draw_text(doc, "Idea Node #1", 65, 630, 14, 0.1, 0.1, 0.1)
+    doc = pdf_draw_text(doc, "Formula: E = mc^2", 65, 600, 11, 0.2, 0.3, 0.4)
+    doc = pdf_draw_text(doc, "Status: Verified", 65, 570, 10, 0.1, 0.6, 0.2)
+    
+    # Card 2: Connected Node
+    doc = pdf_draw_rect(doc, 340, 480, 220, 120, 0.98, 0.98, 0.98, 0.8, 0.3, 0.2, 2)
+    doc = pdf_draw_text(doc, "Target Node #2", 355, 570, 14, 0.1, 0.1, 0.1)
+    doc = pdf_draw_text(doc, "Dependency: Linked", 355, 540, 11, 0.5, 0.5, 0.5)
+    
+    # Cubic Bezier Connector Link between Card 1 and Card 2
+    doc = pdf_draw_bezier(doc, 290, 590, 315, 590, 315, 540, 340, 540, 2, 0.2, 0.5, 0.9)
+    
+    # Save PDF
+    status := pdf_save(doc, "output_test.pdf")
+    if status != 0:
+        print_str("FAILED to write PDF file!\n")
+        exit(1)
+        
+    print_str("SUCCESS: PDF generated and verified successfully -> output_test.pdf\n")

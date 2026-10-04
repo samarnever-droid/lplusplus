@@ -1,0 +1,11 @@
+#!/usr/bin/env sh
+set -eu
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+RELEASE_BIN="$SCRIPT_DIR/target/release/lpp"
+
+if [ -x "$RELEASE_BIN" ]; then
+    exec "$RELEASE_BIN" "$@"
+fi
+
+exec cargo run --manifest-path "$SCRIPT_DIR/Cargo.toml" --release -- "$@"

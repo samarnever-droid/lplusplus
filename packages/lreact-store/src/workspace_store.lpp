@@ -1,0 +1,40 @@
+# lreact-store: Pure L++ Reactive Workspace Store & Project File Manager
+# Manages active workspace session, auto-saving, and .sbook file packaging
+
+struct WorkspaceMeta:
+    name: Str
+    author: Str
+    version: Str
+    theme: Str
+
+
+def workspace_meta_new(name: Str, author: Str, version: Str, theme: Str) -> WorkspaceMeta:
+    return WorkspaceMeta(name, author, version, theme)
+
+
+def workspace_serialize(meta: WorkspaceMeta, nodes_json: Str, edges_json: Str) -> Str:
+    # Packages workspace into consolidated JSON container
+    mut json := "{\n"
+    json = str_concat(json, "  \"project\": {\n")
+    json = str_concat(json, str_concat("    \"name\": \"", str_concat(meta.name, "\",\n")))
+    json = str_concat(json, str_concat("    \"author\": \"", str_concat(meta.author, "\",\n")))
+    json = str_concat(json, str_concat("    \"version\": \"", str_concat(meta.version, "\",\n")))
+    json = str_concat(json, str_concat("    \"theme\": \"", str_concat(meta.theme, "\"\n  },\n")))
+    json = str_concat(json, "  \"nodes\": [\n    ")
+    json = str_concat(json, nodes_json)
+    json = str_concat(json, "\n  ],\n")
+    json = str_concat(json, "  \"edges\": [\n    ")
+    json = str_concat(json, edges_json)
+    json = str_concat(json, "\n  ]\n")
+    json = str_concat(json, "}\n")
+    return json
+
+
+def workspace_save_file(file_path: Str, content: Str) -> Int:
+    return write_file(file_path, content)
+
+
+def workspace_load_file(file_path: Str) -> Str:
+    if file_exists(file_path) == 1:
+        return read_file(file_path)
+    return ""

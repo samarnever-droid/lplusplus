@@ -1,0 +1,36 @@
+# Dynamic dispatch — pass trait-typed arguments
+
+struct Dog:
+    name: Str
+
+struct Cat:
+    name: Str
+
+trait Speak:
+    def speak(self) -> Int
+
+impl Speak for Dog:
+    def speak(self) -> Int:
+        print(42)
+        return 1
+
+impl Speak for Cat:
+    def speak(self) -> Int:
+        print(99)
+        return 2
+
+# This function accepts ANY type implementing Speak
+def make_speak(animal: Speak) -> Int:
+    return animal.speak()
+
+def main():
+    d := Dog("Rex")
+    c := Cat("Whiskers")
+
+    r1 := make_speak(d)
+    print(r1)
+
+    r2 := make_speak(c)
+    print(r2)
+
+    print("dynamic dispatch works!")

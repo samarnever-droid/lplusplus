@@ -1,0 +1,165 @@
+{
+  "generated_utc": "2026-07-20T18:17:47.026494+00:00",
+  "rows": [
+    {
+      "id": 1,
+      "name": "recursive-fib-35",
+      "passed": true,
+      "compile_ms": 3.7348149999729685,
+      "direct_link_ms": 1.663022999991881,
+      "runtime_ms": 70.01554900000428
+    },
+    {
+      "id": 2,
+      "name": "loop-10m",
+      "passed": true,
+      "compile_ms": 2.742033000004085,
+      "direct_link_ms": 1.6263499999809028,
+      "runtime_ms": 9.944227999994837
+    },
+    {
+      "id": 3,
+      "name": "call-chain-1m",
+      "passed": true,
+      "compile_ms": 2.848559000028672,
+      "direct_link_ms": 1.5596759999993992,
+      "runtime_ms": 2.5896809999608195
+    },
+    {
+      "id": 4,
+      "name": "integer-arithmetic",
+      "passed": true,
+      "compile_ms": 2.27108999996517,
+      "direct_link_ms": 1.5295879999825956,
+      "runtime_ms": 0.305035999986103
+    },
+    {
+      "id": 5,
+      "name": "conditional-branches",
+      "passed": true,
+      "compile_ms": 2.6761830000054943,
+      "direct_link_ms": 1.7091510000000198,
+      "runtime_ms": 0.33358299998553775
+    },
+    {
+      "id": 6,
+      "name": "nested-direct-calls",
+      "passed": true,
+      "compile_ms": 2.4876229999790667,
+      "direct_link_ms": 1.4975029999959588,
+      "runtime_ms": 0.268041000026642
+    },
+    {
+      "id": 7,
+      "name": "immutable-closure",
+      "passed": true,
+      "compile_ms": 2.3243019999767967,
+      "direct_link_ms": 1.6202539999881083,
+      "runtime_ms": 0.2378439999688453
+    },
+    {
+      "id": 8,
+      "name": "arc-list-int",
+      "passed": true,
+      "compile_ms": 2.265197999975044,
+      "direct_link_ms": 1.6301480000038282,
+      "runtime_ms": 0.6289279999691644
+    },
+    {
+      "id": 9,
+      "name": "owned-struct-return",
+      "passed": true,
+      "compile_ms": 3.5089669999592843,
+      "direct_link_ms": 1.8607200000246849,
+      "runtime_ms": 0.3238190000161012
+    },
+    {
+      "id": 10,
+      "name": "branch-owned-return",
+      "passed": true,
+      "compile_ms": 2.446376000023065,
+      "direct_link_ms": 1.5075560000354926,
+      "runtime_ms": 0.22016799999846626
+    },
+    {
+      "id": 11,
+      "name": "nested-struct-destructor",
+      "passed": true,
+      "compile_ms": 2.7141309999478835,
+      "direct_link_ms": 1.6694349999966107,
+      "runtime_ms": 0.331211999991865
+    },
+    {
+      "id": 12,
+      "name": "direct-arc-alias",
+      "passed": true,
+      "compile_ms": 2.3626249999892934,
+      "direct_link_ms": 1.4998660000173913,
+      "runtime_ms": 0.2687490000425896
+    },
+    {
+      "id": 13,
+      "name": "closure-arc-capture",
+      "passed": true,
+      "compile_ms": 2.2893089999911354,
+      "direct_link_ms": 1.4642969999840716,
+      "runtime_ms": 0.3446819999908257
+    },
+    {
+      "id": 14,
+      "name": "borrowed-parameter-return",
+      "passed": true,
+      "compile_ms": 2.1560370000202056,
+      "direct_link_ms": 1.5132969999740453,
+      "runtime_ms": 0.313762000018869
+    },
+    {
+      "id": 15,
+      "name": "borrowed-field-return",
+      "passed": true,
+      "compile_ms": 2.676234000034583,
+      "direct_link_ms": 1.629763999972056,
+      "runtime_ms": 0.34667099998841877
+    },
+    {
+      "id": 16,
+      "name": "field-alias",
+      "passed": true,
+      "compile_ms": 2.3107300000333453,
+      "direct_link_ms": 1.5400400000089576,
+      "runtime_ms": 0.27291599997170124
+    },
+    {
+      "id": 17,
+      "name": "list-int-alias",
+      "passed": true,
+      "compile_ms": 2.0722589999877528,
+      "direct_link_ms": 1.6227360000016233,
+      "runtime_ms": 0.2918309999699886
+    },
+    {
+      "id": 18,
+      "name": "list-custom-ownership",
+      "passed": true,
+      "compile_ms": 2.1891939999818533,
+      "direct_link_ms": 1.554770999973698,
+      "runtime_ms": 0.2399809999928948
+    },
+    {
+      "id": 19,
+      "name": "nested-branch-alias",
+      "passed": true,
+      "compile_ms": 2.555019999988417,
+      "direct_link_ms": 1.4138259999754155,
+      "runtime_ms": 0.27211399998350316
+    },
+    {
+      "id": 20,
+      "name": "closure-branch-capture",
+      "passed": true,
+      "compile_ms": 2.3546859999896697,
+      "direct_link_ms": 1.399842000012086,
+      "runtime_ms": 0.2678760000094371
+    }
+  ]
+}

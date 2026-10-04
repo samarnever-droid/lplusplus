@@ -1,0 +1,14 @@
+# Function-call-heavy native workload: 10M direct scalar calls.
+def mix(value: Int) -> Int:
+    return value * 3 + 1
+
+def call_score(n: Int) -> Int:
+    mut i := 0
+    mut score := 0
+    while i < n:
+        score = score + mix(i)
+        i = i + 1
+    return score
+
+def main():
+    print(call_score(10000000))

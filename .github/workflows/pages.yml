@@ -1,0 +1,80 @@
+name: Deploy L++ website
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "website/**"
+      - "registry/**"
+      - "scripts/generate_registry_index.py"
+      - "assets/**"
+      - "install.ps1"
+      - "install.sh"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+# This repository already uses a gh-pages branch. Deploying directly to that
+# branch avoids the GitHub Pages environment protection rule that rejected the
+# previous Actions-pages deployment from master.
+permissions:
+  contents: read
+
+concurrency:
+  group: gh-pages-deployment
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 20.20.2
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+      - name: Sync generated public assets
+        # The hosted installers at lplusplus.bond/install.ps1 and /install.sh
+        # are served from website/public. The registry browser reads the same
+        # generated static index that registry.lplusplus.bond mirrors.
+        run: |
+          cp install.ps1 website/public/install.ps1
+          cp install.sh website/public/install.sh
+          python3 scripts/generate_registry_index.py
+          cmp install.ps1 website/public/install.ps1
+          cmp install.sh website/public/install.sh
+          cmp registry/index.json website/public/registry/index.json
+      - name: Audit and build website
+        working-directory: website
+        run: |
+          npm ci
+          npm audit --audit-level=high
+          npm run build
+      - name: Upload website artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: website-dist
+          path: website/dist
+          if-no-files-found: error
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Download website artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: website-dist
+          path: website-dist
+      - name: Publish to gh-pages
+        uses: peaceiris/actions-gh-pages@84c30a85c19949d7eee79c4ff27748b70285e453 # v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
+          publish_dir: website-dist
+          keep_files: false

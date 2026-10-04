@@ -1,0 +1,113 @@
+# c_cfg.lpp — explicit basic-block state machine for normalized C CFG lowering.
+#
+# Reducible and irreducible C control flow can target the same representation:
+# each label/switch arm is a numbered block, and goto/fallthrough become checked
+# state transitions. The translator still needs a complete statement parser and
+# CFG builder before arbitrary source can use this runtime.
+
+struct CCfgFrame:
+    control: Int
+    slots: Int
+    slot_count: Int
+    max_steps: Int
+
+
+def c_cfg_panic(reason: Str) -> Void:
+    print_str(str_concat("lpp-analyzer C CFG violation: ", reason))
+    exit(102)
+
+
+def c_cfg_set64(buffer: Int, offset: Int, value: Int) -> Void:
+    buf_set32le(buffer, offset, value & 4294967295)
+    buf_set32le(buffer, offset + 4, (value >> 32) & 4294967295)
+
+
+def c_cfg_get64(buffer: Int, offset: Int) -> Int:
+    return buf_get32le(buffer, offset) | (buf_get32le(buffer, offset + 4) << 32)
+
+
+def c_cfg_new(slot_count: Int, entry_block: Int, max_steps: Int) -> CCfgFrame:
+    if slot_count < 0 || entry_block < 0 || max_steps <= 0:
+        c_cfg_panic("C2-CFG-BAD-FRAME")
+    control := buf_alloc(32)
+    slots := buf_alloc(slot_count * 8)
+    c_cfg_set64(control, 0, entry_block)
+    c_cfg_set64(control, 8, 0)
+    c_cfg_set64(control, 16, 0)
+    c_cfg_set64(control, 24, 0)
+    mut i := 0
+    while i < slot_count:
+        c_cfg_set64(slots, i * 8, 0)
+        i = i + 1
+    return CCfgFrame(control, slots, slot_count, max_steps)
+
+
+def c_cfg_done(frame: CCfgFrame) -> Bool:
+    return c_cfg_get64(frame.control, 8) != 0
+
+
+def c_cfg_enter(frame: CCfgFrame) -> Int:
+    if c_cfg_done(frame):
+        c_cfg_panic("C2-CFG-ENTER-AFTER-RETURN")
+    steps := c_cfg_get64(frame.control, 24) + 1
+    if steps > frame.max_steps:
+        c_cfg_panic("C2-CFG-STEP-LIMIT")
+    c_cfg_set64(frame.control, 24, steps)
+    return c_cfg_get64(frame.control, 0)
+
+
+def c_cfg_jump(frame: CCfgFrame, target: Int) -> Void:
+    if target < 0:
+        c_cfg_panic("C2-CFG-BAD-TARGET")
+    c_cfg_set64(frame.control, 0, target)
+
+
+def c_cfg_branch(frame: CCfgFrame, condition: Bool, true_target: Int, false_target: Int) -> Void:
+    if condition:
+        c_cfg_jump(frame, true_target)
+    else:
+        c_cfg_jump(frame, false_target)
+
+
+def c_cfg_switch3(frame: CCfgFrame, value: Int, case0: Int, target0: Int, case1: Int, target1: Int, case2: Int, target2: Int, default_target: Int) -> Void:
+    if value == case0:
+        c_cfg_jump(frame, target0)
+    elif value == case1:
+        c_cfg_jump(frame, target1)
+    elif value == case2:
+        c_cfg_jump(frame, target2)
+    else:
+        c_cfg_jump(frame, default_target)
+
+
+def c_cfg_slot_check(frame: CCfgFrame, slot: Int) -> Void:
+    if slot < 0 || slot >= frame.slot_count:
+        c_cfg_panic("C2-CFG-SLOT-OUT-OF-BOUNDS")
+
+
+def c_cfg_slot_get(frame: CCfgFrame, slot: Int) -> Int:
+    c_cfg_slot_check(frame, slot)
+    return c_cfg_get64(frame.slots, slot * 8)
+
+
+def c_cfg_slot_set(frame: CCfgFrame, slot: Int, value: Int) -> Void:
+    c_cfg_slot_check(frame, slot)
+    c_cfg_set64(frame.slots, slot * 8, value)
+
+
+def c_cfg_return(frame: CCfgFrame, value: Int) -> Void:
+    if c_cfg_done(frame):
+        c_cfg_panic("C2-CFG-DOUBLE-RETURN")
+    c_cfg_set64(frame.control, 16, value)
+    c_cfg_set64(frame.control, 8, 1)
+
+
+def c_cfg_result(frame: CCfgFrame) -> Int:
+    if !c_cfg_done(frame):
+        c_cfg_panic("C2-CFG-RESULT-BEFORE-RETURN")
+    return c_cfg_get64(frame.control, 16)
+
+
+def c_cfg_destroy(frame: CCfgFrame) -> Void:
+    buf_free(frame.slots)
+    buf_free(frame.control)

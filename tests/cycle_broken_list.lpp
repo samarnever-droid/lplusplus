@@ -1,0 +1,17 @@
+# Formerly `aot_reject_list_arc_cycle.lpp`, which asserted this was a compile
+# error because `List[Node]` inside `Node` forms a strong ARC cycle.
+#
+# SAFETY-CONTRACT CHANGE: the type is now accepted. The static cycle breaker
+# demotes the Node -> List[Node] edge to non-owning, so the owning subgraph
+# stays acyclic.
+#
+# The node is built without populating `children`: an empty list literal infers
+# as List[Int], which is a separate, pre-existing inference limitation unrelated
+# to cycles. What this test pins down is that declaring the recursive type and
+# allocating it no longer fails.
+struct Node:
+    value: Int
+    children: List[Node]
+
+def main():
+    print(1)

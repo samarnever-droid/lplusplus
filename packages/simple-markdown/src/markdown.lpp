@@ -1,0 +1,251 @@
+# simple-markdown: Native Markdown Parser & AST Engine for L++
+# Supports standard CommonMark subsets plus SamarBook spatial extensions:
+# - Headings (#, ##, ###, ####, #####, ######)
+# - Bold (**text**), Italic (*text*), Inline Code (`code`)
+# - Links ([text](url)) and Wikilinks ([[Note Title]])
+# - Blockquotes (> quote)
+# - Code blocks (```lang ... ```)
+# - Unordered lists (- item, * item) and Ordered lists (1. item)
+# - Tags (#topic) and Math ($x^2$)
+
+
+def md_is_space(ch: Str) -> Bool:
+    return ch == " " or ch == "\t" or ch == "\r" or ch == "\n"
+
+
+def md_starts_with(s: Str, prefix: Str) -> Bool:
+    plen := str_len(prefix)
+    slen := str_len(s)
+    if plen > slen:
+        return false
+    sub := str_substr(s, 0, plen)
+    return sub == prefix
+
+
+def md_trim_left(s: Str) -> Str:
+    mut i := 0
+    l := str_len(s)
+    while i < l:
+        c := str_substr(s, i, 1)
+        if c != " " and c != "\t":
+            return str_substr(s, i, l - i)
+        i = i + 1
+    return ""
+
+
+def md_escape_html(s: Str) -> Str:
+    mut res := str_replace(s, "&", "&amp;")
+    res = str_replace(res, "<", "&lt;")
+    res = str_replace(res, ">", "&gt;")
+    res = str_replace(res, "\"", "&quot;")
+    return res
+
+
+def md_render_inlines(text: Str) -> Str:
+    mut out := ""
+    l := str_len(text)
+    mut i := 0
+    
+    while i < l:
+        # Check Wikilink [[Note]]
+        if i + 1 < l and str_substr(text, i, 2) == "[[":
+            end_wiki := str_find(str_substr(text, i + 2, l - (i + 2)), "]]")
+            if end_wiki != -1:
+                target := str_substr(text, i + 2, end_wiki)
+                link_html := str_concat("<a class=\"samar-wikilink\" href=\"#\" data-target=\"", str_concat(target, str_concat("\">", str_concat(target, "</a>"))))
+                out = str_concat(out, link_html)
+                i = i + 2 + end_wiki + 2
+            else:
+                out = str_concat(out, "[[")
+                i = i + 2
+        # Check Inline Code `code`
+        elif str_substr(text, i, 1) == "`":
+            end_code := str_find(str_substr(text, i + 1, l - (i + 1)), "`")
+            if end_code != -1:
+                code_content := str_substr(text, i + 1, end_code)
+                code_html := str_concat("<code>", str_concat(md_escape_html(code_content), "</code>"))
+                out = str_concat(out, code_html)
+                i = i + 1 + end_code + 1
+            else:
+                out = str_concat(out, "`")
+                i = i + 1
+        # Check Bold **text**
+        elif i + 1 < l and str_substr(text, i, 2) == "**":
+            end_bold := str_find(str_substr(text, i + 2, l - (i + 2)), "**")
+            if end_bold != -1:
+                bold_content := str_substr(text, i + 2, end_bold)
+                bold_html := str_concat("<strong>", str_concat(md_render_inlines(bold_content), "</strong>"))
+                out = str_concat(out, bold_html)
+                i = i + 2 + end_bold + 2
+            else:
+                out = str_concat(out, "**")
+                i = i + 2
+        # Check Italic *text*
+        elif str_substr(text, i, 1) == "*":
+            end_italic := str_find(str_substr(text, i + 1, l - (i + 1)), "*")
+            if end_italic != -1:
+                italic_content := str_substr(text, i + 1, end_italic)
+                italic_html := str_concat("<em>", str_concat(md_render_inlines(italic_content), "</em>"))
+                out = str_concat(out, italic_html)
+                i = i + 1 + end_italic + 1
+            else:
+                out = str_concat(out, "*")
+                i = i + 1
+        # Check Math $x^2$
+        elif str_substr(text, i, 1) == "$":
+            end_math := str_find(str_substr(text, i + 1, l - (i + 1)), "$")
+            if end_math != -1:
+                math_content := str_substr(text, i + 1, end_math)
+                math_html := str_concat("<span class=\"samar-math\">", str_concat(md_escape_html(math_content), "</span>"))
+                out = str_concat(out, math_html)
+                i = i + 1 + end_math + 1
+            else:
+                out = str_concat(out, "$")
+                i = i + 1
+        else:
+            ch := str_substr(text, i, 1)
+            if ch == "&":
+                out = str_concat(out, "&amp;")
+            elif ch == "<":
+                out = str_concat(out, "&lt;")
+            elif ch == ">":
+                out = str_concat(out, "&gt;")
+            else:
+                out = str_concat(out, ch)
+            i = i + 1
+            
+    return out
+
+
+def md_to_html(markdown_text: Str) -> Str:
+    lines := str_split(markdown_text, 10) # 10 is '\n'
+    num_lines := list_len(lines)
+    mut html := ""
+    mut in_code_block := false
+    mut in_ul := false
+    mut in_ol := false
+    mut in_blockquote := false
+    
+    mut line_idx := 0
+    while line_idx < num_lines:
+        raw_line := str_trim(lines[line_idx])
+        
+        # Code block toggle ```
+        if md_starts_with(raw_line, "```"):
+            if in_code_block:
+                html = str_concat(html, "</code></pre>\n")
+                in_code_block = false
+            else:
+                if in_ul:
+                    html = str_concat(html, "</ul>\n")
+                    in_ul = false
+                if in_ol:
+                    html = str_concat(html, "</ol>\n")
+                    in_ol = false
+                if in_blockquote:
+                    html = str_concat(html, "</blockquote>\n")
+                    in_blockquote = false
+                lang := str_trim(str_substr(raw_line, 3, str_len(raw_line) - 3))
+                if str_len(lang) > 0:
+                    html = str_concat(html, str_concat("<pre><code class=\"language-", str_concat(lang, "\">\n")))
+                else:
+                    html = str_concat(html, "<pre><code>\n")
+                in_code_block = true
+            line_idx = line_idx + 1
+            continue
+
+        if in_code_block:
+            html = str_concat(html, str_concat(md_escape_html(raw_line), "\n"))
+            line_idx = line_idx + 1
+            continue
+
+        # Blank line closes open list / quote containers
+        if str_len(raw_line) == 0:
+            if in_ul:
+                html = str_concat(html, "</ul>\n")
+                in_ul = false
+            if in_ol:
+                html = str_concat(html, "</ol>\n")
+                in_ol = false
+            if in_blockquote:
+                html = str_concat(html, "</blockquote>\n")
+                in_blockquote = false
+            line_idx = line_idx + 1
+            continue
+
+        # Headings
+        if md_starts_with(raw_line, "###### "):
+            html = str_concat(html, str_concat("<h6>", str_concat(md_render_inlines(str_substr(raw_line, 7, str_len(raw_line) - 7)), "</h6>\n")))
+        elif md_starts_with(raw_line, "##### "):
+            html = str_concat(html, str_concat("<h5>", str_concat(md_render_inlines(str_substr(raw_line, 6, str_len(raw_line) - 6)), "</h5>\n")))
+        elif md_starts_with(raw_line, "#### "):
+            html = str_concat(html, str_concat("<h4>", str_concat(md_render_inlines(str_substr(raw_line, 5, str_len(raw_line) - 5)), "</h4>\n")))
+        elif md_starts_with(raw_line, "### "):
+            html = str_concat(html, str_concat("<h3>", str_concat(md_render_inlines(str_substr(raw_line, 4, str_len(raw_line) - 4)), "</h3>\n")))
+        elif md_starts_with(raw_line, "## "):
+            html = str_concat(html, str_concat("<h2>", str_concat(md_render_inlines(str_substr(raw_line, 3, str_len(raw_line) - 3)), "</h2>\n")))
+        elif md_starts_with(raw_line, "# "):
+            html = str_concat(html, str_concat("<h1>", str_concat(md_render_inlines(str_substr(raw_line, 2, str_len(raw_line) - 2)), "</h1>\n")))
+        # Blockquote
+        elif md_starts_with(raw_line, "> "):
+            if not in_blockquote:
+                html = str_concat(html, "<blockquote>\n")
+                in_blockquote = true
+            html = str_concat(html, str_concat("<p>", str_concat(md_render_inlines(str_substr(raw_line, 2, str_len(raw_line) - 2)), "</p>\n")))
+        # Unordered list item (- or *)
+        elif md_starts_with(raw_line, "- ") or md_starts_with(raw_line, "* "):
+            if not in_ul:
+                html = str_concat(html, "<ul>\n")
+                in_ul = true
+            html = str_concat(html, str_concat("<li>", str_concat(md_render_inlines(str_substr(raw_line, 2, str_len(raw_line) - 2)), "</li>\n")))
+        # Divider --- or ***
+        elif raw_line == "---" or raw_line == "***" or raw_line == "___":
+            html = str_concat(html, "<hr />\n")
+        # Standard Paragraph
+        else:
+            if in_ul:
+                html = str_concat(html, "</ul>\n")
+                in_ul = false
+            if in_ol:
+                html = str_concat(html, "</ol>\n")
+                in_ol = false
+            if in_blockquote:
+                html = str_concat(html, "</blockquote>\n")
+                in_blockquote = false
+            html = str_concat(html, str_concat("<p>", str_concat(md_render_inlines(raw_line), "</p>\n")))
+
+        line_idx = line_idx + 1
+
+    if in_code_block:
+        html = str_concat(html, "</code></pre>\n")
+    if in_ul:
+        html = str_concat(html, "</ul>\n")
+    if in_ol:
+        html = str_concat(html, "</ol>\n")
+    if in_blockquote:
+        html = str_concat(html, "</blockquote>\n")
+
+    return html
+
+
+def md_extract_wikilinks(text: Str) -> Str:
+    # Extracts comma-separated list of wikilinks for spatial graph edge generation
+    mut links := ""
+    l := str_len(text)
+    mut i := 0
+    mut count := 0
+    while i < l:
+        if i + 1 < l and str_substr(text, i, 2) == "[[":
+            end_wiki := str_find(str_substr(text, i + 2, l - (i + 2)), "]]")
+            if end_wiki != -1:
+                target := str_substr(text, i + 2, end_wiki)
+                if count > 0:
+                    links = str_concat(links, ",")
+                links = str_concat(links, target)
+                count = count + 1
+                i = i + 2 + end_wiki + 2
+            else:
+                i = i + 2
+        else:
+            i = i + 1
+    return links

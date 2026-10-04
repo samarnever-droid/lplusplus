@@ -1,0 +1,52 @@
+﻿def test_list_ops() -> Bool:
+    mut passed := 0
+    total := 8
+
+    # 1. list_insert
+    mut xs := [10, 30, 40]
+    list_insert(xs, 1, 20) # [10, 20, 30, 40]
+    if len(xs) == 4 and xs[0] == 10 and xs[1] == 20 and xs[2] == 30 and xs[3] == 40:
+        passed = passed + 1
+
+    # 2. list_remove
+    val := list_remove(xs, 1) # removes 20 -> [10, 30, 40]
+    if val == 20 and len(xs) == 3 and xs[1] == 30:
+        passed = passed + 1
+
+    # 3. list_swap
+    list_swap(xs, 0, 2) # [40, 30, 10]
+    if xs[0] == 40 and xs[2] == 10:
+        passed = passed + 1
+
+    # 4. list_reverse
+    list_reverse(xs) # [10, 30, 40]
+    if xs[0] == 10 and xs[1] == 30 and xs[2] == 40:
+        passed = passed + 1
+
+    # 5. list_capacity & list_reserve
+    list_reserve(xs, 64)
+    if list_capacity(xs) >= 64:
+        passed = passed + 1
+
+    # 6. list_truncate
+    list_truncate(xs, 2) # [10, 30]
+    if len(xs) == 2 and xs[0] == 10 and xs[1] == 30:
+        passed = passed + 1
+
+    # 7. list_clear
+    list_clear(xs)
+    if len(xs) == 0:
+        passed = passed + 1
+
+    # 8. String list operations
+    mut s_list := ["first", "third"]
+    list_insert(s_list, 1, "second")
+    if len(s_list) == 3 and s_list[1] == "second":
+        passed = passed + 1
+
+    print_str("ASSERTIONS: " + int_to_str(passed) + "/" + int_to_str(total))
+    return passed == total
+
+def main():
+    if test_list_ops():
+        print_str("SUCCESS: ALL LIST OPERATIONS TESTS PASSED")

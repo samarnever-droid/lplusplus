@@ -1,0 +1,18 @@
+# math.lpp — integer and float math builtins on wasm32, including the
+# series-based transcendental helpers (no libm in a bare wasm sandbox;
+# values chosen so the six-digit %f rounding is unambiguous).
+
+def main():
+    print(lpp_abs(0 - 7))
+    print(lpp_min(3, 9))
+    print(lpp_max(3, 9))
+    print(int_pow(2, 10))
+    print(int_pow(5, 0))
+    print(sqrt(2.0))
+    print(lpp_floor(2.7))
+    print(lpp_ceil(2.1))
+    print(lpp_pow(2.0, 0.5))
+    print(sin(0.0))
+    print(cos(0.0))
+    print(sin(1.0))
+    print(cos(1.0))

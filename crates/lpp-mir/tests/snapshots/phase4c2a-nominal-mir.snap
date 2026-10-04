@@ -1,0 +1,52 @@
+mir-v6
+counts functions=1 aggregates=2 fields=3 variants=2 blocks=1 switch_targets=0 locals=7 places=2 projections=2 instructions=7 strings=0 list_entries=25
+strings
+aggregates
+  MirAggregateId(0) MirAggregate { source: HirItemId(0), definition: DefId(0), instance: Some(InstanceId(0)), arguments: TypeListId(5), ty: TypeId(22), kind: Struct, fields: ListRange(0..2), variants: ListRange(0..0), origin: OriginId(0) }
+    fields [MirFieldId(0), MirFieldId(1)]
+    variants []
+  MirAggregateId(1) MirAggregate { source: HirItemId(1), definition: DefId(1), instance: Some(InstanceId(1)), arguments: TypeListId(5), ty: TypeId(30), kind: Enum, fields: ListRange(0..0), variants: ListRange(0..2), origin: OriginId(6) }
+    fields []
+    variants [MirVariantId(0), MirVariantId(1)]
+fields
+  MirFieldId(0) MirField { aggregate: MirAggregateId(0), variant: None, source: FieldId(0), ty: TypeId(4), origin: OriginId(3) }
+  MirFieldId(1) MirField { aggregate: MirAggregateId(0), variant: None, source: FieldId(1), ty: TypeId(4), origin: OriginId(5) }
+  MirFieldId(2) MirField { aggregate: MirAggregateId(1), variant: Some(MirVariantId(1)), source: FieldId(2), ty: TypeId(4), origin: OriginId(11) }
+variants
+  MirVariantId(0) MirVariant { aggregate: MirAggregateId(1), source: VariantId(0), ordinal: 0, fields: ListRange(2..2), origin: OriginId(8) }
+    fields []
+  MirVariantId(1) MirVariant { aggregate: MirAggregateId(1), source: VariantId(1), ordinal: 1, fields: ListRange(2..3), origin: OriginId(9) }
+    fields [MirFieldId(2)]
+locals
+  MirLocalId(0) MirLocal { ty: TypeId(22), source: None, kind: Temporary, mutable: false, origin: OriginId(19) }
+  MirLocalId(1) MirLocal { ty: TypeId(22), source: Some(LocalId(0)), kind: User, mutable: false, origin: OriginId(20) }
+  MirLocalId(2) MirLocal { ty: TypeId(30), source: None, kind: Temporary, mutable: false, origin: OriginId(25) }
+  MirLocalId(3) MirLocal { ty: TypeId(30), source: Some(LocalId(1)), kind: User, mutable: false, origin: OriginId(26) }
+  MirLocalId(4) MirLocal { ty: TypeId(4), source: None, kind: Temporary, mutable: false, origin: OriginId(29) }
+  MirLocalId(5) MirLocal { ty: TypeId(4), source: None, kind: Temporary, mutable: false, origin: OriginId(31) }
+  MirLocalId(6) MirLocal { ty: TypeId(4), source: None, kind: Temporary, mutable: false, origin: OriginId(32) }
+places
+  MirPlaceId(0) MirPlace { root: MirLocalId(1), projections: ListRange(0..1), ty: TypeId(4), origin: OriginId(29) }
+    projections [Field(MirFieldId(0))]
+  MirPlaceId(1) MirPlace { root: MirLocalId(1), projections: ListRange(1..2), ty: TypeId(4), origin: OriginId(31) }
+    projections [Field(MirFieldId(1))]
+instructions
+  InstructionId(0) Instruction { kind: Assign { target: MirLocalId(0), value: ConstructStruct { aggregate: MirAggregateId(0), fields: ListRange(0..2) } }, origin: OriginId(19) }
+  InstructionId(1) Instruction { kind: Assign { target: MirLocalId(1), value: Use(Copy(MirLocalId(0))) }, origin: OriginId(14) }
+  InstructionId(2) Instruction { kind: Assign { target: MirLocalId(2), value: ConstructVariant { aggregate: MirAggregateId(1), variant: MirVariantId(1), fields: ListRange(2..3) } }, origin: OriginId(25) }
+  InstructionId(3) Instruction { kind: Assign { target: MirLocalId(3), value: Use(Copy(MirLocalId(2))) }, origin: OriginId(21) }
+  InstructionId(4) Instruction { kind: Assign { target: MirLocalId(4), value: Load(MirPlaceId(0)) }, origin: OriginId(29) }
+  InstructionId(5) Instruction { kind: Assign { target: MirLocalId(5), value: Load(MirPlaceId(1)) }, origin: OriginId(31) }
+  InstructionId(6) Instruction { kind: Assign { target: MirLocalId(6), value: Binary { left: Copy(MirLocalId(4)), operator: Add, right: Copy(MirLocalId(5)) } }, origin: OriginId(32) }
+blocks
+  BasicBlockId(0) BasicBlock { instructions: ListRange(0..7), terminator: Return(Some(Copy(MirLocalId(6)))), origin: OriginId(12) }
+    instruction_ids [InstructionId(0), InstructionId(1), InstructionId(2), InstructionId(3), InstructionId(4), InstructionId(5), InstructionId(6)]
+functions
+  MirFunctionId(0) MirFunction { source: HirItemId(2), instance: None, instance_arguments: TypeListId(0), definition: Some(DefId(2)), name: Some(Symbol(2)), kind: Function, captures: ListRange(0..0), ty: TypeId(21), return_type: TypeId(4), parameters: ListRange(0..0), locals: ListRange(0..7), blocks: ListRange(0..1), entry: BasicBlockId(0), origin: OriginId(12) }
+    instance_arguments TypeListId(0)
+    parameters [] captures [] kind=Function
+    locals [MirLocalId(0), MirLocalId(1), MirLocalId(2), MirLocalId(3), MirLocalId(4), MirLocalId(5), MirLocalId(6)]
+    blocks [BasicBlockId(0)]
+operand_lists
+  ListRange(0..2) [Constant(Integer(20)), Constant(Integer(22))]
+  ListRange(2..3) [Constant(Integer(42))]

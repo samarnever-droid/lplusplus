@@ -1,0 +1,528 @@
+# idx.lpp — secondary indexes (index B-trees).
+#
+# SQLite stores an index as its own b-tree whose *key* is a record holding the
+# indexed column values followed by the table rowid:
+#
+#     index leaf page      flag 0x0a
+#     index interior page  flag 0x02
+#     leaf cell:      [payload varint][record: key0, key1, ..., rowid]
+#     interior cell:  [left child u32][payload varint][record ...]
+#
+# Ordering is by the record's values left-to-right using SQLite's comparison
+# rules, with the trailing rowid breaking ties, so entries are unique even when
+# the indexed columns are not.
+#
+# Scope: this implementation keeps every index in a **single leaf page**
+# (index_flag 0x0a). That is a real, spec-conformant index b-tree that the real
+# sqlite3 reads and integrity-checks, and it is what makes equality lookups
+# O(log n) within the page instead of a full table scan. When an index outgrows
+# one page the engine drops it from the plan and falls back to a table scan, so
+# results stay correct — see the README. Interior index pages (0x02) are read
+# correctly if present (e.g. in a file written by real SQLite) but are never
+# produced here.
+
+import mem
+import varint
+import value
+import record
+import pager
+import btree
+import cursor
+import strbuf
+import schema
+import btwrite
+
+def IDX_LEAF() -> Int:
+    return 10
+
+def IDX_INTERIOR() -> Int:
+    return 2
+
+def is_index_page(p: Int, pno: Int) -> Int:
+    f := btree.pg_flag(p, pno)
+    if f == 10:
+        return 1
+    if f == 2:
+        return 1
+    return 0
+
+# ── cell access on an index page ──
+
+# Payload (record) size of index cell i.
+def cell_payload_size(p: Int, pno: Int, i: Int) -> Int:
+    d := pager.pg_data(p)
+    off := btree.cell_at(p, pno, i)
+    if btree.pg_flag(p, pno) == IDX_INTERIOR():
+        return varint.vi_get(d, off + 4)
+    return varint.vi_get(d, off)
+
+# Offset of the record bytes of index cell i.
+def cell_payload_off(p: Int, pno: Int, i: Int) -> Int:
+    d := pager.pg_data(p)
+    off := btree.cell_at(p, pno, i)
+    if btree.pg_flag(p, pno) == IDX_INTERIOR():
+        return off + 4 + varint.vi_len(d, off + 4)
+    return off + varint.vi_len(d, off)
+
+def cell_total_size(p: Int, pno: Int, i: Int) -> Int:
+    d := pager.pg_data(p)
+    off := btree.cell_at(p, pno, i)
+    mut base := 0
+    if btree.pg_flag(p, pno) == IDX_INTERIOR():
+        base = 4
+    plen := varint.vi_get(d, off + base)
+    n := varint.vi_len(d, off + base)
+    loc := btree.local_size(p, plen)
+    mut sz := base + n + loc
+    if loc < plen:
+        sz = sz + 4
+    return sz
+
+# Decode the key record of index cell i into a value vector.
+def cell_values(p: Int, pno: Int, i: Int) -> Int:
+    d := pager.pg_data(p)
+    off := cell_payload_off(p, pno, i)
+    size := cell_payload_size(p, pno, i)
+    return record.decode(d, off, size)
+
+# The trailing rowid of an index entry.
+def cell_rowid(p: Int, pno: Int, i: Int) -> Int:
+    vv := cell_values(p, pno, i)
+    n := value.vv_len(vv)
+    mut r := 0
+    if n > 0:
+        r = value.v_to_int(value.vv_get(vv, n - 1))
+    value.vv_free_all(vv)
+    return r
+
+# ── ordering ──
+
+# Compare two index key vectors (last element is the rowid tiebreaker).
+def idx_key_cmp(a: Int, b: Int) -> Int:
+    na := value.vv_len(a)
+    nb := value.vv_len(b)
+    mut lim := na
+    if nb < lim:
+        lim = nb
+    mut i := 0
+    while i < lim:
+        c := value.v_cmp(value.vv_get(a, i), value.vv_get(b, i))
+        if c != 0:
+            return c
+        i = i + 1
+    if na < nb:
+        return 0 - 1
+    if na > nb:
+        return 1
+    return 0
+
+# Compare only the leading `ncols` columns, ignoring the rowid.
+def idx_prefix_cmp(entry: Int, probe: Int, ncols: Int) -> Int:
+    mut i := 0
+    while i < ncols:
+        if i >= value.vv_len(entry):
+            return 0 - 1
+        if i >= value.vv_len(probe):
+            return 1
+        c := value.v_cmp(value.vv_get(entry, i), value.vv_get(probe, i))
+        if c != 0:
+            return c
+        i = i + 1
+    return 0
+
+# ── build ──
+
+# Create an empty index b-tree page and return its root page number.
+def create_root(p: Int) -> Int:
+    root := pager.pg_new_page(p)
+    btree.init_page(p, root, IDX_LEAF())
+    return root
+
+# Insert one entry, keeping the page sorted. Returns 1 on success, 0 when the
+# page is full (the caller then marks the index unusable).
+def insert_entry(p: Int, root: Int, keyvals: Int) -> Int:
+    if btree.pg_flag(p, root) != IDX_LEAF():
+        return 0
+    rec := record.encode(keyvals)
+    plen := mem.vec_len(rec)
+    # Oversized keys would need overflow chaining; refuse instead of corrupting.
+    if plen > btree.max_local(p):
+        mem.vec_free(rec)
+        return 0
+    cell := mem.vec_new(plen + 10)
+    varint.vi_push(cell, plen)
+    mem.vec_push_bytes(cell, mem.vec_data(rec), 0, plen)
+    mem.vec_free(rec)
+
+    at := find_slot(p, root, keyvals)
+    ok := btwrite.try_insert(p, root, at, mem.vec_data(cell), mem.vec_len(cell))
+    mem.vec_free(cell)
+    return ok
+
+# First slot whose key is >= `keyvals` (binary search).
+def find_slot(p: Int, root: Int, keyvals: Int) -> Int:
+    n := btree.cell_count(p, root)
+    mut lo := 0
+    mut hi := n
+    while lo < hi:
+        mid := (lo + hi) / 2
+        ev := cell_values(p, root, mid)
+        c := idx_key_cmp(ev, keyvals)
+        value.vv_free_all(ev)
+        if c < 0:
+            lo = mid + 1
+        else:
+            hi = mid
+    return lo
+
+# Rebuild an index from the whole table.
+#
+# Built bottom-up rather than by repeated insertion: collect every entry, sort
+# it, then pack full leaf pages and, if more than one leaf is needed, an
+# interior root above them. That is O(n log n) once instead of O(n) splits, and
+# it produces the same on-disk shape SQLite does.
+#
+# Returns the root page, or 0 if the index cannot be built (a single key larger
+# than a page, or more leaves than one interior root can address).
+def build(d: Int, p: Int, tbl_root: Int, ipk: Int, ncols_tbl: Int, colidx: Int) -> Int:
+    cells := mem.iv_new(64)      # encoded leaf cells (vec handles)
+    keys := mem.iv_new(64)       # first-key record bytes, for sorting
+    c := cursor.cu_new(p, tbl_root)
+    cursor.cu_first(c)
+    mut ok := 1
+    while cursor.cu_valid(c) == 1:
+        rid := cursor.cu_rowid(c)
+        pay := cursor.cu_payload(c)
+        vv := record.decode(mem.vec_data(pay), 0, mem.vec_len(pay))
+        mut i := value.vv_len(vv)
+        while i < ncols_tbl:
+            value.vv_push(vv, value.v_null())
+            i = i + 1
+        if ipk >= 0:
+            value.v_free(value.vv_get(vv, ipk))
+            value.vv_set(vv, ipk, value.v_from_int(rid))
+        key := build_key(vv, colidx, rid)
+        rec := record.encode(key)
+        plen := mem.vec_len(rec)
+        if plen > btree.max_local(p):
+            ok = 0
+        cell := mem.vec_new(plen + 10)
+        varint.vi_push(cell, plen)
+        mem.vec_push_bytes(cell, mem.vec_data(rec), 0, plen)
+        mem.vec_free(rec)
+        mem.iv_push(cells, cell)
+        mem.iv_push(keys, key)
+        value.vv_free_all(vv)
+        mem.vec_free(pay)
+        cursor.cu_next(c)
+    cursor.cu_free(c)
+
+    n := mem.iv_len(cells)
+    if ok == 1:
+        sort_entries(cells, keys, n)
+    root := pack_pages(p, cells, n, ok)
+
+    mut f := 0
+    while f < n:
+        mem.vec_free(mem.iv_get(cells, f))
+        value.vv_free_all(mem.iv_get(keys, f))
+        f = f + 1
+    mem.iv_free(cells)
+    mem.iv_free(keys)
+    return root
+
+# Insertion sort over (cells, keys) in lockstep, ordered by the key record.
+def sort_entries(cells: Int, keys: Int, n: Int):
+    mut i := 1
+    while i < n:
+        ck := mem.iv_get(cells, i)
+        kk := mem.iv_get(keys, i)
+        mut j := i - 1
+        mut go := 1
+        while go == 1:
+            if j < 0:
+                go = 0
+            elif idx_key_cmp(mem.iv_get(keys, j), kk) > 0:
+                mem.iv_set(cells, j + 1, mem.iv_get(cells, j))
+                mem.iv_set(keys, j + 1, mem.iv_get(keys, j))
+                j = j - 1
+            else:
+                go = 0
+        mem.iv_set(cells, j + 1, ck)
+        mem.iv_set(keys, j + 1, kk)
+        i = i + 1
+
+# Lay sorted cells into leaf pages, adding an interior root when >1 leaf.
+def pack_pages(p: Int, cells: Int, n: Int, ok: Int) -> Int:
+    root := create_root(p)
+    if ok == 0:
+        pager.free_page(p, root)
+        return 0
+    if n == 0:
+        return root
+
+    leaves := mem.iv_new(8)
+    seps := mem.iv_new(8)        # last cell index on each leaf
+    mut cur := root
+    mem.iv_push(leaves, cur)
+    # In SQLite an interior cell carries a real key, so the entry promoted as a
+    # separator must NOT also stay on a leaf; otherwise integrity_check reports
+    # "wrong # of entries in index". When a leaf fills, the *current* cell is
+    # promoted and the next one starts the following leaf.
+    mut i := 0
+    while i < n:
+        cell := mem.iv_get(cells, i)
+        csz := mem.vec_len(cell)
+        at := btree.cell_count(p, cur)
+        if btwrite.try_insert(p, cur, at, mem.vec_data(cell), csz) == 0:
+            mem.iv_push(seps, i)
+            cur = pager.pg_new_page(p)
+            btree.init_page(p, cur, IDX_LEAF())
+            mem.iv_push(leaves, cur)
+        i = i + 1
+
+    nleaves := mem.iv_len(leaves)
+    if nleaves == 1:
+        mem.iv_free(leaves)
+        mem.iv_free(seps)
+        return root
+
+    # More than one leaf: `root` currently holds the first leaf's cells. Move
+    # them to a fresh page so the root can become an interior node, keeping the
+    # root page number stable (sqlite_schema records it).
+    first := pager.pg_new_page(p)
+    btree.init_page(p, first, IDX_LEAF())
+    copy_cells(p, root, first)
+    mem.iv_set(leaves, 0, first)
+    btree.init_page(p, root, IDX_INTERIOR())
+
+    # One separator cell per leaf except the last, which becomes right-child.
+    mut li := 0
+    mut fail := 0
+    while li < nleaves - 1:
+        child := mem.iv_get(leaves, li)
+        sep := mem.iv_get(seps, li)
+        cellv := mem.iv_get(cells, sep)
+        plen := mem.vec_len(cellv)
+        icell := mem.vec_new(plen + 8)
+        tmp := buf_alloc(4)
+        mem.be_put32(tmp, 0, child)
+        mem.vec_push_bytes(icell, tmp, 0, 4)
+        buf_free(tmp)
+        mem.vec_push_bytes(icell, mem.vec_data(cellv), 0, plen)
+        at := btree.cell_count(p, root)
+        if btwrite.try_insert(p, root, at, mem.vec_data(icell), mem.vec_len(icell)) == 0:
+            fail = 1
+            li = nleaves
+        else:
+            li = li + 1
+        mem.vec_free(icell)
+    if fail == 1:
+        free_leaves(p, leaves, root)
+        mem.iv_free(leaves)
+        mem.iv_free(seps)
+        btree.init_page(p, root, IDX_LEAF())
+        return 0
+    btree.set_right_child(p, root, mem.iv_get(leaves, nleaves - 1))
+    mem.iv_free(leaves)
+    mem.iv_free(seps)
+    return root
+
+# Copy every cell of `src` onto the freshly initialised page `dst`.
+def copy_cells(p: Int, src: Int, dst: Int):
+    n := btree.cell_count(p, src)
+    mut i := 0
+    while i < n:
+        sz := btree.cell_size(p, src, i)
+        off := btree.cell_at(p, src, i)
+        b := buf_alloc(sz)
+        buf_copy(b, 0, pager.pg_data(p), off, sz)
+        btree.insert_cell_raw(p, dst, i, b, 0, sz)
+        buf_free(b)
+        i = i + 1
+
+def free_leaves(p: Int, leaves: Int, root: Int):
+    n := mem.iv_len(leaves)
+    mut i := 0
+    while i < n:
+        pg := mem.iv_get(leaves, i)
+        if pg != root:
+            pager.free_page(p, pg)
+        i = i + 1
+
+# Key vector = indexed column values, then the rowid.
+def build_key(rowvals: Int, colidx: Int, rid: Int) -> Int:
+    key := value.vv_new()
+    n := mem.iv_len(colidx)
+    mut i := 0
+    while i < n:
+        ci := mem.iv_get(colidx, i)
+        if ci < value.vv_len(rowvals):
+            value.vv_push(key, value.v_clone(value.vv_get(rowvals, ci)))
+        else:
+            value.vv_push(key, value.v_null())
+        i = i + 1
+    value.vv_push(key, value.v_from_int(rid))
+    return key
+
+# ── lookup ──
+
+# Rowids whose leading columns equal `probe`. Caller frees the returned iv.
+#
+# Walks interior pages (0x02) down to the first matching leaf, then scans
+# forward across leaves while the prefix still matches. Entries are sorted, so
+# matches are contiguous.
+def seek_eq(p: Int, root: Int, probe: Int, ncols: Int) -> Int:
+    out := mem.iv_new(8)
+    if is_index_page(p, root) == 0:
+        return out
+    leaf := descend_to_leaf(p, root, probe, ncols)
+    if leaf == 0:
+        return out
+    mut pg := leaf
+    mut guard := 0
+    while guard < 100000:
+        if pg == 0:
+            guard = 100000
+        else:
+            n := btree.cell_count(p, pg)
+            mut i := first_ge(p, pg, probe, ncols)
+            mut stop := 0
+            while i < n:
+                ev := cell_values(p, pg, i)
+                c := idx_prefix_cmp(ev, probe, ncols)
+                if c == 0:
+                    m := value.vv_len(ev)
+                    if m > 0:
+                        mem.iv_push(out, value.v_to_int(value.vv_get(ev, m - 1)))
+                    value.vv_free_all(ev)
+                    i = i + 1
+                else:
+                    value.vv_free_all(ev)
+                    stop = 1
+                    i = n
+            if stop == 1:
+                guard = 100000
+            else:
+                pg = next_leaf(p, root, pg)
+                guard = guard + 1
+    return out
+
+# First slot on `pg` whose key prefix is >= probe.
+def first_ge(p: Int, pg: Int, probe: Int, ncols: Int) -> Int:
+    n := btree.cell_count(p, pg)
+    mut lo := 0
+    mut hi := n
+    while lo < hi:
+        mid := (lo + hi) / 2
+        ev := cell_values(p, pg, mid)
+        c := idx_prefix_cmp(ev, probe, ncols)
+        value.vv_free_all(ev)
+        if c < 0:
+            lo = mid + 1
+        else:
+            hi = mid
+    return lo
+
+# Descend from `root` to the leaf that should hold `probe`.
+def descend_to_leaf(p: Int, root: Int, probe: Int, ncols: Int) -> Int:
+    mut cur := root
+    mut guard := 0
+    while guard < 64:
+        f := btree.pg_flag(p, cur)
+        if f == IDX_LEAF():
+            return cur
+        if f != IDX_INTERIOR():
+            return 0
+        n := btree.cell_count(p, cur)
+        mut i := 0
+        mut nxt := 0
+        while i < n:
+            ev := cell_values(p, cur, i)
+            c := idx_prefix_cmp(ev, probe, ncols)
+            value.vv_free_all(ev)
+            if c >= 0:
+                nxt = btree.interior_child(p, cur, i)
+                i = n
+            else:
+                i = i + 1
+        if nxt == 0:
+            nxt = btree.right_child(p, cur)
+        if nxt == 0:
+            return 0
+        cur = nxt
+        guard = guard + 1
+    return 0
+
+# Leaf following `leaf` in key order, or 0. The tree is at most two levels
+# deep here, so a linear walk of the root's children is sufficient.
+def next_leaf(p: Int, root: Int, leaf: Int) -> Int:
+    if btree.pg_flag(p, root) != IDX_INTERIOR():
+        return 0
+    n := btree.cell_count(p, root)
+    mut i := 0
+    while i < n:
+        if btree.interior_child(p, root, i) == leaf:
+            if i + 1 < n:
+                return btree.interior_child(p, root, i + 1)
+            return btree.right_child(p, root)
+        i = i + 1
+    return 0
+
+# Rowids whose leading column falls in [lo, hi]. A bound is skipped when its
+# `has` flag is 0. Returns rowids in index order (i.e. sorted by the key).
+def seek_range(p: Int, root: Int, lo: Int, has_lo: Int, lo_incl: Int, hi: Int, has_hi: Int, hi_incl: Int) -> Int:
+    out := mem.iv_new(8)
+    if btree.pg_flag(p, root) != IDX_LEAF():
+        return out
+    n := btree.cell_count(p, root)
+    mut i := 0
+    while i < n:
+        ev := cell_values(p, root, i)
+        mut keep := 1
+        if value.vv_len(ev) > 0:
+            k := value.vv_get(ev, 0)
+            if has_lo == 1:
+                c := value.v_cmp(k, lo)
+                if c < 0:
+                    keep = 0
+                if c == 0:
+                    if lo_incl == 0:
+                        keep = 0
+            if has_hi == 1:
+                c2 := value.v_cmp(k, hi)
+                if c2 > 0:
+                    keep = 0
+                if c2 == 0:
+                    if hi_incl == 0:
+                        keep = 0
+        if keep == 1:
+            m := value.vv_len(ev)
+            if m > 0:
+                mem.iv_push(out, value.v_to_int(value.vv_get(ev, m - 1)))
+        value.vv_free_all(ev)
+        i = i + 1
+    return out
+
+# ── maintenance ──
+
+# Remove the entry for `rid` whose key columns match `keyvals`.
+def idx_delete_entry(p: Int, root: Int, keyvals: Int) -> Int:
+    if btree.pg_flag(p, root) != IDX_LEAF():
+        return 0
+    n := btree.cell_count(p, root)
+    mut i := 0
+    while i < n:
+        ev := cell_values(p, root, i)
+        c := idx_key_cmp(ev, keyvals)
+        value.vv_free_all(ev)
+        if c == 0:
+            btree.remove_cell(p, root, i)
+            return 1
+        i = i + 1
+    return 0
+
+def entry_count(p: Int, root: Int) -> Int:
+    if is_index_page(p, root) == 0:
+        return 0
+    return btree.cell_count(p, root)

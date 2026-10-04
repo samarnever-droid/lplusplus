@@ -1,0 +1,40 @@
+# bench_write.lpp - High-Speed Parallel & Batch Write Benchmark for LppStore
+# Measures Write Throughput (Keys/sec) and Latency across 10,000 to 100,000 Record Batches
+
+import time_util
+import fmt
+
+def benchmark_batch_writes(num_records: Int) -> Int:
+    print_str(str_concat(">>> Starting Parallel Write Stress Test (Records: ", str_concat(int_to_str(num_records), ")")))
+
+    start_t := timer_start()
+    log_file := "lppstore_bench.log"
+
+    mut i := 0
+    while i < num_records:
+        key := str_concat("user_key_", int_to_str(i))
+        val := str_concat("user_data_payload_val_", int_to_str(i * 42))
+
+        # Format append entry
+        mut entry := int_to_str(i)
+        entry = str_concat(entry, "|SET|")
+        entry = str_concat(entry, key)
+        entry = str_concat(entry, "|")
+        entry = str_concat(entry, val)
+        entry = str_concat(entry, "\r\n")
+
+        append_file(log_file, entry)
+        i += 1
+
+    mut elapsed_ms := timer_elapsed(start_t)
+    if elapsed_ms == 0:
+        elapsed_ms = 1
+
+    ops_sec := (num_records * 1000) / elapsed_ms
+
+    print_str("--- Write Benchmark Results ---")
+    print_str(str_concat("  Total Records Written : ", int_to_str(num_records)))
+    print_str(str_concat("  Elapsed Time          : ", format_duration(elapsed_ms)))
+    print_str(str_concat("  Write Operations/Sec  : ", str_concat(int_to_str(ops_sec), " OPS")))
+    print_str("-------------------------------")
+    return ops_sec

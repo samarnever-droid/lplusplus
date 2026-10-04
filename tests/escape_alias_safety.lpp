@@ -1,0 +1,46 @@
+# Aliased objects must never be stack-promoted.
+#
+# `b := a` makes two names for one object, and `pass_arc` -- which runs after
+# the escape solver -- emits a retain/release pair for the extra handle. If the
+# object were placed in a frame slot it would have no ARC header, and that
+# release would decrement whatever bytes precede the slot.
+#
+# This is not hypothetical. Disabling the solver's alias rule as a negative
+# control made exactly this program segfault (rc=139) on the direct-link path,
+# while the host path stayed clean -- which is also why the differential fuzzer
+# has to exercise both link paths rather than just the host one.
+#
+# The single-field struct matters: a two-field version of the same shape did
+# not reproduce the fault.
+
+struct Inner:
+    n: Int
+
+# Alias created fresh each iteration: a wrong promotion compounds per trip.
+def loop_alias(count: Int) -> Int:
+    mut total := 0
+    mut k := 0
+    while k < count:
+        node := Inner(k)
+        alias := node
+        total = total + alias.n
+        k = k + 1
+    return total
+
+# A three-deep chain, all handles still live across a later call.
+def chain() -> Int:
+    a := Inner(5)
+    b := a
+    c := b
+    return a.n + b.n + c.n
+
+def main() -> Void:
+    print(chain())
+    print(loop_alias(100))
+
+    # Not aliased: this one SHOULD still reach a stack slot, so the test also
+    # guards against the fix being over-broad and disabling promotion entirely.
+    mut solo := Inner(7)
+    solo.n = solo.n + 1
+    print(solo.n)
+    print_str("alias-ok")

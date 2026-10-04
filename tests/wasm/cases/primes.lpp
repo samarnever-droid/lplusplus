@@ -1,0 +1,23 @@
+# primes.lpp — nested loops + early returns; the classic benchmark program.
+
+def is_prime(n: Int) -> Int:
+    if n < 2:
+        return 0
+    mut i := 2
+    while i * i <= n:
+        if n % i == 0:
+            return 0
+        i = i + 1
+    return 1
+
+def count_primes(limit: Int) -> Int:
+    mut count := 0
+    mut n := 2
+    while n < limit:
+        count = count + is_prime(n)
+        n = n + 1
+    return count
+
+def main():
+    print(count_primes(100))
+    print(count_primes(1000))

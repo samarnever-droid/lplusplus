@@ -1,0 +1,44 @@
+﻿def test_slices() -> Bool:
+    mut passed := 0
+    total := 6
+
+    # 1. List slices
+    mut xs := [10, 20, 30, 40, 50]
+    sl := slice(xs, 1, 3) # [20, 30, 40]
+    if len(sl) == 3 and sl[0] == 20 and sl[1] == 30 and sl[2] == 40:
+        passed = passed + 1
+
+    # 2. Slice boundary checks
+    sl2 := slice(xs, 0, 5)
+    if len(sl2) == 5 and sl2[4] == 50:
+        passed = passed + 1
+
+    # 3. Str slices
+    s := "Hello, World!"
+    ssl := str_slice(s, 7, 5) # "World"
+    c0 := ssl[0]
+    c4 := ssl[4]
+    if len(ssl) == 5 and c0 == "W" and c4 == "d":
+        passed = passed + 1
+
+    # 4. slice_to_str
+    converted := slice_to_str(ssl)
+    if converted == "World":
+        passed = passed + 1
+
+    # 5. Zero length slice
+    z_sl := slice(xs, 2, 0)
+    if len(z_sl) == 0:
+        passed = passed + 1
+
+    # 6. String slice whole string
+    ssl_all := str_slice(s, 0, len(s))
+    if slice_to_str(ssl_all) == "Hello, World!":
+        passed = passed + 1
+
+    print_str("ASSERTIONS: " + int_to_str(passed) + "/" + int_to_str(total))
+    return passed == total
+
+def main():
+    if test_slices():
+        print_str("SUCCESS: ALL SLICES TESTS PASSED")

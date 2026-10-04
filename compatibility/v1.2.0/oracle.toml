@@ -1,0 +1,29 @@
+schema = 1
+language = "L++"
+compiler_version = "1.2.0"
+tag = "v1.2.0"
+commit = "a7b61748396a48c03f2d4cd416774fe8fbd845fb"
+repository = "https://github.com/samarnever-droid/lplusplus"
+rust_toolchain = "1.98.0"
+cargo_lock_sha256 = "16cba6b561a9963e0fcd18bca09364037e5eaaf2e3f1aa64cb46d51d43980dd9"
+
+# The files listed in files.sha256 are the frozen behavioral fixtures. Updating
+# one requires an explicit compatibility review; do not regenerate the hashes
+# as part of an unrelated compiler change.
+fixture_hashes = "files.sha256"
+
+[[suite]]
+name = "native-aot-parity"
+runner = "tests/run_aot_parity.sh"
+manifest = "tests/aot_parity.tsv"
+expected_passes = 44
+
+[[suite]]
+name = "wasm"
+runner = "tests/run_wasm_tests.sh"
+expected_passes = 34
+
+[[suite]]
+name = "source-status"
+runner = "scripts/check_source_baseline.py"
+manifest = "tests/source_baseline.json"

@@ -1,0 +1,17 @@
+# Arena region must survive a function return. The returned root keeps the
+# region alive through its arena-backed node references; the caller then drops
+# the graph normally.
+
+struct Cell:
+    value: Int
+    next: Cell
+
+def make_chain() -> Cell:
+    tail := Cell(2, 0)
+    return Cell(1, tail)
+
+def main() -> Void:
+    root := make_chain()
+    print(root.value)
+    print(root.next.value)
+    print_str("arena-ok")

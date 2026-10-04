@@ -1,0 +1,411 @@
+# Language Reference
+
+This is the practical syntax reference for L++.
+
+## Comments
+
+```lpp
+# Single-line comment
+```
+
+L++ currently uses `#` single-line comments. Block comments are not part of the language yet.
+
+## Literals
+
+```lpp
+42              # decimal Int
+1_000_000       # Int with separators
+0xFF            # hexadecimal Int
+0b1010          # binary Int
+3.14            # Float
+true            # Bool
+false           # Bool
+"hello"         # Str
+"""
+multiline
+string
+"""             # multiline Str
+f"hello {name}" # f-string interpolation for string expressions
+[1, 2, 3]       # list literal
+```
+
+## Core types
+
+| Type | Meaning |
+|---|---|
+| `Int` | 64-bit signed integer |
+| `Float` | 64-bit floating point; `%` uses `fmod` |
+| `Str` | ARC-managed string |
+| `Bool` | boolean |
+| `Void` | no value |
+| `List[Int]` | dynamic list handle |
+| `Map[Int, Int]` | map handle; runtime also supports string keys |
+| custom structs | user-defined records |
+| custom enums | tagged values |
+| type params | `T`, `A`, `B` in generics |
+
+## Variables
+
+```lpp
+x := 42
+mut total := 0
+total += x
+```
+
+Variables are immutable by default. Use `mut` if the variable will be reassigned.
+
+## Constants
+
+Constants are top-level declarations:
+
+```lpp
+const LIMIT = 10
+
+def main():
+    print(LIMIT)
+```
+
+## Functions
+
+```lpp
+def add(a: Int, b: Int) -> Int:
+    return a + b
+
+def greet(name: Str):
+    print_str(name)
+```
+
+Functions returning nothing omit the return type.
+
+## Default parameters
+
+```lpp
+def add(a: Int, b: Int = 10) -> Int:
+    return a + b
+
+def main():
+    print(add(5))       # 15
+    print(add(5, 20))   # 25
+```
+
+## Operators
+
+| Category | Operators |
+|---|---|
+| Arithmetic | `+`, `-`, `*`, `/`, `%` |
+| Augmented assignment | `+=`, `-=`, `*=`, `/=`, `%=` |
+| Comparison | `==`, `!=`, `<`, `>`, `<=`, `>=` |
+| Logical | `&&`, `||`, `!` |
+| Bitwise | `&`, `|`, `^`, `<<`, `>>` |
+| Unary | `-x`, `!flag` |
+| Try | `?` |
+| Access | `.`, `[]` |
+| Declare / assign | `:=`, `=` |
+
+`&&` and `||` short-circuit.
+
+## Control flow
+
+```lpp
+const LIMIT = 10
+
+def main():
+    mut total := 0
+    for i in range(0, LIMIT, 2):
+        total += i
+
+    if total > 10 && total < 100:
+        print(total)
+    elif total == 10:
+        print(10)
+    else:
+        print(0)
+```
+
+Supported loops:
+
+```lpp
+for i in range(10):
+    print(i)
+
+for i in range(2, 10):
+    print(i)
+
+for i in range(0, 10, 2):
+    print(i)
+
+while condition:
+    # body
+    break
+```
+
+## Structs
+
+```lpp
+struct Point:
+    x: Int
+    y: Int
+
+p := Point(3, 4)
+print(p.x)
+```
+
+## Method syntax / UFCS
+
+L++ supports method-call syntax as sugar for free functions.
+
+```lpp
+struct Point:
+    x: Int
+    y: Int
+
+def magnitude_squared(p: Point) -> Int:
+    return p.x * p.x + p.y * p.y
+
+def main():
+    p := Point(3, 4)
+    print(p.magnitude_squared())  # calls magnitude_squared(p)
+```
+
+## Enums and match
+
+```lpp
+enum Result:
+    Ok(value: Int)
+    Err(code: Int)
+
+def safe_divide(a: Int, b: Int) -> Result:
+    if b == 0:
+        return Result.Err(1)
+    return Result.Ok(a / b)
+
+def main():
+    match safe_divide(10, 2):
+        Ok(v):
+            print(v)
+        Err(code):
+            print(code)
+```
+
+Enum values are currently represented internally as a packed `i64` tag/data pair. This works for integer payloads and forms the basis of Result-style error handling.
+
+## Generics, phase 1
+
+```lpp
+def identity[T](x: T) -> T:
+    return x
+
+struct Box[T]:
+    value: T
+
+def main():
+    print(identity(42))
+    s := identity("generic string")
+    print_str(s)
+
+    b := Box(99)
+    print(b.value)
+```
+
+Current limitations:
+
+- Generic function inference works for common call-site cases.
+- Generic values are erased to `i64` in codegen.
+- Generic functions cannot yet dispatch overloaded builtins such as `print(x)` when `x: T`; use concrete calls like `print_str` where needed.
+- Trait bounds on type parameters are future work.
+- Full monomorphization is future work.
+
+## Traits and impl
+
+Traits define interfaces. `impl` blocks provide concrete implementations for structs. Method dispatch is static (compile-time) via name mangling.
+
+```lpp
+trait Describe:
+    def describe(self) -> Str
+
+struct Point:
+    x: Int
+    y: Int
+
+struct Circle:
+    radius: Int
+
+impl Describe for Point:
+    def describe(self) -> Str:
+        return str_concat("Point(", str_concat(int_to_str(self.x), str_concat(", ", str_concat(int_to_str(self.y), ")"))))
+
+impl Describe for Circle:
+    def describe(self) -> Str:
+        return str_concat("Circle(r=", str_concat(int_to_str(self.radius), ")"))
+
+trait Area:
+    def area(self) -> Int
+
+impl Area for Circle:
+    def area(self) -> Int:
+        return 3 * self.radius * self.radius
+
+def main():
+    p := Point(10, 20)
+    c := Circle(5)
+
+    print_str(p.describe())   # Point(10, 20)
+    print_str(c.describe())   # Circle(r=5)
+    print(c.area())           # 75
+```
+
+How it works:
+
+- `impl Describe for Point` generates `Point_describe(self: Point)`.
+- `p.describe()` is desugared via UFCS to `describe(p)`.
+- At compile time, the receiver type (`Point`) is used to resolve `Point_describe`.
+- The `self` parameter requires no type annotation — its type is inferred from the `impl` target.
+
+## Dynamic dispatch
+
+Functions can accept trait-typed parameters. The concrete type does not need to be known inside the function — dispatch happens through hidden function pointers.
+
+```lpp
+struct Dog:
+    name: Str
+
+struct Cat:
+    name: Str
+
+trait Speak:
+    def speak(self) -> Int
+
+impl Speak for Dog:
+    def speak(self) -> Int:
+        print(42)
+        return 1
+
+impl Speak for Cat:
+    def speak(self) -> Int:
+        print(99)
+        return 2
+
+# Accepts ANY type implementing Speak
+def make_speak(animal: Speak) -> Int:
+    return animal.speak()
+
+def main():
+    d := Dog("Rex")
+    c := Cat("Whiskers")
+    make_speak(d)    # prints 42
+    make_speak(c)    # prints 99
+```
+
+How it works:
+
+- When a parameter type is a trait name, the compiler adds hidden function pointer arguments (one per trait method).
+- At the call site, the compiler fills in the concrete impl method pointers.
+- Inside the function, `animal.speak()` dispatches through the function pointer via `CallIndirect`.
+- This is similar to Rust's `impl Trait` / Go's interface mechanism.
+
+Current limitations:
+
+- No trait bounds on generic type parameters yet.
+- Trait conformance is not enforced (missing methods are not flagged at `impl` time).
+- Trait objects cannot yet be stored in lists or returned from functions.
+
+## FFI / extern
+
+L++ can call C functions directly via `extern` blocks. No wrappers needed.
+
+```lpp
+extern "C":
+    def abs(x: Int) -> Int
+    def getpid() -> Int
+
+def main():
+    print(abs(-42))     # 42
+    print(getpid())     # actual process ID
+```
+
+### Linking shared libraries
+
+Use `link "libname"` to link against shared libraries:
+
+```lpp
+extern "C" link "SDL2":
+    def SDL_Init(flags: Int) -> Int
+    def SDL_CreateWindow(title: Str, x: Int, y: Int, w: Int, h: Int, flags: Int) -> Int
+    def SDL_Delay(ms: Int) -> Void
+    def SDL_Quit() -> Void
+```
+
+When `extern` blocks are present, L++ automatically uses the host C linker (`cc` / `cl.exe`) instead of `lpp-link`, passing `-lSDL2` or equivalent flags.
+
+### How it works
+
+1. `extern "C":` declares C-ABI function signatures (no body)
+2. Functions are imported as external symbols during Cranelift compilation
+3. Calls lower to the same `BuiltinCall` mechanism used for runtime builtins
+4. Unknown symbols are auto-declared as FFI imports with i64 params/return (C ABI)
+5. The host linker resolves them against libc and any `-l` libraries
+
+## Closures
+
+```lpp
+def main():
+    base := 100
+    add_base := fn(x: Int) -> Int:
+        return x + base
+
+    print(add_base(5))
+```
+
+## Threads
+
+```lpp
+def main():
+    spawn fn():
+        print_str("running in background")
+
+    print_str("main continues")
+```
+
+## Strings
+
+```lpp
+def main():
+    name := "world"
+    msg := f"hello {name}!"
+    print_str(msg)
+
+    print_str(char_at("abc", 1))
+    print(ord("A"))
+    print_str(chr(65))
+    print(str_find("hello world", "world"))
+```
+
+## Lists and maps
+
+```lpp
+def main():
+    nums := [10, 20, 30]
+    print(list_len(nums))
+    print(nums[0])
+
+    m := map_new()
+    map_put(m, 1, 100)
+    print(map_get(m, 1))
+```
+
+
+## Float output
+
+L++ currently has `print` for integer-like values and `print_str` for strings. Float tests use the low-level runtime symbol:
+
+```lpp
+def main():
+    x := 10.5 % 3.0
+    lpp_print_float(x)
+```
+
+A friendlier public `print_float` alias is a good future cleanup.
+
+## `pub` keyword
+
+`pub` is recognized by the lexer and reserved for visibility, but public/private enforcement is not complete yet. Treat it as experimental/reserved.

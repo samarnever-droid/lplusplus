@@ -1,0 +1,186 @@
+import bits
+import deflate
+import inflate
+import crypt
+import zip
+
+# Bool overload: comparisons are typed i8 and cannot be passed as Int.
+def sayb(ok: Bool, label: Str):
+    if ok:
+        print_str(str_concat("PASS  ", label))
+    else:
+        print_str(str_concat("FAIL  ", label))
+
+def say(ok: Int, label: Str):
+    if ok == 1:
+        print_str(str_concat("PASS  ", label))
+    else:
+        print_str(str_concat("FAIL  ", label))
+
+def eq_vec_str(v: Int, s: Str) -> Int:
+    if v == 0:
+        return 0
+    n := bits.vec_len(v)
+    if n != str_len(s):
+        return 0
+    d := bits.vec_data(v)
+    mut i := 0
+    while i < n:
+        if buf_get8(d, i) != ord(str_substr(s, i, 1)):
+            return 0
+        i = i + 1
+    return 1
+
+def main():
+    # ── write an archive Python must be able to read ──
+    z := zip.zw_new()
+    zip.zw_add_str(z, "hello.txt", "hello world\n", 0, "")
+    zip.zw_add_str(z, "big.txt", "the quick brown fox jumps over the lazy dog. the quick brown fox jumps over the lazy dog. the quick brown fox jumps over the lazy dog. the quick brown fox jumps over the lazy dog.", 6, "")
+    zip.zw_add_str(z, "dir/nested.txt", "nested entry\n", 6, "")
+    zip.zw_save(z, "out_plain.zip")
+    zip.zw_free(z)
+    say(file_exists("out_plain.zip"), "wrote out_plain.zip")
+
+    # ── password-protected archive ──
+    z2 := zip.zw_new()
+    zip.zw_add_str(z2, "secret.txt", "classified payload\n", 0, "hunter2")
+    zip.zw_add_str(z2, "secret2.txt", "another secret that is long enough to compress well aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", 6, "hunter2")
+    zip.zw_save(z2, "out_crypt.zip")
+    zip.zw_free(z2)
+    say(file_exists("out_crypt.zip"), "wrote out_crypt.zip")
+
+    # ── read our own archive back ──
+    r := zip.zr_open("out_plain.zip")
+    sayb(r != 0, "reopen out_plain.zip")
+    if r != 0:
+        say(zip.zr_count(r) - 2, "3 entries")
+        i := zip.zr_find(r, "hello.txt")
+        v := zip.zr_extract(r, i, "")
+        say(eq_vec_str(v, "hello world\n"), "extract stored entry")
+        if v != 0:
+            bits.vec_free(v)
+        j := zip.zr_find(r, "dir/nested.txt")
+        v2 := zip.zr_extract(r, j, "")
+        say(eq_vec_str(v2, "nested entry\n"), "extract deflated entry")
+        if v2 != 0:
+            bits.vec_free(v2)
+        zip.zr_free(r)
+
+    # ── password round-trip ──
+    r2 := zip.zr_open("out_crypt.zip")
+    if r2 != 0:
+        i := zip.zr_find(r2, "secret.txt")
+        say(zip.zr_encrypted(r2, i), "entry flagged encrypted")
+        good := zip.zr_extract(r2, i, "hunter2")
+        say(eq_vec_str(good, "classified payload\n"), "correct password decrypts")
+        if good != 0:
+            bits.vec_free(good)
+        bad := zip.zr_extract(r2, i, "wrongpw")
+        mut rejected := 0
+        if bad == 0:
+            rejected = 1
+        else:
+            bits.vec_free(bad)
+        say(rejected, "wrong password rejected")
+        none := zip.zr_extract(r2, i, "")
+        mut norej := 0
+        if none == 0:
+            norej = 1
+        else:
+            bits.vec_free(none)
+        say(norej, "missing password rejected")
+        zip.zr_free(r2)
+
+    # ── read archives PYTHON wrote ──
+    p1 := zip.zr_open("py_store.zip")
+    sayb(p1 != 0, "open python STORED zip")
+    if p1 != 0:
+        i := zip.zr_find(p1, "a.txt")
+        v := zip.zr_extract(p1, i, "")
+        say(eq_vec_str(v, "hello from python\n"), "read python stored entry")
+        if v != 0:
+            bits.vec_free(v)
+        zip.zr_free(p1)
+
+    p2 := zip.zr_open("py_deflate.zip")
+    sayb(p2 != 0, "open python DEFLATED zip")
+    if p2 != 0:
+        i := zip.zr_find(p2, "b.txt")
+        v := zip.zr_extract(p2, i, "")
+        mut ok := 0
+        if v != 0:
+            if bits.vec_len(v) == 2300:
+                ok = 1
+            bits.vec_free(v)
+        say(ok, "read python deflated entry (2300 bytes)")
+        zip.zr_free(p2)
+
+    p3 := zip.zr_open("py_crypt.zip")
+    sayb(p3 != 0, "open python ENCRYPTED zip")
+    if p3 != 0:
+        i := zip.zr_find(p3, "c.txt")
+        v := zip.zr_extract(p3, i, "pw123")
+        say(eq_vec_str(v, "python encrypted content\n"), "decrypt python ZipCrypto entry")
+        if v != 0:
+            bits.vec_free(v)
+        zip.zr_free(p3)
+
+    # ── ZIP64 ──
+    #
+    # Reading: the true sizes/offset may live in extra field 0x0001 behind a
+    # 0xFFFFFFFF sentinel, and the true entry count in the zip64 EOCD record.
+    # Ignoring either silently drops data instead of failing loudly.
+    z5 := zip.zr_open("py_z64_force.zip")
+    sayb(z5 != 0, "open zip64 archive (force_zip64 local headers)")
+    if z5 != 0:
+        say(zip.zr_count(z5) - 2, "zip64 force: entry count (3)")
+        i5 := zip.zr_find(z5, "z1.txt")
+        v5 := zip.zr_extract(z5, i5, "")
+        sayb(v5 != 0, "zip64 force: extract + CRC verify")
+        if v5 != 0:
+            bits.vec_free(v5)
+        zip.zr_free(z5)
+
+    z6 := zip.zr_open("py_z64_sentinel.zip")
+    sayb(z6 != 0, "open zip64 archive (0xFFFFFFFF sentinels in central dir)")
+    if z6 != 0:
+        say(zip.zr_usize(z6, 0) - 199, "zip64 sentinel: size read from extra field (200)")
+        v6 := zip.zr_extract(z6, 0, "")
+        sayb(v6 != 0, "zip64 sentinel: extract + CRC verify")
+        if v6 != 0:
+            bits.vec_free(v6)
+        zip.zr_free(z6)
+
+    # Writing: >65535 entries cannot be represented in the classic EOCD, whose
+    # count field is 16 bits. Without a zip64 EOCD this reads back as 65535.
+    zb := zip.zw_new()
+    mut wi := 0
+    while wi < 65600:
+        zip.zw_add_str(zb, str_concat("n", str_concat(int_to_str(wi), ".txt")), "x", 0, "")
+        wi = wi + 1
+    zip.zw_save(zb, "out_z64_many.zip")
+    zip.zw_free(zb)
+    zm := zip.zr_open("out_z64_many.zip")
+    sayb(zm != 0, "reopen own >65535-entry archive")
+    if zm != 0:
+        say(zip.zr_count(zm) - 65599, "zip64 write: round-trips 65600 entries")
+        vm := zip.zr_extract(zm, 65599, "")
+        sayb(vm != 0, "zip64 write: last entry extracts")
+        if vm != 0:
+            bits.vec_free(vm)
+        zip.zr_free(zm)
+
+    p4 := zip.zr_open("py_multi.zip")
+    if p4 != 0:
+        say(zip.zr_count(p4) - 9, "python multi-entry count (10)")
+        mut allok := 1
+        mut k := 0
+        while k < zip.zr_count(p4):
+            v := zip.zr_extract(p4, k, "")
+            if v == 0:
+                allok = 0
+            else:
+                bits.vec_free(v)
+            k = k + 1
+        say(allok, "all 10 python entries extract + CRC verify")
+        zip.zr_free(p4)

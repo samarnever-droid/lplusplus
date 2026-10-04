@@ -1,0 +1,7 @@
+# SamarBook: Next-Generation Spatial Knowledge Workstation
+# Unified Dual Backend: WebView (Edge/WebKitGTK/WKWebView) & Direct GPU/GDI
+
+import webview_app
+
+def main():
+    webview_app.main()

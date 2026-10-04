@@ -1,0 +1,764 @@
+# c_translation_unit.lpp — general top-level C declaration partition/graph.
+#
+# This scanner accepts declarations in arbitrary translation-unit order. It is
+# not yet a complete semantic declarator parser: each external declaration is
+# partitioned, classified, named when possible, and retained with provenance so
+# later type/CFG passes can reject or lower it explicitly.
+
+import c_lexer
+import c_audit
+import c_native_profile
+import text
+
+struct CTUStats:
+    external_declarations: Int
+    typedef_declarations: Int
+    aggregate_declarations: Int
+    global_declarations: Int
+    prototype_declarations: Int
+    function_definitions: Int
+    function_pointer_declarations: Int
+    variadic_declarations: Int
+    static_declarations: Int
+    extern_declarations: Int
+    const_declarations: Int
+    unknown_declarations: Int
+    code_tokens: Int
+
+struct CTUResult:
+    graph: Str
+    report: Str
+    stats: CTUStats
+    valid: Int
+    error: Str
+
+
+def c_tu_kind_name(kind: Int) -> Str:
+    if kind == 1:
+        return "typedef"
+    if kind == 2:
+        return "aggregate"
+    if kind == 3:
+        return "global"
+    if kind == 4:
+        return "prototype"
+    if kind == 5:
+        return "function"
+    return "unknown"
+
+
+def c_tu_append_record(graph: Str, kind: Int, name: Str, start: CSourceSpan, end_offset: Int, flags: Str) -> Str:
+    mut out := str_concat(c_tu_kind_name(kind), "|")
+    out = str_concat(out, str_concat(name, "|"))
+    out = str_concat(out, str_concat(start.path, "|"))
+    out = str_concat(out, str_concat(int_to_str(start.line), "|"))
+    out = str_concat(out, str_concat(int_to_str(start.column), "|"))
+    out = str_concat(out, str_concat(int_to_str(start.start_offset), "|"))
+    out = str_concat(out, str_concat(int_to_str(end_offset), "|"))
+    return str_concat(graph, str_concat(out, str_concat(flags, "\n")))
+
+
+def c_tu_skip_body(cursor: CLexCursor) -> CLexCursor:
+    mut current := cursor
+    mut depth := 1
+    while depth > 0:
+        step := c_lex_next_code(current)
+        if step.token.kind == C_TOKEN_EOF:
+            return step.next
+        if text_eq(step.token.spelling, "{"):
+            depth = depth + 1
+        elif text_eq(step.token.spelling, "}"):
+            depth = depth - 1
+        current = step.next
+    return current
+
+
+def c_tu_flag_add(flags: Str, value: Str) -> Str:
+    if str_len(flags) == 0:
+        return value
+    return str_concat(flags, str_concat(",", value))
+
+
+def c_tu_scan_file_tokenized(path: Str) -> CTUResult:
+    data := buf_read(path)
+    size := buf_len(data)
+    mut stats := CTUStats()
+    mut graph := "schema|c2lpp-translation-unit-v1\n"
+    if size <= 0:
+        if data != 0:
+            buf_free(data)
+        return CTUResult(graph, "valid=0\nreason=C2-TU-EMPTY\n", stats, 0, "C2-TU-EMPTY")
+    mut reader := c_native_reader(c_lex_cursor(data, size, path))
+    mut valid := 1
+    mut error := ""
+
+    while reader.cursor.offset < size && valid != 0:
+        reader = c_native_skip_preprocessor(reader)
+        first := c_lex_next_code(reader.cursor)
+        if first.token.kind == C_TOKEN_EOF:
+            reader.cursor = first.next
+        else:
+            start := first.token.span
+            mut current := reader.cursor
+            mut paren_depth := 0
+            mut bracket_depth := 0
+            mut brace_depth := 0
+            mut saw_typedef := false
+            mut saw_aggregate_keyword := false
+            mut saw_aggregate_body := false
+            mut saw_static := false
+            mut saw_extern := false
+            mut saw_const := false
+            mut saw_equal := false
+            mut saw_top_rparen := false
+            mut saw_function_pointer := false
+            mut function_pointer_name := ""
+            mut saw_variadic := false
+            mut previous_identifier := ""
+            mut candidate_name := ""
+            mut last_identifier := ""
+            mut flags := ""
+            mut done := false
+            mut kind := 0
+            mut end_offset := start.end_offset
+
+            while !done:
+                step := c_lex_next_code(current)
+                token := step.token
+                spelling := token.spelling
+                stats.code_tokens = stats.code_tokens + 1
+                if token.kind == C_TOKEN_EOF:
+                    valid = 0
+                    error = "C2-TU-UNTERMINATED-DECLARATION"
+                    done = true
+                else:
+                    if token.kind == C_TOKEN_IDENTIFIER || token.kind == C_TOKEN_KEYWORD:
+                        if text_eq(spelling, "typedef"):
+                            saw_typedef = true
+                        elif text_eq(spelling, "struct") || text_eq(spelling, "union") || text_eq(spelling, "enum"):
+                            saw_aggregate_keyword = true
+                        elif text_eq(spelling, "static"):
+                            saw_static = true
+                        elif text_eq(spelling, "extern"):
+                            saw_extern = true
+                        elif text_eq(spelling, "const"):
+                            saw_const = true
+                        if token.kind == C_TOKEN_IDENTIFIER:
+                            previous_identifier = spelling
+                            last_identifier = spelling
+                    if text_eq(spelling, "..."):
+                        saw_variadic = true
+                    elif text_eq(spelling, "=") && paren_depth == 0 && bracket_depth == 0 && brace_depth == 0:
+                        saw_equal = true
+                    elif text_eq(spelling, "["):
+                        bracket_depth = bracket_depth + 1
+                    elif text_eq(spelling, "]"):
+                        if bracket_depth > 0:
+                            bracket_depth = bracket_depth - 1
+                    elif text_eq(spelling, "("):
+                        if paren_depth == 0 && brace_depth == 0 && str_len(previous_identifier) > 0:
+                            candidate_name = previous_identifier
+                        paren_depth = paren_depth + 1
+                        after_open := c_lex_next_code(step.next)
+                        if text_eq(after_open.token.spelling, "*"):
+                            saw_function_pointer = true
+                            after_star := c_lex_next_code(after_open.next)
+                            if after_star.token.kind == C_TOKEN_IDENTIFIER:
+                                function_pointer_name = after_star.token.spelling
+                    elif text_eq(spelling, ")"):
+                        if paren_depth > 0:
+                            paren_depth = paren_depth - 1
+                            if paren_depth == 0 && brace_depth == 0:
+                                saw_top_rparen = true
+                    elif text_eq(spelling, "{"):
+                        if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 && saw_top_rparen && !saw_equal && !saw_typedef && !saw_aggregate_body:
+                            body_end := c_tu_skip_body(step.next)
+                            end_offset = body_end.offset
+                            current = body_end
+                            kind = 5
+                            done = true
+                        else:
+                            brace_depth = brace_depth + 1
+                            if saw_aggregate_keyword && !saw_equal:
+                                saw_aggregate_body = true
+                    elif text_eq(spelling, "}"):
+                        if brace_depth > 0:
+                            brace_depth = brace_depth - 1
+                    elif text_eq(spelling, ";") && paren_depth == 0 && bracket_depth == 0 && brace_depth == 0:
+                        end_offset = token.span.end_offset
+                        current = step.next
+                        if saw_typedef:
+                            kind = 1
+                        elif saw_aggregate_keyword && saw_aggregate_body:
+                            kind = 2
+                        elif saw_top_rparen && !saw_equal:
+                            kind = 4
+                        else:
+                            kind = 3
+                        done = true
+                    if !done:
+                        current = step.next
+
+            if valid != 0:
+                mut name := candidate_name
+                if kind == 1 || kind == 2 || kind == 3:
+                    name = last_identifier
+                if saw_function_pointer && str_len(function_pointer_name) > 0:
+                    name = function_pointer_name
+                if str_len(name) == 0:
+                    name = "<anonymous>"
+                if saw_static:
+                    flags = c_tu_flag_add(flags, "static")
+                    stats.static_declarations = stats.static_declarations + 1
+                if saw_extern:
+                    flags = c_tu_flag_add(flags, "extern")
+                    stats.extern_declarations = stats.extern_declarations + 1
+                if saw_const:
+                    flags = c_tu_flag_add(flags, "const")
+                    stats.const_declarations = stats.const_declarations + 1
+                if saw_function_pointer:
+                    flags = c_tu_flag_add(flags, "function-pointer")
+                    stats.function_pointer_declarations = stats.function_pointer_declarations + 1
+                if saw_variadic:
+                    flags = c_tu_flag_add(flags, "variadic")
+                    stats.variadic_declarations = stats.variadic_declarations + 1
+                stats.external_declarations = stats.external_declarations + 1
+                if kind == 1:
+                    stats.typedef_declarations = stats.typedef_declarations + 1
+                elif kind == 2:
+                    stats.aggregate_declarations = stats.aggregate_declarations + 1
+                elif kind == 3:
+                    stats.global_declarations = stats.global_declarations + 1
+                elif kind == 4:
+                    stats.prototype_declarations = stats.prototype_declarations + 1
+                elif kind == 5:
+                    stats.function_definitions = stats.function_definitions + 1
+                else:
+                    stats.unknown_declarations = stats.unknown_declarations + 1
+                graph = c_tu_append_record(graph, kind, name, start, end_offset, flags)
+                reader.cursor = current
+
+    buf_free(data)
+    mut report := str_concat("valid=", str_concat(int_to_str(valid), "\n"))
+    report = str_concat(report, str_concat("external_declarations=", str_concat(int_to_str(stats.external_declarations), "\n")))
+    report = str_concat(report, str_concat("typedef_declarations=", str_concat(int_to_str(stats.typedef_declarations), "\n")))
+    report = str_concat(report, str_concat("aggregate_declarations=", str_concat(int_to_str(stats.aggregate_declarations), "\n")))
+    report = str_concat(report, str_concat("global_declarations=", str_concat(int_to_str(stats.global_declarations), "\n")))
+    report = str_concat(report, str_concat("prototype_declarations=", str_concat(int_to_str(stats.prototype_declarations), "\n")))
+    report = str_concat(report, str_concat("function_definitions=", str_concat(int_to_str(stats.function_definitions), "\n")))
+    report = str_concat(report, str_concat("function_pointer_declarations=", str_concat(int_to_str(stats.function_pointer_declarations), "\n")))
+    report = str_concat(report, str_concat("variadic_declarations=", str_concat(int_to_str(stats.variadic_declarations), "\n")))
+    report = str_concat(report, str_concat("unknown_declarations=", str_concat(int_to_str(stats.unknown_declarations), "\n")))
+    report = str_concat(report, str_concat("code_tokens=", str_concat(int_to_str(stats.code_tokens), "\n")))
+    if valid == 0:
+        report = str_concat(report, str_concat("reason=", str_concat(error, "\n")))
+    return CTUResult(graph, report, stats, valid, error)
+
+
+struct CTUTextBuilder:
+    data: Int
+    length: Int
+    capacity: Int
+
+struct CTUCommit:
+    builder: CTUTextBuilder
+    stats: CTUStats
+
+struct CTUSkip:
+    offset: Int
+    line: Int
+    column: Int
+    valid: Int
+
+struct CTUPosition:
+    line: Int
+    column: Int
+
+
+def c_tu_builder_new() -> CTUTextBuilder:
+    capacity := 65536
+    data := buf_alloc(capacity)
+    builder := CTUTextBuilder(data, 0, capacity)
+    return c_tu_builder_add(builder, "schema|c2lpp-translation-unit-v1\n")
+
+
+def c_tu_builder_add(builder_in: CTUTextBuilder, value: Str) -> CTUTextBuilder:
+    mut builder := builder_in
+    needed := builder.length + str_len(value) + 1
+    if needed > builder.capacity:
+        mut capacity := builder.capacity
+        while capacity < needed:
+            capacity = capacity * 2
+        replacement := buf_alloc(capacity)
+        if builder.length > 0:
+            buf_copy(replacement, 0, builder.data, 0, builder.length)
+        buf_free(builder.data)
+        builder.data = replacement
+        builder.capacity = capacity
+    if str_len(value) > 0:
+        buf_write_str(builder.data, builder.length, value)
+        builder.length = builder.length + str_len(value)
+    return builder
+
+
+def c_tu_builder_finish(builder: CTUTextBuilder) -> Str:
+    result := buf_read_str(builder.data, 0, builder.length)
+    buf_free(builder.data)
+    return result
+
+
+def c_tu_commit(builder_in: CTUTextBuilder, stats_in: CTUStats, kind: Int, name: Str, path: Str, start_offset: Int, start_line: Int, start_column: Int, end_offset: Int, saw_static: Bool, saw_extern: Bool, saw_const: Bool, saw_function_pointer: Bool, saw_variadic: Bool) -> CTUCommit:
+    mut builder := builder_in
+    mut stats := stats_in
+    mut flags := ""
+    if saw_static:
+        flags = c_tu_flag_add(flags, "static")
+        stats.static_declarations = stats.static_declarations + 1
+    if saw_extern:
+        flags = c_tu_flag_add(flags, "extern")
+        stats.extern_declarations = stats.extern_declarations + 1
+    if saw_const:
+        flags = c_tu_flag_add(flags, "const")
+        stats.const_declarations = stats.const_declarations + 1
+    if saw_function_pointer:
+        flags = c_tu_flag_add(flags, "function-pointer")
+        stats.function_pointer_declarations = stats.function_pointer_declarations + 1
+    if saw_variadic:
+        flags = c_tu_flag_add(flags, "variadic")
+        stats.variadic_declarations = stats.variadic_declarations + 1
+    stats.external_declarations = stats.external_declarations + 1
+    if kind == 1:
+        stats.typedef_declarations = stats.typedef_declarations + 1
+    elif kind == 2:
+        stats.aggregate_declarations = stats.aggregate_declarations + 1
+    elif kind == 3:
+        stats.global_declarations = stats.global_declarations + 1
+    elif kind == 4:
+        stats.prototype_declarations = stats.prototype_declarations + 1
+    elif kind == 5:
+        stats.function_definitions = stats.function_definitions + 1
+    else:
+        stats.unknown_declarations = stats.unknown_declarations + 1
+    span := CSourceSpan(path, start_offset, start_offset, start_line, start_column)
+    record := c_tu_append_record("", kind, name, span, end_offset, flags)
+    builder = c_tu_builder_add(builder, record)
+    return CTUCommit(builder, stats)
+
+
+def c_tu_update_position(data: Int, start: Int, end: Int, line_in: Int, column_in: Int) -> CTUPosition:
+    mut line := line_in
+    mut column := column_in
+    mut i := start
+    while i < end:
+        code := buf_get8(data, i)
+        if code == 13:
+            line = line + 1
+            column = 1
+            if i + 1 < end && buf_get8(data, i + 1) == 10:
+                i = i + 1
+        elif code == 10:
+            line = line + 1
+            column = 1
+        else:
+            column = column + 1
+        i = i + 1
+    return CTUPosition(line, column)
+
+
+def c_tu_skip_function_body_raw(data: Int, size: Int, offset_in: Int, line_in: Int, column_in: Int) -> CTUSkip:
+    mut offset := offset_in
+    mut line := line_in
+    mut column := column_in
+    mut depth := 1
+    mut position := CTUPosition(line, column)
+    while offset < size && depth > 0:
+        start := offset
+        code := c_byte(data, size, offset)
+        if code == 47 && c_byte(data, size, offset + 1) == 47:
+            offset = offset + 2
+            while offset < size && c_byte(data, size, offset) != 10 && c_byte(data, size, offset) != 13:
+                offset = offset + 1
+        elif code == 47 && c_byte(data, size, offset + 1) == 42:
+            offset = offset + 2
+            mut closed := false
+            while offset < size && !closed:
+                if c_byte(data, size, offset) == 42 && c_byte(data, size, offset + 1) == 47:
+                    offset = offset + 2
+                    closed = true
+                else:
+                    offset = offset + 1
+        elif code == 34 || code == 39:
+            quote := code
+            offset = offset + 1
+            mut escaped := false
+            mut closed := false
+            while offset < size && !closed:
+                current := c_byte(data, size, offset)
+                if escaped:
+                    escaped = false
+                    offset = offset + 1
+                elif current == 92:
+                    escaped = true
+                    offset = offset + 1
+                elif current == quote:
+                    offset = offset + 1
+                    closed = true
+                else:
+                    offset = offset + 1
+        else:
+            if code == 123:
+                depth = depth + 1
+            elif code == 125:
+                depth = depth - 1
+            offset = offset + 1
+        position = c_tu_update_position(data, start, offset, line, column)
+        line = position.line
+        column = position.column
+    mut valid := 0
+    if depth == 0:
+        valid = 1
+    return CTUSkip(offset, line, column, valid)
+
+
+def c_tu_next_nontrivia(data: Int, size: Int, offset_in: Int) -> Int:
+    mut offset := offset_in
+    mut scanning := true
+    while scanning && offset < size:
+        code := c_byte(data, size, offset)
+        if c_is_space(code):
+            offset = offset + 1
+        elif code == 47 && c_byte(data, size, offset + 1) == 47:
+            offset = offset + 2
+            while offset < size && c_byte(data, size, offset) != 10 && c_byte(data, size, offset) != 13:
+                offset = offset + 1
+        elif code == 47 && c_byte(data, size, offset + 1) == 42:
+            offset = offset + 2
+            mut closed := false
+            while offset < size && !closed:
+                if c_byte(data, size, offset) == 42 && c_byte(data, size, offset + 1) == 47:
+                    offset = offset + 2
+                    closed = true
+                else:
+                    offset = offset + 1
+        else:
+            scanning = false
+    return offset
+
+
+def c_tu_scan_file(path: Str) -> CTUResult:
+    data := buf_read(path)
+    size := buf_len(data)
+    mut stats := CTUStats()
+    mut builder := c_tu_builder_new()
+    if size <= 0:
+        if data != 0:
+            buf_free(data)
+        graph := c_tu_builder_finish(builder)
+        return CTUResult(graph, "valid=0\nreason=C2-TU-EMPTY\n", stats, 0, "C2-TU-EMPTY")
+
+    mut offset := 0
+    mut line := 1
+    mut column := 1
+    mut at_line_start := true
+    mut active := false
+    mut start_offset := 0
+    mut start_line := 1
+    mut start_column := 1
+    mut paren_depth := 0
+    mut bracket_depth := 0
+    mut brace_depth := 0
+    mut saw_typedef := false
+    mut saw_aggregate_keyword := false
+    mut saw_aggregate_body := false
+    mut saw_static := false
+    mut saw_extern := false
+    mut saw_const := false
+    mut saw_equal := false
+    mut saw_top_rparen := false
+    mut saw_function_pointer := false
+    mut function_pointer_name := ""
+    mut saw_variadic := false
+    mut previous_identifier := ""
+    mut candidate_name := ""
+    mut last_identifier := ""
+    mut top_identifier := ""
+    mut aggregate_name := ""
+    mut expect_aggregate_name := false
+    mut valid := 1
+    mut error := ""
+    mut position := CTUPosition(line, column)
+
+    while offset < size && valid != 0:
+        start := offset
+        mut position_set := false
+        code := c_byte(data, size, offset)
+        mut token_kind := 0
+        mut spelling := ""
+        mut width := 0
+
+        if c_is_space(code):
+            offset = offset + 1
+            while offset < size && c_is_space(c_byte(data, size, offset)):
+                offset = offset + 1
+            position = c_tu_update_position(data, start, offset, line, column)
+            line = position.line
+            column = position.column
+            if c_byte(data, size, offset - 1) == 10 || c_byte(data, size, offset - 1) == 13:
+                at_line_start = true
+        elif code == 47 && c_byte(data, size, offset + 1) == 47:
+            offset = offset + 2
+            while offset < size && c_byte(data, size, offset) != 10 && c_byte(data, size, offset) != 13:
+                offset = offset + 1
+            position = c_tu_update_position(data, start, offset, line, column)
+            line = position.line
+            column = position.column
+        elif code == 47 && c_byte(data, size, offset + 1) == 42:
+            offset = offset + 2
+            mut closed := false
+            while offset < size && !closed:
+                if c_byte(data, size, offset) == 42 && c_byte(data, size, offset + 1) == 47:
+                    offset = offset + 2
+                    closed = true
+                else:
+                    offset = offset + 1
+            if !closed:
+                valid = 0
+                error = "C2-TU-UNTERMINATED-COMMENT"
+            position = c_tu_update_position(data, start, offset, line, column)
+            line = position.line
+            column = position.column
+        elif at_line_start && code == 35:
+            # Logical preprocessor directive, including trailing-backslash lines.
+            mut done := false
+            mut previous_backslash := false
+            while offset < size && !done:
+                current := c_byte(data, size, offset)
+                if current == 10 || current == 13:
+                    offset = offset + 1
+                    if current == 13 && offset < size && c_byte(data, size, offset) == 10:
+                        offset = offset + 1
+                    if previous_backslash:
+                        previous_backslash = false
+                    else:
+                        done = true
+                else:
+                    previous_backslash = current == 92
+                    offset = offset + 1
+            position = c_tu_update_position(data, start, offset, line, column)
+            line = position.line
+            column = position.column
+            at_line_start = true
+        else:
+            if code == 34 || code == 39:
+                token_kind = 3
+                quote := code
+                offset = offset + 1
+                mut escaped := false
+                mut closed := false
+                while offset < size && !closed:
+                    current := c_byte(data, size, offset)
+                    if escaped:
+                        escaped = false
+                        offset = offset + 1
+                    elif current == 92:
+                        escaped = true
+                        offset = offset + 1
+                    elif current == quote:
+                        offset = offset + 1
+                        closed = true
+                    else:
+                        offset = offset + 1
+                if !closed:
+                    valid = 0
+                    error = "C2-TU-UNTERMINATED-LITERAL"
+            elif c_is_ident_start(code):
+                token_kind = 1
+                offset = offset + 1
+                while offset < size && c_is_ident_continue(c_byte(data, size, offset)):
+                    offset = offset + 1
+                spelling = buf_read_str(data, start, offset - start)
+            elif c_is_digit(code) || (code == 46 && c_is_digit(c_byte(data, size, offset + 1))):
+                token_kind = 2
+                offset = offset + 1
+                while offset < size && c_is_number_continue(c_byte(data, size, offset)):
+                    offset = offset + 1
+            else:
+                token_kind = 4
+                width = c_punct_width(data, size, offset)
+                if width <= 0:
+                    width = 1
+                offset = offset + width
+                spelling = buf_read_str(data, start, width)
+
+            if !active:
+                active = true
+                start_offset = start
+                start_line = line
+                start_column = column
+            stats.code_tokens = stats.code_tokens + 1
+            at_line_start = false
+
+            if token_kind == 1:
+                if text_eq(spelling, "typedef"):
+                    saw_typedef = true
+                elif text_eq(spelling, "struct") || text_eq(spelling, "union") || text_eq(spelling, "enum"):
+                    saw_aggregate_keyword = true
+                    expect_aggregate_name = true
+                elif text_eq(spelling, "static"):
+                    saw_static = true
+                elif text_eq(spelling, "extern"):
+                    saw_extern = true
+                elif text_eq(spelling, "const"):
+                    saw_const = true
+                elif !c_is_keyword(spelling):
+                    if expect_aggregate_name:
+                        aggregate_name = spelling
+                        expect_aggregate_name = false
+                    previous_identifier = spelling
+                    last_identifier = spelling
+                    if paren_depth == 0 && brace_depth == 0 && bracket_depth == 0 && !saw_equal:
+                        top_identifier = spelling
+
+            if token_kind == 4:
+                if text_eq(spelling, "..."):
+                    saw_variadic = true
+                elif text_eq(spelling, "=") && paren_depth == 0 && bracket_depth == 0 && brace_depth == 0:
+                    saw_equal = true
+                elif text_eq(spelling, "["):
+                    bracket_depth = bracket_depth + 1
+                elif text_eq(spelling, "]"):
+                    if bracket_depth > 0:
+                        bracket_depth = bracket_depth - 1
+                elif text_eq(spelling, "("):
+                    if paren_depth == 0 && brace_depth == 0 && str_len(previous_identifier) > 0:
+                        candidate_name = previous_identifier
+                    paren_depth = paren_depth + 1
+                    look := c_tu_next_nontrivia(data, size, offset)
+                    if c_byte(data, size, look) == 42:
+                        saw_function_pointer = true
+                        after_star := c_tu_next_nontrivia(data, size, look + 1)
+                        if c_is_ident_start(c_byte(data, size, after_star)):
+                            mut end_name := after_star + 1
+                            while end_name < size && c_is_ident_continue(c_byte(data, size, end_name)):
+                                end_name = end_name + 1
+                            function_pointer_name = buf_read_str(data, after_star, end_name - after_star)
+                elif text_eq(spelling, ")"):
+                    if paren_depth > 0:
+                        paren_depth = paren_depth - 1
+                        if paren_depth == 0 && brace_depth == 0:
+                            saw_top_rparen = true
+                elif text_eq(spelling, "{"):
+                    if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 && saw_top_rparen && !saw_equal && !saw_typedef && !saw_aggregate_body:
+                        after_open_position := c_tu_update_position(data, start, offset, line, column)
+                        skipped := c_tu_skip_function_body_raw(data, size, offset, after_open_position.line, after_open_position.column)
+                        if skipped.valid == 0:
+                            valid = 0
+                            error = "C2-TU-UNTERMINATED-FUNCTION"
+                        else:
+                            mut name := candidate_name
+                            if str_len(name) == 0:
+                                name = "<anonymous>"
+                            committed := c_tu_commit(builder, stats, 5, name, path, start_offset, start_line, start_column, skipped.offset, saw_static, saw_extern, saw_const, saw_function_pointer, saw_variadic)
+                            builder = committed.builder
+                            stats = committed.stats
+                            offset = skipped.offset
+                            line = skipped.line
+                            column = skipped.column
+                            position_set = true
+                            active = false
+                            paren_depth = 0
+                            bracket_depth = 0
+                            brace_depth = 0
+                            saw_typedef = false
+                            saw_aggregate_keyword = false
+                            saw_aggregate_body = false
+                            saw_static = false
+                            saw_extern = false
+                            saw_const = false
+                            saw_equal = false
+                            saw_top_rparen = false
+                            saw_function_pointer = false
+                            function_pointer_name = ""
+                            saw_variadic = false
+                            previous_identifier = ""
+                            candidate_name = ""
+                            last_identifier = ""
+                            top_identifier = ""
+                            aggregate_name = ""
+                            expect_aggregate_name = false
+                            at_line_start = false
+                    else:
+                        brace_depth = brace_depth + 1
+                        if saw_aggregate_keyword && !saw_equal:
+                            saw_aggregate_body = true
+                elif text_eq(spelling, "}"):
+                    if brace_depth > 0:
+                        brace_depth = brace_depth - 1
+                elif text_eq(spelling, ";") && paren_depth == 0 && bracket_depth == 0 && brace_depth == 0:
+                    mut kind := 3
+                    if saw_typedef:
+                        kind = 1
+                    elif saw_aggregate_keyword && saw_aggregate_body:
+                        kind = 2
+                    elif saw_top_rparen && !saw_equal:
+                        kind = 4
+                    mut name := top_identifier
+                    if kind == 1 && str_len(last_identifier) > 0:
+                        name = last_identifier
+                    if kind == 2 && str_len(aggregate_name) > 0:
+                        name = aggregate_name
+                    if kind == 4 && str_len(candidate_name) > 0:
+                        name = candidate_name
+                    if saw_function_pointer && str_len(function_pointer_name) > 0:
+                        name = function_pointer_name
+                    if str_len(name) == 0:
+                        name = "<anonymous>"
+                    committed := c_tu_commit(builder, stats, kind, name, path, start_offset, start_line, start_column, offset, saw_static, saw_extern, saw_const, saw_function_pointer, saw_variadic)
+                    builder = committed.builder
+                    stats = committed.stats
+                    active = false
+                    paren_depth = 0
+                    bracket_depth = 0
+                    brace_depth = 0
+                    saw_typedef = false
+                    saw_aggregate_keyword = false
+                    saw_aggregate_body = false
+                    saw_static = false
+                    saw_extern = false
+                    saw_const = false
+                    saw_equal = false
+                    saw_top_rparen = false
+                    saw_function_pointer = false
+                    function_pointer_name = ""
+                    saw_variadic = false
+                    previous_identifier = ""
+                    candidate_name = ""
+                    last_identifier = ""
+                    top_identifier = ""
+                    aggregate_name = ""
+                    expect_aggregate_name = false
+
+            if !position_set && offset > start:
+                position = c_tu_update_position(data, start, offset, line, column)
+                line = position.line
+                column = position.column
+
+    if valid != 0 && active:
+        valid = 0
+        error = "C2-TU-UNTERMINATED-DECLARATION"
+    graph := c_tu_builder_finish(builder)
+    buf_free(data)
+    mut report := str_concat("valid=", str_concat(int_to_str(valid), "\n"))
+    report = str_concat(report, str_concat("external_declarations=", str_concat(int_to_str(stats.external_declarations), "\n")))
+    report = str_concat(report, str_concat("typedef_declarations=", str_concat(int_to_str(stats.typedef_declarations), "\n")))
+    report = str_concat(report, str_concat("aggregate_declarations=", str_concat(int_to_str(stats.aggregate_declarations), "\n")))
+    report = str_concat(report, str_concat("global_declarations=", str_concat(int_to_str(stats.global_declarations), "\n")))
+    report = str_concat(report, str_concat("prototype_declarations=", str_concat(int_to_str(stats.prototype_declarations), "\n")))
+    report = str_concat(report, str_concat("function_definitions=", str_concat(int_to_str(stats.function_definitions), "\n")))
+    report = str_concat(report, str_concat("function_pointer_declarations=", str_concat(int_to_str(stats.function_pointer_declarations), "\n")))
+    report = str_concat(report, str_concat("variadic_declarations=", str_concat(int_to_str(stats.variadic_declarations), "\n")))
+    report = str_concat(report, str_concat("unknown_declarations=", str_concat(int_to_str(stats.unknown_declarations), "\n")))
+    report = str_concat(report, str_concat("code_tokens=", str_concat(int_to_str(stats.code_tokens), "\n")))
+    if valid == 0:
+        report = str_concat(report, str_concat("reason=", str_concat(error, "\n")))
+    return CTUResult(graph, report, stats, valid, error)

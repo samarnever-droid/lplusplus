@@ -1,0 +1,4 @@
+def main():
+    mut x := 10
+    spawn fn():
+        x = 20

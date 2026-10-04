@@ -1,0 +1,51 @@
+import mem
+import ieee754
+import tap
+
+def rt(T: Int, label: Str, d: Float, expect_bits: Int):
+    b := ieee754.f2bits(d)
+    tap.eq_i(T, str_concat(label, " f2bits"), b, expect_bits)
+    back := ieee754.bits2f(expect_bits)
+    if back == d:
+        tap.ok(T, str_concat(label, " bits2f"), 1)
+    else:
+        tap.eq_i(T, str_concat(label, " bits2f(as bits)"), ieee754.f2bits(back), expect_bits)
+
+def main():
+    T := tap.t_new()
+
+    rt(T, "0.0", 0.0, 0)
+    rt(T, "1.0", 1.0, 4607182418800017408)
+    rt(T, "-1.0", 0.0 - 1.0, 0 - 4616189618054758400)
+    rt(T, "2.0", 2.0, 4611686018427387904)
+    rt(T, "0.5", 0.5, 4602678819172646912)
+    rt(T, "3.5", 3.5, 4615063718147915776)
+    rt(T, "-3.5", 0.0 - 3.5, 0 - 4608308318706860032)
+    rt(T, "0.1", 0.1, 4591870180066957722)
+    rt(T, "1e18", 1000000000000000000.0, 4876203697187506176)
+    rt(T, "1e-9", 0.000000001, 4472406533629990549)
+    rt(T, "123.456", 123.456, 4638387860618067575)
+    rt(T, "4503599627370496", 4503599627370496.0, 4841369599423283200)
+
+    tap.eq_i(T, "inf bits", ieee754.f2bits(ieee754.bits2f(ieee754.PINF_BITS())), ieee754.PINF_BITS())
+    tap.eq_i(T, "-inf bits", ieee754.f2bits(ieee754.bits2f(ieee754.NINF_BITS())), ieee754.NINF_BITS())
+    nanv := ieee754.bits2f(ieee754.QNAN_BITS())
+    tap.eq_i(T, "nan detect", ieee754.is_nan(nanv), 1)
+
+    tap.eq_s(T, "fmt 0", ieee754.fmt_float(0.0), "0.0")
+    tap.eq_s(T, "fmt 1", ieee754.fmt_float(1.0), "1.0")
+    tap.eq_s(T, "fmt -1", ieee754.fmt_float(0.0 - 1.0), "-1.0")
+    tap.eq_s(T, "fmt 3.5", ieee754.fmt_float(3.5), "3.5")
+    tap.eq_s(T, "fmt 0.1", ieee754.fmt_float(0.1), "0.1")
+    tap.eq_s(T, "fmt 123.456", ieee754.fmt_float(123.456), "123.456")
+    tap.eq_s(T, "fmt 100", ieee754.fmt_float(100.0), "100.0")
+    tap.eq_s(T, "fmt 0.001", ieee754.fmt_float(0.001), "0.001")
+
+    tap.eq_i(T, "parse 3.5", ieee754.f2bits(ieee754.parse_float("3.5")), ieee754.f2bits(3.5))
+    tap.eq_i(T, "parse -2.25", ieee754.f2bits(ieee754.parse_float("-2.25")), ieee754.f2bits(0.0 - 2.25))
+    tap.eq_i(T, "parse 100", ieee754.f2bits(ieee754.parse_float("100")), ieee754.f2bits(100.0))
+    tap.eq_i(T, "parse 1e3", ieee754.f2bits(ieee754.parse_float("1e3")), ieee754.f2bits(1000.0))
+    tap.eq_i(T, "parse 1.5e-3", ieee754.f2bits(ieee754.parse_float("1.5e-3")), ieee754.f2bits(0.0015))
+    tap.eq_i(T, "parse 0.1", ieee754.f2bits(ieee754.parse_float("0.1")), ieee754.f2bits(0.1))
+
+    tap.t_report(T, "ieee754")

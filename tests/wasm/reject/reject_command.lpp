@@ -1,0 +1,6 @@
+# reject_command.lpp — spawning child processes is not part of WASI
+# preview1; the compiler must reject it with a clear diagnostic.
+
+def main():
+    code := command_exec("echo hi")
+    print(code)

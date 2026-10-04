@@ -1,0 +1,15 @@
+def main():
+    # Bitwise AND
+    print(255 & 15)
+
+    # Bitwise OR
+    print(255 | 256)
+
+    # Bitwise XOR
+    print(5 ^ 3)
+
+    # Shift left
+    print(1 << 10)
+
+    # Shift right
+    print(1024 >> 3)

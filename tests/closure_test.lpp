@@ -1,0 +1,10 @@
+# closure_test.lpp — Verify closure capture and indirect call
+# Expected output: 52
+
+def main():
+    x := 42
+    my_closure := fn(y) -> Int:
+        return x + y
+    
+    val := my_closure(10)
+    print(val)

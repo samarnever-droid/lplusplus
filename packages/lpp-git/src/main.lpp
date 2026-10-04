@@ -1,0 +1,6 @@
+# packages/lpp-git/src/main.lpp
+
+import client
+
+def main():
+    client.clone_repository("https://github.com/samarnever-droid/lplusplus.git", "./lpp_modules/lplusplus")

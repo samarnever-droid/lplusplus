@@ -1,0 +1,10 @@
+[package]
+name = "lreact-math"
+version = "0.1.0"
+authors = ["Samar"]
+license = "MIT"
+description = "Pure L++ React Component for Interactive Math Cards, Linear Equation Solver, and LaTeX Visualization"
+keywords = ["lreact", "math", "equation", "solver", "latex", "cosmos"]
+
+[dependencies]
+lpp-math = { path = "../lpp-math" }

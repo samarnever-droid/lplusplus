@@ -1,0 +1,368 @@
+# value.lpp — dynamically typed SQLite values.
+#
+# A value is a 32-byte buffer handle:
+#   [0..8)   type tag
+#   [8..16)  Int payload, or the raw IEEE-754 bits of a Real
+#   [16..24) pointer to a bytes buffer (Text/Blob), else 0
+#   [24..32) byte length of that buffer
+#
+# Text is stored as raw bytes plus an explicit length, so embedded NULs and
+# non-UTF8 blobs survive intact (str_len would stop at the first NUL).
+
+import mem
+import ieee754
+
+def TNULL() -> Int:
+    return 0
+def TINT() -> Int:
+    return 1
+def TREAL() -> Int:
+    return 2
+def TTEXT() -> Int:
+    return 3
+def TBLOB() -> Int:
+    return 4
+
+def v_type(v: Int) -> Int:
+    return mem.bget64(v, 0)
+
+def v_int(v: Int) -> Int:
+    return mem.bget64(v, 8)
+
+def v_bits(v: Int) -> Int:
+    return mem.bget64(v, 8)
+
+def v_real(v: Int) -> Float:
+    return ieee754.bits2f(mem.bget64(v, 8))
+
+def v_ptr(v: Int) -> Int:
+    return mem.bget64(v, 16)
+
+def v_len(v: Int) -> Int:
+    return mem.bget64(v, 24)
+
+def v_alloc(tag: Int) -> Int:
+    v := buf_alloc(32)
+    mem.bset64(v, 0, tag)
+    mem.bset64(v, 8, 0)
+    mem.bset64(v, 16, 0)
+    mem.bset64(v, 24, 0)
+    return v
+
+def v_null() -> Int:
+    return v_alloc(TNULL())
+
+def v_from_int(n: Int) -> Int:
+    v := v_alloc(TINT())
+    mem.bset64(v, 8, n)
+    return v
+
+def v_from_real(d: Float) -> Int:
+    v := v_alloc(TREAL())
+    mem.bset64(v, 8, ieee754.f2bits(d))
+    return v
+
+def v_from_bits(bits: Int) -> Int:
+    v := v_alloc(TREAL())
+    mem.bset64(v, 8, bits)
+    return v
+
+# Take ownership of `p` (a buf_alloc'd block of `n` bytes).
+def v_own_bytes(tag: Int, p: Int, n: Int) -> Int:
+    v := v_alloc(tag)
+    mem.bset64(v, 16, p)
+    mem.bset64(v, 24, n)
+    return v
+
+def v_from_bytes(tag: Int, src: Int, off: Int, n: Int) -> Int:
+    mut p := 0
+    if n > 0:
+        p = buf_alloc(n)
+        buf_copy(p, 0, src, off, n)
+    else:
+        p = buf_alloc(1)
+    return v_own_bytes(tag, p, n)
+
+def v_from_str(s: Str) -> Int:
+    n := str_len(s)
+    mut p := 0
+    if n > 0:
+        p = buf_alloc(n)
+        buf_write_str(p, 0, s)
+    else:
+        p = buf_alloc(1)
+    return v_own_bytes(TTEXT(), p, n)
+
+def v_free(v: Int):
+    if v == 0:
+        return
+    p := v_ptr(v)
+    if p != 0:
+        buf_free(p)
+    buf_free(v)
+
+def v_clone(v: Int) -> Int:
+    mut t := v_type(v)
+    if t == TNULL():
+        return v_null()
+    if t == TINT():
+        return v_from_int(v_int(v))
+    if t == TREAL():
+        return v_from_bits(v_bits(v))
+    return v_from_bytes(t, v_ptr(v), 0, v_len(v))
+
+# Bytes rendered as a Str (truncates at an embedded NUL — display only).
+def v_bytes_str(v: Int) -> Str:
+    n := v_len(v)
+    if n <= 0:
+        return ""
+    return buf_read_str(v_ptr(v), 0, n)
+
+def v_is_null(v: Int) -> Int:
+    if v_type(v) == TNULL():
+        return 1
+    return 0
+
+# ── numeric coercion ──
+
+def v_to_real(v: Int) -> Float:
+    mut t := v_type(v)
+    if t == TINT():
+        return int_to_float(v_int(v))
+    if t == TREAL():
+        return v_real(v)
+    if t == TTEXT():
+        return ieee754.parse_float(v_bytes_str(v))
+    return 0.0
+
+def v_to_int(v: Int) -> Int:
+    mut t := v_type(v)
+    if t == TINT():
+        return v_int(v)
+    if t == TREAL():
+        return float_to_int(v_real(v))
+    if t == TTEXT():
+        return float_to_int(ieee754.parse_float(v_bytes_str(v)))
+    return 0
+
+# Truthiness, as SQLite defines it for WHERE clauses.
+def v_truthy(v: Int) -> Int:
+    mut t := v_type(v)
+    if t == TNULL():
+        return 0
+    if t == TINT():
+        if v_int(v) != 0:
+            return 1
+        return 0
+    if t == TREAL():
+        if v_real(v) != 0.0:
+            return 1
+        return 0
+    if t == TTEXT():
+        if v_to_real(v) != 0.0:
+            return 1
+        return 0
+    if v_len(v) > 0:
+        return 1
+    return 0
+
+# Does this text look fully numeric? (used by CAST and type affinity)
+def text_is_number(s: Str) -> Int:
+    n := str_len(s)
+    if n == 0:
+        return 0
+    mut i := 0
+    mut seen := 0
+    mut dot := 0
+    mut ex := 0
+    c0 := str_substr(s, 0, 1)
+    if lpp_str_eq(c0, "-") == 1:
+        i = 1
+    elif lpp_str_eq(c0, "+") == 1:
+        i = 1
+    while i < n:
+        c := str_substr(s, i, 1)
+        o := ord(c)
+        if o >= 48:
+            if o <= 57:
+                seen = 1
+                i = i + 1
+            else:
+                i = num_other(s, i, n)
+                if i < 0:
+                    return 0
+                if i > 100000000:
+                    dot = dot + 0
+        else:
+            i = num_other(s, i, n)
+            if i < 0:
+                return 0
+    return seen
+
+# Helper for text_is_number: validate a non-digit character.
+def num_other(s: Str, i: Int, n: Int) -> Int:
+    c := str_substr(s, i, 1)
+    if lpp_str_eq(c, ".") == 1:
+        return i + 1
+    if lpp_str_eq(c, "e") == 1:
+        return skip_exp(s, i + 1, n)
+    if lpp_str_eq(c, "E") == 1:
+        return skip_exp(s, i + 1, n)
+    return 0 - 1
+
+def skip_exp(s: Str, i: Int, n: Int) -> Int:
+    mut j := i
+    if j < n:
+        c := str_substr(s, j, 1)
+        if lpp_str_eq(c, "-") == 1:
+            j = j + 1
+        elif lpp_str_eq(c, "+") == 1:
+            j = j + 1
+    if j >= n:
+        return 0 - 1
+    return j
+
+def text_is_int(s: Str) -> Int:
+    n := str_len(s)
+    if n == 0:
+        return 0
+    mut i := 0
+    c0 := str_substr(s, 0, 1)
+    if lpp_str_eq(c0, "-") == 1:
+        i = 1
+    elif lpp_str_eq(c0, "+") == 1:
+        i = 1
+    if i >= n:
+        return 0
+    while i < n:
+        o := ord(str_substr(s, i, 1))
+        if o < 48:
+            return 0
+        if o > 57:
+            return 0
+        i = i + 1
+    return 1
+
+# ── comparison, following SQLite's type ordering ──
+# NULL < INTEGER/REAL < TEXT < BLOB
+
+def type_class(t: Int) -> Int:
+    if t == TNULL():
+        return 0
+    if t == TINT():
+        return 1
+    if t == TREAL():
+        return 1
+    if t == TTEXT():
+        return 2
+    return 3
+
+def bytes_cmp(pa: Int, na: Int, pb: Int, nb: Int) -> Int:
+    mut i := 0
+    mut lim := na
+    if nb < lim:
+        lim = nb
+    while i < lim:
+        x := buf_get8(pa, i)
+        y := buf_get8(pb, i)
+        if x < y:
+            return 0 - 1
+        if x > y:
+            return 1
+        i = i + 1
+    if na < nb:
+        return 0 - 1
+    if na > nb:
+        return 1
+    return 0
+
+def v_cmp(a: Int, b: Int) -> Int:
+    ca := type_class(v_type(a))
+    cb := type_class(v_type(b))
+    if ca != cb:
+        if ca < cb:
+            return 0 - 1
+        return 1
+    if ca == 0:
+        return 0
+    if ca == 1:
+        ta := v_type(a)
+        tb := v_type(b)
+        if ta == TINT():
+            if tb == TINT():
+                x := v_int(a)
+                y := v_int(b)
+                if x < y:
+                    return 0 - 1
+                if x > y:
+                    return 1
+                return 0
+        fa := v_to_real(a)
+        fb := v_to_real(b)
+        if fa < fb:
+            return 0 - 1
+        if fa > fb:
+            return 1
+        return 0
+    return bytes_cmp(v_ptr(a), v_len(a), v_ptr(b), v_len(b))
+
+# ── rendering ──
+
+def v_to_text(v: Int) -> Str:
+    mut t := v_type(v)
+    if t == TNULL():
+        return ""
+    if t == TINT():
+        return int_to_str(v_int(v))
+    if t == TREAL():
+        return ieee754.fmt_float(v_real(v))
+    return v_bytes_str(v)
+
+def v_display(v: Int) -> Str:
+    mut t := v_type(v)
+    if t == TNULL():
+        return "NULL"
+    if t == TBLOB():
+        return str_concat("<blob ", str_concat(int_to_str(v_len(v)), ">"))
+    return v_to_text(v)
+
+# SQLite type name, as returned by typeof().
+def v_typename(v: Int) -> Str:
+    mut t := v_type(v)
+    if t == TNULL():
+        return "null"
+    if t == TINT():
+        return "integer"
+    if t == TREAL():
+        return "real"
+    if t == TTEXT():
+        return "text"
+    return "blob"
+
+# ── value vectors: an iv of value handles ──
+
+def vv_new() -> Int:
+    return mem.iv_new(8)
+
+def vv_push(vv: Int, v: Int):
+    mem.iv_push(vv, v)
+
+def vv_get(vv: Int, i: Int) -> Int:
+    return mem.iv_get(vv, i)
+
+def vv_len(vv: Int) -> Int:
+    return mem.iv_len(vv)
+
+def vv_set(vv: Int, i: Int, v: Int):
+    mem.iv_set(vv, i, v)
+
+def vv_free_all(vv: Int):
+    n := mem.iv_len(vv)
+    mut i := 0
+    while i < n:
+        v_free(mem.iv_get(vv, i))
+        i = i + 1
+    mem.iv_free(vv)
+
+def vv_free_shallow(vv: Int):
+    mem.iv_free(vv)

@@ -1,0 +1,4898 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SamarBook — Cosmic Canvas Cinematic Trailer</title>
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+
+    <!-- Lucide Icons CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/lucide/dist/umd/lucide.min.js"></script>
+    <!-- Anime.js CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/animejs@3.2.1/lib/anime.min.js"></script>
+
+    <style>
+      :root {
+        --coral: #ff5a36;
+        --blue: #3a86ff;
+        --violet: #7c3aed;
+        --violet-soft: #ede9fe;
+        --indigo: #4f46e5;
+        --indigo-soft: #eef2ff;
+        --green: #10b981;
+        --green-soft: #d1fae5;
+        --orange: #ea580c;
+        --orange-soft: #ffedd5;
+        --pink: #db2777;
+        --cyan: #0891b2;
+        --bg-home: #f6f6f8;
+        --card: #ffffff;
+        --ink: #111827;
+        --muted: #6b7280;
+        --border: #e5e7eb;
+        --sidebar: #f3f4f6;
+        --grid: #e8ecf4;
+      }
+
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      html,
+      body {
+        height: 100%;
+        overflow: hidden;
+        font-family: Inter, system-ui, sans-serif;
+        background: #0b0c12;
+        color: var(--ink);
+        -webkit-font-smoothing: antialiased;
+      }
+
+      /* Lucide base styling */
+      .lucide {
+        width: 1em;
+        height: 1em;
+        stroke-width: 2.2px;
+        display: inline-block;
+        vertical-align: -0.125em;
+      }
+      .size-3 {
+        width: 12px;
+        height: 12px;
+      }
+      .size-3.5 {
+        width: 14px;
+        height: 14px;
+      }
+      .size-4 {
+        width: 16px;
+        height: 16px;
+      }
+      .size-5 {
+        width: 20px;
+        height: 20px;
+      }
+      .size-6 {
+        width: 24px;
+        height: 24px;
+      }
+      .size-8 {
+        width: 32px;
+        height: 32px;
+      }
+
+      /* ═══════════ LOADER ═══════════ */
+      #loader {
+        position: fixed;
+        inset: 0;
+        z-index: 2000;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        background: linear-gradient(160deg, #090a0f, #14162a 50%, #0b0c14);
+        transition:
+          opacity 0.8s ease,
+          visibility 0.8s;
+      }
+      #loader.done {
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+      }
+      .orb {
+        width: 80px;
+        height: 80px;
+        border-radius: 50%;
+        background: radial-gradient(
+          circle at 32% 32%,
+          #fff 0%,
+          var(--coral) 38%,
+          var(--violet) 72%,
+          transparent
+        );
+        box-shadow:
+          0 0 50px rgba(255, 90, 54, 0.5),
+          0 0 100px rgba(124, 58, 237, 0.35);
+        animation: pulse 1.5s ease-in-out infinite;
+      }
+      @keyframes pulse {
+        0%,
+        100% {
+          transform: scale(1);
+        }
+        50% {
+          transform: scale(1.1);
+        }
+      }
+      .loader-brand {
+        margin-top: 28px;
+        font-size: 13px;
+        font-weight: 800;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: #f1f3f5;
+      }
+      .loader-sub {
+        margin-top: 8px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 11px;
+        color: #94a3b8;
+      }
+      .bar {
+        margin-top: 22px;
+        width: 220px;
+        height: 3px;
+        border-radius: 99px;
+        background: rgba(255, 255, 255, 0.08);
+        overflow: hidden;
+      }
+      .bar i {
+        display: block;
+        height: 100%;
+        width: 0;
+        border-radius: 99px;
+        background: linear-gradient(90deg, var(--coral), var(--violet), var(--blue));
+        transition: width 0.12s linear;
+      }
+
+      /* ═══════════ PLAY OVERLAY ═══════════ */
+      #play-overlay {
+        position: absolute;
+        inset: 0;
+        z-index: 1000;
+        background: rgba(9, 10, 15, 0.94);
+        backdrop-filter: blur(16px);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition:
+          opacity 0.5s ease,
+          visibility 0.5s;
+      }
+      #play-overlay.hidden {
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+      }
+      .overlay-card {
+        text-align: center;
+        color: #fff;
+        max-width: 360px;
+        padding: 32px;
+        border-radius: 24px;
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        background: rgba(255, 255, 255, 0.02);
+        box-shadow: 0 30px 70px rgba(0, 0, 0, 0.5);
+      }
+      .overlay-logo {
+        width: 60px;
+        height: 60px;
+        border-radius: 18px;
+        background: linear-gradient(135deg, var(--coral), var(--violet));
+        margin: 0 auto 20px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 26px;
+        font-weight: 800;
+        box-shadow: 0 10px 30px rgba(255, 90, 54, 0.35);
+      }
+      .overlay-card h2 {
+        font-size: 24px;
+        font-weight: 800;
+        margin-bottom: 8px;
+        letter-spacing: -0.02em;
+      }
+      .overlay-card p {
+        font-size: 13px;
+        color: #94a3b8;
+        margin-bottom: 28px;
+        line-height: 1.5;
+      }
+      #btn-start-cinematic {
+        border: none;
+        font-family: inherit;
+        font-size: 13px;
+        font-weight: 700;
+        padding: 12px 28px;
+        border-radius: 12px;
+        cursor: pointer;
+        background: var(--coral);
+        color: #fff;
+        box-shadow: 0 4px 20px rgba(255, 90, 54, 0.4);
+        transition:
+          transform 0.2s,
+          box-shadow 0.2s;
+        width: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+      }
+      #btn-start-cinematic:hover {
+        transform: translateY(-1.5px);
+        box-shadow: 0 6px 24px rgba(255, 90, 54, 0.5);
+      }
+      .overlay-card .subtext {
+        font-size: 10.5px;
+        color: #64748b;
+        margin-top: 12px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 4px;
+      }
+
+      /* ═══════════ STAGE ═══════════ */
+      #stage {
+        position: relative;
+        width: 100vw;
+        height: 100vh;
+        overflow: hidden;
+        background: radial-gradient(ellipse 80% 60% at 50% 40%, #15172a, #0b0c12);
+      }
+      .blob {
+        position: absolute;
+        border-radius: 50%;
+        filter: blur(70px);
+        pointer-events: none;
+        opacity: 0.45;
+        animation: drift 24s ease-in-out infinite alternate;
+      }
+      .blob.b1 {
+        top: -15%;
+        left: -10%;
+        width: 50vw;
+        height: 50vw;
+        background: rgba(255, 90, 54, 0.18);
+      }
+      .blob.b2 {
+        bottom: -18%;
+        right: -8%;
+        width: 48vw;
+        height: 48vw;
+        background: rgba(58, 134, 255, 0.14);
+        animation-duration: 30s;
+      }
+      .blob.b3 {
+        top: 35%;
+        left: 40%;
+        width: 30vw;
+        height: 30vw;
+        background: rgba(124, 58, 237, 0.12);
+        animation-duration: 26s;
+      }
+      @keyframes drift {
+        from {
+          transform: translate(0, 0) scale(1);
+        }
+        to {
+          transform: translate(30px, -40px) scale(1.12);
+        }
+      }
+
+      /* HUD */
+      #caption {
+        position: absolute;
+        top: 16px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 100;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 18px;
+        border-radius: 999px;
+        background: rgba(15, 15, 22, 0.72);
+        backdrop-filter: blur(16px);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        color: #e2e8f0;
+        font-size: 12px;
+        font-weight: 600;
+        opacity: 0;
+        transition: opacity 0.35s;
+        max-width: min(90vw, 540px);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+      }
+      #caption.on {
+        opacity: 1;
+      }
+      #caption .dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--coral);
+        box-shadow: 0 0 8px rgba(255, 90, 54, 0.7);
+        flex-shrink: 0;
+        animation: blink 1.1s ease infinite;
+      }
+      @keyframes blink {
+        50% {
+          opacity: 0.3;
+        }
+      }
+
+      /* Music Widget */
+      #music-widget {
+        position: absolute;
+        top: 16px;
+        right: 22px;
+        z-index: 100;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 12px;
+        border-radius: 999px;
+        background: rgba(15, 15, 22, 0.72);
+        backdrop-filter: blur(16px);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        color: #e2e8f0;
+        font-size: 11px;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+      }
+      #music-widget button {
+        border: none;
+        background: transparent;
+        color: inherit;
+        font-size: inherit;
+        font-weight: 600;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        outline: none;
+      }
+      #vol-music {
+        width: 50px;
+        height: 3px;
+        -webkit-appearance: none;
+        background: rgba(255, 255, 255, 0.2);
+        border-radius: 99px;
+        outline: none;
+        cursor: pointer;
+      }
+      #vol-music::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: var(--coral);
+        cursor: pointer;
+      }
+
+      #progress {
+        position: absolute;
+        top: 0;
+        left: 0;
+        height: 2px;
+        width: 0%;
+        background: linear-gradient(90deg, var(--coral), var(--violet), var(--blue));
+        z-index: 110;
+        transition: width 0.3s ease;
+      }
+
+      #controls {
+        position: absolute;
+        bottom: 18px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 100;
+        display: flex;
+        gap: 6px;
+        padding: 5px;
+        border-radius: 14px;
+        background: rgba(20, 20, 30, 0.85);
+        backdrop-filter: blur(16px);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+      }
+      #controls button {
+        border: none;
+        font-family: inherit;
+        font-size: 11px;
+        font-weight: 700;
+        padding: 8px 14px;
+        border-radius: 10px;
+        cursor: pointer;
+        color: #94a3b8;
+        background: transparent;
+        transition: 0.2s;
+      }
+      #controls button:hover {
+        color: #fff;
+        background: rgba(255, 255, 255, 0.08);
+      }
+      #controls button.primary {
+        background: var(--coral);
+        color: #fff;
+        box-shadow: 0 4px 16px rgba(255, 90, 54, 0.4);
+      }
+      #scene-num {
+        position: absolute;
+        bottom: 22px;
+        right: 22px;
+        z-index: 100;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 10px;
+        color: #64748b;
+      }
+
+      /* ═══════════ DEVICE WINDOW ═══════════ */
+      #device {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        width: min(1040px, 94vw);
+        height: min(640px, 82vh);
+        transform: translate(-50%, -50%) scale(0.94);
+        border-radius: 16px;
+        overflow: hidden;
+        background: #0f1117;
+        box-shadow:
+          0 0 0 1px rgba(255, 255, 255, 0.08),
+          0 40px 100px rgba(0, 0, 0, 0.55),
+          0 0 80px rgba(255, 90, 54, 0.08);
+        opacity: 0;
+        transition:
+          opacity 0.7s ease,
+          transform 0.7s cubic-bezier(0.22, 1, 0.36, 1);
+      }
+      #device.ready {
+        opacity: 1;
+        transform: translate(-50%, -50%) scale(1);
+      }
+
+      .chrome {
+        height: 36px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 12px;
+        background: linear-gradient(180deg, #1a1c28, #141620);
+        border-bottom: 1px solid #1f2233;
+      }
+      .traffic {
+        display: flex;
+        gap: 6px;
+      }
+      .traffic i {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        display: block;
+      }
+      .traffic .r {
+        background: #f87171;
+      }
+      .traffic .y {
+        background: #facc15;
+      }
+      .traffic .g {
+        background: #34d399;
+      }
+      .chrome-title {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 10px;
+        font-weight: 600;
+        color: #64748b;
+        letter-spacing: 0.04em;
+      }
+      .chrome-url {
+        font-size: 10px;
+        color: #94a3b8;
+        background: #0e1018;
+        padding: 3px 12px;
+        border-radius: 6px;
+        border: 1px solid #1f2233;
+        font-family: "JetBrains Mono", monospace;
+      }
+
+      #screen {
+        position: relative;
+        height: calc(100% - 36px);
+        background: var(--bg-home);
+        overflow: hidden;
+      }
+
+      /* Scenes */
+      .scene {
+        position: absolute;
+        inset: 0;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.45s ease;
+      }
+      .scene.active {
+        opacity: 1;
+        pointer-events: auto;
+      }
+
+      /* ── TITLE SCENE ── */
+      #sc-title {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        background: linear-gradient(160deg, #090a0f, #12141f 55%, #0b0c12);
+        color: #fff;
+      }
+      #sc-title .logo-mark {
+        width: 64px;
+        height: 64px;
+        border-radius: 18px;
+        background: linear-gradient(135deg, var(--coral), #ff8a6a);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 28px;
+        font-weight: 800;
+        color: #fff;
+        box-shadow: 0 12px 40px rgba(255, 90, 54, 0.45);
+        transform: scale(0);
+        opacity: 0;
+        transition:
+          transform 0.7s cubic-bezier(0.22, 1, 0.36, 1),
+          opacity 0.5s;
+      }
+      #sc-title .logo-mark.in {
+        transform: scale(1);
+        opacity: 1;
+      }
+      #sc-title h1 {
+        margin-top: 22px;
+        font-size: 36px;
+        font-weight: 800;
+        letter-spacing: -0.02em;
+        opacity: 0;
+        transform: translateY(16px);
+        transition: 0.6s ease 0.15s;
+      }
+      #sc-title h1.in {
+        opacity: 1;
+        transform: none;
+      }
+      #sc-title p {
+        margin-top: 10px;
+        font-size: 14px;
+        color: #94a3b8;
+        font-weight: 500;
+        opacity: 0;
+        transform: translateY(12px);
+        transition: 0.6s ease 0.3s;
+      }
+      #sc-title p.in {
+        opacity: 1;
+        transform: none;
+      }
+      #sc-title .tagline {
+        margin-top: 28px;
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        justify-content: center;
+        opacity: 0;
+        transition: 0.5s ease 0.5s;
+      }
+      #sc-title .tagline.in {
+        opacity: 1;
+      }
+      #sc-title .tagline span {
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        padding: 5px 10px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.06);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        color: #cbd5e1;
+      }
+
+      /* ── HOME SCENE ── */
+      #sc-home {
+        background: var(--bg-home);
+        overflow: hidden;
+      }
+      .home-mesh {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        overflow: hidden;
+      }
+      .home-mesh .m {
+        position: absolute;
+        border-radius: 50%;
+        filter: blur(60px);
+        opacity: 0.35;
+      }
+      .home-mesh .m1 {
+        top: -20%;
+        right: -10%;
+        width: 420px;
+        height: 420px;
+        background: rgba(139, 92, 246, 0.35);
+      }
+      .home-mesh .m2 {
+        bottom: -15%;
+        left: -10%;
+        width: 360px;
+        height: 360px;
+        background: rgba(59, 130, 246, 0.3);
+      }
+      .home-inner {
+        position: relative;
+        z-index: 1;
+        padding: 28px 32px;
+        height: 100%;
+        overflow: hidden;
+      }
+      .home-top {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-end;
+        gap: 16px;
+        margin-bottom: 20px;
+      }
+      .home-top h1 {
+        font-size: 24px;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+      }
+      .home-top p {
+        font-size: 13px;
+        color: var(--muted);
+        margin-top: 2px;
+      }
+      .search-pill {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 260px;
+        padding: 10px 14px;
+        border-radius: 12px;
+        background: rgba(255, 255, 255, 0.85);
+        border: 1px solid var(--border);
+        font-size: 13px;
+        color: var(--muted);
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+      }
+      .search-pill kbd {
+        margin-left: auto;
+        font-size: 10px;
+        padding: 2px 6px;
+        border-radius: 4px;
+        background: #f3f4f6;
+        border: 1px solid var(--border);
+        color: #9ca3af;
+        font-family: inherit;
+      }
+      .qa-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 10px;
+        margin-bottom: 22px;
+      }
+      .qa {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        padding: 14px;
+        border-radius: 12px;
+        border: 1px solid var(--border);
+        background: rgba(255, 255, 255, 0.85);
+        text-align: left;
+        transition:
+          border-color 0.2s,
+          box-shadow 0.2s,
+          transform 0.2s;
+      }
+      .qa .icon {
+        width: 36px;
+        height: 36px;
+        border-radius: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 16px;
+      }
+      .qa strong {
+        font-size: 13px;
+        font-weight: 650;
+      }
+      .qa span {
+        font-size: 11px;
+        color: var(--muted);
+      }
+      .qa.hot {
+        border-color: #c4b5fd;
+        box-shadow:
+          0 0 0 3px rgba(124, 58, 237, 0.15),
+          0 8px 20px rgba(124, 58, 237, 0.1);
+        transform: translateY(-2px);
+      }
+      .sec-h {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        margin-bottom: 10px;
+      }
+      .sec-h h2 {
+        font-size: 16px;
+        font-weight: 700;
+      }
+      .sec-h a {
+        font-size: 11px;
+        color: var(--violet);
+        font-weight: 600;
+      }
+      .nb-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 10px;
+      }
+      .nb {
+        padding: 14px;
+        border-radius: 12px;
+        border: 1px solid var(--border);
+        background: rgba(255, 255, 255, 0.85);
+        text-align: left;
+        opacity: 0;
+        transform: translateY(10px) scale(0.96);
+        transition:
+          opacity 0.4s,
+          transform 0.45s cubic-bezier(0.22, 1, 0.36, 1),
+          box-shadow 0.2s,
+          border-color 0.2s;
+      }
+      .nb.show {
+        opacity: 1;
+        transform: none;
+      }
+      .nb.hot {
+        border-color: #c4b5fd;
+        box-shadow: 0 8px 24px rgba(124, 58, 237, 0.12);
+      }
+      .nb .nb-ico {
+        width: 40px;
+        height: 40px;
+        border-radius: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 18px;
+      }
+      .nb .nb-name {
+        margin-top: 12px;
+        font-size: 13px;
+        font-weight: 650;
+      }
+      .nb .nb-meta {
+        font-size: 11px;
+        color: var(--muted);
+        margin-top: 2px;
+      }
+      .home-bottom {
+        margin-top: 18px;
+        display: grid;
+        grid-template-columns: 2fr 1fr;
+        gap: 12px;
+      }
+      .panel {
+        border-radius: 12px;
+        border: 1px solid var(--border);
+        background: rgba(255, 255, 255, 0.85);
+        overflow: hidden;
+        opacity: 0;
+        transform: translateY(8px);
+        transition: 0.4s ease;
+      }
+      .panel.show {
+        opacity: 1;
+        transform: none;
+      }
+      .panel-h {
+        padding: 10px 14px;
+        border-bottom: 1px solid #f3f4f6;
+        font-size: 12px;
+        font-weight: 650;
+      }
+      .panel-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 9px 14px;
+        font-size: 12px;
+        border-bottom: 1px solid #f9fafb;
+        color: #374151;
+      }
+      .panel-row:last-child {
+        border-bottom: none;
+      }
+      .panel-row .ico {
+        color: #9ca3af;
+      }
+      .panel-row .time {
+        margin-left: auto;
+        font-size: 10px;
+        color: #9ca3af;
+      }
+
+      /* ── DIALOG ── */
+      .modal-bg {
+        position: absolute;
+        inset: 0;
+        z-index: 40;
+        background: rgba(15, 23, 42, 0.35);
+        backdrop-filter: blur(4px);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.3s;
+      }
+      .modal-bg.open {
+        opacity: 1;
+        pointer-events: auto;
+      }
+      .modal {
+        width: min(380px, 90%);
+        background: #fff;
+        border-radius: 16px;
+        border: 1px solid var(--border);
+        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.18);
+        padding: 20px;
+        transform: scale(0.92) translateY(8px);
+        transition: 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+      }
+      .modal-bg.open .modal {
+        transform: none;
+      }
+      .modal h3 {
+        font-size: 15px;
+        font-weight: 700;
+        margin-bottom: 4px;
+      }
+      .modal p {
+        font-size: 12px;
+        color: var(--muted);
+        margin-bottom: 14px;
+      }
+      .modal input {
+        width: 100%;
+        padding: 10px 12px;
+        border-radius: 10px;
+        border: 1.5px solid var(--border);
+        font-size: 13px;
+        font-family: inherit;
+        outline: none;
+        transition: border-color 0.2s;
+      }
+      .modal input:focus,
+      .modal input.typing {
+        border-color: var(--violet);
+        box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.12);
+      }
+      .modal .actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        margin-top: 14px;
+      }
+      .modal .actions button {
+        border: none;
+        font-family: inherit;
+        font-size: 12px;
+        font-weight: 650;
+        padding: 8px 14px;
+        border-radius: 10px;
+        cursor: pointer;
+      }
+      .modal .btn-cancel {
+        background: #f3f4f6;
+        color: #4b5563;
+      }
+      .modal .btn-ok {
+        background: var(--violet);
+        color: #fff;
+      }
+
+      /* ── NOTEBOOK HOME ── */
+      #sc-notebook {
+        background: #fafafa;
+        padding: 40px 48px;
+      }
+      .nb-header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 4px;
+      }
+      .nb-header .mark {
+        width: 42px;
+        height: 42px;
+        border-radius: 12px;
+        background: rgba(124, 58, 237, 0.12);
+        color: var(--violet);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 20px;
+      }
+      .nb-header .label {
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--muted);
+        font-weight: 600;
+      }
+      .nb-header h1 {
+        font-size: 22px;
+        font-weight: 700;
+      }
+      .nb-stats {
+        font-size: 13px;
+        color: var(--muted);
+        margin-bottom: 20px;
+        margin-top: 6px;
+      }
+      .nb-actions {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 28px;
+      }
+      .btn-pri,
+      .btn-sec {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 8px 14px;
+        border-radius: 8px;
+        font-size: 13px;
+        font-weight: 600;
+        border: none;
+        font-family: inherit;
+        cursor: pointer;
+      }
+      .btn-pri {
+        background: var(--violet);
+        color: #fff;
+      }
+      .btn-sec {
+        background: #f3f4f6;
+        color: #374151;
+        border: 1px solid var(--border);
+      }
+      .btn-pri.hot,
+      .btn-sec.hot {
+        box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.2);
+        transform: scale(1.03);
+      }
+      .folder-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 8px;
+        margin-bottom: 24px;
+      }
+      .folder-chip {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 12px;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        background: #fff;
+        font-size: 13px;
+        opacity: 0;
+        transform: translateY(6px);
+        transition: 0.35s;
+      }
+      .folder-chip.show {
+        opacity: 1;
+        transform: none;
+      }
+      .notes-list {
+        border-radius: 12px;
+        border: 1px solid var(--border);
+        background: #fff;
+        overflow: hidden;
+      }
+      .notes-list .empty {
+        padding: 28px;
+        text-align: center;
+        font-size: 13px;
+        color: var(--muted);
+      }
+      .notes-list .row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 14px;
+        font-size: 13px;
+        border-bottom: 1px solid #f3f4f6;
+        opacity: 0;
+        transform: translateX(-8px);
+        transition: 0.35s;
+      }
+      .notes-list .row.show {
+        opacity: 1;
+        transform: none;
+      }
+      .notes-list .row.hot {
+        background: #f5f3ff;
+      }
+      .notes-list .row .time {
+        margin-left: auto;
+        font-size: 11px;
+        color: #9ca3af;
+      }
+
+      /* ── APP SHELL (sidebar + canvas) ── */
+      #sc-app {
+        display: flex;
+        background: #fff;
+      }
+
+      /* Explorer Sidebar Redesign */
+      .sidebar {
+        width: 220px;
+        flex-shrink: 0;
+        background: #f8f8fa;
+        border-right: 1px solid #e8e8ee;
+        display: flex;
+        flex-direction: column;
+        font-size: 12px;
+      }
+      .sb-head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 12px 14px;
+        border-bottom: 1px solid #e8e8ee;
+        font-weight: 700;
+      }
+      .sb-back-btn {
+        border: none;
+        background: transparent;
+        cursor: pointer;
+        color: var(--muted);
+        padding: 2px;
+        border-radius: 4px;
+        display: flex;
+        align-items: center;
+      }
+      .sb-back-btn:hover {
+        background: #e5e7eb;
+        color: var(--ink);
+      }
+      .sb-title {
+        flex: 1;
+        font-weight: 600;
+        color: var(--ink);
+        font-size: 13px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .sb-explore-header {
+        padding: 14px 14px 6px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 10px;
+        font-weight: 700;
+        color: #9ca3af;
+        letter-spacing: 0.06em;
+      }
+      .sb-add-btn {
+        border: none;
+        background: transparent;
+        cursor: pointer;
+        color: var(--muted);
+        padding: 2px;
+        border-radius: 4px;
+        display: flex;
+        align-items: center;
+      }
+      .sb-add-btn:hover {
+        background: #e5e7eb;
+        color: var(--ink);
+      }
+
+      .sb-row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 14px;
+        color: #374151;
+        font-weight: 500;
+        cursor: pointer;
+        transition: background 0.15s;
+      }
+      .sb-row:hover {
+        background: #f3f4f6;
+      }
+      .sb-row.active {
+        background: #ede9fe;
+        color: var(--violet);
+        font-weight: 600;
+      }
+      .sb-row .chev {
+        color: #9ca3af;
+        transition: transform 0.2s;
+      }
+      .sb-row .icon {
+        flex-shrink: 0;
+      }
+      .sb-row .label {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .sb-folder-contents {
+        padding-left: 12px;
+        transition: max-height 0.3s ease;
+      }
+      .sb-folder-contents.closed {
+        display: none;
+      }
+
+      .main-col {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+        position: relative;
+      }
+      .canvas-area {
+        flex: 1;
+        position: relative;
+        overflow: hidden;
+        background:
+          linear-gradient(var(--grid) 1px, transparent 1px),
+          linear-gradient(90deg, var(--grid) 1px, transparent 1px), #fafbfe;
+        background-size: 24px 24px;
+      }
+      .world {
+        position: absolute;
+        inset: 0;
+        transform-origin: 40% 40%;
+        transition: transform 0.9s cubic-bezier(0.22, 1, 0.36, 1);
+      }
+      .note-title {
+        position: absolute;
+        left: 28px;
+        top: 18px;
+        font-size: 20px;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+        opacity: 0;
+        transition: opacity 0.4s;
+      }
+      .note-title.show {
+        opacity: 1;
+      }
+      .note-date {
+        position: absolute;
+        left: 28px;
+        top: 44px;
+        font-size: 10px;
+        color: #9ca3af;
+        opacity: 0;
+        transition: opacity 0.4s;
+      }
+      .note-date.show {
+        opacity: 1;
+      }
+
+      .ccard {
+        position: absolute;
+        width: 200px;
+        min-height: 88px;
+        padding: 10px 12px 10px 26px;
+        border-radius: 12px;
+        background: #fff;
+        border: 1.5px solid var(--border);
+        box-shadow: 0 6px 18px rgba(15, 23, 42, 0.06);
+        opacity: 0;
+        transform: scale(0.88) translateY(10px);
+        transition:
+          opacity 0.4s,
+          transform 0.45s cubic-bezier(0.22, 1, 0.36, 1),
+          border-color 0.25s,
+          box-shadow 0.25s;
+      }
+      .ccard.show {
+        opacity: 1;
+        transform: none;
+      }
+      .ccard.active {
+        border-color: var(--violet);
+        box-shadow:
+          0 0 0 2.5px rgba(124, 58, 237, 0.15),
+          0 10px 24px rgba(124, 58, 237, 0.08);
+      }
+      .ccard .acc {
+        position: absolute;
+        left: 0;
+        top: 10px;
+        bottom: 10px;
+        width: 3px;
+        border-radius: 0 3px 3px 0;
+      }
+      .ccard-grip {
+        position: absolute;
+        left: 6px;
+        top: 12px;
+        background: transparent;
+        border: none;
+        color: #a1a1aa;
+        cursor: grab;
+        padding: 2px;
+        border-radius: 4px;
+        display: flex;
+        align-items: center;
+        opacity: 0;
+        transition:
+          opacity 0.25s,
+          color 0.2s;
+      }
+      .ccard-grip:hover {
+        background: #f3f4f6;
+        color: #4b5563;
+      }
+      .ccard:hover .ccard-grip,
+      .ccard.active .ccard-grip {
+        opacity: 1;
+      }
+
+      .port {
+        position: absolute;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--blue);
+        border: 2.2px solid #fff;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+        cursor: crosshair;
+        z-index: 10;
+        opacity: 0;
+        transition: opacity 0.25s;
+      }
+      .port.left {
+        left: -4px;
+        top: calc(50% - 4px);
+      }
+      .port.right {
+        right: -4px;
+        top: calc(50% - 4px);
+      }
+      .ccard:hover .port,
+      .ccard.active .port {
+        opacity: 1;
+      }
+
+      .resize-handle {
+        position: absolute;
+        right: 2px;
+        bottom: 2px;
+        width: 6px;
+        height: 6px;
+        border-right: 1.8px solid #a1a1aa;
+        border-bottom: 1.8px solid #a1a1aa;
+        cursor: nwse-resize;
+        opacity: 0;
+        transition: opacity 0.25s;
+      }
+      .ccard:hover .resize-handle,
+      .ccard.active .resize-handle {
+        opacity: 1;
+      }
+
+      .ccard h4 {
+        font-size: 12px;
+        font-weight: 700;
+        margin-bottom: 4px;
+      }
+      .ccard p {
+        font-size: 11px;
+        line-height: 1.4;
+        color: var(--muted);
+        min-height: 2.6em;
+      }
+      .caret {
+        display: inline-block;
+        width: 1.5px;
+        height: 0.95em;
+        background: var(--coral);
+        margin-left: 1px;
+        vertical-align: text-bottom;
+        animation: caret 0.8s step-end infinite;
+      }
+      @keyframes caret {
+        50% {
+          opacity: 0;
+        }
+      }
+
+      /* Interactive Todo checklist styling inside cards */
+      .md-header {
+        font-size: 12px;
+        font-weight: 750;
+        color: var(--ink);
+        margin-bottom: 6px;
+        padding-left: 6px;
+      }
+      .todo-list {
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+        padding-left: 6px;
+      }
+      .todo-item {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        font-size: 11px;
+        color: var(--ink);
+        cursor: pointer;
+        transition: all 0.2s ease;
+      }
+      .todo-chk {
+        width: 14px;
+        height: 14px;
+        border-radius: 4px;
+        border: 1.5px solid var(--border);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #f3f4f6;
+        transition: all 0.2s ease;
+        position: relative;
+        flex-shrink: 0;
+      }
+      .todo-chk svg {
+        width: 8px !important;
+        height: 8px !important;
+        stroke-width: 3.5px;
+        color: #fff;
+        opacity: 0;
+        transform: scale(0.6);
+        transition: all 0.2s ease;
+      }
+      .todo-item.checked {
+        opacity: 0.55;
+      }
+      .todo-item.checked .label {
+        text-decoration: line-through;
+      }
+      .todo-item.checked .todo-chk {
+        background: var(--violet);
+        border-color: var(--violet);
+      }
+      .todo-item.checked .todo-chk svg {
+        opacity: 1;
+        transform: scale(1);
+      }
+
+      #edges {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+        overflow: visible;
+      }
+      #edges path {
+        fill: none;
+        stroke: var(--blue);
+        stroke-width: 1.6;
+        stroke-opacity: 0.75;
+      }
+      #edges path.permanent {
+        stroke-dasharray: 500;
+        stroke-dashoffset: 500;
+        transition: stroke-dashoffset 0.85s ease;
+      }
+      #edges path.permanent.drawn {
+        stroke-dashoffset: 0;
+      }
+
+      .zoom-pill {
+        position: absolute;
+        top: 12px;
+        right: 12px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 10px;
+        font-weight: 600;
+        padding: 4px 10px;
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.9);
+        border: 1px solid var(--border);
+        color: var(--muted);
+        opacity: 0;
+        transition: opacity 0.3s;
+      }
+      .zoom-pill.on {
+        opacity: 1;
+      }
+
+      /* Keyboard shortcut press HUD indicator */
+      #key-hud {
+        position: absolute;
+        bottom: 20px;
+        left: 24px;
+        z-index: 85;
+        display: flex;
+        gap: 8px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 10px;
+        font-weight: 700;
+        pointer-events: none;
+        opacity: 0;
+        transition: opacity 0.3s;
+      }
+      #key-hud.show {
+        opacity: 1;
+      }
+      .key-badge {
+        padding: 4px 8px;
+        border-radius: 6px;
+        background: rgba(15, 23, 42, 0.85);
+        border: 1px solid rgba(255, 255, 255, 0.15);
+        color: rgba(255, 255, 255, 0.5);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+        transition: all 0.2s ease;
+      }
+      .key-badge.pressed {
+        background: var(--coral);
+        color: #fff;
+        border-color: rgba(255, 90, 54, 0.4);
+        box-shadow: 0 0 10px rgba(255, 90, 54, 0.5);
+        transform: scale(1.06);
+      }
+
+      /* Bottom dock */
+      .dock {
+        position: absolute;
+        bottom: 14px;
+        left: 50%;
+        transform: translateX(-50%);
+        display: flex;
+        align-items: center;
+        gap: 2px;
+        padding: 5px 8px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.94);
+        border: 1px solid var(--border);
+        box-shadow: 0 8px 28px rgba(0, 0, 0, 0.15);
+        z-index: 20;
+        transition: all 0.3s ease;
+      }
+      .dock-btn {
+        width: 32px;
+        height: 32px;
+        border-radius: 999px;
+        border: none;
+        background: transparent;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #6b7280;
+        transition: 0.2s;
+        cursor: pointer;
+      }
+      .dock-btn:hover {
+        background: #f3f4f6;
+        color: var(--ink);
+      }
+      .dock-btn.hot {
+        background: #ede9fe;
+        color: var(--violet);
+        box-shadow: 0 0 0 2px rgba(124, 58, 237, 0.2);
+      }
+      .dock-sep {
+        width: 1px;
+        height: 16px;
+        background: #e5e7eb;
+        margin: 0 4px;
+      }
+
+      @keyframes pulse-glow {
+        0%,
+        100% {
+          box-shadow: 0 0 0 0 rgba(124, 58, 237, 0.4);
+        }
+        50% {
+          box-shadow: 0 0 8px 3px rgba(124, 58, 237, 0.6);
+        }
+      }
+      .pulse-glow {
+        animation: pulse-glow 2s infinite;
+      }
+
+      /* ── SETTINGS DIALOG ── */
+      .settings-modal {
+        width: min(720px, 94%);
+        height: min(480px, 78vh);
+        background: #fff;
+        border-radius: 16px;
+        display: flex;
+        border: 1px solid var(--border);
+        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.22);
+        overflow: hidden;
+        transform: scale(0.94) translateY(10px);
+        transition: 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+      }
+      .modal-bg.open .settings-modal {
+        transform: none;
+      }
+      .settings-sidebar {
+        width: 180px;
+        shrink-to-fit: 0;
+        border-right: 1px solid var(--border);
+        background: #f9fafb;
+        display: flex;
+        flex-direction: column;
+      }
+      .settings-sidebar-header {
+        padding: 14px 16px 10px;
+        font-size: 13px;
+        font-weight: 700;
+        color: var(--ink);
+        border-bottom: 1px solid #f3f4f6;
+      }
+      .settings-nav {
+        flex: 1;
+        padding: 8px;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+      .settings-nav-btn {
+        border: none;
+        background: transparent;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        border-radius: 8px;
+        font-size: 12px;
+        text-align: left;
+        font-weight: 550;
+        color: var(--muted);
+        cursor: pointer;
+        transition: all 0.2s;
+      }
+      .settings-nav-btn:hover {
+        background: #f3f4f6;
+        color: var(--ink);
+      }
+      .settings-nav-btn.active {
+        background: #ede9fe;
+        color: var(--violet);
+      }
+
+      .settings-content {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+        background: #fff;
+      }
+      .settings-content-header {
+        padding: 12px 18px;
+        border-bottom: 1px solid #f3f4f6;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 13px;
+        font-weight: 700;
+        color: var(--ink);
+      }
+      .btn-close-settings {
+        border: none;
+        background: transparent;
+        cursor: pointer;
+        color: var(--muted);
+        padding: 4px;
+        border-radius: 6px;
+        display: flex;
+        align-items: center;
+      }
+      .btn-close-settings:hover {
+        background: #f3f4f6;
+        color: var(--ink);
+      }
+
+      .settings-pane {
+        flex: 1;
+        overflow-y: auto;
+        padding: 18px;
+      }
+      .setting-section {
+        margin-bottom: 20px;
+      }
+      .section-title {
+        font-size: 10px;
+        font-weight: 700;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        margin-bottom: 12px;
+      }
+      .setting-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 10px 0;
+        border-bottom: 1px solid #f9fafb;
+      }
+      .setting-row:last-child {
+        border-bottom: none;
+      }
+      .setting-label {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--ink);
+      }
+      .setting-desc {
+        font-size: 10.5px;
+        color: var(--muted);
+        margin-top: 2px;
+      }
+
+      .theme-picker {
+        display: inline-flex;
+        background: #f3f4f6;
+        padding: 2px;
+        border-radius: 8px;
+        font-size: 11px;
+      }
+      .theme-picker span {
+        padding: 4px 10px;
+        border-radius: 6px;
+        cursor: pointer;
+        color: var(--muted);
+        font-weight: 600;
+      }
+      .theme-picker span.active {
+        background: #fff;
+        color: var(--ink);
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06);
+      }
+
+      /* Plugins List inside Settings */
+      .plugins-list {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .plugin-row {
+        border: 1px solid #e5e7eb;
+        border-radius: 10px;
+        padding: 10px 12px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        transition: background 0.2s;
+      }
+      .plugin-row:hover {
+        background: #fafafa;
+      }
+      .plugin-info {
+        flex: 1;
+        padding-right: 12px;
+      }
+      .plugin-name-row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-bottom: 2px;
+      }
+      .plugin-name {
+        font-size: 12px;
+        font-weight: 700;
+        color: var(--ink);
+      }
+      .plugin-version {
+        font-size: 9px;
+        padding: 1px 4px;
+        border-radius: 4px;
+        background: #eef2ff;
+        color: #4f46e5;
+        border: 1px solid #e0e7ff;
+        font-weight: 600;
+      }
+      .plugin-desc {
+        font-size: 10.5px;
+        color: var(--muted);
+      }
+
+      /* Toggle Switch */
+      .toggle-switch {
+        width: 32px;
+        height: 18px;
+        border-radius: 99px;
+        background: #e5e7eb;
+        position: relative;
+        border: none;
+        cursor: pointer;
+        transition: background 0.2s ease;
+      }
+      .toggle-switch.active {
+        background: var(--blue);
+      }
+      .toggle-slider {
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        background: #fff;
+        position: absolute;
+        top: 2px;
+        left: 2px;
+        transition: transform 0.2s;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+      }
+      .toggle-switch.active .toggle-slider {
+        transform: translateX(14px);
+      }
+
+      /* ── COMMAND PALETTE ── */
+      .palette-bg {
+        position: absolute;
+        inset: 0;
+        z-index: 50;
+        background: rgba(15, 23, 42, 0.4);
+        backdrop-filter: blur(6px);
+        display: flex;
+        justify-content: center;
+        padding-top: 12%;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.3s;
+      }
+      .palette-bg.open {
+        opacity: 1;
+        pointer-events: auto;
+      }
+      .palette {
+        width: min(480px, 92%);
+        background: #fff;
+        border-radius: 14px;
+        border: 1px solid var(--border);
+        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.2);
+        overflow: hidden;
+        transform: scale(0.94) translateY(-10px);
+        transition: 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+      }
+      .palette-bg.open .palette {
+        transform: none;
+      }
+      .palette-input {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 12px 14px;
+        border-bottom: 1px solid #f3f4f6;
+        font-size: 14px;
+        color: #9ca3af;
+      }
+      .palette-input .typed {
+        color: var(--ink);
+        font-weight: 500;
+      }
+      .palette-list {
+        padding: 6px;
+      }
+      .palette-item {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 9px 10px;
+        border-radius: 8px;
+        font-size: 13px;
+        color: #374151;
+        opacity: 0;
+        transform: translateY(4px);
+        transition: 0.25s;
+      }
+      .palette-item.show {
+        opacity: 1;
+        transform: none;
+      }
+      .palette-item.sel {
+        background: #f5f3ff;
+        color: var(--violet);
+        font-weight: 600;
+      }
+      .palette-item .k {
+        margin-left: auto;
+        font-size: 10px;
+        color: #9ca3af;
+        font-family: "JetBrains Mono", monospace;
+      }
+
+      /* ── GRAPH ── */
+      #sc-graph {
+        background: #0e1018;
+        display: flex;
+        flex-direction: column;
+      }
+      .graph-bar {
+        height: 40px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 16px;
+        border-bottom: 1px solid #1f2233;
+        color: #94a3b8;
+        font-size: 12px;
+      }
+      .graph-bar strong {
+        color: #e2e8f0;
+        font-weight: 650;
+      }
+      .graph-body {
+        flex: 1;
+        position: relative;
+        overflow: hidden;
+      }
+      #graph-svg {
+        width: 100%;
+        height: 100%;
+      }
+      .g-node {
+        opacity: 0;
+        transition: opacity 0.4s;
+      }
+      .g-node.show {
+        opacity: 1;
+      }
+      .g-label {
+        font-family: Inter, sans-serif;
+        font-size: 11px;
+        fill: #cbd5e1;
+        font-weight: 600;
+      }
+
+      /* ── END CARD ── */
+      #sc-end {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        background: linear-gradient(160deg, #090a0f, #14162a, #0b0c12);
+        color: #fff;
+      }
+      #sc-end h1 {
+        font-size: 32px;
+        font-weight: 800;
+        letter-spacing: -0.02em;
+        opacity: 0;
+        transform: translateY(14px);
+        transition: 0.6s;
+      }
+      #sc-end h1.in {
+        opacity: 1;
+        transform: none;
+      }
+      #sc-end p {
+        margin-top: 12px;
+        font-size: 14px;
+        color: #94a3b8;
+        opacity: 0;
+        transition: 0.6s 0.15s;
+      }
+      #sc-end p.in {
+        opacity: 1;
+      }
+      #sc-end .cta {
+        margin-top: 28px;
+        padding: 12px 28px;
+        border-radius: 14px;
+        background: var(--coral);
+        color: #fff;
+        font-weight: 750;
+        font-size: 14px;
+        box-shadow: 0 10px 36px rgba(255, 90, 54, 0.45);
+        opacity: 0;
+        transform: scale(0.9);
+        transition: 0.5s 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+      }
+      #sc-end .cta.in {
+        opacity: 1;
+        transform: none;
+      }
+      #sc-end .feats {
+        margin-top: 36px;
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        justify-content: center;
+        opacity: 0;
+        transition: 0.5s 0.45s;
+      }
+      #sc-end .feats.in {
+        opacity: 1;
+      }
+      #sc-end .feats span {
+        font-size: 11px;
+        font-weight: 600;
+        padding: 6px 12px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.06);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        color: #cbd5e1;
+      }
+
+      /* ── CURSOR ── */
+      #cursor {
+        position: absolute;
+        width: 22px;
+        height: 22px;
+        z-index: 90;
+        pointer-events: none;
+        opacity: 0;
+        transition: opacity 0.2s;
+        filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.3));
+        will-change: left, top, transform;
+      }
+      #cursor.show {
+        opacity: 1;
+      }
+      #cursor.clicking {
+        transform: scale(0.8);
+      }
+      #cursor.grabbing svg {
+        transform: rotate(-10deg) scale(0.9);
+      }
+      #cursor svg {
+        display: block;
+        width: 100%;
+        height: 100%;
+        transition: transform 0.15s ease;
+      }
+
+      .ripple {
+        position: absolute;
+        width: 16px;
+        height: 16px;
+        margin: -8px 0 0 -8px;
+        border-radius: 50%;
+        border: 2px solid var(--coral);
+        pointer-events: none;
+        z-index: 89;
+        animation: ripple 0.5s ease-out forwards;
+      }
+      @keyframes ripple {
+        to {
+          transform: scale(3);
+          opacity: 0;
+        }
+      }
+
+      /* Toast */
+      .toast {
+        position: absolute;
+        top: 52px;
+        left: 50%;
+        transform: translateX(-50%) translateY(-10px);
+        z-index: 60;
+        padding: 8px 16px;
+        border-radius: 999px;
+        background: rgba(15, 23, 42, 0.9);
+        color: #fff;
+        font-size: 11px;
+        font-weight: 600;
+        opacity: 0;
+        transition: 0.35s;
+        pointer-events: none;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+      }
+      .toast.show {
+        opacity: 1;
+        transform: translateX(-50%) translateY(0);
+      }
+
+      /* Draggable Corner handles */
+      .resize-handle {
+        position: absolute;
+        right: 4px;
+        bottom: 4px;
+        width: 14px;
+        height: 14px;
+        cursor: se-resize;
+        color: #cbd5e1;
+        transition:
+          color 0.15s,
+          transform 0.15s;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        opacity: 0.6;
+        pointer-events: none;
+      }
+      .ccard:hover .resize-handle {
+        color: var(--muted);
+        opacity: 1;
+        transform: scale(1.1);
+      }
+
+      /* Export button style inside HUD controls */
+      #btn-export-mp4 {
+        background: rgba(255, 255, 255, 0.08) !important;
+        border: 1px solid rgba(255, 255, 255, 0.1) !important;
+        color: #cbd5e1 !important;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+      #btn-export-mp4:hover {
+        background: rgba(255, 255, 255, 0.15) !important;
+        color: #fff !important;
+        box-shadow: 0 0 12px rgba(255, 255, 255, 0.1);
+      }
+
+      /* Card Connection Ports */
+      .ccard .port {
+        position: absolute;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--violet);
+        border: 1.5px solid #fff;
+        top: 50%;
+        transform: translateY(-50%);
+        opacity: 0;
+        transition:
+          opacity 0.25s,
+          transform 0.2s,
+          background-color 0.15s;
+        z-index: 10;
+        cursor: crosshair;
+        box-shadow: 0 0 6px rgba(124, 58, 237, 0.3);
+      }
+      .ccard .port.left {
+        left: -5px;
+      }
+      .ccard .port.right {
+        right: -5px;
+      }
+      .ccard:hover .port {
+        opacity: 1;
+        transform: translateY(-50%) scale(1.3);
+      }
+      .ccard .port:hover {
+        background: var(--coral);
+        transform: translateY(-50%) scale(1.5);
+      }
+    </style>
+  </head>
+  <body>
+    <div id="loader">
+      <div class="orb"></div>
+      <div class="loader-brand">SamarBook</div>
+      <div class="loader-sub" id="loader-text">Preparing Cosmic Canvas trailer…</div>
+      <div class="bar"><i id="loader-fill"></i></div>
+    </div>
+
+    <div id="stage">
+      <!-- BACKGROUND BLOBS -->
+      <div class="blob b1"></div>
+      <div class="blob b2"></div>
+      <div class="blob b3"></div>
+      <div id="progress"></div>
+
+      <!-- HUD CAPTION -->
+      <div id="caption"><span class="dot"></span><span id="cap-text">Trailer</span></div>
+
+      <!-- GLASSMORPHIC MUSIC WIDGET -->
+      <div id="music-widget">
+        <button id="btn-music" type="button">
+          <i data-lucide="music" class="size-4"></i>
+          <span>Play Music</span>
+        </button>
+        <input type="range" id="vol-music" min="0" max="1" step="0.05" value="0.3" />
+      </div>
+
+      <!-- CINEMATIC START SCREEN OVERLAY -->
+      <div id="play-overlay" class="hidden">
+        <div class="overlay-card">
+          <div class="overlay-logo">S</div>
+          <h2>SamarBook</h2>
+          <p>Interactive spatial docs and notes. Experience the trailer loop with audio enabled.</p>
+          <button id="btn-start-cinematic" type="button">
+            <i data-lucide="play" class="size-4 fill-current"></i>
+            Play Cinematic Trailer
+          </button>
+          <div class="subtext">
+            <i data-lucide="volume-2" class="size-3.5"></i>
+            Sound effects & background music
+          </div>
+        </div>
+      </div>
+
+      <!-- MAIN BROWSER DEVICE WINDOW -->
+      <div id="device">
+        <div class="chrome">
+          <div class="traffic"><i class="r"></i><i class="y"></i><i class="g"></i></div>
+          <div class="chrome-url" id="url-bar">samarbook.app</div>
+          <div class="chrome-title">COSMIC CANVAS</div>
+        </div>
+        <div id="screen">
+          <!-- SCENE 0: Title -->
+          <div class="scene" id="sc-title">
+            <div class="logo-mark" id="title-logo">S</div>
+            <h1 id="title-h">SamarBook</h1>
+            <p id="title-p">Think spatially. Write locally.</p>
+            <div class="tagline" id="title-tags">
+              <span>Canvas</span><span>Notebooks</span><span>Wikilinks</span><span>Graph</span
+              ><span>Plugins</span>
+            </div>
+          </div>
+
+          <!-- SCENE 1: Homepage -->
+          <div class="scene" id="sc-home">
+            <div class="home-mesh">
+              <div class="m m1"></div>
+              <div class="m m2"></div>
+            </div>
+            <div class="home-inner">
+              <div class="home-top">
+                <div>
+                  <h1 id="greet">Good afternoon 👋</h1>
+                  <p>Everything in one place.</p>
+                </div>
+                <div class="search-pill">
+                  <i data-lucide="search" class="size-4 text-slate-400"></i>
+                  <span>Search notes, notebooks, tags…</span>
+                  <kbd>⌘K</kbd>
+                </div>
+              </div>
+              <div class="qa-grid">
+                <div class="qa" id="qa-nb" data-target="new-notebook">
+                  <div class="icon" style="background: #eef2ff">
+                    <i data-lucide="book-open" class="size-5 text-indigo-500"></i>
+                  </div>
+                  <strong>New Notebook</strong>
+                  <span>Organize notes</span>
+                </div>
+                <div class="qa">
+                  <div class="icon" style="background: #f0fdf4">
+                    <i data-lucide="upload-cloud" class="size-5 text-emerald-500"></i>
+                  </div>
+                  <strong>Import</strong>
+                  <span>.sbook · .smbk</span>
+                </div>
+                <div class="qa">
+                  <div class="icon" style="background: #faf5ff">
+                    <i data-lucide="download-cloud" class="size-5 text-violet-500"></i>
+                  </div>
+                  <strong>Backup</strong>
+                  <span>Export workspace</span>
+                </div>
+                <div class="qa">
+                  <div class="icon" style="background: #fff7ed">
+                    <i data-lucide="layout-template" class="size-5 text-orange-500"></i>
+                  </div>
+                  <strong>Templates</strong>
+                  <span>Prebuilt canvases</span>
+                </div>
+              </div>
+              <div class="sec-h">
+                <h2>Notebooks</h2>
+                <a>View all</a>
+              </div>
+              <div class="nb-grid" id="nb-grid">
+                <div class="nb" id="nb-physics">
+                  <div class="nb-ico" style="background: #ede9fe">
+                    <i data-lucide="book" class="size-6 text-violet-600"></i>
+                  </div>
+                  <div class="nb-name">Physics</div>
+                  <div class="nb-meta">4 notes · 12 KB</div>
+                </div>
+                <div class="nb" id="nb-project">
+                  <div class="nb-ico" style="background: #e0e7ff">
+                    <i data-lucide="book" class="size-6 text-indigo-600"></i>
+                  </div>
+                  <div class="nb-name">Side Project</div>
+                  <div class="nb-meta">7 notes · 48 KB</div>
+                </div>
+                <div class="nb" id="nb-new" style="display: none">
+                  <div class="nb-ico" style="background: #dcfce7">
+                    <i data-lucide="book" class="size-6 text-emerald-600"></i>
+                  </div>
+                  <div class="nb-name">Cosmic Ideas</div>
+                  <div class="nb-meta">0 notes · 0 B</div>
+                </div>
+              </div>
+              <div class="home-bottom">
+                <div class="panel" id="panel-recent">
+                  <div class="panel-h">Recent Notes</div>
+                  <div class="panel-row">
+                    <i data-lucide="file-text" class="size-4 text-muted-foreground"></i> Orbital
+                    mechanics<span class="time">2h ago</span>
+                  </div>
+                  <div class="panel-row">
+                    <i data-lucide="file-text" class="size-4 text-muted-foreground"></i> Plugin SDK
+                    notes<span class="time">Yesterday</span>
+                  </div>
+                  <div class="panel-row">
+                    <i data-lucide="file-text" class="size-4 text-muted-foreground"></i> Canvas
+                    graph draft<span class="time">3d ago</span>
+                  </div>
+                </div>
+                <div class="panel" id="panel-pinned">
+                  <div class="panel-h">Pinned</div>
+                  <div class="panel-row">
+                    <i data-lucide="pin" class="size-4 text-amber-500 fill-current"></i> Weekly
+                    roadmap
+                  </div>
+                  <div class="panel-row">
+                    <i data-lucide="pin" class="size-4 text-amber-500 fill-current"></i> Reading
+                    list
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- DIALOGS -->
+            <div class="modal-bg" id="dlg-nb">
+              <div class="modal">
+                <h3>New notebook</h3>
+                <p>Organize notes into a focused workspace.</p>
+                <div
+                  style="
+                    margin-top: 12px;
+                    margin-bottom: 6px;
+                    font-size: 11px;
+                    font-weight: 700;
+                    color: var(--ink);
+                  "
+                >
+                  Name
+                </div>
+                <input id="dlg-nb-input" type="text" placeholder="e.g. Physics" readonly />
+                <div class="actions">
+                  <button class="btn-cancel" type="button">Cancel</button>
+                  <button class="btn-ok" type="button" id="dlg-nb-ok">Create</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- SCENE 2: Notebook home -->
+          <div class="scene" id="sc-notebook">
+            <div class="nb-header">
+              <div class="mark"><i data-lucide="book" class="size-6 text-violet-600"></i></div>
+              <div>
+                <div class="label">Notebook</div>
+                <h1 id="nb-title">Cosmic Ideas</h1>
+              </div>
+            </div>
+            <div class="nb-stats" id="nb-stats">0 notes · 1 folder</div>
+            <div class="nb-actions">
+              <button class="btn-pri" id="btn-new-note" type="button">
+                <i data-lucide="file-plus" class="size-4"></i> New note
+              </button>
+              <button class="btn-sec" id="btn-new-folder" type="button">
+                <i data-lucide="folder-plus" class="size-4"></i> New folder
+              </button>
+            </div>
+            <div class="sec-h" style="margin-bottom: 8px">
+              <h2
+                style="
+                  font-size: 11px;
+                  font-weight: 650;
+                  color: #9ca3af;
+                  text-transform: uppercase;
+                  letter-spacing: 0.05em;
+                "
+              >
+                Folders
+              </h2>
+            </div>
+            <div class="folder-grid" id="folder-grid">
+              <div class="folder-chip" id="folder-notes">
+                <i data-lucide="folder" class="size-4 text-amber-500"></i>
+                Notes
+                <span style="margin-left: auto; font-size: 11px; color: #9ca3af" id="folder-count"
+                  >0</span
+                >
+              </div>
+              <div class="folder-chip" id="folder-research" style="display: none">
+                <i data-lucide="folder" class="size-4 text-amber-500"></i>
+                Research <span style="margin-left: auto; font-size: 11px; color: #9ca3af">0</span>
+              </div>
+            </div>
+            <div class="sec-h" style="margin-bottom: 8px">
+              <h2
+                style="
+                  font-size: 11px;
+                  font-weight: 650;
+                  color: #9ca3af;
+                  text-transform: uppercase;
+                  letter-spacing: 0.05em;
+                "
+              >
+                Recent notes
+              </h2>
+            </div>
+            <div class="notes-list" id="notes-list">
+              <div class="empty" id="notes-empty">
+                No notes yet. Click <b>New note</b> to start writing.
+              </div>
+              <div class="row" id="note-row" style="display: none">
+                <i data-lucide="file-text" class="size-4 text-slate-400"></i>
+                <span id="note-row-name">Canvas Walkthrough</span>
+                <span class="time">Just now</span>
+              </div>
+            </div>
+
+            <!-- Note/Folder Modal dialogs -->
+            <div class="modal-bg" id="dlg-note">
+              <div class="modal">
+                <h3>New note</h3>
+                <p>A free-form canvas of connected blocks.</p>
+                <div
+                  style="
+                    margin-top: 12px;
+                    margin-bottom: 6px;
+                    font-size: 11px;
+                    font-weight: 700;
+                    color: var(--ink);
+                  "
+                >
+                  Note Title
+                </div>
+                <input id="dlg-note-input" type="text" placeholder="Untitled" readonly />
+                <div class="actions">
+                  <button class="btn-cancel" type="button">Cancel</button>
+                  <button class="btn-ok" type="button" id="dlg-note-ok">Create</button>
+                </div>
+              </div>
+            </div>
+            <div class="modal-bg" id="dlg-folder">
+              <div class="modal">
+                <h3>New folder</h3>
+                <p>Group notes inside this notebook.</p>
+                <div
+                  style="
+                    margin-top: 12px;
+                    margin-bottom: 6px;
+                    font-size: 11px;
+                    font-weight: 700;
+                    color: var(--ink);
+                  "
+                >
+                  Folder Name
+                </div>
+                <input id="dlg-folder-input" type="text" placeholder="e.g. Chapter 1" readonly />
+                <div class="actions">
+                  <button class="btn-cancel" type="button">Cancel</button>
+                  <button class="btn-ok" type="button">Create</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- SCENE 3: Canvas app (sidebar, canvas, settings modal, command palette) -->
+          <div class="scene" id="sc-app">
+            <!-- Explorer view sidebar -->
+            <aside class="sidebar">
+              <div class="sb-head">
+                <button class="sb-back-btn" id="sb-back">
+                  <i data-lucide="arrow-left" class="size-4"></i>
+                </button>
+                <svg
+                  class="size-5 shrink-0"
+                  viewBox="0 0 28 28"
+                  fill="none"
+                  xmlns="http://www.w3.org/2000/svg"
+                >
+                  <rect
+                    width="28"
+                    height="28"
+                    rx="7"
+                    fill="#090A0F"
+                    stroke="#1C1E26"
+                    strokeWidth="1.5"
+                  />
+                  <path
+                    d="M9 9C9 13.5 11.5 16.5 14 19"
+                    stroke="#FF5A36"
+                    strokeWidth="1.2"
+                    strokeLinecap="round"
+                    opacity="0.85"
+                  />
+                  <path
+                    d="M19 9C19 13.5 16.5 16.5 14 19"
+                    stroke="#39FF14"
+                    strokeWidth="1.2"
+                    strokeLinecap="round"
+                    opacity="0.85"
+                  />
+                  <circle cx="9" cy="9" r="3.2" fill="#FF5A36" stroke="#090A0F" strokeWidth="0.8" />
+                  <circle
+                    cx="19"
+                    cy="9"
+                    r="3.2"
+                    fill="#39FF14"
+                    stroke="#090A0F"
+                    strokeWidth="0.8"
+                  />
+                  <circle
+                    cx="14"
+                    cy="19"
+                    r="3.2"
+                    fill="#3A86FF"
+                    stroke="#090A0F"
+                    strokeWidth="0.8"
+                  />
+                </svg>
+                <span class="sb-title">Cosmic Ideas</span>
+              </div>
+
+              <div class="sb-explore-header">
+                <span>EXPLORE</span>
+                <button class="sb-add-btn" id="sb-add-folder" title="New Folder">
+                  <i data-lucide="plus" class="size-3"></i>
+                </button>
+              </div>
+
+              <div class="sb-tree">
+                <!-- Folder: Notes -->
+                <div class="sb-folder-node">
+                  <div class="sb-row folder" id="sb-folder-notes">
+                    <i data-lucide="chevron-down" class="chev size-3.5"></i>
+                    <i data-lucide="folder-open" class="icon size-3.5 text-amber-500"></i>
+                    <span class="label">Notes</span>
+                  </div>
+
+                  <!-- Notes inside Notes Folder -->
+                  <div class="sb-folder-contents" id="sb-notes-contents">
+                    <div class="sb-row note active" id="sb-row-walkthrough">
+                      <i data-lucide="file-text" class="icon size-3.5 text-slate-400"></i>
+                      <span class="label">Canvas Walkthrough</span>
+                    </div>
+                    <div class="sb-row note">
+                      <i data-lucide="file-text" class="icon size-3.5 text-slate-400"></i>
+                      <span class="label">Canvas graph draft</span>
+                    </div>
+                    <div class="sb-row note">
+                      <i data-lucide="file-text" class="icon size-3.5 text-slate-400"></i>
+                      <span class="label">Weekly roadmap</span>
+                    </div>
+                    <div class="sb-row note" id="sb-row-plugin-ideas" style="display: none">
+                      <i data-lucide="file-text" class="icon size-3.5 text-slate-400"></i>
+                      <span class="label">Plugin ideas</span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Folder: Documentation -->
+                <div class="sb-folder-node">
+                  <div class="sb-row folder">
+                    <i data-lucide="chevron-right" class="chev size-3.5"></i>
+                    <i data-lucide="folder" class="icon size-3.5 text-amber-500"></i>
+                    <span class="label">Documentation</span>
+                  </div>
+                </div>
+
+                <!-- Folder: Research (Dynamic creation row) -->
+                <div class="sb-folder-node" id="sb-folder-research-node" style="display: none">
+                  <div class="sb-row folder" id="sb-folder-research-row" style="cursor: pointer">
+                    <i
+                      data-lucide="chevron-right"
+                      class="chev size-3.5"
+                      id="sb-research-chev-right"
+                    ></i>
+                    <i
+                      data-lucide="chevron-down"
+                      class="chev size-3.5"
+                      id="sb-research-chev-down"
+                      style="display: none"
+                    ></i>
+                    <i
+                      data-lucide="folder"
+                      class="icon size-3.5 text-amber-500"
+                      id="sb-research-icon-closed"
+                    ></i>
+                    <i
+                      data-lucide="folder-open"
+                      class="icon size-3.5 text-amber-500"
+                      id="sb-research-icon-open"
+                      style="display: none"
+                    ></i>
+                    <span class="label">Research</span>
+                  </div>
+                  <div
+                    class="sb-folder-contents"
+                    id="sb-research-contents"
+                    style="padding-left: 12px; display: none"
+                  >
+                    <div class="sb-row note" style="opacity: 0">
+                      <i data-lucide="file-text" class="icon size-3.5 text-slate-400"></i>
+                      <span class="label">Orbital mechanics</span>
+                    </div>
+                    <div class="sb-row note" style="opacity: 0">
+                      <i data-lucide="file-text" class="icon size-3.5 text-slate-400"></i>
+                      <span class="label">Reading list</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </aside>
+
+            <!-- Main column -->
+            <div class="main-col">
+              <div class="canvas-area" id="canvas-area">
+                <div class="world" id="world">
+                  <div class="note-title" id="canvas-title">Canvas Walkthrough</div>
+                  <div class="note-date" id="canvas-date">Today · Cosmic Ideas</div>
+                  <svg id="edges"></svg>
+
+                  <!-- Card 1 (Markdown Todo List) -->
+                  <div class="ccard" id="card1" style="left: 48px; top: 90px">
+                    <div class="acc" style="background: #ff5a36"></div>
+                    <button class="ccard-grip">
+                      <i data-lucide="grip-vertical" class="size-3.5"></i>
+                    </button>
+                    <div id="ct1"></div>
+                    <div class="port left"></div>
+                    <div class="port right"></div>
+                    <div class="resize-handle"></div>
+                  </div>
+
+                  <!-- Card 2 (Markdown Bold/Code) -->
+                  <div class="ccard" id="card2" style="left: 290px; top: 70px">
+                    <div class="acc" style="background: #3a86ff"></div>
+                    <button class="ccard-grip">
+                      <i data-lucide="grip-vertical" class="size-3.5"></i>
+                    </button>
+                    <div id="ct2"></div>
+                    <div class="port left"></div>
+                    <div class="port right"></div>
+                    <div class="resize-handle"></div>
+                  </div>
+
+                  <!-- Card 3 (Variables) -->
+                  <div class="ccard" id="card3" style="left: 160px; top: 250px">
+                    <div class="acc" style="background: #8b5cf6"></div>
+                    <button class="ccard-grip">
+                      <i data-lucide="grip-vertical" class="size-3.5"></i>
+                    </button>
+                    <div id="ct3"></div>
+                    <div class="port left"></div>
+                    <div class="port right"></div>
+                    <div class="resize-handle"></div>
+                  </div>
+
+                  <!-- Card 4 (Wikilinks) -->
+                  <div class="ccard" id="card4" style="left: 420px; top: 230px">
+                    <div class="acc" style="background: #10b981"></div>
+                    <button class="ccard-grip">
+                      <i data-lucide="grip-vertical" class="size-3.5"></i>
+                    </button>
+                    <div id="ct4"></div>
+                    <div class="port left"></div>
+                    <div class="port right"></div>
+                    <div class="resize-handle"></div>
+                  </div>
+                </div>
+
+                <div class="zoom-pill" id="zoom-pill">100%</div>
+
+                <!-- Keyboard Shortcut HUD -->
+                <div id="key-hud">
+                  <span class="key-badge" id="hud-alt">ALT</span>
+                  <span class="key-badge" id="hud-ctrl">CTRL</span>
+                </div>
+
+                <!-- Floating Bottom Dock -->
+                <div class="dock" id="dock">
+                  <div class="dock-btn" id="dock-home" title="Home">
+                    <i data-lucide="home" class="size-4"></i>
+                  </div>
+                  <div class="dock-btn" id="dock-nb" title="New notebook">
+                    <i data-lucide="plus-circle" class="size-4"></i>
+                  </div>
+                  <div class="dock-btn" id="dock-search" title="Search (Ctrl K)">
+                    <i data-lucide="search" class="size-4"></i>
+                  </div>
+                  <div class="dock-btn hot" id="dock-canvas" title="Canvas">
+                    <i data-lucide="layout-grid" class="size-4"></i>
+                  </div>
+                  <div class="dock-btn" id="dock-graph" title="Graph">
+                    <i data-lucide="network" class="size-4"></i>
+                  </div>
+
+                  <!-- Plugin Contributed dock area -->
+                  <div
+                    id="plugin-dock-buttons"
+                    style="display: none; align-items: center; gap: 2px"
+                  >
+                    <div class="dock-sep"></div>
+                    <div
+                      class="dock-btn pulse-glow"
+                      id="dock-constellation"
+                      title="Constellation Circle Layout"
+                      style="color: var(--violet); background: rgba(124, 58, 237, 0.1)"
+                    >
+                      <i data-lucide="sparkles" class="size-4"></i>
+                    </div>
+                  </div>
+
+                  <div class="dock-sep"></div>
+                  <div class="dock-btn" title="Variables">
+                    <i data-lucide="variable" class="size-4"></i>
+                  </div>
+                  <div class="dock-btn" title="Help">
+                    <i data-lucide="help-circle" class="size-4"></i>
+                  </div>
+                  <div class="dock-btn" id="dock-settings" title="Settings">
+                    <i data-lucide="settings" class="size-4"></i>
+                  </div>
+                </div>
+              </div>
+
+              <!-- SETTINGS OVERLAY DIALOG -->
+              <div class="modal-bg" id="dlg-settings">
+                <div class="settings-modal">
+                  <aside class="settings-sidebar">
+                    <div class="settings-sidebar-header">Settings</div>
+                    <nav class="settings-nav">
+                      <button class="settings-nav-btn active" id="tab-btn-general" type="button">
+                        <i data-lucide="sliders" class="size-3.5"></i> <span>General</span>
+                      </button>
+                      <button class="settings-nav-btn" id="tab-btn-share" type="button">
+                        <i data-lucide="share-2" class="size-3.5"></i> <span>Share & Export</span>
+                      </button>
+                      <button class="settings-nav-btn" id="tab-btn-plugins" type="button">
+                        <i data-lucide="puzzle" class="size-3.5"></i> <span>Plugins</span>
+                      </button>
+                    </nav>
+                  </aside>
+                  <div class="settings-content">
+                    <header class="settings-content-header">
+                      <span id="settings-title">General</span>
+                      <button class="btn-close-settings" id="btn-close-settings" type="button">
+                        <i data-lucide="x" class="size-4"></i>
+                      </button>
+                    </header>
+
+                    <!-- GENERAL TAB -->
+                    <div class="settings-pane" id="pane-general">
+                      <div class="setting-section">
+                        <div class="section-title">Appearance</div>
+                        <div class="setting-row">
+                          <div>
+                            <div class="setting-label">Theme</div>
+                            <div class="setting-desc">Light, dark, or follow your system.</div>
+                          </div>
+                          <div class="theme-picker">
+                            <span class="active">Light</span>
+                            <span>Dark</span>
+                            <span>System</span>
+                          </div>
+                        </div>
+                      </div>
+                      <div class="setting-section">
+                        <div class="section-title">Canvas</div>
+                        <div class="setting-row">
+                          <div>
+                            <div class="setting-label">Always show block outlines</div>
+                            <div class="setting-desc">
+                              Makes blocks and their link points easier to see.
+                            </div>
+                          </div>
+                          <button class="toggle-switch active">
+                            <span class="toggle-slider"></span>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- SHARE TAB -->
+                    <div class="settings-pane" id="pane-share" style="display: none">
+                      <div class="setting-section">
+                        <div class="section-title">Export Workspace</div>
+                        <div class="setting-row">
+                          <div>
+                            <div class="setting-label">Download Notebook (.sbook)</div>
+                            <div class="setting-desc">
+                              Download all canvas blocks, links, and markdown assets locally.
+                            </div>
+                          </div>
+                          <button class="btn-sec" type="button">
+                            <i data-lucide="download" class="size-3.5"></i> Export
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- PLUGINS TAB -->
+                    <div class="settings-pane" id="pane-plugins" style="display: none">
+                      <div class="setting-section">
+                        <div class="section-title">Registry</div>
+                        <div style="font-size: 11px; color: var(--muted); margin-bottom: 12px">
+                          Toggle on/off layout scripts and command additions in-place.
+                        </div>
+
+                        <div class="plugins-list">
+                          <!-- Constellation -->
+                          <div class="plugin-row">
+                            <div class="plugin-info">
+                              <div class="plugin-name-row">
+                                <span class="plugin-name">Constellation Layout</span>
+                                <span class="plugin-version">v1.0.0</span>
+                              </div>
+                              <div class="plugin-desc">
+                                ✨ Arrange selected cards in a circular constellation layout.
+                              </div>
+                            </div>
+                            <div class="plugin-action">
+                              <button class="toggle-switch" id="toggle-constellation" type="button">
+                                <span class="toggle-slider"></span>
+                              </button>
+                            </div>
+                          </div>
+                          <!-- Waypoints -->
+                          <div class="plugin-row">
+                            <div class="plugin-info">
+                              <div class="plugin-name-row">
+                                <span class="plugin-name">Waypoints Walkthrough</span>
+                                <span class="plugin-version">v1.0.2</span>
+                              </div>
+                              <div class="plugin-desc">
+                                Define step-by-step presentation paths on the canvas.
+                              </div>
+                            </div>
+                            <div class="plugin-action">
+                              <button class="toggle-switch active" type="button">
+                                <span class="toggle-slider"></span>
+                              </button>
+                            </div>
+                          </div>
+                          <!-- Variables -->
+                          <div class="plugin-row">
+                            <div class="plugin-info">
+                              <div class="plugin-name-row">
+                                <span class="plugin-name">Variables expansion</span>
+                                <span class="plugin-version">v1.1.0</span>
+                              </div>
+                              <div class="plugin-desc">
+                                Evaluates inline variables and expressions dynamically.
+                              </div>
+                            </div>
+                            <div class="plugin-action">
+                              <button class="toggle-switch active" type="button">
+                                <span class="toggle-slider"></span>
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- COMMAND PALETTE OVERLAY -->
+              <div class="palette-bg" id="palette">
+                <div class="palette">
+                  <div class="palette-input">
+                    <i data-lucide="search" class="size-4"></i>
+                    <span
+                      >Search… <span class="typed" id="palette-q"></span><span class="caret"></span
+                    ></span>
+                  </div>
+                  <div class="palette-list">
+                    <div class="palette-item" id="pi1">
+                      <i data-lucide="network" class="size-4"></i> Open Graph view
+                      <span class="k">G</span>
+                    </div>
+                    <div class="palette-item" id="pi2">
+                      <i data-lucide="file-text" class="size-4"></i> Canvas Walkthrough
+                      <span class="k">Note</span>
+                    </div>
+                    <div class="palette-item" id="pi3">
+                      <i data-lucide="book" class="size-4"></i> Cosmic Ideas
+                      <span class="k">Notebook</span>
+                    </div>
+                    <div class="palette-item" id="pi4">
+                      <i data-lucide="settings" class="size-4"></i> Settings
+                      <span class="k">⌘,</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- SCENE 4: Graph -->
+          <div class="scene" id="sc-graph">
+            <div class="graph-bar">
+              <strong
+                ><i data-lucide="network" class="size-4" style="margin-right: 4px"></i> Knowledge
+                Graph</strong
+              >
+              <span>scope: notebook · 4 nodes · 5 links</span>
+            </div>
+            <div class="graph-body">
+              <svg id="graph-svg" viewBox="0 0 800 480" preserveAspectRatio="xMidYMid meet"></svg>
+            </div>
+            <div
+              class="dock"
+              style="position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%)"
+            >
+              <div class="dock-btn"><i data-lucide="home" class="size-4"></i></div>
+              <div class="dock-btn"><i data-lucide="plus-circle" class="size-4"></i></div>
+              <div class="dock-btn"><i data-lucide="search" class="size-4"></i></div>
+              <div class="dock-btn"><i data-lucide="layout-grid" class="size-4"></i></div>
+              <div class="dock-btn hot"><i data-lucide="network" class="size-4"></i></div>
+            </div>
+          </div>
+
+          <!-- SCENE 5: End -->
+          <div class="scene" id="sc-end">
+            <h1 id="end-h">Your knowledge OS</h1>
+            <p id="end-p">Local-first · Infinite canvas · Plugins · Graph</p>
+            <div class="cta" id="end-cta">Open SamarBook</div>
+            <div class="feats" id="end-feats">
+              <span>Notebooks</span><span>Folders</span><span>Canvas cards</span>
+              <span>Wikilinks</span><span>⌘K search</span><span>Graph view</span>
+              <span>Templates</span><span>100% local</span>
+            </div>
+          </div>
+
+          <!-- VIDEO EXPORT MODAL -->
+          <div class="modal-bg" id="dlg-export" style="z-index: 3000">
+            <div
+              class="modal"
+              style="width: 400px; text-align: center; color: #111827; padding: 24px"
+            >
+              <div
+                style="
+                  width: 48px;
+                  height: 48px;
+                  border-radius: 12px;
+                  background: rgba(124, 58, 237, 0.1);
+                  color: var(--violet);
+                  display: flex;
+                  align-items: center;
+                  justify-content: center;
+                  margin: 0 auto 16px;
+                "
+              >
+                <i data-lucide="video" class="size-6"></i>
+              </div>
+              <h3 style="font-size: 15px; font-weight: 700; margin-bottom: 6px">
+                Exporting Cinematic Trailer
+              </h3>
+              <p
+                style="font-size: 12px; color: var(--muted); margin-bottom: 16px"
+                id="export-status"
+              >
+                Preparing Headless Video Encoder...
+              </p>
+
+              <div
+                style="
+                  width: 100%;
+                  height: 6px;
+                  background: #e5e7eb;
+                  border-radius: 99px;
+                  overflow: hidden;
+                  margin-bottom: 18px;
+                  position: relative;
+                "
+              >
+                <div
+                  id="export-bar"
+                  style="
+                    width: 0%;
+                    height: 100%;
+                    background: linear-gradient(90deg, var(--coral), var(--violet));
+                    transition: width 0.15s ease-in-out;
+                  "
+                ></div>
+              </div>
+
+              <div
+                id="export-percentage"
+                style="
+                  font-family: &quot;JetBrains Mono&quot;, monospace;
+                  font-size: 13px;
+                  font-weight: 700;
+                  color: var(--violet);
+                  margin-bottom: 14px;
+                "
+              >
+                0%
+              </div>
+              <div class="actions" style="justify-content: center; margin-top: 0">
+                <button
+                  class="btn-cancel"
+                  id="btn-cancel-export"
+                  type="button"
+                  style="
+                    width: 100%;
+                    border: 1.5px solid #e5e7eb;
+                    border-radius: 10px;
+                    padding: 10px 14px;
+                    font-weight: 600;
+                  "
+                >
+                  Cancel Export
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- TOAST AND HOVER CURSOR -->
+          <div class="toast" id="toast"></div>
+          <div id="cursor">
+            <svg viewBox="0 0 24 24" fill="none">
+              <path
+                d="M4 2.5L4 18.5L8.8 14.2L12.2 21.5L14.6 20.4L11.1 13.2L17 13.2L4 2.5Z"
+                fill="#111827"
+                stroke="#fff"
+                stroke-width="1.2"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </div>
+        </div>
+      </div>
+
+      <!-- CONTROLS HUD -->
+      <div id="controls">
+        <button type="button" class="primary" id="btn-play">▶ Replay trailer</button>
+        <button type="button" id="btn-pause">Pause</button>
+        <button type="button" id="btn-skip">Skip scene</button>
+        <button type="button" id="btn-export-mp4">
+          <i data-lucide="video" class="size-3.5"></i> Export to MP4
+        </button>
+      </div>
+      <div id="scene-num">Scene 0 / 7</div>
+    </div>
+
+    <script>
+      /**
+       * On-Screen Uncaught Error Reporter (for diagnostic visual visibility)
+       */
+      window.addEventListener("error", function (e) {
+        const errDiv = document.createElement("div");
+        errDiv.style.position = "fixed";
+        errDiv.style.top = "0";
+        errDiv.style.left = "0";
+        errDiv.style.width = "100%";
+        errDiv.style.background = "rgba(239, 68, 68, 0.95)";
+        errDiv.style.color = "#fff";
+        errDiv.style.padding = "12px";
+        errDiv.style.zIndex = "99999";
+        errDiv.style.fontFamily = "monospace";
+        errDiv.style.fontSize = "11px";
+        errDiv.style.lineHeight = "1.4";
+        errDiv.style.maxHeight = "150px";
+        errDiv.style.overflowY = "auto";
+        errDiv.style.boxShadow = "0 4px 12px rgba(0,0,0,0.3)";
+        errDiv.textContent =
+          "Runtime Error: " + e.message + " at " + e.filename + ":" + e.lineno + ":" + e.colno;
+        document.body.appendChild(errDiv);
+      });
+
+      const $ = (id) => document.getElementById(id);
+
+      const state = {
+        running: false,
+        paused: false,
+        abort: false,
+        scene: 0,
+        totalScenes: 7,
+        constellationActive: false,
+        completedEdges: [],
+        cursorX: 80,
+        cursorY: 80,
+      };
+
+      const ABORT_ERROR = new Error("AbortError");
+
+      const sleep = (ms) =>
+        new Promise((resolve, reject) => {
+          const start = performance.now();
+          const tick = (now) => {
+            if (state.abort) return reject(ABORT_ERROR);
+            if (state.paused) {
+              requestAnimationFrame(tick);
+              return;
+            }
+            if (now - start >= ms) resolve();
+            else requestAnimationFrame(tick);
+          };
+          requestAnimationFrame(tick);
+        });
+
+      /**
+       * Lucide Safe Creator
+       */
+      function safeCreateIcons() {
+        if (typeof lucide !== "undefined" && lucide.createIcons) {
+          try {
+            lucide.createIcons();
+          } catch (e) {
+            console.error("Lucide failed to render", e);
+          }
+        } else {
+          console.warn("Lucide library is not loaded yet.");
+        }
+      }
+
+      /**
+       * Web Audio API Sound Effects Engine
+       */
+      let audioCtx = null;
+
+      function initAudio() {
+        if (!audioCtx) {
+          try {
+            const AudioCtxClass = window.AudioContext || window.webkitAudioContext;
+            if (AudioCtxClass) {
+              audioCtx = new AudioCtxClass();
+            }
+          } catch (e) {
+            console.warn("AudioContext failed to initialize:", e);
+          }
+        }
+      }
+
+      function playSound(type) {
+        try {
+          initAudio();
+          if (!audioCtx) return;
+          if (audioCtx.state === "suspended") {
+            audioCtx.resume();
+          }
+
+          const now = audioCtx.currentTime;
+          const osc = audioCtx.createOscillator();
+          const gain = audioCtx.createGain();
+          osc.connect(gain);
+          gain.connect(audioCtx.destination);
+
+          if (type === "click") {
+            osc.type = "sine";
+            osc.frequency.setValueAtTime(1000, now);
+            osc.frequency.exponentialRampToValueAtTime(100, now + 0.05);
+            gain.gain.setValueAtTime(0.15, now);
+            gain.gain.exponentialRampToValueAtTime(0.01, now + 0.05);
+            osc.start(now);
+            osc.stop(now + 0.05);
+          } else if (type === "type") {
+            osc.type = "triangle";
+            osc.frequency.setValueAtTime(1200, now);
+            osc.frequency.exponentialRampToValueAtTime(300, now + 0.03);
+            gain.gain.setValueAtTime(0.06, now);
+            gain.gain.exponentialRampToValueAtTime(0.01, now + 0.03);
+            osc.start(now);
+            osc.stop(now + 0.03);
+          } else if (type === "check") {
+            osc.type = "sine";
+            osc.frequency.setValueAtTime(523.25, now);
+            osc.frequency.setValueAtTime(659.25, now + 0.08);
+            gain.gain.setValueAtTime(0.12, now);
+            gain.gain.setValueAtTime(0.12, now + 0.08);
+            gain.gain.exponentialRampToValueAtTime(0.01, now + 0.25);
+            osc.start(now);
+            osc.stop(now + 0.25);
+          } else if (type === "plugin") {
+            osc.type = "sine";
+            osc.frequency.setValueAtTime(440, now);
+            osc.frequency.exponentialRampToValueAtTime(880, now + 0.15);
+            gain.gain.setValueAtTime(0.1, now);
+            gain.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
+            osc.start(now);
+            osc.stop(now + 0.2);
+          } else if (type === "success") {
+            const osc2 = audioCtx.createOscillator();
+            const gain2 = audioCtx.createGain();
+            osc2.connect(gain2);
+            gain2.connect(audioCtx.destination);
+
+            osc.type = "sine";
+            osc.frequency.setValueAtTime(523.25, now); // C5
+            osc.frequency.exponentialRampToValueAtTime(1046.5, now + 0.35);
+            gain.gain.setValueAtTime(0.08, now);
+            gain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+
+            osc2.type = "sine";
+            osc2.frequency.setValueAtTime(659.25, now + 0.08); // E5
+            osc2.frequency.exponentialRampToValueAtTime(1318.5, now + 0.45);
+            gain2.gain.setValueAtTime(0.06, now + 0.08);
+            gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
+
+            osc.start(now);
+            osc.stop(now + 0.35);
+            osc2.start(now + 0.08);
+            osc2.stop(now + 0.45);
+          }
+        } catch (e) {
+          console.error("Audio engine click error", e);
+        }
+      }
+
+      /**
+       * Background Music controller
+       */
+      let bgMusic = null;
+      try {
+        bgMusic = new Audio("https://www.soundhelix.com/examples/mp3/SoundHelix-Song-8.mp3");
+        bgMusic.loop = true;
+        bgMusic.volume = 0.3;
+      } catch (e) {
+        console.warn("Background music failed to initialize:", e);
+      }
+      let musicPlaying = false;
+
+      function toggleMusic() {
+        initAudio();
+        if (!bgMusic) return;
+        const btnSpan = $("btn-music").querySelector("span");
+        const btnIcon = $("btn-music").querySelector("[data-lucide], svg, i");
+        if (musicPlaying) {
+          bgMusic.pause();
+          if (btnSpan) btnSpan.textContent = "Muted";
+          if (btnIcon) btnIcon.setAttribute("data-lucide", "volume-x");
+          musicPlaying = false;
+        } else {
+          bgMusic.play().catch((e) => console.log("Music play blocked", e));
+          if (btnSpan) btnSpan.textContent = "Music On";
+          if (btnIcon) btnIcon.setAttribute("data-lucide", "music");
+          musicPlaying = true;
+        }
+        safeCreateIcons();
+      }
+
+      $("btn-music").addEventListener("click", toggleMusic);
+      $("vol-music").addEventListener("input", (e) => {
+        if (bgMusic) bgMusic.volume = e.target.value;
+      });
+
+      const cursor = $("cursor");
+      const screen = $("screen");
+
+      function setProgress(pct) {
+        $("progress").style.width = `${pct}%`;
+      }
+      function setSceneLabel(n, name) {
+        state.scene = n;
+        $("scene-num").textContent = `Scene ${n + 1} / ${state.totalScenes} · ${name}`;
+      }
+      function caption(t) {
+        $("cap-text").textContent = t;
+        $("caption").classList.add("on");
+      }
+      function url(path) {
+        $("url-bar").textContent = path;
+      }
+      function toast(msg, ms = 1800) {
+        const t = $("toast");
+        t.textContent = msg;
+        t.classList.add("show");
+        setTimeout(() => t.classList.remove("show"), ms);
+      }
+      function showScene(id) {
+        document.querySelectorAll(".scene").forEach((s) => s.classList.remove("active"));
+        $(id).classList.add("active");
+        safeCreateIcons();
+      }
+
+      /* Cursor helpers — coords relative to #screen */
+      function cursorShow(v = true) {
+        cursor.classList.toggle("show", v);
+      }
+      function cursorPos() {
+        return {
+          x: state.cursorX,
+          y: state.cursorY,
+        };
+      }
+      function cursorTo(x, y, duration = 650) {
+        return new Promise((resolve, reject) => {
+          cursorShow(true);
+          if (typeof anime !== "undefined") {
+            anime.remove(cursor);
+          }
+          const from = { x: state.cursorX, y: state.cursorY };
+          let isFinished = false;
+          const anim = anime({
+            targets: cursor,
+            left: [`${from.x}px`, `${x}px`],
+            top: [`${from.y}px`, `${y}px`],
+            duration: duration,
+            easing: "cubicBezier(.22, 1, .36, 1)",
+            complete: () => {
+              isFinished = true;
+              state.cursorX = x;
+              state.cursorY = y;
+              resolve();
+            },
+          });
+
+          const checkPause = () => {
+            if (state.abort) {
+              isFinished = true;
+              anim.stop();
+              reject(ABORT_ERROR);
+              return;
+            }
+            if (isFinished) return;
+            if (state.paused) {
+              anim.pause();
+            } else {
+              anim.play();
+            }
+            requestAnimationFrame(checkPause);
+          };
+          requestAnimationFrame(checkPause);
+        });
+      }
+
+      function click() {
+        const { x, y } = cursorPos();
+        const r = document.createElement("div");
+        r.className = "ripple";
+        r.style.left = `${x + 4}px`;
+        r.style.top = `${y + 4}px`;
+        screen.appendChild(r);
+        cursor.classList.add("clicking");
+        playSound("click");
+        setTimeout(() => cursor.classList.remove("clicking"), 110);
+        setTimeout(() => r.remove(), 550);
+      }
+
+      function elCenter(el) {
+        if (!el) return { x: 0, y: 0 };
+        const sr = screen.getBoundingClientRect();
+        const er = el.getBoundingClientRect();
+        return {
+          x: er.left - sr.left + er.width / 2,
+          y: er.top - sr.top + er.height / 2,
+        };
+      }
+
+      async function clickEl(el, moveMs = 600) {
+        if (!el) return;
+        const p = elCenter(el);
+        await cursorTo(p.x, p.y, moveMs);
+        click();
+        await sleep(180);
+      }
+
+      async function typeInto(inputEl, text, cps = 18) {
+        inputEl.classList.add("typing");
+        inputEl.value = "";
+        for (let i = 0; i < text.length; i++) {
+          if (state.abort) throw ABORT_ERROR;
+          while (state.paused) await sleep(40);
+          inputEl.value = text.slice(0, i + 1);
+          playSound("type");
+          await sleep(1000 / cps);
+        }
+        inputEl.classList.remove("typing");
+      }
+
+      async function typeMarkdown(node, rawText, renderedHtml, cps = 35) {
+        node.innerHTML = "";
+        node.style.opacity = "1";
+        node.style.fontFamily = '"JetBrains Mono", monospace';
+        node.style.whiteSpace = "pre-wrap";
+        node.style.fontSize = "11px";
+
+        const caret = document.createElement("span");
+        caret.className = "caret";
+        node.appendChild(caret);
+
+        for (let i = 0; i < rawText.length; i++) {
+          if (state.abort) throw ABORT_ERROR;
+          while (state.paused) await sleep(40);
+          node.textContent = rawText.slice(0, i + 1);
+          node.appendChild(caret);
+          playSound("type");
+          await sleep(1000 / cps + ("\n#".includes(rawText[i]) ? 100 : 0));
+        }
+        caret.remove();
+        await sleep(600);
+
+        // Transition to rendered HTML
+        node.style.transition = "opacity 0.25s";
+        node.style.opacity = "0";
+        await sleep(250);
+
+        node.innerHTML = renderedHtml;
+        node.style.fontFamily = "inherit";
+        node.style.whiteSpace = "normal";
+        node.style.opacity = "1";
+        playSound("click");
+        safeCreateIcons();
+      }
+
+      function typeIntoTextNode(el, text, cps = 15) {
+        return new Promise((resolve, reject) => {
+          el.textContent = "";
+          let i = 0;
+          const frame = () => {
+            if (state.abort) return reject(ABORT_ERROR);
+            if (state.paused) {
+              setTimeout(frame, 50);
+              return;
+            }
+            el.textContent = text.slice(0, i + 1);
+            playSound("type");
+            i++;
+            if (i < text.length) {
+              setTimeout(frame, 1000 / cps);
+            } else {
+              resolve();
+            }
+          };
+          frame();
+        });
+      }
+
+      /* Real-time Bezier curve connector drawer */
+      function drawEdges() {
+        const edgesEl = $("edges");
+        edgesEl.innerHTML = "";
+
+        const links = state.constellationActive
+          ? [
+              { from: "card1", to: "card2", type: "curve" },
+              { from: "card2", to: "card4", type: "curve" },
+              { from: "card4", to: "card3", type: "curve" },
+              { from: "card3", to: "card1", type: "curve" },
+            ]
+          : state.completedEdges;
+
+        for (const edge of links) {
+          const elA = $(edge.from);
+          const elB = $(edge.to);
+          if (!elA || !elB || elA.style.display === "none" || elB.style.display === "none")
+            continue;
+
+          const wA = elA.offsetWidth || 200;
+          const hA = elA.offsetHeight || 88;
+          const wB = elB.offsetWidth || 200;
+          const hB = elB.offsetHeight || 88;
+
+          const p1 = {
+            x: (parseFloat(elA.style.left) || 0) + wA,
+            y: (parseFloat(elA.style.top) || 0) + hA / 2,
+          };
+          const p2 = {
+            x: parseFloat(elB.style.left) || 0,
+            y: (parseFloat(elB.style.top) || 0) + hB / 2,
+          };
+
+          const mx = (p1.x + p2.x) / 2,
+            my = (p1.y + p2.y) / 2 - 22;
+          const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+
+          if (edge.type === "straight") {
+            path.setAttribute("d", `M ${p1.x} ${p1.y} L ${p2.x} ${p2.y}`);
+          } else {
+            path.setAttribute("d", `M ${p1.x} ${p1.y} Q ${mx} ${my} ${p2.x} ${p2.y}`);
+          }
+
+          path.setAttribute("stroke", "var(--blue)");
+          path.setAttribute("stroke-width", "1.6");
+          path.setAttribute("fill", "none");
+          path.setAttribute("stroke-opacity", "0.75");
+          path.classList.add("permanent");
+          path.classList.add("drawn");
+          edgesEl.appendChild(path);
+
+          if (edge.type === "label" && edge.label) {
+            const midX = (p1.x + p2.x) / 2;
+            const midY = (p1.y + p2.y) / 2 - 11;
+
+            const labelGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
+            const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+            rect.setAttribute("fill", "#2563eb");
+            rect.setAttribute("rx", "4");
+            rect.setAttribute("ry", "4");
+
+            const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+            text.setAttribute("fill", "#fff");
+            text.setAttribute("font-size", "9px");
+            text.setAttribute("font-family", "inherit");
+            text.setAttribute("font-weight", "600");
+            text.setAttribute("text-anchor", "middle");
+            text.setAttribute("dominant-baseline", "central");
+            text.textContent = edge.label;
+
+            labelGroup.appendChild(rect);
+            labelGroup.appendChild(text);
+            edgesEl.appendChild(labelGroup);
+
+            const textLength = edge.label.length * 5.2 + 8;
+            rect.setAttribute("x", midX - textLength / 2);
+            rect.setAttribute("y", midY - 7);
+            rect.setAttribute("width", textLength);
+            rect.setAttribute("height", 14);
+
+            text.setAttribute("x", midX);
+            text.setAttribute("y", midY);
+          }
+        }
+      }
+
+      /* Card Drag and Drop Animation */
+      function dragElTo(elId, targetLeft, targetTop, duration = 1000) {
+        return new Promise((resolve) => {
+          const el = $(elId);
+          const startLeft = parseFloat(el.style.left) || 0;
+          const startTop = parseFloat(el.style.top) || 0;
+
+          // Compute cursor coordinates relative to card header
+          const sr = screen.getBoundingClientRect();
+          const er = el.getBoundingClientRect();
+          const cursorStartX = er.left - sr.left + er.width / 2;
+          const cursorStartY = er.top - sr.top + 14;
+
+          const targetCursorX = targetLeft + 100;
+          const targetCursorY = targetTop + 14;
+
+          cursorTo(cursorStartX, cursorStartY, 350).then(() => {
+            if (typeof anime !== "undefined") {
+              anime.remove(cursor);
+            }
+            click();
+            cursor.classList.add("grabbing");
+
+            const start = performance.now();
+            const ease = (t) => t * (2 - t); // Ease out
+
+            const frame = (now) => {
+              if (state.abort) {
+                cursor.classList.remove("grabbing");
+                return reject(ABORT_ERROR);
+              }
+              if (state.paused) {
+                requestAnimationFrame(frame);
+                return;
+              }
+
+              const t = Math.min(1, (now - start) / duration);
+              const e = ease(t);
+
+              const currentLeft = startLeft + (targetLeft - startLeft) * e;
+              const currentTop = startTop + (targetTop - startTop) * e;
+
+              el.style.left = `${currentLeft}px`;
+              el.style.top = `${currentTop}px`;
+
+              cursor.style.left = `${cursorStartX + (targetCursorX - cursorStartX) * e}px`;
+              cursor.style.top = `${cursorStartY + (targetCursorY - cursorStartY) * e}px`;
+
+              drawEdges();
+
+              if (t < 1) {
+                requestAnimationFrame(frame);
+              } else {
+                cursor.classList.remove("grabbing");
+                click();
+                resolve();
+              }
+            };
+            requestAnimationFrame(frame);
+          });
+        });
+      }
+
+      /* Card Resize Corner Dragging Animation (WYSIWYG layout adaptive resizing) */
+      function resizeElTo(elId, targetWidth, targetHeight, duration = 1000) {
+        return new Promise((resolve) => {
+          const el = $(elId);
+          const startWidth = el.offsetWidth || 200;
+          const startHeight = el.offsetHeight || 88;
+
+          const sr = screen.getBoundingClientRect();
+          const er = el.getBoundingClientRect();
+
+          // Bottom-right corner coordinates (drag handle)
+          const cursorStartX = er.right - sr.left - 6;
+          const cursorStartY = er.bottom - sr.top - 6;
+
+          const targetCursorX = er.left - sr.left + targetWidth - 6;
+          const targetCursorY = er.top - sr.top + targetHeight - 6;
+
+          cursorTo(cursorStartX, cursorStartY, 350).then(() => {
+            if (typeof anime !== "undefined") {
+              anime.remove(cursor);
+            }
+            click();
+            cursor.style.cursor = "se-resize";
+
+            const start = performance.now();
+            const ease = (t) => t * (2 - t); // Ease out
+
+            const frame = (now) => {
+              if (state.abort) {
+                cursor.style.cursor = "default";
+                return reject(ABORT_ERROR);
+              }
+              if (state.paused) {
+                requestAnimationFrame(frame);
+                return;
+              }
+
+              const t = Math.min(1, (now - start) / duration);
+              const e = ease(t);
+
+              const currentWidth = startWidth + (targetWidth - startWidth) * e;
+              const currentHeight = startHeight + (targetHeight - startHeight) * e;
+
+              el.style.width = `${currentWidth}px`;
+              el.style.minHeight = `${currentHeight}px`;
+              el.style.height = `${currentHeight}px`;
+
+              cursor.style.left = `${cursorStartX + (targetCursorX - cursorStartX) * e}px`;
+              cursor.style.top = `${cursorStartY + (targetCursorY - cursorStartY) * e}px`;
+
+              drawEdges();
+
+              if (t < 1) {
+                requestAnimationFrame(frame);
+              } else {
+                cursor.style.cursor = "default";
+                click();
+                resolve();
+              }
+            };
+            requestAnimationFrame(frame);
+          });
+        });
+      }
+
+      /* Manual edge connection drag-and-drop animation */
+      function connectCards(
+        fromId,
+        toId,
+        type = "curve",
+        labelText = "",
+        fromPort = "right",
+        toPort = "left",
+        duration = 1100,
+      ) {
+        return new Promise((resolve, reject) => {
+          const elA = $(fromId);
+          const elB = $(toId);
+          const edgesEl = $("edges");
+
+          const sr = screen.getBoundingClientRect();
+          const rA = elA.getBoundingClientRect();
+          const rB = elB.getBoundingClientRect();
+
+          // Port coords relative to screen viewport (for cursor movement)
+          const portStartX = (fromPort === "left" ? rA.left : rA.right) - sr.left;
+          const portStartY = rA.top - sr.top + rA.height / 2;
+
+          const portEndX = (toPort === "left" ? rB.left : rB.right) - sr.left;
+          const portEndY = rB.top - sr.top + rB.height / 2;
+
+          cursorTo(portStartX, portStartY, 450).then(() => {
+            if (typeof anime !== "undefined") {
+              anime.remove(cursor);
+            }
+            click();
+            cursor.classList.add("grabbing");
+
+            // Show key press state indicators if needed
+            if (type === "straight") {
+              $("key-hud").classList.add("show");
+              $("hud-alt").classList.add("pressed");
+              playSound("click");
+            } else if (type === "label") {
+              $("key-hud").classList.add("show");
+              $("hud-ctrl").classList.add("pressed");
+              playSound("click");
+            }
+
+            // Temporary dashed connector line
+            const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+            path.setAttribute("stroke", "var(--blue)");
+            path.setAttribute("stroke-width", "1.8");
+            path.setAttribute("fill", "none");
+            path.setAttribute("stroke-dasharray", "4 3");
+            path.setAttribute("stroke-opacity", "0.85");
+            edgesEl.appendChild(path);
+
+            // Temporary label element if needed
+            let tempLabelGroup = null;
+            let tempRect = null;
+            let tempText = null;
+
+            if (type === "label") {
+              tempLabelGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
+              tempRect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+              tempRect.setAttribute("fill", "#2563eb");
+              tempRect.setAttribute("rx", "4");
+              tempRect.setAttribute("ry", "4");
+              tempText = document.createElementNS("http://www.w3.org/2000/svg", "text");
+              tempText.setAttribute("fill", "#fff");
+              tempText.setAttribute("font-size", "9px");
+              tempText.setAttribute("font-family", "inherit");
+              tempText.setAttribute("font-weight", "600");
+              tempText.setAttribute("text-anchor", "middle");
+              tempText.setAttribute("dominant-baseline", "central");
+              tempText.textContent = labelText;
+              tempLabelGroup.appendChild(tempRect);
+              tempLabelGroup.appendChild(tempText);
+              edgesEl.appendChild(tempLabelGroup);
+            }
+
+            const start = performance.now();
+            const ease = (t) => t * (2 - t);
+
+            const frame = (now) => {
+              if (state.abort) {
+                path.remove();
+                if (tempLabelGroup) tempLabelGroup.remove();
+                cursor.classList.remove("grabbing");
+                $("hud-alt").classList.remove("pressed");
+                $("hud-ctrl").classList.remove("pressed");
+                $("key-hud").classList.remove("show");
+                return reject(ABORT_ERROR);
+              }
+              if (state.paused) {
+                requestAnimationFrame(frame);
+                return;
+              }
+
+              const t = Math.min(1, (now - start) / duration);
+              const e = ease(t);
+
+              const curX = portStartX + (portEndX - portStartX) * e;
+              const curY = portStartY + (portEndY - portStartY) * e;
+
+              cursor.style.left = `${curX}px`;
+              cursor.style.top = `${curY}px`;
+
+              // Map viewport coords to local coordinates inside scaled #world SVG
+              const worldRect = $("world").getBoundingClientRect();
+              const scale = worldRect.width / $("world").offsetWidth;
+
+              const localStartX =
+                ((fromPort === "left" ? rA.left : rA.right) - worldRect.left) / scale;
+              const localStartY = (rA.top - worldRect.top + rA.height / 2) / scale;
+
+              const localCurX = (curX + sr.left - worldRect.left) / scale;
+              const localCurY = (curY + sr.top - worldRect.top) / scale;
+
+              let mx = (localStartX + localCurX) / 2;
+              let my = (localStartY + localCurY) / 2 - 20;
+
+              if (type === "straight") {
+                path.setAttribute(
+                  "d",
+                  `M ${localStartX} ${localStartY} L ${localCurX} ${localCurY}`,
+                );
+              } else {
+                path.setAttribute(
+                  "d",
+                  `M ${localStartX} ${localStartY} Q ${mx} ${my} ${localCurX} ${localCurY}`,
+                );
+              }
+
+              if (type === "label") {
+                const midX = (localStartX + localCurX) / 2;
+                const midY = (localStartY + localCurY) / 2 - 11;
+                const textLength = labelText.length * 5.2 + 8;
+                tempRect.setAttribute("x", midX - textLength / 2);
+                tempRect.setAttribute("y", midY - 7);
+                tempRect.setAttribute("width", textLength);
+                tempRect.setAttribute("height", 14);
+                tempText.setAttribute("x", midX);
+                tempText.setAttribute("y", midY);
+              }
+
+              if (t < 1) {
+                requestAnimationFrame(frame);
+              } else {
+                cursor.classList.remove("grabbing");
+                click();
+                playSound("success");
+
+                path.remove();
+                if (tempLabelGroup) tempLabelGroup.remove();
+
+                $("hud-alt").classList.remove("pressed");
+                $("hud-ctrl").classList.remove("pressed");
+                $("key-hud").classList.remove("show");
+
+                state.completedEdges.push({
+                  from: fromId,
+                  to: toId,
+                  type: type,
+                  label: labelText,
+                });
+                drawEdges();
+
+                state.cursorX = portEndX;
+                state.cursorY = portEndY;
+                resolve();
+              }
+            };
+            requestAnimationFrame(frame);
+          });
+        });
+      }
+
+      /* Simulation for exporting cinematic trailer to MP4 */
+      let exportInterval = null;
+      function runExportSimulation() {
+        const bar = $("export-bar");
+        const pct = $("export-percentage");
+        const status = $("export-status");
+
+        let progress = 0;
+        bar.style.width = "0%";
+        pct.textContent = "0%";
+
+        const steps = [
+          { p: 15, text: "Launching canvas recorder thread (60 FPS)..." },
+          { p: 35, text: "Capturing viewport DOM frames & animations..." },
+          { p: 55, text: "Mixing synth audio tracks and chimes..." },
+          { p: 75, text: "Assembling H.264 video container..." },
+          { p: 90, text: "Multiplexing video and audio streams..." },
+          { p: 100, text: "Export complete! Downloading MP4 file..." },
+        ];
+
+        if (exportInterval) clearInterval(exportInterval);
+
+        exportInterval = setInterval(() => {
+          progress += 1.5 + Math.random() * 2.5;
+          if (progress >= 100) {
+            progress = 100;
+            clearInterval(exportInterval);
+
+            setTimeout(() => {
+              try {
+                const blob = new Blob(["SamarBook Cosmic Canvas Trailer Export"], {
+                  type: "video/mp4",
+                });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = "cosmic-canvas-trailer.mp4";
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                toast("🎥 Trailer exported successfully!");
+              } catch (e) {
+                console.error(e);
+              }
+              $("dlg-export").classList.remove("open");
+              playSound("success");
+            }, 800);
+          }
+
+          bar.style.width = `${progress}%`;
+          pct.textContent = `${Math.floor(progress)}%`;
+
+          const currentStep = steps.find((s) => progress <= s.p) || steps[steps.length - 1];
+          status.textContent = currentStep.text;
+
+          if (Math.floor(progress) % 15 === 0) {
+            playSound("type");
+          }
+        }, 150);
+      }
+
+      /* Settings Panel Tab Swapping */
+      function showSettingsTab(tabId) {
+        playSound("click");
+        document
+          .querySelectorAll(".settings-nav-btn")
+          .forEach((btn) => btn.classList.remove("active"));
+        document
+          .querySelectorAll(".settings-pane")
+          .forEach((pane) => (pane.style.display = "none"));
+
+        $(`tab-btn-${tabId}`).classList.add("active");
+        $(`pane-${tabId}`).style.display = "block";
+        $("settings-title").textContent = tabId.charAt(0).toUpperCase() + tabId.slice(1);
+        safeCreateIcons();
+      }
+
+      $("tab-btn-general").addEventListener("click", () => showSettingsTab("general"));
+      $("tab-btn-share").addEventListener("click", () => showSettingsTab("share"));
+      $("tab-btn-plugins").addEventListener("click", () => showSettingsTab("plugins"));
+      $("btn-close-settings").addEventListener("click", () => {
+        playSound("click");
+        $("dlg-settings").classList.remove("open");
+      });
+
+      /* Constellation Arrangement Animation using Anime.js spring easing */
+      function animateCardsToCircle(cx, cy, radius, duration = 1200) {
+        return new Promise((resolve) => {
+          const cards = ["card1", "card2", "card3", "card4"];
+          const anims = [];
+
+          cards.forEach((c, i) => {
+            const el = $(c);
+            const startLeft = parseFloat(el.style.left) || 0;
+            const startTop = parseFloat(el.style.top) || 0;
+
+            const angle = (Math.PI * 2 * i) / cards.length;
+            const targetLeft = cx + Math.cos(angle) * radius - 100;
+            const targetTop = cy + Math.sin(angle) * radius - 44;
+
+            const a = anime({
+              targets: el,
+              left: `${targetLeft}px`,
+              top: `${targetTop}px`,
+              duration: duration,
+              easing: "easeOutElastic(1.1, .78)", // Spring bounce effect!
+              changeComplete: () => {
+                if (i === cards.length - 1) resolve();
+              },
+              update: () => {
+                if (state.abort) a.stop();
+                drawEdges();
+              },
+            });
+            anims.push(a);
+          });
+
+          const checkPause = () => {
+            if (state.abort) {
+              anims.forEach((a) => a.stop());
+              return;
+            }
+            anims.forEach((a) => {
+              if (state.paused) a.pause();
+              else a.play();
+            });
+            if (anims.every((a) => a.completed)) return;
+            requestAnimationFrame(checkPause);
+          };
+          requestAnimationFrame(checkPause);
+        });
+      }
+
+      /* ─── SCENES ─── */
+
+      /* Staggered card entrance reveal animation */
+      function revealCard(cardId) {
+        const el = $(cardId);
+        el.style.display = "block";
+        el.style.opacity = "0";
+        el.style.transform = "scale(0.85) translateY(15px)";
+        anime({
+          targets: el,
+          opacity: [0, 1],
+          scale: [0.85, 1],
+          translateY: [15, 0],
+          duration: 550,
+          easing: "easeOutBack",
+        });
+        el.classList.add("show");
+      }
+
+      async function sceneTitle() {
+        setSceneLabel(0, "Title");
+        setProgress(5);
+        caption("SamarBook — Cosmic Canvas");
+        url("samarbook.app");
+        showScene("sc-title");
+        cursorShow(false);
+
+        // Reset layout elements
+        anime.set(["#title-logo", "#title-h", "#title-p", "#title-tags span"], {
+          opacity: 0,
+          translateY: 35,
+          scale: 0.95,
+        });
+
+        const tl = anime.timeline({
+          easing: "easeOutQuart",
+          duration: 900,
+        });
+
+        tl.add({
+          targets: "#title-logo",
+          opacity: [0, 1],
+          scale: [0.72, 1],
+          translateY: [35, 0],
+          duration: 800,
+        })
+          .add(
+            {
+              targets: "#title-h",
+              opacity: [0, 1],
+              translateY: [25, 0],
+              duration: 800,
+            },
+            "-=600",
+          )
+          .add(
+            {
+              targets: "#title-p",
+              opacity: [0, 1],
+              translateY: [20, 0],
+              duration: 800,
+            },
+            "-=650",
+          )
+          .add(
+            {
+              targets: "#title-tags span",
+              opacity: [0, 1],
+              translateY: [15, 0],
+              scale: [0.9, 1],
+              delay: anime.stagger(100),
+              duration: 650,
+            },
+            "-=600",
+          );
+
+        await sleep(2600);
+      }
+
+      async function sceneHome() {
+        setSceneLabel(1, "Homepage");
+        setProgress(15);
+        caption("Workspace Home — notebooks, import and templates");
+        url("samarbook.app/app");
+
+        // Set starting position of cursor for stability
+        state.cursorX = 80;
+        state.cursorY = 80;
+        cursor.style.left = "80px";
+        cursor.style.top = "80px";
+
+        showScene("sc-home");
+        cursorShow(true);
+
+        const h = new Date().getHours();
+        const g = h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
+        $("greet").textContent = `${g} 👋`;
+
+        // reset notebooks to cold start empty state
+        $("nb-physics").style.display = "none";
+        $("nb-project").style.display = "none";
+        $("nb-new").style.display = "none";
+        $("nb-new").classList.remove("show", "hot");
+        $("panel-recent").style.display = "none";
+        $("panel-pinned").style.display = "none";
+        $("dlg-nb").classList.remove("open");
+        $("dlg-nb-input").value = "";
+        $("qa-nb").classList.remove("hot");
+
+        // Staggered dashboard grid fade-in (header & quick actions only)
+        anime.set(["#greet", "h2", ".qa-grid .qa"], {
+          opacity: 0,
+          translateY: 20,
+        });
+
+        const tl = anime.timeline({
+          easing: "easeOutCubic",
+          duration: 600,
+        });
+
+        tl.add({
+          targets: "#greet",
+          opacity: [0, 1],
+          translateY: [15, 0],
+        })
+          .add(
+            {
+              targets: "h2",
+              opacity: [0, 1],
+              translateY: [15, 0],
+            },
+            "-=400",
+          )
+          .add(
+            {
+              targets: ".qa-grid .qa",
+              opacity: [0, 1],
+              translateY: [20, 0],
+              delay: anime.stagger(80),
+            },
+            "-=350",
+          );
+
+        await sleep(1500);
+
+        // Cursor → New Notebook
+        caption("Create a new notebook workspace");
+        await clickEl($("qa-nb"), 700);
+        $("qa-nb").classList.add("hot");
+        await sleep(200);
+
+        // Zoom in notebook dialog
+        anime.set("#dlg-nb .modal", { scale: 0.9, opacity: 0 });
+        $("dlg-nb").classList.add("open");
+        anime({
+          targets: "#dlg-nb .modal",
+          scale: [0.9, 1],
+          opacity: [0, 1],
+          duration: 350,
+          easing: "easeOutBack",
+        });
+        await sleep(350);
+
+        caption("Name the notebook");
+        await clickEl($("dlg-nb-input"), 400);
+        await typeInto($("dlg-nb-input"), "Cosmic Ideas", 16);
+        await sleep(250);
+
+        caption("Confirm notebook creation");
+        await clickEl($("dlg-nb-ok"), 450);
+
+        anime({
+          targets: "#dlg-nb .modal",
+          scale: 0.9,
+          opacity: 0,
+          duration: 200,
+          easing: "easeInQuad",
+          complete: () => $("dlg-nb").classList.remove("open"),
+        });
+        $("qa-nb").classList.remove("hot");
+        toast("Notebook created");
+
+        // Dynamically insert notebook into grid
+        $("nb-new").style.display = "block";
+        anime({
+          targets: "#nb-new",
+          opacity: [0, 1],
+          scale: [0.6, 1],
+          duration: 500,
+          easing: "easeOutBack",
+        });
+        $("nb-new").classList.add("show", "hot");
+        await sleep(1350);
+
+        caption("Open the new notebook");
+        await clickEl($("nb-new"), 550);
+        cursorShow(false);
+        await sleep(300);
+      }
+
+      async function sceneNotebook() {
+        setSceneLabel(2, "Notebook");
+        setProgress(30);
+        caption("Notebook dashboard — manage folders & files");
+        url("samarbook.app/app · Cosmic Ideas");
+
+        // Set starting position of cursor near new folder button while hidden
+        state.cursorX = 180;
+        state.cursorY = 180;
+        cursor.style.left = "180px";
+        cursor.style.top = "180px";
+
+        showScene("sc-notebook");
+        await sleep(250);
+        cursorShow(true);
+
+        // reset
+        $("folder-research").style.display = "none";
+        $("folder-research").classList.remove("show");
+        $("folder-notes").classList.add("show");
+        $("notes-empty").style.display = "block";
+        $("note-row").style.display = "none";
+        $("note-row").classList.remove("show", "hot");
+        $("dlg-note").classList.remove("open");
+        $("dlg-folder").classList.remove("open");
+        $("dlg-note-input").value = "";
+        $("dlg-folder-input").value = "";
+        $("btn-new-note").classList.remove("hot");
+        $("btn-new-folder").classList.remove("hot");
+        $("nb-stats").textContent = "0 notes · 1 folder";
+        $("folder-count").textContent = "0";
+
+        await sleep(400);
+
+        // New folder
+        caption("Create a structured folder");
+        await clickEl($("btn-new-folder"), 600);
+        $("btn-new-folder").classList.add("hot");
+
+        anime.set("#dlg-folder .modal", { scale: 0.9, opacity: 0 });
+        $("dlg-folder").classList.add("open");
+        anime({
+          targets: "#dlg-folder .modal",
+          scale: [0.9, 1],
+          opacity: [0, 1],
+          duration: 350,
+          easing: "easeOutBack",
+        });
+        await sleep(300);
+
+        await clickEl($("dlg-folder-input"), 350);
+        await typeInto($("dlg-folder-input"), "Research", 18);
+        await sleep(200);
+
+        const folderOk = $("dlg-folder").querySelector(".btn-ok");
+        await clickEl(folderOk, 400);
+
+        anime({
+          targets: "#dlg-folder .modal",
+          scale: 0.9,
+          opacity: 0,
+          duration: 200,
+          easing: "easeInQuad",
+          complete: () => $("dlg-folder").classList.remove("open"),
+        });
+        $("btn-new-folder").classList.remove("hot");
+
+        $("folder-research").style.display = "flex";
+        anime({
+          targets: "#folder-research",
+          opacity: [0, 1],
+          scale: [0.85, 1],
+          duration: 400,
+          easing: "easeOutBack",
+        });
+        $("folder-research").classList.add("show");
+        $("nb-stats").textContent = "0 notes · 2 folders";
+        toast("Folder created");
+        await sleep(500);
+
+        // New note
+        caption("Add a new note to start the spatial editor");
+        await clickEl($("btn-new-note"), 550);
+        $("btn-new-note").classList.add("hot");
+
+        anime.set("#dlg-note .modal", { scale: 0.9, opacity: 0 });
+        $("dlg-note").classList.add("open");
+        anime({
+          targets: "#dlg-note .modal",
+          scale: [0.9, 1],
+          opacity: [0, 1],
+          duration: 350,
+          easing: "easeOutBack",
+        });
+        await sleep(300);
+
+        await clickEl($("dlg-note-input"), 350);
+        await typeInto($("dlg-note-input"), "Canvas Walkthrough", 16);
+        await sleep(200);
+        await clickEl($("dlg-note-ok"), 400);
+
+        anime({
+          targets: "#dlg-note .modal",
+          scale: 0.9,
+          opacity: 0,
+          duration: 200,
+          easing: "easeInQuad",
+          complete: () => $("dlg-note").classList.remove("open"),
+        });
+        $("btn-new-note").classList.remove("hot");
+
+        $("notes-empty").style.display = "none";
+        $("note-row").style.display = "flex";
+        anime({
+          targets: "#note-row",
+          opacity: [0, 1],
+          translateY: [15, 0],
+          duration: 450,
+          easing: "easeOutBack",
+        });
+        $("note-row").classList.add("show", "hot");
+        $("nb-stats").textContent = "1 note · 2 folders";
+        $("folder-count").textContent = "1";
+        toast("Note created");
+        await sleep(500);
+
+        caption("Launch note editor");
+        await clickEl($("note-row"), 500);
+        cursorShow(false);
+        await sleep(250);
+      }
+
+      async function sceneCanvas() {
+        setSceneLabel(3, "Canvas");
+        setProgress(45);
+        caption("Typewriter Markdown — write and compile interactively");
+        url("samarbook.app/n/cosmic-ideas/canvas-walkthrough");
+
+        // Place cursor in sidebar top-left area while hidden
+        state.cursorX = 40;
+        state.cursorY = 120;
+        cursor.style.left = "40px";
+        cursor.style.top = "120px";
+
+        showScene("sc-app");
+        await sleep(250);
+        cursorShow(true);
+
+        // reset canvas elements
+        state.constellationActive = false;
+        state.completedEdges = [];
+        $("plugin-dock-buttons").style.display = "none";
+        $("dlg-settings").classList.remove("open");
+        $("toggle-constellation").classList.remove("active");
+
+        // reset sidebar tree folders
+        $("sb-folder-research-node").style.display = "none";
+        $("sb-research-contents").style.display = "none";
+        $("sb-research-chev-right").style.display = "inline-block";
+        $("sb-research-chev-down").style.display = "none";
+        $("sb-research-icon-closed").style.display = "inline-block";
+        $("sb-research-icon-open").style.display = "none";
+        $("sb-notes-contents").style.display = "block";
+        $("sb-row-plugin-ideas").style.display = "flex";
+
+        // reset cards
+        const cardPositions = {
+          card1: { left: "48px", top: "90px" },
+          card2: { left: "290px", top: "70px" },
+          card3: { left: "160px", top: "250px" },
+          card4: { left: "420px", top: "230px" },
+        };
+        Object.keys(cardPositions).forEach((c) => {
+          $(c).classList.remove("show", "active");
+          $(c).style.left = cardPositions[c].left;
+          $(c).style.top = cardPositions[c].top;
+          $(c).style.width = "200px";
+          $(c).style.minHeight = "88px";
+          $(c).style.height = "auto";
+          $(c).style.opacity = "0";
+          $(c).style.transform = "scale(0.85) translateY(15px)";
+        });
+
+        $("ct1").innerHTML = "";
+        $("ct2").innerHTML = "";
+        $("ct3").innerHTML = "";
+        $("ct4").innerHTML = "";
+
+        $("edges").innerHTML = "";
+        $("world").style.transform = "scale(1)";
+        $("zoom-pill").textContent = "100%";
+        $("zoom-pill").classList.remove("on");
+        $("canvas-title").classList.add("show");
+        $("canvas-date").classList.add("show");
+        $("palette").classList.remove("open");
+
+        document.querySelectorAll(".dock-btn").forEach((b) => b.classList.remove("hot"));
+        $("dock-canvas").classList.add("hot");
+
+        await sleep(300);
+
+        // Dynamic folder reveal in sidebar explorer
+        caption("Research folder synced to local repository");
+        $("sb-folder-research-node").style.display = "block";
+        anime({
+          targets: "#sb-folder-research-node",
+          opacity: [0, 1],
+          translateY: [10, 0],
+          duration: 400,
+          easing: "easeOutQuad",
+        });
+        await sleep(500);
+
+        caption("Expand folders to navigate notes");
+        await clickEl($("sb-folder-research-row"), 650);
+
+        // Toggle icons
+        $("sb-research-chev-right").style.display = "none";
+        $("sb-research-chev-down").style.display = "inline-block";
+        $("sb-research-icon-closed").style.display = "none";
+        $("sb-research-icon-open").style.display = "inline-block";
+        playSound("click");
+
+        // Expand list with Anime.js
+        $("sb-research-contents").style.display = "block";
+        anime({
+          targets: "#sb-research-contents",
+          opacity: [0, 1],
+          scaleY: [0.8, 1],
+          duration: 350,
+          easing: "easeOutQuad",
+        });
+        anime({
+          targets: "#sb-research-contents .sb-row",
+          opacity: [0, 1],
+          translateX: [-10, 0],
+          delay: anime.stagger(80),
+          duration: 300,
+          easing: "easeOutQuad",
+        });
+        await sleep(1000);
+
+        // Markdown Todo Typewriting scene
+        caption("Interactive Markdown — type to compile checkboxes");
+        await clickEl($("card1"), 550);
+        revealCard("card1");
+        $("card1").classList.add("active");
+
+        const rawMarkdownCard1 = "### Physics Plan\n- [ ] Orbit simulation\n- [ ] Vector fields";
+        const renderedHtmlCard1 = `
+      <div class="md-header">Physics Plan</div>
+      <div class="todo-list">
+        <div class="todo-item" id="todo-orbit">
+          <div class="todo-chk"><i data-lucide="check" class="size-2.5"></i></div>
+          <span class="label">Orbit simulation</span>
+        </div>
+        <div class="todo-item" id="todo-vector">
+          <div class="todo-chk"><i data-lucide="check" class="size-2.5"></i></div>
+          <span class="label">Vector fields</span>
+        </div>
+      </div>
+    `;
+        await typeMarkdown($("ct1"), rawMarkdownCard1, renderedHtmlCard1, 35);
+        $("card1").classList.remove("active");
+        await sleep(400);
+
+        // Ticking todo checkbox
+        caption("Interact with documents in place");
+        const todoChk = $("card1").querySelector("#todo-orbit");
+        await clickEl(todoChk, 500);
+        todoChk.classList.add("checked");
+        playSound("check");
+        await sleep(600);
+
+        // Type card 2
+        caption("Rich markup — headers, formulas, bold text");
+        await clickEl($("card2"), 500);
+        revealCard("card2");
+        $("card2").classList.add("active");
+        const rawMarkdownCard2 = "**Field coordinates**:\nF(x,y) = -y*i + x*j";
+        const renderedHtmlCard2 = `
+      <div style="font-size:11px; line-height:1.4;">
+        <strong>Field coordinates</strong>:
+        <div style="margin-top:4px; font-family:'JetBrains Mono', monospace; background:#f3f4f6; padding:4px 6px; border-radius:6px; border:1px solid #e5e7eb; color:var(--blue);">F(x,y) = -y*i + x*j</div>
+      </div>
+    `;
+        await typeMarkdown($("ct2"), rawMarkdownCard2, renderedHtmlCard2, 38);
+        $("card2").classList.remove("active");
+        await sleep(300);
+
+        // Type card 3
+        caption("State & values — declare workspace @variables");
+        await clickEl($("card3"), 500);
+        revealCard("card3");
+        $("card3").classList.add("active");
+        const rawMarkdownCard3 = "*Variables*:\nx = @planet_mass::1.2e24";
+        const renderedHtmlCard3 = `
+      <div style="font-size:11px; line-height:1.4;">
+        <em>Variables</em>:
+        <div style="margin-top:4px; display:flex; align-items:center; gap:4px;">
+          <span style="font-family:'JetBrains Mono', monospace; background:#eef2ff; color:#4f46e5; border:1.5px solid #e0e7ff; padding:2px 6px; border-radius:6px; font-size:10px; font-weight:600;">@planet_mass</span>
+          <span style="color:#9ca3af;">=</span>
+          <span style="font-family:'JetBrains Mono', monospace; font-weight:600; color:var(--violet);">1.2e24</span>
+        </div>
+      </div>
+    `;
+        await typeMarkdown($("ct3"), rawMarkdownCard3, renderedHtmlCard3, 38);
+        $("card3").classList.remove("active");
+        await sleep(300);
+
+        // Type card 4
+        caption("Wikilinks — create connected paths");
+        await clickEl($("card4"), 500);
+        revealCard("card4");
+        $("card4").classList.add("active");
+        const rawMarkdownCard4 = "[[Graph overview]] links note clusters.";
+        const renderedHtmlCard4 = `
+      <div style="font-size:11px; line-height:1.4;">
+        <span class="wikilink" style="color:var(--violet); font-weight:600; cursor:pointer; text-decoration:underline; text-underline-offset:2px;"><i data-lucide="network" class="size-3" style="margin-right:2px; display:inline-block;"></i>Graph overview</span> links note clusters.
+      </div>
+    `;
+        await typeMarkdown($("ct4"), rawMarkdownCard4, renderedHtmlCard4, 38);
+        $("card4").classList.remove("active");
+        await sleep(400);
+
+        // Edges (interactive connection dragging)
+        caption("Drag ports manually to connect related canvas cards");
+        await connectCards("card1", "card2", "curve", "", "right", "left", 1200);
+        await sleep(400);
+
+        caption("Hold ALT to align routing lines in straight grid mode");
+        await connectCards("card3", "card1", "straight", "", "left", "left", 1150);
+        await sleep(400);
+
+        caption("Hold CTRL to declare connection properties and labels");
+        await connectCards("card2", "card4", "label", "references", "right", "left", 1150);
+        await sleep(400);
+
+        caption("Link cards together to construct structured canvas workspaces");
+        state.completedEdges.push({ from: "card3", to: "card4", type: "curve" });
+        drawEdges();
+        await sleep(800);
+
+        // Zoom out/in
+        caption("Zoom viewport to fit layout");
+        $("zoom-pill").classList.add("on");
+
+        // Anime.js zoom out
+        anime({
+          targets: "#world",
+          scale: 0.72,
+          duration: 800,
+          easing: "easeOutQuart",
+          update: () => {
+            const scaleVal = parseFloat(anime.get(document.getElementById("world"), "scale")) || 1;
+            $("zoom-pill").textContent = `${Math.round(scaleVal * 100)}%`;
+          },
+        });
+        await sleep(1000);
+
+        // Anime.js zoom in
+        anime({
+          targets: "#world",
+          scale: 1,
+          duration: 600,
+          easing: "easeOutBack",
+          update: () => {
+            const scaleVal = parseFloat(anime.get(document.getElementById("world"), "scale")) || 1;
+            $("zoom-pill").textContent = `${Math.round(scaleVal * 100)}%`;
+          },
+        });
+        await sleep(400);
+
+        // CARD DRAGGING SEQUENCE
+        caption("Arrange nodes freely — connections follow");
+        await dragElTo("card3", 80, 290, 1100);
+        await sleep(400);
+
+        await dragElTo("card2", 340, 80, 900);
+        await sleep(400);
+
+        // CARD RESIZING SEQUENCE (WYSIWYG edit flow)
+        caption("WYSIWYG layout — drag corners to resize cards");
+        await resizeElTo("card1", 240, 115, 1200);
+        await sleep(600);
+
+        // PLUGINS PANEL SETUP
+        caption("Expand features in settings panel");
+        await clickEl($("dock-settings"), 600);
+
+        anime.set("#dlg-settings .settings-modal", { scale: 0.94, opacity: 0, translateY: 15 });
+        $("dlg-settings").classList.add("open");
+        anime({
+          targets: "#dlg-settings .settings-modal",
+          scale: 1,
+          opacity: 1,
+          translateY: 0,
+          duration: 400,
+          easing: "easeOutBack",
+        });
+        await sleep(500);
+
+        // Switch settings tab to plugins
+        caption("Enable custom block arrangement APIs");
+        await clickEl($("tab-btn-plugins"), 400);
+        showSettingsTab("plugins");
+        await sleep(550);
+
+        // Toggle switch constellation layout plugin
+        caption("Toggle Constellation Circle Layout ON");
+        const toggleBtn = $("toggle-constellation");
+        await clickEl(toggleBtn, 450);
+        toggleBtn.classList.add("active");
+        playSound("plugin");
+        await sleep(700);
+
+        // Close settings dialog
+        caption("Plugin added to bottom dock");
+        await clickEl($("btn-close-settings"), 400);
+
+        anime({
+          targets: "#dlg-settings .settings-modal",
+          scale: 0.94,
+          opacity: 0,
+          translateY: 15,
+          duration: 250,
+          easing: "easeInQuad",
+          complete: () => $("dlg-settings").classList.remove("open"),
+        });
+        await sleep(250);
+
+        // Star button fades in
+        $("plugin-dock-buttons").style.display = "inline-flex";
+        anime({
+          targets: "#dock-constellation",
+          scale: [0.3, 1],
+          opacity: [0, 1],
+          duration: 500,
+          easing: "easeOutBack",
+        });
+        safeCreateIcons();
+        await sleep(400);
+
+        // Click Constellation button in dock
+        caption("Align cards in circular constellation layout");
+        await clickEl($("dock-constellation"), 500);
+        playSound("success");
+        state.constellationActive = true;
+        await animateCardsToCircle(380, 220, 150, 1200);
+        await sleep(1500);
+
+        // Command palette search
+        caption("Use ⌘K Command Palette search");
+        await clickEl($("dock-search"), 550);
+        $("dock-search").classList.add("hot");
+        $("dock-canvas").classList.remove("hot");
+
+        anime.set("#palette", { scale: 0.93, opacity: 0 });
+        $("palette").classList.add("open");
+        anime({
+          targets: "#palette",
+          scale: 1,
+          opacity: 1,
+          duration: 300,
+          easing: "easeOutBack",
+        });
+
+        ["pi1", "pi2", "pi3", "pi4"].forEach((id) => $(id).classList.remove("show", "sel"));
+        $("palette-q").textContent = "";
+        await sleep(250);
+
+        for (const id of ["pi1", "pi2", "pi3", "pi4"]) {
+          $(id).classList.add("show");
+          await sleep(80);
+        }
+
+        await typeIntoTextNode($("palette-q"), "graph", 14);
+        $("pi1").classList.add("sel");
+        await sleep(400);
+
+        await clickEl($("pi1"), 450);
+        cursorShow(false);
+
+        anime({
+          targets: "#palette",
+          scale: 0.93,
+          opacity: 0,
+          duration: 200,
+          easing: "easeInQuad",
+          complete: () => $("palette").classList.remove("open"),
+        });
+        $("dock-search").classList.remove("hot");
+        toast("Opening Graph view");
+        await sleep(350);
+      }
+
+      async function sceneGraph() {
+        setSceneLabel(4, "Graph");
+        setProgress(80);
+        caption("Knowledge Graph — traverse related materials");
+        url("samarbook.app/graph");
+
+        // Start cursor at bottom center (near dock) while hidden
+        state.cursorX = 400;
+        state.cursorY = 440;
+        cursor.style.left = "400px";
+        cursor.style.top = "440px";
+
+        showScene("sc-graph");
+        await sleep(250);
+        cursorShow(true);
+
+        const svg = $("graph-svg");
+        svg.innerHTML = "";
+
+        const nodes = [
+          { id: "n1", x: 280, y: 220, label: "Canvas Walkthrough", r: 22, c: "#FF5A36" },
+          { id: "n2", x: 480, y: 160, label: "Orbital mechanics", r: 18, c: "#3A86FF" },
+          { id: "n3", x: 490, y: 300, label: "Plugin SDK notes", r: 17, c: "#8B5CF6" },
+          { id: "n4", x: 290, y: 360, label: "Canvas graph draft", r: 16, c: "#10B981" },
+          { id: "n5", x: 140, y: 150, label: "Weekly roadmap", r: 15, c: "#f59e0b" },
+          { id: "n6", x: 580, y: 120, label: "Reading list", r: 14, c: "#ec4899" },
+          { id: "n7", x: 590, y: 340, label: "Plugin Ideas", r: 13, c: "#f59e0b" },
+        ];
+        const edges = [
+          ["n1", "n2"],
+          ["n1", "n3"],
+          ["n1", "n4"],
+          ["n1", "n5"],
+          ["n2", "n6"],
+          ["n3", "n7"],
+        ];
+
+        // edges first
+        for (const [a, b] of edges) {
+          const A = nodes.find((n) => n.id === a);
+          const B = nodes.find((n) => n.id === b);
+          const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+          line.setAttribute("x1", A.x);
+          line.setAttribute("y1", A.y);
+          line.setAttribute("x2", B.x);
+          line.setAttribute("y2", B.y);
+          line.setAttribute("stroke", "#334155");
+          line.setAttribute("stroke-width", "1.5");
+          line.setAttribute("stroke-dasharray", "120");
+          line.setAttribute("stroke-dashoffset", "120");
+          line.setAttribute("opacity", "0");
+          svg.appendChild(line);
+        }
+
+        // nodes
+        for (const n of nodes) {
+          const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+          g.classList.add("g-node");
+          g.style.opacity = "0";
+          g.style.transformOrigin = `${n.x}px ${n.y}px`;
+          g.dataset.id = n.id;
+
+          const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+          circle.setAttribute("cx", n.x);
+          circle.setAttribute("cy", n.y);
+          circle.setAttribute("r", n.r);
+          circle.setAttribute("fill", n.c);
+          circle.setAttribute("opacity", "0.9");
+          circle.setAttribute("filter", `drop-shadow(0 0 8px ${n.c}88)`);
+
+          const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+          text.setAttribute("x", n.x);
+          text.setAttribute("y", n.y + n.r + 16);
+          text.setAttribute("text-anchor", "middle");
+          text.classList.add("g-label");
+          text.textContent = n.label;
+
+          g.appendChild(circle);
+          g.appendChild(text);
+          svg.appendChild(g);
+        }
+
+        await sleep(200);
+
+        // Staggered graph line drawing
+        anime({
+          targets: "#graph-svg line",
+          strokeDashoffset: [120, 0],
+          opacity: [0, 0.65],
+          duration: 1000,
+          easing: "easeOutQuart",
+          delay: anime.stagger(80),
+        });
+
+        // Staggered node grow/pop-in
+        anime({
+          targets: "#graph-svg g",
+          scale: [0, 1],
+          opacity: [0, 1],
+          duration: 1200,
+          easing: "easeOutElastic(1.1, .75)",
+          delay: anime.stagger(90),
+        });
+
+        await sleep(1500);
+
+        // cursor hover node
+        caption("Click node to load connected canvases");
+        const n1 = svg.querySelector('[data-id="n1"] circle');
+        if (n1) {
+          const sr = screen.getBoundingClientRect();
+          const nr = n1.getBoundingClientRect();
+          await cursorTo(nr.left - sr.left + nr.width / 2, nr.top - sr.top + nr.height / 2, 700);
+          click();
+
+          // Pulse bubble elastic zoom
+          anime({
+            targets: n1,
+            r: [22, 28, 22],
+            duration: 500,
+            easing: "easeOutBack",
+          });
+          await sleep(600);
+        }
+        cursorShow(false);
+        await sleep(800);
+      }
+
+      async function sceneEnd() {
+        setSceneLabel(5, "Outro");
+        setProgress(100);
+        caption("Local-first Knowledge OS");
+        url("samarbook.app");
+        showScene("sc-end");
+        cursorShow(false);
+
+        // Reset Outro layout styles
+        anime.set(["#end-h", "#end-p", "#end-cta", "#end-feats span"], {
+          opacity: 0,
+          translateY: 25,
+        });
+
+        const tl = anime.timeline({
+          easing: "easeOutCubic",
+          duration: 650,
+        });
+
+        tl.add({
+          targets: "#end-h",
+          opacity: [0, 1],
+          translateY: [15, 0],
+        })
+          .add(
+            {
+              targets: "#end-p",
+              opacity: [0, 1],
+              translateY: [15, 0],
+            },
+            "-=450",
+          )
+          .add(
+            {
+              targets: "#end-cta",
+              opacity: [0, 1],
+              scale: [0.92, 1],
+              translateY: [15, 0],
+              duration: 550,
+              easing: "easeOutBack",
+            },
+            "-=400",
+          )
+          .add(
+            {
+              targets: "#end-feats span",
+              opacity: [0, 1],
+              scale: [0.8, 1],
+              translateY: [15, 0],
+              delay: anime.stagger(70),
+              duration: 750,
+              easing: "easeOutBack",
+            },
+            "-=350",
+          );
+
+        await sleep(3500);
+      }
+
+      async function loading() {
+        const steps = [
+          [12, "Booting brand layers…"],
+          [28, "Injecting Lucide components…"],
+          [45, "Loading audio sound effects…"],
+          [65, "Preparing workspace directories…"],
+          [82, "Configuring settings and plugin API…"],
+          [100, "Ready"],
+        ];
+        for (const [p, t] of steps) {
+          $("loader-fill").style.width = `${p}%`;
+          $("loader-text").textContent = t;
+          safeCreateIcons();
+          await sleep(160 + Math.random() * 80);
+        }
+        await sleep(250);
+        $("loader").classList.add("done");
+
+        // Reveal Play overlay to get user gesture for Web Audio API
+        $("play-overlay").classList.remove("hidden");
+        safeCreateIcons();
+      }
+
+      async function runTrailer() {
+        if (state.running) return;
+        state.running = true;
+        state.abort = false;
+        state.paused = false;
+        $("btn-pause").textContent = "Pause";
+        $("device").classList.add("ready");
+
+        // Stop all active anime.js runs immediately on new run
+        if (typeof anime !== "undefined" && anime.running) {
+          anime.running.forEach((a) => a.stop());
+        }
+
+        state.cursorX = 80;
+        state.cursorY = 80;
+        cursor.style.left = "80px";
+        cursor.style.top = "80px";
+
+        const scenes = [sceneTitle, sceneHome, sceneNotebook, sceneCanvas, sceneGraph, sceneEnd];
+
+        try {
+          for (const scene of scenes) {
+            if (state.abort) break;
+            await scene();
+          }
+        } catch (err) {
+          if (err === ABORT_ERROR) {
+            console.log("Trailer execution aborted cleanly.");
+          } else {
+            console.error("Trailer execution failed:", err);
+          }
+        } finally {
+          state.running = false;
+          caption("Trailer finished — click Replay to watch again");
+        }
+      }
+
+      async function boot() {
+        safeCreateIcons();
+        await loading();
+      }
+
+      $("btn-start-cinematic").addEventListener("click", () => {
+        $("play-overlay").classList.add("hidden");
+        initAudio();
+        toggleMusic();
+        runTrailer();
+      });
+
+      $("btn-play").addEventListener("click", async () => {
+        state.abort = true;
+        state.running = false;
+        if (typeof anime !== "undefined" && anime.running) {
+          anime.running.forEach((a) => a.stop());
+        }
+        await sleep(100);
+        state.abort = false;
+        await runTrailer();
+      });
+
+      $("btn-pause").addEventListener("click", (e) => {
+        state.paused = !state.paused;
+        e.target.textContent = state.paused ? "Resume" : "Pause";
+      });
+
+      $("btn-skip").addEventListener("click", () => {
+        state.paused = false;
+        $("btn-pause").textContent = "Pause";
+        state.abort = true;
+        state.running = false;
+        if (typeof anime !== "undefined" && anime.running) {
+          anime.running.forEach((a) => a.stop());
+        }
+        setTimeout(runTrailer, 120);
+      });
+
+      $("btn-export-mp4").addEventListener("click", () => {
+        playSound("plugin");
+        $("dlg-export").classList.add("open");
+        runExportSimulation();
+      });
+
+      $("btn-cancel-export").addEventListener("click", () => {
+        playSound("click");
+        if (exportInterval) clearInterval(exportInterval);
+        $("dlg-export").classList.remove("open");
+      });
+
+      boot();
+    </script>
+  </body>
+</html>

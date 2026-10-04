@@ -1,0 +1,67 @@
+import gui
+
+def main():
+    win := gui.create("L++ Native Application Dashboard v3.4", 800, 500)
+    print_str("[L++] Launching Native GUI Application...")
+
+    if win >= 0:
+        mut running := 1
+        mut frame := 0
+
+        while running == 1:
+            running = gui.poll_events(win)
+            if running == 0:
+                break
+
+            frame = frame + 1
+
+            # 1. Dark Background (0x121212)
+            gui.clear(win, 0x121212)
+
+            # 2. Top Header Navigation Bar (0x1F1F23)
+            gui.draw_rect(win, 0, 0, 800, 50, 0x1F1F23)
+            gui.draw_text(win, 20, 16, "L++ NATIVE DASHBOARD", 0x007ACC)
+            gui.draw_text(win, 650, 16, "v3.4.0 (AOT)", 0x888888)
+
+            # 3. Main Hero Card (Accent Blue 0x005999)
+            gui.draw_rect(win, 30, 80, 450, 180, 0x005999)
+            gui.draw_text(win, 50, 105, "Fast, Safe & Native by Default", 0xFFFFFF)
+            gui.draw_text(win, 50, 140, "No Garbage Collector | No Interpreter", 0xCCCCCC)
+            gui.draw_text(win, 50, 165, "Cranelift AOT Engine + Direct PE Linker", 0xCCCCCC)
+            gui.draw_text(win, 50, 210, "[ Active System Status: OPERATIONAL ]", 0x66FF66)
+
+            # 4. Stat Tile 1 (Memory Usage)
+            gui.draw_rect(win, 500, 80, 270, 85, 0x252526)
+            gui.draw_text(win, 520, 95, "MEMORY FOOTPRINT", 0x888888)
+            gui.draw_text(win, 520, 120, "15.5 KB (PE Freestanding)", 0x00FFCC)
+
+            # 5. Stat Tile 2 (Performance)
+            gui.draw_rect(win, 500, 175, 270, 85, 0x252526)
+            gui.draw_text(win, 520, 190, "COMPILER PERFORMANCE", 0x888888)
+            gui.draw_text(win, 520, 215, "1.0x GCC -O2 Parity", 0xFFCC00)
+
+            # 6. Action Buttons
+            gui.draw_rect(win, 30, 290, 220, 45, 0x007ACC)
+            gui.draw_text(win, 65, 305, "Run Analysis", 0xFFFFFF)
+
+            gui.draw_rect(win, 270, 290, 210, 45, 0x333337)
+            gui.draw_text(win, 310, 305, "System Settings", 0xCCCCCC)
+
+            gui.draw_rect(win, 500, 290, 270, 45, 0x28A745)
+            gui.draw_text(win, 550, 305, "Deploy Native Binary", 0xFFFFFF)
+
+            # 7. Embedded Console Terminal Card
+            gui.draw_rect(win, 30, 360, 740, 90, 0x1E1E1E)
+            gui.draw_text(win, 45, 375, "> lpp build --release --linker direct", 0x00FF00)
+            gui.draw_text(win, 45, 400, "  [L++] Compiled 141 files in 9.8 ms", 0xAAAAAA)
+            gui.draw_text(win, 45, 420, "  [L++] Output: demo_gui.exe (Native PE 64-bit)", 0xAAAAAA)
+
+            # 8. Bottom Status Bar
+            gui.draw_rect(win, 0, 475, 800, 25, 0x007ACC)
+            gui.draw_text(win, 15, 480, "Ready | UTF-8 | Win32 GDI Direct Render | 60 FPS", 0xFFFFFF)
+
+            # Present Frame
+            gui.present(win)
+
+        gui.close(win)
+        print_str("[L++] GUI Application closed successfully.")

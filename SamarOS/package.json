@@ -1,0 +1,12 @@
+{
+  "name": "samaros",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node test/boot_test.mjs",
+    "serve": "node web/server.mjs"
+  },
+  "dependencies": {
+    "v86": "^0.5.424"
+  }
+}

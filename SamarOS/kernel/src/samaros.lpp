@@ -1,0 +1,777 @@
+# SamarOS — the shell: state model, compositor, window manager, event loop.
+#
+# This is the top half of the operating system.  It owns every pixel after
+# the kernel has brought up the framebuffer: boot screen, lock screen,
+# desktop, menu bar, dock, launchpad and the window manager.
+
+const MENUBAR_H = 28
+const TITLEBAR_H = 38
+const DOCK_TILE = 44
+const DOCK_GAP = 14
+const DOCK_PAD = 12
+
+const PHASE_BOOT = 0
+const PHASE_LOCK = 1
+const PHASE_DESKTOP = 2
+
+const APP_WELCOME = 0
+const APP_TERMINAL = 1
+const APP_FILES = 2
+const APP_SETTINGS = 3
+const APP_MONITOR = 4
+const APP_STORE = 5
+const APP_ABOUT = 6
+const APP_COUNT = 7
+
+struct App:
+    name: Str
+    short: Str
+    category: Str
+    tagline: Str
+    c0: Int
+    c1: Int
+    w: Int
+    h: Int
+
+struct Win:
+    app: Int
+    x: Int
+    y: Int
+    w: Int
+    h: Int
+    minimized: Int
+    maximized: Int
+    scroll: Int
+    rx: Int
+    ry: Int
+    rw: Int
+    rh: Int
+
+struct Term:
+    lines: List[Str]
+    input: Str
+    cwd: Str
+
+struct FsNode:
+    name: Str
+    kind: Int
+    size: Int
+    body: Str
+    parent: Int
+
+struct OS:
+    apps: List[App]
+    wins: List[Win]
+    fs: List[FsNode]
+    term: Term
+    accent: Int
+    phase: Int
+    dirty: Int
+    launcher: Int
+    drag: Int
+    drag_dx: Int
+    drag_dy: Int
+    mouse_prev: Int
+    cur_x: Int
+    cur_y: Int
+    cur_valid: Int
+    cpu_hist: List[Int]
+    net_hist: List[Int]
+    wifi: Int
+    bluetooth: Int
+    focus_mode: Int
+    night: Int
+    volume: Int
+    brightness: Int
+    frames: Int
+    frame_ms: Int
+    boot_ms: Int
+    dir: Int
+    notice: Str
+    notice_until: Int
+    screen_w: Int
+    screen_h: Int
+    cascade: Int
+
+# ---------------------------------------------------------------- setup
+def make_apps() -> List[App]:
+    apps: List[App] := list_new()
+    list_push(apps, App("Welcome", "Welcome", "System", "Say hello to SamarOS", 0x6D8CFF, 0x8B5CF6, 560, 400))
+    list_push(apps, App("Terminal", "Terminal", "Tools", "A real shell on the L++ kernel", 0x334155, 0x0F172A, 640, 400))
+    list_push(apps, App("Files", "Files", "System", "Browse the SamarOS RAM disk", 0x38BDF8, 0x2563EB, 660, 420))
+    list_push(apps, App("Settings", "Settings", "System", "Appearance, network and power", 0x94A3B8, 0x475569, 600, 430))
+    list_push(apps, App("Monitor", "Monitor", "Tools", "Live kernel and CPU telemetry", 0x34D399, 0x0D9488, 620, 420))
+    list_push(apps, App("Store", "Store", "Media", "Packages built with L++", 0xFB923C, 0xEA580C, 640, 420))
+    list_push(apps, App("About", "About", "System", "What this machine is running", 0xD946EF, 0x7C3AED, 560, 400))
+    return apps
+
+def fs_add(fs: List[FsNode], name: Str, kind: Int, size: Int, body: Str, parent: Int) -> Int:
+    list_push(fs, FsNode(name, kind, size, body, parent))
+    return list_len(fs) - 1
+
+def make_fs() -> List[FsNode]:
+    fs: List[FsNode] := list_new()
+    root := fs_add(fs, "/", 0, 0, "", -1)
+    kernel := fs_add(fs, "kernel", 0, 0, "", root)
+    docs := fs_add(fs, "docs", 0, 0, "", root)
+    home := fs_add(fs, "home", 0, 0, "", root)
+    fs_add(fs, "samaros.lpp", 1, 24, "the shell you are looking at", kernel)
+    fs_add(fs, "ui.lpp", 1, 17, "rounded rects, shadows, icons", kernel)
+    fs_add(fs, "apps.lpp", 1, 21, "every window in this desktop", kernel)
+    fs_add(fs, "sys.lpp", 1, 4, "extern C bindings to the metal", kernel)
+    fs_add(fs, "kruntime.c", 1, 9, "freestanding L++ runtime", kernel)
+    fs_add(fs, "README.md", 1, 6, "SamarOS — an OS written in L++", docs)
+    fs_add(fs, "LICENSE", 1, 1, "MIT", docs)
+    fs_add(fs, "boot.log", 1, 2, "kernel handed over in 0.4s", docs)
+    fs_add(fs, "welcome.txt", 1, 1, "hello from Bhopal", home)
+    fs_add(fs, "notes.md", 1, 3, "ship the OS, then sleep", home)
+    return fs
+
+def make_term() -> Term:
+    lines: List[Str] := list_new()
+    list_push(lines, "SamarOS 1.0 \"Aurora\" — L++ kernel shell")
+    list_push(lines, "type 'help' for the command list")
+    list_push(lines, "")
+    return Term(lines, "", "/")
+
+def make_os(w: Int, h: Int) -> OS:
+    wins: List[Win] := list_new()
+    cpu: List[Int] := list_new()
+    net: List[Int] := list_new()
+    for i in range(28):
+        list_push(cpu, 12 + (i * 7) % 34)
+        list_push(net, 6 + (i * 11) % 28)
+    return OS(make_apps(), wins, make_fs(), make_term(), 0x6D8CFF, PHASE_BOOT, 1, 0,
+              -1, 0, 0, 0, -1, -1, 0, cpu, net, 1, 1, 0, 0, 62, 78, 0, 0, 0, 2,
+              "", 0, w, h, 0)
+
+# ------------------------------------------------------------ utilities
+def app_at(os: OS, id: Int) -> App:
+    return list_get(os.apps, clamp(id, 0, list_len(os.apps) - 1))
+
+def win_at(os: OS, i: Int) -> Win:
+    return list_get(os.wins, i)
+
+def top_window(os: OS) -> Int:
+    mut i := list_len(os.wins) - 1
+    while i >= 0:
+        w := win_at(os, i)
+        if w.minimized == 0:
+            return i
+        i = i - 1
+    return -1
+
+def find_window(os: OS, app: Int) -> Int:
+    for i in range(list_len(os.wins)):
+        w := win_at(os, i)
+        if w.app == app:
+            return i
+    return -1
+
+def raise_window(os: OS, index: Int) -> Void:
+    n := list_len(os.wins)
+    if index < 0:
+        return
+    if index >= n - 1:
+        return
+    w := win_at(os, index)
+    list_remove(os.wins, index)
+    list_push(os.wins, w)
+
+def notify(os: OS, text: Str) -> Void:
+    os.notice = text
+    os.notice_until = time_ms() + 2600
+    os.dirty = 1
+
+def open_app(os: OS, app: Int) -> Void:
+    existing := find_window(os, app)
+    if existing >= 0:
+        w := win_at(os, existing)
+        w.minimized = 0
+        raise_window(os, existing)
+        os.dirty = 1
+        return
+    meta := app_at(os, app)
+    step := os.cascade % 5
+    x := (os.screen_w - meta.w) / 2 - 90 + step * 34
+    y := MENUBAR_H + 34 + step * 26
+    os.cascade = os.cascade + 1
+    list_push(os.wins, Win(app, max(x, 12), y, meta.w, meta.h, 0, 0, 0, x, y, meta.w, meta.h))
+    os.dirty = 1
+
+def close_window(os: OS, index: Int) -> Void:
+    if index >= 0:
+        list_remove(os.wins, index)
+        os.dirty = 1
+
+def window_client_h(w: Win) -> Int:
+    return w.h - TITLEBAR_H
+
+# ------------------------------------------------------------ boot phase
+def boot_line(y: Int, label: Str, x: Int) -> Void:
+    text_draw(x, y, "[", 0x3F3F46, 255, FONT_MONO)
+    text_draw(x + 8, y, "ok", 0x34D399, 255, FONT_MONO)
+    text_draw(x + 26, y, "]", 0x3F3F46, 255, FONT_MONO)
+    text_draw(x + 40, y, label, 0x8B8B95, 255, FONT_MONO)
+
+def boot_screen(w: Int, h: Int, accent: Int) -> Void:
+    logs: List[Str] := list_new()
+    list_push(logs, "samar boot sector -> stage 2 -> long jump")
+    list_push(logs, "VESA linear framebuffer acquired")
+    list_push(logs, "L++ freestanding runtime, bump heap online")
+    list_push(logs, "PS/2 controller, PIT clock, CMOS RTC")
+    list_push(logs, "compositor + window manager")
+    list_push(logs, "starting SamarOS shell")
+
+    cx := w / 2
+    steps := 6
+    for step in range(steps + 1):
+        gfx_clear(0x05060A)
+        samar_logo(cx - 22, h / 2 - 150, 44, accent, 255)
+        title := "SAMAR OS"
+        tw := text_tracked_width(title, 7, FONT_TITLE)
+        text_tracked(cx - tw / 2, h / 2 - 86, title, 7, 0xE4E4E7, 235, FONT_TITLE)
+        sub := "1.0  AURORA"
+        sw := text_tracked_width(sub, 4, FONT_CAPS)
+        text_tracked(cx - sw / 2, h / 2 - 64, sub, 4, 0x52525B, 255, FONT_CAPS)
+
+        bar := 190
+        round_rect(cx - bar / 2, h / 2 - 30, bar, 3, 2, 0xFFFFFF, 26)
+        fill := (bar * step) / steps
+        round_rect(cx - bar / 2, h / 2 - 30, fill, 3, 2, 0xFFFFFF, 220)
+
+        for i in range(step):
+            boot_line(h / 2 + 4 + i * 18, list_get(logs, i), cx - 190)
+
+        gfx_present()
+        wait_ms(190)
+
+def wait_ms(ms: Int) -> Void:
+    start := time_ms()
+    while time_ms() - start < ms:
+        input_poll()
+
+# ------------------------------------------------------------ lock phase
+def weekday_name(d: Int) -> Str:
+    if d == 1:
+        return "Sunday"
+    if d == 2:
+        return "Monday"
+    if d == 3:
+        return "Tuesday"
+    if d == 4:
+        return "Wednesday"
+    if d == 5:
+        return "Thursday"
+    if d == 6:
+        return "Friday"
+    return "Saturday"
+
+def month_name(m: Int) -> Str:
+    if m == 1:
+        return "January"
+    if m == 2:
+        return "February"
+    if m == 3:
+        return "March"
+    if m == 4:
+        return "April"
+    if m == 5:
+        return "May"
+    if m == 6:
+        return "June"
+    if m == 7:
+        return "July"
+    if m == 8:
+        return "August"
+    if m == 9:
+        return "September"
+    if m == 10:
+        return "October"
+    if m == 11:
+        return "November"
+    return "December"
+
+def clock_text() -> Str:
+    return str_concat(str_concat(pad2(rtc_hour()), ":"), pad2(rtc_min()))
+
+def date_text() -> Str:
+    day := str_concat(weekday_name(rtc_weekday()), ", ")
+    return str_concat(str_concat(day, int_to_str(rtc_day())), str_concat(" ", month_name(rtc_month())))
+
+def draw_lock(os: OS, w: Int, h: Int) -> Void:
+    gfx_cache_restore()
+    gfx_blend_rect(0, 0, w, h, 0x05070C, 96)
+
+    gfx_blend_rect(0, 0, w, MENUBAR_H, 0x0B0D14, 130)
+    samar_logo(14, 8, 12, os.accent, 255)
+    text_draw(34, 6, "SamarOS", 0xE4E4E7, 220, FONT_BODY)
+    text_right(0, 6, w - 16, clock_text(), 0xE4E4E7, 200, FONT_BODY)
+
+    t := clock_text()
+    tw := text_width(t, FONT_DISPLAY)
+    text_draw((w - tw) / 2, h / 4, t, 0xFFFFFF, 250, FONT_DISPLAY)
+    d := date_text()
+    text_center(0, h / 4 + 52, w, d, 0xC7C7CE, 190, FONT_TITLE)
+
+    cx := w / 2
+    cy := (h * 62) / 100
+    grad_round_rect(cx - 35, cy - 35, 70, 70, 35, os.accent, 0x7C3AED, 255)
+    text_center(cx - 35, cy - 15, 70, "S", 0xFFFFFF, 255, FONT_HEAD)
+    text_center(0, cy + 46, w, "Samar", 0xF4F4F5, 240, FONT_TITLE)
+
+    pill_w := 200
+    round_rect(cx - pill_w / 2, cy + 76, pill_w, 34, 17, 0xFFFFFF, 22)
+    round_ring(cx - pill_w / 2, cy + 76, pill_w, 34, 17, 0xFFFFFF, 40)
+    icon_lock(cx - pill_w / 2 + 14, cy + 85, 15, 0xE4E4E7, 200)
+    text_draw(cx - pill_w / 2 + 40, cy + 85, "Click anywhere to unlock", 0xD4D4D8, 210, FONT_SMALL)
+
+    text_center(0, h - 46, w, "SamarOS 1.0 \"Aurora\"  ·  L++ kernel", 0x71717A, 200, FONT_SMALL)
+
+# --------------------------------------------------------- menu bar
+def menu_bar(os: OS, w: Int) -> Void:
+    gfx_blend_rect(0, 0, w, MENUBAR_H, 0x0C0E15, 190)
+    gfx_blend_rect(0, MENUBAR_H - 1, w, 1, 0xFFFFFF, 14)
+
+    samar_logo(13, 8, 13, os.accent, 255)
+    mut pen := 36
+    text_draw(pen, 6, "SamarOS", 0xF4F4F5, 250, FONT_BODY_SEMI)
+    pen = pen + text_width("SamarOS", FONT_BODY_SEMI) + 18
+
+    top := top_window(os)
+    if top >= 0:
+        meta := app_at(os, win_at(os, top).app)
+        text_draw(pen, 6, meta.name, 0xD4D4D8, 220, FONT_BODY)
+        pen = pen + text_width(meta.name, FONT_BODY) + 18
+
+    menus: List[Str] := list_new()
+    list_push(menus, "File")
+    list_push(menus, "Edit")
+    list_push(menus, "View")
+    list_push(menus, "Window")
+    list_push(menus, "Help")
+    for i in range(list_len(menus)):
+        label := list_get(menus, i)
+        text_draw(pen, 6, label, 0x9C9CA5, 205, FONT_BODY)
+        pen = pen + text_width(label, FONT_BODY) + 16
+
+    # right hand status cluster
+    stamp := str_concat(str_concat(substr(weekday_name(rtc_weekday()), 0, 3), " "), str_concat(int_to_str(rtc_day()), str_concat(" ", substr(month_name(rtc_month()), 0, 3))))
+    full := str_concat(str_concat(stamp, "  "), clock_text())
+    tw := text_width(full, FONT_BODY)
+    text_draw(w - 16 - tw, 6, full, 0xE4E4E7, 235, FONT_BODY)
+
+    mut rx := w - 16 - tw - 22
+    icon_battery(rx, 9, 18, 82, 0xD4D4D8, 220)
+    rx = rx - 26
+    if os.wifi == 1:
+        icon_wifi(rx, 8, 14, 0xD4D4D8, 220)
+    else:
+        icon_wifi(rx, 8, 14, 0x52525B, 200)
+    rx = rx - 24
+    icon_search(rx, 8, 14, 0xD4D4D8, 200)
+    rx = rx - 24
+    icon_grid(rx, 9, 13, 0xD4D4D8, 200)
+
+# --------------------------------------------------------------- dock
+def dock_width(os: OS) -> Int:
+    n := APP_COUNT
+    return n * DOCK_TILE + (n - 1) * DOCK_GAP + DOCK_PAD * 2
+
+def dock_x(os: OS) -> Int:
+    return (os.screen_w - dock_width(os)) / 2
+
+def dock_y(os: OS) -> Int:
+    return os.screen_h - DOCK_TILE - DOCK_PAD * 2 - 12
+
+def dock_tile_x(os: OS, i: Int) -> Int:
+    return dock_x(os) + DOCK_PAD + i * (DOCK_TILE + DOCK_GAP)
+
+def app_icon(app: Int, x: Int, y: Int, s: Int, color: Int, alpha: Int) -> Void:
+    if app == APP_WELCOME:
+        icon_sparkle(x, y, s, color, alpha)
+    elif app == APP_TERMINAL:
+        icon_terminal(x, y, s, color, alpha)
+    elif app == APP_FILES:
+        icon_folder(x, y, s, color, alpha)
+    elif app == APP_SETTINGS:
+        icon_gear(x, y, s, color, alpha)
+    elif app == APP_MONITOR:
+        icon_chart(x, y, s, color, alpha)
+    elif app == APP_STORE:
+        icon_store(x, y, s, color, alpha)
+    else:
+        icon_cpu(x, y, s, color, alpha)
+
+def draw_dock(os: OS) -> Void:
+    x := dock_x(os)
+    y := dock_y(os)
+    w := dock_width(os)
+    h := DOCK_TILE + DOCK_PAD * 2
+
+    shadow(x, y, w, h, 22, 12, 120)
+    round_rect(x, y, w, h, 22, 0x11131B, 205)
+    round_ring(x, y, w, h, 22, 0xFFFFFF, 20)
+
+    mx := mouse_x()
+    my := mouse_y()
+    for i in range(APP_COUNT):
+        meta := app_at(os, i)
+        tx := dock_tile_x(os, i)
+        ty := y + DOCK_PAD
+        hot := hit(mx, my, tx, ty, DOCK_TILE, DOCK_TILE)
+        size := DOCK_TILE
+        oy := 0
+        if hot == 1:
+            oy = 3
+        grad_round_rect(tx, ty - oy, size, size, 13, meta.c0, meta.c1, 255)
+        round_ring(tx, ty - oy, size, size, 13, 0xFFFFFF, 26)
+        app_icon(i, tx + 12, ty - oy + 12, 20, 0xFFFFFF, 240)
+        if find_window(os, i) >= 0:
+            fill_circle(tx + size / 2, y + h - 5, 2, 0xFFFFFF, 190)
+        if hot == 1:
+            label := meta.name
+            lw := text_width(label, FONT_SMALL) + 18
+            lx := tx + size / 2 - lw / 2
+            ly := y - 30
+            round_rect(lx, ly, lw, 24, 8, 0x1B1D26, 235)
+            round_ring(lx, ly, lw, 24, 8, 0xFFFFFF, 24)
+            text_center(lx, ly + 5, lw, label, 0xF4F4F5, 240, FONT_SMALL)
+
+# ------------------------------------------------------------- windows
+def traffic_lights(x: Int, y: Int, focused: Int, mx: Int, my: Int) -> Void:
+    colors: List[Int] := list_new()
+    list_push(colors, 0xFF5F57)
+    list_push(colors, 0xFEBC2E)
+    list_push(colors, 0x28C840)
+    for i in range(3):
+        cx := x + i * 20
+        c := list_get(colors, i)
+        if focused == 0:
+            c = 0x3F3F46
+        fill_circle(cx, y, 6, c, 255)
+        if hit(mx, my, cx - 7, y - 7, 14, 14) == 1:
+            fill_circle(cx, y, 6, 0x000000, 60)
+
+def draw_window(os: OS, index: Int, focused: Int) -> Void:
+    win := win_at(os, index)
+    meta := app_at(os, win.app)
+    x := win.x
+    y := win.y
+    w := win.w
+    h := win.h
+
+    if focused == 1:
+        shadow(x, y, w, h, 14, 16, 150)
+    else:
+        shadow(x, y, w, h, 14, 10, 90)
+
+    round_rect(x, y, w, h, 14, 0x16181F, 252)
+    round_rect(x, y, w, TITLEBAR_H, 14, 0x111318, 252)
+    gfx_fill_rect(x, y + TITLEBAR_H - 14, w, 14, 0x111318)
+    gfx_blend_rect(x, y + TITLEBAR_H - 1, w, 1, 0xFFFFFF, 14)
+    round_ring(x, y, w, h, 14, 0xFFFFFF, 22)
+
+    traffic_lights(x + 18, y + 19, focused, mouse_x(), mouse_y())
+    title_alpha := 150
+    if focused == 1:
+        title_alpha = 245
+    text_center(x, y + 11, w, meta.name, 0xF4F4F5, title_alpha, FONT_BODY_SEMI)
+
+    gfx_clip(x + 1, y + TITLEBAR_H, w - 2, h - TITLEBAR_H - 1)
+    draw_app(os, win, x, y + TITLEBAR_H, w, h - TITLEBAR_H)
+    gfx_clip_reset()
+
+# ----------------------------------------------------------- launchpad
+def draw_launcher(os: OS) -> Void:
+    w := os.screen_w
+    h := os.screen_h
+    gfx_blend_rect(0, 0, w, h, 0x05070C, 205)
+
+    text_center(0, 96, w, "Applications", 0xF4F4F5, 245, FONT_HEAD)
+    text_center(0, 124, w, "Everything here is compiled into the kernel image", 0x8B8B95, 220, FONT_SMALL)
+
+    cols := 4
+    tile := 108
+    gap := 46
+    total := cols * tile + (cols - 1) * gap
+    x0 := (w - total) / 2
+    y0 := 190
+    mx := mouse_x()
+    my := mouse_y()
+    for i in range(APP_COUNT):
+        meta := app_at(os, i)
+        col := i % cols
+        row := i / cols
+        tx := x0 + col * (tile + gap)
+        ty := y0 + row * (tile + 58)
+        hot := hit(mx, my, tx, ty, tile, tile)
+        oy := 0
+        if hot == 1:
+            oy = 4
+        shadow(tx, ty - oy, tile, tile, 26, 10, 110)
+        grad_round_rect(tx, ty - oy, tile, tile, 26, meta.c0, meta.c1, 255)
+        round_ring(tx, ty - oy, tile, tile, 26, 0xFFFFFF, 26)
+        app_icon(i, tx + tile / 2 - 16, ty - oy + tile / 2 - 16, 32, 0xFFFFFF, 245)
+        text_center(tx, ty - oy + tile + 12, tile, meta.name, 0xF4F4F5, 240, FONT_BODY)
+        text_center(tx - 20, ty - oy + tile + 30, tile + 40, meta.category, 0x71717A, 220, FONT_SMALL)
+
+    text_center(0, h - 60, w, "Press Esc or click the background to close", 0x52525B, 220, FONT_SMALL)
+
+# ------------------------------------------------------------- notice
+def draw_notice(os: OS) -> Void:
+    if time_ms() > os.notice_until:
+        return
+    if len(os.notice) == 0:
+        return
+    w := text_width(os.notice, FONT_BODY) + 46
+    x := os.screen_w - w - 16
+    y := MENUBAR_H + 12
+    shadow(x, y, w, 46, 16, 10, 110)
+    round_rect(x, y, w, 46, 16, 0x1B1D26, 240)
+    round_ring(x, y, w, 46, 16, 0xFFFFFF, 26)
+    grad_round_rect(x + 10, y + 11, 24, 24, 8, os.accent, 0x8B5CF6, 255)
+    icon_sparkle(x + 16, y + 17, 12, 0xFFFFFF, 245)
+    text_draw(x + 42, y + 15, os.notice, 0xF4F4F5, 240, FONT_BODY)
+
+# ---------------------------------------------------------- compositor
+def compose(os: OS) -> Void:
+    w := os.screen_w
+    h := os.screen_h
+    if os.phase == PHASE_LOCK:
+        draw_lock(os, w, h)
+        return
+
+    gfx_cache_restore()
+    n := list_len(os.wins)
+    top := top_window(os)
+    for i in range(n):
+        win := win_at(os, i)
+        if win.minimized == 0:
+            focused := 0
+            if i == top:
+                focused = 1
+            draw_window(os, i, focused)
+    menu_bar(os, w)
+    draw_dock(os)
+    if os.launcher == 1:
+        draw_launcher(os)
+    draw_notice(os)
+    os.cur_valid = 0
+
+# ------------------------------------------------------------- input
+def click_desktop(os: OS, mx: Int, my: Int) -> Void:
+    # launchpad first: it swallows everything
+    if os.launcher == 1:
+        cols := 4
+        tile := 108
+        gap := 46
+        total := cols * tile + (cols - 1) * gap
+        x0 := (os.screen_w - total) / 2
+        y0 := 190
+        for i in range(APP_COUNT):
+            col := i % cols
+            row := i / cols
+            tx := x0 + col * (tile + gap)
+            ty := y0 + row * (tile + 58)
+            if hit(mx, my, tx, ty, tile, tile) == 1:
+                os.launcher = 0
+                open_app(os, i)
+                return
+        os.launcher = 0
+        os.dirty = 1
+        return
+
+    # menu bar
+    if my < MENUBAR_H:
+        if mx < 30:
+            os.launcher = 1
+            os.dirty = 1
+        return
+
+    # dock
+    dy := dock_y(os)
+    if my >= dy:
+        for i in range(APP_COUNT):
+            tx := dock_tile_x(os, i)
+            if hit(mx, my, tx, dy + DOCK_PAD, DOCK_TILE, DOCK_TILE) == 1:
+                open_app(os, i)
+                return
+
+    # windows, front to back
+    mut i := list_len(os.wins) - 1
+    while i >= 0:
+        win := win_at(os, i)
+        if win.minimized == 0:
+            if hit(mx, my, win.x, win.y, win.w, win.h) == 1:
+                raise_window(os, i)
+                last := list_len(os.wins) - 1
+                handle_window_click(os, last, mx, my)
+                return
+        i = i - 1
+
+def handle_window_click(os: OS, index: Int, mx: Int, my: Int) -> Void:
+    win := win_at(os, index)
+    os.dirty = 1
+    if my < win.y + TITLEBAR_H:
+        # traffic lights
+        if hit(mx, my, win.x + 11, win.y + 12, 14, 14) == 1:
+            close_window(os, index)
+            return
+        if hit(mx, my, win.x + 31, win.y + 12, 14, 14) == 1:
+            win.minimized = 1
+            return
+        if hit(mx, my, win.x + 51, win.y + 12, 14, 14) == 1:
+            toggle_maximize(os, win)
+            return
+        os.drag = index
+        os.drag_dx = mx - win.x
+        os.drag_dy = my - win.y
+        return
+    app_click(os, win, mx - win.x, my - win.y - TITLEBAR_H)
+
+def toggle_maximize(os: OS, win: Win) -> Void:
+    if win.maximized == 1:
+        win.x = win.rx
+        win.y = win.ry
+        win.w = win.rw
+        win.h = win.rh
+        win.maximized = 0
+    else:
+        win.rx = win.x
+        win.ry = win.y
+        win.rw = win.w
+        win.rh = win.h
+        win.x = 8
+        win.y = MENUBAR_H + 8
+        win.w = os.screen_w - 16
+        win.h = os.screen_h - MENUBAR_H - dock_height(os) - 24
+        win.maximized = 1
+    os.dirty = 1
+
+def dock_height(os: OS) -> Int:
+    return DOCK_TILE + DOCK_PAD * 2 + 12
+
+def handle_keys(os: OS) -> Void:
+    mut k := key_pop()
+    while k != 0:
+        if os.phase == PHASE_LOCK:
+            os.phase = PHASE_DESKTOP
+            os.dirty = 1
+        elif k == KEY_ESC:
+            if os.launcher == 1:
+                os.launcher = 0
+                os.dirty = 1
+        elif k == KEY_SUPER:
+            os.launcher = 1 - os.launcher
+            os.dirty = 1
+        elif k == KEY_F1:
+            open_app(os, APP_TERMINAL)
+        elif k == KEY_F2:
+            open_app(os, APP_FILES)
+        else:
+            top := top_window(os)
+            if top >= 0:
+                win := win_at(os, top)
+                if win.app == APP_TERMINAL:
+                    term_key(os, k)
+                    os.dirty = 1
+        k = key_pop()
+
+def handle_mouse(os: OS) -> Void:
+    buttons := mouse_buttons()
+    down := buttons & 1
+    mx := mouse_x()
+    my := mouse_y()
+
+    if down == 1:
+        if os.mouse_prev == 0:
+            if os.phase == PHASE_LOCK:
+                os.phase = PHASE_DESKTOP
+                os.dirty = 1
+                open_app(os, APP_WELCOME)
+                notify(os, "Welcome back, Samar")
+            else:
+                click_desktop(os, mx, my)
+        elif os.drag >= 0:
+            win := win_at(os, os.drag)
+            nx := clamp(mx - os.drag_dx, 0 - win.w + 90, os.screen_w - 90)
+            ny := clamp(my - os.drag_dy, MENUBAR_H, os.screen_h - 40)
+            if nx != win.x:
+                os.dirty = 1
+            if ny != win.y:
+                os.dirty = 1
+            win.x = nx
+            win.y = ny
+    else:
+        os.drag = -1
+
+    wheel := mouse_wheel()
+    if wheel != 0:
+        top := top_window(os)
+        if top >= 0:
+            win := win_at(os, top)
+            win.scroll = max(win.scroll + wheel * 24, 0)
+            os.dirty = 1
+
+    os.mouse_prev = down
+
+# -------------------------------------------------------- cursor layer
+def cursor_frame(os: OS) -> Void:
+    mx := mouse_x()
+    my := mouse_y()
+    if os.cur_valid == 1:
+        if mx == os.cur_x:
+            if my == os.cur_y:
+                return
+        gfx_restore_under()
+        gfx_present_rect(os.cur_x - 1, os.cur_y - 1, 24, 24)
+    gfx_save_under(mx, my, 22, 22)
+    draw_cursor(mx, my)
+    gfx_present_rect(mx - 1, my - 1, 24, 24)
+    os.cur_x = mx
+    os.cur_y = my
+    os.cur_valid = 1
+
+# ---------------------------------------------------------------- main
+def main() -> Void:
+    w := fb_width()
+    h := fb_height()
+    os := make_os(w, h)
+
+    boot_screen(w, h, os.accent)
+    draw_wallpaper(w, h, os.accent)
+    gfx_cache_store()
+
+    os.phase = PHASE_LOCK
+    os.boot_ms = time_ms()
+    os.dirty = 1
+
+    mut last_min := -1
+    while 1 == 1:
+        input_poll()
+        handle_keys(os)
+        handle_mouse(os)
+
+        minute := rtc_min() * 60 + rtc_sec() / 15
+        if minute != last_min:
+            last_min = minute
+            os.dirty = 1
+            sample_telemetry(os)
+
+        if os.dirty == 1:
+            start := time_ms()
+            compose(os)
+            gfx_present()
+            os.frame_ms = time_ms() - start
+            os.frames = os.frames + 1
+            os.dirty = 0
+
+        cursor_frame(os)
+
+def sample_telemetry(os: OS) -> Void:
+    load := 8 + (os.frames * 13) % 46 + list_len(os.wins) * 6
+    list_remove(os.cpu_hist, 0)
+    list_push(os.cpu_hist, clamp(load, 4, 96))
+    list_remove(os.net_hist, 0)
+    list_push(os.net_hist, clamp((os.frames * 7) % 60 + 5, 3, 90))

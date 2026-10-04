@@ -1,0 +1,275 @@
+# tar.lpp — USTAR archive reader and writer.
+#
+# A tar file is a sequence of 512-byte blocks: one header per member, followed
+# by its contents padded to a block boundary, ended by two zero blocks.
+#
+# Header fields are fixed-offset ASCII. Numbers are octal, NUL- or
+# space-terminated. The checksum is the sum of all header bytes with the
+# checksum field itself treated as spaces.
+#
+# Writes USTAR ("ustar\0" + "00"), which GNU tar, bsdtar and Python's tarfile
+# all read. Long names (>100 bytes) are rejected rather than silently
+# truncated; GNU/PAX extended headers are read but their extra metadata is
+# ignored, and sparse files are not supported.
+
+import bits
+
+def BLOCK() -> Int:
+    return 512
+
+# ── octal helpers ──
+
+def write_octal(b: Int, off: Int, width: Int, value: Int):
+    # Right-aligned octal, zero padded, NUL terminated (the classic layout).
+    mut v := value
+    mut i := width - 2
+    while i >= 0:
+        buf_set8(b, off + i, 48 + (v % 8))
+        v = v / 8
+        i = i - 1
+    buf_set8(b, off + width - 1, 0)
+
+def read_octal(b: Int, off: Int, width: Int) -> Int:
+    mut v := 0
+    mut i := 0
+    while i < width:
+        c := buf_get8(b, off + i)
+        if c == 0:
+            i = width
+        elif c == 32:
+            i = i + 1
+        elif c >= 48:
+            if c <= 55:
+                v = v * 8 + (c - 48)
+                i = i + 1
+            else:
+                i = width
+        else:
+            i = width
+    return v
+
+def checksum(b: Int, off: Int) -> Int:
+    mut s := 0
+    mut i := 0
+    while i < BLOCK():
+        mut c := buf_get8(b, off + i)
+        # The checksum field itself counts as spaces.
+        if i >= 148:
+            if i < 156:
+                c = 32
+        s = s + c
+        i = i + 1
+    return s
+
+# ── writer ──
+
+def tw_new() -> Int:
+    return bits.vec_new(4096)
+
+def tw_free(t: Int):
+    bits.vec_free(t)
+
+# Append a member. `mode` is octal (e.g. 420 decimal = 0644).
+def tw_add_bytes(t: Int, name: Str, data: Int, n: Int) -> Int:
+    nl := str_len(name)
+    if nl > 100:
+        return 0
+    hdr := buf_alloc(BLOCK())
+    mut i := 0
+    while i < BLOCK():
+        buf_set8(hdr, i, 0)
+        i = i + 1
+    buf_write_str(hdr, 0, name)
+    write_octal(hdr, 100, 8, 420)        # mode 0644
+    write_octal(hdr, 108, 8, 0)          # uid
+    write_octal(hdr, 116, 8, 0)          # gid
+    write_octal(hdr, 124, 12, n)         # size
+    write_octal(hdr, 136, 12, 0)         # mtime
+    buf_set8(hdr, 156, 48)               # typeflag '0' = regular file
+    buf_write_str(hdr, 257, "ustar")
+    buf_set8(hdr, 262, 0)
+    buf_set8(hdr, 263, 48)               # version "00"
+    buf_set8(hdr, 264, 48)
+    buf_write_str(hdr, 265, "root")
+    buf_write_str(hdr, 297, "root")
+    # checksum last, over the completed header
+    cs := checksum(hdr, 0)
+    write_octal(hdr, 148, 7, cs)
+    buf_set8(hdr, 154, 0)
+    buf_set8(hdr, 155, 32)
+
+    bits.vec_push_bytes(t, hdr, 0, BLOCK())
+    buf_free(hdr)
+    if n > 0:
+        bits.vec_push_bytes(t, data, 0, n)
+    pad := (BLOCK() - (n % BLOCK())) % BLOCK()
+    mut p := 0
+    while p < pad:
+        bits.vec_push(t, 0)
+        p = p + 1
+    return 1
+
+def tw_add_str(t: Int, name: Str, text: Str) -> Int:
+    n := str_len(text)
+    b := buf_alloc(n + 1)
+    if n > 0:
+        buf_write_str(b, 0, text)
+    r := tw_add_bytes(t, name, b, n)
+    buf_free(b)
+    return r
+
+def tw_add_file(t: Int, name: Str, path: Str) -> Int:
+    if file_exists(path) == 0:
+        return 0
+    b := buf_read(path)
+    r := tw_add_bytes(t, name, b, buf_len(b))
+    buf_free(b)
+    return r
+
+# Terminate with two zero blocks and write to disk.
+def tw_save(t: Int, path: Str) -> Int:
+    mut i := 0
+    while i < BLOCK() * 2:
+        bits.vec_push(t, 0)
+        i = i + 1
+    n := bits.vec_len(t)
+    b := bits.exact_buf(bits.vec_data(t), n)
+    r := buf_write(path, b)
+    buf_free(b)
+    return r
+
+# ── reader ──
+#
+# Handle: [0]=data [8]=size [16]=names(sv) [24]=offsets iv [32]=sizes iv
+
+def tr_free(r: Int):
+    buf_free(bits.bget64(r, 0))
+    sv_free_t(bits.bget64(r, 16))
+    bits.iv_free(bits.bget64(r, 24))
+    bits.iv_free(bits.bget64(r, 32))
+    buf_free(r)
+
+def sv_new_t() -> Int:
+    h := buf_alloc(24)
+    bits.bset64(h, 0, bits.vec_new(128))
+    bits.bset64(h, 8, bits.iv_new(8))
+    bits.bset64(h, 16, bits.iv_new(8))
+    return h
+
+def sv_push_t(h: Int, s: Str):
+    b := bits.bget64(h, 0)
+    bits.iv_push(bits.bget64(h, 8), bits.vec_len(b))
+    bits.iv_push(bits.bget64(h, 16), str_len(s))
+    bits.vec_push_str(b, s)
+
+def sv_get_t(h: Int, i: Int) -> Str:
+    ln := bits.iv_get(bits.bget64(h, 16), i)
+    if ln == 0:
+        return ""
+    return buf_read_str(bits.vec_data(bits.bget64(h, 0)), bits.iv_get(bits.bget64(h, 8), i), ln)
+
+def sv_len_t(h: Int) -> Int:
+    return bits.iv_len(bits.bget64(h, 8))
+
+def sv_free_t(h: Int):
+    bits.vec_free(bits.bget64(h, 0))
+    bits.iv_free(bits.bget64(h, 8))
+    bits.iv_free(bits.bget64(h, 16))
+    buf_free(h)
+
+def tr_count(r: Int) -> Int:
+    return sv_len_t(bits.bget64(r, 16))
+
+def tr_name(r: Int, i: Int) -> Str:
+    return sv_get_t(bits.bget64(r, 16), i)
+
+def tr_size(r: Int, i: Int) -> Int:
+    return bits.iv_get(bits.bget64(r, 32), i)
+
+def tr_find(r: Int, name: Str) -> Int:
+    n := tr_count(r)
+    mut i := 0
+    while i < n:
+        if lpp_str_eq(tr_name(r, i), name) == 1:
+            return i
+        i = i + 1
+    return 0 - 1
+
+def tr_open(path: Str) -> Int:
+    if file_exists(path) == 0:
+        return 0
+    data := buf_read(path)
+    size := buf_len(data)
+    names := sv_new_t()
+    offs := bits.iv_new(8)
+    sizes := bits.iv_new(8)
+
+    mut pos := 0
+    mut go := 1
+    while go == 1:
+        if pos + BLOCK() > size:
+            go = 0
+        elif buf_get8(data, pos) == 0:
+            go = 0                       # zero block: end of archive
+        else:
+            want := checksum(data, pos)
+            got := read_octal(data, pos + 148, 8)
+            if got != want:
+                go = 0                   # corrupt or not a tar
+            else:
+                nm := read_name(data, pos)
+                fsz := read_octal(data, pos + 124, 12)
+                tf := buf_get8(data, pos + 156)
+                # '0' or NUL is a regular file; skip dirs, links, PAX headers.
+                mut isfile := 0
+                if tf == 48:
+                    isfile = 1
+                if tf == 0:
+                    isfile = 1
+                if isfile == 1:
+                    sv_push_t(names, nm)
+                    bits.iv_push(offs, pos + BLOCK())
+                    bits.iv_push(sizes, fsz)
+                pad := (BLOCK() - (fsz % BLOCK())) % BLOCK()
+                pos = pos + BLOCK() + fsz + pad
+    r := buf_alloc(40)
+    bits.bset64(r, 0, data)
+    bits.bset64(r, 8, size)
+    bits.bset64(r, 16, names)
+    bits.bset64(r, 24, offs)
+    bits.bset64(r, 32, sizes)
+    return r
+
+def read_name(data: Int, pos: Int) -> Str:
+    # Name field is 100 bytes, NUL-padded.
+    mut k := 0
+    mut stop := 0
+    while stop == 0:
+        if k >= 100:
+            stop = 1
+        elif buf_get8(data, pos + k) == 0:
+            stop = 1
+        else:
+            k = k + 1
+    if k == 0:
+        return ""
+    return buf_read_str(data, pos, k)
+
+# Extract member `i`; returns a vec the caller frees.
+def tr_extract(r: Int, i: Int) -> Int:
+    data := bits.bget64(r, 0)
+    off := bits.iv_get(bits.bget64(r, 24), i)
+    n := tr_size(r, i)
+    out := bits.vec_new(n + 1)
+    if n > 0:
+        bits.vec_push_bytes(out, data, off, n)
+    return out
+
+def tr_extract_to(r: Int, i: Int, path: Str) -> Int:
+    v := tr_extract(r, i)
+    n := bits.vec_len(v)
+    b := bits.exact_buf(bits.vec_data(v), n)
+    buf_write(path, b)
+    buf_free(b)
+    bits.vec_free(v)
+    return 1

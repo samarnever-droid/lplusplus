@@ -1,0 +1,97 @@
+# Generic trait implementations: impl[T] Trait for Box[T].
+#
+# The mechanism is deliberately narrow. L++ dispatches methods by name -- MIR
+# resolves `recv.m()` to `{receiver_type_name}_m` -- and monomorphization
+# already renames `Box[Int]` to a nominal `Box__Int`. So a specialised generic
+# impl is indistinguishable from a hand-written concrete one, and MIR dispatch
+# needed no changes at all: monomorphization just emits `Box__Int_show`.
+#
+# Covered here:
+#   * one generic impl used at two different instantiations
+#   * a method whose return type is the type parameter itself
+#   * overlap: a concrete impl beats a generic one (most-specific-wins)
+#   * a bounded impl whose bound is satisfied
+#   * transitive instantiation -- a struct instantiated only inside another
+#     specialised body still gets its impl, which is the case that breaks if
+#     impl specialisation runs outside the fixed-point loop rather than inside
+#
+# Note: the Kennel value is built in two steps rather than as
+# `Kennel(Dog(1))`. Nested construction segfaults at exit under the freestanding
+# runtime on unmodified upstream (see FIXES.md) -- avoiding it keeps this test a
+# signal about generic impls rather than a duplicate report of a known backend
+# fault.
+#
+# Error paths are not here (a file can only fail one way); they are verified
+# separately: unbound `T` in the target, a tie between equally specific impls,
+# a violated bound, and a multi-parameter target.
+
+struct Box[T]:
+    value: T
+
+trait Show:
+    def show(self) -> Int
+
+trait Unwrap:
+    def fetch(self) -> Int
+
+# Generic impl: applies to every Box[T]...
+impl[T] Show for Box[T]:
+    def show(self) -> Int:
+        return 1
+
+# ...except Box[Int], which has a more specific impl.
+impl[T] Show for Box[Int]:
+    def show(self) -> Int:
+        return 99
+
+# A method returning the type parameter, so substitution has to reach the
+# return type and not just the body.
+impl[T] Unwrap for Box[T]:
+    def fetch(self) -> T:
+        return self.value
+
+# Bounded generic impl over a type that satisfies the bound.
+struct Dog:
+    n: Int
+
+trait Speak:
+    def speak(self) -> Int
+
+impl Speak for Dog:
+    def speak(self) -> Int:
+        return 5
+
+struct Kennel[T]:
+    pet: T
+
+trait Housed:
+    def housed(self) -> Int
+
+impl[T: Speak] Housed for Kennel[T]:
+    def housed(self) -> Int:
+        return 8
+
+# Transitive: Box[Str] is only ever instantiated inside `wrap`, called from a
+# specialised `deep`. Its impl must still be emitted.
+def wrap[T](v: T) -> Box[T]:
+    return Box(v)
+
+def deep[T](v: T) -> Int:
+    inner := wrap(v)
+    return inner.show()
+
+def main():
+    bi := Box(5)
+    bs := Box("s")
+    print(bi.show())        # 99 - concrete Box[Int] wins
+    print(bs.show())        # 1  - generic Box[T]
+
+    print(bi.fetch())       # 5    - T = Int
+    print_str(bs.fetch())   # "s"  - T = Str
+
+    d := Dog(1)
+    k := Kennel(d)
+    print(k.housed())       # 8 - bound satisfied
+
+    print(deep(7))          # 99 - Box[Int] via wrap
+    print(deep("q"))        # 1  - Box[Str], instantiated transitively

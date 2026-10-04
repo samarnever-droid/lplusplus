@@ -1,0 +1,41 @@
+# workspace_graph.lpp — Dependency visualization
+# Called via `lpp workspace graph`
+
+import utils
+import workspace
+import manifest
+import graph
+
+def workspace_graph(ws: Workspace) -> Void:
+    if str_len(ws.root) == 0:
+        error("not in a workspace")
+        return
+
+    print_str(str_concat("\033[1;36m=== Workspace Graph: ", str_concat(ws.root, " ===\033[0m")))
+    
+    mut g := graph_create()
+    
+    # Add all members to graph
+    for mpath in ws.abs_paths:
+        p := path_join(mpath, "lpp.toml")
+        if path_exists(p) == 1:
+            m := manifest_parse(p)
+            m_ver := workspace_apply_version(m, ws)
+            graph_add_node(g, m_ver.name, m_ver.name)
+            for dep in m.deps:
+                graph_add_node(g, dep.name, dep.name)
+                graph_add_edge(g, m.name, dep.name, 1)
+
+    # Print ASCII tree
+    # For MVP, just print all members and their immediate deps with indentation
+    for mpath in ws.abs_paths:
+        p := path_join(mpath, "lpp.toml")
+        if path_exists(p) == 1:
+            m := manifest_parse(p)
+            print_str(str_concat("\033[1;32m", str_concat(m.name, str_concat("\033[0m @ ", m.version))))
+            if list_len(m.deps) == 0:
+                print_str("  (no dependencies)")
+            else:
+                for dep in m.deps:
+                    print_str(str_concat("  \033[90m├─\033[0m ", str_concat(dep.name, str_concat(" \033[90m(", str_concat(dep.kind, ")\033[0m")))))
+            print_str("")

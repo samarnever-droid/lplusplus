@@ -1,0 +1,94 @@
+﻿trait Sizer:
+    def byte_size(self) -> Int
+    def is_empty(self) -> Bool
+
+trait Describable:
+    def describe(self) -> Str
+
+struct Box:
+    w: Int
+    h: Int
+
+struct Buffer:
+    len: Int
+
+impl Sizer for Box:
+    def byte_size(self) -> Int:
+        return self.w * self.h
+    def is_empty(self) -> Bool:
+        return self.w == 0 or self.h == 0
+
+impl Describable for Box:
+    def describe(self) -> Str:
+        w_str := int_to_str(self.w)
+        h_str := int_to_str(self.h)
+        return "Box(" + w_str + "x" + h_str + ")"
+
+impl Sizer for Buffer:
+    def byte_size(self) -> Int:
+        return self.len
+    def is_empty(self) -> Bool:
+        return self.len == 0
+
+def calc_total_size[T: Sizer](a: T, b: T) -> Int:
+    return a.byte_size() + b.byte_size()
+
+def test_traits_and_turbofish() -> Bool:
+    mut passed := 0
+    total := 8
+
+    b1 := Box(10, 20)
+    b2 := Box(5, 4)
+    empty_b := Box(0, 10)
+    buf := Buffer(1024)
+
+    # 1. Trait method byte_size on Box
+    if b1.byte_size() == 200:
+        passed = passed + 1
+        print_str("Pass 1")
+
+    # 2. Trait method is_empty
+    if empty_b.is_empty() and not b1.is_empty():
+        passed = passed + 1
+        print_str("Pass 2")
+
+    # 3. Multiple traits on same struct
+    if b1.describe() == "Box(10x20)":
+        passed = passed + 1
+        print_str("Pass 3")
+
+    # 4. Trait method on different struct (Buffer)
+    if buf.byte_size() == 1024:
+        passed = passed + 1
+        print_str("Pass 4")
+
+    # 5. Generic function with trait bound [T: Sizer]
+    total_size := calc_total_size(b1, b2)
+    if total_size == 220:
+        passed = passed + 1
+        print_str("Pass 5")
+
+    # 6. Generic function with trait bound on Buffer
+    buf_total := calc_total_size(buf, Buffer(512))
+    if buf_total == 1536:
+        passed = passed + 1
+        print_str("Pass 6")
+
+    # 7. Explicit Rust-style turbofish ::<Box>
+    t1 := calc_total_size::<Box>(b1, b2)
+    if t1 == 220:
+        passed = passed + 1
+        print_str("Pass 7")
+
+    # 8. Explicit bracket turbofish ::[Buffer]
+    t2 := calc_total_size::[Buffer](buf, Buffer(256))
+    if t2 == 1280:
+        passed = passed + 1
+        print_str("Pass 8")
+
+    print_str("ASSERTIONS: " + int_to_str(passed) + "/" + int_to_str(total))
+    return passed == total
+
+def main():
+    if test_traits_and_turbofish():
+        print_str("SUCCESS: ALL TRAITS AND TURBOFISH TESTS PASSED")

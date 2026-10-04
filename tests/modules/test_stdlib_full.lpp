@@ -1,0 +1,16 @@
+from stdlib.math import abs, min, max, pow, fib, factorial, is_even, gcd
+
+def main():
+    ## Math tests
+    print(abs(42))
+    print(min(3, 7))
+    print(max(3, 7))
+    print(pow(2, 8))
+    print(fib(10))
+    print(factorial(5))
+    print(gcd(12, 8))
+
+    if is_even(100):
+        print(1)
+    else:
+        print(0)

@@ -1,0 +1,34 @@
+# lists.lpp — growable lists on the wasm bump heap: literal construction,
+# push/get/set/len, indexed access, and for-in iteration for Int, Str,
+# Float, and Bool element kinds.
+
+def main():
+    nums := [10, 20, 30, 40, 50]
+    print(list_len(nums))
+    print(nums[0])
+    print(nums[4])
+    list_push(nums, 60)
+    print(list_len(nums))
+    print(nums[5])
+    list_set(nums, 0, 5)
+    print(nums[0])
+    mut total := 0
+    for x in nums:
+        total = total + x
+    print(total)
+
+    words := ["alpha", "beta"]
+    list_push(words, "gamma")
+    print(list_len(words))
+    for w in words:
+        print_str(w)
+
+    floats := [0.5, 1.5]
+    print(floats[1])
+
+    flags := [true, false, true]
+    mut count := 0
+    for f in flags:
+        if f:
+            count = count + 1
+    print(count)

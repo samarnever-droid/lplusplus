@@ -1,0 +1,12 @@
+def compute_collatz_sum(n: Int) -> Int:
+    mut steps := 0
+    mut val := n
+    mut total_sum := 0
+    while val != 1:
+        total_sum = total_sum + val
+        if val % 2 == 0:
+            val = val / 2
+        else:
+            val = 3 * val + 1
+        steps = steps + 1
+    return total_sum

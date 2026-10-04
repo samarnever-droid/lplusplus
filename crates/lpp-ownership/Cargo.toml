@@ -1,0 +1,15 @@
+[package]
+name = "lpp-ownership"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[dependencies]
+lpp-hir = { path = "../lpp-hir" }
+lpp-mir = { path = "../lpp-mir" }
+lpp-passes = { path = "../lpp-passes" }
+lpp-types = { path = "../lpp-types" }
+
+[dev-dependencies]
+lpp-common = { path = "../lpp-common" }

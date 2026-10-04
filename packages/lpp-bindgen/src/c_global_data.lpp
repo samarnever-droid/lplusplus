@@ -1,0 +1,280 @@
+# c_global_data.lpp — immutable scalar-array extraction for typed translation.
+#
+# This pass accepts only file-scope const integer arrays whose complete
+# initializer is a flat list of integer constants. Accepted arrays are emitted
+# as checked pure-L++ accessor functions. Mutable arrays, address-taking,
+# relocations, expressions, strings, aggregates and designated initializers stay
+# fail-closed rather than being represented with guessed storage.
+
+import c_translation_unit
+import c_declaration_graph
+import c_normal_ir
+import c_lexer
+import text
+
+struct CGlobalArrayParse:
+    name: Str
+    values: Str
+    count: Int
+    explicit_values: Int
+    next: CLexCursor
+    valid: Int
+    reason: Str
+    span: CSourceSpan
+
+struct CGlobalDataCatalog:
+    symbols: Str
+    lpp: Str
+    normalized: Str
+    arrays_seen: Int
+    arrays_emitted: Int
+    arrays_rejected: Int
+    diagnostics: Str
+    valid: Int
+
+
+def c_global_empty_span(cursor: CLexCursor) -> CSourceSpan:
+    return CSourceSpan(cursor.path, cursor.offset, cursor.offset, cursor.line, cursor.column)
+
+
+def c_global_array_invalid(name: Str, cursor: CLexCursor, reason: Str, span: CSourceSpan) -> CGlobalArrayParse:
+    return CGlobalArrayParse(name, "", 0, 0, cursor, 0, reason, span)
+
+
+def c_global_strip_integer_suffix(value: Str) -> Str:
+    mut out := value
+    mut scanning := true
+    while scanning && str_len(out) > 0:
+        last := str_substr(out, str_len(out) - 1, 1)
+        if text_eq(last, "u") || text_eq(last, "U") || text_eq(last, "l") || text_eq(last, "L"):
+            out = str_substr(out, 0, str_len(out) - 1)
+        else:
+            scanning = false
+    return out
+
+
+def c_global_integer_token(cursor: CLexCursor) -> CGlobalArrayParse:
+    mut current := cursor
+    mut first := c_lex_next_code(current)
+    mut prefix := ""
+    mut span := first.token.span
+    if c_lex_token_is(first, "+") || c_lex_token_is(first, "-") || c_lex_token_is(first, "~"):
+        prefix = first.token.spelling
+        current = first.next
+        first = c_lex_next_code(current)
+    if first.token.kind != C_TOKEN_NUMBER:
+        return c_global_array_invalid("", first.next, "C2-GLOBAL-ARRAY-NONCONSTANT", span)
+    mut value := c_global_strip_integer_suffix(first.token.spelling)
+    if str_len(value) == 0 || text_contains(value, ".") || text_contains(value, "e") || text_contains(value, "E"):
+        return c_global_array_invalid("", first.next, "C2-GLOBAL-ARRAY-NONINTEGER", span)
+    if str_len(prefix) > 0:
+        value = str_concat(prefix, value)
+    return CGlobalArrayParse("", value, 1, 1, first.next, 1, "", span)
+
+
+def c_global_parse_const_array(data: Int, size: Int, path: Str, start: Int, line: Int, column: Int, end: Int, name: Str, aliases: Str) -> CGlobalArrayParse:
+    mut cursor := CLexCursor(data, size, path, start, line, column)
+    mut saw_const := false
+    mut saw_pointer := false
+    mut found_name := false
+    mut base_kind := C_IR_TYPE_INVALID
+    mut name_span := c_global_empty_span(cursor)
+    while cursor.offset < end && !found_name:
+        step := c_lex_next_code(cursor)
+        if step.token.kind == C_TOKEN_EOF || step.token.span.start_offset >= end:
+            return c_global_array_invalid(name, step.next, "C2-GLOBAL-ARRAY-NAME", name_span)
+        if text_eq(step.token.spelling, "const"):
+            saw_const = true
+        elif text_eq(step.token.spelling, "*"):
+            saw_pointer = true
+        elif text_eq(step.token.spelling, name):
+            found_name = true
+            name_span = step.token.span
+        elif text_eq(step.token.spelling, "float") || text_eq(step.token.spelling, "double"):
+            base_kind = C_IR_TYPE_FLOAT
+        elif text_eq(step.token.spelling, "_Bool") || text_eq(step.token.spelling, "bool"):
+            base_kind = C_IR_TYPE_BOOL
+        elif text_eq(step.token.spelling, "char") || text_eq(step.token.spelling, "short") || text_eq(step.token.spelling, "int") || text_eq(step.token.spelling, "long") || text_eq(step.token.spelling, "signed") || text_eq(step.token.spelling, "unsigned"):
+            base_kind = C_IR_TYPE_INT
+        elif step.token.kind == C_TOKEN_IDENTIFIER:
+            alias_kind := c_ir_symbol_type(aliases, step.token.spelling)
+            if alias_kind != C_IR_TYPE_INVALID:
+                base_kind = alias_kind
+        cursor = step.next
+    if !found_name:
+        return c_global_array_invalid(name, cursor, "C2-GLOBAL-ARRAY-NAME", name_span)
+    if !saw_const:
+        return c_global_array_invalid(name, cursor, "C2-GLOBAL-ARRAY-MUTABLE", name_span)
+    if saw_pointer:
+        return c_global_array_invalid(name, cursor, "C2-GLOBAL-ARRAY-POINTER", name_span)
+    if base_kind != C_IR_TYPE_INT:
+        return c_global_array_invalid(name, cursor, "C2-GLOBAL-ARRAY-ELEMENT-TYPE", name_span)
+
+    open := c_lex_next_code(cursor)
+    if !c_lex_token_is(open, "["):
+        return c_global_array_invalid(name, open.next, "C2-GLOBAL-ARRAY-OPEN", name_span)
+    mut declared_count := -1
+    count_or_close := c_lex_next_code(open.next)
+    mut after_close := count_or_close.next
+    if c_lex_token_is(count_or_close, "]"):
+        after_close = count_or_close.next
+    else:
+        if count_or_close.token.kind != C_TOKEN_NUMBER:
+            return c_global_array_invalid(name, count_or_close.next, "C2-GLOBAL-ARRAY-COUNT", count_or_close.token.span)
+        count_text := c_global_strip_integer_suffix(count_or_close.token.spelling)
+        if str_len(count_text) == 0 || text_contains(count_text, "."):
+            return c_global_array_invalid(name, count_or_close.next, "C2-GLOBAL-ARRAY-COUNT", count_or_close.token.span)
+        declared_count = parse_int(count_text)
+        close := c_lex_next_code(count_or_close.next)
+        if !c_lex_token_is(close, "]"):
+            return c_global_array_invalid(name, close.next, "C2-GLOBAL-ARRAY-CLOSE", close.token.span)
+        after_close = close.next
+    equal := c_lex_next_code(after_close)
+    if !c_lex_token_is(equal, "="):
+        return c_global_array_invalid(name, equal.next, "C2-GLOBAL-ARRAY-NO-INITIALIZER", equal.token.span)
+    brace := c_lex_next_code(equal.next)
+    if !c_lex_token_is(brace, "{"):
+        return c_global_array_invalid(name, brace.next, "C2-GLOBAL-ARRAY-INITIALIZER", brace.token.span)
+
+    cursor = brace.next
+    mut values := ""
+    mut value_count := 0
+    mut finished := false
+    while !finished:
+        next := c_lex_next_code(cursor)
+        if c_lex_token_is(next, "}"):
+            cursor = next.next
+            finished = true
+        else:
+            parsed := c_global_integer_token(cursor)
+            if parsed.valid == 0:
+                return c_global_array_invalid(name, parsed.next, parsed.reason, parsed.span)
+            values = text_append_line(values, parsed.values)
+            value_count = value_count + 1
+            separator := c_lex_next_code(parsed.next)
+            if c_lex_token_is(separator, ","):
+                cursor = separator.next
+                maybe_close := c_lex_next_code(cursor)
+                if c_lex_token_is(maybe_close, "}"):
+                    cursor = maybe_close.next
+                    finished = true
+            elif c_lex_token_is(separator, "}"):
+                cursor = separator.next
+                finished = true
+            else:
+                return c_global_array_invalid(name, separator.next, "C2-GLOBAL-ARRAY-SEPARATOR", separator.token.span)
+    semi := c_lex_next_code(cursor)
+    if !c_lex_token_is(semi, ";"):
+        return c_global_array_invalid(name, semi.next, "C2-GLOBAL-ARRAY-SEMI", semi.token.span)
+    mut final_count := declared_count
+    if final_count < 0:
+        final_count = value_count
+    if final_count <= 0 || value_count > final_count:
+        return c_global_array_invalid(name, semi.next, "C2-GLOBAL-ARRAY-INITIALIZER-COUNT", name_span)
+    return CGlobalArrayParse(name, values, final_count, value_count, semi.next, 1, "", name_span)
+
+
+def c_global_array_value(values: Str, index: Int) -> Str:
+    lines := str_split(values, 10)
+    mut current := 0
+    for line in lines:
+        if current == index:
+            return line
+        current = current + 1
+    return "0"
+
+
+def c_global_array_accessor_name(name: Str) -> Str:
+    safe := text_safe_binding_name(name)
+    if str_len(safe) == 0:
+        return ""
+    return str_concat("c2lpp_const_array_", safe)
+
+
+def c_global_emit_array(array: CGlobalArrayParse) -> Str:
+    accessor := c_global_array_accessor_name(array.name)
+    if str_len(accessor) == 0:
+        return ""
+    mut out := str_concat("def ", str_concat(accessor, "(index: Int) -> Int:\n"))
+    out = str_concat(out, str_concat("    if index < 0 || index >= ", str_concat(int_to_str(array.count), ":\n")))
+    out = str_concat(out, str_concat("        c_mem_panic(\"C2-GLOBAL-CONST-ARRAY-INDEX:", str_concat(array.name, "\")\n")))
+    mut index := 0
+    while index < array.explicit_values:
+        value := c_global_array_value(array.values, index)
+        if !text_eq(value, "0") && !text_eq(value, "+0") && !text_eq(value, "-0"):
+            out = str_concat(out, str_concat("    if index == ", str_concat(int_to_str(index), ":\n")))
+            out = str_concat(out, str_concat("        return ", str_concat(value, "\n")))
+        index = index + 1
+    out = str_concat(out, "    return 0\n\n")
+    return out
+
+
+def c_global_array_symbol(array: CGlobalArrayParse) -> Str:
+    accessor := c_global_array_accessor_name(array.name)
+    mut metadata := str_concat(int_to_str(C_IR_TYPE_INT), "|")
+    metadata = str_concat(metadata, str_concat(int_to_str(array.count), "|"))
+    metadata = str_concat(metadata, accessor)
+    return c_ir_symbol_add_meta("", array.name, C_IR_TYPE_CONST_ARRAY, metadata)
+
+
+def c_global_catalog_file(path: Str, tu_graph: Str, aliases: Str, wanted: Str, emit_code: Bool) -> CGlobalDataCatalog:
+    data := buf_read(path)
+    size := buf_len(data)
+    if size <= 0:
+        if data != 0:
+            buf_free(data)
+        return CGlobalDataCatalog("", "", "", 0, 0, 0, "C2-GLOBAL-DATA-EMPTY\n", 0)
+    lines := str_split(tu_graph, 10)
+    mut symbols := ""
+    mut lpp_builder := CTUTextBuilder(buf_alloc(4096), 0, 4096)
+    mut ir_builder := CTUTextBuilder(buf_alloc(4096), 0, 4096)
+    mut diag_builder := CTUTextBuilder(buf_alloc(4096), 0, 4096)
+    mut seen := 0
+    mut emitted := 0
+    mut rejected := 0
+    for record in lines:
+        if text_starts(record, "global|"):
+            name := c_decl_field(record, 1)
+            line := parse_int(c_decl_field(record, 3))
+            column := parse_int(c_decl_field(record, 4))
+            start := parse_int(c_decl_field(record, 5))
+            end := parse_int(c_decl_field(record, 6))
+            cursor := CLexCursor(data, size, path, start, line, column)
+            # Only records with an array declarator are candidates. This token
+            # probe avoids classifying ordinary rejected globals as array errors.
+            mut probe := cursor
+            mut has_array := false
+            mut probe_done := false
+            while probe.offset < end && !probe_done:
+                token := c_lex_next_code(probe)
+                if token.token.kind == C_TOKEN_EOF || token.token.span.start_offset >= end:
+                    probe_done = true
+                else:
+                    if c_lex_token_is(token, "["):
+                        has_array = true
+                        probe_done = true
+                    probe = token.next
+            if has_array:
+                seen = seen + 1
+                if c_decl_set_has(wanted, name):
+                    parsed := c_global_parse_const_array(data, size, path, start, line, column, end, name, aliases)
+                    if parsed.valid != 0:
+                        accessor := c_global_array_accessor_name(parsed.name)
+                        if str_len(accessor) > 0 && c_ir_symbol_type(symbols, parsed.name) == C_IR_TYPE_INVALID:
+                            symbols = str_concat(symbols, c_global_array_symbol(parsed))
+                            if emit_code:
+                                lpp_builder = c_tu_builder_add(lpp_builder, c_global_emit_array(parsed))
+                            mut ir := str_concat("global-const-array|", str_concat(parsed.name, "|"))
+                            ir = str_concat(ir, str_concat("count=", str_concat(int_to_str(parsed.count), "|")))
+                            ir = str_concat(ir, str_concat("explicit=", str_concat(int_to_str(parsed.explicit_values), "|")))
+                            ir = str_concat(ir, str_concat("accessor=", str_concat(accessor, "\n")))
+                            ir_builder = c_tu_builder_add(ir_builder, ir)
+                            emitted = emitted + 1
+                    else:
+                        rejected = rejected + 1
+                        diag_builder = c_tu_builder_add(diag_builder, str_concat("global-array-reject|", str_concat(name, str_concat("|", str_concat(parsed.reason, "\n")))))
+    lpp := c_tu_builder_finish(lpp_builder)
+    normalized := c_tu_builder_finish(ir_builder)
+    diagnostics := c_tu_builder_finish(diag_builder)
+    buf_free(data)
+    return CGlobalDataCatalog(symbols, lpp, normalized, seen, emitted, rejected, diagnostics, 1)

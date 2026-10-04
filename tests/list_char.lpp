@@ -1,0 +1,4 @@
+def main():
+    letters := ['a', 'b']
+    for letter in letters:
+        print(letter)

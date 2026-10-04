@@ -1,0 +1,18 @@
+## L++ Standard Library: Assert and debug utilities
+## Pure L++ — no C runtime needed.
+
+def assert(condition: Bool, msg: Str):
+    if !condition:
+        print_str(f"ASSERTION FAILED: {msg}")
+        command_exec("exit 1")
+
+def assert_eq(a: Int, b: Int, msg: Str):
+    if a != b:
+        print_str(f"ASSERT_EQ FAILED: {msg}")
+        print(a)
+        print(b)
+        command_exec("exit 1")
+
+def panic(msg: Str):
+    print_str(f"PANIC: {msg}")
+    command_exec("exit 1")

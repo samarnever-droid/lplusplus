@@ -1,0 +1,43 @@
+# Generics — type-parameterized functions, structs, and enums
+
+# Generic identity function
+def identity[T](x: T) -> T:
+    return x
+
+# Generic function with two type params
+def first[A, B](a: A, b: B) -> A:
+    return a
+
+def second[A, B](a: A, b: B) -> B:
+    return b
+
+# Generic struct
+struct Box[T]:
+    value: T
+
+# Generic enum
+enum Option[T]:
+    Some(value: T)
+    None
+
+def main():
+    # identity with Int
+    x := identity(42)
+    print(x)
+
+    # identity with Str
+    s := identity("hello generics")
+    print(s)
+
+    # first/second with mixed types
+    a := first(100, "ignored")
+    print(a)
+
+    b := second(0, "picked")
+    print(b)
+
+    # Box struct with Int
+    box_int := Box(99)
+    print(box_int.value)
+
+    print("generics work!")
