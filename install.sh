@@ -25,11 +25,14 @@ case "$(uname -s):$(uname -m)" in
     RELEASE_TARGET=""
     ;;
 esac
+ASSET_NAME="${RELEASE_TARGET}.tar.gz"
 if [ "$VERSION" = "latest" ]; then
-  RELEASE_URL="https://github.com/samarnever-droid/lplusplus/releases/latest/download/${RELEASE_TARGET}.tar.gz"
+  RELEASE_BASE_URL="https://github.com/samarnever-droid/lplusplus/releases/latest/download"
 else
-  RELEASE_URL="https://github.com/samarnever-droid/lplusplus/releases/download/$VERSION/${RELEASE_TARGET}.tar.gz"
+  RELEASE_BASE_URL="https://github.com/samarnever-droid/lplusplus/releases/download/$VERSION"
 fi
+RELEASE_URL="$RELEASE_BASE_URL/$ASSET_NAME"
+CHECKSUM_URL="$RELEASE_BASE_URL/SHA256SUMS"
 
 printf '%s\n' "========================================================"
 printf '%s\n' "                 L++ GLOBAL INSTALLER                   "
@@ -37,20 +40,85 @@ printf '%s\n' "========================================================"
 
 mkdir -p "$BIN_DIR" "$LIB_DIR"
 
+sha256_file() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | awk '{print $1}'
+    elif command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$1" | awk '{print $1}'
+    else
+        return 1
+    fi
+}
+
 install_release() {
     [ -n "$RELEASE_TARGET" ] || return 1
     command -v curl >/dev/null 2>&1 || return 1
     command -v tar >/dev/null 2>&1 || return 1
     temp=$(mktemp -d "${TMPDIR:-/tmp}/lpp-release.XXXXXX")
     trap 'rm -rf "$temp"' EXIT HUP INT TERM
-    printf '%s\n' "[1/3] Downloading L++ $VERSION release asset..."
-    if ! curl -fsSL "$RELEASE_URL" -o "$temp/lpp.tar.gz"; then
+    printf '%s\n' "[1/3] Downloading L++ $VERSION release asset and checksum manifest..."
+    if ! curl -fsSL "$RELEASE_URL" -o "$temp/$ASSET_NAME"; then
         return 1
     fi
-    tar -xzf "$temp/lpp.tar.gz" -C "$temp"
+    if ! curl -fsSL "$CHECKSUM_URL" -o "$temp/SHA256SUMS"; then
+        printf '%s\n' "ERROR: release has no SHA256SUMS manifest; refusing an unverified install." >&2
+        return 1
+    fi
+
+    expected=$(awk -v asset="$ASSET_NAME" '$2 == asset || $2 == "*" asset { print $1; exit }' "$temp/SHA256SUMS")
+    case "$expected" in
+        ''|*[!0-9A-Fa-f]* )
+            printf '%s\n' "ERROR: SHA256SUMS has no valid digest for $ASSET_NAME." >&2
+            return 1
+            ;;
+    esac
+    [ "${#expected}" -eq 64 ] || {
+        printf '%s\n' "ERROR: invalid SHA-256 length for $ASSET_NAME." >&2
+        return 1
+    }
+    actual=$(sha256_file "$temp/$ASSET_NAME") || {
+        printf '%s\n' "ERROR: sha256sum or shasum is required to verify release assets." >&2
+        return 1
+    }
+    if [ "$(printf '%s' "$actual" | tr 'A-F' 'a-f')" != "$(printf '%s' "$expected" | tr 'A-F' 'a-f')" ]; then
+        printf '%s\n' "ERROR: SHA-256 verification failed for $ASSET_NAME." >&2
+        return 1
+    fi
+
+    # Every member must be unique, remain under the expected package root, and
+    # contain no parent traversal. Links and special files are forbidden so
+    # extraction cannot redirect a later member outside the temporary tree.
+    if ! tar -tzf "$temp/$ASSET_NAME" > "$temp/archive-paths"; then
+        printf '%s\n' "ERROR: release archive cannot be listed safely." >&2
+        return 1
+    fi
+    if awk -v root="$RELEASE_TARGET/" '
+        index($0, root) != 1 { bad=1 }
+        seen[$0]++ { bad=1 }
+        { count=split($0, part, "/"); for (i=1; i<=count; i++) if (part[i] == "..") bad=1 }
+        END { exit bad ? 0 : 1 }
+    ' "$temp/archive-paths"; then
+        printf '%s\n' "ERROR: release archive contains an unsafe or duplicate path." >&2
+        return 1
+    fi
+    if tar -tvzf "$temp/$ASSET_NAME" | awk '
+        substr($1, 1, 1) != "-" && substr($1, 1, 1) != "d" { bad=1 }
+        END { exit bad ? 0 : 1 }
+    '; then
+        printf '%s\n' "ERROR: release archive contains a link or special file." >&2
+        return 1
+    fi
+
+    if ! tar --no-same-owner --no-same-permissions -k -xzf "$temp/$ASSET_NAME" -C "$temp"; then
+        printf '%s\n' "ERROR: verified release archive extraction failed." >&2
+        return 1
+    fi
     root="$temp/$RELEASE_TARGET"
-    [ -x "$root/bin/lpp" ] || return 1
-    printf '%s\n' "[2/3] Installing compiler, linker, and packaged runtimes..."
+    [ -d "$root" ] && [ ! -L "$root" ] || return 1
+    [ -d "$root/lib" ] && [ ! -L "$root/lib" ] || return 1
+    [ -f "$root/bin/lpp" ] && [ ! -L "$root/bin/lpp" ] && [ -x "$root/bin/lpp" ] || return 1
+    [ -f "$root/bin/lpp-link" ] && [ ! -L "$root/bin/lpp-link" ] && [ -x "$root/bin/lpp-link" ] || return 1
+    printf '%s\n' "[2/3] Installing verified compiler, linker, and packaged runtimes..."
     cp "$root/bin/lpp" "$BIN_DIR/lpp"
     cp "$root/bin/lpp-link" "$BIN_DIR/lpp-link"
     cp -r "$root/lib/"* "$LIB_DIR/"
@@ -67,7 +135,7 @@ install_source() {
         exit 1
     }
     printf '%s\n' "[1/3] Building L++ compiler and linker from source..."
-    (cd "$PROJECT_DIR" && cargo build --release --bin lpp --bin lpp-link)
+    (cd "$PROJECT_DIR" && cargo build --release --locked --features all-arch --bin lpp --bin lpp-link)
     printf '%s\n' "[2/3] Packaging local compiler and runtime objects..."
     cp "$PROJECT_DIR/target/release/lpp" "$BIN_DIR/lpp"
     cp "$PROJECT_DIR/target/release/lpp-link" "$BIN_DIR/lpp-link"
@@ -104,9 +172,9 @@ if [ "${LPP_FROM_SOURCE:-0}" = "1" ]; then
 elif install_release; then
     printf '%s\n' "[3/3] Release installation complete."
 else
-    printf '%s\n' "Release asset unavailable; falling back to local source installation." >&2
-    install_source
-    printf '%s\n' "[3/3] Source installation complete."
+    printf '%s\n' "ERROR: verified release installation failed; no automatic source fallback was attempted." >&2
+    printf '%s\n' "       From a trusted source checkout, set LPP_FROM_SOURCE=1 explicitly." >&2
+    exit 1
 fi
 
 INSTALLED_VERSION="$($BIN_DIR/lpp -v 2>/dev/null || true)"

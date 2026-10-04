@@ -10,11 +10,14 @@ $BinDir = Join-Path $InstallDir "bin"
 $LibDir = Join-Path $InstallDir "lib"
 $Version = if ($env:LPP_VERSION) { $env:LPP_VERSION } else { "latest" }
 if (($Version -ne "latest") -and (-not $Version.StartsWith("v"))) { $Version = "v$Version" }
+$AssetName = "lpp-windows-x86_64.zip"
 if ($Version -eq "latest") {
-    $ReleaseUrl = "https://github.com/samarnever-droid/lplusplus/releases/latest/download/lpp-windows-x86_64.zip"
+    $ReleaseBaseUrl = "https://github.com/samarnever-droid/lplusplus/releases/latest/download"
 } else {
-    $ReleaseUrl = "https://github.com/samarnever-droid/lplusplus/releases/download/$Version/lpp-windows-x86_64.zip"
+    $ReleaseBaseUrl = "https://github.com/samarnever-droid/lplusplus/releases/download/$Version"
 }
+$ReleaseUrl = "$ReleaseBaseUrl/$AssetName"
+$ChecksumUrl = "$ReleaseBaseUrl/SHA256SUMS"
 
 New-Item -ItemType Directory -Force $BinDir, $LibDir | Out-Null
 
@@ -22,15 +25,68 @@ function Install-Release {
     $temp = Join-Path $env:TEMP "lpp-release-$([guid]::NewGuid())"
     New-Item -ItemType Directory -Force $temp | Out-Null
     try {
-        Write-Host "[1/3] Downloading L++ $Version release asset..." -ForegroundColor Yellow
-        Invoke-WebRequest -Uri $ReleaseUrl -OutFile "$temp\lpp.zip" -UseBasicParsing
-        Expand-Archive -Path "$temp\lpp.zip" -DestinationPath $temp -Force
+        $archive = Join-Path $temp $AssetName
+        $checksumFile = Join-Path $temp "SHA256SUMS"
+        Write-Host "[1/3] Downloading L++ $Version release asset and checksum manifest..." -ForegroundColor Yellow
+        Invoke-WebRequest -Uri $ReleaseUrl -OutFile $archive -UseBasicParsing
+        try {
+            Invoke-WebRequest -Uri $ChecksumUrl -OutFile $checksumFile -UseBasicParsing
+        } catch {
+            throw "Release has no SHA256SUMS manifest; refusing an unverified install."
+        }
+
+        $checksumLine = Get-Content $checksumFile | Where-Object { $_ -match "^[0-9A-Fa-f]{64}\s+\*?$([regex]::Escape($AssetName))$" } | Select-Object -First 1
+        if (-not $checksumLine) { throw "SHA256SUMS has no valid digest for $AssetName" }
+        $expected = ($checksumLine -split "\s+")[0].ToLowerInvariant()
+        $actual = (Get-FileHash -Path $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($actual -ne $expected) { throw "SHA-256 verification failed for $AssetName" }
+
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        $zip = [System.IO.Compression.ZipFile]::OpenRead($archive)
+        try {
+            $destinationRoot = [System.IO.Path]::GetFullPath($temp + [System.IO.Path]::DirectorySeparatorChar)
+            $expectedPrefix = "lpp-windows-x86_64/"
+            $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            [long]$expandedBytes = 0
+            if ($zip.Entries.Count -gt 10000) { throw "Release archive contains too many entries" }
+            foreach ($entry in $zip.Entries) {
+                $normalized = $entry.FullName.Replace("\", "/")
+                if ((-not $normalized.StartsWith($expectedPrefix, [System.StringComparison]::Ordinal)) -or
+                    $normalized.Contains(":") -or (-not $seen.Add($normalized))) {
+                    throw "Release archive contains an unsafe or duplicate path: $($entry.FullName)"
+                }
+                $destination = [System.IO.Path]::GetFullPath((Join-Path $temp $normalized))
+                if (-not $destination.StartsWith($destinationRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+                    throw "Release archive path escapes the temporary directory: $($entry.FullName)"
+                }
+                $expandedBytes += [long]$entry.Length
+                if (($entry.Length -gt 536870912) -or ($expandedBytes -gt 1073741824)) {
+                    throw "Release archive exceeds the extraction size limit"
+                }
+                [uint32]$attributes = $entry.ExternalAttributes -band 0xFFFFFFFFL
+                $unixType = ($attributes -shr 16) -band 0xF000
+                if (($unixType -ne 0) -and ($unixType -ne 0x4000) -and ($unixType -ne 0x8000)) {
+                    throw "Release archive contains a link or special file: $($entry.FullName)"
+                }
+            }
+        } finally {
+            $zip.Dispose()
+        }
+
+        Expand-Archive -Path $archive -DestinationPath $temp -Force
         $root = Join-Path $temp "lpp-windows-x86_64"
-        if (-not (Test-Path "$root\bin\lpp.exe")) { throw "Release archive is missing lpp.exe" }
-        Write-Host "[2/3] Installing compiler, linker, and runtime objects..." -ForegroundColor Yellow
+        $rootInfo = Get-Item $root -ErrorAction Stop
+        $libInfo = Get-Item "$root\lib" -ErrorAction Stop
+        $compilerInfo = Get-Item "$root\bin\lpp.exe" -ErrorAction Stop
+        $linkerInfo = Get-Item "$root\bin\lpp-link.exe" -ErrorAction Stop
+        if ((-not $rootInfo.PSIsContainer) -or ($rootInfo.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw "Invalid release package root" }
+        if ((-not $libInfo.PSIsContainer) -or ($libInfo.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw "Invalid release library directory" }
+        if ($compilerInfo.PSIsContainer -or ($compilerInfo.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw "Release archive is missing a regular lpp.exe" }
+        if ($linkerInfo.PSIsContainer -or ($linkerInfo.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw "Release archive is missing a regular lpp-link.exe" }
+        Write-Host "[2/3] Installing verified compiler, linker, and runtime objects..." -ForegroundColor Yellow
         Copy-Item "$root\bin\lpp.exe" "$BinDir\lpp.exe" -Force
         Copy-Item "$root\bin\lpp-link.exe" "$BinDir\lpp-link.exe" -Force
-        Copy-Item "$root\lib\*" $LibDir -Force
+        Copy-Item "$root\lib\*" $LibDir -Recurse -Force
         if (Test-Path "$root\pm") { Remove-Item "$InstallDir\pm" -Recurse -Force -ErrorAction SilentlyContinue; Copy-Item "$root\pm" "$InstallDir\pm" -Recurse -Force }
         if (Test-Path "$root\registry") { Remove-Item "$InstallDir\registry" -Recurse -Force -ErrorAction SilentlyContinue; Copy-Item "$root\registry" "$InstallDir\registry" -Recurse -Force }
         return $true
@@ -47,8 +103,13 @@ function Install-Source {
         throw "Cargo is required for source installation. Install Rust or use a published release asset."
     }
     Write-Host "[1/3] Building L++ compiler and linker from source..." -ForegroundColor Yellow
-    cargo build --release --bin lpp --bin lpp-link
-    if ($LASTEXITCODE -ne 0) { throw "Cargo build failed." }
+    Push-Location $ProjectDir
+    try {
+        cargo build --release --locked --features all-arch --bin lpp --bin lpp-link
+        if ($LASTEXITCODE -ne 0) { throw "Cargo build failed." }
+    } finally {
+        Pop-Location
+    }
     Write-Host "[2/3] Packaging compiler and runtime objects..." -ForegroundColor Yellow
     Copy-Item "$ProjectDir\target\release\lpp.exe" "$BinDir\lpp.exe" -Force
     Copy-Item "$ProjectDir\target\release\lpp-link.exe" "$BinDir\lpp-link.exe" -Force
@@ -80,8 +141,7 @@ function Install-Source {
 if ($env:LPP_FROM_SOURCE -eq "1") {
     Install-Source
 } elseif (-not (Install-Release)) {
-    Write-Warning "Falling back to local source installation."
-    Install-Source
+    throw "Verified release installation failed. No automatic source fallback was attempted; from a trusted source checkout, set LPP_FROM_SOURCE=1 explicitly."
 }
 
 $registryKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey("Environment", $true)
