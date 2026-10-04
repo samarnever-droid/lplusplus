@@ -98,8 +98,8 @@ fn path_dep_is_staged_and_lpp_runs_from_the_root() {
     let link = root.join(".lpp_packages/calc/src");
     #[cfg(unix)]
     assert_eq!(
-        std::fs::read_link(&link).unwrap(),
-        root.join("packages/calc/src")
+        std::fs::read_link(&link).unwrap().canonicalize().unwrap(),
+        root.join("packages/calc/src").canonicalize().unwrap()
     );
     // lpp ran with cwd = the workspace root.
     let marks = std::fs::read_to_string(root.join("marks.txt")).unwrap();

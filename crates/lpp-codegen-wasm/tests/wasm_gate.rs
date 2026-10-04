@@ -1545,7 +1545,6 @@ fn task_corpus_matches_the_arc_oracle() {
     let entry = main_function(&program, &package.names.symbols);
 
     let module = compile(&program, &types, &names);
-    std::fs::write("/tmp/corpus.wasm", &module.object).unwrap();
     let (stdout, status) = run_wasm(&module.object, "task");
     assert_eq!(status, 0, "task corpus object exited {status}:\n{stdout}");
 

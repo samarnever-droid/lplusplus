@@ -56,6 +56,9 @@ jobs:
       - name: Workspace tests
         run: cargo test --workspace --locked
 
+      - name: Build compiler and direct linker with all targets
+        run: cargo build --locked --bin lpp --bin lpp-link --features all-arch
+
       - name: Strict runtime C compilation (Linux)
         if: runner.os == 'Linux'
         run: cc -std=c11 -Wall -Wextra -Werror -c lpp_runtime.c -o /tmp/lpp_runtime.o -pthread
