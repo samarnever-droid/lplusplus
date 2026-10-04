@@ -4,12 +4,12 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use lpp_pm::delta::{diff, invalidate, Delta};
-use lpp_pm::fingerprint::{
-    compute_member_fps, hash_sources, lpp_identity, member_fingerprint, FingerprintStore,
-    FingerprintStoreFile,
-};
 use lpp_pm::Workspace;
+use lpp_pm::delta::{Delta, diff, invalidate};
+use lpp_pm::fingerprint::{
+    FingerprintStore, FingerprintStoreFile, compute_member_fps, hash_sources, lpp_identity,
+    member_fingerprint,
+};
 
 fn temp(tag: &str) -> std::path::PathBuf {
     let d = std::env::temp_dir().join(format!("lpp-fp-{tag}-{}", std::process::id()));
@@ -64,12 +64,10 @@ fn fingerprint_changes_when_a_source_changes() {
     std::fs::write(root.join("src/main.lpp"), "fn main() {}\n").unwrap();
 
     let s1 = hash_sources(&root);
-    let fp1 =
-        member_fingerprint("lpp", "host", "manifest", &s1, &BTreeMap::new());
+    let fp1 = member_fingerprint("lpp", "host", "manifest", &s1, &BTreeMap::new());
     std::fs::write(root.join("src/main.lpp"), "fn main() { changed() }\n").unwrap();
     let s2 = hash_sources(&root);
-    let fp2 =
-        member_fingerprint("lpp", "host", "manifest", &s2, &BTreeMap::new());
+    let fp2 = member_fingerprint("lpp", "host", "manifest", &s2, &BTreeMap::new());
     assert_ne!(fp1, fp2, "source change must change the fingerprint");
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -109,7 +107,11 @@ fn a_dep_change_propagates_to_every_transitive_dependent() {
     let fps1 = compute_member_fps(&ws, bin.to_str().unwrap()).unwrap();
 
     // Change the LEAF (d) — d, b, c AND app must all get new fingerprints.
-    std::fs::write(root.join("crates/d/src/main.lpp"), "fn main() { changed }\n").unwrap();
+    std::fs::write(
+        root.join("crates/d/src/main.lpp"),
+        "fn main() { changed }\n",
+    )
+    .unwrap();
     let fps2 = compute_member_fps(&ws, bin.to_str().unwrap()).unwrap();
 
     for key in ["d|host", "b|host", "c|host", "app|host"] {
@@ -121,7 +123,11 @@ fn a_dep_change_propagates_to_every_transitive_dependent() {
     }
 
     // ...but change ONLY app's own source: only app changes.
-    std::fs::write(root.join("apps/app/src/main.lpp"), "fn main() { changed }\n").unwrap();
+    std::fs::write(
+        root.join("apps/app/src/main.lpp"),
+        "fn main() { changed }\n",
+    )
+    .unwrap();
     let fps3 = compute_member_fps(&ws, bin.to_str().unwrap()).unwrap();
     assert_ne!(fps2.get("app|host"), fps3.get("app|host"));
     for key in ["d|host", "b|host", "c|host"] {
@@ -148,13 +154,17 @@ fn store_round_trips_and_prunes_removed_members() {
     assert_eq!(loaded.get("b|host").unwrap().fingerprint, "fp2");
 
     // Prune to a world where b no longer exists.
-    let current: BTreeMap<String, String> =
-        [("a|host".to_string(), "fp1".to_string())].into_iter().collect();
+    let current: BTreeMap<String, String> = [("a|host".to_string(), "fp1".to_string())]
+        .into_iter()
+        .collect();
     loaded.prune(&current);
     loaded.save().unwrap();
     let reloaded = FingerprintStore::load(&path);
     assert!(reloaded.get("a|host").is_some());
-    assert!(reloaded.get("b|host").is_none(), "pruned member must be gone");
+    assert!(
+        reloaded.get("b|host").is_none(),
+        "pruned member must be gone"
+    );
 
     // A corrupt file = cold (empty), never an error.
     std::fs::write(&path, "not [valid toml").unwrap();
@@ -201,10 +211,10 @@ fn diff_and_invalidate_cover_the_transitive_closure() {
     .into_iter()
     .collect();
     let current: BTreeMap<String, String> = [
-        ("a|host".into(), "1".into()), // unchanged
-        ("b|host".into(), "1".into()), // unchanged
-        ("c|host".into(), "1".into()), // unchanged
-        ("d|host".into(), "2".into()), // changed
+        ("a|host".into(), "1".into()),   // unchanged
+        ("b|host".into(), "1".into()),   // unchanged
+        ("c|host".into(), "1".into()),   // unchanged
+        ("d|host".into(), "2".into()),   // changed
         ("new|host".into(), "1".into()), // added
     ]
     .into_iter()
@@ -226,7 +236,12 @@ fn diff_and_invalidate_cover_the_transitive_closure() {
         added: vec!["new|host".to_string()],
         ..Default::default()
     };
-    assert_eq!(invalidate(&only_new, &graph), ["new|host".to_string()].into_iter().collect::<std::collections::BTreeSet<_>>());
+    assert_eq!(
+        invalidate(&only_new, &graph),
+        ["new|host".to_string()]
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>()
+    );
 
     // An empty delta rebuilds nothing.
     let empty = Delta::default();

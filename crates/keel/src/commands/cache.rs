@@ -3,7 +3,7 @@
 use tabled::builder::Builder;
 
 use crate::cli::{CacheAction, CacheBackend};
-use lpp_pm::{create_kv, KvBackendKind};
+use lpp_pm::{KvBackendKind, create_kv};
 
 /// Total size in bytes of everything under `dir` (recursive).
 fn dir_size_bytes(dir: &std::path::Path) -> (u64, u64) {
@@ -94,7 +94,10 @@ fn clean() -> Result<(), String> {
     b.push_record(["field".to_string(), "value".to_string()]);
     b.push_record(["cache_dir".to_string(), dir.display().to_string()]);
     b.push_record(["removed_files".to_string(), files.to_string()]);
-    b.push_record(["removed_bytes".to_string(), format!("{bytes} ({})", human(bytes))]);
+    b.push_record([
+        "removed_bytes".to_string(),
+        format!("{bytes} ({})", human(bytes)),
+    ]);
     println!("{}", b.build());
     println!("cache cleaned");
     Ok(())

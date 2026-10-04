@@ -59,7 +59,9 @@ use lpp_hir::{
     FileSystem, FileSystemError, GraphBuilder, GraphRequest, PackageSpec, ResolutionMode,
     StringInterner, Symbol, lower_package,
 };
-use lpp_mir::{ExecutionOutcome, InterpreterLimits, MirAggregateId, MirFunctionId, MirProgram, build_mir};
+use lpp_mir::{
+    ExecutionOutcome, InterpreterLimits, MirAggregateId, MirFunctionId, MirProgram, build_mir,
+};
 use lpp_ownership::compute_ownership_plan;
 use lpp_types::{ShadowInferenceOptions, TypeInterner, infer_hir_package};
 
@@ -171,8 +173,15 @@ fn run_arc_oracle(
     let plan = compute_ownership_plan(program, types)
         .unwrap_or_else(|error| panic!("ownership plan failed: {error:?}"));
     let pinned = plan.pinned_types();
-    lpp_mir::execute_mir_arc(program, types, entry, &[], InterpreterLimits::default(), &pinned)
-        .unwrap_or_else(|error| panic!("arc oracle execution failed: {error}"))
+    lpp_mir::execute_mir_arc(
+        program,
+        types,
+        entry,
+        &[],
+        InterpreterLimits::default(),
+        &pinned,
+    )
+    .unwrap_or_else(|error| panic!("arc oracle execution failed: {error}"))
 }
 
 fn try_compile(
@@ -246,10 +255,7 @@ fn run_wasm(object: &[u8], test_name: &str) -> (String, i32) {
     if std::env::var("ZZZ_WAT").is_ok() {
         dump_wat(object, test_name);
     }
-    (
-        String::from_utf8_lossy(&run.stdout).into_owned(),
-        status,
-    )
+    (String::from_utf8_lossy(&run.stdout).into_owned(), status)
 }
 
 fn expect_success_markers(stdout: &str, test_name: &str) {
@@ -952,7 +958,10 @@ fn deterministic_object() {
         let names = Names(&package.names.symbols);
         let a = compile(&program, &types, &names);
         let b = compile(&program, &types, &names);
-        assert_eq!(a.object, b.object, "{label}: two compiles differ byte-for-byte");
+        assert_eq!(
+            a.object, b.object,
+            "{label}: two compiles differ byte-for-byte"
+        );
         assert_eq!(
             a.exported_symbols, b.exported_symbols,
             "{label}: export censuses differ"
@@ -974,7 +983,10 @@ fn managed_corpus_matches_the_reference_oracle() {
 
     let module = compile(&program, &types, &names);
     let (stdout, status) = run_wasm(&module.object, "managed");
-    assert_eq!(status, 0, "managed corpus object exited {status}:\n{stdout}");
+    assert_eq!(
+        status, 0,
+        "managed corpus object exited {status}:\n{stdout}"
+    );
 
     let oracle = run_oracle(&program, &types, entry);
     let expected = oracle.output.concat();
@@ -1071,7 +1083,11 @@ fn object_census_matches_the_contract() {
     let expected_table_len = 1 + aggregates.len() as u32 + 1;
     assert_eq!(table_min, Some(expected_table_len), "funcref table size");
     let elems = table_elems.expect("element section initializes the table");
-    assert_eq!(elems.len() as u32, expected_table_len, "table element count");
+    assert_eq!(
+        elems.len() as u32,
+        expected_table_len,
+        "table element count"
+    );
     assert_eq!(
         name_section.get("lpp_drop_none"),
         Some(&elems[0]),
@@ -1346,7 +1362,10 @@ fn closure_corpus_matches_the_arc_oracle() {
 
     let module = compile(&program, &types, &names);
     let (stdout, status) = run_wasm(&module.object, "closure");
-    assert_eq!(status, 0, "closure corpus object exited {status}:\n{stdout}");
+    assert_eq!(
+        status, 0,
+        "closure corpus object exited {status}:\n{stdout}"
+    );
 
     let oracle = run_arc_oracle(&program, &types, entry);
     let expected = oracle.output.concat();
@@ -1922,7 +1941,6 @@ def main() -> Int:
     print_str("all_ok")
     return 0
 "#;
-
 
 #[test]
 fn string_builtin_corpus_matches_the_arc_oracle() {

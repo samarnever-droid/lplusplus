@@ -15,11 +15,20 @@ use std::io::Write;
 pub fn runtime_panic(reason: &str) -> ! {
     let _ = std::io::stdout().flush();
     let mut err = std::io::stderr();
-    let _ = writeln!(err, "\n===================================================================");
+    let _ = writeln!(
+        err,
+        "\n==================================================================="
+    );
     let _ = writeln!(err, "\u{1f4a5} L++ RUNTIME PANIC");
-    let _ = writeln!(err, "===================================================================");
+    let _ = writeln!(
+        err,
+        "==================================================================="
+    );
     let _ = writeln!(err, "Reason: {reason}");
-    let _ = writeln!(err, "===================================================================\n");
+    let _ = writeln!(
+        err,
+        "===================================================================\n"
+    );
     let _ = err.flush();
     let _ = std::io::stdout().flush();
     std::process::exit(101);

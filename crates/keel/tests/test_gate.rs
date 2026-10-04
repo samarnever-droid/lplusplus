@@ -76,10 +76,17 @@ fn all_tests_pass_and_only_lpp_files_run() {
     assert!(res.is_ok(), "all-pass suite should succeed: {res:?}");
 
     let args = std::fs::read_to_string(root.join("args.txt")).unwrap();
-    assert_eq!(args.matches("--run").count(), 2, "one --run per .lpp test file:\n{args}");
+    assert_eq!(
+        args.matches("--run").count(),
+        2,
+        "one --run per .lpp test file:\n{args}"
+    );
     assert!(args.contains("tests/alpha.lpp"), "{args}");
     assert!(args.contains("tests/beta.lpp"), "{args}");
-    assert!(!args.contains("README"), "non-.lpp files must be ignored:\n{args}");
+    assert!(
+        !args.contains("README"),
+        "non-.lpp files must be ignored:\n{args}"
+    );
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -95,8 +102,17 @@ fn failing_test_fails_the_suite() {
     let res = keel::commands::test::test_run(&proj, fake.to_str().unwrap(), None);
     assert!(res.is_err(), "a failing test must fail the suite: {res:?}");
     let err = res.unwrap_err();
-    assert!(err.contains("bad_fail.lpp"), "error names the failing test: {err}");
-    assert!(err.contains("1 passed"), "error reports the pass count: {err}");
-    assert!(err.contains("1 failed"), "error reports the fail count: {err}");
+    assert!(
+        err.contains("bad_fail.lpp"),
+        "error names the failing test: {err}"
+    );
+    assert!(
+        err.contains("1 passed"),
+        "error reports the pass count: {err}"
+    );
+    assert!(
+        err.contains("1 failed"),
+        "error reports the fail count: {err}"
+    );
     let _ = std::fs::remove_dir_all(&root);
 }

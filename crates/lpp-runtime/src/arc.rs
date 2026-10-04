@@ -15,9 +15,9 @@ use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 use libc::{c_void, calloc, free};
 
 use crate::layout::{
-    ARC_DESTRUCTOR_OFFSET, ARC_GENERATION_OFFSET, ARC_HEADER_SIZE, ARC_MAGIC,
-    ARC_MAGIC_OFFSET, ARC_REFCOUNT_OFFSET, ARC_IMMORTAL, EMPTY_STR_BLOB_WORDS,
-    EMPTY_STR_PAYLOAD_WORD, MIN_VALID_ADDR,
+    ARC_DESTRUCTOR_OFFSET, ARC_GENERATION_OFFSET, ARC_HEADER_SIZE, ARC_IMMORTAL, ARC_MAGIC,
+    ARC_MAGIC_OFFSET, ARC_REFCOUNT_OFFSET, EMPTY_STR_BLOB_WORDS, EMPTY_STR_PAYLOAD_WORD,
+    MIN_VALID_ADDR,
 };
 
 /// Monotonic source of object generations. Internal to the runtime — the v1
@@ -35,7 +35,9 @@ fn next_generation() -> i32 {
 // The hidden header lives `ARC_HEADER_SIZE` bytes before the payload.
 
 fn header_of(payload: *const c_void) -> *mut c_void {
-    unsafe { payload.cast::<u8>().sub(ARC_HEADER_SIZE) }.cast_mut().cast::<c_void>()
+    unsafe { payload.cast::<u8>().sub(ARC_HEADER_SIZE) }
+        .cast_mut()
+        .cast::<c_void>()
 }
 
 fn magic_cell(payload: *const c_void) -> *mut u32 {
@@ -57,8 +59,7 @@ fn destructor_cell(payload: *const c_void) -> *mut Option<unsafe extern "C" fn(*
     // The destructor sits at byte offset 16 — 8-byte aligned (the C struct
     // pads generation@8..12 so the pointer lands on a boundary). One clean
     // pointer-sized step past the header base.
-    let hdr = header_of(payload)
-        .cast::<Option<unsafe extern "C" fn(*mut c_void)>>();
+    let hdr = header_of(payload).cast::<Option<unsafe extern "C" fn(*mut c_void)>>();
     unsafe { hdr.add(ARC_DESTRUCTOR_OFFSET / std::mem::size_of::<*const c_void>()) }
 }
 
@@ -203,7 +204,11 @@ pub unsafe extern "C" fn lpp_weak_get(raw: i64, expected_generation: i64) -> i64
         return 0;
     }
     if is_immortal(ptr) {
-        return if expected_generation == ARC_IMMORTAL as i64 { raw } else { 0 };
+        return if expected_generation == ARC_IMMORTAL as i64 {
+            raw
+        } else {
+            0
+        };
     }
     let now = i64::from(unsafe { (*generation_cell(ptr)).load(Ordering::Acquire) });
     if now != expected_generation {
@@ -218,16 +223,8 @@ pub unsafe extern "C" fn lpp_weak_get(raw: i64, expected_generation: i64) -> i64
 pub struct EmptyStrBlob(pub [u32; EMPTY_STR_BLOB_WORDS]);
 
 #[unsafe(no_mangle)]
-pub static lpp__empty_str_blob: EmptyStrBlob = EmptyStrBlob([
-    ARC_MAGIC,
-    ARC_IMMORTAL,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-]);
+pub static lpp__empty_str_blob: EmptyStrBlob =
+    EmptyStrBlob([ARC_MAGIC, ARC_IMMORTAL, 0, 0, 0, 0, 0, 0]);
 
 /// Pointer to the (empty) payload of the immortal empty-string blob.
 #[unsafe(no_mangle)]
@@ -332,7 +329,11 @@ mod tests {
             assert!(!p.is_null());
             let g = lpp_weak_generation(p);
             assert!(g > 0, "fresh object must have a nonzero generation");
-            assert_eq!(lpp_weak_get(p as i64, g), p as i64, "live weak handle resolves");
+            assert_eq!(
+                lpp_weak_get(p as i64, g),
+                p as i64,
+                "live weak handle resolves"
+            );
 
             // rc 1 -> 3 -> 2 -> 1 -> 0: destructor fires exactly once, at the end.
             lpp_arc_retain(p);
@@ -393,7 +394,11 @@ mod tests {
             assert!(!e.is_null());
             let hdr = e.cast::<u8>().sub(24);
             assert_eq!(*(hdr as *const u32), 0x4152_4331, "magic at offset 0");
-            assert_eq!(*(hdr.add(4) as *const u32), 0x4152_4331, "immortal at offset 4");
+            assert_eq!(
+                *(hdr.add(4) as *const u32),
+                0x4152_4331,
+                "immortal at offset 4"
+            );
             lpp_arc_retain(e);
             lpp_arc_release(e);
             assert_eq!(lpp_weak_generation(e), 0x4152_4331_i64);
@@ -411,7 +416,11 @@ mod tests {
             let code = 0x1234usize as *mut c_void;
             let closure = Box::into_raw(Box::new([code, env]));
             lpp_closure_destroy(closure as *mut c_void);
-            assert_eq!(DTOR_COUNT.load(Ordering::Relaxed), 1, "environment released");
+            assert_eq!(
+                DTOR_COUNT.load(Ordering::Relaxed),
+                1,
+                "environment released"
+            );
             std::mem::drop(Box::from_raw(closure));
         }
     }

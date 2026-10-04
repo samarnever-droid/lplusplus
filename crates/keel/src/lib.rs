@@ -52,7 +52,10 @@ fn registry_remote(cli: &cli::Cli) -> Result<String, String> {
 
 /// The shared git-registry (cloned under the global cache).
 fn registry(cli: &cli::Cli) -> Result<lpp_pm::Registry, String> {
-    Ok(lpp_pm::Registry::new(registry_remote(cli)?, cache_dir().join("registry")))
+    Ok(lpp_pm::Registry::new(
+        registry_remote(cli)?,
+        cache_dir().join("registry"),
+    ))
 }
 
 fn dispatch(cli: &cli::Cli) -> Result<(), String> {
@@ -70,7 +73,9 @@ fn dispatch(cli: &cli::Cli) -> Result<(), String> {
             let reg = registry(cli).ok();
             commands::update::update(reg.as_ref(), std::path::Path::new("."), package.as_deref())
         }
-        cli::Command::Tree { package } => commands::tree::tree(std::path::Path::new("."), package.as_deref()),
+        cli::Command::Tree { package } => {
+            commands::tree::tree(std::path::Path::new("."), package.as_deref())
+        }
         // `outdated` is registry-backed but degrades gracefully (see the
         // diagnostics contract); no registry configured = a clean error.
         cli::Command::Outdated { package } => {

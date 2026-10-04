@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use lpp_pm::{resolve_workspace, Candidate, Pkg, Req, Version, Workspace};
+use lpp_pm::{Candidate, Pkg, Req, Version, Workspace, resolve_workspace};
 
 fn temp(tag: &str) -> std::path::PathBuf {
     let d = std::env::temp_dir().join(format!("lpp-ws-{tag}-{}", std::process::id()));
@@ -117,7 +117,10 @@ fn duplicate_member_names_rejected() {
         std::fs::write(root.join(d).join("Keel.toml"), pkg_manifest("same", "")).unwrap();
     }
     let err = Workspace::discover(&root).unwrap_err();
-    assert!(matches!(err, lpp_pm::PmError::DuplicateMember { .. }), "got {err}");
+    assert!(
+        matches!(err, lpp_pm::PmError::DuplicateMember { .. }),
+        "got {err}"
+    );
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -130,7 +133,10 @@ fn bad_member_pattern_rejected() {
     )
     .unwrap();
     let err = Workspace::discover(&root).unwrap_err();
-    assert!(matches!(err, lpp_pm::PmError::BadMemberPattern(_)), "got {err}");
+    assert!(
+        matches!(err, lpp_pm::PmError::BadMemberPattern(_)),
+        "got {err}"
+    );
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -141,7 +147,11 @@ fn build_plan_orders_the_diamond_by_layers() {
     let ws = Workspace::discover(&root).unwrap();
     let plan = ws.build_plan().unwrap();
     let layers = names(&plan, &ws);
-    assert_eq!(layers.len(), 3, "deps first: [[d], [b, c], [app]]\n{layers:?}");
+    assert_eq!(
+        layers.len(),
+        3,
+        "deps first: [[d], [b, c], [app]]\n{layers:?}"
+    );
     assert_eq!(layers[0], vec!["d"]);
     assert_eq!(layers[1], vec!["b", "c"]); // deterministic: sorted within a layer
     assert_eq!(layers[2], vec!["app"]);
@@ -170,7 +180,10 @@ fn build_plan_rejects_cycles() {
     .unwrap();
     let ws = Workspace::discover(&root).unwrap();
     let err = ws.build_plan().unwrap_err();
-    assert!(matches!(err, lpp_pm::PmError::WorkspaceCycle { .. }), "got {err}");
+    assert!(
+        matches!(err, lpp_pm::PmError::WorkspaceCycle { .. }),
+        "got {err}"
+    );
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -188,7 +201,10 @@ fn path_dep_outside_the_workspace_is_rejected_at_plan_time() {
     .unwrap();
     std::fs::write(
         root.join("solo").join("Keel.toml"),
-        pkg_manifest("solo", "[dependencies]\nsibling = { path = \"../sibling\" }"),
+        pkg_manifest(
+            "solo",
+            "[dependencies]\nsibling = { path = \"../sibling\" }",
+        ),
     )
     .unwrap();
     let ws = Workspace::discover(&root.join("solo")).unwrap();
@@ -239,7 +255,10 @@ fn resolve_workspace_unifies_compatible_requirements() {
     assert!(resolved.get("m1").is_some());
     assert!(resolved.get("m2").is_some());
     assert_eq!(resolved.get("math").unwrap().version, Version::new(1, 2, 0));
-    assert!(resolved.get("<workspace>").is_none(), "synthetic root must not leak");
+    assert!(
+        resolved.get("<workspace>").is_none(),
+        "synthetic root must not leak"
+    );
 }
 
 #[test]
@@ -254,7 +273,10 @@ math = { path = "../crates/math" }
 simdlib = { version = "2", features = ["fast"] }
 "#;
     let m = lpp_pm::manifest::Manifest::parse(doc).unwrap();
-    assert_eq!(m.dependencies.get("math").unwrap().path(), Some("../crates/math"));
+    assert_eq!(
+        m.dependencies.get("math").unwrap().path(),
+        Some("../crates/math")
+    );
     // No version → any-version requirement.
     assert_eq!(m.dependencies.get("math").unwrap().version(), "*");
     assert_eq!(m.dependencies.get("simdlib").unwrap().path(), None);

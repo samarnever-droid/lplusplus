@@ -10,9 +10,9 @@ use lpp_hir::{
     lower_package,
 };
 use lpp_mir::{
-    build_mir, execute_mir, execute_mir_with_stats, MirBuildErrorKind, MirBuildOptions,
-    MirFunctionId, MirFunctionKind, MirProgram, UnsupportedConstruct, ExecutionValue,
-    InterpreterErrorKind, InterpreterLimits,
+    ExecutionValue, InterpreterErrorKind, InterpreterLimits, MirBuildErrorKind, MirBuildOptions,
+    MirFunctionId, MirFunctionKind, MirProgram, UnsupportedConstruct, build_mir, execute_mir,
+    execute_mir_with_stats,
 };
 use lpp_types::{ShadowInferenceOptions, TypeInterner, infer_hir_package};
 
@@ -62,8 +62,13 @@ fn executable(source: &str) -> (lpp_mir::MirProgram, TypeInterner) {
     let package = lower_package(&graph, ResolutionMode::Namespaced).unwrap();
     let mut types = infer_hir_package(&package, ShadowInferenceOptions::default())
         .unwrap_or_else(|error| panic!("type stage: {error:?}"));
-    let program = build_mir(&package, &graph.sources, &mut types, MirBuildOptions::default())
-        .unwrap_or_else(|error| panic!("build: {error:?}"));
+    let program = build_mir(
+        &package,
+        &graph.sources,
+        &mut types,
+        MirBuildOptions::default(),
+    )
+    .unwrap_or_else(|error| panic!("build: {error:?}"));
     (program, types.interner)
 }
 
@@ -91,8 +96,13 @@ fn build_error(source: &str) -> lpp_mir::MirBuildError {
     let package = lower_package(&graph, ResolutionMode::Namespaced).unwrap();
     let mut types = infer_hir_package(&package, ShadowInferenceOptions::default())
         .unwrap_or_else(|error| panic!("type stage: {error:?}"));
-    build_mir(&package, &graph.sources, &mut types, MirBuildOptions::default())
-        .unwrap_err()
+    build_mir(
+        &package,
+        &graph.sources,
+        &mut types,
+        MirBuildOptions::default(),
+    )
+    .unwrap_err()
 }
 
 /// Test-program entry: the last top-level function. Closure bodies are
@@ -110,27 +120,13 @@ fn entry_function(program: &MirProgram) -> MirFunctionId {
 fn execute_last(source: &str) -> ExecutionValue {
     let (program, types) = executable(source);
     let entry = entry_function(&program);
-    execute_mir(
-        &program,
-        &types,
-        entry,
-        &[],
-        InterpreterLimits::default(),
-    )
-    .unwrap()
+    execute_mir(&program, &types, entry, &[], InterpreterLimits::default()).unwrap()
 }
 
 fn execute_last_with_stats(source: &str) -> lpp_mir::ExecutionOutcome {
     let (program, types) = executable(source);
     let entry = entry_function(&program);
-    execute_mir_with_stats(
-        &program,
-        &types,
-        entry,
-        &[],
-        InterpreterLimits::default(),
-    )
-    .unwrap()
+    execute_mir_with_stats(&program, &types, entry, &[], InterpreterLimits::default()).unwrap()
 }
 
 // ── 4C3A: strings, chars, and the deterministic builtin subset ─────────────
@@ -405,9 +401,7 @@ fn deterministic_builtin_subset_executes_to_exact_values() {
         ExecutionValue::Int(22),
     );
     assert_eq!(
-        execute_last(
-            "def main() -> Int:\n    xs := list_new()\n    return list_len(xs)\n",
-        ),
+        execute_last("def main() -> Int:\n    xs := list_new()\n    return list_len(xs)\n",),
         ExecutionValue::Int(0),
     );
 }
@@ -487,28 +481,16 @@ fn os_effect_builtins_fail_at_execution_structurally() {
     let source = "def main() -> Int:\n    return random()\n";
     let (program, types) = executable(source);
     let entry = entry_function(&program);
-    let error = execute_mir(
-        &program,
-        &types,
-        entry,
-        &[],
-        InterpreterLimits::default(),
-    )
-    .unwrap_err();
+    let error =
+        execute_mir(&program, &types, entry, &[], InterpreterLimits::default()).unwrap_err();
     assert_eq!(error.kind, InterpreterErrorKind::UnsupportedBuiltin);
     assert_eq!(error.code(), "E4303");
 
     let source = "def main() -> Int:\n    return time_ms()\n";
     let (program, types) = executable(source);
     let entry = entry_function(&program);
-    let error = execute_mir(
-        &program,
-        &types,
-        entry,
-        &[],
-        InterpreterLimits::default(),
-    )
-    .unwrap_err();
+    let error =
+        execute_mir(&program, &types, entry, &[], InterpreterLimits::default()).unwrap_err();
     assert_eq!(error.kind, InterpreterErrorKind::UnsupportedBuiltin);
 }
 
@@ -650,9 +632,11 @@ fn closure_parameter_defaults_are_rejected_but_definition_defaults_work() {
 
     // A default parameter on a plain definition now lowers and executes: the
     // supplied argument overrides the default, and an omitted argument uses it.
-    let supplied = "def f(x: Int = 1) -> Int:\n    return x\n\ndef main() -> Int:\n    return f(2)\n";
+    let supplied =
+        "def f(x: Int = 1) -> Int:\n    return x\n\ndef main() -> Int:\n    return f(2)\n";
     assert_eq!(execute_last(supplied), ExecutionValue::Int(2));
-    let defaulted = "def f(x: Int = 7) -> Int:\n    return x\n\ndef main() -> Int:\n    return f()\n";
+    let defaulted =
+        "def f(x: Int = 7) -> Int:\n    return x\n\ndef main() -> Int:\n    return f()\n";
     assert_eq!(execute_last(defaulted), ExecutionValue::Int(7));
 }
 
@@ -669,8 +653,14 @@ fn closure_work_scales_linearly_from_20_to_200() {
     };
     let small = execute_last_with_stats(&generated(20));
     let large = execute_last_with_stats(&generated(200));
-    assert_eq!(small.value, ExecutionValue::Int((0..20).map(i64::from).sum()));
-    assert_eq!(large.value, ExecutionValue::Int((0..200).map(i64::from).sum()));
+    assert_eq!(
+        small.value,
+        ExecutionValue::Int((0..20).map(i64::from).sum())
+    );
+    assert_eq!(
+        large.value,
+        ExecutionValue::Int((0..200).map(i64::from).sum())
+    );
     // One entry for main plus one call per generated closure.
     assert_eq!(small.stats.calls, 1 + 20);
     assert_eq!(large.stats.calls, 1 + 200);
@@ -782,11 +772,7 @@ fn spawn_of_non_closure_fails_structurally() {
 
 #[test]
 fn await_of_non_task_fails_structurally() {
-    let source = concat!(
-        "async def main():\n",
-        "    x := 5\n",
-        "    y := x.await\n",
-    );
+    let source = concat!("async def main():\n", "    x := 5\n", "    y := x.await\n",);
     let error = type_error(source);
     assert!(
         matches!(error.error, lpp_types::TypeError::Mismatch { .. }),

@@ -25,10 +25,10 @@ use std::path::PathBuf;
 
 // Re-export the proven v1 public surface so `lpp::linker::X` keeps working.
 pub use core::{
+    LPP_FREESTANDING, LinkError, LinkErrorKind, LinkOptions, Machine, OutputFormat, PeSubsystem,
     expand_response_files, inspect_object, link_cli, link_direct, link_with_options, sniff_format,
     usage, write_elf, write_elf_with_options, write_macho, write_macho_with_options, write_pe,
-    write_pe_with_options, LinkError, LinkErrorKind, LinkOptions, LPP_FREESTANDING, Machine,
-    OutputFormat, PeSubsystem,
+    write_pe_with_options,
 };
 // `DynamicMode` is part of the v1 public surface (PHASE_6.md 6A) and is
 // needed by callers configuring static/dynamic linking.
@@ -67,17 +67,22 @@ pub struct LinkReport {
 
 /// Determine the output format for a link, applying the same defaulting the
 /// engine uses (explicit option wins; otherwise sniff the first input).
-pub fn resolve_format(inputs: &[PathBuf], options: &LinkOptions) -> Result<ResolvedFormat, LinkError> {
+pub fn resolve_format(
+    inputs: &[PathBuf],
+    options: &LinkOptions,
+) -> Result<ResolvedFormat, LinkError> {
     if inputs.is_empty() {
         return Err(LinkError::new(
             LinkErrorKind::Usage,
             "at least one input object is required",
         ));
     }
-    let fmt = options.format.unwrap_or_else(|| match inputs.first().map(|p| sniff_format(p)).unwrap_or("elf") {
-        "pe" => OutputFormat::Pe,
-        "macho" => OutputFormat::Macho,
-        _ => OutputFormat::Elf,
+    let fmt = options.format.unwrap_or_else(|| {
+        match inputs.first().map(|p| sniff_format(p)).unwrap_or("elf") {
+            "pe" => OutputFormat::Pe,
+            "macho" => OutputFormat::Macho,
+            _ => OutputFormat::Elf,
+        }
     });
     Ok(ResolvedFormat::from(fmt))
 }

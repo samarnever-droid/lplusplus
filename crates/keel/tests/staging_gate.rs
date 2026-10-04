@@ -5,8 +5,8 @@
 use std::path::Path;
 use std::process::Command;
 
-use lpp_pm::index::{IndexEntry, VersionEntry};
 use lpp_pm::Registry;
+use lpp_pm::index::{IndexEntry, VersionEntry};
 
 #[cfg(unix)]
 fn make_executable(p: &Path) {
@@ -55,7 +55,15 @@ fn git(cwd: &Path, args: &[&str]) {
 /// Empty bare registry (no packages yet).
 fn empty_registry(root: &Path) -> std::path::PathBuf {
     let bare = root.join("remote.git");
-    git(root, &["init", "--bare", "--initial-branch=main", bare.to_str().unwrap()]);
+    git(
+        root,
+        &[
+            "init",
+            "--bare",
+            "--initial-branch=main",
+            bare.to_str().unwrap(),
+        ],
+    );
     let work = root.join("work");
     git(root, &["init", "-b", "main", work.to_str().unwrap()]);
     git(&work, &["config", "user.name", "S"]);
@@ -78,17 +86,36 @@ fn publish_pkg(root: &Path, bare: &Path, name: &str, version: &str, body: &str) 
     std::fs::write(pkgdir.join("src/lib.lpp"), body).unwrap();
     let tar_path = root.join(format!("{name}-{version}.tar.gz"));
     let out = Command::new("tar")
-        .args(["-czf", tar_path.to_str().unwrap(), "-C", pkgdir.to_str().unwrap(), "."])
+        .args([
+            "-czf",
+            tar_path.to_str().unwrap(),
+            "-C",
+            pkgdir.to_str().unwrap(),
+            ".",
+        ])
         .output()
         .unwrap();
-    assert!(out.status.success(), "tar: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "tar: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let bytes = std::fs::read(&tar_path).unwrap();
     let checksum = lpp_pm::ContentAddress::of_bytes(&bytes).to_string();
 
-    let reg = Registry::new(bare.to_string_lossy().as_ref(), root.join(format!("pub-{name}")));
+    let reg = Registry::new(
+        bare.to_string_lossy().as_ref(),
+        root.join(format!("pub-{name}")),
+    );
     reg.sync().unwrap();
-    git(&root.join(format!("pub-{name}")), &["config", "user.name", "P"]);
-    git(&root.join(format!("pub-{name}")), &["config", "user.email", "p@example.com"]);
+    git(
+        &root.join(format!("pub-{name}")),
+        &["config", "user.name", "P"],
+    );
+    git(
+        &root.join(format!("pub-{name}")),
+        &["config", "user.email", "p@example.com"],
+    );
     reg.publish(
         &IndexEntry {
             name: name.into(),
@@ -116,10 +143,7 @@ fn monorepo_path(root: &Path) -> std::path::PathBuf {
     )
     .unwrap();
     for (name, deps) in [
-        (
-            "a",
-            "[dependencies]\nb = { path = \"../b\" }\n",
-        ),
+        ("a", "[dependencies]\nb = { path = \"../b\" }\n"),
         ("b", ""),
     ] {
         let d = root.join("crates").join(name);
@@ -129,11 +153,7 @@ fn monorepo_path(root: &Path) -> std::path::PathBuf {
             format!("[package]\nname = \"{name}\"\nversion = \"0.1.0\"\n\n{deps}"),
         )
         .unwrap();
-        std::fs::write(
-            d.join("src/main.lpp"),
-            "def main():\n    print(1)\n",
-        )
-        .unwrap();
+        std::fs::write(d.join("src/main.lpp"), "def main():\n    print(1)\n").unwrap();
     }
     root.to_path_buf()
 }
@@ -179,7 +199,13 @@ fn check_stages_path_deps() {
 fn registry_dep_is_staged_and_verifies_against_the_lock() {
     let root = temp("reg-stage");
     let bare = empty_registry(&root);
-    publish_pkg(&root, &bare, "mathx", "1.0.0", "def answer():\n    return 42\n");
+    publish_pkg(
+        &root,
+        &bare,
+        "mathx",
+        "1.0.0",
+        "def answer():\n    return 42\n",
+    );
 
     // app depends on mathx (registry dep); fetch locks it.
     let app = root.join("app");
@@ -189,7 +215,11 @@ fn registry_dep_is_staged_and_verifies_against_the_lock() {
         "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\nmathx = \"^1\"\n",
     )
     .unwrap();
-    std::fs::write(app.join("src/main.lpp"), "def main():\n    print(mathx.answer())\n").unwrap();
+    std::fs::write(
+        app.join("src/main.lpp"),
+        "def main():\n    print(mathx.answer())\n",
+    )
+    .unwrap();
 
     let reg = Registry::new(bare.to_string_lossy().as_ref(), root.join("clone"));
     keel::commands::registry::fetch_all(&reg, &app).unwrap();
@@ -205,7 +235,10 @@ fn registry_dep_is_staged_and_verifies_against_the_lock() {
     let staged_src = app.join(".lpp_packages/mathx/src/lib.lpp");
     assert!(staged_src.is_file(), "registry dep must be staged");
     let body = std::fs::read_to_string(&staged_src).unwrap();
-    assert!(body.contains("return 42"), "staged source must be the real artifact: {body}");
+    assert!(
+        body.contains("return 42"),
+        "staged source must be the real artifact: {body}"
+    );
     let doc = std::fs::read_to_string(app.join(".lpp_packages/mathx/lpp.toml")).unwrap();
     assert!(doc.contains("managed = \"keel\""), "{doc}");
     assert!(doc.contains("source = \"registry\""), "{doc}");
@@ -221,7 +254,13 @@ fn registry_dep_is_staged_and_verifies_against_the_lock() {
 fn tampered_registry_is_refused_at_build_time() {
     let root = temp("reg-tamper");
     let bare = empty_registry(&root);
-    publish_pkg(&root, &bare, "mathx", "1.0.0", "def answer():\n    return 42\n");
+    publish_pkg(
+        &root,
+        &bare,
+        "mathx",
+        "1.0.0",
+        "def answer():\n    return 42\n",
+    );
 
     let app = root.join("app");
     std::fs::create_dir_all(app.join("src")).unwrap();
@@ -230,7 +269,11 @@ fn tampered_registry_is_refused_at_build_time() {
         "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\nmathx = \"^1\"\n",
     )
     .unwrap();
-    std::fs::write(app.join("src/main.lpp"), "def main():\n    print(mathx.answer())\n").unwrap();
+    std::fs::write(
+        app.join("src/main.lpp"),
+        "def main():\n    print(mathx.answer())\n",
+    )
+    .unwrap();
 
     let reg = Registry::new(bare.to_string_lossy().as_ref(), root.join("clone"));
     keel::commands::registry::fetch_all(&reg, &app).unwrap();
@@ -241,7 +284,10 @@ fn tampered_registry_is_refused_at_build_time() {
     let attacker = Registry::new(bare.to_string_lossy().as_ref(), root.join("attacker"));
     attacker.sync().unwrap();
     git(&root.join("attacker"), &["config", "user.name", "A"]);
-    git(&root.join("attacker"), &["config", "user.email", "a@example.com"]);
+    git(
+        &root.join("attacker"),
+        &["config", "user.email", "a@example.com"],
+    );
     attacker
         .publish(
             &IndexEntry {
@@ -283,7 +329,13 @@ fn tampered_registry_is_refused_at_build_time() {
 fn registry_dep_without_a_registry_is_a_clean_error() {
     let root = temp("reg-noreg");
     let bare = empty_registry(&root);
-    publish_pkg(&root, &bare, "mathx", "1.0.0", "def answer():\n    return 42\n");
+    publish_pkg(
+        &root,
+        &bare,
+        "mathx",
+        "1.0.0",
+        "def answer():\n    return 42\n",
+    );
 
     let app = root.join("app");
     std::fs::create_dir_all(app.join("src")).unwrap();
@@ -299,10 +351,7 @@ fn registry_dep_without_a_registry_is_a_clean_error() {
 
     let fake = fake_lpp(&root);
     let err = keel::commands::build::check(&app, fake.to_str().unwrap(), None).unwrap_err();
-    assert!(
-        err.contains("no registry configured"),
-        "{err}"
-    );
+    assert!(err.contains("no registry configured"), "{err}");
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -310,7 +359,13 @@ fn registry_dep_without_a_registry_is_a_clean_error() {
 fn registry_dep_without_a_lock_is_a_clean_error() {
     let root = temp("reg-nolock");
     let bare = empty_registry(&root);
-    publish_pkg(&root, &bare, "mathx", "1.0.0", "def answer():\n    return 42\n");
+    publish_pkg(
+        &root,
+        &bare,
+        "mathx",
+        "1.0.0",
+        "def answer():\n    return 42\n",
+    );
 
     let app = root.join("app");
     std::fs::create_dir_all(app.join("src")).unwrap();
@@ -351,6 +406,9 @@ fn test_run_stages_deps_and_runs_from_the_workspace_root() {
         root.canonicalize().unwrap().to_string_lossy().as_ref(),
         "test must run from the workspace root: {line}"
     );
-    assert!(root.join(".lpp_packages/b/lpp.toml").is_file(), "deps must be staged");
+    assert!(
+        root.join(".lpp_packages/b/lpp.toml").is_file(),
+        "deps must be staged"
+    );
     let _ = std::fs::remove_dir_all(&root);
 }

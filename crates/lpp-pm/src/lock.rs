@@ -41,7 +41,10 @@ impl Lock {
             })
             .collect();
         packages.sort_by(|a, b| a.name.cmp(&b.name));
-        Lock { lock_version: LOCK_VERSION, packages }
+        Lock {
+            lock_version: LOCK_VERSION,
+            packages,
+        }
     }
 
     pub fn to_toml(&self) -> Result<String> {
@@ -54,6 +57,9 @@ impl Lock {
 
     /// The checksum for a package name, if it's a (registry) package with one.
     pub fn checksum(&self, name: &str) -> Option<&str> {
-        self.packages.iter().find(|p| p.name == name).and_then(|p| p.checksum.as_deref())
+        self.packages
+            .iter()
+            .find(|p| p.name == name)
+            .and_then(|p| p.checksum.as_deref())
     }
 }

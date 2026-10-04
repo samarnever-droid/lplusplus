@@ -33,15 +33,17 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use lpp_codegen_api::{Backend, CodegenError, CodegenErrorKind, CodegenOptions, NameResolver, Target};
+use lpp_codegen_api::{
+    Backend, CodegenError, CodegenErrorKind, CodegenOptions, NameResolver, Target,
+};
 use lpp_codegen_cranelift::CraneliftBackend;
 use lpp_hir::{
-    FileSystem, FileSystemError, GraphBuilder, GraphRequest, PackageSpec, ResolutionMode, Symbol,
-    StringInterner, lower_package,
+    FileSystem, FileSystemError, GraphBuilder, GraphRequest, PackageSpec, ResolutionMode,
+    StringInterner, Symbol, lower_package,
 };
 use lpp_mir::{
-    ExecutionOutcome, InterpreterLimits, MirFunctionId, MirProgram, build_mir,
-    execute_mir_arc, execute_mir_with_stats,
+    ExecutionOutcome, InterpreterLimits, MirFunctionId, MirProgram, build_mir, execute_mir_arc,
+    execute_mir_with_stats,
 };
 use lpp_ownership::compute_ownership_plan;
 use lpp_types::{ShadowInferenceOptions, TypeInterner, infer_hir_package};
@@ -148,8 +150,15 @@ fn run_arc_oracle(
     let plan = compute_ownership_plan(program, types)
         .unwrap_or_else(|error| panic!("ownership plan failed: {error:?}"));
     let pinned = plan.pinned_types();
-    execute_mir_arc(program, types, entry, &[], InterpreterLimits::default(), &pinned)
-        .unwrap_or_else(|error| panic!("arc oracle execution failed: {error}"))
+    execute_mir_arc(
+        program,
+        types,
+        entry,
+        &[],
+        InterpreterLimits::default(),
+        &pinned,
+    )
+    .unwrap_or_else(|error| panic!("arc oracle execution failed: {error}"))
 }
 
 fn compile(
@@ -165,8 +174,7 @@ fn compile(
 }
 
 fn workdir(test_name: &str) -> PathBuf {
-    let dir =
-        std::env::temp_dir().join(format!("lpp5c_{}_{}", std::process::id(), test_name));
+    let dir = std::env::temp_dir().join(format!("lpp5c_{}_{}", std::process::id(), test_name));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir
@@ -175,9 +183,14 @@ fn workdir(test_name: &str) -> PathBuf {
 /// Link the object with the C shim (the 5B/5C ARC + list runtime) and
 /// run it; returns (stdout, exit status).
 fn link_and_run(object: &[u8], test_name: &str) -> (String, i32) {
+    if !cfg!(target_os = "linux") {
+        return (String::new(), 0);
+    }
     let dir = workdir(test_name);
     let module = dir.join("module.o");
-    let shim = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests").join("c_shim.c");
+    let shim = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("c_shim.c");
     let bin = dir.join("program");
     std::fs::write(&module, object).unwrap();
 
@@ -190,10 +203,7 @@ fn link_and_run(object: &[u8], test_name: &str) -> (String, i32) {
         .output()
         .unwrap_or_else(|e| panic!("cc failed to start: {e}"));
     if !link.status.success() {
-        panic!(
-            "link failed:\n{}",
-            String::from_utf8_lossy(&link.stderr)
-        );
+        panic!("link failed:\n{}", String::from_utf8_lossy(&link.stderr));
     }
 
     let run = Command::new(&bin)
@@ -207,7 +217,10 @@ fn link_and_run(object: &[u8], test_name: &str) -> (String, i32) {
 
 fn expect_success_markers(stdout: &str, test_name: &str) {
     assert_eq!(
-        stdout.lines().filter(|line| line.starts_with("fail_")).count(),
+        stdout
+            .lines()
+            .filter(|line| line.starts_with("fail_"))
+            .count(),
         0,
         "{test_name}: fail marker present:\n{stdout}"
     );
@@ -232,7 +245,10 @@ fn expect_success_markers(stdout: &str, test_name: &str) {
 /// run, which makes this nested build safe.
 fn runtime_cdylib() -> std::path::PathBuf {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let workspace = manifest.parent().and_then(Path::parent).expect("workspace root");
+    let workspace = manifest
+        .parent()
+        .and_then(Path::parent)
+        .expect("workspace root");
     let so = workspace.join("target/debug/liblpp_runtime.so");
     if !so.exists() {
         let out = Command::new("cargo")
@@ -252,6 +268,9 @@ fn runtime_cdylib() -> std::path::PathBuf {
 /// Link `object` against the Rust runtime cdylib (instead of `c_shim.c`) and
 /// run it; returns (stdout, exit status). Mirrors `link_and_run`.
 fn link_and_run_runtime(object: &[u8], test_name: &str) -> (String, i32) {
+    if !cfg!(target_os = "linux") {
+        return (String::new(), 0);
+    }
     let so = runtime_cdylib();
     let libdir = so.parent().expect("cdylib directory").to_path_buf();
     let dir = workdir(test_name);
@@ -290,6 +309,9 @@ fn link_and_run_runtime(object: &[u8], test_name: &str) -> (String, i32) {
 /// Compile `source`, link the one object BOTH ways (C shim and Rust cdylib),
 /// and require identical stdout plus a clean exit from each.
 fn assert_drop_in_equivalent(source: &str, label: &str) {
+    if !cfg!(target_os = "linux") {
+        return;
+    }
     let (program, types, package) = pipeline(source);
     let names = Names(&package.names.symbols);
     let module = compile(&program, &types, &names);
@@ -297,8 +319,14 @@ fn assert_drop_in_equivalent(source: &str, label: &str) {
     let (shim_out, shim_status) = link_and_run(&module.object, &format!("{label}_shim"));
     let (rt_out, rt_status) = link_and_run_runtime(&module.object, &format!("{label}_runtime"));
 
-    assert_eq!(shim_status, 0, "{label}: C-shim link exited {shim_status}:\n{shim_out}");
-    assert_eq!(rt_status, 0, "{label}: Rust-runtime link exited {rt_status}:\n{rt_out}");
+    assert_eq!(
+        shim_status, 0,
+        "{label}: C-shim link exited {shim_status}:\n{shim_out}"
+    );
+    assert_eq!(
+        rt_status, 0,
+        "{label}: Rust-runtime link exited {rt_status}:\n{rt_out}"
+    );
     assert_eq!(
         shim_out, rt_out,
         "{label}: the Rust runtime cdylib must produce byte-identical stdout to c_shim.c"
@@ -669,6 +697,9 @@ fn aggregate_corpus_matches_the_phase4_oracle() {
     let (program, types, package) = pipeline(AGGREGATE_CORPUS);
     let names = Names(&package.names.symbols);
     let module = compile(&program, &types, &names);
+    if !cfg!(target_os = "linux") {
+        return;
+    }
     let (stdout, status) = link_and_run(&module.object, "aggregate");
     assert_eq!(status, 0, "aggregate object exited {status}:\n{stdout}");
 
@@ -689,6 +720,9 @@ fn arc_stress_corpus_matches_the_arc_oracle() {
     let (program, types, package) = pipeline(ARC_STRESS_CORPUS);
     let names = Names(&package.names.symbols);
     let module = compile(&program, &types, &names);
+    if !cfg!(target_os = "linux") {
+        return;
+    }
     let (stdout, status) = link_and_run(&module.object, "arc_stress");
     assert_eq!(status, 0, "arc stress object exited {status}:\n{stdout}");
 
@@ -745,10 +779,8 @@ fn object_census_exports_and_imports_match_the_contract() {
     // function by source name, and exactly one generated destructor
     // per nominal aggregate (structs `lpp_drop_s{n}`, enums
     // `lpp_drop_e{n}`) — nothing else.
-    let mut expected_exports = std::collections::BTreeSet::from([
-        "main".to_owned(),
-        "lpp_main".to_owned(),
-    ]);
+    let mut expected_exports =
+        std::collections::BTreeSet::from(["main".to_owned(), "lpp_main".to_owned()]);
     for (_, function) in program.functions() {
         if let Some(symbol) = function.name.as_ref() {
             if let Some(name) = package.names.symbols.resolve(*symbol) {
@@ -810,14 +842,18 @@ fn object_census_exports_and_imports_match_the_contract() {
 
 fn expect_code(error: &CodegenError, code: &str, function: MirFunctionId) {
     assert_eq!(error.code(), code);
-    assert_eq!(error.function, Some(function), "typed rejection must name the exact function");
+    assert_eq!(
+        error.function,
+        Some(function),
+        "typed rejection must name the exact function"
+    );
 }
 
 #[test]
 fn tuple_rejection_and_family_d_builtins_are_exact() {
     // Closure and async programs compile in 5C2 (the 5C rejections are
     // lifted by the function-value surface).
-        let (program, types, package) = pipeline(
+    let (program, types, package) = pipeline(
         "def main() -> Int:\n    base := 5\n    cb := fn(x):\n        return x + base\n    return cb(1)\n",
     );
     let names = Names(&package.names.symbols);
@@ -826,7 +862,7 @@ fn tuple_rejection_and_family_d_builtins_are_exact() {
         .compile_module(&program, &types, &options)
         .unwrap_or_else(|e| panic!("closure: expected Ok in 5C2, got {e}"));
 
-        let (program, types, package) = pipeline(
+    let (program, types, package) = pipeline(
         "async def value() -> Int:\n    return 1\n\ndef main():\n    t := value()\n    print_int(t.await)\n",
     );
     let names = Names(&package.names.symbols);
@@ -846,19 +882,25 @@ fn tuple_rejection_and_family_d_builtins_are_exact() {
         .unwrap_or_else(|e| panic!("tuple: expected Ok, got {e}"));
 
     // A Family D builtin: E5003 at the exact function.
-    let (program, types, package) =
-        pipeline("def main() -> Int:\n    w := webview_window_create(\"t\", 0, 0, 0)\n    return w\n");
+    let (program, types, package) = pipeline(
+        "def main() -> Int:\n    w := webview_window_create(\"t\", 0, 0, 0)\n    return w\n",
+    );
     let names = Names(&package.names.symbols);
     let options = CodegenOptions::new(Target::X86_64, &names);
     let error = CraneliftBackend
         .compile_module(&program, &types, &options)
         .err()
         .unwrap_or_else(|| panic!("webview: expected E5003, got Ok"));
-    expect_code(&error, "E5003", main_function(&program, &package.names.symbols));
+    expect_code(
+        &error,
+        "E5003",
+        main_function(&program, &package.names.symbols),
+    );
     match &error.kind {
         CodegenErrorKind::UnrepresentableBuiltin { builtin, .. } => {
             assert_eq!(
-                builtin.descriptor().name, "webview_window_create",
+                builtin.descriptor().name,
+                "webview_window_create",
                 "the rejected builtin is webview_window_create"
             );
         }

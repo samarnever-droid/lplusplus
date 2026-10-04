@@ -10,8 +10,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use lpp_linker::{
-    expand_response_files, inspect_object, link_cli, link_typed, sniff_format, LinkOptions,
-    ResolvedFormat,
+    LinkOptions, ResolvedFormat, expand_response_files, inspect_object, link_cli, link_typed,
+    sniff_format,
 };
 
 fn tmp_dir(tag: &str) -> PathBuf {
@@ -21,7 +21,17 @@ fn tmp_dir(tag: &str) -> PathBuf {
     dir
 }
 
-fn sh64(name: u32, kind: u32, flags: u64, offset: u64, size: u64, link: u32, info: u32, align: u64, entsize: u64) -> [u8; 64] {
+fn sh64(
+    name: u32,
+    kind: u32,
+    flags: u64,
+    offset: u64,
+    size: u64,
+    link: u32,
+    info: u32,
+    align: u64,
+    entsize: u64,
+) -> [u8; 64] {
     let mut h = [0u8; 64];
     h[0..4].copy_from_slice(&name.to_le_bytes());
     h[4..8].copy_from_slice(&kind.to_le_bytes());
@@ -97,8 +107,12 @@ fn run_exit_code(binary: &Path) -> i32 {
     if !cfg!(target_os = "linux") {
         return 42;
     }
-    let status = Command::new(binary).status().expect("linked output must execute");
-    status.code().unwrap_or_else(|| panic!("process was killed by a signal"))
+    let status = Command::new(binary)
+        .status()
+        .expect("linked output must execute");
+    status
+        .code()
+        .unwrap_or_else(|| panic!("process was killed by a signal"))
 }
 
 #[test]
@@ -108,10 +122,15 @@ fn hermetic_object_links_and_runs() {
     assert_eq!(sniff_format(&obj), "elf");
 
     let out = dir.join("exit42");
-    let report = link_typed(&[obj.clone()], &out, &LinkOptions::default()).expect("link must succeed");
+    let report =
+        link_typed(&[obj.clone()], &out, &LinkOptions::default()).expect("link must succeed");
     assert_eq!(report.format, ResolvedFormat::Elf);
     assert_eq!(report.object_count, 1);
-    assert!(report.output_size > 64, "nontrivial image: {}", report.output_size);
+    assert!(
+        report.output_size > 64,
+        "nontrivial image: {}",
+        report.output_size
+    );
 
     // The image is a real ELF executable.
     let bytes = std::fs::read(&out).unwrap();
@@ -170,10 +189,7 @@ fn response_files_expand() {
     let dir = tmp_dir("rsp");
     let rsp = dir.join("args.rsp");
     std::fs::write(&rsp, "# a comment\nfoo.o\n\nbar \"baz qux\"\n").unwrap();
-    let args = vec![
-        format!("@{}", rsp.display()),
-        "tail.o".to_string(),
-    ];
+    let args = vec![format!("@{}", rsp.display()), "tail.o".to_string()];
     let expanded = expand_response_files(args).expect("expansion must succeed");
     assert_eq!(expanded, vec!["foo.o", "bar", "baz qux", "tail.o"]);
 }
@@ -200,7 +216,11 @@ fn cc_multi_object_with_relocations() {
     let a = dir.join("a.c");
     let m = dir.join("m.c");
     std::fs::write(&a, "int forty_two(void) { return 42; }\n").unwrap();
-    std::fs::write(&m, "int forty_two(void); int main(void) { return forty_two(); }\n").unwrap();
+    std::fs::write(
+        &m,
+        "int forty_two(void); int main(void) { return forty_two(); }\n",
+    )
+    .unwrap();
 
     let flags = vec![
         "-c".to_string(),
@@ -211,7 +231,13 @@ fn cc_multi_object_with_relocations() {
     let a_o = dir.join("a.o");
     let m_o = dir.join("m.o");
     for (src, dst) in [(a.as_path(), a_o.as_path()), (m.as_path(), m_o.as_path())] {
-        let status = Command::new(cc).args(&flags).arg(src).arg("-o").arg(dst).status().unwrap();
+        let status = Command::new(cc)
+            .args(&flags)
+            .arg(src)
+            .arg("-o")
+            .arg(dst)
+            .status()
+            .unwrap();
         if !status.success() {
             eprintln!("skipping: cc failed to compile a fixture");
             return;
@@ -319,11 +345,26 @@ fn error_kinds_are_classified() {
     let bad = dir.join("bad.o");
     std::fs::write(&bad, [0u8; 32]).unwrap();
     let err = link_typed(&[bad], &out, &LinkOptions::default()).unwrap_err();
-    assert_eq!(err.kind, LinkErrorKind::Malformed, "garbage input: {}", err.message);
+    assert_eq!(
+        err.kind,
+        LinkErrorKind::Malformed,
+        "garbage input: {}",
+        err.message
+    );
 
     let err = link_typed(&[dir.join("nope.o")], &out, &LinkOptions::default()).unwrap_err();
-    assert_eq!(err.kind, LinkErrorKind::Io, "missing input: {}", err.message);
+    assert_eq!(
+        err.kind,
+        LinkErrorKind::Io,
+        "missing input: {}",
+        err.message
+    );
 
     let err = link_typed(&[], &out, &LinkOptions::default()).unwrap_err();
-    assert_eq!(err.kind, LinkErrorKind::Usage, "empty input: {}", err.message);
+    assert_eq!(
+        err.kind,
+        LinkErrorKind::Usage,
+        "empty input: {}",
+        err.message
+    );
 }

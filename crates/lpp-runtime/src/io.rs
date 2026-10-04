@@ -203,7 +203,11 @@ pub unsafe extern "C" fn lpp_append_file(path: *const c_char, data: *const c_cha
     let p = path_from(unsafe { cstr_bytes(path) });
     let data = unsafe { cstr_bytes(data) };
     make_parent_dirs(&p);
-    match std::fs::OpenOptions::new().create(true).append(true).open(&p) {
+    match std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&p)
+    {
         Ok(mut f) => {
             if f.write_all(data).is_ok() {
                 0

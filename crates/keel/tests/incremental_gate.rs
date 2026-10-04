@@ -131,7 +131,11 @@ fn changing_a_leaf_rebuilds_its_whole_dependent_cone() {
     let base = invocation_count(&root);
 
     // Change the leaf d: d, b, c AND app must rebuild (4).
-    std::fs::write(root.join("crates/d/src/main.lpp"), "fn main() { changed }\n").unwrap();
+    std::fs::write(
+        root.join("crates/d/src/main.lpp"),
+        "fn main() { changed }\n",
+    )
+    .unwrap();
     build(&root, &fake);
     assert_eq!(
         invocation_count(&root),
@@ -140,7 +144,11 @@ fn changing_a_leaf_rebuilds_its_whole_dependent_cone() {
     );
 
     // Now change only app: exactly 1 rebuild.
-    std::fs::write(root.join("apps/app/src/main.lpp"), "fn main() { changed2 }\n").unwrap();
+    std::fs::write(
+        root.join("apps/app/src/main.lpp"),
+        "fn main() { changed2 }\n",
+    )
+    .unwrap();
     build(&root, &fake);
     assert_eq!(
         invocation_count(&root),
@@ -165,7 +173,10 @@ fn cache_clean_removes_the_global_cache() {
     std::fs::write(keel_cache.join("registry").join("index.json"), b"{}").unwrap();
     std::fs::write(keel_cache.join("blob").join("abc"), b"blob-bytes").unwrap();
 
-    let res = keel::commands::cache::run(&keel::cli::CacheAction::Clean, keel::cli::CacheBackend::Auto);
+    let res = keel::commands::cache::run(
+        &keel::cli::CacheAction::Clean,
+        keel::cli::CacheBackend::Auto,
+    );
     unsafe {
         std::env::remove_var("XDG_CACHE_HOME");
     }

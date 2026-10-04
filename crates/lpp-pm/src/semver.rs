@@ -14,7 +14,11 @@ pub struct Version {
 
 impl Version {
     pub const fn new(major: u64, minor: u64, patch: u64) -> Self {
-        Self { major, minor, patch }
+        Self {
+            major,
+            minor,
+            patch,
+        }
     }
 
     /// Parse `1`, `1.2`, or `1.2.3` (a leading `v` and any `-pre`/`+build` are ignored).
@@ -36,16 +40,11 @@ impl Version {
         let patch = parts.get(2).copied().unwrap_or("0").parse().ok()?;
         Some(Self::new(major, minor, patch))
     }
-
-    /// `major.minor.patch` (always three components).
-    pub fn to_string(&self) -> String {
-        format!("{}.{}.{}", self.major, self.minor, self.patch)
-    }
 }
 
 impl std::fmt::Display for Version {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.to_string())
+        write!(f, "{}.{}.{}", self.major, self.minor, self.patch)
     }
 }
 

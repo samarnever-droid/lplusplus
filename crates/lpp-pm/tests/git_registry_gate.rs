@@ -22,8 +22,7 @@ fn git(cwd: &Path, args: &[&str]) {
 
 /// A fresh, unique temp dir for a test.
 fn temp(tag: &str) -> std::path::PathBuf {
-    let dir =
-        std::env::temp_dir().join(format!("lpp-git-registry-{tag}-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("lpp-git-registry-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir
@@ -32,7 +31,15 @@ fn temp(tag: &str) -> std::path::PathBuf {
 /// Seed a bare git repo (a "remote") with an empty initial commit on `main`.
 fn seed_bare(dir: &Path) -> std::path::PathBuf {
     let bare = dir.join("remote.git");
-    git(dir, &["init", "--bare", "--initial-branch=main", bare.to_str().unwrap()]);
+    git(
+        dir,
+        &[
+            "init",
+            "--bare",
+            "--initial-branch=main",
+            bare.to_str().unwrap(),
+        ],
+    );
     let work = dir.join("seed");
     git(dir, &["init", "-b", "main", work.to_str().unwrap()]);
     git(&work, &["config", "user.name", "Seeder"]);
@@ -72,7 +79,11 @@ fn publish_then_clone_fetch_round_trip_and_verifies_sha() {
     let artifact = b"fn add(a: i32, b: i32) -> i32 { a + b }";
     let checksum = lpp_pm::ContentAddress::of_bytes(artifact).to_string();
     let sum = reg
-        .publish(&entry("math", "1.0.0", &checksum), artifact, "publish math 1.0.0")
+        .publish(
+            &entry("math", "1.0.0", &checksum),
+            artifact,
+            "publish math 1.0.0",
+        )
         .unwrap();
     assert_eq!(sum, checksum);
     reg.push().unwrap();
@@ -101,7 +112,8 @@ fn fetch_rejects_a_tampered_blob() {
     git(&pub_dir, &["config", "user.email", "p@example.com"]);
     let artifact = b"original artifact bytes";
     let checksum = lpp_pm::ContentAddress::of_bytes(artifact).to_string();
-    reg.publish(&entry("math", "1.0.0", &checksum), artifact, "init").unwrap();
+    reg.publish(&entry("math", "1.0.0", &checksum), artifact, "init")
+        .unwrap();
     reg.push().unwrap();
 
     // Consumer clones, then the blob is silently corrupted.
@@ -110,7 +122,10 @@ fn fetch_rejects_a_tampered_blob() {
     creg.sync().unwrap();
     std::fs::write(con_dir.join("blob").join(&checksum), b"EVIL tampered bytes").unwrap();
     let err = creg.fetch("math", "1.0.0").unwrap_err();
-    assert!(matches!(err, lpp_pm::PmError::ChecksumMismatch { .. }), "got {err}");
+    assert!(
+        matches!(err, lpp_pm::PmError::ChecksumMismatch { .. }),
+        "got {err}"
+    );
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -122,6 +137,9 @@ fn lookup_missing_package_is_typed_not_found() {
     let creg = Registry::new(bare.to_string_lossy().as_ref(), &con_dir);
     creg.sync().unwrap();
     let err = creg.lookup("nope").unwrap_err();
-    assert!(matches!(err, lpp_pm::PmError::PackageNotFound(_)), "got {err}");
+    assert!(
+        matches!(err, lpp_pm::PmError::PackageNotFound(_)),
+        "got {err}"
+    );
     let _ = std::fs::remove_dir_all(&root);
 }

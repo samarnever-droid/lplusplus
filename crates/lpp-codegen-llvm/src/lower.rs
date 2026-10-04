@@ -9,8 +9,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use lpp_codegen_api::{CodegenError, CodegenErrorKind};
 use lpp_mir::{
-    BasicBlockId, BinaryOperator, Constant, InstructionKind, MirFunctionId, MirLocalId,
-    MirProgram, MirFunction, Operand, Rvalue, Terminator, UnaryOperator,
+    BasicBlockId, BinaryOperator, Constant, InstructionKind, MirFunction, MirFunctionId,
+    MirLocalId, MirProgram, Operand, Rvalue, Terminator, UnaryOperator,
 };
 use lpp_types::{BuiltinId, PrimitiveType, TypeId, TypeInterner, TypeKind};
 
@@ -49,10 +49,7 @@ impl Val {
 }
 
 fn unsupported(construct: &'static str, fn_id: Option<MirFunctionId>) -> CodegenError {
-    CodegenError::new(
-        fn_id,
-        CodegenErrorKind::UnsupportedConstruct { construct },
-    )
+    CodegenError::new(fn_id, CodegenErrorKind::UnsupportedConstruct { construct })
 }
 
 fn val_of_type(types: &TypeInterner, ty: TypeId) -> Result<Val, CodegenError> {
@@ -65,7 +62,7 @@ fn val_of_type(types: &TypeInterner, ty: TypeId) -> Result<Val, CodegenError> {
         TypeKind::Primitive(PrimitiveType::Void) => Val::I64,
         TypeKind::Primitive(PrimitiveType::StrSlice)
         | TypeKind::Primitive(PrimitiveType::VectorI64x2) => {
-            return Err(unsupported("SIMD/slice scalar", None))
+            return Err(unsupported("SIMD/slice scalar", None));
         }
         // The remaining primitives are the six integer types; the native ABI
         // carries every integer as i64.
@@ -139,7 +136,9 @@ fn check_rvalue(
     builtins: &mut BTreeSet<&'static str>,
 ) -> Result<(), CodegenError> {
     match rvalue {
-        Rvalue::Use(o) | Rvalue::Unary { operand: o, .. } => check_operand(program, types, fn_id, o, strings, builtins),
+        Rvalue::Use(o) | Rvalue::Unary { operand: o, .. } => {
+            check_operand(program, types, fn_id, o, strings, builtins)
+        }
         Rvalue::Binary {
             left,
             operator,
@@ -217,7 +216,7 @@ fn check_rvalue(
             match callee {
                 Operand::Function(_) => {}
                 Operand::Copy(_) | Operand::Constant(_) => {
-                    return Err(unsupported("function value", Some(fn_id)))
+                    return Err(unsupported("function value", Some(fn_id)));
                 }
             }
             for operand in program.operands(*arguments) {
@@ -311,7 +310,10 @@ fn check_terminator(
     _builtins: &mut BTreeSet<&'static str>,
 ) -> Result<(), CodegenError> {
     match term {
-        Terminator::Goto(_) | Terminator::Branch { .. } | Terminator::Return(_) | Terminator::Unreachable => Ok(()),
+        Terminator::Goto(_)
+        | Terminator::Branch { .. }
+        | Terminator::Return(_)
+        | Terminator::Unreachable => Ok(()),
         Terminator::SwitchEnum { .. } => Err(unsupported("switch on enum", Some(fn_id))),
     }
 }
@@ -337,13 +339,12 @@ fn llvm_string(text: &str) -> String {
 }
 
 /// Emit the full module text.
-pub(crate) fn lower_module(
-    program: &MirProgram,
-    types: &TypeInterner,
-    plan: &Plan,
-) -> String {
+pub(crate) fn lower_module(program: &MirProgram, types: &TypeInterner, plan: &Plan) -> String {
     let mut text = String::new();
-    let _ = std::fmt::Write::write_str(&mut text, "target triple = \"x86_64-unknown-linux-gnu\"\n\n");
+    let _ = std::fmt::Write::write_str(
+        &mut text,
+        "target triple = \"x86_64-unknown-linux-gnu\"\n\n",
+    );
 
     // String globals (deterministic: content order, per the plan).
     for (content, index) in &plan.string_of {
@@ -362,14 +363,37 @@ pub(crate) fn lower_module(
     // Builtin declarations.
     for &symbol in &plan.builtins {
         match symbol {
-            "lpp_print_str" => { let _ = std::fmt::Write::write_str(&mut text, "declare void @lpp_print_str(ptr)\n"); }
-            "lpp_print_int" => { let _ = std::fmt::Write::write_str(&mut text, "declare void @lpp_print_int(i64)\n"); }
-            "lpp_print_bool" => { let _ = std::fmt::Write::write_str(&mut text, "declare void @lpp_print_bool(i8)\n"); }
-            "lpp_print_float" => { let _ = std::fmt::Write::write_str(&mut text, "declare void @lpp_print_float(double)\n"); }
-            "lpp_write_str" => { let _ = std::fmt::Write::write_str(&mut text, "declare void @lpp_write_str(ptr)\n"); }
-            "lpp_str_len" => { let _ = std::fmt::Write::write_str(&mut text, "declare i64 @lpp_str_len(ptr)\n"); }
-            "lpp_str_eq" => { let _ = std::fmt::Write::write_str(&mut text, "declare i64 @lpp_str_eq(ptr, ptr)\n"); }
-            "lpp_str_concat" => { let _ = std::fmt::Write::write_str(&mut text, "declare ptr @lpp_str_concat(ptr, ptr)\n"); }
+            "lpp_print_str" => {
+                let _ = std::fmt::Write::write_str(&mut text, "declare void @lpp_print_str(ptr)\n");
+            }
+            "lpp_print_int" => {
+                let _ = std::fmt::Write::write_str(&mut text, "declare void @lpp_print_int(i64)\n");
+            }
+            "lpp_print_bool" => {
+                let _ = std::fmt::Write::write_str(&mut text, "declare void @lpp_print_bool(i8)\n");
+            }
+            "lpp_print_float" => {
+                let _ = std::fmt::Write::write_str(
+                    &mut text,
+                    "declare void @lpp_print_float(double)\n",
+                );
+            }
+            "lpp_write_str" => {
+                let _ = std::fmt::Write::write_str(&mut text, "declare void @lpp_write_str(ptr)\n");
+            }
+            "lpp_str_len" => {
+                let _ = std::fmt::Write::write_str(&mut text, "declare i64 @lpp_str_len(ptr)\n");
+            }
+            "lpp_str_eq" => {
+                let _ =
+                    std::fmt::Write::write_str(&mut text, "declare i64 @lpp_str_eq(ptr, ptr)\n");
+            }
+            "lpp_str_concat" => {
+                let _ = std::fmt::Write::write_str(
+                    &mut text,
+                    "declare ptr @lpp_str_concat(ptr, ptr)\n",
+                );
+            }
             _ => {}
         }
     }
@@ -400,7 +424,10 @@ fn emit_function(
     // `define void`; others the natural type.
     let ret_val = if is_main {
         Val::I32
-    } else if matches!(types.kind(function.return_type), TypeKind::Primitive(PrimitiveType::Void)) {
+    } else if matches!(
+        types.kind(function.return_type),
+        TypeKind::Primitive(PrimitiveType::Void)
+    ) {
         Val::Void
     } else {
         val_of_type(types, function.return_type).unwrap_or(Val::I64)
@@ -416,7 +443,11 @@ fn emit_function(
     let name = &plan.symbols[&fn_id];
     let _ = std::fmt::Write::write_fmt(
         text,
-        format_args!("define {} @{name}({}) {{\n", ret_val.ty(), param_types.join(", ")),
+        format_args!(
+            "define {} @{name}({}) {{\n",
+            ret_val.ty(),
+            param_types.join(", ")
+        ),
     );
 
     // The entry block is the first RPO block; allocas live there.
@@ -431,13 +462,23 @@ fn emit_function(
     for (i, &local) in locals.iter().enumerate() {
         let ty = val_of_type(types, program.local(local).unwrap().ty).unwrap_or(Val::I64);
         let slot = format!("%slot{i}");
-        let _ = std::fmt::Write::write_str(&mut body, &format!("{slot} = alloca {}, align {}\n", ty.ty(), ty.align()));
+        let _ = std::fmt::Write::write_str(
+            &mut body,
+            &format!("{slot} = alloca {}, align {}\n", ty.ty(), ty.align()),
+        );
         slot_of.insert(local, slot);
     }
     for (i, &p) in params.iter().enumerate() {
         let ty = val_of_type(types, program.local(p).unwrap().ty).unwrap_or(Val::I64);
         if let Some(slot) = slot_of.get(&p) {
-            let _ = std::fmt::Write::write_str(&mut body, &format!("store {} %a{i}, ptr {slot}, align {}\n", ty.ty(), ty.align()));
+            let _ = std::fmt::Write::write_str(
+                &mut body,
+                &format!(
+                    "store {} %a{i}, ptr {slot}, align {}\n",
+                    ty.ty(),
+                    ty.align()
+                ),
+            );
         }
     }
 
@@ -455,32 +496,60 @@ fn emit_function(
             match ir {
                 InstructionKind::Assign { target, value } => {
                     let target_type = program.local(*target).unwrap().ty;
-                    let void =
-                        matches!(types.kind(target_type), TypeKind::Primitive(PrimitiveType::Void));
-                    let (val, expr) =
-                        emit_value(program, types, plan, fn_id, value, &slot_of, &mut ssa, &mut out)
-                            .expect("checked in plan");
+                    let void = matches!(
+                        types.kind(target_type),
+                        TypeKind::Primitive(PrimitiveType::Void)
+                    );
+                    let (val, expr) = emit_value(
+                        program, types, plan, fn_id, value, &slot_of, &mut ssa, &mut out,
+                    )
+                    .expect("checked in plan");
                     if void {
                         // A void expression (a void builtin): the target is a
                         // void temp that is never read, so there is no store.
                         continue;
                     }
                     let slot = &slot_of[target];
-                    push(&mut out, &format!("store {} {expr}, ptr {slot}, align {}", val.ty(), val.align()));
+                    push(
+                        &mut out,
+                        &format!(
+                            "store {} {expr}, ptr {slot}, align {}",
+                            val.ty(),
+                            val.align()
+                        ),
+                    );
                 }
                 InstructionKind::Store { place, value } => {
-                    let (val, expr) =
-                        emit_operand(program, types, plan, fn_id, value, &slot_of, &mut ssa, &mut out)
-                            .expect("checked in plan");
+                    let (val, expr) = emit_operand(
+                        program, types, plan, fn_id, value, &slot_of, &mut ssa, &mut out,
+                    )
+                    .expect("checked in plan");
                     let slot = &slot_of[&program.place(*place).unwrap().root];
-                    push(&mut out, &format!("store {} {expr}, ptr {slot}, align {}", val.ty(), val.align()));
+                    push(
+                        &mut out,
+                        &format!(
+                            "store {} {expr}, ptr {slot}, align {}",
+                            val.ty(),
+                            val.align()
+                        ),
+                    );
                 }
             }
         }
         let block_text = out.split_off(0);
         let _ = std::fmt::Write::write_str(&mut body, &block_text);
         // Terminator.
-        emit_terminator(program, types, plan, fn_id, &block.terminator, &slot_of, &mut ssa, &mut body).expect("checked in plan");
+        emit_terminator(
+            program,
+            types,
+            plan,
+            fn_id,
+            &block.terminator,
+            &slot_of,
+            &mut ssa,
+            &mut body,
+        )
+        .expect("checked in plan");
     }
 
     let _ = std::fmt::Write::write_str(text, &body);
@@ -505,7 +574,11 @@ fn float_literal(bits: u64) -> String {
         return "NaN".to_owned();
     }
     if value.is_infinite() {
-        return if value.is_sign_negative() { "-inf".to_owned() } else { "inf".to_owned() };
+        return if value.is_sign_negative() {
+            "-inf".to_owned()
+        } else {
+            "inf".to_owned()
+        };
     }
     let mut text = format!("{:e}", value);
     if !text.contains('.') {
@@ -546,8 +619,14 @@ fn rpo(program: &MirProgram, function: &MirFunction) -> Vec<BasicBlockId> {
 fn successors(program: &MirProgram, term: &Terminator) -> Vec<BasicBlockId> {
     match term {
         Terminator::Goto(t) => vec![*t],
-        Terminator::Branch { then_block, else_block, .. } => vec![*then_block, *else_block],
-        Terminator::SwitchEnum { targets, .. } => program.switch_targets(*targets).iter().copied().collect(),
+        Terminator::Branch {
+            then_block,
+            else_block,
+            ..
+        } => vec![*then_block, *else_block],
+        Terminator::SwitchEnum { targets, .. } => {
+            program.switch_targets(*targets).iter().copied().collect()
+        }
         Terminator::Return(_) | Terminator::Unreachable => Vec::new(),
     }
 }
@@ -573,25 +652,41 @@ fn emit_value(
     match rvalue {
         Rvalue::Use(o) => emit_operand(program, types, plan, fn_id, o, slot_of, ssa, out),
         Rvalue::Unary { operator, operand } => {
-            let (val, expr) = emit_operand(program, types, plan, fn_id, operand, slot_of, ssa, out)?;
+            let (val, expr) =
+                emit_operand(program, types, plan, fn_id, operand, slot_of, ssa, out)?;
             let v = fresh(ssa);
             match (*operator, val) {
                 (UnaryOperator::Not, Val::I8) => push(out, &format!("{v} = sub i8 1, {expr}")),
                 (UnaryOperator::Negate, Val::I64) => push(out, &format!("{v} = sub i64 0, {expr}")),
-                (UnaryOperator::Negate, Val::F64) => push(out, &format!("{v} = fneg double {expr}")),
+                (UnaryOperator::Negate, Val::F64) => {
+                    push(out, &format!("{v} = fneg double {expr}"))
+                }
                 _ => return Err(unsupported("unary operator", Some(fn_id))),
             }
             Ok((val, v))
         }
-        Rvalue::Binary { left, operator, right } => emit_binary(program, types, plan, fn_id, *operator, left, right, slot_of, ssa, out),
-        Rvalue::Builtin { builtin, arguments } => emit_builtin(program, types, plan, fn_id, *builtin, *arguments, slot_of, ssa, out),
-        Rvalue::Call { callee, arguments } => emit_call(program, types, plan, fn_id, *callee, *arguments, slot_of, ssa, out),
+        Rvalue::Binary {
+            left,
+            operator,
+            right,
+        } => emit_binary(
+            program, types, plan, fn_id, *operator, left, right, slot_of, ssa, out,
+        ),
+        Rvalue::Builtin { builtin, arguments } => emit_builtin(
+            program, types, plan, fn_id, *builtin, *arguments, slot_of, ssa, out,
+        ),
+        Rvalue::Call { callee, arguments } => emit_call(
+            program, types, plan, fn_id, *callee, *arguments, slot_of, ssa, out,
+        ),
         Rvalue::Load(place) => {
             let place = program.place(*place).unwrap();
             let val = val_of_type(types, place.ty)?;
             let slot = &slot_of[&place.root];
             let v = fresh(ssa);
-            push(out, &format!("{v} = load {}, ptr {slot}, align {}", val.ty(), val.align()));
+            push(
+                out,
+                &format!("{v} = load {}, ptr {slot}, align {}", val.ty(), val.align()),
+            );
             Ok((val, v))
         }
         _ => Err(unsupported("rvalue", Some(fn_id))),
@@ -620,7 +715,10 @@ fn emit_operand(
             let val = val_of_type(types, local.ty)?;
             let slot = slot_of.get(&local_id).expect("local mapped");
             let v = fresh(ssa);
-            push(out, &format!("{v} = load {}, ptr {slot}, align {}", val.ty(), val.align()));
+            push(
+                out,
+                &format!("{v} = load {}, ptr {slot}, align {}", val.ty(), val.align()),
+            );
             Ok((val, v))
         }
         // Constants are emitted as untyped literals (the instruction supplies
@@ -671,16 +769,26 @@ fn emit_binary(
         return match operator {
             BinaryOperator::Add => {
                 let v = fresh(ssa);
-                push(out, &format!("{v} = call ptr @lpp_str_concat(ptr {le}, ptr {re})"));
+                push(
+                    out,
+                    &format!("{v} = call ptr @lpp_str_concat(ptr {le}, ptr {re})"),
+                );
                 Ok((Val::Ptr, v))
             }
             BinaryOperator::Equal | BinaryOperator::NotEqual => {
                 let eq = fresh(ssa);
-                push(out, &format!("{eq} = call i64 @lpp_str_eq(ptr {le}, ptr {re})"));
+                push(
+                    out,
+                    &format!("{eq} = call i64 @lpp_str_eq(ptr {le}, ptr {re})"),
+                );
                 let v = fresh(ssa);
                 // `lpp_str_eq` returns 1 when equal, so `==` is `!= 0` and
                 // `!=` is `== 0`.
-                let op = if operator == BinaryOperator::Equal { "ne" } else { "eq" };
+                let op = if operator == BinaryOperator::Equal {
+                    "ne"
+                } else {
+                    "eq"
+                };
                 push(out, &format!("{v} = icmp {op} i64 {eq}, 0"));
                 let v8 = fresh(ssa);
                 push(out, &format!("{v8} = zext i1 {v} to i8"));
@@ -748,7 +856,10 @@ fn emit_binary(
             _ => "",
         };
         let cmp_inst = if lval == Val::F64 { "fcmp" } else { "icmp" };
-        push(out, &format!("{v} = {cmp_inst} {cmp} {} {le}, {re}", lval.ty()));
+        push(
+            out,
+            &format!("{v} = {cmp_inst} {cmp} {} {le}, {re}", lval.ty()),
+        );
         let v8 = fresh(ssa);
         push(out, &format!("{v8} = zext i1 {v} to i8"));
         return Ok((Val::I8, v8));
@@ -775,7 +886,10 @@ fn emit_call(
         return Err(unsupported("indirect call", Some(fn_id)));
     };
     let target_fn = program.function(target).expect("callee exists");
-    let ret = if matches!(types.kind(target_fn.return_type), TypeKind::Primitive(PrimitiveType::Void)) {
+    let ret = if matches!(
+        types.kind(target_fn.return_type),
+        TypeKind::Primitive(PrimitiveType::Void)
+    ) {
         Val::Void
     } else {
         val_of_type(types, target_fn.return_type)?
@@ -793,7 +907,10 @@ fn emit_call(
         Ok((Val::Void, String::new()))
     } else {
         let v = fresh(ssa);
-        push(out, &format!("{v} = call {} @{name}({})", ret.ty(), parts.join(", ")));
+        push(
+            out,
+            &format!("{v} = call {} @{name}({})", ret.ty(), parts.join(", ")),
+        );
         Ok((ret, v))
     }
 }
@@ -813,7 +930,9 @@ fn emit_builtin(
     let operands = program.operands(arguments).to_vec();
     let mut arg_vals: Vec<(Val, String)> = Vec::with_capacity(operands.len());
     for operand in &operands {
-        arg_vals.push(emit_operand(program, types, plan, fn_id, operand, slot_of, ssa, out)?);
+        arg_vals.push(emit_operand(
+            program, types, plan, fn_id, operand, slot_of, ssa, out,
+        )?);
     }
     let (aval, aexpr) = &arg_vals[0];
     let v = fresh(ssa);
@@ -826,7 +945,10 @@ fn emit_builtin(
             // (this clang rejects `sext` of a constexpr), an SSA value via `sext`.
             Val::I32 => match const_int_value(&operands[0]) {
                 Some(value) => push(out, &format!("call void @lpp_print_int(i64 {value})")),
-                None => push(out, &format!("call void @lpp_print_int(i64 sext i32 {aexpr} to i64)")),
+                None => push(
+                    out,
+                    &format!("call void @lpp_print_int(i64 sext i32 {aexpr} to i64)"),
+                ),
             },
             _ => return Err(unsupported("print of unsupported type", Some(fn_id))),
         },
@@ -836,9 +958,7 @@ fn emit_builtin(
         "print_float" => push(out, &format!("call void @lpp_print_float(double {aexpr})")),
         "write_str" => push(out, &format!("call void @lpp_write_str(ptr {aexpr})")),
         "str_len" => push(out, &format!("{v} = call i64 @lpp_str_len(ptr {aexpr})")),
-        _ => {
-            return Err(unsupported("unported builtin", Some(fn_id)))
-        }
+        _ => return Err(unsupported("unported builtin", Some(fn_id))),
     }
     // Void builtins return an i64 placeholder (the rvalue is discarded).
     if name == "str_len" {
@@ -861,13 +981,25 @@ fn emit_terminator(
         Terminator::Goto(target) => {
             push(out, &format!("br label {}", label_ref(*target)));
         }
-        Terminator::Branch { condition, then_block, else_block } => {
-            let (val, expr) = emit_operand(program, types, plan, fn_id, condition, slot_of, ssa, out)?;
+        Terminator::Branch {
+            condition,
+            then_block,
+            else_block,
+        } => {
+            let (val, expr) =
+                emit_operand(program, types, plan, fn_id, condition, slot_of, ssa, out)?;
             debug_assert_eq!(val, Val::I8);
             // LLVM branches on `i1`; the bool local is `i8`.
             let v = fresh(ssa);
             push(out, &format!("{v} = trunc i8 {expr} to i1"));
-            push(out, &format!("br i1 {v}, label {}, label {}", label_ref(*then_block), label_ref(*else_block)));
+            push(
+                out,
+                &format!(
+                    "br i1 {v}, label {}, label {}",
+                    label_ref(*then_block),
+                    label_ref(*else_block)
+                ),
+            );
         }
         Terminator::Return(value) => {
             let is_main = plan.symbols.get(&fn_id).is_some_and(|n| n == "main");
@@ -900,4 +1032,3 @@ fn emit_terminator(
     }
     Ok(())
 }
-

@@ -77,7 +77,8 @@ impl Backend for LlvmBackend {
 fn clang_object(ir: &str) -> Result<Vec<u8>, CodegenError> {
     use std::sync::atomic::{AtomicU64, Ordering};
     static INVOKE: AtomicU64 = AtomicU64::new(0);
-    let emit = |message: String| CodegenError::new(None, CodegenErrorKind::ObjectEmissionFailed(message));
+    let emit =
+        |message: String| CodegenError::new(None, CodegenErrorKind::ObjectEmissionFailed(message));
     // One workspace per *invocation*: cargo runs the gate's tests on
     // parallel threads of one process, and a shared `module.ll` would
     // let concurrent compiles clobber each other's IR.

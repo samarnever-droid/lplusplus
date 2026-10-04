@@ -196,14 +196,14 @@ fn registry_deps_needed(
     if names.is_empty() {
         return Ok(None);
     }
-    let lock = lpp_pm::Lock::parse(
-        &std::fs::read_to_string(ws.root.join("Keel.lock")).map_err(|_| {
+    let lock = lpp_pm::Lock::parse(&std::fs::read_to_string(ws.root.join("Keel.lock")).map_err(
+        |_| {
             format!(
                 "registry dependency '{}' needs a Keel.lock — run `keel fetch` first",
                 names[0]
             )
-        })?,
-    )
+        },
+    )?)
     .map_err(|e| e.to_string())?;
     let mut needed = BTreeMap::new();
     for name in &names {
@@ -212,14 +212,11 @@ fn registry_deps_needed(
             .iter()
             .find(|p| p.name == *name)
             .ok_or_else(|| {
-                format!(
-                    "registry dependency '{name}' is not in Keel.lock — run `keel fetch` first"
-                )
+                format!("registry dependency '{name}' is not in Keel.lock — run `keel fetch` first")
             })?;
-        let checksum = p
-            .checksum
-            .clone()
-            .ok_or_else(|| format!("Keel.lock has no checksum for '{name}' — re-run `keel fetch`"))?;
+        let checksum = p.checksum.clone().ok_or_else(|| {
+            format!("Keel.lock has no checksum for '{name}' — re-run `keel fetch`")
+        })?;
         needed.insert(name.clone(), (p.version.clone(), checksum));
     }
     Ok(Some(needed))
@@ -339,10 +336,7 @@ pub fn stage_registry_deps(
 }
 
 /// Prune stale registry-managed entries (not in `keep`).
-fn prune_registry_managed(
-    ws: &lpp_pm::Workspace,
-    keep: &BTreeSet<String>,
-) -> Result<(), String> {
+fn prune_registry_managed(ws: &lpp_pm::Workspace, keep: &BTreeSet<String>) -> Result<(), String> {
     let pkgs_dir = ws.root.join(".lpp_packages");
     if let Ok(rd) = std::fs::read_dir(&pkgs_dir) {
         for e in rd.flatten() {
@@ -387,7 +381,10 @@ pub fn stage_all_deps(
 /// A **library** member (`src/lib.lpp`) emits an object file
 /// (`--emit-object`, no link, no `main` required); a **binary** member
 /// (`src/main.lpp`) links an executable.
-pub fn member_jobs(member: &lpp_pm::Member, out_dir: &Path) -> Result<Vec<(String, Vec<String>)>, String> {
+pub fn member_jobs(
+    member: &lpp_pm::Member,
+    out_dir: &Path,
+) -> Result<Vec<(String, Vec<String>)>, String> {
     let manifest = &member.manifest;
     let entry = entry_point(&member.dir)?;
     let is_lib = entry == "src/lib.lpp";
@@ -431,8 +428,8 @@ pub fn member_jobs(member: &lpp_pm::Member, out_dir: &Path) -> Result<Vec<(Strin
 /// label per row (e.g. BUILD/CACHED/FAIL) plus an error if any row failed.
 /// The incremental layer (docs/rewrite/DELTA.md) plugs its fingerprint skip
 /// in here.
-pub type JobRunner = dyn Sync
-    + Fn(&str, &Path, &str, &[(String, Vec<String>)]) -> (Vec<String>, Result<(), String>);
+pub type JobRunner =
+    dyn Sync + Fn(&str, &Path, &str, &[(String, Vec<String>)]) -> (Vec<String>, Result<(), String>);
 
 /// Build the workspace discovered from `dir`, layer by layer over the
 /// path-dep DAG; members within a layer build concurrently. All deps (path
@@ -485,7 +482,11 @@ pub fn build(
         });
         let mut layer_err: Option<String> = None;
         for (name, statuses, err) in rx {
-            let i = ws.index().get(name.as_str()).copied().expect("member name from run_job");
+            let i = ws
+                .index()
+                .get(name.as_str())
+                .copied()
+                .expect("member name from run_job");
             let rows = &jobs[i];
             for (i2, st) in statuses.iter().enumerate() {
                 b.push_record([
@@ -574,8 +575,7 @@ pub fn build_incremental(
     // Delta report: what changed since the last build, and the rebuild set.
     let delta = lpp_pm::delta::diff(&store.fps(), &current);
     if !delta.is_empty() {
-        let rebuild =
-            lpp_pm::delta::invalidate(&delta, &lpp_pm::fingerprint::dep_key_graph(&ws));
+        let rebuild = lpp_pm::delta::invalidate(&delta, &lpp_pm::fingerprint::dep_key_graph(&ws));
         println!(
             "delta: {} new/changed, {} removed → rebuilding {} of {} job(s)",
             delta.added.len() + delta.changed.len(),
@@ -636,9 +636,7 @@ fn incremental_job(
         let out_path = cmd.last().map(String::as_str);
         let cached = {
             let s = store.lock().expect("store lock");
-            s.get(&key)
-                .map(|e| e.fingerprint == *fp)
-                .unwrap_or(false)
+            s.get(&key).map(|e| e.fingerprint == *fp).unwrap_or(false)
                 && out_path.map(|p| Path::new(p).exists()).unwrap_or(false)
         };
         if cached {

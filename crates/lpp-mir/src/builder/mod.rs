@@ -256,7 +256,6 @@ struct ClosureWork {
     function_id: MirFunctionId,
 }
 
-
 pub fn build_mir(
     package: &HirPackage,
     sources: &SourceMap,
@@ -392,7 +391,10 @@ impl<'input> MirBuilder<'input> {
                 continue;
             }
             self.validate_function_shape(function, item.origin)?;
-            let parameters = self.package.type_parameters(function.type_parameters).to_vec();
+            let parameters = self
+                .package
+                .type_parameters(function.type_parameters)
+                .to_vec();
             let arguments = self.types.interner.list(record.key.arguments).to_vec();
             if parameters.len() != arguments.len() {
                 return Err(self.error(
@@ -594,10 +596,7 @@ impl<'input> MirBuilder<'input> {
         Ok(())
     }
 
-    fn lower_queued_closure(
-        &mut self,
-        work: ClosureWork,
-    ) -> Result<(), MirBuildError> {
+    fn lower_queued_closure(&mut self, work: ClosureWork) -> Result<(), MirBuildError> {
         let ClosureWork {
             expression,
             parameters,
@@ -639,16 +638,12 @@ impl<'input> MirBuilder<'input> {
         let mut capture_frame_locals = Vec::with_capacity(capture_sources.len());
         for source in &capture_sources {
             let hir_local = self.package.locals[*source];
-            let ty = self
-                .types
-                .assignments
-                .local(*source)
-                .ok_or_else(|| {
-                    self.error(
-                        hir_local.origin,
-                        MirBuildErrorKind::MissingType(TypedEntity::Local(*source)),
-                    )
-                })?;
+            let ty = self.types.assignments.local(*source).ok_or_else(|| {
+                self.error(
+                    hir_local.origin,
+                    MirBuildErrorKind::MissingType(TypedEntity::Local(*source)),
+                )
+            })?;
             let ty = self.materialize_type(&substitution, ty, hir_local.origin)?;
             // A by-reference capture cell continues into this frame: the
             // capture local is the cell (list) itself, so reads and
@@ -766,7 +761,10 @@ impl<'input> MirBuilder<'input> {
     }
 
     fn walk_body(&self, body: BodyId, visit: &mut dyn FnMut(ExprId)) {
-        for statement in self.package.statements(self.package.bodies[body].statements) {
+        for statement in self
+            .package
+            .statements(self.package.bodies[body].statements)
+        {
             self.walk_statement(*statement, visit);
         }
     }
@@ -870,22 +868,14 @@ impl<'input> MirBuilder<'input> {
     /// a parameter of any enclosing function is never marked: the call
     /// ABI passes parameters by value, so that capture stays the
     /// one-way value capture.
-    fn mark_write_captures(
-        &mut self,
-        body: BodyId,
-        function_parameters: &BTreeSet<LocalId>,
-    ) {
+    fn mark_write_captures(&mut self, body: BodyId, function_parameters: &BTreeSet<LocalId>) {
         self.mark_write_captures_inner(body, function_parameters);
     }
 
     /// The same walk restricted to a function body: `enclosing_params`
     /// holds the parameter locals of every function whose body contains
     /// this one (the item function and each enclosing closure).
-    fn mark_write_captures_inner(
-        &mut self,
-        body: BodyId,
-        enclosing_params: &BTreeSet<LocalId>,
-    ) {
+    fn mark_write_captures_inner(&mut self, body: BodyId, enclosing_params: &BTreeSet<LocalId>) {
         for &statement in self
             .package
             .statements(self.package.bodies[body].statements)
@@ -1025,13 +1015,7 @@ impl<'input> MirBuilder<'input> {
         enclosing_params: &BTreeSet<LocalId>,
         cell_sources: &mut BTreeSet<LocalId>,
     ) {
-        Self::collect_writes_statements(
-            package,
-            body,
-            scope,
-            enclosing_params,
-            cell_sources,
-        );
+        Self::collect_writes_statements(package, body, scope, enclosing_params, cell_sources);
     }
 
     fn collect_writes_statements(
@@ -1073,8 +1057,7 @@ impl<'input> MirBuilder<'input> {
                         );
                     }
                 }
-                StatementKind::While { body, .. }
-                | StatementKind::For { body, .. } => {
+                StatementKind::While { body, .. } | StatementKind::For { body, .. } => {
                     Self::collect_writes_statements(
                         package,
                         body,
@@ -1140,8 +1123,9 @@ impl<'input> MirBuilder<'input> {
             self.options.max_functions,
             origin,
         )?;
-        let id = MirFunctionId::from_index(current)
-            .ok_or_else(|| self.error(origin, MirBuildErrorKind::Capacity(MirCapacity::Functions)))?;
+        let id = MirFunctionId::from_index(current).ok_or_else(|| {
+            self.error(origin, MirBuildErrorKind::Capacity(MirCapacity::Functions))
+        })?;
         // The ID is owned from reservation time: bodies may finish in any
         // order (closures finish before their enclosing function), so the
         // count must not wait for the allocation.
@@ -1188,12 +1172,8 @@ impl<'input> MirBuilder<'input> {
                     },
                 )
             })?;
-        if matches!(
-            self.types.interner.kind(ty),
-            TypeKind::InferenceVariable(_)
-        ) {
-            return Err(self
-                .error(origin, MirBuildErrorKind::GenericTypeMaterialization));
+        if matches!(self.types.interner.kind(ty), TypeKind::InferenceVariable(_)) {
+            return Err(self.error(origin, MirBuildErrorKind::GenericTypeMaterialization));
         }
         if substitution.is_empty() {
             return Ok(ty);
@@ -1222,9 +1202,7 @@ impl<'input> MirBuilder<'input> {
         self.types
             .interner
             .intern(TypeKind::List(element))
-            .map_err(|_| {
-                self.error(origin, MirBuildErrorKind::Capacity(MirCapacity::Storage))
-            })
+            .map_err(|_| self.error(origin, MirBuildErrorKind::Capacity(MirCapacity::Storage)))
     }
 
     /// The raw source text covered by `span`, when the span is well-formed.
@@ -1257,11 +1235,10 @@ impl<'input> MirBuilder<'input> {
             self.options.max_strings,
             origin,
         )?;
-        let id = self
-            .program
-            .strings
-            .alloc(text.clone())
-            .map_err(|_| self.error(origin, MirBuildErrorKind::Capacity(MirCapacity::Storage)))?;
+        let id =
+            self.program.strings.alloc(text.clone()).map_err(|_| {
+                self.error(origin, MirBuildErrorKind::Capacity(MirCapacity::Storage))
+            })?;
         self.counts.strings += 1;
         self.string_cache.insert(text, id);
         Ok(id)
@@ -1289,9 +1266,9 @@ impl<'input> MirBuilder<'input> {
                 .ok_or_else(|| self.error(origin, MirBuildErrorKind::InvalidLiteral))?;
             return self.intern_string(decoded, origin);
         }
-        let text = self.source_text(span).ok_or_else(|| {
-            self.error(origin, MirBuildErrorKind::InvalidLiteral)
-        })?;
+        let text = self
+            .source_text(span)
+            .ok_or_else(|| self.error(origin, MirBuildErrorKind::InvalidLiteral))?;
         let triple = text.starts_with("\"\"\"");
         let inner = if triple {
             text.strip_prefix("\"\"\"")
@@ -1303,22 +1280,21 @@ impl<'input> MirBuilder<'input> {
         let Some(inner) = inner else {
             return Err(self.error(origin, MirBuildErrorKind::InvalidLiteral));
         };
-        let decoded = unescape_literal(inner).ok_or_else(|| {
-            self.error(origin, MirBuildErrorKind::InvalidLiteral)
-        })?;
+        let decoded = unescape_literal(inner)
+            .ok_or_else(|| self.error(origin, MirBuildErrorKind::InvalidLiteral))?;
         self.intern_string(decoded, origin)
     }
 
     fn materialize_character(&self, span: Span, origin: OriginId) -> Result<char, MirBuildError> {
-        let text = self.source_text(span).ok_or_else(|| {
-            self.error(origin, MirBuildErrorKind::InvalidLiteral)
-        })?;
+        let text = self
+            .source_text(span)
+            .ok_or_else(|| self.error(origin, MirBuildErrorKind::InvalidLiteral))?;
         let inner = text
             .strip_prefix('\'')
             .and_then(|inner| inner.strip_suffix('\''))
             .ok_or_else(|| self.error(origin, MirBuildErrorKind::InvalidLiteral))?;
-        let decoded =
-            unescape_literal(inner).ok_or_else(|| self.error(origin, MirBuildErrorKind::InvalidLiteral))?;
+        let decoded = unescape_literal(inner)
+            .ok_or_else(|| self.error(origin, MirBuildErrorKind::InvalidLiteral))?;
         let mut characters = decoded.chars();
         let Some(character) = characters.next() else {
             return Err(self.error(origin, MirBuildErrorKind::InvalidLiteral));

@@ -66,8 +66,9 @@ impl Backend for CraneliftBackend {
         flags.set("use_colocated_libcalls", "false").map_err(|e| {
             CodegenError::new(None, CodegenErrorKind::ObjectEmissionFailed(e.to_string()))
         })?;
-        flags.set("is_pic", "true")
-            .map_err(|e| CodegenError::new(None, CodegenErrorKind::ObjectEmissionFailed(e.to_string())))?;
+        flags.set("is_pic", "true").map_err(|e| {
+            CodegenError::new(None, CodegenErrorKind::ObjectEmissionFailed(e.to_string()))
+        })?;
         flags.set("opt_level", "speed").map_err(|e| {
             CodegenError::new(None, CodegenErrorKind::ObjectEmissionFailed(e.to_string()))
         })?;
@@ -82,18 +83,17 @@ impl Backend for CraneliftBackend {
         let isa_builder = cranelift_codegen::isa::lookup(triple).map_err(|e| {
             CodegenError::new(None, CodegenErrorKind::ObjectEmissionFailed(e.to_string()))
         })?;
-        let isa = isa_builder.finish(settings::Flags::new(flags)).map_err(|e| {
-            CodegenError::new(None, CodegenErrorKind::ObjectEmissionFailed(e.to_string()))
-        })?;
+        let isa = isa_builder
+            .finish(settings::Flags::new(flags))
+            .map_err(|e| {
+                CodegenError::new(None, CodegenErrorKind::ObjectEmissionFailed(e.to_string()))
+            })?;
 
-        let builder = ObjectBuilder::new(
-            isa,
-            "lpp_module",
-            cranelift_module::default_libcall_names(),
-        )
-        .map_err(|e| {
-            CodegenError::new(None, CodegenErrorKind::ObjectEmissionFailed(e.to_string()))
-        })?;
+        let builder =
+            ObjectBuilder::new(isa, "lpp_module", cranelift_module::default_libcall_names())
+                .map_err(|e| {
+                    CodegenError::new(None, CodegenErrorKind::ObjectEmissionFailed(e.to_string()))
+                })?;
         let mut module = ObjectModule::new(builder);
 
         // Typed rejection happens up front: the module never holds a
@@ -119,12 +119,9 @@ impl Backend for CraneliftBackend {
         let entry = lowering.entry();
         drop(lowering);
 
-        let object = module
-            .finish()
-            .emit()
-            .map_err(|e| {
-                CodegenError::new(None, CodegenErrorKind::ObjectEmissionFailed(e.to_string()))
-            })?;
+        let object = module.finish().emit().map_err(|e| {
+            CodegenError::new(None, CodegenErrorKind::ObjectEmissionFailed(e.to_string()))
+        })?;
 
         Ok(CompiledModule {
             target: options.target,

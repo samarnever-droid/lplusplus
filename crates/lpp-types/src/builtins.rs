@@ -47,9 +47,7 @@ impl BuiltinIndex {
     pub fn from_generated() -> Self {
         let mut by_name = BTreeMap::new();
         for (offset, builtin) in lpp_runtime_abi::generated::BUILTINS.iter().enumerate() {
-            by_name
-                .entry(builtin.name)
-                .or_insert(Self::id_at(offset));
+            by_name.entry(builtin.name).or_insert(Self::id_at(offset));
         }
         Self { by_name }
     }
@@ -106,16 +104,20 @@ impl BuiltinFacts {
 
     #[must_use]
     pub fn expressions(&self) -> impl Iterator<Item = (ExprId, BuiltinFact)> {
-        self.expressions.iter().enumerate().filter_map(move |(index, fact)| {
-            fact.and_then(|fact| {
-                ExprId::from_index(index).map(|id| (id, fact))
+        self.expressions
+            .iter()
+            .enumerate()
+            .filter_map(move |(index, fact)| {
+                fact.and_then(|fact| ExprId::from_index(index).map(|id| (id, fact)))
             })
-        })
     }
 
     #[must_use]
     pub fn len(&self) -> usize {
-        self.expressions.iter().filter(|fact| fact.is_some()).count()
+        self.expressions
+            .iter()
+            .filter(|fact| fact.is_some())
+            .count()
     }
 
     #[must_use]
@@ -140,10 +142,7 @@ pub fn type_matches_semantic(
         (TypeKind::Primitive(PrimitiveType::Int), SemanticAbiType::I64) => true,
         (TypeKind::Primitive(PrimitiveType::String), SemanticAbiType::Str) => true,
         (TypeKind::Primitive(PrimitiveType::StrSlice), SemanticAbiType::StrSlice) => true,
-        (
-            TypeKind::Primitive(PrimitiveType::VectorI64x2),
-            SemanticAbiType::VectorI64x2,
-        ) => true,
+        (TypeKind::Primitive(PrimitiveType::VectorI64x2), SemanticAbiType::VectorI64x2) => true,
         (TypeKind::Primitive(PrimitiveType::Void), SemanticAbiType::Void) => true,
         _ => false,
     }
@@ -219,7 +218,10 @@ mod tests {
         let first = BuiltinId::from_raw(0);
         facts.record(ExprId::from_raw(2), first);
         assert_eq!(facts.len(), 1);
-        assert_eq!(facts.expression(ExprId::from_raw(2)).unwrap().builtin, first);
+        assert_eq!(
+            facts.expression(ExprId::from_raw(2)).unwrap().builtin,
+            first
+        );
         assert!(facts.expression(ExprId::from_raw(3)).is_none());
     }
 }

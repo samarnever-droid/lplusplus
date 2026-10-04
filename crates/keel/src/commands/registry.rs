@@ -111,7 +111,12 @@ fn candidates(reg: &Registry, name: &str) -> Option<Vec<lpp_pm::Candidate>> {
                 deps: ve
                     .deps
                     .into_iter()
-                    .map(|d| (d.name, lpp_pm::Req::parse(&d.req).unwrap_or(lpp_pm::Req::Any)))
+                    .map(|d| {
+                        (
+                            d.name,
+                            lpp_pm::Req::parse(&d.req).unwrap_or(lpp_pm::Req::Any),
+                        )
+                    })
                     .collect(),
             })
             .collect()
@@ -126,11 +131,8 @@ fn candidates(reg: &Registry, name: &str) -> Option<Vec<lpp_pm::Candidate>> {
 /// path deps and member-named deps excluded (they never hit the registry).
 /// Shared by `keel fetch` (all) and `keel update`.
 pub fn workspace_roots(ws: &lpp_pm::Workspace) -> Result<Vec<lpp_pm::Pkg>, String> {
-    let member_names: std::collections::BTreeSet<String> = ws
-        .members
-        .iter()
-        .map(|m| m.name().to_string())
-        .collect();
+    let member_names: std::collections::BTreeSet<String> =
+        ws.members.iter().map(|m| m.name().to_string()).collect();
     ws.members
         .iter()
         .map(|m| {
@@ -153,7 +155,10 @@ pub fn workspace_roots(ws: &lpp_pm::Workspace) -> Result<Vec<lpp_pm::Pkg>, Strin
                     .iter()
                     .filter(|(n, d)| d.path().is_none() && !member_names.contains(n.as_str()))
                     .map(|(n, d)| {
-                        (n.clone(), lpp_pm::Req::parse(d.version()).unwrap_or(lpp_pm::Req::Any))
+                        (
+                            n.clone(),
+                            lpp_pm::Req::parse(d.version()).unwrap_or(lpp_pm::Req::Any),
+                        )
                     })
                     .collect(),
             })
@@ -166,12 +171,15 @@ pub fn fetch_all(reg: &Registry, dir: &Path) -> Result<(), String> {
     reg.sync().map_err(|e| e.to_string())?;
     let roots = workspace_roots(&ws)?;
 
-    let resolved =
-        lpp_pm::resolve_workspace(&roots, &|name| candidates(reg, name)).map_err(|e| e.to_string())?;
+    let resolved = lpp_pm::resolve_workspace(&roots, &|name| candidates(reg, name))
+        .map_err(|e| e.to_string())?;
 
     let lock = lpp_pm::Lock::from_resolved(&resolved);
-    std::fs::write(ws.root.join("Keel.lock"), lock.to_toml().map_err(|e| e.to_string())?)
-        .map_err(|e| e.to_string())?;
+    std::fs::write(
+        ws.root.join("Keel.lock"),
+        lock.to_toml().map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
 
     let mut b = Builder::default();
     b.push_record(["package".to_string(), "version".to_string()]);
@@ -260,7 +268,10 @@ pub fn publish(reg: &Registry) -> Result<(), String> {
         .output()
         .map_err(|e| format!("failed to run `tar`: {e}"))?;
     if !tar.status.success() {
-        return Err(format!("tar failed: {}", String::from_utf8_lossy(&tar.stderr)));
+        return Err(format!(
+            "tar failed: {}",
+            String::from_utf8_lossy(&tar.stderr)
+        ));
     }
     let artifact = std::fs::read(&artifact_path).map_err(|e| e.to_string())?;
     let _ = std::fs::remove_dir_all(&tmp);
@@ -294,6 +305,9 @@ pub fn publish(reg: &Registry) -> Result<(), String> {
     reg.publish(&entry, &artifact, &format!("publish {name} {version}"))
         .map_err(|e| e.to_string())?;
     reg.push().map_err(|e| e.to_string())?;
-    println!("published {name} {version} (sha256 {checksum}) → {}", reg.remote());
+    println!(
+        "published {name} {version} (sha256 {checksum}) → {}",
+        reg.remote()
+    );
     Ok(())
 }

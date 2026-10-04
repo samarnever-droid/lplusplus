@@ -13,7 +13,7 @@ use lpp_hir::{
     lower_package,
 };
 use lpp_mir::{
-    CORE_MIR_INVARIANTS, MirFunctionId, MirInvariant, MirLocalId, MirProgram, MirBuildOptions,
+    CORE_MIR_INVARIANTS, MirBuildOptions, MirFunctionId, MirInvariant, MirLocalId, MirProgram,
     build_mir, mir_snapshot,
 };
 use lpp_ownership::{
@@ -22,7 +22,7 @@ use lpp_ownership::{
     verify_ownership_plan,
 };
 use lpp_passes::{MirPass, PassContext, PassFailure, PassManager};
-use lpp_types::{TypeInterner, TypeKind, ShadowInferenceOptions, infer_hir_package};
+use lpp_types::{ShadowInferenceOptions, TypeInterner, TypeKind, infer_hir_package};
 
 #[derive(Debug)]
 struct MemoryFileSystem {
@@ -32,10 +32,7 @@ struct MemoryFileSystem {
 impl MemoryFileSystem {
     fn new(source: &str) -> Self {
         Self {
-            files: BTreeMap::from([(
-                PathBuf::from("/ownership/main.lpp"),
-                source.to_owned(),
-            )]),
+            files: BTreeMap::from([(PathBuf::from("/ownership/main.lpp"), source.to_owned())]),
         }
     }
 }
@@ -74,8 +71,13 @@ fn executable(source: &str) -> (MirProgram, TypeInterner) {
     let package = lower_package(&graph, ResolutionMode::Namespaced).unwrap();
     let mut types = infer_hir_package(&package, ShadowInferenceOptions::default())
         .unwrap_or_else(|error| panic!("type stage: {error:?}"));
-    let program = build_mir(&package, &graph.sources, &mut types, MirBuildOptions::default())
-        .unwrap_or_else(|error| panic!("build: {error:?}"));
+    let program = build_mir(
+        &package,
+        &graph.sources,
+        &mut types,
+        MirBuildOptions::default(),
+    )
+    .unwrap_or_else(|error| panic!("build: {error:?}"));
     (program, types.interner)
 }
 
@@ -111,9 +113,7 @@ fn returned_locals(program: &MirProgram, function: MirFunctionId) -> Vec<MirLoca
     let mut returned = Vec::new();
     for &block_id in program.function_blocks(function) {
         let block = program.block(block_id).expect("block exists");
-        if let lpp_mir::Terminator::Return(Some(lpp_mir::Operand::Copy(local))) =
-            block.terminator
-        {
+        if let lpp_mir::Terminator::Return(Some(lpp_mir::Operand::Copy(local))) = block.terminator {
             returned.push(local);
         }
     }
@@ -128,9 +128,8 @@ fn locals_of(program: &MirProgram, function: MirFunctionId) -> Vec<MirLocalId> {
 
 #[test]
 fn non_escaping_locals_are_frame_and_returned_are_owned() {
-    let (program, types) = executable(
-        "def main() -> Int:\n    a := 1\n    b := a + 2\n    return b\n",
-    );
+    let (program, types) =
+        executable("def main() -> Int:\n    a := 1\n    b := a + 2\n    return b\n");
     let plan = compute_ownership_plan(&program, &types).unwrap();
     assert!(verify_ownership_plan(&program, &types, &plan).is_empty());
 
@@ -198,16 +197,18 @@ fn call_arguments_and_returns_are_heap() {
         .filter(|c| c.placement == ValuePlacement::Frame)
         .map(|c| c.local)
         .collect();
-    let arena_cells: Vec<MirLocalId> =
-        plan.arenas.iter().flat_map(|arena| arena.cells.iter().copied()).collect();
+    let arena_cells: Vec<MirLocalId> = plan
+        .arenas
+        .iter()
+        .flat_map(|arena| arena.cells.iter().copied())
+        .collect();
     assert_eq!(frame_cells, arena_cells);
 }
 
 #[test]
 fn spawn_operands_escape() {
-    let (program, types) = executable(
-        "def main():\n    f := fn():\n        print_str(\"x\")\n    spawn(f)\n",
-    );
+    let (program, types) =
+        executable("def main():\n    f := fn():\n        print_str(\"x\")\n    spawn(f)\n");
     let plan = compute_ownership_plan(&program, &types).unwrap();
     assert!(verify_ownership_plan(&program, &types, &plan).is_empty());
 
@@ -311,8 +312,7 @@ fn await_operands_escape() {
     }
     // The task type node exists and is not a cycle member.
     assert!(plan.nodes.iter().any(|node| {
-        matches!(node.node, ContainmentNode::Task(_))
-            && node.strategy == TypeStrategy::Owned
+        matches!(node.node, ContainmentNode::Task(_)) && node.strategy == TypeStrategy::Owned
     }));
 }
 
@@ -348,12 +348,16 @@ fn self_referential_list_of_capturing_closure_becomes_shared() {
         .map(|node| node.node)
         .collect();
     assert_eq!(shared_nodes.len(), 2);
-    assert!(shared_nodes
-        .iter()
-        .any(|node| matches!(node, ContainmentNode::Callable(_))));
-    assert!(shared_nodes
-        .iter()
-        .any(|node| matches!(node, ContainmentNode::List(_))));
+    assert!(
+        shared_nodes
+            .iter()
+            .any(|node| matches!(node, ContainmentNode::Callable(_)))
+    );
+    assert!(
+        shared_nodes
+            .iter()
+            .any(|node| matches!(node, ContainmentNode::List(_)))
+    );
     // The closure's capture cell is shared too (the body temporary is
     // frame, so it is not part of the closure's capture cell).
     let closure = function_at(&program, 1);
@@ -361,9 +365,7 @@ fn self_referential_list_of_capturing_closure_becomes_shared() {
         .cells
         .iter()
         .filter(|c| c.function == closure)
-        .filter(|c| {
-            program.local(c.local).unwrap().kind == lpp_mir::MirLocalKind::Capture
-        })
+        .filter(|c| program.local(c.local).unwrap().kind == lpp_mir::MirLocalKind::Capture)
         .collect();
     assert_eq!(capture.len(), 1);
     assert_eq!(capture[0].placement, ValuePlacement::Shared);
@@ -373,20 +375,18 @@ fn self_referential_list_of_capturing_closure_becomes_shared() {
 
 #[test]
 fn mutually_capturing_closures_become_shared() {
-    let (program, types) = executable(
-        concat!(
-            "def main():\n",
-            "    l1 := list_new()\n",
-            "    l2 := list_new()\n",
-            "    c1 := fn(a: Int):\n",
-            "        list_get(l2, 0)\n",
-            "    c2 := fn() -> Int:\n",
-            "        list_get(l1, 0)\n",
-            "        return 1\n",
-            "    list_push(l1, c1)\n",
-            "    list_push(l2, c2)\n",
-        ),
-    );
+    let (program, types) = executable(concat!(
+        "def main():\n",
+        "    l1 := list_new()\n",
+        "    l2 := list_new()\n",
+        "    c1 := fn(a: Int):\n",
+        "        list_get(l2, 0)\n",
+        "    c2 := fn() -> Int:\n",
+        "        list_get(l1, 0)\n",
+        "        return 1\n",
+        "    list_push(l1, c1)\n",
+        "    list_push(l2, c2)\n",
+    ));
     let plan = compute_ownership_plan(&program, &types).unwrap();
     assert!(verify_ownership_plan(&program, &types, &plan).is_empty());
 
@@ -409,17 +409,15 @@ fn mutually_capturing_closures_become_shared() {
 
 #[test]
 fn acyclic_container_of_shared_type_stays_owned() {
-    let (program, types) = executable(
-        concat!(
-            "def main():\n",
-            "    inner := list_new()\n",
-            "    f := fn():\n",
-            "        list_get(inner, 0)\n",
-            "    list_push(inner, f)\n",
-            "    outer := list_new()\n",
-            "    list_push(outer, inner)\n",
-        ),
-    );
+    let (program, types) = executable(concat!(
+        "def main():\n",
+        "    inner := list_new()\n",
+        "    f := fn():\n",
+        "        list_get(inner, 0)\n",
+        "    list_push(inner, f)\n",
+        "    outer := list_new()\n",
+        "    list_push(outer, inner)\n",
+    ));
     let plan = compute_ownership_plan(&program, &types).unwrap();
     assert!(verify_ownership_plan(&program, &types, &plan).is_empty());
 
@@ -445,10 +443,7 @@ fn acyclic_container_of_shared_type_stays_owned() {
                 ValuePlacement::Owned,
                 "the outer list must stay owned"
             );
-        } else if matches!(
-            types.kind(mir_local.ty),
-            TypeKind::List(_)
-        ) {
+        } else if matches!(types.kind(mir_local.ty), TypeKind::List(_)) {
             saw_shared_list += 1;
             assert_eq!(
                 placement,
@@ -494,7 +489,10 @@ fn aggregate_nodes_carry_their_field_containment() {
         .collect();
     assert!(!frame_cells.is_empty(), "b must be a frame cell");
     assert_eq!(plan.stats.arena_count, 1);
-    assert_eq!(plan.arenas[0].cells, frame_cells.iter().map(|c| c.local).collect::<Vec<_>>());
+    assert_eq!(
+        plan.arenas[0].cells,
+        frame_cells.iter().map(|c| c.local).collect::<Vec<_>>()
+    );
 }
 
 #[test]
@@ -531,7 +529,10 @@ fn tampered_plans_fail_the_proof_and_valid_plans_pass() {
     }
     let errors = verify_ownership_plan(&program, &types, &strategy);
     assert!(errors.iter().any(|error| {
-        matches!(error.kind, OwnershipPlanErrorKind::InvalidNodeStrategy { .. })
+        matches!(
+            error.kind,
+            OwnershipPlanErrorKind::InvalidNodeStrategy { .. }
+        )
     }));
 
     // Drop an arena (from a program that has one). `hop`'s only cell
@@ -544,9 +545,11 @@ fn tampered_plans_fail_the_proof_and_valid_plans_pass() {
     let mut no_arena = frame_plan.clone();
     no_arena.arenas.clear();
     let errors = verify_ownership_plan(&frame_program, &frame_types, &no_arena);
-    assert!(errors.iter().any(|error| {
-        matches!(error.kind, OwnershipPlanErrorKind::MissingArena { .. })
-    }));
+    assert!(
+        errors
+            .iter()
+            .any(|error| { matches!(error.kind, OwnershipPlanErrorKind::MissingArena { .. }) })
+    );
 
     // Add a bogus arena for the function without one (hop, index 0).
     let mut extra = frame_plan.clone();
@@ -555,18 +558,22 @@ fn tampered_plans_fail_the_proof_and_valid_plans_pass() {
         cells: vec![MirLocalId::from_raw(99)],
     });
     let errors = verify_ownership_plan(&frame_program, &frame_types, &extra);
-    assert!(errors.iter().any(|error| {
-        matches!(error.kind, OwnershipPlanErrorKind::ExtraArena { .. })
-    }));
+    assert!(
+        errors
+            .iter()
+            .any(|error| { matches!(error.kind, OwnershipPlanErrorKind::ExtraArena { .. }) })
+    );
 
     // Reorder the cells: the determinism proof must catch it.
     let mut reordered = frame_plan.clone();
     let last = reordered.cells.pop().unwrap();
     reordered.cells.insert(0, last);
     let errors = verify_ownership_plan(&frame_program, &frame_types, &reordered);
-    assert!(errors.iter().any(|error| {
-        matches!(error.kind, OwnershipPlanErrorKind::DeterminismMismatch)
-    }));
+    assert!(
+        errors
+            .iter()
+            .any(|error| { matches!(error.kind, OwnershipPlanErrorKind::DeterminismMismatch) })
+    );
 }
 
 #[test]
@@ -589,11 +596,7 @@ fn pass_manager_establishes_and_drops_the_ownership_invariants() {
         fn preserved(&self) -> &'static [MirInvariant] {
             CORE_MIR_INVARIANTS
         }
-        fn run(
-            &mut self,
-            _: &mut MirProgram,
-            _: &PassContext<'_>,
-        ) -> Result<(), PassFailure> {
+        fn run(&mut self, _: &mut MirProgram, _: &PassContext<'_>) -> Result<(), PassFailure> {
             Ok(())
         }
     }
@@ -614,11 +617,7 @@ fn pass_manager_establishes_and_drops_the_ownership_invariants() {
         fn required(&self) -> &'static [MirInvariant] {
             &[MirInvariant::Ownership]
         }
-        fn run(
-            &mut self,
-            _: &mut MirProgram,
-            _: &PassContext<'_>,
-        ) -> Result<(), PassFailure> {
+        fn run(&mut self, _: &mut MirProgram, _: &PassContext<'_>) -> Result<(), PassFailure> {
             self.0.set(true);
             Ok(())
         }
@@ -633,20 +632,18 @@ fn pass_manager_establishes_and_drops_the_ownership_invariants() {
 
 #[test]
 fn snapshots_are_deterministic_and_stably_ordered() {
-    let (program, types) = executable(
-        concat!(
-            "def first() -> Int:\n",
-            "    xs := list_new()\n",
-            "    f := fn():\n",
-            "        list_get(xs, 0)\n",
-            "    list_push(xs, f)\n",
-            "    return 0\n",
-            "def second() -> Int:\n",
-            "    a := 1\n",
-            "    b := a + 2\n",
-            "    return b\n",
-        ),
-    );
+    let (program, types) = executable(concat!(
+        "def first() -> Int:\n",
+        "    xs := list_new()\n",
+        "    f := fn():\n",
+        "        list_get(xs, 0)\n",
+        "    list_push(xs, f)\n",
+        "    return 0\n",
+        "def second() -> Int:\n",
+        "    a := 1\n",
+        "    b := a + 2\n",
+        "    return b\n",
+    ));
     let plan_a = compute_ownership_plan(&program, &types).unwrap();
     let plan_b = compute_ownership_plan(&program, &types).unwrap();
     assert!(verify_ownership_plan(&program, &types, &plan_a).is_empty());
@@ -787,9 +784,13 @@ fn all_phase4c3_exit_gate_programs_plan_and_prove_clean() {
             let package = lower_package(&graph, ResolutionMode::Namespaced).unwrap();
             let mut types = infer_hir_package(&package, ShadowInferenceOptions::default())
                 .unwrap_or_else(|error| panic!("type stage for {source:?}: {error:?}"));
-            let program =
-                build_mir(&package, &graph.sources, &mut types, MirBuildOptions::default())
-                    .unwrap_or_else(|error| panic!("build for {source:?}: {error:?}"));
+            let program = build_mir(
+                &package,
+                &graph.sources,
+                &mut types,
+                MirBuildOptions::default(),
+            )
+            .unwrap_or_else(|error| panic!("build for {source:?}: {error:?}"));
             (program, types.interner)
         };
         let before = mir_snapshot(&program);
@@ -807,8 +808,7 @@ fn all_phase4c3_exit_gate_programs_plan_and_prove_clean() {
         );
         // None of the 4C3 programs contains an ownership cycle.
         assert_eq!(
-            plan.stats.cycle_count,
-            0,
+            plan.stats.cycle_count, 0,
             "4C3 exit-gate programs have no cycles: {source:?}"
         );
         // Every function with frame cells has exactly one arena.

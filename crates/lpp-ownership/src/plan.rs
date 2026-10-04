@@ -13,10 +13,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use lpp_hir::{DefId, OriginId};
 use lpp_mir::{
-    InstructionKind, MirAggregateId, MirFieldId, MirFunctionId, MirFunctionKind, MirLocalKind,
-    MirLocalId, MirProgram, MirVariantId, Operand, Rvalue, Terminator,
+    InstructionKind, MirAggregateId, MirFieldId, MirFunctionId, MirFunctionKind, MirLocalId,
+    MirLocalKind, MirProgram, MirVariantId, Operand, Rvalue, Terminator,
 };
-use lpp_types::{TypeInterner, TypeKind, TypeId, TypeListId};
+use lpp_types::{TypeId, TypeInterner, TypeKind, TypeListId};
 
 /// Stable identity of a containment-graph node inside a plan.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -276,10 +276,7 @@ impl<'types> Collector<'types> {
                     self.collect_type(element);
                 }
             }
-            TypeKind::Function {
-                parameters,
-                result,
-            } => {
+            TypeKind::Function { parameters, result } => {
                 for callable in self.index.callables_for(ty) {
                     self.needed.callables.insert(*callable);
                 }
@@ -304,9 +301,9 @@ impl<'types> Collector<'types> {
     fn container_elements(&self, ty: TypeId) -> Vec<TypeId> {
         let mut elements = Vec::new();
         match self.types.kind(ty) {
-            TypeKind::List(element)
-            | TypeKind::Slice(element)
-            | TypeKind::Task(element) => elements.push(element),
+            TypeKind::List(element) | TypeKind::Slice(element) | TypeKind::Task(element) => {
+                elements.push(element)
+            }
             TypeKind::Tuple(list) => elements.extend_from_slice(self.types.list(list)),
             TypeKind::Map { key, value } => {
                 elements.push(key);
@@ -397,12 +394,12 @@ fn value_type_nodes(
             definition,
             arguments,
         } => {
-            let aggregate = index.aggregate_for(definition, arguments).ok_or(
-                OwnershipError {
+            let aggregate = index
+                .aggregate_for(definition, arguments)
+                .ok_or(OwnershipError {
                     kind: OwnershipErrorKind::MissingAggregateInstance(ty),
                     origin: None,
-                },
-            )?;
+                })?;
             if let Some(id) = lookup.aggregates.get(&aggregate).copied() {
                 nodes.push(id);
             }
@@ -633,10 +630,7 @@ fn strongly_connected_components<'a>(
 
     let cycle_count = sccs
         .iter()
-        .filter(|scc| {
-            scc.len() > 1
-                || edges_of(scc[0]).iter().any(|target| target.0 == scc[0])
-        })
+        .filter(|scc| scc.len() > 1 || edges_of(scc[0]).iter().any(|target| target.0 == scc[0]))
         .count();
 
     (sccs, cycle_count)
@@ -755,9 +749,7 @@ fn plan_arenas(program: &MirProgram, cells: &[CellPlan]) -> Vec<ArenaPlan> {
     for (function_id, _) in program.functions() {
         let frame: Vec<MirLocalId> = cells
             .iter()
-            .filter(|cell| {
-                cell.function == function_id && cell.placement == ValuePlacement::Frame
-            })
+            .filter(|cell| cell.function == function_id && cell.placement == ValuePlacement::Frame)
             .map(|cell| cell.local)
             .collect();
         if !frame.is_empty() {
@@ -785,8 +777,11 @@ pub fn compute_ownership_plan(
         strongly_connected_components(nodes.len(), |node| &nodes[node].contains);
     let mut cycle_members: BTreeSet<usize> = BTreeSet::new();
     for scc in &sccs {
-        let is_cycle =
-            scc.len() > 1 || nodes[scc[0]].contains.iter().any(|target| target.0 == scc[0]);
+        let is_cycle = scc.len() > 1
+            || nodes[scc[0]]
+                .contains
+                .iter()
+                .any(|target| target.0 == scc[0]);
         if is_cycle {
             for member in scc {
                 cycle_members.insert(*member);

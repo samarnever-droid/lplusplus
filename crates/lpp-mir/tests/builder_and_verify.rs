@@ -48,7 +48,13 @@ impl FileSystem for MemoryFileSystem {
     }
 }
 
-fn typed(source: &str) -> (lpp_hir::HirPackage, lpp_types::ShadowTypeOutput, lpp_common::SourceMap) {
+fn typed(
+    source: &str,
+) -> (
+    lpp_hir::HirPackage,
+    lpp_types::ShadowTypeOutput,
+    lpp_common::SourceMap,
+) {
     let filesystem = MemoryFileSystem::with_source(source);
     let graph = GraphBuilder::new(&filesystem)
         .build(GraphRequest::new(
@@ -61,7 +67,11 @@ fn typed(source: &str) -> (lpp_hir::HirPackage, lpp_types::ShadowTypeOutput, lpp
     (package, types, graph.sources.clone())
 }
 
-fn representative() -> (lpp_hir::HirPackage, lpp_types::ShadowTypeOutput, lpp_common::SourceMap) {
+fn representative() -> (
+    lpp_hir::HirPackage,
+    lpp_types::ShadowTypeOutput,
+    lpp_common::SourceMap,
+) {
     typed(concat!(
         "def choose(value: Int, flag: Bool) -> Int:\n",
         "    mut total := value + 1\n",
@@ -103,7 +113,8 @@ fn representative_typed_hir_builds_exact_valid_mir() {
 #[test]
 fn verifier_rejects_bad_cfg_edges_and_instruction_types() {
     let (package, mut types, sources) = representative();
-    let mut program = build_mir(&package, &sources, &mut types, MirBuildOptions::default()).unwrap();
+    let mut program =
+        build_mir(&package, &sources, &mut types, MirBuildOptions::default()).unwrap();
     let first_function = program.functions().next().unwrap().0;
     let first_block = program.blocks().next().unwrap().0;
     program.function_mut(first_function).unwrap().entry = BasicBlockId::from_raw(999_998);
@@ -113,7 +124,8 @@ fn verifier_rejects_bad_cfg_edges_and_instruction_types() {
     assert!(errors.iter().any(|error| error.code() == "E4101"));
     assert!(errors.iter().any(|error| error.code() == "E4102"));
 
-    let mut program = build_mir(&package, &sources, &mut types, MirBuildOptions::default()).unwrap();
+    let mut program =
+        build_mir(&package, &sources, &mut types, MirBuildOptions::default()).unwrap();
     let instruction = program.instructions().next().unwrap().0;
     let instruction = program.instruction_mut(instruction).unwrap();
     let InstructionKind::Assign { value, .. } = &mut instruction.kind else {
@@ -133,7 +145,8 @@ fn definite_initialization_intersects_diamond_predecessors() {
         "        value = value + 1\n",
         "    return value\n",
     ));
-    let mut program = build_mir(&package, &sources, &mut types, MirBuildOptions::default()).unwrap();
+    let mut program =
+        build_mir(&package, &sources, &mut types, MirBuildOptions::default()).unwrap();
     let value = program
         .locals()
         .find_map(|(id, local)| {
@@ -178,7 +191,8 @@ fn definite_initialization_converges_across_loop_back_edges() {
         "        value = value + 1\n",
         "    return value\n",
     ));
-    let mut program = build_mir(&package, &sources, &mut types, MirBuildOptions::default()).unwrap();
+    let mut program =
+        build_mir(&package, &sources, &mut types, MirBuildOptions::default()).unwrap();
     let value = program
         .locals()
         .find_map(|(id, local)| {
@@ -223,7 +237,8 @@ fn unreachable_reads_do_not_fail_definite_initialization() {
         "    else:\n",
         "        return 3\n",
     ));
-    let mut program = build_mir(&package, &sources, &mut types, MirBuildOptions::default()).unwrap();
+    let mut program =
+        build_mir(&package, &sources, &mut types, MirBuildOptions::default()).unwrap();
     let temporary = program
         .locals()
         .find_map(|(id, local)| (local.kind == MirLocalKind::Temporary).then_some(id))
@@ -295,7 +310,10 @@ fn forward_direct_calls_and_contextual_empty_lists_verify() {
 #[test]
 fn builder_limits_and_unsupported_constructs_are_structured() {
     let (package, mut types, sources) = representative();
-    let error = build_mir(&package, &sources, &mut types,
+    let error = build_mir(
+        &package,
+        &sources,
+        &mut types,
         MirBuildOptions {
             max_blocks: 1,
             ..MirBuildOptions::default()
@@ -305,8 +323,7 @@ fn builder_limits_and_unsupported_constructs_are_structured() {
     assert_eq!(error.kind, MirBuildErrorKind::Capacity(MirCapacity::Blocks),);
     assert_eq!(error.code(), "E4001");
 
-    let (package, mut types, sources) =
-        typed("def main() -> Int:\n    return missing_fn()\n");
+    let (package, mut types, sources) = typed("def main() -> Int:\n    return missing_fn()\n");
     let error = build_mir(&package, &sources, &mut types, MirBuildOptions::default()).unwrap_err();
     assert_eq!(
         error.kind,
@@ -321,8 +338,20 @@ fn mir_storage_growth_is_linear_for_straight_line_hir() {
     let large_source = generated_bindings(1_000);
     let (small_package, mut small_types, small_sources) = typed(&small_source);
     let (large_package, mut large_types, large_sources) = typed(&large_source);
-    let small = build_mir(&small_package, &small_sources, &mut small_types, MirBuildOptions::default()).unwrap();
-    let large = build_mir(&large_package, &large_sources, &mut large_types, MirBuildOptions::default()).unwrap();
+    let small = build_mir(
+        &small_package,
+        &small_sources,
+        &mut small_types,
+        MirBuildOptions::default(),
+    )
+    .unwrap();
+    let large = build_mir(
+        &large_package,
+        &large_sources,
+        &mut large_types,
+        MirBuildOptions::default(),
+    )
+    .unwrap();
 
     assert!(large.local_count() >= small.local_count() * 9);
     assert!(large.local_count() <= small.local_count() * 11);

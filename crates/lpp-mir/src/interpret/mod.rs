@@ -307,14 +307,9 @@ pub fn execute_mir_arc(
         .refcounts
         .iter()
         .enumerate()
-        .filter(|(index, count)| {
-            **count > 0 && interpreter.node_is_pinned(HeapId(*index as u32))
-        })
+        .filter(|(index, count)| **count > 0 && interpreter.node_is_pinned(HeapId(*index as u32)))
         .count();
-    let arc_state = interpreter
-        .arc
-        .take()
-        .expect("arc entries keep arc state");
+    let arc_state = interpreter.arc.take().expect("arc entries keep arc state");
     Ok(ExecutionOutcome {
         value,
         output: interpreter.output,
@@ -597,12 +592,10 @@ fn value_matches_type(
                 if program
                     .function(*function)
                     .is_some_and(|function| function.ty == ty) => {}
-            (
-                ExecutionValue::Task { function, .. },
-                TypeKind::Task(inner),
-            ) if program
-                .function(*function)
-                .is_some_and(|function| function.return_type == inner) => {}
+            (ExecutionValue::Task { function, .. }, TypeKind::Task(inner))
+                if program
+                    .function(*function)
+                    .is_some_and(|function| function.return_type == inner) => {}
             _ => return false,
         }
     }

@@ -34,7 +34,10 @@ supported = ["x86_64", "aarch64", "wasm32-wasi"]
     }
     match m.dependencies.get("simdlib").unwrap() {
         Dependency::Detailed {
-            version, optional, features, ..
+            version,
+            optional,
+            features,
+            ..
         } => {
             assert_eq!(version.as_deref(), Some("2"));
             assert!(*optional);
@@ -42,7 +45,10 @@ supported = ["x86_64", "aarch64", "wasm32-wasi"]
         }
         _ => panic!("simdlib should be detailed"),
     }
-    assert_eq!(m.features.get("simd").unwrap(), &vec!["simdlib".to_string()]);
+    assert_eq!(
+        m.features.get("simd").unwrap(),
+        &vec!["simdlib".to_string()]
+    );
     assert_eq!(
         m.targets.as_ref().unwrap().supported,
         vec!["x86_64", "aarch64", "wasm32-wasi"]

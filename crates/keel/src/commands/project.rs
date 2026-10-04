@@ -79,9 +79,10 @@ pub fn add_dep(dir: &Path, name: &str, req: &str) -> Result<(), String> {
     if manifest.dependencies.contains_key(name) {
         return Err(format!("'{name}' is already a dependency"));
     }
-    manifest
-        .dependencies
-        .insert(name.to_string(), lpp_pm::manifest::Dependency::Version(req.to_string()));
+    manifest.dependencies.insert(
+        name.to_string(),
+        lpp_pm::manifest::Dependency::Version(req.to_string()),
+    );
     save(dir, &manifest)?;
     println!("added {name} = \"{req}\" to Keel.toml");
     Ok(())

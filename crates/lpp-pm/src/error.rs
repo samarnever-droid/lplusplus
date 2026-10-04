@@ -29,7 +29,11 @@ pub enum PmError {
     /// A `git` command exited non-zero.
     GitCommand { code: Option<i32>, stderr: String },
     /// A dependency conflict: two incompatible requirements for one package.
-    ResolveConflict { name: String, chosen: String, required: String },
+    ResolveConflict {
+        name: String,
+        chosen: String,
+        required: String,
+    },
     /// No available version of a package satisfies a requirement.
     NoMatchingVersion { name: String, req: String },
     /// A `Keel.lock` could not be parsed or serialized.
@@ -56,7 +60,11 @@ pub enum PmError {
     /// A publish of a version that already exists in the registry. `same`
     /// = identical artifact (a no-op republish); `false` = conflicting
     /// artifact (published versions are immutable).
-    PublishConflict { name: String, version: String, same: bool },
+    PublishConflict {
+        name: String,
+        version: String,
+        same: bool,
+    },
 }
 
 impl std::fmt::Display for PmError {
@@ -71,37 +79,62 @@ impl std::fmt::Display for PmError {
             Self::ManifestParse(m) => write!(f, "E6006: failed to parse manifest: {m}"),
             Self::PackageNotFound(n) => write!(f, "E6007: package not found in registry: {n}"),
             Self::VersionNotFound { name, version } => {
-                write!(f, "E6008: version {version} of package {name} not found or yanked")
+                write!(
+                    f,
+                    "E6008: version {version} of package {name} not found or yanked"
+                )
             }
             Self::ChecksumMismatch { expected, actual } => {
-                write!(f, "E6009: checksum mismatch: expected {expected}, got {actual}")
+                write!(
+                    f,
+                    "E6009: checksum mismatch: expected {expected}, got {actual}"
+                )
             }
             Self::IndexParse(e) => write!(f, "E6010: malformed registry index: {e}"),
             Self::Git(e) => write!(f, "E6011: git error: {e}"),
             Self::GitCommand { code, stderr } => {
                 write!(f, "E6012: git command failed (exit {code:?}): {stderr}")
             }
-            Self::ResolveConflict { name, chosen, required } => {
-                write!(f, "E6013: version conflict for {name}: have {chosen}, but {required} is required")
+            Self::ResolveConflict {
+                name,
+                chosen,
+                required,
+            } => {
+                write!(
+                    f,
+                    "E6013: version conflict for {name}: have {chosen}, but {required} is required"
+                )
             }
             Self::NoMatchingVersion { name, req } => {
                 write!(f, "E6014: no available version of {name} matches {req}")
             }
             Self::LockParse(e) => write!(f, "E6015: Keel.lock error: {e}"),
             Self::WorkspaceCycle { chain } => {
-                write!(f, "E6016: dependency cycle among workspace members: {chain}")
+                write!(
+                    f,
+                    "E6016: dependency cycle among workspace members: {chain}"
+                )
             }
             Self::MemberNotFound { member } => {
-                write!(f, "E6017: workspace member '{member}' has no Keel.toml [package]")
+                write!(
+                    f,
+                    "E6017: workspace member '{member}' has no Keel.toml [package]"
+                )
             }
             Self::DuplicateMember { name } => {
                 write!(f, "E6018: duplicate workspace member name: {name}")
             }
             Self::PathDepOutsideWorkspace { dep, from } => {
-                write!(f, "E6019: path dependency '{dep}' (from '{from}') is not a workspace member")
+                write!(
+                    f,
+                    "E6019: path dependency '{dep}' (from '{from}') is not a workspace member"
+                )
             }
             Self::BadMemberPattern(p) => {
-                write!(f, "E6020: unsupported members pattern '{p}' (one '*' per pattern)")
+                write!(
+                    f,
+                    "E6020: unsupported members pattern '{p}' (one '*' per pattern)"
+                )
             }
             Self::FingerprintStore(e) => write!(f, "E6021: fingerprint store error: {e}"),
             Self::LockedVersionGone { name, version } => write!(
@@ -113,7 +146,11 @@ impl std::fmt::Display for PmError {
                 "E6023: no Keel.lock in this workspace — run `keel fetch` first"
             ),
             Self::NotInLockFile(n) => write!(f, "E6024: '{n}' is not in Keel.lock"),
-            Self::PublishConflict { name, version, same } => {
+            Self::PublishConflict {
+                name,
+                version,
+                same,
+            } => {
                 if *same {
                     write!(
                         f,

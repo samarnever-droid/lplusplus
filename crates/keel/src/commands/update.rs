@@ -80,7 +80,11 @@ fn candidate_from_lock(p: &lpp_pm::LockedPkg) -> Candidate {
         version: lpp_pm::Version::parse(&p.version).unwrap_or(lpp_pm::Version::new(0, 0, 0)),
         checksum: p.checksum.clone(),
         source: p.source.clone(),
-        deps: p.deps.iter().map(|n| (n.clone(), lpp_pm::Req::Any)).collect(),
+        deps: p
+            .deps
+            .iter()
+            .map(|n| (n.clone(), lpp_pm::Req::Any))
+            .collect(),
     }
 }
 
@@ -183,38 +187,34 @@ pub fn update(reg: Option<&Registry>, dir: &Path, target: Option<&str>) -> Resul
     // The closure owns its copy of the lock map; the original stays for
     // the diff after the resolver returns.
     let old_for_provider = old.clone();
-    let available: Box<dyn Fn(&str) -> Option<Vec<Candidate>>> =
-        Box::new(move |name: &str| {
-            let single_pin = match target {
-                Some(t) if name != t => {
-                    old_for_provider.get(name).filter(|p| p.source == "registry")
-                }
-                _ => None,
-            };
-            if let Some(pinned) = single_pin {
-                // Registry-backed pin (fidelity: real deps + checksum);
-                // offline, rebuild from the lockfile itself.
-                if let Some(reg) = &reg {
-                    return pinned_candidate(reg, name, &pinned.version).map(|c| vec![c]);
-                }
-                return Some(vec![candidate_from_lock(pinned)]);
+    let available: Box<dyn Fn(&str) -> Option<Vec<Candidate>>> = Box::new(move |name: &str| {
+        let single_pin = match target {
+            Some(t) if name != t => old_for_provider
+                .get(name)
+                .filter(|p| p.source == "registry"),
+            _ => None,
+        };
+        if let Some(pinned) = single_pin {
+            // Registry-backed pin (fidelity: real deps + checksum);
+            // offline, rebuild from the lockfile itself.
+            if let Some(reg) = &reg {
+                return pinned_candidate(reg, name, &pinned.version).map(|c| vec![c]);
             }
-            match &reg {
-                Some(r) => latest_candidates(r, name),
-                None => old_for_provider
-                    .get(name)
-                    .filter(|p| p.source == "registry")
-                    .map(|p| vec![candidate_from_lock(p)]),
-            }
-        });
+            return Some(vec![candidate_from_lock(pinned)]);
+        }
+        match &reg {
+            Some(r) => latest_candidates(r, name),
+            None => old_for_provider
+                .get(name)
+                .filter(|p| p.source == "registry")
+                .map(|p| vec![candidate_from_lock(p)]),
+        }
+    });
 
     let resolved = lpp_pm::resolve_workspace(&roots, &available).map_err(|e| e.to_string())?;
     let new_lock = lpp_pm::Lock::from_resolved(&resolved);
-    std::fs::write(
-        &lock_path,
-        new_lock.to_toml().map_err(|e| e.to_string())?,
-    )
-    .map_err(|e| e.to_string())?;
+    std::fs::write(&lock_path, new_lock.to_toml().map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())?;
 
     // Diff (registry-sourced entries only; members never change).
     let new_map: BTreeMap<&str, &lpp_pm::LockedPkg> = new_lock
@@ -230,11 +230,7 @@ pub fn update(reg: Option<&Registry>, dir: &Path, target: Option<&str>) -> Resul
         .collect();
 
     let mut rows: Vec<(String, Option<String>, Option<String>)> = Vec::new();
-    let names: BTreeSet<&str> = old_reg
-        .keys()
-        .chain(new_map.keys())
-        .copied()
-        .collect();
+    let names: BTreeSet<&str> = old_reg.keys().chain(new_map.keys()).copied().collect();
     for name in names {
         let o = old_reg.get(name).map(|p| p.version.clone());
         let n = new_map.get(name).map(|p| p.version.clone());

@@ -37,7 +37,10 @@ fn multi_arg_print_is_rejected_with_a_clear_error() {
         .expect("run lpp --check");
     let _ = std::fs::remove_dir_all(&dir);
 
-    assert!(!output.status.success(), "wrong-arity print must not type-check");
+    assert!(
+        !output.status.success(),
+        "wrong-arity print must not type-check"
+    );
     let combined = format!(
         "{}{}",
         String::from_utf8_lossy(&output.stdout),

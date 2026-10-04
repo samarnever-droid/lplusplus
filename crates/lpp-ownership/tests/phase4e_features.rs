@@ -19,15 +19,15 @@ use lpp_hir::{
     lower_package,
 };
 use lpp_mir::{
-    build_mir, execute_mir_arc, verify_mir, ExecutionOutcome, ExecutionValue,
-    InterpreterErrorKind, InterpreterLimits, MirBuildOptions, MirFunctionId, MirFunctionKind,
+    ExecutionOutcome, ExecutionValue, InterpreterErrorKind, InterpreterLimits, MirBuildOptions,
+    MirFunctionId, MirFunctionKind, build_mir, execute_mir_arc, verify_mir,
 };
 use lpp_ownership::{
-    compute_ownership_plan, verify_ownership_balance, OwnershipBalanceErrorKind,
-    OwnershipBalancePass, OwnershipPlanPass,
+    OwnershipBalanceErrorKind, OwnershipBalancePass, OwnershipPlanPass, compute_ownership_plan,
+    verify_ownership_balance,
 };
 use lpp_passes::{MirPass, PassContext, PassFailure, PassManager};
-use lpp_types::{TypeInterner, TypeKind, infer_hir_package, ShadowInferenceOptions};
+use lpp_types::{ShadowInferenceOptions, TypeInterner, TypeKind, infer_hir_package};
 
 #[derive(Debug)]
 struct MemoryFileSystem {
@@ -37,10 +37,7 @@ struct MemoryFileSystem {
 impl MemoryFileSystem {
     fn new(source: &str) -> Self {
         Self {
-            files: BTreeMap::from([(
-                PathBuf::from("/ownership/main.lpp"),
-                source.to_owned(),
-            )]),
+            files: BTreeMap::from([(PathBuf::from("/ownership/main.lpp"), source.to_owned())]),
         }
     }
 }
@@ -79,8 +76,13 @@ fn executable(source: &str) -> (lpp_mir::MirProgram, TypeInterner) {
     let package = lower_package(&graph, ResolutionMode::Namespaced).unwrap();
     let mut types = infer_hir_package(&package, ShadowInferenceOptions::default())
         .unwrap_or_else(|error| panic!("type stage: {error:?}"));
-    let program = build_mir(&package, &graph.sources, &mut types, MirBuildOptions::default())
-        .unwrap_or_else(|error| panic!("build: {error:?}"));
+    let program = build_mir(
+        &package,
+        &graph.sources,
+        &mut types,
+        MirBuildOptions::default(),
+    )
+    .unwrap_or_else(|error| panic!("build: {error:?}"));
     (program, types.interner)
 }
 
@@ -138,16 +140,14 @@ fn simple_list_is_freed_exactly_once() {
 
 #[test]
 fn closure_pushed_into_list_is_freed_with_the_list() {
-    let (program, types) = executable(
-        concat!(
-            "def main() -> Int:\n",
-            "    xs := list_new()\n",
-            "    f := fn() -> Int:\n",
-            "        return 1\n",
-            "    list_push(xs, f)\n",
-            "    return 0\n",
-        ),
-    );
+    let (program, types) = executable(concat!(
+        "def main() -> Int:\n",
+        "    xs := list_new()\n",
+        "    f := fn() -> Int:\n",
+        "        return 1\n",
+        "    list_push(xs, f)\n",
+        "    return 0\n",
+    ));
     let (outcome, _) = run_arc(&program, &types);
     let arc = arc_of(&outcome);
     // Retains: the xs copy-temp and the f copy-temp. list_push moves f
@@ -163,15 +163,13 @@ fn closure_pushed_into_list_is_freed_with_the_list() {
 
 #[test]
 fn capture_retains_and_call_load_retains() {
-    let (program, types) = executable(
-        concat!(
-            "def main() -> Int:\n",
-            "    xs := list_new()\n",
-            "    f := fn() -> Int:\n",
-            "        return list_len(xs)\n",
-            "    return f()\n",
-        ),
-    );
+    let (program, types) = executable(concat!(
+        "def main() -> Int:\n",
+        "    xs := list_new()\n",
+        "    f := fn() -> Int:\n",
+        "        return list_len(xs)\n",
+        "    return f()\n",
+    ));
     let (outcome, _) = run_arc(&program, &types);
     let arc = arc_of(&outcome);
     // Retains (4): the xs copy-temp, the MakeClosure capture, the f
@@ -188,17 +186,15 @@ fn capture_retains_and_call_load_retains() {
 
 #[test]
 fn list_get_retains_the_element_and_slot_keeps_its_own() {
-    let (program, types) = executable(
-        concat!(
-            "def main() -> Int:\n",
-            "    xs := list_new()\n",
-            "    f := fn() -> Int:\n",
-            "        return 1\n",
-            "    list_push(xs, f)\n",
-            "    g := list_get(xs, 0)\n",
-            "    return g()\n",
-        ),
-    );
+    let (program, types) = executable(concat!(
+        "def main() -> Int:\n",
+        "    xs := list_new()\n",
+        "    f := fn() -> Int:\n",
+        "        return 1\n",
+        "    list_push(xs, f)\n",
+        "    g := list_get(xs, 0)\n",
+        "    return g()\n",
+    ));
     let (outcome, _) = run_arc(&program, &types);
     let arc = arc_of(&outcome);
     // Retains (4): xs copy-temp, f copy-temp, the list_get clone (the
@@ -216,17 +212,15 @@ fn list_get_retains_the_element_and_slot_keeps_its_own() {
 
 #[test]
 fn receiver_is_not_retained_per_push() {
-    let (program, types) = executable(
-        concat!(
-            "def main() -> Int:\n",
-            "    xs := list_new()\n",
-            "    mut i := 0\n",
-            "    while i < 5:\n",
-            "        list_push(xs, i)\n",
-            "        i = i + 1\n",
-            "    return list_len(xs)\n",
-        ),
-    );
+    let (program, types) = executable(concat!(
+        "def main() -> Int:\n",
+        "    xs := list_new()\n",
+        "    mut i := 0\n",
+        "    while i < 5:\n",
+        "        list_push(xs, i)\n",
+        "        i = i + 1\n",
+        "    return list_len(xs)\n",
+    ));
     let (outcome, _) = run_arc(&program, &types);
     let arc = arc_of(&outcome);
     // Five pushes read the receiver five times; a retained receiver
@@ -241,19 +235,17 @@ fn receiver_is_not_retained_per_push() {
 
 #[test]
 fn list_set_releases_the_replaced_element() {
-    let (program, types) = executable(
-        concat!(
-            "def main() -> Int:\n",
-            "    xs := list_new()\n",
-            "    f1 := fn() -> Int:\n",
-            "        return 1\n",
-            "    f2 := fn() -> Int:\n",
-            "        return 2\n",
-            "    list_push(xs, f1)\n",
-            "    list_set(xs, 0, f2)\n",
-            "    return 0\n",
-        ),
-    );
+    let (program, types) = executable(concat!(
+        "def main() -> Int:\n",
+        "    xs := list_new()\n",
+        "    f1 := fn() -> Int:\n",
+        "        return 1\n",
+        "    f2 := fn() -> Int:\n",
+        "        return 2\n",
+        "    list_push(xs, f1)\n",
+        "    list_set(xs, 0, f2)\n",
+        "    return 0\n",
+    ));
     let (outcome, _) = run_arc(&program, &types);
     let arc = arc_of(&outcome);
     // Retains (3): xs, f1, f2 copy-temps. list_push moves f1 in;
@@ -271,19 +263,17 @@ fn list_set_releases_the_replaced_element() {
 
 #[test]
 fn pure_move_chain_has_no_traffic_between_owners() {
-    let (program, types) = executable(
-        concat!(
-            "def make() -> List[Int]:\n",
-            "    xs := list_new()\n",
-            "    return xs\n",
-            "def use_it() -> List[Int]:\n",
-            "    v := make()\n",
-            "    return v\n",
-            "def main() -> Int:\n",
-            "    v := use_it()\n",
-            "    return list_len(v)\n",
-        ),
-    );
+    let (program, types) = executable(concat!(
+        "def make() -> List[Int]:\n",
+        "    xs := list_new()\n",
+        "    return xs\n",
+        "def use_it() -> List[Int]:\n",
+        "    v := make()\n",
+        "    return v\n",
+        "def main() -> Int:\n",
+        "    v := use_it()\n",
+        "    return list_len(v)\n",
+    ));
     let (outcome, _) = run_arc(&program, &types);
     let arc = arc_of(&outcome);
     // Three heap declarations across the chain: three copy-temp
@@ -300,16 +290,14 @@ fn pure_move_chain_has_no_traffic_between_owners() {
 
 #[test]
 fn argument_moved_into_callee_frame_is_released_on_return() {
-    let (program, types) = executable(
-        concat!(
-            "def take(v: List[Int]) -> Int:\n",
-            "    return list_len(v)\n",
-            "def main() -> Int:\n",
-            "    xs := list_new()\n",
-            "    list_push(xs, 1)\n",
-            "    return take(xs)\n",
-        ),
-    );
+    let (program, types) = executable(concat!(
+        "def take(v: List[Int]) -> Int:\n",
+        "    return list_len(v)\n",
+        "def main() -> Int:\n",
+        "    xs := list_new()\n",
+        "    list_push(xs, 1)\n",
+        "    return take(xs)\n",
+    ));
     let (outcome, _) = run_arc(&program, &types);
     let arc = arc_of(&outcome);
     // xs moves into the callee's frame (no traffic); the frame's exit
@@ -325,9 +313,7 @@ fn argument_moved_into_callee_frame_is_released_on_return() {
 
 #[test]
 fn entry_arguments_materialize_and_release_inside_execution() {
-    let (program, types) = executable(
-        "def main(v: List[Int]) -> Int:\n    return list_len(v)\n",
-    );
+    let (program, types) = executable("def main(v: List[Int]) -> Int:\n    return list_len(v)\n");
     let plan = compute_ownership_plan(&program, &types).unwrap();
     let pinned = plan.pinned_types();
     let arguments = vec![ExecutionValue::List(vec![
@@ -356,17 +342,15 @@ fn entry_arguments_materialize_and_release_inside_execution() {
 
 #[test]
 fn redefinition_overwrites_release_the_old_value() {
-    let (program, types) = executable(
-        concat!(
-            "def main() -> Int:\n",
-            "    mut i := 0\n",
-            "    while i < 3:\n",
-            "        xs := list_new()\n",
-            "        list_push(xs, i)\n",
-            "        i = i + 1\n",
-            "    return 0\n",
-        ),
-    );
+    let (program, types) = executable(concat!(
+        "def main() -> Int:\n",
+        "    mut i := 0\n",
+        "    while i < 3:\n",
+        "        xs := list_new()\n",
+        "        list_push(xs, i)\n",
+        "        i = i + 1\n",
+        "    return 0\n",
+    ));
     let (outcome, _) = run_arc(&program, &types);
     let arc = arc_of(&outcome);
     // Three iterations allocate three lists. Each redefinition drops
@@ -385,19 +369,17 @@ fn redefinition_overwrites_release_the_old_value() {
 
 #[test]
 fn repeated_await_retains_per_await_and_frees_once() {
-    let (program, types) = executable(
-        concat!(
-            "async def work() -> Str:\n",
-            "    s := \"hello\"\n",
-            "    return s\n",
-            "async def main():\n",
-            "    t := work()\n",
-            "    a := t.await\n",
-            "    b := t.await\n",
-            "    print_str(a)\n",
-            "    print_str(b)\n",
-        ),
-    );
+    let (program, types) = executable(concat!(
+        "async def work() -> Str:\n",
+        "    s := \"hello\"\n",
+        "    return s\n",
+        "async def main():\n",
+        "    t := work()\n",
+        "    a := t.await\n",
+        "    b := t.await\n",
+        "    print_str(a)\n",
+        "    print_str(b)\n",
+    ));
     let (outcome, _) = run_arc(&program, &types);
     let arc = arc_of(&outcome);
     // Six retains: the work string reader, the t copy-temp, one per
@@ -416,14 +398,12 @@ fn repeated_await_retains_per_await_and_frees_once() {
 
 #[test]
 fn spawn_detached_task_frees_its_closure() {
-    let (program, types) = executable(
-        concat!(
-            "def main():\n",
-            "    xs := list_new()\n",
-            "    spawn fn():\n",
-            "        print_str(\"done\")\n",
-        ),
-    );
+    let (program, types) = executable(concat!(
+        "def main():\n",
+        "    xs := list_new()\n",
+        "    spawn fn():\n",
+        "        print_str(\"done\")\n",
+    ));
     let (outcome, _) = run_arc(&program, &types);
     let arc = arc_of(&outcome);
     // The detached task node is not a cycle member: when its internal
@@ -440,14 +420,12 @@ fn spawn_detached_task_frees_its_closure() {
 
 #[test]
 fn spawn_with_capture_releases_the_capture_on_node_death() {
-    let (program, types) = executable(
-        concat!(
-            "def main():\n",
-            "    s := \"captured\"\n",
-            "    spawn fn():\n",
-            "        print_str(s)\n",
-        ),
-    );
+    let (program, types) = executable(concat!(
+        "def main():\n",
+        "    s := \"captured\"\n",
+        "    spawn fn():\n",
+        "        print_str(s)\n",
+    ));
     let (outcome, _) = run_arc(&program, &types);
     let arc = arc_of(&outcome);
     // The task node retains the closure and its captured string; when
@@ -465,15 +443,13 @@ fn spawn_with_capture_releases_the_capture_on_node_death() {
 
 #[test]
 fn use_after_move_is_flagged_with_exact_location() {
-    let (program, types) = executable(
-        concat!(
-            "def main() -> Int:\n",
-            "    xs := list_new()\n",
-            "    ys := list_new()\n",
-            "    list_push(ys, xs)\n",
-            "    return list_len(xs)\n",
-        ),
-    );
+    let (program, types) = executable(concat!(
+        "def main() -> Int:\n",
+        "    xs := list_new()\n",
+        "    ys := list_new()\n",
+        "    list_push(ys, xs)\n",
+        "    return list_len(xs)\n",
+    ));
     // The core verifier accepts the program; the balance proof is the
     // new coverage.
     assert!(verify_mir(&program, &types).is_empty());
@@ -504,18 +480,16 @@ fn use_after_move_is_flagged_with_exact_location() {
 
 #[test]
 fn second_consume_is_flagged() {
-    let (program, types) = executable(
-        concat!(
-            "def main() -> Int:\n",
-            "    xs := list_new()\n",
-            "    list_push(xs, 1)\n",
-            "    ys := list_new()\n",
-            "    list_push(ys, xs)\n",
-            "    zs := list_new()\n",
-            "    list_push(zs, xs)\n",
-            "    return 0\n",
-        ),
-    );
+    let (program, types) = executable(concat!(
+        "def main() -> Int:\n",
+        "    xs := list_new()\n",
+        "    list_push(xs, 1)\n",
+        "    ys := list_new()\n",
+        "    list_push(ys, xs)\n",
+        "    zs := list_new()\n",
+        "    list_push(zs, xs)\n",
+        "    return 0\n",
+    ));
     assert!(verify_mir(&program, &types).is_empty());
     let plan = compute_ownership_plan(&program, &types).unwrap();
     let errors = verify_ownership_balance(&program, &types, &plan);
@@ -531,16 +505,14 @@ fn second_consume_is_flagged() {
 
 #[test]
 fn calling_a_moved_callee_is_flagged() {
-    let (program, types) = executable(
-        concat!(
-            "def main() -> Int:\n",
-            "    xs := list_new()\n",
-            "    f := fn() -> Int:\n",
-            "        return 1\n",
-            "    list_push(xs, f)\n",
-            "    return f()\n",
-        ),
-    );
+    let (program, types) = executable(concat!(
+        "def main() -> Int:\n",
+        "    xs := list_new()\n",
+        "    f := fn() -> Int:\n",
+        "        return 1\n",
+        "    list_push(xs, f)\n",
+        "    return f()\n",
+    ));
     assert!(verify_mir(&program, &types).is_empty());
     let plan = compute_ownership_plan(&program, &types).unwrap();
     let errors = verify_ownership_balance(&program, &types, &plan);
@@ -553,18 +525,16 @@ fn calling_a_moved_callee_is_flagged() {
 
 #[test]
 fn move_into_loop_body_is_flagged_on_the_backedge() {
-    let (program, types) = executable(
-        concat!(
-            "def main() -> Int:\n",
-            "    xs := list_new()\n",
-            "    mut i := 0\n",
-            "    while i < 2:\n",
-            "        ys := list_new()\n",
-            "        list_push(ys, xs)\n",
-            "        i = i + 1\n",
-            "    return 0\n",
-        ),
-    );
+    let (program, types) = executable(concat!(
+        "def main() -> Int:\n",
+        "    xs := list_new()\n",
+        "    mut i := 0\n",
+        "    while i < 2:\n",
+        "        ys := list_new()\n",
+        "        list_push(ys, xs)\n",
+        "        i = i + 1\n",
+        "    return 0\n",
+    ));
     assert!(verify_mir(&program, &types).is_empty());
     let plan = compute_ownership_plan(&program, &types).unwrap();
     let errors = verify_ownership_balance(&program, &types, &plan);
@@ -595,32 +565,28 @@ fn move_into_loop_body_is_flagged_on_the_backedge() {
 
 #[test]
 fn redefinition_in_loop_passes_balance() {
-    let (program, types) = executable(
-        concat!(
-            "def main() -> Int:\n",
-            "    mut i := 0\n",
-            "    while i < 3:\n",
-            "        xs := list_new()\n",
-            "        list_push(xs, i)\n",
-            "        i = i + 1\n",
-            "    return 0\n",
-        ),
-    );
+    let (program, types) = executable(concat!(
+        "def main() -> Int:\n",
+        "    mut i := 0\n",
+        "    while i < 3:\n",
+        "        xs := list_new()\n",
+        "        list_push(xs, i)\n",
+        "        i = i + 1\n",
+        "    return 0\n",
+    ));
     let plan = compute_ownership_plan(&program, &types).unwrap();
     assert!(verify_ownership_balance(&program, &types, &plan).is_empty());
 }
 
 #[test]
 fn balance_is_deterministic() {
-    let (program, types) = executable(
-        concat!(
-            "def main() -> Int:\n",
-            "    xs := list_new()\n",
-            "    ys := list_new()\n",
-            "    list_push(ys, xs)\n",
-            "    return list_len(xs)\n",
-        ),
-    );
+    let (program, types) = executable(concat!(
+        "def main() -> Int:\n",
+        "    xs := list_new()\n",
+        "    ys := list_new()\n",
+        "    list_push(ys, xs)\n",
+        "    return list_len(xs)\n",
+    ));
     let plan = compute_ownership_plan(&program, &types).unwrap();
     let first = verify_ownership_balance(&program, &types, &plan);
     let second = verify_ownership_balance(&program, &types, &plan);
@@ -632,15 +598,13 @@ fn balance_is_deterministic() {
 
 #[test]
 fn self_referential_proves_zero_leaks_with_pinned_set() {
-    let (program, types) = executable(
-        concat!(
-            "def main():\n",
-            "    xs := list_new()\n",
-            "    f := fn():\n",
-            "        list_get(xs, 0)\n",
-            "    list_push(xs, f)\n",
-        ),
-    );
+    let (program, types) = executable(concat!(
+        "def main():\n",
+        "    xs := list_new()\n",
+        "    f := fn():\n",
+        "        list_get(xs, 0)\n",
+        "    list_push(xs, f)\n",
+    ));
     let (outcome, plan) = run_arc(&program, &types);
     let arc = arc_of(&outcome);
     // Three retains: the xs copy-temp, the MakeClosure capture, and
@@ -663,15 +627,13 @@ fn self_referential_proves_zero_leaks_with_pinned_set() {
 
 #[test]
 fn self_referential_without_pinset_reports_the_leak() {
-    let (program, types) = executable(
-        concat!(
-            "def main():\n",
-            "    xs := list_new()\n",
-            "    f := fn():\n",
-            "        list_get(xs, 0)\n",
-            "    list_push(xs, f)\n",
-        ),
-    );
+    let (program, types) = executable(concat!(
+        "def main():\n",
+        "    xs := list_new()\n",
+        "    f := fn():\n",
+        "        list_get(xs, 0)\n",
+        "    list_push(xs, f)\n",
+    ));
     let error = execute_mir_arc(
         &program,
         &types,
@@ -690,19 +652,17 @@ fn self_referential_without_pinset_reports_the_leak() {
 
 #[test]
 fn mutual_reference_reports_all_four_leaks_without_pinset() {
-    let (program, types) = executable(
-        concat!(
-            "def main():\n",
-            "    l1 := list_new()\n",
-            "    l2 := list_new()\n",
-            "    c1 := fn():\n",
-            "        list_get(l2, 0)\n",
-            "    c2 := fn():\n",
-            "        list_get(l1, 0)\n",
-            "    list_push(l1, c1)\n",
-            "    list_push(l2, c2)\n",
-        ),
-    );
+    let (program, types) = executable(concat!(
+        "def main():\n",
+        "    l1 := list_new()\n",
+        "    l2 := list_new()\n",
+        "    c1 := fn():\n",
+        "        list_get(l2, 0)\n",
+        "    c2 := fn():\n",
+        "        list_get(l1, 0)\n",
+        "    list_push(l1, c1)\n",
+        "    list_push(l2, c2)\n",
+    ));
     let (outcome, _) = run_arc(&program, &types);
     assert_eq!(arc_of(&outcome).pinned_live, 4);
 
@@ -725,23 +685,31 @@ fn mutual_reference_reports_all_four_leaks_without_pinset() {
 
 #[test]
 fn balance_pass_establishes_and_drops_with_the_bookkeeping() {
-    let (mut program, types) = executable(
-        concat!(
-            "def main() -> Int:\n",
-            "    xs := list_new()\n",
-            "    return list_len(xs)\n",
-        ),
-    );
+    let (mut program, types) = executable(concat!(
+        "def main() -> Int:\n",
+        "    xs := list_new()\n",
+        "    return list_len(xs)\n",
+    ));
     let mut manager = PassManager::new();
     manager.push(OwnershipPlanPass);
     manager.push(OwnershipBalancePass);
     let outcome = manager.run(&mut program, &types).unwrap();
     assert_eq!(outcome.executed, ["ownership-plan", "ownership-balance"]);
-    assert!(outcome.established.contains(&lpp_mir::MirInvariant::Ownership));
-    assert!(outcome.established.contains(&lpp_mir::MirInvariant::NoOwningCycles));
-    assert!(outcome
-        .established
-        .contains(&lpp_mir::MirInvariant::OwnershipBalance));
+    assert!(
+        outcome
+            .established
+            .contains(&lpp_mir::MirInvariant::Ownership)
+    );
+    assert!(
+        outcome
+            .established
+            .contains(&lpp_mir::MirInvariant::NoOwningCycles)
+    );
+    assert!(
+        outcome
+            .established
+            .contains(&lpp_mir::MirInvariant::OwnershipBalance)
+    );
 
     // A later pass that does not preserve the 4D/4E invariants drops
     // them from the bookkeeping.
@@ -768,7 +736,11 @@ fn balance_pass_establishes_and_drops_with_the_bookkeeping() {
             .established
             .contains(&lpp_mir::MirInvariant::OwnershipBalance)
     );
-    assert!(!outcome.established.contains(&lpp_mir::MirInvariant::Ownership));
+    assert!(
+        !outcome
+            .established
+            .contains(&lpp_mir::MirInvariant::Ownership)
+    );
 }
 
 #[test]
@@ -781,9 +753,7 @@ fn balance_pass_requires_ownership_precondition() {
     let error = manager.run(&mut program, &types).unwrap_err();
     assert!(matches!(
         error.kind,
-        lpp_passes::PassManagerErrorKind::UnmetPrecondition(
-            lpp_mir::MirInvariant::Ownership
-        )
+        lpp_passes::PassManagerErrorKind::UnmetPrecondition(lpp_mir::MirInvariant::Ownership)
     ));
 
     // With the plan pass first, the precondition is satisfied.
@@ -797,15 +767,13 @@ fn balance_pass_requires_ownership_precondition() {
 
 #[test]
 fn balance_pass_fails_on_unbalanced_program() {
-    let (mut program, types) = executable(
-        concat!(
-            "def main() -> Int:\n",
-            "    xs := list_new()\n",
-            "    ys := list_new()\n",
-            "    list_push(ys, xs)\n",
-            "    return list_len(xs)\n",
-        ),
-    );
+    let (mut program, types) = executable(concat!(
+        "def main() -> Int:\n",
+        "    xs := list_new()\n",
+        "    ys := list_new()\n",
+        "    list_push(ys, xs)\n",
+        "    return list_len(xs)\n",
+    ));
     let mut manager = PassManager::new();
     manager.push(OwnershipPlanPass);
     manager.push(OwnershipBalancePass);

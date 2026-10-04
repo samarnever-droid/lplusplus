@@ -49,11 +49,7 @@ fn app_and_calc(root: &Path) {
     )
     .unwrap();
     for (dir, name, deps) in [
-        (
-            "packages/calc",
-            "calc",
-            "",
-        ),
+        ("packages/calc", "calc", ""),
         (
             "packages/app",
             "app",
@@ -64,14 +60,25 @@ fn app_and_calc(root: &Path) {
         std::fs::create_dir_all(p.join("src")).unwrap();
         std::fs::write(p.join("Keel.toml"), pkg_manifest(name, deps)).unwrap();
     }
-    std::fs::write(root.join("packages/calc/src/lib.lpp"), "def square(x: Int) -> Int:\n    return x * x\n").unwrap();
-    std::fs::write(root.join("packages/app/src/main.lpp"), "def main():\n    print(1)\n").unwrap();
+    std::fs::write(
+        root.join("packages/calc/src/lib.lpp"),
+        "def square(x: Int) -> Int:\n    return x * x\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("packages/app/src/main.lpp"),
+        "def main():\n    print(1)\n",
+    )
+    .unwrap();
 }
 
 fn build(root: &Path, fake: &Path) {
-    keel::commands::build::build(root, fake.to_str().unwrap(), &|m, cwd, l, r| {
-        keel::commands::build::run_lpp_jobs(m, cwd, l, r)
-    }, None)
+    keel::commands::build::build(
+        root,
+        fake.to_str().unwrap(),
+        &|m, cwd, l, r| keel::commands::build::run_lpp_jobs(m, cwd, l, r),
+        None,
+    )
     .expect("build should succeed");
 }
 
@@ -101,8 +108,14 @@ fn path_dep_is_staged_and_lpp_runs_from_the_root() {
         "lpp must run from the workspace root:\n{marks}"
     );
     // ...and the dep still builds before the dependent.
-    let calc = marks.lines().position(|l| l.contains("packages/calc/src/lib.lpp")).unwrap();
-    let app = marks.lines().position(|l| l.contains("packages/app/src/main.lpp")).unwrap();
+    let calc = marks
+        .lines()
+        .position(|l| l.contains("packages/calc/src/lib.lpp"))
+        .unwrap();
+    let app = marks
+        .lines()
+        .position(|l| l.contains("packages/app/src/main.lpp"))
+        .unwrap();
     assert!(calc < app, "calc must build before app:\n{marks}");
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -117,11 +130,7 @@ fn stale_managed_entries_are_pruned_when_the_dep_goes_away() {
     assert!(root.join(".lpp_packages/calc").exists());
 
     // Remove the dep from app's manifest and rebuild.
-    std::fs::write(
-        root.join("packages/app/Keel.toml"),
-        pkg_manifest("app", ""),
-    )
-    .unwrap();
+    std::fs::write(root.join("packages/app/Keel.toml"), pkg_manifest("app", "")).unwrap();
     build(&root, &fake);
     assert!(
         !root.join(".lpp_packages/calc").exists(),

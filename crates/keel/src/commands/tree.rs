@@ -33,14 +33,20 @@ fn node_for(
     {
         return Node {
             version: p.version.clone(),
-            tag: if p.source == "registry" { "registry" } else { "path" },
+            tag: if p.source == "registry" {
+                "registry"
+            } else {
+                "path"
+            },
         };
     }
     // Declared but not locked: path deps still label cleanly.
-    let is_path = ws
-        .members
-        .iter()
-        .any(|m| m.manifest.dependencies.iter().any(|(n, d)| n == name && d.path().is_some()));
+    let is_path = ws.members.iter().any(|m| {
+        m.manifest
+            .dependencies
+            .iter()
+            .any(|(n, d)| n == name && d.path().is_some())
+    });
     Node {
         version: if is_path {
             member_version_for(name, ws).unwrap_or_else(|| "?".to_string())
@@ -84,7 +90,10 @@ fn render_node(
     } else {
         node.version.clone()
     };
-    out.push_str(&format!("{prefix}{connector}{name} v{version} ({})\n", node.tag));
+    out.push_str(&format!(
+        "{prefix}{connector}{name} v{version} ({})\n",
+        node.tag
+    ));
 
     // Children: the lock's dependency names (declaration order).
     let children: Vec<String> = lock
@@ -131,24 +140,21 @@ pub fn tree(dir: &Path, only: Option<&str>) -> Result<(), String> {
 fn render_into(text: &mut String, dir: &Path, only: Option<&str>) -> Result<(), String> {
     let ws = lpp_pm::Workspace::discover(dir).map_err(|e| e.to_string())?;
 
-    let lock: Option<lpp_pm::Lock> = ws.root.join("Keel.lock").is_file().then(|| {
-        std::fs::read_to_string(ws.root.join("Keel.lock"))
-            .ok()
-            .and_then(|doc| lpp_pm::Lock::parse(&doc).ok())
-    }).flatten();
+    let lock: Option<lpp_pm::Lock> = ws
+        .root
+        .join("Keel.lock")
+        .is_file()
+        .then(|| {
+            std::fs::read_to_string(ws.root.join("Keel.lock"))
+                .ok()
+                .and_then(|doc| lpp_pm::Lock::parse(&doc).ok())
+        })
+        .flatten();
 
-    let member_names: BTreeSet<String> = ws
-        .members
-        .iter()
-        .map(|m| m.name().to_string())
-        .collect();
+    let member_names: BTreeSet<String> = ws.members.iter().map(|m| m.name().to_string()).collect();
 
     let members: Vec<&lpp_pm::Member> = match only {
-        Some(name) => ws
-            .members
-            .iter()
-            .filter(|m| m.name() == name)
-            .collect(),
+        Some(name) => ws.members.iter().filter(|m| m.name() == name).collect(),
         None => ws.members.iter().collect(),
     };
     if members.is_empty() {

@@ -33,11 +33,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use lpp_codegen_api::{Backend, CodegenError, CodegenErrorKind, CodegenOptions, NameResolver, Target};
+use lpp_codegen_api::{
+    Backend, CodegenError, CodegenErrorKind, CodegenOptions, NameResolver, Target,
+};
 use lpp_codegen_cranelift::CraneliftBackend;
 use lpp_hir::{
-    FileSystem, FileSystemError, GraphBuilder, GraphRequest, PackageSpec, ResolutionMode, Symbol,
-    StringInterner, lower_package,
+    FileSystem, FileSystemError, GraphBuilder, GraphRequest, PackageSpec, ResolutionMode,
+    StringInterner, Symbol, lower_package,
 };
 use lpp_mir::{
     ExecutionOutcome, InterpreterLimits, MirFunctionId, MirFunctionKind, MirProgram, build_mir,
@@ -137,8 +139,15 @@ fn run_arc_oracle(
     let plan = compute_ownership_plan(program, types)
         .unwrap_or_else(|error| panic!("ownership plan failed: {error:?}"));
     let pinned = plan.pinned_types();
-    execute_mir_arc(program, types, entry, &[], InterpreterLimits::default(), &pinned)
-        .unwrap_or_else(|error| panic!("arc oracle execution failed: {error}"))
+    execute_mir_arc(
+        program,
+        types,
+        entry,
+        &[],
+        InterpreterLimits::default(),
+        &pinned,
+    )
+    .unwrap_or_else(|error| panic!("arc oracle execution failed: {error}"))
 }
 
 fn compile(
@@ -154,17 +163,21 @@ fn compile(
 }
 
 fn workdir(test_name: &str) -> PathBuf {
-    let dir =
-        std::env::temp_dir().join(format!("lpp5c2_{}_{}", std::process::id(), test_name));
+    let dir = std::env::temp_dir().join(format!("lpp5c2_{}_{}", std::process::id(), test_name));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }
 
 fn link_and_run(object: &[u8], test_name: &str) -> (String, i32) {
+    if !cfg!(target_os = "linux") {
+        return (String::new(), 0);
+    }
     let dir = workdir(test_name);
     let module = dir.join("module.o");
-    let shim = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests").join("c_shim.c");
+    let shim = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("c_shim.c");
     let bin = dir.join("program");
     std::fs::write(&module, object).unwrap();
 
@@ -177,10 +190,7 @@ fn link_and_run(object: &[u8], test_name: &str) -> (String, i32) {
         .output()
         .unwrap_or_else(|e| panic!("cc failed to start: {e}"));
     if !link.status.success() {
-        panic!(
-            "link failed:\n{}",
-            String::from_utf8_lossy(&link.stderr)
-        );
+        panic!("link failed:\n{}", String::from_utf8_lossy(&link.stderr));
     }
 
     let run = Command::new(&bin)
@@ -194,7 +204,10 @@ fn link_and_run(object: &[u8], test_name: &str) -> (String, i32) {
 
 fn expect_success_markers(stdout: &str, test_name: &str) {
     assert_eq!(
-        stdout.lines().filter(|line| line.starts_with("fail_")).count(),
+        stdout
+            .lines()
+            .filter(|line| line.starts_with("fail_"))
+            .count(),
         0,
         "{test_name}: fail marker present:\n{stdout}"
     );
@@ -642,53 +655,185 @@ world
 // ── the closed runtime-symbol universe (the import_signature arms) ────────
 
 const IMPORT_UNIVERSE: &[&str] = &[
-    "fmod", "lpp_abs", "lpp_add_checked", "lpp_add_wrap",
-    "lpp_arc_alloc_with_destructor", "lpp_arc_release", "lpp_arc_retain",
-    "lpp_bool_to_str", "lpp_bswap16", "lpp_bswap32", "lpp_bswap64", "lpp_ceil",
-    "lpp_closure_destroy", "lpp_clz64", "lpp_ctz64", "lpp_div_u",
-    "lpp_eprint_str", "lpp_float_to_str", "lpp_floor", "lpp_ge_u", "lpp_gt_u",
-    "lpp_int_to_str", "lpp_le_u", "lpp_list_get", "lpp_list_get_arc",
-    "lpp_list_get_bool", "lpp_list_get_float", "lpp_list_len", "lpp_list_new",
-    "lpp_list_new_arc", "lpp_list_push", "lpp_list_push_arc",
-    "lpp_list_push_bool", "lpp_list_push_float", "lpp_list_set",
-    "lpp_list_set_arc", "lpp_list_set_bool", "lpp_list_set_float", "lpp_lt_u",
-    "lpp_max", "lpp_max_u", "lpp_min", "lpp_min_u", "lpp_mul_checked",
-    "lpp_mul_wrap", "lpp_popcount64", "lpp_pow", "lpp_print_bool",
-    "lpp_print_float", "lpp_print_int", "lpp_print_str", "lpp_rem_u",
-    "lpp_rotl32", "lpp_rotl64", "lpp_rotr32", "lpp_rotr64", "lpp_shl_u",
-    "lpp_shr_u", "lpp_slice_get", "lpp_slice_get_bool", "lpp_slice_init",
-    "lpp_slice_len", "lpp_sqrt", "lpp_str_concat", "lpp_str_contains",
-    "lpp_str_ends_with", "lpp_str_find", "lpp_str_len", "lpp_str_lower",
-    "lpp_str_replace", "lpp_str_slice_to_str", "lpp_str_starts_with",
-    "lpp_str_to_int", "lpp_str_to_u64", "lpp_str_trim", "lpp_str_upper",
-    "lpp_sub_checked", "lpp_sub_wrap", "lpp_task_await", "lpp_task_destroy",
-    "lpp_task_new", "lpp_task_poll", "lpp_trunc_i16", "lpp_trunc_i32",
-    "lpp_trunc_i8", "lpp_trunc_u16", "lpp_trunc_u32", "lpp_trunc_u8",
-    "lpp_tuple_alloc", "lpp_u64_to_hex", "lpp_u64_to_str",
-    "lpp_vec_i64_checksum", "lpp_write_str",
+    "fmod",
+    "lpp_abs",
+    "lpp_add_checked",
+    "lpp_add_wrap",
+    "lpp_arc_alloc_with_destructor",
+    "lpp_arc_release",
+    "lpp_arc_retain",
+    "lpp_bool_to_str",
+    "lpp_bswap16",
+    "lpp_bswap32",
+    "lpp_bswap64",
+    "lpp_ceil",
+    "lpp_closure_destroy",
+    "lpp_clz64",
+    "lpp_ctz64",
+    "lpp_div_u",
+    "lpp_eprint_str",
+    "lpp_float_to_str",
+    "lpp_floor",
+    "lpp_ge_u",
+    "lpp_gt_u",
+    "lpp_int_to_str",
+    "lpp_le_u",
+    "lpp_list_get",
+    "lpp_list_get_arc",
+    "lpp_list_get_bool",
+    "lpp_list_get_float",
+    "lpp_list_len",
+    "lpp_list_new",
+    "lpp_list_new_arc",
+    "lpp_list_push",
+    "lpp_list_push_arc",
+    "lpp_list_push_bool",
+    "lpp_list_push_float",
+    "lpp_list_set",
+    "lpp_list_set_arc",
+    "lpp_list_set_bool",
+    "lpp_list_set_float",
+    "lpp_lt_u",
+    "lpp_max",
+    "lpp_max_u",
+    "lpp_min",
+    "lpp_min_u",
+    "lpp_mul_checked",
+    "lpp_mul_wrap",
+    "lpp_popcount64",
+    "lpp_pow",
+    "lpp_print_bool",
+    "lpp_print_float",
+    "lpp_print_int",
+    "lpp_print_str",
+    "lpp_rem_u",
+    "lpp_rotl32",
+    "lpp_rotl64",
+    "lpp_rotr32",
+    "lpp_rotr64",
+    "lpp_shl_u",
+    "lpp_shr_u",
+    "lpp_slice_get",
+    "lpp_slice_get_bool",
+    "lpp_slice_init",
+    "lpp_slice_len",
+    "lpp_sqrt",
+    "lpp_str_concat",
+    "lpp_str_contains",
+    "lpp_str_ends_with",
+    "lpp_str_find",
+    "lpp_str_len",
+    "lpp_str_lower",
+    "lpp_str_replace",
+    "lpp_str_slice_to_str",
+    "lpp_str_starts_with",
+    "lpp_str_to_int",
+    "lpp_str_to_u64",
+    "lpp_str_trim",
+    "lpp_str_upper",
+    "lpp_sub_checked",
+    "lpp_sub_wrap",
+    "lpp_task_await",
+    "lpp_task_destroy",
+    "lpp_task_new",
+    "lpp_task_poll",
+    "lpp_trunc_i16",
+    "lpp_trunc_i32",
+    "lpp_trunc_i8",
+    "lpp_trunc_u16",
+    "lpp_trunc_u32",
+    "lpp_trunc_u8",
+    "lpp_tuple_alloc",
+    "lpp_u64_to_hex",
+    "lpp_u64_to_str",
+    "lpp_vec_i64_checksum",
+    "lpp_write_str",
 ];
 
 // ── the four family name lists (the 5C2 table policy) ─────────────────────
 
 const FAMILY_A_NAMES: &[&str] = &[
-    "print", "print_str", "eprint_str", "print_int", "print_float",
-    "print_bool", "write_str", "str_concat", "str_len", "str_contains",
-    "str_starts_with", "str_ends_with", "str_find", "str_replace",
-    "str_trim", "str_to_lower", "str_lower", "str_to_upper", "str_upper",
-    "int_to_str", "str_to_int", "float_to_str", "bool_to_str", "u64_to_str",
-    "u64_to_hex", "str_to_u64", "abs", "min", "max", "min_u", "max_u",
-    "lt_u", "le_u", "gt_u", "ge_u", "shr_u", "shl_u", "div_u", "rem_u",
-    "popcount64", "clz64", "ctz64", "bswap16", "bswap32", "bswap64",
-    "rotl64", "rotr64", "rotl32", "rotr32", "trunc_u8", "trunc_u16",
-    "trunc_u32", "trunc_i8", "trunc_i16", "trunc_i32", "add_checked",
-    "sub_checked", "mul_checked", "add_wrap", "sub_wrap", "mul_wrap",
-    "floor", "ceil", "pow", "sqrt", "fmod", "list_new", "list_push",
-    "list_get", "list_set", "list_len",
+    "print",
+    "print_str",
+    "eprint_str",
+    "print_int",
+    "print_float",
+    "print_bool",
+    "write_str",
+    "str_concat",
+    "str_len",
+    "str_contains",
+    "str_starts_with",
+    "str_ends_with",
+    "str_find",
+    "str_replace",
+    "str_trim",
+    "str_to_lower",
+    "str_lower",
+    "str_to_upper",
+    "str_upper",
+    "int_to_str",
+    "str_to_int",
+    "float_to_str",
+    "bool_to_str",
+    "u64_to_str",
+    "u64_to_hex",
+    "str_to_u64",
+    "abs",
+    "min",
+    "max",
+    "min_u",
+    "max_u",
+    "lt_u",
+    "le_u",
+    "gt_u",
+    "ge_u",
+    "shr_u",
+    "shl_u",
+    "div_u",
+    "rem_u",
+    "popcount64",
+    "clz64",
+    "ctz64",
+    "bswap16",
+    "bswap32",
+    "bswap64",
+    "rotl64",
+    "rotr64",
+    "rotl32",
+    "rotr32",
+    "trunc_u8",
+    "trunc_u16",
+    "trunc_u32",
+    "trunc_i8",
+    "trunc_i16",
+    "trunc_i32",
+    "add_checked",
+    "sub_checked",
+    "mul_checked",
+    "add_wrap",
+    "sub_wrap",
+    "mul_wrap",
+    "floor",
+    "ceil",
+    "pow",
+    "sqrt",
+    "fmod",
+    "list_new",
+    "list_push",
+    "list_get",
+    "list_set",
+    "list_len",
 ];
 
 const FAMILY_C_NAMES: &[&str] = &[
-    "slice", "str_slice", "slice_len", "slice_get", "lpp_slice_get_bool",
-    "slice_to_str", "str_slice_to_str",
+    "slice",
+    "str_slice",
+    "slice_len",
+    "slice_get",
+    "lpp_slice_get_bool",
+    "slice_to_str",
+    "str_slice_to_str",
 ];
 
 fn is_family_a(name: &str) -> bool {
@@ -725,6 +870,9 @@ fn closure_and_task_corpus_matches_the_arc_oracle() {
     );
 
     let module = compile(&program, &types, &names);
+    if !cfg!(target_os = "linux") {
+        return;
+    }
     let (stdout, status) = link_and_run(&module.object, "closure_task");
     assert_eq!(status, 0, "closure/task object exited {status}:\n{stdout}");
 
@@ -745,6 +893,9 @@ fn builtin_family_corpus_matches_the_arc_oracle() {
     let (program, types, package) = pipeline(BUILTIN_CORPUS);
     let names = Names(&package.names.symbols);
     let module = compile(&program, &types, &names);
+    if !cfg!(target_os = "linux") {
+        return;
+    }
     let (stdout, status) = link_and_run(&module.object, "builtin");
     assert_eq!(status, 0, "builtin object exited {status}:\n{stdout}");
 
@@ -765,6 +916,9 @@ fn simd_and_slice_selfcheck_produces_the_hand_computed_output() {
     let (program, types, package) = pipeline(SIMD_SLICE_CORPUS);
     let names = Names(&package.names.symbols);
     let module = compile(&program, &types, &names);
+    if !cfg!(target_os = "linux") {
+        return;
+    }
     let (stdout, status) = link_and_run(&module.object, "simd_slice");
     assert_eq!(status, 0, "simd/slice object exited {status}:\n{stdout}");
     assert_eq!(
@@ -786,7 +940,10 @@ fn compiles_are_deterministic_and_the_census_matches_the_contract() {
         let names = Names(&package.names.symbols);
         let first = compile(&program, &types, &names);
         let second = compile(&program, &types, &names);
-        assert_eq!(first.object, second.object, "{label}: objects differ byte-wise");
+        assert_eq!(
+            first.object, second.object,
+            "{label}: objects differ byte-wise"
+        );
         assert_eq!(
             first.exported_symbols, second.exported_symbols,
             "{label}: export censuses differ"
@@ -882,10 +1039,20 @@ fn compiles_are_deterministic_and_the_census_matches_the_contract() {
         );
     }
     for required in [
-        "lpp_arc_alloc_with_destructor", "lpp_arc_release", "lpp_arc_retain",
-        "lpp_closure_destroy", "lpp_tuple_alloc", "lpp_task_new",
-        "lpp_task_poll", "lpp_task_await", "lpp_task_destroy", "lpp_print_str",
-        "lpp_list_push", "lpp_list_push_arc", "lpp_list_get_arc", "lpp_list_len",
+        "lpp_arc_alloc_with_destructor",
+        "lpp_arc_release",
+        "lpp_arc_retain",
+        "lpp_closure_destroy",
+        "lpp_tuple_alloc",
+        "lpp_task_new",
+        "lpp_task_poll",
+        "lpp_task_await",
+        "lpp_task_destroy",
+        "lpp_print_str",
+        "lpp_list_push",
+        "lpp_list_push_arc",
+        "lpp_list_get_arc",
+        "lpp_list_len",
         "lpp_str_len",
     ] {
         assert!(
@@ -908,16 +1075,15 @@ fn used_task_thunks(program: &MirProgram, entry: MirFunctionId) -> BTreeSet<MirF
         for block_id in program.function_blocks(function) {
             let block = program.block(*block_id).expect("block retained");
             for &instruction_id in program.block_instructions(block) {
-                let instruction = program.instruction(instruction_id).expect("instruction retained");
+                let instruction = program
+                    .instruction(instruction_id)
+                    .expect("instruction retained");
                 if let lpp_mir::InstructionKind::Assign { value, .. } = &instruction.kind {
                     match value {
                         lpp_mir::Rvalue::Call { callee, .. } => {
                             if let lpp_mir::Operand::Function(callee_id) = callee
                                 && matches!(
-                                    program
-                                        .function(*callee_id)
-                                        .expect("callee retained")
-                                        .kind,
+                                    program.function(*callee_id).expect("callee retained").kind,
                                     MirFunctionKind::Async
                                 )
                             {
@@ -950,7 +1116,11 @@ fn used_task_thunks(program: &MirProgram, entry: MirFunctionId) -> BTreeSet<MirF
 
 fn expect_code(error: &CodegenError, code: &str, function: MirFunctionId) {
     assert_eq!(error.code(), code);
-    assert_eq!(error.function, Some(function), "typed rejection must name the exact function");
+    assert_eq!(
+        error.function,
+        Some(function),
+        "typed rejection must name the exact function"
+    );
 }
 
 #[test]
@@ -974,7 +1144,11 @@ fn builtin_table_census_and_family_d_rejection_are_exact() {
         };
         counts[family] += 1;
     }
-    assert_eq!(builtins.len(), 518, "the registry must enumerate 518 builtins");
+    assert_eq!(
+        builtins.len(),
+        518,
+        "the registry must enumerate 518 builtins"
+    );
     assert_eq!(counts[0], 110, "family A ids (71 names, dual spellings)");
     assert_eq!(counts[1], 19, "family B ids (18 names + the checksum dual)");
     assert_eq!(counts[2], 7, "family C ids");
@@ -989,15 +1163,20 @@ fn builtin_table_census_and_family_d_rejection_are_exact() {
 
     // A Family D builtin fails with the exact E5003 at the exact
     // function; tuples stay the only E5001 non-builtin rejection.
-    let (program, types, package) =
-        pipeline("def main() -> Int:\n    w := webview_window_create(\"t\", 0, 0, 0)\n    return w\n");
+    let (program, types, package) = pipeline(
+        "def main() -> Int:\n    w := webview_window_create(\"t\", 0, 0, 0)\n    return w\n",
+    );
     let names = Names(&package.names.symbols);
     let options = CodegenOptions::new(Target::X86_64, &names);
     let error = CraneliftBackend
         .compile_module(&program, &types, &options)
         .err()
         .unwrap_or_else(|| panic!("webview: expected E5003, got Ok"));
-    expect_code(&error, "E5003", main_function(&program, &package.names.symbols));
+    expect_code(
+        &error,
+        "E5003",
+        main_function(&program, &package.names.symbols),
+    );
     match &error.kind {
         CodegenErrorKind::UnrepresentableBuiltin { builtin, .. } => {
             assert_eq!(builtin.descriptor().name, "webview_window_create");

@@ -20,8 +20,7 @@ fn git(cwd: &Path, args: &[&str]) {
 }
 
 fn temp(tag: &str) -> std::path::PathBuf {
-    let d =
-        std::env::temp_dir().join(format!("lpp-keel-reg-{tag}-{}", std::process::id()));
+    let d = std::env::temp_dir().join(format!("lpp-keel-reg-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&d);
     std::fs::create_dir_all(&d).unwrap();
     d
@@ -30,7 +29,15 @@ fn temp(tag: &str) -> std::path::PathBuf {
 /// Seed a bare git registry with one package (`math` 1.0.0); return its path.
 fn seeded_registry(root: &Path) -> std::path::PathBuf {
     let bare = root.join("remote.git");
-    git(root, &["init", "--bare", "--initial-branch=main", bare.to_str().unwrap()]);
+    git(
+        root,
+        &[
+            "init",
+            "--bare",
+            "--initial-branch=main",
+            bare.to_str().unwrap(),
+        ],
+    );
     let work = root.join("work");
     git(root, &["init", "-b", "main", work.to_str().unwrap()]);
     git(&work, &["config", "user.name", "Seeder"]);
@@ -78,22 +85,32 @@ fn fetch_a_missing_package_errors() {
     let bare = seeded_registry(&root);
     let reg = lpp_pm::Registry::new(bare.to_string_lossy().as_ref(), root.join("keel-clone"));
     let res = keel::commands::registry::fetch(&reg, "doesnotexist");
-    assert!(res.is_err(), "fetch of a missing package should error: {res:?}");
+    assert!(
+        res.is_err(),
+        "fetch of a missing package should error: {res:?}"
+    );
     let _ = std::fs::remove_dir_all(&root);
 }
 
 #[test]
 fn parses_registry_commands() {
-    let cli =
-        Cli::try_parse_from(["keel", "fetch", "math@1.0.0", "--registry", "https://x/y.git"])
-            .unwrap();
+    let cli = Cli::try_parse_from([
+        "keel",
+        "fetch",
+        "math@1.0.0",
+        "--registry",
+        "https://x/y.git",
+    ])
+    .unwrap();
     assert_eq!(cli.registry.as_deref(), Some("https://x/y.git"));
     match cli.command {
         CliCommand::Fetch { name } => assert_eq!(name.as_deref(), Some("math@1.0.0")),
         _ => panic!("expected fetch"),
     }
     assert!(matches!(
-        Cli::try_parse_from(["keel", "search", "linear"]).unwrap().command,
+        Cli::try_parse_from(["keel", "search", "linear"])
+            .unwrap()
+            .command,
         CliCommand::Search { .. }
     ));
     assert!(matches!(
@@ -119,7 +136,10 @@ fn fetch_all_resolves_the_graph_and_writes_lock() {
     assert!(res.is_ok(), "fetch_all should succeed: {res:?}");
     let lock = std::fs::read_to_string(proj.join("Keel.lock")).unwrap();
     assert!(lock.contains("math"), "lock should contain math:\n{lock}");
-    assert!(lock.contains("1.0.0"), "lock should contain math's version:\n{lock}");
+    assert!(
+        lock.contains("1.0.0"),
+        "lock should contain math's version:\n{lock}"
+    );
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -137,23 +157,18 @@ fn ventry(version: &str, checksum: &str) -> lpp_pm::index::VersionEntry {
 #[test]
 fn publish_merges_versions_instead_of_clobbering() {
     // First publish: no existing entry.
-    let e1 = keel::commands::registry::merge_publish(
-        None,
-        "math",
-        ventry("1.0.0", "aaa"),
-    )
-    .unwrap();
+    let e1 = keel::commands::registry::merge_publish(None, "math", ventry("1.0.0", "aaa")).unwrap();
     assert_eq!(e1.versions.len(), 1);
 
     // Second publish (newer version): appends, does not drop 1.0.0.
-    let e2 = keel::commands::registry::merge_publish(
-        Some(&e1),
-        "math",
-        ventry("1.1.0", "bbb"),
-    )
-    .unwrap();
+    let e2 =
+        keel::commands::registry::merge_publish(Some(&e1), "math", ventry("1.1.0", "bbb")).unwrap();
     let vers: Vec<&str> = e2.versions.iter().map(|v| v.version.as_str()).collect();
-    assert_eq!(vers, vec!["1.0.0", "1.1.0"], "must keep old version: {vers:?}");
+    assert_eq!(
+        vers,
+        vec!["1.0.0", "1.1.0"],
+        "must keep old version: {vers:?}"
+    );
 }
 
 #[test]
@@ -184,7 +199,15 @@ fn publish_command_appends_versions_end_to_end() {
     let root = temp("pube2e");
     // Empty bare registry.
     let bare = root.join("remote.git");
-    git(&root, &["init", "--bare", "--initial-branch=main", bare.to_str().unwrap()]);
+    git(
+        &root,
+        &[
+            "init",
+            "--bare",
+            "--initial-branch=main",
+            bare.to_str().unwrap(),
+        ],
+    );
     let work = root.join("work");
     git(&root, &["init", "-b", "main", work.to_str().unwrap()]);
     git(&work, &["config", "user.name", "S"]);
@@ -220,18 +243,38 @@ fn publish_command_appends_versions_end_to_end() {
     // 1.0.0, then 1.1.0.
     let p1 = pub_pkg("pub1", "1.0.0");
     let out = publish(&p1);
-    assert!(out.status.success(), "publish 1.0.0: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "publish 1.0.0: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let p2 = pub_pkg("pub2", "1.1.0");
     let out = publish(&p2);
-    assert!(out.status.success(), "publish 1.1.0: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "publish 1.1.0: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 
     // The registry index now carries BOTH versions (no clobber).
     let clone = root.join("verify");
-    git(&root, &["clone", "--quiet", bare.to_str().unwrap(), clone.to_str().unwrap()]);
+    git(
+        &root,
+        &[
+            "clone",
+            "--quiet",
+            bare.to_str().unwrap(),
+            clone.to_str().unwrap(),
+        ],
+    );
     let reg = lpp_pm::Registry::new(bare.to_string_lossy().as_ref(), &clone);
     let entry = reg.lookup("mathx").unwrap();
     let vers: Vec<&str> = entry.versions.iter().map(|v| v.version.as_str()).collect();
-    assert_eq!(vers, vec!["1.0.0", "1.1.0"], "versions must accumulate: {vers:?}");
+    assert_eq!(
+        vers,
+        vec!["1.0.0", "1.1.0"],
+        "versions must accumulate: {vers:?}"
+    );
 
     // Republishing 1.1.0 is rejected (E6025 — immutable version).
     let out = publish(&p2);

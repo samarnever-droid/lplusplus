@@ -33,7 +33,10 @@ impl Registry {
     /// `remote` is the git URL (`file://…` or `https://…`); `dir` is the local
     /// clone. Call [`Self::sync`] before reading.
     pub fn new(remote: impl Into<String>, dir: impl Into<PathBuf>) -> Self {
-        Self { remote: remote.into(), dir: dir.into() }
+        Self {
+            remote: remote.into(),
+            dir: dir.into(),
+        }
     }
 
     /// The git remote URL.
@@ -55,11 +58,21 @@ impl Registry {
             self.git(&["clean", "-fd"])?;
             return Ok(());
         }
-        let parent = self.dir.parent().unwrap_or_else(|| Path::new(".")).to_path_buf();
+        let parent = self
+            .dir
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
         std::fs::create_dir_all(&parent).map_err(io_err)?;
         let out = self.run_git(
             &parent,
-            &["clone", "--depth", "1", &self.remote, &self.dir.to_string_lossy()],
+            &[
+                "clone",
+                "--depth",
+                "1",
+                &self.remote,
+                &self.dir.to_string_lossy(),
+            ],
         )?;
         fail_on(out)
     }
@@ -67,8 +80,8 @@ impl Registry {
     /// Read + parse the index entry for `name` (offline, from the local clone).
     pub fn lookup(&self, name: &str) -> Result<IndexEntry> {
         let p = self.dir.join("index").join(index_path(name));
-        let text = std::fs::read_to_string(&p)
-            .map_err(|_| PmError::PackageNotFound(name.to_string()))?;
+        let text =
+            std::fs::read_to_string(&p).map_err(|_| PmError::PackageNotFound(name.to_string()))?;
         serde_json::from_str(&text).map_err(|e| PmError::IndexParse(e.to_string()))
     }
 
@@ -81,12 +94,18 @@ impl Registry {
             .iter()
             .find(|v| v.version == version && !v.yanked)
             .cloned()
-            .ok_or_else(|| PmError::VersionNotFound { name: name.to_string(), version: version.to_string() })?;
+            .ok_or_else(|| PmError::VersionNotFound {
+                name: name.to_string(),
+                version: version.to_string(),
+            })?;
         let bytes = std::fs::read(self.dir.join("blob").join(&v.checksum))
             .map_err(|_| PmError::BlobNotFound(v.checksum.clone()))?;
         let actual = ContentAddress::of_bytes(&bytes).to_string();
         if actual != v.checksum {
-            return Err(PmError::ChecksumMismatch { expected: v.checksum, actual });
+            return Err(PmError::ChecksumMismatch {
+                expected: v.checksum,
+                actual,
+            });
         }
         Ok((bytes, v))
     }
@@ -104,7 +123,8 @@ impl Registry {
         if let Some(parent) = idx.parent() {
             std::fs::create_dir_all(parent).map_err(io_err)?;
         }
-        let doc = serde_json::to_string_pretty(entry).map_err(|e| PmError::IndexParse(e.to_string()))?;
+        let doc =
+            serde_json::to_string_pretty(entry).map_err(|e| PmError::IndexParse(e.to_string()))?;
         std::fs::write(&idx, doc).map_err(io_err)?;
 
         self.git(&["add", "index", "blob"])?;

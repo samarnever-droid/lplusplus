@@ -84,7 +84,10 @@ pub unsafe extern "C" fn lpp_task_poll(raw_task: *mut c_void) -> i64 {
     if task.state.load(Ordering::Acquire) == 2 {
         return 1; // double-poll is idempotent
     }
-    match task.state.compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire) {
+    match task
+        .state
+        .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire)
+    {
         Ok(_) => {}
         Err(expected) => {
             if expected == 2 {
@@ -128,8 +131,8 @@ mod tests {
     use crate::arc::lpp_arc_alloc_with_destructor;
     use crate::numeric::lpp_vec_i64_checksum;
     use crate::tuple::lpp_tuple_alloc;
-    use std::sync::atomic::AtomicUsize;
     use std::sync::Mutex;
+    use std::sync::atomic::AtomicUsize;
 
     #[test]
     fn task_layout_matches_c() {

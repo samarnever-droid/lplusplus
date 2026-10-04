@@ -69,7 +69,13 @@ fn rewrite_return(source: &str) -> ExecutionValue {
         .unwrap();
     let package = lower_package(&graph, ResolutionMode::LegacyFlat).unwrap();
     let mut types = infer_hir_package(&package, ShadowInferenceOptions::default()).unwrap();
-    let program = build_mir(&package, &graph.sources, &mut types, MirBuildOptions::default()).unwrap();
+    let program = build_mir(
+        &package,
+        &graph.sources,
+        &mut types,
+        MirBuildOptions::default(),
+    )
+    .unwrap();
     assert!(verify_mir(&program, &types.interner).is_empty());
     execute_mir(
         &program,

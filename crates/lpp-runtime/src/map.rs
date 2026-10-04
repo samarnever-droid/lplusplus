@@ -528,7 +528,11 @@ pub unsafe extern "C" fn lpp_map_keys(map: *mut c_void) -> *mut c_void {
             if !copy.is_null() {
                 if !s.is_null() && len > 0 {
                     unsafe {
-                        memcpy(copy.cast::<c_void>(), s.cast::<c_void>(), len as libc::size_t);
+                        memcpy(
+                            copy.cast::<c_void>(),
+                            s.cast::<c_void>(),
+                            len as libc::size_t,
+                        );
                     }
                 }
                 unsafe { *copy.add(len as usize) = 0 };

@@ -50,14 +50,21 @@ fn workdir(name: &str) -> PathBuf {
 fn compiles_an_entry_to_an_object() {
     let dir = workdir("object");
     let entry = dir.join("main.lpp");
-    std::fs::write(&entry, "def main() -> Int:\n    print_int(6 * 7)\n    return 0\n").unwrap();
+    std::fs::write(
+        &entry,
+        "def main() -> Int:\n    print_int(6 * 7)\n    return 0\n",
+    )
+    .unwrap();
 
     let module = compile_entry(&entry, "objtest", BackendChoice::Cranelift)
         .expect("compile_entry must succeed");
     assert_eq!(module.target, Target::X86_64);
     assert!(!module.object.is_empty(), "object must be non-empty");
     assert!(
-        module.exported_symbols.iter().any(|symbol| symbol == "main"),
+        module
+            .exported_symbols
+            .iter()
+            .any(|symbol| symbol == "main"),
         "object must export main; got {:?}",
         module.exported_symbols
     );
@@ -73,6 +80,11 @@ fn compiles_and_runs_a_native_executable() {
     )
     .unwrap();
     let exe = dir.join("program");
+
+    if !cfg!(target_os = "linux") {
+        eprintln!("skipping native ELF execution on non-Linux host");
+        return;
+    }
 
     build_executable(
         &entry,
@@ -95,6 +107,10 @@ fn compiles_and_runs_a_native_executable() {
 /// the executable beside the source.
 #[test]
 fn rewrite_engine_runs_a_program_through_the_driver_contract() {
+    if !cfg!(target_os = "linux") {
+        eprintln!("skipping native ELF execution on non-Linux host");
+        return;
+    }
     let dir = workdir("engine");
     let entry = dir.join("main.lpp");
     std::fs::write(
@@ -134,6 +150,10 @@ fn rewrite_engine_runs_a_program_through_the_driver_contract() {
 /// (zero-value synthesis per concrete field type).
 #[test]
 fn zero_arg_struct_constructor_zero_initializes_fields() {
+    if !cfg!(target_os = "linux") {
+        eprintln!("skipping native ELF execution on non-Linux host");
+        return;
+    }
     let dir = workdir("zeroinit");
     let entry = dir.join("main.lpp");
     std::fs::write(

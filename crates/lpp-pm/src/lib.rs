@@ -31,12 +31,12 @@ pub mod semver;
 pub mod workspace;
 
 pub use address::ContentAddress;
-pub use backend::{create_kv, KvBackendKind};
+pub use backend::{KvBackendKind, create_kv};
 pub use blob::{BlobStore, DiskBlobStore};
 pub use error::{PmError, Result};
 pub use kv::{CacheStats, InMemoryKv, KvCache};
 pub use lock::{Lock, LockedPkg};
 pub use registry::Registry;
-pub use resolve::{resolve, resolve_workspace, Candidate, Pkg, Resolved};
-pub use workspace::{Member, Workspace};
+pub use resolve::{Candidate, Pkg, Resolved, resolve, resolve_workspace};
 pub use semver::{Req, Version};
+pub use workspace::{Member, Workspace};

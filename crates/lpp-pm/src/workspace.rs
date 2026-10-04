@@ -83,8 +83,8 @@ impl Workspace {
         //    the single-repo case, a 1-member workspace.
         let manifest_path = start.join("Keel.toml");
         if manifest_path.is_file() {
-            let doc = std::fs::read_to_string(&manifest_path)
-                .map_err(|e| PmError::Io(e.to_string()))?;
+            let doc =
+                std::fs::read_to_string(&manifest_path).map_err(|e| PmError::Io(e.to_string()))?;
             let manifest = Manifest::parse(&doc)?;
             let members = vec![Member {
                 dir: start.to_path_buf(),
@@ -122,7 +122,12 @@ impl Workspace {
             });
         }
 
-        for pattern in root.workspace.as_ref().map(|w| w.members.clone()).unwrap_or_default() {
+        for pattern in root
+            .workspace
+            .as_ref()
+            .map(|w| w.members.clone())
+            .unwrap_or_default()
+        {
             for dir in expand_members(&root_dir, &pattern)? {
                 let manifest = load_member(&dir)?;
                 members.push(Member {
@@ -234,7 +239,11 @@ impl Workspace {
 
     /// Member indices by name.
     pub fn index(&self) -> BTreeMap<&str, usize> {
-        self.members.iter().enumerate().map(|(i, m)| (m.name(), i)).collect()
+        self.members
+            .iter()
+            .enumerate()
+            .map(|(i, m)| (m.name(), i))
+            .collect()
     }
 
     /// The shared output directory: the workspace root's `target/` for

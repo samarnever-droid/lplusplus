@@ -27,7 +27,7 @@ use object::{
     SymbolFlags, SymbolKind, SymbolScope,
 };
 
-use lpp_linker::{link_typed, LinkOptions, Machine, OutputFormat, PeSubsystem, ResolvedFormat};
+use lpp_linker::{LinkOptions, Machine, OutputFormat, PeSubsystem, ResolvedFormat, link_typed};
 
 fn tmp_dir(tag: &str) -> PathBuf {
     let mut dir = std::env::temp_dir();
@@ -144,7 +144,11 @@ fn pe_image_is_well_formed() {
 fn pe_import_populates_the_iat() {
     let dir = tmp_dir("pe_imp");
     // ExitProcess is auto-classified to KERNEL32.dll by the linker.
-    let obj = write_input(&dir, "in.obj", &calling_object(BinaryFormat::Coff, "ExitProcess"));
+    let obj = write_input(
+        &dir,
+        "in.obj",
+        &calling_object(BinaryFormat::Coff, "ExitProcess"),
+    );
     let out = dir.join("out.exe");
 
     let mut opts = LinkOptions::default();

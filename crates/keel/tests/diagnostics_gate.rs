@@ -3,8 +3,8 @@
 use std::path::Path;
 use std::process::Command;
 
-use lpp_pm::index::{DepSpec, IndexEntry, VersionEntry};
 use lpp_pm::Registry;
+use lpp_pm::index::{DepSpec, IndexEntry, VersionEntry};
 
 fn git(cwd: &Path, args: &[&str]) {
     let out = Command::new("git")
@@ -48,7 +48,15 @@ fn ve(version: &str, yanked: bool, deps: &[(&str, &str)]) -> VersionEntry {
 
 fn seeded_registry(root: &Path) -> std::path::PathBuf {
     let bare = root.join("remote.git");
-    git(root, &["init", "--bare", "--initial-branch=main", bare.to_str().unwrap()]);
+    git(
+        root,
+        &[
+            "init",
+            "--bare",
+            "--initial-branch=main",
+            bare.to_str().unwrap(),
+        ],
+    );
     let work = root.join("work");
     git(root, &["init", "-b", "main", work.to_str().unwrap()]);
     git(&work, &["config", "user.name", "Seeder"]);
@@ -99,7 +107,10 @@ fn republish(root: &Path, bare: &Path, entry: &IndexEntry) {
     let reg = Registry::new(bare.to_string_lossy().as_ref(), root.join("republisher"));
     reg.sync().unwrap();
     git(&root.join("republisher"), &["config", "user.name", "R"]);
-    git(&root.join("republisher"), &["config", "user.email", "r@example.com"]);
+    git(
+        &root.join("republisher"),
+        &["config", "user.email", "r@example.com"],
+    );
     reg.publish(entry, &artifact, "bump").unwrap();
     reg.push().unwrap();
 }
@@ -119,7 +130,11 @@ fn make_proj(root: &Path) -> std::path::PathBuf {
 /// `outdated` rows parsed from the rendered table (name → status).
 fn outdated_status(out: &str, name: &str) -> Option<String> {
     for line in out.lines() {
-        let cells: Vec<&str> = line.split('|').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+        let cells: Vec<&str> = line
+            .split('|')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .collect();
         if cells.len() >= 4 && cells[0] == name {
             return Some(cells[3].to_string());
         }
@@ -139,8 +154,16 @@ fn outdated_reports_updates_and_yanks() {
     // 1. Baseline: both up to date.
     let r = Registry::new(url.as_str(), root.join("c2"));
     let out = keel::commands::diagnostics::outdated_render(Some(&r), &proj, None).unwrap();
-    assert_eq!(outdated_status(&out, "math"), Some("up to date".into()), "{out}");
-    assert_eq!(outdated_status(&out, "stats"), Some("up to date".into()), "{out}");
+    assert_eq!(
+        outdated_status(&out, "math"),
+        Some("up to date".into()),
+        "{out}"
+    );
+    assert_eq!(
+        outdated_status(&out, "stats"),
+        Some("up to date".into()),
+        "{out}"
+    );
     assert!(!out.contains("need attention"), "{out}");
 
     // 2. Publish math 1.2.0 → update available (latest 1.2.0).
@@ -173,7 +196,11 @@ fn outdated_reports_updates_and_yanks() {
     );
     let r = Registry::new(url.as_str(), root.join("c4"));
     let out = keel::commands::diagnostics::outdated_render(Some(&r), &proj, None).unwrap();
-    assert_eq!(outdated_status(&out, "math"), Some("up to date".into()), "{out}");
+    assert_eq!(
+        outdated_status(&out, "math"),
+        Some("up to date".into()),
+        "{out}"
+    );
 
     // 4. Yank the locked math 1.0.0 → yanked (filter works too).
     republish(
@@ -186,12 +213,20 @@ fn outdated_reports_updates_and_yanks() {
     );
     let r = Registry::new(url.as_str(), root.join("c5"));
     let out = keel::commands::diagnostics::outdated_render(Some(&r), &proj, Some("math")).unwrap();
-    assert_eq!(outdated_status(&out, "math"), Some("yanked".into()), "{out}");
-    assert!(!out.lines().any(|l| l.contains("stats")), "filter leaked stats:\n{out}");
+    assert_eq!(
+        outdated_status(&out, "math"),
+        Some("yanked".into()),
+        "{out}"
+    );
+    assert!(
+        !out.lines().any(|l| l.contains("stats")),
+        "filter leaked stats:\n{out}"
+    );
 
     // 5. Filter for a name not in the lock → E6024.
     let r = Registry::new(url.as_str(), root.join("c6"));
-    let err = keel::commands::diagnostics::outdated_render(Some(&r), &proj, Some("ghost")).unwrap_err();
+    let err =
+        keel::commands::diagnostics::outdated_render(Some(&r), &proj, Some("ghost")).unwrap_err();
     assert!(err.contains("E6024") && err.contains("ghost"), "{err}");
 
     // 6. No registry configured, lock has registry packages → clean error.
@@ -227,7 +262,10 @@ fn verify_catches_a_missing_blob() {
     let attacker = Registry::new(bare.to_string_lossy().as_ref(), root.join("attacker"));
     attacker.sync().unwrap();
     git(&root.join("attacker"), &["config", "user.name", "A"]);
-    git(&root.join("attacker"), &["config", "user.email", "a@example.com"]);
+    git(
+        &root.join("attacker"),
+        &["config", "user.email", "a@example.com"],
+    );
     // Forged checksum: no blob is (or ever was) stored under it.
     let forged = lpp_pm::ContentAddress::of_bytes(b"nonexistent-bytes").to_string();
     attacker
@@ -276,7 +314,10 @@ fn verify_catches_a_tampered_checksum() {
     let attacker = Registry::new(bare.to_string_lossy().as_ref(), root.join("attacker"));
     attacker.sync().unwrap();
     git(&root.join("attacker"), &["config", "user.name", "A"]);
-    git(&root.join("attacker"), &["config", "user.email", "a@example.com"]);
+    git(
+        &root.join("attacker"),
+        &["config", "user.email", "a@example.com"],
+    );
     let evil = b"attacker-controlled math bytes";
     let evil_sum = lpp_pm::ContentAddress::of_bytes(evil).to_string();
     attacker
@@ -351,11 +392,21 @@ fn why_shows_the_dependency_chains() {
         .current_dir(&proj)
         .output()
         .unwrap();
-    assert!(out.status.success(), "why: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "why: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("why: math v1.0.0 (registry)"), "{stdout}");
-    assert!(stdout.contains("math ← app (direct)"), "direct chain missing:\n{stdout}");
-    assert!(stdout.contains("math ← stats ← app"), "transitive chain missing:\n{stdout}");
+    assert!(
+        stdout.contains("math ← app (direct)"),
+        "direct chain missing:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("math ← stats ← app"),
+        "transitive chain missing:\n{stdout}"
+    );
 
     // stats is only a direct dep.
     let out = Command::new(keel_bin)

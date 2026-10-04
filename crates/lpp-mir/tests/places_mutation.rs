@@ -62,7 +62,13 @@ fn lowered(source: &str) -> (lpp_hir::HirPackage, lpp_common::SourceMap) {
     )
 }
 
-fn typed(source: &str) -> (lpp_hir::HirPackage, lpp_types::ShadowTypeOutput, lpp_common::SourceMap) {
+fn typed(
+    source: &str,
+) -> (
+    lpp_hir::HirPackage,
+    lpp_types::ShadowTypeOutput,
+    lpp_common::SourceMap,
+) {
     let (package, sources) = lowered(source);
     let types = infer_hir_package(&package, ShadowInferenceOptions::default()).unwrap();
     (package, types, sources)
@@ -317,7 +323,10 @@ fn place_capacity_and_malformed_references_fail_structurally() {
         "    return values[0]\n",
     );
     let (package, mut types, sources) = typed(source);
-    let error = build_mir(&package, &sources, &mut types,
+    let error = build_mir(
+        &package,
+        &sources,
+        &mut types,
         MirBuildOptions {
             max_places: 0,
             ..MirBuildOptions::default()
@@ -327,7 +336,10 @@ fn place_capacity_and_malformed_references_fail_structurally() {
     assert_eq!(error.kind, MirBuildErrorKind::Capacity(MirCapacity::Places));
 
     let (package, mut types, sources) = typed(source);
-    let error = build_mir(&package, &sources, &mut types,
+    let error = build_mir(
+        &package,
+        &sources,
+        &mut types,
         MirBuildOptions {
             max_projections: 0,
             ..MirBuildOptions::default()

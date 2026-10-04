@@ -57,7 +57,11 @@ pub fn test_run(dir: &Path, lpp_bin: &str, reg: Option<&lpp_pm::Registry>) -> Re
     }
 
     let mut b = Builder::default();
-    b.push_record(["test".to_string(), "result".to_string(), "time (ms)".to_string()]);
+    b.push_record([
+        "test".to_string(),
+        "result".to_string(),
+        "time (ms)".to_string(),
+    ]);
     let mut passed = 0usize;
     let mut failed: Vec<String> = Vec::new();
 

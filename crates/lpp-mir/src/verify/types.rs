@@ -345,8 +345,14 @@ impl Verifier<'_> {
                     return None;
                 }
                 for (argument, (semantic, operand)) in expected.iter().zip(actual).enumerate() {
-                    let actual =
-                        self.operand_type(function, block, Some(instruction), origin, *operand, locals)?;
+                    let actual = self.operand_type(
+                        function,
+                        block,
+                        Some(instruction),
+                        origin,
+                        *operand,
+                        locals,
+                    )?;
                     if !lpp_types::type_matches_semantic(actual, *semantic, self.types) {
                         self.push(
                             function,
@@ -362,11 +368,9 @@ impl Verifier<'_> {
                         return None;
                     }
                 }
-                let expected_result = lpp_types::semantic_result_type(
-                    descriptor.semantic_result,
-                    self.types,
-                )
-                .unwrap_or(target_type);
+                let expected_result =
+                    lpp_types::semantic_result_type(descriptor.semantic_result, self.types)
+                        .unwrap_or(target_type);
                 if expected_result != target_type {
                     self.push(
                         function,
@@ -434,8 +438,14 @@ impl Verifier<'_> {
                         );
                         return None;
                     };
-                    let actual =
-                        self.operand_type(function, block, Some(instruction), origin, *operand, locals)?;
+                    let actual = self.operand_type(
+                        function,
+                        block,
+                        Some(instruction),
+                        origin,
+                        *operand,
+                        locals,
+                    )?;
                     if actual != capture.ty {
                         self.push(
                             function,
@@ -496,7 +506,11 @@ impl Verifier<'_> {
             Rvalue::Spawn(operand) => {
                 let ty =
                     self.operand_type(function, block, Some(instruction), origin, operand, locals)?;
-                let TypeKind::Function { parameters: _, result } = self.types.kind(ty) else {
+                let TypeKind::Function {
+                    parameters: _,
+                    result,
+                } = self.types.kind(ty)
+                else {
                     self.push(
                         function,
                         Some(block),

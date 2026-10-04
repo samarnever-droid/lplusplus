@@ -15,7 +15,9 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::compile::{BackendChoice, CompileError, build_executable, compile_entry, default_runtime_lib_dir};
+use crate::compile::{
+    BackendChoice, CompileError, build_executable, compile_entry, default_runtime_lib_dir,
+};
 use crate::{CompilerEngine, DriverContext, DriverOutcome, DriverRequest};
 
 /// The rewrite compiler engine (stage 1 of the driver cutover).
@@ -50,9 +52,33 @@ enum Mode {
 /// Subcommands owned by the package manager / toolchain rather than the
 /// single-file source path. The rewrite engine defers these to v1.
 const PM_COMMANDS: &[&str] = &[
-    "init", "create", "new", "install", "add", "remove", "update", "search", "list", "tree",
-    "metadata", "clean", "outdated", "version", "publish", "login", "upgrade", "self-update",
-    "update-self", "workspace", "bench", "config", "setup", "toolchain", "help", "dev", "lreact",
+    "init",
+    "create",
+    "new",
+    "install",
+    "add",
+    "remove",
+    "update",
+    "search",
+    "list",
+    "tree",
+    "metadata",
+    "clean",
+    "outdated",
+    "version",
+    "publish",
+    "login",
+    "upgrade",
+    "self-update",
+    "update-self",
+    "workspace",
+    "bench",
+    "config",
+    "setup",
+    "toolchain",
+    "help",
+    "dev",
+    "lreact",
 ];
 
 /// Exit code used when the rewrite engine deliberately defers to v1.
@@ -67,8 +93,8 @@ fn rewrite_main(args: &[String], cwd: &Path) -> i32 {
 
     // A leading verb mirrors v1's `emit`/`check`/`run`/`build <file.lpp>` forms.
     if let Some(first) = rest.first() {
-        let second_is_source = rest.len() > 1
-            && (rest[1].ends_with(".lpp") || cwd.join(&rest[1]).exists());
+        let second_is_source =
+            rest.len() > 1 && (rest[1].ends_with(".lpp") || cwd.join(&rest[1]).exists());
         match first.as_str() {
             "emit" => {
                 mode = Mode::EmitObject;
@@ -267,14 +293,22 @@ fn defer(command: &str) -> i32 {
     eprintln!(
         "[rewrite] `{command}` is a package-manager command not yet implemented by the rewrite engine (cutover stage 1)."
     );
-    eprintln!("[rewrite] Unset LPP_ENGINE (or set LPP_ENGINE=legacy) to run it with the v1 compiler.");
+    eprintln!(
+        "[rewrite] Unset LPP_ENGINE (or set LPP_ENGINE=legacy) to run it with the v1 compiler."
+    );
     EXIT_DEFER
 }
 
 fn no_input() -> i32 {
-    eprintln!("[rewrite] no input `.lpp` file given. The rewrite engine (cutover stage 1) compiles a single source file:");
-    eprintln!("        lpp <file.lpp> [--backend cranelift|wasm|llvm] [-o <out>] [--run | --check | --emit-object]");
-    eprintln!("        Package commands (build/run/test against lpp.toml, install, config, …) still require v1: unset LPP_ENGINE.");
+    eprintln!(
+        "[rewrite] no input `.lpp` file given. The rewrite engine (cutover stage 1) compiles a single source file:"
+    );
+    eprintln!(
+        "        lpp <file.lpp> [--backend cranelift|wasm|llvm] [-o <out>] [--run | --check | --emit-object]"
+    );
+    eprintln!(
+        "        Package commands (build/run/test against lpp.toml, install, config, …) still require v1: unset LPP_ENGINE."
+    );
     EXIT_DEFER
 }
 
@@ -282,7 +316,9 @@ fn run_wasm(module: &Path) -> i32 {
     if let Ok(status) = Command::new("wasmtime").arg(module).status() {
         return status.code().unwrap_or(0);
     }
-    eprintln!("[rewrite] built the wasm module but found no runtime to execute it (install wasmtime).");
+    eprintln!(
+        "[rewrite] built the wasm module but found no runtime to execute it (install wasmtime)."
+    );
     eprintln!("        module: {}", module.display());
     0
 }

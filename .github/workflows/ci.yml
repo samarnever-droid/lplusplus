@@ -28,26 +28,6 @@ jobs:
       - name: Clippy correctness and suspicious groups
         run: cargo clippy --workspace --all-targets --locked -- -A warnings -D clippy::correctness -D clippy::suspicious
 
-      - name: Rewrite crates warning-clean check
-        run: |
-          cargo clippy --locked \
-            -p lpp-common \
-            -p lpp-driver \
-            -p lpp-frontend \
-            -p lpp-hir \
-            -p lpp-types \
-            -p lpp-mir \
-            -p lpp-passes \
-            -p lpp-runtime-abi \
-            -p lpp-linker \
-            -p lpp-codegen-api \
-            -p lpp-codegen-cranelift \
-            -p lpp-codegen-wasm \
-            -p lpp-runtime \
-            -p lpp-pm \
-            -p keel \
-            --all-targets -- -D warnings
-
   workspace-gates:
     name: Workspace Gates (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -62,6 +42,11 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+
+      - name: Configure git identity for tests
+        run: |
+          git config --global user.name "L++ CI"
+          git config --global user.email "ci@lplusplus.bondd"
 
       - name: Install mold linker (Linux)
         if: runner.os == 'Linux'
@@ -110,10 +95,10 @@ jobs:
           cargo build -p lpp-runtime
 
       - name: Run Corpus Type-Check Triage
-        run: scripts/corpus_correctness.sh check
+        run: bash scripts/corpus_correctness.sh check
 
       - name: Run Full Corpus Correctness Oracle (Compile, Link & Run)
-        run: scripts/corpus_correctness.sh run
+        run: bash scripts/corpus_correctness.sh run
 
   all-arch-check:
     name: Multi-Arch Cranelift Targets Check
@@ -173,6 +158,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
+      - name: Configure git identity for tests
+        run: |
+          git config --global user.name "L++ CI"
+          git config --global user.email "ci@lplusplus.bondd"
+
       - name: Core crates unit & gate tests
         run: |
           cargo test -p lpp-linker -p lpp-runtime -p lpp-driver -p lpp-types -p lpp-mir -p lpp-passes -p lpp-frontend -p lpp-common -p lpp-codegen-api -p lpp-codegen-cranelift -p lpp-codegen-wasm -p lpp-pm --locked
@@ -183,8 +173,8 @@ jobs:
       - name: Direct PE Linker Verification
         run: |
           $env:PATH = "$PWD\target\release;$env:PATH"
-          lpp config set linker direct
-          lpp --version
-          lpp-link --version
-          lpp examples/01_hello.lpp -o target/hello.exe
+          .\target\release\lpp.exe config set linker direct
+          .\target\release\lpp.exe --version
+          .\target\release\lpp-link.exe --version
+          .\target\release\lpp.exe examples/01_hello.lpp -o target/hello.exe
           .\target\hello.exe

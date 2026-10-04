@@ -145,10 +145,28 @@ fn generic_structs_materialize_once_and_nested_reads_execute() {
         "    return boxed.value.first + boxed.value.second\n",
     );
     let (package, mut first_types, sources) = typed(source);
-    let first = build_mir(&package, &sources, &mut first_types, MirBuildOptions::default()).unwrap();
-    let repeated = build_mir(&package, &sources, &mut first_types, MirBuildOptions::default()).unwrap();
+    let first = build_mir(
+        &package,
+        &sources,
+        &mut first_types,
+        MirBuildOptions::default(),
+    )
+    .unwrap();
+    let repeated = build_mir(
+        &package,
+        &sources,
+        &mut first_types,
+        MirBuildOptions::default(),
+    )
+    .unwrap();
     let (package, mut second_types, sources) = typed(source);
-    let second = build_mir(&package, &sources, &mut second_types, MirBuildOptions::default()).unwrap();
+    let second = build_mir(
+        &package,
+        &sources,
+        &mut second_types,
+        MirBuildOptions::default(),
+    )
+    .unwrap();
 
     assert_eq!(first, repeated);
     assert_eq!(first, second);
@@ -259,7 +277,13 @@ fn generic_function_aggregate_types_are_concrete_and_optional_records_stay_non_e
     let work = optional.pop_next().unwrap().unwrap();
     optional.complete(work.id).unwrap();
     optional_types.instances = optional;
-    let program = build_mir(&package, &sources, &mut optional_types, MirBuildOptions::default()).unwrap();
+    let program = build_mir(
+        &package,
+        &sources,
+        &mut optional_types,
+        MirBuildOptions::default(),
+    )
+    .unwrap();
     assert!(verify_mir(&program, &optional_types.interner).is_empty());
     assert_eq!(
         execute_main(&program, &optional_types.interner),
@@ -509,7 +533,10 @@ fn aggregate_builder_and_interpreter_limits_are_structured() {
         "    return Choice.None()\n",
     );
     let (package, mut types, sources) = typed(enum_source);
-    let error = build_mir(&package, &sources, &mut types,
+    let error = build_mir(
+        &package,
+        &sources,
+        &mut types,
         MirBuildOptions {
             max_aggregate_variants: 0,
             ..MirBuildOptions::default()

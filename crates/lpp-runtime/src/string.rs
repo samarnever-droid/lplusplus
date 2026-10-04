@@ -295,7 +295,13 @@ pub unsafe extern "C" fn lpp_str_upper(s: *const c_char) -> *mut c_char {
     let b = unsafe { cstr_bytes(s) };
     let out: Vec<u8> = b
         .iter()
-        .map(|&c| if (b'a'..=b'z').contains(&c) { c - 32 } else { c })
+        .map(|&c| {
+            if (b'a'..=b'z').contains(&c) {
+                c - 32
+            } else {
+                c
+            }
+        })
         .collect();
     unsafe { arc_string(&out) }
 }
@@ -309,7 +315,13 @@ pub unsafe extern "C" fn lpp_str_lower(s: *const c_char) -> *mut c_char {
     let b = unsafe { cstr_bytes(s) };
     let out: Vec<u8> = b
         .iter()
-        .map(|&c| if (b'A'..=b'Z').contains(&c) { c + 32 } else { c })
+        .map(|&c| {
+            if (b'A'..=b'Z').contains(&c) {
+                c + 32
+            } else {
+                c
+            }
+        })
         .collect();
     unsafe { arc_string(&out) }
 }
@@ -444,7 +456,6 @@ pub unsafe extern "C" fn lpp_str_len(s: *const c_char) -> i64 {
     unsafe { strlen(s) as i64 }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -477,15 +488,27 @@ mod tests {
     fn scenario() -> i64 {
         let mut h: i64 = 1469598103934665603;
         unsafe {
-            mixs(&mut h, lpp_str_concat(c"Hello, ".as_ptr(), c"world".as_ptr()));
+            mixs(
+                &mut h,
+                lpp_str_concat(c"Hello, ".as_ptr(), c"world".as_ptr()),
+            );
             mix(&mut h, lpp_str_find(c"abcdef".as_ptr(), c"cd".as_ptr()));
             mix(&mut h, lpp_str_find(c"abcdef".as_ptr(), c"zz".as_ptr()));
-            mixs(&mut h, lpp_str_replace(c"a-b-c".as_ptr(), c"-".as_ptr(), c"+".as_ptr()));
-            mixs(&mut h, lpp_str_replace(c"aaa".as_ptr(), c"a".as_ptr(), c"bb".as_ptr()));
+            mixs(
+                &mut h,
+                lpp_str_replace(c"a-b-c".as_ptr(), c"-".as_ptr(), c"+".as_ptr()),
+            );
+            mixs(
+                &mut h,
+                lpp_str_replace(c"aaa".as_ptr(), c"a".as_ptr(), c"bb".as_ptr()),
+            );
             mixs(&mut h, lpp_str_trim(c"  hi\t".as_ptr()));
             mix(&mut h, lpp_str_contains(c"hello".as_ptr(), c"ell".as_ptr()));
             mix(&mut h, lpp_str_contains(c"hello".as_ptr(), c"xyz".as_ptr()));
-            mix(&mut h, lpp_str_starts_with(c"hello".as_ptr(), c"he".as_ptr()));
+            mix(
+                &mut h,
+                lpp_str_starts_with(c"hello".as_ptr(), c"he".as_ptr()),
+            );
             mix(&mut h, lpp_str_ends_with(c"hello".as_ptr(), c"lo".as_ptr()));
             mixs(&mut h, lpp_str_upper(c"aBc".as_ptr()));
             mixs(&mut h, lpp_str_lower(c"aBc".as_ptr()));

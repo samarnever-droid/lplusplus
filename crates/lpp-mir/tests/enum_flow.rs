@@ -512,7 +512,10 @@ fn switch_target_capacity_is_independent_and_structured() {
         "    return 0\n",
     );
     let (package, mut types, sources) = typed(source);
-    let error = build_mir(&package, &sources, &mut types,
+    let error = build_mir(
+        &package,
+        &sources,
+        &mut types,
         MirBuildOptions {
             max_switch_targets: 2,
             ..MirBuildOptions::default()

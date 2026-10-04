@@ -13,13 +13,24 @@ pub enum AggregateConstructor {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AggregateExpressionFact {
     Constructor(AggregateConstructor),
-    VariantConstructor { item: HirItemId, variant: VariantId },
-    UnitVariant { item: HirItemId, variant: VariantId },
-    FieldProjection { item: HirItemId, field: FieldId },
+    VariantConstructor {
+        item: HirItemId,
+        variant: VariantId,
+    },
+    UnitVariant {
+        item: HirItemId,
+        variant: VariantId,
+    },
+    FieldProjection {
+        item: HirItemId,
+        field: FieldId,
+    },
     /// A UFCS method call `receiver.method(..)`: `method` is the resolved
     /// function item (a free function or an `impl` method) that receives the
     /// receiver as its first argument.
-    MethodCall { method: HirItemId },
+    MethodCall {
+        method: HirItemId,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

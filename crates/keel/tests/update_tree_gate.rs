@@ -3,8 +3,8 @@
 use std::path::Path;
 use std::process::Command;
 
-use lpp_pm::index::{IndexEntry, VersionEntry};
 use lpp_pm::Registry;
+use lpp_pm::index::{IndexEntry, VersionEntry};
 
 fn git(cwd: &Path, args: &[&str]) {
     let out = Command::new("git")
@@ -49,7 +49,15 @@ fn ve(version: &str, yanked: bool, deps: &[(&str, &str)]) -> VersionEntry {
 /// Seed a bare git registry with `math` + `stats`; return the bare path.
 fn seeded_registry(root: &Path) -> std::path::PathBuf {
     let bare = root.join("remote.git");
-    git(root, &["init", "--bare", "--initial-branch=main", bare.to_str().unwrap()]);
+    git(
+        root,
+        &[
+            "init",
+            "--bare",
+            "--initial-branch=main",
+            bare.to_str().unwrap(),
+        ],
+    );
     let work = root.join("work");
     git(root, &["init", "-b", "main", work.to_str().unwrap()]);
     git(&work, &["config", "user.name", "Seeder"]);
@@ -90,7 +98,10 @@ fn republish(root: &Path, bare: &Path, entry: &IndexEntry) {
     let reg = Registry::new(bare.to_string_lossy().as_ref(), root.join("republisher"));
     reg.sync().unwrap();
     git(&root.join("republisher"), &["config", "user.name", "R"]);
-    git(&root.join("republisher"), &["config", "user.email", "r@example.com"]);
+    git(
+        &root.join("republisher"),
+        &["config", "user.email", "r@example.com"],
+    );
     reg.publish(entry, b"artifact", "bump").unwrap();
     reg.push().unwrap();
 }
@@ -109,8 +120,8 @@ fn make_proj(root: &Path) -> std::path::PathBuf {
 }
 
 fn lock_map(proj: &Path) -> std::collections::BTreeMap<String, String> {
-    let lock = lpp_pm::Lock::parse(&std::fs::read_to_string(proj.join("Keel.lock")).unwrap())
-        .unwrap();
+    let lock =
+        lpp_pm::Lock::parse(&std::fs::read_to_string(proj.join("Keel.lock")).unwrap()).unwrap();
     lock.packages
         .into_iter()
         .map(|p| (p.name, p.version))
@@ -267,8 +278,7 @@ fn update_single_with_gone_pinned_version_is_e6022() {
         },
     );
     let reg2 = Registry::new(bare.to_string_lossy().as_ref(), root.join("clone2"));
-    let err = keel::commands::update::update(Some(&reg2), &proj, Some("stats"))
-        .unwrap_err();
+    let err = keel::commands::update::update(Some(&reg2), &proj, Some("stats")).unwrap_err();
     assert!(
         err.contains("E6022") && err.contains("math") && err.contains("1.0.0"),
         "expected E6022 for the gone pinned math, got: {err}"
@@ -358,7 +368,11 @@ fn binary_wiring_update_and_tree() {
         .current_dir(&proj)
         .output()
         .unwrap();
-    assert!(out.status.success(), "fetch: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "fetch: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 
     republish(
         &root,
@@ -377,10 +391,20 @@ fn binary_wiring_update_and_tree() {
         .current_dir(&proj)
         .output()
         .unwrap();
-    assert!(out.status.success(), "update: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "update: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("updated Keel.lock"), "diff table missing:\n{stdout}");
-    assert!(stdout.contains("1.0.0") && stdout.contains("1.5.0"), "bump row missing:\n{stdout}");
+    assert!(
+        stdout.contains("updated Keel.lock"),
+        "diff table missing:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("1.0.0") && stdout.contains("1.5.0"),
+        "bump row missing:\n{stdout}"
+    );
 
     // tree → rendered graph on stdout
     let out = Command::new(keel_bin)
@@ -390,9 +414,16 @@ fn binary_wiring_update_and_tree() {
         .current_dir(&proj)
         .output()
         .unwrap();
-    assert!(out.status.success(), "tree: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "tree: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("app v0.1.0"), "tree header missing:\n{stdout}");
+    assert!(
+        stdout.contains("app v0.1.0"),
+        "tree header missing:\n{stdout}"
+    );
     assert!(
         stdout.contains("math v1.5.0 (registry)"),
         "tree must show the updated version:\n{stdout}"

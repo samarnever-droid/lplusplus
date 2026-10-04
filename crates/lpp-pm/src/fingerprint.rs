@@ -94,9 +94,7 @@ impl FingerprintStore {
 
     /// Drop entries whose keys are no longer in `current` (deleted packages).
     pub fn prune(&mut self, current: &BTreeMap<String, String>) {
-        self.file
-            .entries
-            .retain(|k, _| current.contains_key(k));
+        self.file.entries.retain(|k, _| current.contains_key(k));
     }
 
     /// The fingerprint map (key → fingerprint) as a plain BTreeMap.
@@ -129,7 +127,12 @@ fn now_stamp() -> String {
     let days = secs / 86_400;
     let rem = secs % 86_400;
     let (y, mo, d) = civil_from_days(days);
-    format!("{y:04}-{mo:02}-{d:02}T{:02}:{:02}:{:02}Z", rem / 3600, (rem % 3600) / 60, rem % 60)
+    format!(
+        "{y:04}-{mo:02}-{d:02}T{:02}:{:02}:{:02}Z",
+        rem / 3600,
+        (rem % 3600) / 60,
+        rem % 60
+    )
 }
 
 /// Days since 1970-01-01 → (year, month, day). Howard Hinnant's civil algorithm.
@@ -252,14 +255,7 @@ pub fn compute_member_fps(ws: &Workspace, lpp_bin: &str) -> Result<BTreeMap<Stri
         .members
         .iter()
         .enumerate()
-        .map(|(i, m)| {
-            (
-                i,
-                m.manifest
-                    .to_toml()
-                    .unwrap_or_else(|_| String::new()),
-            )
-        })
+        .map(|(i, m)| (i, m.manifest.to_toml().unwrap_or_else(|_| String::new())))
         .collect();
     let sources: BTreeMap<usize, BTreeMap<String, String>> = ws
         .members
@@ -277,7 +273,11 @@ pub fn compute_member_fps(ws: &Workspace, lpp_bin: &str) -> Result<BTreeMap<Stri
         // Dep fingerprints: the same target first (deps are computed earlier
         // in `order`), falling back to the dep's host fingerprint.
         let mut dep_fps: BTreeMap<String, String> = BTreeMap::new();
-        for dm in ws.members.iter().filter(|dm| m.path_deps.iter().any(|d| d == dm.name())) {
+        for dm in ws
+            .members
+            .iter()
+            .filter(|dm| m.path_deps.iter().any(|d| d == dm.name()))
+        {
             let mut found: Option<String> = None;
             for target in &targets {
                 if let Some(fp) = fps.get(&format!("{}|{}", dm.name(), target)) {

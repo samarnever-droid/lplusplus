@@ -48,7 +48,10 @@ impl FileSystem for MemoryFileSystem {
     }
 }
 
-fn typed(source: &str, options: ShadowInferenceOptions) -> (lpp_hir::HirPackage, ShadowTypeOutput, lpp_common::SourceMap) {
+fn typed(
+    source: &str,
+    options: ShadowInferenceOptions,
+) -> (lpp_hir::HirPackage, ShadowTypeOutput, lpp_common::SourceMap) {
     let filesystem = MemoryFileSystem::new(source);
     let graph = GraphBuilder::new(&filesystem)
         .build(GraphRequest::new(
@@ -175,7 +178,10 @@ fn inferred_and_explicit_demands_emit_concrete_instances_once() {
             })
     );
 
-    let error = build_mir(&package, &sources, &mut types,
+    let error = build_mir(
+        &package,
+        &sources,
+        &mut types,
         MirBuildOptions {
             max_functions: 2,
             ..MirBuildOptions::default()
@@ -206,10 +212,28 @@ fn nested_and_recursive_generic_dependencies_execute_deterministically() {
         "    return recur[Int](42, true)\n",
     );
     let (package, mut first_types, sources) = typed(source, ShadowInferenceOptions::default());
-    let first = build_mir(&package, &sources, &mut first_types, MirBuildOptions::default()).unwrap();
-    let repeated = build_mir(&package, &sources, &mut first_types, MirBuildOptions::default()).unwrap();
+    let first = build_mir(
+        &package,
+        &sources,
+        &mut first_types,
+        MirBuildOptions::default(),
+    )
+    .unwrap();
+    let repeated = build_mir(
+        &package,
+        &sources,
+        &mut first_types,
+        MirBuildOptions::default(),
+    )
+    .unwrap();
     let (package, mut second_types, sources) = typed(source, ShadowInferenceOptions::default());
-    let second = build_mir(&package, &sources, &mut second_types, MirBuildOptions::default()).unwrap();
+    let second = build_mir(
+        &package,
+        &sources,
+        &mut second_types,
+        MirBuildOptions::default(),
+    )
+    .unwrap();
 
     assert_eq!(first, repeated);
     assert_eq!(first, second);
@@ -297,7 +321,13 @@ fn optional_records_are_not_executable_and_required_arity_is_validated() {
     optional.complete(work.id).unwrap();
     optional_types.instances = optional;
 
-    let program = build_mir(&package, &sources, &mut optional_types, MirBuildOptions::default()).unwrap();
+    let program = build_mir(
+        &package,
+        &sources,
+        &mut optional_types,
+        MirBuildOptions::default(),
+    )
+    .unwrap();
     assert_eq!(program.function_count(), 1);
     assert!(
         program
@@ -319,7 +349,13 @@ fn optional_records_are_not_executable_and_required_arity_is_validated() {
     malformed.complete(work.id).unwrap();
     malformed_types.instances = malformed;
 
-    let error = build_mir(&package, &sources, &mut malformed_types, MirBuildOptions::default()).unwrap_err();
+    let error = build_mir(
+        &package,
+        &sources,
+        &mut malformed_types,
+        MirBuildOptions::default(),
+    )
+    .unwrap_err();
     assert_eq!(
         error.kind,
         MirBuildErrorKind::InvalidInstanceArity {
@@ -350,7 +386,13 @@ fn invalid_instance_plans_and_type_work_exhaustion_are_structured() {
         },
     );
     assert!(!limited_types.instance_diagnostics.is_empty());
-    let error = build_mir(&package, &sources, &mut limited_types, MirBuildOptions::default()).unwrap_err();
+    let error = build_mir(
+        &package,
+        &sources,
+        &mut limited_types,
+        MirBuildOptions::default(),
+    )
+    .unwrap_err();
     assert!(matches!(
         error.kind,
         MirBuildErrorKind::InvalidInstancePlan { diagnostics: 1.. }
@@ -358,7 +400,10 @@ fn invalid_instance_plans_and_type_work_exhaustion_are_structured() {
     assert_eq!(error.code(), "E4006");
 
     let (package, mut types, sources) = typed(source, ShadowInferenceOptions::default());
-    let error = build_mir(&package, &sources, &mut types,
+    let error = build_mir(
+        &package,
+        &sources,
+        &mut types,
         MirBuildOptions {
             max_type_work: 0,
             ..MirBuildOptions::default()
@@ -372,7 +417,10 @@ fn invalid_instance_plans_and_type_work_exhaustion_are_structured() {
     assert_eq!(error.code(), "E4001");
 
     let (package, mut types, sources) = typed(source, ShadowInferenceOptions::default());
-    let error = build_mir(&package, &sources, &mut types,
+    let error = build_mir(
+        &package,
+        &sources,
+        &mut types,
         MirBuildOptions {
             max_type_depth: 0,
             ..MirBuildOptions::default()
@@ -390,13 +438,27 @@ fn invalid_instance_plans_and_type_work_exhaustion_are_structured() {
 fn repeated_calls_do_not_duplicate_generic_function_bodies() {
     let small_source = repeated_identity_calls(20);
     let large_source = repeated_identity_calls(200);
-    let (small_package, mut small_types, small_sources) = typed(&small_source, ShadowInferenceOptions::default());
-    let (large_package, mut large_types, large_sources) = typed(&large_source, ShadowInferenceOptions::default());
+    let (small_package, mut small_types, small_sources) =
+        typed(&small_source, ShadowInferenceOptions::default());
+    let (large_package, mut large_types, large_sources) =
+        typed(&large_source, ShadowInferenceOptions::default());
     assert_eq!(small_types.instances.records().len(), 1);
     assert_eq!(large_types.instances.records().len(), 1);
 
-    let small = build_mir(&small_package, &small_sources, &mut small_types, MirBuildOptions::default()).unwrap();
-    let large = build_mir(&large_package, &large_sources, &mut large_types, MirBuildOptions::default()).unwrap();
+    let small = build_mir(
+        &small_package,
+        &small_sources,
+        &mut small_types,
+        MirBuildOptions::default(),
+    )
+    .unwrap();
+    let large = build_mir(
+        &large_package,
+        &large_sources,
+        &mut large_types,
+        MirBuildOptions::default(),
+    )
+    .unwrap();
     assert_eq!(small.function_count(), 2);
     assert_eq!(large.function_count(), 2);
     assert_eq!(

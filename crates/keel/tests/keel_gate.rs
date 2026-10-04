@@ -6,8 +6,7 @@ use keel::cli::{CacheAction, CacheBackend, Cli, Command};
 
 #[test]
 fn parses_cache_stats_with_explicit_backend() {
-    let cli =
-        Cli::try_parse_from(["keel", "cache", "stats", "--cache-backend", "memory"]).unwrap();
+    let cli = Cli::try_parse_from(["keel", "cache", "stats", "--cache-backend", "memory"]).unwrap();
     assert_eq!(cli.cache_backend, CacheBackend::Memory);
     match cli.command {
         Command::Cache { action } => assert!(matches!(action, CacheAction::Stats)),

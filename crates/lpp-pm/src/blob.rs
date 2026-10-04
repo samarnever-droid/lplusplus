@@ -27,8 +27,7 @@ impl DiskBlobStore {
     /// Open (creating if needed) a store rooted at `root`.
     pub fn open(root: impl Into<PathBuf>) -> Result<Self> {
         let root = root.into();
-        std::fs::create_dir_all(root.join("blobs"))
-            .map_err(|e| PmError::Io(e.to_string()))?;
+        std::fs::create_dir_all(root.join("blobs")).map_err(|e| PmError::Io(e.to_string()))?;
         Ok(Self { root })
     }
 

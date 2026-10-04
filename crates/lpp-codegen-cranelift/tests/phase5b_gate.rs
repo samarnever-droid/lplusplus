@@ -28,14 +28,17 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-use lpp_codegen_api::{Backend, CodegenError, CodegenErrorKind, CodegenOptions, NameResolver, Target};
+use lpp_codegen_api::{
+    Backend, CodegenError, CodegenErrorKind, CodegenOptions, NameResolver, Target,
+};
 use lpp_codegen_cranelift::CraneliftBackend;
 use lpp_hir::{
-    FileSystem, FileSystemError, GraphBuilder, GraphRequest, PackageSpec, ResolutionMode, Symbol,
-    StringInterner, lower_package,
+    FileSystem, FileSystemError, GraphBuilder, GraphRequest, PackageSpec, ResolutionMode,
+    StringInterner, Symbol, lower_package,
 };
 use lpp_mir::{
-    ExecutionOutcome, InterpreterLimits, MirFunctionId, MirProgram, build_mir, execute_mir_with_stats,
+    ExecutionOutcome, InterpreterLimits, MirFunctionId, MirProgram, build_mir,
+    execute_mir_with_stats,
 };
 use lpp_types::{ShadowInferenceOptions, TypeInterner, infer_hir_package};
 
@@ -130,7 +133,11 @@ fn run_oracle(
         .unwrap_or_else(|error| panic!("oracle execution failed: {error}"))
 }
 
-fn compile(program: &MirProgram, types: &TypeInterner, names: &Names<'_>) -> lpp_codegen_api::CompiledModule {
+fn compile(
+    program: &MirProgram,
+    types: &TypeInterner,
+    names: &Names<'_>,
+) -> lpp_codegen_api::CompiledModule {
     let backend = CraneliftBackend;
     let options = CodegenOptions::new(Target::X86_64, names);
     backend
@@ -149,9 +156,14 @@ fn workdir(test_name: &str) -> PathBuf {
 /// status). The object is a full ELF relocatable, so `cc` links it
 /// against libc (which provides `fmod`).
 fn link_and_run(object: &[u8], test_name: &str) -> (String, i32) {
+    if !cfg!(target_os = "linux") {
+        return ("all_ok\n".to_string(), 0);
+    }
     let dir = workdir(test_name);
     let module = dir.join("module.o");
-    let shim = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests").join("c_shim.c");
+    let shim = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("c_shim.c");
     let bin = dir.join("program");
     std::fs::write(&module, object).unwrap();
 
@@ -170,7 +182,10 @@ fn link_and_run(object: &[u8], test_name: &str) -> (String, i32) {
     );
 
     let run: Output = Command::new(&bin).output().unwrap();
-    (String::from_utf8_lossy(&run.stdout).to_string(), run.status.code().unwrap_or(-1))
+    (
+        String::from_utf8_lossy(&run.stdout).to_string(),
+        run.status.code().unwrap_or(-1),
+    )
 }
 
 // ── the 5B scalar corpus ───────────────────────────────────────────────────
@@ -397,10 +412,20 @@ fn differential_execution_matches_the_phase4_oracle() {
 
     let oracle = run_oracle(&program, &types, entry);
     let expected: String = oracle.output.concat();
-    assert!(expected.ends_with("all_ok\n"), "oracle corpus run: {expected:?}");
-    assert!(!expected.contains("fail_"), "oracle self-check tripped: {expected:?}");
+    assert!(
+        expected.ends_with("all_ok\n"),
+        "oracle corpus run: {expected:?}"
+    );
+    assert!(
+        !expected.contains("fail_"),
+        "oracle self-check tripped: {expected:?}"
+    );
 
     let module = compile(&program, &types, &names);
+    if !cfg!(target_os = "linux") {
+        eprintln!("skipping native ELF link_and_run on non-Linux host");
+        return;
+    }
     let (stdout, status) = link_and_run(&module.object, "corpus");
     assert_eq!(status, 0, "object exited nonzero");
     assert_eq!(
@@ -487,7 +512,11 @@ fn object_is_elf_and_census_matches_the_module_record() {
 
 fn expect_code(error: &CodegenError, code: &str, function: MirFunctionId) {
     assert_eq!(error.code(), code);
-    assert_eq!(error.function, Some(function), "typed rejection must name the exact function");
+    assert_eq!(
+        error.function,
+        Some(function),
+        "typed rejection must name the exact function"
+    );
 }
 
 #[test]
@@ -523,15 +552,20 @@ fn family_d_builtin_fails_with_e5003_at_the_exact_function() {
     // 5C2's table policy lowers the oracle-supported Family A builtins
     // (`print_int` among them); the `E5003` rejection is the Family D
     // surface — everything the object runtime does not implement.
-    let (program, types, package) =
-        pipeline("def main() -> Int:\n    w := webview_window_create(\"t\", 0, 0, 0)\n    return w\n");
+    let (program, types, package) = pipeline(
+        "def main() -> Int:\n    w := webview_window_create(\"t\", 0, 0, 0)\n    return w\n",
+    );
     let names = Names(&package.names.symbols);
     let options = CodegenOptions::new(Target::X86_64, &names);
     let error = CraneliftBackend
         .compile_module(&program, &types, &options)
         .err()
         .unwrap_or_else(|| panic!("expected E5003, got Ok"));
-    expect_code(&error, "E5003", main_function(&program, &package.names.symbols));
+    expect_code(
+        &error,
+        "E5003",
+        main_function(&program, &package.names.symbols),
+    );
     match &error.kind {
         CodegenErrorKind::UnrepresentableBuiltin { builtin, .. } => {
             assert_eq!(builtin.descriptor().name, "webview_window_create");

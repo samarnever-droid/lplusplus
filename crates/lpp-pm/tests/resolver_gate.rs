@@ -1,7 +1,7 @@
 //! Gate: the semver matcher, the dependency resolver, and the `Keel.lock` model.
 
 use lpp_pm::lock::Lock;
-use lpp_pm::resolve::{resolve, Candidate, Pkg};
+use lpp_pm::resolve::{Candidate, Pkg, resolve};
 use lpp_pm::semver::{Req, Version};
 
 fn v(s: &str) -> Version {
@@ -64,7 +64,11 @@ fn semver_requirement_matching() {
 #[test]
 fn resolves_the_highest_matching_version() {
     let r = resolve(&root("app", &[("math", "^1.0")]), &|name| match name {
-        "math" => Some(vec![cand("1.0.0", &[]), cand("1.4.2", &[]), cand("2.0.0", &[])]),
+        "math" => Some(vec![
+            cand("1.0.0", &[]),
+            cand("1.4.2", &[]),
+            cand("2.0.0", &[]),
+        ]),
         _ => None,
     })
     .unwrap();
@@ -86,12 +90,15 @@ fn resolves_transitive_deps() {
 #[test]
 fn shared_compatible_dep_is_resolved_once() {
     // a and c both need b ^1 -> exactly one b.
-    let r = resolve(&root("app", &[("a", "^1.0"), ("c", "^1.0")]), &|name| match name {
-        "a" => Some(vec![cand("1.0.0", &[("b", "^1.0")])]),
-        "c" => Some(vec![cand("1.0.0", &[("b", "^1.0")])]),
-        "b" => Some(vec![cand("1.5.0", &[])]),
-        _ => None,
-    })
+    let r = resolve(
+        &root("app", &[("a", "^1.0"), ("c", "^1.0")]),
+        &|name| match name {
+            "a" => Some(vec![cand("1.0.0", &[("b", "^1.0")])]),
+            "c" => Some(vec![cand("1.0.0", &[("b", "^1.0")])]),
+            "b" => Some(vec![cand("1.5.0", &[])]),
+            _ => None,
+        },
+    )
     .unwrap();
     assert_eq!(r.get("b").unwrap().version, v("1.5.0"));
 }
@@ -99,14 +106,20 @@ fn shared_compatible_dep_is_resolved_once() {
 #[test]
 fn conflicting_requirements_error() {
     // a needs b ^1, c needs b ^2 -> incompatible.
-    let e = resolve(&root("app", &[("a", "^1.0"), ("c", "^1.0")]), &|name| match name {
-        "a" => Some(vec![cand("1.0.0", &[("b", "^1.0")])]),
-        "c" => Some(vec![cand("1.0.0", &[("b", "^2.0")])]),
-        "b" => Some(vec![cand("1.5.0", &[]), cand("2.0.0", &[])]),
-        _ => None,
-    })
+    let e = resolve(
+        &root("app", &[("a", "^1.0"), ("c", "^1.0")]),
+        &|name| match name {
+            "a" => Some(vec![cand("1.0.0", &[("b", "^1.0")])]),
+            "c" => Some(vec![cand("1.0.0", &[("b", "^2.0")])]),
+            "b" => Some(vec![cand("1.5.0", &[]), cand("2.0.0", &[])]),
+            _ => None,
+        },
+    )
     .unwrap_err();
-    assert!(matches!(e, lpp_pm::PmError::ResolveConflict { .. }), "got {e}");
+    assert!(
+        matches!(e, lpp_pm::PmError::ResolveConflict { .. }),
+        "got {e}"
+    );
 }
 
 #[test]
@@ -124,7 +137,10 @@ fn cycles_do_not_loop_forever() {
 #[test]
 fn unknown_package_is_a_typed_error() {
     let e = resolve(&root("app", &[("ghost", "^1.0")]), &|_| None).unwrap_err();
-    assert!(matches!(e, lpp_pm::PmError::NoMatchingVersion { .. }), "got {e}");
+    assert!(
+        matches!(e, lpp_pm::PmError::NoMatchingVersion { .. }),
+        "got {e}"
+    );
 }
 
 // --- lock ---

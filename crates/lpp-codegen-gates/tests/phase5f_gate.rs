@@ -134,23 +134,19 @@ fn compile_cranelift(
         .unwrap_or_else(|e| panic!("cranelift compile failed: {e}"))
 }
 
-fn compile_llvm(
-    program: &MirProgram,
-    types: &TypeInterner,
-    names: &Names<'_>,
-) -> CompiledModule {
+fn compile_llvm(program: &MirProgram, types: &TypeInterner, names: &Names<'_>) -> CompiledModule {
     LlvmBackend
         .compile_module(program, types, &CodegenOptions::new(Target::X86_64, names))
         .unwrap_or_else(|e| panic!("llvm compile failed: {e}"))
 }
 
-fn compile_wasm(
-    program: &MirProgram,
-    types: &TypeInterner,
-    names: &Names<'_>,
-) -> CompiledModule {
+fn compile_wasm(program: &MirProgram, types: &TypeInterner, names: &Names<'_>) -> CompiledModule {
     WasmBackend
-        .compile_module(program, types, &CodegenOptions::new(Target::Wasm32Wasi, names))
+        .compile_module(
+            program,
+            types,
+            &CodegenOptions::new(Target::Wasm32Wasi, names),
+        )
         .unwrap_or_else(|e| panic!("wasm compile failed: {e}"))
 }
 
@@ -445,7 +441,10 @@ fn cross_backend_corpus_agrees() {
     let (cl_out, cl_status) = link_and_run(&cl.object, "x_cl");
     assert_eq!(cl_status, 0, "cranelift exited non-zero:\n{cl_out}");
     check_markers(&cl_out, "cranelift");
-    assert_eq!(cl_out, expected, "cranelift stdout diverged from the oracle");
+    assert_eq!(
+        cl_out, expected,
+        "cranelift stdout diverged from the oracle"
+    );
 
     // LLVM (native).
     let ll = compile_llvm(&program, &types, &names);
@@ -475,7 +474,10 @@ fn deterministic_object_sizes() {
 
     // Each backend is compiled twice; the objects must be byte-identical and
     // non-empty. The recorded size is the deterministic size baseline.
-    let cases: &[(&str, fn(&MirProgram, &TypeInterner, &Names<'_>) -> CompiledModule)] = &[
+    let cases: &[(
+        &str,
+        fn(&MirProgram, &TypeInterner, &Names<'_>) -> CompiledModule,
+    )] = &[
         ("cranelift", compile_cranelift),
         ("llvm", compile_llvm),
         ("wasm", compile_wasm),
@@ -489,7 +491,11 @@ fn deterministic_object_sizes() {
             a.object, b.object,
             "{label}: two compiles differ byte-for-byte"
         );
-        assert_eq!(a.object.len(), b.object.len(), "{label}: object size not stable");
+        assert_eq!(
+            a.object.len(),
+            b.object.len(),
+            "{label}: object size not stable"
+        );
         assert_eq!(
             a.exported_symbols, b.exported_symbols,
             "{label}: export censuses differ"
@@ -509,10 +515,10 @@ fn sanitizer_clean() {
 
     // The native backends are re-linked with ASan+UBSan and executed; a clean
     // exit with no sanitizer report is required.
-    let cases: &[(&str, fn(&MirProgram, &TypeInterner, &Names<'_>) -> CompiledModule)] = &[
-        ("cranelift", compile_cranelift),
-        ("llvm", compile_llvm),
-    ];
+    let cases: &[(
+        &str,
+        fn(&MirProgram, &TypeInterner, &Names<'_>) -> CompiledModule,
+    )] = &[("cranelift", compile_cranelift), ("llvm", compile_llvm)];
     for (label, compile) in cases {
         let module = compile(&program, &types, &names);
         let dir = workdir(&format!("san_{label}"));
@@ -536,8 +542,13 @@ fn sanitizer_clean() {
         let run = Command::new(&bin).output().unwrap();
         let stderr = String::from_utf8_lossy(&run.stderr);
         let status = run.status.code().unwrap_or(-1);
-        assert!(!stderr.contains("AddressSanitizer") && !stderr.contains("runtime error"),
-            "{label}: sanitizer report:\n{stderr}");
-        assert_eq!(status, 0, "{label}: sanitized run exited non-zero (see stderr)");
+        assert!(
+            !stderr.contains("AddressSanitizer") && !stderr.contains("runtime error"),
+            "{label}: sanitizer report:\n{stderr}"
+        );
+        assert_eq!(
+            status, 0,
+            "{label}: sanitized run exited non-zero (see stderr)"
+        );
     }
 }

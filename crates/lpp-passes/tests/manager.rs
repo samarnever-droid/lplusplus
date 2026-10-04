@@ -61,7 +61,13 @@ fn valid_program() -> (MirProgram, TypeInterner) {
         .unwrap();
     let package = lower_package(&graph, ResolutionMode::Namespaced).unwrap();
     let mut types = infer_hir_package(&package, ShadowInferenceOptions::default()).unwrap();
-    let program = build_mir(&package, &graph.sources, &mut types, MirBuildOptions::default()).unwrap();
+    let program = build_mir(
+        &package,
+        &graph.sources,
+        &mut types,
+        MirBuildOptions::default(),
+    )
+    .unwrap();
     (program, types.interner)
 }
 

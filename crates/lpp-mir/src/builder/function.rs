@@ -340,9 +340,7 @@ impl FunctionBuilder<'_, '_> {
             if self.return_type == self.core.types.interner.primitive(PrimitiveType::Void) {
                 self.blocks[current].terminator = Some(DraftTerminator::Return(None));
             } else {
-                return Err(self
-                    .core
-                    .error(origin, MirBuildErrorKind::MissingReturn));
+                return Err(self.core.error(origin, MirBuildErrorKind::MissingReturn));
             }
         }
 

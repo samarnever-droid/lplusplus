@@ -88,7 +88,10 @@ pub fn outdated_render(
     let (_ws, lock) = load_lock(dir)?;
 
     if let Some(f) = filter {
-        if !locked_registry_names(&lock).into_iter().any(|p| p.name == f) {
+        if !locked_registry_names(&lock)
+            .into_iter()
+            .any(|p| p.name == f)
+        {
             return Err(lpp_pm::PmError::NotInLockFile(f.to_string()).to_string());
         }
     }
@@ -105,7 +108,7 @@ pub fn outdated_render(
             return Err(
                 "no registry configured: pass --registry <git-url> or set KEEL_REGISTRY"
                     .to_string(),
-            )
+            );
         }
     };
 
@@ -122,7 +125,12 @@ pub fn outdated_render(
         if status != "up to date" {
             interesting += 1;
         }
-        b.push_record([name.clone(), current.clone(), latest.clone(), status.clone()]);
+        b.push_record([
+            name.clone(),
+            current.clone(),
+            latest.clone(),
+            status.clone(),
+        ]);
     }
     let mut text = b.build().to_string();
     text.push('\n');
@@ -151,11 +159,7 @@ fn verify_one(reg: &Registry, name: &str, version: &str, locked: &str) -> &'stat
     match reg.fetch(name, version) {
         Ok((bytes, _entry)) => {
             let actual = lpp_pm::ContentAddress::of_bytes(&bytes).to_string();
-            if actual == locked {
-                "ok"
-            } else {
-                "mismatch"
-            }
+            if actual == locked { "ok" } else { "mismatch" }
         }
         Err(lpp_pm::PmError::PackageNotFound(_)) => "removed",
         Err(_) => "missing",
@@ -164,10 +168,7 @@ fn verify_one(reg: &Registry, name: &str, version: &str, locked: &str) -> &'stat
 
 /// Build the full `keel verify` output. Returns `Ok(None)` when everything
 /// verified, `Ok(Some(summary))` when not (caller exits non-zero).
-pub fn verify_render(
-    reg: &Registry,
-    dir: &Path,
-) -> Result<(String, bool), String> {
+pub fn verify_render(reg: &Registry, dir: &Path) -> Result<(String, bool), String> {
     let (_ws, lock) = load_lock(dir)?;
     reg.sync().map_err(|e| e.to_string())?;
 
@@ -186,7 +187,12 @@ pub fn verify_render(
         if status != "ok" {
             failed += 1;
         }
-        rows.push((p.name.clone(), p.version.clone(), checksum[..12.min(checksum.len())].to_string(), status));
+        rows.push((
+            p.name.clone(),
+            p.version.clone(),
+            checksum[..12.min(checksum.len())].to_string(),
+            status,
+        ));
     }
     rows.sort_by(|a, b| a.0.cmp(&b.0));
 
@@ -198,7 +204,12 @@ pub fn verify_render(
         "status".to_string(),
     ]);
     for (name, version, short, status) in &rows {
-        b.push_record([name.clone(), version.clone(), short.clone(), status.to_string()]);
+        b.push_record([
+            name.clone(),
+            version.clone(),
+            short.clone(),
+            status.to_string(),
+        ]);
     }
     let mut text = b.build().to_string();
     text.push('\n');
@@ -214,7 +225,9 @@ pub fn verify_render(
         ));
     }
     if skipped > 0 {
-        text.push_str(&format!("({skipped} path/member package(s) skipped — not content-addressed)\n"));
+        text.push_str(&format!(
+            "({skipped} path/member package(s) skipped — not content-addressed)\n"
+        ));
     }
     Ok((text, failed == 0))
 }
@@ -262,16 +275,9 @@ fn dfs_chains(
 }
 
 /// Collect distinct chains from workspace members to `target`.
-fn chains_to(
-    ws: &lpp_pm::Workspace,
-    lock: &lpp_pm::Lock,
-    target: &str,
-) -> Vec<Vec<String>> {
-    let by_name: std::collections::BTreeMap<&str, &lpp_pm::LockedPkg> = lock
-        .packages
-        .iter()
-        .map(|p| (p.name.as_str(), p))
-        .collect();
+fn chains_to(ws: &lpp_pm::Workspace, lock: &lpp_pm::Lock, target: &str) -> Vec<Vec<String>> {
+    let by_name: std::collections::BTreeMap<&str, &lpp_pm::LockedPkg> =
+        lock.packages.iter().map(|p| (p.name.as_str(), p)).collect();
     let mut out: Vec<Vec<String>> = Vec::new();
     for m in &ws.members {
         if out.len() >= MAX_CHAINS {
@@ -292,7 +298,10 @@ pub fn why(dir: &Path, name: &str) -> Result<(), String> {
         .find(|p| p.name == name)
         .ok_or_else(|| lpp_pm::PmError::NotInLockFile(name.to_string()).to_string())?;
     let chains = chains_to(&ws, &lock, name);
-    println!("why: {} v{} ({})", target.name, target.version, target.source);
+    println!(
+        "why: {} v{} ({})",
+        target.name, target.version, target.source
+    );
     if chains.is_empty() {
         println!("(no chain from any member — stale lock entry; run `keel fetch`)");
         return Ok(());

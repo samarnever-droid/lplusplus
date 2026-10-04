@@ -14,11 +14,11 @@
 //! 5. The `E5xxx` table maps one stable code per kind.
 
 use lpp_codegen_api::{
-    BuiltinLowering, CodegenError, CodegenErrorKind, MachineType, Target,
-    machine_type_for_abi, runtime_symbol_lowerable, semantic_machine_type,
+    BuiltinLowering, CodegenError, CodegenErrorKind, MachineType, Target, machine_type_for_abi,
+    runtime_symbol_lowerable, semantic_machine_type,
 };
 use lpp_mir::MirFunctionId;
-use lpp_runtime_abi::generated::{AbiType, BuiltinAbi, BUILTINS, SemanticAbiType};
+use lpp_runtime_abi::generated::{AbiType, BUILTINS, BuiltinAbi, SemanticAbiType};
 use lpp_runtime_abi::v1_registry;
 use lpp_types::BuiltinId;
 
@@ -103,8 +103,11 @@ fn assert_builtin_parity(builtin: BuiltinId, expected: &BuiltinAbi) {
     assert_eq!(lowering.name, descriptor.name);
     assert_eq!(lowering.symbol, descriptor.symbol);
     assert_eq!(lowering.parameters.len(), descriptor.parameters.len());
-    for (index, (machine_abi, expected_machine)) in
-        descriptor.parameters.iter().zip(lowering.parameters.iter()).enumerate()
+    for (index, (machine_abi, expected_machine)) in descriptor
+        .parameters
+        .iter()
+        .zip(lowering.parameters.iter())
+        .enumerate()
     {
         assert_eq!(
             *expected_machine,
@@ -154,8 +157,7 @@ fn builtin_lowering_parity_across_the_whole_generated_table() {
 
     // Census: exactly the empty-symbol entries are non-lowerable.
     for (raw, entry) in BUILTINS.iter().enumerate() {
-        let is_lowerable =
-            BuiltinLowering::from_builtin(BuiltinId::from_raw(raw as u32)).is_some();
+        let is_lowerable = BuiltinLowering::from_builtin(BuiltinId::from_raw(raw as u32)).is_some();
         assert_eq!(is_lowerable, !entry.symbol.is_empty(), "{:?}", entry.name);
     }
 }
@@ -174,13 +176,23 @@ fn semantic_vs_machine_divergence_census_is_pinned() {
             continue;
         }
         if entry.semantic_result == SemanticAbiType::VectorI64x2 {
-            assert_eq!(entry.result, AbiType::I64, "{:?}: boxed vector result", entry.name);
+            assert_eq!(
+                entry.result,
+                AbiType::I64,
+                "{:?}: boxed vector result",
+                entry.name
+            );
             vector_results += 1;
         }
         let mut semantic_params = entry.semantic_parameters.iter();
         for machine_param in entry.parameters {
             if let Some(SemanticAbiType::VectorI64x2) = semantic_params.next() {
-                assert_eq!(*machine_param, AbiType::I64, "{:?}: boxed vector param", entry.name);
+                assert_eq!(
+                    *machine_param,
+                    AbiType::I64,
+                    "{:?}: boxed vector param",
+                    entry.name
+                );
                 vector_params += 1;
             }
         }
@@ -197,11 +209,7 @@ fn semantic_vs_machine_divergence_census_is_pinned() {
     arity_expansions.sort_unstable();
     assert_eq!(
         arity_expansions,
-        vec![
-            ("slice", 3, 5),
-            ("str_slice", 3, 5),
-            ("vec_i64x2", 2, 4),
-        ],
+        vec![("slice", 3, 5), ("str_slice", 3, 5), ("vec_i64x2", 2, 4),],
         "arity expansion census drift"
     );
 }
@@ -234,10 +242,7 @@ fn e5xx_table_is_one_code_per_kind() {
             },
             "E5001",
         ),
-        (
-            CodegenErrorKind::UnsupportedTarget(Target::X86_64),
-            "E5002",
-        ),
+        (CodegenErrorKind::UnsupportedTarget(Target::X86_64), "E5002"),
         (
             CodegenErrorKind::UnrepresentableBuiltin {
                 builtin: BuiltinId::from_raw(spawn_index as u32),

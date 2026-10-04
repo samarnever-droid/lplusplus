@@ -10,8 +10,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use lpp_hir::OriginId;
 use lpp_mir::{
-    BasicBlockId, InstructionKind, MirFunctionId, MirInvariant, MirLocalId, MirProgram,
-    Operand, Rvalue, Terminator,
+    BasicBlockId, InstructionKind, MirFunctionId, MirInvariant, MirLocalId, MirProgram, Operand,
+    Rvalue, Terminator,
 };
 use lpp_passes::{MirPass, PassContext, PassFailure};
 use lpp_types::{BuiltinId, PrimitiveType, TypeId, TypeInterner, TypeKind};
@@ -134,8 +134,11 @@ pub fn verify_ownership_balance(
     types: &TypeInterner,
     plan: &OwnershipPlan,
 ) -> Vec<OwnershipBalanceError> {
-    let planned: BTreeSet<(MirFunctionId, MirLocalId)> =
-        plan.cells.iter().map(|cell| (cell.function, cell.local)).collect();
+    let planned: BTreeSet<(MirFunctionId, MirLocalId)> = plan
+        .cells
+        .iter()
+        .map(|cell| (cell.function, cell.local))
+        .collect();
 
     let mut result: Vec<OwnershipBalanceError> = Vec::new();
     for (function_id, function) in program.functions() {
@@ -185,10 +188,7 @@ pub fn verify_ownership_balance(
                 break;
             };
             queued.remove(&block_id);
-            let in_state = in_states
-                .get(&block_id)
-                .cloned()
-                .unwrap_or_default();
+            let in_state = in_states.get(&block_id).cloned().unwrap_or_default();
             let (out_state, block_violations) =
                 apply_block(program, block_id, &in_state, &heap_locals);
             violations.extend(block_violations);
@@ -337,9 +337,7 @@ fn apply_block(
                         }
                     }
                     Rvalue::Call {
-                        callee,
-                        arguments,
-                        ..
+                        callee, arguments, ..
                     } => {
                         // Invocation is indirection, not transfer: the
                         // callee is read, not consumed — but it must be
@@ -357,13 +355,8 @@ fn apply_block(
                             }
                         }
                     }
-                    Rvalue::Builtin {
-                        builtin,
-                        arguments,
-                    } => {
-                        for (position, operand) in
-                            program.operands(arguments).iter().enumerate()
-                        {
+                    Rvalue::Builtin { builtin, arguments } => {
+                        for (position, operand) in program.operands(arguments).iter().enumerate() {
                             if let Operand::Copy(local) = *operand {
                                 if builtin_moves_value(builtin, position) {
                                     check_local!(local);
@@ -469,10 +462,9 @@ impl MirPass for OwnershipBalancePass {
         program: &mut MirProgram,
         context: &PassContext<'_>,
     ) -> Result<(), PassFailure> {
-        let plan = compute_ownership_plan(program, context.types)
-            .map_err(|_| PassFailure {
-                message: "ownership plan construction failed",
-            })?;
+        let plan = compute_ownership_plan(program, context.types).map_err(|_| PassFailure {
+            message: "ownership plan construction failed",
+        })?;
         if verify_ownership_balance(program, context.types, &plan).is_empty() {
             Ok(())
         } else {

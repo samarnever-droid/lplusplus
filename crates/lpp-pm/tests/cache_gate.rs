@@ -24,10 +24,17 @@ fn content_address_is_deterministic_sha256() {
     );
     let b = ContentAddress::of_bytes(b"abc");
     assert_eq!(a, b, "same bytes -> same address");
-    assert_ne!(a, ContentAddress::of_bytes(b"abd"), "different bytes -> different address");
+    assert_ne!(
+        a,
+        ContentAddress::of_bytes(b"abd"),
+        "different bytes -> different address"
+    );
     assert!(ContentAddress::try_new(a.as_str()).is_ok());
     assert!(ContentAddress::try_new("nope").is_err());
-    assert!(ContentAddress::try_new(&"A".repeat(64)).is_err(), "uppercase rejected");
+    assert!(
+        ContentAddress::try_new(&"A".repeat(64)).is_err(),
+        "uppercase rejected"
+    );
 }
 
 #[test]
@@ -43,7 +50,10 @@ fn disk_blob_store_round_trips_and_content_addresses() {
 
     let missing = ContentAddress::of_bytes(b"never stored");
     assert!(!store.contains(&missing));
-    assert!(matches!(store.fetch(&missing), Err(PmError::BlobNotFound(_))));
+    assert!(matches!(
+        store.fetch(&missing),
+        Err(PmError::BlobNotFound(_))
+    ));
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -86,4 +96,3 @@ fn backend_factory_selects_memory() {
     let auto = create_kv(KvBackendKind::Auto).unwrap();
     assert_eq!(auto.name(), "memory");
 }
-

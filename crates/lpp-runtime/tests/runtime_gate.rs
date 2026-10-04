@@ -16,7 +16,6 @@
 use std::path::PathBuf;
 use std::process::Command;
 
-
 // ── 2. Differential against the C reference ───────────────────────────────
 
 /// The scenario program: identical C and Rust implementations run the same
@@ -536,30 +535,80 @@ const ABI_SYMBOLS: &[&str] = &[
     "lpp_slice_get_float",
     "lpp_slice_get_bool",
     // 6B.3a — numeric builtins
-    "lpp_abs", "lpp_min", "lpp_max",
-    "lpp_sqrt", "lpp_floor", "lpp_ceil", "lpp_pow",
-    "lpp_shr_u", "lpp_shl_u", "lpp_div_u", "lpp_rem_u",
-    "lpp_lt_u", "lpp_le_u", "lpp_gt_u", "lpp_ge_u", "lpp_min_u", "lpp_max_u",
-    "lpp_rotl64", "lpp_rotr64", "lpp_rotl32", "lpp_rotr32",
-    "lpp_clz64", "lpp_ctz64", "lpp_popcount64",
-    "lpp_bswap16", "lpp_bswap32", "lpp_bswap64",
-    "lpp_trunc_u8", "lpp_trunc_u16", "lpp_trunc_u32",
-    "lpp_trunc_i8", "lpp_trunc_i16", "lpp_trunc_i32",
-    "lpp_add_checked", "lpp_sub_checked", "lpp_mul_checked",
-    "lpp_add_wrap", "lpp_sub_wrap", "lpp_mul_wrap",
+    "lpp_abs",
+    "lpp_min",
+    "lpp_max",
+    "lpp_sqrt",
+    "lpp_floor",
+    "lpp_ceil",
+    "lpp_pow",
+    "lpp_shr_u",
+    "lpp_shl_u",
+    "lpp_div_u",
+    "lpp_rem_u",
+    "lpp_lt_u",
+    "lpp_le_u",
+    "lpp_gt_u",
+    "lpp_ge_u",
+    "lpp_min_u",
+    "lpp_max_u",
+    "lpp_rotl64",
+    "lpp_rotr64",
+    "lpp_rotl32",
+    "lpp_rotr32",
+    "lpp_clz64",
+    "lpp_ctz64",
+    "lpp_popcount64",
+    "lpp_bswap16",
+    "lpp_bswap32",
+    "lpp_bswap64",
+    "lpp_trunc_u8",
+    "lpp_trunc_u16",
+    "lpp_trunc_u32",
+    "lpp_trunc_i8",
+    "lpp_trunc_i16",
+    "lpp_trunc_i32",
+    "lpp_add_checked",
+    "lpp_sub_checked",
+    "lpp_mul_checked",
+    "lpp_add_wrap",
+    "lpp_sub_wrap",
+    "lpp_mul_wrap",
     // 6B.3b — string builtins
-    "lpp_str_concat", "lpp_str_find", "lpp_str_replace", "lpp_str_trim",
-    "lpp_str_contains", "lpp_str_starts_with", "lpp_str_ends_with",
-    "lpp_str_upper", "lpp_str_lower", "lpp_str_eq", "lpp_str_len",
-    "lpp_int_to_str", "lpp_float_to_str", "lpp_bool_to_str",
-    "lpp_u64_to_str", "lpp_u64_to_hex", "lpp_str_to_int", "lpp_str_to_u64",
-    "lpp_str_slice_get", "lpp_str_slice_to_str",
+    "lpp_str_concat",
+    "lpp_str_find",
+    "lpp_str_replace",
+    "lpp_str_trim",
+    "lpp_str_contains",
+    "lpp_str_starts_with",
+    "lpp_str_ends_with",
+    "lpp_str_upper",
+    "lpp_str_lower",
+    "lpp_str_eq",
+    "lpp_str_len",
+    "lpp_int_to_str",
+    "lpp_float_to_str",
+    "lpp_bool_to_str",
+    "lpp_u64_to_str",
+    "lpp_u64_to_hex",
+    "lpp_str_to_int",
+    "lpp_str_to_u64",
+    "lpp_str_slice_get",
+    "lpp_str_slice_to_str",
     // 6B.3c — IO builtins
-    "lpp_print_int", "lpp_print_float", "lpp_print_bool",
-    "lpp_print_str", "lpp_write_str", "lpp_eprint_str",
+    "lpp_print_int",
+    "lpp_print_float",
+    "lpp_print_bool",
+    "lpp_print_str",
+    "lpp_write_str",
+    "lpp_eprint_str",
     // 6B.3d — tasks, tuple, vec checksum
-    "lpp_task_new", "lpp_task_poll", "lpp_task_await", "lpp_task_destroy",
-    "lpp_tuple_alloc", "lpp_vec_i64_checksum",
+    "lpp_task_new",
+    "lpp_task_poll",
+    "lpp_task_await",
+    "lpp_task_destroy",
+    "lpp_tuple_alloc",
+    "lpp_vec_i64_checksum",
 ];
 
 /// Symbols defined by the `c_shim` reference but NOT by `lpp_runtime.c`.
@@ -568,8 +617,8 @@ const SHIM_ONLY_SYMBOLS: &[&str] = &["lpp_eprint_str"];
 
 #[test]
 fn symbol_census_matches_the_c_reference() {
-    let target_a = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target/debug/liblpp_runtime.a");
+    let target_a =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/liblpp_runtime.a");
     if !target_a.exists() {
         eprintln!("skipping: build the crate first (cargo build -p lpp-runtime)");
         return;

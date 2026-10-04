@@ -11,10 +11,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use lpp_hir::OriginId;
 use lpp_mir::{
-    BasicBlockId, InstructionKind, MirAggregateId, MirFunctionId, MirFunctionKind,
-    MirLocalKind, MirLocalId, MirProgram, Operand, Rvalue, Terminator,
+    BasicBlockId, InstructionKind, MirAggregateId, MirFunctionId, MirFunctionKind, MirLocalId,
+    MirLocalKind, MirProgram, Operand, Rvalue, Terminator,
 };
-use lpp_types::{TypeInterner, TypeKind, TypeId};
+use lpp_types::{TypeId, TypeInterner, TypeKind};
 
 use crate::plan::{
     ContainmentNode, OwnershipPlan, TypeStrategy, ValuePlacement, compute_ownership_plan,
@@ -104,10 +104,7 @@ impl Expectation {
     /// Independent recomputation: a recursive DFS collector (not the
     /// planner's iterative BTree walk) and Kosaraju's algorithm (not the
     /// planner's Tarjan).
-    fn recompute(
-        program: &MirProgram,
-        types: &TypeInterner,
-    ) -> Result<Expectation, ()> {
+    fn recompute(program: &MirProgram, types: &TypeInterner) -> Result<Expectation, ()> {
         let mut collector = DfsCollector::new(types);
         for (_, function) in program.functions() {
             collector.collect(program, function.ty);
@@ -154,9 +151,7 @@ impl<'types> DfsCollector<'types> {
             return;
         }
         match self.types.kind(ty) {
-            TypeKind::List(element)
-            | TypeKind::Slice(element)
-            | TypeKind::Task(element) => {
+            TypeKind::List(element) | TypeKind::Slice(element) | TypeKind::Task(element) => {
                 self.containers.insert(ty);
                 self.collect(program, element);
             }
@@ -171,10 +166,7 @@ impl<'types> DfsCollector<'types> {
                 self.collect(program, key);
                 self.collect(program, value);
             }
-            TypeKind::Function {
-                parameters,
-                result,
-            } => {
+            TypeKind::Function { parameters, result } => {
                 for (function_id, function) in program.functions() {
                     if matches!(
                         function.kind,
@@ -450,8 +442,7 @@ impl<'types> DfsCollector<'types> {
             mark_block_recursively(program, function.entry, &mut escapes, &mut seen_blocks);
             for &local in program.function_locals(function) {
                 let mir_local = program.local(local).ok_or(())?;
-                let heap =
-                    mir_local.kind == MirLocalKind::Capture || escapes.contains(&local);
+                let heap = mir_local.kind == MirLocalKind::Capture || escapes.contains(&local);
                 let placement = if !heap {
                     ValuePlacement::Frame
                 } else if own_type_is_shared(
@@ -603,14 +594,12 @@ fn own_type_is_shared(
         | TypeKind::Map { .. } => Ok(container_ids
             .get(&ty)
             .is_some_and(|&node_id| shared[node_id])),
-        TypeKind::Function { .. } => Ok(callable_ids
-            .iter()
-            .any(|(&callable_id, &node_id)| {
-                program
-                    .function(callable_id)
-                    .is_some_and(|function| function.ty == ty)
-                    && shared[node_id]
-            })),
+        TypeKind::Function { .. } => Ok(callable_ids.iter().any(|(&callable_id, &node_id)| {
+            program
+                .function(callable_id)
+                .is_some_and(|function| function.ty == ty)
+                && shared[node_id]
+        })),
         TypeKind::Nominal { .. } => {
             for (&aggregate_id, &node_id) in aggregate_ids {
                 let aggregate = program.aggregate(aggregate_id).ok_or(())?;
@@ -782,7 +771,9 @@ pub fn verify_ownership_plan(
     for (function, _) in &expectation.arenas {
         if !plan.arenas.iter().any(|arena| &arena.function == function) {
             errors.push(OwnershipPlanError {
-                kind: OwnershipPlanErrorKind::MissingArena { function: *function },
+                kind: OwnershipPlanErrorKind::MissingArena {
+                    function: *function,
+                },
                 origin: None,
             });
         }

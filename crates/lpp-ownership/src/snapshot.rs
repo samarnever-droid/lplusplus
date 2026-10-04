@@ -6,9 +6,7 @@
 //! the observable form of the plan for snapshot tests and for the
 //! determinism proof in `verify.rs`.
 
-use crate::plan::{
-    ContainmentNode, OwnershipPlan, TypeStrategy, ValuePlacement,
-};
+use crate::plan::{ContainmentNode, OwnershipPlan, TypeStrategy, ValuePlacement};
 
 fn placement_name(placement: ValuePlacement) -> &'static str {
     match placement {
@@ -65,11 +63,7 @@ pub fn ownership_plan_snapshot(plan: &OwnershipPlan) -> String {
 
     out.push_str("nodes:\n");
     for node in &plan.nodes {
-        let contains: Vec<String> = node
-            .contains
-            .iter()
-            .map(|id| id.0.to_string())
-            .collect();
+        let contains: Vec<String> = node.contains.iter().map(|id| id.0.to_string()).collect();
         out.push_str(&format!(
             "  node({}) {} ty({:?}) {} [{}]\n",
             node.id.0,

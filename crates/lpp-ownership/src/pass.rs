@@ -40,10 +40,9 @@ impl MirPass for OwnershipPlanPass {
         program: &mut MirProgram,
         context: &PassContext<'_>,
     ) -> Result<(), PassFailure> {
-        let plan = compute_ownership_plan(program, context.types)
-            .map_err(|_| PassFailure {
-                message: "ownership plan construction failed",
-            })?;
+        let plan = compute_ownership_plan(program, context.types).map_err(|_| PassFailure {
+            message: "ownership plan construction failed",
+        })?;
         if verify_ownership_plan(program, context.types, &plan).is_empty() {
             Ok(())
         } else {

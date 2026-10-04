@@ -114,8 +114,7 @@ unsafe fn grow(l: &mut LppList) {
     if new_cap > i64::MAX / 8 {
         runtime_panic("list allocation size overflow");
     }
-    let new_data =
-        unsafe { realloc(l.data as *mut c_void, (new_cap as usize) * 8) } as *mut i64;
+    let new_data = unsafe { realloc(l.data as *mut c_void, (new_cap as usize) * 8) } as *mut i64;
     if new_data.is_null() {
         runtime_panic("out of memory while growing list");
     }
@@ -289,8 +288,7 @@ pub unsafe extern "C" fn lpp_list_reserve(list: *mut c_void, capacity: i64) {
     if capacity <= l.cap {
         return;
     }
-    let new_data =
-        unsafe { realloc(l.data as *mut c_void, (capacity as usize) * 8) } as *mut i64;
+    let new_data = unsafe { realloc(l.data as *mut c_void, (capacity as usize) * 8) } as *mut i64;
     if new_data.is_null() {
         runtime_panic("out of memory in list_reserve");
     }
@@ -359,11 +357,7 @@ pub unsafe extern "C" fn lpp_list_insert(list: *mut c_void, index: i64, value: i
     let tail = (l.len - at) as usize;
     if tail > 0 {
         unsafe {
-            std::ptr::copy(
-                l.data.add(at as usize),
-                l.data.add(at as usize + 1),
-                tail,
-            );
+            std::ptr::copy(l.data.add(at as usize), l.data.add(at as usize + 1), tail);
         }
     }
     if let Some(retain) = l.retain_element {
@@ -551,8 +545,8 @@ mod tests {
     use super::*;
     use crate::arc::{lpp_arc_alloc_with_destructor, lpp_arc_release};
     use crate::slice::{lpp_slice_get, lpp_slice_init, lpp_slice_len};
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// The v1 C reference produces this exact fingerprint for the
     /// list/slice/ARC-list scenario (pinned in

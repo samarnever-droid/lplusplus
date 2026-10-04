@@ -108,7 +108,7 @@ fn read_i64_at(buf: &[u8], off: usize) -> Result<i64, LinkError> {
         .map_err(|_| "read i64".to_string())?;
     Ok(i64::from_le_bytes(b))
 }
-fn write_i8_at(buf: &mut [u8], off: usize, v: i64, ctx: &str) -> Result<(),LinkError> {
+fn write_i8_at(buf: &mut [u8], off: usize, v: i64, ctx: &str) -> Result<(), LinkError> {
     if !fits_i8(v) {
         return Err(format!("{ctx}: 8-bit relocation overflow ({v})").into());
     }
@@ -116,7 +116,7 @@ fn write_i8_at(buf: &mut [u8], off: usize, v: i64, ctx: &str) -> Result<(),LinkE
         .ok_or_else(|| format!("{ctx}: patch OOB"))? = v as u8;
     Ok(())
 }
-fn write_i16_at(buf: &mut [u8], off: usize, v: i64, ctx: &str) -> Result<(),LinkError> {
+fn write_i16_at(buf: &mut [u8], off: usize, v: i64, ctx: &str) -> Result<(), LinkError> {
     if !fits_i16(v) {
         return Err(format!("{ctx}: 16-bit relocation overflow ({v})").into());
     }
@@ -126,7 +126,7 @@ fn write_i16_at(buf: &mut [u8], off: usize, v: i64, ctx: &str) -> Result<(),Link
     slot.copy_from_slice(&(v as i16).to_le_bytes());
     Ok(())
 }
-fn write_i32_at(buf: &mut [u8], off: usize, v: i64, ctx: &str) -> Result<(),LinkError> {
+fn write_i32_at(buf: &mut [u8], off: usize, v: i64, ctx: &str) -> Result<(), LinkError> {
     if !fits_i32(v) {
         return Err(format!("{ctx}: 32-bit relocation overflow ({v})",).into());
     }
@@ -136,7 +136,7 @@ fn write_i32_at(buf: &mut [u8], off: usize, v: i64, ctx: &str) -> Result<(),Link
     slot.copy_from_slice(&(v as i32).to_le_bytes());
     Ok(())
 }
-fn write_u32_at(buf: &mut [u8], off: usize, v: i64, ctx: &str) -> Result<(),LinkError> {
+fn write_u32_at(buf: &mut [u8], off: usize, v: i64, ctx: &str) -> Result<(), LinkError> {
     if !fits_u32(v) {
         return Err(format!("{ctx}: unsigned 32-bit relocation overflow ({v})").into());
     }
@@ -146,14 +146,14 @@ fn write_u32_at(buf: &mut [u8], off: usize, v: i64, ctx: &str) -> Result<(),Link
     slot.copy_from_slice(&(v as u32).to_le_bytes());
     Ok(())
 }
-fn write_u64_at(buf: &mut [u8], off: usize, v: u64, ctx: &str) -> Result<(),LinkError> {
+fn write_u64_at(buf: &mut [u8], off: usize, v: u64, ctx: &str) -> Result<(), LinkError> {
     let slot = buf
         .get_mut(off..off + 8)
         .ok_or_else(|| format!("{ctx}: patch OOB"))?;
     slot.copy_from_slice(&v.to_le_bytes());
     Ok(())
 }
-fn write_u32_raw(buf: &mut [u8], off: usize, v: u32, ctx: &str) -> Result<(),LinkError> {
+fn write_u32_raw(buf: &mut [u8], off: usize, v: u32, ctx: &str) -> Result<(), LinkError> {
     let slot = buf
         .get_mut(off..off + 4)
         .ok_or_else(|| format!("{ctx}: patch OOB"))?;
@@ -165,7 +165,7 @@ fn is_archive_bytes(bytes: &[u8]) -> bool {
     bytes.starts_with(b"!<arch>\n")
 }
 
-fn chmod_exec(output: &Path) -> Result<(),LinkError> {
+fn chmod_exec(output: &Path) -> Result<(), LinkError> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -808,10 +808,9 @@ fn parse_object(bytes: &[u8], path: &Path) -> Result<ObjectImage, LinkError> {
         BinaryFormat::Coff | BinaryFormat::Pe => OutputFormat::Pe,
         BinaryFormat::MachO => OutputFormat::Macho,
         other => {
-            return Err(format!(
-                "'{}': unsupported object format {other:?}",
-                path.display()
-            ).into());
+            return Err(
+                format!("'{}': unsupported object format {other:?}", path.display()).into(),
+            );
         }
     };
     let machine = Machine::from_object(file.architecture()).ok_or_else(|| {
@@ -978,7 +977,8 @@ fn parse_object(bytes: &[u8], path: &Path) -> Result<ObjectImage, LinkError> {
                 return Err(format!(
                     "'{}': unsupported non-symbol relocation in '{name}'",
                     path.display()
-                ).into());
+                )
+                .into());
             };
             let sym = file
                 .symbol_by_index(si)
@@ -1176,7 +1176,7 @@ fn pull_archives(
     objects: &mut Vec<ObjectImage>,
     archives: &mut [Archive<ObjectImage>],
     opts: &LinkOptions,
-) -> Result<(),LinkError> {
+) -> Result<(), LinkError> {
     loop {
         let mut need: BTreeSet<String> = BTreeSet::new();
         let mut have: BTreeSet<String> = BTreeSet::new();
@@ -1254,7 +1254,7 @@ fn pull_archives(
 fn load_objects(
     inputs: &[PathBuf],
     opts: &LinkOptions,
-) -> Result<(Vec<ObjectImage>, OutputFormat, Machine),LinkError> {
+) -> Result<(Vec<ObjectImage>, OutputFormat, Machine), LinkError> {
     if inputs.is_empty() {
         return Err("at least one input object is required".into());
     }
@@ -1338,7 +1338,8 @@ fn load_objects(
                     .map(|d| d.display().to_string())
                     .collect::<Vec<_>>()
                     .join(", ")
-            ).into());
+            )
+            .into());
         }
     }
     if objects.is_empty() {
@@ -1383,7 +1384,8 @@ fn load_objects(
                 o.path.display(),
                 o.machine,
                 machine
-            ).into());
+            )
+            .into());
         }
         if o.format != format {
             return Err(format!(
@@ -1391,7 +1393,8 @@ fn load_objects(
                 o.path.display(),
                 o.format,
                 format
-            ).into());
+            )
+            .into());
         }
     }
     Ok((objects, format, machine))
@@ -1595,7 +1598,8 @@ fn merge_objects(objects: &[ObjectImage], opts: &LinkOptions) -> Result<Merged, 
                                 s.name,
                                 objects[prev.object].path.display(),
                                 obj.path.display()
-                            ).into());
+                            )
+                            .into());
                         }
                     }
                 }
@@ -1690,7 +1694,7 @@ fn write_map(
     objects: &[ObjectImage],
     entry: &str,
     entry_va: u64,
-) -> Result<(),LinkError> {
+) -> Result<(), LinkError> {
     let mut s = String::new();
     s.push_str("# lpp-link map\n");
     s.push_str(&format!("# entry {entry} = 0x{entry_va:x}\n"));
@@ -1717,8 +1721,12 @@ fn write_map(
             sy.name
         ));
     }
-    fs::write(path, s)
-        .map_err(|e| LinkError::new(LinkErrorKind::Io, format!("write map '{}': {e}", path.display())))
+    fs::write(path, s).map_err(|e| {
+        LinkError::new(
+            LinkErrorKind::Io,
+            format!("write map '{}': {e}", path.display()),
+        )
+    })
 }
 
 // ── AArch64 instruction patching (ELF / PE / Mach-O) ───────────────────────
@@ -1731,11 +1739,11 @@ fn a64_read(buf: &[u8], off: usize) -> Result<u32, LinkError> {
         .map_err(|_| "aarch64 patch".to_string())?;
     Ok(u32::from_le_bytes(b))
 }
-fn a64_write(buf: &mut [u8], off: usize, instr: u32) -> Result<(),LinkError> {
+fn a64_write(buf: &mut [u8], off: usize, instr: u32) -> Result<(), LinkError> {
     write_u32_raw(buf, off, instr, "aarch64")
 }
 
-fn a64_patch_call26(buf: &mut [u8], off: usize, s: u64, a: i64, p: u64) -> Result<(),LinkError> {
+fn a64_patch_call26(buf: &mut [u8], off: usize, s: u64, a: i64, p: u64) -> Result<(), LinkError> {
     let instr = a64_read(buf, off)?;
     let raw_imm = (instr & 0x03FF_FFFF) as i32;
     let inline_addend = if (raw_imm & 0x0200_0000) != 0 {
@@ -1764,7 +1772,13 @@ fn a64_patch_call26(buf: &mut [u8], off: usize, s: u64, a: i64, p: u64) -> Resul
     )
 }
 
-fn a64_patch_adr_pg_hi21(buf: &mut [u8], off: usize, s: u64, a: i64, p: u64) -> Result<(),LinkError> {
+fn a64_patch_adr_pg_hi21(
+    buf: &mut [u8],
+    off: usize,
+    s: u64,
+    a: i64,
+    p: u64,
+) -> Result<(), LinkError> {
     let dest = s.wrapping_add_signed(a);
     let delta = page(dest) as i64 - page(p) as i64;
     let imm = delta >> 12;
@@ -1781,7 +1795,7 @@ fn a64_patch_adr_pg_hi21(buf: &mut [u8], off: usize, s: u64, a: i64, p: u64) -> 
     )
 }
 
-fn a64_patch_add_lo12(buf: &mut [u8], off: usize, s: u64, a: i64) -> Result<(),LinkError> {
+fn a64_patch_add_lo12(buf: &mut [u8], off: usize, s: u64, a: i64) -> Result<(), LinkError> {
     let dest = s.wrapping_add_signed(a);
     let imm12 = (dest & 0xfff) as u32;
     let instr = a64_read(buf, off)?;
@@ -1794,14 +1808,14 @@ fn a64_patch_ldst_lo12(
     s: u64,
     a: i64,
     shift: u32,
-) -> Result<(),LinkError> {
+) -> Result<(), LinkError> {
     let dest = s.wrapping_add_signed(a);
     let imm12 = ((dest >> shift) & 0xfff) as u32;
     let instr = a64_read(buf, off)?;
     a64_write(buf, off, (instr & 0xFFC0_03FF) | (imm12 << 10))
 }
 
-fn a64_patch_condbr19(buf: &mut [u8], off: usize, s: u64, a: i64, p: u64) -> Result<(),LinkError> {
+fn a64_patch_condbr19(buf: &mut [u8], off: usize, s: u64, a: i64, p: u64) -> Result<(), LinkError> {
     let dest = s.wrapping_add_signed(a);
     let disp = dest as i64 - p as i64;
     if disp & 3 != 0 {
@@ -1819,7 +1833,7 @@ fn a64_patch_condbr19(buf: &mut [u8], off: usize, s: u64, a: i64, p: u64) -> Res
     )
 }
 
-fn a64_patch_tstbr14(buf: &mut [u8], off: usize, s: u64, a: i64, p: u64) -> Result<(),LinkError> {
+fn a64_patch_tstbr14(buf: &mut [u8], off: usize, s: u64, a: i64, p: u64) -> Result<(), LinkError> {
     let dest = s.wrapping_add_signed(a);
     let disp = dest as i64 - p as i64;
     if disp & 3 != 0 {
@@ -1844,7 +1858,7 @@ fn a64_patch_movw(
     a: i64,
     shift: u32,
     check: bool,
-) -> Result<(),LinkError> {
+) -> Result<(), LinkError> {
     let dest = s.wrapping_add_signed(a);
     let imm16 = ((dest >> shift) & 0xffff) as u32;
     if check {
@@ -1857,7 +1871,7 @@ fn a64_patch_movw(
     a64_write(buf, off, (instr & 0xFFE0_001F) | (imm16 << 5))
 }
 
-fn a64_patch_adr_lo21(buf: &mut [u8], off: usize, s: u64, a: i64, p: u64) -> Result<(),LinkError> {
+fn a64_patch_adr_lo21(buf: &mut [u8], off: usize, s: u64, a: i64, p: u64) -> Result<(), LinkError> {
     let dest = s.wrapping_add_signed(a);
     let imm = dest as i64 - p as i64;
     if imm < -(1 << 20) || imm >= (1 << 20) {
@@ -2296,8 +2310,9 @@ fn emit_elf_start_stub_x64(
                 0x54, // 14 push rsp                         ; stack_end
                 0x45, 0x31, 0xc0, // 15 xor r8d, r8d         ; fini = NULL
                 0x31, 0xc9, // 18 xor ecx, ecx               ; init = NULL
-                0x48, 0x8d, 0x3d, 0, 0, 0, 0, // 20 lea rdi,[rip+main]  (disp @ 23, next-ip = +27)
-                0xe8, 0, 0, 0, 0, // 27 call __libc_start_main@plt (disp @ 28, next-ip = +32)
+                0x48, 0x8d, 0x3d, 0, 0, 0,
+                0, // 20 lea rdi,[rip+main]  (disp @ 23, next-ip = +27)
+                0xe8, 0, 0, 0, 0,    // 27 call __libc_start_main@plt (disp @ 28, next-ip = +32)
                 0xf4, // 32 hlt
             ];
             let lea_next_ip = start_off as i64 + 27;
@@ -2403,8 +2418,7 @@ pub fn write_elf_with_options_t(
                 } else {
                     StartupAbi::Freestanding
                 };
-                let (stub, plt_calls) =
-                    emit_elf_start_stub_x64(start_off, main_off as usize, abi)?;
+                let (stub, plt_calls) = emit_elf_start_stub_x64(start_off, main_off as usize, abi)?;
                 for (sym, site) in plt_calls {
                     startup_plt_calls.push((sym, site));
                     if !undef.iter().any(|u| u == sym) {
@@ -2508,10 +2522,7 @@ pub fn write_elf_with_options_t(
             .filter(|u| !merged.syms.contains_key(u) && !plt_keys.contains_key(u))
             .collect();
         if !leftover.is_empty() {
-            return Err(LinkError::unresolved(
-                "unresolved symbols",
-                leftover,
-            ));
+            return Err(LinkError::unresolved("unresolved symbols", leftover));
         }
     } else {
         // anything not going through PLT/GOT and not defined is still an error
@@ -2526,10 +2537,7 @@ pub fn write_elf_with_options_t(
             .cloned()
             .collect();
         if !leftover.is_empty() && opts.dynamic == DynamicMode::Static {
-            return Err(LinkError::unresolved(
-                "unresolved symbols",
-                leftover,
-            ));
+            return Err(LinkError::unresolved("unresolved symbols", leftover));
         }
         for u in &undef {
             if !merged.syms.contains_key(u) && !plt_keys.contains_key(u) {
@@ -3162,7 +3170,12 @@ pub fn write_elf_with_options_t(
                 got_keys
                     .get(n)
                     .map(|i| va_got + (*i as u64) * 8)
-                    .ok_or_else(|| LinkError::new(LinkErrorKind::Internal, format!("'{ctx}': no GOT slot for {n}")))
+                    .ok_or_else(|| {
+                        LinkError::new(
+                            LinkErrorKind::Internal,
+                            format!("'{ctx}': no GOT slot for {n}"),
+                        )
+                    })
             };
             let got_va_target =
                 |t: &RelTarget| -> Result<u64, LinkError> { got_va_of(&got_key(oi, t)) };
@@ -3351,7 +3364,8 @@ pub fn write_elf_with_options_t(
                             return Err(format!(
                                 "'{ctx}': unsupported relocation kind {:?} type {}",
                                 rel.kind, rel.raw_type
-                            ).into());
+                            )
+                            .into());
                         }
                     }
                 }
@@ -3359,7 +3373,8 @@ pub fn write_elf_with_options_t(
                     return Err(format!(
                         "'{ctx}': unsupported relocation type {} on {:?}",
                         rel.raw_type, machine
-                    ).into());
+                    )
+                    .into());
                 }
             }
         }
@@ -4770,10 +4785,7 @@ pub fn write_pe_with_options_t(
         })
         .collect();
     if !leftover.is_empty() && opts.dynamic == DynamicMode::Static {
-        return Err(LinkError::unresolved(
-            "unresolved COFF symbols",
-            leftover,
-        ));
+        return Err(LinkError::unresolved("unresolved COFF symbols", leftover));
     }
     // Auto/Force may promote known DLL imports automatically, but must never
     // turn an arbitrary unresolved symbol into a fake KERNEL32 import.
@@ -5040,7 +5052,8 @@ pub fn write_pe_with_options_t(
                 _ => {
                     return Err(format!(
                         "'{ctx}': unsupported COFF relocation type {rnum} ({machine:?})"
-                    ).into());
+                    )
+                    .into());
                 }
             }
         }
@@ -5488,7 +5501,8 @@ fn resolve_pe_target(
             Err(format!(
                 "unresolved external COFF symbol '{name}' — not defined by any input object \
                  and not a known DLL import. Pass --import DLL=sym or use --dynamic."
-            ).into())
+            )
+            .into())
         }
     }
 }
@@ -5631,7 +5645,8 @@ pub fn write_macho_with_options_t(
         return Err(format!(
             "lpp-link: dynamic libSystem imports are required for ARM64 Mach-O \
  executables; pass -l System or link dynamically (macOS policy)"
-        ).into());
+        )
+        .into());
     }
 
     if opts.dynamic == DynamicMode::Static && !imports.is_empty() {
@@ -6141,7 +6156,8 @@ pub fn write_macho_with_options_t(
                     return Err(format!(
                         "'{ctx}': unsupported Mach-O reloc type {} ({machine:?})",
                         rel.raw_type
-                    ).into());
+                    )
+                    .into());
                 }
             }
         }
@@ -6792,7 +6808,8 @@ fn resolve_lib(
             .map(|p| p.display().to_string())
             .collect::<Vec<_>>()
             .join(", ")
-    ).into())
+    )
+    .into())
 }
 
 fn parse_hex_u64(s: &str) -> Result<u64, LinkError> {
