@@ -91,7 +91,7 @@ pub unsafe extern "C" fn lpp_eprint_str(ptr: *const c_char) {
     }
     let bytes = unsafe { cstr_bytes(ptr) };
     unsafe {
-        write(2, bytes.as_ptr().cast::<c_void>(), bytes.len());
+        write(2, bytes.as_ptr().cast::<c_void>(), bytes.len() as _);
         write(2, b"\n".as_ptr().cast::<c_void>(), 1);
     }
 }
