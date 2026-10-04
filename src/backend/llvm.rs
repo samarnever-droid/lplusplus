@@ -1602,7 +1602,7 @@ pub fn compile(
     let target_triple = if cfg!(target_os = "windows") {
         "x86_64-pc-windows-msvc"
     } else if cfg!(target_os = "macos") {
-        "x86_64-apple-darwin"
+        "aarch64-apple-darwin"
     } else {
         "x86_64-pc-linux-gnu"
     };

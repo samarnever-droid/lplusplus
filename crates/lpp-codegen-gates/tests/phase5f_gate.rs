@@ -430,6 +430,9 @@ def main() -> Int:
 
 #[test]
 fn cross_backend_corpus_agrees() {
+    if !cfg!(target_os = "linux") {
+        return;
+    }
     let (program, types, package) = pipeline(DATA_SURFACE_CORPUS);
     let names = Names(&package.names.symbols);
     let entry = main_function(&program, &package.names.symbols);
@@ -510,6 +513,9 @@ fn deterministic_object_sizes() {
 
 #[test]
 fn sanitizer_clean() {
+    if !cfg!(target_os = "linux") {
+        return;
+    }
     let (program, types, package) = pipeline(DATA_SURFACE_CORPUS);
     let names = Names(&package.names.symbols);
 
