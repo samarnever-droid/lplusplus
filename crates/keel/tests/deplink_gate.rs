@@ -103,8 +103,10 @@ fn path_dep_is_staged_and_lpp_runs_from_the_root() {
     );
     // lpp ran with cwd = the workspace root.
     let marks = std::fs::read_to_string(root.join("marks.txt")).unwrap();
+    let root_canon = root.canonicalize().unwrap_or_else(|_| root.clone());
     assert!(
-        marks.contains(&format!("PWD {}", root.display())),
+        marks.contains(&format!("PWD {}", root.display()))
+            || marks.contains(&format!("PWD {}", root_canon.display())),
         "lpp must run from the workspace root:\n{marks}"
     );
     // ...and the dep still builds before the dependent.

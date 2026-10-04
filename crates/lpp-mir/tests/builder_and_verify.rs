@@ -107,7 +107,10 @@ fn representative_typed_hir_builds_exact_valid_mir() {
         )
         .unwrap();
     }
-    assert_eq!(snapshot, include_str!("snapshots/phase4a-mir.snap"));
+    assert_eq!(
+        snapshot.replace("\r\n", "\n"),
+        include_str!("snapshots/phase4a-mir.snap").replace("\r\n", "\n")
+    );
 }
 
 #[test]
