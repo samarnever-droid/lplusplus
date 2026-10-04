@@ -23,18 +23,20 @@ EOF
 echo "PASS --list-targets advertises Android/Termux triples"
 
 # 2. Cross-compile to an AArch64 ELF object (written as prog.o next to source).
-(cd "$TMP" && "$COMPILER" prog.lpp --target aarch64-linux-android --emit-object >/dev/null 2>&1)
+(cd "$TMP" && "$COMPILER" prog.lpp --target aarch64-linux-android --emit-object)
 OBJ="$TMP/prog.o"
-[ -f "$OBJ" ] || { echo "FAIL: no aarch64 object emitted" >&2; exit 1; }
+[ -f "$OBJ" ] || [ -f "$TMP/prog.obj" ] || { echo "FAIL: no aarch64 object emitted" >&2; exit 1; }
+[ -f "$OBJ" ] || OBJ="$TMP/prog.obj"
 if command -v readelf >/dev/null 2>&1; then
     readelf -h "$OBJ" | grep -q "AArch64" || { echo "FAIL: object is not AArch64" >&2; exit 1; }
 fi
 echo "PASS --target aarch64-linux-android emits an AArch64 ELF object"
 
 # 3. Host target still builds and runs.
-(cd "$TMP" && "$COMPILER" prog.lpp --target x86_64-unknown-linux-gnu --linker host >/dev/null 2>&1)
+(cd "$TMP" && "$COMPILER" prog.lpp --target x86_64-unknown-linux-gnu --linker host)
 BIN="$TMP/prog"
-[ -x "$BIN" ] || { echo "FAIL: host target binary not produced" >&2; exit 1; }
+[ -x "$BIN" ] || [ -x "$TMP/prog.exe" ] || { echo "FAIL: host target binary not produced" >&2; exit 1; }
+[ -x "$BIN" ] || BIN="$TMP/prog.exe"
 OUT=$("$BIN")
 [ "$OUT" = "hello-android" ] || { echo "FAIL: host binary output '$OUT' != hello-android" >&2; exit 1; }
 echo "PASS host target still builds and runs"

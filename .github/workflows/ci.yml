@@ -57,7 +57,7 @@ jobs:
         run: cargo test --workspace --locked
 
       - name: Build compiler and direct linker with all targets
-        run: cargo build --locked --bin lpp --bin lpp-link --features all-arch
+        run: cargo build --release --locked --bin lpp --bin lpp-link --features all-arch
 
       - name: Strict runtime C compilation (Linux)
         if: runner.os == 'Linux'
@@ -179,5 +179,5 @@ jobs:
           .\target\release\lpp.exe config set linker direct
           .\target\release\lpp.exe --version
           .\target\release\lpp-link.exe --version
-          .\target\release\lpp.exe examples/01_hello.lpp -o target/hello.exe
+          .\target\release\lpp.exe test/hello_world.lpp -o target/hello.exe
           .\target\hello.exe
