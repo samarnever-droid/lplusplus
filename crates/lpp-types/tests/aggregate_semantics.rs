@@ -207,7 +207,7 @@ fn place_facts_cover_projection_assignment_destructuring_and_iteration_determini
         fs::write(&fixture, &first_snapshot).unwrap();
     }
     assert_eq!(
-        first_snapshot,
-        include_str!("snapshots/phase4c2b-places-semantic.snap")
+        first_snapshot.replace("\r\n", "\n"),
+        include_str!("snapshots/phase4c2b-places-semantic.snap").replace("\r\n", "\n")
     );
 }

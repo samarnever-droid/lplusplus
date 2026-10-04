@@ -199,8 +199,8 @@ fn semantic_snapshot_matches_the_checked_in_phase3_contract() {
         .unwrap();
     }
     assert_eq!(
-        snapshot,
-        include_str!("snapshots/phase3-semantic.snap"),
+        snapshot.replace("\r\n", "\n"),
+        include_str!("snapshots/phase3-semantic.snap").replace("\r\n", "\n"),
         "semantic snapshot changed; review IDs, types, traits, and instances together",
     );
 }

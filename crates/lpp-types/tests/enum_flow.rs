@@ -192,8 +192,8 @@ fn phase4c2c_semantic_snapshot_is_stable() {
         fs::write(path, &actual).unwrap();
     }
     assert_eq!(
-        actual,
-        include_str!("snapshots/phase4c2c-enum-flow-semantic.snap"),
+        actual.replace("\r\n", "\n"),
+        include_str!("snapshots/phase4c2c-enum-flow-semantic.snap").replace("\r\n", "\n"),
         "Phase 4C2C semantic snapshot changed",
     );
 }
