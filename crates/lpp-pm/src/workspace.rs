@@ -46,8 +46,27 @@ impl Workspace {
     /// section; if none exists, `start` itself must be a package manifest
     /// (a 1-member workspace — the single-repo case).
     pub fn discover(start: &Path) -> Result<Workspace> {
-        // 1. Nearest ancestor (or `start` itself) with a `[workspace]`.
-        let mut cur: Option<PathBuf> = Some(start.to_path_buf());
+        let absolute = if start.is_absolute() {
+            start.to_path_buf()
+        } else {
+            std::env::current_dir()
+                .map_err(|e| PmError::Io(e.to_string()))?
+                .join(start)
+        };
+        let start = absolute
+            .canonicalize()
+            .map_err(|e| PmError::Io(format!("cannot resolve {}: {e}", absolute.display())))?;
+        let search_start = if start.is_file() {
+            start.parent().unwrap_or(&start).to_path_buf()
+        } else {
+            start.clone()
+        };
+
+        // Remember the nearest package in case there is no enclosing
+        // workspace. This also lets commands run from `src/` and other
+        // package subdirectories.
+        let mut nearest_package: Option<PathBuf> = None;
+        let mut cur: Option<PathBuf> = Some(search_start.clone());
         while let Some(dir) = cur {
             let manifest_path = dir.join("Keel.toml");
             if manifest_path.is_file() {
@@ -56,14 +75,15 @@ impl Workspace {
                 let root: RootManifest =
                     toml::from_str(&doc).map_err(|e| PmError::ManifestParse(e.to_string()))?;
                 if root.workspace.is_some() {
-                    let ws = Self::load(root, dir)?;
-                    // `start` must belong to this workspace (be the root, or
-                    // sit inside one of the member dirs).
+                    let ws = Self::load(
+                        root,
+                        dir.canonicalize().map_err(|e| PmError::Io(e.to_string()))?,
+                    )?;
                     let belongs = start == ws.root
                         || ws
                             .members
                             .iter()
-                            .any(|m| start == m.dir || start.starts_with(&m.dir));
+                            .any(|member| start == member.dir || start.starts_with(&member.dir));
                     if !belongs {
                         return Err(PmError::MemberNotFound {
                             member: format!(
@@ -75,24 +95,24 @@ impl Workspace {
                     }
                     return Ok(ws);
                 }
+                if root.package.is_some() && nearest_package.is_none() {
+                    nearest_package = Some(dir.clone());
+                }
             }
-            cur = dir.parent().map(|p| p.to_path_buf());
+            cur = dir.parent().map(Path::to_path_buf);
         }
 
-        // 2. No workspace up the tree: `start` must itself be a package —
-        //    the single-repo case, a 1-member workspace.
-        let manifest_path = start.join("Keel.toml");
-        if manifest_path.is_file() {
-            let doc =
-                std::fs::read_to_string(&manifest_path).map_err(|e| PmError::Io(e.to_string()))?;
+        if let Some(package_dir) = nearest_package {
+            let doc = std::fs::read_to_string(package_dir.join("Keel.toml"))
+                .map_err(|e| PmError::Io(e.to_string()))?;
             let manifest = Manifest::parse(&doc)?;
             let members = vec![Member {
-                dir: start.to_path_buf(),
+                dir: package_dir.clone(),
                 path_deps: path_dep_names(&manifest),
                 manifest,
             }];
             return Ok(Workspace {
-                root: start.to_path_buf(),
+                root: package_dir,
                 virtual_root: false,
                 members,
             });
@@ -115,6 +135,7 @@ impl Workspace {
                 targets: root.targets.clone(),
                 workspace: root.workspace.clone(),
             };
+            manifest.validate()?;
             members.push(Member {
                 dir: root_dir.clone(),
                 path_deps: path_dep_names(&manifest).to_vec(),
@@ -185,20 +206,49 @@ impl Workspace {
         // out-degree = number of path deps; adjacency dep → dependents.
         let mut indegree: Vec<usize> = vec![0; self.members.len()];
         let mut dependents: Vec<Vec<usize>> = vec![Vec::new(); self.members.len()];
-        for (i, m) in self.members.iter().enumerate() {
-            for dep in &m.path_deps {
-                match index.get(dep.as_str()) {
-                    Some(&d) => {
-                        indegree[i] += 1;
-                        dependents[d].push(i);
+        for (i, member) in self.members.iter().enumerate() {
+            for (dependency_name, dependency) in &member.manifest.dependencies {
+                let Some(declared_path) = dependency.path() else {
+                    continue;
+                };
+                let target = member.dir.join(declared_path).canonicalize().map_err(|_| {
+                    PmError::PathDepOutsideWorkspace {
+                        dep: format!("{dependency_name} ({declared_path})"),
+                        from: member.name().to_string(),
                     }
-                    None => {
-                        return Err(PmError::PathDepOutsideWorkspace {
-                            dep: dep.clone(),
-                            from: m.name().to_string(),
-                        });
-                    }
+                })?;
+                let target_index = self
+                    .members
+                    .iter()
+                    .position(|candidate| candidate.dir == target);
+                let Some(target_index) = target_index else {
+                    return Err(PmError::PathDepOutsideWorkspace {
+                        dep: format!("{dependency_name} ({declared_path})"),
+                        from: member.name().to_string(),
+                    });
+                };
+                if self.members[target_index].name() != dependency_name {
+                    return Err(PmError::PathDepOutsideWorkspace {
+                        dep: format!(
+                            "{dependency_name} ({declared_path} points to package '{}')",
+                            self.members[target_index].name()
+                        ),
+                        from: member.name().to_string(),
+                    });
                 }
+                let requirement = crate::validation::requirement(dependency.version())?;
+                let target_version =
+                    crate::validation::version(self.members[target_index].manifest.version())?;
+                if !requirement.matches(&target_version) {
+                    return Err(PmError::ResolveConflict {
+                        name: dependency_name.clone(),
+                        chosen: target_version.to_string(),
+                        required: requirement.to_string(),
+                    });
+                }
+                debug_assert_eq!(index.get(dependency_name.as_str()), Some(&target_index));
+                indegree[i] += 1;
+                dependents[target_index].push(i);
             }
         }
 
@@ -305,7 +355,14 @@ fn expand_members(root: &Path, pattern: &str) -> Result<Vec<PathBuf>> {
     let stars = pattern.matches('*').count();
     if stars == 0 {
         let dir = root.join(pattern);
-        return Ok(if dir.is_dir() { vec![dir] } else { Vec::new() });
+        if !dir.is_dir() {
+            return Ok(Vec::new());
+        }
+        let dir = dir.canonicalize().map_err(|e| PmError::Io(e.to_string()))?;
+        if !dir.starts_with(root) {
+            return Err(PmError::BadMemberPattern(pattern.to_string()));
+        }
+        return Ok(vec![dir]);
     }
     if stars > 1 {
         return Err(PmError::BadMemberPattern(pattern.to_string()));
@@ -315,6 +372,12 @@ fn expand_members(root: &Path, pattern: &str) -> Result<Vec<PathBuf>> {
     let parent = root.join(prefix);
     if !parent.is_dir() {
         return Ok(Vec::new());
+    }
+    let parent = parent
+        .canonicalize()
+        .map_err(|e| PmError::Io(e.to_string()))?;
+    if !parent.starts_with(root) {
+        return Err(PmError::BadMemberPattern(pattern.to_string()));
     }
     let mut out: Vec<PathBuf> = Vec::new();
     for e in std::fs::read_dir(&parent).map_err(|e| PmError::Io(e.to_string()))? {
@@ -333,6 +396,12 @@ fn expand_members(root: &Path, pattern: &str) -> Result<Vec<PathBuf>> {
             parent.join(&name).join(suffix)
         };
         if candidate.is_dir() {
+            let candidate = candidate
+                .canonicalize()
+                .map_err(|e| PmError::Io(e.to_string()))?;
+            if !candidate.starts_with(root) {
+                return Err(PmError::BadMemberPattern(pattern.to_string()));
+            }
             out.push(candidate);
         }
     }

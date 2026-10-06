@@ -29,54 +29,96 @@ fn locked_registry_names(lock: &lpp_pm::Lock) -> Vec<&lpp_pm::LockedPkg> {
         .collect()
 }
 
-/// One status row per locked registry package (sorted by name).
+/// One status row per locked registry package (sorted by name). The reported
+/// candidate must satisfy every requirement recorded in the lock graph; the
+/// absolute registry tip is not mislabeled as an installable update.
 fn outdated_rows(
     reg: &Registry,
     lock: &lpp_pm::Lock,
     filter: Option<&str>,
-) -> Vec<(String, String, String, String)> {
+) -> Result<Vec<(String, String, String, String)>, String> {
     let mut rows: Vec<(String, String, String, String)> = Vec::new();
-    for p in locked_registry_names(lock)
+    for package in locked_registry_names(lock)
         .into_iter()
-        .filter(|p| filter.map(|f| f == p.name).unwrap_or(true))
+        .filter(|package| filter.map(|name| name == package.name).unwrap_or(true))
     {
-        let (status, latest) = match reg.lookup(&p.name) {
-            Err(_) => ("removed".to_string(), "—".to_string()),
+        let (status, compatible) = match reg.lookup(&package.name) {
+            Err(lpp_pm::PmError::PackageNotFound(_)) => ("removed".to_string(), "—".to_string()),
+            Err(error) => return Err(error.to_string()),
             Ok(entry) => {
-                let locked_yanked = entry
+                let requirements = lock
+                    .packages
+                    .iter()
+                    .filter_map(|dependent| {
+                        dependent
+                            .deps
+                            .iter()
+                            .find(|dependency| *dependency == &package.name)
+                            .map(|dependency| {
+                                dependent
+                                    .dep_reqs
+                                    .get(dependency)
+                                    .map(String::as_str)
+                                    .unwrap_or("*")
+                            })
+                    })
+                    .map(lpp_pm::validation::requirement)
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|error| error.to_string())?;
+                let mut available = entry
                     .versions
                     .iter()
-                    .find(|v| v.version == p.version)
-                    .map(|v| v.yanked)
-                    .unwrap_or(true); // version gone from the index
-                if locked_yanked {
-                    ("yanked".to_string(), "—".to_string())
-                } else {
-                    let latest = entry
-                        .versions
-                        .iter()
-                        .filter(|v| !v.yanked)
-                        .max_by(|a, b| {
-                            let av = lpp_pm::Version::parse(&a.version)
-                                .unwrap_or_else(|| lpp_pm::Version::new(0, 0, 0));
-                            let bv = lpp_pm::Version::parse(&b.version)
-                                .unwrap_or_else(|| lpp_pm::Version::new(0, 0, 0));
-                            av.cmp(&bv)
-                        })
-                        .map(|v| v.version.clone())
-                        .expect("locked version is non-yanked, so the set is non-empty");
-                    if latest == p.version {
-                        ("up to date".to_string(), latest)
-                    } else {
-                        ("update available".to_string(), latest)
+                    .filter(|version| !version.yanked)
+                    .map(|version| {
+                        lpp_pm::validation::version(&version.version)
+                            .map(|parsed| (parsed, version.version.clone()))
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|error| error.to_string())?;
+                available.sort_by(|left, right| right.0.cmp(&left.0));
+                let absolute_latest = available.first().map(|(_, text)| text.clone());
+                let compatible = available
+                    .iter()
+                    .find(|(version, _)| {
+                        requirements
+                            .iter()
+                            .all(|requirement| requirement.matches(version))
+                    })
+                    .map(|(_, text)| text.clone());
+                let locked = entry
+                    .versions
+                    .iter()
+                    .find(|version| version.version == package.version);
+                let status = match locked {
+                    None => "locked version removed".to_string(),
+                    Some(version) if version.yanked => "yanked".to_string(),
+                    Some(_) if compatible.as_deref() != Some(package.version.as_str()) => {
+                        if compatible.is_some() {
+                            "update available".to_string()
+                        } else {
+                            "no compatible version".to_string()
+                        }
                     }
-                }
+                    Some(_) if absolute_latest.as_deref() != Some(package.version.as_str()) => {
+                        format!(
+                            "up to date (latest {} is incompatible)",
+                            absolute_latest.as_deref().unwrap_or("—")
+                        )
+                    }
+                    Some(_) => "up to date".to_string(),
+                };
+                (status, compatible.unwrap_or_else(|| "—".to_string()))
             }
         };
-        rows.push((p.name.clone(), p.version.clone(), latest, status));
+        rows.push((
+            package.name.clone(),
+            package.version.clone(),
+            compatible,
+            status,
+        ));
     }
-    rows.sort_by(|a, b| a.0.cmp(&b.0));
-    rows
+    rows.sort_by(|left, right| left.0.cmp(&right.0));
+    Ok(rows)
 }
 
 /// Build the full `keel outdated` output. `reg` is `None` offline.
@@ -100,9 +142,17 @@ pub fn outdated_render(
     }
 
     let reg = match reg {
-        Some(r) => {
-            r.sync().map_err(|e| e.to_string())?;
-            r
+        Some(registry) => {
+            if let Some(identity) = &lock.registry
+                && identity != registry.remote()
+            {
+                return Err(format!(
+                    "Keel.lock belongs to registry '{identity}', but '{}' was requested",
+                    registry.remote()
+                ));
+            }
+            registry.sync().map_err(|e| e.to_string())?;
+            registry
         }
         None => {
             return Err(
@@ -112,17 +162,17 @@ pub fn outdated_render(
         }
     };
 
-    let rows = outdated_rows(reg, &lock, filter);
+    let rows = outdated_rows(reg, &lock, filter)?;
     let mut b = Builder::default();
     b.push_record([
         "package".to_string(),
         "current".to_string(),
-        "latest".to_string(),
+        "compatible".to_string(),
         "status".to_string(),
     ]);
     let mut interesting = 0usize;
     for (name, current, latest, status) in &rows {
-        if status != "up to date" {
+        if !status.starts_with("up to date") {
             interesting += 1;
         }
         b.push_record([
@@ -156,12 +206,13 @@ pub fn outdated(reg: Option<&Registry>, dir: &Path, filter: Option<&str>) -> Res
 /// verifies artifact == *index* checksum), then re-hash against the
 /// **locked** checksum — the lockfile is the source of truth.
 fn verify_one(reg: &Registry, name: &str, version: &str, locked: &str) -> &'static str {
-    match reg.fetch(name, version) {
+    match reg.fetch_locked(name, version) {
         Ok((bytes, _entry)) => {
             let actual = lpp_pm::ContentAddress::of_bytes(&bytes).to_string();
             if actual == locked { "ok" } else { "mismatch" }
         }
         Err(lpp_pm::PmError::PackageNotFound(_)) => "removed",
+        Err(lpp_pm::PmError::ChecksumMismatch { .. }) => "mismatch",
         Err(_) => "missing",
     }
 }
@@ -170,6 +221,14 @@ fn verify_one(reg: &Registry, name: &str, version: &str, locked: &str) -> &'stat
 /// verified, `Ok(Some(summary))` when not (caller exits non-zero).
 pub fn verify_render(reg: &Registry, dir: &Path) -> Result<(String, bool), String> {
     let (_ws, lock) = load_lock(dir)?;
+    if let Some(identity) = &lock.registry
+        && identity != reg.remote()
+    {
+        return Err(format!(
+            "Keel.lock belongs to registry '{identity}', but '{}' was requested",
+            reg.remote()
+        ));
+    }
     reg.sync().map_err(|e| e.to_string())?;
 
     let registry_pkgs: Vec<&lpp_pm::LockedPkg> = lock
@@ -319,8 +378,8 @@ pub fn why(dir: &Path, name: &str) -> Result<(), String> {
         }
         println!("{line}");
     }
-    if chains.len() > MAX_CHAINS {
-        println!("… and {} more", chains.len() - MAX_CHAINS);
+    if chains.len() == MAX_CHAINS {
+        println!("… additional dependency chains may be omitted (limit {MAX_CHAINS})");
     }
     Ok(())
 }

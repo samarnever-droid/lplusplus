@@ -14,28 +14,10 @@ fn split_name_version(s: &str) -> (&str, Option<&str>) {
     }
 }
 
-/// The numeric components of a dotted version (`1.2.3` → `[1,2,3]`).
-fn version_key(v: &str) -> Vec<u64> {
-    v.split('.')
-        .map(|s| {
-            let digits: String = s.chars().take_while(|c| c.is_ascii_digit()).collect();
-            digits.parse::<u64>().unwrap_or(0)
-        })
-        .collect()
-}
-
-/// A minimal dotted-version compare (enough to pick "latest").
-fn cmp_versions(a: &str, b: &str) -> std::cmp::Ordering {
-    let (ka, kb) = (version_key(a), version_key(b));
-    for i in 0..ka.len().max(kb.len()) {
-        let x = ka.get(i).copied().unwrap_or(0);
-        let y = kb.get(i).copied().unwrap_or(0);
-        match x.cmp(&y) {
-            o @ (std::cmp::Ordering::Less | std::cmp::Ordering::Greater) => return o,
-            _ => {}
-        }
-    }
-    std::cmp::Ordering::Equal
+fn cmp_versions(left: &str, right: &str) -> std::cmp::Ordering {
+    let left = lpp_pm::Version::parse(left).expect("validated registry version");
+    let right = lpp_pm::Version::parse(right).expect("validated registry version");
+    left.cmp(&right)
 }
 
 /// Fetch one package: `keel fetch <name>` (latest) or `keel fetch <name>@<version>`.
@@ -103,18 +85,20 @@ fn candidates(reg: &Registry, name: &str) -> Option<Vec<lpp_pm::Candidate>> {
             .versions
             .into_iter()
             .filter(|ve| !ve.yanked)
-            .map(|ve| lpp_pm::Candidate {
-                version: lpp_pm::Version::parse(&ve.version)
-                    .unwrap_or(lpp_pm::Version::new(0, 0, 0)),
-                checksum: Some(ve.checksum),
+            .map(|version| lpp_pm::Candidate {
+                version: lpp_pm::Version::parse(&version.version)
+                    .expect("Registry::lookup validates concrete versions"),
+                checksum: Some(version.checksum),
                 source: "registry".to_string(),
-                deps: ve
+                deps: version
                     .deps
                     .into_iter()
-                    .map(|d| {
+                    .filter(|dependency| !dependency.optional)
+                    .map(|dependency| {
                         (
-                            d.name,
-                            lpp_pm::Req::parse(&d.req).unwrap_or(lpp_pm::Req::Any),
+                            dependency.name,
+                            lpp_pm::Req::parse(&dependency.req)
+                                .expect("Registry::lookup validates requirements"),
                         )
                     })
                     .collect(),
@@ -136,63 +120,165 @@ pub fn workspace_roots(ws: &lpp_pm::Workspace) -> Result<Vec<lpp_pm::Pkg>, Strin
     ws.members
         .iter()
         .map(|m| {
-            let version = lpp_pm::Version::parse(m.manifest.version())
-                .ok_or_else(|| format!("invalid version in Keel.toml: {}", m.manifest.version()))?;
+            let version = lpp_pm::validation::version(m.manifest.version())
+                .map_err(|error| error.to_string())?;
+            let default_features = m
+                .manifest
+                .features
+                .get("default")
+                .cloned()
+                .unwrap_or_default();
+            let deps = m
+                .manifest
+                .dependencies
+                .iter()
+                .filter(|(name, dependency)| {
+                    dependency.path().is_none()
+                        && !member_names.contains(name.as_str())
+                        && (!dependency.optional()
+                            || default_features.iter().any(|feature| feature == *name))
+                })
+                .map(|(name, dependency)| {
+                    Ok((
+                        name.clone(),
+                        lpp_pm::validation::requirement(dependency.version())
+                            .map_err(|error| error.to_string())?,
+                    ))
+                })
+                .collect::<Result<Vec<_>, String>>()?;
             Ok(lpp_pm::Pkg {
                 name: m.name().to_string(),
                 version,
                 checksum: None,
-                // Path deps are local (never in the registry); deps named
-                // after a member are the member itself.
                 source: if m.dir == ws.root {
                     "root".to_string()
                 } else {
                     "path".to_string()
                 },
-                deps: m
-                    .manifest
-                    .dependencies
-                    .iter()
-                    .filter(|(n, d)| d.path().is_none() && !member_names.contains(n.as_str()))
-                    .map(|(n, d)| {
-                        (
-                            n.clone(),
-                            lpp_pm::Req::parse(d.version()).unwrap_or(lpp_pm::Req::Any),
-                        )
-                    })
-                    .collect(),
+                deps,
             })
         })
         .collect()
 }
 
-pub fn fetch_all(reg: &Registry, dir: &Path) -> Result<(), String> {
-    let ws = lpp_pm::Workspace::discover(dir).map_err(|e| e.to_string())?;
-    reg.sync().map_err(|e| e.to_string())?;
-    let roots = workspace_roots(&ws)?;
+/// Resolve and cache every dependency required by the workspace.
+///
+/// A local/path-only workspace installs without a configured registry and gets
+/// a deterministic lockfile containing its workspace packages. Registry-backed
+/// dependencies require the normal `--registry`/`KEEL_REGISTRY` configuration.
+pub fn install(reg: Option<&Registry>, dir: &Path) -> Result<(), String> {
+    let workspace = lpp_pm::Workspace::discover(dir).map_err(|error| error.to_string())?;
+    let roots = workspace_roots(&workspace)?;
+    let has_registry_dependencies = roots.iter().any(|package| !package.deps.is_empty());
+    if has_registry_dependencies {
+        let registry = reg.ok_or_else(|| {
+            "registry dependencies require --registry <git-url> or KEEL_REGISTRY".to_string()
+        })?;
+        return fetch_all(registry, dir);
+    }
 
-    let resolved = lpp_pm::resolve_workspace(&roots, &|name| candidates(reg, name))
-        .map_err(|e| e.to_string())?;
-
+    let resolved = lpp_pm::resolve_workspace(&roots, &|_| Some(Vec::new()))
+        .map_err(|error| error.to_string())?;
     let lock = lpp_pm::Lock::from_resolved(&resolved);
-    std::fs::write(
-        ws.root.join("Keel.lock"),
-        lock.to_toml().map_err(|e| e.to_string())?,
-    )
-    .map_err(|e| e.to_string())?;
+    lock.save_atomic(&workspace.root.join("Keel.lock"))
+        .map_err(|error| error.to_string())?;
+    println!(
+        "installed 0 registry package(s); locked {} workspace package(s)",
+        roots.len()
+    );
+    Ok(())
+}
 
-    let mut b = Builder::default();
-    b.push_record(["package".to_string(), "version".to_string()]);
-    for p in resolved.packages.values() {
-        if p.source == "registry" {
-            b.push_record([p.name.clone(), p.version.to_string()]);
+pub fn fetch_all(reg: &Registry, dir: &Path) -> Result<(), String> {
+    let ws = lpp_pm::Workspace::discover(dir).map_err(|error| error.to_string())?;
+    let roots = workspace_roots(&ws)?;
+    let lock_path = ws.root.join("Keel.lock");
+
+    // `fetch` preserves a valid lock. `update` is the command that changes
+    // selected versions.
+    if let Ok(document) = std::fs::read_to_string(&lock_path)
+        && let Ok(lock) = lpp_pm::Lock::parse(&document)
+        && lock_satisfies_roots(&lock, &roots)
+    {
+        if let Some(identity) = &lock.registry
+            && identity != reg.remote()
+        {
+            return Err(format!(
+                "Keel.lock belongs to registry '{identity}', but '{}' was requested",
+                reg.remote()
+            ));
+        }
+        reg.sync().map_err(|error| error.to_string())?;
+        verify_locked_artifacts(reg, &lock)?;
+        println!("Keel.lock is unchanged; locked artifacts verified and cached.");
+        return Ok(());
+    }
+
+    reg.sync().map_err(|error| error.to_string())?;
+    let resolved = lpp_pm::resolve_workspace(&roots, &|name| candidates(reg, name))
+        .map_err(|error| error.to_string())?;
+    let mut lock = lpp_pm::Lock::from_resolved(&resolved);
+    lock.registry = Some(reg.remote().to_string());
+    verify_locked_artifacts(reg, &lock)?;
+    lock.save_atomic(&lock_path)
+        .map_err(|error| error.to_string())?;
+
+    let mut table = Builder::default();
+    table.push_record(["package".to_string(), "version".to_string()]);
+    for package in resolved.packages.values() {
+        if package.source == "registry" {
+            table.push_record([package.name.clone(), package.version.to_string()]);
         }
     }
     println!(
         "resolved {} package(s) → Keel.lock\n{}",
         resolved.len().saturating_sub(ws.members.len()),
-        b.build()
+        table.build()
     );
+    Ok(())
+}
+
+fn lock_satisfies_roots(lock: &lpp_pm::Lock, roots: &[lpp_pm::Pkg]) -> bool {
+    roots.iter().all(|root| {
+        let Some(locked_root) = lock.package(&root.name) else {
+            return false;
+        };
+        if locked_root.version != root.version.to_string() {
+            return false;
+        }
+        root.deps.iter().all(|(name, requirement)| {
+            lock.package(name)
+                .and_then(|package| lpp_pm::Version::parse(&package.version))
+                .is_some_and(|version| requirement.matches(&version))
+        })
+    })
+}
+
+fn verify_locked_artifacts(reg: &Registry, lock: &lpp_pm::Lock) -> Result<(), String> {
+    for package in lock
+        .packages
+        .iter()
+        .filter(|package| package.source == "registry")
+    {
+        let expected = package
+            .checksum
+            .as_deref()
+            .ok_or_else(|| format!("locked registry package '{}' has no checksum", package.name))?;
+        let (bytes, _) = reg
+            .fetch_locked(&package.name, &package.version)
+            .map_err(|error| error.to_string())?;
+        let actual = lpp_pm::ContentAddress::of_bytes(&bytes).to_string();
+        if actual != expected {
+            return Err(lpp_pm::PmError::ChecksumMismatch {
+                expected: expected.to_string(),
+                actual,
+            }
+            .to_string());
+        }
+        let store = lpp_pm::DiskBlobStore::open(crate::cache_dir().join("content"))
+            .map_err(|error| error.to_string())?;
+        lpp_pm::BlobStore::insert(&store, &bytes).map_err(|error| error.to_string())?;
+    }
     Ok(())
 }
 
@@ -205,6 +291,18 @@ pub fn merge_publish(
     name: &str,
     new: lpp_pm::index::VersionEntry,
 ) -> Result<lpp_pm::index::IndexEntry, lpp_pm::PmError> {
+    lpp_pm::validation::package_name(name)?;
+    lpp_pm::validation::version(&new.version)?;
+    lpp_pm::validation::checksum(&new.checksum)?;
+    if let Some(entry) = existing {
+        entry.validate()?;
+        if entry.name != name {
+            return Err(lpp_pm::PmError::IndexParse(format!(
+                "cannot merge package '{name}' into index entry '{}'",
+                entry.name
+            )));
+        }
+    }
     match existing {
         None => Ok(lpp_pm::index::IndexEntry {
             name: name.to_string(),
@@ -220,13 +318,7 @@ pub fn merge_publish(
             }
             let mut versions = entry.versions.clone();
             versions.push(new);
-            versions.sort_by(|a, b| {
-                let av = lpp_pm::Version::parse(&a.version)
-                    .unwrap_or_else(|| lpp_pm::Version::new(0, 0, 0));
-                let bv = lpp_pm::Version::parse(&b.version)
-                    .unwrap_or_else(|| lpp_pm::Version::new(0, 0, 0));
-                av.cmp(&bv)
-            });
+            versions.sort_by(|left, right| cmp_versions(&left.version, &right.version));
             Ok(lpp_pm::index::IndexEntry {
                 name: name.to_string(),
                 versions,
@@ -235,56 +327,40 @@ pub fn merge_publish(
     }
 }
 
-/// Publish the current project (`./Keel.toml`) to the registry.
-pub fn publish(reg: &Registry) -> Result<(), String> {
+/// Publish the project in `directory` to the registry.
+pub fn publish(reg: &Registry, directory: &Path) -> Result<(), String> {
     // Ensure the registry clone exists first (publish commits into it).
     reg.sync().map_err(|e| e.to_string())?;
-    let manifest_path = std::path::Path::new("Keel.toml");
+    let manifest_path = directory.join("Keel.toml");
     if !manifest_path.exists() {
-        return Err("no Keel.toml in the current directory — run `keel init` first".to_string());
+        return Err("no Keel.toml in the project directory — run `keel init` first".to_string());
     }
     let manifest = lpp_pm::manifest::Manifest::parse(
-        &std::fs::read_to_string(manifest_path).map_err(|e| e.to_string())?,
+        &std::fs::read_to_string(&manifest_path).map_err(|e| e.to_string())?,
     )
     .map_err(|e| e.to_string())?;
     let name = manifest.name().to_string();
     let version = manifest.version().to_string();
 
-    // Package the current directory into a tar.gz (excluding build + vcs).
-    let tmp = std::env::temp_dir().join(format!("keel-publish-{name}-{version}"));
-    let _ = std::fs::remove_dir_all(&tmp);
-    std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
-    let artifact_path = tmp.join(format!("{name}-{version}.tar.gz"));
-    let tar = std::process::Command::new("tar")
-        .args([
-            "-czf",
-            artifact_path.to_str().unwrap(),
-            "--exclude=target",
-            "--exclude=.git",
-            "-C",
-            ".",
-            ".",
-        ])
-        .output()
-        .map_err(|e| format!("failed to run `tar`: {e}"))?;
-    if !tar.status.success() {
+    if let Some((dependency, _)) = manifest
+        .dependencies
+        .iter()
+        .find(|(_, dependency)| dependency.path().is_some())
+    {
         return Err(format!(
-            "tar failed: {}",
-            String::from_utf8_lossy(&tar.stderr)
+            "cannot publish with path dependency '{dependency}'; publish it and use a registry version requirement first"
         ));
     }
-    let artifact = std::fs::read(&artifact_path).map_err(|e| e.to_string())?;
-    let _ = std::fs::remove_dir_all(&tmp);
-
+    let artifact = super::archive::pack(directory)?;
     let checksum = lpp_pm::ContentAddress::of_bytes(&artifact).to_string();
     let deps: Vec<lpp_pm::index::DepSpec> = manifest
         .dependencies
         .iter()
-        .map(|(n, d)| lpp_pm::index::DepSpec {
-            name: n.clone(),
-            req: d.version().to_string(),
-            optional: false,
-            features: Vec::new(),
+        .map(|(dependency_name, dependency)| lpp_pm::index::DepSpec {
+            name: dependency_name.clone(),
+            req: dependency.version().to_string(),
+            optional: dependency.optional(),
+            features: dependency.features().to_vec(),
         })
         .collect();
     let new_version = lpp_pm::index::VersionEntry {
@@ -292,15 +368,24 @@ pub fn publish(reg: &Registry) -> Result<(), String> {
         deps,
         features: manifest.features.clone(),
         checksum: checksum.clone(),
-        targets: Vec::new(),
+        targets: manifest
+            .targets
+            .as_ref()
+            .map(|targets| targets.supported.clone())
+            .unwrap_or_default(),
         yanked: false,
     };
     // Merge into the existing index entry: published versions are
     // immutable, and a new publish appends rather than clobbering the
     // package's history (clobbering would silently "remove" old versions
     // from every consumer's lockfile).
-    let existing = reg.lookup(&name).ok();
-    let entry = merge_publish(existing.as_ref(), &name, new_version).map_err(|e| e.to_string())?;
+    let existing = match reg.lookup(&name) {
+        Ok(entry) => Some(entry),
+        Err(lpp_pm::PmError::PackageNotFound(_)) => None,
+        Err(error) => return Err(error.to_string()),
+    };
+    let entry =
+        merge_publish(existing.as_ref(), &name, new_version).map_err(|error| error.to_string())?;
 
     reg.publish(&entry, &artifact, &format!("publish {name} {version}"))
         .map_err(|e| e.to_string())?;

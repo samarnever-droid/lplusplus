@@ -6,53 +6,107 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag, for example v0.1.0"
+        description: "Release tag, for example v0.1"
         required: true
-        default: "v0.1.0"
         type: string
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
+  rewrite-cutover-preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable 2026-09-01
+        with:
+          toolchain: 1.98.0
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - name: Validate release identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          REQUESTED_TAG='${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}'
+          test "$REQUESTED_TAG" = "v0.1"
+          test "$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(p["version"] for p in d["packages"] if p["name"]=="lpp"))')" = "0.1.0"
+      - name: Formatting and complete workspace tests
+        run: |
+          clang --version
+          cargo fmt --all -- --check
+          cargo test --workspace --locked
+      - name: Rewrite native authored corpus
+        run: |
+          cargo build --locked -p lpp -p lpp-runtime
+          bash scripts/corpus_correctness.sh check
+          bash scripts/corpus_correctness.sh run
+      - name: Installed rewrite runtime layout
+        run: cargo test --locked -p lpp --test rewrite_installed_gate
+
   linux-x86_64:
+    needs: rewrite-cutover-preflight
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable 2026-09-01
         with:
+          toolchain: 1.98.0
+          components: rustfmt, clippy
           targets: x86_64-unknown-linux-musl
       - name: Install musl tools
         run: sudo apt-get update && sudo apt-get install -y musl-tools
       - name: Build compiler and direct linker (static musl)
-        run: cargo build --release --locked --features all-arch --bin lpp --bin lpp-link --bin keel --target x86_64-unknown-linux-musl
-      - name: Package Linux release
+        run: cargo build --release --locked --features all-arch --bin lpp --bin lpp-link --target x86_64-unknown-linux-musl
+      - name: Package Linux runtime objects
         run: |
+          # Phase 1 networking migration: ship the reviewed Rust static
+          # runtime beside L++ without changing the default C compatibility
+          # ABI. This keeps end-user installs Rust-free while giving package
+          # integration a reproducible, versioned native artifact.
+          cargo build --manifest-path runtime/lpp-net/Cargo.toml --release --locked --target x86_64-unknown-linux-musl
+          # The rewrite links programs against this reviewed Rust ABI runtime.
+          # Build it for the release host (glibc), while the compiler itself
+          # remains a static musl executable.
+          cargo build --release --locked -p lpp-runtime
           mkdir -p package/lpp-linux-x86_64/bin package/lpp-linux-x86_64/lib package/lpp-linux-x86_64/include
           cp -r pm package/lpp-linux-x86_64/
-          if [ -d registry ]; then cp -r registry package/lpp-linux-x86_64/; fi
+          cp -r registry package/lpp-linux-x86_64/
           cp target/x86_64-unknown-linux-musl/release/lpp package/lpp-linux-x86_64/bin/
           cp target/x86_64-unknown-linux-musl/release/lpp-link package/lpp-linux-x86_64/bin/
-          cp target/x86_64-unknown-linux-musl/release/keel package/lpp-linux-x86_64/bin/
+          cp runtime/lpp-net/target/x86_64-unknown-linux-musl/release/liblpp_net_runtime.a package/lpp-linux-x86_64/lib/
+          cp runtime/lpp-net/include/lpp_net_runtime.h package/lpp-linux-x86_64/include/
+          cp target/release/liblpp_runtime.so package/lpp-linux-x86_64/lib/
+          cp runtime/lpp-net/README.md package/lpp-linux-x86_64/lib/lpp_net_runtime.README.md
           cc -O2 -fPIC -c lpp_runtime.c -o package/lpp-linux-x86_64/lib/lpp_runtime.o -pthread
           cc -Os -ffreestanding -fno-stack-protector -fno-pic -mno-red-zone \
             -fno-reorder-blocks-and-partition \
             -c runtime/linux_x86_64_min.c -o package/lpp-linux-x86_64/lib/lpp_runtime_min.o
           cp lpp_runtime.c package/lpp-linux-x86_64/lib/
           cp -r runtime package/lpp-linux-x86_64/lib/
-          if [ -d stdlib ]; then cp -r stdlib package/lpp-linux-x86_64/; fi
+          SMOKE="$RUNNER_TEMP/rewrite-installed-smoke"
+          rm -rf "$SMOKE" && mkdir -p "$SMOKE/home"
+          printf 'def main():\n    print_int(42)\n' > "$SMOKE/main.lpp"
+          (cd "$SMOKE" && HOME="$SMOKE/home" LPP_ENGINE=rewrite \
+            "$GITHUB_WORKSPACE/package/lpp-linux-x86_64/bin/lpp" run main.lpp \
+            | tee output.txt)
+          grep -qx '42' "$SMOKE/output.txt"
           python3 scripts/package_release.py tar.gz package/lpp-linux-x86_64 \
             lpp-linux-x86_64.tar.gz --epoch "$(git log -1 --format=%ct)"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: lpp-linux-x86_64
           path: lpp-linux-x86_64.tar.gz
 
   windows-x86_64:
+    needs: rewrite-cutover-preflight
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable 2026-09-01
+        with:
+          toolchain: 1.98.0
+          components: rustfmt, clippy
       - name: Locate MSVC tools
         shell: pwsh
         run: |
@@ -63,14 +117,16 @@ jobs:
       - name: Build and package Windows release
         shell: pwsh
         run: |
-          cargo build --release --locked --features all-arch --bin lpp --bin lpp-link --bin keel
+          cargo build --release --locked --features all-arch --bin lpp --bin lpp-link
+          cargo build --release --locked -p lpp-runtime
           $root = Join-Path $env:RUNNER_TEMP "lpp-windows-x86_64"
           New-Item -ItemType Directory -Force "$root\bin", "$root\lib" | Out-Null
           Copy-Item -Recurse pm "$root\pm"
-          if (Test-Path registry) { Copy-Item -Recurse registry "$root\registry" }
+          Copy-Item -Recurse registry "$root\registry"
           Copy-Item target\release\lpp.exe "$root\bin\lpp.exe"
           Copy-Item target\release\lpp-link.exe "$root\bin\lpp-link.exe"
-          Copy-Item target\release\keel.exe "$root\bin\keel.exe"
+          Copy-Item target\release\lpp_runtime.dll "$root\lib\lpp_runtime.dll"
+          Get-ChildItem target\release\*lpp_runtime*.lib | Copy-Item -Destination "$root\lib"
           $cmd = Join-Path $env:RUNNER_TEMP "build_runtime.bat"
           @"
           call "$env:VSCMD_BAT" || exit /b 1
@@ -82,48 +138,117 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Runtime object packaging failed" }
           Copy-Item lpp_runtime.c "$root\lib\lpp_runtime.c"
           Copy-Item -Recurse runtime "$root\lib\runtime"
-          if (Test-Path stdlib) { Copy-Item -Recurse stdlib "$root\stdlib" }
+          $smoke = Join-Path $env:RUNNER_TEMP "rewrite-installed-smoke"
+          New-Item -ItemType Directory -Force "$smoke\home" | Out-Null
+          @"
+          def main():
+              print_int(42)
+          "@ | Set-Content -Path "$smoke\main.lpp" -Encoding ascii
+          $smokeCmd = Join-Path $smoke "run.cmd"
+          @"
+          @echo off
+          call "%VSCMD_BAT%" >nul || exit /b 1
+          set LPP_ENGINE=rewrite
+          set LPP_HOST_CC=cl.exe
+          set LPP_RUNTIME_DIR=$root\lib
+          set HOME=$smoke\home
+          cd /d "$smoke"
+          "$root\bin\lpp.exe" run main.lpp > output.txt || exit /b 1
+          exit /b 0
+          "@ | Set-Content -Path $smokeCmd -Encoding ascii
+          cmd.exe /d /c $smokeCmd
+          if ($LASTEXITCODE -ne 0) { throw "installed rewrite smoke failed" }
+          if (-not ((Get-Content "$smoke\output.txt") -contains "42")) { throw "installed rewrite output mismatch" }
           $epoch = git log -1 --format=%ct
           python scripts/package_release.py zip $root lpp-windows-x86_64.zip --epoch $epoch
           if ($LASTEXITCODE -ne 0) { throw "Deterministic release packaging failed" }
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: lpp-windows-x86_64
           path: lpp-windows-x86_64.zip
 
   macos-arm64:
+    needs: rewrite-cutover-preflight
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable 2026-09-01
+        with:
+          toolchain: 1.98.0
+          components: rustfmt, clippy
       - name: Build and package Apple Silicon macOS release
         run: |
-          cargo build --release --locked --features all-arch --bin lpp --bin lpp-link --bin keel
+          cargo build --release --locked --features all-arch --bin lpp --bin lpp-link
+          cargo build --release --locked -p lpp-runtime
           mkdir -p package/lpp-macos-arm64/bin package/lpp-macos-arm64/lib
           cp -r pm package/lpp-macos-arm64/
-          if [ -d registry ]; then cp -r registry package/lpp-macos-arm64/; fi
+          cp -r registry package/lpp-macos-arm64/
           cp target/release/lpp package/lpp-macos-arm64/bin/
           cp target/release/lpp-link package/lpp-macos-arm64/bin/
-          cp target/release/keel package/lpp-macos-arm64/bin/
+          cp target/release/liblpp_runtime.dylib package/lpp-macos-arm64/lib/
           clang -O2 -fPIC -c lpp_runtime.c -o package/lpp-macos-arm64/lib/lpp_runtime.o
           cp lpp_runtime.c package/lpp-macos-arm64/lib/
           cp -r runtime package/lpp-macos-arm64/lib/
-          if [ -d stdlib ]; then cp -r stdlib package/lpp-macos-arm64/; fi
+          SMOKE="$RUNNER_TEMP/rewrite-installed-smoke"
+          rm -rf "$SMOKE" && mkdir -p "$SMOKE/home"
+          printf 'def main():\n    print_int(42)\n' > "$SMOKE/main.lpp"
+          (cd "$SMOKE" && HOME="$SMOKE/home" LPP_ENGINE=rewrite \
+            "$GITHUB_WORKSPACE/package/lpp-macos-arm64/bin/lpp" run main.lpp \
+            | tee output.txt)
+          grep -qx '42' "$SMOKE/output.txt"
           python3 scripts/package_release.py tar.gz package/lpp-macos-arm64 \
             lpp-macos-arm64.tar.gz --epoch "$(git log -1 --format=%ct)"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: lpp-macos-arm64
           path: lpp-macos-arm64.tar.gz
 
+  macos-x86_64:
+    needs: rewrite-cutover-preflight
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable 2026-09-01
+        with:
+          toolchain: 1.98.0
+          components: rustfmt, clippy
+      - name: Build and package Intel macOS release
+        run: |
+          test "$(uname -m)" = "x86_64"
+          cargo build --release --locked --features all-arch --bin lpp --bin lpp-link
+          cargo build --release --locked -p lpp-runtime
+          mkdir -p package/lpp-macos-x86_64/bin package/lpp-macos-x86_64/lib
+          cp -r pm package/lpp-macos-x86_64/
+          cp -r registry package/lpp-macos-x86_64/
+          cp target/release/lpp package/lpp-macos-x86_64/bin/
+          cp target/release/lpp-link package/lpp-macos-x86_64/bin/
+          cp target/release/liblpp_runtime.dylib package/lpp-macos-x86_64/lib/
+          clang -O2 -fPIC -c lpp_runtime.c -o package/lpp-macos-x86_64/lib/lpp_runtime.o
+          cp lpp_runtime.c package/lpp-macos-x86_64/lib/
+          cp -r runtime package/lpp-macos-x86_64/lib/
+          SMOKE="$RUNNER_TEMP/rewrite-installed-smoke"
+          rm -rf "$SMOKE" && mkdir -p "$SMOKE/home"
+          printf 'def main():\n    print_int(42)\n' > "$SMOKE/main.lpp"
+          (cd "$SMOKE" && HOME="$SMOKE/home" LPP_ENGINE=rewrite \
+            "$GITHUB_WORKSPACE/package/lpp-macos-x86_64/bin/lpp" run main.lpp \
+            | tee output.txt)
+          grep -qx '42' "$SMOKE/output.txt"
+          python3 scripts/package_release.py tar.gz package/lpp-macos-x86_64 \
+            lpp-macos-x86_64.tar.gz --epoch "$(git log -1 --format=%ct)"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: lpp-macos-x86_64
+          path: lpp-macos-x86_64.tar.gz
+
   publish:
-    needs: [linux-x86_64, windows-x86_64, macos-arm64]
+    needs: [linux-x86_64, windows-x86_64, macos-arm64, macos-x86_64]
     runs-on: ubuntu-latest
     permissions:
       contents: write
       id-token: write
+      attestations: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: artifacts
       - name: Prepare checksummed release assets
@@ -134,15 +259,20 @@ jobs:
           cp artifacts/lpp-linux-x86_64/lpp-linux-x86_64.tar.gz release-assets/
           cp artifacts/lpp-windows-x86_64/lpp-windows-x86_64.zip release-assets/
           cp artifacts/lpp-macos-arm64/lpp-macos-arm64.tar.gz release-assets/
+          cp artifacts/lpp-macos-x86_64/lpp-macos-x86_64.tar.gz release-assets/
           (cd release-assets && sha256sum \
             lpp-linux-x86_64.tar.gz \
             lpp-windows-x86_64.zip \
-            lpp-macos-arm64.tar.gz > SHA256SUMS)
+            lpp-macos-arm64.tar.gz \
+            lpp-macos-x86_64.tar.gz > SHA256SUMS)
           cat release-assets/SHA256SUMS
+      - name: Attest release archives and checksum manifest
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        with:
+          subject-path: "release-assets/*"
       - name: Create GitHub release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
-          name: "L++ ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
           generate_release_notes: true
           files: release-assets/*

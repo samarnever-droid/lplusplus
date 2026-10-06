@@ -218,6 +218,28 @@ fn fetch_all_writes_one_lock_for_the_whole_workspace() {
 }
 
 #[test]
+fn workspace_members_and_graph_are_deterministic() {
+    let root = temp("inspection");
+    diamond(&root);
+    let workspace = keel::commands::workspace::discover(&root).unwrap();
+
+    let members = keel::commands::workspace::render_members(&workspace);
+    assert!(members.starts_with(&format!("Workspace: {}\n", root.display())));
+    assert!(members.contains("  app @ 1.0.0 (apps/app)"), "{members}");
+    assert!(members.contains("  b @ 1.0.0 (crates/b)"), "{members}");
+    assert!(members.contains("  c @ 1.0.0 (crates/c)"), "{members}");
+    assert!(members.contains("  d @ 1.0.0 (crates/d)"), "{members}");
+
+    let graph = keel::commands::workspace::render_graph(&workspace);
+    assert!(graph.contains("  app -> b, c"), "{graph}");
+    assert!(graph.contains("  b -> d"), "{graph}");
+    assert!(graph.contains("  c -> d"), "{graph}");
+    assert!(graph.contains("  d -> (none)"), "{graph}");
+    assert_eq!(graph, keel::commands::workspace::render_graph(&workspace));
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn a_cyclic_workspace_fails_the_build_with_e6016() {
     let root = temp("cycle");
     std::fs::write(

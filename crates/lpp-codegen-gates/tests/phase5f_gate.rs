@@ -124,6 +124,17 @@ fn execute_mir(
 
 // ── the three backends, driven through the common `Backend` trait ──────────
 
+fn llvm_compiler_available() -> bool {
+    let compiler = std::env::var("LPP_LLVM_CC")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "clang".to_string());
+    Command::new(compiler)
+        .arg("--version")
+        .output()
+        .is_ok_and(|output| output.status.success())
+}
+
 fn compile_cranelift(
     program: &MirProgram,
     types: &TypeInterner,
@@ -429,8 +440,13 @@ def main() -> Int:
 // ── tests ─────────────────────────────────────────────────────────────────
 
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "the experimental v0.1 LLVM object tier is gated on Linux"
+)]
 fn cross_backend_corpus_agrees() {
-    if !cfg!(target_os = "linux") {
+    if !llvm_compiler_available() {
+        eprintln!("skipping cross-backend object gate: no configured clang executable");
         return;
     }
     let (program, types, package) = pipeline(DATA_SURFACE_CORPUS);
@@ -471,7 +487,15 @@ fn cross_backend_corpus_agrees() {
 }
 
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "the experimental v0.1 LLVM object tier is gated on Linux"
+)]
 fn deterministic_object_sizes() {
+    if !llvm_compiler_available() {
+        eprintln!("skipping cross-backend object gate: no configured clang executable");
+        return;
+    }
     let (program, types, package) = pipeline(DATA_SURFACE_CORPUS);
     let names = Names(&package.names.symbols);
 
@@ -512,8 +536,13 @@ fn deterministic_object_sizes() {
 }
 
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "the experimental v0.1 LLVM object tier is gated on Linux"
+)]
 fn sanitizer_clean() {
-    if !cfg!(target_os = "linux") {
+    if !llvm_compiler_available() {
+        eprintln!("skipping sanitizer gate: no configured clang executable");
         return;
     }
     let (program, types, package) = pipeline(DATA_SURFACE_CORPUS);

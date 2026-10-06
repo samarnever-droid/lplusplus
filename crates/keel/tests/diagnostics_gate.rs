@@ -182,8 +182,34 @@ fn outdated_reports_updates_and_yanks() {
         Some("update available".into()),
         "{out}"
     );
-    assert!(out.contains("1.2.0"), "latest column missing:\n{out}");
+    assert!(out.contains("1.2.0"), "compatible column missing:\n{out}");
     assert!(out.contains("1 package(s) need attention"), "{out}");
+
+    // A newer incompatible major must never be advertised as the update that
+    // `keel update` can install under the locked ^1 requirement.
+    republish(
+        &root,
+        &bare,
+        &IndexEntry {
+            name: "math".into(),
+            versions: vec![
+                ve("1.0.0", false, &[]),
+                ve("1.2.0", false, &[]),
+                ve("2.0.0", false, &[]),
+            ],
+        },
+    );
+    let r = Registry::new(url.as_str(), root.join("c3-major"));
+    let out = keel::commands::diagnostics::outdated_render(Some(&r), &proj, None).unwrap();
+    assert_eq!(
+        outdated_status(&out, "math"),
+        Some("update available".into())
+    );
+    assert!(out.contains("1.2.0"), "{out}");
+    assert!(
+        !out.contains("2.0.0"),
+        "incompatible major leaked into candidate column: {out}"
+    );
 
     // 3. Yank math 1.2.0 → back to up to date (1.0.0 is latest non-yanked).
     republish(
@@ -268,23 +294,28 @@ fn verify_catches_a_missing_blob() {
     );
     // Forged checksum: no blob is (or ever was) stored under it.
     let forged = lpp_pm::ContentAddress::of_bytes(b"nonexistent-bytes").to_string();
-    attacker
-        .publish(
-            &IndexEntry {
-                name: "math".into(),
-                versions: vec![VersionEntry {
-                    version: "1.0.0".into(),
-                    deps: vec![],
-                    features: Default::default(),
-                    checksum: forged,
-                    targets: vec![],
-                    yanked: false,
-                }],
-            },
-            b"attacker artifact",
-            "tamper: bogus checksum",
-        )
-        .unwrap();
+    let forged_entry = IndexEntry {
+        name: "math".into(),
+        versions: vec![VersionEntry {
+            version: "1.0.0".into(),
+            deps: vec![],
+            features: Default::default(),
+            checksum: forged,
+            targets: vec![],
+            yanked: false,
+        }],
+    };
+    let index_path = attacker
+        .dir()
+        .join("index")
+        .join(lpp_pm::index::index_path("math"));
+    std::fs::write(
+        index_path,
+        serde_json::to_string_pretty(&forged_entry).unwrap(),
+    )
+    .unwrap();
+    git(attacker.dir(), &["add", "index"]);
+    git(attacker.dir(), &["commit", "-m", "tamper: bogus checksum"]);
     attacker.push().unwrap();
 
     let r = Registry::new(bare.to_string_lossy().as_ref(), root.join("vclone"));

@@ -26,12 +26,22 @@ fn main() {
         }
     };
 
-    // Driver cutover, stage 1: the rewrite engine is opt-in via
-    // LPP_ENGINE=rewrite. The v1 compiler stays the default until the rewrite
-    // reaches full CLI and language-feature parity.
-    let use_rewrite = std::env::var("LPP_ENGINE")
-        .map(|value| value.eq_ignore_ascii_case("rewrite"))
-        .unwrap_or(false);
+    // The rewrite engine remains opt-in via LPP_ENGINE=rewrite until the
+    // required cross-host executable and installed-release gates are green.
+    // LPP_ENGINE=legacy is the explicit rollback selector for the cutover.
+    let use_rewrite = match std::env::var("LPP_ENGINE") {
+        Err(std::env::VarError::NotPresent) => false,
+        Ok(value) if value.eq_ignore_ascii_case("legacy") => false,
+        Ok(value) if value.eq_ignore_ascii_case("rewrite") => true,
+        Ok(value) => {
+            eprintln!("[L++] unknown LPP_ENGINE value `{value}`; use `legacy` or `rewrite`");
+            std::process::exit(2);
+        }
+        Err(std::env::VarError::NotUnicode(_)) => {
+            eprintln!("[L++] LPP_ENGINE is not valid Unicode; use `legacy` or `rewrite`");
+            std::process::exit(2);
+        }
+    };
 
     let builder = std::thread::Builder::new()
         .name("lpp_main".to_string())

@@ -47,10 +47,8 @@ impl Backend for LlvmBackend {
             ));
         }
 
-        // Reject non-slice-1 constructs (typed) and collect the module plan.
         let plan = lower::build_plan(program, types, options.names)?;
-        let ir = lower::lower_module(program, types, &plan);
-
+        let ir = lower::lower_module(program, types, &plan)?;
         let object = clang_object(&ir)?;
 
         let exported_symbols = plan.symbols.values().cloned().collect();
@@ -72,8 +70,21 @@ impl Backend for LlvmBackend {
     }
 }
 
-/// Write the IR to a temp `.ll` and compile it to an ELF object with
-/// `clang -c`, returning the object bytes.
+/// Validate the LLVM backend's supported slice and emit textual LLVM IR
+/// without invoking Clang. This keeps plan/emitter agreement directly
+/// testable and guarantees unsupported inputs return a typed error rather than
+/// reaching an invariant panic.
+pub fn emit_llvm_ir(
+    program: &MirProgram,
+    types: &TypeInterner,
+    names: &dyn lpp_codegen_api::NameResolver,
+) -> Result<String, CodegenError> {
+    let plan = lower::build_plan(program, types, names)?;
+    lower::lower_module(program, types, &plan)
+}
+
+/// Write the IR to a temporary `.ll` file and compile it to an ELF object with
+/// `LPP_LLVM_CC`, the persisted `llvm-path`, or `clang`, in that order.
 fn clang_object(ir: &str) -> Result<Vec<u8>, CodegenError> {
     use std::sync::atomic::{AtomicU64, Ordering};
     static INVOKE: AtomicU64 = AtomicU64::new(0);
@@ -93,16 +104,21 @@ fn clang_object(ir: &str) -> Result<Vec<u8>, CodegenError> {
     // and above the LLVM optimizer miscompiles it (reordering the load/store
     // pairs that carry the program state), so correctness first; optimization
     // is the 5F concern once the lowered IR is proven correct.
-    let run = Command::new("clang")
+    let compiler = std::env::var("LPP_LLVM_CC")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| lpp_config::LppConfig::load_or_create().llvm_path)
+        .unwrap_or_else(|| "clang".to_string());
+    let run = Command::new(&compiler)
         .args(["-c", "-w", "-O0"])
         .arg(&ll)
         .arg("-o")
         .arg(&object)
         .output()
-        .map_err(|e| emit(format!("clang spawn: {e}")))?;
+        .map_err(|e| emit(format!("LLVM compiler `{compiler}` spawn: {e}")))?;
     if !run.status.success() {
         return Err(emit(format!(
-            "clang -c failed:\n{}",
+            "LLVM compiler `{compiler}` failed:\n{}",
             String::from_utf8_lossy(&run.stderr)
         )));
     }

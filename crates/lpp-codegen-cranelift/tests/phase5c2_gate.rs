@@ -170,9 +170,6 @@ fn workdir(test_name: &str) -> PathBuf {
 }
 
 fn link_and_run(object: &[u8], test_name: &str) -> (String, i32) {
-    if !cfg!(target_os = "linux") {
-        return (String::new(), 0);
-    }
     let dir = workdir(test_name);
     let module = dir.join("module.o");
     let shim = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -856,6 +853,10 @@ fn is_family_map(name: &str) -> bool {
 // ── gate 1: differential closures + tasks ─────────────────────────────────
 
 #[test]
+#[cfg_attr(
+    target_os = "windows",
+    ignore = "MSVC runtime setup is covered by the Windows driver smoke gate"
+)]
 fn closure_and_task_corpus_matches_the_arc_oracle() {
     let (program, types, package) = pipeline(CLOSURE_TASK_CORPUS);
     let names = Names(&package.names.symbols);
@@ -870,9 +871,6 @@ fn closure_and_task_corpus_matches_the_arc_oracle() {
     );
 
     let module = compile(&program, &types, &names);
-    if !cfg!(target_os = "linux") {
-        return;
-    }
     let (stdout, status) = link_and_run(&module.object, "closure_task");
     assert_eq!(status, 0, "closure/task object exited {status}:\n{stdout}");
 
@@ -889,13 +887,14 @@ fn closure_and_task_corpus_matches_the_arc_oracle() {
 // ── gate 2: differential builtin families ─────────────────────────────────
 
 #[test]
+#[cfg_attr(
+    target_os = "windows",
+    ignore = "MSVC runtime setup is covered by the Windows driver smoke gate"
+)]
 fn builtin_family_corpus_matches_the_arc_oracle() {
     let (program, types, package) = pipeline(BUILTIN_CORPUS);
     let names = Names(&package.names.symbols);
     let module = compile(&program, &types, &names);
-    if !cfg!(target_os = "linux") {
-        return;
-    }
     let (stdout, status) = link_and_run(&module.object, "builtin");
     assert_eq!(status, 0, "builtin object exited {status}:\n{stdout}");
 
@@ -912,13 +911,14 @@ fn builtin_family_corpus_matches_the_arc_oracle() {
 // ── gate 3: self-check slices + SIMD ──────────────────────────────────────
 
 #[test]
+#[cfg_attr(
+    target_os = "windows",
+    ignore = "MSVC runtime setup is covered by the Windows driver smoke gate"
+)]
 fn simd_and_slice_selfcheck_produces_the_hand_computed_output() {
     let (program, types, package) = pipeline(SIMD_SLICE_CORPUS);
     let names = Names(&package.names.symbols);
     let module = compile(&program, &types, &names);
-    if !cfg!(target_os = "linux") {
-        return;
-    }
     let (stdout, status) = link_and_run(&module.object, "simd_slice");
     assert_eq!(status, 0, "simd/slice object exited {status}:\n{stdout}");
     assert_eq!(
@@ -958,7 +958,20 @@ fn compiles_are_deterministic_and_the_census_matches_the_contract() {
     let names = Names(&package.names.symbols);
     let module = compile(&program, &types, &names);
 
-    // Real ELF relocatable with the generated C-ABI entry.
+    // Real host-format relocatable with the generated C-ABI entry.
+    #[cfg(target_os = "windows")]
+    assert_eq!(
+        &module.object[..2],
+        b"\x64\x86",
+        "object is not x86-64 COFF"
+    );
+    #[cfg(target_os = "macos")]
+    assert_eq!(
+        &module.object[..4],
+        b"\xcf\xfa\xed\xfe",
+        "object is not 64-bit Mach-O"
+    );
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     assert_eq!(&module.object[..4], b"\x7fELF", "object is not ELF");
     assert_eq!(module.entry.as_deref(), Some("main"));
 

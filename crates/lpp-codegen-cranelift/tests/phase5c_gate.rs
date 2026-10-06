@@ -20,8 +20,8 @@
 //!    model for the same programs the object executes.
 //! 3. **Determinism.** Two compiles of each corpus produce
 //!    byte-identical objects and identical symbol censuses.
-//! 4. **Symbol census.** Real ELF, entry `main`; exports exactly the
-//!    user functions plus `lpp_main`/`main` and one generated
+//! 4. **Symbol census.** Real host-format object, entry `main`; exports
+//!    exactly the user functions plus `lpp_main`/`main` and one generated
 //!    destructor per nominal (structs `lpp_drop_s{n}`, enums
 //!    `lpp_drop_e{n}`, in `MirAggregateId` order); imports exactly
 //!    the runtime symbols the corpus uses.
@@ -183,9 +183,6 @@ fn workdir(test_name: &str) -> PathBuf {
 /// Link the object with the C shim (the 5B/5C ARC + list runtime) and
 /// run it; returns (stdout, exit status).
 fn link_and_run(object: &[u8], test_name: &str) -> (String, i32) {
-    if !cfg!(target_os = "linux") {
-        return (String::new(), 0);
-    }
     let dir = workdir(test_name);
     let module = dir.join("module.o");
     let shim = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -249,28 +246,32 @@ fn runtime_cdylib() -> std::path::PathBuf {
         .parent()
         .and_then(Path::parent)
         .expect("workspace root");
-    let so = workspace.join("target/debug/liblpp_runtime.so");
-    if !so.exists() {
+    let filename = if cfg!(target_os = "windows") {
+        "lpp_runtime.dll"
+    } else if cfg!(target_os = "macos") {
+        "liblpp_runtime.dylib"
+    } else {
+        "liblpp_runtime.so"
+    };
+    let library = workspace.join("target/debug").join(filename);
+    if !library.exists() {
         let out = Command::new("cargo")
             .args(["build", "-p", "lpp-runtime"])
             .current_dir(workspace)
             .output()
             .unwrap_or_else(|e| panic!("cargo failed to start: {e}"));
         assert!(
-            out.status.success() && so.exists(),
-            "failed to build liblpp_runtime.so:\n{}",
+            out.status.success() && library.exists(),
+            "failed to build {filename}:\n{}",
             String::from_utf8_lossy(&out.stderr)
         );
     }
-    so
+    library
 }
 
 /// Link `object` against the Rust runtime cdylib (instead of `c_shim.c`) and
 /// run it; returns (stdout, exit status). Mirrors `link_and_run`.
 fn link_and_run_runtime(object: &[u8], test_name: &str) -> (String, i32) {
-    if !cfg!(target_os = "linux") {
-        return (String::new(), 0);
-    }
     let so = runtime_cdylib();
     let libdir = so.parent().expect("cdylib directory").to_path_buf();
     let dir = workdir(test_name);
@@ -309,9 +310,6 @@ fn link_and_run_runtime(object: &[u8], test_name: &str) -> (String, i32) {
 /// Compile `source`, link the one object BOTH ways (C shim and Rust cdylib),
 /// and require identical stdout plus a clean exit from each.
 fn assert_drop_in_equivalent(source: &str, label: &str) {
-    if !cfg!(target_os = "linux") {
-        return;
-    }
     let (program, types, package) = pipeline(source);
     let names = Names(&package.names.symbols);
     let module = compile(&program, &types, &names);
@@ -335,6 +333,10 @@ fn assert_drop_in_equivalent(source: &str, label: &str) {
 }
 
 #[test]
+#[cfg_attr(
+    target_os = "windows",
+    ignore = "MSVC runtime setup is covered by the Windows driver smoke gate"
+)]
 fn rust_runtime_is_a_drop_in_for_the_c_shim() {
     // Two proven corpora (aggregate structs/ARC/arithmetic/print, and the ARC
     // stress corpus) each link against the C shim and the Rust cdylib and must
@@ -693,13 +695,14 @@ def main() -> Int:
 // ── gate 1: differential aggregate corpus ─────────────────────────────────
 
 #[test]
+#[cfg_attr(
+    target_os = "windows",
+    ignore = "MSVC runtime setup is covered by the Windows driver smoke gate"
+)]
 fn aggregate_corpus_matches_the_phase4_oracle() {
     let (program, types, package) = pipeline(AGGREGATE_CORPUS);
     let names = Names(&package.names.symbols);
     let module = compile(&program, &types, &names);
-    if !cfg!(target_os = "linux") {
-        return;
-    }
     let (stdout, status) = link_and_run(&module.object, "aggregate");
     assert_eq!(status, 0, "aggregate object exited {status}:\n{stdout}");
 
@@ -716,13 +719,14 @@ fn aggregate_corpus_matches_the_phase4_oracle() {
 // ── gate 2: differential ARC stress corpus ────────────────────────────────
 
 #[test]
+#[cfg_attr(
+    target_os = "windows",
+    ignore = "MSVC runtime setup is covered by the Windows driver smoke gate"
+)]
 fn arc_stress_corpus_matches_the_arc_oracle() {
     let (program, types, package) = pipeline(ARC_STRESS_CORPUS);
     let names = Names(&package.names.symbols);
     let module = compile(&program, &types, &names);
-    if !cfg!(target_os = "linux") {
-        return;
-    }
     let (stdout, status) = link_and_run(&module.object, "arc_stress");
     assert_eq!(status, 0, "arc stress object exited {status}:\n{stdout}");
 
@@ -771,7 +775,20 @@ fn object_census_exports_and_imports_match_the_contract() {
     let names = Names(&package.names.symbols);
     let module = compile(&program, &types, &names);
 
-    // Real ELF relocatable with the generated C-ABI entry.
+    // Real host-format relocatable with the generated C-ABI entry.
+    #[cfg(target_os = "windows")]
+    assert_eq!(
+        &module.object[..2],
+        b"\x64\x86",
+        "object is not x86-64 COFF"
+    );
+    #[cfg(target_os = "macos")]
+    assert_eq!(
+        &module.object[..4],
+        b"\xcf\xfa\xed\xfe",
+        "object is not 64-bit Mach-O"
+    );
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     assert_eq!(&module.object[..4], b"\x7fELF", "object is not ELF");
     assert_eq!(module.entry.as_deref(), Some("main"));
 

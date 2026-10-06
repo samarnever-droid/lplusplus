@@ -1,53 +1,22 @@
-//! Phase 5D gate — the hand-written `wasm32-wasi` backend is correct and
-//! deterministic.
+//! Rewrite WASM gate — executable and ownership parity for the direct
+//! `wasm32-wasip1` backend.
 //!
-//! Slice 1 (data surface):
-//! 1. **Differential execution (data-surface corpus).** Integers
-//!    (wrapping arithmetic, signed div/rem, bitwise, shifts including
-//!    large/negative amounts, all comparisons), booleans, chars, floats
-//!    (arithmetic, modulo, NaN, comparisons), control flow, direct calls
-//!    (multi-parameter, recursion), and the string surface — the object's
-//!    stdout, run under Node's `node:wasi`, equals the Phase 4 reference
-//!    oracle (`execute_mir_with_stats`).
-//! 2. **Determinism.** Two compiles produce byte-identical objects and
-//!    identical symbol censuses.
-//! 3. **Compile-fail (5D2b surface).** Async/await/spawn and bare
-//!    function values fail with the exact `E5001`; slices, SIMD, and
-//!    tuples likewise. (Sync closures compile as of 5D2b slice 1.)
+//! # Capability matrix enforced by this test module
 //!
-//! Slice 2 (5D2a, managed data surface):
-//! 4. **Differential execution (managed corpus).** Structs (construction,
-//!    field read/write, nesting, reassignment, mixed-width layout,
-//!    struct-in-struct, managed fields), enums (dense match dispatch,
-//!    payload binding, explicit arms), lists (literals of every element
-//!    class, element read/write, `for`-in, managed elements, nested
-//!    lists, list-in-struct), float printing (`{:.6}` byte-exact), and
-//!    cross-function passing: object stdout equals the Phase 4 reference
-//!    oracle.
-//! 5. **Differential execution (ARC stress corpus).** Aliasing,
-//!    self-assignment, field/element swaps, move-then-reassign, cross-
-//!    container stores, deep nesting: object stdout equals the ARC-mode
-//!    oracle (`execute_mir_arc` with the 4D `pinned_types()`), whose
-//!    end-of-run balance proof validates the interpreter's ARC model for
-//!    the same programs the object executes.
-//! 6. **Determinism (5D2a).** Both corpora compile byte-identically.
-//! 7. **Structure census.** Exports exactly `_start` + `memory` + the
-//!    user functions; imports exactly `fd_write` + `proc_exit`; the name
-//!    section carries exactly one generated destructor per nominal
-//!    (`lpp_drop_s{n}`/`lpp_drop_e{n}`, in `MirAggregateId` order) plus
-//!    `lpp_drop_list` and `lpp_drop_none`; the funcref table is
-//!    `[no-op, drops…, list…]` with the element section matching.
-//! 8. **Compile-fail (5D2b surface, 5D2a corpus context).** Async fails
-//!    with the exact `E5001` even in a struct program.
+//! | Surface | Persistent gate |
+//! | --- | --- |
+//! | Scalars, control flow, direct calls, and deterministic objects | `data_surface_matches_oracle`, `deterministic_object` |
+//! | Structs, enums, lists, nested managed values, and ARC traffic | `managed_corpus_matches_the_reference_oracle`, `arc_stress_corpus_matches_the_arc_oracle` |
+//! | Dynamic strings and legacy numeric/string builtins | `string_builtin_corpus_matches_the_arc_oracle`, `extended_legacy_builtins_and_borrowed_calls_match_the_arc_oracle` |
+//! | Closures and first-class function values | `closure_corpus_matches_the_arc_oracle`, `function_value_corpus_matches_the_arc_oracle` |
+//! | Tasks, async values, and restricted eager spawn | `task_corpus_matches_the_arc_oracle` |
+//! | Tabled destructors and object shape | the executable ARC corpora plus `object_census_matches_the_contract` |
 //!
-//! Slice 3 (5D2b slice 1, function values):
-//! 9. **Differential execution (closure corpus).** Value captures (a
-//!    `mut` capture is a cell written through the env), capsule copies
-//!    called through the dispatch table, closures stored in lists, and
-//!    two-parameter closure calls: object stdout equals the ARC-mode
-//!    oracle (`execute_mir_arc` with the 4D `pinned_types()`).
-//! 10. **Compile-fail (remaining 5D2b surface).** Async and tuples
-//!     stay `E5001`; the closure smoke program compiles and runs.
+//! Tuple, slice, and map execution have dedicated sibling gates. The driver
+//! gate compiles, validates, executes, and byte-compares the complete positive
+//! legacy WASM corpus while checking the intentional host/SIMD/FFI rejection
+//! boundary. Arbitrary FFI, SIMD, and WASI preview-1 capabilities that have no
+//! direct backend implementation remain structured compile-time rejections.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -494,6 +463,9 @@ struct L2:
     pad: Int
 struct L3:
     value: Int
+struct Link:
+    value: Int
+    next: Link
 enum Shape:
     Square(size: Int)
     Circle(radius: Int)
@@ -571,6 +543,10 @@ def check_deep() -> Int:
     d.next.pad = 5
     total = total + d.next.pad
     return total
+def check_recursive_null() -> Int:
+    tail := Link(2, 0)
+    head := Link(1, tail)
+    return head.value + head.next.value
 def check_lists() -> Int:
     mut xs := [10, 20, 30]
     mut total := xs[0] + xs[1]
@@ -669,6 +645,10 @@ def main() -> Int:
         print_str("ok_deep")
     else:
         print_str("fail_deep")
+    if check_recursive_null() == 3:
+        print_str("ok_recursive_null")
+    else:
+        print_str("fail_recursive_null")
     if check_lists() == 159:
         print_str("ok_lists")
     else:
@@ -1545,6 +1525,7 @@ fn task_corpus_matches_the_arc_oracle() {
     let entry = main_function(&program, &package.names.symbols);
 
     let module = compile(&program, &types, &names);
+    std::fs::write("/tmp/corpus.wasm", &module.object).unwrap();
     let (stdout, status) = run_wasm(&module.object, "task");
     assert_eq!(status, 0, "task corpus object exited {status}:\n{stdout}");
 
@@ -1961,4 +1942,61 @@ fn string_builtin_corpus_matches_the_arc_oracle() {
         "string builtin corpus: object stdout diverges from the arc oracle"
     );
     expect_success_markers(&stdout, "string-builtin");
+}
+
+// Legacy corpus parity added after the original string batch: slicing,
+// repetition, character conversion, split, integer power, and freestanding
+// transcendental helpers all execute against the ARC oracle.
+const EXTENDED_LEGACY_BUILTIN_CORPUS: &str = r#"
+def echo(s: Str) -> Void:
+    print_str(s)
+
+def main() -> Int:
+    word := "borrowed"
+    echo(word)
+    print_int(str_len(word))
+    print_str(str_substr("Hello", 1, 3))
+    print_str(str_substr("Hello", 99, 3))
+    print_str(str_repeat("ab", 3))
+    print_str(char_at("hello", 1))
+    print_int(ord("A"))
+    print_str(chr(66))
+    print_int(ord("🙂"))
+    print_str(chr(128578))
+    print_int(lpp_str_eq("same", "same"))
+    kept := str_repeat("kept", 1)
+    alias := str_replace(kept, "", "unused")
+    print_str(kept)
+    print_str(alias)
+    parts := str_split("a,b,c", ord(","))
+    print_int(list_len(parts))
+    for part in parts:
+        print_str(part)
+    print_int(int_pow(2, 10))
+    print_int(int_pow(2, -1))
+    print_float(lpp_pow(2.0, 0.5))
+    print_float(sin(1.0))
+    print_float(cos(1.0))
+    return 0
+"#;
+
+#[test]
+fn extended_legacy_builtins_and_borrowed_calls_match_the_arc_oracle() {
+    let (program, types, package) = pipeline(EXTENDED_LEGACY_BUILTIN_CORPUS);
+    let names = Names(&package.names.symbols);
+    let entry = main_function(&program, &package.names.symbols);
+
+    let module = compile(&program, &types, &names);
+    let (stdout, status) = run_wasm(&module.object, "extended-legacy-builtins");
+    assert_eq!(
+        status, 0,
+        "extended legacy builtin corpus exited {status}:\n{stdout}"
+    );
+
+    let oracle = run_arc_oracle(&program, &types, entry);
+    assert_eq!(
+        stdout,
+        oracle.output.concat(),
+        "extended legacy builtins diverged from the ARC oracle"
+    );
 }

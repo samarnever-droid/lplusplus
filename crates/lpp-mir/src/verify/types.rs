@@ -16,7 +16,21 @@ impl Verifier<'_> {
         } = site;
         match value {
             Rvalue::Use(operand) => {
-                self.operand_type(function, block, Some(instruction), origin, operand, locals)
+                let actual =
+                    self.operand_type(function, block, Some(instruction), origin, operand, locals)?;
+                // Source integer literals are context-sensitive. The builder
+                // materializes a non-`Int` literal through `Use` so that the
+                // resulting local carries its inferred fixed-width type (or a
+                // nominal type for the legacy zero/null sentinel). Keep this
+                // exception narrow: it applies only to literal constants and
+                // still range-checks every fixed-width representation.
+                if let Operand::Constant(crate::Constant::Integer(value)) = operand
+                    && self.integer_literal_assignable(value, target_type)
+                {
+                    Some(target_type)
+                } else {
+                    Some(actual)
+                }
             }
             Rvalue::Unary { operator, operand } => {
                 let operand =
@@ -42,24 +56,43 @@ impl Verifier<'_> {
                 operator,
                 right,
             } => {
-                let left =
-                    self.operand_type(function, block, Some(instruction), origin, left, locals)?;
-                let right =
-                    self.operand_type(function, block, Some(instruction), origin, right, locals)?;
+                let left_operand = left;
+                let right_operand = right;
+                let left = self.operand_type(
+                    function,
+                    block,
+                    Some(instruction),
+                    origin,
+                    left_operand,
+                    locals,
+                )?;
+                let right = self.operand_type(
+                    function,
+                    block,
+                    Some(instruction),
+                    origin,
+                    right_operand,
+                    locals,
+                )?;
                 let bool_ = self.types.primitive(PrimitiveType::Bool);
+                let literal_pair_matches = (self.is_integral(left)
+                    && self.integer_operand_assignable(right_operand, left))
+                    || (self.is_integral(right)
+                        && self.integer_operand_assignable(left_operand, right));
                 let valid = match operator {
                     BinaryOperator::LogicalAnd | BinaryOperator::LogicalOr => {
                         (left == bool_ && right == bool_).then_some(bool_)
                     }
                     BinaryOperator::Equal | BinaryOperator::NotEqual => {
-                        (left == right).then_some(bool_)
+                        (left == right || literal_pair_matches).then_some(bool_)
                     }
                     BinaryOperator::Less
                     | BinaryOperator::Greater
                     | BinaryOperator::LessEqual
-                    | BinaryOperator::GreaterEqual => {
-                        (left == right && self.is_ordered(left)).then_some(bool_)
-                    }
+                    | BinaryOperator::GreaterEqual => ((left == right && self.is_ordered(left))
+                        || (literal_pair_matches
+                            && (self.is_ordered(left) || self.is_ordered(right))))
+                    .then_some(bool_),
                     BinaryOperator::Add => {
                         let string = self.types.primitive(PrimitiveType::String);
                         let int = self.types.primitive(PrimitiveType::Int);
@@ -353,7 +386,13 @@ impl Verifier<'_> {
                         *operand,
                         locals,
                     )?;
-                    if !lpp_types::type_matches_semantic(actual, *semantic, self.types) {
+                    let contextual_literal = lpp_types::semantic_result_type(*semantic, self.types)
+                        .is_some_and(|expected| {
+                            self.integer_operand_assignable(*operand, expected)
+                        });
+                    if !lpp_types::type_matches_semantic(actual, *semantic, self.types)
+                        && !contextual_literal
+                    {
                         self.push(
                             function,
                             Some(block),
@@ -846,7 +885,7 @@ impl Verifier<'_> {
                 *operand,
                 locals,
             )?;
-            if actual != field.ty {
+            if actual != field.ty && !self.integer_operand_assignable(*operand, field.ty) {
                 self.push(
                     site.function,
                     Some(site.block),
@@ -941,11 +980,36 @@ impl Verifier<'_> {
         );
     }
 
+    pub(super) fn integer_operand_assignable(&self, operand: Operand, target: TypeId) -> bool {
+        match operand {
+            Operand::Constant(crate::Constant::Integer(value)) => {
+                self.integer_literal_assignable(value, target)
+            }
+            Operand::Copy(_) | Operand::Function(_) | Operand::Constant(_) => false,
+        }
+    }
+
+    fn integer_literal_assignable(&self, value: i64, target: TypeId) -> bool {
+        match self.types.kind(target) {
+            TypeKind::Primitive(PrimitiveType::Int) => true,
+            TypeKind::Primitive(PrimitiveType::U8) => u8::try_from(value).is_ok(),
+            TypeKind::Primitive(PrimitiveType::U16) => u16::try_from(value).is_ok(),
+            TypeKind::Primitive(PrimitiveType::U32) => u32::try_from(value).is_ok(),
+            TypeKind::Primitive(PrimitiveType::I8) => i8::try_from(value).is_ok(),
+            TypeKind::Primitive(PrimitiveType::I16) => i16::try_from(value).is_ok(),
+            TypeKind::Primitive(PrimitiveType::I32) => i32::try_from(value).is_ok(),
+            // Legacy L++ source uses integer zero for a null aggregate edge,
+            // most notably as the terminal link of recursive structures.
+            TypeKind::Nominal { .. } => value == 0,
+            _ => false,
+        }
+    }
+
     fn is_numeric(&self, ty: TypeId) -> bool {
         self.is_integral(ty) || self.types.kind(ty) == TypeKind::Primitive(PrimitiveType::Float)
     }
 
-    fn is_integral(&self, ty: TypeId) -> bool {
+    pub(super) fn is_integral(&self, ty: TypeId) -> bool {
         matches!(
             self.types.kind(ty),
             TypeKind::Primitive(

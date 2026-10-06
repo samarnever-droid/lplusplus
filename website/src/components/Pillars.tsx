@@ -8,9 +8,9 @@ const PILLARS = [
     color: "text-acid",
     ring: "group-hover:border-acid/40",
     chip: "border-acid/25 bg-acid/10 text-acid",
-    title: "Readable as Python",
-    body: "Significant whitespace, colon blocks, and := declarations. Types are explicit at function boundaries and inferred everywhere else. Code that reads like prose.",
-    code: `def greet(name: String) -> Void:\n    msg := "Hello, " + name\n    print(msg)`,
+    title: "Python-like clarity",
+    body: "Significant whitespace, colon blocks, and := declarations. Types stay explicit at boundaries and are inferred where the intent is already clear.",
+    code: `def greet(name: Str) -> Void:\n    msg := "Hello, " + name\n    print_str(msg)`,
     tag: "syntax.lpp",
   },
   {
@@ -18,9 +18,9 @@ const PILLARS = [
     color: "text-ember",
     ring: "group-hover:border-ember/40",
     chip: "border-ember/25 bg-ember/10 text-ember",
-    title: "Fast as C",
-    body: "The Cranelift AOT backend emits native x86-64 machine code — no VM, no interpreter, no JIT warmup. Recursive fib(35) runs in ~64 ms, toe-to-toe with gcc -O2.",
-    code: `# source -> native .exe in ~3 ms\n$ lpp main.lpp\n$ .\\main.exe   # 138 KB, zero deps`,
+    title: "Native by default",
+    body: "Cranelift-first ahead-of-time compilation emits native code with no interpreter, VM, or JIT warmup. LLVM and direct WebAssembly provide additional target paths.",
+    code: `# source -> native executable\n$ lpp main.lpp\n$ .\\main.exe`,
     tag: "shell",
   },
   {
@@ -28,8 +28,8 @@ const PILLARS = [
     color: "text-lav",
     ring: "group-hover:border-lav/40",
     chip: "border-lav/25 bg-lav/10 text-lav",
-    title: "Safe as Rust",
-    body: "Immutable by default. Memory is managed by the compiler's escape analyzer — stack, ARC heap, or arena — with no data races by design, and no borrow checker to fight.",
+    title: "Safety engineered in",
+    body: "Immutable by default. Ownership analysis places values as frame, owned, or shared, while static balance checks catch common ownership mistakes before code generation.",
     code: `x := 5\n# x = 6   <- compile error\nmut y := 10\ny = 20      # explicit intent`,
     tag: "safety.lpp",
   },
@@ -43,10 +43,10 @@ export default function Pillars() {
         kicker="One language, three promises"
         title={
           <>
-            The triangle, <span className="text-acid">finally closed.</span>
+            L++ closes <span className="text-acid">the triangle.</span>
           </>
         }
-        desc="Languages have always forced a trade: pick two of readability, speed, and safety. L++ closes the triangle by moving memory management into the compiler's semantic analysis — where it belongs."
+        desc="Readable syntax, native execution, and ownership-aware checks built into the compiler pipeline. Three priorities, one language—without turning safety into ceremony."
       />
 
       <div className="mt-14 grid gap-5 md:grid-cols-3">

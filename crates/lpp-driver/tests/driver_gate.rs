@@ -17,13 +17,20 @@ use lpp_driver::{
     compile_entry, default_runtime_lib_dir,
 };
 
-/// Ensure `liblpp_runtime.so` exists (building it on demand) and return its
-/// directory. `cargo test` does not build the runtime cdylib unless something
+/// Ensure the host runtime cdylib exists (building it on demand) and return
+/// its directory. `cargo test` does not build that artifact unless something
 /// depends on it; cargo has released the package lock by the time test
 /// binaries run, so this nested build is safe.
 fn runtime_lib_dir() -> PathBuf {
     let dir = default_runtime_lib_dir();
-    if !dir.join("liblpp_runtime.so").exists() {
+    let runtime = if cfg!(target_os = "windows") {
+        "lpp_runtime.dll"
+    } else if cfg!(target_os = "macos") {
+        "liblpp_runtime.dylib"
+    } else {
+        "liblpp_runtime.so"
+    };
+    if !dir.join(runtime).exists() {
         let workspace = dir.parent().and_then(Path::parent).expect("workspace root");
         let out = Command::new("cargo")
             .args(["build", "-p", "lpp-runtime"])
@@ -71,6 +78,10 @@ fn compiles_an_entry_to_an_object() {
 }
 
 #[test]
+#[cfg_attr(
+    target_os = "windows",
+    ignore = "MSVC environment is exercised by the Windows driver smoke gate"
+)]
 fn compiles_and_runs_a_native_executable() {
     let dir = workdir("exe");
     let entry = dir.join("main.lpp");
@@ -80,11 +91,6 @@ fn compiles_and_runs_a_native_executable() {
     )
     .unwrap();
     let exe = dir.join("program");
-
-    if !cfg!(target_os = "linux") {
-        eprintln!("skipping native ELF execution on non-Linux host");
-        return;
-    }
 
     build_executable(
         &entry,
@@ -106,11 +112,11 @@ fn compiles_and_runs_a_native_executable() {
 /// compiles, links, and runs, returning exit code 0 to the session and leaving
 /// the executable beside the source.
 #[test]
+#[cfg_attr(
+    target_os = "windows",
+    ignore = "MSVC environment is exercised by the Windows driver smoke gate"
+)]
 fn rewrite_engine_runs_a_program_through_the_driver_contract() {
-    if !cfg!(target_os = "linux") {
-        eprintln!("skipping native ELF execution on non-Linux host");
-        return;
-    }
     let dir = workdir("engine");
     let entry = dir.join("main.lpp");
     std::fs::write(
@@ -149,11 +155,11 @@ fn rewrite_engine_runs_a_program_through_the_driver_contract() {
 /// fix across the type checker (zero-argument constructor arity) and MIR
 /// (zero-value synthesis per concrete field type).
 #[test]
+#[cfg_attr(
+    target_os = "windows",
+    ignore = "MSVC environment is exercised by the Windows driver smoke gate"
+)]
 fn zero_arg_struct_constructor_zero_initializes_fields() {
-    if !cfg!(target_os = "linux") {
-        eprintln!("skipping native ELF execution on non-Linux host");
-        return;
-    }
     let dir = workdir("zeroinit");
     let entry = dir.join("main.lpp");
     std::fs::write(

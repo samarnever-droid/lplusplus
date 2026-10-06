@@ -25,18 +25,20 @@ fn latest_candidates(reg: &Registry, name: &str) -> Option<Vec<Candidate>> {
             .versions
             .into_iter()
             .filter(|ve| !ve.yanked)
-            .map(|ve| Candidate {
-                version: lpp_pm::Version::parse(&ve.version)
-                    .unwrap_or(lpp_pm::Version::new(0, 0, 0)),
-                checksum: Some(ve.checksum),
+            .map(|version| Candidate {
+                version: lpp_pm::Version::parse(&version.version)
+                    .expect("Registry::lookup validates versions"),
+                checksum: Some(version.checksum),
                 source: "registry".to_string(),
-                deps: ve
+                deps: version
                     .deps
                     .into_iter()
-                    .map(|d| {
+                    .filter(|dependency| !dependency.optional)
+                    .map(|dependency| {
                         (
-                            d.name,
-                            lpp_pm::Req::parse(&d.req).unwrap_or(lpp_pm::Req::Any),
+                            dependency.name,
+                            lpp_pm::Req::parse(&dependency.req)
+                                .expect("Registry::lookup validates requirements"),
                         )
                     })
                     .collect(),
@@ -53,18 +55,20 @@ fn pinned_candidate(reg: &Registry, name: &str, version: &str) -> Option<Candida
             .versions
             .into_iter()
             .find(|ve| !ve.yanked && ve.version == version)
-            .map(|ve| Candidate {
-                version: lpp_pm::Version::parse(&ve.version)
-                    .unwrap_or(lpp_pm::Version::new(0, 0, 0)),
-                checksum: Some(ve.checksum),
+            .map(|version| Candidate {
+                version: lpp_pm::Version::parse(&version.version)
+                    .expect("Registry::lookup validates versions"),
+                checksum: Some(version.checksum),
                 source: "registry".to_string(),
-                deps: ve
+                deps: version
                     .deps
                     .into_iter()
-                    .map(|d| {
+                    .filter(|dependency| !dependency.optional)
+                    .map(|dependency| {
                         (
-                            d.name,
-                            lpp_pm::Req::parse(&d.req).unwrap_or(lpp_pm::Req::Any),
+                            dependency.name,
+                            lpp_pm::Req::parse(&dependency.req)
+                                .expect("Registry::lookup validates requirements"),
                         )
                     })
                     .collect(),
@@ -75,15 +79,22 @@ fn pinned_candidate(reg: &Registry, name: &str, version: &str) -> Option<Candida
 /// A pinned candidate rebuilt from the lockfile itself (offline mode):
 /// the locked version, checksum, and dependency names (requirements
 /// relaxed to `Any` — the resolver checks the requirement at each edge).
-fn candidate_from_lock(p: &lpp_pm::LockedPkg) -> Candidate {
+fn candidate_from_lock(package: &lpp_pm::LockedPkg) -> Candidate {
     Candidate {
-        version: lpp_pm::Version::parse(&p.version).unwrap_or(lpp_pm::Version::new(0, 0, 0)),
-        checksum: p.checksum.clone(),
-        source: p.source.clone(),
-        deps: p
+        version: lpp_pm::Version::parse(&package.version).expect("Lock::parse validates versions"),
+        checksum: package.checksum.clone(),
+        source: package.source.clone(),
+        deps: package
             .deps
             .iter()
-            .map(|n| (n.clone(), lpp_pm::Req::Any))
+            .map(|name| {
+                let requirement = package
+                    .dep_reqs
+                    .get(name)
+                    .and_then(|value| lpp_pm::Req::parse(value))
+                    .unwrap_or(lpp_pm::Req::Any);
+                (name.clone(), requirement)
+            })
             .collect(),
     }
 }
@@ -118,33 +129,50 @@ pub fn update(reg: Option<&Registry>, dir: &Path, target: Option<&str>) -> Resul
     let ws = lpp_pm::Workspace::discover(dir).map_err(|e| e.to_string())?;
     let lock_path = ws.root.join("Keel.lock");
 
-    let old: BTreeMap<String, lpp_pm::LockedPkg> = std::fs::read_to_string(&lock_path)
+    let old_lock = std::fs::read_to_string(&lock_path)
         .ok()
-        .map(|doc| lpp_pm::Lock::parse(&doc).map(|l| l.packages))
+        .map(|document| lpp_pm::Lock::parse(&document))
         .transpose()
-        .map_err(|e| e.to_string())?
+        .map_err(|error| error.to_string())?;
+    let old: BTreeMap<String, lpp_pm::LockedPkg> = old_lock
+        .as_ref()
+        .map(|lock| lock.packages.clone())
         .unwrap_or_default()
         .into_iter()
-        .map(|p| (p.name.clone(), p))
+        .map(|package| (package.name.clone(), package))
         .collect();
 
     let roots = super::registry::workspace_roots(&ws)?;
     let member_names: BTreeSet<String> = ws.members.iter().map(|m| m.name().to_string()).collect();
 
     // Single-package mode against a workspace member: nothing to update.
-    if let Some(t) = target {
-        if member_names.contains(t) {
+    if let Some(target) = target {
+        if member_names.contains(target) {
             return Err(format!(
-                "'{t}' is a workspace member — members are never locked"
+                "'{target}' is a workspace member — members are never updated from the registry"
             ));
+        }
+        if !old
+            .get(target)
+            .is_some_and(|package| package.source == "registry")
+        {
+            return Err(lpp_pm::PmError::NotInLockFile(target.to_string()).to_string());
         }
     }
 
     // Sync the registry once, eagerly, when one is configured.
     let reg = match reg {
-        Some(r) => {
-            r.sync().map_err(|e| e.to_string())?;
-            Some(r)
+        Some(registry) => {
+            if let Some(identity) = old_lock.as_ref().and_then(|lock| lock.registry.as_ref())
+                && identity != registry.remote()
+            {
+                return Err(format!(
+                    "Keel.lock belongs to registry '{identity}', but '{}' was requested",
+                    registry.remote()
+                ));
+            }
+            registry.sync().map_err(|error| error.to_string())?;
+            Some(registry)
         }
         None => None,
     };
@@ -212,9 +240,14 @@ pub fn update(reg: Option<&Registry>, dir: &Path, target: Option<&str>) -> Resul
     });
 
     let resolved = lpp_pm::resolve_workspace(&roots, &available).map_err(|e| e.to_string())?;
-    let new_lock = lpp_pm::Lock::from_resolved(&resolved);
-    std::fs::write(&lock_path, new_lock.to_toml().map_err(|e| e.to_string())?)
-        .map_err(|e| e.to_string())?;
+    let mut new_lock = lpp_pm::Lock::from_resolved(&resolved);
+    new_lock.registry = reg
+        .as_ref()
+        .map(|registry| registry.remote().to_string())
+        .or_else(|| old_lock.as_ref().and_then(|lock| lock.registry.clone()));
+    new_lock
+        .save_atomic(&lock_path)
+        .map_err(|error| error.to_string())?;
 
     // Diff (registry-sourced entries only; members never change).
     let new_map: BTreeMap<&str, &lpp_pm::LockedPkg> = new_lock

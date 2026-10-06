@@ -22,9 +22,11 @@
 //! (slot 0 = a no-op "no destructor") and dispatched by `Release`
 //! through `call_indirect`.
 //!
-//! Still typed rejections (`E5001`): the function-value surface
-//! (closures/function values/`await`/`spawn` — 5D2b), slices, SIMD, and
-//! tuples.
+//! The current parity surface also includes tuples, dynamic string `+`,
+//! closures/function values, async tasks, restricted eager `spawn`, borrowed
+//! list/string slices, deterministic maps, WASI line input, and the complete
+//! positive legacy WASM corpus. Typed rejections remain for SIMD, arbitrary
+//! C FFI, and host capabilities unavailable in WASI preview 1.
 //!
 //! CFG strategy: each function is one dispatch loop over its basic blocks
 //! (in reverse post-order). A `current` local holds the block position:
@@ -88,6 +90,26 @@ const LIST_CAP: i64 = 16;
 const LIST_IS_ARC: i64 = 24;
 const LIST_NEW_CAP: i64 = 8;
 const LIST_CAP_MAX: i64 = 0x1000_0000;
+
+// Borrowed slice view (24 raw bump-heap bytes; deliberately not ARC-owned):
+//   [base i32 @0][padding @4][start i64 @8][len i64 @16]
+// The source borrow checker guarantees that `base` outlives the view.
+const SLICE_BASE: i64 = 0;
+const SLICE_START: i64 = 8;
+const SLICE_LEN: i64 = 16;
+const SLICE_SIZE: i64 = 24;
+
+// Map payload and linear-entry layout. Maps use deterministic linear search;
+// growth leaves old bump-heap storage behind, matching the backend's other
+// growable containers. Each entry is `[key i64][value i64]`.
+const MAP_DATA: i64 = 0;
+const MAP_LEN: i64 = 8;
+const MAP_CAP: i64 = 16;
+const MAP_STR_KEYS: i64 = 24;
+const MAP_SIZE: i64 = 32;
+const MAP_ENTRY_SIZE: i64 = 16;
+const MAP_INITIAL_CAP: i64 = 8;
+
 /// The enum tag lives at payload offset 0 (an i32; bytes 4..8 are the
 /// padding of the native 8-byte tag — the shared layout is identical).
 const ENUM_TAG: i64 = 0;
@@ -96,6 +118,8 @@ const ENUM_TAG: i64 = 0;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 enum H {
     FdWrite,
+    FdRead,
+    Input,
     PrintInt,
     PrintBool,
     PrintStr,
@@ -110,6 +134,12 @@ enum H {
     StrEndsWith,
     StrFind,
     StrReplace,
+    StrSubstr,
+    StrRepeat,
+    StrSplit,
+    CharAt,
+    Ord,
+    Chr,
     StrTrim,
     StrLower,
     StrUpper,
@@ -120,6 +150,12 @@ enum H {
     U64ToStr,
     U64ToHex,
     StrToU64,
+    // ── freestanding numeric helpers ──
+    Log2,
+    Exp2,
+    Pow,
+    Sin,
+    Cos,
     // ── 5D2a ARC heap ──
     /// `(size i32) -> node base i32` — 8-aligned bump with `memory.grow`.
     Alloc,
@@ -157,6 +193,37 @@ enum H {
     /// the replaced element and retains the new one (runtime-internal,
     /// mirroring `lpp_list_set_arc`).
     ListSetPtr,
+    // ── borrowed list/string slices ──
+    /// `(list i32, start i64, len i64) -> view i32`.
+    SliceNewList,
+    /// `(string i32, start i64, len i64) -> view i32`.
+    SliceNewStr,
+    /// `(view i32) -> len i64`.
+    SliceLen,
+    /// `(view i32, index i64) -> i64`.
+    SliceGetI64,
+    /// `(view i32, index i64) -> f64`.
+    SliceGetF64,
+    /// `(view i32, index i64) -> i32` (borrowed managed element).
+    SliceGetPtr,
+    /// `(view i32, index i64) -> string i32`.
+    StrSliceGet,
+    /// `(view i32) -> string i32`.
+    StrSliceToStr,
+    // ── maps with Int values and Int/String keys ──
+    MapNew,
+    MapEnsure,
+    MapFindI64,
+    MapFindStr,
+    MapPutI64,
+    MapPutStr,
+    MapGetI64,
+    MapGetStr,
+    MapHasI64,
+    MapHasStr,
+    MapRemoveI64,
+    MapRemoveStr,
+    MapLen,
     // ── 5D2b slice 3 tasks ──
     /// `(code i32, env i32, managed i32) -> task i32` — a 32-byte ARC
     /// node `{code i64@0, env i64@8, result i64@16, state i32@24,
@@ -180,16 +247,19 @@ enum Class {
     F64,  // Float
     Bool, // Bool (i32 0/1)
     Char, // Char (i32 code point)
-    Str,  // String (i32 pointer, immortal, no ARC)
-    Ptr,  // Managed struct/enum/list (i32 payload offset, ARC-tracked)
+    Str,  // String (i32 payload pointer; pooled strings use an immortal ARC count)
+    Ptr,  // Managed struct/enum/list/tuple (i32 payload offset, ARC-tracked)
 }
 
 /// Whether `ty` is ARC-managed on the wasm ABI.
 fn is_managed(types: &TypeInterner, ty: TypeId) -> bool {
     matches!(
         types.kind(ty),
-        TypeKind::Nominal { .. }
+        TypeKind::Primitive(PrimitiveType::String)
+            | TypeKind::Nominal { .. }
             | TypeKind::List(_)
+            | TypeKind::Map { .. }
+            | TypeKind::Tuple(_)
             | TypeKind::Function { .. }
             | TypeKind::Task(_)
     )
@@ -205,7 +275,9 @@ enum ElementClass {
 
 fn element_class(types: &TypeInterner, element: TypeId) -> ElementClass {
     match types.kind(element) {
-        TypeKind::List(_)
+        TypeKind::Primitive(PrimitiveType::String)
+        | TypeKind::List(_)
+        | TypeKind::Tuple(_)
         | TypeKind::Nominal { .. }
         | TypeKind::Function { .. }
         | TypeKind::Task(_) => ElementClass::Ptr,
@@ -322,6 +394,16 @@ impl Backend for WasmBackend {
         if let Some(flag) = options.opt_level.wasm_flag() {
             module.object = run_wasm_opt(&module.object, flag)?;
         }
+        wasmparser::Validator::new()
+            .validate_all(&module.object)
+            .map_err(|error| {
+                CodegenError::new(
+                    None,
+                    CodegenErrorKind::ObjectEmissionFailed(format!(
+                        "generated WebAssembly failed validation: {error}"
+                    )),
+                )
+            })?;
         Ok(module)
     }
 }
@@ -390,6 +472,7 @@ fn compile_module(
     // drop table even without lists or structs.
     let has_heap = !aggregates.is_empty()
         || plan.has_list
+        || plan.has_tuple
         || !plan.closures.is_empty()
         || plan.has_function_value
         || plan.has_tasks
@@ -398,16 +481,22 @@ fn compile_module(
         || plan.needs.contains(&H::Alloc);
     let list_drop_slot = plan.has_list.then(|| (aggregates.len() + 1) as u32);
 
-    // Imports, deterministic order (fd_write before proc_exit).
-    let needs_fd = plan.needs.contains(&H::FdWrite);
-    let import_fields: Vec<&str> = if needs_fd {
-        vec!["fd_write", "proc_exit"]
-    } else {
-        vec!["proc_exit"]
-    };
+    // Imports in deterministic order: output, input, then process exit.
+    let mut import_fields: Vec<&str> = Vec::new();
+    if plan.needs.contains(&H::FdWrite) {
+        import_fields.push("fd_write");
+    }
+    if plan.needs.contains(&H::FdRead) {
+        import_fields.push("fd_read");
+    }
+    import_fields.push("proc_exit");
     let fd_write_idx = import_fields
         .iter()
         .position(|f| *f == "fd_write")
+        .unwrap_or(0) as u32;
+    let fd_read_idx = import_fields
+        .iter()
+        .position(|f| *f == "fd_read")
         .unwrap_or(0) as u32;
     let proc_exit_idx = import_fields
         .iter()
@@ -461,15 +550,18 @@ fn compile_module(
         }
     }
     // Function-value capsules (5D2b slice 2) reuse the same destroyer.
-    let closure_destroy_slot =
-        (!plan.closures.is_empty() || plan.has_function_value).then(|| next_drop_slot);
+    let closure_destroy_slot = (!plan.closures.is_empty() || plan.has_function_value).then(|| {
+        let slot = next_drop_slot;
+        next_drop_slot += 1;
+        slot
+    });
     // Task runtime destructors (5D2b slice 3), after the closure
     // destroyer: `lpp_drop_task`, then `lpp_drop_tuple`.
     let task_drop_slot = plan.has_tasks.then(|| next_drop_slot);
     if plan.has_tasks {
         next_drop_slot += 1;
     }
-    let tuple_drop_slot = plan.has_tasks.then(|| next_drop_slot);
+    let tuple_drop_slot = (plan.has_tasks || plan.has_tuple).then(|| next_drop_slot);
 
     let mut env = Env {
         program,
@@ -516,6 +608,8 @@ fn compile_module(
     // Needed helpers, fixed order.
     let helpers: Vec<H> = [
         H::FdWrite,
+        H::FdRead,
+        H::Input,
         H::PrintInt,
         H::PrintBool,
         H::PrintStr,
@@ -538,6 +632,27 @@ fn compile_module(
         H::ListSetI64,
         H::ListSetF64,
         H::ListSetPtr,
+        H::SliceNewList,
+        H::SliceNewStr,
+        H::SliceLen,
+        H::SliceGetI64,
+        H::SliceGetF64,
+        H::SliceGetPtr,
+        H::StrSliceGet,
+        H::StrSliceToStr,
+        H::MapNew,
+        H::MapEnsure,
+        H::MapFindI64,
+        H::MapFindStr,
+        H::MapPutI64,
+        H::MapPutStr,
+        H::MapGetI64,
+        H::MapGetStr,
+        H::MapHasI64,
+        H::MapHasStr,
+        H::MapRemoveI64,
+        H::MapRemoveStr,
+        H::MapLen,
         H::TaskNew,
         H::TaskPoll,
         H::TaskAwait,
@@ -549,6 +664,12 @@ fn compile_module(
         H::StrEndsWith,
         H::StrFind,
         H::StrReplace,
+        H::StrSubstr,
+        H::StrRepeat,
+        H::StrSplit,
+        H::CharAt,
+        H::Ord,
+        H::Chr,
         H::StrTrim,
         H::StrLower,
         H::StrUpper,
@@ -559,6 +680,11 @@ fn compile_module(
         H::U64ToStr,
         H::U64ToHex,
         H::StrToU64,
+        H::Log2,
+        H::Exp2,
+        H::Pow,
+        H::Sin,
+        H::Cos,
     ]
     .into_iter()
     .filter(|h| plan.needs.contains(h))
@@ -580,7 +706,7 @@ fn compile_module(
     let import_tys: Vec<u32> = import_fields
         .iter()
         .map(|f| {
-            let (p, r) = if *f == "fd_write" {
+            let (p, r) = if matches!(*f, "fd_write" | "fd_read") {
                 (vec![Val::I32; 4], vec![Val::I32])
             } else {
                 (vec![Val::I32], vec![])
@@ -649,8 +775,14 @@ fn compile_module(
         .copied()
         .unwrap_or(fd_write_idx);
     for &h in &helpers {
-        let (params, results, extra, body) =
-            lower_helper(&env, h, fd_helper_idx, fd_write_idx, proc_exit_idx)?;
+        let (params, results, extra, body) = lower_helper(
+            &env,
+            h,
+            fd_helper_idx,
+            fd_write_idx,
+            fd_read_idx,
+            proc_exit_idx,
+        )?;
         funcs.push(Func {
             name: None,
             params,
@@ -870,6 +1002,9 @@ fn compile_module(
                 body: fb.body,
             });
         }
+    }
+    if plan.has_tasks || plan.has_tuple {
+        let release_idx = release_idx.expect("Release registered");
         // ── lpp_drop_tuple ──
         tuple_dtor_index = Some(base + funcs.len() as u32);
         {
@@ -1238,6 +1373,9 @@ struct Plan {
     /// Whether any list place/list literal appears (drives the list
     /// helpers, the list destroyer, and the heap).
     has_list: bool,
+    /// Whether a source-level tuple value or projection appears. Tuples use
+    /// the generic masked ARC tuple node also used for task environments.
+    has_tuple: bool,
     /// Closure functions in `MirFunctionId` order (5D2b): drives the
     /// dispatch table, the per-closure env destructors, and
     /// `lpp_closure_destroy`.
@@ -1277,6 +1415,7 @@ fn pre_scan(
     let mut main: Option<MirFunctionId> = None;
     let mut main_void = false;
     let mut has_list = false;
+    let mut has_tuple = false;
     let mut has_managed = false;
     let mut has_function_value = false;
     let mut has_tasks = false;
@@ -1311,6 +1450,7 @@ fn pre_scan(
             needs: &mut needs,
             strings: &mut strings,
             has_list: &mut has_list,
+            has_tuple: &mut has_tuple,
             has_managed: &mut has_managed,
             has_function_value: &mut has_function_value,
             has_tasks: &mut has_tasks,
@@ -1392,6 +1532,7 @@ fn pre_scan(
         main,
         main_void,
         has_list,
+        has_tuple,
         closures,
         has_function_value,
         task_thunks,
@@ -1409,6 +1550,7 @@ struct ScanLower<'a> {
     needs: &'a mut BTreeSet<H>,
     strings: &'a mut BTreeSet<String>,
     has_list: &'a mut bool,
+    has_tuple: &'a mut bool,
     has_managed: &'a mut bool,
     has_function_value: &'a mut bool,
     /// 5D2b slice 3: a task is constructed somewhere in the program.
@@ -1444,7 +1586,13 @@ fn scan_operand_class(lower: &mut ScanLower, operand: &Operand) -> Result<Class,
         *lower.has_managed = true;
         return Ok(Class::Ptr);
     }
-    operand_class(lower.program, lower.types, operand)
+    let class = operand_class(lower.program, lower.types, operand)?;
+    if class == Class::Str {
+        // Pooled strings use an immortal count, while dynamically produced
+        // strings use ordinary ARC. Both safely share Retain/Release.
+        *lower.has_managed = true;
+    }
+    Ok(class)
 }
 
 fn collect_strings(program: &MirProgram, rvalue: &Rvalue, strings: &mut BTreeSet<String>) {
@@ -1501,6 +1649,13 @@ enum PlaceStep {
     },
     /// A list element (the index operand resolved at the site).
     ListIndex { element: TypeId, index: Operand },
+    /// A boxed tuple slot. Tuple payload words begin after the mask/count
+    /// header and each element occupies one 8-byte word.
+    TupleField {
+        offset: u32,
+        ty: TypeId,
+        managed: bool,
+    },
 }
 
 /// The resolved form of a place: the root local plus its steps.
@@ -1613,8 +1768,27 @@ fn resolve_place(
                 });
                 current_ty = element;
             }
-            PlaceProjection::TupleField(_) => {
-                return Err(unsupported("tuple projection", Some(fn_id)));
+            PlaceProjection::TupleField(index) => {
+                let TypeKind::Tuple(elements) = types.kind(current_ty) else {
+                    return Err(unsupported("tuple field of non-tuple", Some(fn_id)));
+                };
+                let element_types = types.list(elements);
+                let ty = *element_types
+                    .get(*index as usize)
+                    .ok_or_else(|| unsupported("tuple field index", Some(fn_id)))?;
+                let managed = is_managed(types, ty);
+                if !is_last && !managed {
+                    return Err(unsupported(
+                        "projection through scalar tuple element",
+                        Some(fn_id),
+                    ));
+                }
+                steps.push(PlaceStep::TupleField {
+                    offset: 16 + 8 * *index,
+                    ty,
+                    managed,
+                });
+                current_ty = ty;
             }
         }
     }
@@ -1667,6 +1841,25 @@ fn check_instruction(
                     ));
                 };
                 check_list_literal(lower, element)?;
+            }
+            if let Rvalue::Tuple(items) = value {
+                let target_ty = lower.program.local(*target).unwrap().ty;
+                let TypeKind::Tuple(elements) = lower.types.kind(target_ty) else {
+                    return Err(unsupported(
+                        "tuple literal to non-tuple target",
+                        Some(lower.fn_id),
+                    ));
+                };
+                let element_types = lower.types.list(elements);
+                let values = lower.program.operands(*items);
+                if values.len() != element_types.len() || values.len() > 64 {
+                    return Err(unsupported("tuple arity", Some(lower.fn_id)));
+                }
+                *lower.has_tuple = true;
+                *lower.has_managed = true;
+                for value in values {
+                    scan_operand_class(lower, value)?;
+                }
             }
             Ok(())
         }
@@ -1748,12 +1941,16 @@ fn check_rvalue(lower: &mut ScanLower<'_>, rvalue: &Rvalue) -> Result<(), Codege
                 (BinaryOperator::Equal, Class::Str) | (BinaryOperator::NotEqual, Class::Str) => {
                     lower.needs.insert(H::StrEq);
                 }
-                (BinaryOperator::Add, Class::Str)
-                | (BinaryOperator::Subtract, Class::Str)
+                (BinaryOperator::Add, Class::Str) => {
+                    *lower.has_managed = true;
+                    lower.needs.insert(H::Alloc);
+                    lower.needs.insert(H::StrConcat);
+                }
+                (BinaryOperator::Subtract, Class::Str)
                 | (BinaryOperator::Multiply, Class::Str)
                 | (BinaryOperator::Divide, Class::Str)
                 | (BinaryOperator::Modulo, Class::Str) => {
-                    return Err(unsupported("string concatenation", Some(lower.fn_id)));
+                    return Err(unsupported("string arithmetic", Some(lower.fn_id)));
                 }
                 _ => {}
             }
@@ -1818,7 +2015,9 @@ fn check_rvalue(lower: &mut ScanLower<'_>, rvalue: &Rvalue) -> Result<(), Codege
         // List literals are checked from their assignment context (the
         // target/place type supplies the element class of `[]`).
         Rvalue::List(_) => Ok(()),
-        Rvalue::Tuple(_) => Err(unsupported("tuple", Some(lower.fn_id))),
+        // Tuple literals are validated from their assignment context because
+        // the target local supplies the element types.
+        Rvalue::Tuple(_) => Ok(()),
         Rvalue::ConstructStruct { fields, .. } => {
             *lower.has_managed = true;
             for operand in lower.program.operands(*fields) {
@@ -1930,14 +2129,21 @@ fn check_rvalue(lower: &mut ScanLower<'_>, rvalue: &Rvalue) -> Result<(), Codege
 /// (intermediate steps borrow through the same plain element read).
 fn register_list_load_needs(lower: &mut ScanLower<'_>, resolution: &PlaceResolution) {
     for step in &resolution.steps {
-        if let PlaceStep::ListIndex { element, .. } = step {
-            *lower.has_list = true;
-            *lower.has_managed = true;
-            match element_class(lower.types, *element) {
-                ElementClass::I64 => lower.needs.insert(H::ListGetI64),
-                ElementClass::F64 => lower.needs.insert(H::ListGetF64),
-                ElementClass::Ptr => lower.needs.insert(H::ListGetPtr),
-            };
+        match step {
+            PlaceStep::ListIndex { element, .. } => {
+                *lower.has_list = true;
+                *lower.has_managed = true;
+                match element_class(lower.types, *element) {
+                    ElementClass::I64 => lower.needs.insert(H::ListGetI64),
+                    ElementClass::F64 => lower.needs.insert(H::ListGetF64),
+                    ElementClass::Ptr => lower.needs.insert(H::ListGetPtr),
+                };
+            }
+            PlaceStep::TupleField { .. } => {
+                *lower.has_tuple = true;
+                *lower.has_managed = true;
+            }
+            PlaceStep::Downcast | PlaceStep::Field { .. } => {}
         }
     }
 }
@@ -1971,6 +2177,17 @@ fn check_builtin(
             *lower.has_list = true;
             *lower.has_managed = true;
             lower.needs.insert(H::ListNew);
+            Ok(())
+        }
+        "map_new" | "map_new_arc" => {
+            lower.needs.insert(H::Alloc);
+            lower.needs.insert(H::MapNew);
+            Ok(())
+        }
+        "input" => {
+            *lower.has_managed = true;
+            lower.needs.insert(H::FdRead);
+            lower.needs.insert(H::Input);
             Ok(())
         }
         _ => {
@@ -2073,6 +2290,162 @@ fn check_builtin(
                     lower.needs.insert(H::ListLen);
                     Ok(())
                 }
+                "slice" | "str_slice" => {
+                    let start = args.get(1).ok_or_else(|| {
+                        unsupported("slice start argument missing", Some(lower.fn_id))
+                    })?;
+                    let length = args.get(2).ok_or_else(|| {
+                        unsupported("slice length argument missing", Some(lower.fn_id))
+                    })?;
+                    require_i64(lower, start)?;
+                    require_i64(lower, length)?;
+                    lower.needs.insert(H::Alloc);
+                    if short == "slice" {
+                        list_element_of(lower, arg0)?;
+                        *lower.has_list = true;
+                        *lower.has_managed = true;
+                        lower.needs.insert(H::ListLen);
+                        lower.needs.insert(H::SliceNewList);
+                    } else {
+                        require_str(lower, arg0)?;
+                        lower.needs.insert(H::StrLen);
+                        lower.needs.insert(H::SliceNewStr);
+                    }
+                    Ok(())
+                }
+                "slice_len" => {
+                    slice_kind_of(lower.program, lower.types, arg0, lower.fn_id)?;
+                    lower.needs.insert(H::SliceLen);
+                    Ok(())
+                }
+                "slice_get" => {
+                    require_i64(
+                        lower,
+                        args.get(1).ok_or_else(|| {
+                            unsupported("slice index argument missing", Some(lower.fn_id))
+                        })?,
+                    )?;
+                    match slice_kind_of(lower.program, lower.types, arg0, lower.fn_id)? {
+                        SliceKind::String => {
+                            *lower.has_managed = true;
+                            lower.needs.insert(H::Alloc);
+                            lower.needs.insert(H::StrSliceGet);
+                        }
+                        SliceKind::List(element) => {
+                            *lower.has_list = true;
+                            *lower.has_managed = true;
+                            match element_class(lower.types, element) {
+                                ElementClass::I64 => lower.needs.insert(H::SliceGetI64),
+                                ElementClass::F64 => lower.needs.insert(H::SliceGetF64),
+                                ElementClass::Ptr => lower.needs.insert(H::SliceGetPtr),
+                            };
+                            match element_class(lower.types, element) {
+                                ElementClass::I64 => lower.needs.insert(H::ListGetI64),
+                                ElementClass::F64 => lower.needs.insert(H::ListGetF64),
+                                ElementClass::Ptr => lower.needs.insert(H::ListGetPtr),
+                            };
+                        }
+                    }
+                    Ok(())
+                }
+                "slice_get_bool" => {
+                    let index = args.get(1).ok_or_else(|| {
+                        unsupported("slice index argument missing", Some(lower.fn_id))
+                    })?;
+                    require_i64(lower, index)?;
+                    let SliceKind::List(element) =
+                        slice_kind_of(lower.program, lower.types, arg0, lower.fn_id)?
+                    else {
+                        return Err(unsupported(
+                            "slice_get_bool requires a list slice",
+                            Some(lower.fn_id),
+                        ));
+                    };
+                    if !matches!(
+                        lower.types.kind(element),
+                        TypeKind::Primitive(PrimitiveType::Bool)
+                    ) {
+                        return Err(unsupported(
+                            "slice_get_bool requires boolean elements",
+                            Some(lower.fn_id),
+                        ));
+                    }
+                    *lower.has_list = true;
+                    *lower.has_managed = true;
+                    lower.needs.insert(H::ListGetI64);
+                    lower.needs.insert(H::SliceGetI64);
+                    Ok(())
+                }
+                "slice_to_str" | "str_slice_to_str" => {
+                    if slice_kind_of(lower.program, lower.types, arg0, lower.fn_id)?
+                        != SliceKind::String
+                    {
+                        return Err(unsupported(
+                            "slice_to_str requires a string slice",
+                            Some(lower.fn_id),
+                        ));
+                    }
+                    *lower.has_managed = true;
+                    lower.needs.insert(H::Alloc);
+                    lower.needs.insert(H::StrSliceToStr);
+                    Ok(())
+                }
+                "map_put" | "map_put_str" | "map_put_float" | "map_put_str_float" | "map_get"
+                | "map_get_str" | "map_get_float" | "map_get_str_float" | "map_has"
+                | "map_has_str" | "map_remove" | "map_remove_str" => {
+                    require_i64(lower, arg0)?;
+                    let string_keys = short.contains("_str");
+                    let float_value = short.ends_with("_float");
+                    let is_put = short.starts_with("map_put");
+                    let is_get = short.starts_with("map_get");
+                    let is_has = short.starts_with("map_has");
+                    let key = args.get(1).ok_or_else(|| {
+                        unsupported("map key argument missing", Some(lower.fn_id))
+                    })?;
+                    let expected_key_class = if string_keys { Class::Str } else { Class::I64 };
+                    if scan_operand_class(lower, key)? != expected_key_class {
+                        return Err(unsupported("map key type mismatch", Some(lower.fn_id)));
+                    }
+                    if is_put {
+                        let value = args.get(2).ok_or_else(|| {
+                            unsupported("map value argument missing", Some(lower.fn_id))
+                        })?;
+                        if float_value {
+                            require_f64(lower, value)?;
+                        } else {
+                            require_i64(lower, value)?;
+                        }
+                    }
+                    let find = if string_keys {
+                        lower.needs.insert(H::StrEq);
+                        H::MapFindStr
+                    } else {
+                        H::MapFindI64
+                    };
+                    lower.needs.insert(find);
+                    lower
+                        .needs
+                        .insert(match (is_put, is_get, is_has, string_keys) {
+                            (true, _, _, false) => H::MapPutI64,
+                            (true, _, _, true) => H::MapPutStr,
+                            (_, true, _, false) => H::MapGetI64,
+                            (_, true, _, true) => H::MapGetStr,
+                            (_, _, true, false) => H::MapHasI64,
+                            (_, _, true, true) => H::MapHasStr,
+                            (_, _, _, false) => H::MapRemoveI64,
+                            (_, _, _, true) => H::MapRemoveStr,
+                        });
+                    if is_put {
+                        lower.needs.insert(H::MapEnsure);
+                        lower.needs.insert(H::Alloc);
+                    }
+                    Ok(())
+                }
+                "map_len" => {
+                    require_i64(lower, arg0)?;
+                    lower.needs.insert(H::MapLen);
+                    Ok(())
+                }
                 // ── 5D2b slice 4, batch 1: integer + float builtins ──
                 "abs" | "clz64" | "ctz64" | "popcount64" | "bswap16" | "bswap32" | "bswap64"
                 | "trunc_u8" | "trunc_u16" | "trunc_u32" | "trunc_i8" | "trunc_i16"
@@ -2091,8 +2464,32 @@ fn check_builtin(
                     require_i64(lower, arg1)?;
                     Ok(())
                 }
-                "ceil" | "floor" | "sqrt" => {
+                "int_pow" => {
+                    let arg1 = args.get(1).ok_or_else(|| {
+                        unsupported("builtin argument missing", Some(lower.fn_id))
+                    })?;
+                    require_i64(lower, arg0)?;
+                    require_i64(lower, arg1)?;
+                    Ok(())
+                }
+                "ceil" | "floor" | "sqrt" | "sin" | "cos" => {
                     require_f64(lower, arg0)?;
+                    if short == "sin" {
+                        lower.needs.insert(H::Sin);
+                    } else if short == "cos" {
+                        lower.needs.insert(H::Cos);
+                    }
+                    Ok(())
+                }
+                "pow" => {
+                    let arg1 = args.get(1).ok_or_else(|| {
+                        unsupported("builtin argument missing", Some(lower.fn_id))
+                    })?;
+                    require_f64(lower, arg0)?;
+                    require_f64(lower, arg1)?;
+                    lower.needs.insert(H::Log2);
+                    lower.needs.insert(H::Exp2);
+                    lower.needs.insert(H::Pow);
                     Ok(())
                 }
                 "fmod" => {
@@ -2101,6 +2498,78 @@ fn check_builtin(
                     })?;
                     require_f64(lower, arg0)?;
                     require_f64(lower, arg1)?;
+                    Ok(())
+                }
+                // ── string construction, indexing, and splitting ──
+                "str_substr" => {
+                    require_str(lower, arg0)?;
+                    require_i64(
+                        lower,
+                        args.get(1).ok_or_else(|| {
+                            unsupported("builtin argument missing", Some(lower.fn_id))
+                        })?,
+                    )?;
+                    require_i64(
+                        lower,
+                        args.get(2).ok_or_else(|| {
+                            unsupported("builtin argument missing", Some(lower.fn_id))
+                        })?,
+                    )?;
+                    *lower.has_managed = true;
+                    lower.needs.insert(H::StrSubstr);
+                    Ok(())
+                }
+                "str_repeat" | "char_at" => {
+                    require_str(lower, arg0)?;
+                    require_i64(
+                        lower,
+                        args.get(1).ok_or_else(|| {
+                            unsupported("builtin argument missing", Some(lower.fn_id))
+                        })?,
+                    )?;
+                    *lower.has_managed = true;
+                    lower.needs.insert(if short == "str_repeat" {
+                        H::StrRepeat
+                    } else {
+                        H::CharAt
+                    });
+                    Ok(())
+                }
+                "str_split" => {
+                    require_str(lower, arg0)?;
+                    require_i64(
+                        lower,
+                        args.get(1).ok_or_else(|| {
+                            unsupported("builtin argument missing", Some(lower.fn_id))
+                        })?,
+                    )?;
+                    *lower.has_list = true;
+                    *lower.has_managed = true;
+                    lower.needs.insert(H::StrSplit);
+                    lower.needs.insert(H::ListNew);
+                    lower.needs.insert(H::ListPushPtr);
+                    Ok(())
+                }
+                "ord" => {
+                    require_str(lower, arg0)?;
+                    lower.needs.insert(H::Ord);
+                    Ok(())
+                }
+                "chr" => {
+                    require_i64(lower, arg0)?;
+                    *lower.has_managed = true;
+                    lower.needs.insert(H::Chr);
+                    Ok(())
+                }
+                "str_eq" => {
+                    require_str(lower, arg0)?;
+                    require_str(
+                        lower,
+                        args.get(1).ok_or_else(|| {
+                            unsupported("builtin argument missing", Some(lower.fn_id))
+                        })?,
+                    )?;
+                    lower.needs.insert(H::StrEq);
                     Ok(())
                 }
                 // ── 5D2b slice 4, batch 3: string builtins ──
@@ -2213,11 +2682,40 @@ fn check_builtin(
                 }
                 _ => Err(unrepresentable(
                     builtin,
-                    "not representable on wasm32 (5D slice 1)",
+                    "not representable on wasm32-wasip1",
                     lower.fn_id,
                 )),
             }
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SliceKind {
+    List(TypeId),
+    String,
+}
+
+fn slice_kind_of(
+    program: &MirProgram,
+    types: &TypeInterner,
+    operand: &Operand,
+    function: MirFunctionId,
+) -> Result<SliceKind, CodegenError> {
+    let Operand::Copy(local) = operand else {
+        return Err(unsupported(
+            "slice argument must be a local",
+            Some(function),
+        ));
+    };
+    let ty = program
+        .local(*local)
+        .ok_or_else(|| unsupported("unknown slice local", Some(function)))?
+        .ty;
+    match types.kind(ty) {
+        TypeKind::Slice(element) => Ok(SliceKind::List(element)),
+        TypeKind::Primitive(PrimitiveType::StrSlice) => Ok(SliceKind::String),
+        _ => Err(unsupported("slice argument expected", Some(function))),
     }
 }
 
@@ -2314,10 +2812,10 @@ fn local_val(types: &TypeInterner, ty: TypeId) -> Result<Val, CodegenError> {
         TypeKind::Primitive(PrimitiveType::Bool) => Val::I32,
         TypeKind::Primitive(PrimitiveType::Char) => Val::I32,
         TypeKind::Primitive(PrimitiveType::String) => Val::I32,
-        TypeKind::Primitive(PrimitiveType::StrSlice)
-        | TypeKind::Primitive(PrimitiveType::VectorI64x2) => {
+        TypeKind::Primitive(PrimitiveType::StrSlice) => Val::I32,
+        TypeKind::Primitive(PrimitiveType::VectorI64x2) => {
             return Err(unsupported(
-                "SIMD/slice scalars are deferred on wasm32 (5D2b)",
+                "SIMD scalars are deferred on wasm32 (5D2b)",
                 None,
             ));
         }
@@ -2328,7 +2826,11 @@ fn local_val(types: &TypeInterner, ty: TypeId) -> Result<Val, CodegenError> {
         TypeKind::Function { .. } => Val::I32,
         // 5D2b slice 3: a task handle (32-byte ARC node).
         TypeKind::Task(_) => Val::I32,
-        TypeKind::List(_) | TypeKind::Nominal { .. } => Val::I32,
+        TypeKind::List(_)
+        | TypeKind::Slice(_)
+        | TypeKind::Map { .. }
+        | TypeKind::Tuple(_)
+        | TypeKind::Nominal { .. } => Val::I32,
         other => return Err(unsupported(type_desc(&other), None)),
     })
 }
@@ -2372,10 +2874,10 @@ fn class_of_type(types: &TypeInterner, ty: TypeId) -> Result<Class, CodegenError
         TypeKind::Primitive(PrimitiveType::Char) => Class::Char,
         TypeKind::Primitive(PrimitiveType::String) => Class::Str,
         TypeKind::Primitive(PrimitiveType::Void) => return Err(unsupported("void operand", None)),
-        TypeKind::Primitive(PrimitiveType::StrSlice)
-        | TypeKind::Primitive(PrimitiveType::VectorI64x2) => {
+        TypeKind::Primitive(PrimitiveType::StrSlice) => Class::Ptr,
+        TypeKind::Primitive(PrimitiveType::VectorI64x2) => {
             return Err(unsupported(
-                "SIMD/slice scalars are deferred on wasm32 (5D2b)",
+                "SIMD scalars are deferred on wasm32 (5D2b)",
                 None,
             ));
         }
@@ -2385,6 +2887,9 @@ fn class_of_type(types: &TypeInterner, ty: TypeId) -> Result<Class, CodegenError
         // Function values are 16-byte capsule ARC nodes (5D2b); task
         // handles are 32-byte ARC nodes (slice 3).
         TypeKind::List(_)
+        | TypeKind::Slice(_)
+        | TypeKind::Map { .. }
+        | TypeKind::Tuple(_)
         | TypeKind::Nominal { .. }
         | TypeKind::Function { .. }
         | TypeKind::Task(_) => Class::Ptr,
@@ -2733,13 +3238,13 @@ impl<'a> FnLower<'a> {
     /// the caller keeps its value and gains one reference count.
     fn emit_owned(&self, fb: &mut FB, operand: &Operand) -> Result<Class, CodegenError> {
         let class = self.emit_operand(fb, operand)?;
-        if class == Class::Ptr
-            && let Operand::Copy(local) = operand
-        {
+        if let Operand::Copy(local) = operand {
             let ty = self.env.program.local(*local).unwrap().ty;
             if is_managed(self.env.types, ty) {
                 // Retain passes the value through; the caller keeps the
-                // copy on the stack.
+                // copy on the stack. Strings are managed too even though
+                // their lowering class is `Str` rather than the generic
+                // pointer class.
                 self.call_helper(fb, H::Retain)?;
             }
         }
@@ -2759,6 +3264,17 @@ impl<'a> FnLower<'a> {
         let target_ty = self.env.program.local(target).unwrap().ty;
         let _class = if let Rvalue::List(items) = rvalue {
             self.emit_list_literal(fb, target_ty, items)?
+        } else if let Rvalue::Tuple(items) = rvalue {
+            self.emit_tuple_literal(fb, target_ty, items)?
+        } else if let Rvalue::Use(Operand::Constant(Constant::Integer(value))) = rvalue
+            && matches!(self.env.types.kind(target_ty), TypeKind::Nominal { .. })
+        {
+            // Legacy aggregate null is spelled integer `0` in source. MIR
+            // materializes it as a nominally typed local, while wasm pointers
+            // are i32, so emit the context-typed zero directly instead of the
+            // canonical i64 integer constant.
+            fb.i32c(*value);
+            Class::Ptr
         } else if let Rvalue::Use(operand) = rvalue {
             // `Use(Copy(managed))` transfers a new reference to the
             // target: retain on copy (a plain `emit_operand` would leave
@@ -2775,6 +3291,17 @@ impl<'a> FnLower<'a> {
             // The element class (hence the is-ARC word) comes from the
             // target's list type.
             self.emit_list_new(fb, target_ty)?
+        } else if let Rvalue::Builtin { builtin, .. } = rvalue
+            && matches!(
+                builtin
+                    .descriptor()
+                    .name
+                    .strip_prefix("lpp_")
+                    .unwrap_or(builtin.descriptor().name),
+                "map_new" | "map_new_arc"
+            )
+        {
+            self.emit_map_new(fb, target_ty)?
         } else {
             self.emit_rvalue(fb, rvalue)?
         };
@@ -2818,6 +3345,25 @@ impl<'a> FnLower<'a> {
         }
     }
 
+    /// Emit an operand as a value of the destination language type. The only
+    /// contextual representation exception is legacy nominal null (`0`): an
+    /// integer constant is normally i64, while a wasm aggregate pointer is i32.
+    fn emit_owned_for_type(
+        &self,
+        fb: &mut FB,
+        value: &Operand,
+        destination: TypeId,
+    ) -> Result<Class, CodegenError> {
+        if matches!(value, Operand::Constant(Constant::Integer(0)))
+            && matches!(self.env.types.kind(destination), TypeKind::Nominal { .. })
+        {
+            fb.i32c(0);
+            Ok(Class::Ptr)
+        } else {
+            self.emit_owned(fb, value)
+        }
+    }
+
     /// `place = operand`: a bare local is an assign; a projected store
     /// walks the chain, releases the old field (managed fields only),
     /// and writes the element/field in place.
@@ -2837,7 +3383,7 @@ impl<'a> FnLower<'a> {
             self.fn_id,
         )?;
         if resolution.steps.is_empty() {
-            let _class = self.emit_owned(fb, value)?;
+            let _class = self.emit_owned_for_type(fb, value, resolution.ty)?;
             let index = *self
                 .local_index
                 .get(&resolution.root)
@@ -2873,9 +3419,22 @@ impl<'a> FnLower<'a> {
                     fb.load32(*offset);
                     self.call_helper(fb, H::Release)?;
                 }
-                let _class = self.emit_owned(fb, value)?;
+                let _class = self.emit_owned_for_type(fb, value, *ty)?;
                 store_by_type(fb, self.env.types, *offset, *ty);
                 // Stack: [] — the store consumed the base and the value.
+            }
+            PlaceStep::TupleField {
+                offset,
+                ty,
+                managed,
+            } => {
+                if *managed {
+                    fb.g(base_scratch);
+                    fb.load32(*offset);
+                    self.call_helper(fb, H::Release)?;
+                }
+                self.emit_owned_for_type(fb, value, *ty)?;
+                store_by_type(fb, self.env.types, *offset, *ty);
             }
             PlaceStep::ListIndex { element, index } => {
                 // [base] -> get scratch -> [base, base] -> idx -> value
@@ -2895,8 +3454,15 @@ impl<'a> FnLower<'a> {
                     }
                     ElementClass::Ptr => {
                         // The helper releases the replaced element and
-                        // retains the new one (runtime-internal).
-                        self.emit_operand(fb, value)?;
+                        // retains the new one (runtime-internal). Null must be
+                        // emitted as the list element's i32 pointer type.
+                        if matches!(value, Operand::Constant(Constant::Integer(0)))
+                            && matches!(self.env.types.kind(*element), TypeKind::Nominal { .. })
+                        {
+                            fb.i32c(0);
+                        } else {
+                            self.emit_operand(fb, value)?;
+                        }
                         H::ListSetPtr
                     }
                 };
@@ -2929,7 +3495,7 @@ impl<'a> FnLower<'a> {
         for step in resolution.steps.iter().take(resolution.steps.len() - 1) {
             match step {
                 PlaceStep::Downcast => {}
-                PlaceStep::Field { offset, .. } => {
+                PlaceStep::Field { offset, .. } | PlaceStep::TupleField { offset, .. } => {
                     // Intermediate fields are managed (verified), i32 slots.
                     fb.load32(*offset);
                 }
@@ -2991,6 +3557,17 @@ impl<'a> FnLower<'a> {
                     // reference count is bumped. (No tee: scratch is not
                     // part of the exit-release set — parking a copy there
                     // would leak the reference.)
+                    self.call_helper(fb, H::Retain)?;
+                }
+                class_of_type(self.env.types, *ty)
+            }
+            PlaceStep::TupleField {
+                offset,
+                ty,
+                managed,
+            } => {
+                load_by_type(fb, self.env.types, *offset, *ty);
+                if *managed {
                     self.call_helper(fb, H::Retain)?;
                 }
                 class_of_type(self.env.types, *ty)
@@ -3061,6 +3638,44 @@ impl<'a> FnLower<'a> {
             }
         }
         fb.g(list);
+        Ok(Class::Ptr)
+    }
+
+    fn emit_tuple_literal(
+        &self,
+        fb: &mut FB,
+        target_ty: TypeId,
+        items: &lpp_mir::ListRange<Operand>,
+    ) -> Result<Class, CodegenError> {
+        let TypeKind::Tuple(elements) = self.env.types.kind(target_ty) else {
+            return Err(unsupported("tuple literal of non-tuple", Some(self.fn_id)));
+        };
+        let element_types = self.env.types.list(elements);
+        let values = self.env.program.operands(*items);
+        if values.len() != element_types.len() || values.len() > 64 {
+            return Err(unsupported("tuple arity", Some(self.fn_id)));
+        }
+        let drop_slot = self
+            .env
+            .tuple_drop_slot
+            .ok_or_else(|| unsupported("missing tuple destroyer", Some(self.fn_id)))?;
+        let tuple = fb.scratch(Val::I32);
+        fb.i32c((16 + values.len() * 8) as i64);
+        fb.i32c(drop_slot as i64);
+        self.call_helper(fb, H::ArcAlloc)?;
+        fb.s(tuple);
+        let mut managed_mask = 0u64;
+        for (index, (&ty, value)) in element_types.iter().zip(values.iter()).enumerate() {
+            if is_managed(self.env.types, ty) {
+                managed_mask |= 1u64 << index;
+            }
+            fb.g(tuple);
+            self.emit_owned(fb, value)?;
+            store_by_type(fb, self.env.types, 16 + 8 * index as u32, ty);
+        }
+        fb.g(tuple).i64c(managed_mask as i64).store64(0);
+        fb.g(tuple).i64c(values.len() as i64).store64(8);
+        fb.g(tuple);
         Ok(Class::Ptr)
     }
 
@@ -3277,7 +3892,15 @@ impl<'a> FnLower<'a> {
         for (operand, slot) in values.iter().zip(slots.iter()) {
             // wasm stores pop (value, addr): address first, value on top.
             fb.g(ptr);
-            let _class = self.emit_owned(fb, operand)?;
+            if matches!(operand, Operand::Constant(Constant::Integer(0)))
+                && matches!(self.env.types.kind(slot.ty), TypeKind::Nominal { .. })
+            {
+                // Context-typed legacy null: nominal slots are i32 pointers,
+                // while a standalone integer constant would otherwise emit i64.
+                fb.i32c(0);
+            } else {
+                let _class = self.emit_owned(fb, operand)?;
+            }
             store_by_type(fb, self.env.types, slot.offset, slot.ty);
         }
         fb.g(ptr);
@@ -3327,8 +3950,22 @@ impl<'a> FnLower<'a> {
         operator: BinaryOperator,
         right: &Operand,
     ) -> Result<Class, CodegenError> {
-        let lc = self.emit_operand(fb, left)?;
-        let rc = self.emit_operand(fb, right)?; // stack: [l, r]
+        let left_static = operand_class(self.env.program, self.env.types, left)?;
+        let right_static = operand_class(self.env.program, self.env.types, right)?;
+        let left_is_null = matches!(left, Operand::Constant(Constant::Integer(0)));
+        let right_is_null = matches!(right, Operand::Constant(Constant::Integer(0)));
+        let lc = if left_is_null && right_static == Class::Ptr {
+            fb.i32c(0);
+            Class::Ptr
+        } else {
+            self.emit_operand(fb, left)?
+        };
+        let rc = if right_is_null && left_static == Class::Ptr {
+            fb.i32c(0);
+            Class::Ptr
+        } else {
+            self.emit_operand(fb, right)?
+        }; // stack: [l, r]
         if lc != rc {
             return Err(unsupported(
                 "binary operand type mismatch",
@@ -3336,11 +3973,23 @@ impl<'a> FnLower<'a> {
             ));
         }
         match (operator, lc) {
+            (BinaryOperator::Equal, Class::Ptr) => {
+                fb.op(op::I32_EQ);
+                Ok(Class::Bool)
+            }
+            (BinaryOperator::NotEqual, Class::Ptr) => {
+                fb.op(op::I32_NE);
+                Ok(Class::Bool)
+            }
             (_, Class::Ptr) => Err(unsupported(
                 "binary operator on managed type",
                 Some(self.fn_id),
             )),
-            // --- String comparisons ---
+            // --- String operations ---
+            (BinaryOperator::Add, Class::Str) => {
+                self.call_helper(fb, H::StrConcat)?;
+                Ok(Class::Str)
+            }
             (BinaryOperator::Equal, Class::Str) => {
                 self.call_helper(fb, H::StrEq)?;
                 Ok(Class::Bool)
@@ -3831,11 +4480,15 @@ impl<'a> FnLower<'a> {
         arguments: &lpp_mir::ListRange<Operand>,
     ) -> Result<Class, CodegenError> {
         let args = self.env.program.operands(*arguments);
+        let name = builtin.descriptor().name;
+        let short = name.strip_prefix("lpp_").unwrap_or(name);
+        if short == "input" {
+            self.call_helper(fb, H::Input)?;
+            return Ok(Class::Str);
+        }
         let arg0 = args
             .first()
             .ok_or_else(|| unsupported("builtin with no argument", Some(self.fn_id)))?;
-        let name = builtin.descriptor().name;
-        let short = name.strip_prefix("lpp_").unwrap_or(name);
         match short {
             "print" => {
                 let class = operand_class(self.env.program, self.env.types, arg0)?;
@@ -3999,6 +4652,180 @@ impl<'a> FnLower<'a> {
                 self.list_element_of(arg0)?;
                 self.emit_operand(fb, arg0)?;
                 self.call_helper(fb, H::ListLen)?;
+                Ok(Class::I64)
+            }
+            "slice" | "str_slice" => {
+                self.emit_operand(fb, arg0)?;
+                self.emit_operand(
+                    fb,
+                    args.get(1).ok_or_else(|| {
+                        unsupported("slice start argument missing", Some(self.fn_id))
+                    })?,
+                )?;
+                self.emit_operand(
+                    fb,
+                    args.get(2).ok_or_else(|| {
+                        unsupported("slice length argument missing", Some(self.fn_id))
+                    })?,
+                )?;
+                self.call_helper(
+                    fb,
+                    if short == "slice" {
+                        H::SliceNewList
+                    } else {
+                        H::SliceNewStr
+                    },
+                )?;
+                Ok(Class::Ptr)
+            }
+            "slice_len" => {
+                slice_kind_of(self.env.program, self.env.types, arg0, self.fn_id)?;
+                self.emit_operand(fb, arg0)?;
+                self.call_helper(fb, H::SliceLen)?;
+                Ok(Class::I64)
+            }
+            "slice_get" => {
+                let kind = slice_kind_of(self.env.program, self.env.types, arg0, self.fn_id)?;
+                self.emit_operand(fb, arg0)?;
+                self.emit_operand(
+                    fb,
+                    args.get(1).ok_or_else(|| {
+                        unsupported("slice index argument missing", Some(self.fn_id))
+                    })?,
+                )?;
+                match kind {
+                    SliceKind::String => {
+                        self.call_helper(fb, H::StrSliceGet)?;
+                        Ok(Class::Str)
+                    }
+                    SliceKind::List(element) => match class_of_type(self.env.types, element)? {
+                        Class::I64 => {
+                            self.call_helper(fb, H::SliceGetI64)?;
+                            Ok(Class::I64)
+                        }
+                        Class::Bool => {
+                            self.call_helper(fb, H::SliceGetI64)?;
+                            fb.op(op::I32_WRAP_I64);
+                            Ok(Class::Bool)
+                        }
+                        Class::Char => {
+                            self.call_helper(fb, H::SliceGetI64)?;
+                            fb.op(op::I32_WRAP_I64);
+                            Ok(Class::Char)
+                        }
+                        Class::F64 => {
+                            self.call_helper(fb, H::SliceGetF64)?;
+                            Ok(Class::F64)
+                        }
+                        Class::Str => {
+                            self.call_helper(fb, H::SliceGetPtr)?;
+                            self.call_helper(fb, H::Retain)?;
+                            Ok(Class::Str)
+                        }
+                        Class::Ptr => {
+                            self.call_helper(fb, H::SliceGetPtr)?;
+                            self.call_helper(fb, H::Retain)?;
+                            Ok(Class::Ptr)
+                        }
+                    },
+                }
+            }
+            "slice_get_bool" => {
+                let SliceKind::List(element) =
+                    slice_kind_of(self.env.program, self.env.types, arg0, self.fn_id)?
+                else {
+                    return Err(unsupported(
+                        "slice_get_bool requires a list slice",
+                        Some(self.fn_id),
+                    ));
+                };
+                if !matches!(
+                    self.env.types.kind(element),
+                    TypeKind::Primitive(PrimitiveType::Bool)
+                ) {
+                    return Err(unsupported(
+                        "slice_get_bool requires boolean elements",
+                        Some(self.fn_id),
+                    ));
+                }
+                self.emit_operand(fb, arg0)?;
+                self.emit_operand(
+                    fb,
+                    args.get(1).ok_or_else(|| {
+                        unsupported("slice index argument missing", Some(self.fn_id))
+                    })?,
+                )?;
+                self.call_helper(fb, H::SliceGetI64)?;
+                fb.op(op::I32_WRAP_I64);
+                Ok(Class::Bool)
+            }
+            "slice_to_str" | "str_slice_to_str" => {
+                if slice_kind_of(self.env.program, self.env.types, arg0, self.fn_id)?
+                    != SliceKind::String
+                {
+                    return Err(unsupported(
+                        "slice_to_str requires a string slice",
+                        Some(self.fn_id),
+                    ));
+                }
+                self.emit_operand(fb, arg0)?;
+                self.call_helper(fb, H::StrSliceToStr)?;
+                Ok(Class::Str)
+            }
+            "map_put" | "map_put_str" | "map_put_float" | "map_put_str_float" | "map_get"
+            | "map_get_str" | "map_get_float" | "map_get_str_float" | "map_has" | "map_has_str"
+            | "map_remove" | "map_remove_str" => {
+                let string_keys = short.contains("_str");
+                let float_value = short.ends_with("_float");
+                let is_put = short.starts_with("map_put");
+                let is_get = short.starts_with("map_get");
+                let is_has = short.starts_with("map_has");
+                self.emit_operand(fb, arg0)?;
+                fb.op(op::I32_WRAP_I64);
+                self.emit_operand(
+                    fb,
+                    args.get(1)
+                        .ok_or_else(|| unsupported("map key argument missing", Some(self.fn_id)))?,
+                )?;
+                let helper = match (is_put, is_get, is_has, string_keys) {
+                    (true, _, _, false) => H::MapPutI64,
+                    (true, _, _, true) => H::MapPutStr,
+                    (_, true, _, false) => H::MapGetI64,
+                    (_, true, _, true) => H::MapGetStr,
+                    (_, _, true, false) => H::MapHasI64,
+                    (_, _, true, true) => H::MapHasStr,
+                    (_, _, _, false) => H::MapRemoveI64,
+                    (_, _, _, true) => H::MapRemoveStr,
+                };
+                if is_put {
+                    self.emit_operand(
+                        fb,
+                        args.get(2).ok_or_else(|| {
+                            unsupported("map value argument missing", Some(self.fn_id))
+                        })?,
+                    )?;
+                    if float_value {
+                        fb.op(op::I64_REINTERPRET_F64);
+                    }
+                }
+                self.call_helper(fb, helper)?;
+                if is_has {
+                    fb.op(op::I32_WRAP_I64);
+                    Ok(Class::Bool)
+                } else if is_get && float_value {
+                    fb.op(op::F64_REINTERPRET_I64);
+                    Ok(Class::F64)
+                } else {
+                    if is_put || short.starts_with("map_remove") {
+                        fb.i64c(0);
+                    }
+                    Ok(Class::I64)
+                }
+            }
+            "map_len" => {
+                self.emit_operand(fb, arg0)?;
+                fb.op(op::I32_WRAP_I64);
+                self.call_helper(fb, H::MapLen)?;
                 Ok(Class::I64)
             }
             // ── 5D2b slice 4, batch 1: integer + float builtins ──────
@@ -4328,6 +5155,34 @@ impl<'a> FnLower<'a> {
                 fb.g(r);
                 Ok(Class::I64)
             }
+            "int_pow" => {
+                let base = fb.scratch(Val::I64);
+                let exp = fb.scratch(Val::I64);
+                let result = fb.scratch(Val::I64);
+                self.emit_operand(fb, arg0)?;
+                fb.s(base);
+                self.emit_operand(fb, self.arg1(args)?)?;
+                fb.s(exp);
+                // Negative integer exponents are unrepresentable and yield 0.
+                fb.g(exp).i64c(0).op(op::I64_LT_S).if_();
+                fb.i64c(0).s(result);
+                fb.else_();
+                fb.i64c(1).s(result);
+                fb.block();
+                fb.loop_();
+                fb.g(exp).op(op::I64_EQZ).br_if(1);
+                fb.g(exp).i64c(1).op(op::I64_AND).op(op::I32_WRAP_I64).if_();
+                fb.g(result).g(base).op(op::I64_MUL).s(result);
+                fb.end();
+                fb.g(base).g(base).op(op::I64_MUL).s(base);
+                fb.g(exp).i64c(1).op(op::I64_SHR_U).s(exp);
+                fb.br(0);
+                fb.end();
+                fb.end();
+                fb.end();
+                fb.g(result);
+                Ok(Class::I64)
+            }
             "ceil" | "floor" | "sqrt" => {
                 self.emit_operand(fb, arg0)?;
                 fb.op(match short {
@@ -4335,6 +5190,17 @@ impl<'a> FnLower<'a> {
                     "floor" => op::F64_FLOOR,
                     _ => op::F64_SQRT,
                 });
+                Ok(Class::F64)
+            }
+            "pow" => {
+                self.emit_operand(fb, arg0)?;
+                self.emit_operand(fb, self.arg1(args)?)?;
+                self.call_helper(fb, H::Pow)?;
+                Ok(Class::F64)
+            }
+            "sin" | "cos" => {
+                self.emit_operand(fb, arg0)?;
+                self.call_helper(fb, if short == "sin" { H::Sin } else { H::Cos })?;
                 Ok(Class::F64)
             }
             "fmod" => {
@@ -4357,6 +5223,54 @@ impl<'a> FnLower<'a> {
                     .s(q);
                 fb.g(a).g(q).op(op::F64_SUB);
                 Ok(Class::F64)
+            }
+            // ── string construction, indexing, and splitting ──
+            "str_substr" => {
+                self.emit_operand(fb, arg0)?;
+                self.emit_operand(fb, self.arg1(args)?)?;
+                self.emit_operand(
+                    fb,
+                    args.get(2)
+                        .ok_or_else(|| unsupported("builtin argument missing", Some(self.fn_id)))?,
+                )?;
+                self.call_helper(fb, H::StrSubstr)?;
+                Ok(Class::Str)
+            }
+            "str_repeat" | "char_at" => {
+                self.emit_operand(fb, arg0)?;
+                self.emit_operand(fb, self.arg1(args)?)?;
+                self.call_helper(
+                    fb,
+                    if short == "str_repeat" {
+                        H::StrRepeat
+                    } else {
+                        H::CharAt
+                    },
+                )?;
+                Ok(Class::Str)
+            }
+            "str_split" => {
+                self.emit_operand(fb, arg0)?;
+                self.emit_operand(fb, self.arg1(args)?)?;
+                self.call_helper(fb, H::StrSplit)?;
+                Ok(Class::Ptr)
+            }
+            "ord" => {
+                self.emit_operand(fb, arg0)?;
+                self.call_helper(fb, H::Ord)?;
+                Ok(Class::I64)
+            }
+            "chr" => {
+                self.emit_operand(fb, arg0)?;
+                self.call_helper(fb, H::Chr)?;
+                Ok(Class::Str)
+            }
+            "str_eq" => {
+                self.emit_operand(fb, arg0)?;
+                self.emit_operand(fb, self.arg1(args)?)?;
+                self.call_helper(fb, H::StrEq)?;
+                fb.op(op::I64_EXTEND_I32_U);
+                Ok(Class::I64)
             }
             // ── 5D2b slice 4, batch 3: string builtins ──
             "str_concat" | "str_replace" | "str_contains" | "str_starts_with" | "str_ends_with"
@@ -4457,7 +5371,7 @@ impl<'a> FnLower<'a> {
             },
             _ => Err(unrepresentable(
                 builtin,
-                "not representable on wasm32 (5D slice 1)",
+                "not representable on wasm32-wasip1",
                 self.fn_id,
             )),
         }
@@ -4495,6 +5409,22 @@ impl<'a> FnLower<'a> {
         );
         self.call_helper(fb, H::ListNew)?;
         Ok(Class::Ptr)
+    }
+
+    fn emit_map_new(&self, fb: &mut FB, target_ty: TypeId) -> Result<Class, CodegenError> {
+        if !matches!(
+            self.env.types.kind(target_ty),
+            TypeKind::Primitive(PrimitiveType::Int)
+        ) {
+            return Err(unsupported(
+                "map_new outside its opaque Int handle target",
+                Some(self.fn_id),
+            ));
+        }
+        fb.i32c(0);
+        self.call_helper(fb, H::MapNew)?;
+        fb.op(op::I64_EXTEND_I32_U);
+        Ok(Class::I64)
     }
 
     fn emit_terminator(
@@ -4795,10 +5725,12 @@ fn lower_helper(
     h: H,
     fd_helper_idx: u32,
     fd_write_import_idx: u32,
+    fd_read_import_idx: u32,
     proc_exit_import_idx: u32,
 ) -> Result<(Vec<Val>, Vec<Val>, Vec<Val>, Vec<u8>), CodegenError> {
     let mut fb = match h {
-        H::FdWrite => FB::new(2),
+        H::FdWrite | H::FdRead => FB::new(2),
+        H::Input => FB::new(0),
         H::PrintInt => FB::new(1),
         H::PrintBool => FB::new(1),
         H::PrintStr => FB::new(1),
@@ -4821,6 +5753,19 @@ fn lower_helper(
         H::ListSetI64 => FB::new(3),
         H::ListSetF64 => FB::new(3),
         H::ListSetPtr => FB::new(3),
+        H::SliceNewList | H::SliceNewStr => FB::new(3),
+        H::SliceLen | H::StrSliceToStr => FB::new(1),
+        H::SliceGetI64 | H::SliceGetF64 | H::SliceGetPtr | H::StrSliceGet => FB::new(2),
+        H::MapNew | H::MapEnsure | H::MapLen => FB::new(1),
+        H::MapFindI64
+        | H::MapFindStr
+        | H::MapGetI64
+        | H::MapGetStr
+        | H::MapHasI64
+        | H::MapHasStr
+        | H::MapRemoveI64
+        | H::MapRemoveStr => FB::new(2),
+        H::MapPutI64 | H::MapPutStr => FB::new(3),
         H::TaskNew => FB::new(3),
         H::TaskPoll => FB::new(1),
         H::TaskAwait => FB::new(1),
@@ -4831,7 +5776,11 @@ fn lower_helper(
         H::StrStartsWith => FB::new(2),
         H::StrEndsWith => FB::new(2),
         H::StrFind => FB::new(2),
-        H::StrReplace => FB::new(3),
+        H::StrReplace | H::StrSubstr => FB::new(3),
+        H::StrRepeat | H::CharAt => FB::new(2),
+        H::StrSplit => FB::new(2),
+        H::Ord => FB::new(1),
+        H::Chr => FB::new(1),
         H::StrTrim => FB::new(1),
         H::StrLower => FB::new(1),
         H::StrUpper => FB::new(1),
@@ -4842,14 +5791,31 @@ fn lower_helper(
         H::U64ToStr => FB::new(1),
         H::U64ToHex => FB::new(1),
         H::StrToU64 => FB::new(1),
+        H::Log2 | H::Exp2 | H::Sin | H::Cos => FB::new(1),
+        H::Pow => FB::new(2),
     };
     let results = match h {
+        H::FdRead => vec![Val::I32],
+        H::Input => vec![Val::I32],
         H::StrEq => vec![Val::I32],
         H::StrLen => vec![Val::I64],
         // Retain passes the value through (callers keep using it).
         H::Alloc | H::ArcAlloc | H::Retain | H::ListNew | H::ListGetPtr => vec![Val::I32],
-        H::ListLen | H::ListGetI64 => vec![Val::I64],
-        H::ListGetF64 => vec![Val::F64],
+        H::ListLen | H::ListGetI64 | H::SliceLen | H::SliceGetI64 => vec![Val::I64],
+        H::ListGetF64 | H::SliceGetF64 => vec![Val::F64],
+        H::SliceNewList
+        | H::SliceNewStr
+        | H::SliceGetPtr
+        | H::StrSliceGet
+        | H::StrSliceToStr
+        | H::MapNew => vec![Val::I32],
+        H::MapFindI64
+        | H::MapFindStr
+        | H::MapGetI64
+        | H::MapGetStr
+        | H::MapHasI64
+        | H::MapHasStr
+        | H::MapLen => vec![Val::I64],
         // TaskNew returns the node pointer as an i64 word (zero-
         // extended in the body; callers narrow for the wasm ABI).
         H::TaskNew => vec![Val::I64],
@@ -4857,6 +5823,10 @@ fn lower_helper(
         // ── 5D2b slice 4, batch 3: string builtins ──
         H::StrConcat
         | H::StrReplace
+        | H::StrSubstr
+        | H::StrRepeat
+        | H::CharAt
+        | H::Chr
         | H::StrTrim
         | H::StrLower
         | H::StrUpper
@@ -4865,12 +5835,15 @@ fn lower_helper(
         | H::BoolToStr
         | H::U64ToStr
         | H::U64ToHex => vec![Val::I32],
+        H::StrSplit => vec![Val::I32],
         H::StrContains | H::StrStartsWith | H::StrEndsWith => vec![Val::I32],
-        H::StrFind | H::StrToInt | H::StrToU64 => vec![Val::I64],
+        H::StrFind | H::StrToInt | H::StrToU64 | H::Ord => vec![Val::I64],
+        H::Log2 | H::Exp2 | H::Pow | H::Sin | H::Cos => vec![Val::F64],
         _ => vec![],
     };
     let params = match h {
-        H::FdWrite => vec![Val::I32, Val::I32],
+        H::FdWrite | H::FdRead => vec![Val::I32, Val::I32],
+        H::Input => vec![],
         H::PrintInt => vec![Val::I64],
         H::PrintBool => vec![Val::I32],
         H::PrintStr => vec![Val::I32],
@@ -4893,6 +5866,17 @@ fn lower_helper(
         H::ListSetI64 => vec![Val::I32, Val::I64, Val::I64],
         H::ListSetF64 => vec![Val::I32, Val::I64, Val::F64],
         H::ListSetPtr => vec![Val::I32, Val::I64, Val::I32],
+        H::SliceNewList | H::SliceNewStr => vec![Val::I32, Val::I64, Val::I64],
+        H::SliceLen | H::StrSliceToStr => vec![Val::I32],
+        H::SliceGetI64 | H::SliceGetF64 | H::SliceGetPtr | H::StrSliceGet => {
+            vec![Val::I32, Val::I64]
+        }
+        H::MapNew => vec![Val::I32],
+        H::MapEnsure | H::MapLen => vec![Val::I32],
+        H::MapFindI64 | H::MapGetI64 | H::MapHasI64 | H::MapRemoveI64 => vec![Val::I32, Val::I64],
+        H::MapFindStr | H::MapGetStr | H::MapHasStr | H::MapRemoveStr => vec![Val::I32, Val::I32],
+        H::MapPutI64 => vec![Val::I32, Val::I64, Val::I64],
+        H::MapPutStr => vec![Val::I32, Val::I32, Val::I64],
         H::TaskNew => vec![Val::I32, Val::I32, Val::I32],
         H::TaskPoll => vec![Val::I32],
         H::TaskAwait => vec![Val::I32],
@@ -4902,12 +5886,19 @@ fn lower_helper(
             vec![Val::I32, Val::I32]
         }
         H::StrReplace => vec![Val::I32, Val::I32, Val::I32],
+        H::StrSubstr => vec![Val::I32, Val::I64, Val::I64],
+        H::StrRepeat | H::CharAt => vec![Val::I32, Val::I64],
+        H::StrSplit => vec![Val::I32, Val::I64],
+        H::Ord => vec![Val::I32],
+        H::Chr => vec![Val::I64],
         H::StrTrim | H::StrLower | H::StrUpper | H::StrToInt | H::StrToU64 => {
             vec![Val::I32]
         }
         H::IntToStr | H::U64ToStr | H::U64ToHex => vec![Val::I64],
         H::FloatToStr => vec![Val::F64],
         H::BoolToStr => vec![Val::I32],
+        H::Log2 | H::Exp2 | H::Sin | H::Cos => vec![Val::F64],
+        H::Pow => vec![Val::F64, Val::F64],
     };
     emit_helper_body(
         &mut fb,
@@ -4915,6 +5906,7 @@ fn lower_helper(
         env,
         fd_helper_idx,
         fd_write_import_idx,
+        fd_read_import_idx,
         proc_exit_import_idx,
     )?;
     Ok((params, results, fb.extras, fb.body))
@@ -4987,6 +5979,7 @@ fn emit_helper_body(
     env: &Env<'_>,
     fd_helper_idx: u32,
     fd_write_import_idx: u32,
+    fd_read_import_idx: u32,
     proc_exit_import_idx: u32,
 ) -> Result<(), CodegenError> {
     // Helper-to-helper calls go through the pre-registered index map
@@ -5010,6 +6003,82 @@ fn emit_helper_body(
             fb.i32c(FD_IO_OUT as i64);
             fb.call(fd_write_import_idx);
             fb.op(op::DROP);
+        }
+        H::FdRead => {
+            fb.i32c(IOVEC_BUF as i64);
+            fb.g(0);
+            fb.store32(0);
+            fb.i32c((IOVEC_BUF + 4) as i64);
+            fb.g(1);
+            fb.store32(0);
+            fb.i32c(0); // fd = stdin
+            fb.i32c(IOVEC_BUF as i64);
+            fb.i32c(1); // iovec count
+            fb.i32c(FD_IO_OUT as i64);
+            fb.call(fd_read_import_idx);
+            // A WASI read error is an empty read at the language boundary.
+            fb.if_();
+            fb.i32c(0).op(op::RETURN);
+            fb.end();
+            fb.i32c(FD_IO_OUT as i64).load32(0);
+        }
+        H::Input => {
+            const INPUT_CAP: i64 = 4096;
+            let raw = fb.scratch(Val::I32);
+            let len = fb.scratch(Val::I32);
+            let out = fb.scratch(Val::I32);
+            fb.i32c(INPUT_CAP).call(idx(H::Alloc)).s(raw);
+            fb.i32c(0).s(len);
+            // Read one byte at a time so one input() call cannot consume the
+            // following line. The 4096-byte cap is explicit and deterministic.
+            fb.block();
+            fb.loop_();
+            fb.g(len).i32c(INPUT_CAP).op(op::I32_GE_U).br_if(1);
+            fb.g(raw)
+                .g(len)
+                .op(op::I32_ADD)
+                .i32c(1)
+                .call(idx(H::FdRead))
+                .op(op::I32_EQZ)
+                .br_if(1);
+            fb.g(raw)
+                .g(len)
+                .op(op::I32_ADD)
+                .load8(0)
+                .i32c(10)
+                .op(op::I32_EQ)
+                .br_if(1);
+            fb.g(len).i32c(1).op(op::I32_ADD).s(len);
+            fb.br(0);
+            fb.end();
+            fb.end();
+            // Strip the CR in a CRLF line.
+            fb.g(len).op(op::I32_EQZ).if_();
+            fb.else_();
+            fb.g(raw)
+                .g(len)
+                .op(op::I32_ADD)
+                .i32c(1)
+                .op(op::I32_SUB)
+                .load8(0)
+                .i32c(13)
+                .op(op::I32_EQ)
+                .if_();
+            fb.g(len).i32c(1).op(op::I32_SUB).s(len);
+            fb.end();
+            fb.end();
+            fb.g(len)
+                .i32c(4)
+                .op(op::I32_ADD)
+                .i32c(0)
+                .call(idx(H::ArcAlloc))
+                .s(out);
+            fb.g(out).g(len).store32(0);
+            fb.g(out).i32c(4).op(op::I32_ADD);
+            fb.g(raw);
+            fb.g(len);
+            fb.memory_copy();
+            fb.g(out);
         }
         H::PrintInt => {
             let mag = fb.scratch(Val::I64);
@@ -5203,6 +6272,210 @@ fn emit_helper_body(
             fb.load32(0);
             fb.op(op::I64_EXTEND_I32_U);
         }
+        // ── freestanding numeric helpers ────────────────────────────────
+        H::Log2 => {
+            let bits = fb.scratch(Val::I64);
+            let exponent = fb.scratch(Val::I64);
+            let mantissa = fb.scratch(Val::F64);
+            let t = fb.scratch(Val::F64);
+            let t2 = fb.scratch(Val::F64);
+            let term = fb.scratch(Val::F64);
+            let sum = fb.scratch(Val::F64);
+            let i = fb.scratch(Val::I32);
+            fb.g(0).op(op::I64_REINTERPRET_F64).s(bits);
+            fb.g(bits)
+                .i64c(52)
+                .op(op::I64_SHR_U)
+                .i64c(2047)
+                .op(op::I64_AND)
+                .i64c(1023)
+                .op(op::I64_SUB)
+                .s(exponent);
+            fb.g(bits)
+                .i64c(0x800f_ffff_ffff_ffffu64 as i64)
+                .op(op::I64_AND);
+            fb.i64c(1023).i64c(52).op(op::I64_SHL).op(op::I64_OR);
+            fb.op(op::F64_REINTERPRET_I64).s(mantissa);
+            fb.g(mantissa).f64c(1.0).op(op::F64_SUB);
+            fb.g(mantissa)
+                .f64c(1.0)
+                .op(op::F64_ADD)
+                .op(op::F64_DIV)
+                .s(t);
+            fb.g(t).g(t).op(op::F64_MUL).s(t2);
+            fb.g(t).s(term);
+            fb.g(t).s(sum);
+            fb.i32c(3).s(i);
+            fb.block();
+            fb.loop_();
+            fb.g(i).i32c(25).op(op::I32_GE_S).br_if(1);
+            fb.g(term).g(t2).op(op::F64_MUL).s(term);
+            fb.g(sum)
+                .g(term)
+                .g(i)
+                .op(op::F64_CONVERT_I32_S)
+                .op(op::F64_DIV)
+                .op(op::F64_ADD)
+                .s(sum);
+            fb.g(i).i32c(2).op(op::I32_ADD).s(i);
+            fb.br(0);
+            fb.end();
+            fb.end();
+            fb.g(exponent).op(op::F64_CONVERT_I64_S);
+            fb.g(sum)
+                .f64c(2.0)
+                .op(op::F64_MUL)
+                .f64c(std::f64::consts::LN_2)
+                .op(op::F64_DIV)
+                .op(op::F64_ADD);
+        }
+        H::Exp2 => {
+            let integer = fb.scratch(Val::I64);
+            let fraction = fb.scratch(Val::F64);
+            let u = fb.scratch(Val::F64);
+            let term = fb.scratch(Val::F64);
+            let sum = fb.scratch(Val::F64);
+            let i = fb.scratch(Val::I32);
+            fb.g(0).f64c(1024.0).op(op::F64_GE).if_();
+            fb.i64c(0x7ff0_0000_0000_0000)
+                .op(op::F64_REINTERPRET_I64)
+                .op(op::RETURN);
+            fb.end();
+            fb.g(0).f64c(-1075.0).op(op::F64_LT).if_();
+            fb.f64c(0.0).op(op::RETURN);
+            fb.end();
+            fb.g(0).op(op::F64_FLOOR).op(op::I64_TRUNC_F64_S).s(integer);
+            fb.g(0)
+                .g(integer)
+                .op(op::F64_CONVERT_I64_S)
+                .op(op::F64_SUB)
+                .s(fraction);
+            fb.g(integer).i64c(-1022).op(op::I64_LT_S).if_();
+            fb.i64c(-1022).s(integer);
+            fb.end();
+            fb.g(integer).i64c(1023).op(op::I64_GT_S).if_();
+            fb.i64c(1023).s(integer);
+            fb.end();
+            fb.g(fraction)
+                .f64c(std::f64::consts::LN_2)
+                .op(op::F64_MUL)
+                .s(u);
+            fb.f64c(1.0).s(sum);
+            fb.f64c(1.0).s(term);
+            fb.i32c(1).s(i);
+            fb.block();
+            fb.loop_();
+            fb.g(i).i32c(15).op(op::I32_GE_S).br_if(1);
+            fb.g(term)
+                .g(u)
+                .op(op::F64_MUL)
+                .g(i)
+                .op(op::F64_CONVERT_I32_S)
+                .op(op::F64_DIV)
+                .s(term);
+            fb.g(sum).g(term).op(op::F64_ADD).s(sum);
+            fb.g(i).i32c(1).op(op::I32_ADD).s(i);
+            fb.br(0);
+            fb.end();
+            fb.end();
+            fb.g(sum);
+            fb.g(integer)
+                .i64c(1023)
+                .op(op::I64_ADD)
+                .i64c(52)
+                .op(op::I64_SHL)
+                .op(op::F64_REINTERPRET_I64);
+            fb.op(op::F64_MUL);
+        }
+        H::Pow => {
+            let integer_exp = fb.scratch(Val::I64);
+            let result = fb.scratch(Val::F64);
+            fb.g(1).f64c(0.0).op(op::F64_EQ).if_();
+            fb.f64c(1.0).op(op::RETURN);
+            fb.end();
+            fb.g(0).f64c(1.0).op(op::F64_EQ).if_();
+            fb.f64c(1.0).op(op::RETURN);
+            fb.end();
+            fb.g(0).f64c(0.0).op(op::F64_EQ).if_();
+            fb.g(1).f64c(0.0).op(op::F64_LT).if_();
+            fb.i64c(0x7ff0_0000_0000_0000)
+                .op(op::F64_REINTERPRET_I64)
+                .op(op::RETURN);
+            fb.end();
+            fb.f64c(0.0).op(op::RETURN);
+            fb.end();
+            fb.g(0).f64c(0.0).op(op::F64_LT).if_();
+            fb.g(1).op(op::F64_TRUNC).g(1).op(op::F64_NE).if_();
+            fb.f64c(f64::NAN).op(op::RETURN);
+            fb.end();
+            fb.g(1).op(op::I64_TRUNC_F64_S).s(integer_exp);
+            fb.g(0).op(op::F64_NEG).call(idx(H::Log2));
+            fb.g(1).op(op::F64_MUL).call(idx(H::Exp2)).s(result);
+            fb.g(integer_exp)
+                .i64c(1)
+                .op(op::I64_AND)
+                .op(op::I32_WRAP_I64)
+                .if_();
+            fb.g(result).op(op::F64_NEG).s(result);
+            fb.end();
+            fb.g(result).op(op::RETURN);
+            fb.end();
+            fb.g(0).call(idx(H::Log2));
+            fb.g(1).op(op::F64_MUL).call(idx(H::Exp2));
+        }
+        H::Sin | H::Cos => {
+            let reduced = fb.scratch(Val::F64);
+            let square = fb.scratch(Val::F64);
+            let term = fb.scratch(Val::F64);
+            let sum = fb.scratch(Val::F64);
+            let k = fb.scratch(Val::I32);
+            // Reduce to [-pi, pi) before evaluating a bounded Taylor series.
+            fb.g(0).f64c(std::f64::consts::PI).op(op::F64_ADD);
+            fb.f64c(std::f64::consts::TAU)
+                .op(op::F64_DIV)
+                .op(op::F64_FLOOR)
+                .f64c(std::f64::consts::TAU)
+                .op(op::F64_MUL)
+                .s(reduced);
+            fb.g(0).g(reduced).op(op::F64_SUB).s(reduced);
+            fb.g(reduced).g(reduced).op(op::F64_MUL).s(square);
+            if h == H::Sin {
+                fb.g(reduced).s(term);
+                fb.g(reduced).s(sum);
+            } else {
+                fb.f64c(1.0).s(term);
+                fb.f64c(1.0).s(sum);
+            }
+            fb.i32c(1).s(k);
+            fb.block();
+            fb.loop_();
+            fb.g(k).i32c(12).op(op::I32_GE_S).br_if(1);
+            fb.g(term).g(square).op(op::F64_MUL).op(op::F64_NEG);
+            if h == H::Sin {
+                fb.g(k).i32c(2).op(op::I32_MUL).op(op::F64_CONVERT_I32_S);
+                fb.g(k)
+                    .i32c(2)
+                    .op(op::I32_MUL)
+                    .i32c(1)
+                    .op(op::I32_ADD)
+                    .op(op::F64_CONVERT_I32_S);
+            } else {
+                fb.g(k)
+                    .i32c(2)
+                    .op(op::I32_MUL)
+                    .i32c(1)
+                    .op(op::I32_SUB)
+                    .op(op::F64_CONVERT_I32_S);
+                fb.g(k).i32c(2).op(op::I32_MUL).op(op::F64_CONVERT_I32_S);
+            }
+            fb.op(op::F64_MUL).op(op::F64_DIV).s(term);
+            fb.g(sum).g(term).op(op::F64_ADD).s(sum);
+            fb.g(k).i32c(1).op(op::I32_ADD).s(k);
+            fb.br(0);
+            fb.end();
+            fb.end();
+            fb.g(sum);
+        }
         // ── 5D2a ARC heap ───────────────────────────────────────────────
         H::Alloc => {
             let hptr = fb.scratch(Val::I32);
@@ -5298,7 +6571,7 @@ fn emit_helper_body(
             fb.g(0)
                 .i32c(24)
                 .op(op::I32_SUB)
-                .load64(0)
+                .load64(8)
                 .op(op::I32_WRAP_I64)
                 .s(drop_idx);
             fb.g(drop_idx).if_();
@@ -5553,6 +6826,353 @@ fn emit_helper_body(
             fb.g(addr);
             fb.g(2).op(op::I64_EXTEND_I32_U).store64(0);
         }
+        // ── borrowed list/string slices ──────────────────────────────
+        H::SliceNewList => {
+            slice_new_body(fb, idx(H::ListLen), idx(H::Alloc));
+        }
+        H::SliceNewStr => {
+            slice_new_body(fb, idx(H::StrLen), idx(H::Alloc));
+        }
+        H::SliceLen => {
+            fb.g(0).op(op::I32_EQZ).if_().op(op::UNREACHABLE).end();
+            fb.g(0).load64(SLICE_LEN as u32);
+        }
+        H::SliceGetI64 => {
+            slice_source_and_index(fb);
+            fb.call(idx(H::ListGetI64));
+        }
+        H::SliceGetF64 => {
+            slice_source_and_index(fb);
+            fb.call(idx(H::ListGetF64));
+        }
+        H::SliceGetPtr => {
+            slice_source_and_index(fb);
+            fb.call(idx(H::ListGetPtr));
+        }
+        H::StrSliceGet => {
+            slice_bounds_check(fb);
+            let source = fb.scratch(Val::I32);
+            let absolute = fb.scratch(Val::I64);
+            let base = fb.scratch(Val::I32);
+            let payload = fb.scratch(Val::I32);
+            fb.g(0).load32(SLICE_BASE as u32).s(source);
+            fb.g(0)
+                .load64(SLICE_START as u32)
+                .g(1)
+                .op(op::I64_ADD)
+                .s(absolute);
+            fb.i32c(29).call(idx(H::Alloc)).s(base);
+            fb.g(base).i64c(IMMORTAL_RC).store64(0);
+            fb.g(base).i64c(0).store64(8);
+            fb.g(base).i64c(ARC_MAGIC).store64(16);
+            fb.g(base)
+                .i32c(STR_HEADER as i64)
+                .op(op::I32_ADD)
+                .s(payload);
+            fb.g(payload).i32c(1).store32(0);
+            fb.g(payload).i32c(4).op(op::I32_ADD);
+            fb.g(source)
+                .i32c(4)
+                .op(op::I32_ADD)
+                .g(absolute)
+                .op(op::I32_WRAP_I64)
+                .op(op::I32_ADD)
+                .load8(0);
+            fb.store8(0);
+            fb.g(payload);
+        }
+        H::StrSliceToStr => {
+            let source = fb.scratch(Val::I32);
+            let start = fb.scratch(Val::I64);
+            let length = fb.scratch(Val::I64);
+            let base = fb.scratch(Val::I32);
+            let payload = fb.scratch(Val::I32);
+            let i = fb.scratch(Val::I64);
+            fb.g(0).op(op::I32_EQZ).if_().op(op::UNREACHABLE).end();
+            fb.g(0).load32(SLICE_BASE as u32).s(source);
+            fb.g(0).load64(SLICE_START as u32).s(start);
+            fb.g(0).load64(SLICE_LEN as u32).s(length);
+            fb.i32c(28)
+                .g(length)
+                .op(op::I32_WRAP_I64)
+                .op(op::I32_ADD)
+                .call(idx(H::Alloc))
+                .s(base);
+            fb.g(base).i64c(IMMORTAL_RC).store64(0);
+            fb.g(base).i64c(0).store64(8);
+            fb.g(base).i64c(ARC_MAGIC).store64(16);
+            fb.g(base)
+                .i32c(STR_HEADER as i64)
+                .op(op::I32_ADD)
+                .s(payload);
+            fb.g(payload).g(length).op(op::I32_WRAP_I64).store32(0);
+            fb.i64c(0).s(i);
+            fb.loop_();
+            fb.g(i).g(length).op(op::I64_LT_U).if_();
+            fb.g(payload)
+                .i32c(4)
+                .op(op::I32_ADD)
+                .g(i)
+                .op(op::I32_WRAP_I64)
+                .op(op::I32_ADD);
+            fb.g(source)
+                .i32c(4)
+                .op(op::I32_ADD)
+                .g(start)
+                .g(i)
+                .op(op::I64_ADD)
+                .op(op::I32_WRAP_I64)
+                .op(op::I32_ADD)
+                .load8(0);
+            fb.store8(0);
+            fb.end();
+            fb.g(i).i64c(1).op(op::I64_ADD).s(i);
+            fb.g(i).g(length).op(op::I64_LT_U).br_if(0);
+            fb.end();
+            fb.g(payload);
+        }
+        // ── deterministic Int/String-key maps with Int values ────────
+        H::MapNew => {
+            let map = fb.scratch(Val::I32);
+            fb.i32c(MAP_SIZE).call(idx(H::Alloc)).s(map);
+            fb.g(map).i64c(0).store64(MAP_DATA as u32);
+            fb.g(map).i64c(0).store64(MAP_LEN as u32);
+            fb.g(map).i64c(0).store64(MAP_CAP as u32);
+            fb.g(map)
+                .g(0)
+                .op(op::I64_EXTEND_I32_U)
+                .store64(MAP_STR_KEYS as u32);
+            fb.g(map);
+        }
+        H::MapEnsure => {
+            let cap = fb.scratch(Val::I64);
+            let new_cap = fb.scratch(Val::I64);
+            let old_data = fb.scratch(Val::I32);
+            let new_data = fb.scratch(Val::I32);
+            let len = fb.scratch(Val::I64);
+            let i = fb.scratch(Val::I64);
+            fb.g(0).load64(MAP_LEN as u32).s(len);
+            fb.g(0).load64(MAP_CAP as u32).t(cap);
+            // `cap` remains on the stack from `tee`; trap only if `cap < len`.
+            fb.g(len).op(op::I64_LT_U).if_().op(op::UNREACHABLE).end();
+            fb.g(len).g(cap).op(op::I64_LT_U).if_().op(op::RETURN).end();
+            fb.g(cap).op(op::I64_EQZ).if_();
+            fb.i64c(MAP_INITIAL_CAP).s(new_cap);
+            fb.else_();
+            fb.g(cap).i64c(2).op(op::I64_MUL).s(new_cap);
+            fb.end();
+            fb.g(0)
+                .load64(MAP_DATA as u32)
+                .op(op::I32_WRAP_I64)
+                .s(old_data);
+            fb.g(new_cap)
+                .i64c(MAP_ENTRY_SIZE)
+                .op(op::I64_MUL)
+                .op(op::I32_WRAP_I64)
+                .call(idx(H::Alloc))
+                .s(new_data);
+            fb.i64c(0).s(i);
+            fb.loop_();
+            fb.g(i).g(len).op(op::I64_LT_U).if_();
+            fb.g(new_data)
+                .g(i)
+                .i64c(MAP_ENTRY_SIZE)
+                .op(op::I64_MUL)
+                .op(op::I32_WRAP_I64)
+                .op(op::I32_ADD);
+            fb.g(old_data)
+                .g(i)
+                .i64c(MAP_ENTRY_SIZE)
+                .op(op::I64_MUL)
+                .op(op::I32_WRAP_I64)
+                .op(op::I32_ADD)
+                .load64(0);
+            fb.store64(0);
+            fb.g(new_data)
+                .g(i)
+                .i64c(MAP_ENTRY_SIZE)
+                .op(op::I64_MUL)
+                .op(op::I32_WRAP_I64)
+                .op(op::I32_ADD);
+            fb.g(old_data)
+                .g(i)
+                .i64c(MAP_ENTRY_SIZE)
+                .op(op::I64_MUL)
+                .op(op::I32_WRAP_I64)
+                .op(op::I32_ADD)
+                .load64(8);
+            fb.store64(8);
+            fb.end();
+            fb.g(i).i64c(1).op(op::I64_ADD).s(i);
+            fb.g(i).g(len).op(op::I64_LT_U).br_if(0);
+            fb.end();
+            fb.g(0)
+                .g(new_data)
+                .op(op::I64_EXTEND_I32_U)
+                .store64(MAP_DATA as u32);
+            fb.g(0).g(new_cap).store64(MAP_CAP as u32);
+        }
+        H::MapFindI64 | H::MapFindStr => {
+            let len = fb.scratch(Val::I64);
+            let data = fb.scratch(Val::I32);
+            let i = fb.scratch(Val::I64);
+            let entry = fb.scratch(Val::I32);
+            fb.g(0).op(op::I32_EQZ).if_().i64c(-1).op(op::RETURN).end();
+            fb.g(0).load64(MAP_LEN as u32).s(len);
+            fb.g(0).load64(MAP_DATA as u32).op(op::I32_WRAP_I64).s(data);
+            fb.i64c(0).s(i);
+            fb.block();
+            fb.loop_();
+            fb.g(i).g(len).op(op::I64_GE_U).br_if(1);
+            fb.g(data)
+                .g(i)
+                .i64c(MAP_ENTRY_SIZE)
+                .op(op::I64_MUL)
+                .op(op::I32_WRAP_I64)
+                .op(op::I32_ADD)
+                .s(entry);
+            if h == H::MapFindStr {
+                fb.g(entry)
+                    .load64(0)
+                    .op(op::I32_WRAP_I64)
+                    .g(1)
+                    .call(idx(H::StrEq));
+            } else {
+                fb.g(entry).load64(0).g(1).op(op::I64_EQ);
+            }
+            fb.if_().g(i).op(op::RETURN).end();
+            fb.g(i).i64c(1).op(op::I64_ADD).s(i);
+            fb.br(0);
+            fb.end();
+            fb.end();
+            fb.i64c(-1);
+        }
+        H::MapPutI64 | H::MapPutStr => {
+            let found = fb.scratch(Val::I64);
+            let len = fb.scratch(Val::I64);
+            let data = fb.scratch(Val::I32);
+            let entry = fb.scratch(Val::I32);
+            fb.g(0)
+                .g(1)
+                .call(idx(if h == H::MapPutStr {
+                    H::MapFindStr
+                } else {
+                    H::MapFindI64
+                }))
+                .s(found);
+            fb.g(found).i64c(0).op(op::I64_GE_S).if_();
+            fb.g(0)
+                .load64(MAP_DATA as u32)
+                .op(op::I32_WRAP_I64)
+                .g(found)
+                .i64c(MAP_ENTRY_SIZE)
+                .op(op::I64_MUL)
+                .op(op::I32_WRAP_I64)
+                .op(op::I32_ADD)
+                .g(2)
+                .store64(8);
+            fb.else_();
+            fb.g(0).call(idx(H::MapEnsure));
+            fb.g(0).load64(MAP_LEN as u32).s(len);
+            fb.g(0).load64(MAP_DATA as u32).op(op::I32_WRAP_I64).s(data);
+            fb.g(data)
+                .g(len)
+                .i64c(MAP_ENTRY_SIZE)
+                .op(op::I64_MUL)
+                .op(op::I32_WRAP_I64)
+                .op(op::I32_ADD)
+                .s(entry);
+            fb.g(entry);
+            fb.g(1);
+            if h == H::MapPutStr {
+                fb.op(op::I64_EXTEND_I32_U);
+            }
+            fb.store64(0);
+            fb.g(entry).g(2).store64(8);
+            fb.g(0)
+                .g(len)
+                .i64c(1)
+                .op(op::I64_ADD)
+                .store64(MAP_LEN as u32);
+            fb.end();
+        }
+        H::MapGetI64 | H::MapGetStr => {
+            let found = fb.scratch(Val::I64);
+            fb.g(0)
+                .g(1)
+                .call(idx(if h == H::MapGetStr {
+                    H::MapFindStr
+                } else {
+                    H::MapFindI64
+                }))
+                .s(found);
+            fb.g(found).i64c(0).op(op::I64_LT_S).if_();
+            fb.i64c(0).op(op::RETURN);
+            fb.end();
+            fb.g(0)
+                .load64(MAP_DATA as u32)
+                .op(op::I32_WRAP_I64)
+                .g(found)
+                .i64c(MAP_ENTRY_SIZE)
+                .op(op::I64_MUL)
+                .op(op::I32_WRAP_I64)
+                .op(op::I32_ADD)
+                .load64(8);
+        }
+        H::MapHasI64 | H::MapHasStr => {
+            fb.g(0).g(1).call(idx(if h == H::MapHasStr {
+                H::MapFindStr
+            } else {
+                H::MapFindI64
+            }));
+            fb.i64c(0).op(op::I64_GE_S).op(op::I64_EXTEND_I32_U);
+        }
+        H::MapRemoveI64 | H::MapRemoveStr => {
+            let found = fb.scratch(Val::I64);
+            let last = fb.scratch(Val::I64);
+            let data = fb.scratch(Val::I32);
+            let destination = fb.scratch(Val::I32);
+            let source = fb.scratch(Val::I32);
+            fb.g(0)
+                .g(1)
+                .call(idx(if h == H::MapRemoveStr {
+                    H::MapFindStr
+                } else {
+                    H::MapFindI64
+                }))
+                .s(found);
+            fb.g(found).i64c(0).op(op::I64_GE_S).if_();
+            fb.g(0)
+                .load64(MAP_LEN as u32)
+                .i64c(1)
+                .op(op::I64_SUB)
+                .s(last);
+            fb.g(0).load64(MAP_DATA as u32).op(op::I32_WRAP_I64).s(data);
+            fb.g(found).g(last).op(op::I64_NE).if_();
+            fb.g(data)
+                .g(found)
+                .i64c(MAP_ENTRY_SIZE)
+                .op(op::I64_MUL)
+                .op(op::I32_WRAP_I64)
+                .op(op::I32_ADD)
+                .s(destination);
+            fb.g(data)
+                .g(last)
+                .i64c(MAP_ENTRY_SIZE)
+                .op(op::I64_MUL)
+                .op(op::I32_WRAP_I64)
+                .op(op::I32_ADD)
+                .s(source);
+            fb.g(destination).g(source).load64(0).store64(0);
+            fb.g(destination).g(source).load64(8).store64(8);
+            fb.end();
+            fb.g(0).g(last).store64(MAP_LEN as u32);
+            fb.end();
+        }
+        H::MapLen => {
+            fb.g(0).op(op::I32_EQZ).if_().i64c(0).op(op::RETURN).end();
+            fb.g(0).load64(MAP_LEN as u32);
+        }
         // ── 5D2b slice 3: the task runtime ──
         H::TaskNew => {
             // NULL code or environment exits 101 (shim parity), then a
@@ -5702,6 +7322,400 @@ fn emit_helper_body(
             fb.g(i).g(lb).op(op::I32_LT_U).br_if(0); // $c
             fb.end(); // $c
             fb.g(base).i32c(24).op(op::I32_ADD);
+        }
+        H::StrSubstr => {
+            let slen = fb.scratch(Val::I32);
+            let copy = fb.scratch(Val::I32);
+            let start = fb.scratch(Val::I32);
+            let out = fb.scratch(Val::I32);
+            fb.g(0).load32(0).s(slen);
+            fb.i32c(0).s(copy);
+            fb.i32c(0).s(start);
+            fb.g(1).i64c(0).op(op::I64_GE_S);
+            fb.g(2).i64c(0).op(op::I64_GT_S).op(op::I32_AND);
+            fb.g(1)
+                .g(slen)
+                .op(op::I64_EXTEND_I32_U)
+                .op(op::I64_LT_U)
+                .op(op::I32_AND)
+                .if_();
+            fb.g(1).op(op::I32_WRAP_I64).s(start);
+            fb.g(slen).g(start).op(op::I32_SUB).s(copy);
+            fb.g(2)
+                .g(copy)
+                .op(op::I64_EXTEND_I32_U)
+                .op(op::I64_LT_U)
+                .if_();
+            fb.g(2).op(op::I32_WRAP_I64).s(copy);
+            fb.end();
+            fb.end();
+            fb.g(copy)
+                .i32c(4)
+                .op(op::I32_ADD)
+                .i32c(0)
+                .call(idx(H::ArcAlloc))
+                .s(out);
+            fb.g(out).g(copy).store32(0);
+            fb.g(out).i32c(4).op(op::I32_ADD);
+            fb.g(0).i32c(4).op(op::I32_ADD).g(start).op(op::I32_ADD);
+            fb.g(copy);
+            fb.memory_copy();
+            fb.g(out);
+        }
+        H::StrRepeat => {
+            let slen = fb.scratch(Val::I32);
+            let total = fb.scratch(Val::I64);
+            let out = fb.scratch(Val::I32);
+            let i = fb.scratch(Val::I64);
+            fb.g(0).load32(0).s(slen);
+            fb.i64c(0).s(total);
+            fb.g(1).i64c(0).op(op::I64_GT_S).if_();
+            fb.g(slen)
+                .op(op::I64_EXTEND_I32_U)
+                .g(1)
+                .op(op::I64_MUL)
+                .s(total);
+            fb.g(total).i64c(0x7fff_fff0).op(op::I64_GT_U).if_();
+            fb.op(op::UNREACHABLE);
+            fb.end();
+            fb.end();
+            fb.g(total)
+                .op(op::I32_WRAP_I64)
+                .i32c(4)
+                .op(op::I32_ADD)
+                .i32c(0)
+                .call(idx(H::ArcAlloc))
+                .s(out);
+            fb.g(out).g(total).op(op::I32_WRAP_I64).store32(0);
+            fb.g(total).op(op::I64_EQZ).if_();
+            fb.g(out).op(op::RETURN);
+            fb.end();
+            fb.i64c(0).s(i);
+            fb.block();
+            fb.loop_();
+            fb.g(i).g(1).op(op::I64_GE_S).br_if(1);
+            fb.g(out).i32c(4).op(op::I32_ADD);
+            fb.g(i)
+                .g(slen)
+                .op(op::I64_EXTEND_I32_U)
+                .op(op::I64_MUL)
+                .op(op::I32_WRAP_I64)
+                .op(op::I32_ADD);
+            fb.g(0).i32c(4).op(op::I32_ADD);
+            fb.g(slen);
+            fb.memory_copy();
+            fb.g(i).i64c(1).op(op::I64_ADD).s(i);
+            fb.br(0);
+            fb.end();
+            fb.end();
+            fb.g(out);
+        }
+        H::StrSplit => {
+            let list = fb.scratch(Val::I32);
+            let len = fb.scratch(Val::I32);
+            let start = fb.scratch(Val::I32);
+            let i = fb.scratch(Val::I32);
+            let piece_len = fb.scratch(Val::I32);
+            let piece = fb.scratch(Val::I32);
+            let boundary = fb.scratch(Val::I32);
+            fb.i32c(1).call(idx(H::ListNew)).s(list);
+            fb.g(0).load32(0).s(len);
+            fb.i32c(0).s(start);
+            fb.i32c(0).s(i);
+            fb.block();
+            fb.loop_();
+            fb.g(i).g(len).op(op::I32_EQ).s(boundary);
+            fb.g(i).g(len).op(op::I32_LT_U).if_();
+            fb.g(0)
+                .i32c(4)
+                .op(op::I32_ADD)
+                .g(i)
+                .op(op::I32_ADD)
+                .load8(0)
+                .g(1)
+                .op(op::I32_WRAP_I64)
+                .op(op::I32_EQ)
+                .if_();
+            fb.i32c(1).s(boundary);
+            fb.end();
+            fb.end();
+            fb.g(boundary).if_();
+            fb.g(i).g(start).op(op::I32_SUB).s(piece_len);
+            fb.g(piece_len)
+                .i32c(4)
+                .op(op::I32_ADD)
+                .i32c(0)
+                .call(idx(H::ArcAlloc))
+                .s(piece);
+            fb.g(piece).g(piece_len).store32(0);
+            fb.g(piece).i32c(4).op(op::I32_ADD);
+            fb.g(0).i32c(4).op(op::I32_ADD).g(start).op(op::I32_ADD);
+            fb.g(piece_len);
+            fb.memory_copy();
+            fb.g(list).g(piece).call(idx(H::ListPushPtr));
+            fb.g(i).i32c(1).op(op::I32_ADD).s(start);
+            fb.end();
+            fb.g(i).g(len).op(op::I32_EQ).br_if(1);
+            fb.g(i).i32c(1).op(op::I32_ADD).s(i);
+            fb.br(0);
+            fb.end();
+            fb.end();
+            fb.g(list);
+        }
+        H::CharAt => {
+            let len = fb.scratch(Val::I32);
+            let out_len = fb.scratch(Val::I32);
+            let out = fb.scratch(Val::I32);
+            fb.g(0).load32(0).s(len);
+            fb.i32c(0).s(out_len);
+            fb.g(1).i64c(0).op(op::I64_GE_S);
+            fb.g(1)
+                .g(len)
+                .op(op::I64_EXTEND_I32_U)
+                .op(op::I64_LT_U)
+                .op(op::I32_AND)
+                .if_();
+            fb.i32c(1).s(out_len);
+            fb.end();
+            fb.g(out_len)
+                .i32c(4)
+                .op(op::I32_ADD)
+                .i32c(0)
+                .call(idx(H::ArcAlloc))
+                .s(out);
+            fb.g(out).g(out_len).store32(0);
+            fb.g(out_len).if_();
+            fb.g(out).i32c(4).op(op::I32_ADD);
+            fb.g(0)
+                .i32c(4)
+                .op(op::I32_ADD)
+                .g(1)
+                .op(op::I32_WRAP_I64)
+                .op(op::I32_ADD)
+                .load8(0);
+            fb.store8(0);
+            fb.end();
+            fb.g(out);
+        }
+        H::Ord => {
+            let len = fb.scratch(Val::I32);
+            let lead = fb.scratch(Val::I32);
+            let extra = fb.scratch(Val::I32);
+            let code = fb.scratch(Val::I32);
+            let i = fb.scratch(Val::I32);
+            let byte = fb.scratch(Val::I32);
+            fb.g(0).load32(0).s(len);
+            fb.g(len).op(op::I32_EQZ).if_();
+            fb.i64c(0).op(op::RETURN);
+            fb.end();
+            fb.g(0).i32c(4).op(op::I32_ADD).load8(0).s(lead);
+            fb.g(lead).i32c(0x80).op(op::I32_LT_U).if_();
+            fb.g(lead).op(op::I64_EXTEND_I32_U).op(op::RETURN);
+            fb.end();
+            fb.g(lead)
+                .i32c(0xe0)
+                .op(op::I32_AND)
+                .i32c(0xc0)
+                .op(op::I32_EQ)
+                .if_();
+            fb.i32c(1).s(extra);
+            fb.g(lead).i32c(0x1f).op(op::I32_AND).s(code);
+            fb.else_();
+            fb.g(lead)
+                .i32c(0xf0)
+                .op(op::I32_AND)
+                .i32c(0xe0)
+                .op(op::I32_EQ)
+                .if_();
+            fb.i32c(2).s(extra);
+            fb.g(lead).i32c(0x0f).op(op::I32_AND).s(code);
+            fb.else_();
+            fb.g(lead)
+                .i32c(0xf8)
+                .op(op::I32_AND)
+                .i32c(0xf0)
+                .op(op::I32_EQ)
+                .if_();
+            fb.i32c(3).s(extra);
+            fb.g(lead).i32c(0x07).op(op::I32_AND).s(code);
+            fb.else_();
+            fb.g(lead).op(op::I64_EXTEND_I32_U).op(op::RETURN);
+            fb.end();
+            fb.end();
+            fb.end();
+            fb.g(len).g(extra).op(op::I32_LE_U).if_();
+            fb.g(lead).op(op::I64_EXTEND_I32_U).op(op::RETURN);
+            fb.end();
+            fb.i32c(1).s(i);
+            fb.block();
+            fb.loop_();
+            fb.g(i).g(extra).op(op::I32_GT_U).br_if(1);
+            fb.g(0)
+                .i32c(4)
+                .op(op::I32_ADD)
+                .g(i)
+                .op(op::I32_ADD)
+                .load8(0)
+                .s(byte);
+            fb.g(byte)
+                .i32c(0xc0)
+                .op(op::I32_AND)
+                .i32c(0x80)
+                .op(op::I32_NE)
+                .if_();
+            fb.g(lead).op(op::I64_EXTEND_I32_U).op(op::RETURN);
+            fb.end();
+            fb.g(code)
+                .i32c(6)
+                .op(op::I32_SHL)
+                .g(byte)
+                .i32c(0x3f)
+                .op(op::I32_AND)
+                .op(op::I32_OR)
+                .s(code);
+            fb.g(i).i32c(1).op(op::I32_ADD).s(i);
+            fb.br(0);
+            fb.end();
+            fb.end();
+            // Reject overlong encodings, surrogates, and out-of-range scalars.
+            fb.g(extra).i32c(1).op(op::I32_EQ);
+            fb.g(code).i32c(0x80).op(op::I32_LT_U).op(op::I32_AND);
+            fb.g(extra).i32c(2).op(op::I32_EQ);
+            fb.g(code).i32c(0x800).op(op::I32_LT_U).op(op::I32_AND);
+            fb.op(op::I32_OR);
+            fb.g(extra).i32c(3).op(op::I32_EQ);
+            fb.g(code).i32c(0x10000).op(op::I32_LT_U).op(op::I32_AND);
+            fb.op(op::I32_OR);
+            fb.g(code).i32c(0x10ffff).op(op::I32_GT_U).op(op::I32_OR);
+            fb.g(code).i32c(0xd800).op(op::I32_GE_U);
+            fb.g(code).i32c(0xdfff).op(op::I32_LE_U).op(op::I32_AND);
+            fb.op(op::I32_OR).if_();
+            fb.g(lead).op(op::I64_EXTEND_I32_U).op(op::RETURN);
+            fb.end();
+            fb.g(code).op(op::I64_EXTEND_I32_U);
+        }
+        H::Chr => {
+            let valid = fb.scratch(Val::I32);
+            let code = fb.scratch(Val::I32);
+            let len = fb.scratch(Val::I32);
+            let out = fb.scratch(Val::I32);
+            fb.g(0).i64c(0).op(op::I64_GE_S);
+            fb.g(0)
+                .i64c(0x10ffff)
+                .op(op::I64_LE_U)
+                .op(op::I32_AND)
+                .s(valid);
+            fb.g(0).op(op::I32_WRAP_I64).s(code);
+            fb.g(code).i32c(0xd800).op(op::I32_GE_U);
+            fb.g(code)
+                .i32c(0xdfff)
+                .op(op::I32_LE_U)
+                .op(op::I32_AND)
+                .if_();
+            fb.i32c(0).s(valid);
+            fb.end();
+            fb.i32c(0).s(len);
+            fb.g(valid).if_();
+            fb.g(code).i32c(0x80).op(op::I32_LT_U).if_();
+            fb.i32c(1).s(len);
+            fb.else_();
+            fb.g(code).i32c(0x800).op(op::I32_LT_U).if_();
+            fb.i32c(2).s(len);
+            fb.else_();
+            fb.g(code).i32c(0x10000).op(op::I32_LT_U).if_();
+            fb.i32c(3).s(len);
+            fb.else_();
+            fb.i32c(4).s(len);
+            fb.end();
+            fb.end();
+            fb.end();
+            fb.end();
+            fb.g(len)
+                .i32c(4)
+                .op(op::I32_ADD)
+                .i32c(0)
+                .call(idx(H::ArcAlloc))
+                .s(out);
+            fb.g(out).g(len).store32(0);
+            fb.g(len).i32c(1).op(op::I32_EQ).if_();
+            fb.g(out).i32c(4).op(op::I32_ADD).g(code).store8(0);
+            fb.end();
+            fb.g(len).i32c(2).op(op::I32_EQ).if_();
+            fb.g(out).i32c(4).op(op::I32_ADD);
+            fb.g(code)
+                .i32c(6)
+                .op(op::I32_SHR_U)
+                .i32c(0xc0)
+                .op(op::I32_OR)
+                .store8(0);
+            fb.g(out).i32c(5).op(op::I32_ADD);
+            fb.g(code)
+                .i32c(0x3f)
+                .op(op::I32_AND)
+                .i32c(0x80)
+                .op(op::I32_OR)
+                .store8(0);
+            fb.end();
+            fb.g(len).i32c(3).op(op::I32_EQ).if_();
+            fb.g(out).i32c(4).op(op::I32_ADD);
+            fb.g(code)
+                .i32c(12)
+                .op(op::I32_SHR_U)
+                .i32c(0xe0)
+                .op(op::I32_OR)
+                .store8(0);
+            fb.g(out).i32c(5).op(op::I32_ADD);
+            fb.g(code)
+                .i32c(6)
+                .op(op::I32_SHR_U)
+                .i32c(0x3f)
+                .op(op::I32_AND)
+                .i32c(0x80)
+                .op(op::I32_OR)
+                .store8(0);
+            fb.g(out).i32c(6).op(op::I32_ADD);
+            fb.g(code)
+                .i32c(0x3f)
+                .op(op::I32_AND)
+                .i32c(0x80)
+                .op(op::I32_OR)
+                .store8(0);
+            fb.end();
+            fb.g(len).i32c(4).op(op::I32_EQ).if_();
+            fb.g(out).i32c(4).op(op::I32_ADD);
+            fb.g(code)
+                .i32c(18)
+                .op(op::I32_SHR_U)
+                .i32c(0xf0)
+                .op(op::I32_OR)
+                .store8(0);
+            fb.g(out).i32c(5).op(op::I32_ADD);
+            fb.g(code)
+                .i32c(12)
+                .op(op::I32_SHR_U)
+                .i32c(0x3f)
+                .op(op::I32_AND)
+                .i32c(0x80)
+                .op(op::I32_OR)
+                .store8(0);
+            fb.g(out).i32c(6).op(op::I32_ADD);
+            fb.g(code)
+                .i32c(6)
+                .op(op::I32_SHR_U)
+                .i32c(0x3f)
+                .op(op::I32_AND)
+                .i32c(0x80)
+                .op(op::I32_OR)
+                .store8(0);
+            fb.g(out).i32c(7).op(op::I32_ADD);
+            fb.g(code)
+                .i32c(0x3f)
+                .op(op::I32_AND)
+                .i32c(0x80)
+                .op(op::I32_OR)
+                .store8(0);
+            fb.end();
+            fb.g(out);
         }
         H::StrContains => {
             let la = fb.scratch(Val::I32);
@@ -5920,9 +7934,10 @@ fn emit_helper_body(
             fb.g(0).load32(0).s(lt);
             fb.g(1).load32(0).s(lo);
             fb.g(2).load32(0).s(ln);
-            // The oracle returns the text unchanged when old is empty.
+            // The oracle returns the text unchanged when old is empty. The
+            // result is a distinct owner, so retain the aliased allocation.
             fb.g(lo).i32c(0).op(op::I32_EQ).if_();
-            fb.g(0);
+            fb.g(0).call(idx(H::Retain));
             fb.op(op::RETURN);
             fb.end();
             // Pass 1: the result length.
@@ -7082,6 +9097,52 @@ fn emit_helper_body(
 
 /// `null → trap; index out of [0, len) → trap` — the loud-failure
 /// contract shared by every list read/write.
+fn slice_new_body(fb: &mut FB, source_len_helper: u32, alloc_helper: u32) {
+    let source_len = fb.scratch(Val::I64);
+    let view = fb.scratch(Val::I32);
+
+    fb.g(0).op(op::I32_EQZ);
+    fb.g(1).i64c(0).op(op::I64_LT_S).op(op::I32_OR);
+    fb.g(2).i64c(0).op(op::I64_LT_S).op(op::I32_OR);
+    fb.if_().op(op::UNREACHABLE).end();
+
+    fb.g(0).call(source_len_helper).s(source_len);
+    // Check `start <= source_len && len <= source_len - start` without
+    // forming `start + len`, so signed overflow cannot bypass the guard.
+    fb.g(1).g(source_len).op(op::I64_GT_S);
+    fb.g(2)
+        .g(source_len)
+        .g(1)
+        .op(op::I64_SUB)
+        .op(op::I64_GT_S)
+        .op(op::I32_OR);
+    fb.if_().op(op::UNREACHABLE).end();
+
+    fb.i32c(SLICE_SIZE).call(alloc_helper).s(view);
+    fb.g(view).g(0).store32(SLICE_BASE as u32);
+    fb.g(view).g(1).store64(SLICE_START as u32);
+    fb.g(view).g(2).store64(SLICE_LEN as u32);
+    fb.g(view);
+}
+
+fn slice_bounds_check(fb: &mut FB) {
+    fb.g(0).op(op::I32_EQZ);
+    fb.g(1).i64c(0).op(op::I64_LT_S).op(op::I32_OR);
+    fb.g(1)
+        .g(0)
+        .load64(SLICE_LEN as u32)
+        .op(op::I64_GE_S)
+        .op(op::I32_OR);
+    fb.if_().op(op::UNREACHABLE).end();
+}
+
+/// Leave `(source, absolute_index)` on the stack after checking the view index.
+fn slice_source_and_index(fb: &mut FB) {
+    slice_bounds_check(fb);
+    fb.g(0).load32(SLICE_BASE as u32);
+    fb.g(0).load64(SLICE_START as u32).g(1).op(op::I64_ADD);
+}
+
 fn list_bounds_check(fb: &mut FB) {
     fb.g(0).op(op::I32_EQZ).if_().op(op::UNREACHABLE).end();
     let len = fb.scratch(Val::I64);

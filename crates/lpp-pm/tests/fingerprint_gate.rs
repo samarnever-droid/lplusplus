@@ -181,6 +181,7 @@ fn store_file_parses_and_serializes() {
         "x|host".to_string(),
         lpp_pm::fingerprint::FingerprintEntry {
             fingerprint: "abc".into(),
+            artifact_hash: Some("def".into()),
             built_at: "2026-01-01T00:00:00Z".into(),
         },
     );

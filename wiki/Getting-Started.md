@@ -7,7 +7,7 @@ This page walks through installing L++, compiling a first program, creating a pa
 Linux/macOS:
 
 ```bash
-git clone --depth 1 --branch v1.2.0 https://github.com/samarnever-droid/lplusplus.git
+git clone --depth 1 --branch v0.1 https://github.com/samarnever-droid/lplusplus.git
 cd lplusplus
 LPP_FROM_SOURCE=1 sh install.sh
 export PATH="$HOME/.lpp/bin:$PATH"
@@ -17,7 +17,7 @@ lpp --version
 Windows PowerShell:
 
 ```powershell
-git clone --depth 1 --branch v1.2.0 https://github.com/samarnever-droid/lplusplus.git
+git clone --depth 1 --branch v0.1 https://github.com/samarnever-droid/lplusplus.git
 cd lplusplus
 $env:LPP_FROM_SOURCE = "1"
 .\install.ps1

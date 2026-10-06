@@ -126,17 +126,17 @@ def main() -> Void:
             type: "theory",
             title: "Step 1: The Immutable Shield 🛡️",
             conceptTitle: "Why Variables Are Locked by Default (`:=`)",
-            conceptSummary: "In L++, variables declared with `:=` are locked like a bank vault so they can never be corrupted!",
+            conceptSummary: "In L++, bindings declared with `:=` cannot be reassigned unless mutability is explicit.",
             explanationMarkdown: `In RPG games, your hero's Base Max HP shouldn't accidentally change mid-fight!
 
-In L++, when you write **\`base_hp := 100\`**, the value is **100% immutable**.
+In L++, when you write **\`base_hp := 100\`**, the binding is immutable by default.
 
 \`\`\`
 base_hp := 100
-# base_hp = 200  <-- ERROR! Shield activated: Immutable bindings cannot be reassigned!
+# base_hp = 200  <-- ERROR! Immutable bindings cannot be reassigned.
 \`\`\`
 
-This guarantees 100% safety against accidental bugs!`,
+This prevents accidental reassignment while keeping intentional state changes explicit.`,
             codeExample: `def main() -> Void:
     base_hp := 100
     print(base_hp)`

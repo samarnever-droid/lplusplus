@@ -5,6 +5,12 @@
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PmError {
+    /// A package name violated the portable registry-name grammar.
+    InvalidPackageName(String),
+    /// A concrete package version was not valid semantic version syntax.
+    InvalidVersion(String),
+    /// A dependency requirement was not valid semantic version syntax.
+    InvalidRequirement(String),
     /// A [`ContentAddress`](crate::ContentAddress) was malformed (not 64
     /// lowercase hex characters).
     InvalidAddress(String),
@@ -70,6 +76,19 @@ pub enum PmError {
 impl std::fmt::Display for PmError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::InvalidPackageName(name) => write!(
+                f,
+                "E6000: invalid package name '{name}' (expected 1-64 lowercase ASCII letters, digits, or hyphens; first character must be alphanumeric)"
+            ),
+            Self::InvalidVersion(version) => {
+                write!(f, "E6002: invalid semantic version: {version}")
+            }
+            Self::InvalidRequirement(requirement) => {
+                write!(
+                    f,
+                    "E6026: invalid semantic-version requirement: {requirement}"
+                )
+            }
             Self::InvalidAddress(a) => write!(f, "E6001: invalid content address: {a}"),
             Self::Io(e) => write!(f, "E6003: cache I/O error: {e}"),
             Self::BlobNotFound(k) => write!(f, "E6004: blob not found: {k}"),

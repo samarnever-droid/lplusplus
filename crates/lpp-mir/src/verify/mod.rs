@@ -561,6 +561,8 @@ impl Verifier<'_> {
                         );
                         if let (Some(expected), Some(actual)) = (place_type, value_type)
                             && expected != actual
+                            && !(self.is_integral(expected)
+                                && self.integer_operand_assignable(value, expected))
                         {
                             self.push(
                                 function_id,
@@ -608,7 +610,11 @@ impl Verifier<'_> {
                     self.operand_type(function_id, block_id, None, block.origin, condition, locals)
                 {
                     let expected = self.types.primitive(PrimitiveType::Bool);
-                    if actual != expected {
+                    // Source conditions support integer truthiness. Both native
+                    // and Wasm lowering normalize an integral condition to
+                    // `value != 0`, so MIR must preserve the same language rule
+                    // rather than rejecting a type-checked branch here.
+                    if actual != expected && !self.is_integral(actual) {
                         self.push(
                             function_id,
                             Some(block_id),

@@ -437,6 +437,17 @@ enum RuntimeValue {
     Char(char),
     Tuple(Vec<RuntimeValue>),
     List(HeapId),
+    /// Opaque map handle. The current frontend models legacy map handles as
+    /// `Int`, but the interpreter keeps the allocation typed and ARC-managed.
+    Map(HeapId),
+    /// Borrowed list/string window. It does not own `source`; frontend
+    /// borrow checking guarantees the source outlives the view.
+    Slice {
+        source: HeapId,
+        start: usize,
+        len: usize,
+        string: bool,
+    },
     Nominal(HeapId),
     Function(MirFunctionId),
     Closure(HeapId),
@@ -454,6 +465,8 @@ impl RuntimeValue {
             Self::Char(_) => ExecutionValueKind::Char,
             Self::Tuple(_) => ExecutionValueKind::Tuple,
             Self::List(_) => ExecutionValueKind::List,
+            Self::Map(_) => ExecutionValueKind::Int,
+            Self::Slice { .. } => ExecutionValueKind::Tuple,
             Self::Nominal(_) => ExecutionValueKind::Nominal,
             Self::Function(_) => ExecutionValueKind::Function,
             Self::Closure(_) => ExecutionValueKind::Closure,
@@ -463,8 +476,15 @@ impl RuntimeValue {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+enum MapKey {
+    Int(i64),
+    String(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum HeapNode {
     List(Vec<RuntimeValue>),
+    Map(Vec<(MapKey, i64)>),
     Nominal {
         aggregate: MirAggregateId,
         variant: Option<MirVariantId>,

@@ -28,7 +28,7 @@ use std::process::{Command, Output};
 use lpp_codegen_api::{
     Backend, CodegenErrorKind, CodegenOptions, CompiledModule, NameResolver, Target,
 };
-use lpp_codegen_llvm::LlvmBackend;
+use lpp_codegen_llvm::{LlvmBackend, emit_llvm_ir};
 use lpp_hir::{
     FileSystem, FileSystemError, GraphBuilder, GraphRequest, PackageSpec, ResolutionMode,
     StringInterner, Symbol, lower_package,
@@ -123,6 +123,17 @@ fn execute_mir(
 ) -> ExecutionOutcome {
     lpp_mir::execute_mir_with_stats(program, types, entry, &[], InterpreterLimits::default())
         .unwrap_or_else(|error| panic!("oracle execution failed: {error}"))
+}
+
+fn llvm_compiler_available() -> bool {
+    let compiler = std::env::var("LPP_LLVM_CC")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "clang".to_string());
+    Command::new(compiler)
+        .arg("--version")
+        .output()
+        .is_ok_and(|output| output.status.success())
 }
 
 fn try_compile(
@@ -389,7 +400,15 @@ def main() -> Int:
 // ── tests ─────────────────────────────────────────────────────────────────
 
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "the experimental v0.1 LLVM object tier is gated on Linux"
+)]
 fn data_surface_matches_oracle() {
+    if !llvm_compiler_available() {
+        eprintln!("skipping LLVM object gate: no configured clang executable");
+        return;
+    }
     let (program, types, package) = pipeline(DATA_SURFACE_CORPUS);
     let names = Names(&package.names.symbols);
     let entry = main_function(&program, &package.names.symbols);
@@ -409,7 +428,15 @@ fn data_surface_matches_oracle() {
 }
 
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "the experimental v0.1 LLVM object tier is gated on Linux"
+)]
 fn deterministic_object() {
+    if !llvm_compiler_available() {
+        eprintln!("skipping LLVM object gate: no configured clang executable");
+        return;
+    }
     let (program, types, package) = pipeline(DATA_SURFACE_CORPUS);
     let names = Names(&package.names.symbols);
     let a = compile(&program, &types, &names);
@@ -423,6 +450,58 @@ fn deterministic_object() {
         a.imported_symbols, b.imported_symbols,
         "import censuses differ"
     );
+}
+
+#[test]
+fn direct_string_builtins_have_plan_and_emitter_parity_without_panics() {
+    let source = concat!(
+        "def main() -> Int:\n",
+        "    joined := str_concat(\"hello \", \"world\")\n",
+        "    if lpp_str_eq(joined, \"hello world\") == 1:\n",
+        "        print_str(joined)\n",
+        "    return 0\n",
+    );
+    let (program, types, package) = pipeline(source);
+    let ir = emit_llvm_ir(&program, &types, &Names(&package.names.symbols)).unwrap();
+    assert!(ir.contains("call ptr @lpp_str_concat"), "{ir}");
+    assert!(ir.contains("call i64 @lpp_str_eq"), "{ir}");
+    assert!(
+        ir.contains("trunc i64"),
+        "boolean result must be narrowed: {ir}"
+    );
+}
+
+#[test]
+fn bare_function_values_lower_to_typed_indirect_calls() {
+    let source = concat!(
+        "def add(a: Int, b: Int) -> Int:\n",
+        "    return a + b\n",
+        "def main() -> Int:\n",
+        "    operation := add\n",
+        "    alias := operation\n",
+        "    return alias(20, 22)\n",
+    );
+    let (program, types, package) = pipeline(source);
+    let ir = emit_llvm_ir(&program, &types, &Names(&package.names.symbols)).unwrap();
+    assert!(ir.contains("store ptr @add"), "{ir}");
+    assert!(ir.contains("load ptr"), "{ir}");
+    assert!(ir.contains("call i64 %v"), "{ir}");
+}
+
+#[test]
+fn integer_truthiness_and_implicit_void_main_emit_valid_entry_ir() {
+    let source = concat!(
+        "def main():\n",
+        "    flag := 1\n",
+        "    if flag:\n",
+        "        print_int(42)\n",
+    );
+    let (program, types, package) = pipeline(source);
+    let ir = emit_llvm_ir(&program, &types, &Names(&package.names.symbols)).unwrap();
+    assert!(ir.contains("define i32 @main()"), "{ir}");
+    assert!(ir.contains("icmp ne i64"), "{ir}");
+    assert!(ir.contains("ret i32 0"), "{ir}");
+    assert!(!ir.contains("define i32 @main() {\nret void"), "{ir}");
 }
 
 #[test]
@@ -447,7 +526,15 @@ def main() -> Int:
 }
 
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "the experimental v0.1 LLVM object tier is gated on Linux"
+)]
 fn float_print_matches_oracle() {
+    if !llvm_compiler_available() {
+        eprintln!("skipping LLVM object gate: no configured clang executable");
+        return;
+    }
     // 5E2 float-output slice: `print_float` now lowers to a `lpp_print_float`
     // call (C `printf("%f\n", …)`, 6 decimals). The object's stdout must equal
     // the oracle's `{:.6}` formatting for float constants and a float local.

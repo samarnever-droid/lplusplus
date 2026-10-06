@@ -27,7 +27,15 @@ fn discover_one(dir: &Path) -> Result<Vec<PathBuf>, String> {
 
 /// The workspace's test files: `tests/*.lpp` of every member (monorepo),
 /// in member order then file order; a standalone project behaves as before.
-fn discover(ws: &lpp_pm::Workspace, dir: &Path) -> Result<Vec<PathBuf>, String> {
+fn discover(
+    ws: &lpp_pm::Workspace,
+    dir: &Path,
+    only: Option<&str>,
+) -> Result<Vec<PathBuf>, String> {
+    if let Some(package) = only {
+        let member = crate::commands::workspace::require_member(ws, package)?;
+        return discover_one(&member.dir);
+    }
     if ws.members.is_empty() {
         return discover_one(dir);
     }
@@ -48,9 +56,19 @@ fn discover(ws: &lpp_pm::Workspace, dir: &Path) -> Result<Vec<PathBuf>, String> 
 /// workspace root, so `.lpp_packages` and the shared `target/` resolve in
 /// a monorepo too.
 pub fn test_run(dir: &Path, lpp_bin: &str, reg: Option<&lpp_pm::Registry>) -> Result<(), String> {
+    test_run_selected(dir, lpp_bin, reg, None)
+}
+
+/// Test either every workspace member or one named member.
+pub fn test_run_selected(
+    dir: &Path,
+    lpp_bin: &str,
+    reg: Option<&lpp_pm::Registry>,
+    only: Option<&str>,
+) -> Result<(), String> {
     let ws = lpp_pm::Workspace::discover(dir).map_err(|e| e.to_string())?;
+    let files = discover(&ws, dir, only)?;
     crate::commands::build::stage_all_deps(&ws, reg)?;
-    let files = discover(&ws, dir)?;
     if files.is_empty() {
         println!("no tests found (add .lpp files under tests/)");
         return Ok(());

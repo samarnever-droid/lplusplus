@@ -540,11 +540,22 @@ impl Interpreter<'_> {
                 // The callee operand is an indirection: invoking a
                 // closure never consumes it.
                 let callee = self.eval_operand(function, block, origin, callee, frame)?;
-                // Call arguments move into the callee's frame.
+                // User-call arguments are borrowed transfers: the callee's
+                // parameter frame gains an owned reference while a source
+                // local keeps its reference. This is the same contract used
+                // by both native and WASM code generation. A string literal's
+                // evaluation already creates the reader reference that moves
+                // into the parameter, so only local copies retain here.
                 let mut argument_values = Vec::new();
                 for operand in self.program.operands(arguments) {
-                    argument_values
-                        .push(self.eval_operand_moved(function, block, origin, *operand, frame)?);
+                    let value = self.eval_operand(function, block, origin, *operand, frame)?;
+                    if self.arc.is_some()
+                        && matches!(operand, Operand::Copy(_))
+                        && owns_heap_refs(&value)
+                    {
+                        self.retain_owned(function, Some(block), Some(origin), &value)?;
+                    }
+                    argument_values.push(value);
                 }
                 match callee {
                     RuntimeValue::Function(target) => {
@@ -858,6 +869,20 @@ impl Interpreter<'_> {
         let list_at = |position: usize| -> Result<HeapId, InterpreterError> {
             argument_list_id(arguments, position).ok_or_else(|| invalid_at(position))
         };
+        let map_at = |position: usize| -> Result<HeapId, InterpreterError> {
+            argument_map_id(arguments, position).ok_or_else(|| invalid_at(position))
+        };
+        let slice_at = |position: usize| -> Result<(HeapId, usize, usize, bool), InterpreterError> {
+            match arguments.get(position) {
+                Some(RuntimeValue::Slice {
+                    source,
+                    start,
+                    len,
+                    string,
+                }) => Ok((*source, *start, *len, *string)),
+                _ => Err(invalid_at(position)),
+            }
+        };
         let clone_at = |position: usize| -> Result<RuntimeValue, InterpreterError> {
             match arguments.get(position) {
                 Some(value) => Ok(value.clone()),
@@ -972,6 +997,91 @@ impl Interpreter<'_> {
                     text.replace(old.as_str(), new.as_str())
                 };
                 builtin_make_string(self, function, block, origin, replaced, produced)
+            }
+            "str_substr" => {
+                let text = string_at(0)?;
+                let start = int_at(1)?;
+                let len = int_at(2)?;
+                let bytes = text.as_bytes();
+                let start = usize::try_from(start).ok();
+                let len = usize::try_from(len).ok().filter(|len| *len > 0);
+                let result = start
+                    .zip(len)
+                    .filter(|(start, _)| *start < bytes.len())
+                    .map(|(start, len)| {
+                        let end = start.saturating_add(len).min(bytes.len());
+                        String::from_utf8_lossy(&bytes[start..end]).into_owned()
+                    })
+                    .unwrap_or_default();
+                builtin_make_string(self, function, block, origin, result, produced)
+            }
+            "str_repeat" => {
+                let text = string_at(0)?;
+                let count = int_at(1)?;
+                let result = usize::try_from(count)
+                    .ok()
+                    .filter(|count| *count > 0)
+                    .map(|count| text.repeat(count))
+                    .unwrap_or_default();
+                builtin_make_string(self, function, block, origin, result, produced)
+            }
+            "char_at" => {
+                let text = string_at(0)?;
+                let index = usize::try_from(int_at(1)?).ok();
+                let result = index
+                    .and_then(|index| text.as_bytes().get(index).copied())
+                    .map(|byte| String::from_utf8_lossy(&[byte]).into_owned())
+                    .unwrap_or_default();
+                builtin_make_string(self, function, block, origin, result, produced)
+            }
+            "ord" => {
+                let text = string_at(0)?;
+                Ok(RuntimeValue::Int(
+                    text.chars()
+                        .next()
+                        .map_or(0, |character| i64::from(character as u32)),
+                ))
+            }
+            "chr" => {
+                let code = u32::try_from(int_at(0)?).ok();
+                let text = code
+                    .and_then(char::from_u32)
+                    .map_or_else(String::new, |character| character.to_string());
+                builtin_make_string(self, function, block, origin, text, produced)
+            }
+            "str_eq" => {
+                let left = string_at(0)?;
+                let right = string_at(1)?;
+                Ok(RuntimeValue::Int(i64::from(left == right)))
+            }
+            "str_split" => {
+                let text = string_at(0)?;
+                let delimiter = int_at(1)? as u8;
+                let pieces: Vec<String> = text
+                    .as_bytes()
+                    .split(|byte| *byte == delimiter)
+                    .map(|piece| String::from_utf8_lossy(piece).into_owned())
+                    .collect();
+                self.reserve_elements(function, Some(block), origin, pieces.len())?;
+                let mut values = Vec::with_capacity(pieces.len());
+                for piece in pieces {
+                    let id = self.allocate_heap(
+                        function,
+                        Some(block),
+                        origin,
+                        HeapNode::String(piece),
+                        None,
+                    )?;
+                    values.push(RuntimeValue::String(id));
+                }
+                let id = self.allocate_heap(
+                    function,
+                    Some(block),
+                    origin,
+                    HeapNode::List(values),
+                    produced,
+                )?;
+                Ok(RuntimeValue::List(id))
             }
             "str_trim" => {
                 let text = string_at(0)?;
@@ -1156,6 +1266,27 @@ impl Interpreter<'_> {
             "pow" => Ok(RuntimeValue::FloatBits(
                 float_at(0)?.powf(float_at(1)?).to_bits(),
             )),
+            "sin" => Ok(RuntimeValue::FloatBits(float_at(0)?.sin().to_bits())),
+            "cos" => Ok(RuntimeValue::FloatBits(float_at(0)?.cos().to_bits())),
+            "int_pow" => {
+                let base = int_at(0)?;
+                let exponent = int_at(1)?;
+                if exponent < 0 {
+                    Ok(RuntimeValue::Int(0))
+                } else {
+                    let mut base = base;
+                    let mut exponent = exponent as u64;
+                    let mut result = 1i64;
+                    while exponent > 0 {
+                        if exponent & 1 != 0 {
+                            result = result.wrapping_mul(base);
+                        }
+                        base = base.wrapping_mul(base);
+                        exponent >>= 1;
+                    }
+                    Ok(RuntimeValue::Int(result))
+                }
+            }
             "sqrt" => Ok(RuntimeValue::FloatBits(float_at(0)?.sqrt().to_bits())),
             "fmod" => {
                 let left = float_at(0)?;
@@ -1234,6 +1365,179 @@ impl Interpreter<'_> {
                 let id = list_at(0)?;
                 let len = heap_list(&self.heap, id).len();
                 Ok(RuntimeValue::Int(i64::try_from(len).unwrap_or(i64::MAX)))
+            }
+
+            // ── Deterministic integer/string-key maps ──────────────────────
+            "map_new" | "map_new_arc" => {
+                let id = self.allocate_heap(
+                    function,
+                    Some(block),
+                    origin,
+                    HeapNode::Map(Vec::new()),
+                    produced,
+                )?;
+                Ok(RuntimeValue::Map(id))
+            }
+            "map_put" | "map_put_str" | "map_put_float" | "map_put_str_float" => {
+                let id = map_at(0)?;
+                let key = if name.contains("_str") {
+                    MapKey::String(string_at(1)?)
+                } else {
+                    MapKey::Int(int_at(1)?)
+                };
+                let value = if name.ends_with("_float") {
+                    float_at(2)?.to_bits() as i64
+                } else {
+                    int_at(2)?
+                };
+                let position = heap_map(&self.heap, id)
+                    .iter()
+                    .position(|(candidate, _)| *candidate == key);
+                if let Some(position) = position {
+                    heap_map_mut(&mut self.heap, id)[position].1 = value;
+                } else {
+                    self.reserve_elements(function, Some(block), origin, 1)?;
+                    heap_map_mut(&mut self.heap, id).push((key, value));
+                }
+                Ok(RuntimeValue::Void)
+            }
+            "map_get" | "map_get_str" | "map_get_float" | "map_get_str_float" => {
+                let id = map_at(0)?;
+                let key = if name.contains("_str") {
+                    MapKey::String(string_at(1)?)
+                } else {
+                    MapKey::Int(int_at(1)?)
+                };
+                let value = heap_map(&self.heap, id)
+                    .iter()
+                    .find(|(candidate, _)| *candidate == key)
+                    .map_or(0, |(_, value)| *value);
+                if name.ends_with("_float") {
+                    Ok(RuntimeValue::FloatBits(value as u64))
+                } else {
+                    Ok(RuntimeValue::Int(value))
+                }
+            }
+            "map_has" | "map_has_str" => {
+                let id = map_at(0)?;
+                let key = if name.ends_with("_str") {
+                    MapKey::String(string_at(1)?)
+                } else {
+                    MapKey::Int(int_at(1)?)
+                };
+                Ok(RuntimeValue::Bool(
+                    heap_map(&self.heap, id)
+                        .iter()
+                        .any(|(candidate, _)| *candidate == key),
+                ))
+            }
+            "map_remove" | "map_remove_str" => {
+                let id = map_at(0)?;
+                let key = if name.ends_with("_str") {
+                    MapKey::String(string_at(1)?)
+                } else {
+                    MapKey::Int(int_at(1)?)
+                };
+                let position = heap_map(&self.heap, id)
+                    .iter()
+                    .position(|(candidate, _)| *candidate == key);
+                if let Some(position) = position {
+                    heap_map_mut(&mut self.heap, id).swap_remove(position);
+                }
+                Ok(RuntimeValue::Void)
+            }
+            "map_len" => {
+                let id = map_at(0)?;
+                let len = heap_map(&self.heap, id).len();
+                Ok(RuntimeValue::Int(i64::try_from(len).unwrap_or(i64::MAX)))
+            }
+
+            // ── Borrowed list/string slices ────────────────────────────────
+            "slice" | "str_slice" => {
+                let start_raw = int_at(1)?;
+                let len_raw = int_at(2)?;
+                let start = usize::try_from(start_raw).ok();
+                let len = usize::try_from(len_raw).ok();
+                let string = name == "str_slice";
+                let source = if string {
+                    argument_string_id(arguments, 0).ok_or_else(|| invalid_at(0))?
+                } else {
+                    list_at(0)?
+                };
+                let source_len = if string {
+                    heap_string(&self.heap, source).len()
+                } else {
+                    heap_list(&self.heap, source).len()
+                };
+                let valid = start
+                    .zip(len)
+                    .and_then(|(start, len)| start.checked_add(len).map(|end| (start, len, end)))
+                    .filter(|(_, _, end)| *end <= source_len);
+                let Some((start, len, _)) = valid else {
+                    return Err(builtin_index_out_of_bounds(
+                        function,
+                        block,
+                        origin,
+                        start_raw.saturating_add(len_raw),
+                        source_len,
+                    ));
+                };
+                Ok(RuntimeValue::Slice {
+                    source,
+                    start,
+                    len,
+                    string,
+                })
+            }
+            "slice_len" => {
+                let (_, _, len, _) = slice_at(0)?;
+                Ok(RuntimeValue::Int(i64::try_from(len).unwrap_or(i64::MAX)))
+            }
+            "slice_get" | "slice_get_bool" => {
+                let (source, start, len, string) = slice_at(0)?;
+                let index_raw = int_at(1)?;
+                let index = usize::try_from(index_raw)
+                    .ok()
+                    .filter(|index| *index < len)
+                    .ok_or_else(|| {
+                        builtin_index_out_of_bounds(function, block, origin, index_raw, len)
+                    })?;
+                let absolute = start + index;
+                if string {
+                    let byte = heap_string(&self.heap, source).as_bytes()[absolute];
+                    builtin_make_string(
+                        self,
+                        function,
+                        block,
+                        origin,
+                        String::from_utf8_lossy(&[byte]).into_owned(),
+                        produced,
+                    )
+                } else {
+                    let value = heap_list(&self.heap, source)[absolute].clone();
+                    if name == "slice_get_bool" && !matches!(value, RuntimeValue::Bool(_)) {
+                        return Err(invalid(0, value.kind()));
+                    }
+                    if self.arc.is_some() && owns_heap_refs(&value) {
+                        self.retain_owned(function, Some(block), Some(origin), &value)?;
+                    }
+                    Ok(value)
+                }
+            }
+            "slice_to_str" | "str_slice_to_str" => {
+                let (source, start, len, string) = slice_at(0)?;
+                if !string {
+                    return Err(invalid_at(0));
+                }
+                let bytes = &heap_string(&self.heap, source).as_bytes()[start..start + len];
+                builtin_make_string(
+                    self,
+                    function,
+                    block,
+                    origin,
+                    String::from_utf8_lossy(bytes).into_owned(),
+                    produced,
+                )
             }
 
             _ => Err(self.error(
@@ -1546,6 +1850,19 @@ impl Interpreter<'_> {
                     }
                     pending.extend(left.iter().zip(right));
                 }
+                (RuntimeValue::Map(left), RuntimeValue::Map(right)) => {
+                    if left == right {
+                        continue;
+                    }
+                    let (HeapNode::Map(left), HeapNode::Map(right)) =
+                        (&self.heap[left.0 as usize], &self.heap[right.0 as usize])
+                    else {
+                        return false;
+                    };
+                    if left != right {
+                        return false;
+                    }
+                }
                 (RuntimeValue::Nominal(left), RuntimeValue::Nominal(right)) => {
                     if left == right || !visited.insert((*left, *right)) {
                         continue;
@@ -1837,6 +2154,29 @@ impl Interpreter<'_> {
                         .collect::<Result<_, _>>()?,
                 )
             }
+            // Maps are still represented as opaque Int handles by the
+            // frontend. Expose a deterministic nonzero handle if one crosses
+            // the execution boundary; normal map programs return scalars.
+            RuntimeValue::Map(id) => ExecutionValue::Int(i64::from(id.0) + 1),
+            RuntimeValue::Slice {
+                source,
+                start,
+                len,
+                string,
+            } => {
+                if *string {
+                    let bytes = &heap_string(&self.heap, *source).as_bytes()[*start..*start + *len];
+                    ExecutionValue::String(String::from_utf8_lossy(bytes).into_owned())
+                } else {
+                    let values = &heap_list(&self.heap, *source)[*start..*start + *len];
+                    ExecutionValue::List(
+                        values
+                            .iter()
+                            .map(|value| self.export_value(function, origin, value))
+                            .collect::<Result<_, _>>()?,
+                    )
+                }
+            }
             RuntimeValue::Nominal(id) => {
                 let HeapNode::Nominal {
                     aggregate,
@@ -1904,6 +2244,7 @@ impl Interpreter<'_> {
         let mut children: Vec<RuntimeValue> = Vec::new();
         match &self.heap[id.0 as usize] {
             HeapNode::List(elements) => children.extend(elements.iter().cloned()),
+            HeapNode::Map(_) => {}
             HeapNode::Nominal { fields, .. } => children.extend(fields.iter().cloned()),
             HeapNode::String(_) => {}
             HeapNode::Closure { captures, .. } => children.extend(captures.iter().cloned()),
@@ -2579,6 +2920,8 @@ impl Interpreter<'_> {
                 | RuntimeValue::Int(_)
                 | RuntimeValue::FloatBits(_)
                 | RuntimeValue::String(_)
+                | RuntimeValue::Map(_)
+                | RuntimeValue::Slice { .. }
                 | RuntimeValue::Char(_)
                 | RuntimeValue::Function(_) => continue,
             };
@@ -2738,13 +3081,21 @@ fn argument_list_id(arguments: &[RuntimeValue], position: usize) -> Option<HeapI
     }
 }
 
-/// Whether the value is a heap node (string, list, nominal, closure,
+fn argument_map_id(arguments: &[RuntimeValue], position: usize) -> Option<HeapId> {
+    match arguments.get(position)? {
+        RuntimeValue::Map(id) => Some(*id),
+        _ => None,
+    }
+}
+
+/// Whether the value is a heap node (string, list, map, nominal, closure,
 /// or task).
 fn is_heap_value(value: &RuntimeValue) -> bool {
     matches!(
         value,
         RuntimeValue::String(_)
             | RuntimeValue::List(_)
+            | RuntimeValue::Map(_)
             | RuntimeValue::Nominal(_)
             | RuntimeValue::Closure(_)
             | RuntimeValue::Task(_)
@@ -2787,6 +3138,7 @@ fn heap_id_of(value: &RuntimeValue) -> HeapId {
     match value {
         RuntimeValue::String(id)
         | RuntimeValue::List(id)
+        | RuntimeValue::Map(id)
         | RuntimeValue::Nominal(id)
         | RuntimeValue::Closure(id)
         | RuntimeValue::Task(id) => *id,
@@ -2812,6 +3164,20 @@ fn heap_list_mut<'heap>(heap: &'heap mut [HeapNode], id: HeapId) -> &'heap mut V
     match &mut heap[id.0 as usize] {
         HeapNode::List(entries) => entries,
         _ => unreachable!("list handles reference list heap nodes"),
+    }
+}
+
+fn heap_map(heap: &[HeapNode], id: HeapId) -> &[(MapKey, i64)] {
+    match &heap[id.0 as usize] {
+        HeapNode::Map(entries) => entries,
+        _ => unreachable!("map handles reference map heap nodes"),
+    }
+}
+
+fn heap_map_mut(heap: &mut [HeapNode], id: HeapId) -> &mut Vec<(MapKey, i64)> {
+    match &mut heap[id.0 as usize] {
+        HeapNode::Map(entries) => entries,
+        _ => unreachable!("map handles reference map heap nodes"),
     }
 }
 

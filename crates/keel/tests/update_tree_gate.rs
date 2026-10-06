@@ -76,7 +76,7 @@ fn seeded_registry(root: &Path) -> std::path::PathBuf {
             name: "math".into(),
             versions: vec![ve("1.0.0", false, &[])],
         },
-        b"math 1.0.0",
+        b"artifact-1.0.0",
         "seed math",
     )
     .unwrap();
@@ -85,7 +85,7 @@ fn seeded_registry(root: &Path) -> std::path::PathBuf {
             name: "stats".into(),
             versions: vec![ve("0.1.0", false, &[("math", "^1")])],
         },
-        b"stats 0.1.0",
+        b"artifact-0.1.0",
         "seed stats",
     )
     .unwrap();
@@ -102,7 +102,17 @@ fn republish(root: &Path, bare: &Path, entry: &IndexEntry) {
         &root.join("republisher"),
         &["config", "user.email", "r@example.com"],
     );
-    reg.publish(entry, b"artifact", "bump").unwrap();
+    let newest = entry
+        .versions
+        .iter()
+        .max_by(|left, right| {
+            let left = lpp_pm::Version::parse(&left.version).unwrap();
+            let right = lpp_pm::Version::parse(&right.version).unwrap();
+            left.cmp(&right)
+        })
+        .unwrap();
+    let artifact = format!("artifact-{}", newest.version);
+    reg.publish(entry, artifact.as_bytes(), "bump").unwrap();
     reg.push().unwrap();
 }
 

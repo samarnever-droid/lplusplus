@@ -63,6 +63,17 @@ fn manifest_parse_error_is_typed() {
 }
 
 #[test]
+fn manifest_rejects_malformed_names_versions_and_requirements() {
+    for document in [
+        "[package]\nname = \"../escape\"\nversion = \"1.0.0\"\n",
+        "[package]\nname = \"safe\"\nversion = \"not-semver\"\n",
+        "[package]\nname = \"safe\"\nversion = \"1.0.0\"\n[dependencies]\ndep = \"definitely not a requirement\"\n",
+    ] {
+        assert!(Manifest::parse(document).is_err(), "accepted {document:?}");
+    }
+}
+
+#[test]
 fn index_path_matches_the_sparse_layout() {
     assert_eq!(index_path("a"), "1/a");
     assert_eq!(index_path("ab"), "2/ab");

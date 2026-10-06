@@ -82,8 +82,7 @@ fn render_node(
     if node.tag == "unlocked" {
         *unlocked_seen = true;
     }
-    // Members are shared roots, never a cycle in their own right.
-    let cyclic = node.tag != "member" && !branch.insert(name.to_string());
+    let cyclic = !branch.insert(name.to_string());
     let connector = if is_last { "└── " } else { "├── " };
     let version = if cyclic {
         format!("{} (cyclic)", node.version)
@@ -94,6 +93,9 @@ fn render_node(
         "{prefix}{connector}{name} v{version} ({})\n",
         node.tag
     ));
+    if cyclic {
+        return;
+    }
 
     // Children: the lock's dependency names (declaration order).
     let children: Vec<String> = lock
@@ -140,16 +142,13 @@ pub fn tree(dir: &Path, only: Option<&str>) -> Result<(), String> {
 fn render_into(text: &mut String, dir: &Path, only: Option<&str>) -> Result<(), String> {
     let ws = lpp_pm::Workspace::discover(dir).map_err(|e| e.to_string())?;
 
-    let lock: Option<lpp_pm::Lock> = ws
-        .root
-        .join("Keel.lock")
-        .is_file()
-        .then(|| {
-            std::fs::read_to_string(ws.root.join("Keel.lock"))
-                .ok()
-                .and_then(|doc| lpp_pm::Lock::parse(&doc).ok())
-        })
-        .flatten();
+    let lock_path = ws.root.join("Keel.lock");
+    let lock: Option<lpp_pm::Lock> = if lock_path.is_file() {
+        let document = std::fs::read_to_string(&lock_path).map_err(|error| error.to_string())?;
+        Some(lpp_pm::Lock::parse(&document).map_err(|error| error.to_string())?)
+    } else {
+        None
+    };
 
     let member_names: BTreeSet<String> = ws.members.iter().map(|m| m.name().to_string()).collect();
 

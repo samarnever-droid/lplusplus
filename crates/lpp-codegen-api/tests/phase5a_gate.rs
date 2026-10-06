@@ -9,8 +9,7 @@
 //! 3. The semantic-vs-machine divergence census is pinned with exact
 //!    counts (boxed vectors, arity expansion).
 //! 4. The target lattice is exactly {x86_64, aarch64, wasm32_wasip1}
-//!    (the wasm32 target is added by 5D) with fixed deterministic
-//!    triples and pointer widths.
+//!    with deterministic host-format native triples and fixed pointer widths.
 //! 5. The `E5xxx` table maps one stable code per kind.
 
 use lpp_codegen_api::{
@@ -215,13 +214,20 @@ fn semantic_vs_machine_divergence_census_is_pinned() {
 }
 
 #[test]
-fn target_lattice_is_bounded_with_fixed_triples() {
+fn target_lattice_is_bounded_with_host_format_triples() {
     assert_eq!(
         Target::all(),
         &[Target::X86_64, Target::Aarch64, Target::Wasm32Wasi]
     );
-    assert_eq!(Target::X86_64.triple(), "x86_64-unknown-linux-gnu");
-    assert_eq!(Target::Aarch64.triple(), "aarch64-unknown-linux-gnu");
+    let (x86_64, aarch64) = if cfg!(target_os = "windows") {
+        ("x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc")
+    } else if cfg!(target_os = "macos") {
+        ("x86_64-apple-darwin", "aarch64-apple-darwin")
+    } else {
+        ("x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu")
+    };
+    assert_eq!(Target::X86_64.triple(), x86_64);
+    assert_eq!(Target::Aarch64.triple(), aarch64);
     assert_eq!(Target::Wasm32Wasi.triple(), "wasm32-wasip1");
     assert_eq!(Target::X86_64.pointer_bits(), 64);
     assert_eq!(Target::Aarch64.pointer_bits(), 64);

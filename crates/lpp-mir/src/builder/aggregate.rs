@@ -164,6 +164,80 @@ impl MirBuilder<'_> {
         Ok(aggregate)
     }
 
+    /// Ensure every nominal reachable through a concrete value type has a MIR
+    /// descriptor. Some valid programs mention an aggregate only as a
+    /// container element or function-signature component and therefore never
+    /// trigger constructor/field lowering for that aggregate directly.
+    pub(super) fn ensure_type_aggregates(
+        &mut self,
+        ty: TypeId,
+        origin: OriginId,
+    ) -> Result<(), MirBuildError> {
+        match self.types.interner.kind(ty) {
+            TypeKind::Nominal { .. } => {
+                self.ensure_aggregate(ty, origin)?;
+            }
+            TypeKind::List(element) | TypeKind::Slice(element) | TypeKind::Task(element) => {
+                self.ensure_type_aggregates(element, origin)?;
+            }
+            TypeKind::Tuple(elements) => {
+                let elements = self.types.interner.list(elements).to_vec();
+                for element in elements {
+                    self.ensure_type_aggregates(element, origin)?;
+                }
+            }
+            TypeKind::Map { key, value } => {
+                self.ensure_type_aggregates(key, origin)?;
+                self.ensure_type_aggregates(value, origin)?;
+            }
+            TypeKind::Function { parameters, result } => {
+                let parameters = self.types.interner.list(parameters).to_vec();
+                for parameter in parameters {
+                    self.ensure_type_aggregates(parameter, origin)?;
+                }
+                self.ensure_type_aggregates(result, origin)?;
+            }
+            TypeKind::Primitive(_)
+            | TypeKind::Never
+            | TypeKind::Error
+            | TypeKind::GenericParameter(_)
+            | TypeKind::BoundVariable(_)
+            | TypeKind::InferenceVariable(_)
+            | TypeKind::UnresolvedName { .. } => {}
+        }
+        Ok(())
+    }
+
+    /// Close the aggregate-descriptor set over all concrete types that made it
+    /// into MIR. Field recursion handles newly created descriptors, while this
+    /// root pass covers signature-only and local-only nominal references.
+    pub(super) fn ensure_program_aggregate_types(
+        &mut self,
+        fallback_origin: OriginId,
+    ) -> Result<(), MirBuildError> {
+        let mut roots = Vec::new();
+        for (_, function) in self.program.functions() {
+            roots.push((function.ty, function.origin));
+            roots.push((function.return_type, function.origin));
+        }
+        for (_, local) in self.program.locals() {
+            roots.push((local.ty, local.origin));
+        }
+        for (_, place) in self.program.places() {
+            roots.push((place.ty, place.origin));
+        }
+        if roots.is_empty() {
+            roots.push((
+                self.types.interner.primitive(PrimitiveType::Void),
+                fallback_origin,
+            ));
+        }
+        for (ty, origin) in roots {
+            self.ensure_type_aggregates(ty, origin)?;
+        }
+        Ok(())
+    }
+
     fn alloc_aggregate_field(
         &mut self,
         aggregate: MirAggregateId,
@@ -184,6 +258,11 @@ impl MirBuilder<'_> {
                 )
             })?;
         let ty = self.materialize_type(substitution, template, source_field.origin)?;
+        // Ownership and backend layout need descriptors for nominal types even
+        // when they appear only behind a container (for example
+        // `List[Child]` initialized with `[]`). Materialize those transitive
+        // aggregate instances while the concrete field type is available.
+        self.ensure_type_aggregates(ty, source_field.origin)?;
         self.check_next(
             MirCapacity::AggregateFields,
             self.counts.aggregate_fields,

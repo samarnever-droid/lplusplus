@@ -553,8 +553,8 @@ fn phase4c2c_mir_snapshot_is_stable() {
         fs::write(path, &actual).unwrap();
     }
     assert_eq!(
-        actual.replace("\r\n", "\n"),
-        include_str!("snapshots/phase4c2c-enum-flow-mir.snap").replace("\r\n", "\n"),
+        actual,
+        include_str!("snapshots/phase4c2c-enum-flow-mir.snap"),
         "Phase 4C2C MIR snapshot changed",
     );
 }

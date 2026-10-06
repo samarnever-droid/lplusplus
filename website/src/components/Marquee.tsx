@@ -1,14 +1,14 @@
 const ITEMS = [
-  "no garbage collector",
-  "no borrow checker",
-  "semantic escape analysis",
+  "python-like clarity",
+  "static types",
+  "ownership planning",
+  "frame · owned · shared",
   "cranelift aot",
-  "c transpiler",
-  "arena allocation",
-  "arc managed heap",
-  "zero-cost stack values",
-  "3 ms compiles",
-  "native x86-64",
+  "optional llvm",
+  "direct webassembly",
+  "no tracing gc",
+  "structs · enums · generics",
+  "closures · async tasks",
 ];
 
 export default function Marquee() {

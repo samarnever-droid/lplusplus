@@ -15,12 +15,15 @@ use crate::error::{PmError, Result};
 use crate::workspace::Workspace;
 
 /// Fingerprint store format version.
-pub const FP_STORE_VERSION: u32 = 1;
+pub const FP_STORE_VERSION: u32 = 2;
 
 /// The durable fingerprint entry for one (member, target) build.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FingerprintEntry {
     pub fingerprint: String,
+    /// Hash of the produced artifact. Older stores omit it and rebuild once.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_hash: Option<String>,
     /// RFC-3339-ish UTC timestamp (second precision), for humans.
     pub built_at: String,
 }
@@ -46,11 +49,11 @@ impl FingerprintStore {
     pub fn load(path: &Path) -> Self {
         match std::fs::read_to_string(path) {
             Ok(doc) => match FingerprintStoreFile::parse(&doc) {
-                Ok(f) => Self {
+                Ok(f) if f.version == FP_STORE_VERSION => Self {
                     path: Some(path.to_path_buf()),
                     file: f,
                 },
-                Err(_) => Self {
+                Ok(_) | Err(_) => Self {
                     path: Some(path.to_path_buf()),
                     file: FingerprintStoreFile::default(),
                 },
@@ -67,26 +70,30 @@ impl FingerprintStore {
         let Some(path) = &self.path else {
             return Ok(());
         };
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| PmError::Io(e.to_string()))?;
-        }
-        let doc = self
+        let document = self
             .file
             .to_toml()
             .map_err(|e| PmError::FingerprintStore(e.to_string()))?;
-        std::fs::write(path, doc).map_err(|e| PmError::Io(e.to_string()))
+        crate::fsutil::atomic_write(path, document.as_bytes())
     }
 
     pub fn get(&self, key: &str) -> Option<&FingerprintEntry> {
         self.file.entries.get(key)
     }
 
-    /// Record a successful build for `key`.
+    /// Record a successful build for `key` without an artifact hash (primarily
+    /// useful to callers/tests that do not produce an artifact).
     pub fn upsert(&mut self, key: &str, fingerprint: &str) {
+        self.upsert_artifact(key, fingerprint, None);
+    }
+
+    pub fn upsert_artifact(&mut self, key: &str, fingerprint: &str, artifact_hash: Option<String>) {
+        self.file.version = FP_STORE_VERSION;
         self.file.entries.insert(
             key.to_string(),
             FingerprintEntry {
                 fingerprint: fingerprint.to_string(),
+                artifact_hash,
                 built_at: now_stamp(),
             },
         );
@@ -168,15 +175,27 @@ pub fn hash_bytes(bytes: &[u8]) -> String {
     s
 }
 
-/// The compiler identity: path + mtime (a compiler rebuild changes the mtime).
+/// Resolve the compiler through PATH (when necessary) and hash its bytes.
+/// This makes a compiler replacement invalidate every affected artifact even
+/// when Keel was configured with the ordinary `lpp` command name.
 pub fn lpp_identity(lpp_bin: &str) -> String {
-    let mtime = std::fs::metadata(lpp_bin)
-        .and_then(|m| m.modified())
-        .ok()
-        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-        .map(|d| d.as_nanos().to_string())
-        .unwrap_or_else(|| "unknown".to_string());
-    format!("{lpp_bin}#{mtime}")
+    let requested = std::path::PathBuf::from(lpp_bin);
+    let resolved = if requested.components().count() > 1 || requested.is_absolute() {
+        requested
+    } else {
+        std::env::var_os("PATH")
+            .and_then(|path| {
+                std::env::split_paths(&path)
+                    .map(|directory| directory.join(lpp_bin))
+                    .find(|candidate| candidate.is_file())
+            })
+            .unwrap_or_else(|| std::path::PathBuf::from(lpp_bin))
+    };
+    let canonical = resolved.canonicalize().unwrap_or(resolved);
+    match std::fs::read(&canonical) {
+        Ok(bytes) => format!("{}#{}", canonical.display(), hash_bytes(&bytes)),
+        Err(_) => format!("{}#missing", canonical.display()),
+    }
 }
 
 /// Every `.lpp` file under `dir` (recursive, `target/` excluded) as
@@ -189,13 +208,22 @@ pub fn hash_sources(dir: &Path) -> BTreeMap<String, String> {
         };
         for e in rd.flatten() {
             let p = e.path();
-            if p.is_dir() {
+            let Ok(metadata) = std::fs::symlink_metadata(&p) else {
+                continue;
+            };
+            if metadata.file_type().is_symlink() {
+                continue;
+            }
+            if metadata.is_dir() {
                 let name = p.file_name().map(|n| n.to_string_lossy().to_string());
-                if name.as_deref() == Some("target") {
+                if matches!(
+                    name.as_deref(),
+                    Some("target" | ".git" | ".lpp_packages" | "tests" | "examples")
+                ) {
                     continue;
                 }
                 walk(&p, base, out);
-            } else if p.extension().is_some_and(|x| x == "lpp") {
+            } else if metadata.is_file() && p.extension().is_some_and(|x| x == "lpp") {
                 if let Some(h) = hash_file(&p) {
                     let rel = p
                         .strip_prefix(base)
@@ -246,6 +274,16 @@ pub fn member_fingerprint(
 ///
 /// Key format: `"<member name>|<target>"`.
 pub fn compute_member_fps(ws: &Workspace, lpp_bin: &str) -> Result<BTreeMap<String, String>> {
+    compute_member_fps_with_lock(ws, lpp_bin, None)
+}
+
+/// Compute fingerprints with the registry portion of `Keel.lock` folded into
+/// every member that can reach it.
+pub fn compute_member_fps_with_lock(
+    ws: &Workspace,
+    lpp_bin: &str,
+    lock: Option<&crate::Lock>,
+) -> Result<BTreeMap<String, String>> {
     // Order members so deps come first (the plan gives exactly that).
     let plan = ws.build_plan()?;
     let order: Vec<usize> = plan.iter().flatten().copied().collect();
@@ -270,29 +308,29 @@ pub fn compute_member_fps(ws: &Workspace, lpp_bin: &str) -> Result<BTreeMap<Stri
             Some(t) if !t.supported.is_empty() => t.supported.clone(),
             _ => vec!["host".to_string()],
         };
-        // Dep fingerprints: the same target first (deps are computed earlier
-        // in `order`), falling back to the dep's host fingerprint.
-        let mut dep_fps: BTreeMap<String, String> = BTreeMap::new();
-        for dm in ws
-            .members
-            .iter()
-            .filter(|dm| m.path_deps.iter().any(|d| d == dm.name()))
-        {
-            let mut found: Option<String> = None;
-            for target in &targets {
-                if let Some(fp) = fps.get(&format!("{}|{}", dm.name(), target)) {
-                    found = Some(fp.clone());
-                    break;
-                }
-            }
-            if found.is_none() {
-                found = fps.get(&format!("{}|host", dm.name())).cloned();
-            }
-            if let Some(fp) = found {
-                dep_fps.insert(dm.name().to_string(), fp);
-            }
-        }
+        let registry_fps = registry_fingerprints(m, lock)?;
         for target in &targets {
+            // Prefer the dependency artifact for the same target and fall back
+            // to host only when the dependency does not declare that target.
+            let mut dep_fps: BTreeMap<String, String> = registry_fps.clone();
+            for dependency_member in ws
+                .members
+                .iter()
+                .filter(|dependency| m.path_deps.iter().any(|name| name == dependency.name()))
+            {
+                let found = fps
+                    .get(&format!("{}|{}", dependency_member.name(), target))
+                    .or_else(|| fps.get(&format!("{}|host", dependency_member.name())))
+                    .cloned();
+                let Some(found) = found else {
+                    return Err(PmError::FingerprintStore(format!(
+                        "no compatible fingerprint for path dependency '{}' target '{}'",
+                        dependency_member.name(),
+                        target
+                    )));
+                };
+                dep_fps.insert(dependency_member.name().to_string(), found);
+            }
             let key = format!("{}|{}", m.name(), target);
             fps.insert(
                 key,
@@ -307,6 +345,54 @@ pub fn compute_member_fps(ws: &Workspace, lpp_bin: &str) -> Result<BTreeMap<Stri
         }
     }
     Ok(fps)
+}
+
+fn registry_fingerprints(
+    member: &crate::Member,
+    lock: Option<&crate::Lock>,
+) -> Result<BTreeMap<String, String>> {
+    let mut output = BTreeMap::new();
+    let Some(lock) = lock else {
+        return Ok(output);
+    };
+    let default_features = member
+        .manifest
+        .features
+        .get("default")
+        .cloned()
+        .unwrap_or_default();
+    let mut queue: Vec<String> = member
+        .manifest
+        .dependencies
+        .iter()
+        .filter(|(name, dependency)| {
+            dependency.path().is_none()
+                && (!dependency.optional()
+                    || default_features.iter().any(|feature| feature == *name))
+        })
+        .map(|(name, _)| name.clone())
+        .collect();
+    let mut seen = std::collections::BTreeSet::new();
+    while let Some(name) = queue.pop() {
+        if !seen.insert(name.clone()) {
+            continue;
+        }
+        let package = lock.package(&name).ok_or_else(|| {
+            PmError::LockParse(format!("dependency '{name}' is not present in Keel.lock"))
+        })?;
+        if package.source != "registry" {
+            continue;
+        }
+        let checksum = package.checksum.as_deref().ok_or_else(|| {
+            PmError::LockParse(format!("registry package '{name}' has no checksum"))
+        })?;
+        output.insert(
+            format!("registry:{name}"),
+            format!("{}:{checksum}", package.version),
+        );
+        queue.extend(package.deps.iter().cloned());
+    }
+    Ok(output)
 }
 
 /// The dependents graph over fingerprint keys: key → keys it depends on.

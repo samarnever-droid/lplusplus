@@ -11,8 +11,7 @@ use lpp_hir::{
 };
 use lpp_mir::{
     ExecutionValue, InterpreterErrorKind, InterpreterLimits, MirBuildErrorKind, MirBuildOptions,
-    MirFunctionId, MirFunctionKind, MirProgram, UnsupportedConstruct, build_mir, execute_mir,
-    execute_mir_with_stats,
+    MirFunctionId, MirFunctionKind, MirProgram, build_mir, execute_mir, execute_mir_with_stats,
 };
 use lpp_types::{ShadowInferenceOptions, TypeInterner, infer_hir_package};
 

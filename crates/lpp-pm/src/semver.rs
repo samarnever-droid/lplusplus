@@ -1,143 +1,93 @@
-//! A minimal, correct-enough semver for the resolver.
+//! Standards-backed semantic versions and version requirements.
 //!
-//! Supports `major.minor.patch` versions and the requirement forms Keel uses:
-//! `*`, a bare/caret version (`1` or `^1.2.3`), tilde (`~1.2.3`), exact
-//! (`=1.2.3`), and simple comparators (`>`, `>=`, `<`, `<=`).
+//! The public wrapper preserves Keel's small API while delegating parsing and
+//! matching to the battle-tested `semver` crate. Package versions accept the
+//! historical `1` / `1.2` shorthand and normalize it to `1.0.0` / `1.2.0`;
+//! full SemVer pre-release and build metadata are preserved.
 
-/// A semantic version (major, minor, patch). Pre-release/build tags are ignored.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Version {
-    pub major: u64,
-    pub minor: u64,
-    pub patch: u64,
-}
+/// A semantic version.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Version(semver::Version);
 
 impl Version {
-    pub const fn new(major: u64, minor: u64, patch: u64) -> Self {
-        Self {
-            major,
-            minor,
-            patch,
-        }
+    pub fn new(major: u64, minor: u64, patch: u64) -> Self {
+        Self(semver::Version::new(major, minor, patch))
     }
 
-    /// Parse `1`, `1.2`, or `1.2.3` (a leading `v` and any `-pre`/`+build` are ignored).
-    pub fn parse(s: &str) -> Option<Self> {
-        let s = s.trim();
-        let s = s.strip_prefix('v').unwrap_or(s);
-        let core = s.split(|c| c == '-' || c == '+').next()?;
-        let parts: Vec<&str> = core.split('.').collect();
-        if parts.len() > 3 {
+    /// Parse a package version. `1` and `1.2` are accepted for compatibility
+    /// and normalized to three components.
+    pub fn parse(value: &str) -> Option<Self> {
+        let value = value.trim();
+        let value = value.strip_prefix('v').unwrap_or(value);
+        if value.is_empty() {
             return None;
         }
-        for p in &parts {
-            if p.is_empty() || !p.bytes().all(|b| b.is_ascii_digit()) {
-                return None;
-            }
+        if let Ok(version) = semver::Version::parse(value) {
+            return Some(Self(version));
         }
-        let major = parts[0].parse().ok()?;
-        let minor = parts.get(1).copied().unwrap_or("0").parse().ok()?;
-        let patch = parts.get(2).copied().unwrap_or("0").parse().ok()?;
-        Some(Self::new(major, minor, patch))
+        if value.bytes().all(|b| b.is_ascii_digit()) {
+            return semver::Version::parse(&format!("{value}.0.0"))
+                .ok()
+                .map(Self);
+        }
+        if value.matches('.').count() == 1
+            && value
+                .split('.')
+                .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
+        {
+            return semver::Version::parse(&format!("{value}.0")).ok().map(Self);
+        }
+        None
+    }
+
+    pub fn as_semver(&self) -> &semver::Version {
+        &self.0
     }
 }
 
 impl std::fmt::Display for Version {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}.{}.{}", self.major, self.minor, self.patch)
+        self.0.fmt(f)
     }
 }
 
-/// A version requirement.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// A standards-compliant semantic-version requirement.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Req {
-    /// `*` — any version.
     Any,
-    /// `^1.2.3` (also the meaning of a bare `1.2.3`).
-    Caret(Version),
-    /// `~1.2.3`.
-    Tilde(Version),
-    /// `=1.2.3`.
-    Exact(Version),
-    Gt(Version),
-    Gte(Version),
-    Lt(Version),
-    Lte(Version),
+    Parsed {
+        raw: String,
+        inner: semver::VersionReq,
+    },
 }
 
 impl Req {
-    pub fn parse(s: &str) -> Option<Self> {
-        let t = s.trim();
-        if t.is_empty() || t == "*" {
-            return Some(Req::Any);
+    pub fn parse(value: &str) -> Option<Self> {
+        let value = value.trim();
+        if value.is_empty() || value == "*" {
+            return Some(Self::Any);
         }
-        let (op, rest) = if let Some(r) = t.strip_prefix(">=") {
-            (">=", r)
-        } else if let Some(r) = t.strip_prefix("<=") {
-            ("<=", r)
-        } else if let Some(r) = t.strip_prefix('>') {
-            (">", r)
-        } else if let Some(r) = t.strip_prefix('<') {
-            ("<", r)
-        } else if let Some(r) = t.strip_prefix('=') {
-            ("=", r)
-        } else if let Some(r) = t.strip_prefix('^') {
-            ("^", r)
-        } else if let Some(r) = t.strip_prefix('~') {
-            ("~", r)
-        } else {
-            ("", t)
-        };
-        let v = Version::parse(rest)?;
-        Some(match op {
-            "" => Req::Caret(v),
-            ">" => Req::Gt(v),
-            ">=" => Req::Gte(v),
-            "<" => Req::Lt(v),
-            "<=" => Req::Lte(v),
-            "=" => Req::Exact(v),
-            "^" => Req::Caret(v),
-            "~" => Req::Tilde(v),
-            _ => return None,
-        })
+        semver::VersionReq::parse(value)
+            .ok()
+            .map(|inner| Self::Parsed {
+                raw: value.to_string(),
+                inner,
+            })
     }
 
-    pub fn matches(&self, v: &Version) -> bool {
+    pub fn matches(&self, version: &Version) -> bool {
         match self {
-            Req::Any => true,
-            Req::Caret(r) => v >= r && caret_upper(r, v),
-            Req::Tilde(r) => v >= r && v.major == r.major && v.minor == r.minor,
-            Req::Exact(r) => v == r,
-            Req::Gt(r) => v > r,
-            Req::Gte(r) => v >= r,
-            Req::Lt(r) => v < r,
-            Req::Lte(r) => v <= r,
+            Self::Any => true,
+            Self::Parsed { inner, .. } => inner.matches(version.as_semver()),
         }
-    }
-}
-
-/// Caret upper bound: bump the leftmost non-zero component (semver caret rule).
-fn caret_upper(r: &Version, v: &Version) -> bool {
-    if r.major > 0 {
-        v.major == r.major
-    } else if r.minor > 0 {
-        v.major == 0 && v.minor == r.minor
-    } else {
-        v.major == 0 && v.minor == 0 && v.patch == r.patch
     }
 }
 
 impl std::fmt::Display for Req {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Req::Any => write!(f, "*"),
-            Req::Caret(v) => write!(f, "^{v}"),
-            Req::Tilde(v) => write!(f, "~{v}"),
-            Req::Exact(v) => write!(f, "={v}"),
-            Req::Gt(v) => write!(f, ">{v}"),
-            Req::Gte(v) => write!(f, ">={v}"),
-            Req::Lt(v) => write!(f, "<{v}"),
-            Req::Lte(v) => write!(f, "<={v}"),
+            Self::Any => f.write_str("*"),
+            Self::Parsed { raw, .. } => f.write_str(raw),
         }
     }
 }

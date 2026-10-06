@@ -4,7 +4,7 @@
 
 <h1 align="center">L++</h1>
 
-<p align="center"><strong>Readable like Python · Safer than Swift or a garbage collector · Fast like Go · Native by default</strong></p>
+<p align="center"><strong>Readable by design · Native by default · Safety engineered in</strong></p>
 
 <p align="center">
   <a href="#install">Install</a> ·
@@ -19,7 +19,7 @@
 
 ## What is L++?
 
-L++ is a compiled, ownership-aware programming language that combines Python's readability with memory safety that goes further than Swift or a tracing garbage collector, plus Go-like compilation speed. It compiles to native executables through a Cranelift-first AOT pipeline; an optional LLVM backend is available for optimized builds. There is no interpreter or VM.
+L++ is a statically typed, ownership-aware language built around three priorities: readable syntax, ahead-of-time native compilation, and memory safety engineered into the compiler pipeline. Its ownership planner classifies managed values as `Frame`, `Owned`, or `Shared`, while static balance checks catch common ownership mistakes before code generation. L++ does not use a tracing garbage collector, interpreter, or VM. Cranelift is the default native backend, with LLVM and direct WebAssembly output available for additional targets.
 
 ```lpp
 struct User:
@@ -41,7 +41,7 @@ The same compiler also emits WebAssembly — no toolchain, linker, or runtime
 files needed, just a WASI-capable engine such as [wasmtime](https://wasmtime.dev/):
 
 ```bash
-lpp hello.lpp --target wasm32-wasi   # writes hello.wasm (imports WASI fd_write)
+lpp hello.lpp --target wasm32-wasip1   # writes hello.wasm (imports WASI fd_write)
 wasmtime hello.wasm                  # runs it
 ```
 
@@ -61,14 +61,14 @@ processes) are rejected up front with clear diagnostics. See
 | **Generics** | `def identity[T](x: T) -> T`, generic structs and enums with static cycle detection |
 | **Traits + dispatch** | `trait`/`impl` with both static and dynamic dispatch |
 | **FFI / extern** | `extern "C" link "SDL2"` — call any C library directly |
-| **Ownership & ARC** | Automatic reference counting, escape analysis, container ARC promotion |
+| **Ownership planning** | `Frame` / `Owned` / `Shared` placement, escape and cycle analysis, plus static balance checks |
 | **Enums + match** | Algebraic data types with pattern matching and data extraction |
 | **Error handling** | `Result` type + `?` operator for error propagation |
 | **Diagnostics & Panic** | Rust-style error cards (`E0001`–`E0005`) + C runtime stack backtrace engine |
 | **Default params** | `def foo(x: Int, y: Int = 10)` |
 | **Multi-file modules** | `import math`, `from utils import calc`, dotted paths |
 | **Native compilation** | Cranelift AOT by default; optional LLVM object backend |
-| **WebAssembly** | `--target wasm32-wasi` emits a runnable `.wasm` module with zero external tools |
+| **WebAssembly** | `--target wasm32-wasip1` emits a runnable `.wasm` module with zero external tools |
 | **Direct linker** | `lpp-link` produces standalone ELF / PE / Mach-O executables |
 | **Arena regions** | Recursive structs use region-backed nodes with cycle-broken ownership |
 | **Explicit vectors** | `VectorI64x2` operations in both Cranelift and LLVM |
@@ -80,19 +80,19 @@ processes) are rejected up front with clear diagnostics. See
 | **Package manager** | Reliable Rust PM by default; experimental self-hosted pure-L++ PM via `LPP_SELF_HOSTED_PM=1` |
 | **c2lpp package** | Pure-L++ C-header binding/package generator plus experimental scalar C-to-L++ translation |
 | **100+ builtins** | strings, lists, maps, files, network, JSON, buffers |
-| **C-competitive perf** | Matches GCC -O2 on real workloads (primes: 1.0x) |
-| **15KB binaries** | Windows PE freestanding executables as small as 15.5KB |
+| **Native performance** | Cranelift-first AOT compilation, with optional LLVM optimization and reproducible benchmark snapshots |
+| **Compact native output** | Direct ELF / PE / Mach-O linking, including freestanding runtime configurations |
 
 ## Install
 
 ```bash
 # Linux / macOS — pinned, reviewable source installation
-git clone --depth 1 --branch v1.2.0 https://github.com/samarnever-droid/lplusplus.git
+git clone --depth 1 --branch v0.1 https://github.com/samarnever-droid/lplusplus.git
 cd lplusplus
 LPP_FROM_SOURCE=1 sh install.sh
 
 # Windows PowerShell — from the same pinned checkout
-git clone --depth 1 --branch v1.2.0 https://github.com/samarnever-droid/lplusplus.git
+git clone --depth 1 --branch v0.1 https://github.com/samarnever-droid/lplusplus.git
 cd lplusplus
 $env:LPP_FROM_SOURCE = "1"
 .\install.ps1

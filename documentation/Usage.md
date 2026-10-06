@@ -22,8 +22,11 @@ Emit an object without linking:
 lpp app.lpp --backend llvm --emit-object
 ```
 
-`clang` must be installed for the LLVM backend. Set `LPP_LLVM_CC` if it has a
-non-standard path. `LPP_LLVM_MARCH=native` enables host LLVM CPU features.
+An LLVM-compatible compiler must be installed for the LLVM backend. Set it
+persistently with `lpp config set llvm-path /path/to/clang`, or use
+`LPP_LLVM_CC=/path/to/clang` as a per-process override.
+`LPP_LLVM_MARCH=native` enables host LLVM CPU features in the compatibility
+backend.
 
 ## Package manager and versioning
 
@@ -34,6 +37,8 @@ lpp version set 1.2.3
 lpp version bump patch              # 1.2.4
 lpp add local-lib --path ../local-lib
 lpp install --offline               # never consult the network
+lpp config set backend cranelift
+lpp config set linker auto
 lpp workspace members
 lpp workspace graph
 ```
@@ -41,6 +46,10 @@ lpp workspace graph
 The Rust package manager is the reliable default. The pure-L++ implementation
 is available for experiments with `LPP_SELF_HOSTED_PM=1`; failures from either
 implementation are returned as non-zero process statuses.
+
+Use `lpp upgrade --check` to inspect the release channel. Automatic binary
+replacement is intentionally disabled: download the release archive and
+`SHA256SUMS`, verify the digest, and then run the installer.
 
 ## Debugging and inspection
 

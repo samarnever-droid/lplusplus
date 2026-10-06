@@ -16,14 +16,18 @@ pub enum Target {
 }
 
 impl Target {
-    /// The fixed, deterministic triple the target compiles to. Objects are
-    /// named for the platform the v1 freestanding runtime targets; the
-    /// triple is a compile-time constant, never derived from the host, so
-    /// output is reproducible.
+    /// Deterministic architecture triple for the build host's object format.
+    /// Native architecture selection is shared across platforms, while the OS
+    /// component follows the compiler host so emitted objects can be linked by
+    /// that host's toolchain. Explicit cross-OS output remains outside v0.1.
     #[must_use]
     pub const fn triple(self) -> &'static str {
         match self {
+            Self::X86_64 if cfg!(target_os = "windows") => "x86_64-pc-windows-msvc",
+            Self::X86_64 if cfg!(target_os = "macos") => "x86_64-apple-darwin",
             Self::X86_64 => "x86_64-unknown-linux-gnu",
+            Self::Aarch64 if cfg!(target_os = "windows") => "aarch64-pc-windows-msvc",
+            Self::Aarch64 if cfg!(target_os = "macos") => "aarch64-apple-darwin",
             Self::Aarch64 => "aarch64-unknown-linux-gnu",
             Self::Wasm32Wasi => "wasm32-wasip1",
         }

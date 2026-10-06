@@ -345,13 +345,13 @@ fn apply_block(
                         if let Operand::Copy(local) = callee {
                             check_local!(local);
                         }
-                        // Arguments move into the callee's frame.
+                        // User-call arguments are borrowed transfers: codegen
+                        // retains for the callee's parameter frame and the
+                        // source local remains alive. Builtins keep their own
+                        // explicit per-position consume contract below.
                         for operand in program.operands(arguments) {
                             if let Operand::Copy(local) = *operand {
                                 check_local!(local);
-                                if heap_locals.contains(&local) {
-                                    state.insert(local, Token::Dead);
-                                }
                             }
                         }
                     }

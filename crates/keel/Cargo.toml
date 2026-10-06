@@ -12,3 +12,12 @@ lpp-pm = { path = "../lpp-pm" }
 clap = { version = "4", features = ["derive"] }
 # Table output.
 tabled = "0.17"
+# Safe, deterministic package archives (no system `tar` dependency).
+flate2 = "1"
+fs2 = "0.4"
+tar = "0.4"
+# Preserve user formatting/comments when editing manifests.
+toml_edit = "0.22"
+
+[dev-dependencies]
+serde_json = "1"

@@ -6,7 +6,7 @@ use std::path::Path;
 use std::process::Command;
 
 use lpp_pm::Registry;
-use lpp_pm::index::{IndexEntry, VersionEntry};
+use lpp_pm::index::{DepSpec, IndexEntry, VersionEntry};
 
 #[cfg(unix)]
 fn make_executable(p: &Path) {
@@ -76,6 +76,17 @@ fn empty_registry(root: &Path) -> std::path::PathBuf {
 /// Publish a real package artifact (tar.gz of a Keel.toml + src/lib.lpp)
 /// with a consistent checksum.
 fn publish_pkg(root: &Path, bare: &Path, name: &str, version: &str, body: &str) {
+    publish_pkg_with_deps(root, bare, name, version, body, vec![]);
+}
+
+fn publish_pkg_with_deps(
+    root: &Path,
+    bare: &Path,
+    name: &str,
+    version: &str,
+    body: &str,
+    deps: Vec<DepSpec>,
+) {
     let pkgdir = root.join(format!("pkg-{name}-{version}"));
     std::fs::create_dir_all(pkgdir.join("src")).unwrap();
     std::fs::write(
@@ -121,7 +132,7 @@ fn publish_pkg(root: &Path, bare: &Path, name: &str, version: &str, body: &str) 
             name: name.into(),
             versions: vec![VersionEntry {
                 version: version.into(),
-                deps: vec![],
+                deps,
                 features: Default::default(),
                 checksum,
                 targets: vec![],
@@ -196,6 +207,49 @@ fn check_stages_path_deps() {
 }
 
 #[test]
+fn transitive_registry_closure_is_staged_offline() {
+    let root = temp("registry-transitive");
+    let bare = empty_registry(&root);
+    publish_pkg(
+        &root,
+        &bare,
+        "mathx",
+        "1.0.0",
+        "def answer():\n    return 42\n",
+    );
+    publish_pkg_with_deps(
+        &root,
+        &bare,
+        "statsx",
+        "1.0.0",
+        "def mean():\n    return 42\n",
+        vec![DepSpec {
+            name: "mathx".into(),
+            req: "^1".into(),
+            optional: false,
+            features: vec![],
+        }],
+    );
+
+    let app = root.join("app");
+    std::fs::create_dir_all(app.join("src")).unwrap();
+    std::fs::write(
+        app.join("Keel.toml"),
+        "[package]\nname = \"app\"\nversion = \"0.1.0\"\n[dependencies]\nstatsx = \"^1\"\n",
+    )
+    .unwrap();
+    std::fs::write(app.join("src/main.lpp"), "def main():\n    print(1)\n").unwrap();
+
+    let registry = Registry::new(bare.to_string_lossy().as_ref(), root.join("consumer"));
+    keel::commands::registry::fetch_all(&registry, &app).unwrap();
+    let fake = fake_lpp(&root);
+    keel::commands::build::check(&app, fake.to_str().unwrap(), None).unwrap();
+    assert!(app.join(".lpp_packages/statsx/src/lib.lpp").is_file());
+    assert!(app.join(".lpp_packages/mathx/src/lib.lpp").is_file());
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn registry_dep_is_staged_and_verifies_against_the_lock() {
     let root = temp("reg-stage");
     let bare = empty_registry(&root);
@@ -244,14 +298,23 @@ fn registry_dep_is_staged_and_verifies_against_the_lock() {
     assert!(doc.contains("source = \"registry\""), "{doc}");
     assert!(doc.contains("checksum ="), "{doc}");
 
-    // Idempotent: a second run is fine (no re-extraction needed).
-    let reg3 = Registry::new(bare.to_string_lossy().as_ref(), root.join("c3"));
-    keel::commands::build::run(&app, fake.to_str().unwrap(), Some(&reg3)).unwrap();
+    // Reuse is integrity-checked, not trusted merely because the directory
+    // exists. A local edit must be refused rather than executed.
+    std::fs::write(&staged_src, "def answer():\n    return 999\n").unwrap();
+    let err = keel::commands::build::run(&app, fake.to_str().unwrap(), None).unwrap_err();
+    assert!(err.contains("integrity verification"), "{err}");
+
+    // Removing the corrupt staged copy allows deterministic restoration from
+    // the verified content-addressed artifact without network access.
+    std::fs::remove_dir_all(app.join(".lpp_packages/mathx")).unwrap();
+    keel::commands::build::run(&app, fake.to_str().unwrap(), None).unwrap();
+    let restored = std::fs::read_to_string(&staged_src).unwrap();
+    assert!(restored.contains("return 42"));
     let _ = std::fs::remove_dir_all(&root);
 }
 
 #[test]
-fn tampered_registry_is_refused_at_build_time() {
+fn locked_content_cache_survives_registry_tampering() {
     let root = temp("reg-tamper");
     let bare = empty_registry(&root);
     publish_pkg(
@@ -307,26 +370,26 @@ fn tampered_registry_is_refused_at_build_time() {
         .unwrap();
     attacker.push().unwrap();
 
-    // Force re-staging (the staging manifest would otherwise be current).
+    // Force re-staging. The locked, previously verified content-addressed
+    // blob remains the build source even though the mutable registry tip was
+    // compromised.
     let _ = std::fs::remove_dir_all(app.join(".lpp_packages"));
     let fake = fake_lpp(&root);
     let reg2 = Registry::new(bare.to_string_lossy().as_ref(), root.join("c2"));
-    let err = keel::commands::build::check(&app, fake.to_str().unwrap(), Some(&reg2))
-        .expect_err("tampered registry must be refused");
-    assert!(
-        err.contains("E6009"),
-        "expected a checksum-mismatch refusal, got: {err}"
-    );
-    // The evil bytes must NOT have been staged.
-    assert!(
-        !app.join(".lpp_packages/mathx/src/lib.lpp").exists(),
-        "tampered artifact must not be staged"
-    );
+    keel::commands::build::check(&app, fake.to_str().unwrap(), Some(&reg2))
+        .expect("locked cached artifact should build offline");
+    let staged = std::fs::read_to_string(app.join(".lpp_packages/mathx/src/lib.lpp")).unwrap();
+    assert!(staged.contains("return 42"));
+    assert!(!staged.contains("return 999"));
+
+    // An explicit online audit still detects that the registry tip no longer
+    // serves the bytes promised by the lock.
+    assert!(keel::commands::diagnostics::verify(&reg2, &app).is_err());
     let _ = std::fs::remove_dir_all(&root);
 }
 
 #[test]
-fn registry_dep_without_a_registry_is_a_clean_error() {
+fn fetched_registry_dep_builds_offline_without_registry_configuration() {
     let root = temp("reg-noreg");
     let bare = empty_registry(&root);
     publish_pkg(
@@ -349,9 +412,11 @@ fn registry_dep_without_a_registry_is_a_clean_error() {
     let reg = Registry::new(bare.to_string_lossy().as_ref(), root.join("clone"));
     keel::commands::registry::fetch_all(&reg, &app).unwrap();
 
+    // The verified content store is sufficient for an offline build; a
+    // registry URL is not required once `fetch` completed.
+    let _ = std::fs::remove_dir_all(app.join(".lpp_packages"));
     let fake = fake_lpp(&root);
-    let err = keel::commands::build::check(&app, fake.to_str().unwrap(), None).unwrap_err();
-    assert!(err.contains("no registry configured"), "{err}");
+    keel::commands::build::check(&app, fake.to_str().unwrap(), None).unwrap();
     let _ = std::fs::remove_dir_all(&root);
 }
 

@@ -289,7 +289,7 @@ fn pure_move_chain_has_no_traffic_between_owners() {
 }
 
 #[test]
-fn argument_moved_into_callee_frame_is_released_on_return() {
+fn borrowed_argument_retains_for_callee_and_source_stays_alive() {
     let (program, types) = executable(concat!(
         "def take(v: List[Int]) -> Int:\n",
         "    return list_len(v)\n",
@@ -300,14 +300,13 @@ fn argument_moved_into_callee_frame_is_released_on_return() {
     ));
     let (outcome, _) = run_arc(&program, &types);
     let arc = arc_of(&outcome);
-    // xs moves into the callee's frame (no traffic); the frame's exit
-    // releases the parameter (2 to 1); main's exit releases the
-    // copy-temp (1 to 0, free). One retain (the copy-temp), two
-    // releases, one free.
+    // The source local remains alive and the callee frame gains a retained
+    // reference. The callee releases its parameter, then main releases its
+    // source and copy temporary. Two retains, three releases, one free.
     assert_eq!(outcome.value, ExecutionValue::Int(1));
     assert_eq!(
         (arc.retains, arc.releases, arc.frees, arc.pinned_live),
-        (1, 2, 1, 0)
+        (2, 3, 1, 0)
     );
 }
 

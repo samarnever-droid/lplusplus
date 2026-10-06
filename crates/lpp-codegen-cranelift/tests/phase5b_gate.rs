@@ -12,7 +12,7 @@
 //!    byte-identical objects and identical symbol censuses.
 //! 3. **IR validity.** Every corpus function survives cranelift's own
 //!    verification (`define_function` verifies); the object is a real
-//!    ELF image.
+//!    host-format relocatable image.
 //! 4. **Compile-fail.** List, struct, closure, and async programs
 //!    fail with the exact `E5001`; a non-slice builtin (`print_int`)
 //!    fails with the exact `E5003`, each at the exact function.
@@ -152,13 +152,10 @@ fn workdir(test_name: &str) -> PathBuf {
     dir
 }
 
-/// Link the object with the C shim and run it; returns (stdout, exit
-/// status). The object is a full ELF relocatable, so `cc` links it
-/// against libc (which provides `fmod`).
+/// Link the host-format object with the C shim and run it; returns
+/// (stdout, exit status). `cc` links it against libc (which provides
+/// `fmod`) on Unix hosts.
 fn link_and_run(object: &[u8], test_name: &str) -> (String, i32) {
-    if !cfg!(target_os = "linux") {
-        return ("all_ok\n".to_string(), 0);
-    }
     let dir = workdir(test_name);
     let module = dir.join("module.o");
     let shim = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -405,6 +402,10 @@ def main():
 // ── gate 1: differential execution ─────────────────────────────────────────
 
 #[test]
+#[cfg_attr(
+    target_os = "windows",
+    ignore = "MSVC runtime setup is covered by the Windows driver smoke gate"
+)]
 fn differential_execution_matches_the_phase4_oracle() {
     let (program, types, package) = pipeline(CORPUS);
     let names = Names(&package.names.symbols);
@@ -422,10 +423,6 @@ fn differential_execution_matches_the_phase4_oracle() {
     );
 
     let module = compile(&program, &types, &names);
-    if !cfg!(target_os = "linux") {
-        eprintln!("skipping native ELF link_and_run on non-Linux host");
-        return;
-    }
     let (stdout, status) = link_and_run(&module.object, "corpus");
     assert_eq!(status, 0, "object exited nonzero");
     assert_eq!(
@@ -457,12 +454,24 @@ fn two_compiles_produce_byte_identical_objects() {
 // ── gate 3: IR validity + object shape ─────────────────────────────────────
 
 #[test]
-fn object_is_elf_and_census_matches_the_module_record() {
+fn object_has_host_format_and_census_matches_the_module_record() {
     let (program, types, package) = pipeline(CORPUS);
     let names = Names(&package.names.symbols);
     let module = compile(&program, &types, &names);
 
-    // Real ELF relocatable.
+    #[cfg(target_os = "windows")]
+    assert_eq!(
+        &module.object[..2],
+        b"\x64\x86",
+        "object is not x86-64 COFF"
+    );
+    #[cfg(target_os = "macos")]
+    assert_eq!(
+        &module.object[..4],
+        b"\xcf\xfa\xed\xfe",
+        "object is not 64-bit Mach-O"
+    );
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     assert_eq!(&module.object[..4], b"\x7fELF", "object is not ELF");
 
     // The census is the module's declaration record: `main` exports as

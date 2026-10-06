@@ -529,6 +529,6 @@ fn phase4c2b_mir_snapshot_is_stable() {
     }
     assert_eq!(
         snapshot,
-        include_str!("snapshots/phase4c2b-places-mir.snap").replace("\r\n", "\n")
+        include_str!("snapshots/phase4c2b-places-mir.snap")
     );
 }

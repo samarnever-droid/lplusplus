@@ -22,6 +22,8 @@ enum Val {
     I8,
     I32,
     Ptr,
+    /// A bare, non-capturing function value represented as an LLVM pointer.
+    Function,
     /// A void function's return type (`define void`, `ret void`).
     Void,
 }
@@ -33,14 +35,14 @@ impl Val {
             Val::F64 => "double",
             Val::I8 => "i8",
             Val::I32 => "i32",
-            Val::Ptr => "ptr",
+            Val::Ptr | Val::Function => "ptr",
             Val::Void => "void",
         }
     }
 
     fn align(self) -> u32 {
         match self {
-            Val::I64 | Val::F64 | Val::Ptr => 8,
+            Val::I64 | Val::F64 | Val::Ptr | Val::Function => 8,
             Val::I32 => 4,
             Val::I8 => 1,
             Val::Void => 1,
@@ -67,6 +69,7 @@ fn val_of_type(types: &TypeInterner, ty: TypeId) -> Result<Val, CodegenError> {
         // The remaining primitives are the six integer types; the native ABI
         // carries every integer as i64.
         TypeKind::Primitive(_) => Val::I64,
+        TypeKind::Function { .. } => Val::Function,
         _ => return Err(unsupported("unsupported scalar type", None)),
     })
 }
@@ -163,7 +166,8 @@ fn check_rvalue(
             Ok(())
         }
         Rvalue::Builtin { builtin, arguments } => {
-            let name = builtin.descriptor().name;
+            let raw_name = builtin.descriptor().name;
+            let name = raw_name.strip_prefix("lpp_").unwrap_or(raw_name);
             let operands = program.operands(*arguments).to_vec();
             match name {
                 "print" => {
@@ -215,8 +219,11 @@ fn check_rvalue(
             // local, which is the 5E2 function-value surface.
             match callee {
                 Operand::Function(_) => {}
+                Operand::Copy(local)
+                    if val_of_type(types, program.local(*local).unwrap().ty)
+                        .is_ok_and(|value| value == Val::Function) => {}
                 Operand::Copy(_) | Operand::Constant(_) => {
-                    return Err(unsupported("function value", Some(fn_id)));
+                    return Err(unsupported("indirect call", Some(fn_id)));
                 }
             }
             for operand in program.operands(*arguments) {
@@ -259,7 +266,10 @@ fn check_operand(
             }
             Ok(())
         }
-        Operand::Function(_) => Err(unsupported("function value", Some(fn_id))),
+        Operand::Function(target) => program
+            .function(*target)
+            .map(|_| ())
+            .ok_or_else(|| unsupported("unknown function value", Some(fn_id))),
     }
 }
 
@@ -298,7 +308,7 @@ fn operand_class(
             Constant::Character { .. } => Val::I32,
             Constant::String { .. } => Val::Ptr,
         }),
-        Operand::Function(_) => Err(unsupported("function value", Some(fn_id))),
+        Operand::Function(_) => Ok(Val::Function),
     }
 }
 
@@ -339,7 +349,11 @@ fn llvm_string(text: &str) -> String {
 }
 
 /// Emit the full module text.
-pub(crate) fn lower_module(program: &MirProgram, types: &TypeInterner, plan: &Plan) -> String {
+pub(crate) fn lower_module(
+    program: &MirProgram,
+    types: &TypeInterner,
+    plan: &Plan,
+) -> Result<String, CodegenError> {
     let mut text = String::new();
     let _ = std::fmt::Write::write_str(
         &mut text,
@@ -401,10 +415,10 @@ pub(crate) fn lower_module(program: &MirProgram, types: &TypeInterner, plan: &Pl
 
     // Functions (MirFunctionId order).
     for (fn_id, function) in program.functions() {
-        emit_function(program, types, plan, fn_id, function, &mut text);
+        emit_function(program, types, plan, fn_id, function, &mut text)?;
         text.push('\n');
     }
-    text
+    Ok(text)
 }
 
 /// Emit one function definition (non-SSA, alloca-based).
@@ -415,7 +429,7 @@ fn emit_function(
     fn_id: MirFunctionId,
     function: &MirFunction,
     text: &mut String,
-) {
+) -> Result<(), CodegenError> {
     let is_main = plan.symbols[&fn_id] == "main";
     let locals = program.function_locals(function).to_vec();
     let params = program.function_parameters(function).to_vec();
@@ -502,8 +516,7 @@ fn emit_function(
                     );
                     let (val, expr) = emit_value(
                         program, types, plan, fn_id, value, &slot_of, &mut ssa, &mut out,
-                    )
-                    .expect("checked in plan");
+                    )?;
                     if void {
                         // A void expression (a void builtin): the target is a
                         // void temp that is never read, so there is no store.
@@ -522,8 +535,7 @@ fn emit_function(
                 InstructionKind::Store { place, value } => {
                     let (val, expr) = emit_operand(
                         program, types, plan, fn_id, value, &slot_of, &mut ssa, &mut out,
-                    )
-                    .expect("checked in plan");
+                    )?;
                     let slot = &slot_of[&program.place(*place).unwrap().root];
                     push(
                         &mut out,
@@ -548,12 +560,12 @@ fn emit_function(
             &slot_of,
             &mut ssa,
             &mut body,
-        )
-        .expect("checked in plan");
+        )?;
     }
 
     let _ = std::fmt::Write::write_str(text, &body);
     let _ = std::fmt::Write::write_str(text, "}\n");
+    Ok(())
 }
 
 /// The bare LLVM block name (labels are written `b0:`; references are `%b0`).
@@ -734,7 +746,11 @@ fn emit_operand(
                 (Val::Ptr, format!("@str_{index}"))
             }
         }),
-        Operand::Function(_) => Err(unsupported("function value", Some(fn_id))),
+        Operand::Function(target) => plan
+            .symbols
+            .get(target)
+            .map(|name| (Val::Function, format!("@{name}")))
+            .ok_or_else(|| unsupported("unknown function value", Some(fn_id))),
     }
 }
 
@@ -764,6 +780,9 @@ fn emit_binary(
             | BinaryOperator::Equal
             | BinaryOperator::NotEqual
     );
+    if lval == Val::Function {
+        return Err(unsupported("function-value binary", Some(fn_id)));
+    }
     // String comparisons produce an i8 bool via lpp_str_eq.
     if lval == Val::Ptr {
         return match operator {
@@ -882,19 +901,44 @@ fn emit_call(
     ssa: &mut u32,
     out: &mut String,
 ) -> Result<(Val, String), CodegenError> {
-    let Operand::Function(target) = callee else {
-        return Err(unsupported("indirect call", Some(fn_id)));
+    let (ret, callee_expression) = match &callee {
+        Operand::Function(target) => {
+            let target_fn = program
+                .function(*target)
+                .ok_or_else(|| unsupported("unknown direct callee", Some(fn_id)))?;
+            let ret = if matches!(
+                types.kind(target_fn.return_type),
+                TypeKind::Primitive(PrimitiveType::Void)
+            ) {
+                Val::Void
+            } else {
+                val_of_type(types, target_fn.return_type)?
+            };
+            let name = plan
+                .symbols
+                .get(target)
+                .ok_or_else(|| unsupported("unknown direct callee", Some(fn_id)))?;
+            (ret, format!("@{name}"))
+        }
+        Operand::Copy(local) => {
+            let local_type = program.local(*local).unwrap().ty;
+            let TypeKind::Function { result, .. } = types.kind(local_type) else {
+                return Err(unsupported("indirect call", Some(fn_id)));
+            };
+            let ret = if matches!(types.kind(result), TypeKind::Primitive(PrimitiveType::Void)) {
+                Val::Void
+            } else {
+                val_of_type(types, result)?
+            };
+            let (kind, expression) =
+                emit_operand(program, types, plan, fn_id, &callee, slot_of, ssa, out)?;
+            if kind != Val::Function {
+                return Err(unsupported("indirect call", Some(fn_id)));
+            }
+            (ret, expression)
+        }
+        Operand::Constant(_) => return Err(unsupported("indirect call", Some(fn_id))),
     };
-    let target_fn = program.function(target).expect("callee exists");
-    let ret = if matches!(
-        types.kind(target_fn.return_type),
-        TypeKind::Primitive(PrimitiveType::Void)
-    ) {
-        Val::Void
-    } else {
-        val_of_type(types, target_fn.return_type)?
-    };
-    let name = &plan.symbols[&target];
     let operands = program.operands(arguments).to_vec();
     let mut parts = Vec::with_capacity(operands.len());
     for operand in &operands {
@@ -903,13 +947,20 @@ fn emit_call(
     }
     if ret == Val::Void {
         // A void call has no result to bind.
-        push(out, &format!("call void @{name}({})", parts.join(", ")));
+        push(
+            out,
+            &format!("call void {callee_expression}({})", parts.join(", ")),
+        );
         Ok((Val::Void, String::new()))
     } else {
         let v = fresh(ssa);
         push(
             out,
-            &format!("{v} = call {} @{name}({})", ret.ty(), parts.join(", ")),
+            &format!(
+                "{v} = call {} {callee_expression}({})",
+                ret.ty(),
+                parts.join(", ")
+            ),
         );
         Ok((ret, v))
     }
@@ -926,7 +977,8 @@ fn emit_builtin(
     ssa: &mut u32,
     out: &mut String,
 ) -> Result<(Val, String), CodegenError> {
-    let name = builtin.descriptor().name;
+    let raw_name = builtin.descriptor().name;
+    let name = raw_name.strip_prefix("lpp_").unwrap_or(raw_name);
     let operands = program.operands(arguments).to_vec();
     let mut arg_vals: Vec<(Val, String)> = Vec::with_capacity(operands.len());
     for operand in &operands {
@@ -957,14 +1009,36 @@ fn emit_builtin(
         "print_bool" => push(out, &format!("call void @lpp_print_bool(i8 {aexpr})")),
         "print_float" => push(out, &format!("call void @lpp_print_float(double {aexpr})")),
         "write_str" => push(out, &format!("call void @lpp_write_str(ptr {aexpr})")),
-        "str_len" => push(out, &format!("{v} = call i64 @lpp_str_len(ptr {aexpr})")),
+        "str_len" => {
+            push(out, &format!("{v} = call i64 @lpp_str_len(ptr {aexpr})"));
+            return Ok((Val::I64, v));
+        }
+        "str_eq" => {
+            let Some((Val::Ptr, right)) = arg_vals.get(1) else {
+                return Err(unsupported("str_eq arguments", Some(fn_id)));
+            };
+            let raw = fresh(ssa);
+            push(
+                out,
+                &format!("{raw} = call i64 @lpp_str_eq(ptr {aexpr}, ptr {right})"),
+            );
+            push(out, &format!("{v} = trunc i64 {raw} to i8"));
+            return Ok((Val::I8, v));
+        }
+        "str_concat" => {
+            let Some((Val::Ptr, right)) = arg_vals.get(1) else {
+                return Err(unsupported("str_concat arguments", Some(fn_id)));
+            };
+            push(
+                out,
+                &format!("{v} = call ptr @lpp_str_concat(ptr {aexpr}, ptr {right})"),
+            );
+            return Ok((Val::Ptr, v));
+        }
         _ => return Err(unsupported("unported builtin", Some(fn_id))),
     }
-    // Void builtins return an i64 placeholder (the rvalue is discarded).
-    if name == "str_len" {
-        return Ok((Val::I64, v));
-    }
-    Ok((Val::I64, v))
+    // Void builtins' result is discarded by valid MIR.
+    Ok((Val::Void, String::new()))
 }
 
 fn emit_terminator(
@@ -988,10 +1062,15 @@ fn emit_terminator(
         } => {
             let (val, expr) =
                 emit_operand(program, types, plan, fn_id, condition, slot_of, ssa, out)?;
-            debug_assert_eq!(val, Val::I8);
-            // LLVM branches on `i1`; the bool local is `i8`.
+            // Source conditions permit integer truthiness. LLVM branches on
+            // i1, so normalize every supported scalar condition to `!= 0`.
             let v = fresh(ssa);
-            push(out, &format!("{v} = trunc i8 {expr} to i1"));
+            match val {
+                Val::I8 => push(out, &format!("{v} = icmp ne i8 {expr}, 0")),
+                Val::I32 => push(out, &format!("{v} = icmp ne i32 {expr}, 0")),
+                Val::I64 => push(out, &format!("{v} = icmp ne i64 {expr}, 0")),
+                _ => return Err(unsupported("branch condition", Some(fn_id))),
+            }
             push(
                 out,
                 &format!(
@@ -1004,7 +1083,9 @@ fn emit_terminator(
         Terminator::Return(value) => {
             let is_main = plan.symbols.get(&fn_id).is_some_and(|n| n == "main");
             let Some(value) = value else {
-                push(out, "ret void");
+                // The platform entry point is always C `int main(...)`, even
+                // when L++ source omits an explicit return type/value.
+                push(out, if is_main { "ret i32 0" } else { "ret void" });
                 return Ok(());
             };
             let (val, expr) = emit_operand(program, types, plan, fn_id, value, slot_of, ssa, out)?;

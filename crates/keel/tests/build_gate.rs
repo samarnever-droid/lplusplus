@@ -103,6 +103,61 @@ fn build_defaults_to_host_without_target_flag() {
 }
 
 #[test]
+fn selected_workspace_build_includes_path_dependencies_but_not_unrelated_members() {
+    let root = temp("selected-member");
+    let fake = fake_lpp(&root);
+    let workspace = root.join("workspace");
+    std::fs::create_dir_all(&workspace).unwrap();
+    std::fs::write(
+        workspace.join("Keel.toml"),
+        "[workspace]\nmembers = [\"core\", \"app\", \"extra\"]\n",
+    )
+    .unwrap();
+    for package in ["core", "app", "extra"] {
+        let directory = workspace.join(package);
+        std::fs::create_dir_all(directory.join("src")).unwrap();
+        let dependencies = if package == "app" {
+            "\n[dependencies]\ncore = { path = \"../core\" }\n"
+        } else {
+            ""
+        };
+        std::fs::write(
+            directory.join("Keel.toml"),
+            format!("[package]\nname = \"{package}\"\nversion = \"0.1.0\"\n{dependencies}"),
+        )
+        .unwrap();
+        std::fs::write(directory.join("src/main.lpp"), "fn main() {}\n").unwrap();
+    }
+
+    let result = keel::commands::build::build_selected(
+        &workspace,
+        fake.to_str().unwrap(),
+        &|member, cwd, lpp, rows| keel::commands::build::run_lpp_jobs(member, cwd, lpp, rows),
+        None,
+        Some("app"),
+    );
+    assert!(result.is_ok(), "selected build should succeed: {result:?}");
+    let arguments = std::fs::read_to_string(root.join("args.txt")).unwrap();
+    assert!(arguments.contains("core/src/main.lpp"), "{arguments}");
+    assert!(arguments.contains("app/src/main.lpp"), "{arguments}");
+    assert!(!arguments.contains("extra/src/main.lpp"), "{arguments}");
+
+    let missing = keel::commands::build::build_selected(
+        &workspace,
+        fake.to_str().unwrap(),
+        &|member, cwd, lpp, rows| keel::commands::build::run_lpp_jobs(member, cwd, lpp, rows),
+        None,
+        Some("missing"),
+    );
+    assert!(
+        missing
+            .unwrap_err()
+            .contains("workspace member not found: missing")
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn check_invokes_lpp_with_check_flag() {
     let root = temp("check");
     let fake = fake_lpp(&root);

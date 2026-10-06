@@ -6,12 +6,17 @@ license = "MIT OR Apache-2.0"
 publish = false
 
 [dependencies]
+keel = { path = "../keel" }
 lpp-common = { path = "../lpp-common" }
+lpp-config = { path = "../lpp-config" }
 lpp-hir = { path = "../lpp-hir" }
 lpp-types = { path = "../lpp-types" }
 lpp-mir = { path = "../lpp-mir" }
+lpp-passes = { path = "../lpp-passes" }
+lpp-ownership = { path = "../lpp-ownership" }
 lpp-codegen-api = { path = "../lpp-codegen-api" }
 lpp-codegen-cranelift = { path = "../lpp-codegen-cranelift" }
 lpp-codegen-wasm = { path = "../lpp-codegen-wasm" }
 lpp-codegen-llvm = { path = "../lpp-codegen-llvm" }
 lpp-linker = { path = "../lpp-linker" }
+semver = "1"

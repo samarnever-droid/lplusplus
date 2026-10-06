@@ -55,15 +55,28 @@ pub fn run(action: &CacheAction, backend: CacheBackend) -> Result<(), String> {
             let s = kv.stats();
             let mut b = Builder::default();
             b.push_record(["field".to_string(), "value".to_string()]);
-            b.push_record(["backend".to_string(), kv.name().to_string()]);
-            b.push_record(["entries".to_string(), s.entries.to_string()]);
-            b.push_record(["hits".to_string(), s.hits.to_string()]);
-            b.push_record(["misses".to_string(), s.misses.to_string()]);
-            b.push_record(["hit_ratio".to_string(), format!("{:.2}", s.hit_ratio())]);
+            let cache_dir = crate::cache_dir();
+            let (disk_bytes, disk_files) = dir_size_bytes(&cache_dir);
+            let registry_count = std::fs::read_dir(cache_dir.join("registries"))
+                .map(|entries| {
+                    entries
+                        .flatten()
+                        .filter(|entry| entry.path().is_dir())
+                        .count()
+                })
+                .unwrap_or(0);
+            b.push_record(["hot_backend".to_string(), kv.name().to_string()]);
+            b.push_record(["hot_scope".to_string(), "current process".to_string()]);
+            b.push_record(["hot_entries".to_string(), s.entries.to_string()]);
+            b.push_record(["hot_hits".to_string(), s.hits.to_string()]);
+            b.push_record(["hot_misses".to_string(), s.misses.to_string()]);
+            b.push_record(["disk_files".to_string(), disk_files.to_string()]);
             b.push_record([
-                "cache_dir".to_string(),
-                crate::cache_dir().display().to_string(),
+                "disk_bytes".to_string(),
+                format!("{disk_bytes} ({})", human(disk_bytes)),
             ]);
+            b.push_record(["registry_clones".to_string(), registry_count.to_string()]);
+            b.push_record(["cache_dir".to_string(), cache_dir.display().to_string()]);
             let table = b.build();
             println!("{table}");
             Ok(())

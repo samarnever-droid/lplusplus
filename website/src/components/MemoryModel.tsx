@@ -4,7 +4,7 @@ import { Layers, Boxes, Network, Lock, MoveRight, ScanSearch } from "lucide-reac
 import { SectionHead, Reveal, EASE } from "../lib/ui";
 import { CodeBlock } from "../lib/highlight";
 
-type Target = "stack" | "heap" | "arena";
+type Target = "frame" | "owned" | "shared";
 
 interface Rule {
   id: number;
@@ -21,63 +21,63 @@ interface Rule {
 const RULES: Rule[] = [
   {
     id: 1,
-    title: "Returned by Reference",
-    short: "A local returned to the caller escapes its stack frame.",
-    code: `struct Item:\n    value: Int\n\ndef create_item() -> Item:\n    item := Item()\n    return item   # escapes its frame`,
-    highlight: [6],
-    target: "heap",
-    varName: "item",
-    stayed: [],
+    title: "Non-escaping Local",
+    short: "A value used only inside one function can remain frame-placed.",
+    code: `def calculate() -> Int:\n    base := 40\n    bonus := 2\n    result := base + bonus\n    return result`,
+    highlight: [2, 3, 4],
+    target: "frame",
+    varName: "result",
+    stayed: ["base", "bonus"],
     verdict:
-      "item outlives its own frame, so the compiler ref-counts it on the Managed Heap. Returning a scalar copy like box.count never triggers this.",
+      "The values never require managed identity outside the function, so the ownership plan keeps them in the function frame.",
   },
   {
     id: 2,
-    title: "Closure Capture",
-    short: "Captured by a closure that outlives its scope.",
-    code: `def process():\n    multiplier := 5\n    config := Config()\n    callback := fn(x) -> Int:\n        print(config)          # captured\n        return x * multiplier  # cloned by value`,
-    highlight: [5],
-    target: "heap",
-    varName: "config",
-    stayed: ["multiplier"],
+    title: "Returned Aggregate",
+    short: "An aggregate returned to its caller outlives the callee frame.",
+    code: `struct Item:\n    value: Int\n\ndef create_item() -> Item:\n    item := Item(42)\n    return item`,
+    highlight: [5, 6],
+    target: "owned",
+    varName: "item",
+    stayed: [],
     verdict:
-      "config is captured by an escaping closure → Managed Heap. multiplier is an immutable scalar — cloned by value, stays on the stack for free.",
+      "item escapes its defining frame but has no ownership cycle. The planner selects Owned and recursive deallocation remains sound.",
   },
   {
     id: 3,
-    title: "Unbounded Containers",
-    short: "Stored in a container with a dynamic lifetime.",
-    code: `def build_list() -> Void:\n    cap := 8\n    node := Node()\n    my_list := [node]   # lifetime becomes dynamic`,
-    highlight: [4],
-    target: "heap",
-    varName: "node",
-    stayed: ["cap"],
+    title: "Owned Container",
+    short: "A list can own nested acyclic values without making their type cyclic.",
+    code: `struct Item:\n    value: Int\n\ndef build() -> List[Item]:\n    item := Item(7)\n    values := [item]\n    return values`,
+    highlight: [5, 6, 7],
+    target: "owned",
+    varName: "values",
+    stayed: [],
     verdict:
-      "A list's lifetime is unbounded — it can grow, shrink, and travel anywhere. Anything stored inside is promoted to the Managed Heap.",
+      "The containment graph records List[Item] → Item. Because the graph is acyclic, the escaping container remains recursively Owned.",
   },
   {
     id: 4,
-    title: "Concurrency Boundary",
-    short: "Captured by a spawn closure crossing a thread.",
-    code: `def parallel_work() -> Void:\n    readonly := 100\n    mut shared := 0\n    spawn fn() -> Void:\n        print(readonly, shared)`,
-    highlight: [4],
-    target: "heap",
-    varName: "shared",
-    stayed: ["readonly"],
+    title: "Async Task Value",
+    short: "Tasks participate in the same typed containment and escape plan.",
+    code: `async def load_message() -> Str:\n    return "ready"\n\nasync def main():\n    message := load_message().await\n    print_str(message)`,
+    highlight: [1, 5],
+    target: "owned",
+    varName: "message",
+    stayed: [],
     verdict:
-      "shared is mutable state crossing a thread boundary → Managed Heap for safe sharing. readonly is immutable: copied straight onto the new thread's stack.",
+      "Task and result values are planned explicitly. Await retains the result owner while task destruction releases its own managed state.",
   },
   {
     id: 5,
-    title: "Self-Referential Structs",
-    short: "A struct containing its own type becomes graph-shaped.",
-    code: `struct Node:\n    value: Int\n    next: Node    # type-level cycle\n\ndef main():\n    depth := 0\n    node := Node()`,
-    highlight: [3, 7],
-    target: "arena",
+    title: "Ownership Cycle",
+    short: "A self-edge or strongly connected component requires shared strategy.",
+    code: `struct Node:\n    value: Int\n    next: Node\n\ndef main():\n    node := Node(1)`,
+    highlight: [3, 6],
+    target: "shared",
     varName: "node",
-    stayed: ["depth"],
+    stayed: [],
     verdict:
-      "Node references its own type — linked lists, trees, graphs. Instances are bulk-allocated in an Arena: one blazing-fast region, freed in a single shot.",
+      "The containment graph detects the recursive type cycle. That node strategy becomes Shared, with ARC behavior and a pinned cycle set in the execution proof.",
   },
 ];
 
@@ -85,31 +85,31 @@ const ZONES: Record<
   Target,
   { icon: typeof Layers; name: string; sub: string; desc: string; text: string; border: string; bg: string; dot: string }
 > = {
-  stack: {
+  frame: {
     icon: Layers,
-    name: "Stack",
-    sub: "Value storage",
-    desc: "zero-cost · frame-bound",
+    name: "Frame",
+    sub: "local arena",
+    desc: "non-escaping value cells",
     text: "text-acid",
     border: "border-acid/45",
     bg: "bg-acid/[0.06]",
     dot: "bg-acid",
   },
-  heap: {
+  owned: {
     icon: Boxes,
-    name: "Managed Heap",
-    sub: "ARC",
-    desc: "automatic ref-counting",
+    name: "Owned",
+    sub: "recursive",
+    desc: "escaping · acyclic",
     text: "text-lav",
     border: "border-lav/45",
     bg: "bg-lav/[0.06]",
     dot: "bg-lav",
   },
-  arena: {
+  shared: {
     icon: Network,
-    name: "Arena",
-    sub: "bulk allocator",
-    desc: "graphs · freed in one shot",
+    name: "Shared",
+    sub: "ARC",
+    desc: "cycle-aware sharing",
     text: "text-aqua",
     border: "border-aqua/45",
     bg: "bg-aqua/[0.06]",
@@ -127,36 +127,36 @@ export default function MemoryModel() {
       <div className="relative mx-auto max-w-7xl px-5 md:px-8">
         <SectionHead
           index="02"
-          kicker="The magic — hybrid memory model"
+          kicker="Safety engineered into the pipeline"
           title={
             <>
-              You write code. The compiler{" "}
-              <span className="text-acid">decides where it lives.</span>
+              You write intent. The compiler{" "}
+              <span className="text-acid">proves the ownership plan.</span>
             </>
           }
-          desc="Every binding starts as a zero-cost stack value. A semantic pass — Escape Analysis — checks five rules and monotonically promotes escaping values to the ARC Managed Heap or an Arena. No Box, no Rc, no &, no *. Ever."
+          desc="Validated typed MIR feeds escape analysis, a containment graph, and cycle detection. Each managed value cell is planned as Frame, Owned, or Shared, then checked by an independent plan proof and static ownership-balance analysis."
         />
 
-        {/* promotion ladder */}
+        {/* ownership strategies */}
         <Reveal delay={0.1} className="mt-10">
           <div className="flex flex-wrap items-center gap-x-4 gap-y-3 rounded-2xl border border-white/[0.08] bg-panel px-5 py-4">
             <span className="font-mono text-[10px] uppercase tracking-[0.25em] text-white/35">
-              promotion ladder
+              ownership strategies
             </span>
             <div className="flex flex-wrap items-center gap-x-3 gap-y-2 font-mono text-[12px]">
               <span className="flex items-center gap-2 rounded-lg border border-acid/30 bg-acid/[0.07] px-3 py-1.5 text-acid">
-                <span className="h-1.5 w-1.5 rounded-full bg-acid" /> Value · stack
+                <span className="h-1.5 w-1.5 rounded-full bg-acid" /> Frame · non-escaping
               </span>
               <MoveRight className="h-4 w-4 text-white/25" />
               <span className="flex items-center gap-2 rounded-lg border border-lav/30 bg-lav/[0.07] px-3 py-1.5 text-lav">
-                <span className="h-1.5 w-1.5 rounded-full bg-lav" /> Managed Heap · ARC
+                <span className="h-1.5 w-1.5 rounded-full bg-lav" /> Owned · acyclic
               </span>
               <MoveRight className="h-4 w-4 text-white/25" />
               <span className="flex items-center gap-2 rounded-lg border border-aqua/30 bg-aqua/[0.07] px-3 py-1.5 text-aqua">
-                <span className="h-1.5 w-1.5 rounded-full bg-aqua" /> Arena · bulk
+                <span className="h-1.5 w-1.5 rounded-full bg-aqua" /> Shared · cycle-aware ARC
               </span>
               <span className="pl-2 text-[11px] text-white/35">
-                monotonic — a binding never demotes
+                selected from typed containment and escape facts
               </span>
             </div>
           </div>
@@ -201,16 +201,16 @@ export default function MemoryModel() {
                 </button>
               ))}
 
-              <div className="rounded-xl border border-dashed border-white/[0.12] bg-transparent p-4 opacity-60">
+              <div className="rounded-xl border border-dashed border-white/[0.12] bg-transparent p-4 opacity-70">
                 <div className="flex items-center gap-3">
-                  <span className="font-mono text-[11px] text-white/30">R6</span>
-                  <span className="font-display text-[15px] font-semibold tracking-tight text-white/50">
-                    Required Aliasing
+                  <span className="font-mono text-[11px] text-white/30">PROOF</span>
+                  <span className="font-display text-[15px] font-semibold tracking-tight text-white/60">
+                    Independent Verification
                   </span>
                   <Lock className="ml-auto h-3.5 w-3.5 text-white/30" />
                 </div>
-                <p className="mt-1.5 pl-9 text-[13px] text-white/35">
-                  Reserved — pending future language features.
+                <p className="mt-1.5 pl-9 text-[13px] text-white/40">
+                  A separate verifier recomputes placement, graph cycles, arenas, and determinism.
                 </p>
               </div>
             </div>
@@ -306,7 +306,7 @@ export default function MemoryModel() {
                     <p className="mt-1 font-mono text-[10.5px] text-white/30">{z.desc}</p>
 
                     <div className="mt-5 flex min-h-[92px] flex-wrap content-start items-start gap-2">
-                      {key === "stack" &&
+                      {key === "frame" &&
                         rule.stayed.map((s, i) => (
                           <motion.span
                             key={`${rule.id}-${s}`}
@@ -319,9 +319,9 @@ export default function MemoryModel() {
                             {s}
                           </motion.span>
                         ))}
-                      {key === "stack" && rule.stayed.length === 0 && (
+                      {key === "frame" && rule.stayed.length === 0 && (
                         <span className="font-mono text-[10.5px] italic text-white/25">
-                          scalar copies stay — nothing to promote
+                          no additional frame cells shown
                         </span>
                       )}
                       {isTarget ? (
@@ -336,7 +336,7 @@ export default function MemoryModel() {
                           {rule.varName}
                         </motion.span>
                       ) : (
-                        key !== "stack" && (
+                        key !== "frame" && (
                           <span className="font-mono text-[10.5px] italic text-white/20">idle</span>
                         )
                       )}
@@ -359,7 +359,7 @@ export default function MemoryModel() {
                   <span className={ZONES[rule.target].text}>
                     {rule.varName} : {ZONES[rule.target].name}
                   </span>
-                  <span className="text-white/30"> · inserted automatically · zero annotations written</span>
+                  <span className="text-white/30"> · planned automatically from typed MIR</span>
                 </motion.p>
               </AnimatePresence>
             </div>

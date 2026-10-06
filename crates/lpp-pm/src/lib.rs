@@ -21,6 +21,7 @@ pub mod blob;
 pub mod delta;
 pub mod error;
 pub mod fingerprint;
+mod fsutil;
 pub mod index;
 pub mod kv;
 pub mod lock;
@@ -28,6 +29,7 @@ pub mod manifest;
 pub mod registry;
 pub mod resolve;
 pub mod semver;
+pub mod validation;
 pub mod workspace;
 
 pub use address::ContentAddress;

@@ -32,6 +32,7 @@ pub enum CacheBackend {
 #[derive(Subcommand)]
 pub enum Command {
     /// Create a new L++ project
+    #[command(visible_alias = "create")]
     New {
         /// Project name
         name: String,
@@ -56,6 +57,24 @@ pub enum Command {
     Test,
     /// Fast type-check, no codegen
     Check,
+    /// Remove build outputs for the current workspace
+    Clean,
+    /// Print deterministic workspace and package metadata
+    Metadata,
+    /// List workspace packages and their direct dependencies
+    List,
+    /// Inspect, build, or test the current workspace
+    Workspace {
+        #[command(subcommand)]
+        action: Option<WorkspaceAction>,
+    },
+    /// Show or update the current package version
+    Version {
+        #[command(subcommand)]
+        action: Option<VersionAction>,
+    },
+    /// Resolve and install all project dependencies
+    Install,
     /// Fetch dependencies into the global cache
     Fetch {
         /// Package to fetch (or `name@version`); omit to fetch all (resolver)
@@ -96,6 +115,44 @@ pub enum Command {
         #[command(subcommand)]
         action: CacheAction,
     },
+}
+
+#[derive(Subcommand)]
+pub enum WorkspaceAction {
+    /// List workspace members (the default action)
+    Members,
+    /// Alias for `members`
+    List,
+    /// Show direct dependencies for every workspace member
+    Graph,
+    /// Build the workspace, or one member and its path dependencies
+    Build {
+        /// Optional workspace package name
+        package: Option<String>,
+    },
+    /// Test every workspace member, or only one named member
+    Test {
+        /// Optional workspace package name
+        package: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum VersionAction {
+    /// Set an explicit semantic version
+    Set { version: String },
+    /// Increment one semantic-version component
+    Bump {
+        #[arg(value_enum)]
+        part: VersionPart,
+    },
+}
+
+#[derive(ValueEnum, Clone, Copy, PartialEq, Eq, Debug)]
+pub enum VersionPart {
+    Major,
+    Minor,
+    Patch,
 }
 
 #[derive(Subcommand)]

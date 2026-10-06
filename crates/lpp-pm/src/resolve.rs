@@ -1,24 +1,20 @@
-//! The dependency resolver: turns a manifest's dependency graph (against the
-//! registry index) into an exact resolved set, detecting conflicts and cycles.
+//! Backtracking dependency resolution for one package or a workspace.
 
 use std::collections::BTreeMap;
 
 use crate::error::{PmError, Result};
 use crate::semver::{Req, Version};
 
-/// A package (a name at one version) with its dependency edges.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Pkg {
     pub name: String,
     pub version: Version,
-    /// `Some(checksum)` for registry packages; `None` for the root/path deps.
     pub checksum: Option<String>,
-    /// `"root"`, `"registry"`, or a path.
+    /// `"root"`, `"path"`, or `"registry"`.
     pub source: String,
     pub deps: Vec<(String, Req)>,
 }
 
-/// A candidate version of a package, as offered by the registry index.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Candidate {
     pub version: Version,
@@ -27,7 +23,6 @@ pub struct Candidate {
     pub deps: Vec<(String, Req)>,
 }
 
-/// The fully resolved dependency set (deterministic: keyed by name).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Resolved {
     pub packages: BTreeMap<String, Pkg>,
@@ -45,84 +40,126 @@ impl Resolved {
     }
 }
 
-/// Resolve `root`'s full dependency graph.
+/// Resolve a package graph using highest-compatible-first backtracking.
 ///
-/// `available` returns the candidates for a package by name (or `None` if the
-/// package is unknown). Strategy: greedy highest-version-first, with conflict
-/// detection (two incompatible requirements for one package) and cycle safety
-/// (an already-resolved package is reused, never re-expanded).
+/// Unlike the earlier greedy loop, a later constraint can force the solver to
+/// reconsider an earlier high version and select a lower compatible candidate.
 pub fn resolve(root: &Pkg, available: &dyn Fn(&str) -> Option<Vec<Candidate>>) -> Result<Resolved> {
-    let mut resolved = Resolved::default();
-    resolved.packages.insert(root.name.clone(), root.clone());
-    let mut worklist: Vec<(String, Req)> = root.deps.clone();
-
-    while let Some((name, req)) = worklist.pop() {
-        if let Some(existing) = resolved.packages.get(&name) {
-            if !req.matches(&existing.version) {
-                return Err(PmError::ResolveConflict {
-                    name: name.clone(),
-                    chosen: existing.version.to_string(),
-                    required: req.to_string(),
-                });
-            }
-            continue;
-        }
-        let cands = available(&name)
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|c| req.matches(&c.version));
-        let pick = cands
-            .max_by(|a, b| a.version.cmp(&b.version))
-            .ok_or_else(|| PmError::NoMatchingVersion {
-                name: name.clone(),
-                req: req.to_string(),
-            })?;
-        worklist.extend(pick.deps.iter().cloned());
-        resolved.packages.insert(
-            name.clone(),
-            Pkg {
-                name: name.clone(),
-                version: pick.version,
-                checksum: pick.checksum,
-                source: pick.source,
-                deps: pick.deps,
-            },
-        );
-    }
-    Ok(resolved)
+    resolve_roots(std::slice::from_ref(root), available)
 }
 
-/// Resolve the UNION of several roots' dependency graphs (workspace
-/// resolution: one `Keel.lock` for all members).
-///
-/// This feeds the roots' requirements into a single resolution pass, so
-/// compatible requirements across members unify to one version and
-/// incompatible ones surface as the usual [`PmError::ResolveConflict`].
 pub fn resolve_workspace(
     roots: &[Pkg],
     available: &dyn Fn(&str) -> Option<Vec<Candidate>>,
 ) -> Result<Resolved> {
-    if roots.is_empty() {
-        return Ok(Resolved::default());
+    resolve_roots(roots, available)
+}
+
+fn resolve_roots(
+    roots: &[Pkg],
+    available: &dyn Fn(&str) -> Option<Vec<Candidate>>,
+) -> Result<Resolved> {
+    let mut resolved = BTreeMap::new();
+    let mut requirements = Vec::new();
+    for root in roots {
+        if let Some(existing) = resolved.insert(root.name.clone(), root.clone()) {
+            return Err(PmError::ResolveConflict {
+                name: root.name.clone(),
+                chosen: existing.version.to_string(),
+                required: format!("workspace root {}", root.version),
+            });
+        }
+        requirements.extend(root.deps.iter().cloned());
     }
-    let synthetic = Pkg {
-        name: "<workspace>".to_string(),
-        version: Version::new(0, 0, 0),
-        checksum: None,
-        source: "workspace".to_string(),
-        deps: roots.iter().flat_map(|r| r.deps.iter().cloned()).collect(),
-    };
-    let mut resolved = resolve(&synthetic, available)?;
-    // Replace the synthetic root with the real roots (one entry per member,
-    // deterministic: by name).
-    let mut by_name: BTreeMap<&str, Pkg> =
-        roots.iter().map(|r| (r.name.as_str(), r.clone())).collect();
-    let root_names: Vec<String> = roots.iter().map(|r| r.name.clone()).collect();
-    resolved.packages.remove("<workspace>");
-    for name in root_names {
-        if let Some(r) = by_name.remove(name.as_str()) {
-            resolved.packages.insert(name, r);
+    let packages = solve(resolved, requirements, available)?;
+    Ok(Resolved { packages })
+}
+
+fn solve(
+    resolved: BTreeMap<String, Pkg>,
+    requirements: Vec<(String, Req)>,
+    available: &dyn Fn(&str) -> Option<Vec<Candidate>>,
+) -> Result<BTreeMap<String, Pkg>> {
+    // Every requirement for an already selected package must remain true.
+    for (name, requirement) in &requirements {
+        if let Some(existing) = resolved.get(name)
+            && !requirement.matches(&existing.version)
+        {
+            return Err(PmError::ResolveConflict {
+                name: name.clone(),
+                chosen: existing.version.to_string(),
+                required: requirement.to_string(),
+            });
         }
     }
-    Ok(resolved)
+
+    let Some(next_name) = requirements
+        .iter()
+        .map(|(name, _)| name)
+        .find(|name| !resolved.contains_key(name.as_str()))
+        .cloned()
+    else {
+        return Ok(resolved);
+    };
+
+    let constraints: Vec<&Req> = requirements
+        .iter()
+        .filter(|(name, _)| name == &next_name)
+        .map(|(_, requirement)| requirement)
+        .collect();
+    let offered = available(&next_name).unwrap_or_default();
+    let mut candidates: Vec<Candidate> = offered
+        .iter()
+        .filter(|candidate| {
+            constraints
+                .iter()
+                .all(|requirement| requirement.matches(&candidate.version))
+        })
+        .cloned()
+        .collect();
+    candidates.sort_by(|left, right| right.version.cmp(&left.version));
+
+    if candidates.is_empty() {
+        let required = constraints
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(", ");
+        if constraints.len() > 1 && !offered.is_empty() {
+            return Err(PmError::ResolveConflict {
+                name: next_name,
+                chosen: "no single candidate".to_string(),
+                required,
+            });
+        }
+        return Err(PmError::NoMatchingVersion {
+            name: next_name,
+            req: required,
+        });
+    }
+
+    let mut last_error = None;
+    for candidate in candidates {
+        let mut next_resolved = resolved.clone();
+        next_resolved.insert(
+            next_name.clone(),
+            Pkg {
+                name: next_name.clone(),
+                version: candidate.version,
+                checksum: candidate.checksum,
+                source: candidate.source,
+                deps: candidate.deps.clone(),
+            },
+        );
+        let mut next_requirements = requirements.clone();
+        next_requirements.extend(candidate.deps);
+        match solve(next_resolved, next_requirements, available) {
+            Ok(solution) => return Ok(solution),
+            Err(error) => last_error = Some(error),
+        }
+    }
+    Err(last_error.unwrap_or_else(|| PmError::NoMatchingVersion {
+        name: next_name,
+        req: "no candidate produced a complete solution".to_string(),
+    }))
 }

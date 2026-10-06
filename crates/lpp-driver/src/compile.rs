@@ -23,16 +23,19 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use lpp_codegen_api::{
-    Backend, CodegenError, CodegenOptions, CompiledModule, NameResolver, Target,
+    Backend, CodegenError, CodegenOptions, CompiledModule, NameResolver, OptLevel, Target,
 };
 use lpp_codegen_cranelift::CraneliftBackend;
 use lpp_codegen_llvm::LlvmBackend;
 use lpp_codegen_wasm::WasmBackend;
+use lpp_common::OptimizationLevel;
 use lpp_hir::{
     GraphBuilder, GraphRequest, OsFileSystem, PackageSpec, ResolutionMode, StringInterner, Symbol,
     lower_package,
 };
-use lpp_mir::{MirBuildOptions, build_mir};
+use lpp_mir::{MirBuildOptions, build_mir, verify_mir};
+use lpp_ownership::{compute_ownership_plan, verify_ownership_balance, verify_ownership_plan};
+use lpp_passes::run_optimization;
 use lpp_types::{ShadowInferenceOptions, infer_hir_package};
 
 /// Adapts the HIR string interner to the codegen `NameResolver` contract.
@@ -58,12 +61,21 @@ pub enum BackendChoice {
 }
 
 impl BackendChoice {
-    /// The target triple this backend emits, and the backend itself.
-    fn resolve(self) -> (Target, &'static dyn Backend) {
+    fn codegen(self) -> &'static dyn Backend {
         match self {
-            Self::Cranelift => (Target::X86_64, &CraneliftBackend),
-            Self::Wasm => (Target::Wasm32Wasi, &WasmBackend),
-            Self::Llvm => (Target::X86_64, &LlvmBackend),
+            Self::Cranelift => &CraneliftBackend,
+            Self::Wasm => &WasmBackend,
+            Self::Llvm => &LlvmBackend,
+        }
+    }
+
+    /// The target selected when the caller did not pass `--target`.
+    #[must_use]
+    pub fn default_target(self) -> Target {
+        match self {
+            Self::Wasm => Target::Wasm32Wasi,
+            Self::Cranelift if std::env::consts::ARCH == "aarch64" => Target::Aarch64,
+            Self::Cranelift | Self::Llvm => Target::X86_64,
         }
     }
 
@@ -78,6 +90,23 @@ impl BackendChoice {
     }
 }
 
+/// Session choices that affect the validated MIR and emitted module.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CompileOptions {
+    pub target: Target,
+    pub optimization: OptimizationLevel,
+}
+
+impl CompileOptions {
+    #[must_use]
+    pub fn for_backend(backend: BackendChoice) -> Self {
+        Self {
+            target: backend.default_target(),
+            optimization: OptimizationLevel::O0,
+        }
+    }
+}
+
 /// A failure anywhere in the source -> object -> executable pipeline.
 #[derive(Debug)]
 pub enum CompileError {
@@ -87,8 +116,14 @@ pub enum CompileError {
     Lower(String),
     /// Type inference / checking failed.
     Types(String),
-    /// MIR construction failed.
+    /// MIR construction or structural verification failed.
     Mir(String),
+    /// A MIR optimization pass failed or produced invalid MIR.
+    Optimize(String),
+    /// Ownership planning or its independent proofs failed.
+    Ownership(String),
+    /// The selected backend cannot emit the requested target.
+    Target(String),
     /// The backend rejected the program (e.g. an unsupported construct).
     Codegen(CodegenError),
     /// Filesystem failure writing the object or executable.
@@ -103,7 +138,10 @@ impl std::fmt::Display for CompileError {
             Self::Graph(error) => write!(formatter, "dependency graph: {error}"),
             Self::Lower(error) => write!(formatter, "HIR lowering: {error}"),
             Self::Types(error) => write!(formatter, "type stage: {error}"),
-            Self::Mir(error) => write!(formatter, "MIR build: {error}"),
+            Self::Mir(error) => write!(formatter, "MIR: {error}"),
+            Self::Optimize(error) => write!(formatter, "MIR optimization: {error}"),
+            Self::Ownership(error) => write!(formatter, "ownership: {error}"),
+            Self::Target(error) => write!(formatter, "target: {error}"),
             Self::Codegen(error) => write!(formatter, "codegen: {error}"),
             Self::Io(error) => write!(formatter, "i/o: {error}"),
             Self::Link(error) => write!(formatter, "link: {error}"),
@@ -121,7 +159,31 @@ pub fn compile_entry(
     package_name: &str,
     backend: BackendChoice,
 ) -> Result<CompiledModule, CompileError> {
-    let (target, codegen) = backend.resolve();
+    compile_entry_with_options(
+        entry,
+        package_name,
+        backend,
+        CompileOptions::for_backend(backend),
+    )
+}
+
+/// Compile with explicit target and optimization choices. Every backend sees
+/// MIR only after structural verification, bounded optimization, and
+/// independent ownership-plan and balance proofs.
+pub fn compile_entry_with_options(
+    entry: &Path,
+    package_name: &str,
+    backend: BackendChoice,
+    options: CompileOptions,
+) -> Result<CompiledModule, CompileError> {
+    let codegen = backend.codegen();
+    if !codegen.targets().contains(&options.target) {
+        return Err(CompileError::Target(format!(
+            "backend '{}' does not support {}",
+            codegen.name(),
+            options.target.triple()
+        )));
+    }
     let filesystem = OsFileSystem;
     let source_root = entry
         .parent()
@@ -154,7 +216,7 @@ pub fn compile_entry(
         .map_err(|error| CompileError::Lower(format!("{error:?}")))?;
     let mut inference = infer_hir_package(&package, ShadowInferenceOptions::default())
         .map_err(|error| CompileError::Types(format!("{error:?}")))?;
-    let program = build_mir(
+    let mut program = build_mir(
         &package,
         &graph.sources,
         &mut inference,
@@ -162,14 +224,62 @@ pub fn compile_entry(
     )
     .map_err(|error| CompileError::Mir(format!("{error:?}")))?;
 
+    verify_program(&program, &inference.interner, "after MIR construction")?;
+    prove_ownership(&program, &inference.interner, "before optimization")?;
+    run_optimization(&mut program, &inference.interner, options.optimization)
+        .map_err(|error| CompileError::Optimize(format!("{error:?}")))?;
+    verify_program(&program, &inference.interner, "after optimization")?;
+    prove_ownership(&program, &inference.interner, "after optimization")?;
+
+    let backend_opt = match options.optimization {
+        OptimizationLevel::O0 => OptLevel::None,
+        OptimizationLevel::O1 => OptLevel::O1,
+        OptimizationLevel::O2 | OptimizationLevel::Os | OptimizationLevel::Oz => OptLevel::O2,
+        OptimizationLevel::O3 => OptLevel::O3,
+    };
     let names = Names(&package.names.symbols);
     codegen
         .compile_module(
             &program,
             &inference.interner,
-            &CodegenOptions::new(target, &names),
+            &CodegenOptions::new(options.target, &names).with_opt_level(backend_opt),
         )
         .map_err(CompileError::Codegen)
+}
+
+fn verify_program(
+    program: &lpp_mir::MirProgram,
+    types: &lpp_types::TypeInterner,
+    stage: &str,
+) -> Result<(), CompileError> {
+    let errors = verify_mir(program, types);
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(CompileError::Mir(format!("{stage}: {errors:#?}")))
+    }
+}
+
+fn prove_ownership(
+    program: &lpp_mir::MirProgram,
+    types: &lpp_types::TypeInterner,
+    stage: &str,
+) -> Result<(), CompileError> {
+    let plan = compute_ownership_plan(program, types)
+        .map_err(|error| CompileError::Ownership(format!("{stage}: {error}")))?;
+    let plan_errors = verify_ownership_plan(program, types, &plan);
+    if !plan_errors.is_empty() {
+        return Err(CompileError::Ownership(format!(
+            "{stage}: ownership-plan proof failed: {plan_errors:#?}"
+        )));
+    }
+    let balance_errors = verify_ownership_balance(program, types, &plan);
+    if !balance_errors.is_empty() {
+        return Err(CompileError::Ownership(format!(
+            "{stage}: ownership-balance proof failed: {balance_errors:#?}"
+        )));
+    }
+    Ok(())
 }
 
 /// The glibc dynamic loader (`PT_INTERP`) for the host architecture.
@@ -201,6 +311,17 @@ pub fn link_executable(
     runtime_lib_dir: &Path,
     output: &Path,
 ) -> Result<(), CompileError> {
+    let configured = std::env::var("LPP_LINKER").ok();
+    link_executable_with(object, runtime_lib_dir, output, configured.as_deref())
+}
+
+/// Link with an explicit implementation preference (`direct` or `cc`).
+pub fn link_executable_with(
+    object: &[u8],
+    runtime_lib_dir: &Path,
+    output: &Path,
+    linker: Option<&str>,
+) -> Result<(), CompileError> {
     let dir = output
         .parent()
         .unwrap_or_else(|| Path::new("."))
@@ -209,12 +330,24 @@ pub fn link_executable(
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("program");
-    let object_path = dir.join(format!("{stem}.o"));
+    let object_extension = if cfg!(target_os = "windows") {
+        "obj"
+    } else {
+        "o"
+    };
+    let object_path = dir.join(format!("{stem}.{object_extension}"));
     std::fs::write(&object_path, object).map_err(|error| CompileError::Io(error.to_string()))?;
 
-    // `LPP_LINKER=cc` forces the external toolchain; anything else (default)
-    // uses the in-process linker first.
-    let force_cc = std::env::var("LPP_LINKER").ok().as_deref() == Some("cc");
+    let force_direct = linker == Some("direct");
+    if force_direct && !cfg!(target_os = "linux") {
+        let _ = std::fs::remove_file(&object_path);
+        return Err(CompileError::Link(
+            "the rewrite direct linker is currently supported on Linux only; use `--linker cc`"
+                .to_string(),
+        ));
+    }
+    let force_cc =
+        linker == Some("cc") || std::env::consts::ARCH == "aarch64" || !cfg!(target_os = "linux");
 
     let result = if force_cc {
         link_executable_cc(&object_path, runtime_lib_dir, output)
@@ -222,15 +355,12 @@ pub fn link_executable(
         match link_executable_direct(&object_path, runtime_lib_dir, output) {
             Ok(()) => Ok(()),
             // A genuine input/user error (missing `main`, bad object, bad
-            // arguments) is reported as-is: `cc` would reject it too, and the
-            // in-process message is cleaner than a `collect2` dump. Only fall
-            // back for errors that signal an in-process *limitation* (an
-            // unexpected internal failure or an unsupported construct), where
-            // the mature external toolchain may still succeed.
+            // arguments) is reported as-is. Fall back only for limitations,
+            // and never when the user explicitly requested `direct`.
             Err(err) => {
                 use lpp_linker::LinkErrorKind::*;
                 let is_limitation = matches!(err.kind, Internal | UnsupportedFormat);
-                if is_limitation {
+                if is_limitation && !force_direct {
                     eprintln!(
                         "[lpp-linker] warning: direct link hit a limitation ({}); falling back to cc",
                         err.message
@@ -271,27 +401,77 @@ fn link_executable_direct(
 }
 
 /// The legacy external-toolchain link, kept as a fallback.
+#[cfg(not(target_os = "windows"))]
 fn link_executable_cc(
     object_path: &Path,
     runtime_lib_dir: &Path,
     output: &Path,
 ) -> Result<(), CompileError> {
-    let link = Command::new("cc")
+    let compiler = std::env::var("LPP_HOST_CC").unwrap_or_else(|_| "cc".to_string());
+    let rpath = format!("-Wl,-rpath,{}", runtime_lib_dir.display());
+    let link = Command::new(&compiler)
         .arg(object_path)
         .arg("-o")
         .arg(output)
         .arg("-L")
         .arg(runtime_lib_dir)
         .arg("-llpp_runtime")
-        .arg("-Wl,-rpath")
-        .arg(runtime_lib_dir)
+        .arg(rpath)
         .arg("-lm")
         .output()
-        .map_err(|error| CompileError::Io(error.to_string()))?;
+        .map_err(|error| CompileError::Io(format!("failed to run {compiler}: {error}")))?;
     if !link.status.success() {
         return Err(CompileError::Link(
             String::from_utf8_lossy(&link.stderr).into_owned(),
         ));
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn link_executable_cc(
+    object_path: &Path,
+    runtime_lib_dir: &Path,
+    output: &Path,
+) -> Result<(), CompileError> {
+    let compiler = std::env::var("LPP_HOST_CC").unwrap_or_else(|_| "cl.exe".to_string());
+    let import_library = ["lpp_runtime.dll.lib", "lpp_runtime.lib"]
+        .into_iter()
+        .map(|name| runtime_lib_dir.join(name))
+        .find(|path| path.is_file())
+        .ok_or_else(|| {
+            CompileError::Link(format!(
+                "runtime import library not found in {}",
+                runtime_lib_dir.display()
+            ))
+        })?;
+    let link = Command::new(&compiler)
+        .arg("/nologo")
+        .arg(object_path)
+        .arg(format!("/Fe:{}", output.display()))
+        .arg("/link")
+        .arg(format!("/LIBPATH:{}", runtime_lib_dir.display()))
+        .arg(import_library)
+        .output()
+        .map_err(|error| CompileError::Io(format!("failed to run {compiler}: {error}")))?;
+    if !link.status.success() {
+        return Err(CompileError::Link(
+            String::from_utf8_lossy(&link.stderr).into_owned(),
+        ));
+    }
+    let runtime = runtime_lib_dir.join(runtime_library_filename());
+    let destination = output
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join(runtime_library_filename());
+    if runtime != destination {
+        std::fs::copy(&runtime, &destination).map_err(|error| {
+            CompileError::Io(format!(
+                "copy runtime {} to {}: {error}",
+                runtime.display(),
+                destination.display()
+            ))
+        })?;
     }
     Ok(())
 }
@@ -304,17 +484,109 @@ pub fn build_executable(
     output: &Path,
     runtime_lib_dir: &Path,
 ) -> Result<(), CompileError> {
-    let module = compile_entry(entry, package_name, backend)?;
+    build_executable_with_options(
+        entry,
+        package_name,
+        backend,
+        CompileOptions::for_backend(backend),
+        output,
+        runtime_lib_dir,
+    )
+}
+
+pub fn build_executable_with_options(
+    entry: &Path,
+    package_name: &str,
+    backend: BackendChoice,
+    options: CompileOptions,
+    output: &Path,
+    runtime_lib_dir: &Path,
+) -> Result<(), CompileError> {
+    let module = compile_entry_with_options(entry, package_name, backend, options)?;
     link_executable(&module.object, runtime_lib_dir, output)
 }
 
-/// The default runtime library directory: the workspace `target/debug`, where
-/// `cargo build -p lpp-runtime` places `liblpp_runtime.so`.
+pub fn build_executable_configured(
+    entry: &Path,
+    package_name: &str,
+    backend: BackendChoice,
+    options: CompileOptions,
+    output: &Path,
+    runtime_lib_dir: &Path,
+    linker: Option<&str>,
+) -> Result<(), CompileError> {
+    let module = compile_entry_with_options(entry, package_name, backend, options)?;
+    link_executable_with(&module.object, runtime_lib_dir, output, linker)
+}
+
+/// Platform filename of the rewrite runtime dynamic library.
 #[must_use]
-pub fn default_runtime_lib_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+pub const fn runtime_library_filename() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "lpp_runtime.dll"
+    } else if cfg!(target_os = "macos") {
+        "liblpp_runtime.dylib"
+    } else {
+        "liblpp_runtime.so"
+    }
+}
+
+/// Locate the rewrite runtime in an explicit override, an installed toolchain
+/// layout (`bin/lpp` beside `lib/<runtime>`), or this source tree's Cargo
+/// output. The ordered search is deterministic and never scans arbitrary
+/// directories.
+#[must_use]
+pub fn runtime_library_path() -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os("LPP_RUNTIME_LIB").map(PathBuf::from)
+        && path.is_file()
+    {
+        return Some(path);
+    }
+
+    let filename = runtime_library_filename();
+    let mut directories = Vec::new();
+    if let Some(directory) = std::env::var_os("LPP_RUNTIME_DIR").map(PathBuf::from) {
+        directories.push(directory);
+    }
+    if let Ok(executable) = std::env::current_exe()
+        && let Some(bin) = executable.parent()
+    {
+        directories.push(bin.to_path_buf());
+        directories.push(bin.join("lib"));
+        if let Some(prefix) = bin.parent() {
+            directories.push(prefix.join("lib"));
+            // Cargo integration tests execute from target/<profile>/deps.
+            if bin.file_name().is_some_and(|name| name == "deps") {
+                directories.push(prefix.to_path_buf());
+            }
+        }
+    }
+    if let Some(workspace) = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(Path::parent)
-        .map(|workspace| workspace.join("target").join("debug"))
+    {
+        directories.push(workspace.join("target").join("debug"));
+        directories.push(workspace.join("target").join("release"));
+    }
+
+    directories
+        .into_iter()
+        .map(|directory| directory.join(filename))
+        .find(|path| path.is_file())
+}
+
+/// Runtime directory used by native linking. If discovery fails, retain the
+/// source-tree debug path so the eventual linker diagnostic names the expected
+/// location rather than silently selecting an unrelated library.
+#[must_use]
+pub fn default_runtime_lib_dir() -> PathBuf {
+    runtime_library_path()
+        .and_then(|path| path.parent().map(Path::to_path_buf))
+        .or_else(|| {
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .and_then(Path::parent)
+                .map(|workspace| workspace.join("target").join("debug"))
+        })
         .unwrap_or_else(|| PathBuf::from("target/debug"))
 }

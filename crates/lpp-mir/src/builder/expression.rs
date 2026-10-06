@@ -27,27 +27,48 @@ impl FunctionBuilder<'_, '_> {
         let ty = self.concrete_type(ty, expression.origin)?;
         let next_depth = depth + 1;
         match expression.kind {
-            ExpressionKind::Literal(literal) => Ok(Operand::Constant(match literal {
-                Literal::Integer(value) => Constant::Integer(value),
-                Literal::FloatBits(value) => Constant::FloatBits(value),
-                Literal::String { span, formatted } => {
-                    let string =
-                        self.core
-                            .materialize_string(span, formatted, expression.origin)?;
-                    Constant::String {
-                        origin: expression.origin,
-                        string,
+            ExpressionKind::Literal(literal) => {
+                let constant = match literal {
+                    Literal::Integer(value) => Constant::Integer(value),
+                    Literal::FloatBits(value) => Constant::FloatBits(value),
+                    Literal::String { span, formatted } => {
+                        let string =
+                            self.core
+                                .materialize_string(span, formatted, expression.origin)?;
+                        Constant::String {
+                            origin: expression.origin,
+                            string,
+                        }
                     }
-                }
-                Literal::Character(span) => {
-                    let character = self.core.materialize_character(span, expression.origin)?;
-                    Constant::Character {
-                        origin: expression.origin,
-                        character,
+                    Literal::Character(span) => {
+                        let character = self.core.materialize_character(span, expression.origin)?;
+                        Constant::Character {
+                            origin: expression.origin,
+                            character,
+                        }
                     }
+                    Literal::Bool(value) => Constant::Bool(value),
+                };
+                // Integer literals are context-sensitive in source: the type
+                // checker may assign one to a fixed-width integer, or accept
+                // literal zero as the null sentinel for a nominal reference.
+                // MIR constants deliberately retain the canonical `Int` type,
+                // so materialize a typed temporary whenever inference selected
+                // another type. This keeps every later use (constructor fields,
+                // comparisons, stores) consistently typed instead of relying on
+                // each consumer to reinterpret a bare integer constant.
+                if matches!(constant, Constant::Integer(_))
+                    && ty != self.core.types.interner.primitive(PrimitiveType::Int)
+                {
+                    self.assign_temporary(
+                        ty,
+                        Rvalue::Use(Operand::Constant(constant)),
+                        expression.origin,
+                    )
+                } else {
+                    Ok(Operand::Constant(constant))
                 }
-                Literal::Bool(value) => Constant::Bool(value),
-            })),
+            }
             ExpressionKind::Name { binding, .. } => match binding {
                 NameBinding::Local(source) => {
                     let local = self.local(source, MirLocalKind::User)?;

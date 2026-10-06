@@ -13,8 +13,10 @@ mod compile;
 mod rewrite_engine;
 
 pub use compile::{
-    BackendChoice, CompileError, build_executable, compile_entry, default_runtime_lib_dir,
-    link_executable,
+    BackendChoice, CompileError, CompileOptions, build_executable, build_executable_configured,
+    build_executable_with_options, compile_entry, compile_entry_with_options,
+    default_runtime_lib_dir, link_executable, link_executable_with, runtime_library_filename,
+    runtime_library_path,
 };
 pub use rewrite_engine::RewriteEngine;
 // Callers of `compile_entry` receive a `CompiledModule` and select a `Target`,

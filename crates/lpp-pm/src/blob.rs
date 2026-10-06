@@ -41,18 +41,33 @@ impl BlobStore for DiskBlobStore {
     fn insert(&self, bytes: &[u8]) -> Result<ContentAddress> {
         let address = ContentAddress::of_bytes(bytes);
         let path = self.blob_path(&address);
-        if !path.exists() {
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent).map_err(|e| PmError::Io(e.to_string()))?;
+        if path.exists() {
+            let existing = std::fs::read(&path).map_err(|e| PmError::Io(e.to_string()))?;
+            let actual = ContentAddress::of_bytes(&existing);
+            if actual != address {
+                return Err(PmError::ChecksumMismatch {
+                    expected: address.to_string(),
+                    actual: actual.to_string(),
+                });
             }
-            std::fs::write(&path, bytes).map_err(|e| PmError::Io(e.to_string()))?;
+        } else {
+            crate::fsutil::atomic_write(&path, bytes)?;
         }
         Ok(address)
     }
 
     fn fetch(&self, address: &ContentAddress) -> Result<Vec<u8>> {
         let path = self.blob_path(address);
-        std::fs::read(&path).map_err(|_| PmError::BlobNotFound(address.as_str().to_string()))
+        let bytes = std::fs::read(&path)
+            .map_err(|_| PmError::BlobNotFound(address.as_str().to_string()))?;
+        let actual = ContentAddress::of_bytes(&bytes);
+        if &actual != address {
+            return Err(PmError::ChecksumMismatch {
+                expected: address.to_string(),
+                actual: actual.to_string(),
+            });
+        }
+        Ok(bytes)
     }
 
     fn contains(&self, address: &ContentAddress) -> bool {

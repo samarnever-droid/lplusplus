@@ -91,6 +91,57 @@ fn all_tests_pass_and_only_lpp_files_run() {
 }
 
 #[test]
+fn selected_workspace_test_runs_only_the_named_members_tests() {
+    let root = temp("selected");
+    let fake = fake_lpp(&root);
+    let workspace = root.join("workspace");
+    std::fs::create_dir_all(&workspace).unwrap();
+    std::fs::write(
+        workspace.join("Keel.toml"),
+        "[workspace]\nmembers = [\"first\", \"second\"]\n",
+    )
+    .unwrap();
+    for package in ["first", "second"] {
+        let directory = workspace.join(package);
+        std::fs::create_dir_all(directory.join("tests")).unwrap();
+        std::fs::write(
+            directory.join("Keel.toml"),
+            format!("[package]\nname = \"{package}\"\nversion = \"0.1.0\"\n"),
+        )
+        .unwrap();
+        std::fs::write(
+            directory.join(format!("tests/{package}.lpp")),
+            "fn main() {}\n",
+        )
+        .unwrap();
+    }
+
+    let result = keel::commands::test::test_run_selected(
+        &workspace,
+        fake.to_str().unwrap(),
+        None,
+        Some("second"),
+    );
+    assert!(result.is_ok(), "selected tests should pass: {result:?}");
+    let arguments = std::fs::read_to_string(root.join("args.txt")).unwrap();
+    assert!(arguments.contains("second/tests/second.lpp"), "{arguments}");
+    assert!(!arguments.contains("first/tests/first.lpp"), "{arguments}");
+
+    let missing = keel::commands::test::test_run_selected(
+        &workspace,
+        fake.to_str().unwrap(),
+        None,
+        Some("missing"),
+    );
+    assert!(
+        missing
+            .unwrap_err()
+            .contains("workspace member not found: missing")
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn failing_test_fails_the_suite() {
     let root = temp("fail");
     let fake = fake_lpp(&root);

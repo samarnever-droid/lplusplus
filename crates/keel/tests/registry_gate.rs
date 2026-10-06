@@ -143,6 +143,92 @@ fn fetch_all_resolves_the_graph_and_writes_lock() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+#[test]
+fn fetch_rejects_using_a_lock_from_a_different_registry() {
+    let first_root = temp("registry-identity-a");
+    let first = seeded_registry(&first_root);
+    let project = first_root.join("project");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(
+        project.join("Keel.toml"),
+        "[package]\nname = \"app\"\nversion = \"0.1.0\"\n[dependencies]\nmath = \"^1\"\n",
+    )
+    .unwrap();
+    let first_reg =
+        lpp_pm::Registry::new(first.to_string_lossy().as_ref(), first_root.join("clone-a"));
+    keel::commands::registry::fetch_all(&first_reg, &project).unwrap();
+
+    let second_root = temp("registry-identity-b");
+    let second = seeded_registry(&second_root);
+    let second_reg = lpp_pm::Registry::new(
+        second.to_string_lossy().as_ref(),
+        second_root.join("clone-b"),
+    );
+    let error = keel::commands::registry::fetch_all(&second_reg, &project).unwrap_err();
+    assert!(error.contains("belongs to registry"), "{error}");
+    let _ = std::fs::remove_dir_all(first_root);
+    let _ = std::fs::remove_dir_all(second_root);
+}
+
+#[test]
+fn fetch_preserves_a_still_valid_lock_until_explicit_update() {
+    let root = temp("fetch-lock-stability");
+    let bare = seeded_registry(&root);
+    let project = root.join("project");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(
+        project.join("Keel.toml"),
+        "[package]\nname = \"app\"\nversion = \"0.1.0\"\n[dependencies]\nmath = \"^1\"\n",
+    )
+    .unwrap();
+
+    let reg = lpp_pm::Registry::new(bare.to_string_lossy().as_ref(), root.join("consumer"));
+    keel::commands::registry::fetch_all(&reg, &project).unwrap();
+
+    let publisher = lpp_pm::Registry::new(
+        bare.to_string_lossy().as_ref(),
+        root.join("publisher-new-version"),
+    );
+    publisher.sync().unwrap();
+    git(publisher.dir(), &["config", "user.name", "P"]);
+    git(publisher.dir(), &["config", "user.email", "p@example.com"]);
+    let mut entry = publisher.lookup("math").unwrap();
+    let bytes = b"math package bytes 1.1.0";
+    entry.versions.push(lpp_pm::index::VersionEntry {
+        version: "1.1.0".into(),
+        deps: vec![],
+        features: Default::default(),
+        checksum: lpp_pm::ContentAddress::of_bytes(bytes).to_string(),
+        targets: vec![],
+        yanked: false,
+    });
+    publisher.publish(&entry, bytes, "math 1.1.0").unwrap();
+    publisher.push().unwrap();
+
+    keel::commands::registry::fetch_all(&reg, &project).unwrap();
+    let lock =
+        lpp_pm::Lock::parse(&std::fs::read_to_string(project.join("Keel.lock")).unwrap()).unwrap();
+    assert_eq!(
+        lock.package("math").map(|package| package.version.as_str()),
+        Some("1.0.0")
+    );
+
+    keel::commands::update::update(Some(&reg), &project, None).unwrap();
+    let updated =
+        lpp_pm::Lock::parse(&std::fs::read_to_string(project.join("Keel.lock")).unwrap()).unwrap();
+    assert_eq!(
+        updated
+            .package("math")
+            .map(|package| package.version.as_str()),
+        Some("1.1.0")
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+const SUM_A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const SUM_B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+const SUM_C: &str = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+
 fn ventry(version: &str, checksum: &str) -> lpp_pm::index::VersionEntry {
     lpp_pm::index::VersionEntry {
         version: version.into(),
@@ -157,12 +243,12 @@ fn ventry(version: &str, checksum: &str) -> lpp_pm::index::VersionEntry {
 #[test]
 fn publish_merges_versions_instead_of_clobbering() {
     // First publish: no existing entry.
-    let e1 = keel::commands::registry::merge_publish(None, "math", ventry("1.0.0", "aaa")).unwrap();
+    let e1 = keel::commands::registry::merge_publish(None, "math", ventry("1.0.0", SUM_A)).unwrap();
     assert_eq!(e1.versions.len(), 1);
 
     // Second publish (newer version): appends, does not drop 1.0.0.
     let e2 =
-        keel::commands::registry::merge_publish(Some(&e1), "math", ventry("1.1.0", "bbb")).unwrap();
+        keel::commands::registry::merge_publish(Some(&e1), "math", ventry("1.1.0", SUM_B)).unwrap();
     let vers: Vec<&str> = e2.versions.iter().map(|v| v.version.as_str()).collect();
     assert_eq!(
         vers,
@@ -173,10 +259,10 @@ fn publish_merges_versions_instead_of_clobbering() {
 
 #[test]
 fn publish_rejects_republish_of_same_version() {
-    let e1 = keel::commands::registry::merge_publish(None, "math", ventry("1.0.0", "aaa")).unwrap();
+    let e1 = keel::commands::registry::merge_publish(None, "math", ventry("1.0.0", SUM_A)).unwrap();
 
     // Same version, different checksum → immutability conflict.
-    let err = keel::commands::registry::merge_publish(Some(&e1), "math", ventry("1.0.0", "ccc"))
+    let err = keel::commands::registry::merge_publish(Some(&e1), "math", ventry("1.0.0", SUM_C))
         .unwrap_err();
     assert!(matches!(
         err,
@@ -186,7 +272,7 @@ fn publish_rejects_republish_of_same_version() {
 
     // Same version, same checksum → identical republish (no-op, not an
     // immutability violation).
-    let err = keel::commands::registry::merge_publish(Some(&e1), "math", ventry("1.0.0", "aaa"))
+    let err = keel::commands::registry::merge_publish(Some(&e1), "math", ventry("1.0.0", SUM_A))
         .unwrap_err();
     assert!(matches!(
         err,
@@ -235,6 +321,10 @@ fn publish_command_appends_versions_end_to_end() {
             .arg("publish")
             .env("XDG_CACHE_HOME", &xdg)
             .env("KEEL_REGISTRY", bare.to_string_lossy().as_ref())
+            .env("GIT_AUTHOR_NAME", "Keel Test")
+            .env("GIT_AUTHOR_EMAIL", "keel-test@example.com")
+            .env("GIT_COMMITTER_NAME", "Keel Test")
+            .env("GIT_COMMITTER_EMAIL", "keel-test@example.com")
             .current_dir(dir)
             .output()
             .unwrap()

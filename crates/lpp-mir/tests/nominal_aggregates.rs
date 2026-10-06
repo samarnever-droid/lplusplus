@@ -627,8 +627,8 @@ fn concrete_descriptor_snapshot_is_stable() {
         fs::write(&fixture, &snapshot).unwrap();
     }
     assert_eq!(
-        snapshot.replace("\r\n", "\n"),
-        include_str!("snapshots/phase4c2a-nominal-mir.snap").replace("\r\n", "\n"),
+        snapshot,
+        include_str!("snapshots/phase4c2a-nominal-mir.snap"),
     );
 }
 

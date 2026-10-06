@@ -96,8 +96,8 @@ impl<'a> CodegenOptions<'a> {
 
 /// The result of compiling a MIR program to one object file.
 ///
-/// `object` is the full object image (ELF relocatable for the native
-/// backends). The symbol census (`exported_symbols`,
+/// `object` is the full host-format object image (ELF, Mach-O, or COFF for
+/// native backends). The symbol census (`exported_symbols`,
 /// `imported_symbols`, `entry`) is derived from the module's own
 /// declaration record — ordered, deterministic collections — so tests
 /// can assert ABI shape without parsing the bytes.

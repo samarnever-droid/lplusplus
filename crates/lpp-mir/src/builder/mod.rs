@@ -436,6 +436,7 @@ impl<'input> MirBuilder<'input> {
         // order. Draining per item would interleave closure allocations
         // with later item allocations and break the ID numbering.
         self.lower_pending_closures()?;
+        self.ensure_program_aggregate_types(fallback_origin)?;
         Ok(self.program)
     }
 

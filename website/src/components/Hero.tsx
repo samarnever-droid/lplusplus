@@ -40,8 +40,8 @@ const TABS: CodeTab[] = [
 def main():
     result := fib(35)
     print("fib(35) =", result)`,
-    stdout: `[L++] Compiling with direct Cranelift backend...
-[L++] Direct ELF linker: linked in 1.6 ms
+    stdout: `[L++] Compiling with Cranelift AOT...
+[L++] Native executable linked
 fib(35) = 9227465`,
     ir: `function u0:0(i64) -> i64 fast {
 block0(v0: i64):
@@ -69,76 +69,76 @@ block2:
     badge: "ARC & Escape",
     code: `struct Item:
     id: Int
-    name: String
+    name: Str
 
-def create_item(id: Int, name: String) -> Item:
+def create_item(id: Int, name: Str) -> Item:
     item := Item(id, name)
-    return item  # escapes frame -> Managed ARC Heap
+    return item  # escapes this frame
 
 def main():
     item := create_item(101, "Server Cluster")
-    print("Loaded:", item.name)`,
-    stdout: `[L++] Escape analysis pass completed in 0.3 ms
-[L++] item -> Escapes frame (ReturnOwned) -> ARC Heap
-Loaded: Server Cluster`,
-    ir: `mir::pass_arc:
-  _1 = Item::new(v0, v1)
-  retain(_1)          ; increment ref count
-  return_owned(_1)    ; zero cycle leaks`,
+    print_str(item.name)`,
+    stdout: `[L++] ownership: item -> Owned
+[L++] ownership balance verified
+Server Cluster`,
+    ir: `ownership-plan v1
+  item: frame -> owned
+  contains: Item -> Str
+  balance: verified`,
     escapeLog: [
-      { name: "id", type: "Int · scalar", dest: "Stack Frame", color: "text-acid" },
-      { name: "item", type: "struct · escapes", dest: "Managed ARC Heap", color: "text-lav" },
+      { name: "id", type: "Int · scalar", dest: "Frame", color: "text-acid" },
+      { name: "item", type: "struct · escapes", dest: "Owned", color: "text-lav" },
     ],
   },
   {
-    id: "sqlite",
-    name: "database.lpp",
-    badge: "Pure L++ DB",
-    code: `import lppsqlite
+    id: "match",
+    name: "result_match.lpp",
+    badge: "Typed Match",
+    code: `enum Result:
+    Ready(message: Str)
+    Failed(code: Int)
+
+def report(result: Result):
+    match result:
+        Ready(message):
+            print_str(message)
+        Failed(code):
+            print(code)
 
 def main():
-    db := lppsqlite.open("analytics.db")
-    lppsqlite.exec(db, "CREATE TABLE events (id INT, tag TEXT);")
-    lppsqlite.exec(db, "INSERT INTO events VALUES (1, 'pageview');")
-    
-    rows := lppsqlite.query(db, "SELECT * FROM events;")
-    print("Events count:", rows.len())`,
-    stdout: `[L++] Linking package 'lppsqlite' (v1.0.0)
-[L++] SQLite binary page storage initialized
-Events count: 1`,
-    ir: `import lppsqlite::open, lppsqlite::exec, lppsqlite::query
-fn main() -> i32 {
-    %0 = call lppsqlite::open("analytics.db")
-    %1 = call lppsqlite::query(%0, "SELECT * FROM events;")
-    return 0
-}`,
+    report(Result.Ready("ready"))`,
+    stdout: `[L++] exhaustive match verified
+ready`,
+    ir: `switch_variant result
+  Ready(message) -> print_str(message)
+  Failed(code)   -> print(code)`,
     escapeLog: [
-      { name: "db", type: "DbHandle", dest: "Stack Pointer", color: "text-acid" },
-      { name: "rows", type: "RowSet", dest: "Arena Region", color: "text-aqua" },
+      { name: "result", type: "enum · local", dest: "Frame", color: "text-acid" },
+      { name: "message", type: "Str · payload", dest: "Borrowed call", color: "text-lav" },
     ],
   },
   {
-    id: "lreact",
-    name: "app_gui.lpp",
-    badge: "Desktop UI",
-    code: `import lreact
-
-def App() -> lreact.Element:
-    return lreact.column([
-        lreact.text("L++ Native Cloud Dashboard"),
-        lreact.button("Deploy Worker", fn():
-            print("Deploying edge service...")
-        )
-    ])
+    id: "wasm",
+    name: "portable_lists.lpp",
+    badge: "Native + WASM",
+    code: `def sum(values: List[Int]) -> Int:
+    mut total := 0
+    for value in values:
+        total = total + value
+    return total
 
 def main():
-    lreact.launch(App(), width=800, height=600)`,
-    stdout: `[L++] Initializing native IPC bridge...
-[L++] Web runtime launched at 800x600 (3.2 MB memory)`,
-    ir: `lreact::launch(%app, 800, 600) -> event_loop`,
+    values := [10, 20, 30]
+    print(sum(values))`,
+    stdout: `[L++] emitted validated wasm32-wasip1 module
+60`,
+    ir: `values = list [10, 20, 30]
+for value in values:
+  total = total + value
+return total`,
     escapeLog: [
-      { name: "App", type: "Closure", dest: "Managed ARC", color: "text-lav" },
-      { name: "ui_tree", type: "DOM Node", dest: "Arena Tree", color: "text-aqua" },
+      { name: "values", type: "List[Int]", dest: "Owned", color: "text-lav" },
+      { name: "total", type: "Int · scalar", dest: "Frame", color: "text-acid" },
     ],
   },
 ];
@@ -167,9 +167,9 @@ export default function Hero() {
   };
 
   const installCommands = {
-    curl: "git clone --depth 1 --branch v1.2.0 https://github.com/samarnever-droid/lplusplus.git && cd lplusplus && LPP_FROM_SOURCE=1 sh install.sh",
-    powershell: "git clone --depth 1 --branch v1.2.0 https://github.com/samarnever-droid/lplusplus.git; cd lplusplus; $env:LPP_FROM_SOURCE='1'; .\\install.ps1",
-    cargo: "cargo install --locked --git https://github.com/samarnever-droid/lplusplus --tag v1.2.0",
+    curl: "git clone --depth 1 --branch v0.1 https://github.com/samarnever-droid/lplusplus.git && cd lplusplus && LPP_FROM_SOURCE=1 sh install.sh",
+    powershell: "git clone --depth 1 --branch v0.1 https://github.com/samarnever-droid/lplusplus.git; cd lplusplus; $env:LPP_FROM_SOURCE='1'; .\\install.ps1",
+    cargo: "cargo install --locked --git https://github.com/samarnever-droid/lplusplus --tag v0.1",
   };
 
   return (
@@ -192,27 +192,28 @@ export default function Hero() {
             >
               <span className="flex items-center gap-1.5 rounded-full bg-acid/20 px-3 py-0.5 font-mono text-[11px] font-bold uppercase tracking-wider text-acid border border-acid/30">
                 <span className="h-2 w-2 rounded-full bg-acid animate-pulse" />
-                L++ v4.7.0 Production
+                L++ v0.1
               </span>
               <span className="font-mono text-xs text-white/70">
-                Cranelift AOT &bull; Direct ELF &bull; ARC Memory
+                Readable &bull; Native &bull; Safety-first
               </span>
             </motion.div>
 
             {/* Typography Master Headline */}
             <div className="space-y-2">
               <h1 className="font-mono text-4xl sm:text-6xl font-black tracking-tight text-white leading-[1.08]">
-                Native Performance.
+                Readable by design.
                 <br />
-                <span className="text-acid">Python Readability.</span>
+                <span className="text-acid">Native by default.</span>
                 <br />
-                <span className="text-white/40">Zero Garbage Collector.</span>
+                <span className="text-white/55">Safety engineered in.</span>
               </h1>
             </div>
 
             <p className="text-base sm:text-lg leading-relaxed text-white/65 max-w-xl font-sans">
-              L++ combines the clean, expressive syntax of Python with the raw execution speed of C and Cranelift AOT.
-              Automatic escape analysis eliminates manual pointers and borrow-checker friction while delivering deterministic memory safety.
+              L++ brings Python-like clarity to a statically typed, ahead-of-time language. Ownership analysis
+              places values as frame, owned, or shared and catches common ownership mistakes before code
+              generation—without a tracing garbage collector.
             </p>
 
             {/* Quick OS Install Switcher */}
@@ -274,20 +275,20 @@ export default function Hero() {
             {/* Live Telemetry Tickers */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-4 border-t border-white/10 text-xs font-mono">
               <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3 space-y-1">
-                <span className="text-white/40 block text-[10px] uppercase">Link Time</span>
-                <span className="font-bold text-acid text-sm sm:text-base">1.6 ms</span>
+                <span className="text-white/40 block text-[10px] uppercase">Compilation</span>
+                <span className="font-bold text-acid text-sm sm:text-base">Native AOT</span>
               </div>
               <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3 space-y-1">
-                <span className="text-white/40 block text-[10px] uppercase">GC Overhead</span>
-                <span className="font-bold text-emerald-400 text-sm sm:text-base">0 ms (ARC)</span>
+                <span className="text-white/40 block text-[10px] uppercase">Ownership</span>
+                <span className="font-bold text-emerald-400 text-[11px] sm:text-xs">Frame · Owned · Shared</span>
               </div>
               <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3 space-y-1">
-                <span className="text-white/40 block text-[10px] uppercase">Verified Tests</span>
-                <span className="font-bold text-white text-sm sm:text-base">126 / 126</span>
+                <span className="text-white/40 block text-[10px] uppercase">WASM Corpus</span>
+                <span className="font-bold text-white text-sm sm:text-base">24 / 24</span>
               </div>
               <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3 space-y-1">
-                <span className="text-white/40 block text-[10px] uppercase">Official Packages</span>
-                <span className="font-bold text-lav text-sm sm:text-base">16 Live</span>
+                <span className="text-white/40 block text-[10px] uppercase">Tracing GC</span>
+                <span className="font-bold text-lav text-sm sm:text-base">None</span>
               </div>
             </div>
           </div>

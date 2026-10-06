@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # corpus_correctness.sh — the v1-INDEPENDENT correctness oracle for the rewrite.
 #
-# v1/LegacyEngine is retired, so "parity with v1" is no longer the measure.
-# This runs every corpus program through the REWRITE engine and judges it on its
-# own terms: does it compile, link, run, exit 0, and (when the program carries
-# internal assertions) report success rather than failure?
+# This gate does not invoke v1/LegacyEngine, so textual parity with v1 is not
+# the measure. It runs every corpus program through the REWRITE engine and
+# judges it on its own terms: does it compile, link, run, exit 0, and (when the
+# program carries internal assertions) report success rather than failure?
 #
 # Usage: scripts/corpus_correctness.sh [run|check]   (default: run)
 #   run   — compile + link + execute each program (full correctness)
@@ -16,9 +16,17 @@ set -u
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LPP="$ROOT/target/debug/lpp"
+if [ -x "$ROOT/target/debug/lpp.exe" ]; then
+  LPP="$ROOT/target/debug/lpp.exe"
+fi
 MODE="${1:-run}"
 LOG=/tmp/corpus_correctness.log
 PER_FILE_TIMEOUT=25
+
+case "$MODE" in
+  run|check) ;;
+  *) echo "usage: $0 [run|check]" >&2; exit 2;;
+esac
 
 if [ ! -x "$LPP" ]; then
   echo "lpp binary not found at $LPP — build it: cargo build --bin lpp && cargo build -p lpp-runtime" >&2
@@ -36,8 +44,9 @@ mapfile -t FILES < <(find "$ROOT/tests" "$ROOT/examples" -name '*.lpp' 2>/dev/nu
 # Classify a file's EXPECTED outcome. The corpus mixes three kinds of program
 # and scoring each as "must exit 0" is wrong for two of them:
 #   run    — a normal program: must compile, link, run, exit 0, no assert fail.
-#   reject — a negative test: the compiler MUST reject it (emit an Exxxx code).
-#            A clean rejection is the CORRECT result; compiling it is the bug.
+#   reject — a negative test: the compiler MUST reject it with a compile
+#            diagnostic. A clean rejection is CORRECT; accepting it, timing
+#            out, or failing later in linking/execution is a gate failure.
 #   skip   — not a standalone runnable program in this headless harness:
 #            a library module (no `main`), or a GUI/display program that needs
 #            a window server. Excluded from the denominator.
@@ -85,18 +94,22 @@ for f in "${FILES[@]}"; do
     out=$(LPP_ENGINE=rewrite timeout "$PER_FILE_TIMEOUT" "$LPP" run "$f" </dev/null 2>&1); rc=$?
     # lpp run emits an executable named after the source into the cwd; remove it so the
     # harness never pollutes the repo root with one binary per corpus file.
-    rm -f "./$(basename "$f" .lpp)"
+    rm -f "./$(basename "$f" .lpp)" "./$(basename "$f" .lpp).exe"
   fi
 
   code=$(printf '%s' "$out" | grep -oE 'E[0-9]{4}' | head -1)
 
-  # Negative tests: a rejection (nonzero exit with a diagnostic) is CORRECT.
+  # Negative tests: only a compiler rejection is CORRECT. A linker crash,
+  # timeout, or unrelated nonzero process status must not masquerade as an
+  # expected failure merely because the source belongs to the reject corpus.
   if [ "$expect" = "reject" ]; then
-    if [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ]; then
-      xfail_ok=$((xfail_ok + 1)); echo "XFAIL-OK $rel  [${code:-rejected}]" >> "$LOG"
+    if [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ] \
+       && { [ -n "$code" ] || printf '%s' "$out" | grep -qiE '\[rewrite\][[:space:]]+compile error|compile error:'; }; then
+      xfail_ok=$((xfail_ok + 1)); echo "XFAIL-OK $rel  [${code:-compile-error}]" >> "$LOG"
     else
       xfail_bad=$((xfail_bad + 1))
-      echo "WRONGACCEPT $rel  (should have been rejected, rc=$rc)" >> "$LOG"
+      echo "WRONGREJECT $rel  (expected compiler rejection, rc=$rc, code=${code:-none})" >> "$LOG"
+      printf '%s\n' "$out" | sed 's/^/           | /' >> "$LOG"
     fi
     continue
   fi
@@ -107,19 +120,29 @@ for f in "${FILES[@]}"; do
   fi
 
   if [ "$rc" -ne 0 ]; then
-    if [ -n "$code" ]; then
-      compfail=$((compfail + 1)); errcodes[$code]=$(( ${errcodes[$code]:-0} + 1 ))
-      echo "COMPFAIL $rel  [$code]  $(printf '%s' "$out" | grep -m1 -E "$code" | cut -c1-100)" >> "$LOG"
+    # In check mode every nonzero result is a compile/check failure, even when
+    # an internal verifier message has not yet been assigned an Exxxx code.
+    # In run mode the explicit rewrite prefix separates compilation failures
+    # from linker/runtime failures.
+    if [ "$MODE" = "check" ] \
+       || [ -n "$code" ] \
+       || printf '%s' "$out" | grep -qiE '\[rewrite\][[:space:]]+compile error|compile error:'; then
+      compfail=$((compfail + 1))
+      bucket="${code:-NO_CODE}"
+      errcodes[$bucket]=$(( ${errcodes[$bucket]:-0} + 1 ))
+      echo "COMPFAIL $rel  [$bucket]" >> "$LOG"
     else
       runfail=$((runfail + 1))
-      echo "RUNFAIL  $rel  rc=$rc  $(printf '%s' "$out" | tail -1 | cut -c1-100)" >> "$LOG"
+      echo "RUNFAIL  $rel  rc=$rc" >> "$LOG"
     fi
+    printf '%s\n' "$out" | sed 's/^/           | /' >> "$LOG"
     continue
   fi
 
   # rc == 0: ran. If the program carries internal assertions, honour its verdict.
   if printf '%s' "$out" | grep -qiE '\bFAIL(ED|URE)?\b|ASSERTION FAILED|[0-9]+/[0-9]+ .*fail'; then
-    assertfail=$((assertfail + 1)); echo "ASSERTFAIL $rel  $(printf '%s' "$out" | grep -iE 'fail' | head -1 | cut -c1-100)" >> "$LOG"
+    assertfail=$((assertfail + 1)); echo "ASSERTFAIL $rel" >> "$LOG"
+    printf '%s\n' "$out" | sed 's/^/           | /' >> "$LOG"
   else
     pass=$((pass + 1)); echo "PASS     $rel" >> "$LOG"
   fi
@@ -132,7 +155,7 @@ correct=$((pass + xfail_ok))
 scored=$((total - skip_n))
 echo "total=$total  scored=$scored  skipped=$skip_n"
 echo "  run:    PASS=$pass  COMPFAIL=$compfail  RUNFAIL=$runfail  ASSERTFAIL=$assertfail  TIMEOUT=$timeout_n"
-echo "  reject: XFAIL-OK=$xfail_ok  WRONGACCEPT=$xfail_bad"
+echo "  reject: XFAIL-OK=$xfail_ok  REJECT-BAD=$xfail_bad"
 if [ "$scored" -gt 0 ]; then
   pct=$(awk "BEGIN{printf \"%.1f\", ($correct/$scored)*100}")
   echo "correct: ${correct}/${scored} = ${pct}%   (pass ${pass} + correctly-rejected ${xfail_ok})"
@@ -142,4 +165,11 @@ if [ "$compfail" -gt 0 ]; then
   for c in "${!errcodes[@]}"; do echo "$c ${errcodes[$c]}"; done | sort -k2 -nr
 fi
 echo "full log: $LOG"
+
+failures=$((compfail + runfail + assertfail + timeout_n + xfail_bad))
+if [ "$failures" -ne 0 ]; then
+  echo "gate: FAIL ($failures incorrect corpus outcomes)" >&2
+  exit 1
+fi
+echo "gate: PASS"
 

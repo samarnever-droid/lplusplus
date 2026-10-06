@@ -4,8 +4,8 @@
 //! constants, `print_str`, plus the 5C aggregate data surface:
 //! structs, enums with dense `SwitchEnum` dispatch, lists, projected
 //! load/store, and the ARC traffic that keeps them honest) to
-//! cranelift IR and emits a relocatable ELF object through
-//! cranelift-object. The lowering matches the v1 cranelift backend's
+//! cranelift IR and emits a host-format ELF, Mach-O, or COFF relocatable
+//! through cranelift-object. The lowering matches the v1 cranelift backend's
 //! conventions: function order by `MirFunctionId`, `lpp_main` plus a
 //! generated C-ABI `main` wrapper, the 24-byte string-constant header
 //! (whose two magic words are simultaneously the host-runtime magic

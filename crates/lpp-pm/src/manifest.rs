@@ -81,6 +81,27 @@ impl Dependency {
             Self::Detailed { path, .. } => path.as_deref(),
         }
     }
+
+    pub fn optional(&self) -> bool {
+        match self {
+            Self::Version(_) => false,
+            Self::Detailed { optional, .. } => *optional,
+        }
+    }
+
+    pub fn features(&self) -> &[String] {
+        match self {
+            Self::Version(_) => &[],
+            Self::Detailed { features, .. } => features,
+        }
+    }
+
+    pub fn git(&self) -> Option<&str> {
+        match self {
+            Self::Version(_) => None,
+            Self::Detailed { git, .. } => git.as_deref(),
+        }
+    }
 }
 
 /// The optional `[workspace]` section (workspace roots only).
@@ -99,9 +120,56 @@ pub struct Targets {
 }
 
 impl Manifest {
-    /// Parse a `Keel.toml` document.
+    /// Parse and validate a `Keel.toml` document.
     pub fn parse(doc: &str) -> Result<Self> {
-        toml::from_str(doc).map_err(|e| PmError::ManifestParse(e.to_string()))
+        let manifest: Self =
+            toml::from_str(doc).map_err(|e| PmError::ManifestParse(e.to_string()))?;
+        manifest.validate()?;
+        Ok(manifest)
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        crate::validation::package_name(&self.package.name)?;
+        crate::validation::version(&self.package.version)?;
+        if self.package.edition.trim().is_empty() {
+            return Err(PmError::ManifestParse(
+                "package edition cannot be empty".to_string(),
+            ));
+        }
+        for (name, dependency) in &self.dependencies {
+            crate::validation::package_name(name)?;
+            crate::validation::requirement(dependency.version())?;
+            if dependency.path().is_some_and(|path| path.trim().is_empty()) {
+                return Err(PmError::ManifestParse(format!(
+                    "path dependency '{name}' has an empty path"
+                )));
+            }
+            if dependency.path().is_some() && dependency.git().is_some() {
+                return Err(PmError::ManifestParse(format!(
+                    "dependency '{name}' cannot specify both path and git"
+                )));
+            }
+            if dependency.git().is_some() {
+                return Err(PmError::ManifestParse(format!(
+                    "git dependency '{name}' is not supported yet; publish it to the configured registry or use a workspace path dependency"
+                )));
+            }
+        }
+        for (feature, members) in &self.features {
+            if feature.trim().is_empty() {
+                return Err(PmError::ManifestParse(
+                    "feature names cannot be empty".to_string(),
+                ));
+            }
+            for member in members {
+                if member.trim().is_empty() {
+                    return Err(PmError::ManifestParse(format!(
+                        "feature '{feature}' contains an empty member"
+                    )));
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Serialize back to `Keel.toml` format.
