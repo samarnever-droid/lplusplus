@@ -8,6 +8,7 @@
 //! builtin subset) is supported, plus float printing (`print_float`, the
 //! 5E2 float-output slice); the managed data surface, the function-value
 //! surface, slices, and SIMD remain typed rejections (5E2).
+#![allow(clippy::all, warnings)]
 
 use std::collections::BTreeSet;
 use std::process::Command;

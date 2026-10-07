@@ -102,7 +102,6 @@ impl BuiltinFacts {
         self.expressions[expression.index()]
     }
 
-    #[must_use]
     pub fn expressions(&self) -> impl Iterator<Item = (ExprId, BuiltinFact)> {
         self.expressions
             .iter()
@@ -134,18 +133,17 @@ pub fn type_matches_semantic(
     types: &TypeInterner,
 ) -> bool {
     use lpp_runtime_abi::generated::SemanticAbiType;
-    match (types.kind(ty), kind) {
-        (_, SemanticAbiType::Any) => true,
-        (TypeKind::Primitive(PrimitiveType::Bool), SemanticAbiType::Bool) => true,
-        (TypeKind::Primitive(PrimitiveType::Float), SemanticAbiType::F64) => true,
-        (TypeKind::Primitive(PrimitiveType::Int), SemanticAbiType::I32) => true,
-        (TypeKind::Primitive(PrimitiveType::Int), SemanticAbiType::I64) => true,
-        (TypeKind::Primitive(PrimitiveType::String), SemanticAbiType::Str) => true,
-        (TypeKind::Primitive(PrimitiveType::StrSlice), SemanticAbiType::StrSlice) => true,
-        (TypeKind::Primitive(PrimitiveType::VectorI64x2), SemanticAbiType::VectorI64x2) => true,
-        (TypeKind::Primitive(PrimitiveType::Void), SemanticAbiType::Void) => true,
-        _ => false,
-    }
+    matches!(
+        (types.kind(ty), kind),
+        (_, SemanticAbiType::Any)
+            | (TypeKind::Primitive(PrimitiveType::Bool), SemanticAbiType::Bool)
+            | (TypeKind::Primitive(PrimitiveType::Float), SemanticAbiType::F64)
+            | (TypeKind::Primitive(PrimitiveType::Int), SemanticAbiType::I32 | SemanticAbiType::I64)
+            | (TypeKind::Primitive(PrimitiveType::String), SemanticAbiType::Str)
+            | (TypeKind::Primitive(PrimitiveType::StrSlice), SemanticAbiType::StrSlice)
+            | (TypeKind::Primitive(PrimitiveType::VectorI64x2), SemanticAbiType::VectorI64x2)
+            | (TypeKind::Primitive(PrimitiveType::Void), SemanticAbiType::Void)
+    )
 }
 
 /// The concrete L++ type a semantic ABI kind denotes, or `None` for kinds

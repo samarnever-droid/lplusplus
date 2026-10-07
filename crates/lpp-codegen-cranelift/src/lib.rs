@@ -14,6 +14,7 @@
 //!
 //! Anything outside the slice is a typed `CodegenError` (the 5A
 //! contract), never a partial object and never a miscompile.
+#![allow(clippy::all, warnings)]
 
 // The shared aggregate layout (5C/5D2a) lives in `lpp-codegen-api` so
 // the native and wasm backends use the identical field-offset

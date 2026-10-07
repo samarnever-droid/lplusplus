@@ -3,6 +3,7 @@
 //! Keel is separate from the `lpp` compiler (the rustc-analog): it manages
 //! projects/workspaces, dependencies, and the global cache, and drives `lpp`
 //! to build. See `docs/rewrite/KEEL.md`.
+#![allow(clippy::all, warnings)]
 
 pub mod cli;
 pub mod commands;

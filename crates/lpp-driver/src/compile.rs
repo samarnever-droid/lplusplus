@@ -386,16 +386,18 @@ fn link_executable_direct(
 ) -> Result<(), lpp_linker::LinkError> {
     use lpp_linker::{DynamicMode, LinkOptions};
 
-    let mut options = LinkOptions::default();
-    options.dynamic = DynamicMode::Force; // resolve lpp_*/libc through the PLT at load time
-    options.pie = false; // ET_EXEC until RELATIVE GOT relocs land
-    options.dynamic_linker = Some(host_dynamic_linker().to_string());
-    // The runtime cdylib must be a load-time dependency; libc/libm are derived
-    // from the object's undefined symbols by the linker.
-    options.needed = vec!["liblpp_runtime.so".to_string()];
-    options.search_paths = vec![runtime_lib_dir.to_path_buf()];
-    // Find the runtime cdylib at run time without LD_LIBRARY_PATH.
-    options.rpath = vec![runtime_lib_dir.display().to_string()];
+    let options = LinkOptions {
+        dynamic: DynamicMode::Force, // resolve lpp_*/libc through the PLT at load time
+        pie: false,                  // ET_EXEC until RELATIVE GOT relocs land
+        dynamic_linker: Some(host_dynamic_linker().to_string()),
+        // The runtime cdylib must be a load-time dependency; libc/libm are derived
+        // from the object's undefined symbols by the linker.
+        needed: vec!["liblpp_runtime.so".to_string()],
+        search_paths: vec![runtime_lib_dir.to_path_buf()],
+        // Find the runtime cdylib at run time without LD_LIBRARY_PATH.
+        rpath: vec![runtime_lib_dir.display().to_string()],
+        ..Default::default()
+    };
 
     lpp_linker::link_typed(&[object_path.to_path_buf()], output, &options).map(|_report| ())
 }
@@ -445,7 +447,14 @@ fn link_executable_cc(
                 runtime_lib_dir.display()
             ))
         })?;
-    let link = Command::new(&compiler)
+    let mut link_cmd = if compiler.ends_with(".cmd") || compiler.ends_with(".bat") {
+        let mut cmd = Command::new("cmd.exe");
+        cmd.arg("/c").arg(&compiler);
+        cmd
+    } else {
+        Command::new(&compiler)
+    };
+    let link = link_cmd
         .arg("/nologo")
         .arg(object_path)
         .arg(format!("/Fe:{}", output.display()))

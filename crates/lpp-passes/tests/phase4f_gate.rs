@@ -908,7 +908,7 @@ impl MirPass for TypeBreakingPass {
                     None
                 }
             })
-            .ok_or_else(|| PassFailure {
+            .ok_or(PassFailure {
                 message: "stub: no integer constant def found",
             })?;
         program

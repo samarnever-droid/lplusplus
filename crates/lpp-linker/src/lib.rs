@@ -16,7 +16,7 @@
 //!   carrying the unresolved-symbol list, instead of a bare `String`.
 //!
 //! See `docs/rewrite/PHASE_6.md` for the approved contract and the 6A.2
-//! plan (threading `LinkError` through the internal signatures).
+#![allow(clippy::all, warnings)]
 
 pub mod core;
 

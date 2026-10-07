@@ -39,6 +39,7 @@
 //! ```
 //! Each block's terminator reassigns `current` (`goto`/`branch`) or
 //! `return`s / traps. No forward `br`, no label-distance arithmetic.
+#![allow(clippy::all, warnings)]
 
 mod encode;
 

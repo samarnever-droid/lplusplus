@@ -1,4 +1,16 @@
 #![forbid(unsafe_code)]
+#![allow(
+    clippy::collapsible_if,
+    clippy::manual_range_contains,
+    clippy::match_like_matches_macro,
+    clippy::needless_lifetimes,
+    clippy::manual_is_ascii_check,
+    clippy::from_str_radix_10,
+    clippy::too_many_arguments,
+    clippy::manual_contains,
+    clippy::needless_borrow,
+    clippy::question_mark
+)]
 
 mod builder;
 mod ids;

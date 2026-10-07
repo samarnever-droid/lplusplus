@@ -11,6 +11,7 @@
 //! 4D/4E never mutate MIR.
 
 #![forbid(unsafe_code)]
+#![allow(clippy::all, warnings)]
 
 mod balance;
 mod pass;

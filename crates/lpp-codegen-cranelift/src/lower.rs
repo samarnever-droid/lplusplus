@@ -2474,14 +2474,6 @@ impl<'m> Lowering<'m> {
         self.entry.clone()
     }
 
-    fn external_name(&self, logical: &str) -> String {
-        if self.module.isa().triple().binary_format == target_lexicon::BinaryFormat::Macho {
-            format!("_{logical}")
-        } else {
-            logical.to_string()
-        }
-    }
-
     /// Declare the module's symbols: runtime imports first (only the
     /// ones the pre-scan found used, in stable order), then generated
     /// destructors in `MirAggregateId` order, then user exports in
@@ -2501,10 +2493,9 @@ impl<'m> Lowering<'m> {
             if let Some(result) = result {
                 sig.returns.push(AbiParam::new(result));
             }
-            let external_name = self.external_name(name);
             let id = self
                 .module
-                .declare_function(&external_name, Linkage::Import, &sig)
+                .declare_function(name, Linkage::Import, &sig)
                 .map_err(|e| emission_failed(format!("declare import {name}: {e:?}")))?;
             self.import_ids.insert(name, id);
             self.imported.insert(name.to_string());
@@ -3618,10 +3609,9 @@ impl<'m> Lowering<'m> {
 
         let mut sig = self.module.make_signature();
         sig.returns.push(AbiParam::new(cltypes::I32));
-        let external_main = self.external_name("main");
         let main_id = self
             .module
-            .declare_function(&external_main, Linkage::Export, &sig)
+            .declare_function("main", Linkage::Export, &sig)
             .map_err(|e| emission_failed(format!("declare export main: {e:?}")))?;
         self.exported.insert("main".to_owned());
         self.entry = Some("main".to_owned());

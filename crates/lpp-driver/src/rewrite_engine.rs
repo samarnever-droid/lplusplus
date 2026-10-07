@@ -380,7 +380,7 @@ fn rewrite_main(args: &[String], cwd: &Path) -> i32 {
                 backend,
                 compile_options,
                 &exe,
-                &runtime_dir,
+                runtime_dir,
                 linker.as_deref(),
             ) {
                 Ok(()) => {

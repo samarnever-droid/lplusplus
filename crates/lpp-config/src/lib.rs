@@ -138,12 +138,11 @@ impl LppConfig {
     /// Load config from disk, or create default on first run
     pub fn load_or_create() -> Self {
         let path = Self::path();
-        if path.exists() {
-            if let Ok(content) = std::fs::read_to_string(&path) {
-                if let Ok(config) = serde_json::from_str::<LppConfig>(&content) {
-                    return config;
-                }
-            }
+        if let Some(config) = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|content| serde_json::from_str::<LppConfig>(&content).ok())
+        {
+            return config;
         }
         // First run — create default config
         let config = Self::create_default();
@@ -260,7 +259,7 @@ impl LppConfig {
         match self.linker.as_str() {
             "direct" => true,
             "host" => false,
-            "auto" | _ => {
+            _ => {
                 // Auto: prefer direct if available
                 self.system.has_lpp_link
             }
