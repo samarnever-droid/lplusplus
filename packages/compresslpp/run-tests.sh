@@ -10,7 +10,7 @@ DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 BUILD="$DIR/build"
 MODE=${1:-all}
 
-"$DIR/build.sh" --tests >/dev/null
+sh "$DIR/build.sh" --tests >/dev/null
 
 cd "$BUILD"
 

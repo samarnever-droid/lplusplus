@@ -44,7 +44,9 @@ jobs:
       - name: Rewrite crates are warning-clean
         run: cargo clippy --locked -p lpp-common -p lpp-driver -p lpp-frontend -p lpp-hir -p lpp-types -p lpp-mir -p lpp-passes -p lpp-runtime-abi --all-targets -- -D warnings
       - name: Rust workspace tests
-        run: cargo test --workspace --locked
+        run: |
+          cargo build --locked -p lpp-runtime
+          cargo test --workspace --locked
       - name: Rewrite native authored-corpus gate
         run: |
           cargo build --locked -p lpp -p lpp-runtime
@@ -339,6 +341,7 @@ jobs:
         shell: pwsh
         run: |
           rustc --version
+          cargo build --locked -p lpp-runtime
           cargo test --locked
           cargo build --release --locked --bin lpp --bin lpp-link
       - name: Rewrite authored-corpus execution on Windows host
@@ -553,6 +556,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - name: Build and test macOS toolchain
         run: |
+          cargo build --locked -p lpp-runtime
           cargo test --locked
           cargo build --release --locked --bin lpp --bin lpp-link
       - name: Rewrite authored-corpus execution on macOS host

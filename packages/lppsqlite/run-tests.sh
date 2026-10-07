@@ -15,7 +15,7 @@ BUILD="$DIR/build"
 MODE=${1:-all}
 
 if [ "$MODE" = "all" ] || [ "$MODE" = "--unit" ]; then
-    "$DIR/build.sh" --tests >/dev/null
+    sh "$DIR/build.sh" --tests >/dev/null
 fi
 
 FAIL=0
@@ -68,7 +68,7 @@ if [ "$MODE" = "all" ] || [ "$MODE" = "--diff" ]; then
     if command -v python3 >/dev/null 2>&1; then
         echo
         echo "== differential vs real sqlite3 =="
-        "$DIR/build.sh" >/dev/null
+        sh "$DIR/build.sh" >/dev/null
         python3 "$DIR/tests/difftest.py" || FAIL=1
     else
         echo "python3 not found; skipping differential tests" >&2

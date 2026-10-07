@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 /// A key/value cache with hit/miss accounting. Mutating operations take
 /// `&mut self` (single-threaded CLI ownership); reads of the key set and
 /// stats take `&self`.
-pub trait KvCache {
+pub trait KvCache: Send + Sync {
     fn get(&mut self, key: &str) -> Option<Vec<u8>>;
     fn set(&mut self, key: &str, value: &[u8]);
     fn del(&mut self, key: &str) -> bool;

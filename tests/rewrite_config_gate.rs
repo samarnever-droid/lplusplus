@@ -30,6 +30,11 @@ fn lpp(home: &Path, working_directory: &Path, arguments: &[&str]) -> Output {
 )]
 fn rewrite_config_is_persisted_validated_and_used_as_the_backend_default() {
     let root = scratch();
+    if lpp_driver::runtime_library_path().is_none() {
+        let _ = Command::new(env!("CARGO"))
+            .args(["build", "--locked", "-p", "lpp-runtime"])
+            .output();
+    }
     let home = root.join("home");
     let project = root.join("project");
     std::fs::create_dir_all(&home).unwrap();

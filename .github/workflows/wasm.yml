@@ -37,6 +37,8 @@ jobs:
           tar -xJf /tmp/wasmtime.tar.xz -C "$HOME/.wasmtime" --strip-components=1
           echo "$HOME/.wasmtime" >> "$GITHUB_PATH"
           "$HOME/.wasmtime/wasmtime" --version
+      - name: Build runtime library
+        run: cargo build --locked -p lpp-runtime
       - name: Rust unit tests
         run: cargo test --locked
       - name: Rewrite WebAssembly corpus gate
@@ -65,6 +67,8 @@ jobs:
           tar -xJf /tmp/wasmtime.tar.xz -C "$HOME/.wasmtime" --strip-components=1
           echo "$HOME/.wasmtime" >> "$GITHUB_PATH"
           "$HOME/.wasmtime/wasmtime" --version
+      - name: Build runtime library
+        run: cargo build --locked -p lpp-runtime
       - name: Rust unit tests
         run: cargo test --locked
       - name: Rewrite WebAssembly corpus gate
