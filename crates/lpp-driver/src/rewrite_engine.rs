@@ -157,7 +157,9 @@ fn rewrite_main(args: &[String], cwd: &Path) -> i32 {
     let mut optimization = OptimizationLevel::O0;
     let mut output: Option<String> = None;
     let mut linker: Option<String> = match user_config.linker.as_str() {
-        "direct" if cfg!(target_os = "linux") => Some("direct".to_string()),
+        "direct" if cfg!(any(target_os = "linux", target_os = "windows")) => {
+            Some("direct".to_string())
+        }
         "direct" | "host" => Some("cc".to_string()),
         _ => None,
     };

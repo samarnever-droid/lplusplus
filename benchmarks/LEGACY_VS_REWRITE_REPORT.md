@@ -1,6 +1,6 @@
 # L++ Engine Benchmark: Legacy (v1) vs Rewrite (v2)
 
-- **Date**: 2026-10-08 20:45:44
+- **Date**: 2026-10-08 21:10:08
 - **Compiler Binary**: `C:\Users\khati\lpp\target\release\lpp.exe`
 - **Platform**: `win32`
 
@@ -8,12 +8,12 @@
 
 | Workload                     | Legacy Exec  | Rewrite Exec | Exec Speedup   | Legacy Comp  | Rewrite Comp | Comp Ratio   | Binary (KB)  |
 |:-----------------------------|-------------:|-------------:|---------------:|-------------:|-------------:|-------------:|-------------:|
-| Fibonacci (Recursion)        |    301.47 ms |    267.74 ms | + 1.13x faster |     358.9 ms |    3400.6 ms |        0.11x |      10.0 KB |
-| Tight Loop Accumulator       |   1212.73 ms |    145.15 ms | + 8.35x faster |      28.7 ms |    2994.7 ms |        0.01x |      10.0 KB |
-| Branch & Conditional Mix     |   1177.32 ms |    193.35 ms | + 6.09x faster |      72.6 ms |    3078.3 ms |        0.02x |      10.0 KB |
-| Function Call Overhead       |    561.75 ms |    139.83 ms | + 4.02x faster |      69.7 ms |    3352.3 ms |        0.02x |      10.0 KB |
-| Struct & List Allocation     |    836.11 ms |     55.56 ms | +15.05x faster |      59.4 ms |    3498.6 ms |        0.02x |      10.5 KB |
-| File I/O & String Throughput |   1366.88 ms |    470.03 ms | + 2.91x faster |      46.2 ms |    3709.7 ms |        0.01x |      11.5 KB |
+| Fibonacci (Recursion)        |    307.32 ms |    233.06 ms | + 1.32x faster |     429.5 ms |      49.0 ms |        8.77x |       3.0 KB |
+| Tight Loop Accumulator       |   1349.91 ms |    114.69 ms | +11.77x faster |      55.5 ms |      44.5 ms |        1.25x |       3.0 KB |
+| Branch & Conditional Mix     |   1380.60 ms |    193.31 ms | + 7.14x faster |      54.9 ms |      49.5 ms |        1.11x |       3.0 KB |
+| Function Call Overhead       |    634.90 ms |    143.40 ms | + 4.43x faster |      54.8 ms |      66.7 ms |        0.82x |       3.0 KB |
+| Struct & List Allocation     |    571.21 ms |     66.08 ms | + 8.64x faster |      87.8 ms |      47.0 ms |        1.87x |       3.5 KB |
+| File I/O & String Throughput |   1495.38 ms |    592.86 ms | + 2.52x faster |      59.4 ms |      53.6 ms |        1.11x |       4.0 KB |
 
 ## Summary of Architectural Advantages in Rewrite (v2)
 

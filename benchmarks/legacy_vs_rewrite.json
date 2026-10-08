@@ -2,49 +2,49 @@
   "legacy": {
     "Fibonacci (Recursion)": {
       "success": true,
-      "compile_ms": 358.8529333334615,
-      "lines_per_sec": 39.0131964923653,
-      "exec_ms": 301.4746333331762,
+      "compile_ms": 429.4779333331462,
+      "lines_per_sec": 32.59771670070926,
+      "exec_ms": 307.32246666654345,
       "bin_kb": 68.5,
       "stdout": "9227465"
     },
     "Tight Loop Accumulator": {
       "success": true,
-      "compile_ms": 28.726766666598753,
-      "lines_per_sec": 487.3503573333963,
-      "exec_ms": 1212.7270666665027,
+      "compile_ms": 55.52210000011352,
+      "lines_per_sec": 252.15184584105026,
+      "exec_ms": 1349.9087000000145,
       "bin_kb": 68.5,
       "stdout": "49999995000000"
     },
     "Branch & Conditional Mix": {
       "success": true,
-      "compile_ms": 72.5892999998905,
-      "lines_per_sec": 234.1942958538744,
-      "exec_ms": 1177.3237000000638,
+      "compile_ms": 54.861999999957334,
+      "lines_per_sec": 309.8683970692505,
+      "exec_ms": 1380.5957333333936,
       "bin_kb": 68.5,
       "stdout": "6666669"
     },
     "Function Call Overhead": {
       "success": true,
-      "compile_ms": 69.70623333321176,
-      "lines_per_sec": 286.9183865436455,
-      "exec_ms": 561.7472333331838,
+      "compile_ms": 54.79503333359995,
+      "lines_per_sec": 364.99658423852316,
+      "exec_ms": 634.902800000115,
       "bin_kb": 68.5,
       "stdout": "500000500000"
     },
     "Struct & List Allocation": {
       "success": true,
-      "compile_ms": 59.360633333350656,
-      "lines_per_sec": 235.84654027157023,
-      "exec_ms": 836.1122666666839,
+      "compile_ms": 87.8266666665392,
+      "lines_per_sec": 159.40488841680946,
+      "exec_ms": 571.2064000002405,
       "bin_kb": 69.0,
       "stdout": "400005"
     },
     "File I/O & String Throughput": {
       "success": true,
-      "compile_ms": 46.174266666791176,
-      "lines_per_sec": 541.4271152459938,
-      "exec_ms": 1366.8824000001223,
+      "compile_ms": 59.37426666635778,
+      "lines_per_sec": 421.05783201471223,
+      "exec_ms": 1495.378300000084,
       "bin_kb": 69.5,
       "stdout": "IO_SUCCESS_BYTES:85184"
     }
@@ -52,50 +52,50 @@
   "rewrite": {
     "Fibonacci (Recursion)": {
       "success": true,
-      "compile_ms": 3400.593633333301,
-      "lines_per_sec": 4.116928251223313,
-      "exec_ms": 267.73683333325,
-      "bin_kb": 10.0,
+      "compile_ms": 48.9539333329958,
+      "lines_per_sec": 285.9831487853859,
+      "exec_ms": 233.06026666674975,
+      "bin_kb": 3.0,
       "stdout": "9227465"
     },
     "Tight Loop Accumulator": {
       "success": true,
-      "compile_ms": 2994.724033333417,
-      "lines_per_sec": 4.674888184744238,
-      "exec_ms": 145.1505666665677,
-      "bin_kb": 10.0,
+      "compile_ms": 44.455266666470074,
+      "lines_per_sec": 314.92331617390465,
+      "exec_ms": 114.6852333337544,
+      "bin_kb": 3.0,
       "stdout": "49999995000000"
     },
     "Branch & Conditional Mix": {
       "success": true,
-      "compile_ms": 3078.2656999999745,
-      "lines_per_sec": 5.522590203958074,
-      "exec_ms": 193.34969999999885,
-      "bin_kb": 10.0,
+      "compile_ms": 49.547399999937625,
+      "lines_per_sec": 343.105793644498,
+      "exec_ms": 193.30683333343282,
+      "bin_kb": 3.0,
       "stdout": "6666669"
     },
     "Function Call Overhead": {
       "success": true,
-      "compile_ms": 3352.276399999937,
-      "lines_per_sec": 5.966095158501959,
-      "exec_ms": 139.82963333319276,
-      "bin_kb": 10.0,
+      "compile_ms": 66.7148333335111,
+      "lines_per_sec": 299.78340648801304,
+      "exec_ms": 143.40026666650374,
+      "bin_kb": 3.0,
       "stdout": "500000500000"
     },
     "Struct & List Allocation": {
       "success": true,
-      "compile_ms": 3498.575566666659,
-      "lines_per_sec": 4.001628586613263,
-      "exec_ms": 55.56073333324699,
-      "bin_kb": 10.5,
+      "compile_ms": 46.97939999975157,
+      "lines_per_sec": 298.00295448801035,
+      "exec_ms": 66.07709999965057,
+      "bin_kb": 3.5,
       "stdout": "400005"
     },
     "File I/O & String Throughput": {
       "success": true,
-      "compile_ms": 3709.6522666665805,
-      "lines_per_sec": 6.7391761283503,
-      "exec_ms": 470.0254333335276,
-      "bin_kb": 11.5,
+      "compile_ms": 53.60389999987092,
+      "lines_per_sec": 466.3839757939292,
+      "exec_ms": 592.8601999994498,
+      "bin_kb": 4.0,
       "stdout": "IO_SUCCESS_BYTES:85184"
     }
   }

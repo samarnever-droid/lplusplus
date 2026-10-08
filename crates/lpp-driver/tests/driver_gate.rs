@@ -78,10 +78,6 @@ fn compiles_an_entry_to_an_object() {
 }
 
 #[test]
-#[cfg_attr(
-    target_os = "windows",
-    ignore = "MSVC environment is exercised by the Windows driver smoke gate"
-)]
 fn compiles_and_runs_a_native_executable() {
     let dir = workdir("exe");
     let entry = dir.join("main.lpp");
@@ -90,7 +86,11 @@ fn compiles_and_runs_a_native_executable() {
         "def main() -> Int:\n    print_int(6 * 7)\n    print_str(\"driver_ok\")\n    return 0\n",
     )
     .unwrap();
-    let exe = dir.join("program");
+    let exe = if cfg!(target_os = "windows") {
+        dir.join("program.exe")
+    } else {
+        dir.join("program")
+    };
 
     build_executable(
         &entry,
@@ -104,7 +104,7 @@ fn compiles_and_runs_a_native_executable() {
     let run = Command::new(&exe).output().expect("run the executable");
     let stdout = String::from_utf8_lossy(&run.stdout).into_owned();
     assert_eq!(run.status.code(), Some(0), "exe exited non-zero:\n{stdout}");
-    assert_eq!(stdout, "42\ndriver_ok\n", "unexpected program output");
+    assert_eq!(stdout.replace("\r\n", "\n"), "42\ndriver_ok\n", "unexpected program output");
 }
 
 /// Cutover stage 1: `RewriteEngine` drives the same pipeline through the
@@ -112,10 +112,6 @@ fn compiles_and_runs_a_native_executable() {
 /// compiles, links, and runs, returning exit code 0 to the session and leaving
 /// the executable beside the source.
 #[test]
-#[cfg_attr(
-    target_os = "windows",
-    ignore = "MSVC environment is exercised by the Windows driver smoke gate"
-)]
 fn rewrite_engine_runs_a_program_through_the_driver_contract() {
     let dir = workdir("engine");
     let entry = dir.join("main.lpp");
@@ -144,8 +140,13 @@ fn rewrite_engine_runs_a_program_through_the_driver_contract() {
         0,
         "rewrite engine `run` should compile, link, and run cleanly"
     );
+    let exe_name = if cfg!(target_os = "windows") {
+        "main.exe"
+    } else {
+        "main"
+    };
     assert!(
-        dir.join("main").exists(),
+        dir.join(exe_name).exists(),
         "the engine should have built the executable next to the source"
     );
 }
@@ -155,10 +156,6 @@ fn rewrite_engine_runs_a_program_through_the_driver_contract() {
 /// fix across the type checker (zero-argument constructor arity) and MIR
 /// (zero-value synthesis per concrete field type).
 #[test]
-#[cfg_attr(
-    target_os = "windows",
-    ignore = "MSVC environment is exercised by the Windows driver smoke gate"
-)]
 fn zero_arg_struct_constructor_zero_initializes_fields() {
     let dir = workdir("zeroinit");
     let entry = dir.join("main.lpp");
@@ -167,7 +164,11 @@ fn zero_arg_struct_constructor_zero_initializes_fields() {
         "struct Box:\n    value: Int\n\ndef main() -> Int:\n    b := Box()\n    print_int(b.value)\n    return 0\n",
     )
     .unwrap();
-    let exe = dir.join("program");
+    let exe = if cfg!(target_os = "windows") {
+        dir.join("program.exe")
+    } else {
+        dir.join("program")
+    };
 
     build_executable(
         &entry,
@@ -181,5 +182,5 @@ fn zero_arg_struct_constructor_zero_initializes_fields() {
     let run = Command::new(&exe).output().expect("run the executable");
     let stdout = String::from_utf8_lossy(&run.stdout).into_owned();
     assert_eq!(run.status.code(), Some(0), "exe exited non-zero:\n{stdout}");
-    assert_eq!(stdout, "0\n", "Box() should zero-initialize `value` to 0");
+    assert_eq!(stdout.replace("\r\n", "\n"), "0\n", "Box() should zero-initialize `value` to 0");
 }

@@ -283,6 +283,7 @@ fn prove_ownership(
 }
 
 /// The glibc dynamic loader (`PT_INTERP`) for the host architecture.
+#[cfg(not(target_os = "windows"))]
 fn host_dynamic_linker() -> &'static str {
     match std::env::consts::ARCH {
         "x86_64" => "/lib64/ld-linux-x86-64.so.2",
@@ -339,15 +340,16 @@ pub fn link_executable_with(
     std::fs::write(&object_path, object).map_err(|error| CompileError::Io(error.to_string()))?;
 
     let force_direct = linker == Some("direct");
-    if force_direct && !cfg!(target_os = "linux") {
+    if force_direct && !cfg!(any(target_os = "linux", target_os = "windows")) {
         let _ = std::fs::remove_file(&object_path);
         return Err(CompileError::Link(
-            "the rewrite direct linker is currently supported on Linux only; use `--linker cc`"
+            "the rewrite direct linker is currently supported on Linux and Windows only; use `--linker cc`"
                 .to_string(),
         ));
     }
-    let force_cc =
-        linker == Some("cc") || std::env::consts::ARCH == "aarch64" || !cfg!(target_os = "linux");
+    let force_cc = linker == Some("cc")
+        || std::env::consts::ARCH == "aarch64"
+        || !cfg!(any(target_os = "linux", target_os = "windows"));
 
     let result = if force_cc {
         link_executable_cc(&object_path, runtime_lib_dir, output)
@@ -384,8 +386,17 @@ fn link_executable_direct(
     runtime_lib_dir: &Path,
     output: &Path,
 ) -> Result<(), lpp_linker::LinkError> {
-    use lpp_linker::{DynamicMode, LinkOptions};
+    use lpp_linker::{DynamicMode, LinkOptions, OutputFormat};
 
+    #[cfg(target_os = "windows")]
+    let options = LinkOptions {
+        format: Some(OutputFormat::Pe),
+        dynamic: DynamicMode::Force,
+        search_paths: vec![runtime_lib_dir.to_path_buf()],
+        ..Default::default()
+    };
+
+    #[cfg(not(target_os = "windows"))]
     let options = LinkOptions {
         dynamic: DynamicMode::Force, // resolve lpp_*/libc through the PLT at load time
         pie: false,                  // ET_EXEC until RELATIVE GOT relocs land
@@ -399,7 +410,22 @@ fn link_executable_direct(
         ..Default::default()
     };
 
-    lpp_linker::link_typed(&[object_path.to_path_buf()], output, &options).map(|_report| ())
+    lpp_linker::link_typed(&[object_path.to_path_buf()], output, &options)?;
+
+    #[cfg(target_os = "windows")]
+    {
+        let runtime = runtime_library_path()
+            .unwrap_or_else(|| runtime_lib_dir.join(runtime_library_filename()));
+        let destination = output
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join(runtime_library_filename());
+        if runtime.is_file() && runtime != destination {
+            let _ = std::fs::copy(&runtime, &destination);
+        }
+    }
+
+    Ok(())
 }
 
 /// The legacy external-toolchain link, kept as a fallback.

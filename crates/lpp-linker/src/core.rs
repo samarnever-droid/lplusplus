@@ -4090,6 +4090,9 @@ fn classify_dll(name: &str, extra: &HashMap<String, String>) -> Option<String> {
     if is_kernel32_symbol(clean) {
         return Some("KERNEL32.dll".into());
     }
+    if clean.starts_with("lpp_") {
+        return Some("lpp_runtime.dll".into());
+    }
     None
 }
 
