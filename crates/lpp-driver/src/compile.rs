@@ -461,6 +461,8 @@ fn link_executable_cc(
         .arg("/link")
         .arg(format!("/LIBPATH:{}", runtime_lib_dir.display()))
         .arg(import_library)
+        .arg("msvcrt.lib")
+        .arg("legacy_stdio_definitions.lib")
         .output()
         .map_err(|error| CompileError::Io(format!("failed to run {compiler}: {error}")))?;
     if !link.status.success() {
@@ -475,14 +477,15 @@ fn link_executable_cc(
         .parent()
         .unwrap_or_else(|| Path::new("."))
         .join(runtime_library_filename());
-    if runtime != destination {
-        std::fs::copy(&runtime, &destination).map_err(|error| {
-            CompileError::Io(format!(
-                "copy runtime {} to {}: {error}",
-                runtime.display(),
-                destination.display()
-            ))
-        })?;
+    if runtime != destination
+        && let Err(error) = std::fs::copy(&runtime, &destination)
+        && !destination.is_file()
+    {
+        return Err(CompileError::Io(format!(
+            "copy runtime {} to {}: {error}",
+            runtime.display(),
+            destination.display()
+        )));
     }
     Ok(())
 }

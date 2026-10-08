@@ -65,7 +65,7 @@ fn compiles_an_entry_to_an_object() {
 
     let module = compile_entry(&entry, "objtest", BackendChoice::Cranelift)
         .expect("compile_entry must succeed");
-    assert_eq!(module.target, Target::X86_64);
+    assert_eq!(module.target, Target::host());
     assert!(!module.object.is_empty(), "object must be non-empty");
     assert!(
         module

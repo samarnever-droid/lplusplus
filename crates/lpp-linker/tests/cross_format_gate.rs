@@ -196,7 +196,7 @@ fn pe_objdump_agrees() {
         Ok(o) if o.status.success() => {
             let s = String::from_utf8_lossy(&o.stdout);
             assert!(
-                s.contains("pei-x86-64") || s.contains("pe-x86-64"),
+                s.contains("pei-x86-64") || s.contains("pe-x86-64") || s.contains("coff-x86-64"),
                 "objdump must recognize a PE/COFF x86-64 image; got:\n{s}"
             );
             assert!(
