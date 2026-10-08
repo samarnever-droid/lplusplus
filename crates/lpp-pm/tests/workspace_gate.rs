@@ -9,7 +9,7 @@ fn temp(tag: &str) -> std::path::PathBuf {
     let d = std::env::temp_dir().join(format!("lpp-ws-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&d);
     std::fs::create_dir_all(&d).unwrap();
-    d
+    d.canonicalize().unwrap_or(d)
 }
 
 fn pkg_manifest(name: &str, deps: &str) -> String {
