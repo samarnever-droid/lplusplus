@@ -5,7 +5,7 @@ PROJECT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 INSTALL_DIR=${LPP_INSTALL_DIR:-"$HOME/.lpp"}
 BIN_DIR="$INSTALL_DIR/bin"
 LIB_DIR="$INSTALL_DIR/lib"
-VERSION=${LPP_VERSION:-latest}
+VERSION=${LPP_VERSION:-v0.1}
 case "$VERSION" in
   latest|v*) ;;
   *) VERSION="v$VERSION" ;;
