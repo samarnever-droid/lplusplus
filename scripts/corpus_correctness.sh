@@ -170,6 +170,7 @@ echo "full log: $LOG"
 failures=$((compfail + runfail + assertfail + timeout_n + xfail_bad))
 if [ "$failures" -ne 0 ]; then
   echo "gate: FAIL ($failures incorrect corpus outcomes)" >&2
+  head -n 50 "$LOG" >&2
   exit 1
 fi
 echo "gate: PASS"

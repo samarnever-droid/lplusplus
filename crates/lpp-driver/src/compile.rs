@@ -464,9 +464,11 @@ fn link_executable_cc(
         .output()
         .map_err(|error| CompileError::Io(format!("failed to run {compiler}: {error}")))?;
     if !link.status.success() {
-        return Err(CompileError::Link(
-            String::from_utf8_lossy(&link.stderr).into_owned(),
-        ));
+        let mut err = String::from_utf8_lossy(&link.stderr).into_owned();
+        if err.trim().is_empty() {
+            err = String::from_utf8_lossy(&link.stdout).into_owned();
+        }
+        return Err(CompileError::Link(err));
     }
     let runtime = runtime_lib_dir.join(runtime_library_filename());
     let destination = output

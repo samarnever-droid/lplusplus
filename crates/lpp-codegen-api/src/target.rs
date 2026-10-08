@@ -43,6 +43,16 @@ impl Target {
         }
     }
 
+    /// The default target matching the current build host.
+    #[must_use]
+    pub const fn host() -> Self {
+        if cfg!(target_arch = "aarch64") {
+            Self::Aarch64
+        } else {
+            Self::X86_64
+        }
+    }
+
     /// The full bounded set of Phase 5 targets, in deterministic order.
     #[must_use]
     pub const fn all() -> &'static [Target] {

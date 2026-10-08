@@ -139,7 +139,7 @@ fn compile(
     names: &Names<'_>,
 ) -> lpp_codegen_api::CompiledModule {
     let backend = CraneliftBackend;
-    let options = CodegenOptions::new(Target::X86_64, names);
+    let options = CodegenOptions::new(Target::host(), names);
     backend
         .compile_module(program, types, &options)
         .unwrap_or_else(|e| panic!("compile_module failed: {e}"))
