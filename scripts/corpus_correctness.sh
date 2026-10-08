@@ -24,6 +24,18 @@ MODE="${1:-run}"
 LOG=/tmp/corpus_correctness.log
 PER_FILE_TIMEOUT=25
 
+run_with_timeout() {
+  local dur="$1"
+  shift
+  if type timeout >/dev/null 2>&1; then
+    timeout "$dur" "$@"
+  elif type gtimeout >/dev/null 2>&1; then
+    gtimeout "$dur" "$@"
+  else
+    "$@"
+  fi
+}
+
 case "$MODE" in
   run|check) ;;
   *) echo "usage: $0 [run|check]" >&2; exit 2;;
@@ -96,11 +108,11 @@ for f in "${FILES[@]}"; do
   fi
 
   if [ "$MODE" = "check" ]; then
-    out=$(LPP_ENGINE=rewrite timeout "$PER_FILE_TIMEOUT" "$LPP" "$rel" --check 2>&1); rc=$?
+    out=$(LPP_ENGINE=rewrite run_with_timeout "$PER_FILE_TIMEOUT" "$LPP" "$rel" --check 2>&1); rc=$?
   else
     # </dev/null guarantees stdin is at EOF: a program calling input() reads the
     # empty string and terminates instead of blocking until the per-file timeout.
-    out=$(LPP_ENGINE=rewrite timeout "$PER_FILE_TIMEOUT" "$LPP" run "$rel" </dev/null 2>&1); rc=$?
+    out=$(LPP_ENGINE=rewrite run_with_timeout "$PER_FILE_TIMEOUT" "$LPP" run "$rel" </dev/null 2>&1); rc=$?
     # lpp run emits an executable named after the source into the cwd; remove it so the
     # harness never pollutes the repo root with one binary per corpus file.
     rm -f "./$(basename "$rel" .lpp)" "./$(basename "$rel" .lpp).exe"
