@@ -280,6 +280,179 @@ mod pthread_sync {
     }
 }
 
+#[cfg(windows)]
+mod windows_sync {
+    use std::ffi::c_void;
+
+    #[repr(C)]
+    struct CriticalSection {
+        debug_info: *mut c_void,
+        lock_count: i32,
+        recursion_count: i32,
+        owning_thread: *mut c_void,
+        lock_semaphore: *mut c_void,
+        spin_count: usize,
+    }
+
+    #[repr(C)]
+    struct SrwLock {
+        ptr: *mut c_void,
+    }
+
+    unsafe extern "system" {
+        fn InitializeCriticalSection(cs: *mut CriticalSection);
+        fn EnterCriticalSection(cs: *mut CriticalSection);
+        fn TryEnterCriticalSection(cs: *mut CriticalSection) -> i32;
+        fn LeaveCriticalSection(cs: *mut CriticalSection);
+        fn DeleteCriticalSection(cs: *mut CriticalSection);
+
+        fn InitializeSRWLock(srw: *mut SrwLock);
+        fn AcquireSRWLockShared(srw: *mut SrwLock);
+        fn AcquireSRWLockExclusive(srw: *mut SrwLock);
+        fn ReleaseSRWLockShared(srw: *mut SrwLock);
+        fn ReleaseSRWLockExclusive(srw: *mut SrwLock);
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn lpp_mutex_new() -> i64 {
+        let boxed = Box::new(CriticalSection {
+            debug_info: std::ptr::null_mut(),
+            lock_count: 0,
+            recursion_count: 0,
+            owning_thread: std::ptr::null_mut(),
+            lock_semaphore: std::ptr::null_mut(),
+            spin_count: 0,
+        });
+        let raw = Box::into_raw(boxed);
+        unsafe { InitializeCriticalSection(raw) };
+        raw as i64
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn lpp_mutex_lock(handle: i64) {
+        if handle != 0 {
+            unsafe { EnterCriticalSection(handle as *mut CriticalSection) };
+        }
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn lpp_mutex_trylock(handle: i64) -> i64 {
+        if handle == 0 {
+            return 0;
+        }
+        let rc = unsafe { TryEnterCriticalSection(handle as *mut CriticalSection) };
+        i64::from(rc != 0)
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn lpp_mutex_unlock(handle: i64) {
+        if handle != 0 {
+            unsafe { LeaveCriticalSection(handle as *mut CriticalSection) };
+        }
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn lpp_mutex_free(handle: i64) {
+        if handle != 0 {
+            let ptr = handle as *mut CriticalSection;
+            unsafe {
+                DeleteCriticalSection(ptr);
+                drop(Box::from_raw(ptr));
+            }
+        }
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn lpp_rwlock_new() -> i64 {
+        let boxed = Box::new(SrwLock {
+            ptr: std::ptr::null_mut(),
+        });
+        let raw = Box::into_raw(boxed);
+        unsafe { InitializeSRWLock(raw) };
+        raw as i64
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn lpp_rwlock_rdlock(handle: i64) {
+        if handle != 0 {
+            unsafe { AcquireSRWLockShared(handle as *mut SrwLock) };
+        }
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn lpp_rwlock_wrlock(handle: i64) {
+        if handle != 0 {
+            unsafe { AcquireSRWLockExclusive(handle as *mut SrwLock) };
+        }
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn lpp_rwlock_rdunlock(handle: i64) {
+        if handle != 0 {
+            unsafe { ReleaseSRWLockShared(handle as *mut SrwLock) };
+        }
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn lpp_rwlock_wrunlock(handle: i64) {
+        if handle != 0 {
+            unsafe { ReleaseSRWLockExclusive(handle as *mut SrwLock) };
+        }
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn lpp_rwlock_free(handle: i64) {
+        if handle != 0 {
+            let ptr = handle as *mut SrwLock;
+            unsafe {
+                drop(Box::from_raw(ptr));
+            }
+        }
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+mod stub_sync {
+    #[unsafe(no_mangle)]
+    pub extern "C" fn lpp_mutex_new() -> i64 {
+        0
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn lpp_mutex_lock(_handle: i64) {}
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn lpp_mutex_trylock(_handle: i64) -> i64 {
+        0
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn lpp_mutex_unlock(_handle: i64) {}
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn lpp_mutex_free(_handle: i64) {}
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn lpp_rwlock_new() -> i64 {
+        0
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn lpp_rwlock_rdlock(_handle: i64) {}
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn lpp_rwlock_wrlock(_handle: i64) {}
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn lpp_rwlock_rdunlock(_handle: i64) {}
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn lpp_rwlock_wrunlock(_handle: i64) {}
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn lpp_rwlock_free(_handle: i64) {}
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn lpp_cpu_count() -> i64 {
     std::thread::available_parallelism().map_or(1, |count| count.get() as i64)
