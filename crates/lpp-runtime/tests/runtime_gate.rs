@@ -633,8 +633,9 @@ fn symbol_census_matches_the_c_reference() {
         let _ = parts.next(); // value
         let kind = parts.next().unwrap_or("");
         let name = parts.next().unwrap_or("");
-        if ["T", "t", "B", "D", "R", "r"].contains(&kind) && name.starts_with("lpp_") {
-            rust_syms.insert(name.to_string());
+        let clean = name.trim_start_matches('_');
+        if ["T", "t", "B", "D", "R", "r", "S", "s"].contains(&kind) && clean.starts_with("lpp_") {
+            rust_syms.insert(clean.to_string());
         }
     }
     for sym in ABI_SYMBOLS {
@@ -665,8 +666,13 @@ fn symbol_census_matches_the_c_reference() {
         .status()
         .unwrap();
     assert!(status.success(), "the v1 C runtime must still compile");
+    let defined_flag = if cfg!(target_os = "macos") {
+        "-U"
+    } else {
+        "--defined-only"
+    };
     let nm = Command::new("nm")
-        .args(["-g", "--defined-only", c_obj.to_str().unwrap()])
+        .args(["-g", defined_flag, c_obj.to_str().unwrap()])
         .output()
         .expect("nm must exist");
     let mut c_syms = std::collections::BTreeSet::new();
@@ -675,7 +681,7 @@ fn symbol_census_matches_the_c_reference() {
         let _ = parts.next();
         let _ = parts.next();
         if let Some(name) = parts.next() {
-            c_syms.insert(name.to_string());
+            c_syms.insert(name.trim_start_matches('_').to_string());
         }
     }
     for sym in ABI_SYMBOLS {
@@ -701,7 +707,7 @@ fn symbol_census_matches_the_c_reference() {
         .unwrap();
     assert!(status.success(), "the c_shim reference must still compile");
     let nm = Command::new("nm")
-        .args(["-g", "--defined-only", shim_obj.to_str().unwrap()])
+        .args(["-g", defined_flag, shim_obj.to_str().unwrap()])
         .output()
         .expect("nm must exist");
     let mut shim_syms = std::collections::BTreeSet::new();
@@ -710,7 +716,7 @@ fn symbol_census_matches_the_c_reference() {
         let _ = parts.next();
         let _ = parts.next();
         if let Some(name) = parts.next() {
-            shim_syms.insert(name.to_string());
+            shim_syms.insert(name.trim_start_matches('_').to_string());
         }
     }
     for sym in SHIM_ONLY_SYMBOLS {
