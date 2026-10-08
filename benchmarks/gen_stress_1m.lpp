@@ -1,0 +1,27 @@
+# gen_stress_1m.lpp — Generates 1,000,000 LOC stress benchmark file
+
+def build_block(id: Int) -> Str:
+    s_id := int_to_str(id)
+    return "struct Point_" + s_id + ":\n    x: Int\n    y: Int\n\ndef calc_" + s_id + "(p: Point_" + s_id + ") -> Int:\n    mut acc := p.x * 3 + p.y\n    if acc > 1000:\n        acc = acc - 500\n    else:\n        acc = acc + 500\n    return acc\n\n"
+
+def main():
+    out_file := "benchmarks/stress_1m.lpp"
+    print_str("Generating 1,000,000 LOC L++ stress file...")
+    write_file(out_file, "# 1 Million Lines of Code Stress Test\n\n")
+
+    # 100000 blocks of 10 lines = 1,000,000 lines
+    total_blocks := 100000
+    mut i := 0
+    mut batch := ""
+    while i < total_blocks:
+        batch = batch + build_block(i)
+        i = i + 1
+        if i % 100 == 0:
+            append_file(out_file, batch)
+            batch = ""
+            if i % 10000 == 0:
+                print_str("Generated " + int_to_str(i * 12) + " lines...")
+
+    main_code := "def main():\n    pt := Point_0(10, 20)\n    res := calc_0(pt)\n    print_int(res)\n"
+    append_file(out_file, main_code)
+    print_str("Finished generating 1,000,000 LOC in benchmarks/stress_1m.lpp")

@@ -30,11 +30,17 @@ pub fn run_optimization(
 ) -> Result<PassManagerOutcome, PassManagerError> {
     let sweeps = level.budget().fixed_point_iterations;
     let mut outcome: Option<PassManagerOutcome> = None;
-    for _ in 0..sweeps {
-        let before = mir_snapshot(program);
+    for sweep in 0..sweeps {
+        let before = if sweeps > 1 && sweep + 1 < sweeps {
+            Some(mir_snapshot(program))
+        } else {
+            None
+        };
         outcome = Some(optimization_passes().run(program, types)?);
-        if mir_snapshot(program) == before {
-            break;
+        if let Some(before) = before {
+            if mir_snapshot(program) == before {
+                break;
+            }
         }
     }
     Ok(outcome.expect("every optimization budget allows at least one sweep"))

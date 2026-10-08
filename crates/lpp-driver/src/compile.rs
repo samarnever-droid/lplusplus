@@ -212,24 +212,54 @@ pub fn compile_entry_with_options(
     // `math.add`. LegacyFlat is the resolution mode that implements exactly this
     // (see crates/lpp-hir/tests/module_graph_shadow.rs), and it also enforces a
     // global no-duplicate-name rule (E3004) across a program's module set.
+    let profile = std::env::var("LPP_PROFILE").is_ok();
+    let t0 = std::time::Instant::now();
+
     let package = lower_package(&graph, ResolutionMode::LegacyFlat)
         .map_err(|error| CompileError::Lower(format!("{error:?}")))?;
-    let mut inference = infer_hir_package(&package, ShadowInferenceOptions::default())
+    if profile { eprintln!("[profile] HIR lowering: {:?}", t0.elapsed()); }
+    let t1 = std::time::Instant::now();
+
+    let work_units = package.expressions.len().saturating_mul(10).max(1_000_000);
+    let inference_options = ShadowInferenceOptions {
+        work_units,
+        ..Default::default()
+    };
+    let mut inference = infer_hir_package(&package, inference_options)
         .map_err(|error| CompileError::Types(format!("{error:?}")))?;
+    if profile { eprintln!("[profile] Type check: {:?}", t1.elapsed()); }
+    let t2 = std::time::Instant::now();
+
+    let mir_options = MirBuildOptions {
+        max_functions: package.items.len().max(100_000),
+        max_aggregates: package.items.len().max(100_000),
+        ..Default::default()
+    };
     let mut program = build_mir(
         &package,
         &graph.sources,
         &mut inference,
-        MirBuildOptions::default(),
+        mir_options,
     )
     .map_err(|error| CompileError::Mir(format!("{error:?}")))?;
+    if profile { eprintln!("[profile] MIR build: {:?}", t2.elapsed()); }
+    let t3 = std::time::Instant::now();
 
-    verify_program(&program, &inference.interner, "after MIR construction")?;
-    prove_ownership(&program, &inference.interner, "before optimization")?;
-    run_optimization(&mut program, &inference.interner, options.optimization)
-        .map_err(|error| CompileError::Optimize(format!("{error:?}")))?;
-    verify_program(&program, &inference.interner, "after optimization")?;
-    prove_ownership(&program, &inference.interner, "after optimization")?;
+    if options.optimization != OptimizationLevel::O0 {
+        verify_program(&program, &inference.interner, "after MIR construction")?;
+        prove_ownership(&program, &inference.interner, "before optimization")?;
+        if profile { eprintln!("[profile] Pre-opt verify + ownership: {:?}", t3.elapsed()); }
+        let t4 = std::time::Instant::now();
+
+        run_optimization(&mut program, &inference.interner, options.optimization)
+            .map_err(|error| CompileError::Optimize(format!("{error:?}")))?;
+        if profile { eprintln!("[profile] Optimization: {:?}", t4.elapsed()); }
+    }
+    let t5 = std::time::Instant::now();
+    verify_program(&program, &inference.interner, "final MIR")?;
+    prove_ownership(&program, &inference.interner, "final MIR")?;
+    if profile { eprintln!("[profile] Verify + ownership: {:?}", t5.elapsed()); }
+    let t6 = std::time::Instant::now();
 
     let backend_opt = match options.optimization {
         OptimizationLevel::O0 => OptLevel::None,
@@ -238,13 +268,15 @@ pub fn compile_entry_with_options(
         OptimizationLevel::O3 => OptLevel::O3,
     };
     let names = Names(&package.names.symbols);
-    codegen
+    let compiled = codegen
         .compile_module(
             &program,
             &inference.interner,
             &CodegenOptions::new(options.target, &names).with_opt_level(backend_opt),
         )
-        .map_err(CompileError::Codegen)
+        .map_err(CompileError::Codegen)?;
+    if profile { eprintln!("[profile] Cranelift codegen: {:?}", t6.elapsed()); }
+    Ok(compiled)
 }
 
 fn verify_program(
