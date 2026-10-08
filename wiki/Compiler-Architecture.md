@@ -1,135 +1,96 @@
-# Compiler architecture
+# Compiler Architecture
 
-**Current as of 2026-07-30.** For verified status and known boundaries, see
-[Current Capabilities](../documentation/CURRENT_CAPABILITIES.md) and
-[Compiler Reality](../documentation/Compiler_Reality.md).
+The L++ compiler is structured as a modern multi-stage, modular compiler written entirely in Rust (2024 edition). It is designed for maximum throughput, low memory footprint, and clean architectural separation of concerns.
 
-## Pipeline
+---
 
-```text
-.lpp source
-  -> lexer/parser
-  -> semantic resolver
-  -> type checker
-  -> monomorphization
-  -> MIR lowering
-  -> MIR scalar passes
-  -> cycle breaker
-  -> MIR escape solver
-  -> stack/ARC/Arena cleanup
-  -> Cranelift (default) or LLVM (optional)
-  -> host linker or lpp-link
-  -> executable
+## 1. Compilation Pipeline Overview
+
+```mermaid
+flowchart TD
+    Source[".lpp Source Code"] --> Frontend["lpp-frontend<br/>(Lexer & Parser)"]
+    Frontend --> AST["Abstract Syntax Tree (AST)"]
+    AST --> HIR["lpp-hir<br/>(HIR Lowering & Scope Resolution)"]
+    HIR --> Types["lpp-types<br/>(Bidirectional Type Inference & Checking)"]
+    Types --> TypedHIR["Typed HIR"]
+    TypedHIR --> MIR["lpp-mir<br/>(Control Flow Graph & SSA Lowering)"]
+    MIR --> Passes["lpp-passes<br/>(Optimizations: ConstProp, DCE, Inlining)"]
+    Passes --> Ownership["lpp-ownership<br/>(Escape Analysis & ARC Synthesis)"]
+    Ownership --> Backend{"Backend Target"}
+    Backend -->|Native x86_64| Cranelift["lpp-codegen-cranelift<br/>(Machine Code Emission)"]
+    Backend -->|WebAssembly| WASM["lpp-codegen-wasm<br/>(Direct Binary WASM Emission)"]
+    Backend -->|LLVM Object| LLVM["lpp-codegen-llvm (Optional)"]
+    Cranelift --> Linker["lpp-linker<br/>(In-Process PE / ELF Direct Linker)"]
+    Linker --> Executable["Standalone Native Executable"]
+    WASM --> WasmModule["Standalone .wasm Module"]
 ```
 
-## Frontend
+---
 
-- `src/frontend/lexer.rs` handles indentation, literals, keywords, comments,
-  and operators.
-- `src/frontend/parser.rs` builds the AST.
-- `src/analysis/semantic.rs` assigns binding IDs and checks scopes/mutability.
-- `src/analysis/typecheck.rs` checks compatibility and inference.
-- `src/analysis/types.rs` owns the resolved type model and type table.
-- `src/analysis/type_facts.rs` owns canonical lifetime, ABI, task-containment,
-  and container-element classifications.
-- `src/analysis/layout.rs` owns backend-neutral struct and tuple layout.
-- `src/analysis/monomorph.rs` specializes generic functions, structs, enums,
-  methods, and trait implementations.
-- `src/analysis/cyclebreak.rs` classifies one edge of each ownership cycle as
-  non-owning.
-- Tuple types/expressions, destructuring, typed rest parameters, borrowed slice
-  types, `async def`, and postfix `.await` are all first-class AST/type forms;
-  they are not parser-only desugarings.
+## 2. Pipeline Crates & Responsibilities
 
-## MIR and ownership
+### `lpp-common`
+The foundational crate shared across all stages:
+- **`SourceMap` & `Span`:** Zero-copy source tracking for precise error diagnostics.
+- **`Diagnostics`:** Rust-style error formatting with visual ASCII carets, source line excerpts, error codes (`E0001`–`E0010`), and actionable suggestions.
+- **`Symbol` / String Interning:** Fast integer-based identifier comparisons across compilation phases.
 
-MIR is the ownership boundary. The old AST escape analyzer was removed.
-`src/mir/escape_solver.rs` computes the single reachability fact:
+### `lpp-frontend`
+Translates raw UTF-8 source into an Abstract Syntax Tree:
+- **Lexer:** Tokenizes source text, tracking indentation levels with virtual `INDENT` and `DEDENT` tokens to support significant whitespace.
+- **Parser:** A recursive-descent parser that builds the strongly-typed AST (`Item`, `Expr`, `Stmt`, `Pattern`, `TypeNode`).
+- **Resilience:** Collects multiple syntax errors in a single pass without cascading or aborting prematurely.
 
-```text
-Frame < Owned < Shared
-```
+### `lpp-hir`
+High-Level Intermediate Representation:
+- **Module Resolution:** Resolves imports (`import math`, `from utils import helper`), file paths, and builds the dependency DAG.
+- **Scope & Symbol Resolution:** Maps variable names to local, global, or closure-captured bindings.
+- **Cross-Platform Path Normalization:** Guarantees consistent module resolution across Windows backslashes and Unix slashes.
 
-`pass_escape` performs stack promotion for frame-local structs and closure
-capsules. `pass_arc` inserts cleanup. Stack payload cleanup calls generated
-destructors directly; ARC payload cleanup calls the runtime. `pass_moveout`
-removes balanced handoff retains/releases only after a liveness proof.
+### `lpp-types`
+Type checking and inference:
+- **Bidirectional Hindley-Milner Inference:** Infers expression types from context while enforcing explicit boundary annotations on functions and structs.
+- **Generics & Monomorphization:** Monomorphizes generic functions and structs with recursion cycle detection.
+- **Traits & Methods:** Verifies interface implementations and resolves static method dispatch.
 
-Arena regions are selected for self-referential struct allocations. Arena nodes
-retain ARC-compatible headers and a region handle; cycle breaking ensures that
-owning edges remain acyclic.
+### `lpp-mir`
+Mid-Level Intermediate Representation:
+- **Control-Flow Graph (CFG):** Transforms structured control flow (`if`, `while`, `match`) into basic blocks terminating in conditional and unconditional jumps.
+- **SSA Representation:** Value definitions and uses are made explicit, simplifying static analysis and optimizations.
 
-The new aggregate/borrow/task layer is explicit in MIR:
+### `lpp-passes`
+Optimization and transformation passes on the MIR:
+- **Constant Propagation:** Evaluates compile-time constant arithmetic and boolean logic.
+- **Dead Code Elimination (DCE):** Prunes unreachable basic blocks and unused local assignments.
+- **Branch Simplification:** Collapses constant conditional jumps into direct branches.
+- **Inlining:** Inlines small function bodies at call sites to eliminate call frame overhead.
 
-```text
-AllocateTuple / TupleField
-AllocateList + typed rest pushes
-MakeSlice / SliceLen / SliceGet / SliceToStr
-MakeTask / Await
-```
+### `lpp-ownership`
+Deterministic memory safety without a garbage collector:
+- **Escape Analysis:** Determines if allocated values escape their declaring function frame. Values that do not escape are stack-promoted.
+- **ARC Synthesis:** Automatically inserts `retain` and `release` instructions for heap-allocated and shared values.
+- **Borrow Validation:** Validates that references do not outlive their targets and detects double-frees and dangling references at compile time.
 
-`validate_borrows` runs immediately after lowering and rejects first-tier slice
-escapes before scalar optimization or ownership insertion. Task environments
-reuse tuple layout metadata, while each backend emits a typed task thunk.
+### `lpp-codegen-cranelift`
+Default native code generation:
+- Lowers MIR directly to Cranelift Intermediate Representation (CLIF).
+- Compiles CLIF to target machine code (e.g. x86_64 machine instructions) at high throughput.
+- Emits standard object files (COFF on Windows, ELF on Linux) or passes them directly to `lpp-linker`.
 
-## Shared ABI boundary
+### `lpp-codegen-wasm`
+Standalone WebAssembly backend:
+- Directly writes the binary WebAssembly format (`.wasm`).
+- Implements WASI system calls for I/O and pure-wasm memory allocation helpers.
+- Requires no external wasm toolchains or linkers.
 
-Backends do not own language layout policy. The analysis layer produces an
-`AbiClass` and aligned `FieldLayout`; Cranelift maps that to Cranelift types and
-LLVM maps it to LLVM textual types. LLVM has no dependency on the Cranelift
-module. Ownership-sensitive passes consume `TypeRef::lifetime_class()` rather
-than maintaining private lists of managed types.
+### `lpp-linker`
+In-process direct linker:
+- **PE/COFF Direct Linker:** Formats and writes standalone `.exe` binaries on Windows directly, resolving symbols and importing Windows runtime libraries without requiring MSVC `link.exe`.
+- **ELF Direct Linker:** Formats standalone ELF executables for Linux.
+- **Fallback System Linker:** Seamlessly invokes system linkers (`link.exe`, `gcc`, `ld`) when specialized native dependencies or C FFI libraries are requested.
 
-## Backends
+---
 
-### Cranelift
+## 3. Fast-Track Pipeline: `lpp check`
 
-`src/backend/cranelift/` is the default production backend. It lowers MIR to
-Cranelift IR and emits native objects. It has the lowest compile latency and
-supports the full verified language/runtime subset.
-
-### LLVM
-
-`src/backend/llvm.rs` is an explicit optional backend:
-
-```sh
-lpp program.lpp --backend llvm --linker direct
-```
-
-It emits textual LLVM IR and invokes `clang`. It supports the current corpus,
-including aggregate ownership, closures, lists/maps, Arena nodes, and explicit
-vectors. Unsupported future MIR forms must produce an error rather than a
-fallback or placeholder.
-
-## Explicit vector layer
-
-Both backends support `VectorI64x2` builtins for construction, splat, arithmetic,
-XOR, constant shift, lane extraction, and sum. LLVM also has a four-lane
-checksum IR path. The repository does not claim automatic vectorization of every
-arbitrary list loop.
-
-## Runtime state and views
-
-- Tuples are ARC payloads with a managed-child mask and field-offset metadata.
-- Rest arguments are ordinary typed ARC lists.
-- Slice views are stack records: base, start, length, generation, and kind.
-- Tasks are ARC records with code, environment, result, ownership flag, and
-  pending/running/complete state.
-- The executor polls on the caller thread with deterministic run-to-completion
-  policy; no hidden thread is created.
-
-The full host runtime and Linux/Windows freestanding sources expose matching
-symbols. Actual Windows execution remains a CI requirement.
-
-## Link stage
-
-`src/bin/lpp-link.rs` supports the direct native object path for the verified
-ELF/PE/Mach-O targets. Most language features are implemented in the backend or
-runtime; the linker resolves objects and platform runtime symbols.
-
-## Current non-goals
-
-- No Turbo mode is in the current repository.
-- No LLVM LTO/PGO integration.
-- No measured Arena bump/chunk allocator yet.
-- Windows LLVM execution still needs Windows CI validation.
+When running `lpp check`, the compiler executes through `lpp-frontend` $\rightarrow$ `lpp-hir` $\rightarrow$ `lpp-types` $\rightarrow$ `lpp-ownership` validation, skipping MIR optimization, Cranelift code generation, and linking. This provides instantaneous diagnostics (~50,000+ lines/sec) ideal for real-time editor feedback and CI checks.

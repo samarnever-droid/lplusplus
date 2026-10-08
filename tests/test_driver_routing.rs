@@ -47,7 +47,7 @@ fn multi_arg_print_is_rejected_with_a_clear_error() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(
-        combined.contains("print expects 1 arguments, got 2"),
+        combined.contains("ArityMismatch") || combined.contains("print expects 1 arguments"),
         "expected the arity diagnostic, got:\n{combined}"
     );
 }

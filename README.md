@@ -10,8 +10,8 @@
   <a href="#install">Install</a> ·
   <a href="#quick-start">Quick Start</a> ·
   <a href="https://lplusplus.bond">Website</a> ·
-  <a href="Doc.md">Language Guide</a> ·
-  <a href="wiki/">Wiki</a> ·
+  <a href="wiki/Language-Tour.md">Language Tour</a> ·
+  <a href="wiki/Home.md">Wiki</a> ·
   <a href="benchmarks/king20/stable/v1/latest.md">Benchmarks</a>
 </p>
 
@@ -51,7 +51,7 @@ slices, dynamic strings, and the portable builtin set all work, with the ARC
 runtime re-implemented as pure wasm helpers. Platform-specific features that
 a WASI sandbox cannot provide (threads, sockets, files, FFI, SIMD, child
 processes) are rejected up front with clear diagnostics. See
-[Doc.md §6.4](Doc.md) for the full support matrix.
+[wiki/Getting-Started.md](wiki/Getting-Started.md) for details.
 
 ## Key Features
 
@@ -413,7 +413,7 @@ at your option.
 ## Links
 
 - [Website](https://lplusplus.bond)
-- [Language Guide](Doc.md)
+- [Language Tour](wiki/Language-Tour.md)
 - [Package Registry](https://registry.lplusplus.bond)
 - [Benchmarks](benchmarks/king20/stable/v1/latest.md)
 - [Native Linker Roadmap](documentation/Native_Linker_Roadmap.md)

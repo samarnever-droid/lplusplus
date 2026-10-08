@@ -52,6 +52,7 @@ name = "lpp"
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
+default-run = "lpp"
 
 [lib]
 name = "lpp"
@@ -84,6 +85,7 @@ all-arch = ["cranelift-codegen/all-arch"]
 lpp-common = { path = "crates/lpp-common" }
 lpp-config = { path = "crates/lpp-config" }
 lpp-driver = { path = "crates/lpp-driver" }
+lpp-frontend = { path = "crates/lpp-frontend" }
 lpp-linker = { path = "crates/lpp-linker" }
 cranelift-codegen = "0.113"
 cranelift-frontend = "0.113"

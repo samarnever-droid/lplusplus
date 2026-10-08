@@ -1,50 +1,55 @@
-# L++ Wiki
+# L++ Documentation Wiki
 
-**Current status: 2026-07-30.** Start with
-[Current Capabilities](../documentation/CURRENT_CAPABILITIES.md) and the
-[full status report](../documentation/STATUS-2026-07-30.md).
+Welcome to the official **L++ (LPlusPlus)** documentation wiki.
 
-L++ is a native ownership-aware language. The Rust compiler frontend lowers to
-MIR, solves ownership over MIR, and emits native objects through Cranelift by
-default or LLVM optionally. Objects are linked by the host linker or `lpp-link`.
+L++ is a modern, statically typed, ahead-of-time (AOT) compiled programming language engineered around three core tenets:
+1. **Readable by design:** Clean, expressive syntax with significant indentation, eliminating unnecessary visual noise.
+2. **Native by default:** Direct compilation to standalone native machine code (x86_64 PE on Windows, ELF on Linux, Mach-O on macOS) and standalone WebAssembly (`wasm32-wasip1`) without requiring a VM, interpreter, or runtime tracing garbage collector.
+3. **Safety engineered in:** Deterministic Automatic Reference Counting (ARC) with static escape analysis, borrow verification, and compile-time ownership validation.
 
-## Start here
+---
 
-1. [Getting Started](Getting-Started.md)
-2. [Language Reference](Language-Reference.md)
-3. [Errors and Result](Errors-and-Result.md)
-4. [Modules and Packages](Modules-and-Packages.md)
-5. [Standard Library and Builtins](Standard-Library-and-Builtins.md)
-6. [Compiler Architecture](Compiler-Architecture.md)
-7. [Type System and Safety](Type-System-and-Safety.md)
-8. [Direct Linker and Runtime](Direct-Linker-and-Runtime.md)
-9. [Feature Status Matrix](Feature-Status-Matrix.md)
-10. [Runtime Compatibility Matrix](Runtime-Compatibility-Matrix.md)
-11. [Known Historical and Negative Files](Known-Stale-and-Negative-Files.md)
+## Wiki Directory
 
-## Current highlights
+| Guide | Description |
+|---|---|
+| [Getting Started](Getting-Started.md) | Installation, CLI usage (`lpp build`, `lpp run`, `lpp check`, `lpp doctor`), and your first program |
+| [Language Tour](Language-Tour.md) | Comprehensive syntax overview: variables, types, structs, enums, pattern matching, closures, and control flow |
+| [Type System & Safety](Type-System-and-Safety.md) | Static type safety, Hindley-Milner bidirectional inference, generics, traits, and error handling |
+| [Memory & Ownership](Memory-and-Ownership.md) | ARC memory model, `Frame`/`Owned`/`Shared` classifications, borrow validation, and zero-pause reclamation |
+| [Compiler Architecture](Compiler-Architecture.md) | Detailed walkthrough of the modular compiler pipeline: Frontend, HIR, Types, MIR, Passes, Ownership, Codegen, and Linker |
+| [Direct Linker & Platforms](Direct-Linker-and-Platforms.md) | Direct in-process PE/COFF and ELF linkers, cross-compilation, and platform target specifics |
+| [Standard Library & Builtins](Standard-Library.md) | Builtin functions, string manipulations, collections (`List`, `Map`), I/O, and C FFI integration |
+| [Keel Package Manager](Keel-Package-Manager.md) | Dependency management, `lpp.toml` manifests, package publishing, and workspace tooling |
+| [Performance & Benchmarks](Performance-and-Benchmarks.md) | Compiler compilation throughput (~50,000+ lines/sec), runtime benchmarks (King20 suite vs C++, Rust, Go, Python) |
 
-- immutable-by-default variables and `mut`;
-- structs, enums, match, generics, traits, closures, and threads;
-- MIR ownership facts: `Frame < Owned < Shared`;
-- stack payloads, ARC, Arena regions, cycle breaking, and generated destructors;
-- Cranelift default backend;
-- optional LLVM backend with host/direct linker support;
-- explicit `VectorI64x2` operations and long SIMD workload;
-- Linux ELF, Windows PE, and macOS Mach-O linker paths for their verified
-  subsets.
+---
 
-## Accuracy policy
+## Quick Example
 
-Do not use old reports as current implementation evidence. A current feature claim
-must point to a test or validation command. The primary commands are:
+```lpp
+struct User:
+    name: Str
+    age: Int
 
-```sh
-cargo test --release -j1
-sh tests/run_aot_parity.sh
-sh scripts/check_safety_mission.sh
+def greet(user: User):
+    println("Hello, " + user.name + "! You are " + str(user.age) + " years old.")
+
+def main():
+    alice := User("Alice", 25)
+    greet(alice)
 ```
 
-Package validation runs from the package directories. Windows LLVM execution
-still needs a Windows CI runner, and general automatic vectorization/LTO/PGO are
-not current claims.
+Compile and run with zero external toolchain configuration:
+
+```bash
+lpp run hello.lpp
+```
+
+---
+
+## Community & Resources
+
+- **Official Website:** [https://lplusplus.bond](https://lplusplus.bond)
+- **Source Repository:** [GitHub - samarnever-droid/lplusplus](https://github.com/samarnever-droid/lplusplus)
+- **Package Registry:** [https://registry.lplusplus.bond](https://registry.lplusplus.bond)

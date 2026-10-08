@@ -4,12 +4,8 @@ use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
 
-use lpp::ast::{Program, TopLevel};
-use lpp::diagnostics;
-use lpp::lexer::Lexer;
-use lpp::parser::Parser;
-use lpp::semantic::Resolver;
-use lpp::typecheck::TypeChecker;
+use lpp_common::{FileId, SourceMap};
+use lpp_frontend::{ItemKind, ParsedModule, parse_source};
 
 #[derive(Debug, Serialize, Deserialize)]
 struct JsonRpcRequest {
@@ -97,7 +93,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut writer = stdout.lock();
 
     let mut documents: HashMap<String, String> = HashMap::new();
-    let mut ast_cache: HashMap<String, Program> = HashMap::new();
+    let mut ast_cache: HashMap<String, ParsedModule> = HashMap::new();
 
     while let Ok(Some(msg_str)) = read_lsp_message(&mut reader) {
         let req: JsonRpcRequest = match serde_json::from_str(&msg_str) {
@@ -229,30 +225,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .and_then(|u| u.as_str())
                 {
                     if let Some(ast) = ast_cache.get(uri) {
-                        for decl in &ast.declarations {
-                            match decl {
-                                TopLevel::Function(f) => {
-                                    completions.push(json!({
-                                        "label": f.name,
-                                        "kind": 3,
-                                        "detail": format!("def {}(...) -> {:?}", f.name, f.return_type)
-                                    }));
+                        for item in &ast.items {
+                            if let Some(ref name) = item.name {
+                                match item.kind {
+                                    ItemKind::Function => {
+                                        completions.push(json!({
+                                            "label": name,
+                                            "kind": 3,
+                                            "detail": format!("def {}(...)", name)
+                                        }));
+                                    }
+                                    ItemKind::Struct => {
+                                        completions.push(json!({
+                                            "label": name,
+                                            "kind": 22,
+                                            "detail": format!("struct {}", name)
+                                        }));
+                                    }
+                                    ItemKind::Enum => {
+                                        completions.push(json!({
+                                            "label": name,
+                                            "kind": 13,
+                                            "detail": format!("enum {}", name)
+                                        }));
+                                    }
+                                    _ => {}
                                 }
-                                TopLevel::Struct(s) => {
-                                    completions.push(json!({
-                                        "label": s.name,
-                                        "kind": 22,
-                                        "detail": format!("struct {}", s.name)
-                                    }));
-                                }
-                                TopLevel::Enum(e) => {
-                                    completions.push(json!({
-                                        "label": e.name,
-                                        "kind": 13,
-                                        "detail": format!("enum {}", e.name)
-                                    }));
-                                }
-                                _ => {}
                             }
                         }
                     }
@@ -275,51 +273,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .and_then(|u| u.as_str())
                 {
                     if let Some(ast) = ast_cache.get(uri) {
-                        for (idx, decl) in ast.declarations.iter().enumerate() {
-                            match decl {
-                                TopLevel::Function(f) => {
-                                    symbols.push(json!({
-                                        "name": f.name,
-                                        "kind": 12, // Function
-                                        "range": {
-                                            "start": { "line": idx * 2, "character": 0 },
-                                            "end": { "line": idx * 2 + 1, "character": 0 }
-                                        },
-                                        "selectionRange": {
-                                            "start": { "line": idx * 2, "character": 0 },
-                                            "end": { "line": idx * 2, "character": f.name.len() }
-                                        }
-                                    }));
-                                }
-                                TopLevel::Struct(s) => {
-                                    symbols.push(json!({
-                                        "name": s.name,
-                                        "kind": 23, // Struct
-                                        "range": {
-                                            "start": { "line": idx * 2, "character": 0 },
-                                            "end": { "line": idx * 2 + 1, "character": 0 }
-                                        },
-                                        "selectionRange": {
-                                            "start": { "line": idx * 2, "character": 0 },
-                                            "end": { "line": idx * 2, "character": s.name.len() }
-                                        }
-                                    }));
-                                }
-                                TopLevel::Enum(e) => {
-                                    symbols.push(json!({
-                                        "name": e.name,
-                                        "kind": 10, // Enum
-                                        "range": {
-                                            "start": { "line": idx * 2, "character": 0 },
-                                            "end": { "line": idx * 2 + 1, "character": 0 }
-                                        },
-                                        "selectionRange": {
-                                            "start": { "line": idx * 2, "character": 0 },
-                                            "end": { "line": idx * 2, "character": e.name.len() }
-                                        }
-                                    }));
-                                }
-                                _ => {}
+                        for (idx, item) in ast.items.iter().enumerate() {
+                            if let Some(ref name) = item.name {
+                                let (kind, start_line) = match item.kind {
+                                    ItemKind::Function => (12, idx * 2),
+                                    ItemKind::Struct => (23, idx * 2),
+                                    ItemKind::Enum => (10, idx * 2),
+                                    _ => continue,
+                                };
+                                symbols.push(json!({
+                                    "name": name,
+                                    "kind": kind,
+                                    "range": {
+                                        "start": { "line": start_line, "character": 0 },
+                                        "end": { "line": start_line + 1, "character": 0 }
+                                    },
+                                    "selectionRange": {
+                                        "start": { "line": start_line, "character": 0 },
+                                        "end": { "line": start_line, "character": name.len() }
+                                    }
+                                }));
                             }
                         }
                     }
@@ -521,77 +494,46 @@ fn process_and_publish_diagnostics<W: Write>(
     writer: &mut W,
     uri: &str,
     text: &str,
-    ast_cache: &mut HashMap<String, Program>,
+    ast_cache: &mut HashMap<String, ParsedModule>,
 ) -> io::Result<()> {
     let mut lsp_diagnostics = Vec::new();
+    let mut sources = SourceMap::new();
+    let file_id = sources
+        .add_file(uri, text.to_string())
+        .unwrap_or(FileId::from_raw(1));
 
-    let mut lexer = Lexer::new(text);
-    match lexer.tokenize() {
-        Ok(tokens) => {
-            let mut parser = Parser::new(tokens);
-            match parser.parse() {
-                Ok(mut ast) => {
-                    let mut resolver = Resolver::new();
-                    if let Err(e) = resolver.resolve_program(&mut ast) {
-                        let (line, col, msg) =
-                            diagnostics::parse_line_col_message_with_source(&e, text);
-                        lsp_diagnostics.push(json!({
-                            "range": {
-                                "start": { "line": if line > 0 { line - 1 } else { 0 }, "character": col },
-                                "end": { "line": if line > 0 { line - 1 } else { 0 }, "character": col + 5 }
-                            },
-                            "severity": 1,
-                            "code": "SemanticError",
-                            "source": "lpp-lsp",
-                            "message": msg
-                        }));
+    match parse_source(file_id, text) {
+        Ok(ast) => {
+            ast_cache.insert(uri.to_string(), ast);
+        }
+        Err(diags) => {
+            if let Some(source_file) = sources.get(file_id) {
+                for diag in diags {
+                    let (line, col) = if let Some(span) = diag.primary_span {
+                        source_file.line_column(span.start).unwrap_or((1, 1))
+                    } else if let Some(label) = diag.labels.first() {
+                        source_file.line_column(label.span.start).unwrap_or((1, 1))
                     } else {
-                        let mut type_checker = TypeChecker::new(&mut resolver.table);
-                        if let Err(e) = type_checker.check_program(&ast) {
-                            let (line, col, msg) =
-                                diagnostics::parse_line_col_message_with_source(&e, text);
-                            lsp_diagnostics.push(json!({
-                                "range": {
-                                    "start": { "line": if line > 0 { line - 1 } else { 0 }, "character": col },
-                                    "end": { "line": if line > 0 { line - 1 } else { 0 }, "character": col + 5 }
-                                },
-                                "severity": 1,
-                                "code": "TypeError",
-                                "source": "lpp-lsp",
-                                "message": msg
-                            }));
-                        }
-                    }
-                    ast_cache.insert(uri.to_string(), ast);
-                }
-                Err(e) => {
-                    let (line, col, msg) =
-                        diagnostics::parse_line_col_message_with_source(&e, text);
+                        (1, 1)
+                    };
                     lsp_diagnostics.push(json!({
                         "range": {
-                            "start": { "line": if line > 0 { line - 1 } else { 0 }, "character": col },
-                            "end": { "line": if line > 0 { line - 1 } else { 0 }, "character": col + 5 }
+                            "start": {
+                                "line": if line > 0 { line - 1 } else { 0 },
+                                "character": if col > 0 { col - 1 } else { 0 }
+                            },
+                            "end": {
+                                "line": if line > 0 { line - 1 } else { 0 },
+                                "character": col + 4
+                            }
                         },
                         "severity": 1,
-                        "code": "SyntaxError",
+                        "code": diag.code.as_str(),
                         "source": "lpp-lsp",
-                        "message": msg
+                        "message": diag.message
                     }));
                 }
             }
-        }
-        Err(e) => {
-            let (line, col, msg) = diagnostics::parse_line_col_message_with_source(&e, text);
-            lsp_diagnostics.push(json!({
-                "range": {
-                    "start": { "line": if line > 0 { line - 1 } else { 0 }, "character": col },
-                    "end": { "line": if line > 0 { line - 1 } else { 0 }, "character": col + 5 }
-                },
-                "severity": 1,
-                "code": "LexerError",
-                "source": "lpp-lsp",
-                "message": msg
-            }));
         }
     }
 
@@ -604,3 +546,4 @@ fn process_and_publish_diagnostics<W: Write>(
         }),
     )
 }
+

@@ -68,13 +68,16 @@ mod tests {
         }
 
         fn actual_file(&self, requested: &Path) -> Option<&PathBuf> {
+            let requested_norm = requested.to_string_lossy().replace('\\', "/");
             if self.case_insensitive {
-                let requested = requested.to_string_lossy().to_lowercase();
+                let requested_lower = requested_norm.to_lowercase();
                 self.files
                     .keys()
-                    .find(|path| path.to_string_lossy().to_lowercase() == requested)
+                    .find(|path| path.to_string_lossy().replace('\\', "/").to_lowercase() == requested_lower)
             } else {
-                self.files.get_key_value(requested).map(|(path, _)| path)
+                self.files
+                    .keys()
+                    .find(|path| path.to_string_lossy().replace('\\', "/") == requested_norm)
             }
         }
     }

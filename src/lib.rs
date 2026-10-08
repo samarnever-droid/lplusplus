@@ -1,35 +1,7 @@
-#[path = "frontend/ast.rs"]
-pub mod ast;
-pub mod builtins;
-pub mod config;
-#[path = "backend/cranelift/mod.rs"]
-pub mod cranelift_backend;
-#[path = "analysis/cyclebreak.rs"]
-pub mod cyclebreak;
-pub mod diagnostics;
-#[path = "analysis/layout.rs"]
-pub mod layout;
-pub mod legacy_driver;
-#[path = "frontend/lexer.rs"]
-pub mod lexer;
-pub mod linker;
-#[path = "backend/llvm.rs"]
-pub mod llvm_backend;
-#[path = "mir/mod.rs"]
-pub mod mir;
-#[path = "analysis/monomorph.rs"]
-pub mod monomorph;
-#[path = "frontend/parser.rs"]
-pub mod parser;
-pub mod pm;
-#[path = "analysis/semantic.rs"]
-pub mod semantic;
-pub mod target;
-#[path = "analysis/type_facts.rs"]
-pub mod type_facts;
-#[path = "analysis/typecheck.rs"]
-pub mod typecheck;
-#[path = "analysis/types.rs"]
-pub mod types;
-#[path = "backend/wasm.rs"]
-pub mod wasm_backend;
+//! L++ Pure Native AOT Language & Compiler Toolchain.
+
+pub use lpp_common as common;
+pub use lpp_config as config;
+pub use lpp_driver as driver;
+pub use lpp_frontend as frontend;
+pub use lpp_linker as linker;

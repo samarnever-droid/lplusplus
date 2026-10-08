@@ -169,7 +169,10 @@ fn rewrite_main(args: &[String], cwd: &Path) -> i32 {
         let arg = rest[idx].as_str();
         match arg {
             "--version" | "-v" => {
-                println!("L++ v{} (rewrite engine)", env!("CARGO_PKG_VERSION"));
+                println!(
+                    "L++ Compiler v{} (Pure Native AOT)",
+                    env!("CARGO_PKG_VERSION")
+                );
                 return 0;
             }
             "--help" | "-h" => {
@@ -791,9 +794,9 @@ fn print_doctor() {
         .unwrap_or_else(|| "clang".to_string());
     let wasm = find_tool("wasmtime");
 
-    println!("L++ v{} rewrite doctor", env!("CARGO_PKG_VERSION"));
+    println!("L++ v{} doctor", env!("CARGO_PKG_VERSION"));
     println!("host: {}-{}", std::env::consts::ARCH, std::env::consts::OS);
-    println!("rewrite pipeline: available");
+    println!("pipeline: Cranelift AOT / ARC / Keel");
     println!("configured backend: {}", config.backend);
     println!("configured linker: {}", config.linker);
     println!("package manager: Keel embedded");
@@ -812,26 +815,28 @@ fn print_doctor() {
 }
 
 fn print_help() {
-    println!("L++ rewrite engine — driver cutover stage 1");
+    println!("L++ Compiler v{} (Pure Native AOT)", env!("CARGO_PKG_VERSION"));
     println!();
-    println!("Usage: lpp <file.lpp> [options]      (selected with LPP_ENGINE=rewrite)");
+    println!("Usage: lpp <file.lpp> [options]");
+    println!("       lpp <command> [options]");
     println!();
+    println!("Compiler Options:");
     println!("  --backend <be>   cranelift (default), wasm, or llvm");
     println!("  --llvm           shorthand for --backend llvm");
     println!("  --target <t>     host, host-native x86_64/aarch64, or wasm32-wasip1");
     println!("  -O<level>        MIR/backend optimization: 0, 1, 2, 3, s, or z");
-    println!("  --linker <kind>  direct or cc (native Linux builds)");
-    println!("  -o, --output     output path");
-    println!("  --run            compile, link, and run");
-    println!("  --check          compile to object only; report success");
+    println!("  --linker <kind>  direct or cc (in-process PE on Windows, direct ELF on Linux)");
+    println!("  -o, --output     output binary path");
+    println!("  --run            compile, link, and run immediately");
+    println!("  --check          compile to object only; report diagnostics");
     println!("  --emit-object    write the object/module file only");
     println!();
-    println!("  lpp doctor       inspect rewrite runtime/tool availability");
-    println!("  lpp bench [...]  run the installed lpp-bench tool");
-    println!("  lpp upgrade --check  check the signed-release channel");
-    println!("  lpp setup llvm [path]  configure an installed LLVM compiler");
+    println!("Tools & Environment:");
+    println!("  lpp doctor       inspect runtime, backend, and toolchain availability");
+    println!("  lpp bench [...]  run the benchmark suite");
+    println!("  lpp upgrade      check the signed-release channel for updates");
+    println!("  lpp setup llvm   configure an installed LLVM compiler");
     println!();
-    println!(
-        "Keel project commands are available directly: build, check, run, test, add, update, tree, and more."
-    );
+    println!("Keel Package Manager Commands:");
+    println!("  new, init, add, remove, install, update, test, run, build, publish, tree, verify, clean");
 }

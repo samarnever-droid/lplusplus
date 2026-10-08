@@ -347,7 +347,9 @@ impl<'fs, Fs: FileSystem + ?Sized> GraphBuilder<'fs, Fs> {
             return Ok(None);
         }
         let canonical = self.filesystem.canonicalize(candidate)?;
-        if !canonical.ends_with(requested_suffix) {
+        let canonical_norm = canonical.to_string_lossy().replace('\\', "/");
+        let requested_norm = requested_suffix.to_string_lossy().replace('\\', "/");
+        if !canonical_norm.ends_with(&requested_norm) {
             return Err(GraphError::CaseMismatch {
                 requested: candidate.to_owned(),
                 actual: canonical,

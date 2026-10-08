@@ -77,4 +77,5 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_branch: gh-pages
           publish_dir: website-dist
+          cname: lplusplus.bond
           keep_files: false

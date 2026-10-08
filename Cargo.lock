@@ -546,6 +546,7 @@ dependencies = [
  "lpp-common",
  "lpp-config",
  "lpp-driver",
+ "lpp-frontend",
  "lpp-hir",
  "lpp-linker",
  "lpp-mir",

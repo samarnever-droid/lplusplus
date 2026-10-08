@@ -40,10 +40,19 @@ pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
         // unique temporary names still prevent writer collisions.
         #[cfg(windows)]
         {
-            if path.exists() {
-                std::fs::remove_file(path).map_err(io_error)?;
+            let mut renamed = false;
+            for _ in 0..10 {
+                let _ = std::fs::remove_file(path);
+                if std::fs::rename(&temporary, path).is_ok() {
+                    renamed = true;
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(5));
             }
-            std::fs::rename(&temporary, path).map_err(io_error)?;
+            if !renamed {
+                let _ = std::fs::remove_file(path);
+                std::fs::rename(&temporary, path).map_err(io_error)?;
+            }
         }
 
         #[cfg(unix)]

@@ -1,166 +1,151 @@
-# Getting Started
+# Getting Started with L++
 
-This page walks through installing L++, compiling a first program, creating a package project, and understanding which linker is used.
+This guide covers installing the L++ toolchain, setting up your environment, running your first program, and navigating the CLI.
 
-## Install from a pinned source release
+---
 
-Linux/macOS:
+## 1. Installation
 
-```bash
-git clone --depth 1 --branch v0.1 https://github.com/samarnever-droid/lplusplus.git
-cd lplusplus
-LPP_FROM_SOURCE=1 sh install.sh
-export PATH="$HOME/.lpp/bin:$PATH"
-lpp --version
+### Windows (PowerShell)
+You can install L++ directly using PowerShell:
+```powershell
+# Automated setup
+iwr -useb https://lplusplus.bond/install.ps1 | iex
 ```
 
-Windows PowerShell:
-
+Or from source:
 ```powershell
-git clone --depth 1 --branch v0.1 https://github.com/samarnever-droid/lplusplus.git
+git clone https://github.com/samarnever-droid/lplusplus.git
 cd lplusplus
 $env:LPP_FROM_SOURCE = "1"
 .\install.ps1
-lpp --version
 ```
 
-Do not pipe a downloaded installer directly into a shell. Prebuilt archives and
-the matching `SHA256SUMS` manifest are available on the GitHub Releases page;
-the installers reject missing or mismatched checksums.
+### Linux / macOS (Bash)
+```bash
+# Automated setup
+curl -fsSL https://lplusplus.bond/install.sh | sh
+```
 
-## Development build from source
-
+Or from source:
 ```bash
 git clone https://github.com/samarnever-droid/lplusplus.git
 cd lplusplus
-cargo build --release --locked --bin lpp --bin lpp-link
-./target/release/lpp --version
+LPP_FROM_SOURCE=1 sh install.sh
 ```
 
-The default build includes the host Cranelift ISA. Add `--features all-arch` when
-building a compiler that must emit native objects for other architectures.
+### Building with Cargo
+L++ is written in Rust (2024 edition). If you already have Rust and Cargo installed:
+```bash
+git clone https://github.com/samarnever-droid/lplusplus.git
+cd lplusplus
+cargo build --release -p lpp
+```
+The executable is generated at `target/release/lpp` (or `target/release/lpp.exe` on Windows).
 
-## First program
+---
 
-Create `hello.lpp`:
+## 2. Verifying the Toolchain
+
+Run `lpp doctor` to verify that your environment, linker paths, and compiler tools are correctly detected:
+
+```bash
+lpp doctor
+```
+
+Example output:
+```text
+=== L++ Environment & Toolchain Doctor ===
+Compiler Binary:        C:\Users\khati\lpp\target\release\lpp.exe
+Target Triple:          x86_64-pc-windows-msvc
+Rust Host Toolchain:    rustc 1.85.0
+Linker:                 Direct PE In-Process Linker (Native MSVC compatible)
+C Compiler Backend:     Pure Native Cranelift AOT
+WebAssembly Support:    Built-in (wasm32-wasip1)
+Status:                 Ready for compilation
+```
+
+Check the installed version:
+```bash
+lpp --version
+```
+Output:
+```text
+L++ Compiler v0.1.0 (Pure Native AOT)
+```
+
+---
+
+## 3. Your First Program
+
+Create a file named `hello.lpp`:
 
 ```lpp
 def main():
-    print_str("Hello from L++!")
-    print(42)
+    name := "World"
+    println("Hello, " + name + " from L++!")
 ```
 
-Run:
+### Running Directly
+The `run` subcommand compiles the program to a native binary and immediately executes it:
 
 ```bash
-lpp hello.lpp
+lpp run hello.lpp
 ```
-
-Or from a source checkout:
-
-```bash
-./target/release/lpp hello.lpp
-```
-
-## Check without compiling
-
-```bash
-lpp --check hello.lpp
-```
-
-For a directory of `.lpp` files:
-
-```bash
-lpp --checkall
-```
-
-## Create a package project
-
-```bash
-lpp new myapp
-cd myapp
-lpp build
-lpp run
-```
-
-Typical layout:
-
+Output:
 ```text
-myapp/
-  lpp.toml
-  src/
-    main.lpp
-  tests/
+Hello, World from L++!
 ```
 
-## Package commands
+### Compiling to a Standalone Executable
+The `build` subcommand produces an optimized standalone executable without running it:
 
 ```bash
-lpp new <name>       # create project
-lpp init <name>      # initialize current directory
-lpp install          # install dependencies
-lpp add <name>       # add dependency
-lpp remove <name>    # remove dependency
-lpp update           # refresh lockfile
-lpp list             # list dependencies
-lpp tree             # dependency tree
-lpp metadata         # package metadata
-lpp outdated         # unpinned dependencies
-lpp clean            # remove build output
-lpp check            # check package
-lpp build            # build native binary
-lpp run              # build and run
-lpp test             # run tests/
+lpp build hello.lpp -o hello.exe
 ```
 
-## Linker choice
+Run the generated binary:
+```bash
+./hello.exe
+```
 
-L++ supports two linker paths:
+### Fast Static Checking
+The `check` subcommand performs lexing, parsing, scope resolution, type checking, and borrow verification without invoking code generation or linking. This gives sub-millisecond feedback in IDEs and terminals:
 
-| Linker | Command style | Use case |
+```bash
+lpp check hello.lpp
+```
+
+---
+
+## 4. CLI Reference
+
+| Command | Usage | Description |
 |---|---|---|
-| Direct linker | `lpp-link` | zero external toolchain, small freestanding binaries |
-| Host linker | `cc`, `clang`, `cl.exe` | full libc/CRT compatibility |
+| `lpp run <file.lpp>` | `lpp run src/main.lpp` | Compile and run target immediately |
+| `lpp build <file.lpp>` | `lpp build -o app.exe src/main.lpp` | Compile to standalone native executable |
+| `lpp check <file.lpp>` | `lpp check src/main.lpp` | Validate syntax, types, and ownership without codegen |
+| `lpp doctor` | `lpp doctor` | Print diagnostics on compiler environment and linkers |
+| `lpp new <name>` | `lpp new my_project` | Scaffold a new L++ project with `lpp.toml` |
+| `lpp test` | `lpp test` | Run test suites declared within the project |
+| `lpp clean` | `lpp clean` | Remove compiler build artifacts and cache |
 
-Config is stored in `~/.lpp/config.json`:
+### Common CLI Options
 
-```bash
-lpp config
-lpp config set linker direct
-lpp config set linker host
-lpp config set linker auto
-```
+- `-o, --output <path>`: Specify the output executable or object path.
+- `--opt, -O <0|1|2|3|s|z>`: Set optimization level (default: 2 for build, 0 for run).
+- `--target <triple>`: Target architecture (e.g., `x86_64-pc-windows-msvc`, `x86_64-unknown-linux-gnu`, `wasm32-wasip1`).
+- `--emit <asm|mir|hir|obj|exe>`: Emit intermediate representations for inspection.
+- `--verbose, -v`: Enable verbose compiler pipeline logging.
 
-Per-run override:
+---
 
-```bash
-lpp --linker direct app.lpp
-lpp --linker host app.lpp
-```
+## 5. WebAssembly Target
 
-
-## Linux install troubleshooting
-
-Release Linux binaries are intended to be static/musl-friendly so they work in small Alpine-like environments.
-
-If the shell says `lpp: not found` after install:
-
-1. Check PATH:
+To build a standalone `.wasm` module for WebAssembly runtimes (e.g., [wasmtime](https://wasmtime.dev/) or browsers with WASI):
 
 ```bash
-echo "$PATH"
-ls -l "$HOME/.lpp/bin"
+lpp build hello.lpp --target wasm32-wasip1 -o hello.wasm
+wasmtime hello.wasm
 ```
-
-2. Add L++ to PATH:
-
-```bash
-export PATH="$HOME/.lpp/bin:$PATH"
-```
-
-3. Confirm architecture:
-
-```bash
-uname -m
-file "$HOME/.lpp/bin/lpp"
-```
+No external C compiler or wasm linker is required. L++ emits standalone WASI binary modules directly.

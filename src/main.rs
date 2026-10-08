@@ -1,11 +1,9 @@
 //! L++ command-line entry point.
 
-use lpp::legacy_driver::LegacyEngine;
 use lpp_common::{Diagnostic, SourceMap};
 use lpp_driver::{CompilerEngine, CompilerSession, DriverRequest, RewriteEngine};
 
-/// Drive one engine through a session, render its diagnostics, and return its
-/// exit code. Generic so the v1 and rewrite engines share one code path.
+/// Drive the compiler engine through a session, render its diagnostics, and return its exit code.
 fn run_engine<E: CompilerEngine>(engine: E, request: DriverRequest) -> i32 {
     let mut session = CompilerSession::new(engine);
     let outcome = session.execute(&request);
@@ -26,34 +24,18 @@ fn main() {
         }
     };
 
-    // The rewrite engine remains opt-in via LPP_ENGINE=rewrite until the
-    // required cross-host executable and installed-release gates are green.
-    // LPP_ENGINE=legacy is the explicit rollback selector for the cutover.
-    let use_rewrite = match std::env::var("LPP_ENGINE") {
-        Err(std::env::VarError::NotPresent) => false,
-        Ok(value) if value.eq_ignore_ascii_case("legacy") => false,
-        Ok(value) if value.eq_ignore_ascii_case("rewrite") => true,
-        Ok(value) => {
-            eprintln!("[L++] unknown LPP_ENGINE value `{value}`; use `legacy` or `rewrite`");
-            std::process::exit(2);
+    if let Ok(value) = std::env::var("LPP_ENGINE") {
+        if value.eq_ignore_ascii_case("legacy") {
+            eprintln!("[L++] Notice: The legacy v1 engine has been retired in the L++ v0.1 cutover.");
+            eprintln!("[L++] The production compiler now runs through the native Cranelift/ARC pipeline.");
         }
-        Err(std::env::VarError::NotUnicode(_)) => {
-            eprintln!("[L++] LPP_ENGINE is not valid Unicode; use `legacy` or `rewrite`");
-            std::process::exit(2);
-        }
-    };
+    }
 
     let builder = std::thread::Builder::new()
         .name("lpp_main".to_string())
         .stack_size(32 * 1024 * 1024);
     let handle = builder
-        .spawn(move || {
-            if use_rewrite {
-                run_engine(RewriteEngine, request)
-            } else {
-                run_engine(LegacyEngine, request)
-            }
-        })
+        .spawn(move || run_engine(RewriteEngine, request))
         .expect("failed to spawn main compiler thread");
 
     let exit_code = match handle.join() {
