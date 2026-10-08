@@ -35,12 +35,20 @@ if [ ! -x "$LPP" ]; then
 fi
 
 : > "$LOG"
+ERRCODES_LOG=/tmp/corpus_errcodes.log
+: > "$ERRCODES_LOG"
 total=0; pass=0; compfail=0; runfail=0; assertfail=0; timeout_n=0
 xfail_ok=0; xfail_bad=0; skip_n=0
-declare -A errcodes
 
 # Corpus = every .lpp under tests/ and examples/ (sorted for determinism).
-mapfile -t FILES < <(find "$ROOT/tests" "$ROOT/examples" -name '*.lpp' 2>/dev/null | sort)
+FILES=()
+if type mapfile >/dev/null 2>&1; then
+  mapfile -t FILES < <(find "$ROOT/tests" "$ROOT/examples" -name '*.lpp' 2>/dev/null | sort)
+else
+  while IFS= read -r f; do
+    [ -n "$f" ] && FILES+=("$f")
+  done < <(find "$ROOT/tests" "$ROOT/examples" -name '*.lpp' 2>/dev/null | sort)
+fi
 
 # Classify a file's EXPECTED outcome. The corpus mixes three kinds of program
 # and scoring each as "must exit 0" is wrong for two of them:
@@ -130,7 +138,7 @@ for f in "${FILES[@]}"; do
        || printf '%s' "$out" | grep -qiE '\[rewrite\][[:space:]]+compile error|compile error:'; then
       compfail=$((compfail + 1))
       bucket="${code:-NO_CODE}"
-      errcodes[$bucket]=$(( ${errcodes[$bucket]:-0} + 1 ))
+      echo "$bucket" >> "$ERRCODES_LOG"
       echo "COMPFAIL $rel  [$bucket]" >> "$LOG"
     else
       runfail=$((runfail + 1))
@@ -161,9 +169,9 @@ if [ "$scored" -gt 0 ]; then
   pct=$(awk "BEGIN{printf \"%.1f\", ($correct/$scored)*100}")
   echo "correct: ${correct}/${scored} = ${pct}%   (pass ${pass} + correctly-rejected ${xfail_ok})"
 fi
-if [ "$compfail" -gt 0 ]; then
+if [ "$compfail" -gt 0 ] && [ -s "$ERRCODES_LOG" ]; then
   echo "--- compile-error codes (count) ---"
-  for c in "${!errcodes[@]}"; do echo "$c ${errcodes[$c]}"; done | sort -k2 -nr
+  sort "$ERRCODES_LOG" | uniq -c | sort -nr | awk '{print $2, $1}'
 fi
 echo "full log: $LOG"
 
