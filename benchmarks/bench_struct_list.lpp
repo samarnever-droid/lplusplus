@@ -4,7 +4,7 @@ struct Score:
 
 def main():
     values := [1, 2, 3, 4, 5]
-    score := Score()
+    mut score := Score()
     score.value = 0
     mut i := 0
     while i < 100000:

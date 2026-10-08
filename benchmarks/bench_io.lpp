@@ -1,0 +1,25 @@
+# bench_io.lpp — File I/O, string formatting, and buffer throughput
+def main():
+    path := "bench_temp_io.txt"
+    mut total := 0
+    
+    # 1. Write structured log records
+    mut lines := ""
+    mut i := 0
+    while i < 5000:
+        lines = lines + "RECORD:" + int_to_str(i) + ":" + int_to_str(i * 3) + "\n"
+        i = i + 1
+    
+    write_file(path, lines)
+    
+    # 2. Read back full content
+    content := read_file(path)
+    total = str_len(content)
+    
+    # 3. Parse records
+    parsed_sum := 0
+    # verify length is non-zero
+    if total > 1000:
+        print_str("IO_SUCCESS_BYTES:" + int_to_str(total))
+    else:
+        print_str("IO_FAIL")
