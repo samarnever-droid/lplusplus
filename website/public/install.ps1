@@ -8,7 +8,7 @@ $ProjectDir = $PSScriptRoot
 $InstallDir = if ($env:LPP_INSTALL_DIR) { $env:LPP_INSTALL_DIR } else { Join-Path $HOME ".lpp" }
 $BinDir = Join-Path $InstallDir "bin"
 $LibDir = Join-Path $InstallDir "lib"
-$Version = if ($env:LPP_VERSION) { $env:LPP_VERSION } else { "latest" }
+$Version = if ($env:LPP_VERSION) { $env:LPP_VERSION } else { "v0.1" }
 if (($Version -ne "latest") -and (-not $Version.StartsWith("v"))) { $Version = "v$Version" }
 $AssetName = "lpp-windows-x86_64.zip"
 if ($Version -eq "latest") {

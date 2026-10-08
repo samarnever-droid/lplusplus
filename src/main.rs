@@ -26,8 +26,12 @@ fn main() {
 
     if let Ok(value) = std::env::var("LPP_ENGINE") {
         if value.eq_ignore_ascii_case("legacy") {
-            eprintln!("[L++] Notice: The legacy v1 engine has been retired in the L++ v0.1 cutover.");
-            eprintln!("[L++] The production compiler now runs through the native Cranelift/ARC pipeline.");
+            eprintln!(
+                "[L++] Notice: The legacy v1 engine has been retired in the L++ v0.1 cutover."
+            );
+            eprintln!(
+                "[L++] The production compiler now runs through the native Cranelift/ARC pipeline."
+            );
         }
     }
 

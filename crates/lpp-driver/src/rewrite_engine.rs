@@ -815,7 +815,10 @@ fn print_doctor() {
 }
 
 fn print_help() {
-    println!("L++ Compiler v{} (Pure Native AOT)", env!("CARGO_PKG_VERSION"));
+    println!(
+        "L++ Compiler v{} (Pure Native AOT)",
+        env!("CARGO_PKG_VERSION")
+    );
     println!();
     println!("Usage: lpp <file.lpp> [options]");
     println!("       lpp <command> [options]");
@@ -838,5 +841,7 @@ fn print_help() {
     println!("  lpp setup llvm   configure an installed LLVM compiler");
     println!();
     println!("Keel Package Manager Commands:");
-    println!("  new, init, add, remove, install, update, test, run, build, publish, tree, verify, clean");
+    println!(
+        "  new, init, add, remove, install, update, test, run, build, publish, tree, verify, clean"
+    );
 }

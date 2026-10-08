@@ -217,7 +217,9 @@ pub fn compile_entry_with_options(
 
     let package = lower_package(&graph, ResolutionMode::LegacyFlat)
         .map_err(|error| CompileError::Lower(format!("{error:?}")))?;
-    if profile { eprintln!("[profile] HIR lowering: {:?}", t0.elapsed()); }
+    if profile {
+        eprintln!("[profile] HIR lowering: {:?}", t0.elapsed());
+    }
     let t1 = std::time::Instant::now();
 
     let work_units = package.expressions.len().saturating_mul(10).max(1_000_000);
@@ -227,7 +229,9 @@ pub fn compile_entry_with_options(
     };
     let mut inference = infer_hir_package(&package, inference_options)
         .map_err(|error| CompileError::Types(format!("{error:?}")))?;
-    if profile { eprintln!("[profile] Type check: {:?}", t1.elapsed()); }
+    if profile {
+        eprintln!("[profile] Type check: {:?}", t1.elapsed());
+    }
     let t2 = std::time::Instant::now();
 
     let mir_options = MirBuildOptions {
@@ -235,30 +239,33 @@ pub fn compile_entry_with_options(
         max_aggregates: package.items.len().max(100_000),
         ..Default::default()
     };
-    let mut program = build_mir(
-        &package,
-        &graph.sources,
-        &mut inference,
-        mir_options,
-    )
-    .map_err(|error| CompileError::Mir(format!("{error:?}")))?;
-    if profile { eprintln!("[profile] MIR build: {:?}", t2.elapsed()); }
+    let mut program = build_mir(&package, &graph.sources, &mut inference, mir_options)
+        .map_err(|error| CompileError::Mir(format!("{error:?}")))?;
+    if profile {
+        eprintln!("[profile] MIR build: {:?}", t2.elapsed());
+    }
     let t3 = std::time::Instant::now();
 
     if options.optimization != OptimizationLevel::O0 {
         verify_program(&program, &inference.interner, "after MIR construction")?;
         prove_ownership(&program, &inference.interner, "before optimization")?;
-        if profile { eprintln!("[profile] Pre-opt verify + ownership: {:?}", t3.elapsed()); }
+        if profile {
+            eprintln!("[profile] Pre-opt verify + ownership: {:?}", t3.elapsed());
+        }
         let t4 = std::time::Instant::now();
 
         run_optimization(&mut program, &inference.interner, options.optimization)
             .map_err(|error| CompileError::Optimize(format!("{error:?}")))?;
-        if profile { eprintln!("[profile] Optimization: {:?}", t4.elapsed()); }
+        if profile {
+            eprintln!("[profile] Optimization: {:?}", t4.elapsed());
+        }
     }
     let t5 = std::time::Instant::now();
     verify_program(&program, &inference.interner, "final MIR")?;
     prove_ownership(&program, &inference.interner, "final MIR")?;
-    if profile { eprintln!("[profile] Verify + ownership: {:?}", t5.elapsed()); }
+    if profile {
+        eprintln!("[profile] Verify + ownership: {:?}", t5.elapsed());
+    }
     let t6 = std::time::Instant::now();
 
     let backend_opt = match options.optimization {
@@ -275,7 +282,9 @@ pub fn compile_entry_with_options(
             &CodegenOptions::new(options.target, &names).with_opt_level(backend_opt),
         )
         .map_err(CompileError::Codegen)?;
-    if profile { eprintln!("[profile] Cranelift codegen: {:?}", t6.elapsed()); }
+    if profile {
+        eprintln!("[profile] Cranelift codegen: {:?}", t6.elapsed());
+    }
     Ok(compiled)
 }
 

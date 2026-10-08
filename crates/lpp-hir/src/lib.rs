@@ -71,9 +71,9 @@ mod tests {
             let requested_norm = requested.to_string_lossy().replace('\\', "/");
             if self.case_insensitive {
                 let requested_lower = requested_norm.to_lowercase();
-                self.files
-                    .keys()
-                    .find(|path| path.to_string_lossy().replace('\\', "/").to_lowercase() == requested_lower)
+                self.files.keys().find(|path| {
+                    path.to_string_lossy().replace('\\', "/").to_lowercase() == requested_lower
+                })
             } else {
                 self.files
                     .keys()

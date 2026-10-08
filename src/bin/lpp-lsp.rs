@@ -546,4 +546,3 @@ fn process_and_publish_diagnostics<W: Write>(
         }),
     )
 }
-

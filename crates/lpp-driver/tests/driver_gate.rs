@@ -104,7 +104,11 @@ fn compiles_and_runs_a_native_executable() {
     let run = Command::new(&exe).output().expect("run the executable");
     let stdout = String::from_utf8_lossy(&run.stdout).into_owned();
     assert_eq!(run.status.code(), Some(0), "exe exited non-zero:\n{stdout}");
-    assert_eq!(stdout.replace("\r\n", "\n"), "42\ndriver_ok\n", "unexpected program output");
+    assert_eq!(
+        stdout.replace("\r\n", "\n"),
+        "42\ndriver_ok\n",
+        "unexpected program output"
+    );
 }
 
 /// Cutover stage 1: `RewriteEngine` drives the same pipeline through the
@@ -182,5 +186,9 @@ fn zero_arg_struct_constructor_zero_initializes_fields() {
     let run = Command::new(&exe).output().expect("run the executable");
     let stdout = String::from_utf8_lossy(&run.stdout).into_owned();
     assert_eq!(run.status.code(), Some(0), "exe exited non-zero:\n{stdout}");
-    assert_eq!(stdout.replace("\r\n", "\n"), "0\n", "Box() should zero-initialize `value` to 0");
+    assert_eq!(
+        stdout.replace("\r\n", "\n"),
+        "0\n",
+        "Box() should zero-initialize `value` to 0"
+    );
 }
