@@ -799,12 +799,11 @@ fn object_census_exports_and_imports_match_the_contract() {
     let mut expected_exports =
         std::collections::BTreeSet::from(["main".to_owned(), "lpp_main".to_owned()]);
     for (_, function) in program.functions() {
-        if let Some(symbol) = function.name.as_ref() {
-            if let Some(name) = package.names.symbols.resolve(*symbol) {
-                if name != "main" {
-                    expected_exports.insert(name.to_owned());
-                }
-            }
+        if let Some(symbol) = function.name.as_ref()
+            && let Some(name) = package.names.symbols.resolve(*symbol)
+            && name != "main"
+        {
+            expected_exports.insert(name.to_owned());
         }
     }
     for (id, aggregate) in program.aggregates() {

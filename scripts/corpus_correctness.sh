@@ -15,9 +15,10 @@
 set -u
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-LPP="$ROOT/target/debug/lpp"
-if [ -x "$ROOT/target/debug/lpp.exe" ]; then
-  LPP="$ROOT/target/debug/lpp.exe"
+cd "$ROOT" || exit 2
+LPP="./target/debug/lpp"
+if [ -x "./target/debug/lpp.exe" ] || [ -f "./target/debug/lpp.exe" ]; then
+  LPP="./target/debug/lpp.exe"
 fi
 MODE="${1:-run}"
 LOG=/tmp/corpus_correctness.log
@@ -87,14 +88,14 @@ for f in "${FILES[@]}"; do
   fi
 
   if [ "$MODE" = "check" ]; then
-    out=$(LPP_ENGINE=rewrite timeout "$PER_FILE_TIMEOUT" "$LPP" "$f" --check 2>&1); rc=$?
+    out=$(LPP_ENGINE=rewrite timeout "$PER_FILE_TIMEOUT" "$LPP" "$rel" --check 2>&1); rc=$?
   else
     # </dev/null guarantees stdin is at EOF: a program calling input() reads the
     # empty string and terminates instead of blocking until the per-file timeout.
-    out=$(LPP_ENGINE=rewrite timeout "$PER_FILE_TIMEOUT" "$LPP" run "$f" </dev/null 2>&1); rc=$?
+    out=$(LPP_ENGINE=rewrite timeout "$PER_FILE_TIMEOUT" "$LPP" run "$rel" </dev/null 2>&1); rc=$?
     # lpp run emits an executable named after the source into the cwd; remove it so the
     # harness never pollutes the repo root with one binary per corpus file.
-    rm -f "./$(basename "$f" .lpp)" "./$(basename "$f" .lpp).exe"
+    rm -f "./$(basename "$rel" .lpp)" "./$(basename "$rel" .lpp).exe"
   fi
 
   code=$(printf '%s' "$out" | grep -oE 'E[0-9]{4}' | head -1)

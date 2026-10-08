@@ -136,13 +136,34 @@ pub fn type_matches_semantic(
     matches!(
         (types.kind(ty), kind),
         (_, SemanticAbiType::Any)
-            | (TypeKind::Primitive(PrimitiveType::Bool), SemanticAbiType::Bool)
-            | (TypeKind::Primitive(PrimitiveType::Float), SemanticAbiType::F64)
-            | (TypeKind::Primitive(PrimitiveType::Int), SemanticAbiType::I32 | SemanticAbiType::I64)
-            | (TypeKind::Primitive(PrimitiveType::String), SemanticAbiType::Str)
-            | (TypeKind::Primitive(PrimitiveType::StrSlice), SemanticAbiType::StrSlice)
-            | (TypeKind::Primitive(PrimitiveType::VectorI64x2), SemanticAbiType::VectorI64x2)
-            | (TypeKind::Primitive(PrimitiveType::Void), SemanticAbiType::Void)
+            | (
+                TypeKind::Primitive(PrimitiveType::Bool),
+                SemanticAbiType::Bool
+            )
+            | (
+                TypeKind::Primitive(PrimitiveType::Float),
+                SemanticAbiType::F64
+            )
+            | (
+                TypeKind::Primitive(PrimitiveType::Int),
+                SemanticAbiType::I32 | SemanticAbiType::I64
+            )
+            | (
+                TypeKind::Primitive(PrimitiveType::String),
+                SemanticAbiType::Str
+            )
+            | (
+                TypeKind::Primitive(PrimitiveType::StrSlice),
+                SemanticAbiType::StrSlice
+            )
+            | (
+                TypeKind::Primitive(PrimitiveType::VectorI64x2),
+                SemanticAbiType::VectorI64x2
+            )
+            | (
+                TypeKind::Primitive(PrimitiveType::Void),
+                SemanticAbiType::Void
+            )
     )
 }
 

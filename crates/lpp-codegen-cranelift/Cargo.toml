@@ -6,7 +6,7 @@ license = "MIT OR Apache-2.0"
 publish = false
 
 [dependencies]
-cranelift-codegen = { version = "0.113", features = ["arm64"] }
+cranelift-codegen = { version = "0.113", features = ["arm64", "x86"] }
 cranelift-frontend = "0.113"
 cranelift-module = "0.113"
 cranelift-object = "0.113"
