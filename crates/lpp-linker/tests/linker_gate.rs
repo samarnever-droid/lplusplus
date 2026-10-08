@@ -205,6 +205,10 @@ fn link_cli_help_and_version_are_clean() {
 /// Skips cleanly when no C compiler is present.
 #[test]
 fn cc_multi_object_with_relocations() {
+    if !cfg!(target_os = "linux") {
+        eprintln!("skipping: ELF SysV multi-object relocations are Linux-specific");
+        return;
+    }
     let cc = match Command::new("cc").arg("--version").output() {
         Ok(o) if o.status.success() => "cc",
         _ => {
