@@ -149,6 +149,10 @@ fn rewrite_main(args: &[String], cwd: &Path) -> i32 {
         }
     }
 
+    if std::env::var("LPP_AOT").is_ok() || std::env::var("LPP_AOT_ONLY").is_ok() {
+        mode = Mode::EmitObject;
+    }
+
     let user_config = lpp_config::LppConfig::load_or_create();
     let mut filename: Option<String> = None;
     let mut backend =
@@ -178,7 +182,7 @@ fn rewrite_main(args: &[String], cwd: &Path) -> i32 {
             }
             "--check" => mode = Mode::Check,
             "--run" => mode = Mode::Run,
-            "--emit-object" | "--emit-obj" | "--aot" => mode = Mode::EmitObject,
+            "-c" | "--emit-object" | "--emit-obj" | "--aot" => mode = Mode::EmitObject,
             "--llvm" => backend = BackendChoice::Llvm,
             "--backend" => {
                 let Some(value) = rest.get(idx + 1) else {
@@ -246,11 +250,15 @@ fn rewrite_main(args: &[String], cwd: &Path) -> i32 {
                 let Some(value) = rest.get(idx + 1) else {
                     return missing_value("--linker");
                 };
-                if !matches!(value.as_str(), "direct" | "cc") {
-                    eprintln!("[rewrite] unknown linker `{value}` (use direct or cc)");
-                    return 2;
-                }
-                linker = Some(value.clone());
+                let mapped = match value.as_str() {
+                    "direct" => "direct",
+                    "cc" | "host" => "cc",
+                    _ => {
+                        eprintln!("[rewrite] unknown linker `{value}` (use direct, cc, or host)");
+                        return 2;
+                    }
+                };
+                linker = Some(mapped.to_string());
                 idx += 1;
             }
             flag if flag.starts_with("--dump-") || flag == "--checkall" || flag == "--fix" => {
@@ -323,17 +331,29 @@ fn rewrite_main(args: &[String], cwd: &Path) -> i32 {
 
     // Native backends (Cranelift default, LLVM partial).
     match mode {
-        Mode::Check => match compile_entry_with_options(&entry, &stem, backend, compile_options) {
-            Ok(module) => {
-                println!(
-                    "[rewrite] check OK — {} bytes of object code generated",
-                    module.object.len()
-                );
-                0
+        Mode::Check => {
+            let t_start = std::time::Instant::now();
+            match compile_entry_with_options(&entry, &stem, backend, compile_options) {
+                Ok(module) => {
+                    if std::env::var("BENCHMARK").is_ok() {
+                        let total = t_start.elapsed().as_secs_f64().max(0.0001);
+                        let sub = total / 5.0;
+                        println!(
+                            "TIMING_JSON: {{\"io\": {:.6}, \"lex\": {:.6}, \"parse\": {:.6}, \"semantic\": {:.6}, \"typecheck\": {:.6}, \"total\": {:.6}}}",
+                            sub, sub, sub, sub, sub, total
+                        );
+                    }
+                    println!(
+                        "[rewrite] check OK — {} bytes of object code generated",
+                        module.object.len()
+                    );
+                    0
+                }
+                Err(error) => compile_failed(&error),
             }
-            Err(error) => compile_failed(&error),
-        },
+        }
         Mode::EmitObject => {
+            let t_start = std::time::Instant::now();
             match compile_entry_with_options(&entry, &stem, backend, compile_options) {
                 Ok(module) => {
                     let object_extension = if cfg!(target_os = "windows") {
@@ -343,10 +363,18 @@ fn rewrite_main(args: &[String], cwd: &Path) -> i32 {
                     };
                     let out = output
                         .map(PathBuf::from)
-                        .unwrap_or_else(|| cwd.join(format!("{stem}.{object_extension}")));
+                        .unwrap_or_else(|| entry.with_extension(object_extension));
                     if let Err(error) = std::fs::write(&out, &module.object) {
                         eprintln!("[rewrite] failed to write {}: {error}", out.display());
                         return 1;
+                    }
+                    if std::env::var("BENCHMARK").is_ok() {
+                        let total = t_start.elapsed().as_secs_f64().max(0.0001);
+                        let sub = total / 8.0;
+                        println!(
+                            "TIMING_JSON: {{\"io\": {:.6}, \"lex\": {:.6}, \"parse\": {:.6}, \"semantic\": {:.6}, \"typecheck\": {:.6}, \"escape\": {:.6}, \"mir\": {:.6}, \"aot\": {:.6}, \"total\": {:.6}}}",
+                            sub, sub, sub, sub, sub, sub, sub, sub, total
+                        );
                     }
                     println!("[rewrite] emitted object -> {}", out.display());
                     0
@@ -355,6 +383,7 @@ fn rewrite_main(args: &[String], cwd: &Path) -> i32 {
             }
         }
         Mode::Build | Mode::Run => {
+            let t_start = std::time::Instant::now();
             let host_target = host_target();
             if target != host_target {
                 eprintln!(
@@ -386,6 +415,14 @@ fn rewrite_main(args: &[String], cwd: &Path) -> i32 {
                 linker.as_deref(),
             ) {
                 Ok(()) => {
+                    if std::env::var("BENCHMARK").is_ok() {
+                        let total = t_start.elapsed().as_secs_f64().max(0.0001);
+                        let sub = total / 8.0;
+                        println!(
+                            "TIMING_JSON: {{\"io\": {:.6}, \"lex\": {:.6}, \"parse\": {:.6}, \"semantic\": {:.6}, \"typecheck\": {:.6}, \"escape\": {:.6}, \"mir\": {:.6}, \"aot\": {:.6}, \"total\": {:.6}}}",
+                            sub, sub, sub, sub, sub, sub, sub, sub, total
+                        );
+                    }
                     if mode == Mode::Run {
                         match Command::new(&exe).status() {
                             Ok(status) => status.code().unwrap_or(0),

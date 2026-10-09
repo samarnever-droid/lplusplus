@@ -35,6 +35,7 @@ jobs:
         run: |
           clang --version
           cargo fmt --all -- --check
+          cargo build --locked -p lpp-runtime
           cargo test --workspace --locked
       - name: Rewrite native authored corpus
         run: |

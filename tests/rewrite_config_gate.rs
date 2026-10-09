@@ -10,17 +10,18 @@ fn scratch() -> PathBuf {
 }
 
 fn lpp(home: &Path, working_directory: &Path, arguments: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_lpp"))
-        .current_dir(working_directory)
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_lpp"));
+    cmd.current_dir(working_directory)
         .env("HOME", home)
         .env("USERPROFILE", home)
         .env("LPP_ENGINE", "rewrite")
         .env("LPP_BENCH_BIN", env!("CARGO_BIN_EXE_lpp"))
         .env("LPP_UPDATE_LATEST_TAG", "v0.1.0")
-        .env("LPP_LLVM_CC", env!("CARGO_BIN_EXE_lpp"))
-        .args(arguments)
-        .output()
-        .unwrap()
+        .env("LPP_LLVM_CC", env!("CARGO_BIN_EXE_lpp"));
+    if let Some(runtime) = lpp_driver::runtime_library_path() {
+        cmd.env("LPP_RUNTIME_LIB", runtime);
+    }
+    cmd.args(arguments).output().unwrap()
 }
 
 #[test]
