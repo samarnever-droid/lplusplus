@@ -11,7 +11,7 @@ fn cli_routes_the_v1_engine_through_the_typed_driver() {
     assert_eq!(
         String::from_utf8(output.stdout).unwrap(),
         format!(
-            "L++ Compiler v{} (Pure Native AOT)\n",
+            "L++ v{} (rewrite engine)\n",
             env!("CARGO_PKG_VERSION")
         )
     );

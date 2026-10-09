@@ -427,7 +427,9 @@ fn link_executable_direct(
     runtime_lib_dir: &Path,
     output: &Path,
 ) -> Result<(), lpp_linker::LinkError> {
-    use lpp_linker::{DynamicMode, LinkOptions, OutputFormat};
+    #[cfg(target_os = "windows")]
+    use lpp_linker::OutputFormat;
+    use lpp_linker::{DynamicMode, LinkOptions};
 
     #[cfg(target_os = "windows")]
     let options = LinkOptions {

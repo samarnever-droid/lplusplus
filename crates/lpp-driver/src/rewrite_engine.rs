@@ -169,10 +169,7 @@ fn rewrite_main(args: &[String], cwd: &Path) -> i32 {
         let arg = rest[idx].as_str();
         match arg {
             "--version" | "-v" => {
-                println!(
-                    "L++ Compiler v{} (Pure Native AOT)",
-                    env!("CARGO_PKG_VERSION")
-                );
+                println!("L++ v{} (rewrite engine)", env!("CARGO_PKG_VERSION"));
                 return 0;
             }
             "--help" | "-h" => {

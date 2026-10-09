@@ -24,16 +24,27 @@ fn main() {
         }
     };
 
-    if let Ok(value) = std::env::var("LPP_ENGINE") {
-        if value.eq_ignore_ascii_case("legacy") {
+    let _use_rewrite = match std::env::var("LPP_ENGINE") {
+        Err(std::env::VarError::NotPresent) => true,
+        Ok(value) if value.eq_ignore_ascii_case("legacy") => {
             eprintln!(
                 "[L++] Notice: The legacy v1 engine has been retired in the L++ v0.1 cutover."
             );
             eprintln!(
                 "[L++] The production compiler now runs through the native Cranelift/ARC pipeline."
             );
+            true
         }
-    }
+        Ok(value) if value.eq_ignore_ascii_case("rewrite") => true,
+        Ok(value) => {
+            eprintln!("[L++] unknown LPP_ENGINE value `{value}`; use `legacy` or `rewrite`");
+            std::process::exit(2);
+        }
+        Err(std::env::VarError::NotUnicode(_)) => {
+            eprintln!("[L++] LPP_ENGINE is not valid Unicode; use `legacy` or `rewrite`");
+            std::process::exit(2);
+        }
+    };
 
     let builder = std::thread::Builder::new()
         .name("lpp_main".to_string())
