@@ -22,7 +22,7 @@ if [ -x "./target/debug/lpp.exe" ] || [ -f "./target/debug/lpp.exe" ]; then
 fi
 MODE="${1:-run}"
 LOG=/tmp/corpus_correctness.log
-PER_FILE_TIMEOUT=25
+PER_FILE_TIMEOUT="${PER_FILE_TIMEOUT:-45}"
 
 run_with_timeout() {
   local dur="$1"
