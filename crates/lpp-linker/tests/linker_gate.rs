@@ -107,9 +107,17 @@ fn run_exit_code(binary: &Path) -> i32 {
     if !cfg!(target_os = "linux") {
         return 42;
     }
-    let status = Command::new(binary)
-        .status()
-        .expect("linked output must execute");
+    let mut attempts = 0;
+    let status = loop {
+        match Command::new(binary).status() {
+            Ok(status) => break status,
+            Err(e) if e.raw_os_error() == Some(26) && attempts < 10 => {
+                attempts += 1;
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            Err(e) => panic!("linked output must execute: {e:?}"),
+        }
+    };
     status
         .code()
         .unwrap_or_else(|| panic!("process was killed by a signal"))

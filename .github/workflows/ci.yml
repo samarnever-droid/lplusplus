@@ -214,7 +214,7 @@ jobs:
       - name: Show sqlite3 version
         run: python3 -c "import sqlite3; print('sqlite3', sqlite3.sqlite_version)"
       - name: Build the L++ compiler
-        run: cargo build --release --locked --bin lpp --bin lpp-link
+        run: cargo build --release --locked --bin lpp --bin lpp-link -p lpp-runtime
       - name: Build lppsqlite engine and tests
         run: sh packages/lppsqlite/build.sh --tests
       - name: Unit suites (485 assertions)
@@ -284,7 +284,7 @@ jobs:
       - name: Install zip/unzip
         run: sudo apt-get update -qq && sudo apt-get install -y -qq zip unzip 2>/dev/null || true
       - name: Build the L++ compiler
-        run: cargo build --release --locked --bin lpp --bin lpp-link
+        run: cargo build --release --locked --bin lpp --bin lpp-link -p lpp-runtime
       - name: Build compresslpp and its tests
         run: sh packages/compresslpp/build.sh --tests
       - name: Unit suites

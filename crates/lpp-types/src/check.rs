@@ -41,6 +41,12 @@ pub struct ShadowTypeError {
     pub error: TypeError,
 }
 
+impl std::fmt::Display for ShadowTypeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.error)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TypeAssignments {
     expressions: Vec<Option<TypeId>>,

@@ -228,7 +228,7 @@ pub fn compile_entry_with_options(
         ..Default::default()
     };
     let mut inference = infer_hir_package(&package, inference_options)
-        .map_err(|error| CompileError::Types(format!("{error:?}")))?;
+        .map_err(|error| CompileError::Types(format!("{error}")))?;
     if profile {
         eprintln!("[profile] Type check: {:?}", t1.elapsed());
     }

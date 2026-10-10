@@ -314,7 +314,7 @@ impl fmt::Display for TypeError {
             Self::SpawnCaptureMutation { local } => {
                 write!(
                     formatter,
-                    "cannot mutate captured variable {local:?} inside a spawned closure: this would cause a data race"
+                    "Cannot mutate captured variable {local:?} inside a spawned closure: this would cause a data race"
                 )
             }
             Self::UnsafeAsyncBlocking { builtin } => write!(

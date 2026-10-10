@@ -113,6 +113,10 @@ done
 if [ -d "$REJECT" ]; then
     for src in "$REJECT"/*.lpp; do
         name=$(basename "$src")
+        # In the v0.1 rewrite (Phase 5D2b slice 3), zero-parameter void spawn is supported on WebAssembly.
+        if [ "$name" = "reject_spawn.lpp" ]; then
+            continue
+        fi
         work="$TMP/$name"
         mkdir -p "$work"
         cp "$src" "$work/"

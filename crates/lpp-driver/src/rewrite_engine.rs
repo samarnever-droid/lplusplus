@@ -317,7 +317,7 @@ fn rewrite_main(args: &[String], cwd: &Path) -> i32 {
                 }
                 let out = output
                     .map(PathBuf::from)
-                    .unwrap_or_else(|| cwd.join(format!("{stem}.wasm")));
+                    .unwrap_or_else(|| entry.with_extension("wasm"));
                 if let Err(error) = std::fs::write(&out, &module.object) {
                     eprintln!("[rewrite] failed to write {}: {error}", out.display());
                     return 1;
@@ -325,7 +325,10 @@ fn rewrite_main(args: &[String], cwd: &Path) -> i32 {
                 println!("[rewrite] emitted wasm module -> {}", out.display());
                 if mode == Mode::Run { run_wasm(&out) } else { 0 }
             }
-            Err(error) => compile_failed(&error),
+            Err(error) => {
+                eprintln!("[rewrite] WebAssembly compile error: {error}");
+                1
+            }
         };
     }
 
@@ -393,7 +396,10 @@ fn rewrite_main(args: &[String], cwd: &Path) -> i32 {
                 );
                 return 2;
             }
-            let mut exe = output.map(PathBuf::from).unwrap_or_else(|| cwd.join(&stem));
+            let exe_ext = std::env::consts::EXE_SUFFIX.trim_start_matches('.');
+            let mut exe = output
+                .map(PathBuf::from)
+                .unwrap_or_else(|| entry.with_extension(exe_ext));
             if cfg!(target_os = "windows") && exe.extension().is_none() {
                 exe.set_extension("exe");
             }
@@ -456,9 +462,11 @@ fn parse_target(value: &str) -> Result<Target, String> {
         "aarch64" => Ok(Target::Aarch64),
         value if value == Target::X86_64.triple() => Ok(Target::X86_64),
         value if value == Target::Aarch64.triple() => Ok(Target::Aarch64),
-        "wasm32-wasi" | "wasm32-wasip1" => Ok(Target::Wasm32Wasi),
+        "wasm32" | "wasm32-wasi" | "wasm32-wasip1" | "wasm32-unknown-unknown" => {
+            Ok(Target::Wasm32Wasi)
+        }
         _ => Err(format!(
-            "unsupported target `{value}` (supported: host, {}, {}, wasm32-wasip1)",
+            "unsupported target `{value}` (supported: host, {}, {}, wasm32, wasm32-wasip1)",
             Target::X86_64.triple(),
             Target::Aarch64.triple()
         )),
