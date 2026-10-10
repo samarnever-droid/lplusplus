@@ -25,6 +25,7 @@ jobs:
         with:
           toolchain: 1.98.0
           components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - name: Show toolchain
         run: |
           rustc --version
@@ -57,6 +58,7 @@ jobs:
         with:
           toolchain: 1.98.0
           components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - name: Install wasmtime (pinned)
         run: |
           WASMTIME_VERSION=26.0.0
