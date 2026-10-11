@@ -501,3 +501,275 @@ pub unsafe extern "C" fn lpp_ewrite_str(ptr: *const c_char) {
 pub unsafe extern "C" fn lpp_flush() {
     unsafe { flush_all() };
 }
+
+// ── CLI Arguments & Working Directory Builtins ──────────────────────────────
+
+#[unsafe(no_mangle)]
+pub extern "C" fn lpp_args_count() -> i64 {
+    std::env::args_os().count() as i64
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lpp_args_get(index: i64) -> *mut c_char {
+    if index < 0 {
+        return unsafe { arc_string(&[]) };
+    }
+    match std::env::args_os().nth(index as usize) {
+        Some(arg) => {
+            let s = arg.to_string_lossy();
+            unsafe { arc_string(s.as_bytes()) }
+        }
+        None => unsafe { arc_string(&[]) },
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lpp_args() -> *mut c_void {
+    let list = unsafe { crate::list::lpp_list_new_arc() };
+    if list.is_null() {
+        return list;
+    }
+    for arg in std::env::args_os() {
+        let s = arg.to_string_lossy();
+        let arc = unsafe { arc_string(s.as_bytes()) };
+        unsafe { crate::list::lpp_list_push_arc(list, arc as *mut c_void) };
+    }
+    list
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lpp_cwd() -> *mut c_char {
+    match std::env::current_dir() {
+        Ok(dir) => {
+            let s = dir.to_string_lossy();
+            unsafe { arc_string(s.as_bytes()) }
+        }
+        Err(_) => unsafe { arc_string(&[]) },
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lpp_chdir(path: *const c_char) -> i64 {
+    if path.is_null() {
+        return -1;
+    }
+    let p = path_from(unsafe { cstr_bytes(path) });
+    match std::env::set_current_dir(p) {
+        Ok(()) => 0,
+        Err(_) => -1,
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lpp_is_dir(path: *const c_char) -> i64 {
+    if path.is_null() {
+        return 0;
+    }
+    i64::from(path_from(unsafe { cstr_bytes(path) }).is_dir())
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lpp_is_file(path: *const c_char) -> i64 {
+    if path.is_null() {
+        return 0;
+    }
+    i64::from(path_from(unsafe { cstr_bytes(path) }).is_file())
+}
+
+// ── Positional Durable File I/O ─────────────────────────────────────────────
+
+use std::collections::BTreeMap;
+use std::sync::{
+    Mutex, OnceLock,
+    atomic::{AtomicI64, Ordering},
+};
+
+static NEXT_FD: AtomicI64 = AtomicI64::new(1);
+
+fn fd_table() -> &'static Mutex<BTreeMap<i64, std::fs::File>> {
+    static TABLE: OnceLock<Mutex<BTreeMap<i64, std::fs::File>>> = OnceLock::new();
+    TABLE.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lpp_file_open(path: *const c_char, _flags: i64) -> i64 {
+    if path.is_null() {
+        return -1;
+    }
+    let p = path_from(unsafe { cstr_bytes(path) });
+    make_parent_dirs(&p);
+    let Ok(file) = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&p)
+    else {
+        return -1;
+    };
+    let fd = NEXT_FD.fetch_add(1, Ordering::Relaxed);
+    if let Ok(mut table) = fd_table().lock() {
+        table.insert(fd, file);
+        fd
+    } else {
+        -1
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn lpp_file_close(fd: i64) {
+    if fd <= 0 {
+        return;
+    }
+    if let Ok(mut table) = fd_table().lock() {
+        table.remove(&fd);
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lpp_file_pread(
+    fd: i64,
+    buf: i64,
+    buf_off: i64,
+    file_off: i64,
+    len: i64,
+) -> i64 {
+    use std::io::{Read, Seek, SeekFrom};
+    if fd <= 0 || buf == 0 || len < 0 || file_off < 0 || buf_off < 0 {
+        return -1;
+    }
+    let buf_ptr = buf as usize as *mut u8;
+    let buf_size = unsafe { *(buf_ptr as *const i64) };
+    if buf_off.saturating_add(len) > buf_size {
+        return -1;
+    }
+    if len == 0 {
+        return 0;
+    }
+    let Ok(mut table) = fd_table().lock() else {
+        return -1;
+    };
+    let Some(file) = table.get_mut(&fd) else {
+        return -1;
+    };
+    if file.seek(SeekFrom::Start(file_off as u64)).is_err() {
+        return -1;
+    }
+    let dst =
+        unsafe { std::slice::from_raw_parts_mut(buf_ptr.add(8 + buf_off as usize), len as usize) };
+    let mut total = 0usize;
+    while total < dst.len() {
+        match file.read(&mut dst[total..]) {
+            Ok(0) => break,
+            Ok(n) => total += n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => return -1,
+        }
+    }
+    total as i64
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lpp_file_pwrite(
+    fd: i64,
+    buf: i64,
+    buf_off: i64,
+    file_off: i64,
+    len: i64,
+) -> i64 {
+    use std::io::{Seek, SeekFrom, Write};
+    if fd <= 0 || buf == 0 || len < 0 || file_off < 0 || buf_off < 0 {
+        return -1;
+    }
+    let buf_ptr = buf as usize as *const u8;
+    let buf_size = unsafe { *(buf_ptr as *const i64) };
+    if buf_off.saturating_add(len) > buf_size {
+        return -1;
+    }
+    if len == 0 {
+        return 0;
+    }
+    let Ok(mut table) = fd_table().lock() else {
+        return -1;
+    };
+    let Some(file) = table.get_mut(&fd) else {
+        return -1;
+    };
+    if file.seek(SeekFrom::Start(file_off as u64)).is_err() {
+        return -1;
+    }
+    let src =
+        unsafe { std::slice::from_raw_parts(buf_ptr.add(8 + buf_off as usize), len as usize) };
+    match file.write_all(src) {
+        Ok(()) => len,
+        Err(_) => -1,
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn lpp_file_fsync(fd: i64) -> i64 {
+    if fd <= 0 {
+        return -1;
+    }
+    let Ok(table) = fd_table().lock() else {
+        return -1;
+    };
+    let Some(file) = table.get(&fd) else {
+        return -1;
+    };
+    match file.sync_all() {
+        Ok(()) => 0,
+        Err(_) => -1,
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn lpp_file_fdatasync(fd: i64) -> i64 {
+    if fd <= 0 {
+        return -1;
+    }
+    let Ok(table) = fd_table().lock() else {
+        return -1;
+    };
+    let Some(file) = table.get(&fd) else {
+        return -1;
+    };
+    match file.sync_data() {
+        Ok(()) => 0,
+        Err(_) => -1,
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn lpp_file_ftruncate(fd: i64, size: i64) -> i64 {
+    if fd <= 0 || size < 0 {
+        return -1;
+    }
+    let Ok(table) = fd_table().lock() else {
+        return -1;
+    };
+    let Some(file) = table.get(&fd) else {
+        return -1;
+    };
+    match file.set_len(size as u64) {
+        Ok(()) => 0,
+        Err(_) => -1,
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn lpp_fd_size(fd: i64) -> i64 {
+    if fd <= 0 {
+        return -1;
+    }
+    let Ok(table) = fd_table().lock() else {
+        return -1;
+    };
+    let Some(file) = table.get(&fd) else {
+        return -1;
+    };
+    match file.metadata() {
+        Ok(meta) => i64::try_from(meta.len()).unwrap_or(-1),
+        Err(_) => -1,
+    }
+}

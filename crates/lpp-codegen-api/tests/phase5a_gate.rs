@@ -130,7 +130,7 @@ fn assert_builtin_parity(builtin: BuiltinId, expected: &BuiltinAbi) {
 
 #[test]
 fn builtin_lowering_parity_across_the_whole_generated_table() {
-    assert_eq!(BUILTINS.len(), 518, "table size drift");
+    assert_eq!(BUILTINS.len(), 532, "table size drift");
 
     let registry = v1_registry().expect("v1 registry parses");
     assert_eq!(registry.builtins.len(), BUILTINS.len());

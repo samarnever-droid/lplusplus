@@ -284,23 +284,53 @@ def main():
 - `str_trim(s: Str) -> Str`
 - `str_to_lower(s: Str) -> Str`
 - `str_to_upper(s: Str) -> Str`
+- `str_lines(s: Str) -> List[Str]`
+- `str_join(items: List[Str], sep: Str) -> Str`
+- `str_pad_left(s: Str, width: Int, pad: Str) -> Str`
+- `str_pad_right(s: Str, width: Int, pad: Str) -> Str`
 - `int_to_str(n: Int) -> Str`
 - `str_to_int(s: Str) -> Int`
 - `float_to_str(f: Float) -> Str`
 - `bool_to_str(b: Bool) -> Str`
 
-### 4.3. Filesystem & OS
+### 4.3. CLI, Filesystem, JSON & OS
+- `args_count() -> Int`
+- `args_get(index: Int) -> Str`
+- `args() -> List[Str]`
+- `cwd() -> Str`
+- `chdir(path: Str) -> Int`
+- `is_dir(path: Str) -> Bool`
+- `is_file(path: Str) -> Bool`
 - `read_file(path: Str) -> Str`
 - `write_file(path: Str, content: Str) -> Int`
 - `append_file(path: Str, content: Str) -> Int`
 - `file_exists(path: Str) -> Bool`
+- `file_open(path: Str, flags: Int) -> Int`
+- `file_close(fd: Int)`
+- `file_pread(fd: Int, buf: Int, buf_off: Int, file_off: Int, len: Int) -> Int`
+- `file_pwrite(fd: Int, buf: Int, buf_off: Int, file_off: Int, len: Int) -> Int`
+- `file_fsync(fd: Int) -> Int`
+- `file_fdatasync(fd: Int) -> Int`
+- `file_ftruncate(fd: Int, size: Int) -> Int`
+- `fd_size(fd: Int) -> Int`
 - `dir_create(path: Str) -> Bool`
 - `dir_list(path: Str) -> List[Str]`
 - `env_get(key: Str) -> Str`
 - `env_set(key: Str, val: Str) -> Bool`
+- `json_parse(s: Str) -> Int`
+- `json_get_int(handle: Int, key: Str) -> Int`
+- `json_get_str(handle: Int, key: Str) -> Str`
+- `json_get_obj(handle: Int, key: Str) -> Int`
+- `json_free(handle: Int)`
+- `json_escape(s: Str) -> Str`
 - `exit(code: Int)`
 - `time_ms() -> Int`
+- `time_ns() -> Int`
 - `sleep(ms: Int)`
+- `sys_mem_total() -> Int`
+- `sys_mem_free() -> Int`
+- `sys_cpu_usage() -> Int`
+- `sys_uptime() -> Int`
 
 ### 4.4. Math & Random
 - `abs(x: Int) -> Int`

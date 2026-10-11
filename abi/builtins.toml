@@ -6756,3 +6756,187 @@ parameter_ownership = ["legacy_unspecified"]
 result_ownership = "none"
 effects = ["legacy_unspecified"]
 targets = ["legacy"]
+
+[[builtin]]
+name = "args_count"
+symbol = "lpp_args_count"
+feature = "filesystem"
+parameters = []
+result = "i64"
+lowering_parameters = []
+lowering_result = "i64"
+parameter_ownership = []
+result_ownership = "legacy_unspecified"
+effects = ["legacy_unspecified"]
+targets = ["legacy"]
+
+[[builtin]]
+name = "args_get"
+symbol = "lpp_args_get"
+feature = "filesystem"
+parameters = ["i64"]
+result = "str"
+lowering_parameters = ["i64"]
+lowering_result = "i64"
+parameter_ownership = ["legacy_unspecified"]
+result_ownership = "legacy_unspecified"
+effects = ["legacy_unspecified"]
+targets = ["legacy"]
+
+[[builtin]]
+name = "args"
+symbol = "lpp_args"
+feature = "filesystem"
+parameters = []
+result = "any"
+lowering_parameters = []
+lowering_result = "i64"
+parameter_ownership = []
+result_ownership = "none"
+effects = ["legacy_unspecified"]
+targets = ["legacy"]
+
+[[builtin]]
+name = "cwd"
+symbol = "lpp_cwd"
+feature = "filesystem"
+parameters = []
+result = "str"
+lowering_parameters = []
+lowering_result = "i64"
+parameter_ownership = []
+result_ownership = "legacy_unspecified"
+effects = ["legacy_unspecified"]
+targets = ["legacy"]
+
+[[builtin]]
+name = "chdir"
+symbol = "lpp_chdir"
+feature = "filesystem"
+parameters = ["str"]
+result = "i64"
+lowering_parameters = ["i64"]
+lowering_result = "i64"
+parameter_ownership = ["legacy_unspecified"]
+result_ownership = "legacy_unspecified"
+effects = ["legacy_unspecified"]
+targets = ["legacy"]
+
+[[builtin]]
+name = "is_dir"
+symbol = "lpp_is_dir"
+feature = "filesystem"
+parameters = ["str"]
+result = "i64"
+semantic_result = "bool"
+lowering_parameters = ["i64"]
+lowering_result = "i64"
+parameter_ownership = ["legacy_unspecified"]
+result_ownership = "legacy_unspecified"
+effects = ["legacy_unspecified"]
+targets = ["legacy"]
+
+[[builtin]]
+name = "is_file"
+symbol = "lpp_is_file"
+feature = "filesystem"
+parameters = ["str"]
+result = "i64"
+semantic_result = "bool"
+lowering_parameters = ["i64"]
+lowering_result = "i64"
+parameter_ownership = ["legacy_unspecified"]
+result_ownership = "legacy_unspecified"
+effects = ["legacy_unspecified"]
+targets = ["legacy"]
+
+[[builtin]]
+name = "fd_size"
+symbol = "lpp_fd_size"
+feature = "filesystem"
+parameters = ["i64"]
+result = "i64"
+lowering_parameters = ["i64"]
+lowering_result = "i64"
+parameter_ownership = ["legacy_unspecified"]
+result_ownership = "legacy_unspecified"
+effects = ["legacy_unspecified"]
+targets = ["legacy"]
+
+[[builtin]]
+name = "time_ns"
+symbol = "lpp_time_ns"
+feature = "time"
+parameters = []
+result = "i64"
+lowering_parameters = []
+lowering_result = "i64"
+parameter_ownership = []
+result_ownership = "legacy_unspecified"
+effects = ["legacy_unspecified"]
+targets = ["legacy"]
+
+[[builtin]]
+name = "str_join"
+symbol = "lpp_str_join"
+feature = "string"
+parameters = ["any", "str"]
+result = "str"
+lowering_parameters = ["i64", "i64"]
+lowering_result = "i64"
+parameter_ownership = ["legacy_unspecified", "legacy_unspecified"]
+result_ownership = "legacy_unspecified"
+effects = ["legacy_unspecified"]
+targets = ["legacy"]
+
+[[builtin]]
+name = "str_lines"
+symbol = "lpp_str_lines"
+feature = "string"
+parameters = ["str"]
+result = "any"
+lowering_parameters = ["i64"]
+lowering_result = "i64"
+parameter_ownership = ["legacy_unspecified"]
+result_ownership = "none"
+effects = ["legacy_unspecified"]
+targets = ["legacy"]
+
+[[builtin]]
+name = "str_pad_left"
+symbol = "lpp_str_pad_left"
+feature = "string"
+parameters = ["str", "i64", "str"]
+result = "str"
+lowering_parameters = ["i64", "i64", "i64"]
+lowering_result = "i64"
+parameter_ownership = ["legacy_unspecified", "legacy_unspecified", "legacy_unspecified"]
+result_ownership = "legacy_unspecified"
+effects = ["legacy_unspecified"]
+targets = ["legacy"]
+
+[[builtin]]
+name = "str_pad_right"
+symbol = "lpp_str_pad_right"
+feature = "string"
+parameters = ["str", "i64", "str"]
+result = "str"
+lowering_parameters = ["i64", "i64", "i64"]
+lowering_result = "i64"
+parameter_ownership = ["legacy_unspecified", "legacy_unspecified", "legacy_unspecified"]
+result_ownership = "legacy_unspecified"
+effects = ["legacy_unspecified"]
+targets = ["legacy"]
+
+[[builtin]]
+name = "json_escape"
+symbol = "lpp_json_escape"
+feature = "json"
+parameters = ["str"]
+result = "str"
+lowering_parameters = ["i64"]
+lowering_result = "i64"
+parameter_ownership = ["legacy_unspecified"]
+result_ownership = "legacy_unspecified"
+effects = ["legacy_unspecified"]
+targets = ["legacy"]

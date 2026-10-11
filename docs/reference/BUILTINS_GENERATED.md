@@ -522,3 +522,17 @@ This file is generated from `abi/builtins.toml`. Do not edit it by hand.
 | `prefetch` | `lpp_prefetch` | `core` | `(i64) -> void` | legacy |
 | `prefetch_read` | `lpp_prefetch` | `core` | `(i64) -> void` | legacy |
 | `prefetch_write` | `lpp_prefetch_write` | `core` | `(i64) -> void` | legacy |
+| `args_count` | `lpp_args_count` | `filesystem` | `() -> i64` | legacy |
+| `args_get` | `lpp_args_get` | `filesystem` | `(i64) -> i64` | legacy |
+| `args` | `lpp_args` | `filesystem` | `() -> i64` | legacy |
+| `cwd` | `lpp_cwd` | `filesystem` | `() -> i64` | legacy |
+| `chdir` | `lpp_chdir` | `filesystem` | `(i64) -> i64` | legacy |
+| `is_dir` | `lpp_is_dir` | `filesystem` | `(i64) -> i64` | legacy |
+| `is_file` | `lpp_is_file` | `filesystem` | `(i64) -> i64` | legacy |
+| `fd_size` | `lpp_fd_size` | `filesystem` | `(i64) -> i64` | legacy |
+| `time_ns` | `lpp_time_ns` | `time` | `() -> i64` | legacy |
+| `str_join` | `lpp_str_join` | `string` | `(i64, i64) -> i64` | legacy |
+| `str_lines` | `lpp_str_lines` | `string` | `(i64) -> i64` | legacy |
+| `str_pad_left` | `lpp_str_pad_left` | `string` | `(i64, i64, i64) -> i64` | legacy |
+| `str_pad_right` | `lpp_str_pad_right` | `string` | `(i64, i64, i64) -> i64` | legacy |
+| `json_escape` | `lpp_json_escape` | `json` | `(i64) -> i64` | legacy |

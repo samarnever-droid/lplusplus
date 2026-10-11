@@ -1158,15 +1158,15 @@ fn builtin_table_census_and_family_d_rejection_are_exact() {
     }
     assert_eq!(
         builtins.len(),
-        518,
-        "the registry must enumerate 518 builtins"
+        532,
+        "the registry must enumerate 532 builtins"
     );
     assert_eq!(counts[0], 110, "family A ids (71 names, dual spellings)");
     assert_eq!(counts[1], 19, "family B ids (18 names + the checksum dual)");
     assert_eq!(counts[2], 7, "family C ids");
     // Family MAP: the hash map runtime, now lowered natively (was Family D).
     assert_eq!(counts[4], 30, "family MAP ids (hash map runtime)");
-    assert_eq!(counts[3], 352, "family D ids (382 minus the 30 map ids)");
+    assert_eq!(counts[3], 366, "remaining builtin ids");
     assert_eq!(
         counts.iter().sum::<usize>(),
         builtins.len(),
@@ -1204,4 +1204,67 @@ fn builtin_table_census_and_family_d_rejection_are_exact() {
     CraneliftBackend
         .compile_module(&program, &types, &options)
         .unwrap_or_else(|e| panic!("tuple: expected Ok, got {e}"));
+}
+
+#[test]
+fn cli_fs_json_and_ergonomic_builtins_compile_cleanly() {
+    let src = r#"
+def main() -> Int:
+    argc := args_count()
+    arg0 := args_get(0)
+    all_args := args()
+    first_arg := get(all_args, 0)
+    joined := str_join(all_args, ",")
+    lines := str_lines("a\nb\nc")
+    padded_l := str_pad_left("42", 5, "0")
+    padded_r := str_pad_right("42", 5, " ")
+    esc := json_escape("hello \"world\"")
+    h := json_parse("{\"count\": 7, \"name\": \"lpp\"}")
+    cnt := json_get_int(h, "count")
+    nm := json_get_str(h, "name")
+    json_free(h)
+    cur := cwd()
+    ok_dir := is_dir(cur)
+    ok_file := is_file(cur)
+    ns := time_ns()
+    mem := sys_mem_total()
+    free_m := sys_mem_free()
+    up := sys_uptime()
+    print_str(arg0 + first_arg + joined + padded_l + padded_r + esc + nm + cur)
+    if ok_dir and not ok_file:
+        return argc + cnt + list_len(lines) + (ns - ns) + (mem - mem) + (free_m - free_m) + (up - up)
+    return 0
+"#;
+    let (program, types, package) = pipeline(src);
+    let names = Names(&package.names.symbols);
+    let options = CodegenOptions::new(Target::X86_64, &names);
+    let module = CraneliftBackend
+        .compile_module(&program, &types, &options)
+        .unwrap_or_else(|e| panic!("cli/fs/json builtins compile failed: {e}"));
+    for sym in [
+        "lpp_args_count",
+        "lpp_args_get",
+        "lpp_args",
+        "lpp_str_join",
+        "lpp_str_lines",
+        "lpp_str_pad_left",
+        "lpp_str_pad_right",
+        "lpp_json_escape",
+        "lpp_json_parse",
+        "lpp_json_get_int",
+        "lpp_json_get_str",
+        "lpp_json_free",
+        "lpp_cwd",
+        "lpp_is_dir",
+        "lpp_is_file",
+        "lpp_time_ns",
+        "lpp_sys_mem_total",
+        "lpp_sys_mem_free",
+        "lpp_sys_uptime",
+    ] {
+        assert!(
+            module.imported_symbols.contains(sym),
+            "expected imported symbol {sym}"
+        );
+    }
 }

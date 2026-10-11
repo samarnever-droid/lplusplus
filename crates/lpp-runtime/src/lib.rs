@@ -37,6 +37,7 @@ pub mod buf;
 pub mod clock_rng;
 pub mod concur;
 pub mod io;
+pub mod json;
 pub mod list;
 pub mod map;
 pub mod net;

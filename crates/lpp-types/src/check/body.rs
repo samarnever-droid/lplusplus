@@ -1202,7 +1202,7 @@ impl<'hir> TypeChecker<'hir> {
         // through the values that touch the list.
         if matches!(
             descriptor.name,
-            "list_new" | "list_push" | "list_get" | "list_set" | "list_len"
+            "list_new" | "list_push" | "list_get" | "get" | "list_set" | "list_len"
         ) {
             use lpp_runtime_abi::generated::SemanticAbiType;
             let element = self.fresh(InferenceLevel::ROOT.child(), origin)?;
@@ -1230,7 +1230,7 @@ impl<'hir> TypeChecker<'hir> {
                 .interner
                 .intern_list(&parameter_types)
                 .map_err(|error| self.at(origin, error.into()))?;
-            let result = if descriptor.name == "list_get" {
+            let result = if matches!(descriptor.name, "list_get" | "get") {
                 element
             } else if descriptor.name == "list_new" {
                 list_type
@@ -1242,9 +1242,23 @@ impl<'hir> TypeChecker<'hir> {
                 .intern(TypeKind::Function { parameters, result })
                 .map_err(|error| self.at(origin, error.into()));
         }
+        let str_list_type = if matches!(descriptor.name, "args" | "str_lines" | "str_join") {
+            let str_ty = self.interner.primitive(PrimitiveType::String);
+            Some(
+                self.interner
+                    .intern(TypeKind::List(str_ty))
+                    .map_err(|error| self.at(origin, error.into()))?,
+            )
+        } else {
+            None
+        };
         let mut parameter_types = Vec::with_capacity(descriptor.semantic_parameters.len());
-        for kind in descriptor.semantic_parameters {
-            parameter_types.push(self.semantic_builtin_type(*kind, origin)?);
+        for (index, kind) in descriptor.semantic_parameters.iter().enumerate() {
+            if descriptor.name == "str_join" && index == 0 {
+                parameter_types.push(str_list_type.expect("str_join computes str_list_type"));
+            } else {
+                parameter_types.push(self.semantic_builtin_type(*kind, origin)?);
+            }
         }
         let parameters = self
             .interner
@@ -1256,6 +1270,8 @@ impl<'hir> TypeChecker<'hir> {
         // so the condition type-checks and codegen accepts it.
         let result = if matches!(descriptor.name, "map_has" | "map_contains") {
             self.interner.primitive(PrimitiveType::Bool)
+        } else if matches!(descriptor.name, "args" | "str_lines") {
+            str_list_type.expect("args/str_lines compute str_list_type")
         } else {
             self.semantic_builtin_type(descriptor.semantic_result, origin)?
         };

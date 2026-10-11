@@ -345,6 +345,49 @@ const FAMILY_A: &[&str] = &[
     "lpp_max",
     "lpp_floor",
     "lpp_ceil",
+    "get",
+    "json_parse",
+    "json_get_int",
+    "json_get_str",
+    "json_get_obj",
+    "json_free",
+    "json_escape",
+    "file_open",
+    "file_close",
+    "file_pread",
+    "file_pwrite",
+    "file_fsync",
+    "file_fdatasync",
+    "file_ftruncate",
+    "fd_size",
+    "sys_mem_total",
+    "sys_mem_free",
+    "sys_cpu_usage",
+    "sys_uptime",
+    "lpp_c_malloc",
+    "lpp_c_free",
+    "lpp_c_load_u8",
+    "lpp_c_store_u8",
+    "lpp_c_load_i32",
+    "lpp_c_store_i32",
+    "lpp_c_load_i64",
+    "lpp_c_store_i64",
+    "dlopen",
+    "dlsym",
+    "dlclose",
+    "dlerror",
+    "args_count",
+    "args_get",
+    "args",
+    "cwd",
+    "chdir",
+    "is_dir",
+    "is_file",
+    "time_ns",
+    "str_join",
+    "str_lines",
+    "str_pad_left",
+    "str_pad_right",
 ];
 
 fn is_family_a(name: &str) -> bool {
@@ -473,6 +516,37 @@ fn import_signature(name: &str) -> (&'static [CLType], Option<CLType>) {
             Some(cltypes::I64),
         ),
         "lpp_buf_copy" => (&[cltypes::I64; 5], None),
+        // JSON, positional file I/O, CLI args, system info, C pointers, dynamic loading.
+        "lpp_json_parse" | "lpp_json_escape" | "lpp_str_lines" => {
+            (&[cltypes::I64], Some(cltypes::I64))
+        }
+        "lpp_json_get_int" | "lpp_json_get_str" | "lpp_json_get_obj" | "lpp_str_join" => {
+            (&[cltypes::I64, cltypes::I64], Some(cltypes::I64))
+        }
+        "lpp_json_free" => (&[cltypes::I64], None),
+        "lpp_str_pad_left" | "lpp_str_pad_right" => (
+            &[cltypes::I64, cltypes::I64, cltypes::I64],
+            Some(cltypes::I64),
+        ),
+        "lpp_file_open" | "lpp_file_ftruncate" => {
+            (&[cltypes::I64, cltypes::I64], Some(cltypes::I64))
+        }
+        "lpp_file_close" => (&[cltypes::I64], None),
+        "lpp_file_pread" | "lpp_file_pwrite" => (&[cltypes::I64; 5], Some(cltypes::I64)),
+        "lpp_file_fsync" | "lpp_file_fdatasync" | "lpp_fd_size" | "lpp_args_get" | "lpp_chdir"
+        | "lpp_is_dir" | "lpp_is_file" => (&[cltypes::I64], Some(cltypes::I64)),
+        "lpp_args_count" | "lpp_args" | "lpp_cwd" | "lpp_time_ns" | "lpp_sys_mem_total"
+        | "lpp_sys_mem_free" | "lpp_sys_cpu_usage" | "lpp_sys_uptime" | "dlerror" => {
+            (&[], Some(cltypes::I64))
+        }
+        "lpp_c_malloc" | "dlclose" => (&[cltypes::I64], Some(cltypes::I64)),
+        "lpp_c_free" => (&[cltypes::I64], None),
+        "lpp_c_load_u8" | "lpp_c_load_i32" | "lpp_c_load_i64" | "dlopen" | "dlsym" => {
+            (&[cltypes::I64, cltypes::I64], Some(cltypes::I64))
+        }
+        "lpp_c_store_u8" | "lpp_c_store_i32" | "lpp_c_store_i64" => {
+            (&[cltypes::I64, cltypes::I64, cltypes::I64], None)
+        }
         // Time/random/clock.
         "lpp_time_ms" | "lpp_random" | "lpp_cpu_count" | "lpp_thread_id" => {
             (&[], Some(cltypes::I64))
@@ -1966,6 +2040,7 @@ fn check_function_shape(
                                         if name == "list_push"
                                             || name == "list_set"
                                             || name == "list_get"
+                                            || name == "get"
                                         {
                                             let Operand::Copy(list_local) = args[0] else {
                                                 return Err(unsupported(
@@ -2004,7 +2079,7 @@ fn check_function_shape(
                                                         "list_set" => IMP_LIST_SET_ARC,
                                                         _ => IMP_LIST_GET_ARC,
                                                     });
-                                                    if name == "list_get" {
+                                                    if name == "list_get" || name == "get" {
                                                         // An element read
                                                         // gains a reference.
                                                         scan.imports.insert(IMP_ARC_RETAIN);
@@ -2021,7 +2096,7 @@ fn check_function_shape(
                                                         TypeKind::Function { .. }
                                                     ) {
                                                         match name {
-                                                            "list_get" => {
+                                                            "list_get" | "get" => {
                                                                 let class = scan
                                                                     .value_classes
                                                                     .get(&(mir_id, list_local))
@@ -3209,7 +3284,7 @@ impl<'m> Lowering<'m> {
         if name == "list_push" || name == "list_set" {
             return self.lower_list_mutation(inst, builder, name, args);
         }
-        if name == "list_get" {
+        if name == "list_get" || name == "get" {
             return self.lower_list_get(inst, builder, args);
         }
         if is_family_a(name) {

@@ -20,6 +20,9 @@ lpp_arena_begin
 lpp_arena_release
 lpp_arena_release_node
 lpp_arena_retain
+lpp_args
+lpp_args_count
+lpp_args_get
 lpp_atomic_add
 lpp_atomic_add32
 lpp_atomic_and
@@ -80,6 +83,7 @@ lpp_c_store_i64
 lpp_c_store_u8
 lpp_ceil
 lpp_char_at
+lpp_chdir
 lpp_chr
 lpp_clock_advance
 lpp_clock_free
@@ -93,6 +97,7 @@ lpp_cos
 lpp_cpu_count
 lpp_cpu_pause
 lpp_ctz64
+lpp_cwd
 lpp_delete_file
 lpp_dir_create
 lpp_dir_list
@@ -150,6 +155,9 @@ lpp_input
 lpp_int_pow
 lpp_int_to_float
 lpp_int_to_str
+lpp_is_dir
+lpp_is_file
+lpp_json_escape
 lpp_json_free
 lpp_json_get_int
 lpp_json_get_obj
@@ -284,8 +292,12 @@ lpp_str_contains
 lpp_str_ends_with
 lpp_str_eq
 lpp_str_find
+lpp_str_join
 lpp_str_len
+lpp_str_lines
 lpp_str_lower
+lpp_str_pad_left
+lpp_str_pad_right
 lpp_str_repeat
 lpp_str_replace
 lpp_str_slice_to_str
@@ -312,6 +324,7 @@ lpp_thread_join
 lpp_thread_pin
 lpp_thread_spawn
 lpp_time_ms
+lpp_time_ns
 lpp_trunc_i16
 lpp_trunc_i32
 lpp_trunc_i8

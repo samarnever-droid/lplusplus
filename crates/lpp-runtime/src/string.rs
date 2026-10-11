@@ -474,6 +474,105 @@ pub unsafe extern "C" fn lpp_str_len(s: *const c_char) -> i64 {
     unsafe { strlen(s) as i64 }
 }
 
+/// `str_join(list, sep)` — join a `List[Str]` with `sep` into a new ARC string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lpp_str_join(list: *mut c_void, sep: *const c_char) -> *mut c_char {
+    if list.is_null() {
+        return unsafe { arc_string(&[]) };
+    }
+    let n = unsafe { crate::list::lpp_list_len(list) };
+    if n <= 0 {
+        return unsafe { arc_string(&[]) };
+    }
+    let sep_bytes = unsafe { cstr_bytes(sep) };
+    let mut out = Vec::new();
+    for i in 0..n {
+        if i > 0 {
+            out.extend_from_slice(sep_bytes);
+        }
+        let item = unsafe { crate::list::lpp_list_get_arc(list, i) } as *const c_char;
+        out.extend_from_slice(unsafe { cstr_bytes(item) });
+    }
+    unsafe { arc_string(&out) }
+}
+
+/// `str_lines(s)` — split `s` into lines (`\n` or `\r\n`), returning an owning `List[Str]`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lpp_str_lines(s: *const c_char) -> *mut c_void {
+    let list = unsafe { lpp_list_new_arc() };
+    let sb = unsafe { cstr_bytes(s) };
+    if list.is_null() || sb.is_empty() {
+        return list;
+    }
+    let mut start = 0usize;
+    let mut i = 0usize;
+    while i < sb.len() {
+        if sb[i] == b'\n' {
+            let mut end = i;
+            if end > start && sb[end - 1] == b'\r' {
+                end -= 1;
+            }
+            let line = unsafe { arc_string(&sb[start..end]) };
+            unsafe { lpp_list_push_arc(list, line as *mut c_void) };
+            start = i + 1;
+        }
+        i += 1;
+    }
+    if start < sb.len() {
+        let mut end = sb.len();
+        if end > start && sb[end - 1] == b'\r' {
+            end -= 1;
+        }
+        let line = unsafe { arc_string(&sb[start..end]) };
+        unsafe { lpp_list_push_arc(list, line as *mut c_void) };
+    }
+    list
+}
+
+/// `str_pad_left(s, width, pad)` — pad `s` on the left up to `width` bytes using `pad`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lpp_str_pad_left(
+    s: *const c_char,
+    width: i64,
+    pad: *const c_char,
+) -> *mut c_char {
+    let sb = unsafe { cstr_bytes(s) };
+    if width <= 0 || sb.len() as i64 >= width {
+        return unsafe { arc_string(sb) };
+    }
+    let pb = unsafe { cstr_bytes(pad) };
+    let pad_bytes: &[u8] = if pb.is_empty() { b" " } else { pb };
+    let needed = (width as usize) - sb.len();
+    let mut out = Vec::with_capacity(width as usize);
+    for i in 0..needed {
+        out.push(pad_bytes[i % pad_bytes.len()]);
+    }
+    out.extend_from_slice(sb);
+    unsafe { arc_string(&out) }
+}
+
+/// `str_pad_right(s, width, pad)` — pad `s` on the right up to `width` bytes using `pad`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lpp_str_pad_right(
+    s: *const c_char,
+    width: i64,
+    pad: *const c_char,
+) -> *mut c_char {
+    let sb = unsafe { cstr_bytes(s) };
+    if width <= 0 || sb.len() as i64 >= width {
+        return unsafe { arc_string(sb) };
+    }
+    let pb = unsafe { cstr_bytes(pad) };
+    let pad_bytes: &[u8] = if pb.is_empty() { b" " } else { pb };
+    let needed = (width as usize) - sb.len();
+    let mut out = Vec::with_capacity(width as usize);
+    out.extend_from_slice(sb);
+    for i in 0..needed {
+        out.push(pad_bytes[i % pad_bytes.len()]);
+    }
+    unsafe { arc_string(&out) }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

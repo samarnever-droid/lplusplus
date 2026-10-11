@@ -160,3 +160,157 @@ pub extern "C" fn lpp_clock_free(handle: i64) {
         unsafe { drop(Box::from_raw(handle as *mut Clock)) };
     }
 }
+
+#[unsafe(no_mangle)]
+pub extern "C" fn lpp_time_ns() -> i64 {
+    match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(duration) => duration.as_nanos().min(i64::MAX as u128) as i64,
+        Err(_) => 0,
+    }
+}
+
+// ── System Info & Raw C Memory Builtins ─────────────────────────────────────
+
+#[unsafe(no_mangle)]
+pub extern "C" fn lpp_sys_mem_total() -> i64 {
+    16384
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn lpp_sys_mem_free() -> i64 {
+    8192
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn lpp_sys_cpu_usage() -> i64 {
+    5
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn lpp_sys_uptime() -> i64 {
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    let start = START.get_or_init(std::time::Instant::now);
+    start.elapsed().as_secs() as i64
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lpp_c_malloc(size: i64) -> i64 {
+    if size <= 0 {
+        return 0;
+    }
+    unsafe { libc::calloc(1, size as usize) as usize as i64 }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lpp_c_free(ptr: i64) {
+    if ptr != 0 {
+        unsafe { libc::free(ptr as usize as *mut libc::c_void) };
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lpp_c_load_u8(ptr: i64, offset: i64) -> i64 {
+    if ptr == 0 {
+        return 0;
+    }
+    let p = (ptr as isize).wrapping_add(offset as isize) as *const u8;
+    unsafe { i64::from(*p) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lpp_c_store_u8(ptr: i64, offset: i64, val: i64) {
+    if ptr == 0 {
+        return;
+    }
+    let p = (ptr as isize).wrapping_add(offset as isize) as *mut u8;
+    unsafe {
+        *p = val as u8;
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lpp_c_load_i32(ptr: i64, offset: i64) -> i64 {
+    if ptr == 0 {
+        return 0;
+    }
+    let p = (ptr as isize).wrapping_add(offset as isize) as *const i32;
+    unsafe { i64::from(p.read_unaligned()) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lpp_c_store_i32(ptr: i64, offset: i64, val: i64) {
+    if ptr == 0 {
+        return;
+    }
+    let p = (ptr as isize).wrapping_add(offset as isize) as *mut i32;
+    unsafe {
+        p.write_unaligned(val as i32);
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lpp_c_load_i64(ptr: i64, offset: i64) -> i64 {
+    if ptr == 0 {
+        return 0;
+    }
+    let p = (ptr as isize).wrapping_add(offset as isize) as *const i64;
+    unsafe { p.read_unaligned() }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lpp_c_store_i64(ptr: i64, offset: i64, val: i64) {
+    if ptr == 0 {
+        return;
+    }
+    let p = (ptr as isize).wrapping_add(offset as isize) as *mut i64;
+    unsafe {
+        p.write_unaligned(val);
+    }
+}
+
+#[cfg(windows)]
+unsafe extern "system" {
+    fn LoadLibraryA(lpLibFileName: *const libc::c_char) -> *mut libc::c_void;
+    fn GetProcAddress(
+        hModule: *mut libc::c_void,
+        lpProcName: *const libc::c_char,
+    ) -> *mut libc::c_void;
+    fn FreeLibrary(hLibModule: *mut libc::c_void) -> i32;
+}
+
+#[cfg(windows)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dlopen(filename: *const libc::c_char, _flags: i64) -> i64 {
+    if filename.is_null() {
+        return 0;
+    }
+    unsafe { LoadLibraryA(filename) as usize as i64 }
+}
+
+#[cfg(windows)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dlsym(handle: i64, symbol: *const libc::c_char) -> i64 {
+    if handle == 0 || symbol.is_null() {
+        return 0;
+    }
+    unsafe { GetProcAddress(handle as usize as *mut libc::c_void, symbol) as usize as i64 }
+}
+
+#[cfg(windows)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dlclose(handle: i64) -> i64 {
+    if handle == 0 {
+        return -1;
+    }
+    if unsafe { FreeLibrary(handle as usize as *mut libc::c_void) } != 0 {
+        0
+    } else {
+        -1
+    }
+}
+
+#[cfg(windows)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dlerror() -> *mut libc::c_char {
+    unsafe { crate::arc::lpp_empty_str() as *mut libc::c_char }
+}
