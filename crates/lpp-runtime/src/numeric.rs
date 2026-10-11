@@ -67,6 +67,31 @@ pub extern "C" fn lpp_cos(x: f64) -> f64 {
     x.cos()
 }
 
+#[unsafe(no_mangle)]
+pub extern "C" fn lpp_tan(x: f64) -> f64 {
+    x.tan()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn lpp_int_to_float(x: i64) -> f64 {
+    x as f64
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn lpp_float_to_int(x: f64) -> i64 {
+    x as i64
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn lpp_add_overflows(a: i64, b: i64) -> i64 {
+    i64::from(a.checked_add(b).is_none())
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn lpp_mul_overflows(a: i64, b: i64) -> i64 {
+    i64::from(a.checked_mul(b).is_none())
+}
+
 /// `int_pow(base, exp)` — integer exponentiation by repeated multiplication.
 /// `exp == 0` is 1; a negative exponent on integers cannot be represented, so
 /// it yields 0 (matching the C reference). Multiplication wraps so a debug

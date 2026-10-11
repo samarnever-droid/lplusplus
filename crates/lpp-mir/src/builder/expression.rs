@@ -162,7 +162,14 @@ impl FunctionBuilder<'_, '_> {
                 next_depth,
             ),
             ExpressionKind::Field { .. } => {
-                if let Some(AggregateExpressionFact::UnitVariant { item, variant }) =
+                if let Some(definition) = self.core.package.expression_definition(expression_id) {
+                    if let Some(value) = self.const_value(definition) {
+                        self.lower_expression(value, next_depth)
+                    } else {
+                        self.lower_function_name(expression_id, definition, None)
+                            .map(Operand::Function)
+                    }
+                } else if let Some(AggregateExpressionFact::UnitVariant { item, variant }) =
                     self.core.types.aggregates.expression(expression_id)
                 {
                     let aggregate = self.core.ensure_aggregate(ty, expression.origin)?;
@@ -570,19 +577,13 @@ impl FunctionBuilder<'_, '_> {
             }
         }
 
-        let callee_expression = self.core.package.expressions[callee];
-        let callee = match (explicit_arguments, callee_expression.kind) {
-            (
-                Some(type_arguments),
-                ExpressionKind::Name {
-                    binding: NameBinding::Item(lpp_hir::BindingTarget::Definition(definition)),
-                    ..
-                },
-            ) => Operand::Function(self.lower_function_name(
-                callee,
-                definition,
-                Some(type_arguments),
-            )?),
+        let callee = match (
+            explicit_arguments,
+            self.core.package.expression_definition(callee),
+        ) {
+            (Some(type_arguments), Some(definition)) => Operand::Function(
+                self.lower_function_name(callee, definition, Some(type_arguments))?,
+            ),
             _ => self.lower_expression(callee, depth)?,
         };
         let arguments = self.lower_arguments(arguments, origin, depth)?;
@@ -777,13 +778,7 @@ impl FunctionBuilder<'_, '_> {
     /// When `callee` names a variadic function, the count of leading fixed
     /// parameters. Mirrors the type checker's `variadic_fixed_arity`.
     fn variadic_fixed_arity(&self, callee: ExprId) -> Option<usize> {
-        let ExpressionKind::Name {
-            binding: NameBinding::Item(lpp_hir::BindingTarget::Definition(definition)),
-            ..
-        } = self.core.package.expressions[callee].kind
-        else {
-            return None;
-        };
+        let definition = self.core.package.expression_definition(callee)?;
         let item = self
             .core
             .definition_items
@@ -808,13 +803,7 @@ impl FunctionBuilder<'_, '_> {
     /// returns its parameter locals (so omitted trailing arguments can be
     /// filled from each parameter's default expression).
     fn default_param_locals(&self, callee: ExprId) -> Option<Vec<LocalId>> {
-        let ExpressionKind::Name {
-            binding: NameBinding::Item(lpp_hir::BindingTarget::Definition(definition)),
-            ..
-        } = self.core.package.expressions[callee].kind
-        else {
-            return None;
-        };
+        let definition = self.core.package.expression_definition(callee)?;
         let item = self
             .core
             .definition_items

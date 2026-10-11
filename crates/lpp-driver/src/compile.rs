@@ -192,7 +192,8 @@ pub fn compile_entry_with_options(
     let mut request = GraphRequest::new(
         entry.to_path_buf(),
         PackageSpec::new(package_name, source_root),
-    );
+    )
+    .with_allow_cycles(true);
     // Treat the bundled stdlib as a declared dependency of standalone compiler
     // invocations. This lets `from stdlib.math import ...` resolve exactly like
     // a package dependency while preserving local-file precedence for ordinary

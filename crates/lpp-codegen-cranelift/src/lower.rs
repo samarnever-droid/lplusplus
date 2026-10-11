@@ -281,6 +281,55 @@ const FAMILY_A: &[&str] = &[
     "list_index_of",
     "list_binary_search",
     "list_extend",
+    "list_pop",
+    "list_free",
+    "buf_alloc",
+    "buf_free",
+    "buf_len",
+    "buf_get8",
+    "buf_set8",
+    "buf_set32le",
+    "buf_get32le",
+    "buf_set16le",
+    "buf_get16le",
+    "buf_set16be",
+    "buf_get16be",
+    "buf_set32be",
+    "buf_get32be",
+    "buf_set64le",
+    "buf_get64le",
+    "buf_set64be",
+    "buf_get64be",
+    "buf_copy",
+    "buf_read",
+    "buf_write",
+    "buf_crc32",
+    "buf_to_str",
+    "buf_read_str",
+    "buf_write_str",
+    "command_exec",
+    "env_get",
+    "env_set",
+    "dir_list",
+    "path_join",
+    "sleep",
+    "sleep_ms",
+    "exit",
+    "write_int",
+    "write_uint",
+    "write_float",
+    "write_bool",
+    "write_char",
+    "write_nl",
+    "ewrite_str",
+    "flush",
+    "tan",
+    "int_to_float",
+    "float_to_int",
+    "add_overflows",
+    "mul_overflows",
+    "str_cmp",
+    "lpp_str_cmp",
     // Registry-declared alias spellings. The ABI table exposes several builtins
     // under their C symbol names as well (entry pairs such as print_int /
     // lpp_print_int). Each already has an `import_signature` arm and a runtime
@@ -297,6 +346,10 @@ const FAMILY_A: &[&str] = &[
     "lpp_floor",
     "lpp_ceil",
 ];
+
+fn is_family_a(name: &str) -> bool {
+    FAMILY_A.contains(&name) || FAMILY_A.contains(&name.strip_prefix("lpp_").unwrap_or(name))
+}
 
 /// The slice-handle builtin names (Family C, 7 at this commit).
 const FAMILY_C: &[&str] = &[
@@ -341,6 +394,8 @@ fn import_signature(name: &str) -> (&'static [CLType], Option<CLType>) {
         "lpp_list_index_of" => (&[cltypes::I64, cltypes::I64], Some(cltypes::I64)),
         "lpp_list_binary_search" => (&[cltypes::I64, cltypes::I64], Some(cltypes::I64)),
         "lpp_list_extend" => (&[cltypes::I64, cltypes::I64], None),
+        "lpp_list_pop" => (&[cltypes::I64], Some(cltypes::I64)),
+        "lpp_list_free" => (&[cltypes::I64], None),
         "lpp_eprint_str" => (&[cltypes::I64], None),
         "lpp_slice_init" => (&[cltypes::I64; 5], Some(cltypes::I64)),
         "lpp_slice_len" => (&[cltypes::I64], Some(cltypes::I64)),
@@ -352,6 +407,12 @@ fn import_signature(name: &str) -> (&'static [CLType], Option<CLType>) {
         "lpp_print_float" => (&[cltypes::F64], None),
         "lpp_print_bool" => (&[cltypes::I8], None),
         "lpp_write_str" => (&[cltypes::I64], None),
+        "lpp_write_int" | "lpp_write_uint" | "lpp_write_char" | "lpp_ewrite_str" => {
+            (&[cltypes::I64], None)
+        }
+        "lpp_write_float" => (&[cltypes::F64], None),
+        "lpp_write_bool" => (&[cltypes::I8], None),
+        "lpp_write_nl" | "lpp_flush" => (&[], None),
         "lpp_str_concat" => (&[cltypes::I64, cltypes::I64], Some(cltypes::I64)),
         "lpp_str_len" => (&[cltypes::I64], Some(cltypes::I64)),
         "lpp_str_contains" => (&[cltypes::I64, cltypes::I64], Some(cltypes::I64)),
@@ -370,7 +431,7 @@ fn import_signature(name: &str) -> (&'static [CLType], Option<CLType>) {
             Some(cltypes::I64),
         ),
         "lpp_str_trim" => (&[cltypes::I64], Some(cltypes::I64)),
-        "lpp_str_eq" => (&[cltypes::I64, cltypes::I64], Some(cltypes::I64)),
+        "lpp_str_eq" | "lpp_str_cmp" => (&[cltypes::I64, cltypes::I64], Some(cltypes::I64)),
         "lpp_str_lower" => (&[cltypes::I64], Some(cltypes::I64)),
         "lpp_str_upper" => (&[cltypes::I64], Some(cltypes::I64)),
         "lpp_int_to_str" => (&[cltypes::I64], Some(cltypes::I64)),
@@ -389,7 +450,29 @@ fn import_signature(name: &str) -> (&'static [CLType], Option<CLType>) {
         "lpp_dir_create" => (&[cltypes::I64], Some(cltypes::I64)),
         "lpp_dir_remove" => (&[cltypes::I64], Some(cltypes::I64)),
         "lpp_path_exists" => (&[cltypes::I64], Some(cltypes::I64)),
-        "lpp_command_output" => (&[cltypes::I64], Some(cltypes::I64)),
+        "lpp_command_output" | "lpp_command_exec" | "lpp_env_get" | "lpp_dir_list" => {
+            (&[cltypes::I64], Some(cltypes::I64))
+        }
+        "lpp_env_set" | "lpp_path_join" => (&[cltypes::I64, cltypes::I64], Some(cltypes::I64)),
+        "lpp_sleep_ms" | "lpp_exit" => (&[cltypes::I64], None),
+        // Buffer runtime (Family A).
+        "lpp_buf_alloc" | "lpp_buf_len" | "lpp_buf_read" | "lpp_buf_to_str" => {
+            (&[cltypes::I64], Some(cltypes::I64))
+        }
+        "lpp_buf_free" => (&[cltypes::I64], None),
+        "lpp_buf_get8" | "lpp_buf_get16le" | "lpp_buf_get16be" | "lpp_buf_get32le"
+        | "lpp_buf_get32be" | "lpp_buf_get64le" | "lpp_buf_get64be" | "lpp_buf_write" => {
+            (&[cltypes::I64, cltypes::I64], Some(cltypes::I64))
+        }
+        "lpp_buf_set8" | "lpp_buf_set16le" | "lpp_buf_set16be" | "lpp_buf_set32le"
+        | "lpp_buf_set32be" | "lpp_buf_set64le" | "lpp_buf_set64be" => {
+            (&[cltypes::I64, cltypes::I64, cltypes::I64], None)
+        }
+        "lpp_buf_crc32" | "lpp_buf_read_str" | "lpp_buf_write_str" => (
+            &[cltypes::I64, cltypes::I64, cltypes::I64],
+            Some(cltypes::I64),
+        ),
+        "lpp_buf_copy" => (&[cltypes::I64; 5], None),
         // Time/random/clock.
         "lpp_time_ms" | "lpp_random" | "lpp_cpu_count" | "lpp_thread_id" => {
             (&[], Some(cltypes::I64))
@@ -516,12 +599,18 @@ fn import_signature(name: &str) -> (&'static [CLType], Option<CLType>) {
         "lpp_add_wrap" => (&[cltypes::I64, cltypes::I64], Some(cltypes::I64)),
         "lpp_sub_wrap" => (&[cltypes::I64, cltypes::I64], Some(cltypes::I64)),
         "lpp_mul_wrap" => (&[cltypes::I64, cltypes::I64], Some(cltypes::I64)),
+        "lpp_add_overflows" | "lpp_mul_overflows" => {
+            (&[cltypes::I64, cltypes::I64], Some(cltypes::I64))
+        }
         "lpp_floor" => (&[cltypes::F64], Some(cltypes::F64)),
         "lpp_ceil" => (&[cltypes::F64], Some(cltypes::F64)),
         "lpp_pow" => (&[cltypes::F64, cltypes::F64], Some(cltypes::F64)),
         "lpp_sqrt" => (&[cltypes::F64], Some(cltypes::F64)),
         "lpp_sin" => (&[cltypes::F64], Some(cltypes::F64)),
         "lpp_cos" => (&[cltypes::F64], Some(cltypes::F64)),
+        "lpp_tan" => (&[cltypes::F64], Some(cltypes::F64)),
+        "lpp_int_to_float" => (&[cltypes::I64], Some(cltypes::F64)),
+        "lpp_float_to_int" => (&[cltypes::F64], Some(cltypes::I64)),
         "lpp_int_pow" => (&[cltypes::I64, cltypes::I64], Some(cltypes::I64)),
         "lpp_str_repeat" => (&[cltypes::I64, cltypes::I64], Some(cltypes::I64)),
         "lpp_str_split" => (&[cltypes::I64, cltypes::I64], Some(cltypes::I64)),
@@ -1994,7 +2083,7 @@ fn check_function_shape(
                                             }
                                             break 'family;
                                         }
-                                        if FAMILY_A.contains(&name) {
+                                        if is_family_a(name) {
                                             if descriptor.symbol.is_empty() {
                                                 return Err(CodegenError::new(
                                                     Some(mir_id),
@@ -3123,7 +3212,7 @@ impl<'m> Lowering<'m> {
         if name == "list_get" {
             return self.lower_list_get(inst, builder, args);
         }
-        if FAMILY_A.contains(&name) {
+        if is_family_a(name) {
             let symbol = descriptor.symbol;
             let mut call_args: Vec<Value> = Vec::with_capacity(args.len());
             for operand in args {

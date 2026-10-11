@@ -48,6 +48,7 @@ pub struct GraphRequest {
     pub entry: PathBuf,
     pub package: PackageSpec,
     pub dependencies: Vec<PackageSpec>,
+    pub allow_cycles: bool,
 }
 
 impl GraphRequest {
@@ -57,12 +58,19 @@ impl GraphRequest {
             entry: entry.into(),
             package,
             dependencies: Vec::new(),
+            allow_cycles: false,
         }
     }
 
     #[must_use]
     pub fn with_dependency(mut self, dependency: PackageSpec) -> Self {
         self.dependencies.push(dependency);
+        self
+    }
+
+    #[must_use]
+    pub const fn with_allow_cycles(mut self, allow_cycles: bool) -> Self {
+        self.allow_cycles = allow_cycles;
         self
     }
 }
@@ -217,7 +225,9 @@ impl<'fs, Fs: FileSystem + ?Sized> GraphBuilder<'fs, Fs> {
             ))
         });
 
-        if let Some(cycle) = find_cycle(modules.len(), &edges) {
+        if !request.allow_cycles
+            && let Some(cycle) = find_cycle(modules.len(), &edges)
+        {
             return Err(GraphError::ImportCycle(
                 cycle
                     .into_iter()

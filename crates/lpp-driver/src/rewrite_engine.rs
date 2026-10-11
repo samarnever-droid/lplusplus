@@ -180,6 +180,15 @@ fn rewrite_main(args: &[String], cwd: &Path) -> i32 {
                 print_help();
                 return 0;
             }
+            "--list-targets" => {
+                println!("host");
+                println!("{}", Target::X86_64.triple());
+                println!("{}", Target::Aarch64.triple());
+                println!("aarch64-linux-android");
+                println!("armv7-linux-androideabi");
+                println!("wasm32-wasip1");
+                return 0;
+            }
             "--check" => mode = Mode::Check,
             "--run" => mode = Mode::Run,
             "-c" | "--emit-object" | "--emit-obj" | "--aot" => mode = Mode::EmitObject,
@@ -459,14 +468,14 @@ fn parse_target(value: &str) -> Result<Target, String> {
     match value {
         "host" => Ok(host_target()),
         "x86_64" => Ok(Target::X86_64),
-        "aarch64" => Ok(Target::Aarch64),
+        "aarch64" | "aarch64-linux-android" => Ok(Target::Aarch64),
         value if value == Target::X86_64.triple() => Ok(Target::X86_64),
         value if value == Target::Aarch64.triple() => Ok(Target::Aarch64),
         "wasm32" | "wasm32-wasi" | "wasm32-wasip1" | "wasm32-unknown-unknown" => {
             Ok(Target::Wasm32Wasi)
         }
         _ => Err(format!(
-            "unsupported target `{value}` (supported: host, {}, {}, wasm32, wasm32-wasip1)",
+            "unsupported target `{value}` (supported: host, {}, {}, aarch64-linux-android, wasm32, wasm32-wasip1)",
             Target::X86_64.triple(),
             Target::Aarch64.triple()
         )),

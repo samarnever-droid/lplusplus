@@ -416,4 +416,33 @@ impl HirPackage {
     pub fn match_arms(&self, range: IdRange<MatchArmId>) -> &[MatchArmId] {
         self.lists.match_arms.get(range)
     }
+
+    #[must_use]
+    pub fn expression_binding(&self, id: ExprId) -> Option<BindingTarget> {
+        match self.expressions[id].kind {
+            ExpressionKind::Name {
+                binding: NameBinding::Item(target),
+                ..
+            } => Some(target),
+            ExpressionKind::Field { base, name } => {
+                let BindingTarget::Module(module) = self.expression_binding(base)? else {
+                    return None;
+                };
+                let scope = self.names.modules.get(module.raw() as usize)?;
+                scope
+                    .definition(name)
+                    .map(BindingTarget::Definition)
+                    .or_else(|| scope.imported(name))
+            }
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub fn expression_definition(&self, id: ExprId) -> Option<DefId> {
+        match self.expression_binding(id)? {
+            BindingTarget::Definition(definition) => Some(definition),
+            BindingTarget::Module(_) => None,
+        }
+    }
 }

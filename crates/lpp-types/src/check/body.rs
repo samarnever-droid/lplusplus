@@ -308,6 +308,8 @@ impl<'hir> TypeChecker<'hir> {
                 let left = self.infer_expression(left, parameters)?;
                 let right = self.infer_expression(right, parameters)?;
                 let string = self.interner.primitive(PrimitiveType::String);
+                let int = self.interner.primitive(PrimitiveType::Int);
+                let bool_ = self.interner.primitive(PrimitiveType::Bool);
                 // A local's type is an inference variable bound to a primitive,
                 // not the primitive TypeId itself, so resolve before comparing.
                 // Resolution is best-effort: if it fails (e.g. a still-generic
@@ -322,9 +324,16 @@ impl<'hir> TypeChecker<'hir> {
                     .ok();
                 let scalar_right = matches!(
                     right_resolved,
-                    Some(ty) if ty == self.interner.primitive(PrimitiveType::Int)
+                    Some(ty) if ty == int
                         || ty == self.interner.primitive(PrimitiveType::Float)
-                        || ty == self.interner.primitive(PrimitiveType::Bool)
+                        || ty == bool_
+                );
+                let bool_int_eq = matches!(
+                    operator,
+                    BinaryOperator::Equal | BinaryOperator::NotEqual
+                ) && matches!(
+                    (left_resolved, right_resolved),
+                    (Some(l), Some(r)) if (l == bool_ && r == int) || (l == int && r == bool_)
                 );
                 if operator == BinaryOperator::Add && left_resolved == Some(string) && scalar_right
                 {
@@ -333,9 +342,11 @@ impl<'hir> TypeChecker<'hir> {
                     // `f"n={n}"`). Codegen routes this through the matching
                     // `*_to_str` builtin then `lpp_str_concat`.
                     string
+                } else if bool_int_eq {
+                    bool_
                 } else if is_comparison(operator) {
                     self.unify(left, right, expression.origin)?;
-                    self.interner.primitive(PrimitiveType::Bool)
+                    bool_
                 } else {
                     self.unify(left, right, expression.origin)?;
                     left
@@ -497,19 +508,16 @@ impl<'hir> TypeChecker<'hir> {
     }
 
     fn record_constructor_call(&mut self, expression: ExprId, callee: ExprId) {
-        let constructor = match self.package.expressions[callee].kind {
-            ExpressionKind::Name {
-                binding: NameBinding::Item(BindingTarget::Definition(definition)),
-                ..
-            } => self
-                .definition_items
+        let constructor = if let Some(definition) = self.package.expression_definition(callee) {
+            self.definition_items
                 .get(definition.index())
                 .and_then(|item| *item)
                 .and_then(|item| {
                     matches!(self.package.items[item].kind, HirItemKind::Struct(_))
                         .then_some(AggregateConstructor::Struct { item })
-                }),
-            _ => match self.aggregates.expression(callee) {
+                })
+        } else {
+            match self.aggregates.expression(callee) {
                 Some(AggregateExpressionFact::VariantConstructor { item, variant }) => {
                     Some(AggregateConstructor::EnumVariant { item, variant })
                 }
@@ -522,7 +530,7 @@ impl<'hir> TypeChecker<'hir> {
                     | AggregateExpressionFact::MethodCall { .. },
                 )
                 | None => None,
-            },
+            }
         };
         if let Some(constructor) = constructor {
             self.aggregates.set_expression(
@@ -939,17 +947,29 @@ impl<'hir> TypeChecker<'hir> {
         parameters: &BTreeMap<Symbol, TypeParamId>,
         origin: OriginId,
     ) -> Result<TypeId, ShadowTypeError> {
-        let enum_item = match self.package.expressions[base].kind {
-            ExpressionKind::Name {
-                binding: NameBinding::Item(BindingTarget::Definition(definition)),
-                ..
-            } => self
-                .definition_items
-                .get(definition.index())
-                .and_then(|item| *item)
-                .filter(|item| matches!(self.package.items[*item].kind, HirItemKind::Enum(_))),
-            _ => None,
-        };
+        if matches!(
+            self.package.expression_binding(base),
+            Some(BindingTarget::Module(_))
+        ) {
+            let _ = self.infer_expression(base, parameters)?;
+            return match self.package.expression_binding(expression) {
+                Some(BindingTarget::Definition(definition)) => {
+                    self.instantiate_item(definition, origin)
+                }
+                Some(BindingTarget::Module(_)) | None => {
+                    self.fresh(InferenceLevel::ROOT.child(), origin)
+                }
+            };
+        }
+        let enum_item = self
+            .package
+            .expression_definition(base)
+            .and_then(|definition| {
+                self.definition_items
+                    .get(definition.index())
+                    .and_then(|item| *item)
+            })
+            .filter(|item| matches!(self.package.items[*item].kind, HirItemKind::Enum(_)));
         let base_type = self.infer_expression(base, parameters)?;
         let resolved_base = self
             .inference

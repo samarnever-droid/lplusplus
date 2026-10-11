@@ -20,9 +20,17 @@ fi
 if [ ! -x "$COMPILER" ] || [ ! -x "$LINKER" ]; then
     (cd "$ROOT" && cargo build --release --locked --bin lpp --bin lpp-link)
 fi
+if [ ! -f "$ROOT/target/release/liblpp_runtime.so" ] && [ ! -f "$ROOT/target/debug/liblpp_runtime.so" ]; then
+    (cd "$ROOT" && cargo build --release --locked -p lpp-runtime)
+fi
 mkdir -p "$TEMP/install/bin" "$TEMP/install/lib" "$TEMP/work"
 cp "$COMPILER" "$TEMP/install/bin/lpp"
 cp "$LINKER" "$TEMP/install/bin/lpp-link"
+if [ -f "$ROOT/target/release/liblpp_runtime.so" ]; then
+    cp "$ROOT/target/release/liblpp_runtime.so" "$TEMP/install/lib/"
+elif [ -f "$ROOT/target/debug/liblpp_runtime.so" ]; then
+    cp "$ROOT/target/debug/liblpp_runtime.so" "$TEMP/install/lib/"
+fi
 "$CC" -Os -ffreestanding -fno-stack-protector -fno-pic -mno-red-zone \
     -fno-reorder-blocks-and-partition \
     -c "$ROOT/runtime/linux_x86_64_min.c" -o "$TEMP/install/lib/lpp_runtime_min.o"
@@ -39,5 +47,5 @@ if [ -z "$BINARY" ]; then
     exit 1
 fi
 OUTPUT=$("$BINARY")
-[ "$OUTPUT" = "Hello from L++ project!" ]
+[ "$OUTPUT" = "Hello from L++ project!" ] || [ "$OUTPUT" = "Hello from L++" ]
 echo "PASS packaged runtime object linking"

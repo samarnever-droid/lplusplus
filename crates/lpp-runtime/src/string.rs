@@ -439,6 +439,24 @@ pub unsafe extern "C" fn lpp_str_eq(a: *const c_char, b: *const c_char) -> i64 {
     i64::from(unsafe { cstr_bytes(a) } == unsafe { cstr_bytes(b) })
 }
 
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lpp_str_cmp(a: *const c_char, b: *const c_char) -> i64 {
+    if a == b {
+        return 0;
+    }
+    if a.is_null() {
+        return -1;
+    }
+    if b.is_null() {
+        return 1;
+    }
+    match unsafe { cstr_bytes(a) }.cmp(unsafe { cstr_bytes(b) }) {
+        std::cmp::Ordering::Less => -1,
+        std::cmp::Ordering::Equal => 0,
+        std::cmp::Ordering::Greater => 1,
+    }
+}
+
 /// `parse_int(s)` — registry alias of `str_to_int`: parse a base-10 integer
 /// from `s`. The ABI table gives `parse_int` its own symbol (`lpp_parse_int`)
 /// but identical semantics, so this delegates to the existing implementation.

@@ -4,8 +4,8 @@ use std::mem::size_of;
 
 use lpp_common::OptimizationOptions;
 use lpp_hir::{
-    ArenaId, BindingTarget, BodyId, ExprId, ExpressionKind, HirItemId, HirItemKind, HirPackage,
-    InstanceId, NameBinding, OriginId, StatementKind, TypeParamId,
+    ArenaId, BodyId, ExprId, ExpressionKind, HirItemId, HirItemKind, HirPackage, InstanceId,
+    OriginId, StatementKind, TypeParamId,
 };
 
 use crate::pattern::{
@@ -216,11 +216,7 @@ impl InstancePlanner {
         let mut pattern_budget = PatternBudget::new(1_000_000, 256);
 
         for (expression_id, expression) in package.expressions.enumerate() {
-            let ExpressionKind::Name {
-                binding: NameBinding::Item(BindingTarget::Definition(definition)),
-                ..
-            } = expression.kind
-            else {
+            let Some(definition) = package.expression_definition(expression_id) else {
                 continue;
             };
             let Some(item_id) = definition_items[definition.index()] else {

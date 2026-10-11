@@ -9,6 +9,11 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 COMPILER=${LPP:-$ROOT/target/release/lpp}
 [ -x "$COMPILER" ] || COMPILER="$ROOT/target/debug/lpp"
 [ -x "$COMPILER" ] || { echo "lpp compiler not found; set LPP" >&2; exit 2; }
+if [ -f "$ROOT/target/release/liblpp_runtime.so" ]; then
+    export LPP_RUNTIME_DIR="$ROOT/target/release"
+elif [ -f "$ROOT/target/debug/liblpp_runtime.so" ]; then
+    export LPP_RUNTIME_DIR="$ROOT/target/debug"
+fi
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/lpp-target-android.XXXXXX")
 trap 'rm -rf "$TMP"' EXIT HUP INT TERM
 

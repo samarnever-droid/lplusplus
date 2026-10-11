@@ -75,16 +75,19 @@ impl Verifier<'_> {
                     locals,
                 )?;
                 let bool_ = self.types.primitive(PrimitiveType::Bool);
+                let int = self.types.primitive(PrimitiveType::Int);
                 let literal_pair_matches = (self.is_integral(left)
                     && self.integer_operand_assignable(right_operand, left))
                     || (self.is_integral(right)
                         && self.integer_operand_assignable(left_operand, right));
+                let bool_int_pair =
+                    (left == bool_ && right == int) || (left == int && right == bool_);
                 let valid = match operator {
                     BinaryOperator::LogicalAnd | BinaryOperator::LogicalOr => {
                         (left == bool_ && right == bool_).then_some(bool_)
                     }
                     BinaryOperator::Equal | BinaryOperator::NotEqual => {
-                        (left == right || literal_pair_matches).then_some(bool_)
+                        (left == right || literal_pair_matches || bool_int_pair).then_some(bool_)
                     }
                     BinaryOperator::Less
                     | BinaryOperator::Greater

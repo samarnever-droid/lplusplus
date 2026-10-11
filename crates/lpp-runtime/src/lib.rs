@@ -33,6 +33,7 @@
 pub mod layout;
 
 pub mod arc;
+pub mod buf;
 pub mod clock_rng;
 pub mod concur;
 pub mod io;

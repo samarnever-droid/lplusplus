@@ -24,7 +24,12 @@ impl<'hir> TypeChecker<'hir> {
         // UFCS method dispatch: `receiver.method(args)` where `method` is not a
         // struct field resolves to a free function or `impl` method taking the
         // receiver as its first argument.
-        if let ExpressionKind::Field { base, name } = self.package.expressions[callee].kind {
+        if let ExpressionKind::Field { base, name } = self.package.expressions[callee].kind
+            && !matches!(
+                self.package.expression_binding(base),
+                Some(BindingTarget::Module(_))
+            )
+        {
             if let Some(result) = self.infer_method_call(
                 call_expression,
                 callee,
@@ -38,17 +43,15 @@ impl<'hir> TypeChecker<'hir> {
             }
         }
         let callee_type = if let Some(explicit_arguments) = explicit_arguments {
-            match self.package.expressions[callee].kind {
-                ExpressionKind::Name {
-                    binding: NameBinding::Item(BindingTarget::Definition(definition)),
-                    ..
-                } => {
-                    let type_id =
-                        self.instantiate_item_with(definition, explicit_arguments, origin)?;
-                    self.assignments.expressions[callee.index()] = Some(type_id);
-                    type_id
+            if let Some(definition) = self.package.expression_definition(callee) {
+                if let ExpressionKind::Field { base, .. } = self.package.expressions[callee].kind {
+                    let _ = self.infer_expression(base, parameters)?;
                 }
-                _ => self.infer_expression(callee, parameters)?,
+                let type_id = self.instantiate_item_with(definition, explicit_arguments, origin)?;
+                self.assignments.expressions[callee.index()] = Some(type_id);
+                type_id
+            } else {
+                self.infer_expression(callee, parameters)?
             }
         } else {
             self.infer_expression(callee, parameters)?
@@ -163,13 +166,7 @@ impl<'hir> TypeChecker<'hir> {
     /// (leading, non-rest) parameters. The rest parameter collects every
     /// trailing argument into its `List[element]`.
     fn variadic_fixed_arity(&self, callee: ExprId) -> Option<usize> {
-        let ExpressionKind::Name {
-            binding: NameBinding::Item(BindingTarget::Definition(definition)),
-            ..
-        } = self.package.expressions[callee].kind
-        else {
-            return None;
-        };
+        let definition = self.package.expression_definition(callee)?;
         let item = self
             .definition_items
             .get(definition.index())
@@ -303,13 +300,7 @@ impl<'hir> TypeChecker<'hir> {
     /// default) and the total parameter count. A call is well-formed when its
     /// argument count is in `required..=total`.
     fn default_param_arity(&self, callee: ExprId) -> Option<(usize, usize)> {
-        let ExpressionKind::Name {
-            binding: NameBinding::Item(BindingTarget::Definition(definition)),
-            ..
-        } = self.package.expressions[callee].kind
-        else {
-            return None;
-        };
+        let definition = self.package.expression_definition(callee)?;
         let item = self
             .definition_items
             .get(definition.index())
@@ -575,19 +566,14 @@ impl<'hir> TypeChecker<'hir> {
     /// struct detection so the zero-argument type result and the recorded
     /// aggregate fact always agree.
     fn is_struct_constructor(&self, callee: ExprId) -> bool {
-        match self.package.expressions[callee].kind {
-            ExpressionKind::Name {
-                binding: NameBinding::Item(BindingTarget::Definition(definition)),
-                ..
-            } => self
-                .definition_items
-                .get(definition.index())
-                .and_then(|item| *item)
-                .is_some_and(|item| {
-                    matches!(self.package.items[item].kind, HirItemKind::Struct(_))
-                }),
-            _ => false,
-        }
+        self.package
+            .expression_definition(callee)
+            .and_then(|definition| {
+                self.definition_items
+                    .get(definition.index())
+                    .and_then(|item| *item)
+            })
+            .is_some_and(|item| matches!(self.package.items[item].kind, HirItemKind::Struct(_)))
     }
 
     pub(super) fn instantiate_item(

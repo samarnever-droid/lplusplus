@@ -333,3 +333,171 @@ pub unsafe extern "C" fn lpp_command_output(cmd: *const c_char) -> *mut c_char {
         Err(_) => unsafe { arc_string(&[]) },
     }
 }
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lpp_command_exec(cmd: *const c_char) -> i64 {
+    let bytes = unsafe { cstr_bytes(cmd) };
+    if bytes.is_empty() {
+        return -1;
+    }
+    let command = String::from_utf8_lossy(bytes);
+    #[cfg(windows)]
+    let status = std::process::Command::new("cmd")
+        .arg("/C")
+        .arg(command.as_ref())
+        .status();
+    #[cfg(not(windows))]
+    let status = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(command.as_ref())
+        .status();
+    match status {
+        Ok(s) => i64::from(s.code().unwrap_or(-1)),
+        Err(_) => -1,
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lpp_env_get(name: *const c_char) -> *mut c_char {
+    if name.is_null() {
+        return unsafe { arc_string(&[]) };
+    }
+    let key = String::from_utf8_lossy(unsafe { cstr_bytes(name) });
+    match std::env::var(key.as_ref()) {
+        Ok(val) => unsafe { arc_string(val.as_bytes()) },
+        Err(_) => unsafe { arc_string(&[]) },
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lpp_env_set(name: *const c_char, value: *const c_char) -> i64 {
+    if name.is_null() {
+        return -1;
+    }
+    let key = String::from_utf8_lossy(unsafe { cstr_bytes(name) });
+    let val = if value.is_null() {
+        String::new()
+    } else {
+        String::from_utf8_lossy(unsafe { cstr_bytes(value) }).into_owned()
+    };
+    unsafe {
+        std::env::set_var(key.as_ref(), val);
+    }
+    0
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lpp_dir_list(path: *const c_char) -> *mut c_void {
+    let list = unsafe { crate::list::lpp_list_new_arc() };
+    if list.is_null() || path.is_null() {
+        return list;
+    }
+    let p = path_from(unsafe { cstr_bytes(path) });
+    if let Ok(entries) = std::fs::read_dir(p) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let s = name.to_string_lossy();
+            let arc = unsafe { arc_string(s.as_bytes()) };
+            unsafe { crate::list::lpp_list_push_arc(list, arc as *mut c_void) };
+        }
+    }
+    list
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lpp_path_join(base: *const c_char, child: *const c_char) -> *mut c_char {
+    let b = unsafe { cstr_bytes(base) };
+    let c = unsafe { cstr_bytes(child) };
+    let sep = if cfg!(windows) { b'\\' } else { b'/' };
+    let need_sep = !b.is_empty() && b[b.len() - 1] != b'/' && b[b.len() - 1] != b'\\';
+    let mut out = Vec::with_capacity(b.len() + usize::from(need_sep) + c.len());
+    out.extend_from_slice(b);
+    if need_sep {
+        out.push(sep);
+    }
+    out.extend_from_slice(c);
+    unsafe { arc_string(&out) }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn lpp_sleep_ms(ms: i64) {
+    if ms > 0 {
+        std::thread::sleep(std::time::Duration::from_millis(ms as u64));
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn lpp_exit(code: i64) {
+    unsafe { flush_all() };
+    std::process::exit(code as i32);
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lpp_write_int(value: i64) {
+    unsafe {
+        printf(b"%lld\0".as_ptr().cast::<c_char>(), value);
+        flush_all();
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lpp_write_uint(value: i64) {
+    unsafe {
+        printf(b"%llu\0".as_ptr().cast::<c_char>(), value as u64);
+        flush_all();
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lpp_write_float(value: f64) {
+    unsafe {
+        printf(b"%g\0".as_ptr().cast::<c_char>(), value);
+        flush_all();
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lpp_write_bool(value: i8) {
+    let s = if value != 0 {
+        b"true\0".as_ptr()
+    } else {
+        b"false\0".as_ptr()
+    };
+    unsafe {
+        printf(b"%s\0".as_ptr().cast::<c_char>(), s.cast::<c_char>());
+        flush_all();
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lpp_write_char(value: i64) {
+    let b = (value & 0xFF) as u8;
+    unsafe {
+        write(1, (&b as *const u8).cast::<c_void>(), 1 as _);
+        flush_all();
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lpp_write_nl() {
+    unsafe {
+        write(1, b"\n".as_ptr().cast::<c_void>(), 1 as _);
+        flush_all();
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lpp_ewrite_str(ptr: *const c_char) {
+    if ptr.is_null() {
+        return;
+    }
+    let bytes = unsafe { cstr_bytes(ptr) };
+    unsafe {
+        write(2, bytes.as_ptr().cast::<c_void>(), bytes.len() as _);
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lpp_flush() {
+    unsafe { flush_all() };
+}
