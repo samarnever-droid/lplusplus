@@ -36,14 +36,14 @@ fi
     -c "$ROOT/runtime/linux_x86_64_min.c" -o "$TEMP/install/lib/lpp_runtime_min.o"
 
 cd "$TEMP/work"
-"$TEMP/install/bin/lpp" new packaged_runtime_demo >/dev/null
-cd packaged_runtime_demo
+"$TEMP/install/bin/lpp" new packaged-runtime-demo >/dev/null
+cd packaged-runtime-demo
 # Do not copy lpp_runtime.c: success proves the object path was selected.
 "$TEMP/install/bin/lpp" build >/dev/null
 # Find the binary in the target directory
-BINARY=$(find . -name "packaged_runtime_demo" -type f -executable 2>/dev/null | head -1)
+BINARY=$(find . \( -name "packaged-runtime-demo" -o -name "packaged_runtime_demo" \) -type f -executable 2>/dev/null | head -1)
 if [ -z "$BINARY" ]; then
-    echo "ERROR: packaged_runtime_demo binary not found after build"
+    echo "ERROR: packaged-runtime-demo binary not found after build"
     exit 1
 fi
 OUTPUT=$("$BINARY")

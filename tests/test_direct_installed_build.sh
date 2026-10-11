@@ -34,10 +34,10 @@ fi
     -c "$ROOT/runtime/linux_x86_64_min.c" -o "$TEMP/install/lib/lpp_runtime_min.o"
 
 cd "$TEMP/work"
-"$TEMP/install/bin/lpp" new direct_install_demo >/dev/null
-cd direct_install_demo
+"$TEMP/install/bin/lpp" new direct-install-demo >/dev/null
+cd direct-install-demo
 LPP_LINKER=direct "$TEMP/install/bin/lpp" build >/dev/null
-BINARY=$(find . -name direct_install_demo -type f -executable 2>/dev/null | head -1)
+BINARY=$(find . \( -name "direct-install-demo" -o -name "direct_install_demo" \) -type f -executable 2>/dev/null | head -1)
 OUTPUT=$("$BINARY" 2>/dev/null)
 [ "$OUTPUT" = "Hello from L++ project!" ] || [ "$OUTPUT" = "Hello from L++" ]
 echo "PASS installed direct linker build"
