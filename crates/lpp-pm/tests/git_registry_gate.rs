@@ -143,3 +143,119 @@ fn lookup_missing_package_is_typed_not_found() {
     );
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn registry_remote_rejects_option_injection_and_insecure_transports() {
+    for bad in [
+        "",
+        "   ",
+        "-oProxyCommand=evil",
+        "--upload-pack=evil",
+        "ext::sh -c touch% /tmp/pwn",
+        "EXT::sh -c evil",
+        "fd::1",
+        "http://registry.lplusplus.bond/repo.git",
+        "git://github.com/samarnever-droid/llppregistry.git",
+        "ftp://example.com/repo.git",
+        "ftps://example.com/repo.git",
+        "https://github.com/samarnever-droid/llppregistry.git\n--upload-pack=evil",
+        "https://github.com/samarnever-droid/llppregistry.git\0evil",
+    ] {
+        assert!(
+            lpp_pm::validation::registry_remote(bad).is_err(),
+            "expected remote {bad:?} to be rejected"
+        );
+    }
+
+    assert_eq!(
+        lpp_pm::validation::registry_remote(
+            "  https://github.com/samarnever-droid/llppregistry.git  "
+        )
+        .unwrap(),
+        "https://github.com/samarnever-droid/llppregistry.git"
+    );
+}
+
+#[test]
+fn publish_updates_public_aggregate_index_and_ignores_gitkeep() {
+    let root = temp("agg");
+    let bare = seed_bare(&root);
+
+    // Seed the remote with index/.gitkeep and registry/index.json containing an existing package.
+    let seed = root.join("seed-agg");
+    git(
+        &root,
+        &["clone", bare.to_str().unwrap(), seed.to_str().unwrap()],
+    );
+    git(&seed, &["config", "user.name", "Seeder"]);
+    git(&seed, &["config", "user.email", "seeder@example.com"]);
+    std::fs::create_dir_all(seed.join("index")).unwrap();
+    std::fs::create_dir_all(seed.join("blob")).unwrap();
+    std::fs::create_dir_all(seed.join("registry")).unwrap();
+    std::fs::write(seed.join("index/.gitkeep"), "").unwrap();
+    std::fs::write(seed.join("blob/.gitkeep"), "").unwrap();
+    std::fs::write(
+        seed.join("registry/index.json"),
+        r#"{
+  "packages": {
+    "lpp-json": {
+      "description": "Fast JSON parser",
+      "name": "lpp-json",
+      "version": "1.2.0"
+    }
+  },
+  "registry": {
+    "name": "L++ Official Package Registry",
+    "package_count": 1,
+    "repository": "samarnever-droid/llppregistry",
+    "source_of_truth": "git",
+    "url": "https://registry.lplusplus.bond",
+    "version": "3.0.0"
+  }
+}
+"#,
+    )
+    .unwrap();
+    git(&seed, &["add", "."]);
+    git(&seed, &["commit", "-m", "seed aggregate index"]);
+    git(&seed, &["push", "origin", "HEAD:main"]);
+
+    let pub_dir = root.join("publisher");
+    let reg = Registry::new(bare.to_string_lossy().as_ref(), &pub_dir);
+    reg.sync().unwrap();
+    git(&pub_dir, &["config", "user.name", "Publisher"]);
+    git(&pub_dir, &["config", "user.email", "pub@example.com"]);
+
+    // Verify list() ignores .gitkeep when no sparse packages exist yet.
+    assert!(reg.list().unwrap().is_empty());
+
+    let artifact = b"lpp-semver archive bytes";
+    let checksum = lpp_pm::ContentAddress::of_bytes(artifact).to_string();
+    reg.publish(
+        &entry("lpp-semver", "0.1.0", &checksum),
+        artifact,
+        "publish lpp-semver 0.1.0",
+    )
+    .unwrap();
+    reg.push().unwrap();
+
+    // Verify both sparse index and aggregate registry/index.json were updated and pushed.
+    let verify_dir = root.join("verify");
+    let vreg = Registry::new(bare.to_string_lossy().as_ref(), &verify_dir);
+    vreg.sync().unwrap();
+    let listed = vreg.list().unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].name, "lpp-semver");
+
+    let agg_raw = std::fs::read_to_string(verify_dir.join("registry/index.json")).unwrap();
+    let agg: serde_json::Value = serde_json::from_str(&agg_raw).unwrap();
+    assert_eq!(agg["registry"]["package_count"], 2);
+    assert_eq!(agg["packages"]["lpp-json"]["version"], "1.2.0");
+    assert_eq!(agg["packages"]["lpp-semver"]["version"], "0.1.0");
+    assert_eq!(
+        agg["packages"]["lpp-semver"]["versions"]["0.1.0"]["download_url"],
+        format!("https://registry.lplusplus.bond/blob/{checksum}")
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}

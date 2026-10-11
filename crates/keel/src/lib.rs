@@ -76,30 +76,62 @@ pub fn run() -> ExitCode {
     }
 }
 
-/// Resolve the registry git URL: the `--registry` flag, else `KEEL_REGISTRY`.
+/// The canonical git-backed L++ package registry (`samarnever-droid/llppregistry`).
+pub const DEFAULT_REGISTRY_URL: &str = "https://github.com/samarnever-droid/llppregistry.git";
+
+/// Resolve an explicitly configured registry git URL: `--registry` flag, else `KEEL_REGISTRY`.
 fn registry_remote(cli: &cli::Cli) -> Result<String, String> {
     if let Some(r) = &cli.registry {
-        if !r.trim().is_empty() {
-            return Ok(r.clone());
-        }
+        let trimmed = lpp_pm::validation::registry_remote(r).map_err(|e| e.to_string())?;
+        return Ok(trimmed.to_string());
     }
     if let Ok(r) = std::env::var("KEEL_REGISTRY") {
-        if !r.trim().is_empty() {
-            return Ok(r);
+        let t = r.trim();
+        if t.is_empty() || t.eq_ignore_ascii_case("none") || t.eq_ignore_ascii_case("offline") {
+            return Err(
+                "no registry configured: pass --registry <git-url> or set KEEL_REGISTRY"
+                    .to_string(),
+            );
         }
+        let trimmed = lpp_pm::validation::registry_remote(t).map_err(|e| e.to_string())?;
+        return Ok(trimmed.to_string());
     }
     Err("no registry configured: pass --registry <git-url> or set KEEL_REGISTRY".to_string())
 }
 
-/// The shared git-registry (cloned under the global cache).
-fn registry(cli: &cli::Cli) -> Result<lpp_pm::Registry, String> {
-    let remote = registry_remote(cli)?;
+fn registry_from_remote(remote: String) -> lpp_pm::Registry {
     let identity = lpp_pm::ContentAddress::of_bytes(remote.trim().as_bytes()).to_string();
     let cache = cache_dir();
-    Ok(
-        lpp_pm::Registry::new(remote, cache.join("registries").join(identity))
-            .with_blob_store(cache.join("content")),
-    )
+    lpp_pm::Registry::new(remote, cache.join("registries").join(identity))
+        .with_blob_store(cache.join("content"))
+}
+
+/// The shared git-registry when explicitly configured via `--registry` or `KEEL_REGISTRY`.
+fn registry(cli: &cli::Cli) -> Result<lpp_pm::Registry, String> {
+    let remote = registry_remote(cli)?;
+    Ok(registry_from_remote(remote))
+}
+
+/// The shared git-registry for explicit registry commands (`publish`, `search`,
+/// `fetch`, `verify`), defaulting to [`DEFAULT_REGISTRY_URL`] when neither
+/// `--registry` nor `KEEL_REGISTRY` is set.
+fn registry_or_default(cli: &cli::Cli) -> Result<lpp_pm::Registry, String> {
+    if let Some(r) = &cli.registry {
+        let trimmed = lpp_pm::validation::registry_remote(r).map_err(|e| e.to_string())?;
+        return Ok(registry_from_remote(trimmed.to_string()));
+    }
+    if let Ok(r) = std::env::var("KEEL_REGISTRY") {
+        let t = r.trim();
+        if t.is_empty() || t.eq_ignore_ascii_case("none") || t.eq_ignore_ascii_case("offline") {
+            return Err(
+                "no registry configured: pass --registry <git-url> or set KEEL_REGISTRY"
+                    .to_string(),
+            );
+        }
+        let trimmed = lpp_pm::validation::registry_remote(t).map_err(|e| e.to_string())?;
+        return Ok(registry_from_remote(trimmed.to_string()));
+    }
+    Ok(registry_from_remote(DEFAULT_REGISTRY_URL.to_string()))
 }
 
 fn dispatch(cli: &cli::Cli, directory: &std::path::Path) -> Result<(), String> {
@@ -110,11 +142,13 @@ fn dispatch(cli: &cli::Cli, directory: &std::path::Path) -> Result<(), String> {
             commands::registry::install(reg.as_ref(), directory)
         }
         cli::Command::Fetch { name } => match name {
-            Some(n) => commands::registry::fetch(&registry(cli)?, n),
-            None => commands::registry::fetch_all(&registry(cli)?, directory),
+            Some(n) => commands::registry::fetch(&registry_or_default(cli)?, n),
+            None => commands::registry::fetch_all(&registry_or_default(cli)?, directory),
         },
-        cli::Command::Search { query } => commands::registry::search(&registry(cli)?, query),
-        cli::Command::Publish => commands::registry::publish(&registry(cli)?, directory),
+        cli::Command::Search { query } => {
+            commands::registry::search(&registry_or_default(cli)?, query)
+        }
+        cli::Command::Publish => commands::registry::publish(&registry_or_default(cli)?, directory),
         // `update` works offline (no registry configured → idempotent);
         // a configured registry is only synced when one is used.
         cli::Command::Update { package } => {
@@ -130,8 +164,10 @@ fn dispatch(cli: &cli::Cli, directory: &std::path::Path) -> Result<(), String> {
         }
         cli::Command::Why { name } => commands::diagnostics::why(directory, name),
         // `verify` is registry-backed by definition (the registry IS what
-        // we're auditing); no registry configured = the standard error.
-        cli::Command::Verify => commands::diagnostics::verify(&registry(cli)?, directory),
+        // we're auditing).
+        cli::Command::Verify => {
+            commands::diagnostics::verify(&registry_or_default(cli)?, directory)
+        }
         cli::Command::Build => {
             let kind = match cli.cache_backend {
                 cli::CacheBackend::Auto => lpp_pm::KvBackendKind::Auto,

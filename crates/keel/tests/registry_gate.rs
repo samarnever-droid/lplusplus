@@ -374,3 +374,36 @@ fn publish_command_appends_versions_end_to_end() {
 
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn default_registry_url_points_to_official_llppregistry() {
+    assert_eq!(
+        keel::DEFAULT_REGISTRY_URL,
+        "https://github.com/samarnever-droid/llppregistry.git"
+    );
+}
+
+#[test]
+fn publish_rejects_malicious_registry_remotes() {
+    let root = temp("badremote");
+    for bad in [
+        "ext::sh -c evil",
+        "http://insecure.example.com/repo.git",
+        "git://insecure.example.com/repo.git",
+    ] {
+        let outcome = keel::invoke_from(
+            [
+                "keel".to_string(),
+                "--registry".to_string(),
+                bad.to_string(),
+                "publish".to_string(),
+            ],
+            &root,
+        );
+        assert!(
+            matches!(outcome, keel::InvokeOutcome::Failure(_)),
+            "expected failure for {bad:?}, got {outcome:?}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}

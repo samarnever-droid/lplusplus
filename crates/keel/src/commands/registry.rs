@@ -353,6 +353,7 @@ pub fn publish(reg: &Registry, directory: &Path) -> Result<(), String> {
     }
     let artifact = super::archive::pack(directory)?;
     let checksum = lpp_pm::ContentAddress::of_bytes(&artifact).to_string();
+    verify_packed_artifact(&artifact, &checksum, &name, &version)?;
     let deps: Vec<lpp_pm::index::DepSpec> = manifest
         .dependencies
         .iter()
@@ -394,5 +395,55 @@ pub fn publish(reg: &Registry, directory: &Path) -> Result<(), String> {
         "published {name} {version} (sha256 {checksum}) → {}",
         reg.remote()
     );
+    Ok(())
+}
+
+fn verify_packed_artifact(
+    artifact: &[u8],
+    expected_checksum: &str,
+    expected_name: &str,
+    expected_version: &str,
+) -> Result<(), String> {
+    struct TempDirGuard(std::path::PathBuf);
+    impl Drop for TempDirGuard {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    let unique = format!(
+        "keel-publish-verify-{}-{}",
+        std::process::id(),
+        &expected_checksum[..16.min(expected_checksum.len())]
+    );
+    let temp_root = TempDirGuard(std::env::temp_dir().join(unique));
+    if temp_root.0.exists() {
+        let _ = std::fs::remove_dir_all(&temp_root.0);
+    }
+    super::archive::unpack(artifact, &temp_root.0)?;
+
+    let unpacked_manifest_path = temp_root.0.join("Keel.toml");
+    let unpacked_raw = std::fs::read_to_string(&unpacked_manifest_path)
+        .map_err(|e| format!("packed archive missing readable Keel.toml: {e}"))?;
+    let unpacked_manifest =
+        lpp_pm::manifest::Manifest::parse(&unpacked_raw).map_err(|e| e.to_string())?;
+    if unpacked_manifest.name() != expected_name || unpacked_manifest.version() != expected_version
+    {
+        return Err(format!(
+            "packed archive manifest mismatch: expected {} {}, got {} {}",
+            expected_name,
+            expected_version,
+            unpacked_manifest.name(),
+            unpacked_manifest.version()
+        ));
+    }
+
+    let repacked = super::archive::pack(&temp_root.0)?;
+    let repacked_checksum = lpp_pm::ContentAddress::of_bytes(&repacked).to_string();
+    if repacked_checksum != expected_checksum {
+        return Err(format!(
+            "non-deterministic archive round-trip: expected {expected_checksum}, got {repacked_checksum}"
+        ));
+    }
     Ok(())
 }
