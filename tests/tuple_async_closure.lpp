@@ -1,0 +1,11 @@
+# Tuple as an async result and as a closure capture.
+# Expected output: 141
+async def make() -> (Int, Str):
+    return (41, "ok")
+async def main():
+    r := make().await
+    base := (100, "cap")
+    f := fn() -> Int:
+        return base.0 + r.0
+    v := f()
+    print(v)

@@ -1,0 +1,21 @@
+# A reference cycle routed through a structural tuple
+# (N -> H -> (N, Int) -> N): the tuple type is Shared, its generated
+# trace lets the cycle collector reclaim the ring. Expected: 0
+struct H:
+    t: (N, Int)
+struct N:
+    id: Int
+    h: H
+def main() -> Int:
+    mut total := 0
+    mut i := 0
+    while i < 10000:
+        mut a := N(1, 0)
+        mut b := N(2, 0)
+        a.h = H((b, 10))
+        mut bb := a.h.t.0
+        bb.h = H((a, 20))
+        total = total + bb.h.t.0.id + bb.id - 3
+        i = i + 1
+    print(total)
+    return 0

@@ -89,6 +89,23 @@ unsafe fn new_with_ownership(retain: ElementFn, drop: ElementFn) -> *mut c_void 
     raw
 }
 
+/// Trace for a list: report each owned element (ARC lists only;
+/// value lists own nothing). Mirrors `list_destroy`'s element walk.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lpp_list_trace(payload: *mut c_void, ctx: *mut c_void) {
+    if payload.is_null() {
+        return;
+    }
+    let l = unsafe { &*(payload as *mut LppList) };
+    if l.drop_element.is_none() || l.data.is_null() {
+        return;
+    }
+    for i in 0..l.len {
+        let value = unsafe { *l.data.add(i as usize) };
+        unsafe { crate::collect::lpp_trace_visit(ctx, value as usize as *mut c_void) };
+    }
+}
+
 /// `List[Int]`: stores values, owns no element references.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_list_new() -> *mut c_void {

@@ -1,0 +1,11 @@
+# A genuine one-node reference cycle: `a.next` owns `a` itself. Plain
+# refcounting can never reclaim it; the cycle collector does when the
+# last local goes away (see documentation/CYCLE_BREAKING.md).
+struct Node:
+    value: Int
+    next: Node
+
+def main():
+    mut a := Node(7, 0)
+    a.next = a
+    print(a.next.value)

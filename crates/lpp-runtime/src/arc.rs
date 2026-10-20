@@ -10,14 +10,14 @@
 //! `tests/runtime_gate.rs`, which runs differential sequences against
 //! both implementations.
 
-use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU32, AtomicUsize, Ordering};
 
 use libc::{c_void, calloc, free};
 
 use crate::layout::{
-    ARC_DESTRUCTOR_OFFSET, ARC_GENERATION_OFFSET, ARC_HEADER_SIZE, ARC_IMMORTAL, ARC_MAGIC,
-    ARC_MAGIC_OFFSET, ARC_REFCOUNT_OFFSET, EMPTY_STR_BLOB_WORDS, EMPTY_STR_PAYLOAD_WORD,
-    MIN_VALID_ADDR,
+    ARC_CYCLE_FLAGS_OFFSET, ARC_DESTRUCTOR_OFFSET, ARC_FLAG_COLLECTIBLE, ARC_GENERATION_OFFSET,
+    ARC_HEADER_SIZE, ARC_IMMORTAL, ARC_MAGIC, ARC_MAGIC_OFFSET, ARC_REFCOUNT_OFFSET,
+    EMPTY_STR_BLOB_WORDS, EMPTY_STR_PAYLOAD_WORD, MIN_VALID_ADDR,
 };
 
 /// Monotonic source of object generations. Internal to the runtime — the v1
@@ -34,28 +34,30 @@ fn next_generation() -> i32 {
 
 // The hidden header lives `ARC_HEADER_SIZE` bytes before the payload.
 
-fn header_of(payload: *const c_void) -> *mut c_void {
+pub(crate) fn header_of(payload: *const c_void) -> *mut c_void {
     unsafe { payload.cast::<u8>().sub(ARC_HEADER_SIZE) }
         .cast_mut()
         .cast::<c_void>()
 }
 
-fn magic_cell(payload: *const c_void) -> *mut u32 {
+pub(crate) fn magic_cell(payload: *const c_void) -> *mut u32 {
     let hdr = header_of(payload).cast::<u32>();
     unsafe { hdr.add(ARC_MAGIC_OFFSET / 4) }
 }
 
-fn refcount_cell(payload: *const c_void) -> *mut AtomicI32 {
+pub(crate) fn refcount_cell(payload: *const c_void) -> *mut AtomicI32 {
     let hdr = header_of(payload).cast::<AtomicI32>();
     unsafe { hdr.add(ARC_REFCOUNT_OFFSET / 4) }
 }
 
-fn generation_cell(payload: *const c_void) -> *mut AtomicI32 {
+pub(crate) fn generation_cell(payload: *const c_void) -> *mut AtomicI32 {
     let hdr = header_of(payload).cast::<AtomicI32>();
     unsafe { hdr.add(ARC_GENERATION_OFFSET / 4) }
 }
 
-fn destructor_cell(payload: *const c_void) -> *mut Option<unsafe extern "C" fn(*mut c_void)> {
+pub(crate) fn destructor_cell(
+    payload: *const c_void,
+) -> *mut Option<unsafe extern "C" fn(*mut c_void)> {
     // The destructor sits at byte offset 16 — 8-byte aligned (the C struct
     // pads generation@8..12 so the pointer lands on a boundary). One clean
     // pointer-sized step past the header base.
@@ -63,14 +65,20 @@ fn destructor_cell(payload: *const c_void) -> *mut Option<unsafe extern "C" fn(*
     unsafe { hdr.add(ARC_DESTRUCTOR_OFFSET / std::mem::size_of::<*const c_void>()) }
 }
 
-fn is_immortal(payload: *const c_void) -> bool {
+/// The cycle-collector flags word (padding bytes at offset 12).
+pub(crate) fn flags_cell(payload: *const c_void) -> *mut AtomicU32 {
+    let hdr = header_of(payload).cast::<AtomicU32>();
+    unsafe { hdr.add(ARC_CYCLE_FLAGS_OFFSET / 4) }
+}
+
+pub(crate) fn is_immortal(payload: *const c_void) -> bool {
     let rc = unsafe { (*refcount_cell(payload)).load(Ordering::Relaxed) };
     rc as u32 == ARC_IMMORTAL
 }
 
 /// Mirrors C `lpp__is_valid_arc_ptr`: non-null, 8-aligned, beyond the guard
 /// pages, and a live magic in the hidden header.
-fn is_valid_arc_ptr(ptr: *const c_void) -> bool {
+pub(crate) fn is_valid_arc_ptr(ptr: *const c_void) -> bool {
     if ptr.is_null() {
         return false;
     }
@@ -135,6 +143,8 @@ pub unsafe extern "C" fn lpp_arc_release(ptr: *mut c_void) {
     let prev = unsafe { (*refcount_cell(ptr)).fetch_sub(1, Ordering::AcqRel) };
     if prev == 1 {
         unsafe { drop_arc(ptr) };
+    } else if prev > 1 {
+        crate::collect::note_possible_root(ptr);
     }
 }
 
@@ -145,6 +155,9 @@ pub unsafe extern "C" fn lpp_arc_release(ptr: *mut c_void) {
 /// block through the same allocator it came from.
 unsafe fn drop_arc(ptr: *mut c_void) {
     lpp__runtime_drop_count.fetch_add(1, Ordering::Relaxed);
+    if unsafe { (*flags_cell(ptr)).load(Ordering::Acquire) } & ARC_FLAG_COLLECTIBLE != 0 {
+        crate::collect::deregister(ptr);
+    }
     unsafe {
         (*generation_cell(ptr)).fetch_add(1, Ordering::Release);
         magic_cell(ptr).write_volatile(0);
@@ -176,6 +189,8 @@ pub unsafe extern "C" fn lpp_arc_release_local(ptr: *mut c_void) {
     let prev = unsafe { (*refcount_cell(ptr)).fetch_sub(1, Ordering::Relaxed) };
     if prev == 1 {
         unsafe { drop_arc(ptr) };
+    } else if prev > 1 {
+        crate::collect::note_possible_root(ptr);
     }
 }
 
@@ -244,6 +259,19 @@ pub unsafe extern "C" fn lpp_closure_destroy(closure: *mut c_void) {
     let parts = closure as *mut *mut c_void;
     unsafe {
         lpp_arc_release(*parts.add(1));
+    }
+}
+
+/// Trace for a closure capsule: the environment pointer is its one
+/// owned ARC child (mirrors `lpp_closure_destroy`).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lpp_closure_trace(closure: *mut c_void, ctx: *mut c_void) {
+    if closure.is_null() {
+        return;
+    }
+    let parts = closure as *mut *mut c_void;
+    unsafe {
+        crate::collect::lpp_trace_visit(ctx, *parts.add(1));
     }
 }
 

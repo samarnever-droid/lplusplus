@@ -1,0 +1,14 @@
+# A three-node ring a -> b -> c -> a, traversed one full turn.
+struct Node:
+    value: Int
+    next: Node
+
+def main():
+    mut a := Node(1, 0)
+    mut b := Node(2, 0)
+    mut c := Node(3, 0)
+    a.next = b
+    b.next = c
+    c.next = a
+    print(a.next.value + b.next.value + c.next.value)
+    print(a.next.next.next.value)

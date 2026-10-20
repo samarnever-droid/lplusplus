@@ -88,6 +88,16 @@ const IMP_LIST_SET_FLOAT: &str = "lpp_list_set_float";
 const IMP_LIST_SET_BOOL: &str = "lpp_list_set_bool";
 const IMP_LIST_LEN: &str = "lpp_list_len";
 const IMP_CLOSURE_DESTROY: &str = "lpp_closure_destroy";
+// Cycle-collector ABI (see `lpp_runtime::collect`): mark a `Shared`
+// allocation collectible with a trace function, report children during
+// trial deletion, and run the final collection from `main`.
+const IMP_MARK_COLLECTIBLE: &str = "lpp_arc_mark_collectible";
+const IMP_TRACE_VISIT: &str = "lpp_trace_visit";
+const IMP_COLLECT_CYCLES: &str = "lpp_arc_collect_cycles";
+const IMP_LIST_TRACE: &str = "lpp_list_trace";
+const IMP_TUPLE_TRACE: &str = "lpp_tuple_trace";
+const IMP_TASK_TRACE: &str = "lpp_task_trace";
+const IMP_CLOSURE_TRACE: &str = "lpp_closure_trace";
 const IMP_TUPLE_ALLOC: &str = "lpp_tuple_alloc";
 const IMP_TASK_NEW: &str = "lpp_task_new";
 const IMP_TASK_POLL: &str = "lpp_task_poll";
@@ -411,6 +421,9 @@ fn import_signature(name: &str) -> (&'static [CLType], Option<CLType>) {
         IMP_FMOD => (&[cltypes::F64, cltypes::F64], Some(cltypes::F64)),
         IMP_ARC_ALLOC => (&[cltypes::I64, cltypes::I64], Some(cltypes::I64)),
         IMP_ARC_RETAIN | IMP_ARC_RELEASE => (&[cltypes::I64], None),
+        IMP_MARK_COLLECTIBLE | IMP_TRACE_VISIT | IMP_LIST_TRACE | IMP_TUPLE_TRACE
+        | IMP_TASK_TRACE | IMP_CLOSURE_TRACE => (&[cltypes::I64, cltypes::I64], None),
+        IMP_COLLECT_CYCLES => (&[], None),
         IMP_LIST_NEW | IMP_LIST_NEW_ARC => (&[], Some(cltypes::I64)),
         IMP_LIST_PUSH | IMP_LIST_PUSH_ARC => (&[cltypes::I64, cltypes::I64], None),
         IMP_LIST_PUSH_FLOAT => (&[cltypes::I64, cltypes::F64], None),
@@ -792,6 +805,28 @@ pub(crate) struct Plan {
     /// materialized function): the two capsule call ABIs differ by
     /// the leading `env` parameter, so a call site needs the class.
     pub(crate) value_classes: BTreeMap<(MirFunctionId, MirLocalId), ValueClass>,
+    /// The ownership plan's `Shared` (cycle-member) type ids: heap
+    /// values of these types can sit on a reference cycle, so their
+    /// allocations are marked collectible for the runtime's
+    /// trial-deletion collector. Empty for acyclic programs, which
+    /// keep the exact plain-ARC codegen.
+    pub(crate) shared_types: BTreeSet<TypeId>,
+    /// Constructed aggregates whose type is `Shared`, in
+    /// `MirAggregateId` order — one generated trace function each
+    /// (`lpp_trace_{s|e}{n}`), mirroring the destructor walk.
+    pub(crate) traces: Vec<MirAggregateId>,
+    /// Capture-carrying closures whose function type is `Shared`, in
+    /// `MirFunctionId` order — one generated env trace each
+    /// (`lpp_trace_c{n}`).
+    pub(crate) closure_traces: Vec<MirFunctionId>,
+    /// Constructed structural-tuple types, in `TypeId` order — one
+    /// generated destructor each (`lpp_drop_t{n}`), releasing the
+    /// record's managed element slots.
+    pub(crate) tuple_destructors: Vec<TypeId>,
+    /// Constructed tuple types that are `Shared`, in `TypeId` order —
+    /// one generated trace each (`lpp_trace_t{n}`), mirroring the
+    /// tuple destructor walk.
+    pub(crate) tuple_traces: Vec<TypeId>,
     /// Nominal type id to aggregate instance (place resolution).
     pub(crate) aggregates: AggregateIndex,
     /// Layouts for every nominal in the program.
@@ -862,6 +897,13 @@ fn is_managed(types: &TypeInterner, ty: TypeId) -> bool {
             | TypeKind::Nominal { .. }
             | TypeKind::Task(_)
             | TypeKind::Function { .. }
+            // A structural tuple is an ARC heap record with a generated
+            // per-shape destructor (`lpp_drop_t{n}`): it is retained,
+            // released, and traced exactly like a nominal aggregate.
+            // Tuples are immutable after construction (the frontend
+            // rejects element assignment), so sharing the record under
+            // refcounting is observably the oracle's value semantics.
+            | TypeKind::Tuple(_)
     )
 }
 
@@ -1255,6 +1297,18 @@ pub(crate) fn pre_scan(
     types: &TypeInterner,
     names: &dyn lpp_codegen_api::NameResolver,
 ) -> Result<Plan, CodegenError> {
+    // The 4D ownership plan decides which allocations can sit on a
+    // reference cycle (`Shared` types) and therefore need collector
+    // marking. The driver proves the same plan independently; the
+    // backend recomputes it because the `Backend` contract carries
+    // only MIR + types.
+    let shared_types: BTreeSet<TypeId> = lpp_ownership::compute_ownership_plan(program, types)
+        .map(|plan| plan.pinned_types().into_iter().collect())
+        .map_err(|error| {
+            emission_failed(format!(
+                "ownership plan for cycle collection failed: {error}"
+            ))
+        })?;
     let aggregates = AggregateIndex::build(program);
     let mut layouts = HashMap::new();
     for (id, _) in program.aggregates() {
@@ -1266,16 +1320,22 @@ pub(crate) fn pre_scan(
     let mut imports: BTreeSet<&'static str> = BTreeSet::new();
     let mut destructors: Vec<MirAggregateId> = Vec::new();
     let mut closure_dtors: Vec<MirFunctionId> = Vec::new();
+    let mut tuple_destructors: Vec<TypeId> = Vec::new();
     let mut task_thunks: Vec<MirFunctionId> = Vec::new();
     let mut closure_thunks: Vec<MirFunctionId> = Vec::new();
-    let mut value_classes: BTreeMap<(MirFunctionId, MirLocalId), ValueClass> = BTreeMap::new();
+    // Function-value provenance is resolved by a whole-program
+    // fixpoint first (see `resolve_value_classes`): the per-function
+    // scan below then only conflict-checks what it re-derives.
+    let mut value_classes = resolve_value_classes(program, types, &aggregates, &layouts)?;
 
     for (mir_id, function) in program.functions() {
         {
             let mut scan = ScanState {
+                shared: &shared_types,
                 imports: &mut imports,
                 destructors: &mut destructors,
                 closure_dtors: &mut closure_dtors,
+                tuple_destructors: &mut tuple_destructors,
                 task_thunks: &mut task_thunks,
                 closure_thunks: &mut closure_thunks,
                 value_classes: &mut value_classes,
@@ -1341,14 +1401,46 @@ pub(crate) fn pre_scan(
         }
     }
 
+    // The generated `main` wrapper runs one final collection so a
+    // program that ends holding only cyclic garbage exits leak-free.
+    if main_id.is_some() && !shared_types.is_empty() {
+        imports.insert(IMP_COLLECT_CYCLES);
+    }
+
     destructors.sort_unstable();
     destructors.dedup();
     closure_dtors.sort_unstable();
     closure_dtors.dedup();
+    tuple_destructors.sort_unstable();
+    tuple_destructors.dedup();
     task_thunks.sort_unstable();
     task_thunks.dedup();
     closure_thunks.sort_unstable();
     closure_thunks.dedup();
+
+    let traces: Vec<MirAggregateId> = destructors
+        .iter()
+        .copied()
+        .filter(|aggregate| {
+            program
+                .aggregate(*aggregate)
+                .is_some_and(|agg| shared_types.contains(&agg.ty))
+        })
+        .collect();
+    let closure_traces: Vec<MirFunctionId> = closure_dtors
+        .iter()
+        .copied()
+        .filter(|function_id| {
+            program
+                .function(*function_id)
+                .is_some_and(|function| shared_types.contains(&function.ty))
+        })
+        .collect();
+    let tuple_traces: Vec<TypeId> = tuple_destructors
+        .iter()
+        .copied()
+        .filter(|ty| shared_types.contains(ty))
+        .collect();
 
     Ok(Plan {
         export_names,
@@ -1358,6 +1450,11 @@ pub(crate) fn pre_scan(
         task_thunks,
         closure_thunks,
         value_classes,
+        shared_types,
+        traces,
+        closure_traces,
+        tuple_destructors,
+        tuple_traces,
         aggregates,
         layouts,
     })
@@ -1375,12 +1472,221 @@ pub(crate) enum ValueClass {
 
 /// The mutable scan state threaded through `check_function_shape`.
 struct ScanState<'a> {
+    shared: &'a BTreeSet<TypeId>,
     imports: &'a mut BTreeSet<&'static str>,
     destructors: &'a mut Vec<MirAggregateId>,
     closure_dtors: &'a mut Vec<MirFunctionId>,
+    tuple_destructors: &'a mut Vec<TypeId>,
     task_thunks: &'a mut Vec<MirFunctionId>,
     closure_thunks: &'a mut Vec<MirFunctionId>,
     value_classes: &'a mut BTreeMap<(MirFunctionId, MirLocalId), ValueClass>,
+}
+
+/// Resolve function-value provenance classes for the whole program.
+///
+/// The per-function scan records classes in instruction order, which
+/// cannot see provenance that arrives *backwards* (a list whose
+/// element class is established by a push after a copy) or *across*
+/// functions (a list captured into a closure whose body reads function
+/// values out of it — the capture's class lives in the enclosing
+/// function). This pre-pass therefore collects the same facts as
+/// constraints — constants (materialized functions, closures created
+/// by `MakeClosure`, function-typed parameters) and equalities
+/// (copies, list push/get/set, list literals, closure captures) — and
+/// propagates them to a fixpoint. A component forced to both classes
+/// is the same "mixed function value origins" the scan rejects.
+///
+/// Deliberately *not* modelled (matching the scan's long-standing
+/// boundary): provenance through struct fields and through direct
+/// call arguments/returns, where function-typed parameters keep their
+/// caller-supplied-capsule default. Unconstrained locals stay absent
+/// from the map and are still rejected as unknown origin if a call
+/// site actually consumes them.
+fn resolve_value_classes(
+    program: &MirProgram,
+    types: &TypeInterner,
+    aggregates: &AggregateIndex,
+    layouts: &HashMap<MirAggregateId, AggregateLayout>,
+) -> Result<BTreeMap<(MirFunctionId, MirLocalId), ValueClass>, CodegenError> {
+    type ClassKey = (MirFunctionId, MirLocalId);
+    fn set_const(
+        classes: &mut BTreeMap<ClassKey, ValueClass>,
+        key: ClassKey,
+        class: ValueClass,
+    ) -> Result<(), CodegenError> {
+        if let Some(existing) = classes.get(&key) {
+            if *existing != class {
+                return Err(unsupported(key.0, "mixed function value origins"));
+            }
+            return Ok(());
+        }
+        classes.insert(key, class);
+        Ok(())
+    }
+    let local_ty = |local: MirLocalId| {
+        program
+            .local(local)
+            .expect("validated MIR retains locals")
+            .ty
+    };
+    let carries_fn = |local: MirLocalId| is_function_value_kind(types, types.kind(local_ty(local)));
+    let fn_element = |ty: TypeId| match types.kind(ty) {
+        TypeKind::List(element) => matches!(types.kind(element), TypeKind::Function { .. }),
+        _ => false,
+    };
+
+    let mut classes: BTreeMap<ClassKey, ValueClass> = BTreeMap::new();
+    let mut equalities: Vec<(ClassKey, ClassKey)> = Vec::new();
+
+    for (mir_id, function) in program.functions() {
+        for &local in program.function_locals(function) {
+            let descriptor = program.local(local).expect("validated MIR retains locals");
+            if matches!(types.kind(descriptor.ty), TypeKind::Function { .. })
+                && matches!(descriptor.kind, lpp_mir::MirLocalKind::Parameter)
+            {
+                set_const(&mut classes, (mir_id, local), ValueClass::Closure)?;
+            }
+        }
+        for &block in program.function_blocks(function) {
+            let basic = program.block(block).expect("validated MIR retains blocks");
+            for &instruction in program.block_instructions(basic) {
+                let instr = program
+                    .instruction(instruction)
+                    .expect("validated MIR retains instructions");
+                match &instr.kind {
+                    InstructionKind::Assign { target, value } => match value {
+                        Rvalue::Use(Operand::Function(_)) => {
+                            set_const(&mut classes, (mir_id, *target), ValueClass::FunctionValue)?;
+                        }
+                        Rvalue::Use(Operand::Copy(source)) => {
+                            if carries_fn(*source) {
+                                equalities.push(((mir_id, *target), (mir_id, *source)));
+                            }
+                        }
+                        Rvalue::MakeClosure {
+                            function: closure_id,
+                            captures,
+                        } => {
+                            set_const(&mut classes, (mir_id, *target), ValueClass::Closure)?;
+                            let closure_fn = program
+                                .function(*closure_id)
+                                .expect("validated MIR retains functions");
+                            let capture_locals: Vec<MirLocalId> = program
+                                .function_parameters(closure_fn)
+                                .iter()
+                                .copied()
+                                .filter(|local| {
+                                    matches!(
+                                        program
+                                            .local(*local)
+                                            .expect("validated MIR retains locals")
+                                            .kind,
+                                        lpp_mir::MirLocalKind::Capture
+                                    )
+                                })
+                                .collect();
+                            for (operand, capture_local) in
+                                program.operands(*captures).iter().zip(capture_locals)
+                            {
+                                if let Operand::Copy(source) = *operand
+                                    && carries_fn(source)
+                                {
+                                    equalities
+                                        .push(((*closure_id, capture_local), (mir_id, source)));
+                                }
+                            }
+                        }
+                        Rvalue::Load(place) => {
+                            if let Ok(resolution) = resolve_place(
+                                program, types, *place, aggregates, layouts, mir_id, false,
+                            ) && let Some(PlaceStep::ListIndex { element, .. }) =
+                                resolution.steps.last()
+                                && matches!(types.kind(*element), TypeKind::Function { .. })
+                            {
+                                equalities.push(((mir_id, *target), (mir_id, resolution.root)));
+                            }
+                        }
+                        Rvalue::List(operands) => {
+                            if fn_element(local_ty(*target)) {
+                                for operand in program.operands(*operands) {
+                                    if let Operand::Copy(source) = *operand {
+                                        equalities.push(((mir_id, *target), (mir_id, source)));
+                                    }
+                                }
+                            }
+                        }
+                        Rvalue::Builtin { builtin, arguments } => {
+                            let name = builtin.descriptor().name;
+                            if matches!(name, "list_push" | "list_set" | "list_get" | "get") {
+                                let args = program.operands(*arguments);
+                                if let Some(Operand::Copy(list_local)) = args.first()
+                                    && fn_element(local_ty(*list_local))
+                                {
+                                    match name {
+                                        "list_get" | "get" => {
+                                            equalities
+                                                .push(((mir_id, *target), (mir_id, *list_local)));
+                                        }
+                                        _ => {
+                                            if let Some(Operand::Copy(source)) = args.get(1) {
+                                                equalities.push((
+                                                    (mir_id, *list_local),
+                                                    (mir_id, *source),
+                                                ));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        _ => {}
+                    },
+                    InstructionKind::Store {
+                        place,
+                        value: Operand::Copy(source),
+                    } => {
+                        if let Ok(resolution) =
+                            resolve_place(program, types, *place, aggregates, layouts, mir_id, true)
+                            && let Some(PlaceStep::ListIndex { element, .. }) =
+                                resolution.steps.last()
+                            && matches!(types.kind(*element), TypeKind::Function { .. })
+                        {
+                            equalities.push(((mir_id, resolution.root), (mir_id, *source)));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    // Monotone propagation: each key is labelled at most once, so
+    // this terminates after at most (#keys) productive passes.
+    loop {
+        let mut changed = false;
+        for &(a, b) in &equalities {
+            match (classes.get(&a).copied(), classes.get(&b).copied()) {
+                (Some(x), Some(y)) => {
+                    if x != y {
+                        return Err(unsupported(a.0, "mixed function value origins"));
+                    }
+                }
+                (Some(x), None) => {
+                    classes.insert(b, x);
+                    changed = true;
+                }
+                (None, Some(y)) => {
+                    classes.insert(a, y);
+                    changed = true;
+                }
+                (None, None) => {}
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    Ok(classes)
 }
 
 /// Record (or conflict-check) the provenance class of a
@@ -1580,6 +1886,10 @@ fn check_function_shape(
                                     .expect("validated MIR retains functions");
                                 scan.imports.insert(IMP_ARC_ALLOC);
                                 scan.imports.insert(IMP_CLOSURE_DESTROY);
+                                if scan.shared.contains(&callee_fn.ty) {
+                                    scan.imports.insert(IMP_MARK_COLLECTIBLE);
+                                    scan.imports.insert(IMP_CLOSURE_TRACE);
+                                }
                                 match callee_fn.kind {
                                     MirFunctionKind::Async => {
                                         scan.task_thunks.push(*function_id);
@@ -1729,6 +2039,11 @@ fn check_function_shape(
                                             scan.task_thunks.push(*callee_id);
                                             scan.imports.insert(IMP_TUPLE_ALLOC);
                                             scan.imports.insert(IMP_TASK_NEW);
+                                            if scan.shared.contains(&callee_fn.return_type) {
+                                                scan.imports.insert(IMP_MARK_COLLECTIBLE);
+                                                scan.imports.insert(IMP_TASK_TRACE);
+                                                scan.imports.insert(IMP_TUPLE_TRACE);
+                                            }
                                         }
                                         MirFunctionKind::Function => {}
                                     }
@@ -1770,6 +2085,11 @@ fn check_function_shape(
                                     if matches!(types.kind(result), TypeKind::Task(_)) {
                                         scan.imports.insert(IMP_TUPLE_ALLOC);
                                         scan.imports.insert(IMP_TASK_NEW);
+                                        if scan.shared.contains(&result) {
+                                            scan.imports.insert(IMP_MARK_COLLECTIBLE);
+                                            scan.imports.insert(IMP_TASK_TRACE);
+                                            scan.imports.insert(IMP_TUPLE_TRACE);
+                                        }
                                     }
                                     (arity, result)
                                 }
@@ -1849,6 +2169,10 @@ fn check_function_shape(
                             let arc = is_managed(types, element);
                             scan.imports
                                 .insert(if arc { IMP_LIST_NEW_ARC } else { IMP_LIST_NEW });
+                            if scan.shared.contains(&target_ty) {
+                                scan.imports.insert(IMP_MARK_COLLECTIBLE);
+                                scan.imports.insert(IMP_LIST_TRACE);
+                            }
                             for operand in program.operands(*operands) {
                                 check_operand(operand)?;
                                 match element_class(types, element) {
@@ -1899,6 +2223,15 @@ fn check_function_shape(
                             }
                             scan.imports.insert(IMP_ARC_ALLOC);
                             scan.destructors.push(*aggregate);
+                            if scan.shared.contains(
+                                &program
+                                    .aggregate(*aggregate)
+                                    .expect("validated MIR retains every aggregate")
+                                    .ty,
+                            ) {
+                                scan.imports.insert(IMP_MARK_COLLECTIBLE);
+                                scan.imports.insert(IMP_TRACE_VISIT);
+                            }
                         }
                         Rvalue::ConstructVariant {
                             aggregate,
@@ -1927,6 +2260,15 @@ fn check_function_shape(
                             }
                             scan.imports.insert(IMP_ARC_ALLOC);
                             scan.destructors.push(*aggregate);
+                            if scan.shared.contains(
+                                &program
+                                    .aggregate(*aggregate)
+                                    .expect("validated MIR retains every aggregate")
+                                    .ty,
+                            ) {
+                                scan.imports.insert(IMP_MARK_COLLECTIBLE);
+                                scan.imports.insert(IMP_TRACE_VISIT);
+                            }
                         }
                         Rvalue::Builtin { builtin, arguments } => {
                             match *builtin {
@@ -1960,6 +2302,10 @@ fn check_function_shape(
                                         scan.imports.insert(IMP_LIST_NEW_ARC);
                                     } else {
                                         scan.imports.insert(IMP_LIST_NEW);
+                                    }
+                                    if scan.shared.contains(&target_ty) {
+                                        scan.imports.insert(IMP_MARK_COLLECTIBLE);
+                                        scan.imports.insert(IMP_LIST_TRACE);
                                     }
                                     let args = program.operands(*arguments);
                                     let descriptor = LIST_NEW.descriptor();
@@ -2345,6 +2691,11 @@ fn check_function_shape(
                                 }
                             }
                             scan.imports.insert(IMP_ARC_ALLOC);
+                            scan.tuple_destructors.push(local_ty(*target));
+                            if scan.shared.contains(&local_ty(*target)) {
+                                scan.imports.insert(IMP_MARK_COLLECTIBLE);
+                                scan.imports.insert(IMP_TRACE_VISIT);
+                            }
                         }
                         Rvalue::MakeClosure {
                             function: closure_id,
@@ -2381,8 +2732,19 @@ fn check_function_shape(
                             // A zero-user-parameter closure is
                             // spawnable: its capsule code pointer is
                             // the task-code trampoline.
-                            if user_parameters(program, closure_fn).is_empty() {
+                            let spawnable = user_parameters(program, closure_fn).is_empty();
+                            if spawnable {
                                 scan.closure_thunks.push(*closure_id);
+                            }
+                            if scan.shared.contains(&closure_fn.ty) {
+                                scan.imports.insert(IMP_MARK_COLLECTIBLE);
+                                scan.imports.insert(IMP_CLOSURE_TRACE);
+                                if !capture_args.is_empty() {
+                                    scan.imports.insert(IMP_TRACE_VISIT);
+                                }
+                                if spawnable {
+                                    scan.imports.insert(IMP_TUPLE_TRACE);
+                                }
                             }
                             if !capture_args.is_empty() {
                                 scan.closure_dtors.push(*closure_id);
@@ -2586,7 +2948,13 @@ pub(crate) struct Lowering<'m> {
     layouts: HashMap<MirAggregateId, AggregateLayout>,
     func_ids: BTreeMap<MirFunctionId, FuncId>,
     dtor_ids: BTreeMap<MirAggregateId, FuncId>,
+    trace_ids: BTreeMap<MirAggregateId, FuncId>,
     closure_dtor_ids: BTreeMap<MirFunctionId, FuncId>,
+    closure_trace_ids: BTreeMap<MirFunctionId, FuncId>,
+    tuple_dtor_ids: BTreeMap<TypeId, FuncId>,
+    tuple_trace_ids: BTreeMap<TypeId, FuncId>,
+    /// The 4D `Shared` type ids (see `Plan::shared_types`).
+    shared_types: BTreeSet<TypeId>,
     task_thunk_ids: BTreeMap<MirFunctionId, FuncId>,
     closure_thunk_ids: BTreeMap<MirFunctionId, FuncId>,
     value_classes: BTreeMap<(MirFunctionId, MirLocalId), ValueClass>,
@@ -2605,6 +2973,7 @@ impl<'m> Lowering<'m> {
         aggregates: AggregateIndex,
         layouts: HashMap<MirAggregateId, AggregateLayout>,
         value_classes: BTreeMap<(MirFunctionId, MirLocalId), ValueClass>,
+        shared_types: BTreeSet<TypeId>,
     ) -> Self {
         Self {
             module,
@@ -2612,7 +2981,12 @@ impl<'m> Lowering<'m> {
             layouts,
             func_ids: BTreeMap::new(),
             dtor_ids: BTreeMap::new(),
+            trace_ids: BTreeMap::new(),
             closure_dtor_ids: BTreeMap::new(),
+            closure_trace_ids: BTreeMap::new(),
+            tuple_dtor_ids: BTreeMap::new(),
+            tuple_trace_ids: BTreeMap::new(),
+            shared_types,
             task_thunk_ids: BTreeMap::new(),
             closure_thunk_ids: BTreeMap::new(),
             value_classes,
@@ -2696,6 +3070,64 @@ impl<'m> Lowering<'m> {
             self.exported.insert(name);
         }
 
+        for &aggregate in &plan.traces {
+            let agg = program
+                .aggregate(aggregate)
+                .expect("validated MIR retains every aggregate");
+            let tag = match agg.kind {
+                lpp_mir::MirAggregateKind::Struct => 's',
+                lpp_mir::MirAggregateKind::Enum => 'e',
+            };
+            let name = format!("lpp_trace_{tag}{}", aggregate.raw());
+            let mut sig = self.module.make_signature();
+            sig.params.push(AbiParam::new(cltypes::I64));
+            sig.params.push(AbiParam::new(cltypes::I64));
+            let id = self
+                .module
+                .declare_function(&name, Linkage::Export, &sig)
+                .map_err(|e| emission_failed(format!("declare trace {name}: {e:?}")))?;
+            self.trace_ids.insert(aggregate, id);
+            self.exported.insert(name);
+        }
+
+        for &function_id in &plan.closure_traces {
+            let name = format!("lpp_trace_c{}", function_id.raw());
+            let mut sig = self.module.make_signature();
+            sig.params.push(AbiParam::new(cltypes::I64));
+            sig.params.push(AbiParam::new(cltypes::I64));
+            let id = self
+                .module
+                .declare_function(&name, Linkage::Export, &sig)
+                .map_err(|e| emission_failed(format!("declare closure trace {name}: {e:?}")))?;
+            self.closure_trace_ids.insert(function_id, id);
+            self.exported.insert(name);
+        }
+
+        for &ty in &plan.tuple_destructors {
+            let name = format!("lpp_drop_t{}", ty.raw());
+            let mut sig = self.module.make_signature();
+            sig.params.push(AbiParam::new(cltypes::I64));
+            let id = self
+                .module
+                .declare_function(&name, Linkage::Export, &sig)
+                .map_err(|e| emission_failed(format!("declare tuple dtor {name}: {e:?}")))?;
+            self.tuple_dtor_ids.insert(ty, id);
+            self.exported.insert(name);
+        }
+
+        for &ty in &plan.tuple_traces {
+            let name = format!("lpp_trace_t{}", ty.raw());
+            let mut sig = self.module.make_signature();
+            sig.params.push(AbiParam::new(cltypes::I64));
+            sig.params.push(AbiParam::new(cltypes::I64));
+            let id = self
+                .module
+                .declare_function(&name, Linkage::Export, &sig)
+                .map_err(|e| emission_failed(format!("declare tuple trace {name}: {e:?}")))?;
+            self.tuple_trace_ids.insert(ty, id);
+            self.exported.insert(name);
+        }
+
         for &function_id in &plan.task_thunks {
             let name = format!("__lpp_task_thunk{}", function_id.raw());
             let mut sig = self.module.make_signature();
@@ -2771,7 +3203,8 @@ impl<'m> Lowering<'m> {
         Ok(())
     }
 
-    /// Lower every generated destructor in `MirAggregateId` order.
+    /// Lower every generated destructor in `MirAggregateId` order,
+    /// then every generated cycle-collector trace likewise.
     pub(crate) fn lower_destructors(
         &mut self,
         types: &TypeInterner,
@@ -2780,6 +3213,193 @@ impl<'m> Lowering<'m> {
         for &aggregate in &plan.destructors {
             self.lower_destructor(types, aggregate)?;
         }
+        for &aggregate in &plan.traces {
+            self.lower_trace(types, aggregate)?;
+        }
+        for &ty in &plan.tuple_destructors {
+            self.lower_tuple_destructor(types, ty)?;
+        }
+        for &ty in &plan.tuple_traces {
+            self.lower_tuple_trace(types, ty)?;
+        }
+        Ok(())
+    }
+
+    /// `lpp_drop_t{n}(payload)` — release the tuple record's managed
+    /// element slots, walking exactly the `tuple_layout` offsets the
+    /// construction stored through.
+    fn lower_tuple_destructor(
+        &mut self,
+        types: &TypeInterner,
+        ty: TypeId,
+    ) -> Result<(), CodegenError> {
+        let func_id = *self
+            .tuple_dtor_ids
+            .get(&ty)
+            .expect("declare ran before lowering");
+        let (slots, _) = crate::layout::tuple_layout(types, ty)
+            .expect("pre-scan collected constructed tuple types");
+
+        let mut ctx = self.module.make_context();
+        let mut sig = self.module.make_signature();
+        sig.params.push(AbiParam::new(cltypes::I64));
+        ctx.func.signature = sig;
+        ctx.func.name = UserFuncName::user(8, ty.raw());
+        {
+            let mut fn_ctx = FunctionBuilderContext::new();
+            let mut builder = FunctionBuilder::new(&mut ctx.func, &mut fn_ctx);
+            let entry = builder.create_block();
+            let payload = builder.append_block_param(entry, cltypes::I64);
+            builder.seal_block(entry);
+            builder.switch_to_block(entry);
+            for (offset, element) in &slots {
+                if is_managed(types, *element) {
+                    let old =
+                        builder
+                            .ins()
+                            .load(cltypes::I64, MemFlags::new(), payload, *offset as i32);
+                    self.arc_release(&mut builder, old);
+                }
+            }
+            builder.ins().return_(&[]);
+            builder.seal_all_blocks();
+            builder.finalize();
+        }
+        self.module
+            .define_function(func_id, &mut ctx)
+            .map_err(|e| verify_failed(None, format!("define tuple destructor: {e:?}")))?;
+        Ok(())
+    }
+
+    /// `lpp_trace_t{n}(payload, ctx)` — report the tuple record's
+    /// managed element slots to the cycle collector (the
+    /// `lpp_drop_t{n}` walk without the releases).
+    fn lower_tuple_trace(&mut self, types: &TypeInterner, ty: TypeId) -> Result<(), CodegenError> {
+        let func_id = *self
+            .tuple_trace_ids
+            .get(&ty)
+            .expect("declare ran before lowering");
+        let (slots, _) = crate::layout::tuple_layout(types, ty)
+            .expect("pre-scan collected constructed tuple types");
+
+        let mut ctx = self.module.make_context();
+        let mut sig = self.module.make_signature();
+        sig.params.push(AbiParam::new(cltypes::I64));
+        sig.params.push(AbiParam::new(cltypes::I64));
+        ctx.func.signature = sig;
+        ctx.func.name = UserFuncName::user(9, ty.raw());
+        {
+            let mut fn_ctx = FunctionBuilderContext::new();
+            let mut builder = FunctionBuilder::new(&mut ctx.func, &mut fn_ctx);
+            let entry = builder.create_block();
+            let payload = builder.append_block_param(entry, cltypes::I64);
+            let trace_ctx = builder.append_block_param(entry, cltypes::I64);
+            builder.seal_block(entry);
+            builder.switch_to_block(entry);
+            for (offset, element) in &slots {
+                if is_managed(types, *element) {
+                    let child =
+                        builder
+                            .ins()
+                            .load(cltypes::I64, MemFlags::new(), payload, *offset as i32);
+                    self.trace_visit(&mut builder, trace_ctx, child);
+                }
+            }
+            builder.ins().return_(&[]);
+            builder.seal_all_blocks();
+            builder.finalize();
+        }
+        self.module
+            .define_function(func_id, &mut ctx)
+            .map_err(|e| verify_failed(None, format!("define tuple trace: {e:?}")))?;
+        Ok(())
+    }
+
+    /// `lpp_trace_{s|e}{n}(payload, ctx)` — report the payload's owned
+    /// ARC children to the cycle collector, walking exactly the slots
+    /// the matching destructor releases (same layout, same managed
+    /// test). The collector's proof relies on the two walks agreeing.
+    fn lower_trace(
+        &mut self,
+        types: &TypeInterner,
+        aggregate: MirAggregateId,
+    ) -> Result<(), CodegenError> {
+        let func_id = *self
+            .trace_ids
+            .get(&aggregate)
+            .expect("declare ran before lowering");
+        let layout = self
+            .layouts
+            .get(&aggregate)
+            .expect("pre-scan laid out every nominal")
+            .clone();
+
+        let mut ctx = self.module.make_context();
+        let mut sig = self.module.make_signature();
+        sig.params.push(AbiParam::new(cltypes::I64));
+        sig.params.push(AbiParam::new(cltypes::I64));
+        ctx.func.signature = sig;
+        ctx.func.name = UserFuncName::user(6, aggregate.raw());
+        {
+            let mut fn_ctx = FunctionBuilderContext::new();
+            let mut builder = FunctionBuilder::new(&mut ctx.func, &mut fn_ctx);
+            let entry = builder.create_block();
+            let payload = builder.append_block_param(entry, cltypes::I64);
+            let trace_ctx = builder.append_block_param(entry, cltypes::I64);
+            builder.seal_block(entry);
+            builder.switch_to_block(entry);
+
+            match layout.kind {
+                lpp_mir::MirAggregateKind::Struct => {
+                    for slot in &layout.struct_fields {
+                        if is_managed(types, slot.ty) {
+                            let child = builder.ins().load(
+                                cltypes::I64,
+                                MemFlags::new(),
+                                payload,
+                                slot.offset as i32,
+                            );
+                            self.trace_visit(&mut builder, trace_ctx, child);
+                        }
+                    }
+                    builder.ins().return_(&[]);
+                }
+                lpp_mir::MirAggregateKind::Enum => {
+                    let tag = builder
+                        .ins()
+                        .load(cltypes::I64, MemFlags::new(), payload, 0);
+                    let variant_blocks: Vec<Block> = layout
+                        .variant_fields
+                        .iter()
+                        .map(|_| builder.create_block())
+                        .collect();
+                    emit_tag_cascade(&mut builder, tag, &variant_blocks);
+                    for (ordinal, slots) in layout.variant_fields.iter().enumerate() {
+                        let variant_block = variant_blocks[ordinal];
+                        builder.seal_block(variant_block);
+                        builder.switch_to_block(variant_block);
+                        for slot in slots {
+                            if is_managed(types, slot.ty) {
+                                let child = builder.ins().load(
+                                    cltypes::I64,
+                                    MemFlags::new(),
+                                    payload,
+                                    slot.offset as i32,
+                                );
+                                self.trace_visit(&mut builder, trace_ctx, child);
+                            }
+                        }
+                        builder.ins().return_(&[]);
+                    }
+                }
+            }
+            builder.seal_all_blocks();
+            builder.finalize();
+        }
+
+        self.module
+            .define_function(func_id, &mut ctx)
+            .map_err(|e| verify_failed(None, format!("define trace: {e:?}")))?;
         Ok(())
     }
 
@@ -2884,6 +3504,9 @@ impl<'m> Lowering<'m> {
         for &function_id in &plan.closure_dtors {
             self.lower_closure_dtor(program, types, function_id)?;
         }
+        for &function_id in &plan.closure_traces {
+            self.lower_closure_trace(program, types, function_id)?;
+        }
         for &function_id in &plan.task_thunks {
             self.lower_task_thunk(program, types, function_id)?;
         }
@@ -2959,6 +3582,77 @@ impl<'m> Lowering<'m> {
         self.module
             .define_function(func_id, &mut ctx)
             .map_err(|e| verify_failed(Some(function_id), format!("define closure dtor: {e:?}")))?;
+        Ok(())
+    }
+
+    /// `lpp_trace_c{n}` — reports the closure env's managed capture
+    /// slots to the cycle collector (the `lpp_drop_c{n}` walk without
+    /// the releases).
+    fn lower_closure_trace(
+        &mut self,
+        program: &MirProgram,
+        types: &TypeInterner,
+        function_id: MirFunctionId,
+    ) -> Result<(), CodegenError> {
+        let func_id = *self
+            .closure_trace_ids
+            .get(&function_id)
+            .expect("declare ran before lowering");
+        let function = program
+            .function(function_id)
+            .expect("validated MIR retains functions");
+        let captures: Vec<TypeId> = program
+            .function_parameters(function)
+            .iter()
+            .filter(|local| {
+                matches!(
+                    program
+                        .local(**local)
+                        .expect("validated MIR retains locals")
+                        .kind,
+                    lpp_mir::MirLocalKind::Capture
+                )
+            })
+            .map(|local| {
+                program
+                    .local(*local)
+                    .expect("validated MIR retains locals")
+                    .ty
+            })
+            .collect();
+
+        let mut ctx = self.module.make_context();
+        let mut sig = self.module.make_signature();
+        sig.params.push(AbiParam::new(cltypes::I64));
+        sig.params.push(AbiParam::new(cltypes::I64));
+        ctx.func.signature = sig;
+        ctx.func.name = UserFuncName::user(7, function_id.raw());
+        {
+            let mut fn_ctx = FunctionBuilderContext::new();
+            let mut builder = FunctionBuilder::new(&mut ctx.func, &mut fn_ctx);
+            let entry = builder.create_block();
+            let env = builder.append_block_param(entry, cltypes::I64);
+            let trace_ctx = builder.append_block_param(entry, cltypes::I64);
+            builder.seal_block(entry);
+            builder.switch_to_block(entry);
+            for (i, ty) in captures.iter().enumerate() {
+                if is_managed(types, *ty) {
+                    let child =
+                        builder
+                            .ins()
+                            .load(cltypes::I64, MemFlags::new(), env, (8 * i) as i32);
+                    self.trace_visit(&mut builder, trace_ctx, child);
+                }
+            }
+            builder.ins().return_(&[]);
+            builder.seal_all_blocks();
+            builder.finalize();
+        }
+        self.module
+            .define_function(func_id, &mut ctx)
+            .map_err(|e| {
+                verify_failed(Some(function_id), format!("define closure trace: {e:?}"))
+            })?;
         Ok(())
     }
 
@@ -3140,6 +3834,7 @@ impl<'m> Lowering<'m> {
         inst: &Inst,
         builder: &mut FunctionBuilder,
         args_ops: &[Operand],
+        collectible: bool,
     ) -> Result<Value, CodegenError> {
         let mut mask = 0i64;
         let mut offsets = 0i64;
@@ -3171,6 +3866,11 @@ impl<'m> Lowering<'m> {
             builder
                 .ins()
                 .store(MemFlags::new(), value, env, (16 + 8 * i) as i32);
+        }
+        if collectible {
+            // The task's trace reaches its arguments through this
+            // tuple, so the tuple itself must be traversable.
+            self.mark_collectible_import(builder, env, IMP_TUPLE_TRACE);
         }
         Ok(env)
     }
@@ -3221,6 +3921,9 @@ impl<'m> Lowering<'m> {
         };
         builder.ins().store(MemFlags::new(), code_ref, capsule, 0);
         builder.ins().store(MemFlags::new(), env, capsule, 8);
+        if self.shared_types.contains(&function.ty) {
+            self.mark_collectible_import(builder, capsule, IMP_CLOSURE_TRACE);
+        }
         Ok(capsule)
     }
 
@@ -3815,6 +4518,12 @@ impl<'m> Lowering<'m> {
                 let main_ref = self.module.declare_func_in_func(lpp_main, builder.func);
                 builder.ins().call(main_ref, &[]);
             }
+            if !self.shared_types.is_empty() {
+                // Reclaim any cyclic garbage still buffered below the
+                // collector's threshold so the process exits leak-free.
+                let collect_ref = self.import_ref(&mut builder, IMP_COLLECT_CYCLES);
+                builder.ins().call(collect_ref, &[]);
+            }
             let zero = builder.ins().iconst(cltypes::I32, 0);
             builder.ins().return_(&[zero]);
             builder.seal_all_blocks();
@@ -3843,6 +4552,41 @@ impl<'m> Lowering<'m> {
         builder.ins().call(func_ref, &[value]);
     }
 
+    /// Report one owned child during a generated trace:
+    /// `lpp_trace_visit(ctx, child)`.
+    fn trace_visit(&mut self, builder: &mut FunctionBuilder, ctx: Value, child: Value) {
+        let func_ref = self.import_ref(builder, IMP_TRACE_VISIT);
+        builder.ins().call(func_ref, &[ctx, child]);
+    }
+
+    /// Register a fresh `Shared` allocation with the runtime cycle
+    /// collector, using a compiler-generated trace function.
+    fn mark_collectible_generated(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        ptr: Value,
+        trace_id: FuncId,
+    ) {
+        let trace_ref = self.module.declare_func_in_func(trace_id, builder.func);
+        let trace_addr = builder.ins().func_addr(cltypes::I64, trace_ref);
+        let func_ref = self.import_ref(builder, IMP_MARK_COLLECTIBLE);
+        builder.ins().call(func_ref, &[ptr, trace_addr]);
+    }
+
+    /// Register a fresh `Shared` allocation with one of the runtime's
+    /// own trace functions (lists, tuples, tasks, closure capsules).
+    fn mark_collectible_import(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        ptr: Value,
+        trace_import: &'static str,
+    ) {
+        let trace_ref = self.import_ref(builder, trace_import);
+        let trace_addr = builder.ins().func_addr(cltypes::I64, trace_ref);
+        let func_ref = self.import_ref(builder, IMP_MARK_COLLECTIBLE);
+        builder.ins().call(func_ref, &[ptr, trace_addr]);
+    }
+
     /// An owning slot dies: `lpp_arc_release(ptr)` (null-safe and
     /// immortal-safe in the v1 runtime, so the call is unconditional).
     fn arc_release(&mut self, builder: &mut FunctionBuilder, value: Value) {
@@ -3850,18 +4594,26 @@ impl<'m> Lowering<'m> {
         builder.ins().call(func_ref, &[value]);
     }
 
-    /// `lpp_arc_alloc_with_destructor(size, dtor)` — zero-initialized
-    /// payload, refcount 1, the aggregate's generated destructor.
-    /// Allocate an ARC block for a structural tuple. Tuples are unmanaged (never
-    /// retained or released), so the block carries a null destructor and simply
-    /// lives for the process; the ARC header keeps the pointer shape identical to
-    /// structs so tuple-field projection reuses the offset-load path.
-    fn alloc_tuple(&mut self, builder: &mut FunctionBuilder, size: u32) -> Value {
+    /// Allocate the ARC block for a structural tuple of type `ty`:
+    /// `lpp_arc_alloc_with_destructor(size, lpp_drop_t{n})` — refcount
+    /// 1, zero-initialized payload, and the generated per-shape
+    /// destructor releasing the managed element slots at count zero;
+    /// a `Shared` tuple type is additionally marked collectible with
+    /// its generated trace. The payload keeps the flat `tuple_layout`
+    /// shape so tuple-field projection reuses the offset-load path.
+    fn alloc_tuple(&mut self, builder: &mut FunctionBuilder, size: u32, ty: TypeId) -> Value {
         let func_ref = self.import_ref(builder, IMP_ARC_ALLOC);
         let size_value = builder.ins().iconst(cltypes::I64, size as i64);
-        let null_dtor = builder.ins().iconst(cltypes::I64, 0);
-        let call = builder.ins().call(func_ref, &[size_value, null_dtor]);
-        builder.func.dfg.first_result(call)
+        let dtor_ref = self
+            .module
+            .declare_func_in_func(self.tuple_dtor_ids[&ty], builder.func);
+        let dtor_addr = builder.ins().func_addr(cltypes::I64, dtor_ref);
+        let call = builder.ins().call(func_ref, &[size_value, dtor_addr]);
+        let ptr = builder.func.dfg.first_result(call);
+        if let Some(&trace_id) = self.tuple_trace_ids.get(&ty) {
+            self.mark_collectible_generated(builder, ptr, trace_id);
+        }
+        ptr
     }
 
     fn arc_alloc(
@@ -3877,7 +4629,11 @@ impl<'m> Lowering<'m> {
             .declare_func_in_func(self.dtor_ids[&aggregate], builder.func);
         let dtor_addr = builder.ins().func_addr(cltypes::I64, dtor_ref);
         let call = builder.ins().call(func_ref, &[size_value, dtor_addr]);
-        builder.func.dfg.first_result(call)
+        let ptr = builder.func.dfg.first_result(call);
+        if let Some(&trace_id) = self.trace_ids.get(&aggregate) {
+            self.mark_collectible_generated(builder, ptr, trace_id);
+        }
+        ptr
     }
 
     /// The exit release pass: every managed local of the function, in
@@ -4418,7 +5174,10 @@ impl<'m> Lowering<'m> {
                             // An async call builds the task env tuple
                             // and the handle through the thunk.
                             MirFunctionKind::Async => {
-                                let env = self.task_env_for_args(inst, builder, args_ops)?;
+                                let collectible =
+                                    self.shared_types.contains(&callee_fn.return_type);
+                                let env =
+                                    self.task_env_for_args(inst, builder, args_ops, collectible)?;
                                 let thunk_ref = self.module.declare_func_in_func(
                                     self.task_thunk_ids[callee_id],
                                     builder.func,
@@ -4430,6 +5189,9 @@ impl<'m> Lowering<'m> {
                                     env,
                                     Self::task_managed_flag(inst.types, callee_fn.return_type),
                                 );
+                                if collectible {
+                                    self.mark_collectible_import(builder, task, IMP_TASK_TRACE);
+                                }
                                 Some(task)
                             }
                             MirFunctionKind::Function => {
@@ -4520,13 +5282,22 @@ impl<'m> Lowering<'m> {
                                     // A call through an async function
                                     // value constructs a task; the
                                     // capsule code is the task thunk.
-                                    let env = self.task_env_for_args(inst, builder, args_ops)?;
+                                    let collectible = self.shared_types.contains(&result_ty);
+                                    let env = self.task_env_for_args(
+                                        inst,
+                                        builder,
+                                        args_ops,
+                                        collectible,
+                                    )?;
                                     let task = self.task_new(
                                         builder,
                                         code,
                                         env,
                                         Self::task_managed_flag(inst.types, result_ty),
                                     );
+                                    if collectible {
+                                        self.mark_collectible_import(builder, task, IMP_TASK_TRACE);
+                                    }
                                     Some(task)
                                 } else {
                                     let mut sig = self.module.make_signature();
@@ -4646,6 +5417,9 @@ impl<'m> Lowering<'m> {
                     let call = builder.ins().call(func_ref, &[]);
                     builder.func.dfg.first_result(call)
                 };
+                if self.shared_types.contains(&target_ty) {
+                    self.mark_collectible_import(builder, list, IMP_LIST_TRACE);
+                }
                 for operand in inst.program.operands(*operands) {
                     // Elements enter the list as owners: a `Copy`
                     // element retains for the list (push_arc is
@@ -4757,7 +5531,11 @@ impl<'m> Lowering<'m> {
                         let func_ref = self
                             .import_ref(builder, if arc { IMP_LIST_NEW_ARC } else { IMP_LIST_NEW });
                         let call = builder.ins().call(func_ref, &[]);
-                        Some(builder.func.dfg.first_result(call))
+                        let list = builder.func.dfg.first_result(call);
+                        if self.shared_types.contains(&target_ty) {
+                            self.mark_collectible_import(builder, list, IMP_LIST_TRACE);
+                        }
+                        Some(list)
                     }
                     other => self.lower_builtin_families(inst, builder, other, args)?,
                 }
@@ -4769,7 +5547,7 @@ impl<'m> Lowering<'m> {
                 if values.len() != slots.len() {
                     return Err(unsupported(inst.mir_id, "tuple element count"));
                 }
-                let ptr = self.alloc_tuple(builder, total_size);
+                let ptr = self.alloc_tuple(builder, total_size, target_ty);
                 for (value_operand, (offset, element_ty)) in values.iter().zip(slots.iter()) {
                     let v = self.owned_value(inst, builder, value_operand)?;
                     let stored = coerce_to(
@@ -4793,6 +5571,7 @@ impl<'m> Lowering<'m> {
                     .expect("validated MIR retains functions");
                 let capture_args = inst.program.operands(*captures);
                 let zero_params = user_parameters(inst.program, closure_fn).is_empty();
+                let collectible = self.shared_types.contains(&closure_fn.ty);
                 // The raw capture env (slots at 8*i) — NULL when the
                 // closure captures nothing.
                 let raw_env = if capture_args.is_empty() {
@@ -4803,6 +5582,10 @@ impl<'m> Lowering<'m> {
                         .declare_func_in_func(self.closure_dtor_ids[closure_id], builder.func);
                     let env =
                         self.arc_alloc_ptr(builder, (8 * capture_args.len()) as u32, dtor_ref);
+                    if collectible {
+                        let trace_id = self.closure_trace_ids[closure_id];
+                        self.mark_collectible_generated(builder, env, trace_id);
+                    }
                     for (i, operand) in capture_args.iter().enumerate() {
                         let captured_ty = match operand {
                             Operand::Copy(local) => {
@@ -4832,6 +5615,9 @@ impl<'m> Lowering<'m> {
                     .expect("pre-scan declared lpp_closure_destroy");
                 let dtor_ref = self.module.declare_func_in_func(dtor_id, builder.func);
                 let capsule = self.arc_alloc_ptr(builder, 16, dtor_ref);
+                if collectible {
+                    self.mark_collectible_import(builder, capsule, IMP_CLOSURE_TRACE);
+                }
                 let code_ref = if zero_params {
                     self.closure_thunk_ids[closure_id]
                 } else {
@@ -4851,6 +5637,11 @@ impl<'m> Lowering<'m> {
                     let offsets = builder.ins().iconst(cltypes::I64, 16);
                     let call = builder.ins().call(tuple_ref, &[size, mask, offsets]);
                     let wrapper = builder.func.dfg.first_result(call);
+                    if collectible {
+                        // The capsule trace reaches the raw env through
+                        // this wrapper tuple; keep it traversable.
+                        self.mark_collectible_import(builder, wrapper, IMP_TUPLE_TRACE);
+                    }
                     // The allocation reference of the raw env is
                     // transferred to the wrapper slot (released by the
                     // tuple destructor at wrapper death) — no retain:

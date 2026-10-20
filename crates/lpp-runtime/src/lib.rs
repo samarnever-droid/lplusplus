@@ -35,6 +35,7 @@ pub mod layout;
 pub mod arc;
 pub mod buf;
 pub mod clock_rng;
+pub mod collect;
 pub mod concur;
 pub mod io;
 pub mod json;

@@ -593,7 +593,7 @@ fn balance_is_deterministic() {
     assert_eq!(first.len(), 1);
 }
 
-// ── 4E5: runtime leak/underflow proof (E4304) and the pinned set ─────────
+// ── 4E5: runtime leak/underflow proof (E4304) and cycle collection ───
 
 #[test]
 fn self_referential_proves_zero_leaks_with_pinned_set() {
@@ -607,12 +607,14 @@ fn self_referential_proves_zero_leaks_with_pinned_set() {
     let (outcome, plan) = run_arc(&program, &types);
     let arc = arc_of(&outcome);
     // Three retains: the xs copy-temp, the MakeClosure capture, and
-    // the f copy-temp. Both cycle-member nodes are pinned, so every
-    // release is absorbed: no release counts, no frees, and the two
-    // pinned nodes are reported, not leaked.
-    assert_eq!(arc.pinned_live, 2);
-    assert_eq!((arc.retains, arc.releases, arc.frees), (3, 0, 0));
-    // The pinned set is exactly the Shared nodes' types, ascending.
+    // the f copy-temp. Both cycle-member nodes are collectible: their
+    // releases are counted normally, plain refcounting stalls at one
+    // reference each (the cycle edge), and trial deletion reclaims
+    // both nodes at end of execution — collected, not leaked.
+    assert_eq!(arc.pinned_live, 0);
+    assert_eq!((arc.retains, arc.releases, arc.frees), (3, 3, 2));
+    assert_eq!(arc.collected, 2);
+    // The collectible set is exactly the Shared nodes' types, ascending.
     let pinned = plan.pinned_types();
     assert_eq!(pinned.len(), 2);
     let expected: Vec<lpp_types::TypeId> = plan
@@ -644,7 +646,7 @@ fn self_referential_without_pinset_reports_the_leak() {
     .unwrap_err();
     assert_eq!(error.code(), "E4304");
     match &error.kind {
-        InterpreterErrorKind::OwnershipLeak { nodes } => assert_eq!(*nodes, 2),
+        InterpreterErrorKind::OwnershipLeak { nodes, .. } => assert_eq!(*nodes, 2),
         other => panic!("expected OwnershipLeak, got {other:?}"),
     }
 }
@@ -663,7 +665,10 @@ fn mutual_reference_reports_all_four_leaks_without_pinset() {
         "    list_push(l2, c2)\n",
     ));
     let (outcome, _) = run_arc(&program, &types);
-    assert_eq!(arc_of(&outcome).pinned_live, 4);
+    // All four cycle members are reclaimed by trial deletion.
+    assert_eq!(arc_of(&outcome).pinned_live, 0);
+    assert_eq!(arc_of(&outcome).collected, 4);
+    assert_eq!(arc_of(&outcome).frees, 4);
 
     let error = execute_mir_arc(
         &program,
@@ -675,7 +680,7 @@ fn mutual_reference_reports_all_four_leaks_without_pinset() {
     )
     .unwrap_err();
     match &error.kind {
-        InterpreterErrorKind::OwnershipLeak { nodes } => assert_eq!(*nodes, 4),
+        InterpreterErrorKind::OwnershipLeak { nodes, .. } => assert_eq!(*nodes, 4),
         other => panic!("expected OwnershipLeak, got {other:?}"),
     }
 }

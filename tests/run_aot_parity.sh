@@ -143,14 +143,16 @@ for result in "$RESULT_DIR"/*.result; do
     fi
 done
 
-# SAFETY-CONTRACT CHANGE: the two ARC-cycle cases used to be *rejection*
-# contracts -- "AOT must refuse a strong ownership cycle". They are now positive
-# cases in the manifest above (cycle_broken_node.lpp, cycle_broken_list.lpp),
-# because analysis::cyclebreak demotes one edge of every cycle to non-owning, so
-# no owning cycle can be built and the structures are reclaimed normally.
-# Leak-freedom is preserved and was re-verified under AddressSanitizer with
-# 50 000 genuine runtime cycles; what changed is that trees, linked lists and
-# parent pointers are now expressible.
+# SAFETY-CONTRACT CHANGE: ARC-cycle cases used to be *rejection* contracts --
+# "AOT must refuse a strong ownership cycle". They are positive cases in the
+# manifest (cycle_broken_*.lpp plus the genuine runtime cycles in
+# cycle_self_loop/cycle_ring/cycle_list_ring/cycle_churn.lpp): every edge
+# stays owning, and unreachable cycles are reclaimed by the runtime
+# trial-deletion collector over the ownership plan's Shared types (see
+# documentation/CYCLE_BREAKING.md). Leak-freedom for cyclic garbage is
+# verified separately (ASan/LSan + flat-RSS churn over 200k cycles); this
+# script pins stdout parity across the interpreter oracle and both native
+# link paths.
 for rejected_case in \
     "aot_reject_mut_closure:Cannot mutate captured variable"
 do

@@ -521,6 +521,18 @@ fn build_graph(
                     origin: None,
                 })?;
                 let mut targets = Vec::new();
+                // Struct fields live directly on the aggregate; enum
+                // payload fields live under variants (see the MIR
+                // builder's aggregate construction). A containment walk
+                // must cover both, or every struct type looks like a
+                // leaf and struct cycles are never classified `Shared`.
+                for field_id in program.aggregate_fields(aggregate) {
+                    let field = program.field(*field_id).ok_or(OwnershipError {
+                        kind: OwnershipErrorKind::MissingField(*field_id),
+                        origin: None,
+                    })?;
+                    targets.extend(value_type_nodes(index, types, &lookup, field.ty)?);
+                }
                 for variant_id in program.aggregate_variants(aggregate) {
                     let variant = program.variant(*variant_id).ok_or(OwnershipError {
                         kind: OwnershipErrorKind::MissingVariant(*variant_id),

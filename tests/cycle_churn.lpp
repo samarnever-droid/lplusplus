@@ -1,0 +1,24 @@
+# Repeatedly build and abandon two-node cycles while one long-lived
+# cycle stays reachable the whole time. Collection rounds triggered
+# by the churn must never reclaim the live ring (its values are read
+# back at the end), and memory must not grow with the iteration count.
+struct Node:
+    value: Int
+    next: Node
+
+def main():
+    mut keep_a := Node(10, 0)
+    mut keep_b := Node(20, 0)
+    keep_a.next = keep_b
+    keep_b.next = keep_a
+    mut i := 0
+    mut total := 0
+    while i < 2000:
+        mut a := Node(i, 0)
+        mut b := Node(i + 1, 0)
+        a.next = b
+        b.next = a
+        total = total + a.next.value
+        i = i + 1
+    print(total)
+    print(keep_a.next.value + keep_b.next.value)

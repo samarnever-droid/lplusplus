@@ -42,3 +42,12 @@ stack_owned_fields.lpp|owned-field\n11\n10\n42\n3\n8\n6\nstack-owned-ok
 arena_return.lpp|1\n2\narena-ok
 vector_api.lpp|11\n12\n23
 vector_builtin.lpp|620204246048896
+cycle_self_loop.lpp|7
+cycle_ring.lpp|6\n1
+cycle_list_ring.lpp|5
+cycle_churn.lpp|2001000\n30
+cycle_closure_env.lpp|41\n1
+tuple_managed_churn.lpp|30000
+tuple_cycle.lpp|0
+tuple_async_closure.lpp|141
+tuple_overwrite.lpp|39998

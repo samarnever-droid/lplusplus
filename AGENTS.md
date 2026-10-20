@@ -25,7 +25,7 @@ This project is indexed by GitNexus as **lplusplus** (21104 symbols, 74797 relat
 
 ### Key Architectural Pillars:
 - **Instant Compilation Speed**: Compiles complete native standalone executables in **2 to 5 milliseconds** via Cranelift AOT and the direct built-in linker (`lpp-link`).
-- **Deterministic Memory Safety**: Zero Garbage Collection pauses. Uses **Compile-Time Automatic Reference Counting (ARC)** + **Static SCC Cycle-Breaking (`cyclebreak`)** + **Single-Thread Atomic Elision (`pass_arc_local`)** + **Move-Out Retain Elision (`pass_moveout`)**.
+- **Deterministic Memory Safety**: Zero Garbage Collection pauses. Uses **Compile-Time Automatic Reference Counting (ARC)** + **trial-deletion cycle collection for the ownership plan's `Shared` (cycle-capable) types** (see `documentation/CYCLE_BREAKING.md`) + **Single-Thread Atomic Elision (`pass_arc_local`)** + **Move-Out Retain Elision (`pass_moveout`)**.
 - **Dual Compilation Pipeline**:
   - **Cranelift Backend**: Default for instant development iteration (<5ms builds).
   - **LLVM Backend (`--opt`)**: For maximum production optimization (`-O3`, AVX2 SIMD vectorization).

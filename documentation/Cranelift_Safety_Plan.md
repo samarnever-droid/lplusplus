@@ -76,7 +76,7 @@ A Unix harness now exists at `tests/run_aot_parity.sh`. It compares stdout from 
 
 **Field alias baseline implemented:** reading a custom/list field produces a borrowed MIR value. Assigning that borrowed field into another owner retains it exactly once, while field reads inside closures remain non-owning. This closes the direct `alias := parent.child` class of dangling/double-release errors.
 
-**Cycle-safety gate implemented:** AOT builds classify recursive structs through the static cycle breaker. Arena-backed self-referential nodes use a region-owned ARC-compatible header, while one edge of each cycle is demoted to non-owning; the owning subgraph remains acyclic and the region is reclaimed after its last node dies. This is tested through both host and direct link paths.
+**Cycle-safety gate implemented:** AOT builds classify recursive structs through the ownership plan's `Shared` set. All edges stay strong; unreachable cycles are reclaimed at runtime by trial-deletion collection, and acyclic values of recursive types free promptly by refcount. Tested through host and direct link paths, the MIR ARC oracle, and ASan/RSS churn runs. (The earlier arena+demotion description referred to the v1 engine removed in the rewrite cutover; see `documentation/CYCLE_BREAKING.md`.)
 
 **Still required:** generic element support beyond `Int`/custom ARC objects, alias analysis through arbitrary call patterns, and matching ownership cleanup in the C transpiler backend. Those are essential before claiming leak-free ARC.
 

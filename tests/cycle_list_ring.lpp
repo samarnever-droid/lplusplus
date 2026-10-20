@@ -1,0 +1,13 @@
+# Cycle mediated by lists: a -> a.kids -> b -> b.kids -> a.
+struct Bag:
+    id: Int
+    kids: List[Bag]
+
+def main():
+    mut a := Bag(5, list_new())
+    mut b := Bag(6, list_new())
+    list_push(a.kids, b)
+    got := list_get(a.kids, 0)
+    list_push(got.kids, a)
+    back := list_get(got.kids, 0)
+    print(back.id)

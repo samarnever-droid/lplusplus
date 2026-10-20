@@ -1,4 +1,9 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+
+/// Buffered possible cycle roots that trigger an opportunistic
+/// trial deletion mid-execution. End-of-execution collection always
+/// runs regardless of this threshold.
+const CYCLE_COLLECT_THRESHOLD: usize = 512;
 
 use lpp_hir::{BinaryOperator, OriginId, UnaryOperator};
 
@@ -2266,10 +2271,12 @@ impl Interpreter<'_> {
         children
     }
 
-    /// Whether the node's own type is a 4D cycle member (pinned). Nodes
-    /// without a recorded type are treated conservatively as pinned:
-    /// they are reported, never reported as leaks.
-    pub(super) fn node_is_pinned(&self, id: HeapId) -> bool {
+    /// Whether the node may participate in a value cycle and is thus
+    /// eligible for trial-deletion collection: its own type is a 4D
+    /// cycle member. Nodes without a recorded type are treated
+    /// conservatively as collectible (trial deletion can see through
+    /// them, and only ever frees nodes it proves unreachable).
+    pub(super) fn node_is_collectible(&self, id: HeapId) -> bool {
         let Some(arc) = self.arc.as_ref() else {
             return false;
         };
@@ -2280,10 +2287,11 @@ impl Interpreter<'_> {
         }
     }
 
-    /// Classify a task node's pin: a task node can join a 4D cycle only
-    /// through its contents, so it pins through the result type or the
-    /// spawned closure's function type, and is ephemeral otherwise
-    /// (detached nodes must be able to die with their last owner).
+    /// Classify a task node's collectibility: a task node can join a 4D
+    /// cycle only through its contents, so it is collectible through
+    /// the result type or the spawned closure's function type, and is
+    /// ephemeral otherwise (detached nodes must be able to die with
+    /// their last owner).
     fn mark_task_node(&mut self, id: HeapId, target: MirFunctionId) {
         if self.arc.is_none() {
             return;
@@ -2367,8 +2375,11 @@ impl Interpreter<'_> {
     /// Drop one reference for a value that owns heap references (looking
     /// through inline tuples); when a node's count reaches zero it is
     /// deallocated and its children released, depth-first in declaration
-    /// order (iteratively). Pinned nodes absorb the release. A release
-    /// with no live reference is an underflow.
+    /// order (iteratively). A collectible node whose count stays above
+    /// zero is buffered as a possible cycle root for trial deletion;
+    /// when the buffer reaches `CYCLE_COLLECT_THRESHOLD` a collection
+    /// runs before returning. A release with no live reference is an
+    /// underflow.
     fn drop_reference(
         &mut self,
         value: &RuntimeValue,
@@ -2415,20 +2426,200 @@ impl Interpreter<'_> {
                     InterpreterErrorKind::OwnershipUnderflow,
                 ));
             }
-            if self.node_is_pinned(id) {
-                continue;
-            }
             let children = self.children_of(id);
             let arc = self.arc.as_mut().unwrap();
             let next = count - 1;
             arc.refcounts[index] = next;
             arc.releases = arc.releases.saturating_add(1);
             if next > 0 {
+                // A collectible node that survived a release may be
+                // kept alive only by a cycle through itself: buffer
+                // it as a possible root for trial deletion.
+                if self.node_is_collectible(id) {
+                    self.arc.as_mut().unwrap().candidates.insert(index);
+                }
                 continue;
             }
             arc.frees = arc.frees.saturating_add(1);
+            // A freed node is never a useful root; drop any stale
+            // buffering so the candidate set tracks live nodes only.
+            arc.candidates.remove(&index);
             for child in children.into_iter().rev() {
                 pending.push(child);
+            }
+        }
+        // Opportunistic collection bounds cyclic garbage during long
+        // executions; `finish_arc` always collects what remains.
+        let due = self
+            .arc
+            .as_ref()
+            .is_some_and(|arc| !arc.collecting && arc.candidates.len() >= CYCLE_COLLECT_THRESHOLD);
+        if due {
+            self.collect_cycles(function, block, origin)?;
+        }
+        Ok(())
+    }
+
+    /// The heap-valued children of a stored value, flattened through
+    /// inline tuples, one entry per owning edge (duplicates kept: two
+    /// fields referencing one node are two references).
+    fn heap_children_of(value: &RuntimeValue, out: &mut Vec<RuntimeValue>) {
+        match value {
+            RuntimeValue::Tuple(elements) => {
+                for element in elements {
+                    Self::heap_children_of(element, out);
+                }
+            }
+            other => {
+                if is_heap_value(other) {
+                    out.push(other.clone());
+                }
+            }
+        }
+    }
+
+    /// Trial-deletion cycle collection (Bacon & Rajan): reclaim
+    /// collectible nodes that are reachable only from themselves.
+    ///
+    /// From the buffered possible roots, walk the collectible subgraph
+    /// subtracting one *scratch* count per internal edge. A node whose
+    /// scratch count stays above zero is referenced from outside the
+    /// subgraph — a live root — and everything reachable from it is
+    /// live. The remaining nodes' reference counts are fully explained
+    /// by edges among themselves: unreachable cyclic garbage. They are
+    /// deallocated together; their edges to surviving nodes are
+    /// released normally (which may cascade ordinary frees and buffer
+    /// fresh candidates for a later round).
+    ///
+    /// Iterative throughout: deep graphs cannot overflow the stack.
+    /// Deterministic: every set is ordered by heap index.
+    fn collect_cycles(
+        &mut self,
+        function: Option<MirFunctionId>,
+        block: Option<BasicBlockId>,
+        origin: Option<OriginId>,
+    ) -> Result<(), InterpreterError> {
+        let Some(arc) = self.arc.as_mut() else {
+            return Ok(());
+        };
+        if arc.collecting || arc.candidates.is_empty() {
+            return Ok(());
+        }
+        arc.collecting = true;
+        let result = self.collect_cycles_inner(function, block, origin);
+        if let Some(arc) = self.arc.as_mut() {
+            arc.collecting = false;
+        }
+        result
+    }
+
+    fn collect_cycles_inner(
+        &mut self,
+        function: Option<MirFunctionId>,
+        block: Option<BasicBlockId>,
+        origin: Option<OriginId>,
+    ) -> Result<(), InterpreterError> {
+        let candidates: Vec<usize> = {
+            let arc = self.arc.as_mut().unwrap();
+            std::mem::take(&mut arc.candidates).into_iter().collect()
+        };
+
+        // Mark-gray: trial deletion over the collectible subgraph.
+        // `scratch[i]` starts at the live refcount and loses one per
+        // edge from another gray node.
+        let mut scratch: BTreeMap<usize, i64> = BTreeMap::new();
+        let mut stack: Vec<usize> = Vec::new();
+        for index in candidates {
+            let live = self
+                .arc
+                .as_ref()
+                .unwrap()
+                .refcounts
+                .get(index)
+                .is_some_and(|count| *count > 0);
+            if live
+                && self.node_is_collectible(HeapId(index as u32))
+                && !scratch.contains_key(&index)
+            {
+                let count = self.arc.as_ref().unwrap().refcounts[index] as i64;
+                scratch.insert(index, count);
+                stack.push(index);
+            }
+        }
+        while let Some(index) = stack.pop() {
+            let mut children = Vec::new();
+            for child in self.children_of(HeapId(index as u32)) {
+                Self::heap_children_of(&child, &mut children);
+            }
+            for child in children {
+                let child_index = heap_id_of(&child).0 as usize;
+                let live_count = self.arc.as_ref().unwrap().refcounts[child_index];
+                if live_count == 0 || !self.node_is_collectible(heap_id_of(&child)) {
+                    continue;
+                }
+                let entry = scratch.entry(child_index).or_insert_with(|| {
+                    stack.push(child_index);
+                    live_count as i64
+                });
+                *entry -= 1;
+            }
+        }
+        if scratch.is_empty() {
+            return Ok(());
+        }
+
+        // Scan: nodes with external references (scratch > 0) are live
+        // roots; mark everything reachable from them live. The gray
+        // remainder is garbage.
+        let mut garbage: BTreeSet<usize> = scratch.keys().copied().collect();
+        let mut live_stack: Vec<usize> = scratch
+            .iter()
+            .filter(|(_, count)| **count > 0)
+            .map(|(index, _)| *index)
+            .collect();
+        while let Some(index) = live_stack.pop() {
+            if !garbage.remove(&index) {
+                continue;
+            }
+            let mut children = Vec::new();
+            for child in self.children_of(HeapId(index as u32)) {
+                Self::heap_children_of(&child, &mut children);
+            }
+            for child in children {
+                let child_index = heap_id_of(&child).0 as usize;
+                if garbage.contains(&child_index) {
+                    live_stack.push(child_index);
+                }
+            }
+        }
+        if garbage.is_empty() {
+            return Ok(());
+        }
+
+        // Collect: deallocate the garbage set together (counts to
+        // zero first, so no member can be released twice), then
+        // release edges that leave the set. Edges inside the set die
+        // with it; that is precisely the cyclic reference that plain
+        // refcounting could never drop.
+        {
+            let arc = self.arc.as_mut().unwrap();
+            for index in &garbage {
+                arc.refcounts[*index] = 0;
+                arc.candidates.remove(index);
+            }
+            arc.frees = arc.frees.saturating_add(garbage.len());
+            arc.collected = arc.collected.saturating_add(garbage.len());
+        }
+        for index in &garbage {
+            let mut children = Vec::new();
+            for child in self.children_of(HeapId(*index as u32)) {
+                Self::heap_children_of(&child, &mut children);
+            }
+            for child in children {
+                if garbage.contains(&(heap_id_of(&child).0 as usize)) {
+                    continue;
+                }
+                self.drop_reference(&child, function, block, origin)?;
             }
         }
         Ok(())
@@ -2436,10 +2627,10 @@ impl Interpreter<'_> {
 
     /// End-of-execution balance proof for `execute_mir_arc`: the string
     /// cache holds one reference per interned literal and releases them,
-    /// then every non-pinned heap node must be dead. A node held —
-    /// transitively — by a live pinned node is part of that 4D-approved
-    /// cycle's retained set: it survives the program together with the
-    /// cycle and is not an accidental leak.
+    /// trial deletion reclaims every unreachable cycle, and then every
+    /// heap node must be dead. A survivor's refcount cannot be explained
+    /// by the heap graph — some owner never released it — so it is a
+    /// genuine leak, never an exempted cycle.
     pub(super) fn finish_arc(&mut self) -> Result<(), InterpreterError> {
         if self.arc.is_none() {
             return Ok(());
@@ -2448,42 +2639,100 @@ impl Interpreter<'_> {
         for id in cached {
             self.drop_reference(&RuntimeValue::String(id), None, None, None)?;
         }
-        let arc = self.arc.as_ref().unwrap();
-        let mut held: BTreeSet<usize> = BTreeSet::new();
-        let mut stack: Vec<usize> = arc
-            .refcounts
-            .iter()
-            .enumerate()
-            .filter(|(index, count)| **count > 0 && self.node_is_pinned(HeapId(*index as u32)))
-            .map(|(index, _)| index)
-            .collect();
-        while let Some(index) = stack.pop() {
-            if !held.insert(index) {
-                continue;
-            }
-            for child in self.children_of(HeapId(index as u32)) {
-                if is_heap_value(&child) {
-                    stack.push(heap_id_of(&child).0 as usize);
-                }
+        // Each round can expose fresh candidates (a cycle held only by
+        // another cycle), so collect until the buffer drains. The bound
+        // is structural: a round that frees nothing cannot enable a
+        // later round to free anything.
+        loop {
+            let frees_before = self.arc.as_ref().unwrap().frees;
+            self.collect_cycles(None, None, None)?;
+            let arc = self.arc.as_ref().unwrap();
+            if arc.candidates.is_empty() || arc.frees == frees_before {
+                break;
             }
         }
-        let leaked = arc
+        let leaked = self
+            .arc
+            .as_ref()
+            .unwrap()
             .refcounts
             .iter()
-            .enumerate()
-            .filter(|(index, count)| {
-                **count > 0 && !self.node_is_pinned(HeapId(*index as u32)) && !held.contains(index)
-            })
+            .filter(|count| **count > 0)
             .count();
         if leaked > 0 {
+            // Audit the survivors against the heap graph so the
+            // failure says *why* each node is still alive, not just
+            // how many there are.
+            let report = self.leak_report();
+            let phantom = report.count(LeakClass::PhantomRoot);
+            let closed = report.count(LeakClass::ClosedGarbage);
+            self.arc.as_mut().unwrap().leak_report = Some(report);
             return Err(InterpreterError {
                 function: None,
                 block: None,
                 origin: None,
-                kind: InterpreterErrorKind::OwnershipLeak { nodes: leaked },
+                kind: InterpreterErrorKind::OwnershipLeak {
+                    nodes: leaked,
+                    phantom,
+                    closed,
+                },
             });
         }
         Ok(())
+    }
+
+    /// Classify every surviving heap node by recomputing owning
+    /// edges from the live heap graph (the same `children_of` edges
+    /// deallocation releases, flattened through inline tuples) and
+    /// comparing against the modelled refcounts. Only called when
+    /// the balance proof has already found survivors.
+    fn leak_report(&self) -> LeakReport {
+        let arc = self.arc.as_ref().expect("leak audit needs arc state");
+        let n = self.heap.len();
+        let mut internal = vec![0u32; n];
+        let mut edges: Vec<Vec<usize>> = vec![Vec::new(); n];
+        let mut flat: Vec<RuntimeValue> = Vec::new();
+        for (index, outgoing) in edges.iter_mut().enumerate().take(n) {
+            if arc.refcounts.get(index).copied().unwrap_or(0) == 0 {
+                continue; // deallocated: its edges were released with it
+            }
+            for child in self.children_of(HeapId(index as u32)) {
+                flat.clear();
+                Self::heap_children_of(&child, &mut flat);
+                for value in &flat {
+                    let target = heap_id_of(value).0 as usize;
+                    if target < n {
+                        internal[target] = internal[target].saturating_add(1);
+                        outgoing.push(target);
+                    }
+                }
+            }
+        }
+        let classes = classify_leak_classes(&arc.refcounts, &internal, &edges);
+        let mut nodes = Vec::new();
+        for (index, class) in classes.into_iter().enumerate() {
+            let Some(class) = class else { continue };
+            nodes.push(LeakedNode {
+                heap: index as u32,
+                ty: match arc.node_types.get(index) {
+                    Some(NodePin::Of(ty)) => Some(*ty),
+                    _ => None,
+                },
+                kind: match &self.heap[index] {
+                    HeapNode::List(_) => "list",
+                    HeapNode::Map(_) => "map",
+                    HeapNode::Nominal { .. } => "nominal",
+                    HeapNode::String(_) => "string",
+                    HeapNode::Closure { .. } => "closure",
+                    HeapNode::Task { .. } => "task",
+                },
+                refcount: arc.refcounts.get(index).copied().unwrap_or(0),
+                internal_refs: internal[index],
+                collectible: self.node_is_collectible(HeapId(index as u32)),
+                class,
+            });
+        }
+        LeakReport { nodes }
     }
 
     /// Evaluate a transfer operand that consumes the source slot (the
@@ -3401,5 +3650,103 @@ fn format_percent_g(value: f64) -> String {
     } else {
         let zeros = "0".repeat((-exponent - 1) as usize);
         format!("{sign}0.{zeros}{trimmed}")
+    }
+}
+
+/// Pure leak classification over recomputed counts: `internal[i]` is
+/// the number of owning edges into `i` from live nodes, `edges` the
+/// live adjacency. Returns `None` for nodes that are dead and
+/// unreferenced (the healthy case).
+fn classify_leak_classes(
+    refcounts: &[u32],
+    internal: &[u32],
+    edges: &[Vec<usize>],
+) -> Vec<Option<LeakClass>> {
+    let n = refcounts.len().min(internal.len());
+    let mut classes: Vec<Option<LeakClass>> = vec![None; n];
+    let mut stack: Vec<usize> = Vec::new();
+    for i in 0..n {
+        if refcounts[i] == 0 {
+            if internal[i] > 0 {
+                classes[i] = Some(LeakClass::DanglingTarget);
+            }
+        } else if refcounts[i] != internal[i] {
+            classes[i] = Some(LeakClass::PhantomRoot);
+            stack.push(i);
+        }
+    }
+    // Everything live and reachable from a phantom root is held by
+    // it; anything else live belongs to a closed component.
+    while let Some(i) = stack.pop() {
+        if let Some(targets) = edges.get(i) {
+            for &target in targets {
+                if target < n && classes[target].is_none() && refcounts[target] > 0 {
+                    classes[target] = Some(LeakClass::HeldByPhantom);
+                    stack.push(target);
+                }
+            }
+        }
+    }
+    for i in 0..n {
+        if classes[i].is_none() && refcounts[i] > 0 {
+            classes[i] = Some(LeakClass::ClosedGarbage);
+        }
+    }
+    classes
+}
+
+#[cfg(test)]
+mod leak_classification_tests {
+    use super::LeakClass;
+    use super::classify_leak_classes;
+
+    #[test]
+    fn closed_two_cycle_is_closed_garbage() {
+        // 0 <-> 1, counts fully explained internally.
+        let classes = classify_leak_classes(&[1, 1], &[1, 1], &[vec![1], vec![0]]);
+        assert_eq!(
+            classes,
+            vec![
+                Some(LeakClass::ClosedGarbage),
+                Some(LeakClass::ClosedGarbage)
+            ]
+        );
+    }
+
+    #[test]
+    fn phantom_root_holds_its_reachable_subgraph() {
+        // 0 has one unexplained reference and holds 1, which holds 2;
+        // 3 is an independent self-loop.
+        let classes = classify_leak_classes(
+            &[2, 1, 1, 1],
+            &[1, 1, 1, 1],
+            &[vec![1], vec![2], vec![], vec![3]],
+        );
+        assert_eq!(classes[0], Some(LeakClass::PhantomRoot));
+        assert_eq!(classes[1], Some(LeakClass::HeldByPhantom));
+        assert_eq!(classes[2], Some(LeakClass::HeldByPhantom));
+        assert_eq!(classes[3], Some(LeakClass::ClosedGarbage));
+    }
+
+    #[test]
+    fn dead_but_referenced_node_is_dangling() {
+        // 0 leaks (phantom) and points at dead 1.
+        let classes = classify_leak_classes(&[1, 0], &[0, 1], &[vec![1], vec![]]);
+        assert_eq!(classes[0], Some(LeakClass::PhantomRoot));
+        assert_eq!(classes[1], Some(LeakClass::DanglingTarget));
+    }
+
+    #[test]
+    fn undercounted_live_node_is_phantom() {
+        // More owning edges than the refcount admits: a retain was
+        // missed somewhere in the modelled traffic.
+        let classes = classify_leak_classes(&[1], &[2], &[vec![]]);
+        assert_eq!(classes[0], Some(LeakClass::PhantomRoot));
+    }
+
+    #[test]
+    fn healthy_heap_classifies_nothing() {
+        let classes = classify_leak_classes(&[0, 0], &[0, 0], &[vec![], vec![]]);
+        assert_eq!(classes, vec![None, None]);
     }
 }

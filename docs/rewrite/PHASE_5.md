@@ -360,6 +360,11 @@ subset: `E5001`/`E5003` at the exact function. These are 5C2.
    `pinned_types() = ∅` for a struct self-cycle; such a program
    fails the oracle's balance proof with `E4304`) — cyclic
    aggregation through function values remains 5C2.
+   *(Amendment, 2026-10-20: the deferral is closed. The plan graph now
+   carries struct-field edges, struct cycles classify `Shared`, and
+   both the oracle and the native runtimes reclaim them by trial
+   deletion — see `documentation/CYCLE_BREAKING.md`. `E4304` once
+   again means a genuine accounting leak.)*
 3. **Determinism.** Two compiles of each corpus produce byte-identical
    objects and identical symbol censuses; destructors in
    `MirAggregateId` order; imports declared only when used.
@@ -496,6 +501,11 @@ references). 4D `Callable` nodes carry edges to their capture types,
 so closure-capture cycles are statically pinned; the ARC oracle's
 balance proof tolerates the pinned types, and the object retains the
 cycle with plain ARC (no special-case code).
+*(Amendment, 2026-10-20: pinning is gone. The oracle models honest
+refcounts and collects unreachable cycles by trial deletion; the
+backend generates `lpp_trace_*` functions and collectible markings for
+the `Shared` set, and the runtimes reclaim cyclic garbage. See
+`documentation/CYCLE_BREAKING.md`.)*
 
 **Builtin table (registry-derived over all 518 `BuiltinId`s).** Four
 disjoint families (96 covered: 71 + 18 + 7, by name at this commit —
@@ -539,6 +549,12 @@ names carry two ids), asserted exhaustively by the gate:
    be pinned, never freed, and leak its unpinned managed captures.
    The corpus therefore gives the cycle closure a function type no
    other closure in the program shares.
+   *(Amendment, 2026-10-20: the oracle no longer pins — collectible
+   nodes drop honestly and unreachable cycles are reclaimed by trial
+   deletion, so the shared-function-type hazard above no longer
+   applies; acyclic values of cyclic types free at refcount zero.
+   The corpus is unchanged and still passes, now with native drop
+   counts asserted equal to the oracle's.)*
 2. **Differential (builtin families).** The Family A surface
    (print family, string ops, conversions, bit ops, checked
    arithmetic, float ops, list family): object stdout equals the

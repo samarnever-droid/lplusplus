@@ -7,6 +7,10 @@ trap 'rm -rf "$TMP"' EXIT HUP INT TERM
 CFLAGS=${CFLAGS:-}
 RUNNER=${RUNNER:-}
 cargo build --manifest-path "$ROOT/runtime/lpp-net/Cargo.toml" --release --locked
+# lpp-net is a member of the root workspace, so its artifacts land in the
+# workspace target directory -- ask cargo where that is instead of assuming
+# a standalone runtime/lpp-net/target/.
+TARGET_DIR=$(cargo metadata --manifest-path "$ROOT/runtime/lpp-net/Cargo.toml" --format-version 1 --no-deps | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')
 cat > "$TMP/client.c" <<'C'
 #include <stdint.h>
 #include <stdlib.h>
@@ -17,7 +21,7 @@ int main(int argc, char **argv) { if (argc != 2) return 2; int64_t s=lpp_net_con
 C
 # CFLAGS is intentionally configurable for ASan/UBSan safety missions.
 # shellcheck disable=SC2086
-"$CC" $CFLAGS -std=c11 -Wall -Wextra -Werror -Wno-unused-function -Wno-unused-variable -Wno-unused-parameter -DLPP_NO_NETWORK -I"$ROOT/runtime" -I"$ROOT/runtime/lpp-net/include" "$TMP/client.c" "$ROOT/lpp_runtime.c" "$ROOT/runtime/lpp_net_rust_adapter.c" "$ROOT/runtime/lpp-net/target/release/liblpp_net_runtime.a" -ldl -lm -lpthread -o "$TMP/client"
+"$CC" $CFLAGS -std=c11 -Wall -Wextra -Werror -Wno-unused-function -Wno-unused-variable -Wno-unused-parameter -DLPP_NO_NETWORK -I"$ROOT/runtime" -I"$ROOT/runtime/lpp-net/include" "$TMP/client.c" "$ROOT/lpp_runtime.c" "$ROOT/runtime/lpp_net_rust_adapter.c" "$TARGET_DIR/release/liblpp_net_runtime.a" -ldl -lm -lpthread -o "$TMP/client"
 python3 - "$TMP/port" <<'PY' &
 import socket,sys
 s=socket.socket();s.bind(('127.0.0.1',0));s.listen(1);open(sys.argv[1],'w').write(str(s.getsockname()[1]));c,_=s.accept();assert c.recv(4)==b'ping';c.sendall(b'pong');c.close();s.close()

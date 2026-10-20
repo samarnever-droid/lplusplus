@@ -29,6 +29,21 @@ pub const ARC_REFCOUNT_OFFSET: usize = 4;
 pub const ARC_GENERATION_OFFSET: usize = 8;
 pub const ARC_DESTRUCTOR_OFFSET: usize = 16;
 
+/// Cycle-collector flags, stored in the 4 padding bytes at offset 12
+/// (between `generation`@8 and the 8-aligned destructor@16). Using the
+/// padding keeps the header size and every existing offset — and thus
+/// the C ABI — unchanged; calloc zeroes the word, so unmarked objects
+/// read as flags = 0. The freestanding runtimes use offset 12 for
+/// allocator bookkeeping and keep these flags in that word's top bits
+/// instead (see `runtime/linux_x86_64_min.c`); generated code never
+/// reads the header, so the placement is runtime-internal.
+pub const ARC_CYCLE_FLAGS_OFFSET: usize = 12;
+/// The object is registered with the cycle collector (its type is a
+/// 4D `Shared` cycle member).
+pub const ARC_FLAG_COLLECTIBLE: u32 = 1;
+/// The object is currently in the possible-cycle-root buffer.
+pub const ARC_FLAG_BUFFERED: u32 = 2;
+
 /// The freestanding (min) runtime puts the refcount at offset 0; both of the
 /// first two words of an emitted literal hold [`ARC_IMMORTAL`], so one blob
 /// stays immortal no matter which runtime the object is linked against.

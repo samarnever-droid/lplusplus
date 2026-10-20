@@ -104,9 +104,11 @@ Nothing in the type system, ownership model, or MIR changes.
 ## Why L++ is actually a *good* fit for bare metal
 The ownership model was built for this without knowing it: **non-escaping
 values live in a Frame arena (no heap at all)**, acyclic values are freed
-**deterministically** (recursive free, no GC, no pauses), and **ARC is paid
-only where a reference cycle is structurally possible** (detected statically by
-Tarjan SCC in `crates/lpp-ownership`). That is precisely the memory discipline
+**deterministically** (recursive free, no GC, no pauses), and **cycle
+collection is paid only where a reference cycle is structurally possible**
+(detected statically by Tarjan SCC in `crates/lpp-ownership`; unreachable
+cycles are reclaimed by bounded trial deletion over candidate subgraphs,
+never a whole-heap pause — see `documentation/CYCLE_BREAKING.md`). That is precisely the memory discipline
 embedded and kernel code wants: predictable, allocation-light, pause-free.
 
 ## Phasing / cost

@@ -39,6 +39,16 @@ fn test_freestanding_runtime_symbol_parity() {
         "lpp_arc_alloc",
         "lpp_arc_retain",
         "lpp_arc_release",
+        // Cycle-collector ABI (ownership-plan Shared types): every
+        // runtime must provide marking, collection, the trace-visit
+        // sink, and traces for the runtime-owned aggregate shapes.
+        "lpp_arc_mark_collectible",
+        "lpp_arc_collect_cycles",
+        "lpp_trace_visit",
+        "lpp_list_trace",
+        "lpp_tuple_trace",
+        "lpp_task_trace",
+        "lpp_closure_trace",
         "lpp_list_new",
         "lpp_list_new_arc",
         "lpp_list_push",

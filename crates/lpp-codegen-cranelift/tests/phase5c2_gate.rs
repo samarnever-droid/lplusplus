@@ -22,8 +22,9 @@
 //! 4. **Determinism + census.** Two compiles of each corpus produce
 //!    byte-identical objects; exports include `lpp_main`, every user
 //!    function, every closure function (`lpp_c{n}`), every generated
-//!    destructor, and the used thunks; imports stay inside the closed
-//!    runtime-symbol universe.
+//!    destructor, every generated cycle-collector trace (for the 4D
+//!    `Shared` types), and the used thunks; imports stay inside the
+//!    closed runtime-symbol universe.
 //! 5. **Table census + rejections.** The registry enumerates to
 //!    518 = Family A ∪ B ∪ C ∪ D, disjoint; a Family D builtin fails
 //!    with the exact `E5003` at the exact function; tuples stay the
@@ -128,9 +129,10 @@ fn main_function(program: &MirProgram, names: &StringInterner) -> MirFunctionId 
         .expect("corpus programs define main")
 }
 
-/// The ARC-mode oracle: the 4D plan's pinned set tells the
-/// interpreter which types may legitimately survive the run; the
-/// end-of-run balance proof validates the interpreter's ARC model.
+/// The ARC-mode oracle: the 4D plan's collectible (`Shared`) set
+/// tells the interpreter which types may sit on a reference cycle;
+/// trial deletion must reclaim them, and the end-of-run balance proof
+/// validates the interpreter's ARC model.
 fn run_arc_oracle(
     program: &MirProgram,
     types: &TypeInterner,
@@ -657,8 +659,15 @@ const IMPORT_UNIVERSE: &[&str] = &[
     "lpp_add_checked",
     "lpp_add_wrap",
     "lpp_arc_alloc_with_destructor",
+    "lpp_arc_collect_cycles",
+    "lpp_arc_mark_collectible",
     "lpp_arc_release",
     "lpp_arc_retain",
+    "lpp_closure_trace",
+    "lpp_list_trace",
+    "lpp_task_trace",
+    "lpp_trace_visit",
+    "lpp_tuple_trace",
     "lpp_bool_to_str",
     "lpp_bswap16",
     "lpp_bswap32",
@@ -990,12 +999,23 @@ fn compiles_are_deterministic_and_the_census_matches_the_contract() {
             expected_exports.insert(name.to_owned());
         }
     }
+    // The 4D Shared set: aggregates/closure-envs of these types also
+    // get a generated cycle-collector trace beside the destructor.
+    let shared: std::collections::BTreeSet<lpp_types::TypeId> =
+        compute_ownership_plan(&program, &types)
+            .expect("ownership plan")
+            .pinned_types()
+            .into_iter()
+            .collect();
     for (id, aggregate) in program.aggregates() {
         let tag = match aggregate.kind {
             lpp_mir::MirAggregateKind::Struct => 's',
             lpp_mir::MirAggregateKind::Enum => 'e',
         };
         expected_exports.insert(format!("lpp_drop_{tag}{}", id.raw()));
+        if shared.contains(&aggregate.ty) {
+            expected_exports.insert(format!("lpp_trace_{tag}{}", id.raw()));
+        }
     }
 
     let async_thunk_used: BTreeSet<MirFunctionId> =
@@ -1028,6 +1048,9 @@ fn compiles_are_deterministic_and_the_census_matches_the_contract() {
             .count();
         if captures > 0 {
             expected_exports.insert(format!("lpp_drop_c{}", id.raw()));
+            if shared.contains(&function.ty) {
+                expected_exports.insert(format!("lpp_trace_c{}", id.raw()));
+            }
         }
         if user_params == 0 {
             expected_exports.insert(format!("__lpp_closure_thunk{}", id.raw()));

@@ -37,6 +37,25 @@ unsafe extern "C" fn tuple_destroy(payload: *mut c_void) {
     }
 }
 
+/// Trace for a tuple: report each managed child slot (the same walk
+/// as `tuple_destroy`, without releasing).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lpp_tuple_trace(payload: *mut c_void, ctx: *mut c_void) {
+    if payload.is_null() {
+        return;
+    }
+    let tuple = unsafe { &*(payload as *mut LppTuplePrefix) };
+    for i in 0..4u32 {
+        if tuple.managed_mask & (1u64 << i) == 0 {
+            continue;
+        }
+        let offset = ((tuple.packed_offsets >> (i * 16)) & 0xffff) as usize;
+        let slot = unsafe { payload.cast::<u8>().add(offset) } as *mut *mut c_void;
+        let child = unsafe { *slot };
+        unsafe { crate::collect::lpp_trace_visit(ctx, child) };
+    }
+}
+
 /// Allocate a tuple of `size` bytes (>= the 16-byte prefix) with the given
 /// managed mask and packed offsets.
 #[unsafe(no_mangle)]

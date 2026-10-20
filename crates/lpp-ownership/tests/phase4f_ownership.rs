@@ -89,7 +89,7 @@ fn entry_function(program: &MirProgram) -> MirFunctionId {
         .expect("test programs define at least one top-level function")
 }
 
-/// Execute under ARC with the plan's pinned set; panics on failure.
+/// Execute under ARC with the plan's collectible set; panics on failure.
 fn run_arc(
     program: &MirProgram,
     types: &TypeInterner,
@@ -115,7 +115,7 @@ fn arc_of(outcome: &lpp_mir::ExecutionOutcome) -> lpp_mir::ArcStats {
 /// The full ownership-side gate: the program proves balance before
 /// and after optimization, and the pinned ARC run is bit-for-bit
 /// identical (value, output, and every ArcStats counter).
-fn assert_arc_equivalence(source: &str, expected: ExecutionValue, expected_pinned_live: usize) {
+fn assert_arc_equivalence(source: &str, expected: ExecutionValue, expected_collected: usize) {
     let (unoptimized, types) = executable(source);
     let entry = entry_function(&unoptimized);
 
@@ -127,7 +127,8 @@ fn assert_arc_equivalence(source: &str, expected: ExecutionValue, expected_pinne
     );
     let before = run_arc(&unoptimized, &types).0;
     assert_eq!(before.value, expected);
-    assert_eq!(arc_of(&before).pinned_live, expected_pinned_live);
+    assert_eq!(arc_of(&before).pinned_live, 0);
+    assert_eq!(arc_of(&before).collected, expected_collected);
 
     // Optimize, then re-prove and re-run.
     let mut optimized = unoptimized.clone();
@@ -167,9 +168,8 @@ fn simple_list_proves_balance_after_optimization() {
 
 #[test]
 fn self_referential_zero_leak_after_optimization() {
-    // The 4E self-referential program: two pinned cycle members,
-    // three retains, no releases, no frees — exactly preserved by the
-    // pipeline.
+    // The 4E self-referential program: two cycle members reclaimed
+    // by trial deletion — exactly preserved by the pipeline.
     assert_arc_equivalence(
         concat!(
             "def main():\n",
@@ -185,7 +185,7 @@ fn self_referential_zero_leak_after_optimization() {
 
 #[test]
 fn mutual_reference_zero_leak_after_optimization() {
-    // The 4E mutual-capture program: four pinned cycle members.
+    // The 4E mutual-capture program: four collected cycle members.
     assert_arc_equivalence(
         concat!(
             "def main():\n",
@@ -227,7 +227,9 @@ fn unpinned_self_referential_still_reports_e4304_after_optimization() {
     )
     .unwrap_err();
     assert_eq!(before.code(), "E4304");
-    assert!(matches!(&before.kind, InterpreterErrorKind::OwnershipLeak { nodes } if *nodes == 2));
+    assert!(
+        matches!(&before.kind, InterpreterErrorKind::OwnershipLeak { nodes, .. } if *nodes == 2)
+    );
 
     let mut optimized = program.clone();
     run_optimization(&mut optimized, &types, OptimizationLevel::O2).unwrap();
@@ -241,7 +243,9 @@ fn unpinned_self_referential_still_reports_e4304_after_optimization() {
     )
     .unwrap_err();
     assert_eq!(after.code(), "E4304");
-    assert!(matches!(&after.kind, InterpreterErrorKind::OwnershipLeak { nodes } if *nodes == 2));
+    assert!(
+        matches!(&after.kind, InterpreterErrorKind::OwnershipLeak { nodes, .. } if *nodes == 2)
+    );
 }
 
 #[test]

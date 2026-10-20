@@ -6,8 +6,8 @@ S1 means an unsupported or unsafe ownership/linking request is rejected determin
 
 | Class | Required result |
 |---|---|
-| Strong owned struct cycle | AOT diagnostic: ARC cannot reclaim ownership cycles; no object output |
-| Strong owned list/aggregate cycle | Same cycle diagnostic; no object output |
+| Strong owned struct/list/aggregate cycle | **Accepted** (graduated 2026-10-20): reclaimed by trial-deletion cycle collection; evidence in `documentation/CYCLE_BREAKING.md` §2.7. This row remains as the record that acceptance required the specified+tested collector. |
+| Cycle shape native codegen cannot lower (e.g. closure capturing the list it is stored into) | AOT diagnostic (`E5001`); no object output |
 | Unsupported AOT element representation | Diagnostic: not supported safely yet; no object output |
 | Malformed native object | Direct linker rejects input; no executable output |
 | Unresolved runtime import | Direct linker rejects input; no executable output |

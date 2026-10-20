@@ -30,7 +30,7 @@ graph TD
         AST --> Mono["Monomorphizer (monomorph.rs)"]
         Mono --> Semantic["Semantic Resolver (semantic.rs)"]
         Semantic --> Typecheck["Type Checker (typecheck.rs)"]
-        Typecheck --> CycleBreak["Cycle Breaker (cyclebreak.rs)"]
+        Typecheck --> CycleBreak["Ownership plan: SCC classification (lpp-ownership)"]
     end
 
     subgraph MIR ["3. Mid-Level IR & Optimization Passes"]
@@ -59,7 +59,7 @@ graph TD
 | Subsystem | Key Files | Responsibility |
 |---|---|---|
 | **Frontend** | [`lexer.rs`](file:///c:/Users/khati/lpp/src/frontend/lexer.rs), [`parser.rs`](file:///c:/Users/khati/lpp/src/frontend/parser.rs), [`ast.rs`](file:///c:/Users/khati/lpp/src/frontend/ast.rs) | Converts UTF-8 source into token streams, validates escape sequences and indentation, builds strongly typed AST. |
-| **Analysis** | [`monomorph.rs`](file:///c:/Users/khati/lpp/src/analysis/monomorph.rs), [`semantic.rs`](file:///c:/Users/khati/lpp/src/analysis/semantic.rs), [`typecheck.rs`](file:///c:/Users/khati/lpp/src/analysis/typecheck.rs), [`cyclebreak.rs`](file:///c:/Users/khati/lpp/src/analysis/cyclebreak.rs) | Generic instantiation, lexical scoping, symbol binding, trait resolution, type checking, and compile-time ownership cycle detection. |
+| **Analysis** | [`monomorph.rs`](file:///c:/Users/khati/lpp/src/analysis/monomorph.rs), [`semantic.rs`](file:///c:/Users/khati/lpp/src/analysis/semantic.rs), [`typecheck.rs`](file:///c:/Users/khati/lpp/src/analysis/typecheck.rs), `crates/lpp-ownership` (SCC cycle classification; collection in the runtimes) | Generic instantiation, lexical scoping, symbol binding, trait resolution, type checking, and compile-time ownership cycle detection. |
 | **MIR** | [`mir/lower.rs`](file:///c:/Users/khati/lpp/src/mir/lower.rs), `pass_*.rs`, [`escape_solver.rs`](file:///c:/Users/khati/lpp/src/mir/escape_solver.rs) | Lowers AST to Control Flow Graph (CFG) of basic blocks, runs constant propagation, inlining, scalar optimizations, whole-function escape solving, and deterministic ARC lifetime instrumentation. |
 | **Backend** | [`cranelift/`](file:///c:/Users/khati/lpp/src/backend/cranelift/), [`llvm.rs`](file:///c:/Users/khati/lpp/src/backend/llvm.rs), [`wasm.rs`](file:///c:/Users/khati/lpp/src/backend/wasm.rs) | Lowers MIR to machine code via Cranelift (default), LLVM (optimized release), or WebAssembly. |
 | **Linker & Runtime** | [`linker.rs`](file:///c:/Users/khati/lpp/src/linker.rs), [`lpp_runtime.c`](file:///c:/Users/khati/lpp/lpp_runtime.c) | Self-contained zero-dependency linker producing native PE/COFF, ELF, and Mach-O binaries, linked with the minimal ARC and arena memory runtime. |
@@ -75,7 +75,7 @@ graph TD
 4. **Monomorphization**: Clones and specializes generic types, functions, and trait implementations with concrete type arguments.
 5. **Semantic Scope Resolution**: Validates identifier bindings, mutability rules, and closure captures.
 6. **Type Checking**: Validates type contracts, operators, and method signatures; computes `TypeTable`.
-7. **Cycle Breaking**: Analyzes struct dependency graphs; demotes back-edges to weak references or marks recursive types for arena allocation.
+7. **Cycle classification & collection**: The ownership plan (`crates/lpp-ownership`) classifies types that can sit on a reference cycle as `Shared`; runtime trial-deletion collection reclaims unreachable cycles of those types (see `documentation/CYCLE_BREAKING.md`). The v1 `src/analysis/cyclebreak.rs` demotion engine was removed in the rewrite cutover and no edge is demoted today.
 8. **MIR Generation**: Transforms AST to basic-block MIR representation.
 9. **MIR Optimization Pipeline**: Runs constant folding, copy propagation, strength reduction, dead code elimination, and inlining.
 10. **Escape Analysis**: Computes value vs reference escape status to stack-promote non-escaping allocations.

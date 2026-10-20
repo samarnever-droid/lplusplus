@@ -29,8 +29,13 @@ implementation status is in [STATUS-2026-07-30.md](STATUS-2026-07-30.md).
 - `Frame < Owned < Shared` is the escape lattice.
 - Non-escaping ordinary structs use stack payloads.
 - Escaping values use ARC.
-- Self-referential structs use Arena regions with ARC-compatible node headers.
-- The static cycle breaker demotes one edge per ownership cycle to non-owning.
+- Self-referential structs are ordinary ARC allocations whose types the
+  ownership plan classifies `Shared` (collectible); unreachable reference
+  cycles are reclaimed by runtime trial-deletion collection, and acyclic
+  values of the same types free promptly by refcount. No edge is demoted
+  to non-owning. (The legacy arena runtime API remains for the paths that
+  still use it; it is not the cycle mechanism. See
+  `documentation/CYCLE_BREAKING.md`.)
 - Closures use ARC environments; non-escaping closure capsules can be stack-resident.
 - Tuples and tasks are ARC aggregates with runtime child/environment teardown.
 - Slice view records are stack-resident and borrowed; the MIR validator prevents

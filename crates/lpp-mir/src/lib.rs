@@ -30,8 +30,9 @@ pub use ids::{
 };
 pub use interpret::{
     ArcStats, ExecutionOutcome, ExecutionStats, ExecutionValue, ExecutionValueKind,
-    InterpreterError, InterpreterErrorKind, InterpreterLimit, InterpreterLimits, execute_mir,
-    execute_mir_arc, execute_mir_with_stats,
+    InterpreterError, InterpreterErrorKind, InterpreterLimit, InterpreterLimits, LeakClass,
+    LeakReport, LeakedNode, execute_mir, execute_mir_arc, execute_mir_arc_diagnosed,
+    execute_mir_with_stats,
 };
 pub use ir::{
     BasicBlock, Constant, Instruction, InstructionKind, MirAggregate, MirAggregateKind, MirField,

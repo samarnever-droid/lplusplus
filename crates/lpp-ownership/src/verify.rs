@@ -312,6 +312,20 @@ impl<'types> DfsCollector<'types> {
                 }
                 ContainmentNode::Aggregate(aggregate_id) => {
                     let aggregate = program.aggregate(*aggregate_id).ok_or(())?;
+                    // Struct fields are stored on the aggregate itself;
+                    // enum payloads under variants. Cover both (the
+                    // planner's walk, recomputed independently here).
+                    for field_id in program.aggregate_fields(aggregate) {
+                        let field = program.field(*field_id).ok_or(())?;
+                        edges.extend(targets_for(
+                            program,
+                            self.types,
+                            &callable_ids,
+                            &aggregate_ids,
+                            &container_ids,
+                            field.ty,
+                        )?);
+                    }
                     for variant_id in program.aggregate_variants(aggregate) {
                         let variant = program.variant(*variant_id).ok_or(())?;
                         for field_id in program.variant_fields(variant) {

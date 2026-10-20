@@ -48,6 +48,22 @@ unsafe extern "C" fn task_payload_destroy(payload: *mut c_void) {
     }
 }
 
+/// Trace for a task: the owned environment, plus the owned managed
+/// result once complete (mirrors `task_payload_destroy`).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lpp_task_trace(payload: *mut c_void, ctx: *mut c_void) {
+    if payload.is_null() {
+        return;
+    }
+    let task = unsafe { &*(payload as *mut LppTask) };
+    unsafe { crate::collect::lpp_trace_visit(ctx, task.environment) };
+    if task.state.load(Ordering::Acquire) == 2 && task.result_managed != 0 && task.result != 0 {
+        unsafe {
+            crate::collect::lpp_trace_visit(ctx, task.result as usize as *mut c_void);
+        }
+    }
+}
+
 /// Create a task. `code_ptr` and `environment` are both required; the
 /// environment reference is transferred (owned by the task).
 #[unsafe(no_mangle)]

@@ -1,14 +1,13 @@
-# Recursive data structures, made possible by static cycle breaking.
+# Recursive data structures.
 #
-# All of these were compile errors before: "Cyclic owned struct detected. ARC
-# cannot reclaim ownership cycles." The fix is not to allow leaks but to ensure
-# no *owning* cycle is ever built -- analysis::cyclebreak demotes exactly one
-# edge of every cycle to non-owning, so the owning subgraph is acyclic by
-# construction and refcounts still reach zero.
-#
-# Verified under AddressSanitizer: zero leaks, zero use-after-free, including
-# 50 000 genuine A<->B runtime cycles. Verified under ThreadSanitizer: zero
-# races with four threads building and tearing down cyclic structures.
+# The types below can form runtime reference cycles, so the ownership plan
+# classifies them Shared (collectible). Every edge stays owning: acyclic
+# values free promptly by refcount, and unreachable cycles are reclaimed by
+# the runtime trial-deletion collector (documentation/CYCLE_BREAKING.md).
+# This file pins that declaring and building these structures is accepted
+# and evaluates correctly; cycle *reclamation* evidence lives in
+# crates/lpp-ownership/tests/cycle_breaking.rs and tests/cycle_churn.lpp
+# (ASan/LSan + flat RSS over 200k churned cycles).
 
 struct TreeNode:
     value: Int

@@ -1,0 +1,15 @@
+# Structural tuples with managed elements, churned: the tuple record
+# and its elements must be reclaimed by ARC every iteration (native
+# leak regression for tuple drop glue). Expected output: 30000
+struct Box:
+    v: Int
+def main() -> Int:
+    mut total := 0
+    mut i := 0
+    while i < 30000:
+        t := (Box(i), "s")
+        (b, s) := t
+        total = total + b.v - i + str_len(s)
+        i = i + 1
+    print(total)
+    return 0

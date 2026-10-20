@@ -1,9 +1,11 @@
 # Formerly `aot_reject_arc_cycle.lpp`, which asserted this was a compile error.
 #
-# SAFETY-CONTRACT CHANGE: a self-referential struct now compiles. The static
-# cycle breaker demotes `next` to a non-owning edge, so the owning subgraph is
-# acyclic and the object is reclaimed. Verified leak-free and use-after-free
-# free under AddressSanitizer, including 50 000 genuine runtime cycles.
+# SAFETY-CONTRACT CHANGE: a self-referential struct now compiles and runs.
+# `next` stays a strong owning edge; Node is classified Shared (collectible)
+# and unreachable Node cycles are reclaimed by trial-deletion collection
+# (documentation/CYCLE_BREAKING.md). This program builds an acyclic chain;
+# genuine runtime cycles live in cycle_self_loop.lpp / cycle_ring.lpp /
+# cycle_churn.lpp, with ASan/RSS reclamation evidence over 200k cycles.
 struct Node:
     value: Int
     next: Node

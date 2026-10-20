@@ -1,0 +1,17 @@
+# Tuple locals and tuple-typed struct fields overwritten in a loop:
+# every replaced tuple (and its elements) released exactly once.
+# Expected output: 39998
+struct Box:
+    v: Int
+struct Holder:
+    pair: (Box, Int)
+def main() -> Int:
+    mut h := Holder((Box(1), 1))
+    mut t := (Box(0), 0)
+    mut i := 0
+    while i < 20000:
+        h.pair = (Box(i), i)
+        t = (Box(i), i)
+        i = i + 1
+    print(h.pair.0.v + t.0.v)
+    return 0

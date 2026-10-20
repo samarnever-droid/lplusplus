@@ -25,7 +25,12 @@ The current public promise is narrower:
 3. Every control-flow exit releases definite-live owned values exactly once.
 4. Borrowed results never create an unretained owner escape.
 5. Struct/list/closure destructors release owned children before storage reclamation.
-6. Strong cycles are rejected until weak/arena/cycle-collector semantics are specified and tested.
+6. Strong cycles are reclaimed by the specified and tested cycle
+   collector (trial deletion over the ownership plan's `Shared` types;
+   see `documentation/CYCLE_BREAKING.md`). A cycle shape the collector
+   cannot prove unreachable is leaked, never freed early; shapes native
+   codegen cannot lower at all are rejected before object output (e.g.
+   the Cranelift closure-origin limit).
 7. An unsupported backend/runtime combination fails before executable output is produced.
 8. Runtime ABI allocations are released by their matching allocator; adapters must copy across allocators where necessary.
 9. Direct linkers reject unknown relocations/imports rather than emitting ambiguous binaries.
@@ -37,7 +42,7 @@ The repository’s S1 gate is `sh scripts/run_s1_rejection.sh`. It runs the S0 f
 
 ## Current verified boundary
 
-S2 applies only to the documented Linux x86-64 Cranelift AOT ownership subset: ARC structs, moves/borrows/owned returns, aliases, closure capsules, supported lists, destructor chains, and strong-cycle rejection. It does **not** automatically extend to C compatibility code, unimplemented thread transfer, direct networking linkage, all platform linkers, or future async tasks.
+S2 applies only to the documented Linux x86-64 Cranelift AOT ownership subset: ARC structs, moves/borrows/owned returns, aliases, closure capsules, supported lists, destructor chains, and strong-cycle collection (trial deletion; see `documentation/CYCLE_BREAKING.md`). It does **not** automatically extend to C compatibility code, unimplemented thread transfer, direct networking linkage, all platform linkers, or future async tasks.
 
 ## Required evidence for new language features
 

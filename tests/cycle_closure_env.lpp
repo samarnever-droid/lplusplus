@@ -1,0 +1,16 @@
+# Cycle through a closure environment: the closure captures the list,
+# the list owns the closure. Native codegen used to reject this with
+# E5001 "function value of unknown origin" because function-value
+# provenance did not flow through closure captures; the Cranelift
+# pre-scan now resolves provenance with a whole-program fixpoint
+# (resolve_value_classes). Reclamation is by trial-deletion collection
+# (documentation/CYCLE_BREAKING.md).
+def main():
+    xs := list_new()
+    f := fn() -> Int:
+        g := list_get(xs, 0)
+        return list_len(xs) + 40
+    list_push(xs, f)
+    h := list_get(xs, 0)
+    print(h())
+    print(list_len(xs))

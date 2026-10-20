@@ -71,9 +71,13 @@ analyzer is retired and no longer exists in the current tree.
 
 Self-referential structs receive a lazily created region. Arena nodes have
 ARC-compatible headers and are registered with the region. The region survives
-as long as nodes reference it and is reclaimed after the last node dies. The
-cycle breaker ensures that one edge of every type cycle is non-owning, so the
-owning subgraph is acyclic.
+as long as nodes reference it and is reclaimed after the last node dies.
+
+*Correction (2026-10-20):* arenas are no longer the cycle mechanism for the
+Cranelift/interpreter paths, and no cycle edge is demoted to non-owning.
+Reference cycles are reclaimed by trial-deletion collection over the
+ownership plan's `Shared` types — see `documentation/CYCLE_BREAKING.md`.
+The arena runtime API above remains for the paths that use it.
 
 This is a correctness-first Arena implementation. It is not yet a bump/chunk
 allocator benchmark claim.

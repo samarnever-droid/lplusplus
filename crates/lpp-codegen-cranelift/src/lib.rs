@@ -106,6 +106,7 @@ impl Backend for CraneliftBackend {
             plan.aggregates.clone(),
             plan.layouts.clone(),
             plan.value_classes.clone(),
+            plan.shared_types.clone(),
         );
 
         lowering.declare(&plan, program, types)?;

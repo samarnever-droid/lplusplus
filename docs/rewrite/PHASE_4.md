@@ -1087,6 +1087,16 @@ stays on `LegacyEngine`; rewrite MIR remains shadow-only.
     it is never freed, and it is reported instead of leaked. Value
     cycles exist only over `Shared` type nodes (a value cycle implies a
     type cycle), so pinning is complete.
+    *(Amendment, 2026-10-20: pinning is replaced by collection. Nodes
+    of `Shared` types keep honest counts; a release that leaves one
+    alive buffers it as a cycle candidate, and trial deletion
+    reclaims exactly the unreachable cyclic subgraphs (threshold 512
+    candidates, and unconditionally in the balance proof below, which
+    loops until a round frees nothing). `pinned_live` remains in
+    `ArcStats` as the post-collection survivor count — zero for every
+    successful run; a survivor still reports `OwnershipLeak`. The
+    struct-field containment edges this phase deferred are also in.
+    See `documentation/CYCLE_BREAKING.md`.)*
   - **End-of-execution balance proof** (successful completion only; a
     failed execution is abandoned and proves nothing): the public
     `ExecutionValue` outcome is materialized as a deep copy, the entry

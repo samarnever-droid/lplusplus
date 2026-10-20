@@ -109,11 +109,95 @@ pub struct ArcStats {
     pub retains: usize,
     /// Reference drops, including the drops that trigger frees.
     pub releases: usize,
-    /// Heap nodes whose count reached zero and were deallocated.
+    /// Heap nodes deallocated, whether by plain refcounting (count
+    /// reached zero) or by the cycle collector.
     pub frees: usize,
-    /// Pinned (cycle-member) nodes still alive at end of execution;
-    /// pinned nodes are reported, never leaked.
+    /// Heap nodes reclaimed by trial-deletion cycle collection (a
+    /// subset of `frees`): unreachable cyclic garbage whose refcounts
+    /// could never reach zero on their own.
+    pub collected: usize,
+    /// Collectible (cycle-member-typed) nodes still alive after the
+    /// final collection at end of execution. Zero for every successful
+    /// run: a survivor has an unexplained reference and reports as
+    /// `OwnershipLeak` instead. Retained under its historical name.
     pub pinned_live: usize,
+}
+
+/// Why a heap node appears in a [`LeakReport`]. The classification
+/// recomputes every live node's refcount from the heap graph at end
+/// of execution (when no external roots remain, a node's refcount
+/// must equal its incoming owning edges from other live nodes) and
+/// compares — trial deletion's scratch arithmetic applied as an
+/// audit over *all* nodes, not just collectible ones.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LeakClass {
+    /// Refcount disagrees with the graph (more counted references
+    /// than owning edges, or the reverse): a retain/release was
+    /// missed or duplicated in the modelled ARC traffic.
+    PhantomRoot,
+    /// Internally consistent, but kept alive (transitively) by a
+    /// [`LeakClass::PhantomRoot`].
+    HeldByPhantom,
+    /// Part of a closed component whose refcounts are fully
+    /// explained by edges among themselves: unreachable garbage the
+    /// collector did not reclaim — for a cycle, its types were not
+    /// marked collectible (an ownership-plan gap or a wrong
+    /// `pinned` argument).
+    ClosedGarbage,
+    /// Already deallocated (refcount 0) yet still referenced by a
+    /// live node's stored child: a dangling edge in the model.
+    DanglingTarget,
+}
+
+/// One node's entry in a [`LeakReport`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LeakedNode {
+    /// Heap index of the node.
+    pub heap: u32,
+    /// The allocation site's produced type, when recorded.
+    pub ty: Option<TypeId>,
+    /// Heap-node shape: "list", "map", "nominal", "string",
+    /// "closure", or "task".
+    pub kind: &'static str,
+    /// The modelled live refcount.
+    pub refcount: u32,
+    /// Owning edges into this node from other *live* nodes,
+    /// recomputed from the heap graph.
+    pub internal_refs: u32,
+    /// Whether the node was eligible for cycle collection.
+    pub collectible: bool,
+    pub class: LeakClass,
+}
+
+/// Per-node diagnosis of an [`InterpreterErrorKind::OwnershipLeak`],
+/// produced by [`execute_mir_arc_diagnosed`] whenever the balance
+/// proof finds survivors.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LeakReport {
+    pub nodes: Vec<LeakedNode>,
+}
+
+impl LeakReport {
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.nodes.is_empty()
+    }
+
+    /// Survivors in one class.
+    #[must_use]
+    pub fn count(&self, class: LeakClass) -> usize {
+        self.nodes.iter().filter(|node| node.class == class).count()
+    }
+
+    /// Live survivors (all classes except already-dead
+    /// [`LeakClass::DanglingTarget`] entries).
+    #[must_use]
+    pub fn live(&self) -> usize {
+        self.nodes
+            .iter()
+            .filter(|node| node.class != LeakClass::DanglingTarget)
+            .count()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -175,10 +259,20 @@ pub enum InterpreterErrorKind {
     /// A release or free found no live reference (refcount underflow or
     /// double free).
     OwnershipUnderflow,
-    /// Non-pinned heap nodes survived end of execution with a live
-    /// reference.
+    /// Heap nodes survived end of execution (after final cycle
+    /// collection) with a reference nothing can account for.
+    /// `phantom` counts survivors whose refcount is *not* explained
+    /// by the heap graph (a missed release or double retain in the
+    /// modelled ARC traffic); `closed` counts survivors whose
+    /// refcounts are fully explained by edges among themselves
+    /// (unreachable garbage the collector could not take — a cycle
+    /// over types the caller did not mark collectible). The full
+    /// per-node breakdown is available from
+    /// [`execute_mir_arc_diagnosed`].
     OwnershipLeak {
         nodes: usize,
+        phantom: usize,
+        closed: usize,
     },
 }
 
@@ -263,8 +357,10 @@ pub fn execute_mir_with_stats(
 /// Execute the program with ARC: refcounted heap values, the
 /// consume-vs-borrow call contract, recursive free at count zero, and
 /// the end-of-execution balance proof. `pinned` is the ownership plan's
-/// cycle-member type ids (`OwnershipPlan::pinned_types`): heap nodes of
-/// those types are pinned — never freed, reported as `pinned_live`.
+/// cycle-member (`Shared`) type ids (`OwnershipPlan::pinned_types`):
+/// heap nodes of those types are *collectible* — refcounted normally,
+/// and additionally eligible for trial-deletion cycle collection so
+/// unreachable reference cycles are reclaimed instead of leaking.
 pub fn execute_mir_arc(
     program: &MirProgram,
     types: &TypeInterner,
@@ -273,6 +369,26 @@ pub fn execute_mir_arc(
     limits: InterpreterLimits,
     pinned: &[TypeId],
 ) -> Result<ExecutionOutcome, InterpreterError> {
+    execute_mir_arc_diagnosed(program, types, entry, arguments, limits, pinned).0
+}
+
+/// [`execute_mir_arc`], additionally returning a [`LeakReport`] when
+/// the end-of-execution balance proof finds surviving heap nodes:
+/// each survivor classified by recomputing refcounts from the heap
+/// graph (see [`LeakClass`]). The report is `None` on success and
+/// on execution failure (a failed execution is abandoned mid-flight
+/// and its heap proves nothing).
+pub fn execute_mir_arc_diagnosed(
+    program: &MirProgram,
+    types: &TypeInterner,
+    entry: MirFunctionId,
+    arguments: &[ExecutionValue],
+    limits: InterpreterLimits,
+    pinned: &[TypeId],
+) -> (
+    Result<ExecutionOutcome, InterpreterError>,
+    Option<LeakReport>,
+) {
     let mut pinned_set = std::collections::BTreeSet::new();
     pinned_set.extend(pinned.iter().copied());
     let mut interpreter = Interpreter {
@@ -293,13 +409,28 @@ pub fn execute_mir_arc(
             retains: 0,
             releases: 0,
             frees: 0,
+            collected: 0,
+            candidates: std::collections::BTreeSet::new(),
+            collecting: false,
+            leak_report: None,
         }),
     };
-    let value = interpreter.execute_entry(entry, arguments)?;
-    // Balance proof: the string cache releases its references, then
-    // every non-pinned heap node must be dead.
-    interpreter.finish_arc()?;
-    // Pinned live nodes: still counted and unrecorded-or-cycle-member.
+    let value = match interpreter.execute_entry(entry, arguments) {
+        Ok(value) => value,
+        Err(error) => return (Err(error), None),
+    };
+    // Balance proof: the string cache releases its references, cycle
+    // collection reclaims unreachable cyclic garbage, then every heap
+    // node must be dead.
+    if let Err(error) = interpreter.finish_arc() {
+        let report = interpreter
+            .arc
+            .as_mut()
+            .and_then(|arc| arc.leak_report.take());
+        return (Err(error), report);
+    }
+    // Collectible survivors after the final collection (zero on
+    // success; survivors fail the balance proof above instead).
     let pinned_live = interpreter
         .arc
         .as_ref()
@@ -307,10 +438,12 @@ pub fn execute_mir_arc(
         .refcounts
         .iter()
         .enumerate()
-        .filter(|(index, count)| **count > 0 && interpreter.node_is_pinned(HeapId(*index as u32)))
+        .filter(|(index, count)| {
+            **count > 0 && interpreter.node_is_collectible(HeapId(*index as u32))
+        })
         .count();
     let arc_state = interpreter.arc.take().expect("arc entries keep arc state");
-    Ok(ExecutionOutcome {
+    let outcome = ExecutionOutcome {
         value,
         output: interpreter.output,
         stats: ExecutionStats {
@@ -324,9 +457,11 @@ pub fn execute_mir_arc(
             retains: arc_state.retains,
             releases: arc_state.releases,
             frees: arc_state.frees,
+            collected: arc_state.collected,
             pinned_live,
         }),
-    })
+    };
+    (Ok(outcome), None)
 }
 
 fn execute_with(
@@ -376,13 +511,14 @@ fn execute_with(
     })
 }
 
-/// How a heap node participates in the pinned set:
+/// How a heap node participates in cycle collection:
 /// - `Unknown`: the allocation site has no type information; the node
-///   is conservatively pinned (reported, never leaked);
+///   is conservatively collectible (it may sit on a value cycle, so
+///   trial deletion must be able to see through it);
 /// - `Ephemeral`: the node cannot be a cycle member (string literals,
 ///   detached task nodes with plain contents);
-/// - `Of(ty)`: the node pins exactly when the 4D plan marks `ty` a
-///   cycle member.
+/// - `Of(ty)`: the node is collectible exactly when the 4D plan marks
+///   `ty` a cycle member (`Shared`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum NodePin {
     Unknown,
@@ -391,8 +527,8 @@ pub(super) enum NodePin {
 }
 
 /// Per-execution ARC state. The refcount table runs in lockstep with
-/// the heap (indexed by `HeapId`); the pin table records each node's
-/// participation in the pinned set (4D `Shared` type ids).
+/// the heap (indexed by `HeapId`); the class table records each node's
+/// participation in cycle collection (4D `Shared` type ids).
 #[derive(Debug)]
 struct ArcState {
     /// Live reference counts; zero means deallocated.
@@ -401,11 +537,22 @@ struct ArcState {
     /// it.
     node_types: Vec<NodePin>,
     /// Type ids of the 4D cycle members; nodes of these types are
-    /// pinned (never freed, reported as `pinned_live`).
+    /// collectible (eligible for trial-deletion cycle collection).
     pinned: std::collections::BTreeSet<TypeId>,
     retains: usize,
     releases: usize,
     frees: usize,
+    collected: usize,
+    /// Possible cycle roots: collectible heap indices whose refcount
+    /// was decremented without reaching zero, buffered for the next
+    /// trial deletion (the Bacon–Rajan purple set).
+    candidates: std::collections::BTreeSet<usize>,
+    /// Reentrancy guard: releases issued *by* collection must not
+    /// start a nested collection.
+    collecting: bool,
+    /// Per-node leak diagnosis, filled by `finish_arc` when the
+    /// balance proof finds survivors.
+    leak_report: Option<LeakReport>,
 }
 
 struct Interpreter<'input> {

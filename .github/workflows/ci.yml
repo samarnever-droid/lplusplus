@@ -576,3 +576,26 @@ jobs:
           LPP_AOT=1 target/release/lpp /tmp/arith.lpp
           clang /tmp/arith.o /tmp/lpp_runtime.o -o /tmp/arith
           test "$(/tmp/arith)" = $'15\n5\n50\n2'
+
+  sanitizers-and-fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build driver
+        run: cargo build --locked -p lpp
+      - name: ASan/LSan/UBSan over ownership-critical corpus
+        run: |
+          set -eu
+          WORK="$RUNNER_TEMP/lpp-asan"
+          mkdir -p "$WORK"
+          cc -fsanitize=address,undefined -g -c crates/lpp-codegen-cranelift/tests/c_shim.c -o "$WORK/c_shim.o"
+          for f in tuple_managed_churn tuple_overwrite tuple_cycle tuple_async_closure \
+                   cycle_churn cycle_ring cycle_closure_env; do
+            ./target/debug/lpp "tests/$f.lpp" --emit-object -o "$WORK/$f.o"
+            cc -fsanitize=address,undefined "$WORK/$f.o" "$WORK/c_shim.o" -lm -o "$WORK/$f"
+            ASAN_OPTIONS=detect_leaks=1 "$WORK/$f" > "$WORK/$f.out"
+            echo "ASan clean: $f -> $(cat "$WORK/$f.out")"
+          done
+      - name: Ownership fuzz smoke (seeded, deterministic)
+        run: python3 scripts/fuzz_ownership.py --seed 1 --count 60

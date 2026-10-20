@@ -1,9 +1,11 @@
 # Formerly `aot_reject_list_arc_cycle.lpp`, which asserted this was a compile
 # error because `List[Node]` inside `Node` forms a strong ARC cycle.
 #
-# SAFETY-CONTRACT CHANGE: the type is now accepted. The static cycle breaker
-# demotes the Node -> List[Node] edge to non-owning, so the owning subgraph
-# stays acyclic.
+# SAFETY-CONTRACT CHANGE: the type is now accepted. Both edges stay owning;
+# Node and List[Node] are classified Shared (collectible) and unreachable
+# cycles through them are reclaimed by trial-deletion collection
+# (documentation/CYCLE_BREAKING.md; runtime list-mediated cycle in
+# cycle_list_ring.lpp).
 #
 # The node is built without populating `children`: an empty list literal infers
 # as List[Int], which is a separate, pre-existing inference limitation unrelated
