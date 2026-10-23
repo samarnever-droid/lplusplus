@@ -25,8 +25,8 @@ pub use builder::{
     UnsupportedConstruct, build_mir,
 };
 pub use ids::{
-    BasicBlockId, InstructionId, MirAggregateId, MirFieldId, MirFunctionId, MirLocalId, MirPlaceId,
-    MirStringId, MirVariantId,
+    BasicBlockId, InstructionId, MirAggregateId, MirExternalFunctionId, MirFieldId, MirFunctionId,
+    MirLocalId, MirPlaceId, MirStringId, MirVariantId,
 };
 pub use interpret::{
     ArcStats, ExecutionOutcome, ExecutionStats, ExecutionValue, ExecutionValueKind,
@@ -35,9 +35,9 @@ pub use interpret::{
     execute_mir_with_stats,
 };
 pub use ir::{
-    BasicBlock, Constant, Instruction, InstructionKind, MirAggregate, MirAggregateKind, MirField,
-    MirFunction, MirFunctionKind, MirLocal, MirLocalKind, MirPlace, MirProgram, MirVariant,
-    Operand, PlaceProjection, Rvalue, Terminator,
+    BasicBlock, Constant, Instruction, InstructionKind, MirAggregate, MirAggregateKind,
+    MirExternalFunction, MirField, MirFunction, MirFunctionKind, MirLocal, MirLocalKind, MirPlace,
+    MirProgram, MirVariant, Operand, PlaceProjection, Rvalue, Terminator,
 };
 pub use lpp_hir::{BinaryOperator, UnaryOperator};
 pub use snapshot::mir_snapshot;

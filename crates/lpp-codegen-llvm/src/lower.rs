@@ -162,6 +162,10 @@ fn check_rvalue(
                         return Err(unsupported("string binary", Some(fn_id)));
                     }
                 }
+            } else if matches!(operator, BinaryOperator::Divide | BinaryOperator::Modulo)
+                && operand_class(program, types, fn_id, left)? == Val::I64
+            {
+                builtins.insert("lpp_panic_div_zero");
             }
             Ok(())
         }
@@ -213,6 +217,7 @@ fn check_rvalue(
             }
             Ok(())
         }
+        Rvalue::ExternalCall { .. } => Err(unsupported("external call", Some(fn_id))),
         Rvalue::Call { callee, arguments } => {
             // A direct call's callee is a function operand (supported). An
             // indirect call (function value) is a copy of a function-typed
@@ -407,6 +412,10 @@ pub(crate) fn lower_module(
                     &mut text,
                     "declare ptr @lpp_str_concat(ptr, ptr)\n",
                 );
+            }
+            "lpp_panic_div_zero" => {
+                let _ =
+                    std::fmt::Write::write_str(&mut text, "declare void @lpp_panic_div_zero()\n");
             }
             _ => {}
         }
@@ -816,6 +825,46 @@ fn emit_binary(
             _ => Err(unsupported("string binary", Some(fn_id))),
         };
     }
+    if lval == Val::I64 && matches!(operator, BinaryOperator::Divide | BinaryOperator::Modulo) {
+        // Match the MIR oracle exactly: zero is a defined runtime panic,
+        // and INT_MIN / -1 wraps rather than becoming LLVM poison/UB.
+        let is_zero = fresh(ssa);
+        push(out, &format!("{is_zero} = icmp eq i64 {re}, 0"));
+        let block = *ssa;
+        *ssa += 1;
+        push(
+            out,
+            &format!("br i1 {is_zero}, label %div_zero_{block}, label %div_ok_{block}"),
+        );
+        push(out, &format!("div_zero_{block}:"));
+        push(out, "call void @lpp_panic_div_zero()");
+        push(out, "unreachable");
+        push(out, &format!("div_ok_{block}:"));
+
+        let is_min = fresh(ssa);
+        push(
+            out,
+            &format!("{is_min} = icmp eq i64 {le}, -9223372036854775808"),
+        );
+        let is_neg_one = fresh(ssa);
+        push(out, &format!("{is_neg_one} = icmp eq i64 {re}, -1"));
+        let overflow = fresh(ssa);
+        push(out, &format!("{overflow} = and i1 {is_min}, {is_neg_one}"));
+        let safe_right = fresh(ssa);
+        push(
+            out,
+            &format!("{safe_right} = select i1 {overflow}, i64 1, i64 {re}"),
+        );
+        let result = fresh(ssa);
+        let op = if operator == BinaryOperator::Divide {
+            "sdiv"
+        } else {
+            "srem"
+        };
+        push(out, &format!("{result} = {op} i64 {le}, {safe_right}"));
+        return Ok((Val::I64, result));
+    }
+
     let v = fresh(ssa);
     let (op, res_ty) = match (operator, lval) {
         (BinaryOperator::Add, Val::I64) => ("add", "i64"),

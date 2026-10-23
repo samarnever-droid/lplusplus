@@ -82,6 +82,12 @@ const IMMORTAL_RC: i64 = i64::MAX;
 const ARC_MAGIC: i64 = 0x41_52_43_31; // "ARC1"
 /// The wasm heap-pointer global index (emitted only when the heap exists).
 const GLOBAL_HEAP: u32 = 0;
+/// Per-size-class free-list heads follow the bump pointer global. Class
+/// exponents 5..=31 represent blocks from 32 bytes through 2 GiB.
+const ARC_FREE_BIN_BASE: u32 = 1;
+const ARC_FREE_BIN_COUNT: u32 = 27;
+const ARC_MIN_EXP: i64 = 5;
+const ARC_MAX_EXP: i64 = 31;
 
 // List payload (32 bytes of i64 slots, mirroring the v1 wasm list):
 //   [data i64 @0][len i64 @8][cap i64 @16][is_arc i64 @24]
@@ -344,6 +350,8 @@ struct Env<'a> {
     /// 5D2b slice 3: type-table index of the task-code signature
     /// `(i32 env) -> i64 result` (0 when there are no tasks).
     task_code_call_type: u32,
+    /// Import index of WASI's `proc_exit`, used by defined runtime panic guards.
+    proc_exit_import_idx: u32,
     /// The funcref table index of the dispatch table (table 1 when a
     /// drop table exists, table 0 otherwise).
     dispatch_table: u8,
@@ -586,6 +594,7 @@ fn compile_module(
         task_drop_slot,
         tuple_drop_slot,
         task_code_call_type: 0,
+        proc_exit_import_idx: proc_exit_idx,
         dispatch_table: if has_heap { 1 } else { 0 },
         value_origins: plan.value_origins,
     };
@@ -1186,15 +1195,24 @@ fn compile_module(
     msec.push(0x00); // limits: min only
     uleb(&mut msec, min_pages as u64);
 
-    // ---- Global section (6) ---- (the heap bump pointer)
+    // ---- Global section (6) ---- (heap bump pointer + ARC size-class
+    // free-list heads). The heap pointer remains global 0; ARC bins are
+    // globals 1..=27 and are emitted only in heap-using modules.
     let mut gsec = Vec::new();
     if has_heap {
-        uleb(&mut gsec, 1);
-        gsec.push(0x7f); // i32
+        uleb(&mut gsec, 1 + ARC_FREE_BIN_COUNT as u64);
+        gsec.push(0x7f); // heap pointer: i32
         gsec.push(0x01); // mutable
         gsec.push(0x41); // i32.const
         sleb(&mut gsec, heap_start as i64);
         gsec.push(0x0b); // end
+        for _ in 0..ARC_FREE_BIN_COUNT {
+            gsec.push(0x7f); // free-list head: i32
+            gsec.push(0x01); // mutable
+            gsec.push(0x41);
+            sleb(&mut gsec, 0);
+            gsec.push(0x0b);
+        }
     } else {
         uleb(&mut gsec, 0);
     }
@@ -1358,6 +1376,7 @@ fn compile_module(
         object: module,
         exported_symbols,
         imported_symbols,
+        link_libraries: program.link_libraries(),
         entry: Some("main".to_string()),
     })
 }
@@ -1617,6 +1636,9 @@ fn rvalue_operands(program: &MirProgram, rvalue: &Rvalue) -> Vec<Operand> {
         }
         Rvalue::Call { callee, arguments } => {
             out.push(*callee);
+            out.extend_from_slice(program.operands(*arguments));
+        }
+        Rvalue::ExternalCall { arguments, .. } => {
             out.extend_from_slice(program.operands(*arguments));
         }
         Rvalue::Builtin { arguments, .. } => out.extend_from_slice(program.operands(*arguments)),
@@ -1960,6 +1982,7 @@ fn check_rvalue(lower: &mut ScanLower<'_>, rvalue: &Rvalue) -> Result<(), Codege
             let _ = rc;
             Ok(())
         }
+        Rvalue::ExternalCall { .. } => Err(unsupported("external call", Some(lower.fn_id))),
         Rvalue::Call { callee, arguments } => {
             match callee {
                 Operand::Function(f) => {
@@ -3690,6 +3713,7 @@ impl<'a> FnLower<'a> {
                 right,
             } => self.emit_binary(fb, left, *operator, right),
             Rvalue::Call { callee, arguments } => self.emit_call(fb, *callee, arguments),
+            Rvalue::ExternalCall { .. } => Err(unsupported("external call", Some(self.fn_id))),
             Rvalue::Builtin { builtin, arguments } => self.emit_builtin(fb, *builtin, arguments),
             Rvalue::Load(place) => self.emit_load_place(fb, *place),
             // List literals are produced by `emit_assign` (the target
@@ -3972,6 +3996,39 @@ impl<'a> FnLower<'a> {
                 "binary operand type mismatch",
                 Some(self.fn_id),
             ));
+        }
+        if lc == Class::I64 && matches!(operator, BinaryOperator::Divide | BinaryOperator::Modulo) {
+            // WASM traps on i64.div_s / i64.rem_s for zero; the L++
+            // contract is the same typed runtime panic as the MIR oracle
+            // (WASI exit 101). `INT_MIN / -1` is also handled explicitly:
+            // use divisor 1 for that pair, yielding the oracle's wrapped
+            // quotient (INT_MIN) and remainder (0), never a host trap.
+            let left = fb.scratch(Val::I64);
+            let right = fb.scratch(Val::I64);
+            let overflow = fb.scratch(Val::I32);
+            let safe_right = fb.scratch(Val::I64);
+            fb.s(right);
+            fb.s(left);
+            fb.g(right).i64c(0).op(op::I64_EQ).if_();
+            fb.i32c(101).call(self.env.proc_exit_import_idx);
+            fb.op(op::UNREACHABLE);
+            fb.end();
+            fb.g(left)
+                .i64c(i64::MIN)
+                .op(op::I64_EQ)
+                .g(right)
+                .i64c(-1)
+                .op(op::I64_EQ)
+                .op(op::I32_AND)
+                .s(overflow);
+            fb.i64c(1).g(right).g(overflow).op(op::SELECT).s(safe_right);
+            fb.g(left).g(safe_right);
+            fb.op(if operator == BinaryOperator::Divide {
+                op::I64_DIV_S
+            } else {
+                op::I64_REM_S
+            });
+            return Ok(Class::I64);
         }
         match (operator, lc) {
             (BinaryOperator::Equal, Class::Ptr) => {
@@ -6028,7 +6085,7 @@ fn emit_helper_body(
             let raw = fb.scratch(Val::I32);
             let len = fb.scratch(Val::I32);
             let out = fb.scratch(Val::I32);
-            fb.i32c(INPUT_CAP).call(idx(H::Alloc)).s(raw);
+            fb.i32c(INPUT_CAP).i32c(0).call(idx(H::ArcAlloc)).s(raw);
             fb.i32c(0).s(len);
             // Read one byte at a time so one input() call cannot consume the
             // following line. The 4096-byte cap is explicit and deterministic.
@@ -6079,6 +6136,7 @@ fn emit_helper_body(
             fb.g(raw);
             fb.g(len);
             fb.memory_copy();
+            fb.g(raw).call(idx(H::Release));
             fb.g(out);
         }
         H::PrintInt => {
@@ -6522,18 +6580,72 @@ fn emit_helper_body(
             fb.g(hptr);
         }
         H::ArcAlloc => {
-            let a = fb.scratch(Val::I32);
-            // a = Alloc(size + 24); header [rc][drop-index][magic "ARC1"]
-            fb.g(0)
-                .i32c(ARC_HEADER)
-                .op(op::I32_ADD)
+            let base = fb.scratch(Val::I32);
+            let total = fb.scratch(Val::I32);
+            let exponent = fb.scratch(Val::I32);
+            // Round each ARC allocation to a power-of-two size class,
+            // with a 32-byte minimum (header + payload). On final
+            // release, blocks return to one of these segregated bins.
+            // The class exponent is packed into the high 32 bits of the
+            // otherwise-unused ARC magic word at header+16; the low word
+            // retains ARC_MAGIC for diagnostics. Free blocks use payload
+            // word 0 as the intrusive next pointer.
+            fb.g(0).i32c(ARC_HEADER).op(op::I32_ADD).s(total);
+            fb.i32c(32)
+                .g(total)
+                .i32c(1)
+                .op(op::I32_SUB)
+                .op(op::I32_CLZ)
+                .op(op::I32_SUB)
+                .s(exponent);
+            // For the smallest request (24-byte header + zero payload),
+            // ceil(log2(24)) is already 5. Reject unrepresentable
+            // >2-GiB nodes rather than wrapping the free-list index.
+            fb.g(exponent)
+                .i32c(ARC_MAX_EXP)
+                .op(op::I32_GT_U)
+                .if_()
+                .op(op::UNREACHABLE)
+                .end();
+
+            // Pop the head of the exact-size class, if present.
+            fb.i32c(0).s(base);
+            for class_index in 0..ARC_FREE_BIN_COUNT {
+                let class_exp = ARC_MIN_EXP + class_index as i64;
+                fb.g(exponent).i32c(class_exp).op(op::I32_EQ).if_();
+                let head_global = ARC_FREE_BIN_BASE + class_index;
+                fb.gget(head_global).s(base);
+                fb.g(base).if_();
+                fb.g(base)
+                    .i32c(ARC_HEADER)
+                    .op(op::I32_ADD)
+                    .load32(0)
+                    .gset(head_global);
+                fb.end();
+                fb.end();
+            }
+            // A miss allocates one class-sized block from the linear
+            // memory bump heap. Same-shape ARC churn reuses in O(1).
+            fb.g(base).op(op::I32_EQZ).if_();
+            fb.i32c(1)
+                .g(exponent)
+                .op(op::I32_SHL)
                 .call(idx(H::Alloc))
-                .s(a);
-            fb.g(a).i64c(1).store64(0);
-            fb.g(a).g(1).op(op::I64_EXTEND_I32_U).store64(8);
-            fb.g(a).i64c(ARC_MAGIC).store64(16);
-            // payload = a + 24
-            fb.g(a).i32c(ARC_HEADER).op(op::I32_ADD);
+                .s(base);
+            fb.end();
+
+            fb.g(base).i64c(1).store64(0);
+            fb.g(base).g(1).op(op::I64_EXTEND_I32_U).store64(8);
+            fb.g(base)
+                .g(exponent)
+                .op(op::I64_EXTEND_I32_U)
+                .i64c(32)
+                .op(op::I64_SHL)
+                .i64c(ARC_MAGIC)
+                .op(op::I64_OR)
+                .store64(16);
+            // payload = base + 24
+            fb.g(base).i32c(ARC_HEADER).op(op::I32_ADD);
         }
         H::Retain => {
             fb.g(0).if_();
@@ -6556,6 +6668,8 @@ fn emit_helper_body(
         H::Release => {
             let rc = fb.scratch(Val::I64);
             let drop_idx = fb.scratch(Val::I32);
+            let base = fb.scratch(Val::I32);
+            let exponent = fb.scratch(Val::I32);
             fb.g(0).if_();
             fb.g(0).i32c(24).op(op::I32_SUB).load64(0).s(rc);
             fb.g(rc).i64c(IMMORTAL_RC).op(op::I64_NE).if_();
@@ -6568,16 +6682,32 @@ fn emit_helper_body(
                 .end();
             fb.g(rc).i64c(1).op(op::I64_EQ).if_();
             // Dying: mark, then dispatch the destructor if present.
-            fb.g(0).i32c(24).op(op::I32_SUB).i64c(0).store64(0);
-            fb.g(0)
-                .i32c(24)
-                .op(op::I32_SUB)
-                .load64(8)
+            fb.g(0).i32c(24).op(op::I32_SUB).s(base);
+            fb.g(base).i64c(0).store64(0);
+            fb.g(base)
+                .load64(16)
+                .i64c(32)
+                .op(op::I64_SHR_U)
                 .op(op::I32_WRAP_I64)
-                .s(drop_idx);
+                .s(exponent);
+            fb.g(base).load64(8).op(op::I32_WRAP_I64).s(drop_idx);
             fb.g(drop_idx).if_();
             fb.g(0).g(drop_idx).call_indirect(env.drop_call_type, 0); // drop table
             fb.end();
+            // Destructor recursion is complete; this block is now safe
+            // to publish to its size-class free list.
+            for class_index in 0..ARC_FREE_BIN_COUNT {
+                let class_exp = ARC_MIN_EXP + class_index as i64;
+                fb.g(exponent).i32c(class_exp).op(op::I32_EQ).if_();
+                let head_global = ARC_FREE_BIN_BASE + class_index;
+                fb.g(base)
+                    .i32c(ARC_HEADER)
+                    .op(op::I32_ADD)
+                    .gget(head_global)
+                    .store32(0);
+                fb.g(base).gset(head_global);
+                fb.end();
+            }
             fb.else_();
             fb.g(0)
                 .i32c(24)
@@ -6862,14 +6992,11 @@ fn emit_helper_body(
                 .g(1)
                 .op(op::I64_ADD)
                 .s(absolute);
-            fb.i32c(29).call(idx(H::Alloc)).s(base);
-            fb.g(base).i64c(IMMORTAL_RC).store64(0);
-            fb.g(base).i64c(0).store64(8);
-            fb.g(base).i64c(ARC_MAGIC).store64(16);
-            fb.g(base)
+            fb.i32c(5).i32c(0).call(idx(H::ArcAlloc)).s(payload);
+            fb.g(payload)
                 .i32c(STR_HEADER as i64)
-                .op(op::I32_ADD)
-                .s(payload);
+                .op(op::I32_SUB)
+                .s(base);
             fb.g(payload).i32c(1).store32(0);
             fb.g(payload).i32c(4).op(op::I32_ADD);
             fb.g(source)
@@ -6893,19 +7020,17 @@ fn emit_helper_body(
             fb.g(0).load32(SLICE_BASE as u32).s(source);
             fb.g(0).load64(SLICE_START as u32).s(start);
             fb.g(0).load64(SLICE_LEN as u32).s(length);
-            fb.i32c(28)
+            fb.i32c(4)
                 .g(length)
                 .op(op::I32_WRAP_I64)
                 .op(op::I32_ADD)
-                .call(idx(H::Alloc))
-                .s(base);
-            fb.g(base).i64c(IMMORTAL_RC).store64(0);
-            fb.g(base).i64c(0).store64(8);
-            fb.g(base).i64c(ARC_MAGIC).store64(16);
-            fb.g(base)
-                .i32c(STR_HEADER as i64)
-                .op(op::I32_ADD)
+                .i32c(0)
+                .call(idx(H::ArcAlloc))
                 .s(payload);
+            fb.g(payload)
+                .i32c(STR_HEADER as i64)
+                .op(op::I32_SUB)
+                .s(base);
             fb.g(payload).g(length).op(op::I32_WRAP_I64).store32(0);
             fb.i64c(0).s(i);
             fb.loop_();
@@ -7271,18 +7396,21 @@ fn emit_helper_body(
             let lb = fb.scratch(Val::I32);
             let rlen = fb.scratch(Val::I32);
             let base = fb.scratch(Val::I32);
+            let string_payload = fb.scratch(Val::I32);
             let i = fb.scratch(Val::I32);
             fb.g(0).load32(0).s(la);
             fb.g(1).load32(0).s(lb);
             fb.g(la).g(lb).op(op::I32_ADD).s(rlen);
-            fb.i32c(28)
+            fb.i32c(4)
                 .g(rlen)
                 .op(op::I32_ADD)
-                .call(idx(H::Alloc))
+                .i32c(0)
+                .call(idx(H::ArcAlloc))
+                .s(string_payload);
+            fb.g(string_payload)
+                .i32c(STR_HEADER as i64)
+                .op(op::I32_SUB)
                 .s(base);
-            fb.g(base).i64c(IMMORTAL_RC).store64(0);
-            fb.g(base).i64c(0).store64(8);
-            fb.g(base).i64c(ARC_MAGIC).store64(16);
             fb.g(base).g(rlen).store32(24);
             // left bytes
             fb.i32c(0).s(i);
@@ -7928,6 +8056,7 @@ fn emit_helper_body(
             let m = fb.scratch(Val::I32);
             let rlen = fb.scratch(Val::I32);
             let base = fb.scratch(Val::I32);
+            let string_payload = fb.scratch(Val::I32);
             let k = fb.scratch(Val::I32);
             let o = fb.scratch(Val::I32);
             let ca = fb.scratch(Val::I32);
@@ -7988,14 +8117,16 @@ fn emit_helper_body(
             fb.br(1); // $p1
             fb.end(); // $p1in
             fb.end(); // $p1
-            fb.i32c(28)
+            fb.i32c(4)
                 .g(rlen)
                 .op(op::I32_ADD)
-                .call(idx(H::Alloc))
+                .i32c(0)
+                .call(idx(H::ArcAlloc))
+                .s(string_payload);
+            fb.g(string_payload)
+                .i32c(STR_HEADER as i64)
+                .op(op::I32_SUB)
                 .s(base);
-            fb.g(base).i64c(IMMORTAL_RC).store64(0);
-            fb.g(base).i64c(0).store64(8);
-            fb.g(base).i64c(ARC_MAGIC).store64(16);
             fb.g(base).g(rlen).store32(24);
             // Pass 2: the copy.
             fb.i32c(0).s(i);
@@ -8081,6 +8212,7 @@ fn emit_helper_body(
             let j = fb.scratch(Val::I32);
             let rlen = fb.scratch(Val::I32);
             let base = fb.scratch(Val::I32);
+            let string_payload = fb.scratch(Val::I32);
             let c = fb.scratch(Val::I32);
             let k = fb.scratch(Val::I32);
             fb.g(0).load32(0).s(la);
@@ -8157,14 +8289,16 @@ fn emit_helper_body(
             fb.g(rlen).i32c(0).op(op::I32_LT_S).if_();
             fb.i32c(0).s(rlen);
             fb.end();
-            fb.i32c(28)
+            fb.i32c(4)
                 .g(rlen)
                 .op(op::I32_ADD)
-                .call(idx(H::Alloc))
+                .i32c(0)
+                .call(idx(H::ArcAlloc))
+                .s(string_payload);
+            fb.g(string_payload)
+                .i32c(STR_HEADER as i64)
+                .op(op::I32_SUB)
                 .s(base);
-            fb.g(base).i64c(IMMORTAL_RC).store64(0);
-            fb.g(base).i64c(0).store64(8);
-            fb.g(base).i64c(ARC_MAGIC).store64(16);
             fb.g(base).g(rlen).store32(24);
             fb.i32c(0).s(k);
             fb.loop_(); // $cp
@@ -8188,17 +8322,20 @@ fn emit_helper_body(
         H::StrLower => {
             let la = fb.scratch(Val::I32);
             let base = fb.scratch(Val::I32);
+            let string_payload = fb.scratch(Val::I32);
             let i = fb.scratch(Val::I32);
             let c = fb.scratch(Val::I32);
             fb.g(0).load32(0).s(la);
-            fb.i32c(28)
+            fb.i32c(4)
                 .g(la)
                 .op(op::I32_ADD)
-                .call(idx(H::Alloc))
+                .i32c(0)
+                .call(idx(H::ArcAlloc))
+                .s(string_payload);
+            fb.g(string_payload)
+                .i32c(STR_HEADER as i64)
+                .op(op::I32_SUB)
                 .s(base);
-            fb.g(base).i64c(IMMORTAL_RC).store64(0);
-            fb.g(base).i64c(0).store64(8);
-            fb.g(base).i64c(ARC_MAGIC).store64(16);
             fb.g(base).g(la).store32(24);
             fb.i32c(0).s(i);
             fb.loop_(); // $c
@@ -8231,17 +8368,20 @@ fn emit_helper_body(
         H::StrUpper => {
             let la = fb.scratch(Val::I32);
             let base = fb.scratch(Val::I32);
+            let string_payload = fb.scratch(Val::I32);
             let i = fb.scratch(Val::I32);
             let c = fb.scratch(Val::I32);
             fb.g(0).load32(0).s(la);
-            fb.i32c(28)
+            fb.i32c(4)
                 .g(la)
                 .op(op::I32_ADD)
-                .call(idx(H::Alloc))
+                .i32c(0)
+                .call(idx(H::ArcAlloc))
+                .s(string_payload);
+            fb.g(string_payload)
+                .i32c(STR_HEADER as i64)
+                .op(op::I32_SUB)
                 .s(base);
-            fb.g(base).i64c(IMMORTAL_RC).store64(0);
-            fb.g(base).i64c(0).store64(8);
-            fb.g(base).i64c(ARC_MAGIC).store64(16);
             fb.g(base).g(la).store32(24);
             fb.i32c(0).s(i);
             fb.loop_(); // $c
@@ -8277,6 +8417,7 @@ fn emit_helper_body(
             let cnt = fb.scratch(Val::I32);
             let rlen = fb.scratch(Val::I32);
             let base = fb.scratch(Val::I32);
+            let string_payload = fb.scratch(Val::I32);
             let pos = fb.scratch(Val::I32);
             let d = fb.scratch(Val::I32);
             let u2 = fb.scratch(Val::I64);
@@ -8297,14 +8438,16 @@ fn emit_helper_body(
             fb.end(); // $dci
             fb.end(); // $dc
             fb.g(cnt).g(neg).op(op::I32_ADD).s(rlen);
-            fb.i32c(28)
+            fb.i32c(4)
                 .g(rlen)
                 .op(op::I32_ADD)
-                .call(idx(H::Alloc))
+                .i32c(0)
+                .call(idx(H::ArcAlloc))
+                .s(string_payload);
+            fb.g(string_payload)
+                .i32c(STR_HEADER as i64)
+                .op(op::I32_SUB)
                 .s(base);
-            fb.g(base).i64c(IMMORTAL_RC).store64(0);
-            fb.g(base).i64c(0).store64(8);
-            fb.g(base).i64c(ARC_MAGIC).store64(16);
             fb.g(base).g(rlen).store32(24);
             fb.i32c(28)
                 .g(rlen)
@@ -8337,6 +8480,7 @@ fn emit_helper_body(
             let cnt = fb.scratch(Val::I32);
             let rlen = fb.scratch(Val::I32);
             let base = fb.scratch(Val::I32);
+            let string_payload = fb.scratch(Val::I32);
             let pos = fb.scratch(Val::I32);
             let d = fb.scratch(Val::I32);
             fb.g(0).s(u);
@@ -8350,14 +8494,16 @@ fn emit_helper_body(
             fb.end(); // $dci
             fb.end(); // $dc
             fb.g(cnt).s(rlen);
-            fb.i32c(28)
+            fb.i32c(4)
                 .g(rlen)
                 .op(op::I32_ADD)
-                .call(idx(H::Alloc))
+                .i32c(0)
+                .call(idx(H::ArcAlloc))
+                .s(string_payload);
+            fb.g(string_payload)
+                .i32c(STR_HEADER as i64)
+                .op(op::I32_SUB)
                 .s(base);
-            fb.g(base).i64c(IMMORTAL_RC).store64(0);
-            fb.g(base).i64c(0).store64(8);
-            fb.g(base).i64c(ARC_MAGIC).store64(16);
             fb.g(base).g(rlen).store32(24);
             fb.i32c(28)
                 .g(rlen)
@@ -8385,6 +8531,7 @@ fn emit_helper_body(
             let cnt = fb.scratch(Val::I32);
             let rlen = fb.scratch(Val::I32);
             let base = fb.scratch(Val::I32);
+            let string_payload = fb.scratch(Val::I32);
             let pos = fb.scratch(Val::I32);
             let d = fb.scratch(Val::I32);
             fb.g(0).s(u);
@@ -8398,14 +8545,16 @@ fn emit_helper_body(
             fb.end(); // $dci
             fb.end(); // $dc
             fb.g(cnt).s(rlen);
-            fb.i32c(28)
+            fb.i32c(4)
                 .g(rlen)
                 .op(op::I32_ADD)
-                .call(idx(H::Alloc))
+                .i32c(0)
+                .call(idx(H::ArcAlloc))
+                .s(string_payload);
+            fb.g(string_payload)
+                .i32c(STR_HEADER as i64)
+                .op(op::I32_SUB)
                 .s(base);
-            fb.g(base).i64c(IMMORTAL_RC).store64(0);
-            fb.g(base).i64c(0).store64(8);
-            fb.g(base).i64c(ARC_MAGIC).store64(16);
             fb.g(base).g(rlen).store32(24);
             fb.i32c(28)
                 .g(rlen)
@@ -8437,18 +8586,21 @@ fn emit_helper_body(
             let f = lit("false");
             let len = fb.scratch(Val::I32);
             let base = fb.scratch(Val::I32);
+            let string_payload = fb.scratch(Val::I32);
             let src = fb.scratch(Val::I32);
             let k = fb.scratch(Val::I32);
             // "true" = 4 chars, "false" = 5 chars: len = 5 - v
             fb.i32c(5).g(0).op(op::I32_SUB).s(len);
-            fb.i32c(28)
+            fb.i32c(4)
                 .g(len)
                 .op(op::I32_ADD)
-                .call(idx(H::Alloc))
+                .i32c(0)
+                .call(idx(H::ArcAlloc))
+                .s(string_payload);
+            fb.g(string_payload)
+                .i32c(STR_HEADER as i64)
+                .op(op::I32_SUB)
                 .s(base);
-            fb.g(base).i64c(IMMORTAL_RC).store64(0);
-            fb.g(base).i64c(0).store64(8);
-            fb.g(base).i64c(ARC_MAGIC).store64(16);
             fb.g(base).g(len).store32(24);
             fb.i32c(t as i64);
             fb.i32c(f as i64);
@@ -8785,6 +8937,7 @@ fn emit_helper_body(
             let pos = fb.scratch(Val::I32);
             let rlen = fb.scratch(Val::I32);
             let base = fb.scratch(Val::I32);
+            let string_payload = fb.scratch(Val::I32);
             let exp = fb.scratch(Val::I32);
             let t = fb.scratch(Val::F64);
             let sigval = fb.scratch(Val::I64);
@@ -9071,14 +9224,16 @@ fn emit_helper_body(
             fb.end(); // NaN
             // ── epilogue: the scratch became the string ──
             fb.g(pos).s(rlen);
-            fb.i32c(28)
+            fb.i32c(4)
                 .g(rlen)
                 .op(op::I32_ADD)
-                .call(idx(H::Alloc))
+                .i32c(0)
+                .call(idx(H::ArcAlloc))
+                .s(string_payload);
+            fb.g(string_payload)
+                .i32c(STR_HEADER as i64)
+                .op(op::I32_SUB)
                 .s(base);
-            fb.g(base).i64c(IMMORTAL_RC).store64(0);
-            fb.g(base).i64c(0).store64(8);
-            fb.g(base).i64c(ARC_MAGIC).store64(16);
             fb.g(base).g(rlen).store32(24);
             fb.i32c(0).s(k);
             fb.loop_(); // $cp
@@ -9194,11 +9349,16 @@ fn list_push_body(fb: &mut FB, idx: impl Fn(H) -> u32, is_f64: bool, is_ptr: boo
         .op(op::UNREACHABLE)
         .end();
     // newdata = Alloc(newcap * 8); copy oldcap * 8 bytes
+    // The list's backing store is internal heap memory with the same
+    // lifecycle as the list. Allocate it as a no-destructor ARC block
+    // so final list drop and subsequent growth can return it to the
+    // shared size-class free bins.
     fb.g(newcap)
         .i64c(8)
         .op(op::I64_MUL)
         .op(op::I32_WRAP_I64)
-        .call(idx(H::Alloc))
+        .i32c(0)
+        .call(idx(H::ArcAlloc))
         .s(newdata);
     fb.g(newdata)
         .g(data)
@@ -9207,6 +9367,9 @@ fn list_push_body(fb: &mut FB, idx: impl Fn(H) -> u32, is_f64: bool, is_ptr: boo
         .op(op::I64_MUL)
         .op(op::I32_WRAP_I64)
         .memory_copy();
+    // The new buffer owns a copied bitwise representation of the live
+    // slots; after the copy the old backing block is no longer reachable.
+    fb.g(data).call(idx(H::Release));
     fb.g(0)
         .g(newdata)
         .op(op::I64_EXTEND_I32_U)
@@ -9339,6 +9502,12 @@ fn lower_list_destructor(
     fb.end(); // $d
     fb.end(); // $done
     fb.end(); // if
+    // Release the backing array even when the list stores scalars (or
+    // is empty). List data is an ARC block with a zero drop index.
+    fb.g(0)
+        .load64(LIST_DATA as u32)
+        .op(op::I32_WRAP_I64)
+        .call(release_idx);
     Ok((
         "lpp_drop_list".to_string(),
         vec![Val::I32],

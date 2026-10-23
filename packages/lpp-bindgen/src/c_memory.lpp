@@ -4,8 +4,9 @@
 # allocation identity, byte offset, subobject bounds, generation, mutability and
 # element width. Allocation descriptors remain as small tombstones until the
 # explicit context is destroyed, allowing deterministic stale/double-free checks.
-# The context header itself remains as a tiny destroyed tombstone so copied
-# CMemory/CPtr values fail deterministically instead of touching freed metadata.
+# The context header remains as a tiny destroyed tombstone until process
+# shutdown so copied CMemory/CPtr values fail deterministically; the runtime
+# reclaims that header at exit.
 
 struct CMemory:
     handle: Int
@@ -26,7 +27,6 @@ const C_MEM_CONTEXT_STATE_OFFSET = 48
 const C_MEM_CONTEXT_BYTES = 56
 const C_MEM_CONTEXT_ALIVE = 1
 const C_MEM_CONTEXT_DESTROYED = 0
-
 
 def c_mem_panic(reason: Str) -> Void:
     print_str(str_concat("c2lpp C memory violation: ", reason))
@@ -540,6 +540,7 @@ def c_memory_destroy(memory: CMemory) -> Void:
     c_mem_set64(memory.handle, 32, 0)
     c_mem_set64(memory.handle, 40, 0)
     c_mem_set64(memory.handle, C_MEM_CONTEXT_STATE_OFFSET, C_MEM_CONTEXT_DESTROYED)
+    buf_free_at_exit(memory.handle)
 
 
 def c_load_u8(pointer: CPtr) -> Int:

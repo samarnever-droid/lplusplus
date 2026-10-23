@@ -124,6 +124,12 @@ lpp build && lpp run
 
 ## Language Overview
 
+### Logical evaluation
+
+Logical `&&` and `||` (also spelled `and` and `or`) evaluate left to right and
+short-circuit: `false && rhs` does not evaluate `rhs`, and `true || rhs` does not
+evaluate `rhs`. Use bitwise `&` and `|` for eager integer bit operations.
+
 ### Variables & Types
 
 ```lpp

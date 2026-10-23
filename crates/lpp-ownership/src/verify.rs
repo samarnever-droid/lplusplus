@@ -541,6 +541,10 @@ fn mark_block_recursively(
                     arguments: captures,
                     ..
                 }
+                | Rvalue::ExternalCall {
+                    arguments: captures,
+                    ..
+                }
                 // v1 container/print operations lower to builtin
                 // calls; per-builtin retention is not modeled, so
                 // every builtin value argument escapes.

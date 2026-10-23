@@ -363,6 +363,73 @@ impl Verifier<'_> {
                 }
                 Some(result)
             }
+            Rvalue::ExternalCall {
+                function: external_id,
+                arguments,
+            } => {
+                let Some(external) = self.program.external_function(external_id) else {
+                    self.push(
+                        function,
+                        Some(block),
+                        Some(instruction),
+                        origin,
+                        MirVerificationErrorKind::MissingReference(MirEntity::ExternalFunction(
+                            external_id,
+                        )),
+                    );
+                    return None;
+                };
+                let external_ty = external.ty;
+                let TypeKind::Function { parameters, result } = self.types.kind(external_ty) else {
+                    self.push(
+                        function,
+                        Some(block),
+                        Some(instruction),
+                        origin,
+                        MirVerificationErrorKind::InvalidFunctionType(external_ty),
+                    );
+                    return None;
+                };
+                let expected = self.types.list(parameters);
+                let actual = self.program.operands(arguments);
+                if expected.len() != actual.len() {
+                    self.push(
+                        function,
+                        Some(block),
+                        Some(instruction),
+                        origin,
+                        MirVerificationErrorKind::ArityMismatch {
+                            expected: expected.len(),
+                            actual: actual.len(),
+                        },
+                    );
+                    return None;
+                }
+                for (expected, operand) in expected.iter().zip(actual) {
+                    let actual = self.operand_type(
+                        function,
+                        block,
+                        Some(instruction),
+                        origin,
+                        *operand,
+                        locals,
+                    )?;
+                    if actual != *expected {
+                        self.push(
+                            function,
+                            Some(block),
+                            Some(instruction),
+                            origin,
+                            MirVerificationErrorKind::TypeMismatch {
+                                expected: *expected,
+                                actual,
+                            },
+                        );
+                        return None;
+                    }
+                }
+                Some(result)
+            }
             Rvalue::Builtin { builtin, arguments } => {
                 let descriptor = builtin.descriptor();
                 let expected = descriptor.semantic_parameters;

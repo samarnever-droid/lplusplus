@@ -1423,6 +1423,7 @@ int64_t lpp_list_len(void *raw) {
     return list ? list->len : 0;
 }
 
+void lpp_panic_div_zero(void) { lpp_exit(101); }
 int64_t lpp_list_pop(void *raw) {
     LppList *list = (LppList *)raw;
     if (!list || list->len <= 0) lpp_exit(101);
@@ -2736,6 +2737,8 @@ int64_t lpp_str_cmp(const char *a, const char *b) { if(a==b)return 0; if(!a)retu
 /* ── Buffers ── */
 int64_t lpp_buf_alloc(int64_t size) { if(size<=0)size=64; int64_t t=size+8; void*m=lpp_sys_mmap(lpp_page_round((uint64_t)t)); if(!m)return 0; *(int64_t*)m=size; return(int64_t)(uintptr_t)((char*)m+8); }
 void lpp_buf_free(void*p) { if(!p)return; char*b=(char*)p-8; int64_t s=*(int64_t*)b; lpp_sys_munmap(b,lpp_page_round((uint64_t)(s+8))); }
+/* The OS reclaims stale-context tombstones when this freestanding process exits. */
+void lpp_buf_free_at_exit(int64_t p) { (void)p; }
 int64_t lpp_buf_len(void*p) { if(!p)return 0; return*(int64_t*)((char*)p-8); }
 int64_t lpp_buf_get8(void*p,int64_t o) { if(!p)return 0; return(int64_t)(unsigned char)((char*)p)[o]; }
 void lpp_buf_set8(void*p,int64_t o,int64_t v) { if(!p)return; ((char*)p)[o]=(char)(v&0xFF); }

@@ -129,6 +129,7 @@ pub mod op {
     pub const F64_GT: u8 = 0x64;
     pub const F64_LE: u8 = 0x65;
     pub const F64_GE: u8 = 0x66;
+    pub const I32_CLZ: u8 = 0x67;
     pub const I32_ADD: u8 = 0x6a;
     pub const I32_SUB: u8 = 0x6b;
     pub const I32_MUL: u8 = 0x6c;

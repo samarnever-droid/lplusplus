@@ -1109,7 +1109,10 @@ struct CForHeader:
 
 
 def c_for_invalid(cursor: CLexCursor, reason: Str, span: CSourceSpan) -> CForHeader:
-    invalid_expr := CExprIR(C_IR_EXPR_INVALID, C_IR_TYPE_INVALID, "", "", "", "", 0, 0, 0, 0, span, 0)
+    # Both results own their provenance span, so duplicate its path before
+    # moving one copy into the invalid expression.
+    expr_span := CSourceSpan(str_concat(span.path, ""), span.start_offset, span.end_offset, span.line, span.column)
+    invalid_expr := CExprIR(C_IR_EXPR_INVALID, C_IR_TYPE_INVALID, "", "", "", "", 0, 0, 0, 0, expr_span, 0)
     return CForHeader("", "", "", invalid_expr, "", cursor, 0, reason, span)
 
 
@@ -1914,9 +1917,10 @@ def c_skip_decl_or_function(cursor: CLexCursor) -> CLexCursor:
 def c_parse_function_signature_known(cursor: CLexCursor, aliases: Str) -> CFunctionSignature:
     parsed_type := c_parse_type_known(cursor, aliases)
     invalid_type := c_parse_invalid_type(cursor)
-    invalid_params := CParamsParse("", "", "", "", 0, cursor, 0, "")
+    invalid_params := CParamsParse("", "", "", "", 0, c_lex_cursor_clone(cursor), 0, "")
     if parsed_type.c_type.valid == 0:
-        return CFunctionSignature("", invalid_type, invalid_params, cursor, 0, "C2-SIGNATURE-RETURN-TYPE", c_parse_empty_span(cursor))
+        empty_span := c_parse_empty_span(cursor)
+        return CFunctionSignature("", invalid_type, invalid_params, cursor, 0, "C2-SIGNATURE-RETURN-TYPE", empty_span)
     mut return_kind := parsed_type.c_type.kind
     mut return_c_spelling := parsed_type.c_type.c_spelling
     mut return_lpp_spelling := parsed_type.c_type.lpp_spelling

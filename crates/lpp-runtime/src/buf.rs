@@ -4,6 +4,8 @@
 //! A buffer handle (`i64`) points to the start of the 8-byte size header.
 
 use libc::{c_char, c_void, calloc, free, strlen};
+use std::sync::Once;
+use std::sync::atomic::{AtomicPtr, Ordering};
 
 use crate::arc::lpp_empty_str;
 use crate::string::arc_string;
@@ -46,6 +48,49 @@ pub unsafe extern "C" fn lpp_buf_alloc(size: i64) -> i64 {
 pub unsafe extern "C" fn lpp_buf_free(ptr: i64) {
     if ptr != 0 {
         unsafe { free(ptr as usize as *mut c_void) };
+    }
+}
+
+// Destroyed CMemory contexts must remain readable while stale CPtr copies may
+// exist. Intrusive linking in the dead context's first payload word avoids a
+// second allocation; the process-exit hook frees the tombstones for LSan.
+static DEFERRED_BUF_HEAD: AtomicPtr<u8> = AtomicPtr::new(std::ptr::null_mut());
+static DEFERRED_BUF_EXIT_HOOK: Once = Once::new();
+
+extern "C" fn release_deferred_buffers() {
+    let mut current = DEFERRED_BUF_HEAD.swap(std::ptr::null_mut(), Ordering::AcqRel);
+    while !current.is_null() {
+        let next = unsafe { *(current.add(8) as *const *mut u8) };
+        unsafe { free(current.cast::<c_void>()) };
+        current = next;
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lpp_buf_free_at_exit(ptr: i64) {
+    if ptr == 0 {
+        return;
+    }
+    DEFERRED_BUF_EXIT_HOOK.call_once(|| {
+        // If registration fails, the static intrusive list remains reachable
+        // until OS process teardown; the stale-handle check remains valid.
+        let _ = unsafe { libc::atexit(release_deferred_buffers) };
+    });
+
+    let header = ptr as usize as *mut u8;
+    let next_slot = unsafe { header.add(8) as *mut *mut u8 };
+    let mut head = DEFERRED_BUF_HEAD.load(Ordering::Acquire);
+    loop {
+        unsafe { next_slot.write(head) };
+        match DEFERRED_BUF_HEAD.compare_exchange_weak(
+            head,
+            header,
+            Ordering::Release,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => break,
+            Err(observed) => head = observed,
+        }
     }
 }
 

@@ -93,6 +93,17 @@ impl FunctionBuilder<'_, '_> {
                     // expression; any other definition is a function value.
                     if let Some(value) = self.const_value(definition) {
                         self.lower_expression(value, next_depth)
+                    } else if self
+                        .core
+                        .definition_items
+                        .get(definition.index())
+                        .and_then(|item| *item)
+                        .is_some_and(|item| self.core.is_external_function(item))
+                    {
+                        Err(self.core.error(
+                            expression.origin,
+                            MirBuildErrorKind::Unsupported(UnsupportedConstruct::ExternalFunction),
+                        ))
                     } else {
                         self.lower_function_name(expression_id, definition, None)
                             .map(Operand::Function)
@@ -116,17 +127,31 @@ impl FunctionBuilder<'_, '_> {
                 operator,
                 right,
             } => {
-                let left = self.lower_expression(left, next_depth)?;
-                let right = self.lower_expression(right, next_depth)?;
-                self.assign_temporary(
-                    ty,
-                    Rvalue::Binary {
+                if matches!(
+                    operator,
+                    lpp_hir::BinaryOperator::LogicalAnd | lpp_hir::BinaryOperator::LogicalOr
+                ) {
+                    self.lower_short_circuit(
+                        ty,
                         left,
                         operator,
                         right,
-                    },
-                    expression.origin,
-                )
+                        next_depth,
+                        expression.origin,
+                    )
+                } else {
+                    let left = self.lower_expression(left, next_depth)?;
+                    let right = self.lower_expression(right, next_depth)?;
+                    self.assign_temporary(
+                        ty,
+                        Rvalue::Binary {
+                            left,
+                            operator,
+                            right,
+                        },
+                        expression.origin,
+                    )
+                }
             }
             ExpressionKind::Tuple(elements) => {
                 let elements = self.core.package.expressions(elements).to_vec();
@@ -305,6 +330,48 @@ impl FunctionBuilder<'_, '_> {
                 )
             }
         }
+    }
+
+    fn lower_short_circuit(
+        &mut self,
+        ty: TypeId,
+        left_expression: ExprId,
+        operator: lpp_hir::BinaryOperator,
+        right_expression: ExprId,
+        depth: usize,
+        origin: OriginId,
+    ) -> Result<Operand, MirBuildError> {
+        let left = self.lower_expression(left_expression, depth)?;
+        let rhs_block = self.new_block(origin)?;
+        let short_block = self.new_block(origin)?;
+        let join_block = self.new_block(origin)?;
+        let result = self.temporary(ty, origin)?;
+        let (then_block, else_block, short_value) = match operator {
+            lpp_hir::BinaryOperator::LogicalAnd => (rhs_block, short_block, false),
+            lpp_hir::BinaryOperator::LogicalOr => (short_block, rhs_block, true),
+            _ => unreachable!("only logical operators use short-circuit lowering"),
+        };
+        self.terminate(DraftTerminator::Branch {
+            condition: left,
+            then_block,
+            else_block,
+        });
+
+        self.current = Some(short_block);
+        self.emit(
+            result,
+            Rvalue::Use(Operand::Constant(Constant::Bool(short_value))),
+            origin,
+        )?;
+        self.terminate(DraftTerminator::Goto(join_block));
+
+        self.current = Some(rhs_block);
+        let right = self.lower_expression(right_expression, depth)?;
+        self.emit(result, Rvalue::Use(right), origin)?;
+        self.terminate(DraftTerminator::Goto(join_block));
+
+        self.current = Some(join_block);
+        Ok(Operand::Copy(result))
     }
 
     fn lower_try(
@@ -558,6 +625,31 @@ impl FunctionBuilder<'_, '_> {
                 }
             };
             return self.assign_temporary(result_type, value, origin);
+        }
+
+        if let Some(definition) = self.core.package.expression_definition(callee)
+            && let Some(item) = self
+                .core
+                .definition_items
+                .get(definition.index())
+                .and_then(|item| *item)
+            && self.core.is_external_function(item)
+        {
+            if explicit_arguments.is_some() {
+                return Err(self
+                    .core
+                    .error(origin, MirBuildErrorKind::UnsupportedExternalSignature));
+            }
+            let function = self.core.register_external_function(item, origin)?;
+            let arguments = self.lower_arguments(arguments, origin, depth)?;
+            return self.assign_temporary(
+                result_type,
+                Rvalue::ExternalCall {
+                    function,
+                    arguments,
+                },
+                origin,
+            );
         }
 
         if let Some(fixed) = self.variadic_fixed_arity(callee) {

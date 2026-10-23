@@ -396,3 +396,17 @@ fn cycle_through_structural_tuple_is_collected() {
         "cycle through tuple must be collected, got {stats:?}"
     );
 }
+
+#[test]
+fn cycle_through_list_of_tuples_is_collected() {
+    // N -> List[(N, Int)] -> tuple -> N: tuples are valid list
+    // elements, and the collector must see through both layers.
+    let source = "struct N:\n    id: Int\n    links: List[(N, Int)]\n\ndef main() -> Int:\n    mut a := N(1, [])\n    mut b := N(2, [])\n    list_push(a.links, (b, 10))\n    bb := list_get(a.links, 0).0\n    list_push(bb.links, (a, 20))\n    return list_get(bb.links, 0).0.id + bb.id\n";
+    let (outcome, stats, _collectible) = run(source);
+    assert_eq!(int(&outcome), 3);
+    assert_eq!(stats.pinned_live, 0);
+    assert!(
+        stats.collected >= 2,
+        "cycle through list-of-tuples must be collected, got {stats:?}"
+    );
+}

@@ -62,6 +62,18 @@ impl MemoryFileSystem {
             files: BTreeMap::from([(PathBuf::from(format!("{root}/main.lpp")), source.to_owned())]),
         }
     }
+
+    fn with_bindings(main: &str, bindings: &str, root: &str) -> Self {
+        Self {
+            files: BTreeMap::from([
+                (PathBuf::from(format!("{root}/main.lpp")), main.to_owned()),
+                (
+                    PathBuf::from(format!("{root}/bindings.lpp")),
+                    bindings.to_owned(),
+                ),
+            ]),
+        }
+    }
 }
 
 impl FileSystem for MemoryFileSystem {
@@ -95,14 +107,34 @@ impl NameResolver for Names<'_> {
 
 fn pipeline(source: &str) -> (MirProgram, TypeInterner, lpp_hir::HirPackage) {
     let filesystem = MemoryFileSystem::new(source, "/p5c2");
+    pipeline_from_filesystem(filesystem)
+}
+
+fn pipeline_with_bindings(
+    main: &str,
+    bindings: &str,
+) -> (MirProgram, TypeInterner, lpp_hir::HirPackage) {
+    let filesystem = MemoryFileSystem::with_bindings(main, bindings, "/p5c2");
+    pipeline_from_filesystem_mode(filesystem, ResolutionMode::LegacyFlat)
+}
+
+fn pipeline_from_filesystem(
+    filesystem: MemoryFileSystem,
+) -> (MirProgram, TypeInterner, lpp_hir::HirPackage) {
+    pipeline_from_filesystem_mode(filesystem, ResolutionMode::Namespaced)
+}
+
+fn pipeline_from_filesystem_mode(
+    filesystem: MemoryFileSystem,
+    resolution_mode: ResolutionMode,
+) -> (MirProgram, TypeInterner, lpp_hir::HirPackage) {
     let graph = GraphBuilder::new(&filesystem)
         .build(GraphRequest::new(
             "/p5c2/main.lpp",
             PackageSpec::new("p5c2", "/p5c2"),
         ))
         .unwrap_or_else(|e| panic!("graph: {e:?}"));
-    let package = lower_package(&graph, ResolutionMode::Namespaced)
-        .unwrap_or_else(|e| panic!("lower: {e:?}"));
+    let package = lower_package(&graph, resolution_mode).unwrap_or_else(|e| panic!("lower: {e:?}"));
     let mut types = infer_hir_package(&package, ShadowInferenceOptions::default())
         .unwrap_or_else(|e| panic!("type stage: {e:?}"));
     let program = build_mir(
@@ -1181,15 +1213,15 @@ fn builtin_table_census_and_family_d_rejection_are_exact() {
     }
     assert_eq!(
         builtins.len(),
-        532,
-        "the registry must enumerate 532 builtins"
+        533,
+        "the registry must enumerate 533 builtins"
     );
     assert_eq!(counts[0], 110, "family A ids (71 names, dual spellings)");
     assert_eq!(counts[1], 19, "family B ids (18 names + the checksum dual)");
     assert_eq!(counts[2], 7, "family C ids");
     // Family MAP: the hash map runtime, now lowered natively (was Family D).
     assert_eq!(counts[4], 30, "family MAP ids (hash map runtime)");
-    assert_eq!(counts[3], 366, "remaining builtin ids");
+    assert_eq!(counts[3], 367, "remaining builtin ids");
     assert_eq!(
         counts.iter().sum::<usize>(),
         builtins.len(),
@@ -1290,4 +1322,105 @@ def main() -> Int:
             "expected imported symbol {sym}"
         );
     }
+}
+
+#[test]
+fn imported_external_declarations_resolve_and_record_native_dependencies() {
+    let bindings = concat!(
+        "pub extern \"C\" link \"sqlite3\":\n",
+        "    def sqlite3_libversion() -> Str\n",
+        "    def sqlite3_libversion_number() -> Int\n",
+    );
+    let main = concat!(
+        "import bindings\n",
+        "def main():\n",
+        "    print(sqlite3_libversion())\n",
+        "    print(sqlite3_libversion_number())\n",
+    );
+    let (program, types, package) = pipeline_with_bindings(main, bindings);
+
+    assert_eq!(program.external_function_count(), 2);
+    assert_eq!(program.link_libraries(), vec!["sqlite3".to_string()]);
+    let names = Names(&package.names.symbols);
+    let module = compile(&program, &types, &names);
+    assert!(module.imported_symbols.contains("sqlite3_libversion"));
+    assert!(
+        module
+            .imported_symbols
+            .contains("sqlite3_libversion_number")
+    );
+    assert_eq!(module.link_libraries, vec!["sqlite3".to_string()]);
+}
+
+#[test]
+fn external_call_symbols_and_link_libraries_are_reported() {
+    let source = concat!(
+        "extern \"C\" link \"z\":\n",
+        "    def zlibVersion() -> Str\n",
+        "extern \"C\" link \"m\":\n",
+        "    def cos(value: Float) -> Float\n",
+        "    def sin(value: Float) -> Float\n",
+        "def main():\n",
+        "    print(zlibVersion())\n",
+        "    print(cos(0.0))\n",
+        "    print(sin(0.0))\n",
+    );
+    let (program, types, package) = pipeline(source);
+    let names = Names(&package.names.symbols);
+    let module = compile(&program, &types, &names);
+
+    assert_eq!(
+        module.link_libraries,
+        vec!["m".to_string(), "z".to_string()]
+    );
+    assert!(module.imported_symbols.contains("zlibVersion"));
+    assert!(module.imported_symbols.contains("cos"));
+    assert!(module.imported_symbols.contains("sin"));
+    assert!(module.imported_symbols.contains("lpp_empty_str"));
+    assert!(module.imported_symbols.contains("lpp_str_concat"));
+}
+
+#[test]
+fn external_c_string_arguments_are_borrowed_from_managed_payloads() {
+    let source = concat!(
+        "extern \"C\":\n",
+        "    def lpp_test_external_string_length(value: Str) -> Int\n",
+        "def main():\n",
+        "    value := \"foreign-\" + \"borrowed\"\n",
+        "    print(lpp_test_external_string_length(value))\n",
+    );
+    let (program, types, package) = pipeline(source);
+    let names = Names(&package.names.symbols);
+    let module = compile(&program, &types, &names);
+    assert!(
+        module
+            .imported_symbols
+            .contains("lpp_test_external_string_length")
+    );
+
+    let (stdout, status) = link_and_run(&module.object, "external-c-string-argument");
+    assert_eq!(status, 0);
+    assert_eq!(stdout, "16\n");
+}
+
+#[test]
+fn external_c_string_returns_are_copied_into_managed_strings() {
+    let source = concat!(
+        "extern \"C\":\n",
+        "    def lpp_test_external_string() -> Str\n",
+        "def main():\n",
+        "    value := lpp_test_external_string()\n",
+        "    print(value)\n",
+    );
+    let (program, types, package) = pipeline(source);
+    let names = Names(&package.names.symbols);
+    let module = compile(&program, &types, &names);
+
+    assert!(module.link_libraries.is_empty());
+    assert!(module.imported_symbols.contains("lpp_test_external_string"));
+    assert!(module.imported_symbols.contains("lpp_empty_str"));
+    assert!(module.imported_symbols.contains("lpp_str_concat"));
+    let (stdout, status) = link_and_run(&module.object, "external-c-string");
+    assert_eq!(status, 0);
+    assert_eq!(stdout, "foreign-owned\n");
 }

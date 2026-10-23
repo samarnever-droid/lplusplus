@@ -231,6 +231,7 @@ pub static BUILTINS: &[BuiltinAbi] = &[    BuiltinAbi { name: "str_slice", symbo
     BuiltinAbi { name: "lpp_buf_alloc", symbol: "lpp_buf_alloc", parameters: &[AbiType::I64], result: AbiType::I64, semantic_parameters: &[SemanticAbiType::I64], semantic_result: SemanticAbiType::I64 },
     BuiltinAbi { name: "buf_free", symbol: "lpp_buf_free", parameters: &[AbiType::I64], result: AbiType::Void, semantic_parameters: &[SemanticAbiType::I64], semantic_result: SemanticAbiType::Void },
     BuiltinAbi { name: "lpp_buf_free", symbol: "lpp_buf_free", parameters: &[AbiType::I64], result: AbiType::Void, semantic_parameters: &[SemanticAbiType::I64], semantic_result: SemanticAbiType::Void },
+    BuiltinAbi { name: "buf_free_at_exit", symbol: "lpp_buf_free_at_exit", parameters: &[AbiType::I64], result: AbiType::Void, semantic_parameters: &[SemanticAbiType::I64], semantic_result: SemanticAbiType::Void },
     BuiltinAbi { name: "buf_len", symbol: "lpp_buf_len", parameters: &[AbiType::I64], result: AbiType::I64, semantic_parameters: &[SemanticAbiType::I64], semantic_result: SemanticAbiType::I64 },
     BuiltinAbi { name: "lpp_buf_len", symbol: "lpp_buf_len", parameters: &[AbiType::I64], result: AbiType::I64, semantic_parameters: &[SemanticAbiType::I64], semantic_result: SemanticAbiType::I64 },
     BuiltinAbi { name: "buf_get8", symbol: "lpp_buf_get8", parameters: &[AbiType::I64, AbiType::I64], result: AbiType::I64, semantic_parameters: &[SemanticAbiType::I64, SemanticAbiType::I64], semantic_result: SemanticAbiType::I64 },

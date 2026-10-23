@@ -2841,6 +2841,19 @@ effects = ["legacy_unspecified"]
 targets = ["legacy"]
 
 [[builtin]]
+name = "buf_free_at_exit"
+symbol = "lpp_buf_free_at_exit"
+feature = "buffer"
+parameters = ["i64"]
+result = "void"
+lowering_parameters = ["i64"]
+lowering_result = "void"
+parameter_ownership = ["legacy_unspecified"]
+result_ownership = "none"
+effects = ["legacy_unspecified"]
+targets = ["legacy"]
+
+[[builtin]]
 name = "buf_len"
 symbol = "lpp_buf_len"
 feature = "buffer"

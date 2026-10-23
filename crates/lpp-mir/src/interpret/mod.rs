@@ -246,6 +246,7 @@ pub enum InterpreterErrorKind {
     },
     UnsupportedConstant,
     UnsupportedBuiltin,
+    UnsupportedExternalCall,
     InvalidBuiltinArgument {
         argument: usize,
         actual: ExecutionValueKind,
@@ -303,6 +304,7 @@ impl InterpreterError {
             | InterpreterErrorKind::IndexOutOfBounds { .. }
             | InterpreterErrorKind::UnsupportedConstant
             | InterpreterErrorKind::UnsupportedBuiltin
+            | InterpreterErrorKind::UnsupportedExternalCall
             | InterpreterErrorKind::InvalidBuiltinArgument { .. }
             | InterpreterErrorKind::InvalidAwaitTarget(_)
             | InterpreterErrorKind::InvalidTaskProjection

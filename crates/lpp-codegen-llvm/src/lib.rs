@@ -66,6 +66,7 @@ impl Backend for LlvmBackend {
             object,
             exported_symbols,
             imported_symbols,
+            link_libraries: program.link_libraries(),
             entry,
         })
     }

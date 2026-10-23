@@ -1,0 +1,15 @@
+# Lists of structural tuples churned: elements are ARC records
+# released by the list destructor (tuple list-element parity).
+# Expected output: 20000
+struct Box:
+    v: Int
+def main() -> Int:
+    mut total := 0
+    mut i := 0
+    while i < 10000:
+        xs := [(Box(i), 1), (Box(i), 2), (Box(i), 3)]
+        t := list_get(xs, 1)
+        total = total + t.0.v - i + t.1
+        i = i + 1
+    print(total)
+    return 0

@@ -130,6 +130,7 @@ impl Backend for CraneliftBackend {
             object,
             exported_symbols,
             imported_symbols,
+            link_libraries: program.link_libraries(),
             entry,
         })
     }

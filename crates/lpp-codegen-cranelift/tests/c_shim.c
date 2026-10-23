@@ -688,6 +688,8 @@ void lpp_tuple_trace(void *raw, void *ctx) {
     }
 }
 
+void lpp_panic_div_zero(void) { fprintf(stderr, "lpp shim: integer division by zero\n"); exit(101); }
+
 void *lpp_tuple_alloc(int64_t size, int64_t mask, int64_t packed_offsets) {
     if (size < 16) size = 16;
     if (size > 16 + 64 * 8) { fprintf(stderr, "lpp shim: tuple too large\n"); exit(101); }
@@ -832,6 +834,21 @@ int64_t lpp_str_len(const char *s) {
 
 int64_t lpp_str_eq(const char *a, const char *b) {
     return strcmp(a, b) == 0;
+}
+
+char *lpp_empty_str(void) {
+    /* This helper is only read by lpp_str_concat in external-string
+       conversion; it is not adopted or released as an ARC payload. */
+    return (char *)"";
+}
+
+const char *lpp_test_external_string(void) {
+    static const char value[] = "foreign-owned";
+    return value;
+}
+
+int64_t lpp_test_external_string_length(const char *value) {
+    return value ? (int64_t)strlen(value) : -1;
 }
 
 char *lpp_str_concat(const char *a, const char *b) {

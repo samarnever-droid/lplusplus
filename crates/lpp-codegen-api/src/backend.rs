@@ -107,6 +107,9 @@ pub struct CompiledModule {
     pub object: Vec<u8>,
     pub exported_symbols: BTreeSet<String>,
     pub imported_symbols: BTreeSet<String>,
+    /// System libraries required by direct external calls in this module
+    /// (for example, `sqlite3` for `extern "C" link "sqlite3"`).
+    pub link_libraries: Vec<String>,
     /// The C-ABI process entry symbol (`main`) when the program
     /// defines a source-level `main`; `None` for library modules.
     pub entry: Option<String>,

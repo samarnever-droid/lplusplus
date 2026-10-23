@@ -142,8 +142,22 @@ class Prog:
         ]
         self.expected += reps - 1
 
+    def tuple_list(self):
+        reps = self.rng.choice([10, 400])
+        box = self.fresh("Crate")
+        self.decls.append(f"struct {box}:\n    v: Int\n")
+        self.body += [
+            "    mut i := 0",
+            f"    while i < {reps}:",
+            f"        xs := [({box}(i), 1), ({box}(i), 2), ({box}(i), 3)]",
+            "        t := list_get(xs, 2)",
+            "        total = total + t.0.v - i + t.1",
+            "        i = i + 1",
+        ]
+        self.expected += 3 * reps
+
     BLOCKS = ["ring", "tuple_churn", "tuple_cycle", "list_alias",
-              "closure_tuple", "overwrite"]
+              "closure_tuple", "overwrite", "tuple_list"]
 
     def render(self):
         blocks = self.rng.randint(1, 4)

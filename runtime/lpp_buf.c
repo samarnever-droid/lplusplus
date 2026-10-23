@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <stdatomic.h>
 
 extern void *lpp_arc_alloc(int64_t size);
 extern char *lpp_empty_str(void);
@@ -23,6 +24,46 @@ int64_t lpp_buf_alloc(int64_t size) {
 
 void lpp_buf_free(void *ptr) {
     free(ptr);
+}
+
+/* A CMemory context keeps a destroyed tombstone alive so copied CPtr values
+ * can still report a deterministic stale-context error. The payload's first
+ * word is no longer needed after destruction and links tombstones until the
+ * process exit handler frees them. */
+static atomic_uintptr_t lpp_buf_deferred_head = ATOMIC_VAR_INIT(0);
+static atomic_flag lpp_buf_deferred_cleanup_registered = ATOMIC_FLAG_INIT;
+
+static void lpp_buf_release_deferred(void) {
+    uintptr_t current = atomic_exchange_explicit(
+        &lpp_buf_deferred_head, 0, memory_order_acq_rel);
+    while (current != 0) {
+        void *header = (void *)current;
+        uintptr_t next = *(uintptr_t *)((uint8_t *)header + sizeof(int64_t));
+        free(header);
+        current = next;
+    }
+}
+
+void lpp_buf_free_at_exit(int64_t raw_ptr) {
+    if (raw_ptr == 0) return;
+
+    if (!atomic_flag_test_and_set_explicit(
+            &lpp_buf_deferred_cleanup_registered, memory_order_acq_rel)) {
+        if (atexit(lpp_buf_release_deferred) != 0) {
+            /* Keep the list globally reachable if the C library cannot accept
+             * another exit handler; process teardown still reclaims it. */
+            atomic_flag_clear_explicit(
+                &lpp_buf_deferred_cleanup_registered, memory_order_release);
+        }
+    }
+
+    void *header = (void *)(uintptr_t)raw_ptr;
+    uintptr_t head = atomic_load_explicit(&lpp_buf_deferred_head, memory_order_acquire);
+    do {
+        *(uintptr_t *)((uint8_t *)header + sizeof(int64_t)) = head;
+    } while (!atomic_compare_exchange_weak_explicit(
+        &lpp_buf_deferred_head, &head, (uintptr_t)header,
+        memory_order_release, memory_order_acquire));
 }
 
 int64_t lpp_buf_len(void *ptr) {

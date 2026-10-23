@@ -379,7 +379,7 @@ def c_sweep_file(path: Str) -> CFunctionSweep:
             signature_end := parse_int(c_decl_field(signature_record, 6))
             signature_shape := c_body_scan(data, size, signature_start, signature_end)
             if signature_shape.valid != 0 && signature_start >= 0 && signature_end > signature_start:
-                signature_cursor := CLexCursor(data, size, path, signature_start, signature_line, signature_column)
+                signature_cursor := CLexCursor(data, size, str_concat(path, ""), signature_start, signature_line, signature_column)
                 signature := c_parse_function_signature_known(signature_cursor, aliases)
                 if signature.valid != 0:
                     functions = c_ir_function_add(functions, signature.name, signature.return_type.kind, signature.params.count, signature.params.type_list)
@@ -387,7 +387,7 @@ def c_sweep_file(path: Str) -> CFunctionSweep:
             # Aggregate pointee families and global references are only worth            # Aggregate pointee families and global references are only worth
             # collecting for bodies we may actually emit (candidate shape).
             if c_sweep_is_candidate(signature_shape, signature_name, pointer_functions, pointer_returns):
-                signature_cursor := CLexCursor(data, size, path, signature_start, signature_line, signature_column)
+                signature_cursor := CLexCursor(data, size, str_concat(path, ""), signature_start, signature_line, signature_column)
                 signature := c_parse_function_signature_known(signature_cursor, aliases)
                 if signature.valid != 0:
                     # Collect aggregate pointee families for every candidate
@@ -438,7 +438,7 @@ def c_sweep_file(path: Str) -> CFunctionSweep:
             candidate := c_sweep_is_candidate(shape, name, pointer_functions, pointer_returns)
             if candidate:
                 eligible = eligible + 1
-                cursor := CLexCursor(data, size, path, start, line, column)
+                cursor := CLexCursor(data, size, str_concat(path, ""), start, line, column)
                 parsed := c_parse_function_context(cursor, functions, aliases, aggregate_catalog.graph, global_metadata.symbols)
                 if parsed.recognized != 0 && parsed.function.valid != 0:
                     translated = translated + 1
@@ -498,7 +498,7 @@ def c_sweep_file(path: Str) -> CFunctionSweep:
                     closure_column := parse_int(c_decl_field(closure_record, 4))
                     closure_start := parse_int(c_decl_field(closure_record, 5))
                     closure_end := parse_int(c_decl_field(closure_record, 6))
-                    closure_cursor := CLexCursor(data, size, path, closure_start, closure_line, closure_column)
+                    closure_cursor := CLexCursor(data, size, str_concat(path, ""), closure_start, closure_line, closure_column)
                     # Resolve calls against signatures emitted so far. A callee
                     # not yet emitted fails this round and is retried next round.
                     closure_parsed := c_parse_function_context(closure_cursor, emitted_registry, aliases, aggregate_catalog.graph, global_catalog.symbols)

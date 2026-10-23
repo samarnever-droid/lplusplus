@@ -54,6 +54,7 @@ lpp_buf_alloc
 lpp_buf_copy
 lpp_buf_crc32
 lpp_buf_free
+lpp_buf_free_at_exit
 lpp_buf_get16be
 lpp_buf_get16le
 lpp_buf_get32be

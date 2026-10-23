@@ -719,6 +719,7 @@ double lpp_list_get_float(void*l,int64_t idx){int64_t i=lpp_list_get(l,idx);doub
 int8_t lpp_list_get_bool(void*l,int64_t i){return lpp_list_get(l,i)!=0;}
 void *lpp_list_get_arc(void*l,int64_t i){return(void*)(intptr_t)lpp_list_get(l,i);}
 int64_t lpp_list_len(void*r){return r?((LppList*)r)->len:0;}
+void lpp_panic_div_zero(void){ExitProcess(101);}
 int64_t lpp_list_pop(void*r){LppList*l=(LppList*)r;if(!l||l->len<=0)ExitProcess(101);l->len--;return l->data[l->len];}
 void lpp_list_free(void*l){lpp_arc_release(l);}
 void lpp_list_insert(void*r,int64_t idx,int64_t v){LppList*l=(LppList*)r;if(!l||idx<0||idx>l->len)ExitProcess(101);lpp_list_push(l,0);for(int64_t i=l->len-1;i>idx;i--)l->data[i]=l->data[i-1];l->data[idx]=v;if(l->arc_elements)lpp_arc_retain((void*)(intptr_t)v);}
@@ -939,6 +940,8 @@ int64_t lpp_file_size(const char *path) { HANDLE h = CreateFileA(path, GENERIC_R
  */
 void *lpp_buf_alloc(int64_t size) { if (size <= 0) size = 64; uint64_t t = lpp_page_round((uint64_t)size + 8); char *m = (char*)VirtualAlloc(0, t, MEM_COMMIT|MEM_RESERVE, PAGE_READWRITE); if (!m) return 0; *(int64_t*)m = size; return m + 8; }
 void lpp_buf_free(void *p) { if (!p) return; VirtualFree((char*)p - 8, 0, MEM_RELEASE); }
+/* The OS reclaims stale-context tombstones when this freestanding process exits. */
+void lpp_buf_free_at_exit(int64_t p) { (void)p; }
 int64_t lpp_buf_len(void *p) { if (!p) return 0; return *(int64_t*)((char*)p - 8); }
 int64_t lpp_buf_get8(void *p, int64_t o) { if (!p) return 0; int64_t s = *(int64_t*)((char*)p - 8); if (o < 0 || o >= s) return 0; return (int64_t)(unsigned char)((char*)p)[o]; }
 void lpp_buf_set8(void *p, int64_t o, int64_t v) { if (!p) return; int64_t s = *(int64_t*)((char*)p - 8); if (o < 0 || o >= s) return; ((char*)p)[o] = (char)(v & 0xFF); }

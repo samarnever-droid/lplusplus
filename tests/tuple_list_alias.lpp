@@ -1,0 +1,8 @@
+# list_get of a tuple element retains it; list_set replacement
+# releases only the list's reference. Expected output: 1001
+def main() -> Int:
+    mut xs := [(1, 100), (2, 200)]
+    keep := list_get(xs, 0)
+    list_set(xs, 0, (9, 900))
+    print(keep.0 + keep.1 + list_get(xs, 0).1)
+    return 0

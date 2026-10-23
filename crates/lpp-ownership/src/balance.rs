@@ -90,6 +90,8 @@ pub enum OwnershipBalanceErrorKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OwnershipBalanceError {
     pub kind: OwnershipBalanceErrorKind,
+    /// The offending use site for `UseAfterMove`; the local declaration for
+    /// structural `MissingCell` errors.
     pub origin: Option<OriginId>,
 }
 
@@ -153,7 +155,7 @@ pub fn verify_ownership_balance(
             })
             .collect();
 
-        let mut violations: BTreeSet<(BasicBlockId, MirLocalId)> = BTreeSet::new();
+        let mut violations: BTreeMap<(BasicBlockId, MirLocalId), OriginId> = BTreeMap::new();
         let mut worklist: Vec<BasicBlockId> = Vec::new();
         let mut queued: BTreeSet<BasicBlockId> = BTreeSet::new();
 
@@ -191,7 +193,9 @@ pub fn verify_ownership_balance(
             let in_state = in_states.get(&block_id).cloned().unwrap_or_default();
             let (out_state, block_violations) =
                 apply_block(program, block_id, &in_state, &heap_locals);
-            violations.extend(block_violations);
+            for (key, origin) in block_violations {
+                violations.entry(key).or_insert(origin);
+            }
             if out_states.get(&block_id) == Some(&out_state) {
                 // The transfer is stable for this in-state.
                 continue;
@@ -231,14 +235,14 @@ pub fn verify_ownership_balance(
                 }
             }
         }
-        for (block, local) in violations {
+        for ((block, local), origin) in violations {
             result.push(OwnershipBalanceError {
                 kind: OwnershipBalanceErrorKind::UseAfterMove {
                     function: function_id,
                     block,
                     local,
                 },
-                origin: program.local(local).map(|local| local.origin),
+                origin: Some(origin),
             });
         }
     }
@@ -272,17 +276,20 @@ fn apply_block(
     block_id: BasicBlockId,
     in_state: &State,
     heap_locals: &BTreeSet<MirLocalId>,
-) -> (State, Vec<(BasicBlockId, MirLocalId)>) {
+) -> (State, BTreeMap<(BasicBlockId, MirLocalId), OriginId>) {
     let block = program
         .block(block_id)
         .expect("verified MIR retains every block");
     let mut state: State = in_state.clone();
-    let mut violations: Vec<(BasicBlockId, MirLocalId)> = Vec::new();
+    let mut violations: BTreeMap<(BasicBlockId, MirLocalId), OriginId> = BTreeMap::new();
+    let mut current_origin = block.origin;
     macro_rules! check_local {
         ($local:expr) => {{
             let local = $local;
             if not_alive(&state, heap_locals, local) {
-                violations.push((block_id, local));
+                violations
+                    .entry((block_id, local))
+                    .or_insert(current_origin);
             }
         }};
     }
@@ -291,6 +298,7 @@ fn apply_block(
         let instruction = program
             .instruction(instruction_id)
             .expect("verified MIR retains every instruction");
+        current_origin = instruction.origin;
         match instruction.kind {
             InstructionKind::Assign { target, value } => {
                 match value {
@@ -355,6 +363,15 @@ fn apply_block(
                             }
                         }
                     }
+                    Rvalue::ExternalCall { arguments, .. } => {
+                        // C receives borrowed scalar/string pointers; the
+                        // source values remain owned by their L++ locals.
+                        for operand in program.operands(arguments) {
+                            if let Operand::Copy(local) = *operand {
+                                check_local!(local);
+                            }
+                        }
+                    }
                     Rvalue::Builtin { builtin, arguments } => {
                         for (position, operand) in program.operands(arguments).iter().enumerate() {
                             if let Operand::Copy(local) = *operand {
@@ -408,6 +425,7 @@ fn apply_block(
             }
         }
     }
+    current_origin = block.origin;
     match block.terminator {
         Terminator::Return(Some(Operand::Copy(local))) => {
             check_local!(local);

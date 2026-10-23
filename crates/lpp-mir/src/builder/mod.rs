@@ -13,13 +13,13 @@ use lpp_types::{
 };
 
 use crate::ids::{
-    BasicBlockId, MirAggregateId, MirFieldId, MirFunctionId, MirLocalId, MirPlaceId, MirStringId,
-    MirVariantId,
+    BasicBlockId, MirAggregateId, MirExternalFunctionId, MirFieldId, MirFunctionId, MirLocalId,
+    MirPlaceId, MirStringId, MirVariantId,
 };
 use crate::ir::{
-    BasicBlock, Constant, Instruction, InstructionKind, MirAggregate, MirAggregateKind, MirField,
-    MirFunction, MirFunctionKind, MirLocal, MirLocalKind, MirPlace, MirProgram, MirVariant,
-    Operand, PlaceProjection, Rvalue, Terminator,
+    BasicBlock, Constant, Instruction, InstructionKind, MirAggregate, MirAggregateKind,
+    MirExternalFunction, MirField, MirFunction, MirFunctionKind, MirLocal, MirLocalKind, MirPlace,
+    MirProgram, MirVariant, Operand, PlaceProjection, Rvalue, Terminator,
 };
 use crate::storage::{ListRange, StorageExhausted};
 
@@ -125,6 +125,9 @@ pub enum MirBuildErrorKind {
     Unsupported(UnsupportedConstruct),
     MissingType(TypedEntity),
     InvalidFunctionType(TypeId),
+    InvalidExternalAbi,
+    InvalidExternalLibrary,
+    UnsupportedExternalSignature,
     InvalidAssignmentTarget,
     MissingReturn,
     InvalidInstancePlan {
@@ -185,7 +188,10 @@ impl MirBuildError {
     pub const fn code(self) -> &'static str {
         match self.kind {
             MirBuildErrorKind::Capacity(_) => "E4001",
-            MirBuildErrorKind::Unsupported(_) => "E4002",
+            MirBuildErrorKind::Unsupported(_)
+            | MirBuildErrorKind::InvalidExternalAbi
+            | MirBuildErrorKind::InvalidExternalLibrary
+            | MirBuildErrorKind::UnsupportedExternalSignature => "E4002",
             MirBuildErrorKind::MissingType(_) | MirBuildErrorKind::InvalidFunctionType(_) => {
                 "E4003"
             }
@@ -276,6 +282,8 @@ struct MirBuilder<'input> {
     item_functions: Vec<Option<MirFunctionId>>,
     definition_items: Vec<Option<HirItemId>>,
     definition_functions: Vec<Option<MirFunctionId>>,
+    external_items: BTreeMap<HirItemId, (Span, Option<Span>)>,
+    external_function_ids: BTreeMap<HirItemId, MirExternalFunctionId>,
     instance_functions: Vec<Option<MirFunctionId>>,
     instance_type_functions: BTreeMap<(HirItemId, TypeId), Option<MirFunctionId>>,
     aggregate_types: BTreeMap<TypeId, MirAggregateId>,
@@ -301,6 +309,15 @@ impl<'input> MirBuilder<'input> {
         options: MirBuildOptions,
     ) -> Self {
         let instance_count = types.instances.records().len();
+        let mut external_items = BTreeMap::new();
+        for (_, item) in package.items.enumerate() {
+            let HirItemKind::Extern(block) = item.kind else {
+                continue;
+            };
+            for &function in package.items(block.functions) {
+                external_items.insert(function, (block.abi, block.link_library));
+            }
+        }
         Self {
             package,
             sources,
@@ -320,6 +337,8 @@ impl<'input> MirBuilder<'input> {
             item_functions: vec![None; package.items.len()],
             definition_items: vec![None; package.names.definitions.len()],
             definition_functions: vec![None; package.names.definitions.len()],
+            external_items,
+            external_function_ids: BTreeMap::new(),
             instance_functions: vec![None; instance_count],
             instance_type_functions: BTreeMap::new(),
             aggregate_types: BTreeMap::new(),
@@ -1220,6 +1239,145 @@ impl<'input> MirBuilder<'input> {
             return None;
         }
         Some(&text[start..end])
+    }
+
+    fn decode_string_span(&self, span: Span) -> Option<String> {
+        let text = self.source_text(span)?;
+        unescape_literal(text.strip_prefix('"')?.strip_suffix('"')?)
+    }
+
+    fn is_external_function(&self, item: HirItemId) -> bool {
+        self.external_items.contains_key(&item)
+    }
+
+    fn register_external_function(
+        &mut self,
+        item_id: HirItemId,
+        origin: OriginId,
+    ) -> Result<MirExternalFunctionId, MirBuildError> {
+        if let Some(&external) = self.external_function_ids.get(&item_id) {
+            return Ok(external);
+        }
+        let Some((abi_span, library_span)) = self.external_items.get(&item_id).copied() else {
+            return Err(self.error(
+                origin,
+                MirBuildErrorKind::Unsupported(UnsupportedConstruct::ExternalFunction),
+            ));
+        };
+        let abi = self
+            .decode_string_span(abi_span)
+            .ok_or_else(|| self.error(origin, MirBuildErrorKind::InvalidExternalAbi))?;
+        if abi != "C" {
+            return Err(self.error(origin, MirBuildErrorKind::InvalidExternalAbi));
+        }
+        let link_library = library_span
+            .map(|span| {
+                let library = self
+                    .decode_string_span(span)
+                    .ok_or_else(|| self.error(origin, MirBuildErrorKind::InvalidExternalLibrary))?;
+                let safe = !library.is_empty()
+                    && !library.starts_with('-')
+                    && library != "."
+                    && library != ".."
+                    && library.bytes().all(|byte| {
+                        byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'+' | b'.')
+                    });
+                if !safe {
+                    return Err(self.error(origin, MirBuildErrorKind::InvalidExternalLibrary));
+                }
+                Ok(library)
+            })
+            .transpose()?;
+        let item = self.package.items[item_id];
+        let HirItemKind::Function(function) = item.kind else {
+            return Err(self.error(origin, MirBuildErrorKind::UnsupportedExternalSignature));
+        };
+        if function.body.is_some()
+            || function.is_async
+            || function.variadic
+            || !self
+                .package
+                .type_parameters(function.type_parameters)
+                .is_empty()
+            || self
+                .package
+                .locals(function.parameters)
+                .iter()
+                .any(|local| self.package.locals[*local].default.is_some())
+        {
+            return Err(self.error(origin, MirBuildErrorKind::UnsupportedExternalSignature));
+        }
+        let ty = self.types.assignments.item(item_id).ok_or_else(|| {
+            self.error(
+                origin,
+                MirBuildErrorKind::MissingType(TypedEntity::Function(item_id)),
+            )
+        })?;
+        let TypeKind::Function { parameters, result } = self.types.interner.kind(ty) else {
+            return Err(self.error(origin, MirBuildErrorKind::InvalidFunctionType(ty)));
+        };
+        let supported_primitive = |ty| {
+            matches!(
+                self.types.interner.kind(ty),
+                TypeKind::Primitive(
+                    PrimitiveType::Void
+                        | PrimitiveType::Bool
+                        | PrimitiveType::Int
+                        | PrimitiveType::Float
+                        | PrimitiveType::String
+                        | PrimitiveType::U8
+                        | PrimitiveType::U16
+                        | PrimitiveType::U32
+                        | PrimitiveType::I8
+                        | PrimitiveType::I16
+                        | PrimitiveType::I32
+                )
+            )
+        };
+        // `Str` is an ARC-managed value, not an owned C string. Its payload
+        // is NUL-terminated, so an external call may borrow its pointer for
+        // the duration of the call; foreign functions must not mutate or
+        // retain that pointer. Returned C strings are copied by native codegen.
+        if !supported_primitive(result)
+            || self
+                .types
+                .interner
+                .list(parameters)
+                .iter()
+                .any(|parameter| {
+                    !supported_primitive(*parameter)
+                        || matches!(
+                            self.types.interner.kind(*parameter),
+                            TypeKind::Primitive(PrimitiveType::Void)
+                        )
+                })
+        {
+            return Err(self.error(origin, MirBuildErrorKind::UnsupportedExternalSignature));
+        }
+        let name = item
+            .name
+            .and_then(|symbol| self.package.names.symbols.resolve(symbol))
+            .ok_or_else(|| {
+                self.error(
+                    origin,
+                    MirBuildErrorKind::Unsupported(UnsupportedConstruct::ExternalFunction),
+                )
+            })?
+            .to_owned();
+        let external = self
+            .program
+            .external_functions
+            .alloc(MirExternalFunction {
+                source: item_id,
+                name,
+                abi,
+                link_library,
+                ty,
+                origin: item.origin,
+            })
+            .map_err(|_| self.error(origin, MirBuildErrorKind::Capacity(MirCapacity::Storage)))?;
+        self.external_function_ids.insert(item_id, external);
+        Ok(external)
     }
 
     fn intern_string(

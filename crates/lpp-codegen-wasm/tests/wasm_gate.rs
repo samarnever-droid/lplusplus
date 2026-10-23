@@ -196,6 +196,43 @@ fn dump_wat(object: &[u8], label: &str) {
     }
 }
 
+fn run_wasm_memory_pages(object: &[u8], test_name: &str) -> (String, i32, u32) {
+    validate_wasm(object, test_name);
+    let dir = workdir(test_name);
+    let wasm = dir.join("module.wasm");
+    let host = dir.join("memory_probe.mjs");
+    std::fs::write(&wasm, object).unwrap();
+    std::fs::write(
+        &host,
+        r#"import { readFileSync } from "node:fs";
+import { WASI } from "node:wasi";
+const file = process.argv[2];
+const wasi = new WASI({ version: "preview1", args: [file], env: {}, returnOnExit: true });
+const module = await WebAssembly.compile(readFileSync(file));
+const instance = await WebAssembly.instantiate(module, { wasi_snapshot_preview1: wasi.wasiImport });
+const status = wasi.start(instance);
+process.stderr.write(`MEMORY_PAGES:${instance.exports.memory.buffer.byteLength / 65536}\n`);
+process.exitCode = status;
+"#,
+    )
+    .unwrap();
+    let run = Command::new("node")
+        .arg(&host)
+        .arg(&wasm)
+        .output()
+        .unwrap_or_else(|e| panic!("node failed to start ({e}); is Node.js on PATH?"));
+    let stderr = String::from_utf8_lossy(&run.stderr);
+    let pages = stderr
+        .lines()
+        .find_map(|line| line.strip_prefix("MEMORY_PAGES:")?.parse().ok())
+        .unwrap_or_else(|| panic!("missing memory-page marker: {stderr}"));
+    (
+        String::from_utf8_lossy(&run.stdout).into_owned(),
+        run.status.code().unwrap_or(-1),
+        pages,
+    )
+}
+
 fn run_wasm(object: &[u8], test_name: &str) -> (String, i32) {
     validate_wasm(object, test_name);
     let dir = workdir(test_name);
@@ -1999,4 +2036,54 @@ fn extended_legacy_builtins_and_borrowed_calls_match_the_arc_oracle() {
         oracle.output.concat(),
         "extended legacy builtins diverged from the ARC oracle"
     );
+}
+
+#[test]
+fn arc_heap_reuses_freed_blocks_under_repeated_managed_churn() {
+    fn compile_churn(iterations: usize, label: &str) -> (String, i32, u32) {
+        let source = format!(
+            "struct Box:\n    value: Int\n\ndef main() -> Int:\n    mut total := 0\n    mut i := 0\n    while i < {iterations}:\n        xs := [Box(i), Box(i + 1)]\n        value := list_get(xs, 0)\n        total = total + value.value - i\n        ys := [i, i + 1]\n        total = total + list_get(ys, 0) - i\n        text := str_concat(\"id:\", int_to_str(i))\n        if str_len(text) > 0:\n            total = total + 1\n        i = i + 1\n    print(total)\n    return 0\n"
+        );
+        let (program, types, package) = pipeline(&source);
+        let names = Names(&package.names.symbols);
+        let module = compile(&program, &types, &names);
+        run_wasm_memory_pages(&module.object, label)
+    }
+
+    let (small_out, small_status, small_pages) = compile_churn(100, "heap_reuse_small");
+    let (large_out, large_status, large_pages) = compile_churn(100_000, "heap_reuse_large");
+    assert_eq!((small_out.as_str(), small_status), ("100\n", 0));
+    assert_eq!((large_out.as_str(), large_status), ("100000\n", 0));
+    eprintln!(
+        "WASM ARC churn: 100 iterations={small_pages} pages; 100,000 iterations={large_pages} pages"
+    );
+    assert!(
+        large_pages <= small_pages + 1,
+        "ARC churn should reuse freed blocks: memory grew from {small_pages} pages at 100 iterations to {large_pages} pages at 100,000"
+    );
+}
+
+#[test]
+fn integer_division_panic_and_overflow_match_the_oracle() {
+    for (operator, label) in [("/", "div_zero"), ("%", "mod_zero")] {
+        let zero = format!(
+            "def f(n: Int) -> Int:\n    return 100 {operator} n\n\ndef main() -> Int:\n    print(f(0))\n    return 0\n"
+        );
+        let (program, types, package) = pipeline(&zero);
+        let names = Names(&package.names.symbols);
+        let module = compile(&program, &types, &names);
+        let (_, status) = run_wasm(&module.object, label);
+        assert_eq!(
+            status, 101,
+            "integer {operator}-by-zero must exit via WASI status 101"
+        );
+    }
+
+    let wrapping = "def main() -> Int:\n    m := 0 - 9223372036854775807 - 1\n    print(m / (0 - 1))\n    print(m % (0 - 1))\n    print(100 / 7)\n    print(100 % 7)\n    return 0\n";
+    let (program, types, package) = pipeline(wrapping);
+    let names = Names(&package.names.symbols);
+    let module = compile(&program, &types, &names);
+    let (stdout, status) = run_wasm(&module.object, "div_wrap");
+    assert_eq!(status, 0);
+    assert_eq!(stdout, "-9223372036854775808\n0\n14\n2\n");
 }

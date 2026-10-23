@@ -102,7 +102,7 @@ if find generated/sqlite-backend -type f \( -name '*.c' -o -name '*.h' \) | grep
     exit 1
 fi
 BACKEND_CHECK=$("$LPP" "$BACKEND_LPP" --check 2>&1)
-printf '%s\n' "$BACKEND_CHECK" | grep -Fq 'L++ check: OK'
+printf '%s\n' "$BACKEND_CHECK" | grep -Fq '[rewrite] check OK'
 cat > generated/sqlite-backend/smoke.lpp <<'EOF'
 import translated
 
@@ -269,7 +269,7 @@ grep -Fq 'total_functions=2' "$POINTER_SWEEP_REPORT"
 grep -Fq 'translated_functions=2' "$POINTER_SWEEP_REPORT"
 grep -Fq 'rejected_functions=0' "$POINTER_SWEEP_REPORT"
 POINTER_CHECK=$("$LPP" "$POINTER_SWEEP_LPP" --check 2>&1)
-printf '%s\n' "$POINTER_CHECK" | grep -Fq 'L++ check: OK'
+printf '%s\n' "$POINTER_CHECK" | grep -Fq '[rewrite] check OK'
 cat > generated/pointer-sweep/smoke.lpp <<'EOF'
 import translated
 
@@ -301,7 +301,7 @@ grep -Fq 'total_functions=3' "$CAST_REPORT"
 grep -Fq 'translated_functions=3' "$CAST_REPORT"
 grep -Fq 'rejected_functions=0' "$CAST_REPORT"
 CAST_CHECK=$("$LPP" "$CAST_LPP" --check 2>&1)
-printf '%s\n' "$CAST_CHECK" | grep -Fq 'L++ check: OK'
+printf '%s\n' "$CAST_CHECK" | grep -Fq '[rewrite] check OK'
 cat > generated/cast-sweep/smoke.lpp <<'EOF'
 import translated
 
@@ -328,7 +328,7 @@ grep -Fq 'total_functions=2' "$EXPR_REPORT"
 grep -Fq 'translated_functions=2' "$EXPR_REPORT"
 grep -Fq 'rejected_functions=0' "$EXPR_REPORT"
 EXPR_CHECK=$("$LPP" "$EXPR_LPP" --check 2>&1)
-printf '%s\n' "$EXPR_CHECK" | grep -Fq 'L++ check: OK'
+printf '%s\n' "$EXPR_CHECK" | grep -Fq '[rewrite] check OK'
 cat > generated/expression-sweep/smoke.lpp <<'EOF'
 import translated
 
@@ -354,7 +354,7 @@ grep -Fq 'total_functions=1' "$IF_BLOCK_REPORT"
 grep -Fq 'translated_functions=1' "$IF_BLOCK_REPORT"
 grep -Fq 'rejected_functions=0' "$IF_BLOCK_REPORT"
 IF_BLOCK_CHECK=$("$LPP" "$IF_BLOCK_LPP" --check 2>&1)
-printf '%s\n' "$IF_BLOCK_CHECK" | grep -Fq 'L++ check: OK'
+printf '%s\n' "$IF_BLOCK_CHECK" | grep -Fq '[rewrite] check OK'
 cat > generated/if-block-sweep/smoke.lpp <<'EOF'
 import translated
 
@@ -380,7 +380,7 @@ grep -Fq 'total_functions=2' "$WHILE_REPORT"
 grep -Fq 'translated_functions=2' "$WHILE_REPORT"
 grep -Fq 'rejected_functions=0' "$WHILE_REPORT"
 WHILE_CHECK=$("$LPP" "$WHILE_LPP" --check 2>&1)
-printf '%s\n' "$WHILE_CHECK" | grep -Fq 'L++ check: OK'
+printf '%s\n' "$WHILE_CHECK" | grep -Fq '[rewrite] check OK'
 cat > generated/while-sweep/smoke.lpp <<'EOF'
 import translated
 
@@ -536,7 +536,7 @@ grep -Fq 'total_functions=3' "$FOR_REPORT"
 grep -Fq 'translated_functions=3' "$FOR_REPORT"
 grep -Fq 'rejected_functions=0' "$FOR_REPORT"
 FOR_CHECK=$("$LPP" "$FOR_LPP" --check 2>&1)
-printf '%s\n' "$FOR_CHECK" | grep -Fq 'L++ check: OK'
+printf '%s\n' "$FOR_CHECK" | grep -Fq '[rewrite] check OK'
 cat > generated/for-sweep/smoke.lpp <<'EOF'
 import translated
 
@@ -609,7 +609,7 @@ grep -Fq 'total_functions=2' "$LOOP_CONTROL_REPORT"
 grep -Fq 'translated_functions=2' "$LOOP_CONTROL_REPORT"
 grep -Fq 'rejected_functions=0' "$LOOP_CONTROL_REPORT"
 LOOP_CONTROL_CHECK=$("$LPP" "$LOOP_CONTROL_LPP" --check 2>&1)
-printf '%s\n' "$LOOP_CONTROL_CHECK" | grep -Fq 'L++ check: OK'
+printf '%s\n' "$LOOP_CONTROL_CHECK" | grep -Fq '[rewrite] check OK'
 cat > generated/loop-control-sweep/smoke.lpp <<'EOF'
 import translated
 
@@ -1553,8 +1553,8 @@ write_config ownership-proof fixtures/ownership_proof.c '' graph_ownerproof grap
 OWNPROOF_REPORT=generated/ownership-proof/c2lpp.ownership-proof-report.txt
 OWNPROOF_GRAPH=generated/ownership-proof/c2lpp.ownership-proof.txt
 grep -Fq 'valid=1' "$OWNPROOF_REPORT"
-grep -Fq 'functions=7' "$OWNPROOF_REPORT"
-grep -Fq 'proved_balanced=2' "$OWNPROOF_REPORT"
+grep -Fq 'functions=8' "$OWNPROOF_REPORT"
+grep -Fq 'proved_balanced=3' "$OWNPROOF_REPORT"
 grep -Fq 'proved_escape=1' "$OWNPROOF_REPORT"
 grep -Fq 'proved_leak=1' "$OWNPROOF_REPORT"
 grep -Fq 'proved_double_free=1' "$OWNPROOF_REPORT"
@@ -1564,6 +1564,7 @@ grep -Fq 'proof|escape_path|proved-escape|alloc=1|realloc=0|free=0' "$OWNPROOF_G
 grep -Fq 'proof|leak_path|proved-leak|alloc=1|realloc=0|free=0' "$OWNPROOF_GRAPH"
 grep -Fq 'proof|double_free_path|proved-double-free|alloc=1|realloc=0|free=2' "$OWNPROOF_GRAPH"
 grep -Fq 'proof|realloc_balanced|proved-balanced|alloc=1|realloc=1|free=1' "$OWNPROOF_GRAPH"
+grep -Fq 'proof|do_balanced|proved-balanced|alloc=1|realloc=0|free=1' "$OWNPROOF_GRAPH"
 grep -Fq 'proof|divergent_path|unproven' "$OWNPROOF_GRAPH"
 grep -Fq 'proof|goto_path|unproven' "$OWNPROOF_GRAPH"
 echo 'PASS path-sensitive ownership proof (balanced/escape/leak/double-free/unproven)'
@@ -2091,7 +2092,7 @@ if [ "$SQLITE_AUDIT" = 1 ]; then
         ! grep -Fq 'extern "C"' "$SQLITE_SWEEP_LPP"
         ! grep -Fq 'link "' "$SQLITE_SWEEP_LPP"
         SQLITE_SWEEP_CHECK=$("$LPP" "$SQLITE_SWEEP_LPP" --check 2>&1)
-        printf '%s\n' "$SQLITE_SWEEP_CHECK" | grep -Fq 'L++ check: OK'
+        printf '%s\n' "$SQLITE_SWEEP_CHECK" | grep -Fq '[rewrite] check OK'
         echo "PASS SQLite automatic semantic sweep ($SQLITE_TRANSLATED/$TU_FUNCTIONS pure-L++ functions type-check)"
 
         rm -rf work/sqlite-3460100/frontend-attempt

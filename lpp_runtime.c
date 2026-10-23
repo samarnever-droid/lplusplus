@@ -1900,6 +1900,10 @@ void lpp_list_push(void *list, int64_t value) {
     l->data[l->len++] = value;
 }
 
+/* Generated code's integer div/mod-by-zero guard: the defined L++
+ * panic (exit 101), never a hardware trap. */
+void lpp_panic_div_zero(void) { lpp_panic("integer division by zero"); }
+
 /* Store one ARC object reference in List[T]. */
 void lpp_list_push_arc(void *list, void *value) {
     LppList *l = (LppList *)list;

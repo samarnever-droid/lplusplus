@@ -66,6 +66,7 @@ fn test_freestanding_runtime_symbol_parity() {
         "lpp_list_pop",
         "lpp_list_len",
         "lpp_list_free",
+        "lpp_buf_free_at_exit",
         "lpp_str_concat",
         "lpp_str_eq",
         "lpp_str_cmp",

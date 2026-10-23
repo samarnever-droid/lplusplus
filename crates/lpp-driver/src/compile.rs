@@ -16,8 +16,8 @@
 //!
 //! The final link uses the **Rust runtime cdylib** (`liblpp_runtime.so`), the
 //! same artifact the 6B.3e drop-in capstone proved is a byte-identical
-//! replacement for the v1 C `c_shim.c`. The cdylib is self-contained, so a
-//! native executable needs nothing but `libm` at link time.
+//! replacement for the v1 C `c_shim.c`. Native modules also pass their declared
+//! external libraries through to the host linker.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -348,23 +348,52 @@ fn host_dynamic_linker() -> &'static str {
 /// GOT relocations that the direct linker does not yet emit (tracked as the
 /// next hardening step). If the direct link fails for any reason, we fall back
 /// to `cc` and print a warning to stderr so the gap is visible rather than
-/// silently masked.
+/// silently masked. This convenience wrapper has no user libraries; modules
+/// containing external calls should use [`link_executable_with_libraries`].
 pub fn link_executable(
     object: &[u8],
     runtime_lib_dir: &Path,
     output: &Path,
 ) -> Result<(), CompileError> {
     let configured = std::env::var("LPP_LINKER").ok();
-    link_executable_with(object, runtime_lib_dir, output, configured.as_deref())
+    link_executable_with_libraries(object, &[], runtime_lib_dir, output, configured.as_deref())
 }
 
 /// Link with an explicit implementation preference (`direct` or `cc`).
+/// This compatibility wrapper has no user libraries; use
+/// [`link_executable_with_libraries`] for external calls.
 pub fn link_executable_with(
     object: &[u8],
     runtime_lib_dir: &Path,
     output: &Path,
     linker: Option<&str>,
 ) -> Result<(), CompileError> {
+    link_executable_with_libraries(object, &[], runtime_lib_dir, output, linker)
+}
+
+/// Link an object with the system libraries required by its external calls.
+pub fn link_executable_with_libraries(
+    object: &[u8],
+    libraries: &[String],
+    runtime_lib_dir: &Path,
+    output: &Path,
+    linker: Option<&str>,
+) -> Result<(), CompileError> {
+    for library in libraries {
+        if library.is_empty()
+            || library.starts_with('-')
+            || library == "."
+            || library == ".."
+            || !library.bytes().all(|byte| {
+                byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'+' | b'.')
+            })
+        {
+            return Err(CompileError::Link(format!(
+                "invalid external library name {library:?}"
+            )));
+        }
+    }
+
     let dir = output
         .parent()
         .unwrap_or_else(|| Path::new("."))
@@ -391,12 +420,16 @@ pub fn link_executable_with(
     }
     let force_cc = linker == Some("cc")
         || std::env::consts::ARCH == "aarch64"
-        || !cfg!(any(target_os = "linux", target_os = "windows"));
+        || !cfg!(any(target_os = "linux", target_os = "windows"))
+        // PE import-library lookup and DLL symbol ownership are delegated to
+        // the platform linker; the in-process PE linker only supports its
+        // explicit import map today.
+        || (cfg!(target_os = "windows") && !libraries.is_empty() && !force_direct);
 
     let result = if force_cc {
-        link_executable_cc(&object_path, runtime_lib_dir, output)
+        link_executable_cc(&object_path, libraries, runtime_lib_dir, output)
     } else {
-        match link_executable_direct(&object_path, runtime_lib_dir, output) {
+        match link_executable_direct(&object_path, libraries, runtime_lib_dir, output) {
             Ok(()) => Ok(()),
             // A genuine input/user error (missing `main`, bad object, bad
             // arguments) is reported as-is. Fall back only for limitations,
@@ -409,7 +442,7 @@ pub fn link_executable_with(
                         "[lpp-linker] warning: direct link hit a limitation ({}); falling back to cc",
                         err.message
                     );
-                    link_executable_cc(&object_path, runtime_lib_dir, output)
+                    link_executable_cc(&object_path, libraries, runtime_lib_dir, output)
                 } else {
                     Err(CompileError::Link(err.message))
                 }
@@ -425,6 +458,7 @@ pub fn link_executable_with(
 /// the caller can decide, by error kind, whether to fall back to `cc`.
 fn link_executable_direct(
     object_path: &Path,
+    libraries: &[String],
     runtime_lib_dir: &Path,
     output: &Path,
 ) -> Result<(), lpp_linker::LinkError> {
@@ -437,6 +471,7 @@ fn link_executable_direct(
         format: Some(OutputFormat::Pe),
         dynamic: DynamicMode::Force,
         search_paths: vec![runtime_lib_dir.to_path_buf()],
+        libraries: libraries.to_vec(),
         ..Default::default()
     };
 
@@ -445,12 +480,14 @@ fn link_executable_direct(
         dynamic: DynamicMode::Force, // resolve lpp_*/libc through the PLT at load time
         pie: false,                  // ET_EXEC until RELATIVE GOT relocs land
         dynamic_linker: Some(host_dynamic_linker().to_string()),
-        // The runtime cdylib must be a load-time dependency; libc/libm are derived
-        // from the object's undefined symbols by the linker.
+        // The runtime cdylib is a load-time dependency; libc/libm are derived
+        // from undefined symbols, and user-declared extern libraries become
+        // additional DT_NEEDED entries.
         needed: vec!["liblpp_runtime.so".to_string()],
         search_paths: vec![runtime_lib_dir.to_path_buf()],
         // Find the runtime cdylib at run time without LD_LIBRARY_PATH.
         rpath: vec![runtime_lib_dir.display().to_string()],
+        libraries: libraries.to_vec(),
         ..Default::default()
     };
 
@@ -476,20 +513,27 @@ fn link_executable_direct(
 #[cfg(not(target_os = "windows"))]
 fn link_executable_cc(
     object_path: &Path,
+    libraries: &[String],
     runtime_lib_dir: &Path,
     output: &Path,
 ) -> Result<(), CompileError> {
     let compiler = std::env::var("LPP_HOST_CC").unwrap_or_else(|_| "cc".to_string());
     let rpath = format!("-Wl,-rpath,{}", runtime_lib_dir.display());
-    let link = Command::new(&compiler)
+    let mut link_cmd = Command::new(&compiler);
+    link_cmd
         .arg(object_path)
         .arg("-o")
         .arg(output)
         .arg("-L")
         .arg(runtime_lib_dir)
-        .arg("-llpp_runtime")
-        .arg(rpath)
-        .arg("-lm")
+        .arg(rpath);
+    for library in libraries {
+        link_cmd.arg(format!("-l{library}"));
+    }
+    // Keep runtime/math libraries after user archives so their undefined
+    // references can be resolved in the normal left-to-right linker model.
+    link_cmd.arg("-llpp_runtime").arg("-lm");
+    let link = link_cmd
         .output()
         .map_err(|error| CompileError::Io(format!("failed to run {compiler}: {error}")))?;
     if !link.status.success() {
@@ -503,6 +547,7 @@ fn link_executable_cc(
 #[cfg(target_os = "windows")]
 fn link_executable_cc(
     object_path: &Path,
+    libraries: &[String],
     runtime_lib_dir: &Path,
     output: &Path,
 ) -> Result<(), CompileError> {
@@ -524,7 +569,7 @@ fn link_executable_cc(
     } else {
         Command::new(&compiler)
     };
-    let link = link_cmd
+    link_cmd
         .arg("/nologo")
         .arg(object_path)
         .arg(format!("/Fe:{}", output.display()))
@@ -532,7 +577,16 @@ fn link_executable_cc(
         .arg(format!("/LIBPATH:{}", runtime_lib_dir.display()))
         .arg(import_library)
         .arg("msvcrt.lib")
-        .arg("legacy_stdio_definitions.lib")
+        .arg("legacy_stdio_definitions.lib");
+    for library in libraries {
+        let path = if library.to_ascii_lowercase().ends_with(".lib") {
+            library.clone()
+        } else {
+            format!("{library}.lib")
+        };
+        link_cmd.arg(path);
+    }
+    let link = link_cmd
         .output()
         .map_err(|error| CompileError::Io(format!("failed to run {compiler}: {error}")))?;
     if !link.status.success() {
@@ -587,7 +641,14 @@ pub fn build_executable_with_options(
     runtime_lib_dir: &Path,
 ) -> Result<(), CompileError> {
     let module = compile_entry_with_options(entry, package_name, backend, options)?;
-    link_executable(&module.object, runtime_lib_dir, output)
+    let configured = std::env::var("LPP_LINKER").ok();
+    link_executable_with_libraries(
+        &module.object,
+        &module.link_libraries,
+        runtime_lib_dir,
+        output,
+        configured.as_deref(),
+    )
 }
 
 pub fn build_executable_configured(
@@ -600,7 +661,13 @@ pub fn build_executable_configured(
     linker: Option<&str>,
 ) -> Result<(), CompileError> {
     let module = compile_entry_with_options(entry, package_name, backend, options)?;
-    link_executable_with(&module.object, runtime_lib_dir, output, linker)
+    link_executable_with_libraries(
+        &module.object,
+        &module.link_libraries,
+        runtime_lib_dir,
+        output,
+        linker,
+    )
 }
 
 /// Platform filename of the rewrite runtime dynamic library.

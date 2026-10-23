@@ -1,10 +1,10 @@
 use std::collections::BTreeMap;
 
 use lpp_common::{Diagnostic, Span};
-use lpp_frontend::{ImportKind, ItemKind};
+use lpp_frontend::{ImportKind, ItemKind, Keyword, SyntaxKind, TokenKind};
 
 use crate::arena::{Arena, ArenaExhausted};
-use crate::graph::{ModuleId, PackageGraph};
+use crate::graph::{Module, ModuleId, PackageGraph};
 use crate::ids::{DefId, Symbol};
 use crate::interner::{InternerExhausted, StringInterner};
 
@@ -104,7 +104,17 @@ pub fn build_name_index(
     let expected_definitions = graph
         .modules
         .iter()
-        .map(|module| module.syntax.items.len())
+        .map(|module| {
+            module.syntax.items.len()
+                + module
+                    .syntax
+                    .items
+                    .iter()
+                    .filter(|item| item.kind == ItemKind::Extern)
+                    .filter_map(|item| module.syntax.syntax.get(item.syntax_index as usize))
+                    .map(|node| node.children.len())
+                    .sum::<usize>()
+        })
         .sum();
     let mut symbols = StringInterner::with_capacity(expected_definitions);
     let mut definitions = Arena::with_capacity(expected_definitions);
@@ -149,6 +159,51 @@ pub fn build_name_index(
                     format!("duplicate definition '{name}' in one module"),
                     item.span,
                 ));
+            }
+        }
+    }
+
+    // Extern-block declarations are top-level module names even though their
+    // syntax and HIR items are nested under the block. Index them here so both
+    // module imports and expression resolution can find the function DefIds.
+    for module in &graph.modules {
+        let scope = &mut modules[module.id.raw() as usize];
+        for item in &module.syntax.items {
+            if item.kind != ItemKind::Extern {
+                continue;
+            }
+            let Some(block) = module.syntax.syntax.get(item.syntax_index as usize) else {
+                continue;
+            };
+            for function in &block.children {
+                if function.kind != SyntaxKind::Function {
+                    continue;
+                }
+                let Some(name) = nested_function_name(module, function) else {
+                    continue;
+                };
+                let symbol = match symbols.intern(name) {
+                    Ok(symbol) => symbol,
+                    Err(error) => return Err(vec![capacity_diagnostic(error, function.span)]),
+                };
+                let definition = Definition {
+                    module: module.id,
+                    name: symbol,
+                    kind: DefinitionKind::Function,
+                    public: item.public,
+                    span: function.span,
+                };
+                let id = match definitions.alloc(definition) {
+                    Ok(id) => id,
+                    Err(error) => return Err(vec![arena_diagnostic(error, function.span)]),
+                };
+                if scope.definitions.insert(symbol, id).is_some() {
+                    diagnostics.push(diagnostic(
+                        "E3001",
+                        format!("duplicate definition '{name}' in one module"),
+                        function.span,
+                    ));
+                }
             }
         }
     }
@@ -241,6 +296,24 @@ pub fn build_name_index(
     } else {
         Err(diagnostics)
     }
+}
+
+fn nested_function_name<'a>(
+    module: &'a Module,
+    node: &lpp_frontend::SyntaxNode,
+) -> Option<&'a str> {
+    let tokens = module
+        .syntax
+        .tokens
+        .get(node.tokens.start..node.tokens.end)?;
+    let def = tokens
+        .iter()
+        .position(|token| token.kind == TokenKind::Keyword(Keyword::Def))?;
+    tokens
+        .get(def + 1..)?
+        .iter()
+        .find(|token| token.kind == TokenKind::Identifier)
+        .map(|token| token.text(&module.syntax.source))
 }
 
 fn insert_import(

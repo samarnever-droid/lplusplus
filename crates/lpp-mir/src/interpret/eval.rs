@@ -622,6 +622,12 @@ impl Interpreter<'_> {
                     )),
                 }
             }
+            Rvalue::ExternalCall { .. } => Err(self.error(
+                Some(function),
+                Some(block),
+                Some(origin),
+                InterpreterErrorKind::UnsupportedExternalCall,
+            )),
             Rvalue::Builtin { builtin, arguments } => {
                 // The builtin half of the call contract: value arguments
                 // that a builtin stores move; receivers and indices are

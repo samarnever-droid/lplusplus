@@ -33,3 +33,12 @@ pub fn runtime_panic(reason: &str) -> ! {
     let _ = std::io::stdout().flush();
     std::process::exit(101);
 }
+
+/// Generated code's integer division/modulo-by-zero guard target:
+/// the defined L++ panic (the MIR oracle's `DivisionByZero`), never
+/// a hardware trap. Exported because generated objects call it
+/// directly, unlike the internal [`runtime_panic`].
+#[unsafe(no_mangle)]
+pub extern "C" fn lpp_panic_div_zero() -> ! {
+    runtime_panic("integer division by zero")
+}

@@ -115,8 +115,8 @@ fn rewrite_rvalue(map: &BTreeMap<MirLocalId, Constant>, value: Rvalue) -> Rvalue
         Rvalue::Await(operand) => Rvalue::Await(rewrite_operand(map, operand)),
         Rvalue::Spawn(operand) => Rvalue::Spawn(rewrite_operand(map, operand)),
         // `Tuple`, `List`, `ConstructStruct`, `ConstructVariant`,
-        // `Call`, `Builtin`, and `MakeClosure` hold their operands in
-        // the read-only list arena: untouched.
+        // `Call`, `ExternalCall`, `Builtin`, and `MakeClosure` hold their
+        // operands in the read-only list arena: untouched.
         other => other,
     }
 }

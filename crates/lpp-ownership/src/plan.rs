@@ -672,6 +672,10 @@ fn escaping_locals(program: &MirProgram, function_id: MirFunctionId) -> BTreeSet
                         arguments: captures,
                         ..
                     }
+                    | Rvalue::ExternalCall {
+                        arguments: captures,
+                        ..
+                    }
                     // v1 container/print operations lower to builtin
                     // calls; per-builtin retention is not modeled, so
                     // every builtin value argument escapes.

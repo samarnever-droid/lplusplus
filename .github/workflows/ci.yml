@@ -591,6 +591,7 @@ jobs:
           mkdir -p "$WORK"
           cc -fsanitize=address,undefined -g -c crates/lpp-codegen-cranelift/tests/c_shim.c -o "$WORK/c_shim.o"
           for f in tuple_managed_churn tuple_overwrite tuple_cycle tuple_async_closure \
+                   tuple_list_churn tuple_list_cycle tuple_list_alias list_literal_managed_churn \
                    cycle_churn cycle_ring cycle_closure_env; do
             ./target/debug/lpp "tests/$f.lpp" --emit-object -o "$WORK/$f.o"
             cc -fsanitize=address,undefined "$WORK/$f.o" "$WORK/c_shim.o" -lm -o "$WORK/$f"

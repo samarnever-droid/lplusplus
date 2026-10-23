@@ -19,8 +19,9 @@ use lpp_hir::{
     lower_package,
 };
 use lpp_mir::{
-    ExecutionOutcome, ExecutionValue, InterpreterErrorKind, InterpreterLimits, MirBuildOptions,
-    MirFunctionId, MirFunctionKind, build_mir, execute_mir_arc, verify_mir,
+    ExecutionOutcome, ExecutionValue, InstructionKind, InterpreterErrorKind, InterpreterLimits,
+    MirBuildOptions, MirFunctionId, MirFunctionKind, Operand, Rvalue, build_mir, execute_mir_arc,
+    verify_mir,
 };
 use lpp_ownership::{
     OwnershipBalanceErrorKind, OwnershipBalancePass, OwnershipPlanPass, compute_ownership_plan,
@@ -471,7 +472,30 @@ fn use_after_move_is_flagged_with_exact_location() {
                 program.local(*local).map(|local| local.ty),
                 Some(ty) if matches!(types.kind(ty), TypeKind::List(_))
             ));
-            let _ = block;
+            let block_data = program.block(*block).expect("violation block is present");
+            let use_origin = program
+                .block_instructions(block_data)
+                .iter()
+                .filter_map(|instruction| program.instruction(*instruction))
+                .find_map(|instruction| {
+                    let InstructionKind::Assign {
+                        value: Rvalue::Builtin { builtin, arguments },
+                        ..
+                    } = instruction.kind
+                    else {
+                        return None;
+                    };
+                    let name = builtin
+                        .descriptor()
+                        .name
+                        .strip_prefix("lpp_")
+                        .unwrap_or(builtin.descriptor().name);
+                    (name == "list_len"
+                        && program.operands(arguments).contains(&Operand::Copy(*local)))
+                    .then_some(instruction.origin)
+                })
+                .expect("the violating list_len read is in the reported block");
+            assert_eq!(error.origin, Some(use_origin));
         }
         other => panic!("expected UseAfterMove, got {other:?}"),
     }

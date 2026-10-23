@@ -1,6 +1,7 @@
 # source file|expected stdout, with \n denoting a newline
 arith.lpp|15\n5\n50\n2
 branches.lpp|1\n0\n1
+test_short_circuit.lpp|eval-false\n0\neval-true\n1
 fib.lpp|55
 loop.lpp|5050
 nested_calls.lpp|120
@@ -51,3 +52,7 @@ tuple_managed_churn.lpp|30000
 tuple_cycle.lpp|0
 tuple_async_closure.lpp|141
 tuple_overwrite.lpp|39998
+tuple_list_churn.lpp|20000
+tuple_list_cycle.lpp|0
+tuple_list_alias.lpp|1001
+list_literal_managed_churn.lpp|20000

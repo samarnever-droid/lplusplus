@@ -440,7 +440,7 @@ fn rewrite_main(args: &[String], cwd: &Path) -> i32 {
                     }
                     if mode == Mode::Run {
                         match Command::new(&exe).status() {
-                            Ok(status) => status.code().unwrap_or(0),
+                            Ok(status) => child_exit_code(&status),
                             Err(error) => {
                                 eprintln!("[rewrite] failed to run {}: {error}", exe.display());
                                 1
@@ -526,9 +526,27 @@ fn no_input() -> i32 {
     EXIT_DEFER
 }
 
+/// The exit code to report for a spawned child: its real code when
+/// it exited normally, `128 + signal` when it was killed by one
+/// (shell convention), never a silent 0 — a crashing program must
+/// not look like a successful run.
+fn child_exit_code(status: &std::process::ExitStatus) -> i32 {
+    if let Some(code) = status.code() {
+        return code;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        if let Some(signal) = status.signal() {
+            return 128 + signal;
+        }
+    }
+    1
+}
+
 fn run_wasm(module: &Path) -> i32 {
     if let Ok(status) = Command::new("wasmtime").arg(module).status() {
-        return status.code().unwrap_or(0);
+        return child_exit_code(&status);
     }
     eprintln!(
         "[rewrite] built the wasm module but found no runtime to execute it (install wasmtime)."
@@ -749,9 +767,7 @@ fn run_bench(arguments: &[String], cwd: &Path) -> i32 {
         .current_dir(cwd)
         .status()
     {
-        Ok(status) => status
-            .code()
-            .unwrap_or(if status.success() { 0 } else { 1 }),
+        Ok(status) => child_exit_code(&status),
         Err(error) => {
             eprintln!(
                 "[rewrite] failed to launch benchmark tool {}: {error}",
@@ -895,4 +911,40 @@ fn print_help() {
     println!(
         "  new, init, add, remove, install, update, test, run, build, publish, tree, verify, clean"
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::child_exit_code;
+    use std::process::Command;
+
+    #[cfg(unix)]
+    #[test]
+    fn child_exit_code_passes_through_real_codes() {
+        let status = Command::new("sh")
+            .args(["-c", "exit 101"])
+            .status()
+            .expect("sh");
+        assert_eq!(child_exit_code(&status), 101);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn child_exit_code_passes_through_real_codes() {
+        let status = Command::new("cmd")
+            .args(["/C", "exit 101"])
+            .status()
+            .expect("cmd");
+        assert_eq!(child_exit_code(&status), 101);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn child_exit_code_never_reports_signal_death_as_success() {
+        let status = Command::new("sh")
+            .args(["-c", "kill -SEGV $$"])
+            .status()
+            .expect("sh");
+        assert_eq!(child_exit_code(&status), 128 + 11);
+    }
 }

@@ -259,6 +259,7 @@ fn rvalue_operands(program: &MirProgram, value: Rvalue) -> Vec<Operand> {
             operands.extend_from_slice(program.operands(arguments));
             operands
         }
+        Rvalue::ExternalCall { arguments, .. } => program.operands(arguments).to_vec(),
         Rvalue::Builtin {
             builtin: _,
             arguments,

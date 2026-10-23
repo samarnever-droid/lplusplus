@@ -148,7 +148,7 @@ fn dense_match_dispatch_binds_every_payload_and_evaluates_subject_once() {
         .map(|(_, variant)| variant.ordinal)
         .collect::<Vec<_>>();
     assert_eq!(ordinals, vec![0, 1, 2]);
-    assert!(mir_snapshot(&program).starts_with("mir-v6\n"));
+    assert!(mir_snapshot(&program).starts_with("mir-v7\n"));
 }
 
 #[test]

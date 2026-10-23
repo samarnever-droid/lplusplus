@@ -24,6 +24,11 @@ def c_lex_cursor(data: Int, size: Int, path: Str) -> CLexCursor:
     return CLexCursor(data, size, path, 0, 1, 1)
 
 
+# Make an independent owning cursor while preserving the caller's path value.
+def c_lex_cursor_clone(cursor: CLexCursor) -> CLexCursor:
+    return CLexCursor(cursor.data, cursor.size, str_concat(cursor.path, ""), cursor.offset, cursor.line, cursor.column)
+
+
 def c_lex_advance(cursor: CLexCursor, end: Int) -> CLexCursor:
     mut line := cursor.line
     mut column := cursor.column

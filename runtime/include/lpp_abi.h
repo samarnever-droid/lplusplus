@@ -61,6 +61,7 @@ int64_t lpp_buf_alloc(int64_t);
 void lpp_buf_copy(int64_t, int64_t, int64_t, int64_t, int64_t);
 int64_t lpp_buf_crc32(int64_t, int64_t, int64_t);
 void lpp_buf_free(int64_t);
+void lpp_buf_free_at_exit(int64_t);
 int64_t lpp_buf_get16be(int64_t, int64_t);
 int64_t lpp_buf_get16le(int64_t, int64_t);
 int64_t lpp_buf_get32be(int64_t, int64_t);

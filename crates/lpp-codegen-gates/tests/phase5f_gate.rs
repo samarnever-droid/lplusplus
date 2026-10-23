@@ -587,3 +587,51 @@ fn sanitizer_clean() {
         );
     }
 }
+
+/// Integer division/modulo by zero is the defined L++ runtime
+/// panic (the oracle's `DivisionByZero`): banner + exit 101, never
+/// a hardware trap (SIGILL/SIGFPE would surface here as status -1).
+/// `INT_MIN / -1` wraps like the oracle's `wrapping_div`.
+#[test]
+fn integer_division_by_zero_is_the_defined_panic() {
+    for (operator, label) in [("/", "div_zero"), ("%", "mod_zero")] {
+        let source = format!(
+            "def f(n: Int) -> Int:\n    return 100 {operator} n\n\ndef main():\n    print(f(0))\n"
+        );
+        let (program, types, package) = pipeline(&source);
+        let names = Names(&package.names.symbols);
+        let cl = compile_cranelift(&program, &types, &names);
+        let (_out, status) = link_and_run(&cl.object, &format!("{label}_cl"));
+        assert_eq!(status, 101, "Cranelift {operator} by zero must exit 101");
+        let ws = compile_wasm(&program, &types, &names);
+        let (_out, status) = run_wasm(&ws.object, &format!("{label}_ws"));
+        assert_eq!(
+            status, 101,
+            "WASM {operator} by zero must exit via WASI status 101"
+        );
+        if llvm_compiler_available() {
+            let ll = compile_llvm(&program, &types, &names);
+            let (_out, status) = link_and_run(&ll.object, &format!("{label}_ll"));
+            assert_eq!(status, 101, "LLVM {operator} by zero must exit 101");
+        }
+    }
+
+    let wrapping = "def main():\n    m := 0 - 9223372036854775807 - 1\n    print(m / (0 - 1))\n    print(m % (0 - 1))\n    print(100 / 7)\n    print(100 % 7)\n";
+    let (program, types, package) = pipeline(wrapping);
+    let names = Names(&package.names.symbols);
+    let cl = compile_cranelift(&program, &types, &names);
+    let (out, status) = link_and_run(&cl.object, "div_wrap_cl");
+    assert_eq!(status, 0);
+    let expected = "-9223372036854775808\n0\n14\n2\n";
+    assert_eq!(out, expected);
+    let ws = compile_wasm(&program, &types, &names);
+    let (out, status) = run_wasm(&ws.object, "div_wrap_ws");
+    assert_eq!(status, 0);
+    assert_eq!(out, expected);
+    if llvm_compiler_available() {
+        let ll = compile_llvm(&program, &types, &names);
+        let (out, status) = link_and_run(&ll.object, "div_wrap_ll");
+        assert_eq!(status, 0);
+        assert_eq!(out, expected);
+    }
+}

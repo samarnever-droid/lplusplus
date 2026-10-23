@@ -123,7 +123,9 @@ def c_decl_resolve_file(path: Str) -> CDeclResult:
             start := parse_int(c_decl_field(record, 5))
             end := parse_int(c_decl_field(record, 6))
             flags := c_decl_field(record, 7)
-            mut cursor := CLexCursor(data, size, path, start, line, column)
+            # CLexCursor takes ownership of its path field; keep the file-level
+            # path reusable for the next declaration by passing a fresh string.
+            mut cursor := CLexCursor(data, size, str_concat(path, ""), start, line, column)
             mut base := ""
             mut base_class := "unresolved"
             mut pointer_depth := 0

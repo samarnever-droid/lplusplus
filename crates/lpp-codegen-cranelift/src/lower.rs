@@ -43,9 +43,9 @@ use cranelift_module::{DataDescription, DataId, FuncId, Linkage, Module};
 use cranelift_object::ObjectModule;
 use lpp_codegen_api::{CodegenError, CodegenErrorKind};
 use lpp_mir::{
-    BasicBlockId, BinaryOperator, Constant, InstructionKind, MirAggregateId, MirFunction,
-    MirFunctionId, MirFunctionKind, MirLocalId, MirProgram, MirStringId, Operand, PlaceProjection,
-    Rvalue, Terminator, UnaryOperator,
+    BasicBlockId, BinaryOperator, Constant, InstructionKind, MirAggregateId, MirExternalFunctionId,
+    MirFunction, MirFunctionId, MirFunctionKind, MirLocalId, MirProgram, MirStringId, Operand,
+    PlaceProjection, Rvalue, Terminator, UnaryOperator,
 };
 use lpp_types::{BuiltinId, PrimitiveType, TypeId, TypeInterner, TypeKind};
 
@@ -63,9 +63,11 @@ const STRING_HEADER_OFFSET: i64 = 24;
 // for `fmod`.
 
 const IMP_PRINT_STR: &str = "lpp_print_str";
+const IMP_PANIC_DIV_ZERO: &str = "lpp_panic_div_zero";
 const IMP_FMOD: &str = "fmod";
 const IMP_STR_EQ: &str = "lpp_str_eq";
 const IMP_STR_CONCAT: &str = "lpp_str_concat";
+const IMP_EMPTY_STR: &str = "lpp_empty_str";
 const IMP_INT_TO_STR: &str = "lpp_int_to_str";
 const IMP_FLOAT_TO_STR: &str = "lpp_float_to_str";
 const IMP_BOOL_TO_STR: &str = "lpp_bool_to_str";
@@ -295,6 +297,7 @@ const FAMILY_A: &[&str] = &[
     "list_free",
     "buf_alloc",
     "buf_free",
+    "buf_free_at_exit",
     "buf_len",
     "buf_get8",
     "buf_set8",
@@ -424,6 +427,7 @@ fn import_signature(name: &str) -> (&'static [CLType], Option<CLType>) {
         IMP_MARK_COLLECTIBLE | IMP_TRACE_VISIT | IMP_LIST_TRACE | IMP_TUPLE_TRACE
         | IMP_TASK_TRACE | IMP_CLOSURE_TRACE => (&[cltypes::I64, cltypes::I64], None),
         IMP_COLLECT_CYCLES => (&[], None),
+        IMP_PANIC_DIV_ZERO => (&[], None),
         IMP_LIST_NEW | IMP_LIST_NEW_ARC => (&[], Some(cltypes::I64)),
         IMP_LIST_PUSH | IMP_LIST_PUSH_ARC => (&[cltypes::I64, cltypes::I64], None),
         IMP_LIST_PUSH_FLOAT => (&[cltypes::I64, cltypes::F64], None),
@@ -470,6 +474,7 @@ fn import_signature(name: &str) -> (&'static [CLType], Option<CLType>) {
         "lpp_write_bool" => (&[cltypes::I8], None),
         "lpp_write_nl" | "lpp_flush" => (&[], None),
         "lpp_str_concat" => (&[cltypes::I64, cltypes::I64], Some(cltypes::I64)),
+        "lpp_empty_str" => (&[], Some(cltypes::I64)),
         "lpp_str_len" => (&[cltypes::I64], Some(cltypes::I64)),
         "lpp_str_contains" => (&[cltypes::I64, cltypes::I64], Some(cltypes::I64)),
         "lpp_str_starts_with" => (&[cltypes::I64, cltypes::I64], Some(cltypes::I64)),
@@ -515,7 +520,7 @@ fn import_signature(name: &str) -> (&'static [CLType], Option<CLType>) {
         "lpp_buf_alloc" | "lpp_buf_len" | "lpp_buf_read" | "lpp_buf_to_str" => {
             (&[cltypes::I64], Some(cltypes::I64))
         }
-        "lpp_buf_free" => (&[cltypes::I64], None),
+        "lpp_buf_free" | "lpp_buf_free_at_exit" => (&[cltypes::I64], None),
         "lpp_buf_get8" | "lpp_buf_get16le" | "lpp_buf_get16be" | "lpp_buf_get32le"
         | "lpp_buf_get32be" | "lpp_buf_get64le" | "lpp_buf_get64be" | "lpp_buf_write" => {
             (&[cltypes::I64, cltypes::I64], Some(cltypes::I64))
@@ -784,6 +789,8 @@ pub(crate) struct Plan {
     pub(crate) export_names: BTreeMap<MirFunctionId, String>,
     /// Runtime imports, in stable (lexicographic) order.
     pub(crate) imports: BTreeSet<&'static str>,
+    /// Direct foreign symbols used by the program, in stable MIR-ID order.
+    pub(crate) external_functions: Vec<MirExternalFunctionId>,
     /// Nominal aggregates that are constructed, in `MirAggregateId`
     /// order — one generated destructor each.
     pub(crate) destructors: Vec<MirAggregateId>,
@@ -963,7 +970,11 @@ fn element_class(types: &TypeInterner, element: TypeId) -> ElementClass {
         TypeKind::Primitive(PrimitiveType::String)
         | TypeKind::List(_)
         | TypeKind::Nominal { .. }
-        | TypeKind::Function { .. } => ElementClass::Managed,
+        | TypeKind::Function { .. }
+        // Structural tuples are ARC heap records (generated
+        // destructor/trace), so they store in lists through the
+        // managed element ops exactly like nominals.
+        | TypeKind::Tuple(_) => ElementClass::Managed,
         TypeKind::Primitive(
             PrimitiveType::Int
             | PrimitiveType::Char
@@ -981,7 +992,7 @@ fn element_class(types: &TypeInterner, element: TypeId) -> ElementClass {
 /// Validate that `element` is a type a runtime list can actually store.
 ///
 /// This is deliberately stricter than `check_value_type`: a SIMD vector is a
-/// perfectly valid machine value (`I64X2`) and a tuple/map is a valid value
+/// perfectly valid machine value (`I64X2`) and a map is a valid value
 /// type elsewhere, but the runtime list ops only cover scalar / float / bool /
 /// managed (ARC) slots — there is no list storage class for a vector. Rejecting
 /// an unstoreable element here, at the construction site in the pre-scan, turns
@@ -1008,7 +1019,8 @@ fn check_list_element(
         )
         | TypeKind::List(_)
         | TypeKind::Nominal { .. }
-        | TypeKind::Function { .. } => Ok(()),
+        | TypeKind::Function { .. }
+        | TypeKind::Tuple(_) => Ok(()),
         other => Err(unsupported(function, unsupported_construct_for(other))),
     }
 }
@@ -1318,6 +1330,7 @@ pub(crate) fn pre_scan(
     let mut export_names = BTreeMap::new();
     let mut used_export_names: BTreeSet<String> = BTreeSet::new();
     let mut imports: BTreeSet<&'static str> = BTreeSet::new();
+    let mut external_functions: BTreeSet<MirExternalFunctionId> = BTreeSet::new();
     let mut destructors: Vec<MirAggregateId> = Vec::new();
     let mut closure_dtors: Vec<MirFunctionId> = Vec::new();
     let mut tuple_destructors: Vec<TypeId> = Vec::new();
@@ -1333,6 +1346,7 @@ pub(crate) fn pre_scan(
             let mut scan = ScanState {
                 shared: &shared_types,
                 imports: &mut imports,
+                external_functions: &mut external_functions,
                 destructors: &mut destructors,
                 closure_dtors: &mut closure_dtors,
                 tuple_destructors: &mut tuple_destructors,
@@ -1445,6 +1459,7 @@ pub(crate) fn pre_scan(
     Ok(Plan {
         export_names,
         imports,
+        external_functions: external_functions.into_iter().collect(),
         destructors,
         closure_dtors,
         task_thunks,
@@ -1474,6 +1489,7 @@ pub(crate) enum ValueClass {
 struct ScanState<'a> {
     shared: &'a BTreeSet<TypeId>,
     imports: &'a mut BTreeSet<&'static str>,
+    external_functions: &'a mut BTreeSet<MirExternalFunctionId>,
     destructors: &'a mut Vec<MirAggregateId>,
     closure_dtors: &'a mut Vec<MirFunctionId>,
     tuple_destructors: &'a mut Vec<TypeId>,
@@ -1999,6 +2015,15 @@ fn check_function_shape(
                                 if *operator == BinaryOperator::Modulo && left_ty == cltypes::F64 {
                                     scan.imports.insert(IMP_FMOD);
                                 }
+                                // Integer div/mod guards the zero
+                                // divisor with the defined panic import.
+                                if matches!(
+                                    *operator,
+                                    BinaryOperator::Divide | BinaryOperator::Modulo
+                                ) && left_ty != cltypes::F64
+                                {
+                                    scan.imports.insert(IMP_PANIC_DIV_ZERO);
+                                }
                                 // String equality compares the contents, not the
                                 // heap pointers.
                                 if matches!(
@@ -2008,6 +2033,87 @@ fn check_function_shape(
                                 {
                                     scan.imports.insert(IMP_STR_EQ);
                                 }
+                            }
+                        }
+                        Rvalue::ExternalCall {
+                            function: external_id,
+                            arguments,
+                        } => {
+                            let external = program
+                                .external_function(*external_id)
+                                .ok_or_else(|| unsupported(mir_id, "missing external function"))?;
+                            if external.abi != "C" {
+                                return Err(unsupported(mir_id, "unsupported external ABI"));
+                            }
+                            let TypeKind::Function { parameters, result } = types.kind(external.ty)
+                            else {
+                                return Err(unsupported(mir_id, "external has non-function type"));
+                            };
+                            let supported_scalar = |ty, allow_string, allow_void| {
+                                matches!(
+                                    types.kind(ty),
+                                    TypeKind::Primitive(
+                                        PrimitiveType::Bool
+                                            | PrimitiveType::Int
+                                            | PrimitiveType::Float
+                                            | PrimitiveType::U8
+                                            | PrimitiveType::U16
+                                            | PrimitiveType::U32
+                                            | PrimitiveType::I8
+                                            | PrimitiveType::I16
+                                            | PrimitiveType::I32
+                                    )
+                                ) || (allow_string
+                                    && matches!(
+                                        types.kind(ty),
+                                        TypeKind::Primitive(PrimitiveType::String)
+                                    ))
+                                    || (allow_void && is_void_type(types, ty))
+                            };
+                            if !supported_scalar(result, true, true)
+                                || types
+                                    .list(parameters)
+                                    .iter()
+                                    .any(|parameter| !supported_scalar(*parameter, true, false))
+                            {
+                                return Err(unsupported(mir_id, "unsupported external signature"));
+                            }
+                            if !machine_type(types, result).is_some()
+                                && !is_void_type(types, result)
+                            {
+                                return Err(unsupported(
+                                    mir_id,
+                                    unsupported_construct_for(types.kind(result)),
+                                ));
+                            }
+                            if result != local_ty(*target) {
+                                return Err(unsupported(mir_id, "external result type mismatch"));
+                            }
+                            let expected = types.list(parameters);
+                            let actual = program.operands(*arguments);
+                            if expected.len() != actual.len() {
+                                return Err(unsupported(mir_id, "external call arity mismatch"));
+                            }
+                            for (expected, operand) in expected.iter().zip(actual) {
+                                let expected_machine = check_value_type(types, *expected, mir_id)?;
+                                let actual_machine = check_operand(operand)?;
+                                if expected_machine != actual_machine {
+                                    return Err(unsupported(
+                                        mir_id,
+                                        "external argument type mismatch",
+                                    ));
+                                }
+                            }
+                            scan.external_functions.insert(*external_id);
+                            if matches!(
+                                types.kind(result),
+                                TypeKind::Primitive(PrimitiveType::String)
+                            ) {
+                                // C returns a borrowed NUL-terminated buffer.
+                                // Copy it to an ARC-owned L++ string before
+                                // normal MIR ownership cleanup can release it.
+                                scan.imports.insert(IMP_EMPTY_STR);
+                                scan.imports.insert(IMP_STR_CONCAT);
                             }
                         }
                         Rvalue::Call { callee, arguments } => {
@@ -2959,6 +3065,7 @@ pub(crate) struct Lowering<'m> {
     closure_thunk_ids: BTreeMap<MirFunctionId, FuncId>,
     value_classes: BTreeMap<(MirFunctionId, MirLocalId), ValueClass>,
     import_ids: BTreeMap<&'static str, FuncId>,
+    external_ids: BTreeMap<MirExternalFunctionId, FuncId>,
     exported: BTreeSet<String>,
     imported: BTreeSet<String>,
     entry: Option<String>,
@@ -2991,6 +3098,7 @@ impl<'m> Lowering<'m> {
             closure_thunk_ids: BTreeMap::new(),
             value_classes,
             import_ids: BTreeMap::new(),
+            external_ids: BTreeMap::new(),
             exported: BTreeSet::new(),
             imported: BTreeSet::new(),
             entry: None,
@@ -3013,9 +3121,10 @@ impl<'m> Lowering<'m> {
     }
 
     /// Declare the module's symbols: runtime imports first (only the
-    /// ones the pre-scan found used, in stable order), then generated
-    /// destructors in `MirAggregateId` order, then user exports in
-    /// `MirFunctionId` order.
+    /// ones the pre-scan found used, in stable order), then direct C
+    /// imports in `MirExternalFunctionId` order, generated destructors
+    /// in `MirAggregateId` order, and user exports in `MirFunctionId`
+    /// order.
     pub(crate) fn declare(
         &mut self,
         plan: &Plan,
@@ -3037,6 +3146,37 @@ impl<'m> Lowering<'m> {
                 .map_err(|e| emission_failed(format!("declare import {name}: {e:?}")))?;
             self.import_ids.insert(name, id);
             self.imported.insert(name.to_string());
+        }
+
+        for &external_id in &plan.external_functions {
+            let external = program
+                .external_function(external_id)
+                .expect("pre-scan validates external function references");
+            let TypeKind::Function { parameters, result } = types.kind(external.ty) else {
+                return Err(emission_failed(
+                    "external function has a non-function type".to_string(),
+                ));
+            };
+            let mut sig = self.module.make_signature();
+            for parameter in types.list(parameters) {
+                let ty = machine_type(types, *parameter).ok_or_else(|| {
+                    emission_failed("unsupported external parameter type".to_string())
+                })?;
+                sig.params.push(AbiParam::new(ty));
+            }
+            if !is_void_type(types, result) {
+                let ty = machine_type(types, result).ok_or_else(|| {
+                    emission_failed("unsupported external result type".to_string())
+                })?;
+                sig.returns.push(AbiParam::new(ty));
+            }
+            let symbol = external.name.clone();
+            let id = self
+                .module
+                .declare_function(&symbol, Linkage::Import, &sig)
+                .map_err(|e| emission_failed(format!("declare external {symbol}: {e:?}")))?;
+            self.external_ids.insert(external_id, id);
+            self.imported.insert(symbol);
         }
 
         for &aggregate in &plan.destructors {
@@ -4312,6 +4452,13 @@ impl<'m> Lowering<'m> {
     /// element-class dispatch on the list's element, the value
     /// argument moving into the list (the list owns the reference,
     /// the source local is emptied).
+    ///
+    /// The runtime's `lpp_list_push`/`lpp_list_set` retain the stored
+    /// element (`retain_element`) for ARC lists, so a move is: push
+    /// (runtime creates the list's reference), then release the
+    /// source's reference and empty its local. Omitting the release
+    /// leaks exactly one reference per stored element — the oracle's
+    /// `builtin_moves_value` move consumes the source outright.
     fn lower_list_mutation(
         &mut self,
         inst: &Inst,
@@ -4351,6 +4498,9 @@ impl<'m> Lowering<'m> {
                     let index = self.operand_value(inst, builder, &args[1])?;
                     builder.ins().call(func_ref, &[list, index, value]);
                 }
+                // The runtime retained its own reference; consume the
+                // source's (the move), then empty the source local.
+                self.arc_release(builder, value);
                 self.empty_moved_local(inst, builder, value_operand);
             }
             ElementClass::Scalar => {
@@ -5153,6 +5303,55 @@ impl<'m> Lowering<'m> {
                     Some(self.lower_binary(builder, *operator, ty, string_eq, l, r)?)
                 }
             }
+            Rvalue::ExternalCall {
+                function: external_id,
+                arguments,
+            } => {
+                let external = inst
+                    .program
+                    .external_function(*external_id)
+                    .expect("validated MIR retains external functions");
+                // A L++ `Str` operand is an ARC allocation whose value is
+                // its NUL-terminated payload pointer. Pass that pointer as a
+                // borrowed C string; the foreign call contract forbids
+                // retaining or mutating it.
+                let args = inst
+                    .program
+                    .operands(*arguments)
+                    .iter()
+                    .map(|argument| self.operand_value(inst, builder, argument))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let function_id = self
+                    .external_ids
+                    .get(external_id)
+                    .copied()
+                    .ok_or_else(|| unsupported(inst.mir_id, "undeclared external function"))?;
+                let function_ref = self.module.declare_func_in_func(function_id, builder.func);
+                let call = builder.ins().call(function_ref, &args);
+                let TypeKind::Function { result, .. } = inst.types.kind(external.ty) else {
+                    return Err(unsupported(inst.mir_id, "external has non-function type"));
+                };
+                if matches!(
+                    inst.types.kind(result),
+                    TypeKind::Primitive(PrimitiveType::String)
+                ) {
+                    // The C pointer is borrowed and must remain readable
+                    // through this immediate copy (for example, static or
+                    // thread-local storage). `lpp_str_concat` copies its bytes
+                    // into a fresh L++ ARC string; never adopt/release it.
+                    let foreign = builder.func.dfg.first_result(call);
+                    let empty_fn = self.import_ref(builder, IMP_EMPTY_STR);
+                    let empty_call = builder.ins().call(empty_fn, &[]);
+                    let empty = builder.func.dfg.first_result(empty_call);
+                    let copy_fn = self.import_ref(builder, IMP_STR_CONCAT);
+                    let copy_call = builder.ins().call(copy_fn, &[foreign, empty]);
+                    Some(builder.func.dfg.first_result(copy_call))
+                } else if is_void_type(inst.types, result) {
+                    None
+                } else {
+                    Some(builder.func.dfg.first_result(call))
+                }
+            }
             Rvalue::Call { callee, arguments } => {
                 let args_ops = inst.program.operands(*arguments);
                 match callee {
@@ -5421,31 +5620,35 @@ impl<'m> Lowering<'m> {
                     self.mark_collectible_import(builder, list, IMP_LIST_TRACE);
                 }
                 for operand in inst.program.operands(*operands) {
-                    // Elements enter the list as owners: a `Copy`
-                    // element retains for the list (push_arc is
-                    // runtime-internal for managed elements; a scalar
-                    // push stores bits). The source keeps its own
-                    // reference.
-                    let v = self.owned_value(inst, builder, operand)?;
                     match element_class(inst.types, element) {
                         ElementClass::Managed => {
-                            // The element already carries the list's
-                            // reference from `owned_value`; push the
-                            // pointer without another retain.
+                            // Elements MOVE into the list (the
+                            // oracle's `eval_operand_moved`): the
+                            // runtime's push retains for the list, so
+                            // consume the source reference and empty
+                            // its local — retaining here as well (the
+                            // old `owned_value`) leaked one reference
+                            // per element.
+                            let v = self.operand_value(inst, builder, operand)?;
                             let func_ref = self.import_ref(builder, IMP_LIST_PUSH_ARC);
                             builder.ins().call(func_ref, &[list, v]);
+                            self.arc_release(builder, v);
+                            self.empty_moved_local(inst, builder, operand);
                         }
                         ElementClass::Scalar => {
+                            let v = self.operand_value(inst, builder, operand)?;
                             let stored = coerce_to(builder, v, cltypes::I64);
                             let func_ref = self.import_ref(builder, IMP_LIST_PUSH);
                             builder.ins().call(func_ref, &[list, stored]);
                         }
                         ElementClass::Float => {
+                            let v = self.operand_value(inst, builder, operand)?;
                             let stored = coerce_to(builder, v, cltypes::F64);
                             let func_ref = self.import_ref(builder, IMP_LIST_PUSH_FLOAT);
                             builder.ins().call(func_ref, &[list, stored]);
                         }
                         ElementClass::Bool => {
+                            let v = self.operand_value(inst, builder, operand)?;
                             let stored = coerce_to(builder, v, cltypes::I8);
                             let func_ref = self.import_ref(builder, IMP_LIST_PUSH_BOOL);
                             builder.ins().call(func_ref, &[list, stored]);
@@ -5735,6 +5938,66 @@ impl<'m> Lowering<'m> {
         Ok(())
     }
 
+    /// Integer `sdiv`/`srem` with L++ semantics: a zero divisor is
+    /// the defined runtime panic (the oracle's `DivisionByZero`,
+    /// exit 101 via `lpp_panic_div_zero`), never a hardware trap;
+    /// `INT_MIN / -1` wraps like the oracle's
+    /// `wrapping_div`/`wrapping_rem` — substituting divisor 1 for
+    /// that single case yields `INT_MIN` and `0` respectively, so
+    /// the hardware op never sees the overflowing pair either.
+    fn int_divmod(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        ty: CLType,
+        divide: bool,
+        l: Value,
+        r: Value,
+    ) -> Value {
+        let zero = builder.ins().iconst(ty, 0);
+        let divisor_ok = builder.ins().icmp(IntCC::NotEqual, r, zero);
+        let panic_block = builder.create_block();
+        let div_block = builder.create_block();
+        let merge_block = builder.create_block();
+        let result = builder.append_block_param(merge_block, ty);
+        builder
+            .ins()
+            .brif(divisor_ok, div_block, &[], panic_block, &[]);
+
+        builder.seal_block(panic_block);
+        builder.switch_to_block(panic_block);
+        let func_ref = self.import_ref(builder, IMP_PANIC_DIV_ZERO);
+        builder.ins().call(func_ref, &[]);
+        builder.ins().trap(TrapCode::unwrap_user(1));
+
+        builder.seal_block(div_block);
+        builder.switch_to_block(div_block);
+        let int_min = builder.ins().iconst(
+            ty,
+            match ty {
+                cltypes::I8 => i64::from(i8::MIN),
+                cltypes::I16 => i64::from(i16::MIN),
+                cltypes::I32 => i64::from(i32::MIN),
+                _ => i64::MIN,
+            },
+        );
+        let neg_one = builder.ins().iconst(ty, -1);
+        let is_min = builder.ins().icmp(IntCC::Equal, l, int_min);
+        let is_neg_one = builder.ins().icmp(IntCC::Equal, r, neg_one);
+        let one = builder.ins().iconst(ty, 1);
+        let if_min = builder.ins().select(is_neg_one, one, r);
+        let safe_r = builder.ins().select(is_min, if_min, r);
+        let quotient = if divide {
+            builder.ins().sdiv(l, safe_r)
+        } else {
+            builder.ins().srem(l, safe_r)
+        };
+        builder.ins().jump(merge_block, &[quotient]);
+
+        builder.seal_block(merge_block);
+        builder.switch_to_block(merge_block);
+        result
+    }
+
     fn lower_binary(
         &mut self,
         builder: &mut FunctionBuilder,
@@ -5768,14 +6031,14 @@ impl<'m> Lowering<'m> {
             },
             BinaryOperator::Divide => match ty {
                 cltypes::F64 => builder.ins().fdiv(l, r),
-                _ => builder.ins().sdiv(l, r),
+                _ => self.int_divmod(builder, ty, true, l, r),
             },
             BinaryOperator::Modulo if ty == cltypes::F64 => {
                 let func_ref = self.import_ref(builder, IMP_FMOD);
                 let call_inst = builder.ins().call(func_ref, &[l, r]);
                 builder.func.dfg.first_result(call_inst)
             }
-            BinaryOperator::Modulo => builder.ins().srem(l, r),
+            BinaryOperator::Modulo => self.int_divmod(builder, ty, false, l, r),
             BinaryOperator::BitAnd => builder.ins().band(l, r),
             BinaryOperator::BitOr => builder.ins().bor(l, r),
             BinaryOperator::BitXor => builder.ins().bxor(l, r),
