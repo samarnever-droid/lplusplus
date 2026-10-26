@@ -1,0 +1,477 @@
+# exec_select_projection.lpp — SELECT result shape, projection, ordering, and limits.
+import mem
+import strbuf
+import value
+import ieee754
+import record
+import pager
+import btree
+import btwrite
+import cursor
+import schema
+import idx
+import lexer
+import ast
+import parser
+import eval
+import func
+import rowset
+
+
+# ── result shape ──
+
+def build_result_shape(st: Int, ar: Int, cx: Int, sc: Int) -> Int:
+    res := parser.st_results(st)
+    aliases := parser.st_aliases(st)
+    n := mem.iv_len(res)
+    names := strbuf.sv_new()
+    mut i := 0
+    while i < n:
+        e := mem.iv_get(res, i)
+        mut nm := ""
+        if i < strbuf.sv_len(aliases):
+            nm = strbuf.sv_get(aliases, i)
+        if str_len(nm) == 0:
+            nm = default_name(ar, e, cx)
+        if ast.kind(ar, e) == ast.N_STAR():
+            expand_star(ar, e, cx, names)
+        else:
+            strbuf.sv_push(names, nm)
+        i = i + 1
+    ncols := strbuf.sv_len(names)
+    r := rowset.rs_new(ncols)
+    mut j := 0
+    while j < ncols:
+        rowset.rs_add_name(r, strbuf.sv_get(names, j))
+        j = j + 1
+    strbuf.sv_free(names)
+    return r
+
+def expand_star(ar: Int, e: Int, cx: Int, names: Int):
+    qual := ast.text_of(ar, e)
+    n := eval.cx_ncols(cx)
+    mut i := 0
+    while i < n:
+        if str_len(qual) == 0:
+            strbuf.sv_push(names, strbuf.sv_get(eval.cx_names(cx), i))
+        elif strbuf.eq_ci(strbuf.sv_get(eval.cx_quals(cx), i), qual) == 1:
+            strbuf.sv_push(names, strbuf.sv_get(eval.cx_names(cx), i))
+        i = i + 1
+
+def default_name(ar: Int, e: Int, cx: Int) -> Str:
+    k := ast.kind(ar, e)
+    if k == ast.N_COL():
+        return ast.text_of(ar, e)
+    if k == ast.N_FUNC():
+        return func_label(ar, e)
+    if k == ast.N_INT():
+        return int_to_str(ast.int_of(ar, e))
+    if k == ast.N_STR():
+        return strbuf.sql_quote(ast.text_of(ar, e))
+    if k == ast.N_REAL():
+        return ast.text_of(ar, e)
+    return "expr"
+
+def func_label(ar: Int, e: Int) -> Str:
+    sb := strbuf.sb_new()
+    strbuf.sb_add(sb, ast.text_of(ar, e))
+    strbuf.sb_add_ch(sb, 40)
+    slot := ast.list_of(ar, e)
+    cnt := ast.av_count(ar, slot)
+    mut i := 0
+    while i < cnt:
+        if i > 0:
+            strbuf.sb_add_ch(sb, 44)
+        a := ast.av_get(ar, slot, i)
+        if ast.kind(ar, a) == ast.N_STAR():
+            strbuf.sb_add_ch(sb, 42)
+        elif ast.kind(ar, a) == ast.N_COL():
+            strbuf.sb_add(sb, ast.text_of(ar, a))
+        else:
+            strbuf.sb_add(sb, "?")
+        i = i + 1
+    strbuf.sb_add_ch(sb, 41)
+    r := strbuf.sb_str(sb)
+    strbuf.sb_free(sb)
+    return r
+
+# ── projection ──
+
+# Projection that simultaneously evaluates ORDER BY keys against the source row.
+def project_rows_keyed(st: Int, ar: Int, cx: Int, combos: Int, r: Int, keys: Int):
+    res := parser.st_results(st)
+    nres := mem.iv_len(res)
+    orders := parser.st_order(st)
+    no := mem.iv_len(orders)
+    n := mem.iv_len(combos)
+    mut i := 0
+    while i < n:
+        load_combo(cx, mem.iv_get(combos, i))
+        vals := mem.iv_new(4)
+        mut j := 0
+        while j < nres:
+            e := mem.iv_get(res, j)
+            if ast.kind(ar, e) == ast.N_STAR():
+                push_star(ar, e, cx, vals)
+            else:
+                mem.iv_push(vals, eval.eval(ar, e, cx))
+            j = j + 1
+        # ORDER BY keys: an ordinal refers to a result column, otherwise the
+        # expression is evaluated against the source row still in context.
+        mut k := 0
+        while k < no:
+            e2 := mem.iv_get(orders, k)
+            mem.iv_push(keys, order_key_live(ar, e2, cx, vals, r))
+            k = k + 1
+        rowset.rs_add_row(r, vals)
+        mem.iv_free(vals)
+        i = i + 1
+
+def order_key_live(ar: Int, e: Int, cx: Int, vals: Int, r: Int) -> Int:
+    k := ast.kind(ar, e)
+    if k == ast.N_INT():
+        pos := ast.int_of(ar, e) - 1
+        if pos >= 0:
+            if pos < mem.iv_len(vals):
+                return value.v_clone(mem.iv_get(vals, pos))
+    if k == ast.N_COL():
+        # Prefer a matching result alias, else fall through to the source row.
+        ci := result_col_index(r, ast.text_of(ar, e))
+        if ci >= 0:
+            if ci < mem.iv_len(vals):
+                if eval.cx_lookup(cx, ast.text_of(ar, e), "") < 0:
+                    return value.v_clone(mem.iv_get(vals, ci))
+    return eval.eval(ar, e, cx)
+
+# For grouped queries the source rows are gone; sort by result columns.
+def collect_keys_from_result(st: Int, ar: Int, cx: Int, r: Int, keys: Int):
+    orders := parser.st_order(st)
+    no := mem.iv_len(orders)
+    if no == 0:
+        return
+    n := rowset.rs_nrows(r)
+    mut i := 0
+    while i < n:
+        mut j := 0
+        while j < no:
+            e := mem.iv_get(orders, j)
+            mem.iv_push(keys, result_key(ar, e, r, i))
+            j = j + 1
+        i = i + 1
+
+def result_key(ar: Int, e: Int, r: Int, rowi: Int) -> Int:
+    k := ast.kind(ar, e)
+    if k == ast.N_INT():
+        pos := ast.int_of(ar, e) - 1
+        if pos >= 0:
+            if pos < rowset.rs_ncols(r):
+                return value.v_clone(rowset.rs_cell(r, rowi, pos))
+    nm := ""
+    if k == ast.N_COL():
+        ci := result_col_index(r, ast.text_of(ar, e))
+        if ci >= 0:
+            return value.v_clone(rowset.rs_cell(r, rowi, ci))
+    if k == ast.N_FUNC():
+        ci := result_col_index(r, func_label(ar, e))
+        if ci >= 0:
+            return value.v_clone(rowset.rs_cell(r, rowi, ci))
+    return value.v_null()
+
+def free_keys(keys: Int):
+    n := mem.iv_len(keys)
+    mut i := 0
+    while i < n:
+        value.v_free(mem.iv_get(keys, i))
+        i = i + 1
+    mem.iv_free(keys)
+
+# Sort the result set using pre-computed keys (no re-evaluation).
+def apply_order_keys(st: Int, r: Int, keys: Int):
+    dirs := parser.st_order_dirs(st)
+    no := mem.iv_len(parser.st_order(st))
+    n := rowset.rs_nrows(r)
+    if n <= 1:
+        return
+    if mem.iv_len(keys) < n * no:
+        return
+    idx := mem.iv_new(n)
+    mut z := 0
+    while z < n:
+        mem.iv_push(idx, z)
+        z = z + 1
+    mut a := 1
+    while a < n:
+        cur := mem.iv_get(idx, a)
+        mut b := a - 1
+        mut go := 1
+        while go == 1:
+            if b < 0:
+                go = 0
+            else:
+                other := mem.iv_get(idx, b)
+                if key_cmp(keys, no, dirs, other, cur) > 0:
+                    mem.iv_set(idx, b + 1, other)
+                    b = b - 1
+                else:
+                    go = 0
+        mem.iv_set(idx, b + 1, cur)
+        a = a + 1
+    nc := rowset.rs_ncols(r)
+    newcells := mem.iv_new(n * nc + 1)
+    mut p := 0
+    while p < n:
+        src := mem.iv_get(idx, p)
+        mut q := 0
+        while q < nc:
+            mem.iv_push(newcells, rowset.rs_cell(r, src, q))
+            q = q + 1
+        p = p + 1
+    rowset.rs_replace_cells(r, newcells, n)
+    mem.iv_free(idx)
+
+def project_rows(st: Int, ar: Int, cx: Int, combos: Int, r: Int):
+    res := parser.st_results(st)
+    nres := mem.iv_len(res)
+    n := mem.iv_len(combos)
+    mut i := 0
+    while i < n:
+        load_combo(cx, mem.iv_get(combos, i))
+        vals := mem.iv_new(4)
+        mut j := 0
+        while j < nres:
+            e := mem.iv_get(res, j)
+            if ast.kind(ar, e) == ast.N_STAR():
+                push_star(ar, e, cx, vals)
+            else:
+                mem.iv_push(vals, eval.eval(ar, e, cx))
+            j = j + 1
+        rowset.rs_add_row(r, vals)
+        mem.iv_free(vals)
+        i = i + 1
+
+def push_star(ar: Int, e: Int, cx: Int, vals: Int):
+    qual := ast.text_of(ar, e)
+    n := eval.cx_ncols(cx)
+    mut i := 0
+    while i < n:
+        mut take := 0
+        if str_len(qual) == 0:
+            take = 1
+        elif strbuf.eq_ci(strbuf.sv_get(eval.cx_quals(cx), i), qual) == 1:
+            take = 1
+        if take == 1:
+            v := eval.cx_val(cx, i)
+            if v == 0:
+                mem.iv_push(vals, value.v_null())
+            else:
+                mem.iv_push(vals, value.v_clone(v))
+        i = i + 1
+
+# ── DISTINCT / ORDER BY / LIMIT ──
+
+def rows_equal(r: Int, a: Int, b: Int) -> Int:
+    nc := rowset.rs_ncols(r)
+    mut i := 0
+    while i < nc:
+        x := rowset.rs_cell(r, a, i)
+        y := rowset.rs_cell(r, b, i)
+        xn := value.v_is_null(x)
+        yn := value.v_is_null(y)
+        if xn != yn:
+            return 0
+        if xn == 0:
+            if value.v_cmp(x, y) != 0:
+                return 0
+        i = i + 1
+    return 1
+
+def apply_distinct(r: Int):
+    n := rowset.rs_nrows(r)
+    nc := rowset.rs_ncols(r)
+    keep := mem.iv_new(8)
+    mut i := 0
+    while i < n:
+        mut dup := 0
+        mut j := 0
+        while j < mem.iv_len(keep):
+            if rows_equal(r, i, mem.iv_get(keep, j)) == 1:
+                dup = 1
+                j = mem.iv_len(keep)
+            else:
+                j = j + 1
+        if dup == 0:
+            mem.iv_push(keep, i)
+        i = i + 1
+    rebuild(r, keep)
+    mem.iv_free(keep)
+
+# Rebuild the cell array from a list of surviving row indices.
+def rebuild(r: Int, keep: Int):
+    nc := rowset.rs_ncols(r)
+    n := rowset.rs_nrows(r)
+    m := mem.iv_len(keep)
+    newcells := mem.iv_new(m * nc + 1)
+    used := mem.iv_new(n + 1)
+    mut z := 0
+    while z < n:
+        mem.iv_push(used, 0)
+        z = z + 1
+    mut i := 0
+    while i < m:
+        src := mem.iv_get(keep, i)
+        mem.iv_set(used, src, 1)
+        mut j := 0
+        while j < nc:
+            mem.iv_push(newcells, rowset.rs_cell(r, src, j))
+            j = j + 1
+        i = i + 1
+    # free dropped rows
+    mut k := 0
+    while k < n:
+        if mem.iv_get(used, k) == 0:
+            mut j2 := 0
+            while j2 < nc:
+                value.v_free(rowset.rs_cell(r, k, j2))
+                j2 = j2 + 1
+        k = k + 1
+    mem.iv_free(used)
+    rowset.rs_replace_cells(r, newcells, m)
+
+def apply_order(st: Int, ar: Int, cx: Int, r: Int):
+    orders := parser.st_order(st)
+    dirs := parser.st_order_dirs(st)
+    no := mem.iv_len(orders)
+    n := rowset.rs_nrows(r)
+    if n <= 1:
+        return
+    # Precompute sort keys per row.
+    keys := mem.iv_new(n * no + 1)
+    mut i := 0
+    while i < n:
+        bind_result_row(cx, r, i, st, ar)
+        mut j := 0
+        while j < no:
+            e := mem.iv_get(orders, j)
+            mem.iv_push(keys, order_key(ar, e, cx, r, i, st))
+            j = j + 1
+        i = i + 1
+    # insertion sort on an index permutation (stable)
+    idx := mem.iv_new(n)
+    mut z := 0
+    while z < n:
+        mem.iv_push(idx, z)
+        z = z + 1
+    mut a := 1
+    while a < n:
+        cur := mem.iv_get(idx, a)
+        mut b := a - 1
+        mut go := 1
+        while go == 1:
+            if b < 0:
+                go = 0
+            else:
+                other := mem.iv_get(idx, b)
+                if key_cmp(keys, no, dirs, other, cur) > 0:
+                    mem.iv_set(idx, b + 1, other)
+                    b = b - 1
+                else:
+                    go = 0
+        mem.iv_set(idx, b + 1, cur)
+        a = a + 1
+    # rebuild in sorted order
+    nc := rowset.rs_ncols(r)
+    newcells := mem.iv_new(n * nc + 1)
+    mut p := 0
+    while p < n:
+        src := mem.iv_get(idx, p)
+        mut q := 0
+        while q < nc:
+            mem.iv_push(newcells, rowset.rs_cell(r, src, q))
+            q = q + 1
+        p = p + 1
+    rowset.rs_replace_cells(r, newcells, n)
+    # free keys
+    mut f := 0
+    while f < mem.iv_len(keys):
+        value.v_free(mem.iv_get(keys, f))
+        f = f + 1
+    mem.iv_free(keys)
+    mem.iv_free(idx)
+
+def key_cmp(keys: Int, no: Int, dirs: Int, a: Int, b: Int) -> Int:
+    mut j := 0
+    while j < no:
+        x := mem.iv_get(keys, a * no + j)
+        y := mem.iv_get(keys, b * no + j)
+        mut cv := 0
+        xn := value.v_is_null(x)
+        yn := value.v_is_null(y)
+        if xn == 1:
+            if yn == 0:
+                cv = 0 - 1
+        elif yn == 1:
+            cv = 1
+        else:
+            cv = eval.compare_operands(x, y)
+        if cv != 0:
+            if mem.iv_get(dirs, j) == 1:
+                return 0 - cv
+            return cv
+        j = j + 1
+    return 0
+
+# ORDER BY may reference a result alias, an ordinal, or an expression.
+def order_key(ar: Int, e: Int, cx: Int, r: Int, rowi: Int, st: Int) -> Int:
+    k := ast.kind(ar, e)
+    if k == ast.N_INT():
+        pos := ast.int_of(ar, e) - 1
+        if pos >= 0:
+            if pos < rowset.rs_ncols(r):
+                return value.v_clone(rowset.rs_cell(r, rowi, pos))
+    if k == ast.N_COL():
+        nm := ast.text_of(ar, e)
+        ci := result_col_index(r, nm)
+        if ci >= 0:
+            return value.v_clone(rowset.rs_cell(r, rowi, ci))
+    return eval.eval(ar, e, cx)
+
+def result_col_index(r: Int, nm: Str) -> Int:
+    n := rowset.rs_ncols(r)
+    mut i := 0
+    while i < n:
+        if strbuf.eq_ci(rowset.rs_name(r, i), nm) == 1:
+            return i
+        i = i + 1
+    return 0 - 1
+
+# Bind result-row values so ORDER BY expressions over aliases work.
+def bind_result_row(cx: Int, r: Int, rowi: Int, st: Int, ar: Int):
+    return
+
+def apply_limit(st: Int, ar: Int, cx: Int, r: Int):
+    ln := parser.st_limit(st)
+    if ln < 0:
+        return
+    lv := eval.eval(ar, ln, cx)
+    mut lim := value.v_to_int(lv)
+    value.v_free(lv)
+    mut off := 0
+    on := parser.st_offset(st)
+    if on >= 0:
+        ov := eval.eval(ar, on, cx)
+        off = value.v_to_int(ov)
+        value.v_free(ov)
+    if lim < 0:
+        lim = rowset.rs_nrows(r)
+    n := rowset.rs_nrows(r)
+    keep := mem.iv_new(8)
+    mut i := off
+    mut taken := 0
+    while i < n:
+        if taken < lim:
+            mem.iv_push(keep, i)
+            taken = taken + 1
+        i = i + 1
+    rebuild(r, keep)
+    mem.iv_free(keep)
+

@@ -5,8 +5,8 @@ use lpp_hir::{
 use lpp_types::{BuiltinId, TypeId, TypeListId};
 
 use crate::ids::{
-    BasicBlockId, InstructionId, MirAggregateId, MirFieldId, MirFunctionId, MirLocalId, MirPlaceId,
-    MirStringId, MirVariantId,
+    BasicBlockId, InstructionId, MirAggregateId, MirExternalFunctionId, MirFieldId, MirFunctionId,
+    MirLocalId, MirPlaceId, MirStringId, MirVariantId,
 };
 use crate::storage::{ListRange, ListStore};
 
@@ -140,6 +140,10 @@ pub enum Rvalue {
         callee: Operand,
         arguments: ListRange<Operand>,
     },
+    ExternalCall {
+        function: MirExternalFunctionId,
+        arguments: ListRange<Operand>,
+    },
     Builtin {
         builtin: BuiltinId,
         arguments: ListRange<Operand>,
@@ -208,6 +212,19 @@ pub struct MirFunction {
     pub origin: OriginId,
 }
 
+/// A foreign function referenced by a direct external call. External function
+/// values are not materialized; call sites retain this descriptor for ABI and
+/// link-library handling in native backends.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MirExternalFunction {
+    pub source: HirItemId,
+    pub name: String,
+    pub abi: String,
+    pub link_library: Option<String>,
+    pub ty: TypeId,
+    pub origin: OriginId,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(crate) struct MirLists {
     pub(crate) parameters: ListStore<MirLocalId>,
@@ -242,6 +259,7 @@ impl MirLists {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MirProgram {
     pub(crate) functions: Arena<MirFunctionId, MirFunction>,
+    pub(crate) external_functions: Arena<MirExternalFunctionId, MirExternalFunction>,
     pub(crate) aggregates: Arena<MirAggregateId, MirAggregate>,
     pub(crate) fields: Arena<MirFieldId, MirField>,
     pub(crate) variants: Arena<MirVariantId, MirVariant>,
@@ -258,6 +276,7 @@ impl MirProgram {
     pub fn new() -> Self {
         Self {
             functions: Arena::new(),
+            external_functions: Arena::new(),
             aggregates: Arena::new(),
             fields: Arena::new(),
             variants: Arena::new(),
@@ -278,6 +297,7 @@ impl MirProgram {
     ) -> Self {
         Self {
             functions: Arena::with_capacity(function_count),
+            external_functions: Arena::with_capacity(function_count / 8),
             aggregates: Arena::with_capacity(function_count / 2),
             fields: Arena::with_capacity(local_count / 4),
             variants: Arena::with_capacity(function_count / 4),
@@ -293,6 +313,11 @@ impl MirProgram {
     #[must_use]
     pub fn function_count(&self) -> usize {
         self.functions.len()
+    }
+
+    #[must_use]
+    pub fn external_function_count(&self) -> usize {
+        self.external_functions.len()
     }
 
     #[must_use]
@@ -349,6 +374,26 @@ impl MirProgram {
         self.functions.enumerate()
     }
 
+    pub fn external_functions(
+        &self,
+    ) -> impl ExactSizeIterator<Item = (MirExternalFunctionId, &MirExternalFunction)> {
+        self.external_functions.enumerate()
+    }
+
+    /// The distinct system libraries required by the external functions that
+    /// survived MIR lowering. The result is stable and sorted for reproducible
+    /// link commands.
+    #[must_use]
+    pub fn link_libraries(&self) -> Vec<String> {
+        let mut libraries = self
+            .external_functions()
+            .filter_map(|(_, function)| function.link_library.clone())
+            .collect::<Vec<_>>();
+        libraries.sort();
+        libraries.dedup();
+        libraries
+    }
+
     pub fn aggregates(&self) -> impl ExactSizeIterator<Item = (MirAggregateId, &MirAggregate)> {
         self.aggregates.enumerate()
     }
@@ -380,6 +425,11 @@ impl MirProgram {
     #[must_use]
     pub fn function(&self, id: MirFunctionId) -> Option<&MirFunction> {
         self.functions.get(id)
+    }
+
+    #[must_use]
+    pub fn external_function(&self, id: MirExternalFunctionId) -> Option<&MirExternalFunction> {
+        self.external_functions.get(id)
     }
 
     #[must_use]

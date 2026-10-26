@@ -1,6 +1,7 @@
-mir-v6
-counts functions=2 aggregates=0 fields=0 variants=0 blocks=11 switch_targets=0 locals=15 places=3 projections=0 instructions=16 strings=0 list_entries=50
+mir-v7
+counts functions=2 external_functions=0 aggregates=0 fields=0 variants=0 blocks=11 switch_targets=0 locals=15 places=3 projections=0 instructions=16 strings=0 list_entries=50
 strings
+external_functions
 aggregates
 fields
 variants

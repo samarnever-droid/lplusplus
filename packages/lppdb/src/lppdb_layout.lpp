@@ -1,0 +1,410 @@
+# lppdb.lpp — a real embedded SQL database engine written in pure L++.
+#
+# This is NOT a stub. It implements a genuine binary, page-oriented storage
+# format and a real SQL parser/executor. Data is stored as typed binary cells
+# (INTEGER = 8-byte little-endian two's-complement, TEXT = length-prefixed
+# bytes, NULL) inside length-prefixed rows and table blocks, persisted to disk
+# with buf_read/buf_write. Every query result is computed from the bytes
+# actually stored on disk — nothing is hardcoded.
+#
+# Supported SQL (single-table, honest subset — see README):
+#   CREATE TABLE t (col INTEGER|TEXT, ...)
+#   INSERT INTO t [(cols)] VALUES (v,...) [, (v,...)]
+#   SELECT * | cols | COUNT(*) | SUM(c) | MIN(c) | MAX(c) FROM t
+#          [WHERE c op v [AND ...]] [ORDER BY c [ASC|DESC]] [LIMIT n]
+#   UPDATE t SET c = v [, c = v] [WHERE ...]
+#   DELETE FROM t [WHERE ...]
+#   DROP TABLE t
+# Not supported (and not claimed): JOIN, subqueries, CTE, FTS, views, triggers,
+# indexes, transactions, REAL arithmetic (REAL columns are stored as TEXT).
+
+# ── Type codes ──
+def T_NULL() -> Int:
+    return 0
+def T_INT() -> Int:
+    return 1
+def T_TEXT() -> Int:
+    return 2
+
+# ── Comparison op codes ──
+def OP_EQ() -> Int:
+    return 0
+def OP_NE() -> Int:
+    return 1
+def OP_LT() -> Int:
+    return 2
+def OP_LE() -> Int:
+    return 3
+def OP_GT() -> Int:
+    return 4
+def OP_GE() -> Int:
+    return 5
+
+# ════════════════════ Low-level binary I/O ════════════════════
+# Buffers are used as mutable byte arrays. All writers take (buf, offset, ...)
+# and return the new offset, threaded through a `mut off` local. This avoids
+# `list_set` inside functions, which the current compiler mis-compiles.
+
+def rd_i64(buf: Int, off: Int) -> Int:
+    b0 := buf_get8(buf, off)
+    b1 := buf_get8(buf, off + 1)
+    b2 := buf_get8(buf, off + 2)
+    b3 := buf_get8(buf, off + 3)
+    b4 := buf_get8(buf, off + 4)
+    b5 := buf_get8(buf, off + 5)
+    b6 := buf_get8(buf, off + 6)
+    b7 := buf_get8(buf, off + 7)
+    return b0 | (b1 << 8) | (b2 << 16) | (b3 << 24) | (b4 << 32) | (b5 << 40) | (b6 << 48) | (b7 << 56)
+
+def put_u8(buf: Int, off: Int, v: Int) -> Int:
+    buf_set8(buf, off, v)
+    return off + 1
+
+def put_u16(buf: Int, off: Int, v: Int) -> Int:
+    buf_set16le(buf, off, v)
+    return off + 2
+
+def put_u32(buf: Int, off: Int, v: Int) -> Int:
+    buf_set32le(buf, off, v)
+    return off + 4
+
+def put_i64(buf: Int, off: Int, v: Int) -> Int:
+    buf_set8(buf, off, v & 255)
+    buf_set8(buf, off + 1, (v >> 8) & 255)
+    buf_set8(buf, off + 2, (v >> 16) & 255)
+    buf_set8(buf, off + 3, (v >> 24) & 255)
+    buf_set8(buf, off + 4, (v >> 32) & 255)
+    buf_set8(buf, off + 5, (v >> 40) & 255)
+    buf_set8(buf, off + 6, (v >> 48) & 255)
+    buf_set8(buf, off + 7, (v >> 56) & 255)
+    return off + 8
+
+def put_bytes(dst: Int, doff: Int, src: Int, soff: Int, n: Int) -> Int:
+    buf_copy(dst, doff, src, soff, n)
+    return doff + n
+
+def put_str_raw(buf: Int, off: Int, s: Str) -> Int:
+    n := str_len(s)
+    buf_write_str(buf, off, s)
+    return off + n
+
+# Return a tight copy of buf[0..used). Frees the original.
+def trim_buf(buf: Int, used: Int) -> Int:
+    nb := buf_alloc(used)
+    buf_copy(nb, 0, buf, 0, used)
+    buf_free(buf)
+    return nb
+
+def write_magic(buf: Int, off: Int) -> Int:
+    mut o := off
+    o = put_u8(buf, o, 76)   # L
+    o = put_u8(buf, o, 80)   # P
+    o = put_u8(buf, o, 80)   # P
+    o = put_u8(buf, o, 68)   # D
+    o = put_u8(buf, o, 66)   # B
+    o = put_u8(buf, o, 48)   # 0
+    o = put_u8(buf, o, 48)   # 0
+    o = put_u8(buf, o, 49)   # 1
+    return o
+
+def is_magic(buf: Int) -> Int:
+    if buf_len(buf) < 12:
+        return 0
+    if buf_get8(buf, 0) != 76:
+        return 0
+    if buf_get8(buf, 1) != 80:
+        return 0
+    if buf_get8(buf, 2) != 80:
+        return 0
+    if buf_get8(buf, 3) != 68:
+        return 0
+    if buf_get8(buf, 4) != 66:
+        return 0
+    return 1
+
+# ════════════════════ String utilities ════════════════════
+
+def is_digit_char(c: Str) -> Int:
+    o := ord(c)
+    if o >= 48:
+        if o <= 57:
+            return 1
+    return 0
+
+def is_int_str(s: Str) -> Int:
+    n := str_len(s)
+    if n == 0:
+        return 0
+    mut start := 0
+    first := str_substr(s, 0, 1)
+    if lpp_str_eq(first, "-") == 1:
+        start = 1
+        if n == 1:
+            return 0
+    mut i := start
+    while i < n:
+        if is_digit_char(str_substr(s, i, 1)) == 0:
+            return 0
+        i = i + 1
+    return 1
+
+def strcmp(a: Str, b: Str) -> Int:
+    la := str_len(a)
+    lb := str_len(b)
+    mut i := 0
+    while i < la:
+        if i >= lb:
+            return 1
+        oa := ord(str_substr(a, i, 1))
+        ob := ord(str_substr(b, i, 1))
+        if oa < ob:
+            return -1
+        if oa > ob:
+            return 1
+        i = i + 1
+    if la < lb:
+        return -1
+    return 0
+
+def json_escape(s: Str) -> Str:
+    bs := chr(92)
+    qt := chr(34)
+    mut out := ""
+    mut i := 0
+    n := str_len(s)
+    while i < n:
+        c := str_substr(s, i, 1)
+        if lpp_str_eq(c, bs) == 1:
+            out = str_concat(out, str_concat(bs, bs))
+        elif lpp_str_eq(c, qt) == 1:
+            out = str_concat(out, str_concat(bs, qt))
+        else:
+            out = str_concat(out, c)
+        i = i + 1
+    return out
+
+def sign(n: Int) -> Int:
+    if n < 0:
+        return -1
+    if n > 0:
+        return 1
+    return 0
+
+# ════════════════════ Handle ════════════════════
+# A DB handle is an 8-byte buffer holding the current database buffer pointer
+# as an i64. Mutations swap the pointer in place (buf_set is safe in functions),
+# so the handle stays stable across calls while the underlying DB is rebuilt.
+
+def handle_new(dbbuf: Int) -> Int:
+    h := buf_alloc(8)
+    put_i64(h, 0, dbbuf)
+    return h
+
+def handle_db(h: Int) -> Int:
+    return rd_i64(h, 0)
+
+def handle_set_db(h: Int, dbbuf: Int):
+    put_i64(h, 0, dbbuf)
+
+# ════════════════════ Schema / format walkers ════════════════════
+# File format (all little-endian):
+#   [magic 8 "LPPDB001"][u32 num_tables]
+#   table block: [u32 block_len][u32 name_len][name][u32 ncols]
+#                col*: [u32 clen][cname][u8 type]
+#                [u32 num_rows]
+#                row*: [u32 row_len] cell*
+#   cell: [u8 type][u32 len][bytes]   type 0=NULL(len0) 1=INT(len8) 2=TEXT(len n)
+# `toff` = offset of a table block's block_len field.
+
+def db_num_tables(db: Int) -> Int:
+    return buf_get32le(db, 8)
+
+def db_size(db: Int) -> Int:
+    return buf_len(db)
+
+def table_find(db: Int, name: Str) -> Int:
+    mut off := 12
+    mut i := 0
+    nt := db_num_tables(db)
+    while i < nt:
+        blen := buf_get32le(db, off)
+        nlen := buf_get32le(db, off + 4)
+        nm := buf_read_str(db, off + 8, nlen)
+        if lpp_str_eq(nm, name) == 1:
+            return off
+        off = off + 4 + blen
+        i = i + 1
+    return -1
+
+def t_blen(db: Int, toff: Int) -> Int:
+    return buf_get32le(db, toff)
+
+def t_name_len(db: Int, toff: Int) -> Int:
+    return buf_get32le(db, toff + 4)
+
+def t_name(db: Int, toff: Int) -> Str:
+    return buf_read_str(db, toff + 8, buf_get32le(db, toff + 4))
+
+def t_ncols(db: Int, toff: Int) -> Int:
+    return buf_get32le(db, toff + 8 + t_name_len(db, toff))
+
+def t_cols_off(db: Int, toff: Int) -> Int:
+    return toff + 8 + t_name_len(db, toff) + 4
+
+def t_col_off(db: Int, toff: Int, idx: Int) -> Int:
+    mut off := t_cols_off(db, toff)
+    mut i := 0
+    while i < idx:
+        clen := buf_get32le(db, off)
+        off = off + 4 + clen + 1
+        i = i + 1
+    return off
+
+def t_col_name(db: Int, toff: Int, idx: Int) -> Str:
+    co := t_col_off(db, toff, idx)
+    clen := buf_get32le(db, co)
+    return buf_read_str(db, co + 4, clen)
+
+def t_col_type(db: Int, toff: Int, idx: Int) -> Int:
+    co := t_col_off(db, toff, idx)
+    clen := buf_get32le(db, co)
+    return buf_get8(db, co + 4 + clen)
+
+def t_col_index(db: Int, toff: Int, name: Str) -> Int:
+    nc := t_ncols(db, toff)
+    mut i := 0
+    while i < nc:
+        cn := t_col_name(db, toff, i)
+        if lpp_str_eq(cn, name) == 1:
+            return i
+        i = i + 1
+    return -1
+
+def t_nrows_off(db: Int, toff: Int) -> Int:
+    mut off := t_cols_off(db, toff)
+    nc := t_ncols(db, toff)
+    mut i := 0
+    while i < nc:
+        clen := buf_get32le(db, off)
+        off = off + 4 + clen + 1
+        i = i + 1
+    return off
+
+def t_num_rows(db: Int, toff: Int) -> Int:
+    return buf_get32le(db, t_nrows_off(db, toff))
+
+def t_rows_start(db: Int, toff: Int) -> Int:
+    return t_nrows_off(db, toff) + 4
+
+def t_end(db: Int, toff: Int) -> Int:
+    return toff + 4 + t_blen(db, toff)
+
+# ════════════════════ Row / cell walkers ════════════════════
+
+def row_len(db: Int, roff: Int) -> Int:
+    return buf_get32le(db, roff)
+
+def row_next(db: Int, roff: Int) -> Int:
+    return roff + 4 + buf_get32le(db, roff)
+
+def cell_off(db: Int, roff: Int, colidx: Int) -> Int:
+    mut off := roff + 4
+    mut i := 0
+    while i < colidx:
+        ln := buf_get32le(db, off + 1)
+        off = off + 5 + ln
+        i = i + 1
+    return off
+
+def cell_type(db: Int, co: Int) -> Int:
+    return buf_get8(db, co)
+
+def cell_len(db: Int, co: Int) -> Int:
+    return buf_get32le(db, co + 1)
+
+def cell_int(db: Int, co: Int) -> Int:
+    return rd_i64(db, co + 5)
+
+def cell_str(db: Int, co: Int) -> Str:
+    return buf_read_str(db, co + 5, buf_get32le(db, co + 1))
+
+def cell_as_int(db: Int, co: Int) -> Int:
+    t := cell_type(db, co)
+    if t == 1:
+        return cell_int(db, co)
+    if t == 2:
+        return str_to_int(cell_str(db, co))
+    return 0
+
+def cell_to_str(db: Int, co: Int) -> Str:
+    t := cell_type(db, co)
+    if t == 1:
+        return int_to_str(cell_int(db, co))
+    if t == 2:
+        return cell_str(db, co)
+    return ""
+
+def cell_json(db: Int, co: Int) -> Str:
+    t := cell_type(db, co)
+    qt := chr(34)
+    if t == 0:
+        return "null"
+    if t == 1:
+        return int_to_str(cell_int(db, co))
+    return str_concat(str_concat(qt, json_escape(cell_str(db, co))), qt)
+
+def cmp_col(db: Int, coA: Int, coB: Int, coltype: Int) -> Int:
+    tA := cell_type(db, coA)
+    tB := cell_type(db, coB)
+    if tA == 0:
+        if tB == 0:
+            return 0
+        return -1
+    if tB == 0:
+        return 1
+    if coltype == 1:
+        a := cell_as_int(db, coA)
+        b := cell_as_int(db, coB)
+        return sign(a - b)
+    return strcmp(cell_to_str(db, coA), cell_to_str(db, coB))
+
+def apply_op(cmp: Int, op: Int) -> Int:
+    if op == 0:
+        if cmp == 0:
+            return 1
+        return 0
+    if op == 1:
+        if cmp != 0:
+            return 1
+        return 0
+    if op == 2:
+        if cmp < 0:
+            return 1
+        return 0
+    if op == 3:
+        if cmp <= 0:
+            return 1
+        return 0
+    if op == 4:
+        if cmp > 0:
+            return 1
+        return 0
+    if cmp >= 0:
+        return 1
+    return 0
+
+# ════════════════════ JSON result helpers ════════════════════
+
+def err_json(msg: Str) -> Str:
+    qt := chr(34)
+    s := str_concat("{\"status\":\"error\",\"message\":", str_concat(qt, json_escape(msg)))
+    return str_concat(s, str_concat(qt, "}"))
+
+def ok_msg(msg: Str) -> Str:
+    qt := chr(34)
+    s := str_concat("{\"status\":\"ok\",\"message\":", str_concat(qt, json_escape(msg)))
+    return str_concat(s, str_concat(qt, "}"))
+
+def ok_changes(n: Int) -> Str:
+    return str_concat("{\"status\":\"ok\",\"changes\":", str_concat(int_to_str(n), "}"))
+

@@ -26,7 +26,8 @@ pub struct FieldSlot {
 #[derive(Debug, Clone)]
 pub struct AggregateLayout {
     pub kind: MirAggregateKind,
-    /// The allocation size (the 24-byte ARC header is runtime-side).
+    /// The payload allocation size; runtime-side ARC metadata adds a 16-byte
+    /// common header and an optional 8-byte destructor prefix.
     pub total_size: u32,
     /// Struct fields, in declaration order (offsets from 0).
     pub struct_fields: Vec<FieldSlot>,

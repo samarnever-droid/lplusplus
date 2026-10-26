@@ -1,0 +1,169 @@
+# exec_insert.lpp — INSERT statement execution.
+import mem
+import strbuf
+import value
+import ieee754
+import record
+import pager
+import btree
+import btwrite
+import cursor
+import schema
+import idx
+import lexer
+import ast
+import parser
+import eval
+import func
+import rowset
+
+import exec_ddl
+import exec_rows
+import exec_select_core
+
+# ════════════════════ INSERT ════════════════════
+
+def do_insert(d: Int, st: Int, ar: Int, params: Int) -> Int:
+    r := rowset.rs_new(0)
+    name := parser.st_table(st)
+    sc := db_schema(d)
+    ti := schema.sc_find(sc, name)
+    if ti < 0:
+        rowset.rs_fail(r, str_concat("no such table: ", name))
+        return r
+    p := db_pager(d)
+    root := schema.sc_root(sc, ti)
+    tcols := schema.sc_cols(sc, ti)
+    ttypes := schema.sc_types_of(sc, ti)
+    ncols := strbuf.sv_len(tcols)
+    ipk := schema.sc_ipk(sc, ti)
+
+    inscols := parser.st_ins_cols(st)
+    nins := strbuf.sv_len(inscols)
+
+    # Map each supplied value position to a table column index.
+    colmap := mem.iv_new(8)
+    if nins == 0:
+        mut i := 0
+        while i < ncols:
+            mem.iv_push(colmap, i)
+            i = i + 1
+    else:
+        mut i := 0
+        while i < nins:
+            cn := strbuf.sv_get(inscols, i)
+            ci := strbuf.sv_find_ci(tcols, cn)
+            if ci < 0:
+                rowset.rs_fail(r, str_concat("table ", str_concat(name, str_concat(" has no column named ", cn))))
+                strbuf.sv_free(tcols)
+                strbuf.sv_free(ttypes)
+                mem.iv_free(colmap)
+                return r
+            mem.iv_push(colmap, ci)
+            i = i + 1
+
+    cx := eval.cx_new()
+    eval.cx_set_db(cx, d)
+    bind_params(cx, params)
+    rows := parser.st_val_rows(st)
+    nrows := mem.iv_len(rows)
+    mut changes := 0
+    mut ri := 0
+    while ri < nrows:
+        slot := mem.iv_get(rows, ri)
+        nvals := ast.av_count(ar, slot)
+        # Build the full column vector, NULL-filled.
+        vv := value.vv_new()
+        mut ci := 0
+        while ci < ncols:
+            value.vv_push(vv, value.v_null())
+            ci = ci + 1
+        mut vi := 0
+        while vi < nvals:
+            if vi < mem.iv_len(colmap):
+                target := mem.iv_get(colmap, vi)
+                ev := eval.eval(ar, ast.av_get(ar, slot, vi), cx)
+                aff := schema.affinity_of(col_type(ttypes, target))
+                av := schema.apply_affinity(ev, aff)
+                value.v_free(value.vv_get(vv, target))
+                value.vv_set(vv, target, av)
+            vi = vi + 1
+
+        # rowid: explicit INTEGER PRIMARY KEY value, else max+1
+        mut rid := 0
+        mut haverid := 0
+        if ipk >= 0:
+            pv := value.vv_get(vv, ipk)
+            if value.v_is_null(pv) == 0:
+                rid = value.v_to_int(pv)
+                haverid = 1
+        if haverid == 0:
+            rid = btree.max_rowid(p, root) + 1
+        # The IPK column is stored as NULL in the record (the rowid holds it).
+        if ipk >= 0:
+            value.v_free(value.vv_get(vv, ipk))
+            value.vv_set(vv, ipk, value.v_null())
+
+        rec := record.encode(vv)
+        btwrite.insert(p, root, rid, mem.vec_data(rec), mem.vec_len(rec))
+        mem.vec_free(rec)
+        value.vv_free_all(vv)
+        db_set_last_id(d, rid)
+        changes = changes + 1
+        ri = ri + 1
+
+    # INSERT ... SELECT
+    isel := parser.st_ins_select(st)
+    if isel != 0:
+        sub := do_select(d, isel, ar, params)
+        if rowset.rs_err(sub) == 0:
+            sn := rowset.rs_nrows(sub)
+            scn := rowset.rs_ncols(sub)
+            mut sr := 0
+            while sr < sn:
+                vv := value.vv_new()
+                mut ci2 := 0
+                while ci2 < ncols:
+                    value.vv_push(vv, value.v_null())
+                    ci2 = ci2 + 1
+                mut sc2 := 0
+                while sc2 < scn:
+                    if sc2 < mem.iv_len(colmap):
+                        target := mem.iv_get(colmap, sc2)
+                        aff := schema.affinity_of(col_type(ttypes, target))
+                        av := schema.apply_affinity(value.v_clone(rowset.rs_cell(sub, sr, sc2)), aff)
+                        value.v_free(value.vv_get(vv, target))
+                        value.vv_set(vv, target, av)
+                    sc2 = sc2 + 1
+                mut rid2 := 0
+                mut have2 := 0
+                if ipk >= 0:
+                    pv := value.vv_get(vv, ipk)
+                    if value.v_is_null(pv) == 0:
+                        rid2 = value.v_to_int(pv)
+                        have2 = 1
+                    value.v_free(value.vv_get(vv, ipk))
+                    value.vv_set(vv, ipk, value.v_null())
+                if have2 == 0:
+                    rid2 = btree.max_rowid(p, root) + 1
+                rec := record.encode(vv)
+                btwrite.insert(p, root, rid2, mem.vec_data(rec), mem.vec_len(rec))
+                mem.vec_free(rec)
+                value.vv_free_all(vv)
+                db_set_last_id(d, rid2)
+                changes = changes + 1
+                sr = sr + 1
+        rowset.rs_free(sub)
+
+    eval.cx_free(cx)
+    strbuf.sv_free(tcols)
+    strbuf.sv_free(ttypes)
+    mem.iv_free(colmap)
+    rowset.rs_set_changes(r, changes)
+    rowset.rs_set_last_id(r, db_last_id(d))
+    mem.bset64(d, 48, changes)
+    if changes > 0:
+        reindex_table(d, name)
+    autoflush(d)
+    return r
+

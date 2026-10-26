@@ -1,6 +1,7 @@
-mir-v6
-counts functions=1 aggregates=2 fields=3 variants=2 blocks=1 switch_targets=0 locals=7 places=2 projections=2 instructions=7 strings=0 list_entries=25
+mir-v7
+counts functions=1 external_functions=0 aggregates=2 fields=3 variants=2 blocks=1 switch_targets=0 locals=7 places=2 projections=2 instructions=7 strings=0 list_entries=25
 strings
+external_functions
 aggregates
   MirAggregateId(0) MirAggregate { source: HirItemId(0), definition: DefId(0), instance: Some(InstanceId(0)), arguments: TypeListId(5), ty: TypeId(22), kind: Struct, fields: ListRange(0..2), variants: ListRange(0..0), origin: OriginId(0) }
     fields [MirFieldId(0), MirFieldId(1)]

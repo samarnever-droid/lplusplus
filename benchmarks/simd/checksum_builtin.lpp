@@ -1,0 +1,3 @@
+# Runtime-dispatched 4-lane integer checksum; no raw pointers or user SIMD types.
+def main():
+    print(vec_i64_checksum(50000000))

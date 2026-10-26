@@ -239,7 +239,7 @@ def c_global_catalog_file(path: Str, tu_graph: Str, aliases: Str, wanted: Str, e
             column := parse_int(c_decl_field(record, 4))
             start := parse_int(c_decl_field(record, 5))
             end := parse_int(c_decl_field(record, 6))
-            cursor := CLexCursor(data, size, path, start, line, column)
+            cursor := CLexCursor(data, size, str_concat(path, ""), start, line, column)
             # Only records with an array declarator are candidates. This token
             # probe avoids classifying ordinary rejected globals as array errors.
             mut probe := cursor

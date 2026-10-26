@@ -1,0 +1,18 @@
+# Regression: managed elements entering a list by literal or list_push
+# MOVE in (oracle semantics). The runtime push retains its own
+# reference, so the backend must consume the source reference —
+# retaining it as well leaked exactly one reference per element
+# (ASan-verified). Expected output: 20000
+struct Box:
+    v: Int
+
+def main() -> Int:
+    mut total := 0
+    mut i := 0
+    while i < 10000:
+        xs := [Box(i), Box(i + 1)]
+        list_push(xs, Box(i + 2))
+        total = total + list_get(xs, 2).v - i
+        i = i + 1
+    print(total)
+    return 0

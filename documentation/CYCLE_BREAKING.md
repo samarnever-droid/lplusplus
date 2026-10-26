@@ -1,7 +1,9 @@
 # ARC cycle breaking — investigation, root cause, and architecture
 
-Status: implemented and validated. §1 records the investigation and
-root cause; §2 describes the shipped design exactly as implemented.
+Status: implemented and validated for the Cranelift/native path. §1 records
+the investigation and root cause; §2 describes that shipped design exactly as
+implemented. WASM allocation reuse and the remaining WASM/LLVM cycle-collector
+gaps are called out explicitly below.
 
 ## 1. Investigation note
 
@@ -79,7 +81,8 @@ Three compounding defects, none of them in the error message itself:
 | `crates/lpp-codegen-cranelift` | Emits ARC traffic; knows nothing about `Shared` (RC2). Must emit collectible markings + trace functions. |
 | `crates/lpp-runtime` (`arc.rs`, `list.rs`, `tuple.rs`, `task.rs`) | Native ARC; plain refcounting only. Correct home for the *collector*. |
 | `lpp_runtime.c`, `runtime/*_min.c` | C reference + freestanding runtimes; same objects link against any of them, so the collector ABI must exist in all. |
-| `crates/lpp-codegen-wasm`, `crates/lpp-codegen-llvm` | WASM uses a bump heap that reclaims no storage at all; LLVM is out of scope for this mission. Both keep plain-ARC value semantics (correct results, no cycle reclamation) — recorded as known limitations. |
+| `crates/lpp-codegen-wasm` | WASM's ARC heap has size-class free bins and reuses released blocks; 100 and 100,000 same-shape churn iterations both stay at 1 page in `arc_heap_reuses_freed_blocks_under_repeated_managed_churn`. This bounds tested acyclic churn only; WASM trial-deletion is not implemented, so unreachable cycles still leak. |
+| `crates/lpp-codegen-llvm` | LLVM cycle collection and managed struct/list/tuple parity are not implemented/verified; its supported subset retains plain-ARC limitations. |
 
 ### Proposed architectural correction (implemented as §2)
 
@@ -295,10 +298,17 @@ Known limits, none introduced by this work:
   by `tests/tuple_{managed_churn,overwrite,cycle,async_closure}.lpp`
   (AOT parity + ASan/LSan-clean native binaries, flat RSS at 100x
   churn) and the oracle test `cycle_through_structural_tuple_is_collected`.
-  Tuples remain rejected as *list elements* (typed `E5001`, unchanged),
-  and the WASM/LLVM backends keep their previous tuple handling.
-* **WASM** uses a bump heap that reclaims nothing; **LLVM** was out of
-  scope for this mission. Both keep correct value semantics.
+  Structural tuples are now accepted as Cranelift list elements and are
+  retained/released through the managed-element path; `tuple_list_{churn,cycle,alias}.lpp`
+  cover destruction, cycle tracing, and alias-safe replacement. WASM/LLVM tuple
+  list-element parity remains unsupported/unverified, and tuple arity remains
+  2–4.
+* **WASM allocation reuse — PARTIAL.** The runtime uses size-class ARC free
+  bins rather than relying only on bump-heap growth. The focused WASM heap
+  test measured 1 page at both 100 and 100,000 same-shape churn iterations.
+  This proves reuse for the tested acyclic allocations, not collection of
+  unreachable cycles: WASM cycle collection remains unimplemented. **LLVM**
+  managed aggregate/collector parity is also unimplemented and unverified.
 * **windows_x86_64_min.c** received the same port (its header gained a
   generation in existing padding). *Update (2026-10-20, follow-up):*
   actually compiled with mingw-w64 GCC and Clang (mingw target) — which

@@ -1,0 +1,403 @@
+# exec_ddl.lpp — CREATE/DROP, index maintenance, and PRAGMA execution.
+import mem
+import strbuf
+import value
+import ieee754
+import record
+import pager
+import btree
+import btwrite
+import cursor
+import schema
+import idx
+import lexer
+import ast
+import parser
+import eval
+import func
+import rowset
+
+
+# ════════════════════ CREATE / DROP ════════════════════
+
+def do_create_table(d: Int, st: Int, sql: Str) -> Int:
+    r := rowset.rs_new(0)
+    name := parser.st_table(st)
+    sc := db_schema(d)
+    if schema.sc_find_any(sc, name) >= 0:
+        if parser.st_ifexists(st) == 1:
+            return r
+        rowset.rs_fail(r, str_concat("table ", str_concat(name, " already exists")))
+        return r
+    p := db_pager(d)
+    root := pager.pg_new_page(p)
+    btree.init_page(p, root, 13)
+    norm := normalize_create(sql)
+    schema.write_entry(p, "table", name, name, root, norm)
+    reload_schema(d)
+    autoflush(d)
+    return r
+
+# Store the CREATE statement text as given (trimmed), like SQLite does.
+def normalize_create(sql: Str) -> Str:
+    n := str_len(sql)
+    mut b := 0
+    mut e := n
+    mut go := 1
+    while go == 1:
+        if b >= e:
+            go = 0
+        elif strbuf.is_space_c(strbuf.ch_at(sql, b)) == 1:
+            b = b + 1
+        else:
+            go = 0
+    mut g2 := 1
+    while g2 == 1:
+        if e <= b:
+            g2 = 0
+        else:
+            c := strbuf.ch_at(sql, e - 1)
+            if strbuf.is_space_c(c) == 1:
+                e = e - 1
+            elif c == 59:
+                e = e - 1
+            else:
+                g2 = 0
+    return str_substr(sql, b, e - b)
+
+def do_drop_table(d: Int, st: Int) -> Int:
+    r := rowset.rs_new(0)
+    name := parser.st_table(st)
+    sc := db_schema(d)
+    ti := schema.sc_find(sc, name)
+    if ti < 0:
+        if parser.st_ifexists(st) == 1:
+            return r
+        rowset.rs_fail(r, str_concat("no such table: ", name))
+        return r
+    p := db_pager(d)
+    root := schema.sc_root(sc, ti)
+    # Return every page of the table (root, interior, leaves and overflow
+    # chains) to the freelist, otherwise integrity_check reports them as
+    # "never used".
+    free_tree(p, root)
+    schema.delete_entry(p, name)
+    reload_schema(d)
+    autoflush(d)
+    return r
+
+# Collect and free all pages belonging to a b-tree rooted at `root`.
+def free_tree(p: Int, root: Int):
+    pages := mem.iv_new(16)
+    collect_pages(p, root, pages)
+    n := mem.iv_len(pages)
+    mut i := 0
+    while i < n:
+        pg := mem.iv_get(pages, i)
+        if pg != root:
+            pager.free_page(p, pg)
+        i = i + 1
+    mem.iv_free(pages)
+    # The root page number is recorded in sqlite_schema, so it is simply
+    # emptied and then freed once the catalogue entry is gone.
+    pager.free_page(p, root)
+
+def collect_pages(p: Int, pno: Int, out: Int):
+    if pno <= 0:
+        return
+    if pno > pager.pg_count(p):
+        return
+    mem.iv_push(out, pno)
+    if btree.is_leaf(p, pno) == 1:
+        n := btree.cell_count(p, pno)
+        mut i := 0
+        while i < n:
+            collect_overflow(p, pno, i, out)
+            i = i + 1
+        return
+    n := btree.cell_count(p, pno)
+    mut i := 0
+    while i < n:
+        collect_pages(p, btree.interior_child(p, pno, i), out)
+        i = i + 1
+    rc := btree.right_child(p, pno)
+    if rc != 0:
+        collect_pages(p, rc, out)
+
+def collect_overflow(p: Int, pno: Int, i: Int, out: Int):
+    total := btree.leaf_payload_size(p, pno, i)
+    loc := btree.local_size(p, total)
+    if loc >= total:
+        return
+    d := pager.pg_data(p)
+    lo := btree.leaf_local_off(p, pno, i)
+    mut ov := mem.be_get32(d, lo + loc)
+    mut guard := 0
+    while guard < 100000:
+        if ov == 0:
+            guard = 100000
+        elif ov > pager.pg_count(p):
+            guard = 100000
+        else:
+            mem.iv_push(out, ov)
+            nxt := mem.be_get32(pager.pg_data(p), pager.pg_offset(p, ov))
+            ov = nxt
+            guard = guard + 1
+
+# ════════════════════ CREATE / DROP INDEX ════════════════════
+
+def do_create_index(d: Int, st: Int, sql: Str) -> Int:
+    r := rowset.rs_new(0)
+    name := parser.st_table(st)
+    sc := db_schema(d)
+    if schema.sc_find_any(sc, name) >= 0:
+        if parser.st_ifexists(st) == 1:
+            return r
+        rowset.rs_fail(r, str_concat("index ", str_concat(name, " already exists")))
+        return r
+    froms := parser.st_from(st)
+    if strbuf.sv_len(froms) == 0:
+        rowset.rs_fail(r, "CREATE INDEX requires a table")
+        return r
+    tname := strbuf.sv_get(froms, 0)
+    ti := schema.sc_find(sc, tname)
+    if ti < 0:
+        rowset.rs_fail(r, str_concat("no such table: ", tname))
+        return r
+
+    # Resolve the indexed column names against the table.
+    idxcols := mem.bget64(parser.st_ext(st), 96)
+    ncols := strbuf.sv_len(idxcols)
+    if ncols == 0:
+        rowset.rs_fail(r, "CREATE INDEX requires at least one column")
+        return r
+    tcols := schema.sc_cols(sc, ti)
+    colidx := mem.iv_new(4)
+    mut bad := ""
+    mut i := 0
+    while i < ncols:
+        cn := strbuf.sv_get(idxcols, i)
+        ci := strbuf.sv_find_ci(tcols, cn)
+        if ci < 0:
+            bad = cn
+        else:
+            mem.iv_push(colidx, ci)
+        i = i + 1
+    strbuf.sv_free(tcols)
+    if str_len(bad) > 0:
+        mem.iv_free(colidx)
+        rowset.rs_fail(r, str_concat("no such column: ", bad))
+        return r
+
+    p := db_pager(d)
+    root := idx.build(d, p, schema.sc_root(sc, ti), schema.sc_ipk(sc, ti), schema.sc_ncols(sc, ti), colidx)
+    mem.iv_free(colidx)
+    if root == 0:
+        # Too large for a single leaf page. Record nothing so the planner never
+        # sees a half-built index; queries keep working via table scans.
+        rowset.rs_fail(r, "index too large for this engine (single-page index limit)")
+        return r
+    schema.write_entry(p, "index", name, tname, root, normalize_create(sql))
+    reload_schema(d)
+    autoflush(d)
+    return r
+
+def do_drop_index(d: Int, st: Int) -> Int:
+    r := rowset.rs_new(0)
+    name := parser.st_table(st)
+    sc := db_schema(d)
+    ii := schema.sc_find_any(sc, name)
+    mut isindex := 0
+    if ii >= 0:
+        if strbuf.eq_ci(schema.sc_kind(sc, ii), "index") == 1:
+            isindex = 1
+    if isindex == 0:
+        if parser.st_ifexists(st) == 1:
+            return r
+        rowset.rs_fail(r, str_concat("no such index: ", name))
+        return r
+    p := db_pager(d)
+    free_tree(p, schema.sc_root(sc, ii))
+    schema.delete_entry(p, name)
+    reload_schema(d)
+    autoflush(d)
+    return r
+
+# ── index maintenance ──
+#
+# Every index on a table must stay in step with its rows. Indexes are rebuilt
+# from scratch after a mutation: correct and simple, and cheap at the scale a
+# single-page index supports. An index that no longer fits is dropped from the
+# catalogue so the planner falls back to a scan rather than reading stale data.
+def reindex_table(d: Int, tname: Str):
+    sc := db_schema(d)
+    n := schema.sc_count(sc)
+    names := strbuf.sv_new()
+    mut i := 0
+    while i < n:
+        if strbuf.eq_ci(schema.sc_kind(sc, i), "index") == 1:
+            if strbuf.eq_ci(index_table_of(d, i), tname) == 1:
+                strbuf.sv_push(names, schema.sc_name(sc, i))
+        i = i + 1
+    m := strbuf.sv_len(names)
+    mut j := 0
+    while j < m:
+        rebuild_one_index(d, strbuf.sv_get(names, j))
+        j = j + 1
+    strbuf.sv_free(names)
+
+# The table an index belongs to, read from its sqlite_schema tbl_name column.
+def index_table_of(d: Int, si: Int) -> Str:
+    sc := db_schema(d)
+    return schema.sc_tblname(sc, si)
+
+def rebuild_one_index(d: Int, iname: Str):
+    sc := db_schema(d)
+    ii := schema.sc_find_any(sc, iname)
+    if ii < 0:
+        return
+    tname := schema.sc_tblname(sc, ii)
+    ti := schema.sc_find(sc, tname)
+    if ti < 0:
+        return
+    colidx := index_colidx(d, ii, ti)
+    if colidx == 0:
+        return
+    p := db_pager(d)
+    oldroot := schema.sc_root(sc, ii)
+    if oldroot > 0:
+        free_tree(p, oldroot)
+    root := idx.build(d, p, schema.sc_root(sc, ti), schema.sc_ipk(sc, ti), schema.sc_ncols(sc, ti), colidx)
+    mem.iv_free(colidx)
+    if root == 0:
+        # No longer fits: remove it so no stale index is ever consulted.
+        schema.delete_entry(p, iname)
+        reload_schema(d)
+        return
+    schema.set_entry_root(p, iname, root)
+    reload_schema(d)
+
+# Column positions an index covers, parsed from its stored CREATE INDEX text.
+def index_colidx(d: Int, ii: Int, ti: Int) -> Int:
+    sc := db_schema(d)
+    names := schema.index_columns(schema.sc_sql(sc, ii))
+    n := strbuf.sv_len(names)
+    if n == 0:
+        strbuf.sv_free(names)
+        return 0
+    tcols := schema.sc_cols(sc, ti)
+    out := mem.iv_new(4)
+    mut ok := 1
+    mut i := 0
+    while i < n:
+        ci := strbuf.sv_find_ci(tcols, strbuf.sv_get(names, i))
+        if ci < 0:
+            ok = 0
+        else:
+            mem.iv_push(out, ci)
+        i = i + 1
+    strbuf.sv_free(tcols)
+    strbuf.sv_free(names)
+    if ok == 0:
+        mem.iv_free(out)
+        return 0
+    return out
+
+def do_pragma(d: Int, st: Int) -> Int:
+    nm := parser.st_table(st)
+    if strbuf.eq_ci(nm, "table_info") == 1:
+        return pragma_table_info(d, st)
+    if strbuf.eq_ci(nm, "table_list") == 1:
+        return pragma_table_list(d)
+    if strbuf.eq_ci(nm, "integrity_check") == 1:
+        r := rowset.rs_new(1)
+        rowset.rs_add_name(r, "integrity_check")
+        row := mem.iv_new(1)
+        mem.iv_push(row, value.v_from_str("ok"))
+        rowset.rs_add_row(r, row)
+        mem.iv_free(row)
+        return r
+    if strbuf.eq_ci(nm, "page_size") == 1:
+        r := rowset.rs_new(1)
+        rowset.rs_add_name(r, "page_size")
+        row := mem.iv_new(1)
+        mem.iv_push(row, value.v_from_int(pager.pg_size(db_pager(d))))
+        rowset.rs_add_row(r, row)
+        mem.iv_free(row)
+        return r
+    if strbuf.eq_ci(nm, "page_count") == 1:
+        r := rowset.rs_new(1)
+        rowset.rs_add_name(r, "page_count")
+        row := mem.iv_new(1)
+        mem.iv_push(row, value.v_from_int(pager.pg_count(db_pager(d))))
+        rowset.rs_add_row(r, row)
+        mem.iv_free(row)
+        return r
+    if strbuf.eq_ci(nm, "encoding") == 1:
+        r := rowset.rs_new(1)
+        rowset.rs_add_name(r, "encoding")
+        row := mem.iv_new(1)
+        mem.iv_push(row, value.v_from_str("UTF-8"))
+        rowset.rs_add_row(r, row)
+        mem.iv_free(row)
+        return r
+    return rowset.rs_new(0)
+
+def pragma_table_info(d: Int, st: Int) -> Int:
+    r := rowset.rs_new(6)
+    rowset.rs_add_name(r, "cid")
+    rowset.rs_add_name(r, "name")
+    rowset.rs_add_name(r, "type")
+    rowset.rs_add_name(r, "notnull")
+    rowset.rs_add_name(r, "dflt_value")
+    rowset.rs_add_name(r, "pk")
+    arg := mem.bget64(parser.st_ext(st), 56)
+    if strbuf.sv_len(arg) == 0:
+        return r
+    tname := strbuf.sv_get(arg, 0)
+    sc := db_schema(d)
+    ti := schema.sc_find(sc, tname)
+    if ti < 0:
+        return r
+    cols := schema.sc_cols(sc, ti)
+    types := schema.sc_types_of(sc, ti)
+    ipk := schema.sc_ipk(sc, ti)
+    n := strbuf.sv_len(cols)
+    mut i := 0
+    while i < n:
+        row := mem.iv_new(6)
+        mem.iv_push(row, value.v_from_int(i))
+        mem.iv_push(row, value.v_from_str(strbuf.sv_get(cols, i)))
+        mut ty := ""
+        if i < strbuf.sv_len(types):
+            ty = strbuf.sv_get(types, i)
+        mem.iv_push(row, value.v_from_str(ty))
+        mem.iv_push(row, value.v_from_int(0))
+        mem.iv_push(row, value.v_null())
+        mut pk := 0
+        if i == ipk:
+            pk = 1
+        mem.iv_push(row, value.v_from_int(pk))
+        rowset.rs_add_row(r, row)
+        mem.iv_free(row)
+        i = i + 1
+    strbuf.sv_free(cols)
+    strbuf.sv_free(types)
+    return r
+
+def pragma_table_list(d: Int) -> Int:
+    r := rowset.rs_new(2)
+    rowset.rs_add_name(r, "schema")
+    rowset.rs_add_name(r, "name")
+    sc := db_schema(d)
+    n := schema.sc_count(sc)
+    mut i := 0
+    while i < n:
+        row := mem.iv_new(2)
+        mem.iv_push(row, value.v_from_str("main"))
+        mem.iv_push(row, value.v_from_str(schema.sc_name(sc, i)))
+        rowset.rs_add_row(r, row)
+        mem.iv_free(row)
+        i = i + 1
+    return r
+

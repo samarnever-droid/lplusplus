@@ -132,6 +132,23 @@ fn equivalent_expression_trees_have_the_same_observable_result() {
 }
 
 #[test]
+fn logical_and_or_short_circuit_the_right_operand() {
+    let source = concat!(
+        "def main() -> (Bool, Bool, Bool, Bool):\n",
+        "    return (false && ((1 / 0) == 0), true || ((1 / 0) == 0), true && (2 == 2), false || (3 == 3))\n",
+    );
+    assert_eq!(
+        execute_last(source),
+        ExecutionValue::Tuple(vec![
+            ExecutionValue::Bool(false),
+            ExecutionValue::Bool(true),
+            ExecutionValue::Bool(true),
+            ExecutionValue::Bool(true),
+        ]),
+    );
+}
+
+#[test]
 fn recursive_calls_and_infinite_loops_hit_explicit_limits() {
     let (program, types) = executable(concat!(
         "def recurse(value: Int) -> Int:\n",

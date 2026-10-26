@@ -1,6 +1,6 @@
 [package]
 name = "lpp-bindgen"
-version = "0.36.0"
+version = "0.37.0"
 description = "Pure-L++ C Header FFI binder & C-to-L++ translator with safe checked pointers (CPtr), SysV/MSVC layout calculator, and CFG analysis"
 authors = ["L++ Project"]
 license = "MIT"

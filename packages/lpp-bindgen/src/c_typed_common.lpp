@@ -1,0 +1,287 @@
+# c_typed_common.lpp — type, parameter, and emission helpers
+import c_lexer
+import c_normal_ir
+import c_aggregate_data
+import text
+import c_typed_types
+
+def c_parse_pointer_prefix(cursor: CLexCursor) -> CPointerPrefix:
+    mut current := cursor
+    mut count := 0
+    mut scanning := true
+    while scanning:
+        step := c_lex_next_code(current)
+        if c_lex_token_is(step, "*"):
+            count = count + 1
+            current = step.next
+        else:
+            scanning = false
+    return CPointerPrefix(current, count)
+
+
+def c_typed_indent(level: Int) -> Str:
+    mut out := ""
+    mut i := 0
+    while i < level:
+        out = str_concat(out, "    ")
+        i = i + 1
+    return out
+
+
+def c_param_is_mutated(normalized: Str, body_lpp: Str, name: Str) -> Bool:
+    if text_contains(normalized, str_concat("stmt|assign|", str_concat(name, "|"))):
+        return true
+    if text_contains(normalized, str_concat("stmt|postfix|", str_concat(name, "|"))):
+        return true
+    if text_contains(normalized, str_concat("for-init|assign|", str_concat(name, "|"))):
+        return true
+    # Nested if/loop bodies are emitted recursively, but their statement records
+    # are not flattened into the top-level normalized summary. A C parameter is
+    # a by-value local copy, so any emitted assignment to it needs a mutable L++
+    # local prologue even when the write occurs below a control-flow node.
+    if text_contains(body_lpp, str_concat(name, " = ")):
+        return true
+    return false
+
+
+def c_params_emitted_lpp(params_lpp: Str, symbols: Str, normalized: Str, body_lpp: Str) -> Str:
+    lines := str_split(symbols, 10)
+    mut out := params_lpp
+    for line in lines:
+        if str_len(line) > 0:
+            fields := str_split(line, 124)
+            mut symbol_name := ""
+            mut index := 0
+            for field in fields:
+                if index == 0:
+                    symbol_name = field
+                index = index + 1
+            if str_len(symbol_name) > 0 && c_param_is_mutated(normalized, body_lpp, symbol_name):
+                old_prefix := str_concat(symbol_name, ":")
+                new_prefix := str_concat("c2lpp_arg_", str_concat(symbol_name, ":"))
+                out = str_replace(out, old_prefix, new_prefix)
+    return out
+
+
+def c_params_mutable_prologue(symbols: Str, normalized: Str, body_lpp: Str) -> Str:
+    lines := str_split(symbols, 10)
+    mut out := ""
+    for line in lines:
+        if str_len(line) > 0:
+            fields := str_split(line, 124)
+            mut name := ""
+            mut index := 0
+            for field in fields:
+                if index == 0:
+                    name = field
+                index = index + 1
+            if str_len(name) > 0 && c_param_is_mutated(normalized, body_lpp, name):
+                binding_name := str_concat("c2lpp_arg_", name)
+                out = text_append_line(out, str_concat("    mut ", str_concat(name, str_concat(" := ", binding_name))))
+    return out
+
+
+def c_typed_condition(expr: CExprIR) -> Str:
+    if expr.type_kind == C_IR_TYPE_BOOL:
+        return expr.lpp
+    if expr.type_kind == C_IR_TYPE_INT:
+        return str_concat("(", str_concat(expr.lpp, " != 0)"))
+    if expr.type_kind == C_IR_TYPE_PTR:
+        return str_concat("!c_ptr_is_null(", str_concat(expr.lpp, ")"))
+    return ""
+
+
+def c_parse_empty_span(cursor: CLexCursor) -> CSourceSpan:
+    return CSourceSpan(cursor.path, cursor.offset, cursor.offset, cursor.line, cursor.column)
+
+
+def c_parse_invalid_type(cursor: CLexCursor) -> CTypeIR:
+    return CTypeIR(C_IR_TYPE_INVALID, "", "", c_parse_empty_span(cursor), 0)
+
+
+def c_parse_type_known(cursor: CLexCursor, aliases: Str) -> CTypeParse:
+    mut current := cursor
+    mut spelling := ""
+    mut saw_type := false
+    mut kind := C_IR_TYPE_INVALID
+    mut span := c_parse_empty_span(cursor)
+    mut first := true
+    mut scanning := true
+    while scanning:
+        step := c_lex_next_code(current)
+        word := step.token.spelling
+        mut consumed := true
+        if text_eq(word, "const") || text_eq(word, "volatile") || text_eq(word, "static") || text_eq(word, "extern") || text_eq(word, "inline") || text_eq(word, "register"):
+            consumed = true
+        elif text_eq(word, "signed") || text_eq(word, "unsigned") || text_eq(word, "short") || text_eq(word, "long") || text_eq(word, "int") || text_eq(word, "char"):
+            saw_type = true
+            kind = C_IR_TYPE_INT
+        elif text_eq(word, "float") || text_eq(word, "double"):
+            saw_type = true
+            kind = C_IR_TYPE_FLOAT
+        elif text_eq(word, "_Bool") || text_eq(word, "bool"):
+            saw_type = true
+            kind = C_IR_TYPE_BOOL
+        elif text_eq(word, "void"):
+            saw_type = true
+            kind = C_IR_TYPE_VOID
+        elif step.token.kind == C_TOKEN_IDENTIFIER && c_ir_symbol_type(aliases, word) != C_IR_TYPE_INVALID:
+            saw_type = true
+            kind = c_ir_symbol_type(aliases, word)
+        else:
+            consumed = false
+            scanning = false
+        if consumed:
+            if first:
+                span = step.token.span
+                first = false
+            if str_len(spelling) > 0:
+                spelling = str_concat(spelling, " ")
+            spelling = str_concat(spelling, word)
+            current = step.next
+    if !saw_type:
+        return CTypeParse(c_parse_invalid_type(cursor), cursor)
+    mut lpp := "Int"
+    if kind == C_IR_TYPE_VOID:
+        lpp = "Void"
+    elif kind == C_IR_TYPE_FLOAT:
+        lpp = "Float"
+    elif kind == C_IR_TYPE_BOOL:
+        lpp = "Bool"
+    return CTypeParse(CTypeIR(kind, spelling, lpp, span, 1), current)
+
+
+def c_parse_type(cursor: CLexCursor) -> CTypeParse:
+    return c_parse_type_known(cursor, "")
+
+
+def c_typed_scalar_size(c_type: CTypeIR, aliases: Str) -> Int:
+    spelling := c_type.c_spelling
+    if text_contains(spelling, "char") || text_contains(spelling, "_Bool") || text_contains(spelling, "bool"):
+        return 1
+    if text_contains(spelling, "short"):
+        return 2
+    if text_contains(spelling, "double") || text_contains(spelling, "long"):
+        return 8
+    if text_contains(spelling, "float") || text_contains(spelling, "int"):
+        return 4
+    words := str_split(spelling, 32)
+    for word in words:
+        if c_ir_symbol_type(aliases, word) != C_IR_TYPE_INVALID:
+            value := c_ir_symbol_field(aliases, word, 2)
+            if str_len(value) > 0:
+                return parse_int(value)
+    return 0
+
+
+def c_typed_scalar_signed(c_type: CTypeIR, aliases: Str) -> Int:
+    spelling := c_type.c_spelling
+    if text_contains(spelling, "unsigned") || text_contains(spelling, "_Bool") || text_contains(spelling, "bool"):
+        return 0
+    words := str_split(spelling, 32)
+    for word in words:
+        if c_ir_symbol_type(aliases, word) != C_IR_TYPE_INVALID:
+            value := c_ir_symbol_field(aliases, word, 3)
+            if str_len(value) > 0:
+                return parse_int(value)
+    return 1
+
+
+def c_typed_scalar_load_lpp(pointer_lpp: Str, size: Int, signed_flag: Int) -> Str:
+    mut helper := "c_load_i64"
+    if size == 1:
+        helper = "c_load_u8"
+        if signed_flag != 0:
+            helper = "c_load_i8"
+    elif size == 2:
+        helper = "c_load_u16"
+        if signed_flag != 0:
+            helper = "c_load_i16"
+    elif size == 4:
+        helper = "c_load_u32"
+        if signed_flag != 0:
+            helper = "c_load_i32"
+    return str_concat(helper, str_concat("(", str_concat(pointer_lpp, ")")))
+
+
+def c_typed_pointer_metadata(c_type: CTypeIR, pointer_depth: Int, aliases: Str) -> Str:
+    mut metadata := str_concat(int_to_str(c_type.kind), "|")
+    metadata = str_concat(metadata, str_concat(int_to_str(c_typed_scalar_size(c_type, aliases)), "|"))
+    metadata = str_concat(metadata, str_concat(int_to_str(c_typed_scalar_signed(c_type, aliases)), "|"))
+    metadata = str_concat(metadata, str_concat(int_to_str(pointer_depth), "|"))
+    return str_concat(metadata, c_type.c_spelling)
+
+
+def c_parse_params_known(cursor: CLexCursor, aliases: Str) -> CParamsParse:
+    mut current := cursor
+    mut lpp := ""
+    mut symbols := ""
+    mut normalized := ""
+    mut type_list := ""
+    mut count := 0
+    first := c_lex_next_code(current)
+    if c_lex_token_is(first, ")"):
+        return CParamsParse(lpp, symbols, normalized, type_list, count, first.next, 1, "")
+
+    while true:
+        parsed_type := c_parse_type_known(current, aliases)
+        if parsed_type.c_type.valid == 0:
+            return CParamsParse(lpp, symbols, normalized, type_list, count, current, 0, "C2-PARSE-PARAM-TYPE")
+        pointer_prefix := c_parse_pointer_prefix(parsed_type.next)
+        after_type := c_lex_next_code(pointer_prefix.next)
+        if parsed_type.c_type.kind == C_IR_TYPE_VOID && c_lex_token_is(after_type, ")") && count == 0:
+            return CParamsParse("", "", "", "", 0, after_type.next, 1, "")
+        mut param_kind := parsed_type.c_type.kind
+        mut param_lpp := parsed_type.c_type.lpp_spelling
+        if pointer_prefix.count > 0:
+            param_kind = C_IR_TYPE_PTR
+            param_lpp = "CPtr"
+        if c_lex_token_is(after_type, "["):
+            return CParamsParse(lpp, symbols, normalized, type_list, count, after_type.next, 0, "C2-TYPE-ARRAY-PARAM")
+        if param_kind == C_IR_TYPE_AGGREGATE:
+            return CParamsParse(lpp, symbols, normalized, type_list, count, after_type.next, 0, "C2-TYPE-AGGREGATE-BY-VALUE")
+        if param_kind == C_IR_TYPE_VOID || after_type.token.kind != C_TOKEN_IDENTIFIER:
+            return CParamsParse(lpp, symbols, normalized, type_list, count, parsed_type.next, 0, "C2-PARSE-PARAM-NAME")
+        name := text_safe_binding_name(after_type.token.spelling)
+        if str_len(name) == 0 || c_ir_symbol_type(symbols, name) != C_IR_TYPE_INVALID:
+            return CParamsParse(lpp, symbols, normalized, type_list, count, after_type.next, 0, "C2-TYPE-DUPLICATE-PARAM")
+        mut effective_pointer_depth := pointer_prefix.count
+        mut separator := c_lex_next_code(after_type.next)
+        if c_lex_token_is(separator, "["):
+            if effective_pointer_depth > 0:
+                return CParamsParse(lpp, symbols, normalized, type_list, count, separator.next, 0, "C2-TYPE-MULTIDIM-ARRAY-PARAM")
+            mut array_cursor := separator.next
+            mut array_close := c_lex_next_code(array_cursor)
+            if array_close.token.kind == C_TOKEN_NUMBER:
+                array_cursor = array_close.next
+                array_close = c_lex_next_code(array_cursor)
+            if !c_lex_token_is(array_close, "]"):
+                return CParamsParse(lpp, symbols, normalized, type_list, count, array_close.next, 0, "C2-PARSE-ARRAY-PARAM-CLOSE")
+            effective_pointer_depth = 1
+            param_kind = C_IR_TYPE_PTR
+            param_lpp = "CPtr"
+            separator = c_lex_next_code(array_close.next)
+        if c_lex_token_is(separator, "*"):
+            return CParamsParse(lpp, symbols, normalized, type_list, count, separator.next, 0, "C2-TYPE-POINTER-DECLARATOR")
+        if count > 0:
+            lpp = str_concat(lpp, ", ")
+            type_list = str_concat(type_list, ",")
+        lpp = str_concat(lpp, str_concat(name, str_concat(": ", param_lpp)))
+        type_list = str_concat(type_list, int_to_str(param_kind))
+        if param_kind == C_IR_TYPE_PTR:
+            metadata := c_typed_pointer_metadata(parsed_type.c_type, effective_pointer_depth, aliases)
+            symbols = c_ir_symbol_add_meta(symbols, name, param_kind, metadata)
+        else:
+            symbols = c_ir_symbol_add(symbols, name, param_kind)
+        normalized = text_append_line(normalized, str_concat("param|", str_concat(name, str_concat("|", c_ir_type_name(param_kind)))))
+        count = count + 1
+        if c_lex_token_is(separator, ")"):
+            return CParamsParse(lpp, symbols, normalized, type_list, count, separator.next, 1, "")
+        if !c_lex_token_is(separator, ","):
+            return CParamsParse(lpp, symbols, normalized, type_list, count, separator.next, 0, "C2-PARSE-PARAM-SEPARATOR")
+        current = separator.next
+    return CParamsParse(lpp, symbols, normalized, type_list, count, current, 0, "C2-PARSE-PARAM")
+
+
+def c_parse_params(cursor: CLexCursor) -> CParamsParse:
+    return c_parse_params_known(cursor, "")

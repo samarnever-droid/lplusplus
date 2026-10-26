@@ -542,10 +542,9 @@ def c_proof_walk_for(first: CLexStep, st: Int) -> Int:
 
 
 def c_proof_walk_do(first: CLexStep, st: Int) -> Int:
-    body_start := c_lex_next_code(first.next)
     body_st := buf_alloc(544)
     c_proof_clone_state(st, body_st)
-    result_offset := c_proof_walk_stmt(body_start, body_st)
+    body_offset := c_proof_walk_stmt(first.next, body_st)
     if !text_eq(c_proof_owned_read(st), c_proof_owned_read(body_st)):
         c_proof_set_flag(st, C_PROOF_DIVERGENT)
     body_flags := c_proof_flags(body_st)
@@ -553,6 +552,27 @@ def c_proof_walk_do(first: CLexStep, st: Int) -> Int:
         c_proof_set_flag(st, C_PROOF_DIVERGENT)
     c_proof_set_flag(st, c_proof_flags(body_st))
     buf_set32le(st, C_ST_ALLOC, c_proof_alloc_count(st) + c_proof_alloc_count(body_st))
+
+    # Consume the `while (condition);` trailer so the enclosing block scanner
+    # does not mistake it for a separate while statement.
+    after_body := c_lex_advance(first.next, body_offset)
+    while_step := c_lex_next_code(after_body)
+    mut result_offset := body_offset
+    if !text_eq(while_step.token.spelling, "while"):
+        c_proof_set_flag(st, C_PROOF_COMPLEX)
+    else:
+        open := c_lex_next_code(while_step.next)
+        if !c_lex_token_is(open, "("):
+            c_proof_set_flag(st, C_PROOF_COMPLEX)
+            result_offset = open.next.offset
+        else:
+            condition_end := c_proof_skip_paren(open)
+            semi := c_lex_next_code(condition_end)
+            if c_lex_token_is(semi, ";"):
+                result_offset = semi.next.offset
+            else:
+                c_proof_set_flag(st, C_PROOF_COMPLEX)
+                result_offset = c_proof_skip_to_semi(condition_end).offset
     buf_free(body_st)
     return result_offset
 

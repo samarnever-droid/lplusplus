@@ -128,11 +128,12 @@ are analysis graphs, not emitted SQLite semantics.
 
 Selects balanced control-free function bodies from the general graph and applies
 the typed normalized-IR parser. Every accepted function is emitted into one
-pure-L++ module; all rejections carry a reason. On pinned SQLite it currently
-produces 66/2,528 functions (2.61%) and the resulting module type-checks with no
+pure-L++ module; all rejections carry a reason. On pinned SQLite 3.46.1 it
+produces 74/2,528 functions (2.93%) and the resulting module type-checks with no
 extern or native link. The sweep resolves 232 scalar/aggregate typedef families,
-demand-emits three immutable arrays, and selects ten aggregate type demands under
-an explicit memory budget. Scalar and side-table-backed pointer fields retain
+demand-emits three immutable arrays, and uses a bounded `sizeof` aggregate-demand
+budget of 20 (18 selected types: 15 complete, 2 partial; 159 fields emitted).
+Scalar and side-table-backed pointer fields retain
 checked provenance. Anonymous-struct typedefs (`typedef struct {...} Name;`)
 resolve to the typedef name, and nested aggregate pointer fields are
 transitively catalogued, so chains like `b->p->a` (including inside `if`
@@ -154,14 +155,18 @@ assignments, postfix, place/dereference targets and calls. No-initializer local
 declarations are parsed correctly: scalars default to zero and pointer locals
 (`int *p;`) default to null, so bodies that declare a pointer and assign it later
 translate. `for`-loop increments accept `i++`, `i--`, `i += n` and plain
-reassignment `i = i + 1` and an empty increment (`for(i=0;i<n;)`); unbraced
+reassignment `i = i + 1` and an empty increment (`for(i=0;i<n;)`). C
+by-value parameters reassigned under nested branches/loops receive a mutable
+local copy, preserving C's local-copy semantics; the regression fixture compiles,
+runs and matches native C. Unbraced
 `if (...) break;` / `continue;` bodies are supported, covering `while(1)` loops
 with a terminating `break`. Emission uses a call-closure fixpoint: a function is
 only emitted once every callee it references is also emitted, so transitive
 helper chains survive while wrappers around non-translated bodies are rejected
 rather than emitting dangling calls. Whole-SQLite do loops remain
-outside the memory-bounded selector, which stays at 66 functions, 953 signatures
-and 1,017 eligible bodies.
+outside the memory-bounded selector. The current pinned run emits 74 functions
+from 2,528 bodies, with 1,017 eligible candidates; complete SQLite conversion
+remains unfinished.
 
 ### `decl-graph` — base-type and declarator-shape pass
 

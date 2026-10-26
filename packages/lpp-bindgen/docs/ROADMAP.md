@@ -45,7 +45,7 @@
 - [x] Pinned active SQLite graph: 4,430 declarations, zero unknown records
 - [x] SQLite base-type-family shapes: 4,430/4,430 resolved
 - [x] SQLite structural body graph: 2,528/2,528 balanced, 45,222 statements
-- [x] Automatic typed semantic sweep: 62/2,528 pure-L++ functions
+- [x] Automatic typed semantic sweep: 74/2,528 pure-L++ functions (2.93%, pinned SQLite 3.46.1)
 - [x] Scalar/aggregate typedef registry with ABI widths (232 SQLite families)
 - [x] Lazy conditional returns, local initializers and assignments
 - [x] Pointer-aware short-circuit logical operators
@@ -54,7 +54,7 @@
 - [x] Sequenced comma expression statements
 - [x] Ternary-aware structural label scanning
 - [x] Demand-emitted immutable integer arrays (3 referenced SQLite arrays)
-- [x] Demand-bounded aggregate catalog (10 selected demands, 9 layouts, 100 fields)
+- [x] Demand-bounded aggregate catalog (20 `sizeof` budget; 18 selected, 15 complete, 2 partial, 159 fields)
 - [x] Scalar arrow/nested-member/bitfield/fixed-array place lowering
 - [x] ABI-width data-pointer fields with raw provenance side tables
 - [x] Pointer-depth-two dereference/index/store lowering
@@ -68,7 +68,7 @@
 - [x] Braced do/while with bottom-test semantics and break
 - [x] Unbraced if/else call statements and empty statements
 - [x] Nearest-loop break/continue; for-continue preserves induction update
-- [x] 953 bounded SQLite signatures pre-registered for forward calls
+- [x] 2,296 bounded SQLite function signatures pre-registered for forward calls
 - [x] Accepted-call closure removes wrappers targeting rejected functions
 - [x] Swept SQLite module type-checks with zero extern/native links
 - [ ] Full conditional/macro preprocessing with physical-source span remapping

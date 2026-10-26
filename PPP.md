@@ -40,7 +40,7 @@ lpp-codegen-api ──► [ Backends: lpp-codegen-cranelift | lpp-codegen-wasm |
 | `lpp-mir` | Mid-level IR CFG, basic blocks, 3-address instructions, SSA values. | Typed HIR | `MirProgram`, `BasicBlock` |
 | `lpp-ownership` | Ownership graph, cell placement (Frame/Owned/Shared), balance proofs. | Validated MIR | `OwnershipPlan`, `ProofReport` |
 | `lpp-passes` | Deterministic MIR optimization: constprop, constfold, branchfold. | Raw `MirProgram` | Optimized `MirProgram` |
-| `lpp-runtime-abi`| ABI constants, 24-byte layout definitions, symbol registries. | - | ABI struct definitions |
+| `lpp-runtime-abi`| ABI constants, native 16-byte common-header definitions, symbol registries. | - | ABI struct definitions |
 | `lpp-runtime` | Pure-Rust native runtime: ARC core, task reactor, list/string/net engines. | Rust/C ABI | `liblpp_runtime.{a,so,dylib,dll}` |
 | `lpp-codegen-api` | Target triples, machine types (`I32`/`I64`/`Ptr`), lowering contracts. | - | `Backend` trait, `Target` |
 | `lpp-codegen-cranelift` | Native AOT codegen (x86_64, aarch64) emitting ELF, PE, Mach-O objects. | Optimized MIR | Native `.o` / `.obj` |
@@ -57,23 +57,25 @@ lpp-codegen-api ──► [ Backends: lpp-codegen-cranelift | lpp-codegen-wasm |
 
 L++ achieves complete memory safety **without garbage collection**, without a tracing runtime, and without manual `free()` calls.
 
-### 2.1 The 24-Byte ARC Header Layout
+### 2.1 ARC Header Layouts
 
-Every heap-allocated object (strings, structs, lists, enums, maps, tasks) begins with an invariant 24-byte header:
+The native x86-64 runtimes use one common 16-byte header immediately before every managed payload:
 
 ```
-Byte Offset:   0           8          16         24
-              ┌───────────┬───────────┬───────────┬───────────────────────┐
-              │ Refcount  │ Drop Fn   │ Magic /   │ Payload Data          │
-              │ (i64)     │ (fn ptr)  │ Sentinel  │ (Struct fields,       │
-              │           │           │ ("ARC1")  │ string bytes, etc.)   │
-              └───────────┴───────────┴───────────┴───────────────────────┘
+Byte Offset:    0          4           8             12          16
+               ┌──────────┬───────────┬─────────────┬───────────┬──────────────┐
+               │ Magic    │ Refcount  │ Generation  │ Flags /  │ Payload     │
+               │ u32      │ i32       │ i32         │ allocator │             │
+               └──────────┴───────────┴─────────────┴───────────┴──────────────┘
 ```
 
-- **`rc` (+0, 8 bytes)**: Signed 64-bit reference counter. Mutated via atomic operations for shared cells, or non-atomic for exclusive owned cells.
-- **`drop` (+8, 8 bytes)**: Function pointer to the generated type destructor (e.g., `lpp_drop_s12`), or index into a funcref dispatch table.
-- **`magic` (+16, 8 bytes)**: 8-byte safety canary: `0x41524331` (`"ARC1"`). If `magic == ARC_IMMORTAL` (`i64::MAX`), the object is statically allocated (string literals, immortal singletons); retain and release calls are no-ops.
-- **`payload` (+24)**: Object fields begin strictly at offset +24. Pointers to L++ objects reference offset +24 directly, allowing zero-offset access to fields while accessing metadata via negative indexing (`ptr[-24]`, `ptr[-16]`, `ptr[-8]`).
+- **`magic` (+0)**: `0x41524331` (`"ARC1"`) validates the ARC header.
+- **`refcount` (+4)**: 32-bit count; the immortal sentinel is also `0x41524331`, and retain/release do not write read-only literals.
+- **`generation` (+8)**: Monotonic weak-handle generation.
+- **`flags` (+12)**: Cycle-collector flags; freestanding allocators also encode size/arena metadata here. `HAS_DTOR` indicates that an optional 8-byte destructor pointer sits immediately before the common header.
+- **`payload` (+16)**: Native payload pointers always point to the first payload byte at common-header+16. Destructor-free objects, including strings and static literals, use a 16-byte prefix; destructor-bearing objects use 24 bytes in total (8-byte pointer + 16-byte common header).
+
+WASM retains a separate 24-byte representation: `[refcount i64][drop-table index i64][magic]` followed by a length-prefixed string or managed payload. It is target-specific, not the native C ABI.
 
 ### 2.2 Three-Tier Placement Engine
 
@@ -90,7 +92,7 @@ The `lpp-ownership` crate classifies every local variable and temporary into one
 3. **`Shared` (Concurrent / Aliased Heap)**:
    - Value is accessible across threads, tasks, or multiple aliased variables.
    - Retain uses `atomic_add(1)`, release uses `atomic_sub(1)`.
-   - When `rc` drops to 0, destructor at `drop` is invoked and the buffer is freed.
+   - When `rc` drops to 0, a native object's optional destructor prefix is invoked before its allocation is freed; WASM dispatches its table-index destructor.
 
 ### 2.3 Static Cycle Breaking (`E4403`)
 
@@ -127,25 +129,20 @@ When used locally in functions or loop kernels, `VectorI64x2` never touches the 
 - **WASI**: Lowers to WebAssembly 128-bit vector primitives (`v128`).
 - **LLVM**: Lowers to `<2 x i64>` native vector type.
 
-#### Memory Layout & 16-Byte Hardware Alignment in 24-Byte ARC Cells
-When vectors are boxed, stored in dynamic structures (`List[VectorI64x2]`), or shared across threads, they are packaged inside the standard 24-byte ARC header:
+#### Native ARC Layout and SIMD Alignment
+A destructor-free boxed value such as `VectorI64x2` uses the 16-byte common native header; its two 64-bit lanes begin at payload offset +16:
 
 ```
-Byte Offset:   +0           +8          +16         +24         +32        +40
-              ┌───────────┬───────────┬───────────┬───────────┬───────────┐
-              │ Refcount  │ Drop Fn   │ Magic     │ Lane 0    │ Lane 1    │
-              │ (8B: i64) │ (8B: ptr) │ (8B: ARC1)│ (8B: i64) │ (8B: i64) │
-              └───────────┴───────────┴───────────┴───────────┴───────────┘
-              ▲                                   ▲
-              │ Base Allocation (16B aligned)     │ Payload Pointer (+24)
+Byte Offset:    +0          +4          +8             +12          +16       +24
+               ┌──────────┬───────────┬─────────────┬────────────┬───────────┬───────────┐
+               │ Magic    │ Refcount  │ Generation  │ Flags      │ Lane 0    │ Lane 1    │
+               │ u32      │ i32       │ i32         │ u32        │ i64       │ i64       │
+               └──────────┴───────────┴─────────────┴────────────┴───────────┴───────────┘
+               ▲                                               ▲
+               │ Base Allocation (16B aligned)                 │ Payload (+16)
 ```
 
-1. **Unaligned Fast-Path Parity**:
-   Standard 64-bit OS allocators return base pointers with 16-byte alignment (`base % 16 == 0`). Thus, the payload at `+24` starts at an 8-byte offset from the 16-byte boundary (`(base + 24) % 16 == 8`). On modern CPU architectures (x86 Haswell+, Zen+, ARM Apple Silicon, Cortex-A7x), unaligned 128-bit vector loads/stores (`movdqu`, `movups`, `ldr q`, `str q`) execute with **zero performance penalty** (identical 1-cycle latency/throughput to aligned ops) except across rare 64-byte cache line splits.
-2. **Padded 16/32-Byte Aligned Array Buffers**:
-   For contiguous high-throughput SIMD buffers (`List[VectorI64x2]`, tensor kernels), L++ applies a 32-byte header (24B ARC + 8B SIMD pad), placing all vector elements at strict 16-byte (and 32-byte AVX2) boundaries for aligned vector streaming (`movdqa`, `vmovaps`).
-3. **Zero-Cost SSA Unboxing in Loops**:
-   The `lpp-passes` loop vectorizer and Cranelift codegen hoist boxed vectors out of the payload into SSA hardware registers at loop entry. Vector loops (`paddq`, `psubq`, `mul`, `fma`) run at full hardware clock speed with zero reference count or heap traffic.
+Destructor-bearing allocations add an 8-byte pointer before the common header, producing a 24-byte total prefix; payloads still sit at common-header+16. For destructor-free vector payloads, a 16-byte-aligned allocation base therefore yields a 16-byte-aligned payload. The ARC header alone does not promise 32-byte alignment for AVX2 buffers: any stronger array alignment must come from the buffer allocator. Local vector values may remain in backend registers, but vectorization and alignment guarantees are backend-specific rather than consequences of the ARC header.
 
 ---
 

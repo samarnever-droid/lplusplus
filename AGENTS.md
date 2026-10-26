@@ -87,7 +87,7 @@ id: UserID = "usr_99812"
 | :--- | :--- | :--- |
 | `Int` | 64-bit signed integer | `i64` |
 | `Float` | 64-bit IEEE-754 double precision float | `f64` |
-| `Str` | Immutable UTF-8 ARC-owned heap string | 24-byte ARC header + buffer |
+| `Str` | Immutable UTF-8 ARC-owned heap string | 16-byte native common ARC header + buffer (no destructor prefix); WASM uses its own length-prefixed layout |
 | `Bool` | Boolean (`true` / `false`) | `i8` |
 | `Char` | Unicode character | `i64` |
 | `Void` | Unit / no return value | `void` |

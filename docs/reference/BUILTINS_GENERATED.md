@@ -221,6 +221,7 @@ This file is generated from `abi/builtins.toml`. Do not edit it by hand.
 | `lpp_buf_alloc` | `lpp_buf_alloc` | `buffer` | `(i64) -> i64` | legacy |
 | `buf_free` | `lpp_buf_free` | `buffer` | `(i64) -> void` | legacy |
 | `lpp_buf_free` | `lpp_buf_free` | `buffer` | `(i64) -> void` | legacy |
+| `buf_free_at_exit` | `lpp_buf_free_at_exit` | `buffer` | `(i64) -> void` | legacy |
 | `buf_len` | `lpp_buf_len` | `buffer` | `(i64) -> i64` | legacy |
 | `lpp_buf_len` | `lpp_buf_len` | `buffer` | `(i64) -> i64` | legacy |
 | `buf_get8` | `lpp_buf_get8` | `buffer` | `(i64, i64) -> i64` | legacy |

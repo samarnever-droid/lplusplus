@@ -1,0 +1,119 @@
+# c_typed_types.lpp — shared typed-parser structures
+import c_lexer
+import c_normal_ir
+import c_aggregate_data
+import text
+
+struct CTypeParse:
+    c_type: CTypeIR
+    next: CLexCursor
+
+struct CParamsParse:
+    lpp: Str
+    symbols: Str
+    normalized: Str
+    type_list: Str
+    count: Int
+    next: CLexCursor
+    valid: Int
+    reason: Str
+
+struct CBodyParse:
+    lpp: Str
+    normalized: Str
+    symbols: Str
+    next: CLexCursor
+    valid: Int
+    has_return: Int
+    reason: Str
+    span: CSourceSpan
+
+struct CFunctionParse:
+    function: CFunctionIR
+    next: CLexCursor
+    recognized: Int
+    reason: Str
+    span: CSourceSpan
+
+struct CPointerPrefix:
+    next: CLexCursor
+    count: Int
+
+struct CFunctionSignature:
+    name: Str
+    return_type: CTypeIR
+    params: CParamsParse
+    body: CLexCursor
+    valid: Int
+    reason: Str
+    span: CSourceSpan
+
+
+struct CTernaryReturn:
+    lpp: Str
+    normalized: Str
+    next: CLexCursor
+    valid: Int
+    reason: Str
+    span: CSourceSpan
+
+struct CConditionalParts:
+    condition_lpp: Str
+    condition_ir: Str
+    true_lpp: Str
+    true_ir: Str
+    true_type: Int
+    false_lpp: Str
+    false_ir: Str
+    false_type: Int
+    next: CLexCursor
+    valid: Int
+    reason: Str
+    span: CSourceSpan
+
+
+struct CReturnBranch:
+    lpp: Str
+    normalized: Str
+    next: CLexCursor
+    valid: Int
+    reason: Str
+
+
+struct CForHeader:
+    init_lpp: Str
+    increment_lpp: Str
+    normalized: Str
+    condition: CExprIR
+    symbols: Str
+    next: CLexCursor
+    valid: Int
+    reason: Str
+    span: CSourceSpan
+
+
+struct CExpressionStatement:
+    lpp: Str
+    normalized: Str
+    next: CLexCursor
+    valid: Int
+    reason: Str
+    span: CSourceSpan
+
+
+struct CPlaceStatement:
+    lpp: Str
+    normalized: Str
+    next: CLexCursor
+    valid: Int
+    reason: Str
+    span: CSourceSpan
+
+
+struct CSingleStatement:
+    lpp: Str
+    normalized: Str
+    next: CLexCursor
+    valid: Int
+    reason: Str
+    span: CSourceSpan

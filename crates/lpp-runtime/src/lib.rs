@@ -44,12 +44,13 @@ pub mod map;
 pub mod net;
 pub mod numeric;
 pub mod panic;
+pub mod pgo;
 pub mod slice;
 pub mod string;
 pub mod task;
 pub mod tuple;
 
 pub use layout::{
-    ARC_DESTRUCTOR_OFFSET, ARC_GENERATION_OFFSET, ARC_HEADER_SIZE, ARC_IMMORTAL, ARC_MAGIC,
+    ARC_DESTRUCTOR_PREFIX_SIZE, ARC_GENERATION_OFFSET, ARC_HEADER_SIZE, ARC_IMMORTAL, ARC_MAGIC,
     ARC_MAGIC_OFFSET, ARC_REFCOUNT_OFFSET, FREESTANDING_REFCOUNT_OFFSET, MIN_VALID_ADDR,
 };

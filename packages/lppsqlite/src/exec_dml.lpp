@@ -1,0 +1,197 @@
+# exec_dml.lpp — UPDATE and DELETE execution.
+import mem
+import strbuf
+import value
+import ieee754
+import record
+import pager
+import btree
+import btwrite
+import cursor
+import schema
+import idx
+import lexer
+import ast
+import parser
+import eval
+import func
+import rowset
+
+import exec_ddl
+import exec_rows
+
+# ════════════════════ UPDATE / DELETE ════════════════════
+
+def do_update(d: Int, st: Int, ar: Int, params: Int) -> Int:
+    r := rowset.rs_new(0)
+    name := parser.st_table(st)
+    sc := db_schema(d)
+    ti := schema.sc_find(sc, name)
+    if ti < 0:
+        rowset.rs_fail(r, str_concat("no such table: ", name))
+        return r
+    p := db_pager(d)
+    root := schema.sc_root(sc, ti)
+    ipk := schema.sc_ipk(sc, ti)
+    tcols := schema.sc_cols(sc, ti)
+    ttypes := schema.sc_types_of(sc, ti)
+    ncols := strbuf.sv_len(tcols)
+
+    setcols := parser.st_set_cols(st)
+    setexprs := parser.st_set_exprs(st)
+    nset := strbuf.sv_len(setcols)
+
+    cx := eval.cx_new()
+    eval.cx_set_db(cx, d)
+    bind_params(cx, params)
+    mut i := 0
+    while i < ncols:
+        eval.cx_bind(cx, strbuf.sv_get(tcols, i), name, 0)
+        i = i + 1
+
+    rows := scan_table(d, ti)
+    n := mem.iv_len(rows)
+    targets := mem.iv_new(8)
+    newrecs := mem.iv_new(8)
+    w := parser.st_where(st)
+    mut ri := 0
+    while ri < n:
+        row := mem.iv_get(rows, ri)
+        vv := row_vals(row)
+        mut j := 0
+        while j < ncols:
+            eval.cx_set_val(cx, j, value.vv_get(vv, j))
+            j = j + 1
+        eval.cx_set_rowid(cx, row_rowid(row))
+        mut ok := 1
+        if w >= 0:
+            cv := eval.eval(ar, w, cx)
+            ok = 0
+            if value.v_is_null(cv) == 0:
+                ok = value.v_truthy(cv)
+            value.v_free(cv)
+        if ok == 1:
+            newvv := value.vv_new()
+            mut k := 0
+            while k < ncols:
+                value.vv_push(newvv, value.v_clone(value.vv_get(vv, k)))
+                k = k + 1
+            mut s := 0
+            while s < nset:
+                cn := strbuf.sv_get(setcols, s)
+                ci := strbuf.sv_find_ci(tcols, cn)
+                if ci >= 0:
+                    ev := eval.eval(ar, mem.iv_get(setexprs, s), cx)
+                    aff := schema.affinity_of(col_type(ttypes, ci))
+                    av := schema.apply_affinity(ev, aff)
+                    value.v_free(value.vv_get(newvv, ci))
+                    value.vv_set(newvv, ci, av)
+                s = s + 1
+            mut newrid := row_rowid(row)
+            if ipk >= 0:
+                pv := value.vv_get(newvv, ipk)
+                if value.v_is_null(pv) == 0:
+                    newrid = value.v_to_int(pv)
+                value.v_free(value.vv_get(newvv, ipk))
+                value.vv_set(newvv, ipk, value.v_null())
+            rec := record.encode(newvv)
+            h := buf_alloc(24)
+            mem.bset64(h, 0, row_rowid(row))
+            mem.bset64(h, 8, newrid)
+            mem.bset64(h, 16, rec)
+            mem.iv_push(newrecs, h)
+            value.vv_free_all(newvv)
+        ri = ri + 1
+
+    # Apply after scanning so the cursor is never invalidated mid-walk.
+    mut ai := 0
+    while ai < mem.iv_len(newrecs):
+        h := mem.iv_get(newrecs, ai)
+        oldrid := mem.bget64(h, 0)
+        newrid := mem.bget64(h, 8)
+        rec := mem.bget64(h, 16)
+        btwrite.delete(p, root, oldrid)
+        btwrite.insert(p, root, newrid, mem.vec_data(rec), mem.vec_len(rec))
+        mem.vec_free(rec)
+        buf_free(h)
+        ai = ai + 1
+    changes := mem.iv_len(newrecs)
+
+    free_rows(rows)
+    mem.iv_free(targets)
+    mem.iv_free(newrecs)
+    strbuf.sv_free(tcols)
+    strbuf.sv_free(ttypes)
+    if eval.cx_err(cx) == 1:
+        rowset.rs_fail(r, eval.cx_errmsg(cx))
+    eval.cx_free(cx)
+    rowset.rs_set_changes(r, changes)
+    mem.bset64(d, 48, changes)
+    if changes > 0:
+        reindex_table(d, name)
+    autoflush(d)
+    return r
+
+def do_delete(d: Int, st: Int, ar: Int, params: Int) -> Int:
+    r := rowset.rs_new(0)
+    name := parser.st_table(st)
+    sc := db_schema(d)
+    ti := schema.sc_find(sc, name)
+    if ti < 0:
+        rowset.rs_fail(r, str_concat("no such table: ", name))
+        return r
+    p := db_pager(d)
+    root := schema.sc_root(sc, ti)
+    tcols := schema.sc_cols(sc, ti)
+    ncols := strbuf.sv_len(tcols)
+
+    cx := eval.cx_new()
+    eval.cx_set_db(cx, d)
+    bind_params(cx, params)
+    mut i := 0
+    while i < ncols:
+        eval.cx_bind(cx, strbuf.sv_get(tcols, i), name, 0)
+        i = i + 1
+
+    rows := scan_table(d, ti)
+    n := mem.iv_len(rows)
+    victims := mem.iv_new(8)
+    w := parser.st_where(st)
+    mut ri := 0
+    while ri < n:
+        row := mem.iv_get(rows, ri)
+        vv := row_vals(row)
+        mut j := 0
+        while j < ncols:
+            eval.cx_set_val(cx, j, value.vv_get(vv, j))
+            j = j + 1
+        eval.cx_set_rowid(cx, row_rowid(row))
+        mut ok := 1
+        if w >= 0:
+            cv := eval.eval(ar, w, cx)
+            ok = 0
+            if value.v_is_null(cv) == 0:
+                ok = value.v_truthy(cv)
+            value.v_free(cv)
+        if ok == 1:
+            mem.iv_push(victims, row_rowid(row))
+        ri = ri + 1
+
+    mut vi := 0
+    while vi < mem.iv_len(victims):
+        btwrite.delete(p, root, mem.iv_get(victims, vi))
+        vi = vi + 1
+    changes := mem.iv_len(victims)
+
+    free_rows(rows)
+    mem.iv_free(victims)
+    strbuf.sv_free(tcols)
+    if eval.cx_err(cx) == 1:
+        rowset.rs_fail(r, eval.cx_errmsg(cx))
+    eval.cx_free(cx)
+    rowset.rs_set_changes(r, changes)
+    mem.bset64(d, 48, changes)
+    if changes > 0:
+        reindex_table(d, name)
+    autoflush(d)
+    return r

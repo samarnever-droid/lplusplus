@@ -1,0 +1,154 @@
+import lppdb_layout
+
+# ════════════════════ WHERE parsing & evaluation ════════════════════
+# Conditions are packed 6 i64 each into condbuf: [col, op, isstr, intval, stroff, strlen].
+# String literals are appended into litpool; stroff/strlen reference them.
+# Returns the number of conditions. An empty WHERE clause yields 0 (matches all).
+
+def find_and(low: Str, start: Int) -> Int:
+    n := str_len(low)
+    mut i := start
+    while i + 5 <= n:
+        seg := str_substr(low, i, 5)
+        if lpp_str_eq(seg, " and ") == 1:
+            return i
+        i = i + 1
+    return -1
+
+def find_op(s: Str) -> Int:
+    n := str_len(s)
+    mut i := 0
+    while i < n:
+        c := str_substr(s, i, 1)
+        if lpp_str_eq(c, "<") == 1:
+            return i
+        if lpp_str_eq(c, ">") == 1:
+            return i
+        if lpp_str_eq(c, "=") == 1:
+            return i
+        if lpp_str_eq(c, "!") == 1:
+            return i
+        i = i + 1
+    return -1
+
+def parse_one_cond(db: Int, toff: Int, low: Str, orig: Str, lo: Int, hi: Int, condbuf: Int, ci: Int, litpool: Int) -> Int:
+    qt := chr(34)
+    ap := chr(39)
+    piece := str_trim(str_substr(low, lo, hi - lo))
+    opiece := str_trim(str_substr(orig, lo, hi - lo))
+    op_pos := find_op(piece)
+    if op_pos < 0:
+        return ci
+    left := str_trim(str_substr(piece, 0, op_pos))
+    mut op := OP_EQ()
+    mut vstart := op_pos + 1
+    c1 := str_substr(piece, op_pos, 1)
+    mut c2 := ""
+    if op_pos + 1 < str_len(piece):
+        c2 = str_substr(piece, op_pos + 1, 1)
+    if lpp_str_eq(c1, "<") == 1:
+        if lpp_str_eq(c2, "=") == 1:
+            op = OP_LE()
+            vstart = op_pos + 2
+        elif lpp_str_eq(c2, ">") == 1:
+            op = OP_NE()
+            vstart = op_pos + 2
+        else:
+            op = OP_LT()
+    elif lpp_str_eq(c1, ">") == 1:
+        if lpp_str_eq(c2, "=") == 1:
+            op = OP_GE()
+            vstart = op_pos + 2
+        else:
+            op = OP_GT()
+    elif lpp_str_eq(c1, "!") == 1:
+        op = OP_NE()
+        vstart = op_pos + 2
+    else:
+        op = OP_EQ()
+    colidx := t_col_index(db, toff, left)
+    val := str_trim(str_substr(opiece, vstart, str_len(opiece) - vstart))
+    # Literal-pool cursor = end of the previous condition's literal (contiguous).
+    mut lp_off := 0
+    if ci > 0:
+        lp_off = rd_i64(condbuf, (ci - 1) * 48 + 32) + rd_i64(condbuf, (ci - 1) * 48 + 40)
+    mut isstr := 0
+    mut intval := 0
+    mut stroff := 0
+    mut strlen := 0
+    firstc := str_substr(val, 0, 1)
+    if lpp_str_eq(firstc, ap) == 1:
+        isstr = 1
+        inner := str_substr(val, 1, str_len(val) - 2)
+        stroff = lp_off
+        strlen = str_len(inner)
+        put_str_raw(litpool, lp_off, inner)
+    elif lpp_str_eq(firstc, qt) == 1:
+        isstr = 1
+        inner := str_substr(val, 1, str_len(val) - 2)
+        stroff = lp_off
+        strlen = str_len(inner)
+        put_str_raw(litpool, lp_off, inner)
+    elif is_int_str(val) == 1:
+        intval = str_to_int(val)
+    else:
+        isstr = 1
+        stroff = lp_off
+        strlen = str_len(val)
+        put_str_raw(litpool, lp_off, val)
+    base := ci * 48
+    put_i64(condbuf, base, colidx)
+    put_i64(condbuf, base + 8, op)
+    put_i64(condbuf, base + 16, isstr)
+    put_i64(condbuf, base + 24, intval)
+    put_i64(condbuf, base + 32, stroff)
+    put_i64(condbuf, base + 40, strlen)
+    return ci + 1
+
+def parse_where(db: Int, toff: Int, low: Str, orig: Str, condbuf: Int, litpool: Int) -> Int:
+    n := str_len(low)
+    mut ci := 0
+    mut lo := 0
+    mut more := 1
+    while more == 1:
+        a := find_and(low, lo)
+        if a < 0:
+            ci = parse_one_cond(db, toff, low, orig, lo, n, condbuf, ci, litpool)
+            more = 0
+        else:
+            ci = parse_one_cond(db, toff, low, orig, lo, a, condbuf, ci, litpool)
+            lo = a + 5
+    return ci
+
+def cond_matches(db: Int, toff: Int, roff: Int, condbuf: Int, idx: Int, litpool: Int) -> Int:
+    base := idx * 48
+    colidx := rd_i64(condbuf, base)
+    op := rd_i64(condbuf, base + 8)
+    isstr := rd_i64(condbuf, base + 16)
+    intval := rd_i64(condbuf, base + 24)
+    stroff := rd_i64(condbuf, base + 32)
+    strlen := rd_i64(condbuf, base + 40)
+    if colidx < 0:
+        return 0
+    co := cell_off(db, roff, colidx)
+    t := cell_type(db, co)
+    if t == 0:
+        if op == 1:
+            return 1
+        return 0
+    mut cmp := 0
+    if isstr == 1:
+        lit := buf_read_str(litpool, stroff, strlen)
+        cmp = strcmp(cell_to_str(db, co), lit)
+    else:
+        cmp = sign(cell_as_int(db, co) - intval)
+    return apply_op(cmp, op)
+
+def eval_where(db: Int, toff: Int, roff: Int, condbuf: Int, ncond: Int, litpool: Int) -> Int:
+    mut i := 0
+    while i < ncond:
+        if cond_matches(db, toff, roff, condbuf, i, litpool) == 0:
+            return 0
+        i = i + 1
+    return 1
+

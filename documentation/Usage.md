@@ -1,6 +1,6 @@
 # L++ usage
 
-**Current as of 2026-07-30.**
+**Current as of 2026-10-26.**
 
 ## Compile and run
 
@@ -27,6 +27,33 @@ persistently with `lpp config set llvm-path /path/to/clang`, or use
 `LPP_LLVM_CC=/path/to/clang` as a per-process override.
 `LPP_LLVM_MARCH=native` enables host LLVM CPU features in the compatibility
 backend.
+
+## Native optimization and PGO
+
+```sh
+lpp app.lpp -O3 --lto -o app-fast
+./app-fast
+```
+
+`-O0` disables Cranelift post-optimization; `-O1`/`-O2`/`-O3` select its speed
+pipeline, while `-Os`/`-Oz` select speed-and-size. `--lto` enables a bounded
+whole-program MIR inliner for tiny, direct, pure scalar callees. It is not
+object-file or foreign-library LTO.
+
+Profile-guided hot-callee inlining uses a two-step workflow:
+
+```sh
+lpp app.lpp -O3 --pgo-generate -o app-instrumented
+LPP_PGO_PROFILE=app.pgo ./app-instrumented
+lpp app.lpp -O3 --pgo-use app.pgo -o app-pgo
+./app-pgo
+```
+
+`--pgo-generate` currently requires Cranelift and the compiler host target. The
+runtime writes `lpp.pgo` if `LPP_PGO_PROFILE` is unset; profile data is flushed
+when source `main` returns normally. `--pgo-use` checks the profile's program
+fingerprint before using function-entry counts to select hot callees for the
+same bounded MIR inliner. It does not guide backend machine-code optimization.
 
 ## Package manager and versioning
 

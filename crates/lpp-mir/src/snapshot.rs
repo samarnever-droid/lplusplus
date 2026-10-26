@@ -5,11 +5,12 @@ use crate::MirProgram;
 #[must_use]
 pub fn mir_snapshot(program: &MirProgram) -> String {
     let mut snapshot = String::new();
-    writeln!(snapshot, "mir-v6").expect("writing to a String cannot fail");
+    writeln!(snapshot, "mir-v7").expect("writing to a String cannot fail");
     writeln!(
         snapshot,
-        "counts functions={} aggregates={} fields={} variants={} blocks={} switch_targets={} locals={} places={} projections={} instructions={} strings={} list_entries={}",
+        "counts functions={} external_functions={} aggregates={} fields={} variants={} blocks={} switch_targets={} locals={} places={} projections={} instructions={} strings={} list_entries={}",
         program.function_count(),
+        program.external_function_count(),
         program.aggregate_count(),
         program.field_count(),
         program.variant_count(),
@@ -26,6 +27,10 @@ pub fn mir_snapshot(program: &MirProgram) -> String {
     writeln!(snapshot, "strings").expect("writing to a String cannot fail");
     for (id, string) in program.strings.enumerate() {
         writeln!(snapshot, "  {id:?} {string:?}").expect("writing to a String cannot fail");
+    }
+    writeln!(snapshot, "external_functions").expect("writing to a String cannot fail");
+    for (id, function) in program.external_functions() {
+        writeln!(snapshot, "  {id:?} {function:?}").expect("writing to a String cannot fail");
     }
     writeln!(snapshot, "aggregates").expect("writing to a String cannot fail");
     for (id, aggregate) in program.aggregates() {
@@ -130,6 +135,9 @@ pub fn mir_snapshot(program: &MirProgram) -> String {
             | crate::Rvalue::ConstructStruct { fields: range, .. }
             | crate::Rvalue::ConstructVariant { fields: range, .. }
             | crate::Rvalue::Call {
+                arguments: range, ..
+            }
+            | crate::Rvalue::ExternalCall {
                 arguments: range, ..
             }
             | crate::Rvalue::Builtin {

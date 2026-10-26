@@ -511,6 +511,7 @@ fn object_has_host_format_and_census_matches_the_module_record() {
             "fmod".to_owned(),
             "lpp_arc_release".to_owned(),
             "lpp_arc_retain".to_owned(),
+            "lpp_panic_div_zero".to_owned(),
             "lpp_print_str".to_owned(),
             "lpp_str_eq".to_owned(),
         ])

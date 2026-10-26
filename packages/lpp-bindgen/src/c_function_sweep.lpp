@@ -379,7 +379,7 @@ def c_sweep_file(path: Str) -> CFunctionSweep:
             signature_end := parse_int(c_decl_field(signature_record, 6))
             signature_shape := c_body_scan(data, size, signature_start, signature_end)
             if signature_shape.valid != 0 && signature_start >= 0 && signature_end > signature_start:
-                signature_cursor := CLexCursor(data, size, path, signature_start, signature_line, signature_column)
+                signature_cursor := CLexCursor(data, size, str_concat(path, ""), signature_start, signature_line, signature_column)
                 signature := c_parse_function_signature_known(signature_cursor, aliases)
                 if signature.valid != 0:
                     functions = c_ir_function_add(functions, signature.name, signature.return_type.kind, signature.params.count, signature.params.type_list)
@@ -387,7 +387,7 @@ def c_sweep_file(path: Str) -> CFunctionSweep:
             # Aggregate pointee families and global references are only worth            # Aggregate pointee families and global references are only worth
             # collecting for bodies we may actually emit (candidate shape).
             if c_sweep_is_candidate(signature_shape, signature_name, pointer_functions, pointer_returns):
-                signature_cursor := CLexCursor(data, size, path, signature_start, signature_line, signature_column)
+                signature_cursor := CLexCursor(data, size, str_concat(path, ""), signature_start, signature_line, signature_column)
                 signature := c_parse_function_signature_known(signature_cursor, aliases)
                 if signature.valid != 0:
                     # Collect aggregate pointee families for every candidate
@@ -400,10 +400,11 @@ def c_sweep_file(path: Str) -> CFunctionSweep:
                         aggregate_budget_exhausted = 1
                     global_wanted = c_sweep_collect_global_references(data, size, path, signature_start, signature_line, signature_column, signature_end, global_names, global_wanted)
 
-    # Parameter-driven layouts retain priority. One additional compact demand
-    # slot is available for sizeof-only aggregate types.
+    # Parameter-driven layouts retain priority. A bounded demand window for
+    # sizeof-only aggregates admits up to 20 types; the one-statement shape gate
+    # keeps this second pass cheap while covering complete size-query helpers.
     for sizeof_record in lines:
-        if text_count(aggregate_wanted, "|") < 20 && text_starts(sizeof_record, "function|"):
+        if text_count(aggregate_wanted, "|") < 40 && text_starts(sizeof_record, "function|"):
             sizeof_name := c_decl_field(sizeof_record, 1)
             sizeof_line := parse_int(c_decl_field(sizeof_record, 3))
             sizeof_column := parse_int(c_decl_field(sizeof_record, 4))
@@ -411,7 +412,7 @@ def c_sweep_file(path: Str) -> CFunctionSweep:
             sizeof_end := parse_int(c_decl_field(sizeof_record, 6))
             sizeof_shape := c_body_scan(data, size, sizeof_start, sizeof_end)
             if c_sweep_is_candidate(sizeof_shape, sizeof_name, pointer_functions, pointer_returns) && sizeof_shape.statements <= 1:
-                aggregate_wanted = c_sweep_collect_sizeof_types(data, size, path, sizeof_start, sizeof_line, sizeof_column, sizeof_end, aliases, aggregate_defined, aggregate_wanted, 10)
+                aggregate_wanted = c_sweep_collect_sizeof_types(data, size, path, sizeof_start, sizeof_line, sizeof_column, sizeof_end, aliases, aggregate_defined, aggregate_wanted, 20)
 
     mut aggregate_catalog := c_aggregate_catalog_file(path, tu.graph, aliases, aggregate_wanted)
     # Transitively collect nested aggregate pointer-field types from the catalog
@@ -438,7 +439,7 @@ def c_sweep_file(path: Str) -> CFunctionSweep:
             candidate := c_sweep_is_candidate(shape, name, pointer_functions, pointer_returns)
             if candidate:
                 eligible = eligible + 1
-                cursor := CLexCursor(data, size, path, start, line, column)
+                cursor := CLexCursor(data, size, str_concat(path, ""), start, line, column)
                 parsed := c_parse_function_context(cursor, functions, aliases, aggregate_catalog.graph, global_metadata.symbols)
                 if parsed.recognized != 0 && parsed.function.valid != 0:
                     translated = translated + 1
@@ -498,7 +499,7 @@ def c_sweep_file(path: Str) -> CFunctionSweep:
                     closure_column := parse_int(c_decl_field(closure_record, 4))
                     closure_start := parse_int(c_decl_field(closure_record, 5))
                     closure_end := parse_int(c_decl_field(closure_record, 6))
-                    closure_cursor := CLexCursor(data, size, path, closure_start, closure_line, closure_column)
+                    closure_cursor := CLexCursor(data, size, str_concat(path, ""), closure_start, closure_line, closure_column)
                     # Resolve calls against signatures emitted so far. A callee
                     # not yet emitted fails this round and is retried next round.
                     closure_parsed := c_parse_function_context(closure_cursor, emitted_registry, aliases, aggregate_catalog.graph, global_catalog.symbols)
@@ -532,7 +533,7 @@ def c_sweep_file(path: Str) -> CFunctionSweep:
     report = str_concat(report, str_concat("const_arrays_seen=", str_concat(int_to_str(global_catalog.arrays_seen), "\n")))
     report = str_concat(report, str_concat("const_arrays_emitted=", str_concat(int_to_str(global_catalog.arrays_emitted), "\n")))
     report = str_concat(report, str_concat("const_arrays_rejected=", str_concat(int_to_str(global_catalog.arrays_rejected), "\n")))
-    report = str_concat(report, "aggregate_type_budget=10\n")
+    report = str_concat(report, "aggregate_type_budget=20\n")
     report = str_concat(report, str_concat("aggregate_types_selected=", str_concat(int_to_str(text_count(aggregate_wanted, "|") / 2), "\n")))
     report = str_concat(report, str_concat("aggregate_budget_exhausted=", str_concat(int_to_str(aggregate_budget_exhausted), "\n")))
     report = str_concat(report, str_concat("aggregates_seen=", str_concat(int_to_str(aggregate_catalog.aggregates_seen), "\n")))

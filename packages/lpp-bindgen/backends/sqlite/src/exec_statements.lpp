@@ -1,0 +1,134 @@
+# exec_statements.lpp — statement splitting and dispatch.
+import mem
+import strbuf
+import value
+import ieee754
+import record
+import pager
+import btree
+import btwrite
+import cursor
+import schema
+import idx
+import lexer
+import ast
+import parser
+import eval
+import func
+import rowset
+
+import exec_ddl
+import exec_insert
+import exec_select_core
+import exec_dml
+
+def is_blank(s: Str) -> Int:
+    n := str_len(s)
+    mut i := 0
+    while i < n:
+        if strbuf.is_space_c(strbuf.ch_at(s, i)) == 0:
+            return 0
+        i = i + 1
+    return 1
+
+# Split on ';' while respecting quotes and comments.
+def split_statements(sql: Str) -> Int:
+    out := strbuf.sv_new()
+    n := str_len(sql)
+    mut sb := strbuf.sb_new()
+    mut i := 0
+    while i < n:
+        c := strbuf.ch_at(sql, i)
+        if c == 39:
+            i = copy_quoted(sql, i, n, sb, 39)
+        elif c == 34:
+            i = copy_quoted(sql, i, n, sb, 34)
+        elif c == 45:
+            if i + 1 < n:
+                if strbuf.ch_at(sql, i + 1) == 45:
+                    mut j := i
+                    mut go := 1
+                    while go == 1:
+                        if j >= n:
+                            go = 0
+                        elif strbuf.ch_at(sql, j) == 10:
+                            go = 0
+                        else:
+                            j = j + 1
+                    i = j
+                else:
+                    strbuf.sb_add_ch(sb, c)
+                    i = i + 1
+            else:
+                strbuf.sb_add_ch(sb, c)
+                i = i + 1
+        elif c == 59:
+            strbuf.sv_push(out, strbuf.sb_str(sb))
+            strbuf.sb_free(sb)
+            sb = strbuf.sb_new()
+            i = i + 1
+        else:
+            strbuf.sb_add_ch(sb, c)
+            i = i + 1
+    strbuf.sv_push(out, strbuf.sb_str(sb))
+    strbuf.sb_free(sb)
+    return out
+
+def copy_quoted(s: Str, i: Int, n: Int, sb: Int, q: Int) -> Int:
+    strbuf.sb_add_ch(sb, q)
+    mut j := i + 1
+    mut go := 1
+    while go == 1:
+        if j >= n:
+            go = 0
+        else:
+            c := strbuf.ch_at(s, j)
+            strbuf.sb_add_ch(sb, c)
+            if c == q:
+                if j + 1 < n:
+                    if strbuf.ch_at(s, j + 1) == q:
+                        strbuf.sb_add_ch(sb, q)
+                        j = j + 2
+                    else:
+                        j = j + 1
+                        go = 0
+                else:
+                    j = j + 1
+                    go = 0
+            else:
+                j = j + 1
+    return j
+
+def run_stmt(d: Int, st: Int, ar: Int, sql: Str, params: Int) -> Int:
+    k := parser.st_kind(st)
+    if k == parser.S_SELECT():
+        return do_select(d, st, ar, params)
+    if k == parser.S_INSERT():
+        return do_insert(d, st, ar, params)
+    if k == parser.S_UPDATE():
+        return do_update(d, st, ar, params)
+    if k == parser.S_DELETE():
+        return do_delete(d, st, ar, params)
+    if k == parser.S_CREATE_TABLE():
+        return do_create_table(d, st, sql)
+    if k == parser.S_DROP_TABLE():
+        return do_drop_table(d, st)
+    if k == parser.S_BEGIN():
+        begin_txn(d)
+        return rowset.rs_new(0)
+    if k == parser.S_COMMIT():
+        commit_txn(d)
+        return rowset.rs_new(0)
+    if k == parser.S_ROLLBACK():
+        rollback_txn(d)
+        return rowset.rs_new(0)
+    if k == parser.S_PRAGMA():
+        return do_pragma(d, st)
+    if k == parser.S_CREATE_INDEX():
+        return do_create_index(d, st, sql)
+    if k == parser.S_DROP_INDEX():
+        return do_drop_index(d, st)
+    r := rowset.rs_new(0)
+    rowset.rs_fail(r, "unsupported statement")
+    return r
+

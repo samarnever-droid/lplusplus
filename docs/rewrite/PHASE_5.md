@@ -62,10 +62,10 @@ not a source to copy into the rewrite crates.
 - **Budget-bounded.** Machine-level refinements honor
   `OptimizationBudget`; a backend may refine but never change language
   semantics.
-- **v1 runtime ABI preserved.** Generated objects link against the v1
-  freestanding runtime unchanged; symbol names, calling conventions,
-  and constant layouts (including the 24-byte string header) match the
-  v1 cranelift backend.
+- **Native runtime ABI.** Generated objects keep the native pointer ABI;
+  the current string-constant layout is a 16-byte common ARC header plus
+  NUL-terminated payload, matching the hosted and freestanding x86-64
+  runtimes. WASM has its own 24-byte representation (see 5D2a).
 
 ## Phase 5 slices
 
@@ -176,15 +176,15 @@ and emits relocatable ELF objects via cranelift-object.
   matches the interpreter's runtime semantics for the rest.
   Integer division by zero is not software-trapped — identical to the
   v1 cranelift backend, which emits the hardware divide.
-- **String constants.** Emitted as the v1 runtime layout: the
-  24-byte header (`LPP_ARC_MAGIC 0x4152_4331` in the first two
-  little-endian words, sixteen zero bytes), the UTF-8 payload, a null
-  terminator, 16-byte alignment, handed out as `base + 24`. This is
-  byte-for-byte the layout the v1 cranelift backend emits, so the
-  same object links against either v1 runtime (host or freestanding).
-  Data is **deduplicated per `MirStringId`** (one symbol per literal):
-  the interpreter interns string constants per program, so pointer
-  identity of equal literals must match between object and oracle.
+- **String constants.** Emitted in the current native layout: the
+  16-byte common header (`LPP_ARC_MAGIC 0x4152_4331` in the first two
+  little-endian words, eight zero bytes), then the UTF-8 payload and a
+  NUL terminator, aligned to 16 bytes and handed out as `base + 16`.
+  Strings have no destructor prefix. Destructor-bearing objects keep the
+  same common header and add an 8-byte prefix before it. Data is
+  **deduplicated per `MirStringId`** (one symbol per literal): the
+  interpreter interns string constants per program, so pointer identity
+  of equal literals must match between object and oracle.
 - **Builtin subset.** `print_str` (`lpp_print_str`, `I64 -> Void`) is
   the only builtin call in 5B. Any other `Rvalue::Builtin` is
   `E5003` at the exact instruction's function. Float `Modulo` lowers
@@ -257,13 +257,13 @@ function-value surface's machinery beyond what 5C already adds.
 
 Extended surface over 5B in `lpp-codegen-cranelift`:
 
-- **Value representation (v1 runtime ABI, unchanged from the v1
-  cranelift backend).** Every managed value is an `I64` heap pointer
-  with a 24-byte ARC header in front of its payload:
-  `magic u32 @0, refcount i32 @4, generation i32 @8, map_size u32
-  @12, destructor ptr @16` (the freestanding `LppArcHeader`).
-  `Str`, `List[_]`, structs and enums all lower to this pointer ABI,
-  so `Call`/`Return` need no new machinery over 5B.
+- **Value representation.** Every native managed value is an `I64`
+  heap pointer whose common 16-byte ARC header is at payload−16:
+  `magic u32 @0, refcount i32 @4, generation i32 @8, flags/map_size
+  u32 @12`. When a destructor is needed, its pointer is an optional
+  8-byte prefix immediately before that common header; payload remains
+  at header+16. `Str`, `List[_]`, structs and enums all keep this pointer
+  ABI, so `Call`/`Return` need no new machinery over 5B.
 - **Struct layout.** Fields in declaration order with native
   alignment from offset 0 — the v1 `struct_layout` rule (Int/Float/
   pointer `8:8`, Char `4:4`, Bool `1:1`). Allocation is
@@ -690,9 +690,10 @@ runtime helpers are emitted in-module, so the import census stays exactly
   pointer — 0 = no destructor), `magic 0x41524331 ("ARC1") @16`.
   `ArcAlloc(size, drop_idx)` = `Alloc(size + 24)` with header
   `rc = 1`, `drop = drop_idx`, `magic`, returning the payload offset.
-  This differs from the native 24-byte header on purpose: it is the v1
-  *wasm* runtime layout, and 5D2a must match the v1 wasm backend, not
-  the native ABI.
+  This differs from the native 16-byte common header on purpose: it is
+  a WASM-specific runtime layout with a length-prefixed string pool and
+  table-index destructor dispatch. The native compact-header change does
+  not alter WASM offsets; a WASM layout migration is a separate change.
 - **`Retain(p)` / `Release(p)` (v1 semantics).** Both no-op on null.
   Retain: no-op when `rc == ARC_IMMORTAL` (string-literal sentinel),
   else `rc += 1`. Release: no-op on immortal; `rc < 1` is a double

@@ -1,7 +1,9 @@
 # Curated pure-L++ SQLite backend provenance
 
 These modules are vendored from `packages/lppsqlite/src` in the same L++
-repository and remain under the repository MIT license.
+repository and remain under the repository MIT license. The split parser and
+statement-execution modules are copied one-for-one alongside their facade
+modules by c2lpp's curated-backend mode.
 
 They provide a tested SQLite-file-format-compatible pure-L++ implementation.
 They are not mechanically translated from `sqlite3.c`. c2lpp mode

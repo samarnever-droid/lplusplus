@@ -311,17 +311,65 @@ pub extern "C" fn lpp_mul_wrap(a: i64, b: i64) -> i64 {
     a.wrapping_mul(b)
 }
 
-/// `vec_i64_checksum(n)` — `sum_{i<n} (i*3) ^ (i>>1)`, the scalar reference
-/// for the explicit SIMD vector intrinsic (the AVX2 path in the C runtime
-/// computes the identical value; vectorization does not change the result).
-/// Negative `n` yields 0. All arithmetic wraps, matching C.
+/// `vec_i64_checksum(n)` — `sum_{i<n} (i*3) ^ (i>>1)`. On x86-64 this
+/// automatically uses a four-lane AVX2 kernel when the host supports it; all
+/// other targets/CPUs use the scalar reference. Negative `n` yields 0 and all
+/// arithmetic wraps, so vectorization preserves the scalar result exactly.
 #[unsafe(no_mangle)]
 pub extern "C" fn lpp_vec_i64_checksum(n: i64) -> i64 {
     if n < 0 {
         return 0;
     }
+
+    #[cfg(target_arch = "x86_64")]
+    if n >= 64 && std::is_x86_feature_detected!("avx2") {
+        // SAFETY: the runtime feature check above guarantees the function's
+        // target feature is available on this CPU.
+        return unsafe { checksum_i64x4_avx2(n) };
+    }
+
+    checksum_i64_scalar(n)
+}
+
+fn checksum_i64_scalar(n: i64) -> i64 {
     let mut total: i64 = 0;
     let mut i: i64 = 0;
+    while i < n {
+        total = total.wrapping_add(i.wrapping_mul(3) ^ (i >> 1));
+        i += 1;
+    }
+    total
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn checksum_i64x4_avx2(n: i64) -> i64 {
+    use core::arch::x86_64::{
+        __m256i, _mm256_add_epi64, _mm256_set_epi64x, _mm256_setzero_si256, _mm256_slli_epi64,
+        _mm256_srli_epi64, _mm256_storeu_si256, _mm256_xor_si256,
+    };
+
+    let mut vector_total = _mm256_setzero_si256();
+    let mut i = 0i64;
+    while n - i >= 4 {
+        // Lanes are [i, i+1, i+2, i+3]. Since i <= n-4, these additions
+        // remain representable even when n approaches i64::MAX.
+        let values = _mm256_set_epi64x(i + 3, i + 2, i + 1, i);
+        let triples = _mm256_add_epi64(values, _mm256_slli_epi64(values, 1));
+        let half = _mm256_srli_epi64(values, 1);
+        let terms = _mm256_xor_si256(triples, half);
+        vector_total = _mm256_add_epi64(vector_total, terms);
+        i += 4;
+    }
+
+    let mut lanes = [0i64; 4];
+    // SAFETY: `lanes` is a valid, suitably sized destination; the storeu
+    // intrinsic permits unaligned memory.
+    unsafe { _mm256_storeu_si256(lanes.as_mut_ptr().cast::<__m256i>(), vector_total) };
+    let mut total = lanes[0]
+        .wrapping_add(lanes[1])
+        .wrapping_add(lanes[2])
+        .wrapping_add(lanes[3]);
     while i < n {
         total = total.wrapping_add(i.wrapping_mul(3) ^ (i >> 1));
         i += 1;
@@ -342,6 +390,23 @@ pub extern "C" fn lpp_prefetch_write(_addr: i64) {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn checksum_dispatch_matches_scalar_for_vector_widths_and_tails() {
+        for n in [0, 1, 3, 4, 5, 63, 64, 65, 127, 128, 129, 1_000, 10_003] {
+            assert_eq!(lpp_vec_i64_checksum(n), checksum_i64_scalar(n), "n={n}");
+        }
+
+        #[cfg(target_arch = "x86_64")]
+        if std::is_x86_feature_detected!("avx2") {
+            for n in [0, 1, 3, 4, 5, 63, 64, 65, 127, 128, 129, 1_000, 10_003] {
+                // SAFETY: guarded by the same runtime AVX2 feature check used
+                // by the exported dispatch function.
+                let vectorized = unsafe { checksum_i64x4_avx2(n) };
+                assert_eq!(vectorized, checksum_i64_scalar(n), "AVX2 n={n}");
+            }
+        }
+    }
 
     #[test]
     fn numeric_builtins_match_the_c_semantics() {

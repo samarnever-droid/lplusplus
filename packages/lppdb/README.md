@@ -63,6 +63,14 @@ cell:
                                                         #       2=TEXT(len n)
 ```
 
+## Source layout
+
+`src/lppdb.lpp` is the public API facade. The implementation is split into
+`lppdb_layout.lpp` (storage and handle layout), `lppdb_predicates.lpp` (WHERE
+logic), `lppdb_rows.lpp` (cell/row serialization), and `lppdb_exec.lpp`
+(statement execution). Each module is imported from the facade, so existing
+`import lppdb` callers keep the same public API.
+
 ## API
 
 ```

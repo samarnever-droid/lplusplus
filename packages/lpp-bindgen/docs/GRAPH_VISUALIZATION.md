@@ -17,9 +17,9 @@ flowchart LR
     CALL[Call graph\n13,472 sites]
     CFG[Control targets\n779/779 gotos resolved]
     OWN[Ownership sites\n436 alloc / 54 realloc / 555 free]
-    CAND[Bounded sweep\n953 signatures / 1,017 eligible]
-    OK[Mechanical pure L++\n66 functions]
-    NO[Fail-closed\n2,462 functions]
+    CAND[Bounded sweep\n2,296 registered signatures / 1,017 eligible]
+    OK[Mechanical pure L++\n74 functions]
+    NO[Fail-closed\n2,454 functions]
 
     C --> TU
     TU --> TY
@@ -45,7 +45,7 @@ The force graph would render:
 - unresolved ownership paths as amber halos;
 - globals and aggregate types as teal rectangles.
 
-At SQLite scale the 66 translated functions form small green islands connected by
+At SQLite scale the 74 translated functions form small green islands connected by
 accepted-call closure inside a much larger gray call network. Pager, B-tree,
 VDBE, parser and JSON subsystems should be collapsible clusters rather than one
 undifferentiated hairball.

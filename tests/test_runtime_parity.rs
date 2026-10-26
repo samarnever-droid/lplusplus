@@ -1,26 +1,50 @@
-// Runtime Symbol Parity Gate — ensures all required builtins exist across all runtimes
+// Runtime Symbol Parity Gate — ensures required builtins exist across runtimes.
+use std::collections::BTreeSet;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-fn load_complete_runtime(root: &Path, filename: &str) -> String {
-    let content = fs::read_to_string(root.join(filename)).unwrap_or_default();
+fn expand_runtime_includes(root: &Path, source: &Path, visited: &mut BTreeSet<PathBuf>) -> String {
+    let path = if source.is_absolute() {
+        source.to_path_buf()
+    } else {
+        root.join(source)
+    };
+    let canonical = path.canonicalize().unwrap_or(path.clone());
+    if !visited.insert(canonical.clone()) {
+        return String::new();
+    }
+    let content = fs::read_to_string(&canonical).unwrap_or_default();
     let mut expanded = String::new();
     for line in content.lines() {
-        if line.trim_start().starts_with("#include \"runtime/") {
-            let rel = line
-                .trim()
-                .trim_start_matches("#include \"")
-                .trim_end_matches('"');
-            if let Ok(sub) = fs::read_to_string(root.join(rel)) {
-                expanded.push_str(&sub);
-                expanded.push('\n');
-                continue;
-            }
+        let trimmed = line.trim_start();
+        let Some(include) = trimmed.strip_prefix("#include \"") else {
+            expanded.push_str(line);
+            expanded.push('\n');
+            continue;
+        };
+        let Some((include, _)) = include.split_once('"') else {
+            expanded.push_str(line);
+            expanded.push('\n');
+            continue;
+        };
+        let include = Path::new(include);
+        let candidates = [
+            root.join(include),
+            canonical.parent().unwrap_or(root).join(include),
+        ];
+        if let Some(path) = candidates.into_iter().find(|candidate| candidate.is_file()) {
+            expanded.push_str(&expand_runtime_includes(root, &path, visited));
+            expanded.push('\n');
+        } else {
+            expanded.push_str(line);
+            expanded.push('\n');
         }
-        expanded.push_str(line);
-        expanded.push('\n');
     }
     expanded
+}
+
+fn load_complete_runtime(root: &Path, filename: &str) -> String {
+    expand_runtime_includes(root, Path::new(filename), &mut BTreeSet::new())
 }
 
 #[test]
@@ -66,6 +90,7 @@ fn test_freestanding_runtime_symbol_parity() {
         "lpp_list_pop",
         "lpp_list_len",
         "lpp_list_free",
+        "lpp_buf_free_at_exit",
         "lpp_str_concat",
         "lpp_str_eq",
         "lpp_str_cmp",
@@ -78,18 +103,16 @@ fn test_freestanding_runtime_symbol_parity() {
 
     for sym in core_symbols {
         if !standard_rt.contains(sym) {
-            missing.push(format!("standard runtime (lpp_runtime.c) missing {}", sym));
+            missing.push(format!("standard runtime (lpp_runtime.c) missing {sym}"));
         }
         if !win_min.contains(sym) {
             missing.push(format!(
-                "windows freestanding runtime (windows_x86_64_min.c) missing {}",
-                sym
+                "windows freestanding runtime (windows_x86_64_min.c) missing {sym}"
             ));
         }
         if !linux_min.contains(sym) {
             missing.push(format!(
-                "linux freestanding runtime (linux_x86_64_min.c) missing {}",
-                sym
+                "linux freestanding runtime (linux_x86_64_min.c) missing {sym}"
             ));
         }
     }
@@ -99,15 +122,21 @@ fn test_freestanding_runtime_symbol_parity() {
         "Runtime parity gate failed:\n{}",
         missing.join("\n")
     );
+    for pgo_symbol in ["lpp_pgo_hit", "lpp_pgo_flush"] {
+        assert!(
+            standard_rt.contains(pgo_symbol),
+            "standard runtime is missing PGO helper {pgo_symbol}"
+        );
+    }
 }
 
 #[test]
 fn test_pe_kernel32_linker_symbols() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    // Phase 6A: the linker engine moved to the `lpp-linker` crate
-    // (`src/linker.rs` is now a re-export shim). Scan the real engine source.
-    let linker_src = fs::read_to_string(root.join("crates/lpp-linker/src/core.rs"))
-        .expect("crates/lpp-linker/src/core.rs missing");
+    // The Kernel32 import table is defined in the PE support module, separate
+    // from the shared cross-format object/link model.
+    let linker_src = fs::read_to_string(root.join("crates/lpp-linker/src/core/pe_support.rs"))
+        .expect("crates/lpp-linker/src/core/pe_support.rs missing");
 
     let required_k32_apis = [
         "ExitProcess",
@@ -128,7 +157,7 @@ fn test_pe_kernel32_linker_symbols() {
     let mut missing = Vec::new();
     for api in required_k32_apis {
         if !linker_src.contains(api) {
-            missing.push(format!("lpp-linker missing Kernel32 symbol {}", api));
+            missing.push(format!("lpp-linker missing Kernel32 symbol {api}"));
         }
     }
 

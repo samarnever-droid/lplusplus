@@ -1,0 +1,376 @@
+# parser_state.lpp — parser layout, state, token cursor, and accessors.
+#
+# Parser state handle:
+#   [0]  tokens
+#   [8]  position
+#   [16] arena
+#   [24] error message (sv, index 0 if any)
+#   [32] error flag
+#   [40] statement store
+#
+# Statement store (flat, one statement per parse):
+#   kind, target table, column list, value lists, expressions, clauses...
+# Held in a `stmt` handle described in stmt.lpp-style comments below.
+
+import mem
+import strbuf
+import lexer
+import ast
+
+# ── statement kinds ──
+def state_S_SELECT() -> Int:
+    return 1
+def state_S_INSERT() -> Int:
+    return 2
+def state_S_UPDATE() -> Int:
+    return 3
+def state_S_DELETE() -> Int:
+    return 4
+def state_S_CREATE_TABLE() -> Int:
+    return 5
+def state_S_DROP_TABLE() -> Int:
+    return 6
+def state_S_BEGIN() -> Int:
+    return 7
+def state_S_COMMIT() -> Int:
+    return 8
+def state_S_ROLLBACK() -> Int:
+    return 9
+def state_S_PRAGMA() -> Int:
+    return 10
+def state_S_CREATE_INDEX() -> Int:
+    return 11
+def state_S_DROP_INDEX() -> Int:
+    return 12
+def state_S_CREATE_VIEW() -> Int:
+    return 13
+def state_S_DROP_VIEW() -> Int:
+    return 14
+
+# ── statement handle layout (128 bytes) ──
+#  [0]  kind
+#  [8]  table name (sv idx 0)
+#  [16] arena
+#  [24] result columns (iv of node ids)
+#  [32] result aliases (sv)
+#  [40] from tables (sv)
+#  [48] from aliases (sv)
+#  [56] join types (iv)    0=cross/comma 1=inner 2=left
+#  [64] join conditions (iv of node ids)
+#  [72] where node
+#  [80] group by (iv), having node in [88]
+#  [88] having node
+#  [96] order by (iv of nodes), directions in [104]
+#  [104] order dirs (iv)
+#  [112] limit node, offset node packed: limit in [112], offset in [120]
+#  [120] offset node
+# Extra fields live in a side table because 128 bytes runs out:
+#  ext[0] insert columns (sv)
+#  ext[1] insert value rows (iv of argv slots)
+#  ext[2] update set columns (sv)
+#  ext[3] update set exprs (iv)
+#  ext[4] create sql text
+#  ext[5] distinct flag
+#  ext[6] select-from-subquery
+#  ext[7] pragma arg
+#  ext[8] compound op / next select
+#  ext[9] insert-from-select
+#  ext[10] or-conflict
+#  ext[11] index columns
+
+def state_st_new(arena: Int) -> Int:
+    s := buf_alloc(136)
+    mut i := 0
+    while i < 136:
+        buf_set8(s, i, 0)
+        i = i + 1
+    mem.bset64(s, 16, arena)
+    mem.bset64(s, 24, mem.iv_new(4))
+    mem.bset64(s, 32, strbuf.sv_new())
+    mem.bset64(s, 40, strbuf.sv_new())
+    mem.bset64(s, 48, strbuf.sv_new())
+    mem.bset64(s, 56, mem.iv_new(4))
+    mem.bset64(s, 64, mem.iv_new(4))
+    mem.bset64(s, 72, 0 - 1)
+    mem.bset64(s, 80, mem.iv_new(4))
+    mem.bset64(s, 88, 0 - 1)
+    mem.bset64(s, 96, mem.iv_new(4))
+    mem.bset64(s, 104, mem.iv_new(4))
+    mem.bset64(s, 112, 0 - 1)
+    mem.bset64(s, 120, 0 - 1)
+    mem.bset64(s, 128, state_ext_new())
+    return s
+
+def state_ext_new() -> Int:
+    e := buf_alloc(128)
+    mut i := 0
+    while i < 128:
+        buf_set8(e, i, 0)
+        i = i + 1
+    mem.bset64(e, 0, strbuf.sv_new())     # insert cols
+    mem.bset64(e, 8, mem.iv_new(4))       # value rows (argv slots)
+    mem.bset64(e, 16, strbuf.sv_new())    # set cols
+    mem.bset64(e, 24, mem.iv_new(4))      # set exprs
+    mem.bset64(e, 32, strbuf.sv_new())    # create sql / pragma name
+    mem.bset64(e, 40, 0)                  # distinct
+    mem.bset64(e, 48, 0)                  # subselect stmt
+    mem.bset64(e, 56, strbuf.sv_new())    # pragma arg
+    mem.bset64(e, 64, 0)                  # compound next
+    mem.bset64(e, 72, 0)                  # compound op
+    mem.bset64(e, 80, 0)                  # insert select
+    mem.bset64(e, 88, 0)                  # or-conflict
+    mem.bset64(e, 96, strbuf.sv_new())    # index cols
+    mem.bset64(e, 104, 0)                 # if-not-exists / if-exists
+    mem.bset64(e, 112, 0)                 # unique index
+    return e
+
+def state_st_ext(s: Int) -> Int:
+    return mem.bget64(s, 128)
+
+def state_st_kind(s: Int) -> Int:
+    return mem.bget64(s, 0)
+
+def state_st_set_kind(s: Int, k: Int):
+    mem.bset64(s, 0, k)
+
+def state_st_arena(s: Int) -> Int:
+    return mem.bget64(s, 16)
+
+def state_st_results(s: Int) -> Int:
+    return mem.bget64(s, 24)
+
+def state_st_aliases(s: Int) -> Int:
+    return mem.bget64(s, 32)
+
+def state_st_from(s: Int) -> Int:
+    return mem.bget64(s, 40)
+
+def state_st_from_alias(s: Int) -> Int:
+    return mem.bget64(s, 48)
+
+def state_st_join_types(s: Int) -> Int:
+    return mem.bget64(s, 56)
+
+def state_st_join_conds(s: Int) -> Int:
+    return mem.bget64(s, 64)
+
+def state_st_where(s: Int) -> Int:
+    return mem.bget64(s, 72)
+
+def state_st_set_where(s: Int, n: Int):
+    mem.bset64(s, 72, n)
+
+def state_st_group(s: Int) -> Int:
+    return mem.bget64(s, 80)
+
+def state_st_having(s: Int) -> Int:
+    return mem.bget64(s, 88)
+
+def state_st_order(s: Int) -> Int:
+    return mem.bget64(s, 96)
+
+def state_st_order_dirs(s: Int) -> Int:
+    return mem.bget64(s, 104)
+
+def state_st_limit(s: Int) -> Int:
+    return mem.bget64(s, 112)
+
+def state_st_offset(s: Int) -> Int:
+    return mem.bget64(s, 120)
+
+def state_st_ins_cols(s: Int) -> Int:
+    return mem.bget64(state_st_ext(s), 0)
+
+def state_st_val_rows(s: Int) -> Int:
+    return mem.bget64(state_st_ext(s), 8)
+
+def state_st_set_cols(s: Int) -> Int:
+    return mem.bget64(state_st_ext(s), 16)
+
+def state_st_set_exprs(s: Int) -> Int:
+    return mem.bget64(state_st_ext(s), 24)
+
+def state_st_textv(s: Int) -> Int:
+    return mem.bget64(state_st_ext(s), 32)
+
+def state_st_distinct(s: Int) -> Int:
+    return mem.bget64(state_st_ext(s), 40)
+
+def state_st_subsel(s: Int) -> Int:
+    return mem.bget64(state_st_ext(s), 48)
+
+def state_st_pragma_arg(s: Int) -> Int:
+    return mem.bget64(state_st_ext(s), 56)
+
+def state_st_compound(s: Int) -> Int:
+    return mem.bget64(state_st_ext(s), 64)
+
+def state_st_compound_op(s: Int) -> Int:
+    return mem.bget64(state_st_ext(s), 72)
+
+def state_st_ins_select(s: Int) -> Int:
+    return mem.bget64(state_st_ext(s), 80)
+
+def state_st_ifexists(s: Int) -> Int:
+    return mem.bget64(state_st_ext(s), 104)
+
+def state_st_table(s: Int) -> Str:
+    tv := state_st_textv(s)
+    if strbuf.sv_len(tv) == 0:
+        return ""
+    return strbuf.sv_get(tv, 0)
+
+def state_st_free(s: Int):
+    mem.iv_free(state_st_results(s))
+    strbuf.sv_free(state_st_aliases(s))
+    strbuf.sv_free(state_st_from(s))
+    strbuf.sv_free(state_st_from_alias(s))
+    mem.iv_free(state_st_join_types(s))
+    mem.iv_free(state_st_join_conds(s))
+    mem.iv_free(state_st_group(s))
+    mem.iv_free(state_st_order(s))
+    mem.iv_free(state_st_order_dirs(s))
+    e := state_st_ext(s)
+    strbuf.sv_free(mem.bget64(e, 0))
+    mem.iv_free(mem.bget64(e, 8))
+    strbuf.sv_free(mem.bget64(e, 16))
+    mem.iv_free(mem.bget64(e, 24))
+    strbuf.sv_free(mem.bget64(e, 32))
+    strbuf.sv_free(mem.bget64(e, 56))
+    strbuf.sv_free(mem.bget64(e, 96))
+    sub := mem.bget64(e, 48)
+    if sub != 0:
+        state_st_free(sub)
+    cmp := mem.bget64(e, 64)
+    if cmp != 0:
+        state_st_free(cmp)
+    isel := mem.bget64(e, 80)
+    if isel != 0:
+        state_st_free(isel)
+    buf_free(e)
+    buf_free(s)
+
+# ── parser state ──
+
+def state_ps_new(sql: Str) -> Int:
+    p := buf_alloc(56)
+    mem.bset64(p, 0, lexer.tokenize(sql))
+    mem.bset64(p, 8, 0)
+    mem.bset64(p, 16, ast.ar_new())
+    mem.bset64(p, 24, strbuf.sv_new())
+    mem.bset64(p, 32, 0)
+    mem.bset64(p, 40, 0)
+    return p
+
+def state_ps_toks(p: Int) -> Int:
+    return mem.bget64(p, 0)
+
+def state_ps_pos(p: Int) -> Int:
+    return mem.bget64(p, 8)
+
+def state_ps_set_pos(p: Int, v: Int):
+    mem.bset64(p, 8, v)
+
+def state_ps_arena(p: Int) -> Int:
+    return mem.bget64(p, 16)
+
+def state_ps_errs(p: Int) -> Int:
+    return mem.bget64(p, 24)
+
+def state_ps_failed(p: Int) -> Int:
+    return mem.bget64(p, 32)
+
+def state_ps_error(p: Int, msg: Str):
+    if mem.bget64(p, 32) == 0:
+        mem.bset64(p, 32, 1)
+        strbuf.sv_push(state_ps_errs(p), msg)
+
+def state_ps_errmsg(p: Int) -> Str:
+    if strbuf.sv_len(state_ps_errs(p)) == 0:
+        return ""
+    return strbuf.sv_get(state_ps_errs(p), 0)
+
+def state_ps_free(p: Int):
+    lexer.lx_free(state_ps_toks(p))
+    strbuf.sv_free(state_ps_errs(p))
+    buf_free(p)
+
+def state_cur_kind(p: Int) -> Int:
+    return lexer.lx_kind(state_ps_toks(p), state_ps_pos(p))
+
+def state_cur_text(p: Int) -> Str:
+    return lexer.lx_text(state_ps_toks(p), state_ps_pos(p))
+
+def state_cur_ival(p: Int) -> Int:
+    return lexer.lx_ival(state_ps_toks(p), state_ps_pos(p))
+
+def state_peek_text(p: Int, off: Int) -> Str:
+    return lexer.lx_text(state_ps_toks(p), state_ps_pos(p) + off)
+
+def state_peek_kind(p: Int, off: Int) -> Int:
+    return lexer.lx_kind(state_ps_toks(p), state_ps_pos(p) + off)
+
+def state_advance(p: Int):
+    state_ps_set_pos(p, state_ps_pos(p) + 1)
+
+def state_at_eof(p: Int) -> Int:
+    if state_cur_kind(p) == lexer.TK_EOF():
+        return 1
+    return 0
+
+def state_is_kw(p: Int, w: Str) -> Int:
+    if state_cur_kind(p) != lexer.TK_KW():
+        return 0
+    if lpp_str_eq(state_cur_text(p), w) == 1:
+        return 1
+    return 0
+
+def state_is_punct(p: Int, w: Str) -> Int:
+    if state_cur_kind(p) != lexer.TK_PUNCT():
+        return 0
+    if lpp_str_eq(state_cur_text(p), w) == 1:
+        return 1
+    return 0
+
+def state_accept_kw(p: Int, w: Str) -> Int:
+    if state_is_kw(p, w) == 1:
+        state_advance(p)
+        return 1
+    return 0
+
+def state_accept_punct(p: Int, w: Str) -> Int:
+    if state_is_punct(p, w) == 1:
+        state_advance(p)
+        return 1
+    return 0
+
+def state_expect_punct(p: Int, w: Str) -> Int:
+    if state_accept_punct(p, w) == 1:
+        return 1
+    state_ps_error(p, str_concat("near \"", str_concat(state_cur_text(p), str_concat("\": expected ", w))))
+    return 0
+
+def state_expect_kw(p: Int, w: Str) -> Int:
+    if state_accept_kw(p, w) == 1:
+        return 1
+    state_ps_error(p, str_concat("near \"", str_concat(state_cur_text(p), str_concat("\": expected ", w))))
+    return 0
+
+# An identifier, or a keyword being used as a name.
+def state_take_name(p: Int) -> Str:
+    k := state_cur_kind(p)
+    if k == lexer.TK_ID():
+        r := state_cur_text(p)
+        state_advance(p)
+        return r
+    if k == lexer.TK_KW():
+        r := state_cur_text(p)
+        state_advance(p)
+        return r
+    if k == lexer.TK_STR():
+        r := state_cur_text(p)
+        state_advance(p)
+        return r
+    state_ps_error(p, str_concat("near \"", str_concat(state_cur_text(p), "\": expected name")))
+    return ""
+

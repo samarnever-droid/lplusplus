@@ -4,8 +4,9 @@ use lpp_hir::{BinaryOperator, InstanceId, OriginId, UnaryOperator};
 use lpp_types::{PrimitiveType, TypeId, TypeInterner, TypeKind};
 
 use crate::{
-    BasicBlockId, InstructionId, InstructionKind, MirAggregateId, MirFieldId, MirFunctionId,
-    MirLocalId, MirPlaceId, MirProgram, MirVariantId, Operand, PlaceProjection, Rvalue, Terminator,
+    BasicBlockId, InstructionId, InstructionKind, MirAggregateId, MirExternalFunctionId,
+    MirFieldId, MirFunctionId, MirLocalId, MirPlaceId, MirProgram, MirVariantId, Operand,
+    PlaceProjection, Rvalue, Terminator,
 };
 
 mod definite;
@@ -35,6 +36,7 @@ pub const CORE_MIR_INVARIANTS: &[MirInvariant] = &[
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MirEntity {
     Function(MirFunctionId),
+    ExternalFunction(MirExternalFunctionId),
     Aggregate(MirAggregateId),
     Field(MirFieldId),
     Variant(MirVariantId),
@@ -148,6 +150,14 @@ pub fn verify_mir_with_limits(
         errors: Vec::new(),
     };
     verifier.verify_aggregates();
+    for (_, external) in program.external_functions() {
+        if !matches!(types.kind(external.ty), TypeKind::Function { .. }) {
+            verifier.push_global(
+                external.origin,
+                MirVerificationErrorKind::InvalidFunctionType(external.ty),
+            );
+        }
+    }
     let mut instances = BTreeSet::new();
     for (function_id, function) in program.functions() {
         let has_instance_arguments = !types.list(function.instance_arguments).is_empty();

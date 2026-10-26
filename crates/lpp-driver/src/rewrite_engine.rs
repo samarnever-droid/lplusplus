@@ -159,6 +159,9 @@ fn rewrite_main(args: &[String], cwd: &Path) -> i32 {
         BackendChoice::parse(&user_config.backend).unwrap_or(BackendChoice::Cranelift);
     let mut target: Option<Target> = None;
     let mut optimization = OptimizationLevel::O0;
+    let mut lto = false;
+    let mut pgo_generate = false;
+    let mut pgo_use: Option<PathBuf> = None;
     let mut output: Option<String> = None;
     let mut linker: Option<String> = match user_config.linker.as_str() {
         "direct" if cfg!(any(target_os = "linux", target_os = "windows")) => {
@@ -225,6 +228,31 @@ fn rewrite_main(args: &[String], cwd: &Path) -> i32 {
                     }
                 }
                 idx += 1;
+            }
+            "--lto" => lto = true,
+            "--pgo-generate" => pgo_generate = true,
+            "--pgo-use" => {
+                let Some(value) = rest.get(idx + 1) else {
+                    return missing_value("--pgo-use");
+                };
+                let profile_path = PathBuf::from(value);
+                pgo_use = Some(if profile_path.is_absolute() {
+                    profile_path
+                } else {
+                    cwd.join(profile_path)
+                });
+                idx += 1;
+            }
+            value if value.starts_with("--pgo-use=") => {
+                let profile_path = PathBuf::from(&value["--pgo-use=".len()..]);
+                if profile_path.as_os_str().is_empty() {
+                    return missing_value("--pgo-use");
+                }
+                pgo_use = Some(if profile_path.is_absolute() {
+                    profile_path
+                } else {
+                    cwd.join(profile_path)
+                });
             }
             "-O" | "--opt-level" => {
                 let Some(value) = rest.get(idx + 1) else {
@@ -311,6 +339,9 @@ fn rewrite_main(args: &[String], cwd: &Path) -> i32 {
     let compile_options = CompileOptions {
         target,
         optimization,
+        lto,
+        pgo_generate,
+        pgo_use,
     };
 
     // The WASM backend emits a self-contained module — there is no native link.
@@ -440,7 +471,7 @@ fn rewrite_main(args: &[String], cwd: &Path) -> i32 {
                     }
                     if mode == Mode::Run {
                         match Command::new(&exe).status() {
-                            Ok(status) => status.code().unwrap_or(0),
+                            Ok(status) => child_exit_code(&status),
                             Err(error) => {
                                 eprintln!("[rewrite] failed to run {}: {error}", exe.display());
                                 1
@@ -526,9 +557,27 @@ fn no_input() -> i32 {
     EXIT_DEFER
 }
 
+/// The exit code to report for a spawned child: its real code when
+/// it exited normally, `128 + signal` when it was killed by one
+/// (shell convention), never a silent 0 — a crashing program must
+/// not look like a successful run.
+fn child_exit_code(status: &std::process::ExitStatus) -> i32 {
+    if let Some(code) = status.code() {
+        return code;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        if let Some(signal) = status.signal() {
+            return 128 + signal;
+        }
+    }
+    1
+}
+
 fn run_wasm(module: &Path) -> i32 {
     if let Ok(status) = Command::new("wasmtime").arg(module).status() {
-        return status.code().unwrap_or(0);
+        return child_exit_code(&status);
     }
     eprintln!(
         "[rewrite] built the wasm module but found no runtime to execute it (install wasmtime)."
@@ -749,9 +798,7 @@ fn run_bench(arguments: &[String], cwd: &Path) -> i32 {
         .current_dir(cwd)
         .status()
     {
-        Ok(status) => status
-            .code()
-            .unwrap_or(if status.success() { 0 } else { 1 }),
+        Ok(status) => child_exit_code(&status),
         Err(error) => {
             eprintln!(
                 "[rewrite] failed to launch benchmark tool {}: {error}",
@@ -879,6 +926,9 @@ fn print_help() {
     println!("  --llvm           shorthand for --backend llvm");
     println!("  --target <t>     host, host-native x86_64/aarch64, or wasm32-wasip1");
     println!("  -O<level>        MIR/backend optimization: 0, 1, 2, 3, s, or z");
+    println!("  --lto            Enable safe whole-program MIR inlining of small pure callees");
+    println!("  --pgo-generate   Instrument Cranelift; write a profile at LPP_PGO_PROFILE");
+    println!("  --pgo-use FILE   Use a matching profile to select hot MIR callees for inlining");
     println!("  --linker <kind>  direct or cc (in-process PE on Windows, direct ELF on Linux)");
     println!("  -o, --output     output binary path");
     println!("  --run            compile, link, and run immediately");
@@ -895,4 +945,40 @@ fn print_help() {
     println!(
         "  new, init, add, remove, install, update, test, run, build, publish, tree, verify, clean"
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::child_exit_code;
+    use std::process::Command;
+
+    #[cfg(unix)]
+    #[test]
+    fn child_exit_code_passes_through_real_codes() {
+        let status = Command::new("sh")
+            .args(["-c", "exit 101"])
+            .status()
+            .expect("sh");
+        assert_eq!(child_exit_code(&status), 101);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn child_exit_code_passes_through_real_codes() {
+        let status = Command::new("cmd")
+            .args(["/C", "exit 101"])
+            .status()
+            .expect("cmd");
+        assert_eq!(child_exit_code(&status), 101);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn child_exit_code_never_reports_signal_death_as_success() {
+        let status = Command::new("sh")
+            .args(["-c", "kill -SEGV $$"])
+            .status()
+            .expect("sh");
+        assert_eq!(child_exit_code(&status), 128 + 11);
+    }
 }

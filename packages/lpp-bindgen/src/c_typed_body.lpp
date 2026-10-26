@@ -1,0 +1,464 @@
+# c_typed_body.lpp — typed function-body parsing
+import c_lexer
+import c_normal_ir
+import c_aggregate_data
+import text
+import c_typed_types
+import c_typed_common
+import c_typed_expr
+import c_typed_conditionals
+import c_typed_control
+
+def c_body_invalid(body: Str, normalized: Str, symbols: Str, cursor: CLexCursor, reason: Str, span: CSourceSpan) -> CBodyParse:
+    return CBodyParse(body, normalized, symbols, cursor, 0, 0, reason, span)
+
+
+def c_typed_pointer_metadata_parts(base_kind: Int, base_spelling: Str, pointer_depth: Int, base_abi_size: Int, base_abi_signed: Int) -> Str:
+    mut metadata := str_concat(int_to_str(base_kind), "|")
+    metadata = str_concat(metadata, str_concat(int_to_str(base_abi_size), "|"))
+    metadata = str_concat(metadata, str_concat(int_to_str(base_abi_signed), "|"))
+    metadata = str_concat(metadata, str_concat(int_to_str(pointer_depth), "|"))
+    return str_concat(metadata, base_spelling)
+
+
+def c_parse_body_level(cursor: CLexCursor, symbols_in: Str, functions: Str, return_type: Int, aliases: Str, aggregates: Str, indent_level: Int, require_return: Bool, continue_action: Str, loop_depth: Int) -> CBodyParse:
+    mut current := cursor
+    mut symbols := symbols_in
+    mut body := ""
+    indent := c_typed_indent(indent_level)
+    mut normalized := ""
+    mut has_return := 0
+    while true:
+        step := c_lex_next_code(current)
+        if step.token.kind == C_TOKEN_EOF:
+            return c_body_invalid(body, normalized, symbols, step.next, "C2-PARSE-UNTERMINATED-FUNCTION", step.token.span)
+        if c_lex_token_is(step, "}"):
+            if require_return && return_type != C_IR_TYPE_VOID && has_return == 0:
+                return c_body_invalid(body, normalized, symbols, step.next, "C2-TYPE-MISSING-RETURN", step.token.span)
+            if require_return && return_type == C_IR_TYPE_VOID && str_len(body) == 0:
+                body = text_append_line(body, str_concat(indent, "return"))
+                normalized = text_append_line(normalized, "stmt|return|void")
+                has_return = 1
+            return CBodyParse(body, normalized, symbols, step.next, 1, has_return, "", step.token.span)
+
+        if c_lex_token_is(step, ";"):
+            normalized = text_append_line(normalized, "stmt|empty")
+            current = step.next
+        elif text_eq(step.token.spelling, "return"):
+            after := c_lex_next_code(step.next)
+            if c_lex_token_is(after, ";"):
+                if return_type != C_IR_TYPE_VOID:
+                    return c_body_invalid(body, normalized, symbols, after.next, "C2-TYPE-RETURN", step.token.span)
+                body = text_append_line(body, str_concat(indent, "return"))
+                normalized = text_append_line(normalized, "stmt|return|void")
+                has_return = 1
+                current = after.next
+            else:
+                parsed := c_parse_expression(step.next, symbols, functions, aliases, aggregates)
+                if parsed.expr.valid == 0:
+                    return c_body_invalid(body, normalized, symbols, parsed.next, parsed.expr.normalized, step.token.span)
+                after_expr := c_lex_next_code(parsed.next)
+                if c_lex_token_is(after_expr, "?"):
+                    ternary := c_parse_ternary_return(step.next, symbols, functions, return_type, aliases, aggregates, indent_level)
+                    if ternary.valid == 0:
+                        return c_body_invalid(body, normalized, symbols, ternary.next, ternary.reason, ternary.span)
+                    body = str_concat(body, ternary.lpp)
+                    normalized = text_append_line(normalized, ternary.normalized)
+                    has_return = 1
+                    current = ternary.next
+                else:
+                    semi := after_expr
+                    if !c_lex_token_is(semi, ";"):
+                        return c_body_invalid(body, normalized, symbols, parsed.next, "C2-PARSE-RETURN-SEMI", step.token.span)
+                    if !c_return_expr_compatible(parsed.expr, return_type):
+                        return c_body_invalid(body, normalized, symbols, semi.next, "C2-TYPE-RETURN", step.token.span)
+                    return_lpp := c_return_expr_lpp(parsed.expr, return_type)
+                    body = text_append_line(body, str_concat(indent, str_concat("return ", return_lpp)))
+                    normalized = text_append_line(normalized, str_concat("stmt|return|", parsed.expr.normalized))
+                    has_return = 1
+                    current = semi.next
+        elif text_eq(step.token.spelling, "break"):
+            if loop_depth <= 0:
+                return c_body_invalid(body, normalized, symbols, step.next, "C2-CONTROL-BREAK-OUTSIDE-LOOP", step.token.span)
+            semi := c_lex_next_code(step.next)
+            if !c_lex_token_is(semi, ";"):
+                return c_body_invalid(body, normalized, symbols, semi.next, "C2-PARSE-BREAK-SEMI", step.token.span)
+            body = text_append_line(body, str_concat(indent, "break"))
+            normalized = text_append_line(normalized, "stmt|break")
+            current = semi.next
+        elif text_eq(step.token.spelling, "continue"):
+            if loop_depth <= 0:
+                return c_body_invalid(body, normalized, symbols, step.next, "C2-CONTROL-CONTINUE-OUTSIDE-LOOP", step.token.span)
+            semi := c_lex_next_code(step.next)
+            if !c_lex_token_is(semi, ";"):
+                return c_body_invalid(body, normalized, symbols, semi.next, "C2-PARSE-CONTINUE-SEMI", step.token.span)
+            if str_len(continue_action) > 0:
+                body = text_append_line(body, str_concat(indent, continue_action))
+            body = text_append_line(body, str_concat(indent, "continue"))
+            normalized = text_append_line(normalized, "stmt|continue")
+            current = semi.next
+        elif text_eq(step.token.spelling, "if"):
+            open := c_lex_next_code(step.next)
+            if !c_lex_token_is(open, "("):
+                return c_body_invalid(body, normalized, symbols, open.next, "C2-PARSE-IF-OPEN", step.token.span)
+            condition := c_parse_expression(open.next, symbols, functions, aliases, aggregates)
+            if condition.expr.valid == 0:
+                return c_body_invalid(body, normalized, symbols, condition.next, condition.expr.normalized, step.token.span)
+            condition_lpp := c_typed_condition(condition.expr)
+            if str_len(condition_lpp) == 0:
+                return c_body_invalid(body, normalized, symbols, condition.next, "C2-TYPE-CONDITION", step.token.span)
+            close := c_lex_next_code(condition.next)
+            if !c_lex_token_is(close, ")"):
+                return c_body_invalid(body, normalized, symbols, close.next, "C2-PARSE-IF-CLOSE", step.token.span)
+            after_condition := c_lex_next_code(close.next)
+            body = text_append_line(body, str_concat(indent, str_concat("if ", str_concat(condition_lpp, ":"))))
+            if c_lex_token_is(after_condition, "{"):
+                then_body := c_parse_body_level(after_condition.next, symbols, functions, return_type, aliases, aggregates, indent_level + 1, false, continue_action, loop_depth)
+                if then_body.valid == 0:
+                    return c_body_invalid(body, normalized, symbols, then_body.next, then_body.reason, step.token.span)
+                body = str_concat(body, then_body.lpp)
+                normalized = text_append_line(normalized, str_concat("stmt|if-block|", condition.expr.normalized))
+                current = then_body.next
+                maybe_else := c_lex_next_code(current)
+                if text_eq(maybe_else.token.spelling, "else"):
+                    else_open := c_lex_next_code(maybe_else.next)
+                    body = text_append_line(body, str_concat(indent, "else:"))
+                    if c_lex_token_is(else_open, "{"):
+                        else_body := c_parse_body_level(else_open.next, symbols, functions, return_type, aliases, aggregates, indent_level + 1, false, continue_action, loop_depth)
+                        if else_body.valid == 0:
+                            return c_body_invalid(body, normalized, symbols, else_body.next, else_body.reason, step.token.span)
+                        body = str_concat(body, else_body.lpp)
+                        normalized = text_append_line(normalized, "stmt|else-block")
+                        current = else_body.next
+                        if then_body.has_return != 0 && else_body.has_return != 0:
+                            has_return = 1
+                    else:
+                        else_branch := c_parse_return_branch(maybe_else.next, symbols, functions, return_type, aliases, aggregates, indent_level + 1)
+                        if else_branch.valid == 0:
+                            return c_body_invalid(body, normalized, symbols, else_branch.next, else_branch.reason, step.token.span)
+                        body = text_append_line(body, else_branch.lpp)
+                        current = else_branch.next
+                        if then_body.has_return != 0:
+                            has_return = 1
+            else:
+                then_first := c_lex_next_code(close.next)
+                mut then_returns := 0
+                if text_eq(then_first.token.spelling, "return"):
+                    then_branch := c_parse_return_branch(close.next, symbols, functions, return_type, aliases, aggregates, indent_level + 1)
+                    if then_branch.valid == 0:
+                        return c_body_invalid(body, normalized, symbols, then_branch.next, then_branch.reason, step.token.span)
+                    body = text_append_line(body, then_branch.lpp)
+                    normalized = text_append_line(normalized, str_concat("stmt|if-return|", str_concat(condition.expr.normalized, str_concat("|", then_branch.normalized))))
+                    current = then_branch.next
+                    then_returns = 1
+                else:
+                    then_statement := c_parse_single_statement(close.next, symbols, functions, aliases, aggregates, indent_level + 1)
+                    if then_statement.valid == 0:
+                        return c_body_invalid(body, normalized, symbols, then_statement.next, "C2-PARSE-IF-SINGLE-STATEMENT", then_statement.span)
+                    body = str_concat(body, then_statement.lpp)
+                    normalized = text_append_line(normalized, str_concat("stmt|if-single|", condition.expr.normalized))
+                    normalized = str_concat(normalized, then_statement.normalized)
+                    current = then_statement.next
+                maybe_else := c_lex_next_code(current)
+                if text_eq(maybe_else.token.spelling, "else"):
+                    body = text_append_line(body, str_concat(indent, "else:"))
+                    else_first := c_lex_next_code(maybe_else.next)
+                    mut else_returns := 0
+                    if text_eq(else_first.token.spelling, "return"):
+                        else_branch := c_parse_return_branch(maybe_else.next, symbols, functions, return_type, aliases, aggregates, indent_level + 1)
+                        if else_branch.valid == 0:
+                            return c_body_invalid(body, normalized, symbols, else_branch.next, else_branch.reason, step.token.span)
+                        body = text_append_line(body, else_branch.lpp)
+                        normalized = text_append_line(normalized, str_concat("stmt|else-return|", else_branch.normalized))
+                        current = else_branch.next
+                        else_returns = 1
+                    else:
+                        else_statement := c_parse_single_statement(maybe_else.next, symbols, functions, aliases, aggregates, indent_level + 1)
+                        if else_statement.valid == 0:
+                            return c_body_invalid(body, normalized, symbols, else_statement.next, "C2-PARSE-ELSE-SINGLE-STATEMENT", else_statement.span)
+                        body = str_concat(body, else_statement.lpp)
+                        normalized = text_append_line(normalized, "stmt|else-single")
+                        normalized = str_concat(normalized, else_statement.normalized)
+                        current = else_statement.next
+                    if then_returns != 0 && else_returns != 0:
+                        has_return = 1
+        elif text_eq(step.token.spelling, "do"):
+            open_body := c_lex_next_code(step.next)
+            if !c_lex_token_is(open_body, "{"):
+                return c_body_invalid(body, normalized, symbols, open_body.next, "C2-PARSE-DO-BODY", step.token.span)
+            loop_body := c_parse_body_level(open_body.next, symbols, functions, return_type, aliases, aggregates, indent_level + 1, false, "", loop_depth + 1)
+            if loop_body.valid == 0:
+                return c_body_invalid(body, normalized, symbols, loop_body.next, loop_body.reason, step.token.span)
+            if text_contains(loop_body.normalized, "stmt|continue"):
+                return c_body_invalid(body, normalized, symbols, loop_body.next, "C2-CONTROL-DO-CONTINUE", step.token.span)
+            while_step := c_lex_next_code(loop_body.next)
+            if !text_eq(while_step.token.spelling, "while"):
+                return c_body_invalid(body, normalized, symbols, while_step.next, "C2-PARSE-DO-WHILE", while_step.token.span)
+            open_condition := c_lex_next_code(while_step.next)
+            if !c_lex_token_is(open_condition, "("):
+                return c_body_invalid(body, normalized, symbols, open_condition.next, "C2-PARSE-DO-OPEN", open_condition.token.span)
+            condition := c_parse_expression(open_condition.next, symbols, functions, aliases, aggregates)
+            if condition.expr.valid == 0:
+                return c_body_invalid(body, normalized, symbols, condition.next, condition.expr.normalized, step.token.span)
+            condition_lpp := c_typed_condition(condition.expr)
+            if str_len(condition_lpp) == 0:
+                return c_body_invalid(body, normalized, symbols, condition.next, "C2-TYPE-DO-CONDITION", condition.expr.span)
+            close_condition := c_lex_next_code(condition.next)
+            if !c_lex_token_is(close_condition, ")"):
+                return c_body_invalid(body, normalized, symbols, close_condition.next, "C2-PARSE-DO-CLOSE", close_condition.token.span)
+            do_semi := c_lex_next_code(close_condition.next)
+            if !c_lex_token_is(do_semi, ";"):
+                return c_body_invalid(body, normalized, symbols, do_semi.next, "C2-PARSE-DO-SEMI", do_semi.token.span)
+            nested_indent := c_typed_indent(indent_level + 1)
+            deeper_indent := c_typed_indent(indent_level + 2)
+            body = text_append_line(body, str_concat(indent, "while true:"))
+            body = str_concat(body, loop_body.lpp)
+            body = text_append_line(body, str_concat(nested_indent, str_concat("if ", str_concat(condition_lpp, ":"))))
+            body = text_append_line(body, str_concat(deeper_indent, "continue"))
+            body = text_append_line(body, str_concat(nested_indent, "break"))
+            normalized = text_append_line(normalized, str_concat("stmt|do-while|", condition.expr.normalized))
+            current = do_semi.next
+        elif text_eq(step.token.spelling, "while"):
+            open := c_lex_next_code(step.next)
+            if !c_lex_token_is(open, "("):
+                return c_body_invalid(body, normalized, symbols, open.next, "C2-PARSE-WHILE-OPEN", step.token.span)
+            condition := c_parse_expression(open.next, symbols, functions, aliases, aggregates)
+            if condition.expr.valid == 0:
+                return c_body_invalid(body, normalized, symbols, condition.next, condition.expr.normalized, step.token.span)
+            condition_lpp := c_typed_condition(condition.expr)
+            if str_len(condition_lpp) == 0:
+                return c_body_invalid(body, normalized, symbols, condition.next, "C2-TYPE-CONDITION", step.token.span)
+            close := c_lex_next_code(condition.next)
+            if !c_lex_token_is(close, ")"):
+                return c_body_invalid(body, normalized, symbols, close.next, "C2-PARSE-WHILE-CLOSE", step.token.span)
+            open_body := c_lex_next_code(close.next)
+            if !c_lex_token_is(open_body, "{"):
+                return c_body_invalid(body, normalized, symbols, open_body.next, "C2-PARSE-WHILE-BODY", step.token.span)
+            loop_body := c_parse_body_level(open_body.next, symbols, functions, return_type, aliases, aggregates, indent_level + 1, false, "", loop_depth + 1)
+            if loop_body.valid == 0:
+                return c_body_invalid(body, normalized, symbols, loop_body.next, loop_body.reason, step.token.span)
+            body = text_append_line(body, str_concat(indent, str_concat("while ", str_concat(condition_lpp, ":"))))
+            body = str_concat(body, loop_body.lpp)
+            normalized = text_append_line(normalized, str_concat("stmt|while|", condition.expr.normalized))
+            current = loop_body.next
+        elif text_eq(step.token.spelling, "for"):
+            header := c_parse_for_header(step.next, symbols, functions, aliases, aggregates, step.token.span)
+            if header.valid == 0:
+                return c_body_invalid(body, normalized, symbols, header.next, header.reason, step.token.span)
+            condition_lpp := c_typed_condition(header.condition)
+            open_body := c_lex_next_code(header.next)
+            if !c_lex_token_is(open_body, "{"):
+                return c_body_invalid(body, normalized, symbols, open_body.next, "C2-PARSE-FOR-BODY", step.token.span)
+            loop_body := c_parse_body_level(open_body.next, header.symbols, functions, return_type, aliases, aggregates, indent_level + 1, false, header.increment_lpp, loop_depth + 1)
+            if loop_body.valid == 0:
+                return c_body_invalid(body, normalized, symbols, loop_body.next, loop_body.reason, step.token.span)
+            body = text_append_line(body, str_concat(indent, header.init_lpp))
+            body = text_append_line(body, str_concat(indent, str_concat("while ", str_concat(condition_lpp, ":"))))
+            body = str_concat(body, loop_body.lpp)
+            body = text_append_line(body, str_concat(c_typed_indent(indent_level + 1), header.increment_lpp))
+            normalized = text_append_line(normalized, str_concat("stmt|for|", header.normalized))
+            current = loop_body.next
+        else:
+            parsed_type := c_parse_type_known(current, aliases)
+            if parsed_type.c_type.valid == 1:
+                if parsed_type.c_type.kind == C_IR_TYPE_VOID:
+                    return c_body_invalid(body, normalized, symbols, parsed_type.next, "C2-TYPE-VOID-LOCAL", parsed_type.c_type.span)
+                if parsed_type.c_type.kind == C_IR_TYPE_AGGREGATE:
+                    return c_body_invalid(body, normalized, symbols, parsed_type.next, "C2-TYPE-AGGREGATE-LOCAL", parsed_type.c_type.span)
+                # A local declaration may contain several declarators separated
+                # by commas: `int x = 1, y = 2;`. Each gets its own `mut` line.
+                base_kind := parsed_type.c_type.kind
+                base_spelling := parsed_type.c_type.c_spelling
+                base_abi_size := c_typed_scalar_size(parsed_type.c_type, aliases)
+                base_abi_signed := c_typed_scalar_signed(parsed_type.c_type, aliases)
+                mut decl_cursor := parsed_type.next
+                mut decl_done := false
+                while !decl_done:
+                    decl_pointer := c_parse_pointer_prefix(decl_cursor)
+                    mut local_kind := base_kind
+                    if decl_pointer.count > 0:
+                        local_kind = C_IR_TYPE_PTR
+                    name_step := c_lex_next_code(decl_pointer.next)
+                    if name_step.token.kind != C_TOKEN_IDENTIFIER:
+                        return c_body_invalid(body, normalized, symbols, name_step.next, "C2-PARSE-LOCAL-NAME", name_step.token.span)
+                    name := text_safe_binding_name(name_step.token.spelling)
+                    if str_len(name) == 0 || c_ir_symbol_type(symbols, name) != C_IR_TYPE_INVALID:
+                        return c_body_invalid(body, normalized, symbols, name_step.next, "C2-TYPE-DUPLICATE-LOCAL", name_step.token.span)
+                    after_name := c_lex_next_code(name_step.next)
+                    if c_lex_token_is(after_name, "[") || c_lex_token_is(after_name, "("):
+                        return c_body_invalid(body, normalized, symbols, after_name.next, "C2-TYPE-ARRAY-OR-FUNCTION-LOCAL", after_name.token.span)
+                    mut value := "0"
+                    mut value_ir := "zero"
+                    mut init_next := name_step.next
+                    mut consumed_semi := false
+                    mut conditional_lpp := ""
+                    if local_kind == C_IR_TYPE_FLOAT:
+                        value = "0.0"
+                    elif local_kind == C_IR_TYPE_BOOL:
+                        value = "false"
+                    elif local_kind == C_IR_TYPE_PTR:
+                        value = "c_ptr_null()"
+                    if c_lex_token_is(after_name, "="):
+                        parsed := c_parse_expression(after_name.next, symbols, functions, aliases, aggregates)
+                        if parsed.expr.valid == 0:
+                            return c_body_invalid(body, normalized, symbols, parsed.next, parsed.expr.normalized, after_name.token.span)
+                        parsed_end := c_lex_next_code(parsed.next)
+                        if c_lex_token_is(parsed_end, "?"):
+                            conditional := c_parse_conditional_parts(after_name.next, symbols, functions, aliases, aggregates)
+                            if conditional.valid == 0:
+                                return c_body_invalid(body, normalized, symbols, conditional.next, conditional.reason, conditional.span)
+                            if !c_conditional_branch_compatible(conditional.true_type, conditional.true_lpp, local_kind) || !c_conditional_branch_compatible(conditional.false_type, conditional.false_lpp, local_kind):
+                                return c_body_invalid(body, normalized, symbols, conditional.next, "C2-TYPE-LOCAL-TERNARY", conditional.span)
+                            nested_indent := c_typed_indent(indent_level + 1)
+                            conditional_lpp = text_append_line(conditional_lpp, str_concat(indent, str_concat("mut ", str_concat(name, str_concat(" := ", value)))))
+                            conditional_lpp = text_append_line(conditional_lpp, str_concat(indent, str_concat("if ", str_concat(conditional.condition_lpp, ":"))))
+                            conditional_lpp = text_append_line(conditional_lpp, str_concat(nested_indent, str_concat(name, str_concat(" = ", c_conditional_branch_lpp(conditional.true_type, conditional.true_lpp, local_kind)))))
+                            conditional_lpp = text_append_line(conditional_lpp, str_concat(indent, "else:"))
+                            conditional_lpp = text_append_line(conditional_lpp, str_concat(nested_indent, str_concat(name, str_concat(" = ", c_conditional_branch_lpp(conditional.false_type, conditional.false_lpp, local_kind)))))
+                            value_ir = str_concat("conditional|", str_concat(conditional.condition_ir, str_concat("|true|", str_concat(conditional.true_ir, str_concat("|false|", conditional.false_ir)))))
+                            init_next = conditional.next
+                            consumed_semi = true
+                        else:
+                            if !c_conditional_branch_compatible(parsed.expr.type_kind, parsed.expr.lpp, local_kind):
+                                return c_body_invalid(body, normalized, symbols, parsed.next, "C2-TYPE-LOCAL-INIT", after_name.token.span)
+                            value = c_conditional_branch_lpp(parsed.expr.type_kind, parsed.expr.lpp, local_kind)
+                            value_ir = parsed.expr.normalized
+                            init_next = parsed.next
+                    if local_kind == C_IR_TYPE_PTR:
+                        metadata := c_typed_pointer_metadata_parts(base_kind, base_spelling, decl_pointer.count, base_abi_size, base_abi_signed)
+                        symbols = c_ir_symbol_add_meta(symbols, name, local_kind, metadata)
+                    else:
+                        symbols = c_ir_symbol_add(symbols, name, local_kind)
+                    if str_len(conditional_lpp) > 0:
+                        body = str_concat(body, conditional_lpp)
+                    else:
+                        body = text_append_line(body, str_concat(indent, str_concat("mut ", str_concat(name, str_concat(" := ", value)))))
+                    normalized = text_append_line(normalized, str_concat("stmt|local|", str_concat(name, str_concat("|", str_concat(c_ir_type_name(local_kind), str_concat("|", value_ir))))))
+                    if consumed_semi:
+                        # Ternary initializer already consumed the ';'.
+                        decl_cursor = init_next
+                        decl_done = true
+                    else:
+                        sep := c_lex_next_code(init_next)
+                        if c_lex_token_is(sep, ","):
+                            decl_cursor = sep.next
+                        elif c_lex_token_is(sep, ";"):
+                            decl_cursor = sep.next
+                            decl_done = true
+                        else:
+                            return c_body_invalid(body, normalized, symbols, sep.next, "C2-PARSE-LOCAL-SEMI", sep.token.span)
+                current = decl_cursor
+            elif step.token.kind == C_TOKEN_IDENTIFIER:
+                operator_step := c_lex_next_code(step.next)
+                if c_lex_token_is(operator_step, "[") || c_lex_token_is(operator_step, "->"):
+                    place_statement := c_parse_place_statement(current, symbols, functions, aliases, aggregates)
+                    if place_statement.valid == 0:
+                        return c_body_invalid(body, normalized, symbols, place_statement.next, place_statement.reason, place_statement.span)
+                    body = text_append_line(body, str_concat(indent, place_statement.lpp))
+                    normalized = text_append_line(normalized, str_concat("stmt|", place_statement.normalized))
+                    current = place_statement.next
+                elif c_lex_token_is(operator_step, "("):
+                    expression_statement := c_parse_expression_statement(current, symbols, functions, aliases, aggregates, indent_level)
+                    if expression_statement.valid == 0:
+                        return c_body_invalid(body, normalized, symbols, expression_statement.next, expression_statement.reason, expression_statement.span)
+                    body = str_concat(body, expression_statement.lpp)
+                    normalized = str_concat(normalized, expression_statement.normalized)
+                    current = expression_statement.next
+                else:
+                    name := text_safe_binding_name(step.token.spelling)
+                    symbol_type := c_ir_symbol_type(symbols, name)
+                    if symbol_type == C_IR_TYPE_INVALID:
+                        return c_body_invalid(body, normalized, symbols, step.next, "C2-TYPE-ASSIGN-NAME", step.token.span)
+                    op := operator_step.token.spelling
+                    if text_eq(op, "++") || text_eq(op, "--"):
+                        semi := c_lex_next_code(operator_step.next)
+                        if !c_lex_token_is(semi, ";") || symbol_type != C_IR_TYPE_INT:
+                            return c_body_invalid(body, normalized, symbols, semi.next, "C2-PARSE-POSTFIX", operator_step.token.span)
+                        mut arithmetic := "+"
+                        if text_eq(op, "--"):
+                            arithmetic = "-"
+                        postfix_line := str_concat(name, str_concat(" = ", str_concat(name, str_concat(" ", str_concat(arithmetic, " 1")))))
+                        body = text_append_line(body, str_concat(indent, postfix_line))
+                        normalized = text_append_line(normalized, str_concat("stmt|postfix|", str_concat(name, str_concat("|", op))))
+                        current = semi.next
+                    elif text_eq(op, "=") || text_eq(op, "+=") || text_eq(op, "-=") || text_eq(op, "*=") || text_eq(op, "/=") || text_eq(op, "%=") || text_eq(op, "<<=") || text_eq(op, ">>=") || text_eq(op, "&=") || text_eq(op, "|=") || text_eq(op, "^="):
+                        parsed := c_parse_expression(operator_step.next, symbols, functions, aliases, aggregates)
+                        if parsed.expr.valid == 0:
+                            return c_body_invalid(body, normalized, symbols, parsed.next, parsed.expr.normalized, operator_step.token.span)
+                        parsed_end := c_lex_next_code(parsed.next)
+                        if c_lex_token_is(parsed_end, "?"):
+                            conditional := c_parse_conditional_parts(operator_step.next, symbols, functions, aliases, aggregates)
+                            if conditional.valid == 0:
+                                return c_body_invalid(body, normalized, symbols, conditional.next, conditional.reason, conditional.span)
+                            if !c_conditional_branch_compatible(conditional.true_type, conditional.true_lpp, symbol_type) || !c_conditional_branch_compatible(conditional.false_type, conditional.false_lpp, symbol_type):
+                                return c_body_invalid(body, normalized, symbols, conditional.next, "C2-TYPE-ASSIGN-TERNARY", conditional.span)
+                            true_value := c_conditional_branch_lpp(conditional.true_type, conditional.true_lpp, symbol_type)
+                            false_value := c_conditional_branch_lpp(conditional.false_type, conditional.false_lpp, symbol_type)
+                            mut true_assignment := str_concat(name, str_concat(" = ", true_value))
+                            mut false_assignment := str_concat(name, str_concat(" = ", false_value))
+                            if !text_eq(op, "="):
+                                if symbol_type != C_IR_TYPE_INT && symbol_type != C_IR_TYPE_FLOAT:
+                                    return c_body_invalid(body, normalized, symbols, conditional.next, "C2-TYPE-COMPOUND-TERNARY", conditional.span)
+                                binary := c_compound_binary_op(op)
+                                true_assignment = str_concat(name, str_concat(" = ", str_concat(name, str_concat(" ", str_concat(binary, str_concat(" ", true_value))))))
+                                false_assignment = str_concat(name, str_concat(" = ", str_concat(name, str_concat(" ", str_concat(binary, str_concat(" ", false_value))))))
+                            nested_indent := c_typed_indent(indent_level + 1)
+                            body = text_append_line(body, str_concat(indent, str_concat("if ", str_concat(conditional.condition_lpp, ":"))))
+                            body = text_append_line(body, str_concat(nested_indent, true_assignment))
+                            body = text_append_line(body, str_concat(indent, "else:"))
+                            body = text_append_line(body, str_concat(nested_indent, false_assignment))
+                            normalized = text_append_line(normalized, str_concat("stmt|assign|", str_concat(name, str_concat("|", str_concat(op, str_concat("|conditional|", str_concat(conditional.condition_ir, str_concat("|true|", str_concat(conditional.true_ir, str_concat("|false|", conditional.false_ir))))))))))
+                            current = conditional.next
+                        else:
+                            if !c_conditional_branch_compatible(parsed.expr.type_kind, parsed.expr.lpp, symbol_type):
+                                return c_body_invalid(body, normalized, symbols, parsed.next, "C2-TYPE-ASSIGN", operator_step.token.span)
+                            semi := parsed_end
+                            if !c_lex_token_is(semi, ";"):
+                                return c_body_invalid(body, normalized, symbols, semi.next, "C2-PARSE-ASSIGN-SEMI", semi.token.span)
+                            parsed_lpp := c_conditional_branch_lpp(parsed.expr.type_kind, parsed.expr.lpp, symbol_type)
+                            mut assignment := str_concat(name, str_concat(" = ", parsed_lpp))
+                            if !text_eq(op, "="):
+                                binary := c_compound_binary_op(op)
+                                assignment = str_concat(name, str_concat(" = ", str_concat(name, str_concat(" ", str_concat(binary, str_concat(" ", parsed_lpp))))))
+                            body = text_append_line(body, str_concat(indent, assignment))
+                            normalized = text_append_line(normalized, str_concat("stmt|assign|", str_concat(name, str_concat("|", str_concat(op, str_concat("|", parsed.expr.normalized))))))
+                            current = semi.next
+                    else:
+                        return c_body_invalid(body, normalized, symbols, operator_step.next, "C2-PARSE-STATEMENT", operator_step.token.span)
+            elif c_lex_token_is(step, "*"):
+                place_statement := c_parse_place_statement(current, symbols, functions, aliases, aggregates)
+                if place_statement.valid == 0:
+                    return c_body_invalid(body, normalized, symbols, place_statement.next, place_statement.reason, place_statement.span)
+                body = text_append_line(body, str_concat(indent, place_statement.lpp))
+                normalized = text_append_line(normalized, str_concat("stmt|", place_statement.normalized))
+                current = place_statement.next
+            elif c_lex_token_is(step, "("):
+                expression := c_parse_expression(current, symbols, functions, aliases, aggregates)
+                if expression.expr.valid == 0:
+                    return c_body_invalid(body, normalized, symbols, expression.next, expression.expr.normalized, step.token.span)
+                expression_end := c_lex_next_code(expression.next)
+                if str_len(expression.expr.place_lpp) > 0 && (c_lex_token_is(expression_end, "=") || c_lex_token_is(expression_end, "+=") || c_lex_token_is(expression_end, "-=") || c_lex_token_is(expression_end, "*=") || c_lex_token_is(expression_end, "/=") || c_lex_token_is(expression_end, "%=") || c_lex_token_is(expression_end, "++") || c_lex_token_is(expression_end, "--")):
+                    place_statement := c_parse_place_statement(current, symbols, functions, aliases, aggregates)
+                    if place_statement.valid == 0:
+                        return c_body_invalid(body, normalized, symbols, place_statement.next, place_statement.reason, place_statement.span)
+                    body = text_append_line(body, str_concat(indent, place_statement.lpp))
+                    normalized = text_append_line(normalized, str_concat("stmt|", place_statement.normalized))
+                    current = place_statement.next
+                else:
+                    expression_statement := c_parse_expression_statement(current, symbols, functions, aliases, aggregates, indent_level)
+                    if expression_statement.valid == 0:
+                        return c_body_invalid(body, normalized, symbols, expression_statement.next, expression_statement.reason, expression_statement.span)
+                    body = str_concat(body, expression_statement.lpp)
+                    normalized = str_concat(normalized, expression_statement.normalized)
+                    current = expression_statement.next
+            else:
+                return c_body_invalid(body, normalized, symbols, step.next, "C2-PARSE-STATEMENT", step.token.span)
+    return c_body_invalid(body, normalized, symbols, current, "C2-PARSE-BODY", c_parse_empty_span(current))
+
+
+def c_parse_body_known(cursor: CLexCursor, symbols_in: Str, functions: Str, return_type: Int, aliases: Str, aggregates: Str) -> CBodyParse:
+    return c_parse_body_level(cursor, symbols_in, functions, return_type, aliases, aggregates, 1, true, "", 0)
+
+
+def c_parse_body(cursor: CLexCursor, symbols_in: Str, functions: Str, return_type: Int) -> CBodyParse:
+    return c_parse_body_known(cursor, symbols_in, functions, return_type, "", "")

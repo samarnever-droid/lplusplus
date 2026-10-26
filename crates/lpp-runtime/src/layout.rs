@@ -1,59 +1,55 @@
-//! Layout constants for the L++ runtime (Phase 6B).
+//! Native ARC layout constants shared by the Rust runtime and generated code.
 //!
-//! These mirror, byte for byte, the v1 C runtime's (`lpp_runtime.c`)
-//! `LppArcHeader` and the string-pool entry layout the generated objects
-//! assume. The v1 C runtime remains the behavioral reference; any change
-//! here must change in lockstep (and the symbol/layout gates will fail
-//! first).
+//! Every native ARC payload has a 16-byte common header immediately before
+//! it: magic@0, refcount@4, generation@8, flags@12. Objects with a destructor
+//! carry an additional 8-byte destructor pointer immediately before that
+//! common header, so their allocation prefix remains 24 bytes. Objects without
+//! a destructor—including ordinary strings—use only the 16-byte header.
+//!
+//! The freestanding C runtimes encode allocator and arena metadata in the
+//! flags word; the hosted runtime uses it for cycle-collector flags. The
+//! compiler does not read these fields: payload values remain normal pointers.
 
-/// The ARC header magic, at offset 0 of every ARC-managed object's hidden
-/// header. `"ARC1"` in ASCII.
+/// ARC magic, the first word of every native ARC header (`"ARC1"` in ASCII).
 pub const ARC_MAGIC: u32 = 0x4152_4331;
 
 /// Immortal sentinel: a refcount value meaning "static, never freed".
-/// Deliberately the same constant as [`ARC_MAGIC`] — a literal prefixed with
-/// the constant in BOTH of its first two words is well-formed to this
-/// runtime (magic@0, refcount@4) and immortal to it, and stays correct under
-/// the freestanding layout (refcount@0) as well.
+/// The emitted literal stores this in both the magic and refcount words so
+/// the read-only blob is recognized consistently by every native runtime.
 pub const ARC_IMMORTAL: u32 = 0x4152_4331;
 
-/// Hidden header size. C layout of `LppArcHeader` (verified with
-/// `offsetof`): magic(4)@0 + refcount(4)@4 + generation(4)@8 +
-/// 4 bytes padding@12 + destructor(8)@16 = 24 bytes. The destructor is a
-/// pointer, so the C compiler aligns it to 8 — it sits at offset 16, not 12.
-pub const ARC_HEADER_SIZE: usize = 24;
+/// Size of the common native ARC header immediately before the payload.
+pub const ARC_HEADER_SIZE: usize = 16;
 
-/// Byte offsets inside the hidden header (match C `offsetof` exactly).
+/// Destructor-bearing allocations place the function pointer immediately
+/// before the common header. This prefix is absent when there is no destructor.
+pub const ARC_DESTRUCTOR_PREFIX_SIZE: usize = 8;
+
+/// Byte offsets inside the common header (match the C layouts exactly).
 pub const ARC_MAGIC_OFFSET: usize = 0;
 pub const ARC_REFCOUNT_OFFSET: usize = 4;
 pub const ARC_GENERATION_OFFSET: usize = 8;
-pub const ARC_DESTRUCTOR_OFFSET: usize = 16;
-
-/// Cycle-collector flags, stored in the 4 padding bytes at offset 12
-/// (between `generation`@8 and the 8-aligned destructor@16). Using the
-/// padding keeps the header size and every existing offset — and thus
-/// the C ABI — unchanged; calloc zeroes the word, so unmarked objects
-/// read as flags = 0. The freestanding runtimes use offset 12 for
-/// allocator bookkeeping and keep these flags in that word's top bits
-/// instead (see `runtime/linux_x86_64_min.c`); generated code never
-/// reads the header, so the placement is runtime-internal.
 pub const ARC_CYCLE_FLAGS_OFFSET: usize = 12;
+
 /// The object is registered with the cycle collector (its type is a
-/// 4D `Shared` cycle member).
+/// `Shared` cycle member).
 pub const ARC_FLAG_COLLECTIBLE: u32 = 1;
 /// The object is currently in the possible-cycle-root buffer.
 pub const ARC_FLAG_BUFFERED: u32 = 2;
+/// An 8-byte destructor pointer is stored immediately before the common
+/// header. Kept in the flags word so freeing can recover the true allocation
+/// base after cycle-collector invalidation.
+pub const ARC_FLAG_HAS_DTOR: u32 = 4;
 
-/// The freestanding (min) runtime puts the refcount at offset 0; both of the
-/// first two words of an emitted literal hold [`ARC_IMMORTAL`], so one blob
-/// stays immortal no matter which runtime the object is linked against.
-pub const FREESTANDING_REFCOUNT_OFFSET: usize = 0;
+/// The host, Linux freestanding, and Windows freestanding runtimes now share
+/// the same native refcount offset.
+pub const FREESTANDING_REFCOUNT_OFFSET: usize = ARC_REFCOUNT_OFFSET;
 
-/// Minimum address accepted as a valid ARC payload pointer (beyond the
-/// kernel guard pages; the C runtime uses 0x10000).
+/// Minimum address accepted as a valid ARC payload pointer (beyond the guard
+/// pages; the C runtime uses 0x10000).
 pub const MIN_VALID_ADDR: usize = 0x10000;
 
-/// The shared immortal empty string: 16-aligned, 32 words of which the last
-/// two hold `""` plus padding. The payload pointer is word 6 (24 bytes in).
+/// Shared immortal empty-string blob. Keep the allocation larger than needed
+/// for alignment; the payload pointer is word 4 (16 bytes in).
 pub const EMPTY_STR_BLOB_WORDS: usize = 8;
-pub const EMPTY_STR_PAYLOAD_WORD: usize = 6;
+pub const EMPTY_STR_PAYLOAD_WORD: usize = ARC_HEADER_SIZE / 4;

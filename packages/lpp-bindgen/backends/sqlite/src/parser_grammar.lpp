@@ -1,0 +1,980 @@
+import mem
+import strbuf
+import lexer
+import ast
+import parser_state
+
+# ════════════════════ expressions ════════════════════
+# Precedence (loosest first): OR, AND, NOT, comparison, BETWEEN/IN/LIKE,
+# bitwise, additive, multiplicative, concat, unary, postfix.
+
+def grammar_parse_expr(p: Int) -> Int:
+    return grammar_parse_or(p)
+
+def grammar_parse_or(p: Int) -> Int:
+    mut l := grammar_parse_and(p)
+    mut go := 1
+    while go == 1:
+        if state_is_kw(p, "OR") == 1:
+            state_advance(p)
+            r := grammar_parse_and(p)
+            l = ast.nd(state_ps_arena(p), ast.N_BINOP(), l, r, 0 - 1, "OR", 0, 0 - 1)
+        else:
+            go = 0
+    return l
+
+def grammar_parse_and(p: Int) -> Int:
+    mut l := grammar_parse_not(p)
+    mut go := 1
+    while go == 1:
+        if state_is_kw(p, "AND") == 1:
+            state_advance(p)
+            r := grammar_parse_not(p)
+            l = ast.nd(state_ps_arena(p), ast.N_BINOP(), l, r, 0 - 1, "AND", 0, 0 - 1)
+        else:
+            go = 0
+    return l
+
+def grammar_parse_not(p: Int) -> Int:
+    if state_is_kw(p, "NOT") == 1:
+        state_advance(p)
+        e := grammar_parse_not(p)
+        return ast.nd(state_ps_arena(p), ast.N_UNOP(), e, 0 - 1, 0 - 1, "NOT", 0, 0 - 1)
+    return grammar_parse_compare(p)
+
+def grammar_parse_compare(p: Int) -> Int:
+    mut l := grammar_parse_range(p)
+    mut go := 1
+    while go == 1:
+        if state_cur_kind(p) == lexer.TK_PUNCT():
+            op := state_cur_text(p)
+            if grammar_is_cmp_op(op) == 1:
+                state_advance(p)
+                r := grammar_parse_range(p)
+                l = ast.nd(state_ps_arena(p), ast.N_BINOP(), l, r, 0 - 1, op, 0, 0 - 1)
+            else:
+                go = 0
+        elif state_is_kw(p, "IS") == 1:
+            state_advance(p)
+            mut neg := 0
+            if state_accept_kw(p, "NOT") == 1:
+                neg = 1
+            if state_is_kw(p, "NULL") == 1:
+                state_advance(p)
+                l = ast.nd(state_ps_arena(p), ast.N_ISNULL(), l, 0 - 1, 0 - 1, "", neg, 0 - 1)
+            else:
+                r := grammar_parse_range(p)
+                mut o := "IS"
+                if neg == 1:
+                    o = "IS NOT"
+                l = ast.nd(state_ps_arena(p), ast.N_BINOP(), l, r, 0 - 1, o, 0, 0 - 1)
+        else:
+            go = 0
+    return l
+
+def grammar_is_cmp_op(op: Str) -> Int:
+    if lpp_str_eq(op, "=") == 1:
+        return 1
+    if lpp_str_eq(op, "==") == 1:
+        return 1
+    if lpp_str_eq(op, "<") == 1:
+        return 1
+    if lpp_str_eq(op, ">") == 1:
+        return 1
+    if lpp_str_eq(op, "<=") == 1:
+        return 1
+    if lpp_str_eq(op, ">=") == 1:
+        return 1
+    if lpp_str_eq(op, "!=") == 1:
+        return 1
+    if lpp_str_eq(op, "<>") == 1:
+        return 1
+    return 0
+
+# BETWEEN / IN / LIKE / GLOB and their NOT forms.
+def grammar_parse_range(p: Int) -> Int:
+    mut l := grammar_parse_bitor(p)
+    mut go := 1
+    while go == 1:
+        mut neg := 0
+        mut save := state_ps_pos(p)
+        if state_is_kw(p, "NOT") == 1:
+            state_advance(p)
+            neg = 1
+        if state_is_kw(p, "BETWEEN") == 1:
+            state_advance(p)
+            lo := grammar_parse_bitor(p)
+            state_expect_kw(p, "AND")
+            hi := grammar_parse_bitor(p)
+            l = ast.nd(state_ps_arena(p), ast.N_BETWEEN(), l, lo, hi, "", neg, 0 - 1)
+        elif state_is_kw(p, "IN") == 1:
+            state_advance(p)
+            l = grammar_parse_in_tail(p, l, neg)
+        elif state_is_kw(p, "LIKE") == 1:
+            state_advance(p)
+            r := grammar_parse_bitor(p)
+            mut esc := 0 - 1
+            if state_is_kw(p, "ESCAPE") == 1:
+                state_advance(p)
+                esc = grammar_parse_bitor(p)
+            l = ast.nd(state_ps_arena(p), ast.N_LIKE(), l, r, esc, "LIKE", neg, 0 - 1)
+        elif state_is_kw(p, "GLOB") == 1:
+            state_advance(p)
+            r := grammar_parse_bitor(p)
+            l = ast.nd(state_ps_arena(p), ast.N_LIKE(), l, r, 0 - 1, "GLOB", neg, 0 - 1)
+        else:
+            if neg == 1:
+                state_ps_set_pos(p, save)
+            go = 0
+    return l
+
+def grammar_parse_in_tail(p: Int, lhs: Int, neg: Int) -> Int:
+    slot := ast.av_begin(state_ps_arena(p))
+    if state_expect_punct(p, "(") == 0:
+        return lhs
+    if state_is_punct(p, ")") == 1:
+        state_advance(p)
+        return ast.nd(state_ps_arena(p), ast.N_INLIST(), lhs, 0 - 1, 0 - 1, "", neg, slot)
+    # subquery form
+    if state_is_kw(p, "SELECT") == 1:
+        sub := grammar_parse_select(p)
+        state_expect_punct(p, ")")
+        n := ast.nd(state_ps_arena(p), ast.N_INLIST(), lhs, 0 - 1, 0 - 1, "SUB", neg, slot)
+        ast.set_c(state_ps_arena(p), n, sub)
+        return n
+    mut go := 1
+    while go == 1:
+        e := grammar_parse_expr(p)
+        ast.av_add(state_ps_arena(p), slot, e)
+        if state_accept_punct(p, ",") == 0:
+            go = 0
+    state_expect_punct(p, ")")
+    return ast.nd(state_ps_arena(p), ast.N_INLIST(), lhs, 0 - 1, 0 - 1, "", neg, slot)
+
+def grammar_parse_bitor(p: Int) -> Int:
+    mut l := grammar_parse_bitand(p)
+    mut go := 1
+    while go == 1:
+        if state_is_punct(p, "|") == 1:
+            state_advance(p)
+            r := grammar_parse_bitand(p)
+            l = ast.nd(state_ps_arena(p), ast.N_BINOP(), l, r, 0 - 1, "|", 0, 0 - 1)
+        else:
+            go = 0
+    return l
+
+def grammar_parse_bitand(p: Int) -> Int:
+    mut l := grammar_parse_shift(p)
+    mut go := 1
+    while go == 1:
+        if state_is_punct(p, "&") == 1:
+            state_advance(p)
+            r := grammar_parse_shift(p)
+            l = ast.nd(state_ps_arena(p), ast.N_BINOP(), l, r, 0 - 1, "&", 0, 0 - 1)
+        else:
+            go = 0
+    return l
+
+def grammar_parse_shift(p: Int) -> Int:
+    mut l := grammar_parse_add(p)
+    mut go := 1
+    while go == 1:
+        if state_is_punct(p, "<<") == 1:
+            state_advance(p)
+            r := grammar_parse_add(p)
+            l = ast.nd(state_ps_arena(p), ast.N_BINOP(), l, r, 0 - 1, "<<", 0, 0 - 1)
+        elif state_is_punct(p, ">>") == 1:
+            state_advance(p)
+            r := grammar_parse_add(p)
+            l = ast.nd(state_ps_arena(p), ast.N_BINOP(), l, r, 0 - 1, ">>", 0, 0 - 1)
+        else:
+            go = 0
+    return l
+
+def grammar_parse_add(p: Int) -> Int:
+    mut l := grammar_parse_mul(p)
+    mut go := 1
+    while go == 1:
+        if state_is_punct(p, "+") == 1:
+            state_advance(p)
+            r := grammar_parse_mul(p)
+            l = ast.nd(state_ps_arena(p), ast.N_BINOP(), l, r, 0 - 1, "+", 0, 0 - 1)
+        elif state_is_punct(p, "-") == 1:
+            state_advance(p)
+            r := grammar_parse_mul(p)
+            l = ast.nd(state_ps_arena(p), ast.N_BINOP(), l, r, 0 - 1, "-", 0, 0 - 1)
+        else:
+            go = 0
+    return l
+
+def grammar_parse_mul(p: Int) -> Int:
+    mut l := grammar_parse_concat(p)
+    mut go := 1
+    while go == 1:
+        if state_is_punct(p, "*") == 1:
+            state_advance(p)
+            r := grammar_parse_concat(p)
+            l = ast.nd(state_ps_arena(p), ast.N_BINOP(), l, r, 0 - 1, "*", 0, 0 - 1)
+        elif state_is_punct(p, "/") == 1:
+            state_advance(p)
+            r := grammar_parse_concat(p)
+            l = ast.nd(state_ps_arena(p), ast.N_BINOP(), l, r, 0 - 1, "/", 0, 0 - 1)
+        elif state_is_punct(p, "%") == 1:
+            state_advance(p)
+            r := grammar_parse_concat(p)
+            l = ast.nd(state_ps_arena(p), ast.N_BINOP(), l, r, 0 - 1, "%", 0, 0 - 1)
+        else:
+            go = 0
+    return l
+
+def grammar_parse_concat(p: Int) -> Int:
+    mut l := grammar_parse_unary(p)
+    mut go := 1
+    while go == 1:
+        if state_is_punct(p, "||") == 1:
+            state_advance(p)
+            r := grammar_parse_unary(p)
+            l = ast.nd(state_ps_arena(p), ast.N_BINOP(), l, r, 0 - 1, "||", 0, 0 - 1)
+        else:
+            go = 0
+    return l
+
+def grammar_parse_unary(p: Int) -> Int:
+    if state_is_punct(p, "-") == 1:
+        state_advance(p)
+        e := grammar_parse_unary(p)
+        return ast.nd(state_ps_arena(p), ast.N_UNOP(), e, 0 - 1, 0 - 1, "-", 0, 0 - 1)
+    if state_is_punct(p, "+") == 1:
+        state_advance(p)
+        return grammar_parse_unary(p)
+    if state_is_punct(p, "~") == 1:
+        state_advance(p)
+        e := grammar_parse_unary(p)
+        return ast.nd(state_ps_arena(p), ast.N_UNOP(), e, 0 - 1, 0 - 1, "~", 0, 0 - 1)
+    if state_is_kw(p, "NOT") == 1:
+        state_advance(p)
+        e := grammar_parse_unary(p)
+        return ast.nd(state_ps_arena(p), ast.N_UNOP(), e, 0 - 1, 0 - 1, "NOT", 0, 0 - 1)
+    return grammar_parse_postfix(p)
+
+def grammar_parse_postfix(p: Int) -> Int:
+    mut e := grammar_parse_primary(p)
+    mut go := 1
+    while go == 1:
+        if state_is_kw(p, "ISNULL") == 1:
+            state_advance(p)
+            e = ast.nd(state_ps_arena(p), ast.N_ISNULL(), e, 0 - 1, 0 - 1, "", 0, 0 - 1)
+        elif state_is_kw(p, "NOTNULL") == 1:
+            state_advance(p)
+            e = ast.nd(state_ps_arena(p), ast.N_ISNULL(), e, 0 - 1, 0 - 1, "", 1, 0 - 1)
+        elif state_is_kw(p, "COLLATE") == 1:
+            state_advance(p)
+            nm := state_take_name(p)
+            e = ast.nd(state_ps_arena(p), ast.N_COLLATE(), e, 0 - 1, 0 - 1, nm, 0, 0 - 1)
+        else:
+            go = 0
+    return e
+
+def grammar_parse_primary(p: Int) -> Int:
+    ar := state_ps_arena(p)
+    k := state_cur_kind(p)
+
+    if k == lexer.TK_INT():
+        v := state_cur_ival(p)
+        state_advance(p)
+        return ast.nd(ar, ast.N_INT(), 0, 0, 0, "", v, 0 - 1)
+
+    if k == lexer.TK_FLOAT():
+        t := state_cur_text(p)
+        state_advance(p)
+        return ast.nd(ar, ast.N_REAL(), 0, 0, 0, t, 0, 0 - 1)
+
+    if k == lexer.TK_STR():
+        t := state_cur_text(p)
+        state_advance(p)
+        return ast.nd(ar, ast.N_STR(), 0, 0, 0, t, 0, 0 - 1)
+
+    if k == lexer.TK_BLOB():
+        t := state_cur_text(p)
+        state_advance(p)
+        return ast.nd(ar, ast.N_BLOB(), 0, 0, 0, t, 0, 0 - 1)
+
+    if k == lexer.TK_VAR():
+        idx := state_cur_ival(p)
+        t := state_cur_text(p)
+        state_advance(p)
+        return ast.nd(ar, ast.N_PARAM(), 0, 0, 0, t, idx, 0 - 1)
+
+    if state_is_kw(p, "NULL") == 1:
+        state_advance(p)
+        return ast.nd(ar, ast.N_NULL(), 0, 0, 0, "", 0, 0 - 1)
+
+    if state_is_kw(p, "CASE") == 1:
+        return grammar_parse_case(p)
+
+    if state_is_kw(p, "CAST") == 1:
+        state_advance(p)
+        state_expect_punct(p, "(")
+        e := grammar_parse_expr(p)
+        state_expect_kw(p, "AS")
+        ty := grammar_parse_typename(p)
+        state_expect_punct(p, ")")
+        return ast.nd(ar, ast.N_CAST(), e, 0 - 1, 0 - 1, ty, 0, 0 - 1)
+
+    if state_is_kw(p, "EXISTS") == 1:
+        state_advance(p)
+        state_expect_punct(p, "(")
+        sub := grammar_parse_select(p)
+        state_expect_punct(p, ")")
+        n := ast.nd(ar, ast.N_EXISTS(), 0 - 1, 0 - 1, 0 - 1, "", 0, 0 - 1)
+        ast.set_a(ar, n, sub)
+        return n
+
+    if state_is_punct(p, "(") == 1:
+        state_advance(p)
+        if state_is_kw(p, "SELECT") == 1:
+            sub := grammar_parse_select(p)
+            state_expect_punct(p, ")")
+            n := ast.nd(ar, ast.N_SUBQUERY(), 0 - 1, 0 - 1, 0 - 1, "", 0, 0 - 1)
+            ast.set_a(ar, n, sub)
+            return n
+        e := grammar_parse_expr(p)
+        state_expect_punct(p, ")")
+        return e
+
+    if state_is_punct(p, "*") == 1:
+        state_advance(p)
+        return ast.nd(ar, ast.N_STAR(), 0, 0, 0, "", 0, 0 - 1)
+
+    if k == lexer.TK_ID():
+        name := state_cur_text(p)
+        state_advance(p)
+        # function call
+        if state_is_punct(p, "(") == 1:
+            return grammar_parse_func(p, name)
+        # qualified column  tbl.col  or  tbl.*
+        if state_is_punct(p, ".") == 1:
+            state_advance(p)
+            if state_is_punct(p, "*") == 1:
+                state_advance(p)
+                return ast.nd(ar, ast.N_STAR(), 0, 0, 0, name, 0, 0 - 1)
+            col := state_take_name(p)
+            n := ast.nd(ar, ast.N_COL(), 0, 0, 0, col, 0, 0 - 1)
+            ast.set_b(ar, n, grammar_qual_slot(p, name))
+            return n
+        return ast.nd(ar, ast.N_COL(), 0, 0, 0, name, 0, 0 - 1)
+
+    # A few keywords double as functions/values.
+    if k == lexer.TK_KW():
+        w := state_cur_text(p)
+        if lpp_str_eq(w, "REPLACE") == 1:
+            state_advance(p)
+            if state_is_punct(p, "(") == 1:
+                return grammar_parse_func(p, "replace")
+            return ast.nd(ar, ast.N_COL(), 0, 0, 0, w, 0, 0 - 1)
+        if lpp_str_eq(w, "LIKE") == 1:
+            state_advance(p)
+            if state_is_punct(p, "(") == 1:
+                return grammar_parse_func(p, "like")
+        # Clause-introducing keywords can never start an expression; treating
+        # them as column names would silently accept "SELECT FROM t".
+        if grammar_starts_clause(w) == 1:
+            state_ps_error(p, str_concat("near \"", str_concat(w, "\": syntax error")))
+            return ast.nd(ar, ast.N_NULL(), 0, 0, 0, "", 0, 0 - 1)
+        # otherwise treat as a bare column name
+        state_advance(p)
+        return ast.nd(ar, ast.N_COL(), 0, 0, 0, w, 0, 0 - 1)
+
+    state_ps_error(p, str_concat("near \"", str_concat(state_cur_text(p), "\": syntax error")))
+    state_advance(p)
+    return ast.nd(ar, ast.N_NULL(), 0, 0, 0, "", 0, 0 - 1)
+
+# Keywords that introduce a clause and therefore cannot begin an expression.
+def grammar_starts_clause(w: Str) -> Int:
+    if lpp_str_eq(w, "FROM") == 1:
+        return 1
+    if lpp_str_eq(w, "WHERE") == 1:
+        return 1
+    if lpp_str_eq(w, "GROUP") == 1:
+        return 1
+    if lpp_str_eq(w, "HAVING") == 1:
+        return 1
+    if lpp_str_eq(w, "ORDER") == 1:
+        return 1
+    if lpp_str_eq(w, "LIMIT") == 1:
+        return 1
+    if lpp_str_eq(w, "OFFSET") == 1:
+        return 1
+    if lpp_str_eq(w, "VALUES") == 1:
+        return 1
+    if lpp_str_eq(w, "SET") == 1:
+        return 1
+    if lpp_str_eq(w, "INTO") == 1:
+        return 1
+    if lpp_str_eq(w, "JOIN") == 1:
+        return 1
+    if lpp_str_eq(w, "ON") == 1:
+        return 1
+    if lpp_str_eq(w, "UNION") == 1:
+        return 1
+    if lpp_str_eq(w, "EXCEPT") == 1:
+        return 1
+    if lpp_str_eq(w, "INTERSECT") == 1:
+        return 1
+    if lpp_str_eq(w, "AS") == 1:
+        return 1
+    return 0
+
+# Table qualifiers are interned in the arena's text vector.
+def grammar_qual_slot(p: Int, name: Str) -> Int:
+    ar := state_ps_arena(p)
+    n := ast.nd(ar, ast.N_STR(), 0, 0, 0, name, 0, 0 - 1)
+    return n
+
+def grammar_parse_typename(p: Int) -> Str:
+    sb := strbuf.sb_new()
+    mut go := 1
+    mut first := 1
+    while go == 1:
+        k := state_cur_kind(p)
+        if k == lexer.TK_ID():
+            if first == 0:
+                strbuf.sb_add_ch(sb, 32)
+            strbuf.sb_add(sb, state_cur_text(p))
+            first = 0
+            state_advance(p)
+        elif k == lexer.TK_KW():
+            if first == 0:
+                strbuf.sb_add_ch(sb, 32)
+            strbuf.sb_add(sb, state_cur_text(p))
+            first = 0
+            state_advance(p)
+        else:
+            go = 0
+    if state_is_punct(p, "(") == 1:
+        state_advance(p)
+        mut d := 1
+        while d > 0:
+            if state_is_punct(p, "(") == 1:
+                d = d + 1
+            elif state_is_punct(p, ")") == 1:
+                d = d - 1
+            elif state_at_eof(p) == 1:
+                d = 0
+            state_advance(p)
+    r := strbuf.sb_str(sb)
+    strbuf.sb_free(sb)
+    return r
+
+def grammar_parse_func(p: Int, name: Str) -> Int:
+    ar := state_ps_arena(p)
+    state_expect_punct(p, "(")
+    slot := ast.av_begin(ar)
+    mut distinct := 0
+    if state_is_kw(p, "DISTINCT") == 1:
+        state_advance(p)
+        distinct = 1
+    if state_is_punct(p, ")") == 1:
+        state_advance(p)
+        return ast.nd(ar, ast.N_FUNC(), 0 - 1, distinct, 0 - 1, name, 0, slot)
+    if state_is_punct(p, "*") == 1:
+        state_advance(p)
+        star := ast.nd(ar, ast.N_STAR(), 0, 0, 0, "", 0, 0 - 1)
+        ast.av_add(ar, slot, star)
+        state_expect_punct(p, ")")
+        return ast.nd(ar, ast.N_FUNC(), 0 - 1, distinct, 0 - 1, name, 0, slot)
+    mut go := 1
+    while go == 1:
+        e := grammar_parse_expr(p)
+        ast.av_add(ar, slot, e)
+        if state_accept_punct(p, ",") == 0:
+            go = 0
+    state_expect_punct(p, ")")
+    return ast.nd(ar, ast.N_FUNC(), 0 - 1, distinct, 0 - 1, name, 0, slot)
+
+def grammar_parse_case(p: Int) -> Int:
+    ar := state_ps_arena(p)
+    state_expect_kw(p, "CASE")
+    mut base := 0 - 1
+    if state_is_kw(p, "WHEN") == 0:
+        base = grammar_parse_expr(p)
+    slot := ast.av_begin(ar)
+    mut go := 1
+    while go == 1:
+        if state_is_kw(p, "WHEN") == 1:
+            state_advance(p)
+            c := grammar_parse_expr(p)
+            state_expect_kw(p, "THEN")
+            r := grammar_parse_expr(p)
+            ast.av_add(ar, slot, c)
+            ast.av_add(ar, slot, r)
+        else:
+            go = 0
+    mut els := 0 - 1
+    if state_is_kw(p, "ELSE") == 1:
+        state_advance(p)
+        els = grammar_parse_expr(p)
+    state_expect_kw(p, "END")
+    return ast.nd(ar, ast.N_CASE(), base, els, 0 - 1, "", 0, slot)
+
+# ════════════════════ statements ════════════════════
+
+def grammar_parse_statement(p: Int) -> Int:
+    if state_is_kw(p, "SELECT") == 1:
+        return grammar_parse_select(p)
+    if state_is_kw(p, "INSERT") == 1:
+        return grammar_parse_insert(p)
+    if state_is_kw(p, "REPLACE") == 1:
+        return grammar_parse_insert(p)
+    if state_is_kw(p, "UPDATE") == 1:
+        return grammar_parse_update(p)
+    if state_is_kw(p, "DELETE") == 1:
+        return grammar_parse_delete(p)
+    if state_is_kw(p, "CREATE") == 1:
+        return grammar_parse_create(p)
+    if state_is_kw(p, "DROP") == 1:
+        return grammar_parse_drop(p)
+    if state_is_kw(p, "BEGIN") == 1:
+        state_advance(p)
+        state_accept_kw(p, "TRANSACTION")
+        state_accept_kw(p, "DEFERRED")
+        state_accept_kw(p, "IMMEDIATE")
+        state_accept_kw(p, "EXCLUSIVE")
+        s := state_st_new(state_ps_arena(p))
+        state_st_set_kind(s, state_S_BEGIN())
+        return s
+    if state_is_kw(p, "COMMIT") == 1:
+        state_advance(p)
+        state_accept_kw(p, "TRANSACTION")
+        s := state_st_new(state_ps_arena(p))
+        state_st_set_kind(s, state_S_COMMIT())
+        return s
+    if state_is_kw(p, "END") == 1:
+        state_advance(p)
+        state_accept_kw(p, "TRANSACTION")
+        s := state_st_new(state_ps_arena(p))
+        state_st_set_kind(s, state_S_COMMIT())
+        return s
+    if state_is_kw(p, "ROLLBACK") == 1:
+        state_advance(p)
+        state_accept_kw(p, "TRANSACTION")
+        s := state_st_new(state_ps_arena(p))
+        state_st_set_kind(s, state_S_ROLLBACK())
+        return s
+    if state_is_kw(p, "PRAGMA") == 1:
+        return grammar_parse_pragma(p)
+    # Recognised SQL that this engine does not implement: report it clearly
+    # rather than silently mis-parsing (see README "Not implemented").
+    w := strbuf.to_upper(state_cur_text(p))
+    if lpp_str_eq(w, "WITH") == 1:
+        state_ps_error(p, "common table expressions (WITH) are not supported")
+        return state_st_new(state_ps_arena(p))
+    if lpp_str_eq(w, "ALTER") == 1:
+        state_ps_error(p, "ALTER TABLE is not supported")
+        return state_st_new(state_ps_arena(p))
+    if lpp_str_eq(w, "SAVEPOINT") == 1:
+        state_ps_error(p, "SAVEPOINT is not supported")
+        return state_st_new(state_ps_arena(p))
+    if lpp_str_eq(w, "RELEASE") == 1:
+        state_ps_error(p, "RELEASE is not supported")
+        return state_st_new(state_ps_arena(p))
+    if lpp_str_eq(w, "ATTACH") == 1:
+        state_ps_error(p, "ATTACH is not supported")
+        return state_st_new(state_ps_arena(p))
+    if lpp_str_eq(w, "VACUUM") == 1:
+        state_ps_error(p, "VACUUM is not supported")
+        return state_st_new(state_ps_arena(p))
+    if lpp_str_eq(w, "ANALYZE") == 1:
+        state_ps_error(p, "ANALYZE is not supported")
+        return state_st_new(state_ps_arena(p))
+    state_ps_error(p, str_concat("near \"", str_concat(state_cur_text(p), "\": syntax error")))
+    s := state_st_new(state_ps_arena(p))
+    return s
+
+def grammar_parse_pragma(p: Int) -> Int:
+    state_advance(p)
+    s := state_st_new(state_ps_arena(p))
+    state_st_set_kind(s, state_S_PRAGMA())
+    nm := state_take_name(p)
+    strbuf.sv_push(state_st_textv(s), nm)
+    if state_is_punct(p, "(") == 1:
+        state_advance(p)
+        strbuf.sv_push(state_st_pragma_arg(s), state_cur_text(p))
+        state_advance(p)
+        state_expect_punct(p, ")")
+    elif state_is_punct(p, "=") == 1:
+        state_advance(p)
+        strbuf.sv_push(state_st_pragma_arg(s), state_cur_text(p))
+        state_advance(p)
+    return s
+
+def grammar_parse_select(p: Int) -> Int:
+    ar := state_ps_arena(p)
+    s := state_st_new(ar)
+    state_st_set_kind(s, state_S_SELECT())
+    state_expect_kw(p, "SELECT")
+    if state_is_kw(p, "DISTINCT") == 1:
+        state_advance(p)
+        mem.bset64(state_st_ext(s), 40, 1)
+    elif state_is_kw(p, "ALL") == 1:
+        state_advance(p)
+
+    # result columns
+    mut go := 1
+    while go == 1:
+        e := grammar_parse_expr(p)
+        mem.iv_push(state_st_results(s), e)
+        mut alias := ""
+        if state_is_kw(p, "AS") == 1:
+            state_advance(p)
+            alias = state_take_name(p)
+        elif state_cur_kind(p) == lexer.TK_ID():
+            alias = state_cur_text(p)
+            state_advance(p)
+        strbuf.sv_push(state_st_aliases(s), alias)
+        if state_accept_punct(p, ",") == 0:
+            go = 0
+
+    # FROM
+    if state_is_kw(p, "FROM") == 1:
+        state_advance(p)
+        grammar_parse_from(p, s)
+
+    if state_is_kw(p, "WHERE") == 1:
+        state_advance(p)
+        state_st_set_where(s, grammar_parse_expr(p))
+
+    if state_is_kw(p, "GROUP") == 1:
+        state_advance(p)
+        state_expect_kw(p, "BY")
+        mut g2 := 1
+        while g2 == 1:
+            mem.iv_push(state_st_group(s), grammar_parse_expr(p))
+            if state_accept_punct(p, ",") == 0:
+                g2 = 0
+        if state_is_kw(p, "HAVING") == 1:
+            state_advance(p)
+            mem.bset64(s, 88, grammar_parse_expr(p))
+
+    if state_is_kw(p, "ORDER") == 1:
+        state_advance(p)
+        state_expect_kw(p, "BY")
+        mut g3 := 1
+        while g3 == 1:
+            mem.iv_push(state_st_order(s), grammar_parse_expr(p))
+            mut dir := 0
+            if state_is_kw(p, "ASC") == 1:
+                state_advance(p)
+            elif state_is_kw(p, "DESC") == 1:
+                state_advance(p)
+                dir = 1
+            mem.iv_push(state_st_order_dirs(s), dir)
+            if state_accept_punct(p, ",") == 0:
+                g3 = 0
+
+    if state_is_kw(p, "LIMIT") == 1:
+        state_advance(p)
+        mem.bset64(s, 112, grammar_parse_expr(p))
+        if state_is_kw(p, "OFFSET") == 1:
+            state_advance(p)
+            mem.bset64(s, 120, grammar_parse_expr(p))
+        elif state_is_punct(p, ",") == 1:
+            # LIMIT offset, count
+            state_advance(p)
+            mem.bset64(s, 120, mem.bget64(s, 112))
+            mem.bset64(s, 112, grammar_parse_expr(p))
+
+    # compound selects
+    mut op := 0
+    if state_is_kw(p, "UNION") == 1:
+        state_advance(p)
+        if state_is_kw(p, "ALL") == 1:
+            state_advance(p)
+            op = 2
+        else:
+            op = 1
+    elif state_is_kw(p, "EXCEPT") == 1:
+        state_advance(p)
+        op = 3
+    elif state_is_kw(p, "INTERSECT") == 1:
+        state_advance(p)
+        op = 4
+    if op != 0:
+        nxt := grammar_parse_select(p)
+        mem.bset64(state_st_ext(s), 64, nxt)
+        mem.bset64(state_st_ext(s), 72, op)
+
+    return s
+
+def grammar_parse_from(p: Int, s: Int):
+    grammar_parse_from_item(p, s)
+    mut go := 1
+    while go == 1:
+        mut jt := 0 - 1
+        if state_is_punct(p, ",") == 1:
+            state_advance(p)
+            jt = 0
+        elif state_is_kw(p, "CROSS") == 1:
+            state_advance(p)
+            state_accept_kw(p, "JOIN")
+            jt = 0
+        elif state_is_kw(p, "INNER") == 1:
+            state_advance(p)
+            state_expect_kw(p, "JOIN")
+            jt = 1
+        elif state_is_kw(p, "LEFT") == 1:
+            state_advance(p)
+            state_accept_kw(p, "OUTER")
+            state_expect_kw(p, "JOIN")
+            jt = 2
+        elif state_is_kw(p, "NATURAL") == 1:
+            state_advance(p)
+            state_ps_error(p, "NATURAL JOIN is not supported")
+            go = 0
+        elif state_is_kw(p, "JOIN") == 1:
+            state_advance(p)
+            jt = 1
+        else:
+            go = 0
+        if jt >= 0:
+            grammar_parse_from_item(p, s)
+            mem.iv_set(state_st_join_types(s), mem.iv_len(state_st_join_types(s)) - 1, jt)
+            if state_is_kw(p, "ON") == 1:
+                state_advance(p)
+                cond := grammar_parse_expr(p)
+                mem.iv_set(state_st_join_conds(s), mem.iv_len(state_st_join_conds(s)) - 1, cond)
+            elif state_is_kw(p, "USING") == 1:
+                state_advance(p)
+                state_expect_punct(p, "(")
+                # USING (a,b) is desugared by the executor into equality tests
+                mut g2 := 1
+                while g2 == 1:
+                    nm := state_take_name(p)
+                    strbuf.sv_push(state_st_pragma_arg(s), nm)
+                    if state_accept_punct(p, ",") == 0:
+                        g2 = 0
+                state_expect_punct(p, ")")
+
+def grammar_parse_from_item(p: Int, s: Int):
+    nm := state_take_name(p)
+    strbuf.sv_push(state_st_from(s), nm)
+    mut alias := ""
+    if state_is_kw(p, "AS") == 1:
+        state_advance(p)
+        alias = state_take_name(p)
+    elif state_cur_kind(p) == lexer.TK_ID():
+        alias = state_cur_text(p)
+        state_advance(p)
+    strbuf.sv_push(state_st_from_alias(s), alias)
+    mem.iv_push(state_st_join_types(s), 0)
+    mem.iv_push(state_st_join_conds(s), 0 - 1)
+
+def grammar_parse_insert(p: Int) -> Int:
+    ar := state_ps_arena(p)
+    s := state_st_new(ar)
+    state_st_set_kind(s, state_S_INSERT())
+    mut isreplace := 0
+    if state_is_kw(p, "REPLACE") == 1:
+        state_advance(p)
+        isreplace = 1
+        mem.bset64(state_st_ext(s), 88, 5)
+    else:
+        state_expect_kw(p, "INSERT")
+        if state_is_kw(p, "OR") == 1:
+            state_advance(p)
+            w := state_cur_text(p)
+            state_advance(p)
+            mem.bset64(state_st_ext(s), 88, grammar_conflict_code(w))
+    state_expect_kw(p, "INTO")
+    strbuf.sv_push(state_st_textv(s), state_take_name(p))
+
+    if state_is_punct(p, "(") == 1:
+        state_advance(p)
+        mut go := 1
+        while go == 1:
+            strbuf.sv_push(state_st_ins_cols(s), state_take_name(p))
+            if state_accept_punct(p, ",") == 0:
+                go = 0
+        state_expect_punct(p, ")")
+
+    if state_is_kw(p, "VALUES") == 1:
+        state_advance(p)
+        mut g2 := 1
+        while g2 == 1:
+            state_expect_punct(p, "(")
+            slot := ast.av_begin(ar)
+            mut g3 := 1
+            while g3 == 1:
+                e := grammar_parse_expr(p)
+                ast.av_add(ar, slot, e)
+                if state_accept_punct(p, ",") == 0:
+                    g3 = 0
+            state_expect_punct(p, ")")
+            mem.iv_push(state_st_val_rows(s), slot)
+            if state_accept_punct(p, ",") == 0:
+                g2 = 0
+    elif state_is_kw(p, "SELECT") == 1:
+        sel := grammar_parse_select(p)
+        mem.bset64(state_st_ext(s), 80, sel)
+    elif state_is_kw(p, "DEFAULT") == 1:
+        state_advance(p)
+        state_accept_kw(p, "VALUES")
+    return s
+
+def grammar_conflict_code(w: Str) -> Int:
+    if strbuf.eq_ci(w, "ROLLBACK") == 1:
+        return 1
+    if strbuf.eq_ci(w, "ABORT") == 1:
+        return 2
+    if strbuf.eq_ci(w, "FAIL") == 1:
+        return 3
+    if strbuf.eq_ci(w, "IGNORE") == 1:
+        return 4
+    if strbuf.eq_ci(w, "REPLACE") == 1:
+        return 5
+    return 0
+
+def grammar_parse_update(p: Int) -> Int:
+    ar := state_ps_arena(p)
+    s := state_st_new(ar)
+    state_st_set_kind(s, state_S_UPDATE())
+    state_expect_kw(p, "UPDATE")
+    if state_is_kw(p, "OR") == 1:
+        state_advance(p)
+        w := state_cur_text(p)
+        state_advance(p)
+        mem.bset64(state_st_ext(s), 88, grammar_conflict_code(w))
+    strbuf.sv_push(state_st_textv(s), state_take_name(p))
+    state_expect_kw(p, "SET")
+    mut go := 1
+    while go == 1:
+        col := state_take_name(p)
+        strbuf.sv_push(state_st_set_cols(s), col)
+        state_expect_punct(p, "=")
+        e := grammar_parse_expr(p)
+        mem.iv_push(state_st_set_exprs(s), e)
+        if state_accept_punct(p, ",") == 0:
+            go = 0
+    if state_is_kw(p, "WHERE") == 1:
+        state_advance(p)
+        state_st_set_where(s, grammar_parse_expr(p))
+    return s
+
+def grammar_parse_delete(p: Int) -> Int:
+    s := state_st_new(state_ps_arena(p))
+    state_st_set_kind(s, state_S_DELETE())
+    state_expect_kw(p, "DELETE")
+    state_expect_kw(p, "FROM")
+    strbuf.sv_push(state_st_textv(s), state_take_name(p))
+    if state_is_kw(p, "WHERE") == 1:
+        state_advance(p)
+        state_st_set_where(s, grammar_parse_expr(p))
+    return s
+
+def grammar_parse_create(p: Int) -> Int:
+    state_expect_kw(p, "CREATE")
+    mut unique := 0
+    if state_is_kw(p, "UNIQUE") == 1:
+        state_advance(p)
+        unique = 1
+    if state_is_kw(p, "TEMP") == 1:
+        state_advance(p)
+    if state_is_kw(p, "TEMPORARY") == 1:
+        state_advance(p)
+    if state_is_kw(p, "INDEX") == 1:
+        return grammar_parse_create_index(p, unique)
+    if state_is_kw(p, "VIEW") == 1:
+        return grammar_parse_create_view(p)
+    return grammar_parse_create_table(p)
+
+def grammar_parse_create_table(p: Int) -> Int:
+    s := state_st_new(state_ps_arena(p))
+    state_st_set_kind(s, state_S_CREATE_TABLE())
+    state_expect_kw(p, "TABLE")
+    if state_is_kw(p, "IF") == 1:
+        state_advance(p)
+        state_expect_kw(p, "NOT")
+        state_expect_kw(p, "EXISTS")
+        mem.bset64(state_st_ext(s), 104, 1)
+    strbuf.sv_push(state_st_textv(s), state_take_name(p))
+    # The full CREATE text is reconstructed by the executor from the source
+    # SQL; here we only need to consume the definition.
+    if state_is_punct(p, "(") == 1:
+        mut d := 0
+        mut go := 1
+        while go == 1:
+            if state_at_eof(p) == 1:
+                go = 0
+            elif state_is_punct(p, "(") == 1:
+                d = d + 1
+                state_advance(p)
+            elif state_is_punct(p, ")") == 1:
+                d = d - 1
+                state_advance(p)
+                if d == 0:
+                    go = 0
+            else:
+                state_advance(p)
+    state_accept_kw(p, "WITHOUT")
+    state_accept_kw(p, "ROWID")
+    return s
+
+def grammar_parse_create_index(p: Int, unique: Int) -> Int:
+    s := state_st_new(state_ps_arena(p))
+    state_st_set_kind(s, state_S_CREATE_INDEX())
+    state_expect_kw(p, "INDEX")
+    if state_is_kw(p, "IF") == 1:
+        state_advance(p)
+        state_expect_kw(p, "NOT")
+        state_expect_kw(p, "EXISTS")
+        mem.bset64(state_st_ext(s), 104, 1)
+    strbuf.sv_push(state_st_textv(s), state_take_name(p))
+    state_expect_kw(p, "ON")
+    strbuf.sv_push(state_st_from(s), state_take_name(p))
+    mem.bset64(state_st_ext(s), 112, unique)
+    if state_is_punct(p, "(") == 1:
+        state_advance(p)
+        mut go := 1
+        while go == 1:
+            strbuf.sv_push(mem.bget64(state_st_ext(s), 96), state_take_name(p))
+            state_accept_kw(p, "ASC")
+            state_accept_kw(p, "DESC")
+            if state_accept_punct(p, ",") == 0:
+                go = 0
+        state_expect_punct(p, ")")
+    return s
+
+def grammar_parse_create_view(p: Int) -> Int:
+    s := state_st_new(state_ps_arena(p))
+    state_st_set_kind(s, state_S_CREATE_VIEW())
+    state_expect_kw(p, "VIEW")
+    if state_is_kw(p, "IF") == 1:
+        state_advance(p)
+        state_expect_kw(p, "NOT")
+        state_expect_kw(p, "EXISTS")
+        mem.bset64(state_st_ext(s), 104, 1)
+    strbuf.sv_push(state_st_textv(s), state_take_name(p))
+    state_expect_kw(p, "AS")
+    sel := grammar_parse_select(p)
+    mem.bset64(state_st_ext(s), 48, sel)
+    return s
+
+def grammar_parse_drop(p: Int) -> Int:
+    state_expect_kw(p, "DROP")
+    s := state_st_new(state_ps_arena(p))
+    mut kindv := state_S_DROP_TABLE()
+    if state_is_kw(p, "INDEX") == 1:
+        kindv = state_S_DROP_INDEX()
+        state_advance(p)
+    elif state_is_kw(p, "VIEW") == 1:
+        kindv = state_S_DROP_VIEW()
+        state_advance(p)
+    else:
+        state_expect_kw(p, "TABLE")
+    state_st_set_kind(s, kindv)
+    if state_is_kw(p, "IF") == 1:
+        state_advance(p)
+        state_expect_kw(p, "EXISTS")
+        mem.bset64(state_st_ext(s), 104, 1)
+    strbuf.sv_push(state_st_textv(s), state_take_name(p))
+    return s

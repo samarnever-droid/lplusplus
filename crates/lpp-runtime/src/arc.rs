@@ -15,9 +15,9 @@ use std::sync::atomic::{AtomicI32, AtomicU32, AtomicUsize, Ordering};
 use libc::{c_void, calloc, free};
 
 use crate::layout::{
-    ARC_CYCLE_FLAGS_OFFSET, ARC_DESTRUCTOR_OFFSET, ARC_FLAG_COLLECTIBLE, ARC_GENERATION_OFFSET,
-    ARC_HEADER_SIZE, ARC_IMMORTAL, ARC_MAGIC, ARC_MAGIC_OFFSET, ARC_REFCOUNT_OFFSET,
-    EMPTY_STR_BLOB_WORDS, EMPTY_STR_PAYLOAD_WORD, MIN_VALID_ADDR,
+    ARC_CYCLE_FLAGS_OFFSET, ARC_DESTRUCTOR_PREFIX_SIZE, ARC_FLAG_COLLECTIBLE, ARC_FLAG_HAS_DTOR,
+    ARC_GENERATION_OFFSET, ARC_HEADER_SIZE, ARC_IMMORTAL, ARC_MAGIC, ARC_MAGIC_OFFSET,
+    ARC_REFCOUNT_OFFSET, EMPTY_STR_BLOB_WORDS, EMPTY_STR_PAYLOAD_WORD, MIN_VALID_ADDR,
 };
 
 /// Monotonic source of object generations. Internal to the runtime — the v1
@@ -55,20 +55,37 @@ pub(crate) fn generation_cell(payload: *const c_void) -> *mut AtomicI32 {
     unsafe { hdr.add(ARC_GENERATION_OFFSET / 4) }
 }
 
-pub(crate) fn destructor_cell(
-    payload: *const c_void,
-) -> *mut Option<unsafe extern "C" fn(*mut c_void)> {
-    // The destructor sits at byte offset 16 — 8-byte aligned (the C struct
-    // pads generation@8..12 so the pointer lands on a boundary). One clean
-    // pointer-sized step past the header base.
-    let hdr = header_of(payload).cast::<Option<unsafe extern "C" fn(*mut c_void)>>();
-    unsafe { hdr.add(ARC_DESTRUCTOR_OFFSET / std::mem::size_of::<*const c_void>()) }
-}
-
-/// The cycle-collector flags word (padding bytes at offset 12).
+/// The cycle-collector/runtime flags word at offset 12.
 pub(crate) fn flags_cell(payload: *const c_void) -> *mut AtomicU32 {
     let hdr = header_of(payload).cast::<AtomicU32>();
     unsafe { hdr.add(ARC_CYCLE_FLAGS_OFFSET / 4) }
+}
+
+/// Read the optional destructor and allocation base from one flags-word load.
+pub(crate) unsafe fn destructor_and_allocation_base(
+    payload: *const c_void,
+) -> (Option<unsafe extern "C" fn(*mut c_void)>, *mut c_void) {
+    let header = header_of(payload).cast::<u8>();
+    let flags = unsafe { (*flags_cell(payload)).load(Ordering::Acquire) };
+    if flags & ARC_FLAG_HAS_DTOR != 0 {
+        let base = unsafe { header.sub(ARC_DESTRUCTOR_PREFIX_SIZE) };
+        let cell = base.cast::<Option<unsafe extern "C" fn(*mut c_void)>>();
+        (unsafe { *cell }, base.cast::<c_void>())
+    } else {
+        (None, header.cast::<c_void>())
+    }
+}
+
+pub(crate) unsafe fn destructor_of(
+    payload: *const c_void,
+) -> Option<unsafe extern "C" fn(*mut c_void)> {
+    unsafe { destructor_and_allocation_base(payload).0 }
+}
+
+/// Allocation base, including the optional destructor prefix.
+#[cfg(test)]
+pub(crate) unsafe fn allocation_base(payload: *const c_void) -> *mut c_void {
+    unsafe { destructor_and_allocation_base(payload).1 }
 }
 
 pub(crate) fn is_immortal(payload: *const c_void) -> bool {
@@ -92,28 +109,49 @@ pub(crate) fn is_valid_arc_ptr(ptr: *const c_void) -> bool {
 
 /// Allocate an ARC object with an optional type-specific destructor.
 ///
-/// Returns the payload pointer (past the hidden 24-byte header), refcount
-/// 1, generation from the process-global counter. Mirrors C
-/// `lpp_arc_alloc_with_destructor` exactly (calloc-zeroed, same field
-/// order, same generation protocol, same allocator).
+/// The common header is 16 bytes. When a destructor exists, its 8-byte
+/// function pointer is stored immediately before that header, preserving a
+/// total 24-byte prefix for destructor-bearing objects. No-destructor objects
+/// (including ordinary strings) use only 16 bytes. The returned payload stays
+/// a plain pointer, and all ARC entry points use the common header.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lpp_arc_alloc_with_destructor(
     size: i64,
     destructor: Option<unsafe extern "C" fn(*mut c_void)>,
 ) -> *mut c_void {
-    let base = unsafe { calloc(1, (ARC_HEADER_SIZE + size.max(0) as usize) as libc::size_t) };
+    let payload_size = size.max(0) as usize;
+    let has_destructor = destructor.is_some();
+    let destructor_prefix = if has_destructor {
+        ARC_DESTRUCTOR_PREFIX_SIZE
+    } else {
+        0
+    };
+    let Some(total_size) = ARC_HEADER_SIZE
+        .checked_add(destructor_prefix)
+        .and_then(|prefix| prefix.checked_add(payload_size))
+    else {
+        return std::ptr::null_mut();
+    };
+    let base = unsafe { calloc(1, total_size as libc::size_t) };
     if base.is_null() {
         return std::ptr::null_mut();
     }
-    // The cell helpers map a PAYLOAD pointer back to the hidden header, so
-    // compute the payload first and initialize through it (passing `base`
-    // here would write 24 bytes *before* the allocation).
-    let payload = unsafe { base.add(ARC_HEADER_SIZE) }.cast::<c_void>();
+    let header_base = unsafe { base.cast::<u8>().add(destructor_prefix) };
+    let payload = unsafe { header_base.add(ARC_HEADER_SIZE) }.cast::<c_void>();
     unsafe {
         magic_cell(payload).write_volatile(ARC_MAGIC);
         (*refcount_cell(payload)).store(1, Ordering::Relaxed);
         (*generation_cell(payload)).store(next_generation(), Ordering::Relaxed);
-        *destructor_cell(payload) = destructor;
+        (*flags_cell(payload)).store(
+            if has_destructor { ARC_FLAG_HAS_DTOR } else { 0 },
+            Ordering::Relaxed,
+        );
+        if let Some(dtor) = destructor {
+            let cell = header_base
+                .sub(ARC_DESTRUCTOR_PREFIX_SIZE)
+                .cast::<Option<unsafe extern "C" fn(*mut c_void)>>();
+            cell.write(Some(dtor));
+        }
     }
     payload
 }
@@ -148,24 +186,23 @@ pub unsafe extern "C" fn lpp_arc_release(ptr: *mut c_void) {
     }
 }
 
-/// Free-path tail shared by both release variants: bump the generation
-/// BEFORE freeing (load-bearing: a weak reader that still sees the old
-/// generation is guaranteed to predate the deallocation), clear the magic,
-/// run the destructor exactly once, then deallocate the header+payload
-/// block through the same allocator it came from.
+/// Free-path tail shared by both release variants: capture the optional
+/// prefix information, bump the generation before freeing, invalidate the
+/// common header, run the destructor exactly once, then free the true block
+/// base (which may precede the common header by eight bytes).
 unsafe fn drop_arc(ptr: *mut c_void) {
     lpp__runtime_drop_count.fetch_add(1, Ordering::Relaxed);
     if unsafe { (*flags_cell(ptr)).load(Ordering::Acquire) } & ARC_FLAG_COLLECTIBLE != 0 {
         crate::collect::deregister(ptr);
     }
+    let (destructor, base) = unsafe { destructor_and_allocation_base(ptr) };
     unsafe {
         (*generation_cell(ptr)).fetch_add(1, Ordering::Release);
         magic_cell(ptr).write_volatile(0);
-        let destructor = *destructor_cell(ptr);
         if let Some(f) = destructor {
             f(ptr);
         }
-        free(header_of(ptr.cast::<c_void>()));
+        free(base);
     }
 }
 
@@ -233,7 +270,7 @@ pub unsafe extern "C" fn lpp_weak_get(raw: i64, expected_generation: i64) -> i64
 }
 
 /// The shared immortal empty string: one 16-aligned blob whose first two
-/// words hold the magic/immortal constants, payload `""` at word 6.
+/// words hold the magic/immortal constants, payload `""` at word 4.
 #[repr(align(16))]
 pub struct EmptyStrBlob(pub [u32; EMPTY_STR_BLOB_WORDS]);
 
@@ -379,6 +416,41 @@ mod tests {
     }
 
     #[test]
+    fn no_destructor_uses_compact_header_and_destructor_uses_prefix() {
+        let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        DTOR_COUNT.store(0, Ordering::Relaxed);
+        unsafe {
+            let compact = lpp_arc_alloc(7);
+            let compact_header = header_of(compact);
+            assert_eq!(compact as usize - compact_header as usize, ARC_HEADER_SIZE);
+            assert_eq!(allocation_base(compact), compact_header);
+            assert_eq!(
+                (*flags_cell(compact)).load(Ordering::Relaxed) & ARC_FLAG_HAS_DTOR,
+                0
+            );
+            lpp_arc_release(compact);
+
+            let extended = lpp_arc_alloc_with_destructor(7, Some(test_destructor));
+            let extended_header = header_of(extended);
+            assert_eq!(
+                extended as usize - extended_header as usize,
+                ARC_HEADER_SIZE
+            );
+            assert_eq!(
+                extended_header as usize - allocation_base(extended) as usize,
+                ARC_DESTRUCTOR_PREFIX_SIZE
+            );
+            assert!(destructor_of(extended).is_some());
+            assert_ne!(
+                (*flags_cell(extended)).load(Ordering::Relaxed) & ARC_FLAG_HAS_DTOR,
+                0
+            );
+            lpp_arc_release(extended);
+            assert_eq!(DTOR_COUNT.load(Ordering::Relaxed), 1);
+        }
+    }
+
+    #[test]
     fn arc_local_fast_path_matches() {
         let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
         DTOR_COUNT.store(0, Ordering::Relaxed);
@@ -420,7 +492,7 @@ mod tests {
         unsafe {
             let e = lpp_empty_str();
             assert!(!e.is_null());
-            let hdr = e.cast::<u8>().sub(24);
+            let hdr = e.cast::<u8>().sub(ARC_HEADER_SIZE);
             assert_eq!(*(hdr as *const u32), 0x4152_4331, "magic at offset 0");
             assert_eq!(
                 *(hdr.add(4) as *const u32),

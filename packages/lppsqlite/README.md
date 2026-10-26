@@ -111,13 +111,18 @@ With no SQL argument the shell starts a REPL.
                      SQL text
                         │
    lexer.lpp     ──►  tokens          keywords, strings, blobs, params, comments
-   parser.lpp    ──►  AST + stmt      recursive descent, full operator precedence
+   parser.lpp    ──►  AST + stmt      facade over parser_state + parser_grammar
    ast.lpp             (flat arena)   struct-of-arrays node storage
                         │
-   exec.lpp      ──►  execution       scan → join → filter → group → project
-    ├── eval.lpp       expressions    3-valued logic, affinity-aware comparison
-    ├── func.lpp       ~30 built-ins  string/math/type functions
-    └── rowset.lpp     result sets
+   exec.lpp      ──►  execution API   database lifecycle + statement entry points
+    ├── exec_statements.lpp            splitting and statement dispatch
+    ├── exec_ddl.lpp / exec_insert.lpp CREATE/DROP/index/PRAGMA and INSERT
+    ├── exec_rows.lpp                  scans and rowid/index lookup helpers
+    ├── exec_select_*.lpp              SELECT planning, projection, aggregates
+    ├── exec_dml.lpp                   UPDATE and DELETE
+    ├── eval.lpp                       expressions, 3-valued logic, affinity
+    ├── func.lpp                       ~30 string/math/type built-ins
+    └── rowset.lpp                     result sets
                         │
    schema.lpp    ──►  sqlite_schema   CREATE parsing, affinity rules, catalogue
    btwrite.lpp   ──►  insert/split/delete/prune

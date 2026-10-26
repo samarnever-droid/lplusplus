@@ -1,0 +1,305 @@
+# exec_select_core.lpp — SELECT planning, joins, contexts, and subquery helpers.
+import mem
+import strbuf
+import value
+import ieee754
+import record
+import pager
+import btree
+import btwrite
+import cursor
+import schema
+import idx
+import lexer
+import ast
+import parser
+import eval
+import func
+import rowset
+
+import exec_rows
+import exec_select_projection
+import exec_select_aggregate
+
+# ════════════════════ SELECT ════════════════════
+
+def do_select(d: Int, st: Int, ar: Int, params: Int) -> Int:
+    return do_select_in(d, st, ar, params, 0)
+
+# `outer` is the enclosing query's context (0 at the top level). Columns that
+# are not found locally resolve against it, which is what makes a correlated
+# subquery see the outer row.
+def do_select_in(d: Int, st: Int, ar: Int, params: Int, outer: Int) -> Int:
+    sc := db_schema(d)
+    froms := parser.st_from(st)
+    nf := strbuf.sv_len(froms)
+
+    cx := eval.cx_new()
+    eval.cx_set_db(cx, d)
+    eval.cx_set_outer(cx, outer)
+    bind_params(cx, params)
+
+    # No FROM: evaluate the result expressions once.
+    if nf == 0:
+        r := build_result_shape(st, ar, cx, sc)
+        vals := mem.iv_new(4)
+        res := parser.st_results(st)
+        nres := mem.iv_len(res)
+        mut i := 0
+        while i < nres:
+            mem.iv_push(vals, eval.eval(ar, mem.iv_get(res, i), cx))
+            i = i + 1
+        rowset.rs_add_row(r, vals)
+        mem.iv_free(vals)
+        if eval.cx_err(cx) == 1:
+            rowset.rs_fail(r, eval.cx_errmsg(cx))
+        eval.cx_free(cx)
+        return r
+
+    # Resolve every table in FROM.
+    tidx := mem.iv_new(4)
+    mut fi := 0
+    while fi < nf:
+        tn := strbuf.sv_get(froms, fi)
+        ti := schema.sc_find(sc, tn)
+        if ti < 0:
+            r := rowset.rs_new(0)
+            rowset.rs_fail(r, str_concat("no such table: ", tn))
+            mem.iv_free(tidx)
+            eval.cx_free(cx)
+            return r
+        mem.iv_push(tidx, ti)
+        fi = fi + 1
+
+    # Materialise each table. A single-table query whose WHERE pins the rowid
+    # seeks straight to that row instead of scanning.
+    tables := mem.iv_new(4)
+    mut probe := 0 - 1
+    mut rowids := 0
+    if nf == 1:
+        probe = rowid_probe(ar, parser.st_where(st), sc, mem.iv_get(tidx, 0), cx)
+        if probe < 0:
+            rowids = index_probe(d, ar, parser.st_where(st), sc, mem.iv_get(tidx, 0), cx)
+    mut ti2 := 0
+    while ti2 < nf:
+        if ti2 == 0:
+            if probe >= 0:
+                mem.iv_push(tables, scan_table_rowid(d, mem.iv_get(tidx, 0), probe))
+            elif rowids != 0:
+                mem.iv_push(tables, scan_table_rowids(d, mem.iv_get(tidx, 0), rowids))
+            else:
+                mem.iv_push(tables, scan_table(d, mem.iv_get(tidx, ti2)))
+        else:
+            mem.iv_push(tables, scan_table(d, mem.iv_get(tidx, ti2)))
+        ti2 = ti2 + 1
+    if rowids != 0:
+        mem.iv_free(rowids)
+
+    # Column layout for the joined row.
+    setup_context(cx, sc, tidx, froms, parser.st_from_alias(st))
+
+    r := build_result_shape(st, ar, cx, sc)
+
+    # Cross-product with join filtering.
+    combos := mem.iv_new(16)
+    idxs := mem.iv_new(4)
+    mut z := 0
+    while z < nf:
+        mem.iv_push(idxs, 0)
+        z = z + 1
+    join_loop(d, st, ar, cx, tables, tidx, 0, nf, combos)
+
+    # Aggregate / group / project. Sort keys are gathered here because ORDER BY
+    # may reference columns that are not in the result list.
+    mut sortkeys := mem.iv_new(8)
+    if has_aggregate(st, ar) == 1:
+        do_grouped(d, st, ar, cx, combos, r, sc)
+        collect_keys_from_result(st, ar, cx, r, sortkeys)
+    else:
+        project_rows_keyed(st, ar, cx, combos, r, sortkeys)
+
+    # DISTINCT (recompute keys afterwards so they stay row-aligned)
+    if parser.st_distinct(st) == 1:
+        apply_distinct(r)
+        free_keys(sortkeys)
+        sortkeys = mem.iv_new(8)
+        collect_keys_from_result(st, ar, cx, r, sortkeys)
+
+    # ORDER BY (keys were captured during projection, while source rows were live)
+    if mem.iv_len(parser.st_order(st)) > 0:
+        apply_order_keys(st, r, sortkeys)
+
+    # LIMIT / OFFSET
+    apply_limit(st, ar, cx, r)
+
+    free_keys(sortkeys)
+
+    if eval.cx_err(cx) == 1:
+        rowset.rs_fail(r, eval.cx_errmsg(cx))
+
+    # compound SELECT (UNION / UNION ALL / EXCEPT / INTERSECT)
+    nxt := parser.st_compound(st)
+    if nxt != 0:
+        r2 := do_select_in(d, nxt, ar, params, outer)
+        combine(r, r2, parser.st_compound_op(st))
+        rowset.rs_free(r2)
+
+    free_combos(combos)
+    mut fj := 0
+    while fj < nf:
+        free_rows(mem.iv_get(tables, fj))
+        fj = fj + 1
+    mem.iv_free(tables)
+    mem.iv_free(tidx)
+    mem.iv_free(idxs)
+    eval.cx_free(cx)
+    return r
+
+# Bind column names/qualifiers for all FROM tables (values filled per row).
+def setup_context(cx: Int, sc: Int, tidx: Int, froms: Int, aliases: Int):
+    n := mem.iv_len(tidx)
+    mut i := 0
+    while i < n:
+        ti := mem.iv_get(tidx, i)
+        mut qual := strbuf.sv_get(froms, i)
+        if i < strbuf.sv_len(aliases):
+            al := strbuf.sv_get(aliases, i)
+            if str_len(al) > 0:
+                qual = al
+        cols := schema.sc_cols(sc, ti)
+        nc := strbuf.sv_len(cols)
+        mut j := 0
+        while j < nc:
+            eval.cx_bind(cx, strbuf.sv_get(cols, j), qual, 0)
+            j = j + 1
+        strbuf.sv_free(cols)
+        i = i + 1
+
+# Recursive nested-loop join; appends surviving combinations to `out`.
+# A combination is an iv of row handles (one per table).
+def join_loop(d: Int, st: Int, ar: Int, cx: Int, tables: Int, tidx: Int, level: Int, nf: Int, out: Int):
+    if level >= nf:
+        # bind values then test WHERE
+        bind_combo(cx, out, tables, tidx, level)
+        return
+    rows := mem.iv_get(tables, level)
+    n := mem.iv_len(rows)
+    jt := mem.iv_get(parser.st_join_types(st), level)
+    cond := mem.iv_get(parser.st_join_conds(st), level)
+    mut matched := 0
+    mut i := 0
+    while i < n:
+        push_row(cx, tables, tidx, level, mem.iv_get(rows, i))
+        mut ok := 1
+        if cond >= 0:
+            cv := eval.eval(ar, cond, cx)
+            ok = 0
+            if value.v_is_null(cv) == 0:
+                ok = value.v_truthy(cv)
+            value.v_free(cv)
+        if ok == 1:
+            matched = 1
+            join_loop2(d, st, ar, cx, tables, tidx, level + 1, nf, out)
+        i = i + 1
+    # LEFT JOIN with no match: emit one row of NULLs for this table
+    if jt == 2:
+        if matched == 0:
+            null_row(cx, tables, tidx, level)
+            join_loop2(d, st, ar, cx, tables, tidx, level + 1, nf, out)
+
+def join_loop2(d: Int, st: Int, ar: Int, cx: Int, tables: Int, tidx: Int, level: Int, nf: Int, out: Int):
+    if level >= nf:
+        emit_if_match(st, ar, cx, out)
+        return
+    join_loop(d, st, ar, cx, tables, tidx, level, nf, out)
+
+# Copy a table row's values into the context slots for that table.
+def push_row(cx: Int, tables: Int, tidx: Int, level: Int, row: Int):
+    base := col_base(cx, tables, tidx, level)
+    vv := row_vals(row)
+    n := value.vv_len(vv)
+    mut i := 0
+    while i < n:
+        eval.cx_set_val(cx, base + i, value.vv_get(vv, i))
+        i = i + 1
+    if level == 0:
+        eval.cx_set_rowid(cx, row_rowid(row))
+
+def null_row(cx: Int, tables: Int, tidx: Int, level: Int):
+    base := col_base(cx, tables, tidx, level)
+    n := table_ncols(cx, tables, tidx, level)
+    mut i := 0
+    while i < n:
+        eval.cx_set_val(cx, base + i, 0)
+        i = i + 1
+
+# Column offset of table `level` inside the context.
+def col_base(cx: Int, tables: Int, tidx: Int, level: Int) -> Int:
+    mut base := 0
+    mut i := 0
+    while i < level:
+        base = base + table_ncols(cx, tables, tidx, i)
+        i = i + 1
+    return base
+
+def table_ncols(cx: Int, tables: Int, tidx: Int, level: Int) -> Int:
+    rows := mem.iv_get(tables, level)
+    if mem.iv_len(rows) > 0:
+        return value.vv_len(row_vals(mem.iv_get(rows, 0)))
+    return 0
+
+def bind_combo(cx: Int, out: Int, tables: Int, tidx: Int, level: Int):
+    return
+
+# WHERE test, then snapshot the row into `out`.
+def emit_if_match(st: Int, ar: Int, cx: Int, out: Int):
+    w := parser.st_where(st)
+    if w >= 0:
+        v := eval.eval(ar, w, cx)
+        mut ok := 0
+        if value.v_is_null(v) == 0:
+            ok = value.v_truthy(v)
+        value.v_free(v)
+        if ok == 0:
+            return
+    n := eval.cx_ncols(cx)
+    snap := mem.iv_new(n)
+    mut i := 0
+    while i < n:
+        v := eval.cx_val(cx, i)
+        if v == 0:
+            mem.iv_push(snap, value.v_null())
+        else:
+            mem.iv_push(snap, value.v_clone(v))
+        i = i + 1
+    h := buf_alloc(16)
+    mem.bset64(h, 0, eval.cx_rowid(cx))
+    mem.bset64(h, 8, snap)
+    mem.iv_push(out, h)
+
+def free_combos(combos: Int):
+    n := mem.iv_len(combos)
+    mut i := 0
+    while i < n:
+        h := mem.iv_get(combos, i)
+        vals := mem.bget64(h, 8)
+        m := mem.iv_len(vals)
+        mut j := 0
+        while j < m:
+            value.v_free(mem.iv_get(vals, j))
+            j = j + 1
+        mem.iv_free(vals)
+        buf_free(h)
+        i = i + 1
+    mem.iv_free(combos)
+
+# Restore a snapshot into the context so expressions can be evaluated.
+def load_combo(cx: Int, h: Int):
+    vals := mem.bget64(h, 8)
+    n := mem.iv_len(vals)
+    mut i := 0
+    while i < n:
+        eval.cx_set_val(cx, i, mem.iv_get(vals, i))
+        i = i + 1
+    eval.cx_set_rowid(cx, mem.bget64(h, 0))
+

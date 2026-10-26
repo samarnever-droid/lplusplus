@@ -131,11 +131,11 @@ table.
 **6B.1 — layout + ARC core — done.** New crate `crates/lpp-runtime`
 (`rlib` + `staticlib` + `cdylib`), zero deps beyond `libc`:
 
-- `layout.rs` — the header constants, verified against the C struct with
-  `offsetof`: `LppArcHeader` is magic@0, refcount@4, generation@8,
-  4 bytes padding@12, destructor@16, size 24. The destructor offset is
-  16, not 12 — the C compiler 8-aligns the pointer (a wrong 12 here put
-  an unaligned 8-byte field at offset 12 and corrupted the header).
+- `layout.rs` — the current native header constants, verified against
+  the C struct with `offsetof`: `LppArcHeader` is magic@0, refcount@4,
+  generation@8, flags@12, size 16. A destructor is stored in an optional
+  8-byte prefix immediately before the common header, so destructor-bearing
+  objects retain a 24-byte total prefix without enlarging the shared header.
 - `arc.rs` — the ARC primitives re-implemented with identical ABI and
   memory ordering: `lpp_arc_alloc[_with_destructor]`, `lpp_arc_retain`,
   `lpp_arc_release`, the relaxed thread-local fast path
@@ -156,11 +156,11 @@ table.
   `A genpos=1 live=1 drops=1 dead=1 B drops=1 emptypos=1`); and a
   **symbol census** proving the Rust `staticlib` exports every 6B.1 ABI
   symbol and that each is also defined by the C reference object.
-- Two real bugs found and fixed while landing this: (1) the allocator
-  initialized the header through the *base* pointer instead of the
-  payload, writing 24 bytes before the allocation (heap corruption /
-  SIGSEGV) and leaving the real header zeroed (generation read 0,
-  destructor never fired); (2) the destructor offset (above).
+- Historical porting note: the initial 24-byte implementation briefly
+  initialized fields at the wrong base and had an unaligned inline-destructor
+  offset. The current compact-header tests assert the magic/refcount/generation/
+  flags offsets, the optional prefix size, destructor execution, and free-base
+  recovery for both layouts.
 
 **6B.2 — lists + slices — done.** `panic.rs` (the C-style banner +
 `exit(101)` path, internal — generated objects reach it only through the

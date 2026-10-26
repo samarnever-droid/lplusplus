@@ -36,7 +36,7 @@ def c2lpp_package_manifest(name: Str, library: Str) -> Str:
 def c2lpp_pure_manifest(name: Str) -> Str:
     mut out := "[package]\n"
     out = str_concat(out, str_concat("name = \"", str_concat(name, "\"\n")))
-    out = str_concat(out, "version = \"0.36.0-experimental\"\n")
+    out = str_concat(out, "version = \"0.37.0-experimental\"\n")
     out = str_concat(out, "edition = \"2026\"\n")
     return out
 
@@ -115,7 +115,7 @@ def c2lpp_sqlite_adapter() -> Str:
 
 
 def c2lpp_emit_sqlite_backend(config: C2Config, input_path: Str) -> Void:
-    names := ["ast", "btree", "btwrite", "cursor", "eval", "exec", "func", "idx", "ieee754", "lexer", "mem", "pager", "parser", "record", "rowset", "schema", "strbuf", "tap", "value", "varint"]
+    names := ["ast", "btree", "btwrite", "cursor", "eval", "exec", "exec_ddl", "exec_dml", "exec_insert", "exec_rows", "exec_select_aggregate", "exec_select_core", "exec_select_projection", "exec_statements", "func", "idx", "ieee754", "lexer", "mem", "pager", "parser", "parser_grammar", "parser_state", "record", "rowset", "schema", "strbuf", "tap", "value", "varint"]
     mut copied := 0
     for name in names:
         source := c2lpp_sqlite_backend_source(name)
@@ -161,7 +161,7 @@ def c2lpp_emit_audit(config: C2Config, input_path: Str, audited: CProjectAudit) 
 def main():
     print_str("lpp-bindgen - C Header to L++ FFI Binder\n")
     print_str("Loading config...\n")
-    config := c_config_load("lpp-bindgen.json")
+    config := c_config_load("c2lpp.json")
     print_str("Config loaded.\n")
     if config.valid == 0:
         c2lpp_fail(config.error)

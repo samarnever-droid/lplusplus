@@ -15,7 +15,9 @@ pub use manager::{
     PassManagerOutcome,
 };
 pub use passes::{
-    BranchFoldPass, ConstFoldPass, ConstPropPass, fold_binary, fold_unary, is_primitive_constant,
-    single_def_constants,
+    BranchFoldPass, ConstFoldPass, ConstPropPass, InlinePass, fold_binary, fold_unary,
+    is_primitive_constant, single_def_constants,
 };
-pub use pipeline::{optimization_passes, run_optimization};
+pub use pipeline::{
+    optimization_passes, run_optimization, run_optimization_with_lto, run_optimization_with_profile,
+};

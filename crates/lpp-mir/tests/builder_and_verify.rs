@@ -333,6 +333,59 @@ fn builder_limits_and_unsupported_constructs_are_structured() {
 }
 
 #[test]
+fn external_calls_are_explicit_in_mir_and_collect_link_libraries() {
+    let source = concat!(
+        "extern \"C\" link \"z\":\n",
+        "    def zlibVersion() -> Str\n",
+        "extern \"C\" link \"m\":\n",
+        "    def cos(value: Float) -> Float\n",
+        "    def sin(value: Float) -> Float\n",
+        "def main():\n",
+        "    print(zlibVersion())\n",
+        "    print(cos(0.0))\n",
+        "    print(sin(0.0))\n",
+    );
+    let (package, mut types, sources) = typed(source);
+    let program = build_mir(&package, &sources, &mut types, MirBuildOptions::default()).unwrap();
+
+    assert!(verify_mir(&program, &types.interner).is_empty());
+    assert_eq!(program.external_function_count(), 3);
+    assert_eq!(
+        program.link_libraries(),
+        vec!["m".to_string(), "z".to_string()]
+    );
+    assert!(program.instructions().any(|(_, instruction)| matches!(
+        instruction.kind,
+        InstructionKind::Assign {
+            value: Rvalue::ExternalCall { .. },
+            ..
+        }
+    )));
+    let snapshot = mir_snapshot(&program);
+    assert!(snapshot.starts_with("mir-v7\n"));
+    assert!(snapshot.contains("external_functions\n  MirExternalFunctionId("));
+}
+
+#[test]
+fn external_managed_strings_are_borrowed_for_calls() {
+    let (package, mut types, sources) = typed(concat!(
+        "extern \"C\":\n",
+        "    def consume_c_string(value: Str) -> Int\n",
+        "def main():\n",
+        "    print(consume_c_string(\"borrowed bytes\"))\n",
+    ));
+    let program = build_mir(&package, &sources, &mut types, MirBuildOptions::default()).unwrap();
+    assert!(verify_mir(&program, &types.interner).is_empty());
+    assert!(program.instructions().any(|(_, instruction)| matches!(
+        instruction.kind,
+        InstructionKind::Assign {
+            value: Rvalue::ExternalCall { .. },
+            ..
+        }
+    )));
+}
+
+#[test]
 fn mir_storage_growth_is_linear_for_straight_line_hir() {
     let small_source = generated_bindings(100);
     let large_source = generated_bindings(1_000);
@@ -386,6 +439,11 @@ fn generated_bindings(count: usize) -> String {
 fn mir_ids_and_ranges_are_compact() {
     assert_eq!(std::mem::size_of::<lpp_mir::MirFunctionId>(), 4);
     assert_eq!(std::mem::size_of::<Option<lpp_mir::MirFunctionId>>(), 4);
+    assert_eq!(std::mem::size_of::<lpp_mir::MirExternalFunctionId>(), 4);
+    assert_eq!(
+        std::mem::size_of::<Option<lpp_mir::MirExternalFunctionId>>(),
+        4
+    );
     assert_eq!(std::mem::size_of::<lpp_mir::BasicBlockId>(), 4);
     assert_eq!(std::mem::size_of::<lpp_mir::MirLocalId>(), 4);
     assert_eq!(std::mem::size_of::<lpp_mir::MirPlaceId>(), 4);

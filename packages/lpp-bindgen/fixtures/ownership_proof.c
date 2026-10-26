@@ -44,3 +44,11 @@ int realloc_balanced(int n) {
     free(v);
     return n;
 }
+int do_balanced(int n) {
+    int *v = calloc(n, 4);
+    do {
+        n = n - 1;
+    } while (n > 0);
+    free(v);
+    return n;
+}

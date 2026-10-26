@@ -87,8 +87,12 @@ statements. It does not parse typed expression ASTs or resolve CFG edges.
 
 `mode: "sweep"` selects structurally bounded, control-free functions and applies
 the typed normalized-IR parser. Only complete accepted functions are emitted;
-all others receive stable rejection reasons. The pinned SQLite sweep currently
-emits 62 of 2,528 functions (2.45%) as one pure-L++ module that type-checks.
+all others receive stable rejection reasons. The latest pinned SQLite 3.46.1
+sweep emits 74 of 2,528 functions (2.93%) as one pure-L++ module that type-checks,
+with no extern/native link. Its bounded `sizeof` aggregate-demand window is 20
+(18 selected types, 15 complete and 2 partial); `sqlite3HeaderSizePcache1` is
+compiled and compared against the pinned native amalgamation. This remains a
+small subset, not a complete `sqlite3.c` translation.
 
 ## Strict no-binding frontend mode
 

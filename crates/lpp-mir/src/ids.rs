@@ -41,6 +41,7 @@ macro_rules! compact_id {
 }
 
 compact_id!(MirFunctionId);
+compact_id!(MirExternalFunctionId);
 compact_id!(MirAggregateId);
 compact_id!(MirFieldId);
 compact_id!(MirVariantId);

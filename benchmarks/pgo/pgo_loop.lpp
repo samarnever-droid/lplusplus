@@ -1,0 +1,14 @@
+# Profile-guided inlining benchmark: plus_one is deliberately tiny and pure.
+def plus_one(value: Int) -> Int:
+    return value + 1
+
+def total(n: Int) -> Int:
+    mut i := 0
+    mut result := 0
+    while i < n:
+        result = result + plus_one(i)
+        i = i + 1
+    return result
+
+def main():
+    print(total(10000000))

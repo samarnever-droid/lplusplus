@@ -1,0 +1,156 @@
+# c_typed_conditionals.lpp — conditional expression and return parsing
+import c_lexer
+import c_normal_ir
+import c_aggregate_data
+import text
+import c_typed_types
+import c_typed_common
+import c_typed_expr
+
+def c_conditional_invalid(cursor: CLexCursor, reason: Str, span: CSourceSpan) -> CConditionalParts:
+    return CConditionalParts("", "", "", "", C_IR_TYPE_INVALID, "", "", C_IR_TYPE_INVALID, cursor, 0, reason, span)
+
+
+def c_parse_conditional_parts(cursor: CLexCursor, symbols: Str, functions: Str, aliases: Str, aggregates: Str) -> CConditionalParts:
+    condition := c_parse_expression(cursor, symbols, functions, aliases, aggregates)
+    if condition.expr.valid == 0:
+        return c_conditional_invalid(condition.next, condition.expr.normalized, condition.expr.span)
+    question := c_lex_next_code(condition.next)
+    if !c_lex_token_is(question, "?"):
+        return c_conditional_invalid(question.next, "C2-PARSE-TERNARY-QUESTION", question.token.span)
+    when_true := c_parse_expression(question.next, symbols, functions, aliases, aggregates)
+    if when_true.expr.valid == 0:
+        return c_conditional_invalid(when_true.next, when_true.expr.normalized, when_true.expr.span)
+    colon := c_lex_next_code(when_true.next)
+    if !c_lex_token_is(colon, ":"):
+        return c_conditional_invalid(colon.next, "C2-PARSE-TERNARY-COLON", colon.token.span)
+    when_false := c_parse_expression(colon.next, symbols, functions, aliases, aggregates)
+    if when_false.expr.valid == 0:
+        return c_conditional_invalid(when_false.next, when_false.expr.normalized, when_false.expr.span)
+    semi := c_lex_next_code(when_false.next)
+    if !c_lex_token_is(semi, ";"):
+        return c_conditional_invalid(semi.next, "C2-PARSE-TERNARY-SEMI", semi.token.span)
+    condition_lpp := c_typed_condition(condition.expr)
+    if str_len(condition_lpp) == 0:
+        return c_conditional_invalid(semi.next, "C2-TYPE-TERNARY-CONDITION", condition.expr.span)
+    return CConditionalParts(condition_lpp, condition.expr.normalized, when_true.expr.lpp, when_true.expr.normalized, when_true.expr.type_kind, when_false.expr.lpp, when_false.expr.normalized, when_false.expr.type_kind, semi.next, 1, "", question.token.span)
+
+
+def c_conditional_branch_compatible(type_kind: Int, lpp: Str, target_kind: Int) -> Bool:
+    if type_kind == target_kind:
+        return target_kind != C_IR_TYPE_VOID
+    if target_kind == C_IR_TYPE_INT && type_kind == C_IR_TYPE_BOOL:
+        return true
+    if target_kind == C_IR_TYPE_PTR && type_kind == C_IR_TYPE_INT && text_eq(lpp, "0"):
+        return true
+    return false
+
+
+def c_conditional_branch_lpp(type_kind: Int, lpp: Str, target_kind: Int) -> Str:
+    if target_kind == C_IR_TYPE_INT && type_kind == C_IR_TYPE_BOOL:
+        return str_concat("c2lpp_bool_to_int(", str_concat(lpp, ")"))
+    if target_kind == C_IR_TYPE_PTR && type_kind == C_IR_TYPE_INT && text_eq(lpp, "0"):
+        return "c_ptr_null()"
+    return lpp
+
+
+def c_return_expr_compatible(expr: CExprIR, return_type: Int) -> Bool:
+    if expr.type_kind == return_type:
+        return return_type != C_IR_TYPE_VOID
+    if return_type == C_IR_TYPE_INT && expr.type_kind == C_IR_TYPE_BOOL:
+        return true
+    if return_type == C_IR_TYPE_PTR && expr.type_kind == C_IR_TYPE_INT && text_eq(expr.lpp, "0"):
+        return true
+    return false
+
+
+def c_return_expr_lpp(expr: CExprIR, return_type: Int) -> Str:
+    if return_type == C_IR_TYPE_INT && expr.type_kind == C_IR_TYPE_BOOL:
+        return str_concat("c2lpp_bool_to_int(", str_concat(expr.lpp, ")"))
+    if return_type == C_IR_TYPE_PTR && expr.type_kind == C_IR_TYPE_INT && text_eq(expr.lpp, "0"):
+        return "c_ptr_null()"
+    return expr.lpp
+
+
+def c_parse_ternary_return(cursor: CLexCursor, symbols: Str, functions: Str, return_type: Int, aliases: Str, aggregates: Str, indent_level: Int) -> CTernaryReturn:
+    condition := c_parse_expression(cursor, symbols, functions, aliases, aggregates)
+    if condition.expr.valid == 0:
+        return CTernaryReturn("", "", condition.next, 0, condition.expr.normalized, condition.expr.span)
+    question := c_lex_next_code(condition.next)
+    if !c_lex_token_is(question, "?"):
+        return CTernaryReturn("", "", question.next, 0, "C2-PARSE-TERNARY-QUESTION", question.token.span)
+    when_true := c_parse_expression(question.next, symbols, functions, aliases, aggregates)
+    if when_true.expr.valid == 0:
+        return CTernaryReturn("", "", when_true.next, 0, when_true.expr.normalized, when_true.expr.span)
+    colon := c_lex_next_code(when_true.next)
+    if !c_lex_token_is(colon, ":"):
+        return CTernaryReturn("", "", colon.next, 0, "C2-PARSE-TERNARY-COLON", colon.token.span)
+    when_false := c_parse_expression(colon.next, symbols, functions, aliases, aggregates)
+    if when_false.expr.valid == 0:
+        return CTernaryReturn("", "", when_false.next, 0, when_false.expr.normalized, when_false.expr.span)
+    semi := c_lex_next_code(when_false.next)
+    if !c_lex_token_is(semi, ";"):
+        return CTernaryReturn("", "", semi.next, 0, "C2-PARSE-TERNARY-SEMI", semi.token.span)
+    condition_lpp := c_typed_condition(condition.expr)
+    if str_len(condition_lpp) == 0:
+        return CTernaryReturn("", "", semi.next, 0, "C2-TYPE-TERNARY-CONDITION", condition.expr.span)
+    if !c_return_expr_compatible(when_true.expr, return_type) || !c_return_expr_compatible(when_false.expr, return_type):
+        return CTernaryReturn("", "", semi.next, 0, "C2-TYPE-TERNARY-BRANCH", question.token.span)
+    indent := c_typed_indent(indent_level)
+    nested_indent := c_typed_indent(indent_level + 1)
+    mut lpp := text_append_line("", str_concat(indent, str_concat("if ", str_concat(condition_lpp, ":"))))
+    lpp = text_append_line(lpp, str_concat(nested_indent, str_concat("return ", c_return_expr_lpp(when_true.expr, return_type))))
+    lpp = text_append_line(lpp, str_concat(indent, str_concat("return ", c_return_expr_lpp(when_false.expr, return_type))))
+    mut normalized := str_concat("stmt|ternary-return|condition|", condition.expr.normalized)
+    normalized = str_concat(normalized, str_concat("|true|", when_true.expr.normalized))
+    normalized = str_concat(normalized, str_concat("|false|", when_false.expr.normalized))
+    return CTernaryReturn(lpp, normalized, semi.next, 1, "", question.token.span)
+
+
+def c_parse_return_branch(cursor: CLexCursor, symbols: Str, functions: Str, return_type: Int, aliases: Str, aggregates: Str, indent_level: Int) -> CReturnBranch:
+    mut current := cursor
+    mut braced := false
+    mut first := c_lex_next_code(current)
+    if c_lex_token_is(first, "{"):
+        braced = true
+        current = first.next
+        first = c_lex_next_code(current)
+    if !text_eq(first.token.spelling, "return"):
+        return CReturnBranch("", "", first.next, 0, "C2-PARSE-IF-NONRETURN-BRANCH")
+    parsed := c_parse_expression(first.next, symbols, functions, aliases, aggregates)
+    if parsed.expr.valid == 0:
+        return CReturnBranch("", "", parsed.next, 0, parsed.expr.normalized)
+    after_parsed := c_lex_next_code(parsed.next)
+    if c_lex_token_is(after_parsed, "?"):
+        ternary := c_parse_ternary_return(first.next, symbols, functions, return_type, aliases, aggregates, indent_level)
+        if ternary.valid == 0:
+            return CReturnBranch("", "", ternary.next, 0, ternary.reason)
+        current = ternary.next
+        if braced:
+            ternary_close := c_lex_next_code(current)
+            if !c_lex_token_is(ternary_close, "}"):
+                return CReturnBranch("", "", ternary_close.next, 0, "C2-PARSE-IF-BRACE")
+            current = ternary_close.next
+        return CReturnBranch(ternary.lpp, ternary.normalized, current, 1, "")
+    mut compatible := parsed.expr.type_kind == return_type
+    if return_type == C_IR_TYPE_INT && parsed.expr.type_kind == C_IR_TYPE_BOOL:
+        compatible = true
+    if return_type == C_IR_TYPE_PTR && parsed.expr.type_kind == C_IR_TYPE_INT && text_eq(parsed.expr.lpp, "0"):
+        compatible = true
+    if !compatible:
+        return CReturnBranch("", "", parsed.next, 0, "C2-TYPE-IF-RETURN")
+    semi := c_lex_next_code(parsed.next)
+    if !c_lex_token_is(semi, ";"):
+        return CReturnBranch("", "", semi.next, 0, "C2-PARSE-IF-RETURN-SEMI")
+    current = semi.next
+    if braced:
+        close := c_lex_next_code(current)
+        if !c_lex_token_is(close, "}"):
+            return CReturnBranch("", "", close.next, 0, "C2-PARSE-IF-BRACE")
+        current = close.next
+    mut return_lpp := parsed.expr.lpp
+    if return_type == C_IR_TYPE_INT && parsed.expr.type_kind == C_IR_TYPE_BOOL:
+        return_lpp = str_concat("c2lpp_bool_to_int(", str_concat(parsed.expr.lpp, ")"))
+    if return_type == C_IR_TYPE_PTR && parsed.expr.type_kind == C_IR_TYPE_INT && text_eq(parsed.expr.lpp, "0"):
+        return_lpp = "c_ptr_null()"
+    return CReturnBranch(str_concat(c_typed_indent(indent_level), str_concat("return ", return_lpp)), str_concat("branch-return|", parsed.expr.normalized), current, 1, "")

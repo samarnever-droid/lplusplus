@@ -1,0 +1,330 @@
+# exec_rows.lpp — row scanning and rowid/index lookup helpers.
+import mem
+import strbuf
+import value
+import ieee754
+import record
+import pager
+import btree
+import btwrite
+import cursor
+import schema
+import idx
+import lexer
+import ast
+import parser
+import eval
+import func
+import rowset
+
+import exec_ddl
+
+def col_type(types: Int, i: Int) -> Str:
+    if i < strbuf.sv_len(types):
+        return strbuf.sv_get(types, i)
+    return ""
+
+def bind_params(cx: Int, params: Int):
+    if params == 0:
+        return
+    n := mem.iv_len(params)
+    mut i := 0
+    while i < n:
+        mem.iv_push(eval.cx_params(cx), mem.iv_get(params, i))
+        i = i + 1
+
+# ════════════════════ row scanning ════════════════════
+
+# Load one table's rows into a context-shaped buffer.
+# Returns an iv of "row handles": each is an iv of value handles + rowid at [0].
+def scan_table(d: Int, ti: Int) -> Int:
+    p := db_pager(d)
+    sc := db_schema(d)
+    root := schema.sc_root(sc, ti)
+    ipk := schema.sc_ipk(sc, ti)
+    ncols := schema.sc_ncols(sc, ti)
+    out := mem.iv_new(16)
+    c := cursor.cu_new(p, root)
+    cursor.cu_first(c)
+    while cursor.cu_valid(c) == 1:
+        rid := cursor.cu_rowid(c)
+        pay := cursor.cu_payload(c)
+        vv := record.decode(mem.vec_data(pay), 0, mem.vec_len(pay))
+        # pad/truncate to the declared column count
+        mut i := value.vv_len(vv)
+        while i < ncols:
+            value.vv_push(vv, value.v_null())
+            i = i + 1
+        if ipk >= 0:
+            value.v_free(value.vv_get(vv, ipk))
+            value.vv_set(vv, ipk, value.v_from_int(rid))
+        row := buf_alloc(16)
+        mem.bset64(row, 0, rid)
+        mem.bset64(row, 8, vv)
+        mem.iv_push(out, row)
+        mem.vec_free(pay)
+        cursor.cu_next(c)
+    cursor.cu_free(c)
+    return out
+
+# ── rowid fast path ──
+#
+# Table b-trees are keyed by rowid, so an equality test against the rowid (or
+# against an INTEGER PRIMARY KEY column, which aliases it) can seek straight to
+# the leaf instead of materialising every row. This turns the common
+# `WHERE id = ?` lookup from O(rows) into O(log rows).
+#
+# Only a top-level `col = <literal>` conjunct qualifies; anything else falls
+# back to the full scan, so results are always identical.
+
+# Return the constant rowid implied by `where`, or a negative marker.
+#   -1  no usable rowid predicate
+def rowid_probe(ar: Int, where: Int, sc: Int, ti: Int, cx: Int) -> Int:
+    if where < 0:
+        return 0 - 1
+    k := ast.kind(ar, where)
+    if k == ast.N_BINOP():
+        op := ast.text_of(ar, where)
+        if lpp_str_eq(op, "AND") == 1:
+            left := rowid_probe(ar, ast.a_of(ar, where), sc, ti, cx)
+            if left >= 0:
+                return left
+            return rowid_probe(ar, ast.b_of(ar, where), sc, ti, cx)
+        mut iseq := 0
+        if lpp_str_eq(op, "=") == 1:
+            iseq = 1
+        if lpp_str_eq(op, "==") == 1:
+            iseq = 1
+        if iseq == 1:
+            a := ast.a_of(ar, where)
+            b := ast.b_of(ar, where)
+            if is_rowid_col(ar, a, sc, ti) == 1:
+                return const_rowid(ar, b, cx)
+            if is_rowid_col(ar, b, sc, ti) == 1:
+                return const_rowid(ar, a, cx)
+    return 0 - 1
+
+# Is this node the table's rowid (or its INTEGER PRIMARY KEY alias)?
+def is_rowid_col(ar: Int, n: Int, sc: Int, ti: Int) -> Int:
+    if ast.kind(ar, n) != ast.N_COL():
+        return 0
+    name := ast.text_of(ar, n)
+    if strbuf.eq_ci(name, "rowid") == 1:
+        return 1
+    if strbuf.eq_ci(name, "_rowid_") == 1:
+        return 1
+    if strbuf.eq_ci(name, "oid") == 1:
+        return 1
+    ipk := schema.sc_ipk(sc, ti)
+    if ipk < 0:
+        return 0
+    cols := schema.sc_cols(sc, ti)
+    mut hit := 0
+    if ipk < strbuf.sv_len(cols):
+        if strbuf.eq_ci(strbuf.sv_get(cols, ipk), name) == 1:
+            hit = 1
+    strbuf.sv_free(cols)
+    return hit
+
+# Evaluate a constant integer operand; returns -1 when not usable.
+def const_rowid(ar: Int, n: Int, cx: Int) -> Int:
+    k := ast.kind(ar, n)
+    mut ok := 0
+    if k == ast.N_INT():
+        ok = 1
+    if k == ast.N_PARAM():
+        ok = 1
+    if ok == 0:
+        return 0 - 1
+    v := eval.eval(ar, n, cx)
+    if value.v_type(v) != value.TINT():
+        value.v_free(v)
+        return 0 - 1
+    r := value.v_int(v)
+    value.v_free(v)
+    if r < 0:
+        return 0 - 1
+    return r
+
+# Materialise a single row by rowid, or an empty list if it does not exist.
+def scan_table_rowid(d: Int, ti: Int, rid: Int) -> Int:
+    p := db_pager(d)
+    sc := db_schema(d)
+    root := schema.sc_root(sc, ti)
+    ipk := schema.sc_ipk(sc, ti)
+    ncols := schema.sc_ncols(sc, ti)
+    out := mem.iv_new(2)
+    pay := btwrite.find_row(p, root, rid)
+    if pay == 0:
+        return out
+    vv := record.decode(mem.vec_data(pay), 0, mem.vec_len(pay))
+    mut i := value.vv_len(vv)
+    while i < ncols:
+        value.vv_push(vv, value.v_null())
+        i = i + 1
+    if ipk >= 0:
+        value.v_free(value.vv_get(vv, ipk))
+        value.vv_set(vv, ipk, value.v_from_int(rid))
+    row := buf_alloc(16)
+    mem.bset64(row, 0, rid)
+    mem.bset64(row, 8, vv)
+    mem.iv_push(out, row)
+    mem.vec_free(pay)
+    return out
+
+# ── index-driven planning ──
+#
+# Find a usable index for the WHERE clause and return the matching rowids, or 0
+# when no index applies (the caller then scans). Only equality on the index's
+# leading column is used; that covers the common `WHERE col = ?` lookup.
+def index_probe(d: Int, ar: Int, where: Int, sc: Int, ti: Int, cx: Int) -> Int:
+    if where < 0:
+        return 0
+    tname := schema.sc_name(sc, ti)
+    n := schema.sc_count(sc)
+    mut si := 0
+    while si < n:
+        mut usable := 0
+        if strbuf.eq_ci(schema.sc_kind(sc, si), "index") == 1:
+            if strbuf.eq_ci(schema.sc_tblname(sc, si), tname) == 1:
+                usable = 1
+        if usable == 1:
+            cols := schema.index_columns(schema.sc_sql(sc, si))
+            if strbuf.sv_len(cols) > 0:
+                lead := strbuf.sv_get(cols, 0)
+                v := eq_value_for(ar, where, lead, cx)
+                if v != 0:
+                    probe := value.vv_new()
+                    value.vv_push(probe, v)
+                    p := db_pager(d)
+                    root := schema.sc_root(sc, si)
+                    ids := idx.seek_eq(p, root, probe, 1)
+                    value.vv_free_all(probe)
+                    strbuf.sv_free(cols)
+                    return ids
+            strbuf.sv_free(cols)
+        si = si + 1
+    return 0
+
+# The constant that `col` is compared equal to at the top level of `where`,
+# or 0. Returns a fresh value the caller owns.
+def eq_value_for(ar: Int, where: Int, col: Str, cx: Int) -> Int:
+    if where < 0:
+        return 0
+    if ast.kind(ar, where) != ast.N_BINOP():
+        return 0
+    op := ast.text_of(ar, where)
+    if lpp_str_eq(op, "AND") == 1:
+        l := eq_value_for(ar, ast.a_of(ar, where), col, cx)
+        if l != 0:
+            return l
+        return eq_value_for(ar, ast.b_of(ar, where), col, cx)
+    mut iseq := 0
+    if lpp_str_eq(op, "=") == 1:
+        iseq = 1
+    if lpp_str_eq(op, "==") == 1:
+        iseq = 1
+    if iseq == 0:
+        return 0
+    a := ast.a_of(ar, where)
+    b := ast.b_of(ar, where)
+    if named_col(ar, a, col) == 1:
+        return const_value(ar, b, cx)
+    if named_col(ar, b, col) == 1:
+        return const_value(ar, a, cx)
+    return 0
+
+def named_col(ar: Int, n: Int, col: Str) -> Int:
+    if ast.kind(ar, n) != ast.N_COL():
+        return 0
+    if strbuf.eq_ci(ast.text_of(ar, n), col) == 1:
+        return 1
+    return 0
+
+# A literal or bound parameter, evaluated once; 0 if the node is not constant.
+def const_value(ar: Int, n: Int, cx: Int) -> Int:
+    k := ast.kind(ar, n)
+    mut ok := 0
+    if k == ast.N_INT():
+        ok = 1
+    if k == ast.N_STR():
+        ok = 1
+    if k == ast.N_REAL():
+        ok = 1
+    if k == ast.N_PARAM():
+        ok = 1
+    if ok == 0:
+        return 0
+    return eval.eval(ar, n, cx)
+
+# Materialise exactly the rows named by `rowids`, in rowid order.
+def scan_table_rowids(d: Int, ti: Int, rowids: Int) -> Int:
+    p := db_pager(d)
+    sc := db_schema(d)
+    root := schema.sc_root(sc, ti)
+    ipk := schema.sc_ipk(sc, ti)
+    ncols := schema.sc_ncols(sc, ti)
+    out := mem.iv_new(8)
+    sorted := mem.iv_new(mem.iv_len(rowids) + 1)
+    mut a := 0
+    while a < mem.iv_len(rowids):
+        mem.iv_push(sorted, mem.iv_get(rowids, a))
+        a = a + 1
+    sort_iv(sorted)
+    mut i := 0
+    while i < mem.iv_len(sorted):
+        rid := mem.iv_get(sorted, i)
+        pay := btwrite.find_row(p, root, rid)
+        if pay != 0:
+            vv := record.decode(mem.vec_data(pay), 0, mem.vec_len(pay))
+            mut j := value.vv_len(vv)
+            while j < ncols:
+                value.vv_push(vv, value.v_null())
+                j = j + 1
+            if ipk >= 0:
+                value.v_free(value.vv_get(vv, ipk))
+                value.vv_set(vv, ipk, value.v_from_int(rid))
+            row := buf_alloc(16)
+            mem.bset64(row, 0, rid)
+            mem.bset64(row, 8, vv)
+            mem.iv_push(out, row)
+            mem.vec_free(pay)
+        i = i + 1
+    mem.iv_free(sorted)
+    return out
+
+# Insertion sort; index result sets are small by construction.
+def sort_iv(h: Int):
+    n := mem.iv_len(h)
+    mut i := 1
+    while i < n:
+        v := mem.iv_get(h, i)
+        mut j := i - 1
+        mut go := 1
+        while go == 1:
+            if j < 0:
+                go = 0
+            elif mem.iv_get(h, j) > v:
+                mem.iv_set(h, j + 1, mem.iv_get(h, j))
+                j = j - 1
+            else:
+                go = 0
+        mem.iv_set(h, j + 1, v)
+        i = i + 1
+
+def row_rowid(row: Int) -> Int:
+    return mem.bget64(row, 0)
+
+def row_vals(row: Int) -> Int:
+    return mem.bget64(row, 8)
+
+def free_rows(rows: Int):
+    n := mem.iv_len(rows)
+    mut i := 0
+    while i < n:
+        row := mem.iv_get(rows, i)
+        value.vv_free_all(row_vals(row))
+        buf_free(row)
+        i = i + 1
+    mem.iv_free(rows)
+

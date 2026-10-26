@@ -6,10 +6,10 @@
 # allocation per `str_concat`, forever, and a `List[Str]` that faulted at
 # teardown.
 #
-# Literals now carry a real 24-byte ARC header whose refcount is an immortal
-# sentinel, so `release` on a literal is a checked no-op while `release` on a
-# heap string frees it. This test exercises both kinds through the paths that
-# actually broke.
+# Native literals now carry the real 16-byte common ARC header with an
+# immortal refcount sentinel (WASM has its separate length-prefixed layout),
+# so `release` on a literal is a checked no-op while `release` on a heap string
+# frees it. This test exercises both kinds through the paths that actually broke.
 
 def echo(s: Str) -> Str:
     return s

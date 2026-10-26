@@ -7,7 +7,7 @@
 //! cranelift IR and emits a host-format ELF, Mach-O, or COFF relocatable
 //! through cranelift-object. The lowering matches the v1 cranelift backend's
 //! conventions: function order by `MirFunctionId`, `lpp_main` plus a
-//! generated C-ABI `main` wrapper, the 24-byte string-constant header
+//! generated C-ABI `main` wrapper, the compact 16-byte native string-constant header
 //! (whose two magic words are simultaneously the host-runtime magic
 //! and the freestanding immortal sentinel), and cranelift settings
 //! with `opt_level = "speed"`.
@@ -27,7 +27,7 @@ mod lower;
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_object::{ObjectBuilder, ObjectModule};
 use lpp_codegen_api::{
-    Backend, CodegenError, CodegenErrorKind, CodegenOptions, CompiledModule, Target,
+    Backend, CodegenError, CodegenErrorKind, CodegenOptions, CompiledModule, OptLevel, Target,
 };
 use lpp_mir::MirProgram;
 use lpp_types::{BuiltinId, TypeInterner};
@@ -63,16 +63,19 @@ impl Backend for CraneliftBackend {
         }
 
         let mut flags = settings::builder();
-        // The v1 AOT settings: no colocated libcalls, PIC, speed.
+        // Keep the v1 AOT relocation settings. Unlike the old hard-coded
+        // `speed` setting, honor the caller's requested optimization level.
         flags.set("use_colocated_libcalls", "false").map_err(|e| {
             CodegenError::new(None, CodegenErrorKind::ObjectEmissionFailed(e.to_string()))
         })?;
         flags.set("is_pic", "true").map_err(|e| {
             CodegenError::new(None, CodegenErrorKind::ObjectEmissionFailed(e.to_string()))
         })?;
-        flags.set("opt_level", "speed").map_err(|e| {
-            CodegenError::new(None, CodegenErrorKind::ObjectEmissionFailed(e.to_string()))
-        })?;
+        flags
+            .set("opt_level", cranelift_opt_level(options.opt_level))
+            .map_err(|e| {
+                CodegenError::new(None, CodegenErrorKind::ObjectEmissionFailed(e.to_string()))
+            })?;
 
         let triple = options
             .target
@@ -99,7 +102,12 @@ impl Backend for CraneliftBackend {
 
         // Typed rejection happens up front: the module never holds a
         // partial lowering.
-        let plan = pre_scan(program, types, options.names)?;
+        let plan = pre_scan(
+            program,
+            types,
+            options.names,
+            options.pgo_fingerprint.is_some(),
+        )?;
 
         let mut lowering = Lowering::new(
             &mut module,
@@ -107,6 +115,7 @@ impl Backend for CraneliftBackend {
             plan.layouts.clone(),
             plan.value_classes.clone(),
             plan.shared_types.clone(),
+            options.pgo_fingerprint,
         );
 
         lowering.declare(&plan, program, types)?;
@@ -130,8 +139,35 @@ impl Backend for CraneliftBackend {
             object,
             exported_symbols,
             imported_symbols,
+            link_libraries: program.link_libraries(),
             entry,
         })
+    }
+}
+
+/// Cranelift exposes three optimization modes. The MIR pass budget
+/// distinguishes O1/O2/O3; backend speed settings currently share Cranelift's
+/// `speed` mode, while size levels use `speed_and_size`.
+const fn cranelift_opt_level(level: OptLevel) -> &'static str {
+    match level {
+        OptLevel::None => "none",
+        OptLevel::Os | OptLevel::Oz => "speed_and_size",
+        OptLevel::O1 | OptLevel::O2 | OptLevel::O3 | OptLevel::O4 => "speed",
+    }
+}
+
+#[cfg(test)]
+mod optimization_tests {
+    use super::{OptLevel, cranelift_opt_level};
+
+    #[test]
+    fn native_codegen_respects_o0_and_optimized_levels() {
+        assert_eq!(cranelift_opt_level(OptLevel::None), "none");
+        for level in [OptLevel::O1, OptLevel::O2, OptLevel::O3, OptLevel::O4] {
+            assert_eq!(cranelift_opt_level(level), "speed");
+        }
+        assert_eq!(cranelift_opt_level(OptLevel::Os), "speed_and_size");
+        assert_eq!(cranelift_opt_level(OptLevel::Oz), "speed_and_size");
     }
 }
 

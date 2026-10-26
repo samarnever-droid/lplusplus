@@ -1,0 +1,401 @@
+# exec_select_aggregate.lpp — compound SELECT and aggregate evaluation.
+import mem
+import strbuf
+import value
+import ieee754
+import record
+import pager
+import btree
+import btwrite
+import cursor
+import schema
+import idx
+import lexer
+import ast
+import parser
+import eval
+import func
+import rowset
+
+import exec_select_projection
+
+# ── compound selects ──
+
+def combine(r: Int, r2: Int, op: Int):
+    if op == 2:
+        append_all(r, r2)
+        return
+    if op == 1:
+        append_all(r, r2)
+        apply_distinct(r)
+        return
+    if op == 3:
+        subtract(r, r2)
+        apply_distinct(r)
+        return
+    intersect(r, r2)
+    apply_distinct(r)
+
+def append_all(r: Int, r2: Int):
+    n := rowset.rs_nrows(r2)
+    nc := rowset.rs_ncols(r2)
+    mut i := 0
+    while i < n:
+        vals := mem.iv_new(nc)
+        mut j := 0
+        while j < nc:
+            mem.iv_push(vals, value.v_clone(rowset.rs_cell(r2, i, j)))
+            j = j + 1
+        rowset.rs_add_row(r, vals)
+        mem.iv_free(vals)
+        i = i + 1
+
+def row_in(r2: Int, r: Int, rowi: Int) -> Int:
+    n2 := rowset.rs_nrows(r2)
+    nc := rowset.rs_ncols(r)
+    mut i := 0
+    while i < n2:
+        mut same := 1
+        mut j := 0
+        while j < nc:
+            if j < rowset.rs_ncols(r2):
+                x := rowset.rs_cell(r, rowi, j)
+                y := rowset.rs_cell(r2, i, j)
+                xn := value.v_is_null(x)
+                yn := value.v_is_null(y)
+                if xn != yn:
+                    same = 0
+                elif xn == 0:
+                    if value.v_cmp(x, y) != 0:
+                        same = 0
+            j = j + 1
+        if same == 1:
+            return 1
+        i = i + 1
+    return 0
+
+def subtract(r: Int, r2: Int):
+    n := rowset.rs_nrows(r)
+    keep := mem.iv_new(8)
+    mut i := 0
+    while i < n:
+        if row_in(r2, r, i) == 0:
+            mem.iv_push(keep, i)
+        i = i + 1
+    rebuild(r, keep)
+    mem.iv_free(keep)
+
+def intersect(r: Int, r2: Int):
+    n := rowset.rs_nrows(r)
+    keep := mem.iv_new(8)
+    mut i := 0
+    while i < n:
+        if row_in(r2, r, i) == 1:
+            mem.iv_push(keep, i)
+        i = i + 1
+    rebuild(r, keep)
+    mem.iv_free(keep)
+
+# ── aggregates ──
+
+def has_aggregate(st: Int, ar: Int) -> Int:
+    if mem.iv_len(parser.st_group(st)) > 0:
+        return 1
+    res := parser.st_results(st)
+    n := mem.iv_len(res)
+    mut i := 0
+    while i < n:
+        if expr_has_agg(ar, mem.iv_get(res, i)) == 1:
+            return 1
+        i = i + 1
+    if parser.st_having(st) >= 0:
+        return 1
+    return 0
+
+def expr_has_agg(ar: Int, e: Int) -> Int:
+    if e < 0:
+        return 0
+    k := ast.kind(ar, e)
+    if k == ast.N_FUNC():
+        if func.is_agg_call(ar, e) == 1:
+            return 1
+        slot := ast.list_of(ar, e)
+        cnt := ast.av_count(ar, slot)
+        mut i := 0
+        while i < cnt:
+            if expr_has_agg(ar, ast.av_get(ar, slot, i)) == 1:
+                return 1
+            i = i + 1
+        return 0
+    if k == ast.N_BINOP():
+        if expr_has_agg(ar, ast.a_of(ar, e)) == 1:
+            return 1
+        return expr_has_agg(ar, ast.b_of(ar, e))
+    if k == ast.N_UNOP():
+        return expr_has_agg(ar, ast.a_of(ar, e))
+    if k == ast.N_CASE():
+        slot := ast.list_of(ar, e)
+        cnt := ast.av_count(ar, slot)
+        mut i := 0
+        while i < cnt:
+            if expr_has_agg(ar, ast.av_get(ar, slot, i)) == 1:
+                return 1
+            i = i + 1
+        if expr_has_agg(ar, ast.a_of(ar, e)) == 1:
+            return 1
+        return expr_has_agg(ar, ast.b_of(ar, e))
+    return 0
+
+def do_grouped(d: Int, st: Int, ar: Int, cx: Int, combos: Int, r: Int, sc: Int):
+    groups := parser.st_group(st)
+    ng := mem.iv_len(groups)
+    n := mem.iv_len(combos)
+
+    # Assign each row to a group bucket.
+    bucket_of := mem.iv_new(n + 1)
+    bkeys := mem.iv_new(8)
+    mut nbuckets := 0
+    mut i := 0
+    while i < n:
+        load_combo(cx, mem.iv_get(combos, i))
+        mut found := 0 - 1
+        if ng == 0:
+            if nbuckets > 0:
+                found = 0
+        else:
+            mut b := 0
+            while b < nbuckets:
+                if group_matches(ar, groups, ng, cx, bkeys, b) == 1:
+                    found = b
+                    b = nbuckets
+                else:
+                    b = b + 1
+        if found < 0:
+            found = nbuckets
+            mut j := 0
+            while j < ng:
+                mem.iv_push(bkeys, eval.eval(ar, mem.iv_get(groups, j), cx))
+                j = j + 1
+            nbuckets = nbuckets + 1
+        mem.iv_push(bucket_of, found)
+        i = i + 1
+
+    if nbuckets == 0:
+        if ng == 0:
+            nbuckets = 1
+
+    res := parser.st_results(st)
+    nres := mem.iv_len(res)
+    mut b := 0
+    while b < nbuckets:
+        # HAVING is evaluated with the same aggregate machinery.
+        if parser.st_having(st) >= 0:
+            hv := eval_agg_expr(ar, parser.st_having(st), cx, combos, bucket_of, b)
+            mut ok := 0
+            if value.v_is_null(hv) == 0:
+                ok = value.v_truthy(hv)
+            value.v_free(hv)
+            if ok == 0:
+                b = b + 1
+                continue
+        vals := mem.iv_new(4)
+        mut j := 0
+        while j < nres:
+            e := mem.iv_get(res, j)
+            if ast.kind(ar, e) == ast.N_STAR():
+                first := first_in_bucket(combos, bucket_of, b)
+                if first >= 0:
+                    load_combo(cx, mem.iv_get(combos, first))
+                push_star(ar, e, cx, vals)
+            else:
+                mem.iv_push(vals, eval_agg_expr(ar, e, cx, combos, bucket_of, b))
+            j = j + 1
+        rowset.rs_add_row(r, vals)
+        mem.iv_free(vals)
+        b = b + 1
+
+    mut f := 0
+    while f < mem.iv_len(bkeys):
+        value.v_free(mem.iv_get(bkeys, f))
+        f = f + 1
+    mem.iv_free(bkeys)
+    mem.iv_free(bucket_of)
+
+def first_in_bucket(combos: Int, bucket_of: Int, b: Int) -> Int:
+    n := mem.iv_len(bucket_of)
+    mut i := 0
+    while i < n:
+        if mem.iv_get(bucket_of, i) == b:
+            return i
+        i = i + 1
+    return 0 - 1
+
+def group_matches(ar: Int, groups: Int, ng: Int, cx: Int, bkeys: Int, b: Int) -> Int:
+    mut j := 0
+    while j < ng:
+        v := eval.eval(ar, mem.iv_get(groups, j), cx)
+        k := mem.iv_get(bkeys, b * ng + j)
+        vn := value.v_is_null(v)
+        kn := value.v_is_null(k)
+        mut same := 1
+        if vn != kn:
+            same = 0
+        elif vn == 0:
+            if value.v_cmp(v, k) != 0:
+                same = 0
+        value.v_free(v)
+        if same == 0:
+            return 0
+        j = j + 1
+    return 1
+
+# Evaluate an expression where aggregate calls fold over the bucket's rows.
+def eval_agg_expr(ar: Int, e: Int, cx: Int, combos: Int, bucket_of: Int, b: Int) -> Int:
+    if e < 0:
+        return value.v_null()
+    k := ast.kind(ar, e)
+    if k == ast.N_FUNC():
+        if func.is_agg_call(ar, e) == 1:
+            return run_aggregate(ar, e, cx, combos, bucket_of, b)
+    if k == ast.N_BINOP():
+        op := ast.text_of(ar, e)
+        l := eval_agg_expr(ar, ast.a_of(ar, e), cx, combos, bucket_of, b)
+        rr := eval_agg_expr(ar, ast.b_of(ar, e), cx, combos, bucket_of, b)
+        out := eval.apply_binop(op, l, rr)
+        value.v_free(l)
+        value.v_free(rr)
+        return out
+    if k == ast.N_UNOP():
+        inner := eval_agg_expr(ar, ast.a_of(ar, e), cx, combos, bucket_of, b)
+        op := ast.text_of(ar, e)
+        mut out := 0
+        if lpp_str_eq(op, "-") == 1:
+            if value.v_type(inner) == value.TREAL():
+                out = value.v_from_real(0.0 - value.v_real(inner))
+            else:
+                out = value.v_from_int(0 - value.v_to_int(inner))
+        elif lpp_str_eq(op, "NOT") == 1:
+            out = value.v_from_int(1 - value.v_truthy(inner))
+        else:
+            out = value.v_clone(inner)
+        value.v_free(inner)
+        return out
+    # Non-aggregate leaf: evaluate against the first row of the bucket.
+    first := first_in_bucket(combos, bucket_of, b)
+    if first >= 0:
+        load_combo(cx, mem.iv_get(combos, first))
+    return eval.eval(ar, e, cx)
+
+def run_aggregate(ar: Int, e: Int, cx: Int, combos: Int, bucket_of: Int, b: Int) -> Int:
+    name := ast.text_of(ar, e)
+    slot := ast.list_of(ar, e)
+    cnt := ast.av_count(ar, slot)
+    distinct := ast.b_of(ar, e)
+    n := mem.iv_len(bucket_of)
+
+    mut count := 0
+    mut isum := 0
+    mut fsum := 0.0
+    mut anyreal := 0
+    mut best := 0
+    mut sawval := 0
+    seen := mem.iv_new(8)
+    catsb := strbuf.sb_new()
+    mut catn := 0
+
+    mut i := 0
+    while i < n:
+        if mem.iv_get(bucket_of, i) == b:
+            load_combo(cx, mem.iv_get(combos, i))
+            mut v := 0
+            mut isstar := 0
+            if cnt == 0:
+                isstar = 1
+            elif ast.kind(ar, ast.av_get(ar, slot, 0)) == ast.N_STAR():
+                isstar = 1
+            if isstar == 1:
+                count = count + 1
+            else:
+                v = eval.eval(ar, ast.av_get(ar, slot, 0), cx)
+                if value.v_is_null(v) == 0:
+                    mut dup := 0
+                    if distinct == 1:
+                        mut z := 0
+                        while z < mem.iv_len(seen):
+                            if value.v_cmp(v, mem.iv_get(seen, z)) == 0:
+                                dup = 1
+                                z = mem.iv_len(seen)
+                            else:
+                                z = z + 1
+                        if dup == 0:
+                            mem.iv_push(seen, value.v_clone(v))
+                    if dup == 0:
+                        count = count + 1
+                        if value.v_type(v) == value.TREAL():
+                            anyreal = 1
+                        fsum = fsum + value.v_to_real(v)
+                        isum = isum + value.v_to_int(v)
+                        if sawval == 0:
+                            best = value.v_clone(v)
+                            sawval = 1
+                        else:
+                            cv := eval.compare_operands(v, best)
+                            if strbuf.eq_ci(name, "min") == 1:
+                                if cv < 0:
+                                    value.v_free(best)
+                                    best = value.v_clone(v)
+                            elif strbuf.eq_ci(name, "max") == 1:
+                                if cv > 0:
+                                    value.v_free(best)
+                                    best = value.v_clone(v)
+                        if strbuf.eq_ci(name, "group_concat") == 1:
+                            if catn > 0:
+                                mut sep := ","
+                                if cnt >= 2:
+                                    sv2 := eval.eval(ar, ast.av_get(ar, slot, 1), cx)
+                                    sep = value.v_to_text(sv2)
+                                    value.v_free(sv2)
+                                strbuf.sb_add(catsb, sep)
+                            strbuf.sb_add(catsb, value.v_to_text(v))
+                            catn = catn + 1
+                value.v_free(v)
+        i = i + 1
+
+    mut zz := 0
+    while zz < mem.iv_len(seen):
+        value.v_free(mem.iv_get(seen, zz))
+        zz = zz + 1
+    mem.iv_free(seen)
+
+    mut out := 0
+    if strbuf.eq_ci(name, "count") == 1:
+        out = value.v_from_int(count)
+    elif strbuf.eq_ci(name, "sum") == 1:
+        if count == 0:
+            out = value.v_null()
+        elif anyreal == 1:
+            out = value.v_from_real(fsum)
+        else:
+            out = value.v_from_int(isum)
+    elif strbuf.eq_ci(name, "total") == 1:
+        out = value.v_from_real(fsum)
+    elif strbuf.eq_ci(name, "avg") == 1:
+        if count == 0:
+            out = value.v_null()
+        else:
+            out = value.v_from_real(fsum / int_to_float(count))
+    elif strbuf.eq_ci(name, "group_concat") == 1:
+        if catn == 0:
+            out = value.v_null()
+        else:
+            out = value.v_from_str(strbuf.sb_str(catsb))
+    else:
+        if sawval == 0:
+            out = value.v_null()
+        else:
+            out = value.v_clone(best)
+    if sawval == 1:
+        value.v_free(best)
+    strbuf.sb_free(catsb)
+    return out
+

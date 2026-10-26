@@ -55,8 +55,11 @@ src/c_normal_ir.lpp
   and stable normalized-IR records.
 
 src/c_typed_parser.lpp
-  Precedence parser, statement parser, function-atomic validation/quarantine and
-  normalized-IR-to-L++ emission.
+  Public facade over the split typed parser. c_typed_types/common/expr,
+  c_typed_conditionals/control/body, and c_typed_functions hold the shared IR
+  records, parser helpers, expression/statement/body logic, and translation API.
+  Function-atomic validation/quarantine and normalized-IR-to-L++ emission are
+  unchanged.
 
 src/c_native_profile.lpp
   Strict no-binding profile v1 integrating typedef struct/bitfield declarations,

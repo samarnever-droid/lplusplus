@@ -1,6 +1,7 @@
-mir-v6
-counts functions=2 aggregates=1 fields=2 variants=2 blocks=8 switch_targets=4 locals=11 places=3 projections=6 instructions=10 strings=0 list_entries=47
+mir-v7
+counts functions=2 external_functions=0 aggregates=1 fields=2 variants=2 blocks=8 switch_targets=4 locals=11 places=3 projections=6 instructions=10 strings=0 list_entries=47
 strings
+external_functions
 aggregates
   MirAggregateId(0) MirAggregate { source: HirItemId(0), definition: DefId(0), instance: Some(InstanceId(0)), arguments: TypeListId(2), ty: TypeId(19), kind: Enum, fields: ListRange(0..0), variants: ListRange(0..2), origin: OriginId(0) }
     fields []

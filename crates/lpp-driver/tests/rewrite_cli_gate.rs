@@ -81,7 +81,107 @@ fn rejects_unknown_flags_and_missing_option_values() {
     assert_eq!(execute(&directory, &[entry.clone(), "--mystery".into()]), 2);
     assert_eq!(execute(&directory, &[entry.clone(), "--backend".into()]), 2);
     assert_eq!(execute(&directory, &[entry.clone(), "--target".into()]), 2);
+    assert_eq!(execute(&directory, &[entry.clone(), "--pgo-use".into()]), 2);
     assert_eq!(execute(&directory, &[entry, "-o".into()]), 2);
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+#[test]
+fn rejects_source_type_mismatches_before_object_emission() {
+    let directory = workdir("type-mismatches");
+    let cases = [
+        (
+            "bad-local.lpp",
+            concat!("def main():\n", "    age: Int = \"thirty years old\"\n",),
+        ),
+        (
+            "bad-argument.lpp",
+            concat!(
+                "def foo(x: Int):\n",
+                "    return\n",
+                "def main():\n",
+                "    foo(\"hello world\")\n",
+            ),
+        ),
+    ];
+
+    for (filename, text) in cases {
+        let entry = directory.join(filename);
+        let output = entry.with_extension("o");
+        std::fs::write(&entry, text).unwrap();
+        assert_eq!(
+            execute(
+                &directory,
+                &[
+                    entry.to_string_lossy().into_owned(),
+                    "--emit-object".into(),
+                    "-o".into(),
+                    output.to_string_lossy().into_owned(),
+                ]
+            ),
+            1,
+            "type-invalid source should fail: {filename}"
+        );
+        assert!(
+            !output.exists(),
+            "type-invalid source emitted an object: {filename}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+#[test]
+fn lto_flag_routes_through_the_whole_program_optimizer() {
+    let directory = workdir("lto-cli");
+    let entry = directory.join("lto.lpp");
+    std::fs::write(
+        &entry,
+        concat!(
+            "def plus_one(value: Int) -> Int:\n",
+            "    return value + 1\n",
+            "def main() -> Int:\n",
+            "    return plus_one(41)\n",
+        ),
+    )
+    .unwrap();
+    assert_eq!(
+        execute(
+            &directory,
+            &[
+                entry.to_string_lossy().into_owned(),
+                "--lto".into(),
+                "--check".into(),
+            ],
+        ),
+        0
+    );
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+#[test]
+fn pgo_generation_requires_native_cranelift_and_accepts_the_cli_flag() {
+    let directory = workdir("pgo-cli");
+    let entry = source(&directory).to_string_lossy().into_owned();
+    assert_eq!(
+        execute(
+            &directory,
+            &[entry.clone(), "--pgo-generate".into(), "--check".into()],
+        ),
+        0
+    );
+    assert_eq!(
+        execute(
+            &directory,
+            &[
+                entry,
+                "--target".into(),
+                "wasm32-wasip1".into(),
+                "--pgo-generate".into(),
+                "--check".into(),
+            ],
+        ),
+        1
+    );
     let _ = std::fs::remove_dir_all(directory);
 }
 

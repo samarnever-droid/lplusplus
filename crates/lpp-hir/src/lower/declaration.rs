@@ -51,17 +51,20 @@ impl<'module, 'package> ModuleLowerer<'module, 'package> {
         &mut self,
         node: &SyntaxNode,
         signature_only: bool,
+        is_extern: bool,
     ) -> LowerResult<HirItemId> {
         let mut cursor = Cursor::new(node.tokens);
         self.consume_keyword(&mut cursor, Keyword::Async);
         self.expect_keyword(&mut cursor, Keyword::Def, "expected 'def' in method")?;
         let name_token = self.expect_identifier(&mut cursor, "expected method name")?;
+        let name_text = self.token_text(name_token).to_owned();
         let name = self.intern_token(name_token)?;
+        let definition = is_extern.then(|| self.definition_for(&name_text)).flatten();
         let origin = self.source_origin(node.span)?;
         let function = self.lower_function(node, origin, signature_only)?;
         self.alloc_item(HirItem {
             module: self.module.id,
-            definition: None,
+            definition,
             name: Some(name),
             public: false,
             attributes: IdRange::empty(),
@@ -338,7 +341,7 @@ impl<'module, 'package> ModuleLowerer<'module, 'package> {
         let methods = node
             .children
             .iter()
-            .map(|method| self.lower_nested_function(method, true))
+            .map(|method| self.lower_nested_function(method, true, false))
             .collect::<LowerResult<Vec<_>>>()?;
         Ok(Trait {
             type_parameters,
@@ -366,7 +369,7 @@ impl<'module, 'package> ModuleLowerer<'module, 'package> {
         let methods = node
             .children
             .iter()
-            .map(|method| self.lower_nested_function(method, false))
+            .map(|method| self.lower_nested_function(method, false, false))
             .collect::<LowerResult<Vec<_>>>()?;
         let impl_parameters = self
             .package
@@ -447,7 +450,7 @@ impl<'module, 'package> ModuleLowerer<'module, 'package> {
         let functions = node
             .children
             .iter()
-            .map(|function| self.lower_nested_function(function, true))
+            .map(|function| self.lower_nested_function(function, true, true))
             .collect::<LowerResult<Vec<_>>>()?;
         Ok(ExternBlock {
             abi: abi.span,

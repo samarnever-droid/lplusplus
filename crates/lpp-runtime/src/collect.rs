@@ -36,8 +36,8 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use libc::{c_void, free};
 
 use crate::arc::{
-    destructor_cell, flags_cell, generation_cell, header_of, is_immortal, is_valid_arc_ptr,
-    lpp__runtime_drop_count, magic_cell, refcount_cell,
+    destructor_and_allocation_base, destructor_of, flags_cell, generation_cell, is_immortal,
+    is_valid_arc_ptr, lpp__runtime_drop_count, magic_cell, refcount_cell,
 };
 use crate::layout::{ARC_FLAG_BUFFERED, ARC_FLAG_COLLECTIBLE};
 
@@ -81,7 +81,7 @@ fn with_registry<R>(f: impl FnOnce(&mut HashMap<usize, usize>) -> R) -> R {
 /// a destructor address because the text page holding the destructor
 /// is itself mapped.
 fn registry_key(ptr: *mut c_void) -> usize {
-    match unsafe { *destructor_cell(ptr) } {
+    match unsafe { destructor_of(ptr) } {
         Some(destructor) => destructor as usize,
         None => ptr as usize,
     }
@@ -111,7 +111,7 @@ pub unsafe extern "C" fn lpp_arc_mark_collectible(ptr: *mut c_void, trace: Optio
 /// lifetime, so the common case is a no-op that never touches the
 /// lock; only destructor-less fallback entries are removed per object.
 pub(crate) fn deregister(ptr: *mut c_void) {
-    if unsafe { *destructor_cell(ptr) }.is_some() {
+    if unsafe { destructor_of(ptr) }.is_some() {
         return;
     }
     with_registry(|registry| {
@@ -278,25 +278,28 @@ unsafe fn collect_round() -> usize {
     // a member's destructor releasing another member must be a no-op —
     // then run destructors (which release references leaving the set)
     // and free the blocks with the same accounting as a normal drop.
-    let mut doomed: Vec<(usize, Option<unsafe extern "C" fn(*mut c_void)>)> =
+    let mut doomed: Vec<(usize, Option<unsafe extern "C" fn(*mut c_void)>, usize)> =
         Vec::with_capacity(garbage.len());
     for addr in &garbage {
         let ptr = *addr as *mut c_void;
-        let destructor = unsafe { *destructor_cell(ptr) };
+        // Capture both values before clearing flags: HAS_DTOR lives in the
+        // flags word and determines whether an 8-byte prefix exists.
+        let (destructor, base) = unsafe { destructor_and_allocation_base(ptr) };
+        let base = base as usize;
         deregister(ptr);
         unsafe {
             (*generation_cell(ptr)).fetch_add(1, Ordering::Release);
             magic_cell(ptr).write_volatile(0);
             (*flags_cell(ptr)).store(0, Ordering::Release);
         }
-        doomed.push((*addr, destructor));
+        doomed.push((*addr, destructor, base));
     }
     // Deterministic teardown order (address order) across runs.
     // Destructors first, storage second: a member destructor that
     // releases another member must land on that member's intact
     // (invalidated) header, never on recycled memory.
-    doomed.sort_unstable_by_key(|(addr, _)| *addr);
-    for (addr, destructor) in &doomed {
+    doomed.sort_unstable_by_key(|(addr, _, _)| *addr);
+    for (addr, destructor, _) in &doomed {
         let ptr = *addr as *mut c_void;
         lpp__runtime_drop_count.fetch_add(1, Ordering::Relaxed);
         lpp__cycle_collected_count.fetch_add(1, Ordering::Relaxed);
@@ -304,9 +307,8 @@ unsafe fn collect_round() -> usize {
             unsafe { destructor(ptr) };
         }
     }
-    for (addr, _) in doomed {
-        let ptr = addr as *mut c_void;
-        unsafe { free(header_of(ptr)) };
+    for (_, _, base) in doomed {
+        unsafe { free(base as *mut c_void) };
     }
     garbage.len()
 }

@@ -34,12 +34,17 @@ extern void lpp_arc_release_local(void *);
 extern int64_t lpp_weak_generation(void *);
 extern int64_t lpp_weak_get(int64_t, int64_t);
 extern char *lpp_empty_str(void);
+typedef void (*Dtor)(void *);
+typedef struct { uint32_t magic; int32_t refcount; int32_t generation; int32_t flags; } Header16;
 static int drops;
 static void dtor(void *p) { (void)p; drops++; }
 int main(void) {
     char out[256] = "";
     char tmp[32];
     void *a = lpp_arc_alloc_with_destructor(32, dtor);
+    Header16 *ah = (Header16 *)((char *)a - 16);
+    if (sizeof(*ah) != 16 || ah->magic != 0x41524331u || !(ah->flags & 4)
+        || *(Dtor *)((char *)a - 24) != dtor) return 90;
     int64_t ga = lpp_weak_generation(a);
     int gpos = ga > 0;
     int live = lpp_weak_get((int64_t)a, ga) == (int64_t)a;
@@ -50,8 +55,12 @@ int main(void) {
     snprintf(tmp, sizeof tmp, "drops=%d dead=%d ", drops, dead);
     strcat(out, tmp);
     void *b = lpp_arc_alloc(16);
+    Header16 *bh = (Header16 *)((char *)b - 16);
+    if (bh->magic != 0x41524331u || (bh->flags & 4)) return 91;
     lpp_arc_retain_local(b); lpp_arc_release_local(b); lpp_arc_release_local(b);
     char *e = lpp_empty_str();
+    Header16 *eh = (Header16 *)((char *)e - 16);
+    if (eh->magic != 0x41524331u || (uint32_t)eh->refcount != 0x41524331u) return 92;
     lpp_arc_retain(e); lpp_arc_release(e);
     int epos = lpp_weak_generation(e) == 0x41524331LL;
     snprintf(tmp, sizeof tmp, "B drops=%d emptypos=%d", drops, epos);
@@ -98,6 +107,11 @@ fn c_reference_matches_the_golden() {
         return;
     }
     let c_out = Command::new(&bin).output().unwrap();
+    assert!(
+        c_out.status.success(),
+        "C ARC layout checks failed: {:?}",
+        c_out.status
+    );
     let c_fingerprint = String::from_utf8_lossy(&c_out.stdout).trim().to_string();
     assert_eq!(
         c_fingerprint, GOLDEN,

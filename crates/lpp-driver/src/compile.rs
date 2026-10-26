@@ -16,9 +16,10 @@
 //!
 //! The final link uses the **Rust runtime cdylib** (`liblpp_runtime.so`), the
 //! same artifact the 6B.3e drop-in capstone proved is a byte-identical
-//! replacement for the v1 C `c_shim.c`. The cdylib is self-contained, so a
-//! native executable needs nothing but `libm` at link time.
+//! replacement for the v1 C `c_shim.c`. Native modules also pass their declared
+//! external libraries through to the host linker.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -33,9 +34,9 @@ use lpp_hir::{
     GraphBuilder, GraphRequest, OsFileSystem, PackageSpec, ResolutionMode, StringInterner, Symbol,
     lower_package,
 };
-use lpp_mir::{MirBuildOptions, build_mir, verify_mir};
+use lpp_mir::{MirBuildOptions, MirFunctionId, build_mir, mir_snapshot, verify_mir};
 use lpp_ownership::{compute_ownership_plan, verify_ownership_balance, verify_ownership_plan};
-use lpp_passes::run_optimization;
+use lpp_passes::run_optimization_with_profile;
 use lpp_types::{ShadowInferenceOptions, infer_hir_package};
 
 /// Adapts the HIR string interner to the codegen `NameResolver` contract.
@@ -91,10 +92,16 @@ impl BackendChoice {
 }
 
 /// Session choices that affect the validated MIR and emitted module.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompileOptions {
     pub target: Target,
     pub optimization: OptimizationLevel,
+    /// Enable the safe whole-program MIR inliner (not object-file LTO).
+    pub lto: bool,
+    /// Instrument Cranelift function entries and write an execution profile.
+    pub pgo_generate: bool,
+    /// Profile consumed for hot-callee inlining, if present.
+    pub pgo_use: Option<PathBuf>,
 }
 
 impl CompileOptions {
@@ -103,6 +110,9 @@ impl CompileOptions {
         Self {
             target: backend.default_target(),
             optimization: OptimizationLevel::O0,
+            lto: false,
+            pgo_generate: false,
+            pgo_use: None,
         }
     }
 }
@@ -247,7 +257,45 @@ pub fn compile_entry_with_options(
     }
     let t3 = std::time::Instant::now();
 
-    if options.optimization != OptimizationLevel::O0 {
+    let host_target = if cfg!(target_arch = "aarch64") {
+        Target::Aarch64
+    } else {
+        Target::X86_64
+    };
+    if options.pgo_generate
+        && (backend != BackendChoice::Cranelift || options.target != host_target)
+    {
+        return Err(CompileError::Target(
+            "PGO generation currently requires Cranelift for the compiler host target".to_string(),
+        ));
+    }
+    let fingerprint =
+        (options.pgo_generate || options.pgo_use.is_some()).then(|| profile_fingerprint(&program));
+    if options.pgo_generate {
+        let has_main = program.functions().any(|(_, function)| {
+            function
+                .name
+                .as_ref()
+                .and_then(|symbol| package.names.symbols.resolve(*symbol))
+                == Some("main")
+        });
+        if !has_main {
+            return Err(CompileError::Optimize(
+                "PGO generation requires a source-level main function to flush counters"
+                    .to_string(),
+            ));
+        }
+    }
+    let profile_counts = match (&options.pgo_use, fingerprint) {
+        (Some(path), Some(fingerprint)) => Some(read_pgo_profile(path, fingerprint)?),
+        _ => None,
+    };
+    let hot_callees = profile_counts
+        .as_ref()
+        .map(|counts| select_hot_callees(&program, counts))
+        .unwrap_or_default();
+
+    if options.optimization != OptimizationLevel::O0 || options.lto || !hot_callees.is_empty() {
         verify_program(&program, &inference.interner, "after MIR construction")?;
         prove_ownership(&program, &inference.interner, "before optimization")?;
         if profile {
@@ -255,8 +303,14 @@ pub fn compile_entry_with_options(
         }
         let t4 = std::time::Instant::now();
 
-        run_optimization(&mut program, &inference.interner, options.optimization)
-            .map_err(|error| CompileError::Optimize(format!("{error:?}")))?;
+        run_optimization_with_profile(
+            &mut program,
+            &inference.interner,
+            options.optimization,
+            options.lto,
+            hot_callees,
+        )
+        .map_err(|error| CompileError::Optimize(format!("{error:?}")))?;
         if profile {
             eprintln!("[profile] Optimization: {:?}", t4.elapsed());
         }
@@ -272,21 +326,129 @@ pub fn compile_entry_with_options(
     let backend_opt = match options.optimization {
         OptimizationLevel::O0 => OptLevel::None,
         OptimizationLevel::O1 => OptLevel::O1,
-        OptimizationLevel::O2 | OptimizationLevel::Os | OptimizationLevel::Oz => OptLevel::O2,
+        OptimizationLevel::O2 => OptLevel::O2,
         OptimizationLevel::O3 => OptLevel::O3,
+        OptimizationLevel::Os => OptLevel::Os,
+        OptimizationLevel::Oz => OptLevel::Oz,
     };
     let names = Names(&package.names.symbols);
+    let mut codegen_options =
+        CodegenOptions::new(options.target, &names).with_opt_level(backend_opt);
+    if options.pgo_generate {
+        if let Some(fingerprint) = fingerprint {
+            codegen_options = codegen_options.with_pgo_fingerprint(fingerprint);
+        }
+    }
     let compiled = codegen
-        .compile_module(
-            &program,
-            &inference.interner,
-            &CodegenOptions::new(options.target, &names).with_opt_level(backend_opt),
-        )
+        .compile_module(&program, &inference.interner, &codegen_options)
         .map_err(CompileError::Codegen)?;
     if profile {
         eprintln!("[profile] Cranelift codegen: {:?}", t6.elapsed());
     }
     Ok(compiled)
+}
+
+fn profile_fingerprint(program: &lpp_mir::MirProgram) -> u64 {
+    // FNV-1a over deterministic MIR text ties a profile to this exact, pre-opt
+    // program without making profile IDs depend on optimization decisions.
+    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+    for byte in mir_snapshot(program).bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
+}
+
+fn read_pgo_profile(
+    path: &Path,
+    expected_fingerprint: u64,
+) -> Result<BTreeMap<u32, u64>, CompileError> {
+    let contents = std::fs::read_to_string(path).map_err(|error| {
+        CompileError::Optimize(format!(
+            "cannot read PGO profile {}: {error}",
+            path.display()
+        ))
+    })?;
+    let mut lines = contents.lines();
+    let header = lines.next().unwrap_or_default();
+    let mut fields = header.split_whitespace();
+    let format = fields.next().unwrap_or_default();
+    let fingerprint_text = fields.next().unwrap_or_default();
+    let fingerprint = (fingerprint_text.len() == 16
+        && fingerprint_text
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit()))
+    .then(|| u64::from_str_radix(fingerprint_text, 16).ok())
+    .flatten();
+    if format != "LPP-PGO-1" || fields.next().is_some() || fingerprint.is_none() {
+        return Err(CompileError::Optimize(format!(
+            "invalid PGO profile header in {} (expected `LPP-PGO-1 <16-hex-digit fingerprint>`)",
+            path.display()
+        )));
+    }
+    let fingerprint = fingerprint.expect("validated above");
+    if fingerprint != expected_fingerprint {
+        return Err(CompileError::Optimize(format!(
+            "PGO profile fingerprint mismatch for {}: profile has {fingerprint:016x}, source has {expected_fingerprint:016x}",
+            path.display()
+        )));
+    }
+
+    let mut counts = BTreeMap::new();
+    for (line_index, line) in lines.enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let values: Vec<_> = line.split_whitespace().collect();
+        if values.len() != 2 {
+            return Err(CompileError::Optimize(format!(
+                "invalid PGO profile record at {}:{}",
+                path.display(),
+                line_index + 2
+            )));
+        }
+        let function_id = values[0].parse::<u32>().map_err(|_| {
+            CompileError::Optimize(format!(
+                "invalid function ID in PGO profile at {}:{}",
+                path.display(),
+                line_index + 2
+            ))
+        })?;
+        let count = values[1].parse::<u64>().map_err(|_| {
+            CompileError::Optimize(format!(
+                "invalid execution count in PGO profile at {}:{}",
+                path.display(),
+                line_index + 2
+            ))
+        })?;
+        if counts.insert(function_id, count).is_some() {
+            return Err(CompileError::Optimize(format!(
+                "duplicate function ID {function_id} in PGO profile {}",
+                path.display()
+            )));
+        }
+    }
+    Ok(counts)
+}
+
+fn select_hot_callees(
+    program: &lpp_mir::MirProgram,
+    counts: &BTreeMap<u32, u64>,
+) -> BTreeSet<MirFunctionId> {
+    let hottest = counts.values().copied().max().unwrap_or_default();
+    if hottest == 0 {
+        return BTreeSet::new();
+    }
+    let threshold = (hottest / 100).max(1);
+    program
+        .functions()
+        .filter_map(|(id, _)| {
+            counts
+                .get(&id.raw())
+                .is_some_and(|count| *count >= threshold)
+                .then_some(id)
+        })
+        .collect()
 }
 
 fn verify_program(
@@ -348,23 +510,52 @@ fn host_dynamic_linker() -> &'static str {
 /// GOT relocations that the direct linker does not yet emit (tracked as the
 /// next hardening step). If the direct link fails for any reason, we fall back
 /// to `cc` and print a warning to stderr so the gap is visible rather than
-/// silently masked.
+/// silently masked. This convenience wrapper has no user libraries; modules
+/// containing external calls should use [`link_executable_with_libraries`].
 pub fn link_executable(
     object: &[u8],
     runtime_lib_dir: &Path,
     output: &Path,
 ) -> Result<(), CompileError> {
     let configured = std::env::var("LPP_LINKER").ok();
-    link_executable_with(object, runtime_lib_dir, output, configured.as_deref())
+    link_executable_with_libraries(object, &[], runtime_lib_dir, output, configured.as_deref())
 }
 
 /// Link with an explicit implementation preference (`direct` or `cc`).
+/// This compatibility wrapper has no user libraries; use
+/// [`link_executable_with_libraries`] for external calls.
 pub fn link_executable_with(
     object: &[u8],
     runtime_lib_dir: &Path,
     output: &Path,
     linker: Option<&str>,
 ) -> Result<(), CompileError> {
+    link_executable_with_libraries(object, &[], runtime_lib_dir, output, linker)
+}
+
+/// Link an object with the system libraries required by its external calls.
+pub fn link_executable_with_libraries(
+    object: &[u8],
+    libraries: &[String],
+    runtime_lib_dir: &Path,
+    output: &Path,
+    linker: Option<&str>,
+) -> Result<(), CompileError> {
+    for library in libraries {
+        if library.is_empty()
+            || library.starts_with('-')
+            || library == "."
+            || library == ".."
+            || !library.bytes().all(|byte| {
+                byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'+' | b'.')
+            })
+        {
+            return Err(CompileError::Link(format!(
+                "invalid external library name {library:?}"
+            )));
+        }
+    }
+
     let dir = output
         .parent()
         .unwrap_or_else(|| Path::new("."))
@@ -391,12 +582,16 @@ pub fn link_executable_with(
     }
     let force_cc = linker == Some("cc")
         || std::env::consts::ARCH == "aarch64"
-        || !cfg!(any(target_os = "linux", target_os = "windows"));
+        || !cfg!(any(target_os = "linux", target_os = "windows"))
+        // PE import-library lookup and DLL symbol ownership are delegated to
+        // the platform linker; the in-process PE linker only supports its
+        // explicit import map today.
+        || (cfg!(target_os = "windows") && !libraries.is_empty() && !force_direct);
 
     let result = if force_cc {
-        link_executable_cc(&object_path, runtime_lib_dir, output)
+        link_executable_cc(&object_path, libraries, runtime_lib_dir, output)
     } else {
-        match link_executable_direct(&object_path, runtime_lib_dir, output) {
+        match link_executable_direct(&object_path, libraries, runtime_lib_dir, output) {
             Ok(()) => Ok(()),
             // A genuine input/user error (missing `main`, bad object, bad
             // arguments) is reported as-is. Fall back only for limitations,
@@ -409,7 +604,7 @@ pub fn link_executable_with(
                         "[lpp-linker] warning: direct link hit a limitation ({}); falling back to cc",
                         err.message
                     );
-                    link_executable_cc(&object_path, runtime_lib_dir, output)
+                    link_executable_cc(&object_path, libraries, runtime_lib_dir, output)
                 } else {
                     Err(CompileError::Link(err.message))
                 }
@@ -425,6 +620,7 @@ pub fn link_executable_with(
 /// the caller can decide, by error kind, whether to fall back to `cc`.
 fn link_executable_direct(
     object_path: &Path,
+    libraries: &[String],
     runtime_lib_dir: &Path,
     output: &Path,
 ) -> Result<(), lpp_linker::LinkError> {
@@ -437,6 +633,7 @@ fn link_executable_direct(
         format: Some(OutputFormat::Pe),
         dynamic: DynamicMode::Force,
         search_paths: vec![runtime_lib_dir.to_path_buf()],
+        libraries: libraries.to_vec(),
         ..Default::default()
     };
 
@@ -445,12 +642,14 @@ fn link_executable_direct(
         dynamic: DynamicMode::Force, // resolve lpp_*/libc through the PLT at load time
         pie: false,                  // ET_EXEC until RELATIVE GOT relocs land
         dynamic_linker: Some(host_dynamic_linker().to_string()),
-        // The runtime cdylib must be a load-time dependency; libc/libm are derived
-        // from the object's undefined symbols by the linker.
+        // The runtime cdylib is a load-time dependency; libc/libm are derived
+        // from undefined symbols, and user-declared extern libraries become
+        // additional DT_NEEDED entries.
         needed: vec!["liblpp_runtime.so".to_string()],
         search_paths: vec![runtime_lib_dir.to_path_buf()],
         // Find the runtime cdylib at run time without LD_LIBRARY_PATH.
         rpath: vec![runtime_lib_dir.display().to_string()],
+        libraries: libraries.to_vec(),
         ..Default::default()
     };
 
@@ -476,20 +675,27 @@ fn link_executable_direct(
 #[cfg(not(target_os = "windows"))]
 fn link_executable_cc(
     object_path: &Path,
+    libraries: &[String],
     runtime_lib_dir: &Path,
     output: &Path,
 ) -> Result<(), CompileError> {
     let compiler = std::env::var("LPP_HOST_CC").unwrap_or_else(|_| "cc".to_string());
     let rpath = format!("-Wl,-rpath,{}", runtime_lib_dir.display());
-    let link = Command::new(&compiler)
+    let mut link_cmd = Command::new(&compiler);
+    link_cmd
         .arg(object_path)
         .arg("-o")
         .arg(output)
         .arg("-L")
         .arg(runtime_lib_dir)
-        .arg("-llpp_runtime")
-        .arg(rpath)
-        .arg("-lm")
+        .arg(rpath);
+    for library in libraries {
+        link_cmd.arg(format!("-l{library}"));
+    }
+    // Keep runtime/math libraries after user archives so their undefined
+    // references can be resolved in the normal left-to-right linker model.
+    link_cmd.arg("-llpp_runtime").arg("-lm");
+    let link = link_cmd
         .output()
         .map_err(|error| CompileError::Io(format!("failed to run {compiler}: {error}")))?;
     if !link.status.success() {
@@ -503,6 +709,7 @@ fn link_executable_cc(
 #[cfg(target_os = "windows")]
 fn link_executable_cc(
     object_path: &Path,
+    libraries: &[String],
     runtime_lib_dir: &Path,
     output: &Path,
 ) -> Result<(), CompileError> {
@@ -524,7 +731,7 @@ fn link_executable_cc(
     } else {
         Command::new(&compiler)
     };
-    let link = link_cmd
+    link_cmd
         .arg("/nologo")
         .arg(object_path)
         .arg(format!("/Fe:{}", output.display()))
@@ -532,7 +739,16 @@ fn link_executable_cc(
         .arg(format!("/LIBPATH:{}", runtime_lib_dir.display()))
         .arg(import_library)
         .arg("msvcrt.lib")
-        .arg("legacy_stdio_definitions.lib")
+        .arg("legacy_stdio_definitions.lib");
+    for library in libraries {
+        let path = if library.to_ascii_lowercase().ends_with(".lib") {
+            library.clone()
+        } else {
+            format!("{library}.lib")
+        };
+        link_cmd.arg(path);
+    }
+    let link = link_cmd
         .output()
         .map_err(|error| CompileError::Io(format!("failed to run {compiler}: {error}")))?;
     if !link.status.success() {
@@ -587,7 +803,14 @@ pub fn build_executable_with_options(
     runtime_lib_dir: &Path,
 ) -> Result<(), CompileError> {
     let module = compile_entry_with_options(entry, package_name, backend, options)?;
-    link_executable(&module.object, runtime_lib_dir, output)
+    let configured = std::env::var("LPP_LINKER").ok();
+    link_executable_with_libraries(
+        &module.object,
+        &module.link_libraries,
+        runtime_lib_dir,
+        output,
+        configured.as_deref(),
+    )
 }
 
 pub fn build_executable_configured(
@@ -600,7 +823,13 @@ pub fn build_executable_configured(
     linker: Option<&str>,
 ) -> Result<(), CompileError> {
     let module = compile_entry_with_options(entry, package_name, backend, options)?;
-    link_executable_with(&module.object, runtime_lib_dir, output, linker)
+    link_executable_with_libraries(
+        &module.object,
+        &module.link_libraries,
+        runtime_lib_dir,
+        output,
+        linker,
+    )
 }
 
 /// Platform filename of the rewrite runtime dynamic library.

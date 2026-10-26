@@ -1,9 +1,9 @@
 # c2lpp handoff — Phase 1 complete, Phase 2 in progress
 
-**Date:** 2026-07-31
+**Date:** 2026-10-23
 **Current continuation base:** `7f8902412ecf447519b9908af51b9985ee63dd84`
 **Upstream package commit:** `98e1644f0af385c7c05292553d2ed8a62ba6b01b`
-**Package version:** `c2lpp 0.36.0`
+**Package version:** `c2lpp 0.37.0`
 
 ## Read this first
 
@@ -222,21 +222,28 @@ basic-block candidates:       20955
 ```
 
 An automatic semantic sweep now sends bounded bodies through the typed parser.
-It emits 66/2,528 SQLite functions (2.61%) as one pure-L++ module that type-checks
-with zero extern/native links. Conditional lowering covers lazy returns, local
-initializers and ordinary/compound assignments across Int, Bool, Float and
-pointer/null branches. Pointer logical operations emit explicit short-circuit
-null tests. Character literals become C integer constants. Compile-time `sizeof`
-supports primitive, pointer, aggregate and non-evaluated dereference forms;
-parameter-driven aggregate layouts retain priority and one extra demand slot is
-reserved for sizeof-only types. Pointer depth two now lowers through ABI
+The latest pinned SQLite 3.46.1 run emits 74/2,528 functions (2.93%) as one
+pure-L++ module that type-checks with zero extern/native links; 1,017 bodies are
+eligible and 2,454 are rejected with explicit reasons. Conditional lowering
+covers lazy returns, local initializers and ordinary/compound assignments across
+Int, Bool, Float and pointer/null branches. Pointer logical operations emit
+explicit short-circuit null tests. Character literals become C integer
+constants. Compile-time `sizeof` supports primitive, pointer, aggregate and
+non-evaluated dereference forms; the bounded aggregate-demand budget is now 20,
+selecting 18 types (15 complete, 2 partial) and emitting 159 fields. The new
+`sqlite3HeaderSizePcache1` translation is executed as pure L++ and compared with
+the same pinned native amalgamation. Pointer depth two now lowers through ABI
 pointer-slot loads/stores and supports `**p`, `p[i]` and out-slot assignment.
 One-dimensional array parameter syntax decays to `CPtr`; multidimensional arrays
 and pointer depth three remain fail-closed. Six indirection functions match native
 C and pass sanitizers. Braced do/while, empty statements and unbraced if/else call
-statements are executable; do-loop continue remains fail-closed. Direct typed
-mode covers do/while while the memory-bounded SQLite selector stays at 953
-signatures, 1,017 eligible bodies and 66 accepted functions.
+statements are executable; do-loop continue remains fail-closed. C by-value
+parameters reassigned inside nested branches/loops are lowered through mutable
+local copies; this is regression-tested against native C.
+
+This remains a small, bounded semantic subset—not a complete `sqlite3.c`
+translation. The pinned selector has 2,528 bodies, 1,017 eligible candidates,
+and 74 accepted functions.
 
 Two further parser-completeness additions (c2lpp 0.29.0) extend what an eligible
 body may contain:
@@ -295,7 +302,31 @@ A bitwise-compound tranche (c2lpp 0.36.0) adds bitwise compound assignments on
 local scalars (`x <<= 2`, `x >>= 1`, `x &= 3`, `x |= 1`, `x ^= 5`) via a
 `c_compound_binary_op` operator mapper. Standard suite passes 58/58.
 
-Three parser robustness fixes raised the mechanical count from 62 to 66. First, a
+Latest SQLite sweep tranche:
+
+- Nested body writes to a C by-value parameter are detected from emitted L++
+  statements even when control-flow statement IR is summarized at the parent.
+  The generated function renames the input parameter and creates a mutable
+  local copy, matching C's local-copy semantics. A loop plus branch regression
+  compiles/runs and matches native C.
+- The bounded demand pass now scans up to 20 aggregate types used by eligible
+  one-statement `sizeof` helpers (previously 10). This preserves the prior
+  accepted set and adds `sqlite3HeaderSizePcache1`; its generated value (56) is
+  executed as pure L++ and compared with the pinned native `sqlite3.c` helper.
+- Pinned SQLite 3.46.1 coverage rises from 73 to **74/2,528** functions
+  (2.93%); 1,017 candidates, 2,454 explicit rejections, 18 selected aggregate
+  types, 15 complete, 2 partial, and 159 emitted fields. The whole generated
+  module type-checks with no extern/native link.
+- `sh tests/run.sh --sqlite-audit` passes end to end, including the full
+  structural gates, generated module `--check`, translated `sqlite3HeaderSizePcache1`
+  execution, and native amalgamation comparison (both return 56).
+
+Resource caution: scratch runs that raised the function-body statement gate
+from 7 to 8 or 12 were killed under the sandbox budget. Do not increase this
+selector threshold blindly; the largest rejection bucket still needs a bounded
+CFG/streaming strategy rather than speculative whole-body parsing.
+
+The package version is advanced to c2lpp 0.37.0. Three parser robustness fixes raised the mechanical count from 62 to 66. First, a
 no-initializer local declaration (`int i;`) previously advanced the cursor past
 its terminating `;`, so any following statement was misread as the terminator
 (`C2-PARSE-LOCAL-SEMI`, 70 rejections). The no-init path now leaves the cursor on
@@ -307,10 +338,11 @@ assignments, postfix, ternary assignments, place/dereference targets and calls,
 emitting them at the correct nested indentation. Third, `c_parse_return_branch`
 emitted a fixed eight-space indent, so a nested `if (c) return x;` inside a loop
 emitted `return` at the wrong depth and the whole module failed the `--check`
-gate; it now emits at the caller-provided depth. These fixes unlocked
-`sqlite3WalLimit` and `isAllZero` and are covered by the new `unbraced_assignments`
-fixture with native equivalence. The pinned SQLite module type-checks at 66
-accepted functions with zero extern/native links.
+gate; it now emits at the caller-provided depth. These fixes are covered by the
+`unbraced_assignments` fixture with native equivalence; `isAllZero` remains in the
+current pinned accepted set, while `sqlite3WalLimit` is not selected after the
+fresh aggregate-demand analysis. The latest pinned SQLite module type-checks at
+74 accepted functions with zero extern/native links.
 
 Whole-source graph passes additionally report 13,472 SQLite call sites, resolve
 all 779 direct gotos, classify 436 allocation/54 reallocation/555 free sites,

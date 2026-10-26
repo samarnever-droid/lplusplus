@@ -1,0 +1,18 @@
+# Cycle routed N -> List[(N, Int)] -> tuple -> N: list and tuple
+# traces must both be walked for collection. Expected output: 0
+struct N:
+    id: Int
+    links: List[(N, Int)]
+def main() -> Int:
+    mut total := 0
+    mut i := 0
+    while i < 5000:
+        mut a := N(1, [])
+        mut b := N(2, [])
+        list_push(a.links, (b, 10))
+        bb := list_get(a.links, 0).0
+        list_push(bb.links, (a, 20))
+        total = total + list_get(bb.links, 0).0.id + bb.id - 3
+        i = i + 1
+    print(total)
+    return 0

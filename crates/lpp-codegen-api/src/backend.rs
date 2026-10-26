@@ -25,10 +25,10 @@ pub trait NameResolver: Send + Sync {
 
 /// The optimization level requested of a backend.
 ///
-/// [`OptLevel::None`] is the raw, deterministic output (the dev default). For
-/// the `wasm32` target a non-`None` level runs the object through `wasm-opt`
-/// as a one-time production pass (a system tool, like `clang` for the native
-/// backends — no new Rust dependency). Native backends currently ignore it.
+/// [`OptLevel::None`] is the raw output (the development default). The WASM
+/// backend maps levels to `wasm-opt`; Cranelift maps nonzero levels to its
+/// speed pipeline and `Os`/`Oz` to speed-and-size. The LLVM backend currently
+/// forces `-O0` until its scalar lowering is safe under LLVM optimization.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum OptLevel {
     /// Raw output; no post-optimization.
@@ -38,6 +38,8 @@ pub enum OptLevel {
     O2,
     O3,
     O4,
+    Os,
+    Oz,
 }
 
 impl OptLevel {
@@ -49,6 +51,8 @@ impl OptLevel {
             OptLevel::O2 => Some("-O2"),
             OptLevel::O3 => Some("-O3"),
             OptLevel::O4 => Some("-O4"),
+            OptLevel::Os => Some("-Os"),
+            OptLevel::Oz => Some("-Oz"),
         }
     }
 
@@ -62,6 +66,9 @@ pub struct CodegenOptions<'a> {
     pub target: Target,
     pub names: &'a dyn NameResolver,
     pub opt_level: OptLevel,
+    /// Enable Cranelift function-entry counters and store this program
+    /// fingerprint when the generated `main` returns.
+    pub pgo_fingerprint: Option<u64>,
 }
 
 impl std::fmt::Debug for CodegenOptions<'_> {
@@ -71,6 +78,7 @@ impl std::fmt::Debug for CodegenOptions<'_> {
             .field("target", &self.target)
             .field("names", &"<NameResolver>")
             .field("opt_level", &self.opt_level)
+            .field("pgo_fingerprint", &self.pgo_fingerprint)
             .finish()
     }
 }
@@ -82,14 +90,23 @@ impl<'a> CodegenOptions<'a> {
             target,
             names,
             opt_level: OptLevel::None,
+            pgo_fingerprint: None,
         }
     }
 
-    /// Request a post-optimization level. The wasm backend runs the object
-    /// through `wasm-opt`; native backends ignore it.
+    /// Request backend optimization. WASM runs `wasm-opt`; Cranelift selects
+    /// its machine-code optimization mode; LLVM currently forces `-O0`.
     #[must_use]
     pub fn with_opt_level(mut self, level: OptLevel) -> Self {
         self.opt_level = level;
+        self
+    }
+
+    /// Enable Cranelift PGO instrumentation. The supplied fingerprint is
+    /// written at normal process exit to the runtime-selected profile file.
+    #[must_use]
+    pub fn with_pgo_fingerprint(mut self, fingerprint: u64) -> Self {
+        self.pgo_fingerprint = Some(fingerprint);
         self
     }
 }
@@ -107,6 +124,9 @@ pub struct CompiledModule {
     pub object: Vec<u8>,
     pub exported_symbols: BTreeSet<String>,
     pub imported_symbols: BTreeSet<String>,
+    /// System libraries required by direct external calls in this module
+    /// (for example, `sqlite3` for `extern "C" link "sqlite3"`).
+    pub link_libraries: Vec<String>,
     /// The C-ABI process entry symbol (`main`) when the program
     /// defines a source-level `main`; `None` for library modules.
     pub entry: Option<String>,

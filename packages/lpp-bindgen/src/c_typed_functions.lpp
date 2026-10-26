@@ -1,0 +1,175 @@
+# c_typed_functions.lpp — function signature/context and translation entry points
+import c_lexer
+import c_normal_ir
+import c_aggregate_data
+import text
+import c_typed_types
+import c_typed_common
+import c_typed_expr
+import c_typed_conditionals
+import c_typed_control
+import c_typed_body
+
+def c_skip_decl_or_function(cursor: CLexCursor) -> CLexCursor:
+    mut current := cursor
+    while true:
+        step := c_lex_next_code(current)
+        if step.token.kind == C_TOKEN_EOF:
+            return step.next
+        if c_lex_token_is(step, ";"):
+            return step.next
+        if c_lex_token_is(step, "{"):
+            return c_skip_block(step.next)
+        current = step.next
+    return current
+
+
+def c_parse_function_signature_known(cursor: CLexCursor, aliases: Str) -> CFunctionSignature:
+    parsed_type := c_parse_type_known(cursor, aliases)
+    invalid_type := c_parse_invalid_type(cursor)
+    invalid_params := CParamsParse("", "", "", "", 0, c_lex_cursor_clone(cursor), 0, "")
+    if parsed_type.c_type.valid == 0:
+        empty_span := c_parse_empty_span(cursor)
+        return CFunctionSignature("", invalid_type, invalid_params, cursor, 0, "C2-SIGNATURE-RETURN-TYPE", empty_span)
+    mut return_kind := parsed_type.c_type.kind
+    mut return_c_spelling := parsed_type.c_type.c_spelling
+    mut return_lpp_spelling := parsed_type.c_type.lpp_spelling
+    pointer_prefix := c_parse_pointer_prefix(parsed_type.next)
+    name_step := c_lex_next_code(pointer_prefix.next)
+    if pointer_prefix.count > 0:
+        return_kind = C_IR_TYPE_PTR
+        return_c_spelling = str_concat(parsed_type.c_type.c_spelling, " *")
+        return_lpp_spelling = "CPtr"
+    return_type := CTypeIR(return_kind, return_c_spelling, return_lpp_spelling, parsed_type.c_type.span, 1)
+    if return_kind == C_IR_TYPE_AGGREGATE:
+        return CFunctionSignature("", return_type, invalid_params, name_step.next, 0, "C2-TYPE-AGGREGATE-RETURN", name_step.token.span)
+    if name_step.token.kind != C_TOKEN_IDENTIFIER:
+        return CFunctionSignature("", return_type, invalid_params, name_step.next, 0, "C2-SIGNATURE-NAME", name_step.token.span)
+    open_step := c_lex_next_code(name_step.next)
+    if !c_lex_token_is(open_step, "("):
+        return CFunctionSignature(name_step.token.spelling, return_type, invalid_params, open_step.next, 0, "C2-SIGNATURE-OPEN", open_step.token.span)
+    parsed_params := c_parse_params_known(open_step.next, aliases)
+    if parsed_params.valid == 0:
+        return CFunctionSignature(name_step.token.spelling, return_type, parsed_params, parsed_params.next, 0, parsed_params.reason, name_step.token.span)
+    open_body := c_lex_next_code(parsed_params.next)
+    if !c_lex_token_is(open_body, "{"):
+        return CFunctionSignature(name_step.token.spelling, return_type, parsed_params, open_body.next, 0, "C2-SIGNATURE-BODY", open_body.token.span)
+    return CFunctionSignature(name_step.token.spelling, return_type, parsed_params, open_body.next, 1, "", name_step.token.span)
+
+
+def c_parse_function_context(cursor: CLexCursor, functions: Str, aliases: Str, aggregates: Str, global_symbols: Str) -> CFunctionParse:
+    parsed_type := c_parse_type_known(cursor, aliases)
+    empty_type := c_parse_invalid_type(cursor)
+    empty_function := CFunctionIR("", empty_type, "", "", 0, "", "", "", c_parse_empty_span(cursor), 0)
+    if parsed_type.c_type.valid == 0:
+        return CFunctionParse(empty_function, cursor, 0, "", c_parse_empty_span(cursor))
+    mut return_kind := parsed_type.c_type.kind
+    mut return_c_spelling := parsed_type.c_type.c_spelling
+    mut return_lpp_spelling := parsed_type.c_type.lpp_spelling
+    pointer_prefix := c_parse_pointer_prefix(parsed_type.next)
+    name_step := c_lex_next_code(pointer_prefix.next)
+    if pointer_prefix.count > 0:
+        return_kind = C_IR_TYPE_PTR
+        return_c_spelling = str_concat(parsed_type.c_type.c_spelling, " *")
+        return_lpp_spelling = "CPtr"
+    return_type := CTypeIR(return_kind, return_c_spelling, return_lpp_spelling, parsed_type.c_type.span, 1)
+    if return_kind == C_IR_TYPE_AGGREGATE:
+        return CFunctionParse(empty_function, name_step.next, 0, "C2-TYPE-AGGREGATE-RETURN", name_step.token.span)
+    if name_step.token.kind != C_TOKEN_IDENTIFIER:
+        return CFunctionParse(empty_function, name_step.next, 0, "", name_step.token.span)
+    open_step := c_lex_next_code(name_step.next)
+    if !c_lex_token_is(open_step, "("):
+        return CFunctionParse(empty_function, open_step.next, 0, "", open_step.token.span)
+    parsed_params := c_parse_params_known(open_step.next, aliases)
+    if parsed_params.valid == 0:
+        skipped := c_skip_decl_or_function(parsed_params.next)
+        return CFunctionParse(empty_function, skipped, 1, parsed_params.reason, name_step.token.span)
+    open_body := c_lex_next_code(parsed_params.next)
+    if !c_lex_token_is(open_body, "{"):
+        return CFunctionParse(empty_function, open_body.next, 0, "", open_body.token.span)
+    signature_functions := c_ir_function_add(functions, name_step.token.spelling, return_type.kind, parsed_params.count, parsed_params.type_list)
+    body_symbols := str_concat(parsed_params.symbols, global_symbols)
+    parsed_body := c_parse_body_known(open_body.next, body_symbols, signature_functions, return_type.kind, aliases, aggregates)
+    if parsed_body.valid == 0:
+        skipped := c_skip_block(open_body.next)
+        return CFunctionParse(empty_function, skipped, 1, parsed_body.reason, parsed_body.span)
+    name := text_safe_binding_name(name_step.token.spelling)
+    if str_len(name) == 0:
+        return CFunctionParse(empty_function, parsed_body.next, 1, "C2-NAME-UNSUPPORTED", name_step.token.span)
+    emitted_params := c_params_emitted_lpp(parsed_params.lpp, parsed_params.symbols, parsed_body.normalized, parsed_body.lpp)
+    mut lpp := str_concat("def ", str_concat(name, str_concat("(", str_concat(emitted_params, str_concat(") -> ", str_concat(return_type.lpp_spelling, ":\n"))))))
+    lpp = str_concat(lpp, c_params_mutable_prologue(parsed_params.symbols, parsed_body.normalized, parsed_body.lpp))
+    lpp = str_concat(lpp, parsed_body.lpp)
+    mut normalized := str_concat("function|", str_concat(name, str_concat("|", str_concat(c_ir_type_name(return_type.kind), "\n"))))
+    normalized = str_concat(normalized, parsed_params.normalized)
+    normalized = str_concat(normalized, parsed_body.normalized)
+    normalized = str_concat(normalized, "end-function\n")
+    function := CFunctionIR(name, return_type, parsed_params.lpp, parsed_params.type_list, parsed_params.count, parsed_params.symbols, lpp, normalized, name_step.token.span, 1)
+    return CFunctionParse(function, parsed_body.next, 1, "", name_step.token.span)
+
+
+def c_parse_function_known(cursor: CLexCursor, functions: Str, aliases: Str) -> CFunctionParse:
+    return c_parse_function_context(cursor, functions, aliases, "", "")
+
+
+def c_parse_function(cursor: CLexCursor, functions: Str) -> CFunctionParse:
+    return c_parse_function_known(cursor, functions, "")
+
+
+def c_skip_preprocessor_line(cursor: CLexCursor, line: Int) -> CLexCursor:
+    mut current := cursor
+    while true:
+        step := c_lex_next(current)
+        if step.token.kind == C_TOKEN_EOF:
+            return step.next
+        if step.token.span.line > line:
+            return current
+        current = step.next
+    return current
+
+
+def c_translate_typed_file(path: Str) -> CTypedTranslation:
+    data := buf_read(path)
+    size := buf_len(data)
+    if size <= 0:
+        if data != 0:
+            buf_free(data)
+        return CTypedTranslation("", "", 0, 0, 0, "C2-INPUT-EMPTY\n", 0)
+    mut current := c_lex_cursor(data, size, path)
+    mut lpp := "# Typed normalized-IR C translation generated by c2lpp.\n# Rejected functions are omitted, never guessed.\n\nimport c_memory\nimport c_place\n\ndef c2lpp_bool_to_int(value: Bool) -> Int:\n    if value:\n        return 1\n    return 0\n\n"
+    mut normalized := "schema|c2lpp-normal-ir-v1\n"
+    mut diagnostics := ""
+    mut functions := ""
+    mut total := 0
+    mut translated := 0
+    mut rejected := 0
+    while current.offset < current.size:
+        step := c_lex_next_code(current)
+        if step.token.kind == C_TOKEN_EOF:
+            current = step.next
+        elif c_lex_token_is(step, "#"):
+            current = c_skip_preprocessor_line(step.next, step.token.span.line)
+        else:
+            parsed := c_parse_function(current, functions)
+            if parsed.recognized == 0:
+                current = step.next
+            else:
+                total = total + 1
+                if parsed.function.valid == 1:
+                    translated = translated + 1
+                    lpp = str_concat(lpp, str_concat(parsed.function.body_lpp, "\n"))
+                    normalized = str_concat(normalized, parsed.function.normalized)
+                    functions = c_ir_function_add(functions, parsed.function.name, parsed.function.return_type.kind, parsed.function.param_count, parsed.function.param_types)
+                else:
+                    rejected = rejected + 1
+                    diagnostics = str_concat(diagnostics, c_ir_diag(parsed.reason, parsed.span, "function rejected"))
+                    lpp = text_append_line(lpp, str_concat("# c2lpp typed unsupported: ", str_concat(parsed.reason, str_concat(" at ", str_concat(int_to_str(parsed.span.line), str_concat(":", int_to_str(parsed.span.column)))))))
+                if parsed.next.offset <= current.offset:
+                    current = step.next
+                else:
+                    current = parsed.next
+    buf_free(data)
+    mut ok := 1
+    if rejected > 0 || translated == 0:
+        ok = 0
+    return CTypedTranslation(lpp, normalized, total, translated, rejected, diagnostics, ok)

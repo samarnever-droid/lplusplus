@@ -659,6 +659,7 @@ dependencies = [
  "lpp-mir",
  "lpp-ownership",
  "lpp-passes",
+ "lpp-runtime",
  "lpp-types",
  "semver",
 ]

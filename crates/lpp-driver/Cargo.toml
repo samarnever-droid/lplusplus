@@ -20,3 +20,6 @@ lpp-codegen-wasm = { path = "../lpp-codegen-wasm" }
 lpp-codegen-llvm = { path = "../lpp-codegen-llvm" }
 lpp-linker = { path = "../lpp-linker" }
 semver = "1"
+
+[dev-dependencies]
+lpp-runtime = { path = "../lpp-runtime" }

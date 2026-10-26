@@ -466,6 +466,18 @@ fn direct_string_builtins_have_plan_and_emitter_parity_without_panics() {
     assert!(ir.contains("call ptr @lpp_str_concat"), "{ir}");
     assert!(ir.contains("call i64 @lpp_str_eq"), "{ir}");
     assert!(
+        ir.contains("align 16"),
+        "string globals need ARC alignment: {ir}"
+    );
+    assert!(
+        ir.contains("i64 16)"),
+        "strings point past the 16-byte header: {ir}"
+    );
+    assert!(
+        ir.contains("\\31\\43\\52\\41"),
+        "immortal ARC magic missing: {ir}"
+    );
+    assert!(
         ir.contains("trunc i64"),
         "boolean result must be narrowed: {ir}"
     );

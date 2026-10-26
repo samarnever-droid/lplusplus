@@ -1,0 +1,342 @@
+import lppdb_layout
+
+# ════════════════════ Cell / row serialization ════════════════════
+# Serialize one typed cell. Returns new offset. coltype drives coercion.
+def put_cell(buf: Int, off0: Int, coltype: Int, val: Str) -> Int:
+    mut off := off0
+    # NULL
+    if lpp_str_eq(str_upper(val), "NULL") == 1:
+        off = put_u8(buf, off, T_NULL())
+        off = put_u32(buf, off, 0)
+        return off
+    if coltype == 1:
+        off = put_u8(buf, off, T_INT())
+        off = put_u32(buf, off, 8)
+        off = put_i64(buf, off, str_to_int(val))
+        return off
+    # TEXT: strip surrounding quotes if present
+    mut s := val
+    n := str_len(s)
+    if n >= 2:
+        fc := str_substr(s, 0, 1)
+        lc := str_substr(s, n - 1, 1)
+        if lpp_str_eq(fc, chr(39)) == 1:
+            if lpp_str_eq(lc, chr(39)) == 1:
+                s = str_substr(s, 1, n - 2)
+        elif lpp_str_eq(fc, chr(34)) == 1:
+            if lpp_str_eq(lc, chr(34)) == 1:
+                s = str_substr(s, 1, n - 2)
+    off = put_u8(buf, off, T_TEXT())
+    off = put_u32(buf, off, str_len(s))
+    off = put_str_raw(buf, off, s)
+    return off
+
+# Compute the byte length of a row built from `vals` (a buffer of value-strings
+# is awkward; instead we serialize twice: once to measure, once to write).
+# Serialize a row's cells into dst at off. ncols columns, value for column i is
+# provided by reading value-strings from the caller. We represent the values for
+# one row as a contiguous buffer of NUL-terminated strings (valbuf), with an
+# index buffer (validx) of byte offsets. Simpler: caller builds row directly.
+
+# ════════════════════ Statement parsing helpers ════════════════════
+
+def kw_pos(low: Str, kw: Str) -> Int:
+    return str_find(low, kw)
+
+def extract_word(s: Str, start: Int) -> Str:
+    n := str_len(s)
+    mut i := start
+    mut out := ""
+    while i < n:
+        c := str_substr(s, i, 1)
+        o := ord(c)
+        mut is_id := 0
+        if o >= 97:
+            if o <= 122:
+                is_id = 1
+        if o >= 48:
+            if o <= 57:
+                is_id = 1
+        if o == 95:
+            is_id = 1
+        if is_id == 0:
+            break
+        out = str_concat(out, c)
+        i = i + 1
+    return out
+
+# ════════════════════ Value-tuple parsing ════════════════════
+
+def tuple_count(s: Str) -> Int:
+    n := str_len(s)
+    if str_len(str_trim(s)) == 0:
+        return 0
+    mut cnt := 1
+    mut q := 0
+    mut i := 0
+    while i < n:
+        c := str_substr(s, i, 1)
+        if lpp_str_eq(c, chr(39)) == 1:
+            q = 1 - q
+        if q == 0:
+            if lpp_str_eq(c, ",") == 1:
+                cnt = cnt + 1
+        i = i + 1
+    return cnt
+
+def tuple_value(s: Str, idx: Int) -> Str:
+    n := str_len(s)
+    mut i := 0
+    mut cur := 0
+    mut start := 0
+    mut q := 0
+    while i <= n:
+        mut is_end := 0
+        mut is_comma := 0
+        if i < n:
+            c := str_substr(s, i, 1)
+            if lpp_str_eq(c, chr(39)) == 1:
+                q = 1 - q
+            if q == 0:
+                if lpp_str_eq(c, ",") == 1:
+                    is_comma = 1
+        else:
+            is_end = 1
+        if is_comma == 1:
+            if cur == idx:
+                return str_trim(str_substr(s, start, i - start))
+            cur = cur + 1
+            start = i + 1
+        if is_end == 1:
+            if cur == idx:
+                return str_trim(str_substr(s, start, i - start))
+        i = i + 1
+    return ""
+
+# Position of colname within a comma-separated lowercased column list, or -1.
+def name_list_pos(list_low: Str, colname: Str) -> Int:
+    n := str_len(list_low)
+    mut i := 0
+    mut cur := 0
+    mut start := 0
+    while i <= n:
+        mut is_end := 0
+        mut is_comma := 0
+        if i < n:
+            c := str_substr(list_low, i, 1)
+            if lpp_str_eq(c, ",") == 1:
+                is_comma = 1
+        else:
+            is_end = 1
+        if is_comma == 1:
+            tok := str_trim(str_substr(list_low, start, i - start))
+            if lpp_str_eq(tok, colname) == 1:
+                return cur
+            cur = cur + 1
+            start = i + 1
+        if is_end == 1:
+            tok := str_trim(str_substr(list_low, start, i - start))
+            if lpp_str_eq(tok, colname) == 1:
+                return cur
+        i = i + 1
+    return -1
+
+# ════════════════════ Row building (byte-level) ════════════════════
+# The current compiler mis-compiles loops that interleave ARC-string-producing
+# calls (tuple_value / t_col_name) with buffer cell writes, corrupting the first
+# cell. To avoid this, build_row parses the value tuple at the BYTE level via a
+# buffer, and splits work into two loops: (1) resolve column types and the
+# column->token map (string ops, no cell writes), then (2) serialize cells using
+# only buffer/integer ops (no ARC strings).
+
+def put_null_cell(dst: Int, off0: Int) -> Int:
+    mut off := off0
+    off = put_u8(dst, off, 0)
+    off = put_u32(dst, off, 0)
+    return off
+
+def scan_tokens(tb: Int, tlen: Int, tok_s: Int, tok_l: Int) -> Int:
+    mut i := 0
+    mut cur_start := 0
+    mut cur := 0
+    mut q := 0
+    while i <= tlen:
+        mut is_end := 0
+        mut is_comma := 0
+        if i < tlen:
+            c := buf_get8(tb, i)
+            if c == 39:
+                q = 1 - q
+            if q == 0:
+                if c == 44:
+                    is_comma = 1
+        else:
+            is_end = 1
+        if is_comma == 1:
+            put_i64(tok_s, cur * 8, cur_start)
+            put_i64(tok_l, cur * 8, i - cur_start)
+            cur = cur + 1
+            cur_start = i + 1
+        if is_end == 1:
+            put_i64(tok_s, cur * 8, cur_start)
+            put_i64(tok_l, cur * 8, i - cur_start)
+            cur = cur + 1
+        i = i + 1
+    return cur
+
+def parse_int_bytes(tb: Int, a: Int, b: Int) -> Int:
+    mut i := a
+    mut neg := 0
+    if i < b:
+        if buf_get8(tb, i) == 45:
+            neg = 1
+            i = i + 1
+    mut v := 0
+    while i < b:
+        d := buf_get8(tb, i) - 48
+        if d >= 0:
+            if d <= 9:
+                v = v * 10 + d
+        i = i + 1
+    if neg == 1:
+        v = 0 - v
+    return v
+
+def is_null_bytes(tb: Int, a: Int, len: Int) -> Int:
+    if len != 4:
+        return 0
+    c0 := buf_get8(tb, a)
+    c1 := buf_get8(tb, a + 1)
+    c2 := buf_get8(tb, a + 2)
+    c3 := buf_get8(tb, a + 3)
+    mut ok := 1
+    if c0 != 110:
+        if c0 != 78:
+            ok = 0
+    if c1 != 117:
+        if c1 != 85:
+            ok = 0
+    if c2 != 108:
+        if c2 != 76:
+            ok = 0
+    if c3 != 108:
+        if c3 != 76:
+            ok = 0
+    return ok
+
+def write_cell_from_tb(dst: Int, off0: Int, tb: Int, ts: Int, tl: Int, coltype: Int) -> Int:
+    mut off := off0
+    mut a := ts
+    mut b := ts + tl
+    while a < b:
+        if buf_get8(tb, a) == 32:
+            a = a + 1
+        else:
+            break
+    while b > a:
+        if buf_get8(tb, b - 1) == 32:
+            b = b - 1
+        else:
+            break
+    seg_len := b - a
+    if is_null_bytes(tb, a, seg_len) == 1:
+        off = put_u8(dst, off, 0)
+        off = put_u32(dst, off, 0)
+        return off
+    if coltype == 1:
+        off = put_u8(dst, off, 1)
+        off = put_u32(dst, off, 8)
+        off = put_i64(dst, off, parse_int_bytes(tb, a, b))
+        return off
+    mut sa := a
+    mut sb := b
+    if seg_len >= 2:
+        fc := buf_get8(tb, a)
+        lc := buf_get8(tb, b - 1)
+        if fc == 39:
+            if lc == 39:
+                sa = a + 1
+                sb = b - 1
+        if fc == 34:
+            if lc == 34:
+                sa = a + 1
+                sb = b - 1
+    slen := sb - sa
+    off = put_u8(dst, off, 2)
+    off = put_u32(dst, off, slen)
+    off = put_bytes(dst, off, tb, sa, slen)
+    return off
+
+# Build one row into dst at off, in schema column order. `exp_low` is the
+# lowercased explicit-column list ("" if none); `tup_orig` is the value tuple
+# contents. Returns the new offset.
+#
+# NOTE: cells are first serialized into a temp buffer, then copied to dst with
+# `mut off` declared immediately adjacent to the writes. Declaring `mut off`
+# far above its use (with buf_alloc calls in between) triggers a compiler
+# register-clobber bug that corrupts the row_len field.
+def build_row(db: Int, toff: Int, exp_low: Str, tup_orig: Str, dst: Int, off0: Int) -> Int:
+    nc := t_ncols(db, toff)
+    has_exp := str_len(exp_low)
+    tlen := str_len(tup_orig)
+    tb := buf_alloc(tlen + 1)
+    buf_write_str(tb, 0, tup_orig)
+    tok_s := buf_alloc((nc + 2) * 8)
+    tok_l := buf_alloc((nc + 2) * 8)
+    ntok := scan_tokens(tb, tlen, tok_s, tok_l)
+    ct_buf := buf_alloc((nc + 1) * 8)
+    map_buf := buf_alloc((nc + 1) * 8)
+    mut j := 0
+    while j < nc:
+        put_i64(ct_buf, j * 8, t_col_type(db, toff, j))
+        mut tidx := -1
+        if has_exp == 0:
+            tidx = j
+        else:
+            tidx = name_list_pos(exp_low, t_col_name(db, toff, j))
+        put_i64(map_buf, j * 8, tidx)
+        j = j + 1
+    # Serialize cells into a temp buffer (its own offset starts at 0).
+    tmp := buf_alloc(tlen + nc * 16 + 64)
+    mut toff2 := 0
+    mut j2 := 0
+    while j2 < nc:
+        coltype := rd_i64(ct_buf, j2 * 8)
+        tidx := rd_i64(map_buf, j2 * 8)
+        if tidx >= 0:
+            if tidx < ntok:
+                ts := rd_i64(tok_s, tidx * 8)
+                tl := rd_i64(tok_l, tidx * 8)
+                toff2 = write_cell_from_tb(tmp, toff2, tb, ts, tl, coltype)
+            else:
+                toff2 = put_null_cell(tmp, toff2)
+        else:
+            toff2 = put_null_cell(tmp, toff2)
+        j2 = j2 + 1
+    cell_bytes := toff2
+    # Emit [row_len][cells] into dst; keep `mut off` adjacent to its uses.
+    mut off := off0
+    off = put_u32(dst, off, cell_bytes)
+    off = put_bytes(dst, off, tmp, 0, cell_bytes)
+    buf_free(tmp)
+    buf_free(tb)
+    buf_free(tok_s)
+    buf_free(tok_l)
+    buf_free(ct_buf)
+    buf_free(map_buf)
+    return off
+
+# ════════════════════ Rebuild helpers ════════════════════
+
+def copy_all_tables(db: Int, dst: Int, doff0: Int) -> Int:
+    mut doff := doff0
+    mut off := 12
+    mut i := 0
+    nt := db_num_tables(db)
+    while i < nt:
+        blen := buf_get32le(db, off)
+        doff = put_bytes(dst, doff, db, off, 4 + blen)
+        off = off + 4 + blen
+        i = i + 1
+    return doff
+

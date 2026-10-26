@@ -175,6 +175,31 @@ fn string_indexing_and_named_aliases_preserve_v1_types() {
 }
 
 #[test]
+fn rejects_annotated_local_and_function_argument_type_mismatches() {
+    let bad_local = lower_single_source(concat!(
+        "def main():\n",
+        "    age: Int = \"thirty years old\"\n",
+    ));
+    let error = infer_hir_package(&bad_local, ShadowInferenceOptions::default()).unwrap_err();
+    assert!(
+        matches!(error.error, TypeError::Mismatch { .. }),
+        "annotated local mismatch was not rejected: {error:?}"
+    );
+
+    let bad_call = lower_single_source(concat!(
+        "def foo(x: Int):\n",
+        "    return\n",
+        "def main():\n",
+        "    foo(\"hello world\")\n",
+    ));
+    let error = infer_hir_package(&bad_call, ShadowInferenceOptions::default()).unwrap_err();
+    assert!(
+        matches!(error.error, TypeError::Mismatch { .. }),
+        "function argument mismatch was not rejected: {error:?}"
+    );
+}
+
+#[test]
 fn cyclic_type_aliases_fail_with_a_bounded_diagnostic() {
     let package = lower_single_source(concat!(
         "type First = Second\n",
