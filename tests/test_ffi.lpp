@@ -2,15 +2,15 @@
 
 extern "C":
     def abs(x: Int) -> Int
-    def _getpid() -> Int
+    def strlen(s: Str) -> Int
 
 def main():
     # Call C stdlib abs()
     n := abs(-42)
     print(n)
 
-    # Call _getpid()
-    pid := _getpid()
-    print(pid)
+    # Call C stdlib strlen() with borrowed Str
+    n_len := strlen("ffi works!")
+    print(n_len)
 
     print("ffi works!")

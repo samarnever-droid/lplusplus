@@ -30,7 +30,7 @@ void lpp_buf_free(void *ptr) {
  * can still report a deterministic stale-context error. The payload's first
  * word is no longer needed after destruction and links tombstones until the
  * process exit handler frees them. */
-static atomic_uintptr_t lpp_buf_deferred_head = ATOMIC_VAR_INIT(0);
+static atomic_uintptr_t lpp_buf_deferred_head = 0;
 static atomic_flag lpp_buf_deferred_cleanup_registered = ATOMIC_FLAG_INIT;
 
 static void lpp_buf_release_deferred(void) {

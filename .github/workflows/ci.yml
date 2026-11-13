@@ -389,7 +389,7 @@ jobs:
           @"
           @echo off
           call "%VSCMD_BAT%" >nul || exit /b 1
-          cl.exe /nologo /O2 /c lpp_runtime.c "/Fo:$work\lpp_runtime.obj" || exit /b 1
+          cl.exe /nologo /std:c11 /O2 /c lpp_runtime.c "/Fo:$work\lpp_runtime.obj" || exit /b 1
           set LPP_AOT=1
           target\release\lpp.exe "$work\arith.lpp" || exit /b 1
           target\release\lpp-link.exe inspect "$work\arith.obj" > "$work\inspect.txt" || exit /b 1
@@ -540,7 +540,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [macos-14, macos-15-intel]
+        runner: [macos-latest, macos-15-intel]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 25
     steps:
@@ -583,7 +583,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - name: Build driver
-        run: cargo build --locked -p lpp
+        run: cargo build --locked -p lpp -p lpp-runtime
       - name: ASan/LSan/UBSan over ownership-critical corpus
         run: |
           set -eu
