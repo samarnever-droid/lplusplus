@@ -3,16 +3,11 @@
 //! with cwd = the workspace root, staging is idempotent and prunes only
 //! Keel-managed entries.
 
+mod common;
+
 use std::path::Path;
 
-#[cfg(unix)]
-fn make_executable(p: &Path) {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o755)).unwrap();
-}
-
-#[cfg(not(unix))]
-fn make_executable(_p: &Path) {}
+use common::{FakeMode, install_fake_lpp, normalize_slashes};
 
 fn temp(tag: &str) -> std::path::PathBuf {
     let d = std::env::temp_dir().join(format!("lpp-keel-deplink-{tag}-{}", std::process::id()));
@@ -27,18 +22,7 @@ fn pkg_manifest(name: &str, deps: &str) -> String {
 
 /// A fake `lpp` that records its cwd and args per invocation.
 fn fake_lpp(root: &Path) -> std::path::PathBuf {
-    let p = root.join("lpp-fake");
-    std::fs::write(
-        &p,
-        format!(
-            "#!/bin/sh\necho \"PWD $(pwd)\" >> {}\necho \"ARGS $*\" >> {}\n",
-            root.join("marks.txt").display(),
-            root.join("marks.txt").display()
-        ),
-    )
-    .unwrap();
-    make_executable(&p);
-    p
+    install_fake_lpp(root, FakeMode::PwdArgs, &root.join("marks.txt"))
 }
 
 /// app (binary) → calc (lib) path dep.
@@ -95,24 +79,34 @@ fn path_dep_is_staged_and_lpp_runs_from_the_root() {
     assert!(doc.contains("entry = \"src/lib.lpp\""), "{doc}");
     assert!(doc.contains("managed = \"keel\""), "{doc}");
     // The src symlink points at the member's real src dir.
-    let link = root.join(".lpp_packages/calc/src");
     #[cfg(unix)]
-    assert_eq!(
-        std::fs::read_link(&link).unwrap(),
-        root.join("packages/calc/src")
-    );
+    {
+        let link = root.join(".lpp_packages/calc/src");
+        assert_eq!(
+            std::fs::read_link(&link).unwrap(),
+            root.join("packages/calc/src")
+        );
+    }
     // lpp ran with cwd = the workspace root.
     let marks = std::fs::read_to_string(root.join("marks.txt")).unwrap();
+    let expected_root = root.canonicalize().unwrap();
     assert!(
-        marks.contains(&format!("PWD {}", root.display())),
-        "lpp must run from the workspace root:\n{marks}"
+        marks.lines().any(|line| {
+            line.strip_prefix("PWD ")
+                .and_then(|pwd| Path::new(pwd).canonicalize().ok())
+                .as_ref()
+                == Some(&expected_root)
+        }),
+        "lpp must run from the workspace root ({}):\n{marks}",
+        expected_root.display()
     );
     // ...and the dep still builds before the dependent.
-    let calc = marks
+    let marks_norm = normalize_slashes(&marks);
+    let calc = marks_norm
         .lines()
         .position(|l| l.contains("packages/calc/src/lib.lpp"))
         .unwrap();
-    let app = marks
+    let app = marks_norm
         .lines()
         .position(|l| l.contains("packages/app/src/main.lpp"))
         .unwrap();

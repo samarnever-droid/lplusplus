@@ -40,36 +40,42 @@ pub fn ownership_plan_snapshot(plan: &OwnershipPlan) -> String {
     let mut out = String::from("ownership-plan v1\n");
     let stats = &plan.stats;
     out.push_str(&format!(
-        "stats: cells={} frame={} owned={} shared={} nodes={} shared-nodes={} cycles={} arenas={}\n",
+        "stats: cells={} frame={} owned={} shared={} concurrent-cells={} nodes={} shared-nodes={} concurrent-nodes={} cycles={} arenas={}\n",
         stats.cell_count,
         stats.frame_cell_count,
         stats.owned_cell_count,
         stats.shared_cell_count,
+        stats.concurrent_cell_count,
         stats.node_count,
         stats.shared_node_count,
+        stats.concurrent_node_count,
         stats.cycle_count,
         stats.arena_count,
     ));
 
     out.push_str("cells:\n");
     for cell in &plan.cells {
+        let conc_tag = if cell.concurrent { " concurrent" } else { "" };
         out.push_str(&format!(
-            "  fn({:?}) local({:?}) {}\n",
+            "  fn({:?}) local({:?}) {}{}\n",
             cell.function,
             cell.local,
-            placement_name(cell.placement)
+            placement_name(cell.placement),
+            conc_tag,
         ));
     }
 
     out.push_str("nodes:\n");
     for node in &plan.nodes {
         let contains: Vec<String> = node.contains.iter().map(|id| id.0.to_string()).collect();
+        let conc_tag = if node.concurrent { " concurrent" } else { "" };
         out.push_str(&format!(
-            "  node({}) {} ty({:?}) {} [{}]\n",
+            "  node({}) {} ty({:?}) {}{} [{}]\n",
             node.id.0,
             node_name(&node.node),
             node.ty,
             strategy_name(node.strategy),
+            conc_tag,
             contains.join(", "),
         ));
     }

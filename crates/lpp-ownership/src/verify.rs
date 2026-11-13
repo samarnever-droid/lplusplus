@@ -14,7 +14,7 @@ use lpp_mir::{
     BasicBlockId, InstructionKind, MirAggregateId, MirFunctionId, MirFunctionKind, MirLocalId,
     MirLocalKind, MirProgram, Operand, Rvalue, Terminator,
 };
-use lpp_types::{TypeId, TypeInterner, TypeKind};
+use lpp_types::{BuiltinId, PrimitiveType, TypeId, TypeInterner, TypeKind};
 
 use crate::plan::{
     ContainmentNode, OwnershipPlan, TypeStrategy, ValuePlacement, compute_ownership_plan,
@@ -52,12 +52,21 @@ pub enum OwnershipPlanErrorKind {
         function: MirFunctionId,
         local: MirLocalId,
     },
+    /// A cell's concurrency flag contradicts the recomputed spawn/task
+    /// reachability analysis.
+    InvalidCellConcurrency {
+        function: MirFunctionId,
+        local: MirLocalId,
+    },
     /// The plan's node sequence deviates from the stable emission order.
     InvalidNodeOrder { position: usize },
     /// A node's containment edges differ from the recomputed graph.
     InvalidNodeEdges { position: usize },
     /// A node's strategy differs from the recomputed cycle partition.
     InvalidNodeStrategy { position: usize },
+    /// A node's concurrency flag contradicts the recomputed spawn/task
+    /// reachability analysis.
+    InvalidNodeConcurrency { position: usize },
     /// An arena the recomputation requires is absent.
     MissingArena { function: MirFunctionId },
     /// An arena with no frame cells is present.
@@ -93,9 +102,13 @@ impl std::error::Error for OwnershipPlanError {}
 struct Expectation {
     /// Expected placement per `(function, local)`.
     cells: BTreeMap<(MirFunctionId, MirLocalId), ValuePlacement>,
+    /// Expected concurrent cells (`(function, local)` reaching spawn/task).
+    concurrent_cells: BTreeSet<(MirFunctionId, MirLocalId)>,
     /// Expected node sequence in stable emission order: (kind, ty,
     /// expected edges, cycle member?).
     nodes: Vec<(ContainmentNode, TypeId, Vec<usize>, bool)>,
+    /// Expected `concurrent` flag per node position.
+    concurrent_nodes: Vec<bool>,
     /// Expected arena per function, in function id order.
     arenas: BTreeMap<MirFunctionId, Vec<MirLocalId>>,
 }
@@ -496,12 +509,636 @@ impl<'types> DfsCollector<'types> {
             }
         }
 
+        let (concurrent_cells, concurrent_nodes) =
+            recompute_concurrency(program, self.types, &nodes);
+
         Ok(Expectation {
             cells,
+            concurrent_cells,
             nodes,
+            concurrent_nodes,
             arenas,
         })
     }
+}
+
+fn collect_blocks_dfs(
+    program: &MirProgram,
+    block_id: BasicBlockId,
+    seen: &mut BTreeSet<BasicBlockId>,
+) {
+    if !seen.insert(block_id) {
+        return;
+    }
+    let Some(block) = program.block(block_id) else {
+        return;
+    };
+    match block.terminator {
+        Terminator::Goto(target) => collect_blocks_dfs(program, target, seen),
+        Terminator::Branch {
+            then_block,
+            else_block,
+            ..
+        } => {
+            collect_blocks_dfs(program, then_block, seen);
+            collect_blocks_dfs(program, else_block, seen);
+        }
+        Terminator::SwitchEnum { targets, .. } => {
+            for &target in program.switch_targets(targets) {
+                collect_blocks_dfs(program, target, seen);
+            }
+        }
+        Terminator::Return(_) | Terminator::Unreachable => {}
+    }
+}
+
+fn verify_builtin_name(builtin: BuiltinId) -> &'static str {
+    let name = builtin.descriptor().name;
+    name.strip_prefix("lpp_").unwrap_or(name)
+}
+
+fn verify_is_tracked_type(types: &TypeInterner, ty: TypeId) -> bool {
+    matches!(
+        types.kind(ty),
+        TypeKind::Function { .. }
+            | TypeKind::List(_)
+            | TypeKind::Slice(_)
+            | TypeKind::Task(_)
+            | TypeKind::Tuple(_)
+            | TypeKind::Map { .. }
+            | TypeKind::Nominal { .. }
+            | TypeKind::Primitive(PrimitiveType::String)
+    )
+}
+
+fn verify_is_reader_builtin(name: &str) -> bool {
+    matches!(
+        name,
+        "list_get"
+            | "get"
+            | "list_pop"
+            | "map_get"
+            | "map_get_str"
+            | "map_get_float"
+            | "map_get_str_float"
+            | "slice"
+            | "slice_get"
+    )
+}
+
+fn verify_is_insert_builtin(name: &str) -> bool {
+    matches!(
+        name,
+        "list_push"
+            | "list_set"
+            | "list_insert"
+            | "list_extend"
+            | "map_put"
+            | "map_put_str"
+            | "map_put_float"
+            | "map_put_str_float"
+    )
+}
+
+fn mark_node_concurrent_dfs(
+    nodes: &[(ContainmentNode, TypeId, Vec<usize>, bool)],
+    idx: usize,
+    concurrent_nodes: &mut [bool],
+) {
+    if concurrent_nodes[idx] {
+        return;
+    }
+    concurrent_nodes[idx] = true;
+    for &child in &nodes[idx].2 {
+        mark_node_concurrent_dfs(nodes, child, concurrent_nodes);
+    }
+}
+
+fn recompute_concurrency(
+    program: &MirProgram,
+    types: &TypeInterner,
+    nodes: &[(ContainmentNode, TypeId, Vec<usize>, bool)],
+) -> (BTreeSet<(MirFunctionId, MirLocalId)>, Vec<bool>) {
+    let mut blocks_by_fn: BTreeMap<MirFunctionId, BTreeSet<BasicBlockId>> = BTreeMap::new();
+    let mut returns_by_fn: BTreeMap<MirFunctionId, Vec<Operand>> = BTreeMap::new();
+    for (fn_id, func) in program.functions() {
+        let mut seen = BTreeSet::new();
+        collect_blocks_dfs(program, func.entry, &mut seen);
+        let mut rets = Vec::new();
+        for &bid in &seen {
+            if let Some(block) = program.block(bid)
+                && let Terminator::Return(Some(op)) = block.terminator
+            {
+                rets.push(op);
+            }
+        }
+        blocks_by_fn.insert(fn_id, seen);
+        returns_by_fn.insert(fn_id, rets);
+    }
+
+    let mut fn_targets: BTreeMap<(MirFunctionId, MirLocalId), BTreeSet<MirFunctionId>> =
+        BTreeMap::new();
+    let resolve = |targets: &BTreeMap<(MirFunctionId, MirLocalId), BTreeSet<MirFunctionId>>,
+                   fn_id: MirFunctionId,
+                   op: Operand|
+     -> Vec<MirFunctionId> {
+        match op {
+            Operand::Function(cid) => vec![cid],
+            Operand::Copy(local) => {
+                if let Some(set) = targets.get(&(fn_id, local))
+                    && !set.is_empty()
+                {
+                    return set.iter().copied().collect();
+                }
+                let Some(mir_local) = program.local(local) else {
+                    return Vec::new();
+                };
+                program
+                    .functions()
+                    .filter(|(_, f)| f.ty == mir_local.ty)
+                    .map(|(id, _)| id)
+                    .collect()
+            }
+            _ => Vec::new(),
+        }
+    };
+
+    loop {
+        let mut changed = false;
+        for (&fn_id, blocks) in &blocks_by_fn {
+            for &bid in blocks {
+                let Some(block) = program.block(bid) else {
+                    continue;
+                };
+                for &iid in program.block_instructions(block) {
+                    let Some(inst) = program.instruction(iid) else {
+                        continue;
+                    };
+                    let InstructionKind::Assign { target, value } = inst.kind else {
+                        continue;
+                    };
+                    match value {
+                        Rvalue::MakeClosure { function, .. }
+                        | Rvalue::Use(Operand::Function(function)) => {
+                            changed |= fn_targets
+                                .entry((fn_id, target))
+                                .or_default()
+                                .insert(function);
+                        }
+                        Rvalue::Use(Operand::Copy(src)) => {
+                            if let Some(srcs) = fn_targets.get(&(fn_id, src)).cloned() {
+                                let dst = fn_targets.entry((fn_id, target)).or_default();
+                                for cid in srcs {
+                                    changed |= dst.insert(cid);
+                                }
+                            }
+                        }
+                        Rvalue::Call { callee, .. } => {
+                            for cid in resolve(&fn_targets, fn_id, callee) {
+                                if let Some(rets) = returns_by_fn.get(&cid) {
+                                    for &ret_op in rets {
+                                        match ret_op {
+                                            Operand::Function(f) => {
+                                                changed |= fn_targets
+                                                    .entry((fn_id, target))
+                                                    .or_default()
+                                                    .insert(f);
+                                            }
+                                            Operand::Copy(ret_l) => {
+                                                if let Some(srcs) =
+                                                    fn_targets.get(&(cid, ret_l)).cloned()
+                                                {
+                                                    let dst = fn_targets
+                                                        .entry((fn_id, target))
+                                                        .or_default();
+                                                    for f in srcs {
+                                                        changed |= dst.insert(f);
+                                                    }
+                                                }
+                                            }
+                                            _ => {}
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    let mut reaches_spawn: BTreeSet<(MirFunctionId, MirLocalId)> = BTreeSet::new();
+    let mut spawned_callables: BTreeSet<MirFunctionId> = BTreeSet::new();
+
+    for (&fn_id, blocks) in &blocks_by_fn {
+        for &bid in blocks {
+            let Some(block) = program.block(bid) else {
+                continue;
+            };
+            for &iid in program.block_instructions(block) {
+                let Some(inst) = program.instruction(iid) else {
+                    continue;
+                };
+                if let InstructionKind::Assign { target, value } = inst.kind {
+                    match value {
+                        Rvalue::Spawn(op) => {
+                            reaches_spawn.insert((fn_id, target));
+                            if let Operand::Copy(local) = op {
+                                reaches_spawn.insert((fn_id, local));
+                            }
+                            for cid in resolve(&fn_targets, fn_id, op) {
+                                spawned_callables.insert(cid);
+                            }
+                        }
+                        Rvalue::Builtin { builtin, arguments }
+                            if verify_builtin_name(builtin) == "thread_spawn" =>
+                        {
+                            for (pos, &op) in program.operands(arguments).iter().enumerate() {
+                                if let Operand::Copy(local) = op {
+                                    reaches_spawn.insert((fn_id, local));
+                                }
+                                if pos == 0 {
+                                    for cid in resolve(&fn_targets, fn_id, op) {
+                                        spawned_callables.insert(cid);
+                                    }
+                                } else if let Operand::Function(cid) = op {
+                                    spawned_callables.insert(cid);
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+
+    let local_ty = |local: MirLocalId| program.local(local).map(|l| l.ty);
+
+    loop {
+        let mut changed = false;
+        let current: Vec<MirFunctionId> = spawned_callables.iter().copied().collect();
+        for cid in current {
+            if let Some(func) = program.function(cid) {
+                let cap_count = program.function_captures(func).len();
+                let params = program.function_parameters(func);
+                for &cap in params.iter().take(cap_count) {
+                    changed |= reaches_spawn.insert((cid, cap));
+                }
+            }
+            if let Some(rets) = returns_by_fn.get(&cid) {
+                for &ret_op in rets {
+                    if let Operand::Copy(ret_l) = ret_op
+                        && local_ty(ret_l).is_some_and(|ty| verify_is_tracked_type(types, ty))
+                    {
+                        changed |= reaches_spawn.insert((cid, ret_l));
+                    }
+                }
+            }
+        }
+
+        for (&fn_id, blocks) in &blocks_by_fn {
+            for &bid in blocks {
+                let Some(block) = program.block(bid) else {
+                    continue;
+                };
+                for &iid in program.block_instructions(block) {
+                    let Some(inst) = program.instruction(iid) else {
+                        continue;
+                    };
+                    match inst.kind {
+                        InstructionKind::Assign { target, value } => {
+                            let target_reaches = reaches_spawn.contains(&(fn_id, target));
+                            match value {
+                                Rvalue::Use(Operand::Copy(src)) => {
+                                    if target_reaches
+                                        && local_ty(src).is_some_and(|ty| {
+                                            !matches!(
+                                                types.kind(ty),
+                                                TypeKind::Primitive(PrimitiveType::Void)
+                                            )
+                                        })
+                                    {
+                                        changed |= reaches_spawn.insert((fn_id, src));
+                                    }
+                                }
+                                Rvalue::Use(Operand::Function(cid)) => {
+                                    if target_reaches {
+                                        changed |= spawned_callables.insert(cid);
+                                    }
+                                }
+                                Rvalue::MakeClosure { function, captures } => {
+                                    let closure_spawned =
+                                        target_reaches || spawned_callables.contains(&function);
+                                    let cap_ops = program.operands(captures);
+                                    let callee_caps: &[MirLocalId] = program
+                                        .function(function)
+                                        .map(|f| {
+                                            let count = program.function_captures(f).len();
+                                            let params = program.function_parameters(f);
+                                            &params[..count.min(params.len())]
+                                        })
+                                        .unwrap_or(&[]);
+                                    if closure_spawned {
+                                        changed |= spawned_callables.insert(function);
+                                        for &op in cap_ops {
+                                            if let Operand::Copy(local) = op {
+                                                changed |= reaches_spawn.insert((fn_id, local));
+                                            }
+                                        }
+                                        for &fc in callee_caps {
+                                            changed |= reaches_spawn.insert((function, fc));
+                                        }
+                                    }
+                                    for (pos, &op) in cap_ops.iter().enumerate() {
+                                        let Some(&fc) = callee_caps.get(pos) else {
+                                            continue;
+                                        };
+                                        if let Operand::Copy(local) = op {
+                                            if reaches_spawn.contains(&(function, fc)) {
+                                                changed |= reaches_spawn.insert((fn_id, local));
+                                            }
+                                            if reaches_spawn.contains(&(fn_id, local)) {
+                                                changed |= reaches_spawn.insert((function, fc));
+                                            }
+                                        }
+                                    }
+                                }
+                                Rvalue::Tuple(ops)
+                                | Rvalue::List(ops)
+                                | Rvalue::ConstructStruct { fields: ops, .. }
+                                | Rvalue::ConstructVariant { fields: ops, .. } => {
+                                    if target_reaches {
+                                        for &op in program.operands(ops) {
+                                            if let Operand::Copy(local) = op
+                                                && local_ty(local).is_some_and(|ty| {
+                                                    verify_is_tracked_type(types, ty)
+                                                })
+                                            {
+                                                changed |= reaches_spawn.insert((fn_id, local));
+                                            }
+                                        }
+                                    }
+                                }
+                                Rvalue::Load(place_id) => {
+                                    if target_reaches
+                                        && local_ty(target)
+                                            .is_some_and(|ty| verify_is_tracked_type(types, ty))
+                                        && let Some(place) = program.place(place_id)
+                                    {
+                                        changed |= reaches_spawn.insert((fn_id, place.root));
+                                    }
+                                }
+                                Rvalue::Await(Operand::Copy(task)) => {
+                                    if target_reaches {
+                                        changed |= reaches_spawn.insert((fn_id, task));
+                                    }
+                                }
+                                Rvalue::Call { callee, arguments } => {
+                                    let args = program.operands(arguments);
+                                    for cid in resolve(&fn_targets, fn_id, callee) {
+                                        let formal_params: &[MirLocalId] = program
+                                            .function(cid)
+                                            .map(|f| {
+                                                let count = program.function_captures(f).len();
+                                                let params = program.function_parameters(f);
+                                                &params[count.min(params.len())..]
+                                            })
+                                            .unwrap_or(&[]);
+                                        for (pos, &op) in args.iter().enumerate() {
+                                            if let Operand::Copy(arg_l) = op
+                                                && let Some(&param) = formal_params.get(pos)
+                                                && reaches_spawn.contains(&(cid, param))
+                                            {
+                                                changed |= reaches_spawn.insert((fn_id, arg_l));
+                                            }
+                                        }
+                                        if target_reaches
+                                            && let Some(rets) = returns_by_fn.get(&cid)
+                                        {
+                                            for &ret_op in rets {
+                                                match ret_op {
+                                                    Operand::Copy(ret_l)
+                                                        if local_ty(ret_l).is_some_and(|ty| {
+                                                            verify_is_tracked_type(types, ty)
+                                                        }) =>
+                                                    {
+                                                        changed |=
+                                                            reaches_spawn.insert((cid, ret_l));
+                                                    }
+                                                    Operand::Function(ret_f) => {
+                                                        changed |= spawned_callables.insert(ret_f);
+                                                    }
+                                                    _ => {}
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                Rvalue::Builtin { builtin, arguments } => {
+                                    let bname = verify_builtin_name(builtin);
+                                    let args = program.operands(arguments);
+                                    if verify_is_reader_builtin(bname)
+                                        && target_reaches
+                                        && local_ty(target)
+                                            .is_some_and(|ty| verify_is_tracked_type(types, ty))
+                                        && let Some(&Operand::Copy(container)) = args.first()
+                                    {
+                                        changed |= reaches_spawn.insert((fn_id, container));
+                                    }
+                                    if verify_is_insert_builtin(bname)
+                                        && let Some(&Operand::Copy(container)) = args.first()
+                                        && reaches_spawn.contains(&(fn_id, container))
+                                    {
+                                        for &op in args.iter().skip(1) {
+                                            if let Operand::Copy(val) = op
+                                                && local_ty(val).is_some_and(|ty| {
+                                                    verify_is_tracked_type(types, ty)
+                                                })
+                                            {
+                                                changed |= reaches_spawn.insert((fn_id, val));
+                                            }
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                        InstructionKind::Store { place, value } => {
+                            if let Some(mir_place) = program.place(place)
+                                && reaches_spawn.contains(&(fn_id, mir_place.root))
+                                && let Operand::Copy(val) = value
+                                && local_ty(val).is_some_and(|ty| verify_is_tracked_type(types, ty))
+                            {
+                                changed |= reaches_spawn.insert((fn_id, val));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    let mut concurrent_cells = reaches_spawn;
+    loop {
+        let mut changed = false;
+        for (&fn_id, blocks) in &blocks_by_fn {
+            for &bid in blocks {
+                let Some(block) = program.block(bid) else {
+                    continue;
+                };
+                for &iid in program.block_instructions(block) {
+                    let Some(inst) = program.instruction(iid) else {
+                        continue;
+                    };
+                    let InstructionKind::Assign { target, value } = inst.kind else {
+                        continue;
+                    };
+                    match value {
+                        Rvalue::Use(Operand::Copy(src)) => {
+                            if concurrent_cells.contains(&(fn_id, src))
+                                && local_ty(target).is_some_and(|ty| {
+                                    !matches!(
+                                        types.kind(ty),
+                                        TypeKind::Primitive(PrimitiveType::Void)
+                                    )
+                                })
+                            {
+                                changed |= concurrent_cells.insert((fn_id, target));
+                            }
+                        }
+                        Rvalue::Load(place_id) => {
+                            if let Some(place) = program.place(place_id)
+                                && concurrent_cells.contains(&(fn_id, place.root))
+                                && local_ty(target)
+                                    .is_some_and(|ty| verify_is_tracked_type(types, ty))
+                            {
+                                changed |= concurrent_cells.insert((fn_id, target));
+                            }
+                        }
+                        Rvalue::Builtin { builtin, arguments } => {
+                            let bname = verify_builtin_name(builtin);
+                            let args = program.operands(arguments);
+                            if verify_is_reader_builtin(bname)
+                                && let Some(&Operand::Copy(container)) = args.first()
+                                && concurrent_cells.contains(&(fn_id, container))
+                                && local_ty(target)
+                                    .is_some_and(|ty| verify_is_tracked_type(types, ty))
+                            {
+                                changed |= concurrent_cells.insert((fn_id, target));
+                            }
+                        }
+                        Rvalue::MakeClosure { function, captures } => {
+                            let cap_ops = program.operands(captures);
+                            let callee_caps: &[MirLocalId] = program
+                                .function(function)
+                                .map(|f| {
+                                    let count = program.function_captures(f).len();
+                                    let params = program.function_parameters(f);
+                                    &params[..count.min(params.len())]
+                                })
+                                .unwrap_or(&[]);
+                            for (pos, &op) in cap_ops.iter().enumerate() {
+                                let Some(&fc) = callee_caps.get(pos) else {
+                                    continue;
+                                };
+                                if let Operand::Copy(local) = op
+                                    && concurrent_cells.contains(&(fn_id, local))
+                                {
+                                    changed |= concurrent_cells.insert((function, fc));
+                                }
+                            }
+                        }
+                        Rvalue::Call { callee, arguments } => {
+                            let args = program.operands(arguments);
+                            for cid in resolve(&fn_targets, fn_id, callee) {
+                                let formal_params: &[MirLocalId] = program
+                                    .function(cid)
+                                    .map(|f| {
+                                        let count = program.function_captures(f).len();
+                                        let params = program.function_parameters(f);
+                                        &params[count.min(params.len())..]
+                                    })
+                                    .unwrap_or(&[]);
+                                for (pos, &op) in args.iter().enumerate() {
+                                    if let Operand::Copy(arg_l) = op
+                                        && concurrent_cells.contains(&(fn_id, arg_l))
+                                        && local_ty(arg_l)
+                                            .is_some_and(|ty| verify_is_tracked_type(types, ty))
+                                        && let Some(&param) = formal_params.get(pos)
+                                    {
+                                        changed |= concurrent_cells.insert((cid, param));
+                                    }
+                                }
+                                if local_ty(target)
+                                    .is_some_and(|ty| verify_is_tracked_type(types, ty))
+                                    && let Some(rets) = returns_by_fn.get(&cid)
+                                {
+                                    for &ret_op in rets {
+                                        if let Operand::Copy(ret_l) = ret_op
+                                            && concurrent_cells.contains(&(cid, ret_l))
+                                        {
+                                            changed |= concurrent_cells.insert((fn_id, target));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Rvalue::Await(Operand::Copy(task)) => {
+                            if concurrent_cells.contains(&(fn_id, task))
+                                && local_ty(target)
+                                    .is_some_and(|ty| verify_is_tracked_type(types, ty))
+                            {
+                                changed |= concurrent_cells.insert((fn_id, target));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    let mut concurrent_non_callable_tys: BTreeSet<TypeId> = BTreeSet::new();
+    for &(fn_id, local) in &concurrent_cells {
+        if let Some(mir_local) = program.local(local) {
+            if matches!(types.kind(mir_local.ty), TypeKind::Function { .. }) {
+                for cid in resolve(&fn_targets, fn_id, Operand::Copy(local)) {
+                    spawned_callables.insert(cid);
+                }
+            } else {
+                concurrent_non_callable_tys.insert(mir_local.ty);
+            }
+        }
+    }
+
+    let mut concurrent_nodes = vec![false; nodes.len()];
+    let mut initial_true = Vec::new();
+    for (idx, (kind, ty, _, _)) in nodes.iter().enumerate() {
+        let is_conc = match kind {
+            ContainmentNode::Callable(cid) => spawned_callables.contains(cid),
+            _ => concurrent_non_callable_tys.contains(ty),
+        };
+        if is_conc {
+            initial_true.push(idx);
+        }
+    }
+    for idx in initial_true {
+        mark_node_concurrent_dfs(nodes, idx, &mut concurrent_nodes);
+    }
+
+    (concurrent_cells, concurrent_nodes)
 }
 
 fn container_kind(kind: TypeKind) -> usize {
@@ -711,6 +1348,16 @@ pub fn verify_ownership_plan(
                 origin: None,
             });
         }
+        let expected_conc = expectation.concurrent_cells.contains(&key);
+        if cell.concurrent != expected_conc {
+            errors.push(OwnershipPlanError {
+                kind: OwnershipPlanErrorKind::InvalidCellConcurrency {
+                    function: cell.function,
+                    local: cell.local,
+                },
+                origin: None,
+            });
+        }
     }
     for (&(function, local), _) in &expectation.cells {
         if !seen_cells.contains(&(function, local)) {
@@ -750,6 +1397,17 @@ pub fn verify_ownership_plan(
                 if actual_shared != *expected_shared {
                     errors.push(OwnershipPlanError {
                         kind: OwnershipPlanErrorKind::InvalidNodeStrategy { position },
+                        origin: None,
+                    });
+                }
+                let expected_conc = expectation
+                    .concurrent_nodes
+                    .get(position)
+                    .copied()
+                    .unwrap_or(false);
+                if node.concurrent != expected_conc {
+                    errors.push(OwnershipPlanError {
+                        kind: OwnershipPlanErrorKind::InvalidNodeConcurrency { position },
                         origin: None,
                     });
                 }

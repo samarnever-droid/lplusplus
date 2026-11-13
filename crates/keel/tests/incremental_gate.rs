@@ -1,16 +1,11 @@
 //! Gate: `keel build` incremental builds (fingerprint skip) and
 //! `keel cache clean` (docs/rewrite/DELTA.md).
 
+mod common;
+
 use std::path::Path;
 
-#[cfg(unix)]
-fn make_executable(p: &Path) {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o755)).unwrap();
-}
-
-#[cfg(not(unix))]
-fn make_executable(_p: &Path) {}
+use common::{FakeMode, install_fake_lpp};
 
 fn temp(tag: &str) -> std::path::PathBuf {
     let d = std::env::temp_dir().join(format!("lpp-keel-incr-{tag}-{}", std::process::id()));
@@ -49,17 +44,7 @@ fn diamond(root: &Path) {
 
 /// A fake `lpp`: records every invocation and creates its `-o` artifact.
 fn fake_lpp(root: &Path) -> std::path::PathBuf {
-    let p = root.join("lpp-fake");
-    std::fs::write(
-        &p,
-        format!(
-            "#!/bin/sh\necho \"INVOKE $*\" >> {}\n\nout=\"\"\nprev=\"\"\nfor a in \"$@\"; do\n  if [ \"$prev\" = \"-o\" ]; then out=\"$a\"; fi\n  prev=\"$a\"\ndone\nif [ -n \"$out\" ]; then mkdir -p \"$(dirname \"$out\")\" && echo built > \"$out\"; fi\n",
-            root.join("args.txt").display()
-        ),
-    )
-    .unwrap();
-    make_executable(&p);
-    p
+    install_fake_lpp(root, FakeMode::Incremental, &root.join("args.txt"))
 }
 
 fn build(root: &Path, fake: &Path) {
@@ -83,7 +68,12 @@ fn unchanged_workspace_is_fully_cached_on_rebuild() {
     build(&root, &fake);
     let first = invocation_count(&root);
     assert_eq!(first, 4, "first build compiles all 4 members");
-    assert!(root.join("target").join("app").exists(), "artifact exists");
+    assert!(
+        root.join("target")
+            .join(format!("app{}", std::env::consts::EXE_SUFFIX))
+            .exists(),
+        "artifact exists"
+    );
 
     // Nothing changed: rebuild invokes lpp ZERO times.
     build(&root, &fake);
@@ -110,14 +100,17 @@ fn deleting_an_artifact_forces_only_that_rebuild() {
     let after_first = invocation_count(&root);
 
     // Simulate a broken/missing artifact: fingerprint matches, file gone.
-    std::fs::remove_file(root.join("target").join("b")).unwrap();
+    let b_artifact = root
+        .join("target")
+        .join(format!("b{}", std::env::consts::EXE_SUFFIX));
+    std::fs::remove_file(&b_artifact).unwrap();
     build(&root, &fake);
     assert_eq!(
         invocation_count(&root),
         after_first + 1,
         "only the missing artifact's member re-builds"
     );
-    assert!(root.join("target").join("b").exists());
+    assert!(b_artifact.exists());
     let _ = std::fs::remove_dir_all(&root);
 }
 

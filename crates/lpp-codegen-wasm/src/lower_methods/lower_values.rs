@@ -76,6 +76,7 @@ impl<'a> FnLower<'a> {
                 fb.i32c(16);
                 fb.i32c(destroy_slot as i64);
                 self.call_helper(fb, H::ArcAlloc)?;
+                crate::cycle::maybe_mark_closure_collectible(self.env, fb);
                 // Keep the capsule on the stack (the caller owns it);
                 // the scratch only addresses the fill-in stores.
                 fb.t(capsule);
@@ -492,6 +493,7 @@ impl<'a> FnLower<'a> {
         let list = fb.scratch(Val::I32);
         fb.i32c(if ec == ElementClass::Ptr { 1 } else { 0 });
         self.call_helper(fb, H::ListNew)?;
+        crate::cycle::maybe_mark_collectible(self.env, fb, target_ty);
         fb.s(list);
         for operand in self.env.program.operands(*items) {
             fb.g(list);
@@ -535,6 +537,7 @@ impl<'a> FnLower<'a> {
         fb.i32c((16 + values.len() * 8) as i64);
         fb.i32c(drop_slot as i64);
         self.call_helper(fb, H::ArcAlloc)?;
+        crate::cycle::maybe_mark_collectible(self.env, fb, target_ty);
         fb.s(tuple);
         let mut managed_mask = 0u64;
         for (index, (&ty, value)) in element_types.iter().zip(values.iter()).enumerate() {
@@ -687,6 +690,7 @@ impl<'a> FnLower<'a> {
         fb.i32c(24);
         fb.i32c(tuple_slot as i64);
         self.call_helper(fb, H::ArcAlloc)?;
+        crate::cycle::maybe_mark_task_collectible(self.env, fb);
         let tuple = fb.scratch(Val::I32);
         fb.t(tuple);
         fb.g(tuple).i64c(if is_closure { 1 } else { 0 }).store64(0);
@@ -742,10 +746,17 @@ impl<'a> FnLower<'a> {
             .drop_slot
             .get(&aggregate)
             .ok_or_else(|| unsupported("unregistered drop slot", Some(self.fn_id)))?;
+        let target_ty = self
+            .env
+            .program
+            .aggregate(aggregate)
+            .ok_or_else(|| unsupported("missing aggregate", Some(self.fn_id)))?
+            .ty;
         let ptr = fb.scratch(Val::I32);
         fb.i32c(layout.total_size as i64);
         fb.i32c(drop_slot as i64);
         self.call_helper(fb, H::ArcAlloc)?;
+        crate::cycle::maybe_mark_collectible(self.env, fb, target_ty);
         fb.s(ptr);
         if let Some(ordinal) = tag {
             // The i32 tag at offset 0 (bytes 4..8 stay the padding of

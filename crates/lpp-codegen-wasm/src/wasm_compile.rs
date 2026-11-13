@@ -37,6 +37,12 @@ pub(super) fn compile_module(
         // bump heap without any aggregate type in the program.
         || plan.needs.contains(&H::Alloc);
     let list_drop_slot = plan.has_list.then(|| (aggregates.len() + 1) as u32);
+    let shared_types = if has_heap {
+        crate::cycle::compute_shared_types(program, types, &aggregates)?
+    } else {
+        std::collections::BTreeSet::new()
+    };
+    let has_cycles = has_heap && !shared_types.is_empty();
 
     // Imports in deterministic order: output, input, then process exit.
     let mut import_fields: Vec<&str> = Vec::new();
@@ -179,6 +185,10 @@ pub(super) fn compile_module(
         proc_exit_import_idx: proc_exit_idx,
         dispatch_table: if has_heap { 1 } else { 0 },
         value_origins: plan.value_origins,
+        shared_types,
+        mark_collectible_idx: None,
+        note_root_idx: None,
+        collect_cycles_idx: None,
     };
 
     // Lowered functions, in stable MirFunctionId order (async
@@ -284,12 +294,33 @@ pub(super) fn compile_module(
         H::Cos,
     ]
     .into_iter()
-    .filter(|h| plan.needs.contains(h))
+    .filter(|h| {
+        plan.needs.contains(h) || (has_cycles && matches!(h, H::ArcAlloc | H::Retain | H::Release))
+    })
     .collect();
     for (pos, h) in helpers.iter().enumerate() {
         env.helper_index.insert(*h, base + user_count + pos as u32);
     }
-    let start_index = base + user_count + helpers.len() as u32;
+    let runtime_base_idx = base + user_count + helpers.len() as u32;
+    let cycle_indices = has_cycles.then(|| {
+        let indices = crate::cycle::CycleFnIndices::compute(
+            runtime_base_idx,
+            aggregates.len(),
+            plan.has_list,
+            env.env_drop_slot.len(),
+            env.closure_destroy_slot.is_some(),
+            env.task_drop_slot.is_some(),
+            env.tuple_drop_slot.is_some(),
+        );
+        env.mark_collectible_idx = Some(indices.mark_collectible);
+        env.note_root_idx = Some(indices.note_root);
+        env.collect_cycles_idx = Some(indices.collect_cycles);
+        indices
+    });
+    let start_index = runtime_base_idx
+        + cycle_indices
+            .as_ref()
+            .map_or(0, |indices| indices.fn_count());
 
     // Memory size (at least the pool; the heap grows at runtime).
     let min_pages = pool_end.div_ceil(65536).max(1);
@@ -395,15 +426,20 @@ pub(super) fn compile_module(
         .copied()
         .unwrap_or(fd_write_idx);
     for &h in &helpers {
-        let (params, results, extra, body) = lower_helper(
-            &env,
-            h,
-            fd_helper_idx,
-            fd_write_idx,
-            fd_read_idx,
-            proc_exit_idx,
-            &import_index,
-        )?;
+        let (params, results, extra, body) =
+            if has_cycles && matches!(h, H::ArcAlloc | H::Retain | H::Release) {
+                crate::cycle::lower_arc_helper(&env, h)?
+            } else {
+                lower_helper(
+                    &env,
+                    h,
+                    fd_helper_idx,
+                    fd_write_idx,
+                    fd_read_idx,
+                    proc_exit_idx,
+                    &import_index,
+                )?
+            };
         funcs.push(Func {
             name: None,
             params,
@@ -411,6 +447,16 @@ pub(super) fn compile_module(
             extra,
             body,
         });
+    }
+    if let Some(indices) = &cycle_indices {
+        crate::cycle::emit_cycle_runtime_and_traces(
+            &env,
+            indices,
+            &aggregates,
+            &plan.closures,
+            base,
+            &mut funcs,
+        )?;
     }
     // `_start`
     {
@@ -485,6 +531,12 @@ pub(super) fn compile_module(
             } else {
                 fb.op(op::I32_WRAP_I64);
             }
+        }
+        if let Some(collect_idx) = env.collect_cycles_idx {
+            let exit_code = fb.scratch(Val::I32);
+            fb.s(exit_code);
+            fb.call(collect_idx);
+            fb.g(exit_code);
         }
         fb.call(proc_exit_idx);
         // The async drain allocates scratch locals (tuple/task/word);
@@ -811,14 +863,22 @@ pub(super) fn compile_module(
     // globals 1..=27 and are emitted only in heap-using modules.
     let mut gsec = Vec::new();
     if has_heap {
-        uleb(&mut gsec, 1 + ARC_FREE_BIN_COUNT as u64);
+        let extra_cycle_globals = if has_cycles {
+            crate::cycle::CYCLE_GLOBAL_COUNT
+        } else {
+            0
+        };
+        uleb(
+            &mut gsec,
+            1 + ARC_FREE_BIN_COUNT as u64 + extra_cycle_globals as u64,
+        );
         gsec.push(0x7f); // heap pointer: i32
         gsec.push(0x01); // mutable
         gsec.push(0x41); // i32.const
         sleb(&mut gsec, heap_start as i64);
         gsec.push(0x0b); // end
-        for _ in 0..ARC_FREE_BIN_COUNT {
-            gsec.push(0x7f); // free-list head: i32
+        for _ in 0..(ARC_FREE_BIN_COUNT + extra_cycle_globals) {
+            gsec.push(0x7f); // free-list head / collector state: i32
             gsec.push(0x01); // mutable
             gsec.push(0x41);
             sleb(&mut gsec, 0);

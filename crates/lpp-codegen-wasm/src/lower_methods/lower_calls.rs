@@ -157,6 +157,7 @@ impl<'a> FnLower<'a> {
         fb.i32c(16 + 8 * args.len() as i64);
         fb.i32c(tuple_slot as i64);
         self.call_helper(fb, H::ArcAlloc)?;
+        crate::cycle::maybe_mark_task_collectible(self.env, fb);
         let tuple = fb.scratch(Val::I32);
         fb.t(tuple);
         fb.g(tuple).i64c(mask).store64(0);
@@ -236,6 +237,7 @@ impl<'a> FnLower<'a> {
         // TaskNew returns the node pointer as an i64 word; narrow
         // for the wasm ABI.
         fb.op(op::I32_WRAP_I64);
+        crate::cycle::maybe_mark_task_collectible(self.env, fb);
         Ok(Class::Ptr)
     }
 
@@ -378,6 +380,7 @@ impl<'a> FnLower<'a> {
             fb.i32c((8 * count) as i64);
             fb.i32c(env_dtor as i64);
             self.call_helper(fb, H::ArcAlloc)?;
+            crate::cycle::maybe_mark_closure_collectible(self.env, fb);
             fb.s(ptr);
             let values = self.env.program.operands(*captures);
             if values.len() != capture_locals.len() {
@@ -401,6 +404,7 @@ impl<'a> FnLower<'a> {
         fb.i32c(16);
         fb.i32c(destroy_slot as i64);
         self.call_helper(fb, H::ArcAlloc)?;
+        crate::cycle::maybe_mark_closure_collectible(self.env, fb);
         fb.s(capsule);
         let code = *self
             .env

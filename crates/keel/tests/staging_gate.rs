@@ -2,20 +2,14 @@
 //! path + registry deps; registry artifacts are verified against the lock.
 //! Contract: DEP_LINKING.md (slice 11 section).
 
+mod common;
+
 use std::path::Path;
 use std::process::Command;
 
+use common::{FakeMode, install_fake_lpp};
 use lpp_pm::Registry;
 use lpp_pm::index::{DepSpec, IndexEntry, VersionEntry};
-
-#[cfg(unix)]
-fn make_executable(p: &Path) {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o755)).unwrap();
-}
-
-#[cfg(not(unix))]
-fn make_executable(_p: &Path) {}
 
 fn temp(tag: &str) -> std::path::PathBuf {
     let d = std::env::temp_dir().join(format!("lpp-keel-stage-{tag}-{}", std::process::id()));
@@ -26,17 +20,7 @@ fn temp(tag: &str) -> std::path::PathBuf {
 
 /// A fake `lpp` that records its cwd + args for every invocation.
 fn fake_lpp(root: &Path) -> std::path::PathBuf {
-    let p = root.join("lpp-fake");
-    std::fs::write(
-        &p,
-        format!(
-            "#!/bin/sh\nprintf '%s\\n' \"$(pwd)|$@\" >> {}\n",
-            root.join("calls.txt").display()
-        ),
-    )
-    .unwrap();
-    make_executable(&p);
-    p
+    install_fake_lpp(root, FakeMode::PwdPipeArgs, &root.join("calls.txt"))
 }
 
 fn git(cwd: &Path, args: &[&str]) {
@@ -467,8 +451,8 @@ fn test_run_stages_deps_and_runs_from_the_workspace_root() {
     let line = calls.lines().find(|l| l.contains("t1.lpp")).unwrap_or("");
     let cwd = line.split('|').next().unwrap_or("");
     assert_eq!(
-        cwd,
-        root.canonicalize().unwrap().to_string_lossy().as_ref(),
+        Path::new(cwd).canonicalize().unwrap(),
+        root.canonicalize().unwrap(),
         "test must run from the workspace root: {line}"
     );
     assert!(

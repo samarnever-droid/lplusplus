@@ -44,6 +44,7 @@
 #![allow(clippy::all, warnings)]
 
 mod analysis;
+mod cycle;
 mod encode;
 mod helper_body;
 mod lower_functions;
@@ -404,6 +405,14 @@ struct Env<'a> {
     dispatch_table: u8,
     /// 5D2b slice 3: function-value provenance (from the pre-scan).
     value_origins: BTreeMap<(MirFunctionId, MirLocalId), MirFunctionId>,
+    /// Cycle-capable (`Shared`) types requiring Bacon-Rajan cycle collection.
+    shared_types: std::collections::BTreeSet<TypeId>,
+    /// Module index of `lpp_arc_mark_collectible`, when cycle collection is active.
+    mark_collectible_idx: Option<u32>,
+    /// Module index of `lpp_cycle_note_root`, when cycle collection is active.
+    note_root_idx: Option<u32>,
+    /// Module index of `lpp_arc_collect_cycles`, when cycle collection is active.
+    collect_cycles_idx: Option<u32>,
 }
 
 /// Per-function lowering state (local-index map + dispatch-local slot).

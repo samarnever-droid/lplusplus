@@ -2,17 +2,12 @@
 //! path-dep DAG, CONCURRENT builds within a layer, one `Keel.lock` for the
 //! whole workspace (docs/rewrite/WORKSPACE.md).
 
+mod common;
+
 use std::path::Path;
 use std::process::Command;
 
-#[cfg(unix)]
-fn make_executable(p: &Path) {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o755)).unwrap();
-}
-
-#[cfg(not(unix))]
-fn make_executable(_p: &Path) {}
+use common::{FakeMode, install_fake_lpp, normalize_slashes};
 
 fn temp(tag: &str) -> std::path::PathBuf {
     let d = std::env::temp_dir().join(format!("lpp-keel-ws-{tag}-{}", std::process::id()));
@@ -83,33 +78,12 @@ fn diamond(root: &Path) {
 
 /// A fake `lpp` that appends one line per invocation.
 fn fake_lpp(root: &Path) -> std::path::PathBuf {
-    let p = root.join("lpp-fake");
-    std::fs::write(
-        &p,
-        format!(
-            "#!/bin/sh\nprintf '%s\\n' \"$@\" >> {}\n",
-            root.join("args.txt").display()
-        ),
-    )
-    .unwrap();
-    make_executable(&p);
-    p
+    install_fake_lpp(root, FakeMode::ArgsLines, &root.join("args.txt"))
 }
 
 /// A fake `lpp` that records START/END around a 0.5s "compile".
 fn slow_fake_lpp(root: &Path) -> std::path::PathBuf {
-    let p = root.join("lpp-fake");
-    std::fs::write(
-        &p,
-        format!(
-            "#!/bin/sh\necho \"START $1\" >> {}\nsleep 0.5\necho \"END $1\" >> {}\n",
-            root.join("marks.txt").display(),
-            root.join("marks.txt").display()
-        ),
-    )
-    .unwrap();
-    make_executable(&p);
-    p
+    install_fake_lpp(root, FakeMode::SlowMarks, &root.join("marks.txt"))
 }
 
 #[test]
@@ -127,8 +101,10 @@ fn build_runs_dependencies_before_dependents() {
     assert!(res.is_ok(), "build should succeed: {res:?}");
 
     let args = std::fs::read_to_string(root.join("args.txt")).unwrap();
+    let args_norm = normalize_slashes(&args);
     let line = |member: &str| {
-        args.lines()
+        args_norm
+            .lines()
             .position(|l| l.contains(&format!("{member}/src/main.lpp")))
             .unwrap_or_else(|| panic!("no invocation for {member}:\n{args}"))
     };
@@ -137,9 +113,17 @@ fn build_runs_dependencies_before_dependents() {
     assert!(line("b") < line("app"), "b must build before app:\n{args}");
     assert!(line("c") < line("app"), "c must build before app:\n{args}");
     // Multi-member workspaces share the root target/.
+    let expected_out = normalize_slashes(
+        &root
+            .canonicalize()
+            .unwrap()
+            .join("target")
+            .join(format!("app{}", std::env::consts::EXE_SUFFIX))
+            .to_string_lossy(),
+    );
     assert!(
-        args.contains(&format!("{}/target/app", root.display())),
-        "shared root target/ expected:\n{args}"
+        args_norm.contains(&expected_out),
+        "shared root target/ expected ({expected_out}):\n{args}"
     );
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -159,28 +143,18 @@ fn independent_members_build_concurrently_within_a_layer() {
     assert!(res.is_ok(), "build should succeed: {res:?}");
 
     let marks = std::fs::read_to_string(root.join("marks.txt")).unwrap();
+    let marks_norm = normalize_slashes(&marks);
+    let ws_root = normalize_slashes(&root.canonicalize().unwrap().to_string_lossy());
     let pos = |needle: &str| {
-        marks
+        marks_norm
             .lines()
             .position(|l| l == needle)
             .unwrap_or_else(|| panic!("missing mark '{needle}':\n{marks}"))
     };
-    let start_b = pos(&format!(
-        "START {root}/crates/b/src/main.lpp",
-        root = root.display()
-    ));
-    let end_b = pos(&format!(
-        "END {root}/crates/b/src/main.lpp",
-        root = root.display()
-    ));
-    let start_c = pos(&format!(
-        "START {root}/crates/c/src/main.lpp",
-        root = root.display()
-    ));
-    let end_c = pos(&format!(
-        "END {root}/crates/c/src/main.lpp",
-        root = root.display()
-    ));
+    let start_b = pos(&format!("START {ws_root}/crates/b/src/main.lpp"));
+    let end_b = pos(&format!("END {ws_root}/crates/b/src/main.lpp"));
+    let start_c = pos(&format!("START {ws_root}/crates/c/src/main.lpp"));
+    let end_c = pos(&format!("END {ws_root}/crates/c/src/main.lpp"));
     // b and c are independent (same layer): their "compile" windows overlap.
     assert!(
         start_b.min(start_c) < end_b.min(end_c) && start_b.max(start_c) < end_b.min(end_c),
@@ -224,11 +198,19 @@ fn workspace_members_and_graph_are_deterministic() {
     let workspace = keel::commands::workspace::discover(&root).unwrap();
 
     let members = keel::commands::workspace::render_members(&workspace);
-    assert!(members.starts_with(&format!("Workspace: {}\n", root.display())));
-    assert!(members.contains("  app @ 1.0.0 (apps/app)"), "{members}");
-    assert!(members.contains("  b @ 1.0.0 (crates/b)"), "{members}");
-    assert!(members.contains("  c @ 1.0.0 (crates/c)"), "{members}");
-    assert!(members.contains("  d @ 1.0.0 (crates/d)"), "{members}");
+    let ws_root = root.canonicalize().unwrap();
+    assert!(
+        members.starts_with(&format!("Workspace: {}\n", ws_root.display())),
+        "{members}"
+    );
+    let members_norm = normalize_slashes(&members);
+    assert!(
+        members_norm.contains("  app @ 1.0.0 (apps/app)"),
+        "{members}"
+    );
+    assert!(members_norm.contains("  b @ 1.0.0 (crates/b)"), "{members}");
+    assert!(members_norm.contains("  c @ 1.0.0 (crates/c)"), "{members}");
+    assert!(members_norm.contains("  d @ 1.0.0 (crates/d)"), "{members}");
 
     let graph = keel::commands::workspace::render_graph(&workspace);
     assert!(graph.contains("  app -> b, c"), "{graph}");

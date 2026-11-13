@@ -36,6 +36,7 @@ impl<'a> FnLower<'a> {
             },
         );
         self.call_helper(fb, H::ListNew)?;
+        crate::cycle::maybe_mark_collectible(self.env, fb, target_ty);
         Ok(Class::Ptr)
     }
 

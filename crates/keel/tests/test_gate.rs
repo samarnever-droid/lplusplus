@@ -1,16 +1,11 @@
 //! Gate: `keel test` runs every `tests/*.lpp` with `lpp <file> --run` and
 //! reports a pass/fail table (non-zero exit from the test = FAIL).
 
+mod common;
+
 use std::path::Path;
 
-#[cfg(unix)]
-fn make_executable(p: &Path) {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o755)).unwrap();
-}
-
-#[cfg(not(unix))]
-fn make_executable(_p: &Path) {}
+use common::{FakeMode, install_fake_lpp, normalize_slashes};
 
 fn temp(tag: &str) -> std::path::PathBuf {
     let d = std::env::temp_dir().join(format!("lpp-keel-test-{tag}-{}", std::process::id()));
@@ -22,17 +17,7 @@ fn temp(tag: &str) -> std::path::PathBuf {
 /// A fake `lpp` that records its arguments and FAILS (exit 3, stderr message)
 /// when the file being run contains "fail" — simulating a failed assertion.
 fn fake_lpp(root: &Path) -> std::path::PathBuf {
-    let p = root.join("lpp-fake");
-    std::fs::write(
-        &p,
-        format!(
-            "#!/bin/sh\nprintf '%s\\n' \"$@\" >> {}\n\ncase \"$(basename \"$1\")\" in *fail*) echo \"assertion failed: 1 != 2\" >&2; exit 3;; esac\nexit 0\n",
-            root.join("args.txt").display()
-        ),
-    )
-    .unwrap();
-    make_executable(&p);
-    p
+    install_fake_lpp(root, FakeMode::TestRunner, &root.join("args.txt"))
 }
 
 fn project(root: &Path) -> std::path::PathBuf {
@@ -76,15 +61,16 @@ fn all_tests_pass_and_only_lpp_files_run() {
     assert!(res.is_ok(), "all-pass suite should succeed: {res:?}");
 
     let args = std::fs::read_to_string(root.join("args.txt")).unwrap();
+    let args_norm = normalize_slashes(&args);
     assert_eq!(
-        args.matches("--run").count(),
+        args_norm.matches("--run").count(),
         2,
         "one --run per .lpp test file:\n{args}"
     );
-    assert!(args.contains("tests/alpha.lpp"), "{args}");
-    assert!(args.contains("tests/beta.lpp"), "{args}");
+    assert!(args_norm.contains("tests/alpha.lpp"), "{args}");
+    assert!(args_norm.contains("tests/beta.lpp"), "{args}");
     assert!(
-        !args.contains("README"),
+        !args_norm.contains("README"),
         "non-.lpp files must be ignored:\n{args}"
     );
     let _ = std::fs::remove_dir_all(&root);
@@ -123,7 +109,7 @@ fn selected_workspace_test_runs_only_the_named_members_tests() {
         Some("second"),
     );
     assert!(result.is_ok(), "selected tests should pass: {result:?}");
-    let arguments = std::fs::read_to_string(root.join("args.txt")).unwrap();
+    let arguments = normalize_slashes(&std::fs::read_to_string(root.join("args.txt")).unwrap());
     assert!(arguments.contains("second/tests/second.lpp"), "{arguments}");
     assert!(!arguments.contains("first/tests/first.lpp"), "{arguments}");
 
