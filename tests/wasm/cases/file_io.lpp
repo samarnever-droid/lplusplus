@@ -1,0 +1,22 @@
+# file_io.lpp — the five filesystem builtins round-trip through WASI preopens.
+# The runner preopens the case directory, so relative paths resolve there.
+# Expected output:
+# 0
+# 0
+# 1
+# 0
+# Hello World!
+# 0
+# 0
+
+def main():
+    path := "wasm_case_file_io.txt"
+    if file_exists(path):
+        delete_file(path)
+    print(file_exists(path))          # 0
+    print(write_file(path, "Hello ")) # 0
+    print(file_exists(path))          # 1
+    print(append_file(path, "World!"))# 0
+    print_str(read_file(path))        # Hello World!
+    print(delete_file(path))          # 0
+    print(file_exists(path))          # 0

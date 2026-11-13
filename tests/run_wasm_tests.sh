@@ -46,7 +46,7 @@ run_module() {
     # $1 = .wasm file. Node's WASI CLI differs from wasmtime-like runtimes.
     case "$RT" in
         *node*) node "$ROOT/tests/wasm/node_run.mjs" "$1" ;;
-        *)      "$RT" "$1" ;;
+        *)      "$RT" --dir "$ROOT/tests/wasm/cases" "$1" ;;
     esac
 }
 

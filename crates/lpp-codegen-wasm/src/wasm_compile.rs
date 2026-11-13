@@ -46,6 +46,33 @@ pub(super) fn compile_module(
     if plan.needs.contains(&H::FdRead) {
         import_fields.push("fd_read");
     }
+    // Filesystem helpers need WASI's path-based surface. Only emitted when a
+    // program actually calls one of the file builtins, so ordinary programs
+    // keep the two-import shape they had.
+    let needs_fs = plan.needs.iter().any(|h| {
+        matches!(
+            h,
+            H::FileExists | H::ReadFile | H::WriteFile | H::AppendFile | H::DeleteFile
+        )
+    });
+    if needs_fs {
+        // `read_file` lowers to `fd_read` even when the program never reads
+        // stdin, so the import must exist whenever a file builtin is used.
+        if !import_fields.contains(&"fd_read") {
+            import_fields.push("fd_read");
+        }
+        for field in [
+            "path_open",
+            "path_filestat_get",
+            "path_unlink_file",
+            "fd_close",
+            "fd_seek",
+        ] {
+            if !import_fields.contains(&field) {
+                import_fields.push(field);
+            }
+        }
+    }
     import_fields.push("proc_exit");
     let fd_write_idx = import_fields
         .iter()
@@ -59,6 +86,13 @@ pub(super) fn compile_module(
         .iter()
         .position(|f| *f == "proc_exit")
         .unwrap() as u32;
+    // Name -> import index for the path-based WASI surface (empty unless a
+    // file builtin pulled those imports in).
+    let import_index: BTreeMap<&str, u32> = import_fields
+        .iter()
+        .enumerate()
+        .map(|(i, f)| (*f, i as u32))
+        .collect();
 
     // Build the string pool (sorted by content → deterministic).
     let (string_ptr, pool_bytes) = build_pool(&plan.strings);
@@ -173,6 +207,11 @@ pub(super) fn compile_module(
         H::PrintStr,
         H::PrintFloat,
         H::WriteStr,
+        H::FileExists,
+        H::ReadFile,
+        H::WriteFile,
+        H::AppendFile,
+        H::DeleteFile,
         H::StrEq,
         H::StrLen,
         H::Alloc,
@@ -264,10 +303,33 @@ pub(super) fn compile_module(
     let import_tys: Vec<u32> = import_fields
         .iter()
         .map(|f| {
-            let (p, r) = if matches!(*f, "fd_write" | "fd_read") {
-                (vec![Val::I32; 4], vec![Val::I32])
-            } else {
-                (vec![Val::I32], vec![])
+            let (p, r) = match *f {
+                "fd_write" | "fd_read" => (vec![Val::I32; 4], vec![Val::I32]),
+                // path_open(dirfd, dirflags, path_ptr, path_len, oflags,
+                // fs_rights_base, fs_rights_inheriting, fdflags, &fd) — the
+                // two `rights` words are i64 in WASI preview1.
+                "path_open" => (
+                    vec![
+                        Val::I32,
+                        Val::I32,
+                        Val::I32,
+                        Val::I32,
+                        Val::I32,
+                        Val::I64,
+                        Val::I64,
+                        Val::I32,
+                        Val::I32,
+                    ],
+                    vec![Val::I32],
+                ),
+                // path_filestat_get(dirfd, flags, path_ptr, path_len, &stat)
+                "path_filestat_get" => (vec![Val::I32; 5], vec![Val::I32]),
+                // fd_seek(fd, offset i64, whence, &newoffset)
+                "fd_seek" => (vec![Val::I32, Val::I64, Val::I32, Val::I32], vec![Val::I32]),
+                // path_unlink_file(dirfd, path_ptr, path_len)
+                "path_unlink_file" => (vec![Val::I32; 3], vec![Val::I32]),
+                "fd_close" => (vec![Val::I32], vec![Val::I32]),
+                _ => (vec![Val::I32], vec![]),
             };
             reg_type(&mut type_map, &mut type_list, &p, &r)
         })
@@ -340,6 +402,7 @@ pub(super) fn compile_module(
             fd_write_idx,
             fd_read_idx,
             proc_exit_idx,
+            &import_index,
         )?;
         funcs.push(Func {
             name: None,

@@ -97,8 +97,27 @@ const IOVEC_BUF: u32 = 0;
 const FD_IO_OUT: u32 = 8;
 const NUM_BUF: u32 = 16;
 const NUM_BUF_END: u32 = 80;
-const POOL_START: u32 = 80;
+/// Read in 4 KiB chunks into `FS_BUF`.
+const FS_CHUNK: u32 = 4096;
+/// Low scratch the filesystem helpers own: `&fd`, `&nwritten`, `&nread` and
+/// the 64-byte `filestat`. It must sit *outside* the string pool, so the pool
+/// starts after it.
+const FS_FD_OUT: u32 = 88;
+const FS_NWRITTEN: u32 = 92;
+const FS_NREAD: u32 = 84;
+const FS_STAT: u32 = 96;
+/// `fd_seek`'s u64 output: the file size, taken by seeking to the end.
+const FS_SEEK_OUT: u32 = 104;
+const FS_SCRATCH_END: u32 = 160;
+const FS_BUF: u32 = 160;
+const POOL_START: u32 = FS_SCRATCH_END + FS_CHUNK;
 const STR_HEADER: u32 = 24;
+/// WASI `rights` for a read-only open: path_open, fd_read, fd_seek, fd_tell.
+const FS_RIGHTS_BASE: i64 = (1 << 0) | (1 << 1) | (1 << 2) | (1 << 5) | (1 << 6) | (1 << 13);
+/// …plus fd_write and path_create_file for a writer.
+const FS_RIGHTS_WRITE: i64 = FS_RIGHTS_BASE | (1 << 6) | (1 << 9) | (1 << 3) | (1 << 4);
+/// Appending needs the same rights as writing (the offset comes from `fd_seek`).
+const FS_RIGHTS_APPEND: i64 = FS_RIGHTS_WRITE;
 const ARC_HEADER: i64 = 24;
 const IMMORTAL_RC: i64 = i64::MAX;
 const ARC_MAGIC: i64 = 0x41_52_43_31; // "ARC1"
@@ -154,6 +173,12 @@ enum H {
     PrintStr,
     PrintFloat,
     WriteStr,
+    // ── filesystem (path-based WASI imports) ──
+    FileExists,
+    ReadFile,
+    WriteFile,
+    AppendFile,
+    DeleteFile,
     StrEq,
     StrLen,
     // ── 5D2b slice 4, batch 3: string builtins ──

@@ -36,7 +36,7 @@ fn rewrite_wasm_executes_the_complete_positive_legacy_corpus() {
         .filter(|path| path.extension().and_then(|value| value.to_str()) == Some("lpp"))
         .collect();
     sources.sort();
-    assert_eq!(sources.len(), 24, "the positive corpus census changed");
+    assert_eq!(sources.len(), 25, "the positive corpus census changed");
 
     for source in sources {
         let name = source.file_stem().unwrap().to_string_lossy();
@@ -85,13 +85,13 @@ fn rewrite_wasm_executes_the_complete_positive_legacy_corpus() {
 fn rewrite_wasm_preserves_host_capability_rejections() {
     let root = repository_root();
     let reject = root.join("tests/wasm/reject");
-    // Restricted eager `spawn` is intentionally supported by rewrite WASM;
-    // the remaining legacy negative cases still require rejection.
+    // Restricted eager `spawn` and the five filesystem builtins are
+    // intentionally supported by rewrite WASM (the latter over WASI
+    // preopens); the remaining legacy negative cases still require rejection.
     for name in [
         "reject_command.lpp",
         "reject_env_set.lpp",
         "reject_ffi.lpp",
-        "reject_file.lpp",
         "reject_net.lpp",
         "reject_simd.lpp",
     ] {

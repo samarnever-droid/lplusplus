@@ -1,6 +1,7 @@
 // Minimal WASI preview1 host for running L++ wasm modules under Node.js,
 // used by the Phase 5D gate. Mirrors the v1 `tests/wasm/node_run.mjs`.
 import { readFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { WASI } from "node:wasi";
 
 const file = process.argv[2];
@@ -9,11 +10,14 @@ if (!file) {
   process.exit(2);
 }
 
+// Preopen the module's own directory so relative-path file builtins resolve
+// next to the case being run (same contract as `tests/wasm/node_run.mjs`).
 const wasi = new WASI({
   version: "preview1",
   args: [file],
   env: {},
   returnOnExit: true,
+  preopens: { [dirname(file)]: dirname(file) },
 });
 
 const bytes = readFileSync(file);
