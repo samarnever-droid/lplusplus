@@ -7,7 +7,14 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
-#include <stdatomic.h>
+#if defined(_MSC_VER)
+#  ifndef WIN32_LEAN_AND_MEAN
+#    define WIN32_LEAN_AND_MEAN
+#  endif
+#  include <windows.h>
+#else
+#  include <stdatomic.h>
+#endif
 
 extern void *lpp_arc_alloc(int64_t size);
 extern char *lpp_empty_str(void);
@@ -30,12 +37,64 @@ void lpp_buf_free(void *ptr) {
  * can still report a deterministic stale-context error. The payload's first
  * word is no longer needed after destruction and links tombstones until the
  * process exit handler frees them. */
+#if defined(_MSC_VER)
+static PVOID volatile lpp_buf_deferred_head = NULL;
+static volatile LONG lpp_buf_deferred_cleanup_registered = 0;
+
+static uintptr_t lpp_buf_head_exchange_zero(void) {
+    return (uintptr_t)InterlockedExchangePointer(&lpp_buf_deferred_head, NULL);
+}
+
+static uintptr_t lpp_buf_head_load(void) {
+    return (uintptr_t)InterlockedCompareExchangePointer(&lpp_buf_deferred_head, NULL, NULL);
+}
+
+static int lpp_buf_head_cas(uintptr_t *expected, uintptr_t desired) {
+    PVOID prev = (PVOID)*expected;
+    PVOID observed = InterlockedCompareExchangePointer(&lpp_buf_deferred_head, (PVOID)desired, prev);
+    *expected = (uintptr_t)observed;
+    return observed == prev;
+}
+
+static int lpp_buf_cleanup_try_claim(void) {
+    return InterlockedExchange(&lpp_buf_deferred_cleanup_registered, 1) == 0;
+}
+
+static void lpp_buf_cleanup_release_claim(void) {
+    InterlockedExchange(&lpp_buf_deferred_cleanup_registered, 0);
+}
+#else
 static atomic_uintptr_t lpp_buf_deferred_head = 0;
 static atomic_flag lpp_buf_deferred_cleanup_registered = ATOMIC_FLAG_INIT;
 
-static void lpp_buf_release_deferred(void) {
-    uintptr_t current = atomic_exchange_explicit(
+static uintptr_t lpp_buf_head_exchange_zero(void) {
+    return atomic_exchange_explicit(
         &lpp_buf_deferred_head, 0, memory_order_acq_rel);
+}
+
+static uintptr_t lpp_buf_head_load(void) {
+    return atomic_load_explicit(&lpp_buf_deferred_head, memory_order_acquire);
+}
+
+static int lpp_buf_head_cas(uintptr_t *expected, uintptr_t desired) {
+    return atomic_compare_exchange_weak_explicit(
+        &lpp_buf_deferred_head, expected, desired,
+        memory_order_release, memory_order_acquire);
+}
+
+static int lpp_buf_cleanup_try_claim(void) {
+    return !atomic_flag_test_and_set_explicit(
+        &lpp_buf_deferred_cleanup_registered, memory_order_acq_rel);
+}
+
+static void lpp_buf_cleanup_release_claim(void) {
+    atomic_flag_clear_explicit(
+        &lpp_buf_deferred_cleanup_registered, memory_order_release);
+}
+#endif
+
+static void lpp_buf_release_deferred(void) {
+    uintptr_t current = lpp_buf_head_exchange_zero();
     while (current != 0) {
         void *header = (void *)current;
         uintptr_t next = *(uintptr_t *)((uint8_t *)header + sizeof(int64_t));
@@ -47,23 +106,19 @@ static void lpp_buf_release_deferred(void) {
 void lpp_buf_free_at_exit(int64_t raw_ptr) {
     if (raw_ptr == 0) return;
 
-    if (!atomic_flag_test_and_set_explicit(
-            &lpp_buf_deferred_cleanup_registered, memory_order_acq_rel)) {
+    if (lpp_buf_cleanup_try_claim()) {
         if (atexit(lpp_buf_release_deferred) != 0) {
             /* Keep the list globally reachable if the C library cannot accept
              * another exit handler; process teardown still reclaims it. */
-            atomic_flag_clear_explicit(
-                &lpp_buf_deferred_cleanup_registered, memory_order_release);
+            lpp_buf_cleanup_release_claim();
         }
     }
 
     void *header = (void *)(uintptr_t)raw_ptr;
-    uintptr_t head = atomic_load_explicit(&lpp_buf_deferred_head, memory_order_acquire);
+    uintptr_t head = lpp_buf_head_load();
     do {
         *(uintptr_t *)((uint8_t *)header + sizeof(int64_t)) = head;
-    } while (!atomic_compare_exchange_weak_explicit(
-        &lpp_buf_deferred_head, &head, (uintptr_t)header,
-        memory_order_release, memory_order_acquire));
+    } while (!lpp_buf_head_cas(&head, (uintptr_t)header));
 }
 
 int64_t lpp_buf_len(void *ptr) {

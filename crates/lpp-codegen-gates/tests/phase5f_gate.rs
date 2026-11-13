@@ -141,7 +141,7 @@ fn compile_cranelift(
     names: &Names<'_>,
 ) -> CompiledModule {
     CraneliftBackend
-        .compile_module(program, types, &CodegenOptions::new(Target::X86_64, names))
+        .compile_module(program, types, &CodegenOptions::new(Target::host(), names))
         .unwrap_or_else(|e| panic!("cranelift compile failed: {e}"))
 }
 
@@ -456,7 +456,7 @@ fn cross_backend_corpus_agrees() {
 
     // Cranelift (native).
     let cl = compile_cranelift(&program, &types, &names);
-    assert_eq!(cl.target, Target::X86_64);
+    assert_eq!(cl.target, Target::host());
     let (cl_out, cl_status) = link_and_run(&cl.object, "x_cl");
     assert_eq!(cl_status, 0, "cranelift exited non-zero:\n{cl_out}");
     check_markers(&cl_out, "cranelift");
@@ -594,6 +594,8 @@ fn sanitizer_clean() {
 /// `INT_MIN / -1` wraps like the oracle's `wrapping_div`.
 #[test]
 fn integer_division_by_zero_is_the_defined_panic() {
+    let run_llvm =
+        cfg!(target_os = "linux") && Target::host() == Target::X86_64 && llvm_compiler_available();
     for (operator, label) in [("/", "div_zero"), ("%", "mod_zero")] {
         let source = format!(
             "def f(n: Int) -> Int:\n    return 100 {operator} n\n\ndef main():\n    print(f(0))\n"
@@ -609,7 +611,7 @@ fn integer_division_by_zero_is_the_defined_panic() {
             status, 101,
             "WASM {operator} by zero must exit via WASI status 101"
         );
-        if llvm_compiler_available() {
+        if run_llvm {
             let ll = compile_llvm(&program, &types, &names);
             let (_out, status) = link_and_run(&ll.object, &format!("{label}_ll"));
             assert_eq!(status, 101, "LLVM {operator} by zero must exit 101");
@@ -628,7 +630,7 @@ fn integer_division_by_zero_is_the_defined_panic() {
     let (out, status) = run_wasm(&ws.object, "div_wrap_ws");
     assert_eq!(status, 0);
     assert_eq!(out, expected);
-    if llvm_compiler_available() {
+    if run_llvm {
         let ll = compile_llvm(&program, &types, &names);
         let (out, status) = link_and_run(&ll.object, "div_wrap_ll");
         assert_eq!(status, 0);
