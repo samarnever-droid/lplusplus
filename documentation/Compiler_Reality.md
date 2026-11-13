@@ -1,7 +1,8 @@
 # Compiler reality — 2026-07-30
 
-This document replaces the old v0.1 notes. The current compiler is a native
-Rust/MIR compiler; there is no C transpilation stage in the production pipeline.
+> **Historical Pre-Rewrite Document**: The `src/frontend/`, `src/analysis/`, `src/mir/`, and `src/backend/` paths listed below were removed in the modular rewrite cutover. For the current `crates/lpp-*` architecture and verified backend boundaries, see [`ARCHITECTURE.md`](../ARCHITECTURE.md), [`specs.md`](../specs.md), and [`documentation/CURRENT_CAPABILITIES.md`](CURRENT_CAPABILITIES.md).
+
+This historical note described the pre-rewrite `src/` compiler. There is no C transpilation stage in the compiler pipeline.
 
 ## Pipeline
 

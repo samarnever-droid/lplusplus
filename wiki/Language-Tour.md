@@ -1,268 +1,157 @@
 # L++ Language Tour
 
-L++ is designed to combine the clean syntax and rapid ergonomics of high-level scripting languages with the zero-cost abstractions, strict types, and predictability of native systems programming.
+L++ combines clean, indentation-based syntax with static type checking, type inference, and native execution.
+
+> Authoritative grammar & operator reference: [`specs.md`](../specs.md) §2–§5.
 
 ---
 
 ## 1. Syntax Basics & Indentation
 
-L++ uses **significant whitespace** for block structure (like Python), eliminating braces (`{}`) while keeping code clean and readable.
+L++ uses **significant whitespace** for block structure, introduced by `:` and indented with spaces (tabs are rejected):
 
 ```lpp
 def main():
     x := 10
     if x > 5:
-        println("x is greater than 5")
+        print_str("x is greater than 5")
     else:
-        println("x is 5 or less")
+        print_str("x is 5 or less")
 ```
 
-Comments begin with `#` and run to the end of the line:
-```lpp
-# This is a single-line comment
-x := 42 # inline comment
-```
+Both `#` and `//` start a single-line comment.
 
 ---
 
-## 2. Variables & Assignment
+## 2. Variables & Mutability
 
-Variables are declared and initialized using `:=`. Type annotations can be provided explicitly or inferred:
+Bindings are immutable by default with `:=`; use `mut` when reassignment is needed:
 
 ```lpp
-# Inferred types
+# Immutable inferred bindings
 count := 10             # Int
 ratio := 3.14           # Float
 active := true          # Bool
 message := "Hello L++"  # Str
 
-# Explicit type annotations
+# Explicit type annotation
 total: Int = 100
-pi: Float = 3.14159
-title: Str = "Systems Programming"
 
-# Re-assignment uses '='
-total = 105
+# Mutable binding & reassignment
+mut score := 10
+score = 15
+score += 5
 ```
 
 ---
 
-## 3. Primitive Types
+## 3. Primitive & Core Types
 
 | Type | Description | Example |
 |---|---|---|
 | `Int` | 64-bit signed integer | `42`, `-10` |
-| `Float` | 64-bit IEEE 754 floating-point | `3.14`, `-0.5` |
-| `Bool` | Boolean truth value | `true`, `false` |
-| `Str` | UTF-8 dynamic string managed by ARC | `"hello world"` |
-| `Void` | Unit / no return value | Implicit function return |
+| `Float` | 64-bit IEEE-754 float | `3.14`, `-0.5` |
+| `Bool` | Boolean value | `true`, `false` |
+| `Char` | Unicode scalar character literal | `'A'` |
+| `Str` | NUL-terminated UTF-8 ARC-managed string | `"hello world"` |
+| `Void` | No return value | Default return type |
+| `List[T]` | Managed dynamic list | `[1, 2, 3]` |
+| `(A, B)` | Fixed structural tuple (arity 2–4) | `(10, "ok")` |
+
+Fixed-width integer types (`U8`/`I8`, `U16`/`I16`, `U32`/`I32` and lowercase aliases) are also supported, primarily for `extern "C"` signatures.
 
 ---
 
 ## 4. Control Flow
 
-### If / Elif / Else
+### `if` / `elif` / `else`
 ```lpp
 score := 85
 
 if score >= 90:
-    println("Grade: A")
+    print_str("Grade: A")
 elif score >= 80:
-    println("Grade: B")
-elif score >= 70:
-    println("Grade: C")
+    print_str("Grade: B")
 else:
-    println("Grade: F")
+    print_str("Grade: C")
 ```
 
-### While Loops
+### `while` and `for` Loops
 ```lpp
-i := 0
+mut i := 0
 while i < 5:
-    println(str(i))
+    print(i)
     i = i + 1
-```
 
-### For Loops
-Iterating over lists or ranges:
-```lpp
-items := [10, 20, 30, 40]
+for n in 0..5:
+    print(n)
+
+items := [10, 20, 30]
 for item in items:
-    println(str(item))
+    print(item)
 ```
 
-Loops support `break` to exit early and `continue` to advance to the next iteration.
+Loops support `break` and `continue`.
 
 ---
 
-## 5. Functions
-
-Functions are defined with `def`. Parameter types and return types are strongly enforced.
+## 5. Functions, Defaults, Variadics, and Closures
 
 ```lpp
 def add(a: Int, b: Int) -> Int:
     return a + b
 
-def greet(name: Str):
-    println("Hello, " + name)
+def connect(host: Str, port: Int = 8080):
+    print_str(f"Connecting to {host} on port " + int_to_str(port))
+
+def sum_all(...numbers: Int) -> Int:
+    mut total := 0
+    for n in numbers:
+        total = total + n
+    return total
 ```
 
-### Default Parameters
-Parameters can specify default values:
+Closures use `fn(...) -> ...`:
 ```lpp
-def connect(host: Str, port: Int = 8080, timeout_ms: Int = 5000):
-    println("Connecting to " + host + ":" + str(port))
+double := fn(x: Int) -> Int: x * 2
 ```
 
 ---
 
-## 6. Structs
-
-Structs define custom composite data structures:
+## 6. Structs, Methods, Enums, and Traits
 
 ```lpp
 struct Point:
     x: Float
-    y: Float
+    y: Float = 0.0
 
-def distance_from_origin(p: Point) -> Float:
-    return (p.x * p.x + p.y * p.y) ** 0.5
+impl Point:
+    def dist_sq(self) -> Float:
+        return self.x * self.x + self.y * self.y
 
-def main():
-    pt := Point(3.0, 4.0)
-    d := distance_from_origin(pt)
-    println(str(d)) # 5.0
-```
+enum Direction:
+    North
+    South
+    Move(x: Int, y: Int)
 
-Structs can also define methods:
-```lpp
-struct Counter:
-    value: Int
+def step(d: Direction):
+    match d:
+        Direction.North =>
+            print_str("North")
+        Direction.South =>
+            print_str("South")
+        Direction.Move(x, y) =>
+            print_str("Move")
 
-    def increment(self):
-        self.value = self.value + 1
+trait Display:
+    def to_str(self) -> Str
 
-    def get(self) -> Int:
-        return self.value
-```
-
----
-
-## 7. Enums & Pattern Matching
-
-Enums represent algebraic data types with optional associated data:
-
-```lpp
-enum Status:
-    Pending
-    InProgress(Int) # percentage
-    Completed(Str)  # result string
-    Failed(Str)     # error message
-
-def log_status(s: Status):
-    match s:
-        Status::Pending =>
-            println("Waiting to start...")
-        Status::InProgress(pct) =>
-            println("Progress: " + str(pct) + "%")
-        Status::Completed(msg) =>
-            println("Success: " + msg)
-        Status::Failed(err) =>
-            println("Error: " + err)
-```
-
-The compiler checks pattern matching exhaustiveness statically.
-
----
-
-## 8. Collections
-
-### Lists
-Lists are dynamically sized, heap-allocated, ARC-managed homogeneous sequences:
-```lpp
-numbers := [1, 2, 3, 4, 5]
-numbers.append(6)
-println(str(numbers.len())) # 6
-println(str(numbers[0]))     # 1
-```
-
-### Tuples
-Tuples are fixed-size structural heterogeneous groupings:
-```lpp
-pair: (Str, Int) = ("Alice", 25)
-name := pair.0
-age := pair.1
-```
-
-### Maps
-Key-value mappings:
-```lpp
-scores := Map[Str, Int]()
-scores.insert("Alice", 98)
-scores.insert("Bob", 85)
-
-if scores.contains("Alice"):
-    println("Alice scored: " + str(scores.get("Alice")))
+def show[T: Display](item: T):
+    print_str(item.to_str())
 ```
 
 ---
 
-## 9. Closures & Anonymous Functions
+## 7. Modules & Error Propagation (`?`)
 
-Functions are first-class values. Closures can capture variables from their enclosing scope:
-
-```lpp
-def make_multiplier(factor: Int) -> fn(Int) -> Int:
-    return |x: Int| -> Int:
-        return x * factor
-
-def main():
-    double := make_multiplier(2)
-    triple := make_multiplier(3)
-
-    println(str(double(5))) # 10
-    println(str(triple(5))) # 15
-```
-
----
-
-## 10. Error Handling: Result & `?`
-
-L++ does not use unchecked exceptions. Fallible functions return `Result[T, E]`:
-
-```lpp
-enum Result[T, E]:
-    Ok(T)
-    Err(E)
-
-def parse_int(s: Str) -> Result[Int, Str]:
-    if s == "42":
-        return Result::Ok(42)
-    return Result::Err("Invalid number")
-
-def compute() -> Result[Int, Str]:
-    # The '?' operator unpacks Ok or propagates Err immediately
-    val := parse_int("42")?
-    return Result::Ok(val * 2)
-```
-
----
-
-## 11. Generics
-
-Functions, structs, and enums can be parameterized with type variables:
-
-```lpp
-def identity[T](val: T) -> T:
-    return val
-
-struct Box[T]:
-    item: T
-
-def main():
-    b_int := Box[Int](10)
-    b_str := Box[Str]("boxed text")
-    println(b_str.item)
-```
-
-Generics are fully monomorphized at compile time, guaranteeing zero runtime overhead.
+Modules map dotted paths (`import math.vector` -> `math/vector.lpp`). Functions returning `Result` / `Option` values can propagate early errors with `?`. See [`specs.md`](../specs.md) §3.4 & §5.1.

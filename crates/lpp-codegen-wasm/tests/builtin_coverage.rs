@@ -128,6 +128,12 @@ const WASM_LOWERED: &[&str] = &[
     "input",
     "input_line",
     "input_eof",
+    // filesystem
+    "append_file",
+    "delete_file",
+    "file_exists",
+    "read_file",
+    "write_file",
 ];
 
 /// Builtins the corpus resolves to that the wasm backend does **not** lower.
@@ -256,6 +262,7 @@ const KNOWN_GAPS: &[&str] = &[
     "clock_free",
     "clock_new",
     "clock_now",
+    "random_range",
     "rng_float",
     "rng_free",
     "rng_new",
@@ -263,17 +270,12 @@ const KNOWN_GAPS: &[&str] = &[
     "rng_range",
     "time_ms",
     // filesystem
-    "append_file",
-    "delete_file",
     "dir_create",
     "dir_remove",
     "file_copy",
-    "file_exists",
     "file_move",
     "file_size",
     "path_exists",
-    "read_file",
-    "write_file",
     // process, environment, threads
     "command_exec",
     "command_output",
@@ -381,7 +383,7 @@ impl FileSystem for OneFile {
             Err(FileSystemError::new("canonicalize", path, "not found"))
         }
     }
-    fn read_to_string(&self, path: &Path) -> Result<String, FileSystemError> {
+    fn read_to_string(&self, _path: &Path) -> Result<String, FileSystemError> {
         Ok(self.text.clone())
     }
 }

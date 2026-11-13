@@ -17,7 +17,7 @@ and how to catch regressions quickly in a ~100k-LOC compiler._
 | Tooling | **65%** | Keel PM (SemVer, lockfiles), LSP (8 methods), bench, direct linker, source-compile gate for bindgen, focused ASan/LSan/UBSan regression. No debugger story, no REPL, no `fmt` CLI, shallow LSP. |
 | Async / concurrency | **40%** | Threads + atomics exist; async is single-thread run-to-completion, no I/O reactor. The concurrency contract is now documented; Send/Sync-style enforcement is not. |
 | Platforms | **65%** | Linux gates are strong. CI executes authored corpus on Windows and macOS (arm64 + Intel); Windows sanitizer-equivalent coverage and aarch64 Linux runtime/linker proof remain. |
-| Ecosystem & stability | **15%** | v0.1.0, ~24 in-repo packages, no stability guarantee yet. |
+| Ecosystem & stability | **15%** | v0.2.0, ~24 in-repo packages, no stability guarantee yet. |
 | **Overall: usable language today** | **~75%** | |
 | **Overall: mature 1.0 platform** | **~45%** | The gap is mostly proof, platforms, and ecosystem — not syntax. |
 

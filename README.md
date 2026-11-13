@@ -87,12 +87,12 @@ processes) are rejected up front with clear diagnostics. See
 
 ```bash
 # Linux / macOS — pinned, reviewable source installation
-git clone --depth 1 --branch v0.1 https://github.com/samarnever-droid/lplusplus.git
+git clone --depth 1 --branch v0.2.0 https://github.com/samarnever-droid/lplusplus.git
 cd lplusplus
 LPP_FROM_SOURCE=1 sh install.sh
 
 # Windows PowerShell — from the same pinned checkout
-git clone --depth 1 --branch v0.1 https://github.com/samarnever-droid/lplusplus.git
+git clone --depth 1 --branch v0.2.0 https://github.com/samarnever-droid/lplusplus.git
 cd lplusplus
 $env:LPP_FROM_SOURCE = "1"
 .\install.ps1
@@ -369,32 +369,29 @@ logcat, while Termux uses normal stdout. See
 
 ```
 src/
-  frontend/     Lexer, Parser, AST
-  analysis/     Semantic, Typecheck, Monomorphization, Cycle Breaker
-  mir/          MIR IR, Builder, Escape Solver, ARC and cleanup passes
-  backend/      Cranelift default + optional LLVM object backend
-  bin/          lpp-link (ELF/PE/Mach-O direct linker)
-  config.rs     User config (~/.lpp/config.json)
-  builtins.rs   91 builtin function declarations
-  target.rs     --target triple parsing + Android/Termux detection
-  pm.rs         Package manager backend
-  main.rs       CLI entry point
+  main.rs                 CLI entrypoint (dispatches directly to RewriteEngine)
 
-stdlib/         Pure L++ standard library
-  math.lpp      abs, min, max, pow, gcd, fib, factorial
-  strings.lpp   str_repeat, str_contains, str_reverse
-  collections.lpp  list_sum, list_max, list_reverse
-  algo.lpp      bubble_sort, binary_search
-  result.lpp    Result, Option enums + helpers
-  convert.lpp   int_to_str, bool_to_str
+crates/
+  lpp-common/             Diagnostics, source spans, shared target triples
+  lpp-frontend/           Lexer, parser, AST, token validation
+  lpp-hir/                Module graph resolution and HIR lowering
+  lpp-types/              Type inference, checker, traits, generics
+  lpp-mir/                MIR builder, structural verifier, MIR interpreter & ARC oracle
+  lpp-passes/             MIR optimizations, escape/placement helpers, whole-program inliner
+  lpp-ownership/          Three-tier placement (`Frame`/`Owned`/`Shared`), cycle analysis, balance proofs
+  lpp-codegen-api/        Shared backend target/request traits & descriptors
+  lpp-codegen-cranelift/  Default native Cranelift AOT backend (x86_64, aarch64)
+  lpp-codegen-llvm/       Experimental Clang-backed LLVM backend
+  lpp-codegen-wasm/       Experimental WASI WebAssembly (`wasm32-wasip1`) backend
+  lpp-linker/             Direct ELF / PE / Mach-O linker (`lpp-link`)
+  lpp-runtime-abi/        Generated builtin/runtime ABI descriptors (`abi/builtins.toml`)
+  lpp-runtime/            Hosted Rust/C-ABI ARC runtime (`cdylib`/`rlib` + trial-deletion collector)
+  lpp-pm/ & keel/         Decentralized Git registry & `Keel.toml` package/workspace manager
+  lpp-driver/             Compiler session orchestration, PGO/LTO wiring, CLI dispatch
 
-packages/       Published packages
-  lpp-zip/      ZIP archive library (pure L++)
-
-runtime/        Platform runtimes
-  lpp_runtime.c           Host runtime (libc)
-  windows_x86_64_min.c    Windows freestanding (Kernel32 only)
-  linux_x86_64_min.c      Linux freestanding (syscalls only)
+stdlib/                   Pure L++ standard library modules
+packages/                 In-repo L++ packages (e.g. `lpp-zip`, `lpp-bindgen`)
+runtime/                  C/freestanding runtime headers and platform sources
 ```
 
 ## CI Status

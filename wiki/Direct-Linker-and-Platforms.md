@@ -1,86 +1,35 @@
-# Direct Linker & Target Platforms
+# Direct Linker & Platforms
 
-One of the defining innovations of the L++ compiler is its **in-process direct linker** (`lpp-linker`). Rather than shelling out to external toolchain linkers (such as Microsoft's `link.exe` or GNU `ld`), L++ can synthesize native executable binaries directly in memory and write them to disk.
-
----
-
-## 1. Why Direct In-Process Linking?
-
-Traditional compilers (such as Clang, Rustc, or GCC) compile code into intermediate object files (`.o` or `.obj`), then launch a heavy external subprocess linker. This causes:
-1. **Slow Build Times:** Process spawning, disk I/O for temporary `.obj` files, and command-line parsing add hundreds of milliseconds even for small programs.
-2. **Fragile Host Dependencies:** On Windows, compiling native code typically requires a multi-gigabyte Visual Studio or C++ Build Tools installation just for `link.exe` and SDK libraries.
-3. **Complex Cross-Compilation:** Cross-compiling across operating systems requires setting up complex sysroots and target linkers.
-
-L++ solves this by bundling a native PE/COFF and ELF linker directly into the compiler binary:
-- **Sub-10ms Link Times:** Links standard binaries entirely in memory.
-- **Zero-Dependency Native Binaries:** Produces valid Windows `.exe` files out of the box.
-- **Hermetic Reproducibility:** Identical binary section layouts across host environments.
+L++ includes an in-process direct linker (`crates/lpp-linker` / `lpp-link`) supporting ELF, PE/COFF, and Mach-O object output alongside `--linker host` fallback.
 
 ---
 
-## 2. In-Process PE/COFF Direct Linker (Windows)
+## 1. Supported Targets & Backends (`v0.2.0`)
 
-When targeting `x86_64-pc-windows-msvc`, `lpp-linker` synthesizes PE32+ executables:
-
-```text
-[DOS Header & Stub]
-        │
-[PE Header (Signature, COFF Header, Optional Header 64-bit)]
-        │
-[Section Table]
-├── .text   ── Executable code (from Cranelift AOT)
-├── .rdata  ── String literals, constants, import address table (IAT)
-├── .data   ── Mutable global state
-├── .pdata  ── Exception handling unwind function table
-├── .xdata  ── Unwind info and backtrace descriptors
-└── .idata  ── Direct import descriptors for KERNEL32.dll, MSVCRT.dll
-```
-
-### Automatic Import Resolution
-The direct PE linker automatically constructs import tables for essential Windows system DLLs:
-- `KERNEL32.dll` (`ExitProcess`, `GetStdHandle`, `WriteFile`, `ReadFile`, `VirtualAlloc`, `VirtualFree`)
-- `MSVCRT.dll` or Universal CRT (`malloc`, `free`, `printf`, `memcpy`)
-
----
-
-## 3. Direct ELF Linker (Linux)
-
-When targeting `x86_64-unknown-linux-gnu`, `lpp-linker` synthesizes standard 64-bit System V ELF executables:
-- Generates `Elf64_Ehdr`, `Elf64_Phdr` (Program Headers), and section tables.
-- Creates `PT_LOAD` segments for code (`.text`) and data (`.rodata`, `.data`).
-- Synthesizes entry trampolines adhering strictly to the System V AMD64 ABI.
-
----
-
-## 4. System Linker Fallback
-
-When a project links against external C libraries using `extern "C" link "..."` (e.g. `SDL2`, `sqlite3`, `curl`), the compiler can automatically escalate to the host system's native linker:
-- On Windows: Detects and invokes `link.exe` via the Microsoft vswhere locator.
-- On Linux/macOS: Invokes `cc` / `gcc` / `clang`.
-
-You can explicitly force the system linker or the direct linker via CLI flags:
-```bash
-# Force internal direct linker
-lpp build main.lpp --linker direct
-
-# Force host system linker
-lpp build main.lpp --linker system
-```
-
----
-
-## 5. Supported Target Triples
-
-| Target Triple | Output Format | Linker Engine | Status |
+| Target Triple / Alias | Architecture / OS | Default Backend | Notes |
 |---|---|---|---|
-| `x86_64-pc-windows-msvc` | PE32+ `.exe` | Direct PE / MSVC `link.exe` | **Tier 1 (Production)** |
-| `x86_64-unknown-linux-gnu` | ELF64 Executable | Direct ELF / `gcc` / `ld` | **Tier 1 (Production)** |
-| `wasm32-wasip1` | WebAssembly `.wasm` | Direct WASM binary emission | **Tier 1 (Production)** |
-| `aarch64-unknown-linux-gnu` | ELF64 Executable | Cross-compile via Cranelift | **Tier 2 (Supported)** |
-| `x86_64-apple-darwin` | Mach-O 64-bit | Direct Mach-O / `clang` | **Tier 2 (Supported)** |
+| Host `x86_64` | Linux (ELF), Windows (PE), macOS (Mach-O) | Cranelift | Primary native target; single-file build/run links for the compiler's host OS |
+| Host `aarch64` | Linux (ELF), macOS (Mach-O) | Cranelift | Cross-arch native objects can be emitted via `--emit-object` / `--check` |
+| `wasm32-wasip1` / `wasm32` | WebAssembly (WASI) | WASM (`lpp-codegen-wasm`) | Emits validated `.wasm` directly without external wasm linkers |
+| `--backend llvm` | `x86_64` | LLVM (Experimental) | Requires `clang`; scalar/direct-call subset (`specs.md` §8.1) |
 
-To specify a target triple:
+*(Compatibility target aliases such as `aarch64-linux-android` map into the generic `Aarch64` backend target and require setting NDK `ANDROID_CC` / `LPP_CC` to link; L++ does not bundle Android or cross-OS sysroots.)*
+
+---
+
+## 2. Direct Linker vs Host Linker (`--linker`)
+
+Select linker behavior via `--linker direct|cc|host` or `lpp config set linker <mode>`:
+
+- **`auto` / `direct`**: Uses `lpp-linker` (`lpp-link`) to emit native ELF, PE, or Mach-O binaries in memory where supported, and in `auto` mode prints diagnostics and falls back to the host toolchain if an object/import falls outside the direct-linker subset.
+- **`host` / `cc`**: Delegates linking to the host C toolchain (`clang` / `gcc` / `cl.exe`), required for general external C libraries (`-l <lib>`) on platforms where direct linking does not yet handle those imports.
+
+---
+
+## 3. Standalone `lpp-link`
+
+`lpp-link` is also built as a standalone binary with explicit `elf`, `pe`, `macho`, or auto-detected input format modes:
 ```bash
-lpp build main.lpp --target wasm32-wasip1 -o output.wasm
-lpp build main.lpp --target x86_64-unknown-linux-gnu -o output.elf
+lpp-link --help
 ```
+See [`documentation/Native_Linker_Roadmap.md`](../documentation/Native_Linker_Roadmap.md) and [`specs.md`](../specs.md) §8.2–§8.3 for the exact boundaries of direct-link vs host-link execution.

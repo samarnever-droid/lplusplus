@@ -30,6 +30,8 @@
 //! The crate builds as `rlib` (in-process tests), `staticlib` and
 //! `cdylib` (linking for generated objects and the census gate).
 
+#![allow(clippy::style, clippy::complexity, clippy::perf)]
+
 pub mod layout;
 
 pub mod arc;

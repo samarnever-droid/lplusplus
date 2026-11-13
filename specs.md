@@ -376,13 +376,13 @@ The LLVM and WASM backends explicitly reject imported external calls. The L++/SQ
 |---|---|---|
 | Cranelift | `x86_64`, `aarch64`, with the object OS format inherited from the compiler host | Default native backend and broadest rewrite backend. Supports the current native scalar/control-flow/direct-call path and substantial managed-data/runtime surface (strings, structs/enums, lists, tuples, closures, tasks, slices and supported builtins). Direct external C calls are implemented for the subset in §7. The `vec_i64_checksum` runtime intrinsic auto-dispatches to a 4-lane 256-bit AVX2 kernel on capable x86-64 hosts and otherwise uses its scalar fallback; this is not general loop auto-vectorization or a source-level `VectorI64x4` type. |
 | LLVM | `x86_64` only | Optional Clang-based scalar/CFG/direct-call and builtin subset. Managed structs/lists/tuples, function values, slices, SIMD, and imported C calls are incomplete or typed rejections in the current slice. Windows LLVM runtime execution still needs validation. |
-| WASM | `wasm32-wasip1` | Experimental WASI backend. Current source implements scalars, control flow/direct calls, strings, managed aggregates/lists, tuples, dynamic string concatenation, closures/function values, tasks, eager spawn, borrowed slices, deterministic maps, and WASI line input in its tested subset. SIMD, arbitrary host C FFI, and host capabilities unavailable in WASI are rejected. Cycle collection is missing. |
+| WASM | `wasm32-wasip1` | Experimental WASI backend. Current source implements scalars, control flow/direct calls, strings, managed aggregates/lists, tuples, dynamic string concatenation, closures/function values, tasks, eager spawn, borrowed slices, deterministic maps, WASI line input, and WASI filesystem builtins (`file_exists`, `read_file`, `write_file`, `append_file`, `delete_file`) over WASI preopens in its tested subset. SIMD, arbitrary host C FFI, and host capabilities unavailable in WASI are rejected. Cycle collection is missing. |
 
 This matrix is a feature boundary, not a claim that every listed feature is equally mature or that every builtin is available on every target. The complete current feature index is [`documentation/CURRENT_CAPABILITIES.md`](documentation/CURRENT_CAPABILITIES.md).
 
 ### 8.2 Target selection and cross-compilation
 
-The shared codegen target lattice is exactly `X86_64`, `Aarch64`, and `Wasm32Wasi`. Native triples use the compiler host OS (Linux, Windows, or macOS) with the selected architecture; explicit cross-OS/sysroot support is outside the current v0.1 model. A native cross-architecture object can be emitted/checked, but the single-file `build`/`run` path only links the current host target.
+The shared codegen target lattice is exactly `X86_64`, `Aarch64`, and `Wasm32Wasi`. Native triples use the compiler host OS (Linux, Windows, or macOS) with the selected architecture; explicit cross-OS/sysroot support is outside the current v0.2.0 model. A native cross-architecture object can be emitted/checked, but the single-file `build`/`run` path only links the current host target.
 
 The CLI accepts aliases including `x86_64`, `aarch64`, `aarch64-linux-android`, `wasm32`, `wasm32-wasi`, `wasm32-wasip1`, and `wasm32-unknown-unknown`. These aliases map into the small target lattice: for example, `aarch64-linux-android` maps to the generic AArch64 target and does not supply an Android sysroot/linker, and `wasm32-unknown-unknown` is mapped to the WASI backend rather than a true unknown-unknown target. `--list-targets` includes compatibility labels that are not all independently implemented targets; use the backend target list and actual compile result as the authority.
 
@@ -464,7 +464,7 @@ A minimal manifest is:
 ```toml
 [package]
 name = "demo"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 
 [dependencies]

@@ -1,27 +1,34 @@
-# L++ Documentation Wiki
+# L++ (LPlusPlus) Wiki
 
 Welcome to the official **L++ (LPlusPlus)** documentation wiki.
 
-L++ is a modern, statically typed, ahead-of-time (AOT) compiled programming language engineered around three core tenets:
-1. **Readable by design:** Clean, expressive syntax with significant indentation, eliminating unnecessary visual noise.
-2. **Native by default:** Direct compilation to standalone native machine code (x86_64 PE on Windows, ELF on Linux, Mach-O on macOS) and standalone WebAssembly (`wasm32-wasip1`) without requiring a VM, interpreter, or runtime tracing garbage collector.
-3. **Safety engineered in:** Deterministic Automatic Reference Counting (ARC) with static escape analysis, borrow verification, and compile-time ownership validation.
+L++ is a compiled, statically typed systems and application programming language designed around three pillars:
+1. **Readable by design:** Clean, expressive syntax with significant indentation and inferred bindings (`:=`).
+2. **Native by default:** Direct compilation to native machine code (Cranelift AOT by default, optional experimental LLVM and `wasm32-wasip1` targets) without a runtime VM.
+3. **Safety engineered in:** Deterministic Automatic Reference Counting (ARC), MIR ownership placement and balance proofs (`E4403`), and Bacon-Rajan trial-deletion cycle collection on Cranelift native targets.
+
+> For authoritative syntax, CLI, and per-backend support boundaries, see [`specs.md`](../specs.md) and [`documentation/CURRENT_CAPABILITIES.md`](../documentation/CURRENT_CAPABILITIES.md).
 
 ---
 
-## Wiki Directory
+## Navigation
 
-| Guide | Description |
+### Getting Started
+| Page | Description |
 |---|---|
-| [Getting Started](Getting-Started.md) | Installation, CLI usage (`lpp build`, `lpp run`, `lpp check`, `lpp doctor`), and your first program |
-| [Language Tour](Language-Tour.md) | Comprehensive syntax overview: variables, types, structs, enums, pattern matching, closures, and control flow |
-| [Type System & Safety](Type-System-and-Safety.md) | Static type safety, Hindley-Milner bidirectional inference, generics, traits, and error handling |
-| [Memory & Ownership](Memory-and-Ownership.md) | ARC memory model, `Frame`/`Owned`/`Shared` classifications, borrow validation, and zero-pause reclamation |
-| [Compiler Architecture](Compiler-Architecture.md) | Detailed walkthrough of the modular compiler pipeline: Frontend, HIR, Types, MIR, Passes, Ownership, Codegen, and Linker |
-| [Direct Linker & Platforms](Direct-Linker-and-Platforms.md) | Direct in-process PE/COFF and ELF linkers, cross-compilation, and platform target specifics |
-| [Standard Library & Builtins](Standard-Library.md) | Builtin functions, string manipulations, collections (`List`, `Map`), I/O, and C FFI integration |
-| [Keel Package Manager](Keel-Package-Manager.md) | Dependency management, `lpp.toml` manifests, package publishing, and workspace tooling |
-| [Performance & Benchmarks](Performance-and-Benchmarks.md) | Compiler compilation throughput (~50,000+ lines/sec), runtime benchmarks (King20 suite vs C++, Rust, Go, Python) |
+| [Getting Started](Getting-Started.md) | Installation, CLI usage (`lpp --run`, `lpp --check`), and your first L++ program |
+| [Language Tour](Language-Tour.md) | Variables, primitives, control flow, structs, enums, traits, and generics |
+| [Standard Library & Builtins](Standard-Library.md) | Core I/O, string helpers, `List`/`Map`, files, math, and FFI (`extern "C"`) |
+
+### Deep Dives & Internals
+| Page | Description |
+|---|---|
+| [Compiler Architecture](Compiler-Architecture.md) | The modular `crates/lpp-*` pipeline from frontend AST through MIR and codegen |
+| [Memory & Ownership](Memory-and-Ownership.md) | `Frame`/`Owned`/`Shared` placement, ARC headers, balance proofs, and cycle collection |
+| [Type System & Safety](Type-System-and-Safety.md) | Bidirectional inference, monomorphization, pattern matching, and `Option`/`Result` |
+| [Direct Linker & Platforms](Direct-Linker-and-Platforms.md) | Built-in PE/ELF/Mach-O linker (`lpp-link`), host fallback, and WASI WebAssembly |
+| [Keel Package Manager](Keel-Package-Manager.md) | Dependency management, `Keel.toml` manifests, `Keel.lock`, and `llppregistry` |
+| [Benchmarks & Performance](Performance-and-Benchmarks.md) | Repository benchmark suites (`benchmarks/king20`, `lto`, `pgo`, `simd`) |
 
 ---
 
@@ -32,24 +39,20 @@ struct User:
     name: Str
     age: Int
 
-def greet(user: User):
-    println("Hello, " + user.name + "! You are " + str(user.age) + " years old.")
-
 def main():
-    alice := User("Alice", 25)
-    greet(alice)
+    user := User("Samar", 24)
+    print_str("Hello, " + user.name + "! You are " + int_to_str(user.age) + " years old.")
 ```
 
-Compile and run with zero external toolchain configuration:
-
+Compile and execute directly:
 ```bash
-lpp run hello.lpp
+lpp hello.lpp --run
 ```
 
 ---
 
-## Community & Resources
+## Official Links
 
 - **Official Website:** [https://lplusplus.bond](https://lplusplus.bond)
 - **Source Repository:** [GitHub - samarnever-droid/lplusplus](https://github.com/samarnever-droid/lplusplus)
-- **Package Registry:** [https://registry.lplusplus.bond](https://registry.lplusplus.bond)
+- **Release Brief (`v0.2.0`):** [`docs/release/V0.2.0.md`](../docs/release/V0.2.0.md)

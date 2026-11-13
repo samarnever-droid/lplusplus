@@ -517,6 +517,43 @@ pub(crate) fn check_builtin(
                     };
                     Ok(())
                 }
+                // ── filesystem ──
+                // Path-based WASI: `path_open`/`path_filestat_get`/
+                // `path_unlink_file` against the preopened "." at fd 3. The
+                // helpers take the path string plus, for a write, the payload.
+                "file_exists" => {
+                    require_str(lower, arg0)?;
+                    lower.needs.insert(H::FileExists);
+                    *lower.has_managed = true;
+                    Ok(())
+                }
+                "read_file" => {
+                    require_str(lower, arg0)?;
+                    lower.needs.insert(H::ReadFile);
+                    lower.needs.insert(H::Alloc);
+                    *lower.has_managed = true;
+                    Ok(())
+                }
+                "delete_file" | "remove_file" => {
+                    require_str(lower, arg0)?;
+                    lower.needs.insert(H::DeleteFile);
+                    Ok(())
+                }
+                "write_file" | "append_file" => {
+                    require_str(lower, arg0)?;
+                    require_str(
+                        lower,
+                        args.get(1).ok_or_else(|| {
+                            unsupported("builtin argument missing", Some(lower.fn_id))
+                        })?,
+                    )?;
+                    lower.needs.insert(if short == "write_file" {
+                        H::WriteFile
+                    } else {
+                        H::AppendFile
+                    });
+                    Ok(())
+                }
                 _ => Err(unrepresentable(
                     builtin,
                     "not representable on wasm32-wasip1",

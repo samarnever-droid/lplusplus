@@ -14,6 +14,7 @@ pub(super) fn emit_helper_body(
     fd_write_import_idx: u32,
     fd_read_import_idx: u32,
     proc_exit_import_idx: u32,
+    import_index: &BTreeMap<&str, u32>,
 ) -> Result<(), CodegenError> {
     match h {
         H::FdWrite
@@ -24,6 +25,11 @@ pub(super) fn emit_helper_body(
         | H::PrintStr
         | H::PrintFloat
         | H::WriteStr
+        | H::FileExists
+        | H::ReadFile
+        | H::WriteFile
+        | H::AppendFile
+        | H::DeleteFile
         | H::StrEq
         | H::StrLen
         | H::Log2
@@ -42,6 +48,7 @@ pub(super) fn emit_helper_body(
             fd_write_import_idx,
             fd_read_import_idx,
             proc_exit_import_idx,
+            import_index,
         )?,
         H::ListNew
         | H::ListPushI64

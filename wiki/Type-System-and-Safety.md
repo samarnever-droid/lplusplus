@@ -1,108 +1,60 @@
 # Type System & Safety
 
-L++ features a strong, statically checked type system designed to prevent bugs before code ever reaches runtime. There are no unchecked `null` references, no implicit type coercion, and all type errors are diagnosed at compile time.
+L++ is statically typed with local inference (`:=`), immutable bindings by default, generic monomorphization, traits, and checked `Option` / `Result` error handling.
 
 ---
 
-## 1. Type Inference & Annotations
-
-L++ employs **bidirectional type inference** (Hindley-Milner inspired):
-- Local variable bindings infer their concrete type from initialization expressions.
-- Function parameter types and public interfaces require explicit annotations to preserve clear architectural boundaries and fast module-level checking.
+## 1. Local Type Inference & Immutability
 
 ```lpp
-# Types inferred cleanly:
-count := 42                # Int
-rate := 0.05               # Float
-active := true             # Bool
-names := ["Alice", "Bob"]  # List[Str]
-
-# Explicit interface typing:
-def compute_interest(principal: Float, rate: Float, periods: Int) -> Float:
-    return principal * (1.0 + rate) ** float(periods)
+def compound_interest(principal: Float, rate: Float, periods: Int) -> Float:
+    # 'principal', 'rate', and 'periods' are explicitly typed
+    factor := lpp_pow(1.0 + rate, 1.0 * periods)
+    return principal * factor
 ```
 
+- Local `x := expr` bindings are **immutable** unless declared `mut x := expr`.
+- Function parameters and return types (when returning a non-`Void` value) are explicitly annotated.
+
 ---
 
-## 2. No Null Pointers: The `Option[T]` Pattern
+## 2. Explicit Optionality (`Option` / `Result`)
 
-In L++, primitive values and references cannot be `null`. Absence of a value is explicitly modeled through `Option[T]`:
+Safe L++ code has no null reference values; optional and fallible results use sum types (`enum`):
 
 ```lpp
-enum Option[T]:
-    Some(T)
+enum OptionInt:
+    Some(value: Int)
     None
 
-def find_user(id: Int) -> Option[Str]:
-    if id == 1:
-        return Option::Some("Alice")
-    return Option::None
-
-def main():
-    result := find_user(1)
-    match result:
-        Option::Some(name) =>
-            println("Found user: " + name)
-        Option::None =>
-            println("User not found.")
+def show_opt(opt: OptionInt):
+    match opt:
+        OptionInt.Some(v) =>
+            print_str("Found value: " + int_to_str(v))
+        OptionInt.None =>
+            print_str("No value")
 ```
-
-Because `Option[T]` requires pattern matching or unwrapping, "null pointer exceptions" are mathematically impossible at runtime.
 
 ---
 
-## 3. Generics & Monomorphization
+## 3. Generics & Traits
 
-Generics allow writing reusable algorithms without sacrificing runtime performance:
+Generic structs and functions are specialized via monomorphization:
 
 ```lpp
-struct Stack[T]:
+struct Box[T]:
     items: List[T]
 
-    def push(self, item: T):
-        self.items.append(item)
-
-    def pop(self, default_val: T) -> T:
-        if self.items.len() > 0:
-            return self.items.pop()
-        return default_val
-```
-
-### Zero-Cost Abstraction
-Generics in L++ are fully **monomorphized**:
-- During compilation, the compiler generates a specialized, concrete version of each struct and function for every distinct type argument (e.g. `Stack[Int]`, `Stack[Str]`).
-- There is zero pointer indirection, zero dynamic boxing, and zero runtime performance penalty.
-
----
-
-## 4. Traits & Dispatch
-
-Traits define shared interfaces that types can implement:
-
-```lpp
 trait Printable:
-    def to_string(self) -> Str
+    def to_str(self) -> Str
 
-struct Point:
-    x: Int
-    y: Int
-
-impl Printable for Point:
-    def to_string(self) -> Str:
-        return "(" + str(self.x) + ", " + str(self.y) + ")"
-
-def display[T: Printable](item: T):
-    println("Item: " + item.to_string())
+def render[T: Printable](item: T):
+    print_str("Item: " + item.to_str())
 ```
-
-### Static Dispatch
-By default, trait calls on generic parameters use **static monomorphization**. The compiler directly inlines or branches to the concrete implementation without vtable lookups.
 
 ---
 
-## 5. Exhaustive Pattern Matching
-
-When matching on algebraic enums, the compiler validates that every possible variant is handled:
+## 4. Exhaustive `match` & Variant Payloads
 
 ```lpp
 enum Direction:
@@ -111,24 +63,22 @@ enum Direction:
     East
     West
 
-def move(d: Direction):
-    match d:
-        Direction::North => println("Going north")
-        Direction::South => println("Going south")
-        Direction::East  => println("Going east")
-        Direction::West  => println("Going west")
+def move_player(dir: Direction):
+    match dir:
+        Direction.North => print_str("Going north")
+        Direction.South => print_str("Going south")
+        Direction.East  => print_str("Going east")
+        Direction.West  => print_str("Going west")
 ```
-
-If a variant is omitted (e.g., forgetting `West`), the compiler halts compilation with diagnostic `error[E0008]: non-exhaustive pattern match`.
 
 ---
 
-## 6. Safety Invariants Summary
+## 5. Safety Boundaries
 
-| Potential Issue | C / C++ | Python / JS | L++ Guarantee |
-|---|---|---|---|
-| **Null pointer dereference** | Crash (Segfault) | `NoneType` / `undefined` Exception | **Impossible** (No null; `Option[T]` enforced) |
-| **Type mismatch at runtime** | Undefined Behavior | Runtime `TypeError` | **Impossible** (Static type check) |
-| **Use-after-free** | Undefined Behavior / Exploit | N/A (GC) | **Prevented** (ARC + borrow validation) |
-| **Data race on shared memory** | Undefined Behavior | GIL / Race conditions | **Checked** (Thread isolation & balance) |
-| **Uncaught exceptions** | Uncaught crash | Uncaught crash | **Explicit** (`Result[T, E]` return types) |
+| Concern | Current L++ Guarantee (`v0.2.0`) |
+|---|---|
+| **Type mismatches** | Caught statically during type checking before MIR/codegen. |
+| **Bounds checks** | List and slice accesses validate bounds and trap cleanly on out-of-range indices. |
+| **Ownership balance & leaks** | Enforced via `lpp-ownership` (`E4403`) on Cranelift native; trial-deletion collects `Shared` cycles (`CYCLE_BREAKING.md`). WASM lacks cycle collection today. |
+| **Raw FFI pointers** | C pointers carried in `Int` via `extern "C"` are caller-managed (`EXTERNAL_C_ABI.md`). |
+| **Concurrent shared mutation** | ARC refcounts are atomic, but `Send`/`Sync` compile-time trait enforcement is still open (`CONCURRENCY.md`). |

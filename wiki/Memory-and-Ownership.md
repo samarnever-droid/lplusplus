@@ -1,50 +1,36 @@
 # Memory & Ownership
 
-L++ provides complete memory safety **without a tracing garbage collector** and without runtime stop-the-world pauses. Memory management is automated, deterministic, and verified at compile time through an ownership analysis pipeline combining static escape analysis, value classification, and deterministic Automatic Reference Counting (ARC).
+L++ manages memory **without a stop-the-world tracing garbage collector** on its native runtime, combining MIR escape/placement classification, balanced Automatic Reference Counting (ARC), ownership balance proofs (`E4403`), and Bacon-Rajan trial-deletion cycle collection on Cranelift native targets.
+
+> For verified safety scope and backend boundaries, see [`documentation/Safety_Mission.md`](../documentation/Safety_Mission.md), [`documentation/CYCLE_BREAKING.md`](../documentation/CYCLE_BREAKING.md), and [`documentation/CONCURRENCY.md`](../documentation/CONCURRENCY.md).
 
 ---
 
-## 1. Core Philosophy: Why No Tracing GC?
+## 1. Three-Tier Ownership Classification (`Frame`, `Owned`, `Shared`)
 
-Tracing garbage collectors (used in Go, Java, C#, Python) introduce:
-1. **Unpredictable Latency:** Garbage collection pauses ("stop-the-world") interrupt real-time systems, games, audio processing, and high-throughput servers.
-2. **High Memory Overhead:** Tracing collectors typically require 2x–3x the resident memory to avoid thrashing CPU caches with frequent collection sweeps.
-3. **Nondeterministic Destructors:** Operating system resources (file handles, network sockets, GPU textures) are closed arbitrarily late when the collector happens to run.
+During `lpp-ownership` analysis over MIR, every managed value is placed into one of three tiers:
 
-L++ adopts **deterministic, scope-bound destruction**: as soon as a value's last owner goes out of scope, its memory and associated resources are released immediately on the current thread.
-
----
-
-## 2. Value Classification: Frame, Owned, and Shared
-
-During the `lpp-ownership` pass, the compiler categorizes every managed variable into one of three classifications:
-
-| Category | Storage | Lifecycle | Overhead |
+| Tier | Storage | Lifecycle | Notes |
 |---|---|---|---|
-| **`Frame`** | Call Stack | Bound strictly to current function frame | Zero allocation cost; pointer increment/decrement |
-| **`Owned`** | Native Heap | Unique single owner; freed immediately on scope exit | Standard allocation, zero reference count tracking |
-| **`Shared`** | Native Heap | Multiple owners across scopes or threads; managed by ARC | Atomic increment on clone, atomic decrement on drop |
+| **`Frame`** | Call Stack | Scoped to current function frame | Non-escaping ordinary structs/values; avoids heap allocation |
+| **`Owned`** | Heap (ARC) | Single owning flow | Move semantics avoid redundant retain/release pairs along linear moves |
+| **`Shared`** | Heap (ARC) | Aliased or potentially cycle-capable | Participates in cycle tracking on Cranelift native targets |
 
-```
-                Allocation Request
-                        │
-            Can value escape function?
-                   ╱          ╲
-                 No            Yes
-                 │              │
-             [Frame]      Multiple owners?
-           Stack Allocated     ╱          ╲
-                             No            Yes
-                             │              │
-                         [Owned]        [Shared]
-                        Single Heap    Atomic Ref Counted
-```
+*(In the current native runtime, heap ARC headers use atomic reference count operations across managed cells; see [`documentation/CONCURRENCY.md`](../documentation/CONCURRENCY.md).)*
+
+---
+
+## 2. Native ARC Headers vs WASM Layout
+
+- **Native Cranelift / Hosted Runtime**:
+  - Destructor-free managed objects (including `Str`) use a **16-byte common header** immediately before payload (`magic`, atomic `refcount`, `generation`, `flags`).
+  - Destructor-bearing native objects prepend an **8-byte destructor pointer** before that common header (**24-byte total allocation prefix**), keeping payload at `common_header + 16`.
+- **WebAssembly (`wasm32-wasip1`)**:
+  - Uses its own target-specific 24-byte header (`[refcount i64][drop-table index i64][magic]`) with size-class free-list reuse for acyclic churn.
 
 ---
 
 ## 3. Escape Analysis & Stack Promotion
-
-Before allocating a struct or buffer on the heap, the compiler runs an **escape analysis pass**:
 
 ```lpp
 struct Vector3:
@@ -52,64 +38,39 @@ struct Vector3:
     y: Float
     z: Float
 
-def calculate_magnitude(x: Float, y: Float, z: Float) -> Float:
-    v := Vector3(x, y, z)   # Classified as Frame!
-    return (v.x * v.x + v.y * v.y + v.z * v.z) ** 0.5
+def length_sq(x: Float, y: Float, z: Float) -> Float:
+    v := Vector3(x, y, z)   # Non-escaping -> eligible for Frame placement
+    return v.x * v.x + v.y * v.y + v.z * v.z
 ```
 
-Because `v` never escapes `calculate_magnitude`:
-1. It is promoted to stack allocation (`Frame`).
-2. No heap `malloc` or `free` calls are generated.
-3. Accesses compile down to direct stack offset loads and stores.
+Because `v` does not escape `length_sq`, it does not need heap retention beyond the frame.
 
 ---
 
-## 4. Automatic ARC Synthesis
+## 4. Ownership Balance Proofs & Cycle Collection
 
-When a value genuinely escapes (e.g. stored in a returned list, captured by a closure, or passed between threads), the compiler synthesizes ARC balance instructions:
+### Compile-Time Balance Proof (`E4403`)
+Before codegen, `lpp-ownership` verifies balanced retain/release paths along the MIR CFG (catching use-after-move or missing ownership cells with `E4403`), and MIR tests run the ARC interpreter leak oracle (`E4304`).
+
+### Runtime Trial-Deletion Collector (Cranelift Native)
+- `lpp-ownership` identifies types whose containment edges can form a cycle via strongly connected components (SCCs) and classifies them as `Shared` (collectible).
+- On Cranelift native targets, `lpp-runtime` reclaims unreachable cycles among `Shared` objects using a Bacon-Rajan trial-deletion collector (`lpp_arc_cycle_collect`). Acyclic objects continue to drop immediately when their reference count hits zero.
+
+### Current Backend & Concurrency Boundaries
+- **WASM (`wasm32-wasip1`)**: Reuses released acyclic heap blocks, but does **not** run cycle collection yet; cyclic WASM graphs can leak.
+- **LLVM (`--backend llvm`)**: Managed structs/lists/tuples and cycle-collector parity remain incomplete in `v0.2.0`.
+- **Threads (`spawn`)**: Refcounts are atomic, but compile-time `Send`/`Sync` enforcement and race-freedom proofs are not yet implemented (`specs.md` §6.3).
+
+---
+
+## 5. Borrowed Slices (`StrSlice` and `Slice[T]`)
+
+Zero-copy borrowed views avoid heap copies when passed downward into known readers:
 
 ```lpp
-def create_greeting(name: Str) -> Str:
-    # 'name' is retained when entering, and 'msg' is transferred to the caller
-    msg := "Hello, " + name
-    return msg
+def show_slice(s: Str):
+    view := str_slice(s, 0, 5)
+    print_str(str_slice_to_str(view))
 ```
 
-### Static Balance Checks
-The compiler verifies that every branch through a function has balanced `retain` and `release` counts:
-- Variables exiting scope without escaping have an automatic `release` instruction inserted at the exit block.
-- Early `return` statements, loop `break`s, and exception paths automatically trigger cleanup blocks for all live variables in the scope.
-- Double-frees and memory leaks are ruled out by construction.
-
----
-
-## 5. Compile-Time Borrow Verification
-
-L++ allows creating borrowed references (`&T`) and borrowed string slices (`StrSlice`) without incurring reference counting operations:
-
-```lpp
-def print_length(slice: StrSlice):
-    # 'slice' is a borrowed view: 0 allocations, 0 reference counts
-    println("Length: " + str(slice.len()))
-
-def main():
-    text := "Heavy heap-allocated string"
-    view := text[0:5] # Zero-copy stack slice
-    print_length(view)
-```
-
-The borrow verifier enforces:
-1. **No Outlived Borrows:** A borrow cannot be returned from a function if it references local stack memory.
-2. **Borrow Invalidation:** Modifying a collection while active borrows exist is rejected at compile time.
-
----
-
-## 6. Comparison with Other Languages
-
-| Feature | L++ | Rust | Go | C++ | Python |
-|---|---|---|---|---|---|
-| **Memory Model** | ARC + Escape Analysis | Strict Borrow Checker | Tracing GC | Manual / Smart Ptrs | Tracing GC + RefCount |
-| **GC Pauses** | **0 ms** | 0 ms | 1–10+ ms | 0 ms | Unpredictable |
-| **Ergonomics** | High (automatic) | Strict (explicit lifetimes) | High | Low (manual safety) | High |
-| **Destructor Timing** | **Immediate (RAII)** | Immediate (RAII) | Nondeterministic | Immediate (RAII) | Nondeterministic |
-| **Memory Footprint** | Minimal | Minimal | 2x–3x overhead | Minimal | High |
+In the current first tier, conservative escape checks reject returning borrowed slices, capturing them across escaping closures/`spawn`, or mutating their source while borrowed.

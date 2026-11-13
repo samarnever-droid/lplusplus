@@ -334,10 +334,10 @@ pub fn compile_entry_with_options(
     let names = Names(&package.names.symbols);
     let mut codegen_options =
         CodegenOptions::new(options.target, &names).with_opt_level(backend_opt);
-    if options.pgo_generate {
-        if let Some(fingerprint) = fingerprint {
-            codegen_options = codegen_options.with_pgo_fingerprint(fingerprint);
-        }
+    if options.pgo_generate
+        && let Some(fingerprint) = fingerprint
+    {
+        codegen_options = codegen_options.with_pgo_fingerprint(fingerprint);
     }
     let compiled = codegen
         .compile_module(&program, &inference.interner, &codegen_options)

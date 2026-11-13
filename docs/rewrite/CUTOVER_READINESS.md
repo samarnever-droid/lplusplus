@@ -1,5 +1,7 @@
 # Rewrite cutover readiness
 
+> **Historical Cutover Snapshot (2026-10-06)**: This readiness assessment precedes the unconditional cutover in `src/main.rs`. `RewriteEngine` is now the sole default engine (`LPP_ENGINE=legacy` is retired). For current capabilities and platform/backend boundaries, see [`specs.md`](../../specs.md), [`documentation/CURRENT_CAPABILITIES.md`](../../documentation/CURRENT_CAPABILITIES.md), and [`docs/release/V0.2.0.md`](../release/V0.2.0.md).
+
 **Assessment date:** 2026-10-06
 
 ## Executive answer

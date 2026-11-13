@@ -1,5 +1,13 @@
 use super::super::*;
 
+/// Import index of a WASI field, for the path-based surface the file helpers
+/// call directly (they are imported, not lowered as helpers).
+macro_rules! imp {
+    ($index:expr, $name:literal) => {
+        *$index.get($name).expect("filesystem import is registered")
+    };
+}
+
 pub(super) fn emit(
     fb: &mut FB,
     h: H,
@@ -8,6 +16,7 @@ pub(super) fn emit(
     fd_write_import_idx: u32,
     fd_read_import_idx: u32,
     proc_exit_import_idx: u32,
+    import_index: &BTreeMap<&str, u32>,
 ) -> Result<(), CodegenError> {
     let idx = |h: H| {
         *env.helper_index
@@ -234,6 +243,190 @@ pub(super) fn emit(
             fb.g(0);
             fb.load32(0);
             fb.call(fd_helper_idx);
+        }
+        // ── filesystem ────────────────────────────────────────────────
+        // Every file builtin is spelled with a *path* string and lowers onto
+        // WASI's path surface relative to the preopened "." (fd 3). Scratch
+        // slots: 88..96 hold the out-parameter each import writes (`&fd`,
+        // `&nread`), 96..176 the 64-byte `filestat` record.
+        H::FileExists => {
+            // path_filestat_get(3, 0, path+4, path.len, 96) — errno 0 means
+            // the path names something.
+            fb.i32c(3);
+            fb.i32c(0);
+            fb.g(0);
+            fb.i32c(4);
+            fb.op(op::I32_ADD);
+            fb.g(0);
+            fb.load32(0);
+            fb.i32c(FS_STAT as i64);
+            fb.call(imp!(import_index, "path_filestat_get"));
+            fb.i32c(0);
+            fb.op(op::I32_EQ);
+            fb.op(op::I64_EXTEND_I32_U);
+        }
+        H::DeleteFile => {
+            fb.i32c(3);
+            fb.g(0);
+            fb.i32c(4);
+            fb.op(op::I32_ADD);
+            fb.g(0);
+            fb.load32(0);
+            fb.call(imp!(import_index, "path_unlink_file"));
+            fb.op(op::I64_EXTEND_I32_U);
+        }
+        H::ReadFile => {
+            // path_open(3, 0, path+4, path.len, oflags=0, rights, 0, 0, 88)
+            let fd = fb.scratch(Val::I32);
+            let errno = fb.scratch(Val::I32);
+            let base = fb.scratch(Val::I32);
+            let payload = fb.scratch(Val::I32);
+            let len = fb.scratch(Val::I32);
+            fb.i32c(3);
+            fb.i32c(0);
+            fb.g(0);
+            fb.i32c(4);
+            fb.op(op::I32_ADD);
+            fb.g(0);
+            fb.load32(0);
+            fb.i32c(0); // oflags
+            fb.i64c(FS_RIGHTS_BASE);
+            fb.i64c(0);
+            fb.i32c(0); // fdflags
+            fb.i32c(FS_FD_OUT as i64);
+            fb.call(imp!(import_index, "path_open"));
+            fb.s(errno);
+            fb.g(errno);
+            fb.if_();
+            // Open failed: return 0 (an empty string pointer).
+            fb.i64c(0);
+            fb.op(op::RETURN);
+            fb.end();
+            fb.i32c(FS_FD_OUT as i64);
+            fb.load32(0);
+            fb.s(fd);
+            // One bounded read into `FS_BUF`, then one ARC string sized to
+            // the bytes actually returned (`FS_CHUNK` = 4 KiB).
+            let errno2 = fb.scratch(Val::I32);
+            fb.i32c(IOVEC_BUF as i64).i32c(FS_BUF as i64).store32(0);
+            fb.i32c((IOVEC_BUF + 4) as i64)
+                .i32c(FS_CHUNK as i64)
+                .store32(0);
+            fb.i32c(FS_NREAD as i64).i32c(0).store32(0);
+            fb.g(fd)
+                .i32c(IOVEC_BUF as i64)
+                .i32c(1)
+                .i32c(FS_NREAD as i64)
+                .call(fd_read_import_idx)
+                .s(errno2);
+            fb.i32c(FS_NREAD as i64).load32(0).s(len);
+            // Size the string from the file itself: seek to the end, take the
+            // resulting offset, then rewind (Node reports `nread` as the
+            // requested length rather than bytes read).
+            fb.g(fd)
+                .i64c(0)
+                .i32c(2) // whence = END
+                .i32c(FS_SEEK_OUT as i64)
+                .call(imp!(import_index, "fd_seek"))
+                .s(errno2);
+            fb.i32c(FS_SEEK_OUT as i64).load32(0).s(len);
+            fb.g(fd)
+                .i64c(0)
+                .i32c(0) // whence = SET
+                .i32c(FS_SEEK_OUT as i64)
+                .call(imp!(import_index, "fd_seek"))
+                .op(op::DROP);
+            fb.g(len).i32c(FS_CHUNK as i64).op(op::I32_GT_U);
+            fb.if_();
+            fb.i32c(FS_CHUNK as i64).s(len);
+            fb.end();
+            fb.g(fd).call(imp!(import_index, "fd_close")).op(op::DROP);
+            // `ArcAlloc(4 + len, 0)` returns the payload; the length word
+            // lives at `payload` and the bytes at `payload + 4`.
+            fb.i32c(4)
+                .g(len)
+                .op(op::I32_ADD)
+                .i32c(0)
+                .call(idx(H::ArcAlloc))
+                .s(payload);
+            fb.g(payload)
+                .i32c(STR_HEADER as i64)
+                .op(op::I32_SUB)
+                .s(base);
+            fb.g(base).g(len).store32(STR_HEADER as u32);
+            fb.g(payload)
+                .i32c(4)
+                .op(op::I32_ADD)
+                .i32c(FS_BUF as i64)
+                .g(len)
+                .memory_copy();
+            fb.g(payload);
+            fb.op(op::I64_EXTEND_I32_U);
+            fb.op(op::RETURN);
+        }
+        H::WriteFile | H::AppendFile => {
+            // path_open(3, 0, path+4, path.len, oflags, rights, 0, 0, 88)
+            // write_file = CREAT|TRUNC, append_file = CREAT + seek to end.
+            let append = matches!(h, H::AppendFile);
+            let fd = fb.scratch(Val::I32);
+            let errno = fb.scratch(Val::I32);
+            fb.i32c(3);
+            fb.i32c(0);
+            fb.g(0);
+            fb.i32c(4);
+            fb.op(op::I32_ADD);
+            fb.g(0);
+            fb.load32(0);
+            fb.i32c(if append { 1 } else { 1 | 8 }); // CREAT (| TRUNC)
+            fb.i64c(if append {
+                FS_RIGHTS_APPEND
+            } else {
+                FS_RIGHTS_WRITE
+            });
+            fb.i64c(0);
+            fb.i32c(0);
+            fb.i32c(FS_FD_OUT as i64);
+            fb.call(imp!(import_index, "path_open"));
+            fb.s(errno);
+            fb.g(errno);
+            fb.if_();
+            fb.g(errno);
+            fb.op(op::I64_EXTEND_I32_U);
+            fb.op(op::RETURN);
+            fb.end();
+            fb.i32c(FS_FD_OUT as i64);
+            fb.load32(0);
+            fb.s(fd);
+            if append {
+                // Seek to the end: whence=2 (END), offset 0.
+                fb.g(fd);
+                fb.i64c(0);
+                fb.i32c(2);
+                fb.i32c(FS_FD_OUT as i64);
+                fb.call(imp!(import_index, "fd_seek"));
+                fb.op(op::DROP);
+            }
+            // fd_write(fd, iovec(payload), 1, &nwritten)
+            fb.i32c(IOVEC_BUF as i64);
+            fb.g(1);
+            fb.i32c(4);
+            fb.op(op::I32_ADD);
+            fb.store32(0);
+            fb.i32c((IOVEC_BUF + 4) as i64);
+            fb.g(1);
+            fb.load32(0);
+            fb.store32(0);
+            fb.g(fd);
+            fb.i32c(IOVEC_BUF as i64);
+            fb.i32c(1);
+            fb.i32c(FS_NWRITTEN as i64);
+            fb.call(fd_write_import_idx);
+            fb.s(errno);
+            fb.g(fd);
+            fb.call(imp!(import_index, "fd_close"));
+            fb.op(op::DROP);
+            fb.g(errno);
+            fb.op(op::I64_EXTEND_I32_U);
         }
         H::StrEq => {
             let la = fb.scratch(Val::I32);

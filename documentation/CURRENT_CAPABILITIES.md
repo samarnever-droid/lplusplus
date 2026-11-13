@@ -1,6 +1,6 @@
 # Current capabilities
 
-**Last reviewed: 2026-10-26 (FFI, SIMD, MIR inlining, and PGO);** remaining gate counts below are the 2026-10-20 snapshot. This file is a compact index; the detailed
+**Last reviewed: 2026-11-13 (v0.2.0, WASI filesystem builtins);** remaining historical gate counts below reflect their dated snapshots. This file is a compact index; the detailed
 historical snapshot is in [STATUS-2026-07-30.md](STATUS-2026-07-30.md), while
 current gate results and open work are tracked in [ROADMAP.md](../ROADMAP.md).
 
@@ -50,7 +50,7 @@ current gate results and open work are tracked in [ROADMAP.md](../ROADMAP.md).
 |---|---|
 | Cranelift + host linker | Production/default; managed aggregate drop glue and native cycle collector |
 | Cranelift + direct ELF/PE/Mach-O linker | Production for the verified targets |
-| WASM | Experimental; ARC size-class free-list reuse passes bounded acyclic churn; cycle collection missing |
+| WASM | Experimental (`wasm32-wasip1`); ARC size-class free-list reuse passes bounded acyclic churn; WASI filesystem builtins (`file_exists`, `read_file`, `write_file`, `append_file`, `delete_file`) lowered via WASI preopens; cycle collection missing |
 | LLVM + host linker | Optional; managed structs/lists/tuples and cycle-collector parity incomplete |
 | LLVM + direct linker | Optional, tested for the supported subset |
 | Windows LLVM execution | Needs Windows CI validation |

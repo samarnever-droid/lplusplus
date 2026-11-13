@@ -1,154 +1,101 @@
 # Standard Library & Builtins
 
-L++ provides a comprehensive suite of built-in functions, primitive operations, and collection data structures designed for high-performance systems development.
+L++ provides runtime builtins in `abi/builtins.toml` plus pure-L++ modules under `stdlib/`. Note that backend coverage varies between Cranelift native, WASM (`wasm32-wasip1`), and experimental LLVM (`documentation/CURRENT_CAPABILITIES.md`).
 
 ---
 
 ## 1. Core I/O Functions
 
-### Printing
 ```lpp
-# Print with automatic newline
-println("Hello, world!")
+def main():
+    print_str("Hello, world!")     # String + newline
+    print(42)                      # Type-directed print + newline
+    write_str("Inline: ")          # Without trailing newline
+    write_int(7)
+    write_nl()
 
-# Print values without trailing newline
-print("Processing: ")
-print(str(42))
-
-# Specialized fast ASCII / UTF-8 string output
-print_str("Direct string output\n")
-```
-
-### Reading Input
-```lpp
-# Read a single line of input from stdin
-name := input("Enter your name: ")
-println("Welcome, " + name)
+    line := input()                # Reads one line from stdin
+    print_str("Read: " + line)
 ```
 
 ---
 
 ## 2. String Manipulation
 
-Strings in L++ are UTF-8 encoded and managed with deterministic ARC.
-
-### Basic String Operations
 ```lpp
 s := "Systems Programming"
+length := len(s)                   # Byte length (or str_len(s))
+greeting := "Hello, " + "L++!"     # Concatenation
 
-# Length in bytes
-length := s.len()               # 19
-
-# Concatenation with '+'
-greeting := "Hello, " + "L++!"
-
-# Conversions to Str
-n_str := str(12345)             # "12345"
-f_str := str(3.14)              # "3.14"
-b_str := str(true)              # "true"
+n_str := int_to_str(12345)         # "12345"
+f_str := float_to_str(3.14)        # Float formatting
+b_str := bool_to_str(true)         # "true"
+num := str_to_int("42")            # 42
 ```
 
-### Slicing & Substrings
-Zero-copy borrowed string slicing (`StrSlice`):
+### Borrowed String Slices (`StrSlice`)
 ```lpp
 text := "The quick brown fox"
-word := text[4:9]               # "quick"
-prefix := text[0:3]             # "The"
+word := str_slice(text, 4, 5)      # Borrowed view (offset 4, len 5)
+print_str(str_slice_to_str(word))  # Convert to owned Str when escaping
 ```
 
 ---
 
-## 3. Collections
+## 3. Collections (`List[T]` and `Map[K, V]`)
 
-### Lists (`List[T]`)
-Dynamically resizable arrays allocated on the heap:
-
+### Lists
 ```lpp
-# Instantiation
-nums := [10, 20, 30]
+mut nums := [10, 20, 30]
+list_push(nums, 40)
+count := len(nums)
+first := nums[0]
+nums[1] = 25
 
-# Appending items
-nums.append(40)
-
-# Length
-count := nums.len()             # 4
-
-# Indexing (0-based)
-first := nums[0]                # 10
-nums[1] = 25                    # update element
-
-# Removing the last element
-last := nums.pop()              # 40
-
-# Iteration
 for val in nums:
-    println(str(val))
+    print(val)
 ```
 
-### Maps (`Map[K, V]`)
-Hash maps for efficient key-value lookups:
-
+### Maps
 ```lpp
-# Instantiation
-inventory := Map[Str, Int]()
+mut inventory := map_new()
+map_put(inventory, "Apples", 50)
+map_put(inventory, "Oranges", 35)
 
-# Insertion
-inventory.insert("Apples", 50)
-inventory.insert("Oranges", 35)
+if map_has(inventory, "Apples"):
+    qty := map_get(inventory, "Apples")
+    print_str("Apples in stock: " + int_to_str(qty))
 
-# Lookup
-if inventory.contains("Apples"):
-    qty := inventory.get("Apples")
-    println("Apples in stock: " + str(qty))
-
-# Removal
-inventory.remove("Oranges")
+print(map_len(inventory))
+map_remove(inventory, "Oranges")
 ```
 
 ---
 
 ## 4. File I/O
 
-Standard synchronous file operations:
+Supported on hosted native builds and over WASI preopens on `wasm32-wasip1`:
 
 ```lpp
-# Writing text to a file
-content := "Configuration data\nkey=value\n"
-write_file("config.txt", content)
-
-# Reading text from a file
-read_back := read_file("config.txt")
-println("File content:\n" + read_back)
+write_file("config.txt", "key=value\n")
+if file_exists("config.txt"):
+    content := read_file("config.txt")
+    print_str(content)
+append_file("config.txt", "extra=1\n")
+delete_file("config.txt")
 ```
 
 ---
 
-## 5. Math & Conversions
+## 5. Math & Native C FFI (`extern "C"`)
 
-| Function / Operator | Signature | Description |
-|---|---|---|
-| `abs(x)` | `(Int) -> Int`, `(Float) -> Float` | Absolute value |
-| `min(a, b)` | `(Int, Int) -> Int`, `(Float, Float) -> Float` | Minimum of two values |
-| `max(a, b)` | `(Int, Int) -> Int`, `(Float, Float) -> Float` | Maximum of two values |
-| `a ** b` | Operator | Exponentiation ($a^b$) |
-| `int(x)` | `(Float) -> Int`, `(Str) -> Int` | Parse or convert to 64-bit integer |
-| `float(x)` | `(Int) -> Float`, `(Str) -> Float` | Convert to 64-bit floating point |
+Math helpers include `abs`, `min`, `max`, `floor`, `ceil`, `sqrt`, `pow` / `lpp_pow`, and `int_pow` (L++ does not have a `**` operator).
 
----
-
-## 6. C Foreign Function Interface (FFI)
-
-L++ can call arbitrary C libraries directly using `extern "C"`:
-
+On Cranelift native targets, `extern "C"` supports direct non-variadic calls for `Bool`, `Int`, `Float`, `U8`/`I8`, `U16`/`I16`, `U32`/`I32`, and borrowed `Str`:
 ```lpp
-extern "C" link "msvcrt":
-    def puts(s: Str) -> Int
-    def sqrt(x: Float) -> Float
+link "sqlite3"
 
-def main():
-    puts("Direct C puts invocation!")
-    root := sqrt(16.0)
-    println("Square root of 16 is: " + str(root))
+extern "C":
+    def sqlite3_libversion() -> Str
 ```
-
-The compiler adheres strictly to the target platform's C calling convention (MSVC x64 ABI on Windows, System V AMD64 ABI on Linux).
+See [`documentation/EXTERNAL_C_ABI.md`](../documentation/EXTERNAL_C_ABI.md) for ABI preconditions.

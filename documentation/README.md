@@ -2,38 +2,41 @@
 
 ## Read this first
 
-- [Current status — 2026-07-30](STATUS-2026-07-30.md)
-- [Current capabilities](CURRENT_CAPABILITIES.md)
-- [Compiler reality](Compiler_Reality.md)
-- [Safety contract](Cranelift_Safety_Plan.md)
+- [Language & Compiler Specification](../specs.md) — current authoritative language, CLI, backend, and Keel boundary spec.
+- [Current Capabilities](CURRENT_CAPABILITIES.md) — verified feature, backend, and platform status matrix.
+- [Project Roadmap](../ROADMAP.md) — active priority tiers and open parity gaps.
+- [ARC Cycle Breaking](CYCLE_BREAKING.md) — native Bacon-Rajan trial-deletion collector & leak oracle.
+- [Concurrency & Atomic ARC](CONCURRENCY.md) — current threading/task boundaries and open `Send`/`Sync` work.
+- [Safety Mission](Safety_Mission.md) — S0–S4 safety levels and claims policy.
+- [Release Briefs](../docs/release/V0.2.0.md) — v0.2.0 release notes ([v0.1 archive](../docs/release/V0.1.md)).
 
-These files describe the current MIR-first compiler. Older reports and design
-notes are historical unless they are linked from the status page.
+## Technical guides
 
-## Main guides
-
-- [Language guide](../Doc.md)
+- [External C ABI](EXTERNAL_C_ABI.md)
+- [Panic & Errors](PANIC_AND_ERRORS.md)
 - [Usage](Usage.md)
 - [Networking](Networking.md)
-- [Windows native toolchain](Windows_Native_Toolchain.md)
-- [macOS native toolchain](MacOS_Native_Toolchain.md)
-- [Native linker roadmap](Native_Linker_Roadmap.md)
-- [Runtime architecture](../runtime/ARCHITECTURE.md)
-- [Safety mission](Safety_Mission.md)
+- [Windows Native Toolchain](Windows_Native_Toolchain.md)
+- [macOS Native Toolchain](MacOS_Native_Toolchain.md)
+- [Native Linker Roadmap](Native_Linker_Roadmap.md)
+- [Android & Termux](ANDROID_TERMUX.md)
+
+## Historical pre-rewrite archives
+
+- [Historical Status — 2026-07-30](STATUS-2026-07-30.md) *(superseded by `specs.md` and `CURRENT_CAPABILITIES.md`)*
+- [Historical Compiler Reality — 2026-07-30](Compiler_Reality.md) *(describes pre-rewrite `src/` layout, superseded by `ARCHITECTURE.md`)*
 
 ## Wiki
 
-The version-controlled wiki is in [`wiki/`](../wiki/README.md). Architecture,
-type-system, status, and linker pages are updated against the same status source.
+The version-controlled wiki lives in [`wiki/`](../wiki/Home.md).
 
 ## Verification
 
-The repository's primary executable checks are:
+Primary repository gates (see [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) and [`scripts/fast_gate.sh`](../scripts/fast_gate.sh)):
 
 ```sh
-cargo test --release -j1
+cargo fmt --all -- --check
+cargo test --workspace --locked
+python3 scripts/check_compatibility_freeze.py
 sh tests/run_aot_parity.sh
-sh scripts/check_safety_mission.sh
 ```
-
-Package validation is documented in the status page and handoff notes.

@@ -8,6 +8,12 @@
 *.yml text eol=lf
 *.yaml text eol=lf
 *.md text eol=lf
+*.lpp text eol=lf
+*.tsv text eol=lf
+*.expected text eol=lf
+*.snap text eol=lf
+*.symbols text eol=lf
+*.h text eol=lf
 runtime/linux_x86_64_min.c -text whitespace=cr-at-eol
 
 # Generated benchmark reports should not affect GitHub language statistics.

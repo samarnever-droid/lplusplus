@@ -169,6 +169,7 @@ pub(super) fn lower_helper(
     fd_write_import_idx: u32,
     fd_read_import_idx: u32,
     proc_exit_import_idx: u32,
+    import_index: &BTreeMap<&str, u32>,
 ) -> Result<(Vec<Val>, Vec<Val>, Vec<Val>, Vec<u8>), CodegenError> {
     let mut fb = match h {
         H::FdWrite | H::FdRead => FB::new(2),
@@ -178,6 +179,11 @@ pub(super) fn lower_helper(
         H::PrintStr => FB::new(1),
         H::PrintFloat => FB::new(1),
         H::WriteStr => FB::new(1),
+        // (path_ptr) / (path_ptr, payload_ptr) / (path_ptr)
+        H::FileExists => FB::new(1),
+        H::ReadFile => FB::new(1),
+        H::WriteFile | H::AppendFile => FB::new(2),
+        H::DeleteFile => FB::new(1),
         H::StrEq => FB::new(2),
         H::StrLen => FB::new(1),
         H::Alloc => FB::new(1),
@@ -239,6 +245,11 @@ pub(super) fn lower_helper(
     let results = match h {
         H::FdRead => vec![Val::I32],
         H::Input => vec![Val::I32],
+        // A file read yields a fresh ARC string pointer (wrapped to the i64
+        // word the helper returns); the rest report an i64 errno/flag.
+        H::FileExists | H::ReadFile | H::WriteFile | H::AppendFile | H::DeleteFile => {
+            vec![Val::I64]
+        }
         H::StrEq => vec![Val::I32],
         H::StrLen => vec![Val::I64],
         // Retain passes the value through (callers keep using it).
@@ -291,6 +302,10 @@ pub(super) fn lower_helper(
         H::PrintStr => vec![Val::I32],
         H::PrintFloat => vec![Val::F64],
         H::WriteStr => vec![Val::I32],
+        // A path (and, for a write, the payload) is a string pointer — the
+        // same `Val::I32` shape `print_str` takes.
+        H::FileExists | H::ReadFile | H::DeleteFile => vec![Val::I32],
+        H::WriteFile | H::AppendFile => vec![Val::I32, Val::I32],
         H::StrEq => vec![Val::I32, Val::I32],
         H::StrLen => vec![Val::I32],
         H::Alloc => vec![Val::I32],
@@ -350,6 +365,7 @@ pub(super) fn lower_helper(
         fd_write_import_idx,
         fd_read_import_idx,
         proc_exit_import_idx,
+        import_index,
     )?;
     Ok((params, results, fb.extras, fb.body))
 }

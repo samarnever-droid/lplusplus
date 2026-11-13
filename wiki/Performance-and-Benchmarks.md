@@ -1,72 +1,45 @@
 # Performance & Benchmarks
 
-L++ is engineered from first principles for performance in two domains:
-1. **Compilation Speed:** Ultra-fast feedback loops for developers (~50,000+ lines/sec check phase).
-2. **Runtime Execution Speed:** Standalone machine code compiled by Cranelift and optimized via MIR passes, executing on par with C++ and Rust without GC pauses.
+L++ tracks compiler scalability, AOT/optimization gains, and runtime microbenchmarks transparently using reproducible repository harnesses under [`benchmarks/`](../benchmarks/Benchmarks.md).
+
+> Per [`documentation/Safety_Mission.md`](../documentation/Safety_Mission.md), unverified external comparisons against C, C++, Rust, Go, or Python are omitted. Only measured in-repo suites are reported here.
 
 ---
 
-## 1. Compiler Throughput
+## 1. Benchmark Suites in This Repository
 
-Traditional systems compilers (like `rustc` or `clang`) are notorious for long build times. L++ prioritizes instant feedback:
-
-| Stage | Throughput (lines/sec) | Latency (10k lines) |
+| Suite | Focus | Location |
 |---|---|---|
-| **Lexing & Parsing (`lpp-frontend`)** | ~180,000 lines/sec | ~55 ms |
-| **Type Checking (`lpp-types`)** | ~120,000 lines/sec | ~80 ms |
-| **Static Check (`lpp check`)** | **~50,000+ lines/sec** | **~190 ms** |
-| **Native Codegen & Direct Linking (`lpp build`)** | ~20,000 lines/sec | ~520 ms |
-
-### Multicore & Scaling to Massive Codebases
-- Independent modules and HIR units are parsed and type-checked concurrently.
-- Linear symbol lookup caching and single-pass tokenization prevent the $O(N^2)$ algorithmic slowdowns common in older parsers.
+| **King20 Stable** | 20 canonical native L++ workloads across Cranelift & host/direct linkers | [`benchmarks/king20/stable/v1/latest.md`](../benchmarks/king20/stable/v1/latest.md) |
+| **MIR Inlining (`--lto`)** | Whole-program bounded pure-scalar MIR inlining across modules | [`benchmarks/lto/results.md`](../benchmarks/lto/results.md) |
+| **Profile-Guided Inlining (`--pgo-*`)** | Cranelift host-target entry counter profiling (`LPP-PGO-1`) | [`benchmarks/pgo/results.md`](../benchmarks/pgo/results.md) |
+| **SIMD Kernel (`vec_i64_checksum`)** | 4-lane 256-bit AVX2 checksum dispatch vs scalar fallback | [`benchmarks/simd/results.md`](../benchmarks/simd/results.md) |
+| **Compiler Scalability** | Multi-thousand-line parse, check, MIR, and codegen scaling | [`benchmarks/scalability/latest.md`](../benchmarks/scalability/latest.md) |
 
 ---
 
-## 2. Runtime Benchmarks: King20 Suite
+## 2. Optimization Controls
 
-The King20 benchmark suite measures standard compute, memory allocation, and algorithmic tasks across languages on identical hardware:
-
-> System: AMD / Intel x86_64 8-core CPU, 64-bit OS, Release builds with `-O2` / `-O3`.
-
-### Benchmark Results (Runtime in Milliseconds — Lower is Better)
-
-| Benchmark | L++ (v0.1) | C++ (Clang -O3) | Rust (rustc -O) | Go (1.23) | Python (3.12) |
-|---|---|---|---|---|---|
-| **Fibonacci (Recursive n=40)** | **312 ms** | 305 ms | 308 ms | 480 ms | 12,400 ms |
-| **N-Body Simulation** | **184 ms** | 162 ms | 170 ms | 240 ms | 6,850 ms |
-| **Binary Trees (Alloc & Free)** | **420 ms** | 390 ms | 410 ms | 680 ms | 11,200 ms |
-| **Spectral Norm** | **145 ms** | 138 ms | 142 ms | 195 ms | 4,920 ms |
-| **Mandelbrot (16000x16000)** | **520 ms** | 490 ms | 505 ms | 710 ms | 18,300 ms |
-| **Fast String Slicing (1M ops)**| **38 ms** | 32 ms | 35 ms | 75 ms | 980 ms |
-
-### Key Observations:
-- **Zero GC Jitter:** In the `Binary Trees` benchmark, Go's tracing collector experiences intermittent stop-the-world pauses, whereas L++ frees nodes deterministically using ARC and stack frames with smooth, flat latency.
-- **Near-C++ Speed:** L++ native binaries compiled via Cranelift AOT execute within 1.05x–1.15x of tuned C++ and Rust code.
-- **Massive Python Advantage:** L++ provides Python-like readability while running **20x to 40x faster** across compute-intensive workloads.
+- **Cranelift Optimization Levels**:
+  - `-O0` (default): skips MIR optimization passes while still running MIR verification and ownership balance proofs; maps to Cranelift `none`.
+  - `-O1` / `-O2` / `-O3`: enables bounded MIR optimization budgets and Cranelift `speed` optimization.
+  - `-Os` / `-Oz`: selects size-oriented MIR budgets and Cranelift `speed_and_size`.
+- **Whole-Program Scalar Inliner (`--lto`)**:
+  - Inlines small, single-block, pure scalar callees across merged L++ MIR modules (not object-file or C-library LTO).
+- **Profile-Guided MIR Inlining (`--pgo-generate` / `--pgo-use`)**:
+  ```bash
+  lpp app.lpp -O3 --pgo-generate -o app-inst
+  LPP_PGO_PROFILE=app.pgo ./app-inst
+  lpp app.lpp -O3 --pgo-use app.pgo -o app-pgo
+  ```
+  Records MIR function-entry counts in a fingerprint-checked `LPP-PGO-1` file and prioritizes hot callees in the bounded MIR inliner.
 
 ---
 
-## 3. Memory Footprint Comparison
+## 3. Running Local Benchmarks
 
-| Language | Peak RSS (Binary Trees) | Memory Model | GC Pauses |
-|---|---|---|---|
-| **L++** | **42 MB** | Deterministic ARC + Frame | **0 ms** |
-| **Rust** | 38 MB | Static Lifetimes | **0 ms** |
-| **C++** | 40 MB | Manual `std::unique_ptr` | **0 ms** |
-| **Go** | 128 MB | Tracing Collector | 4–12 ms |
-| **Python** | 215 MB | Reference Counting + Cyclic GC | Periodic sweeps |
-
----
-
-## 4. Reproducing the Benchmarks
-
-All benchmark source files are located in the repository under `benchmarks/`:
-
+Use `lpp bench` (or inspect `benchmarks/Benchmarks.md` for harness scripts):
 ```bash
-# Compile and run King20 benchmarks in L++
-lpp build -O2 benchmarks/fib.lpp -o fib.exe
-Measure-Command { ./fib.exe } # Windows PowerShell
-# or
-time ./fib.exe                # Linux / macOS
+lpp app.lpp -O2 -o app
 ```
+Setting `BENCHMARK=1` in the environment prints a `TIMING_JSON` line reporting total compilation wall-clock duration.

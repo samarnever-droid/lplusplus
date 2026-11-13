@@ -1,105 +1,87 @@
 # Keel Package Manager
 
-**Keel** (invoked through `lpp` CLI commands) is the official dependency manager and build orchestrator for L++. It manages project manifests, dependencies, semantic version resolution, lockfiles, and package distribution.
+**Keel** (accessible both as standalone `keel` and via `lpp <cmd>` when no `.lpp` source file is passed) is the official package and workspace manager for L++. It manages `Keel.toml` manifests, semantic version resolution, `Keel.lock` lockfiles, local caching, and decentralized Git registry publishing.
 
 ---
 
-## 1. Creating a Project
-
-To initialize a new L++ project:
+## 1. Creating a New Project
 
 ```bash
-lpp new my_app
-cd my_app
+lpp new my-app
+cd my-app
 ```
 
-This creates a standard project layout:
+Generated layout:
 ```text
-my_app/
-├── lpp.toml          # Project manifest
+my-app/
+├── Keel.toml          # Project manifest
 └── src/
-    └── main.lpp      # Entry point
+    └── main.lpp       # Program entry point (`def main()`)
 ```
 
-Default `lpp.toml`:
+Default `Keel.toml`:
 ```toml
 [package]
-name = "my_app"
+name = "my-app"
 version = "0.1.0"
-authors = ["Your Name <you@example.com>"]
-edition = "2026"
-license = "MIT"
+edition = "2024"
 
 [dependencies]
 ```
+
+> Note: Staged dependency copies placed inside `.lpp_packages/` use internal `lpp.toml` descriptors for the compiler's module resolver; user-authored projects and workspaces always use `Keel.toml` (see [`specs.md`](../specs.md) §10).
 
 ---
 
 ## 2. Managing Dependencies
 
 ### Adding Dependencies
-To add a package from the official registry ([registry.lplusplus.bond](https://registry.lplusplus.bond)):
-
 ```bash
-lpp add json
+lpp add my-dep
 ```
-
-This modifies `lpp.toml`:
+Validates the package against the configured registry index (`llppregistry` by default) and records the constraint in `Keel.toml`:
 ```toml
 [dependencies]
-json = "1.2.0"
+my-dep = "^0.2"
 ```
 
-### Git Dependencies
-You can also depend directly on a Git repository:
-```toml
-[dependencies]
-http_client = { git = "https://github.com/example/http_client.git", branch = "main" }
-```
-
-### Local Path Dependencies
-For monorepos or multi-crate workspaces:
-```toml
-[dependencies]
-utils = { path = "../utils" }
+### Building, Running & Testing
+```bash
+lpp install            # Resolve & fetch dependencies, write Keel.lock
+lpp build              # Compile package binaries/libraries
+lpp run                # Build & run package binary
+lpp test               # Run package tests
 ```
 
 ---
 
-## 3. The Lockfile: `lpp.lock`
+## 3. Lockfiles (`Keel.lock`) & Workspaces
 
-When dependencies are resolved, Keel generates a deterministic `lpp.lock` file:
-- Records exact semantic versions, resolved git commit SHAs, and integrity hashes.
-- Ensures identical reproducible builds across all development machines and CI/CD environments.
-- Always commit `lpp.lock` for executable applications.
+When resolving dependencies, Keel writes a deterministic `Keel.lock` containing exact resolved versions and SHA-256 content hashes for offline verification.
+
+Workspaces can span multiple member crates in `Keel.toml`:
+```toml
+[workspace]
+members = ["crates/*"]
+```
+Path dependencies must resolve to members within the workspace; raw `git = "..."` dependency tables in `Keel.toml` are currently rejected by manifest validation.
 
 ---
 
-## 4. Keel Commands Reference
+## 4. Common Package Commands
 
-| Command | Usage | Description |
+| Command | Example | Description |
 |---|---|---|
-| `lpp new <name>` | `lpp new my_library --lib` | Create a new binary or library project |
-| `lpp add <pkg>` | `lpp add regex` | Add a dependency to `lpp.toml` |
-| `lpp remove <pkg>` | `lpp remove regex` | Remove a dependency from `lpp.toml` |
-| `lpp build` | `lpp build --release` | Compile all dependencies and the project |
-| `lpp run` | `lpp run` | Compile and execute the main binary |
-| `lpp test` | `lpp test` | Discover and run test suites |
-| `lpp tree` | `lpp tree` | Print the visual dependency graph |
-| `lpp publish` | `lpp publish` | Package and upload to `registry.lplusplus.bond` |
+| `lpp new <name>` | `lpp new demo-app` | Create project directory with `Keel.toml` and `src/main.lpp` |
+| `lpp init` | `lpp init` | Initialize `Keel.toml` in the current directory |
+| `lpp add <pkg>` | `lpp add lpp-json` | Add a registry dependency to `Keel.toml` |
+| `lpp remove <pkg>` | `lpp remove lpp-json` | Remove a dependency from `Keel.toml` |
+| `lpp update` | `lpp update` | Refresh `Keel.lock` from registry index |
+| `lpp tree` / `lpp why` | `lpp why lpp-json` | Inspect dependency tree and reverse dependencies |
+| `lpp verify` / `lpp cache` | `lpp verify` | Verify cached SHA-256 blobs and workspace lockfiles |
 
 ---
 
-## 5. Publishing to the Registry
+## 5. Decentralized Git Registry (`llppregistry`)
 
-To publish a library package to the official registry:
-1. Ensure your `lpp.toml` contains `name`, `version`, `description`, `license`, and `repository`.
-2. Authenticate with your token:
-   ```bash
-   lpp login <api-token>
-   ```
-3. Run the publish command:
-   ```bash
-   lpp publish
-   ```
-Keel packages the source, computes the archive checksum, and verifies that the crate builds cleanly before uploading.
+Keel uses a decentralized Git-backed package index (defaulting to `llppregistry`) with SHA-256 archive verification instead of a centralized API-token server. There is no `lpp login <api-token>` workflow. Publishing uses `keel publish` / `lpp publish` with standard Git authentication (SSH/HTTPS credentials) against the configured registry remote; published versions are immutable (`E6025`).

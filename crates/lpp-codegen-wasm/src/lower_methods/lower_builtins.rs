@@ -897,6 +897,36 @@ impl<'a> FnLower<'a> {
                     unreachable!("string builtin guarded by the outer match")
                 }
             },
+            // ── filesystem ──
+            "file_exists" => {
+                self.emit_operand(fb, arg0)?;
+                self.call_helper(fb, H::FileExists)?;
+                Ok(Class::I64)
+            }
+            "read_file" => {
+                self.emit_operand(fb, arg0)?;
+                self.call_helper(fb, H::ReadFile)?;
+                fb.op(op::I32_WRAP_I64);
+                Ok(Class::Str)
+            }
+            "delete_file" | "remove_file" => {
+                self.emit_operand(fb, arg0)?;
+                self.call_helper(fb, H::DeleteFile)?;
+                Ok(Class::I64)
+            }
+            "write_file" | "append_file" => {
+                self.emit_operand(fb, arg0)?;
+                self.emit_operand(fb, self.arg1(args)?)?;
+                self.call_helper(
+                    fb,
+                    if short == "write_file" {
+                        H::WriteFile
+                    } else {
+                        H::AppendFile
+                    },
+                )?;
+                Ok(Class::I64)
+            }
             _ => Err(unrepresentable(
                 builtin,
                 "not representable on wasm32-wasip1",

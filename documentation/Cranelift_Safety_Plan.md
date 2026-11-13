@@ -115,11 +115,11 @@ program's meaning or violate ownership assumptions. Current examples:
 - AOT rejects lists other than `List[Int]` because the runtime uses an
   `int64_t` element buffer.
 
-## Current v0.1.3 status note — 2026-07-20
+## Historical status note (pre-rewrite v0.1.3 context — 2026-07-20)
 
 This document is historical/design context. For current public capability claims,
 platform boundaries, filesystem APIs, package cache layout, and known missing
-features, see [Current Capabilities](CURRENT_CAPABILITIES.md).
+features, see [Current Capabilities](CURRENT_CAPABILITIES.md) and [`specs.md`](../specs.md).
 
 Current rules:
 

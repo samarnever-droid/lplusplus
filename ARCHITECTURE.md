@@ -1,95 +1,68 @@
 # L++ Architecture Documentation
 
-> Generated via GitNexus Knowledge Graph & Compiler Source Analysis
+> Modular rewrite architecture across `crates/lpp-*` and `crates/keel`. For verified per-backend boundaries and limitations, see [specs.md](specs.md) and [documentation/CURRENT_CAPABILITIES.md](documentation/CURRENT_CAPABILITIES.md).
 
 ---
 
-## 1. Overview & Codebase Statistics
+## 1. Overview & Workspace Architecture
 
-L++ is a high-performance, statically typed, memory-safe systems programming language featuring deterministic Automatic Reference Counting (ARC) with static cycle breaking, stack promotion via whole-program escape analysis, and an ultra-fast multi-backend compilation pipeline (Cranelift AOT/JIT, LLVM, WebAssembly) with custom built-in cross-platform linkers (PE, ELF, Mach-O).
+L++ is a statically typed compiled systems and application language built on a verified multi-stage Rust workspace (`crates/lpp-*`):
 
-### Repository Statistics (via GitNexus)
-- **Source Files**: 868 files indexed
-- **Symbols**: 21,104 symbols
-- **Execution Flows**: 300 distinct execution flows
-- **Core Engine**: Rust compiler (`src/`) + native C runtime (`lpp_runtime.c`)
+- **CLI Entrypoint**: [`src/main.rs`](src/main.rs) unconditionally invokes `lpp_driver::RewriteEngine`.
+- **Hosted Runtime**: [`crates/lpp-runtime`](crates/lpp-runtime) (atomic ARC, Bacon-Rajan trial-deletion cycle collector for native `Shared` objects, strings, collections, OS/file/JSON builtins), paired with freestanding C/platform sources under [`runtime/`](runtime/).
+- **Direct & Host Linking**: [`crates/lpp-linker`](crates/lpp-linker) provides standalone ELF/PE/Mach-O linking (`lpp-link`), with host C toolchain fallback (`--linker host`).
 
 ---
 
-## 2. Functional Areas (Subsystems & Clusters)
+## 2. Compilation Pipeline
 
 ```mermaid
 graph TD
-    subgraph Frontend ["1. Frontend (Lexing & Parsing)"]
-        Lexer["Lexer (lexer.rs)"] --> Tokens["Token Stream"]
-        Tokens --> Parser["Parser (parser.rs)"]
-        Parser --> AST["AST (ast.rs)"]
+    subgraph Frontend ["1. Frontend & HIR"]
+        Lexer["lpp-frontend (Lexer / Parser / AST)"] --> HIR["lpp-hir (Module Graph & HIR)"]
     end
 
-    subgraph Analysis ["2. Semantic Analysis & Type System"]
-        AST --> Mono["Monomorphizer (monomorph.rs)"]
-        Mono --> Semantic["Semantic Resolver (semantic.rs)"]
-        Semantic --> Typecheck["Type Checker (typecheck.rs)"]
-        Typecheck --> CycleBreak["Ownership plan: SCC classification (lpp-ownership)"]
+    subgraph TypesAndMIR ["2. Types, MIR & Ownership"]
+        HIR --> Types["lpp-types (Inference, Traits, Generics)"]
+        Types --> MIR["lpp-mir (MIR Lowering & Verifiers)"]
+        MIR --> Passes["lpp-passes (Scalar Opts, LTO Inliner, Escape/Placement)"]
+        Passes --> Ownership["lpp-ownership (Frame / Owned / Shared, SCC Cycles, Balance Proof)"]
     end
 
-    subgraph MIR ["3. Mid-Level IR & Optimization Passes"]
-        CycleBreak --> MirLower["MIR Lowering (mir/lower.rs)"]
-        MirLower --> Peephole["Peephole & ConstProp"]
-        Peephole --> Inline["Inlining & DCE"]
-        Inline --> EscapeSolver["Escape Solver (Stack vs ARC)"]
-        EscapeSolver --> ArcPass["ARC Retain/Release Insertion"]
+    subgraph Backends ["3. Modular Codegen Backends"]
+        Ownership --> API["lpp-codegen-api"]
+        API --> Cranelift["lpp-codegen-cranelift (Default Native AOT)"]
+        API --> LLVM["lpp-codegen-llvm (Experimental Clang-based)"]
+        API --> WASM["lpp-codegen-wasm (Experimental wasm32-wasip1)"]
     end
 
-    subgraph Backend ["4. Code Generation Backends"]
-        ArcPass --> Cranelift["Cranelift AOT/JIT (cranelift/)"]
-        ArcPass --> LLVM["LLVM Backend (llvm.rs)"]
-        ArcPass --> WASM["WASM Backend (wasm.rs)"]
-    end
-
-    subgraph Linker ["5. Linking & Runtime Support"]
-        Cranelift --> BuiltinLinker["Custom Linker (linker.rs) - PE / ELF / Mach-O"]
-        BuiltinLinker --> Binary["Native Executable / Shared Object"]
-        Binary -.-> Runtime["L++ Runtime (lpp_runtime.c)"]
+    subgraph LinkRuntime ["4. Linking & Runtime"]
+        Cranelift --> Linker["lpp-linker / Host Linker"]
+        LLVM --> Linker
+        Linker --> Binary["Native Executable"]
+        Binary -.-> Runtime["lpp-runtime (ARC + Cycle Collector + Std Builtins)"]
+        WASM --> WasmMod["Validated .wasm Module (WASI)"]
     end
 ```
 
-### Module Breakdown
+### Workspace Crate Breakdown
 
-| Subsystem | Key Files | Responsibility |
+| Subsystem | Crate(s) | Responsibility |
 |---|---|---|
-| **Frontend** | [`lexer.rs`](file:///c:/Users/khati/lpp/src/frontend/lexer.rs), [`parser.rs`](file:///c:/Users/khati/lpp/src/frontend/parser.rs), [`ast.rs`](file:///c:/Users/khati/lpp/src/frontend/ast.rs) | Converts UTF-8 source into token streams, validates escape sequences and indentation, builds strongly typed AST. |
-| **Analysis** | [`monomorph.rs`](file:///c:/Users/khati/lpp/src/analysis/monomorph.rs), [`semantic.rs`](file:///c:/Users/khati/lpp/src/analysis/semantic.rs), [`typecheck.rs`](file:///c:/Users/khati/lpp/src/analysis/typecheck.rs), `crates/lpp-ownership` (SCC cycle classification; collection in the runtimes) | Generic instantiation, lexical scoping, symbol binding, trait resolution, type checking, and compile-time ownership cycle detection. |
-| **MIR** | [`mir/lower.rs`](file:///c:/Users/khati/lpp/src/mir/lower.rs), `pass_*.rs`, [`escape_solver.rs`](file:///c:/Users/khati/lpp/src/mir/escape_solver.rs) | Lowers AST to Control Flow Graph (CFG) of basic blocks, runs constant propagation, inlining, scalar optimizations, whole-function escape solving, and deterministic ARC lifetime instrumentation. |
-| **Backend** | [`cranelift/`](file:///c:/Users/khati/lpp/src/backend/cranelift/), [`llvm.rs`](file:///c:/Users/khati/lpp/src/backend/llvm.rs), [`wasm.rs`](file:///c:/Users/khati/lpp/src/backend/wasm.rs) | Lowers MIR to machine code via Cranelift (default), LLVM (optimized release), or WebAssembly. |
-| **Linker & Runtime** | [`linker.rs`](file:///c:/Users/khati/lpp/src/linker.rs), [`lpp_runtime.c`](file:///c:/Users/khati/lpp/lpp_runtime.c) | Self-contained zero-dependency linker producing native PE/COFF, ELF, and Mach-O binaries, linked with the minimal ARC and arena memory runtime. |
+| **Frontend** | [`crates/lpp-frontend`](crates/lpp-frontend) | Tokenization, indentation/escape validation, parsing into typed AST. |
+| **HIR & Module Graph** | [`crates/lpp-hir`](crates/lpp-hir) | Resolves imports (including staged `.lpp_packages/*`), constructs HIR. |
+| **Type System** | [`crates/lpp-types`](crates/lpp-types) | Bidirectional type inference, monomorphization, trait & generic checking. |
+| **MIR & Verification** | [`crates/lpp-mir`](crates/lpp-mir) | Control-flow graph lowering, `CORE_MIR_INVARIANTS` verifier, MIR interpreter & ARC leak oracle (`E4304`). |
+| **Passes & Ownership** | [`crates/lpp-passes`](crates/lpp-passes), [`crates/lpp-ownership`](crates/lpp-ownership) | Constant folding, DCE, `--lto`/`--pgo-use` inliner, three-tier placement (`Frame`/`Owned`/`Shared`), SCC cycle classification, and balance proofs (`E4403`). |
+| **Codegen Backends** | [`crates/lpp-codegen-api`](crates/lpp-codegen-api), [`crates/lpp-codegen-cranelift`](crates/lpp-codegen-cranelift), [`crates/lpp-codegen-llvm`](crates/lpp-codegen-llvm), [`crates/lpp-codegen-wasm`](crates/lpp-codegen-wasm) | Cranelift (default native `x86_64`/`aarch64`), experimental LLVM, and experimental `wasm32-wasip1` emission. |
+| **Linking & Runtime** | [`crates/lpp-linker`](crates/lpp-linker), [`crates/lpp-runtime-abi`](crates/lpp-runtime-abi), [`crates/lpp-runtime`](crates/lpp-runtime) | Direct ELF/PE/Mach-O linker, `abi/builtins.toml`-driven ABI tables, and hosted runtime. |
+| **Package Manager & Driver** | [`crates/keel`](crates/keel), [`crates/lpp-pm`](crates/lpp-pm), [`crates/lpp-driver`](crates/lpp-driver) | `Keel.toml`/`Keel.lock` resolution, decentralized git registry client, session & CLI orchestration. |
 
 ---
 
-## 3. Key Execution Flows
+## 3. Memory & Lifetime Model
 
-### 1. Compilation Pipeline (`main.rs::compile_file`)
-1. **Source Loading & Lexing**: `Lexer::tokenize` converts `.lpp` source text into `Vec<SpannedToken>`.
-2. **Parsing**: `Parser::parse` constructs the root `Program` AST node.
-3. **Import Resolution**: Merges dependent AST declarations across modules.
-4. **Monomorphization**: Clones and specializes generic types, functions, and trait implementations with concrete type arguments.
-5. **Semantic Scope Resolution**: Validates identifier bindings, mutability rules, and closure captures.
-6. **Type Checking**: Validates type contracts, operators, and method signatures; computes `TypeTable`.
-7. **Cycle classification & collection**: The ownership plan (`crates/lpp-ownership`) classifies types that can sit on a reference cycle as `Shared`; runtime trial-deletion collection reclaims unreachable cycles of those types (see `documentation/CYCLE_BREAKING.md`). The v1 `src/analysis/cyclebreak.rs` demotion engine was removed in the rewrite cutover and no edge is demoted today.
-8. **MIR Generation**: Transforms AST to basic-block MIR representation.
-9. **MIR Optimization Pipeline**: Runs constant folding, copy propagation, strength reduction, dead code elimination, and inlining.
-10. **Escape Analysis**: Computes value vs reference escape status to stack-promote non-escaping allocations.
-11. **ARC Instrumentation**: Inserts `lpp_arc_retain` and `lpp_arc_release` calls strictly on surviving reference edges.
-12. **Codegen**: Emits machine code via Cranelift `ObjectModule`.
-13. **Linking**: Packages object bytes into target executable (PE/ELF/Mach-O) with embedded runtime.
-
-### 2. Arithmetic & Expression Lowering
-Expressions are lowered through `mir::lower` to `Rvalue::BinaryOp`, which backend lowerers (`cranelift/lower.rs`) map to machine instructions with strict safety traps:
-- Integer addition, subtraction, multiplication (`iadd`, `isub`, `imul`)
-- Integer division and modulo (`sdiv`, `srem` guarded against division by zero and signed overflow)
-- Bitwise shifts (`ishl`, `sshr` guarded against shift counts `< 0` or `>= 64`)
-
-### 3. Memory & Lifetime Management
-- **Stack Promotion**: Values that do not escape their declaring frame are allocated directly on the stack with 0 refcount overhead.
-- **ARC (Atomic Reference Counting)**: Thread-shared references use atomic refcounting (`lpp_arc_retain` / `lpp_arc_release`), while function-local single-threaded references use fast non-atomic updates.
-- **Arena Regions**: Self-referential and cyclic graphs are allocated in function-scoped arenas (`lpp_arena_alloc`) and reclaimed in bulk at frame exit.
+- **Three-Tier Ownership Plan**: `lpp-ownership` classifies locals into `Frame`, `Owned`, and `Shared`. Cycle-capable types identified by SCC analysis are placed in `Shared` and tracked for collection on the Cranelift native path. See [documentation/CYCLE_BREAKING.md](documentation/CYCLE_BREAKING.md).
+- **Atomic Native ARC Headers**: Native runtime reference counting uses atomic operations across `Shared` objects (see [documentation/CONCURRENCY.md](documentation/CONCURRENCY.md)). Strings and destructor-free objects use a 16-byte common ARC header immediately before payload; destructor-bearing native objects prepend an 8-byte destructor pointer (24-byte total prefix).
+- **Trial-Deletion Cycle Collection**: Unreachable runtime reference cycles on Cranelift native targets are collected by the Bacon-Rajan trial-deletion collector in `lpp-runtime`. WASM uses a target-specific 24-byte header with free-list reuse for acyclic churn, and cycle collection on WASM/LLVM remains unimplemented.
+- **Trapping Arithmetic & Bounds**: Signed division/modulo by zero, overflow (`MIN / -1`), invalid shift counts, and out-of-bounds indexing trap safely rather than invoking undefined behavior.

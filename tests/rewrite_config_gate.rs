@@ -16,7 +16,10 @@ fn lpp(home: &Path, working_directory: &Path, arguments: &[&str]) -> Output {
         .env("USERPROFILE", home)
         .env("LPP_ENGINE", "rewrite")
         .env("LPP_BENCH_BIN", env!("CARGO_BIN_EXE_lpp"))
-        .env("LPP_UPDATE_LATEST_TAG", "v0.1.0")
+        .env(
+            "LPP_UPDATE_LATEST_TAG",
+            format!("v{}", env!("CARGO_PKG_VERSION")),
+        )
         .env("LPP_LLVM_CC", env!("CARGO_BIN_EXE_lpp"));
     if let Some(runtime) = lpp_driver::runtime_library_path() {
         cmd.env("LPP_RUNTIME_LIB", runtime);
@@ -56,18 +59,19 @@ fn rewrite_config_is_persisted_validated_and_used_as_the_backend_default() {
     assert_eq!(invalid_engine.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&invalid_engine.stderr).contains("legacy` or `rewrite"));
 
+    let expected_version = format!("L++ v{} (rewrite engine)", env!("CARGO_PKG_VERSION"));
     let version = lpp(&home, &project, &["--version"]);
     assert!(version.status.success());
     assert_eq!(
         String::from_utf8_lossy(&version.stdout).trim(),
-        "L++ v0.1.0 (rewrite engine)"
+        expected_version
     );
 
     let bench = lpp(&home, &project, &["bench", "--version"]);
     assert!(bench.status.success());
     assert_eq!(
         String::from_utf8_lossy(&bench.stdout).trim(),
-        "L++ v0.1.0 (rewrite engine)"
+        expected_version
     );
 
     let update_policy = lpp(&home, &project, &["upgrade"]);

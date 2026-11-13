@@ -4,7 +4,7 @@
 
 ## 1. Rewrite Crates & Pipeline Architecture
 
-The L++ compiler is decomposed into a strict, unidirectional 15-crate pipeline. No stage depends on legacy code or circular dependencies.
+The L++ compiler is decomposed into a strict, unidirectional multi-crate pipeline (`crates/lpp-*`). No stage depends on the retired legacy engine.
 
 ```
 Source (.lpp)
@@ -48,14 +48,14 @@ lpp-codegen-api ──► [ Backends: lpp-codegen-cranelift | lpp-codegen-wasm |
 | `lpp-codegen-llvm` | Textual LLVM-IR generation with clang fallback. | Optimized MIR | Native `.o` |
 | `lpp-linker` | Zero-external-dependency tri-format direct linker (ELF, PE, Mach-O). | Objects + libs | Native Executables |
 | `lpp-driver` | End-to-end driver, CLI dispatcher, multi-backend routing. | CLI arguments | Completed compilation |
-| `keel` | Cargo-equivalent workspace/project manager, lockfile, cache manager. | `lpp.json` | Build DAG, packages |
+| `keel` | Cargo-equivalent workspace/project manager, lockfile, cache manager. | `Keel.toml` | Build DAG, packages |
 | `lpp-pm` | Storage core: content-addressed blob store, in-memory KV index. | Blobs/Registries | Resolved packages |
 
 ---
 
 ## 2. Memory Safety & Ownership Architecture
 
-L++ achieves complete memory safety **without garbage collection**, without a tracing runtime, and without manual `free()` calls.
+L++ manages memory via **deterministic Automatic Reference Counting (ARC)** on the native path, paired with a bounded Bacon-Rajan trial-deletion collector for unreachable cycles among `Shared` objects (`documentation/CYCLE_BREAKING.md`). For verified scope and per-backend caveats, see [`documentation/Safety_Mission.md`](documentation/Safety_Mission.md) and [`specs.md`](specs.md).
 
 ### 2.1 ARC Header Layouts
 
@@ -86,25 +86,23 @@ The `lpp-ownership` crate classifies every local variable and temporary into one
    - Zero heap allocation, zero reference count traffic.
    - Deallocated instantly on stack unwinding/block exit.
 2. **`Owned` (Exclusive Heap)**:
-   - Value is heap-allocated but owned by a single deterministic path.
-   - Retain/release calls use non-atomic CPU instructions.
-   - Transferred by Move semantics: assigning moves ownership, eliminating refcount increments.
-3. **`Shared` (Concurrent / Aliased Heap)**:
-   - Value is accessible across threads, tasks, or multiple aliased variables.
-   - Retain uses `atomic_add(1)`, release uses `atomic_sub(1)`.
-   - When `rc` drops to 0, a native object's optional destructor prefix is invoked before its allocation is freed; WASM dispatches its table-index destructor.
+   - Value is heap-allocated and owned along a single path where moves avoid redundant retain/release traffic.
+   - Note: current native runtime ARC header refcounts remain atomic across heap cells (`documentation/CONCURRENCY.md`).
+3. **`Shared` (Cycle-Capable / Aliased Heap)**:
+   - Value may be aliased or participate in a statically possible reference cycle.
+   - Native runtime retains/releases use atomic updates; when `rc` drops to 0, a native object's optional destructor prefix is invoked before its allocation is freed (WASM dispatches its table-index destructor).
 
-### 2.3 Static Cycle Breaking (`E4403`)
+### 2.3 Cycle Classification & Runtime Trial-Deletion Collection
 
-- **Containment Graph Analysis**: During MIR analysis, `lpp-ownership` builds a directed graph of type containment ($T_1 \to T_2$ if $T_1$ owns a field of type $T_2$).
-- **Cycle Rejection**: If an owning cycle is detected ($A \to B \to A$), the compiler rejects the program with diagnostic `E4403: Owning reference cycle detected`.
-- **Resolution**: Cyclic graphs must use weak generations, integer keys, or explicit graph node tables rather than direct owning pointers.
+- **SCC Containment Analysis**: During ownership planning, `lpp-ownership` analyzes type containment edges to identify cycle-capable types and places them in the `Shared` tier so they participate in cycle tracking rather than crashing or leaking.
+- **Native Trial-Deletion Collector**: On the Cranelift native path, `lpp-runtime` reclaims unreachable runtime cycles via a Bacon-Rajan trial-deletion collector with `COLLECTED` bit handling and `E4304` leak-oracle verification in MIR tests (see [`documentation/CYCLE_BREAKING.md`](documentation/CYCLE_BREAKING.md)).
+- **Backend Boundaries**: WASM reuses freed blocks for acyclic churn but lacks cycle collection; LLVM managed aggregates and cycle-collector parity remain incomplete.
 
-### 2.4 Ownership Balance Proof (Phase 4E)
+### 2.4 Ownership Balance Proof (`E4403`)
 
-Before emission, every basic block and edge in the MIR CFG is evaluated against the **Ownership Balance Law**:
+Before emission, every basic block and edge in the MIR CFG is evaluated against the ownership balance law:
 $$\sum \text{Retains}(x) - \sum \text{Releases}(x) = 0 \quad \text{along every path from entry to exit}$$
-Any path with a lingering reference is flagged as a compile-time leak; any path with an extra release is flagged as a use-after-free or double-free.
+Any path with an unbalanced ownership cell, missing move initialization, or use-after-move triggers diagnostic `E4403` (see `specs.md` §12.4).
 
 ### 2.5 Vector & SIMD Architecture in the 24-Byte Payload
 
@@ -146,39 +144,18 @@ Destructor-bearing allocations add an 8-byte pointer before the common header, p
 
 ---
 
-### 2.6 The Normal Developer Memory Safety Profile
+### 2.6 Memory Safety Profile & Boundaries
 
-L++ delivers absolute, mathematical memory safety **without forcing developers to learn complex lifetime annotations (`'a`) or fight borrow checkers**.
+L++ aims to prevent common systems-language footguns **without requiring manual lifetime annotations (`'a`)**, while documenting exact verified boundaries in [`documentation/Safety_Mission.md`](documentation/Safety_Mission.md) and [`specs.md`](specs.md):
 
-#### The 7 Ironclad Safety Guarantees for Everyday Programmers
-
-| Risk / Failure Mode | Legacy Languages | L++ Normal Developer Guarantee |
-|---|---|---|
-| **Segfaults** | Common in C/C++ (invalid pointers, bad indexing) | **IMPOSSIBLE**: All slice and list accesses are strictly bounds-checked. |
-| **Null Pointer Exceptions** | Plague Java, C++, Go, Python (`NoneType error`) | **IMPOSSIBLE**: Pointers cannot be null. Optional values use `Option[T]`. |
-| **Use-After-Free (UAF)** | Primary source of CVE security exploits in C/C++ | **IMPOSSIBLE**: Object lives until last reference drops; destroyed deterministically. |
-| **Double-Free** | Crash on freeing already freed memory | **IMPOSSIBLE**: Destructor invoked exactly once when `rc` hits 0. |
-| **Cyclic Memory Leaks** | Common in Python/Swift; requires slow tracing GC | **IMPOSSIBLE**: Compiler statically detects and rejects owning cycles (`E4403`). |
-| **Data Races** | Silent memory corruption across threads | **IMPOSSIBLE**: Immutable by default (`:=`); cross-thread sharing is atomic. |
-| **Lifetime Overhead** | Rust requires complex annotations (`'a`, `Box`, `Pin`) | **ZERO OVERHEAD**: Automatic 3-tier placement manages lifespans invisibly. |
-
-#### Language Comparison Matrix
-
-```
-┌────────────────────────┬─────────────┬─────────────┬─────────────┬─────────────┬─────────────┐
-│ Capability / Metric    │ L++         │ C++20       │ Rust        │ Python 3    │ Go          │
-├────────────────────────┼─────────────┼─────────────┼─────────────┼─────────────┼─────────────┤
-│ Null Pointer Safety    │ Pure (Option│ None (Raw)  │ Pure (Option│ None (None) │ None (nil)  │
-│ Segfault Immunity      │ Guaranteed  │ None        │ Guaranteed  │ Guaranteed  │ Runtime Nil │
-│ Use-After-Free Immune  │ Guaranteed  │ None        │ Guaranteed  │ Guaranteed  │ Guaranteed  │
-│ Cycle Leak Prevention  │ Static E4403│ None        │ None (Rc)   │ Tracing GC  │ Tracing GC  │
-│ Stop-The-World GC Pause│ ZERO (0ms)  │ None (0ms)  │ ZERO (0ms)  │ Heavy GC    │ Periodic GC │
-│ Lifetime Annotations   │ NONE (Auto) │ None        │ Required('a)│ None        │ None        │
-│ Link Time (Incremental│ 5 - 15ms    │ 500 - 3000ms│ 800 - 5000ms│ N/A (Interp)│ 100 - 400ms │
-│ Standalone Executable  │ YES (No SDK)│ Needs Toolch│ Needs Cargo │ No (Needs Py│ YES         │
-│ Memory Overhead (RAM)  │ Minimal (2MB│ Minimal (1MB│ Minimal (1MB│ Heavy (35MB)│ Moderate(8MB│
-└────────────────────────┴─────────────┴─────────────┴─────────────┴─────────────┴─────────────┘
-```
+| Risk / Failure Mode | L++ Design & Current Scope |
+|---|---|
+| **Out-of-bounds access** | List and slice indexing checks bounds and traps safely on out-of-range access. |
+| **Null dereferences** | Safe L++ values do not expose null pointers; optional values use `Option` / `Result`. Raw C pointers passed as `Int` via FFI remain the caller's responsibility. |
+| **Use-after-free & Double-free** | MIR ownership balance proofs (`E4403`) and atomic ARC reclamation enforce balanced retains/releases in safe native code. |
+| **Reference cycles** | Cranelift native reclaims unreachable `Shared` cycles via Bacon-Rajan trial deletion (`documentation/CYCLE_BREAKING.md`); WASM/LLVM cycle-collector parity remains open. |
+| **Concurrency / Data races** | Native ARC counts are atomic and `spawn`/`await` exist, but `Send`/`Sync` compile-time trait enforcement and general data-race-freedom proofs are still open (`documentation/CONCURRENCY.md`). |
+| **Lifetime annotations** | `Frame` / `Owned` / `Shared` placement is inferred automatically without explicit `'a` annotations. |
 
 ---
 
@@ -357,61 +334,44 @@ cache total: 3 packages, 688.8 KB
 Instant environmental diagnostics for toolchains, backends, and runtimes:
 
 ```text
-L++ v0.1.0 rewrite doctor
-  host:               x86_64-linux (glibc 2.38)
-  rewrite pipeline:   ACTIVE (15/15 crates clean)
+L++ v0.2.0 (rewrite engine)
+  host:               x86_64-linux
+  rewrite pipeline:   ACTIVE
   configured backend: cranelift
-  configured linker:  direct (ELF64 in-process)
-  native runtime:     /usr/local/lib/liblpp_runtime.so (OK)
-  WASM runtime:       wasmtime 25.0.0 (OK)
-  LLVM compiler:      clang 18.1.3 (OK)
-  package manager:    Keel v0.1.0 (Git-decentralized)
-doctor: all systems operational
+  configured linker:  direct / host fallback
+  WASM runtime:       wasmtime / node WASI
+  LLVM compiler:      clang (optional / experimental)
+  package manager:    Keel v0.2.0 (Git-backed index)
 ```
 
 ---
 
-## 7. The WOW Factors: Why L++ Outclasses Legacy Languages
-
-L++ is designed to solve the real bottlenecks of modern software engineering: slow build times, heavy runtimes, complicated borrow checkers, and fragile package registries.
+## 7. Architectural Highlights
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                               THE L++ WOW FACTORS                           │
+│                               KEY CAPABILITIES                              │
 ├────────────────────────────────┬────────────────────────────────────────────┤
-│ 1. 10x-50x Compilation Speed   │ Cranelift AOT + Direct Linker links in 5ms │
-│ 2. Python Ease + C Performance │ Indentation syntax, no GC, native speed    │
-│ 3. Mathematical Memory Safety  │ 24B ARC + Cycle Breaker (E4403) + Balance  │
-│ 4. Zero External Toolchain     │ Emits ELF, PE, Mach-O without GCC or MSVC  │
-│ 5. Truly Decentralized PM      │ Git-backed, content-addressed, offline     │
-│ 6. Multi-Target Parity         │ Native x86/ARM64, WASI, and LLVM from one  │
-│ 7. Microsecond Cold Starts     │ <1ms process startup (100x faster than Py) │
-│ 8. Featherweight RAM Footprint │ 2MB baseline RSS vs 35MB Python / 60MB Node│
-│ 9. Flat P99 Deterministic RAII │ No GC jitter; real-time audio & HFT ready  │
-│ 10. Hardware-Direct SIMD       │ 128-bit vector lanes in native CPU register│
-│ 11. Zero "Missing DLL" Hell    │ Fully self-contained, statically linked bin│
+│ 1. Fast Cranelift + Linker     │ Cranelift AOT + direct ELF/PE/Mach-O link  │
+│ 2. Clean Indented Syntax       │ Python-inspired syntax compiled statically  │
+│ 3. Checked Ownership + Cycles  │ ARC + E4403 balance + native cycle collect │
+│ 4. Modular Workspace Crates    │ Separate frontend, HIR, MIR, passes, backends│
+│ 5. Decentralized Registry      │ Git-backed index, SHA-256 blobs, Keel.lock │
+│ 6. Multi-Backend Targets       │ Cranelift default, experimental WASI & LLVM│
+│ 7. Direct Native Executables   │ Native OS binaries without interpreter VMs │
+│ 8. Deterministic Reclamation   │ Immediate acyclic drops without tracing sweeps│
+│ 9. SIMD Kernel Support         │ Runtime `vec_i64_checksum` AVX2 auto-dispatch│
 └────────────────────────────────┴────────────────────────────────────────────┘
 ```
 
-1. **Sub-100ms Build-Link Cycles (The 5ms Direct Linker)**:
-   - While Rust (`rustc`/`lld`) and C++ (`clang`/`mold`) take seconds for trivial link steps, L++'s Cranelift backend and in-process direct linker emit and link complete native executables in **5 to 20 milliseconds**.
-2. **Zero-GC Without Borrow-Checker Headaches**:
-   - Programmers write natural, expressive code with Python-like cleanliness.
-   - The compiler's three-tier placement (`Frame` / `Owned` / `Shared`) and compile-time cycle breaker (`E4403`) eliminate memory leaks and use-after-free bugs without requiring manual lifetime annotations (`'a`).
-3. **Standalone Single-Binary Toolchain (No 15GB SDKs)**:
-   - `lpp` needs no host compiler installed. You can compile, link, and run native Windows executables (`.exe`) on Windows, ELF on Linux, and Mach-O on macOS right out of the box with zero SDK pre-requisites. No Visual Studio C++ build tools, no Xcode command line tools, no GCC required.
-4. **Resilient Offline-First Package Management (Airplane Mode Ready)**:
-   - `keel` relies on standard Git transport. There are no registry corporate owners who can pull tokens, delete accounts, or introduce network downtimes. If GitHub is reachable, you have a registry; if you have cloned once, you can develop on an airplane with full local blob cache resolution.
-5. **Microsecond Startup Latency (< 1ms Cold Starts)**:
-   - L++ binaries execute immediately from disk with zero VM initialization, zero JIT warm-up, and zero dynamic library lookups. Cold-start latency is < 1ms, making L++ 50x–100x faster to start than Python (~40ms), Node.js (~65ms), or Ruby (~70ms)—critical for CLI tools, serverless functions, and microservices.
-6. **Featherweight RAM Footprint (10x–30x Less Memory)**:
-   - A baseline L++ service consumes less than 2MB of Resident Set Size (RSS), compared to 35MB for a minimal Python script and 60MB for Node.js. Run thousands of concurrent microservices on a single budget cloud instance.
-7. **Deterministic RAII & Flat P99 Latency (Real-Time Ready)**:
-   - Because memory is reclaimed instantly on block exit without GC stop-the-world sweep phases, latency jitter is eliminated. Tail latency (p99/p99.9) is flat, making L++ suited for real-time audio DSP, game engines, robotics, and high-frequency trading.
-8. **Native 128-Bit SIMD Without Assembly**:
-   - Express vectorized operations directly with `VectorI64x2`. The compiler generates hardware SSE/AVX/NEON instructions automatically, achieving gigabytes-per-second computational throughput without arcane C intrinsics or assembly blocks.
-9. **Zero-Dependency Single-Binary Distribution**:
-   - `lpp-linker` produces statically self-contained executables. Distributing your application requires copying a single binary file to production servers or user machines—no runtime dependencies, no dynamic link errors, no "Python 3.11 not found" issues.
+1. **Fast Native Development Loop**:
+   - Cranelift AOT + direct `lpp-link` (with `--linker host` fallback) produces native executables without requiring a heavy IDE toolchain on supported direct-link paths.
+2. **Automatic Placement Without Lifetime Annotations**:
+   - `lpp-ownership` classifies locals into `Frame`, `Owned`, and `Shared`, verifies ownership balance (`E4403`), and pairs with trial-deletion cycle collection on Cranelift native targets (`documentation/CYCLE_BREAKING.md`).
+3. **Resilient Git-Backed Package Management (`Keel`)**:
+   - `keel` resolves `Keel.toml` manifests against the Git-backed `llppregistry` index, caches content-addressed `.crate`/tarball blobs by SHA-256, and locks builds deterministically via `Keel.lock`.
+4. **Cross-Target Experimentation**:
+   - Native `x86_64` and `aarch64` targets run on Cranelift (default), while `wasm32-wasip1` adds WASI execution (including WASI filesystem preopens) and `--backend llvm` provides an experimental Clang-backed scalar optimization path. See [`documentation/CURRENT_CAPABILITIES.md`](documentation/CURRENT_CAPABILITIES.md) and [`benchmarks/Benchmarks.md`](benchmarks/Benchmarks.md) for measured runs.
 
 ---
 

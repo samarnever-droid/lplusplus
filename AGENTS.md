@@ -13,7 +13,7 @@ This project is indexed by GitNexus as **lplusplus** (21104 symbols, 74797 relat
 
 ---
 
-# L++ (LPlusPlus) v1.0.0 — Complete AI Architecture & Language Specification
+# L++ (LPlusPlus) v0.2.0 — Complete AI Architecture & Language Specification
 
 > **For any AI Assistant / Agent**: This document is the single, authoritative, complete specification of the **L++ programming language**. When generating, debugging, or analyzing L++ code, **strictly follow the syntax, semantics, standard library, and architecture detailed below.**
 
@@ -24,14 +24,14 @@ This project is indexed by GitNexus as **lplusplus** (21104 symbols, 74797 relat
 **L++ (LPlusPlus)** is an ultra-high-performance, compiled, systems and application programming language designed for sub-millisecond compilation, deterministic compile-time memory safety, and cross-platform native execution.
 
 ### Key Architectural Pillars:
-- **Instant Compilation Speed**: Compiles complete native standalone executables in **2 to 5 milliseconds** via Cranelift AOT and the direct built-in linker (`lpp-link`).
-- **Deterministic Memory Safety**: Zero Garbage Collection pauses. Uses **Compile-Time Automatic Reference Counting (ARC)** + **trial-deletion cycle collection for the ownership plan's `Shared` (cycle-capable) types** (see `documentation/CYCLE_BREAKING.md`) + **Single-Thread Atomic Elision (`pass_arc_local`)** + **Move-Out Retain Elision (`pass_moveout`)**.
-- **Dual Compilation Pipeline**:
-  - **Cranelift Backend**: Default for instant development iteration (<5ms builds).
-  - **LLVM Backend (`--opt`)**: For maximum production optimization (`-O3`, AVX2 SIMD vectorization).
-  - **WebAssembly Backend (`--target wasm32`)**: Compiles directly to clean, validated `.wasm` modules.
-- **Zero-Dependency Native Linker (`lpp-link`)**: Built-in PE/COFF (Windows), ELF (Linux), and Mach-O (macOS) linker that generates direct native executables without requiring MSVC Build Tools or GNU `ld`.
-- **First-Class Desktop WebViews**: Native in-process embedded windowing (Microsoft Edge WebView2 on Windows, WKWebView on macOS, WebKitGTK on Linux) for building modern desktop applications (Tauri/Wry architecture) in pure L++.
+- **Fast Native Compilation**: Compiles native standalone executables via Cranelift AOT (`crates/lpp-codegen-cranelift`) and either the built-in direct linker (`lpp-link`) or host C toolchain fallback.
+- **Deterministic Memory Safety**: Zero tracing GC pauses on the native path. Uses **Automatic Reference Counting (ARC)** with atomic refcounts, **ownership placement & move-out elision** (`crates/lpp-ownership`, `crates/lpp-passes`), and **Bacon-Rajan trial-deletion cycle collection for cycle-capable `Shared` types on the Cranelift native path** (see `documentation/CYCLE_BREAKING.md`; WASM cycle collection and LLVM managed-aggregate parity remain open).
+- **Multi-Backend Compilation Pipeline**:
+  - **Cranelift Backend**: Default native backend for `x86_64` and `aarch64` host targets.
+  - **LLVM Backend (`--backend llvm`, experimental)**: Optional Clang-based `x86_64` scalar/direct-call backend with optimization levels (`-O0`–`-O3`, `-Os`/`-Oz`).
+  - **WebAssembly Backend (`--backend wasm` / `--target wasm32-wasip1`, experimental)**: Compiles directly to validated `.wasm` modules with WASI filesystem preopen support.
+- **Native Linker (`lpp-link`)**: Built-in PE/COFF (Windows), ELF (Linux), and Mach-O (macOS) linker with host C linker fallback (`--linker host`).
+- **First-Class Desktop WebViews**: Native in-process embedded windowing (Microsoft Edge WebView2 on Windows, WKWebView on macOS, WebKitGTK on Linux) for desktop applications in pure L++.
 
 ---
 
@@ -41,19 +41,20 @@ This project is indexed by GitNexus as **lplusplus** (21104 symbols, 74797 relat
 # Compilation & Execution
 lpp main.lpp                       # Compile and link directly to main.exe (or ./main)
 lpp main.lpp -o myapp.exe          # Specify output executable name
-lpp run main.lpp                   # Compile, link, and run immediately
-lpp main.lpp --opt                 # Use LLVM backend with -O3 optimization
-lpp main.lpp --target wasm32       # Compile to WebAssembly (output .wasm)
+lpp main.lpp --run                 # Compile and run (or `lpp run main.lpp`)
+lpp main.lpp --backend llvm -O3    # Use experimental LLVM backend with -O3 optimization
+lpp main.lpp --target wasm32-wasip1 # Compile to WASI WebAssembly (.wasm)
 lpp main.lpp --linker host         # Use host C compiler (cl.exe / cc) for external C linking
 lpp main.lpp -l sqlite3            # Link external C library
 
-# Package Manager (lpp-pm)
-lpp init my-app                    # Initialize a new L++ project
-lpp add <pkg>                      # Add a dependency from official registry
-lpp install                        # Resolve and install all dependencies in lpp.toml
-lpp build                          # Build project defined in lpp.toml
+# Package Manager (Keel — `keel` CLI or `lpp <cmd>`)
+lpp new my-app                     # Create a new L++ project (Keel.toml + src/main.lpp)
+lpp init                           # Initialize Keel.toml in the current directory
+lpp add <pkg>                      # Add a dependency from llppregistry (git-backed index)
+lpp install                        # Resolve and install dependencies from Keel.toml / Keel.lock
+lpp build                          # Build project defined in Keel.toml
 lpp test                           # Run all tests in tests/
-lpp publish                        # Publish package to official registry
+lpp publish                        # Publish package to configured registry index
 ```
 
 ---
@@ -105,9 +106,9 @@ def connect(host: Str, port: Int = 8080, timeout_ms: Int = 5000) -> Bool:
     print_str("Connecting to " + host)
     return true
 
-# Variadic parameters (collected into List[T])
-def sum_all(*numbers: Int) -> Int:
-    total := 0
+# Typed variadic rest parameter (collected into List[T])
+def sum_all(...numbers: Int) -> Int:
+    mut total := 0
     for n in numbers:
         total = total + n
     return total
@@ -139,9 +140,9 @@ impl Point:
     def translate(self, dx: Float, dy: Float) -> Point:
         return Point(self.x + dx, self.y + dy)
 
-# Instantiation (Positional or Named)
+# Instantiation (Positional)
 p1 := Point(3.0, 4.0)
-p2 := Point { x: 10.0, y: 20.0 }
+p2 := Point(10.0, 20.0)
 dist := p1.magnitude()
 ```
 
@@ -184,19 +185,19 @@ def draw[T: Renderable](item: T):
 ### 3.7. Collections: Lists & Maps
 ```lpp
 # Lists (Dynamic, type-safe arrays)
-numbers := [10, 20, 30, 40]
-numbers.push(50)
+mut numbers := [10, 20, 30, 40]
+list_push(numbers, 50)
 first := numbers[0]
-count := numbers.len()
+count := len(numbers)
 
 # Maps (Hash tables)
-m := map_new()
-map_set(m, "theme", "dark")
-map_set(m, "lang", "en")
+mut m := map_new()
+map_put(m, "theme", 1)
+map_put(m, "lang", 2)
 
-if map_contains(m, "theme"):
+if map_has(m, "theme"):
     current_theme := map_get(m, "theme")
-    print_str("Current theme: " + current_theme)
+    print(current_theme)
 
 # Tuples
 pair := (100, "Success")
@@ -358,8 +359,8 @@ def main():
 ### 5.1. Project Structure
 ```
 my-app/
-├── lpp.toml               # Package manifest
-├── lpp.lock               # Deterministic dependency lockfile
+├── Keel.toml              # Package manifest (managed by Keel / `lpp` PM commands)
+├── Keel.lock              # Deterministic dependency lockfile
 ├── src/
 │   ├── main.lpp           # Main entry point (def main())
 │   ├── app.lpp            # Business logic / services
@@ -371,14 +372,17 @@ my-app/
     └── test_main.lpp      # Unit tests
 ```
 
-### 5.2. `lpp.toml` Manifest
+> Note: Staged dependency manifests inside `.lpp_packages/<dep>/lpp.toml` are generated internally by Keel for module resolution; user projects declare `Keel.toml`.
+
+### 5.2. `Keel.toml` Manifest
 ```toml
 [package]
 name = "my-app"
-version = "0.1.0"
+version = "0.2.0"
+edition = "2024"
 authors = ["Samar <samar@lplusplus.bond>"]
 description = "High-performance native application in pure L++"
-license = "MIT"
+license = "MIT OR Apache-2.0"
 
 [dependencies]
 lpp-json = "1.2.0"
@@ -415,5 +419,5 @@ def main():
 2. **Use `:=` for declaring new variables** with inferred types, and `=` for reassigning existing mutable variables.
 3. **Strings are strongly-typed `Str`**: Use `print_str(msg)` to print strings and `print(n)` to print integers.
 4. **Always use exact L++ types**: `Int`, `Float`, `Str`, `Bool`, `Char`, `Void`, `List[T]`, `Map[K, V]`, `(T1, T2)`.
-5. **No raw memory pointers or manual freeing needed**: L++ automatically manages memory with static ARC and compile-time cycle breaking.
+5. **No raw memory pointers or manual freeing needed**: L++ manages memory with ARC and runtime trial-deletion cycle collection on the Cranelift native path (see `specs.md` and `documentation/CURRENT_CAPABILITIES.md` for backend boundaries).
 6. **For desktop GUIs**: Use the built-in `webview_*` API to deliver in-process native windowing with zero runtime dependencies.

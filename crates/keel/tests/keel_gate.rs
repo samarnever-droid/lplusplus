@@ -44,5 +44,10 @@ fn parses_workspace_member_selection() {
 fn cache_dir_points_at_keel() {
     let d = keel::cache_dir();
     let s = d.display().to_string();
-    assert!(s.ends_with("keel"), "cache dir ends with 'keel': {s}");
+    assert!(
+        d.file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.eq_ignore_ascii_case("keel")),
+        "cache dir ends with 'keel' (case-insensitive on Windows): {s}"
+    );
 }
