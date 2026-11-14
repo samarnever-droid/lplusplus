@@ -47,8 +47,13 @@ typedef struct {
     unsigned int generation;
     uint32_t flags;
 } LppArcHeader;
+#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
 _Static_assert(sizeof(LppArcHeader) == 16, "native common ARC header must be 16 bytes");
 _Static_assert(sizeof(LppArcDestructor) == 8, "native destructor prefix must be 8 bytes");
+#else
+typedef char lpp__assert_arc_header_size[(sizeof(LppArcHeader) == 16) ? 1 : -1];
+typedef char lpp__assert_arc_dtor_size[(sizeof(LppArcDestructor) == 8) ? 1 : -1];
+#endif
 
 static LppArcDestructor lpp__header_destructor(const LppArcHeader *h) {
     if (!(h->flags & LPP_WIN_FLAG_HAS_DTOR)) return 0;
