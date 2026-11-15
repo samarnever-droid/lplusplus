@@ -1,7 +1,7 @@
 {
   "name": "lpp-website",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Source for the L++ GitHub Pages website.",
   "type": "module",
   "scripts": {
@@ -25,6 +25,6 @@
     "@vitejs/plugin-react": "5.1.1",
     "tailwindcss": "4.1.17",
     "typescript": "5.9.3",
-    "vite": "7.3.6"
+    "vite": "^7.3.8"
   }
 }

@@ -167,9 +167,9 @@ export default function Hero() {
   };
 
   const installCommands = {
-    curl: "git clone --depth 1 --branch v0.2.0 https://github.com/samarnever-droid/lplusplus.git && cd lplusplus && LPP_FROM_SOURCE=1 sh install.sh",
-    powershell: "git clone --depth 1 --branch v0.2.0 https://github.com/samarnever-droid/lplusplus.git; cd lplusplus; $env:LPP_FROM_SOURCE='1'; .\\install.ps1",
-    cargo: "cargo install --locked --git https://github.com/samarnever-droid/lplusplus --tag v0.2.0",
+    curl: "git clone --depth 1 --branch v0.3.0 https://github.com/samarnever-droid/lplusplus.git && cd lplusplus && LPP_FROM_SOURCE=1 sh install.sh",
+    powershell: "git clone --depth 1 --branch v0.3.0 https://github.com/samarnever-droid/lplusplus.git; cd lplusplus; $env:LPP_FROM_SOURCE='1'; .\\install.ps1",
+    cargo: "cargo install --locked --git https://github.com/samarnever-droid/lplusplus --tag v0.3.0",
   };
 
   return (
@@ -192,7 +192,7 @@ export default function Hero() {
             >
               <span className="flex items-center gap-1.5 rounded-full bg-acid/20 px-3 py-0.5 font-mono text-[11px] font-bold uppercase tracking-wider text-acid border border-acid/30">
                 <span className="h-2 w-2 rounded-full bg-acid animate-pulse" />
-                L++ v0.2.0
+                L++ v0.3.0
               </span>
               <span className="font-mono text-xs text-white/70">
                 Readable &bull; Native &bull; Safety-first
