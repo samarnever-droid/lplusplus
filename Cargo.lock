@@ -612,6 +612,7 @@ dependencies = [
  "lpp-ownership",
  "lpp-runtime-abi",
  "lpp-types",
+ "object",
 ]
 
 [[package]]

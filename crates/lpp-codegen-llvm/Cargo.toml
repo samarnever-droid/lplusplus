@@ -15,3 +15,4 @@ lpp-types = { path = "../lpp-types" }
 
 [dev-dependencies]
 lpp-hir = { path = "../lpp-hir" }
+object = { version = "0.36", features = ["read"] }
