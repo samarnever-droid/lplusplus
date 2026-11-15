@@ -49,6 +49,30 @@ typedef void (*LppTraceFn)(void *payload, void *ctx);
 uint64_t lpp__runtime_drop_count = 0;
 uint64_t lpp__cycle_collected_count = 0;
 
+static inline void lpp__inc_drop_count(void) {
+#if defined(_MSC_VER)
+#  if defined(_WIN64)
+    _InterlockedIncrement64((volatile LONGLONG *)&lpp__runtime_drop_count);
+#  else
+    InterlockedIncrement((volatile LONG *)&lpp__runtime_drop_count);
+#  endif
+#else
+    __atomic_fetch_add(&lpp__runtime_drop_count, 1, __ATOMIC_RELAXED);
+#endif
+}
+
+static inline void lpp__inc_cycle_count(void) {
+#if defined(_MSC_VER)
+#  if defined(_WIN64)
+    _InterlockedIncrement64((volatile LONGLONG *)&lpp__cycle_collected_count);
+#  else
+    InterlockedIncrement((volatile LONG *)&lpp__cycle_collected_count);
+#  endif
+#else
+    __atomic_fetch_add(&lpp__cycle_collected_count, 1, __ATOMIC_RELAXED);
+#endif
+}
+
 static inline uint32_t lpp__cycle_flags_load(const LppArcHeader *hdr) {
     return lpp__header_flags(hdr);
 }
@@ -218,10 +242,12 @@ static void lpp__cycle_deregister(void *payload) {
 
 void lpp_arc_collect_cycles(void);
 
-static void lpp__note_possible_root(void *payload) {
+/* Buffer a possible cycle root while caller still owns a strong reference,
+ * returning non-zero when a collection round should run after decrement. */
+static int lpp__note_possible_root_buffer(void *payload) {
     LppArcHeader *header = (LppArcHeader *)payload - 1;
     uint32_t flags = lpp__cycle_flags_load(header);
-    if (!(flags & LPP_CYCLE_COLLECTIBLE) || (flags & LPP_CYCLE_BUFFERED)) return;
+    if (!(flags & LPP_CYCLE_COLLECTIBLE) || (flags & LPP_CYCLE_BUFFERED)) return 0;
     int trigger = 0;
     lpp__cycle_lock_acquire();
     /* Re-check under the lock: another thread may have buffered it. */
@@ -233,7 +259,7 @@ static void lpp__note_possible_root(void *payload) {
                 lpp__root_buffer, new_cap * sizeof(LppCycleCandidate));
             if (!grown) {
                 lpp__cycle_lock_release();
-                return; /* leak the hint, not the program */
+                return 0; /* leak the hint, not the program */
             }
             lpp__root_buffer = grown;
             lpp__root_cap = new_cap;
@@ -245,7 +271,7 @@ static void lpp__note_possible_root(void *payload) {
         trigger = lpp__root_len >= LPP_CYCLE_ROOT_THRESHOLD && !lpp__collecting;
     }
     lpp__cycle_lock_release();
-    if (trigger) lpp_arc_collect_cycles();
+    return trigger;
 }
 
 void lpp_arc_mark_collectible(void *payload, LppTraceFn trace) {
@@ -419,8 +445,8 @@ static uint64_t lpp__collect_round(LppCycleCandidate *candidates, size_t ncands)
         LppArcHeader *header = (LppArcHeader *)ptr - 1;
         LppArcDestructor destructor = lpp__header_destructor(header);
         if (destructor) destructor(ptr);
-        lpp__runtime_drop_count++;
-        lpp__cycle_collected_count++;
+        lpp__inc_drop_count();
+        lpp__inc_cycle_count();
         freed++;
     }
     for (size_t i = 0; i < garbage_count; i++) {
@@ -485,10 +511,15 @@ void lpp_arena_release_node(void *payload) {
     LppArenaRegion *region = lpp__arena_for_header(header);
     if (!region) return;
     if (lpp__is_immortal(header)) return;
+    uint32_t flags = lpp__cycle_flags_load(header);
+    int trigger = 0;
+    if ((flags & LPP_CYCLE_COLLECTIBLE) && LPP_ARC_LOAD(&header->refcount) > 1) {
+        trigger = lpp__note_possible_root_buffer(payload);
+    }
     int32_t prev = (int32_t)LPP_ARC_DEC(&header->refcount);
     if (prev == 1) {
-        lpp__runtime_drop_count++;
-        if (lpp__cycle_flags_load(header) & LPP_CYCLE_COLLECTIBLE) {
+        lpp__inc_drop_count();
+        if (flags & LPP_CYCLE_COLLECTIBLE) {
             lpp__cycle_deregister(payload);
         }
         LppArcDestructor destructor = lpp__header_destructor(header);
@@ -496,8 +527,8 @@ void lpp_arena_release_node(void *payload) {
         header->magic = 0;
         if (destructor) destructor(payload);
         lpp__arena_node_zero(region);
-    } else if (prev > 1) {
-        lpp__note_possible_root(payload);
+    } else if (prev > 1 && trigger) {
+        lpp_arc_collect_cycles();
     }
 }
 
@@ -515,13 +546,18 @@ void lpp_arc_release(void *ptr) {
     LppArcHeader *hdr = (LppArcHeader *)ptr - 1;
     if (lpp__is_immortal(hdr)) return;
     LppArenaRegion *arena = lpp__arena_for_header(hdr);
+    uint32_t flags = lpp__cycle_flags_load(hdr);
+    int trigger = 0;
+    if ((flags & LPP_CYCLE_COLLECTIBLE) && LPP_ARC_LOAD(&hdr->refcount) > 1) {
+        trigger = lpp__note_possible_root_buffer(ptr);
+    }
     int32_t prev = (int32_t)LPP_ARC_DEC(&hdr->refcount);
     if (prev == 1) {
         /* Refcount just hit zero. Destroy owned child references before the
          * payload/header are released; child releases may recursively invoke
          * their own generated destructors. */
-        lpp__runtime_drop_count++;
-        if (lpp__cycle_flags_load(hdr) & LPP_CYCLE_COLLECTIBLE) {
+        lpp__inc_drop_count();
+        if (flags & LPP_CYCLE_COLLECTIBLE) {
             lpp__cycle_deregister(ptr);
         }
         void *allocation;
@@ -532,10 +568,8 @@ void lpp_arc_release(void *ptr) {
         if (destructor) destructor(ptr);
         if (arena) lpp__arena_node_zero(arena);
         else free(allocation);
-    } else if (prev > 1) {
-        /* A collectible object that survives a release may head a
-         * cycle that just became unreachable. */
-        lpp__note_possible_root(ptr);
+    } else if (prev > 1 && trigger) {
+        lpp_arc_collect_cycles();
     }
 }
 

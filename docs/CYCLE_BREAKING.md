@@ -81,8 +81,8 @@ Three compounding defects, none of them in the error message itself:
 | `crates/lpp-codegen-cranelift` | Emits ARC traffic; knows nothing about `Shared` (RC2). Must emit collectible markings + trace functions. |
 | `crates/lpp-runtime` (`arc.rs`, `list.rs`, `tuple.rs`, `task.rs`) | Native ARC; plain refcounting only. Correct home for the *collector*. |
 | `lpp_runtime.c`, `runtime/*_min.c` | C reference + freestanding runtimes; same objects link against any of them, so the collector ABI must exist in all. |
-| `crates/lpp-codegen-wasm` | WASM's ARC heap has size-class free bins and reuses released blocks; 100 and 100,000 same-shape churn iterations both stay at 1 page in `arc_heap_reuses_freed_blocks_under_repeated_managed_churn`. This bounds tested acyclic churn only; WASM trial-deletion is not implemented, so unreachable cycles still leak. |
-| `crates/lpp-codegen-llvm` | LLVM cycle collection and managed struct/list/tuple parity are not implemented/verified; its supported subset retains plain-ARC limitations. |
+| `crates/lpp-codegen-wasm` | WASM's ARC heap has size-class free bins and implements Bacon–Rajan trial-deletion cycle collection (`crates/lpp-codegen-wasm/src/cycle.rs`) over `Shared` structs, enums, lists, tuples (64-bit managed bitmask), closures, and tasks; `cyclic_churn_keeps_wasm_memory_pages_bounded` and `tuple_closure_and_enum_cyclic_churn_keeps_wasm_memory_pages_bounded` keep WASM memory pages bounded across 20k–40k cyclic iterations. |
+| `crates/lpp-codegen-llvm` | Full-parity LLVM backend lowers managed structs, enums, lists, tuples, and Bacon–Rajan cycle-collector traces/destructors across `-O0`–`-O3`. |
 
 ### Proposed architectural correction (implemented as §2)
 
@@ -303,12 +303,18 @@ Known limits, none introduced by this work:
   cover destruction, cycle tracing, and alias-safe replacement. WASM/LLVM tuple
   list-element parity remains unsupported/unverified, and tuple arity remains
   2–4.
-* **WASM allocation reuse — PARTIAL.** The runtime uses size-class ARC free
-  bins rather than relying only on bump-heap growth. The focused WASM heap
-  test measured 1 page at both 100 and 100,000 same-shape churn iterations.
-  This proves reuse for the tested acyclic allocations, not collection of
-  unreachable cycles: WASM cycle collection remains unimplemented. **LLVM**
-  managed aggregate/collector parity is also unimplemented and unverified.
+* **WASM cycle collection — DONE.** `crates/lpp-codegen-wasm/src/cycle.rs`
+  computes cycle-capable `Shared` types via Tarjan SCCs over the containment
+  graph, marks collectible objects with a generation/flags header on top of the
+  size-class ARC free-bin heap, emits trace walkers for structs, enums, lists,
+  tuples, closures, and tasks (`emit_trace_tuple` uses the offset-0 64-bit
+  managed-slot mask matching `lpp_drop_tuple`), and runs Bacon–Rajan
+  trial-deletion both when buffered roots reach threshold and at `_start` exit.
+  Validated by `crates/lpp-codegen-wasm/tests/cycle_gate.rs` (including bounded
+  memory pages over 20k–40k iterations of struct, list, tuple, closure, and
+  enum cycles) and 4-backend driver parity (`p21b_cycles_all_4`). **LLVM**
+  managed aggregate/collector parity is also implemented and verified across
+  `-O0`–`-O3`.
 * **windows_x86_64_min.c** received the same port (its header gained a
   generation in existing padding). *Update (2026-10-20, follow-up):*
   actually compiled with mingw-w64 GCC and Clang (mingw target) — which

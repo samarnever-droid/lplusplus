@@ -122,24 +122,19 @@ pub(crate) fn deregister(ptr: *mut c_void) {
 /// Buffer a collectible object as a possible cycle root after a
 /// release that did not free it. No-op for unmarked objects, so plain
 /// ARC traffic on acyclic types pays only one flags load.
-pub(crate) fn note_possible_root(ptr: *mut c_void) {
+pub(crate) fn note_possible_root_buffer(ptr: *mut c_void) -> bool {
     let flags = unsafe { (*flags_cell(ptr)).load(Ordering::Acquire) };
     if flags & ARC_FLAG_COLLECTIBLE == 0 || flags & ARC_FLAG_BUFFERED != 0 {
-        return;
+        return false;
     }
     let previous = unsafe { (*flags_cell(ptr)).fetch_or(ARC_FLAG_BUFFERED, Ordering::AcqRel) };
     if previous & ARC_FLAG_BUFFERED != 0 {
-        return; // another thread buffered it first
+        return false; // another thread buffered it first
     }
     let generation = unsafe { (*generation_cell(ptr)).load(Ordering::Acquire) };
-    let due = {
-        let mut buffer = ROOT_BUFFER.lock().unwrap_or_else(|e| e.into_inner());
-        buffer.push((ptr as usize, generation));
-        buffer.len() >= COLLECT_THRESHOLD
-    };
-    if due {
-        unsafe { lpp_arc_collect_cycles() };
-    }
+    let mut buffer = ROOT_BUFFER.lock().unwrap_or_else(|e| e.into_inner());
+    buffer.push((ptr as usize, generation));
+    buffer.len() >= COLLECT_THRESHOLD
 }
 
 /// The trace sink: trace functions report each owned child here.

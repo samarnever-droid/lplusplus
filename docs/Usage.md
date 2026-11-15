@@ -125,8 +125,10 @@ Rules in the current first tier:
 - blocking input/file/network/process calls are rejected transitively from
   async call graphs.
 
-The executor is deterministic, single-threaded, and run-to-completion. It does
-not claim nonblocking socket/file I/O or general coroutine suspension.
+`async def` tasks are dispatched to a multi-threaded worker pool (`2..=16` OS
+worker threads on hosted native targets) with cooperative caller stealing on
+`.await`. An OS readiness reactor (`epoll`/`kqueue`/`IOCP`) for nonblocking
+socket/file I/O is not yet integrated.
 
 ## Linkers
 
@@ -161,4 +163,4 @@ sh tests/test_pm_workflow.sh
 ```
 
 Read [Current Capabilities](CURRENT_CAPABILITIES.md) for the supported feature
-boundary and [v0.3.0 Release Notes](release/V0.3.0.md) for current highlights.
+boundary and [v0.3.1 Release Notes](release/V0.3.1.md) for current highlights.

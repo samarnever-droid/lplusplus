@@ -488,6 +488,7 @@ fn run_wasm_opt(object: &[u8], flag: &str) -> Result<Vec<u8>, CodegenError> {
     std::fs::write(&in_path, object).map_err(|e| fail(format!("wasm-opt write: {e}")))?;
 
     let output = Command::new("wasm-opt")
+        .arg("--enable-bulk-memory")
         .arg(flag)
         .arg(&in_path)
         .arg("-o")

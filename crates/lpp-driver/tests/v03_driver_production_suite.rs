@@ -709,6 +709,55 @@ def main():
     print_str(t)
 "#;
     assert_all_4_parity("p21_aliases_bits", p21, "8080\n2815\n255\n10\nnet\n");
+
+    // Program 21b: Cycle collection across Cranelift, LLVM (-O0/-O3), and WASM
+    let p21b_cycles = r#"
+struct CycPair:
+    items: (Int, CycNode, CycNode)
+
+struct CycNode:
+    val: Int
+    next: CycNode
+    pair: CycPair
+
+enum CycEnum:
+    End
+    Next(tag: Int, node: CycBox)
+
+struct CycBox:
+    val: Int
+    link: CycEnum
+
+def churn_cycles(i: Int):
+    mut x := CycNode(i, 0, 0)
+    y := CycNode(i + 1, 0, 0)
+    z := CycNode(i + 2, 0, 0)
+    x.next = x
+    x.pair = CycPair((i, y, z))
+    mut yy := x.pair.items.1
+    zz := x.pair.items.2
+    yy.pair = CycPair((i + 1, x, zz))
+
+    keep_e := [CycBox(i, CycEnum.End)]
+    mut eb := CycBox(i + 3, CycEnum.Next(i, list_get(keep_e, 0)))
+    mut ea := list_get(keep_e, 0)
+    ea.link = CycEnum.Next(i + 1, eb)
+
+    mut fns := []
+    cap := fn() -> Int:
+        return list_len(fns) + 10
+    list_push(fns, cap)
+
+def main():
+    mut live := CycNode(42, 0, 0)
+    live.next = live
+    mut i := 0
+    while i < 800:
+        churn_cycles(i)
+        i = i + 1
+    print(live.val + live.next.val)
+"#;
+    assert_all_4_parity("p21b_cycles_all_4", p21b_cycles, "84\n");
 }
 
 #[test]
@@ -778,6 +827,175 @@ def main():
     q.free()
 "#;
     assert_native_3_parity("p24_sync", p24, "100\n123\n11\n22\n33\n-1\n");
+
+    // Program 24b: Genuine parallel multi-threaded async worker rendezvous + nested await
+    let p24_async_parallel = r#"
+async def rendezvous_peer(arrived: Int, ready: Int) -> Int:
+    atomic_add(arrived, 1)
+    mut spins := 0
+    while atomic_load(arrived) < 2 and spins < 50000000:
+        spins = spins + 1
+    if atomic_load(arrived) >= 2:
+        atomic_store(ready, 1)
+        return 1
+    return 0
+
+async def child_sum(a: Int, b: Int) -> Int:
+    return a + b
+
+async def parent_nested(x: Int) -> Int:
+    c1 := child_sum(x, 10)
+    c2 := child_sum(x, 20)
+    return c1.await + c2.await
+
+def main():
+    arrived := atomic_new(0)
+    ready := atomic_new(0)
+    t1 := rendezvous_peer(arrived, ready)
+    t2 := rendezvous_peer(arrived, ready)
+    r1 := t1.await
+    r2 := t2.await
+    print(r1 + r2)
+    print(atomic_load(ready))
+    atomic_free(arrived)
+    atomic_free(ready)
+
+    n1 := parent_nested(5)
+    n2 := parent_nested(7)
+    print(n1.await + n2.await)
+"#;
+    assert_native_3_parity("p24b_async_parallel", p24_async_parallel, "2\n1\n84\n");
+
+    // Program 24c: Production fan-out List[Task], recursive fork-join fib, mutex-guarded box,
+    // managed string results across worker threads, and scheduler telemetry
+    let p24_production_fanout = r#"
+extern "C":
+    def lpp_async_worker_count() -> Int
+    def lpp_async_tasks_completed() -> Int
+
+struct SharedAcc:
+    sum: Int
+
+async def async_fib(n: Int) -> Int:
+    if n <= 1:
+        return n
+    a := async_fib(n - 1)
+    b := async_fib(n - 2)
+    return a.await + b.await
+
+async def worker_fanout(idx: Int, acc: SharedAcc, mtx: Int, done_atom: Int) -> Int:
+    mutex_lock(mtx)
+    acc.sum = acc.sum + idx
+    mutex_unlock(mtx)
+    atomic_add(done_atom, 1)
+    return idx * 2
+
+async def format_worker(tag: Int) -> Str:
+    return "task:" + int_to_str(tag)
+
+def main():
+    before := lpp_async_tasks_completed()
+    workers := lpp_async_worker_count()
+    print_bool(workers >= 2)
+
+    fib12 := async_fib(12).await
+    print(fib12)
+
+    mut acc := SharedAcc(0)
+    mtx := mutex_new()
+    done_atom := atomic_new(0)
+    mut tasks := []
+    for i in 1..65:
+        list_push(tasks, worker_fanout(i, acc, mtx, done_atom))
+
+    mut doubled := 0
+    for t in tasks:
+        doubled = doubled + t.await
+
+    print(acc.sum)
+    print(doubled)
+    print(atomic_load(done_atom))
+
+    s1 := format_worker(10)
+    s2 := format_worker(20)
+    print_str(s1.await + "|" + s2.await)
+
+    after := lpp_async_tasks_completed()
+    print_bool(after - before >= 500)
+
+    atomic_free(done_atom)
+    mutex_free(mtx)
+"#;
+    assert_native_3_parity(
+        "p24c_async_production",
+        p24_production_fanout,
+        "1\n144\n2080\n4160\n64\ntask:10|task:20\n1\n",
+    );
+
+    // Program 24d: Unawaited dropped tasks, concurrent rwlock writers/readers, and
+    // per-task cycle-capable ARC graphs crossing the collector threshold across workers.
+    let p24_unawaited_rwlock_cycles = r#"
+extern "C":
+    def lpp_async_tasks_completed() -> Int
+
+struct RwCycleNode:
+    tag: Int
+    next: RwCycleNode
+
+struct RwSharedSum:
+    total: Int
+
+async def detached_cycle_worker(idx: Int, rw: Int, acc: RwSharedSum, done_atom: Int) -> Str:
+    mut k := 0
+    while k < 10:
+        mut head := RwCycleNode(idx + k, 0)
+        head.next = head
+        k = k + 1
+    rwlock_wrlock(rw)
+    acc.total = acc.total + idx
+    rwlock_wrunlock(rw)
+    atomic_add(done_atom, 1)
+    return "detached:" + int_to_str(idx)
+
+async def reader_check(rw: Int, acc: RwSharedSum) -> Int:
+    rwlock_rdlock(rw)
+    v := acc.total
+    rwlock_rdunlock(rw)
+    return v
+
+def main():
+    before := lpp_async_tasks_completed()
+    rw := rwlock_new()
+    done_atom := atomic_new(0)
+    mut acc := RwSharedSum(0)
+
+    # Drop every Task handle immediately without awaiting — workers still finish and release
+    for i in 1..33:
+        _dropped := detached_cycle_worker(i, rw, acc, done_atom)
+
+    while atomic_load(done_atom) < 32:
+        sleep(1)
+
+    mut readers := []
+    for _r in 0..8:
+        list_push(readers, reader_check(rw, acc))
+
+    mut reader_sum := 0
+    for rt in readers:
+        reader_sum = reader_sum + rt.await
+
+    print(reader_sum)
+    print_bool(atomic_load(done_atom) == 32)
+    print_bool(lpp_async_tasks_completed() - before >= 40)
+
+    atomic_free(done_atom)
+    rwlock_free(rw)
+"#;
+    assert_native_3_parity(
+        "p24d_async_unawaited_rwlock_and_cycles",
+        p24_unawaited_rwlock_cycles,
+        "4224\n1\n1\n",
+    );
 
     // Program 25: unsafe Ptr[T], RawPtr, MMIO, @repr(C), @packed, @align, size_of/align_of
     let p25 = r#"

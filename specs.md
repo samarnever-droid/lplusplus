@@ -1,7 +1,7 @@
 # L++ language and toolchain specification
 
-- **Status:** source-grounded description of the implementation in this **v0.3.0** (`v0.3-dev`) working tree, not a promise that every construct works on every backend.
-- **Audit date:** 2026-11-15. The compact capability inventory in `docs/CURRENT_CAPABILITIES.md` and release notes in `docs/release/V0.3.0.md` track the same `v0.3.0` snapshot.
+- **Status:** source-grounded description of the implementation in this **v0.3.1** (`v0.3-dev`) working tree, not a promise that every construct works on every backend.
+- **Audit date:** 2026-11-15. The compact capability inventory in `docs/CURRENT_CAPABILITIES.md` and release notes in `docs/release/V0.3.1.md` track the same `v0.3.1` snapshot.
 - **Scope:** the L++ source language, compiler pipeline, runtime/ABI, diagnostics, developer tools, Keel package manager, backend targets, and known limitations.
 
 This document describes what the current implementation parses, type-checks, lowers, and supports on the named backend. It is deliberately not a claim of language-version stability, complete cross-backend parity, data-race freedom, or production readiness for experimental features. A construct accepted by the lexer/parser is not necessarily accepted by type checking or by every code generator. Where support differs, this specification says so.
@@ -296,7 +296,7 @@ Current type-stage error variants include: mismatch and arity mismatch; occurs-c
 
 Strings, escaping aggregates, closures, tuples/tasks, lists, and related managed runtime objects use ARC ownership. The ownership analysis distinguishes frame-resident values, acyclic owned heap values, and cycle-capable shared values. Nonescaping ordinary values may be stack-resident; escaping values use runtime allocation and generated drop logic.
 
-On the Cranelift native path, reference counts are atomic and the runtime includes a trial-deletion collector for unreachable cycles among collectible shared objects. This is a native-path guarantee, not a universal backend guarantee. The WebAssembly runtime reuses released acyclic heap blocks but does not collect unreachable cycles; cyclic WASM values can therefore leak. LLVM managed-value/cycle-collector parity is incomplete.
+On Cranelift, LLVM, and WASM (`wasm32-wasip1`), managed objects use ARC with Bacon-Rajan trial-deletion cycle collection for collectible `Shared` objects (`lpp-runtime` atomically on native hosted targets; `crates/lpp-codegen-wasm/src/cycle.rs` in single-threaded WASM linear memory). Notice WASM `Map`/`IntSet`/`IntDeque` store primitive scalars/strings rather than arbitrary managed object graphs.
 
 `Slice[T]` and `StrSlice` are first-tier borrowed views with conservative escape checks, runtime bounds/generation validation, and no general source-level lifetime parameters. They may not safely escape their source, be returned/stored/captured, reach an unknown retaining call, or cross `spawn`; use a conversion such as `slice_to_str`/`str_slice_to_str` to make an owned string. Mutable/general lifetime-parameterized slices are not claimed.
 
@@ -334,7 +334,7 @@ Runtime panic conditions include supported bounds/handle failures, integer divis
 
 - `spawn` uses host threads on supported hosted paths. The type checker rejects mutation of a mutable captured local in a spawned closure and rejects borrowed slices crossing spawn. Freestanding minimal runtimes have no thread primitive; spawn there is not linkable.
 - ARC refcounts are atomic in the current runtime. This is not a claim of general data-race freedom: shared mutable struct fields can still race. Treat data shared between threads as immutable, atomic-only, or lock-protected. The cycle collector’s interactions with concurrent mutation are not fully proven for arbitrary shared cyclic graphs.
-- `async def`/`.await` use task-state records and a deterministic, single-thread, run-to-completion executor. There is no I/O reactor, nonblocking socket/file readiness, work stealing, fairness, or general coroutine suspension guarantee. A blocking builtin called transitively from an async function is rejected in the current first tier. Task handles cannot be captured by closures in this tier.
+- `async def`/`.await` use task-state records backed by a multi-threaded worker-pool executor (`2..=16` OS threads on hosted native targets) with cooperative caller stealing on `.await`. Blocking builtins called transitively from an async function remain rejected in this tier while an OS readiness I/O reactor (`epoll`/`kqueue`/`IOCP`) is future work. Task handles cannot be captured by closures in this tier. `wasm32-wasip1` remains single-threaded per WASI.
 - Panics terminate the process; there is no per-thread panic isolation or join-error recovery guarantee.
 
 See [`docs/CONCURRENCY.md`](docs/CONCURRENCY.md), [`docs/PANIC_AND_ERRORS.md`](docs/PANIC_AND_ERRORS.md), and [`docs/CYCLE_BREAKING.md`](docs/CYCLE_BREAKING.md).
@@ -376,7 +376,7 @@ The LLVM and WASM backends explicitly reject imported external calls. The L++/SQ
 |---|---|---|
 | Cranelift | `x86_64`, `aarch64`, `x86_64-unknown-none`, `aarch64-unknown-none`, with the object OS format inherited from host or bare-metal ELF | Default native backend and full-surface rewrite backend. Supports scalars, control flow, strings, structs/enums, lists, maps, `Set`, `Deque`, tuples up to arity 16, closures, tasks, slices, `unsafe` (`Ptr[T]`, `RawPtr`, volatile MMIO, port I/O, CPU control registers), DWARF `-g`, stack-placed `Frame` POD structs/tuples, destructor-free POD `Owned` ARC payloads, and Bacon-Rajan cycle collection for `Shared`. |
 | LLVM | `x86_64`, `aarch64`, `x86_64-unknown-none`, `aarch64-unknown-none` | Clang-based full-parity backend (`--backend llvm -O0`–`-O3`, `-Os`/`-Oz`). Lowers full MIR, managed structs/enums/lists/tuples, cycle-collector ARC destructors, stack-placed `Frame` POD & null-dtor POD `Owned`, kernel/`unsafe` primitives, SIMD intrinsics, and DWARF `-g`. Windows LLVM execution needs CI validation. |
-| WASM | `wasm32-wasip1` | Experimental WASI backend. Implements scalars, control flow/direct calls, strings, managed aggregates/lists, tuples, dynamic string concatenation, closures/function values, tasks, eager spawn, borrowed slices, deterministic maps, WASI line input, and WASI filesystem builtins over WASI preopens in its tested subset. Host C FFI and kernel/MMIO primitives are rejected. Cycle collection is missing. |
+| WASM | `wasm32-wasip1` | Experimental WASI backend. Implements scalars, control flow/direct calls, strings, managed aggregates/lists, tuples, dynamic string concatenation, closures/function values, tasks, eager spawn, borrowed slices, deterministic maps, WASI line input, WASI filesystem builtins over WASI preopens, and Bacon-Rajan cycle collection for `Shared` structs/enums/lists/tuples/closures/tasks. Host C FFI and kernel/MMIO primitives are rejected. |
 
 This matrix is a feature boundary, not a claim that every listed feature is equally mature or that every builtin is available on every target. The complete current feature index is [`docs/CURRENT_CAPABILITIES.md`](docs/CURRENT_CAPABILITIES.md).
 
@@ -656,7 +656,7 @@ The following are explicit limitations, not implied future guarantees:
 - No enforced `pub` privacy boundary; module global names are currently flat for duplicate checking.
 - No exponent operator, one-element tuples, tuple arity above 16, or arbitrary complex expressions inside `f"..."` interpolations.
 - No generalized lifetime system, mutable borrowed slices, general slice escape/thread transfer, async I/O reactor, fairness/work-stealing guarantee, or static `Send`/`Sync` data-race-freedom proof yet.
-- WASM cycle collection is absent; Windows LLVM runtime execution and CodeView/PDB debugging await Windows CI validation.
+- Windows LLVM runtime execution and CodeView/PDB debugging await Windows CI validation.
 - The builtin ABI catalogue is larger than any single freestanding/WASM target subset. A registered builtin name is not evidence of bare-metal/WASI availability.
 - The C binding/translation project is experimental and its narrow profiles do not translate arbitrary C or all of SQLite.
 - `lpp-lsp` workspace-wide cross-file semantic index features remain partial; see §11.1.

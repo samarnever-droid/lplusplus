@@ -1,6 +1,6 @@
 # L++ Roadmap — how complete is L++, and what "done" looks like
 
-_Updated for **v0.3.0** (`v0.3-dev`). These figures and capabilities reflect
+_Updated for **v0.3.1** (`v0.3-dev`). These figures and capabilities reflect
 observed implementation and test suites in this tree; open items remain tracked
 transparently below._
 
@@ -9,15 +9,15 @@ transparently below._
 | Area | ~Done | Evidence / gap |
 |---|---|---|
 | Core language | **92%** | Structs, enums+exhaustive match, generics+turbofish, traits (static+dynamic), closures, `Result`+`?`, modules, FFI, tuples up to 16, f-strings, ranges, slices, variadics, defaults, principled `unsafe` (`Ptr[T]`, `RawPtr`, casts, MMIO/port/control-reg intrinsics, `--deny-unsafe`). Missing: iterators/generators, macros, operator overloading. |
-| Compiler & backends | **92%** | Cranelift (default native `x86_64`/`aarch64` + `*-unknown-none` bare-metal kernels); LLVM (`--backend llvm -O0`–`-O3`) now at full MIR/ARC/kernel/SIMD parity; direct ELF/PE/Mach-O + static kernel ELF linker; stack-placed `Frame` POD structs/tuples & destructor-free POD `Owned` ARC. WASM works with size-class free-list reuse for acyclic churn, while WASM cycle collection remains open. |
+| Compiler & backends | **95%** | Cranelift (default native `x86_64`/`aarch64` + `*-unknown-none` bare-metal kernels); LLVM (`--backend llvm -O0`–`-O3`) now at full MIR/ARC/kernel/SIMD parity; direct ELF/PE/Mach-O + static kernel ELF linker; stack-placed `Frame` POD structs/tuples & destructor-free POD `Owned` ARC; WASM size-class free-list reuse + Bacon-Rajan trial-deletion cycle collection over `Shared` aggregates/lists/tuples/closures/tasks. |
 | Memory-safety proof | **~65%** | Safety Mission level **S2 → S3**. Ownership proofs (`Frame`/`Owned`/`Shared`), Bacon-Rajan cycle collector across Cranelift & LLVM, bindgen ASan/LSan/UBSan checks, and 22,000+ LOC `v03_*` production suites across all workspace crates. Still open: TSan stress & concurrent `Send`/`Sync` enforcement, S4 formal mechanization. |
 | Standard library | **75%** | 500+ builtin entries, `Set[T]` & `Deque[T]`, strings, lists, maps, buffers, files, networking, JSON, bare-metal kernel/Multiboot2 runtime. Still thin relative to mature Go/Python ecosystems. |
 | Tooling | **85%** | Keel PM (SemVer, lockfiles, `lpp/keel migrate`), DWARF `-g` debug info (`lpp debug` CLI + backtraces), `lpp fmt`, `lpp repl`, `lpp test`, `lpp-lsp`, `lpp-link`, `lpp-bench`. LSP semantic rename/references still minimal. |
-| Async / concurrency | **45%** | Threads + atomics exist; async is single-thread run-to-completion, no I/O reactor yet. `Send`/`Sync`-style static enforcement and TSan validation remain open. |
+| Async / concurrency | **70%** | Threads, atomics, mutexes/rwlocks, multi-threaded work-stealing `async def`/`.await` executor, and static concurrent-write checks across `spawn` + `async` tasks exist; OS I/O readiness reactor (`epoll`/`kqueue`/`IOCP`), `Send`/`Sync` trait enforcement, and TSan CI validation remain open. |
 | Platforms | **75%** | Linux, Windows MSVC/PE, and macOS (arm64 + Intel) native CI, WASI WebAssembly CI, plus `x86_64-unknown-none` & `aarch64-unknown-none` bare-metal targets. Complete aarch64 Linux hosted execution and Windows Sanitizer coverage remain. |
-| Ecosystem & stability | **25%** | **v0.3.0**, modern `Keel.toml` across all in-repo packages, git registry (`llppregistry`), no 1.0 stability guarantee yet. |
+| Ecosystem & stability | **25%** | **v0.3.1**, modern `Keel.toml` across all in-repo packages, git registry (`llppregistry`), no 1.0 stability guarantee yet. |
 | **Overall: usable language today** | **~88%** | |
-| **Overall: mature 1.0 platform** | **~62%** | The remaining gap is WASM cycle collection, async I/O reactor, `Send`/`Sync` proof, and ecosystem scale. |
+| **Overall: mature 1.0 platform** | **~66%** | The remaining gap is async I/O reactor (`epoll`/`kqueue`/`IOCP`), static `Send`/`Sync` trait enforcement, Windows LLVM CI verification, and ecosystem scale. |
 
 ## 2. Status since v0.2.0 & remaining build order
 
@@ -25,10 +25,10 @@ transparently below._
 
 1. ~~Cranelift structural-tuple drop glue~~ — **DONE**
    (`lpp_drop_t{n}`/`lpp_trace_t{n}`; see `docs/CYCLE_BREAKING.md`).
-2. **WASM cycle collection — PARTIAL.** The WASM runtime reuses freed ARC
-   blocks in size-class bins (`1` page under acyclic churn), but unreachable
-   reference cycles still leak in WASM. Next, port the ownership-plan
-   trace/mark/trial-deletion protocol to `lpp-codegen-wasm`.
+2. ~~WASM cycle collection~~ — **DONE.**
+   `crates/lpp-codegen-wasm/src/cycle.rs` implements Bacon-Rajan trial-deletion
+   cycle collection over `Shared` structs, enums, lists, tuples, closures, and
+   tasks, bounded in memory across `cycle_gate` and 4-backend driver parity.
 3. ~~LLVM managed-value, kernel, SIMD, and -O3 parity~~ — **DONE in v0.3.0.**
    `lpp-codegen-llvm` lowers full MIR, managed structs/enums/lists/tuples,
    cycle-collector ARC destructors, DWARF `-g`, SIMD intrinsics, kernel primitives,

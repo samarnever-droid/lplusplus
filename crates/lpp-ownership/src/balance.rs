@@ -10,8 +10,8 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use lpp_hir::OriginId;
 use lpp_mir::{
-    BasicBlockId, InstructionId, InstructionKind, MirFunctionId, MirInvariant, MirLocalId,
-    MirPlace, MirProgram, Operand, PlaceProjection, Rvalue, Terminator,
+    BasicBlockId, InstructionId, InstructionKind, MirFunctionId, MirFunctionKind, MirInvariant,
+    MirLocalId, MirPlace, MirProgram, Operand, PlaceProjection, Rvalue, Terminator,
 };
 use lpp_passes::{MirPass, PassContext, PassFailure};
 use lpp_types::{BuiltinId, PrimitiveType, TypeId, TypeInterner, TypeKind};
@@ -895,6 +895,22 @@ fn apply_concur_block(
                         new_target_objs.insert(obj);
                         let args = program.operands(arguments);
                         let callees = resolve_call_targets(program, &state, callee);
+                        if callees.iter().any(|&cid| {
+                            program
+                                .function(cid)
+                                .is_some_and(|f| f.kind == MirFunctionKind::Async)
+                        }) {
+                            check_spawn_transfer(
+                                program,
+                                function_id,
+                                callee,
+                                args,
+                                live_after,
+                                &mut state,
+                                summaries,
+                                summary_changed,
+                            );
+                        }
                         for cid in callees {
                             for (pos, &arg_op) in args.iter().enumerate() {
                                 let a_objs = operand_objs(&state, arg_op);

@@ -1,6 +1,6 @@
 # Current capabilities
 
-**Last updated for v0.3.0 (`v0.3-dev`);** remaining historical gate counts below reflect their dated snapshots unless marked current. This file is a compact index; current roadmap status is tracked in [ROADMAP.md](../ROADMAP.md) and `v0.3.0` release notes in [V0.3.0.md](release/V0.3.0.md).
+**Last updated for v0.3.1 (`v0.3-dev`);** remaining historical gate counts below reflect their dated snapshots unless marked current. This file is a compact index; current roadmap status is tracked in [ROADMAP.md](../ROADMAP.md) and `v0.3.1` release notes in [V0.3.1.md](release/V0.3.1.md).
 
 ## Compiler
 
@@ -19,7 +19,7 @@
 | Fixed structural tuples | Available up to arity 16, managed elements, destructuring; Cranelift and LLVM full parity |
 | Typed variadics | Available: final owned rest `List[T]`; extern C varargs rejected |
 | Borrowed slices | Available: zero-copy `StrSlice` / `Slice[T]`, conservative non-escape rules |
-| Async/await | Single-thread run-to-completion executor (`async def`, `.await`, `spawn`) |
+| Async/await | Multi-threaded worker-pool executor (`async def`, `.await`, `spawn`) with cooperative caller stealing and static concurrent-write checks |
 | Collections & builtins | `List[T]`, `Map[K, V]`, `Set[T]`, `Deque[T]`, strings, buffers, files, networking, JSON, 100+ builtins |
 | DWARF debugging & backtraces | Available: `-g` / `--debug` (Cranelift & LLVM), `lpp debug` CLI, runtime stack backtraces |
 | Developer CLI & LSP | Available: `lpp fmt`, `lpp repl`, `lpp test`, `lpp debug`, `lpp-lsp` |
@@ -32,7 +32,7 @@
 - `Frame < Owned < Shared` is the escape lattice.
 - Non-escaping `Frame` POD structs and tuples lower onto the stack (`StackSlot` in Cranelift, `alloca` in LLVM) with zero heap allocations and zero ARC retain/release traffic.
 - Escaping `Owned` POD structs, enums, and tuples pass a null destructor to `lpp_arc_alloc_with_destructor`, skipping the 8-byte destructor prefix and indirect destructor call at teardown.
-- Self-referential structs and cycle-capable aggregates are classified `Shared` and collected on Cranelift and LLVM native targets via Bacon-Rajan trial-deletion in `lpp-runtime`. WASM recycles freed acyclic blocks but does not yet collect unreachable cycles. (See `docs/CYCLE_BREAKING.md` and `ROADMAP.md`.)
+- Self-referential structs and cycle-capable aggregates are classified `Shared` and collected across Cranelift, LLVM, and WASM (`lpp-runtime` on native targets, `lpp-codegen-wasm/src/cycle.rs` on `wasm32-wasip1`) via Bacon-Rajan trial-deletion. (See `docs/CYCLE_BREAKING.md` and `ROADMAP.md`.)
 - Closures use ARC environments; non-escaping closure capsules can be stack-resident.
 - Tuples up to arity 16 and async tasks are ARC aggregates with runtime child/environment teardown (or stack-placed when `Frame` POD).
 - Slice view records are stack-resident and borrowed; the MIR validator prevents first-tier escapes and the runtime validates bounds/generation at each access.
@@ -44,7 +44,7 @@
 | Cranelift + host linker | Production/default (`x86_64`, `aarch64`); stack-placed `Frame` POD, destructor-free POD `Owned`, cycle collector, DWARF `-g` |
 | Cranelift + direct ELF/PE/Mach-O linker | Production for host native targets and static bare-metal `*-unknown-none` ELF kernels |
 | LLVM + host/direct linker | Full MIR/ARC/kernel/SIMD parity (`x86_64`, `aarch64`), `-O0`–`-O3`, DWARF `-g`, stack `Frame` POD & null-dtor `Owned` POD |
-| WASM | Experimental (`wasm32-wasip1`); ARC size-class free-list reuse passes bounded acyclic churn; WASI filesystem builtins lowered via WASI preopens; cycle collection missing |
+| WASM | Experimental (`wasm32-wasip1`); ARC size-class free-list reuse + Bacon-Rajan trial-deletion cycle collection over `Shared` structs/enums/lists/tuples/closures/tasks; WASI filesystem builtins lowered via WASI preopens |
 | Windows LLVM execution | Needs Windows CI validation |
 
 Select the optional backend explicitly:
@@ -101,8 +101,7 @@ per-entry instrumentation overhead; see the benchmark for a measured example.
 
 ## Not yet claimed
 
-- Project-wide “100% feature freeze”; async I/O reactor and static `Send`/`Sync` enforcement remain open.
-- WASM cycle collection or bounded memory for cyclic WASM workloads.
+- Project-wide “100% feature freeze”; async I/O reactor (`epoll`/`kqueue`/`IOCP`) and static `Send`/`Sync` enforcement remain open.
 - General lifetime-parameterized slices, mutable slices, or slice thread send.
 - Unsafe native C variadic ABI or tuples beyond arity 16.
 - Windows LLVM runtime execution.

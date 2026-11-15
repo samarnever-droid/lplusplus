@@ -773,6 +773,30 @@ fn recompute_concurrency(
                                 }
                             }
                         }
+                        Rvalue::Call { callee, arguments } => {
+                            let args = program.operands(arguments);
+                            for cid in resolve(&fn_targets, fn_id, callee) {
+                                let Some(callee_fn) = program.function(cid) else {
+                                    continue;
+                                };
+                                if callee_fn.kind != MirFunctionKind::Async {
+                                    continue;
+                                }
+                                reaches_spawn.insert((fn_id, target));
+                                spawned_callables.insert(cid);
+                                let cap_count = program.function_captures(callee_fn).len();
+                                let params = program.function_parameters(callee_fn);
+                                let formal_params = &params[cap_count.min(params.len())..];
+                                for (pos, &op) in args.iter().enumerate() {
+                                    if let Operand::Copy(local) = op {
+                                        reaches_spawn.insert((fn_id, local));
+                                    }
+                                    if let Some(&param) = formal_params.get(pos) {
+                                        reaches_spawn.insert((cid, param));
+                                    }
+                                }
+                            }
+                        }
                         _ => {}
                     }
                 }

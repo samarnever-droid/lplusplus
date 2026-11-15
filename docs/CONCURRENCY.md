@@ -11,7 +11,7 @@ build before any data-race-freedom claim (Safety Mission S4)._
 | Facility | Surface | Runtime |
 |---|---|---|
 | OS threads | `spawn fn() ...:`, `spawn callback`, `lpp_thread_join` | `std::thread` (host Rust runtime); pthread in `lpp_runtime.c`. **Freestanding min runtimes have no thread primitive** — `spawn` fails to link there by design. |
-| Async tasks | `async def`, `.await` | Task state records + deterministic **single-thread** run-to-completion executor. No hidden threads, no I/O reactor (ROADMAP Tier 3). |
+| Async tasks | `async def`, `.await` | Multi-threaded worker-pool executor (`2..=16` worker threads) with cooperative caller stealing on `.await` and atomic task completion synchronization across both Rust and C hosted runtimes. Static `OwnershipBalancePass` rejects unsynchronized concurrent writes across aliased `async def` parameters; OS I/O readiness reactor (`epoll`/`kqueue`/`IOCP`) integration remains future work. |
 | Atomics | `atomic_new/load/store/add/sub/and/or/xor/swap/cas` (+ acq/rel/relaxed variants, 32- and 64-bit) | Opaque i64 handles over host atomics (`Ordering::SeqCst` unless the relaxed variants are chosen). |
 | Locks | mutex / rwlock builtins | Host-backed opaque handles (`concur.rs`). |
 

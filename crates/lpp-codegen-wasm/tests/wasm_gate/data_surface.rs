@@ -601,10 +601,10 @@ fn parse_names_and_table(object: &[u8]) -> (BTreeMap<String, u32>, Option<u32>, 
                         let mut q = p;
                         let count = uleb(payload, &mut q) as usize;
                         for _ in 0..count {
+                            let func_idx = uleb(payload, &mut q) as u32;
                             let nlen = uleb(payload, &mut q) as usize;
                             let n = String::from_utf8(payload[q..q + nlen].to_vec()).unwrap();
                             q += nlen;
-                            let func_idx = uleb(payload, &mut q) as u32;
                             names.insert(n, func_idx);
                         }
                     }

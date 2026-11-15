@@ -690,3 +690,82 @@ def main():
         OwnershipBalanceErrorKind::UnsynchronizedConcurrentWrite { .. }
     )));
 }
+
+#[test]
+fn step2_async_aliased_unsynchronized_write_rejected() {
+    let source = r#"
+struct Box:
+    x: Int
+
+async def worker(b: Box) -> Int:
+    b.x = 77
+    return b.x
+
+def main():
+    mut b := Box(0)
+    t := worker(b)
+    b.x = 88
+    res := t.await
+    print(res)
+"#;
+    let (program, types) = executable(source);
+    let plan = compute_ownership_plan(&program, &types).unwrap();
+    let errors = verify_ownership_balance(&program, &types, &plan);
+    assert!(
+        errors.iter().any(|e| matches!(
+            e.kind,
+            OwnershipBalanceErrorKind::UnsynchronizedConcurrentWrite { .. }
+        )),
+        "expected UnsynchronizedConcurrentWrite for aliased async argument mutation, got {errors:?}"
+    );
+}
+
+#[test]
+fn step2_async_mutex_synchronized_write_and_unique_move_accepted() {
+    let synced = r#"
+struct Box:
+    x: Int
+
+async def worker(b: Box, m: Int) -> Int:
+    mutex_lock(m)
+    b.x = 77
+    mutex_unlock(m)
+    return 1
+
+def main():
+    mut b := Box(0)
+    m := mutex_new()
+    t1 := worker(b, m)
+    t2 := worker(b, m)
+    print(t1.await + t2.await)
+    mutex_free(m)
+"#;
+    let (program, types) = executable(synced);
+    let plan = compute_ownership_plan(&program, &types).unwrap();
+    let errors = verify_ownership_balance(&program, &types, &plan);
+    assert!(
+        errors.is_empty(),
+        "expected mutex-synchronized async tasks to pass, got {errors:?}"
+    );
+
+    let unique = r#"
+struct Box:
+    x: Int
+
+async def own_worker(b: Box) -> Int:
+    b.x = 99
+    return b.x
+
+def main():
+    mut b := Box(1)
+    t := own_worker(b)
+    print(t.await)
+"#;
+    let (program_u, types_u) = executable(unique);
+    let plan_u = compute_ownership_plan(&program_u, &types_u).unwrap();
+    let errors_u = verify_ownership_balance(&program_u, &types_u, &plan_u);
+    assert!(
+        errors_u.is_empty(),
+        "expected uniquely transferred async task arg to pass, got {errors_u:?}"
+    );
+}

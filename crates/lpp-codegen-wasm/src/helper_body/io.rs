@@ -276,12 +276,15 @@ pub(super) fn emit(
             fb.op(op::I64_EXTEND_I32_U);
         }
         H::ReadFile => {
-            // path_open(3, 0, path+4, path.len, oflags=0, rights, 0, 0, 88)
+            // path_open(3, 0, path+4, path.len, oflags=0, rights, 0, 0, FS_FD_OUT)
             let fd = fb.scratch(Val::I32);
             let errno = fb.scratch(Val::I32);
-            let base = fb.scratch(Val::I32);
             let payload = fb.scratch(Val::I32);
-            let len = fb.scratch(Val::I32);
+            let total_len = fb.scratch(Val::I32);
+            let offset = fb.scratch(Val::I32);
+            let nread = fb.scratch(Val::I32);
+            let size64 = fb.scratch(Val::I64);
+            let rem = fb.scratch(Val::I32);
             fb.i32c(3);
             fb.i32c(0);
             fb.g(0);
@@ -305,71 +308,88 @@ pub(super) fn emit(
             fb.i32c(FS_FD_OUT as i64);
             fb.load32(0);
             fb.s(fd);
-            // One bounded read into `FS_BUF`, then one ARC string sized to
-            // the bytes actually returned (`FS_CHUNK` = 4 KiB).
-            let errno2 = fb.scratch(Val::I32);
-            fb.i32c(IOVEC_BUF as i64).i32c(FS_BUF as i64).store32(0);
-            fb.i32c((IOVEC_BUF + 4) as i64)
-                .i32c(FS_CHUNK as i64)
-                .store32(0);
-            fb.i32c(FS_NREAD as i64).i32c(0).store32(0);
-            fb.g(fd)
-                .i32c(IOVEC_BUF as i64)
-                .i32c(1)
-                .i32c(FS_NREAD as i64)
-                .call(fd_read_import_idx)
-                .s(errno2);
-            fb.i32c(FS_NREAD as i64).load32(0).s(len);
-            // Size the string from the file itself: seek to the end, take the
-            // resulting offset, then rewind (Node reports `nread` as the
-            // requested length rather than bytes read).
+            // Determine full file size by seeking to END, then rewind to SET.
             fb.g(fd)
                 .i64c(0)
                 .i32c(2) // whence = END
                 .i32c(FS_SEEK_OUT as i64)
                 .call(imp!(import_index, "fd_seek"))
-                .s(errno2);
-            fb.i32c(FS_SEEK_OUT as i64).load32(0).s(len);
+                .s(errno);
+            fb.g(errno);
+            fb.if_();
+            fb.g(fd).call(imp!(import_index, "fd_close")).op(op::DROP);
+            fb.i64c(0);
+            fb.op(op::RETURN);
+            fb.end();
+            fb.i32c(FS_SEEK_OUT as i64).load64(0).s(size64);
             fb.g(fd)
                 .i64c(0)
                 .i32c(0) // whence = SET
                 .i32c(FS_SEEK_OUT as i64)
                 .call(imp!(import_index, "fd_seek"))
                 .op(op::DROP);
-            fb.g(len).i32c(FS_CHUNK as i64).op(op::I32_GT_U);
+            // Clamp to signed 32-bit max minus length prefix to stay within wasm32.
+            fb.g(size64).i64c(0x7FFF_FFFB).op(op::I64_GT_U);
             fb.if_();
-            fb.i32c(FS_CHUNK as i64).s(len);
+            fb.i64c(0x7FFF_FFFB).s(size64);
             fb.end();
-            fb.g(fd).call(imp!(import_index, "fd_close")).op(op::DROP);
-            // `ArcAlloc(4 + len, 0)` returns the payload; the length word
-            // lives at `payload` and the bytes at `payload + 4`.
+            fb.g(size64).op(op::I32_WRAP_I64).s(total_len);
+            // `ArcAlloc(4 + total_len, 0)` holds `[len i32][bytes...]`.
             fb.i32c(4)
-                .g(len)
+                .g(total_len)
                 .op(op::I32_ADD)
                 .i32c(0)
                 .call(idx(H::ArcAlloc))
                 .s(payload);
-            fb.g(payload)
-                .i32c(STR_HEADER as i64)
-                .op(op::I32_SUB)
-                .s(base);
-            fb.g(base).g(len).store32(STR_HEADER as u32);
-            fb.g(payload)
-                .i32c(4)
-                .op(op::I32_ADD)
-                .i32c(FS_BUF as i64)
-                .g(len)
-                .memory_copy();
+            fb.i32c(0).s(offset);
+            fb.block();
+            fb.loop_();
+            {
+                fb.g(offset).g(total_len).op(op::I32_GE_U);
+                fb.br_if(1);
+                fb.g(total_len).g(offset).op(op::I32_SUB).s(rem);
+                fb.i32c(IOVEC_BUF as i64)
+                    .g(payload)
+                    .i32c(4)
+                    .op(op::I32_ADD)
+                    .g(offset)
+                    .op(op::I32_ADD)
+                    .store32(0);
+                fb.i32c((IOVEC_BUF + 4) as i64).g(rem).store32(0);
+                fb.i32c(FS_NREAD as i64).i32c(0).store32(0);
+                fb.g(fd)
+                    .i32c(IOVEC_BUF as i64)
+                    .i32c(1)
+                    .i32c(FS_NREAD as i64)
+                    .call(fd_read_import_idx)
+                    .s(errno);
+                fb.g(errno).br_if(1);
+                fb.i32c(FS_NREAD as i64).load32(0).s(nread);
+                fb.g(nread).op(op::I32_EQZ).br_if(1);
+                fb.g(nread).g(rem).op(op::I32_GT_U);
+                fb.if_();
+                fb.g(rem).s(nread);
+                fb.end();
+                fb.g(offset).g(nread).op(op::I32_ADD).s(offset);
+                fb.br(0);
+            }
+            fb.end();
+            fb.end();
+            fb.g(fd).call(imp!(import_index, "fd_close")).op(op::DROP);
+            fb.g(payload).g(offset).store32(0);
             fb.g(payload);
             fb.op(op::I64_EXTEND_I32_U);
             fb.op(op::RETURN);
         }
         H::WriteFile | H::AppendFile => {
-            // path_open(3, 0, path+4, path.len, oflags, rights, 0, 0, 88)
+            // path_open(3, 0, path+4, path.len, oflags, rights, 0, 0, FS_FD_OUT)
             // write_file = CREAT|TRUNC, append_file = CREAT + seek to end.
             let append = matches!(h, H::AppendFile);
             let fd = fb.scratch(Val::I32);
             let errno = fb.scratch(Val::I32);
+            let total = fb.scratch(Val::I32);
+            let offset = fb.scratch(Val::I32);
+            let nw = fb.scratch(Val::I32);
             fb.i32c(3);
             fb.i32c(0);
             fb.g(0);
@@ -402,29 +422,51 @@ pub(super) fn emit(
                 fb.g(fd);
                 fb.i64c(0);
                 fb.i32c(2);
-                fb.i32c(FS_FD_OUT as i64);
+                fb.i32c(FS_SEEK_OUT as i64);
                 fb.call(imp!(import_index, "fd_seek"));
                 fb.op(op::DROP);
             }
-            // fd_write(fd, iovec(payload), 1, &nwritten)
-            fb.i32c(IOVEC_BUF as i64);
-            fb.g(1);
-            fb.i32c(4);
-            fb.op(op::I32_ADD);
-            fb.store32(0);
-            fb.i32c((IOVEC_BUF + 4) as i64);
-            fb.g(1);
-            fb.load32(0);
-            fb.store32(0);
-            fb.g(fd);
-            fb.i32c(IOVEC_BUF as i64);
-            fb.i32c(1);
-            fb.i32c(FS_NWRITTEN as i64);
-            fb.call(fd_write_import_idx);
-            fb.s(errno);
-            fb.g(fd);
-            fb.call(imp!(import_index, "fd_close"));
-            fb.op(op::DROP);
+            // Loop fd_write until all bytes are flushed cleanly (handles partial writes).
+            fb.g(1).load32(0).s(total);
+            fb.i32c(0).s(offset);
+            fb.i32c(0).s(errno);
+            fb.block();
+            fb.loop_();
+            {
+                fb.g(offset).g(total).op(op::I32_GE_U);
+                fb.br_if(1);
+                fb.i32c(IOVEC_BUF as i64)
+                    .g(1)
+                    .i32c(4)
+                    .op(op::I32_ADD)
+                    .g(offset)
+                    .op(op::I32_ADD)
+                    .store32(0);
+                fb.i32c((IOVEC_BUF + 4) as i64)
+                    .g(total)
+                    .g(offset)
+                    .op(op::I32_SUB)
+                    .store32(0);
+                fb.i32c(FS_NWRITTEN as i64).i32c(0).store32(0);
+                fb.g(fd)
+                    .i32c(IOVEC_BUF as i64)
+                    .i32c(1)
+                    .i32c(FS_NWRITTEN as i64)
+                    .call(fd_write_import_idx)
+                    .s(errno);
+                fb.g(errno).br_if(1);
+                fb.i32c(FS_NWRITTEN as i64).load32(0).s(nw);
+                fb.g(nw).op(op::I32_EQZ);
+                fb.if_();
+                fb.i32c(5).s(errno); // EIO safeguard on 0-byte write progress
+                fb.br(2);
+                fb.end();
+                fb.g(offset).g(nw).op(op::I32_ADD).s(offset);
+                fb.br(0);
+            }
+            fb.end();
+            fb.end();
+            fb.g(fd).call(imp!(import_index, "fd_close")).op(op::DROP);
             fb.g(errno);
             fb.op(op::I64_EXTEND_I32_U);
         }

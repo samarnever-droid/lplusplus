@@ -62,12 +62,11 @@ pub(super) fn compile_module(
         )
     });
     if needs_fs {
-        // `read_file` lowers to `fd_read` even when the program never reads
-        // stdin, so the import must exist whenever a file builtin is used.
-        if !import_fields.contains(&"fd_read") {
-            import_fields.push("fd_read");
-        }
+        // File helpers call `fd_read` / `fd_write` directly even when the
+        // program never uses stdin/stdout, so ensure both imports exist.
         for field in [
+            "fd_write",
+            "fd_read",
             "path_open",
             "path_filestat_get",
             "path_unlink_file",
@@ -995,8 +994,9 @@ pub(super) fn compile_module(
         let mut sub = Vec::new();
         uleb(&mut sub, named.len() as u64);
         for (name, index) in &named {
-            enc_name(&mut sub, name);
+            // Wasm spec namemap entry order: funcidx (u32 LEB128), then name.
             uleb(&mut sub, *index as u64);
+            enc_name(&mut sub, name);
         }
         name_sec.push(1); // subsection: function names
         uleb(&mut name_sec, sub.len() as u64);

@@ -616,11 +616,14 @@ const ABI_SYMBOLS: &[&str] = &[
     "lpp_print_str",
     "lpp_write_str",
     "lpp_eprint_str",
-    // 6B.3d — tasks, tuple, vec checksum
+    // 6B.3d — tasks, tuple, vec checksum, multi-threaded async pool telemetry
     "lpp_task_new",
     "lpp_task_poll",
     "lpp_task_await",
     "lpp_task_destroy",
+    "lpp_async_worker_count",
+    "lpp_async_tasks_completed",
+    "lpp_async_tasks_stolen",
     "lpp_tuple_alloc",
     "lpp_vec_i64_checksum",
 ];
@@ -739,4 +742,194 @@ fn symbol_census_matches_the_c_reference() {
             "c_shim reference does not define shim-only symbol {sym}"
         );
     }
+}
+
+const C_MT_STRESS_SOURCE: &str = r#"
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdint.h>
+#if defined(_WIN32)
+#  ifndef WIN32_LEAN_AND_MEAN
+#    define WIN32_LEAN_AND_MEAN
+#  endif
+#  include <windows.h>
+static volatile LONG g_env_drops = 0;
+static volatile LONG g_res_drops = 0;
+static volatile LONG g_arrived = 0;
+#  define ATOMIC_INC(p) InterlockedIncrement(p)
+#  define ATOMIC_LOAD(p) InterlockedCompareExchange((volatile LONG *)(p), 0, 0)
+#  define SLEEP_US(us) Sleep(((us) + 999) / 1000)
+#else
+#  include <stdatomic.h>
+#  include <unistd.h>
+static _Atomic(int) g_env_drops = 0;
+static _Atomic(int) g_res_drops = 0;
+static _Atomic(int) g_arrived = 0;
+#  define ATOMIC_INC(p) atomic_fetch_add((p), 1)
+#  define ATOMIC_LOAD(p) atomic_load(p)
+#  define SLEEP_US(us) usleep(us)
+#endif
+
+extern void *lpp_arc_alloc_with_destructor(int64_t, void(*)(void*));
+extern void lpp_arc_release(void*);
+extern void *lpp_task_new(void*, void*, int64_t);
+extern int64_t lpp_task_await(void*);
+extern void lpp_task_destroy(void*);
+extern int64_t lpp_async_worker_count(void);
+extern int64_t lpp_async_tasks_completed(void);
+
+static void on_env_drop(void *p) { (void)p; ATOMIC_INC(&g_env_drops); }
+static void on_res_drop(void *p) { (void)p; ATOMIC_INC(&g_res_drops); }
+
+static int64_t peer_code(void *env) {
+    (void)env;
+    ATOMIC_INC(&g_arrived);
+    for (int i = 0; i < 5000; i++) {
+        if (ATOMIC_LOAD(&g_arrived) >= 2) return 1;
+        SLEEP_US(100);
+    }
+    return 0;
+}
+
+static int64_t fib_code(void *env) {
+    int64_t n = *(int64_t*)env;
+    if (n <= 1) return n;
+    void *ea = lpp_arc_alloc_with_destructor(8, NULL); *(int64_t*)ea = n - 1;
+    void *eb = lpp_arc_alloc_with_destructor(8, NULL); *(int64_t*)eb = n - 2;
+    void *ta = lpp_task_new((void*)(intptr_t)fib_code, ea, 0);
+    void *tb = lpp_task_new((void*)(intptr_t)fib_code, eb, 0);
+    int64_t s = lpp_task_await(ta) + lpp_task_await(tb);
+    lpp_task_destroy(ta);
+    lpp_task_destroy(tb);
+    return s;
+}
+
+static int64_t managed_code(void *env) {
+    int64_t v = *(int64_t*)env;
+    void *res = lpp_arc_alloc_with_destructor(8, on_res_drop);
+    *(int64_t*)res = v * 2;
+    return (int64_t)(intptr_t)res;
+}
+
+int main(void) {
+    const char *env_threads = getenv("LPP_ASYNC_THREADS");
+    int expected_workers = env_threads ? atoi(env_threads) : 4;
+    if (lpp_async_worker_count() != expected_workers) return 11;
+    void *e1 = lpp_arc_alloc_with_destructor(8, NULL);
+    void *e2 = lpp_arc_alloc_with_destructor(8, NULL);
+    void *t1 = lpp_task_new((void*)(intptr_t)peer_code, e1, 0);
+    void *t2 = lpp_task_new((void*)(intptr_t)peer_code, e2, 0);
+    int64_t p = lpp_task_await(t1) + lpp_task_await(t2);
+    lpp_task_destroy(t1); lpp_task_destroy(t2);
+    if (p != 2) return 12;
+
+    void *fe = lpp_arc_alloc_with_destructor(8, NULL); *(int64_t*)fe = 15;
+    void *ft = lpp_task_new((void*)(intptr_t)fib_code, fe, 0);
+    int64_t f = lpp_task_await(ft);
+    lpp_task_destroy(ft);
+    if (f != 610) return 13;
+
+    void *kept[400];
+    int ki = 0;
+    for (int i = 0; i < 500; i++) {
+        void *me = lpp_arc_alloc_with_destructor(8, on_env_drop);
+        *(int64_t*)me = i;
+        void *mt = lpp_task_new((void*)(intptr_t)managed_code, me, 1);
+        if (i % 5 == 0) {
+            lpp_task_destroy(mt);
+        } else {
+            kept[ki++] = mt;
+        }
+    }
+    for (int i = ki - 1; i >= 0; i--) {
+        void *res = (void*)(intptr_t)lpp_task_await(kept[i]);
+        lpp_arc_release(res);
+        lpp_task_destroy(kept[i]);
+    }
+    for (int i = 0; i < 1000; i++) {
+        if (ATOMIC_LOAD(&g_env_drops) == 500 && ATOMIC_LOAD(&g_res_drops) == 500) break;
+        SLEEP_US(1000);
+    }
+    if (ATOMIC_LOAD(&g_env_drops) != 500 || ATOMIC_LOAD(&g_res_drops) != 500) return 14;
+    if (lpp_async_tasks_completed() < 2473) return 15;
+    printf("OK:%lld\n", (long long)lpp_async_tasks_completed());
+    return 0;
+}
+"#;
+
+fn run_c_mt_stress(compiler: &str, tag: &str, extra_flags: &[&str], threads: &str) {
+    let dir = std::env::temp_dir().join(format!("lpp-c-mt-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let scenario = dir.join("mt_stress.c");
+    std::fs::write(&scenario, C_MT_STRESS_SOURCE).unwrap();
+    let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let bin = dir.join("mt_stress");
+    let mut cmd = Command::new(compiler);
+    cmd.args(extra_flags)
+        .arg(crate_root.join("lpp_runtime.c"))
+        .arg(&scenario)
+        .arg("-o")
+        .arg(&bin);
+    if !cfg!(target_os = "windows") {
+        cmd.arg("-lpthread").arg("-lm");
+    }
+    let build = cmd.output().unwrap();
+    if !build.status.success() {
+        let _ = std::fs::remove_dir_all(&dir);
+        eprintln!(
+            "skipping {tag}: {compiler} failed to build ({})",
+            String::from_utf8_lossy(&build.stderr).trim()
+        );
+        return;
+    }
+    let out = Command::new(&bin)
+        .env("LPP_ASYNC_THREADS", threads)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(
+        out.status.success(),
+        "C MT {tag} failed code={:?} stdout={stdout} stderr={stderr}",
+        out.status.code()
+    );
+    assert!(
+        stdout.trim().starts_with("OK:"),
+        "unexpected stdout in {tag}: {stdout}"
+    );
+}
+
+#[test]
+fn c_reference_multithreaded_work_stealing_stress() {
+    let cc = match Command::new("cc").arg("--version").output() {
+        Ok(o) if o.status.success() => "cc",
+        _ => {
+            eprintln!("skipping: no C compiler available");
+            return;
+        }
+    };
+    run_c_mt_stress(cc, "stress", &["-O2"], "4");
+}
+
+#[test]
+fn c_reference_multithreaded_sanitizers_clean() {
+    if !cfg!(target_os = "linux") {
+        return;
+    }
+    let clang = match Command::new("clang").arg("--version").output() {
+        Ok(o) if o.status.success() => "clang",
+        _ => {
+            eprintln!("skipping: clang unavailable for sanitizer run");
+            return;
+        }
+    };
+    run_c_mt_stress(clang, "tsan", &["-fsanitize=thread", "-g", "-O1"], "4");
+    run_c_mt_stress(
+        clang,
+        "asan",
+        &["-fsanitize=address,undefined", "-g", "-O1"],
+        "4",
+    );
 }

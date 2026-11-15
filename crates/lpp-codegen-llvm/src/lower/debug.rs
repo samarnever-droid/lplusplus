@@ -77,7 +77,8 @@ impl<'a> DebugMetadata<'a> {
             let _ = dwarf_or_cv_flag;
             let _ = dbg_info_ver_flag;
             this.defs.push(format!(
-                "!{cu_id} = distinct !DICompileUnit(language: DW_LANG_C99, file: !{file_id}, producer: \"lpp 0.3.0\", isOptimized: {}, runtimeVersion: 0, emissionKind: FullDebug, enums: !{empty_tuple_id})",
+                "!{cu_id} = distinct !DICompileUnit(language: DW_LANG_C99, file: !{file_id}, producer: \"lpp {}\", isOptimized: {}, runtimeVersion: 0, emissionKind: FullDebug, enums: !{empty_tuple_id})",
+                env!("CARGO_PKG_VERSION"),
                 if this.is_optimized { "true" } else { "false" }
             ));
             if this.is_windows_coff {

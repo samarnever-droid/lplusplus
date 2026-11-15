@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag, for example v0.3.0"
+        description: "Release tag, for example v0.3.1"
         required: true
         type: string
 
@@ -29,8 +29,8 @@ jobs:
         run: |
           set -euo pipefail
           REQUESTED_TAG='${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}'
-          test "$REQUESTED_TAG" = "v0.3.0"
-          test "$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(p["version"] for p in d["packages"] if p["name"]=="lpp"))')" = "0.3.0"
+          test "$REQUESTED_TAG" = "v0.3.1"
+          test "$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(p["version"] for p in d["packages"] if p["name"]=="lpp"))')" = "0.3.1"
       - name: Formatting and complete workspace tests
         run: |
           clang --version
@@ -76,7 +76,7 @@ jobs:
           cp -r registry package/lpp-linux-x86_64/
           cp target/x86_64-unknown-linux-musl/release/lpp package/lpp-linux-x86_64/bin/
           cp target/x86_64-unknown-linux-musl/release/lpp-link package/lpp-linux-x86_64/bin/
-          cp runtime/lpp-net/target/x86_64-unknown-linux-musl/release/liblpp_net_runtime.a package/lpp-linux-x86_64/lib/
+          cp target/x86_64-unknown-linux-musl/release/liblpp_net_runtime.a package/lpp-linux-x86_64/lib/
           cp runtime/lpp-net/include/lpp_net_runtime.h package/lpp-linux-x86_64/include/
           cp target/release/liblpp_runtime.so package/lpp-linux-x86_64/lib/
           cp runtime/lpp-net/README.md package/lpp-linux-x86_64/lib/lpp_net_runtime.README.md

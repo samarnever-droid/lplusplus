@@ -178,11 +178,19 @@ pub unsafe extern "C" fn lpp_arc_release(ptr: *mut c_void) {
     if !is_valid_arc_ptr(ptr) || is_immortal(ptr) {
         return;
     }
+    // Buffer while this caller still holds a strong reference so sibling
+    // threads freeing the last reference cannot race with reading `flags`.
+    let rc_now = unsafe { (*refcount_cell(ptr)).load(Ordering::Acquire) };
+    let trigger_collect = if rc_now > 1 {
+        crate::collect::note_possible_root_buffer(ptr)
+    } else {
+        false
+    };
     let prev = unsafe { (*refcount_cell(ptr)).fetch_sub(1, Ordering::AcqRel) };
     if prev == 1 {
         unsafe { drop_arc(ptr) };
-    } else if prev > 1 {
-        crate::collect::note_possible_root(ptr);
+    } else if prev > 1 && trigger_collect {
+        unsafe { crate::collect::lpp_arc_collect_cycles() };
     }
 }
 
@@ -223,11 +231,17 @@ pub unsafe extern "C" fn lpp_arc_release_local(ptr: *mut c_void) {
     if !is_valid_arc_ptr(ptr) || is_immortal(ptr) {
         return;
     }
-    let prev = unsafe { (*refcount_cell(ptr)).fetch_sub(1, Ordering::Relaxed) };
+    let rc_now = unsafe { (*refcount_cell(ptr)).load(Ordering::Acquire) };
+    let trigger_collect = if rc_now > 1 {
+        crate::collect::note_possible_root_buffer(ptr)
+    } else {
+        false
+    };
+    let prev = unsafe { (*refcount_cell(ptr)).fetch_sub(1, Ordering::AcqRel) };
     if prev == 1 {
         unsafe { drop_arc(ptr) };
-    } else if prev > 1 {
-        crate::collect::note_possible_root(ptr);
+    } else if prev > 1 && trigger_collect {
+        unsafe { crate::collect::lpp_arc_collect_cycles() };
     }
 }
 

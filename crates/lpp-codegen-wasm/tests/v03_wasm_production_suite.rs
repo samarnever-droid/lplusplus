@@ -299,3 +299,124 @@ def main() -> Int:
         .expect_err("WasmBackend must reject x86 port I/O intrinsics");
     assert_eq!(kerr.code(), "E5001");
 }
+
+#[test]
+fn wasm_name_custom_section_conforms_to_spec_and_parses_with_wasmparser() {
+    let src = r#"
+struct Pair:
+    a: Int
+    b: Str
+
+def helper(x: Int) -> Int:
+    p := Pair(x, "ok")
+    return p.a + 1
+
+def main() -> Int:
+    print_int(helper(41))
+    return 0
+"#;
+    let (module, _) = compile_wasm_checked(src, "wasm_name_section");
+    let mut found_fn_names = BTreeMap::new();
+    for payload in wasmparser::Parser::new(0).parse_all(&module.object) {
+        if let wasmparser::Payload::CustomSection(custom) = payload.expect("valid wasm") {
+            if let wasmparser::KnownCustom::Name(reader) = custom.as_known() {
+                for subsection in reader {
+                    let sub = subsection.expect("valid name subsection (idx before name)");
+                    if let wasmparser::Name::Function(map) = sub {
+                        for entry in map {
+                            let naming = entry.expect("valid function naming entry");
+                            found_fn_names.insert(naming.index, naming.name.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        found_fn_names.values().any(|n| n == "main"),
+        "expected main in WASM name section: {found_fn_names:?}"
+    );
+    assert!(
+        found_fn_names.values().any(|n| n.starts_with("helper")),
+        "expected helper in WASM name section: {found_fn_names:?}"
+    );
+    assert!(
+        found_fn_names.values().any(|n| n.starts_with("lpp_drop_")),
+        "expected drop destructor in WASM name section: {found_fn_names:?}"
+    );
+}
+
+#[test]
+fn wasm_read_and_write_file_handle_arbitrary_multi_megabyte_sizes() {
+    if std::process::Command::new("node")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        return;
+    }
+
+    // Deliberately omit any `print*` calls so we also test `write_file` /
+    // `append_file` importing `fd_write` without needing stdout helpers.
+    let copy_src = r#"
+def main() -> Int:
+    data := read_file("in.bin")
+    rc1 := write_file("out.bin", data)
+    rc2 := append_file("app.bin", "tail")
+    return rc1 + rc2
+"#;
+    let (module, _) = compile_wasm_checked(copy_src, "wasm_fs_large_copy");
+
+    let dir = std::env::temp_dir().join(format!("lpp-wasm-fs-large-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let wasm_path = dir.join("copy.wasm");
+    let runner_path = dir.join("run.mjs");
+    std::fs::write(&wasm_path, &module.object).unwrap();
+    std::fs::write(
+        &runner_path,
+        r#"
+import { WASI } from 'node:wasi';
+import fs from 'node:fs';
+const wasi = new WASI({
+  version: 'preview1',
+  args: ['copy.wasm'],
+  preopens: { '.': process.argv[3] },
+  returnOnExit: true,
+});
+const bytes = fs.readFileSync(process.argv[2]);
+const mod = await WebAssembly.compile(bytes);
+const instance = await WebAssembly.instantiate(mod, {
+  wasi_snapshot_preview1: wasi.wasiImport,
+});
+process.exitCode = wasi.start(instance);
+"#,
+    )
+    .unwrap();
+
+    for size in [0usize, 4095, 4096, 4097, 1_048_576, 8 * 1024 * 1024] {
+        let input_bytes: Vec<u8> = (0..size).map(|i| b'A' + (i % 26) as u8).collect();
+        std::fs::write(dir.join("in.bin"), &input_bytes).unwrap();
+        let _ = std::fs::remove_file(dir.join("out.bin"));
+        std::fs::write(dir.join("app.bin"), b"head-").unwrap();
+
+        let status = std::process::Command::new("node")
+            .arg(&runner_path)
+            .arg(&wasm_path)
+            .arg(&dir)
+            .status()
+            .unwrap();
+        assert!(status.success(), "copy failed for size={size}");
+        let copied = std::fs::read(dir.join("out.bin")).unwrap();
+        assert_eq!(
+            copied.len(),
+            input_bytes.len(),
+            "WASM read_file/write_file truncated size {size} to {}",
+            copied.len()
+        );
+        assert_eq!(copied, input_bytes, "byte mismatch at size {size}");
+        assert_eq!(std::fs::read(dir.join("app.bin")).unwrap(), b"head-tail");
+    }
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

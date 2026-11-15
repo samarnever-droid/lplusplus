@@ -451,3 +451,64 @@ fn cyclic_churn_keeps_wasm_memory_pages_bounded() {
         "cyclic churn leaked WASM memory: 100 iters used {small_pages} pages, 40000 iters used {large_pages} pages"
     );
 }
+
+#[test]
+fn tuple_closure_and_enum_cyclic_churn_keeps_wasm_memory_pages_bounded() {
+    let source_for = |iters: usize| {
+        format!(
+            concat!(
+                "struct TPair:\n",
+                "    t: (Int, TNode, TNode)\n",
+                "\n",
+                "struct TNode:\n",
+                "    val: Int\n",
+                "    pair: TPair\n",
+                "\n",
+                "enum ELink:\n",
+                "    Empty\n",
+                "    Link(tag: Int, target: EBox)\n",
+                "\n",
+                "struct EBox:\n",
+                "    val: Int\n",
+                "    next: ELink\n",
+                "\n",
+                "def churn_tuple_closure_enum(i: Int) -> Void:\n",
+                "    mut a := TNode(i, 0)\n",
+                "    b := TNode(i + 1, 0)\n",
+                "    c := TNode(i + 2, 0)\n",
+                "    a.pair = TPair((i, b, c))\n",
+                "    mut bb := a.pair.t.1\n",
+                "    mut cc := a.pair.t.2\n",
+                "    bb.pair = TPair((i + 1, a, cc))\n",
+                "    mut fns := list_new()\n",
+                "    reader := fn() -> Int:\n",
+                "        return list_len(fns) + 1\n",
+                "    list_push(fns, reader)\n",
+                "    keep_e := [EBox(i, ELink.Empty)]\n",
+                "    mut eb := EBox(i + 2, ELink.Link(i, list_get(keep_e, 0)))\n",
+                "    mut ea := list_get(keep_e, 0)\n",
+                "    ea.next = ELink.Link(i + 1, eb)\n",
+                "\n",
+                "def main() -> Void:\n",
+                "    mut i := 0\n",
+                "    while i < {iters}:\n",
+                "        churn_tuple_closure_enum(i)\n",
+                "        i = i + 1\n",
+                "    print(1)\n",
+            ),
+            iters = iters
+        )
+    };
+
+    let (small_wasm, small_oracle) = compile_with_oracle(&source_for(100), true);
+    let (small_out, small_pages) = run_wasm_and_measure_pages(&small_wasm);
+    assert_eq!(small_out, small_oracle.unwrap());
+
+    let (large_wasm, _) = compile_with_oracle(&source_for(20_000), false);
+    let (large_out, large_pages) = run_wasm_and_measure_pages(&large_wasm);
+    assert_eq!(large_out, "1\n");
+    assert!(
+        large_pages <= small_pages + 2,
+        "tuple/closure/enum cyclic churn leaked WASM memory: 100 iters used {small_pages} pages, 20000 iters used {large_pages} pages"
+    );
+}

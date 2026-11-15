@@ -833,7 +833,7 @@ def main() -> Int:
 
         let strings = extract_cstr_table(&debug_str);
         assert!(
-            strings.contains("lpp 0.3.0"),
+            strings.contains(concat!("lpp ", env!("CARGO_PKG_VERSION"))),
             "{target:?} .debug_str missing producer: {strings:?}"
         );
         assert!(

@@ -13,7 +13,7 @@ This project is indexed by GitNexus as **lplusplus** (21104 symbols, 74797 relat
 
 ---
 
-# L++ (LPlusPlus) v0.3.0 — Complete AI Architecture & Language Specification
+# L++ (LPlusPlus) v0.3.1 — Complete AI Architecture & Language Specification
 
 > **For any AI Assistant / Agent**: This document is the single, authoritative, complete specification of the **L++ programming language**. When generating, debugging, or analyzing L++ code, **strictly follow the syntax, semantics, standard library, and architecture detailed below.**
 
@@ -386,7 +386,7 @@ my-app/
 ```toml
 [package]
 name = "my-app"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2024"
 authors = ["Samar <samar@lplusplus.bond>"]
 description = "High-performance native application in pure L++"

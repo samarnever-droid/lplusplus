@@ -77,7 +77,7 @@ processes) are rejected up front with clear diagnostics. See
 | **Collections & stdlib** | `List[T]`, `Map[K, V]`, `Set[T]`, `Deque[T]`, strings, buffers, files, networking, JSON, 100+ builtins |
 | **Typed variadics** | Final `...items: T` parameter receives a typed rest `List[T]`; no native C varargs |
 | **Borrowed slices** | Zero-copy `StrSlice` / `Slice[T]` stack views with bounds and escape validation |
-| **Async tasks** | `async def`, postfix `.await`, and a deterministic single-thread run-to-completion executor |
+| **Async tasks** | `async def`, postfix `.await`, and a multi-threaded work-stealing worker-pool executor |
 | **Developer Tooling** | `lpp fmt`, `lpp repl`, `lpp test`, `lpp debug`, and `lpp-lsp` stdio JSON-RPC server |
 | **Keel Package Manager** | `Keel.toml` + `Keel.lock`, decentralized Git registry, workspaces, and `lpp migrate` / `keel migrate` for legacy `lpp.toml` |
 | **c2lpp package** | Pure-L++ C-header binding/package generator plus audited scalar C-to-L++ translation |
@@ -88,12 +88,12 @@ processes) are rejected up front with clear diagnostics. See
 
 ```bash
 # Linux / macOS — pinned, reviewable source installation
-git clone --depth 1 --branch v0.3.0 https://github.com/samarnever-droid/lplusplus.git
+git clone --depth 1 --branch v0.3.1 https://github.com/samarnever-droid/lplusplus.git
 cd lplusplus
 LPP_FROM_SOURCE=1 sh install.sh
 
 # Windows PowerShell — from the same pinned checkout
-git clone --depth 1 --branch v0.3.0 https://github.com/samarnever-droid/lplusplus.git
+git clone --depth 1 --branch v0.3.1 https://github.com/samarnever-droid/lplusplus.git
 cd lplusplus
 $env:LPP_FROM_SOURCE = "1"
 .\install.ps1
@@ -175,8 +175,7 @@ async def main():
 Tuple arity supports up to 16 elements. A rest parameter must be final and is a safe typed list, not
 C `...`. Borrowed views cannot be returned, captured, stored in owning
 containers, reassigned through their source, or sent to a thread. Async uses a
-single-thread run-to-completion executor; blocking file/network/process calls
-without a readiness adapter are rejected from async call graphs.
+single-threaded or multi-threaded `spawn`/`async` workloads; async tasks run on a multi-threaded work-stealing worker pool, while blocking file/network/process calls without a readiness reactor remain rejected from async call graphs.
 
 ### Structs
 
@@ -413,6 +412,7 @@ at your option.
 ## Links
 
 - [Website](https://lplusplus.bond)
+- [v0.3.1 Release Notes](docs/release/V0.3.1.md)
 - [v0.3.0 Release Notes](docs/release/V0.3.0.md)
 - [Language Tour](wiki/Language-Tour.md)
 - [Package Registry](https://registry.lplusplus.bond)

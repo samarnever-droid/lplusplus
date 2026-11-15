@@ -1479,32 +1479,22 @@ fn emit_trace_task(trace_visit_idx: u32) -> Func {
 fn emit_trace_tuple(trace_visit_idx: u32) -> Func {
     let mut fb = FB::new(1);
     let ptr = 0u32;
-    let count = fb.scratch(Val::I32);
     let mask = fb.scratch(Val::I64);
     let i = fb.scratch(Val::I32);
 
-    fb.g(ptr).load32(0).s(count);
-    fb.g(count).i32c(64).op(op::I32_GT_S);
-    fb.if_();
-    fb.i32c(64).s(count);
-    fb.end();
-    fb.g(ptr).load64(8).s(mask);
-
+    // Match `lpp_drop_tuple`: offset 0 stores the 64-bit managed-slot bitmask
+    // where bit `i` marks a managed child pointer at byte offset `16 + 8*i`.
+    fb.g(ptr).load64(0).s(mask);
     fb.i32c(0).s(i);
     fb.block();
     fb.loop_();
     {
-        fb.g(i).g(count).op(op::I32_GE_S);
+        fb.g(mask).op(op::I64_EQZ);
+        fb.br_if(1);
+        fb.g(i).i32c(64).op(op::I32_GE_S);
         fb.br_if(1);
 
-        fb.g(mask)
-            .g(i)
-            .op(op::I64_EXTEND_I32_U)
-            .op(op::I64_SHR_U)
-            .i64c(1)
-            .op(op::I64_AND)
-            .i64c(0)
-            .op(op::I64_NE);
+        fb.g(mask).i64c(1).op(op::I64_AND).i64c(0).op(op::I64_NE);
         fb.if_();
         {
             fb.g(ptr)
@@ -1514,11 +1504,13 @@ fn emit_trace_tuple(trace_visit_idx: u32) -> Func {
                 .op(op::I32_SHL)
                 .op(op::I32_ADD)
                 .op(op::I32_ADD)
-                .load32(0);
+                .load64(0)
+                .op(op::I32_WRAP_I64);
             fb.call(trace_visit_idx);
         }
         fb.end();
 
+        fb.g(mask).i64c(1).op(op::I64_SHR_U).s(mask);
         fb.g(i).i32c(1).op(op::I32_ADD).s(i);
         fb.br(0);
     }

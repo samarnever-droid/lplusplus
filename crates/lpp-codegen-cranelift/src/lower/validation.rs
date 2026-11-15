@@ -144,6 +144,7 @@ pub(super) fn element_class(types: &TypeInterner, element: TypeId) -> ElementCla
         | TypeKind::List(_)
         | TypeKind::Nominal { .. }
         | TypeKind::Function { .. }
+        | TypeKind::Task(_)
         // Structural tuples are ARC heap records (generated
         // destructor/trace), so they store in lists through the
         // managed element ops exactly like nominals.
@@ -203,6 +204,7 @@ pub(super) fn check_list_element(
         | TypeKind::List(_)
         | TypeKind::Nominal { .. }
         | TypeKind::Function { .. }
+        | TypeKind::Task(_)
         | TypeKind::Tuple(_) => Ok(()),
         other => Err(unsupported(function, unsupported_construct_for(other))),
     }
