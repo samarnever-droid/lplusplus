@@ -701,7 +701,23 @@ fn value_matches_type(
         match (value, types.kind(ty)) {
             (ExecutionValue::Void, TypeKind::Primitive(PrimitiveType::Void))
             | (ExecutionValue::Bool(_), TypeKind::Primitive(PrimitiveType::Bool))
-            | (ExecutionValue::Int(_), TypeKind::Primitive(PrimitiveType::Int))
+            | (
+                ExecutionValue::Int(_),
+                TypeKind::Primitive(
+                    PrimitiveType::Int
+                    | PrimitiveType::U8
+                    | PrimitiveType::U16
+                    | PrimitiveType::U32
+                    | PrimitiveType::U64
+                    | PrimitiveType::I8
+                    | PrimitiveType::I16
+                    | PrimitiveType::I32
+                    | PrimitiveType::USize
+                    | PrimitiveType::ISize
+                    | PrimitiveType::RawPtr,
+                )
+                | TypeKind::Ptr(_),
+            )
             | (ExecutionValue::FloatBits(_), TypeKind::Primitive(PrimitiveType::Float))
             | (ExecutionValue::String(_), TypeKind::Primitive(PrimitiveType::String))
             | (ExecutionValue::Char(_), TypeKind::Primitive(PrimitiveType::Char)) => {}

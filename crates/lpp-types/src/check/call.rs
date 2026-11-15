@@ -50,6 +50,16 @@ impl<'hir> TypeChecker<'hir> {
                 let type_id = self.instantiate_item_with(definition, explicit_arguments, origin)?;
                 self.assignments.expressions[callee.index()] = Some(type_id);
                 type_id
+            } else if let ExpressionKind::Name {
+                symbol,
+                binding: NameBinding::Unresolved,
+            } = self.package.expressions[callee].kind
+                && let Some(spelling) = self.package.names.symbols.resolve(symbol)
+                && let Some(type_id) =
+                    self.intrinsic_function_type(spelling, Some(explicit_arguments), origin)?
+            {
+                self.assignments.expressions[callee.index()] = Some(type_id);
+                type_id
             } else {
                 self.infer_expression(callee, parameters)?
             }

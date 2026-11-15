@@ -677,7 +677,8 @@ pub(super) fn import_signature(name: &str) -> (&'static [CLType], Option<CLType>
         "lpp_map_len" | "lpp_map_capacity" => (&[cltypes::I64], Some(cltypes::I64)),
         "lpp_map_keys" | "lpp_map_values" => (&[cltypes::I64], Some(cltypes::I64)),
         "lpp_map_clear" => (&[cltypes::I64], None),
-        _ => unreachable!("import signatures are a closed set"),
+        other => arch_import_signature(other)
+            .unwrap_or_else(|| unreachable!("import signatures are a closed set: {other}")),
     }
 }
 

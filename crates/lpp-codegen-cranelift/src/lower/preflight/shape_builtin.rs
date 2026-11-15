@@ -84,9 +84,21 @@ pub(super) fn check_builtin_shape(
                             Constant::String { .. } => IMP_PRINT_STR,
                         },
                         Some(Operand::Copy(local)) => match types.kind(local_ty(*local)) {
-                            TypeKind::Primitive(PrimitiveType::Int | PrimitiveType::Char) => {
-                                IMP_PRINT_INT
-                            }
+                            TypeKind::Primitive(
+                                PrimitiveType::Int
+                                | PrimitiveType::Char
+                                | PrimitiveType::U8
+                                | PrimitiveType::U16
+                                | PrimitiveType::U32
+                                | PrimitiveType::U64
+                                | PrimitiveType::USize
+                                | PrimitiveType::I8
+                                | PrimitiveType::I16
+                                | PrimitiveType::I32
+                                | PrimitiveType::ISize
+                                | PrimitiveType::RawPtr,
+                            )
+                            | TypeKind::Ptr(_) => IMP_PRINT_INT,
                             TypeKind::Primitive(PrimitiveType::Float) => IMP_PRINT_FLOAT,
                             TypeKind::Primitive(PrimitiveType::Bool) => IMP_PRINT_BOOL,
                             TypeKind::Primitive(PrimitiveType::String) => IMP_PRINT_STR,

@@ -172,6 +172,10 @@ pub enum ExpressionKind {
         base: ExprId,
         index: ExprId,
     },
+    Cast {
+        value: ExprId,
+        target: TypeRefId,
+    },
     Try(ExprId),
     Await(ExprId),
     Spawn(ExprId),
@@ -207,6 +211,9 @@ pub enum StatementKind {
     },
     While {
         condition: ExprId,
+        body: BodyId,
+    },
+    Unsafe {
         body: BodyId,
     },
     For {
@@ -251,6 +258,7 @@ pub struct Function {
     pub return_type: Option<TypeRefId>,
     pub body: Option<BodyId>,
     pub is_async: bool,
+    pub is_unsafe: bool,
     pub variadic: bool,
 }
 

@@ -36,7 +36,7 @@ impl<'module, 'package> ModuleLowerer<'module, 'package> {
         minimum_precedence: u8,
         closure_body: Option<&[SyntaxNode]>,
     ) -> LowerResult<ExprId> {
-        let mut left = self.parse_unary(cursor, closure_body)?;
+        let mut left = self.parse_cast(cursor, closure_body)?;
         while let Some((operator, precedence)) = self.peek_kind(cursor).and_then(binary_operator) {
             if precedence < minimum_precedence {
                 break;
@@ -60,6 +60,29 @@ impl<'module, 'package> ModuleLowerer<'module, 'package> {
             })?;
         }
         Ok(left)
+    }
+
+    fn parse_cast(
+        &mut self,
+        cursor: &mut Cursor,
+        closure_body: Option<&[SyntaxNode]>,
+    ) -> LowerResult<ExprId> {
+        let mut value = self.parse_unary(cursor, closure_body)?;
+        while self.consume_keyword(cursor, Keyword::As) {
+            let target = self.parse_type_ref(cursor)?;
+            let value_span = self.package.origins[self.package.expressions[value].origin].span;
+            let target_span = self.package.origins[self.package.type_refs[target].origin].span;
+            let origin = self.source_origin(Span {
+                file: value_span.file,
+                start: value_span.start,
+                end: target_span.end,
+            })?;
+            value = self.alloc_expression(Expression {
+                kind: ExpressionKind::Cast { value, target },
+                origin,
+            })?;
+        }
+        Ok(value)
     }
 
     fn parse_unary(
@@ -702,7 +725,10 @@ impl<'module, 'package> ModuleLowerer<'module, 'package> {
                         return self.peek_kind(&mut probe) == Some(TokenKind::LeftParen);
                     }
                 }
-                TokenKind::Identifier | TokenKind::Comma => {}
+                TokenKind::Identifier
+                | TokenKind::Comma
+                | TokenKind::LeftParen
+                | TokenKind::RightParen => {}
                 _ => return false,
             }
         }

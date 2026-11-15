@@ -188,6 +188,9 @@ impl<'hir> TypeChecker<'hir> {
                 self.infer_expression(condition, parameters)?;
                 self.infer_body(body, expected_result, parameters)?;
             }
+            StatementKind::Unsafe { body } => {
+                self.infer_body(body, expected_result, parameters)?;
+            }
             StatementKind::For {
                 binding,
                 iterable,
@@ -416,6 +419,40 @@ impl<'hir> TypeChecker<'hir> {
                 parameters,
                 expression.origin,
             )?,
+            ExpressionKind::Cast { value, target } => {
+                let from = self.infer_expression(value, parameters)?;
+                let module = self.module_for_origin(expression.origin);
+                let to = self.resolve_type_ref(target, module, parameters)?;
+                let from_resolved = self
+                    .inference
+                    .resolve(&self.interner, from, &mut self.budget)
+                    .map_err(|error| self.at(expression.origin, error))?;
+                let to_resolved = self
+                    .inference
+                    .resolve(&self.interner, to, &mut self.budget)
+                    .map_err(|error| self.at(expression.origin, error))?;
+                if !matches!(
+                    self.interner.kind(from_resolved),
+                    TypeKind::InferenceVariable(_)
+                        | TypeKind::GenericParameter(_)
+                        | TypeKind::Error
+                ) && !matches!(
+                    self.interner.kind(to_resolved),
+                    TypeKind::InferenceVariable(_)
+                        | TypeKind::GenericParameter(_)
+                        | TypeKind::Error
+                ) && !is_cast_compatible(&self.interner, from_resolved, to_resolved)
+                {
+                    return Err(self.at(
+                        expression.origin,
+                        TypeError::InvalidCast {
+                            from: from_resolved,
+                            to: to_resolved,
+                        },
+                    ));
+                }
+                to
+            }
             ExpressionKind::Try(inner) => {
                 self.infer_try_expression(expression_id, inner, parameters, expression.origin)?
             }
@@ -523,5 +560,59 @@ impl<'hir> TypeChecker<'hir> {
                 AggregateExpressionFact::Constructor(constructor),
             );
         }
+    }
+}
+
+fn is_integer_cast_primitive(p: PrimitiveType) -> bool {
+    matches!(
+        p,
+        PrimitiveType::Int
+            | PrimitiveType::Bool
+            | PrimitiveType::Char
+            | PrimitiveType::U8
+            | PrimitiveType::U16
+            | PrimitiveType::U32
+            | PrimitiveType::U64
+            | PrimitiveType::I8
+            | PrimitiveType::I16
+            | PrimitiveType::I32
+            | PrimitiveType::USize
+            | PrimitiveType::ISize
+    )
+}
+
+fn is_numeric_cast_primitive(p: PrimitiveType) -> bool {
+    is_integer_cast_primitive(p) || matches!(p, PrimitiveType::Float)
+}
+
+fn is_pointer_kind(interner: &crate::TypeInterner, ty: TypeId) -> bool {
+    matches!(
+        interner.kind(ty),
+        TypeKind::Ptr(_) | TypeKind::Primitive(PrimitiveType::RawPtr)
+    )
+}
+
+fn is_cast_compatible(interner: &crate::TypeInterner, from: TypeId, to: TypeId) -> bool {
+    if from == to {
+        return true;
+    }
+    match (interner.kind(from), interner.kind(to)) {
+        (TypeKind::Primitive(a), TypeKind::Primitive(b))
+            if is_numeric_cast_primitive(a) && is_numeric_cast_primitive(b) =>
+        {
+            true
+        }
+        (TypeKind::Primitive(a), _)
+            if is_integer_cast_primitive(a) && is_pointer_kind(interner, to) =>
+        {
+            true
+        }
+        (_, TypeKind::Primitive(b))
+            if is_pointer_kind(interner, from) && is_integer_cast_primitive(b) =>
+        {
+            true
+        }
+        _ if is_pointer_kind(interner, from) && is_pointer_kind(interner, to) => true,
+        _ => false,
     }
 }

@@ -207,6 +207,16 @@ pub enum TypeError {
     BorrowedSliceEscape {
         reason: &'static str,
     },
+    UnsafeRequired {
+        operation: &'static str,
+    },
+    InvalidCast {
+        from: TypeId,
+        to: TypeId,
+    },
+    InvalidKernelAttribute {
+        message: &'static str,
+    },
 }
 
 impl fmt::Display for TypeError {
@@ -331,6 +341,17 @@ impl fmt::Display for TypeError {
                 formatter,
                 "try residual payloads for variant {variant:?} do not match the function result"
             ),
+            Self::UnsafeRequired { operation } => write!(
+                formatter,
+                "[E3201] unsafe operation `{operation}` requires an `unsafe:` block or `unsafe def`"
+            ),
+            Self::InvalidCast { from, to } => write!(
+                formatter,
+                "[E3202] invalid cast from {from:?} to {to:?}"
+            ),
+            Self::InvalidKernelAttribute { message } => {
+                write!(formatter, "[E3203] {message}")
+            }
         }
     }
 }

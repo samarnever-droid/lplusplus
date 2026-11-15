@@ -13,6 +13,8 @@ echo "== cargo fmt --check"
 cargo fmt --check
 echo "== cargo clippy (workspace, all targets)"
 cargo clippy --locked --workspace -j2 --all-targets 2>&1 | tail -n 2
+echo "== build lpp-runtime"
+cargo build --locked -j2 -p lpp-runtime 2>&1 | tail -n 1
 echo "== cargo test --workspace"
 cargo test --locked --workspace -j2 2>&1 | awk '/test result/ {p+=$4; f+=$6} END {printf "workspace: %d passed, %d failed\n", p, f; if (f > 0) exit 1}'
 echo "== build lpp driver"

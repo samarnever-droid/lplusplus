@@ -327,6 +327,7 @@ impl<'types> Collector<'types> {
                 self.needed.nominal_types.insert(ty);
             }
             TypeKind::Primitive(_)
+            | TypeKind::Ptr(_)
             | TypeKind::Never
             | TypeKind::Error
             | TypeKind::GenericParameter(_)
@@ -443,6 +444,7 @@ fn value_type_nodes(
             }
         }
         TypeKind::Primitive(_)
+        | TypeKind::Ptr(_)
         | TypeKind::Never
         | TypeKind::Error
         | TypeKind::GenericParameter(_)

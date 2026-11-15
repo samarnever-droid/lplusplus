@@ -28,6 +28,7 @@ pub enum SyntaxKind {
     Else,
     While,
     For,
+    Unsafe,
     Match,
     MatchArm,
     Return,
@@ -49,7 +50,21 @@ pub struct SyntaxNode {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Attribute {
     pub name: String,
+    pub arguments: Vec<String>,
     pub span: Span,
+}
+
+impl Attribute {
+    /// Canonical string representation stored into HIR attributes (e.g.
+    /// `packed` or `repr(C)` or `section(.text.boot)`).
+    #[must_use]
+    pub fn canonical_text(&self) -> String {
+        if self.arguments.is_empty() {
+            self.name.clone()
+        } else {
+            format!("{}({})", self.name, self.arguments.join(","))
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

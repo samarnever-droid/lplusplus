@@ -186,6 +186,10 @@ fn substitute_rvalue(
             operator,
             right: substitute_operand(right, params, arguments)?,
         },
+        Rvalue::Cast { value, target } => Rvalue::Cast {
+            value: substitute_operand(value, params, arguments)?,
+            target,
+        },
         _ => return None,
     })
 }
@@ -216,10 +220,14 @@ fn is_scalar(types: &TypeInterner, ty: lpp_types::TypeId) -> bool {
                 | PrimitiveType::U8
                 | PrimitiveType::U16
                 | PrimitiveType::U32
+                | PrimitiveType::U64
+                | PrimitiveType::USize
                 | PrimitiveType::I8
                 | PrimitiveType::I16
                 | PrimitiveType::I32
-        )
+                | PrimitiveType::ISize
+                | PrimitiveType::RawPtr
+        ) | TypeKind::Ptr(_)
     )
 }
 

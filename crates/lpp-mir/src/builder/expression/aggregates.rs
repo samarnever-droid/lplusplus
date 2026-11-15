@@ -53,7 +53,26 @@ impl FunctionBuilder<'_, '_> {
     ) -> Result<Operand, MirBuildError> {
         let ty = self.concrete_type(ty, origin)?;
         match self.core.types.interner.kind(ty) {
-            TypeKind::Primitive(PrimitiveType::Int) => Ok(Operand::Constant(Constant::Integer(0))),
+            TypeKind::Primitive(
+                PrimitiveType::Int
+                | PrimitiveType::U8
+                | PrimitiveType::U16
+                | PrimitiveType::U32
+                | PrimitiveType::U64
+                | PrimitiveType::I8
+                | PrimitiveType::I16
+                | PrimitiveType::I32
+                | PrimitiveType::USize
+                | PrimitiveType::ISize,
+            ) => Ok(Operand::Constant(Constant::Integer(0))),
+            TypeKind::Primitive(PrimitiveType::RawPtr) | TypeKind::Ptr(_) => self.assign_temporary(
+                ty,
+                Rvalue::Cast {
+                    value: Operand::Constant(Constant::Integer(0)),
+                    target: ty,
+                },
+                origin,
+            ),
             TypeKind::Primitive(PrimitiveType::Float) => {
                 Ok(Operand::Constant(Constant::FloatBits(0)))
             }

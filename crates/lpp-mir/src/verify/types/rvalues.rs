@@ -584,6 +584,27 @@ impl Verifier<'_> {
                 }
                 Some(target_type)
             }
+            Rvalue::Cast { value, target } => {
+                self.operand_type(function, block, Some(instruction), origin, value, locals)?;
+                Some(target)
+            }
+            Rvalue::Intrinsic {
+                intrinsic: _,
+                type_argument: _,
+                arguments,
+            } => {
+                for operand in self.program.operands(arguments) {
+                    self.operand_type(
+                        function,
+                        block,
+                        Some(instruction),
+                        origin,
+                        *operand,
+                        locals,
+                    )?;
+                }
+                Some(target_type)
+            }
             Rvalue::Await(operand) => {
                 let ty =
                     self.operand_type(function, block, Some(instruction), origin, operand, locals)?;

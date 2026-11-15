@@ -276,7 +276,10 @@ fn contains_generic(root: TypeId, types: &TypeInterner) -> bool {
         match types.kind(ty) {
             TypeKind::GenericParameter(_) => return true,
             TypeKind::Tuple(elements) => pending.extend(types.list(elements).iter().copied()),
-            TypeKind::List(element) | TypeKind::Slice(element) | TypeKind::Task(element) => {
+            TypeKind::List(element)
+            | TypeKind::Slice(element)
+            | TypeKind::Task(element)
+            | TypeKind::Ptr(element) => {
                 pending.push(element);
             }
             TypeKind::Map { key, value } => {

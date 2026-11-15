@@ -198,6 +198,7 @@ impl<'types> DfsCollector<'types> {
                 self.nominals.insert(ty);
             }
             TypeKind::Primitive(_)
+            | TypeKind::Ptr(_)
             | TypeKind::Never
             | TypeKind::Error
             | TypeKind::GenericParameter(_)
@@ -292,6 +293,7 @@ impl<'types> DfsCollector<'types> {
                     }
                 }
                 TypeKind::Primitive(_)
+                | TypeKind::Ptr(_)
                 | TypeKind::Never
                 | TypeKind::Error
                 | TypeKind::GenericParameter(_)
@@ -1267,6 +1269,7 @@ fn own_type_is_shared(
             Err(())
         }
         TypeKind::Primitive(_)
+        | TypeKind::Ptr(_)
         | TypeKind::Never
         | TypeKind::Error
         | TypeKind::GenericParameter(_)

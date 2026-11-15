@@ -111,6 +111,10 @@ fn rewrite_rvalue(map: &BTreeMap<MirLocalId, Constant>, value: Rvalue) -> Rvalue
             operator,
             right: rewrite_operand(map, right),
         },
+        Rvalue::Cast { value, target } => Rvalue::Cast {
+            value: rewrite_operand(map, value),
+            target,
+        },
         Rvalue::ListLen(operand) => Rvalue::ListLen(rewrite_operand(map, operand)),
         Rvalue::Await(operand) => Rvalue::Await(rewrite_operand(map, operand)),
         Rvalue::Spawn(operand) => Rvalue::Spawn(rewrite_operand(map, operand)),

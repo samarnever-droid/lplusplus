@@ -128,6 +128,10 @@ impl InferenceTable {
                 let element = self.normalize_inner(interner, element, budget, memo, depth + 1)?;
                 interner.intern(TypeKind::Slice(element))?
             }
+            TypeKind::Ptr(element) => {
+                let element = self.normalize_inner(interner, element, budget, memo, depth + 1)?;
+                interner.intern(TypeKind::Ptr(element))?
+            }
             TypeKind::Task(output) => {
                 let output = self.normalize_inner(interner, output, budget, memo, depth + 1)?;
                 interner.intern(TypeKind::Task(output))?
@@ -287,6 +291,10 @@ impl InferenceTable {
             TypeKind::Slice(element) => {
                 let element = replace(self, interner, element, budget, memo, depth + 1)?;
                 interner.intern(TypeKind::Slice(element))?
+            }
+            TypeKind::Ptr(element) => {
+                let element = replace(self, interner, element, budget, memo, depth + 1)?;
+                interner.intern(TypeKind::Ptr(element))?
             }
             TypeKind::Task(output) => {
                 let output = replace(self, interner, output, budget, memo, depth + 1)?;

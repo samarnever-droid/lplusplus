@@ -43,13 +43,13 @@ use cranelift_module::{DataDescription, DataId, FuncId, Linkage, Module};
 use cranelift_object::ObjectModule;
 use lpp_codegen_api::{CodegenError, CodegenErrorKind};
 use lpp_mir::{
-    BasicBlockId, BinaryOperator, Constant, InstructionKind, MirAggregateId, MirExternalFunctionId,
-    MirFunction, MirFunctionId, MirFunctionKind, MirLocalId, MirProgram, MirStringId, Operand,
-    PlaceProjection, Rvalue, Terminator, UnaryOperator,
+    BasicBlockId, BinaryOperator, Constant, InstructionKind, KernelIntrinsic, MirAggregateId,
+    MirExternalFunctionId, MirFunction, MirFunctionId, MirFunctionKind, MirLocalId, MirProgram,
+    MirStringId, Operand, PlaceProjection, Rvalue, Terminator, UnaryOperator,
 };
 use lpp_types::{BuiltinId, PrimitiveType, TypeId, TypeInterner, TypeKind};
 
-use crate::layout::{AggregateIndex, AggregateLayout, aggregate_layout};
+use crate::layout::{AggregateIndex, AggregateLayout, aggregate_layout, static_type_size_align};
 use crate::{LIST_NEW, PRINT_STR};
 
 /// The native compact string header (magic, immortal refcount, generation,
@@ -166,8 +166,10 @@ use validation::*;
 mod assignment;
 mod collections;
 mod imports;
+mod intrinsics;
 
 use imports::*;
+use intrinsics::{arch_import_signature, intrinsic_arch_import};
 
 mod declarations;
 mod entry;
@@ -254,7 +256,11 @@ fn is_signed_integer_kind(kind: Option<TypeKind>) -> bool {
     matches!(
         kind,
         Some(TypeKind::Primitive(
-            PrimitiveType::Int | PrimitiveType::I8 | PrimitiveType::I16 | PrimitiveType::I32,
+            PrimitiveType::Int
+                | PrimitiveType::I8
+                | PrimitiveType::I16
+                | PrimitiveType::I32
+                | PrimitiveType::ISize,
         ))
     )
 }

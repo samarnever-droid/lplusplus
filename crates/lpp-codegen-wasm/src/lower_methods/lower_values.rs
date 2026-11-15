@@ -592,6 +592,10 @@ impl<'a> FnLower<'a> {
             }
             Rvalue::Await(operand) => self.emit_await(fb, operand),
             Rvalue::Spawn(operand) => self.emit_spawn(fb, operand),
+            Rvalue::Cast { .. } | Rvalue::Intrinsic { .. } => Err(unsupported(
+                "low-level unsafe cast or kernel intrinsic on wasm target",
+                Some(self.fn_id),
+            )),
         }
     }
 

@@ -320,6 +320,10 @@ pub(crate) fn check_rvalue(lower: &mut ScanLower<'_>, rvalue: &Rvalue) -> Result
             lower.needs.insert(H::TaskDestroy);
             Ok(())
         }
+        Rvalue::Cast { .. } | Rvalue::Intrinsic { .. } => Err(unsupported(
+            "low-level unsafe cast or kernel intrinsic on wasm target",
+            Some(lower.fn_id),
+        )),
     }
 }
 

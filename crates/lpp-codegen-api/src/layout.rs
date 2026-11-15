@@ -38,13 +38,28 @@ pub struct AggregateLayout {
 
 const ENUM_TAG_OFFSET: u32 = 8;
 
-fn type_size_align(types: &TypeInterner, ty: TypeId) -> (u32, u32) {
+#[must_use]
+pub fn type_size_align(types: &TypeInterner, ty: TypeId) -> (u32, u32) {
     match types.kind(ty) {
-        lpp_types::TypeKind::Primitive(lpp_types::PrimitiveType::Int)
-        | lpp_types::TypeKind::Primitive(lpp_types::PrimitiveType::Float)
-        | lpp_types::TypeKind::Primitive(lpp_types::PrimitiveType::String)
+        lpp_types::TypeKind::Primitive(
+            lpp_types::PrimitiveType::Int
+            | lpp_types::PrimitiveType::Float
+            | lpp_types::PrimitiveType::String
+            | lpp_types::PrimitiveType::U64
+            | lpp_types::PrimitiveType::USize
+            | lpp_types::PrimitiveType::ISize
+            | lpp_types::PrimitiveType::RawPtr,
+        )
+        | lpp_types::TypeKind::Ptr(_)
+        | lpp_types::TypeKind::Function { .. }
         | lpp_types::TypeKind::List(_)
+        | lpp_types::TypeKind::Task(_)
+        | lpp_types::TypeKind::Map { .. }
         | lpp_types::TypeKind::Nominal { .. } => (8, 8),
+        lpp_types::TypeKind::Slice(_)
+        | lpp_types::TypeKind::Primitive(lpp_types::PrimitiveType::StrSlice) => (16, 8),
+        lpp_types::TypeKind::Primitive(lpp_types::PrimitiveType::VectorI64x2) => (16, 16),
+        lpp_types::TypeKind::Primitive(lpp_types::PrimitiveType::Void) => (0, 1),
         lpp_types::TypeKind::Primitive(lpp_types::PrimitiveType::Bool)
         | lpp_types::TypeKind::Primitive(lpp_types::PrimitiveType::U8)
         | lpp_types::TypeKind::Primitive(lpp_types::PrimitiveType::I8) => (1, 1),
@@ -69,8 +84,29 @@ fn type_size_align(types: &TypeInterner, ty: TypeId) -> (u32, u32) {
             }
             (align_up(offset, aggregate_align), aggregate_align)
         }
-        _ => unreachable!("5C value types are machine-representable"),
+        _ => (8, 8),
     }
+}
+
+/// Evaluate `(size, align)` of a value/aggregate type for `size_of[T]()` / `align_of[T]()`.
+/// For nominals present in `program`, returns the aggregate's physical record size and
+/// effective alignment (honoring `@packed` and `@align(N)`).
+#[must_use]
+pub fn static_type_size_align(
+    program: &MirProgram,
+    types: &TypeInterner,
+    ty: TypeId,
+) -> (u32, u32) {
+    if matches!(types.kind(ty), lpp_types::TypeKind::Nominal { .. })
+        && let Some((agg_id, _)) = program.aggregates().find(|(_, agg)| agg.ty == ty)
+    {
+        let layout = aggregate_layout(program, types, agg_id);
+        let attrs = program.aggregate_attrs(agg_id);
+        let base_align = if attrs.packed { 1 } else { 8 };
+        let align = attrs.align.map_or(base_align, |a| a.max(1));
+        return (layout.total_size, align);
+    }
+    type_size_align(types, ty)
 }
 
 fn align_up(value: u32, align: u32) -> u32 {
@@ -98,24 +134,46 @@ pub fn tuple_layout(types: &TypeInterner, ty: TypeId) -> Option<(Vec<(u32, TypeI
     Some((slots, align_up(offset, aggregate_align)))
 }
 
+fn field_layouts_with_options(
+    types: &TypeInterner,
+    fields: &[(MirFieldId, TypeId)],
+    start: u32,
+    packed: bool,
+    min_align: Option<u32>,
+) -> (Vec<FieldSlot>, u32) {
+    let mut offset = start;
+    // A payload that starts at 0 aligns to 1 (the v1 rule); an offset
+    // payload (enum fields) is 8-aligned.
+    let mut aggregate_align = if packed {
+        1
+    } else if start == 0 {
+        1
+    } else {
+        8
+    };
+    if let Some(forced) = min_align {
+        aggregate_align = aggregate_align.max(forced.max(1));
+    }
+    let mut slots = Vec::with_capacity(fields.len());
+    for &(field, ty) in fields {
+        let (size, natural_align) = type_size_align(types, ty);
+        let align = if packed { 1 } else { natural_align };
+        offset = align_up(offset, align);
+        slots.push(FieldSlot { field, offset, ty });
+        offset += size;
+        if !packed {
+            aggregate_align = aggregate_align.max(align);
+        }
+    }
+    (slots, align_up(offset, aggregate_align))
+}
+
 fn field_layouts(
     types: &TypeInterner,
     fields: &[(MirFieldId, TypeId)],
     start: u32,
 ) -> (Vec<FieldSlot>, u32) {
-    let mut offset = start;
-    // A payload that starts at 0 aligns to 1 (the v1 rule); an offset
-    // payload (enum fields) is 8-aligned.
-    let mut aggregate_align = if start == 0 { 1 } else { 8 };
-    let mut slots = Vec::with_capacity(fields.len());
-    for &(field, ty) in fields {
-        let (size, align) = type_size_align(types, ty);
-        offset = align_up(offset, align);
-        slots.push(FieldSlot { field, offset, ty });
-        offset += size;
-        aggregate_align = aggregate_align.max(align);
-    }
-    (slots, align_up(offset, aggregate_align))
+    field_layouts_with_options(types, fields, start, false, None)
 }
 
 /// The layout of `aggregate` (struct or enum), from the program's own
@@ -132,6 +190,7 @@ pub fn aggregate_layout(
     match kind {
         MirAggregateKind::Struct => {
             let fields = program.aggregate_fields(descriptor);
+            let attrs = program.aggregate_attrs(aggregate);
             let tys: Vec<(MirFieldId, TypeId)> = fields
                 .iter()
                 .map(|&field| {
@@ -141,7 +200,8 @@ pub fn aggregate_layout(
                     (field, field_descriptor.ty)
                 })
                 .collect();
-            let (slots, total) = field_layouts(types, &tys, 0);
+            let (slots, total) =
+                field_layouts_with_options(types, &tys, 0, attrs.packed, attrs.align);
             AggregateLayout {
                 kind,
                 total_size: total,

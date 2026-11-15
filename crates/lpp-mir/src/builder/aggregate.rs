@@ -67,6 +67,27 @@ impl MirBuilder<'_> {
             .map_err(|_| self.error(origin, MirBuildErrorKind::Capacity(MirCapacity::Storage)))?;
         self.counts.aggregates += 1;
         self.aggregate_types.insert(ty, aggregate);
+        let mut attrs = MirAggregateAttrs::default();
+        for &attr_sym in self.package.symbols(item.attributes) {
+            let Some(text) = self.package.names.symbols.resolve(attr_sym) else {
+                continue;
+            };
+            let text = text.trim();
+            if text == "repr(C)" || text == "repr(c)" {
+                attrs.repr_c = true;
+            } else if text == "packed" || text == "repr(packed)" {
+                attrs.packed = true;
+            } else if let Some(inner) = text
+                .strip_prefix("align(")
+                .and_then(|s| s.strip_suffix(')'))
+                && let Ok(align) = inner.trim().parse::<u32>()
+            {
+                attrs.align = Some(align);
+            }
+        }
+        if attrs != MirAggregateAttrs::default() {
+            self.program.aggregate_attrs.insert(aggregate, attrs);
+        }
 
         match item.kind {
             HirItemKind::Struct(structure) => {
@@ -177,7 +198,10 @@ impl MirBuilder<'_> {
             TypeKind::Nominal { .. } => {
                 self.ensure_aggregate(ty, origin)?;
             }
-            TypeKind::List(element) | TypeKind::Slice(element) | TypeKind::Task(element) => {
+            TypeKind::List(element)
+            | TypeKind::Slice(element)
+            | TypeKind::Task(element)
+            | TypeKind::Ptr(element) => {
                 self.ensure_type_aggregates(element, origin)?;
             }
             TypeKind::Tuple(elements) => {

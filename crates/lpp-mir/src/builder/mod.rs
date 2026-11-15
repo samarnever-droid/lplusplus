@@ -17,9 +17,10 @@ use crate::ids::{
     MirPlaceId, MirStringId, MirVariantId,
 };
 use crate::ir::{
-    BasicBlock, Constant, Instruction, InstructionKind, MirAggregate, MirAggregateKind,
-    MirExternalFunction, MirField, MirFunction, MirFunctionKind, MirLocal, MirLocalKind, MirPlace,
-    MirProgram, MirVariant, Operand, PlaceProjection, Rvalue, Terminator,
+    BasicBlock, Constant, Instruction, InstructionKind, KernelIntrinsic, MirAggregate,
+    MirAggregateAttrs, MirAggregateKind, MirExternalFunction, MirField, MirFunction,
+    MirFunctionAttrs, MirFunctionKind, MirLocal, MirLocalKind, MirPlace, MirProgram, MirVariant,
+    Operand, PlaceProjection, Rvalue, Terminator, UnsafeSite, UnsafeSiteKind,
 };
 use crate::storage::{ListRange, StorageExhausted};
 

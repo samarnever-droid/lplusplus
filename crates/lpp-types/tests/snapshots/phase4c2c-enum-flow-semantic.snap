@@ -138,8 +138,8 @@ match_arms
   MatchArmId(1) MatchArm { path: IdRange(1..2), bindings: IdRange(8..9), body: BodyId(2), wildcard: false, origin: OriginId(42) }
 items
   HirItemId(0) HirItem { module: ModuleId(0), definition: Some(DefId(0)), name: Some(Symbol(0)), public: false, attributes: IdRange(0..0), kind: Enum(Enum { type_parameters: IdRange(0..2), variants: IdRange(0..2) }), origin: OriginId(0) }
-  HirItemId(1) HirItem { module: ModuleId(0), definition: Some(DefId(1)), name: Some(Symbol(1)), public: false, attributes: IdRange(0..0), kind: Function(Function { type_parameters: IdRange(0..0), parameters: IdRange(3..4), return_type: Some(TypeRefId(7)), body: Some(BodyId(0)), is_async: false, variadic: false }), origin: OriginId(9) }
-  HirItemId(2) HirItem { module: ModuleId(0), definition: Some(DefId(2)), name: Some(Symbol(2)), public: false, attributes: IdRange(0..0), kind: Function(Function { type_parameters: IdRange(0..0), parameters: IdRange(10..10), return_type: Some(TypeRefId(8)), body: Some(BodyId(3)), is_async: false, variadic: false }), origin: OriginId(26) }
+  HirItemId(1) HirItem { module: ModuleId(0), definition: Some(DefId(1)), name: Some(Symbol(1)), public: false, attributes: IdRange(0..0), kind: Function(Function { type_parameters: IdRange(0..0), parameters: IdRange(3..4), return_type: Some(TypeRefId(7)), body: Some(BodyId(0)), is_async: false, is_unsafe: false, variadic: false }), origin: OriginId(9) }
+  HirItemId(2) HirItem { module: ModuleId(0), definition: Some(DefId(2)), name: Some(Symbol(2)), public: false, attributes: IdRange(0..0), kind: Function(Function { type_parameters: IdRange(0..0), parameters: IdRange(10..10), return_type: Some(TypeRefId(8)), body: Some(BodyId(3)), is_async: false, is_unsafe: false, variadic: false }), origin: OriginId(26) }
 lists
   symbols [Symbol(5), Symbol(7)]
   type_refs [TypeRefId(2), TypeRefId(3), TypeRefId(5), TypeRefId(6)]
@@ -152,7 +152,7 @@ lists
   items [HirItemId(0), HirItemId(1), HirItemId(2)]
   match_arms [MatchArmId(0), MatchArmId(1)]
 semantic-v4
-metrics SemanticMetrics { hir_nodes: 104, interned_types: 45, interned_type_lists: 13, type_list_entries: 18, inference_variables: 11, aggregate_facts: 4, place_facts: 0, enum_flow_facts: 4, builtin_facts: 0, trait_rules: 0, generic_instances: 1, minimum_payload_bytes: 4964 }
+metrics SemanticMetrics { hir_nodes: 104, interned_types: 49, interned_type_lists: 13, type_list_entries: 18, inference_variables: 11, aggregate_facts: 4, place_facts: 0, enum_flow_facts: 4, builtin_facts: 0, trait_rules: 0, generic_instances: 1, minimum_payload_bytes: 5012 }
 types
   TypeId(0) Error
   TypeId(1) Never
@@ -170,95 +170,99 @@ types
   TypeId(13) Primitive(I32)
   TypeId(14) Primitive(StrSlice)
   TypeId(15) Primitive(VectorI64x2)
-  TypeId(16) GenericParameter(TypeParamId(0))
-  TypeId(17) GenericParameter(TypeParamId(1))
-  TypeId(18) Nominal { definition: DefId(0), arguments: TypeListId(1) }
-  TypeId(19) Nominal { definition: DefId(0), arguments: TypeListId(2) }
-  TypeId(20) Function { parameters: TypeListId(3), result: TypeId(19) }
-  TypeId(21) Function { parameters: TypeListId(0), result: TypeId(4) }
-  TypeId(22) InferenceVariable(InferVarId(0))
-  TypeId(23) InferenceVariable(InferVarId(1))
-  TypeId(24) InferenceVariable(InferVarId(2))
-  TypeId(25) Nominal { definition: DefId(0), arguments: TypeListId(4) }
-  TypeId(26) Function { parameters: TypeListId(5), result: TypeId(25) }
-  TypeId(27) InferenceVariable(InferVarId(3))
-  TypeId(28) Function { parameters: TypeListId(6), result: TypeId(27) }
-  TypeId(29) Nominal { definition: DefId(0), arguments: TypeListId(8) }
-  TypeId(30) Function { parameters: TypeListId(7), result: TypeId(29) }
-  TypeId(31) InferenceVariable(InferVarId(4))
-  TypeId(32) InferenceVariable(InferVarId(5))
-  TypeId(33) Nominal { definition: DefId(0), arguments: TypeListId(9) }
-  TypeId(34) Function { parameters: TypeListId(10), result: TypeId(33) }
-  TypeId(35) InferenceVariable(InferVarId(6))
-  TypeId(36) Function { parameters: TypeListId(7), result: TypeId(35) }
-  TypeId(37) Nominal { definition: DefId(0), arguments: TypeListId(11) }
-  TypeId(38) Function { parameters: TypeListId(7), result: TypeId(37) }
-  TypeId(39) InferenceVariable(InferVarId(7))
-  TypeId(40) Function { parameters: TypeListId(12), result: TypeId(39) }
-  TypeId(41) InferenceVariable(InferVarId(8))
-  TypeId(42) InferenceVariable(InferVarId(9))
-  TypeId(43) InferenceVariable(InferVarId(10))
-  TypeId(44) Function { parameters: TypeListId(7), result: TypeId(19) }
+  TypeId(16) Primitive(U64)
+  TypeId(17) Primitive(USize)
+  TypeId(18) Primitive(ISize)
+  TypeId(19) Primitive(RawPtr)
+  TypeId(20) GenericParameter(TypeParamId(0))
+  TypeId(21) GenericParameter(TypeParamId(1))
+  TypeId(22) Nominal { definition: DefId(0), arguments: TypeListId(1) }
+  TypeId(23) Nominal { definition: DefId(0), arguments: TypeListId(2) }
+  TypeId(24) Function { parameters: TypeListId(3), result: TypeId(23) }
+  TypeId(25) Function { parameters: TypeListId(0), result: TypeId(4) }
+  TypeId(26) InferenceVariable(InferVarId(0))
+  TypeId(27) InferenceVariable(InferVarId(1))
+  TypeId(28) InferenceVariable(InferVarId(2))
+  TypeId(29) Nominal { definition: DefId(0), arguments: TypeListId(4) }
+  TypeId(30) Function { parameters: TypeListId(5), result: TypeId(29) }
+  TypeId(31) InferenceVariable(InferVarId(3))
+  TypeId(32) Function { parameters: TypeListId(6), result: TypeId(31) }
+  TypeId(33) Nominal { definition: DefId(0), arguments: TypeListId(8) }
+  TypeId(34) Function { parameters: TypeListId(7), result: TypeId(33) }
+  TypeId(35) InferenceVariable(InferVarId(4))
+  TypeId(36) InferenceVariable(InferVarId(5))
+  TypeId(37) Nominal { definition: DefId(0), arguments: TypeListId(9) }
+  TypeId(38) Function { parameters: TypeListId(10), result: TypeId(37) }
+  TypeId(39) InferenceVariable(InferVarId(6))
+  TypeId(40) Function { parameters: TypeListId(7), result: TypeId(39) }
+  TypeId(41) Nominal { definition: DefId(0), arguments: TypeListId(11) }
+  TypeId(42) Function { parameters: TypeListId(7), result: TypeId(41) }
+  TypeId(43) InferenceVariable(InferVarId(7))
+  TypeId(44) Function { parameters: TypeListId(12), result: TypeId(43) }
+  TypeId(45) InferenceVariable(InferVarId(8))
+  TypeId(46) InferenceVariable(InferVarId(9))
+  TypeId(47) InferenceVariable(InferVarId(10))
+  TypeId(48) Function { parameters: TypeListId(7), result: TypeId(23) }
 type_lists
   TypeListId(0) []
-  TypeListId(1) [TypeId(16), TypeId(17)]
+  TypeListId(1) [TypeId(20), TypeId(21)]
   TypeListId(2) [TypeId(4), TypeId(4)]
-  TypeListId(3) [TypeId(19)]
-  TypeListId(4) [TypeId(23), TypeId(24)]
-  TypeListId(5) [TypeId(23)]
-  TypeListId(6) [TypeId(22)]
+  TypeListId(3) [TypeId(23)]
+  TypeListId(4) [TypeId(27), TypeId(28)]
+  TypeListId(5) [TypeId(27)]
+  TypeListId(6) [TypeId(26)]
   TypeListId(7) [TypeId(4)]
-  TypeListId(8) [TypeId(4), TypeId(24)]
-  TypeListId(9) [TypeId(31), TypeId(32)]
-  TypeListId(10) [TypeId(32)]
-  TypeListId(11) [TypeId(31), TypeId(4)]
-  TypeListId(12) [TypeId(35)]
+  TypeListId(8) [TypeId(4), TypeId(28)]
+  TypeListId(9) [TypeId(35), TypeId(36)]
+  TypeListId(10) [TypeId(36)]
+  TypeListId(11) [TypeId(35), TypeId(4)]
+  TypeListId(12) [TypeId(39)]
 inference
-  InferVarId(0) InferenceVariable { parent: InferVarId(0), type_id: TypeId(22), level: InferenceLevel(1), origin: Some(OriginId(20)), binding: Some(TypeId(4)), rank: 0 }
-  InferVarId(1) InferenceVariable { parent: InferVarId(1), type_id: TypeId(23), level: InferenceLevel(1), origin: Some(OriginId(22)), binding: Some(TypeId(4)), rank: 0 }
-  InferVarId(2) InferenceVariable { parent: InferVarId(2), type_id: TypeId(24), level: InferenceLevel(1), origin: Some(OriginId(22)), binding: Some(TypeId(4)), rank: 0 }
-  InferVarId(3) InferenceVariable { parent: InferVarId(3), type_id: TypeId(27), level: InferenceLevel(1), origin: Some(OriginId(25)), binding: Some(TypeId(25)), rank: 0 }
-  InferVarId(4) InferenceVariable { parent: InferVarId(4), type_id: TypeId(31), level: InferenceLevel(1), origin: Some(OriginId(30)), binding: Some(TypeId(4)), rank: 0 }
-  InferVarId(5) InferenceVariable { parent: InferVarId(5), type_id: TypeId(32), level: InferenceLevel(1), origin: Some(OriginId(30)), binding: Some(TypeId(4)), rank: 0 }
-  InferVarId(6) InferenceVariable { parent: InferVarId(6), type_id: TypeId(35), level: InferenceLevel(1), origin: Some(OriginId(33)), binding: Some(TypeId(33)), rank: 0 }
-  InferVarId(7) InferenceVariable { parent: InferVarId(7), type_id: TypeId(39), level: InferenceLevel(1), origin: Some(OriginId(34)), binding: Some(TypeId(19)), rank: 0 }
-  InferVarId(8) InferenceVariable { parent: InferVarId(8), type_id: TypeId(41), level: InferenceLevel(1), origin: Some(OriginId(35)), binding: Some(TypeId(19)), rank: 0 }
-  InferVarId(9) InferenceVariable { parent: InferVarId(9), type_id: TypeId(42), level: InferenceLevel(1), origin: Some(OriginId(39)), binding: Some(TypeId(4)), rank: 0 }
-  InferVarId(10) InferenceVariable { parent: InferVarId(10), type_id: TypeId(43), level: InferenceLevel(1), origin: Some(OriginId(43)), binding: Some(TypeId(4)), rank: 0 }
+  InferVarId(0) InferenceVariable { parent: InferVarId(0), type_id: TypeId(26), level: InferenceLevel(1), origin: Some(OriginId(20)), binding: Some(TypeId(4)), rank: 0 }
+  InferVarId(1) InferenceVariable { parent: InferVarId(1), type_id: TypeId(27), level: InferenceLevel(1), origin: Some(OriginId(22)), binding: Some(TypeId(4)), rank: 0 }
+  InferVarId(2) InferenceVariable { parent: InferVarId(2), type_id: TypeId(28), level: InferenceLevel(1), origin: Some(OriginId(22)), binding: Some(TypeId(4)), rank: 0 }
+  InferVarId(3) InferenceVariable { parent: InferVarId(3), type_id: TypeId(31), level: InferenceLevel(1), origin: Some(OriginId(25)), binding: Some(TypeId(29)), rank: 0 }
+  InferVarId(4) InferenceVariable { parent: InferVarId(4), type_id: TypeId(35), level: InferenceLevel(1), origin: Some(OriginId(30)), binding: Some(TypeId(4)), rank: 0 }
+  InferVarId(5) InferenceVariable { parent: InferVarId(5), type_id: TypeId(36), level: InferenceLevel(1), origin: Some(OriginId(30)), binding: Some(TypeId(4)), rank: 0 }
+  InferVarId(6) InferenceVariable { parent: InferVarId(6), type_id: TypeId(39), level: InferenceLevel(1), origin: Some(OriginId(33)), binding: Some(TypeId(37)), rank: 0 }
+  InferVarId(7) InferenceVariable { parent: InferVarId(7), type_id: TypeId(43), level: InferenceLevel(1), origin: Some(OriginId(34)), binding: Some(TypeId(23)), rank: 0 }
+  InferVarId(8) InferenceVariable { parent: InferVarId(8), type_id: TypeId(45), level: InferenceLevel(1), origin: Some(OriginId(35)), binding: Some(TypeId(23)), rank: 0 }
+  InferVarId(9) InferenceVariable { parent: InferVarId(9), type_id: TypeId(46), level: InferenceLevel(1), origin: Some(OriginId(39)), binding: Some(TypeId(4)), rank: 0 }
+  InferVarId(10) InferenceVariable { parent: InferVarId(10), type_id: TypeId(47), level: InferenceLevel(1), origin: Some(OriginId(43)), binding: Some(TypeId(4)), rank: 0 }
 assignments
-  expression ExprId(0) Some(TypeId(19))
+  expression ExprId(0) Some(TypeId(23))
   expression ExprId(1) Some(TypeId(4))
-  expression ExprId(2) Some(TypeId(19))
-  expression ExprId(3) Some(TypeId(44))
+  expression ExprId(2) Some(TypeId(23))
+  expression ExprId(3) Some(TypeId(48))
   expression ExprId(4) Some(TypeId(4))
-  expression ExprId(5) Some(TypeId(19))
-  expression ExprId(6) Some(TypeId(20))
-  expression ExprId(7) Some(TypeId(19))
-  expression ExprId(8) Some(TypeId(44))
+  expression ExprId(5) Some(TypeId(23))
+  expression ExprId(6) Some(TypeId(24))
+  expression ExprId(7) Some(TypeId(23))
+  expression ExprId(8) Some(TypeId(48))
   expression ExprId(9) Some(TypeId(4))
-  expression ExprId(10) Some(TypeId(19))
-  expression ExprId(11) Some(TypeId(19))
-  expression ExprId(12) Some(TypeId(19))
+  expression ExprId(10) Some(TypeId(23))
+  expression ExprId(11) Some(TypeId(23))
+  expression ExprId(12) Some(TypeId(23))
   expression ExprId(13) Some(TypeId(4))
   expression ExprId(14) Some(TypeId(4))
   expression ExprId(15) Some(TypeId(4))
-  local LocalId(0) Some(TypeId(19))
+  local LocalId(0) Some(TypeId(23))
   local LocalId(1) Some(TypeId(4))
-  local LocalId(2) Some(TypeId(19))
+  local LocalId(2) Some(TypeId(23))
   local LocalId(3) Some(TypeId(4))
   local LocalId(4) Some(TypeId(4))
-  type_ref TypeRefId(0) Some(TypeId(16))
-  type_ref TypeRefId(1) Some(TypeId(17))
+  type_ref TypeRefId(0) Some(TypeId(20))
+  type_ref TypeRefId(1) Some(TypeId(21))
   type_ref TypeRefId(2) Some(TypeId(4))
   type_ref TypeRefId(3) Some(TypeId(4))
-  type_ref TypeRefId(4) Some(TypeId(19))
+  type_ref TypeRefId(4) Some(TypeId(23))
   type_ref TypeRefId(5) Some(TypeId(4))
   type_ref TypeRefId(6) Some(TypeId(4))
-  type_ref TypeRefId(7) Some(TypeId(19))
+  type_ref TypeRefId(7) Some(TypeId(23))
   type_ref TypeRefId(8) Some(TypeId(4))
-  item HirItemId(0) Some(TypeId(18))
-  item HirItemId(1) Some(TypeId(20))
-  item HirItemId(2) Some(TypeId(21))
+  item HirItemId(0) Some(TypeId(22))
+  item HirItemId(1) Some(TypeId(24))
+  item HirItemId(2) Some(TypeId(25))
 aggregate_facts
   ExprId(3) VariantConstructor { item: HirItemId(0), variant: VariantId(0) }
   ExprId(5) Constructor(EnumVariant { item: HirItemId(0), variant: VariantId(0) })
@@ -266,10 +270,10 @@ aggregate_facts
   ExprId(10) Constructor(EnumVariant { item: HirItemId(0), variant: VariantId(1) })
 place_facts
 enum_flow_facts
-  match StmtId(5) EnumMatchFact { item: HirItemId(0), subject_type: TypeId(19), arms: IdRange(0..2), covered_variants: 2, total_variants: 2, wildcard: None }
+  match StmtId(5) EnumMatchFact { item: HirItemId(0), subject_type: TypeId(23), arms: IdRange(0..2), covered_variants: 2, total_variants: 2, wildcard: None }
   arm MatchArmId(0) Variant { item: HirItemId(0), variant: VariantId(0), fields: IdRange(0..1), bindings: IdRange(6..7), reachable: true }
   arm MatchArmId(1) Variant { item: HirItemId(0), variant: VariantId(1), fields: IdRange(1..2), bindings: IdRange(8..9), reachable: true }
-  try ExprId(1) EnumTryFact { item: HirItemId(0), carrier_type: TypeId(19), success: VariantId(0), success_field: FieldId(0), success_type: TypeId(4), variants: IdRange(0..2), return_item: HirItemId(0), return_type: TypeId(19), direct_residual: true }
+  try ExprId(1) EnumTryFact { item: HirItemId(0), carrier_type: TypeId(23), success: VariantId(0), success_field: FieldId(0), success_type: TypeId(4), variants: IdRange(0..2), return_item: HirItemId(0), return_type: TypeId(23), direct_residual: true }
 builtin_facts
 trait_rules
 trait_diagnostics []

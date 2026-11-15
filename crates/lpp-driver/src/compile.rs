@@ -102,6 +102,8 @@ pub struct CompileOptions {
     pub pgo_generate: bool,
     /// Profile consumed for hot-callee inlining, if present.
     pub pgo_use: Option<PathBuf>,
+    /// Reject any `unsafe` blocks, `unsafe def`, pointer ops, casts, or kernel intrinsics (`[E4501]`).
+    pub deny_unsafe: bool,
 }
 
 impl CompileOptions {
@@ -113,6 +115,7 @@ impl CompileOptions {
             lto: false,
             pgo_generate: false,
             pgo_use: None,
+            deny_unsafe: false,
         }
     }
 }
@@ -252,6 +255,15 @@ pub fn compile_entry_with_options(
     };
     let mut program = build_mir(&package, &graph.sources, &mut inference, mir_options)
         .map_err(|error| CompileError::Mir(format!("{error:?}")))?;
+    if options.deny_unsafe && !program.unsafe_sites().is_empty() {
+        let first = program.unsafe_sites()[0];
+        return Err(CompileError::Mir(format!(
+            "[E4501] --deny-unsafe rejected {} unsafe site(s) (first: {:?} at origin {:?})",
+            program.unsafe_sites().len(),
+            first.kind,
+            first.origin
+        )));
+    }
     if profile {
         eprintln!("[profile] MIR build: {:?}", t2.elapsed());
     }

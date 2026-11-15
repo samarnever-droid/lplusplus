@@ -37,6 +37,7 @@ impl<'module, 'package> ModuleLowerer<'module, 'package> {
         let origin = self.source_origin(node.span)?;
         let kind = match node.kind {
             SyntaxKind::While => self.lower_while(node)?,
+            SyntaxKind::Unsafe => self.lower_unsafe(node)?,
             SyntaxKind::For => self.lower_for(node)?,
             SyntaxKind::Match => self.lower_match(node)?,
             SyntaxKind::Return => {
@@ -316,6 +317,16 @@ impl<'module, 'package> ModuleLowerer<'module, 'package> {
         let origin = self.source_origin(node.span)?;
         let body = self.lower_child_body(&node.children, origin)?;
         Ok(StatementKind::While { condition, body })
+    }
+
+    fn lower_unsafe(&mut self, node: &SyntaxNode) -> LowerResult<StatementKind> {
+        let mut cursor = Cursor::new(node.tokens);
+        self.expect_keyword(&mut cursor, Keyword::Unsafe, "expected unsafe")?;
+        self.expect(&mut cursor, TokenKind::Colon, "expected ':' after unsafe")?;
+        self.expect_end(&mut cursor, "unexpected token after 'unsafe:'")?;
+        let origin = self.source_origin(node.span)?;
+        let body = self.lower_child_body(&node.children, origin)?;
+        Ok(StatementKind::Unsafe { body })
     }
 
     fn lower_for(&mut self, node: &SyntaxNode) -> LowerResult<StatementKind> {

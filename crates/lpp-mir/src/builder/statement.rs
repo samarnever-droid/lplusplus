@@ -155,6 +155,13 @@ impl FunctionBuilder<'_, '_> {
             StatementKind::Match { subject, arms } => {
                 self.lower_match(statement_id, subject, arms, statement.origin)?;
             }
+            StatementKind::Unsafe { body } => {
+                self.core.program.unsafe_sites.push(UnsafeSite {
+                    origin: statement.origin,
+                    kind: UnsafeSiteKind::UnsafeBlock,
+                });
+                self.lower_body(body)?;
+            }
         }
         Ok(())
     }

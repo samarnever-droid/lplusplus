@@ -119,6 +119,7 @@ impl InferenceTable {
                 }
                 (TypeKind::List(left), TypeKind::List(right))
                 | (TypeKind::Slice(left), TypeKind::Slice(right))
+                | (TypeKind::Ptr(left), TypeKind::Ptr(right))
                 | (TypeKind::Task(left), TypeKind::Task(right)) => pending.push((left, right)),
                 (
                     TypeKind::Map {
@@ -298,9 +299,12 @@ fn integer_primitives_are_compatible(left: PrimitiveType, right: PrimitiveType) 
                 | PrimitiveType::U8
                 | PrimitiveType::U16
                 | PrimitiveType::U32
+                | PrimitiveType::U64
                 | PrimitiveType::I8
                 | PrimitiveType::I16
                 | PrimitiveType::I32
+                | PrimitiveType::USize
+                | PrimitiveType::ISize
         )
     }
 
@@ -343,7 +347,10 @@ fn push_children(
                 push(*child)?;
             }
         }
-        TypeKind::List(element) | TypeKind::Slice(element) | TypeKind::Task(element) => {
+        TypeKind::List(element)
+        | TypeKind::Slice(element)
+        | TypeKind::Ptr(element)
+        | TypeKind::Task(element) => {
             push(element)?;
         }
         TypeKind::Map { key, value } => {

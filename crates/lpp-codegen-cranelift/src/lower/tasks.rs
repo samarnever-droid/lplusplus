@@ -177,13 +177,13 @@ impl<'m> Lowering<'m> {
             // A char argument lowers to i32 but the v1 print-int symbol
             // carries the ABI's i64 int, so it is widened before the call
             // (int arguments are already i64).
-            let (printer, is_char) = match args.first().expect("print argument") {
+            let (printer, widen_signed) = match args.first().expect("print argument") {
                 Operand::Constant(constant) => match constant {
-                    Constant::Integer(_) => (IMP_PRINT_INT, false),
-                    Constant::Character { .. } => (IMP_PRINT_INT, true),
-                    Constant::FloatBits(_) => (IMP_PRINT_FLOAT, false),
-                    Constant::Bool(_) => (IMP_PRINT_BOOL, false),
-                    Constant::String { .. } => (IMP_PRINT_STR, false),
+                    Constant::Integer(_) => (IMP_PRINT_INT, Some(true)),
+                    Constant::Character { .. } => (IMP_PRINT_INT, Some(false)),
+                    Constant::FloatBits(_) => (IMP_PRINT_FLOAT, None),
+                    Constant::Bool(_) => (IMP_PRINT_BOOL, None),
+                    Constant::String { .. } => (IMP_PRINT_STR, None),
                 },
                 Operand::Copy(local) => match inst.types.kind(
                     inst.program
@@ -191,19 +191,41 @@ impl<'m> Lowering<'m> {
                         .expect("validated MIR retains locals")
                         .ty,
                 ) {
-                    TypeKind::Primitive(PrimitiveType::Int) => (IMP_PRINT_INT, false),
-                    TypeKind::Primitive(PrimitiveType::Char) => (IMP_PRINT_INT, true),
-                    TypeKind::Primitive(PrimitiveType::Float) => (IMP_PRINT_FLOAT, false),
-                    TypeKind::Primitive(PrimitiveType::Bool) => (IMP_PRINT_BOOL, false),
-                    TypeKind::Primitive(PrimitiveType::String) => (IMP_PRINT_STR, false),
+                    TypeKind::Primitive(
+                        PrimitiveType::Int
+                        | PrimitiveType::I8
+                        | PrimitiveType::I16
+                        | PrimitiveType::I32
+                        | PrimitiveType::ISize,
+                    ) => (IMP_PRINT_INT, Some(true)),
+                    TypeKind::Primitive(
+                        PrimitiveType::Char
+                        | PrimitiveType::U8
+                        | PrimitiveType::U16
+                        | PrimitiveType::U32
+                        | PrimitiveType::U64
+                        | PrimitiveType::USize
+                        | PrimitiveType::RawPtr,
+                    )
+                    | TypeKind::Ptr(_) => (IMP_PRINT_INT, Some(false)),
+                    TypeKind::Primitive(PrimitiveType::Float) => (IMP_PRINT_FLOAT, None),
+                    TypeKind::Primitive(PrimitiveType::Bool) => (IMP_PRINT_BOOL, None),
+                    TypeKind::Primitive(PrimitiveType::String) => (IMP_PRINT_STR, None),
                     _ => return Err(unsupported(inst.mir_id, "print of unsupported argument")),
                 },
                 _ => return Err(unsupported(inst.mir_id, "print of non-local argument")),
             };
             let mut value =
                 self.operand_value(inst, builder, args.first().expect("print argument"))?;
-            if is_char {
-                value = builder.ins().uextend(cltypes::I64, value);
+            if let Some(signed) = widen_signed {
+                let val_ty = builder.func.dfg.value_type(value);
+                if val_ty != cltypes::I64 {
+                    value = if signed {
+                        builder.ins().sextend(cltypes::I64, value)
+                    } else {
+                        builder.ins().uextend(cltypes::I64, value)
+                    };
+                }
             }
             let func_ref = self.import_ref(builder, printer);
             builder.ins().call(func_ref, &[value]);

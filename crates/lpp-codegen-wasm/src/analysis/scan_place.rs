@@ -70,7 +70,8 @@ pub(crate) fn rvalue_operands(program: &MirProgram, rvalue: &Rvalue) -> Vec<Oper
         Rvalue::ConstructVariant { fields, .. } => out.extend_from_slice(program.operands(*fields)),
         Rvalue::Load(_) | Rvalue::ListLen(_) => {}
         Rvalue::MakeClosure { captures, .. } => out.extend_from_slice(program.operands(*captures)),
-        Rvalue::Await(o) | Rvalue::Spawn(o) => out.push(*o),
+        Rvalue::Await(o) | Rvalue::Spawn(o) | Rvalue::Cast { value: o, .. } => out.push(*o),
+        Rvalue::Intrinsic { arguments, .. } => out.extend_from_slice(program.operands(*arguments)),
     }
     out
 }

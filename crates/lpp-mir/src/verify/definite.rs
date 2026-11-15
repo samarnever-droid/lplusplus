@@ -268,7 +268,10 @@ fn rvalue_operands(program: &MirProgram, value: Rvalue) -> Vec<Operand> {
             function: _,
             captures,
         } => program.operands(captures).to_vec(),
-        Rvalue::Await(operand) | Rvalue::Spawn(operand) => vec![operand],
+        Rvalue::Cast { value: operand, .. } | Rvalue::Await(operand) | Rvalue::Spawn(operand) => {
+            vec![operand]
+        }
+        Rvalue::Intrinsic { arguments, .. } => program.operands(arguments).to_vec(),
     }
 }
 

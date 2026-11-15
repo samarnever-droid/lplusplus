@@ -184,10 +184,14 @@ impl<'input> MirBuilder<'input> {
                         | PrimitiveType::U8
                         | PrimitiveType::U16
                         | PrimitiveType::U32
+                        | PrimitiveType::U64
+                        | PrimitiveType::USize
                         | PrimitiveType::I8
                         | PrimitiveType::I16
                         | PrimitiveType::I32
-                )
+                        | PrimitiveType::ISize
+                        | PrimitiveType::RawPtr
+                ) | TypeKind::Ptr(_)
             )
         };
         // `Str` is an ARC-managed value, not an owned C string. Its payload

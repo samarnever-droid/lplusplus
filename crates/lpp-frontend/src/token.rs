@@ -28,6 +28,7 @@ pub enum Keyword {
     Struct,
     Trait,
     Type,
+    Unsafe,
     While,
 }
 
@@ -61,6 +62,7 @@ impl Keyword {
             "struct" => Self::Struct,
             "trait" => Self::Trait,
             "type" => Self::Type,
+            "unsafe" => Self::Unsafe,
             "while" => Self::While,
             _ => return None,
         })

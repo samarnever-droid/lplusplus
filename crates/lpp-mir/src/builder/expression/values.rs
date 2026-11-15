@@ -118,6 +118,26 @@ impl FunctionBuilder<'_, '_> {
                     MirBuildErrorKind::Unsupported(UnsupportedConstruct::UnresolvedName),
                 )),
             },
+            ExpressionKind::Cast { value, target: _ } => {
+                let lowered = self.lower_expression(value, next_depth)?;
+                if matches!(
+                    self.core.types.interner.kind(ty),
+                    TypeKind::Ptr(_) | TypeKind::Primitive(PrimitiveType::RawPtr)
+                ) {
+                    self.core.program.unsafe_sites.push(UnsafeSite {
+                        origin: expression.origin,
+                        kind: UnsafeSiteKind::UnsafeCast,
+                    });
+                }
+                self.assign_temporary(
+                    ty,
+                    Rvalue::Cast {
+                        value: lowered,
+                        target: ty,
+                    },
+                    expression.origin,
+                )
+            }
             ExpressionKind::Unary { operator, operand } => {
                 let operand = self.lower_expression(operand, next_depth)?;
                 self.assign_temporary(ty, Rvalue::Unary { operator, operand }, expression.origin)

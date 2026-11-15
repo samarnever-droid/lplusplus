@@ -113,9 +113,11 @@ for f in "${FILES[@]}"; do
     # </dev/null guarantees stdin is at EOF: a program calling input() reads the
     # empty string and terminates instead of blocking until the per-file timeout.
     out=$(LPP_ENGINE=rewrite run_with_timeout "$PER_FILE_TIMEOUT" "$LPP" run "$rel" </dev/null 2>&1); rc=$?
-    # lpp run emits an executable named after the source into the cwd; remove it so the
-    # harness never pollutes the repo root with one binary per corpus file.
-    rm -f "./$(basename "$rel" .lpp)" "./$(basename "$rel" .lpp).exe" "./$(basename "$rel" .lpp).exe.obj" "./$(basename "$rel" .lpp).obj" "./lpp_runtime.dll"
+    # lpp run emits an executable next to the source (or in cwd); remove both
+    # so the harness never pollutes the repo with compiled binaries per corpus file.
+    bin_stem="${rel%.lpp}"
+    rm -f "$bin_stem" "$bin_stem.exe" "$bin_stem.exe.obj" "$bin_stem.obj" \
+          "./$(basename "$rel" .lpp)" "./$(basename "$rel" .lpp).exe" "./$(basename "$rel" .lpp).exe.obj" "./$(basename "$rel" .lpp).obj" "./lpp_runtime.dll" ./test.txt
   fi
 
   code=$(printf '%s' "$out" | grep -oE 'E[0-9]{4}' | head -1)

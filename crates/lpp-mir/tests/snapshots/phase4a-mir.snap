@@ -10,10 +10,10 @@ locals
   MirLocalId(1) MirLocal { ty: TypeId(3), source: Some(LocalId(1)), kind: Parameter, mutable: false, origin: OriginId(4) }
   MirLocalId(2) MirLocal { ty: TypeId(4), source: None, kind: Temporary, mutable: false, origin: OriginId(9) }
   MirLocalId(3) MirLocal { ty: TypeId(4), source: Some(LocalId(2)), kind: User, mutable: true, origin: OriginId(10) }
-  MirLocalId(4) MirLocal { ty: TypeId(21), source: None, kind: Temporary, mutable: false, origin: OriginId(14) }
-  MirLocalId(5) MirLocal { ty: TypeId(21), source: Some(LocalId(3)), kind: User, mutable: false, origin: OriginId(15) }
-  MirLocalId(6) MirLocal { ty: TypeId(24), source: None, kind: Temporary, mutable: false, origin: OriginId(19) }
-  MirLocalId(7) MirLocal { ty: TypeId(24), source: Some(LocalId(4)), kind: User, mutable: false, origin: OriginId(20) }
+  MirLocalId(4) MirLocal { ty: TypeId(25), source: None, kind: Temporary, mutable: false, origin: OriginId(14) }
+  MirLocalId(5) MirLocal { ty: TypeId(25), source: Some(LocalId(3)), kind: User, mutable: false, origin: OriginId(15) }
+  MirLocalId(6) MirLocal { ty: TypeId(28), source: None, kind: Temporary, mutable: false, origin: OriginId(19) }
+  MirLocalId(7) MirLocal { ty: TypeId(28), source: Some(LocalId(4)), kind: User, mutable: false, origin: OriginId(20) }
   MirLocalId(8) MirLocal { ty: TypeId(4), source: None, kind: Temporary, mutable: false, origin: OriginId(27) }
   MirLocalId(9) MirLocal { ty: TypeId(4), source: None, kind: Temporary, mutable: false, origin: OriginId(33) }
   MirLocalId(10) MirLocal { ty: TypeId(3), source: None, kind: Temporary, mutable: false, origin: OriginId(37) }
@@ -69,12 +69,12 @@ blocks
   BasicBlockId(10) BasicBlock { instructions: ListRange(14..16), terminator: Return(Some(Copy(MirLocalId(14)))), origin: OriginId(51) }
     instruction_ids [InstructionId(14), InstructionId(15)]
 functions
-  MirFunctionId(0) MirFunction { source: HirItemId(0), instance: None, instance_arguments: TypeListId(0), definition: Some(DefId(0)), name: Some(Symbol(0)), kind: Function, captures: ListRange(0..0), ty: TypeId(16), return_type: TypeId(4), parameters: ListRange(0..2), locals: ListRange(0..13), blocks: ListRange(0..10), entry: BasicBlockId(0), origin: OriginId(0) }
+  MirFunctionId(0) MirFunction { source: HirItemId(0), instance: None, instance_arguments: TypeListId(0), definition: Some(DefId(0)), name: Some(Symbol(0)), kind: Function, captures: ListRange(0..0), ty: TypeId(20), return_type: TypeId(4), parameters: ListRange(0..2), locals: ListRange(0..13), blocks: ListRange(0..10), entry: BasicBlockId(0), origin: OriginId(0) }
     instance_arguments TypeListId(0)
     parameters [MirLocalId(0), MirLocalId(1)] captures [] kind=Function
     locals [MirLocalId(0), MirLocalId(1), MirLocalId(2), MirLocalId(3), MirLocalId(4), MirLocalId(5), MirLocalId(6), MirLocalId(7), MirLocalId(8), MirLocalId(9), MirLocalId(10), MirLocalId(11), MirLocalId(12)]
     blocks [BasicBlockId(0), BasicBlockId(1), BasicBlockId(2), BasicBlockId(3), BasicBlockId(4), BasicBlockId(5), BasicBlockId(6), BasicBlockId(7), BasicBlockId(8), BasicBlockId(9)]
-  MirFunctionId(1) MirFunction { source: HirItemId(1), instance: None, instance_arguments: TypeListId(0), definition: Some(DefId(1)), name: Some(Symbol(1)), kind: Function, captures: ListRange(0..0), ty: TypeId(17), return_type: TypeId(4), parameters: ListRange(2..2), locals: ListRange(13..15), blocks: ListRange(10..11), entry: BasicBlockId(10), origin: OriginId(51) }
+  MirFunctionId(1) MirFunction { source: HirItemId(1), instance: None, instance_arguments: TypeListId(0), definition: Some(DefId(1)), name: Some(Symbol(1)), kind: Function, captures: ListRange(0..0), ty: TypeId(21), return_type: TypeId(4), parameters: ListRange(2..2), locals: ListRange(13..15), blocks: ListRange(10..11), entry: BasicBlockId(10), origin: OriginId(51) }
     instance_arguments TypeListId(0)
     parameters [] captures [] kind=Function
     locals [MirLocalId(13), MirLocalId(14)]

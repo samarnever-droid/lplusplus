@@ -73,6 +73,7 @@ impl<'input> MirBuilder<'input> {
                     self.walk_body(self.package.match_arms[*arm].body, visit);
                 }
             }
+            StatementKind::Unsafe { body } => self.walk_body(body, visit),
             StatementKind::Break | StatementKind::Continue => {}
         }
     }
@@ -81,7 +82,9 @@ impl<'input> MirBuilder<'input> {
         visit(expression);
         match self.package.expressions[expression].kind {
             ExpressionKind::Literal(_) | ExpressionKind::Name { .. } => {}
-            ExpressionKind::Unary { operand, .. } => self.walk_expression(operand, visit),
+            ExpressionKind::Unary { operand, .. } | ExpressionKind::Cast { value: operand, .. } => {
+                self.walk_expression(operand, visit)
+            }
             ExpressionKind::Binary { left, right, .. } => {
                 self.walk_expression(left, visit);
                 self.walk_expression(right, visit);
@@ -203,6 +206,9 @@ impl<'input> MirBuilder<'input> {
                     );
                 }
             }
+            StatementKind::Unsafe { body } => {
+                self.mark_write_captures_inner(body, enclosing_params);
+            }
             StatementKind::Break | StatementKind::Continue => {}
         }
     }
@@ -232,7 +238,7 @@ impl<'input> MirBuilder<'input> {
                 self.mark_write_captures_inner(body, &extended);
             }
             ExpressionKind::Literal(_) | ExpressionKind::Name { .. } => {}
-            ExpressionKind::Unary { operand, .. } => {
+            ExpressionKind::Unary { operand, .. } | ExpressionKind::Cast { value: operand, .. } => {
                 self.mark_write_captures_expression(operand, enclosing_params)
             }
             ExpressionKind::Binary { left, right, .. } => {
@@ -327,7 +333,9 @@ impl<'input> MirBuilder<'input> {
                         );
                     }
                 }
-                StatementKind::While { body, .. } | StatementKind::For { body, .. } => {
+                StatementKind::While { body, .. }
+                | StatementKind::For { body, .. }
+                | StatementKind::Unsafe { body } => {
                     Self::collect_writes_statements(
                         package,
                         body,

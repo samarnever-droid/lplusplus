@@ -13,6 +13,7 @@ impl<'m> Lowering<'m> {
         builder: &mut FunctionBuilder,
         ty: CLType,
         divide: bool,
+        signed: bool,
         l: Value,
         r: Value,
     ) -> Value {
@@ -34,25 +35,31 @@ impl<'m> Lowering<'m> {
 
         builder.seal_block(div_block);
         builder.switch_to_block(div_block);
-        let int_min = builder.ins().iconst(
-            ty,
-            match ty {
-                cltypes::I8 => i64::from(i8::MIN),
-                cltypes::I16 => i64::from(i16::MIN),
-                cltypes::I32 => i64::from(i32::MIN),
-                _ => i64::MIN,
-            },
-        );
-        let neg_one = builder.ins().iconst(ty, -1);
-        let is_min = builder.ins().icmp(IntCC::Equal, l, int_min);
-        let is_neg_one = builder.ins().icmp(IntCC::Equal, r, neg_one);
-        let one = builder.ins().iconst(ty, 1);
-        let if_min = builder.ins().select(is_neg_one, one, r);
-        let safe_r = builder.ins().select(is_min, if_min, r);
-        let quotient = if divide {
-            builder.ins().sdiv(l, safe_r)
+        let quotient = if signed {
+            let int_min = builder.ins().iconst(
+                ty,
+                match ty {
+                    cltypes::I8 => i64::from(i8::MIN),
+                    cltypes::I16 => i64::from(i16::MIN),
+                    cltypes::I32 => i64::from(i32::MIN),
+                    _ => i64::MIN,
+                },
+            );
+            let neg_one = builder.ins().iconst(ty, -1);
+            let is_min = builder.ins().icmp(IntCC::Equal, l, int_min);
+            let is_neg_one = builder.ins().icmp(IntCC::Equal, r, neg_one);
+            let one = builder.ins().iconst(ty, 1);
+            let if_min = builder.ins().select(is_neg_one, one, r);
+            let safe_r = builder.ins().select(is_min, if_min, r);
+            if divide {
+                builder.ins().sdiv(l, safe_r)
+            } else {
+                builder.ins().srem(l, safe_r)
+            }
+        } else if divide {
+            builder.ins().udiv(l, r)
         } else {
-            builder.ins().srem(l, safe_r)
+            builder.ins().urem(l, r)
         };
         builder.ins().jump(merge_block, &[quotient]);
 
@@ -66,6 +73,7 @@ impl<'m> Lowering<'m> {
         builder: &mut FunctionBuilder,
         operator: BinaryOperator,
         ty: CLType,
+        signed: bool,
         string_eq: bool,
         l: Value,
         r: Value,
@@ -94,19 +102,25 @@ impl<'m> Lowering<'m> {
             },
             BinaryOperator::Divide => match ty {
                 cltypes::F64 => builder.ins().fdiv(l, r),
-                _ => self.int_divmod(builder, ty, true, l, r),
+                _ => self.int_divmod(builder, ty, true, signed, l, r),
             },
             BinaryOperator::Modulo if ty == cltypes::F64 => {
                 let func_ref = self.import_ref(builder, IMP_FMOD);
                 let call_inst = builder.ins().call(func_ref, &[l, r]);
                 builder.func.dfg.first_result(call_inst)
             }
-            BinaryOperator::Modulo => self.int_divmod(builder, ty, false, l, r),
+            BinaryOperator::Modulo => self.int_divmod(builder, ty, false, signed, l, r),
             BinaryOperator::BitAnd => builder.ins().band(l, r),
             BinaryOperator::BitOr => builder.ins().bor(l, r),
             BinaryOperator::BitXor => builder.ins().bxor(l, r),
             BinaryOperator::ShiftLeft => builder.ins().ishl(l, r),
-            BinaryOperator::ShiftRight => builder.ins().sshr(l, r),
+            BinaryOperator::ShiftRight => {
+                if signed {
+                    builder.ins().sshr(l, r)
+                } else {
+                    builder.ins().ushr(l, r)
+                }
+            }
             BinaryOperator::Equal if string_eq => {
                 let func_ref = self.import_ref(builder, IMP_STR_EQ);
                 let call_inst = builder.ins().call(func_ref, &[l, r]);
@@ -125,14 +139,38 @@ impl<'m> Lowering<'m> {
                 builder.ins().icmp(IntCC::Equal, raw, zero)
             }
             BinaryOperator::NotEqual => compare(IntCC::NotEqual, FloatCC::NotEqual),
-            BinaryOperator::Less => compare(IntCC::SignedLessThan, FloatCC::LessThan),
-            BinaryOperator::Greater => compare(IntCC::SignedGreaterThan, FloatCC::GreaterThan),
-            BinaryOperator::LessEqual => {
-                compare(IntCC::SignedLessThanOrEqual, FloatCC::LessThanOrEqual)
-            }
-            BinaryOperator::GreaterEqual => {
-                compare(IntCC::SignedGreaterThanOrEqual, FloatCC::GreaterThanOrEqual)
-            }
+            BinaryOperator::Less => compare(
+                if signed {
+                    IntCC::SignedLessThan
+                } else {
+                    IntCC::UnsignedLessThan
+                },
+                FloatCC::LessThan,
+            ),
+            BinaryOperator::Greater => compare(
+                if signed {
+                    IntCC::SignedGreaterThan
+                } else {
+                    IntCC::UnsignedGreaterThan
+                },
+                FloatCC::GreaterThan,
+            ),
+            BinaryOperator::LessEqual => compare(
+                if signed {
+                    IntCC::SignedLessThanOrEqual
+                } else {
+                    IntCC::UnsignedLessThanOrEqual
+                },
+                FloatCC::LessThanOrEqual,
+            ),
+            BinaryOperator::GreaterEqual => compare(
+                if signed {
+                    IntCC::SignedGreaterThanOrEqual
+                } else {
+                    IntCC::UnsignedGreaterThanOrEqual
+                },
+                FloatCC::GreaterThanOrEqual,
+            ),
             BinaryOperator::LogicalAnd => builder.ins().band(l, r),
             BinaryOperator::LogicalOr => builder.ins().bor(l, r),
         })

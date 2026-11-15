@@ -348,7 +348,10 @@ impl Verifier<'_> {
                 TypeKind::Tuple(elements) => {
                     pending.extend(self.types.list(elements).iter().copied());
                 }
-                TypeKind::List(element) | TypeKind::Slice(element) | TypeKind::Task(element) => {
+                TypeKind::List(element)
+                | TypeKind::Slice(element)
+                | TypeKind::Task(element)
+                | TypeKind::Ptr(element) => {
                     pending.push(element);
                 }
                 TypeKind::Map { key, value } => {

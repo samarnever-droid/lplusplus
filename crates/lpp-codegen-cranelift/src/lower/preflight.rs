@@ -75,35 +75,41 @@ pub(crate) fn pre_scan(
             )?;
         }
 
-        // A source-level `main` exports as the internal `lpp_main`;
-        // the C-ABI `main` wrapper is generated separately. Closure
-        // functions are unnamed in the MIR and export as `lpp_c{n}`
-        // (n = the MirFunctionId, in function-id order).
-        match function
-            .name
-            .as_ref()
-            .and_then(|symbol| names.resolve(symbol.raw()))
-        {
-            Some(name) if name == "main" => {
-                export_names.insert(mir_id, "lpp_main".to_owned());
-            }
-            Some(name) => {
-                // Distinct functions can share a source name (e.g. `describe`
-                // implemented for several types via `impl` blocks). Such methods
-                // are only ever called by function id, so a colliding linkage
-                // name is disambiguated with the function id to keep symbols
-                // unique.
-                let mut export = name.to_owned();
-                if used_export_names.contains(&export) {
-                    export = format!("{name}_{}", mir_id.raw());
+        // Custom `@export_name("...")` overrides the default symbol mapping so
+        // kernels and bare-metal entry points (`_start`) or C-ABI hooks export
+        // under their exact link name. Otherwise source-level `main` exports as
+        // `lpp_main`, and closures as `lpp_c{n}`.
+        if let Some(custom) = program.function_attrs(mir_id).export_name.as_deref() {
+            let export = custom.to_owned();
+            used_export_names.insert(export.clone());
+            export_names.insert(mir_id, export);
+        } else {
+            match function
+                .name
+                .as_ref()
+                .and_then(|symbol| names.resolve(symbol.raw()))
+            {
+                Some(name) if name == "main" => {
+                    export_names.insert(mir_id, "lpp_main".to_owned());
                 }
-                used_export_names.insert(export.clone());
-                export_names.insert(mir_id, export);
+                Some(name) => {
+                    // Distinct functions can share a source name (e.g. `describe`
+                    // implemented for several types via `impl` blocks). Such methods
+                    // are only ever called by function id, so a colliding linkage
+                    // name is disambiguated with the function id to keep symbols
+                    // unique.
+                    let mut export = name.to_owned();
+                    if used_export_names.contains(&export) {
+                        export = format!("{name}_{}", mir_id.raw());
+                    }
+                    used_export_names.insert(export.clone());
+                    export_names.insert(mir_id, export);
+                }
+                None if matches!(function.kind, MirFunctionKind::Closure) => {
+                    export_names.insert(mir_id, format!("lpp_c{}", mir_id.raw()));
+                }
+                None => return Err(unsupported(mir_id, "unnamed function")),
             }
-            None if matches!(function.kind, MirFunctionKind::Closure) => {
-                export_names.insert(mir_id, format!("lpp_c{}", mir_id.raw()));
-            }
-            None => return Err(unsupported(mir_id, "unnamed function")),
         }
     }
 

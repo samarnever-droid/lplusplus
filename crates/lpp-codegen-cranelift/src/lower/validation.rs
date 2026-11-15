@@ -24,7 +24,14 @@ pub(super) fn emission_failed(what: String) -> CodegenError {
 /// are heap pointers; `Void` is handled by the caller.
 pub(super) fn machine_type(types: &TypeInterner, ty: TypeId) -> Option<CLType> {
     Some(match types.kind(ty) {
-        TypeKind::Primitive(PrimitiveType::Int) => cltypes::I64,
+        TypeKind::Primitive(
+            PrimitiveType::Int
+            | PrimitiveType::U64
+            | PrimitiveType::USize
+            | PrimitiveType::ISize
+            | PrimitiveType::RawPtr,
+        ) => cltypes::I64,
+        TypeKind::Ptr(_) => cltypes::I64,
         TypeKind::Primitive(PrimitiveType::Float) => cltypes::F64,
         TypeKind::Primitive(PrimitiveType::Bool)
         | TypeKind::Primitive(PrimitiveType::U8)
@@ -91,14 +98,19 @@ pub(super) fn unsupported_construct_for(kind: TypeKind) -> &'static str {
         TypeKind::BoundVariable(_) => "bound variable",
         TypeKind::InferenceVariable(_) => "inference variable",
         TypeKind::UnresolvedName { .. } => "unresolved name",
+        TypeKind::Ptr(_) => "raw pointer",
         TypeKind::Primitive(primitive) => match primitive {
             PrimitiveType::Void => "void",
             PrimitiveType::U8
             | PrimitiveType::U16
             | PrimitiveType::U32
+            | PrimitiveType::U64
+            | PrimitiveType::USize
             | PrimitiveType::I8
             | PrimitiveType::I16
-            | PrimitiveType::I32 => "narrow primitive",
+            | PrimitiveType::I32
+            | PrimitiveType::ISize
+            | PrimitiveType::RawPtr => "narrow primitive",
             PrimitiveType::StrSlice => "str slice",
             PrimitiveType::VectorI64x2 => "vector",
             _ => unreachable!("the slice primitives are mapped"),
@@ -142,10 +154,15 @@ pub(super) fn element_class(types: &TypeInterner, element: TypeId) -> ElementCla
             | PrimitiveType::U8
             | PrimitiveType::U16
             | PrimitiveType::U32
+            | PrimitiveType::U64
+            | PrimitiveType::USize
             | PrimitiveType::I8
             | PrimitiveType::I16
-            | PrimitiveType::I32,
-        ) => ElementClass::Scalar,
+            | PrimitiveType::I32
+            | PrimitiveType::ISize
+            | PrimitiveType::RawPtr,
+        )
+        | TypeKind::Ptr(_) => ElementClass::Scalar,
         _ => unreachable!("list elements are checked by the pre-scan"),
     }
 }
@@ -171,13 +188,18 @@ pub(super) fn check_list_element(
             | PrimitiveType::U8
             | PrimitiveType::U16
             | PrimitiveType::U32
+            | PrimitiveType::U64
+            | PrimitiveType::USize
             | PrimitiveType::I8
             | PrimitiveType::I16
             | PrimitiveType::I32
+            | PrimitiveType::ISize
+            | PrimitiveType::RawPtr
             | PrimitiveType::Float
             | PrimitiveType::Bool
             | PrimitiveType::String,
         )
+        | TypeKind::Ptr(_)
         | TypeKind::List(_)
         | TypeKind::Nominal { .. }
         | TypeKind::Function { .. }

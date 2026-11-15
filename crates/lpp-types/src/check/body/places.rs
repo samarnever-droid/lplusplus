@@ -250,6 +250,9 @@ impl<'hir> TypeChecker<'hir> {
                 } else {
                     spelling
                 };
+                if let Some(ty) = self.intrinsic_function_type(builtin_spelling, None, origin)? {
+                    return Ok(ty);
+                }
                 if let Some(builtin) = self.builtin_index.lookup(builtin_spelling) {
                     return self.builtin_function_type(builtin, origin);
                 }

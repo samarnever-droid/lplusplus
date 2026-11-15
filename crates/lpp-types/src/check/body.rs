@@ -17,6 +17,7 @@ use super::{ShadowTypeError, TypeChecker};
 
 mod builtins;
 mod inference;
+mod intrinsics;
 mod matches;
 mod places;
 mod safety;

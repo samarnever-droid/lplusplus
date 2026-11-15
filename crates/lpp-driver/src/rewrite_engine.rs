@@ -162,6 +162,7 @@ fn rewrite_main(args: &[String], cwd: &Path) -> i32 {
     let mut lto = false;
     let mut pgo_generate = false;
     let mut pgo_use: Option<PathBuf> = None;
+    let mut deny_unsafe = false;
     let mut output: Option<String> = None;
     let mut linker: Option<String> = match user_config.linker.as_str() {
         "direct" if cfg!(any(target_os = "linux", target_os = "windows")) => {
@@ -230,6 +231,7 @@ fn rewrite_main(args: &[String], cwd: &Path) -> i32 {
                 idx += 1;
             }
             "--lto" => lto = true,
+            "--deny-unsafe" => deny_unsafe = true,
             "--pgo-generate" => pgo_generate = true,
             "--pgo-use" => {
                 let Some(value) = rest.get(idx + 1) else {
@@ -342,6 +344,7 @@ fn rewrite_main(args: &[String], cwd: &Path) -> i32 {
         lto,
         pgo_generate,
         pgo_use,
+        deny_unsafe,
     };
 
     // The WASM backend emits a self-contained module — there is no native link.
@@ -927,6 +930,7 @@ fn print_help() {
     println!("  --target <t>     host, host-native x86_64/aarch64, or wasm32-wasip1");
     println!("  -O<level>        MIR/backend optimization: 0, 1, 2, 3, s, or z");
     println!("  --lto            Enable safe whole-program MIR inlining of small pure callees");
+    println!("  --deny-unsafe    Reject all unsafe blocks, pointer ops, and kernel intrinsics");
     println!("  --pgo-generate   Instrument Cranelift; write a profile at LPP_PGO_PROFILE");
     println!("  --pgo-use FILE   Use a matching profile to select hot MIR callees for inlining");
     println!("  --linker <kind>  direct or cc (in-process PE on Windows, direct ELF on Linux)");

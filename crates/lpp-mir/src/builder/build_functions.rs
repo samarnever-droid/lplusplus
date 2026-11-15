@@ -202,6 +202,46 @@ impl<'input> MirBuilder<'input> {
             None => self.item_functions[work.item.index()],
         }
         .expect("the function was assigned an identity before lowering");
+        let mut fn_attrs = MirFunctionAttrs {
+            is_unsafe: function.is_unsafe,
+            ..MirFunctionAttrs::default()
+        };
+        for &attr_sym in self.package.symbols(item.attributes) {
+            let Some(text) = self.package.names.symbols.resolve(attr_sym) else {
+                continue;
+            };
+            let text = text.trim();
+            if text == "naked" {
+                fn_attrs.is_naked = true;
+            } else if text == "interrupt" {
+                fn_attrs.is_interrupt = true;
+            } else if let Some(inner) = text
+                .strip_prefix("export_name(")
+                .and_then(|s| s.strip_suffix(')'))
+            {
+                let unquoted = inner.trim().trim_matches('"').to_owned();
+                if !unquoted.is_empty() {
+                    fn_attrs.export_name = Some(unquoted);
+                }
+            } else if let Some(inner) = text
+                .strip_prefix("section(")
+                .and_then(|s| s.strip_suffix(')'))
+            {
+                let unquoted = inner.trim().trim_matches('"').to_owned();
+                if !unquoted.is_empty() {
+                    fn_attrs.section = Some(unquoted);
+                }
+            }
+        }
+        if fn_attrs != MirFunctionAttrs::default() {
+            self.program.function_attrs.insert(function_id, fn_attrs);
+        }
+        if function.is_unsafe {
+            self.program.unsafe_sites.push(UnsafeSite {
+                origin: item.origin,
+                kind: UnsafeSiteKind::UnsafeFunction,
+            });
+        }
         // Mark by-reference capture cells before any local of this body
         // is materialized: the mark changes how each local is typed and
         // referenced throughout the frame.

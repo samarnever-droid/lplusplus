@@ -505,7 +505,10 @@ fn insert_rvalue_uses(program: &MirProgram, rvalue: Rvalue, live: &mut BTreeSet<
         }
     };
     match rvalue {
-        Rvalue::Use(op) | Rvalue::Unary { operand: op, .. } | Rvalue::ListLen(op) => {
+        Rvalue::Use(op)
+        | Rvalue::Unary { operand: op, .. }
+        | Rvalue::Cast { value: op, .. }
+        | Rvalue::ListLen(op) => {
             add_op(op, live);
         }
         Rvalue::Binary { left, right, .. } => {
@@ -518,6 +521,7 @@ fn insert_rvalue_uses(program: &MirProgram, rvalue: Rvalue, live: &mut BTreeSet<
         | Rvalue::ConstructVariant { fields: ops, .. }
         | Rvalue::ExternalCall { arguments: ops, .. }
         | Rvalue::Builtin { arguments: ops, .. }
+        | Rvalue::Intrinsic { arguments: ops, .. }
         | Rvalue::MakeClosure { captures: ops, .. } => add_ops(ops, live),
         Rvalue::Load(place_id) => {
             if let Some(place) = program.place(place_id) {
@@ -1260,7 +1264,9 @@ fn apply_block(
                             check_local!(local);
                         }
                     }
-                    Rvalue::Unary { operand, .. } | Rvalue::ListLen(operand) => {
+                    Rvalue::Unary { operand, .. }
+                    | Rvalue::Cast { value: operand, .. }
+                    | Rvalue::ListLen(operand) => {
                         if let Operand::Copy(local) = operand {
                             check_local!(local);
                         }
@@ -1316,8 +1322,9 @@ fn apply_block(
                             }
                         }
                     }
-                    Rvalue::ExternalCall { arguments, .. } => {
-                        // C receives borrowed scalar/string pointers; the
+                    Rvalue::ExternalCall { arguments, .. }
+                    | Rvalue::Intrinsic { arguments, .. } => {
+                        // C / intrinsics receive borrowed scalar/pointer values; the
                         // source values remain owned by their L++ locals.
                         for operand in program.operands(arguments) {
                             if let Operand::Copy(local) = *operand {

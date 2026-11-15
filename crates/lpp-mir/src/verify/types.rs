@@ -154,9 +154,12 @@ impl Verifier<'_> {
             TypeKind::Primitive(PrimitiveType::U8) => u8::try_from(value).is_ok(),
             TypeKind::Primitive(PrimitiveType::U16) => u16::try_from(value).is_ok(),
             TypeKind::Primitive(PrimitiveType::U32) => u32::try_from(value).is_ok(),
+            TypeKind::Primitive(PrimitiveType::U64 | PrimitiveType::USize) => value >= 0,
             TypeKind::Primitive(PrimitiveType::I8) => i8::try_from(value).is_ok(),
             TypeKind::Primitive(PrimitiveType::I16) => i16::try_from(value).is_ok(),
             TypeKind::Primitive(PrimitiveType::I32) => i32::try_from(value).is_ok(),
+            TypeKind::Primitive(PrimitiveType::ISize) => true,
+            TypeKind::Primitive(PrimitiveType::RawPtr) | TypeKind::Ptr(_) => value == 0,
             // Legacy L++ source uses integer zero for a null aggregate edge,
             // most notably as the terminal link of recursive structures.
             TypeKind::Nominal { .. } => value == 0,
@@ -176,9 +179,12 @@ impl Verifier<'_> {
                     | PrimitiveType::U8
                     | PrimitiveType::U16
                     | PrimitiveType::U32
+                    | PrimitiveType::U64
                     | PrimitiveType::I8
                     | PrimitiveType::I16
                     | PrimitiveType::I32
+                    | PrimitiveType::USize
+                    | PrimitiveType::ISize
             )
         )
     }

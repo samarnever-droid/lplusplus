@@ -143,6 +143,9 @@ pub fn mir_snapshot(program: &MirProgram) -> String {
             | crate::Rvalue::Builtin {
                 arguments: range, ..
             }
+            | crate::Rvalue::Intrinsic {
+                arguments: range, ..
+            }
             | crate::Rvalue::MakeClosure {
                 captures: range, ..
             } => {
@@ -152,6 +155,7 @@ pub fn mir_snapshot(program: &MirProgram) -> String {
             crate::Rvalue::Use(_)
             | crate::Rvalue::Unary { .. }
             | crate::Rvalue::Binary { .. }
+            | crate::Rvalue::Cast { .. }
             | crate::Rvalue::Load(_)
             | crate::Rvalue::ListLen(_)
             | crate::Rvalue::Await(_)

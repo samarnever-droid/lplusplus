@@ -89,7 +89,9 @@ impl<'m> Lowering<'m> {
                         is_signed_integer_kind(left_kind),
                         is_signed_integer_kind(right_kind),
                     );
-                    Some(self.lower_binary(builder, *operator, ty, string_eq, l, r)?)
+                    let signed =
+                        is_signed_integer_kind(left_kind) && is_signed_integer_kind(right_kind);
+                    Some(self.lower_binary(builder, *operator, ty, signed, string_eq, l, r)?)
                 }
             }
             Rvalue::ExternalCall {
@@ -698,6 +700,19 @@ impl<'m> Lowering<'m> {
                 builder.ins().call(destroy_ref, &[task]);
                 None
             }
+            Rvalue::Cast { value, target } => Some(self.lower_cast(inst, builder, value, *target)?),
+            Rvalue::Intrinsic {
+                intrinsic,
+                type_argument,
+                arguments,
+            } => self.lower_kernel_intrinsic(
+                inst,
+                builder,
+                *intrinsic,
+                *type_argument,
+                inst.program.operands(*arguments),
+                target_ty,
+            )?,
         };
 
         if let Some(value) = produced

@@ -178,10 +178,14 @@ pub(super) fn check_assign_shape(
                             | PrimitiveType::U8
                             | PrimitiveType::U16
                             | PrimitiveType::U32
+                            | PrimitiveType::U64
+                            | PrimitiveType::USize
                             | PrimitiveType::I8
                             | PrimitiveType::I16
                             | PrimitiveType::I32
-                    )
+                            | PrimitiveType::ISize
+                            | PrimitiveType::RawPtr
+                    ) | TypeKind::Ptr(_)
                 ) || (allow_string
                     && matches!(types.kind(ty), TypeKind::Primitive(PrimitiveType::String)))
                     || (allow_void && is_void_type(types, ty))
@@ -596,6 +600,30 @@ pub(super) fn check_assign_shape(
             scan.imports.insert(IMP_TASK_POLL);
             scan.imports.insert(IMP_TASK_DESTROY);
             scan.imports.insert(IMP_ARC_RETAIN);
+        }
+        Rvalue::Cast { value, target } => {
+            check_operand(value)?;
+            if machine_type(types, *target).is_none() {
+                return Err(unsupported(
+                    mir_id,
+                    unsupported_construct_for(types.kind(*target)),
+                ));
+            }
+        }
+        Rvalue::Intrinsic {
+            intrinsic,
+            type_argument,
+            arguments,
+        } => {
+            for arg in program.operands(*arguments) {
+                check_operand(arg)?;
+            }
+            if let Some(ty_arg) = type_argument {
+                let _ = static_type_size_align(program, types, *ty_arg);
+            }
+            if let Some(arch_imp) = intrinsic_arch_import(*intrinsic) {
+                scan.imports.insert(arch_imp);
+            }
         }
     }
     Ok(())

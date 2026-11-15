@@ -752,6 +752,9 @@ fn mark_owned_expressions(
                         expressions.push(condition);
                         bodies.push(body);
                     }
+                    StatementKind::Unsafe { body } => {
+                        bodies.push(body);
+                    }
                     StatementKind::For { iterable, body, .. } => {
                         expressions.push(iterable);
                         bodies.push(body);
@@ -797,6 +800,7 @@ fn mark_owned_expressions(
                     expressions.push(index);
                 }
                 ExpressionKind::Try(inner)
+                | ExpressionKind::Cast { value: inner, .. }
                 | ExpressionKind::Await(inner)
                 | ExpressionKind::Spawn(inner) => expressions.push(inner),
                 ExpressionKind::Closure { body, .. } => bodies.push(body),

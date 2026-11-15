@@ -671,6 +671,86 @@ impl Interpreter<'_> {
                 )?;
                 Ok(RuntimeValue::Closure(id))
             }
+            Rvalue::Cast { value, target } => {
+                let evaluated = self.eval_operand(function, block, origin, value, frame)?;
+                match (evaluated, self.types.kind(target)) {
+                    (RuntimeValue::Int(v), TypeKind::Primitive(PrimitiveType::Float)) => {
+                        Ok(RuntimeValue::FloatBits((v as f64).to_bits()))
+                    }
+                    (RuntimeValue::FloatBits(bits), TypeKind::Primitive(p))
+                        if !matches!(
+                            p,
+                            PrimitiveType::Float | PrimitiveType::Void | PrimitiveType::String
+                        ) =>
+                    {
+                        let f = f64::from_bits(bits);
+                        Ok(RuntimeValue::Int(f as i64))
+                    }
+                    (RuntimeValue::Int(v), TypeKind::Primitive(PrimitiveType::Bool)) => {
+                        Ok(RuntimeValue::Bool(v != 0))
+                    }
+                    (RuntimeValue::Bool(b), _) => Ok(RuntimeValue::Int(i64::from(b))),
+                    (RuntimeValue::Char(c), _) => Ok(RuntimeValue::Int(i64::from(c as u32))),
+                    (RuntimeValue::Int(v), TypeKind::Primitive(PrimitiveType::Char)) => {
+                        Ok(RuntimeValue::Char(char::from_u32(v as u32).unwrap_or('\0')))
+                    }
+                    (other, _) => Ok(other),
+                }
+            }
+            Rvalue::Intrinsic {
+                intrinsic,
+                type_argument,
+                arguments,
+            } => {
+                let arg_vals = self.eval_operands(function, block, origin, arguments, frame)?;
+                match intrinsic {
+                    crate::KernelIntrinsic::SizeOf | crate::KernelIntrinsic::AlignOf => {
+                        let (sz, al) =
+                            type_argument.map_or((8_i64, 8_i64), |ty| match self.types.kind(ty) {
+                                TypeKind::Primitive(
+                                    PrimitiveType::Bool | PrimitiveType::U8 | PrimitiveType::I8,
+                                ) => (1, 1),
+                                TypeKind::Primitive(PrimitiveType::U16 | PrimitiveType::I16) => {
+                                    (2, 2)
+                                }
+                                TypeKind::Primitive(
+                                    PrimitiveType::U32 | PrimitiveType::I32 | PrimitiveType::Char,
+                                ) => (4, 4),
+                                _ => (8, 8),
+                            });
+                        Ok(RuntimeValue::Int(
+                            if intrinsic == crate::KernelIntrinsic::SizeOf {
+                                sz
+                            } else {
+                                al
+                            },
+                        ))
+                    }
+                    crate::KernelIntrinsic::PtrNull => Ok(RuntimeValue::Int(0)),
+                    crate::KernelIntrinsic::PtrIsNull => {
+                        let is_null = matches!(arg_vals.first(), Some(RuntimeValue::Int(0)));
+                        Ok(RuntimeValue::Bool(is_null))
+                    }
+                    crate::KernelIntrinsic::PtrAdd => {
+                        let base = match arg_vals.first() {
+                            Some(RuntimeValue::Int(v)) => *v,
+                            _ => 0,
+                        };
+                        let off = match arg_vals.get(1) {
+                            Some(RuntimeValue::Int(v)) => *v,
+                            _ => 0,
+                        };
+                        Ok(RuntimeValue::Int(base.wrapping_add(off)))
+                    }
+                    crate::KernelIntrinsic::MemoryBarrier => Ok(RuntimeValue::Void),
+                    _ => Err(self.error(
+                        Some(function),
+                        Some(block),
+                        Some(origin),
+                        InterpreterErrorKind::UnsupportedBuiltin,
+                    )),
+                }
+            }
             Rvalue::Await(operand) => {
                 // The task handle is a receiver: repeated awaits are
                 // legal and the handle stays alive.

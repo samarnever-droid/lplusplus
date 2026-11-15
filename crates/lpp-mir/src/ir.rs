@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use lpp_hir::{
     Arena, BinaryOperator, DefId, FieldId, HirItemId, InstanceId, LocalId, OriginId, Symbol,
     UnaryOperator, VariantId,
@@ -112,6 +114,141 @@ pub struct MirPlace {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KernelIntrinsic {
+    SizeOf,
+    AlignOf,
+    PtrNull,
+    PtrIsNull,
+    PtrRead,
+    PtrWrite,
+    PtrOffset,
+    PtrAdd,
+    MmioRead8,
+    MmioRead16,
+    MmioRead32,
+    MmioRead64,
+    MmioWrite8,
+    MmioWrite16,
+    MmioWrite32,
+    MmioWrite64,
+    PortIn8,
+    PortIn16,
+    PortIn32,
+    PortOut8,
+    PortOut16,
+    PortOut32,
+    CpuCli,
+    CpuSti,
+    CpuHlt,
+    MemoryBarrier,
+    Rdtsc,
+    ReadCr0,
+    ReadCr2,
+    ReadCr3,
+    ReadCr4,
+    WriteCr3,
+    WriteCr4,
+    Rdmsr,
+    Wrmsr,
+    Lgdt,
+    Lidt,
+    Invlpg,
+    MemcpyRaw,
+    MemsetRaw,
+    MemmoveRaw,
+    MemcmpRaw,
+}
+
+impl KernelIntrinsic {
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<Self> {
+        Some(match name {
+            "size_of" => Self::SizeOf,
+            "align_of" => Self::AlignOf,
+            "ptr_null" => Self::PtrNull,
+            "ptr_is_null" => Self::PtrIsNull,
+            "ptr_read" => Self::PtrRead,
+            "ptr_write" => Self::PtrWrite,
+            "ptr_offset" => Self::PtrOffset,
+            "ptr_add" => Self::PtrAdd,
+            "mmio_read8" => Self::MmioRead8,
+            "mmio_read16" => Self::MmioRead16,
+            "mmio_read32" => Self::MmioRead32,
+            "mmio_read64" => Self::MmioRead64,
+            "mmio_write8" => Self::MmioWrite8,
+            "mmio_write16" => Self::MmioWrite16,
+            "mmio_write32" => Self::MmioWrite32,
+            "mmio_write64" => Self::MmioWrite64,
+            "port_in8" => Self::PortIn8,
+            "port_in16" => Self::PortIn16,
+            "port_in32" => Self::PortIn32,
+            "port_out8" => Self::PortOut8,
+            "port_out16" => Self::PortOut16,
+            "port_out32" => Self::PortOut32,
+            "cpu_cli" => Self::CpuCli,
+            "cpu_sti" => Self::CpuSti,
+            "cpu_hlt" => Self::CpuHlt,
+            "memory_barrier" => Self::MemoryBarrier,
+            "rdtsc" => Self::Rdtsc,
+            "read_cr0" => Self::ReadCr0,
+            "read_cr2" => Self::ReadCr2,
+            "read_cr3" => Self::ReadCr3,
+            "read_cr4" => Self::ReadCr4,
+            "write_cr3" => Self::WriteCr3,
+            "write_cr4" => Self::WriteCr4,
+            "rdmsr" => Self::Rdmsr,
+            "wrmsr" => Self::Wrmsr,
+            "lgdt" => Self::Lgdt,
+            "lidt" => Self::Lidt,
+            "invlpg" => Self::Invlpg,
+            "memcpy_raw" => Self::MemcpyRaw,
+            "memset_raw" => Self::MemsetRaw,
+            "memmove_raw" => Self::MemmoveRaw,
+            "memcmp_raw" => Self::MemcmpRaw,
+            _ => return None,
+        })
+    }
+
+    #[must_use]
+    pub const fn is_unsafe(self) -> bool {
+        !matches!(
+            self,
+            Self::SizeOf | Self::AlignOf | Self::PtrNull | Self::PtrIsNull
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct MirFunctionAttrs {
+    pub is_unsafe: bool,
+    pub is_naked: bool,
+    pub is_interrupt: bool,
+    pub export_name: Option<String>,
+    pub section: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct MirAggregateAttrs {
+    pub repr_c: bool,
+    pub packed: bool,
+    pub align: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnsafeSiteKind {
+    UnsafeFunction,
+    UnsafeBlock,
+    UnsafeIntrinsic,
+    UnsafeCast,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UnsafeSite {
+    pub origin: OriginId,
+    pub kind: UnsafeSiteKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Rvalue {
     Use(Operand),
     Unary {
@@ -122,6 +259,10 @@ pub enum Rvalue {
         left: Operand,
         operator: BinaryOperator,
         right: Operand,
+    },
+    Cast {
+        value: Operand,
+        target: TypeId,
     },
     Tuple(ListRange<Operand>),
     List(ListRange<Operand>),
@@ -146,6 +287,11 @@ pub enum Rvalue {
     },
     Builtin {
         builtin: BuiltinId,
+        arguments: ListRange<Operand>,
+    },
+    Intrinsic {
+        intrinsic: KernelIntrinsic,
+        type_argument: Option<TypeId>,
         arguments: ListRange<Operand>,
     },
     MakeClosure {
@@ -269,6 +415,9 @@ pub struct MirProgram {
     pub(crate) instructions: Arena<InstructionId, Instruction>,
     pub(crate) strings: Arena<MirStringId, String>,
     pub(crate) lists: MirLists,
+    pub(crate) function_attrs: BTreeMap<MirFunctionId, MirFunctionAttrs>,
+    pub(crate) aggregate_attrs: BTreeMap<MirAggregateId, MirAggregateAttrs>,
+    pub(crate) unsafe_sites: Vec<UnsafeSite>,
 }
 
 impl MirProgram {
@@ -286,6 +435,9 @@ impl MirProgram {
             instructions: Arena::new(),
             strings: Arena::new(),
             lists: MirLists::default(),
+            function_attrs: BTreeMap::new(),
+            aggregate_attrs: BTreeMap::new(),
+            unsafe_sites: Vec::new(),
         }
     }
 
@@ -307,6 +459,9 @@ impl MirProgram {
             instructions: Arena::with_capacity(expression_count.saturating_add(local_count)),
             strings: Arena::with_capacity(expression_count / 8),
             lists: MirLists::with_capacity(local_count, expression_count),
+            function_attrs: BTreeMap::new(),
+            aggregate_attrs: BTreeMap::new(),
+            unsafe_sites: Vec::new(),
         }
     }
 
@@ -576,6 +731,21 @@ impl MirProgram {
             + self.lists.fields.len()
             + self.lists.variants.len()
             + self.lists.captures.len()
+    }
+
+    #[must_use]
+    pub fn function_attrs(&self, id: MirFunctionId) -> MirFunctionAttrs {
+        self.function_attrs.get(&id).cloned().unwrap_or_default()
+    }
+
+    #[must_use]
+    pub fn aggregate_attrs(&self, id: MirAggregateId) -> MirAggregateAttrs {
+        self.aggregate_attrs.get(&id).copied().unwrap_or_default()
+    }
+
+    #[must_use]
+    pub fn unsafe_sites(&self) -> &[UnsafeSite] {
+        &self.unsafe_sites
     }
 }
 

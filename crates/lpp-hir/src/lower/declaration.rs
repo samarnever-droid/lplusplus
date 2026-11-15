@@ -14,7 +14,7 @@ impl<'module, 'package> ModuleLowerer<'module, 'package> {
         let attributes = item
             .attributes
             .iter()
-            .map(|attribute| self.intern(&attribute.name, attribute.span))
+            .map(|attribute| self.intern(&attribute.canonical_text(), attribute.span))
             .collect::<LowerResult<Vec<_>>>()?;
         let attributes = self.symbol_list(&attributes, item.span)?;
         let origin = self.source_origin(item.span)?;
@@ -54,6 +54,7 @@ impl<'module, 'package> ModuleLowerer<'module, 'package> {
         is_extern: bool,
     ) -> LowerResult<HirItemId> {
         let mut cursor = Cursor::new(node.tokens);
+        self.consume_keyword(&mut cursor, Keyword::Unsafe);
         self.consume_keyword(&mut cursor, Keyword::Async);
         self.expect_keyword(&mut cursor, Keyword::Def, "expected 'def' in method")?;
         let name_token = self.expect_identifier(&mut cursor, "expected method name")?;
@@ -81,6 +82,7 @@ impl<'module, 'package> ModuleLowerer<'module, 'package> {
     ) -> LowerResult<Function> {
         let mut cursor = Cursor::new(node.tokens);
         self.consume_keyword(&mut cursor, Keyword::Pub);
+        let is_unsafe = self.consume_keyword(&mut cursor, Keyword::Unsafe);
         let is_async = self.consume_keyword(&mut cursor, Keyword::Async);
         self.expect_keyword(&mut cursor, Keyword::Def, "expected function declaration")?;
         self.expect_identifier(&mut cursor, "expected function name")?;
@@ -227,6 +229,7 @@ impl<'module, 'package> ModuleLowerer<'module, 'package> {
             return_type,
             body,
             is_async,
+            is_unsafe,
             variadic,
         })
     }

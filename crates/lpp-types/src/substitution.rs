@@ -87,6 +87,10 @@ impl TypeSubstitution {
                 let element = self.apply_inner(interner, element, budget, memo, depth + 1)?;
                 interner.intern(TypeKind::Slice(element))?
             }
+            TypeKind::Ptr(element) => {
+                let element = self.apply_inner(interner, element, budget, memo, depth + 1)?;
+                interner.intern(TypeKind::Ptr(element))?
+            }
             TypeKind::Task(output) => {
                 let output = self.apply_inner(interner, output, budget, memo, depth + 1)?;
                 interner.intern(TypeKind::Task(output))?

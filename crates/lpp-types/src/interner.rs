@@ -17,9 +17,13 @@ pub enum PrimitiveType {
     U8,
     U16,
     U32,
+    U64,
     I8,
     I16,
     I32,
+    USize,
+    ISize,
+    RawPtr,
     StrSlice,
     VectorI64x2,
 }
@@ -36,6 +40,7 @@ pub enum TypeKind {
         value: TypeId,
     },
     Slice(TypeId),
+    Ptr(TypeId),
     Task(TypeId),
     Function {
         parameters: TypeListId,
@@ -77,9 +82,13 @@ struct PrimitiveIds {
     u8_: TypeId,
     u16_: TypeId,
     u32_: TypeId,
+    u64_: TypeId,
     i8_: TypeId,
     i16_: TypeId,
     i32_: TypeId,
+    usize_: TypeId,
+    isize_: TypeId,
+    raw_ptr: TypeId,
     str_slice: TypeId,
     vector_i64x2: TypeId,
 }
@@ -106,9 +115,13 @@ impl TypeInterner {
                 u8_: placeholder,
                 u16_: placeholder,
                 u32_: placeholder,
+                u64_: placeholder,
                 i8_: placeholder,
                 i16_: placeholder,
                 i32_: placeholder,
+                usize_: placeholder,
+                isize_: placeholder,
+                raw_ptr: placeholder,
                 str_slice: placeholder,
                 vector_i64x2: placeholder,
             },
@@ -165,6 +178,18 @@ impl TypeInterner {
                 .expect("primitive types fit the compact ID range"),
             vector_i64x2: interner
                 .intern(TypeKind::Primitive(PrimitiveType::VectorI64x2))
+                .expect("primitive types fit the compact ID range"),
+            u64_: interner
+                .intern(TypeKind::Primitive(PrimitiveType::U64))
+                .expect("primitive types fit the compact ID range"),
+            usize_: interner
+                .intern(TypeKind::Primitive(PrimitiveType::USize))
+                .expect("primitive types fit the compact ID range"),
+            isize_: interner
+                .intern(TypeKind::Primitive(PrimitiveType::ISize))
+                .expect("primitive types fit the compact ID range"),
+            raw_ptr: interner
+                .intern(TypeKind::Primitive(PrimitiveType::RawPtr))
                 .expect("primitive types fit the compact ID range"),
         };
         interner
@@ -256,9 +281,13 @@ impl TypeInterner {
             PrimitiveType::U8 => self.primitives.u8_,
             PrimitiveType::U16 => self.primitives.u16_,
             PrimitiveType::U32 => self.primitives.u32_,
+            PrimitiveType::U64 => self.primitives.u64_,
             PrimitiveType::I8 => self.primitives.i8_,
             PrimitiveType::I16 => self.primitives.i16_,
             PrimitiveType::I32 => self.primitives.i32_,
+            PrimitiveType::USize => self.primitives.usize_,
+            PrimitiveType::ISize => self.primitives.isize_,
+            PrimitiveType::RawPtr => self.primitives.raw_ptr,
             PrimitiveType::StrSlice => self.primitives.str_slice,
             PrimitiveType::VectorI64x2 => self.primitives.vector_i64x2,
         }

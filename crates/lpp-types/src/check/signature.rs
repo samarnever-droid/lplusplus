@@ -294,6 +294,7 @@ impl<'hir> TypeChecker<'hir> {
                 value: arguments[1],
             },
             "Slice" if arguments.len() == 1 => TypeKind::Slice(arguments[0]),
+            "Ptr" if arguments.len() == 1 => TypeKind::Ptr(arguments[0]),
             "Task" if arguments.len() == 1 => TypeKind::Task(arguments[0]),
             "Tuple" => {
                 let arguments = self
@@ -363,9 +364,13 @@ fn primitive_type(name: &str) -> Option<PrimitiveType> {
         "U8" | "u8" => PrimitiveType::U8,
         "U16" | "u16" => PrimitiveType::U16,
         "U32" | "u32" => PrimitiveType::U32,
+        "U64" | "u64" => PrimitiveType::U64,
         "I8" | "i8" => PrimitiveType::I8,
         "I16" | "i16" => PrimitiveType::I16,
         "I32" | "i32" => PrimitiveType::I32,
+        "USize" | "usize" => PrimitiveType::USize,
+        "ISize" | "isize" => PrimitiveType::ISize,
+        "RawPtr" => PrimitiveType::RawPtr,
         "StrSlice" => PrimitiveType::StrSlice,
         "VectorI64x2" => PrimitiveType::VectorI64x2,
         _ => return None,

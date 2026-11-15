@@ -75,6 +75,7 @@ fn match_inner(
         }
         (TypeKind::List(left), TypeKind::List(right))
         | (TypeKind::Slice(left), TypeKind::Slice(right))
+        | (TypeKind::Ptr(left), TypeKind::Ptr(right))
         | (TypeKind::Task(left), TypeKind::Task(right)) => {
             match_inner(interner, left, right, substitution, budget, depth + 1)
         }
@@ -240,6 +241,7 @@ fn overlap_inner(
         }
         (TypeKind::List(left), TypeKind::List(right))
         | (TypeKind::Slice(left), TypeKind::Slice(right))
+        | (TypeKind::Ptr(left), TypeKind::Ptr(right))
         | (TypeKind::Task(left), TypeKind::Task(right)) => {
             overlap_inner(interner, left, right, bindings, budget, depth + 1)
         }
@@ -375,7 +377,10 @@ fn contains_parameter(
         match interner.kind(type_id) {
             TypeKind::GenericParameter(parameter) if parameter == needle => return Ok(true),
             TypeKind::Tuple(types) => pending.extend(interner.list(types).iter().rev().copied()),
-            TypeKind::List(element) | TypeKind::Slice(element) | TypeKind::Task(element) => {
+            TypeKind::List(element)
+            | TypeKind::Slice(element)
+            | TypeKind::Ptr(element)
+            | TypeKind::Task(element) => {
                 pending.push(element);
             }
             TypeKind::Map { key, value } => {
@@ -485,6 +490,13 @@ fn substitute_inner(
                 .intern(TypeKind::Slice(element))
                 .map_err(|_| PatternLimit::Work)?
         }
+        TypeKind::Ptr(element) => {
+            let element =
+                substitute_inner(interner, element, substitution, budget, memo, depth + 1)?;
+            interner
+                .intern(TypeKind::Ptr(element))
+                .map_err(|_| PatternLimit::Work)?
+        }
         TypeKind::Task(output) => {
             let output = substitute_inner(interner, output, substitution, budget, memo, depth + 1)?;
             interner
@@ -574,7 +586,10 @@ fn specificity_inner(
     let children = match interner.kind(type_id) {
         TypeKind::GenericParameter(_) => return Ok(0),
         TypeKind::Tuple(types) => interner.list(types).to_vec(),
-        TypeKind::List(element) | TypeKind::Slice(element) | TypeKind::Task(element) => {
+        TypeKind::List(element)
+        | TypeKind::Slice(element)
+        | TypeKind::Ptr(element)
+        | TypeKind::Task(element) => {
             vec![element]
         }
         TypeKind::Map { key, value } => vec![key, value],
@@ -610,7 +625,10 @@ pub(crate) fn is_concrete_type(
         match interner.kind(type_id) {
             TypeKind::GenericParameter(_) | TypeKind::InferenceVariable(_) => return Ok(false),
             TypeKind::Tuple(types) => pending.extend(interner.list(types).iter().rev().copied()),
-            TypeKind::List(element) | TypeKind::Slice(element) | TypeKind::Task(element) => {
+            TypeKind::List(element)
+            | TypeKind::Slice(element)
+            | TypeKind::Ptr(element)
+            | TypeKind::Task(element) => {
                 pending.push(element);
             }
             TypeKind::Map { key, value } => {

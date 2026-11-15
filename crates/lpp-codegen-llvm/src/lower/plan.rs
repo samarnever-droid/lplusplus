@@ -174,6 +174,8 @@ fn check_rvalue(
         Rvalue::MakeClosure { .. } => Err(unsupported("closure", Some(fn_id))),
         Rvalue::Await(_) => Err(unsupported("await", Some(fn_id))),
         Rvalue::Spawn(_) => Err(unsupported("spawn", Some(fn_id))),
+        Rvalue::Cast { .. } => Err(unsupported("cast", Some(fn_id))),
+        Rvalue::Intrinsic { .. } => Err(unsupported("kernel intrinsic", Some(fn_id))),
     }
 }
 

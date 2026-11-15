@@ -33,6 +33,65 @@ impl FunctionBuilder<'_, '_> {
                 origin,
             );
         }
+        if let ExpressionKind::Name {
+            binding: NameBinding::Unresolved,
+            symbol,
+            ..
+        } = self.core.package.expressions[callee].kind
+            && let Some(name) = self.core.package.names.symbols.resolve(symbol)
+            && let Some(intrinsic) = KernelIntrinsic::from_name(name)
+        {
+            if intrinsic.is_unsafe() {
+                self.core.program.unsafe_sites.push(UnsafeSite {
+                    origin,
+                    kind: UnsafeSiteKind::UnsafeIntrinsic,
+                });
+            }
+            let type_argument = if let Some(type_args) = explicit_arguments
+                && let Some(&first_ref) = self.core.package.type_refs(type_args).first()
+                && let Some(template) = self.core.types.assignments.type_ref(first_ref)
+            {
+                Some(self.concrete_type(template, origin)?)
+            } else {
+                match intrinsic {
+                    KernelIntrinsic::PtrNull => match self.core.types.interner.kind(result_type) {
+                        TypeKind::Ptr(element) => Some(element),
+                        _ => None,
+                    },
+                    KernelIntrinsic::PtrIsNull
+                    | KernelIntrinsic::PtrRead
+                    | KernelIntrinsic::PtrWrite
+                    | KernelIntrinsic::PtrOffset
+                    | KernelIntrinsic::PtrAdd => self
+                        .core
+                        .package
+                        .expressions(arguments)
+                        .first()
+                        .and_then(|&arg0| self.core.types.assignments.expression(arg0))
+                        .and_then(|ty| self.concrete_type(ty, origin).ok())
+                        .and_then(|ty| match self.core.types.interner.kind(ty) {
+                            TypeKind::Ptr(element) => Some(element),
+                            _ => None,
+                        }),
+                    _ => None,
+                }
+            };
+            if let Some(ty) = type_argument
+                && matches!(self.core.types.interner.kind(ty), TypeKind::Nominal { .. })
+            {
+                let _ = self.core.ensure_aggregate(ty, origin)?;
+            }
+            let arguments = self.lower_arguments(arguments, origin, depth)?;
+            return self.assign_temporary(
+                result_type,
+                Rvalue::Intrinsic {
+                    intrinsic,
+                    type_argument,
+                    arguments,
+                },
+                origin,
+            );
+        }
         if let Some(AggregateExpressionFact::MethodCall { method }) =
             self.core.types.aggregates.expression(expression)
         {

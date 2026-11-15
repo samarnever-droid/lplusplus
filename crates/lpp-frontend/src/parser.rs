@@ -206,29 +206,47 @@ impl Parser {
         }
         let first = self.kind_at(line, offset);
         let second = self.kind_at(line, offset + 1);
-        match (first, second) {
-            (Some(TokenKind::At), _) => SyntaxKind::Attribute,
-            (Some(TokenKind::Keyword(Keyword::Async)), Some(TokenKind::Keyword(Keyword::Def)))
-            | (Some(TokenKind::Keyword(Keyword::Def)), _) => SyntaxKind::Function,
-            (Some(TokenKind::Keyword(Keyword::Struct)), _) => SyntaxKind::Struct,
-            (Some(TokenKind::Keyword(Keyword::Enum)), _) => SyntaxKind::Enum,
-            (Some(TokenKind::Keyword(Keyword::Trait)), _) => SyntaxKind::Trait,
-            (Some(TokenKind::Keyword(Keyword::Impl)), _) => SyntaxKind::Impl,
-            (Some(TokenKind::Keyword(Keyword::Extern)), _) => SyntaxKind::Extern,
-            (Some(TokenKind::Keyword(Keyword::Const)), _) => SyntaxKind::Const,
-            (Some(TokenKind::Keyword(Keyword::Type)), _) => SyntaxKind::TypeAlias,
-            (Some(TokenKind::Keyword(Keyword::Import)), _) => SyntaxKind::Import,
-            (Some(TokenKind::Keyword(Keyword::From)), _) => SyntaxKind::FromImport,
-            (Some(TokenKind::Keyword(Keyword::If)), _) => SyntaxKind::If,
-            (Some(TokenKind::Keyword(Keyword::Elif)), _) => SyntaxKind::Elif,
-            (Some(TokenKind::Keyword(Keyword::Else)), _) => SyntaxKind::Else,
-            (Some(TokenKind::Keyword(Keyword::While)), _) => SyntaxKind::While,
-            (Some(TokenKind::Keyword(Keyword::For)), _) => SyntaxKind::For,
-            (Some(TokenKind::Keyword(Keyword::Match)), _) => SyntaxKind::Match,
-            (Some(TokenKind::Keyword(Keyword::Return)), _) => SyntaxKind::Return,
-            (Some(TokenKind::Keyword(Keyword::Break)), _) => SyntaxKind::Break,
-            (Some(TokenKind::Keyword(Keyword::Continue)), _) => SyntaxKind::Continue,
-            (Some(TokenKind::Keyword(Keyword::Mut)), _) => SyntaxKind::Binding,
+        let third = self.kind_at(line, offset + 2);
+        match (first, second, third) {
+            (Some(TokenKind::At), _, _) => SyntaxKind::Attribute,
+            (Some(TokenKind::Keyword(Keyword::Unsafe)), Some(TokenKind::Colon), _) => {
+                SyntaxKind::Unsafe
+            }
+            (
+                Some(TokenKind::Keyword(Keyword::Unsafe)),
+                Some(TokenKind::Keyword(Keyword::Async)),
+                Some(TokenKind::Keyword(Keyword::Def)),
+            )
+            | (
+                Some(TokenKind::Keyword(Keyword::Unsafe)),
+                Some(TokenKind::Keyword(Keyword::Def)),
+                _,
+            )
+            | (
+                Some(TokenKind::Keyword(Keyword::Async)),
+                Some(TokenKind::Keyword(Keyword::Def)),
+                _,
+            )
+            | (Some(TokenKind::Keyword(Keyword::Def)), _, _) => SyntaxKind::Function,
+            (Some(TokenKind::Keyword(Keyword::Struct)), _, _) => SyntaxKind::Struct,
+            (Some(TokenKind::Keyword(Keyword::Enum)), _, _) => SyntaxKind::Enum,
+            (Some(TokenKind::Keyword(Keyword::Trait)), _, _) => SyntaxKind::Trait,
+            (Some(TokenKind::Keyword(Keyword::Impl)), _, _) => SyntaxKind::Impl,
+            (Some(TokenKind::Keyword(Keyword::Extern)), _, _) => SyntaxKind::Extern,
+            (Some(TokenKind::Keyword(Keyword::Const)), _, _) => SyntaxKind::Const,
+            (Some(TokenKind::Keyword(Keyword::Type)), _, _) => SyntaxKind::TypeAlias,
+            (Some(TokenKind::Keyword(Keyword::Import)), _, _) => SyntaxKind::Import,
+            (Some(TokenKind::Keyword(Keyword::From)), _, _) => SyntaxKind::FromImport,
+            (Some(TokenKind::Keyword(Keyword::If)), _, _) => SyntaxKind::If,
+            (Some(TokenKind::Keyword(Keyword::Elif)), _, _) => SyntaxKind::Elif,
+            (Some(TokenKind::Keyword(Keyword::Else)), _, _) => SyntaxKind::Else,
+            (Some(TokenKind::Keyword(Keyword::While)), _, _) => SyntaxKind::While,
+            (Some(TokenKind::Keyword(Keyword::For)), _, _) => SyntaxKind::For,
+            (Some(TokenKind::Keyword(Keyword::Match)), _, _) => SyntaxKind::Match,
+            (Some(TokenKind::Keyword(Keyword::Return)), _, _) => SyntaxKind::Return,
+            (Some(TokenKind::Keyword(Keyword::Break)), _, _) => SyntaxKind::Break,
+            (Some(TokenKind::Keyword(Keyword::Continue)), _, _) => SyntaxKind::Continue,
+            (Some(TokenKind::Keyword(Keyword::Mut)), _, _) => SyntaxKind::Binding,
             _ if parent == Some(SyntaxKind::Match)
                 && self.line_ends_with(line, TokenKind::Colon) =>
             {
@@ -493,8 +511,33 @@ impl Parser {
     fn parse_attribute(&self, node: &SyntaxNode) -> Result<Attribute, Vec<Diagnostic>> {
         let line = self.line_tokens(node);
         let name = self.token_text(line[1]).to_owned();
+        let mut arguments = Vec::new();
+        if line.len() > 2 {
+            if line.get(2).map(|token| token.kind) != Some(TokenKind::LeftParen)
+                || line.last().map(|token| token.kind) != Some(TokenKind::RightParen)
+            {
+                return self.fail(
+                    "E1103",
+                    "expected '(...)' arguments after attribute name",
+                    node.span,
+                );
+            }
+            for token in &line[3..line.len() - 1] {
+                if token.kind == TokenKind::Comma {
+                    continue;
+                }
+                let text = self.token_text(token);
+                let arg = if token.kind == TokenKind::String && text.len() >= 2 {
+                    text[1..text.len() - 1].to_owned()
+                } else {
+                    text.to_owned()
+                };
+                arguments.push(arg);
+            }
+        }
         Ok(Attribute {
             name,
+            arguments,
             span: node.span,
         })
     }
@@ -701,6 +744,7 @@ fn requires_block(kind: SyntaxKind, parent: Option<SyntaxKind>) -> bool {
             | SyntaxKind::Else
             | SyntaxKind::While
             | SyntaxKind::For
+            | SyntaxKind::Unsafe
             | SyntaxKind::Match
             | SyntaxKind::MatchArm
     )
@@ -714,6 +758,7 @@ const fn is_control(kind: SyntaxKind) -> bool {
             | SyntaxKind::Else
             | SyntaxKind::While
             | SyntaxKind::For
+            | SyntaxKind::Unsafe
             | SyntaxKind::Match
             | SyntaxKind::MatchArm
     )
