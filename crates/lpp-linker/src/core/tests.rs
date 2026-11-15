@@ -147,3 +147,33 @@ fn fits_checks() {
     assert!(fits_i26((1 << 25) - 1));
     assert!(!fits_i26(1 << 25));
 }
+
+#[test]
+fn pe_bss_starts_after_data() {
+    let data_sym = ResolvedSym {
+        name: "g_data".to_string(),
+        bind: Bind::Global,
+        class: SectionClass::Data,
+        offset: 8,
+        size: 8,
+        object: 0,
+    };
+    let bss_sym = ResolvedSym {
+        name: "g_bss".to_string(),
+        bind: Bind::Global,
+        class: SectionClass::Bss,
+        offset: 0,
+        size: 8,
+        object: 0,
+    };
+    let data_rva = 0x3000;
+    let bss_rva = data_rva + 32;
+    assert_eq!(
+        super::pe_writer::pe_sym_rva(&data_sym, 0x1000, 0x2000, data_rva, bss_rva, 0x4000),
+        0x3008
+    );
+    assert_eq!(
+        super::pe_writer::pe_sym_rva(&bss_sym, 0x1000, 0x2000, data_rva, bss_rva, 0x4000),
+        0x3020
+    );
+}

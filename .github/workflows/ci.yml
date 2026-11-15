@@ -21,6 +21,8 @@ jobs:
           toolchain: 1.98.0
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          cache-on-failure: true
       - name: Show toolchain
         run: |
           rustc --version
@@ -78,6 +80,8 @@ jobs:
           toolchain: 1.98.0
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          cache-on-failure: true
       - name: Check all Cranelift target backends
         run: cargo check --locked --features all-arch
 
@@ -91,6 +95,8 @@ jobs:
           toolchain: 1.98.0
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          cache-on-failure: true
       - name: Install mold linker
         run: sudo apt-get update -qq && sudo apt-get install -y -qq mold 2>/dev/null || true
       - name: Run King 20 Stable v1
@@ -181,6 +187,8 @@ jobs:
           toolchain: 1.98.0
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          cache-on-failure: true
       - name: Install mold linker
         run: sudo apt-get update -qq && sudo apt-get install -y -qq mold 2>/dev/null || true
       - name: Run 10k / 50k / 100k phase scaling suite
@@ -203,6 +211,8 @@ jobs:
           toolchain: 1.98.0
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          cache-on-failure: true
       - name: Show sqlite3 version
         run: python3 -c "import sqlite3; print('sqlite3', sqlite3.sqlite_version)"
       - name: Build the L++ compiler
@@ -275,6 +285,8 @@ jobs:
           toolchain: 1.98.0
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          cache-on-failure: true
       - name: Install zip/unzip
         run: sudo apt-get update -qq && sudo apt-get install -y -qq zip unzip 2>/dev/null || true
       - name: Build the L++ compiler
@@ -326,6 +338,8 @@ jobs:
           toolchain: 1.98.0
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          cache-on-failure: true
       - name: Locate and load MSVC tools
         shell: pwsh
         run: |
@@ -550,6 +564,8 @@ jobs:
           toolchain: 1.98.0
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          cache-on-failure: true
       - name: Build and test macOS toolchain
         run: |
           cargo build --locked -p lpp-runtime

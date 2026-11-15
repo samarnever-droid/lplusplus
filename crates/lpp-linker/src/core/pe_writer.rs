@@ -117,11 +117,17 @@ pub fn write_pe_with_options_t(
         None
     };
 
+    if merged.bss_size > 0 {
+        let aligned = align_up(merged.data.len(), 16);
+        merged.data.resize(aligned, 0);
+    }
+
     let text_rva = PE_SECTION_RVA;
     let thunks_len = raw_imports.len() * 6;
     let total_text = merged.text.len() + thunks_len;
     let rdata_rva = pe_align(text_rva as usize + total_text, PE_SECT_ALIGN) as u32;
     let data_rva = pe_align(rdata_rva as usize + merged.rodata.len(), PE_SECT_ALIGN) as u32;
+    let bss_rva = data_rva + merged.data.len() as u32;
     let data_virt = merged.data.len() + merged.bss_size;
     let tls_rva = pe_align(data_rva as usize + data_virt, PE_SECT_ALIGN) as u32;
     let tls_virt = merged.tls.len() + merged.tbss_size;
@@ -192,7 +198,7 @@ pub fn write_pe_with_options_t(
         let slot_rva = data_rva as usize + refptr_data_off + i * 8;
         refptr_rvas.insert(format!(".refptr.{name}"), slot_rva);
         if let Some(sy) = merged.syms.get(name) {
-            let rva = pe_sym_rva(sy, text_rva, rdata_rva, data_rva, tls_rva);
+            let rva = pe_sym_rva(sy, text_rva, rdata_rva, data_rva, bss_rva, tls_rva);
             let addr = image_base + rva;
             merged.data[refptr_data_off + i * 8..refptr_data_off + i * 8 + 8]
                 .copy_from_slice(&addr.to_le_bytes());
@@ -220,6 +226,7 @@ pub fn write_pe_with_options_t(
                 text_rva,
                 rdata_rva,
                 data_rva,
+                bss_rva,
                 tls_rva,
                 idx,
             )?;
@@ -492,7 +499,7 @@ pub fn write_pe_with_options_t(
                     .to_string()
             })?
     };
-    let entry_rva = pe_sym_rva(entry_sym, text_rva, rdata_rva, data_rva, tls_rva) as u32;
+    let entry_rva = pe_sym_rva(entry_sym, text_rva, rdata_rva, data_rva, bss_rva, tls_rva) as u32;
     put_u32(&mut pe, opt + 16, entry_rva);
     put_u32(&mut pe, opt + 20, text_rva);
     put_u64(&mut pe, opt + 24, image_base);
@@ -717,16 +724,25 @@ pub fn write_pe_with_options_t(
     Ok(())
 }
 
-fn pe_sym_rva(sy: &ResolvedSym, text: u32, rdata: u32, data: u32, tls: u32) -> u64 {
+pub(super) fn pe_sym_rva(
+    sy: &ResolvedSym,
+    text: u32,
+    rdata: u32,
+    data: u32,
+    bss: u32,
+    tls: u32,
+) -> u64 {
     let base = match sy.class {
         SectionClass::Text => text,
         SectionClass::Rodata | SectionClass::InitArray | SectionClass::FiniArray => rdata,
-        SectionClass::Data | SectionClass::Bss => data,
+        SectionClass::Data => data,
+        SectionClass::Bss => bss,
         SectionClass::Tls => tls,
     };
     base as u64 + sy.offset
 }
 
+#[allow(clippy::too_many_arguments)]
 fn resolve_pe_target(
     rel: &Relocation,
     merged: &Merged,
@@ -737,6 +753,7 @@ fn resolve_pe_target(
     text_rva: u32,
     rdata_rva: u32,
     data_rva: u32,
+    bss_rva: u32,
     tls_rva: u32,
     _obj_idx: usize,
 ) -> Result<u64, LinkError> {
@@ -748,7 +765,7 @@ fn resolve_pe_target(
                     (rdata_rva, bases.rodata)
                 }
                 SectionClass::Data => (data_rva, bases.data),
-                SectionClass::Bss => (data_rva, bases.bss),
+                SectionClass::Bss => (bss_rva, bases.bss),
                 SectionClass::Tls => (tls_rva, bases.tls),
             };
             Ok(rva as u64 + b as u64 + *off)
@@ -758,14 +775,18 @@ fn resolve_pe_target(
                 return Ok(0);
             }
             if let Some(sy) = merged.syms.get(name) {
-                return Ok(pe_sym_rva(sy, text_rva, rdata_rva, data_rva, tls_rva));
+                return Ok(pe_sym_rva(
+                    sy, text_rva, rdata_rva, data_rva, bss_rva, tls_rva,
+                ));
             }
             if let Some(&rva) = refptr_offsets.get(name) {
                 return Ok(rva as u64);
             }
             if let Some(inner) = name.strip_prefix(".refptr.") {
                 if let Some(sy) = merged.syms.get(inner) {
-                    return Ok(pe_sym_rva(sy, text_rva, rdata_rva, data_rva, tls_rva));
+                    return Ok(pe_sym_rva(
+                        sy, text_rva, rdata_rva, data_rva, bss_rva, tls_rva,
+                    ));
                 }
             }
             if !name.starts_with("__imp_") {
