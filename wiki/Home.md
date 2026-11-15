@@ -7,7 +7,7 @@ L++ is a compiled, statically typed systems and application programming language
 2. **Native by default:** Direct compilation to native machine code (Cranelift AOT by default, optional experimental LLVM and `wasm32-wasip1` targets) without a runtime VM.
 3. **Safety engineered in:** Deterministic Automatic Reference Counting (ARC), MIR ownership placement and balance proofs (`E4403`), and Bacon-Rajan trial-deletion cycle collection on Cranelift native targets.
 
-> For authoritative syntax, CLI, and per-backend support boundaries, see [`specs.md`](../specs.md) and [`documentation/CURRENT_CAPABILITIES.md`](../documentation/CURRENT_CAPABILITIES.md).
+> For authoritative syntax, CLI, and per-backend support boundaries, see [`specs.md`](../specs.md) and [`docs/CURRENT_CAPABILITIES.md`](../docs/CURRENT_CAPABILITIES.md).
 
 ---
 

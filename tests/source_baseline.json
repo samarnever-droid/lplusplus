@@ -6,12 +6,12 @@
       "name": "SamarOS combined-source dialect",
       "command": [
         "python3",
-        "SamarOS/tools/lppc.py",
+        "examples/samaros/tools/lppc.py",
         "{output}",
-        "SamarOS/kernel/src/sys.lpp",
-        "SamarOS/kernel/src/ui.lpp",
-        "SamarOS/kernel/src/apps.lpp",
-        "SamarOS/kernel/src/samaros.lpp"
+        "examples/samaros/kernel/src/sys.lpp",
+        "examples/samaros/kernel/src/ui.lpp",
+        "examples/samaros/kernel/src/apps.lpp",
+        "examples/samaros/kernel/src/samaros.lpp"
       ]
     }
   ],
@@ -22,17 +22,17 @@
       "expected_failures": [
         {
           "status": "custom-dialect",
-          "path": "SamarOS/kernel/src/apps.lpp",
+          "path": "examples/samaros/kernel/src/apps.lpp",
           "contains": "semantic: Undeclared identifier 'APP_WELCOME'"
         },
         {
           "status": "custom-dialect",
-          "path": "SamarOS/kernel/src/samaros.lpp",
+          "path": "examples/samaros/kernel/src/samaros.lpp",
           "contains": "semantic: Undeclared identifier 'clamp'"
         },
         {
           "status": "custom-dialect",
-          "path": "SamarOS/kernel/src/ui.lpp",
+          "path": "examples/samaros/kernel/src/ui.lpp",
           "contains": "semantic: Undeclared identifier 'clamp'"
         },
         {

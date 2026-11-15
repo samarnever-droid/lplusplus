@@ -32,4 +32,4 @@ Select linker behavior via `--linker direct|cc|host` or `lpp config set linker <
 ```bash
 lpp-link --help
 ```
-See [`documentation/Native_Linker_Roadmap.md`](../documentation/Native_Linker_Roadmap.md) and [`specs.md`](../specs.md) §8.2–§8.3 for the exact boundaries of direct-link vs host-link execution.
+See [`docs/Native_Linker_Roadmap.md`](../docs/Native_Linker_Roadmap.md) and [`specs.md`](../specs.md) §8.2–§8.3 for the exact boundaries of direct-link vs host-link execution.

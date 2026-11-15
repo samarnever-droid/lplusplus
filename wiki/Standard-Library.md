@@ -1,6 +1,6 @@
 # Standard Library & Builtins
 
-L++ provides runtime builtins in `abi/builtins.toml` plus pure-L++ modules under `stdlib/`. Note that backend coverage varies between Cranelift native, WASM (`wasm32-wasip1`), and experimental LLVM (`documentation/CURRENT_CAPABILITIES.md`).
+L++ provides runtime builtins in `abi/builtins.toml` plus pure-L++ modules under `stdlib/`. Note that backend coverage varies between Cranelift native, WASM (`wasm32-wasip1`), and experimental LLVM (`docs/CURRENT_CAPABILITIES.md`).
 
 ---
 
@@ -98,4 +98,4 @@ link "sqlite3"
 extern "C":
     def sqlite3_libversion() -> Str
 ```
-See [`documentation/EXTERNAL_C_ABI.md`](../documentation/EXTERNAL_C_ABI.md) for ABI preconditions.
+See [`docs/EXTERNAL_C_ABI.md`](../docs/EXTERNAL_C_ABI.md) for ABI preconditions.

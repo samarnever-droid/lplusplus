@@ -363,7 +363,7 @@ subset: `E5001`/`E5003` at the exact function. These are 5C2.
    *(Amendment, 2026-10-20: the deferral is closed. The plan graph now
    carries struct-field edges, struct cycles classify `Shared`, and
    both the oracle and the native runtimes reclaim them by trial
-   deletion — see `documentation/CYCLE_BREAKING.md`. `E4304` once
+   deletion — see `docs/CYCLE_BREAKING.md`. `E4304` once
    again means a genuine accounting leak.)*
 3. **Determinism.** Two compiles of each corpus produce byte-identical
    objects and identical symbol censuses; destructors in
@@ -505,7 +505,7 @@ cycle with plain ARC (no special-case code).
 refcounts and collects unreachable cycles by trial deletion; the
 backend generates `lpp_trace_*` functions and collectible markings for
 the `Shared` set, and the runtimes reclaim cyclic garbage. See
-`documentation/CYCLE_BREAKING.md`.)*
+`docs/CYCLE_BREAKING.md`.)*
 
 **Builtin table (registry-derived over all 518 `BuiltinId`s).** Four
 disjoint families (96 covered: 71 + 18 + 7, by name at this commit —

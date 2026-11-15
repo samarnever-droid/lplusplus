@@ -108,7 +108,7 @@ values live in a Frame arena (no heap at all)**, acyclic values are freed
 collection is paid only where a reference cycle is structurally possible**
 (detected statically by Tarjan SCC in `crates/lpp-ownership`; unreachable
 cycles are reclaimed by bounded trial deletion over candidate subgraphs,
-never a whole-heap pause — see `documentation/CYCLE_BREAKING.md`). That is precisely the memory discipline
+never a whole-heap pause — see `docs/CYCLE_BREAKING.md`). That is precisely the memory discipline
 embedded and kernel code wants: predictable, allocation-light, pause-free.
 
 ## Phasing / cost

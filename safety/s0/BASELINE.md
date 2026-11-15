@@ -20,4 +20,4 @@ Each safety-sensitive pull request records platform, compiler versions, exact co
 
 ## Promotion rule
 
-S0 only proves that the tool gate exists and was executed. S1 additionally requires deterministic rejection for unsupported ownership behavior. S2 requires ownership/MIR/runtime/negative/parity evidence as defined in `documentation/Safety_Mission.md`.
+S0 only proves that the tool gate exists and was executed. S1 additionally requires deterministic rejection for unsupported ownership behavior. S2 requires ownership/MIR/runtime/negative/parity evidence as defined in `docs/Safety_Mission.md`.

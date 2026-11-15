@@ -149,7 +149,7 @@ done
 # cycle_self_loop/cycle_ring/cycle_list_ring/cycle_churn.lpp): every edge
 # stays owning, and unreachable cycles are reclaimed by the runtime
 # trial-deletion collector over the ownership plan's Shared types (see
-# documentation/CYCLE_BREAKING.md). Leak-freedom for cyclic garbage is
+# docs/CYCLE_BREAKING.md). Leak-freedom for cyclic garbage is
 # verified separately (ASan/LSan + flat-RSS churn over 200k cycles); this
 # script pins stdout parity across the interpreter oracle and both native
 # link paths.

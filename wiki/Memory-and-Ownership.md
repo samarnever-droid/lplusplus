@@ -2,7 +2,7 @@
 
 L++ manages memory **without a stop-the-world tracing garbage collector** on its native runtime, combining MIR escape/placement classification, balanced Automatic Reference Counting (ARC), ownership balance proofs (`E4403`), and Bacon-Rajan trial-deletion cycle collection on Cranelift native targets.
 
-> For verified safety scope and backend boundaries, see [`documentation/Safety_Mission.md`](../documentation/Safety_Mission.md), [`documentation/CYCLE_BREAKING.md`](../documentation/CYCLE_BREAKING.md), and [`documentation/CONCURRENCY.md`](../documentation/CONCURRENCY.md).
+> For verified safety scope and backend boundaries, see [`docs/Safety_Mission.md`](../docs/Safety_Mission.md), [`docs/CYCLE_BREAKING.md`](../docs/CYCLE_BREAKING.md), and [`docs/CONCURRENCY.md`](../docs/CONCURRENCY.md).
 
 ---
 
@@ -16,7 +16,7 @@ During `lpp-ownership` analysis over MIR, every managed value is placed into one
 | **`Owned`** | Heap (ARC) | Single owning flow | Move semantics avoid redundant retain/release pairs along linear moves |
 | **`Shared`** | Heap (ARC) | Aliased or potentially cycle-capable | Participates in cycle tracking on Cranelift native targets |
 
-*(In the current native runtime, heap ARC headers use atomic reference count operations across managed cells; see [`documentation/CONCURRENCY.md`](../documentation/CONCURRENCY.md).)*
+*(In the current native runtime, heap ARC headers use atomic reference count operations across managed cells; see [`docs/CONCURRENCY.md`](../docs/CONCURRENCY.md).)*
 
 ---
 

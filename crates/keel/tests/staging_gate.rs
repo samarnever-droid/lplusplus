@@ -1,6 +1,6 @@
 //! Gate: slice 11 — every compile command (build/check/run/test) stages
 //! path + registry deps; registry artifacts are verified against the lock.
-//! Contract: DEP_LINKING.md (slice 11 section).
+//! Contract: docs/rewrite/DEP_LINKING.md (slice 11 section).
 
 mod common;
 

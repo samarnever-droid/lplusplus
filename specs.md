@@ -1,7 +1,7 @@
 # L++ language and toolchain specification
 
 - **Status:** source-grounded description of the implementation in this **v0.3.0** (`v0.3-dev`) working tree, not a promise that every construct works on every backend.
-- **Audit date:** 2026-11-15. The compact capability inventory in `documentation/CURRENT_CAPABILITIES.md` and release notes in `documentation/RELEASE_NOTES_v0.3.0.md` track the same `v0.3.0` snapshot.
+- **Audit date:** 2026-11-15. The compact capability inventory in `docs/CURRENT_CAPABILITIES.md` and release notes in `docs/release/V0.3.0.md` track the same `v0.3.0` snapshot.
 - **Scope:** the L++ source language, compiler pipeline, runtime/ABI, diagnostics, developer tools, Keel package manager, backend targets, and known limitations.
 
 This document describes what the current implementation parses, type-checks, lowers, and supports on the named backend. It is deliberately not a claim of language-version stability, complete cross-backend parity, data-race freedom, or production readiness for experimental features. A construct accepted by the lexer/parser is not necessarily accepted by type checking or by every code generator. Where support differs, this specification says so.
@@ -52,7 +52,7 @@ The front end preserves source spans and reports lexer/parser/name/lowering diag
 - **Backend-supported** means the selected backend can emit it. A backend rejects unsupported MIR with an error; it should not be assumed to produce a partial object.
 - **End-to-end verified** means a build/run integration path has actually been exercised. This is a stronger claim than the presence of implementation code or an ABI entry.
 
-The three backends have different surfaces. Consult [§8](#8-compiler-pipeline-targets-and-backends) and [`documentation/CURRENT_CAPABILITIES.md`](documentation/CURRENT_CAPABILITIES.md) before relying on a feature outside Cranelift/native.
+The three backends have different surfaces. Consult [§8](#8-compiler-pipeline-targets-and-backends) and [`docs/CURRENT_CAPABILITIES.md`](docs/CURRENT_CAPABILITIES.md) before relying on a feature outside Cranelift/native.
 
 ### 1.3 Engine selection
 
@@ -337,7 +337,7 @@ Runtime panic conditions include supported bounds/handle failures, integer divis
 - `async def`/`.await` use task-state records and a deterministic, single-thread, run-to-completion executor. There is no I/O reactor, nonblocking socket/file readiness, work stealing, fairness, or general coroutine suspension guarantee. A blocking builtin called transitively from an async function is rejected in the current first tier. Task handles cannot be captured by closures in this tier.
 - Panics terminate the process; there is no per-thread panic isolation or join-error recovery guarantee.
 
-See [`documentation/CONCURRENCY.md`](documentation/CONCURRENCY.md), [`documentation/PANIC_AND_ERRORS.md`](documentation/PANIC_AND_ERRORS.md), and [`documentation/CYCLE_BREAKING.md`](documentation/CYCLE_BREAKING.md).
+See [`docs/CONCURRENCY.md`](docs/CONCURRENCY.md), [`docs/PANIC_AND_ERRORS.md`](docs/PANIC_AND_ERRORS.md), and [`docs/CYCLE_BREAKING.md`](docs/CYCLE_BREAKING.md).
 
 ## 7. Modules, packages, and C interoperability
 
@@ -366,7 +366,7 @@ The implemented native Cranelift subset is direct, non-variadic `extern "C"` cal
 
 For an L++ `Str` argument the native external-call lowering passes the payload pointer as a **borrowed** C string for the duration of the call. Foreign code must not mutate it or retain it after returning. A C `char *` returned as `Str` is treated as borrowed readable NUL-terminated data and copied immediately into a new ARC-managed L++ string; the foreign pointer is not adopted or freed. A null string result follows the helper contract and becomes an empty string. These are FFI preconditions, not safety checks the compiler can prove.
 
-The LLVM and WASM backends explicitly reject imported external calls. The L++/SQLite end-to-end smoke has not been established by the current audit: the recorded `Unsupported(UnresolvedName)` failure was not re-run after the current source changes. Symbol/link metadata tests do not prove a SQLite library was linked and executed. See [`documentation/EXTERNAL_C_ABI.md`](documentation/EXTERNAL_C_ABI.md).
+The LLVM and WASM backends explicitly reject imported external calls. The L++/SQLite end-to-end smoke has not been established by the current audit: the recorded `Unsupported(UnresolvedName)` failure was not re-run after the current source changes. Symbol/link metadata tests do not prove a SQLite library was linked and executed. See [`docs/EXTERNAL_C_ABI.md`](docs/EXTERNAL_C_ABI.md).
 
 ## 8. Compiler pipeline, targets, and backends
 
@@ -378,7 +378,7 @@ The LLVM and WASM backends explicitly reject imported external calls. The L++/SQ
 | LLVM | `x86_64`, `aarch64`, `x86_64-unknown-none`, `aarch64-unknown-none` | Clang-based full-parity backend (`--backend llvm -O0`–`-O3`, `-Os`/`-Oz`). Lowers full MIR, managed structs/enums/lists/tuples, cycle-collector ARC destructors, stack-placed `Frame` POD & null-dtor POD `Owned`, kernel/`unsafe` primitives, SIMD intrinsics, and DWARF `-g`. Windows LLVM execution needs CI validation. |
 | WASM | `wasm32-wasip1` | Experimental WASI backend. Implements scalars, control flow/direct calls, strings, managed aggregates/lists, tuples, dynamic string concatenation, closures/function values, tasks, eager spawn, borrowed slices, deterministic maps, WASI line input, and WASI filesystem builtins over WASI preopens in its tested subset. Host C FFI and kernel/MMIO primitives are rejected. Cycle collection is missing. |
 
-This matrix is a feature boundary, not a claim that every listed feature is equally mature or that every builtin is available on every target. The complete current feature index is [`documentation/CURRENT_CAPABILITIES.md`](documentation/CURRENT_CAPABILITIES.md).
+This matrix is a feature boundary, not a claim that every listed feature is equally mature or that every builtin is available on every target. The complete current feature index is [`docs/CURRENT_CAPABILITIES.md`](docs/CURRENT_CAPABILITIES.md).
 
 ### 8.2 Target selection and cross-compilation
 
@@ -675,8 +675,8 @@ The following are explicit limitations, not implied future guarantees:
 | Backend target/API | [`crates/lpp-codegen-api`](crates/lpp-codegen-api) |
 | Hosted runtime, ARC, strings, I/O | [`crates/lpp-runtime/src`](crates/lpp-runtime/src) |
 | Builtin ABI registry | [`abi/builtins.toml`](abi/builtins.toml), [`docs/reference/BUILTINS_GENERATED.md`](docs/reference/BUILTINS_GENERATED.md) |
-| External C ABI | [`documentation/EXTERNAL_C_ABI.md`](documentation/EXTERNAL_C_ABI.md) |
-| Capability index | [`documentation/CURRENT_CAPABILITIES.md`](documentation/CURRENT_CAPABILITIES.md) |
-| Runtime panic contract | [`documentation/PANIC_AND_ERRORS.md`](documentation/PANIC_AND_ERRORS.md) |
+| External C ABI | [`docs/EXTERNAL_C_ABI.md`](docs/EXTERNAL_C_ABI.md) |
+| Capability index | [`docs/CURRENT_CAPABILITIES.md`](docs/CURRENT_CAPABILITIES.md) |
+| Runtime panic contract | [`docs/PANIC_AND_ERRORS.md`](docs/PANIC_AND_ERRORS.md) |
 | Keel manifest/workspaces/registry | [`crates/keel`](crates/keel), [`crates/lpp-pm`](crates/lpp-pm), [`docs/rewrite/KEEL.md`](docs/rewrite/KEEL.md) |
 | C analysis/binding tool | [`packages/lpp-bindgen/docs/CONFIG.md`](packages/lpp-bindgen/docs/CONFIG.md) |

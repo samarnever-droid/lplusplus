@@ -2,7 +2,7 @@
 
 L++ tracks compiler scalability, AOT/optimization gains, and runtime microbenchmarks transparently using reproducible repository harnesses under [`benchmarks/`](../benchmarks/Benchmarks.md).
 
-> Per [`documentation/Safety_Mission.md`](../documentation/Safety_Mission.md), unverified external comparisons against C, C++, Rust, Go, or Python are omitted. Only measured in-repo suites are reported here.
+> Per [`docs/Safety_Mission.md`](../docs/Safety_Mission.md), unverified external comparisons against C, C++, Rust, Go, or Python are omitted. Only measured in-repo suites are reported here.
 
 ---
 

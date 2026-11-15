@@ -26,7 +26,7 @@
 //! Concurrency: refcounts stay atomic; the registry, the root buffer,
 //! and collections are serialized by mutexes, and at most one
 //! collection runs at a time. The S2 safety boundary
-//! (`documentation/Safety_Mission.md`) already excludes unsynchronized
+//! (`docs/Safety_Mission.md`) already excludes unsynchronized
 //! cross-thread transfer/mutation of the same graph.
 
 use std::collections::{HashMap, HashSet};

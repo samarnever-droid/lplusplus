@@ -360,7 +360,7 @@ cargo build --release --bin lpp --bin lpp-link
 Set `ANDROID_NDK_HOME`/`ANDROID_NDK_ROOT` (or `ANDROID_CC`/`LPP_CC`) to link
 Android objects with the NDK clang; `-DLPP_ANDROID` routes runtime output to
 logcat, while Termux uses normal stdout. See
-[`documentation/ANDROID_TERMUX.md`](documentation/ANDROID_TERMUX.md).
+[`docs/ANDROID_TERMUX.md`](docs/ANDROID_TERMUX.md).
 
 ## Project Structure
 
@@ -413,9 +413,9 @@ at your option.
 ## Links
 
 - [Website](https://lplusplus.bond)
-- [v0.3.0 Release Notes](documentation/RELEASE_NOTES_v0.3.0.md)
+- [v0.3.0 Release Notes](docs/release/V0.3.0.md)
 - [Language Tour](wiki/Language-Tour.md)
 - [Package Registry](https://registry.lplusplus.bond)
 - [Benchmarks](benchmarks/king20/stable/v1/latest.md)
-- [Native Linker Roadmap](documentation/Native_Linker_Roadmap.md)
-- [Safety Mission](documentation/Safety_Mission.md)
+- [Native Linker Roadmap](docs/Native_Linker_Roadmap.md)
+- [Safety Mission](docs/Safety_Mission.md)

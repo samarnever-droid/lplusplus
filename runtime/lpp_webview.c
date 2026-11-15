@@ -383,7 +383,7 @@ static HRESULT STDMETHODCALLTYPE Ctrl_Invoke(void *this_ptr, HRESULT result, ICo
 
     if (wv->core) {
         const char *target = wv->current_url[0] ? wv->current_url : 
-                             (wv->temp_html_path[0] ? wv->temp_html_path : "webview_demo/index.html");
+                             (wv->temp_html_path[0] ? wv->temp_html_path : "examples/webview_demo/index.html");
         lpp_load_content_into_core(wv->core, target);
     }
 

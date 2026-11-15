@@ -34,5 +34,5 @@ accepted only when their pre-optimization MIR fingerprint matches the source.
 
 This is an initial workload-specific result, not a claim about general
 profile-guided optimization or arbitrary programs. See
-[`../documentation/CURRENT_CAPABILITIES.md`](../../documentation/CURRENT_CAPABILITIES.md)
+[`../docs/CURRENT_CAPABILITIES.md`](../../docs/CURRENT_CAPABILITIES.md)
 for supported flags and limits.

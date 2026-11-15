@@ -54,6 +54,6 @@ latest.md    human-readable report
 ## v0.1.3 documentation status
 
 For the current supported subset and explicit feature boundaries, see
-[`documentation/CURRENT_CAPABILITIES.md`](../../documentation/CURRENT_CAPABILITIES.md).
+[`docs/CURRENT_CAPABILITIES.md`](../../docs/CURRENT_CAPABILITIES.md).
 
 Do not use historical benchmark numbers or roadmap text as current guarantees.

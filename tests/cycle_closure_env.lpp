@@ -4,7 +4,7 @@
 # provenance did not flow through closure captures; the Cranelift
 # pre-scan now resolves provenance with a whole-program fixpoint
 # (resolve_value_classes). Reclamation is by trial-deletion collection
-# (documentation/CYCLE_BREAKING.md).
+# (docs/CYCLE_BREAKING.md).
 def main():
     xs := list_new()
     f := fn() -> Int:

@@ -253,7 +253,7 @@ void lpp_arc_release(void *ptr);
  * gone. (Arenas remain a legacy allocation strategy; reference cycles
  * in ordinary ARC allocations are reclaimed by the trial-deletion
  * collector below, and no edge is demoted. See
- * documentation/CYCLE_BREAKING.md.)
+ * docs/CYCLE_BREAKING.md.)
  */
 typedef struct LppArenaRecord LppArenaRecord;
 typedef struct LppArenaRegion LppArenaRegion;

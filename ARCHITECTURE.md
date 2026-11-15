@@ -1,6 +1,6 @@
 # L++ Architecture Documentation
 
-> Modular rewrite architecture across `crates/lpp-*` and `crates/keel`. For verified per-backend boundaries and limitations, see [specs.md](specs.md) and [documentation/CURRENT_CAPABILITIES.md](documentation/CURRENT_CAPABILITIES.md).
+> Modular rewrite architecture across `crates/lpp-*` and `crates/keel`. For verified per-backend boundaries and limitations, see [specs.md](specs.md) and [docs/CURRENT_CAPABILITIES.md](docs/CURRENT_CAPABILITIES.md).
 
 ---
 
@@ -66,5 +66,5 @@ graph TD
 - **Stack-Placed `Frame` & Destructor-Free POD `Owned`**:
   - Non-escaping `Frame` POD structs and tuples lower directly to fixed stack slots (`StackSlot` in Cranelift, `alloca` in LLVM) with zero heap allocations and zero ARC calls.
   - Escaping `Owned` POD structs, enums, and tuples pass a null destructor to `lpp_arc_alloc_with_destructor`, omitting the 8-byte destructor prefix and indirect destructor dispatch.
-- **Atomic Native ARC Headers & Cycle Collection**: Native reference counting uses atomic operations across `Shared` objects (see [documentation/CONCURRENCY.md](documentation/CONCURRENCY.md)). Unreachable `Shared` reference cycles on Cranelift and LLVM native targets are collected by the Bacon-Rajan trial-deletion collector in `lpp-runtime` (see [documentation/CYCLE_BREAKING.md](documentation/CYCLE_BREAKING.md)). WASM uses a target-specific 24-byte header with size-class free-list reuse for acyclic churn, and WASM cycle collection remains unimplemented.
+- **Atomic Native ARC Headers & Cycle Collection**: Native reference counting uses atomic operations across `Shared` objects (see [docs/CONCURRENCY.md](docs/CONCURRENCY.md)). Unreachable `Shared` reference cycles on Cranelift and LLVM native targets are collected by the Bacon-Rajan trial-deletion collector in `lpp-runtime` (see [docs/CYCLE_BREAKING.md](docs/CYCLE_BREAKING.md)). WASM uses a target-specific 24-byte header with size-class free-list reuse for acyclic churn, and WASM cycle collection remains unimplemented.
 - **Principled `unsafe` Boundary & Trapping Safety**: Low-level pointer (`Ptr[T]`, `RawPtr`), MMIO, port I/O, and CPU register primitives require explicit `unsafe` blocks/functions and can be rejected project-wide with `--deny-unsafe`. Safe code retains trapping signed division/modulo by zero, `MIN / -1` guard handling, shift-count traps, and bounds checks.

@@ -24,7 +24,7 @@ transparently below._
 ### Tier 1 — correctness & parity
 
 1. ~~Cranelift structural-tuple drop glue~~ — **DONE**
-   (`lpp_drop_t{n}`/`lpp_trace_t{n}`; see `documentation/CYCLE_BREAKING.md`).
+   (`lpp_drop_t{n}`/`lpp_trace_t{n}`; see `docs/CYCLE_BREAKING.md`).
 2. **WASM cycle collection — PARTIAL.** The WASM runtime reuses freed ARC
    blocks in size-class bins (`1` page under acyclic churn), but unreachable
    reference cycles still leak in WASM. Next, port the ownership-plan
@@ -33,7 +33,7 @@ transparently below._
    `lpp-codegen-llvm` lowers full MIR, managed structs/enums/lists/tuples,
    cycle-collector ARC destructors, DWARF `-g`, SIMD intrinsics, kernel primitives,
    and `--backend llvm -O0`..`-O3`.
-4. **Concurrency safety enforcement — PARTIAL.** `documentation/CONCURRENCY.md`
+4. **Concurrency safety enforcement — PARTIAL.** `docs/CONCURRENCY.md`
    records the contract and open gaps. Add a concurrent-sharing fact to the
    ownership plan, enforce `Send`/`Sync` rules, add a collector-exclusion
    protocol, and validate under TSan.

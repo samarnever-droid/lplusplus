@@ -1,5 +1,5 @@
 //! Regression suite for ARC cycle breaking (see
-//! `documentation/CYCLE_BREAKING.md`).
+//! `docs/CYCLE_BREAKING.md`).
 //!
 //! The original failure: the ownership plan classified recursive types
 //! but nothing reclaimed values whose references form a cycle —

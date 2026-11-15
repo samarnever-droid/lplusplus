@@ -400,7 +400,6 @@ fn every_builtin_used_in_the_corpus_is_lowered_by_the_wasm_backend() {
         "examples",
         "benchmarks",
         "packages",
-        "SamarOS",
     ] {
         collect(&root.join(directory), &mut files);
     }

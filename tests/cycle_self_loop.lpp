@@ -1,6 +1,6 @@
 # A genuine one-node reference cycle: `a.next` owns `a` itself. Plain
 # refcounting can never reclaim it; the cycle collector does when the
-# last local goes away (see documentation/CYCLE_BREAKING.md).
+# last local goes away (see docs/CYCLE_BREAKING.md).
 struct Node:
     value: Int
     next: Node

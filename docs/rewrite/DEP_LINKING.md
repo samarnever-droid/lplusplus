@@ -80,4 +80,4 @@ registry artifact is re-hashed against the `Keel.lock` checksum at build
 time (a tampered registry is refused, `E6009` — the same guarantee as
 `keel verify`). `keel test` runs with cwd = workspace root and discovers
 tests across all members. Full contract + live demo:
-`DEP_LINKING.md` (repo root) and `scripts/demo_pm_lifecycle.sh`.
+`scripts/demo_pm_lifecycle.sh`.

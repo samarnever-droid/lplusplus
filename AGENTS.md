@@ -25,7 +25,7 @@ This project is indexed by GitNexus as **lplusplus** (21104 symbols, 74797 relat
 
 ### Key Architectural Pillars:
 - **Fast Native Compilation**: Compiles native standalone executables via Cranelift AOT (`crates/lpp-codegen-cranelift`) and either the built-in direct linker (`lpp-link`) or host C toolchain fallback.
-- **Deterministic Zero-Overhead Memory Safety**: Zero tracing GC pauses on native paths. Uses `Frame` stack allocation for non-escaping POD structs/tuples, destructor-free `Owned` ARC (`null` destructor, zero indirect drop call), atomic refcounting, and **Bacon-Rajan trial-deletion cycle collection** for cycle-capable `Shared` types across Cranelift and LLVM (`documentation/CYCLE_BREAKING.md`; WASM cycle collection remains open).
+- **Deterministic Zero-Overhead Memory Safety**: Zero tracing GC pauses on native paths. Uses `Frame` stack allocation for non-escaping POD structs/tuples, destructor-free `Owned` ARC (`null` destructor, zero indirect drop call), atomic refcounting, and **Bacon-Rajan trial-deletion cycle collection** for cycle-capable `Shared` types across Cranelift and LLVM (`docs/CYCLE_BREAKING.md`; WASM cycle collection remains open).
 - **Principled `unsafe` & Bare-Metal Kernels**: Explicit `unsafe` blocks/functions, `Ptr[T]`, `RawPtr`, volatile MMIO, port I/O, CPU control registers, `--deny-unsafe` enforcement, and `x86_64-unknown-none` / `aarch64-unknown-none` static ELF kernel targets (`--multiboot2`, `--image-base`).
 - **Multi-Backend Compilation Pipeline**:
   - **Cranelift Backend**: Default native backend for `x86_64`, `aarch64`, and bare-metal `*-unknown-none` targets with DWARF `-g` debug info.

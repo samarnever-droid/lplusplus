@@ -1096,7 +1096,7 @@ stays on `LegacyEngine`; rewrite MIR remains shadow-only.
     `ArcStats` as the post-collection survivor count — zero for every
     successful run; a survivor still reports `OwnershipLeak`. The
     struct-field containment edges this phase deferred are also in.
-    See `documentation/CYCLE_BREAKING.md`.)*
+    See `docs/CYCLE_BREAKING.md`.)*
   - **End-of-execution balance proof** (successful completion only; a
     failed execution is abandoned and proves nothing): the public
     `ExecutionValue` outcome is materialized as a deep copy, the entry
