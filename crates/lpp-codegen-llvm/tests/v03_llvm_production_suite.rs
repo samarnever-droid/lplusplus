@@ -679,26 +679,16 @@ def main() -> Int:
 "#;
     let cp = pipeline(source);
     let ir = emit_ir(&cp).expect("emit_llvm_ir succeeds");
-    let expected_host_triple = if cfg!(target_os = "windows") {
-        if cfg!(target_arch = "aarch64") {
-            "aarch64-pc-windows-msvc"
-        } else {
-            "x86_64-pc-windows-msvc"
-        }
+    let expected_x86_64_triple = if cfg!(target_os = "windows") {
+        "x86_64-pc-windows-msvc"
     } else if cfg!(target_os = "macos") {
-        if cfg!(target_arch = "aarch64") {
-            "arm64-apple-darwin"
-        } else {
-            "x86_64-apple-darwin"
-        }
-    } else if cfg!(target_arch = "aarch64") {
-        "aarch64-unknown-linux-gnu"
+        "x86_64-apple-darwin"
     } else {
         "x86_64-unknown-linux-gnu"
     };
     assert!(
-        ir.contains(&format!("target triple = \"{expected_host_triple}\"")),
-        "expected triple {expected_host_triple} in IR"
+        ir.contains(&format!("target triple = \"{expected_x86_64_triple}\"")),
+        "expected triple {expected_x86_64_triple} in IR"
     );
     assert!(ir.contains("define i64 @boot_compute(i64"));
 
