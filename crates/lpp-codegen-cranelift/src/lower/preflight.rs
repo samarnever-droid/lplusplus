@@ -93,16 +93,13 @@ pub(crate) fn pre_scan(
                     export_names.insert(mir_id, "lpp_main".to_owned());
                 }
                 Some(name) => {
-                    // Distinct functions can share a source name (e.g. `describe`
-                    // implemented for several types via `impl` blocks). Such methods
-                    // are only ever called by function id, so a colliding linkage
-                    // name is disambiguated with the function id to keep symbols
-                    // unique.
-                    let mut export = name.to_owned();
-                    if used_export_names.contains(&export) {
-                        export = format!("{name}_{}", mir_id.raw());
-                    }
-                    used_export_names.insert(export.clone());
+                    // Distinct functions/methods can share a source name or match
+                    // reserved C runtime symbols like `free`/`open`/`read`.
+                    let export = lpp_codegen_api::sanitize_internal_export_name(
+                        name,
+                        mir_id.raw(),
+                        &mut used_export_names,
+                    );
                     export_names.insert(mir_id, export);
                 }
                 None if matches!(function.kind, MirFunctionKind::Closure) => {

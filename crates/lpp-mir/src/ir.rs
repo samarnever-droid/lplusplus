@@ -157,6 +157,29 @@ pub enum KernelIntrinsic {
     MemsetRaw,
     MemmoveRaw,
     MemcmpRaw,
+    SetNew,
+    SetAdd,
+    SetHas,
+    SetRemove,
+    SetAddStr,
+    SetHasStr,
+    SetRemoveStr,
+    SetLen,
+    SetClear,
+    SetFree,
+    SetUnion,
+    SetIntersect,
+    DequeNew,
+    DequePushBack,
+    DequePushFront,
+    DequePopBack,
+    DequePopFront,
+    DequePeekFront,
+    DequePeekBack,
+    DequeGet,
+    DequeLen,
+    DequeClear,
+    DequeFree,
 }
 
 impl KernelIntrinsic {
@@ -205,6 +228,29 @@ impl KernelIntrinsic {
             "memset_raw" => Self::MemsetRaw,
             "memmove_raw" => Self::MemmoveRaw,
             "memcmp_raw" => Self::MemcmpRaw,
+            "set_new" => Self::SetNew,
+            "set_add" => Self::SetAdd,
+            "set_has" => Self::SetHas,
+            "set_remove" => Self::SetRemove,
+            "set_add_str" => Self::SetAddStr,
+            "set_has_str" => Self::SetHasStr,
+            "set_remove_str" => Self::SetRemoveStr,
+            "set_len" => Self::SetLen,
+            "set_clear" => Self::SetClear,
+            "set_free" => Self::SetFree,
+            "set_union" => Self::SetUnion,
+            "set_intersect" => Self::SetIntersect,
+            "deque_new" => Self::DequeNew,
+            "deque_push_back" => Self::DequePushBack,
+            "deque_push_front" => Self::DequePushFront,
+            "deque_pop_back" => Self::DequePopBack,
+            "deque_pop_front" => Self::DequePopFront,
+            "deque_peek_front" => Self::DequePeekFront,
+            "deque_peek_back" => Self::DequePeekBack,
+            "deque_get" => Self::DequeGet,
+            "deque_len" => Self::DequeLen,
+            "deque_clear" => Self::DequeClear,
+            "deque_free" => Self::DequeFree,
             _ => return None,
         })
     }
@@ -213,7 +259,33 @@ impl KernelIntrinsic {
     pub const fn is_unsafe(self) -> bool {
         !matches!(
             self,
-            Self::SizeOf | Self::AlignOf | Self::PtrNull | Self::PtrIsNull
+            Self::SizeOf
+                | Self::AlignOf
+                | Self::PtrNull
+                | Self::PtrIsNull
+                | Self::SetNew
+                | Self::SetAdd
+                | Self::SetHas
+                | Self::SetRemove
+                | Self::SetAddStr
+                | Self::SetHasStr
+                | Self::SetRemoveStr
+                | Self::SetLen
+                | Self::SetClear
+                | Self::SetFree
+                | Self::SetUnion
+                | Self::SetIntersect
+                | Self::DequeNew
+                | Self::DequePushBack
+                | Self::DequePushFront
+                | Self::DequePopBack
+                | Self::DequePopFront
+                | Self::DequePeekFront
+                | Self::DequePeekBack
+                | Self::DequeGet
+                | Self::DequeLen
+                | Self::DequeClear
+                | Self::DequeFree
         )
     }
 }

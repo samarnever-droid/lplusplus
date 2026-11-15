@@ -91,7 +91,7 @@ reject_case() {
     echo "PASS $name (rejected)"
 }
 
-reject_case tuple_bad_arity "Tuple expressions require arity 2..=4"
+reject_case tuple_bad_arity_17 "tuple expressions require between two and sixteen elements"
 reject_case variadic_bad_position "Variadic rest parameter must be the final parameter"
 reject_case variadic_bad_type "expects Int, got Str"
 reject_case slice_return_rejected "borrowed slice cannot be returned"

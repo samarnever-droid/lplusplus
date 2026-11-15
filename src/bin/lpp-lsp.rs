@@ -5,6 +5,8 @@ use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
 
 use lpp_common::{FileId, SourceMap};
+use lpp_driver::fmt::format_source;
+use lpp_driver::frontend_eval::check_in_memory;
 use lpp_frontend::{ItemKind, ParsedModule, parse_source};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -126,7 +128,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         },
                         "serverInfo": {
                             "name": "lpp-lsp",
-                            "version": "4.6.0"
+                            "version": env!("CARGO_PKG_VERSION")
                         }
                     })),
                     error: None,
@@ -272,25 +274,42 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .and_then(|t| t.get("uri"))
                     .and_then(|u| u.as_str())
                 {
-                    if let Some(ast) = ast_cache.get(uri) {
-                        for (idx, item) in ast.items.iter().enumerate() {
+                    if let (Some(ast), Some(doc_text)) = (ast_cache.get(uri), documents.get(uri)) {
+                        let mut sources = SourceMap::new();
+                        let fid = sources
+                            .add_file(uri, doc_text.clone())
+                            .unwrap_or(FileId::from_raw(1));
+                        let sf = sources.get(fid);
+                        for item in &ast.items {
                             if let Some(ref name) = item.name {
-                                let (kind, start_line) = match item.kind {
-                                    ItemKind::Function => (12, idx * 2),
-                                    ItemKind::Struct => (23, idx * 2),
-                                    ItemKind::Enum => (10, idx * 2),
+                                let kind = match item.kind {
+                                    ItemKind::Function => 12,
+                                    ItemKind::Struct => 23,
+                                    ItemKind::Enum => 10,
+                                    ItemKind::Trait => 11,
+                                    ItemKind::Impl => 6,
                                     _ => continue,
                                 };
+                                let (sl, sc) = sf
+                                    .and_then(|s| s.line_column(item.span.start).ok())
+                                    .unwrap_or((1usize, 1usize));
+                                let (el, ec) = sf
+                                    .and_then(|s| s.line_column(item.span.end).ok())
+                                    .unwrap_or((sl, sc + name.len()));
+                                let sl0 = sl.saturating_sub(1);
+                                let sc0 = sc.saturating_sub(1);
+                                let el0 = el.saturating_sub(1).max(sl0);
+                                let ec0 = ec.saturating_sub(1).max(sc0 + name.len());
                                 symbols.push(json!({
                                     "name": name,
                                     "kind": kind,
                                     "range": {
-                                        "start": { "line": start_line, "character": 0 },
-                                        "end": { "line": start_line + 1, "character": 0 }
+                                        "start": { "line": sl0, "character": sc0 },
+                                        "end": { "line": el0, "character": ec0 }
                                     },
                                     "selectionRange": {
-                                        "start": { "line": start_line, "character": 0 },
-                                        "end": { "line": start_line, "character": name.len() }
+                                        "start": { "line": sl0, "character": sc0 },
+                                        "end": { "line": sl0, "character": sc0 + name.len() }
                                     }
                                 }));
                             }
@@ -307,7 +326,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 send_lsp_response(&mut writer, &response)?;
             }
             "textDocument/hover" => {
-                let mut hover_val = "### L++ Language Symbol\nSelect or inspect symbols in L++.";
+                let mut hover_val =
+                    String::from("### L++ Language Symbol\nSelect or inspect symbols in L++.");
                 if let Some(uri) = req
                     .params
                     .get("textDocument")
@@ -318,17 +338,36 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         if let Some(pos) = req.params.get("position") {
                             let line_idx =
                                 pos.get("line").and_then(|l| l.as_u64()).unwrap_or(0) as usize;
+                            let char_idx =
+                                pos.get("character").and_then(|c| c.as_u64()).unwrap_or(0) as usize;
                             if let Some(line) = doc_text.lines().nth(line_idx) {
-                                if line.contains("def ") {
-                                    hover_val = "### L++ Function Declaration\nDefines a type-checked function frame.";
-                                } else if line.contains("struct ") {
-                                    hover_val = "### L++ Struct Declaration\nDefines a structured value type with zero-overhead MIR escape analysis.";
-                                } else if line.contains("CPtr") {
-                                    hover_val = "### `CPtr` (Safe Checked Pointer)\nFat C-pointer with generation ID, bounds checking, and subobject security.";
-                                } else if line.contains("CMemory") {
-                                    hover_val = "### `CMemory` (Isolated Heap Context)\nChecked memory allocator tracking active allocations and UAF guards.";
-                                } else if line.contains("Buffer") {
-                                    hover_val = "### `Buffer` (Binary Byte Buffer)\nStructured binary reader/writer supporting endianness and string conversions.";
+                                let word = extract_word_at_col(line, char_idx);
+                                if !word.is_empty() {
+                                    if let Some(decl_line) = doc_text.lines().find(|l| {
+                                        let t = l.trim();
+                                        t.starts_with(&format!("def {word}("))
+                                            || t.starts_with(&format!("async def {word}("))
+                                            || t.starts_with(&format!("unsafe def {word}("))
+                                            || t.starts_with(&format!("struct {word}"))
+                                            || t.starts_with(&format!("enum {word}"))
+                                            || t.starts_with(&format!("trait {word}"))
+                                            || t.starts_with(&format!("type {word}"))
+                                    }) {
+                                        hover_val = format!("```lpp\n{}\n```", decl_line.trim());
+                                    }
+                                }
+                                if hover_val.starts_with("### L++ Language Symbol") {
+                                    if line.contains("def ") {
+                                        hover_val = "### L++ Function Declaration\nDefines a statically type-checked function.".to_string();
+                                    } else if line.contains("struct ") {
+                                        hover_val = "### L++ Struct Declaration\nDefines an ARC/stack composite struct type.".to_string();
+                                    } else if line.contains("enum ") {
+                                        hover_val = "### L++ Enum Declaration\nDefines an algebraic data type with exhaustive pattern matching.".to_string();
+                                    } else if line.contains("unsafe") {
+                                        hover_val = "### `unsafe` Block / Function\nPermits checked raw pointers, MMIO, and low-level intrinsics.".to_string();
+                                    } else if line.contains("VectorI64x") {
+                                        hover_val = "### `VectorI64x2` / `VectorI64x4`\nHardware 128-bit / 256-bit integer SIMD vector.".to_string();
+                                    }
                                 }
                             }
                         }
@@ -406,7 +445,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .and_then(|u| u.as_str())
                 {
                     if let Some(text) = documents.get(uri) {
-                        let formatted = format_lpp_code(text);
+                        let formatted = format_source(text);
                         let line_count = text.lines().count();
                         edits.push(json!({
                             "range": {
@@ -450,46 +489,6 @@ fn extract_word_at_col(line: &str, col: usize) -> &str {
     if start < end { &line[start..end] } else { "" }
 }
 
-fn format_lpp_code(text: &str) -> String {
-    let mut result = String::new();
-    let mut indent_level: usize = 0;
-
-    for line in text.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            result.push('\n');
-            continue;
-        }
-
-        if trimmed.starts_with("else") || trimmed.starts_with("elif") {
-            let current_indent = if indent_level > 0 {
-                indent_level - 1
-            } else {
-                0
-            };
-            result.push_str(&" ".repeat(current_indent * 4));
-        } else {
-            result.push_str(&" ".repeat(indent_level * 4));
-        }
-
-        result.push_str(trimmed);
-        result.push('\n');
-
-        if trimmed.ends_with(':') {
-            indent_level += 1;
-        } else if trimmed.starts_with("return")
-            || trimmed.starts_with("break")
-            || trimmed.starts_with("continue")
-        {
-            if indent_level > 0 {
-                indent_level -= 1;
-            }
-        }
-    }
-
-    result
-}
-
 fn process_and_publish_diagnostics<W: Write>(
     writer: &mut W,
     uri: &str,
@@ -502,38 +501,27 @@ fn process_and_publish_diagnostics<W: Write>(
         .add_file(uri, text.to_string())
         .unwrap_or(FileId::from_raw(1));
 
-    match parse_source(file_id, text) {
-        Ok(ast) => {
-            ast_cache.insert(uri.to_string(), ast);
-        }
-        Err(diags) => {
-            if let Some(source_file) = sources.get(file_id) {
-                for diag in diags {
-                    let (line, col) = if let Some(span) = diag.primary_span {
-                        source_file.line_column(span.start).unwrap_or((1, 1))
-                    } else if let Some(label) = diag.labels.first() {
-                        source_file.line_column(label.span.start).unwrap_or((1, 1))
-                    } else {
-                        (1, 1)
-                    };
-                    lsp_diagnostics.push(json!({
-                        "range": {
-                            "start": {
-                                "line": if line > 0 { line - 1 } else { 0 },
-                                "character": if col > 0 { col - 1 } else { 0 }
-                            },
-                            "end": {
-                                "line": if line > 0 { line - 1 } else { 0 },
-                                "character": col + 4
-                            }
-                        },
-                        "severity": 1,
-                        "code": diag.code.as_str(),
-                        "source": "lpp-lsp",
-                        "message": diag.message
-                    }));
-                }
-            }
+    if let Ok(ast) = parse_source(file_id, text) {
+        ast_cache.insert(uri.to_string(), ast);
+    }
+
+    let check_path = uri_to_path(uri).unwrap_or_else(|| PathBuf::from("buffer.lpp"));
+    if let Err(diags) = check_in_memory(text, &check_path) {
+        for diag in diags {
+            let start_line = diag.line.saturating_sub(1);
+            let start_char = diag.col.saturating_sub(1);
+            let end_line = diag.end_line.saturating_sub(1).max(start_line);
+            let end_char = diag.end_col.saturating_sub(1).max(start_char + 1);
+            lsp_diagnostics.push(json!({
+                "range": {
+                    "start": { "line": start_line, "character": start_char },
+                    "end": { "line": end_line, "character": end_char }
+                },
+                "severity": 1,
+                "code": diag.code,
+                "source": "lpp-lsp",
+                "message": diag.message
+            }));
         }
     }
 

@@ -369,13 +369,14 @@ impl<'a> Lexer<'a> {
             self.offset += 2;
             self.emit(TokenKind::Ellipsis, start, self.offset);
             Ok(())
+        } else if self.input[self.offset..].starts_with(".=") {
+            self.offset += 2;
+            self.emit(TokenKind::DotDotEqual, start, self.offset);
+            Ok(())
         } else if self.peek() == Some('.') {
-            self.fail(
-                "E1001",
-                "expected a third '.' in variadic marker",
-                start,
-                self.offset + 1,
-            )
+            self.bump();
+            self.emit(TokenKind::DotDot, start, self.offset);
+            Ok(())
         } else {
             self.emit(TokenKind::Dot, start, self.offset);
             Ok(())

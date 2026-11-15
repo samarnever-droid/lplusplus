@@ -1018,3 +1018,34 @@ pub fn default_runtime_lib_dir() -> PathBuf {
         })
         .unwrap_or_else(|| PathBuf::from("target/debug"))
 }
+
+/// Spawn a newly-linked executable with bounded retries if another thread's
+/// fork briefly holds a writable file descriptor (`ETXTBSY` on Linux).
+pub fn exec_status_retry(exe: &Path) -> std::io::Result<std::process::ExitStatus> {
+    let mut attempt = 0u64;
+    loop {
+        match Command::new(exe).status() {
+            Ok(status) => return Ok(status),
+            Err(err) if err.kind() == std::io::ErrorKind::ExecutableFileBusy && attempt < 12 => {
+                attempt += 1;
+                std::thread::sleep(std::time::Duration::from_millis(attempt * 2));
+            }
+            Err(err) => return Err(err),
+        }
+    }
+}
+
+/// Capture stdout/stderr of a newly-linked executable with bounded `ETXTBSY` retries.
+pub fn exec_output_retry(exe: &Path) -> std::io::Result<std::process::Output> {
+    let mut attempt = 0u64;
+    loop {
+        match Command::new(exe).output() {
+            Ok(output) => return Ok(output),
+            Err(err) if err.kind() == std::io::ErrorKind::ExecutableFileBusy && attempt < 12 => {
+                attempt += 1;
+                std::thread::sleep(std::time::Duration::from_millis(attempt * 2));
+            }
+            Err(err) => return Err(err),
+        }
+    }
+}

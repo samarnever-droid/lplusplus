@@ -144,7 +144,19 @@ mod tests {
     fn rejects_known_frontend_debt_forms() {
         assert_eq!(error_code("def f():\n    result: SemVer\n"), "E1105");
         assert_eq!(error_code("def f():\n    if yes: continue\n"), "E1104");
-        assert_eq!(error_code("def f():\n    x := (1, 2, 3, 4, 5)\n"), "E1110");
+        assert!(
+            parse_source(
+                FileId::from_raw(0),
+                "def f():\n    x := (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16)\n",
+            )
+            .is_ok()
+        );
+        assert_eq!(
+            error_code(
+                "def f():\n    x := (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17)\n"
+            ),
+            "E1110"
+        );
         assert_eq!(
             error_code("def f(a: Int..., b: Int):\n    return\n"),
             "E1111"

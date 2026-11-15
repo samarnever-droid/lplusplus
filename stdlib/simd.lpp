@@ -1,0 +1,69 @@
+## L++ Standard Library: 256-bit (4x64-bit) Integer SIMD Vector (`VectorI64x4`)
+## Built atop hardware-accelerated `VectorI64x2` lanes on Cranelift and LLVM.
+
+struct VectorI64x4:
+    lo: VectorI64x2
+    hi: VectorI64x2
+
+def vec_i64x4(a: Int, b: Int, c: Int, d: Int) -> VectorI64x4:
+    return VectorI64x4(vec_i64x2(a, b), vec_i64x2(c, d))
+
+def vec_i64x4_splat(v: Int) -> VectorI64x4:
+    s := vec_i64x2_splat(v)
+    return VectorI64x4(s, s)
+
+def vec_i64x4_add(a: VectorI64x4, b: VectorI64x4) -> VectorI64x4:
+    return VectorI64x4(vec_i64x2_add(a.lo, b.lo), vec_i64x2_add(a.hi, b.hi))
+
+def vec_i64x4_sub(a: VectorI64x4, b: VectorI64x4) -> VectorI64x4:
+    return VectorI64x4(vec_i64x2_sub(a.lo, b.lo), vec_i64x2_sub(a.hi, b.hi))
+
+def vec_i64x4_mul(a: VectorI64x4, b: VectorI64x4) -> VectorI64x4:
+    return VectorI64x4(vec_i64x2_mul(a.lo, b.lo), vec_i64x2_mul(a.hi, b.hi))
+
+def vec_i64x4_and(a: VectorI64x4, b: VectorI64x4) -> VectorI64x4:
+    return VectorI64x4(vec_i64x2_and(a.lo, b.lo), vec_i64x2_and(a.hi, b.hi))
+
+def vec_i64x4_or(a: VectorI64x4, b: VectorI64x4) -> VectorI64x4:
+    return VectorI64x4(vec_i64x2_or(a.lo, b.lo), vec_i64x2_or(a.hi, b.hi))
+
+def vec_i64x4_xor(a: VectorI64x4, b: VectorI64x4) -> VectorI64x4:
+    return VectorI64x4(vec_i64x2_xor(a.lo, b.lo), vec_i64x2_xor(a.hi, b.hi))
+
+def vec_i64x4_not(a: VectorI64x4) -> VectorI64x4:
+    return VectorI64x4(vec_i64x2_not(a.lo), vec_i64x2_not(a.hi))
+
+def vec_i64x4_sum(a: VectorI64x4) -> Int:
+    return vec_i64x2_sum(a.lo) + vec_i64x2_sum(a.hi)
+
+def vec_i64x4_dot(a: VectorI64x4, b: VectorI64x4) -> Int:
+    prod := vec_i64x4_mul(a, b)
+    return vec_i64x4_sum(prod)
+
+def vec_i64x4_extract(a: VectorI64x4, lane: Int) -> Int:
+    if lane == 0:
+        return vec_i64x2_extract(a.lo, 0)
+    if lane == 1:
+        return vec_i64x2_extract(a.lo, 1)
+    if lane == 2:
+        return vec_i64x2_extract(a.hi, 0)
+    return vec_i64x2_extract(a.hi, 1)
+
+impl VectorI64x4:
+    def add(self, other: VectorI64x4) -> VectorI64x4:
+        return vec_i64x4_add(self, other)
+
+    def sub(self, other: VectorI64x4) -> VectorI64x4:
+        return vec_i64x4_sub(self, other)
+
+    def mul(self, other: VectorI64x4) -> VectorI64x4:
+        return vec_i64x4_mul(self, other)
+
+    def sum(self) -> Int:
+        return vec_i64x4_sum(self)
+
+    def dot(self, other: VectorI64x4) -> Int:
+        return vec_i64x4_dot(self, other)
+
+    def lane(self, idx: Int) -> Int:
+        return vec_i64x4_extract(self, idx)

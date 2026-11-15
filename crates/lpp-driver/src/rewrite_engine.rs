@@ -127,6 +127,27 @@ fn rewrite_main(args: &[String], cwd: &Path) -> i32 {
                 return 2;
             }
             "lreact" => return handle_lreact(&rest[1..], cwd),
+            "fmt" | "format" => return crate::fmt::run_fmt(&rest[1..], cwd),
+            "repl" => return crate::repl::run_repl(&rest[1..], cwd),
+            "test" => {
+                let has_explicit_target = rest[1..].iter().any(|arg| {
+                    arg == "--mir"
+                        || arg == "--interpret"
+                        || arg == "--filter"
+                        || arg == "-k"
+                        || arg.ends_with(".lpp")
+                        || (!arg.starts_with('-') && cwd.join(arg).exists())
+                });
+                if has_explicit_target || !cwd.join("Keel.toml").exists() {
+                    let test_args = if rest.len() == 1 {
+                        vec![cwd.display().to_string()]
+                    } else {
+                        rest[1..].to_vec()
+                    };
+                    return crate::test_runner::run_tests_cli(&test_args, cwd);
+                }
+                return invoke_keel(args, cwd);
+            }
             "emit" => {
                 mode = Mode::EmitObject;
                 start = 1;
@@ -526,7 +547,7 @@ fn rewrite_main(args: &[String], cwd: &Path) -> i32 {
                         );
                     }
                     if mode == Mode::Run {
-                        match Command::new(&exe).status() {
+                        match crate::compile::exec_status_retry(&exe) {
                             Ok(status) => child_exit_code(&status),
                             Err(error) => {
                                 eprintln!("[rewrite] failed to run {}: {error}", exe.display());

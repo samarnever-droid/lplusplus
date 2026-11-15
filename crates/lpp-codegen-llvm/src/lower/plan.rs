@@ -153,6 +153,26 @@ pub(crate) fn core_import_sig(name: &str) -> ImportSig {
         | "lpp_arch_invlpg" => sig(&[Val::I64], None),
         "lpp_arch_rdmsr" => sig(&[Val::I32], Some(Val::I64)),
         "lpp_arch_wrmsr" => sig(&[Val::I32, Val::I64], None),
+        "lpp_set_new" | "lpp_deque_new" => sig(&[], Some(Val::I64)),
+        "lpp_set_add" | "lpp_set_has" | "lpp_set_remove" => {
+            sig(&[Val::I64, Val::I64], Some(Val::I8))
+        }
+        "lpp_set_add_str" | "lpp_set_has_str" | "lpp_set_remove_str" => {
+            sig(&[Val::I64, Val::Ptr], Some(Val::I8))
+        }
+        "lpp_set_len"
+        | "lpp_deque_pop_back"
+        | "lpp_deque_pop_front"
+        | "lpp_deque_peek_front"
+        | "lpp_deque_peek_back"
+        | "lpp_deque_len" => sig(&[Val::I64], Some(Val::I64)),
+        "lpp_set_clear" | "lpp_set_free" | "lpp_deque_clear" | "lpp_deque_free" => {
+            sig(&[Val::I64], None)
+        }
+        "lpp_set_union" | "lpp_set_intersect" | "lpp_deque_get" => {
+            sig(&[Val::I64, Val::I64], Some(Val::I64))
+        }
+        "lpp_deque_push_back" | "lpp_deque_push_front" => sig(&[Val::I64, Val::I64], None),
         _ => sig(&[], None),
     }
 }
@@ -209,6 +229,29 @@ pub(crate) fn intrinsic_arch_import(intrinsic: KernelIntrinsic) -> Option<&'stat
         KernelIntrinsic::Lgdt => "lpp_arch_lgdt",
         KernelIntrinsic::Lidt => "lpp_arch_lidt",
         KernelIntrinsic::Invlpg => "lpp_arch_invlpg",
+        KernelIntrinsic::SetNew => "lpp_set_new",
+        KernelIntrinsic::SetAdd => "lpp_set_add",
+        KernelIntrinsic::SetHas => "lpp_set_has",
+        KernelIntrinsic::SetRemove => "lpp_set_remove",
+        KernelIntrinsic::SetAddStr => "lpp_set_add_str",
+        KernelIntrinsic::SetHasStr => "lpp_set_has_str",
+        KernelIntrinsic::SetRemoveStr => "lpp_set_remove_str",
+        KernelIntrinsic::SetLen => "lpp_set_len",
+        KernelIntrinsic::SetClear => "lpp_set_clear",
+        KernelIntrinsic::SetFree => "lpp_set_free",
+        KernelIntrinsic::SetUnion => "lpp_set_union",
+        KernelIntrinsic::SetIntersect => "lpp_set_intersect",
+        KernelIntrinsic::DequeNew => "lpp_deque_new",
+        KernelIntrinsic::DequePushBack => "lpp_deque_push_back",
+        KernelIntrinsic::DequePushFront => "lpp_deque_push_front",
+        KernelIntrinsic::DequePopBack => "lpp_deque_pop_back",
+        KernelIntrinsic::DequePopFront => "lpp_deque_pop_front",
+        KernelIntrinsic::DequePeekFront => "lpp_deque_peek_front",
+        KernelIntrinsic::DequePeekBack => "lpp_deque_peek_back",
+        KernelIntrinsic::DequeGet => "lpp_deque_get",
+        KernelIntrinsic::DequeLen => "lpp_deque_len",
+        KernelIntrinsic::DequeClear => "lpp_deque_clear",
+        KernelIntrinsic::DequeFree => "lpp_deque_free",
         _ => return None,
     })
 }
@@ -248,11 +291,11 @@ pub(crate) fn pre_scan(
             if name == "main" {
                 export_names.insert(mir_id, "lpp_main".to_owned());
             } else {
-                let mut export = name.to_owned();
-                if used_export_names.contains(&export) {
-                    export = format!("{export}__{}", mir_id.raw());
-                }
-                used_export_names.insert(export.clone());
+                let export = lpp_codegen_api::sanitize_internal_export_name(
+                    name,
+                    mir_id.raw(),
+                    &mut used_export_names,
+                );
                 export_names.insert(mir_id, export);
             }
         } else {

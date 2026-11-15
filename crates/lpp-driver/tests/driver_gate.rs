@@ -101,7 +101,7 @@ fn compiles_and_runs_a_native_executable() {
     )
     .expect("build_executable must succeed");
 
-    let run = Command::new(&exe).output().expect("run the executable");
+    let run = lpp_driver::exec_output_retry(&exe).expect("run the executable");
     let stdout = String::from_utf8_lossy(&run.stdout).into_owned();
     assert_eq!(run.status.code(), Some(0), "exe exited non-zero:\n{stdout}");
     assert_eq!(
@@ -183,7 +183,7 @@ fn zero_arg_struct_constructor_zero_initializes_fields() {
     )
     .expect("zero-argument struct construction must compile and link");
 
-    let run = Command::new(&exe).output().expect("run the executable");
+    let run = lpp_driver::exec_output_retry(&exe).expect("run the executable");
     let stdout = String::from_utf8_lossy(&run.stdout).into_owned();
     assert_eq!(run.status.code(), Some(0), "exe exited non-zero:\n{stdout}");
     assert_eq!(

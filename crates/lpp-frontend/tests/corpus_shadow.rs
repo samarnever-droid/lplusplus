@@ -9,7 +9,7 @@ const EXPECTED_FRONTEND_REJECTIONS: &[&str] = &[
     "packages/lpp-semver/src/semver.lpp",
     "packages/lpp-toml/src/toml.lpp",
     "pm/src/publisher.lpp",
-    "tests/tuple_bad_arity.lpp",
+    "tests/tuple_bad_arity_17.lpp",
     "tests/variadic_bad_position.lpp",
 ];
 

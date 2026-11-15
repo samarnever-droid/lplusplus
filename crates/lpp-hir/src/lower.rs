@@ -84,6 +84,7 @@ struct ModuleLowerer<'module, 'package> {
     module: &'module Module,
     package: &'package mut HirPackage,
     scopes: Vec<ActiveScope>,
+    override_tokens: Option<Vec<Token>>,
 }
 
 impl<'module, 'package> ModuleLowerer<'module, 'package> {
@@ -92,7 +93,14 @@ impl<'module, 'package> ModuleLowerer<'module, 'package> {
             module,
             package,
             scopes: Vec::new(),
+            override_tokens: None,
         }
+    }
+
+    fn active_tokens(&self) -> &[Token] {
+        self.override_tokens
+            .as_deref()
+            .unwrap_or(&self.module.syntax.tokens)
     }
 
     fn lower_module(&mut self) -> LowerResult<Vec<HirItemId>> {
@@ -451,12 +459,11 @@ impl<'module, 'package> ModuleLowerer<'module, 'package> {
     }
 
     fn peek(&self, cursor: &mut Cursor) -> Option<Token> {
-        while cursor.position < cursor.end
-            && self.module.syntax.tokens[cursor.position].kind.is_trivia()
-        {
+        let tokens = self.active_tokens();
+        while cursor.position < cursor.end && tokens[cursor.position].kind.is_trivia() {
             cursor.position += 1;
         }
-        (cursor.position < cursor.end).then(|| self.module.syntax.tokens[cursor.position])
+        (cursor.position < cursor.end).then(|| tokens[cursor.position])
     }
 
     fn peek_kind(&self, cursor: &mut Cursor) -> Option<TokenKind> {
@@ -528,9 +535,11 @@ impl<'module, 'package> ModuleLowerer<'module, 'package> {
     }
 
     fn previous_span(&self, cursor: &Cursor) -> Option<Span> {
-        cursor.position.checked_sub(1).and_then(|index| {
-            (index >= cursor.start).then(|| self.module.syntax.tokens[index].span)
-        })
+        let tokens = self.active_tokens();
+        cursor
+            .position
+            .checked_sub(1)
+            .and_then(|index| (index >= cursor.start).then(|| tokens[index].span))
     }
 
     fn cursor_span(&self, cursor: &Cursor) -> Span {

@@ -9,6 +9,7 @@ publish = false
 keel = { path = "../keel" }
 lpp-common = { path = "../lpp-common" }
 lpp-config = { path = "../lpp-config" }
+lpp-frontend = { path = "../lpp-frontend" }
 lpp-hir = { path = "../lpp-hir" }
 lpp-types = { path = "../lpp-types" }
 lpp-mir = { path = "../lpp-mir" }

@@ -4,20 +4,25 @@
 //! replace the engine behind the same session contract one stage at a time.
 
 use std::env;
-use std::fmt;
+use std::fmt as std_fmt;
 use std::path::{Path, PathBuf};
 
 use lpp_common::{Diagnostic, OptimizationOptions, SourceMap, TargetSpec};
 
 mod compile;
+pub mod fmt;
+pub mod frontend_eval;
+pub mod repl;
 mod rewrite_engine;
+pub mod test_runner;
 
 pub use compile::{
     BackendChoice, CompileError, CompileOptions, build_executable, build_executable_configured,
     build_executable_with_options, build_freestanding_kernel,
     build_freestanding_kernel_with_backend, compile_entry, compile_entry_with_options,
-    default_runtime_lib_dir, link_executable, link_executable_with, link_executable_with_libraries,
-    link_freestanding_kernel, runtime_library_filename, runtime_library_path,
+    default_runtime_lib_dir, exec_output_retry, exec_status_retry, link_executable,
+    link_executable_with, link_executable_with_libraries, link_freestanding_kernel,
+    runtime_library_filename, runtime_library_path,
 };
 pub use rewrite_engine::RewriteEngine;
 // Callers of `compile_entry` receive a `CompiledModule` and select a `Target`,
@@ -83,8 +88,8 @@ pub enum DriverRequestError {
     WorkingDirectory(std::io::Error),
 }
 
-impl fmt::Display for DriverRequestError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl std_fmt::Display for DriverRequestError {
+    fn fmt(&self, formatter: &mut std_fmt::Formatter<'_>) -> std_fmt::Result {
         match self {
             Self::MissingExecutable => formatter.write_str("driver request has no executable name"),
             Self::WorkingDirectory(error) => {

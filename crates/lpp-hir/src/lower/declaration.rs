@@ -611,10 +611,10 @@ impl<'module, 'package> ModuleLowerer<'module, 'package> {
                 TokenKind::RightParen,
                 "expected ')' after tuple type",
             )?;
-            if !(2..=4).contains(&elements.len()) {
+            if !(2..=16).contains(&elements.len()) {
                 return Err(LowerError::new(
                     "E3100",
-                    "tuple types require between two and four elements",
+                    "tuple types require between two and sixteen elements",
                     start,
                 ));
             }

@@ -1,0 +1,78 @@
+## L++ Standard Library: Synchronization Primitives (`AtomicInt`, `MutexLock`, `SyncQueue`)
+## Safe structured wrappers around runtime atomic, mutex, and deque primitives.
+
+struct AtomicInt:
+    handle: Int
+
+def atomic_int_new(initial: Int) -> AtomicInt:
+    return AtomicInt(atomic_new(initial))
+
+impl AtomicInt:
+    def load(self) -> Int:
+        return atomic_load(self.handle)
+
+    def store(self, val: Int):
+        atomic_store(self.handle, val)
+
+    def fetch_add(self, delta: Int) -> Int:
+        return atomic_add(self.handle, delta)
+
+    def fetch_sub(self, delta: Int) -> Int:
+        return atomic_sub(self.handle, delta)
+
+    def cas(self, expected: Int, desired: Int) -> Bool:
+        return atomic_cas(self.handle, expected, desired) == expected
+
+    def free(self):
+        atomic_free(self.handle)
+
+struct MutexLock:
+    handle: Int
+
+def mutex_lock_new() -> MutexLock:
+    return MutexLock(mutex_new())
+
+impl MutexLock:
+    def lock(self):
+        mutex_lock(self.handle)
+
+    def try_lock(self) -> Bool:
+        return mutex_trylock(self.handle) != 0
+
+    def unlock(self):
+        mutex_unlock(self.handle)
+
+    def free(self):
+        mutex_free(self.handle)
+
+struct SyncQueue:
+    mutex: Int
+    deque: Int
+
+def sync_queue_new() -> SyncQueue:
+    return SyncQueue(mutex_new(), deque_new())
+
+impl SyncQueue:
+    def push(self, val: Int):
+        mutex_lock(self.mutex)
+        deque_push_back(self.deque, val)
+        mutex_unlock(self.mutex)
+
+    def pop_or(self, fallback: Int) -> Int:
+        mutex_lock(self.mutex)
+        if deque_len(self.deque) == 0:
+            mutex_unlock(self.mutex)
+            return fallback
+        val := deque_pop_front(self.deque)
+        mutex_unlock(self.mutex)
+        return val
+
+    def len(self) -> Int:
+        mutex_lock(self.mutex)
+        n := deque_len(self.deque)
+        mutex_unlock(self.mutex)
+        return n
+
+    def free(self):
+        deque_free(self.deque)
+        mutex_free(self.mutex)

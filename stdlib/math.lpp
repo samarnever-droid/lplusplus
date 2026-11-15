@@ -75,3 +75,16 @@ def is_even(x: Int) -> Bool:
 
 def is_odd(x: Int) -> Bool:
     return x - (x / 2) * 2 != 0
+
+def lcm(a: Int, b: Int) -> Int:
+    if a == 0 || b == 0:
+        return 0
+    g := gcd(a, b)
+    return abs((a / g) * b)
+
+def clamp_float(x: Float, lo: Float, hi: Float) -> Float:
+    if x < lo:
+        return lo
+    if x > hi:
+        return hi
+    return x

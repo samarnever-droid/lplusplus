@@ -404,6 +404,7 @@ pub fn execute_mir_arc_diagnosed(
         heap: Vec::new(),
         string_cache: std::collections::BTreeMap::new(),
         output: Vec::new(),
+        ext_collections: ExtCollections::default(),
         arc: Some(ArcState {
             refcounts: Vec::new(),
             node_types: Vec::new(),
@@ -496,6 +497,7 @@ fn execute_with(
         heap: Vec::new(),
         string_cache: std::collections::BTreeMap::new(),
         output: Vec::new(),
+        ext_collections: ExtCollections::default(),
         arc,
     };
     let value = interpreter.execute_entry(entry, arguments)?;
@@ -568,9 +570,84 @@ struct Interpreter<'input> {
     heap: Vec<HeapNode>,
     string_cache: std::collections::BTreeMap<crate::MirStringId, HeapId>,
     output: Vec<String>,
+    ext_collections: ExtCollections,
     /// `Some` for `execute_mir_arc`; the legacy entries run without
     /// refcounts and prove nothing.
     arc: Option<ArcState>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum ExtSetKey {
+    Int(i64),
+    Str(String),
+}
+
+#[derive(Default)]
+struct ExtCollections {
+    sets: Vec<Option<std::collections::HashSet<ExtSetKey>>>,
+    free_sets: Vec<usize>,
+    deques: Vec<Option<std::collections::VecDeque<i64>>>,
+    free_deques: Vec<usize>,
+}
+
+impl ExtCollections {
+    fn alloc_set(&mut self, value: std::collections::HashSet<ExtSetKey>) -> i64 {
+        if let Some(idx) = self.free_sets.pop() {
+            self.sets[idx] = Some(value);
+            (idx + 1) as i64
+        } else {
+            self.sets.push(Some(value));
+            self.sets.len() as i64
+        }
+    }
+
+    fn set(&self, handle: i64) -> Option<&std::collections::HashSet<ExtSetKey>> {
+        let idx = usize::try_from(handle.checked_sub(1)?).ok()?;
+        self.sets.get(idx)?.as_ref()
+    }
+
+    fn set_mut(&mut self, handle: i64) -> Option<&mut std::collections::HashSet<ExtSetKey>> {
+        let idx = usize::try_from(handle.checked_sub(1)?).ok()?;
+        self.sets.get_mut(idx)?.as_mut()
+    }
+
+    fn free_set(&mut self, handle: i64) {
+        if let Ok(idx) = usize::try_from(handle.saturating_sub(1))
+            && idx < self.sets.len()
+            && self.sets[idx].take().is_some()
+        {
+            self.free_sets.push(idx);
+        }
+    }
+
+    fn alloc_deque(&mut self) -> i64 {
+        if let Some(idx) = self.free_deques.pop() {
+            self.deques[idx] = Some(std::collections::VecDeque::new());
+            (idx + 1) as i64
+        } else {
+            self.deques.push(Some(std::collections::VecDeque::new()));
+            self.deques.len() as i64
+        }
+    }
+
+    fn deque(&self, handle: i64) -> Option<&std::collections::VecDeque<i64>> {
+        let idx = usize::try_from(handle.checked_sub(1)?).ok()?;
+        self.deques.get(idx)?.as_ref()
+    }
+
+    fn deque_mut(&mut self, handle: i64) -> Option<&mut std::collections::VecDeque<i64>> {
+        let idx = usize::try_from(handle.checked_sub(1)?).ok()?;
+        self.deques.get_mut(idx)?.as_mut()
+    }
+
+    fn free_deque(&mut self, handle: i64) {
+        if let Ok(idx) = usize::try_from(handle.saturating_sub(1))
+            && idx < self.deques.len()
+            && self.deques[idx].take().is_some()
+        {
+            self.free_deques.push(idx);
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]

@@ -743,6 +743,31 @@ impl Interpreter<'_> {
                         Ok(RuntimeValue::Int(base.wrapping_add(off)))
                     }
                     crate::KernelIntrinsic::MemoryBarrier => Ok(RuntimeValue::Void),
+                    crate::KernelIntrinsic::SetNew
+                    | crate::KernelIntrinsic::SetAdd
+                    | crate::KernelIntrinsic::SetHas
+                    | crate::KernelIntrinsic::SetRemove
+                    | crate::KernelIntrinsic::SetAddStr
+                    | crate::KernelIntrinsic::SetHasStr
+                    | crate::KernelIntrinsic::SetRemoveStr
+                    | crate::KernelIntrinsic::SetLen
+                    | crate::KernelIntrinsic::SetClear
+                    | crate::KernelIntrinsic::SetFree
+                    | crate::KernelIntrinsic::SetUnion
+                    | crate::KernelIntrinsic::SetIntersect
+                    | crate::KernelIntrinsic::DequeNew
+                    | crate::KernelIntrinsic::DequePushBack
+                    | crate::KernelIntrinsic::DequePushFront
+                    | crate::KernelIntrinsic::DequePopBack
+                    | crate::KernelIntrinsic::DequePopFront
+                    | crate::KernelIntrinsic::DequePeekFront
+                    | crate::KernelIntrinsic::DequePeekBack
+                    | crate::KernelIntrinsic::DequeGet
+                    | crate::KernelIntrinsic::DequeLen
+                    | crate::KernelIntrinsic::DequeClear
+                    | crate::KernelIntrinsic::DequeFree => {
+                        self.eval_collection_intrinsic(intrinsic, &arg_vals)
+                    }
                     _ => Err(self.error(
                         Some(function),
                         Some(block),
@@ -908,5 +933,171 @@ impl Interpreter<'_> {
             unreachable!("task handles reference task heap nodes");
         }
         Ok(())
+    }
+
+    fn eval_collection_intrinsic(
+        &mut self,
+        intrinsic: crate::KernelIntrinsic,
+        args: &[RuntimeValue],
+    ) -> Result<RuntimeValue, InterpreterError> {
+        let arg_int = |idx: usize| -> i64 {
+            match args.get(idx) {
+                Some(RuntimeValue::Int(v)) => *v,
+                _ => 0,
+            }
+        };
+        let arg_str = |idx: usize| -> Option<String> {
+            match args.get(idx) {
+                Some(RuntimeValue::String(id)) => match &self.heap[id.0 as usize] {
+                    super::HeapNode::String(s) => Some(s.clone()),
+                    _ => None,
+                },
+                _ => None,
+            }
+        };
+        use super::super::ExtSetKey;
+        use crate::KernelIntrinsic as KI;
+        Ok(match intrinsic {
+            KI::SetNew => RuntimeValue::Int(self.ext_collections.alloc_set(Default::default())),
+            KI::SetAdd => RuntimeValue::Bool(
+                self.ext_collections
+                    .set_mut(arg_int(0))
+                    .is_some_and(|s| s.insert(ExtSetKey::Int(arg_int(1)))),
+            ),
+            KI::SetHas => RuntimeValue::Bool(
+                self.ext_collections
+                    .set(arg_int(0))
+                    .is_some_and(|s| s.contains(&ExtSetKey::Int(arg_int(1)))),
+            ),
+            KI::SetRemove => RuntimeValue::Bool(
+                self.ext_collections
+                    .set_mut(arg_int(0))
+                    .is_some_and(|s| s.remove(&ExtSetKey::Int(arg_int(1)))),
+            ),
+            KI::SetAddStr => {
+                let added = arg_str(1).is_some_and(|k| {
+                    self.ext_collections
+                        .set_mut(arg_int(0))
+                        .is_some_and(|s| s.insert(ExtSetKey::Str(k)))
+                });
+                RuntimeValue::Bool(added)
+            }
+            KI::SetHasStr => {
+                let has = arg_str(1).is_some_and(|k| {
+                    self.ext_collections
+                        .set(arg_int(0))
+                        .is_some_and(|s| s.contains(&ExtSetKey::Str(k)))
+                });
+                RuntimeValue::Bool(has)
+            }
+            KI::SetRemoveStr => {
+                let removed = arg_str(1).is_some_and(|k| {
+                    self.ext_collections
+                        .set_mut(arg_int(0))
+                        .is_some_and(|s| s.remove(&ExtSetKey::Str(k)))
+                });
+                RuntimeValue::Bool(removed)
+            }
+            KI::SetLen => RuntimeValue::Int(
+                self.ext_collections
+                    .set(arg_int(0))
+                    .map_or(0, |s| s.len() as i64),
+            ),
+            KI::SetClear => {
+                if let Some(s) = self.ext_collections.set_mut(arg_int(0)) {
+                    s.clear();
+                }
+                RuntimeValue::Void
+            }
+            KI::SetFree => {
+                self.ext_collections.free_set(arg_int(0));
+                RuntimeValue::Void
+            }
+            KI::SetUnion => {
+                let mut out = self
+                    .ext_collections
+                    .set(arg_int(0))
+                    .cloned()
+                    .unwrap_or_default();
+                if let Some(sb) = self.ext_collections.set(arg_int(1)) {
+                    out.extend(sb.iter().cloned());
+                }
+                RuntimeValue::Int(self.ext_collections.alloc_set(out))
+            }
+            KI::SetIntersect => {
+                let out = match (
+                    self.ext_collections.set(arg_int(0)),
+                    self.ext_collections.set(arg_int(1)),
+                ) {
+                    (Some(sa), Some(sb)) => sa.intersection(sb).cloned().collect(),
+                    _ => Default::default(),
+                };
+                RuntimeValue::Int(self.ext_collections.alloc_set(out))
+            }
+            KI::DequeNew => RuntimeValue::Int(self.ext_collections.alloc_deque()),
+            KI::DequePushBack => {
+                if let Some(dq) = self.ext_collections.deque_mut(arg_int(0)) {
+                    dq.push_back(arg_int(1));
+                }
+                RuntimeValue::Void
+            }
+            KI::DequePushFront => {
+                if let Some(dq) = self.ext_collections.deque_mut(arg_int(0)) {
+                    dq.push_front(arg_int(1));
+                }
+                RuntimeValue::Void
+            }
+            KI::DequePopBack => RuntimeValue::Int(
+                self.ext_collections
+                    .deque_mut(arg_int(0))
+                    .and_then(|dq| dq.pop_back())
+                    .unwrap_or(0),
+            ),
+            KI::DequePopFront => RuntimeValue::Int(
+                self.ext_collections
+                    .deque_mut(arg_int(0))
+                    .and_then(|dq| dq.pop_front())
+                    .unwrap_or(0),
+            ),
+            KI::DequePeekFront => RuntimeValue::Int(
+                self.ext_collections
+                    .deque(arg_int(0))
+                    .and_then(|dq| dq.front().copied())
+                    .unwrap_or(0),
+            ),
+            KI::DequePeekBack => RuntimeValue::Int(
+                self.ext_collections
+                    .deque(arg_int(0))
+                    .and_then(|dq| dq.back().copied())
+                    .unwrap_or(0),
+            ),
+            KI::DequeGet => {
+                let idx = usize::try_from(arg_int(1)).ok();
+                RuntimeValue::Int(
+                    idx.and_then(|i| {
+                        self.ext_collections
+                            .deque(arg_int(0))
+                            .and_then(|dq| dq.get(i).copied())
+                    })
+                    .unwrap_or(0),
+                )
+            }
+            KI::DequeLen => RuntimeValue::Int(
+                self.ext_collections
+                    .deque(arg_int(0))
+                    .map_or(0, |dq| dq.len() as i64),
+            ),
+            KI::DequeClear => {
+                if let Some(dq) = self.ext_collections.deque_mut(arg_int(0)) {
+                    dq.clear();
+                }
+                RuntimeValue::Void
+            }
+            KI::DequeFree => {
+                self.ext_collections.free_deque(arg_int(0));
+                RuntimeValue::Void
+            }
+            _ => unreachable!("filtered by caller"),
+        })
     }
 }

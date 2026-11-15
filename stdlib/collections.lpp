@@ -45,3 +45,72 @@ def list_count(lst: List[Int], target: Int) -> Int:
         if item == target:
             c = c + 1
     return c
+
+## Safe handle wrappers for O(1) runtime Set and Deque.
+struct IntSet:
+    handle: Int
+
+def int_set_new() -> IntSet:
+    return IntSet(set_new())
+
+impl IntSet:
+    def add(self, val: Int) -> Bool:
+        return set_add(self.handle, val)
+
+    def has(self, val: Int) -> Bool:
+        return set_has(self.handle, val)
+
+    def remove(self, val: Int) -> Bool:
+        return set_remove(self.handle, val)
+
+    def add_str(self, key: Str) -> Bool:
+        return set_add_str(self.handle, key)
+
+    def has_str(self, key: Str) -> Bool:
+        return set_has_str(self.handle, key)
+
+    def len(self) -> Int:
+        return set_len(self.handle)
+
+    def clear(self):
+        set_clear(self.handle)
+
+    def free(self):
+        set_free(self.handle)
+
+struct IntDeque:
+    handle: Int
+
+def int_deque_new() -> IntDeque:
+    return IntDeque(deque_new())
+
+impl IntDeque:
+    def push_back(self, val: Int):
+        deque_push_back(self.handle, val)
+
+    def push_front(self, val: Int):
+        deque_push_front(self.handle, val)
+
+    def pop_back(self) -> Int:
+        return deque_pop_back(self.handle)
+
+    def pop_front(self) -> Int:
+        return deque_pop_front(self.handle)
+
+    def peek_front(self) -> Int:
+        return deque_peek_front(self.handle)
+
+    def peek_back(self) -> Int:
+        return deque_peek_back(self.handle)
+
+    def get(self, idx: Int) -> Int:
+        return deque_get(self.handle, idx)
+
+    def len(self) -> Int:
+        return deque_len(self.handle)
+
+    def clear(self):
+        deque_clear(self.handle)
+
+    def free(self):
+        deque_free(self.handle)

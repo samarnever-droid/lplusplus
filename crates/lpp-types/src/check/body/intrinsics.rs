@@ -229,6 +229,18 @@ fn monomorphic_intrinsic_sig(name: &str) -> Option<(&'static [PrimitiveType], Pr
         "rdmsr" => (&[U32], U64),
         "wrmsr" => (&[U32, U64], Void),
         "lgdt" | "lidt" | "invlpg" => (&[USize], Void),
+        "set_new" => (&[], Int),
+        "set_add" | "set_has" | "set_remove" => (&[Int, Int], Bool),
+        "set_add_str" | "set_has_str" | "set_remove_str" => (&[Int, PrimitiveType::String], Bool),
+        "set_len" => (&[Int], Int),
+        "set_clear" | "set_free" => (&[Int], Void),
+        "set_union" | "set_intersect" => (&[Int, Int], Int),
+        "deque_new" => (&[], Int),
+        "deque_push_back" | "deque_push_front" => (&[Int, Int], Void),
+        "deque_pop_back" | "deque_pop_front" | "deque_peek_front" | "deque_peek_back"
+        | "deque_len" => (&[Int], Int),
+        "deque_get" => (&[Int, Int], Int),
+        "deque_clear" | "deque_free" => (&[Int], Void),
         _ => return None,
     })
 }

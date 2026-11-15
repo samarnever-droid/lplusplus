@@ -38,6 +38,7 @@ pub mod arc;
 pub mod buf;
 pub mod clock_rng;
 pub mod collect;
+pub mod collections_ext;
 pub mod concur;
 pub mod io;
 pub mod json;

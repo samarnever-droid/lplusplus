@@ -200,10 +200,10 @@ impl<'module, 'package> ModuleLowerer<'module, 'package> {
                     }
                     let close =
                         self.expect(cursor, TokenKind::RightParen, "expected ')' after tuple")?;
-                    if !(2..=4).contains(&elements.len()) {
+                    if !(2..=16).contains(&elements.len()) {
                         return Err(LowerError::new(
                             "E3100",
-                            "tuple expressions require between two and four elements",
+                            "tuple expressions require between two and sixteen elements",
                             token.span,
                         ));
                     }
@@ -274,11 +274,8 @@ impl<'module, 'package> ModuleLowerer<'module, 'package> {
     /// Each literal run between interpolations becomes a `Literal::String`
     /// carrying the *inner* segment span (no surrounding quotes) with
     /// `formatted = true`, which tells the MIR builder to unescape the raw
-    /// segment text directly. Each `{name}` becomes a `Name` expression, and
-    /// the pieces are folded with the `+` operator (string concatenation).
-    ///
-    /// Interpolations are limited to a single identifier for now; anything
-    /// more complex is rejected rather than silently mishandled.
+    /// segment text directly. Each `{expr}` is lexed and parsed as a full L++
+    /// expression in the active scope, and the pieces are folded with `+`.
     fn lower_formatted_string(&mut self, token: Token) -> LowerResult<ExprId> {
         let full = self.token_text(token).to_string();
         let base = token.span.start;
@@ -321,32 +318,95 @@ impl<'module, 'package> ModuleLowerer<'module, 'package> {
                     }
                     let interp_start = i + 1;
                     let mut j = interp_start;
-                    while j < end_idx && bytes[j] != b'}' {
+                    let mut depth = 1usize;
+                    let mut in_quote: Option<u8> = None;
+                    while j < end_idx && depth > 0 {
+                        let b = bytes[j];
+                        if let Some(q) = in_quote {
+                            if b == b'\\' {
+                                j += 2;
+                                continue;
+                            }
+                            if b == q {
+                                in_quote = None;
+                            }
+                        } else {
+                            match b {
+                                b'"' | b'\'' => in_quote = Some(b),
+                                b'{' => depth += 1,
+                                b'}' => {
+                                    depth -= 1;
+                                    if depth == 0 {
+                                        break;
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
                         j += 1;
                     }
-                    if j >= end_idx {
+                    if depth != 0 || j >= end_idx {
                         return Err(LowerError::new(
                             "E3104",
                             "unterminated interpolation in formatted string",
                             token.span,
                         ));
                     }
-                    let name = full[interp_start..j].trim();
-                    if !is_simple_identifier(name) {
+                    let expr_text = &full[interp_start..j];
+                    let expr_span = seg_span(interp_start, j);
+                    if expr_text.trim().is_empty() {
                         return Err(LowerError::new(
                             "E3105",
-                            "formatted-string interpolation must be a single identifier",
-                            token.span,
+                            "empty interpolation in formatted string",
+                            expr_span,
                         ));
                     }
-                    let span = seg_span(interp_start, j);
-                    let symbol = self.intern(name, span)?;
-                    let binding = self.resolve_name(symbol);
-                    let origin = self.source_origin(span)?;
-                    parts.push(self.alloc_expression(Expression {
-                        kind: ExpressionKind::Name { symbol, binding },
-                        origin,
-                    })?);
+                    let offset = base + interp_start as u32;
+                    let lexed = lpp_frontend::lex(file, expr_text).map_err(|diags| {
+                        let msg = diags
+                            .into_iter()
+                            .next()
+                            .map(|d| d.message)
+                            .unwrap_or_else(|| "invalid interpolation expression".to_string());
+                        LowerError::new("E3105", msg, expr_span)
+                    })?;
+                    let sub_tokens: Vec<Token> = lexed
+                        .tokens
+                        .into_iter()
+                        .filter(|t| {
+                            !matches!(
+                                t.kind,
+                                TokenKind::Newline
+                                    | TokenKind::Indent
+                                    | TokenKind::Dedent
+                                    | TokenKind::Eof
+                            )
+                        })
+                        .map(|mut t| {
+                            t.span = Span {
+                                file,
+                                start: offset + t.span.start,
+                                end: offset + t.span.end,
+                            };
+                            t
+                        })
+                        .collect();
+                    let prev_tokens = self.override_tokens.take();
+                    self.override_tokens = Some(sub_tokens);
+                    let mut sub_cursor = Cursor {
+                        start: 0,
+                        position: 0,
+                        end: self.active_tokens().len(),
+                    };
+                    let parsed = self.parse_expression(&mut sub_cursor, None).and_then(|e| {
+                        self.expect_end(
+                            &mut sub_cursor,
+                            "unexpected token in formatted-string interpolation",
+                        )?;
+                        Ok(e)
+                    });
+                    self.override_tokens = prev_tokens;
+                    parts.push(parsed?);
                     i = j + 1;
                     seg_start = i;
                 }
@@ -734,15 +794,4 @@ impl<'module, 'package> ModuleLowerer<'module, 'package> {
         }
         false
     }
-}
-
-/// A single ASCII identifier: `[A-Za-z_][A-Za-z0-9_]*`. Used to validate
-/// formatted-string interpolations, which currently accept one identifier.
-fn is_simple_identifier(text: &str) -> bool {
-    let mut chars = text.chars();
-    match chars.next() {
-        Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
-        _ => return false,
-    }
-    chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }

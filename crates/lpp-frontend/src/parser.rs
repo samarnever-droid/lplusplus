@@ -463,11 +463,11 @@ impl Parser {
                 TokenKind::RightParen => {
                     if let Some((open, commas, call)) = stack.pop()
                         && !call
-                        && commas >= 4
+                        && commas >= 16
                     {
                         return self.fail(
                             "E1110",
-                            "tuple expressions require between two and four elements",
+                            "tuple expressions require between two and sixteen elements",
                             Span {
                                 file: self.file,
                                 start: self.token_at(line[open]).span.start,

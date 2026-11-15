@@ -122,6 +122,8 @@ pub enum TokenKind {
     RightBracket,
     Comma,
     Dot,
+    DotDot,
+    DotDotEqual,
     Ellipsis,
     At,
 }

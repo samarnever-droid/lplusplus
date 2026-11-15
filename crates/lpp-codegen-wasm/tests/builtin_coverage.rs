@@ -187,6 +187,7 @@ const KNOWN_GAPS: &[&str] = &[
     "vec_i64x2_and",
     "vec_i64x2_extract",
     "vec_i64x2_mul",
+    "vec_i64x2_not",
     "vec_i64x2_or",
     "vec_i64x2_shr",
     "vec_i64x2_splat",

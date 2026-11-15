@@ -33,6 +33,29 @@ pub(super) fn intrinsic_arch_import(intrinsic: KernelIntrinsic) -> Option<&'stat
         KernelIntrinsic::Lgdt => "lpp_arch_lgdt",
         KernelIntrinsic::Lidt => "lpp_arch_lidt",
         KernelIntrinsic::Invlpg => "lpp_arch_invlpg",
+        KernelIntrinsic::SetNew => "lpp_set_new",
+        KernelIntrinsic::SetAdd => "lpp_set_add",
+        KernelIntrinsic::SetHas => "lpp_set_has",
+        KernelIntrinsic::SetRemove => "lpp_set_remove",
+        KernelIntrinsic::SetAddStr => "lpp_set_add_str",
+        KernelIntrinsic::SetHasStr => "lpp_set_has_str",
+        KernelIntrinsic::SetRemoveStr => "lpp_set_remove_str",
+        KernelIntrinsic::SetLen => "lpp_set_len",
+        KernelIntrinsic::SetClear => "lpp_set_clear",
+        KernelIntrinsic::SetFree => "lpp_set_free",
+        KernelIntrinsic::SetUnion => "lpp_set_union",
+        KernelIntrinsic::SetIntersect => "lpp_set_intersect",
+        KernelIntrinsic::DequeNew => "lpp_deque_new",
+        KernelIntrinsic::DequePushBack => "lpp_deque_push_back",
+        KernelIntrinsic::DequePushFront => "lpp_deque_push_front",
+        KernelIntrinsic::DequePopBack => "lpp_deque_pop_back",
+        KernelIntrinsic::DequePopFront => "lpp_deque_pop_front",
+        KernelIntrinsic::DequePeekFront => "lpp_deque_peek_front",
+        KernelIntrinsic::DequePeekBack => "lpp_deque_peek_back",
+        KernelIntrinsic::DequeGet => "lpp_deque_get",
+        KernelIntrinsic::DequeLen => "lpp_deque_len",
+        KernelIntrinsic::DequeClear => "lpp_deque_clear",
+        KernelIntrinsic::DequeFree => "lpp_deque_free",
         _ => return None,
     })
 }
@@ -52,6 +75,24 @@ pub(super) fn arch_import_signature(name: &str) -> Option<(&'static [CLType], Op
         | "lpp_arch_invlpg" => (&[cltypes::I64], None),
         "lpp_arch_rdmsr" => (&[cltypes::I32], Some(cltypes::I64)),
         "lpp_arch_wrmsr" => (&[cltypes::I32, cltypes::I64], None),
+        "lpp_set_new" | "lpp_deque_new" => (&[], Some(cltypes::I64)),
+        "lpp_set_add" | "lpp_set_has" | "lpp_set_remove" | "lpp_set_add_str"
+        | "lpp_set_has_str" | "lpp_set_remove_str" => {
+            (&[cltypes::I64, cltypes::I64], Some(cltypes::I8))
+        }
+        "lpp_set_len"
+        | "lpp_deque_pop_back"
+        | "lpp_deque_pop_front"
+        | "lpp_deque_peek_front"
+        | "lpp_deque_peek_back"
+        | "lpp_deque_len" => (&[cltypes::I64], Some(cltypes::I64)),
+        "lpp_set_clear" | "lpp_set_free" | "lpp_deque_clear" | "lpp_deque_free" => {
+            (&[cltypes::I64], None)
+        }
+        "lpp_set_union" | "lpp_set_intersect" | "lpp_deque_get" => {
+            (&[cltypes::I64, cltypes::I64], Some(cltypes::I64))
+        }
+        "lpp_deque_push_back" | "lpp_deque_push_front" => (&[cltypes::I64, cltypes::I64], None),
         _ => return None,
     })
 }
