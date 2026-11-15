@@ -10,12 +10,8 @@ use lpp_driver::{
 fn workdir(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("lpp_llvm_e2e_{}_{}", std::process::id(), name));
     let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&directory_path(&dir)).unwrap();
+    std::fs::create_dir_all(&dir).unwrap();
     dir
-}
-
-fn directory_path(p: &PathBuf) -> PathBuf {
-    p.clone()
 }
 
 fn run_on_backend(

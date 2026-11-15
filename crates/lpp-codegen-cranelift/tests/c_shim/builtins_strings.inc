@@ -103,9 +103,23 @@ int64_t lpp_str_ends_with(const char *text, const char *suffix) {
     return strcmp(text + (tlen - slen), suffix) == 0;
 }
 
+static const char *lpp_memmem(const void *hay, size_t hay_len, const void *needle, size_t needle_len) {
+    if (needle_len == 0) return (const char *)hay;
+    if (hay_len < needle_len) return NULL;
+    const unsigned char *h = (const unsigned char *)hay;
+    const unsigned char *n = (const unsigned char *)needle;
+    size_t limit = hay_len - needle_len;
+    for (size_t i = 0; i <= limit; i++) {
+        if (h[i] == n[0] && memcmp(h + i, n, needle_len) == 0) {
+            return (const char *)(h + i);
+        }
+    }
+    return NULL;
+}
+
 int64_t lpp_str_find(const char *haystack, const char *needle) {
     if (!*needle) return 0;
-    const char *hit = memmem(haystack, strlen(haystack), needle, strlen(needle));
+    const char *hit = lpp_memmem(haystack, strlen(haystack), needle, strlen(needle));
     return hit ? (int64_t)(hit - haystack) : -1;
 }
 
@@ -119,7 +133,7 @@ char *lpp_str_replace(const char *text, const char *old, const char *replacement
     {
         const char *cursor = text;
         for (;;) {
-            const char *hit = memmem(cursor, strlen(cursor), old, old_len);
+            const char *hit = lpp_memmem(cursor, strlen(cursor), old, old_len);
             if (!hit) break;
             count++;
             cursor = hit + old_len;
@@ -130,7 +144,7 @@ char *lpp_str_replace(const char *text, const char *old, const char *replacement
     size_t pos = 0;
     const char *cursor = text;
     for (;;) {
-        const char *hit = memmem(cursor, strlen(cursor), old, old_len);
+        const char *hit = lpp_memmem(cursor, strlen(cursor), old, old_len);
         if (!hit) {
             size_t tail = strlen(cursor);
             memcpy(out + pos, cursor, tail);

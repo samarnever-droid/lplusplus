@@ -143,7 +143,7 @@ fn lower_files(
     (graph, hir)
 }
 
-fn sym_str<'a>(hir: &'a HirPackage, symbol: Symbol) -> &'a str {
+fn sym_str(hir: &HirPackage, symbol: Symbol) -> &str {
     hir.names.symbols.resolve(symbol).expect("interned symbol")
 }
 
@@ -207,7 +207,7 @@ fn find_externs(hir: &HirPackage) -> Vec<ExternBlock> {
         .collect()
 }
 
-fn body_stmts<'a>(hir: &'a HirPackage, body: BodyId) -> &'a [StmtId] {
+fn body_stmts(hir: &HirPackage, body: BodyId) -> &[StmtId] {
     hir.statements(hir.bodies[body].statements)
 }
 
@@ -284,7 +284,7 @@ fn flatten_fstring_concat(hir: &HirPackage, expr: ExprId, out: &mut Vec<ExprId>)
     }
 }
 
-fn module_by_suffix<'a>(graph: &'a PackageGraph, suffix: &str) -> ModuleId {
+fn module_by_suffix(graph: &PackageGraph, suffix: &str) -> ModuleId {
     graph
         .modules
         .iter()

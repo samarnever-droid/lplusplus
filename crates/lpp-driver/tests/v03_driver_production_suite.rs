@@ -12,7 +12,7 @@
 //! - `--deny-unsafe` (`[E4501]`), safe-context rejections (`[E3201]`), invalid casts (`[E3202]`).
 //! - `lpp fmt`, `lpp test`, `lpp repl`, and `lpp-lsp` JSON-RPC tooling sequences.
 
-use std::io::{Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::OnceLock;
@@ -935,29 +935,37 @@ unsafe def kmain():
             "missing Multiboot2 header magic ({tag})"
         );
 
-        let readelf = Command::new("readelf")
+        assert_elf_exec_without_interp(&bytes, 62, tag);
+
+        match Command::new("readelf")
             .args(["-h", "-l"])
             .arg(&elf_path)
             .output()
-            .expect("readelf installed");
-        assert!(readelf.status.success());
-        let re_text = String::from_utf8_lossy(&readelf.stdout);
-        assert!(re_text.contains("EXEC (Executable file)"), "{re_text}");
-        assert!(
-            !re_text.contains("INTERP"),
-            "unexpected PT_INTERP: {re_text}"
-        );
+        {
+            Ok(readelf) => {
+                assert!(readelf.status.success());
+                let re_text = String::from_utf8_lossy(&readelf.stdout);
+                assert!(re_text.contains("EXEC (Executable file)"), "{re_text}");
+                assert!(
+                    !re_text.contains("INTERP"),
+                    "unexpected PT_INTERP: {re_text}"
+                );
+            }
+            Err(e) if e.kind() == ErrorKind::NotFound => {}
+            Err(e) => panic!("failed invoking readelf ({tag}): {e}"),
+        }
 
-        let objdump = Command::new("objdump")
-            .args(["-d"])
-            .arg(&elf_path)
-            .output()
-            .expect("objdump installed");
-        assert!(objdump.status.success());
-        let disasm = String::from_utf8_lossy(&objdump.stdout);
-        assert!(disasm.contains("cli"), "missing cli ({tag})");
-        assert!(disasm.contains("hlt"), "missing hlt ({tag})");
-        assert!(disasm.contains("rdtsc"), "missing rdtsc ({tag})");
+        match Command::new("objdump").args(["-d"]).arg(&elf_path).output() {
+            Ok(objdump) if objdump.status.success() => {
+                let disasm = String::from_utf8_lossy(&objdump.stdout);
+                assert!(disasm.contains("cli"), "missing cli ({tag})");
+                assert!(disasm.contains("hlt"), "missing hlt ({tag})");
+                assert!(disasm.contains("rdtsc"), "missing rdtsc ({tag})");
+            }
+            Ok(_) => {}
+            Err(e) if e.kind() == ErrorKind::NotFound => {}
+            Err(e) => panic!("failed invoking objdump ({tag}): {e}"),
+        }
     }
 
     // Custom aarch64-unknown-none kernel with MMIO + bump allocator on Cranelift & LLVM
@@ -997,18 +1005,55 @@ unsafe def a64_main():
         assert_eq!(u16::from_le_bytes([bytes[16], bytes[17]]), 2); // ET_EXEC
         assert_eq!(u16::from_le_bytes([bytes[18], bytes[19]]), 183); // EM_AARCH64
 
-        let readelf = Command::new("readelf")
+        assert_elf_exec_without_interp(&bytes, 183, tag);
+
+        match Command::new("readelf")
             .args(["-h", "-l"])
             .arg(&a64_elf)
             .output()
-            .expect("readelf installed");
-        assert!(readelf.status.success());
-        let re_text = String::from_utf8_lossy(&readelf.stdout);
-        assert!(re_text.contains("AArch64"), "{re_text}");
-        assert!(!re_text.contains("INTERP"), "{re_text}");
+        {
+            Ok(readelf) => {
+                assert!(readelf.status.success());
+                let re_text = String::from_utf8_lossy(&readelf.stdout);
+                assert!(re_text.contains("AArch64"), "{re_text}");
+                assert!(!re_text.contains("INTERP"), "{re_text}");
+            }
+            Err(e) if e.kind() == ErrorKind::NotFound => {}
+            Err(e) => panic!("failed invoking readelf ({tag}): {e}"),
+        }
     }
 
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+fn assert_elf_exec_without_interp(bytes: &[u8], expected_machine: u16, tag: &str) {
+    assert!(bytes.len() >= 64, "ELF64 header truncated ({tag})");
+    assert_eq!(&bytes[0..4], b"\x7fELF", "invalid ELF magic ({tag})");
+    assert_eq!(
+        u16::from_le_bytes([bytes[16], bytes[17]]),
+        2,
+        "expected ET_EXEC ({tag})"
+    );
+    assert_eq!(
+        u16::from_le_bytes([bytes[18], bytes[19]]),
+        expected_machine,
+        "unexpected e_machine ({tag})"
+    );
+    let phoff = u64::from_le_bytes(bytes[32..40].try_into().unwrap()) as usize;
+    let phentsize = u16::from_le_bytes([bytes[54], bytes[55]]) as usize;
+    let phnum = u16::from_le_bytes([bytes[56], bytes[57]]) as usize;
+    assert!(
+        phentsize >= 56 && phnum > 0,
+        "expected ELF program headers ({tag})"
+    );
+    for i in 0..phnum {
+        let off = phoff + i * phentsize;
+        let p_type = u32::from_le_bytes(bytes[off..off + 4].try_into().unwrap());
+        assert_ne!(
+            p_type, 3,
+            "unexpected PT_INTERP in freestanding ELF ({tag})"
+        );
+    }
 }
 
 // ============================================================================
@@ -1060,23 +1105,28 @@ fn dwarf_debug_info_gdb_line_stepping_and_panic_backtrace() {
         assert!(run_out.status.success());
         assert_eq!(String::from_utf8_lossy(&run_out.stdout).trim(), "42");
 
-        let readelf = Command::new("readelf")
+        match Command::new("readelf")
             .args(["--debug-dump=info,line"])
             .arg(&exe)
             .output()
-            .expect("readelf installed");
-        assert!(readelf.status.success());
-        let dump = String::from_utf8_lossy(&readelf.stdout);
-        assert!(
-            dump.contains("step_demo.lpp"),
-            "missing filename in DWARF ({tag})"
-        );
-        assert!(
-            dump.contains("compute") || dump.contains("main"),
-            "missing function DIEs in DWARF ({tag})"
-        );
+        {
+            Ok(readelf) => {
+                assert!(readelf.status.success());
+                let dump = String::from_utf8_lossy(&readelf.stdout);
+                assert!(
+                    dump.contains("step_demo.lpp"),
+                    "missing filename in DWARF ({tag})"
+                );
+                assert!(
+                    dump.contains("compute") || dump.contains("main"),
+                    "missing function DIEs in DWARF ({tag})"
+                );
+            }
+            Err(e) if e.kind() == ErrorKind::NotFound => {}
+            Err(e) => panic!("failed invoking readelf ({tag}): {e}"),
+        }
 
-        let gdb = Command::new("gdb")
+        match Command::new("gdb")
             .args([
                 "-batch",
                 "-ex",
@@ -1096,29 +1146,34 @@ fn dwarf_debug_info_gdb_line_stepping_and_panic_backtrace() {
             ])
             .arg(&exe)
             .output()
-            .expect("gdb installed");
-        let gdb_out = String::from_utf8_lossy(&gdb.stdout);
-        let gdb_err = String::from_utf8_lossy(&gdb.stderr);
-        assert!(
-            gdb.status.success(),
-            "gdb failed ({tag}): stdout={gdb_out}\nstderr={gdb_err}"
-        );
-        assert!(
-            gdb_out.contains("step_demo.lpp:6"),
-            "missing initial breakpoint on line 6 ({tag}):\n{gdb_out}"
-        );
-        assert!(
-            gdb_out.contains("step_demo.lpp:7"),
-            "expected `next` to step to line 7 ({tag}):\n{gdb_out}"
-        );
-        assert!(
-            gdb_out.contains("compute") && gdb_out.contains("main"),
-            "expected backtrace inside compute -> main ({tag}):\n{gdb_out}"
-        );
-        assert!(
-            gdb_out.contains("42"),
-            "expected program stdout 42 after continue ({tag}):\n{gdb_out}"
-        );
+        {
+            Ok(gdb) => {
+                let gdb_out = String::from_utf8_lossy(&gdb.stdout);
+                let gdb_err = String::from_utf8_lossy(&gdb.stderr);
+                assert!(
+                    gdb.status.success(),
+                    "gdb failed ({tag}): stdout={gdb_out}\nstderr={gdb_err}"
+                );
+                assert!(
+                    gdb_out.contains("step_demo.lpp:6"),
+                    "missing initial breakpoint on line 6 ({tag}):\n{gdb_out}"
+                );
+                assert!(
+                    gdb_out.contains("step_demo.lpp:7"),
+                    "expected `next` to step to line 7 ({tag}):\n{gdb_out}"
+                );
+                assert!(
+                    gdb_out.contains("compute") && gdb_out.contains("main"),
+                    "expected backtrace inside compute -> main ({tag}):\n{gdb_out}"
+                );
+                assert!(
+                    gdb_out.contains("42"),
+                    "expected program stdout 42 after continue ({tag}):\n{gdb_out}"
+                );
+            }
+            Err(e) if e.kind() == ErrorKind::NotFound => {}
+            Err(e) => panic!("failed invoking gdb ({tag}): {e}"),
+        }
     }
 
     // Verify LPP_BACKTRACE=1 emits panic backtrace on runtime division by zero

@@ -1168,13 +1168,13 @@ impl MirPass for AlgebraicPeepholePass {
                 }
                 _ => None,
             };
-            if let Some(new_rvalue) = replacement {
-                if let Some(inst_mut) = program.instruction_mut(id) {
-                    inst_mut.kind = InstructionKind::Assign {
-                        target,
-                        value: new_rvalue,
-                    };
-                }
+            if let Some(new_rvalue) = replacement
+                && let Some(inst_mut) = program.instruction_mut(id)
+            {
+                inst_mut.kind = InstructionKind::Assign {
+                    target,
+                    value: new_rvalue,
+                };
             }
         }
         Ok(())
@@ -1214,17 +1214,17 @@ impl MirPass for ScalarCopyPropPass {
                     continue;
                 };
                 for &iid in program.block_instructions(block) {
-                    if let Some(inst) = program.instruction(iid) {
-                        if let InstructionKind::Assign { target, value } = inst.kind {
-                            let c = assign_counts.entry(target).or_insert(0);
-                            *c += 1;
-                            if *c == 1 {
-                                if let Rvalue::Use(Operand::Copy(src)) = value {
-                                    copy_defs.insert(target, src);
-                                }
-                            } else {
-                                copy_defs.remove(&target);
+                    if let Some(inst) = program.instruction(iid)
+                        && let InstructionKind::Assign { target, value } = inst.kind
+                    {
+                        let c = assign_counts.entry(target).or_insert(0);
+                        *c += 1;
+                        if *c == 1 {
+                            if let Rvalue::Use(Operand::Copy(src)) = value {
+                                copy_defs.insert(target, src);
                             }
+                        } else {
+                            copy_defs.remove(&target);
                         }
                     }
                 }
@@ -1257,10 +1257,10 @@ impl MirPass for ScalarCopyPropPass {
                 continue;
             }
             let rewrite_op = |op: Operand| -> Operand {
-                if let Operand::Copy(local) = op {
-                    if let Some(&src) = copy_defs.get(&local) {
-                        return Operand::Copy(src);
-                    }
+                if let Operand::Copy(local) = op
+                    && let Some(&src) = copy_defs.get(&local)
+                {
+                    return Operand::Copy(src);
                 }
                 op
             };
@@ -1303,14 +1303,14 @@ impl MirPass for ScalarCopyPropPass {
                         inst_mut.kind = new_kind;
                     }
                 }
-                if let Some(block) = program.block(bid) {
-                    if let Terminator::Return(Some(op)) = block.terminator {
-                        let new_op = rewrite_op(op);
-                        if new_op != op {
-                            if let Some(bmut) = program.block_mut(bid) {
-                                bmut.terminator = Terminator::Return(Some(new_op));
-                            }
-                        }
+                if let Some(block) = program.block(bid)
+                    && let Terminator::Return(Some(op)) = block.terminator
+                {
+                    let new_op = rewrite_op(op);
+                    if new_op != op
+                        && let Some(bmut) = program.block_mut(bid)
+                    {
+                        bmut.terminator = Terminator::Return(Some(new_op));
                     }
                 }
             }
@@ -2374,7 +2374,7 @@ fn equivalence_suite_45_plus_programs_loops_recursion_enums_tuples_closures_stru
                 "    deque_free(dq)\n",
                 "    return f + b + mid + p1 + p2 + rem + after_clear\n",
             ),
-            expected: ExecutionValue::Int(5 + 30 + 20 + 5 + 30 + 2 + 0),
+            expected: ExecutionValue::Int(5 + 30 + 20 + 5 + 30 + 2),
             expected_output: &[],
         },
         // 34. String concatenation & builtins

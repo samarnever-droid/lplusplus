@@ -374,6 +374,7 @@ fn select_stack_locals(
                 && (dsts.is_empty() || dsts.iter().any(|dst| rejected.contains(dst)))
             {
                 invalid_temp.insert(tmp);
+                rejected.insert(tmp);
                 changed = true;
             }
         }
@@ -389,7 +390,8 @@ fn select_stack_locals(
             let is_valid_temp = temp_sources.get(local).is_some_and(|dsts| {
                 !dsts.is_empty() && !invalid_temp.contains(local) && !rejected.contains(local)
             });
-            let is_valid_dest = !rejected.contains(local)
+            let is_valid_dest = !temp_sources.contains_key(local)
+                && !rejected.contains(local)
                 && (has_direct_construct.contains(local) || user_deps.contains_key(local));
             is_valid_temp || is_valid_dest
         })

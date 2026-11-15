@@ -1,4 +1,4 @@
-use std::io::{Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
@@ -560,23 +560,30 @@ def main():
         assert!(run_out.status.success(), "{tag} binary failed");
         assert_eq!(String::from_utf8_lossy(&run_out.stdout).trim(), "42");
 
-        let readelf = Command::new("readelf")
+        match Command::new("readelf")
             .args(["--debug-dump=info,line"])
             .arg(&exe)
             .output()
-            .expect("run readelf");
-        assert!(readelf.status.success(), "readelf failed for {tag}");
-        let dump = String::from_utf8_lossy(&readelf.stdout);
-        assert!(
-            dump.contains("main.lpp"),
-            "expected main.lpp in DWARF dump for {tag}: {dump}"
-        );
-        assert!(
-            dump.contains("add_values") || dump.contains("lpp_add_values") || dump.contains("main"),
-            "expected function DIEs in DWARF dump for {tag}: {dump}"
-        );
+        {
+            Ok(readelf) => {
+                assert!(readelf.status.success(), "readelf failed for {tag}");
+                let dump = String::from_utf8_lossy(&readelf.stdout);
+                assert!(
+                    dump.contains("main.lpp"),
+                    "expected main.lpp in DWARF dump for {tag}: {dump}"
+                );
+                assert!(
+                    dump.contains("add_values")
+                        || dump.contains("lpp_add_values")
+                        || dump.contains("main"),
+                    "expected function DIEs in DWARF dump for {tag}: {dump}"
+                );
+            }
+            Err(e) if e.kind() == ErrorKind::NotFound => {}
+            Err(e) => panic!("failed running readelf for {tag}: {e}"),
+        }
 
-        let gdb_out = Command::new("gdb")
+        match Command::new("gdb")
             .args([
                 "-batch",
                 "-ex",
@@ -592,21 +599,26 @@ def main():
             ])
             .arg(&exe)
             .output()
-            .expect("run gdb");
-        let gdb_stdout = String::from_utf8_lossy(&gdb_out.stdout);
-        let gdb_stderr = String::from_utf8_lossy(&gdb_out.stderr);
-        assert!(
-            gdb_out.status.success(),
-            "gdb failed for {tag}: stdout={gdb_stdout} stderr={gdb_stderr}"
-        );
-        assert!(
-            gdb_stdout.contains("main.lpp:6"),
-            "expected gdb breakpoint/backtrace on main.lpp:6 for {tag}: {gdb_stdout}"
-        );
-        assert!(
-            gdb_stdout.contains("42"),
-            "expected program output 42 under gdb for {tag}: {gdb_stdout}"
-        );
+        {
+            Ok(gdb_out) => {
+                let gdb_stdout = String::from_utf8_lossy(&gdb_out.stdout);
+                let gdb_stderr = String::from_utf8_lossy(&gdb_out.stderr);
+                assert!(
+                    gdb_out.status.success(),
+                    "gdb failed for {tag}: stdout={gdb_stdout} stderr={gdb_stderr}"
+                );
+                assert!(
+                    gdb_stdout.contains("main.lpp:6"),
+                    "expected gdb breakpoint/backtrace on main.lpp:6 for {tag}: {gdb_stdout}"
+                );
+                assert!(
+                    gdb_stdout.contains("42"),
+                    "expected program output 42 under gdb for {tag}: {gdb_stdout}"
+                );
+            }
+            Err(e) if e.kind() == ErrorKind::NotFound => {}
+            Err(e) => panic!("failed running gdb for {tag}: {e}"),
+        }
     }
 
     // Verify `lpp debug` CLI routing with LPP_DEBUGGER override.

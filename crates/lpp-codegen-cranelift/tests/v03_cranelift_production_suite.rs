@@ -298,7 +298,6 @@ const SHT_PROGBITS: u32 = 1;
 const SHT_SYMTAB: u32 = 2;
 #[allow(dead_code)]
 const SHT_STRTAB: u32 = 3;
-const SHT_RELA: u32 = 4;
 
 const SHF_WRITE: u64 = 0x1;
 const SHF_ALLOC: u64 = 0x2;
@@ -358,10 +357,6 @@ fn read_u32_le(bytes: &[u8], off: usize) -> u32 {
 
 fn read_u64_le(bytes: &[u8], off: usize) -> u64 {
     u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap())
-}
-
-fn read_i64_le(bytes: &[u8], off: usize) -> i64 {
-    i64::from_le_bytes(bytes[off..off + 8].try_into().unwrap())
 }
 
 fn read_cstr(bytes: &[u8], off: usize) -> String {
@@ -458,35 +453,6 @@ impl Elf64View {
         self.sections.iter().find(|s| s.name == name)
     }
 
-    fn relocations_for(&self, rela_section_name: &str) -> Vec<ElfRela> {
-        let Some(sec) = self.section(rela_section_name) else {
-            return Vec::new();
-        };
-        assert_eq!(sec.sh_type, SHT_RELA);
-        let count = sec.data.len() / 24;
-        let mut out = Vec::with_capacity(count);
-        for i in 0..count {
-            let b = &sec.data[i * 24..(i + 1) * 24];
-            let r_offset = read_u64_le(b, 0);
-            let r_info = read_u64_le(b, 8);
-            let r_addend = read_i64_le(b, 16);
-            let sym_idx = (r_info >> 32) as usize;
-            let rel_type = (r_info & 0xffff_ffff) as u32;
-            let sym_name = self
-                .symbols
-                .get(sym_idx)
-                .map(|s| s.name.clone())
-                .unwrap_or_default();
-            out.push(ElfRela {
-                offset: r_offset,
-                sym_name,
-                rel_type,
-                addend: r_addend,
-            });
-        }
-        out
-    }
-
     fn defined_global_funcs(&self) -> BTreeSet<String> {
         self.symbols
             .iter()
@@ -494,6 +460,74 @@ impl Elf64View {
             .map(|s| s.name.clone())
             .collect()
     }
+}
+
+// ── Cross-Format Object Inspection Helpers (ELF / Mach-O / COFF) ────────────
+
+fn normalize_sym_name(format: cranelift_object::object::BinaryFormat, name: &str) -> &str {
+    if format == cranelift_object::object::BinaryFormat::MachO {
+        name.strip_prefix('_').unwrap_or(name)
+    } else {
+        name
+    }
+}
+
+fn obj_section<'a>(
+    obj: &'a cranelift_object::object::File<'a>,
+    elf_name: &str,
+) -> Option<cranelift_object::object::Section<'a, 'a>> {
+    use cranelift_object::object::{Object as _, ObjectSection as _};
+    let macho_alt = elf_name.strip_prefix('.').map(|s| format!("__{s}"));
+    obj.sections().find(|sec| {
+        sec.name()
+            .ok()
+            .is_some_and(|n| n == elf_name || macho_alt.as_deref() == Some(n))
+    })
+}
+
+fn obj_section_relocs(bytes: &[u8], elf_sec_name: &str) -> Vec<String> {
+    use cranelift_object::object::{
+        self, Object as _, ObjectSection as _, ObjectSymbol as _, RelocationTarget,
+    };
+    let obj = object::File::parse(bytes).expect("parse object");
+    let fmt = obj.format();
+    let Some(sec) = obj_section(&obj, elf_sec_name) else {
+        return Vec::new();
+    };
+    sec.relocations()
+        .filter_map(|(_, reloc)| match reloc.target() {
+            RelocationTarget::Symbol(sym_idx) => obj
+                .symbol_by_index(sym_idx)
+                .ok()
+                .and_then(|s| s.name().ok())
+                .map(|n| normalize_sym_name(fmt, n).to_string()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn obj_defined_global_funcs(bytes: &[u8]) -> BTreeSet<String> {
+    use cranelift_object::object::{self, Object as _, ObjectSymbol as _, SymbolKind};
+    let obj = object::File::parse(bytes).expect("parse object");
+    let fmt = obj.format();
+    obj.symbols()
+        .filter(|sym| sym.is_global() && sym.is_definition() && sym.kind() == SymbolKind::Text)
+        .filter_map(|sym| {
+            sym.name()
+                .ok()
+                .map(|n| normalize_sym_name(fmt, n).to_string())
+        })
+        .collect()
+}
+
+fn is_rodata_section(sec: &cranelift_object::object::Section<'_, '_>) -> bool {
+    use cranelift_object::object::{ObjectSection as _, SectionKind};
+    matches!(
+        sec.kind(),
+        SectionKind::ReadOnlyData | SectionKind::ReadOnlyString | SectionKind::ReadOnlyDataWithRel
+    ) || sec.name().is_ok_and(|n| {
+        n.starts_with(".rodata") || n.starts_with(".rdata") || n == "__const" || n == "__cstring"
+    })
 }
 
 // ── Minimal Pure-Rust DWARF v4 Decoder ─────────────────────────────────────
@@ -780,32 +814,63 @@ def main() -> Int:
         assert!(m1.exported_symbols.contains("main"));
         assert!(m1.imported_symbols.contains("lpp_print_int"));
 
-        let elf = Elf64View::parse(&m1.object);
-        assert_eq!(elf.e_type, ET_REL, "expected ET_REL for {target:?}");
+        use cranelift_object::object::{
+            self, Architecture, BinaryFormat, Object as _, ObjectKind, ObjectSection as _,
+            SectionKind,
+        };
+        let obj = object::File::parse(&*m1.object).expect("object must parse");
         assert_eq!(
-            elf.e_machine, expected_machine,
-            "machine mismatch for {target:?}"
+            obj.kind(),
+            ObjectKind::Relocatable,
+            "expected relocatable for {target:?}"
+        );
+        let expected_arch = match expected_machine {
+            EM_X86_64 => Architecture::X86_64,
+            EM_AARCH64 => Architecture::Aarch64,
+            _ => unreachable!(),
+        };
+        assert_eq!(
+            obj.architecture(),
+            expected_arch,
+            "architecture mismatch for {target:?}"
+        );
+        let text_sec = obj
+            .sections()
+            .find(|s| s.kind() == SectionKind::Text)
+            .expect("object must contain text section");
+        assert!(
+            !text_sec.data().expect("text data").is_empty(),
+            "text section must be non-empty"
         );
 
-        let text = elf.section(".text").expect("ELF must contain .text");
-        assert_eq!(text.sh_type, SHT_PROGBITS);
-        assert_ne!(text.sh_flags & SHF_ALLOC, 0);
-        assert_ne!(text.sh_flags & SHF_EXECINSTR, 0);
-        assert_eq!(text.sh_flags & SHF_WRITE, 0);
-        assert!(!text.data.is_empty());
+        if obj.format() == BinaryFormat::Elf {
+            let elf = Elf64View::parse(&m1.object);
+            assert_eq!(elf.e_type, ET_REL, "expected ET_REL for {target:?}");
+            assert_eq!(
+                elf.e_machine, expected_machine,
+                "machine mismatch for {target:?}"
+            );
 
-        let defs = elf.defined_global_funcs();
+            let text = elf.section(".text").expect("ELF must contain .text");
+            assert_eq!(text.sh_type, SHT_PROGBITS);
+            assert_ne!(text.sh_flags & SHF_ALLOC, 0);
+            assert_ne!(text.sh_flags & SHF_EXECINSTR, 0);
+            assert_eq!(text.sh_flags & SHF_WRITE, 0);
+            assert!(!text.data.is_empty());
+        }
+
+        let defs = obj_defined_global_funcs(&m1.object);
         assert!(
             defs.contains("compute"),
-            "missing compute in .symtab: {defs:?}"
+            "missing compute in symbol table: {defs:?}"
         );
         assert!(defs.contains("lpp_main"));
         assert!(defs.contains("main"));
 
-        let text_relocs = elf.relocations_for(".rela.text");
+        let text_relocs = obj_section_relocs(&m1.object, text_sec.name().unwrap_or(".text"));
         assert!(
-            text_relocs.iter().any(|r| r.sym_name == "lpp_print_int"),
-            "expected relocation to lpp_print_int in .rela.text: {text_relocs:?}"
+            text_relocs.iter().any(|r| r == "lpp_print_int"),
+            "expected relocation to lpp_print_int in text section: {text_relocs:?}"
         );
     }
 
@@ -848,12 +913,10 @@ def main() -> Int:
         let b = compile_with_options(&cp, Target::host(), level, false, None, None)
             .expect("opt level deterministic");
         assert!(a.same_object(&b), "determinism failed at {level:?}");
-        let elf = Elf64View::parse(&a.object);
-        assert!(elf.section(".text").is_some());
-        assert!(
-            elf.section(".rodata").is_some()
-                || elf.sections.iter().any(|s| s.name.starts_with(".rodata"))
-        );
+        use cranelift_object::object::{self, Object as _, ObjectSection as _, SectionKind};
+        let obj = object::File::parse(&*a.object).expect("parse opt level object");
+        assert!(obj.sections().any(|s| s.kind() == SectionKind::Text));
+        assert!(obj.sections().any(|s| is_rodata_section(&s)));
     }
 
     // PGO fingerprint pulls in lpp_pgo_hit + lpp_pgo_flush relocations
@@ -869,10 +932,20 @@ def main() -> Int:
     assert!(pgo_mod.imported_symbols.contains("lpp_pgo_hit"));
     assert!(pgo_mod.imported_symbols.contains("lpp_pgo_flush"));
 
-    let elf = Elf64View::parse(&pgo_mod.object);
-    let relocs = elf.relocations_for(".rela.text");
-    assert!(relocs.iter().any(|r| r.sym_name == "lpp_pgo_hit"));
-    assert!(relocs.iter().any(|r| r.sym_name == "lpp_pgo_flush"));
+    let pgo_text_name = {
+        use cranelift_object::object::{self, Object as _, ObjectSection as _, SectionKind};
+        object::File::parse(&*pgo_mod.object)
+            .ok()
+            .and_then(|o| {
+                o.sections()
+                    .find(|s| s.kind() == SectionKind::Text)
+                    .and_then(|s| s.name().ok().map(str::to_string))
+            })
+            .unwrap_or_else(|| ".text".to_string())
+    };
+    let relocs = obj_section_relocs(&pgo_mod.object, &pgo_text_name);
+    assert!(relocs.iter().any(|r| r == "lpp_pgo_hit"));
+    assert!(relocs.iter().any(|r| r == "lpp_pgo_flush"));
 }
 
 #[test]
@@ -887,40 +960,44 @@ def main() -> Int:
 "#;
     let cp = pipeline(source);
     let module = compile_target(&cp, Target::X86_64).unwrap();
-    let elf = Elf64View::parse(&module.object);
-
-    // String pool resides in read-only allocatable .rodata* section(s)
-    let rodata_sections: Vec<&ElfSection> = elf
-        .sections
-        .iter()
-        .filter(|s| s.name.starts_with(".rodata"))
-        .collect();
-    assert!(!rodata_sections.is_empty(), "expected .rodata section(s)");
-    for sec in &rodata_sections {
-        assert_ne!(
-            sec.sh_flags & SHF_ALLOC,
-            0,
-            "{} must be SHF_ALLOC",
-            sec.name
-        );
-        assert_eq!(
-            sec.sh_flags & SHF_EXECINSTR,
-            0,
-            "{} must not be executable",
-            sec.name
-        );
-        assert_eq!(
-            sec.sh_flags & SHF_WRITE,
-            0,
-            "{} must be read-only",
-            sec.name
-        );
+    use cranelift_object::object::{self, BinaryFormat, Object as _, ObjectSection as _};
+    let obj = object::File::parse(&*module.object).expect("parse rodata object");
+    if obj.format() == BinaryFormat::Elf {
+        let elf = Elf64View::parse(&module.object);
+        let rodata_sections: Vec<&ElfSection> = elf
+            .sections
+            .iter()
+            .filter(|s| s.name.starts_with(".rodata"))
+            .collect();
+        assert!(!rodata_sections.is_empty(), "expected .rodata section(s)");
+        for sec in &rodata_sections {
+            assert_ne!(
+                sec.sh_flags & SHF_ALLOC,
+                0,
+                "{} must be SHF_ALLOC",
+                sec.name
+            );
+            assert_eq!(
+                sec.sh_flags & SHF_EXECINSTR,
+                0,
+                "{} must not be executable",
+                sec.name
+            );
+            assert_eq!(
+                sec.sh_flags & SHF_WRITE,
+                0,
+                "{} must be read-only",
+                sec.name
+            );
+        }
     }
 
-    let combined_ro: Vec<u8> = rodata_sections
-        .iter()
-        .flat_map(|s| s.data.iter().copied())
+    let combined_ro: Vec<u8> = obj
+        .sections()
+        .filter(|s| is_rodata_section(s))
+        .flat_map(|s| s.data().unwrap_or(&[]).iter().copied())
         .collect();
+    assert!(!combined_ro.is_empty(), "expected non-empty read-only data");
     assert!(
         combined_ro.windows(14).any(|w| w == b"alpha-immortal"),
         "alpha-immortal missing from .rodata"
@@ -972,25 +1049,50 @@ def main() -> Int:
     )
     .expect("debug compile succeeds");
 
-    let elf = Elf64View::parse(&dbg_mod.object);
-    let debug_info = elf.section(".debug_info").expect(".debug_info missing");
-    let debug_abbrev = elf.section(".debug_abbrev").expect(".debug_abbrev missing");
-    let debug_str = elf.section(".debug_str").expect(".debug_str missing");
-    let debug_line = elf.section(".debug_line").expect(".debug_line missing");
+    use cranelift_object::object::{self, BinaryFormat, ObjectSection as _};
+    let obj = object::File::parse(&*dbg_mod.object).expect("parse DWARF object");
+    let info_data = obj_section(&obj, ".debug_info")
+        .expect(".debug_info missing")
+        .data()
+        .expect("debug_info data")
+        .to_vec();
+    let abbrev_data = obj_section(&obj, ".debug_abbrev")
+        .expect(".debug_abbrev missing")
+        .data()
+        .expect("debug_abbrev data")
+        .to_vec();
+    let str_data = obj_section(&obj, ".debug_str")
+        .expect(".debug_str missing")
+        .data()
+        .expect("debug_str data")
+        .to_vec();
+    let line_data = obj_section(&obj, ".debug_line")
+        .expect(".debug_line missing")
+        .data()
+        .expect("debug_line data")
+        .to_vec();
 
-    for sec in [debug_info, debug_abbrev, debug_str, debug_line] {
-        assert_eq!(sec.sh_type, SHT_PROGBITS);
-        assert_eq!(
-            sec.sh_flags & SHF_ALLOC,
-            0,
-            "{} must not have SHF_ALLOC",
-            sec.name
-        );
-        assert!(!sec.data.is_empty(), "{} must be non-empty", sec.name);
+    if obj.format() == BinaryFormat::Elf {
+        let elf = Elf64View::parse(&dbg_mod.object);
+        for name in [".debug_info", ".debug_abbrev", ".debug_str", ".debug_line"] {
+            let sec = elf.section(name).unwrap();
+            assert_eq!(sec.sh_type, SHT_PROGBITS);
+            assert_eq!(
+                sec.sh_flags & SHF_ALLOC,
+                0,
+                "{} must not have SHF_ALLOC",
+                sec.name
+            );
+            assert!(!sec.data.is_empty(), "{} must be non-empty", sec.name);
+        }
+    } else {
+        for data in [&info_data, &abbrev_data, &str_data, &line_data] {
+            assert!(!data.is_empty(), "DWARF section must be non-empty");
+        }
     }
 
     let (producer, cu_name, comp_dir, subprograms) =
-        parse_dwarf_info(&debug_info.data, &debug_abbrev.data, &debug_str.data);
+        parse_dwarf_info(&info_data, &abbrev_data, &str_data);
     assert_eq!(producer, "lpp 0.3.0");
     assert_eq!(cu_name, "main.lpp");
     assert_eq!(comp_dir, "/dbg");
@@ -1017,7 +1119,7 @@ def main() -> Int:
         assert!(sp.high_pc_size >= 1);
     }
 
-    let line_hdr = parse_dwarf_line(&debug_line.data);
+    let line_hdr = parse_dwarf_line(&line_data);
     assert_eq!(line_hdr.version, 4);
     assert!(line_hdr.dirs.iter().any(|d| d == "/dbg"));
     let file_names: BTreeSet<&str> = line_hdr.files.iter().map(|(f, _)| f.as_str()).collect();
@@ -1038,21 +1140,23 @@ def main() -> Int:
     );
 
     // Relocations must bind .debug_info and .debug_line addresses to text symbols
-    let info_relocs = elf.relocations_for(".rela.debug_info");
-    let line_relocs = elf.relocations_for(".rela.debug_line");
-    assert_eq!(info_relocs.len(), subprograms.len());
-    assert_eq!(line_relocs.len(), subprograms.len());
-    assert!(info_relocs.iter().any(|r| r.sym_name == "lpp_main"));
-    assert!(line_relocs.iter().any(|r| r.sym_name == "lpp_main"));
+    let info_relocs = obj_section_relocs(&dbg_mod.object, ".debug_info");
+    let line_relocs = obj_section_relocs(&dbg_mod.object, ".debug_line");
+    assert!(info_relocs.iter().any(|r| r == "lpp_main"));
+    assert!(line_relocs.iter().any(|r| r == "lpp_main"));
+    if obj.format() == BinaryFormat::Elf {
+        assert_eq!(info_relocs.len(), subprograms.len());
+        assert_eq!(line_relocs.len(), subprograms.len());
+    }
 
     // debug_info = false must omit all .debug_* sections
     let nodebug = compile_with_options(&cp, Target::X86_64, OptLevel::None, false, None, None)
         .expect("non-debug compile succeeds");
-    let nodebug_elf = Elf64View::parse(&nodebug.object);
-    assert!(nodebug_elf.section(".debug_info").is_none());
-    assert!(nodebug_elf.section(".debug_line").is_none());
-    assert!(nodebug_elf.section(".debug_abbrev").is_none());
-    assert!(nodebug_elf.section(".debug_str").is_none());
+    let nodebug_obj = object::File::parse(&*nodebug.object).expect("parse nodebug object");
+    assert!(obj_section(&nodebug_obj, ".debug_info").is_none());
+    assert!(obj_section(&nodebug_obj, ".debug_line").is_none());
+    assert!(obj_section(&nodebug_obj, ".debug_abbrev").is_none());
+    assert!(obj_section(&nodebug_obj, ".debug_str").is_none());
 }
 
 #[test]
@@ -1067,20 +1171,24 @@ def main() -> Int:
     let cp = pipeline(source);
     let module = compile_with_options(&cp, Target::Aarch64, OptLevel::O1, true, None, None)
         .expect("DWARF without resolver succeeds");
-    let elf = Elf64View::parse(&module.object);
-    assert_eq!(elf.e_machine, EM_AARCH64);
-    let debug_info = elf.section(".debug_info").expect(".debug_info missing");
-    let debug_abbrev = elf.section(".debug_abbrev").expect(".debug_abbrev missing");
-    let debug_str = elf.section(".debug_str").expect(".debug_str missing");
-    let debug_line = elf.section(".debug_line").expect(".debug_line missing");
+    use cranelift_object::object::{self, Architecture, Object as _, ObjectSection as _};
+    let obj = object::File::parse(&*module.object).expect("parse aarch64 DWARF object");
+    assert_eq!(obj.architecture(), Architecture::Aarch64);
+    let debug_info = obj_section(&obj, ".debug_info").expect(".debug_info missing");
+    let debug_abbrev = obj_section(&obj, ".debug_abbrev").expect(".debug_abbrev missing");
+    let debug_str = obj_section(&obj, ".debug_str").expect(".debug_str missing");
+    let debug_line = obj_section(&obj, ".debug_line").expect(".debug_line missing");
 
-    let (producer, cu_name, comp_dir, subprograms) =
-        parse_dwarf_info(&debug_info.data, &debug_abbrev.data, &debug_str.data);
+    let (producer, cu_name, comp_dir, subprograms) = parse_dwarf_info(
+        debug_info.data().unwrap(),
+        debug_abbrev.data().unwrap(),
+        debug_str.data().unwrap(),
+    );
     assert_eq!(producer, "lpp 0.3.0");
     assert_eq!(cu_name, "main.lpp");
     assert_eq!(comp_dir, ".");
     assert!(subprograms.len() >= 2);
-    let line_hdr = parse_dwarf_line(&debug_line.data);
+    let line_hdr = parse_dwarf_line(debug_line.data().unwrap());
     assert_eq!(line_hdr.files[0].0, "main.lpp");
 }
 
@@ -1248,8 +1356,7 @@ def main() -> Int:
     assert!(!module.exported_symbols.contains("free"));
     assert!(!module.exported_symbols.contains("open"));
 
-    let elf = Elf64View::parse(&module.object);
-    let defs = elf.defined_global_funcs();
+    let defs = obj_defined_global_funcs(&module.object);
     assert!(defs.contains("lpp_fn_free"));
     assert!(defs.contains("lpp_fn_open"));
     assert!(defs.contains("custom_c_hook"));
@@ -1623,11 +1730,10 @@ def main() -> Int:
                 "{target:?} missing import {sym}"
             );
         }
-        let elf = Elf64View::parse(&module.object);
-        let relocs = elf.relocations_for(".rela.text");
-        assert!(relocs.iter().any(|r| r.sym_name == "lpp_set_new"));
-        assert!(relocs.iter().any(|r| r.sym_name == "lpp_deque_new"));
-        assert!(relocs.iter().any(|r| r.sym_name == "lpp_buf_alloc"));
+        let relocs = obj_section_relocs(&module.object, ".text");
+        assert!(relocs.iter().any(|r| r == "lpp_set_new"));
+        assert!(relocs.iter().any(|r| r == "lpp_deque_new"));
+        assert!(relocs.iter().any(|r| r == "lpp_buf_alloc"));
     }
 }
 
@@ -1772,25 +1878,16 @@ def main() -> Int:
             .any(|s| s.starts_with("lpp_trace_t"))
     );
 
-    let elf = Elf64View::parse(&module.object);
-    let defs = elf.defined_global_funcs();
+    let defs = obj_defined_global_funcs(&module.object);
     assert!(defs.iter().any(|s| s.starts_with("lpp_trace_s")));
     assert!(defs.iter().any(|s| s.starts_with("lpp_trace_e")));
     assert!(defs.iter().any(|s| s.starts_with("lpp_trace_c")));
     assert!(defs.iter().any(|s| s.starts_with("lpp_trace_t")));
 
-    let relocs = elf.relocations_for(".rela.text");
-    assert!(
-        relocs
-            .iter()
-            .any(|r| r.sym_name == "lpp_arc_mark_collectible")
-    );
-    assert!(relocs.iter().any(|r| r.sym_name == "lpp_trace_visit"));
-    assert!(
-        relocs
-            .iter()
-            .any(|r| r.sym_name == "lpp_arc_collect_cycles")
-    );
+    let relocs = obj_section_relocs(&module.object, ".text");
+    assert!(relocs.iter().any(|r| r == "lpp_arc_mark_collectible"));
+    assert!(relocs.iter().any(|r| r == "lpp_trace_visit"));
+    assert!(relocs.iter().any(|r| r == "lpp_arc_collect_cycles"));
 }
 
 // ── 7. External C FFI & Typed Rejections ───────────────────────────────────
@@ -1926,4 +2023,49 @@ def main() -> Int:
     return 0
 "#;
     assert_native_matches_arc_oracle(escaping_pod_src, "owned_pod_escaping");
+}
+
+#[test]
+fn nested_pod_child_assigned_to_heap_parent_does_not_stack_allocate_child() {
+    use cranelift_object::object::{
+        self, Object as _, ObjectSection as _, ObjectSymbol as _, RelocationTarget,
+    };
+
+    let src = r#"
+struct Child:
+    value: Int
+
+struct Parent:
+    child: Child
+
+def main():
+    child := Child()
+    mut parent := Parent()
+    parent.child = child
+    print(1)
+"#;
+    let cp = pipeline(src);
+    let plan = lpp_codegen_api::build_ownership_lowering_plan(&cp.program, &cp.types);
+    assert!(
+        plan.stack_locals.is_empty(),
+        "nested child assigned to heap parent must not stack-allocate: {:?}",
+        plan.stack_locals
+    );
+    let module = assert_native_matches_arc_oracle(src, "nested_pod_child_escape");
+    let parsed = object::File::parse(&*module.object).expect("parse object");
+    let mut allocs = 0usize;
+    for section in parsed.sections() {
+        for (_, reloc) in section.relocations() {
+            if let RelocationTarget::Symbol(sym_idx) = reloc.target()
+                && let Ok(sym) = parsed.symbol_by_index(sym_idx)
+                && sym.name().ok() == Some("lpp_arc_alloc_with_destructor")
+            {
+                allocs += 1;
+            }
+        }
+    }
+    assert!(
+        allocs >= 3,
+        "expected Child() + default Child() + Parent() to all heap-allocate (got {allocs})"
+    );
 }
