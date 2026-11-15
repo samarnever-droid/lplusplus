@@ -9,9 +9,9 @@ publish = false
 lpp-codegen-api = { path = "../lpp-codegen-api" }
 lpp-config = { path = "../lpp-config" }
 lpp-mir = { path = "../lpp-mir" }
+lpp-ownership = { path = "../lpp-ownership" }
 lpp-runtime-abi = { path = "../lpp-runtime-abi" }
 lpp-types = { path = "../lpp-types" }
 
 [dev-dependencies]
 lpp-hir = { path = "../lpp-hir" }
-lpp-ownership = { path = "../lpp-ownership" }

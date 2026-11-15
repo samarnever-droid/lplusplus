@@ -25,9 +25,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-use lpp_codegen_api::{
-    Backend, CodegenErrorKind, CodegenOptions, CompiledModule, NameResolver, Target,
-};
+use lpp_codegen_api::{Backend, CodegenOptions, CompiledModule, NameResolver, OptLevel, Target};
 use lpp_codegen_llvm::{LlvmBackend, emit_llvm_ir};
 use lpp_hir::{
     FileSystem, FileSystemError, GraphBuilder, GraphRequest, PackageSpec, ResolutionMode,
@@ -457,7 +455,7 @@ fn direct_string_builtins_have_plan_and_emitter_parity_without_panics() {
     let source = concat!(
         "def main() -> Int:\n",
         "    joined := str_concat(\"hello \", \"world\")\n",
-        "    if lpp_str_eq(joined, \"hello world\") == 1:\n",
+        "    if str_contains(joined, \"world\") and lpp_str_eq(joined, \"hello world\") == 1:\n",
         "        print_str(joined)\n",
         "    return 0\n",
     );
@@ -517,23 +515,91 @@ fn integer_truthiness_and_implicit_void_main_emit_valid_entry_ir() {
 }
 
 #[test]
-fn struct_is_typed_rejection() {
+fn struct_and_managed_features_emit_valid_ir_and_objects() {
     let source = r#"
+@repr(C)
 struct Point:
     x: Int
     y: Int
+
+enum Event:
+    Idle
+    Move(dx: Int, dy: Int)
+
+async def worker(n: Int) -> Int:
+    return n + 1
+
 def main() -> Int:
     p := Point(1, 2)
-    print_int(p.x + p.y)
+    pair := (p.x, p.y)
+    mut items := [10, 20]
+    list_push(items, 30)
+    ev := Event.Move(pair.0, pair.1)
+    mut delta := 0
+    match ev:
+        Idle:
+            delta = 0
+        Move(a, b):
+            delta = a + b
+    offset := 5
+    f := fn(x: Int) -> Int:
+        return x + offset
+    res := f(delta)
+    t := spawn fn() -> Void:
+        print_int(res)
+    done := worker(res).await
+    print_int(done + len(items))
     return 0
 "#;
     let (program, types, package) = pipeline(source);
     let names = Names(&package.names.symbols);
-    let error = try_compile(&program, &types, &names)
-        .expect_err("a struct program must be rejected on x86_64 (5E slice 1)");
-    match error.kind {
-        CodegenErrorKind::UnsupportedConstruct { .. } => {}
-        other => panic!("expected UnsupportedConstruct (E5001), got {other:?}"),
+    let mut options = CodegenOptions::new(Target::X86_64, &names);
+    options.opt_level = OptLevel::O3;
+    let artifact = LlvmBackend
+        .compile_module(&program, &types, &options)
+        .expect("managed L++ constructs must compile cleanly on LLVM backend");
+    assert!(!artifact.object.is_empty());
+
+    let ir = emit_llvm_ir(&program, &types, &names).expect("IR emission must succeed");
+    assert!(ir.contains("switch i64"), "expected enum switch in IR");
+    assert!(ir.contains("lpp_list_new"), "expected list lowering in IR");
+    assert!(
+        ir.contains("lpp_task_new"),
+        "expected async task creation in IR"
+    );
+    assert!(
+        ir.contains("lpp_task_await"),
+        "expected async task await in IR"
+    );
+
+    // Also verify bare-metal kernel target IR/object emission without ARC runtime dependencies.
+    let kernel_src = r#"
+@repr(C)
+@packed
+struct Header:
+    magic: U64
+    flags: USize
+
+def main() -> Int:
+    h := Header(0x4C5050 as U64, 1 as USize)
+    unsafe:
+        v := mmio_read64(h.magic as USize)
+        mmio_write64(h.magic as USize, v + (1 as U64))
+    return 0
+"#;
+    let (kprog, ktypes, kpkg) = pipeline(kernel_src);
+    let knames = Names(&kpkg.names.symbols);
+    for target in [Target::X86_64None, Target::Aarch64None] {
+        let mut kopt = CodegenOptions::new(target, &knames);
+        kopt.opt_level = OptLevel::O2;
+        let kart = LlvmBackend
+            .compile_module(&kprog, &ktypes, &kopt)
+            .expect("bare-metal kernel target must compile on LLVM backend");
+        assert!(!kart.object.is_empty());
+        let kir = emit_llvm_ir(&kprog, &ktypes, &knames)
+            .expect("bare-metal kernel IR emission must succeed");
+        assert!(kir.contains("load volatile i64"));
+        assert!(kir.contains("store volatile i64"));
     }
 }
 

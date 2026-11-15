@@ -464,8 +464,13 @@ fn rewrite_main(args: &[String], cwd: &Path) -> i32 {
                 let out = output
                     .map(PathBuf::from)
                     .unwrap_or_else(|| entry.with_extension("elf"));
-                return match crate::build_freestanding_kernel(&entry, &stem, compile_options, &out)
-                {
+                return match crate::build_freestanding_kernel_with_backend(
+                    &entry,
+                    &stem,
+                    backend,
+                    compile_options,
+                    &out,
+                ) {
                     Ok(module) => {
                         println!(
                             "[rewrite] linked freestanding ELF kernel -> {} ({} bytes obj)",

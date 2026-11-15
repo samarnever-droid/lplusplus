@@ -44,7 +44,11 @@ fn append_all(path: &Path, content: &str) {
 }
 
 fn main() {
-    let exe = std::env::current_exe().expect("current_exe");
+    let exe_from_arg0 = std::env::args_os()
+        .next()
+        .map(PathBuf::from)
+        .filter(|p| p.parent().map(|d| d.join("lpp-fake.cfg").exists()).unwrap_or(false));
+    let exe = exe_from_arg0.unwrap_or_else(|| std::env::current_exe().expect("current_exe"));
     let cfg_path = exe.parent().expect("exe parent").join("lpp-fake.cfg");
     let cfg = fs::read_to_string(&cfg_path).expect("read lpp-fake.cfg");
     let mut lines = cfg.lines();
@@ -125,9 +129,9 @@ fn make_executable(p: &Path) {
 #[cfg(not(unix))]
 fn make_executable(_p: &Path) {}
 
-fn fake_lpp_bytes() -> &'static [u8] {
-    static BYTES: OnceLock<Vec<u8>> = OnceLock::new();
-    BYTES.get_or_init(|| {
+fn fake_lpp_master() -> &'static PathBuf {
+    static MASTER: OnceLock<PathBuf> = OnceLock::new();
+    MASTER.get_or_init(|| {
         let build_dir = std::env::temp_dir().join(format!("lpp-fake-bin-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&build_dir);
         std::fs::create_dir_all(&build_dir).unwrap();
@@ -149,20 +153,28 @@ fn fake_lpp_bytes() -> &'static [u8] {
             "failed to compile lpp-fake helper: {}",
             String::from_utf8_lossy(&out.stderr)
         );
-        let bytes = std::fs::read(&exe).expect("read compiled lpp-fake binary");
-        let _ = std::fs::remove_dir_all(&build_dir);
-        bytes
+        let _ = std::fs::remove_file(&src);
+        make_executable(&exe);
+        exe
     })
 }
 
 /// Install a cross-platform `lpp-fake` binary into `root` configured to run in
 /// `mode` and log into `log_file`.
+///
+/// Uses a hard link from the `rustc`-compiled master binary so this process never
+/// opens the installed executable for writing (avoiding multi-threaded fork `ETXTBSY`).
 pub fn install_fake_lpp(root: &Path, mode: FakeMode, log_file: &Path) -> PathBuf {
     let exe = root.join(format!("lpp-fake{}", std::env::consts::EXE_SUFFIX));
     let cfg = root.join("lpp-fake.cfg");
     std::fs::write(&cfg, format!("{}\n{}\n", mode.as_str(), log_file.display())).unwrap();
-    std::fs::write(&exe, fake_lpp_bytes()).unwrap();
-    make_executable(&exe);
+    let master = fake_lpp_master();
+    let _ = std::fs::remove_file(&exe);
+    if std::fs::hard_link(master, &exe).is_err() {
+        let bytes = std::fs::read(master).expect("read compiled lpp-fake binary");
+        std::fs::write(&exe, bytes).unwrap();
+        make_executable(&exe);
+    }
     exe
 }
 

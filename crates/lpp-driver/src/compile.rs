@@ -862,6 +862,19 @@ pub fn link_freestanding_kernel(
     result
 }
 
+/// Compile and statically link a bare-metal L++ kernel image using the selected backend.
+pub fn build_freestanding_kernel_with_backend(
+    entry: &Path,
+    package_name: &str,
+    backend: BackendChoice,
+    options: CompileOptions,
+    output: &Path,
+) -> Result<CompiledModule, CompileError> {
+    let module = compile_entry_with_options(entry, package_name, backend, options.clone())?;
+    link_freestanding_kernel(&module, &options, output)?;
+    Ok(module)
+}
+
 /// Compile and statically link a bare-metal L++ kernel image.
 pub fn build_freestanding_kernel(
     entry: &Path,
@@ -869,14 +882,13 @@ pub fn build_freestanding_kernel(
     options: CompileOptions,
     output: &Path,
 ) -> Result<CompiledModule, CompileError> {
-    let module = compile_entry_with_options(
+    build_freestanding_kernel_with_backend(
         entry,
         package_name,
         BackendChoice::Cranelift,
-        options.clone(),
-    )?;
-    link_freestanding_kernel(&module, &options, output)?;
-    Ok(module)
+        options,
+        output,
+    )
 }
 
 /// Compile an L++ entry file all the way to a runnable native executable.
