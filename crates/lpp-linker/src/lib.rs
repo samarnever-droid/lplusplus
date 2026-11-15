@@ -18,10 +18,13 @@
 //! See `docs/rewrite/PHASE_6.md` for the approved contract and the 6A.2
 #![allow(clippy::all, warnings)]
 
+pub mod bare_metal;
 pub mod core;
 
 use std::fs;
 use std::path::PathBuf;
+
+pub use bare_metal::{freestanding_arch_object, multiboot2_header_object};
 
 // Re-export the proven v1 public surface so `lpp::linker::X` keeps working.
 pub use core::{

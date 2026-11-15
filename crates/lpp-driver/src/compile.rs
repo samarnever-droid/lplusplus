@@ -104,6 +104,10 @@ pub struct CompileOptions {
     pub pgo_use: Option<PathBuf>,
     /// Reject any `unsafe` blocks, `unsafe def`, pointer ops, casts, or kernel intrinsics (`[E4501]`).
     pub deny_unsafe: bool,
+    /// Optional explicit virtual/physical base address when linking freestanding bare-metal ELF images.
+    pub image_base: Option<u64>,
+    /// Prepend a Multiboot2 header block when linking a bare-metal kernel ELF image.
+    pub multiboot2: bool,
 }
 
 impl CompileOptions {
@@ -116,6 +120,8 @@ impl CompileOptions {
             pgo_generate: false,
             pgo_use: None,
             deny_unsafe: false,
+            image_base: None,
+            multiboot2: false,
         }
     }
 }
@@ -786,6 +792,91 @@ fn link_executable_cc(
         )));
     }
     Ok(())
+}
+
+/// Link a compiled freestanding kernel object (`x86_64-unknown-none` /
+/// `aarch64-unknown-none`) statically into a standalone ELF64 kernel image via
+/// `lpp-linker`, bundling the pure-Rust `lpp_arch_*` machine-code support object
+/// and an optional Multiboot2 header without external toolchains.
+pub fn link_freestanding_kernel(
+    module: &CompiledModule,
+    options: &CompileOptions,
+    output: &Path,
+) -> Result<(), CompileError> {
+    use lpp_linker::{
+        DynamicMode, LinkOptions, Machine, OutputFormat, freestanding_arch_object,
+        multiboot2_header_object,
+    };
+
+    let (machine, default_base) = match module.target {
+        Target::X86_64None => (Machine::X86_64, 0x0010_0000_u64),
+        Target::Aarch64None => (Machine::Aarch64, 0x4008_0000_u64),
+        other => {
+            return Err(CompileError::Target(format!(
+                "target {} is not freestanding",
+                other.triple()
+            )));
+        }
+    };
+
+    let dir = output
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .to_path_buf();
+    std::fs::create_dir_all(&dir).map_err(|e| CompileError::Io(e.to_string()))?;
+    let pid = std::process::id();
+    let kernel_obj = dir.join(format!(".lpp_kernel_{pid}.o"));
+    let arch_obj = dir.join(format!(".lpp_arch_{pid}.o"));
+    let mb2_obj = dir.join(format!(".lpp_mb2_{pid}.o"));
+
+    std::fs::write(&kernel_obj, &module.object).map_err(|e| CompileError::Io(e.to_string()))?;
+    std::fs::write(&arch_obj, freestanding_arch_object(machine))
+        .map_err(|e| CompileError::Io(e.to_string()))?;
+
+    let mut inputs = Vec::new();
+    if options.multiboot2 {
+        std::fs::write(&mb2_obj, multiboot2_header_object(machine))
+            .map_err(|e| CompileError::Io(e.to_string()))?;
+        inputs.push(mb2_obj.clone());
+    }
+    inputs.push(kernel_obj.clone());
+    inputs.push(arch_obj.clone());
+
+    let link_opts = LinkOptions {
+        format: Some(OutputFormat::Elf),
+        machine: Some(machine),
+        entry: module.entry.clone().or_else(|| Some("_start".to_string())),
+        image_base: Some(options.image_base.unwrap_or(default_base)),
+        pie: false,
+        dynamic: DynamicMode::Static,
+        ..Default::default()
+    };
+
+    let result = lpp_linker::link_typed(&inputs, output, &link_opts)
+        .map(|_| ())
+        .map_err(|err| CompileError::Link(err.message));
+
+    let _ = std::fs::remove_file(&kernel_obj);
+    let _ = std::fs::remove_file(&arch_obj);
+    let _ = std::fs::remove_file(&mb2_obj);
+    result
+}
+
+/// Compile and statically link a bare-metal L++ kernel image.
+pub fn build_freestanding_kernel(
+    entry: &Path,
+    package_name: &str,
+    options: CompileOptions,
+    output: &Path,
+) -> Result<CompiledModule, CompileError> {
+    let module = compile_entry_with_options(
+        entry,
+        package_name,
+        BackendChoice::Cranelift,
+        options.clone(),
+    )?;
+    link_freestanding_kernel(&module, &options, output)?;
+    Ok(module)
 }
 
 /// Compile an L++ entry file all the way to a runnable native executable.

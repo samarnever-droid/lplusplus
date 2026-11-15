@@ -44,7 +44,12 @@ impl Backend for CraneliftBackend {
     }
 
     fn targets(&self) -> &'static [Target] {
-        &[Target::X86_64, Target::Aarch64]
+        &[
+            Target::X86_64,
+            Target::Aarch64,
+            Target::X86_64None,
+            Target::Aarch64None,
+        ]
     }
 
     fn compile_module(
@@ -63,27 +68,39 @@ impl Backend for CraneliftBackend {
         }
 
         let mut flags = settings::builder();
-        // Keep the v1 AOT relocation settings. Unlike the old hard-coded
-        // `speed` setting, honor the caller's requested optimization level.
+        // Keep the v1 AOT relocation settings. Bare-metal kernels (`*-unknown-none`)
+        // use static non-PIC code generation so kernel symbols resolve directly.
         flags.set("use_colocated_libcalls", "false").map_err(|e| {
             CodegenError::new(None, CodegenErrorKind::ObjectEmissionFailed(e.to_string()))
         })?;
-        flags.set("is_pic", "true").map_err(|e| {
-            CodegenError::new(None, CodegenErrorKind::ObjectEmissionFailed(e.to_string()))
-        })?;
+        flags
+            .set(
+                "is_pic",
+                if options.target.is_freestanding() {
+                    "false"
+                } else {
+                    "true"
+                },
+            )
+            .map_err(|e| {
+                CodegenError::new(None, CodegenErrorKind::ObjectEmissionFailed(e.to_string()))
+            })?;
         flags
             .set("opt_level", cranelift_opt_level(options.opt_level))
             .map_err(|e| {
                 CodegenError::new(None, CodegenErrorKind::ObjectEmissionFailed(e.to_string()))
             })?;
 
-        let triple = options
+        let mut triple = options
             .target
             .triple()
             .parse::<target_lexicon::Triple>()
             .map_err(|e| {
                 CodegenError::new(None, CodegenErrorKind::ObjectEmissionFailed(e.to_string()))
             })?;
+        if options.target.is_freestanding() {
+            triple.binary_format = target_lexicon::BinaryFormat::Elf;
+        }
         let isa_builder = cranelift_codegen::isa::lookup(triple).map_err(|e| {
             CodegenError::new(None, CodegenErrorKind::ObjectEmissionFailed(e.to_string()))
         })?;

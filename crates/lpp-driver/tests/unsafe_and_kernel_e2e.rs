@@ -214,8 +214,123 @@ def main():
         &cli_dir,
     )
     .unwrap();
-    let code = CompilerSession::new(RewriteEngine)
+    let engine = RewriteEngine;
+    let code = CompilerSession::new(engine).execute(&request).exit_code();
+    assert_ne!(code, 0, "--deny-unsafe CLI must reject unsafe program");
+}
+
+#[test]
+fn bare_metal_x86_64_and_aarch64_kernels_compile_and_link_static_elf() {
+    use lpp_driver::build_freestanding_kernel;
+
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..");
+    let kernel_src = repo_root.join("examples/kernel_x86_64/src/main.lpp");
+    assert!(
+        kernel_src.is_file(),
+        "example kernel must exist at {}",
+        kernel_src.display()
+    );
+
+    let dir = workdir("bare_metal_kernel");
+    let kernel_elf = dir.join("kernel_x86_64.elf");
+
+    let mut x64_opts = CompileOptions::for_backend(BackendChoice::Cranelift);
+    x64_opts.target = lpp_driver::Target::X86_64None;
+    x64_opts.image_base = Some(0x0010_0000);
+    x64_opts.multiboot2 = true;
+
+    let module = build_freestanding_kernel(&kernel_src, "lpp_kernel", x64_opts, &kernel_elf)
+        .expect("bare-metal x86_64 kernel must compile and statically link");
+    assert_eq!(module.entry.as_deref(), Some("_start"));
+
+    let elf_bytes = std::fs::read(&kernel_elf).unwrap();
+    assert_eq!(&elf_bytes[0..4], b"\x7fELF");
+    // Multiboot2 magic (0xE85250D6 little-endian: d6 50 52 e8) must sit within first 32 KiB
+    let mb2_magic = 0xE852_50D6_u32.to_le_bytes();
+    let search_limit = elf_bytes.len().min(32 * 1024);
+    assert!(
+        elf_bytes[..search_limit].windows(4).any(|w| w == mb2_magic),
+        "Multiboot2 header magic must appear in first 32 KiB of kernel ELF"
+    );
+
+    // Verify with readelf & objdump if present on Linux CI/host
+    if let Ok(readelf) = Command::new("readelf")
+        .args(["-h", "-l"])
+        .arg(&kernel_elf)
+        .output()
+        && readelf.status.success()
+    {
+        let text = String::from_utf8_lossy(&readelf.stdout);
+        assert!(
+            text.contains("EXEC (Executable file)"),
+            "kernel must be static ET_EXEC ELF, got:\n{text}"
+        );
+        assert!(
+            !text.contains("INTERP"),
+            "freestanding kernel must have zero PT_INTERP dynamic loader:\n{text}"
+        );
+    }
+    if let Ok(objdump) = Command::new("objdump")
+        .args(["-d"])
+        .arg(&kernel_elf)
+        .output()
+        && objdump.status.success()
+    {
+        let disasm = String::from_utf8_lossy(&objdump.stdout);
+        for expected in ["cli", "hlt", "lgdt", "rdtsc"] {
+            assert!(
+                disasm.contains(expected),
+                "disassembly missing `{expected}` instruction:\n{disasm}"
+            );
+        }
+    }
+
+    // Verify CLI `--target x86_64-unknown-none` works end-to-end
+    let cli_elf = dir.join("cli_kernel.elf");
+    let request = DriverRequest::from_args(
+        [
+            "lpp".to_string(),
+            kernel_src.to_string_lossy().into_owned(),
+            "--target".to_string(),
+            "x86_64-unknown-none".to_string(),
+            "--multiboot2".to_string(),
+            "--image-base".to_string(),
+            "0x100000".to_string(),
+            "-o".to_string(),
+            cli_elf.to_string_lossy().into_owned(),
+        ],
+        &dir,
+    )
+    .unwrap();
+    let exit = CompilerSession::new(RewriteEngine)
         .execute(&request)
         .exit_code();
-    assert_ne!(code, 0, "--deny-unsafe CLI must reject unsafe program");
+    assert_eq!(exit, 0, "CLI bare-metal build must succeed");
+    assert!(cli_elf.is_file());
+
+    // Also verify aarch64-unknown-none freestanding ELF generation
+    let a64_src = dir.join("kernel_a64.lpp");
+    std::fs::write(
+        &a64_src,
+        r#"
+@export_name("_start")
+unsafe def a64_kmain():
+    cpu_cli()
+    mmio_write32(0x09000000 as USize, 0x41 as U32)
+    memory_barrier()
+    while true:
+        cpu_hlt()
+"#,
+    )
+    .unwrap();
+    let a64_elf = dir.join("kernel_a64.elf");
+    let mut a64_opts = CompileOptions::for_backend(BackendChoice::Cranelift);
+    a64_opts.target = lpp_driver::Target::Aarch64None;
+    build_freestanding_kernel(&a64_src, "a64_kernel", a64_opts, &a64_elf)
+        .expect("bare-metal aarch64 kernel must compile and statically link");
+    let a64_bytes = std::fs::read(&a64_elf).unwrap();
+    assert_eq!(&a64_bytes[0..4], b"\x7fELF");
+    assert_eq!(u16::from_le_bytes([a64_bytes[18], a64_bytes[19]]), 183); // EM_AARCH64 = 183
 }

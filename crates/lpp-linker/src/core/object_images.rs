@@ -51,7 +51,11 @@ fn classify_section(name: &str, kind: object::SectionKind) -> Option<SectionClas
     if name == ".fini_array" || name.starts_with(".fini_array.") || name == ".dtors" {
         return Some(SectionClass::FiniArray);
     }
-    if name.starts_with(".text") || name.starts_with("__text") || kind == object::SectionKind::Text
+    if name.starts_with(".text")
+        || name.starts_with("__text")
+        || name == ".multiboot2"
+        || name == ".boot"
+        || kind == object::SectionKind::Text
     {
         return Some(SectionClass::Text);
     }

@@ -163,6 +163,8 @@ fn rewrite_main(args: &[String], cwd: &Path) -> i32 {
     let mut pgo_generate = false;
     let mut pgo_use: Option<PathBuf> = None;
     let mut deny_unsafe = false;
+    let mut image_base: Option<u64> = None;
+    let mut multiboot2 = false;
     let mut output: Option<String> = None;
     let mut linker: Option<String> = match user_config.linker.as_str() {
         "direct" if cfg!(any(target_os = "linux", target_os = "windows")) => {
@@ -188,6 +190,8 @@ fn rewrite_main(args: &[String], cwd: &Path) -> i32 {
                 println!("host");
                 println!("{}", Target::X86_64.triple());
                 println!("{}", Target::Aarch64.triple());
+                println!("{}", Target::X86_64None.triple());
+                println!("{}", Target::Aarch64None.triple());
                 println!("aarch64-linux-android");
                 println!("armv7-linux-androideabi");
                 println!("wasm32-wasip1");
@@ -232,6 +236,24 @@ fn rewrite_main(args: &[String], cwd: &Path) -> i32 {
             }
             "--lto" => lto = true,
             "--deny-unsafe" => deny_unsafe = true,
+            "--multiboot2" => multiboot2 = true,
+            "--image-base" => {
+                let Some(value) = rest.get(idx + 1) else {
+                    return missing_value("--image-base");
+                };
+                let trimmed = value
+                    .trim()
+                    .trim_start_matches("0x")
+                    .trim_start_matches("0X");
+                match u64::from_str_radix(trimmed, 16) {
+                    Ok(addr) => image_base = Some(addr),
+                    Err(_) => {
+                        eprintln!("[rewrite] invalid hex address for --image-base: `{value}`");
+                        return 2;
+                    }
+                }
+                idx += 1;
+            }
             "--pgo-generate" => pgo_generate = true,
             "--pgo-use" => {
                 let Some(value) = rest.get(idx + 1) else {
@@ -345,6 +367,8 @@ fn rewrite_main(args: &[String], cwd: &Path) -> i32 {
         pgo_generate,
         pgo_use,
         deny_unsafe,
+        image_base,
+        multiboot2,
     };
 
     // The WASM backend emits a self-contained module — there is no native link.
@@ -429,6 +453,30 @@ fn rewrite_main(args: &[String], cwd: &Path) -> i32 {
             }
         }
         Mode::Build | Mode::Run => {
+            if target.is_freestanding() {
+                if mode == Mode::Run {
+                    eprintln!(
+                        "[rewrite] cannot directly execute freestanding kernel {} on host; build ELF image with without --run or boot under QEMU",
+                        target.triple()
+                    );
+                    return 2;
+                }
+                let out = output
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| entry.with_extension("elf"));
+                return match crate::build_freestanding_kernel(&entry, &stem, compile_options, &out)
+                {
+                    Ok(module) => {
+                        println!(
+                            "[rewrite] linked freestanding ELF kernel -> {} ({} bytes obj)",
+                            out.display(),
+                            module.object.len()
+                        );
+                        0
+                    }
+                    Err(error) => compile_failed(&error),
+                };
+            }
             let t_start = std::time::Instant::now();
             let host_target = host_target();
             if target != host_target {
@@ -503,13 +551,15 @@ fn parse_target(value: &str) -> Result<Target, String> {
         "host" => Ok(host_target()),
         "x86_64" => Ok(Target::X86_64),
         "aarch64" | "aarch64-linux-android" => Ok(Target::Aarch64),
+        "x86_64-unknown-none" | "x86_64-none-elf" => Ok(Target::X86_64None),
+        "aarch64-unknown-none" | "aarch64-none-elf" => Ok(Target::Aarch64None),
         value if value == Target::X86_64.triple() => Ok(Target::X86_64),
         value if value == Target::Aarch64.triple() => Ok(Target::Aarch64),
         "wasm32" | "wasm32-wasi" | "wasm32-wasip1" | "wasm32-unknown-unknown" => {
             Ok(Target::Wasm32Wasi)
         }
         _ => Err(format!(
-            "unsupported target `{value}` (supported: host, {}, {}, aarch64-linux-android, wasm32, wasm32-wasip1)",
+            "unsupported target `{value}` (supported: host, {}, {}, x86_64-unknown-none, aarch64-unknown-none, aarch64-linux-android, wasm32, wasm32-wasip1)",
             Target::X86_64.triple(),
             Target::Aarch64.triple()
         )),
@@ -927,10 +977,12 @@ fn print_help() {
     println!("Compiler Options:");
     println!("  --backend <be>   cranelift (default), wasm, or llvm");
     println!("  --llvm           shorthand for --backend llvm");
-    println!("  --target <t>     host, host-native x86_64/aarch64, or wasm32-wasip1");
+    println!("  --target <t>     host, x86_64/aarch64, *-unknown-none (kernel), or wasm32-wasip1");
     println!("  -O<level>        MIR/backend optimization: 0, 1, 2, 3, s, or z");
     println!("  --lto            Enable safe whole-program MIR inlining of small pure callees");
     println!("  --deny-unsafe    Reject all unsafe blocks, pointer ops, and kernel intrinsics");
+    println!("  --image-base HEX Base virtual/load address for freestanding ELF kernels");
+    println!("  --multiboot2     Prepend a Multiboot2 boot header into bare-metal ELF images");
     println!("  --pgo-generate   Instrument Cranelift; write a profile at LPP_PGO_PROFILE");
     println!("  --pgo-use FILE   Use a matching profile to select hot MIR callees for inlining");
     println!("  --linker <kind>  direct or cc (in-process PE on Windows, direct ELF on Linux)");

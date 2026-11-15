@@ -12,6 +12,8 @@
 pub enum Target {
     X86_64,
     Aarch64,
+    X86_64None,
+    Aarch64None,
     Wasm32Wasi,
 }
 
@@ -19,7 +21,8 @@ impl Target {
     /// Deterministic architecture triple for the build host's object format.
     /// Native architecture selection is shared across platforms, while the OS
     /// component follows the compiler host so emitted objects can be linked by
-    /// that host's toolchain. Explicit cross-OS output remains outside v0.1.
+    /// that host's toolchain. Bare-metal kernel targets (`*-unknown-none`)
+    /// always emit ELF objects regardless of host OS.
     #[must_use]
     pub const fn triple(self) -> &'static str {
         match self {
@@ -29,17 +32,26 @@ impl Target {
             Self::Aarch64 if cfg!(target_os = "windows") => "aarch64-pc-windows-msvc",
             Self::Aarch64 if cfg!(target_os = "macos") => "aarch64-apple-darwin",
             Self::Aarch64 => "aarch64-unknown-linux-gnu",
+            Self::X86_64None => "x86_64-unknown-none",
+            Self::Aarch64None => "aarch64-unknown-none",
             Self::Wasm32Wasi => "wasm32-wasip1",
         }
     }
 
-    /// Pointer width in bits. The native targets are 64-bit; wasm32 is
+    /// True when the target produces freestanding bare-metal kernel ELF images
+    /// with no host OS ABI, C runtime, or dynamic linker.
+    #[must_use]
+    pub const fn is_freestanding(self) -> bool {
+        matches!(self, Self::X86_64None | Self::Aarch64None)
+    }
+
+    /// Pointer width in bits. The native/bare-metal targets are 64-bit; wasm32 is
     /// 32-bit (heap pointers are linear-memory offsets).
     #[must_use]
     pub const fn pointer_bits(self) -> u32 {
         match self {
             Self::Wasm32Wasi => 32,
-            Self::X86_64 | Self::Aarch64 => 64,
+            Self::X86_64 | Self::Aarch64 | Self::X86_64None | Self::Aarch64None => 64,
         }
     }
 
@@ -56,6 +68,12 @@ impl Target {
     /// The full bounded set of Phase 5 targets, in deterministic order.
     #[must_use]
     pub const fn all() -> &'static [Target] {
-        &[Target::X86_64, Target::Aarch64, Target::Wasm32Wasi]
+        &[
+            Target::X86_64,
+            Target::Aarch64,
+            Target::X86_64None,
+            Target::Aarch64None,
+            Target::Wasm32Wasi,
+        ]
     }
 }

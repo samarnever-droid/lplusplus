@@ -263,6 +263,8 @@ impl<'m> Lowering<'m> {
             if name == "lpp_main" {
                 self.lpp_main_id = Some(id);
                 self.lpp_main_function_id = Some(mir_id);
+            } else if name == "_start" && self.entry.is_none() {
+                self.entry = Some("_start".to_owned());
             }
             self.func_ids.insert(mir_id, id);
             self.exported.insert(name.clone());

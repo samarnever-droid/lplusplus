@@ -1,0 +1,6 @@
+[package]
+name = "lpp-kernel-x86_64"
+version = "0.3.0"
+edition = "2024"
+description = "Freestanding x86_64 bare-metal kernel written in pure L++"
+license = "MIT OR Apache-2.0"

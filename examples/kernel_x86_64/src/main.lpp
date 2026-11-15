@@ -1,0 +1,93 @@
+# Bare-metal freestanding x86_64 kernel written in pure L++
+# Build with:
+#   lpp examples/kernel_x86_64/src/main.lpp --target x86_64-unknown-none --multiboot2 --image-base 0x100000 -o kernel.elf
+
+@repr(C)
+@packed
+struct DescriptorPtr:
+    limit: U16
+    base: U64
+
+@repr(C)
+@packed
+struct GdtEntry:
+    limit_low: U16
+    base_low: U16
+    base_mid: U8
+    access: U8
+    granularity: U8
+    base_high: U8
+
+@repr(C)
+@align(4096)
+struct PageFrameHeader:
+    magic: U64
+    flags: U64
+    next_phys: U64
+    reserved: U64
+
+# PC COM1 16550 UART helpers
+unsafe def com1_init():
+    com1: U16 = 0x3F8 as U16
+    port_out8((com1 + (1 as U16)), 0x00 as U8)   # Disable interrupts
+    port_out8((com1 + (3 as U16)), 0x80 as U8)   # Enable DLAB (set baud divisor)
+    port_out8((com1 + (0 as U16)), 0x03 as U8)   # 38400 baud divisor lo
+    port_out8((com1 + (1 as U16)), 0x00 as U8)   # divisor hi
+    port_out8((com1 + (3 as U16)), 0x03 as U8)   # 8N1, disable DLAB
+    port_out8((com1 + (2 as U16)), 0xC7 as U8)   # Enable FIFO
+    port_out8((com1 + (4 as U16)), 0x0B as U8)   # IRQs enabled, RTS/DSR set
+
+unsafe def com1_putc(ch: U8):
+    lsr_port: U16 = 0x3FD as U16
+    data_port: U16 = 0x3F8 as U16
+    mut spin := 0
+    while spin < 100000:
+        lsr := port_in8(lsr_port)
+        if (lsr & (0x20 as U8)) != (0 as U8):
+            spin = 100000
+        spin = spin + 1
+    port_out8(data_port, ch)
+
+unsafe def vga_write_cell(col: USize, row: USize, ch: U8, attr: U8):
+    vga_base: USize = 0xB8000 as USize
+    offset: USize = ((row * (80 as USize)) + col) * (2 as USize)
+    cell: U16 = ((attr as U16) << (8 as U16)) | (ch as U16)
+    mmio_write16(vga_base + offset, cell)
+
+unsafe def install_boot_tables(scratch_addr: USize):
+    # Write a minimal 3-entry GDT + GDTR at scratch physical memory (0x9000)
+    gdt_ptr := scratch_addr as Ptr[U64]
+    ptr_write[U64](gdt_ptr, 0 as U64)                                      # Null descriptor
+    ptr_write[U64](ptr_offset[U64](gdt_ptr, 1), 0x00AF9A000000FFFF as U64) # 64-bit kernel code
+    ptr_write[U64](ptr_offset[U64](gdt_ptr, 2), 0x00CF92000000FFFF as U64) # 64-bit kernel data
+
+    gdtr_limit_ptr := (scratch_addr + (0x20 as USize)) as Ptr[U16]
+    gdtr_base_ptr := (scratch_addr + (0x22 as USize)) as Ptr[U64]
+    ptr_write[U16](gdtr_limit_ptr, 23 as U16)
+    ptr_write[U64](gdtr_base_ptr, scratch_addr as U64)
+    memory_barrier()
+    lgdt(scratch_addr + (0x20 as USize))
+
+@export_name("_start")
+unsafe def kmain():
+    cpu_cli()
+    install_boot_tables(0x9000 as USize)
+    com1_init()
+
+    # Print "L++" to COM1 serial & VGA text buffer row 0
+    com1_putc(76 as U8)   # 'L'
+    com1_putc(43 as U8)   # '+'
+    com1_putc(43 as U8)   # '+'
+    com1_putc(10 as U8)   # '\n'
+
+    vga_write_cell(0 as USize, 0 as USize, 76 as U8, 0x0A as U8)
+    vga_write_cell(1 as USize, 0 as USize, 43 as U8, 0x0A as U8)
+    vga_write_cell(2 as USize, 0 as USize, 43 as U8, 0x0A as U8)
+
+    cr0 := read_cr0()
+    tsc := rdtsc()
+    mmio_write64(0x9100 as USize, cr0 ^ tsc)
+    memory_barrier()
+
+    while true:
+        cpu_hlt()

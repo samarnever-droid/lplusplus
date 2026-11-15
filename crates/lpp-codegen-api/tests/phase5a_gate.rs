@@ -217,7 +217,13 @@ fn semantic_vs_machine_divergence_census_is_pinned() {
 fn target_lattice_is_bounded_with_host_format_triples() {
     assert_eq!(
         Target::all(),
-        &[Target::X86_64, Target::Aarch64, Target::Wasm32Wasi]
+        &[
+            Target::X86_64,
+            Target::Aarch64,
+            Target::X86_64None,
+            Target::Aarch64None,
+            Target::Wasm32Wasi
+        ]
     );
     let (x86_64, aarch64) = if cfg!(target_os = "windows") {
         ("x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc")
@@ -228,9 +234,16 @@ fn target_lattice_is_bounded_with_host_format_triples() {
     };
     assert_eq!(Target::X86_64.triple(), x86_64);
     assert_eq!(Target::Aarch64.triple(), aarch64);
+    assert_eq!(Target::X86_64None.triple(), "x86_64-unknown-none");
+    assert_eq!(Target::Aarch64None.triple(), "aarch64-unknown-none");
     assert_eq!(Target::Wasm32Wasi.triple(), "wasm32-wasip1");
     assert_eq!(Target::X86_64.pointer_bits(), 64);
     assert_eq!(Target::Aarch64.pointer_bits(), 64);
+    assert_eq!(Target::X86_64None.pointer_bits(), 64);
+    assert_eq!(Target::Aarch64None.pointer_bits(), 64);
+    assert!(Target::X86_64None.is_freestanding());
+    assert!(Target::Aarch64None.is_freestanding());
+    assert!(!Target::X86_64.is_freestanding());
     assert_eq!(Target::Wasm32Wasi.pointer_bits(), 32);
 }
 
