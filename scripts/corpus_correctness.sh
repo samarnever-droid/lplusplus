@@ -84,6 +84,9 @@ classify() {
   # so they belong to the wasm gate, not this native corpus.
   case "$rel" in
     *wasm/reject/*) echo "skip"; return;;
+    # Frozen v0.2 fixture with a 5-tuple; v0.3.0 supports tuples up to arity 16
+    # (17-element rejection is covered by tests/tuple_bad_arity_17.lpp).
+    tests/tuple_bad_arity.lpp) echo "run"; return;;
   esac
   case "$rel" in
     *reject*|*_rejected*|*_bad_*) echo "reject"; return;;

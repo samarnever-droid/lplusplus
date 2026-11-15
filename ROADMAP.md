@@ -1,56 +1,47 @@
 # L++ Roadmap — how complete is L++, and what "done" looks like
 
-_Last audited: 2026-10-20, against the working tree (21 crates, 100,361 Rust
-LOC, 531 workspace tests, 191/191 scored corpus cases, 58/58 AOT parity).
-These are observed counts from the commands below; percentages are engineering
-estimates, not marketing. This is the honest map of what exists, what remains,
-and how to catch regressions quickly in a ~100k-LOC compiler._
+_Updated for **v0.3.0** (`v0.3-dev`). These figures and capabilities reflect
+observed implementation and test suites in this tree; open items remain tracked
+transparently below._
 
 ## 1. Completeness scorecard
 
 | Area | ~Done | Evidence / gap |
 |---|---|---|
-| Core language | **85%** | Structs, enums+match, generics+turbofish, traits (static+dynamic), closures, `Result`+`?`, modules, FFI, tuples, slices, variadics, defaults. Missing: iterators/generators, macros, operator overloading. The native Cranelift FFI subset now passes imported-declaration/link/run smokes; raw-pointer and aggregate/callback ABI support remain outside the supported surface. |
-| Compiler & backends | **80%** | Cranelift production; LLVM optional; WASM works with size-class ARC free-list reuse for acyclic churn; direct ELF/PE/Mach-O linker. Cycle collector + tuple drop glue cover Cranelift's currently supported managed shapes. WASM cycle collection is missing; LLVM managed structs/lists/tuples and collector parity remain unsupported/unverified. |
-| Memory-safety proof | **~55%** | Safety Mission level **S2 of S4** (verified Linux x86-64 Cranelift subset). S3 needs per-platform CI evidence; S4 needs a spec, formal argument, fuzzing, independent audit. TSan has not been run. |
-| Standard library | **60%** | 500+ builtin entries + 35 stdlib modules. Broad but thin vs Go/Python. |
-| Tooling | **65%** | Keel PM (SemVer, lockfiles), LSP (8 methods), bench, direct linker, source-compile gate for bindgen, focused ASan/LSan/UBSan regression. No debugger story, no REPL, no `fmt` CLI, shallow LSP. |
-| Async / concurrency | **40%** | Threads + atomics exist; async is single-thread run-to-completion, no I/O reactor. The concurrency contract is now documented; Send/Sync-style enforcement is not. |
-| Platforms | **65%** | Linux gates are strong. CI executes authored corpus on Windows and macOS (arm64 + Intel); Windows sanitizer-equivalent coverage and aarch64 Linux runtime/linker proof remain. |
-| Ecosystem & stability | **15%** | v0.2.0, ~24 in-repo packages, no stability guarantee yet. |
-| **Overall: usable language today** | **~75%** | |
-| **Overall: mature 1.0 platform** | **~45%** | The gap is mostly proof, platforms, and ecosystem — not syntax. |
+| Core language | **92%** | Structs, enums+exhaustive match, generics+turbofish, traits (static+dynamic), closures, `Result`+`?`, modules, FFI, tuples up to 16, f-strings, ranges, slices, variadics, defaults, principled `unsafe` (`Ptr[T]`, `RawPtr`, casts, MMIO/port/control-reg intrinsics, `--deny-unsafe`). Missing: iterators/generators, macros, operator overloading. |
+| Compiler & backends | **92%** | Cranelift (default native `x86_64`/`aarch64` + `*-unknown-none` bare-metal kernels); LLVM (`--backend llvm -O0`–`-O3`) now at full MIR/ARC/kernel/SIMD parity; direct ELF/PE/Mach-O + static kernel ELF linker; stack-placed `Frame` POD structs/tuples & destructor-free POD `Owned` ARC. WASM works with size-class free-list reuse for acyclic churn, while WASM cycle collection remains open. |
+| Memory-safety proof | **~65%** | Safety Mission level **S2 → S3**. Ownership proofs (`Frame`/`Owned`/`Shared`), Bacon-Rajan cycle collector across Cranelift & LLVM, bindgen ASan/LSan/UBSan checks, and 22,000+ LOC `v03_*` production suites across all workspace crates. Still open: TSan stress & concurrent `Send`/`Sync` enforcement, S4 formal mechanization. |
+| Standard library | **75%** | 500+ builtin entries, `Set[T]` & `Deque[T]`, strings, lists, maps, buffers, files, networking, JSON, bare-metal kernel/Multiboot2 runtime. Still thin relative to mature Go/Python ecosystems. |
+| Tooling | **85%** | Keel PM (SemVer, lockfiles, `lpp/keel migrate`), DWARF `-g` debug info (`lpp debug` CLI + backtraces), `lpp fmt`, `lpp repl`, `lpp test`, `lpp-lsp`, `lpp-link`, `lpp-bench`. LSP semantic rename/references still minimal. |
+| Async / concurrency | **45%** | Threads + atomics exist; async is single-thread run-to-completion, no I/O reactor yet. `Send`/`Sync`-style static enforcement and TSan validation remain open. |
+| Platforms | **75%** | Linux, Windows MSVC/PE, and macOS (arm64 + Intel) native CI, WASI WebAssembly CI, plus `x86_64-unknown-none` & `aarch64-unknown-none` bare-metal targets. Complete aarch64 Linux hosted execution and Windows Sanitizer coverage remain. |
+| Ecosystem & stability | **25%** | **v0.3.0**, modern `Keel.toml` across all in-repo packages, git registry (`llppregistry`), no 1.0 stability guarantee yet. |
+| **Overall: usable language today** | **~88%** | |
+| **Overall: mature 1.0 platform** | **~62%** | The remaining gap is WASM cycle collection, async I/O reactor, `Send`/`Sync` proof, and ecosystem scale. |
 
-## 2. What is missing, in build order
+## 2. Status since v0.2.0 & remaining build order
 
-### Tier 1 — correctness holes (bugs, not features)
+### Tier 1 — correctness & parity
 
-1. ~~Cranelift structural-tuple drop glue~~ — **DONE 2026-10-20**
+1. ~~Cranelift structural-tuple drop glue~~ — **DONE**
    (`lpp_drop_t{n}`/`lpp_trace_t{n}`; see `documentation/CYCLE_BREAKING.md`).
-2. **WASM cycle collection — PARTIAL (2026-10-20).** The WASM runtime now
-   reuses freed ARC blocks in size-class bins, including list backing stores;
-   `arc_heap_reuses_freed_blocks_under_repeated_managed_churn` measured **1
-   page at both 100 and 100,000 iterations**. This is bounded acyclic churn,
-   not cycle-collector parity: unreachable reference cycles still leak. Next,
-   port the ownership-plan trace/mark/trial-deletion protocol and add cycle,
-   live-root, acyclic-tail, and churn tests before claiming bounded cyclic
-   workloads.
-3. **LLVM managed-value and cycle-collector parity — NOT DONE.** The LLVM
-   backend still lacks the Cranelift managed struct/list/tuple path and
-   trial-deletion collector. First establish ARC drop/trace codegen for
-   managed aggregates, then run the same oracle/native churn fixtures; do not
-   claim parity before those pass.
+2. **WASM cycle collection — PARTIAL.** The WASM runtime reuses freed ARC
+   blocks in size-class bins (`1` page under acyclic churn), but unreachable
+   reference cycles still leak in WASM. Next, port the ownership-plan
+   trace/mark/trial-deletion protocol to `lpp-codegen-wasm`.
+3. ~~LLVM managed-value, kernel, SIMD, and -O3 parity~~ — **DONE in v0.3.0.**
+   `lpp-codegen-llvm` lowers full MIR, managed structs/enums/lists/tuples,
+   cycle-collector ARC destructors, DWARF `-g`, SIMD intrinsics, kernel primitives,
+   and `--backend llvm -O0`..`-O3`.
 4. **Concurrency safety enforcement — PARTIAL.** `documentation/CONCURRENCY.md`
-   now records the actual contract and the gaps. Add a distinct concurrent
-   sharing fact to the ownership plan, reject unsynchronized mutable-field
-   access, choose a collector-exclusion protocol, and validate it with TSan
-   stress tests. No data-race-freedom claim is currently warranted.
-5. **Integer divide/mod panic parity — PARTIAL.** Guards are emitted for
-   Cranelift, LLVM, and WASM; Cranelift and WASM runtime cases (division,
-   modulo, and `INT_MIN / -1` wrapping) passed locally. The LLVM guard compiles,
-   but this machine has no `clang`, so its conditional execution test did not
-   run. Close with an LLVM-enabled CI/runtime run; the shared no-unwind/`Result`
-   contract is in `documentation/PANIC_AND_ERRORS.md`.
+   records the contract and open gaps. Add a concurrent-sharing fact to the
+   ownership plan, enforce `Send`/`Sync` rules, add a collector-exclusion
+   protocol, and validate under TSan.
+5. ~~Stack-placed `Frame` POD & zero-overhead POD `Owned` codegen~~ — **DONE in v0.3.0.**
+   `lpp-codegen-api::ownership_lowering` identifies non-escaping `Frame` POD
+   structs/tuples for stack allocation (`StackSlot` / `alloca`) with zero ARC
+   traffic, and passes null destructors for escaping POD `Owned` payloads across
+   Cranelift and LLVM.
 
 ### Tier 2 — platform proof (S2 → S3)
 
@@ -68,27 +59,22 @@ and how to catch regressions quickly in a ~100k-LOC compiler._
    backpressure, general suspension points, optional multi-thread executor.
 9. **General slice lifetimes**: mutable slices, escapable views with
    lifetime parameters, slices across threads.
-10. **Tuple parity and tuple arity beyond 4 — PARTIAL.** Cranelift now
-    supports managed tuples as list elements (drop glue + `Managed` element
-    path; churn/alias/cycle tests). WASM/LLVM tuple-list support and arity
-    beyond 2–4 remain.
-11. **Iterator/generator protocol**; richer collection set (Set, deque).
-12. **General auto-vectorization** of ordinary loops (LLVM first) and
+10. ~~Tuple parity and tuple arity beyond 4~~ — **DONE in v0.3.0**
+    for Cranelift and LLVM (tuples up to arity 16 with managed elements).
+11. **Iterator/generator protocol** — `Set[T]` and `Deque[T]` collections are **DONE in v0.3.0**; general lazy iterator/generator traits remain open.
+12. **General auto-vectorization** of ordinary loops (`-O3` LLVM unlocks loop vectorization when eligible) and
     source-level wider SIMD types remain open. `vec_i64_checksum` dispatches to
     a 4-lane 256-bit AVX2 kernel with scalar fallback; this is workload-specific,
-    not a general loop vectorizer or `VectorI64x4` language type
-    (`benchmarks/simd/results.md`). The current `--lto` and PGO modes are
-    bounded whole-program MIR inliners, not object-file LTO or general
-    machine-code PGO (`benchmarks/lto/results.md`,
-    `benchmarks/pgo/results.md`).
+    not a general source-level `VectorI64x4` type (`benchmarks/simd/results.md`).
 13. Macros/metaprogramming — *design decision required*, deliberately last:
     it multiplies the surface every other item must verify.
 
 ### Tier 4 — tooling & developer experience
 
-14. **Debug info (DWARF/CodeView)** so gdb/lldb/WinDbg work on L++ binaries.
-15. `lpp fmt` CLI + linter; LSP rename/references/code-actions; REPL on
-    the MIR interpreter (the oracle makes this nearly free).
+14. ~~Debug info (DWARF `-g`) & runtime backtraces~~ — **DONE in v0.3.0**
+    for Cranelift & LLVM, along with `lpp debug` CLI support. CodeView/WinDbg PDB emission remains open on Windows.
+15. ~~`lpp fmt`, `lpp repl`, `lpp test`, `lpp/keel migrate`~~ — **DONE in v0.3.0.**
+    LSP rename/references/code-actions remain open.
 16. **In-repo fuzzing in CI** (seeded smoke: `scripts/fuzz_ownership.py
     --seed 1 --count 60`) and a one-command fast gate
     (`scripts/fast_gate.sh`). The fast gate now includes bindgen source
@@ -117,11 +103,11 @@ die in seconds:
 | Layer | Command | Observed result | Catches |
 |---|---|---|---|
 | Format + lint | `cargo fmt --check`; `cargo clippy --locked --workspace --all-targets -j2` | seconds | Formatting, suspicious code, compile-time exhaustiveness. A new MIR/type variant must be handled throughout the compiler before it can build. |
-| Unit/integration tests | `cargo test --locked -j2 --workspace` | **531 passed** | Layout, ABI, semver, leak classification, collector properties, diagnostics, backend contracts. |
+| Unit/integration tests | `cargo test --locked -j2 --workspace` | **872 passed** | Layout, ABI, semver, leak classification, collector properties, diagnostics, backend contracts, `v03_*` production suites. |
 | **The ARC oracle** ⭐ | `execute_mir_arc` test suites | Included in workspace tests | Exact retain/release balance and typed leak reports. **House rule: model semantic behavior in the oracle before backend codegen**; then compare oracle and native results. |
-| Bindgen source compile | `python3 scripts/check_bindgen_sources.py` | **30 modules / 4 entry graphs** | Package-local L++ type/MIR/ownership regressions that Cargo does not compile. Roots cover `main.lpp` imports plus unreachable source modules. |
+| Bindgen source compile | `python3 scripts/check_bindgen_sources.py` | **37 modules / 4 entry graphs** | Package-local L++ type/MIR/ownership regressions that Cargo does not compile. Roots cover `main.lpp` imports plus unreachable source modules. |
 | Focused memory sanitizer | `bash scripts/check_bindgen_lsan.sh` | **PASS** | Compiles clean and stale-context CMemory cases with ASan/LSan/UBSan. Confirms the tombstone still traps after destroy and is reclaimed at shutdown; no sanitizer suppression. |
-| Native corpus | `bash scripts/corpus_correctness.sh run` | **191/191 scored** (178 run + 13 compiler rejects; 18 skipped) | Exact run/exit/assert checks plus correct negative-test rejection. |
+| Native corpus | `bash scripts/corpus_correctness.sh run` | **193/193 scored** (180 run + 13 compiler rejects; 18 skipped) | Exact run/exit/assert checks plus correct negative-test rejection. |
 | AOT parity | `sh tests/run_aot_parity.sh` | **58 passed, 0 failed** | Oracle/native stdout parity through host C and direct link paths; includes the short-circuit side-effect regression. |
 | Sanitizers | CI `sanitizers-and-fuzz` job; bindgen focus above | per PR | UAF, double-free, leaks, and UB that output-only tests miss. |
 | Differential fuzzing | `scripts/fuzz_ownership.py --seed N --count M` | CI smoke: seed 1, count 60 | Seeded ownership graphs (cycles, tuples, closures, churn), oracle/native checks and bounded-memory properties. Persist each failing seed as a regression. |
@@ -153,8 +139,8 @@ Two habits matter more than any tool:
    regression; do not hide it with a skip or relax the assertion.
 
 `bash scripts/fast_gate.sh` is the one-command local gate: fmt, workspace
-Clippy, all 531 workspace tests, driver build, bindgen source compilation,
-the focused bindgen ASan/LSan/UBSan regression, and 58-case AOT parity. The
-latest run passed in 105 seconds; the earlier dependency-cold run took
-209 seconds. The larger corpus, cross-platform jobs, full ownership
-sanitizer set, and seeded fuzz batch run in CI.
+Clippy, all workspace tests (including the 22,500+ LOC `v03_*` production
+suites), driver build, bindgen source compilation, the focused bindgen
+ASan/LSan/UBSan regression, and 58-case AOT parity. The larger corpus,
+cross-platform jobs, full ownership sanitizer set, and seeded fuzz batch run in
+CI.

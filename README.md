@@ -57,42 +57,43 @@ processes) are rejected up front with clear diagnostics. See
 
 | Feature | Description |
 |---------|-------------|
-| **Python-like syntax** | Significant whitespace, `:=` declarations, `def`/`struct`/`enum` |
+| **Python-like syntax** | Significant whitespace, `:=` declarations, `def`/`struct`/`enum`, `f"..."` f-strings, range expressions |
 | **Generics** | `def identity[T](x: T) -> T`, generic structs and enums with static cycle detection |
 | **Traits + dispatch** | `trait`/`impl` with both static and dynamic dispatch |
-| **FFI / extern** | `extern "C" link "SDL2"` — call any C library directly |
-| **Ownership planning** | `Frame` / `Owned` / `Shared` placement, escape and cycle analysis, plus static balance checks |
-| **Enums + match** | Algebraic data types with pattern matching and data extraction |
+| **Principled `unsafe` & Systems** | `unsafe` blocks/functions, `Ptr[T]`, `RawPtr`, volatile MMIO, port I/O, CPU control registers, `--deny-unsafe` |
+| **Bare-Metal Kernels** | `--target x86_64-unknown-none` / `aarch64-unknown-none`, `--multiboot2`, `--image-base`, static ELF kernel linking |
+| **FFI / extern** | `extern "C" link "SDL2"` — call C libraries directly |
+| **Zero-overhead Ownership** | `Frame` POD structs/tuples lowered on the stack, destructor-free POD `Owned` ARC, `Shared` Bacon-Rajan cycle collector, static balance proofs |
+| **Enums + exhaustive match** | Algebraic data types with pattern matching, data extraction, and exhaustiveness checks |
 | **Error handling** | `Result` type + `?` operator for error propagation |
-| **Diagnostics & Panic** | Rust-style error cards (`E0001`–`E0005`) + C runtime stack backtrace engine |
+| **Debugging & Backtraces** | DWARF `-g`/`--debug` debug info (Cranelift & LLVM), `lpp debug` CLI, runtime stack backtraces, Rust-style error cards |
 | **Default params** | `def foo(x: Int, y: Int = 10)` |
 | **Multi-file modules** | `import math`, `from utils import calc`, dotted paths |
-| **Native compilation** | Cranelift AOT by default; optional LLVM object backend |
-| **WebAssembly** | `--target wasm32-wasip1` emits a runnable `.wasm` module with zero external tools |
-| **Direct linker** | `lpp-link` produces standalone ELF / PE / Mach-O executables |
-| **Arena regions** | Recursive structs use region-backed nodes with cycle-broken ownership |
+| **Native compilation** | Cranelift AOT by default; full-parity LLVM backend (`--backend llvm -O0`–`-O3`) |
+| **WebAssembly** | `--target wasm32-wasip1` emits a runnable `.wasm` module with WASI filesystem builtins and zero external tools |
+| **Direct linker** | `lpp-link` produces standalone ELF / PE / Mach-O executables and static bare-metal kernel ELFs |
 | **Explicit vectors** | `VectorI64x2` operations in both Cranelift and LLVM |
-| **Structural tuples** | Fixed arity 2–4, structural types, destructuring, and ARC-safe managed elements |
+| **Structural tuples** | Fixed arity up to 16, structural types, destructuring, and ARC-safe managed elements |
+| **Collections & stdlib** | `List[T]`, `Map[K, V]`, `Set[T]`, `Deque[T]`, strings, buffers, files, networking, JSON, 100+ builtins |
 | **Typed variadics** | Final `...items: T` parameter receives a typed rest `List[T]`; no native C varargs |
 | **Borrowed slices** | Zero-copy `StrSlice` / `Slice[T]` stack views with bounds and escape validation |
 | **Async tasks** | `async def`, postfix `.await`, and a deterministic single-thread run-to-completion executor |
-| **LSP Language Server** | `lpp-lsp` stdio JSON-RPC server for editor Intellisense, hovers & diagnostics |
-| **Package manager** | Reliable Rust PM by default; experimental self-hosted pure-L++ PM via `LPP_SELF_HOSTED_PM=1` |
-| **c2lpp package** | Pure-L++ C-header binding/package generator plus experimental scalar C-to-L++ translation |
-| **100+ builtins** | strings, lists, maps, files, network, JSON, buffers |
-| **Native performance** | Cranelift-first AOT compilation, with optional LLVM optimization and reproducible benchmark snapshots |
-| **Compact native output** | Direct ELF / PE / Mach-O linking, including freestanding runtime configurations |
+| **Developer Tooling** | `lpp fmt`, `lpp repl`, `lpp test`, `lpp debug`, and `lpp-lsp` stdio JSON-RPC server |
+| **Keel Package Manager** | `Keel.toml` + `Keel.lock`, decentralized Git registry, workspaces, and `lpp migrate` / `keel migrate` for legacy `lpp.toml` |
+| **c2lpp package** | Pure-L++ C-header binding/package generator plus audited scalar C-to-L++ translation |
+| **Native performance** | Cranelift-first AOT + `-O3` LLVM optimization, stack `Frame` lowering, `--lto` MIR inlining, and PGO |
+| **Compact native output** | Direct ELF / PE / Mach-O linking, including freestanding and bare-metal runtime configurations |
 
 ## Install
 
 ```bash
 # Linux / macOS — pinned, reviewable source installation
-git clone --depth 1 --branch v0.2.0 https://github.com/samarnever-droid/lplusplus.git
+git clone --depth 1 --branch v0.3.0 https://github.com/samarnever-droid/lplusplus.git
 cd lplusplus
 LPP_FROM_SOURCE=1 sh install.sh
 
 # Windows PowerShell — from the same pinned checkout
-git clone --depth 1 --branch v0.2.0 https://github.com/samarnever-droid/lplusplus.git
+git clone --depth 1 --branch v0.3.0 https://github.com/samarnever-droid/lplusplus.git
 cd lplusplus
 $env:LPP_FROM_SOURCE = "1"
 .\install.ps1
@@ -171,15 +172,11 @@ async def main():
     print(owned)
 ```
 
-Tuple arity is 2–4. A rest parameter must be final and is a safe typed list, not
+Tuple arity supports up to 16 elements. A rest parameter must be final and is a safe typed list, not
 C `...`. Borrowed views cannot be returned, captured, stored in owning
 containers, reassigned through their source, or sent to a thread. Async uses a
 single-thread run-to-completion executor; blocking file/network/process calls
 without a readiness adapter are rejected from async call graphs.
-
-These four features are an experimental first tier while Windows runtime
-execution is still awaiting a real Windows CI run. They are not a claim of
-project-wide “100% feature freeze.”
 
 ### Structs
 
@@ -381,7 +378,7 @@ crates/
   lpp-ownership/          Three-tier placement (`Frame`/`Owned`/`Shared`), cycle analysis, balance proofs
   lpp-codegen-api/        Shared backend target/request traits & descriptors
   lpp-codegen-cranelift/  Default native Cranelift AOT backend (x86_64, aarch64)
-  lpp-codegen-llvm/       Experimental Clang-backed LLVM backend
+  lpp-codegen-llvm/       Full-parity Clang-backed LLVM backend (x86_64/aarch64, -O0..-O3, kernel & ARC support)
   lpp-codegen-wasm/       Experimental WASI WebAssembly (`wasm32-wasip1`) backend
   lpp-linker/             Direct ELF / PE / Mach-O linker (`lpp-link`)
   lpp-runtime-abi/        Generated builtin/runtime ABI descriptors (`abi/builtins.toml`)
@@ -416,6 +413,7 @@ at your option.
 ## Links
 
 - [Website](https://lplusplus.bond)
+- [v0.3.0 Release Notes](documentation/RELEASE_NOTES_v0.3.0.md)
 - [Language Tour](wiki/Language-Tour.md)
 - [Package Registry](https://registry.lplusplus.bond)
 - [Benchmarks](benchmarks/king20/stable/v1/latest.md)

@@ -1,58 +1,50 @@
 # Current capabilities
 
-**Last reviewed: 2026-11-13 (v0.2.0, WASI filesystem builtins);** remaining historical gate counts below reflect their dated snapshots. This file is a compact index; the detailed
-historical snapshot is in [STATUS-2026-07-30.md](STATUS-2026-07-30.md), while
-current gate results and open work are tracked in [ROADMAP.md](../ROADMAP.md).
+**Last updated for v0.3.0 (`v0.3-dev`);** remaining historical gate counts below reflect their dated snapshots unless marked current. This file is a compact index; current roadmap status is tracked in [ROADMAP.md](../ROADMAP.md) and `v0.3.0` release notes in [RELEASE_NOTES_v0.3.0.md](RELEASE_NOTES_v0.3.0.md).
 
 ## Compiler
 
 | Capability | Status |
 |---|---|
 | Python-readable indentation syntax | Available |
-| Functions, defaults, loops, break/continue | Available |
-| Structs, enums, match, `?` | Available |
+| Functions, defaults, loops, break/continue, ranges | Available |
+| Structs, enums, exhaustive match, `?`, f-strings | Available |
 | Generics and turbofish | Available and monomorphized |
 | Traits with static/dynamic dispatch | Available |
-| FFI / `extern "C"` | Cranelift supports direct calls for the documented scalar/`Str` subset, including imported declarations across modules and host-library linking. The system SQLite and zlib binding smokes pass; LLVM/WASM still reject imported calls. No raw-pointer type is added. See [`EXTERNAL_C_ABI.md`](EXTERNAL_C_ABI.md). |
-| Native optimization | `-O0` selects Cranelift `none`; `-O1`/`-O2`/`-O3` use Cranelift `speed`; `-Os`/`-Oz` use `speed_and_size`. `--lto` enables the bounded whole-program MIR inliner for tiny pure scalar callees; `--pgo-generate`/`--pgo-use` profile function entries and steer that same inliner. This is not object-file LTO or general profile-guided machine-code optimization. LLVM remains forced to `-O0`. See [`benchmarks/lto/results.md`](../benchmarks/lto/results.md) and [`benchmarks/pgo/results.md`](../benchmarks/pgo/results.md). |
+| Principled `unsafe` & Kernel Primitives | Available: `unsafe` blocks/functions, `Ptr[T]`, `RawPtr`, casts, volatile MMIO, port I/O, CPU control registers, `--deny-unsafe` (`E4501`), `--multiboot2`, `--image-base` |
+| Bare-metal targets | Available: `x86_64-unknown-none`, `aarch64-unknown-none` + static ELF kernel linking (`lpp-link`) |
+| FFI / `extern "C"` | Cranelift supports direct calls for the documented scalar/`Str` subset, including imported declarations across modules and host-library linking. The system SQLite and zlib binding smokes pass. See [`EXTERNAL_C_ABI.md`](EXTERNAL_C_ABI.md). |
+| Native optimization | Cranelift respects `-O0`–`-Oz`; LLVM backend now supports `-O0`–`-O3`, `-Os`/`-Oz`, managed ARC, kernel primitives, and SIMD. `--lto` enables the bounded whole-program MIR inliner; `--pgo-generate`/`--pgo-use` profile function entries on Cranelift. |
 | Closures and thread spawn | Available |
-| Fixed structural tuples | Experimental first tier: arity 2–4, managed elements, destructuring; Cranelift supports tuple list elements, LLVM/WASM parity incomplete |
-| Typed variadics | Experimental first tier: final owned rest `List[T]`; extern C varargs rejected |
-| Borrowed slices | Experimental first tier: zero-copy `StrSlice` / `Slice[T]`, conservative non-escape rules |
-| Async/await | Experimental first tier: task state records and single-thread run-to-completion executor |
-| Lists, maps, strings, buffers, files, networking | Available in the supported runtime paths |
-| LSP server and diagnostics | Available |
-| Package tooling | Rust PM is production default; pure-L++ PM is experimental opt-in (`LPP_SELF_HOSTED_PM=1`) |
+| Fixed structural tuples | Available up to arity 16, managed elements, destructuring; Cranelift and LLVM full parity |
+| Typed variadics | Available: final owned rest `List[T]`; extern C varargs rejected |
+| Borrowed slices | Available: zero-copy `StrSlice` / `Slice[T]`, conservative non-escape rules |
+| Async/await | Single-thread run-to-completion executor (`async def`, `.await`, `spawn`) |
+| Collections & builtins | `List[T]`, `Map[K, V]`, `Set[T]`, `Deque[T]`, strings, buffers, files, networking, JSON, 100+ builtins |
+| DWARF debugging & backtraces | Available: `-g` / `--debug` (Cranelift & LLVM), `lpp debug` CLI, runtime stack backtraces |
+| Developer CLI & LSP | Available: `lpp fmt`, `lpp repl`, `lpp test`, `lpp debug`, `lpp-lsp` |
+| Package tooling | Keel PM (`Keel.toml`, `Keel.lock`), Git registry (`llppregistry`), and `lpp migrate` / `keel migrate` for legacy `lpp.toml` |
 | `c2lpp` package | Phase 1 C-header/native-package generation complete; Phase 2 audited scalar translation started |
 
 ## Ownership
 
-- MIR is the single source of escape/storage truth.
+- MIR and `lpp-ownership` are the single source of escape/storage truth.
 - `Frame < Owned < Shared` is the escape lattice.
-- Non-escaping ordinary structs use stack payloads.
-- Escaping values use ARC.
-- Self-referential structs are ordinary ARC allocations whose types the
-  ownership plan classifies `Shared` (collectible). Cranelift's native runtime
-  reclaims unreachable cycles by trial-deletion; acyclic values free promptly
-  by refcount, and no edge is demoted to non-owning. This reclamation claim is
-  backend-specific: WASM recycles freed acyclic blocks but does not yet collect
-  unreachable cycles; LLVM managed-value/collector parity is incomplete. (The
-  legacy arena API is not the cycle mechanism. See
-  `documentation/CYCLE_BREAKING.md` and `ROADMAP.md`.)
+- Non-escaping `Frame` POD structs and tuples lower onto the stack (`StackSlot` in Cranelift, `alloca` in LLVM) with zero heap allocations and zero ARC retain/release traffic.
+- Escaping `Owned` POD structs, enums, and tuples pass a null destructor to `lpp_arc_alloc_with_destructor`, skipping the 8-byte destructor prefix and indirect destructor call at teardown.
+- Self-referential structs and cycle-capable aggregates are classified `Shared` and collected on Cranelift and LLVM native targets via Bacon-Rajan trial-deletion in `lpp-runtime`. WASM recycles freed acyclic blocks but does not yet collect unreachable cycles. (See `documentation/CYCLE_BREAKING.md` and `ROADMAP.md`.)
 - Closures use ARC environments; non-escaping closure capsules can be stack-resident.
-- Tuples and tasks are ARC aggregates with runtime child/environment teardown.
-- Slice view records are stack-resident and borrowed; the MIR validator prevents
-  first-tier escapes and the runtime validates bounds/generation at each access.
+- Tuples up to arity 16 and async tasks are ARC aggregates with runtime child/environment teardown (or stack-placed when `Frame` POD).
+- Slice view records are stack-resident and borrowed; the MIR validator prevents first-tier escapes and the runtime validates bounds/generation at each access.
 
 ## Backends and linkers
 
 | Combination | Status |
 |---|---|
-| Cranelift + host linker | Production/default; managed aggregate drop glue and native cycle collector |
-| Cranelift + direct ELF/PE/Mach-O linker | Production for the verified targets |
-| WASM | Experimental (`wasm32-wasip1`); ARC size-class free-list reuse passes bounded acyclic churn; WASI filesystem builtins (`file_exists`, `read_file`, `write_file`, `append_file`, `delete_file`) lowered via WASI preopens; cycle collection missing |
-| LLVM + host linker | Optional; managed structs/lists/tuples and cycle-collector parity incomplete |
-| LLVM + direct linker | Optional, tested for the supported subset |
+| Cranelift + host linker | Production/default (`x86_64`, `aarch64`); stack-placed `Frame` POD, destructor-free POD `Owned`, cycle collector, DWARF `-g` |
+| Cranelift + direct ELF/PE/Mach-O linker | Production for host native targets and static bare-metal `*-unknown-none` ELF kernels |
+| LLVM + host/direct linker | Full MIR/ARC/kernel/SIMD parity (`x86_64`, `aarch64`), `-O0`–`-O3`, DWARF `-g`, stack `Frame` POD & null-dtor `Owned` POD |
+| WASM | Experimental (`wasm32-wasip1`); ARC size-class free-list reuse passes bounded acyclic churn; WASI filesystem builtins lowered via WASI preopens; cycle collection missing |
 | Windows LLVM execution | Needs Windows CI validation |
 
 Select the optional backend explicitly:
@@ -98,42 +90,20 @@ The runtime uses relaxed atomic counters in a dense table (IDs below 1,048,576)
 and flushes it when source `main` returns normally. Profile generation adds
 per-entry instrumentation overhead; see the benchmark for a measured example.
 
-## Verified gates (2026-10-26)
+## Verified gates (`v0.3-dev`)
 
-- `cargo fmt --all -- --check` and `cargo test --locked --workspace`: **PASS**;
-  includes PGO profile generation/use/mismatch checks and the imported-extern
-  cross-module regression.
-- Hosted and Linux freestanding C runtimes compile with the project flags; the
-  corrected recursive runtime-symbol gate and Kernel32 import-table gate pass.
-- `bash scripts/fast_gate.sh`: **PASS** — 531 workspace tests; driver build;
-  30 bindgen source modules across 4 entry graphs; focused bindgen
-  ASan/LSan/UBSan regression; 58 AOT parity cases. Latest run: 105 seconds
-  (the earlier dependency-cold run took 209 seconds).
-- `bash scripts/corpus_correctness.sh run`: **191/191 scored** (178 run cases
-  and 13 expected compiler rejections; 18 skipped by corpus policy).
-- `cargo test --locked -p lpp-codegen-wasm --test wasm_gate
-  arc_heap_reuses_freed_blocks_under_repeated_managed_churn -- --nocapture`:
-  **PASS**; 100 and 100,000 same-shape churn iterations both use 1 WASM page.
-- `bash scripts/check_bindgen_lsan.sh`: **PASS** with leak detection enabled;
-  normal destroy and stale-handle panic both run under ASan/LSan/UBSan.
-- Historical backend/differential/safety evidence is recorded in
-  [STATUS-2026-07-30.md](STATUS-2026-07-30.md); it is not a replacement for
-  the current gates above.
-- `LPP=/home/user/lplusplus/target/debug/lpp sh packages/lpp-bindgen/tests/run.sh`:
-  **PASS (2026-10-26, 116 s)**, including the system SQLite header/native smoke
-  (270 declarations) and system zlib smoke (73 declarations). These exercise
-  imported `extern` declarations through the rewrite compiler, native linker,
-  and runtime. The earlier `Unsupported(UnresolvedName)` report is stale.
+- `bash scripts/fast_gate.sh`: **PASS** — `cargo fmt --check`, workspace
+  Clippy, **872** workspace tests (0 failed, including the `v03_*` production
+  suites across all 14 core crates), **37** bindgen source modules across 4 entry
+  graphs, focused bindgen ASan/LSan/UBSan regression, and **58/58** AOT parity.
+- `bash scripts/corpus_correctness.sh run` (`193/193` = `100.0%`, 180 run + 13 expected rejects; 18 skipped) and
+  `python3 scripts/check_compatibility_freeze.py` (`112/112` unchanged): **PASS**.
 
 ## Not yet claimed
 
-- Project-wide “100% feature freeze”; several language additions remain experimental.
+- Project-wide “100% feature freeze”; async I/O reactor and static `Send`/`Sync` enforcement remain open.
 - WASM cycle collection or bounded memory for cyclic WASM workloads.
-- LLVM managed structs/lists/tuples or native cycle-collector parity.
-- Async I/O readiness, backpressure, multi-thread work stealing, or C100K claims.
 - General lifetime-parameterized slices, mutable slices, or slice thread send.
-- Unsafe native C variadic ABI or tuples outside arity 2–4.
+- Unsafe native C variadic ABI or tuples beyond arity 16.
 - Windows LLVM runtime execution.
-- Object-file/LLVM-style LTO or general profile-guided machine-code optimization.
 - General source-level automatic vectorization of arbitrary loops or a source-level wider SIMD type.
-- Arena bump/chunk allocation performance optimization.

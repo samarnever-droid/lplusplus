@@ -2,9 +2,9 @@ name: L++ CI
 
 on:
   push:
-    branches: [master, main]
+    branches: [master, main, v0.3-dev]
   pull_request:
-    branches: [master, main]
+    branches: [master, main, v0.3-dev]
   workflow_dispatch:
 
 permissions:

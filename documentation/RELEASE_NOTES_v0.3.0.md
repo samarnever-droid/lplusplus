@@ -1,0 +1,47 @@
+# L++ v0.3.0 Release Notes
+
+**Release coordinates**
+- **Release**: `v0.3.0` (`v0.3-dev`)
+- **Workspace crate version**: `0.3.0` across all 21 workspace/runtime manifests
+- **Previous release**: `v0.2.0`
+
+---
+
+## Highlights in `v0.3.0`
+
+### 1. Stack-Placed `Frame` & Zero-Overhead POD `Owned` Codegen (`cc28e84`)
+- Shared fixed-point ownership lowering analysis in [`crates/lpp-codegen-api/src/ownership_lowering.rs`](../crates/lpp-codegen-api/src/ownership_lowering.rs) connects `lpp-ownership` (`Frame` / `Owned` / `Shared`) directly to both native backends.
+- Non-escaping `Frame` POD structs and tuples are allocated directly on the stack (`StackSlot` in `lpp-codegen-cranelift`, `alloca` in `lpp-codegen-llvm`) with **zero heap allocations** and **zero calls** to `lpp_arc_alloc_with_destructor`, `lpp_arc_retain`, or `lpp_arc_release`.
+- Escaping `Owned` POD structs, enums, and tuples pass a null destructor to `lpp_arc_alloc_with_destructor`, omitting the 8-byte destructor prefix and avoiding indirect destructor dispatch at free time while preserving runtime ARC compatibility.
+
+### 2. Principled `unsafe`, Kernel Primitives & Bare-Metal Targets (`6507590`, `089d3e6`)
+- Added scoped `unsafe` blocks and `unsafe def` functions, `Ptr[T]` and `RawPtr` pointer primitives, typed pointer/integer casts, volatile MMIO operations, x86/aarch64 port I/O, CPU control-register intrinsics, and kernel attributes.
+- Added `--deny-unsafe` (`E4501`) for strict safe-only builds.
+- Added bare-metal targets `x86_64-unknown-none` and `aarch64-unknown-none` with `--multiboot2`, `--image-base <hex>`, static bare-metal ELF linking in `lpp-link`, and Multiboot2/arch runtime support under `runtime/`.
+
+### 3. Full LLVM Backend Parity (`e9e6b8a`)
+- Upgraded [`crates/lpp-codegen-llvm`](../crates/lpp-codegen-llvm) from the scalar prototype to full MIR, managed aggregate (`struct`/`enum`/list/tuple), Bacon-Rajan cycle-collector destructor, SIMD, kernel primitive, and `-O0`–`-O3`/`-Os`/`-Oz` optimization parity.
+- Fixed `keel` executable replacement `ETXTBSY` races during repeated builds/runs.
+
+### 4. Language & Developer Tooling Parity (`a330177`)
+- **Language & collections**: extended structural tuple arity up to 16 elements, added `f"..."` formatted strings, first-class range iteration/values, exhaustive `match` checks, and `Set[T]` / `Deque[T]` collections.
+- **Developer commands**: added canonical source formatter `lpp fmt` (shared with `lpp-lsp`), interactive MIR REPL `lpp repl`, `lpp test`, and enhanced `lpp-lsp` diagnostics/formatting.
+
+### 5. DWARF `-g` Debugging & Runtime Backtraces (`4b1d4c8`)
+- Added DWARF `-g` / `--debug` line and symbol metadata emission across Cranelift (`lpp-codegen-cranelift`) and LLVM (`lpp-codegen-llvm`).
+- Added `lpp debug` CLI mode and runtime panic/crash stack backtrace support.
+
+### 6. Keel Migration (`lpp/keel migrate`) (`e2139d4`)
+- Added `lpp migrate` / `keel migrate` to convert legacy `lpp.toml` manifests to modern `Keel.toml` manifests.
+- Added explicit deprecation warnings when loading legacy `lpp.toml` directly, and migrated in-repo packages to `Keel.toml` / `Keel.lock`.
+
+### 7. Production Test Suite Expansion (`14f4e31`)
+- Added 14 comprehensive `v03_*_production_suite.rs` integration suites totaling **22,532+ LOC** across `keel`, `lpp-pm`, `lpp-driver`, `lpp-frontend`, `lpp-hir`, `lpp-types`, `lpp-mir`, `lpp-passes`, `lpp-ownership`, `lpp-linker`, `lpp-runtime`, `lpp-codegen-cranelift`, `lpp-codegen-llvm`, and `lpp-codegen-wasm`.
+
+---
+
+## Known Limitations (Tracked Transparently)
+- **WASM cycle collection**: `lpp-codegen-wasm` recycles freed acyclic blocks in size-class bins, but unreachable reference cycles still leak in WASM.
+- **Concurrency safety**: Native ARC refcounts are atomic, but static `Send`/`Sync` compile-time enforcement and TSan validation remain open (`documentation/CONCURRENCY.md`).
+- **Async I/O reactor**: `async`/`await` uses a single-thread run-to-completion executor; OS readiness reactor (`epoll`/`kqueue`/`IOCP`) integration remains future work.
+- **Windows LLVM & PDB debugging**: Windows MSVC + Cranelift PE are validated in CI; Windows LLVM runtime execution and CodeView/PDB debugging await Windows CI verification.

@@ -30,9 +30,9 @@ graph TD
     end
 
     subgraph Backends ["3. Modular Codegen Backends"]
-        Ownership --> API["lpp-codegen-api"]
-        API --> Cranelift["lpp-codegen-cranelift (Default Native AOT)"]
-        API --> LLVM["lpp-codegen-llvm (Experimental Clang-based)"]
+        Ownership --> API["lpp-codegen-api (Layout + Ownership Lowering Plan + DWARF)"]
+        API --> Cranelift["lpp-codegen-cranelift (Default Native AOT + Frame/Owned Fast Path)"]
+        API --> LLVM["lpp-codegen-llvm (Clang-based LLVM Parity, -O0..-O3, Kernel)"]
         API --> WASM["lpp-codegen-wasm (Experimental wasm32-wasip1)"]
     end
 
@@ -54,15 +54,17 @@ graph TD
 | **Type System** | [`crates/lpp-types`](crates/lpp-types) | Bidirectional type inference, monomorphization, trait & generic checking. |
 | **MIR & Verification** | [`crates/lpp-mir`](crates/lpp-mir) | Control-flow graph lowering, `CORE_MIR_INVARIANTS` verifier, MIR interpreter & ARC leak oracle (`E4304`). |
 | **Passes & Ownership** | [`crates/lpp-passes`](crates/lpp-passes), [`crates/lpp-ownership`](crates/lpp-ownership) | Constant folding, DCE, `--lto`/`--pgo-use` inliner, three-tier placement (`Frame`/`Owned`/`Shared`), SCC cycle classification, and balance proofs (`E4403`). |
-| **Codegen Backends** | [`crates/lpp-codegen-api`](crates/lpp-codegen-api), [`crates/lpp-codegen-cranelift`](crates/lpp-codegen-cranelift), [`crates/lpp-codegen-llvm`](crates/lpp-codegen-llvm), [`crates/lpp-codegen-wasm`](crates/lpp-codegen-wasm) | Cranelift (default native `x86_64`/`aarch64`), experimental LLVM, and experimental `wasm32-wasip1` emission. |
-| **Linking & Runtime** | [`crates/lpp-linker`](crates/lpp-linker), [`crates/lpp-runtime-abi`](crates/lpp-runtime-abi), [`crates/lpp-runtime`](crates/lpp-runtime) | Direct ELF/PE/Mach-O linker, `abi/builtins.toml`-driven ABI tables, and hosted runtime. |
-| **Package Manager & Driver** | [`crates/keel`](crates/keel), [`crates/lpp-pm`](crates/lpp-pm), [`crates/lpp-driver`](crates/lpp-driver) | `Keel.toml`/`Keel.lock` resolution, decentralized git registry client, session & CLI orchestration. |
+| **Codegen Backends** | [`crates/lpp-codegen-api`](crates/lpp-codegen-api), [`crates/lpp-codegen-cranelift`](crates/lpp-codegen-cranelift), [`crates/lpp-codegen-llvm`](crates/lpp-codegen-llvm), [`crates/lpp-codegen-wasm`](crates/lpp-codegen-wasm) | Shared ownership lowering + DWARF debug encoding; Cranelift (default native `x86_64`/`aarch64` + `*-unknown-none`), LLVM (`-O0`–`-O3`, full MIR/ARC/kernel parity), and experimental `wasm32-wasip1` emission. |
+| **Linking & Runtime** | [`crates/lpp-linker`](crates/lpp-linker), [`crates/lpp-runtime-abi`](crates/lpp-runtime-abi), [`crates/lpp-runtime`](crates/lpp-runtime) | Direct ELF/PE/Mach-O & static bare-metal kernel ELF linker, `abi/builtins.toml`-driven ABI tables, hosted ARC runtime, and bare-metal Multiboot2/arch support. |
+| **Package Manager & Driver** | [`crates/keel`](crates/keel), [`crates/lpp-pm`](crates/lpp-pm), [`crates/lpp-driver`](crates/lpp-driver) | `Keel.toml`/`Keel.lock` resolution, `lpp`/`keel migrate`, decentralized git registry client, DWARF `lpp debug`, `lpp fmt`, `lpp repl`, and session orchestration. |
 
 ---
 
 ## 3. Memory & Lifetime Model
 
-- **Three-Tier Ownership Plan**: `lpp-ownership` classifies locals into `Frame`, `Owned`, and `Shared`. Cycle-capable types identified by SCC analysis are placed in `Shared` and tracked for collection on the Cranelift native path. See [documentation/CYCLE_BREAKING.md](documentation/CYCLE_BREAKING.md).
-- **Atomic Native ARC Headers**: Native runtime reference counting uses atomic operations across `Shared` objects (see [documentation/CONCURRENCY.md](documentation/CONCURRENCY.md)). Strings and destructor-free objects use a 16-byte common ARC header immediately before payload; destructor-bearing native objects prepend an 8-byte destructor pointer (24-byte total prefix).
-- **Trial-Deletion Cycle Collection**: Unreachable runtime reference cycles on Cranelift native targets are collected by the Bacon-Rajan trial-deletion collector in `lpp-runtime`. WASM uses a target-specific 24-byte header with free-list reuse for acyclic churn, and cycle collection on WASM/LLVM remains unimplemented.
-- **Trapping Arithmetic & Bounds**: Signed division/modulo by zero, overflow (`MIN / -1`), invalid shift counts, and out-of-bounds indexing trap safely rather than invoking undefined behavior.
+- **Three-Tier Ownership Plan**: `lpp-ownership` classifies locals into `Frame`, `Owned`, and `Shared`. `lpp-codegen-api::ownership_lowering` computes non-escaping `Frame` POD clusters and POD `Owned` aggregates cleanly across Cranelift and LLVM.
+- **Stack-Placed `Frame` & Destructor-Free POD `Owned`**:
+  - Non-escaping `Frame` POD structs and tuples lower directly to fixed stack slots (`StackSlot` in Cranelift, `alloca` in LLVM) with zero heap allocations and zero ARC calls.
+  - Escaping `Owned` POD structs, enums, and tuples pass a null destructor to `lpp_arc_alloc_with_destructor`, omitting the 8-byte destructor prefix and indirect destructor dispatch.
+- **Atomic Native ARC Headers & Cycle Collection**: Native reference counting uses atomic operations across `Shared` objects (see [documentation/CONCURRENCY.md](documentation/CONCURRENCY.md)). Unreachable `Shared` reference cycles on Cranelift and LLVM native targets are collected by the Bacon-Rajan trial-deletion collector in `lpp-runtime` (see [documentation/CYCLE_BREAKING.md](documentation/CYCLE_BREAKING.md)). WASM uses a target-specific 24-byte header with size-class free-list reuse for acyclic churn, and WASM cycle collection remains unimplemented.
+- **Principled `unsafe` Boundary & Trapping Safety**: Low-level pointer (`Ptr[T]`, `RawPtr`), MMIO, port I/O, and CPU register primitives require explicit `unsafe` blocks/functions and can be rejected project-wide with `--deny-unsafe`. Safe code retains trapping signed division/modulo by zero, `MIN / -1` guard handling, shift-count traps, and bounds checks.

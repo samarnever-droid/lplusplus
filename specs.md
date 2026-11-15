@@ -1,7 +1,7 @@
 # L++ language and toolchain specification
 
-- **Status:** source-grounded description of the implementation in this working tree, not a promise that every construct works on every backend.
-- **Audit date:** 2026-10-23. The compact capability inventory in `documentation/CURRENT_CAPABILITIES.md` was last reviewed 2026-10-20.
+- **Status:** source-grounded description of the implementation in this **v0.3.0** (`v0.3-dev`) working tree, not a promise that every construct works on every backend.
+- **Audit date:** 2026-11-15. The compact capability inventory in `documentation/CURRENT_CAPABILITIES.md` and release notes in `documentation/RELEASE_NOTES_v0.3.0.md` track the same `v0.3.0` snapshot.
 - **Scope:** the L++ source language, compiler pipeline, runtime/ABI, diagnostics, developer tools, Keel package manager, backend targets, and known limitations.
 
 This document describes what the current implementation parses, type-checks, lowers, and supports on the named backend. It is deliberately not a claim of language-version stability, complete cross-backend parity, data-race freedom, or production readiness for experimental features. A construct accepted by the lexer/parser is not necessarily accepted by type checking or by every code generator. Where support differs, this specification says so.
@@ -374,15 +374,15 @@ The LLVM and WASM backends explicitly reject imported external calls. The L++/SQ
 
 | Backend | Declared target(s) | Current support boundary |
 |---|---|---|
-| Cranelift | `x86_64`, `aarch64`, with the object OS format inherited from the compiler host | Default native backend and broadest rewrite backend. Supports the current native scalar/control-flow/direct-call path and substantial managed-data/runtime surface (strings, structs/enums, lists, tuples, closures, tasks, slices and supported builtins). Direct external C calls are implemented for the subset in §7. The `vec_i64_checksum` runtime intrinsic auto-dispatches to a 4-lane 256-bit AVX2 kernel on capable x86-64 hosts and otherwise uses its scalar fallback; this is not general loop auto-vectorization or a source-level `VectorI64x4` type. |
-| LLVM | `x86_64` only | Optional Clang-based scalar/CFG/direct-call and builtin subset. Managed structs/lists/tuples, function values, slices, SIMD, and imported C calls are incomplete or typed rejections in the current slice. Windows LLVM runtime execution still needs validation. |
-| WASM | `wasm32-wasip1` | Experimental WASI backend. Current source implements scalars, control flow/direct calls, strings, managed aggregates/lists, tuples, dynamic string concatenation, closures/function values, tasks, eager spawn, borrowed slices, deterministic maps, WASI line input, and WASI filesystem builtins (`file_exists`, `read_file`, `write_file`, `append_file`, `delete_file`) over WASI preopens in its tested subset. SIMD, arbitrary host C FFI, and host capabilities unavailable in WASI are rejected. Cycle collection is missing. |
+| Cranelift | `x86_64`, `aarch64`, `x86_64-unknown-none`, `aarch64-unknown-none`, with the object OS format inherited from host or bare-metal ELF | Default native backend and full-surface rewrite backend. Supports scalars, control flow, strings, structs/enums, lists, maps, `Set`, `Deque`, tuples up to arity 16, closures, tasks, slices, `unsafe` (`Ptr[T]`, `RawPtr`, volatile MMIO, port I/O, CPU control registers), DWARF `-g`, stack-placed `Frame` POD structs/tuples, destructor-free POD `Owned` ARC payloads, and Bacon-Rajan cycle collection for `Shared`. |
+| LLVM | `x86_64`, `aarch64`, `x86_64-unknown-none`, `aarch64-unknown-none` | Clang-based full-parity backend (`--backend llvm -O0`–`-O3`, `-Os`/`-Oz`). Lowers full MIR, managed structs/enums/lists/tuples, cycle-collector ARC destructors, stack-placed `Frame` POD & null-dtor POD `Owned`, kernel/`unsafe` primitives, SIMD intrinsics, and DWARF `-g`. Windows LLVM execution needs CI validation. |
+| WASM | `wasm32-wasip1` | Experimental WASI backend. Implements scalars, control flow/direct calls, strings, managed aggregates/lists, tuples, dynamic string concatenation, closures/function values, tasks, eager spawn, borrowed slices, deterministic maps, WASI line input, and WASI filesystem builtins over WASI preopens in its tested subset. Host C FFI and kernel/MMIO primitives are rejected. Cycle collection is missing. |
 
 This matrix is a feature boundary, not a claim that every listed feature is equally mature or that every builtin is available on every target. The complete current feature index is [`documentation/CURRENT_CAPABILITIES.md`](documentation/CURRENT_CAPABILITIES.md).
 
 ### 8.2 Target selection and cross-compilation
 
-The shared codegen target lattice is exactly `X86_64`, `Aarch64`, and `Wasm32Wasi`. Native triples use the compiler host OS (Linux, Windows, or macOS) with the selected architecture; explicit cross-OS/sysroot support is outside the current v0.2.0 model. A native cross-architecture object can be emitted/checked, but the single-file `build`/`run` path only links the current host target.
+The shared codegen target lattice includes `X86_64`, `Aarch64`, `X86_64None` (`x86_64-unknown-none`), `Aarch64None` (`aarch64-unknown-none`), and `Wasm32Wasi`. Hosted native triples use the compiler host OS (Linux, Windows, or macOS) with the selected architecture; bare-metal `*-unknown-none` targets emit standalone freestanding ELFs linkable with `--multiboot2`, `--image-base <hex>`, and `lpp-link` static kernel mode.
 
 The CLI accepts aliases including `x86_64`, `aarch64`, `aarch64-linux-android`, `wasm32`, `wasm32-wasi`, `wasm32-wasip1`, and `wasm32-unknown-unknown`. These aliases map into the small target lattice: for example, `aarch64-linux-android` maps to the generic AArch64 target and does not supply an Android sysroot/linker, and `wasm32-unknown-unknown` is mapped to the WASI backend rather than a true unknown-unknown target. `--list-targets` includes compatibility labels that are not all independently implemented targets; use the backend target list and actual compile result as the authority.
 
@@ -418,8 +418,11 @@ lpp app.lpp -O2 -o app
 Supported compiler options include:
 
 - `--backend cranelift|llvm|wasm` (`--llvm` is shorthand for `--backend llvm`).
-- `--target <target>`; selecting WASI also selects the WASM backend.
+- `--target <target>`; selecting WASI selects the WASM backend; `x86_64-unknown-none` / `aarch64-unknown-none` select bare-metal static ELF mode.
 - `-O<level>`, `-O <level>`, or `--opt-level <level>`.
+- `-g`, `--debug` to emit DWARF debug info (`debug <source>` / `lpp debug` runs interactive debugging/backtrace diagnostics).
+- `--deny-unsafe` to reject any `unsafe` block/function (`E4501`).
+- `--multiboot2` and `--image-base <hex>` for bare-metal kernel linking.
 - `-o <path>` / `--output <path>`.
 - `--run`, `--check`, `-c`, `--emit-object`, `--emit-obj`, and `--aot`.
 - `--list-targets`, `--help`/`-h`, and `--version`/`-v`.
@@ -434,7 +437,7 @@ The CLI accepts one source input. Multiple positional source files are rejected;
 
 ### 9.2 Project commands and dispatch
 
-When a command receives a source-file argument (for example `lpp run app.lpp`), the compiler handles the file. Without a source argument, project/package commands are dispatched to Keel in-process: `new`/`create`, `init`, `add`, `remove`, `build`, `check`, `run`, `test`, `clean`, `metadata`, `list`, `workspace`, `version`, `install`, `fetch`, `search`, `publish`, `update`, `tree`, `outdated`, `why`, `verify`, and `cache`.
+When a command receives a source-file argument (for example `lpp run app.lpp`), the compiler handles the file. Developer utilities handled directly by the driver include `lpp fmt` (`--check`, `--write`, `--stdin`), `lpp repl`, `lpp debug <file.lpp>`, and `lpp test`. Without a source argument, project/package commands are dispatched to Keel in-process: `new`/`create`, `init`, `migrate`, `add`, `remove`, `build`, `check`, `run`, `test`, `clean`, `metadata`, `list`, `workspace`, `version`, `install`, `fetch`, `search`, `publish`, `update`, `tree`, `outdated`, `why`, `verify`, and `cache`.
 
 The rewrite compiler currently rejects `--dump-*`, `--checkall`, and `--fix`; these are not available in the current direct-source rewrite path. Old `Usage.md`/help claims for these options should not be treated as current support.
 
@@ -482,7 +485,7 @@ The Keel command surface includes:
 
 | Command | Purpose |
 |---|---|
-| `new`/`create`, `init` | Create or initialize a project. |
+| `new`/`create`, `init`, `migrate` | Create, initialize, or migrate legacy `lpp.toml` projects to modern `Keel.toml` (`migrate` emits a deprecation notice for `lpp.toml`). |
 | `add`, `remove` | Edit dependencies. `add` accepts a package name or `name@version`; a `--path` CLI option is not part of the current clap surface. A path dependency can be declared in the manifest. |
 | `build`, `check`, `run` | Build workspace/member artifacts, check a selected package entry, or build and run it. |
 | `test` | Run each `tests/*.lpp` as a standalone compile-and-run test; no test files is a successful “no tests found” result. |
@@ -506,15 +509,9 @@ Package-manager errors use `E6000`–`E6026`; see the complete mapping in §12. 
 
 ## 11. Developer tools
 
-### 11.1 Language server
+### 11.1 Language server & canonical formatter
 
-`lpp-lsp` is a stdio JSON-RPC/LSP process using `Content-Length` framing. It advertises full text synchronization, completion, hover, definition, document symbols, formatting, and full semantic tokens. Its implemented scope is substantially more limited:
-
-- It parses documents and publishes **parser-only** diagnostics on open/change/save; it does not run the full compiler type checker or package resolver.
-- Completion is hard-coded plus same-document function/struct/enum names. It is not a workspace/import-aware semantic completion engine.
-- Hover is line-text heuristic; definition search is heuristic and same-document only; document-symbol ranges are approximations; formatting is a simple indentation heuristic, not a syntax-aware formatter.
-- Semantic tokens are advertised by `initialize`, but the current server has no `textDocument/semanticTokens/full` request handler.
-- Some hard-coded completion/hover labels (`CPtr`, `CMemory`, `Buffer`) are legacy placeholders, not proof that those names are built-in source types.
+`lpp-lsp` is a stdio JSON-RPC/LSP process using `Content-Length` framing. It parses documents through `lpp-frontend`, publishes diagnostics, and delegates document formatting to `lpp_driver::fmt::format_source` (shared with `lpp fmt`). Some completion/hover helpers remain lightweight heuristics rather than a workspace-wide semantic type server.
 
 ### 11.2 Linker and compiler API
 
@@ -655,19 +652,16 @@ Target, graph, filesystem, I/O, and link errors are also surfaced as stage-prefi
 The following are explicit limitations, not implied future guarantees:
 
 - No stable cross-backend ABI/layout guarantee for arbitrary L++ aggregates. The `extern "C"` scalar/`Str` subset is the only documented imported-C surface.
-- No general function-pointer/callback ABI, C varargs, C aggregate ABI, safe raw-pointer type, or compiler-verified foreign ownership. A pointer stored in `Int` is an unsafe-by-convention handle.
+- Low-level pointers (`Ptr[T]`, `RawPtr`), MMIO, port I/O, and CPU register intrinsics require `unsafe` and carry manual systems responsibility; compiler-verified foreign C lifetime contracts remain outside the safe core.
 - No enforced `pub` privacy boundary; module global names are currently flat for duplicate checking.
-- No exponent operator, general source pattern-matching grammar, one-element tuples, tuple arity outside 2–4, or arbitrary f-string expressions.
-- No generalized lifetime system, mutable borrowed slices, general slice escape/thread transfer, async I/O reactor, fairness/work-stealing guarantee, or general data-race-freedom guarantee.
-- WASM cycle collection is absent; LLVM managed-value/cycle-collector and Windows LLVM runtime parity are incomplete. Cross-OS sysroots and a complete Android toolchain are not provided by the target aliases.
-- The builtin ABI catalogue is larger than the current implementation/backend subset. A registered builtin name or generated ABI row is not evidence of backend support.
+- No exponent operator, one-element tuples, tuple arity above 16, or arbitrary complex expressions inside `f"..."` interpolations.
+- No generalized lifetime system, mutable borrowed slices, general slice escape/thread transfer, async I/O reactor, fairness/work-stealing guarantee, or static `Send`/`Sync` data-race-freedom proof yet.
+- WASM cycle collection is absent; Windows LLVM runtime execution and CodeView/PDB debugging await Windows CI validation.
+- The builtin ABI catalogue is larger than any single freestanding/WASM target subset. A registered builtin name is not evidence of bare-metal/WASI availability.
 - The C binding/translation project is experimental and its narrow profiles do not translate arbitrary C or all of SQLite.
-- The current LSP advertises more than it semantically implements; see §11.1.
-- The repository capability file reports a 2026-10-20 fast-gate/corpus run; that is historical context, separate from the verification below.
+- `lpp-lsp` workspace-wide cross-file semantic index features remain partial; see §11.1.
 
-**Verification on 2026-10-23 (Rust 1.98.0):** `cargo fmt --all -- --check` passes, and `cargo test --workspace --locked` passes with 537 tests passed, 0 failed, and 0 ignored (115 test-result summaries, including doc-test targets). The full workspace test run includes Cranelift imported-extern and C-string ABI tests.
-
-A native SQLite smoke also passed through the direct compiler/linker path: `main.lpp` imported a separate `bindings.lpp` declaring `sqlite3_libversion() -> Str` and `sqlite3_libversion_number() -> Int`, linked against the installed SQLite 3.46.1 library, and printed `3.46.1` and `3046001`. A same-file smoke also passed with both the direct and host linkers. This verifies those calls, imported declaration resolution, library propagation, and the `Str` result path; it does **not** verify SQLite database/statement handles, pointer-to-pointer APIs, parameter binding, or a complete database integration. The earlier `Unsupported(UnresolvedName)` failure was not reproduced in this reduced cross-module smoke; do not treat that as proof that every form of the earlier scenario is fixed.
+**Verification on `v0.3-dev` (Rust 1.98.0):** `bash scripts/fast_gate.sh` passes (`cargo fmt --check`, workspace Clippy, **872** workspace tests including the `v03_*` production suites, **37** bindgen source modules across 4 entry graphs, ASan/LSan/UBSan stale-context regression, and **58/58** AOT parity).
 
 ## 14. Implementation references
 

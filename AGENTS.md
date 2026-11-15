@@ -13,7 +13,7 @@ This project is indexed by GitNexus as **lplusplus** (21104 symbols, 74797 relat
 
 ---
 
-# L++ (LPlusPlus) v0.2.0 — Complete AI Architecture & Language Specification
+# L++ (LPlusPlus) v0.3.0 — Complete AI Architecture & Language Specification
 
 > **For any AI Assistant / Agent**: This document is the single, authoritative, complete specification of the **L++ programming language**. When generating, debugging, or analyzing L++ code, **strictly follow the syntax, semantics, standard library, and architecture detailed below.**
 
@@ -21,16 +21,17 @@ This project is indexed by GitNexus as **lplusplus** (21104 symbols, 74797 relat
 
 ## 1. What is L++?
 
-**L++ (LPlusPlus)** is an ultra-high-performance, compiled, systems and application programming language designed for sub-millisecond compilation, deterministic compile-time memory safety, and cross-platform native execution.
+**L++ (LPlusPlus)** is an ultra-high-performance, compiled, systems and application programming language designed for sub-millisecond compilation, deterministic compile-time memory safety, bare-metal OS/kernel development, and cross-platform native execution.
 
 ### Key Architectural Pillars:
 - **Fast Native Compilation**: Compiles native standalone executables via Cranelift AOT (`crates/lpp-codegen-cranelift`) and either the built-in direct linker (`lpp-link`) or host C toolchain fallback.
-- **Deterministic Memory Safety**: Zero tracing GC pauses on the native path. Uses **Automatic Reference Counting (ARC)** with atomic refcounts, **ownership placement & move-out elision** (`crates/lpp-ownership`, `crates/lpp-passes`), and **Bacon-Rajan trial-deletion cycle collection for cycle-capable `Shared` types on the Cranelift native path** (see `documentation/CYCLE_BREAKING.md`; WASM cycle collection and LLVM managed-aggregate parity remain open).
+- **Deterministic Zero-Overhead Memory Safety**: Zero tracing GC pauses on native paths. Uses `Frame` stack allocation for non-escaping POD structs/tuples, destructor-free `Owned` ARC (`null` destructor, zero indirect drop call), atomic refcounting, and **Bacon-Rajan trial-deletion cycle collection** for cycle-capable `Shared` types across Cranelift and LLVM (`documentation/CYCLE_BREAKING.md`; WASM cycle collection remains open).
+- **Principled `unsafe` & Bare-Metal Kernels**: Explicit `unsafe` blocks/functions, `Ptr[T]`, `RawPtr`, volatile MMIO, port I/O, CPU control registers, `--deny-unsafe` enforcement, and `x86_64-unknown-none` / `aarch64-unknown-none` static ELF kernel targets (`--multiboot2`, `--image-base`).
 - **Multi-Backend Compilation Pipeline**:
-  - **Cranelift Backend**: Default native backend for `x86_64` and `aarch64` host targets.
-  - **LLVM Backend (`--backend llvm`, experimental)**: Optional Clang-based `x86_64` scalar/direct-call backend with optimization levels (`-O0`–`-O3`, `-Os`/`-Oz`).
+  - **Cranelift Backend**: Default native backend for `x86_64`, `aarch64`, and bare-metal `*-unknown-none` targets with DWARF `-g` debug info.
+  - **LLVM Backend (`--backend llvm -O0`..`-O3`)**: Full-parity Clang-based backend supporting managed structs/enums/lists/tuples, ARC cycle collection, stack `Frame` lowering, kernel primitives, SIMD, and DWARF `-g`.
   - **WebAssembly Backend (`--backend wasm` / `--target wasm32-wasip1`, experimental)**: Compiles directly to validated `.wasm` modules with WASI filesystem preopen support.
-- **Native Linker (`lpp-link`)**: Built-in PE/COFF (Windows), ELF (Linux), and Mach-O (macOS) linker with host C linker fallback (`--linker host`).
+- **Native Linker & Tooling**: Built-in PE/COFF (Windows), ELF / static bare-metal ELF (Linux/kernels), and Mach-O (macOS) linker (`lpp-link`), plus `lpp debug`, `lpp fmt`, `lpp repl`, `lpp test`, `lpp-lsp`, and Keel (`lpp/keel migrate`).
 - **First-Class Desktop WebViews**: Native in-process embedded windowing (Microsoft Edge WebView2 on Windows, WKWebView on macOS, WebKitGTK on Linux) for desktop applications in pure L++.
 
 ---
@@ -38,18 +39,25 @@ This project is indexed by GitNexus as **lplusplus** (21104 symbols, 74797 relat
 ## 2. CLI Toolchain Reference
 
 ```bash
-# Compilation & Execution
-lpp main.lpp                       # Compile and link directly to main.exe (or ./main)
+# Compilation, Debugging & Execution
+lpp main.lpp                       # Compile and link directly executable
 lpp main.lpp -o myapp.exe          # Specify output executable name
 lpp main.lpp --run                 # Compile and run (or `lpp run main.lpp`)
-lpp main.lpp --backend llvm -O3    # Use experimental LLVM backend with -O3 optimization
+lpp debug main.lpp                 # Build with DWARF -g and debug interactively
+lpp main.lpp -g -O2                # Emit DWARF debug info
+lpp main.lpp --backend llvm -O3    # Full-parity LLVM backend with -O3 optimization
+lpp main.lpp --deny-unsafe         # Enforce pure-safe compilation (reject unsafe sites)
+lpp main.lpp --target x86_64-unknown-none --multiboot2 --image-base 0x100000 -o kernel.elf
 lpp main.lpp --target wasm32-wasip1 # Compile to WASI WebAssembly (.wasm)
 lpp main.lpp --linker host         # Use host C compiler (cl.exe / cc) for external C linking
 lpp main.lpp -l sqlite3            # Link external C library
 
-# Package Manager (Keel — `keel` CLI or `lpp <cmd>`)
+# Developer Tools & Package Manager (Keel — `keel` CLI or `lpp <cmd>`)
+lpp fmt --write src/               # Canonical formatting
+lpp repl                           # Interactive typed MIR REPL
 lpp new my-app                     # Create a new L++ project (Keel.toml + src/main.lpp)
 lpp init                           # Initialize Keel.toml in the current directory
+lpp migrate                        # Migrate legacy lpp.toml package to modern Keel.toml
 lpp add <pkg>                      # Add a dependency from llppregistry (git-backed index)
 lpp install                        # Resolve and install dependencies from Keel.toml / Keel.lock
 lpp build                          # Build project defined in Keel.toml
@@ -378,7 +386,7 @@ my-app/
 ```toml
 [package]
 name = "my-app"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 authors = ["Samar <samar@lplusplus.bond>"]
 description = "High-performance native application in pure L++"
@@ -418,6 +426,6 @@ def main():
 1. **Always provide `def main():`** as the program entry point in root files.
 2. **Use `:=` for declaring new variables** with inferred types, and `=` for reassigning existing mutable variables.
 3. **Strings are strongly-typed `Str`**: Use `print_str(msg)` to print strings and `print(n)` to print integers.
-4. **Always use exact L++ types**: `Int`, `Float`, `Str`, `Bool`, `Char`, `Void`, `List[T]`, `Map[K, V]`, `(T1, T2)`.
-5. **No raw memory pointers or manual freeing needed**: L++ manages memory with ARC and runtime trial-deletion cycle collection on the Cranelift native path (see `specs.md` and `documentation/CURRENT_CAPABILITIES.md` for backend boundaries).
+4. **Always use exact L++ types**: `Int`, `Float`, `Str`, `Bool`, `Char`, `Void`, `List[T]`, `Map[K, V]`, `Set[T]`, `Deque[T]`, `(T1, T2)` (up to 16 elements), `Ptr[T]`, `RawPtr`.
+5. **No raw memory pointers or manual freeing needed in safe code**: L++ lowers `Frame` POD values onto the stack, omits destructors on POD `Owned` values, and manages heap cycles with ARC and runtime trial-deletion cycle collection across Cranelift and LLVM native paths. Use explicit `unsafe` blocks only for kernel/MMIO/`Ptr[T]` code.
 6. **For desktop GUIs**: Use the built-in `webview_*` API to deliver in-process native windowing with zero runtime dependencies.
