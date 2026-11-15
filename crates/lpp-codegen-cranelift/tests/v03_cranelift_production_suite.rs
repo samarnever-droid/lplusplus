@@ -2027,10 +2027,6 @@ def main() -> Int:
 
 #[test]
 fn nested_pod_child_assigned_to_heap_parent_does_not_stack_allocate_child() {
-    use cranelift_object::object::{
-        self, Object as _, ObjectSection as _, ObjectSymbol as _, RelocationTarget,
-    };
-
     let src = r#"
 struct Child:
     value: Int
@@ -2052,18 +2048,10 @@ def main():
         plan.stack_locals
     );
     let module = assert_native_matches_arc_oracle(src, "nested_pod_child_escape");
-    let parsed = object::File::parse(&*module.object).expect("parse object");
-    let mut allocs = 0usize;
-    for section in parsed.sections() {
-        for (_, reloc) in section.relocations() {
-            if let RelocationTarget::Symbol(sym_idx) = reloc.target()
-                && let Ok(sym) = parsed.symbol_by_index(sym_idx)
-                && sym.name().ok() == Some("lpp_arc_alloc_with_destructor")
-            {
-                allocs += 1;
-            }
-        }
-    }
+    let allocs = obj_section_relocs(&module.object, ".text")
+        .into_iter()
+        .filter(|name| name == "lpp_arc_alloc_with_destructor")
+        .count();
     assert!(
         allocs >= 3,
         "expected Child() + default Child() + Parent() to all heap-allocate (got {allocs})"
