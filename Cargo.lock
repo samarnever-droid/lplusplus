@@ -565,6 +565,7 @@ name = "lpp-codegen-api"
 version = "0.2.0"
 dependencies = [
  "lpp-mir",
+ "lpp-ownership",
  "lpp-runtime-abi",
  "lpp-types",
 ]

@@ -123,10 +123,22 @@ impl<'m> Lowering<'m> {
             }
 
             // Zero-init every non-parameter value local; the 4B
-            // invariant keeps the reads sound. Managed locals zero to
-            // null, which the v1 ARC runtime treats as a no-op.
+            // invariant keeps the reads sound. Non-escaping `Frame` POD
+            // structs/tuples sit directly in a sized `StackSlot` (0 B heap,
+            // 0 atomics); heap-managed locals zero to null.
             for &local in locals {
                 if !params.contains(&local) {
+                    let variable = *local_vars.get(&local).expect("local variable");
+                    if let Some(&stack_bytes) = self.stack_locals.get(&(mir_id, local)) {
+                        let slot = builder.func.create_sized_stack_slot(StackSlotData {
+                            kind: StackSlotKind::ExplicitSlot,
+                            size: stack_bytes,
+                            align_shift: 3,
+                        });
+                        let addr = builder.ins().stack_addr(cltypes::I64, slot, 0);
+                        builder.def_var(variable, addr);
+                        continue;
+                    }
                     let ty = program
                         .local(local)
                         .expect("validated MIR retains locals")
@@ -144,7 +156,6 @@ impl<'m> Lowering<'m> {
                             }
                             _ => unreachable!("slice machine types"),
                         };
-                        let variable = *local_vars.get(&local).expect("local variable");
                         builder.def_var(variable, zero);
                     }
                 }

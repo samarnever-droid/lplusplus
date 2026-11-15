@@ -1860,3 +1860,70 @@ def main() -> Int:
     assert_eq!(err_d.code(), "E5003");
     assert!(err_d.function.is_some());
 }
+
+#[test]
+fn frame_pod_structs_and_tuples_use_stack_slots_and_owned_pod_skips_dtor() {
+    use cranelift_object::object::{
+        self, Object as _, ObjectSection as _, ObjectSymbol as _, RelocationTarget,
+    };
+
+    let frame_only_src = r#"
+struct Point:
+    x: Int
+    y: Int
+
+def main() -> Int:
+    mut total := 0
+    for i in 0..100:
+        mut p := Point(i, i + 1)
+        p.x = p.x + 2
+        pair := (p.x, p.y)
+        total = total + pair.0 + pair.1
+    print_int(total)
+    return 0
+"#;
+    let module = assert_native_matches_arc_oracle(frame_only_src, "frame_pod_stack");
+
+    // Verify at ELF/object level that the function using only Frame POD struct/tuple
+    // emits zero relocations to lpp_arc_alloc_with_destructor / lpp_arc_retain / lpp_arc_release.
+    let parsed = object::File::parse(&*module.object).expect("parse ELF/COFF/MachO");
+    let mut arc_reloc_count = 0usize;
+    for section in parsed.sections() {
+        for (_, reloc) in section.relocations() {
+            if let RelocationTarget::Symbol(sym_idx) = reloc.target()
+                && let Ok(sym) = parsed.symbol_by_index(sym_idx)
+                && let Ok(name) = sym.name()
+                && matches!(
+                    name,
+                    "lpp_arc_alloc_with_destructor" | "lpp_arc_retain" | "lpp_arc_release"
+                )
+            {
+                arc_reloc_count += 1;
+            }
+        }
+    }
+    assert_eq!(
+        arc_reloc_count, 0,
+        "Frame-placed POD struct/tuple must emit 0 heap ARC relocations"
+    );
+
+    // Escaping Owned POD struct/tuple allocates via heap ARC with null destructor and executes cleanly.
+    let escaping_pod_src = r#"
+struct Vec2:
+    x: Int
+    y: Int
+
+def make_vec(x: Int, y: Int) -> Vec2:
+    return Vec2(x * 2, y * 3)
+
+def make_pair(a: Int, b: Int) -> (Int, Int):
+    return (a + 1, b + 2)
+
+def main() -> Int:
+    v := make_vec(5, 7)
+    p := make_pair(v.x, v.y)
+    print_int(p.0 + p.1)
+    return 0
+"#;
+    assert_native_matches_arc_oracle(escaping_pod_src, "owned_pod_escaping");
+}

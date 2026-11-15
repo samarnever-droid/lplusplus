@@ -7,6 +7,7 @@ impl<'m> Lowering<'m> {
         layouts: HashMap<MirAggregateId, AggregateLayout>,
         value_classes: BTreeMap<(MirFunctionId, MirLocalId), ValueClass>,
         shared_types: BTreeSet<TypeId>,
+        stack_locals: BTreeMap<(MirFunctionId, MirLocalId), u32>,
         pgo_fingerprint: Option<u64>,
     ) -> Self {
         Self {
@@ -21,6 +22,7 @@ impl<'m> Lowering<'m> {
             tuple_dtor_ids: BTreeMap::new(),
             tuple_trace_ids: BTreeMap::new(),
             shared_types,
+            stack_locals,
             pgo_fingerprint,
             task_thunk_ids: BTreeMap::new(),
             closure_thunk_ids: BTreeMap::new(),

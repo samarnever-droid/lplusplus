@@ -147,24 +147,28 @@ impl<'m> Lowering<'m> {
     }
 
     /// Allocate the ARC block for a structural tuple of type `ty`:
-    /// `lpp_arc_alloc_with_destructor(size, lpp_drop_t{n})` — refcount
-    /// 1, zero-initialized payload, and the generated per-shape
-    /// destructor releasing the managed element slots at count zero;
-    /// a `Shared` tuple type is additionally marked collectible with
-    /// its generated trace. The payload keeps the flat `tuple_layout`
-    /// shape so tuple-field projection reuses the offset-load path.
+    /// POD `Owned` tuples pass a null destructor (omitting the 8-byte prefix
+    /// and indirect destructor call); tuples containing managed slots pass
+    /// `lpp_drop_t{n}` and `Shared` tuples are additionally marked collectible.
     pub(super) fn alloc_tuple(
         &mut self,
+        types: &TypeInterner,
         builder: &mut FunctionBuilder,
         size: u32,
         ty: TypeId,
     ) -> Value {
         let func_ref = self.import_ref(builder, IMP_ARC_ALLOC);
         let size_value = builder.ins().iconst(cltypes::I64, size as i64);
-        let dtor_ref = self
-            .module
-            .declare_func_in_func(self.tuple_dtor_ids[&ty], builder.func);
-        let dtor_addr = builder.ins().func_addr(cltypes::I64, dtor_ref);
+        let dtor_addr = if !self.tuple_trace_ids.contains_key(&ty)
+            && lpp_codegen_api::is_pod_tuple(types, ty)
+        {
+            builder.ins().iconst(cltypes::I64, 0)
+        } else {
+            let dtor_ref = self
+                .module
+                .declare_func_in_func(self.tuple_dtor_ids[&ty], builder.func);
+            builder.ins().func_addr(cltypes::I64, dtor_ref)
+        };
         let call = builder.ins().call(func_ref, &[size_value, dtor_addr]);
         let ptr = builder.func.dfg.first_result(call);
         if let Some(&trace_id) = self.tuple_trace_ids.get(&ty) {
@@ -175,16 +179,26 @@ impl<'m> Lowering<'m> {
 
     pub(super) fn arc_alloc(
         &mut self,
+        types: &TypeInterner,
         builder: &mut FunctionBuilder,
         size: u32,
         aggregate: MirAggregateId,
     ) -> Value {
         let func_ref = self.import_ref(builder, IMP_ARC_ALLOC);
         let size_value = builder.ins().iconst(cltypes::I64, size as i64);
-        let dtor_ref = self
-            .module
-            .declare_func_in_func(self.dtor_ids[&aggregate], builder.func);
-        let dtor_addr = builder.ins().func_addr(cltypes::I64, dtor_ref);
+        let is_pod_owned = !self.trace_ids.contains_key(&aggregate)
+            && self
+                .layouts
+                .get(&aggregate)
+                .is_some_and(|layout| lpp_codegen_api::is_pod_aggregate(layout, types));
+        let dtor_addr = if is_pod_owned {
+            builder.ins().iconst(cltypes::I64, 0)
+        } else {
+            let dtor_ref = self
+                .module
+                .declare_func_in_func(self.dtor_ids[&aggregate], builder.func);
+            builder.ins().func_addr(cltypes::I64, dtor_ref)
+        };
         let call = builder.ins().call(func_ref, &[size_value, dtor_addr]);
         let ptr = builder.func.dfg.first_result(call);
         if let Some(&trace_id) = self.trace_ids.get(&aggregate) {
@@ -193,8 +207,9 @@ impl<'m> Lowering<'m> {
         ptr
     }
 
-    /// The exit release pass: every managed local of the function, in
-    /// declaration order (the interpreter's rule at `Return`).
+    /// The exit release pass: every heap-managed local of the function, in
+    /// declaration order (the interpreter's rule at `Return`), skipping
+    /// stack-allocated `Frame` locals.
     pub(super) fn exit_release_pass(&mut self, inst: &Inst, builder: &mut FunctionBuilder) {
         for &local in inst.program.function_locals(inst.function) {
             let descriptor = inst
@@ -202,6 +217,9 @@ impl<'m> Lowering<'m> {
                 .local(local)
                 .expect("validated MIR retains locals");
             if matches!(descriptor.kind, lpp_mir::MirLocalKind::Capture) {
+                continue;
+            }
+            if self.stack_locals.contains_key(&(inst.mir_id, local)) {
                 continue;
             }
             if is_managed(inst.types, descriptor.ty) {

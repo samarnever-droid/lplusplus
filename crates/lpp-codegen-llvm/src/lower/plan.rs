@@ -72,6 +72,7 @@ pub(crate) struct Plan {
     pub closure_thunks: Vec<MirFunctionId>,
     pub used_strings: BTreeSet<MirStringId>,
     pub value_classes: BTreeMap<(MirFunctionId, MirLocalId), ValueClass>,
+    pub stack_locals: BTreeMap<(MirFunctionId, MirLocalId), u32>,
 }
 
 impl Plan {
@@ -262,16 +263,9 @@ pub(crate) fn pre_scan(
     names: &dyn NameResolver,
     pgo_instrument: bool,
 ) -> Result<Plan, CodegenError> {
-    let shared_types: BTreeSet<TypeId> = lpp_ownership::compute_ownership_plan(program, types)
-        .map(|plan| plan.pinned_types().into_iter().collect())
-        .map_err(|error| {
-            CodegenError::new(
-                None,
-                CodegenErrorKind::ObjectEmissionFailed(format!(
-                    "ownership plan for cycle collection failed: {error}"
-                )),
-            )
-        })?;
+    let ownership_lowering = lpp_codegen_api::build_ownership_lowering_plan(program, types);
+    let shared_types = ownership_lowering.shared_types;
+    let stack_locals = ownership_lowering.stack_locals;
 
     let aggregates = AggregateIndex::build(program);
     let mut layouts = HashMap::new();
@@ -320,6 +314,7 @@ pub(crate) fn pre_scan(
         closure_thunks: Vec::new(),
         used_strings: BTreeSet::new(),
         value_classes,
+        stack_locals,
     };
 
     if pgo_instrument {

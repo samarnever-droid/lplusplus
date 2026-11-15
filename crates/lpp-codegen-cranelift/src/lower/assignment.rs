@@ -17,12 +17,24 @@ impl<'m> Lowering<'m> {
 
         let produced = match value {
             Rvalue::Use(operand) => {
-                let v = if let Operand::Function(function_id) = operand {
-                    self.materialize_function_value(inst, builder, *function_id)?
+                if let Operand::Copy(src) = operand
+                    && let Some(&stack_bytes) = self.stack_locals.get(&(inst.mir_id, *src))
+                    && self.stack_locals.contains_key(&(inst.mir_id, target))
+                {
+                    let src_ptr =
+                        builder.use_var(*inst.local_vars.get(src).expect("stack source local"));
+                    let dst_ptr =
+                        builder.use_var(*inst.local_vars.get(&target).expect("stack target local"));
+                    copy_stack_bytes_cl(builder, dst_ptr, src_ptr, stack_bytes);
+                    None
                 } else {
-                    self.owned_value(inst, builder, operand)?
-                };
-                Some(v)
+                    let v = if let Operand::Function(function_id) = operand {
+                        self.materialize_function_value(inst, builder, *function_id)?
+                    } else {
+                        self.owned_value(inst, builder, operand)?
+                    };
+                    Some(v)
+                }
             }
             Rvalue::Unary { operator, operand } => {
                 let value = self.operand_value(inst, builder, operand)?;
@@ -454,7 +466,13 @@ impl<'m> Lowering<'m> {
                     .get(aggregate)
                     .expect("pre-scan laid out every nominal")
                     .clone();
-                let ptr = self.arc_alloc(builder, layout.total_size, *aggregate);
+                let is_stack = self.stack_locals.contains_key(&(inst.mir_id, target));
+                let ptr = if is_stack {
+                    let var = *inst.local_vars.get(&target).expect("stack local variable");
+                    builder.use_var(var)
+                } else {
+                    self.arc_alloc(inst.types, builder, layout.total_size, *aggregate)
+                };
                 let values = inst.program.operands(*fields);
                 if values.len() != layout.struct_fields.len() {
                     return Err(unsupported(inst.mir_id, "struct field count"));
@@ -470,7 +488,7 @@ impl<'m> Lowering<'m> {
                         .ins()
                         .store(MemFlags::new(), stored, ptr, slot.offset as i32);
                 }
-                Some(ptr)
+                if is_stack { None } else { Some(ptr) }
             }
             Rvalue::ConstructVariant {
                 aggregate,
@@ -487,7 +505,7 @@ impl<'m> Lowering<'m> {
                     .variant(*variant)
                     .expect("validated MIR retains every variant")
                     .ordinal;
-                let ptr = self.arc_alloc(builder, layout.total_size, *aggregate);
+                let ptr = self.arc_alloc(inst.types, builder, layout.total_size, *aggregate);
                 let tag = builder.ins().iconst(cltypes::I64, ordinal as i64);
                 builder.ins().store(MemFlags::new(), tag, ptr, 0);
                 let slots = &layout.variant_fields[ordinal as usize];
@@ -541,7 +559,13 @@ impl<'m> Lowering<'m> {
                 if values.len() != slots.len() {
                     return Err(unsupported(inst.mir_id, "tuple element count"));
                 }
-                let ptr = self.alloc_tuple(builder, total_size, target_ty);
+                let is_stack = self.stack_locals.contains_key(&(inst.mir_id, target));
+                let ptr = if is_stack {
+                    let var = *inst.local_vars.get(&target).expect("stack local variable");
+                    builder.use_var(var)
+                } else {
+                    self.alloc_tuple(inst.types, builder, total_size, target_ty)
+                };
                 for (value_operand, (offset, element_ty)) in values.iter().zip(slots.iter()) {
                     let v = self.owned_value(inst, builder, value_operand)?;
                     let stored = coerce_to(
@@ -553,7 +577,7 @@ impl<'m> Lowering<'m> {
                         .ins()
                         .store(MemFlags::new(), stored, ptr, *offset as i32);
                 }
-                Some(ptr)
+                if is_stack { None } else { Some(ptr) }
             }
             Rvalue::MakeClosure {
                 function: closure_id,
@@ -740,5 +764,26 @@ impl<'m> Lowering<'m> {
             builder.def_var(variable, value);
         }
         Ok(())
+    }
+}
+
+/// Copies `bytes` from a stack-allocated POD temporary slot into the target stack slot
+/// using 64-bit word loads/stores plus byte tail, avoiding any ARC atomic operations.
+fn copy_stack_bytes_cl(builder: &mut FunctionBuilder, dst: Value, src: Value, bytes: u32) {
+    let mut offset = 0i32;
+    let limit = bytes as i32;
+    while offset + 8 <= limit {
+        let val = builder
+            .ins()
+            .load(cltypes::I64, MemFlags::new(), src, offset);
+        builder.ins().store(MemFlags::new(), val, dst, offset);
+        offset += 8;
+    }
+    while offset < limit {
+        let val = builder
+            .ins()
+            .load(cltypes::I8, MemFlags::new(), src, offset);
+        builder.ins().store(MemFlags::new(), val, dst, offset);
+        offset += 1;
     }
 }

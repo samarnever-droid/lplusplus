@@ -20,13 +20,9 @@ pub(crate) fn pre_scan(
     // marking. The driver proves the same plan independently; the
     // backend recomputes it because the `Backend` contract carries
     // only MIR + types.
-    let shared_types: BTreeSet<TypeId> = lpp_ownership::compute_ownership_plan(program, types)
-        .map(|plan| plan.pinned_types().into_iter().collect())
-        .map_err(|error| {
-            emission_failed(format!(
-                "ownership plan for cycle collection failed: {error}"
-            ))
-        })?;
+    let ownership_lowering = lpp_codegen_api::build_ownership_lowering_plan(program, types);
+    let shared_types = ownership_lowering.shared_types;
+    let stack_locals = ownership_lowering.stack_locals;
     let aggregates = AggregateIndex::build(program);
     let mut layouts = HashMap::new();
     for (id, _) in program.aggregates() {
@@ -185,6 +181,7 @@ pub(crate) fn pre_scan(
         tuple_traces,
         aggregates,
         layouts,
+        stack_locals,
     })
 }
 

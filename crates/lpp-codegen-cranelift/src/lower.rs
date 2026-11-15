@@ -113,6 +113,8 @@ pub(crate) struct Plan {
     pub(crate) aggregates: AggregateIndex,
     /// Layouts for every nominal in the program.
     pub(crate) layouts: HashMap<MirAggregateId, AggregateLayout>,
+    /// Non-escaping `Frame` POD structs/tuples lowered directly to stack slots.
+    pub(crate) stack_locals: BTreeMap<(MirFunctionId, MirLocalId), u32>,
 }
 
 /// The shared per-function data an instruction pass reads: bundled so
@@ -142,6 +144,8 @@ pub(crate) struct Lowering<'m> {
     tuple_trace_ids: BTreeMap<TypeId, FuncId>,
     /// The 4D `Shared` type ids (see `Plan::shared_types`).
     shared_types: BTreeSet<TypeId>,
+    /// Non-escaping `Frame` POD locals allocated on the stack (`byte_size >= 8`).
+    stack_locals: BTreeMap<(MirFunctionId, MirLocalId), u32>,
     pgo_fingerprint: Option<u64>,
     task_thunk_ids: BTreeMap<MirFunctionId, FuncId>,
     closure_thunk_ids: BTreeMap<MirFunctionId, FuncId>,

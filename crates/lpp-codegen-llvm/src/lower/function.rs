@@ -327,6 +327,18 @@ pub(crate) fn emit_function(
         if is_void_type(types, desc.ty) {
             continue;
         }
+        if let Some(&stack_bytes) = plan.stack_locals.get(&(mir_id, local)) {
+            let buf = format!("%loc_{}_buf", local.raw());
+            let slot = format!("%loc_{}", local.raw());
+            let _ = writeln!(
+                ctx.prologue,
+                "  {buf} = alloca [{stack_bytes} x i8], align 8"
+            );
+            let _ = writeln!(ctx.prologue, "  {slot} = alloca ptr, align 8");
+            let _ = writeln!(ctx.body, "  store ptr {buf}, ptr {slot}, align 8");
+            ctx.local_slots.insert(local, (slot, Val::Ptr));
+            continue;
+        }
         let v = val_of_type(types, desc.ty, mir_id)?;
         let slot = format!("%loc_{}", local.raw());
         let _ = writeln!(
@@ -577,7 +589,19 @@ impl<'a> FnCtx<'a> {
 
         let produced: Option<(Val, String)> = match value {
             Rvalue::Use(op) => {
-                if let Operand::Function(fn_id) = op {
+                if let Operand::Copy(src) = op
+                    && let Some(&stack_bytes) = self.plan.stack_locals.get(&(self.mir_id, *src))
+                    && self.plan.stack_locals.contains_key(&(self.mir_id, target))
+                {
+                    let src_slot = self.local_slots[src].0.clone();
+                    let dst_slot = self.local_slots[&target].0.clone();
+                    let src_ptr = self.fresh();
+                    let dst_ptr = self.fresh();
+                    self.line(format!("{src_ptr} = load ptr, ptr {src_slot}, align 8"));
+                    self.line(format!("{dst_ptr} = load ptr, ptr {dst_slot}, align 8"));
+                    self.copy_stack_bytes(&dst_ptr, &src_ptr, stack_bytes);
+                    None
+                } else if let Operand::Function(fn_id) = op {
                     Some((Val::Ptr, self.materialize_function_value(*fn_id)?))
                 } else {
                     Some(self.owned_value(op)?)
@@ -800,13 +824,28 @@ impl<'a> FnCtx<'a> {
             Rvalue::ConstructStruct { aggregate, fields } => {
                 let agg_desc = self.program.aggregate(*aggregate).expect("agg");
                 let layout = self.plan.layouts[aggregate].clone();
-                let dtor = format!("lpp_drop_s{}", aggregate.raw());
-                let size = layout.total_size.max(8);
-                let ptr = self.arc_alloc(size as usize, &dtor);
-                if self.plan.shared_types.contains(&agg_desc.ty) {
-                    let trace = format!("lpp_trace_s{}", aggregate.raw());
-                    self.mark_collectible(&ptr, &trace);
-                }
+                let is_stack = self.plan.stack_locals.contains_key(&(self.mir_id, target));
+                let ptr = if is_stack {
+                    let slot = self.local_slots[&target].0.clone();
+                    let p = self.fresh();
+                    self.line(format!("{p} = load ptr, ptr {slot}, align 8"));
+                    p
+                } else {
+                    let size = layout.total_size.max(8) as usize;
+                    let is_pod_owned = !self.plan.shared_types.contains(&agg_desc.ty)
+                        && lpp_codegen_api::is_pod_aggregate(&layout, self.types);
+                    let ptr = if is_pod_owned {
+                        self.arc_alloc_no_dtor(size)
+                    } else {
+                        let dtor = format!("lpp_drop_s{}", aggregate.raw());
+                        self.arc_alloc(size, &dtor)
+                    };
+                    if self.plan.shared_types.contains(&agg_desc.ty) {
+                        let trace = format!("lpp_trace_s{}", aggregate.raw());
+                        self.mark_collectible(&ptr, &trace);
+                    }
+                    ptr
+                };
                 let values = self.program.operands(*fields);
                 for (op, slot) in values.iter().zip(layout.struct_fields.iter()) {
                     let (vt, vn) = self.owned_value(op)?;
@@ -820,7 +859,11 @@ impl<'a> FnCtx<'a> {
                     ));
                     self.line(format!("store {} {stored}, ptr {gep}, align 1", fty.llvm()));
                 }
-                Some((Val::Ptr, ptr))
+                if is_stack {
+                    None
+                } else {
+                    Some((Val::Ptr, ptr))
+                }
             }
             Rvalue::ConstructVariant {
                 aggregate,
@@ -830,8 +873,15 @@ impl<'a> FnCtx<'a> {
                 let agg_desc = self.program.aggregate(*aggregate).expect("agg");
                 let layout = self.plan.layouts[aggregate].clone();
                 let ord = self.program.variant(*variant).expect("var").ordinal;
-                let dtor = format!("lpp_drop_e{}", aggregate.raw());
-                let ptr = self.arc_alloc(layout.total_size.max(8) as usize, &dtor);
+                let size = layout.total_size.max(8) as usize;
+                let is_pod_owned = !self.plan.shared_types.contains(&agg_desc.ty)
+                    && lpp_codegen_api::is_pod_aggregate(&layout, self.types);
+                let ptr = if is_pod_owned {
+                    self.arc_alloc_no_dtor(size)
+                } else {
+                    let dtor = format!("lpp_drop_e{}", aggregate.raw());
+                    self.arc_alloc(size, &dtor)
+                };
                 if self.plan.shared_types.contains(&agg_desc.ty) {
                     let trace = format!("lpp_trace_e{}", aggregate.raw());
                     self.mark_collectible(&ptr, &trace);
@@ -856,12 +906,28 @@ impl<'a> FnCtx<'a> {
             Rvalue::Tuple(elements) => {
                 let (slots, total_size) = tuple_layout(self.types, target_ty)
                     .ok_or_else(|| unsupported(self.mir_id, "tuple non-tuple"))?;
-                let dtor = format!("lpp_drop_t{}", target_ty.raw());
-                let ptr = self.arc_alloc(total_size.max(8) as usize, &dtor);
-                if self.plan.shared_types.contains(&target_ty) {
-                    let trace = format!("lpp_trace_t{}", target_ty.raw());
-                    self.mark_collectible(&ptr, &trace);
-                }
+                let is_stack = self.plan.stack_locals.contains_key(&(self.mir_id, target));
+                let ptr = if is_stack {
+                    let slot = self.local_slots[&target].0.clone();
+                    let p = self.fresh();
+                    self.line(format!("{p} = load ptr, ptr {slot}, align 8"));
+                    p
+                } else {
+                    let size = total_size.max(8) as usize;
+                    let is_pod_owned = !self.plan.shared_types.contains(&target_ty)
+                        && lpp_codegen_api::is_pod_tuple(self.types, target_ty);
+                    let ptr = if is_pod_owned {
+                        self.arc_alloc_no_dtor(size)
+                    } else {
+                        let dtor = format!("lpp_drop_t{}", target_ty.raw());
+                        self.arc_alloc(size, &dtor)
+                    };
+                    if self.plan.shared_types.contains(&target_ty) {
+                        let trace = format!("lpp_trace_t{}", target_ty.raw());
+                        self.mark_collectible(&ptr, &trace);
+                    }
+                    ptr
+                };
                 let values = self.program.operands(*elements);
                 for (op, (offset, ety)) in values.iter().zip(slots.iter()) {
                     let (vt, vn) = self.owned_value(op)?;
@@ -872,7 +938,11 @@ impl<'a> FnCtx<'a> {
                     self.line(format!("{gep} = getelementptr i8, ptr {ptr}, i64 {offset}"));
                     self.line(format!("store {} {stored}, ptr {gep}, align 1", fty.llvm()));
                 }
-                Some((Val::Ptr, ptr))
+                if is_stack {
+                    None
+                } else {
+                    Some((Val::Ptr, ptr))
+                }
             }
             Rvalue::MakeClosure {
                 function: closure_id,
@@ -976,6 +1046,47 @@ impl<'a> FnCtx<'a> {
             "{r} = call ptr @{IMP_ARC_ALLOC}(i64 {size}, ptr @{sym})"
         ));
         r
+    }
+
+    fn arc_alloc_no_dtor(&mut self, size: usize) -> String {
+        let r = self.fresh();
+        self.line(format!(
+            "{r} = call ptr @{IMP_ARC_ALLOC}(i64 {size}, ptr null)"
+        ));
+        r
+    }
+
+    /// Copies `bytes` between stack-allocated POD buffers without ARC retain/release.
+    fn copy_stack_bytes(&mut self, dst: &str, src: &str, bytes: u32) {
+        let mut offset = 0u32;
+        while offset + 8 <= bytes {
+            let sgep = self.fresh();
+            let dgep = self.fresh();
+            let val = self.fresh();
+            self.line(format!(
+                "{sgep} = getelementptr i8, ptr {src}, i64 {offset}"
+            ));
+            self.line(format!("{val} = load i64, ptr {sgep}, align 8"));
+            self.line(format!(
+                "{dgep} = getelementptr i8, ptr {dst}, i64 {offset}"
+            ));
+            self.line(format!("store i64 {val}, ptr {dgep}, align 8"));
+            offset += 8;
+        }
+        while offset < bytes {
+            let sgep = self.fresh();
+            let dgep = self.fresh();
+            let val = self.fresh();
+            self.line(format!(
+                "{sgep} = getelementptr i8, ptr {src}, i64 {offset}"
+            ));
+            self.line(format!("{val} = load i8, ptr {sgep}, align 1"));
+            self.line(format!(
+                "{dgep} = getelementptr i8, ptr {dst}, i64 {offset}"
+            ));
+            self.line(format!("store i8 {val}, ptr {dgep}, align 1"));
+            offset += 1;
+        }
     }
 
     fn task_managed_flag(types: &TypeInterner, return_type: lpp_types::TypeId) -> i64 {
@@ -1647,6 +1758,9 @@ impl<'a> FnCtx<'a> {
                 for &local in self.program.function_locals(self.function) {
                     let desc = self.program.local(local).expect("l");
                     if matches!(desc.kind, MirLocalKind::Capture) {
+                        continue;
+                    }
+                    if self.plan.stack_locals.contains_key(&(self.mir_id, local)) {
                         continue;
                     }
                     if is_managed(self.types, desc.ty)

@@ -17,6 +17,7 @@ mod builtin;
 mod error;
 pub mod layout;
 mod machine;
+pub mod ownership_lowering;
 mod target;
 
 pub use backend::{
@@ -25,6 +26,10 @@ pub use backend::{
 pub use builtin::{BuiltinLowering, runtime_symbol_lowerable};
 pub use error::{CodegenError, CodegenErrorKind};
 pub use machine::{MachineType, machine_type_for_abi, semantic_machine_type};
+pub use ownership_lowering::{
+    OwnershipLoweringPlan, build_ownership_lowering_plan, is_managed_value, is_pod_aggregate,
+    is_pod_tuple,
+};
 pub use target::Target;
 
 /// C, POSIX, libm, and runtime symbol names that must never be exported

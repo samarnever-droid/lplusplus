@@ -1580,3 +1580,63 @@ def main() -> Int:
     let err_t = compile_target(&cp_t, Target::Wasm32Wasi).expect_err("WASM target unsupported");
     assert_eq!(err_t.code(), "E5002");
 }
+
+#[test]
+fn llvm_frame_pod_uses_alloca_zero_arc_and_owned_pod_passes_null_dtor() {
+    let frame_only_src = r#"
+struct Point:
+    x: Int
+    y: Int
+
+def main() -> Int:
+    mut total := 0
+    for i in 0..100:
+        mut p := Point(i, i + 1)
+        p.x = p.x + 2
+        pair := (p.x, p.y)
+        total = total + pair.0 + pair.1
+    print_int(total)
+    return 0
+"#;
+    let cp_frame = pipeline(frame_only_src);
+    let names_frame = Names(&cp_frame.package.names.symbols);
+    let ir_frame = lpp_codegen_llvm::emit_llvm_ir(&cp_frame.program, &cp_frame.types, &names_frame)
+        .expect("emit LLVM IR for Frame POD");
+    assert!(
+        ir_frame.contains("alloca [16 x i8], align 8"),
+        "expected stack alloca [16 x i8] for Frame POD struct/tuple in LLVM IR:\n{ir_frame}"
+    );
+    assert!(
+        !ir_frame.contains("call ptr @lpp_arc_alloc_with_destructor")
+            && !ir_frame.contains("call void @lpp_arc_release"),
+        "Frame-only POD program must emit zero ARC alloc/release calls:\n{ir_frame}"
+    );
+    assert_llvm_matches_arc_oracle(frame_only_src, OptLevel::O3, "llvm_frame_pod");
+
+    let escaping_pod_src = r#"
+struct Vec2:
+    x: Int
+    y: Int
+
+def make_vec(x: Int, y: Int) -> Vec2:
+    return Vec2(x * 2, y * 3)
+
+def make_pair(a: Int, b: Int) -> (Int, Int):
+    return (a + 1, b + 2)
+
+def main() -> Int:
+    v := make_vec(5, 7)
+    p := make_pair(v.x, v.y)
+    print_int(p.0 + p.1)
+    return 0
+"#;
+    let cp_esc = pipeline(escaping_pod_src);
+    let names_esc = Names(&cp_esc.package.names.symbols);
+    let ir_esc = lpp_codegen_llvm::emit_llvm_ir(&cp_esc.program, &cp_esc.types, &names_esc)
+        .expect("emit LLVM IR for Owned POD");
+    assert!(
+        ir_esc.contains("call ptr @lpp_arc_alloc_with_destructor(i64 16, ptr null)"),
+        "Owned POD struct/tuple must pass null destructor to skip 8B dtor prefix:\n{ir_esc}"
+    );
+    assert_llvm_matches_arc_oracle(escaping_pod_src, OptLevel::O3, "llvm_owned_pod");
+}

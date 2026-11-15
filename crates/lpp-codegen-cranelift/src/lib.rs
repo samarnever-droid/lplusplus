@@ -141,6 +141,7 @@ impl Backend for CraneliftBackend {
             plan.layouts.clone(),
             plan.value_classes.clone(),
             plan.shared_types.clone(),
+            plan.stack_locals.clone(),
             options.pgo_fingerprint,
         );
 
