@@ -1,7 +1,0 @@
-[package]
-name = "my_test_project"
-version = "0.1.0"
-author = "Khati"
-entry = "src/main.lpp"
-
-[dependencies]
