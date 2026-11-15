@@ -5,6 +5,7 @@ authors = ["Samar"]
 license = "MIT"
 description = "Pure L++ React Component for Markdown Note Cards with Wikilinks, Math, and Code Highlighting"
 keywords = ["lreact", "markdown", "component", "wikilinks", "ui", "cosmos"]
+edition = "2024"
 
 [dependencies]
 simple-markdown = { path = "../simple-markdown" }

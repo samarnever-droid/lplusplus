@@ -5,6 +5,7 @@ authors = ["Samar"]
 license = "MIT"
 description = "Pure L++ Reactive Workspace Store and Project File Persistence (.sbook) Manager"
 keywords = ["lreact", "store", "state", "workspace", "sbook", "cosmos"]
+edition = "2024"
 
 [dependencies]
 lpp-zip = { path = "../lpp-zip" }

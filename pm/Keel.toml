@@ -1,7 +1,7 @@
 [package]
 name = "lpp-pm"
 version = "0.1.0"
-author = "L++"
-entry = "src/main.lpp"
+edition = "2024"
+authors = ["L++"]
 
 [dependencies]

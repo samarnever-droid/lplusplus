@@ -6,6 +6,7 @@ authors = ["L++ Project"]
 license = "MIT"
 repository = "https://github.com/samarnever-droid/lplusplus"
 keywords = ["ffi", "bindgen", "c-bindings", "c2lpp", "abi-layout"]
+edition = "2024"
 
 [bin]
 entry = "src/main.lpp"

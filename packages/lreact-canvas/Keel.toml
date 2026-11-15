@@ -5,6 +5,7 @@ authors = ["Samar"]
 license = "MIT"
 description = "Pure L++ 60fps Infinite 2D Spatial Canvas Component with Smooth Bezier Link Routing and Pan/Zoom Viewports"
 keywords = ["lreact", "canvas", "infinite", "spatial", "graph", "cosmos"]
+edition = "2024"
 
 [dependencies]
 lpp-graph = { path = "../lpp-graph" }

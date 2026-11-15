@@ -5,3 +5,6 @@ authors = ["Samar"]
 license = "MIT"
 description = "Pure L++ Spatial Graph Topology, QuadTree Spatial Indexing, Bezier Geometry, and Canvas Layout Engine"
 keywords = ["graph", "spatial", "canvas", "quadtree", "geometry", "cosmos"]
+edition = "2024"
+
+[dependencies]

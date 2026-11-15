@@ -68,8 +68,7 @@ impl Workspace {
         let mut nearest_package: Option<PathBuf> = None;
         let mut cur: Option<PathBuf> = Some(search_start.clone());
         while let Some(dir) = cur {
-            let manifest_path = dir.join("Keel.toml");
-            if manifest_path.is_file() {
+            if let Some(manifest_path) = find_manifest(&dir) {
                 let doc = std::fs::read_to_string(&manifest_path)
                     .map_err(|e| PmError::Io(e.to_string()))?;
                 let root: RootManifest =
@@ -103,8 +102,12 @@ impl Workspace {
         }
 
         if let Some(package_dir) = nearest_package {
-            let doc = std::fs::read_to_string(package_dir.join("Keel.toml"))
-                .map_err(|e| PmError::Io(e.to_string()))?;
+            let manifest_path =
+                find_manifest(&package_dir).ok_or_else(|| PmError::MemberNotFound {
+                    member: format!("{} (no Keel.toml found)", package_dir.display()),
+                })?;
+            let doc =
+                std::fs::read_to_string(&manifest_path).map_err(|e| PmError::Io(e.to_string()))?;
             let manifest = Manifest::parse(&doc)?;
             let members = vec![Member {
                 dir: package_dir.clone(),
@@ -322,13 +325,33 @@ struct RootManifest {
     workspace: Option<crate::manifest::WorkspaceSection>,
 }
 
-fn load_member(dir: &Path) -> Result<Manifest> {
-    let p = dir.join("Keel.toml");
-    if !p.is_file() {
-        return Err(PmError::MemberNotFound {
-            member: dir.display().to_string(),
-        });
+fn find_manifest_in(dir: &Path) -> Option<(PathBuf, bool)> {
+    let modern = dir.join("Keel.toml");
+    if modern.is_file() {
+        return Some((modern, false));
     }
+    if dir.components().any(|c| c.as_os_str() == ".lpp_packages") {
+        return None;
+    }
+    let legacy = dir.join("lpp.toml");
+    legacy.is_file().then_some((legacy, true))
+}
+
+fn find_manifest(dir: &Path) -> Option<PathBuf> {
+    let (path, is_legacy) = find_manifest_in(dir)?;
+    if is_legacy {
+        eprintln!(
+            "warning: {} uses deprecated `lpp.toml`; run `lpp migrate` (or `keel migrate`) to upgrade to `Keel.toml`",
+            path.display()
+        );
+    }
+    Some(path)
+}
+
+fn load_member(dir: &Path) -> Result<Manifest> {
+    let p = find_manifest(dir).ok_or_else(|| PmError::MemberNotFound {
+        member: dir.display().to_string(),
+    })?;
     let doc = std::fs::read_to_string(&p).map_err(|e| PmError::Io(e.to_string()))?;
     Manifest::parse(&doc)
 }

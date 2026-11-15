@@ -7,6 +7,7 @@ pub mod clean;
 pub mod diagnostics;
 pub mod list;
 pub mod metadata;
+pub mod migrate;
 pub mod project;
 pub mod registry;
 pub mod test;

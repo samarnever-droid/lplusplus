@@ -72,6 +72,7 @@ const KEEL_COMMANDS: &[&str] = &[
     "outdated",
     "why",
     "verify",
+    "migrate",
     "cache",
     "test",
     "clean",

@@ -17,6 +17,12 @@ fn validate_name(name: &str) -> Result<(), String> {
 fn load_text(dir: &Path) -> Result<String, String> {
     let path = dir.join("Keel.toml");
     if !path.exists() {
+        if dir.join("lpp.toml").is_file() {
+            return Err(
+                "legacy `lpp.toml` found; run `lpp migrate` (or `keel migrate`) first to upgrade to `Keel.toml`"
+                    .to_string(),
+            );
+        }
         return Err("no Keel.toml in the current directory (run `keel init` first)".to_string());
     }
     std::fs::read_to_string(path).map_err(|error| error.to_string())

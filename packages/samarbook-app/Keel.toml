@@ -5,6 +5,7 @@ authors = ["Samar"]
 license = "MIT"
 description = "SamarBook: Next-Generation Spatial Knowledge Workstation & Infinite Canvas rewritten in pure L++"
 keywords = ["samarbook", "cosmos", "canvas", "spatial", "knowledge", "desktop", "lreact"]
+edition = "2024"
 
 [dependencies]
 simple-pdf = { path = "../simple-pdf" }

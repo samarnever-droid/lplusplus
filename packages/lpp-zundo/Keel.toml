@@ -5,3 +5,6 @@ authors = ["Samar"]
 license = "MIT"
 description = "Pure L++ Undo/Redo Timeline History Stack, State Snapshotting, and WAL Action Journal"
 keywords = ["undo", "redo", "history", "timeline", "state", "wal", "cosmos"]
+edition = "2024"
+
+[dependencies]

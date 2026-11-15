@@ -5,6 +5,7 @@ authors = ["Samar"]
 license = "MIT"
 description = "Pure L++ React Component for PDF Document Viewing, Page Flipping, and Vector Canvas Export"
 keywords = ["lreact", "pdf", "viewer", "vector", "export", "cosmos"]
+edition = "2024"
 
 [dependencies]
 simple-pdf = { path = "../simple-pdf" }

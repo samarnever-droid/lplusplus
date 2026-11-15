@@ -5,5 +5,6 @@ description = "ZIP archive create/read library for L++ — pure L++ using buf_* 
 authors = ["0x4171341 <0x4171341@proton.me>"]
 license = "MIT"
 repository = "https://github.com/samarnever-droid/lplusplus"
+edition = "2024"
 
 [dependencies]

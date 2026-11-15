@@ -168,6 +168,10 @@ fn dispatch(cli: &cli::Cli, directory: &std::path::Path) -> Result<(), String> {
         cli::Command::Verify => {
             commands::diagnostics::verify(&registry_or_default(cli)?, directory)
         }
+        cli::Command::Migrate {
+            dry_run,
+            keep_legacy,
+        } => commands::migrate::migrate(directory, *dry_run, *keep_legacy),
         cli::Command::Build => {
             let kind = match cli.cache_backend {
                 cli::CacheBackend::Auto => lpp_pm::KvBackendKind::Auto,

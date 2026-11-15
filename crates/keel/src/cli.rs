@@ -110,6 +110,15 @@ pub enum Command {
     },
     /// Verify the integrity of every locked registry artifact (supply-chain audit)
     Verify,
+    /// Migrate legacy lpp.toml / lpp.lock manifests to modern Keel.toml / Keel.lock
+    Migrate {
+        /// Preview migration without writing or deleting files
+        #[arg(long)]
+        dry_run: bool,
+        /// Keep legacy lpp.toml / lpp.lock files after writing Keel.toml / Keel.lock
+        #[arg(long)]
+        keep_legacy: bool,
+    },
     /// Inspect or clean the global cache
     Cache {
         #[command(subcommand)]
