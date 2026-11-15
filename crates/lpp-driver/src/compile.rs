@@ -76,8 +76,7 @@ impl BackendChoice {
     pub fn default_target(self) -> Target {
         match self {
             Self::Wasm => Target::Wasm32Wasi,
-            Self::Cranelift if std::env::consts::ARCH == "aarch64" => Target::Aarch64,
-            Self::Cranelift | Self::Llvm => Target::X86_64,
+            Self::Cranelift | Self::Llvm => Target::host(),
         }
     }
 
