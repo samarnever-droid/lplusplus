@@ -24,7 +24,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use lpp_codegen_api::{
-    Backend, CodegenError, CodegenOptions, CompiledModule, NameResolver, OptLevel, Target,
+    Backend, CodegenError, CodegenOptions, CompiledModule, DebugSourceResolver, NameResolver,
+    OptLevel, Target,
 };
 use lpp_codegen_cranelift::CraneliftBackend;
 use lpp_codegen_llvm::LlvmBackend;
@@ -91,11 +92,65 @@ impl BackendChoice {
     }
 }
 
+/// Maps HIR `OriginId` indices to `(directory, filename, line, column)` for DWARF emission.
+struct OriginDebugResolver {
+    origins: Vec<Option<(usize, u32, u32)>>,
+    files: Vec<(String, String)>,
+}
+
+impl OriginDebugResolver {
+    fn from_package(package: &lpp_hir::HirPackage, sources: &lpp_common::SourceMap) -> Self {
+        let mut files = Vec::new();
+        let mut file_index_by_id = BTreeMap::new();
+        let mut origins = Vec::new();
+
+        for (_, origin) in package.origins.enumerate() {
+            let span = origin.span;
+            let mapped = sources.get(span.file).map(|file| {
+                let slot = *file_index_by_id.entry(span.file.raw()).or_insert_with(|| {
+                    let path = Path::new(file.name());
+                    let dir = path
+                        .parent()
+                        .filter(|p| !p.as_os_str().is_empty())
+                        .map(|p| p.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| ".".to_string());
+                    let name = path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| file.name().to_string());
+                    let s = files.len();
+                    files.push((dir, name));
+                    s
+                });
+                let (line, col) = file.line_column(span.start).unwrap_or((1, 1));
+                (slot, line as u32, col as u32)
+            });
+            origins.push(mapped);
+        }
+
+        Self { origins, files }
+    }
+}
+
+impl DebugSourceResolver for OriginDebugResolver {
+    fn resolve_origin(&self, origin_raw: u32) -> Option<(&str, &str, u32, u32)> {
+        let (slot, line, col) = (*self.origins.get(origin_raw as usize)?)?;
+        let (dir, name) = self.files.get(slot)?;
+        Some((dir.as_str(), name.as_str(), line, col))
+    }
+
+    fn entry_file(&self) -> Option<(&str, &str)> {
+        self.files.first().map(|(d, n)| (d.as_str(), n.as_str()))
+    }
+}
+
 /// Session choices that affect the validated MIR and emitted module.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompileOptions {
     pub target: Target,
     pub optimization: OptimizationLevel,
+    /// Enable DWARF/CodeView source debug metadata (`-g` / `--debug`).
+    pub debug_info: bool,
     /// Enable the safe whole-program MIR inliner (not object-file LTO).
     pub lto: bool,
     /// Instrument Cranelift function entries and write an execution profile.
@@ -116,6 +171,7 @@ impl CompileOptions {
         Self {
             target: backend.default_target(),
             optimization: OptimizationLevel::O0,
+            debug_info: false,
             lto: false,
             pgo_generate: false,
             pgo_use: None,
@@ -350,8 +406,13 @@ pub fn compile_entry_with_options(
         OptimizationLevel::Oz => OptLevel::Oz,
     };
     let names = Names(&package.names.symbols);
-    let mut codegen_options =
-        CodegenOptions::new(options.target, &names).with_opt_level(backend_opt);
+    let dbg_resolver = options
+        .debug_info
+        .then(|| OriginDebugResolver::from_package(&package, &graph.sources));
+    let mut codegen_options = CodegenOptions::new(options.target, &names)
+        .with_opt_level(backend_opt)
+        .with_debug_info(options.debug_info)
+        .with_debug_sources(dbg_resolver.as_ref().map(|r| r as &dyn DebugSourceResolver));
     if options.pgo_generate
         && let Some(fingerprint) = fingerprint
     {
@@ -917,14 +978,20 @@ pub fn build_executable_with_options(
     output: &Path,
     runtime_lib_dir: &Path,
 ) -> Result<(), CompileError> {
+    let debug_info = options.debug_info;
     let module = compile_entry_with_options(entry, package_name, backend, options)?;
     let configured = std::env::var("LPP_LINKER").ok();
+    let effective = if debug_info && configured.as_deref() != Some("direct") {
+        Some("cc")
+    } else {
+        configured.as_deref()
+    };
     link_executable_with_libraries(
         &module.object,
         &module.link_libraries,
         runtime_lib_dir,
         output,
-        configured.as_deref(),
+        effective,
     )
 }
 
@@ -937,13 +1004,19 @@ pub fn build_executable_configured(
     runtime_lib_dir: &Path,
     linker: Option<&str>,
 ) -> Result<(), CompileError> {
+    let debug_info = options.debug_info;
     let module = compile_entry_with_options(entry, package_name, backend, options)?;
+    let effective = if debug_info && linker != Some("direct") {
+        Some("cc")
+    } else {
+        linker
+    };
     link_executable_with_libraries(
         &module.object,
         &module.link_libraries,
         runtime_lib_dir,
         output,
-        linker,
+        effective,
     )
 }
 

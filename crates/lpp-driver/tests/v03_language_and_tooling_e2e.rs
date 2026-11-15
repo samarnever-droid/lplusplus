@@ -524,3 +524,161 @@ def test_fstring():
         );
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn dwarf_debug_info_and_debugger_cli() {
+    let dir = workdir("dwarf_debug_info");
+    let src = dir.join("main.lpp");
+    std::fs::write(
+        &src,
+        r#"def add_values(a: Int, b: Int) -> Int:
+    sum := a + b
+    return sum
+
+def main():
+    res := add_values(19, 23)
+    print(res)
+"#,
+    )
+    .expect("write source");
+
+    let runtime = runtime_library_path().expect("runtime library built");
+    let rt_dir = runtime.parent().expect("runtime parent dir");
+
+    for (tag, backend) in [
+        ("cranelift", BackendChoice::Cranelift),
+        ("llvm", BackendChoice::Llvm),
+    ] {
+        let exe = dir.join(format!("app_{tag}"));
+        let mut opts = CompileOptions::for_backend(backend);
+        opts.debug_info = true;
+        build_executable_configured(&src, "pkg", backend, opts, &exe, rt_dir, Some("cc"))
+            .unwrap_or_else(|e| panic!("build {tag} -g failed: {e}"));
+
+        let run_out = lpp_driver::exec_output_retry(&exe).expect("run debug binary");
+        assert!(run_out.status.success(), "{tag} binary failed");
+        assert_eq!(String::from_utf8_lossy(&run_out.stdout).trim(), "42");
+
+        let readelf = Command::new("readelf")
+            .args(["--debug-dump=info,line"])
+            .arg(&exe)
+            .output()
+            .expect("run readelf");
+        assert!(readelf.status.success(), "readelf failed for {tag}");
+        let dump = String::from_utf8_lossy(&readelf.stdout);
+        assert!(
+            dump.contains("main.lpp"),
+            "expected main.lpp in DWARF dump for {tag}: {dump}"
+        );
+        assert!(
+            dump.contains("add_values") || dump.contains("lpp_add_values") || dump.contains("main"),
+            "expected function DIEs in DWARF dump for {tag}: {dump}"
+        );
+
+        let gdb_out = Command::new("gdb")
+            .args([
+                "-batch",
+                "-ex",
+                "set pagination off",
+                "-ex",
+                "b main.lpp:6",
+                "-ex",
+                "run",
+                "-ex",
+                "bt",
+                "-ex",
+                "continue",
+            ])
+            .arg(&exe)
+            .output()
+            .expect("run gdb");
+        let gdb_stdout = String::from_utf8_lossy(&gdb_out.stdout);
+        let gdb_stderr = String::from_utf8_lossy(&gdb_out.stderr);
+        assert!(
+            gdb_out.status.success(),
+            "gdb failed for {tag}: stdout={gdb_stdout} stderr={gdb_stderr}"
+        );
+        assert!(
+            gdb_stdout.contains("main.lpp:6"),
+            "expected gdb breakpoint/backtrace on main.lpp:6 for {tag}: {gdb_stdout}"
+        );
+        assert!(
+            gdb_stdout.contains("42"),
+            "expected program output 42 under gdb for {tag}: {gdb_stdout}"
+        );
+    }
+
+    // Verify `lpp debug` CLI routing with LPP_DEBUGGER override.
+    let mut session = lpp_driver::CompilerSession::new(lpp_driver::RewriteEngine);
+    let req = lpp_driver::DriverRequest::from_args(
+        [
+            "lpp".to_string(),
+            "debug".to_string(),
+            src.to_string_lossy().into_owned(),
+        ],
+        &dir,
+    )
+    .expect("driver request");
+    let orig_dbg = std::env::var_os("LPP_DEBUGGER");
+    unsafe {
+        std::env::set_var("LPP_DEBUGGER", "/bin/echo");
+    }
+    let outcome = session.execute(&req);
+    match orig_dbg {
+        Some(v) => unsafe { std::env::set_var("LPP_DEBUGGER", v) },
+        None => unsafe { std::env::remove_var("LPP_DEBUGGER") },
+    }
+    assert_eq!(outcome.exit_code(), 0, "lpp debug CLI failed: {outcome:?}");
+
+    // Verify LPP_BACKTRACE=1 produces runtime panic backtrace.
+    let panic_src = dir.join("panic_div.lpp");
+    std::fs::write(
+        &panic_src,
+        r#"def boom(a: Int, b: Int) -> Int:
+    return a / b
+
+def main():
+    print(boom(10, 0))
+"#,
+    )
+    .expect("write panic_div");
+    let panic_exe = dir.join("panic_div");
+    let mut panic_opts = CompileOptions::for_backend(BackendChoice::Cranelift);
+    panic_opts.debug_info = true;
+    build_executable_configured(
+        &panic_src,
+        "pkg",
+        BackendChoice::Cranelift,
+        panic_opts,
+        &panic_exe,
+        rt_dir,
+        Some("cc"),
+    )
+    .expect("build panic_div");
+    let mut panic_out = None;
+    for attempt in 0..5 {
+        match Command::new(&panic_exe).env("LPP_BACKTRACE", "1").output() {
+            Ok(out) => {
+                panic_out = Some(out);
+                break;
+            }
+            Err(e) if e.raw_os_error() == Some(26) && attempt < 4 => {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            Err(e) => panic!("run panic_div failed: {e}"),
+        }
+    }
+    let panic_out = panic_out.expect("panic_div output");
+    assert!(
+        !panic_out.status.success(),
+        "expected non-zero exit on div by zero"
+    );
+    let panic_err = String::from_utf8_lossy(&panic_out.stderr);
+    assert!(
+        panic_err.contains("L++ RUNTIME PANIC") && panic_err.contains("Backtrace:"),
+        "expected panic + backtrace, got stderr: {panic_err}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

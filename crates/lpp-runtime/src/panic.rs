@@ -25,6 +25,10 @@ pub fn runtime_panic(reason: &str) -> ! {
         "==================================================================="
     );
     let _ = writeln!(err, "Reason: {reason}");
+    if std::env::var("LPP_BACKTRACE").is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("full")) {
+        let bt = std::backtrace::Backtrace::force_capture();
+        let _ = writeln!(err, "Backtrace:\n{bt}");
+    }
     let _ = writeln!(
         err,
         "===================================================================\n"

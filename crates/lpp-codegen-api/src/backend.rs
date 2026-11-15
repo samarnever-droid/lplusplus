@@ -23,6 +23,15 @@ pub trait NameResolver: Send + Sync {
     fn resolve(&self, symbol_raw: u32) -> Option<&str>;
 }
 
+/// Resolves an HIR `OriginId` raw index to `(directory, filename, line_1_based, column_1_based)`
+/// for emitting source-level DWARF/CodeView debug information.
+pub trait DebugSourceResolver: Send + Sync {
+    fn resolve_origin(&self, origin_raw: u32) -> Option<(&str, &str, u32, u32)>;
+    fn entry_file(&self) -> Option<(&str, &str)> {
+        None
+    }
+}
+
 /// The optimization level requested of a backend.
 ///
 /// [`OptLevel::None`] is the raw output (the development default). The WASM
@@ -69,6 +78,10 @@ pub struct CodegenOptions<'a> {
     /// Enable Cranelift function-entry counters and store this program
     /// fingerprint when the generated `main` returns.
     pub pgo_fingerprint: Option<u64>,
+    /// Emit DWARF/CodeView debug information (`-g` / `--debug`).
+    pub debug_info: bool,
+    /// Optional origin -> file/line/column mapping for debug info emission.
+    pub debug_sources: Option<&'a dyn DebugSourceResolver>,
 }
 
 impl std::fmt::Debug for CodegenOptions<'_> {
@@ -79,6 +92,7 @@ impl std::fmt::Debug for CodegenOptions<'_> {
             .field("names", &"<NameResolver>")
             .field("opt_level", &self.opt_level)
             .field("pgo_fingerprint", &self.pgo_fingerprint)
+            .field("debug_info", &self.debug_info)
             .finish()
     }
 }
@@ -91,7 +105,26 @@ impl<'a> CodegenOptions<'a> {
             names,
             opt_level: OptLevel::None,
             pgo_fingerprint: None,
+            debug_info: false,
+            debug_sources: None,
         }
+    }
+
+    /// Enable or disable debug information emission (`-g` / `--debug`).
+    #[must_use]
+    pub fn with_debug_info(mut self, debug_info: bool) -> Self {
+        self.debug_info = debug_info;
+        self
+    }
+
+    /// Attach a source-origin resolver for DWARF/CodeView line tables.
+    #[must_use]
+    pub fn with_debug_sources(
+        mut self,
+        debug_sources: Option<&'a dyn DebugSourceResolver>,
+    ) -> Self {
+        self.debug_sources = debug_sources;
+        self
     }
 
     /// Request backend optimization. WASM runs `wasm-opt`; Cranelift selects

@@ -5,6 +5,7 @@ use lpp_codegen_api::{CodegenError, CodegenErrorKind, CodegenOptions, NameResolv
 use lpp_mir::{MirFunction, MirFunctionId, MirLocalId, MirLocalKind, MirProgram, MirStringId};
 use lpp_types::{PrimitiveType, TypeId, TypeInterner, TypeKind};
 
+mod debug;
 mod function;
 mod intrinsics;
 mod managed;
@@ -12,6 +13,7 @@ mod plan;
 mod strings;
 
 use crate::llvm_target_triple;
+use debug::DebugMetadata;
 use plan::pre_scan;
 use strings::llvm_arc_string;
 
@@ -323,6 +325,13 @@ pub(crate) fn emit_llvm_ir_with_options(
     }
     let _ = writeln!(out);
 
+    let mut dbg = DebugMetadata::new(
+        options.debug_info,
+        options.debug_sources,
+        options.target,
+        options.opt_level,
+    );
+
     for (mir_id, function) in program.functions() {
         function::emit_function(
             &mut out,
@@ -333,10 +342,13 @@ pub(crate) fn emit_llvm_ir_with_options(
             mir_id,
             function,
             options.pgo_fingerprint,
+            options.names,
+            &mut dbg,
         )?;
     }
 
     managed::emit_destructors_and_thunks(&mut out, program, types, &plan, options.pgo_fingerprint)?;
+    dbg.emit_module_trailer(&mut out);
 
     let mut exported_symbols: BTreeSet<String> = plan.export_names.values().cloned().collect();
     for agg in &plan.destructors {

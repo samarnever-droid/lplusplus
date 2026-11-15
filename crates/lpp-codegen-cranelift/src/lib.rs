@@ -22,6 +22,7 @@
 mod layout {
     pub(crate) use lpp_codegen_api::layout::*;
 }
+mod dwarf;
 mod lower;
 
 use cranelift_codegen::settings::{self, Configurable};
@@ -90,6 +91,14 @@ impl Backend for CraneliftBackend {
             .map_err(|e| {
                 CodegenError::new(None, CodegenErrorKind::ObjectEmissionFailed(e.to_string()))
             })?;
+        if options.debug_info {
+            flags.set("preserve_frame_pointers", "true").map_err(|e| {
+                CodegenError::new(None, CodegenErrorKind::ObjectEmissionFailed(e.to_string()))
+            })?;
+            flags.set("unwind_info", "true").map_err(|e| {
+                CodegenError::new(None, CodegenErrorKind::ObjectEmissionFailed(e.to_string()))
+            })?;
+        }
 
         let mut triple = options
             .target
@@ -137,7 +146,13 @@ impl Backend for CraneliftBackend {
 
         lowering.declare(&plan, program, types)?;
         lowering.lower_destructors(types, &plan)?;
-        lowering.lower_functions(program, types, &plan)?;
+        lowering.lower_functions_with_debug(
+            program,
+            types,
+            &plan,
+            options.names,
+            options.debug_info,
+        )?;
         lowering.lower_main_wrapper(program, types)?;
 
         // The census is the module's own declaration record, read
@@ -145,9 +160,14 @@ impl Backend for CraneliftBackend {
         let exported_symbols = lowering.exported_symbols();
         let imported_symbols = lowering.imported_symbols();
         let entry = lowering.entry();
+        let debug_records = lowering.take_debug_records();
         drop(lowering);
 
-        let object = module.finish().emit().map_err(|e| {
+        let mut product = module.finish();
+        if options.debug_info {
+            dwarf::emit_dwarf_sections(&mut product.object, &debug_records, options.debug_sources);
+        }
+        let object = product.emit().map_err(|e| {
             CodegenError::new(None, CodegenErrorKind::ObjectEmissionFailed(e.to_string()))
         })?;
 

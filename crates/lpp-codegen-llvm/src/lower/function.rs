@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::fmt::Write as _;
 
-use lpp_codegen_api::CodegenError;
 use lpp_codegen_api::layout::tuple_layout;
+use lpp_codegen_api::{CodegenError, NameResolver};
 use lpp_mir::{
     BasicBlockId, BinaryOperator, Constant, InstructionKind, MirFunction, MirFunctionId,
     MirFunctionKind, MirLocalId, MirLocalKind, MirProgram, MirStringId, Operand, Rvalue,
@@ -40,6 +40,7 @@ pub(crate) struct FnCtx<'a> {
     seq: usize,
     lbl_seq: usize,
     terminated: bool,
+    cur_dbg: Option<u32>,
 }
 
 impl<'a> FnCtx<'a> {
@@ -56,7 +57,11 @@ impl<'a> FnCtx<'a> {
     }
 
     pub fn line(&mut self, s: impl AsRef<str>) {
-        let _ = writeln!(self.body, "  {}", s.as_ref());
+        if let Some(dbg) = self.cur_dbg {
+            let _ = writeln!(self.body, "  {}, !dbg !{dbg}", s.as_ref());
+        } else {
+            let _ = writeln!(self.body, "  {}", s.as_ref());
+        }
     }
 
     pub fn start_label(&mut self, label: &str) {
@@ -229,6 +234,8 @@ pub(crate) fn emit_function(
     mir_id: MirFunctionId,
     function: &MirFunction,
     pgo_fingerprint: Option<u64>,
+    names: &dyn NameResolver,
+    dbg: &mut super::debug::DebugMetadata<'_>,
 ) -> Result<(), CodegenError> {
     let is_closure = matches!(function.kind, MirFunctionKind::Closure);
     let capture_locals: Vec<MirLocalId> = program
@@ -263,7 +270,16 @@ pub(crate) fn emit_function(
     } else {
         val_of_type(types, function.return_type, mir_id)?
     };
-    let name = llvm_sym(&plan.export_names[&mir_id]);
+    let export_name = &plan.export_names[&mir_id];
+    let name = llvm_sym(export_name);
+    let source_name = function
+        .name
+        .and_then(|s| names.resolve(s.raw()))
+        .unwrap_or(export_name.as_str());
+    let dbg_pair = dbg.register_subprogram(source_name, export_name, function.origin.raw());
+    let dbg_fn_attr = dbg_pair
+        .map(|(sp, _)| format!(" !dbg !{sp}"))
+        .unwrap_or_default();
     let attrs = program.function_attrs(mir_id);
     let sec_attr = attrs
         .section
@@ -273,7 +289,7 @@ pub(crate) fn emit_function(
 
     let _ = writeln!(
         out,
-        "define {} @{name}({}){sec_attr} {{",
+        "define {} @{name}({}){sec_attr}{dbg_fn_attr} {{",
         ret_val.llvm(),
         params_str.join(", ")
     );
@@ -294,6 +310,7 @@ pub(crate) fn emit_function(
         seq: 0,
         lbl_seq: 0,
         terminated: false,
+        cur_dbg: dbg_pair.map(|(_, d)| d),
     };
 
     // Allocate every non-Void local in prologue
@@ -374,10 +391,16 @@ pub(crate) fn emit_function(
         ctx.start_label(&format!("bb{}", block_id.raw()));
         for &inst_id in program.block_instructions(block) {
             let instr = program.instruction(inst_id).expect("inst");
+            if let Some((sp_id, _)) = dbg_pair {
+                ctx.cur_dbg = dbg.location_for_origin(sp_id, instr.origin.raw());
+            }
             match &instr.kind {
                 InstructionKind::Store { place, value } => ctx.lower_store(*place, value)?,
                 InstructionKind::Assign { target, value } => ctx.lower_assign(*target, value)?,
             }
+        }
+        if let Some((sp_id, _)) = dbg_pair {
+            ctx.cur_dbg = dbg.location_for_origin(sp_id, block.origin.raw());
         }
         ctx.lower_terminator(&block.terminator)?;
     }

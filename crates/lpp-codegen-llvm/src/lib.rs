@@ -53,7 +53,12 @@ impl Backend for LlvmBackend {
         }
 
         let lowered = lower::emit_llvm_ir_with_options(program, types, options)?;
-        let object = clang_object(&lowered.ir, options.target, options.opt_level)?;
+        let object = clang_object(
+            &lowered.ir,
+            options.target,
+            options.opt_level,
+            options.debug_info,
+        )?;
 
         Ok(CompiledModule {
             object,
@@ -124,7 +129,12 @@ fn opt_flag(level: OptLevel) -> &'static str {
     }
 }
 
-fn clang_object(ir: &str, target: Target, opt_level: OptLevel) -> Result<Vec<u8>, CodegenError> {
+fn clang_object(
+    ir: &str,
+    target: Target,
+    opt_level: OptLevel,
+    debug_info: bool,
+) -> Result<Vec<u8>, CodegenError> {
     let compiler = resolve_llvm_cc().ok_or_else(|| {
         CodegenError::new(
             None,
@@ -160,6 +170,9 @@ fn clang_object(ir: &str, target: Target, opt_level: OptLevel) -> Result<Vec<u8>
         .arg("-c")
         .arg(opt_flag(opt_level))
         .arg(format!("--target={}", llvm_target_triple(target)));
+    if debug_info {
+        cmd.arg("-g");
+    }
 
     if target.is_freestanding() {
         cmd.arg("-ffreestanding").arg("-fno-pic");

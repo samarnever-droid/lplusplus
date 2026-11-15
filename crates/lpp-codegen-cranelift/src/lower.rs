@@ -154,6 +154,7 @@ pub(crate) struct Lowering<'m> {
     lpp_main_id: Option<FuncId>,
     lpp_main_function_id: Option<MirFunctionId>,
     emitted_strings: BTreeMap<MirStringId, DataId>,
+    debug_records: Vec<crate::dwarf::CompiledDebugFunction>,
 }
 
 mod preflight;

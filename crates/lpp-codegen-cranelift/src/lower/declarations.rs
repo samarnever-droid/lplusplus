@@ -33,7 +33,12 @@ impl<'m> Lowering<'m> {
             lpp_main_id: None,
             lpp_main_function_id: None,
             emitted_strings: BTreeMap::new(),
+            debug_records: Vec::new(),
         }
+    }
+
+    pub(crate) fn take_debug_records(&mut self) -> Vec<crate::dwarf::CompiledDebugFunction> {
+        std::mem::take(&mut self.debug_records)
     }
 
     pub(crate) fn exported_symbols(&self) -> BTreeSet<String> {
@@ -566,14 +571,33 @@ impl<'m> Lowering<'m> {
     /// Lower every function in `MirFunctionId` order, then the
     /// generated closure-env destructors and task/closure thunks in
     /// plan order.
-    pub(crate) fn lower_functions(
+    pub(crate) fn lower_functions_with_debug(
         &mut self,
         program: &MirProgram,
         types: &TypeInterner,
         plan: &Plan,
+        names: &dyn lpp_codegen_api::NameResolver,
+        debug_info: bool,
     ) -> Result<(), CodegenError> {
         for (mir_id, function) in program.functions() {
-            self.lower_function(program, types, mir_id, function)?;
+            let export_name = plan
+                .export_names
+                .get(&mir_id)
+                .map(String::as_str)
+                .unwrap_or("lpp_fn");
+            let source_name = function
+                .name
+                .and_then(|s| names.resolve(s.raw()))
+                .unwrap_or(export_name);
+            self.lower_function(
+                program,
+                types,
+                mir_id,
+                function,
+                export_name,
+                source_name,
+                debug_info,
+            )?;
         }
         for &function_id in &plan.closure_dtors {
             self.lower_closure_dtor(program, types, function_id)?;

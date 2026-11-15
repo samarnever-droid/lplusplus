@@ -47,6 +47,8 @@ enum Mode {
     Build,
     /// Compile + link + run, propagating the program's exit code.
     Run,
+    /// Compile + link with DWARF debug info (`-g`) and launch host debugger.
+    Debug,
     /// Compile to object only and report success (no link, no write).
     Check,
     /// Compile to object only and write the object/module file.
@@ -152,6 +154,10 @@ fn rewrite_main(args: &[String], cwd: &Path) -> i32 {
                 mode = Mode::EmitObject;
                 start = 1;
             }
+            "debug" => {
+                mode = Mode::Debug;
+                start = 1;
+            }
             "check" if second_is_source => {
                 mode = Mode::Check;
                 start = 1;
@@ -180,6 +186,7 @@ fn rewrite_main(args: &[String], cwd: &Path) -> i32 {
         BackendChoice::parse(&user_config.backend).unwrap_or(BackendChoice::Cranelift);
     let mut target: Option<Target> = None;
     let mut optimization = OptimizationLevel::O0;
+    let mut debug_info = mode == Mode::Debug;
     let mut lto = false;
     let mut pgo_generate = false;
     let mut pgo_use: Option<PathBuf> = None;
@@ -220,6 +227,7 @@ fn rewrite_main(args: &[String], cwd: &Path) -> i32 {
             }
             "--check" => mode = Mode::Check,
             "--run" => mode = Mode::Run,
+            "-g" | "--debug" => debug_info = true,
             "-c" | "--emit-object" | "--emit-obj" | "--aot" => mode = Mode::EmitObject,
             "--llvm" => backend = BackendChoice::Llvm,
             "--backend" => {
@@ -384,6 +392,7 @@ fn rewrite_main(args: &[String], cwd: &Path) -> i32 {
     let compile_options = CompileOptions {
         target,
         optimization,
+        debug_info,
         lto,
         pgo_generate,
         pgo_use,
@@ -473,7 +482,7 @@ fn rewrite_main(args: &[String], cwd: &Path) -> i32 {
                 Err(error) => compile_failed(&error),
             }
         }
-        Mode::Build | Mode::Run => {
+        Mode::Build | Mode::Run | Mode::Debug => {
             if target.is_freestanding() {
                 if mode == Mode::Run {
                     eprintln!(
@@ -546,7 +555,9 @@ fn rewrite_main(args: &[String], cwd: &Path) -> i32 {
                             sub, sub, sub, sub, sub, sub, sub, sub, total
                         );
                     }
-                    if mode == Mode::Run {
+                    if mode == Mode::Debug {
+                        launch_debugger(&exe)
+                    } else if mode == Mode::Run {
                         match crate::compile::exec_status_retry(&exe) {
                             Ok(status) => child_exit_code(&status),
                             Err(error) => {
@@ -939,6 +950,49 @@ fn handle_config(arguments: &[String]) -> i32 {
     0
 }
 
+fn launch_debugger(exe: &Path) -> i32 {
+    let candidates: Vec<String> = if let Ok(explicit) = std::env::var("LPP_DEBUGGER") {
+        let trimmed = explicit.trim();
+        if trimmed.is_empty() {
+            vec!["gdb".into(), "lldb".into()]
+        } else {
+            vec![trimmed.to_string()]
+        }
+    } else if cfg!(target_os = "macos") {
+        vec!["lldb".into(), "gdb".into()]
+    } else if cfg!(target_os = "windows") {
+        vec!["lldb".into(), "gdb".into(), "cdb".into()]
+    } else {
+        vec!["gdb".into(), "lldb".into()]
+    };
+
+    for dbg in &candidates {
+        if let Some(dbg_path) = find_tool(dbg) {
+            println!("[debug] built -> {} (launching {dbg})", exe.display());
+            let mut cmd = Command::new(&dbg_path);
+            if dbg.ends_with("gdb") {
+                cmd.arg("-q").arg(exe);
+            } else {
+                cmd.arg(exe);
+            }
+            return match cmd.status() {
+                Ok(status) => child_exit_code(&status),
+                Err(error) => {
+                    eprintln!("[debug] failed to launch {}: {error}", dbg_path.display());
+                    1
+                }
+            };
+        }
+    }
+
+    println!("[debug] built debug executable -> {}", exe.display());
+    eprintln!(
+        "[debug] no host debugger found (tried {}); install gdb or lldb, or set LPP_DEBUGGER.",
+        candidates.join(", ")
+    );
+    0
+}
+
 fn find_tool(program: &str) -> Option<PathBuf> {
     let requested = Path::new(program);
     if requested.components().count() > 1 {
@@ -1005,6 +1059,7 @@ fn print_help() {
     println!("  --llvm           shorthand for --backend llvm");
     println!("  --target <t>     host, x86_64/aarch64, *-unknown-none (kernel), or wasm32-wasip1");
     println!("  -O<level>        MIR/backend optimization: 0, 1, 2, 3, s, or z");
+    println!("  -g, --debug      Emit DWARF/CodeView source debug info and keep frame pointers");
     println!("  --lto            Enable safe whole-program MIR inlining of small pure callees");
     println!("  --deny-unsafe    Reject all unsafe blocks, pointer ops, and kernel intrinsics");
     println!("  --image-base HEX Base virtual/load address for freestanding ELF kernels");
@@ -1018,6 +1073,10 @@ fn print_help() {
     println!("  --emit-object    write the object/module file only");
     println!();
     println!("Tools & Environment:");
+    println!("  lpp debug <file> compile with -g and launch gdb/lldb on the binary");
+    println!("  lpp fmt [paths]  format L++ source files cleanly");
+    println!("  lpp repl         launch interactive L++ REPL");
+    println!("  lpp test         run @test functions in tests/");
     println!("  lpp doctor       inspect runtime, backend, and toolchain availability");
     println!("  lpp bench [...]  run the benchmark suite");
     println!("  lpp upgrade      check the signed-release channel for updates");

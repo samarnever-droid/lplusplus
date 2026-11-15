@@ -19,7 +19,9 @@ pub mod layout;
 mod machine;
 mod target;
 
-pub use backend::{Backend, CodegenOptions, CompiledModule, NameResolver, OptLevel};
+pub use backend::{
+    Backend, CodegenOptions, CompiledModule, DebugSourceResolver, NameResolver, OptLevel,
+};
 pub use builtin::{BuiltinLowering, runtime_symbol_lowerable};
 pub use error::{CodegenError, CodegenErrorKind};
 pub use machine::{MachineType, machine_type_for_abi, semantic_machine_type};

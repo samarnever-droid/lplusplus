@@ -7,6 +7,9 @@ impl<'m> Lowering<'m> {
         types: &TypeInterner,
         mir_id: MirFunctionId,
         function: &MirFunction,
+        export_name: &str,
+        source_name: &str,
+        debug_info: bool,
     ) -> Result<(), CodegenError> {
         let func_id = *self
             .func_ids
@@ -186,6 +189,23 @@ impl<'m> Lowering<'m> {
             .define_function(func_id, &mut ctx)
             .map_err(|e| verify_failed(Some(mir_id), format!("define function: {e:?}")))?;
 
+        if debug_info && let Some(compiled) = ctx.compiled_code() {
+            let srclocs = compiled
+                .buffer
+                .get_srclocs_sorted()
+                .iter()
+                .map(|m| (m.start, m.loc))
+                .collect();
+            self.debug_records
+                .push(crate::dwarf::CompiledDebugFunction {
+                    export_name: export_name.to_string(),
+                    source_name: source_name.to_string(),
+                    origin_raw: function.origin.raw(),
+                    code_len: compiled.buffer.data().len() as u32,
+                    srclocs,
+                });
+        }
+
         Ok(())
     }
 
@@ -210,8 +230,10 @@ impl<'m> Lowering<'m> {
                 .program
                 .instruction(instruction)
                 .expect("validated MIR retains instructions");
+            builder.set_srcloc(cranelift_codegen::ir::SourceLoc::new(instr.origin.raw()));
             self.lower_instr(inst, builder, instr)?;
         }
+        builder.set_srcloc(cranelift_codegen::ir::SourceLoc::new(basic.origin.raw()));
         self.lower_terminator(inst, builder, &basic.terminator, cl_blocks)
     }
 
