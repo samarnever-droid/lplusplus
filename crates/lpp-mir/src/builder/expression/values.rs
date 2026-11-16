@@ -40,6 +40,13 @@ impl FunctionBuilder<'_, '_> {
                             string,
                         }
                     }
+                    Literal::RawString(span) => {
+                        let string = self.core.materialize_raw_string(span, expression.origin)?;
+                        Constant::String {
+                            origin: expression.origin,
+                            string,
+                        }
+                    }
                     Literal::Character(span) => {
                         let character = self.core.materialize_character(span, expression.origin)?;
                         Constant::Character {
@@ -138,6 +145,18 @@ impl FunctionBuilder<'_, '_> {
                     expression.origin,
                 )
             }
+            ExpressionKind::Conditional {
+                condition,
+                then_expr,
+                else_expr,
+            } => self.lower_conditional(
+                ty,
+                condition,
+                then_expr,
+                else_expr,
+                next_depth,
+                expression.origin,
+            ),
             ExpressionKind::Unary { operator, operand } => {
                 let operand = self.lower_expression(operand, next_depth)?;
                 self.assign_temporary(ty, Rvalue::Unary { operator, operand }, expression.origin)
@@ -389,6 +408,44 @@ impl FunctionBuilder<'_, '_> {
         let right = self.lower_expression(right_expression, depth)?;
         self.emit(result, Rvalue::Use(right), origin)?;
         self.terminate(DraftTerminator::Goto(join_block));
+
+        self.current = Some(join_block);
+        Ok(Operand::Copy(result))
+    }
+
+    pub(in crate::builder) fn lower_conditional(
+        &mut self,
+        ty: TypeId,
+        condition: ExprId,
+        then_expr: ExprId,
+        else_expr: ExprId,
+        depth: usize,
+        origin: OriginId,
+    ) -> Result<Operand, MirBuildError> {
+        let cond = self.lower_expression(condition, depth)?;
+        let then_block = self.new_block(origin)?;
+        let else_block = self.new_block(origin)?;
+        let join_block = self.new_block(origin)?;
+        let result = self.temporary(ty, origin)?;
+        self.terminate(DraftTerminator::Branch {
+            condition: cond,
+            then_block,
+            else_block,
+        });
+
+        self.current = Some(then_block);
+        let then_val = self.lower_expression(then_expr, depth)?;
+        if self.current.is_some() {
+            self.emit(result, Rvalue::Use(then_val), origin)?;
+            self.terminate(DraftTerminator::Goto(join_block));
+        }
+
+        self.current = Some(else_block);
+        let else_val = self.lower_expression(else_expr, depth)?;
+        if self.current.is_some() {
+            self.emit(result, Rvalue::Use(else_val), origin)?;
+            self.terminate(DraftTerminator::Goto(join_block));
+        }
 
         self.current = Some(join_block);
         Ok(Operand::Copy(result))

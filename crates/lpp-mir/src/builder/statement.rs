@@ -423,15 +423,82 @@ impl FunctionBuilder<'_, '_> {
         self.terminate(DraftTerminator::Goto(condition_block));
 
         self.current = Some(condition_block);
-        let condition = self.assign_temporary(
-            bool_type,
-            Rvalue::Binary {
-                left: Operand::Copy(counter),
-                operator: lpp_hir::BinaryOperator::Less,
-                right: Operand::Copy(end_local),
-            },
-            origin,
-        )?;
+        let condition = if arguments.len() < 3 {
+            self.assign_temporary(
+                bool_type,
+                Rvalue::Binary {
+                    left: Operand::Copy(counter),
+                    operator: lpp_hir::BinaryOperator::Less,
+                    right: Operand::Copy(end_local),
+                },
+                origin,
+            )?
+        } else {
+            let zero_const = Operand::Constant(Constant::Integer(0));
+            let pos_step = self.assign_temporary(
+                bool_type,
+                Rvalue::Binary {
+                    left: Operand::Copy(step_local),
+                    operator: lpp_hir::BinaryOperator::Greater,
+                    right: zero_const.clone(),
+                },
+                origin,
+            )?;
+            let lt = self.assign_temporary(
+                bool_type,
+                Rvalue::Binary {
+                    left: Operand::Copy(counter),
+                    operator: lpp_hir::BinaryOperator::Less,
+                    right: Operand::Copy(end_local),
+                },
+                origin,
+            )?;
+            let pos_cond = self.assign_temporary(
+                bool_type,
+                Rvalue::Binary {
+                    left: pos_step,
+                    operator: lpp_hir::BinaryOperator::LogicalAnd,
+                    right: lt,
+                },
+                origin,
+            )?;
+            let neg_step = self.assign_temporary(
+                bool_type,
+                Rvalue::Binary {
+                    left: Operand::Copy(step_local),
+                    operator: lpp_hir::BinaryOperator::Less,
+                    right: zero_const,
+                },
+                origin,
+            )?;
+            let gt = self.assign_temporary(
+                bool_type,
+                Rvalue::Binary {
+                    left: Operand::Copy(counter),
+                    operator: lpp_hir::BinaryOperator::Greater,
+                    right: Operand::Copy(end_local),
+                },
+                origin,
+            )?;
+            let neg_cond = self.assign_temporary(
+                bool_type,
+                Rvalue::Binary {
+                    left: neg_step,
+                    operator: lpp_hir::BinaryOperator::LogicalAnd,
+                    right: gt,
+                },
+                origin,
+            )?;
+            self.assign_temporary(
+                bool_type,
+                Rvalue::Binary {
+                    left: pos_cond,
+                    operator: lpp_hir::BinaryOperator::LogicalOr,
+                    right: neg_cond,
+                },
+                origin,
+            )?
+        };
         self.terminate(DraftTerminator::Branch {
             condition,
             then_block: body_block,

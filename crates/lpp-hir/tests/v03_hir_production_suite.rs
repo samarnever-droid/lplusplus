@@ -267,6 +267,21 @@ fn flatten_type_ref(hir: &HirPackage, id: TypeRefId) -> String {
                 .join(", ");
             format!("({elems})")
         }
+        TypeRefKind::Function {
+            parameters,
+            return_type,
+        } => {
+            let params = hir
+                .type_refs(parameters)
+                .iter()
+                .map(|param| flatten_type_ref(hir, *param))
+                .collect::<Vec<_>>()
+                .join(", ");
+            match return_type {
+                Some(ret) => format!("fn({params}) -> {}", flatten_type_ref(hir, ret)),
+                None => format!("fn({params})"),
+            }
+        }
     }
 }
 
@@ -1317,7 +1332,7 @@ fn fstring_interpolation_desugars_into_left_folded_string_concatenation() {
     };
     let mut nested_parts = Vec::new();
     flatten_fstring_concat(&hir, nested_v, &mut nested_parts);
-    assert_eq!(nested_parts.len(), 4);
+    assert_eq!(nested_parts.len(), 3);
     assert!(matches!(
         hir.expressions[nested_parts[2]].kind,
         ExpressionKind::Call { .. }

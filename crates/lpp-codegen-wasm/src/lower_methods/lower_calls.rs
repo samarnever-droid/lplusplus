@@ -1,7 +1,36 @@
 use super::*;
 
+pub(super) fn emit_i64_pow(fb: &mut FB) {
+    let base = fb.scratch(Val::I64);
+    let exp = fb.scratch(Val::I64);
+    let result = fb.scratch(Val::I64);
+    fb.s(exp);
+    fb.s(base);
+    fb.g(exp).i64c(0).op(op::I64_LT_S).if_();
+    fb.i64c(0).s(result);
+    fb.else_();
+    fb.i64c(1).s(result);
+    fb.block();
+    fb.loop_();
+    fb.g(exp).op(op::I64_EQZ).br_if(1);
+    fb.g(exp).i64c(1).op(op::I64_AND).op(op::I32_WRAP_I64).if_();
+    fb.g(result).g(base).op(op::I64_MUL).s(result);
+    fb.end();
+    fb.g(base).g(base).op(op::I64_MUL).s(base);
+    fb.g(exp).i64c(1).op(op::I64_SHR_U).s(exp);
+    fb.br(0);
+    fb.end();
+    fb.end();
+    fb.end();
+    fb.g(result);
+}
+
 impl<'a> FnLower<'a> {
     pub(super) fn i64_op(&self, fb: &mut FB, op_: BinaryOperator) -> Result<(), CodegenError> {
+        if op_ == BinaryOperator::Power {
+            emit_i64_pow(fb);
+            return Ok(());
+        }
         let code = match op_ {
             BinaryOperator::Add => op::I64_ADD,
             BinaryOperator::Subtract => op::I64_SUB,
@@ -19,6 +48,7 @@ impl<'a> FnLower<'a> {
             BinaryOperator::Greater => op::I64_GT_S,
             BinaryOperator::LessEqual => op::I64_LE_S,
             BinaryOperator::GreaterEqual => op::I64_GE_S,
+            BinaryOperator::Power => unreachable!(),
             BinaryOperator::LogicalAnd | BinaryOperator::LogicalOr => {
                 return Err(unsupported("logical op on integer", Some(self.fn_id)));
             }
@@ -28,6 +58,10 @@ impl<'a> FnLower<'a> {
     }
 
     pub(super) fn f64_op(&self, fb: &mut FB, op_: BinaryOperator) -> Result<(), CodegenError> {
+        if op_ == BinaryOperator::Power {
+            self.call_helper(fb, H::Pow)?;
+            return Ok(());
+        }
         if op_ == BinaryOperator::Modulo {
             // fmod: l - trunc(l / r) * r
             let l = fb.scratch(Val::F64);

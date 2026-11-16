@@ -8,7 +8,7 @@
 - [ARC Cycle Breaking](CYCLE_BREAKING.md) — native Bacon-Rajan trial-deletion collector & leak oracle.
 - [Concurrency & Atomic ARC](CONCURRENCY.md) — current threading/task boundaries and open `Send`/`Sync` work.
 - [Safety Mission](Safety_Mission.md) — S0–S4 safety levels and claims policy.
-- [v0.3.1 Release Notes](release/V0.3.1.md) — L++ v0.3.1 release notes ([v0.3.0 notes](release/V0.3.0.md), [v0.2.0 brief](release/V0.2.0.md), [v0.1 archive](release/V0.1.md)).
+- [v0.3.2 Release Notes](release/V0.3.2.md) — L++ v0.3.2 release notes ([v0.3.1 notes](release/V0.3.1.md), [v0.3.0 notes](release/V0.3.0.md), [v0.2.0 brief](release/V0.2.0.md), [v0.1 archive](release/V0.1.md)).
 
 ## Technical guides & reference
 

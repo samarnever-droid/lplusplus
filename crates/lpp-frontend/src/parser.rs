@@ -259,8 +259,14 @@ impl Parser {
                         | TokenKind::PlusEqual
                         | TokenKind::MinusEqual
                         | TokenKind::StarEqual
+                        | TokenKind::StarStarEqual
                         | TokenKind::SlashEqual
                         | TokenKind::PercentEqual
+                        | TokenKind::BitAndEqual
+                        | TokenKind::BitOrEqual
+                        | TokenKind::BitXorEqual
+                        | TokenKind::ShiftLeftEqual
+                        | TokenKind::ShiftRightEqual
                 )
             }) =>
             {
@@ -456,7 +462,9 @@ impl Parser {
                     stack.push((position, 0, call));
                 }
                 TokenKind::Comma => {
-                    if let Some((_, commas, _)) = stack.last_mut() {
+                    let is_trailing =
+                        self.kind_at(line, position + 1) == Some(TokenKind::RightParen);
+                    if !is_trailing && let Some((_, commas, _)) = stack.last_mut() {
                         *commas += 1;
                     }
                 }

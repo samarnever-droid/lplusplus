@@ -63,6 +63,10 @@ pub enum TypeRefKind {
         arguments: IdRange<TypeRefId>,
     },
     Tuple(IdRange<TypeRefId>),
+    Function {
+        parameters: IdRange<TypeRefId>,
+        return_type: Option<TypeRefId>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -98,6 +102,7 @@ pub enum Literal {
     Integer(i64),
     FloatBits(u64),
     String { span: Span, formatted: bool },
+    RawString(Span),
     Character(Span),
     Bool(bool),
 }
@@ -112,7 +117,9 @@ pub enum NameBinding {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnaryOperator {
     Negate,
+    Plus,
     Not,
+    BitNot,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -122,6 +129,7 @@ pub enum BinaryOperator {
     Multiply,
     Divide,
     Modulo,
+    Power,
     Equal,
     NotEqual,
     Less,
@@ -175,6 +183,11 @@ pub enum ExpressionKind {
     Cast {
         value: ExprId,
         target: TypeRefId,
+    },
+    Conditional {
+        condition: ExprId,
+        then_expr: ExprId,
+        else_expr: ExprId,
     },
     Try(ExprId),
     Await(ExprId),
@@ -303,8 +316,13 @@ pub enum HirItemKind {
     Trait(Trait),
     Impl(Impl),
     Extern(ExternBlock),
-    Const { value: ExprId },
-    TypeAlias { target: TypeRefId },
+    Const {
+        value: ExprId,
+    },
+    TypeAlias {
+        type_parameters: IdRange<TypeParamId>,
+        target: TypeRefId,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

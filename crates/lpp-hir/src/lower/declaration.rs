@@ -106,78 +106,74 @@ impl<'module, 'package> ModuleLowerer<'module, 'package> {
         let scope = self.begin_scope(None, origin)?;
         let mut parameters = Vec::new();
         let mut variadic = false;
-        if self.peek_kind(&mut cursor) != Some(TokenKind::RightParen) {
-            loop {
-                let parameter_origin_span = self.peek_span(&mut cursor).unwrap_or(node.span);
-                let is_variadic = self.consume(&mut cursor, TokenKind::Ellipsis);
-                variadic |= is_variadic;
-                let name_token = self.expect_identifier(&mut cursor, "expected parameter name")?;
-                let is_self = self.token_text(name_token) == "self";
-                let name = self.intern_token(name_token)?;
-                let type_ref = if self.consume(&mut cursor, TokenKind::Colon) {
-                    Some(self.parse_type_ref(&mut cursor)?)
-                } else if is_self && !is_variadic {
-                    Some(self.named_type("Self", name_token.span)?)
-                } else {
-                    return Err(LowerError::new(
-                        "E3100",
-                        "expected ':' and a parameter type",
-                        name_token.span,
-                    ));
-                };
-                // If the (non-self) parameter's annotation names a trait, rewrite
-                // it into a fresh trait-bounded generic type parameter.
-                let type_ref = match type_ref {
-                    Some(annotation) if !is_self => {
-                        match self
-                            .desugar_trait_parameter(annotation, &mut synthetic_trait_params)?
-                        {
-                            Some((param_id, param_ref)) => {
-                                type_parameter_ids.push(param_id);
-                                Some(param_ref)
-                            }
-                            None => Some(annotation),
+        while self.peek_kind(&mut cursor) != Some(TokenKind::RightParen) {
+            let parameter_origin_span = self.peek_span(&mut cursor).unwrap_or(node.span);
+            let is_variadic = self.consume(&mut cursor, TokenKind::Ellipsis);
+            variadic |= is_variadic;
+            let name_token = self.expect_identifier(&mut cursor, "expected parameter name")?;
+            let is_self = self.token_text(name_token) == "self";
+            let name = self.intern_token(name_token)?;
+            let type_ref = if self.consume(&mut cursor, TokenKind::Colon) {
+                Some(self.parse_type_ref(&mut cursor)?)
+            } else if is_self && !is_variadic {
+                Some(self.named_type("Self", name_token.span)?)
+            } else {
+                return Err(LowerError::new(
+                    "E3100",
+                    "expected ':' and a parameter type",
+                    name_token.span,
+                ));
+            };
+            // If the (non-self) parameter's annotation names a trait, rewrite
+            // it into a fresh trait-bounded generic type parameter.
+            let type_ref = match type_ref {
+                Some(annotation) if !is_self => {
+                    match self.desugar_trait_parameter(annotation, &mut synthetic_trait_params)? {
+                        Some((param_id, param_ref)) => {
+                            type_parameter_ids.push(param_id);
+                            Some(param_ref)
                         }
+                        None => Some(annotation),
                     }
-                    other => other,
-                };
-                let default = if self.consume(&mut cursor, TokenKind::Equal) {
-                    if is_variadic {
-                        return Err(LowerError::new(
-                            "E3100",
-                            "variadic parameters cannot have defaults",
-                            name_token.span,
-                        ));
-                    }
-                    Some(self.parse_expression(&mut cursor, None)?)
-                } else {
-                    None
-                };
-                let local_origin = self.source_origin(Span {
-                    file: node.span.file,
-                    start: parameter_origin_span.start,
-                    end: self
-                        .previous_span(&cursor)
-                        .map_or(name_token.span.end, |span| span.end),
-                })?;
-                parameters.push(self.declare_local(
-                    name,
-                    false,
-                    LocalKind::Parameter,
-                    type_ref,
-                    default,
-                    local_origin,
-                )?);
-                if !self.consume(&mut cursor, TokenKind::Comma) {
-                    break;
                 }
+                other => other,
+            };
+            let default = if self.consume(&mut cursor, TokenKind::Equal) {
                 if is_variadic {
                     return Err(LowerError::new(
                         "E3100",
-                        "variadic parameter must be final",
+                        "variadic parameters cannot have defaults",
                         name_token.span,
                     ));
                 }
+                Some(self.parse_expression(&mut cursor, None)?)
+            } else {
+                None
+            };
+            let local_origin = self.source_origin(Span {
+                file: node.span.file,
+                start: parameter_origin_span.start,
+                end: self
+                    .previous_span(&cursor)
+                    .map_or(name_token.span.end, |span| span.end),
+            })?;
+            parameters.push(self.declare_local(
+                name,
+                false,
+                LocalKind::Parameter,
+                type_ref,
+                default,
+                local_origin,
+            )?);
+            if !self.consume(&mut cursor, TokenKind::Comma) {
+                break;
+            }
+            if is_variadic {
+                return Err(LowerError::new(
+                    "E3100",
+                    "variadic parameter must be final",
+                    name_token.span,
+                ));
             }
         }
         self.expect(
@@ -279,34 +275,32 @@ impl<'module, 'package> ModuleLowerer<'module, 'package> {
             )?;
             let mut fields = Vec::new();
             if self.consume(&mut child_cursor, TokenKind::LeftParen) {
-                if self.peek_kind(&mut child_cursor) != Some(TokenKind::RightParen) {
-                    loop {
-                        let field_start = self.peek_span(&mut child_cursor).unwrap_or(child.span);
-                        let field_name_token = self
-                            .expect_identifier(&mut child_cursor, "expected variant field name")?;
-                        let field_name = self.intern_token(field_name_token)?;
-                        self.expect(
-                            &mut child_cursor,
-                            TokenKind::Colon,
-                            "expected ':' after variant field name",
-                        )?;
-                        let type_ref = self.parse_type_ref(&mut child_cursor)?;
-                        let field_origin = self.source_origin(Span {
-                            file: child.span.file,
-                            start: field_start.start,
-                            end: self
-                                .previous_span(&child_cursor)
-                                .map_or(field_name_token.span.end, |span| span.end),
-                        })?;
-                        fields.push(self.alloc_field(Field {
-                            name: field_name,
-                            type_ref,
-                            default: None,
-                            origin: field_origin,
-                        })?);
-                        if !self.consume(&mut child_cursor, TokenKind::Comma) {
-                            break;
-                        }
+                while self.peek_kind(&mut child_cursor) != Some(TokenKind::RightParen) {
+                    let field_start = self.peek_span(&mut child_cursor).unwrap_or(child.span);
+                    let field_name_token =
+                        self.expect_identifier(&mut child_cursor, "expected variant field name")?;
+                    let field_name = self.intern_token(field_name_token)?;
+                    self.expect(
+                        &mut child_cursor,
+                        TokenKind::Colon,
+                        "expected ':' after variant field name",
+                    )?;
+                    let type_ref = self.parse_type_ref(&mut child_cursor)?;
+                    let field_origin = self.source_origin(Span {
+                        file: child.span.file,
+                        start: field_start.start,
+                        end: self
+                            .previous_span(&child_cursor)
+                            .map_or(field_name_token.span.end, |span| span.end),
+                    })?;
+                    fields.push(self.alloc_field(Field {
+                        name: field_name,
+                        type_ref,
+                        default: None,
+                        origin: field_origin,
+                    })?);
+                    if !self.consume(&mut child_cursor, TokenKind::Comma) {
+                        break;
                     }
                 }
                 self.expect(
@@ -421,6 +415,16 @@ impl<'module, 'package> ModuleLowerer<'module, 'package> {
                 .type_refs(elements)
                 .iter()
                 .any(|element| self.type_ref_mentions_symbol(*element, symbol)),
+            TypeRefKind::Function {
+                parameters,
+                return_type,
+            } => {
+                self.package
+                    .type_refs(parameters)
+                    .iter()
+                    .any(|parameter| self.type_ref_mentions_symbol(*parameter, symbol))
+                    || return_type.is_some_and(|ret| self.type_ref_mentions_symbol(ret, symbol))
+            }
         }
     }
 
@@ -478,10 +482,14 @@ impl<'module, 'package> ModuleLowerer<'module, 'package> {
         self.consume_keyword(&mut cursor, Keyword::Pub);
         self.expect_keyword(&mut cursor, Keyword::Type, "expected type alias")?;
         self.expect_identifier(&mut cursor, "expected type alias name")?;
+        let type_parameters = self.parse_type_parameters(&mut cursor)?;
         self.expect(&mut cursor, TokenKind::Equal, "expected '=' in type alias")?;
         let target = self.parse_type_ref(&mut cursor)?;
         self.expect_end(&mut cursor, "unexpected token after type alias")?;
-        Ok(HirItemKind::TypeAlias { target })
+        Ok(HirItemKind::TypeAlias {
+            type_parameters,
+            target,
+        })
     }
 
     fn lower_field(&mut self, node: &SyntaxNode) -> LowerResult<FieldId> {
@@ -514,30 +522,28 @@ impl<'module, 'package> ModuleLowerer<'module, 'package> {
             return Ok(IdRange::empty());
         }
         let mut parameters = Vec::new();
-        if self.peek_kind(cursor) != Some(TokenKind::RightBracket) {
-            loop {
-                let name_token = self.expect_identifier(cursor, "expected type parameter name")?;
-                let name = self.intern_token(name_token)?;
-                let bound = if self.consume(cursor, TokenKind::Colon) {
-                    Some(self.parse_type_ref(cursor)?)
-                } else {
-                    None
-                };
-                let origin = self.source_origin(Span {
-                    file: name_token.span.file,
-                    start: name_token.span.start,
-                    end: self
-                        .previous_span(cursor)
-                        .map_or(name_token.span.end, |span| span.end),
-                })?;
-                parameters.push(self.alloc_type_parameter(TypeParameter {
-                    name,
-                    bound,
-                    origin,
-                })?);
-                if !self.consume(cursor, TokenKind::Comma) {
-                    break;
-                }
+        while self.peek_kind(cursor) != Some(TokenKind::RightBracket) {
+            let name_token = self.expect_identifier(cursor, "expected type parameter name")?;
+            let name = self.intern_token(name_token)?;
+            let bound = if self.consume(cursor, TokenKind::Colon) {
+                Some(self.parse_type_ref(cursor)?)
+            } else {
+                None
+            };
+            let origin = self.source_origin(Span {
+                file: name_token.span.file,
+                start: name_token.span.start,
+                end: self
+                    .previous_span(cursor)
+                    .map_or(name_token.span.end, |span| span.end),
+            })?;
+            parameters.push(self.alloc_type_parameter(TypeParameter {
+                name,
+                bound,
+                origin,
+            })?);
+            if !self.consume(cursor, TokenKind::Comma) {
+                break;
             }
         }
         self.expect(
@@ -600,7 +606,7 @@ impl<'module, 'package> ModuleLowerer<'module, 'package> {
                 TokenKind::Comma,
                 "tuple types require at least two elements",
             )?;
-            loop {
+            while self.peek_kind(cursor) != Some(TokenKind::RightParen) {
                 elements.push(self.parse_type_ref(cursor)?);
                 if !self.consume(cursor, TokenKind::Comma) {
                     break;
@@ -619,17 +625,42 @@ impl<'module, 'package> ModuleLowerer<'module, 'package> {
                 ));
             }
             TypeRefKind::Tuple(self.type_ref_list(&elements, start)?)
+        } else if self.consume_keyword(cursor, Keyword::Fn) {
+            self.expect(
+                cursor,
+                TokenKind::LeftParen,
+                "expected '(' after 'fn' in function type",
+            )?;
+            let mut parameters = Vec::new();
+            while self.peek_kind(cursor) != Some(TokenKind::RightParen) {
+                parameters.push(self.parse_type_ref(cursor)?);
+                if !self.consume(cursor, TokenKind::Comma) {
+                    break;
+                }
+            }
+            self.expect(
+                cursor,
+                TokenKind::RightParen,
+                "expected ')' after function type parameters",
+            )?;
+            let return_type = if self.consume(cursor, TokenKind::Arrow) {
+                Some(self.parse_type_ref(cursor)?)
+            } else {
+                None
+            };
+            TypeRefKind::Function {
+                parameters: self.type_ref_list(&parameters, start)?,
+                return_type,
+            }
         } else {
             let name_token = self.expect_identifier(cursor, "expected type name")?;
             let base = self.intern_token(name_token)?;
             if self.consume(cursor, TokenKind::LeftBracket) {
                 let mut arguments = Vec::new();
-                if self.peek_kind(cursor) != Some(TokenKind::RightBracket) {
-                    loop {
-                        arguments.push(self.parse_type_ref(cursor)?);
-                        if !self.consume(cursor, TokenKind::Comma) {
-                            break;
-                        }
+                while self.peek_kind(cursor) != Some(TokenKind::RightBracket) {
+                    arguments.push(self.parse_type_ref(cursor)?);
+                    if !self.consume(cursor, TokenKind::Comma) {
+                        break;
                     }
                 }
                 self.expect(
@@ -656,7 +687,7 @@ impl<'module, 'package> ModuleLowerer<'module, 'package> {
         self.alloc_type_ref(TypeRef { kind, origin })
     }
 
-    fn named_type(&mut self, name: &str, span: Span) -> LowerResult<TypeRefId> {
+    pub(super) fn named_type(&mut self, name: &str, span: Span) -> LowerResult<TypeRefId> {
         let symbol = self.intern(name, span)?;
         let origin = self.source_origin(span)?;
         self.alloc_type_ref(TypeRef {

@@ -42,6 +42,8 @@ impl<'m> Lowering<'m> {
                 let result = match (operator, ty) {
                     (UnaryOperator::Negate, t) if t.is_int() => builder.ins().ineg(value),
                     (UnaryOperator::Negate, cltypes::F64) => builder.ins().fneg(value),
+                    (UnaryOperator::Plus, t) if t.is_int() || t == cltypes::F64 => value,
+                    (UnaryOperator::BitNot, t) if t.is_int() => builder.ins().bnot(value),
                     (UnaryOperator::Not, cltypes::I8) => {
                         let one = builder.ins().iconst(cltypes::I8, 1);
                         builder.ins().bxor(value, one)
@@ -81,6 +83,12 @@ impl<'m> Lowering<'m> {
                         Some(TypeKind::Primitive(PrimitiveType::Bool)) => {
                             let f = self.import_ref(builder, IMP_BOOL_TO_STR);
                             let c = builder.ins().call(f, &[r]);
+                            builder.func.dfg.first_result(c)
+                        }
+                        Some(TypeKind::Primitive(PrimitiveType::Char)) => {
+                            let r64 = builder.ins().uextend(cltypes::I64, r);
+                            let f = self.import_ref(builder, IMP_CHR);
+                            let c = builder.ins().call(f, &[r64]);
                             builder.func.dfg.first_result(c)
                         }
                         _ => return Err(unsupported(inst.mir_id, "string concat with non-scalar")),
@@ -245,10 +253,25 @@ impl<'m> Lowering<'m> {
                                     builder
                                         .ins()
                                         .load(cltypes::I64, MemFlags::new(), capsule, 8);
-                                if param_tys.is_empty() {
-                                    // The zero-parameter capsule code
-                                    // is the task-code trampoline:
-                                    // (env) -> boxed I64.
+                                let zero = builder.ins().iconst(cltypes::I64, 0);
+                                let has_env = builder.ins().icmp(IntCC::NotEqual, env, zero);
+                                let mut user_args: Vec<Value> = Vec::with_capacity(args_ops.len());
+                                for operand in args_ops {
+                                    user_args.push(self.owned_value(inst, builder, operand)?);
+                                }
+                                let ret_cl = machine_type(inst.types, result_ty);
+                                let closure_block = builder.create_block();
+                                let fn_block = builder.create_block();
+                                let merge_block = builder.create_block();
+                                let merged =
+                                    ret_cl.map(|cl| builder.append_block_param(merge_block, cl));
+                                builder
+                                    .ins()
+                                    .brif(has_env, closure_block, &[], fn_block, &[]);
+
+                                builder.seal_block(closure_block);
+                                builder.switch_to_block(closure_block);
+                                let closure_res = if param_tys.is_empty() {
                                     let mut sig = self.module.make_signature();
                                     sig.params.push(AbiParam::new(cltypes::I64));
                                     sig.returns.push(AbiParam::new(cltypes::I64));
@@ -265,19 +288,49 @@ impl<'m> Lowering<'m> {
                                                 .expect("pre-scan checked the types"),
                                         ));
                                     }
-                                    if let Some(cl) = machine_type(inst.types, result_ty) {
+                                    if let Some(cl) = ret_cl {
                                         sig.returns.push(AbiParam::new(cl));
                                     }
                                     let sig_ref = builder.import_signature(sig);
-                                    let mut call_args: Vec<Value> = vec![env];
-                                    for operand in args_ops {
-                                        call_args.push(self.owned_value(inst, builder, operand)?);
-                                    }
+                                    let mut call_args: Vec<Value> =
+                                        Vec::with_capacity(1 + user_args.len());
+                                    call_args.push(env);
+                                    call_args.extend_from_slice(&user_args);
                                     let call =
                                         builder.ins().call_indirect(sig_ref, code, &call_args);
-                                    (machine_type(inst.types, result_ty).is_some())
-                                        .then(|| builder.func.dfg.first_result(call))
-                                }
+                                    ret_cl.map(|_| builder.func.dfg.first_result(call))
+                                };
+                                match closure_res {
+                                    Some(v) => builder.ins().jump(merge_block, &[v]),
+                                    None => builder.ins().jump(merge_block, &[]),
+                                };
+
+                                builder.seal_block(fn_block);
+                                builder.switch_to_block(fn_block);
+                                let fn_res = {
+                                    let mut sig = self.module.make_signature();
+                                    for param_ty in &param_tys {
+                                        sig.params.push(AbiParam::new(
+                                            machine_type(inst.types, *param_ty)
+                                                .expect("pre-scan checked the types"),
+                                        ));
+                                    }
+                                    if let Some(cl) = ret_cl {
+                                        sig.returns.push(AbiParam::new(cl));
+                                    }
+                                    let sig_ref = builder.import_signature(sig);
+                                    let call =
+                                        builder.ins().call_indirect(sig_ref, code, &user_args);
+                                    ret_cl.map(|_| builder.func.dfg.first_result(call))
+                                };
+                                match fn_res {
+                                    Some(v) => builder.ins().jump(merge_block, &[v]),
+                                    None => builder.ins().jump(merge_block, &[]),
+                                };
+
+                                builder.seal_block(merge_block);
+                                builder.switch_to_block(merge_block);
+                                merged
                             }
                             ValueClass::FunctionValue => {
                                 if matches!(inst.types.kind(result_ty), TypeKind::Task(_)) {
@@ -590,10 +643,20 @@ impl<'m> Lowering<'m> {
                 let capture_args = inst.program.operands(*captures);
                 let zero_params = user_parameters(inst.program, closure_fn).is_empty();
                 let collectible = self.shared_types.contains(&closure_fn.ty);
-                // The raw capture env (slots at 8*i) — NULL when the
-                // closure captures nothing.
+                // The raw capture env (slots at 8*i). Zero-capture closures
+                // with parameters allocate a tiny empty ARC env so callers
+                // can distinguish a closure capsule (env != NULL) from a
+                // materialized bare function value (env == NULL).
                 let raw_env = if capture_args.is_empty() {
-                    builder.ins().iconst(cltypes::I64, 0)
+                    if zero_params {
+                        builder.ins().iconst(cltypes::I64, 0)
+                    } else {
+                        let alloc_ref = self.import_ref(builder, IMP_ARC_ALLOC);
+                        let sz = builder.ins().iconst(cltypes::I64, 8);
+                        let null_dtor = builder.ins().iconst(cltypes::I64, 0);
+                        let call = builder.ins().call(alloc_ref, &[sz, null_dtor]);
+                        builder.func.dfg.first_result(call)
+                    }
                 } else {
                     let dtor_ref = self
                         .module

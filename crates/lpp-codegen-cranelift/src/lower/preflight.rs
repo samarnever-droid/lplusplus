@@ -579,6 +579,7 @@ fn check_binary(
             | BinaryOperator::Multiply
             | BinaryOperator::Divide
             | BinaryOperator::Modulo
+            | BinaryOperator::Power
     );
     let bitwise = matches!(
         operator,

@@ -2105,3 +2105,57 @@ fn negative_try_assignment_safety_and_cast_errors_cover_all_variants() {
     .unwrap_err();
     assert!(matches!(cycle_err, GraphError::ImportCycle(_)));
 }
+
+#[test]
+fn function_types_generic_aliases_ternary_and_unary_ops_typecheck() {
+    let ok_src = concat!(
+        "type Pair[T,] = (T, T,)\n",
+        "type BinOp[T] = fn(T, T,) -> T\n",
+        "def add(a: Int, b: Int) -> Int:\n",
+        "    return a + b\n",
+        "def run(op: BinOp[Int], p: Pair[Int], cond: Bool) -> Int:\n",
+        "    mut v := ~0 if cond else +op(p.0, p.1)\n",
+        "    v &= 0o77\n",
+        "    v **= 2\n",
+        "    b: U8 = 255u8\n",
+        "    s: I32 = 42_i32\n",
+        "    f: Float = 10f64\n",
+        "    return v + (b as Int) + (s as Int) + (f as Int)\n",
+    );
+    let (_hir, _out) = check_ok(ok_src);
+
+    assert!(matches!(
+        check_err("type Pair[T] = (T, T)\ndef f(x: Pair) -> Int:\n    return 0\n"),
+        TypeError::ArityMismatch {
+            expected: 1,
+            actual: 0
+        }
+    ));
+    assert!(matches!(
+        check_err("type Pair[T] = (T, T)\ndef f(x: Pair[Int, Str]) -> Int:\n    return 0\n"),
+        TypeError::ArityMismatch {
+            expected: 1,
+            actual: 2
+        }
+    ));
+    assert!(matches!(
+        check_err("type Loop[T] = Loop[T]\ndef f(x: Loop[Int]) -> Int:\n    return 0\n"),
+        TypeError::TypeAliasCycle { .. }
+    ));
+    assert!(matches!(
+        check_err("def f() -> Int:\n    return ~3.5\n"),
+        TypeError::Mismatch { .. }
+    ));
+    assert!(matches!(
+        check_err("def f() -> Str:\n    return +\"abc\"\n"),
+        TypeError::Mismatch { .. }
+    ));
+    assert!(matches!(
+        check_err("def f() -> Int:\n    return 1 if 42 else 2\n"),
+        TypeError::Mismatch { .. }
+    ));
+    assert!(matches!(
+        check_err("def f() -> Int:\n    return 1 if true else \"bad\"\n"),
+        TypeError::Mismatch { .. }
+    ));
+}

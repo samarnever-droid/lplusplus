@@ -200,15 +200,21 @@ const char *dlerror(void) { return "dlerror not implemented on Windows"; }
 int64_t lpp_file_open(const char *path, int64_t flags) {
     if (!path) return -1;
 #if defined(_WIN32)
-    DWORD access = GENERIC_READ | GENERIC_WRITE;
-    DWORD creation = OPEN_ALWAYS;
+    DWORD access = (flags & 8) && !(flags & 6) ? GENERIC_READ : (GENERIC_READ | GENERIC_WRITE);
+    DWORD creation = (flags & 2) ? CREATE_NEW
+                   : (flags & 4) ? CREATE_ALWAYS
+                   : (flags & 8) ? OPEN_EXISTING
+                                 : OPEN_ALWAYS;
     DWORD attr = FILE_ATTRIBUTE_NORMAL;
     if (flags & 1) attr |= FILE_FLAG_NO_BUFFERING | FILE_FLAG_WRITE_THROUGH;
     HANDLE h = CreateFileA(path, access, FILE_SHARE_READ | FILE_SHARE_WRITE, 0, creation, attr, 0);
     if (h == INVALID_HANDLE_VALUE) return -1;
     return (int64_t)(intptr_t)h;
 #else
-    int f = O_RDWR | O_CREAT;
+    int f = (flags & 2) ? (O_RDWR | O_CREAT | O_EXCL)
+          : (flags & 4) ? (O_RDWR | O_CREAT | O_TRUNC)
+          : (flags & 8) ? O_RDONLY
+                        : (O_RDWR | O_CREAT);
     if (flags & 1) f |= O_SYNC;
     int fd = open(path, f, 0644);
     return (int64_t)fd;

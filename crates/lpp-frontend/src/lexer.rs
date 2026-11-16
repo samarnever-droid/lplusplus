@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use lpp_common::{Diagnostic, FileId, Span};
 
-use crate::literal::{LiteralError, scan_character, scan_string};
+use crate::literal::{LiteralError, scan_character, scan_raw_string, scan_string};
 use crate::token::{Keyword, Token, TokenKind};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -109,8 +109,7 @@ impl<'a> Lexer<'a> {
             self.emit(TokenKind::Whitespace, start, self.offset);
         }
 
-        let blank_or_comment = matches!(self.peek(), None | Some('\r' | '\n' | '#'))
-            || self.input[self.offset..].starts_with("//");
+        let blank_or_comment = self.is_blank_or_comment_at(self.offset);
         if self.delimiter_depth > 0 || blank_or_comment {
             return Ok(());
         }
@@ -159,9 +158,14 @@ impl<'a> Lexer<'a> {
                 self.bump();
                 self.scan_comment(start);
             }
+            '/' if self.peek() == Some('*') => {
+                self.bump();
+                self.scan_block_comment(start)?;
+            }
             '\'' => self.scan_character_token(start)?,
             '"' => self.scan_string_token(start, false)?,
             'f' if self.peek() == Some('"') => self.scan_string_token(start, true)?,
+            'r' if self.peek() == Some('"') => self.scan_raw_string_token(start)?,
             value if value.is_ascii_digit() => self.scan_number(start, value)?,
             value if value.is_alphabetic() || value == '_' => self.scan_identifier(start),
             '(' => self.open(TokenKind::LeftParen, start),
@@ -173,8 +177,22 @@ impl<'a> Lexer<'a> {
             '!' => self.either(start, '=', TokenKind::NotEqual, TokenKind::Not),
             '+' => self.either(start, '=', TokenKind::PlusEqual, TokenKind::Plus),
             '%' => self.either(start, '=', TokenKind::PercentEqual, TokenKind::Percent),
-            '&' => self.either(start, '&', TokenKind::LogicalAnd, TokenKind::BitAnd),
-            '|' => self.either(start, '|', TokenKind::LogicalOr, TokenKind::BitOr),
+            '&' => self.multi(
+                start,
+                '&',
+                '=',
+                TokenKind::LogicalAnd,
+                TokenKind::BitAndEqual,
+                TokenKind::BitAnd,
+            ),
+            '|' => self.multi(
+                start,
+                '|',
+                '=',
+                TokenKind::LogicalOr,
+                TokenKind::BitOrEqual,
+                TokenKind::BitOr,
+            ),
             '-' => self.multi(
                 start,
                 '>',
@@ -183,25 +201,33 @@ impl<'a> Lexer<'a> {
                 TokenKind::MinusEqual,
                 TokenKind::Minus,
             ),
-            '*' => self.either(start, '=', TokenKind::StarEqual, TokenKind::Star),
-            '/' => self.either(start, '=', TokenKind::SlashEqual, TokenKind::Slash),
-            '<' => self.multi(
+            '*' => self.shift_or_compare(
                 start,
-                '=',
+                '*',
+                TokenKind::StarEqual,
+                TokenKind::StarStarEqual,
+                TokenKind::StarStar,
+                TokenKind::Star,
+            ),
+            '/' => self.either(start, '=', TokenKind::SlashEqual, TokenKind::Slash),
+            '<' => self.shift_or_compare(
+                start,
                 '<',
                 TokenKind::LessEqual,
+                TokenKind::ShiftLeftEqual,
                 TokenKind::ShiftLeft,
                 TokenKind::Less,
             ),
-            '>' => self.multi(
+            '>' => self.shift_or_compare(
                 start,
-                '=',
                 '>',
                 TokenKind::GreaterEqual,
+                TokenKind::ShiftRightEqual,
                 TokenKind::ShiftRight,
                 TokenKind::Greater,
             ),
-            '^' => self.emit(TokenKind::BitXor, start, self.offset),
+            '^' => self.either(start, '=', TokenKind::BitXorEqual, TokenKind::BitXor),
+            '~' => self.emit(TokenKind::BitNot, start, self.offset),
             '?' => self.emit(TokenKind::Question, start, self.offset),
             ',' => self.emit(TokenKind::Comma, start, self.offset),
             '@' => self.emit(TokenKind::At, start, self.offset),
@@ -238,6 +264,65 @@ impl<'a> Lexer<'a> {
         self.emit(TokenKind::Comment, start, self.offset);
     }
 
+    fn scan_block_comment(&mut self, start: usize) -> Result<(), Vec<Diagnostic>> {
+        let mut depth = 1usize;
+        while depth > 0 {
+            if self.input[self.offset..].starts_with("/*") {
+                self.offset += 2;
+                depth += 1;
+            } else if self.input[self.offset..].starts_with("*/") {
+                self.offset += 2;
+                depth -= 1;
+            } else if self.bump().is_none() {
+                return self.fail(
+                    "E1004",
+                    "unterminated block comment",
+                    start,
+                    (start + 2).min(self.input.len()),
+                );
+            }
+        }
+        self.emit(TokenKind::Comment, start, self.offset);
+        Ok(())
+    }
+
+    fn is_blank_or_comment_at(&self, mut pos: usize) -> bool {
+        let bytes = self.input.as_bytes();
+        loop {
+            while pos < bytes.len() && bytes[pos] == b' ' {
+                pos += 1;
+            }
+            if pos >= bytes.len() || matches!(bytes[pos], b'\r' | b'\n' | b'#') {
+                return true;
+            }
+            if self.input[pos..].starts_with("//") {
+                return true;
+            }
+            if self.input[pos..].starts_with("/*") {
+                pos += 2;
+                let mut depth = 1usize;
+                while depth > 0 && pos < bytes.len() {
+                    if self.input[pos..].starts_with("/*") {
+                        pos += 2;
+                        depth += 1;
+                    } else if self.input[pos..].starts_with("*/") {
+                        pos += 2;
+                        depth -= 1;
+                    } else if matches!(bytes[pos], b'\r' | b'\n') {
+                        return true;
+                    } else {
+                        pos += 1;
+                    }
+                }
+                if depth > 0 {
+                    return true;
+                }
+                continue;
+            }
+            return false;
+        }
+    }
+
     fn scan_character_token(&mut self, start: usize) -> Result<(), Vec<Diagnostic>> {
         match scan_character(self.input, start) {
             Ok(end) => {
@@ -268,6 +353,17 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    fn scan_raw_string_token(&mut self, start: usize) -> Result<(), Vec<Diagnostic>> {
+        match scan_raw_string(self.input, start) {
+            Ok(end) => {
+                self.offset = end;
+                self.emit(TokenKind::RawString, start, end);
+                Ok(())
+            }
+            Err(error) => self.literal_error(error),
+        }
+    }
+
     fn literal_error(&self, error: LiteralError) -> Result<(), Vec<Diagnostic>> {
         self.fail(
             "E1004",
@@ -278,26 +374,45 @@ impl<'a> Lexer<'a> {
     }
 
     fn scan_number(&mut self, start: usize, first: char) -> Result<(), Vec<Diagnostic>> {
-        if first == '0' && matches!(self.peek(), Some('x' | 'X' | 'b' | 'B')) {
+        if first == '0' && matches!(self.peek(), Some('x' | 'X' | 'o' | 'O' | 'b' | 'B')) {
             let radix_marker = self.bump().expect("checked radix marker");
-            let radix = if matches!(radix_marker, 'x' | 'X') {
-                16
-            } else {
-                2
+            let radix = match radix_marker {
+                'x' | 'X' => 16,
+                'o' | 'O' => 8,
+                _ => 2,
             };
             let digits_start = self.offset;
             while self.peek().is_some_and(|value| {
                 value == '_'
                     || (radix == 16 && value.is_ascii_hexdigit())
+                    || (radix == 8 && matches!(value, '0'..='7'))
                     || (radix == 2 && matches!(value, '0' | '1'))
             }) {
                 self.bump();
             }
             let digits = self.input[digits_start..self.offset].replace('_', "");
-            if digits.is_empty() || i64::from_str_radix(&digits, radix).is_err() {
+            let Ok(value) = i64::from_str_radix(&digits, radix) else {
                 return self.fail(
                     "E1005",
                     "integer literal is out of range",
+                    start,
+                    self.offset,
+                );
+            };
+            if digits.is_empty() {
+                return self.fail(
+                    "E1005",
+                    "integer literal is out of range",
+                    start,
+                    self.offset,
+                );
+            }
+            if let Some(suffix) = self.scan_numeric_suffix()
+                && !int_suffix_in_range(suffix, value)
+            {
+                return self.fail(
+                    "E1005",
+                    "invalid or out-of-range integer type suffix",
                     start,
                     self.offset,
                 );
@@ -320,9 +435,68 @@ impl<'a> Lexer<'a> {
                 break;
             }
         }
-        let number = self.input[start..self.offset].replace('_', "");
+        if matches!(self.peek(), Some('e' | 'E')) {
+            float = true;
+            self.bump();
+            if matches!(self.peek(), Some('+' | '-')) {
+                self.bump();
+            }
+            let mut exponent_digits = 0usize;
+            while let Some(value) = self.peek() {
+                if value.is_ascii_digit() {
+                    exponent_digits += 1;
+                    self.bump();
+                } else if value == '_' {
+                    self.bump();
+                } else {
+                    break;
+                }
+            }
+            if exponent_digits == 0 {
+                return self.fail(
+                    "E1005",
+                    "invalid scientific notation exponent",
+                    start,
+                    self.offset,
+                );
+            }
+        }
+        let digits_end = self.offset;
+        if let Some(suffix) = self.scan_numeric_suffix() {
+            if suffix == "f64" {
+                float = true;
+            } else if float {
+                return self.fail(
+                    "E1005",
+                    "invalid float literal suffix; expected 'f64'",
+                    start,
+                    self.offset,
+                );
+            } else {
+                let number = self.input[start..digits_end].replace('_', "");
+                let Ok(value) = number.parse::<i64>() else {
+                    return self.fail(
+                        "E1005",
+                        "numeric literal is out of range",
+                        start,
+                        self.offset,
+                    );
+                };
+                if !int_suffix_in_range(suffix, value) {
+                    return self.fail(
+                        "E1005",
+                        "invalid or out-of-range integer type suffix",
+                        start,
+                        self.offset,
+                    );
+                }
+                self.emit(TokenKind::Integer, start, self.offset);
+                return Ok(());
+            }
+        }
+        let number = self.input[start..digits_end].replace('_', "");
         let valid = if float {
-            number.parse::<f64>().is_ok()
+            number.parse::<f64>().is_ok_and(f64::is_finite)
         } else {
             number.parse::<i64>().is_ok()
         };
@@ -422,6 +596,31 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    fn shift_or_compare(
+        &mut self,
+        start: usize,
+        shift_char: char,
+        compare_equal: TokenKind,
+        shift_equal: TokenKind,
+        shift: TokenKind,
+        single: TokenKind,
+    ) {
+        if self.peek() == Some('=') {
+            self.bump();
+            self.emit(compare_equal, start, self.offset);
+        } else if self.peek() == Some(shift_char) {
+            self.bump();
+            if self.peek() == Some('=') {
+                self.bump();
+                self.emit(shift_equal, start, self.offset);
+            } else {
+                self.emit(shift, start, self.offset);
+            }
+        } else {
+            self.emit(single, start, self.offset);
+        }
+    }
+
     fn emit(&mut self, kind: TokenKind, start: usize, end: usize) {
         self.tokens.push(Token {
             kind,
@@ -473,6 +672,34 @@ impl<'a> Lexer<'a> {
         let value = self.peek()?;
         self.offset += value.len_utf8();
         Some(value)
+    }
+
+    fn scan_numeric_suffix(&mut self) -> Option<&'a str> {
+        if !self.peek().is_some_and(|c| c.is_ascii_alphabetic()) {
+            return None;
+        }
+        let suffix_start = self.offset;
+        while self
+            .peek()
+            .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
+        {
+            self.bump();
+        }
+        Some(&self.input[suffix_start..self.offset])
+    }
+}
+
+fn int_suffix_in_range(suffix: &str, value: i64) -> bool {
+    match suffix {
+        "u8" => value >= 0 && value <= i64::from(u8::MAX),
+        "u16" => value >= 0 && value <= i64::from(u16::MAX),
+        "u32" => value >= 0 && value <= i64::from(u32::MAX),
+        "u64" | "usize" => value >= 0,
+        "i8" => value <= i64::from(i8::MAX),
+        "i16" => value <= i64::from(i16::MAX),
+        "i32" => value <= i64::from(i32::MAX),
+        "i64" | "isize" => true,
+        _ => false,
     }
 }
 

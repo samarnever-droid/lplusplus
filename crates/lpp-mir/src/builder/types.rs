@@ -304,6 +304,30 @@ impl<'input> MirBuilder<'input> {
         self.intern_string(decoded, origin)
     }
 
+    pub(super) fn materialize_raw_string(
+        &mut self,
+        span: Span,
+        origin: OriginId,
+    ) -> Result<MirStringId, MirBuildError> {
+        let text = self
+            .source_text(span)
+            .ok_or_else(|| self.error(origin, MirBuildErrorKind::InvalidLiteral))?;
+        let body = text
+            .strip_prefix('r')
+            .ok_or_else(|| self.error(origin, MirBuildErrorKind::InvalidLiteral))?;
+        let inner = if body.starts_with("\"\"\"") {
+            body.strip_prefix("\"\"\"")
+                .and_then(|inner| inner.strip_suffix("\"\"\""))
+        } else {
+            body.strip_prefix('\"')
+                .and_then(|inner| inner.strip_suffix('\"'))
+        };
+        let Some(inner) = inner else {
+            return Err(self.error(origin, MirBuildErrorKind::InvalidLiteral));
+        };
+        self.intern_string(inner.to_owned(), origin)
+    }
+
     pub(super) fn materialize_character(
         &self,
         span: Span,

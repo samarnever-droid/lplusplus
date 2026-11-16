@@ -115,6 +115,15 @@ impl<'input> MirBuilder<'input> {
                 self.walk_expression(base, visit);
                 self.walk_expression(index, visit);
             }
+            ExpressionKind::Conditional {
+                condition,
+                then_expr,
+                else_expr,
+            } => {
+                self.walk_expression(condition, visit);
+                self.walk_expression(then_expr, visit);
+                self.walk_expression(else_expr, visit);
+            }
             ExpressionKind::Try(inner)
             | ExpressionKind::Await(inner)
             | ExpressionKind::Spawn(inner) => self.walk_expression(inner, visit),
@@ -272,6 +281,15 @@ impl<'input> MirBuilder<'input> {
             ExpressionKind::Index { base, index } => {
                 self.mark_write_captures_expression(base, enclosing_params);
                 self.mark_write_captures_expression(index, enclosing_params);
+            }
+            ExpressionKind::Conditional {
+                condition,
+                then_expr,
+                else_expr,
+            } => {
+                self.mark_write_captures_expression(condition, enclosing_params);
+                self.mark_write_captures_expression(then_expr, enclosing_params);
+                self.mark_write_captures_expression(else_expr, enclosing_params);
             }
             ExpressionKind::Try(inner)
             | ExpressionKind::Await(inner)

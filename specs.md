@@ -1,7 +1,7 @@
 # L++ language and toolchain specification
 
-- **Status:** source-grounded description of the implementation in this **v0.3.1** (`v0.3-dev`) working tree, not a promise that every construct works on every backend.
-- **Audit date:** 2026-11-15. The compact capability inventory in `docs/CURRENT_CAPABILITIES.md` and release notes in `docs/release/V0.3.1.md` track the same `v0.3.1` snapshot.
+- **Status:** source-grounded description of the implementation in this **v0.3.2** (`v0.3-dev`) working tree, not a promise that every construct works on every backend.
+- **Audit date:** 2026-11-15. The compact capability inventory in `docs/CURRENT_CAPABILITIES.md` and release notes in `docs/release/V0.3.1.md` track the same `v0.3.2` snapshot.
 - **Scope:** the L++ source language, compiler pipeline, runtime/ABI, diagnostics, developer tools, Keel package manager, backend targets, and known limitations.
 
 This document describes what the current implementation parses, type-checks, lowers, and supports on the named backend. It is deliberately not a claim of language-version stability, complete cross-backend parity, data-race freedom, or production readiness for experimental features. A construct accepted by the lexer/parser is not necessarily accepted by type checking or by every code generator. Where support differs, this specification says so.
@@ -70,43 +70,46 @@ The three backends have different surfaces. Consult [§8](#8-compiler-pipeline-t
 
 ### 2.2 Comments and identifiers
 
-Both `#` and `//` begin a line comment outside a string or character literal. There is no block-comment syntax. Because `//` begins a comment, it is not an integer floor-division operator.
+Both `#` and `//` begin a line comment outside a string or character literal, and `/* ... */` delimits nested block comments. Because `//` begins a comment, it is not an integer floor-division operator.
 
-An identifier starts with a Unicode alphabetic character or `_`; later characters may also be Unicode alphanumeric characters. Formatted-string interpolation is narrower: it accepts only one ASCII identifier (`[A-Za-z_][A-Za-z0-9_]*`).
+An identifier starts with a Unicode alphabetic character or `_`; later characters may also be Unicode alphanumeric characters.
 
 Reserved declaration/control keywords include `as`, `async`, `await`, `break`, `const`, `continue`, `def`, `elif`, `else`, `enum`, `extern`, `fn`, `for`, `from`, `if`, `impl`, `import`, `in`, `match`, `mut`, `pub`, `return`, `spawn`, `struct`, `trait`, `type`, and `while`. `true` and `false` are boolean literals. `and`, `or`, and `not` are operators rather than declaration keywords.
 
 ### 2.3 Numeric and literal forms
 
-- Integers are signed 64-bit literals. Decimal, `0x`/`0X` hexadecimal, and `0b`/`0B` binary forms are recognized; underscores may be used as digit separators. Integer literals outside the `i64` range are rejected.
-- Floats are decimal digits with a decimal point followed by digits and are stored as `f64`. Exponent notation and numeric suffixes are not part of the current lexer grammar.
-- Ordinary strings use double quotes; triple-double-quoted strings are recognized. Character literals use single quotes and must contain exactly one character (or one supported escape).
-- Supported escapes are `\n`, `\r`, `\t`, `\0`, `\\`, `\"`, `\'`, and `\xNN` (two hexadecimal digits). Unknown or unterminated escapes are errors.
-- Formatted strings use `f"..."`. Each unescaped `{name}` inserts one simple ASCII identifier; `\{` and `\}` escape literal braces. Interpolations are not arbitrary expressions. The current implementation desugars the string into concatenation. Do not rely on triple-quoted formatted strings.
+- Integers are signed 64-bit literals by default (`Int`). Decimal, `0x`/`0X` hexadecimal, `0o`/`0O` octal, and `0b`/`0B` binary forms are recognized; underscores may be used as digit separators, and optional integer suffixes (`u8`, `u16`, `u32`, `u64`, `usize`, `i8`, `i16`, `i32`, `i64`, `isize`) are supported and range-checked.
+- Floats support decimal digits (`1.5`), scientific/exponent notation (`1e5`, `1.5e-3`, `2.5E+10`), and optional `f64` suffix (`10f64`, `1.5_f64`), stored as `f64` and required to be finite.
+- Ordinary strings use double quotes; triple-double-quoted strings (`"""..."""`) and raw strings (`r"..."`, `r"""..."""`) are recognized. Character literals use single quotes and must contain exactly one character (or one supported escape).
+- Supported escapes are `\n`, `\r`, `\t`, `\0`, `\\`, `\"`, `\'`, `\xNN` (two hexadecimal digits), and `\u{...}` (1 to 6 hexadecimal digits for a Unicode scalar value). Unknown or unterminated escapes are errors.
+- Formatted strings use `f"..."` and `f"""..."""`. Each unescaped `{expr}` interpolates an expression in scope; `\{` and `\}` escape literal braces. The current implementation desugars formatted strings into concatenation.
 
 ### 2.4 Operators and punctuation
 
 The source lexer recognizes:
 
-- Assignment/binding punctuation: `:=`, `=`, `+=`, `-=`, `*=`, `/=`, `%=`.
+- Assignment/binding punctuation: `:=`, `=`, `+=`, `-=`, `*=`, `**=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`.
 - Comparisons: `==`, `!=`, `<`, `>`, `<=`, `>=`.
 - Logical operators: `and`/`&&`, `or`/`||`, `not`/`!`.
-- Arithmetic: `+`, `-`, `*`, `/`, `%`.
-- Bitwise/shift: `&`, `|`, `^`, `<<`, `>>`.
+- Arithmetic: `+`, `-`, `*`, `/`, `%`, `**`.
+- Bitwise/shift: `~`, `&`, `|`, `^`, `<<`, `>>`.
+- Conditional expression: `then_expr if condition else else_expr`.
 - Postfix/structural forms: calls `(...)`, indexing `[...]`, field access `.name`, numeric tuple projection `.0`, async wait `.await`, propagation `?`, and generic-call forms described below.
 
-There is no `**` exponentiation operator. `=` is not equality; equality is `==`. `:=` introduces an inferred local binding.
+`=` is not equality; equality is `==`. `:=` introduces an inferred local binding.
 
 The current expression parser uses these precedence groups (highest to lowest; operators in one group associate left-to-right):
 
 | Precedence | Forms |
 |---|---|
 | Postfix | call, field/tuple projection, index, `.await`, `?`, explicit generic call |
-| Unary | `-`, `not`, `!` |
+| Unary | `-`, `+`, `~`, `not`, `!` |
+| 5 | `**` |
 | 4 | `*`, `/`, `%` |
 | 3 | `+`, `-`, `&`, `|`, `^`, `<<`, `>>` |
 | 2 | `==`, `!=`, `<`, `>`, `<=`, `>=` |
 | 1 | `and`/`&&`, `or`/`||` (same precedence) |
+| Lowest | `then_expr if condition else else_expr` (right-associative) |
 
 The grouping is an implementation fact, including the shared precedence of `and` and `or`, and of arithmetic-additive/bitwise/shift operators; it should not be silently “corrected” to another language’s conventional precedence.
 
@@ -174,7 +177,7 @@ pub def answer() -> Int:
     return ANSWER
 ```
 
-Constants and type aliases use `=`. The current type-alias syntax is not generic. Attributes are recorded as simple `@identifier` metadata; the parser does not provide a general attribute argument grammar. `pub` is parsed and carried through HIR, but the current selective-import resolution path does not enforce a public/private access check. Do not use `pub` as a security boundary.
+Constants and type aliases use `=`; type aliases may also be generic (`type Pair[T] = (T, T)`). Attributes are recorded as simple `@identifier` metadata; the parser does not provide a general attribute argument grammar. `pub` is parsed and carried through HIR, but the current selective-import resolution path does not enforce a public/private access check. Do not use `pub` as a security boundary.
 
 ### 3.4 Imports and modules
 
@@ -190,7 +193,7 @@ The single-file CLI compiles one entry file and discovers its imports; passing m
 
 ### 3.5 Type syntax
 
-The source type grammar includes named types, applied types `Name[T, U]`, and tuple types `(T, U, ...)`. Tuple types and tuple values have arity 2–4. A parenthesized single expression is grouping, not a one-element tuple; empty tuple expressions are rejected.
+The source type grammar includes named types, applied types `Name[T, U]`, tuple types `(T, U, ...)` (up to 16 elements), and function types `fn(A, B) -> R` (or `fn(A, B)` returning `Void`), with optional trailing commas. A parenthesized single expression is grouping, not a one-element tuple; empty tuple expressions are rejected.
 
 The main built-in types are:
 
@@ -212,7 +215,7 @@ The main built-in types are:
 | `(T, U, ...)` | Fixed tuple, arity 2–4. |
 | `VectorI64x2` | Experimental two-lane integer vector; operations/backend coverage are limited. |
 
-Source-defined nominal types, generic parameters, and inferred function/closure values are also supported. Function types exist in the semantic model, but there is no general standalone function-type annotation grammar described here. Empty list literals are permitted when context supplies an element type; otherwise inference may be unable to determine it.
+Source-defined nominal types, generic parameters, function type annotations, and inferred function/closure values are supported. Empty list literals are permitted when context supplies an element type; otherwise inference may be unable to determine it.
 
 ## 4. Statements and expressions
 
@@ -260,7 +263,7 @@ Statements include `return [expr]`, `break`, and `continue`. `if`/`elif`/`else`,
 - `range(end)` starts at 0, step 1.
 - `range(start, end)` uses step 1.
 - `range(start, end, step)` uses the supplied step.
-- The upper bound is exclusive (`counter < end`); bounds and step are evaluated once. A negative step does not provide the usual descending-range semantics in the current lowering.
+- The upper bound is exclusive (`counter < end` for positive step, `counter > end` for negative step); bounds and step are evaluated once.
 - `range` is not a general first-class runtime function. The special form accepts 1–3 arguments.
 
 ### 4.3 Expressions, closures, tasks, and propagation
@@ -271,7 +274,7 @@ Expressions include literals, names, unary/binary operations, calls, list/tuple 
 - `spawn expression` schedules a spawned closure/callback through the host thread path where available. It is separate from `async`/`Task` and is not supported by freestanding minimal runtimes.
 - Await is postfix: `task.await` or `make_task().await`; it is intended for `async def` bodies.
 - `value?` propagates an enum residual from a function. The operand’s enum must have its success variant first with exactly one payload. The enclosing function must return the same enum definition, and residual payload types must be compatible. This is a narrow enum convention, not a built-in exception system or a general `Result` constraint.
-- Formatted strings are `f"...{name}..."`; an interpolation is one identifier, not an arbitrary expression. The current checker explicitly supports string concatenation/stringification of `Int`, `Float`, and `Bool` interpolation values. Do not assume all types, including `Char`, can be interpolated.
+- Formatted strings are `f"...{expr}..."`; `\{` and `\}` escape literal braces. String `+` concatenates with `Str`, `Int`, `Float`, `Bool`, and `Char` right operands across all backends.
 - Tuple access accepts a constant numeric projection such as `pair.0`; tuple indices must be static and in range. Ordinary list/string indexing uses `[...]`.
 
 ## 5. Type system and runtime semantics

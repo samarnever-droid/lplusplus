@@ -129,6 +129,9 @@ pub(crate) fn core_import_sig(name: &str) -> ImportSig {
         IMP_INT_TO_STR => sig(&[Val::I64], Some(Val::Ptr)),
         IMP_FLOAT_TO_STR => sig(&[Val::F64], Some(Val::Ptr)),
         IMP_BOOL_TO_STR => sig(&[Val::I8], Some(Val::Ptr)),
+        "lpp_chr" => sig(&[Val::I64], Some(Val::Ptr)),
+        "lpp_pow" => sig(&[Val::F64, Val::F64], Some(Val::F64)),
+        "lpp_int_pow" => sig(&[Val::I64, Val::I64], Some(Val::I64)),
         "lpp_u64_to_str" => sig(&[Val::I64], Some(Val::Ptr)),
         IMP_CLOSURE_DESTROY => sig(&[Val::Ptr], None),
         IMP_TUPLE_ALLOC => sig(&[Val::I64, Val::I64, Val::I64], Some(Val::Ptr)),
@@ -548,6 +551,7 @@ fn scan_rvalue(
                     Some(TypeKind::Primitive(PrimitiveType::Bool)) => {
                         plan.ensure_import(IMP_BOOL_TO_STR)
                     }
+                    Some(TypeKind::Primitive(PrimitiveType::Char)) => plan.ensure_import("lpp_chr"),
                     _ => {}
                 }
             } else if matches!(
@@ -562,6 +566,12 @@ fn scan_rvalue(
             ) && l_ty != Some(TypeKind::Primitive(PrimitiveType::Float))
             {
                 plan.ensure_import(IMP_PANIC_DIV_ZERO);
+            } else if *operator == lpp_mir::BinaryOperator::Power {
+                if l_ty == Some(TypeKind::Primitive(PrimitiveType::Float)) {
+                    plan.ensure_import("lpp_pow");
+                } else {
+                    plan.ensure_import("lpp_int_pow");
+                }
             }
         }
         Rvalue::ExternalCall { function, .. } => {

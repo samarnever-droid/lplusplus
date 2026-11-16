@@ -274,7 +274,9 @@ impl<'hir> TypeChecker<'hir> {
             ExpressionKind::Literal(literal) => match literal {
                 Literal::Integer(_) => self.interner.primitive(PrimitiveType::Int),
                 Literal::FloatBits(_) => self.interner.primitive(PrimitiveType::Float),
-                Literal::String { .. } => self.interner.primitive(PrimitiveType::String),
+                Literal::String { .. } | Literal::RawString(_) => {
+                    self.interner.primitive(PrimitiveType::String)
+                }
                 Literal::Character(_) => self.interner.primitive(PrimitiveType::Char),
                 Literal::Bool(_) => self.interner.primitive(PrimitiveType::Bool),
             },
@@ -285,6 +287,54 @@ impl<'hir> TypeChecker<'hir> {
                 let operand = self.infer_expression(operand, parameters)?;
                 match operator {
                     UnaryOperator::Negate => operand,
+                    UnaryOperator::Plus => {
+                        let resolved = self
+                            .inference
+                            .resolve(&self.interner, operand, &mut self.budget)
+                            .ok();
+                        if let Some(ty) = resolved {
+                            match self.interner.kind(ty) {
+                                TypeKind::Primitive(p)
+                                    if is_numeric_cast_primitive(p)
+                                        && !matches!(
+                                            p,
+                                            PrimitiveType::Bool | PrimitiveType::Char
+                                        ) => {}
+                                TypeKind::InferenceVariable(_)
+                                | TypeKind::GenericParameter(_)
+                                | TypeKind::Error => {}
+                                _ => {
+                                    let int = self.interner.primitive(PrimitiveType::Int);
+                                    self.unify(int, ty, expression.origin)?;
+                                }
+                            }
+                        }
+                        operand
+                    }
+                    UnaryOperator::BitNot => {
+                        let resolved = self
+                            .inference
+                            .resolve(&self.interner, operand, &mut self.budget)
+                            .ok();
+                        if let Some(ty) = resolved {
+                            match self.interner.kind(ty) {
+                                TypeKind::Primitive(p)
+                                    if is_integer_cast_primitive(p)
+                                        && !matches!(
+                                            p,
+                                            PrimitiveType::Bool | PrimitiveType::Char
+                                        ) => {}
+                                TypeKind::InferenceVariable(_)
+                                | TypeKind::GenericParameter(_)
+                                | TypeKind::Error => {}
+                                _ => {
+                                    let int = self.interner.primitive(PrimitiveType::Int);
+                                    self.unify(int, ty, expression.origin)?;
+                                }
+                            }
+                        }
+                        operand
+                    }
                     UnaryOperator::Not => self.interner.primitive(PrimitiveType::Bool),
                 }
             }
@@ -315,6 +365,7 @@ impl<'hir> TypeChecker<'hir> {
                     Some(ty) if ty == int
                         || ty == self.interner.primitive(PrimitiveType::Float)
                         || ty == bool_
+                        || ty == self.interner.primitive(PrimitiveType::Char)
                 );
                 let bool_int_eq = matches!(
                     operator,
@@ -452,6 +503,19 @@ impl<'hir> TypeChecker<'hir> {
                     ));
                 }
                 to
+            }
+            ExpressionKind::Conditional {
+                condition,
+                then_expr,
+                else_expr,
+            } => {
+                let condition_ty = self.infer_expression(condition, parameters)?;
+                let bool_ = self.interner.primitive(PrimitiveType::Bool);
+                self.unify(bool_, condition_ty, expression.origin)?;
+                let then_ty = self.infer_expression(then_expr, parameters)?;
+                let else_ty = self.infer_expression(else_expr, parameters)?;
+                self.unify(then_ty, else_ty, expression.origin)?;
+                then_ty
             }
             ExpressionKind::Try(inner) => {
                 self.infer_try_expression(expression_id, inner, parameters, expression.origin)?

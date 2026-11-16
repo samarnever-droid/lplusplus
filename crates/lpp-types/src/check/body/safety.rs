@@ -213,6 +213,15 @@ impl<'hir> TypeChecker<'hir> {
                     ));
                 }
             }
+            ExpressionKind::Conditional {
+                condition,
+                then_expr,
+                else_expr,
+            } => {
+                self.validate_expression_safety(condition, in_async, in_unsafe, closure_scope)?;
+                self.validate_expression_safety(then_expr, in_async, in_unsafe, closure_scope)?;
+                self.validate_expression_safety(else_expr, in_async, in_unsafe, closure_scope)?;
+            }
             ExpressionKind::Await(inner) | ExpressionKind::Spawn(inner) => {
                 self.validate_expression_safety(inner, in_async, in_unsafe, closure_scope)?;
             }

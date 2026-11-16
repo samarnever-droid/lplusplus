@@ -108,6 +108,11 @@ impl Interpreter<'_> {
             (UnaryOperator::Negate, RuntimeValue::FloatBits(value)) => {
                 Ok(RuntimeValue::FloatBits((-f64::from_bits(value)).to_bits()))
             }
+            (UnaryOperator::Plus, RuntimeValue::Int(value)) => Ok(RuntimeValue::Int(value)),
+            (UnaryOperator::Plus, RuntimeValue::FloatBits(value)) => {
+                Ok(RuntimeValue::FloatBits(value))
+            }
+            (UnaryOperator::BitNot, RuntimeValue::Int(value)) => Ok(RuntimeValue::Int(!value)),
             _ => Err(self.error(
                 Some(function),
                 Some(block),
@@ -186,7 +191,10 @@ impl Interpreter<'_> {
                 if operator == BinaryOperator::Add
                     && matches!(
                         right,
-                        RuntimeValue::Int(_) | RuntimeValue::FloatBits(_) | RuntimeValue::Bool(_)
+                        RuntimeValue::Int(_)
+                            | RuntimeValue::FloatBits(_)
+                            | RuntimeValue::Bool(_)
+                            | RuntimeValue::Char(_)
                     ) =>
             {
                 let HeapNode::String(left_text) = &self.heap[left_id.0 as usize] else {
@@ -204,6 +212,7 @@ impl Interpreter<'_> {
                     RuntimeValue::FloatBits(bits) => {
                         combined.push_str(&f64::from_bits(bits).to_string())
                     }
+                    RuntimeValue::Char(ch) => combined.push(ch),
                     _ => unreachable!("guarded to scalar right operands"),
                 }
                 let id = self.allocate_heap(
@@ -364,6 +373,23 @@ impl Interpreter<'_> {
             BinaryOperator::Modulo if right != 0 => {
                 Some(RuntimeValue::Int(left.wrapping_rem(right)))
             }
+            BinaryOperator::Power => {
+                if right < 0 {
+                    Some(RuntimeValue::Int(0))
+                } else {
+                    let mut res = 1i64;
+                    let mut base = left;
+                    let mut exp = right as u64;
+                    while exp > 0 {
+                        if (exp & 1) != 0 {
+                            res = res.wrapping_mul(base);
+                        }
+                        base = base.wrapping_mul(base);
+                        exp >>= 1;
+                    }
+                    Some(RuntimeValue::Int(res))
+                }
+            }
             BinaryOperator::BitAnd => Some(RuntimeValue::Int(left & right)),
             BinaryOperator::BitOr => Some(RuntimeValue::Int(left | right)),
             BinaryOperator::BitXor => Some(RuntimeValue::Int(left ^ right)),
@@ -408,6 +434,7 @@ impl Interpreter<'_> {
             BinaryOperator::Multiply => Some(RuntimeValue::FloatBits((left * right).to_bits())),
             BinaryOperator::Divide => Some(RuntimeValue::FloatBits((left / right).to_bits())),
             BinaryOperator::Modulo => Some(RuntimeValue::FloatBits((left % right).to_bits())),
+            BinaryOperator::Power => Some(RuntimeValue::FloatBits(left.powf(right).to_bits())),
             BinaryOperator::Equal => Some(RuntimeValue::Bool(left == right)),
             BinaryOperator::NotEqual => Some(RuntimeValue::Bool(left != right)),
             BinaryOperator::Less => Some(RuntimeValue::Bool(left < right)),

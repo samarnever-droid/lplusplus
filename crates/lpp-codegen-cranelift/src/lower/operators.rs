@@ -110,6 +110,32 @@ impl<'m> Lowering<'m> {
                 builder.func.dfg.first_result(call_inst)
             }
             BinaryOperator::Modulo => self.int_divmod(builder, ty, false, signed, l, r),
+            BinaryOperator::Power if ty == cltypes::F64 => {
+                let func_ref = self.import_ref(builder, IMP_POW);
+                let call_inst = builder.ins().call(func_ref, &[l, r]);
+                builder.func.dfg.first_result(call_inst)
+            }
+            BinaryOperator::Power => {
+                let widen = |builder: &mut FunctionBuilder, v: Value| {
+                    if ty == cltypes::I64 {
+                        v
+                    } else if signed {
+                        builder.ins().sextend(cltypes::I64, v)
+                    } else {
+                        builder.ins().uextend(cltypes::I64, v)
+                    }
+                };
+                let l64 = widen(builder, l);
+                let r64 = widen(builder, r);
+                let func_ref = self.import_ref(builder, IMP_INT_POW);
+                let call_inst = builder.ins().call(func_ref, &[l64, r64]);
+                let raw = builder.func.dfg.first_result(call_inst);
+                if ty == cltypes::I64 {
+                    raw
+                } else {
+                    builder.ins().ireduce(ty, raw)
+                }
+            }
             BinaryOperator::BitAnd => builder.ins().band(l, r),
             BinaryOperator::BitOr => builder.ins().bor(l, r),
             BinaryOperator::BitXor => builder.ins().bxor(l, r),

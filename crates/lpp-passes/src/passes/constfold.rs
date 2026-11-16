@@ -118,6 +118,9 @@ pub fn fold_unary(operator: UnaryOperator, value: &Constant) -> Option<Constant>
         (UnaryOperator::Negate, Constant::FloatBits(bits)) => {
             Some(Constant::FloatBits((-f64::from_bits(*bits)).to_bits()))
         }
+        (UnaryOperator::Plus, Constant::Integer(value)) => Some(Constant::Integer(*value)),
+        (UnaryOperator::Plus, Constant::FloatBits(bits)) => Some(Constant::FloatBits(*bits)),
+        (UnaryOperator::BitNot, Constant::Integer(value)) => Some(Constant::Integer(!value)),
         _ => None,
     }
 }
@@ -179,6 +182,23 @@ fn fold_integer(operator: BinaryOperator, left: i64, right: i64) -> Option<Const
         BinaryOperator::Multiply => Constant::Integer(left.wrapping_mul(right)),
         BinaryOperator::Divide if right != 0 => Constant::Integer(left.wrapping_div(right)),
         BinaryOperator::Modulo if right != 0 => Constant::Integer(left.wrapping_rem(right)),
+        BinaryOperator::Power => {
+            if right < 0 {
+                Constant::Integer(0)
+            } else {
+                let mut res = 1i64;
+                let mut base = left;
+                let mut exp = right as u64;
+                while exp > 0 {
+                    if (exp & 1) != 0 {
+                        res = res.wrapping_mul(base);
+                    }
+                    base = base.wrapping_mul(base);
+                    exp >>= 1;
+                }
+                Constant::Integer(res)
+            }
+        }
         BinaryOperator::BitAnd => Constant::Integer(left & right),
         BinaryOperator::BitOr => Constant::Integer(left | right),
         BinaryOperator::BitXor => Constant::Integer(left ^ right),
@@ -203,6 +223,7 @@ fn fold_float(operator: BinaryOperator, left: f64, right: f64) -> Option<Constan
         BinaryOperator::Multiply => Constant::FloatBits((left * right).to_bits()),
         BinaryOperator::Divide => Constant::FloatBits((left / right).to_bits()),
         BinaryOperator::Modulo => Constant::FloatBits((left % right).to_bits()),
+        BinaryOperator::Power => Constant::FloatBits(left.powf(right).to_bits()),
         BinaryOperator::Equal => Constant::Bool(left == right),
         BinaryOperator::NotEqual => Constant::Bool(left != right),
         BinaryOperator::Less => Constant::Bool(left < right),
