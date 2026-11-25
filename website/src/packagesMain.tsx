@@ -24,7 +24,13 @@ import {
   Code,
   Star,
 } from "lucide-react";
-import { useAuth, useClerk } from "@clerk/react";
+import {
+  OrganizationSwitcher,
+  SignInButton,
+  UserButton,
+  useAuth,
+  useClerk,
+} from "@clerk/react";
 import { rankPackages, PackageItem, SortMode } from "./lib/searchAlgorithm";
 import { LppClerkProvider } from "./lib/clerk";
 import Footer from "./components/Footer";
@@ -136,19 +142,39 @@ export function PackagesApp() {
   const fetchPackages = async () => {
     setLoading(true);
     try {
-      const res = await fetch("https://registry.lplusplus.bond/index.json");
-      if (res.ok) {
-        const data = await res.json();
-        let list: PackageItem[] = [];
-        if (data.packages) {
-          list = Object.values(data.packages);
-        } else if (data.results) {
-          list = data.results;
+      const byName = new Map<string, PackageItem>();
+      const sources = [
+        "https://registry.lplusplus.bond/index.json",
+        "https://raw.githubusercontent.com/samarnever-droid/llppregistry/main/registry/index.json",
+      ];
+      for (const url of sources) {
+        try {
+          const res = await fetch(url);
+          if (!res.ok) continue;
+          const data = await res.json();
+          let list: PackageItem[] = [];
+          if (data.packages) {
+            list = Array.isArray(data.packages)
+              ? data.packages
+              : Object.values(data.packages);
+          } else if (data.results) {
+            list = data.results;
+          }
+          for (const item of list) {
+            if (item && item.name) byName.set(item.name, item);
+          }
+        } catch {
+          // ignore individual mirror failures
         }
-        setPackages(list);
       }
-    } catch {
-      // ignore
+      const merged = Array.from(byName.values());
+      setPackages(merged);
+      if (merged.length > 0) {
+        setStats((prev) => ({
+          ...prev,
+          packages_count: Math.max(prev.packages_count, merged.length),
+        }));
+      }
     } finally {
       setLoading(false);
     }
@@ -184,13 +210,36 @@ export function PackagesApp() {
           </div>
 
           <div className="flex items-center gap-3">
-            <a
-              href="/account.html"
-              className="flex items-center gap-1.5 rounded-lg border border-acid/40 bg-acid/10 px-3.5 py-1.5 font-mono text-xs font-bold text-acid hover:bg-acid/20"
-            >
-              <Key className="h-3.5 w-3.5" />
-              Publish Guide
-            </a>
+            {isLoaded && isSignedIn ? (
+              <>
+                <div className="hidden md:flex items-center">
+                  <OrganizationSwitcher hidePersonal={false} />
+                </div>
+                <a
+                  href="/account.html"
+                  className="clerk-btn-primary inline-flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-xs font-semibold"
+                >
+                  <Sparkles className="h-3.5 w-3.5" />
+                  Studio
+                </a>
+                <UserButton />
+              </>
+            ) : (
+              <>
+                <SignInButton mode="modal" fallbackRedirectUrl="/packages.html">
+                  <button className="rounded-lg border border-white/15 bg-white/[0.04] px-3 py-1.5 text-xs font-medium text-zinc-200 hover:text-white">
+                    Sign in
+                  </button>
+                </SignInButton>
+                <a
+                  href="/account.html"
+                  className="clerk-btn-primary inline-flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-xs font-semibold"
+                >
+                  <Key className="h-3.5 w-3.5" />
+                  Publish
+                </a>
+              </>
+            )}
           </div>
         </div>
       </header>

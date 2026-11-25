@@ -142,3 +142,104 @@ body {
 .code-scroll::-webkit-scrollbar {
   height: 6px;
 }
+
+/* High-contrast Clerk UI overrides so every label, input, divider, icon, and footer is 100% readable */
+.cl-card,
+.cl-modalContent,
+.cl-userButtonPopoverCard,
+.cl-organizationSwitcherPopoverCard {
+  background-color: #181822 !important;
+  color: #ffffff !important;
+  border-color: rgba(255, 255, 255, 0.16) !important;
+}
+
+.cl-headerTitle,
+.cl-profileSectionTitleText,
+.cl-userPreviewMainIdentifier,
+.cl-organizationPreviewMainIdentifier,
+.cl-formFieldLabel,
+.cl-socialButtonsBlockButtonText,
+.cl-identityPreviewText,
+.cl-userButtonPopoverActionButtonText,
+.cl-organizationSwitcherTrigger,
+.cl-navbarButton,
+.cl-accordionTriggerButton {
+  color: #ffffff !important;
+}
+
+.cl-headerSubtitle,
+.cl-userPreviewSecondaryIdentifier,
+.cl-organizationPreviewSecondaryIdentifier,
+.cl-dividerText,
+.cl-footerActionText,
+.cl-formFieldHintText,
+.cl-formFieldInfoText,
+.cl-formFieldOptionalText,
+.cl-profileSectionSubtitle,
+.cl-breadcrumbsItem,
+.cl-menuItem {
+  color: #e4e4e7 !important;
+  opacity: 1 !important;
+}
+
+.cl-formFieldInput,
+.cl-otpCodeFieldInput,
+.cl-selectButton {
+  background-color: #232332 !important;
+  color: #ffffff !important;
+  border-color: rgba(255, 255, 255, 0.24) !important;
+}
+
+.cl-formFieldInput::placeholder {
+  color: #a1a1aa !important;
+  opacity: 1 !important;
+}
+
+.cl-socialButtonsBlockButton,
+.cl-alternativeMethodsBlockButton {
+  background-color: #232332 !important;
+  color: #ffffff !important;
+  border-color: rgba(255, 255, 255, 0.2) !important;
+}
+
+.cl-socialButtonsBlockButton:hover,
+.cl-alternativeMethodsBlockButton:hover {
+  background-color: #2d2d40 !important;
+}
+
+.cl-dividerLine {
+  background-color: rgba(255, 255, 255, 0.18) !important;
+}
+
+.cl-footer,
+.cl-userButtonPopoverFooter,
+.cl-organizationSwitcherPopoverFooter {
+  background: #14141c !important;
+  border-top: 1px solid rgba(255, 255, 255, 0.12) !important;
+}
+
+.cl-footerActionLink,
+.cl-formFieldAction,
+.cl-identityPreviewEditButton {
+  color: #c4b5fd !important;
+}
+
+.cl-formButtonPrimary {
+  background-color: #6c47ff !important;
+  color: #ffffff !important;
+}
+
+.cl-formButtonPrimary:hover {
+  background-color: #7c5cff !important;
+}
+
+.cl-modalCloseButton,
+.cl-formFieldInputShowPasswordButton,
+.cl-userButtonPopoverActionButtonIcon,
+.cl-socialButtonsProviderIcon__github {
+  color: #e4e4e7 !important;
+}
+
+.cl-socialButtonsProviderIcon__github {
+  filter: invert(1) brightness(1.8);
+}
