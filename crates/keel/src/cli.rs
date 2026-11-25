@@ -127,6 +127,13 @@ pub enum Command {
         #[command(subcommand)]
         action: CacheAction,
     },
+    /// Check for a newer L++ & Keel release and install it
+    #[command(visible_alias = "upgrade")]
+    SelfUpdate {
+        /// Only check if a newer version is available without installing
+        #[arg(long)]
+        check: bool,
+    },
 }
 
 #[derive(Subcommand)]

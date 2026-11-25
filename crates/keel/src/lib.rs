@@ -137,6 +137,7 @@ fn registry_or_default(cli: &cli::Cli) -> Result<lpp_pm::Registry, String> {
 fn dispatch(cli: &cli::Cli, directory: &std::path::Path) -> Result<(), String> {
     match &cli.command {
         cli::Command::Cache { action } => commands::cache::run(action, cli.cache_backend),
+        cli::Command::SelfUpdate { check } => commands::self_update::self_update(*check),
         cli::Command::Install => {
             let reg = registry_or_default(cli).ok();
             commands::registry::install(reg.as_ref(), directory)

@@ -861,8 +861,10 @@ fn handle_self_update(arguments: &[String]) -> i32 {
     };
     println!("Latest release channel: v{latest}");
     if latest > current {
-        println!("Update available: v{current} -> v{latest}");
-        println!("Download and verify the release archive before installation.");
+        println!("New version found: v{current} -> v{latest}");
+        println!(
+            "Run `keel self-update` (or `irm https://lplusplus.bond/install.ps1 | iex` on Windows / `curl -fsSL https://lplusplus.bond/install.sh | sh` on Unix)."
+        );
         1
     } else {
         println!("L++ v{current} is the latest production build.");
