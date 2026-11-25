@@ -24,7 +24,10 @@ fn default_cache_backend_is_auto() {
 fn parses_add_with_name() {
     let cli = Cli::try_parse_from(["keel", "add", "serde"]).unwrap();
     match cli.command {
-        Command::Add { name } => assert_eq!(name, "serde"),
+        Command::Add { name, path } => {
+            assert_eq!(name, "serde");
+            assert!(path.is_none());
+        }
         _ => panic!("expected add"),
     }
 }

@@ -167,9 +167,9 @@ export default function Hero() {
   };
 
   const installCommands = {
-    curl: "git clone --depth 1 --branch v0.3.2 https://github.com/samarnever-droid/lplusplus.git && cd lplusplus && LPP_FROM_SOURCE=1 sh install.sh",
-    powershell: "git clone --depth 1 --branch v0.3.2 https://github.com/samarnever-droid/lplusplus.git; cd lplusplus; $env:LPP_FROM_SOURCE='1'; .\\install.ps1",
-    cargo: "cargo install --locked --git https://github.com/samarnever-droid/lplusplus --tag v0.3.2",
+    curl: "curl -fsSL https://raw.githubusercontent.com/samarnever-droid/lplusplus/main/install.sh | sh",
+    powershell: "irm https://raw.githubusercontent.com/samarnever-droid/lplusplus/main/install.ps1 | iex",
+    cargo: "git clone --depth 1 https://github.com/samarnever-droid/lplusplus.git && cd lplusplus && LPP_FROM_SOURCE=1 sh install.sh",
   };
 
   return (

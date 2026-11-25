@@ -138,7 +138,7 @@ fn dispatch(cli: &cli::Cli, directory: &std::path::Path) -> Result<(), String> {
     match &cli.command {
         cli::Command::Cache { action } => commands::cache::run(action, cli.cache_backend),
         cli::Command::Install => {
-            let reg = registry(cli).ok();
+            let reg = registry_or_default(cli).ok();
             commands::registry::install(reg.as_ref(), directory)
         }
         cli::Command::Fetch { name } => match name {
@@ -149,17 +149,16 @@ fn dispatch(cli: &cli::Cli, directory: &std::path::Path) -> Result<(), String> {
             commands::registry::search(&registry_or_default(cli)?, query)
         }
         cli::Command::Publish => commands::registry::publish(&registry_or_default(cli)?, directory),
-        // `update` works offline (no registry configured → idempotent);
-        // a configured registry is only synced when one is used.
+        // `update` works offline when `KEEL_REGISTRY=offline`/`none`; otherwise
+        // defaults to the canonical git registry.
         cli::Command::Update { package } => {
-            let reg = registry(cli).ok();
+            let reg = registry_or_default(cli).ok();
             commands::update::update(reg.as_ref(), directory, package.as_deref())
         }
         cli::Command::Tree { package } => commands::tree::tree(directory, package.as_deref()),
-        // `outdated` is registry-backed but degrades gracefully (see the
-        // diagnostics contract); no registry configured = a clean error.
+        // `outdated` defaults to the canonical registry unless explicitly offline.
         cli::Command::Outdated { package } => {
-            let reg = registry(cli).ok();
+            let reg = registry_or_default(cli).ok();
             commands::diagnostics::outdated(reg.as_ref(), directory, package.as_deref())
         }
         cli::Command::Why { name } => commands::diagnostics::why(directory, name),
@@ -182,7 +181,7 @@ fn dispatch(cli: &cli::Cli, directory: &std::path::Path) -> Result<(), String> {
             )));
             // Staging may need the registry (registry deps); path-only
             // workspaces never touch it.
-            let reg = registry(cli).ok();
+            let reg = registry_or_default(cli).ok();
             commands::build::build_incremental(
                 directory,
                 &commands::build::lpp_bin(),
@@ -191,7 +190,7 @@ fn dispatch(cli: &cli::Cli, directory: &std::path::Path) -> Result<(), String> {
             )
         }
         cli::Command::Check => {
-            let reg = registry(cli).ok();
+            let reg = registry_or_default(cli).ok();
             commands::build::check(directory, &commands::build::lpp_bin(), reg.as_ref())
         }
         cli::Command::Clean => commands::clean::clean(directory),
@@ -210,7 +209,7 @@ fn dispatch(cli: &cli::Cli, directory: &std::path::Path) -> Result<(), String> {
                 let kv = Some(std::sync::Arc::new(std::sync::Mutex::new(
                     lpp_pm::create_kv(kind).map_err(|error| error.to_string())?,
                 )));
-                let reg = registry(cli).ok();
+                let reg = registry_or_default(cli).ok();
                 commands::build::build_incremental_selected(
                     directory,
                     &commands::build::lpp_bin(),
@@ -220,7 +219,7 @@ fn dispatch(cli: &cli::Cli, directory: &std::path::Path) -> Result<(), String> {
                 )
             }
             Some(cli::WorkspaceAction::Test { package }) => {
-                let reg = registry(cli).ok();
+                let reg = registry_or_default(cli).ok();
                 commands::test::test_run_selected(
                     directory,
                     &commands::build::lpp_bin(),
@@ -234,20 +233,24 @@ fn dispatch(cli: &cli::Cli, directory: &std::path::Path) -> Result<(), String> {
             commands::project::new_project(name.as_str(), directory).map(|_| ())
         }
         cli::Command::Init => commands::project::init(directory),
-        cli::Command::Add { name } => {
-            let (n, v) = match name.as_str().split_once('@') {
-                Some((n, v)) => (n, v),
-                None => (name.as_str(), "*"),
-            };
-            commands::project::add_dep(directory, n, v)
+        cli::Command::Add { name, path } => {
+            if let Some(local_path) = path {
+                commands::project::add_path_dep(directory, name.as_str(), local_path.as_str())
+            } else {
+                let (n, v) = match name.as_str().split_once('@') {
+                    Some((n, v)) => (n, v),
+                    None => (name.as_str(), "*"),
+                };
+                commands::project::add_dep(directory, n, v)
+            }
         }
         cli::Command::Remove { name } => commands::project::remove_dep(directory, name.as_str()),
         cli::Command::Run => {
-            let reg = registry(cli).ok();
+            let reg = registry_or_default(cli).ok();
             commands::build::run(directory, &commands::build::lpp_bin(), reg.as_ref())
         }
         cli::Command::Test => {
-            let reg = registry(cli).ok();
+            let reg = registry_or_default(cli).ok();
             commands::test::test_run(directory, &commands::build::lpp_bin(), reg.as_ref())
         }
     }

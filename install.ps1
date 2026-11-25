@@ -8,7 +8,7 @@ $ProjectDir = $PSScriptRoot
 $InstallDir = if ($env:LPP_INSTALL_DIR) { $env:LPP_INSTALL_DIR } else { Join-Path $HOME ".lpp" }
 $BinDir = Join-Path $InstallDir "bin"
 $LibDir = Join-Path $InstallDir "lib"
-$Version = if ($env:LPP_VERSION) { $env:LPP_VERSION } else { "v0.3.2" }
+$Version = if ($env:LPP_VERSION) { $env:LPP_VERSION } else { "latest" }
 if (($Version -ne "latest") -and (-not $Version.StartsWith("v"))) { $Version = "v$Version" }
 $AssetName = "lpp-windows-x86_64.zip"
 if ($Version -eq "latest") {
@@ -83,9 +83,15 @@ function Install-Release {
         if ((-not $libInfo.PSIsContainer) -or ($libInfo.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw "Invalid release library directory" }
         if ($compilerInfo.PSIsContainer -or ($compilerInfo.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw "Release archive is missing a regular lpp.exe" }
         if ($linkerInfo.PSIsContainer -or ($linkerInfo.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw "Release archive is missing a regular lpp-link.exe" }
-        Write-Host "[2/3] Installing verified compiler, linker, and runtime objects..." -ForegroundColor Yellow
+        Write-Host "[2/3] Installing verified compiler, linker, package manager, and runtime objects..." -ForegroundColor Yellow
         Copy-Item "$root\bin\lpp.exe" "$BinDir\lpp.exe" -Force
         Copy-Item "$root\bin\lpp-link.exe" "$BinDir\lpp-link.exe" -Force
+        if (Test-Path "$root\bin\keel.exe") {
+            $keelInfo = Get-Item "$root\bin\keel.exe" -ErrorAction Stop
+            if (-not $keelInfo.PSIsContainer -and -not ($keelInfo.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+                Copy-Item "$root\bin\keel.exe" "$BinDir\keel.exe" -Force
+            }
+        }
         Copy-Item "$root\lib\*" $LibDir -Recurse -Force
         if (Test-Path "$root\pm") { Remove-Item "$InstallDir\pm" -Recurse -Force -ErrorAction SilentlyContinue; Copy-Item "$root\pm" "$InstallDir\pm" -Recurse -Force }
         if (Test-Path "$root\registry") { Remove-Item "$InstallDir\registry" -Recurse -Force -ErrorAction SilentlyContinue; Copy-Item "$root\registry" "$InstallDir\registry" -Recurse -Force }
@@ -102,17 +108,20 @@ function Install-Source {
     if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
         throw "Cargo is required for source installation. Install Rust or use a published release asset."
     }
-    Write-Host "[1/3] Building L++ compiler and linker from source..." -ForegroundColor Yellow
+    Write-Host "[1/3] Building L++ compiler, linker, and Keel package manager from source..." -ForegroundColor Yellow
     Push-Location $ProjectDir
     try {
         cargo build --release --locked --features all-arch --bin lpp --bin lpp-link
         if ($LASTEXITCODE -ne 0) { throw "Cargo build failed." }
+        cargo build --release --locked -p keel --bin keel
+        if ($LASTEXITCODE -ne 0) { throw "Keel build failed." }
     } finally {
         Pop-Location
     }
-    Write-Host "[2/3] Packaging compiler and runtime objects..." -ForegroundColor Yellow
+    Write-Host "[2/3] Packaging compiler, Keel, and runtime objects..." -ForegroundColor Yellow
     Copy-Item "$ProjectDir\target\release\lpp.exe" "$BinDir\lpp.exe" -Force
     Copy-Item "$ProjectDir\target\release\lpp-link.exe" "$BinDir\lpp-link.exe" -Force
+    Copy-Item "$ProjectDir\target\release\keel.exe" "$BinDir\keel.exe" -Force
     Copy-Item "$ProjectDir\lpp_runtime.c" "$LibDir\lpp_runtime.c" -Force
     if (Test-Path "$ProjectDir\pm") { Remove-Item "$InstallDir\pm" -Recurse -Force -ErrorAction SilentlyContinue; Copy-Item "$ProjectDir\pm" "$InstallDir\pm" -Recurse -Force }
     if (Test-Path "$ProjectDir\registry") { Remove-Item "$InstallDir\registry" -Recurse -Force -ErrorAction SilentlyContinue; Copy-Item "$ProjectDir\registry" "$InstallDir\registry" -Recurse -Force }
@@ -163,7 +172,8 @@ try {
     }
 } catch {}
 
-Write-Host "[3/3] Installed commands: lpp, lpp-link" -ForegroundColor Green
+$InstalledCommands = if (Test-Path "$BinDir\keel.exe") { "lpp, lpp-link, keel" } else { "lpp, lpp-link" }
+Write-Host "[3/3] Installed commands: $InstalledCommands" -ForegroundColor Green
 Write-Host "Requested release: $Version" -ForegroundColor Green
 Write-Host "Release asset: lpp-windows-x86_64.zip" -ForegroundColor Green
 Write-Host "Download URL: $ReleaseUrl" -ForegroundColor Green

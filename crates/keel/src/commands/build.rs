@@ -72,6 +72,39 @@ pub fn lpp_bin() -> String {
     "lpp".to_string()
 }
 
+/// Fallback entry detection for library packages whose single module file
+/// lives in `src/` (for example `src/semver.lpp` in `lpp-semver`).
+fn detect_single_src_entry(root: &Path, name: &str) -> Option<String> {
+    let mut candidates = vec![
+        format!("src/{name}.lpp"),
+        format!("src/{}.lpp", name.replace('-', "_")),
+    ];
+    if let Some(stripped) = name.strip_prefix("lpp-") {
+        candidates.push(format!("src/{stripped}.lpp"));
+        candidates.push(format!("src/{}.lpp", stripped.replace('-', "_")));
+    }
+    for candidate in candidates {
+        if root.join(&candidate).is_file() {
+            return Some(candidate);
+        }
+    }
+    let src_dir = root.join("src");
+    let mut lpp_files = Vec::new();
+    for entry in std::fs::read_dir(&src_dir).ok()?.flatten() {
+        let path = entry.path();
+        if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("lpp") {
+            if let Some(file_name) = path.file_name().and_then(|f| f.to_str()) {
+                lpp_files.push(format!("src/{file_name}"));
+            }
+        }
+    }
+    if lpp_files.len() == 1 {
+        lpp_files.pop()
+    } else {
+        None
+    }
+}
+
 /// The project's entry point: `src/main.lpp` (binary) or `src/lib.lpp` (lib).
 fn entry_point(dir: &Path) -> Result<String, String> {
     for name in ["src/main.lpp", "src/lib.lpp"] {
@@ -397,9 +430,11 @@ pub fn stage_registry_deps(
             ));
         }
         let entry = if temporary.join("src/lib.lpp").is_file() {
-            "src/lib.lpp"
+            "src/lib.lpp".to_string()
         } else if temporary.join("src/main.lpp").is_file() {
-            "src/main.lpp"
+            "src/main.lpp".to_string()
+        } else if let Some(detected) = detect_single_src_entry(&temporary, name) {
+            detected
         } else {
             let _ = std::fs::remove_dir_all(&temporary);
             return Err(format!(

@@ -43,6 +43,9 @@ pub enum Command {
     Add {
         /// Package name (or `name@version`)
         name: String,
+        /// Add as a local path dependency (`name = { path = "<dir>" }`)
+        #[arg(long)]
+        path: Option<String>,
     },
     /// Remove a dependency
     Remove {

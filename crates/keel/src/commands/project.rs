@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-const TEMPLATE_MAIN: &str = "def main():\n    print(\"Hello from L++\")\n";
+const TEMPLATE_MAIN: &str = "def main():\n    print_str(\"Hello from L++\")\n";
 
 fn manifest_template(name: &str) -> String {
     format!(
@@ -107,6 +107,36 @@ pub fn add_dep(dir: &Path, name: &str, requirement: &str) -> Result<(), String> 
     dependencies.insert(name, toml_edit::value(requirement));
     save_validated(dir, document.to_string())?;
     println!("added {name} = \"{requirement}\" to Keel.toml");
+    Ok(())
+}
+
+pub fn add_path_dep(dir: &Path, name: &str, path: &str) -> Result<(), String> {
+    validate_name(name)?;
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err("dependency path cannot be empty".to_string());
+    }
+    let source = load_text(dir)?;
+    lpp_pm::manifest::Manifest::parse(&source).map_err(|error| error.to_string())?;
+    let mut document = source
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|error| error.to_string())?;
+    let dependencies = document
+        .entry("dependencies")
+        .or_insert(toml_edit::Item::Table(toml_edit::Table::new()))
+        .as_table_mut()
+        .ok_or_else(|| "[dependencies] must be a TOML table".to_string())?;
+    if dependencies.contains_key(name) {
+        return Err(format!("'{name}' is already a dependency"));
+    }
+    let mut table = toml_edit::InlineTable::new();
+    table.insert("path", toml_edit::Value::from(trimmed));
+    dependencies.insert(
+        name,
+        toml_edit::Item::Value(toml_edit::Value::InlineTable(table)),
+    );
+    save_validated(dir, document.to_string())?;
+    println!("added {name} = {{ path = \"{trimmed}\" }} to Keel.toml");
     Ok(())
 }
 

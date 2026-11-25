@@ -58,8 +58,10 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - name: Install musl tools
         run: sudo apt-get update && sudo apt-get install -y musl-tools
-      - name: Build compiler and direct linker (static musl)
-        run: cargo build --release --locked --features all-arch --bin lpp --bin lpp-link --target x86_64-unknown-linux-musl
+      - name: Build compiler, direct linker, and Keel (static musl)
+        run: |
+          cargo build --release --locked --features all-arch --bin lpp --bin lpp-link --target x86_64-unknown-linux-musl
+          cargo build --release --locked -p keel --bin keel --target x86_64-unknown-linux-musl
       - name: Package Linux runtime objects
         run: |
           # Phase 1 networking migration: ship the reviewed Rust static
@@ -76,6 +78,7 @@ jobs:
           cp -r registry package/lpp-linux-x86_64/
           cp target/x86_64-unknown-linux-musl/release/lpp package/lpp-linux-x86_64/bin/
           cp target/x86_64-unknown-linux-musl/release/lpp-link package/lpp-linux-x86_64/bin/
+          cp target/x86_64-unknown-linux-musl/release/keel package/lpp-linux-x86_64/bin/
           cp target/x86_64-unknown-linux-musl/release/liblpp_net_runtime.a package/lpp-linux-x86_64/lib/
           cp runtime/lpp-net/include/lpp_net_runtime.h package/lpp-linux-x86_64/include/
           cp target/release/liblpp_runtime.so package/lpp-linux-x86_64/lib/
@@ -121,6 +124,7 @@ jobs:
         shell: pwsh
         run: |
           cargo build --release --locked --features all-arch --bin lpp --bin lpp-link
+          cargo build --release --locked -p keel --bin keel
           cargo build --release --locked -p lpp-runtime
           $root = Join-Path $env:RUNNER_TEMP "lpp-windows-x86_64"
           New-Item -ItemType Directory -Force "$root\bin", "$root\lib" | Out-Null
@@ -128,6 +132,7 @@ jobs:
           Copy-Item -Recurse registry "$root\registry"
           Copy-Item target\release\lpp.exe "$root\bin\lpp.exe"
           Copy-Item target\release\lpp-link.exe "$root\bin\lpp-link.exe"
+          Copy-Item target\release\keel.exe "$root\bin\keel.exe"
           Copy-Item target\release\lpp_runtime.dll "$root\lib\lpp_runtime.dll"
           Get-ChildItem target\release\*lpp_runtime*.lib | Copy-Item -Destination "$root\lib"
           $cmd = Join-Path $env:RUNNER_TEMP "build_runtime.bat"
@@ -183,12 +188,14 @@ jobs:
       - name: Build and package Apple Silicon macOS release
         run: |
           cargo build --release --locked --features all-arch --bin lpp --bin lpp-link
+          cargo build --release --locked -p keel --bin keel
           cargo build --release --locked -p lpp-runtime
           mkdir -p package/lpp-macos-arm64/bin package/lpp-macos-arm64/lib
           cp -r pm package/lpp-macos-arm64/
           cp -r registry package/lpp-macos-arm64/
           cp target/release/lpp package/lpp-macos-arm64/bin/
           cp target/release/lpp-link package/lpp-macos-arm64/bin/
+          cp target/release/keel package/lpp-macos-arm64/bin/
           cp target/release/liblpp_runtime.dylib package/lpp-macos-arm64/lib/
           clang -O2 -fPIC -c lpp_runtime.c -o package/lpp-macos-arm64/lib/lpp_runtime.o
           cp lpp_runtime.c package/lpp-macos-arm64/lib/
@@ -221,12 +228,14 @@ jobs:
         run: |
           test "$(uname -m)" = "x86_64"
           cargo build --release --locked --features all-arch --bin lpp --bin lpp-link
+          cargo build --release --locked -p keel --bin keel
           cargo build --release --locked -p lpp-runtime
           mkdir -p package/lpp-macos-x86_64/bin package/lpp-macos-x86_64/lib
           cp -r pm package/lpp-macos-x86_64/
           cp -r registry package/lpp-macos-x86_64/
           cp target/release/lpp package/lpp-macos-x86_64/bin/
           cp target/release/lpp-link package/lpp-macos-x86_64/bin/
+          cp target/release/keel package/lpp-macos-x86_64/bin/
           cp target/release/liblpp_runtime.dylib package/lpp-macos-x86_64/lib/
           clang -O2 -fPIC -c lpp_runtime.c -o package/lpp-macos-x86_64/lib/lpp_runtime.o
           cp lpp_runtime.c package/lpp-macos-x86_64/lib/
